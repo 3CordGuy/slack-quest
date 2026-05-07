@@ -1,0 +1,2 @@
+SLACK_SIGNING_SECRET=replace_me
+SLACK_BOT_TOKEN=xoxb-replace-me
