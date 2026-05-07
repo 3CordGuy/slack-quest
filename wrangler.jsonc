@@ -12,8 +12,5 @@
       "migrations_dir": "migrations"
     }
   ],
-  "ai": { "binding": "AI" },
-  "vars": {
-    "ALLOWED_CHANNEL_ID": ""
-  }
+  "ai": { "binding": "AI" }
 }

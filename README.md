@@ -87,18 +87,23 @@ Locally:
 
 ```bash
 cp .dev.vars.example .dev.vars
-# fill in SLACK_SIGNING_SECRET and SLACK_BOT_TOKEN
+# fill in SLACK_SIGNING_SECRET, SLACK_BOT_TOKEN, and (optionally) ALLOWED_CHANNEL_ID
 ```
 
-Set `ALLOWED_CHANNEL_ID` in `wrangler.jsonc` to the `#gamers` channel ID once you have it
-(right-click the channel → Copy link → the ID is the last path segment).
+`ALLOWED_CHANNEL_ID` restricts slash commands to a single channel — get it by right-clicking
+the channel → Copy link → the ID is the last path segment. Leave it blank in dev to accept
+calls from any channel.
 
 For deployed Workers:
 
 ```bash
 npx wrangler secret put SLACK_SIGNING_SECRET
 npx wrangler secret put SLACK_BOT_TOKEN
+npx wrangler secret put ALLOWED_CHANNEL_ID
 ```
+
+Keeping `ALLOWED_CHANNEL_ID` out of `wrangler.jsonc` means a public repo never leaks the
+target channel ID.
 
 ### 5. Run it
 

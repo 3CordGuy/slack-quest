@@ -1,2 +1,4 @@
 SLACK_SIGNING_SECRET=replace_me
 SLACK_BOT_TOKEN=xoxb-replace-me
+# Optional: restrict slash commands to one channel. Leave blank in dev to allow any channel.
+ALLOWED_CHANNEL_ID=

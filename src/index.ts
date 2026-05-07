@@ -8,7 +8,7 @@ export interface Env {
   AI: Ai;
   SLACK_SIGNING_SECRET: string;
   SLACK_BOT_TOKEN: string;
-  ALLOWED_CHANNEL_ID: string; // Empty string = allow any channel (dev convenience).
+  ALLOWED_CHANNEL_ID: string; // Set via .dev.vars locally / `wrangler secret put` in prod. Empty = allow any channel.
 }
 
 const app = new Hono<{ Bindings: Env }>();
