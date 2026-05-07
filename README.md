@@ -62,10 +62,14 @@ What works:
   with a minimum of 1 dmg taken so armor never makes you immune.
 - **Consumables** — `/dnd use <id>` heals you for the item's power. Free action; doesn't
   consume your 45-second combat cooldown so potions are actually worth taking into a fight.
+- **Shop** — `/dnd shop` lists 5 AI-generated items priced flat by rarity (15/50/150g).
+  Stock is **channel-wide and restocks every 6 hours**, so the channel collectively decides
+  who grabs the rare drop. `/dnd buy <id>` claims atomically (no double-spend if two people
+  hit the same item). `/dnd sell <id>` returns 30% of shop price as gold sink prevention.
+  Stock tier scales with the active community's average level.
 
 Still stubbed:
 
-- `/dnd shop` — buy/sell items between quests with rotating AI-generated stock.
 - Quest variants (`boss`, `gauntlet`, `expedition`).
 - Reaction-based spectator buffs/debuffs.
 

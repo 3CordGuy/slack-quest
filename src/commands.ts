@@ -12,33 +12,42 @@ import {
   generateOpeningScene,
 } from "./ai";
 import {
+  addGold,
   addItem,
   appendLog,
   applySoftDeath,
+  averageCharacterLevel,
   awardSpoils,
+  claimShopItem,
   consumeItem,
   cooldownRemaining,
   createCharacter,
   createQuest,
+  deductGold,
   deleteCharacter,
   equipItem,
   getActiveQuestForCharacter,
   getActiveQuestInChannel,
+  getActiveShopStock,
   getCharacter,
   getEquipped,
   getInventory,
   getItem,
   getLeaderboard,
   getQuestParty,
+  getShopItem,
+  insertShopStock,
   isFighter,
   joinQuest,
   markQuestStatus,
+  removeItem,
   scaleMonsterForJoin,
   setCharacterHp,
   updateMonsterHp,
   type ActiveQuest,
   type Character,
   type Item,
+  type ShopItem,
 } from "./db";
 import {
   classByName,
@@ -48,8 +57,10 @@ import {
   pickRandomClass,
   rollDice,
   rollItem,
+  sellPrice,
   xpForLevel,
   RARITY_BADGE,
+  SHOP_PRICE,
 } from "./flavor";
 import { postMessage, respondToCommand, type SlashCommandPayload } from "./slack";
 
@@ -62,6 +73,8 @@ export interface CommandResponse {
 const DOWNED_COOLDOWN_MS = 12 * 60 * 60 * 1000;
 const ACTION_COOLDOWN_MS = 45 * 1000;
 const JOIN_HP_RATIO = 0.4; // monster max HP grows by this fraction per joiner
+const SHOP_RESTOCK_MS = 6 * 60 * 60 * 1000; // 6h channel-wide restock cadence
+const SHOP_STOCK_SIZE = 5;
 
 const HELP_TEXT = [
   "*Slack Quest commands*",
@@ -76,6 +89,9 @@ const HELP_TEXT = [
   "• `/dnd inventory` — list your items (equipped marked ✅)",
   "• `/dnd equip <id>` — equip a weapon or armor by inventory id",
   "• `/dnd use <id>` — use a consumable (free action, no cooldown)",
+  "• `/dnd shop` — view the channel's shop (restocks every 6h)",
+  "• `/dnd buy <id>` — purchase a shop item with gold",
+  "• `/dnd sell <id>` — sell an inventory item for 30% of shop price",
   "• `/dnd party` — show the current quest's roster + HP",
   "• `/dnd leaderboard` — top 10 heroes",
   "• `/dnd help` — show this list",
@@ -118,6 +134,12 @@ export async function handleCommand(
       return handleEquip(payload, args, env);
     case "use":
       return handleUse(payload, args, env);
+    case "shop":
+      return handleShop(payload, env, ctx);
+    case "buy":
+      return handleBuy(payload, args, env);
+    case "sell":
+      return handleSell(payload, args, env);
     case "help":
     case "":
       return ephemeral(HELP_TEXT);
@@ -660,6 +682,121 @@ async function handleUse(
   const healed = await consumeItem(env.DB, character, item);
   return ephemeral(
     `🧪 You drink *${item.item_name}* — recovered *${healed}* HP. (${character.hp + healed}/${character.max_hp})`,
+  );
+}
+
+async function handleShop(
+  payload: SlashCommandPayload,
+  env: Env,
+  ctx: ExecutionContext,
+): Promise<CommandResponse> {
+  const character = await getCharacter(env.DB, payload.user_id);
+  if (!character) return ephemeral("You need to `/dnd roll` a character first.");
+
+  const existing = await getActiveShopStock(env.DB, payload.channel_id, SHOP_RESTOCK_MS);
+  if (existing && existing.length > 0) {
+    return ephemeral(formatShop(existing, character.gold));
+  }
+
+  // Shop is dry — kick off a restock. Generation does up to SHOP_STOCK_SIZE AI calls,
+  // so we ack immediately and let it run via waitUntil. The user re-runs /dnd shop to see it.
+  ctx.waitUntil(restockShop(env, payload.channel_id));
+  return ephemeral(
+    "🛒 The shopkeep is unpacking new stock — try `/dnd shop` again in a few seconds.",
+  );
+}
+
+async function restockShop(env: Env, channelId: string): Promise<void> {
+  const tier = Math.max(2, await averageCharacterLevel(env.DB));
+  const generatedAt = Date.now();
+  const items: Parameters<typeof insertShopStock>[1] = [];
+  for (let i = 0; i < SHOP_STOCK_SIZE; i++) {
+    const roll = rollItem(tier);
+    const named = await flavorLootDrop(env.AI, "the shopkeep's chest", roll.type, roll.rarity, roll.power);
+    items.push({
+      channel_id: channelId,
+      generated_at: generatedAt,
+      item_name: named.name,
+      item_type: roll.type,
+      power: roll.power,
+      rarity: roll.rarity,
+      flavor: named.flavor,
+      price: SHOP_PRICE[roll.rarity],
+    });
+  }
+  await insertShopStock(env.DB, items);
+}
+
+function formatShop(items: ShopItem[], gold: number): string {
+  const lines = [`🛒 *Shop* — you have ${gold} gold`];
+  for (const it of items) {
+    const status = it.bought_by ? " ❌_sold_" : "";
+    const powerStr = it.item_type === "consumable" ? `heals ${it.power}` : `+${it.power}`;
+    lines.push(
+      `\`${it.id}\` ${RARITY_BADGE[it.rarity]} *${it.item_name}* — ${it.item_type}, ${powerStr} • *${it.price}g*${status}`,
+    );
+    if (it.flavor) lines.push(`   _${it.flavor}_`);
+  }
+  lines.push("", "Buy with `/dnd buy <id>`. Sell your own items with `/dnd sell <id>`.");
+  return lines.join("\n");
+}
+
+async function handleBuy(
+  payload: SlashCommandPayload,
+  args: string[],
+  env: Env,
+): Promise<CommandResponse> {
+  const character = await getCharacter(env.DB, payload.user_id);
+  if (!character) return ephemeral("You need to `/dnd roll` a character first.");
+
+  const id = parseInt(args[0] ?? "", 10);
+  if (Number.isNaN(id)) return ephemeral("Usage: `/dnd buy <shop id>` (find ids with `/dnd shop`).");
+
+  const stock = await getShopItem(env.DB, id, payload.channel_id);
+  if (!stock) return ephemeral("No such shop item in this channel.");
+  if (stock.bought_by) return ephemeral(`*${stock.item_name}* was already bought.`);
+  if (character.gold < stock.price) {
+    return ephemeral(`Not enough gold — *${stock.item_name}* costs ${stock.price}g, you have ${character.gold}g.`);
+  }
+
+  // Atomic claim — if someone else bought it between the check and now, claim returns false.
+  const claimed = await claimShopItem(env.DB, stock.id, payload.user_id);
+  if (!claimed) return ephemeral(`*${stock.item_name}* was just bought by someone else.`);
+
+  await deductGold(env.DB, payload.user_id, stock.price);
+  const item = await addItem(env.DB, {
+    character_id: payload.user_id,
+    item_name: stock.item_name,
+    item_type: stock.item_type,
+    power: stock.power,
+    rarity: stock.rarity,
+    flavor: stock.flavor ?? "",
+  });
+  return ephemeral(
+    `🛍️ Bought ${RARITY_BADGE[stock.rarity]} *${stock.item_name}* for ${stock.price}g (now ${character.gold - stock.price}g). Inventory id \`${item.id}\`.`,
+  );
+}
+
+async function handleSell(
+  payload: SlashCommandPayload,
+  args: string[],
+  env: Env,
+): Promise<CommandResponse> {
+  const character = await getCharacter(env.DB, payload.user_id);
+  if (!character) return ephemeral("You need to `/dnd roll` a character first.");
+
+  const id = parseInt(args[0] ?? "", 10);
+  if (Number.isNaN(id)) return ephemeral("Usage: `/dnd sell <inventory id>`.");
+
+  const item = await getItem(env.DB, id, payload.user_id);
+  if (!item) return ephemeral("No such item in your inventory.");
+  if (item.equipped) return ephemeral("Unequip it first.");
+
+  const price = sellPrice(item.rarity);
+  await removeItem(env.DB, item.id);
+  await addGold(env.DB, payload.user_id, price);
+  return ephemeral(
+    `💰 Sold *${item.item_name}* for ${price}g (now ${character.gold + price}g).`,
   );
 }
 

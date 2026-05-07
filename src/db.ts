@@ -372,6 +372,129 @@ export async function getEquipped(
   return row ? rowToItem(row) : null;
 }
 
+export interface ShopItem {
+  id: number;
+  channel_id: string;
+  generated_at: number;
+  item_name: string;
+  item_type: ItemType;
+  power: number;
+  rarity: Rarity;
+  flavor: string | null;
+  price: number;
+  bought_by: string | null;
+}
+
+// Returns active shop stock (generated within the cutoff window, available items only),
+// or null if a fresh restock is needed.
+export async function getActiveShopStock(
+  db: D1Database,
+  channelId: string,
+  windowMs: number,
+): Promise<ShopItem[] | null> {
+  const cutoff = Date.now() - windowMs;
+  const result = await db
+    .prepare(
+      `SELECT id, channel_id, generated_at, item_name, item_type, power, rarity, flavor, price, bought_by
+       FROM shop_stock
+       WHERE channel_id = ? AND generated_at > ?
+       ORDER BY id ASC`,
+    )
+    .bind(channelId, cutoff)
+    .all<ShopItem>();
+  const rows = result.results ?? [];
+  if (rows.length === 0) return null;
+  return rows;
+}
+
+export interface ShopStockInput {
+  channel_id: string;
+  generated_at: number;
+  item_name: string;
+  item_type: ItemType;
+  power: number;
+  rarity: Rarity;
+  flavor: string;
+  price: number;
+}
+
+export async function insertShopStock(
+  db: D1Database,
+  items: ShopStockInput[],
+): Promise<void> {
+  if (items.length === 0) return;
+  const stmts = items.map((it) =>
+    db.prepare(
+      `INSERT INTO shop_stock (channel_id, generated_at, item_name, item_type, power, rarity, flavor, price)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).bind(it.channel_id, it.generated_at, it.item_name, it.item_type, it.power, it.rarity, it.flavor, it.price),
+  );
+  await db.batch(stmts);
+}
+
+export async function getShopItem(
+  db: D1Database,
+  itemId: number,
+  channelId: string,
+): Promise<ShopItem | null> {
+  return db
+    .prepare(
+      `SELECT id, channel_id, generated_at, item_name, item_type, power, rarity, flavor, price, bought_by
+       FROM shop_stock WHERE id = ? AND channel_id = ?`,
+    )
+    .bind(itemId, channelId)
+    .first<ShopItem>();
+}
+
+// Marks the stock row as bought atomically (returns true if we got it, false if someone
+// else beat us to it). Use this before deducting gold so we never charge twice.
+export async function claimShopItem(
+  db: D1Database,
+  itemId: number,
+  buyerId: string,
+): Promise<boolean> {
+  const result = await db
+    .prepare("UPDATE shop_stock SET bought_by = ? WHERE id = ? AND bought_by IS NULL")
+    .bind(buyerId, itemId)
+    .run();
+  return (result.meta.changes ?? 0) > 0;
+}
+
+export async function deductGold(
+  db: D1Database,
+  userId: string,
+  amount: number,
+): Promise<void> {
+  await db
+    .prepare("UPDATE characters SET gold = gold - ?, last_active = ? WHERE slack_user_id = ?")
+    .bind(amount, Date.now(), userId)
+    .run();
+}
+
+export async function addGold(
+  db: D1Database,
+  userId: string,
+  amount: number,
+): Promise<void> {
+  await db
+    .prepare("UPDATE characters SET gold = gold + ?, last_active = ? WHERE slack_user_id = ?")
+    .bind(amount, Date.now(), userId)
+    .run();
+}
+
+// Removes an item from inventory (used by /dnd sell).
+export async function removeItem(db: D1Database, itemId: number): Promise<void> {
+  await db.prepare("DELETE FROM inventory WHERE id = ?").bind(itemId).run();
+}
+
+// Average level across all characters — used to scale shop stock to the active community.
+export async function averageCharacterLevel(db: D1Database): Promise<number> {
+  const row = await db
+    .prepare("SELECT AVG(level) AS avg_level FROM characters")
+    .first<{ avg_level: number | null }>();
+  return Math.max(1, Math.round(row?.avg_level ?? 1));
+}
+
 // Consumes the item and updates character HP. Returns the actual HP healed (capped at max).
 export async function consumeItem(
   db: D1Database,

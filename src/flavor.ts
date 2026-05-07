@@ -105,6 +105,18 @@ export const RARITY_BADGE: Record<Rarity, string> = {
   rare: "🟣",
 };
 
+// Flat per-rarity pricing. Power varies within rarity but the price doesn't —
+// keeps the stock readable and "do I want this?" easy to answer.
+export const SHOP_PRICE: Record<Rarity, number> = {
+  common: 15,
+  uncommon: 50,
+  rare: 150,
+};
+
+export function sellPrice(rarity: Rarity): number {
+  return Math.floor(SHOP_PRICE[rarity] * 0.3);
+}
+
 export function rollDice(sides: number, count = 1): number {
   let total = 0;
   for (let i = 0; i < count; i++) total += 1 + Math.floor(Math.random() * sides);
