@@ -3,8 +3,10 @@
 
 import type { Env } from "./index";
 import {
+  flavorBossPhase,
   flavorDeath,
   flavorFleeSuccess,
+  flavorGauntletNext,
   flavorHit,
   flavorJoin,
   flavorLootDrop,
@@ -46,7 +48,10 @@ import {
   updateMonsterHp,
   type ActiveQuest,
   type Character,
+  type GauntletWave,
   type Item,
+  type QuestVariant,
+  type SceneJson,
   type ShopItem,
 } from "./db";
 import {
@@ -75,13 +80,18 @@ const ACTION_COOLDOWN_MS = 45 * 1000;
 const JOIN_HP_RATIO = 0.4; // monster max HP grows by this fraction per joiner
 const SHOP_RESTOCK_MS = 6 * 60 * 60 * 1000; // 6h channel-wide restock cadence
 const SHOP_STOCK_SIZE = 5;
+const BOSS_LEVEL_REQUIRED = 3;
+const GAUNTLET_LEVEL_REQUIRED = 5;
+const GAUNTLET_WAVES = 3;
 
 const HELP_TEXT = [
   "*Slack Quest commands*",
   "• `/dnd roll` — roll a new character",
   "• `/dnd me` — show your character sheet",
   "• `/dnd quest` — start a standard quest",
-  "• `/dnd quest elite` — start an elite quest (perma-death enabled)",
+  "• `/dnd quest boss` — single tougher monster, 2 phases (L3+, 2× rewards)",
+  "• `/dnd quest gauntlet` — 3 monsters back-to-back, no flee (L5+, 3× rewards, guaranteed drop)",
+  "• `/dnd quest elite` — elite modifier; perma-death (composes: `/dnd quest boss elite`)",
   "• `/dnd join` — join the active quest in this channel",
   "• `/dnd attack` — strike with weapon (1d6 + atk_mod + weapon power, crit on nat 6)",
   "• `/dnd cast` — channel magic (1d8 + mag_mod + weapon power, crit on nat 8)",
@@ -209,9 +219,7 @@ async function handleQuest(
   if (!character) return ephemeral("You need to `/dnd roll` a character first.");
 
   if (character.downed_until && character.downed_until > Date.now()) {
-    return ephemeral(
-      `You are *downed* and recovering. Try again later.`,
-    );
+    return ephemeral(`You are *downed* and recovering. Try again later.`);
   }
 
   const active = await getActiveQuestForCharacter(env.DB, payload.user_id);
@@ -221,53 +229,108 @@ async function handleQuest(
     );
   }
 
-  const elite = args[0]?.toLowerCase() === "elite";
+  const lower = args.map((a) => a.toLowerCase());
+  const elite = lower.includes("elite");
+  const variant: QuestVariant = lower.includes("boss")
+    ? "boss"
+    : lower.includes("gauntlet")
+    ? "gauntlet"
+    : "standard";
 
-  // Slack requires we ack within 3s. AI generation can take longer, so
-  // ack immediately and post the scene asynchronously to the channel.
-  ctx.waitUntil(
-    (async () => {
-      try {
-        const scene = await generateOpeningScene(env.AI, character, elite);
-        const eliteBanner = elite ? "⚠️ *ELITE QUEST — perma-death enabled* ⚠️\n\n" : "";
-        const text = [
-          `${eliteBanner}*A new quest begins.* <@${payload.user_id}> as *${character.name}* the ${character.class} (L${character.level}).`,
-          ``,
-          `_${scene.scene}_`,
-          ``,
-          `Foe: *${scene.monster_name}* — HP ${scene.monster_hp}`,
-        ].join("\n");
+  if (variant === "boss" && character.level < BOSS_LEVEL_REQUIRED) {
+    return ephemeral(`Boss quests require Level ${BOSS_LEVEL_REQUIRED}+. You're L${character.level}.`);
+  }
+  if (variant === "gauntlet" && character.level < GAUNTLET_LEVEL_REQUIRED) {
+    return ephemeral(`Gauntlets require Level ${GAUNTLET_LEVEL_REQUIRED}+. You're L${character.level}.`);
+  }
 
-        const post = await postMessage(env.SLACK_BOT_TOKEN, {
-          channel: payload.channel_id,
-          text,
-        });
+  ctx.waitUntil((async () => {
+    try {
+      const scene = await buildQuestScene(env, character, elite, variant);
+      const eliteBanner = elite ? "⚠️ *ELITE — perma-death enabled* ⚠️\n" : "";
+      const variantBanner =
+        variant === "boss"
+          ? "👑 *BOSS QUEST*\n"
+          : variant === "gauntlet"
+          ? `⚔️ *GAUNTLET — ${GAUNTLET_WAVES} waves, no flee*\n`
+          : "";
+      const text = [
+        `${eliteBanner}${variantBanner}*A new quest begins.* <@${payload.user_id}> as *${character.name}* the ${character.class} (L${character.level}).`,
+        ``,
+        `_${scene.scene}_`,
+        ``,
+        `Foe: *${scene.monster_name}* — HP ${scene.monster_hp}${variant === "gauntlet" ? ` (wave 1/${GAUNTLET_WAVES})` : ""}`,
+      ].join("\n");
 
-        if (!post.ok || !post.ts) {
-          await respondToCommand(payload.response_url, {
-            response_type: "ephemeral",
-            text: `Failed to start the quest: ${post.error ?? "unknown Slack error"}`,
-          });
-          return;
-        }
+      const post = await postMessage(env.SLACK_BOT_TOKEN, {
+        channel: payload.channel_id,
+        text,
+      });
 
-        await createQuest(env.DB, {
-          channel_id: payload.channel_id,
-          thread_ts: post.ts,
-          elite,
-          scene,
-          created_by: payload.user_id,
-        });
-      } catch (err) {
+      if (!post.ok || !post.ts) {
         await respondToCommand(payload.response_url, {
           response_type: "ephemeral",
-          text: `The narrator stumbled: ${(err as Error).message}`,
+          text: `Failed to start the quest: ${post.error ?? "unknown Slack error"}`,
         });
+        return;
       }
-    })(),
-  );
+
+      await createQuest(env.DB, {
+        channel_id: payload.channel_id,
+        thread_ts: post.ts,
+        elite,
+        scene,
+        created_by: payload.user_id,
+      });
+    } catch (err) {
+      await respondToCommand(payload.response_url, {
+        response_type: "ephemeral",
+        text: `The narrator stumbled: ${(err as Error).message}`,
+      });
+    }
+  })());
 
   return ephemeral("🎲 Rolling for initiative...");
+}
+
+// Builds the SceneJson for a new quest, with variant-specific shape:
+//   standard   → existing behavior
+//   boss       → bigger HP envelope, boss_phase=1
+//   gauntlet   → first wave inline, remaining waves pre-generated and queued
+async function buildQuestScene(
+  env: Env,
+  character: Character,
+  elite: boolean,
+  variant: QuestVariant,
+): Promise<SceneJson> {
+  if (variant === "boss") {
+    const scene = await generateOpeningScene(env.AI, character, elite, "boss");
+    return { ...scene, variant, boss_phase: 1 };
+  }
+
+  if (variant === "gauntlet") {
+    const first = await generateOpeningScene(env.AI, character, elite, "gauntlet-wave", {
+      wave: 1,
+      total: GAUNTLET_WAVES,
+    });
+    const queue: GauntletWave[] = [];
+    for (let i = 2; i <= GAUNTLET_WAVES; i++) {
+      const next = await generateOpeningScene(env.AI, character, elite, "gauntlet-wave", {
+        wave: i,
+        total: GAUNTLET_WAVES,
+      });
+      queue.push({ name: next.monster_name, max_hp: next.monster_max_hp, scene: next.scene });
+    }
+    return {
+      ...first,
+      variant,
+      wave: 1,
+      total_waves: GAUNTLET_WAVES,
+      upcoming_waves: queue,
+    };
+  }
+
+  return { ...(await generateOpeningScene(env.AI, character, elite, "standard")), variant };
 }
 
 type CombatAction = "attack" | "cast" | "flee";
@@ -302,6 +365,9 @@ async function handleCombat(
   ]);
 
   if (action === "flee") {
+    if (quest.scene.variant === "gauntlet") {
+      return ephemeral("🚪 No exit. Gauntlets don't allow flee — kill or be killed.");
+    }
     return resolveFlee(payload, env, ctx, character, quest, fighters, equippedArmor);
   }
 
@@ -325,20 +391,40 @@ async function handleCombat(
     : `<@${payload.user_id}> ${verb} for *${damage}* (${roll} + ${modBreakdown}).`;
 
   if (newMonsterHp <= 0) {
-    await updateMonsterHp(env.DB, quest.id, quest.scene, 0);
     await appendLog(env.DB, quest.id, payload.user_id, action, `${damage} dmg (kill)`);
+    // Gauntlet: advance to next wave instead of triggering victory.
+    if (quest.scene.variant === "gauntlet" && quest.scene.upcoming_waves && quest.scene.upcoming_waves.length > 0) {
+      return resolveGauntletAdvance(payload, env, ctx, quest, [playerLine, `🏆 *${quest.scene.monster_name}* falls.`]);
+    }
+    await updateMonsterHp(env.DB, quest.id, quest.scene, 0);
     return resolveVictory(payload, env, ctx, character, quest, fighters, [
       playerLine,
       `🏆 *${quest.scene.monster_name}* falls.`,
     ]);
   }
 
-  await updateMonsterHp(env.DB, quest.id, quest.scene, newMonsterHp);
+  // Boss phase 1 → 2 transition: crossing the 50% HP threshold powers it up.
+  // Detection happens here (before saving) so we narrate the moment and tag the scene.
+  let updatedScene = quest.scene;
+  let bossPhaseTransition = false;
+  if (
+    quest.scene.variant === "boss" &&
+    quest.scene.boss_phase === 1 &&
+    quest.scene.monster_hp >= quest.scene.monster_max_hp / 2 &&
+    newMonsterHp < quest.scene.monster_max_hp / 2
+  ) {
+    bossPhaseTransition = true;
+    updatedScene = { ...quest.scene, boss_phase: 2 };
+  }
+
+  await updateMonsterHp(env.DB, quest.id, updatedScene, newMonsterHp);
   await appendLog(env.DB, quest.id, payload.user_id, action, `${damage} dmg`);
 
   // Monster turn — retaliates against the actor only. Damage scales with party size,
   // mitigated by armor (floor(power / 2), minimum 1 damage so armor never makes you immune).
-  const rawMonsterDmg = rollDice(4) + quest.scene.tier + Math.floor((fighters.length - 1) / 2);
+  // Boss phase 2 adds a flat tier bonus on top.
+  const bossBonus = updatedScene.variant === "boss" && updatedScene.boss_phase === 2 ? quest.scene.tier : 0;
+  const rawMonsterDmg = rollDice(4) + quest.scene.tier + Math.floor((fighters.length - 1) / 2) + bossBonus;
   const armorReduction = equippedArmor ? Math.floor(equippedArmor.power / 2) : 0;
   const monsterRoll = Math.max(1, rawMonsterDmg - armorReduction);
   const playerHpAfter = character.hp - monsterRoll;
@@ -364,7 +450,10 @@ async function handleCombat(
 
   ctx.waitUntil((async () => {
     const flavor = await flavorHit(env.AI, character, quest.scene.monster_name, isMagic ? "cast" : "attack", isCrit);
-    const text = `${isCrit ? "💥 " : ""}${flavor}\n${statBlock}`;
+    const phaseLine = bossPhaseTransition
+      ? `\n👑 *Phase 2!* ${await flavorBossPhase(env.AI, quest.scene.monster_name)}`
+      : "";
+    const text = `${isCrit ? "💥 " : ""}${flavor}${phaseLine}\n${statBlock}`;
     await postToThread(env, quest, text);
   })());
 
@@ -420,6 +509,19 @@ async function resolveFlee(
   return ephemeral(text);
 }
 
+function rewardMultiplier(variant?: QuestVariant): number {
+  if (variant === "boss") return 2;
+  if (variant === "gauntlet") return 3;
+  return 1;
+}
+
+function variantDropChance(variant: QuestVariant | undefined, tier: number): number {
+  if (variant === "gauntlet") return 1.0;
+  const base = dropChance(tier);
+  if (variant === "boss") return Math.min(1.0, base + 0.2);
+  return base;
+}
+
 async function resolveVictory(
   payload: SlashCommandPayload,
   env: Env,
@@ -429,8 +531,9 @@ async function resolveVictory(
   fighters: Character[],
   preamble: string[],
 ): Promise<CommandResponse> {
-  const totalXp = 10 + quest.scene.tier * 5;
-  const totalGold = 5 + quest.scene.tier * 3;
+  const mult = rewardMultiplier(quest.scene.variant);
+  const totalXp = (10 + quest.scene.tier * 5) * mult;
+  const totalGold = (5 + quest.scene.tier * 3) * mult;
   const xpEach = Math.max(1, Math.floor(totalXp / fighters.length));
   const goldEach = Math.max(0, Math.floor(totalGold / fighters.length));
 
@@ -452,9 +555,10 @@ async function resolveVictory(
   }
 
   // Roll loot independently per fighter so everyone has skin in the kill.
+  const variantDrop = variantDropChance(quest.scene.variant, quest.scene.tier);
   const lootRolls = fighters
     .map((f) => ({ fighter: f, roll: rollItem(quest.scene.tier) }))
-    .filter(() => Math.random() < dropChance(quest.scene.tier));
+    .filter(() => Math.random() < variantDrop);
 
   await markQuestStatus(env.DB, quest.id, "completed");
   await appendLog(env.DB, quest.id, payload.user_id, "victory", `+${xpEach}xp/+${goldEach}g × ${fighters.length}, ${lootRolls.length} drops`);
@@ -494,6 +598,51 @@ async function resolveVictory(
       ...lootLines,
     ].join("\n");
     await postToThread(env, quest, `🏆 ${flavor}\n${tail}`);
+  })());
+
+  return ephemeral(ephemeralLines.join("\n"));
+}
+
+// Gauntlet wave kill: drop the queued next monster into scene_json and post a transition
+// narration. No spoils yet — only the final wave's kill triggers resolveVictory.
+async function resolveGauntletAdvance(
+  payload: SlashCommandPayload,
+  env: Env,
+  ctx: ExecutionContext,
+  quest: ActiveQuest,
+  preamble: string[],
+): Promise<CommandResponse> {
+  const queue = quest.scene.upcoming_waves ?? [];
+  const next = queue[0];
+  const remaining = queue.slice(1);
+  const newWave = (quest.scene.wave ?? 1) + 1;
+  const totalWaves = quest.scene.total_waves ?? GAUNTLET_WAVES;
+  const previousMonster = quest.scene.monster_name;
+
+  const updatedScene: SceneJson = {
+    ...quest.scene,
+    monster_name: next.name,
+    monster_hp: next.max_hp,
+    monster_max_hp: next.max_hp,
+    scene: next.scene,
+    wave: newWave,
+    upcoming_waves: remaining,
+  };
+
+  // Persist the new wave directly via the same scene_json update used for HP changes.
+  await updateMonsterHp(env.DB, quest.id, updatedScene, next.max_hp);
+  await appendLog(env.DB, quest.id, payload.user_id, "wave_advance", `wave ${newWave}/${totalWaves}`);
+
+  const ephemeralLines = [
+    ...preamble,
+    `⚔️ Wave ${newWave}/${totalWaves}: *${next.name}* (HP ${next.max_hp}).`,
+  ];
+
+  const waveLabel = `wave ${newWave}/${totalWaves}`;
+  ctx.waitUntil((async () => {
+    const flavor = await flavorGauntletNext(env.AI, previousMonster, next.name, waveLabel);
+    const tail = `_⚔️ ${waveLabel} — *${next.name}* (HP ${next.max_hp})._\n_${next.scene}_`;
+    await postToThread(env, quest, `⚔️ ${flavor}\n${tail}`);
   })());
 
   return ephemeral(ephemeralLines.join("\n"));
@@ -578,6 +727,10 @@ async function handleJoin(
 
   const quest = await getActiveQuestInChannel(env.DB, payload.channel_id);
   if (!quest) return ephemeral("No active quest in this channel. Start one with `/dnd quest`.");
+
+  if (quest.scene.variant === "gauntlet") {
+    return ephemeral("⚔️ Gauntlets lock the party at the start. Wait for the next quest.");
+  }
 
   const inserted = await joinQuest(env.DB, quest.id, payload.user_id);
   if (!inserted) return ephemeral("You're already on this quest.");

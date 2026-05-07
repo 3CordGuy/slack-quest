@@ -9,30 +9,47 @@ interface AiRunResponse {
   response?: string;
 }
 
+export type SceneVariant = "standard" | "boss" | "gauntlet-wave";
+
 export async function generateOpeningScene(
   ai: Ai,
   character: Pick<Character, "name" | "class" | "level">,
   elite: boolean,
+  variant: SceneVariant = "standard",
+  waveContext?: { wave: number; total: number },
 ): Promise<SceneJson> {
-  const tier = Math.max(1, character.level + (elite ? 1 : 0));
-  const monsterHpFloor = 8 + tier * 4;
-  const monsterHpCeil = monsterHpFloor + 12;
+  const baseTier = Math.max(1, character.level + (elite ? 1 : 0));
+  const tier = variant === "boss" ? baseTier + 1 : baseTier;
+
+  // Boss has roughly 1.8x the HP ceiling; gauntlet wave is standard.
+  const baseFloor = 8 + tier * 4;
+  const baseCeil = baseFloor + 12;
+  const monsterHpFloor = variant === "boss" ? Math.floor(baseFloor * 1.8) : baseFloor;
+  const monsterHpCeil = variant === "boss" ? Math.floor(baseCeil * 1.8) : baseCeil;
+
+  const variantLine =
+    variant === "boss"
+      ? "This is a BOSS encounter — pick a more imposing, multi-word monster name and a scene that sets up a single climactic fight."
+      : variant === "gauntlet-wave"
+      ? `This is wave ${waveContext?.wave}/${waveContext?.total} of a gauntlet — quick scene, momentum-driven, the heroes are between catching their breath.`
+      : "This is a standard quest.";
 
   const system = [
     "You are the narrator of a comedic engineering-themed dungeon crawl Slack bot called Slack Quest.",
     "Tone: dry, witty, with software-industry winks (PRs, standups, deprecated APIs, on-call pagers).",
     "Never break character. Never mention you are an AI.",
     "Output MUST follow this exact format with one field per line:",
-    "MONSTER_NAME: <a 1-4 word name, slightly absurd>",
+    `MONSTER_NAME: <a ${variant === "boss" ? "2-5" : "1-4"} word name, slightly absurd>`,
     `MONSTER_HP: <integer between ${monsterHpFloor} and ${monsterHpCeil}>`,
     "SCENE: <2-3 sentences, ~60 words total, introducing the monster and the setting>",
   ].join("\n");
 
   const user = [
     `The hero is ${character.name}, a Level ${character.level} ${character.class}.`,
-    elite ? "This is an ELITE quest — perma-death is in effect. Make it feel weighty." : "This is a standard quest.",
+    elite ? "ELITE quest — perma-death is in effect. Make it feel weighty." : "",
+    variantLine,
     "Generate the opening scene now.",
-  ].join("\n");
+  ].filter(Boolean).join("\n");
 
   const result = (await ai.run(MODEL, {
     messages: [
@@ -214,6 +231,26 @@ export async function flavorLootDrop(
   } catch {
     return fallback;
   }
+}
+
+export async function flavorBossPhase(
+  ai: Ai,
+  monsterName: string,
+): Promise<string> {
+  const user = `${monsterName} has just been wounded past 50% HP and powers up — second phase of the boss fight begins. Narrate the menacing transformation in one line.`;
+  const fallback = `${monsterName} pulses with renewed fury — the fight isn't over yet.`;
+  return generateFlavor(ai, user, fallback, 110);
+}
+
+export async function flavorGauntletNext(
+  ai: Ai,
+  prevMonster: string,
+  nextMonster: string,
+  waveLabel: string,
+): Promise<string> {
+  const user = `${prevMonster} just fell. Now ${nextMonster} emerges — ${waveLabel} of a gauntlet. Narrate the transition with no rest in between.`;
+  const fallback = `Before the dust settles, ${nextMonster} appears — ${waveLabel}.`;
+  return generateFlavor(ai, user, fallback, 110);
 }
 
 export async function flavorVictory(

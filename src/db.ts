@@ -89,12 +89,27 @@ export async function createCharacter(
   return row;
 }
 
+export type QuestVariant = "standard" | "boss" | "gauntlet";
+
+export interface GauntletWave {
+  name: string;
+  max_hp: number;
+  scene: string;
+}
+
 export interface SceneJson {
   monster_name: string;
   monster_hp: number;
   monster_max_hp: number;
   tier: number;
   scene: string;
+  variant?: QuestVariant;
+  // Boss-only: tracks the 50% HP power-up transition.
+  boss_phase?: 1 | 2;
+  // Gauntlet-only: current wave index (1-based) and queued upcoming waves.
+  wave?: number;
+  total_waves?: number;
+  upcoming_waves?: GauntletWave[];
 }
 
 export interface ActiveQuest {

@@ -28,8 +28,12 @@ What works:
 
 - `/dnd roll` — create a character with a random class + generated name.
 - `/dnd me` — show your sheet.
-- `/dnd quest [elite]` — kick off a quest. The bot generates an opening scene with Workers AI
-  and posts it to the channel. The thread + monster state is persisted.
+- `/dnd quest [variant] [elite]` — kick off a quest. Variants: `boss` (L3+, single tougher
+  monster, 2 phases at 50% HP, 2× rewards), `gauntlet` (L5+, 3 monsters back-to-back, no
+  flee, party locked at start, 3× rewards, guaranteed drop on the final kill). `elite` is
+  a modifier that composes with any variant — turns on perma-death. The bot generates the
+  opening scene with Workers AI and posts it to the channel; for gauntlets it pre-generates
+  all three waves at quest start so transitions are instant.
 - `/dnd join` — join the active quest in the current channel. Monster max HP grows by 40%
   per joiner so the encounter doesn't get trivialized.
 - `/dnd attack` — 1d6 + class `attack_mod`, crit ×2 on a natural 6.
@@ -70,8 +74,10 @@ What works:
 
 Still stubbed:
 
-- Quest variants (`boss`, `gauntlet`, `expedition`).
+- `/dnd quest expedition` — multi-scene branching narrative with NPC encounters, decision
+  forks, and skill checks. First-vote-wins decisions in v1.
 - Reaction-based spectator buffs/debuffs.
+- Idle-quest auto-fail timeout (a quest with no action in N hours should fail).
 
 ## Setup
 
