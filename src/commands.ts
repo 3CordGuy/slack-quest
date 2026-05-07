@@ -7,20 +7,27 @@ import {
   flavorFleeSuccess,
   flavorHit,
   flavorJoin,
+  flavorLootDrop,
   flavorVictory,
   generateOpeningScene,
 } from "./ai";
 import {
+  addItem,
   appendLog,
   applySoftDeath,
   awardSpoils,
+  consumeItem,
   cooldownRemaining,
   createCharacter,
   createQuest,
   deleteCharacter,
+  equipItem,
   getActiveQuestForCharacter,
   getActiveQuestInChannel,
   getCharacter,
+  getEquipped,
+  getInventory,
+  getItem,
   getLeaderboard,
   getQuestParty,
   isFighter,
@@ -31,14 +38,18 @@ import {
   updateMonsterHp,
   type ActiveQuest,
   type Character,
+  type Item,
 } from "./db";
 import {
   classByName,
+  dropChance,
   generateNpcName,
   generateScar,
   pickRandomClass,
   rollDice,
+  rollItem,
   xpForLevel,
+  RARITY_BADGE,
 } from "./flavor";
 import { postMessage, respondToCommand, type SlashCommandPayload } from "./slack";
 
@@ -59,9 +70,12 @@ const HELP_TEXT = [
   "• `/dnd quest` — start a standard quest",
   "• `/dnd quest elite` — start an elite quest (perma-death enabled)",
   "• `/dnd join` — join the active quest in this channel",
-  "• `/dnd attack` — strike with weapon (1d6 + atk_mod, crit on nat 6)",
-  "• `/dnd cast` — channel magic (1d8 + mag_mod, crit on nat 8)",
+  "• `/dnd attack` — strike with weapon (1d6 + atk_mod + weapon power, crit on nat 6)",
+  "• `/dnd cast` — channel magic (1d8 + mag_mod + weapon power, crit on nat 8)",
   "• `/dnd flee` — try to escape (1d2; on fail you take a free hit)",
+  "• `/dnd inventory` — list your items (equipped marked ✅)",
+  "• `/dnd equip <id>` — equip a weapon or armor by inventory id",
+  "• `/dnd use <id>` — use a consumable (free action, no cooldown)",
   "• `/dnd party` — show the current quest's roster + HP",
   "• `/dnd leaderboard` — top 10 heroes",
   "• `/dnd help` — show this list",
@@ -97,6 +111,13 @@ export async function handleCommand(
     case "leaderboard":
     case "lb":
       return handleLeaderboard(env);
+    case "inventory":
+    case "inv":
+      return handleInventory(payload, env);
+    case "equip":
+      return handleEquip(payload, args, env);
+    case "use":
+      return handleUse(payload, args, env);
     case "help":
     case "":
       return ephemeral(HELP_TEXT);
@@ -252,23 +273,34 @@ async function handleCombat(
   const party = await getQuestParty(env.DB, quest.id);
   const fighters = party.filter(isFighter);
 
-  if (action === "flee") return resolveFlee(payload, env, ctx, character, quest, fighters);
+  // Equipment loaded once for both attack/cast and flee paths (failed flee takes a hit too).
+  const [equippedWeapon, equippedArmor] = await Promise.all([
+    getEquipped(env.DB, payload.user_id, "weapon"),
+    getEquipped(env.DB, payload.user_id, "armor"),
+  ]);
 
-  // attack | cast
+  if (action === "flee") {
+    return resolveFlee(payload, env, ctx, character, quest, fighters, equippedArmor);
+  }
+
+  // attack | cast — equipped weapon adds to whichever action you use; armor reduces incoming.
   const cls = classByName(character.class);
   const isMagic = action === "cast";
   const sides = isMagic ? 8 : 6;
-  const mod = isMagic ? cls.magic_mod : cls.attack_mod;
+  const classMod = isMagic ? cls.magic_mod : cls.attack_mod;
+  const weaponMod = equippedWeapon?.power ?? 0;
+  const totalMod = classMod + weaponMod;
   const verb = isMagic ? "casts" : "attacks";
 
   const roll = rollDice(sides);
   const isCrit = roll === sides;
-  const damage = (roll + mod) * (isCrit ? 2 : 1);
+  const damage = (roll + totalMod) * (isCrit ? 2 : 1);
   const newMonsterHp = quest.scene.monster_hp - damage;
 
+  const modBreakdown = weaponMod > 0 ? `${classMod}+${weaponMod}` : `${totalMod}`;
   const playerLine = isCrit
-    ? `💥 *CRIT!* <@${payload.user_id}> ${verb} for *${damage}* (${roll}×2 + ${mod}).`
-    : `<@${payload.user_id}> ${verb} for *${damage}* (${roll} + ${mod}).`;
+    ? `💥 *CRIT!* <@${payload.user_id}> ${verb} for *${damage}* (${roll}×2 + ${modBreakdown}).`
+    : `<@${payload.user_id}> ${verb} for *${damage}* (${roll} + ${modBreakdown}).`;
 
   if (newMonsterHp <= 0) {
     await updateMonsterHp(env.DB, quest.id, quest.scene, 0);
@@ -282,11 +314,16 @@ async function handleCombat(
   await updateMonsterHp(env.DB, quest.id, quest.scene, newMonsterHp);
   await appendLog(env.DB, quest.id, payload.user_id, action, `${damage} dmg`);
 
-  // Monster turn — retaliates against the actor only. Damage scales with party size.
-  const monsterRoll = rollDice(4) + quest.scene.tier + Math.floor((fighters.length - 1) / 2);
+  // Monster turn — retaliates against the actor only. Damage scales with party size,
+  // mitigated by armor (floor(power / 2), minimum 1 damage so armor never makes you immune).
+  const rawMonsterDmg = rollDice(4) + quest.scene.tier + Math.floor((fighters.length - 1) / 2);
+  const armorReduction = equippedArmor ? Math.floor(equippedArmor.power / 2) : 0;
+  const monsterRoll = Math.max(1, rawMonsterDmg - armorReduction);
   const playerHpAfter = character.hp - monsterRoll;
 
-  const monsterLine = `*${quest.scene.monster_name}* hits back for *${monsterRoll}*.`;
+  const monsterLine = armorReduction > 0
+    ? `*${quest.scene.monster_name}* hits back for *${monsterRoll}* (${rawMonsterDmg} − ${armorReduction} armor).`
+    : `*${quest.scene.monster_name}* hits back for *${monsterRoll}*.`;
 
   if (playerHpAfter <= 0) {
     return resolveDeath(payload, env, ctx, character, quest, fighters, [playerLine, monsterLine]);
@@ -319,6 +356,7 @@ async function resolveFlee(
   character: Character,
   quest: ActiveQuest,
   fighters: Character[],
+  equippedArmor: Item | null,
 ): Promise<CommandResponse> {
   const roll = rollDice(2);
   if (roll === 1) {
@@ -343,7 +381,9 @@ async function resolveFlee(
   }
 
   // Failed flee → free monster hit. Static narration (low-stakes comic beat).
-  const monsterRoll = rollDice(4) + quest.scene.tier + Math.floor((fighters.length - 1) / 2);
+  const rawDmg = rollDice(4) + quest.scene.tier + Math.floor((fighters.length - 1) / 2);
+  const armorReduction = equippedArmor ? Math.floor(equippedArmor.power / 2) : 0;
+  const monsterRoll = Math.max(1, rawDmg - armorReduction);
   const playerHpAfter = character.hp - monsterRoll;
   const intro = `🪤 <@${payload.user_id}> trips on the way out. *${quest.scene.monster_name}* lands a free hit for *${monsterRoll}*.`;
 
@@ -389,20 +429,47 @@ async function resolveVictory(
     }
   }
 
+  // Roll loot independently per fighter so everyone has skin in the kill.
+  const lootRolls = fighters
+    .map((f) => ({ fighter: f, roll: rollItem(quest.scene.tier) }))
+    .filter(() => Math.random() < dropChance(quest.scene.tier));
+
   await markQuestStatus(env.DB, quest.id, "completed");
-  await appendLog(env.DB, quest.id, payload.user_id, "victory", `+${xpEach}xp/+${goldEach}g × ${fighters.length}`);
+  await appendLog(env.DB, quest.id, payload.user_id, "victory", `+${xpEach}xp/+${goldEach}g × ${fighters.length}, ${lootRolls.length} drops`);
 
   const ephemeralLines = [
     ...preamble,
     `✨ Spoils split across ${fighters.length}: +${xpEach} XP, +${goldEach} gold each.`,
     ...levelUpLines,
   ];
+  if (lootRolls.length > 0) {
+    ephemeralLines.push(
+      `🎁 ${lootRolls.length} drop${lootRolls.length > 1 ? "s" : ""}! Check \`/dnd inventory\` once narration posts.`,
+    );
+  }
 
   ctx.waitUntil((async () => {
     const flavor = await flavorVictory(env.AI, killer, quest.scene.monster_name, fighters.length);
+    const lootLines: string[] = [];
+    for (const { fighter, roll } of lootRolls) {
+      const named = await flavorLootDrop(env.AI, quest.scene.monster_name, roll.type, roll.rarity, roll.power);
+      const item = await addItem(env.DB, {
+        character_id: fighter.slack_user_id,
+        item_name: named.name,
+        item_type: roll.type,
+        power: roll.power,
+        rarity: roll.rarity,
+        flavor: named.flavor,
+      });
+      const powerStr = roll.type === "consumable" ? `heals ${roll.power}` : `+${roll.power}`;
+      lootLines.push(
+        `${RARITY_BADGE[roll.rarity]} *${fighter.name}* finds *${item.item_name}* (${roll.type}, ${powerStr}) — _${named.flavor}_`,
+      );
+    }
     const tail = [
       `_✨ +${xpEach} XP, +${goldEach} gold to each of ${fighters.length} fighter${fighters.length > 1 ? "s" : ""}._`,
       ...levelUpLines,
+      ...lootLines,
     ].join("\n");
     await postToThread(env, quest, `🏆 ${flavor}\n${tail}`);
   })());
@@ -519,6 +586,81 @@ async function handleParty(payload: SlashCommandPayload, env: Env): Promise<Comm
     }),
   ];
   return ephemeral(lines.join("\n"));
+}
+
+async function handleInventory(payload: SlashCommandPayload, env: Env): Promise<CommandResponse> {
+  const character = await getCharacter(env.DB, payload.user_id);
+  if (!character) return ephemeral("You need to `/dnd roll` a character first.");
+
+  const items = await getInventory(env.DB, payload.user_id);
+  if (items.length === 0) {
+    return ephemeral("Your pack is empty. Win quests to find loot.");
+  }
+
+  const lines = [
+    `*Inventory* — ${items.length} item${items.length > 1 ? "s" : ""}`,
+  ];
+  for (const item of items) {
+    const equipMark = item.equipped ? " ✅" : "";
+    const powerStr = item.item_type === "consumable" ? `heals ${item.power}` : `+${item.power}`;
+    lines.push(
+      `\`${item.id}\` ${RARITY_BADGE[item.rarity]} *${item.item_name}* — ${item.item_type}, ${powerStr}${equipMark}`,
+    );
+    if (item.flavor) lines.push(`   _${item.flavor}_`);
+  }
+  lines.push("", "Equip with `/dnd equip <id>`, use a consumable with `/dnd use <id>`.");
+  return ephemeral(lines.join("\n"));
+}
+
+async function handleEquip(
+  payload: SlashCommandPayload,
+  args: string[],
+  env: Env,
+): Promise<CommandResponse> {
+  const character = await getCharacter(env.DB, payload.user_id);
+  if (!character) return ephemeral("You need to `/dnd roll` a character first.");
+
+  const id = parseInt(args[0] ?? "", 10);
+  if (Number.isNaN(id)) return ephemeral("Usage: `/dnd equip <inventory id>` (find ids with `/dnd inventory`).");
+
+  const item = await getItem(env.DB, id, payload.user_id);
+  if (!item) return ephemeral("No such item in your inventory.");
+  if (item.item_type === "consumable") {
+    return ephemeral("Consumables can't be equipped — use them with `/dnd use <id>`.");
+  }
+  if (item.equipped) return ephemeral(`*${item.item_name}* is already equipped.`);
+
+  await equipItem(env.DB, item);
+  return ephemeral(
+    `✅ Equipped *${item.item_name}* (${item.item_type}, +${item.power}). Previous ${item.item_type} unequipped.`,
+  );
+}
+
+async function handleUse(
+  payload: SlashCommandPayload,
+  args: string[],
+  env: Env,
+): Promise<CommandResponse> {
+  const character = await getCharacter(env.DB, payload.user_id);
+  if (!character) return ephemeral("You need to `/dnd roll` a character first.");
+
+  const id = parseInt(args[0] ?? "", 10);
+  if (Number.isNaN(id)) return ephemeral("Usage: `/dnd use <inventory id>` (find ids with `/dnd inventory`).");
+
+  const item = await getItem(env.DB, id, payload.user_id);
+  if (!item) return ephemeral("No such item in your inventory.");
+  if (item.item_type !== "consumable") {
+    return ephemeral(`*${item.item_name}* isn't a consumable. Try \`/dnd equip ${item.id}\`.`);
+  }
+
+  if (character.hp >= character.max_hp) {
+    return ephemeral("You're already at full HP — save it for when you need it.");
+  }
+
+  const healed = await consumeItem(env.DB, character, item);
+  return ephemeral(
+    `🧪 You drink *${item.item_name}* — recovered *${healed}* HP. (${character.hp + healed}/${character.max_hp})`,
+  );
 }
 
 async function handleLeaderboard(env: Env): Promise<CommandResponse> {

@@ -1,5 +1,26 @@
 // D1 query helpers. Raw prepared statements — no ORM.
 
+import type { ItemType, Rarity } from "./flavor";
+
+export interface Item {
+  id: number;
+  character_id: string;
+  item_name: string;
+  item_type: ItemType;
+  power: number;
+  rarity: Rarity;
+  flavor: string | null;
+  equipped: boolean;
+}
+
+interface ItemRow extends Omit<Item, "equipped"> {
+  equipped: number;
+}
+
+function rowToItem(row: ItemRow): Item {
+  return { ...row, equipped: row.equipped === 1 };
+}
+
 export interface Character {
   slack_user_id: string;
   slack_team_id: string;
@@ -229,6 +250,7 @@ export async function awardSpoils(
 }
 
 // Soft death: 25% gold loss, 1 random item drop, downed timer, +1 scar.
+// Drop preference order: unequipped consumables → unequipped gear → equipped gear.
 // Returns what was lost so callers can narrate it.
 export async function applySoftDeath(
   db: D1Database,
@@ -244,7 +266,11 @@ export async function applySoftDeath(
   const itemRow = await db
     .prepare(
       `SELECT id, item_name FROM inventory
-       WHERE character_id = ? ORDER BY RANDOM() LIMIT 1`,
+       WHERE character_id = ?
+       ORDER BY equipped ASC,
+                CASE item_type WHEN 'consumable' THEN 0 ELSE 1 END ASC,
+                RANDOM()
+       LIMIT 1`,
     )
     .bind(character.slack_user_id)
     .first<{ id: number; item_name: string }>();
@@ -263,6 +289,103 @@ export async function applySoftDeath(
     .run();
 
   return { goldLost, itemLost: itemRow?.item_name ?? null };
+}
+
+export interface CreateItemInput {
+  character_id: string;
+  item_name: string;
+  item_type: ItemType;
+  power: number;
+  rarity: Rarity;
+  flavor: string;
+}
+
+export async function addItem(db: D1Database, input: CreateItemInput): Promise<Item> {
+  const result = await db
+    .prepare(
+      `INSERT INTO inventory (character_id, item_name, item_type, power, rarity, flavor, qty, equipped)
+       VALUES (?, ?, ?, ?, ?, ?, 1, 0)`,
+    )
+    .bind(input.character_id, input.item_name, input.item_type, input.power, input.rarity, input.flavor)
+    .run();
+  const id = result.meta.last_row_id;
+  const row = await db
+    .prepare("SELECT id, character_id, item_name, item_type, power, rarity, flavor, equipped FROM inventory WHERE id = ?")
+    .bind(id)
+    .first<ItemRow>();
+  if (!row) throw new Error("Failed to read back inserted item");
+  return rowToItem(row);
+}
+
+export async function getInventory(db: D1Database, characterId: string): Promise<Item[]> {
+  const result = await db
+    .prepare(
+      `SELECT id, character_id, item_name, item_type, power, rarity, flavor, equipped
+       FROM inventory WHERE character_id = ?
+       ORDER BY equipped DESC, item_type ASC,
+                CASE rarity WHEN 'rare' THEN 0 WHEN 'uncommon' THEN 1 ELSE 2 END,
+                id DESC`,
+    )
+    .bind(characterId)
+    .all<ItemRow>();
+  return (result.results ?? []).map(rowToItem);
+}
+
+export async function getItem(
+  db: D1Database,
+  itemId: number,
+  characterId: string,
+): Promise<Item | null> {
+  const row = await db
+    .prepare(
+      `SELECT id, character_id, item_name, item_type, power, rarity, flavor, equipped
+       FROM inventory WHERE id = ? AND character_id = ?`,
+    )
+    .bind(itemId, characterId)
+    .first<ItemRow>();
+  return row ? rowToItem(row) : null;
+}
+
+// Equips an item, unequipping any other item of the same type for that character.
+export async function equipItem(db: D1Database, item: Item): Promise<void> {
+  await db.batch([
+    db.prepare(
+      `UPDATE inventory SET equipped = 0 WHERE character_id = ? AND item_type = ?`,
+    ).bind(item.character_id, item.item_type),
+    db.prepare("UPDATE inventory SET equipped = 1 WHERE id = ?").bind(item.id),
+  ]);
+}
+
+export async function getEquipped(
+  db: D1Database,
+  characterId: string,
+  type: ItemType,
+): Promise<Item | null> {
+  const row = await db
+    .prepare(
+      `SELECT id, character_id, item_name, item_type, power, rarity, flavor, equipped
+       FROM inventory WHERE character_id = ? AND item_type = ? AND equipped = 1
+       LIMIT 1`,
+    )
+    .bind(characterId, type)
+    .first<ItemRow>();
+  return row ? rowToItem(row) : null;
+}
+
+// Consumes the item and updates character HP. Returns the actual HP healed (capped at max).
+export async function consumeItem(
+  db: D1Database,
+  character: Character,
+  item: Item,
+): Promise<number> {
+  const newHp = Math.min(character.max_hp, character.hp + item.power);
+  const healed = newHp - character.hp;
+  await db.batch([
+    db.prepare("UPDATE characters SET hp = ?, last_active = ? WHERE slack_user_id = ?")
+      .bind(newHp, Date.now(), character.slack_user_id),
+    db.prepare("DELETE FROM inventory WHERE id = ?").bind(item.id),
+  ]);
+  return healed;
 }
 
 // Perma-death. quests.created_by uses ON DELETE SET NULL (see 0002 migration), so

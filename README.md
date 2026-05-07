@@ -52,11 +52,21 @@ What works:
 - **Victory rewards** split evenly across alive party members at the kill blow. Level-up
   triggers automatically when XP crosses the threshold (each level adds 1d6 to max HP and
   refills the bar).
+- **Loot drops** roll independently per fighter on victory. Drop chance is 35% +5% per
+  monster tier, capped at 70%. Each drop rolls a slot (40% weapon / 30% armor / 30%
+  consumable), a rarity (common → rare; weights skew rarer at higher tiers), and a power
+  number. The system rolls mechanics; the AI generates the name + flavor line.
+- **Equipment** — `/dnd inventory` lists items, `/dnd equip <id>` slots a weapon or armor
+  (one of each at a time). Combat reads equipped gear: `attack`/`cast` rolls become
+  `class_mod + weapon_power`; armor reduces incoming damage by `floor(armor_power / 2)`,
+  with a minimum of 1 dmg taken so armor never makes you immune.
+- **Consumables** — `/dnd use <id>` heals you for the item's power. Free action; doesn't
+  consume your 45-second combat cooldown so potions are actually worth taking into a fight.
 
 Still stubbed:
 
-- Inventory drops *on victory* (defeats already drop items via the soft-death penalty).
-- Item rarity tables, equipment slots, anything resembling shopping.
+- `/dnd shop` — buy/sell items between quests with rotating AI-generated stock.
+- Quest variants (`boss`, `gauntlet`, `expedition`).
 - Reaction-based spectator buffs/debuffs.
 
 ## Setup

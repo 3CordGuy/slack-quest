@@ -161,6 +161,61 @@ export async function flavorDeath(
   return generateFlavor(ai, user, fallback, 110);
 }
 
+// AI names + flavors a loot drop. Mechanics (slot, power, rarity) are deterministic;
+// the model only writes the name and a one-line description.
+// Returns { name, flavor } — falls back to generic stubs if the model misbehaves.
+export async function flavorLootDrop(
+  ai: Ai,
+  monsterName: string,
+  type: "weapon" | "armor" | "consumable",
+  rarity: "common" | "uncommon" | "rare",
+  power: number,
+): Promise<{ name: string; flavor: string }> {
+  const typeHint =
+    type === "weapon" ? "a weapon (e.g. sword, hammer, dagger, staff, bow, gauntlet)" :
+    type === "armor"  ? "armor (e.g. vest, robe, cloak, helm, plating, gloves)" :
+                        "a consumable (e.g. potion, brew, scroll, capsule, energy drink, snack)";
+  const rarityHint =
+    rarity === "rare" ? "Rare and weighty — name it like a legendary artifact." :
+    rarity === "uncommon" ? "Uncommon — slightly notable, has some history." :
+    "Common — workmanlike, mildly absurd is fine.";
+  const powerHint =
+    type === "consumable" ? `It restores about ${power} HP when used.` :
+    `It grants a +${power} bonus when equipped.`;
+
+  const user = [
+    `Generate loot dropped by ${monsterName} for a comedic engineering-themed dungeon crawl.`,
+    `It is ${typeHint}. ${rarityHint} ${powerHint}`,
+    "Output exactly two lines, no markdown, no quotes:",
+    "NAME: <a 2-5 word punchy themed name>",
+    "FLAVOR: <one short sentence, ~15 words, dryly funny, software-industry winks ok>",
+  ].join("\n");
+
+  const fallback = {
+    name: type === "consumable" ? `Mystery ${rarity} elixir` : `Battered ${rarity} ${type}`,
+    flavor: `Dropped by ${monsterName}. Smells faintly of merge conflicts.`,
+  };
+
+  try {
+    const result = (await ai.run(MODEL, {
+      messages: [
+        { role: "system", content: COMBAT_SYSTEM },
+        { role: "user", content: user },
+      ],
+      max_tokens: 90,
+    })) as AiRunResponse;
+    const text = (result.response ?? "").trim();
+    const nameMatch = /NAME:\s*(.+)/i.exec(text);
+    const flavorMatch = /FLAVOR:\s*(.+)/i.exec(text);
+    const name = nameMatch?.[1]?.trim().replace(/^["'`]|["'`]$/g, "");
+    const flavor = flavorMatch?.[1]?.trim().replace(/^["'`]|["'`]$/g, "");
+    if (!name || !flavor) return fallback;
+    return { name, flavor };
+  } catch {
+    return fallback;
+  }
+}
+
 export async function flavorVictory(
   ai: Ai,
   character: FighterRef,

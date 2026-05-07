@@ -42,6 +42,69 @@ export function generateScar(monster: string): string {
   return t.replace("{monster}", monster);
 }
 
+// Loot system: deterministic rolls for slot/rarity/power. AI generates name + flavor on top.
+
+export type ItemType = "weapon" | "armor" | "consumable";
+export type Rarity = "common" | "uncommon" | "rare";
+
+export interface ItemRoll {
+  type: ItemType;
+  rarity: Rarity;
+  power: number;
+}
+
+// Slot weights are constant — every drop has the same chance to be a sword vs potion vs vest.
+function rollItemType(): ItemType {
+  const r = Math.random();
+  if (r < 0.4) return "weapon";
+  if (r < 0.7) return "armor";
+  return "consumable";
+}
+
+// Rarity weights skew rarer as the monster tier rises.
+function rollRarity(tier: number): Rarity {
+  const t = Math.max(1, tier);
+  const rareChance = Math.min(0.25, 0.05 + 0.05 * (t - 1));
+  const uncommonChance = Math.min(0.45, 0.25 + 0.05 * (t - 1));
+  const r = Math.random();
+  if (r < rareChance) return "rare";
+  if (r < rareChance + uncommonChance) return "uncommon";
+  return "common";
+}
+
+// Power maps to mechanic by type:
+//   weapon/armor → flat modifier added to attack/cast (weapon) or subtracted /2 from incoming dmg (armor)
+//   consumable   → HP healed on /dnd use
+function rollPower(type: ItemType, rarity: Rarity): number {
+  if (type === "consumable") {
+    if (rarity === "rare") return 25 + rollDice(11);      // 26-35
+    if (rarity === "uncommon") return 12 + rollDice(7);   // 13-18
+    return 5 + rollDice(4);                               // 6-8 (small)
+  }
+  // weapon | armor
+  if (rarity === "rare") return 5 + rollDice(2);          // 6-7
+  if (rarity === "uncommon") return 3 + rollDice(2);      // 4-5
+  return 1 + rollDice(2);                                 // 2-3
+}
+
+export function rollItem(tier: number): ItemRoll {
+  const type = rollItemType();
+  const rarity = rollRarity(tier);
+  const power = rollPower(type, rarity);
+  return { type, rarity, power };
+}
+
+// Per-fighter drop chance after a kill. 35% baseline, +5% per tier.
+export function dropChance(tier: number): number {
+  return Math.min(0.7, 0.35 + 0.05 * Math.max(0, tier - 1));
+}
+
+export const RARITY_BADGE: Record<Rarity, string> = {
+  common: "⚪",
+  uncommon: "🟢",
+  rare: "🟣",
+};
+
 export function rollDice(sides: number, count = 1): number {
   let total = 0;
   for (let i = 0; i < count; i++) total += 1 + Math.floor(Math.random() * sides);
