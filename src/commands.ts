@@ -2,6 +2,13 @@
 // Long-running work (AI calls, chat.postMessage) goes through ctx.waitUntil.
 
 import type { Env } from "./index";
+
+// Public-facing display name. Defaults to "Slack Quest"; operators override per
+// deployment by setting BOT_NAME in wrangler.jsonc `vars` or as a secret.
+const DEFAULT_BOT_NAME = "Slack Quest";
+function botName(env: Env): string {
+  return env.BOT_NAME?.trim() || DEFAULT_BOT_NAME;
+}
 import {
   flavorBossPhase,
   flavorDeath,
@@ -138,9 +145,10 @@ const SHORT_REST_HEAL_RATIO = 0.5;                    // heals 50% of missing HP
 
 // Help text uses the actual slash command name the operator installed under (e.g. /sq,
 // /quest, /raid). Slack's /dnd is reserved for Do Not Disturb so don't pick that.
-function helpText(cmd: string): string {
+// `name` is the display name (defaults to "Slack Quest"; operators can set BOT_NAME).
+function helpText(cmd: string, name: string): string {
   return [
-    "*Slack Quest commands*",
+    `*${name} commands*`,
     `• \`${cmd} roll\` — roll a new character (or reroll: free until your first XP, then \`level × 50g\`; confirm with \`${cmd} roll confirm\`)`,
     `• \`${cmd} me\` — show your character sheet`,
     `• \`${cmd} quest [variant] [@user1 @user2…]\` — start a quest, optionally inviting party members`,
@@ -178,9 +186,9 @@ function helpText(cmd: string): string {
 
 // Full mechanics reference. Verbose by design — players invoke this when they want
 // to understand the system, not just remember a command name.
-function rulesText(cmd: string): string {
+function rulesText(cmd: string, name: string): string {
   return [
-    `*🎲 Slack Quest — Mechanics Reference*`,
+    `*🎲 ${name} — Mechanics Reference*`,
     ``,
     `*━━ Characters ━━*`,
     `• Roll with \`${cmd} roll\`. 8 engineering-themed classes, randomly assigned (HP / atk_mod / mag_mod vary by class).`,
@@ -315,11 +323,11 @@ export async function handleCommand(
       return handleTake(payload, args, env, ctx);
     case "help":
     case "":
-      return ephemeral(helpText(payload.command));
+      return ephemeral(helpText(payload.command, botName(env)));
     case "rules":
     case "howto":
     case "manual":
-      return ephemeral(rulesText(payload.command));
+      return ephemeral(rulesText(payload.command, botName(env)));
     default:
       return ephemeral(`Unknown command: \`${sub}\`. Try \`${payload.command} help\`.`);
   }

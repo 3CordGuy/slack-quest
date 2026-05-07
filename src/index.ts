@@ -9,6 +9,10 @@ export interface Env {
   SLACK_SIGNING_SECRET: string;
   SLACK_BOT_TOKEN: string;
   ALLOWED_CHANNEL_ID: string; // Set via .dev.vars locally / `wrangler secret put` in prod. Empty = allow any channel.
+  // Display name for the bot in user-facing text (help, rules, channel-restriction
+  // message). Set via wrangler.jsonc `vars` to override per-workspace branding.
+  // Defaults to "Slack Quest" when unset. Helper: `botName(env)` in commands.ts.
+  BOT_NAME?: string;
 }
 
 const app = new Hono<{ Bindings: Env }>();
@@ -28,9 +32,10 @@ app.post("/slack/commands", async (c) => {
   const payload = parseSlashCommand(body);
 
   if (c.env.ALLOWED_CHANNEL_ID && payload.channel_id !== c.env.ALLOWED_CHANNEL_ID) {
+    const name = c.env.BOT_NAME?.trim() || "Slack Quest";
     return c.json({
       response_type: "ephemeral",
-      text: "Slack Quest only runs in the designated channel.",
+      text: `${name} only runs in the designated channel.`,
     });
   }
 

@@ -182,6 +182,25 @@ npx wrangler secret put ALLOWED_CHANNEL_ID
 Keeping `ALLOWED_CHANNEL_ID` out of `wrangler.jsonc` means a public repo never leaks the
 target channel ID.
 
+#### Optional: rename the bot
+
+The bot's user-facing display name (used in `/sq help`, `/sq rules`, channel-restriction
+errors) defaults to **"Slack Quest"**. To override per-deployment, set `BOT_NAME` as a
+non-secret variable in `wrangler.jsonc`:
+
+```jsonc
+{
+  // ...
+  "vars": {
+    "BOT_NAME": "Gantt Quest"
+  }
+}
+```
+
+Or via secret if you'd rather keep the deploy name out of the committed config:
+`npx wrangler secret put BOT_NAME`. Either works — the bot reads from `env.BOT_NAME`
+and falls back to `"Slack Quest"` when unset.
+
 ### 5. Run it
 
 ```bash
