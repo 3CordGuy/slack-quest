@@ -11,9 +11,13 @@ Cloudflare Workers + D1 + Workers AI. No real coworkers as NPCs — names are ge
 ## Design at a glance
 
 - **Surface:** one Slack channel (the bot rejects calls from anywhere else).
+  Slack restricts custom-app slash commands to channels and DMs (only Slack's own
+  built-ins like `/topic` work inside threads), so players invoke from the channel and
+  watch the story unfold in the quest thread — the channel stays uncluttered (slash
+  commands and ephemeral responses are invoker-only).
 - **Persistence:** D1. One character per Slack user, one active quest at a time.
 - **Death model:** soft death by default — at 0 HP you're "downed," lose 25% gold + a random
-  inventory item, and can't quest for 12h. Elite quests (`/dnd quest elite`) flip on perma-death.
+  inventory item, and can't quest for 12h. Elite quests (`/sq quest elite`) flip on perma-death.
 - **AI:** Cloudflare Workers AI (`@cf/meta/llama-3.1-8b-instruct`) narrates opening scenes,
   hits, crits, joins, deaths, victories, and successful flees. Combat resolution itself is
   deterministic / dice-based — the model only writes the flavor line that wraps the result.
@@ -26,9 +30,9 @@ Cloudflare Workers + D1 + Workers AI. No real coworkers as NPCs — names are ge
 
 What works:
 
-- `/dnd roll` — create a character with a random class + generated name.
-- `/dnd me` — show your sheet.
-- `/dnd quest [variant] [elite]` — kick off a quest. Variants: `boss` (L3+, single tougher
+- `/sq roll` — create a character with a random class + generated name.
+- `/sq me` — show your sheet.
+- `/sq quest [variant] [elite]` — kick off a quest. Variants: `boss` (L3+, single tougher
   monster, 2 phases at 50% HP, 2× rewards), `gauntlet` (L5+, 3 monsters back-to-back, no
   flee, party locked at start, 3× rewards, guaranteed drop on the final kill), `expedition`
   (L4+, 3 narrative forks → boss fight → 2-item treasure pick, 2.5× rewards). `elite` is
@@ -36,14 +40,16 @@ What works:
   opening scene with Workers AI and posts it to the channel; gauntlets pre-generate all
   three waves and expeditions pre-generate the full node graph at quest start so
   transitions are instant.
-- `/dnd join` — join the active quest in the current channel. Monster max HP grows by 40%
-  per joiner so the encounter doesn't get trivialized.
-- `/dnd attack` — 1d6 + class `attack_mod`, crit ×2 on a natural 6.
-- `/dnd cast` — 1d8 + class `magic_mod`, crit ×2 on a natural 8.
-- `/dnd flee` — 1d2; on a 1 you escape (party fights on; quest fails only if you were the
+- `/sq join` — join the active quest in the current channel. Monster max HP grows by 40%
+  per joiner so the encounter doesn't get trivialized. **Joinable through wave 1 of a
+  gauntlet** (locks once wave 2 begins) and **until the first `/sq choose` of an
+  expedition** (locks once any fork has been picked).
+- `/sq attack` — 1d6 + class `attack_mod`, crit ×2 on a natural 6.
+- `/sq cast` — 1d8 + class `magic_mod`, crit ×2 on a natural 8.
+- `/sq flee` — 1d2; on a 1 you escape (party fights on; quest fails only if you were the
   last fighter), on a 2 the monster gets a free hit and you stay in.
-- `/dnd party` — show the current quest's roster + HP.
-- `/dnd leaderboard` — top 10 heroes by level/XP/gold (channel-visible).
+- `/sq party` — show the current quest's roster + HP.
+- `/sq leaderboard` — top 10 heroes by level/XP/gold (channel-visible).
 - Combat resolves a player turn then a monster turn. Monster damage is `1d4 + tier +
   floor((alive_party - 1) / 2)` so it gets meaner with more enemies. Updates post in the
   quest thread; the invoker gets an ephemeral copy.
@@ -62,16 +68,16 @@ What works:
   monster tier, capped at 70%. Each drop rolls a slot (40% weapon / 30% armor / 30%
   consumable), a rarity (common → rare; weights skew rarer at higher tiers), and a power
   number. The system rolls mechanics; the AI generates the name + flavor line.
-- **Equipment** — `/dnd inventory` lists items, `/dnd equip <id>` slots a weapon or armor
+- **Equipment** — `/sq inventory` lists items, `/sq equip <id>` slots a weapon or armor
   (one of each at a time). Combat reads equipped gear: `attack`/`cast` rolls become
   `class_mod + weapon_power`; armor reduces incoming damage by `floor(armor_power / 2)`,
   with a minimum of 1 dmg taken so armor never makes you immune.
-- **Consumables** — `/dnd use <id>` heals you for the item's power. Free action; doesn't
+- **Consumables** — `/sq use <id>` heals you for the item's power. Free action; doesn't
   consume your 45-second combat cooldown so potions are actually worth taking into a fight.
-- **Shop** — `/dnd shop` lists 5 AI-generated items priced flat by rarity (15/50/150g).
+- **Shop** — `/sq shop` lists 5 AI-generated items priced flat by rarity (15/50/150g).
   Stock is **channel-wide and restocks every 6 hours**, so the channel collectively decides
-  who grabs the rare drop. `/dnd buy <id>` claims atomically (no double-spend if two people
-  hit the same item). `/dnd sell <id>` returns 30% of shop price as gold sink prevention.
+  who grabs the rare drop. `/sq buy <id>` claims atomically (no double-spend if two people
+  hit the same item). `/sq sell <id>` returns 30% of shop price as gold sink prevention.
   Stock tier scales with the active community's average level.
 
 Still stubbed:
@@ -102,7 +108,12 @@ pnpm db:migrate:local
 
 ### 3. Create the Slack app
 
-Use this manifest at <https://api.slack.com/apps?new_app=1> → "From an app manifest":
+Use this manifest at <https://api.slack.com/apps?new_app=1> → "From an app manifest".
+
+> **Don't pick `/sq`** — it's reserved by Slack for Do Not Disturb. The example below
+> uses `/sq` (short for "slack quest"); `/quest`, `/raid`, `/d20`, or anything else
+> unreserved works too. The bot reads its own command name from the slash command payload,
+> so help text and error messages will reflect whatever you choose.
 
 ```yaml
 display_information:
@@ -113,7 +124,7 @@ features:
     display_name: Slack Quest
     always_online: true
   slash_commands:
-    - command: /dnd
+    - command: /sq
       url: https://slack-quest.<your-subdomain>.workers.dev/slack/commands
       description: Roll a character, start a quest, check your sheet
       usage_hint: roll | me | quest [elite] | help

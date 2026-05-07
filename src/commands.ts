@@ -96,32 +96,36 @@ const EXPEDITION_LEVEL_REQUIRED = 4;
 const EXPEDITION_FORKS = 3;
 const EXPEDITION_TREASURE_OPTIONS = 2;
 
-const HELP_TEXT = [
-  "*Slack Quest commands*",
-  "• `/dnd roll` — roll a new character",
-  "• `/dnd me` — show your character sheet",
-  "• `/dnd quest` — start a standard quest",
-  "• `/dnd quest boss` — single tougher monster, 2 phases (L3+, 2× rewards)",
-  "• `/dnd quest gauntlet` — 3 monsters back-to-back, no flee (L5+, 3× rewards, guaranteed drop)",
-  "• `/dnd quest expedition` — 3 narrative forks → boss → treasure pick (L4+, 2.5× rewards)",
-  "• `/dnd quest elite` — elite modifier; perma-death (composes: `/dnd quest boss elite`)",
-  "• `/dnd choose <n>` — pick a fork option in an expedition (first vote wins)",
-  "• `/dnd take <n>` — claim an item from an expedition treasure room",
-  "• `/dnd join` — join the active quest in this channel",
-  "• `/dnd attack` — strike with weapon (1d6 + atk_mod + weapon power, crit on nat 6)",
-  "• `/dnd cast` — channel magic (1d8 + mag_mod + weapon power, crit on nat 8)",
-  "• `/dnd flee` — try to escape (1d2; on fail you take a free hit)",
-  "• `/dnd inventory` — list your items (equipped marked ✅)",
-  "• `/dnd equip <id>` — equip a weapon or armor by inventory id",
-  "• `/dnd use <id>` — use a consumable (free action, no cooldown)",
-  "• `/dnd shop` — view the channel's shop (restocks every 6h)",
-  "• `/dnd buy <id>` — purchase a shop item with gold",
-  "• `/dnd sell <id>` — sell an inventory item for 30% of shop price",
-  "• `/dnd party` — show the current quest's roster + HP",
-  "• `/dnd leaderboard` — top 10 heroes",
-  "• `/dnd help` — show this list",
-  "_Combat actions have a 45-second cooldown per player._",
-].join("\n");
+// Help text uses the actual slash command name the operator installed under (e.g. /sq,
+// /quest, /raid). Slack's /dnd is reserved for Do Not Disturb so don't pick that.
+function helpText(cmd: string): string {
+  return [
+    "*Slack Quest commands*",
+    `• \`${cmd} roll\` — roll a new character`,
+    `• \`${cmd} me\` — show your character sheet`,
+    `• \`${cmd} quest\` — start a standard quest`,
+    `• \`${cmd} quest boss\` — single tougher monster, 2 phases (L3+, 2× rewards)`,
+    `• \`${cmd} quest gauntlet\` — 3 monsters back-to-back, no flee (L5+, 3× rewards, guaranteed drop)`,
+    `• \`${cmd} quest expedition\` — 3 narrative forks → boss → treasure pick (L4+, 2.5× rewards)`,
+    `• \`${cmd} quest elite\` — elite modifier; perma-death (composes: \`${cmd} quest boss elite\`)`,
+    `• \`${cmd} choose <n>\` — pick a fork option in an expedition (first vote wins)`,
+    `• \`${cmd} take <n>\` — claim an item from an expedition treasure room`,
+    `• \`${cmd} join\` — join the active quest in this channel`,
+    `• \`${cmd} attack\` — strike with weapon (1d6 + atk_mod + weapon power, crit on nat 6)`,
+    `• \`${cmd} cast\` — channel magic (1d8 + mag_mod + weapon power, crit on nat 8)`,
+    `• \`${cmd} flee\` — try to escape (1d2; on fail you take a free hit)`,
+    `• \`${cmd} inventory\` — list your items (equipped marked ✅)`,
+    `• \`${cmd} equip <id>\` — equip a weapon or armor by inventory id`,
+    `• \`${cmd} use <id>\` — use a consumable (free action, no cooldown)`,
+    `• \`${cmd} shop\` — view the channel's shop (restocks every 6h)`,
+    `• \`${cmd} buy <id>\` — purchase a shop item with gold`,
+    `• \`${cmd} sell <id>\` — sell an inventory item for 30% of shop price`,
+    `• \`${cmd} party\` — show the current quest's roster + HP`,
+    `• \`${cmd} leaderboard\` — top 10 heroes`,
+    `• \`${cmd} help\` — show this list`,
+    "_Combat actions have a 45-second cooldown per player._",
+  ].join("\n");
+}
 
 export async function handleCommand(
   payload: SlashCommandPayload,
@@ -151,7 +155,7 @@ export async function handleCommand(
       return handleParty(payload, env);
     case "leaderboard":
     case "lb":
-      return handleLeaderboard(env);
+      return handleLeaderboard(payload, env);
     case "inventory":
     case "inv":
       return handleInventory(payload, env);
@@ -171,9 +175,9 @@ export async function handleCommand(
       return handleTake(payload, args, env, ctx);
     case "help":
     case "":
-      return ephemeral(HELP_TEXT);
+      return ephemeral(helpText(payload.command));
     default:
-      return ephemeral(`Unknown command: \`${sub}\`. Try \`/dnd help\`.`);
+      return ephemeral(`Unknown command: \`${sub}\`. Try \`${payload.command} help\`.`);
   }
 }
 
@@ -181,7 +185,7 @@ async function handleRoll(payload: SlashCommandPayload, env: Env): Promise<Comma
   const existing = await getCharacter(env.DB, payload.user_id);
   if (existing) {
     return ephemeral(
-      `You already have a character: *${existing.name}* the ${existing.class} (L${existing.level}). Use \`/dnd me\` to see the sheet.`,
+      `You already have a character: *${existing.name}* the ${existing.class} (L${existing.level}). Use \`${payload.command} me\` to see the sheet.`,
     );
   }
 
@@ -211,7 +215,7 @@ async function handleRoll(payload: SlashCommandPayload, env: Env): Promise<Comma
 
 async function handleMe(payload: SlashCommandPayload, env: Env): Promise<CommandResponse> {
   const c = await getCharacter(env.DB, payload.user_id);
-  if (!c) return ephemeral("You haven't rolled a character yet. Try `/dnd roll`.");
+  if (!c) return ephemeral(`You haven't rolled a character yet. Try \`${payload.command} roll\`.`);
   return ephemeral(formatSheet(c));
 }
 
@@ -235,7 +239,7 @@ async function handleQuest(
   ctx: ExecutionContext,
 ): Promise<CommandResponse> {
   const character = await getCharacter(env.DB, payload.user_id);
-  if (!character) return ephemeral("You need to `/dnd roll` a character first.");
+  if (!character) return ephemeral(`You need to \`${payload.command} roll\` a character first.`);
 
   if (character.downed_until && character.downed_until > Date.now()) {
     return ephemeral(`You are *downed* and recovering. Try again later.`);
@@ -293,7 +297,7 @@ async function handleQuest(
             ``,
             ...((expFirstNode.choices ?? []).map((c, i) => `\`${i + 1}\` ${c}`)),
             ``,
-            `_First \`/dnd choose <n>\` wins for the party._`,
+            `_First \`${payload.command} choose <n>\` wins for the party._`,
           ].join("\n")
         : [
             `_${scene.scene}_`,
@@ -437,13 +441,13 @@ async function handleCombat(
   action: CombatAction,
 ): Promise<CommandResponse> {
   const character = await getCharacter(env.DB, payload.user_id);
-  if (!character) return ephemeral("You need to `/dnd roll` a character first.");
+  if (!character) return ephemeral(`You need to \`${payload.command} roll\` a character first.`);
   if (!isFighter(character)) {
     return ephemeral("You're downed and can't act. Recover, then try again.");
   }
 
   const quest = await getActiveQuestForCharacter(env.DB, payload.user_id);
-  if (!quest) return ephemeral("You're not on an active quest. Try `/dnd quest` or `/dnd join`.");
+  if (!quest) return ephemeral(`You're not on an active quest. Try \`${payload.command} quest\` or \`${payload.command} join\`.`);
 
   const cooldown = await cooldownRemaining(env.DB, quest.id, payload.user_id, ACTION_COOLDOWN_MS);
   if (cooldown > 0) {
@@ -471,9 +475,9 @@ async function handleCombat(
     const node = currentExpNode(quest);
     if (!node || node.type !== "combat") {
       const nextStep = node?.type === "fork"
-        ? "Try `/dnd choose <n>`."
+        ? `Try \`${payload.command} choose <n>\`.`
         : node?.type === "treasure"
-        ? "Try `/dnd take <n>`."
+        ? `Try \`${payload.command} take <n>\`.`
         : "Quest not progressed.";
       return ephemeral(`Not in combat right now. ${nextStep}`);
     }
@@ -703,7 +707,7 @@ async function resolveVictory(
   ];
   if (lootRolls.length > 0) {
     ephemeralLines.push(
-      `🎁 ${lootRolls.length} drop${lootRolls.length > 1 ? "s" : ""}! Check \`/dnd inventory\` once narration posts.`,
+      `🎁 ${lootRolls.length} drop${lootRolls.length > 1 ? "s" : ""}! Check \`${payload.command} inventory\` once narration posts.`,
     );
   }
 
@@ -821,11 +825,11 @@ async function resolveExpeditionToTreasure(
   }).join("\n");
 
   ctx.waitUntil((async () => {
-    const tail = `_🎁 ${treasureNode.scene}_\n${lootLines}\n\n_First \`/dnd take <n>\` claims for the party._`;
+    const tail = `_🎁 ${treasureNode.scene}_\n${lootLines}\n\n_First \`${payload.command} take <n>\` claims for the party._`;
     await postToThread(env, quest, `${preamble.join("\n")}\n\n${tail}`);
   })());
 
-  return ephemeral([...preamble, "🎁 Treasure ahead — `/dnd take <1-2>` to claim."].join("\n"));
+  return ephemeral([...preamble, `🎁 Treasure ahead — \`${payload.command} take <1-2>\` to claim.`].join("\n"));
 }
 
 // Used at the end of an expedition once treasure has been picked. Splits XP/gold across
@@ -877,12 +881,12 @@ async function handleChoose(
   ctx: ExecutionContext,
 ): Promise<CommandResponse> {
   const character = await getCharacter(env.DB, payload.user_id);
-  if (!character) return ephemeral("You need to `/dnd roll` a character first.");
+  if (!character) return ephemeral(`You need to \`${payload.command} roll\` a character first.`);
 
   const quest = await getActiveQuestForCharacter(env.DB, payload.user_id);
   if (!quest) return ephemeral("You're not on an active quest.");
   if (quest.scene.variant !== "expedition" || !quest.scene.expedition) {
-    return ephemeral("This quest doesn't have forks — try `/dnd attack` or similar.");
+    return ephemeral(`This quest doesn't have forks — try \`${payload.command} attack\` or similar.`);
   }
 
   const exp = quest.scene.expedition;
@@ -894,7 +898,7 @@ async function handleChoose(
   const idx = parseInt(args[0] ?? "", 10);
   const choices = node.choices ?? [];
   if (Number.isNaN(idx) || idx < 1 || idx > choices.length) {
-    return ephemeral(`Usage: \`/dnd choose <1-${choices.length}>\`.`);
+    return ephemeral(`Usage: \`${payload.command} choose <1-${choices.length}>\`.`);
   }
 
   const chosen = choices[idx - 1];
@@ -933,7 +937,7 @@ async function handleChoose(
         ``,
         ...((nextNode.choices ?? []).map((c, i) => `\`${i + 1}\` ${c}`)),
         ``,
-        `_First \`/dnd choose <n>\` wins for the party._`,
+        `_First \`${payload.command} choose <n>\` wins for the party._`,
       ].join("\n");
     } else if (nextNode.type === "combat") {
       nextBeat = [
@@ -941,14 +945,14 @@ async function handleChoose(
         ``,
         `Foe: *${updatedScene.monster_name}* — HP ${updatedScene.monster_hp}/${updatedScene.monster_max_hp}`,
         ``,
-        `Combat: \`/dnd attack\` or \`/dnd cast\`.`,
+        `Combat: \`${payload.command} attack\` or \`${payload.command} cast\`.`,
       ].join("\n");
     } else if (nextNode.type === "treasure") {
       const lootLines = (nextNode.loot_options ?? []).map((l, i) => {
         const power = l.item_type === "consumable" ? `heals ${l.power}` : `+${l.power}`;
         return `\`${i + 1}\` ${RARITY_BADGE[l.rarity]} *${l.name}* — ${l.item_type}, ${power}\n   _${l.flavor}_`;
       }).join("\n");
-      nextBeat = `_${nextNode.scene}_\n${lootLines}\n\n_First \`/dnd take <n>\` claims for the party._`;
+      nextBeat = `_${nextNode.scene}_\n${lootLines}\n\n_First \`${payload.command} take <n>\` claims for the party._`;
     }
     const header = `🗺️ <@${payload.user_id}> chose: *${chosen}*. ${consequence}`;
     await postToThread(env, quest, `${header}\n\n${nextBeat}`);
@@ -964,7 +968,7 @@ async function handleTake(
   ctx: ExecutionContext,
 ): Promise<CommandResponse> {
   const character = await getCharacter(env.DB, payload.user_id);
-  if (!character) return ephemeral("You need to `/dnd roll` a character first.");
+  if (!character) return ephemeral(`You need to \`${payload.command} roll\` a character first.`);
 
   const quest = await getActiveQuestForCharacter(env.DB, payload.user_id);
   if (!quest) return ephemeral("You're not on an active quest.");
@@ -981,7 +985,7 @@ async function handleTake(
   const idx = parseInt(args[0] ?? "", 10);
   const options = node.loot_options ?? [];
   if (Number.isNaN(idx) || idx < 1 || idx > options.length) {
-    return ephemeral(`Usage: \`/dnd take <1-${options.length}>\`.`);
+    return ephemeral(`Usage: \`${payload.command} take <1-${options.length}>\`.`);
   }
 
   const choice = options[idx - 1];
@@ -1036,9 +1040,9 @@ async function resolveDeath(
     ephemeralLines.push(
       `💀💀 *${character.name}* the ${character.class} is no more.`,
       `_Cause: ${quest.scene.monster_name}. Elite quest — perma-death enforced._`,
-      `Roll a new hero with \`/dnd roll\`.`,
+      `Roll a new hero with \`${payload.command} roll\`.`,
     );
-    resultTail = `_💀💀 *${character.name}* the ${character.class} is no more — slain by ${quest.scene.monster_name}. Roll a new hero with \`/dnd roll\`._`;
+    resultTail = `_💀💀 *${character.name}* the ${character.class} is no more — slain by ${quest.scene.monster_name}. Roll a new hero with \`${payload.command} roll\`._`;
   } else {
     // Note: applySoftDeath sets hp = max_hp (post-recovery). No need to write 0 first.
     const scar = generateScar(quest.scene.monster_name);
@@ -1081,7 +1085,7 @@ async function handleJoin(
   ctx: ExecutionContext,
 ): Promise<CommandResponse> {
   const character = await getCharacter(env.DB, payload.user_id);
-  if (!character) return ephemeral("You need to `/dnd roll` a character first.");
+  if (!character) return ephemeral(`You need to \`${payload.command} roll\` a character first.`);
   if (!isFighter(character)) {
     return ephemeral("You're downed and can't quest right now.");
   }
@@ -1092,10 +1096,17 @@ async function handleJoin(
   }
 
   const quest = await getActiveQuestInChannel(env.DB, payload.channel_id);
-  if (!quest) return ephemeral("No active quest in this channel. Start one with `/dnd quest`.");
+  if (!quest) return ephemeral(`No active quest in this channel. Start one with \`${payload.command} quest\`.`);
 
-  if (quest.scene.variant === "gauntlet" || quest.scene.variant === "expedition") {
-    return ephemeral("⚔️ This quest type locks the party at the start. Wait for the next one.");
+  // Gauntlet locks once wave 2+ begins; up through wave 1 you can still join. Joiners
+  // get caught up by the existing scaleMonsterForJoin HP bump.
+  if (quest.scene.variant === "gauntlet" && (quest.scene.wave ?? 1) > 1) {
+    return ephemeral("⚔️ Gauntlet has already advanced past wave 1 — too late to join.");
+  }
+  // Expedition locks once any fork has been chosen — joiners don't get to retroactively
+  // affect choices that have already been made.
+  if (quest.scene.variant === "expedition" && (quest.scene.expedition?.path_taken.length ?? 0) > 0) {
+    return ephemeral(`🗺️ The party has already started making decisions — too late to join. Wait for the next \`${payload.command} quest\`.`);
   }
 
   const inserted = await joinQuest(env.DB, quest.id, payload.user_id);
@@ -1131,7 +1142,7 @@ async function handleParty(payload: SlashCommandPayload, env: Env): Promise<Comm
 
 async function handleInventory(payload: SlashCommandPayload, env: Env): Promise<CommandResponse> {
   const character = await getCharacter(env.DB, payload.user_id);
-  if (!character) return ephemeral("You need to `/dnd roll` a character first.");
+  if (!character) return ephemeral(`You need to \`${payload.command} roll\` a character first.`);
 
   const items = await getInventory(env.DB, payload.user_id);
   if (items.length === 0) {
@@ -1149,7 +1160,7 @@ async function handleInventory(payload: SlashCommandPayload, env: Env): Promise<
     );
     if (item.flavor) lines.push(`   _${item.flavor}_`);
   }
-  lines.push("", "Equip with `/dnd equip <id>`, use a consumable with `/dnd use <id>`.");
+  lines.push("", `Equip with \`${payload.command} equip <id>\`, use a consumable with \`${payload.command} use <id>\`.`);
   return ephemeral(lines.join("\n"));
 }
 
@@ -1159,15 +1170,15 @@ async function handleEquip(
   env: Env,
 ): Promise<CommandResponse> {
   const character = await getCharacter(env.DB, payload.user_id);
-  if (!character) return ephemeral("You need to `/dnd roll` a character first.");
+  if (!character) return ephemeral(`You need to \`${payload.command} roll\` a character first.`);
 
   const id = parseInt(args[0] ?? "", 10);
-  if (Number.isNaN(id)) return ephemeral("Usage: `/dnd equip <inventory id>` (find ids with `/dnd inventory`).");
+  if (Number.isNaN(id)) return ephemeral(`Usage: \`${payload.command} equip <inventory id>\` (find ids with \`${payload.command} inventory\`).`);
 
   const item = await getItem(env.DB, id, payload.user_id);
   if (!item) return ephemeral("No such item in your inventory.");
   if (item.item_type === "consumable") {
-    return ephemeral("Consumables can't be equipped — use them with `/dnd use <id>`.");
+    return ephemeral(`Consumables can't be equipped — use them with \`${payload.command} use <id>\`.`);
   }
   if (item.equipped) return ephemeral(`*${item.item_name}* is already equipped.`);
 
@@ -1183,15 +1194,15 @@ async function handleUse(
   env: Env,
 ): Promise<CommandResponse> {
   const character = await getCharacter(env.DB, payload.user_id);
-  if (!character) return ephemeral("You need to `/dnd roll` a character first.");
+  if (!character) return ephemeral(`You need to \`${payload.command} roll\` a character first.`);
 
   const id = parseInt(args[0] ?? "", 10);
-  if (Number.isNaN(id)) return ephemeral("Usage: `/dnd use <inventory id>` (find ids with `/dnd inventory`).");
+  if (Number.isNaN(id)) return ephemeral(`Usage: \`${payload.command} use <inventory id>\` (find ids with \`${payload.command} inventory\`).`);
 
   const item = await getItem(env.DB, id, payload.user_id);
   if (!item) return ephemeral("No such item in your inventory.");
   if (item.item_type !== "consumable") {
-    return ephemeral(`*${item.item_name}* isn't a consumable. Try \`/dnd equip ${item.id}\`.`);
+    return ephemeral(`*${item.item_name}* isn't a consumable. Try \`${payload.command} equip ${item.id}\`.`);
   }
 
   if (character.hp >= character.max_hp) {
@@ -1210,18 +1221,18 @@ async function handleShop(
   ctx: ExecutionContext,
 ): Promise<CommandResponse> {
   const character = await getCharacter(env.DB, payload.user_id);
-  if (!character) return ephemeral("You need to `/dnd roll` a character first.");
+  if (!character) return ephemeral(`You need to \`${payload.command} roll\` a character first.`);
 
   const existing = await getActiveShopStock(env.DB, payload.channel_id, SHOP_RESTOCK_MS);
   if (existing && existing.length > 0) {
-    return ephemeral(formatShop(existing, character.gold));
+    return ephemeral(formatShop(existing, character.gold, payload.command));
   }
 
   // Shop is dry — kick off a restock. Generation does up to SHOP_STOCK_SIZE AI calls,
   // so we ack immediately and let it run via waitUntil. The user re-runs /dnd shop to see it.
   ctx.waitUntil(restockShop(env, payload.channel_id));
   return ephemeral(
-    "🛒 The shopkeep is unpacking new stock — try `/dnd shop` again in a few seconds.",
+    `🛒 The shopkeep is unpacking new stock — try \`${payload.command} shop\` again in a few seconds.`,
   );
 }
 
@@ -1258,7 +1269,7 @@ async function restockShop(env: Env, channelId: string): Promise<void> {
   await insertShopStock(env.DB, items);
 }
 
-function formatShop(items: ShopItem[], gold: number): string {
+function formatShop(items: ShopItem[], gold: number, cmd: string): string {
   const lines = [`🛒 *Shop* — you have ${gold} gold`];
   for (const it of items) {
     const status = it.bought_by ? " ❌_sold_" : "";
@@ -1268,7 +1279,7 @@ function formatShop(items: ShopItem[], gold: number): string {
     );
     if (it.flavor) lines.push(`   _${it.flavor}_`);
   }
-  lines.push("", "Buy with `/dnd buy <id>`. Sell your own items with `/dnd sell <id>`.");
+  lines.push("", `Buy with \`${cmd} buy <id>\`. Sell your own items with \`${cmd} sell <id>\`.`);
   return lines.join("\n");
 }
 
@@ -1278,10 +1289,10 @@ async function handleBuy(
   env: Env,
 ): Promise<CommandResponse> {
   const character = await getCharacter(env.DB, payload.user_id);
-  if (!character) return ephemeral("You need to `/dnd roll` a character first.");
+  if (!character) return ephemeral(`You need to \`${payload.command} roll\` a character first.`);
 
   const id = parseInt(args[0] ?? "", 10);
-  if (Number.isNaN(id)) return ephemeral("Usage: `/dnd buy <shop id>` (find ids with `/dnd shop`).");
+  if (Number.isNaN(id)) return ephemeral(`Usage: \`${payload.command} buy <shop id>\` (find ids with \`${payload.command} shop\`).`);
 
   const stock = await getShopItem(env.DB, id, payload.channel_id);
   if (!stock) return ephemeral("No such shop item in this channel.");
@@ -1326,10 +1337,10 @@ async function handleSell(
   env: Env,
 ): Promise<CommandResponse> {
   const character = await getCharacter(env.DB, payload.user_id);
-  if (!character) return ephemeral("You need to `/dnd roll` a character first.");
+  if (!character) return ephemeral(`You need to \`${payload.command} roll\` a character first.`);
 
   const id = parseInt(args[0] ?? "", 10);
-  if (Number.isNaN(id)) return ephemeral("Usage: `/dnd sell <inventory id>`.");
+  if (Number.isNaN(id)) return ephemeral(`Usage: \`${payload.command} sell <inventory id>\`.`);
 
   const item = await getItem(env.DB, id, payload.user_id);
   if (!item) return ephemeral("No such item in your inventory.");
@@ -1343,9 +1354,9 @@ async function handleSell(
   );
 }
 
-async function handleLeaderboard(env: Env): Promise<CommandResponse> {
+async function handleLeaderboard(payload: SlashCommandPayload, env: Env): Promise<CommandResponse> {
   const top = await getLeaderboard(env.DB, 10);
-  if (top.length === 0) return ephemeral("No heroes yet. Be the first — `/dnd roll`.");
+  if (top.length === 0) return ephemeral(`No heroes yet. Be the first — \`${payload.command} roll\`.`);
   const lines = [
     "*🏆 Top heroes*",
     ...top.map((e, i) => {

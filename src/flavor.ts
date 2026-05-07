@@ -14,7 +14,7 @@ export const CLASSES: CharClass[] = [
   { id: "qa_paladin",        name: "QA Paladin",         base_hp: 28, attack_mod: 2, magic_mod: 0, blurb: "Smites bugs with the sacred light of regression suites." },
   { id: "backend_druid",     name: "Backend Druid",      base_hp: 24, attack_mod: 1, magic_mod: 1, blurb: "Speaks to databases and tames feral microservices." },
   { id: "frontend_bard",     name: "Frontend Bard",      base_hp: 20, attack_mod: 0, magic_mod: 2, blurb: "Charms users with pixel-perfect ballads of CSS." },
-  { id: "staff_necromancer", name: "Staff Necromancer",  base_hp: 26, attack_mod: 0, magic_mod: 2, blurb: "Resurrects deprecated APIs from the codebase crypt." },
+  { id: "staff_sage",        name: "Staff Sage",         base_hp: 26, attack_mod: 0, magic_mod: 2, blurb: "Dispenses ancient wisdom and the occasional postmortem." },
   { id: "refactor_rogue",    name: "Refactor Rogue",     base_hp: 18, attack_mod: 2, magic_mod: 0, blurb: "Strikes from the shadows; leaves no dead code behind." },
   { id: "sre_warden",        name: "SRE Warden",         base_hp: 30, attack_mod: 2, magic_mod: 0, blurb: "Stands the wall between prod and the howling void." },
   { id: "data_warlock",      name: "Data Warlock",       base_hp: 22, attack_mod: 0, magic_mod: 2, blurb: "Bound to a query plan most mortals dare not read." },
@@ -74,7 +74,7 @@ function rollRarity(tier: number): Rarity {
 
 // Power maps to mechanic by type:
 //   weapon/armor → flat modifier added to attack/cast (weapon) or subtracted /2 from incoming dmg (armor)
-//   consumable   → HP healed on /dnd use
+//   consumable   → HP healed on `<cmd> use`
 function rollPower(type: ItemType, rarity: Rarity): number {
   if (type === "consumable") {
     if (rarity === "rare") return 25 + rollDice(11);      // 26-35
