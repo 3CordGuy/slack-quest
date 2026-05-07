@@ -28,7 +28,6 @@ import {
   cooldownRemaining,
   createCharacter,
   createQuest,
-  deductGold,
   deleteCharacter,
   equipItem,
   getActiveQuestForCharacter,
@@ -45,11 +44,14 @@ import {
   isFighter,
   joinQuest,
   markQuestStatus,
+  releaseShopClaim,
   removeItem,
   saveScene,
   scaleMonsterForJoin,
   setCharacterHp,
-  updateMonsterHp,
+  trySaveExpeditionAdvance,
+  tryDeductGold,
+  tryUpdateScene,
   type ActiveQuest,
   type Character,
   type ExpeditionNode,
@@ -60,6 +62,7 @@ import {
   type SceneJson,
   type ShopItem,
 } from "./db";
+import { isBossPhaseTransition, resolveMonsterHit, resolvePlayerHit } from "./combat";
 import {
   classByName,
   dropChance,
@@ -479,24 +482,46 @@ async function handleCombat(
   // attack | cast — equipped weapon adds to whichever action you use; armor reduces incoming.
   const cls = classByName(character.class);
   const isMagic = action === "cast";
-  const sides = isMagic ? 8 : 6;
   const classMod = isMagic ? cls.magic_mod : cls.attack_mod;
   const weaponMod = equippedWeapon?.power ?? 0;
-  const totalMod = classMod + weaponMod;
   const verb = isMagic ? "casts" : "attacks";
 
-  const roll = rollDice(sides);
-  const isCrit = roll === sides;
-  const damage = (roll + totalMod) * (isCrit ? 2 : 1);
-  const newMonsterHp = quest.scene.monster_hp - damage;
+  const hit = resolvePlayerHit(action, classMod, weaponMod, rollDice);
+  const newMonsterHp = quest.scene.monster_hp - hit.damage;
+  const willKill = newMonsterHp <= 0;
 
-  const modBreakdown = weaponMod > 0 ? `${classMod}+${weaponMod}` : `${totalMod}`;
-  const playerLine = isCrit
-    ? `💥 *CRIT!* <@${payload.user_id}> ${verb} for *${damage}* (${roll}×2 + ${modBreakdown}).`
-    : `<@${payload.user_id}> ${verb} for *${damage}* (${roll} + ${modBreakdown}).`;
+  const modBreakdown = weaponMod > 0 ? `${classMod}+${weaponMod}` : `${hit.totalMod}`;
+  const playerLine = hit.isCrit
+    ? `💥 *CRIT!* <@${payload.user_id}> ${verb} for *${hit.damage}* (${hit.roll}×2 + ${modBreakdown}).`
+    : `<@${payload.user_id}> ${verb} for *${hit.damage}* (${hit.roll} + ${modBreakdown}).`;
 
-  if (newMonsterHp <= 0) {
-    await appendLog(env.DB, quest.id, payload.user_id, action, `${damage} dmg (kill)`);
+  // Boss phase 1 → 2 transition: crossing the 50% HP threshold powers it up.
+  // Bake the flag into the scene so the same atomic write applies HP + phase together.
+  let updatedScene: SceneJson = { ...quest.scene, monster_hp: Math.max(0, newMonsterHp) };
+  let bossPhaseTransition = false;
+  if (
+    !willKill &&
+    quest.scene.variant === "boss" &&
+    quest.scene.boss_phase === 1 &&
+    isBossPhaseTransition(quest.scene.monster_max_hp, quest.scene.monster_hp, newMonsterHp)
+  ) {
+    bossPhaseTransition = true;
+    updatedScene.boss_phase = 2;
+  }
+
+  // Atomic write: only proceed if monster_hp hasn't moved since we read it. Two
+  // simultaneous attacks racing on the same HP value would otherwise lose one
+  // player's damage. Loser of the race retries instead of having work erased.
+  const won = await tryUpdateScene(env.DB, quest.id, updatedScene, quest.scene.monster_hp);
+  if (!won) {
+    return ephemeral(
+      "⏱️ The fight moved on while you were swinging. Try again — your cooldown wasn't consumed.",
+    );
+  }
+
+  await appendLog(env.DB, quest.id, payload.user_id, action, `${hit.damage} dmg${willKill ? " (kill)" : ""}`);
+
+  if (willKill) {
     // Gauntlet: advance to next wave instead of triggering victory.
     if (quest.scene.variant === "gauntlet" && quest.scene.upcoming_waves && quest.scene.upcoming_waves.length > 0) {
       return resolveGauntletAdvance(payload, env, ctx, quest, [playerLine, `🏆 *${quest.scene.monster_name}* falls.`]);
@@ -508,49 +533,34 @@ async function handleCombat(
         `🏆 *${quest.scene.monster_name}* falls.`,
       ]);
     }
-    await updateMonsterHp(env.DB, quest.id, quest.scene, 0);
     return resolveVictory(payload, env, ctx, character, quest, fighters, [
       playerLine,
       `🏆 *${quest.scene.monster_name}* falls.`,
     ]);
   }
 
-  // Boss phase 1 → 2 transition: crossing the 50% HP threshold powers it up.
-  // Detection happens here (before saving) so we narrate the moment and tag the scene.
-  let updatedScene = quest.scene;
-  let bossPhaseTransition = false;
-  if (
-    quest.scene.variant === "boss" &&
-    quest.scene.boss_phase === 1 &&
-    quest.scene.monster_hp >= quest.scene.monster_max_hp / 2 &&
-    newMonsterHp < quest.scene.monster_max_hp / 2
-  ) {
-    bossPhaseTransition = true;
-    updatedScene = { ...quest.scene, boss_phase: 2 };
-  }
-
-  await updateMonsterHp(env.DB, quest.id, updatedScene, newMonsterHp);
-  await appendLog(env.DB, quest.id, payload.user_id, action, `${damage} dmg`);
-
   // Monster turn — retaliates against the actor only. Damage scales with party size,
   // mitigated by armor (floor(power / 2), minimum 1 damage so armor never makes you immune).
   // Boss phase 2 adds a flat tier bonus on top.
-  const bossBonus = updatedScene.variant === "boss" && updatedScene.boss_phase === 2 ? quest.scene.tier : 0;
-  const rawMonsterDmg = rollDice(4) + quest.scene.tier + Math.floor((fighters.length - 1) / 2) + bossBonus;
-  const armorReduction = equippedArmor ? Math.floor(equippedArmor.power / 2) : 0;
-  const monsterRoll = Math.max(1, rawMonsterDmg - armorReduction);
-  const playerHpAfter = character.hp - monsterRoll;
+  const monster = resolveMonsterHit(
+    quest.scene.tier,
+    fighters.length,
+    equippedArmor?.power ?? 0,
+    updatedScene.variant === "boss" && updatedScene.boss_phase === 2,
+    rollDice,
+  );
+  const playerHpAfter = character.hp - monster.final;
 
-  const monsterLine = armorReduction > 0
-    ? `*${quest.scene.monster_name}* hits back for *${monsterRoll}* (${rawMonsterDmg} − ${armorReduction} armor).`
-    : `*${quest.scene.monster_name}* hits back for *${monsterRoll}*.`;
+  const monsterLine = monster.armorReduction > 0
+    ? `*${quest.scene.monster_name}* hits back for *${monster.final}* (${monster.raw} − ${monster.armorReduction} armor).`
+    : `*${quest.scene.monster_name}* hits back for *${monster.final}*.`;
 
   if (playerHpAfter <= 0) {
     return resolveDeath(payload, env, ctx, character, quest, fighters, [playerLine, monsterLine]);
   }
 
   await setCharacterHp(env.DB, payload.user_id, playerHpAfter);
-  await appendLog(env.DB, quest.id, "monster", "attack", `${monsterRoll} dmg`);
+  await appendLog(env.DB, quest.id, "monster", "attack", `${monster.final} dmg`);
 
   const ephemeralLines = [
     playerLine,
@@ -561,11 +571,11 @@ async function handleCombat(
   const statBlock = `_${quest.scene.monster_name}: ${Math.max(0, newMonsterHp)}/${quest.scene.monster_max_hp} HP • ${character.name}: ${playerHpAfter}/${character.max_hp} HP_`;
 
   ctx.waitUntil((async () => {
-    const flavor = await flavorHit(env.AI, character, quest.scene.monster_name, isMagic ? "cast" : "attack", isCrit);
+    const flavor = await flavorHit(env.AI, character, quest.scene.monster_name, isMagic ? "cast" : "attack", hit.isCrit);
     const phaseLine = bossPhaseTransition
       ? `\n👑 *Phase 2!* ${await flavorBossPhase(env.AI, quest.scene.monster_name)}`
       : "";
-    const text = `${isCrit ? "💥 " : ""}${flavor}${phaseLine}\n${statBlock}`;
+    const text = `${hit.isCrit ? "💥 " : ""}${flavor}${phaseLine}\n${statBlock}`;
     await postToThread(env, quest, text);
   })());
 
@@ -604,11 +614,15 @@ async function resolveFlee(
   }
 
   // Failed flee → free monster hit. Static narration (low-stakes comic beat).
-  const rawDmg = rollDice(4) + quest.scene.tier + Math.floor((fighters.length - 1) / 2);
-  const armorReduction = equippedArmor ? Math.floor(equippedArmor.power / 2) : 0;
-  const monsterRoll = Math.max(1, rawDmg - armorReduction);
-  const playerHpAfter = character.hp - monsterRoll;
-  const intro = `🪤 <@${payload.user_id}> trips on the way out. *${quest.scene.monster_name}* lands a free hit for *${monsterRoll}*.`;
+  const monster = resolveMonsterHit(
+    quest.scene.tier,
+    fighters.length,
+    equippedArmor?.power ?? 0,
+    quest.scene.variant === "boss" && quest.scene.boss_phase === 2,
+    rollDice,
+  );
+  const playerHpAfter = character.hp - monster.final;
+  const intro = `🪤 <@${payload.user_id}> trips on the way out. *${quest.scene.monster_name}* lands a free hit for *${monster.final}*.`;
 
   if (playerHpAfter <= 0) {
     return resolveDeath(payload, env, ctx, character, quest, fighters, [intro]);
@@ -748,8 +762,9 @@ async function resolveGauntletAdvance(
     upcoming_waves: remaining,
   };
 
-  // Persist the new wave directly via the same scene_json update used for HP changes.
-  await updateMonsterHp(env.DB, quest.id, updatedScene, next.max_hp);
+  // Reached only after a kill-blow conditional update succeeded, so no concurrent
+  // writer is possible. saveScene (unconditional) is correct here.
+  await saveScene(env.DB, quest.id, updatedScene);
   await appendLog(env.DB, quest.id, payload.user_id, "wave_advance", `wave ${newWave}/${totalWaves}`);
 
   const ephemeralLines = [
@@ -794,7 +809,10 @@ async function resolveExpeditionToTreasure(
     scene: treasureNode.scene,
     monster_hp: 0,
   };
-  await saveScene(env.DB, quest.id, updatedScene);
+  // Reached only after a kill-blow conditional update succeeded, so no concurrent
+  // writer is possible — but use trySaveExpeditionAdvance anyway for symmetry with
+  // the other expedition advance sites.
+  await trySaveExpeditionAdvance(env.DB, quest.id, updatedScene, exp.current);
   await appendLog(env.DB, quest.id, payload.user_id, "expedition", `→ treasure`);
 
   const lootLines = (treasureNode.loot_options ?? []).map((l, i) => {
@@ -898,14 +916,12 @@ async function handleChoose(
     monster_hp: nextNode.type === "combat" ? quest.scene.monster_max_hp : 0,
   };
 
-  // Atomic-ish: only proceed if the node hasn't already been chosen.
-  // We re-fetch + check current to guard against double-choose races.
-  const fresh = await getActiveQuestForCharacter(env.DB, payload.user_id);
-  if (!fresh || fresh.scene.expedition?.current !== exp.current) {
+  // Atomic guard: write only lands if expedition.current still equals the value we
+  // read. A racing /dnd choose for the same fork will fail the WHERE clause.
+  const advanced = await trySaveExpeditionAdvance(env.DB, quest.id, updatedScene, exp.current);
+  if (!advanced) {
     return ephemeral("Someone else already chose for the party.");
   }
-
-  await saveScene(env.DB, quest.id, updatedScene);
   await appendLog(env.DB, quest.id, payload.user_id, "choose", `${idx}: ${chosen}`);
 
   ctx.waitUntil((async () => {
@@ -968,13 +984,20 @@ async function handleTake(
     return ephemeral(`Usage: \`/dnd take <1-${options.length}>\`.`);
   }
 
-  // Race guard: only proceed if treasure node hasn't already been resolved.
-  const fresh = await getActiveQuestForCharacter(env.DB, payload.user_id);
-  if (!fresh || fresh.scene.expedition?.current !== exp.current) {
+  const choice = options[idx - 1];
+
+  // Race guard FIRST — only the winning /dnd take advances the expedition. Two
+  // simultaneous takers would otherwise both insert items and both call victory.
+  const updatedScene: SceneJson = {
+    ...quest.scene,
+    expedition: { ...exp, current: exp.current + 1 },
+  };
+  const advanced = await trySaveExpeditionAdvance(env.DB, quest.id, updatedScene, exp.current);
+  if (!advanced) {
     return ephemeral("Someone else already claimed the treasure.");
   }
 
-  const choice = options[idx - 1];
+  // Past the guard — safe to mutate inventory + resolve victory exactly once.
   const item = await addItem(env.DB, {
     character_id: payload.user_id,
     item_name: choice.name,
@@ -983,13 +1006,6 @@ async function handleTake(
     rarity: choice.rarity,
     flavor: choice.flavor,
   });
-
-  // Mark expedition as past treasure so /dnd take is rejected next time.
-  const updatedScene: SceneJson = {
-    ...quest.scene,
-    expedition: { ...exp, current: exp.current + 1 },
-  };
-  await saveScene(env.DB, quest.id, updatedScene);
 
   await resolveExpeditionVictory(payload, env, ctx, character, item, quest);
 
@@ -1024,7 +1040,7 @@ async function resolveDeath(
     );
     resultTail = `_💀💀 *${character.name}* the ${character.class} is no more — slain by ${quest.scene.monster_name}. Roll a new hero with \`/dnd roll\`._`;
   } else {
-    await setCharacterHp(env.DB, payload.user_id, 0);
+    // Note: applySoftDeath sets hp = max_hp (post-recovery). No need to write 0 first.
     const scar = generateScar(quest.scene.monster_name);
     const { goldLost, itemLost } = await applySoftDeath(env.DB, character, scar, DOWNED_COOLDOWN_MS);
     await appendLog(env.DB, quest.id, payload.user_id, "death", `soft, -${goldLost} gold`);
@@ -1210,6 +1226,18 @@ async function handleShop(
 }
 
 async function restockShop(env: Env, channelId: string): Promise<void> {
+  // Idempotency guard: if another concurrent /dnd shop already kicked off a restock
+  // (rows with generated_at in the last 60s), bail. Without this, N near-simultaneous
+  // /dnd shop calls would each generate their own batch of stock and the channel would
+  // see 5N items. The window between this check and the eventual insertShopStock is
+  // small (~AI latency) but bounded — for an 8-person team this resolves the
+  // thundering-herd cleanly without a separate lock table.
+  const recent = await env.DB
+    .prepare("SELECT 1 FROM shop_stock WHERE channel_id = ? AND generated_at > ? LIMIT 1")
+    .bind(channelId, Date.now() - 60_000)
+    .first();
+  if (recent) return;
+
   const tier = Math.max(2, await averageCharacterLevel(env.DB));
   const generatedAt = Date.now();
   const items: Parameters<typeof insertShopStock>[1] = [];
@@ -1262,11 +1290,23 @@ async function handleBuy(
     return ephemeral(`Not enough gold — *${stock.item_name}* costs ${stock.price}g, you have ${character.gold}g.`);
   }
 
-  // Atomic claim — if someone else bought it between the check and now, claim returns false.
+  // Two-stage atomic purchase:
+  //   1. Claim the stock row (prevents two players from buying the same item).
+  //   2. Conditionally deduct gold (prevents a player from buying two items in
+  //      parallel that together exceed their balance).
+  // If gold deduct fails after the claim succeeds, release the claim so the item
+  // goes back into the shop.
   const claimed = await claimShopItem(env.DB, stock.id, payload.user_id);
   if (!claimed) return ephemeral(`*${stock.item_name}* was just bought by someone else.`);
 
-  await deductGold(env.DB, payload.user_id, stock.price);
+  const paid = await tryDeductGold(env.DB, payload.user_id, stock.price);
+  if (!paid) {
+    await releaseShopClaim(env.DB, stock.id);
+    return ephemeral(
+      `Not enough gold — looks like you spent it on something else. *${stock.item_name}* is back in the shop.`,
+    );
+  }
+
   const item = await addItem(env.DB, {
     character_id: payload.user_id,
     item_name: stock.item_name,

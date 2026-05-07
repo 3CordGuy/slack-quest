@@ -217,20 +217,8 @@ export async function createQuest(
   return questId;
 }
 
-export async function updateMonsterHp(
-  db: D1Database,
-  questId: number,
-  scene: SceneJson,
-  newHp: number,
-): Promise<void> {
-  const next = { ...scene, monster_hp: Math.max(0, newHp) };
-  await db
-    .prepare("UPDATE quests SET scene_json = ? WHERE id = ?")
-    .bind(JSON.stringify(next), questId)
-    .run();
-}
-
-// Generic scene save — used by expedition advancement when whole-state mutations happen.
+// Generic scene save — used after a guarded action when no concurrent writer is possible
+// (e.g. wave/treasure advancement that's already gated by a kill-blow conditional update).
 export async function saveScene(
   db: D1Database,
   questId: number,
@@ -240,6 +228,47 @@ export async function saveScene(
     .prepare("UPDATE quests SET scene_json = ? WHERE id = ?")
     .bind(JSON.stringify(scene), questId)
     .run();
+}
+
+// Atomic scene write conditional on the prior monster_hp matching `expectedMonsterHp`.
+// Returns true if the write landed, false if another player got there first (lost-update).
+// Combat actions go through this so two simultaneous attacks can't both apply damage to
+// the same starting HP value.
+export async function tryUpdateScene(
+  db: D1Database,
+  questId: number,
+  scene: SceneJson,
+  expectedMonsterHp: number,
+): Promise<boolean> {
+  const result = await db
+    .prepare(
+      `UPDATE quests SET scene_json = ?
+       WHERE id = ?
+         AND CAST(json_extract(scene_json, '$.monster_hp') AS INTEGER) = ?`,
+    )
+    .bind(JSON.stringify(scene), questId, expectedMonsterHp)
+    .run();
+  return (result.meta.changes ?? 0) > 0;
+}
+
+// Atomic scene write conditional on the expedition's `current` node index matching.
+// Used by /dnd choose and /dnd take so a fast second invoker doesn't overwrite the
+// first vote's advancement.
+export async function trySaveExpeditionAdvance(
+  db: D1Database,
+  questId: number,
+  scene: SceneJson,
+  expectedCurrent: number,
+): Promise<boolean> {
+  const result = await db
+    .prepare(
+      `UPDATE quests SET scene_json = ?
+       WHERE id = ?
+         AND CAST(json_extract(scene_json, '$.expedition.current') AS INTEGER) = ?`,
+    )
+    .bind(JSON.stringify(scene), questId, expectedCurrent)
+    .run();
+  return (result.meta.changes ?? 0) > 0;
 }
 
 export async function setCharacterHp(
@@ -526,6 +555,33 @@ export async function deductGold(
   await db
     .prepare("UPDATE characters SET gold = gold - ?, last_active = ? WHERE slack_user_id = ?")
     .bind(amount, Date.now(), userId)
+    .run();
+}
+
+// Atomic gold deduction. Returns true if the player had enough gold and it was deducted,
+// false if the player's balance fell short (likely from a concurrent purchase). Use this
+// for shop buys so we never go negative on a parallel /dnd buy.
+export async function tryDeductGold(
+  db: D1Database,
+  userId: string,
+  amount: number,
+): Promise<boolean> {
+  const result = await db
+    .prepare(
+      `UPDATE characters SET gold = gold - ?, last_active = ?
+       WHERE slack_user_id = ? AND gold >= ?`,
+    )
+    .bind(amount, Date.now(), userId, amount)
+    .run();
+  return (result.meta.changes ?? 0) > 0;
+}
+
+// Reverses a successful claimShopItem. Used to refund a stock claim when the gold
+// deduction fails after the claim succeeded.
+export async function releaseShopClaim(db: D1Database, itemId: number): Promise<void> {
+  await db
+    .prepare("UPDATE shop_stock SET bought_by = NULL WHERE id = ?")
+    .bind(itemId)
     .run();
 }
 

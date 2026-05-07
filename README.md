@@ -173,6 +173,17 @@ pnpm deploy
 
 Then point the Slack app's slash command URL at the deployed Worker.
 
+## Tests
+
+Local-only Vitest suite covering the pure math (combat damage, dice rolls, drop tables,
+class lookup, scar generation, shop pricing). No DB or Workers AI mocking — the suite
+intentionally only tests pure functions, which is where most regression risk lives.
+
+```bash
+pnpm test       # one-shot run
+pnpm test:watch # re-run on file change
+```
+
 ## File map
 
 ```

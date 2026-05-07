@@ -7,6 +7,8 @@
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
     "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "db:create": "wrangler d1 create slack-quest",
     "db:migrate:local": "wrangler d1 migrations apply slack-quest --local",
     "db:migrate:remote": "wrangler d1 migrations apply slack-quest --remote"
@@ -17,6 +19,7 @@
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20250101.0",
     "typescript": "^5.6.0",
+    "vitest": "^4.1.5",
     "wrangler": "^3.95.0"
   }
 }
