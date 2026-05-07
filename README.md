@@ -20,23 +20,29 @@ Cloudflare Workers + D1 + Workers AI. No real coworkers as NPCs — names are ge
 
 ## Current status
 
-v1 scaffold. What works:
+What works:
 
 - `/dnd roll` — create a character with a random class + generated name.
 - `/dnd me` — show your sheet.
 - `/dnd quest [elite]` — kick off a quest. The bot generates an opening scene with Workers AI
   and posts it to the channel. The thread + monster state is persisted.
-- `/dnd help` — list commands.
+- `/dnd attack` — 1d6 + class `attack_mod`, crit ×2 on a natural 6.
+- `/dnd cast` — 1d8 + class `magic_mod`, crit ×2 on a natural 8.
+- `/dnd flee` — 1d2; on a 1 you escape (quest fails, no penalty), on a 2 the monster gets a
+  free hit and the quest continues.
+- Combat resolves a player turn then a monster turn (1d4 + tier). Updates post in the quest
+  thread; the invoker also gets an ephemeral copy.
+- **Soft death** at 0 HP on standard quests: 25% gold loss, drop a random inventory item,
+  +1 scar, 12h `downed_until` cooldown, HP restored to max for next time.
+- **Perma-death** at 0 HP on elite quests: character row deleted (cascades inventory + party).
+- Level-up: granted automatically when XP crosses the threshold (`xpForLevel` in `flavor.ts`).
+  Each level adds 1d6 to max HP and refills the bar.
 
-What's stubbed for v2 (deliberately, not by accident):
+Still stubbed:
 
-- In-quest combat actions (`/dnd attack`, `/dnd cast`, etc.) — schema is ready, command
-  dispatch needs writing.
-- Scar awarding + downed-timer enforcement on actual HP-zero.
-- Inventory drops + level-up flow.
-- Elite quest perma-death cleanup.
-
-See `src/commands.ts` for the dispatch table — that's where `attack` and friends slot in.
+- Inventory drops *on victory* (defeats already drop items via the soft-death penalty).
+- `/dnd join @thread` for multiplayer parties — schema's there (`quest_party`), dispatch isn't.
+- Item rarity tables, equipment slots, anything resembling shopping.
 
 ## Setup
 
