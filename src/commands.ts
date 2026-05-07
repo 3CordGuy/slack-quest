@@ -20,6 +20,7 @@ import {
 import {
   addGold,
   addItem,
+  addShield,
   appendLog,
   applySoftDeath,
   averageCharacterLevel,
@@ -42,6 +43,7 @@ import {
   getLeaderboard,
   getQuestParty,
   getShopItem,
+  healCharacter,
   insertShopStock,
   isFighter,
   joinQuest,
@@ -49,9 +51,11 @@ import {
   refillMana,
   releaseShopClaim,
   removeItem,
+  reviveCharacter,
   saveScene,
   scaleMonsterForJoin,
   setCharacterHp,
+  setCharacterHpAndShield,
   trySaveExpeditionAdvance,
   tryDeductGold,
   tryDeductMana,
@@ -66,7 +70,15 @@ import {
   type SceneJson,
   type ShopItem,
 } from "./db";
-import { isBossPhaseTransition, resolveMonsterHit, resolvePlayerHit, resolveSignature } from "./combat";
+import {
+  applyDamageWithShield,
+  isBossPhaseTransition,
+  resolveHeal,
+  resolveMonsterHit,
+  resolvePlayerHit,
+  resolveShield,
+  resolveSignature,
+} from "./combat";
 import {
   classByName,
   dropChance,
@@ -81,6 +93,7 @@ import {
   xpForLevel,
   MAX_MANA_CAP,
   RARITY_BADGE,
+  SHIELD_CAP_MULTIPLIER,
 } from "./flavor";
 import { postMessage, respondToCommand, type SlashCommandPayload } from "./slack";
 
@@ -121,6 +134,9 @@ function helpText(cmd: string): string {
     `• \`${cmd} cast\` — channel magic (1d8 + mag_mod + weapon power, crit on nat 8)`,
     `• \`${cmd} flee\` — try to escape (1d2; on fail you take a free hit)`,
     `• \`${cmd} signature\` (alias \`sig\`) — your class's signature ability (costs 1 mana, refills between quests)`,
+    `• \`${cmd} heal [@user]\` — restore 1d6 + magic_mod HP on a party member (costs 1 mana, default self)`,
+    `• \`${cmd} shield [@user]\` — buff 1d6 + magic_mod absorbing HP on a party member (costs 1 mana, default self)`,
+    `• \`${cmd} revive <id> @user\` — bring a downed party member back, consuming a revive item`,
     `• \`${cmd} inventory\` — list your items (equipped marked ✅)`,
     `• \`${cmd} equip <id>\` — equip a weapon or armor by inventory id`,
     `• \`${cmd} use <id>\` — use a consumable (free action, no cooldown)`,
@@ -159,6 +175,12 @@ export async function handleCommand(
     case "signature":
     case "sig":
       return handleCombat(payload, env, ctx, "signature");
+    case "heal":
+      return handleHeal(payload, args, env, ctx);
+    case "shield":
+      return handleShield(payload, args, env, ctx);
+    case "revive":
+      return handleRevive(payload, args, env, ctx);
     case "join":
       return handleJoin(payload, env, ctx);
     case "party":
@@ -628,26 +650,33 @@ async function handleCombat(
     updatedScene.variant === "boss" && updatedScene.boss_phase === 2,
     rollDice,
   );
-  const playerHpAfter = character.hp - monster.final;
+  // Shield absorbs damage before HP. Both fields are written together below.
+  const dmg = applyDamageWithShield(monster.final, character.shield, character.hp);
+  const playerHpAfter = dmg.newHp;
 
-  const monsterLine = monster.armorReduction > 0
-    ? `*${quest.scene.monster_name}* hits back for *${monster.final}* (${monster.raw} − ${monster.armorReduction} armor).`
-    : `*${quest.scene.monster_name}* hits back for *${monster.final}*.`;
+  const armorPart = monster.armorReduction > 0
+    ? ` (${monster.raw} − ${monster.armorReduction} armor)`
+    : "";
+  const shieldPart = dmg.shieldAbsorbed > 0
+    ? ` — *${dmg.shieldAbsorbed}* absorbed by shield, *${dmg.hpDamage}* to HP`
+    : "";
+  const monsterLine = `*${quest.scene.monster_name}* hits back for *${monster.final}*${armorPart}${shieldPart}.`;
 
   if (playerHpAfter <= 0) {
     return resolveDeath(payload, env, ctx, character, quest, fighters, [playerLine, monsterLine]);
   }
 
-  await setCharacterHp(env.DB, payload.user_id, playerHpAfter);
+  await setCharacterHpAndShield(env.DB, payload.user_id, playerHpAfter, dmg.newShield);
   await appendLog(env.DB, quest.id, "monster", "attack", `${monster.final} dmg`);
 
+  const shieldDisplay = dmg.newShield > 0 ? ` (🛡️${dmg.newShield})` : "";
   const ephemeralLines = [
     playerLine,
     `${quest.scene.monster_name}: ${Math.max(0, newMonsterHp)}/${quest.scene.monster_max_hp} HP`,
     monsterLine,
-    `${character.name}: ${playerHpAfter}/${character.max_hp} HP`,
+    `${character.name}: ${playerHpAfter}/${character.max_hp} HP${shieldDisplay}`,
   ];
-  const statBlock = `_${quest.scene.monster_name}: ${Math.max(0, newMonsterHp)}/${quest.scene.monster_max_hp} HP • ${character.name}: ${playerHpAfter}/${character.max_hp} HP_`;
+  const statBlock = `_${quest.scene.monster_name}: ${Math.max(0, newMonsterHp)}/${quest.scene.monster_max_hp} HP • ${character.name}: ${playerHpAfter}/${character.max_hp} HP${shieldDisplay}_`;
 
   ctx.waitUntil((async () => {
     const flavor = signatureName
@@ -704,16 +733,21 @@ async function resolveFlee(
     quest.scene.variant === "boss" && quest.scene.boss_phase === 2,
     rollDice,
   );
-  const playerHpAfter = character.hp - monster.final;
-  const intro = `🪤 <@${payload.user_id}> trips on the way out. *${quest.scene.monster_name}* lands a free hit for *${monster.final}*.`;
+  const dmg = applyDamageWithShield(monster.final, character.shield, character.hp);
+  const playerHpAfter = dmg.newHp;
+  const shieldPart = dmg.shieldAbsorbed > 0
+    ? ` (${dmg.shieldAbsorbed} absorbed by shield)`
+    : "";
+  const intro = `🪤 <@${payload.user_id}> trips on the way out. *${quest.scene.monster_name}* lands a free hit for *${monster.final}*${shieldPart}.`;
 
   if (playerHpAfter <= 0) {
     return resolveDeath(payload, env, ctx, character, quest, fighters, [intro]);
   }
 
-  await setCharacterHp(env.DB, payload.user_id, playerHpAfter);
+  await setCharacterHpAndShield(env.DB, payload.user_id, playerHpAfter, dmg.newShield);
   await appendLog(env.DB, quest.id, payload.user_id, "flee", "failed");
-  const text = `${intro}\n${character.name}: ${playerHpAfter}/${character.max_hp} HP`;
+  const shieldDisplay = dmg.newShield > 0 ? ` (🛡️${dmg.newShield})` : "";
+  const text = `${intro}\n${character.name}: ${playerHpAfter}/${character.max_hp} HP${shieldDisplay}`;
   ctx.waitUntil(postToThread(env, quest, text));
   return ephemeral(text);
 }
@@ -1457,6 +1491,186 @@ async function handleSell(
   );
 }
 
+// Slack @ mentions in slash text come through as <@U123ABC> or <@U123ABC|name>.
+// Extract the user id (or null if no mention is present).
+const MENTION_RX = /<@(U[A-Z0-9]+)(?:\|[^>]+)?>/;
+function parseMention(text: string): string | null {
+  const m = MENTION_RX.exec(text);
+  return m?.[1] ?? null;
+}
+
+// Shared validation for heal/shield: target must be on the same active quest.
+async function resolveSupportTarget(
+  env: Env,
+  invoker: Character,
+  invokerQuest: ActiveQuest,
+  args: string[],
+): Promise<{ target: Character } | { error: string }> {
+  const targetId = parseMention(args.join(" ")) ?? invoker.slack_user_id;
+  const target = targetId === invoker.slack_user_id
+    ? invoker
+    : await getCharacter(env.DB, targetId);
+  if (!target) return { error: "Target hasn't rolled a character yet." };
+  const targetQuest = targetId === invoker.slack_user_id
+    ? invokerQuest
+    : await getActiveQuestForCharacter(env.DB, targetId);
+  if (!targetQuest || targetQuest.id !== invokerQuest.id) {
+    return { error: `*${target.name}* isn't on your quest.` };
+  }
+  return { target };
+}
+
+async function handleHeal(
+  payload: SlashCommandPayload,
+  args: string[],
+  env: Env,
+  ctx: ExecutionContext,
+): Promise<CommandResponse> {
+  const character = await getCharacter(env.DB, payload.user_id);
+  if (!character) return ephemeral(`You need to \`${payload.command} roll\` a character first.`);
+  if (!isFighter(character)) return ephemeral("You're downed and can't act.");
+
+  const quest = await getActiveQuestForCharacter(env.DB, payload.user_id);
+  if (!quest) return ephemeral("You're not on an active quest.");
+
+  const cooldown = await cooldownRemaining(env.DB, quest.id, payload.user_id, ACTION_COOLDOWN_MS);
+  if (cooldown > 0) {
+    return ephemeral(`⏳ Catching your breath — try again in ${Math.ceil(cooldown / 1000)}s.`);
+  }
+  if (character.mana < 1) {
+    return ephemeral(`Out of mana. Mana refills between quests. (${character.mana}/${character.max_mana})`);
+  }
+
+  const resolved = await resolveSupportTarget(env, character, quest, args);
+  if ("error" in resolved) return ephemeral(resolved.error);
+  const { target } = resolved;
+  if (!isFighter(target)) {
+    return ephemeral(`*${target.name}* is downed — needs \`${payload.command} revive <id> @${target.name}\` (with a revive item) instead.`);
+  }
+  if (target.hp >= target.max_hp) {
+    return ephemeral(`*${target.name}* is already at full HP.`);
+  }
+
+  const cls = classByName(character.class);
+  const heal = resolveHeal(cls.magic_mod, rollDice);
+  const healed = await healCharacter(env.DB, target, heal.amount);
+  await tryDeductMana(env.DB, payload.user_id, 1);
+  await appendLog(env.DB, quest.id, payload.user_id, "heal", `+${healed} HP → ${target.name}`);
+
+  const targetTag = target.slack_user_id === payload.user_id
+    ? `themselves`
+    : `<@${target.slack_user_id}>`;
+  const text = `💚 <@${payload.user_id}> heals ${targetTag} for *${healed}* HP (${heal.roll} + ${cls.magic_mod}m). _${target.name}: ${target.hp + healed}/${target.max_hp}_`;
+  ctx.waitUntil(postToThread(env, quest, text));
+  return ephemeral(text);
+}
+
+async function handleShield(
+  payload: SlashCommandPayload,
+  args: string[],
+  env: Env,
+  ctx: ExecutionContext,
+): Promise<CommandResponse> {
+  const character = await getCharacter(env.DB, payload.user_id);
+  if (!character) return ephemeral(`You need to \`${payload.command} roll\` a character first.`);
+  if (!isFighter(character)) return ephemeral("You're downed and can't act.");
+
+  const quest = await getActiveQuestForCharacter(env.DB, payload.user_id);
+  if (!quest) return ephemeral("You're not on an active quest.");
+
+  const cooldown = await cooldownRemaining(env.DB, quest.id, payload.user_id, ACTION_COOLDOWN_MS);
+  if (cooldown > 0) {
+    return ephemeral(`⏳ Catching your breath — try again in ${Math.ceil(cooldown / 1000)}s.`);
+  }
+  if (character.mana < 1) {
+    return ephemeral(`Out of mana. Mana refills between quests. (${character.mana}/${character.max_mana})`);
+  }
+
+  const resolved = await resolveSupportTarget(env, character, quest, args);
+  if ("error" in resolved) return ephemeral(resolved.error);
+  const { target } = resolved;
+  if (!isFighter(target)) {
+    return ephemeral(`*${target.name}* is downed — can't shield a downed character.`);
+  }
+
+  const cls = classByName(character.class);
+  const shield = resolveShield(cls.magic_mod, rollDice);
+  const cap = target.max_hp * SHIELD_CAP_MULTIPLIER;
+  const added = await addShield(env.DB, target, shield.amount, cap);
+  await tryDeductMana(env.DB, payload.user_id, 1);
+  await appendLog(env.DB, quest.id, payload.user_id, "shield", `+${added} sh → ${target.name}`);
+
+  const targetTag = target.slack_user_id === payload.user_id
+    ? `themselves`
+    : `<@${target.slack_user_id}>`;
+  const wasted = shield.amount - added;
+  const wastedNote = wasted > 0 ? ` (${wasted} over the cap)` : "";
+  const text = `🛡️ <@${payload.user_id}> shields ${targetTag} for *${added}*${wastedNote} (${shield.roll} + ${cls.magic_mod}m). _${target.name}: 🛡️${target.shield + added}/${cap}_`;
+  ctx.waitUntil(postToThread(env, quest, text));
+  return ephemeral(text);
+}
+
+async function handleRevive(
+  payload: SlashCommandPayload,
+  args: string[],
+  env: Env,
+  ctx: ExecutionContext,
+): Promise<CommandResponse> {
+  const character = await getCharacter(env.DB, payload.user_id);
+  if (!character) return ephemeral(`You need to \`${payload.command} roll\` a character first.`);
+  if (!isFighter(character)) return ephemeral("You're downed yourself — can't revive anyone.");
+
+  const quest = await getActiveQuestForCharacter(env.DB, payload.user_id);
+  if (!quest) return ephemeral("You're not on an active quest.");
+
+  // Cooldown applies — revive is a combat-tier action.
+  const cooldown = await cooldownRemaining(env.DB, quest.id, payload.user_id, ACTION_COOLDOWN_MS);
+  if (cooldown > 0) {
+    return ephemeral(`⏳ Catching your breath — try again in ${Math.ceil(cooldown / 1000)}s.`);
+  }
+
+  const itemId = parseInt(args[0] ?? "", 10);
+  if (Number.isNaN(itemId)) {
+    return ephemeral(`Usage: \`${payload.command} revive <inventory id> @user\`.`);
+  }
+
+  const targetId = parseMention(args.slice(1).join(" "));
+  if (!targetId) {
+    return ephemeral(`Need a target — \`${payload.command} revive ${itemId} @user\`.`);
+  }
+  if (targetId === payload.user_id) {
+    return ephemeral("You can't revive yourself — find a partymate.");
+  }
+
+  const item = await getItem(env.DB, itemId, payload.user_id);
+  if (!item) return ephemeral("No such item in your inventory.");
+  if (item.item_type !== "revive") {
+    return ephemeral(`*${item.item_name}* isn't a revive item.`);
+  }
+
+  const target = await getCharacter(env.DB, targetId);
+  if (!target) return ephemeral("Target hasn't rolled a character.");
+  if (!target.downed_until || target.downed_until <= Date.now()) {
+    return ephemeral(`*${target.name}* isn't downed.`);
+  }
+
+  // Same active quest only (downed character is still on quest_party).
+  const targetQuest = await getActiveQuestForCharacter(env.DB, targetId);
+  if (!targetQuest || targetQuest.id !== quest.id) {
+    return ephemeral(`*${target.name}* isn't on your quest.`);
+  }
+
+  const restoredHp = await reviveCharacter(env.DB, target, item.power);
+  await removeItem(env.DB, item.id);
+  // Don't deduct mana — the item itself is the gate.
+  await appendLog(env.DB, quest.id, payload.user_id, "revive", `${item.item_name} → ${target.name}`);
+
+  const text = `🌱 <@${payload.user_id}> uses *${item.item_name}* — <@${target.slack_user_id}> stirs and rejoins the fight at *${restoredHp}/${target.max_hp}* HP.`;
+  // Revive is a big beat — broadcast.
+  ctx.waitUntil(postToThread(env, quest, text, { broadcast: true }));
+  return ephemeral(text);
+}
+
 async function handleLeaderboard(payload: SlashCommandPayload, env: Env): Promise<CommandResponse> {
   const top = await getLeaderboard(env.DB, 10);
   if (top.length === 0) return ephemeral(`No heroes yet. Be the first — \`${payload.command} roll\`.`);
@@ -1498,6 +1712,7 @@ async function postToThread(
 function powerLabel(itemType: Item["item_type"], power: number): string {
   if (itemType === "consumable") return `heals ${power}`;
   if (itemType === "magic") return `+${power} max mana`;
+  if (itemType === "revive") return `revives @ ${power}% HP`;
   return `+${power}`;
 }
 

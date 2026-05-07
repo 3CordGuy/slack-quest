@@ -70,10 +70,10 @@ describe("dropChance", () => {
 });
 
 describe("rollItem", () => {
-  it("type is one of weapon | armor | consumable | magic", () => {
-    for (let i = 0; i < 100; i++) {
+  it("type is one of weapon | armor | consumable | magic | revive", () => {
+    for (let i = 0; i < 200; i++) {
       const r = rollItem(2);
-      expect(["weapon", "armor", "consumable", "magic"]).toContain(r.type);
+      expect(["weapon", "armor", "consumable", "magic", "revive"]).toContain(r.type);
     }
   });
 
@@ -108,13 +108,16 @@ describe("rollItem", () => {
     expect(highTier).toBeGreaterThan(lowTier);
   });
 
-  it("consumable power exceeds weapon/armor power for the same rarity", () => {
-    // Weapons/armor cap at +7 (rare); rare consumables go up to 35.
+  it("rare consumable power exceeds any weapon/armor power", () => {
+    // Weapons/armor cap at +7 (rare); rare consumables go up to 35. Magic + revive
+    // use power for different mechanics (max_mana / HP%) so they're excluded.
     let maxWeaponArmor = 0;
     let minRareConsumable = Infinity;
-    for (let i = 0; i < 200; i++) {
+    for (let i = 0; i < 400; i++) {
       const r = rollItem(2);
-      if (r.type !== "consumable") maxWeaponArmor = Math.max(maxWeaponArmor, r.power);
+      if (r.type === "weapon" || r.type === "armor") {
+        maxWeaponArmor = Math.max(maxWeaponArmor, r.power);
+      }
       if (r.type === "consumable" && r.rarity === "rare") {
         minRareConsumable = Math.min(minRareConsumable, r.power);
       }

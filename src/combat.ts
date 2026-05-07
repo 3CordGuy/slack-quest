@@ -65,6 +65,44 @@ export function isBossPhaseTransition(
   return oldHp >= monsterMaxHp / 2 && newHp < monsterMaxHp / 2;
 }
 
+// Heal: 1d6 + magic_mod HP restored. Caster's class mod is the lever — physical
+// classes (mag_mod 0) heal for 1-7; casters (mag_mod 2) heal for 3-8.
+export function resolveHeal(
+  magicMod: number,
+  rollFn: (sides: number) => number,
+): { amount: number; roll: number } {
+  const roll = rollFn(6);
+  const amount = Math.max(1, roll + magicMod);
+  return { amount, roll };
+}
+
+// Shield: 1d6 + magic_mod absorbing HP. Same formula shape as heal so caster classes
+// are good at both, intentional.
+export function resolveShield(
+  magicMod: number,
+  rollFn: (sides: number) => number,
+): { amount: number; roll: number } {
+  const roll = rollFn(6);
+  const amount = Math.max(1, roll + magicMod);
+  return { amount, roll };
+}
+
+// Applies incoming raw damage through the shield buffer first, then HP. Shield is
+// consumed by the absorbed amount; HP eats whatever's left over. Used by both the
+// monster turn and the failed-flee free hit.
+export function applyDamageWithShield(
+  rawDamage: number,
+  currentShield: number,
+  currentHp: number,
+): { newShield: number; newHp: number; shieldAbsorbed: number; hpDamage: number } {
+  const dmg = Math.max(0, rawDamage);
+  const shieldAbsorbed = Math.min(currentShield, dmg);
+  const newShield = currentShield - shieldAbsorbed;
+  const hpDamage = dmg - shieldAbsorbed;
+  const newHp = currentHp - hpDamage;
+  return { newShield, newHp, shieldAbsorbed, hpDamage };
+}
+
 export interface SignatureResult {
   damage: number;
   formula: string; // human-readable for the ephemeral / log

@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { isBossPhaseTransition, resolveMonsterHit, resolvePlayerHit, resolveSignature } from "./combat";
+import {
+  applyDamageWithShield,
+  isBossPhaseTransition,
+  resolveHeal,
+  resolveMonsterHit,
+  resolvePlayerHit,
+  resolveShield,
+  resolveSignature,
+} from "./combat";
 
 // Deterministic dice: returns the same fixed value for any size.
 const constantRoll = (value: number) => () => value;
@@ -140,6 +148,59 @@ describe("resolveSignature", () => {
     // weaponPower<0 treated as 0; partySize<1 treated as 1
     const ok = resolveSignature("frontend_bard", 0, 0, -10, 1, 0, 30, r(3));
     expect(ok.damage).toBeGreaterThan(0);
+  });
+});
+
+describe("resolveHeal", () => {
+  const r = (val: number) => () => val;
+
+  it("base heal is 1d6 + magic_mod", () => {
+    expect(resolveHeal(2, r(4)).amount).toBe(6);
+    expect(resolveHeal(0, r(3)).amount).toBe(3);
+  });
+
+  it("never heals less than 1, even with negative mod", () => {
+    expect(resolveHeal(-10, r(1)).amount).toBe(1);
+  });
+});
+
+describe("resolveShield", () => {
+  const r = (val: number) => () => val;
+
+  it("base shield is 1d6 + magic_mod", () => {
+    expect(resolveShield(2, r(5)).amount).toBe(7);
+  });
+
+  it("never grants less than 1", () => {
+    expect(resolveShield(-99, r(1)).amount).toBe(1);
+  });
+});
+
+describe("applyDamageWithShield", () => {
+  it("no shield → all damage hits HP", () => {
+    const r = applyDamageWithShield(7, 0, 20);
+    expect(r).toEqual({ newShield: 0, newHp: 13, shieldAbsorbed: 0, hpDamage: 7 });
+  });
+
+  it("shield fully absorbs small damage", () => {
+    const r = applyDamageWithShield(3, 10, 20);
+    expect(r).toEqual({ newShield: 7, newHp: 20, shieldAbsorbed: 3, hpDamage: 0 });
+  });
+
+  it("shield depletes and the remainder hits HP", () => {
+    const r = applyDamageWithShield(8, 5, 20);
+    expect(r).toEqual({ newShield: 0, newHp: 17, shieldAbsorbed: 5, hpDamage: 3 });
+  });
+
+  it("zero damage is a no-op", () => {
+    const r = applyDamageWithShield(0, 5, 20);
+    expect(r.shieldAbsorbed).toBe(0);
+    expect(r.hpDamage).toBe(0);
+  });
+
+  it("negative damage is clamped to zero (defensive)", () => {
+    const r = applyDamageWithShield(-3, 5, 20);
+    expect(r).toEqual({ newShield: 5, newHp: 20, shieldAbsorbed: 0, hpDamage: 0 });
   });
 });
 

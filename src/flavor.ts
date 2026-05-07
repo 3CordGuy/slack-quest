@@ -44,7 +44,9 @@ export function generateScar(monster: string): string {
 
 // Loot system: deterministic rolls for slot/rarity/power. AI generates name + flavor on top.
 
-export type ItemType = "weapon" | "armor" | "consumable" | "magic";
+export type ItemType = "weapon" | "armor" | "consumable" | "magic" | "revive";
+
+export const SHIELD_CAP_MULTIPLIER = 2; // shield caps at SHIELD_CAP_MULTIPLIER × max_hp
 export type Rarity = "common" | "uncommon" | "rare";
 
 export const MAX_MANA_CAP = 5;
@@ -80,14 +82,16 @@ export interface ItemRoll {
   power: number;
 }
 
-// Slot weights — magic items are rarer than gear/consumables since they grant permanent
-// max_mana increases (capped at MAX_MANA_CAP).
+// Slot weights. Magic items (permanent max_mana boost) and revive items (rare combat
+// life-saver) sit at the bottom of the table on purpose — their effects are stronger
+// than per-fight gear so the drop rates are throttled.
 function rollItemType(): ItemType {
   const r = Math.random();
-  if (r < 0.35) return "weapon";
-  if (r < 0.60) return "armor";
-  if (r < 0.85) return "consumable";
-  return "magic";
+  if (r < 0.32) return "weapon";       // 32%
+  if (r < 0.54) return "armor";        // 22%
+  if (r < 0.79) return "consumable";   // 25%
+  if (r < 0.94) return "magic";        // 15%
+  return "revive";                     //  6%
 }
 
 // Rarity weights skew rarer as the monster tier rises.
@@ -116,6 +120,12 @@ function rollPower(type: ItemType, rarity: Rarity): number {
     if (rarity === "rare") return 3;
     if (rarity === "uncommon") return 2;
     return 1;
+  }
+  if (type === "revive") {
+    // Single-tier revive — power is the % HP restored on use.
+    if (rarity === "rare") return 100;
+    if (rarity === "uncommon") return 75;
+    return 50;
   }
   // weapon | armor
   if (rarity === "rare") return 5 + rollDice(2);          // 6-7
@@ -157,8 +167,18 @@ export const MAGIC_PRICE: Record<Rarity, number> = {
   rare: 500,
 };
 
+// Revive items pull a downed party member back into the fight. Pricier than gear,
+// cheaper than rare magic — they're combat-defining but consumed on use.
+export const REVIVE_PRICE: Record<Rarity, number> = {
+  common: 150,
+  uncommon: 280,
+  rare: 450,
+};
+
 export function priceFor(type: ItemType, rarity: Rarity): number {
-  return type === "magic" ? MAGIC_PRICE[rarity] : SHOP_PRICE[rarity];
+  if (type === "magic") return MAGIC_PRICE[rarity];
+  if (type === "revive") return REVIVE_PRICE[rarity];
+  return SHOP_PRICE[rarity];
 }
 
 export function sellPriceFor(type: ItemType, rarity: Rarity): number {

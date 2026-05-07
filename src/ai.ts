@@ -184,7 +184,7 @@ export async function flavorDeath(
 export async function flavorLootDrop(
   ai: Ai,
   monsterName: string,
-  type: "weapon" | "armor" | "consumable" | "magic",
+  type: "weapon" | "armor" | "consumable" | "magic" | "revive",
   rarity: "common" | "uncommon" | "rare",
   power: number,
 ): Promise<{ name: string; flavor: string }> {
@@ -192,6 +192,7 @@ export async function flavorLootDrop(
     type === "weapon" ? "a weapon (e.g. sword, hammer, dagger, staff, bow, gauntlet)" :
     type === "armor"  ? "armor (e.g. vest, robe, cloak, helm, plating, gloves)" :
     type === "magic"  ? "a magical focus (e.g. tome, crystal, sigil, talisman, rune-stone)" :
+    type === "revive" ? "a revival item (e.g. phoenix down, defib paddles, hot-fix kit, sacred patch)" :
                         "a consumable (e.g. potion, brew, scroll, capsule, energy drink, snack)";
   const rarityHint =
     rarity === "rare" ? "Rare and weighty — name it like a legendary artifact." :
@@ -200,6 +201,7 @@ export async function flavorLootDrop(
   const powerHint =
     type === "consumable" ? `It restores about ${power} HP when used.` :
     type === "magic" ? `It permanently grants +${power} maximum mana when consumed.` :
+    type === "revive" ? `It revives a downed party member to ${power}% of their max HP.` :
     `It grants a +${power} bonus when equipped.`;
 
   const user = [

@@ -55,6 +55,15 @@ What works:
   different formula (Detonate / Smite / Wildgrowth / Crescendo / Manifest / Backstab /
   Bulwark Strike / Hex). Magic-type loot items grant +1/+2/+3 max mana when consumed,
   capped at 5. Level-up adds +1 max mana every 5 levels.
+- `/sq heal [@user]` — restore `1d6 + magic_mod` HP to a party member (defaults to self).
+  Costs 1 mana, shares the combat cooldown. Casters (mag_mod 2) heal best; physical
+  classes can still cast it but for less.
+- `/sq shield [@user]` — buff `1d6 + magic_mod` absorbing HP onto a party member's
+  shield buffer (defaults to self). Same costs as heal. Shield depletes before HP on
+  any incoming damage and persists across actions; capped at 2× target's max HP.
+- `/sq revive <id> @user` — consume a revive item to bring a downed party member back
+  at 50/75/100% HP (rarity-tiered). Item is the gate, no mana cost; shares the combat
+  cooldown. Can't self-revive — has to be a partymate.
 - `/sq party` — show the current quest's roster + HP.
 - `/sq leaderboard` — top 10 heroes by level/XP/gold (channel-visible).
 - Combat resolves a player turn then a monster turn. Monster damage is `1d4 + tier +

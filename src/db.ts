@@ -32,6 +32,7 @@ export interface Character {
   max_hp: number;
   mana: number;
   max_mana: number;
+  shield: number;
   gold: number;
   scars: string[];
   downed_until: number | null;
@@ -282,6 +283,68 @@ export async function setCharacterHp(
     .prepare("UPDATE characters SET hp = ?, last_active = ? WHERE slack_user_id = ?")
     .bind(Math.max(0, hp), Date.now(), userId)
     .run();
+}
+
+// Writes both HP and shield in one statement — used after the monster turn since
+// shield consumption and HP loss are entangled.
+export async function setCharacterHpAndShield(
+  db: D1Database,
+  userId: string,
+  hp: number,
+  shield: number,
+): Promise<void> {
+  await db
+    .prepare("UPDATE characters SET hp = ?, shield = ?, last_active = ? WHERE slack_user_id = ?")
+    .bind(Math.max(0, hp), Math.max(0, shield), Date.now(), userId)
+    .run();
+}
+
+// Heal a target up to max_hp. Returns the actual HP healed (may be less if near max).
+export async function healCharacter(
+  db: D1Database,
+  target: Character,
+  amount: number,
+): Promise<number> {
+  const newHp = Math.min(target.max_hp, target.hp + amount);
+  const healed = newHp - target.hp;
+  await db
+    .prepare("UPDATE characters SET hp = ?, last_active = ? WHERE slack_user_id = ?")
+    .bind(newHp, Date.now(), target.slack_user_id)
+    .run();
+  return healed;
+}
+
+// Add to target's shield buffer, capped at cap. Returns actual shield added.
+export async function addShield(
+  db: D1Database,
+  target: Character,
+  amount: number,
+  cap: number,
+): Promise<number> {
+  const newShield = Math.min(cap, target.shield + amount);
+  const added = newShield - target.shield;
+  await db
+    .prepare("UPDATE characters SET shield = ?, last_active = ? WHERE slack_user_id = ?")
+    .bind(newShield, Date.now(), target.slack_user_id)
+    .run();
+  return added;
+}
+
+// Revives a downed character: clears downed_until, restores HP to a percentage of max.
+export async function reviveCharacter(
+  db: D1Database,
+  target: Character,
+  hpPercent: number,
+): Promise<number> {
+  const restored = Math.max(1, Math.floor(target.max_hp * (hpPercent / 100)));
+  await db
+    .prepare(
+      `UPDATE characters SET hp = ?, downed_until = NULL, last_active = ?
+       WHERE slack_user_id = ?`,
+    )
+    .bind(restored, Date.now(), target.slack_user_id)
+    .run();
+  return restored;
 }
 
 export async function markQuestStatus(
