@@ -22,6 +22,7 @@ import {
   addItem,
   addShield,
   appendLog,
+  applyRest,
   applySoftDeath,
   averageCharacterLevel,
   awardSpoils,
@@ -114,6 +115,7 @@ const GAUNTLET_WAVES = 3;
 const EXPEDITION_LEVEL_REQUIRED = 4;
 const EXPEDITION_FORKS = 3;
 const EXPEDITION_TREASURE_OPTIONS = 2;
+const REST_COOLDOWN_MS = 10 * 60 * 1000; // /sq rest between-quest HP restore cadence
 
 // Help text uses the actual slash command name the operator installed under (e.g. /sq,
 // /quest, /raid). Slack's /dnd is reserved for Do Not Disturb so don't pick that.
@@ -130,13 +132,14 @@ function helpText(cmd: string): string {
     `• \`${cmd} choose <n>\` — pick a fork option in an expedition (first vote wins)`,
     `• \`${cmd} take <n>\` — claim an item from an expedition treasure room`,
     `• \`${cmd} join\` — join the active quest in this channel`,
-    `• \`${cmd} attack\` — strike with weapon (1d6 + atk_mod + weapon power, crit on nat 6)`,
-    `• \`${cmd} cast\` — channel magic (1d8 + mag_mod + weapon power, crit on nat 8)`,
-    `• \`${cmd} flee\` — try to escape (1d2; on fail you take a free hit)`,
+    `• \`${cmd} attack\` — strike with weapon: \`1d6 + atk_mod + weapon\` (crit on nat 6)`,
+    `• \`${cmd} cast\` — channel magic: \`1d8 + mag_mod + weapon\` (crit on nat 8)`,
+    `• \`${cmd} flee\` — try to escape (\`1d2\`; on fail you take a free hit)`,
     `• \`${cmd} signature\` (alias \`sig\`) — your class's signature ability (costs 1 mana, refills between quests)`,
-    `• \`${cmd} heal [@user]\` — restore 1d6 + magic_mod HP on a party member (costs 1 mana, default self)`,
-    `• \`${cmd} shield [@user]\` — buff 1d6 + magic_mod absorbing HP on a party member (costs 1 mana, default self)`,
+    `• \`${cmd} heal [@user]\` — restore \`1d6 + magic_mod\` HP on a party member (costs 1 mana, default self)`,
+    `• \`${cmd} shield [@user]\` — buff \`1d6 + magic_mod\` absorbing HP on a party member (costs 1 mana, default self)`,
     `• \`${cmd} revive <id> @user\` — bring a downed party member back, consuming a revive item`,
+    `• \`${cmd} rest\` — between-quest HP restore (10-minute cooldown, no quest required)`,
     `• \`${cmd} inventory\` — list your items (equipped marked ✅)`,
     `• \`${cmd} equip <id>\` — equip a weapon or armor by inventory id`,
     `• \`${cmd} use <id>\` — use a consumable (free action, no cooldown)`,
@@ -181,6 +184,8 @@ export async function handleCommand(
       return handleShield(payload, args, env, ctx);
     case "revive":
       return handleRevive(payload, args, env, ctx);
+    case "rest":
+      return handleRest(payload, env);
     case "join":
       return handleJoin(payload, env, ctx);
     case "party":
@@ -567,8 +572,8 @@ async function handleCombat(
     }
 
     playerLine = isCrit
-      ? `💥 *${sig.name} CRIT!* <@${payload.user_id}> hits for *${damage}* (${sigResult.formula}, ×2).`
-      : `✨ *${sig.name}* — <@${payload.user_id}> hits for *${damage}* (${sigResult.formula}).`;
+      ? `💥 *${sig.name} CRIT!* <@${payload.user_id}> hits for *${damage}* \`${sigResult.formula} ×2\`.`
+      : `✨ *${sig.name}* — <@${payload.user_id}> hits for *${damage}* \`${sigResult.formula}\`.`;
   } else {
     const isMagic = action === "cast";
     const classMod = isMagic ? cls.magic_mod : cls.attack_mod;
@@ -581,8 +586,8 @@ async function handleCombat(
 
     const modBreakdown = weaponMod > 0 ? `${classMod}+${weaponMod}` : `${hit.totalMod}`;
     playerLine = isCrit
-      ? `💥 *CRIT!* <@${payload.user_id}> ${verb} for *${damage}* (${hit.roll}×2 + ${modBreakdown}).`
-      : `<@${payload.user_id}> ${verb} for *${damage}* (${hit.roll} + ${modBreakdown}).`;
+      ? `💥 *CRIT!* <@${payload.user_id}> ${verb} for *${damage}* \`${hit.roll}×2 + ${modBreakdown}\`.`
+      : `<@${payload.user_id}> ${verb} for *${damage}* \`${hit.roll} + ${modBreakdown}\`.`;
   }
 
   const newMonsterHp = quest.scene.monster_hp - damage;
@@ -655,7 +660,7 @@ async function handleCombat(
   const playerHpAfter = dmg.newHp;
 
   const armorPart = monster.armorReduction > 0
-    ? ` (${monster.raw} − ${monster.armorReduction} armor)`
+    ? ` \`${monster.raw} − ${monster.armorReduction} armor\``
     : "";
   const shieldPart = dmg.shieldAbsorbed > 0
     ? ` — *${dmg.shieldAbsorbed}* absorbed by shield, *${dmg.hpDamage}* to HP`
@@ -736,7 +741,7 @@ async function resolveFlee(
   const dmg = applyDamageWithShield(monster.final, character.shield, character.hp);
   const playerHpAfter = dmg.newHp;
   const shieldPart = dmg.shieldAbsorbed > 0
-    ? ` (${dmg.shieldAbsorbed} absorbed by shield)`
+    ? ` \`${dmg.shieldAbsorbed} absorbed by shield\``
     : "";
   const intro = `🪤 <@${payload.user_id}> trips on the way out. *${quest.scene.monster_name}* lands a free hit for *${monster.final}*${shieldPart}.`;
 
@@ -1560,7 +1565,7 @@ async function handleHeal(
   const targetTag = target.slack_user_id === payload.user_id
     ? `themselves`
     : `<@${target.slack_user_id}>`;
-  const text = `💚 <@${payload.user_id}> heals ${targetTag} for *${healed}* HP (${heal.roll} + ${cls.magic_mod}m). _${target.name}: ${target.hp + healed}/${target.max_hp}_`;
+  const text = `💚 <@${payload.user_id}> heals ${targetTag} for *${healed}* HP \`${heal.roll} + ${cls.magic_mod}m\`. _${target.name}: ${target.hp + healed}/${target.max_hp}_`;
   ctx.waitUntil(postToThread(env, quest, text));
   return ephemeral(text);
 }
@@ -1605,7 +1610,7 @@ async function handleShield(
     : `<@${target.slack_user_id}>`;
   const wasted = shield.amount - added;
   const wastedNote = wasted > 0 ? ` (${wasted} over the cap)` : "";
-  const text = `🛡️ <@${payload.user_id}> shields ${targetTag} for *${added}*${wastedNote} (${shield.roll} + ${cls.magic_mod}m). _${target.name}: 🛡️${target.shield + added}/${cap}_`;
+  const text = `🛡️ <@${payload.user_id}> shields ${targetTag} for *${added}*${wastedNote} \`${shield.roll} + ${cls.magic_mod}m\`. _${target.name}: 🛡️${target.shield + added}/${cap}_`;
   ctx.waitUntil(postToThread(env, quest, text));
   return ephemeral(text);
 }
@@ -1669,6 +1674,42 @@ async function handleRevive(
   // Revive is a big beat — broadcast.
   ctx.waitUntil(postToThread(env, quest, text, { broadcast: true }));
   return ephemeral(text);
+}
+
+// Between-quest HP restore. No mana cost; the 10-minute cooldown is the gate.
+// Rejected during an active quest — use /sq heal or /sq use <consumable> there.
+async function handleRest(payload: SlashCommandPayload, env: Env): Promise<CommandResponse> {
+  const character = await getCharacter(env.DB, payload.user_id);
+  if (!character) return ephemeral(`You need to \`${payload.command} roll\` a character first.`);
+
+  if (character.downed_until && character.downed_until > Date.now()) {
+    return ephemeral("You're downed and recovering — wait the 12h cooldown.");
+  }
+
+  const activeQuest = await getActiveQuestForCharacter(env.DB, payload.user_id);
+  if (activeQuest) {
+    return ephemeral(
+      `Can't rest mid-quest. Try \`${payload.command} use <id>\` for a consumable, or \`${payload.command} heal\` if you have mana.`,
+    );
+  }
+
+  if (character.hp >= character.max_hp) {
+    return ephemeral("Already at full HP — save the rest for when you need it.");
+  }
+
+  const since = character.last_rest_at == null ? Infinity : Date.now() - character.last_rest_at;
+  if (since < REST_COOLDOWN_MS) {
+    const remaining = Math.ceil((REST_COOLDOWN_MS - since) / 1000);
+    const mins = Math.floor(remaining / 60);
+    const secs = remaining % 60;
+    const fmt = mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
+    return ephemeral(`🛏️ You're still catching your breath — next rest in ${fmt}.`);
+  }
+
+  await applyRest(env.DB, payload.user_id);
+  return ephemeral(
+    `🛏️ You rest. HP restored to *${character.max_hp}/${character.max_hp}*. Next rest available in 10 minutes.`,
+  );
 }
 
 async function handleLeaderboard(payload: SlashCommandPayload, env: Env): Promise<CommandResponse> {

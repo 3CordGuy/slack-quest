@@ -36,6 +36,7 @@ export interface Character {
   gold: number;
   scars: string[];
   downed_until: number | null;
+  last_rest_at: number | null;
   created_at: number;
   last_active: number;
 }
@@ -328,6 +329,17 @@ export async function addShield(
     .bind(newShield, Date.now(), target.slack_user_id)
     .run();
   return added;
+}
+
+// Restores HP to max and stamps last_rest_at = now. Caller should pre-check cooldown
+// + active-quest + downed + already-full-HP. The race window between read and write is
+// tiny — worst case two simultaneous /sq rest spam-clicks both succeed; no harm done.
+export async function applyRest(db: D1Database, userId: string): Promise<void> {
+  const now = Date.now();
+  await db
+    .prepare("UPDATE characters SET hp = max_hp, last_rest_at = ?, last_active = ? WHERE slack_user_id = ?")
+    .bind(now, now, userId)
+    .run();
 }
 
 // Revives a downed character: clears downed_until, restores HP to a percentage of max.
