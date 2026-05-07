@@ -89,12 +89,41 @@ export async function createCharacter(
   return row;
 }
 
-export type QuestVariant = "standard" | "boss" | "gauntlet";
+export type QuestVariant = "standard" | "boss" | "gauntlet" | "expedition";
 
 export interface GauntletWave {
   name: string;
   max_hp: number;
   scene: string;
+}
+
+// An expedition node is one screen of an expedition quest. Types map to player actions:
+//   "fork" → players use /dnd choose 1|2 to advance
+//   "combat" → players use /dnd attack/cast (existing combat resolves it)
+//   "treasure" → players use /dnd take 1|2 to claim one item from the chest
+export type ExpeditionNodeType = "fork" | "combat" | "treasure";
+
+export interface ExpeditionNode {
+  type: ExpeditionNodeType;
+  scene: string;
+  // fork-only
+  choices?: string[];
+  // treasure-only — pre-rolled and AI-named at expedition start
+  loot_options?: Array<{
+    name: string;
+    item_type: ItemType;
+    power: number;
+    rarity: Rarity;
+    flavor: string;
+  }>;
+}
+
+export interface ExpeditionState {
+  theme: string;
+  current: number; // index into nodes
+  nodes: ExpeditionNode[];
+  path_taken: string[]; // labels of fork choices
+  // Expedition combat uses scene_json's monster_name/hp/max_hp at the combat node.
 }
 
 export interface SceneJson {
@@ -110,6 +139,8 @@ export interface SceneJson {
   wave?: number;
   total_waves?: number;
   upcoming_waves?: GauntletWave[];
+  // Expedition-only.
+  expedition?: ExpeditionState;
 }
 
 export interface ActiveQuest {
@@ -196,6 +227,18 @@ export async function updateMonsterHp(
   await db
     .prepare("UPDATE quests SET scene_json = ? WHERE id = ?")
     .bind(JSON.stringify(next), questId)
+    .run();
+}
+
+// Generic scene save — used by expedition advancement when whole-state mutations happen.
+export async function saveScene(
+  db: D1Database,
+  questId: number,
+  scene: SceneJson,
+): Promise<void> {
+  await db
+    .prepare("UPDATE quests SET scene_json = ? WHERE id = ?")
+    .bind(JSON.stringify(scene), questId)
     .run();
 }
 

@@ -233,6 +233,75 @@ export async function flavorLootDrop(
   }
 }
 
+// Generates the per-node content of an expedition. The model picks a coherent
+// theme + 5 scenes; we rely on field markers to parse rather than JSON output
+// (llama-3.1-8b is unreliable with strict JSON, very reliable with line markers).
+export interface GeneratedExpeditionScene {
+  scene: string;
+  choices: string[];
+}
+
+export async function generateExpeditionForkScene(
+  ai: Ai,
+  theme: string,
+  pathTaken: string[],
+  sceneIndex: number,
+  totalForks: number,
+): Promise<GeneratedExpeditionScene> {
+  const history = pathTaken.length > 0
+    ? `Choices made so far: ${pathTaken.map((p, i) => `(${i + 1}) ${p}`).join("; ")}.`
+    : "This is the opening scene.";
+
+  const user = [
+    `You are running an expedition quest with the theme: "${theme}".`,
+    `This is fork ${sceneIndex} of ${totalForks}.`,
+    history,
+    "Generate the next scene + 2 choices. Output exactly:",
+    "SCENE: <2 sentences, ~40 words, set the situation>",
+    "CHOICE_1: <a short imperative phrase, ~6 words>",
+    "CHOICE_2: <a short imperative phrase, ~6 words, meaningfully different from choice 1>",
+  ].join("\n");
+
+  const fallback: GeneratedExpeditionScene = {
+    scene: "A junction looms. Two paths diverge through the gloom of long-deprecated documentation.",
+    choices: ["Take the lit path", "Take the dark path"],
+  };
+
+  try {
+    const result = (await ai.run(MODEL, {
+      messages: [
+        { role: "system", content: COMBAT_SYSTEM },
+        { role: "user", content: user },
+      ],
+      max_tokens: 200,
+    })) as AiRunResponse;
+    const text = (result.response ?? "").trim();
+    const scene = /SCENE:\s*(.+)/i.exec(text)?.[1]?.trim();
+    const c1 = /CHOICE_1:\s*(.+)/i.exec(text)?.[1]?.trim().replace(/^["'`]|["'`]$/g, "");
+    const c2 = /CHOICE_2:\s*(.+)/i.exec(text)?.[1]?.trim().replace(/^["'`]|["'`]$/g, "");
+    if (!scene || !c1 || !c2) return fallback;
+    return { scene, choices: [c1, c2] };
+  } catch {
+    return fallback;
+  }
+}
+
+export async function generateExpeditionTheme(ai: Ai): Promise<string> {
+  const user = "Generate a single short evocative theme for an expedition into a hostile codebase. 4-7 words. No quotes. Examples: 'the cursed monorepo merge', 'haunted staging environment', 'forgotten sprint of 2019'.";
+  const fallback = "the abandoned staging environment";
+  return generateFlavor(ai, user, fallback, 30);
+}
+
+export async function flavorForkOutcome(
+  ai: Ai,
+  theme: string,
+  choice: string,
+): Promise<string> {
+  const user = `Expedition theme: "${theme}". The party just chose: "${choice}". Narrate the immediate consequence in one short line.`;
+  const fallback = `The party commits to the path.`;
+  return generateFlavor(ai, user, fallback, 80);
+}
+
 export async function flavorBossPhase(
   ai: Ai,
   monsterName: string,

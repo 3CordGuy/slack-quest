@@ -30,10 +30,12 @@ What works:
 - `/dnd me` — show your sheet.
 - `/dnd quest [variant] [elite]` — kick off a quest. Variants: `boss` (L3+, single tougher
   monster, 2 phases at 50% HP, 2× rewards), `gauntlet` (L5+, 3 monsters back-to-back, no
-  flee, party locked at start, 3× rewards, guaranteed drop on the final kill). `elite` is
+  flee, party locked at start, 3× rewards, guaranteed drop on the final kill), `expedition`
+  (L4+, 3 narrative forks → boss fight → 2-item treasure pick, 2.5× rewards). `elite` is
   a modifier that composes with any variant — turns on perma-death. The bot generates the
-  opening scene with Workers AI and posts it to the channel; for gauntlets it pre-generates
-  all three waves at quest start so transitions are instant.
+  opening scene with Workers AI and posts it to the channel; gauntlets pre-generate all
+  three waves and expeditions pre-generate the full node graph at quest start so
+  transitions are instant.
 - `/dnd join` — join the active quest in the current channel. Monster max HP grows by 40%
   per joiner so the encounter doesn't get trivialized.
 - `/dnd attack` — 1d6 + class `attack_mod`, crit ×2 on a natural 6.
@@ -74,8 +76,10 @@ What works:
 
 Still stubbed:
 
-- `/dnd quest expedition` — multi-scene branching narrative with NPC encounters, decision
-  forks, and skill checks. First-vote-wins decisions in v1.
+- Expedition v2: skill-checked forks (class-gated branches), more node types
+  (NPC dialogues, traps, hidden doors), multiple endings.
+- Voting-based fork resolution (v1 is first-vote-wins). Would need a Cron Trigger or
+  Durable Object to handle the timeout.
 - Reaction-based spectator buffs/debuffs.
 - Idle-quest auto-fail timeout (a quest with no action in N hours should fail).
 

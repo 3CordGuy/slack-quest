@@ -6,11 +6,14 @@ import {
   flavorBossPhase,
   flavorDeath,
   flavorFleeSuccess,
+  flavorForkOutcome,
   flavorGauntletNext,
   flavorHit,
   flavorJoin,
   flavorLootDrop,
   flavorVictory,
+  generateExpeditionForkScene,
+  generateExpeditionTheme,
   generateOpeningScene,
 } from "./ai";
 import {
@@ -43,11 +46,14 @@ import {
   joinQuest,
   markQuestStatus,
   removeItem,
+  saveScene,
   scaleMonsterForJoin,
   setCharacterHp,
   updateMonsterHp,
   type ActiveQuest,
   type Character,
+  type ExpeditionNode,
+  type ExpeditionState,
   type GauntletWave,
   type Item,
   type QuestVariant,
@@ -83,6 +89,9 @@ const SHOP_STOCK_SIZE = 5;
 const BOSS_LEVEL_REQUIRED = 3;
 const GAUNTLET_LEVEL_REQUIRED = 5;
 const GAUNTLET_WAVES = 3;
+const EXPEDITION_LEVEL_REQUIRED = 4;
+const EXPEDITION_FORKS = 3;
+const EXPEDITION_TREASURE_OPTIONS = 2;
 
 const HELP_TEXT = [
   "*Slack Quest commands*",
@@ -91,7 +100,10 @@ const HELP_TEXT = [
   "• `/dnd quest` — start a standard quest",
   "• `/dnd quest boss` — single tougher monster, 2 phases (L3+, 2× rewards)",
   "• `/dnd quest gauntlet` — 3 monsters back-to-back, no flee (L5+, 3× rewards, guaranteed drop)",
+  "• `/dnd quest expedition` — 3 narrative forks → boss → treasure pick (L4+, 2.5× rewards)",
   "• `/dnd quest elite` — elite modifier; perma-death (composes: `/dnd quest boss elite`)",
+  "• `/dnd choose <n>` — pick a fork option in an expedition (first vote wins)",
+  "• `/dnd take <n>` — claim an item from an expedition treasure room",
   "• `/dnd join` — join the active quest in this channel",
   "• `/dnd attack` — strike with weapon (1d6 + atk_mod + weapon power, crit on nat 6)",
   "• `/dnd cast` — channel magic (1d8 + mag_mod + weapon power, crit on nat 8)",
@@ -150,6 +162,10 @@ export async function handleCommand(
       return handleBuy(payload, args, env);
     case "sell":
       return handleSell(payload, args, env);
+    case "choose":
+      return handleChoose(payload, args, env, ctx);
+    case "take":
+      return handleTake(payload, args, env, ctx);
     case "help":
     case "":
       return ephemeral(HELP_TEXT);
@@ -235,6 +251,8 @@ async function handleQuest(
     ? "boss"
     : lower.includes("gauntlet")
     ? "gauntlet"
+    : lower.includes("expedition")
+    ? "expedition"
     : "standard";
 
   if (variant === "boss" && character.level < BOSS_LEVEL_REQUIRED) {
@@ -242,6 +260,9 @@ async function handleQuest(
   }
   if (variant === "gauntlet" && character.level < GAUNTLET_LEVEL_REQUIRED) {
     return ephemeral(`Gauntlets require Level ${GAUNTLET_LEVEL_REQUIRED}+. You're L${character.level}.`);
+  }
+  if (variant === "expedition" && character.level < EXPEDITION_LEVEL_REQUIRED) {
+    return ephemeral(`Expeditions require Level ${EXPEDITION_LEVEL_REQUIRED}+. You're L${character.level}.`);
   }
 
   ctx.waitUntil((async () => {
@@ -253,13 +274,34 @@ async function handleQuest(
           ? "👑 *BOSS QUEST*\n"
           : variant === "gauntlet"
           ? `⚔️ *GAUNTLET — ${GAUNTLET_WAVES} waves, no flee*\n`
+          : variant === "expedition"
+          ? `🗺️ *EXPEDITION — ${EXPEDITION_FORKS} forks, then boss + treasure*\n`
           : "";
+
+      // Expedition opens at fork 1, not in a fight — show choices instead of foe HP.
+      const isExpedition = variant === "expedition" && scene.expedition;
+      const expFirstNode = isExpedition ? scene.expedition!.nodes[0] : null;
+
+      const body = isExpedition && expFirstNode?.type === "fork"
+        ? [
+            `_${expFirstNode.scene}_`,
+            ``,
+            `*Theme:* ${scene.expedition!.theme}`,
+            ``,
+            ...((expFirstNode.choices ?? []).map((c, i) => `\`${i + 1}\` ${c}`)),
+            ``,
+            `_First \`/dnd choose <n>\` wins for the party._`,
+          ].join("\n")
+        : [
+            `_${scene.scene}_`,
+            ``,
+            `Foe: *${scene.monster_name}* — HP ${scene.monster_hp}${variant === "gauntlet" ? ` (wave 1/${GAUNTLET_WAVES})` : ""}`,
+          ].join("\n");
+
       const text = [
         `${eliteBanner}${variantBanner}*A new quest begins.* <@${payload.user_id}> as *${character.name}* the ${character.class} (L${character.level}).`,
         ``,
-        `_${scene.scene}_`,
-        ``,
-        `Foe: *${scene.monster_name}* — HP ${scene.monster_hp}${variant === "gauntlet" ? ` (wave 1/${GAUNTLET_WAVES})` : ""}`,
+        body,
       ].join("\n");
 
       const post = await postMessage(env.SLACK_BOT_TOKEN, {
@@ -330,6 +372,56 @@ async function buildQuestScene(
     };
   }
 
+  if (variant === "expedition") {
+    const theme = await generateExpeditionTheme(env.AI);
+    const nodes: ExpeditionNode[] = [];
+    const path: string[] = [];
+    for (let i = 1; i <= EXPEDITION_FORKS; i++) {
+      const fork = await generateExpeditionForkScene(env.AI, theme, path, i, EXPEDITION_FORKS);
+      nodes.push({ type: "fork", scene: fork.scene, choices: fork.choices });
+    }
+    // Combat node — boss-flavored monster but no phase mechanics.
+    const combat = await generateOpeningScene(env.AI, character, elite, "boss");
+    nodes.push({ type: "combat", scene: combat.scene });
+    // Treasure node — pre-roll N items at boss tier and AI-name each.
+    const lootOptions: NonNullable<ExpeditionNode["loot_options"]> = [];
+    for (let i = 0; i < EXPEDITION_TREASURE_OPTIONS; i++) {
+      const roll = rollItem(combat.tier);
+      const named = await flavorLootDrop(env.AI, "the expedition's reward chest", roll.type, roll.rarity, roll.power);
+      lootOptions.push({
+        name: named.name,
+        item_type: roll.type,
+        power: roll.power,
+        rarity: roll.rarity,
+        flavor: named.flavor,
+      });
+    }
+    nodes.push({
+      type: "treasure",
+      scene: "The way ahead opens onto a chest, glittering with possibility.",
+      loot_options: lootOptions,
+    });
+
+    const expedition: ExpeditionState = {
+      theme,
+      current: 0,
+      nodes,
+      path_taken: [],
+    };
+
+    // Top-level monster fields stay as the combat node's monster — populated when the
+    // expedition reaches that node so combat code can read them unmodified.
+    return {
+      monster_name: combat.monster_name,
+      monster_hp: combat.monster_max_hp, // not active yet; treated as latent
+      monster_max_hp: combat.monster_max_hp,
+      tier: combat.tier,
+      scene: nodes[0].scene,
+      variant,
+      expedition,
+    };
+  }
+
   return { ...(await generateOpeningScene(env.AI, character, elite, "standard")), variant };
 }
 
@@ -365,10 +457,23 @@ async function handleCombat(
   ]);
 
   if (action === "flee") {
-    if (quest.scene.variant === "gauntlet") {
-      return ephemeral("🚪 No exit. Gauntlets don't allow flee — kill or be killed.");
+    if (quest.scene.variant === "gauntlet" || quest.scene.variant === "expedition") {
+      return ephemeral("🚪 No exit on this quest type — kill or be killed.");
     }
     return resolveFlee(payload, env, ctx, character, quest, fighters, equippedArmor);
+  }
+
+  // Expedition: only allow attack/cast at the combat node.
+  if (quest.scene.variant === "expedition") {
+    const node = currentExpNode(quest);
+    if (!node || node.type !== "combat") {
+      const nextStep = node?.type === "fork"
+        ? "Try `/dnd choose <n>`."
+        : node?.type === "treasure"
+        ? "Try `/dnd take <n>`."
+        : "Quest not progressed.";
+      return ephemeral(`Not in combat right now. ${nextStep}`);
+    }
   }
 
   // attack | cast — equipped weapon adds to whichever action you use; armor reduces incoming.
@@ -395,6 +500,13 @@ async function handleCombat(
     // Gauntlet: advance to next wave instead of triggering victory.
     if (quest.scene.variant === "gauntlet" && quest.scene.upcoming_waves && quest.scene.upcoming_waves.length > 0) {
       return resolveGauntletAdvance(payload, env, ctx, quest, [playerLine, `🏆 *${quest.scene.monster_name}* falls.`]);
+    }
+    // Expedition: advance to the treasure node instead of triggering victory.
+    if (quest.scene.variant === "expedition") {
+      return resolveExpeditionToTreasure(payload, env, ctx, quest, [
+        playerLine,
+        `🏆 *${quest.scene.monster_name}* falls.`,
+      ]);
     }
     await updateMonsterHp(env.DB, quest.id, quest.scene, 0);
     return resolveVictory(payload, env, ctx, character, quest, fighters, [
@@ -512,7 +624,14 @@ async function resolveFlee(
 function rewardMultiplier(variant?: QuestVariant): number {
   if (variant === "boss") return 2;
   if (variant === "gauntlet") return 3;
+  if (variant === "expedition") return 2.5;
   return 1;
+}
+
+function currentExpNode(quest: ActiveQuest): ExpeditionNode | null {
+  const exp = quest.scene.expedition;
+  if (!exp) return null;
+  return exp.nodes[exp.current] ?? null;
 }
 
 function variantDropChance(variant: QuestVariant | undefined, tier: number): number {
@@ -648,6 +767,237 @@ async function resolveGauntletAdvance(
   return ephemeral(ephemeralLines.join("\n"));
 }
 
+// Expedition combat-node kill: advance to the treasure node and post the loot prompt.
+// Quest stays active until someone /dnd take's an item.
+async function resolveExpeditionToTreasure(
+  payload: SlashCommandPayload,
+  env: Env,
+  ctx: ExecutionContext,
+  quest: ActiveQuest,
+  preamble: string[],
+): Promise<CommandResponse> {
+  const exp = quest.scene.expedition;
+  if (!exp) return ephemeral("Expedition state missing — quest is in a bad way.");
+  const treasureIdx = exp.current + 1;
+  const treasureNode = exp.nodes[treasureIdx];
+  if (!treasureNode || treasureNode.type !== "treasure") {
+    // Shouldn't be reachable — expeditions always build combat → treasure. If it ever
+    // does (corrupted scene_json, manual DB edit, etc.), end the quest cleanly.
+    await markQuestStatus(env.DB, quest.id, "completed");
+    return ephemeral([...preamble, "_(no treasure node found — quest closed.)_"].join("\n"));
+  }
+
+  const updatedExp: ExpeditionState = { ...exp, current: treasureIdx };
+  const updatedScene: SceneJson = {
+    ...quest.scene,
+    expedition: updatedExp,
+    scene: treasureNode.scene,
+    monster_hp: 0,
+  };
+  await saveScene(env.DB, quest.id, updatedScene);
+  await appendLog(env.DB, quest.id, payload.user_id, "expedition", `→ treasure`);
+
+  const lootLines = (treasureNode.loot_options ?? []).map((l, i) => {
+    const power = l.item_type === "consumable" ? `heals ${l.power}` : `+${l.power}`;
+    return `\`${i + 1}\` ${RARITY_BADGE[l.rarity]} *${l.name}* — ${l.item_type}, ${power}\n   _${l.flavor}_`;
+  }).join("\n");
+
+  ctx.waitUntil((async () => {
+    const tail = `_🎁 ${treasureNode.scene}_\n${lootLines}\n\n_First \`/dnd take <n>\` claims for the party._`;
+    await postToThread(env, quest, `${preamble.join("\n")}\n\n${tail}`);
+  })());
+
+  return ephemeral([...preamble, "🎁 Treasure ahead — `/dnd take <1-2>` to claim."].join("\n"));
+}
+
+// Used at the end of an expedition once treasure has been picked. Splits XP/gold across
+// alive fighters with the expedition multiplier, marks quest completed, posts the closer.
+async function resolveExpeditionVictory(
+  payload: SlashCommandPayload,
+  env: Env,
+  ctx: ExecutionContext,
+  taker: Character,
+  takenItem: Item,
+  quest: ActiveQuest,
+): Promise<void> {
+  const fighters = (await getQuestParty(env.DB, quest.id)).filter(isFighter);
+  const partySize = Math.max(1, fighters.length);
+  const mult = rewardMultiplier(quest.scene.variant);
+  const totalXp = (10 + quest.scene.tier * 5) * mult;
+  const totalGold = (5 + quest.scene.tier * 3) * mult;
+  const xpEach = Math.max(1, Math.floor(totalXp / partySize));
+  const goldEach = Math.max(0, Math.floor(totalGold / partySize));
+
+  const levelUpLines: string[] = [];
+  for (const fighter of fighters) {
+    const result = await awardSpoils(env.DB, fighter, xpEach, goldEach, () => rollDice(6), xpForLevel);
+    if (result.levelsGained > 0) {
+      levelUpLines.push(
+        `🎚️ *${fighter.name}* hits Level ${result.newLevel} (max HP ${result.newMaxHp}).`,
+      );
+    }
+  }
+
+  await markQuestStatus(env.DB, quest.id, "completed");
+  await appendLog(env.DB, quest.id, payload.user_id, "expedition_complete", `taker:${taker.name}, item:${takenItem.item_name}`);
+
+  ctx.waitUntil((async () => {
+    const flavor = await flavorVictory(env.AI, taker, quest.scene.monster_name, partySize);
+    const tail = [
+      `_🎁 *${taker.name}* claims *${takenItem.item_name}* (${takenItem.item_type}, ${takenItem.item_type === "consumable" ? `heals ${takenItem.power}` : `+${takenItem.power}`})._`,
+      `_✨ +${xpEach} XP, +${goldEach} gold to each of ${partySize} fighter${partySize > 1 ? "s" : ""}._`,
+      ...levelUpLines,
+    ].join("\n");
+    await postToThread(env, quest, `🏆 ${flavor}\n${tail}`);
+  })());
+}
+
+async function handleChoose(
+  payload: SlashCommandPayload,
+  args: string[],
+  env: Env,
+  ctx: ExecutionContext,
+): Promise<CommandResponse> {
+  const character = await getCharacter(env.DB, payload.user_id);
+  if (!character) return ephemeral("You need to `/dnd roll` a character first.");
+
+  const quest = await getActiveQuestForCharacter(env.DB, payload.user_id);
+  if (!quest) return ephemeral("You're not on an active quest.");
+  if (quest.scene.variant !== "expedition" || !quest.scene.expedition) {
+    return ephemeral("This quest doesn't have forks — try `/dnd attack` or similar.");
+  }
+
+  const exp = quest.scene.expedition;
+  const node = exp.nodes[exp.current];
+  if (!node || node.type !== "fork") {
+    return ephemeral("No fork to choose right now.");
+  }
+
+  const idx = parseInt(args[0] ?? "", 10);
+  const choices = node.choices ?? [];
+  if (Number.isNaN(idx) || idx < 1 || idx > choices.length) {
+    return ephemeral(`Usage: \`/dnd choose <1-${choices.length}>\`.`);
+  }
+
+  const chosen = choices[idx - 1];
+  const newCurrent = exp.current + 1;
+  const nextNode = exp.nodes[newCurrent];
+  if (!nextNode) return ephemeral("Expedition is in a bad state — no next node.");
+
+  const updatedExp: ExpeditionState = {
+    ...exp,
+    current: newCurrent,
+    path_taken: [...exp.path_taken, chosen],
+  };
+
+  const updatedScene: SceneJson = {
+    ...quest.scene,
+    expedition: updatedExp,
+    scene: nextNode.scene,
+    // If next is combat, refresh monster HP from the latent value (full bar).
+    monster_hp: nextNode.type === "combat" ? quest.scene.monster_max_hp : 0,
+  };
+
+  // Atomic-ish: only proceed if the node hasn't already been chosen.
+  // We re-fetch + check current to guard against double-choose races.
+  const fresh = await getActiveQuestForCharacter(env.DB, payload.user_id);
+  if (!fresh || fresh.scene.expedition?.current !== exp.current) {
+    return ephemeral("Someone else already chose for the party.");
+  }
+
+  await saveScene(env.DB, quest.id, updatedScene);
+  await appendLog(env.DB, quest.id, payload.user_id, "choose", `${idx}: ${chosen}`);
+
+  ctx.waitUntil((async () => {
+    const consequence = await flavorForkOutcome(env.AI, exp.theme, chosen);
+    let nextBeat = "";
+    if (nextNode.type === "fork") {
+      nextBeat = [
+        `_${nextNode.scene}_`,
+        ``,
+        ...((nextNode.choices ?? []).map((c, i) => `\`${i + 1}\` ${c}`)),
+        ``,
+        `_First \`/dnd choose <n>\` wins for the party._`,
+      ].join("\n");
+    } else if (nextNode.type === "combat") {
+      nextBeat = [
+        `_${nextNode.scene}_`,
+        ``,
+        `Foe: *${updatedScene.monster_name}* — HP ${updatedScene.monster_hp}/${updatedScene.monster_max_hp}`,
+        ``,
+        `Combat: \`/dnd attack\` or \`/dnd cast\`.`,
+      ].join("\n");
+    } else if (nextNode.type === "treasure") {
+      const lootLines = (nextNode.loot_options ?? []).map((l, i) => {
+        const power = l.item_type === "consumable" ? `heals ${l.power}` : `+${l.power}`;
+        return `\`${i + 1}\` ${RARITY_BADGE[l.rarity]} *${l.name}* — ${l.item_type}, ${power}\n   _${l.flavor}_`;
+      }).join("\n");
+      nextBeat = `_${nextNode.scene}_\n${lootLines}\n\n_First \`/dnd take <n>\` claims for the party._`;
+    }
+    const header = `🗺️ <@${payload.user_id}> chose: *${chosen}*. ${consequence}`;
+    await postToThread(env, quest, `${header}\n\n${nextBeat}`);
+  })());
+
+  return ephemeral(`✅ You chose: *${chosen}*. Watch the thread for what happens.`);
+}
+
+async function handleTake(
+  payload: SlashCommandPayload,
+  args: string[],
+  env: Env,
+  ctx: ExecutionContext,
+): Promise<CommandResponse> {
+  const character = await getCharacter(env.DB, payload.user_id);
+  if (!character) return ephemeral("You need to `/dnd roll` a character first.");
+
+  const quest = await getActiveQuestForCharacter(env.DB, payload.user_id);
+  if (!quest) return ephemeral("You're not on an active quest.");
+  if (quest.scene.variant !== "expedition" || !quest.scene.expedition) {
+    return ephemeral("Not an expedition — there's no chest to open here.");
+  }
+
+  const exp = quest.scene.expedition;
+  const node = exp.nodes[exp.current];
+  if (!node || node.type !== "treasure") {
+    return ephemeral("No treasure to take right now.");
+  }
+
+  const idx = parseInt(args[0] ?? "", 10);
+  const options = node.loot_options ?? [];
+  if (Number.isNaN(idx) || idx < 1 || idx > options.length) {
+    return ephemeral(`Usage: \`/dnd take <1-${options.length}>\`.`);
+  }
+
+  // Race guard: only proceed if treasure node hasn't already been resolved.
+  const fresh = await getActiveQuestForCharacter(env.DB, payload.user_id);
+  if (!fresh || fresh.scene.expedition?.current !== exp.current) {
+    return ephemeral("Someone else already claimed the treasure.");
+  }
+
+  const choice = options[idx - 1];
+  const item = await addItem(env.DB, {
+    character_id: payload.user_id,
+    item_name: choice.name,
+    item_type: choice.item_type,
+    power: choice.power,
+    rarity: choice.rarity,
+    flavor: choice.flavor,
+  });
+
+  // Mark expedition as past treasure so /dnd take is rejected next time.
+  const updatedScene: SceneJson = {
+    ...quest.scene,
+    expedition: { ...exp, current: exp.current + 1 },
+  };
+  await saveScene(env.DB, quest.id, updatedScene);
+
+  await resolveExpeditionVictory(payload, env, ctx, character, item, quest);
+
+  return ephemeral(
+    `🎁 You claim ${RARITY_BADGE[choice.rarity]} *${choice.name}* for the party. Inventory id \`${item.id}\`. Watch the thread for the closer.`,
+  );
+}
+
 async function resolveDeath(
   payload: SlashCommandPayload,
   env: Env,
@@ -728,8 +1078,8 @@ async function handleJoin(
   const quest = await getActiveQuestInChannel(env.DB, payload.channel_id);
   if (!quest) return ephemeral("No active quest in this channel. Start one with `/dnd quest`.");
 
-  if (quest.scene.variant === "gauntlet") {
-    return ephemeral("⚔️ Gauntlets lock the party at the start. Wait for the next quest.");
+  if (quest.scene.variant === "gauntlet" || quest.scene.variant === "expedition") {
+    return ephemeral("⚔️ This quest type locks the party at the start. Wait for the next one.");
   }
 
   const inserted = await joinQuest(env.DB, quest.id, payload.user_id);
