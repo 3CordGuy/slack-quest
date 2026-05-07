@@ -61,6 +61,11 @@ export interface PostMessageArgs {
   channel: string;
   text: string;
   thread_ts?: string;
+  // When true alongside thread_ts, Slack posts the message both as a thread reply AND
+  // as a top-level channel message. Use sparingly — only for high-value "big beat"
+  // moments (joins, victories, perma-death, phase transitions) that earn the channel
+  // interrupt.
+  reply_broadcast?: boolean;
   blocks?: unknown[];
 }
 

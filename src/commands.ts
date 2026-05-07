@@ -580,7 +580,8 @@ async function handleCombat(
       ? `\n👑 *Phase 2!* ${await flavorBossPhase(env.AI, quest.scene.monster_name)}`
       : "";
     const text = `${hit.isCrit ? "💥 " : ""}${flavor}${phaseLine}\n${statBlock}`;
-    await postToThread(env, quest, text);
+    // Broadcast only on the phase transition — regular hits stay thread-local.
+    await postToThread(env, quest, text, { broadcast: bossPhaseTransition });
   })());
 
   return ephemeral(ephemeralLines.join("\n"));
@@ -734,7 +735,7 @@ async function resolveVictory(
       ...levelUpLines,
       ...lootLines,
     ].join("\n");
-    await postToThread(env, quest, `🏆 ${flavor}\n${tail}`);
+    await postToThread(env, quest, `🏆 ${flavor}\n${tail}`, { broadcast: true });
   })());
 
   return ephemeral(ephemeralLines.join("\n"));
@@ -780,7 +781,7 @@ async function resolveGauntletAdvance(
   ctx.waitUntil((async () => {
     const flavor = await flavorGauntletNext(env.AI, previousMonster, next.name, waveLabel);
     const tail = `_⚔️ ${waveLabel} — *${next.name}* (HP ${next.max_hp})._\n_${next.scene}_`;
-    await postToThread(env, quest, `⚔️ ${flavor}\n${tail}`);
+    await postToThread(env, quest, `⚔️ ${flavor}\n${tail}`, { broadcast: true });
   })());
 
   return ephemeral(ephemeralLines.join("\n"));
@@ -826,7 +827,7 @@ async function resolveExpeditionToTreasure(
 
   ctx.waitUntil((async () => {
     const tail = `_🎁 ${treasureNode.scene}_\n${lootLines}\n\n_First \`${payload.command} take <n>\` claims for the party._`;
-    await postToThread(env, quest, `${preamble.join("\n")}\n\n${tail}`);
+    await postToThread(env, quest, `${preamble.join("\n")}\n\n${tail}`, { broadcast: true });
   })());
 
   return ephemeral([...preamble, `🎁 Treasure ahead — \`${payload.command} take <1-2>\` to claim.`].join("\n"));
@@ -870,7 +871,7 @@ async function resolveExpeditionVictory(
       `_✨ +${xpEach} XP, +${goldEach} gold to each of ${partySize} fighter${partySize > 1 ? "s" : ""}._`,
       ...levelUpLines,
     ].join("\n");
-    await postToThread(env, quest, `🏆 ${flavor}\n${tail}`);
+    await postToThread(env, quest, `🏆 ${flavor}\n${tail}`, { broadcast: true });
   })());
 }
 
@@ -1073,7 +1074,9 @@ async function resolveDeath(
   ctx.waitUntil((async () => {
     const flavor = await flavorDeath(env.AI, character, quest.scene.monster_name, isPerma);
     const marker = isPerma ? "💀💀 " : "💀 ";
-    await postToThread(env, quest, `${marker}${flavor}\n${resultTail}\n${survivorsTail}`);
+    // Perma-death is rare and weighty — broadcast it. Soft deaths happen often
+    // and would clutter the channel.
+    await postToThread(env, quest, `${marker}${flavor}\n${resultTail}\n${survivorsTail}`, { broadcast: isPerma });
   })());
 
   return ephemeral(ephemeralLines.join("\n"));
@@ -1118,7 +1121,9 @@ async function handleJoin(
   ctx.waitUntil((async () => {
     const flavor = await flavorJoin(env.AI, character, scaled.monster_name);
     const tail = `_*${scaled.monster_name}* swells with menace (now ${scaled.monster_hp}/${scaled.monster_max_hp} HP)._`;
-    await postToThread(env, quest, `🛡️ ${flavor}\n${tail}`);
+    // Broadcast joins so other channel members see "X joined the fight" and might
+    // also drop in.
+    await postToThread(env, quest, `🛡️ ${flavor}\n${tail}`, { broadcast: true });
   })());
 
   return ephemeral(
@@ -1368,11 +1373,21 @@ async function handleLeaderboard(payload: SlashCommandPayload, env: Env): Promis
   return inChannel(lines.join("\n"));
 }
 
-async function postToThread(env: Env, quest: ActiveQuest, text: string): Promise<void> {
+// Posts a message into the quest thread. With { broadcast: true }, Slack also surfaces
+// the message at the channel top-level so spectators see it without clicking into the
+// thread. Use broadcast for "big beats" only — joins, phase transitions, perma-death,
+// gauntlet wave changes, victories — to keep the channel from drowning in combat lines.
+async function postToThread(
+  env: Env,
+  quest: ActiveQuest,
+  text: string,
+  options?: { broadcast?: boolean },
+): Promise<void> {
   const res = await postMessage(env.SLACK_BOT_TOKEN, {
     channel: quest.channel_id,
     thread_ts: quest.thread_ts,
     text,
+    reply_broadcast: options?.broadcast,
   });
   if (!res.ok) {
     // Don't fail the command — the player still got an ephemeral copy.

@@ -13,8 +13,10 @@ Cloudflare Workers + D1 + Workers AI. No real coworkers as NPCs — names are ge
 - **Surface:** one Slack channel (the bot rejects calls from anywhere else).
   Slack restricts custom-app slash commands to channels and DMs (only Slack's own
   built-ins like `/topic` work inside threads), so players invoke from the channel and
-  watch the story unfold in the quest thread — the channel stays uncluttered (slash
-  commands and ephemeral responses are invoker-only).
+  watch the story unfold in the quest thread. Most narration stays thread-local; **big
+  beats** (joins, gauntlet wave transitions, boss phase 2, perma-death, victories,
+  expedition treasure reveals) use Slack's `reply_broadcast` to surface in the channel
+  too — keeps spectators in the loop without the channel drowning in combat lines.
 - **Persistence:** D1. One character per Slack user, one active quest at a time.
 - **Death model:** soft death by default — at 0 HP you're "downed," lose 25% gold + a random
   inventory item, and can't quest for 12h. Elite quests (`/sq quest elite`) flip on perma-death.
