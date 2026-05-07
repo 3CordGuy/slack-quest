@@ -2,6 +2,7 @@
 
 import type { Character } from "./db";
 import type { SceneJson } from "./db";
+import { fallbackMonsterName, fallbackSceneText } from "./flavor";
 
 const MODEL = "@cf/meta/llama-3.1-8b-instruct";
 
@@ -38,8 +39,8 @@ export async function generateOpeningScene(
     "You are the narrator of a comedic engineering-themed dungeon crawl Slack bot called Slack Quest.",
     "Tone: dry, witty, with software-industry winks (PRs, standups, deprecated APIs, on-call pagers).",
     "Never break character. Never mention you are an AI.",
-    "Output MUST follow this exact format with one field per line:",
-    `MONSTER_NAME: <a ${variant === "boss" ? "2-5" : "1-4"} word name, slightly absurd>`,
+    "Output MUST follow this EXACT format. Plain text only — no markdown, no asterisks, no quotes around values, no extra commentary before or after the fields.",
+    `MONSTER_NAME: <a ${variant === "boss" ? "2-5" : "1-4"} word name, slightly absurd, never repeat the same name>`,
     `MONSTER_HP: <integer between ${monsterHpFloor} and ${monsterHpCeil}>`,
     "SCENE: <2-3 sentences, ~60 words total, introducing the monster and the setting>",
   ].join("\n");
@@ -62,20 +63,50 @@ export async function generateOpeningScene(
   return parseScene(result.response ?? "", tier, monsterHpFloor, monsterHpCeil);
 }
 
-function parseScene(text: string, tier: number, hpFloor: number, hpCeil: number): SceneJson {
-  const nameMatch = /MONSTER_NAME:\s*(.+)/i.exec(text);
-  const hpMatch = /MONSTER_HP:\s*(\d+)/i.exec(text);
-  const sceneMatch = /SCENE:\s*([\s\S]+)/i.exec(text);
+// Strips markdown emphasis (`*`, `_`), surrounding quotes, and code ticks from a
+// captured field value. Llama 3.1 8B sometimes wraps fields like `**Foo**` or `"Foo"`
+// despite the strict format spec.
+function stripWrappers(s: string): string {
+  let v = s.trim();
+  for (let i = 0; i < 4; i++) {
+    const next = v.replace(/^[*_"'`]+/, "").replace(/[*_"'`]+$/, "").trim();
+    if (next === v) break;
+    v = next;
+  }
+  return v;
+}
 
-  const monster_name = nameMatch?.[1]?.trim() || "the Unnamed Thing";
-  let monster_hp = hpMatch ? parseInt(hpMatch[1], 10) : Math.floor((hpFloor + hpCeil) / 2);
+function parseScene(text: string, tier: number, hpFloor: number, hpCeil: number): SceneJson {
+  // Allow optional surrounding asterisks on the field key too: `**MONSTER_NAME:** Foo`.
+  const nameMatch = /\*{0,2}MONSTER_NAME\*{0,2}\s*:\s*(.+)/i.exec(text);
+  const hpMatch = /\*{0,2}MONSTER_HP\*{0,2}\s*:\s*\*{0,2}(\d+)/i.exec(text);
+  const sceneMatch = /\*{0,2}SCENE\*{0,2}\s*:\s*([\s\S]+)/i.exec(text);
+
+  const monster_name = nameMatch?.[1] ? stripWrappers(nameMatch[1].split("\n")[0]) : "";
+  const scene_raw = sceneMatch?.[1] ? stripWrappers(sceneMatch[1]) : "";
+
+  let monster_hp = hpMatch ? parseInt(hpMatch[1], 10) : NaN;
   if (Number.isNaN(monster_hp)) monster_hp = Math.floor((hpFloor + hpCeil) / 2);
   monster_hp = Math.min(hpCeil, Math.max(hpFloor, monster_hp));
 
-  const scene = sceneMatch?.[1]?.trim() ||
-    "A presence stirs in the dim glow of a forgotten staging environment. Something is very, very wrong.";
+  // Diagnostic — surfaces in worker logs when the AI returns something unparseable so
+  // we can see WHY it fell back instead of silently substituting the default name.
+  if (!monster_name || !scene_raw) {
+    console.warn("scene parse fallback", {
+      gotName: !!monster_name,
+      gotScene: !!scene_raw,
+      gotHp: !Number.isNaN(monster_hp),
+      preview: text.slice(0, 220),
+    });
+  }
 
-  return { monster_name, monster_hp, monster_max_hp: monster_hp, tier, scene };
+  return {
+    monster_name: monster_name || fallbackMonsterName(),
+    monster_hp,
+    monster_max_hp: monster_hp,
+    tier,
+    scene: scene_raw || fallbackSceneText(),
+  };
 }
 
 // Shared system prompt for one-line combat flavor. Tight constraints — the model gets
@@ -129,13 +160,24 @@ export async function flavorHit(
   monsterName: string,
   action: "attack" | "cast",
   isCrit: boolean,
+  equippedWeapon?: string,
+  equippedArmor?: string,
 ): Promise<string> {
-  const verb = action === "cast" ? "casts a spell at" : "swings a weapon at";
+  const verb = action === "cast"
+    ? equippedWeapon
+      ? `channels their *${equippedWeapon}* at`
+      : "casts a spell at"
+    : equippedWeapon
+      ? `swings their *${equippedWeapon}* at`
+      : "swings a weapon at";
   const intensity = isCrit ? "The blow lands as a CRITICAL hit — devastating." : "The blow connects solidly.";
-  const user = `${character.name}, a Level ${character.level} ${character.class}, ${verb} ${monsterName}. ${intensity} Narrate this single moment in-world.`;
+  const gearHint = equippedWeapon || equippedArmor
+    ? ` Mention the gear by name: ${[equippedWeapon && `weapon "${equippedWeapon}"`, equippedArmor && `armor "${equippedArmor}"`].filter(Boolean).join(", ")}.`
+    : "";
+  const user = `${character.name}, a Level ${character.level} ${character.class}, ${verb} ${monsterName}. ${intensity} Narrate this single moment in-world.${gearHint}`;
   const fallback = isCrit
-    ? `${character.name} lands a brutal blow on ${monsterName}.`
-    : `${character.name} strikes ${monsterName}.`;
+    ? `${character.name} lands a brutal blow on ${monsterName}${equippedWeapon ? ` with their ${equippedWeapon}` : ""}.`
+    : `${character.name} strikes ${monsterName}${equippedWeapon ? ` with their ${equippedWeapon}` : ""}.`;
   return generateFlavor(ai, user, fallback);
 }
 
@@ -187,13 +229,19 @@ export async function flavorLootDrop(
   type: "weapon" | "armor" | "consumable" | "magic" | "revive",
   rarity: "common" | "uncommon" | "rare",
   power: number,
+  weaponRange?: "melee" | "ranged",
 ): Promise<{ name: string; flavor: string }> {
+  const weaponHint = type === "weapon"
+    ? weaponRange === "ranged"
+      ? "a RANGED weapon (e.g. crossbow, bow, sling, throwing dart, scroll-launcher, blunderbuss)"
+      : "a MELEE weapon (e.g. sword, hammer, dagger, staff, gauntlet, mace, axe)"
+    : null;
   const typeHint =
-    type === "weapon" ? "a weapon (e.g. sword, hammer, dagger, staff, bow, gauntlet)" :
-    type === "armor"  ? "armor (e.g. vest, robe, cloak, helm, plating, gloves)" :
-    type === "magic"  ? "a magical focus (e.g. tome, crystal, sigil, talisman, rune-stone)" :
-    type === "revive" ? "a revival item (e.g. phoenix down, defib paddles, hot-fix kit, sacred patch)" :
-                        "a consumable (e.g. potion, brew, scroll, capsule, energy drink, snack)";
+    weaponHint ??
+    (type === "armor"  ? "armor (e.g. vest, robe, cloak, helm, plating, gloves)" :
+     type === "magic"  ? "a magical focus (e.g. tome, crystal, sigil, talisman, rune-stone)" :
+     type === "revive" ? "a revival item (e.g. phoenix down, defib paddles, hot-fix kit, sacred patch)" :
+                         "a consumable (e.g. potion, brew, scroll, capsule, energy drink, snack)");
   const rarityHint =
     rarity === "rare" ? "Rare and weighty — name it like a legendary artifact." :
     rarity === "uncommon" ? "Uncommon — slightly notable, has some history." :
@@ -312,12 +360,17 @@ export async function flavorSignature(
   monsterName: string,
   signatureName: string,
   isCrit: boolean,
+  equippedWeapon?: string,
+  equippedArmor?: string,
 ): Promise<string> {
   const intensity = isCrit ? "It lands as a CRITICAL strike — devastating." : "It lands true.";
-  const user = `${character.name}, a Level ${character.level} ${character.class}, just unleashes their signature ability *${signatureName}* on ${monsterName}. ${intensity} Narrate the moment with extra weight — this is a class-defining move.`;
+  const gearHint = equippedWeapon || equippedArmor
+    ? ` Work the gear into the moment: ${[equippedWeapon && `weapon "${equippedWeapon}"`, equippedArmor && `armor "${equippedArmor}"`].filter(Boolean).join(", ")}.`
+    : "";
+  const user = `${character.name}, a Level ${character.level} ${character.class}, just unleashes their signature ability *${signatureName}* on ${monsterName}. ${intensity} Narrate the moment with extra weight — this is a class-defining move.${gearHint}`;
   const fallback = isCrit
-    ? `${character.name}'s ${signatureName} crashes into ${monsterName} like a falling stack trace.`
-    : `${character.name} channels ${signatureName} at ${monsterName}.`;
+    ? `${character.name}'s ${signatureName}${equippedWeapon ? `, channeled through their ${equippedWeapon},` : ""} crashes into ${monsterName} like a falling stack trace.`
+    : `${character.name} channels ${signatureName}${equippedWeapon ? ` through their ${equippedWeapon}` : ""} at ${monsterName}.`;
   return generateFlavor(ai, user, fallback, 110);
 }
 

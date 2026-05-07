@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   applyDamageWithShield,
   isBossPhaseTransition,
+  pickMonsterTarget,
+  positionDamageMod,
   resolveHeal,
   resolveMonsterHit,
   resolvePlayerHit,
@@ -201,6 +203,62 @@ describe("applyDamageWithShield", () => {
   it("negative damage is clamped to zero (defensive)", () => {
     const r = applyDamageWithShield(-3, 5, 20);
     expect(r).toEqual({ newShield: 5, newHp: 20, shieldAbsorbed: 0, hpDamage: 0 });
+  });
+});
+
+describe("positionDamageMod", () => {
+  it("front row takes full damage", () => {
+    expect(positionDamageMod("front", 10)).toBe(10);
+    expect(positionDamageMod("front", 1)).toBe(1);
+  });
+
+  it("back row takes 60% (rounded down) of damage", () => {
+    expect(positionDamageMod("back", 10)).toBe(6);
+    expect(positionDamageMod("back", 5)).toBe(3);  // floor(3.0)
+    expect(positionDamageMod("back", 7)).toBe(4);  // floor(4.2)
+  });
+
+  it("back row never takes less than 1 damage", () => {
+    expect(positionDamageMod("back", 1)).toBe(1);
+    expect(positionDamageMod("back", 2)).toBe(1);  // floor(1.2) → 1
+  });
+});
+
+describe("pickMonsterTarget", () => {
+  const front = { id: "F", position: "front" as const };
+  const back = { id: "B", position: "back" as const };
+
+  it("returns the only fighter when alone", () => {
+    expect(pickMonsterTarget([front], () => 0.5).id).toBe("F");
+    expect(pickMonsterTarget([back], () => 0.5).id).toBe("B");
+  });
+
+  it("picks first front-row when random is at 0", () => {
+    expect(pickMonsterTarget([back, front], () => 0).id).toBe("B");  // weights: 1, 3 → first is back
+  });
+
+  it("front-to-back hit ratio is 3:1 over many rolls", () => {
+    let frontHits = 0;
+    let backHits = 0;
+    for (let i = 0; i < 4000; i++) {
+      const t = pickMonsterTarget([front, back], () => Math.random());
+      if (t.id === "F") frontHits++;
+      else backHits++;
+    }
+    // Expected: front gets ~3000, back gets ~1000. Allow loose bounds.
+    expect(frontHits).toBeGreaterThan(2700);
+    expect(frontHits).toBeLessThan(3300);
+    expect(backHits).toBeGreaterThan(700);
+    expect(backHits).toBeLessThan(1300);
+  });
+
+  it("back-only party still gets hit", () => {
+    const t = pickMonsterTarget([back, back], () => 0.5);
+    expect(t.position).toBe("back");
+  });
+
+  it("throws on empty fighters", () => {
+    expect(() => pickMonsterTarget([], () => 0.5)).toThrow();
   });
 });
 

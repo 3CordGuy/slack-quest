@@ -1,6 +1,6 @@
 // D1 query helpers. Raw prepared statements — no ORM.
 
-import type { ItemType, Rarity } from "./flavor";
+import type { ItemType, Rarity, WeaponRange } from "./flavor";
 
 export interface Item {
   id: number;
@@ -11,6 +11,8 @@ export interface Item {
   rarity: Rarity;
   flavor: string | null;
   equipped: boolean;
+  weapon_range: WeaponRange | null; // null for non-weapons; legacy weapon rows
+                                    // also null and read as "melee".
 }
 
 interface ItemRow extends Omit<Item, "equipped"> {
@@ -20,6 +22,8 @@ interface ItemRow extends Omit<Item, "equipped"> {
 function rowToItem(row: ItemRow): Item {
   return { ...row, equipped: row.equipped === 1 };
 }
+
+export type BattlePosition = "front" | "back";
 
 export interface Character {
   slack_user_id: string;
@@ -37,6 +41,8 @@ export interface Character {
   scars: string[];
   downed_until: number | null;
   last_rest_at: number | null;
+  last_long_rest_at: number | null;
+  position: BattlePosition;
   created_at: number;
   last_active: number;
 }
@@ -119,6 +125,7 @@ export interface ExpeditionNode {
     power: number;
     rarity: Rarity;
     flavor: string;
+    weapon_range?: WeaponRange | null;
   }>;
 }
 
@@ -331,13 +338,38 @@ export async function addShield(
   return added;
 }
 
-// Restores HP to max and stamps last_rest_at = now. Caller should pre-check cooldown
-// + active-quest + downed + already-full-HP. The race window between read and write is
-// tiny — worst case two simultaneous /sq rest spam-clicks both succeed; no harm done.
-export async function applyRest(db: D1Database, userId: string): Promise<void> {
+// Updates a character's battle position. No cost; positioning is strategic prep.
+export async function setPosition(
+  db: D1Database,
+  userId: string,
+  position: BattlePosition,
+): Promise<void> {
+  await db
+    .prepare("UPDATE characters SET position = ?, last_active = ? WHERE slack_user_id = ?")
+    .bind(position, Date.now(), userId)
+    .run();
+}
+
+// Short rest: partial HP restore + bumps last_rest_at. Caller computes the new HP
+// (e.g. current + 50% of missing) and passes it in so the math stays in commands.ts.
+export async function applyShortRest(
+  db: D1Database,
+  userId: string,
+  newHp: number,
+): Promise<void> {
   const now = Date.now();
   await db
-    .prepare("UPDATE characters SET hp = max_hp, last_rest_at = ?, last_active = ? WHERE slack_user_id = ?")
+    .prepare("UPDATE characters SET hp = ?, last_rest_at = ?, last_active = ? WHERE slack_user_id = ?")
+    .bind(newHp, now, now, userId)
+    .run();
+}
+
+// Long rest: full HP restore + bumps last_long_rest_at. Once per 24 hours.
+// Doesn't touch last_rest_at — the two cooldowns are independent.
+export async function applyLongRest(db: D1Database, userId: string): Promise<void> {
+  const now = Date.now();
+  await db
+    .prepare("UPDATE characters SET hp = max_hp, last_long_rest_at = ?, last_active = ? WHERE slack_user_id = ?")
     .bind(now, now, userId)
     .run();
 }
@@ -527,19 +559,20 @@ export interface CreateItemInput {
   power: number;
   rarity: Rarity;
   flavor: string;
+  weapon_range?: WeaponRange | null; // only meaningful for weapons; null otherwise
 }
 
 export async function addItem(db: D1Database, input: CreateItemInput): Promise<Item> {
   const result = await db
     .prepare(
-      `INSERT INTO inventory (character_id, item_name, item_type, power, rarity, flavor, qty, equipped)
-       VALUES (?, ?, ?, ?, ?, ?, 1, 0)`,
+      `INSERT INTO inventory (character_id, item_name, item_type, power, rarity, flavor, qty, equipped, weapon_range)
+       VALUES (?, ?, ?, ?, ?, ?, 1, 0, ?)`,
     )
-    .bind(input.character_id, input.item_name, input.item_type, input.power, input.rarity, input.flavor)
+    .bind(input.character_id, input.item_name, input.item_type, input.power, input.rarity, input.flavor, input.weapon_range ?? null)
     .run();
   const id = result.meta.last_row_id;
   const row = await db
-    .prepare("SELECT id, character_id, item_name, item_type, power, rarity, flavor, equipped FROM inventory WHERE id = ?")
+    .prepare("SELECT id, character_id, item_name, item_type, power, rarity, flavor, equipped, weapon_range FROM inventory WHERE id = ?")
     .bind(id)
     .first<ItemRow>();
   if (!row) throw new Error("Failed to read back inserted item");
@@ -549,7 +582,7 @@ export async function addItem(db: D1Database, input: CreateItemInput): Promise<I
 export async function getInventory(db: D1Database, characterId: string): Promise<Item[]> {
   const result = await db
     .prepare(
-      `SELECT id, character_id, item_name, item_type, power, rarity, flavor, equipped
+      `SELECT id, character_id, item_name, item_type, power, rarity, flavor, equipped, weapon_range
        FROM inventory WHERE character_id = ?
        ORDER BY equipped DESC, item_type ASC,
                 CASE rarity WHEN 'rare' THEN 0 WHEN 'uncommon' THEN 1 ELSE 2 END,
@@ -567,7 +600,7 @@ export async function getItem(
 ): Promise<Item | null> {
   const row = await db
     .prepare(
-      `SELECT id, character_id, item_name, item_type, power, rarity, flavor, equipped
+      `SELECT id, character_id, item_name, item_type, power, rarity, flavor, equipped, weapon_range
        FROM inventory WHERE id = ? AND character_id = ?`,
     )
     .bind(itemId, characterId)
@@ -592,7 +625,7 @@ export async function getEquipped(
 ): Promise<Item | null> {
   const row = await db
     .prepare(
-      `SELECT id, character_id, item_name, item_type, power, rarity, flavor, equipped
+      `SELECT id, character_id, item_name, item_type, power, rarity, flavor, equipped, weapon_range
        FROM inventory WHERE character_id = ? AND item_type = ? AND equipped = 1
        LIMIT 1`,
     )
@@ -612,6 +645,7 @@ export interface ShopItem {
   flavor: string | null;
   price: number;
   bought_by: string | null;
+  weapon_range: WeaponRange | null;
 }
 
 // Returns active shop stock (generated within the cutoff window, available items only),
@@ -624,7 +658,7 @@ export async function getActiveShopStock(
   const cutoff = Date.now() - windowMs;
   const result = await db
     .prepare(
-      `SELECT id, channel_id, generated_at, item_name, item_type, power, rarity, flavor, price, bought_by
+      `SELECT id, channel_id, generated_at, item_name, item_type, power, rarity, flavor, price, bought_by, weapon_range
        FROM shop_stock
        WHERE channel_id = ? AND generated_at > ?
        ORDER BY id ASC`,
@@ -645,6 +679,7 @@ export interface ShopStockInput {
   rarity: Rarity;
   flavor: string;
   price: number;
+  weapon_range?: WeaponRange | null;
 }
 
 export async function insertShopStock(
@@ -654,9 +689,9 @@ export async function insertShopStock(
   if (items.length === 0) return;
   const stmts = items.map((it) =>
     db.prepare(
-      `INSERT INTO shop_stock (channel_id, generated_at, item_name, item_type, power, rarity, flavor, price)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).bind(it.channel_id, it.generated_at, it.item_name, it.item_type, it.power, it.rarity, it.flavor, it.price),
+      `INSERT INTO shop_stock (channel_id, generated_at, item_name, item_type, power, rarity, flavor, price, weapon_range)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).bind(it.channel_id, it.generated_at, it.item_name, it.item_type, it.power, it.rarity, it.flavor, it.price, it.weapon_range ?? null),
   );
   await db.batch(stmts);
 }
@@ -668,7 +703,7 @@ export async function getShopItem(
 ): Promise<ShopItem | null> {
   return db
     .prepare(
-      `SELECT id, channel_id, generated_at, item_name, item_type, power, rarity, flavor, price, bought_by
+      `SELECT id, channel_id, generated_at, item_name, item_type, power, rarity, flavor, price, bought_by, weapon_range
        FROM shop_stock WHERE id = ? AND channel_id = ?`,
     )
     .bind(itemId, channelId)
@@ -743,12 +778,53 @@ export async function removeItem(db: D1Database, itemId: number): Promise<void> 
   await db.prepare("DELETE FROM inventory WHERE id = ?").bind(itemId).run();
 }
 
+// Transfers ownership of an inventory item to another character. Used by /sq give.
+// Force-unequips on transfer so the new owner doesn't end up with two equipped items
+// of the same slot. Caller pre-validates that the item belongs to the current owner.
+export async function transferItem(
+  db: D1Database,
+  itemId: number,
+  newOwnerId: string,
+): Promise<void> {
+  await db
+    .prepare("UPDATE inventory SET character_id = ?, equipped = 0 WHERE id = ?")
+    .bind(newOwnerId, itemId)
+    .run();
+}
+
 // Average level across all characters — used to scale shop stock to the active community.
 export async function averageCharacterLevel(db: D1Database): Promise<number> {
   const row = await db
     .prepare("SELECT AVG(level) AS avg_level FROM characters")
     .first<{ avg_level: number | null }>();
   return Math.max(1, Math.round(row?.avg_level ?? 1));
+}
+
+// Total character count — used to scale shop stock size to community size so an
+// 8-person channel doesn't get a stock built for 4.
+export async function countCharacters(db: D1Database): Promise<number> {
+  const row = await db
+    .prepare("SELECT COUNT(*) AS n FROM characters")
+    .first<{ n: number }>();
+  return row?.n ?? 0;
+}
+
+// How many items the user has bought from the current shop cycle (matched by
+// generated_at). Used to enforce a per-player purchase cap per cycle.
+export async function countPurchasesInCycle(
+  db: D1Database,
+  channelId: string,
+  userId: string,
+  cycleGeneratedAt: number,
+): Promise<number> {
+  const row = await db
+    .prepare(
+      `SELECT COUNT(*) AS n FROM shop_stock
+       WHERE channel_id = ? AND generated_at = ? AND bought_by = ?`,
+    )
+    .bind(channelId, cycleGeneratedAt, userId)
+    .first<{ n: number }>();
+  return row?.n ?? 0;
 }
 
 // Consumes the item and updates character HP. Returns the actual HP healed (capped at max).
@@ -837,6 +913,9 @@ export function isFighter(c: Character): boolean {
 }
 
 // Returns ms remaining on the per-character action cooldown for this quest, or 0 if ready.
+// All "combat-tier" player actions reset the cooldown — attack, cast, flee, signature,
+// heal, shield, revive, and position changes (repositioning consumes a turn).
+// Bookkeeping rows (monster turns, victory, death, join, expedition advance) don't.
 export async function cooldownRemaining(
   db: D1Database,
   questId: number,
@@ -846,7 +925,8 @@ export async function cooldownRemaining(
   const row = await db
     .prepare(
       `SELECT MAX(ts) AS last_ts FROM quest_log
-       WHERE quest_id = ? AND actor = ? AND action IN ('attack', 'cast', 'flee')`,
+       WHERE quest_id = ? AND actor = ?
+         AND action IN ('attack', 'cast', 'flee', 'signature', 'heal', 'shield', 'revive', 'position')`,
     )
     .bind(questId, userId)
     .first<{ last_ts: number | null }>();

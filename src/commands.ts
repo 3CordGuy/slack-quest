@@ -22,7 +22,8 @@ import {
   addItem,
   addShield,
   appendLog,
-  applyRest,
+  applyLongRest,
+  applyShortRest,
   applySoftDeath,
   averageCharacterLevel,
   awardSpoils,
@@ -30,6 +31,8 @@ import {
   claimShopItem,
   consumeItem,
   cooldownRemaining,
+  countCharacters,
+  countPurchasesInCycle,
   createCharacter,
   createQuest,
   deleteCharacter,
@@ -57,11 +60,14 @@ import {
   scaleMonsterForJoin,
   setCharacterHp,
   setCharacterHpAndShield,
+  setPosition,
+  transferItem,
   trySaveExpeditionAdvance,
   tryDeductGold,
   tryDeductMana,
   tryUpdateScene,
   type ActiveQuest,
+  type BattlePosition,
   type Character,
   type ExpeditionNode,
   type ExpeditionState,
@@ -74,6 +80,8 @@ import {
 import {
   applyDamageWithShield,
   isBossPhaseTransition,
+  pickMonsterTarget,
+  positionDamageMod,
   resolveHeal,
   resolveMonsterHit,
   resolvePlayerHit,
@@ -108,23 +116,34 @@ const DOWNED_COOLDOWN_MS = 12 * 60 * 60 * 1000;
 const ACTION_COOLDOWN_MS = 45 * 1000;
 const JOIN_HP_RATIO = 0.4; // monster max HP grows by this fraction per joiner
 const SHOP_RESTOCK_MS = 6 * 60 * 60 * 1000; // 6h channel-wide restock cadence
-const SHOP_STOCK_SIZE = 5;
+// Stock scales with the active community: 6 base, +1 per character above 4, capped
+// at 12 to keep AI-call cost bounded. 8 players → 10 items per restock.
+const SHOP_STOCK_BASE = 6;
+const SHOP_STOCK_PER_EXTRA_PLAYER = 1;
+const SHOP_STOCK_CAP = 12;
+const SHOP_STOCK_PLAYER_BASELINE = 4;
+// Per-player purchase cap per restock cycle — keeps one greedy player from clearing
+// the whole shop in 30 seconds. 8 players × 2 = 16 max demand vs ~10 supply: slight
+// scarcity preserves urgency without freezing late shoppers out.
+const SHOP_BUY_CAP_PER_CYCLE = 2;
 const BOSS_LEVEL_REQUIRED = 3;
 const GAUNTLET_LEVEL_REQUIRED = 5;
 const GAUNTLET_WAVES = 3;
 const EXPEDITION_LEVEL_REQUIRED = 4;
 const EXPEDITION_FORKS = 3;
 const EXPEDITION_TREASURE_OPTIONS = 2;
-const REST_COOLDOWN_MS = 10 * 60 * 1000; // /sq rest between-quest HP restore cadence
+const SHORT_REST_COOLDOWN_MS = 10 * 60 * 1000;        // 10 min between short rests
+const LONG_REST_COOLDOWN_MS = 24 * 60 * 60 * 1000;    // once per real-world day
+const SHORT_REST_HEAL_RATIO = 0.5;                    // heals 50% of missing HP, min 1
 
 // Help text uses the actual slash command name the operator installed under (e.g. /sq,
 // /quest, /raid). Slack's /dnd is reserved for Do Not Disturb so don't pick that.
 function helpText(cmd: string): string {
   return [
     "*Slack Quest commands*",
-    `• \`${cmd} roll\` — roll a new character`,
+    `• \`${cmd} roll\` — roll a new character (or reroll: free until your first XP, then \`level × 50g\`; confirm with \`${cmd} roll confirm\`)`,
     `• \`${cmd} me\` — show your character sheet`,
-    `• \`${cmd} quest\` — start a standard quest`,
+    `• \`${cmd} quest [variant] [@user1 @user2…]\` — start a quest, optionally inviting party members`,
     `• \`${cmd} quest boss\` — single tougher monster, 2 phases (L3+, 2× rewards)`,
     `• \`${cmd} quest gauntlet\` — 3 monsters back-to-back, no flee (L5+, 3× rewards, guaranteed drop)`,
     `• \`${cmd} quest expedition\` — 3 narrative forks → boss → treasure pick (L4+, 2.5× rewards)`,
@@ -132,24 +151,103 @@ function helpText(cmd: string): string {
     `• \`${cmd} choose <n>\` — pick a fork option in an expedition (first vote wins)`,
     `• \`${cmd} take <n>\` — claim an item from an expedition treasure room`,
     `• \`${cmd} join\` — join the active quest in this channel`,
-    `• \`${cmd} attack\` — strike with weapon: \`1d6 + atk_mod + weapon\` (crit on nat 6)`,
-    `• \`${cmd} cast\` — channel magic: \`1d8 + mag_mod + weapon\` (crit on nat 8)`,
+    `• \`${cmd} attack\` — strike with weapon: \`1d6 + atk_mod + weapon\` (crit on nat 6, *front-row only*)`,
+    `• \`${cmd} cast\` — channel magic: \`1d8 + mag_mod + weapon\` (crit on nat 8, any row)`,
     `• \`${cmd} flee\` — try to escape (\`1d2\`; on fail you take a free hit)`,
+    `• \`${cmd} position front|back\` — set battle position. Free outside a quest; mid-quest costs the 45s combat cooldown.`,
     `• \`${cmd} signature\` (alias \`sig\`) — your class's signature ability (costs 1 mana, refills between quests)`,
     `• \`${cmd} heal [@user]\` — restore \`1d6 + magic_mod\` HP on a party member (costs 1 mana, default self)`,
     `• \`${cmd} shield [@user]\` — buff \`1d6 + magic_mod\` absorbing HP on a party member (costs 1 mana, default self)`,
     `• \`${cmd} revive <id> @user\` — bring a downed party member back, consuming a revive item`,
-    `• \`${cmd} rest\` — between-quest HP restore (10-minute cooldown, no quest required)`,
+    `• \`${cmd} rest\` — short rest: heals 50% of missing HP (10-min cooldown)`,
+    `• \`${cmd} rest long\` — long rest: full HP restore, once per 24 hours`,
     `• \`${cmd} inventory\` — list your items (equipped marked ✅)`,
     `• \`${cmd} equip <id>\` — equip a weapon or armor by inventory id`,
     `• \`${cmd} use <id>\` — use a consumable (free action, no cooldown)`,
     `• \`${cmd} shop\` — view the channel's shop (restocks every 6h)`,
     `• \`${cmd} buy <id>\` — purchase a shop item with gold`,
     `• \`${cmd} sell <id>\` — sell an inventory item for 30% of shop price`,
+    `• \`${cmd} give <id> @user\` — gift an inventory item to another player (unequip first)`,
     `• \`${cmd} party\` — show the current quest's roster + HP`,
     `• \`${cmd} leaderboard\` — top 10 heroes`,
     `• \`${cmd} help\` — show this list`,
+    `• \`${cmd} rules\` — full mechanics reference (positioning, items, shop, etc.)`,
     "_Combat actions have a 45-second cooldown per player._",
+  ].join("\n");
+}
+
+// Full mechanics reference. Verbose by design — players invoke this when they want
+// to understand the system, not just remember a command name.
+function rulesText(cmd: string): string {
+  return [
+    `*🎲 Slack Quest — Mechanics Reference*`,
+    ``,
+    `*━━ Characters ━━*`,
+    `• Roll with \`${cmd} roll\`. 8 engineering-themed classes, randomly assigned (HP / atk_mod / mag_mod vary by class).`,
+    `• *Reroll:* free until your first XP, then \`level × 50g\`. Confirm with \`${cmd} roll confirm\` — deletes everything (gold, gear, scars).`,
+    `• *Level up* (auto on XP threshold): max HP +1d6, HP refills, mana refills, max mana +1 every 5 levels (cap 5).`,
+    `• *Mana refills* between quests, on join, and on level-up.`,
+    ``,
+    `*━━ Battle Position ━━*`,
+    `• 🔼 *Front:* 3× more likely to be targeted, takes full damage. Required for melee \`${cmd} attack\`.`,
+    `• 🔽 *Back:* less hit risk, takes 60% damage, *can only \`${cmd} attack\` with a ranged weapon equipped*.`,
+    `• \`${cmd} position front|back\` — free outside a quest; mid-quest costs the 45s combat cooldown.`,
+    `• _Position effects only apply in parties of 2+. Solo fights ignore positioning entirely._`,
+    ``,
+    `*━━ Combat ━━*`,
+    `_All actions share one 45s cooldown — one combat-tier action per player per 45s._`,
+    `• \`${cmd} attack\` — \`1d6 + atk_mod + weapon\`, crit on nat 6 (×2 damage)`,
+    `• \`${cmd} cast\` — \`1d8 + mag_mod + weapon\`, crit on nat 8`,
+    `• \`${cmd} signature\` (\`sig\`) — class-specific big move, costs 1 mana`,
+    `• \`${cmd} flee\` — \`1d2\`. 1 = escape (party fights on); 2 = trip + free monster hit. Blocked in gauntlet/expedition.`,
+    `• \`${cmd} heal [@user]\` — \`1d6 + mag_mod\` HP to a partymate, costs 1 mana`,
+    `• \`${cmd} shield [@user]\` — \`1d6 + mag_mod\` absorbing HP, costs 1 mana, caps at 2× max HP`,
+    `• \`${cmd} revive <id> @user\` — bring downed partymate back, consumes a revive item (no mana cost)`,
+    `• Monster damage: \`1d4 + tier + party_bonus\`, mitigated by armor (\`floor(power/2)\`, min 1) and back-row position (×0.6, min 1). Boss phase 2 adds +tier.`,
+    `• *Targeting:* monster picks a victim weighted 3:1 front:back from alive fighters — front-line tanks soak hits for back-line casters.`,
+    ``,
+    `*━━ Items & Equipment ━━*`,
+    `• ⚔️ *Melee weapons* — front-row only for \`attack\`; \`+N\` to attack/cast/sig damage`,
+    `• 🏹 *Ranged weapons* — usable from any row for \`attack\`; same damage bonus`,
+    `• 🛡️ *Armor* — reduces incoming damage by \`floor(power/2)\``,
+    `• 🧪 *Consumables* — \`${cmd} use <id>\` heals N HP. Free action, no cooldown.`,
+    `• 🔮 *Magic items* — \`${cmd} use <id>\` grants permanent +N max mana (cap 5)`,
+    `• 🌱 *Revive items* — bring downed teammate back at N% HP (rarity-tiered 50/75/100%)`,
+    `• Slots: 1 weapon + 1 armor equipped at a time. \`${cmd} equip <id>\` swaps in.`,
+    `• \`${cmd} give <id> @user\` — gift any unequipped item; channel-public message`,
+    ``,
+    `*━━ Shop ━━*`,
+    `• \`${cmd} shop\` — channel-shared, restocks every 6h with AI-generated items.`,
+    `• *Stock size scales:* 6 base + 1 per character above 4 (cap 12). 8 players → 10 items per cycle.`,
+    `• *Per-player cap:* 2 purchases per restock cycle (no whale-clearing).`,
+    `• Pricing (flat per rarity): gear 15g/50g/150g; magic 100g/250g/500g; revive 150g/280g/450g.`,
+    `• \`${cmd} sell\` returns 30% of buy price. No shopping mid-quest.`,
+    ``,
+    `*━━ Quest Variants ━━*`,
+    `• \`${cmd} quest\` — standard, 1 monster, 1× rewards`,
+    `• \`${cmd} quest boss\` — L3+, beefy monster, 2 phases at 50% HP, 2× rewards`,
+    `• \`${cmd} quest gauntlet\` — L5+, 3 monsters back-to-back, no flee, 3× rewards, 100% drop on the final kill`,
+    `• \`${cmd} quest expedition\` — L4+, 3 narrative forks (\`${cmd} choose <n>\`) → boss → treasure pick (\`${cmd} take <n>\`), 2.5× rewards`,
+    `• \`${cmd} quest elite\` — modifier: *perma-death* on 0 HP. Composes: \`${cmd} quest boss elite\`.`,
+    `• *Invite at start:* \`${cmd} quest [variant] @user1 @user2\` — auto-joins them, scales monster HP per joiner.`,
+    ``,
+    `*━━ Joining ━━*`,
+    `• \`${cmd} join\` — join the active channel quest. Monster max HP grows ×1.4 per joiner.`,
+    `• Joinable through wave 1 of a gauntlet (locks at wave 2).`,
+    `• Joinable until the first \`${cmd} choose\` of an expedition (locks once anyone picks).`,
+    ``,
+    `*━━ Death & Recovery ━━*`,
+    `• *Soft death* (any non-elite at 0 HP): 25% gold loss, drop a random item, +1 scar, *12h cooldown*, HP restored to max for next time.`,
+    `• *Perma death* (elite quest at 0 HP): character row deleted (gear, gold, scars — all gone). Roll a new one.`,
+    `• \`${cmd} rest\` — short rest between quests, heals 50% of missing HP, 10-min cooldown.`,
+    `• \`${cmd} rest long\` — full HP restore, *once per 24h*.`,
+    ``,
+    `*━━ Visibility ━━*`,
+    `• Channel sees: quest start, quest end (victory / failure / abandoned). And \`${cmd} leaderboard\` if you run it.`,
+    `• Quest thread sees: every combat action with full Block Kit cards (narration, dice math, monster + actor stats).`,
+    `• You see (ephemeral): your own action's deterministic outcome instantly; the AI-flavored thread version follows ~1-2s later.`,
+    ``,
+    `_Use \`${cmd} help\` for the command list. \`${cmd} me\` for your sheet._`,
   ].join("\n");
 }
 
@@ -163,7 +261,7 @@ export async function handleCommand(
 
   switch (sub) {
     case "roll":
-      return handleRoll(payload, env);
+      return handleRoll(payload, args, env);
     case "me":
     case "sheet":
       return handleMe(payload, env);
@@ -185,7 +283,10 @@ export async function handleCommand(
     case "revive":
       return handleRevive(payload, args, env, ctx);
     case "rest":
-      return handleRest(payload, env);
+      return handleRest(payload, args, env);
+    case "position":
+    case "pos":
+      return handlePosition(payload, args, env);
     case "join":
       return handleJoin(payload, env, ctx);
     case "party":
@@ -206,6 +307,8 @@ export async function handleCommand(
       return handleBuy(payload, args, env);
     case "sell":
       return handleSell(payload, args, env);
+    case "give":
+      return handleGive(payload, args, env, ctx);
     case "choose":
       return handleChoose(payload, args, env, ctx);
     case "take":
@@ -213,19 +316,28 @@ export async function handleCommand(
     case "help":
     case "":
       return ephemeral(helpText(payload.command));
+    case "rules":
+    case "howto":
+    case "manual":
+      return ephemeral(rulesText(payload.command));
     default:
       return ephemeral(`Unknown command: \`${sub}\`. Try \`${payload.command} help\`.`);
   }
 }
 
-async function handleRoll(payload: SlashCommandPayload, env: Env): Promise<CommandResponse> {
-  const existing = await getCharacter(env.DB, payload.user_id);
-  if (existing) {
-    return ephemeral(
-      `You already have a character: *${existing.name}* the ${existing.class} (L${existing.level}). Use \`${payload.command} me\` to see the sheet.`,
-    );
-  }
+// Reroll cost: free until your first quest victory (XP > 0), then `level × 50g`
+// to swap classes. The fee is a barrier, not a literal deduction — rerolling deletes
+// the entire character (gold included) and creates a fresh one with default 10g.
+function rerollCostFor(c: Character): number {
+  if (c.xp === 0) return 0;
+  return c.level * 50;
+}
 
+async function rollNewCharacter(
+  payload: SlashCommandPayload,
+  env: Env,
+  preamble?: string,
+): Promise<CommandResponse> {
   const cls = pickRandomClass();
   const npcName = generateNpcName();
   const hp = cls.base_hp + rollDice(4); // small variance
@@ -239,35 +351,101 @@ async function handleRoll(payload: SlashCommandPayload, env: Env): Promise<Comma
     max_hp: hp,
   });
 
-  return inChannel(
-    [
-      `🎲 <@${payload.user_id}> rolls a new hero!`,
-      ``,
-      `*${character.name}*, the ${character.class}`,
-      `_${cls.blurb}_`,
-      `Level ${character.level} • HP ${character.hp}/${character.max_hp} • ${character.gold} gold`,
-    ].join("\n"),
-  );
+  const lines = [
+    preamble ?? `🎲 <@${payload.user_id}> rolls a new hero!`,
+    ``,
+    `*${character.name}*, the ${character.class}`,
+    `_${cls.blurb}_`,
+    `Level ${character.level} • HP ${character.hp}/${character.max_hp} • ${character.gold} gold`,
+  ];
+  return inChannel(lines.join("\n"));
+}
+
+async function handleRoll(
+  payload: SlashCommandPayload,
+  args: string[],
+  env: Env,
+): Promise<CommandResponse> {
+  const existing = await getCharacter(env.DB, payload.user_id);
+
+  // First-ever roll: nothing to reconcile.
+  if (!existing) return rollNewCharacter(payload, env);
+
+  // Reroll requires a clear-headed character — no swapping mid-quest.
+  const activeQuest = await getActiveQuestForCharacter(env.DB, payload.user_id);
+  if (activeQuest) {
+    return ephemeral(
+      `You're on an active quest in <#${activeQuest.channel_id}>. Finish (or die trying) before rerolling.`,
+    );
+  }
+
+  const cost = rerollCostFor(existing);
+  const isFree = cost === 0;
+  const confirmed = args[0]?.toLowerCase() === "confirm";
+
+  if (!confirmed) {
+    if (isFree) {
+      return ephemeral(
+        `You already have *${existing.name}* the ${existing.class} (L${existing.level}). Reroll is *free* — you haven't earned XP yet.\n` +
+        `Confirm with \`${payload.command} roll confirm\` to delete them and roll a new hero.`,
+      );
+    }
+    return ephemeral(
+      `You already have *${existing.name}* the ${existing.class} (L${existing.level}, ${existing.gold}g).\n` +
+      `Reroll cost: *${cost}g* (level × 50). Rerolling *deletes* them — gear, gold, scars, signature, all of it.\n` +
+      (existing.gold < cost
+        ? `You're short ${cost - existing.gold}g. Earn more, then \`${payload.command} roll confirm\`.`
+        : `Confirm with \`${payload.command} roll confirm\` to proceed.`),
+    );
+  }
+
+  // Confirmed reroll — re-validate gold (in case state changed since the warning).
+  if (existing.gold < cost) {
+    return ephemeral(`Not enough gold to reroll (need ${cost}g, have ${existing.gold}g).`);
+  }
+
+  await deleteCharacter(env.DB, payload.user_id);
+  const preamble = isFree
+    ? `🎲 <@${payload.user_id}> rerolls — *${existing.name}* steps aside for a fresh hero.`
+    : `🎲 <@${payload.user_id}> spends ${cost}g to retire *${existing.name}* and roll a new hero.`;
+  return rollNewCharacter(payload, env, preamble);
 }
 
 async function handleMe(payload: SlashCommandPayload, env: Env): Promise<CommandResponse> {
   const c = await getCharacter(env.DB, payload.user_id);
   if (!c) return ephemeral(`You haven't rolled a character yet. Try \`${payload.command} roll\`.`);
-  return ephemeral(formatSheet(c));
+  const [weapon, armor] = await Promise.all([
+    getEquipped(env.DB, payload.user_id, "weapon"),
+    getEquipped(env.DB, payload.user_id, "armor"),
+  ]);
+  return ephemeral(formatSheet(c, weapon, armor));
 }
 
-function formatSheet(c: Character): string {
+function formatSheet(c: Character, weapon: Item | null, armor: Item | null): string {
   const downedNote = c.downed_until && c.downed_until > Date.now()
     ? `\n💀 _Downed until <!date^${Math.floor(c.downed_until / 1000)}^{date_short_pretty} {time}|soon>_`
     : "";
   const scarLine = c.scars.length ? `\nScars: ${c.scars.join(", ")}` : "";
   const sig = signatureFor(c.class);
   const sigLine = sig ? `\nSignature: *${sig.name}* — _${sig.blurb}_` : "";
+
+  // Equipment line. Shows whichever slots are filled; blank if neither.
+  // Weapon emoji reflects melee (⚔️) vs ranged (🏹).
+  const equipParts: string[] = [];
+  if (weapon) {
+    const wIcon = (weapon.weapon_range ?? "melee") === "ranged" ? "🏹" : "⚔️";
+    equipParts.push(`${wIcon} *${weapon.item_name}* +${weapon.power}`);
+  }
+  if (armor) equipParts.push(`🛡️ *${armor.item_name}* +${armor.power}`);
+  const equipLine = equipParts.length > 0
+    ? `\nEquipped: ${equipParts.join(" • ")}`
+    : `\nEquipped: _nothing_`;
+
   return [
     `*${c.name}*, the ${c.class}`,
-    `Level ${c.level} • XP ${c.xp}`,
+    `Level ${c.level} • XP ${c.xp} • ${positionEmoji(c.position)} ${c.position}`,
     `HP ${c.hp}/${c.max_hp} • Mana ${c.mana}/${c.max_mana} • ${c.gold} gold`,
-    `${sigLine}${scarLine}${downedNote}`,
+    `${equipLine}${sigLine}${scarLine}${downedNote}`,
   ].filter(Boolean).join("\n");
 }
 
@@ -311,9 +489,40 @@ async function handleQuest(
     return ephemeral(`Expeditions require Level ${EXPEDITION_LEVEL_REQUIRED}+. You're L${character.level}.`);
   }
 
+  // Optional invitees: any @ mentions in the slash text auto-join at quest start.
+  // Mentions of the inviter themselves are filtered out (they're already in).
+  const invitedIds = parseMentions(args.join(" ")).filter((id) => id !== payload.user_id);
+
   ctx.waitUntil((async () => {
     try {
-      const scene = await buildQuestScene(env, character, elite, variant);
+      const baseScene = await buildQuestScene(env, character, elite, variant);
+
+      // Validate each invitee. Bucket into joiners (will succeed) and rejects (with
+      // reasons surfaced in the opening post so the inviter knows why).
+      type Reject = { id: string; name: string; reason: string };
+      const joiners: Character[] = [];
+      const rejects: Reject[] = [];
+      for (const id of invitedIds) {
+        const c = await getCharacter(env.DB, id);
+        if (!c) {
+          rejects.push({ id, name: `<@${id}>`, reason: "no character" });
+          continue;
+        }
+        if (!isFighter(c)) {
+          rejects.push({ id, name: c.name, reason: "downed" });
+          continue;
+        }
+        const existing = await getActiveQuestForCharacter(env.DB, id);
+        if (existing) {
+          rejects.push({ id, name: c.name, reason: "already on a quest" });
+          continue;
+        }
+        joiners.push(c);
+      }
+
+      // Pre-scale the monster HP based on how many will join. Saved scene already
+      // reflects the bumped HP; no follow-up scaleMonsterForJoin DB writes needed.
+      const scene = preScaleForJoiners(baseScene, joiners.length, JOIN_HP_RATIO);
       const eliteBanner = elite ? "⚠️ *ELITE — perma-death enabled* ⚠️\n" : "";
       const variantBanner =
         variant === "boss"
@@ -344,8 +553,22 @@ async function handleQuest(
             `Foe: *${scene.monster_name}* — HP ${scene.monster_hp}${variant === "gauntlet" ? ` (wave 1/${GAUNTLET_WAVES})` : ""}`,
           ].join("\n");
 
+      // Party line + invite-rejection notes, both visible in the opening channel post.
+      // Each name carries its position emoji so spectators see the front/back split
+      // before combat starts.
+      const partyMembers = [
+        `${positionEmoji(character.position)} <@${payload.user_id}>`,
+        ...joiners.map((j) => `${positionEmoji(j.position)} <@${j.slack_user_id}>`),
+      ];
+      const partyLine = joiners.length > 0
+        ? `\n👥 *Party:* ${partyMembers.join(", ")}`
+        : "";
+      const rejectLine = rejects.length > 0
+        ? `\n⚠️ Couldn't invite: ${rejects.map((r) => `*${r.name}* (${r.reason})`).join(", ")}`
+        : "";
+
       const text = [
-        `${eliteBanner}${variantBanner}*A new quest begins.* <@${payload.user_id}> as *${character.name}* the ${character.class} (L${character.level}).`,
+        `${eliteBanner}${variantBanner}*A new quest begins.* <@${payload.user_id}> as *${character.name}* the ${character.class} (L${character.level}).${partyLine}${rejectLine}`,
         ``,
         body,
       ].join("\n");
@@ -363,7 +586,7 @@ async function handleQuest(
         return;
       }
 
-      await createQuest(env.DB, {
+      const questId = await createQuest(env.DB, {
         channel_id: payload.channel_id,
         thread_ts: post.ts,
         elite,
@@ -373,6 +596,14 @@ async function handleQuest(
       // Mana refills to max for the questing character at quest start. Anyone who
       // joins later via /sq join also gets a refill.
       await refillMana(env.DB, payload.user_id);
+
+      // Auto-join validated invitees. Each one also gets a mana refill so they
+      // start the quest fresh, same as the inviter.
+      for (const j of joiners) {
+        await joinQuest(env.DB, questId, j.slack_user_id);
+        await refillMana(env.DB, j.slack_user_id);
+        await appendLog(env.DB, questId, j.slack_user_id, "join", "invited at quest start");
+      }
     } catch (err) {
       await respondToCommand(payload.response_url, {
         response_type: "ephemeral",
@@ -436,13 +667,14 @@ async function buildQuestScene(
     const lootOptions: NonNullable<ExpeditionNode["loot_options"]> = [];
     for (let i = 0; i < EXPEDITION_TREASURE_OPTIONS; i++) {
       const roll = rollItem(combat.tier);
-      const named = await flavorLootDrop(env.AI, "the expedition's reward chest", roll.type, roll.rarity, roll.power);
+      const named = await flavorLootDrop(env.AI, "the expedition's reward chest", roll.type, roll.rarity, roll.power, roll.weapon_range);
       lootOptions.push({
         name: named.name,
         item_type: roll.type,
         power: roll.power,
         rarity: roll.rarity,
         flavor: named.flavor,
+        weapon_range: roll.weapon_range ?? null,
       });
     }
     nodes.push({
@@ -522,6 +754,17 @@ async function handleCombat(
         ? `Try \`${payload.command} take <n>\`.`
         : "Quest not progressed.";
       return ephemeral(`Not in combat right now. ${nextStep}`);
+    }
+  }
+
+  // Back-row melee restriction only applies in a party — solo fights have no
+  // positioning concept (one fighter, one target).
+  if (action === "attack" && character.position === "back" && fighters.length > 1) {
+    const isRanged = (equippedWeapon?.weapon_range ?? "melee") === "ranged";
+    if (!isRanged) {
+      return ephemeral(
+        `🏹 Back row can't melee — equip a *ranged* weapon to attack from here, or \`${payload.command} cast\` / \`${payload.command} signature\`, or \`${payload.command} position front\`.`,
+      );
     }
   }
 
@@ -644,56 +887,106 @@ async function handleCombat(
     ]);
   }
 
-  // Monster turn — retaliates against the actor only. Damage scales with party size,
-  // mitigated by armor (floor(power / 2), minimum 1 damage so armor never makes you immune).
-  // Boss phase 2 adds a flat tier bonus on top.
+  // Monster turn — picks a target from the alive party weighted by battle position.
+  // Front-row players are 3× more likely to be hit than back-row. Back-row takes 60%
+  // damage when hit. This forces real party composition: tanks up front, casters back.
   const isMagic = action === "cast";
+  const target = pickMonsterTarget(fighters, Math.random);
+  const targetIsActor = target.slack_user_id === payload.user_id;
+
+  // Armor is per-target — re-fetch if we're hitting someone other than the actor
+  // (the actor's equippedArmor was already loaded above).
+  const targetArmor = targetIsActor
+    ? equippedArmor
+    : await getEquipped(env.DB, target.slack_user_id, "armor");
+
   const monster = resolveMonsterHit(
     quest.scene.tier,
     fighters.length,
-    equippedArmor?.power ?? 0,
+    targetArmor?.power ?? 0,
     updatedScene.variant === "boss" && updatedScene.boss_phase === 2,
     rollDice,
   );
-  // Shield absorbs damage before HP. Both fields are written together below.
-  const dmg = applyDamageWithShield(monster.final, character.shield, character.hp);
-  const playerHpAfter = dmg.newHp;
+  // Position damage mod applies only in parties of 2+. Solo fights ignore position
+  // entirely — there's no front/back tradeoff with one fighter.
+  const positionAdjusted = fighters.length > 1
+    ? positionDamageMod(target.position, monster.final)
+    : monster.final;
+  // Shield absorbs damage before HP.
+  const dmg = applyDamageWithShield(positionAdjusted, target.shield, target.hp);
+  const targetHpAfter = dmg.newHp;
 
   const armorPart = monster.armorReduction > 0
     ? ` \`${monster.raw} − ${monster.armorReduction} armor\``
     : "";
+  const positionPart = fighters.length > 1 && target.position === "back" && positionAdjusted < monster.final
+    ? ` (${target.position}-row: ${positionAdjusted})`
+    : "";
   const shieldPart = dmg.shieldAbsorbed > 0
     ? ` — *${dmg.shieldAbsorbed}* absorbed by shield, *${dmg.hpDamage}* to HP`
     : "";
-  const monsterLine = `*${quest.scene.monster_name}* hits back for *${monster.final}*${armorPart}${shieldPart}.`;
+  const targetTag = targetIsActor ? "back" : `*${target.name}*`;
+  const monsterLine = `*${quest.scene.monster_name}* hits ${targetTag} for *${positionAdjusted}*${armorPart}${positionPart}${shieldPart}.`;
 
-  if (playerHpAfter <= 0) {
-    return resolveDeath(payload, env, ctx, character, quest, fighters, [playerLine, monsterLine]);
+  if (targetHpAfter <= 0) {
+    // Pass the dying TARGET to resolveDeath, not the actor. Survivors include
+    // everyone-except-target.
+    return resolveDeath(payload, env, ctx, target, quest, fighters, [playerLine, monsterLine]);
   }
 
-  await setCharacterHpAndShield(env.DB, payload.user_id, playerHpAfter, dmg.newShield);
-  await appendLog(env.DB, quest.id, "monster", "attack", `${monster.final} dmg`);
+  await setCharacterHpAndShield(env.DB, target.slack_user_id, targetHpAfter, dmg.newShield);
+  await appendLog(env.DB, quest.id, "monster", "attack", `${positionAdjusted} dmg → ${target.name}`);
 
-  const shieldDisplay = dmg.newShield > 0 ? ` (🛡️${dmg.newShield})` : "";
+  const shieldDisplay = dmg.newShield > 0 ? ` 🛡${dmg.newShield}` : "";
   const ephemeralLines = [
     playerLine,
-    `${quest.scene.monster_name}: ${Math.max(0, newMonsterHp)}/${quest.scene.monster_max_hp} HP`,
+    `*${quest.scene.monster_name}*: ${Math.max(0, newMonsterHp)}/${quest.scene.monster_max_hp}`,
     monsterLine,
-    `${character.name}: ${playerHpAfter}/${character.max_hp} HP${shieldDisplay}`,
+    `*${target.name}*: ${targetHpAfter}/${target.max_hp}${shieldDisplay}`,
   ];
-  const statBlock = `_${quest.scene.monster_name}: ${Math.max(0, newMonsterHp)}/${quest.scene.monster_max_hp} HP • ${character.name}: ${playerHpAfter}/${character.max_hp} HP${shieldDisplay}_`;
 
+  // For the thread cards: show the actor (whose action this was). If they weren't the
+  // target, their stats are unchanged from pre-turn — still informative.
+  const updatedActor: Character = targetIsActor
+    ? { ...character, hp: targetHpAfter, shield: dmg.newShield }
+    : character;
+
+  const weaponName = equippedWeapon?.item_name;
+  const armorName = equippedArmor?.item_name;
   ctx.waitUntil((async () => {
     const flavor = signatureName
-      ? await flavorSignature(env.AI, character, quest.scene.monster_name, signatureName, isCrit)
-      : await flavorHit(env.AI, character, quest.scene.monster_name, isMagic ? "cast" : "attack", isCrit);
-    const phaseLine = bossPhaseTransition
-      ? `\n👑 *Phase 2!* ${await flavorBossPhase(env.AI, quest.scene.monster_name)}`
-      : "";
+      ? await flavorSignature(env.AI, character, quest.scene.monster_name, signatureName, isCrit, weaponName, armorName)
+      : await flavorHit(env.AI, character, quest.scene.monster_name, isMagic ? "cast" : "attack", isCrit, weaponName, armorName);
     const marker = signatureName ? "✨ " : isCrit ? "💥 " : "";
-    const text = `${marker}${flavor}${phaseLine}\n${statBlock}`;
-    // Broadcast on phase transition or signature use (signatures are big beats).
-    await postToThread(env, quest, text, { broadcast: bossPhaseTransition || !!signatureName });
+    const phaseLine = bossPhaseTransition
+      ? `\n\n👑 *Phase 2!* ${await flavorBossPhase(env.AI, quest.scene.monster_name)}`
+      : "";
+    const narration = `${marker}${flavor}${phaseLine}`;
+
+    // Both player + monster lines already include the dice math (e.g. "5 dmg `3 + 2`"
+     // and "hits back for 4 `4 − 0 armor` — 2 absorbed by shield, 2 to HP"), so they
+     // double as the events section.
+    const events = [playerLine, monsterLine];
+
+    // Notification fallback: plain text. Block Kit drives the actual visual layout.
+    const fallbackText = [
+      blockQuote(narration),
+      "",
+      ...events,
+      "",
+      formatMonsterLine(quest.scene, newMonsterHp),
+      `*${updatedActor.name}* — ${updatedActor.hp}/${updatedActor.max_hp}${updatedActor.shield > 0 ? ` 🛡${updatedActor.shield}` : ""}`,
+    ].join("\n");
+    const blocks = buildCombatBlocks({
+      narration,
+      events,
+      scene: quest.scene,
+      monsterHp: newMonsterHp,
+      actor: updatedActor,
+    });
+
+    // Mid-quest combat stays in-thread; only quest start + finish broadcast.
+    await postToThread(env, quest, fallbackText, { blocks });
   })());
 
   return ephemeral(ephemeralLines.join("\n"));
@@ -721,10 +1014,21 @@ async function resolveFlee(
 
     ctx.waitUntil((async () => {
       const flavor = await flavorFleeSuccess(env.AI, character, quest.scene.monster_name, partyContinues);
-      const tail = partyContinues
-        ? `_<@${payload.user_id}> retreats. ${others.map((s) => `*${s.name}*`).join(", ")} fight on._`
-        : `_The quest fails — no fighters remain._`;
-      await postToThread(env, quest, `🏃 ${flavor}\n${tail}`);
+      if (!partyContinues) {
+        // Last fighter walks away — quest ends. Use the same fanfare shape as victory
+        // but framed as "abandoned" rather than "failed."
+        const blocks = buildQuestEndBlocks({
+          outcome: "failure",
+          headline: "QUEST ABANDONED",
+          narration: `🏃 ${flavor}`,
+          body: [`The quest closes — no fighters remain.`],
+        });
+        const fallback = `🏃 QUEST ABANDONED\n${blockQuote(flavor)}`;
+        await postToThread(env, quest, fallback, { broadcast: true, blocks });
+        return;
+      }
+      const tail = `<@${payload.user_id}> retreats. ${others.map((s) => `*${s.name}*`).join(", ")} fight on.`;
+      await postToThread(env, quest, `${blockQuote(`🏃 ${flavor}`)}\n\n${tail}`);
     })());
 
     return ephemeral(ephem);
@@ -751,10 +1055,20 @@ async function resolveFlee(
 
   await setCharacterHpAndShield(env.DB, payload.user_id, playerHpAfter, dmg.newShield);
   await appendLog(env.DB, quest.id, payload.user_id, "flee", "failed");
-  const shieldDisplay = dmg.newShield > 0 ? ` (🛡️${dmg.newShield})` : "";
-  const text = `${intro}\n${character.name}: ${playerHpAfter}/${character.max_hp} HP${shieldDisplay}`;
-  ctx.waitUntil(postToThread(env, quest, text));
-  return ephemeral(text);
+
+  const updatedActor: Character = { ...character, hp: playerHpAfter, shield: dmg.newShield };
+  const ephem = `${intro}\n*${character.name}*: ${playerHpAfter}/${character.max_hp}${dmg.newShield > 0 ? ` 🛡${dmg.newShield}` : ""}`;
+  // Failed flee narration is short and already mentions the damage, so use a brief
+  // narration + the same intro as the event line for consistency with combat posts.
+  const blocks = buildCombatBlocks({
+    narration: `🪤 *${character.name}* trips on the way out.`,
+    events: [intro],
+    scene: quest.scene,
+    monsterHp: quest.scene.monster_hp,
+    actor: updatedActor,
+  });
+  ctx.waitUntil(postToThread(env, quest, ephem, { blocks }));
+  return ephemeral(ephem);
 }
 
 function rewardMultiplier(variant?: QuestVariant): number {
@@ -835,7 +1149,7 @@ async function resolveVictory(
     const flavor = await flavorVictory(env.AI, killer, quest.scene.monster_name, fighters.length);
     const lootLines: string[] = [];
     for (const { fighter, roll } of lootRolls) {
-      const named = await flavorLootDrop(env.AI, quest.scene.monster_name, roll.type, roll.rarity, roll.power);
+      const named = await flavorLootDrop(env.AI, quest.scene.monster_name, roll.type, roll.rarity, roll.power, roll.weapon_range);
       const item = await addItem(env.DB, {
         character_id: fighter.slack_user_id,
         item_name: named.name,
@@ -843,18 +1157,27 @@ async function resolveVictory(
         power: roll.power,
         rarity: roll.rarity,
         flavor: named.flavor,
+        weapon_range: roll.weapon_range ?? null,
       });
       const powerStr = powerLabel(roll.type, roll.power);
+      const rangeNote = roll.weapon_range ? ` ${roll.weapon_range === "ranged" ? "🏹" : "⚔️"}` : "";
       lootLines.push(
-        `${RARITY_BADGE[roll.rarity]} *${fighter.name}* finds *${item.item_name}* (${roll.type}, ${powerStr}) — _${named.flavor}_`,
+        `${RARITY_BADGE[roll.rarity]} *${fighter.name}* finds *${item.item_name}* (${roll.type}${rangeNote}, ${powerStr}) — _${named.flavor}_`,
       );
     }
-    const tail = [
-      `_✨ +${xpEach} XP, +${goldEach} gold to each of ${fighters.length} fighter${fighters.length > 1 ? "s" : ""}._`,
+    const body = [
+      `✨ +${xpEach} XP, +${goldEach} gold to each of ${fighters.length} fighter${fighters.length > 1 ? "s" : ""}.`,
       ...levelUpLines,
       ...lootLines,
-    ].join("\n");
-    await postToThread(env, quest, `🏆 ${flavor}\n${tail}`, { broadcast: true });
+    ];
+    const blocks = buildQuestEndBlocks({
+      outcome: "victory",
+      headline: "QUEST COMPLETE",
+      narration: flavor,
+      body,
+    });
+    const fallback = `🏆 QUEST COMPLETE\n${blockQuote(flavor)}\n${body.join("\n")}`;
+    await postToThread(env, quest, fallback, { broadcast: true, blocks });
   })());
 
   return ephemeral(ephemeralLines.join("\n"));
@@ -899,8 +1222,10 @@ async function resolveGauntletAdvance(
   const waveLabel = `wave ${newWave}/${totalWaves}`;
   ctx.waitUntil((async () => {
     const flavor = await flavorGauntletNext(env.AI, previousMonster, next.name, waveLabel);
-    const tail = `_⚔️ ${waveLabel} — *${next.name}* (HP ${next.max_hp})._\n_${next.scene}_`;
-    await postToThread(env, quest, `⚔️ ${flavor}\n${tail}`, { broadcast: true });
+    const intro = `⚔️ ${flavor}`;
+    const tail = `⚔️ *${waveLabel}* — *${next.name}* (HP ${next.max_hp})\n${blockQuote(next.scene)}`;
+    // Mid-quest wave transition stays in-thread.
+    await postToThread(env, quest, `${blockQuote(intro)}\n\n${tail}`);
   })());
 
   return ephemeral(ephemeralLines.join("\n"));
@@ -945,8 +1270,11 @@ async function resolveExpeditionToTreasure(
   }).join("\n");
 
   ctx.waitUntil((async () => {
-    const tail = `_🎁 ${treasureNode.scene}_\n${lootLines}\n\n_First \`${payload.command} take <n>\` claims for the party._`;
-    await postToThread(env, quest, `${preamble.join("\n")}\n\n${tail}`, { broadcast: true });
+    const head = blockQuote(preamble.join("\n"));
+    const sceneQuote = blockQuote(`🎁 ${treasureNode.scene}`);
+    const tail = `${lootLines}\n\n_First \`${payload.command} take <n>\` claims for the party._`;
+    // Mid-quest treasure reveal stays in-thread; the expedition victory itself broadcasts.
+    await postToThread(env, quest, `${head}\n\n${sceneQuote}\n\n${tail}`);
   })());
 
   return ephemeral([...preamble, `🎁 Treasure ahead — \`${payload.command} take <1-2>\` to claim.`].join("\n"));
@@ -986,12 +1314,19 @@ async function resolveExpeditionVictory(
 
   ctx.waitUntil((async () => {
     const flavor = await flavorVictory(env.AI, taker, quest.scene.monster_name, partySize);
-    const tail = [
-      `_🎁 *${taker.name}* claims *${takenItem.item_name}* (${takenItem.item_type}, ${powerLabel(takenItem.item_type, takenItem.power)})._`,
-      `_✨ +${xpEach} XP, +${goldEach} gold to each of ${partySize} fighter${partySize > 1 ? "s" : ""}._`,
+    const body = [
+      `🎁 *${taker.name}* claims *${takenItem.item_name}* (${takenItem.item_type}, ${powerLabel(takenItem.item_type, takenItem.power)}).`,
+      `✨ +${xpEach} XP, +${goldEach} gold to each of ${partySize} fighter${partySize > 1 ? "s" : ""}.`,
       ...levelUpLines,
-    ].join("\n");
-    await postToThread(env, quest, `🏆 ${flavor}\n${tail}`, { broadcast: true });
+    ];
+    const blocks = buildQuestEndBlocks({
+      outcome: "victory",
+      headline: "EXPEDITION COMPLETE",
+      narration: flavor,
+      body,
+    });
+    const fallback = `🏆 EXPEDITION COMPLETE\n${blockQuote(flavor)}\n${body.join("\n")}`;
+    await postToThread(env, quest, fallback, { broadcast: true, blocks });
   })());
 }
 
@@ -1076,7 +1411,7 @@ async function handleChoose(
       nextBeat = `_${nextNode.scene}_\n${lootLines}\n\n_First \`${payload.command} take <n>\` claims for the party._`;
     }
     const header = `🗺️ <@${payload.user_id}> chose: *${chosen}*. ${consequence}`;
-    await postToThread(env, quest, `${header}\n\n${nextBeat}`);
+    await postToThread(env, quest, `${blockQuote(header)}\n\n${nextBeat}`);
   })());
 
   return ephemeral(`✅ You chose: *${chosen}*. Watch the thread for what happens.`);
@@ -1130,6 +1465,7 @@ async function handleTake(
     power: choice.power,
     rarity: choice.rarity,
     flavor: choice.flavor,
+    weapon_range: choice.weapon_range ?? null,
   });
 
   await resolveExpeditionVictory(payload, env, ctx, character, item, quest);
@@ -1155,27 +1491,30 @@ async function resolveDeath(
   const ephemeralLines = [...preamble];
   let resultTail = "";
 
+  // `character` here is the DYING character — which may differ from the action's
+  // invoker (payload.user_id) now that monster targeting can hit anyone in the party.
+  // All death-state writes target character.slack_user_id, not payload.user_id.
   if (isPerma) {
-    await deleteCharacter(env.DB, payload.user_id);
-    await appendLog(env.DB, quest.id, payload.user_id, "death", "perma");
+    await deleteCharacter(env.DB, character.slack_user_id);
+    await appendLog(env.DB, quest.id, character.slack_user_id, "death", "perma");
     ephemeralLines.push(
       `💀💀 *${character.name}* the ${character.class} is no more.`,
       `_Cause: ${quest.scene.monster_name}. Elite quest — perma-death enforced._`,
       `Roll a new hero with \`${payload.command} roll\`.`,
     );
-    resultTail = `_💀💀 *${character.name}* the ${character.class} is no more — slain by ${quest.scene.monster_name}. Roll a new hero with \`${payload.command} roll\`._`;
+    resultTail = `💀💀 *${character.name}* the ${character.class} is no more — slain by *${quest.scene.monster_name}*. Roll a new hero with \`${payload.command} roll\`.`;
   } else {
     // Note: applySoftDeath sets hp = max_hp (post-recovery). No need to write 0 first.
     const scar = generateScar(quest.scene.monster_name);
     const { goldLost, itemLost } = await applySoftDeath(env.DB, character, scar, DOWNED_COOLDOWN_MS);
-    await appendLog(env.DB, quest.id, payload.user_id, "death", `soft, -${goldLost} gold`);
+    await appendLog(env.DB, quest.id, character.slack_user_id, "death", `soft, -${goldLost} gold`);
     const recoveryTs = Math.floor((Date.now() + DOWNED_COOLDOWN_MS) / 1000);
     ephemeralLines.push(
       `💀 *${character.name}* is *downed*.`,
       `Lost ${goldLost} gold${itemLost ? ` and *${itemLost}*` : ""}. New scar: _${scar}_.`,
       `Recover by <!date^${recoveryTs}^{date_short_pretty} {time}|in ~12h>.`,
     );
-    resultTail = `_💀 ${character.name} is downed. Lost ${goldLost} gold${itemLost ? ` and *${itemLost}*` : ""}. New scar: ${scar}. Recover <!date^${recoveryTs}^{date_short_pretty}|in ~12h>._`;
+    resultTail = `💀 *${character.name}* is downed. Lost ${goldLost} gold${itemLost ? ` and *${itemLost}*` : ""}. New scar: _${scar}_. Recover <!date^${recoveryTs}^{date_short_pretty}|in ~12h>.`;
   }
 
   if (questEnds) {
@@ -1188,15 +1527,32 @@ async function resolveDeath(
   }
 
   const survivorsTail = questEnds
-    ? `_☠️ The party is broken. Quest fails._`
-    : `_Survivors fight on: ${survivors.map((s) => `*${s.name}*`).join(", ")}._`;
+    ? `☠️ The party is broken. Quest fails.`
+    : `Survivors fight on: ${survivors.map((s) => `*${s.name}*`).join(", ")}.`;
 
   ctx.waitUntil((async () => {
     const flavor = await flavorDeath(env.AI, character, quest.scene.monster_name, isPerma);
     const marker = isPerma ? "💀💀 " : "💀 ";
-    // Perma-death is rare and weighty — broadcast it. Soft deaths happen often
-    // and would clutter the channel.
-    await postToThread(env, quest, `${marker}${flavor}\n${resultTail}\n${survivorsTail}`, { broadcast: isPerma });
+
+    // When the death ENDS the quest (last fighter falls), use the quest-end fanfare
+    // header — same shape as victory but with the failure styling. Otherwise stay
+    // with the lighter inline death post.
+    if (questEnds) {
+      const blocks = buildQuestEndBlocks({
+        outcome: "failure",
+        headline: "QUEST FAILED",
+        narration: `${marker}${flavor}`,
+        body: [resultTail, survivorsTail],
+      });
+      const fallback = `☠️ QUEST FAILED\n${blockQuote(`${marker}${flavor}`)}\n${resultTail}\n${survivorsTail}`;
+      // Always broadcast a quest-failure ending — same logic as victories.
+      await postToThread(env, quest, fallback, { broadcast: true, blocks });
+      return;
+    }
+
+    // Mid-quest death (party survives) — stays in-thread regardless of perma vs soft.
+    // Channel only sees the quest START + FINISH posts.
+    await postToThread(env, quest, `${blockQuote(`${marker}${flavor}`)}\n\n${resultTail}\n${survivorsTail}`);
   })());
 
   return ephemeral(ephemeralLines.join("\n"));
@@ -1241,12 +1597,24 @@ async function handleJoin(
   const scaled = await scaleMonsterForJoin(env.DB, quest.id, quest.scene, JOIN_HP_RATIO);
   await appendLog(env.DB, quest.id, payload.user_id, "join", `monster +${scaled.monster_max_hp - quest.scene.monster_max_hp} HP`);
 
+  // Joiners post arrives with the actor's character card so the rest of the party can
+  // see the new arrival's HP/mana at a glance — same 2-card grid as combat actions.
   ctx.waitUntil((async () => {
     const flavor = await flavorJoin(env.AI, character, scaled.monster_name);
-    const tail = `_*${scaled.monster_name}* swells with menace (now ${scaled.monster_hp}/${scaled.monster_max_hp} HP)._`;
-    // Broadcast joins so other channel members see "X joined the fight" and might
-    // also drop in.
-    await postToThread(env, quest, `🛡️ ${flavor}\n${tail}`, { broadcast: true });
+    const narration = `🛡️ ${flavor}`;
+    const fallback = [
+      blockQuote(narration),
+      "",
+      formatMonsterLine({ ...quest.scene, monster_name: scaled.monster_name, monster_hp: scaled.monster_hp, monster_max_hp: scaled.monster_max_hp }, scaled.monster_hp),
+      `*${character.name}* — ${character.hp}/${character.max_hp}${character.shield > 0 ? ` 🛡${character.shield}` : ""}${character.max_mana > 0 ? ` ✨${character.mana}/${character.max_mana}` : ""}`,
+    ].join("\n");
+    const blocks = buildCombatBlocks({
+      narration,
+      scene: { ...quest.scene, monster_name: scaled.monster_name, monster_hp: scaled.monster_hp, monster_max_hp: scaled.monster_max_hp },
+      monsterHp: scaled.monster_hp,
+      actor: character,
+    });
+    await postToThread(env, quest, fallback, { blocks });
   })());
 
   return ephemeral(
@@ -1262,7 +1630,7 @@ async function handleParty(payload: SlashCommandPayload, env: Env): Promise<Comm
     `*Quest party* — facing *${quest.scene.monster_name}* (${quest.scene.monster_hp}/${quest.scene.monster_max_hp} HP)`,
     ...party.map((c) => {
       const status = isFighter(c) ? "" : " 💀_downed_";
-      return `• *${c.name}* the ${c.class} — L${c.level}, HP ${c.hp}/${c.max_hp}${status}`;
+      return `• ${positionEmoji(c.position)} *${c.name}* the ${c.class} — L${c.level}, HP ${c.hp}/${c.max_hp}${status}`;
     }),
   ];
   return ephemeral(lines.join("\n"));
@@ -1284,7 +1652,7 @@ async function handleInventory(payload: SlashCommandPayload, env: Env): Promise<
     const equipMark = item.equipped ? " ✅" : "";
     const powerStr = powerLabel(item.item_type, item.power);
     lines.push(
-      `\`${item.id}\` ${RARITY_BADGE[item.rarity]} *${item.item_name}* — ${item.item_type}, ${powerStr}${equipMark}`,
+      `\`${item.id}\` ${RARITY_BADGE[item.rarity]} *${item.item_name}* — ${item.item_type}${rangeBadge(item)}, ${powerStr}${equipMark}`,
     );
     if (item.flavor) lines.push(`   _${item.flavor}_`);
   }
@@ -1312,7 +1680,7 @@ async function handleEquip(
 
   await equipItem(env.DB, item);
   return ephemeral(
-    `✅ Equipped *${item.item_name}* (${item.item_type}, +${item.power}). Previous ${item.item_type} unequipped.`,
+    `✅ Equipped *${item.item_name}* (${item.item_type}${rangeBadge(item)}, +${item.power}). Previous ${item.item_type} unequipped.`,
   );
 }
 
@@ -1365,6 +1733,11 @@ async function handleShop(
   const character = await getCharacter(env.DB, payload.user_id);
   if (!character) return ephemeral(`You need to \`${payload.command} roll\` a character first.`);
 
+  const activeQuest = await getActiveQuestForCharacter(env.DB, payload.user_id);
+  if (activeQuest) {
+    return ephemeral("🛒 No shopping mid-quest — the shopkeep is afraid of monsters. Finish the fight first.");
+  }
+
   const existing = await getActiveShopStock(env.DB, payload.channel_id, SHOP_RESTOCK_MS);
   if (existing && existing.length > 0) {
     return ephemeral(formatShop(existing, character.gold, payload.command));
@@ -1392,11 +1765,16 @@ async function restockShop(env: Env, channelId: string): Promise<void> {
   if (recent) return;
 
   const tier = Math.max(2, await averageCharacterLevel(env.DB));
+  const playerCount = await countCharacters(env.DB);
+  const stockSize = Math.min(
+    SHOP_STOCK_CAP,
+    SHOP_STOCK_BASE + Math.max(0, playerCount - SHOP_STOCK_PLAYER_BASELINE) * SHOP_STOCK_PER_EXTRA_PLAYER,
+  );
   const generatedAt = Date.now();
   const items: Parameters<typeof insertShopStock>[1] = [];
-  for (let i = 0; i < SHOP_STOCK_SIZE; i++) {
+  for (let i = 0; i < stockSize; i++) {
     const roll = rollItem(tier);
-    const named = await flavorLootDrop(env.AI, "the shopkeep's chest", roll.type, roll.rarity, roll.power);
+    const named = await flavorLootDrop(env.AI, "the shopkeep's chest", roll.type, roll.rarity, roll.power, roll.weapon_range);
     items.push({
       channel_id: channelId,
       generated_at: generatedAt,
@@ -1406,6 +1784,7 @@ async function restockShop(env: Env, channelId: string): Promise<void> {
       rarity: roll.rarity,
       flavor: named.flavor,
       price: priceFor(roll.type, roll.rarity),
+      weapon_range: roll.weapon_range ?? null,
     });
   }
   await insertShopStock(env.DB, items);
@@ -1417,11 +1796,14 @@ function formatShop(items: ShopItem[], gold: number, cmd: string): string {
     const status = it.bought_by ? " ❌_sold_" : "";
     const powerStr = powerLabel(it.item_type, it.power);
     lines.push(
-      `\`${it.id}\` ${RARITY_BADGE[it.rarity]} *${it.item_name}* — ${it.item_type}, ${powerStr} • *${it.price}g*${status}`,
+      `\`${it.id}\` ${RARITY_BADGE[it.rarity]} *${it.item_name}* — ${it.item_type}${rangeBadge(it)}, ${powerStr} • *${it.price}g*${status}`,
     );
     if (it.flavor) lines.push(`   _${it.flavor}_`);
   }
-  lines.push("", `Buy with \`${cmd} buy <id>\`. Sell your own items with \`${cmd} sell <id>\`.`);
+  lines.push(
+    "",
+    `Buy with \`${cmd} buy <id>\`. Sell your own items with \`${cmd} sell <id>\`. _Cap: ${SHOP_BUY_CAP_PER_CYCLE} purchases per restock cycle._`,
+  );
   return lines.join("\n");
 }
 
@@ -1433,6 +1815,11 @@ async function handleBuy(
   const character = await getCharacter(env.DB, payload.user_id);
   if (!character) return ephemeral(`You need to \`${payload.command} roll\` a character first.`);
 
+  const activeQuest = await getActiveQuestForCharacter(env.DB, payload.user_id);
+  if (activeQuest) {
+    return ephemeral("🛒 No shopping mid-quest. Finish the fight first.");
+  }
+
   const id = parseInt(args[0] ?? "", 10);
   if (Number.isNaN(id)) return ephemeral(`Usage: \`${payload.command} buy <shop id>\` (find ids with \`${payload.command} shop\`).`);
 
@@ -1441,6 +1828,19 @@ async function handleBuy(
   if (stock.bought_by) return ephemeral(`*${stock.item_name}* was already bought.`);
   if (character.gold < stock.price) {
     return ephemeral(`Not enough gold — *${stock.item_name}* costs ${stock.price}g, you have ${character.gold}g.`);
+  }
+
+  // Per-cycle purchase cap so a fast buyer can't clear the shop alone.
+  const alreadyBought = await countPurchasesInCycle(
+    env.DB,
+    payload.channel_id,
+    payload.user_id,
+    stock.generated_at,
+  );
+  if (alreadyBought >= SHOP_BUY_CAP_PER_CYCLE) {
+    return ephemeral(
+      `🛒 You've already bought ${SHOP_BUY_CAP_PER_CYCLE} item${SHOP_BUY_CAP_PER_CYCLE > 1 ? "s" : ""} this restock cycle. Wait for the next 6h refresh.`,
+    );
   }
 
   // Two-stage atomic purchase:
@@ -1467,6 +1867,7 @@ async function handleBuy(
     power: stock.power,
     rarity: stock.rarity,
     flavor: stock.flavor ?? "",
+    weapon_range: stock.weapon_range,
   });
   return ephemeral(
     `🛍️ Bought ${RARITY_BADGE[stock.rarity]} *${stock.item_name}* for ${stock.price}g (now ${character.gold - stock.price}g). Inventory id \`${item.id}\`.`,
@@ -1480,6 +1881,11 @@ async function handleSell(
 ): Promise<CommandResponse> {
   const character = await getCharacter(env.DB, payload.user_id);
   if (!character) return ephemeral(`You need to \`${payload.command} roll\` a character first.`);
+
+  const activeQuest = await getActiveQuestForCharacter(env.DB, payload.user_id);
+  if (activeQuest) {
+    return ephemeral("🛒 No selling mid-quest — keep your gear. Finish the fight first.");
+  }
 
   const id = parseInt(args[0] ?? "", 10);
   if (Number.isNaN(id)) return ephemeral(`Usage: \`${payload.command} sell <inventory id>\`.`);
@@ -1496,12 +1902,89 @@ async function handleSell(
   );
 }
 
+// Hand an item over to another player. Works anywhere (no quest required) so it
+// composes with the shop ("I bought you a healing potion") and post-quest cleanup.
+// Equipped items are auto-unequipped on transfer to keep the new owner's slot state sane.
+async function handleGive(
+  payload: SlashCommandPayload,
+  args: string[],
+  env: Env,
+  ctx: ExecutionContext,
+): Promise<CommandResponse> {
+  const character = await getCharacter(env.DB, payload.user_id);
+  if (!character) return ephemeral(`You need to \`${payload.command} roll\` a character first.`);
+
+  const itemId = parseInt(args[0] ?? "", 10);
+  if (Number.isNaN(itemId)) {
+    return ephemeral(`Usage: \`${payload.command} give <inventory id> @user\`.`);
+  }
+
+  const targetUserId = parseMention(args.slice(1).join(" "));
+  if (!targetUserId) {
+    return ephemeral(`Need a target — \`${payload.command} give ${itemId} @user\`.`);
+  }
+  if (targetUserId === payload.user_id) {
+    return ephemeral("You can't give items to yourself.");
+  }
+
+  const item = await getItem(env.DB, itemId, payload.user_id);
+  if (!item) return ephemeral("No such item in your inventory.");
+  if (item.equipped) {
+    return ephemeral(`*${item.item_name}* is currently equipped — equip a different ${item.item_type} first to free this slot.`);
+  }
+
+  const target = await getCharacter(env.DB, targetUserId);
+  if (!target) return ephemeral(`<@${targetUserId}> hasn't rolled a character yet.`);
+
+  await transferItem(env.DB, item.id, target.slack_user_id);
+
+  // Public in-channel post so the whole channel sees the generosity. Errors above
+  // (no item, equipped, no target, etc.) stay ephemeral — only successful transfers
+  // get the broadcast.
+  return inChannel(
+    `🎁 <@${payload.user_id}> gives *${item.item_name}* (${item.item_type}, ${powerLabel(item.item_type, item.power)}) to <@${target.slack_user_id}>.`,
+  );
+}
+
 // Slack @ mentions in slash text come through as <@U123ABC> or <@U123ABC|name>.
 // Extract the user id (or null if no mention is present).
 const MENTION_RX = /<@(U[A-Z0-9]+)(?:\|[^>]+)?>/;
 function parseMention(text: string): string | null {
   const m = MENTION_RX.exec(text);
   return m?.[1] ?? null;
+}
+
+// All user mentions in a string, in order, deduped. Used by /sq quest @a @b @c
+// for batch quest invites.
+function parseMentions(text: string): string[] {
+  const rx = /<@(U[A-Z0-9]+)(?:\|[^>]+)?>/g;
+  const seen = new Set<string>();
+  const out: string[] = [];
+  let m: RegExpExecArray | null;
+  while ((m = rx.exec(text)) !== null) {
+    if (!seen.has(m[1])) {
+      seen.add(m[1]);
+      out.push(m[1]);
+    }
+  }
+  return out;
+}
+
+// Pure scene-scaling helper — same math as scaleMonsterForJoin in db.ts but runs
+// against an in-memory SceneJson before the quest is persisted. Used by /sq quest
+// when invitees are batched in at quest start, so the saved scene already reflects
+// the scaled monster HP.
+function preScaleForJoiners(scene: SceneJson, joinerCount: number, ratio: number): SceneJson {
+  let s = scene;
+  for (let i = 0; i < joinerCount; i++) {
+    const bump = Math.max(1, Math.floor(s.monster_max_hp * ratio));
+    s = {
+      ...s,
+      monster_hp: s.monster_hp + bump,
+      monster_max_hp: s.monster_max_hp + bump,
+    };
+  }
+  return s;
 }
 
 // Shared validation for heal/shield: target must be on the same active quest.
@@ -1565,9 +2048,11 @@ async function handleHeal(
   const targetTag = target.slack_user_id === payload.user_id
     ? `themselves`
     : `<@${target.slack_user_id}>`;
-  const text = `💚 <@${payload.user_id}> heals ${targetTag} for *${healed}* HP \`${heal.roll} + ${cls.magic_mod}m\`. _${target.name}: ${target.hp + healed}/${target.max_hp}_`;
-  ctx.waitUntil(postToThread(env, quest, text));
-  return ephemeral(text);
+  const headline = `💚 <@${payload.user_id}> heals ${targetTag} for *${healed}* HP \`${heal.roll} + ${cls.magic_mod}m\`.`;
+  const stat = `*${target.name}*: ${target.hp + healed}/${target.max_hp}`;
+  const ephem = `${headline}\n${stat}`;
+  ctx.waitUntil(postToThread(env, quest, `${blockQuote(headline)}\n\n${stat}`));
+  return ephemeral(ephem);
 }
 
 async function handleShield(
@@ -1610,9 +2095,11 @@ async function handleShield(
     : `<@${target.slack_user_id}>`;
   const wasted = shield.amount - added;
   const wastedNote = wasted > 0 ? ` (${wasted} over the cap)` : "";
-  const text = `🛡️ <@${payload.user_id}> shields ${targetTag} for *${added}*${wastedNote} \`${shield.roll} + ${cls.magic_mod}m\`. _${target.name}: 🛡️${target.shield + added}/${cap}_`;
-  ctx.waitUntil(postToThread(env, quest, text));
-  return ephemeral(text);
+  const headline = `🛡️ <@${payload.user_id}> shields ${targetTag} for *${added}*${wastedNote} \`${shield.roll} + ${cls.magic_mod}m\`.`;
+  const stat = `*${target.name}*: 🛡${target.shield + added}/${cap}`;
+  const ephem = `${headline}\n${stat}`;
+  ctx.waitUntil(postToThread(env, quest, `${blockQuote(headline)}\n\n${stat}`));
+  return ephemeral(ephem);
 }
 
 async function handleRevive(
@@ -1670,15 +2157,37 @@ async function handleRevive(
   // Don't deduct mana — the item itself is the gate.
   await appendLog(env.DB, quest.id, payload.user_id, "revive", `${item.item_name} → ${target.name}`);
 
-  const text = `🌱 <@${payload.user_id}> uses *${item.item_name}* — <@${target.slack_user_id}> stirs and rejoins the fight at *${restoredHp}/${target.max_hp}* HP.`;
-  // Revive is a big beat — broadcast.
-  ctx.waitUntil(postToThread(env, quest, text, { broadcast: true }));
-  return ephemeral(text);
+  const headline = `🌱 <@${payload.user_id}> uses *${item.item_name}* — <@${target.slack_user_id}> stirs and rejoins the fight.`;
+  const stat = `*${target.name}*: ${restoredHp}/${target.max_hp}`;
+  const ephem = `${headline}\n${stat}`;
+  // Mid-quest support action — stays in-thread.
+  ctx.waitUntil(postToThread(env, quest, `${blockQuote(headline)}\n\n${stat}`));
+  return ephemeral(ephem);
 }
 
-// Between-quest HP restore. No mana cost; the 10-minute cooldown is the gate.
-// Rejected during an active quest — use /sq heal or /sq use <consumable> there.
-async function handleRest(payload: SlashCommandPayload, env: Env): Promise<CommandResponse> {
+// Renders a millisecond duration as a human-friendly cooldown string.
+// e.g. 6500 → "7s", 90_000 → "1m 30s", 8_640_000 → "2h 24m".
+function formatCooldown(ms: number): string {
+  const totalSec = Math.ceil(Math.max(0, ms) / 1000);
+  if (totalSec < 60) return `${totalSec}s`;
+  const totalMin = Math.floor(totalSec / 60);
+  if (totalMin < 60) {
+    const s = totalSec % 60;
+    return s > 0 ? `${totalMin}m ${s}s` : `${totalMin}m`;
+  }
+  const hours = Math.floor(totalMin / 60);
+  const mins = totalMin % 60;
+  return mins > 0 ? `${hours}h ${mins}m` : `${hours}h`;
+}
+
+// Between-quest HP restore. Two flavors:
+//   short (default) — heals 50% of missing HP, 10-minute cooldown
+//   long             — full HP restore, once per 24 hours
+async function handleRest(
+  payload: SlashCommandPayload,
+  args: string[],
+  env: Env,
+): Promise<CommandResponse> {
   const character = await getCharacter(env.DB, payload.user_id);
   if (!character) return ephemeral(`You need to \`${payload.command} roll\` a character first.`);
 
@@ -1697,18 +2206,85 @@ async function handleRest(payload: SlashCommandPayload, env: Env): Promise<Comma
     return ephemeral("Already at full HP — save the rest for when you need it.");
   }
 
-  const since = character.last_rest_at == null ? Infinity : Date.now() - character.last_rest_at;
-  if (since < REST_COOLDOWN_MS) {
-    const remaining = Math.ceil((REST_COOLDOWN_MS - since) / 1000);
-    const mins = Math.floor(remaining / 60);
-    const secs = remaining % 60;
-    const fmt = mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
-    return ephemeral(`🛏️ You're still catching your breath — next rest in ${fmt}.`);
+  const isLong = args[0]?.toLowerCase() === "long";
+
+  if (isLong) {
+    const since = character.last_long_rest_at == null
+      ? Infinity
+      : Date.now() - character.last_long_rest_at;
+    if (since < LONG_REST_COOLDOWN_MS) {
+      return ephemeral(
+        `🛌 You've already taken your daily long rest — next one in ${formatCooldown(LONG_REST_COOLDOWN_MS - since)}.`,
+      );
+    }
+    await applyLongRest(env.DB, payload.user_id);
+    return ephemeral(
+      `🛌 You take a long rest. HP fully restored to *${character.max_hp}/${character.max_hp}*. Next long rest available in 24h.`,
+    );
   }
 
-  await applyRest(env.DB, payload.user_id);
+  // Short rest path.
+  const since = character.last_rest_at == null
+    ? Infinity
+    : Date.now() - character.last_rest_at;
+  if (since < SHORT_REST_COOLDOWN_MS) {
+    return ephemeral(
+      `🛏️ You're still catching your breath — next short rest in ${formatCooldown(SHORT_REST_COOLDOWN_MS - since)}.`,
+    );
+  }
+
+  const missing = character.max_hp - character.hp;
+  const healed = Math.max(1, Math.floor(missing * SHORT_REST_HEAL_RATIO));
+  const newHp = Math.min(character.max_hp, character.hp + healed);
+  await applyShortRest(env.DB, payload.user_id, newHp);
   return ephemeral(
-    `🛏️ You rest. HP restored to *${character.max_hp}/${character.max_hp}*. Next rest available in 10 minutes.`,
+    `🛏️ You take a short rest. Recovered *${healed}* HP (${newHp}/${character.max_hp}). For a full heal, try \`${payload.command} rest long\` (1× per 24h).`,
+  );
+}
+
+async function handlePosition(
+  payload: SlashCommandPayload,
+  args: string[],
+  env: Env,
+): Promise<CommandResponse> {
+  const character = await getCharacter(env.DB, payload.user_id);
+  if (!character) return ephemeral(`You need to \`${payload.command} roll\` a character first.`);
+
+  const target = args[0]?.toLowerCase();
+  if (target !== "front" && target !== "back") {
+    return ephemeral(
+      `Usage: \`${payload.command} position front|back\`. Currently in *${character.position}* row.\n` +
+      `_Front: 3× more likely to be targeted, takes full damage. Back: less hit risk, 60% damage taken when hit, can't melee._`,
+    );
+  }
+
+  if (character.position === target) {
+    return ephemeral(`You're already in *${target}* row.`);
+  }
+
+  // In-quest repositioning consumes the combat cooldown — moving up or back is
+  // a real action, not a free swap. Outside a quest it's free preparation.
+  const activeQuest = await getActiveQuestForCharacter(env.DB, payload.user_id);
+  if (activeQuest) {
+    const cd = await cooldownRemaining(env.DB, activeQuest.id, payload.user_id, ACTION_COOLDOWN_MS);
+    if (cd > 0) {
+      return ephemeral(`⏳ Catching your breath — try again in ${Math.ceil(cd / 1000)}s.`);
+    }
+    await setPosition(env.DB, payload.user_id, target as BattlePosition);
+    await appendLog(env.DB, activeQuest.id, payload.user_id, "position", `→ ${target}`);
+    return ephemeral(
+      target === "front"
+        ? `🔼 You shoulder forward to *front* row. (Cooldown set, 45s.)`
+        : `🔽 You retreat to *back* row. (Cooldown set, 45s.)`,
+    );
+  }
+
+  // Out-of-quest reposition — free, no cooldown.
+  await setPosition(env.DB, payload.user_id, target as BattlePosition);
+  return ephemeral(
+    target === "front"
+      ? `🔼 You move to *front* row — you'll soak more hits, but take full damage.`
+      : `🔽 You move to *back* row — harder to hit, take 60% damage when hit, can't melee.`,
   );
 }
 
@@ -1730,16 +2306,21 @@ async function handleLeaderboard(payload: SlashCommandPayload, env: Env): Promis
 // the message at the channel top-level so spectators see it without clicking into the
 // thread. Use broadcast for "big beats" only — joins, phase transitions, perma-death,
 // gauntlet wave changes, victories — to keep the channel from drowning in combat lines.
+//
+// `blocks` (optional) lets callers send Block Kit JSON for richer layouts. The `text`
+// arg becomes the notification fallback. Most callers should pass plain text; combat
+// uses blocks for the party-card grid.
 async function postToThread(
   env: Env,
   quest: ActiveQuest,
   text: string,
-  options?: { broadcast?: boolean },
+  options?: { broadcast?: boolean; blocks?: unknown[] },
 ): Promise<void> {
   const res = await postMessage(env.SLACK_BOT_TOKEN, {
     channel: quest.channel_id,
     thread_ts: quest.thread_ts,
     text,
+    blocks: options?.blocks,
     reply_broadcast: options?.broadcast,
   });
   if (!res.ok) {
@@ -1755,6 +2336,114 @@ function powerLabel(itemType: Item["item_type"], power: number): string {
   if (itemType === "magic") return `+${power} max mana`;
   if (itemType === "revive") return `revives @ ${power}% HP`;
   return `+${power}`;
+}
+
+// Compact range badge for weapons; empty for non-weapons.
+function rangeBadge(item: { item_type: Item["item_type"]; weapon_range?: Item["weapon_range"] | null }): string {
+  if (item.item_type !== "weapon") return "";
+  return (item.weapon_range ?? "melee") === "ranged" ? " 🏹" : " ⚔️";
+}
+
+// Single source of truth for the position emoji. Directional (🔼 forward / 🔽 back)
+// so it never collides with weapon-range badges (⚔️ melee / 🏹 ranged) — a front-row
+// player with a ranged weapon now reads cleanly as 🔼 + 🏹 instead of ⚔️ + 🏹.
+function positionEmoji(p: BattlePosition): string {
+  return p === "back" ? "🔽" : "🔼";
+}
+
+// Wraps multi-line narration in Slack's block-quote prefix so the story text gets the
+// vertical bar treatment and reads as visually distinct from the stat block below.
+function blockQuote(text: string): string {
+  return text.split("\n").map((l) => `> ${l}`).join("\n");
+}
+
+// One party member's compact stat fragment. Downed members show as a skull instead
+// of HP. Active shield buffer renders as 🛡N.
+function formatPartyMember(c: Character): string {
+  if (!isFighter(c)) return `*${c.name}* 💀`;
+  const shieldPart = c.shield > 0 ? ` 🛡${c.shield}` : "";
+  return `*${c.name}* ${c.hp}/${c.max_hp}${shieldPart}`;
+}
+
+function formatPartyLine(party: Character[]): string {
+  return `*Party* — ${party.map(formatPartyMember).join(" • ")}`;
+}
+
+// Monster line with the boss phase 2 marker if active.
+function formatMonsterLine(scene: SceneJson, currentHp: number): string {
+  const phase = scene.variant === "boss" && scene.boss_phase === 2 ? " 👑 *P2*" : "";
+  return `*${scene.monster_name}*${phase} — ${Math.max(0, currentHp)}/${scene.monster_max_hp}`;
+}
+
+// One character's compact stat card for Block Kit fields. Downed members render as
+// a skull. Active shield/mana are appended only if present so the card stays terse.
+// Position emoji is part of the name line so spectators see at a glance who's
+// front-line vs back-line.
+function characterField(c: Character): { type: "mrkdwn"; text: string } {
+  const stat = isFighter(c)
+    ? [
+        `${c.hp}/${c.max_hp} ❤️`,
+        c.shield > 0 ? `🛡${c.shield}` : "",
+        c.max_mana > 0 ? `✨${c.mana}/${c.max_mana}` : "",
+      ].filter(Boolean).join("  ")
+    : "💀 _downed_";
+  return {
+    type: "mrkdwn",
+    text: `${positionEmoji(c.position)} *${c.name}*\n${stat}`,
+  };
+}
+
+function monsterField(scene: SceneJson, currentHp: number): { type: "mrkdwn"; text: string } {
+  const phase = scene.variant === "boss" && scene.boss_phase === 2 ? " 👑" : "";
+  return {
+    type: "mrkdwn",
+    text: `*${scene.monster_name}*${phase}\n${Math.max(0, currentHp)}/${scene.monster_max_hp} 🩸`,
+  };
+}
+
+// Builds the Block Kit blocks for a combat-result thread post. Renders as:
+//   1. Narration section (block-quoted markdown)
+//   2. (optional) Events section — damage dealt / received / shield breakdown so
+//      the actual mechanical outcome is visible alongside the AI flavor.
+//   3. Two-card grid (monster, actor) — current state of the participants.
+// Events is intentionally separate from narration: the AI doesn't include numbers
+// (we tell it not to), so this section is where the dice math lives.
+function buildCombatBlocks(opts: {
+  narration: string;
+  events?: string[];
+  scene: SceneJson;
+  monsterHp: number;
+  actor: Character;
+}): unknown[] {
+  const blocks: unknown[] = [
+    { type: "section", text: { type: "mrkdwn", text: blockQuote(opts.narration) } },
+    { type: "divider" },
+  ];
+  if (opts.events && opts.events.length > 0) {
+    blocks.push({ type: "section", text: { type: "mrkdwn", text: opts.events.join("\n") } });
+    blocks.push({ type: "divider" });
+  }
+  blocks.push({ type: "section", fields: [monsterField(opts.scene, opts.monsterHp), characterField(opts.actor)] });
+  return blocks;
+}
+
+// Quest-end blocks. Used by victory/expedition-victory/party-broken-death posts so
+// the channel sees a clear "this is the closer" beat instead of just one more
+// thread message in a long stream.
+function buildQuestEndBlocks(opts: {
+  outcome: "victory" | "failure";
+  headline: string;       // single short line, e.g. "QUEST COMPLETE" or "QUEST FAILED"
+  narration: string;      // AI-generated flavor text
+  body: string[];         // post-narration lines: spoils, level-ups, loot, scars, etc.
+}): unknown[] {
+  const emoji = opts.outcome === "victory" ? "🏆🎉" : "☠️💀";
+  return [
+    { type: "header", text: { type: "plain_text", text: `${emoji} ${opts.headline} ${emoji}`, emoji: true } },
+    { type: "divider" },
+    { type: "section", text: { type: "mrkdwn", text: blockQuote(opts.narration) } },
+    { type: "divider" },
+    { type: "section", text: { type: "mrkdwn", text: opts.body.join("\n") } },
+  ];
 }
 
 function ephemeral(text: string): CommandResponse {

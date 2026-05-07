@@ -2,6 +2,33 @@
 
 export type CombatAction = "attack" | "cast" | "flee";
 
+export type BattlePosition = "front" | "back";
+
+// Position-based monster damage multiplier. Front-row eats full damage; back-row
+// takes 60% (rounded down, with a minimum of 1 so back-row isn't immune).
+export function positionDamageMod(position: BattlePosition, rawDamage: number): number {
+  if (position === "back") return Math.max(1, Math.floor(rawDamage * 0.6));
+  return rawDamage;
+}
+
+// Picks a monster's target from the alive party, weighted by battle position.
+// Front-row characters are 3× more likely to be hit than back-row. If only back-row
+// fighters remain, the monster targets back. Random injection makes it testable.
+export function pickMonsterTarget<T extends { position: BattlePosition }>(
+  fighters: T[],
+  random: () => number,
+): T {
+  if (fighters.length === 0) throw new Error("pickMonsterTarget: empty fighters list");
+  const weights = fighters.map((f) => (f.position === "back" ? 1 : 3));
+  const total = weights.reduce((a, b) => a + b, 0);
+  let r = random() * total;
+  for (let i = 0; i < fighters.length; i++) {
+    r -= weights[i];
+    if (r <= 0) return fighters[i];
+  }
+  return fighters[fighters.length - 1];
+}
+
 export interface PlayerHit {
   roll: number;
   damage: number;

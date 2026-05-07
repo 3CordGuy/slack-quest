@@ -30,6 +30,44 @@ export function classByName(name: string): CharClass {
     { id: "unknown", name, base_hp: 20, attack_mod: 1, magic_mod: 1, blurb: "" };
 }
 
+// Fallback monster names — used when the AI response can't be parsed. Themed for the
+// engineering dungeon-crawl vibe so even a parse failure feels in-world.
+const FALLBACK_MONSTER_NAMES = [
+  "the Untested Branch",
+  "the Cursed Migration",
+  "the Recursion Wraith",
+  "the 502 Goblin",
+  "the Stale PR",
+  "the YAML Revenant",
+  "the Thrashing Cache",
+  "the Stack Overflow",
+  "the Deprecated Mainframe",
+  "the Off-by-One Banshee",
+  "the Heisenbug Wyrm",
+  "the Race Condition",
+  "the Null Pointer Lich",
+  "the Memory Leak Hydra",
+  "the Forgotten Cron",
+  "the Schemaless Shrieker",
+];
+
+const FALLBACK_SCENES = [
+  "A presence stirs in the dim glow of a forgotten staging environment. Something is very, very wrong.",
+  "The on-call pager buzzes in the distance — an unwelcome omen. The air smells faintly of burnt JSON.",
+  "The terminal blinks. A single line of red logs spools up the screen, hinting at the foe ahead.",
+  "Something rummages through the build cache. The sound is wet and recursive.",
+  "A monitor flickers ominously. The dashboard shows a metric only mathematicians can love.",
+  "The CI pipeline coughs up a warning so old its bug tracker no longer exists. The thing it warned of stands before you.",
+];
+
+export function fallbackMonsterName(): string {
+  return FALLBACK_MONSTER_NAMES[Math.floor(Math.random() * FALLBACK_MONSTER_NAMES.length)];
+}
+
+export function fallbackSceneText(): string {
+  return FALLBACK_SCENES[Math.floor(Math.random() * FALLBACK_SCENES.length)];
+}
+
 const SCAR_TEMPLATES = [
   "Cleaved by {monster}",
   "Survivor of {monster}",
@@ -45,6 +83,8 @@ export function generateScar(monster: string): string {
 // Loot system: deterministic rolls for slot/rarity/power. AI generates name + flavor on top.
 
 export type ItemType = "weapon" | "armor" | "consumable" | "magic" | "revive";
+
+export type WeaponRange = "melee" | "ranged";
 
 export const SHIELD_CAP_MULTIPLIER = 2; // shield caps at SHIELD_CAP_MULTIPLIER × max_hp
 export type Rarity = "common" | "uncommon" | "rare";
@@ -80,6 +120,13 @@ export interface ItemRoll {
   type: ItemType;
   rarity: Rarity;
   power: number;
+  weapon_range?: WeaponRange; // only set when type === "weapon"
+}
+
+// 60% melee / 40% ranged. Melee skews more common because most class signatures
+// + the standard /sq attack assume hand-to-hand by default.
+function rollWeaponRange(): WeaponRange {
+  return Math.random() < 0.6 ? "melee" : "ranged";
 }
 
 // Slot weights. Magic items (permanent max_mana boost) and revive items (rare combat
@@ -137,7 +184,8 @@ export function rollItem(tier: number): ItemRoll {
   const type = rollItemType();
   const rarity = rollRarity(tier);
   const power = rollPower(type, rarity);
-  return { type, rarity, power };
+  const weapon_range = type === "weapon" ? rollWeaponRange() : undefined;
+  return { type, rarity, power, weapon_range };
 }
 
 // Per-fighter drop chance after a kill. 35% baseline, +5% per tier.
