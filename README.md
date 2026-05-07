@@ -50,6 +50,11 @@ What works:
 - `/sq cast` — 1d8 + class `magic_mod`, crit ×2 on a natural 8.
 - `/sq flee` — 1d2; on a 1 you escape (party fights on; quest fails only if you were the
   last fighter), on a 2 the monster gets a free hit and you stay in.
+- `/sq signature` (alias `sig`) — your class's unique ability. Costs 1 mana, shares the
+  combat cooldown. Mana refills to max between quests and on level-up. Each class has a
+  different formula (Detonate / Smite / Wildgrowth / Crescendo / Manifest / Backstab /
+  Bulwark Strike / Hex). Magic-type loot items grant +1/+2/+3 max mana when consumed,
+  capped at 5. Level-up adds +1 max mana every 5 levels.
 - `/sq party` — show the current quest's roster + HP.
 - `/sq leaderboard` — top 10 heroes by level/XP/gold (channel-visible).
 - Combat resolves a player turn then a monster turn. Monster damage is `1d4 + tier +

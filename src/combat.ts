@@ -64,3 +64,78 @@ export function isBossPhaseTransition(
 ): boolean {
   return oldHp >= monsterMaxHp / 2 && newHp < monsterMaxHp / 2;
 }
+
+export interface SignatureResult {
+  damage: number;
+  formula: string; // human-readable for the ephemeral / log
+}
+
+// Resolves a class signature ability. Costs 1 mana (caller deducts). Each class has
+// a distinct formula so the eight feel mechanically different even though they share
+// the same /sq signature command.
+export function resolveSignature(
+  classId: string,
+  attackMod: number,
+  magicMod: number,
+  weaponPower: number,
+  tier: number,
+  partySize: number,
+  monsterMaxHp: number,
+  rollFn: (sides: number) => number,
+): SignatureResult {
+  const wpn = Math.max(0, weaponPower);
+  const t = Math.max(1, tier);
+  const party = Math.max(1, partySize);
+
+  switch (classId) {
+    case "devops_mage": {
+      // Detonate: 2d6 + magic_mod + weapon
+      const r = rollFn(6) + rollFn(6);
+      return { damage: r + magicMod + wpn, formula: `2d6 + ${magicMod}m + ${wpn}w` };
+    }
+    case "qa_paladin": {
+      // Smite: 2d6 + attack_mod * 2 + weapon
+      const r = rollFn(6) + rollFn(6);
+      return { damage: r + attackMod * 2 + wpn, formula: `2d6 + ${attackMod}a×2 + ${wpn}w` };
+    }
+    case "backend_druid": {
+      // Wildgrowth: 1d8 + max(atk, mag) + tier + weapon
+      const best = Math.max(attackMod, magicMod);
+      const r = rollFn(8);
+      return { damage: r + best + t + wpn, formula: `1d8 + ${best} + ${t}t + ${wpn}w` };
+    }
+    case "frontend_bard": {
+      // Crescendo: 1d6 + magic_mod + party_size * 2 + weapon
+      const r = rollFn(6);
+      return { damage: r + magicMod + party * 2 + wpn, formula: `1d6 + ${magicMod}m + ${party}p×2 + ${wpn}w` };
+    }
+    case "staff_sage": {
+      // Manifest: 2d8 + weapon (raw caster output, no class mod)
+      const r = rollFn(8) + rollFn(8);
+      return { damage: r + wpn, formula: `2d8 + ${wpn}w` };
+    }
+    case "refactor_rogue": {
+      // Backstab: 3d4 + attack_mod + weapon
+      // (auto-crit if monster ≤ 50% HP applied by caller — needs monster_hp)
+      const r = rollFn(4) + rollFn(4) + rollFn(4);
+      return { damage: r + attackMod + wpn, formula: `3d4 + ${attackMod}a + ${wpn}w` };
+    }
+    case "sre_warden": {
+      // Bulwark Strike: 1d10 + attack_mod + armor_power. Armor power is passed via
+      // weaponPower's slot — caller must pre-add the armor value if both equipped.
+      const r = rollFn(10);
+      return { damage: r + attackMod + wpn, formula: `1d10 + ${attackMod}a + ${wpn}` };
+    }
+    case "data_warlock": {
+      // Hex: 1d6 + magic_mod + floor(monster_max_hp * 0.05) + weapon
+      const slowQuery = Math.floor(Math.max(0, monsterMaxHp) * 0.05);
+      const r = rollFn(6);
+      return { damage: r + magicMod + slowQuery + wpn, formula: `1d6 + ${magicMod}m + ${slowQuery}% + ${wpn}w` };
+    }
+    default: {
+      // Unknown class — fall back to a vanilla attack so it's never a no-op.
+      const r = rollFn(6);
+      return { damage: r + attackMod + wpn, formula: `1d6 + ${attackMod}a + ${wpn}w` };
+    }
+  }
+}

@@ -30,6 +30,8 @@ export interface Character {
   xp: number;
   hp: number;
   max_hp: number;
+  mana: number;
+  max_mana: number;
   gold: number;
   scars: string[];
   downed_until: number | null;
@@ -307,6 +309,8 @@ export async function appendLog(
 }
 
 // Awards XP and gold; applies any level-ups and returns the deltas.
+// Level-up effects: max_hp += 1d6, hp restored to new max, mana refilled to max,
+// and every 5 levels max_mana grows by 1 (capped at maxManaCap).
 export async function awardSpoils(
   db: D1Database,
   character: Character,
@@ -314,26 +318,89 @@ export async function awardSpoils(
   gold: number,
   hpRollPerLevel: () => number,
   xpForLevel: (level: number) => number,
-): Promise<{ levelsGained: number; newLevel: number; newMaxHp: number; newHp: number }> {
+  maxManaCap: number,
+): Promise<{
+  levelsGained: number;
+  newLevel: number;
+  newMaxHp: number;
+  newHp: number;
+  newMaxMana: number;
+  newMana: number;
+}> {
   let level = character.level;
   let maxHp = character.max_hp;
+  let maxMana = character.max_mana;
   const totalXp = character.xp + xp;
   let levelsGained = 0;
   while (totalXp >= xpForLevel(level + 1)) {
     level += 1;
     levelsGained += 1;
     maxHp += hpRollPerLevel();
+    if (level % 5 === 0 && maxMana < maxManaCap) {
+      maxMana += 1;
+    }
   }
   const newHp = levelsGained > 0 ? maxHp : character.hp;
+  // Mana refills to max on any level-up (parallel to HP refill).
+  const newMana = levelsGained > 0 ? maxMana : character.mana;
   await db
     .prepare(
       `UPDATE characters
-       SET xp = ?, gold = gold + ?, level = ?, max_hp = ?, hp = ?, last_active = ?
+       SET xp = ?, gold = gold + ?, level = ?,
+           max_hp = ?, hp = ?,
+           max_mana = ?, mana = ?,
+           last_active = ?
        WHERE slack_user_id = ?`,
     )
-    .bind(totalXp, gold, level, maxHp, newHp, Date.now(), character.slack_user_id)
+    .bind(totalXp, gold, level, maxHp, newHp, maxMana, newMana, Date.now(), character.slack_user_id)
     .run();
-  return { levelsGained, newLevel: level, newMaxHp: maxHp, newHp };
+  return { levelsGained, newLevel: level, newMaxHp: maxHp, newHp, newMaxMana: maxMana, newMana };
+}
+
+// Refills mana to max — called between quests so each quest start has a fresh signature.
+export async function refillMana(db: D1Database, userId: string): Promise<void> {
+  await db
+    .prepare("UPDATE characters SET mana = max_mana, last_active = ? WHERE slack_user_id = ?")
+    .bind(Date.now(), userId)
+    .run();
+}
+
+// Atomic mana deduction. Returns true if the player had >= amount and it was spent.
+// Used by /sq signature so two simultaneous casts can't both spend the same point.
+export async function tryDeductMana(
+  db: D1Database,
+  userId: string,
+  amount: number,
+): Promise<boolean> {
+  const result = await db
+    .prepare(
+      `UPDATE characters SET mana = mana - ?, last_active = ?
+       WHERE slack_user_id = ? AND mana >= ?`,
+    )
+    .bind(amount, Date.now(), userId, amount)
+    .run();
+  return (result.meta.changes ?? 0) > 0;
+}
+
+// Increases max_mana by `amount`, clamped to cap. Also bumps current mana by the
+// same delta. Used when a magic-type item is consumed.
+export async function bumpMaxMana(
+  db: D1Database,
+  character: Character,
+  amount: number,
+  cap: number,
+): Promise<{ added: number; newMaxMana: number; newMana: number }> {
+  const newMaxMana = Math.min(cap, character.max_mana + amount);
+  const added = newMaxMana - character.max_mana;
+  const newMana = Math.min(newMaxMana, character.mana + added);
+  await db
+    .prepare(
+      `UPDATE characters SET max_mana = ?, mana = ?, last_active = ?
+       WHERE slack_user_id = ?`,
+    )
+    .bind(newMaxMana, newMana, Date.now(), character.slack_user_id)
+    .run();
+  return { added, newMaxMana, newMana };
 }
 
 // Soft death: 25% gold loss, 1 random item drop, downed timer, +1 scar.

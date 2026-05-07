@@ -184,13 +184,14 @@ export async function flavorDeath(
 export async function flavorLootDrop(
   ai: Ai,
   monsterName: string,
-  type: "weapon" | "armor" | "consumable",
+  type: "weapon" | "armor" | "consumable" | "magic",
   rarity: "common" | "uncommon" | "rare",
   power: number,
 ): Promise<{ name: string; flavor: string }> {
   const typeHint =
     type === "weapon" ? "a weapon (e.g. sword, hammer, dagger, staff, bow, gauntlet)" :
     type === "armor"  ? "armor (e.g. vest, robe, cloak, helm, plating, gloves)" :
+    type === "magic"  ? "a magical focus (e.g. tome, crystal, sigil, talisman, rune-stone)" :
                         "a consumable (e.g. potion, brew, scroll, capsule, energy drink, snack)";
   const rarityHint =
     rarity === "rare" ? "Rare and weighty — name it like a legendary artifact." :
@@ -198,6 +199,7 @@ export async function flavorLootDrop(
     "Common — workmanlike, mildly absurd is fine.";
   const powerHint =
     type === "consumable" ? `It restores about ${power} HP when used.` :
+    type === "magic" ? `It permanently grants +${power} maximum mana when consumed.` :
     `It grants a +${power} bonus when equipped.`;
 
   const user = [
@@ -300,6 +302,21 @@ export async function flavorForkOutcome(
   const user = `Expedition theme: "${theme}". The party just chose: "${choice}". Narrate the immediate consequence in one short line.`;
   const fallback = `The party commits to the path.`;
   return generateFlavor(ai, user, fallback, 80);
+}
+
+export async function flavorSignature(
+  ai: Ai,
+  character: FighterRef,
+  monsterName: string,
+  signatureName: string,
+  isCrit: boolean,
+): Promise<string> {
+  const intensity = isCrit ? "It lands as a CRITICAL strike — devastating." : "It lands true.";
+  const user = `${character.name}, a Level ${character.level} ${character.class}, just unleashes their signature ability *${signatureName}* on ${monsterName}. ${intensity} Narrate the moment with extra weight — this is a class-defining move.`;
+  const fallback = isCrit
+    ? `${character.name}'s ${signatureName} crashes into ${monsterName} like a falling stack trace.`
+    : `${character.name} channels ${signatureName} at ${monsterName}.`;
+  return generateFlavor(ai, user, fallback, 110);
 }
 
 export async function flavorBossPhase(

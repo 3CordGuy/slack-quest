@@ -44,8 +44,35 @@ export function generateScar(monster: string): string {
 
 // Loot system: deterministic rolls for slot/rarity/power. AI generates name + flavor on top.
 
-export type ItemType = "weapon" | "armor" | "consumable";
+export type ItemType = "weapon" | "armor" | "consumable" | "magic";
 export type Rarity = "common" | "uncommon" | "rare";
+
+export const MAX_MANA_CAP = 5;
+
+// Class signature abilities. Each costs 1 mana, shares the 45s combat cooldown,
+// and resolves to a damage value via a class-specific formula in combat.ts.
+export interface SignatureSpec {
+  id: string;
+  name: string;
+  blurb: string;
+}
+
+export const SIGNATURES: Record<string, SignatureSpec> = {
+  devops_mage: { id: "detonate", name: "Detonate", blurb: "Drops a payload that bursts on impact." },
+  qa_paladin: { id: "smite", name: "Smite", blurb: "Strikes with the weight of a thousand failed builds." },
+  backend_druid: { id: "wildgrowth", name: "Wildgrowth", blurb: "Vines of legacy code constrict the foe." },
+  frontend_bard: { id: "crescendo", name: "Crescendo", blurb: "A rising chorus the whole party joins." },
+  staff_sage: { id: "manifest", name: "Manifest", blurb: "Pure intent shaped into pure damage." },
+  refactor_rogue: { id: "backstab", name: "Backstab", blurb: "Slips through the diff and finds the soft spot." },
+  sre_warden: { id: "bulwark_strike", name: "Bulwark Strike", blurb: "Turns armor into a weapon." },
+  data_warlock: { id: "hex", name: "Hex", blurb: "Curses the foe with a slow query that bleeds them out." },
+};
+
+export function signatureFor(className: string): SignatureSpec | null {
+  const cls = CLASSES.find((c) => c.name === className);
+  if (!cls) return null;
+  return SIGNATURES[cls.id] ?? null;
+}
 
 export interface ItemRoll {
   type: ItemType;
@@ -53,12 +80,14 @@ export interface ItemRoll {
   power: number;
 }
 
-// Slot weights are constant — every drop has the same chance to be a sword vs potion vs vest.
+// Slot weights — magic items are rarer than gear/consumables since they grant permanent
+// max_mana increases (capped at MAX_MANA_CAP).
 function rollItemType(): ItemType {
   const r = Math.random();
-  if (r < 0.4) return "weapon";
-  if (r < 0.7) return "armor";
-  return "consumable";
+  if (r < 0.35) return "weapon";
+  if (r < 0.60) return "armor";
+  if (r < 0.85) return "consumable";
+  return "magic";
 }
 
 // Rarity weights skew rarer as the monster tier rises.
@@ -75,11 +104,18 @@ function rollRarity(tier: number): Rarity {
 // Power maps to mechanic by type:
 //   weapon/armor → flat modifier added to attack/cast (weapon) or subtracted /2 from incoming dmg (armor)
 //   consumable   → HP healed on `<cmd> use`
+//   magic        → max_mana increase on `<cmd> use` (capped at MAX_MANA_CAP)
 function rollPower(type: ItemType, rarity: Rarity): number {
   if (type === "consumable") {
     if (rarity === "rare") return 25 + rollDice(11);      // 26-35
     if (rarity === "uncommon") return 12 + rollDice(7);   // 13-18
     return 5 + rollDice(4);                               // 6-8 (small)
+  }
+  if (type === "magic") {
+    // Granular max_mana boost. Rarity tiers are flat — caller clamps to MAX_MANA_CAP.
+    if (rarity === "rare") return 3;
+    if (rarity === "uncommon") return 2;
+    return 1;
   }
   // weapon | armor
   if (rarity === "rare") return 5 + rollDice(2);          // 6-7
@@ -113,8 +149,20 @@ export const SHOP_PRICE: Record<Rarity, number> = {
   rare: 150,
 };
 
-export function sellPrice(rarity: Rarity): number {
-  return Math.floor(SHOP_PRICE[rarity] * 0.3);
+// Magic items grant permanent max_mana — priced higher than consumables/gear of the
+// same rarity since the buff lasts forever.
+export const MAGIC_PRICE: Record<Rarity, number> = {
+  common: 100,
+  uncommon: 250,
+  rare: 500,
+};
+
+export function priceFor(type: ItemType, rarity: Rarity): number {
+  return type === "magic" ? MAGIC_PRICE[rarity] : SHOP_PRICE[rarity];
+}
+
+export function sellPriceFor(type: ItemType, rarity: Rarity): number {
+  return Math.floor(priceFor(type, rarity) * 0.3);
 }
 
 export function rollDice(sides: number, count = 1): number {

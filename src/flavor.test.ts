@@ -1,14 +1,19 @@
 import { describe, expect, it } from "vitest";
 import {
   CLASSES,
+  MAGIC_PRICE,
+  MAX_MANA_CAP,
   RARITY_BADGE,
   SHOP_PRICE,
+  SIGNATURES,
   classByName,
   dropChance,
   generateScar,
+  priceFor,
   rollDice,
   rollItem,
-  sellPrice,
+  sellPriceFor,
+  signatureFor,
   xpForLevel,
 } from "./flavor";
 
@@ -65,10 +70,20 @@ describe("dropChance", () => {
 });
 
 describe("rollItem", () => {
-  it("type is one of weapon | armor | consumable", () => {
+  it("type is one of weapon | armor | consumable | magic", () => {
     for (let i = 0; i < 100; i++) {
       const r = rollItem(2);
-      expect(["weapon", "armor", "consumable"]).toContain(r.type);
+      expect(["weapon", "armor", "consumable", "magic"]).toContain(r.type);
+    }
+  });
+
+  it("magic items have power between 1 and 3 (rarity-flat tiers)", () => {
+    for (let i = 0; i < 200; i++) {
+      const r = rollItem(2);
+      if (r.type === "magic") {
+        expect(r.power).toBeGreaterThanOrEqual(1);
+        expect(r.power).toBeLessThanOrEqual(3);
+      }
     }
   });
 
@@ -111,21 +126,63 @@ describe("rollItem", () => {
 });
 
 describe("shop pricing", () => {
-  it("sell price is less than buy price for every rarity", () => {
+  it("sell price is less than buy price for every rarity (consumable + gear)", () => {
     for (const rarity of ["common", "uncommon", "rare"] as const) {
-      expect(sellPrice(rarity)).toBeLessThan(SHOP_PRICE[rarity]);
+      for (const type of ["weapon", "armor", "consumable"] as const) {
+        expect(sellPriceFor(type, rarity)).toBeLessThan(priceFor(type, rarity));
+      }
+    }
+  });
+
+  it("magic items use the elevated MAGIC_PRICE table", () => {
+    for (const rarity of ["common", "uncommon", "rare"] as const) {
+      expect(priceFor("magic", rarity)).toBe(MAGIC_PRICE[rarity]);
+      expect(priceFor("weapon", rarity)).toBe(SHOP_PRICE[rarity]);
+    }
+  });
+
+  it("magic items always cost more than gear/consumables of the same rarity", () => {
+    for (const rarity of ["common", "uncommon", "rare"] as const) {
+      expect(priceFor("magic", rarity)).toBeGreaterThan(priceFor("consumable", rarity));
     }
   });
 
   it("rarer items cost more to buy", () => {
     expect(SHOP_PRICE.uncommon).toBeGreaterThan(SHOP_PRICE.common);
     expect(SHOP_PRICE.rare).toBeGreaterThan(SHOP_PRICE.uncommon);
+    expect(MAGIC_PRICE.uncommon).toBeGreaterThan(MAGIC_PRICE.common);
+    expect(MAGIC_PRICE.rare).toBeGreaterThan(MAGIC_PRICE.uncommon);
   });
 
   it("sell yields ~30% of shop price", () => {
     for (const rarity of ["common", "uncommon", "rare"] as const) {
-      expect(sellPrice(rarity)).toBe(Math.floor(SHOP_PRICE[rarity] * 0.3));
+      expect(sellPriceFor("weapon", rarity)).toBe(Math.floor(SHOP_PRICE[rarity] * 0.3));
+      expect(sellPriceFor("magic", rarity)).toBe(Math.floor(MAGIC_PRICE[rarity] * 0.3));
     }
+  });
+});
+
+describe("signatures", () => {
+  it("every class has a signature spec", () => {
+    for (const cls of CLASSES) {
+      expect(SIGNATURES[cls.id]).toBeDefined();
+    }
+  });
+
+  it("signatureFor resolves by class name", () => {
+    expect(signatureFor("DevOps Mage")?.id).toBe("detonate");
+    expect(signatureFor("QA Paladin")?.id).toBe("smite");
+  });
+
+  it("signatureFor returns null for unknown class", () => {
+    expect(signatureFor("Made-Up Class")).toBeNull();
+  });
+});
+
+describe("MAX_MANA_CAP", () => {
+  it("is a sensible positive cap", () => {
+    expect(MAX_MANA_CAP).toBeGreaterThan(1);
+    expect(MAX_MANA_CAP).toBeLessThanOrEqual(10);
   });
 });
 

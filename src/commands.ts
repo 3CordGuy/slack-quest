@@ -11,6 +11,7 @@ import {
   flavorHit,
   flavorJoin,
   flavorLootDrop,
+  flavorSignature,
   flavorVictory,
   generateExpeditionForkScene,
   generateExpeditionTheme,
@@ -23,6 +24,7 @@ import {
   applySoftDeath,
   averageCharacterLevel,
   awardSpoils,
+  bumpMaxMana,
   claimShopItem,
   consumeItem,
   cooldownRemaining,
@@ -44,6 +46,7 @@ import {
   isFighter,
   joinQuest,
   markQuestStatus,
+  refillMana,
   releaseShopClaim,
   removeItem,
   saveScene,
@@ -51,6 +54,7 @@ import {
   setCharacterHp,
   trySaveExpeditionAdvance,
   tryDeductGold,
+  tryDeductMana,
   tryUpdateScene,
   type ActiveQuest,
   type Character,
@@ -62,19 +66,21 @@ import {
   type SceneJson,
   type ShopItem,
 } from "./db";
-import { isBossPhaseTransition, resolveMonsterHit, resolvePlayerHit } from "./combat";
+import { isBossPhaseTransition, resolveMonsterHit, resolvePlayerHit, resolveSignature } from "./combat";
 import {
   classByName,
   dropChance,
   generateNpcName,
   generateScar,
   pickRandomClass,
+  priceFor,
   rollDice,
   rollItem,
-  sellPrice,
+  sellPriceFor,
+  signatureFor,
   xpForLevel,
+  MAX_MANA_CAP,
   RARITY_BADGE,
-  SHOP_PRICE,
 } from "./flavor";
 import { postMessage, respondToCommand, type SlashCommandPayload } from "./slack";
 
@@ -114,6 +120,7 @@ function helpText(cmd: string): string {
     `• \`${cmd} attack\` — strike with weapon (1d6 + atk_mod + weapon power, crit on nat 6)`,
     `• \`${cmd} cast\` — channel magic (1d8 + mag_mod + weapon power, crit on nat 8)`,
     `• \`${cmd} flee\` — try to escape (1d2; on fail you take a free hit)`,
+    `• \`${cmd} signature\` (alias \`sig\`) — your class's signature ability (costs 1 mana, refills between quests)`,
     `• \`${cmd} inventory\` — list your items (equipped marked ✅)`,
     `• \`${cmd} equip <id>\` — equip a weapon or armor by inventory id`,
     `• \`${cmd} use <id>\` — use a consumable (free action, no cooldown)`,
@@ -149,6 +156,9 @@ export async function handleCommand(
       return handleCombat(payload, env, ctx, "cast");
     case "flee":
       return handleCombat(payload, env, ctx, "flee");
+    case "signature":
+    case "sig":
+      return handleCombat(payload, env, ctx, "signature");
     case "join":
       return handleJoin(payload, env, ctx);
     case "party":
@@ -224,11 +234,13 @@ function formatSheet(c: Character): string {
     ? `\n💀 _Downed until <!date^${Math.floor(c.downed_until / 1000)}^{date_short_pretty} {time}|soon>_`
     : "";
   const scarLine = c.scars.length ? `\nScars: ${c.scars.join(", ")}` : "";
+  const sig = signatureFor(c.class);
+  const sigLine = sig ? `\nSignature: *${sig.name}* — _${sig.blurb}_` : "";
   return [
     `*${c.name}*, the ${c.class}`,
     `Level ${c.level} • XP ${c.xp}`,
-    `HP ${c.hp}/${c.max_hp} • ${c.gold} gold`,
-    `${scarLine}${downedNote}`,
+    `HP ${c.hp}/${c.max_hp} • Mana ${c.mana}/${c.max_mana} • ${c.gold} gold`,
+    `${sigLine}${scarLine}${downedNote}`,
   ].filter(Boolean).join("\n");
 }
 
@@ -331,6 +343,9 @@ async function handleQuest(
         scene,
         created_by: payload.user_id,
       });
+      // Mana refills to max for the questing character at quest start. Anyone who
+      // joins later via /sq join also gets a refill.
+      await refillMana(env.DB, payload.user_id);
     } catch (err) {
       await respondToCommand(payload.response_url, {
         response_type: "ephemeral",
@@ -432,7 +447,7 @@ async function buildQuestScene(
   return { ...(await generateOpeningScene(env.AI, character, elite, "standard")), variant };
 }
 
-type CombatAction = "attack" | "cast" | "flee";
+type CombatAction = "attack" | "cast" | "flee" | "signature";
 
 async function handleCombat(
   payload: SlashCommandPayload,
@@ -483,21 +498,73 @@ async function handleCombat(
     }
   }
 
-  // attack | cast — equipped weapon adds to whichever action you use; armor reduces incoming.
+  // attack | cast | signature — compute damage + the player-line. Signature has its
+  // own formula per class and costs 1 mana (deducted post-success below).
   const cls = classByName(character.class);
-  const isMagic = action === "cast";
-  const classMod = isMagic ? cls.magic_mod : cls.attack_mod;
-  const weaponMod = equippedWeapon?.power ?? 0;
-  const verb = isMagic ? "casts" : "attacks";
+  let damage: number;
+  let isCrit: boolean;
+  let playerLine: string;
+  let signatureName: string | null = null;
+  let manaCost = 0;
 
-  const hit = resolvePlayerHit(action, classMod, weaponMod, rollDice);
-  const newMonsterHp = quest.scene.monster_hp - hit.damage;
+  if (action === "signature") {
+    const sig = signatureFor(character.class);
+    if (!sig) return ephemeral("Your class has no signature ability.");
+    if (character.mana < 1) {
+      return ephemeral(
+        `Out of mana — \`${payload.command} signature\` refills between quests. (${character.mana}/${character.max_mana})`,
+      );
+    }
+
+    // SRE Warden's Bulwark Strike folds equipped armor into the "weapon" slot of
+    // the signature formula — armor power becomes its own attack stat.
+    const wpnPower = equippedWeapon?.power ?? 0;
+    const armorPower = equippedArmor?.power ?? 0;
+    const sigWpn = cls.id === "sre_warden" ? wpnPower + armorPower : wpnPower;
+
+    const sigResult = resolveSignature(
+      cls.id,
+      cls.attack_mod,
+      cls.magic_mod,
+      sigWpn,
+      quest.scene.tier,
+      fighters.length,
+      quest.scene.monster_max_hp,
+      rollDice,
+    );
+
+    damage = sigResult.damage;
+    isCrit = false;
+    signatureName = sig.name;
+    manaCost = 1;
+
+    // Backstab auto-crits when the monster is already weakened. Doubles damage.
+    if (cls.id === "refactor_rogue" && quest.scene.monster_hp <= quest.scene.monster_max_hp / 2) {
+      damage = damage * 2;
+      isCrit = true;
+    }
+
+    playerLine = isCrit
+      ? `💥 *${sig.name} CRIT!* <@${payload.user_id}> hits for *${damage}* (${sigResult.formula}, ×2).`
+      : `✨ *${sig.name}* — <@${payload.user_id}> hits for *${damage}* (${sigResult.formula}).`;
+  } else {
+    const isMagic = action === "cast";
+    const classMod = isMagic ? cls.magic_mod : cls.attack_mod;
+    const weaponMod = equippedWeapon?.power ?? 0;
+    const verb = isMagic ? "casts" : "attacks";
+
+    const hit = resolvePlayerHit(action, classMod, weaponMod, rollDice);
+    damage = hit.damage;
+    isCrit = hit.isCrit;
+
+    const modBreakdown = weaponMod > 0 ? `${classMod}+${weaponMod}` : `${hit.totalMod}`;
+    playerLine = isCrit
+      ? `💥 *CRIT!* <@${payload.user_id}> ${verb} for *${damage}* (${hit.roll}×2 + ${modBreakdown}).`
+      : `<@${payload.user_id}> ${verb} for *${damage}* (${hit.roll} + ${modBreakdown}).`;
+  }
+
+  const newMonsterHp = quest.scene.monster_hp - damage;
   const willKill = newMonsterHp <= 0;
-
-  const modBreakdown = weaponMod > 0 ? `${classMod}+${weaponMod}` : `${hit.totalMod}`;
-  const playerLine = hit.isCrit
-    ? `💥 *CRIT!* <@${payload.user_id}> ${verb} for *${hit.damage}* (${hit.roll}×2 + ${modBreakdown}).`
-    : `<@${payload.user_id}> ${verb} for *${hit.damage}* (${hit.roll} + ${modBreakdown}).`;
 
   // Boss phase 1 → 2 transition: crossing the 50% HP threshold powers it up.
   // Bake the flag into the scene so the same atomic write applies HP + phase together.
@@ -523,7 +590,14 @@ async function handleCombat(
     );
   }
 
-  await appendLog(env.DB, quest.id, payload.user_id, action, `${hit.damage} dmg${willKill ? " (kill)" : ""}`);
+  if (manaCost > 0) {
+    // Mana deduct is conditional too — covers the (rare) case where a player races
+    // two simultaneous signatures with mana=1. Loser gets the mana refund implicitly
+    // by failing the WHERE clause; the scene update has already landed for them which
+    // means the damage applied — small inconsistency, accepted for v1.
+    await tryDeductMana(env.DB, payload.user_id, manaCost);
+  }
+  await appendLog(env.DB, quest.id, payload.user_id, action, `${damage} dmg${willKill ? " (kill)" : ""}`);
 
   if (willKill) {
     // Gauntlet: advance to next wave instead of triggering victory.
@@ -546,6 +620,7 @@ async function handleCombat(
   // Monster turn — retaliates against the actor only. Damage scales with party size,
   // mitigated by armor (floor(power / 2), minimum 1 damage so armor never makes you immune).
   // Boss phase 2 adds a flat tier bonus on top.
+  const isMagic = action === "cast";
   const monster = resolveMonsterHit(
     quest.scene.tier,
     fighters.length,
@@ -575,13 +650,16 @@ async function handleCombat(
   const statBlock = `_${quest.scene.monster_name}: ${Math.max(0, newMonsterHp)}/${quest.scene.monster_max_hp} HP • ${character.name}: ${playerHpAfter}/${character.max_hp} HP_`;
 
   ctx.waitUntil((async () => {
-    const flavor = await flavorHit(env.AI, character, quest.scene.monster_name, isMagic ? "cast" : "attack", hit.isCrit);
+    const flavor = signatureName
+      ? await flavorSignature(env.AI, character, quest.scene.monster_name, signatureName, isCrit)
+      : await flavorHit(env.AI, character, quest.scene.monster_name, isMagic ? "cast" : "attack", isCrit);
     const phaseLine = bossPhaseTransition
       ? `\n👑 *Phase 2!* ${await flavorBossPhase(env.AI, quest.scene.monster_name)}`
       : "";
-    const text = `${hit.isCrit ? "💥 " : ""}${flavor}${phaseLine}\n${statBlock}`;
-    // Broadcast only on the phase transition — regular hits stay thread-local.
-    await postToThread(env, quest, text, { broadcast: bossPhaseTransition });
+    const marker = signatureName ? "✨ " : isCrit ? "💥 " : "";
+    const text = `${marker}${flavor}${phaseLine}\n${statBlock}`;
+    // Broadcast on phase transition or signature use (signatures are big beats).
+    await postToThread(env, quest, text, { broadcast: bossPhaseTransition || !!signatureName });
   })());
 
   return ephemeral(ephemeralLines.join("\n"));
@@ -684,10 +762,12 @@ async function resolveVictory(
       goldEach,
       () => rollDice(6),
       xpForLevel,
+      MAX_MANA_CAP,
     );
     if (result.levelsGained > 0) {
+      const manaPart = result.newMaxMana > fighter.max_mana ? `, max mana ${result.newMaxMana}` : "";
       levelUpLines.push(
-        `🎚️ *${fighter.name}* hits Level ${result.newLevel} (max HP ${result.newMaxHp}).`,
+        `🎚️ *${fighter.name}* hits Level ${result.newLevel} (max HP ${result.newMaxHp}${manaPart}).`,
       );
     }
   }
@@ -725,7 +805,7 @@ async function resolveVictory(
         rarity: roll.rarity,
         flavor: named.flavor,
       });
-      const powerStr = roll.type === "consumable" ? `heals ${roll.power}` : `+${roll.power}`;
+      const powerStr = powerLabel(roll.type, roll.power);
       lootLines.push(
         `${RARITY_BADGE[roll.rarity]} *${fighter.name}* finds *${item.item_name}* (${roll.type}, ${powerStr}) — _${named.flavor}_`,
       );
@@ -821,7 +901,7 @@ async function resolveExpeditionToTreasure(
   await appendLog(env.DB, quest.id, payload.user_id, "expedition", `→ treasure`);
 
   const lootLines = (treasureNode.loot_options ?? []).map((l, i) => {
-    const power = l.item_type === "consumable" ? `heals ${l.power}` : `+${l.power}`;
+    const power = powerLabel(l.item_type, l.power);
     return `\`${i + 1}\` ${RARITY_BADGE[l.rarity]} *${l.name}* — ${l.item_type}, ${power}\n   _${l.flavor}_`;
   }).join("\n");
 
@@ -853,10 +933,11 @@ async function resolveExpeditionVictory(
 
   const levelUpLines: string[] = [];
   for (const fighter of fighters) {
-    const result = await awardSpoils(env.DB, fighter, xpEach, goldEach, () => rollDice(6), xpForLevel);
+    const result = await awardSpoils(env.DB, fighter, xpEach, goldEach, () => rollDice(6), xpForLevel, MAX_MANA_CAP);
     if (result.levelsGained > 0) {
+      const manaPart = result.newMaxMana > fighter.max_mana ? `, max mana ${result.newMaxMana}` : "";
       levelUpLines.push(
-        `🎚️ *${fighter.name}* hits Level ${result.newLevel} (max HP ${result.newMaxHp}).`,
+        `🎚️ *${fighter.name}* hits Level ${result.newLevel} (max HP ${result.newMaxHp}${manaPart}).`,
       );
     }
   }
@@ -867,7 +948,7 @@ async function resolveExpeditionVictory(
   ctx.waitUntil((async () => {
     const flavor = await flavorVictory(env.AI, taker, quest.scene.monster_name, partySize);
     const tail = [
-      `_🎁 *${taker.name}* claims *${takenItem.item_name}* (${takenItem.item_type}, ${takenItem.item_type === "consumable" ? `heals ${takenItem.power}` : `+${takenItem.power}`})._`,
+      `_🎁 *${taker.name}* claims *${takenItem.item_name}* (${takenItem.item_type}, ${powerLabel(takenItem.item_type, takenItem.power)})._`,
       `_✨ +${xpEach} XP, +${goldEach} gold to each of ${partySize} fighter${partySize > 1 ? "s" : ""}._`,
       ...levelUpLines,
     ].join("\n");
@@ -950,7 +1031,7 @@ async function handleChoose(
       ].join("\n");
     } else if (nextNode.type === "treasure") {
       const lootLines = (nextNode.loot_options ?? []).map((l, i) => {
-        const power = l.item_type === "consumable" ? `heals ${l.power}` : `+${l.power}`;
+        const power = powerLabel(l.item_type, l.power);
         return `\`${i + 1}\` ${RARITY_BADGE[l.rarity]} *${l.name}* — ${l.item_type}, ${power}\n   _${l.flavor}_`;
       }).join("\n");
       nextBeat = `_${nextNode.scene}_\n${lootLines}\n\n_First \`${payload.command} take <n>\` claims for the party._`;
@@ -1115,6 +1196,9 @@ async function handleJoin(
   const inserted = await joinQuest(env.DB, quest.id, payload.user_id);
   if (!inserted) return ephemeral("You're already on this quest.");
 
+  // Joiners also get a mana refill — same effect as starting the quest yourself.
+  await refillMana(env.DB, payload.user_id);
+
   const scaled = await scaleMonsterForJoin(env.DB, quest.id, quest.scene, JOIN_HP_RATIO);
   await appendLog(env.DB, quest.id, payload.user_id, "join", `monster +${scaled.monster_max_hp - quest.scene.monster_max_hp} HP`);
 
@@ -1159,7 +1243,7 @@ async function handleInventory(payload: SlashCommandPayload, env: Env): Promise<
   ];
   for (const item of items) {
     const equipMark = item.equipped ? " ✅" : "";
-    const powerStr = item.item_type === "consumable" ? `heals ${item.power}` : `+${item.power}`;
+    const powerStr = powerLabel(item.item_type, item.power);
     lines.push(
       `\`${item.id}\` ${RARITY_BADGE[item.rarity]} *${item.item_name}* — ${item.item_type}, ${powerStr}${equipMark}`,
     );
@@ -1206,8 +1290,22 @@ async function handleUse(
 
   const item = await getItem(env.DB, id, payload.user_id);
   if (!item) return ephemeral("No such item in your inventory.");
+
+  if (item.item_type === "magic") {
+    if (character.max_mana >= MAX_MANA_CAP) {
+      return ephemeral(`Already at the max-mana cap (${MAX_MANA_CAP}). Sell it instead with \`${payload.command} sell ${item.id}\`.`);
+    }
+    const result = await bumpMaxMana(env.DB, character, item.power, MAX_MANA_CAP);
+    await removeItem(env.DB, item.id);
+    const wasted = item.power - result.added;
+    const wastedNote = wasted > 0 ? ` (${wasted} over the cap, lost)` : "";
+    return ephemeral(
+      `🔮 You channel *${item.item_name}* — *+${result.added}* max mana${wastedNote}. (${result.newMana}/${result.newMaxMana})`,
+    );
+  }
+
   if (item.item_type !== "consumable") {
-    return ephemeral(`*${item.item_name}* isn't a consumable. Try \`${payload.command} equip ${item.id}\`.`);
+    return ephemeral(`*${item.item_name}* isn't usable. Try \`${payload.command} equip ${item.id}\`.`);
   }
 
   if (character.hp >= character.max_hp) {
@@ -1268,7 +1366,7 @@ async function restockShop(env: Env, channelId: string): Promise<void> {
       power: roll.power,
       rarity: roll.rarity,
       flavor: named.flavor,
-      price: SHOP_PRICE[roll.rarity],
+      price: priceFor(roll.type, roll.rarity),
     });
   }
   await insertShopStock(env.DB, items);
@@ -1278,7 +1376,7 @@ function formatShop(items: ShopItem[], gold: number, cmd: string): string {
   const lines = [`🛒 *Shop* — you have ${gold} gold`];
   for (const it of items) {
     const status = it.bought_by ? " ❌_sold_" : "";
-    const powerStr = it.item_type === "consumable" ? `heals ${it.power}` : `+${it.power}`;
+    const powerStr = powerLabel(it.item_type, it.power);
     lines.push(
       `\`${it.id}\` ${RARITY_BADGE[it.rarity]} *${it.item_name}* — ${it.item_type}, ${powerStr} • *${it.price}g*${status}`,
     );
@@ -1351,7 +1449,7 @@ async function handleSell(
   if (!item) return ephemeral("No such item in your inventory.");
   if (item.equipped) return ephemeral("Unequip it first.");
 
-  const price = sellPrice(item.rarity);
+  const price = sellPriceFor(item.item_type, item.rarity);
   await removeItem(env.DB, item.id);
   await addGold(env.DB, payload.user_id, price);
   return ephemeral(
@@ -1393,6 +1491,14 @@ async function postToThread(
     // Don't fail the command — the player still got an ephemeral copy.
     console.warn("postToThread failed", res.error);
   }
+}
+
+// Renders the power value in user-facing terms based on item type.
+// Used by inventory, shop, treasure room, and victory loot lines.
+function powerLabel(itemType: Item["item_type"], power: number): string {
+  if (itemType === "consumable") return `heals ${power}`;
+  if (itemType === "magic") return `+${power} max mana`;
+  return `+${power}`;
 }
 
 function ephemeral(text: string): CommandResponse {
