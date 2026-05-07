@@ -1,13 +1,13 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "gantt-quest",
+  "name": "slack-quest",
   "main": "src/index.ts",
   "compatibility_date": "2025-05-01",
   "observability": { "enabled": true },
   "d1_databases": [
     {
       "binding": "DB",
-      "database_name": "gantt-quest",
+      "database_name": "slack-quest",
       "database_id": "REPLACE_AFTER_pnpm_db:create",
       "migrations_dir": "migrations"
     }

@@ -1,7 +1,12 @@
-# gantt-quest
+# slack-quest
 
 A Slack bot that runs a comedic, engineering-themed mini dungeon-crawl in a single channel.
 Cloudflare Workers + D1 + Workers AI. No real coworkers as NPCs — names are generated.
+
+> Rename it for your team — the bot's display name (`Slack Quest` in [src/ai.ts](src/ai.ts),
+> [src/commands.ts](src/commands.ts), [src/index.ts](src/index.ts), and the manifest below)
+> is just a default. The Cloudflare Worker name and D1 database name in
+> [wrangler.jsonc](wrangler.jsonc) and [package.json](package.json) can be renamed too.
 
 ## Design at a glance
 
@@ -56,15 +61,15 @@ Use this manifest at <https://api.slack.com/apps?new_app=1> → "From an app man
 
 ```yaml
 display_information:
-  name: Gantt-Quest
+  name: Slack Quest
   description: A mini dungeon crawl for the team.
 features:
   bot_user:
-    display_name: Gantt-Quest
+    display_name: Slack Quest
     always_online: true
   slash_commands:
     - command: /dnd
-      url: https://gantt-quest.<your-subdomain>.workers.dev/slack/commands
+      url: https://slack-quest.<your-subdomain>.workers.dev/slack/commands
       description: Roll a character, start a quest, check your sheet
       usage_hint: roll | me | quest [elite] | help
       should_escape: false

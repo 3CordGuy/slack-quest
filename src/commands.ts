@@ -20,7 +20,7 @@ export interface CommandResponse {
 }
 
 const HELP_TEXT = [
-  "*Gantt-Quest commands*",
+  "*Slack Quest commands*",
   "• `/dnd roll` — roll a new character",
   "• `/dnd me` — show your character sheet",
   "• `/dnd quest` — start a standard quest",

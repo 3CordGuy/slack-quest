@@ -13,7 +13,7 @@ export interface Env {
 
 const app = new Hono<{ Bindings: Env }>();
 
-app.get("/", (c) => c.text("gantt-quest is alive."));
+app.get("/", (c) => c.text("slack-quest is alive."));
 
 app.post("/slack/commands", async (c) => {
   const body = await c.req.text();
@@ -30,7 +30,7 @@ app.post("/slack/commands", async (c) => {
   if (c.env.ALLOWED_CHANNEL_ID && payload.channel_id !== c.env.ALLOWED_CHANNEL_ID) {
     return c.json({
       response_type: "ephemeral",
-      text: "Gantt-Quest only runs in the designated channel.",
+      text: "Slack Quest only runs in the designated channel.",
     });
   }
 

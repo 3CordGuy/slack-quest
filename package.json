@@ -1,5 +1,5 @@
 {
-  "name": "gantt-quest",
+  "name": "slack-quest",
   "version": "0.0.1",
   "private": true,
   "type": "module",
@@ -7,9 +7,9 @@
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
     "typecheck": "tsc --noEmit",
-    "db:create": "wrangler d1 create gantt-quest",
-    "db:migrate:local": "wrangler d1 migrations apply gantt-quest --local",
-    "db:migrate:remote": "wrangler d1 migrations apply gantt-quest --remote"
+    "db:create": "wrangler d1 create slack-quest",
+    "db:migrate:local": "wrangler d1 migrations apply slack-quest --local",
+    "db:migrate:remote": "wrangler d1 migrations apply slack-quest --remote"
   },
   "dependencies": {
     "hono": "^4.6.0"
