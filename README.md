@@ -26,23 +26,34 @@ What works:
 - `/dnd me` — show your sheet.
 - `/dnd quest [elite]` — kick off a quest. The bot generates an opening scene with Workers AI
   and posts it to the channel. The thread + monster state is persisted.
+- `/dnd join` — join the active quest in the current channel. Monster max HP grows by 40%
+  per joiner so the encounter doesn't get trivialized.
 - `/dnd attack` — 1d6 + class `attack_mod`, crit ×2 on a natural 6.
 - `/dnd cast` — 1d8 + class `magic_mod`, crit ×2 on a natural 8.
-- `/dnd flee` — 1d2; on a 1 you escape (quest fails, no penalty), on a 2 the monster gets a
-  free hit and the quest continues.
-- Combat resolves a player turn then a monster turn (1d4 + tier). Updates post in the quest
-  thread; the invoker also gets an ephemeral copy.
+- `/dnd flee` — 1d2; on a 1 you escape (party fights on; quest fails only if you were the
+  last fighter), on a 2 the monster gets a free hit and you stay in.
+- `/dnd party` — show the current quest's roster + HP.
+- `/dnd leaderboard` — top 10 heroes by level/XP/gold (channel-visible).
+- Combat resolves a player turn then a monster turn. Monster damage is `1d4 + tier +
+  floor((alive_party - 1) / 2)` so it gets meaner with more enemies. Updates post in the
+  quest thread; the invoker gets an ephemeral copy.
+- **Per-player 45-second cooldown** between actions instead of strict turn order — keeps
+  Slack's async vibe and prevents one fast typer from dominating.
 - **Soft death** at 0 HP on standard quests: 25% gold loss, drop a random inventory item,
-  +1 scar, 12h `downed_until` cooldown, HP restored to max for next time.
-- **Perma-death** at 0 HP on elite quests: character row deleted (cascades inventory + party).
-- Level-up: granted automatically when XP crosses the threshold (`xpForLevel` in `flavor.ts`).
-  Each level adds 1d6 to max HP and refills the bar.
+  +1 scar, 12h `downed_until` cooldown, HP restored to max for next time. The quest
+  continues for surviving party members.
+- **Perma-death** at 0 HP on elite quests: character row deleted (cascades inventory + party
+  records; `quests.created_by` is `ON DELETE SET NULL` so historical quests survive).
+  Survivors fight on; quest only ends when the last fighter falls.
+- **Victory rewards** split evenly across alive party members at the kill blow. Level-up
+  triggers automatically when XP crosses the threshold (each level adds 1d6 to max HP and
+  refills the bar).
 
 Still stubbed:
 
 - Inventory drops *on victory* (defeats already drop items via the soft-death penalty).
-- `/dnd join @thread` for multiplayer parties — schema's there (`quest_party`), dispatch isn't.
 - Item rarity tables, equipment slots, anything resembling shopping.
+- Reaction-based spectator buffs/debuffs.
 
 ## Setup
 

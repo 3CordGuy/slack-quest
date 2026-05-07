@@ -7,12 +7,19 @@ import {
   appendLog,
   applySoftDeath,
   awardSpoils,
+  cooldownRemaining,
   createCharacter,
   createQuest,
   deleteCharacter,
   getActiveQuestForCharacter,
+  getActiveQuestInChannel,
   getCharacter,
+  getLeaderboard,
+  getQuestParty,
+  isFighter,
+  joinQuest,
   markQuestStatus,
+  scaleMonsterForJoin,
   setCharacterHp,
   updateMonsterHp,
   type ActiveQuest,
@@ -35,6 +42,8 @@ export interface CommandResponse {
 }
 
 const DOWNED_COOLDOWN_MS = 12 * 60 * 60 * 1000;
+const ACTION_COOLDOWN_MS = 45 * 1000;
+const JOIN_HP_RATIO = 0.4; // monster max HP grows by this fraction per joiner
 
 const HELP_TEXT = [
   "*Slack Quest commands*",
@@ -42,10 +51,14 @@ const HELP_TEXT = [
   "• `/dnd me` — show your character sheet",
   "• `/dnd quest` — start a standard quest",
   "• `/dnd quest elite` — start an elite quest (perma-death enabled)",
+  "• `/dnd join` — join the active quest in this channel",
   "• `/dnd attack` — strike with weapon (1d6 + atk_mod, crit on nat 6)",
   "• `/dnd cast` — channel magic (1d8 + mag_mod, crit on nat 8)",
   "• `/dnd flee` — try to escape (1d2; on fail you take a free hit)",
+  "• `/dnd party` — show the current quest's roster + HP",
+  "• `/dnd leaderboard` — top 10 heroes",
   "• `/dnd help` — show this list",
+  "_Combat actions have a 45-second cooldown per player._",
 ].join("\n");
 
 export async function handleCommand(
@@ -70,6 +83,13 @@ export async function handleCommand(
       return handleCombat(payload, env, "cast");
     case "flee":
       return handleCombat(payload, env, "flee");
+    case "join":
+      return handleJoin(payload, env);
+    case "party":
+      return handleParty(payload, env);
+    case "leaderboard":
+    case "lb":
+      return handleLeaderboard(env);
     case "help":
     case "":
       return ephemeral(HELP_TEXT);
@@ -209,11 +229,22 @@ async function handleCombat(
 ): Promise<CommandResponse> {
   const character = await getCharacter(env.DB, payload.user_id);
   if (!character) return ephemeral("You need to `/dnd roll` a character first.");
+  if (!isFighter(character)) {
+    return ephemeral("You're downed and can't act. Recover, then try again.");
+  }
 
   const quest = await getActiveQuestForCharacter(env.DB, payload.user_id);
-  if (!quest) return ephemeral("You're not on an active quest. Try `/dnd quest`.");
+  if (!quest) return ephemeral("You're not on an active quest. Try `/dnd quest` or `/dnd join`.");
 
-  if (action === "flee") return resolveFlee(payload, env, character, quest);
+  const cooldown = await cooldownRemaining(env.DB, quest.id, payload.user_id, ACTION_COOLDOWN_MS);
+  if (cooldown > 0) {
+    return ephemeral(`⏳ Catching your breath — try again in ${Math.ceil(cooldown / 1000)}s.`);
+  }
+
+  const party = await getQuestParty(env.DB, quest.id);
+  const fighters = party.filter(isFighter);
+
+  if (action === "flee") return resolveFlee(payload, env, character, quest, fighters);
 
   // attack | cast
   const cls = classByName(character.class);
@@ -232,7 +263,9 @@ async function handleCombat(
     : `<@${payload.user_id}> ${verb} for *${damage}* (${roll} + ${mod}).`;
 
   if (newMonsterHp <= 0) {
-    return resolveVictory(payload, env, character, quest, [
+    await updateMonsterHp(env.DB, quest.id, quest.scene, 0);
+    await appendLog(env.DB, quest.id, payload.user_id, action, `${damage} dmg (kill)`);
+    return resolveVictory(payload, env, quest, fighters, [
       playerLine,
       `🏆 *${quest.scene.monster_name}* falls.`,
     ]);
@@ -241,14 +274,14 @@ async function handleCombat(
   await updateMonsterHp(env.DB, quest.id, quest.scene, newMonsterHp);
   await appendLog(env.DB, quest.id, payload.user_id, action, `${damage} dmg`);
 
-  // Monster turn.
-  const monsterRoll = rollDice(4) + quest.scene.tier;
+  // Monster turn — retaliates against the actor only. Damage scales with party size.
+  const monsterRoll = rollDice(4) + quest.scene.tier + Math.floor((fighters.length - 1) / 2);
   const playerHpAfter = character.hp - monsterRoll;
 
   const monsterLine = `*${quest.scene.monster_name}* hits back for *${monsterRoll}*.`;
 
   if (playerHpAfter <= 0) {
-    return resolveDeath(payload, env, character, quest, [playerLine, monsterLine]);
+    return resolveDeath(payload, env, character, quest, fighters, [playerLine, monsterLine]);
   }
 
   await setCharacterHp(env.DB, payload.user_id, playerHpAfter);
@@ -269,23 +302,31 @@ async function resolveFlee(
   env: Env,
   character: Character,
   quest: ActiveQuest,
+  fighters: Character[],
 ): Promise<CommandResponse> {
   const roll = rollDice(2);
   if (roll === 1) {
-    await markQuestStatus(env.DB, quest.id, "failed");
+    // The fleeing character leaves the party. Quest only ends if they were the last fighter.
     await appendLog(env.DB, quest.id, payload.user_id, "flee", "escaped");
-    const text = `🏃 <@${payload.user_id}> escapes *${quest.scene.monster_name}* and lives to debug another day.`;
+    const others = fighters.filter((c) => c.slack_user_id !== payload.user_id);
+    if (others.length === 0) {
+      await markQuestStatus(env.DB, quest.id, "failed");
+      const text = `🏃 <@${payload.user_id}> escapes *${quest.scene.monster_name}*. The party is broken — quest ends.`;
+      await postToThread(env, quest, text);
+      return ephemeral(text);
+    }
+    const text = `🏃 <@${payload.user_id}> escapes *${quest.scene.monster_name}*. The rest fight on.`;
     await postToThread(env, quest, text);
     return ephemeral(text);
   }
 
   // Failed flee → free monster hit.
-  const monsterRoll = rollDice(4) + quest.scene.tier;
+  const monsterRoll = rollDice(4) + quest.scene.tier + Math.floor((fighters.length - 1) / 2);
   const playerHpAfter = character.hp - monsterRoll;
   const intro = `🪤 <@${payload.user_id}> trips on the way out. *${quest.scene.monster_name}* lands a free hit for *${monsterRoll}*.`;
 
   if (playerHpAfter <= 0) {
-    return resolveDeath(payload, env, character, quest, [intro]);
+    return resolveDeath(payload, env, character, quest, fighters, [intro]);
   }
 
   await setCharacterHp(env.DB, payload.user_id, playerHpAfter);
@@ -298,32 +339,39 @@ async function resolveFlee(
 async function resolveVictory(
   payload: SlashCommandPayload,
   env: Env,
-  character: Character,
   quest: ActiveQuest,
+  fighters: Character[],
   preamble: string[],
 ): Promise<CommandResponse> {
-  const xpGained = 10 + quest.scene.tier * 5;
-  const goldGained = 5 + quest.scene.tier * 3;
-  const result = await awardSpoils(
-    env.DB,
-    character,
-    xpGained,
-    goldGained,
-    () => rollDice(6),
-    xpForLevel,
-  );
-  await markQuestStatus(env.DB, quest.id, "completed");
-  await appendLog(env.DB, quest.id, payload.user_id, "victory", `+${xpGained} xp, +${goldGained} gold`);
+  const totalXp = 10 + quest.scene.tier * 5;
+  const totalGold = 5 + quest.scene.tier * 3;
+  const xpEach = Math.max(1, Math.floor(totalXp / fighters.length));
+  const goldEach = Math.max(0, Math.floor(totalGold / fighters.length));
 
   const lines = [
     ...preamble,
-    `✨ +${xpGained} XP, +${goldGained} gold.`,
+    `✨ Spoils split across ${fighters.length}: +${xpEach} XP, +${goldEach} gold each.`,
   ];
-  if (result.levelsGained > 0) {
-    lines.push(
-      `🎚️ *LEVEL UP!* ${character.name} is now Level ${result.newLevel} (max HP ${result.newMaxHp}).`,
+
+  for (const fighter of fighters) {
+    const result = await awardSpoils(
+      env.DB,
+      fighter,
+      xpEach,
+      goldEach,
+      () => rollDice(6),
+      xpForLevel,
     );
+    if (result.levelsGained > 0) {
+      lines.push(
+        `🎚️ *${fighter.name}* hits Level ${result.newLevel} (max HP ${result.newMaxHp}).`,
+      );
+    }
   }
+
+  await markQuestStatus(env.DB, quest.id, "completed");
+  await appendLog(env.DB, quest.id, payload.user_id, "victory", `+${xpEach}xp/+${goldEach}g × ${fighters.length}`);
+
   await postToThread(env, quest, lines.join("\n"));
   return ephemeral(lines.join("\n"));
 }
@@ -333,38 +381,101 @@ async function resolveDeath(
   env: Env,
   character: Character,
   quest: ActiveQuest,
+  fightersBefore: Character[],
   preamble: string[],
 ): Promise<CommandResponse> {
-  await markQuestStatus(env.DB, quest.id, "failed");
-  await setCharacterHp(env.DB, payload.user_id, 0);
+  const survivors = fightersBefore.filter((c) => c.slack_user_id !== payload.user_id);
+  const questEnds = survivors.length === 0;
+
+  const lines = [...preamble];
 
   if (quest.elite) {
     await deleteCharacter(env.DB, payload.user_id);
     await appendLog(env.DB, quest.id, payload.user_id, "death", "perma");
-    const lines = [
-      ...preamble,
+    lines.push(
       `💀💀 *${character.name}* the ${character.class} is no more.`,
       `_Cause: ${quest.scene.monster_name}. Elite quest — perma-death enforced._`,
       `Roll a new hero with \`/dnd roll\`.`,
-    ];
-    await postToThread(env, quest, lines.join("\n"));
-    return ephemeral(lines.join("\n"));
+    );
+  } else {
+    await setCharacterHp(env.DB, payload.user_id, 0);
+    const scar = generateScar(quest.scene.monster_name);
+    const { goldLost, itemLost } = await applySoftDeath(env.DB, character, scar, DOWNED_COOLDOWN_MS);
+    await appendLog(env.DB, quest.id, payload.user_id, "death", `soft, -${goldLost} gold`);
+    const recoveryTs = Math.floor((Date.now() + DOWNED_COOLDOWN_MS) / 1000);
+    lines.push(
+      `💀 *${character.name}* is *downed*.`,
+      `Lost ${goldLost} gold${itemLost ? ` and *${itemLost}*` : ""}. New scar: _${scar}_.`,
+      `Recover by <!date^${recoveryTs}^{date_short_pretty} {time}|in ~12h>.`,
+    );
   }
 
-  // Soft death.
-  const scar = generateScar(quest.scene.monster_name);
-  const { goldLost, itemLost } = await applySoftDeath(env.DB, character, scar, DOWNED_COOLDOWN_MS);
-  await appendLog(env.DB, quest.id, payload.user_id, "death", `soft, -${goldLost} gold`);
+  if (questEnds) {
+    await markQuestStatus(env.DB, quest.id, "failed");
+    lines.push(`☠️ The party is broken. Quest fails.`);
+  } else {
+    lines.push(
+      `Survivors fight on: ${survivors.map((s) => `*${s.name}*`).join(", ")}.`,
+    );
+  }
 
-  const recoveryTs = Math.floor((Date.now() + DOWNED_COOLDOWN_MS) / 1000);
-  const lines = [
-    ...preamble,
-    `💀 *${character.name}* is *downed*.`,
-    `Lost ${goldLost} gold${itemLost ? ` and *${itemLost}*` : ""}. New scar: _${scar}_.`,
-    `Recover by <!date^${recoveryTs}^{date_short_pretty} {time}|in ~12h>.`,
-  ];
   await postToThread(env, quest, lines.join("\n"));
   return ephemeral(lines.join("\n"));
+}
+
+async function handleJoin(payload: SlashCommandPayload, env: Env): Promise<CommandResponse> {
+  const character = await getCharacter(env.DB, payload.user_id);
+  if (!character) return ephemeral("You need to `/dnd roll` a character first.");
+  if (!isFighter(character)) {
+    return ephemeral("You're downed and can't quest right now.");
+  }
+
+  const existing = await getActiveQuestForCharacter(env.DB, payload.user_id);
+  if (existing) {
+    return ephemeral(`You're already on an active quest in <#${existing.channel_id}>.`);
+  }
+
+  const quest = await getActiveQuestInChannel(env.DB, payload.channel_id);
+  if (!quest) return ephemeral("No active quest in this channel. Start one with `/dnd quest`.");
+
+  const inserted = await joinQuest(env.DB, quest.id, payload.user_id);
+  if (!inserted) return ephemeral("You're already on this quest.");
+
+  // Beef up the monster so the encounter doesn't trivialize.
+  const scaled = await scaleMonsterForJoin(env.DB, quest.id, quest.scene, JOIN_HP_RATIO);
+  await appendLog(env.DB, quest.id, payload.user_id, "join", `monster +${scaled.monster_max_hp - quest.scene.monster_max_hp} HP`);
+
+  const text = `🛡️ <@${payload.user_id}> joins as *${character.name}* the ${character.class}. *${scaled.monster_name}* swells with menace (now ${scaled.monster_hp}/${scaled.monster_max_hp} HP).`;
+  await postToThread(env, quest, text);
+  return ephemeral(text);
+}
+
+async function handleParty(payload: SlashCommandPayload, env: Env): Promise<CommandResponse> {
+  const quest = await getActiveQuestForCharacter(env.DB, payload.user_id);
+  if (!quest) return ephemeral("You're not on an active quest.");
+  const party = await getQuestParty(env.DB, quest.id);
+  const lines = [
+    `*Quest party* — facing *${quest.scene.monster_name}* (${quest.scene.monster_hp}/${quest.scene.monster_max_hp} HP)`,
+    ...party.map((c) => {
+      const status = isFighter(c) ? "" : " 💀_downed_";
+      return `• *${c.name}* the ${c.class} — L${c.level}, HP ${c.hp}/${c.max_hp}${status}`;
+    }),
+  ];
+  return ephemeral(lines.join("\n"));
+}
+
+async function handleLeaderboard(env: Env): Promise<CommandResponse> {
+  const top = await getLeaderboard(env.DB, 10);
+  if (top.length === 0) return ephemeral("No heroes yet. Be the first — `/dnd roll`.");
+  const lines = [
+    "*🏆 Top heroes*",
+    ...top.map((e, i) => {
+      const medal = i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : `${i + 1}.`;
+      const scars = e.scars_count > 0 ? ` • ${e.scars_count} scar${e.scars_count > 1 ? "s" : ""}` : "";
+      return `${medal} *${e.name}* the ${e.class} — L${e.level}, ${e.xp} XP, ${e.gold}g${scars}`;
+    }),
+  ];
+  return inChannel(lines.join("\n"));
 }
 
 async function postToThread(env: Env, quest: ActiveQuest, text: string): Promise<void> {
