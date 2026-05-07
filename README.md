@@ -14,8 +14,12 @@ Cloudflare Workers + D1 + Workers AI. No real coworkers as NPCs — names are ge
 - **Persistence:** D1. One character per Slack user, one active quest at a time.
 - **Death model:** soft death by default — at 0 HP you're "downed," lose 25% gold + a random
   inventory item, and can't quest for 12h. Elite quests (`/dnd quest elite`) flip on perma-death.
-- **AI:** Cloudflare Workers AI (`@cf/meta/llama-3.1-8b-instruct`) for opening-scene narration only.
-  Combat resolution is deterministic / dice-based; the model just adds flavor.
+- **AI:** Cloudflare Workers AI (`@cf/meta/llama-3.1-8b-instruct`) narrates opening scenes,
+  hits, crits, joins, deaths, victories, and successful flees. Combat resolution itself is
+  deterministic / dice-based — the model only writes the flavor line that wraps the result.
+  Each slash command's ephemeral ack is the deterministic outcome (instant, no AI dependency);
+  the AI-flavored version posts to the thread a beat later via `ctx.waitUntil`. If the model
+  call fails or times out, the thread post falls back to a static line.
 - **No GitHub integration.** Quests are AI-flavored from generic prompts.
 
 ## Current status
