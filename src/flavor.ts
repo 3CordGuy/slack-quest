@@ -1,24 +1,38 @@
 // Engineering-themed classes, NPC name generation, dice.
 
+// Skill leans determine which trap-room option auto-passes for a class. Non-experts
+// can still attempt — they roll 1d6 and need 4+ — so every class is *capable* but
+// classes built for the moment shine.
+export type SkillType = "str" | "dex" | "int";
+
 export interface CharClass {
   id: string;
   name: string;
   base_hp: number;
   attack_mod: number;
   magic_mod: number;
+  skills: SkillType[];   // expert types — 1-2 per class
   blurb: string;
 }
 
 export const CLASSES: CharClass[] = [
-  { id: "devops_mage",       name: "DevOps Mage",        base_hp: 22, attack_mod: 1, magic_mod: 1, blurb: "Channels arcane YAML to summon and banish containers." },
-  { id: "qa_paladin",        name: "QA Paladin",         base_hp: 28, attack_mod: 2, magic_mod: 0, blurb: "Smites bugs with the sacred light of regression suites." },
-  { id: "backend_druid",     name: "Backend Druid",      base_hp: 24, attack_mod: 1, magic_mod: 1, blurb: "Speaks to databases and tames feral microservices." },
-  { id: "frontend_bard",     name: "Frontend Bard",      base_hp: 20, attack_mod: 0, magic_mod: 2, blurb: "Charms users with pixel-perfect ballads of CSS." },
-  { id: "staff_sage",        name: "Staff Sage",         base_hp: 26, attack_mod: 0, magic_mod: 2, blurb: "Dispenses ancient wisdom and the occasional postmortem." },
-  { id: "refactor_rogue",    name: "Refactor Rogue",     base_hp: 18, attack_mod: 2, magic_mod: 0, blurb: "Strikes from the shadows; leaves no dead code behind." },
-  { id: "sre_warden",        name: "SRE Warden",         base_hp: 30, attack_mod: 2, magic_mod: 0, blurb: "Stands the wall between prod and the howling void." },
-  { id: "data_warlock",      name: "Data Warlock",       base_hp: 22, attack_mod: 0, magic_mod: 2, blurb: "Bound to a query plan most mortals dare not read." },
+  { id: "devops_mage",       name: "DevOps Mage",        base_hp: 22, attack_mod: 1, magic_mod: 1, skills: ["int", "dex"], blurb: "Channels arcane YAML to summon and banish containers." },
+  { id: "qa_paladin",        name: "QA Paladin",         base_hp: 28, attack_mod: 2, magic_mod: 0, skills: ["str"],         blurb: "Smites bugs with the sacred light of regression suites." },
+  { id: "backend_druid",     name: "Backend Druid",      base_hp: 24, attack_mod: 1, magic_mod: 1, skills: ["int", "str"],  blurb: "Speaks to databases and tames feral microservices." },
+  { id: "frontend_bard",     name: "Frontend Bard",      base_hp: 20, attack_mod: 0, magic_mod: 2, skills: ["int"],         blurb: "Charms users with pixel-perfect ballads of CSS." },
+  { id: "staff_sage",        name: "Staff Sage",         base_hp: 26, attack_mod: 0, magic_mod: 2, skills: ["int"],         blurb: "Dispenses ancient wisdom and the occasional postmortem." },
+  { id: "refactor_rogue",    name: "Refactor Rogue",     base_hp: 18, attack_mod: 2, magic_mod: 0, skills: ["dex"],         blurb: "Strikes from the shadows; leaves no dead code behind." },
+  { id: "sre_warden",        name: "SRE Warden",         base_hp: 30, attack_mod: 2, magic_mod: 0, skills: ["str"],         blurb: "Stands the wall between prod and the howling void." },
+  { id: "data_warlock",      name: "Data Warlock",       base_hp: 22, attack_mod: 0, magic_mod: 2, skills: ["int"],         blurb: "Bound to a query plan most mortals dare not read." },
 ];
+
+// Skill emojis used in trap choice display so players see at a glance which option
+// matches their class without needing to memorize names.
+export const SKILL_META: Record<SkillType, { emoji: string; label: string }> = {
+  str: { emoji: "💪", label: "STR" },
+  dex: { emoji: "🔧", label: "DEX" },
+  int: { emoji: "📜", label: "INT" },
+};
 
 export function pickRandomClass(): CharClass {
   return CLASSES[Math.floor(Math.random() * CLASSES.length)];
@@ -27,7 +41,7 @@ export function pickRandomClass(): CharClass {
 export function classByName(name: string): CharClass {
   // Falls back to a balanced default so a renamed/stale class string still works.
   return CLASSES.find((c) => c.name === name) ??
-    { id: "unknown", name, base_hp: 20, attack_mod: 1, magic_mod: 1, blurb: "" };
+    { id: "unknown", name, base_hp: 20, attack_mod: 1, magic_mod: 1, skills: ["int"], blurb: "" };
 }
 
 // Fallback monster names — used when the AI response can't be parsed. Themed for the

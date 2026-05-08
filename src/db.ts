@@ -107,34 +107,65 @@ export interface GauntletWave {
   scene: string;
 }
 
-// An expedition node is one screen of an expedition quest. Types map to player actions:
-//   "fork" → players use /dnd choose 1|2 to advance
-//   "combat" → players use /dnd attack/cast (existing combat resolves it)
-//   "treasure" → players use /dnd take 1|2 to claim one item from the chest
-export type ExpeditionNodeType = "fork" | "combat" | "treasure";
+// An expedition (dungeon) node is one room players step into. Each type maps to a
+// different player verb:
+//   "combat"   → /sq attack/cast/signature (resolves via existing combat)
+//   "trap"     → /sq choose 1|2|3 — class-gated skill check, fail = HP damage
+//   "lockbox"  → /sq choose 1|2 — use a key for bonus loot, or skip
+//   "npc"      → /sq choose 1|2 — trust (get item) or refuse (free pass)
+//   "treasure" → /sq take 1|2 — final reward, always the dungeon's last room
+export type ExpeditionNodeType = "combat" | "trap" | "lockbox" | "npc" | "treasure";
+
+export type SkillType = "str" | "dex" | "int";
+
+export interface LootOption {
+  name: string;
+  item_type: ItemType;
+  power: number;
+  rarity: Rarity;
+  flavor: string;
+  weapon_range?: WeaponRange | null;
+}
+
+export interface TrapChoice {
+  text: string;       // shown to the player, e.g. "Smash through the wall"
+  emoji: string;      // 💪/🔧/📜 — visual hint of the skill type
+  skill: SkillType;
+  fail_damage: number;
+}
+
+export interface NpcOffer {
+  greeting: string;   // AI-generated NPC line
+  item: LootOption;   // what they offer if trusted
+}
 
 export interface ExpeditionNode {
   type: ExpeditionNodeType;
   scene: string;
-  // fork-only
-  choices?: string[];
-  // treasure-only — pre-rolled and AI-named at expedition start
-  loot_options?: Array<{
-    name: string;
-    item_type: ItemType;
-    power: number;
-    rarity: Rarity;
-    flavor: string;
-    weapon_range?: WeaponRange | null;
-  }>;
+
+  // combat-only — pre-rolled monster. The final-treasure room is preceded by a beefier
+  // sub-boss combat; mid-dungeon combat rooms have a chance to drop a key.
+  monster_name?: string;
+  monster_max_hp?: number;
+  tier?: number;
+  drops_key?: boolean;
+
+  // trap-only
+  trap_choices?: TrapChoice[];
+
+  // npc-only
+  npc?: NpcOffer;
+
+  // lockbox + treasure share this — pre-rolled and AI-named at expedition start.
+  loot_options?: LootOption[];
 }
 
 export interface ExpeditionState {
   theme: string;
-  current: number; // index into nodes
+  current: number;     // index into nodes
   nodes: ExpeditionNode[];
-  path_taken: string[]; // labels of fork choices
-  // Expedition combat uses scene_json's monster_name/hp/max_hp at the combat node.
+  path_taken: string[]; // labels of choices made (for AI continuity)
+  keys: number;        // 🗝️ — held by the party, dropped by combat rooms, spent on lockboxes
 }
 
 export interface SceneJson {

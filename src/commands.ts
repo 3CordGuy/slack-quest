@@ -13,16 +13,17 @@ import {
   flavorBossPhase,
   flavorDeath,
   flavorFleeSuccess,
-  flavorForkOutcome,
   flavorGauntletNext,
   flavorHit,
   flavorJoin,
   flavorLootDrop,
   flavorSignature,
   flavorVictory,
-  generateExpeditionForkScene,
   generateExpeditionTheme,
+  generateLockboxScene,
+  generateNpcRoom,
   generateOpeningScene,
+  generateTrapRoom,
 } from "./ai";
 import {
   addGold,
@@ -77,9 +78,11 @@ import {
   type BattlePosition,
   type Character,
   type ExpeditionNode,
+  type ExpeditionNodeType,
   type ExpeditionState,
   type GauntletWave,
   type Item,
+  type LootOption,
   type QuestVariant,
   type SceneJson,
   type ShopItem,
@@ -110,6 +113,7 @@ import {
   MAX_MANA_CAP,
   RARITY_BADGE,
   SHIELD_CAP_MULTIPLIER,
+  SKILL_META,
 } from "./flavor";
 import { postMessage, respondToCommand, type SlashCommandPayload } from "./slack";
 
@@ -136,9 +140,14 @@ const SHOP_BUY_CAP_PER_CYCLE = 2;
 const BOSS_LEVEL_REQUIRED = 3;
 const GAUNTLET_LEVEL_REQUIRED = 5;
 const GAUNTLET_WAVES = 3;
-const EXPEDITION_LEVEL_REQUIRED = 4;
-const EXPEDITION_FORKS = 3;
+// Expeditions are the dungeon-crawl variant — accessible from L1 so new players see
+// the bot's depth right away. The L4 gate was holding back the most fun content.
+const EXPEDITION_LEVEL_REQUIRED = 1;
 const EXPEDITION_TREASURE_OPTIONS = 2;
+// Dungeon length: 5-7 rooms total. Last room is treasure (always); second-to-last is
+// the sub-boss combat. Middle rooms (count − 2) are randomly chosen from the room pool.
+const DUNGEON_MIN_ROOMS = 5;
+const DUNGEON_MAX_ROOMS = 7;
 const SHORT_REST_COOLDOWN_MS = 10 * 60 * 1000;        // 10 min between short rests
 const LONG_REST_COOLDOWN_MS = 24 * 60 * 60 * 1000;    // once per real-world day
 const SHORT_REST_HEAL_RATIO = 0.5;                    // heals 50% of missing HP, min 1
@@ -154,7 +163,7 @@ function helpText(cmd: string, name: string): string {
     `• \`${cmd} quest [variant] [@user1 @user2…]\` — start a quest, optionally inviting party members`,
     `• \`${cmd} quest boss\` — single tougher monster, 2 phases (L3+, 2× rewards)`,
     `• \`${cmd} quest gauntlet\` — 3 monsters back-to-back, no flee (L5+, 3× rewards, guaranteed drop)`,
-    `• \`${cmd} quest expedition\` — 3 narrative forks → boss → treasure pick (L4+, 2.5× rewards)`,
+    `• \`${cmd} quest expedition\` — 5-7 room dungeon: combat, traps, lockboxes, NPC encounters → sub-boss → treasure (L1+, 2.5× rewards)`,
     `• \`${cmd} quest elite\` — elite modifier; perma-death (composes: \`${cmd} quest boss elite\`)`,
     `• \`${cmd} choose <n>\` — pick a fork option in an expedition (first vote wins)`,
     `• \`${cmd} take <n>\` — claim an item from an expedition treasure room`,
@@ -235,14 +244,18 @@ function rulesText(cmd: string, name: string): string {
     `• \`${cmd} quest\` — standard, 1 monster, 1× rewards`,
     `• \`${cmd} quest boss\` — L3+, beefy monster, 2 phases at 50% HP, 2× rewards`,
     `• \`${cmd} quest gauntlet\` — L5+, 3 monsters back-to-back, no flee, 3× rewards, 100% drop on the final kill`,
-    `• \`${cmd} quest expedition\` — L4+, 3 narrative forks (\`${cmd} choose <n>\`) → boss → treasure pick (\`${cmd} take <n>\`), 2.5× rewards`,
+    `• \`${cmd} quest expedition\` — *the dungeon crawl* (L1+). 5-7 rooms: combat, trap, lockbox, NPC encounter. Sub-boss + treasure at the end. 2.5× rewards.`,
+    `   _Trap rooms_ — 3 class-skill options. Match → auto-pass; mismatch → \`1d6 ≥ 4\`. Fail = HP damage.`,
+    `   _Lockbox rooms_ — need a 🗝️ key (drops from combat rooms) for bonus loot, or skip.`,
+    `   _NPC rooms_ — trust them for an item, or refuse and pass.`,
+    `   Class skills: 💪 *STR*: Paladin, Warden, Druid · 🔧 *DEX*: Rogue, Mage · 📜 *INT*: Bard, Sage, Warlock, Mage, Druid`,
     `• \`${cmd} quest elite\` — modifier: *perma-death* on 0 HP. Composes: \`${cmd} quest boss elite\`.`,
     `• *Invite at start:* \`${cmd} quest [variant] @user1 @user2\` — auto-joins them, scales monster HP per joiner.`,
     ``,
     `*━━ Joining ━━*`,
     `• \`${cmd} join\` — join the active channel quest. Monster max HP grows ×1.4 per joiner.`,
     `• Joinable through wave 1 of a gauntlet (locks at wave 2).`,
-    `• Joinable until the first \`${cmd} choose\` of an expedition (locks once anyone picks).`,
+    `• Joinable until the first room is resolved on an expedition (locks once anyone advances).`,
     ``,
     `*━━ Death & Recovery ━━*`,
     `• *Soft death* (any non-elite at 0 HP): 25% gold loss, drop a random item, +1 scar, *12h cooldown*, HP restored to max for next time.`,
@@ -538,22 +551,17 @@ async function handleQuest(
           : variant === "gauntlet"
           ? `⚔️ *GAUNTLET — ${GAUNTLET_WAVES} waves, no flee*\n`
           : variant === "expedition"
-          ? `🗺️ *EXPEDITION — ${EXPEDITION_FORKS} forks, then boss + treasure*\n`
+          ? `🗺️ *DUNGEON — ${scene.expedition?.nodes.length ?? 5} rooms, treasure at the end*\n`
           : "";
 
-      // Expedition opens at fork 1, not in a fight — show choices instead of foe HP.
+      // Expedition: render the first room (could be combat/trap/lockbox/npc).
+      // Other variants: standard opening scene + foe HP.
       const isExpedition = variant === "expedition" && scene.expedition;
-      const expFirstNode = isExpedition ? scene.expedition!.nodes[0] : null;
-
-      const body = isExpedition && expFirstNode?.type === "fork"
+      const body = isExpedition
         ? [
-            `_${expFirstNode.scene}_`,
-            ``,
             `*Theme:* ${scene.expedition!.theme}`,
             ``,
-            ...((expFirstNode.choices ?? []).map((c, i) => `\`${i + 1}\` ${c}`)),
-            ``,
-            `_First \`${payload.command} choose <n>\` wins for the party._`,
+            renderDungeonRoom(scene.expedition!.nodes[0], scene.expedition!, payload.command),
           ].join("\n")
         : [
             `_${scene.scene}_`,
@@ -661,57 +669,256 @@ async function buildQuestScene(
   }
 
   if (variant === "expedition") {
-    const theme = await generateExpeditionTheme(env.AI);
-    const nodes: ExpeditionNode[] = [];
-    const path: string[] = [];
-    for (let i = 1; i <= EXPEDITION_FORKS; i++) {
-      const fork = await generateExpeditionForkScene(env.AI, theme, path, i, EXPEDITION_FORKS);
-      nodes.push({ type: "fork", scene: fork.scene, choices: fork.choices });
-    }
-    // Combat node — boss-flavored monster but no phase mechanics.
-    const combat = await generateOpeningScene(env.AI, character, elite, "boss");
-    nodes.push({ type: "combat", scene: combat.scene });
-    // Treasure node — pre-roll N items at boss tier and AI-name each.
-    const lootOptions: NonNullable<ExpeditionNode["loot_options"]> = [];
-    for (let i = 0; i < EXPEDITION_TREASURE_OPTIONS; i++) {
-      const roll = rollItem(combat.tier);
-      const named = await flavorLootDrop(env.AI, "the expedition's reward chest", roll.type, roll.rarity, roll.power, roll.weapon_range);
-      lootOptions.push({
-        name: named.name,
-        item_type: roll.type,
-        power: roll.power,
-        rarity: roll.rarity,
-        flavor: named.flavor,
-        weapon_range: roll.weapon_range ?? null,
+    return buildDungeonScene(env, character, elite, variant);
+  }
+
+  return { ...(await generateOpeningScene(env.AI, character, elite, "standard")), variant };
+}
+
+// Generates a fresh dungeon: 5-7 rooms total. Last is treasure (guaranteed exit);
+// second-to-last is a sub-boss combat; middle rooms are a random mix of combat/trap/
+// lockbox/npc. At least one combat in the middle drops a key so lockboxes are
+// reachable. Pre-rolls all rooms at start so transitions are instant in play.
+async function buildDungeonScene(
+  env: Env,
+  character: Character,
+  elite: boolean,
+  variant: QuestVariant,
+): Promise<SceneJson> {
+  const theme = await generateExpeditionTheme(env.AI);
+  const totalRooms = DUNGEON_MIN_ROOMS + Math.floor(Math.random() * (DUNGEON_MAX_ROOMS - DUNGEON_MIN_ROOMS + 1));
+  const middleCount = totalRooms - 2; // last 2 are sub-boss + treasure
+
+  // Pick room types for middle slots, biased toward combat for encounter density.
+  const middleTypes: ExpeditionNodeType[] = [];
+  for (let i = 0; i < middleCount; i++) {
+    const r = Math.random();
+    if (r < 0.40) middleTypes.push("combat");
+    else if (r < 0.65) middleTypes.push("trap");
+    else if (r < 0.85) middleTypes.push("lockbox");
+    else middleTypes.push("npc");
+  }
+  // Guarantee at least one combat (so lockboxes can be unlocked via dropped keys).
+  if (!middleTypes.includes("combat")) middleTypes[0] = "combat";
+
+  const failDamage = 4 + Math.max(1, character.level);
+  const baseTier = Math.max(1, character.level + (elite ? 1 : 0));
+  const nodes: ExpeditionNode[] = [];
+  let combatRoomKeyAssigned = false;
+
+  for (let i = 0; i < middleCount; i++) {
+    const roomNum = i + 1;
+    const type = middleTypes[i];
+
+    if (type === "combat") {
+      const monster = await generateOpeningScene(env.AI, character, elite, "gauntlet-wave", { wave: roomNum, total: totalRooms });
+      const dropsKey: boolean = !combatRoomKeyAssigned;
+      if (dropsKey) combatRoomKeyAssigned = true;
+      nodes.push({
+        type: "combat",
+        scene: monster.scene,
+        monster_name: monster.monster_name,
+        monster_max_hp: monster.monster_max_hp,
+        tier: monster.tier,
+        drops_key: dropsKey,
+      });
+    } else if (type === "trap") {
+      const trap = await generateTrapRoom(env.AI, theme, roomNum, totalRooms);
+      nodes.push({
+        type: "trap",
+        scene: trap.scene,
+        trap_choices: [
+          { text: trap.options.str, emoji: "💪", skill: "str", fail_damage: failDamage },
+          { text: trap.options.dex, emoji: "🔧", skill: "dex", fail_damage: failDamage },
+          { text: trap.options.int, emoji: "📜", skill: "int", fail_damage: failDamage },
+        ],
+      });
+    } else if (type === "lockbox") {
+      const lockboxScene = await generateLockboxScene(env.AI, theme, roomNum, totalRooms);
+      const opts: LootOption[] = [];
+      for (let j = 0; j < 2; j++) {
+        const roll = rollItem(baseTier + 1);
+        const named = await flavorLootDrop(env.AI, "the locked chest", roll.type, roll.rarity, roll.power, roll.weapon_range);
+        opts.push({
+          name: named.name,
+          item_type: roll.type,
+          power: roll.power,
+          rarity: roll.rarity,
+          flavor: named.flavor,
+          weapon_range: roll.weapon_range ?? null,
+        });
+      }
+      nodes.push({ type: "lockbox", scene: lockboxScene, loot_options: opts });
+    } else {
+      // npc
+      const npcName = generateNpcName();
+      const npc = await generateNpcRoom(env.AI, theme, roomNum, totalRooms, npcName);
+      const offerRoll = rollItem(baseTier);
+      const offerNamed = await flavorLootDrop(env.AI, `${npcName}'s pack`, offerRoll.type, offerRoll.rarity, offerRoll.power, offerRoll.weapon_range);
+      nodes.push({
+        type: "npc",
+        scene: npc.scene,
+        npc: {
+          greeting: npc.greeting,
+          item: {
+            name: offerNamed.name,
+            item_type: offerRoll.type,
+            power: offerRoll.power,
+            rarity: offerRoll.rarity,
+            flavor: offerNamed.flavor,
+            weapon_range: offerRoll.weapon_range ?? null,
+          },
+        },
       });
     }
-    nodes.push({
-      type: "treasure",
-      scene: "The way ahead opens onto a chest, glittering with possibility.",
-      loot_options: lootOptions,
+  }
+
+  // Sub-boss room — beefier monster (boss variant).
+  const boss = await generateOpeningScene(env.AI, character, elite, "boss");
+  nodes.push({
+    type: "combat",
+    scene: boss.scene,
+    monster_name: boss.monster_name,
+    monster_max_hp: boss.monster_max_hp,
+    tier: boss.tier,
+    drops_key: false,
+  });
+
+  // Final treasure — 2 high-tier loot options.
+  const treasureLoot: LootOption[] = [];
+  for (let i = 0; i < EXPEDITION_TREASURE_OPTIONS; i++) {
+    const roll = rollItem(boss.tier);
+    const named = await flavorLootDrop(env.AI, "the dungeon's heart-chamber", roll.type, roll.rarity, roll.power, roll.weapon_range);
+    treasureLoot.push({
+      name: named.name,
+      item_type: roll.type,
+      power: roll.power,
+      rarity: roll.rarity,
+      flavor: named.flavor,
+      weapon_range: roll.weapon_range ?? null,
     });
+  }
+  nodes.push({
+    type: "treasure",
+    scene: "The dungeon opens onto its heart-chamber. A chest awaits.",
+    loot_options: treasureLoot,
+  });
 
-    const expedition: ExpeditionState = {
-      theme,
-      current: 0,
-      nodes,
-      path_taken: [],
-    };
+  const expedition: ExpeditionState = {
+    theme,
+    current: 0,
+    nodes,
+    path_taken: [],
+    keys: 0,
+  };
 
-    // Top-level monster fields stay as the combat node's monster — populated when the
-    // expedition reaches that node so combat code can read them unmodified.
+  // Top-level monster fields = first room's monster if it's combat, else placeholder.
+  // Combat code reads these for the active fight; non-combat rooms keep them as latent.
+  const first = nodes[0];
+  if (first.type === "combat") {
     return {
-      monster_name: combat.monster_name,
-      monster_hp: combat.monster_max_hp, // not active yet; treated as latent
-      monster_max_hp: combat.monster_max_hp,
-      tier: combat.tier,
-      scene: nodes[0].scene,
+      monster_name: first.monster_name!,
+      monster_hp: first.monster_max_hp!,
+      monster_max_hp: first.monster_max_hp!,
+      tier: first.tier!,
+      scene: first.scene,
       variant,
       expedition,
     };
   }
+  return {
+    monster_name: "—",
+    monster_hp: 0,
+    monster_max_hp: 0,
+    tier: baseTier,
+    scene: first.scene,
+    variant,
+    expedition,
+  };
+}
 
-  return { ...(await generateOpeningScene(env.AI, character, elite, "standard")), variant };
+function dungeonRoomLabel(t: ExpeditionNodeType): string {
+  if (t === "combat") return "⚔️ Combat";
+  if (t === "trap") return "⚠️ Trap";
+  if (t === "lockbox") return "🔒 Lockbox";
+  if (t === "npc") return "🤝 Encounter";
+  return "🎁 Treasure";
+}
+
+// Renders a single dungeon room as the body text for either the opening post or a
+// post-action room transition. Includes the room number, key count, and type-specific
+// affordances (combat verbs / trap options / lockbox key prompt / npc choices / take).
+function renderDungeonRoom(node: ExpeditionNode, exp: ExpeditionState, cmd: string): string {
+  const roomNum = exp.current + 1;
+  const totalRooms = exp.nodes.length;
+  const keyDisplay = exp.keys > 0 ? ` 🗝️${exp.keys}` : "";
+  const header = `*Room ${roomNum}/${totalRooms}*${keyDisplay} — ${dungeonRoomLabel(node.type)}`;
+  const sceneBlock = blockQuote(node.scene);
+
+  if (node.type === "combat") {
+    return [
+      header,
+      sceneBlock,
+      "",
+      `Foe: *${node.monster_name}* — HP ${node.monster_max_hp}`,
+      "",
+      `Combat: \`${cmd} attack\` • \`${cmd} cast\` • \`${cmd} signature\`.`,
+    ].join("\n");
+  }
+  if (node.type === "trap") {
+    const choices = (node.trap_choices ?? []).map((c, i) =>
+      `\`${i + 1}\` ${c.emoji} ${c.text}  _(${SKILL_META[c.skill].label})_`,
+    );
+    const dmg = node.trap_choices?.[0]?.fail_damage ?? 0;
+    return [
+      header,
+      sceneBlock,
+      "",
+      ...choices,
+      "",
+      `_Failing rolls 1d6, need 4+. Fail = take *${dmg}* HP. Class with the matching skill auto-passes._ \`${cmd} choose <n>\``,
+    ].join("\n");
+  }
+  if (node.type === "lockbox") {
+    const opts = (node.loot_options ?? []).map((l, i) => {
+      const power = l.item_type === "consumable" ? `heals ${l.power}` : `+${l.power}`;
+      return `\`${i + 1}\` ${RARITY_BADGE[l.rarity]} *${l.name}* — ${l.item_type}, ${power}`;
+    });
+    const skipNum = (node.loot_options?.length ?? 0) + 1;
+    const canUse = exp.keys > 0;
+    const action = canUse
+      ? `🗝️ Use a key: \`${cmd} choose 1\` or \`${cmd} choose 2\`. Or \`${cmd} choose ${skipNum}\` to walk past.`
+      : `🗝️ No key in your party. \`${cmd} choose ${skipNum}\` to walk past empty-handed.`;
+    return [header, sceneBlock, "", ...opts, "", action].join("\n");
+  }
+  if (node.type === "npc") {
+    const item = node.npc?.item;
+    const itemLine = item
+      ? `Offers: ${RARITY_BADGE[item.rarity]} *${item.name}* — ${item.item_type}, ${item.item_type === "consumable" ? `heals ${item.power}` : `+${item.power}`}`
+      : "";
+    return [
+      header,
+      sceneBlock,
+      "",
+      `> "${node.npc?.greeting ?? "..."}"`,
+      itemLine,
+      "",
+      `\`${cmd} choose 1\` Trust them (take the item) • \`${cmd} choose 2\` Refuse and pass.`,
+    ].filter(Boolean).join("\n");
+  }
+  // treasure
+  const opts = (node.loot_options ?? []).map((l, i) => {
+    const power = l.item_type === "consumable" ? `heals ${l.power}` : `+${l.power}`;
+    return `\`${i + 1}\` ${RARITY_BADGE[l.rarity]} *${l.name}* — ${l.item_type}, ${power}`;
+  });
+  return [
+    header,
+    sceneBlock,
+    "",
+    ...opts,
+    "",
+    `_First \`${cmd} take <n>\` claims for the party._`,
+  ].join("\n");
 }
 
 type CombatAction = "attack" | "cast" | "flee" | "signature";
@@ -752,15 +959,15 @@ async function handleCombat(
     return resolveFlee(payload, env, ctx, character, quest, fighters, equippedArmor);
   }
 
-  // Expedition: only allow attack/cast at the combat node.
+  // Expedition: only allow attack/cast in combat rooms. Other rooms use /sq choose
+  // (trap, lockbox, npc) or /sq take (treasure).
   if (quest.scene.variant === "expedition") {
     const node = currentExpNode(quest);
     if (!node || node.type !== "combat") {
-      const nextStep = node?.type === "fork"
-        ? `Try \`${payload.command} choose <n>\`.`
-        : node?.type === "treasure"
-        ? `Try \`${payload.command} take <n>\`.`
-        : "Quest not progressed.";
+      const nextStep =
+        node?.type === "treasure" ? `Try \`${payload.command} take <n>\`.` :
+        node ? `Try \`${payload.command} choose <n>\`.` :
+        "Quest not progressed.";
       return ephemeral(`Not in combat right now. ${nextStep}`);
     }
   }
@@ -882,9 +1089,19 @@ async function handleCombat(
     if (quest.scene.variant === "gauntlet" && quest.scene.upcoming_waves && quest.scene.upcoming_waves.length > 0) {
       return resolveGauntletAdvance(payload, env, ctx, quest, [playerLine, `🏆 *${quest.scene.monster_name}* falls.`]);
     }
-    // Expedition: advance to the treasure node instead of triggering victory.
+    // Expedition (dungeon): branch on whether this was a mid-dungeon room or the
+    // final sub-boss. The next room being treasure means we just killed the boss.
     if (quest.scene.variant === "expedition") {
-      return resolveExpeditionToTreasure(payload, env, ctx, quest, [
+      const exp = quest.scene.expedition;
+      const nextNode = exp?.nodes[(exp?.current ?? 0) + 1];
+      if (nextNode?.type === "treasure") {
+        return resolveExpeditionToTreasure(payload, env, ctx, quest, [
+          playerLine,
+          `🏆 *${quest.scene.monster_name}* falls.`,
+        ]);
+      }
+      // Mid-dungeon combat kill — advance to the next room. Maybe drop a key.
+      return advanceDungeonRoom(payload, env, ctx, quest, character, [
         playerLine,
         `🏆 *${quest.scene.monster_name}* falls.`,
       ]);
@@ -1299,6 +1516,61 @@ async function resolveExpeditionVictory(
   })());
 }
 
+// Advances a dungeon expedition to the next room. Atomically writes the new scene
+// state (current+1, optional key delta, monster fields synced if next room is combat).
+// Posts the new room into the thread; returns ephemeral combining preamble + room.
+async function advanceDungeonRoom(
+  payload: SlashCommandPayload,
+  env: Env,
+  ctx: ExecutionContext,
+  quest: ActiveQuest,
+  actor: Character,
+  preamble: string[],
+  options?: { keysDelta?: number; actorHpAfter?: number },
+): Promise<CommandResponse> {
+  const exp = quest.scene.expedition;
+  if (!exp) return ephemeral("Expedition state missing.");
+  const newCurrent = exp.current + 1;
+  const nextNode = exp.nodes[newCurrent];
+  if (!nextNode) return ephemeral("Dungeon is in a bad state — no next room.");
+
+  const newKeys = Math.max(0, exp.keys + (options?.keysDelta ?? 0));
+  const updatedExp: ExpeditionState = {
+    ...exp,
+    current: newCurrent,
+    keys: newKeys,
+  };
+
+  const isCombat = nextNode.type === "combat";
+  const updatedScene: SceneJson = {
+    ...quest.scene,
+    expedition: updatedExp,
+    scene: nextNode.scene,
+    monster_name: isCombat ? nextNode.monster_name! : "—",
+    monster_max_hp: isCombat ? nextNode.monster_max_hp! : 0,
+    monster_hp: isCombat ? nextNode.monster_max_hp! : 0,
+    tier: isCombat ? nextNode.tier! : quest.scene.tier,
+  };
+
+  const advanced = await trySaveExpeditionAdvance(env.DB, quest.id, updatedScene, exp.current);
+  if (!advanced) return ephemeral("Someone else already advanced the party.");
+  await appendLog(env.DB, quest.id, payload.user_id, "dungeon", `→ room ${newCurrent + 1}/${exp.nodes.length}`);
+
+  // Apply trap-fail damage (or any other actor damage) AFTER the room advance.
+  if (options?.actorHpAfter !== undefined && options.actorHpAfter !== actor.hp) {
+    if (options.actorHpAfter <= 0) {
+      const fighters = (await getQuestParty(env.DB, quest.id)).filter(isFighter);
+      return resolveDeath(payload, env, ctx, actor, quest, fighters, preamble);
+    }
+    await setCharacterHp(env.DB, payload.user_id, options.actorHpAfter);
+  }
+
+  const roomBody = renderDungeonRoom(nextNode, updatedExp, payload.command);
+  const threadText = [blockQuote(preamble.join("\n")), "", roomBody].join("\n");
+  ctx.waitUntil(postToThread(env, quest, threadText));
+  return ephemeral([...preamble, "", roomBody].join("\n"));
+}
+
 async function handleChoose(
   payload: SlashCommandPayload,
   args: string[],
@@ -1307,83 +1579,157 @@ async function handleChoose(
 ): Promise<CommandResponse> {
   const character = await getCharacter(env.DB, payload.user_id);
   if (!character) return ephemeral(`You need to \`${payload.command} roll\` a character first.`);
+  if (!isFighter(character)) return ephemeral("You're downed and can't act.");
 
   const quest = await getActiveQuestForCharacter(env.DB, payload.user_id);
   if (!quest) return ephemeral("You're not on an active quest.");
   if (quest.scene.variant !== "expedition" || !quest.scene.expedition) {
-    return ephemeral(`This quest doesn't have forks — try \`${payload.command} attack\` or similar.`);
+    return ephemeral(`No room choice to make — try \`${payload.command} attack\` or similar.`);
   }
 
   const exp = quest.scene.expedition;
   const node = exp.nodes[exp.current];
-  if (!node || node.type !== "fork") {
-    return ephemeral("No fork to choose right now.");
+  if (!node || (node.type !== "trap" && node.type !== "lockbox" && node.type !== "npc")) {
+    return ephemeral("No room choice to make right now.");
   }
 
   const idx = parseInt(args[0] ?? "", 10);
-  const choices = node.choices ?? [];
-  if (Number.isNaN(idx) || idx < 1 || idx > choices.length) {
+  if (Number.isNaN(idx) || idx < 1) {
+    return ephemeral(`Usage: \`${payload.command} choose <n>\`.`);
+  }
+
+  if (node.type === "trap") {
+    return resolveTrapChoice(payload, env, ctx, character, quest, exp, node, idx);
+  }
+  if (node.type === "lockbox") {
+    return resolveLockboxChoice(payload, env, ctx, character, quest, exp, node, idx);
+  }
+  return resolveNpcChoice(payload, env, ctx, character, quest, exp, node, idx);
+}
+
+async function resolveTrapChoice(
+  payload: SlashCommandPayload,
+  env: Env,
+  ctx: ExecutionContext,
+  character: Character,
+  quest: ActiveQuest,
+  exp: ExpeditionState,
+  node: ExpeditionNode,
+  idx: number,
+): Promise<CommandResponse> {
+  const choices = node.trap_choices ?? [];
+  if (idx > choices.length) {
     return ephemeral(`Usage: \`${payload.command} choose <1-${choices.length}>\`.`);
   }
-
-  const chosen = choices[idx - 1];
-  const newCurrent = exp.current + 1;
-  const nextNode = exp.nodes[newCurrent];
-  if (!nextNode) return ephemeral("Expedition is in a bad state — no next node.");
-
-  const updatedExp: ExpeditionState = {
-    ...exp,
-    current: newCurrent,
-    path_taken: [...exp.path_taken, chosen],
-  };
-
-  const updatedScene: SceneJson = {
-    ...quest.scene,
-    expedition: updatedExp,
-    scene: nextNode.scene,
-    // If next is combat, refresh monster HP from the latent value (full bar).
-    monster_hp: nextNode.type === "combat" ? quest.scene.monster_max_hp : 0,
-  };
-
-  // Atomic guard: write only lands if expedition.current still equals the value we
-  // read. A racing /dnd choose for the same fork will fail the WHERE clause.
-  const advanced = await trySaveExpeditionAdvance(env.DB, quest.id, updatedScene, exp.current);
-  if (!advanced) {
-    return ephemeral("Someone else already chose for the party.");
+  const choice = choices[idx - 1];
+  const cls = classByName(character.class);
+  const isExpert = cls.skills.includes(choice.skill);
+  let passed: boolean;
+  let rollNote: string;
+  if (isExpert) {
+    passed = true;
+    rollNote = `*${cls.name}* expert at ${SKILL_META[choice.skill].label} — auto-pass.`;
+  } else {
+    const roll = rollDice(6);
+    passed = roll >= 4;
+    rollNote = `1d6 = *${roll}* — ${passed ? "pass (≥4)" : "fail (<4)"}.`;
   }
-  await appendLog(env.DB, quest.id, payload.user_id, "choose", `${idx}: ${chosen}`);
 
-  ctx.waitUntil((async () => {
-    const consequence = await flavorForkOutcome(env.AI, exp.theme, chosen);
-    let nextBeat = "";
-    if (nextNode.type === "fork") {
-      nextBeat = [
-        `_${nextNode.scene}_`,
-        ``,
-        ...((nextNode.choices ?? []).map((c, i) => `\`${i + 1}\` ${c}`)),
-        ``,
-        `_First \`${payload.command} choose <n>\` wins for the party._`,
-      ].join("\n");
-    } else if (nextNode.type === "combat") {
-      nextBeat = [
-        `_${nextNode.scene}_`,
-        ``,
-        `Foe: *${updatedScene.monster_name}* — HP ${updatedScene.monster_hp}/${updatedScene.monster_max_hp}`,
-        ``,
-        `Combat: \`${payload.command} attack\` or \`${payload.command} cast\`.`,
-      ].join("\n");
-    } else if (nextNode.type === "treasure") {
-      const lootLines = (nextNode.loot_options ?? []).map((l, i) => {
-        const power = powerLabel(l.item_type, l.power);
-        return `\`${i + 1}\` ${RARITY_BADGE[l.rarity]} *${l.name}* — ${l.item_type}, ${power}\n   _${l.flavor}_`;
-      }).join("\n");
-      nextBeat = `_${nextNode.scene}_\n${lootLines}\n\n_First \`${payload.command} take <n>\` claims for the party._`;
-    }
-    const header = `🗺️ <@${payload.user_id}> chose: *${chosen}*. ${consequence}`;
-    await postToThread(env, quest, `${blockQuote(header)}\n\n${nextBeat}`);
-  })());
+  const actorHpAfter = passed ? character.hp : Math.max(0, character.hp - choice.fail_damage);
+  const headLine = passed
+    ? `⚠️ <@${payload.user_id}> chose ${choice.emoji} *${choice.text}*. ${rollNote}`
+    : `⚠️ <@${payload.user_id}> chose ${choice.emoji} *${choice.text}*. ${rollNote} Takes *${choice.fail_damage}* HP.`;
 
-  return ephemeral(`✅ You chose: *${chosen}*. Watch the thread for what happens.`);
+  await appendLog(
+    env.DB, quest.id, payload.user_id,
+    "trap",
+    `${choice.skill} ${passed ? "pass" : `fail -${choice.fail_damage}HP`}`,
+  );
+
+  return advanceDungeonRoom(payload, env, ctx, quest, character, [headLine], {
+    actorHpAfter: passed ? undefined : actorHpAfter,
+  });
+}
+
+async function resolveLockboxChoice(
+  payload: SlashCommandPayload,
+  env: Env,
+  ctx: ExecutionContext,
+  character: Character,
+  quest: ActiveQuest,
+  exp: ExpeditionState,
+  node: ExpeditionNode,
+  idx: number,
+): Promise<CommandResponse> {
+  const opts = node.loot_options ?? [];
+  const skipIdx = opts.length + 1;
+  if (idx > skipIdx) {
+    return ephemeral(`Usage: \`${payload.command} choose <1-${skipIdx}>\` (last option = skip).`);
+  }
+  if (idx === skipIdx) {
+    return advanceDungeonRoom(payload, env, ctx, quest, character, [
+      `🔒 <@${payload.user_id}> walks past the lockbox empty-handed.`,
+    ]);
+  }
+  if (exp.keys < 1) {
+    return ephemeral("🗝️ The party has no keys — `${payload.command} choose " + skipIdx + "` to skip.");
+  }
+  const choice = opts[idx - 1];
+  const item = await addItem(env.DB, {
+    character_id: payload.user_id,
+    item_name: choice.name,
+    item_type: choice.item_type,
+    power: choice.power,
+    rarity: choice.rarity,
+    flavor: choice.flavor,
+    weapon_range: choice.weapon_range ?? null,
+  });
+  await appendLog(env.DB, quest.id, payload.user_id, "lockbox", `unlocked ${item.item_name}`);
+
+  const headline = `🔓 <@${payload.user_id}> uses a key — claims ${RARITY_BADGE[choice.rarity]} *${choice.name}* (id \`${item.id}\`).`;
+  return advanceDungeonRoom(payload, env, ctx, quest, character, [headline], {
+    keysDelta: -1,
+  });
+}
+
+async function resolveNpcChoice(
+  payload: SlashCommandPayload,
+  env: Env,
+  ctx: ExecutionContext,
+  character: Character,
+  quest: ActiveQuest,
+  exp: ExpeditionState,
+  node: ExpeditionNode,
+  idx: number,
+): Promise<CommandResponse> {
+  if (idx < 1 || idx > 2) {
+    return ephemeral(`Usage: \`${payload.command} choose 1\` (trust) or \`${payload.command} choose 2\` (refuse).`);
+  }
+  if (idx === 2) {
+    return advanceDungeonRoom(payload, env, ctx, quest, character, [
+      `🤝 <@${payload.user_id}> waves the stranger off and presses on.`,
+    ]);
+  }
+  // Trust — take the offered item.
+  const offer = node.npc?.item;
+  if (!offer) {
+    return advanceDungeonRoom(payload, env, ctx, quest, character, [
+      `🤝 The stranger fades into the gloom with nothing to give.`,
+    ]);
+  }
+  const item = await addItem(env.DB, {
+    character_id: payload.user_id,
+    item_name: offer.name,
+    item_type: offer.item_type,
+    power: offer.power,
+    rarity: offer.rarity,
+    flavor: offer.flavor,
+    weapon_range: offer.weapon_range ?? null,
+  });
+  await appendLog(env.DB, quest.id, payload.user_id, "npc", `trusted, took ${item.item_name}`);
+
+  const headline = `🤝 <@${payload.user_id}> trusts the stranger — claims ${RARITY_BADGE[offer.rarity]} *${offer.name}* (id \`${item.id}\`).`;
+  return advanceDungeonRoom(payload, env, ctx, quest, character, [headline]);
 }
 
 async function handleTake(

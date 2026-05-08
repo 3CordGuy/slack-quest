@@ -374,6 +374,116 @@ export async function flavorSignature(
   return generateFlavor(ai, user, fallback, 110);
 }
 
+// Generates a trap room: scene description + 3 disarm-option texts. The skill type
+// for each option is fixed by caller (one str, one dex, one int) — the AI just
+// fills in what those skills look like in this scenario.
+export interface GeneratedTrap {
+  scene: string;
+  options: { str: string; dex: string; int: string };
+}
+
+export async function generateTrapRoom(
+  ai: Ai,
+  theme: string,
+  roomNumber: number,
+  totalRooms: number,
+): Promise<GeneratedTrap> {
+  const user = [
+    `You are running room ${roomNumber}/${totalRooms} of a dungeon themed: "${theme}".`,
+    "This room contains a TRAP. Generate scene + 3 disarm options matching three approaches:",
+    "  STR — brute force (smash, charge, bend, lift)",
+    "  DEX — finesse (disarm, slip past, defuse, sneak)",
+    "  INT — wits (decode, riddle, calculate, identify)",
+    "Output exactly:",
+    "SCENE: <2 sentences, ~35 words, set the trap with menace>",
+    "STR: <imperative phrase, 4-6 words>",
+    "DEX: <imperative phrase, 4-6 words>",
+    "INT: <imperative phrase, 4-6 words>",
+  ].join("\n");
+
+  const fallback: GeneratedTrap = {
+    scene: "A pressure plate clicks under your boot. The room hisses — definitely a trap.",
+    options: {
+      str: "Smash through the wall",
+      dex: "Disarm the trigger gently",
+      int: "Decode the warding glyphs",
+    },
+  };
+
+  try {
+    const result = (await ai.run(MODEL, {
+      messages: [
+        { role: "system", content: COMBAT_SYSTEM },
+        { role: "user", content: user },
+      ],
+      max_tokens: 200,
+    })) as AiRunResponse;
+    const text = (result.response ?? "").trim();
+    const scene = /SCENE:\s*(.+)/i.exec(text)?.[1]?.trim();
+    const str = /STR:\s*(.+)/i.exec(text)?.[1]?.trim().replace(/^["'`]|["'`]$/g, "");
+    const dex = /DEX:\s*(.+)/i.exec(text)?.[1]?.trim().replace(/^["'`]|["'`]$/g, "");
+    const int = /INT:\s*(.+)/i.exec(text)?.[1]?.trim().replace(/^["'`]|["'`]$/g, "");
+    if (!scene || !str || !dex || !int) return fallback;
+    return { scene, options: { str, dex, int } };
+  } catch {
+    return fallback;
+  }
+}
+
+export async function generateLockboxScene(
+  ai: Ai,
+  theme: string,
+  roomNumber: number,
+  totalRooms: number,
+): Promise<string> {
+  const user = `Room ${roomNumber}/${totalRooms} of a dungeon themed: "${theme}". This room has a *locked* chest. Narrate the discovery in 2 sentences (~35 words). Hint that without a key, players can only walk past empty-handed.`;
+  const fallback = "A chest sits at the room's center, bound in three iron locks and humming with promise. You'd need a key — or your conscience to leave it.";
+  return generateFlavor(ai, user, fallback, 110);
+}
+
+export interface GeneratedNpc {
+  scene: string;
+  greeting: string;
+}
+
+export async function generateNpcRoom(
+  ai: Ai,
+  theme: string,
+  roomNumber: number,
+  totalRooms: number,
+  npcName: string,
+): Promise<GeneratedNpc> {
+  const user = [
+    `Room ${roomNumber}/${totalRooms} of a dungeon themed: "${theme}".`,
+    `An NPC named "${npcName}" is here, offering an item to the party.`,
+    "Output exactly:",
+    "SCENE: <2 sentences setting the encounter — what they look like, what they're doing>",
+    "GREETING: <1-2 sentences of what they say to the party, offering their wares>",
+  ].join("\n");
+
+  const fallback: GeneratedNpc = {
+    scene: "A figure in patched robes warms hands by a battered terminal. They look up and grin.",
+    greeting: `"You look like trustworthy adventurers. I've got something you might want — for the right offer."`,
+  };
+
+  try {
+    const result = (await ai.run(MODEL, {
+      messages: [
+        { role: "system", content: COMBAT_SYSTEM },
+        { role: "user", content: user },
+      ],
+      max_tokens: 180,
+    })) as AiRunResponse;
+    const text = (result.response ?? "").trim();
+    const scene = /SCENE:\s*(.+)/i.exec(text)?.[1]?.trim();
+    const greeting = /GREETING:\s*([\s\S]+)/i.exec(text)?.[1]?.trim().replace(/^["'`]|["'`]$/g, "");
+    if (!scene || !greeting) return fallback;
+    return { scene, greeting };
+  } catch {
+    return fallback;
+  }
+}
+
 export async function flavorBossPhase(
   ai: Ai,
   monsterName: string,
