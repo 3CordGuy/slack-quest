@@ -1150,6 +1150,55 @@ function effectsBadge(effects: StatusEffect[] | undefined | null): string {
   return effects.map((e) => `${EFFECT_META[e.type]?.emoji ?? "❓"}${e.remaining}`).join(" ");
 }
 
+// Tick the actor's status effects + apply any newly-applied effects, persist
+// both HP and effects to the DB, and return narration lines + post-tick HP.
+//
+// Used by every combat-tier player action (attack/cast/sig, heal/shield, tool
+// uses that consume a turn). Free-action tool uses (Espresso Shot, Rebase Scroll)
+// don't call this — they apply their own effects without ticking.
+//
+// Returns:
+//   character    — updated copy with new HP + effects (caller should reassign)
+//   tickLines    — one line per ticked effect (for narration)
+//   newLines     — one line per newly-applied effect ("now bleeding")
+//   postTickHp   — final HP after tick, before any clamp by caller
+async function applyPlayerTick(
+  env: Env,
+  userId: string,
+  character: Character,
+  newlyApplied: StatusEffect[] = [],
+): Promise<{ character: Character; tickLines: string[]; newLines: string[]; postTickHp: number }> {
+  const tick = tickEffects(character.effects ?? []);
+  const tickLines = tick.ticked.map((e) => {
+    const meta = EFFECT_META[e.type];
+    const sign = meta.kind === "buff" ? "+" : "-";
+    return `${meta.emoji} <@${userId}> ${meta.name.toLowerCase()} ticks ${sign}${e.magnitude} HP.`;
+  });
+  let postTickEffects = tick.next;
+  const newLines: string[] = [];
+  for (const eff of newlyApplied) {
+    postTickEffects = withEffectApplied(postTickEffects, eff);
+    const meta = EFFECT_META[eff.type];
+    newLines.push(`${meta.emoji} <@${userId}> is now *${meta.name}* (${eff.remaining} actions).`);
+  }
+
+  const postTickHp = Math.max(0, Math.min(character.max_hp, character.hp + tick.hpDelta));
+  const effectsChanged =
+    tick.hpDelta !== 0 || tick.ticked.length > 0 || newlyApplied.length > 0;
+  if (effectsChanged) {
+    await setCharacterEffects(env.DB, userId, postTickEffects);
+  }
+  if (tick.hpDelta !== 0) {
+    await setCharacterHp(env.DB, userId, postTickHp);
+  }
+  return {
+    character: { ...character, hp: postTickHp, effects: postTickEffects },
+    tickLines,
+    newLines,
+    postTickHp,
+  };
+}
+
 // Applies an effect to a character. If an effect of the same type already exists,
 // REFRESHES it (resets remaining to the new value, keeps higher magnitude).
 function withEffectApplied(effects: StatusEffect[], add: StatusEffect): StatusEffect[] {
@@ -1669,44 +1718,32 @@ async function handleCombat(
   }
   await appendLog(env.DB, quest.id, payload.user_id, action, `${damage} dmg${willKill ? " (kill)" : ""}`);
 
-  // Tick the actor's own status effects (regen heals; bleed/burn damages). Apply
-  // HP delta + save updated effects array. If a debuff DoT kills the actor, route
-  // to resolveDeath with both their attack line AND the tick line in preamble so
-  // partymates see what happened.
-  const playerTick = tickEffects(character.effects ?? []);
-  const playerTickLines: string[] = playerTick.ticked.map((e) => {
-    const meta = EFFECT_META[e.type];
-    const sign = meta.kind === "buff" ? "+" : "-";
-    return `${meta.emoji} <@${payload.user_id}> ${meta.name.toLowerCase()} ticks ${sign}${e.magnitude} HP.`;
-  });
-  let postTickEffects = playerTick.next;
-
-  // Effects applied by this action (NOT yet ticked — they take effect next action).
-  // - Boss phase 2 transition burns the actor: -3 HP per action × 3 actions.
-  const newEffects: StatusEffect[] = [];
+  // Tick the actor's own status effects + fold in any newly-applied effects from
+  // this action (e.g. boss phase 2 transition applies burning).
+  const newlyApplied: StatusEffect[] = [];
   if (bossPhaseTransition) {
-    newEffects.push({ type: "burning", magnitude: 3, remaining: 3, source: `${quest.scene.monster_name} phase 2` });
+    newlyApplied.push({
+      type: "burning",
+      magnitude: 3,
+      remaining: 3,
+      source: `${quest.scene.monster_name} phase 2`,
+    });
   }
-  const newEffectLines: string[] = [];
-  for (const eff of newEffects) {
-    postTickEffects = withEffectApplied(postTickEffects, eff);
-    const meta = EFFECT_META[eff.type];
-    newEffectLines.push(`${meta.emoji} <@${payload.user_id}> is now *${meta.name}* (${eff.remaining} actions).`);
-  }
+  const tickResult = await applyPlayerTick(env, payload.user_id, character, newlyApplied);
+  const playerTickLines = tickResult.tickLines;
+  const newEffectLines = tickResult.newLines;
+  let postTickHp = tickResult.postTickHp;
 
-  let postTickHp = character.hp + playerTick.hpDelta;
-  const effectsChanged =
-    playerTick.hpDelta !== 0 || playerTick.ticked.length > 0 || newEffects.length > 0;
-  if (effectsChanged) {
-    await setCharacterEffects(env.DB, payload.user_id, postTickEffects);
-  }
-  if (playerTick.hpDelta !== 0) {
-    postTickHp = Math.max(0, Math.min(character.max_hp, postTickHp));
-    await setCharacterHp(env.DB, payload.user_id, postTickHp);
-  }
-  // DoT tick killed the actor — death-by-effect. Route through standard death flow
-  // before the kill/turn branches so the narration order makes sense.
-  if (postTickHp <= 0) {
+  // Death-after-success clamp: if the player's tick would kill them ON THE SAME
+  // action that delivered a kill blow, clamp to 1 HP so the win still registers.
+  // "Collapses to one knee but the boss is down." Subsequent ticks (or the next
+  // monster's swing) can still kill them — but the quest gets credit for the kill.
+  if (postTickHp <= 0 && willKill) {
+    await setCharacterHp(env.DB, payload.user_id, 1);
+    postTickHp = 1;
+    playerTickLines.push(`💪 <@${payload.user_id}> drops to one knee but the kill stands — clamped to 1 HP.`);
+  } else if (postTickHp <= 0) {
+    // DoT tick killed the actor without a kill blow — standard death path.
     return resolveDeath(payload, env, ctx, character, quest, fighters, [
       playerLine,
       ...monsterEffectLines,
@@ -1716,7 +1753,7 @@ async function handleCombat(
   }
   // Update the in-memory character so downstream code (monster turn target HP,
   // ephemeral stat lines) sees the post-tick HP.
-  character = { ...character, hp: postTickHp, effects: postTickEffects };
+  character = { ...tickResult.character, hp: postTickHp };
 
   if (willKill) {
     // Gauntlet: advance to next wave instead of triggering victory.
@@ -3143,21 +3180,27 @@ async function usePoisonVial(
 
   const playerLine = `${entry.emoji} <@${payload.user_id}> hurls *${item.item_name}* — *${quest.scene.monster_name}* is now ☠️ *Poisoned* (-${item.power} HP × 4 turns).`;
 
-  // Tool consumes a turn — monster gets a swing in retaliation.
+  // Tick caster's status effects — Poison Vial consumes a turn.
   const fighters = (await getQuestParty(env.DB, quest.id)).filter(isFighter);
+  const tick = await applyPlayerTick(env, payload.user_id, character);
+  if (tick.postTickHp <= 0) {
+    return resolveDeath(payload, env, ctx, character, quest, fighters, [playerLine, ...tick.tickLines]);
+  }
+
+  // Tool consumes a turn — monster gets a swing in retaliation.
   const actorArmor = await getEquipped(env.DB, payload.user_id, "armor");
-  const turn = await performMonsterTurn(env, quest, fighters, character, actorArmor);
+  const turn = await performMonsterTurn(env, quest, fighters, tick.character, actorArmor);
 
   if (turn.willKillTarget) {
-    return resolveDeath(payload, env, ctx, turn.target, quest, fighters, [playerLine, turn.monsterLine]);
+    return resolveDeath(payload, env, ctx, turn.target, quest, fighters, [playerLine, ...tick.tickLines, turn.monsterLine]);
   }
   await setCharacterHpAndShield(env.DB, turn.target.slack_user_id, turn.dmg.newHp, turn.dmg.newShield);
   await appendLog(env.DB, quest.id, "monster", "attack", `${turn.positionAdjusted} dmg → ${turn.target.name}`);
 
   const targetShield = turn.dmg.newShield > 0 ? ` 🛡${turn.dmg.newShield}` : "";
   const targetStat = `*${turn.target.name}*: ${turn.dmg.newHp}/${turn.target.max_hp}${targetShield}`;
-  const ephem = [playerLine, turn.monsterLine, targetStat].join("\n");
-  ctx.waitUntil(postToThread(env, quest, [blockQuote(playerLine), "", turn.monsterLine, targetStat].join("\n")));
+  const ephem = [playerLine, ...tick.tickLines, turn.monsterLine, targetStat].join("\n");
+  ctx.waitUntil(postToThread(env, quest, [blockQuote(playerLine), "", ...tick.tickLines, turn.monsterLine, targetStat].join("\n")));
   return ephemeral(ephem);
 }
 
@@ -3190,13 +3233,20 @@ async function useDamageTool(
   const cappedNote = damage < requested ? ` _(capped from ${requested} — finish it with attack)_` : "";
   const playerLine = `${entry.emoji} <@${payload.user_id}> uses *${item.item_name}* — *${damage}* dmg, ignores armor.${cappedNote}`;
 
-  // Monster turn — same plumbing as heal/shield post-effect.
+  // Tick the actor's status effects — tools that consume a turn behave like any
+  // other combat action.
   const fighters = (await getQuestParty(env.DB, quest.id)).filter(isFighter);
+  const tick = await applyPlayerTick(env, payload.user_id, character);
+  if (tick.postTickHp <= 0) {
+    return resolveDeath(payload, env, ctx, character, quest, fighters, [playerLine, ...tick.tickLines]);
+  }
+
+  // Monster turn — same plumbing as heal/shield post-effect.
   const actorArmor = await getEquipped(env.DB, payload.user_id, "armor");
-  const turn = await performMonsterTurn(env, quest, fighters, character, actorArmor);
+  const turn = await performMonsterTurn(env, quest, fighters, tick.character, actorArmor);
 
   if (turn.willKillTarget) {
-    return resolveDeath(payload, env, ctx, turn.target, quest, fighters, [playerLine, turn.monsterLine]);
+    return resolveDeath(payload, env, ctx, turn.target, quest, fighters, [playerLine, ...tick.tickLines, turn.monsterLine]);
   }
   await setCharacterHpAndShield(env.DB, turn.target.slack_user_id, turn.dmg.newHp, turn.dmg.newShield);
   await appendLog(env.DB, quest.id, "monster", "attack", `${turn.positionAdjusted} dmg → ${turn.target.name}`);
@@ -3204,8 +3254,8 @@ async function useDamageTool(
   const monsterStat = `*${quest.scene.monster_name}*: ${newMonsterHp}/${quest.scene.monster_max_hp}`;
   const targetShield = turn.dmg.newShield > 0 ? ` 🛡${turn.dmg.newShield}` : "";
   const targetStat = `*${turn.target.name}*: ${turn.dmg.newHp}/${turn.target.max_hp}${targetShield}`;
-  const ephem = [playerLine, monsterStat, turn.monsterLine, targetStat].join("\n");
-  ctx.waitUntil(postToThread(env, quest, [blockQuote(playerLine), "", monsterStat, turn.monsterLine, targetStat].join("\n")));
+  const ephem = [playerLine, ...tick.tickLines, monsterStat, turn.monsterLine, targetStat].join("\n");
+  ctx.waitUntil(postToThread(env, quest, [blockQuote(playerLine), "", ...tick.tickLines, monsterStat, turn.monsterLine, targetStat].join("\n")));
   return ephemeral(ephem);
 }
 
@@ -3288,13 +3338,19 @@ async function useProductionOutage(
     : `*${quest.scene.monster_name}* is reduced to *1 HP* — finish it.`;
   const playerLine = `${entry.emoji} <@${payload.user_id}> invokes *${item.item_name}*. ${effectNote}`;
 
-  // Monster gets a turn (still alive — we capped at 1).
+  // Tick caster's status effects — Production Outage consumes a turn.
   const fighters = (await getQuestParty(env.DB, quest.id)).filter(isFighter);
+  const tick = await applyPlayerTick(env, payload.user_id, character);
+  if (tick.postTickHp <= 0) {
+    return resolveDeath(payload, env, ctx, character, quest, fighters, [playerLine, ...tick.tickLines]);
+  }
+
+  // Monster gets a turn (still alive — we capped at 1).
   const actorArmor = await getEquipped(env.DB, payload.user_id, "armor");
-  const turn = await performMonsterTurn(env, quest, fighters, character, actorArmor);
+  const turn = await performMonsterTurn(env, quest, fighters, tick.character, actorArmor);
 
   if (turn.willKillTarget) {
-    return resolveDeath(payload, env, ctx, turn.target, quest, fighters, [playerLine, turn.monsterLine]);
+    return resolveDeath(payload, env, ctx, turn.target, quest, fighters, [playerLine, ...tick.tickLines, turn.monsterLine]);
   }
   await setCharacterHpAndShield(env.DB, turn.target.slack_user_id, turn.dmg.newHp, turn.dmg.newShield);
   await appendLog(env.DB, quest.id, "monster", "attack", `${turn.positionAdjusted} dmg → ${turn.target.name}`);
@@ -3302,8 +3358,8 @@ async function useProductionOutage(
   const monsterStat = `*${quest.scene.monster_name}*: ${newMonsterHp}/${quest.scene.monster_max_hp}`;
   const targetShield = turn.dmg.newShield > 0 ? ` 🛡${turn.dmg.newShield}` : "";
   const targetStat = `*${turn.target.name}*: ${turn.dmg.newHp}/${turn.target.max_hp}${targetShield}`;
-  const ephem = [playerLine, monsterStat, turn.monsterLine, targetStat].join("\n");
-  ctx.waitUntil(postToThread(env, quest, [blockQuote(playerLine), "", monsterStat, turn.monsterLine, targetStat].join("\n")));
+  const ephem = [playerLine, ...tick.tickLines, monsterStat, turn.monsterLine, targetStat].join("\n");
+  ctx.waitUntil(postToThread(env, quest, [blockQuote(playerLine), "", ...tick.tickLines, monsterStat, turn.monsterLine, targetStat].join("\n")));
   return ephemeral(ephem);
 }
 
@@ -3836,22 +3892,34 @@ async function handleHeal(
     : `<@${target.slack_user_id}>`;
   const healLine = `💚 <@${payload.user_id}> heals ${targetTag} for *${healed}* HP \`${heal.roll} + ${cls.magic_mod}m\`.`;
 
+  // Tick the caster's status effects — heal is a combat-tier action so it should
+  // tick effects just like attack/cast. The actor's tick (regen/bleed/burn) fires
+  // on their own action.
+  const casterTick = await applyPlayerTick(env, payload.user_id, character);
+  const tickLines = casterTick.tickLines;
+  if (casterTick.postTickHp <= 0) {
+    const fighters = (await getQuestParty(env.DB, quest.id)).filter(isFighter);
+    return resolveDeath(payload, env, ctx, character, quest, fighters, [healLine, ...tickLines]);
+  }
+
   // Between-rooms / no-live-monster: skip retaliation. Heal still consumes mana
   // and triggers the cooldown — but no dead monster can hit back.
   if (!hasLiveMonster(quest)) {
     const healStat = `*${target.name}*: ${target.hp + healed}/${target.max_hp}`;
-    ctx.waitUntil(postToThread(env, quest, [blockQuote(healLine), "", healStat].join("\n")));
-    return ephemeral([healLine, healStat].join("\n"));
+    const lines = [healLine, ...tickLines, healStat];
+    ctx.waitUntil(postToThread(env, quest, [blockQuote(healLine), "", ...tickLines, healStat].join("\n")));
+    return ephemeral(lines.join("\n"));
   }
 
   // Monster retaliates while you're channeling the heal — mana actions cost a turn,
   // so the monster gets one too. Pick target via the same position-weighted RNG.
+  // Use the post-tick character so the monster hits the right HP value.
   const fighters = (await getQuestParty(env.DB, quest.id)).filter(isFighter);
   const actorArmor = await getEquipped(env.DB, payload.user_id, "armor");
-  const turn = await performMonsterTurn(env, quest, fighters, character, actorArmor);
+  const turn = await performMonsterTurn(env, quest, fighters, casterTick.character, actorArmor);
 
   if (turn.willKillTarget) {
-    return resolveDeath(payload, env, ctx, turn.target, quest, fighters, [healLine, turn.monsterLine]);
+    return resolveDeath(payload, env, ctx, turn.target, quest, fighters, [healLine, ...tickLines, turn.monsterLine]);
   }
 
   await setCharacterHpAndShield(env.DB, turn.target.slack_user_id, turn.dmg.newHp, turn.dmg.newShield);
@@ -3860,21 +3928,21 @@ async function handleHeal(
   const healStat = `*${target.name}*: ${target.hp + healed}/${target.max_hp}`;
   const targetShield = turn.dmg.newShield > 0 ? ` 🛡${turn.dmg.newShield}` : "";
   const monsterStat = `*${turn.target.name}*: ${turn.dmg.newHp}/${turn.target.max_hp}${targetShield}`;
-  const ephem = [healLine, healStat, turn.monsterLine, monsterStat].join("\n");
+  const ephem = [healLine, ...tickLines, healStat, turn.monsterLine, monsterStat].join("\n");
 
   // Thread post: heal + monster retaliation as the events, with monster + actor cards.
   const updatedActor: Character = turn.victimWasActor
-    ? { ...character, hp: turn.dmg.newHp, shield: turn.dmg.newShield }
-    : character;
+    ? { ...casterTick.character, hp: turn.dmg.newHp, shield: turn.dmg.newShield }
+    : casterTick.character;
   ctx.waitUntil((async () => {
     const blocks = buildCombatBlocks({
       narration: healLine,
-      events: [healStat, turn.monsterLine],
+      events: [...tickLines, healStat, turn.monsterLine],
       scene: quest.scene,
       monsterHp: quest.scene.monster_hp,
       actor: updatedActor,
     });
-    const fallback = [blockQuote(healLine), "", healStat, turn.monsterLine, monsterStat].join("\n");
+    const fallback = [blockQuote(healLine), "", ...tickLines, healStat, turn.monsterLine, monsterStat].join("\n");
     await postToThread(env, quest, fallback, { blocks });
   })());
 
@@ -3923,21 +3991,29 @@ async function handleShield(
   const wastedNote = wasted > 0 ? ` (${wasted} over the cap)` : "";
   const shieldLine = `🛡️ <@${payload.user_id}> shields ${targetTag} for *${added}*${wastedNote} \`${shield.roll} + ${cls.magic_mod}m\`.`;
 
+  // Tick the caster's status effects — shield is a combat-tier action.
+  const casterTick = await applyPlayerTick(env, payload.user_id, character);
+  const tickLines = casterTick.tickLines;
+  if (casterTick.postTickHp <= 0) {
+    const fighters = (await getQuestParty(env.DB, quest.id)).filter(isFighter);
+    return resolveDeath(payload, env, ctx, character, quest, fighters, [shieldLine, ...tickLines]);
+  }
+
   // Between-rooms / no-live-monster: skip retaliation. Shield still costs mana +
   // cooldown but a dead monster can't hit back.
   if (!hasLiveMonster(quest)) {
     const shieldStat = `*${target.name}*: 🛡${(target.shield ?? 0) + added}`;
-    ctx.waitUntil(postToThread(env, quest, [blockQuote(shieldLine), "", shieldStat].join("\n")));
-    return ephemeral([shieldLine, shieldStat].join("\n"));
+    ctx.waitUntil(postToThread(env, quest, [blockQuote(shieldLine), "", ...tickLines, shieldStat].join("\n")));
+    return ephemeral([shieldLine, ...tickLines, shieldStat].join("\n"));
   }
 
   // Monster retaliates on mana use, same as heal/cast.
   const fighters = (await getQuestParty(env.DB, quest.id)).filter(isFighter);
   const actorArmor = await getEquipped(env.DB, payload.user_id, "armor");
-  const turn = await performMonsterTurn(env, quest, fighters, character, actorArmor);
+  const turn = await performMonsterTurn(env, quest, fighters, casterTick.character, actorArmor);
 
   if (turn.willKillTarget) {
-    return resolveDeath(payload, env, ctx, turn.target, quest, fighters, [shieldLine, turn.monsterLine]);
+    return resolveDeath(payload, env, ctx, turn.target, quest, fighters, [shieldLine, ...tickLines, turn.monsterLine]);
   }
 
   await setCharacterHpAndShield(env.DB, turn.target.slack_user_id, turn.dmg.newHp, turn.dmg.newShield);
@@ -3946,20 +4022,20 @@ async function handleShield(
   const shieldStat = `*${target.name}*: 🛡${target.shield + added}/${cap}`;
   const turnShield = turn.dmg.newShield > 0 ? ` 🛡${turn.dmg.newShield}` : "";
   const monsterStat = `*${turn.target.name}*: ${turn.dmg.newHp}/${turn.target.max_hp}${turnShield}`;
-  const ephem = [shieldLine, shieldStat, turn.monsterLine, monsterStat].join("\n");
+  const ephem = [shieldLine, ...tickLines, shieldStat, turn.monsterLine, monsterStat].join("\n");
 
   const updatedActor: Character = turn.victimWasActor
-    ? { ...character, hp: turn.dmg.newHp, shield: turn.dmg.newShield }
-    : character;
+    ? { ...casterTick.character, hp: turn.dmg.newHp, shield: turn.dmg.newShield }
+    : casterTick.character;
   ctx.waitUntil((async () => {
     const blocks = buildCombatBlocks({
       narration: shieldLine,
-      events: [shieldStat, turn.monsterLine],
+      events: [...tickLines, shieldStat, turn.monsterLine],
       scene: quest.scene,
       monsterHp: quest.scene.monster_hp,
       actor: updatedActor,
     });
-    const fallback = [blockQuote(shieldLine), "", shieldStat, turn.monsterLine, monsterStat].join("\n");
+    const fallback = [blockQuote(shieldLine), "", ...tickLines, shieldStat, turn.monsterLine, monsterStat].join("\n");
     await postToThread(env, quest, fallback, { blocks });
   })());
 
