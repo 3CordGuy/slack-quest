@@ -2400,6 +2400,11 @@ async function handleUse(
     return useToolOrScroll(payload, env, ctx, character, item);
   }
 
+  // Lookup active quest once — both magic and consumable uses post to thread when
+  // mid-quest so the rest of the party sees the action. Out-of-quest use stays
+  // ephemeral (no thread to post to).
+  const activeQuest = await getActiveQuestForCharacter(env.DB, payload.user_id);
+
   if (item.item_type === "magic") {
     if (character.max_mana >= MAX_MANA_CAP) {
       return ephemeral(`Already at the max-mana cap (${MAX_MANA_CAP}). Sell it instead with \`${payload.command} sell ${item.id}\`.`);
@@ -2408,9 +2413,11 @@ async function handleUse(
     await removeItem(env.DB, item.id);
     const wasted = item.power - result.added;
     const wastedNote = wasted > 0 ? ` (${wasted} over the cap, lost)` : "";
-    return ephemeral(
-      `🔮 You channel *${item.item_name}* — *+${result.added}* max mana${wastedNote}. (${result.newMana}/${result.newMaxMana})`,
-    );
+    const headline = `🔮 <@${payload.user_id}> channels *${item.item_name}* — *+${result.added}* max mana${wastedNote}. (${result.newMana}/${result.newMaxMana})`;
+    if (activeQuest) {
+      ctx.waitUntil(postToThread(env, activeQuest, blockQuote(headline)));
+    }
+    return ephemeral(headline);
   }
 
   if (item.item_type !== "consumable") {
@@ -2422,9 +2429,12 @@ async function handleUse(
   }
 
   const healed = await consumeItem(env.DB, character, item);
-  return ephemeral(
-    `🧪 You drink *${item.item_name}* — recovered *${healed}* HP. (${character.hp + healed}/${character.max_hp})`,
-  );
+  const newHp = character.hp + healed;
+  const headline = `🧪 <@${payload.user_id}> drinks *${item.item_name}* — recovered *${healed}* HP. (${newHp}/${character.max_hp})`;
+  if (activeQuest) {
+    ctx.waitUntil(postToThread(env, activeQuest, blockQuote(headline)));
+  }
+  return ephemeral(headline);
 }
 
 // /sq use for catalog items (tool / scroll). Each catalog name dispatches to a
