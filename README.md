@@ -100,7 +100,7 @@ What works:
   |------|------|--------|--------|-------|
   | tool | 🧨 Caffeine Bomb | common | `2 + tier` dmg, ignores armor | 50g |
   | tool | 🔥 Hotfix Grenade | uncommon | `6 + tier×2` dmg, ignores armor | 150g |
-  | scroll | 🔄 Rebase Scroll | uncommon | Wipes party action cooldowns + caster mana → full | 250g |
+  | scroll | 🔄 Rebase Scroll | uncommon | Free action: wipes party cooldowns + party mana → full, no monster retaliation | 250g |
   | scroll | 💥 Production Outage | rare | Boss: HP × 0.7 / Non-boss: HP → 1 | 500g |
 
   Power is rolled at create time and **does not auto-scale** — a Caffeine Bomb bought at

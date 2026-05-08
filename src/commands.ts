@@ -238,7 +238,7 @@ function rulesText(cmd: string, name: string): string {
     `• 🔮 *Magic items* — \`${cmd} use <id>\` grants permanent +N max mana (cap 5)`,
     `• 🌱 *Revive items* — bring downed teammate back at N% HP (rarity-tiered 50/75/100%)`,
     `• 🧨 *Tools* — single-shot offensive consumables; \`${cmd} use <id>\` deals damage, ignores armor (consumes a combat turn)`,
-    `• 📜 *Scrolls* — single-shot rituals; \`${cmd} use <id>\` triggers the named effect (consumes a combat turn). v1: 🔄 Rebase (party cooldown wipe + mana refill), 💥 Production Outage (boss -30% / non-boss → 1 HP)`,
+    `• 📜 *Scrolls* — single-shot rituals; \`${cmd} use <id>\` triggers the named effect. 🔄 Rebase (FREE action — party cooldowns + mana wipe to full, no retaliation), 💥 Production Outage (consumes a turn — boss -30% HP / non-boss → 1 HP)`,
     `• Slots: 1 weapon + 1 armor equipped at a time. \`${cmd} equip <id>\` swaps in.`,
     `• \`${cmd} give <id> @user\` — gift any unequipped item; channel-public message`,
     ``,
@@ -2520,11 +2520,19 @@ async function useDamageTool(
   return ephemeral(ephem);
 }
 
-// Rebase Scroll — wipes the action cooldown for every party member so they can
-// all act immediately, AND refills the caster's mana to full. The caster's own
-// cooldown is reset by the floor entry, then immediately re-set by the 'scroll'
-// log entry below — so caster pays a turn while the rest of the party gets a free
-// jump. Multi-party version of "rebase your work to fresh main."
+// Rebase Scroll — a "fast ritual" treated as a free action:
+//   • Wipes action cooldowns for every party member (caster included)
+//   • Refills mana to full for every party member
+//   • Does NOT consume the caster's turn — no monster retaliation
+//
+// The free-action framing is what justifies 250g over "just wait 45s": real-time
+// waiting only resets your own cooldown and does nothing for mana. Rebase resets
+// the WHOLE party AND tops everyone up. Party-wide burst window with the boss
+// not swinging back. Use it before a sub-boss for a coordinated sig wave.
+//
+// Spam-gating: 'scroll' isn't logged in the action list, so back-to-back scrolls
+// would technically work — but rare drop weight + 250g price keeps stockpiles
+// rare in practice. A v2 limit could add an explicit per-quest cap.
 async function useRebaseScroll(
   payload: SlashCommandPayload,
   env: Env,
@@ -2535,36 +2543,24 @@ async function useRebaseScroll(
   entry: { name: string; emoji: string },
 ): Promise<CommandResponse> {
   const fighters = (await getQuestParty(env.DB, quest.id)).filter(isFighter);
-  await resetCooldownsFor(env.DB, quest.id, fighters.map((f) => f.slack_user_id));
-  await refillMana(env.DB, payload.user_id);
+  const fighterIds = fighters.map((f) => f.slack_user_id);
+  await Promise.all([
+    resetCooldownsFor(env.DB, quest.id, fighterIds),
+    ...fighterIds.map((uid) => refillMana(env.DB, uid)),
+  ]);
   await removeItem(env.DB, item.id);
-  await appendLog(env.DB, quest.id, payload.user_id, "scroll", `${entry.name}: party cooldown reset`);
+  // Note: action='scroll_free' is intentionally NOT in cooldownRemaining's filter
+  // list, so this use doesn't gate the caster's combat cooldown. Free action.
+  await appendLog(env.DB, quest.id, payload.user_id, "scroll_free", `${entry.name}: party cd+mana reset`);
 
-  const otherFighters = fighters.filter((f) => f.slack_user_id !== payload.user_id);
-  const partyNote = otherFighters.length > 0
-    ? ` *${otherFighters.length}* partymate${otherFighters.length > 1 ? "s" : ""} can act *now*.`
-    : "";
-  const playerLine = `${entry.emoji} <@${payload.user_id}> reads *${item.item_name}* — party cooldowns wiped. Caster's mana → ${character.max_mana}/${character.max_mana}.${partyNote}`;
+  const partyNote = fighters.length > 1
+    ? ` Whole party (${fighters.length}) at full mana, no cooldowns.`
+    : ` You're at full mana with no cooldown.`;
+  const playerLine = `${entry.emoji} <@${payload.user_id}> reads *${item.item_name}* — fast ritual.${partyNote} _(free action — monster doesn't retaliate)_`;
 
-  // No live foe → no retaliation. With a live foe, scroll consumed the turn so the monster gets a swing.
-  if (!hasLiveMonster(quest)) {
-    ctx.waitUntil(postToThread(env, quest, blockQuote(playerLine)));
-    return ephemeral(playerLine);
-  }
-  const actorArmor = await getEquipped(env.DB, payload.user_id, "armor");
-  const turn = await performMonsterTurn(env, quest, fighters, character, actorArmor);
-
-  if (turn.willKillTarget) {
-    return resolveDeath(payload, env, ctx, turn.target, quest, fighters, [playerLine, turn.monsterLine]);
-  }
-  await setCharacterHpAndShield(env.DB, turn.target.slack_user_id, turn.dmg.newHp, turn.dmg.newShield);
-  await appendLog(env.DB, quest.id, "monster", "attack", `${turn.positionAdjusted} dmg → ${turn.target.name}`);
-
-  const targetShield = turn.dmg.newShield > 0 ? ` 🛡${turn.dmg.newShield}` : "";
-  const targetStat = `*${turn.target.name}*: ${turn.dmg.newHp}/${turn.target.max_hp}${targetShield}`;
-  const ephem = [playerLine, turn.monsterLine, targetStat].join("\n");
-  ctx.waitUntil(postToThread(env, quest, [blockQuote(playerLine), "", turn.monsterLine, targetStat].join("\n")));
-  return ephemeral(ephem);
+  // Free action — never trigger monster turn, regardless of whether a foe is alive.
+  ctx.waitUntil(postToThread(env, quest, blockQuote(playerLine)));
+  return ephemeral(playerLine);
 }
 
 // Production Outage — boss: HP × 0.7 (effective -30%). Non-boss: HP → 1 (player's
