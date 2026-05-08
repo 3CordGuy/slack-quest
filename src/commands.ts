@@ -2964,12 +2964,19 @@ async function handleInventory(payload: SlashCommandPayload, env: Env): Promise<
   // Per-item: section block (item description) + actions block ([Equip] [Use] [Sell]).
   // The actions block carries action_id values that the /slack/interactive endpoint
   // routes via handleInteraction. value = inventory id as string.
-  const blocks: unknown[] = [
-    {
-      type: "header",
-      text: { type: "plain_text", text: `Inventory — ${items.length} item${items.length > 1 ? "s" : ""}` },
-    },
-  ];
+  const blocks: unknown[] = [];
+  // Optional banner image — served from R2 when IMAGE_BASE_URL is configured.
+  if (env.IMAGE_BASE_URL) {
+    blocks.push({
+      type: "image",
+      image_url: `${env.IMAGE_BASE_URL}/img/inventory-header.jpg`,
+      alt_text: "your pack",
+    });
+  }
+  blocks.push({
+    type: "header",
+    text: { type: "plain_text", text: `Inventory — ${items.length} item${items.length > 1 ? "s" : ""}` },
+  });
   if (equippedItems.length > 0) {
     blocks.push({
       type: "section",
