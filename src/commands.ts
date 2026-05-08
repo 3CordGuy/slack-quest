@@ -324,6 +324,7 @@ export async function handleInteraction(
   if (action.action_id === "equip") return handleEquip(slash, args, env);
   if (action.action_id === "use") return handleUse(slash, args, env, ctx);
   if (action.action_id === "sell") return handleSell(slash, args, env);
+  if (action.action_id === "inventory") return handleInventory(slash, env);
   return ephemeral(`Unknown action \`${action.action_id}\`.`);
 }
 
@@ -498,7 +499,25 @@ async function handleMe(payload: SlashCommandPayload, env: Env): Promise<Command
     getEquipped(env.DB, payload.user_id, "weapon"),
     getEquipped(env.DB, payload.user_id, "armor"),
   ]);
-  return ephemeral(formatSheet(c, weapon, armor));
+  const text = formatSheet(c, weapon, armor);
+  // Block Kit version: same content as the plain-text sheet, plus a row of action
+  // buttons (Inventory). Slack falls back to `text` on clients that don't render blocks.
+  const blocks: unknown[] = [
+    { type: "section", text: { type: "mrkdwn", text } },
+    {
+      type: "actions",
+      block_id: "me_actions",
+      elements: [
+        {
+          type: "button",
+          action_id: "inventory",
+          value: "open",
+          text: { type: "plain_text", text: "🎒 Inventory" },
+        },
+      ],
+    },
+  ];
+  return { text, response_type: "ephemeral", blocks };
 }
 
 function formatSheet(c: Character, weapon: Item | null, armor: Item | null): string {
