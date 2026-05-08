@@ -70,11 +70,27 @@ describe("dropChance", () => {
 });
 
 describe("rollItem", () => {
-  it("type is one of weapon | armor | consumable | magic | revive", () => {
+  it("type is one of weapon | armor | consumable | magic | revive | tool | scroll", () => {
     for (let i = 0; i < 200; i++) {
       const r = rollItem(2);
-      expect(["weapon", "armor", "consumable", "magic", "revive"]).toContain(r.type);
+      expect(["weapon", "armor", "consumable", "magic", "revive", "tool", "scroll"]).toContain(r.type);
     }
+  });
+
+  it("tool/scroll rolls have a catalog_name and known emoji", () => {
+    let sawCatalog = false;
+    for (let i = 0; i < 500; i++) {
+      const r = rollItem(2);
+      if (r.type === "tool" || r.type === "scroll") {
+        sawCatalog = true;
+        expect(r.catalog_name).toBeDefined();
+        expect(["Caffeine Bomb", "Hotfix Grenade", "Rebase Scroll", "Production Outage"]).toContain(r.catalog_name);
+        // Power is computed from tier, not random — must be > 0 for tools, 0 or specific for scrolls.
+        if (r.type === "tool") expect(r.power).toBeGreaterThan(0);
+      }
+    }
+    // ~8% combined drop weight × 500 rolls = expect at least one. Flaky-tolerant.
+    expect(sawCatalog).toBe(true);
   });
 
   it("magic items have power between 1 and 3 (rarity-flat tiers)", () => {
@@ -94,9 +110,14 @@ describe("rollItem", () => {
     }
   });
 
-  it("power is always positive", () => {
+  it("power is always positive (or zero for utility scrolls)", () => {
     for (let i = 0; i < 100; i++) {
       const r = rollItem(2);
+      // Utility scrolls (Rebase Scroll) have power 0 — they don't deal damage.
+      if (r.type === "scroll" && r.catalog_name === "Rebase Scroll") {
+        expect(r.power).toBe(0);
+        continue;
+      }
       expect(r.power).toBeGreaterThan(0);
     }
   });

@@ -96,7 +96,7 @@ export function generateScar(monster: string): string {
 
 // Loot system: deterministic rolls for slot/rarity/power. AI generates name + flavor on top.
 
-export type ItemType = "weapon" | "armor" | "consumable" | "magic" | "revive";
+export type ItemType = "weapon" | "armor" | "consumable" | "magic" | "revive" | "tool" | "scroll";
 
 export type WeaponRange = "melee" | "ranged";
 
@@ -135,6 +135,70 @@ export interface ItemRoll {
   rarity: Rarity;
   power: number;
   weapon_range?: WeaponRange; // only set when type === "weapon"
+  catalog_name?: string;       // set for type === "tool"|"scroll" — fixed name from CATALOG
+}
+
+// Tool & scroll catalog. Names are fixed (no AI naming) so handleUse can dispatch
+// effects by name lookup. Each entry encodes its rarity, computed power formula,
+// emoji, and a short blurb. AI still flavors each drop's `flavor` text.
+//
+// Rarity drives price (via TOOL_PRICE / SCROLL_PRICE). Effects are dispatched in
+// handleUse via item_name → switch.
+export interface CatalogEntry {
+  name: string;
+  emoji: string;
+  type: "tool" | "scroll";
+  rarity: Rarity;
+  // Power scales with the tier the drop rolled at. Drops do NOT auto-scale at use
+  // time — a Caffeine Bomb bought at L1 stays L1-tier forever. Sell or use.
+  computePower: (tier: number) => number;
+  blurb: string;
+}
+
+export const ITEM_CATALOG: CatalogEntry[] = [
+  {
+    name: "Caffeine Bomb",
+    emoji: "🧨",
+    type: "tool",
+    rarity: "common",
+    computePower: (tier) => 2 + Math.max(1, tier),
+    blurb: "Single-target nuke. Ignores armor.",
+  },
+  {
+    name: "Hotfix Grenade",
+    emoji: "🔥",
+    type: "tool",
+    rarity: "uncommon",
+    computePower: (tier) => 6 + Math.max(1, tier) * 2,
+    blurb: "Bigger nuke. Ignores armor. Single-target.",
+  },
+  {
+    name: "Rebase Scroll",
+    emoji: "🔄",
+    type: "scroll",
+    rarity: "uncommon",
+    computePower: () => 0,
+    blurb: "Resets all combat cooldowns for the whole party.",
+  },
+  {
+    name: "Production Outage",
+    emoji: "💥",
+    type: "scroll",
+    rarity: "rare",
+    computePower: () => 30, // boss damage % — non-boss instakill
+    blurb: "Non-boss: instant kill. Boss: drops 30% HP.",
+  },
+];
+
+export function findCatalogEntry(name: string): CatalogEntry | undefined {
+  return ITEM_CATALOG.find((e) => e.name === name);
+}
+
+// Picks a catalog entry of the given type at random. Used by rollItem when the
+// item-type roll lands on tool or scroll.
+export function rollCatalogEntry(type: "tool" | "scroll"): CatalogEntry {
+  const pool = ITEM_CATALOG.filter((e) => e.type === type);
+  return pool[Math.floor(Math.random() * pool.length)];
 }
 
 // 60% melee / 40% ranged. Melee skews more common because most class signatures
@@ -148,11 +212,13 @@ function rollWeaponRange(): WeaponRange {
 // than per-fight gear so the drop rates are throttled.
 function rollItemType(): ItemType {
   const r = Math.random();
-  if (r < 0.32) return "weapon";       // 32%
-  if (r < 0.54) return "armor";        // 22%
-  if (r < 0.79) return "consumable";   // 25%
-  if (r < 0.94) return "magic";        // 15%
-  return "revive";                     //  6%
+  if (r < 0.30) return "weapon";       // 30%
+  if (r < 0.50) return "armor";        // 20%
+  if (r < 0.74) return "consumable";   // 24%
+  if (r < 0.86) return "magic";        // 12%
+  if (r < 0.92) return "revive";       //  6%
+  if (r < 0.97) return "tool";         //  5%
+  return "scroll";                     //  3%
 }
 
 // Rarity weights skew rarer as the monster tier rises.
@@ -196,6 +262,15 @@ function rollPower(type: ItemType, rarity: Rarity): number {
 
 export function rollItem(tier: number): ItemRoll {
   const type = rollItemType();
+  if (type === "tool" || type === "scroll") {
+    const entry = rollCatalogEntry(type);
+    return {
+      type,
+      rarity: entry.rarity,
+      power: entry.computePower(tier),
+      catalog_name: entry.name,
+    };
+  }
   const rarity = rollRarity(tier);
   const power = rollPower(type, rarity);
   const weapon_range = type === "weapon" ? rollWeaponRange() : undefined;
@@ -237,9 +312,28 @@ export const REVIVE_PRICE: Record<Rarity, number> = {
   rare: 450,
 };
 
+// Tool: tactical one-shot offensive consumables (Caffeine Bomb, Hotfix Grenade).
+// Mid-tier pricing — they consume a combat turn and don't auto-scale, so a stockpile
+// from L1 becomes irrelevant late.
+export const TOOL_PRICE: Record<Rarity, number> = {
+  common: 50,
+  uncommon: 150,
+  rare: 350,
+};
+
+// Scroll: party-affecting / boss-altering rituals (Rebase Scroll, Production Outage).
+// Steeper than tools — bigger effects (whole-party cooldown reset, boss HP cut).
+export const SCROLL_PRICE: Record<Rarity, number> = {
+  common: 100,
+  uncommon: 250,
+  rare: 500,
+};
+
 export function priceFor(type: ItemType, rarity: Rarity): number {
   if (type === "magic") return MAGIC_PRICE[rarity];
   if (type === "revive") return REVIVE_PRICE[rarity];
+  if (type === "tool") return TOOL_PRICE[rarity];
+  if (type === "scroll") return SCROLL_PRICE[rarity];
   return SHOP_PRICE[rarity];
 }
 

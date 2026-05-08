@@ -90,6 +90,25 @@ What works:
   with a minimum of 1 dmg taken so armor never makes you immune.
 - **Consumables** — `/sq use <id>` heals you for the item's power. Free action; doesn't
   consume your 45-second combat cooldown so potions are actually worth taking into a fight.
+- **Tools & Scrolls** (catalog items, fixed names) — single-shot offensive consumables
+  named from a curated list rather than AI-generated. Each entry maps `item_name → effect`
+  in `commands.ts`. AI still writes flavor text per drop. `/sq use <id>` consumes a combat
+  turn (cooldown + monster retaliation, like heal/shield) — distinct from heal-consumables
+  which are free actions. Catalog (v1):
+
+  | Type | Item | Rarity | Effect | Price |
+  |------|------|--------|--------|-------|
+  | tool | 🧨 Caffeine Bomb | common | `2 + tier` dmg, ignores armor | 50g |
+  | tool | 🔥 Hotfix Grenade | uncommon | `6 + tier×2` dmg, ignores armor | 150g |
+  | scroll | 🔄 Rebase Scroll | uncommon | Caster's mana → full | 250g |
+  | scroll | 💥 Production Outage | rare | Boss: HP × 0.7 / Non-boss: HP → 1 | 500g |
+
+  Power is rolled at create time and **does not auto-scale** — a Caffeine Bomb bought at
+  L1 stays L1-tier forever. Sell or use. v1 limitation: damage tools cap at `monster_hp - 1`
+  so they never deliver the killing blow (player follows up with `/sq attack`). Lifting
+  this requires extracting the kill-flow branches from `handleCombat` — deferred. Tools
+  & scrolls drop from shop (~5%/3% slot weight), lockboxes, and NPC offers; never from
+  sub-bosses or treasure rooms.
 - **Shop** — `/sq shop` lists 5 AI-generated items priced flat by rarity (15/50/150g).
   Stock is **channel-wide and restocks every 6 hours**, so the channel collectively decides
   who grabs the rare drop. `/sq buy <id>` claims atomically (no double-spend if two people

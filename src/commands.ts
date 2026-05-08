@@ -16,6 +16,7 @@ import {
   flavorGauntletNext,
   flavorHit,
   flavorJoin,
+  flavorCatalogItem,
   flavorLootDrop,
   flavorSignature,
   flavorVictory,
@@ -103,6 +104,7 @@ import {
 import {
   classByName,
   dropChance,
+  findCatalogEntry,
   generateNpcName,
   generateScar,
   pickRandomClass,
@@ -112,6 +114,7 @@ import {
   sellPriceFor,
   signatureFor,
   xpForLevel,
+  type ItemRoll,
   MAX_MANA_CAP,
   RARITY_BADGE,
   SHIELD_CAP_MULTIPLIER,
@@ -233,6 +236,8 @@ function rulesText(cmd: string, name: string): string {
     `• 🧪 *Consumables* — \`${cmd} use <id>\` heals N HP. Free action, no cooldown.`,
     `• 🔮 *Magic items* — \`${cmd} use <id>\` grants permanent +N max mana (cap 5)`,
     `• 🌱 *Revive items* — bring downed teammate back at N% HP (rarity-tiered 50/75/100%)`,
+    `• 🧨 *Tools* — single-shot offensive consumables; \`${cmd} use <id>\` deals damage, ignores armor (consumes a combat turn)`,
+    `• 📜 *Scrolls* — single-shot rituals; \`${cmd} use <id>\` triggers the named effect (consumes a combat turn). v1: 🔄 Rebase (refill mana), 💥 Production Outage (boss -30% / non-boss → 1 HP)`,
     `• Slots: 1 weapon + 1 armor equipped at a time. \`${cmd} equip <id>\` swaps in.`,
     `• \`${cmd} give <id> @user\` — gift any unequipped item; channel-public message`,
     ``,
@@ -331,7 +336,7 @@ export async function handleCommand(
     case "equip":
       return handleEquip(payload, args, env);
     case "use":
-      return handleUse(payload, args, env);
+      return handleUse(payload, args, env, ctx);
     case "shop":
       return handleShop(payload, env, ctx);
     case "buy":
@@ -762,7 +767,7 @@ async function buildDungeonScene(
       const rolls = Array.from({ length: 2 }, () => rollItem(baseTier + tierBump));
       const [lockboxScene, ...named] = await Promise.all([
         generateLockboxScene(env.AI, theme, roomNum, totalRoomsVisited),
-        ...rolls.map((roll) => flavorLootDrop(env.AI, "the locked chest", roll.type, roll.rarity, roll.power, roll.weapon_range)),
+        ...rolls.map((roll) => resolveLootDrop(env, "the locked chest", roll)),
       ]);
       const opts: LootOption[] = rolls.map((roll, j) => ({
         name: named[j].name,
@@ -780,7 +785,7 @@ async function buildDungeonScene(
     const offerRoll = rollItem(baseTier);
     const [npc, offerNamed] = await Promise.all([
       generateNpcRoom(env.AI, theme, roomNum, totalRoomsVisited, npcName),
-      flavorLootDrop(env.AI, `${npcName}'s pack`, offerRoll.type, offerRoll.rarity, offerRoll.power, offerRoll.weapon_range),
+      resolveLootDrop(env, `${npcName}'s pack`, offerRoll),
     ]);
     const node: ExpeditionNode = {
       type: "npc",
@@ -806,7 +811,7 @@ async function buildDungeonScene(
   // (was: baseTier from boss, but boss tier is already character.level + elite bump).
   const treasureRolls = Array.from({ length: EXPEDITION_TREASURE_OPTIONS }, () => rollItem(baseTier + 1));
   const treasureNamedPromises = treasureRolls.map((roll) =>
-    flavorLootDrop(env.AI, "the dungeon's heart-chamber", roll.type, roll.rarity, roll.power, roll.weapon_range),
+    resolveLootDrop(env, "the dungeon's heart-chamber", roll),
   );
 
   const [middleNodes, boss, treasureNamed] = await Promise.all([
@@ -884,6 +889,34 @@ async function buildDungeonScene(
     variant,
     expedition,
   };
+}
+
+// Resolves an ItemRoll into a (name, flavor) pair. Catalog items (tool/scroll) keep
+// their fixed name from the catalog; the AI just writes flavor text. Other types
+// (weapon/armor/etc.) get fully AI-named via flavorLootDrop. Used at every drop
+// site so the catalog/non-catalog branch lives in one place.
+async function resolveLootDrop(
+  env: Env,
+  location: string,
+  roll: ItemRoll,
+): Promise<{ name: string; flavor: string }> {
+  if (roll.catalog_name) {
+    const entry = findCatalogEntry(roll.catalog_name);
+    if (entry) {
+      const flavor = await flavorCatalogItem(env.AI, entry.name, entry.blurb, location);
+      return { name: `${entry.emoji} ${entry.name}`, flavor };
+    }
+  }
+  return flavorLootDrop(
+    env.AI,
+    location,
+    // Narrow back: catalog items are handled above, so by here type is always one of
+    // the AI-named types.
+    roll.type as "weapon" | "armor" | "consumable" | "magic" | "revive",
+    roll.rarity,
+    roll.power,
+    roll.weapon_range,
+  );
 }
 
 function dungeonRoomLabel(t: ExpeditionNodeType): string {
@@ -1506,7 +1539,7 @@ async function resolveVictory(
     const flavor = await flavorVictory(env.AI, killer, quest.scene.monster_name, fighters.length);
     const lootLines: string[] = [];
     for (const { fighter, roll } of lootRolls) {
-      const named = await flavorLootDrop(env.AI, quest.scene.monster_name, roll.type, roll.rarity, roll.power, roll.weapon_range);
+      const named = await resolveLootDrop(env, quest.scene.monster_name, roll);
       const item = await addItem(env.DB, {
         character_id: fighter.slack_user_id,
         item_name: named.name,
@@ -2351,6 +2384,7 @@ async function handleUse(
   payload: SlashCommandPayload,
   args: string[],
   env: Env,
+  ctx: ExecutionContext,
 ): Promise<CommandResponse> {
   const character = await getCharacter(env.DB, payload.user_id);
   if (!character) return ephemeral(`You need to \`${payload.command} roll\` a character first.`);
@@ -2360,6 +2394,10 @@ async function handleUse(
 
   const item = await getItem(env.DB, id, payload.user_id);
   if (!item) return ephemeral("No such item in your inventory.");
+
+  if (item.item_type === "tool" || item.item_type === "scroll") {
+    return useToolOrScroll(payload, env, ctx, character, item);
+  }
 
   if (item.item_type === "magic") {
     if (character.max_mana >= MAX_MANA_CAP) {
@@ -2386,6 +2424,193 @@ async function handleUse(
   return ephemeral(
     `🧪 You drink *${item.item_name}* — recovered *${healed}* HP. (${character.hp + healed}/${character.max_hp})`,
   );
+}
+
+// /sq use for catalog items (tool / scroll). Each catalog name dispatches to a
+// fixed effect handler below. All tool/scroll uses:
+//   1. Require an active quest with a live foe (damage tools) or just an active quest.
+//   2. Spend a combat turn (action cooldown + monster retaliation, like heal/shield).
+//   3. Consume the item on use.
+//
+// v1 limitation: damage tools cap at monster_hp - 1 so they never deliver the
+// killing blow. Reason: avoids a refactor of handleCombat's kill-flow branches
+// (gauntlet/dungeon/standard). Player follows up with /sq attack to finish.
+async function useToolOrScroll(
+  payload: SlashCommandPayload,
+  env: Env,
+  ctx: ExecutionContext,
+  character: Character,
+  item: Item,
+): Promise<CommandResponse> {
+  if (!isFighter(character)) return ephemeral("You're downed and can't act.");
+
+  const quest = await getActiveQuestForCharacter(env.DB, payload.user_id);
+  if (!quest) {
+    return ephemeral(`*${item.item_name}* needs a foe in front of you. Pick up a quest first.`);
+  }
+
+  const cooldown = await cooldownRemaining(env.DB, quest.id, payload.user_id, ACTION_COOLDOWN_MS);
+  if (cooldown > 0) {
+    return ephemeral(`⏳ Catching your breath — try again in ${Math.ceil(cooldown / 1000)}s.`);
+  }
+
+  const entry = findCatalogEntry(item.item_name);
+  if (!entry) {
+    return ephemeral(`Unknown effect for *${item.item_name}*. Try selling it.`);
+  }
+
+  if (entry.name === "Caffeine Bomb" || entry.name === "Hotfix Grenade") {
+    return useDamageTool(payload, env, ctx, character, item, quest, entry);
+  }
+  if (entry.name === "Rebase Scroll") {
+    return useRebaseScroll(payload, env, ctx, character, item, quest, entry);
+  }
+  if (entry.name === "Production Outage") {
+    return useProductionOutage(payload, env, ctx, character, item, quest, entry);
+  }
+  return ephemeral(`*${item.item_name}* doesn't have a wired-up effect yet.`);
+}
+
+// Caffeine Bomb / Hotfix Grenade — deal item.power damage, ignores armor, capped
+// at monster_hp - 1. Triggers monster retaliation (consumes a combat turn).
+async function useDamageTool(
+  payload: SlashCommandPayload,
+  env: Env,
+  ctx: ExecutionContext,
+  character: Character,
+  item: Item,
+  quest: ActiveQuest,
+  entry: { name: string; emoji: string },
+): Promise<CommandResponse> {
+  if (!hasLiveMonster(quest)) {
+    return ephemeral(`*${item.item_name}* needs a live foe. Save it for the next combat room.`);
+  }
+  // Cap at monster_hp - 1 so v1 tools never deliver the kill blow (see useToolOrScroll header).
+  const requested = item.power;
+  const damage = Math.max(1, Math.min(requested, quest.scene.monster_hp - 1));
+  const newMonsterHp = quest.scene.monster_hp - damage;
+  const updatedScene: SceneJson = { ...quest.scene, monster_hp: newMonsterHp };
+
+  const ok = await tryUpdateScene(env.DB, quest.id, updatedScene, quest.scene.monster_hp);
+  if (!ok) return ephemeral("⏱️ The fight moved on. Your tool wasn't consumed — try again.");
+
+  await removeItem(env.DB, item.id);
+  await appendLog(env.DB, quest.id, payload.user_id, "tool", `${entry.name}: ${damage} dmg`);
+
+  const cappedNote = damage < requested ? ` _(capped from ${requested} — finish it with attack)_` : "";
+  const playerLine = `${entry.emoji} <@${payload.user_id}> uses *${item.item_name}* — *${damage}* dmg, ignores armor.${cappedNote}`;
+
+  // Monster turn — same plumbing as heal/shield post-effect.
+  const fighters = (await getQuestParty(env.DB, quest.id)).filter(isFighter);
+  const actorArmor = await getEquipped(env.DB, payload.user_id, "armor");
+  const turn = await performMonsterTurn(env, quest, fighters, character, actorArmor);
+
+  if (turn.willKillTarget) {
+    return resolveDeath(payload, env, ctx, turn.target, quest, fighters, [playerLine, turn.monsterLine]);
+  }
+  await setCharacterHpAndShield(env.DB, turn.target.slack_user_id, turn.dmg.newHp, turn.dmg.newShield);
+  await appendLog(env.DB, quest.id, "monster", "attack", `${turn.positionAdjusted} dmg → ${turn.target.name}`);
+
+  const monsterStat = `*${quest.scene.monster_name}*: ${newMonsterHp}/${quest.scene.monster_max_hp}`;
+  const targetShield = turn.dmg.newShield > 0 ? ` 🛡${turn.dmg.newShield}` : "";
+  const targetStat = `*${turn.target.name}*: ${turn.dmg.newHp}/${turn.target.max_hp}${targetShield}`;
+  const ephem = [playerLine, monsterStat, turn.monsterLine, targetStat].join("\n");
+  ctx.waitUntil(postToThread(env, quest, [blockQuote(playerLine), "", monsterStat, turn.monsterLine, targetStat].join("\n")));
+  return ephemeral(ephem);
+}
+
+// Rebase Scroll — refills the caster's mana to max. (v1 limitation: self-only;
+// future: party-wide mana bump or cooldown reset.)
+async function useRebaseScroll(
+  payload: SlashCommandPayload,
+  env: Env,
+  ctx: ExecutionContext,
+  character: Character,
+  item: Item,
+  quest: ActiveQuest,
+  entry: { name: string; emoji: string },
+): Promise<CommandResponse> {
+  await refillMana(env.DB, payload.user_id);
+  await removeItem(env.DB, item.id);
+  await appendLog(env.DB, quest.id, payload.user_id, "scroll", `${entry.name}: mana refill`);
+
+  const playerLine = `${entry.emoji} <@${payload.user_id}> reads *${item.item_name}* — mana restored to ${character.max_mana}/${character.max_mana}.`;
+
+  // No live foe → no retaliation. With a live foe, scroll consumed the turn so the monster gets a swing.
+  if (!hasLiveMonster(quest)) {
+    ctx.waitUntil(postToThread(env, quest, blockQuote(playerLine)));
+    return ephemeral(playerLine);
+  }
+  const fighters = (await getQuestParty(env.DB, quest.id)).filter(isFighter);
+  const actorArmor = await getEquipped(env.DB, payload.user_id, "armor");
+  const turn = await performMonsterTurn(env, quest, fighters, character, actorArmor);
+
+  if (turn.willKillTarget) {
+    return resolveDeath(payload, env, ctx, turn.target, quest, fighters, [playerLine, turn.monsterLine]);
+  }
+  await setCharacterHpAndShield(env.DB, turn.target.slack_user_id, turn.dmg.newHp, turn.dmg.newShield);
+  await appendLog(env.DB, quest.id, "monster", "attack", `${turn.positionAdjusted} dmg → ${turn.target.name}`);
+
+  const targetShield = turn.dmg.newShield > 0 ? ` 🛡${turn.dmg.newShield}` : "";
+  const targetStat = `*${turn.target.name}*: ${turn.dmg.newHp}/${turn.target.max_hp}${targetShield}`;
+  const ephem = [playerLine, turn.monsterLine, targetStat].join("\n");
+  ctx.waitUntil(postToThread(env, quest, [blockQuote(playerLine), "", turn.monsterLine, targetStat].join("\n")));
+  return ephemeral(ephem);
+}
+
+// Production Outage — boss: HP × 0.7 (effective -30%). Non-boss: HP → 1 (player's
+// next attack ends it). v1 doesn't deliver the killing blow itself (see header).
+async function useProductionOutage(
+  payload: SlashCommandPayload,
+  env: Env,
+  ctx: ExecutionContext,
+  character: Character,
+  item: Item,
+  quest: ActiveQuest,
+  entry: { name: string; emoji: string },
+): Promise<CommandResponse> {
+  if (!hasLiveMonster(quest)) {
+    return ephemeral(`*${item.item_name}* needs a live foe to crash on.`);
+  }
+  const isBoss = quest.scene.variant === "boss" ||
+    (quest.scene.variant === "dungeon" &&
+      // sub-boss is the penultimate node in the dungeon; check current node
+      quest.scene.expedition?.nodes[quest.scene.expedition.current]?.type === "combat" &&
+      quest.scene.expedition.current === (quest.scene.expedition.nodes.length - 2));
+  const newMonsterHp = isBoss
+    ? Math.max(1, Math.floor(quest.scene.monster_hp * 0.7))
+    : 1;
+  const damage = quest.scene.monster_hp - newMonsterHp;
+  const updatedScene: SceneJson = { ...quest.scene, monster_hp: newMonsterHp };
+
+  const ok = await tryUpdateScene(env.DB, quest.id, updatedScene, quest.scene.monster_hp);
+  if (!ok) return ephemeral("⏱️ The fight moved on. Your scroll wasn't consumed — try again.");
+
+  await removeItem(env.DB, item.id);
+  await appendLog(env.DB, quest.id, payload.user_id, "scroll", `${entry.name}: ${damage} dmg (${isBoss ? "boss -30%" : "set to 1HP"})`);
+
+  const effectNote = isBoss
+    ? `*${quest.scene.monster_name}* takes *${damage}* damage — production is on fire.`
+    : `*${quest.scene.monster_name}* is reduced to *1 HP* — finish it.`;
+  const playerLine = `${entry.emoji} <@${payload.user_id}> invokes *${item.item_name}*. ${effectNote}`;
+
+  // Monster gets a turn (still alive — we capped at 1).
+  const fighters = (await getQuestParty(env.DB, quest.id)).filter(isFighter);
+  const actorArmor = await getEquipped(env.DB, payload.user_id, "armor");
+  const turn = await performMonsterTurn(env, quest, fighters, character, actorArmor);
+
+  if (turn.willKillTarget) {
+    return resolveDeath(payload, env, ctx, turn.target, quest, fighters, [playerLine, turn.monsterLine]);
+  }
+  await setCharacterHpAndShield(env.DB, turn.target.slack_user_id, turn.dmg.newHp, turn.dmg.newShield);
+  await appendLog(env.DB, quest.id, "monster", "attack", `${turn.positionAdjusted} dmg → ${turn.target.name}`);
+
+  const monsterStat = `*${quest.scene.monster_name}*: ${newMonsterHp}/${quest.scene.monster_max_hp}`;
+  const targetShield = turn.dmg.newShield > 0 ? ` 🛡${turn.dmg.newShield}` : "";
+  const targetStat = `*${turn.target.name}*: ${turn.dmg.newHp}/${turn.target.max_hp}${targetShield}`;
+  const ephem = [playerLine, monsterStat, turn.monsterLine, targetStat].join("\n");
+  ctx.waitUntil(postToThread(env, quest, [blockQuote(playerLine), "", monsterStat, turn.monsterLine, targetStat].join("\n")));
+  return ephemeral(ephem);
 }
 
 async function handleShop(
@@ -2437,7 +2662,7 @@ async function restockShop(env: Env, channelId: string): Promise<void> {
   const items: Parameters<typeof insertShopStock>[1] = [];
   for (let i = 0; i < stockSize; i++) {
     const roll = rollItem(tier);
-    const named = await flavorLootDrop(env.AI, "the shopkeep's chest", roll.type, roll.rarity, roll.power, roll.weapon_range);
+    const named = await resolveLootDrop(env, "the shopkeep's chest", roll);
     items.push({
       channel_id: channelId,
       generated_at: generatedAt,

@@ -37,7 +37,7 @@ export async function generateOpeningScene(
 
   const system = [
     "You are the narrator of a comedic engineering-themed dungeon crawl Slack bot called Slack Quest.",
-    "Tone: dry, witty, with software-industry winks (PRs, standups, deprecated APIs, on-call pagers).",
+    "Tone: dry, witty, software-industry + project-management winks (PRs, standups, deprecated APIs, on-call pagers, sprints, gantt charts, scope creep, kanban, blockers, retros, MVPs, dependencies, story points, the critical path).",
     "Never break character. Never mention you are an AI.",
     "Output MUST follow this EXACT format. Plain text only — no markdown, no asterisks, no quotes around values, no extra commentary before or after the fields.",
     `MONSTER_NAME: <a ${variant === "boss" ? "2-5" : "1-4"} word name, slightly absurd, never repeat the same name>`,
@@ -146,7 +146,7 @@ function sceneMentionsName(scene: string, name: string): boolean {
 // excited and starts writing essays otherwise.
 const COMBAT_SYSTEM = [
   'You are the narrator of "Slack Quest", a comedic engineering-themed dungeon crawl Slack bot.',
-  "Tone: dry, witty, software-industry winks (PRs, standups, deprecated APIs, YAML, on-call pagers, 502s, kubernetes, regex).",
+  "Tone: dry, witty, software-industry + project-management winks (PRs, standups, deprecated APIs, YAML, on-call pagers, 502s, kubernetes, regex, sprints, gantt charts, scope creep, kanban, retros, blockers, story points, the critical path, burndown).",
   "Never break character. Never mention you are an AI.",
   "Output ONE line, 1-2 sentences, ~25 words MAX. No markdown formatting. No emoji. Do not include numbers, HP values, or damage amounts.",
 ].join("\n");
@@ -256,6 +256,10 @@ export async function flavorDeath(
 // AI names + flavors a loot drop. Mechanics (slot, power, rarity) are deterministic;
 // the model only writes the name and a one-line description.
 // Returns { name, flavor } — falls back to generic stubs if the model misbehaves.
+//
+// Note: this function is for items whose names are AI-generated (weapon, armor,
+// consumable, magic, revive). Tool & scroll catalog items use flavorCatalogItem
+// instead — their names are fixed and the AI only writes the flavor blurb.
 export async function flavorLootDrop(
   ai: Ai,
   monsterName: string,
@@ -315,6 +319,37 @@ export async function flavorLootDrop(
     return { name, flavor };
   } catch {
     return fallback;
+  }
+}
+
+// Flavor text for a catalog item (tool/scroll). The name is fixed by the catalog;
+// this only generates the one-line description. Falls back to the catalog blurb if
+// the model misbehaves.
+export async function flavorCatalogItem(
+  ai: Ai,
+  catalogName: string,
+  blurb: string,
+  location: string,
+): Promise<string> {
+  const system = [
+    'You are the narrator of "Slack Quest", a comedic engineering + project-management themed dungeon crawl Slack bot.',
+    "Tone: dry, witty, software-industry winks (PRs, standups, sprints, gantt charts, scope creep, kanban, deprecated APIs, on-call pagers).",
+    "Output ONE line: a 1-2 sentence flavor description (~25 words). No markdown, no quotes, no name field, no labels. Just the prose.",
+    `Item: ${catalogName} — ${blurb}`,
+  ].join("\n");
+  const user = `Found in ${location}. Describe how this specific ${catalogName} looks/feels in 1-2 dry, witty sentences.`;
+  try {
+    const res = (await ai.run(MODEL, {
+      messages: [
+        { role: "system", content: system },
+        { role: "user", content: user },
+      ],
+      max_tokens: 80,
+    })) as AiRunResponse;
+    const text = (res.response ?? "").trim().replace(/^["'`]|["'`]$/g, "");
+    return text || blurb;
+  } catch {
+    return blurb;
   }
 }
 
