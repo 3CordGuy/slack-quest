@@ -334,6 +334,7 @@ export async function handleInteraction(
   if (action.action_id === "dungeon_take") return handleTake(slash, args, env, ctx);
   if (action.action_id === "shop_buy") return handleBuy(slash, args, env);
   if (action.action_id === "shop_haggle") return handleHaggle(slash, args, env);
+  if (action.action_id === "shop_open") return handleShop(slash, env, ctx);
   return ephemeral(`Unknown action \`${action.action_id}\`.`);
 }
 
@@ -3294,9 +3295,15 @@ async function handleBuy(
     flavor: stock.flavor ?? "",
     weapon_range: stock.weapon_range,
   });
-  return ephemeral(
-    `🛍️ Bought ${RARITY_BADGE[stock.rarity]} *${stock.item_name}* for ${stock.price}g (now ${character.gold - stock.price}g). Inventory id \`${item.id}\`.`,
-  );
+  const text = `🛍️ Bought ${RARITY_BADGE[stock.rarity]} *${stock.item_name}* for ${stock.price}g (now ${character.gold - stock.price}g). Inventory id \`${item.id}\`.`;
+  return {
+    text,
+    response_type: "ephemeral",
+    blocks: [
+      { type: "section", text: { type: "mrkdwn", text } },
+      shopBackButtonRow(),
+    ],
+  };
 }
 
 // Haggle for a discount on a single shop item. Communal: any party member can
@@ -3362,7 +3369,34 @@ async function handleHaggle(
     ? `🪙 <@${payload.user_id}> haggles *${stock.item_name}* — *STEAL!* -${pct}% \`1d6 + ${modBreakdown} = ${total}\`. New price: *${newPrice}g* (was ${stock.price}g).`
     : `🪙 <@${payload.user_id}> haggles *${stock.item_name}* — *-${pct}%* \`1d6 + ${modBreakdown} = ${total}\`. New price: *${newPrice}g* (was ${stock.price}g).`;
 
-  return ephemeral(`${headline}\n_${flavor}_`);
+  const text = `${headline}\n_${flavor}_`;
+  return {
+    text,
+    response_type: "ephemeral",
+    blocks: [
+      { type: "section", text: { type: "mrkdwn", text } },
+      shopBackButtonRow(),
+    ],
+  };
+}
+
+// Shared "back to shop" actions row used after haggle / buy / sell-from-shop
+// confirmations so the player can hop back into the shop view in one click
+// instead of re-running /sq shop. action_id "shop_open" routes through
+// handleInteraction → handleShop.
+function shopBackButtonRow(): unknown {
+  return {
+    type: "actions",
+    block_id: "shop_back",
+    elements: [
+      {
+        type: "button",
+        action_id: "shop_open",
+        value: "open",
+        text: { type: "plain_text", text: "🛒 Back to Shop" },
+      },
+    ],
+  };
 }
 
 async function handleSell(
