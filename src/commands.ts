@@ -2403,6 +2403,12 @@ async function handleInventory(payload: SlashCommandPayload, env: Env): Promise<
     return ephemeral(emptyLines.join("\n"));
   }
 
+  // Sort equipped items to the top, then by id desc (newest first) within each
+  // group. Equipped items render under an "Equipped" subheader so they pop visually.
+  const equippedItems = items.filter((i) => i.equipped).sort((a, b) => b.id - a.id);
+  const packItems = items.filter((i) => !i.equipped).sort((a, b) => b.id - a.id);
+  const orderedItems = [...equippedItems, ...packItems];
+
   // Per-item: section block (item description) + actions block ([Equip] [Use] [Sell]).
   // The actions block carries action_id values that the /slack/interactive endpoint
   // routes via handleInteraction. value = inventory id as string.
@@ -2412,11 +2418,29 @@ async function handleInventory(payload: SlashCommandPayload, env: Env): Promise<
       text: { type: "plain_text", text: `Inventory — ${items.length} item${items.length > 1 ? "s" : ""}` },
     },
   ];
-  for (const item of items) {
-    const equipMark = item.equipped ? " ✅" : "";
+  if (equippedItems.length > 0) {
+    blocks.push({
+      type: "section",
+      text: { type: "mrkdwn", text: `*✅ Equipped — ${equippedItems.length}*` },
+    });
+  }
+  let firstPackItem = equippedItems.length > 0;
+  for (const item of orderedItems) {
+    // When we transition from equipped → pack, drop a visual divider + label.
+    if (firstPackItem && !item.equipped) {
+      blocks.push({ type: "divider" });
+      if (packItems.length > 0) {
+        blocks.push({
+          type: "section",
+          text: { type: "mrkdwn", text: `*🎒 Pack — ${packItems.length}*` },
+        });
+      }
+      firstPackItem = false;
+    }
+    const equipPrefix = item.equipped ? "✅ " : "";
     const powerStr = powerLabel(item.item_type, item.power);
     const flavorLine = item.flavor ? `\n_${item.flavor}_` : "";
-    const summary = `\`${item.id}\` ${RARITY_BADGE[item.rarity]} *${item.item_name}* — ${item.item_type}${rangeBadge(item)}, ${powerStr}${equipMark}${flavorLine}`;
+    const summary = `${equipPrefix}\`${item.id}\` ${RARITY_BADGE[item.rarity]} *${item.item_name}* — ${item.item_type}${rangeBadge(item)}, ${powerStr}${flavorLine}`;
     blocks.push({
       type: "section",
       text: { type: "mrkdwn", text: summary },
