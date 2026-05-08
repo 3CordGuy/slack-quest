@@ -327,6 +327,7 @@ export async function handleInteraction(
   if (action.action_id === "inventory") return handleInventory(slash, env);
   if (action.action_id === "dungeon_choose") return handleChoose(slash, args, env, ctx);
   if (action.action_id === "dungeon_take") return handleTake(slash, args, env, ctx);
+  if (action.action_id === "shop_buy") return handleBuy(slash, args, env);
   return ephemeral(`Unknown action \`${action.action_id}\`.`);
 }
 
@@ -2981,7 +2982,11 @@ async function handleShop(
 
   const existing = await getActiveShopStock(env.DB, payload.channel_id, SHOP_RESTOCK_MS);
   if (existing && existing.length > 0) {
-    return ephemeral(formatShop(existing, character.gold, payload.command));
+    return {
+      text: formatShopText(existing, character.gold, payload.command),
+      response_type: "ephemeral",
+      blocks: formatShopBlocks(existing, character.gold, payload.command),
+    };
   }
 
   // Shop is dry — kick off a restock. Generation does up to SHOP_STOCK_SIZE AI calls,
@@ -3031,7 +3036,8 @@ async function restockShop(env: Env, channelId: string): Promise<void> {
   await insertShopStock(env.DB, items);
 }
 
-function formatShop(items: ShopItem[], gold: number, cmd: string): string {
+// Plain-text shop summary (for fallback / non-Block-Kit clients).
+function formatShopText(items: ShopItem[], gold: number, cmd: string): string {
   const lines = [`🛒 *Shop* — you have ${gold} gold`];
   for (const it of items) {
     const status = it.bought_by ? " ❌_sold_" : "";
@@ -3046,6 +3052,63 @@ function formatShop(items: ShopItem[], gold: number, cmd: string): string {
     `Buy with \`${cmd} buy <id>\`. Sell your own items with \`${cmd} sell <id>\`. _Cap: ${SHOP_BUY_CAP_PER_CYCLE} purchases per restock cycle._`,
   );
   return lines.join("\n");
+}
+
+// Block Kit shop view: header + per-item (section + Buy button), with sold items
+// styled as struck-through and no Buy button. The Buy button carries the shop_stock
+// id as `value` and routes through handleInteraction → handleBuy.
+function formatShopBlocks(items: ShopItem[], gold: number, cmd: string): unknown[] {
+  const available = items.filter((i) => !i.bought_by).length;
+  const blocks: unknown[] = [
+    {
+      type: "header",
+      text: { type: "plain_text", text: `🛒 Shop — ${available}/${items.length} available` },
+    },
+    {
+      type: "context",
+      elements: [{ type: "mrkdwn", text: `You have *${gold}g*. Cap: ${SHOP_BUY_CAP_PER_CYCLE} purchases per restock cycle.` }],
+    },
+    { type: "divider" },
+  ];
+  for (const it of items) {
+    const sold = !!it.bought_by;
+    const powerStr = powerLabel(it.item_type, it.power);
+    const flavorLine = it.flavor ? `\n_${it.flavor}_` : "";
+    const summaryRaw = `\`${it.id}\` ${RARITY_BADGE[it.rarity]} *${it.item_name}* — ${it.item_type}${rangeBadge(it)}, ${powerStr} • *${it.price}g*${flavorLine}`;
+    // Sold items: render dimmed + tagged. We can't truly grey out a section in
+    // Block Kit, so we strikethrough the name and append "❌ sold by <user>".
+    const summary = sold
+      ? `~${summaryRaw.replace(/\*([^*]+)\*/, "$1")}~  ❌ _sold to <@${it.bought_by}>_`
+      : summaryRaw;
+    blocks.push({ type: "section", text: { type: "mrkdwn", text: summary } });
+
+    if (!sold) {
+      const canAfford = gold >= it.price;
+      const button: Record<string, unknown> = {
+        type: "button",
+        action_id: "shop_buy",
+        value: String(it.id),
+        text: { type: "plain_text", text: canAfford ? `🛍️ Buy ${it.price}g` : `Not enough gold (${it.price}g)` },
+        style: "primary",
+        confirm: {
+          title: { type: "plain_text", text: "Buy this item?" },
+          text: { type: "mrkdwn", text: `Buy *${it.item_name}* for ${it.price}g? You'll have ${gold - it.price}g left.` },
+          confirm: { type: "plain_text", text: "Buy" },
+          deny: { type: "plain_text", text: "Cancel" },
+        },
+      };
+      blocks.push({
+        type: "actions",
+        block_id: `shop_${it.id}`,
+        elements: [button],
+      });
+    }
+  }
+  blocks.push({
+    type: "context",
+    elements: [{ type: "mrkdwn", text: `_Slash form: \`${cmd} buy <id>\` • \`${cmd} sell <id>\`._` }],
+  });
+  return blocks;
 }
 
 async function handleBuy(
