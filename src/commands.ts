@@ -181,6 +181,7 @@ function helpText(cmd: string, name: string): string {
     `• \`${cmd} rest\` — short rest: heals 50% of missing HP (10-min cooldown)`,
     `• \`${cmd} rest long\` — long rest: full HP restore, once per 24 hours`,
     `• \`${cmd} inventory\` — list your items (equipped marked ✅)`,
+    `• \`${cmd} look\` (\`where\`, \`scene\`) — re-show the current room / door choices if you've scrolled past`,
     `• \`${cmd} equip <id>\` — equip a weapon or armor by inventory id`,
     `• \`${cmd} use <id>\` — use a consumable (free action, no cooldown)`,
     `• \`${cmd} shop\` — view the channel's shop (restocks every 6h)`,
@@ -323,6 +324,10 @@ export async function handleCommand(
     case "inventory":
     case "inv":
       return handleInventory(payload, env);
+    case "look":
+    case "where":
+    case "scene":
+      return handleLook(payload, env);
     case "equip":
       return handleEquip(payload, args, env);
     case "use":
@@ -2251,6 +2256,40 @@ async function handleParty(payload: SlashCommandPayload, env: Env): Promise<Comm
       return `• ${positionEmoji(c.position)} *${c.name}* the ${c.class} — L${c.level}, HP ${c.hp}/${c.max_hp}${status}`;
     }),
   ];
+  return ephemeral(lines.join("\n"));
+}
+
+// /sq look — re-renders the current quest state ephemerally so a scrolled-past
+// player can see where they are. Aliased as `/sq where` and `/sq scene`.
+async function handleLook(payload: SlashCommandPayload, env: Env): Promise<CommandResponse> {
+  const character = await getCharacter(env.DB, payload.user_id);
+  if (!character) return ephemeral(`You need to \`${payload.command} roll\` a character first.`);
+
+  const quest = await getActiveQuestForCharacter(env.DB, payload.user_id);
+  if (!quest) {
+    return ephemeral(`You're not on an active quest. Try \`${payload.command} quest\` to start one.`);
+  }
+
+  if (quest.scene.variant === "dungeon" && quest.scene.expedition) {
+    const exp = quest.scene.expedition;
+    if (exp.pending_doors && exp.pending_doors.length > 0) {
+      return ephemeral(renderDoorPrompt(exp, payload.command));
+    }
+    const node = exp.nodes[exp.current];
+    if (node) {
+      return ephemeral(renderDungeonRoom(node, exp, payload.command));
+    }
+  }
+
+  // Non-dungeon: show monster + scene.
+  const lines = [`*${quest.scene.monster_name}* — HP ${quest.scene.monster_hp}/${quest.scene.monster_max_hp}`];
+  if (quest.scene.variant === "gauntlet" && quest.scene.wave && quest.scene.total_waves) {
+    lines.push(`Wave ${quest.scene.wave}/${quest.scene.total_waves}`);
+  }
+  if (quest.scene.variant === "boss" && quest.scene.boss_phase === 2) {
+    lines.push(`_Phase 2 — enraged_`);
+  }
+  lines.push("", blockQuote(quest.scene.scene));
   return ephemeral(lines.join("\n"));
 }
 
