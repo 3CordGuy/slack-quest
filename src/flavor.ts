@@ -226,7 +226,7 @@ export const ITEM_CATALOG: CatalogEntry[] = [
     type: "scroll",
     rarity: "uncommon",
     computePower: () => 0,
-    blurb: "Resets all combat cooldowns for the whole party.",
+    blurb: "Free action — wipes party cooldowns + refills party mana to full. Monster doesn't retaliate.",
   },
   {
     name: "Production Outage",
