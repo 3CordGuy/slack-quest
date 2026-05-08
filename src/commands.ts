@@ -905,6 +905,22 @@ function canRestBetweenRooms(quest: ActiveQuest): boolean {
   return true;
 }
 
+// Is there a live monster in the current scene that should retaliate when a player
+// uses mana? Heal/shield call this to skip retaliation when the party is between
+// rooms (dungeon: pending door, or non-combat room, or combat won) — a dead Stale PR
+// shouldn't get to hit back.
+function hasLiveMonster(quest: ActiveQuest): boolean {
+  if (quest.scene.monster_hp <= 0) return false;
+  if (quest.scene.variant === "dungeon") {
+    const exp = quest.scene.expedition;
+    if (!exp) return false;
+    if (exp.pending_doors && exp.pending_doors.length > 0) return false;
+    const node = exp.nodes[exp.current];
+    if (!node || node.type !== "combat") return false;
+  }
+  return true;
+}
+
 const KEY_EMOJI: Record<KeyTier, string> = { bronze: "🥉", silver: "🥈", gold: "🥇" };
 const TIER_RANK: Record<KeyTier, number> = { bronze: 1, silver: 2, gold: 3 };
 const TIER_ORDER: KeyTier[] = ["bronze", "silver", "gold"];
@@ -2652,6 +2668,14 @@ async function handleHeal(
     : `<@${target.slack_user_id}>`;
   const healLine = `💚 <@${payload.user_id}> heals ${targetTag} for *${healed}* HP \`${heal.roll} + ${cls.magic_mod}m\`.`;
 
+  // Between-rooms / no-live-monster: skip retaliation. Heal still consumes mana
+  // and triggers the cooldown — but no dead monster can hit back.
+  if (!hasLiveMonster(quest)) {
+    const healStat = `*${target.name}*: ${target.hp + healed}/${target.max_hp}`;
+    ctx.waitUntil(postToThread(env, quest, [blockQuote(healLine), "", healStat].join("\n")));
+    return ephemeral([healLine, healStat].join("\n"));
+  }
+
   // Monster retaliates while you're channeling the heal — mana actions cost a turn,
   // so the monster gets one too. Pick target via the same position-weighted RNG.
   const fighters = (await getQuestParty(env.DB, quest.id)).filter(isFighter);
@@ -2730,6 +2754,14 @@ async function handleShield(
   const wasted = shield.amount - added;
   const wastedNote = wasted > 0 ? ` (${wasted} over the cap)` : "";
   const shieldLine = `🛡️ <@${payload.user_id}> shields ${targetTag} for *${added}*${wastedNote} \`${shield.roll} + ${cls.magic_mod}m\`.`;
+
+  // Between-rooms / no-live-monster: skip retaliation. Shield still costs mana +
+  // cooldown but a dead monster can't hit back.
+  if (!hasLiveMonster(quest)) {
+    const shieldStat = `*${target.name}*: 🛡${(target.shield ?? 0) + added}`;
+    ctx.waitUntil(postToThread(env, quest, [blockQuote(shieldLine), "", shieldStat].join("\n")));
+    return ephemeral([shieldLine, shieldStat].join("\n"));
+  }
 
   // Monster retaliates on mana use, same as heal/cast.
   const fighters = (await getQuestParty(env.DB, quest.id)).filter(isFighter);
