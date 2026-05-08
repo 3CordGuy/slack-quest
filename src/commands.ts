@@ -56,6 +56,7 @@ import {
   getInventory,
   getItem,
   getLeaderboard,
+  getQuestDamageStats,
   getQuestParty,
   getRecentMonsterNames,
   getShopItem,
@@ -92,6 +93,7 @@ import {
   type Item,
   type KeyTier,
   type LootOption,
+  type QuestDamageStats,
   type QuestVariant,
   type SceneJson,
   type ShopItem,
@@ -1394,6 +1396,24 @@ function renderPathTrail(exp: ExpeditionState): string {
 // We iterate visited[] and consume sealed_doors with a running cursor; when the
 // cursor runs past the end (the auto-advance step), `sealed[cursor]` is undefined
 // and we render no sealed sibling — which is exactly correct.
+// Per-fighter damage / healing / shield / kill totals at quest end. Renders a
+// compact one-line-per-actor breakdown ordered by damage dealt descending.
+// Returns "" when there's nothing to show (no logged combat actions).
+function renderDamageBreakdown(stats: QuestDamageStats[]): string {
+  if (stats.length === 0) return "";
+  const lines = ["📊 *Contribution breakdown*"];
+  for (const s of stats) {
+    const parts: string[] = [];
+    if (s.damage_dealt > 0) parts.push(`*${s.damage_dealt}* dmg`);
+    if (s.healing_done > 0) parts.push(`💚 ${s.healing_done} healed`);
+    if (s.shielding_done > 0) parts.push(`🛡️ ${s.shielding_done} shielded`);
+    if (s.kills > 0) parts.push(`🏆 ${s.kills}`);
+    if (parts.length === 0) continue;
+    lines.push(`<@${s.user_id}> — ${parts.join(", ")}`);
+  }
+  return lines.length > 1 ? lines.join("\n") : "";
+}
+
 function renderDungeonMap(exp: ExpeditionState): string {
   const visited = exp.visited_indices ?? [exp.current];
   const sealed = exp.sealed_doors ?? [];
@@ -2265,10 +2285,13 @@ async function resolveVictory(
         `${RARITY_BADGE[roll.rarity]} *${fighter.name}* finds *${item.item_name}* (${roll.type}${rangeNote}, ${powerStr}) — _${named.flavor}_`,
       );
     }
+    const stats = await getQuestDamageStats(env.DB, quest.id);
+    const breakdown = renderDamageBreakdown(stats);
     const body = [
       `✨ +${xpEach} XP, +${goldEach} gold to each of ${fighters.length} fighter${fighters.length > 1 ? "s" : ""}.`,
       ...levelUpLines,
       ...lootLines,
+      ...(breakdown ? ["", breakdown] : []),
     ];
     const blocks = buildQuestEndBlocks({
       outcome: "victory",
@@ -2431,10 +2454,13 @@ async function resolveExpeditionVictory(
   ctx.waitUntil((async () => {
     const flavor = await flavorVictory(env.AI, taker, quest.scene.monster_name, partySize);
     const map = quest.scene.expedition ? renderDungeonMap(quest.scene.expedition) : "";
+    const stats = await getQuestDamageStats(env.DB, quest.id);
+    const breakdown = renderDamageBreakdown(stats);
     const body = [
       `🎁 *${taker.name}* claims *${takenItem.item_name}* (${takenItem.item_type}, ${powerLabel(takenItem.item_type, takenItem.power)}).`,
       `✨ +${xpEach} XP, +${goldEach} gold to each of ${partySize} fighter${partySize > 1 ? "s" : ""}.`,
       ...levelUpLines,
+      ...(breakdown ? ["", breakdown] : []),
       ...(map ? ["", map] : []),
     ];
     const blocks = buildQuestEndBlocks({

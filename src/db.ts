@@ -961,6 +961,57 @@ export async function countCharacters(db: D1Database): Promise<number> {
   return row?.n ?? 0;
 }
 
+// Per-character contribution stats for a quest. Aggregated from quest_log
+// outcome strings — we don't store damage in a dedicated column, but every
+// combat action's appendLog encodes the numbers in a parseable format.
+export interface QuestDamageStats {
+  user_id: string;
+  damage_dealt: number;     // sum of attack/cast/sig/tool/scroll damage to monsters
+  healing_done: number;     // sum of HP healed via /sq heal
+  shielding_done: number;   // sum of shield added via /sq shield
+  kills: number;            // count of finishing blows
+}
+
+// Reads quest_log for a quest, parses outcome strings, returns per-actor stats
+// sorted by damage_dealt desc. Used at quest end for the damage-breakdown post.
+export async function getQuestDamageStats(
+  db: D1Database,
+  questId: number,
+): Promise<QuestDamageStats[]> {
+  const rows = await db
+    .prepare(
+      `SELECT actor, action, outcome FROM quest_log
+       WHERE quest_id = ?
+         AND actor != 'monster'
+         AND action IN ('attack', 'cast', 'signature', 'tool', 'scroll', 'heal', 'shield')`,
+    )
+    .bind(questId)
+    .all<{ actor: string; action: string; outcome: string | null }>();
+
+  const stats = new Map<string, QuestDamageStats>();
+  for (const row of rows.results ?? []) {
+    if (!row.outcome) continue;
+    let s = stats.get(row.actor);
+    if (!s) {
+      s = { user_id: row.actor, damage_dealt: 0, healing_done: 0, shielding_done: 0, kills: 0 };
+      stats.set(row.actor, s);
+    }
+    if (row.action === "heal") {
+      const m = /\+(\d+)\s*HP/.exec(row.outcome);
+      if (m) s.healing_done += parseInt(m[1], 10);
+    } else if (row.action === "shield") {
+      const m = /\+(\d+)\s*sh/.exec(row.outcome);
+      if (m) s.shielding_done += parseInt(m[1], 10);
+    } else {
+      // attack / cast / signature / tool / scroll → damage to monster
+      const dmgMatch = /(\d+)\s*dmg/.exec(row.outcome);
+      if (dmgMatch) s.damage_dealt += parseInt(dmgMatch[1], 10);
+      if (/\(kill\)/.test(row.outcome)) s.kills += 1;
+    }
+  }
+  return Array.from(stats.values()).sort((a, b) => b.damage_dealt - a.damage_dealt);
+}
+
 // Recent monster names from this channel's last N quests (any status). Passed
 // to the AI scene generator as an avoid-list so back-to-back quests don't keep
 // summoning "the Schemaless Shrieker." Uses JSON path extraction for speed.
