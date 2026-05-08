@@ -1681,8 +1681,11 @@ async function handleCombat(
     isCrit = hit.isCrit;
 
     const modBreakdown = weaponMod > 0 ? `${classMod}+${weaponMod}` : `${hit.totalMod}`;
+    // Crit doubles the WHOLE total: (roll + mods) × 2. The display reflects the
+    // formula's actual associativity — wrapping the sum in parens — so the math
+    // is reproducible from the breakdown.
     playerLine = isCrit
-      ? `💥 *CRIT!* <@${payload.user_id}> ${verb} for *${damage}* \`${hit.roll}×2 + ${modBreakdown}\`.`
+      ? `💥 *CRIT!* <@${payload.user_id}> ${verb} for *${damage}* \`(${hit.roll} + ${modBreakdown})×2\`.`
       : `<@${payload.user_id}> ${verb} for *${damage}* \`${hit.roll} + ${modBreakdown}\`.`;
   }
 
@@ -2760,11 +2763,11 @@ async function resolveDeath(
     await appendLog(env.DB, quest.id, character.slack_user_id, "death", `soft, -${goldLost} gold`);
     const recoveryTs = Math.floor((Date.now() + DOWNED_COOLDOWN_MS) / 1000);
     ephemeralLines.push(
-      `💀 *${character.name}* is *downed*.`,
+      `💀 <@${character.slack_user_id}> (*${character.name}*) is *downed*.`,
       `Lost ${goldLost} gold${itemLost ? ` and *${itemLost}*` : ""}. New scar: _${scar}_.`,
       `Recover by <!date^${recoveryTs}^{date_short_pretty} {time}|in ~12h>.`,
     );
-    resultTail = `💀 *${character.name}* is downed. Lost ${goldLost} gold${itemLost ? ` and *${itemLost}*` : ""}. New scar: _${scar}_. Recover <!date^${recoveryTs}^{date_short_pretty}|in ~12h>.`;
+    resultTail = `💀 <@${character.slack_user_id}> (*${character.name}*) is downed. Lost ${goldLost} gold${itemLost ? ` and *${itemLost}*` : ""}. New scar: _${scar}_. Recover <!date^${recoveryTs}^{date_short_pretty}|in ~12h>.`;
   }
 
   if (questEnds) {
@@ -4516,7 +4519,13 @@ async function performMonsterTurn(
   const shieldPart = dmg.shieldAbsorbed > 0
     ? ` — *${dmg.shieldAbsorbed}* absorbed by shield, *${dmg.hpDamage}* to HP`
     : "";
-  const targetTag = victimWasActor ? "back" : `*${target.name}*`;
+  // When the monster picks a different party member than the actor, tag them
+  // with a Slack <@user_id> mention so the message reads clearly in a multi-
+  // person quest ("the Stale PR hits @fenus for 6"). For the actor themselves
+  // we say "hits back" since they're the one who just acted.
+  const targetTag = victimWasActor
+    ? "back"
+    : `<@${target.slack_user_id}>`;
   const monsterLine = `*${quest.scene.monster_name}* hits ${targetTag} for *${positionAdjusted}*${armorPart}${positionPart}${shieldPart}.`;
 
   return {
