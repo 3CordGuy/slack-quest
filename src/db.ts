@@ -25,6 +25,8 @@ function rowToItem(row: ItemRow): Item {
 
 export type BattlePosition = "front" | "back";
 
+export type KeyTier = "bronze" | "silver" | "gold";
+
 export interface Character {
   slack_user_id: string;
   slack_team_id: string;
@@ -43,6 +45,9 @@ export interface Character {
   last_rest_at: number | null;
   last_long_rest_at: number | null;
   position: BattlePosition;
+  keys_bronze: number;
+  keys_silver: number;
+  keys_gold: number;
   created_at: number;
   last_active: number;
 }
@@ -99,7 +104,17 @@ export async function createCharacter(
   return row;
 }
 
-export type QuestVariant = "standard" | "boss" | "gauntlet" | "expedition";
+export type QuestVariant = "standard" | "boss" | "gauntlet" | "dungeon";
+
+// Read-time scene migration. The "expedition" variant was renamed to "dungeon" once
+// the room/keys/traps overhaul made the original name misleading. Any pre-rename
+// rows in the DB get normalized here so callers don't have to think about it.
+function normalizeScene(scene: SceneJson): SceneJson {
+  if ((scene.variant as string) === "expedition") {
+    return { ...scene, variant: "dungeon" };
+  }
+  return scene;
+}
 
 export interface GauntletWave {
   name: string;
@@ -143,12 +158,13 @@ export interface ExpeditionNode {
   type: ExpeditionNodeType;
   scene: string;
 
-  // combat-only — pre-rolled monster. The final-treasure room is preceded by a beefier
-  // sub-boss combat; mid-dungeon combat rooms have a chance to drop a key.
+  // combat-only — pre-rolled monster. Sub-boss combats drop silver; standard combats
+  // drop bronze. Treasure room is the final reward and isn't preceded by a key drop.
   monster_name?: string;
   monster_max_hp?: number;
   tier?: number;
   drops_key?: boolean;
+  drops_key_tier?: KeyTier;
 
   // trap-only
   trap_choices?: TrapChoice[];
@@ -157,15 +173,29 @@ export interface ExpeditionNode {
   npc?: NpcOffer;
 
   // lockbox + treasure share this — pre-rolled and AI-named at expedition start.
+  // Lockboxes also carry a lock_tier (bronze/silver/gold). Higher-tier locks gate
+  // better loot and require a key of matching tier or higher to use the key path.
   loot_options?: LootOption[];
+  lock_tier?: KeyTier;
 }
 
 export interface ExpeditionState {
   theme: string;
-  current: number;     // index into nodes
-  nodes: ExpeditionNode[];
-  path_taken: string[]; // labels of choices made (for AI continuity)
-  keys: number;        // 🗝️ — held by the party, dropped by combat rooms, spent on lockboxes
+  current: number;            // index into nodes (current room)
+  nodes: ExpeditionNode[];    // all rooms — middle pool + sub-boss + treasure (last 2)
+  path_taken: string[];       // labels of choices made (for AI continuity)
+  keys: number;               // 🗝️ — held by party, dropped by combat, spent on lockboxes
+
+  // Door-choice navigation: middle rooms come from a pool ~2× the visited count.
+  // After each room resolves, two unvisited middles are presented as doors; player
+  // picks one with /sq choose, the other is discarded. Last 2 indices in `nodes`
+  // (sub-boss + treasure) aren't in the pool — they're fixed-end.
+  pool?: number[];            // unvisited middle-room indices remaining
+  pending_doors?: number[];   // [idx1, idx2] — set while a door pick is awaited
+  middle_count?: number;      // how many middle rooms the player will visit total
+  visited_count?: number;     // how many middle rooms visited so far
+  sealed_doors?: number[];    // node indices of doors not picked (for completion map)
+  visited_indices?: number[]; // ordered list of node indices walked through
 }
 
 export interface SceneJson {
@@ -222,7 +252,7 @@ export async function getActiveQuestForCharacter(
     channel_id: row.channel_id,
     thread_ts: row.thread_ts,
     elite: row.elite === 1,
-    scene: JSON.parse(row.scene_json) as SceneJson,
+    scene: normalizeScene(JSON.parse(row.scene_json) as SceneJson),
   };
 }
 
@@ -804,6 +834,21 @@ export async function addGold(
     .run();
 }
 
+// Adds (or removes, with negative `amount`) tiered dungeon keys on a character.
+// Caller is responsible for checking the character has enough before spending.
+export async function addCharacterKey(
+  db: D1Database,
+  userId: string,
+  tier: KeyTier,
+  amount: number,
+): Promise<void> {
+  const col = tier === "bronze" ? "keys_bronze" : tier === "silver" ? "keys_silver" : "keys_gold";
+  await db
+    .prepare(`UPDATE characters SET ${col} = MAX(0, ${col} + ?), last_active = ? WHERE slack_user_id = ?`)
+    .bind(amount, Date.now(), userId)
+    .run();
+}
+
 // Removes an item from inventory (used by /dnd sell).
 export async function removeItem(db: D1Database, itemId: number): Promise<void> {
   await db.prepare("DELETE FROM inventory WHERE id = ?").bind(itemId).run();
@@ -900,7 +945,7 @@ export async function getActiveQuestInChannel(
     channel_id: row.channel_id,
     thread_ts: row.thread_ts,
     elite: row.elite === 1,
-    scene: JSON.parse(row.scene_json) as SceneJson,
+    scene: normalizeScene(JSON.parse(row.scene_json) as SceneJson),
   };
 }
 
