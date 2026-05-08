@@ -411,6 +411,36 @@ export function rollItem(tier: number): ItemRoll {
   return { type, rarity, power, weapon_range };
 }
 
+// Merchant slot weights — practical-for-this-fight stock only. Excludes magic
+// items (permanent max-mana boost is long-term, not "buy now to win the
+// sub-boss"). Re-weighted to fill the gap with consumables / tools / revives.
+function rollMerchantType(): ItemType {
+  const r = Math.random();
+  if (r < 0.25) return "weapon";       // 25%
+  if (r < 0.45) return "armor";        // 20%
+  if (r < 0.70) return "consumable";   // 25%
+  if (r < 0.80) return "revive";       // 10%
+  if (r < 0.92) return "tool";         // 12%
+  return "scroll";                     //  8%
+}
+
+export function rollMerchantItem(tier: number): ItemRoll {
+  const type = rollMerchantType();
+  if (type === "tool" || type === "scroll") {
+    const entry = rollCatalogEntry(type);
+    return {
+      type,
+      rarity: entry.rarity,
+      power: entry.computePower(tier),
+      catalog_name: entry.name,
+    };
+  }
+  const rarity = rollRarity(tier);
+  const power = rollPower(type, rarity);
+  const weapon_range = type === "weapon" ? rollWeaponRange() : undefined;
+  return { type, rarity, power, weapon_range };
+}
+
 // Per-fighter drop chance after a kill. 35% baseline, +5% per tier.
 export function dropChance(tier: number): number {
   return Math.min(0.7, 0.35 + 0.05 * Math.max(0, tier - 1));

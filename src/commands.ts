@@ -124,6 +124,7 @@ import {
   priceFor,
   rollDice,
   rollItem,
+  rollMerchantItem,
   sellPriceFor,
   signatureFor,
   xpForLevel,
@@ -273,7 +274,7 @@ function rulesText(cmd: string, name: string): string {
     `   _Lockbox rooms_ — tiered locks (🥉 bronze / 🥈 silver / 🥇 gold). Need a matching-or-higher key from your inventory; bigger tier = bigger loot.`,
     `   _Keys_ — 🥉 bronze drops from each combat room; 🥈 silver from the sub-boss; 🥇 gold rarely from chests. *Keys persist on your character* across dungeons.`,
     `   _NPC rooms_ — trust is risky! Roll 1d6 + class trust mod (🎭 Bard +2, 🧙 Sage +2, 🗡️ Rogue +1, 👁️ Warlock +1, others 0). ≤2: betrayed (no item + damage). 3: tainted (item + 🔴 Bleeding). 4+: clean exchange. Refuse to walk away safely.`,
-    `   _Merchant_ — guaranteed once per dungeon, right before the sub-boss. Buys with gold (+15% markup over shop). Stock evaporates when you walk past.`,
+    `   _Merchant_ — guaranteed once per dungeon, right before the sub-boss. 3 practical-for-the-fight items at flat shop prices (no markup). Stock evaporates when you walk past.`,
     `   _Map_ — \`🗺️\` trail shown each room; full reveal (with sealed doors) on completion.`,
     `   Class skills: 💪 *STR*: Paladin, Warden, Druid · 🔧 *DEX*: Rogue, Mage · 📜 *INT*: Bard, Sage, Warlock, Mage, Druid`,
     `• \`${cmd} quest elite\` — modifier: *perma-death* on 0 HP. Composes: \`${cmd} quest boss elite\`.`,
@@ -754,7 +755,7 @@ async function handleQuest(
           : variant === "gauntlet"
           ? `⚔️ *GAUNTLET — ${GAUNTLET_WAVES} waves, no flee*\n`
           : variant === "dungeon"
-          ? `🗺️ *DUNGEON — ${(scene.expedition?.middle_count ?? 4) + 2} rooms, treasure at the end*\n`
+          ? `🗺️ *DUNGEON — ${(scene.expedition?.middle_count ?? 4) + 3} rooms, treasure at the end*\n`
           : "";
 
       // Expedition: render the first room (could be combat/trap/lockbox/npc).
@@ -921,12 +922,9 @@ async function buildDungeonScene(
   }
   // Force first slot to be combat — that's the entry room and drops the first key.
   poolTypes[0] = "combat";
-  // Force ONE middle slot to be a merchant. We pick a random non-entry index
-  // and override its rolled type. Later (after pool shuffle) we'll move that
-  // index to the END of the pool so it lands as the forced single-option door
-  // right before the sub-boss — guaranteed visit, "last chance to gear up" beat.
-  const merchantNodeIdx = 1 + Math.floor(Math.random() * (poolMiddleCount - 1));
-  poolTypes[merchantNodeIdx] = "merchant";
+  // Note: merchant is appended as a DEDICATED node after the pool (see below),
+  // not by overriding a random slot — preserves the random-middle-room
+  // probabilities (40 combat / 25 trap / 20 lockbox / 15 npc).
 
   const failDamage = 4 + Math.max(1, character.level);
   const baseTier = Math.max(1, character.level + (elite ? 1 : 0));
@@ -981,36 +979,8 @@ async function buildDungeonScene(
       const node: ExpeditionNode = { type: "lockbox", scene: lockboxScene, loot_options: opts, lock_tier: lockTier };
       return node;
     }
-    if (type === "merchant") {
-      const merchantName = generateMerchantName();
-      // 3 stocked items at slightly higher tier than mid-dungeon — last chance
-      // to gear up before sub-boss, prices are stiff (+15% over shop).
-      const stockRolls = Array.from({ length: 3 }, () => rollItem(baseTier + 1));
-      const [merchant, ...stockNamed] = await Promise.all([
-        generateMerchantRoom(env.AI, theme, roomNum, totalRoomsVisited, merchantName),
-        ...stockRolls.map((roll) => resolveLootDrop(env, `${merchantName}'s stall`, roll)),
-      ]);
-      const opts: LootOption[] = stockRolls.map((roll, j) => ({
-        name: stockNamed[j].name,
-        item_type: roll.type,
-        power: roll.power,
-        rarity: roll.rarity,
-        flavor: stockNamed[j].flavor,
-        weapon_range: roll.weapon_range ?? null,
-      }));
-      const node: ExpeditionNode = {
-        type: "merchant",
-        scene: merchant.scene,
-        loot_options: opts, // reuse loot_options for merchant stock
-        npc: {
-          greeting: merchant.greeting,
-          // npc.item is unused for merchants but the type requires it — set to
-          // a placeholder. resolveMerchantChoice reads from loot_options.
-          item: opts[0],
-        },
-      };
-      return node;
-    }
+    // (merchant is no longer rolled in the random pool — it's appended as a
+    // dedicated node after the pool. See merchantPromise below.)
     // npc
     const npcName = generateNpcName();
     const offerRoll = rollItem(baseTier);
@@ -1045,13 +1015,47 @@ async function buildDungeonScene(
     resolveLootDrop(env, "the dungeon's heart-chamber", roll),
   );
 
-  const [middleNodes, boss, treasureNamed] = await Promise.all([
+  // Dedicated merchant node — appended AFTER the random pool so the random
+  // middle-room probabilities (combat/trap/lockbox/npc) stay untouched.
+  // Practical-for-fight stock only: weapons, armor, consumables, revives,
+  // tools, scrolls. Magic items (max-mana boost) excluded — they're long-term
+  // upgrades, not "fight this dungeon" gear.
+  const merchantName = generateMerchantName();
+  const merchantStockRolls = Array.from(
+    { length: 3 },
+    () => rollMerchantItem(baseTier + 1),
+  );
+  const merchantPromise = (async () => {
+    const [info, ...named] = await Promise.all([
+      generateMerchantRoom(env.AI, theme, totalRoomsVisited - 2, totalRoomsVisited, merchantName),
+      ...merchantStockRolls.map((roll) => resolveLootDrop(env, `${merchantName}'s stall`, roll)),
+    ]);
+    const stock: LootOption[] = merchantStockRolls.map((roll, j) => ({
+      name: named[j].name,
+      item_type: roll.type,
+      power: roll.power,
+      rarity: roll.rarity,
+      flavor: named[j].flavor,
+      weapon_range: roll.weapon_range ?? null,
+    }));
+    return { info, stock };
+  })();
+
+  const [middleNodes, merchantData, boss, treasureNamed] = await Promise.all([
     Promise.all(middleNodePromises),
+    merchantPromise,
     bossPromise,
     Promise.all(treasureNamedPromises),
   ]);
 
   const nodes: ExpeditionNode[] = [...middleNodes];
+  // Merchant — guaranteed visit, sits between the random pool and the sub-boss.
+  nodes.push({
+    type: "merchant",
+    scene: merchantData.info.scene,
+    loot_options: merchantData.stock,
+    npc: { greeting: merchantData.info.greeting, item: merchantData.stock[0] },
+  });
   nodes.push({
     type: "combat",
     scene: boss.scene,
@@ -1084,14 +1088,9 @@ async function buildDungeonScene(
     const j = Math.floor(Math.random() * (i + 1));
     [pool[i], pool[j]] = [pool[j], pool[i]];
   }
-  // Force merchant to be the LAST element of the shuffled pool. With pool size
-  // always odd (2*middleCount - 1), pool[-1] becomes the forced single-option
-  // door right before the sub-boss — a guaranteed merchant visit, "last chance
-  // to gear up" beat.
-  const merchantPos = pool.indexOf(merchantNodeIdx);
-  if (merchantPos !== -1 && merchantPos !== pool.length - 1) {
-    [pool[merchantPos], pool[pool.length - 1]] = [pool[pool.length - 1], pool[merchantPos]];
-  }
+  // Note: merchant is a dedicated node appended after the pool (see node
+  // assembly above), not a pool slot — so no special placement needed here.
+  // pickNextRoom routes pool-empty → merchant → sub-boss as forced single doors.
 
   const expedition: ExpeditionState = {
     theme,
@@ -1332,7 +1331,7 @@ function dungeonRoomIcon(t: ExpeditionNodeType): string {
 // back to a coarse approximation if that field is missing on legacy saves.
 function renderPathTrail(exp: ExpeditionState): string {
   const visited = exp.visited_indices ?? [exp.current];
-  const middleTotal = (exp.middle_count ?? 0) + 2;
+  const middleTotal = (exp.middle_count ?? 0) + 3;
   const ahead = Math.max(0, middleTotal - visited.length);
   const visitedIcons = visited.map((idx, i) => {
     const node = exp.nodes[idx];
@@ -1389,7 +1388,7 @@ function renderDungeonRoom(node: ExpeditionNode, exp: ExpeditionState, cmd: stri
   // Display X/Y in terms of VISITED rooms, not the door-pool size. visited_count
   // is the player's path length so far; middle_count + 2 is the total they'll visit.
   const visited = exp.visited_count ?? 1;
-  const middleTotal = (exp.middle_count ?? 0) + 2; // + sub-boss + treasure
+  const middleTotal = (exp.middle_count ?? 0) + 3; // + sub-boss + treasure
   const trail = renderPathTrail(exp);
   const header = `*Room ${visited}/${middleTotal}* — ${dungeonRoomLabel(node.type)}\n${trail}`;
   const sceneBlock = blockQuote(node.scene);
@@ -1483,9 +1482,9 @@ function renderDungeonRoom(node: ExpeditionNode, exp: ExpeditionState, cmd: stri
 // /sq attack/cast/sig). Action_id values route via /slack/interactive →
 // handleInteraction → handleChoose / handleTake. value = the same idx the slash
 // form takes.
-function buildDungeonRoomBlocks(node: ExpeditionNode, exp: ExpeditionState, cmd: string): unknown[] {
+function buildDungeonRoomBlocks(node: ExpeditionNode, exp: ExpeditionState, cmd: string, env?: Env): unknown[] {
   const visited = exp.visited_count ?? 1;
-  const middleTotal = (exp.middle_count ?? 0) + 2;
+  const middleTotal = (exp.middle_count ?? 0) + 3;
   const trail = renderPathTrail(exp);
   const header = `*Room ${visited}/${middleTotal}* — ${dungeonRoomLabel(node.type)}\n${trail}`;
   const blocks: unknown[] = [
@@ -1526,6 +1525,13 @@ function buildDungeonRoomBlocks(node: ExpeditionNode, exp: ExpeditionState, cmd:
   }
 
   if (node.type === "lockbox") {
+    if (env?.IMAGE_BASE_URL) {
+      blocks.splice(1, 0, {
+        type: "image",
+        image_url: `${env.IMAGE_BASE_URL}/img/lockbox-header.jpg`,
+        alt_text: "the locked chest",
+      });
+    }
     const opts = node.loot_options ?? [];
     const lockTier = node.lock_tier ?? "bronze";
     const optionLines = opts.map((l, i) => {
@@ -1571,6 +1577,13 @@ function buildDungeonRoomBlocks(node: ExpeditionNode, exp: ExpeditionState, cmd:
   }
 
   if (node.type === "merchant") {
+    if (env?.IMAGE_BASE_URL) {
+      blocks.splice(1, 0, {
+        type: "image",
+        image_url: `${env.IMAGE_BASE_URL}/img/merchant-header.jpg`,
+        alt_text: "the merchant's stall",
+      });
+    }
     const stock = node.loot_options ?? [];
     const greeting = `> "${node.npc?.greeting ?? "..."}"`;
     const stockLines = stock.map((l, i) => {
@@ -1599,7 +1612,7 @@ function buildDungeonRoomBlocks(node: ExpeditionNode, exp: ExpeditionState, cmd:
     blocks.push({ type: "actions", block_id: "dungeon_merchant", elements });
     blocks.push({
       type: "context",
-      elements: [{ type: "mrkdwn", text: `_Prices include a +15% dungeon markup. Stock is gone after you walk past._` }],
+      elements: [{ type: "mrkdwn", text: `_Stock is gone once you walk past. Same prices as the channel shop._` }],
     });
     return blocks;
   }
@@ -1634,7 +1647,7 @@ function buildDungeonRoomBlocks(node: ExpeditionNode, exp: ExpeditionState, cmd:
 function buildDoorPromptBlocks(exp: ExpeditionState, cmd: string): unknown[] {
   const doors = exp.pending_doors ?? [];
   const visited = exp.visited_count ?? 1;
-  const middleTotal = (exp.middle_count ?? 0) + 2;
+  const middleTotal = (exp.middle_count ?? 0) + 3;
   const isSingle = doors.length === 1;
   const isSubBossAhead = isSingle && doors[0] === exp.nodes.length - 2;
 
@@ -2368,7 +2381,7 @@ async function resolveExpeditionVictory(
 function renderDoorPrompt(exp: ExpeditionState, cmd: string): string {
   const doors = exp.pending_doors ?? [];
   const visited = exp.visited_count ?? 1;
-  const middleTotal = (exp.middle_count ?? 0) + 2;
+  const middleTotal = (exp.middle_count ?? 0) + 3;
   const isSingle = doors.length === 1;
   const isSubBossAhead = isSingle && doors[0] === exp.nodes.length - 2;
   // Header reflects how many paths there are. Single-option transitions get a
@@ -2402,14 +2415,20 @@ type NextRoom =
   | { type: "node"; index: number; remainingPool: number[] };
 
 function pickNextRoom(exp: ExpeditionState): NextRoom {
-  const subBossIdx = exp.nodes.length - 2;
   const treasureIdx = exp.nodes.length - 1;
+  const subBossIdx = exp.nodes.length - 2;
+  const merchantIdx = exp.nodes.length - 3;
   const pool = [...(exp.pool ?? [])];
 
-  // Sub-boss → treasure: still auto-advance (treasure is the take-prompt UI,
-  // not a fight, no need for a rest opportunity).
+  // Sub-boss → treasure: auto-advance (treasure is the take-prompt UI,
+  // not a fight, no rest needed).
   if (exp.current === subBossIdx) {
     return { type: "node", index: treasureIdx, remainingPool: pool };
+  }
+  // Merchant → sub-boss: forced single door so the party gets a pause to
+  // rest/heal/equip purchases before the boss fight.
+  if (exp.current === merchantIdx) {
+    return { type: "doors", pair: [subBossIdx], remainingPool: pool };
   }
   // 2+ pool: regular door pick (left vs right).
   if (pool.length >= 2) {
@@ -2417,15 +2436,13 @@ function pickNextRoom(exp: ExpeditionState): NextRoom {
     const b = pool.shift()!;
     return { type: "doors", pair: [a, b], remainingPool: pool };
   }
-  // 1 pool OR pool empty (sub-boss): present as a SINGLE-OPTION door so the
-  // player gets a pause + a chance to rest/heal before walking into the next
-  // fight. Without this, the previous flow auto-advanced and dropped them
-  // straight into the next combat room with no breather.
+  // 1 pool: present as single-option door (rest-pause beat).
   if (pool.length === 1) {
     const idx = pool.shift()!;
     return { type: "doors", pair: [idx], remainingPool: pool };
   }
-  return { type: "doors", pair: [subBossIdx], remainingPool: pool };
+  // Pool empty: forced single door to merchant (the guaranteed-visit slot).
+  return { type: "doors", pair: [merchantIdx], remainingPool: pool };
 }
 
 async function advanceDungeonRoom(
@@ -2512,7 +2529,7 @@ async function advanceDungeonRoom(
 
   const roomBody = renderDungeonRoom(nextNode, updatedExp, payload.command);
   const threadText = [blockQuote(preamble.join("\n")), "", roomBody].join("\n");
-  const roomBlocks = buildDungeonRoomBlocks(nextNode, updatedExp, payload.command);
+  const roomBlocks = buildDungeonRoomBlocks(nextNode, updatedExp, payload.command, env);
   const threadBlocks = [
     { type: "section", text: { type: "mrkdwn", text: blockQuote(preamble.join("\n")) } },
     ...roomBlocks,
@@ -2572,7 +2589,7 @@ async function resolveDoorChoice(
   const roomBody = renderDungeonRoom(chosenNode, updatedExp, payload.command);
   const headLine = `🚪 <@${payload.user_id}> opens Door ${pickIdx} — ${dungeonRoomLabel(chosenNode.type).toLowerCase()}.`;
   const threadText = [blockQuote(headLine), "", roomBody].join("\n");
-  const roomBlocks = buildDungeonRoomBlocks(chosenNode, updatedExp, payload.command);
+  const roomBlocks = buildDungeonRoomBlocks(chosenNode, updatedExp, payload.command, env);
   const threadBlocks = [
     { type: "section", text: { type: "mrkdwn", text: blockQuote(headLine) } },
     ...roomBlocks,
@@ -2876,7 +2893,7 @@ async function resolveMerchantChoice(
   // Don't advance — let the player potentially buy a second item. Return the
   // updated room render so they see what's left.
   const roomBody = renderDungeonRoom(updatedNode, updatedExp, payload.command);
-  const blocks = buildDungeonRoomBlocks(updatedNode, updatedExp, payload.command);
+  const blocks = buildDungeonRoomBlocks(updatedNode, updatedExp, payload.command, env);
   ctx.waitUntil(postToThread(env, quest, [blockQuote(headline), "", roomBody].join("\n")));
   return {
     text: [headline, "", roomBody].join("\n"),
@@ -3142,7 +3159,7 @@ async function handleLook(payload: SlashCommandPayload, env: Env): Promise<Comma
       return {
         text: renderDungeonRoom(node, exp, payload.command),
         response_type: "ephemeral",
-        blocks: buildDungeonRoomBlocks(node, exp, payload.command),
+        blocks: buildDungeonRoomBlocks(node, exp, payload.command, env),
       };
     }
   }
@@ -4591,12 +4608,10 @@ function powerLabel(itemType: Item["item_type"], power: number): string {
   return `+${power}`;
 }
 
-// Merchants charge a flat +15% over the standard shop price for the inconvenience
-// of dragging their stall into a dungeon. Uses the same priceFor() base table
-// (which already accounts for tier/rarity differences across item types).
-const MERCHANT_MARKUP = 1.15;
+// Merchants charge the same flat shop price as the channel-shared shop. No
+// markup — they're convenient, but not predatory.
 function merchantPrice(type: Parameters<typeof priceFor>[0], rarity: Parameters<typeof priceFor>[1]): number {
-  return Math.ceil(priceFor(type, rarity) * MERCHANT_MARKUP);
+  return priceFor(type, rarity);
 }
 
 // For catalog items (tool / scroll), returns a short *Effect:* line describing
