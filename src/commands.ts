@@ -64,6 +64,7 @@ import {
   markQuestStatus,
   refillMana,
   releaseShopClaim,
+  resetCooldownsFor,
   removeItem,
   reviveCharacter,
   saveScene,
@@ -237,7 +238,7 @@ function rulesText(cmd: string, name: string): string {
     `• 🔮 *Magic items* — \`${cmd} use <id>\` grants permanent +N max mana (cap 5)`,
     `• 🌱 *Revive items* — bring downed teammate back at N% HP (rarity-tiered 50/75/100%)`,
     `• 🧨 *Tools* — single-shot offensive consumables; \`${cmd} use <id>\` deals damage, ignores armor (consumes a combat turn)`,
-    `• 📜 *Scrolls* — single-shot rituals; \`${cmd} use <id>\` triggers the named effect (consumes a combat turn). v1: 🔄 Rebase (refill mana), 💥 Production Outage (boss -30% / non-boss → 1 HP)`,
+    `• 📜 *Scrolls* — single-shot rituals; \`${cmd} use <id>\` triggers the named effect (consumes a combat turn). v1: 🔄 Rebase (party cooldown wipe + mana refill), 💥 Production Outage (boss -30% / non-boss → 1 HP)`,
     `• Slots: 1 weapon + 1 armor equipped at a time. \`${cmd} equip <id>\` swaps in.`,
     `• \`${cmd} give <id> @user\` — gift any unequipped item; channel-public message`,
     ``,
@@ -2519,8 +2520,11 @@ async function useDamageTool(
   return ephemeral(ephem);
 }
 
-// Rebase Scroll — refills the caster's mana to max. (v1 limitation: self-only;
-// future: party-wide mana bump or cooldown reset.)
+// Rebase Scroll — wipes the action cooldown for every party member so they can
+// all act immediately, AND refills the caster's mana to full. The caster's own
+// cooldown is reset by the floor entry, then immediately re-set by the 'scroll'
+// log entry below — so caster pays a turn while the rest of the party gets a free
+// jump. Multi-party version of "rebase your work to fresh main."
 async function useRebaseScroll(
   payload: SlashCommandPayload,
   env: Env,
@@ -2530,18 +2534,23 @@ async function useRebaseScroll(
   quest: ActiveQuest,
   entry: { name: string; emoji: string },
 ): Promise<CommandResponse> {
+  const fighters = (await getQuestParty(env.DB, quest.id)).filter(isFighter);
+  await resetCooldownsFor(env.DB, quest.id, fighters.map((f) => f.slack_user_id));
   await refillMana(env.DB, payload.user_id);
   await removeItem(env.DB, item.id);
-  await appendLog(env.DB, quest.id, payload.user_id, "scroll", `${entry.name}: mana refill`);
+  await appendLog(env.DB, quest.id, payload.user_id, "scroll", `${entry.name}: party cooldown reset`);
 
-  const playerLine = `${entry.emoji} <@${payload.user_id}> reads *${item.item_name}* — mana restored to ${character.max_mana}/${character.max_mana}.`;
+  const otherFighters = fighters.filter((f) => f.slack_user_id !== payload.user_id);
+  const partyNote = otherFighters.length > 0
+    ? ` *${otherFighters.length}* partymate${otherFighters.length > 1 ? "s" : ""} can act *now*.`
+    : "";
+  const playerLine = `${entry.emoji} <@${payload.user_id}> reads *${item.item_name}* — party cooldowns wiped. Caster's mana → ${character.max_mana}/${character.max_mana}.${partyNote}`;
 
   // No live foe → no retaliation. With a live foe, scroll consumed the turn so the monster gets a swing.
   if (!hasLiveMonster(quest)) {
     ctx.waitUntil(postToThread(env, quest, blockQuote(playerLine)));
     return ephemeral(playerLine);
   }
-  const fighters = (await getQuestParty(env.DB, quest.id)).filter(isFighter);
   const actorArmor = await getEquipped(env.DB, payload.user_id, "armor");
   const turn = await performMonsterTurn(env, quest, fighters, character, actorArmor);
 

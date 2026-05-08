@@ -1006,17 +1006,42 @@ export async function cooldownRemaining(
   userId: string,
   cooldownMs: number,
 ): Promise<number> {
+  // Honors a 'cooldown_reset' floor: combat actions before the most recent reset
+  // are filtered out. Used by Rebase Scroll to wipe party cooldowns mid-fight.
+  // 'tool' and 'scroll' are in the action list so tool/scroll uses gate further uses.
   const row = await db
     .prepare(
       `SELECT MAX(ts) AS last_ts FROM quest_log
        WHERE quest_id = ? AND actor = ?
-         AND action IN ('attack', 'cast', 'flee', 'signature', 'heal', 'shield', 'revive', 'position')`,
+         AND action IN ('attack', 'cast', 'flee', 'signature', 'heal', 'shield', 'revive', 'position', 'tool', 'scroll')
+         AND ts > COALESCE(
+           (SELECT MAX(ts) FROM quest_log WHERE quest_id = ? AND actor = ? AND action = 'cooldown_reset'),
+           0
+         )`,
     )
-    .bind(questId, userId)
+    .bind(questId, userId, questId, userId)
     .first<{ last_ts: number | null }>();
   const last = row?.last_ts ?? 0;
   const elapsed = Date.now() - last;
   return Math.max(0, cooldownMs - elapsed);
+}
+
+// Inserts a 'cooldown_reset' floor for each given user on a quest. cooldownRemaining
+// treats this as a floor — combat actions logged BEFORE the most recent reset don't
+// count, so the user's effective cooldown drops to 0. Used by the Rebase Scroll.
+export async function resetCooldownsFor(
+  db: D1Database,
+  questId: number,
+  userIds: string[],
+): Promise<void> {
+  if (userIds.length === 0) return;
+  const ts = Date.now();
+  const stmts = userIds.map((uid) =>
+    db
+      .prepare("INSERT INTO quest_log (quest_id, actor, action, outcome, ts) VALUES (?, ?, 'cooldown_reset', NULL, ?)")
+      .bind(questId, uid, ts),
+  );
+  await db.batch(stmts);
 }
 
 // Bumps monster HP by a multiplier of current max — used when a new player joins
