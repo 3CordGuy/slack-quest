@@ -79,7 +79,74 @@ export async function generateOpeningScene(
     max_tokens: 220,
   })) as AiRunResponse;
 
-  return parseScene(result.response ?? "", tier, monsterHpFloor, monsterHpCeil);
+  const parsed = parseScene(result.response ?? "", tier, monsterHpFloor, monsterHpCeil);
+
+  // If the parsed scene mentions a different monster name than the one we picked,
+  // regenerate just the scene prose with the name forced. One extra AI call only
+  // when the first attempt failed the consistency check — most calls stay at 1.
+  if (parsed.monster_name && !sceneMentionsName(parsed.scene, parsed.monster_name)) {
+    console.warn("scene/name mismatch — regenerating", { name: parsed.monster_name });
+    const fixedScene = await regenerateSceneWithName(
+      ai,
+      parsed.monster_name,
+      character,
+      elite,
+      variant,
+    );
+    if (fixedScene) {
+      return { ...parsed, scene: fixedScene };
+    }
+  }
+  return parsed;
+}
+
+// Regenerates JUST the scene prose for a known monster name. Used when the first
+// generation produced a name in MONSTER_NAME that doesn't appear in SCENE — Llama
+// 3.1 8B occasionally hallucinates a different proper noun. Forcing the name as
+// explicit input here pins it.
+async function regenerateSceneWithName(
+  ai: Ai,
+  monsterName: string,
+  character: Pick<Character, "name" | "class" | "level">,
+  elite: boolean,
+  variant: SceneVariant,
+): Promise<string | null> {
+  const variantLine =
+    variant === "boss" ? "BOSS encounter — climactic, imposing." :
+    variant === "gauntlet-wave" ? "wave of a gauntlet — quick, momentum-driven." :
+    "standard quest opening.";
+  const system = [
+    "You are the narrator of a comedic engineering + project-management themed dungeon crawl.",
+    "Tone: dry, witty, software-industry + PM winks (PRs, standups, sprints, gantt charts, scope creep, retros).",
+    "Output ONE paragraph: 2-3 sentences, ~60 words total. Plain text — no markdown, no labels, no quotes.",
+    `The monster's name is "${monsterName}" and you MUST refer to it by that exact name in the prose. Do not invent any other proper noun.`,
+  ].join("\n");
+  const user = [
+    `Write the opening scene for ${character.name}, a Level ${character.level} ${character.class}, facing ${monsterName}.`,
+    elite ? "ELITE quest — perma-death looms." : "",
+    `Setup: ${variantLine}`,
+  ].filter(Boolean).join("\n");
+  try {
+    const res = (await ai.run(MODEL, {
+      messages: [
+        { role: "system", content: system },
+        { role: "user", content: user },
+      ],
+      max_tokens: 140,
+    })) as AiRunResponse;
+    const text = (res.response ?? "").trim().replace(/^["'`]|["'`]$/g, "");
+    if (!text) return null;
+    // Final guard: even the regen could fail to mention the name. If so, give up
+    // and let the caller use the original (still-mismatched) scene rather than
+    // recurse forever. Logged so we can spot persistent failures.
+    if (!sceneMentionsName(text, monsterName)) {
+      console.warn("scene regen still mismatched", { monsterName, preview: text.slice(0, 120) });
+      return null;
+    }
+    return text;
+  } catch {
+    return null;
+  }
 }
 
 // Strips markdown emphasis (`*`, `_`), surrounding quotes, and code ticks from a
