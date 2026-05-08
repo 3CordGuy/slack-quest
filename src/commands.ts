@@ -2707,8 +2707,10 @@ async function handleInventory(payload: SlashCommandPayload, env: Env): Promise<
     }
     const equipPrefix = item.equipped ? "✅ " : "";
     const powerStr = powerLabel(item.item_type, item.power);
+    const effect = catalogEffectLine(item.item_name);
+    const effectLine = effect ? `\n${effect}` : "";
     const flavorLine = item.flavor ? `\n_${item.flavor}_` : "";
-    const summary = `${equipPrefix}\`${item.id}\` ${RARITY_BADGE[item.rarity]} *${item.item_name}* — ${item.item_type}${rangeBadge(item)}, ${powerStr}${flavorLine}`;
+    const summary = `${equipPrefix}\`${item.id}\` ${RARITY_BADGE[item.rarity]} *${item.item_name}* — ${item.item_type}${rangeBadge(item)}, ${powerStr}${effectLine}${flavorLine}`;
     blocks.push({
       type: "section",
       text: { type: "mrkdwn", text: summary },
@@ -3126,6 +3128,8 @@ function formatShopText(items: ShopItem[], gold: number, cmd: string): string {
     lines.push(
       `\`${it.id}\` ${RARITY_BADGE[it.rarity]} *${it.item_name}* — ${it.item_type}${rangeBadge(it)}, ${powerStr} • *${it.price}g*${status}`,
     );
+    const effect = catalogEffectLine(it.item_name);
+    if (effect) lines.push(`   ${effect}`);
     if (it.flavor) lines.push(`   _${it.flavor}_`);
   }
   lines.push(
@@ -3154,8 +3158,10 @@ function formatShopBlocks(items: ShopItem[], gold: number, cmd: string): unknown
   for (const it of items) {
     const sold = !!it.bought_by;
     const powerStr = powerLabel(it.item_type, it.power);
+    const effect = catalogEffectLine(it.item_name);
+    const effectLine = effect ? `\n${effect}` : "";
     const flavorLine = it.flavor ? `\n_${it.flavor}_` : "";
-    const summaryRaw = `\`${it.id}\` ${RARITY_BADGE[it.rarity]} *${it.item_name}* — ${it.item_type}${rangeBadge(it)}, ${powerStr} • *${it.price}g*${flavorLine}`;
+    const summaryRaw = `\`${it.id}\` ${RARITY_BADGE[it.rarity]} *${it.item_name}* — ${it.item_type}${rangeBadge(it)}, ${powerStr} • *${it.price}g*${effectLine}${flavorLine}`;
     // Sold items: render dimmed + tagged. We can't truly grey out a section in
     // Block Kit, so we strikethrough the name and append "❌ sold by <user>".
     const summary = sold
@@ -3807,7 +3813,19 @@ function powerLabel(itemType: Item["item_type"], power: number): string {
   if (itemType === "consumable") return `heals ${power}`;
   if (itemType === "magic") return `+${power} max mana`;
   if (itemType === "revive") return `revives @ ${power}% HP`;
+  // Tools deal damage. Scrolls have fixed effects — power isn't meaningful for
+  // utility scrolls (e.g. Rebase Scroll), so render a generic label there.
+  if (itemType === "tool") return `${power} dmg`;
+  if (itemType === "scroll") return power > 0 ? `+${power}` : "ritual";
   return `+${power}`;
+}
+
+// For catalog items (tool / scroll), returns a short *Effect:* line describing
+// what the item does mechanically. Empty string for non-catalog items.
+function catalogEffectLine(itemName: string): string {
+  const entry = findCatalogEntry(itemName);
+  if (!entry) return "";
+  return `💡 *Effect:* ${entry.blurb}`;
 }
 
 // Compact range badge for weapons; empty for non-weapons.
