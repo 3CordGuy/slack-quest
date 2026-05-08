@@ -12,14 +12,23 @@ interface AiRunResponse {
 
 export type SceneVariant = "standard" | "boss" | "gauntlet-wave";
 
+// Two-step opening-scene generation:
+//   1. generateMonsterIdentity → picks MONSTER_NAME + MONSTER_HP (small prompt,
+//      tight output)
+//   2. generateSceneForMonster → writes the SCENE with the chosen name forced
+//      as explicit input
+//
+// Eliminates the name/scene mismatch class of bugs by construction — the scene
+// prompt sees the name as input, never invents one. Pays an extra AI call per
+// scene-gen, but each call is smaller than the old single-call combined output,
+// so total token cost is roughly equivalent. Sequential by necessity (step 2
+// needs step 1's output).
 export async function generateOpeningScene(
   ai: Ai,
   character: Pick<Character, "name" | "class" | "level">,
   elite: boolean,
   variant: SceneVariant = "standard",
   waveContext?: { wave: number; total: number },
-  // Recent monster names to avoid (per-channel). The AI is asked not to reuse
-  // these names OR their core nouns. Caller fetches via getRecentMonsterNames.
   avoidNames: string[] = [],
 ): Promise<SceneJson> {
   const baseTier = Math.max(1, character.level + (elite ? 1 : 0));
@@ -31,100 +40,112 @@ export async function generateOpeningScene(
   const monsterHpFloor = variant === "boss" ? Math.floor(baseFloor * 1.8) : baseFloor;
   const monsterHpCeil = variant === "boss" ? Math.floor(baseCeil * 1.8) : baseCeil;
 
-  const variantLine =
-    variant === "boss"
-      ? "This is a BOSS encounter — pick a more imposing, multi-word monster name and a scene that sets up a single climactic fight."
-      : variant === "gauntlet-wave"
-      ? `This is wave ${waveContext?.wave}/${waveContext?.total} of a gauntlet — quick scene, momentum-driven, the heroes are between catching their breath.`
-      : "This is a standard quest.";
+  // Step 1: pick a name + HP, with the avoid-list applied here.
+  const identity = await generateMonsterIdentity(
+    ai, variant, monsterHpFloor, monsterHpCeil, avoidNames, waveContext,
+  );
+  // Step 2: write the scene around the chosen name.
+  const scene = await generateSceneForMonster(
+    ai, identity.name, character, elite, variant, waveContext,
+  );
 
-  // Avoid-list for repetition. We strip "the " from each name so the model also
-  // avoids the core noun (e.g. "Schemaless Shrieker" matches "Shrieker"). Cap
-  // at 10 to keep the prompt tight.
+  return {
+    monster_name: identity.name,
+    monster_hp: identity.hp,
+    monster_max_hp: identity.hp,
+    tier,
+    scene,
+  };
+}
+
+// Step 1 of opening-scene generation: pick a name + HP. Tiny output — Llama
+// nails the format with the focused prompt + smaller max_tokens budget.
+async function generateMonsterIdentity(
+  ai: Ai,
+  variant: SceneVariant,
+  hpFloor: number,
+  hpCeil: number,
+  avoidNames: string[],
+  waveContext?: { wave: number; total: number },
+): Promise<{ name: string; hp: number }> {
+  const variantHint =
+    variant === "boss"
+      ? "BOSS encounter — name should be imposing, multi-word, slightly mythic."
+      : variant === "gauntlet-wave"
+      ? `Wave ${waveContext?.wave}/${waveContext?.total} of a gauntlet — name should be punchy, single archetype.`
+      : "Standard foe — slightly absurd, single concept.";
+
+  // Avoid-list with core-noun guidance.
   const avoidLines: string[] = [];
   if (avoidNames.length > 0) {
     const cleaned = avoidNames.slice(0, 10).map((n) => n.trim()).filter(Boolean);
     if (cleaned.length > 0) {
       avoidLines.push(
-        `RECENT FOES IN THIS CHANNEL — DO NOT REUSE these names OR their core nouns: ${cleaned.join(", ")}.`,
-        "Pick a name that is NOT a near-clone (e.g. if 'the Schemaless Shrieker' is on the list, also avoid 'the Schemaless Screamer' or 'the Schemaless Wailer' — pick a different core noun entirely).",
+        `DO NOT REUSE these recent foes OR their core nouns: ${cleaned.join(", ")}.`,
+        "Pick a different core noun entirely (e.g. avoid 'the X Shrieker' if 'the Y Shrieker' is on the list).",
       );
     }
   }
 
   const system = [
-    "You are the narrator of a comedic engineering-themed dungeon crawl Slack bot called Slack Quest.",
-    "Tone: dry, witty, software-industry + project-management winks (PRs, standups, deprecated APIs, on-call pagers, sprints, gantt charts, scope creep, kanban, blockers, retros, MVPs, dependencies, story points, the critical path).",
-    "Never break character. Never mention you are an AI.",
-    "Output MUST follow this EXACT format. Plain text only — no markdown, no asterisks, no quotes around values, no extra commentary before or after the fields.",
-    `MONSTER_NAME: <a ${variant === "boss" ? "2-5" : "1-4"} word name, slightly absurd, never repeat the same name>`,
-    `MONSTER_HP: <integer between ${monsterHpFloor} and ${monsterHpCeil}>`,
-    "SCENE: <2-3 sentences, ~60 words total, introducing the monster and the setting>",
-    "CRITICAL: the SCENE field MUST refer to the monster by the EXACT same name you wrote in MONSTER_NAME. Do not invent a different name, title, or species in the scene. If MONSTER_NAME is 'the Schemaless Shrieker', the scene must say 'the Schemaless Shrieker' — not 'the Bloat King', 'the beast', 'the dragon', etc.",
+    "You name comedic engineering + project-management themed monsters for Slack Quest.",
+    "Tone: dry, witty, software-industry + PM (PRs, standups, sprints, gantt charts, scope creep, retros, kanban, blockers, deprecated APIs, on-call pagers).",
+    "Output MUST follow this EXACT format. Plain text only — no markdown, no asterisks, no quotes around values, no commentary.",
+    `MONSTER_NAME: <a ${variant === "boss" ? "2-5" : "1-4"} word name>`,
+    `MONSTER_HP: <integer between ${hpFloor} and ${hpCeil}>`,
+    variantHint,
     ...avoidLines,
   ].join("\n");
 
-  const user = [
-    `The hero is ${character.name}, a Level ${character.level} ${character.class}.`,
-    elite ? "ELITE quest — perma-death is in effect. Make it feel weighty." : "",
-    variantLine,
-    "Generate the opening scene now.",
-  ].filter(Boolean).join("\n");
-
-  const result = (await ai.run(MODEL, {
-    messages: [
-      { role: "system", content: system },
-      { role: "user", content: user },
-    ],
-    max_tokens: 220,
-  })) as AiRunResponse;
-
-  const parsed = parseScene(result.response ?? "", tier, monsterHpFloor, monsterHpCeil);
-
-  // If the parsed scene mentions a different monster name than the one we picked,
-  // regenerate just the scene prose with the name forced. One extra AI call only
-  // when the first attempt failed the consistency check — most calls stay at 1.
-  if (parsed.monster_name && !sceneMentionsName(parsed.scene, parsed.monster_name)) {
-    console.warn("scene/name mismatch — regenerating", { name: parsed.monster_name });
-    const fixedScene = await regenerateSceneWithName(
-      ai,
-      parsed.monster_name,
-      character,
-      elite,
-      variant,
-    );
-    if (fixedScene) {
-      return { ...parsed, scene: fixedScene };
+  try {
+    const res = (await ai.run(MODEL, {
+      messages: [
+        { role: "system", content: system },
+        { role: "user", content: "Pick the next foe now." },
+      ],
+      max_tokens: 60,
+    })) as AiRunResponse;
+    const text = res.response ?? "";
+    const nameMatch = /\*{0,2}MONSTER_NAME\*{0,2}\s*:\s*(.+)/i.exec(text);
+    const hpMatch = /\*{0,2}MONSTER_HP\*{0,2}\s*:\s*\*{0,2}(\d+)/i.exec(text);
+    const name = nameMatch?.[1] ? stripWrappers(nameMatch[1].split("\n")[0]) : "";
+    let hp = hpMatch ? parseInt(hpMatch[1], 10) : NaN;
+    if (Number.isNaN(hp)) hp = Math.floor((hpFloor + hpCeil) / 2);
+    hp = Math.min(hpCeil, Math.max(hpFloor, hp));
+    if (!name) {
+      console.warn("identity parse fallback", { preview: text.slice(0, 160) });
+      return { name: fallbackMonsterName(), hp };
     }
+    return { name, hp };
+  } catch {
+    return { name: fallbackMonsterName(), hp: Math.floor((hpFloor + hpCeil) / 2) };
   }
-  return parsed;
 }
 
-// Regenerates JUST the scene prose for a known monster name. Used when the first
-// generation produced a name in MONSTER_NAME that doesn't appear in SCENE — Llama
-// 3.1 8B occasionally hallucinates a different proper noun. Forcing the name as
-// explicit input here pins it.
-async function regenerateSceneWithName(
+// Step 2 of opening-scene generation: write the scene prose with the chosen
+// name pinned as input. The prompt is very explicit about using the exact name.
+async function generateSceneForMonster(
   ai: Ai,
   monsterName: string,
   character: Pick<Character, "name" | "class" | "level">,
   elite: boolean,
   variant: SceneVariant,
-): Promise<string | null> {
+  waveContext?: { wave: number; total: number },
+): Promise<string> {
   const variantLine =
-    variant === "boss" ? "BOSS encounter — climactic, imposing." :
-    variant === "gauntlet-wave" ? "wave of a gauntlet — quick, momentum-driven." :
-    "standard quest opening.";
+    variant === "boss" ? "Climactic, imposing — single big foe." :
+    variant === "gauntlet-wave" ? `Wave ${waveContext?.wave}/${waveContext?.total} — quick, momentum-driven, between breaths.` :
+    "Standard quest opening.";
   const system = [
-    "You are the narrator of a comedic engineering + project-management themed dungeon crawl.",
-    "Tone: dry, witty, software-industry + PM winks (PRs, standups, sprints, gantt charts, scope creep, retros).",
-    "Output ONE paragraph: 2-3 sentences, ~60 words total. Plain text — no markdown, no labels, no quotes.",
-    `The monster's name is "${monsterName}" and you MUST refer to it by that exact name in the prose. Do not invent any other proper noun.`,
+    "You narrate comedic engineering + project-management themed dungeon scenes for Slack Quest.",
+    "Tone: dry, witty, software-industry + PM winks (PRs, standups, sprints, gantt charts, scope creep, retros, blockers, MVPs, kanban).",
+    "Output ONE paragraph: 2-3 sentences, ~60 words total. Plain text — no markdown, no labels, no quotes around the prose.",
+    `The monster's name is "${monsterName}". You MUST refer to it by that EXACT name at least once in the prose. Do not invent any other proper noun for the monster.`,
   ].join("\n");
   const user = [
     `Write the opening scene for ${character.name}, a Level ${character.level} ${character.class}, facing ${monsterName}.`,
     elite ? "ELITE quest — perma-death looms." : "",
-    `Setup: ${variantLine}`,
+    `Beat: ${variantLine}`,
   ].filter(Boolean).join("\n");
   try {
     const res = (await ai.run(MODEL, {
@@ -132,20 +153,19 @@ async function regenerateSceneWithName(
         { role: "system", content: system },
         { role: "user", content: user },
       ],
-      max_tokens: 140,
+      max_tokens: 160,
     })) as AiRunResponse;
     const text = (res.response ?? "").trim().replace(/^["'`]|["'`]$/g, "");
-    if (!text) return null;
-    // Final guard: even the regen could fail to mention the name. If so, give up
-    // and let the caller use the original (still-mismatched) scene rather than
-    // recurse forever. Logged so we can spot persistent failures.
+    if (!text) return fallbackSceneText();
+    // Final consistency check — log a warning if the LLM still slipped a different
+    // name in (rare with the explicit-name prompt). We return the text anyway since
+    // it's still on-tone narration; the alternative is a generic fallback.
     if (!sceneMentionsName(text, monsterName)) {
-      console.warn("scene regen still mismatched", { monsterName, preview: text.slice(0, 120) });
-      return null;
+      console.warn("scene/name mismatch in step-2 regen", { monsterName, preview: text.slice(0, 120) });
     }
     return text;
   } catch {
-    return null;
+    return fallbackSceneText();
   }
 }
 
@@ -160,49 +180,6 @@ function stripWrappers(s: string): string {
     v = next;
   }
   return v;
-}
-
-function parseScene(text: string, tier: number, hpFloor: number, hpCeil: number): SceneJson {
-  // Allow optional surrounding asterisks on the field key too: `**MONSTER_NAME:** Foo`.
-  const nameMatch = /\*{0,2}MONSTER_NAME\*{0,2}\s*:\s*(.+)/i.exec(text);
-  const hpMatch = /\*{0,2}MONSTER_HP\*{0,2}\s*:\s*\*{0,2}(\d+)/i.exec(text);
-  const sceneMatch = /\*{0,2}SCENE\*{0,2}\s*:\s*([\s\S]+)/i.exec(text);
-
-  const monster_name = nameMatch?.[1] ? stripWrappers(nameMatch[1].split("\n")[0]) : "";
-  const scene_raw = sceneMatch?.[1] ? stripWrappers(sceneMatch[1]) : "";
-
-  let monster_hp = hpMatch ? parseInt(hpMatch[1], 10) : NaN;
-  if (Number.isNaN(monster_hp)) monster_hp = Math.floor((hpFloor + hpCeil) / 2);
-  monster_hp = Math.min(hpCeil, Math.max(hpFloor, monster_hp));
-
-  // Diagnostic — surfaces in worker logs when the AI returns something unparseable so
-  // we can see WHY it fell back instead of silently substituting the default name.
-  if (!monster_name || !scene_raw) {
-    console.warn("scene parse fallback", {
-      gotName: !!monster_name,
-      gotScene: !!scene_raw,
-      gotHp: !Number.isNaN(monster_hp),
-      preview: text.slice(0, 220),
-    });
-  }
-
-  const finalName = monster_name || fallbackMonsterName();
-  const finalScene = scene_raw || fallbackSceneText();
-
-  // Llama 3.1 8B occasionally invents a *different* monster name in the SCENE prose
-  // than what it wrote for MONSTER_NAME. Logging this lets us measure how often the
-  // tightened prompt is failing — if it's still common, escalate to a 2-step generation.
-  if (monster_name && scene_raw && !sceneMentionsName(scene_raw, monster_name)) {
-    console.warn("scene/name mismatch", { monster_name, scene_preview: scene_raw.slice(0, 160) });
-  }
-
-  return {
-    monster_name: finalName,
-    monster_hp,
-    monster_max_hp: monster_hp,
-    tier,
-    scene: finalScene,
-  };
 }
 
 // Does the scene prose actually mention the monster's name? Lenient match: case-insensitive,
