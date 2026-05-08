@@ -208,6 +208,8 @@ function helpText(cmd: string, name: string): string {
     `• \`${cmd} buy <id>\` — purchase a shop item with gold`,
     `• \`${cmd} haggle <id>\` — try to talk down the price (1d6 + class mod; communal, once per item)`,
     `• \`${cmd} sell <id>\` — sell an inventory item for 30% of shop price`,
+    `• \`${cmd} sell-key <tier>\` — sell one key for gold (🥉 5g / 🥈 25g / 🥇 100g)`,
+    `• \`${cmd} transmute <tier>\` — combine 3 keys of a tier into 1 of the next (🥉→🥈, 🥈→🥇)`,
     `• \`${cmd} give <id> @user\` — gift an inventory item to another player (unequip first)`,
     `• \`${cmd} party\` — show the current quest's roster + HP`,
     `• \`${cmd} leaderboard\` — top 10 heroes`,
@@ -349,6 +351,8 @@ export async function handleInteraction(
   if (action.action_id === "shop_buy") return handleBuy(slash, args, env);
   if (action.action_id === "shop_haggle") return handleHaggle(slash, args, env, ctx);
   if (action.action_id === "shop_open") return handleShop(slash, env, ctx);
+  if (action.action_id === "key_sell") return handleSellKey(slash, args, env);
+  if (action.action_id === "key_transmute") return handleTransmuteKey(slash, args, env);
   return ephemeral(`Unknown action \`${action.action_id}\`.`);
 }
 
@@ -417,6 +421,11 @@ export async function handleCommand(
       return handleHaggle(payload, args, env, ctx);
     case "sell":
       return handleSell(payload, args, env);
+    case "sell-key":
+    case "sellkey":
+      return handleSellKey(payload, args, env);
+    case "transmute":
+      return handleTransmuteKey(payload, args, env);
     case "give":
       return handleGive(payload, args, env, ctx);
     case "choose":
@@ -1358,6 +1367,29 @@ function characterKeyDisplay(c: Character): string {
   if (c.keys_silver > 0) parts.push(`${KEY_EMOJI.silver}${c.keys_silver}`);
   if (c.keys_gold > 0) parts.push(`${KEY_EMOJI.gold}${c.keys_gold}`);
   return parts.join(" ");
+}
+
+// Static gold values per key tier — sold to the shopkeep regardless of channel
+// shop state. Lets piled-up keys convert to a soft gold trickle.
+const KEY_SELL_PRICE: Record<KeyTier, number> = {
+  bronze: 5,
+  silver: 25,
+  gold: 100,
+};
+
+// 3 of any tier transmutes up to 1 of the next tier. No transmute path beyond
+// gold (it's the top). Encourages saving toward gold-tier locks without
+// requiring sub-boss drop luck.
+const KEY_TRANSMUTE_COST = 3;
+
+function keyCount(c: Character, tier: KeyTier): number {
+  return tier === "bronze" ? c.keys_bronze : tier === "silver" ? c.keys_silver : c.keys_gold;
+}
+
+function nextKeyTier(tier: KeyTier): KeyTier | null {
+  if (tier === "bronze") return "silver";
+  if (tier === "silver") return "gold";
+  return null;
 }
 
 // Compact emoji-only icon for a room type — used in path-trail rendering.
@@ -3389,13 +3421,50 @@ async function handleInventory(payload: SlashCommandPayload, env: Env): Promise<
     });
   }
 
-  // Footer: keys + slash-command hints.
-  const footerParts: string[] = [];
-  if (keyLine) footerParts.push(keyLine);
-  footerParts.push(`_Buttons require Slack interactivity. Slash forms: \`${payload.command} equip <id>\` • \`${payload.command} use <id>\` • \`${payload.command} sell <id>\`._`);
+  // Keys section — rendered separately from the footer so we can attach action
+  // buttons (sell / transmute) per tier the player holds.
+  const heldTiers: KeyTier[] = [];
+  if (character.keys_bronze > 0) heldTiers.push("bronze");
+  if (character.keys_silver > 0) heldTiers.push("silver");
+  if (character.keys_gold > 0) heldTiers.push("gold");
+  if (heldTiers.length > 0) {
+    blocks.push({ type: "divider" });
+    blocks.push({
+      type: "section",
+      text: { type: "mrkdwn", text: `*🗝️ Keys*\n${keyDisplay}` },
+    });
+    const keyActions: unknown[] = [];
+    for (const tier of heldTiers) {
+      keyActions.push({
+        type: "button",
+        action_id: "key_sell",
+        value: tier,
+        text: { type: "plain_text", text: `💰 Sell ${KEY_EMOJI[tier]} (${KEY_SELL_PRICE[tier]}g)` },
+      });
+    }
+    // Transmute buttons — only for tiers where the player has at least 3 AND
+    // there's a tier above to upgrade into.
+    for (const tier of (["bronze", "silver"] as const)) {
+      if (keyCount(character, tier) >= KEY_TRANSMUTE_COST) {
+        const upTier = nextKeyTier(tier)!;
+        keyActions.push({
+          type: "button",
+          action_id: "key_transmute",
+          value: tier,
+          text: { type: "plain_text", text: `⚗️ ${KEY_TRANSMUTE_COST}${KEY_EMOJI[tier]} → 1${KEY_EMOJI[upTier]}` },
+          style: "primary",
+        });
+      }
+    }
+    if (keyActions.length > 0) {
+      blocks.push({ type: "actions", block_id: "inv_keys", elements: keyActions });
+    }
+  }
+
+  // Footer: slash-command hints. (Keys moved to their own section above.)
   blocks.push({
     type: "context",
-    elements: [{ type: "mrkdwn", text: footerParts.join("  •  ") }],
+    elements: [{ type: "mrkdwn", text: `_Slash forms: \`${payload.command} equip <id>\` • \`${payload.command} use <id>\` • \`${payload.command} sell <id>\` • \`${payload.command} sell-key <tier>\` • \`${payload.command} transmute <tier>\`._` }],
   });
 
   // Plain-text fallback for clients/contexts that don't render Block Kit.
@@ -4155,6 +4224,76 @@ async function handleSell(
   await addGold(env.DB, payload.user_id, price);
   return ephemeral(
     `💰 Sold *${item.item_name}* for ${price}g (now ${character.gold + price}g).`,
+  );
+}
+
+// Sell ONE key of the given tier for its flat gold value. Lets piled-up keys
+// convert to gold without requiring a lockbox to spend them on. No mid-quest
+// selling (you might still need that key in the dungeon).
+async function handleSellKey(
+  payload: SlashCommandPayload,
+  args: string[],
+  env: Env,
+): Promise<CommandResponse> {
+  const character = await getCharacter(env.DB, payload.user_id);
+  if (!character) return ephemeral(`You need to \`${payload.command} roll\` a character first.`);
+
+  const activeQuest = await getActiveQuestForCharacter(env.DB, payload.user_id);
+  if (activeQuest) {
+    return ephemeral("🛒 No key-selling mid-quest — you might need that key.");
+  }
+
+  const tierArg = (args[0] ?? "").toLowerCase();
+  if (tierArg !== "bronze" && tierArg !== "silver" && tierArg !== "gold") {
+    return ephemeral(`Usage: \`${payload.command} sell-key bronze|silver|gold\`.`);
+  }
+  const tier = tierArg as KeyTier;
+  if (keyCount(character, tier) < 1) {
+    return ephemeral(`${KEY_EMOJI[tier]} You don't have any ${tier} keys.`);
+  }
+
+  const price = KEY_SELL_PRICE[tier];
+  await addCharacterKey(env.DB, payload.user_id, tier, -1);
+  await addGold(env.DB, payload.user_id, price);
+  return ephemeral(
+    `💰 Sold a ${KEY_EMOJI[tier]} *${tier}* key for ${price}g (now ${character.gold + price}g).`,
+  );
+}
+
+// Transmute 3 keys of one tier into 1 key of the next tier up. Bronze → silver,
+// silver → gold. No transmute past gold (it's the top tier).
+async function handleTransmuteKey(
+  payload: SlashCommandPayload,
+  args: string[],
+  env: Env,
+): Promise<CommandResponse> {
+  const character = await getCharacter(env.DB, payload.user_id);
+  if (!character) return ephemeral(`You need to \`${payload.command} roll\` a character first.`);
+
+  const activeQuest = await getActiveQuestForCharacter(env.DB, payload.user_id);
+  if (activeQuest) {
+    return ephemeral("⚗️ No transmuting mid-quest — focus on the dungeon.");
+  }
+
+  const tierArg = (args[0] ?? "").toLowerCase();
+  if (tierArg !== "bronze" && tierArg !== "silver") {
+    return ephemeral(`Usage: \`${payload.command} transmute bronze|silver\` (3-of-tier → 1 of next tier).`);
+  }
+  const fromTier = tierArg as KeyTier;
+  const toTier = nextKeyTier(fromTier);
+  if (!toTier) {
+    return ephemeral(`${KEY_EMOJI.gold} Gold keys are the top tier — nothing to transmute up to.`);
+  }
+  if (keyCount(character, fromTier) < KEY_TRANSMUTE_COST) {
+    return ephemeral(
+      `${KEY_EMOJI[fromTier]} Need ${KEY_TRANSMUTE_COST} ${fromTier} keys to transmute. You have ${keyCount(character, fromTier)}.`,
+    );
+  }
+
+  await addCharacterKey(env.DB, payload.user_id, fromTier, -KEY_TRANSMUTE_COST);
+  await addCharacterKey(env.DB, payload.user_id, toTier, 1);
+  return ephemeral(
+    `⚗️ Transmuted *${KEY_TRANSMUTE_COST}* ${KEY_EMOJI[fromTier]} ${fromTier} → *1* ${KEY_EMOJI[toTier]} ${toTier} key.`,
   );
 }
 
