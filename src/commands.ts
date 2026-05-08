@@ -848,22 +848,26 @@ async function buildQuestScene(
   }
 
   if (variant === "gauntlet") {
-    // Accumulate generated names so each wave also avoids the others in THIS gauntlet.
-    const avoid = [...recentNames];
-    const first = await generateOpeningScene(env.AI, character, elite, "gauntlet-wave", {
-      wave: 1,
-      total: GAUNTLET_WAVES,
-    }, avoid);
-    avoid.push(first.monster_name);
-    const queue: GauntletWave[] = [];
-    for (let i = 2; i <= GAUNTLET_WAVES; i++) {
-      const next = await generateOpeningScene(env.AI, character, elite, "gauntlet-wave", {
-        wave: i,
-        total: GAUNTLET_WAVES,
-      }, avoid);
-      avoid.push(next.monster_name);
-      queue.push({ name: next.monster_name, max_hp: next.monster_max_hp, scene: next.scene });
+    // Generate all waves IN PARALLEL. Sequential generation made the 2-step
+    // identity+scene flow add up to 6+ AI calls in series, which timed out the
+    // build. Each wave gets the same channel-recent avoid-list; intra-gauntlet
+    // name collisions are possible but rare enough to accept for the speed win.
+    const wavePromises = [];
+    for (let i = 1; i <= GAUNTLET_WAVES; i++) {
+      wavePromises.push(
+        generateOpeningScene(env.AI, character, elite, "gauntlet-wave", {
+          wave: i,
+          total: GAUNTLET_WAVES,
+        }, recentNames),
+      );
     }
+    const waves = await Promise.all(wavePromises);
+    const first = waves[0];
+    const queue: GauntletWave[] = waves.slice(1).map((w) => ({
+      name: w.monster_name,
+      max_hp: w.monster_max_hp,
+      scene: w.scene,
+    }));
     return {
       ...first,
       variant,
