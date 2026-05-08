@@ -422,8 +422,13 @@ export async function applyShortRest(
   newHp: number,
 ): Promise<void> {
   const now = Date.now();
+  // Short rest also drips +1 mana (capped at max_mana). The 10-min cooldown
+  // gates spamming, so this just makes the rest decision more meaningful when
+  // you're low on both HP and mana mid-dungeon.
   await db
-    .prepare("UPDATE characters SET hp = ?, last_rest_at = ?, last_active = ? WHERE slack_user_id = ?")
+    .prepare(
+      "UPDATE characters SET hp = ?, mana = MIN(max_mana, mana + 1), last_rest_at = ?, last_active = ? WHERE slack_user_id = ?",
+    )
     .bind(newHp, now, now, userId)
     .run();
 }

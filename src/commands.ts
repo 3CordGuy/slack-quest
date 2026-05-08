@@ -889,6 +889,22 @@ function dungeonRoomLabel(t: ExpeditionNodeType): string {
   return "🎁 Treasure";
 }
 
+// Mid-dungeon rest gate. Allowed when the party is "between" rooms in a dungeon —
+// not during an active combat fight. Other variants (standard/boss/gauntlet) never
+// allow mid-quest rest because there's no room concept to be "between."
+function canRestBetweenRooms(quest: ActiveQuest): boolean {
+  if (quest.scene.variant !== "dungeon") return false;
+  const exp = quest.scene.expedition;
+  if (!exp) return false;
+  // Pending door pick = entry combat just resolved, no active fight.
+  if (exp.pending_doors && exp.pending_doors.length > 0) return true;
+  // Active combat blocks rest. Otherwise (current room is trap/lockbox/npc/treasure
+  // OR combat is already won), resting is fine.
+  const node = exp.nodes[exp.current];
+  if (node && node.type === "combat" && quest.scene.monster_hp > 0) return false;
+  return true;
+}
+
 const KEY_EMOJI: Record<KeyTier, string> = { bronze: "🥉", silver: "🥈", gold: "🥇" };
 const TIER_RANK: Record<KeyTier, number> = { bronze: 1, silver: 2, gold: 3 };
 const TIER_ORDER: KeyTier[] = ["bronze", "silver", "gold"];
@@ -2844,17 +2860,26 @@ async function handleRest(
   }
 
   const activeQuest = await getActiveQuestForCharacter(env.DB, payload.user_id);
-  if (activeQuest) {
-    return ephemeral(
-      `Can't rest mid-quest. Try \`${payload.command} use <id>\` for a consumable, or \`${payload.command} heal\` if you have mana.`,
-    );
-  }
-
-  if (character.hp >= character.max_hp) {
-    return ephemeral("Already at full HP — save the rest for when you need it.");
-  }
-
   const isLong = args[0]?.toLowerCase() === "long";
+
+  if (activeQuest) {
+    // Long rest is always blocked mid-quest — too generous, would nullify attrition.
+    if (isLong) {
+      return ephemeral(`Long rests only happen between quests. Try \`${payload.command} rest\` for a short one.`);
+    }
+    // Short rest mid-quest is allowed in dungeons, but only between rooms (not
+    // mid-combat). "Between" = pending door pick, current room is non-combat,
+    // or the combat in this room is already resolved (monster_hp <= 0).
+    if (!canRestBetweenRooms(activeQuest)) {
+      return ephemeral(
+        `Can't rest mid-fight. Try \`${payload.command} use <id>\` for a consumable, or \`${payload.command} heal\` if you have mana.`,
+      );
+    }
+  }
+
+  if (character.hp >= character.max_hp && character.mana >= character.max_mana) {
+    return ephemeral("Already at full HP and mana — save the rest for when you need it.");
+  }
 
   if (isLong) {
     const since = character.last_long_rest_at == null
