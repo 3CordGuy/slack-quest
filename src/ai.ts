@@ -6,6 +6,13 @@ import { fallbackMonsterName, fallbackSceneText } from "./flavor";
 
 const MODEL = "@cf/meta/llama-3.1-8b-instruct";
 
+// Smaller, faster model used for the lightweight identity step (just picks a
+// name + HP, no prose). Llama 3.2 3B Instruct returns in roughly half the time
+// of the 8B model — meaningful win when step 1 is the latency floor for
+// standard/boss quest builds. The 8B is still used for the SCENE step and all
+// the other prose-generating helpers (loot flavor, victory flavor, etc.).
+const FAST_MODEL = "@cf/meta/llama-3.2-3b-instruct";
+
 interface AiRunResponse {
   response?: string;
 }
@@ -99,7 +106,7 @@ async function generateMonsterIdentity(
 
   console.log("identity:start", { variant, hpFloor, hpCeil, avoidCount: avoidNames.length });
   try {
-    const res = (await ai.run(MODEL, {
+    const res = (await ai.run(FAST_MODEL, {
       messages: [
         { role: "system", content: system },
         { role: "user", content: "Pick the next foe now." },
