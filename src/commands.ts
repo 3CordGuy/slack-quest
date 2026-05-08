@@ -2154,10 +2154,14 @@ async function handleJoin(
   if (quest.scene.variant === "gauntlet" && (quest.scene.wave ?? 1) > 1) {
     return ephemeral("⚔️ Gauntlet has already advanced past wave 1 — too late to join.");
   }
-  // Expedition locks once any fork has been chosen — joiners don't get to retroactively
-  // affect choices that have already been made.
-  if (quest.scene.variant === "dungeon" && (quest.scene.expedition?.path_taken.length ?? 0) > 0) {
-    return ephemeral(`🗺️ The party has already started making decisions — too late to join. Wait for the next \`${payload.command} quest\`.`);
+  // Dungeon locks once the entry combat is resolved (pending door pick set, or any
+  // subsequent room visited). Joiners don't get to retroactively affect decisions.
+  if (quest.scene.variant === "dungeon") {
+    const exp = quest.scene.expedition;
+    const advanced = (exp?.visited_count ?? 1) > 1 || (exp?.pending_doors?.length ?? 0) > 0;
+    if (advanced) {
+      return ephemeral(`🗺️ The party has already started making decisions — too late to join. Wait for the next \`${payload.command} quest\`.`);
+    }
   }
 
   const inserted = await joinQuest(env.DB, quest.id, payload.user_id);
