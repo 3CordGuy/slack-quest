@@ -56,6 +56,7 @@ import {
   getItem,
   getLeaderboard,
   getQuestParty,
+  getRecentMonsterNames,
   getShopItem,
   healCharacter,
   insertShopStock,
@@ -711,7 +712,11 @@ async function handleQuest(
 
   ctx.waitUntil((async () => {
     try {
-      const baseScene = await buildQuestScene(env, character, elite, variant);
+      // Recent foes in this channel — passed as an avoid-list to the AI so we
+      // don't see "the Schemaless Shrieker" twice in a row. Limit 10 covers
+      // the back-to-back-quests window without bloating the prompt.
+      const recentNames = await getRecentMonsterNames(env.DB, payload.channel_id, 10);
+      const baseScene = await buildQuestScene(env, character, elite, variant, recentNames);
 
       // Validate each invitee. Bucket into joiners (will succeed) and rejects (with
       // reasons surfaced in the opening post so the inviter knows why).
@@ -835,23 +840,28 @@ async function buildQuestScene(
   character: Character,
   elite: boolean,
   variant: QuestVariant,
+  recentNames: string[] = [],
 ): Promise<SceneJson> {
   if (variant === "boss") {
-    const scene = await generateOpeningScene(env.AI, character, elite, "boss");
+    const scene = await generateOpeningScene(env.AI, character, elite, "boss", undefined, recentNames);
     return { ...scene, variant, boss_phase: 1 };
   }
 
   if (variant === "gauntlet") {
+    // Accumulate generated names so each wave also avoids the others in THIS gauntlet.
+    const avoid = [...recentNames];
     const first = await generateOpeningScene(env.AI, character, elite, "gauntlet-wave", {
       wave: 1,
       total: GAUNTLET_WAVES,
-    });
+    }, avoid);
+    avoid.push(first.monster_name);
     const queue: GauntletWave[] = [];
     for (let i = 2; i <= GAUNTLET_WAVES; i++) {
       const next = await generateOpeningScene(env.AI, character, elite, "gauntlet-wave", {
         wave: i,
         total: GAUNTLET_WAVES,
-      });
+      }, avoid);
+      avoid.push(next.monster_name);
       queue.push({ name: next.monster_name, max_hp: next.monster_max_hp, scene: next.scene });
     }
     return {
@@ -864,10 +874,10 @@ async function buildQuestScene(
   }
 
   if (variant === "dungeon") {
-    return buildDungeonScene(env, character, elite, variant);
+    return buildDungeonScene(env, character, elite, variant, recentNames);
   }
 
-  return { ...(await generateOpeningScene(env.AI, character, elite, "standard")), variant };
+  return { ...(await generateOpeningScene(env.AI, character, elite, "standard", undefined, recentNames)), variant };
 }
 
 // Generates a fresh dungeon. Layout:
@@ -884,6 +894,7 @@ async function buildDungeonScene(
   character: Character,
   elite: boolean,
   variant: QuestVariant,
+  recentNames: string[] = [],
 ): Promise<SceneJson> {
   const theme = await generateExpeditionTheme(env.AI);
   const totalRoomsVisited =
@@ -912,7 +923,7 @@ async function buildDungeonScene(
   const middleNodePromises: Promise<ExpeditionNode>[] = poolTypes.map(async (type, i) => {
     const roomNum = i + 1;
     if (type === "combat") {
-      const monster = await generateOpeningScene(env.AI, character, elite, "gauntlet-wave", { wave: roomNum, total: totalRoomsVisited });
+      const monster = await generateOpeningScene(env.AI, character, elite, "gauntlet-wave", { wave: roomNum, total: totalRoomsVisited }, recentNames);
       const node: ExpeditionNode = {
         type: "combat",
         scene: monster.scene,
@@ -983,7 +994,7 @@ async function buildDungeonScene(
   });
 
   // Sub-boss + treasure loot also fire in parallel with the pool.
-  const bossPromise = generateOpeningScene(env.AI, character, elite, "boss");
+  const bossPromise = generateOpeningScene(env.AI, character, elite, "boss", undefined, recentNames);
   // Treasure loot rolls don't depend on boss tier — fire them at baseTier+1 in parallel
   // (was: baseTier from boss, but boss tier is already character.level + elite bump).
   const treasureRolls = Array.from({ length: EXPEDITION_TREASURE_OPTIONS }, () => rollItem(baseTier + 1));

@@ -961,6 +961,37 @@ export async function countCharacters(db: D1Database): Promise<number> {
   return row?.n ?? 0;
 }
 
+// Recent monster names from this channel's last N quests (any status). Passed
+// to the AI scene generator as an avoid-list so back-to-back quests don't keep
+// summoning "the Schemaless Shrieker." Uses JSON path extraction for speed.
+//
+// For dungeon and gauntlet quests, monster_name is the FINAL one (the last
+// monster fought / on scene). It misses earlier waves and dungeon rooms. v1
+// acceptable — eliminates the most-visible repetition (entry combat + boss).
+export async function getRecentMonsterNames(
+  db: D1Database,
+  channelId: string,
+  limit: number,
+): Promise<string[]> {
+  const rows = await db
+    .prepare(
+      `SELECT json_extract(scene_json, '$.monster_name') AS name
+       FROM quests
+       WHERE channel_id = ?
+       ORDER BY id DESC
+       LIMIT ?`,
+    )
+    .bind(channelId, limit)
+    .all<{ name: string | null }>();
+  const names: string[] = [];
+  for (const r of rows.results ?? []) {
+    if (r.name && typeof r.name === "string" && r.name.trim() && r.name !== "—") {
+      names.push(r.name);
+    }
+  }
+  return names;
+}
+
 // How many items the user has bought from the current shop cycle (matched by
 // generated_at). Used to enforce a per-player purchase cap per cycle.
 export async function countPurchasesInCycle(

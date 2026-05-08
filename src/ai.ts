@@ -18,6 +18,9 @@ export async function generateOpeningScene(
   elite: boolean,
   variant: SceneVariant = "standard",
   waveContext?: { wave: number; total: number },
+  // Recent monster names to avoid (per-channel). The AI is asked not to reuse
+  // these names OR their core nouns. Caller fetches via getRecentMonsterNames.
+  avoidNames: string[] = [],
 ): Promise<SceneJson> {
   const baseTier = Math.max(1, character.level + (elite ? 1 : 0));
   const tier = variant === "boss" ? baseTier + 1 : baseTier;
@@ -35,6 +38,20 @@ export async function generateOpeningScene(
       ? `This is wave ${waveContext?.wave}/${waveContext?.total} of a gauntlet — quick scene, momentum-driven, the heroes are between catching their breath.`
       : "This is a standard quest.";
 
+  // Avoid-list for repetition. We strip "the " from each name so the model also
+  // avoids the core noun (e.g. "Schemaless Shrieker" matches "Shrieker"). Cap
+  // at 10 to keep the prompt tight.
+  const avoidLines: string[] = [];
+  if (avoidNames.length > 0) {
+    const cleaned = avoidNames.slice(0, 10).map((n) => n.trim()).filter(Boolean);
+    if (cleaned.length > 0) {
+      avoidLines.push(
+        `RECENT FOES IN THIS CHANNEL — DO NOT REUSE these names OR their core nouns: ${cleaned.join(", ")}.`,
+        "Pick a name that is NOT a near-clone (e.g. if 'the Schemaless Shrieker' is on the list, also avoid 'the Schemaless Screamer' or 'the Schemaless Wailer' — pick a different core noun entirely).",
+      );
+    }
+  }
+
   const system = [
     "You are the narrator of a comedic engineering-themed dungeon crawl Slack bot called Slack Quest.",
     "Tone: dry, witty, software-industry + project-management winks (PRs, standups, deprecated APIs, on-call pagers, sprints, gantt charts, scope creep, kanban, blockers, retros, MVPs, dependencies, story points, the critical path).",
@@ -44,6 +61,7 @@ export async function generateOpeningScene(
     `MONSTER_HP: <integer between ${monsterHpFloor} and ${monsterHpCeil}>`,
     "SCENE: <2-3 sentences, ~60 words total, introducing the monster and the setting>",
     "CRITICAL: the SCENE field MUST refer to the monster by the EXACT same name you wrote in MONSTER_NAME. Do not invent a different name, title, or species in the scene. If MONSTER_NAME is 'the Schemaless Shrieker', the scene must say 'the Schemaless Shrieker' — not 'the Bloat King', 'the beast', 'the dragon', etc.",
+    ...avoidLines,
   ].join("\n");
 
   const user = [
