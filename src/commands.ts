@@ -380,7 +380,7 @@ export async function handleCommand(
       return handleRest(payload, args, env);
     case "position":
     case "pos":
-      return handlePosition(payload, args, env);
+      return handlePosition(payload, args, env, ctx);
     case "join":
       return handleJoin(payload, env, ctx);
     case "party":
@@ -4260,6 +4260,7 @@ async function handlePosition(
   payload: SlashCommandPayload,
   args: string[],
   env: Env,
+  ctx: ExecutionContext,
 ): Promise<CommandResponse> {
   const character = await getCharacter(env.DB, payload.user_id);
   if (!character) return ephemeral(`You need to \`${payload.command} roll\` a character first.`);
@@ -4286,14 +4287,16 @@ async function handlePosition(
     }
     await setPosition(env.DB, payload.user_id, target as BattlePosition);
     await appendLog(env.DB, activeQuest.id, payload.user_id, "position", `→ ${target}`);
-    return ephemeral(
-      target === "front"
-        ? `🔼 You shoulder forward to *front* row. (Cooldown set, 45s.)`
-        : `🔽 You retreat to *back* row. (Cooldown set, 45s.)`,
-    );
+    const headline = target === "front"
+      ? `🔼 <@${payload.user_id}> shoulders forward to *front* row.`
+      : `🔽 <@${payload.user_id}> retreats to *back* row.`;
+    // Post to the quest thread so the rest of the party sees the formation change —
+    // it affects monster targeting weights, so it's gameplay-relevant.
+    ctx.waitUntil(postToThread(env, activeQuest, blockQuote(headline)));
+    return ephemeral(`${headline} _(Cooldown set, 45s.)_`);
   }
 
-  // Out-of-quest reposition — free, no cooldown.
+  // Out-of-quest reposition — free, no cooldown, ephemeral only (no thread to post to).
   await setPosition(env.DB, payload.user_id, target as BattlePosition);
   return ephemeral(
     target === "front"
