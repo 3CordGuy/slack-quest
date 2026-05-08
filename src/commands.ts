@@ -929,15 +929,18 @@ function renderPathTrail(exp: ExpeditionState): string {
 }
 
 // Vertical map shown on dungeon completion — every visited room with its sealed-door
-// alternative inline on the same line. Sealed doors come from `sealed_doors` in the
-// order they were sealed, which lines up with door-pick rounds 1..N over middle rooms.
+// alternative inline on the same line.
+//
+// Invariant: sealed_doors is appended-to in walk order, one entry per door pick.
+// All non-entry middle rooms came from a door pick EXCEPT the auto-advanced last
+// middle room (which the player walked into when only one room was left in the pool).
+// We iterate visited[] and consume sealed_doors with a running cursor; when the
+// cursor runs past the end (the auto-advance step), `sealed[cursor]` is undefined
+// and we render no sealed sibling — which is exactly correct.
 function renderDungeonMap(exp: ExpeditionState): string {
   const visited = exp.visited_indices ?? [exp.current];
   const sealed = exp.sealed_doors ?? [];
   const lines: string[] = ["🗺️ *Dungeon path*"];
-  // visited[0] = entry (no sealed sibling), visited[1..N-2] = middle rooms (each may
-  // have a sealed sibling from sealed[i-1] if it was a door round), visited[N-2] = sub-boss,
-  // visited[N-1] = treasure. Sub-boss + treasure are fixed-end and have no sealed sibling.
   let sealedCursor = 0;
   for (let i = 0; i < visited.length; i++) {
     const idx = visited[i];
@@ -953,7 +956,6 @@ function renderDungeonMap(exp: ExpeditionState): string {
       // The penultimate visited node is the sub-boss in completed dungeons.
       line = `▸ ${label}  _sub-boss_`;
     } else {
-      // Middle room — show what was sealed at this fork (if any).
       const sealedIdx = sealed[sealedCursor++];
       const sealedNode = sealedIdx !== undefined ? exp.nodes[sealedIdx] : null;
       const sealedLabel = sealedNode ? `  ╱ _sealed: ${dungeonRoomLabel(sealedNode.type)}_` : "";
@@ -1660,30 +1662,34 @@ function renderDoorPrompt(exp: ExpeditionState, cmd: string): string {
   return lines.join("\n");
 }
 
-// Picks the next node index after the current room is resolved. Three cases:
+// Picks the next node index after the current room is resolved. Returns both the
+// pick and the post-pop pool so callers don't recompute it. Three cases:
 //   1. Pool has 2+ unvisited middle rooms: pop two, set pending_doors, signal "doors"
 //   2. Pool has exactly 1: pop it, auto-advance (no door choice — last middle room)
 //   3. Pool is empty: advance to sub-boss (nodes.length - 2)
 //   4. Already at sub-boss when called: advance to treasure
-function pickNextRoom(exp: ExpeditionState): { type: "doors"; pair: number[] } | { type: "node"; index: number } {
+type NextRoom =
+  | { type: "doors"; pair: number[]; remainingPool: number[] }
+  | { type: "node"; index: number; remainingPool: number[] };
+
+function pickNextRoom(exp: ExpeditionState): NextRoom {
   const subBossIdx = exp.nodes.length - 2;
   const treasureIdx = exp.nodes.length - 1;
-
-  // If currently at sub-boss, advance to treasure.
-  if (exp.current === subBossIdx) {
-    return { type: "node", index: treasureIdx };
-  }
-
   const pool = [...(exp.pool ?? [])];
+
+  if (exp.current === subBossIdx) {
+    return { type: "node", index: treasureIdx, remainingPool: pool };
+  }
   if (pool.length >= 2) {
-    const pair = [pool.shift()!, pool.shift()!];
-    return { type: "doors", pair };
+    const a = pool.shift()!;
+    const b = pool.shift()!;
+    return { type: "doors", pair: [a, b], remainingPool: pool };
   }
   if (pool.length === 1) {
-    return { type: "node", index: pool[0] };
+    const idx = pool.shift()!;
+    return { type: "node", index: idx, remainingPool: pool };
   }
-  // Pool empty — advance to sub-boss.
-  return { type: "node", index: subBossIdx };
+  return { type: "node", index: subBossIdx, remainingPool: pool };
 }
 
 async function advanceDungeonRoom(
@@ -1711,11 +1717,10 @@ async function advanceDungeonRoom(
   }
 
   if (next.type === "doors") {
-    // Present a door choice — don't advance current yet. Pop the chosen pair from pool.
-    const newPool = (exp.pool ?? []).filter((idx) => idx !== next.pair[0] && idx !== next.pair[1]);
+    // Present a door choice — don't advance current yet.
     const updatedExp: ExpeditionState = {
       ...exp,
-      pool: newPool,
+      pool: next.remainingPool,
       pending_doors: next.pair,
     };
     const updatedScene: SceneJson = { ...quest.scene, expedition: updatedExp };
@@ -1734,12 +1739,10 @@ async function advanceDungeonRoom(
   const nextNode = exp.nodes[newCurrent];
   if (!nextNode) return ephemeral("Dungeon is in a bad state — no next room.");
 
-  // If we just popped the last middle room from pool, drop pool too.
-  const newPool = (exp.pool ?? []).filter((idx) => idx !== newCurrent);
   const updatedExp: ExpeditionState = {
     ...exp,
     current: newCurrent,
-    pool: newPool,
+    pool: next.remainingPool,
     pending_doors: undefined,
     visited_count: (exp.visited_count ?? 1) + 1,
     visited_indices: [...(exp.visited_indices ?? [exp.current]), newCurrent],

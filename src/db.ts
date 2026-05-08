@@ -82,6 +82,9 @@ export async function createCharacter(
   input: CreateCharacterInput,
 ): Promise<Character> {
   const now = Date.now();
+  // Mana, shield, position, last_rest_at, last_long_rest_at, downed_until, and
+  // tiered keys (keys_bronze/silver/gold) all rely on the ALTER TABLE DEFAULTs
+  // from their respective migrations.
   await db
     .prepare(
       `INSERT INTO characters
