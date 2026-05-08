@@ -84,7 +84,14 @@ describe("rollItem", () => {
       if (r.type === "tool" || r.type === "scroll") {
         sawCatalog = true;
         expect(r.catalog_name).toBeDefined();
-        expect(["Caffeine Bomb", "Hotfix Grenade", "Rebase Scroll", "Production Outage"]).toContain(r.catalog_name);
+        expect([
+          "Caffeine Bomb",
+          "Hotfix Grenade",
+          "Rebase Scroll",
+          "Production Outage",
+          "Espresso Shot",
+          "Poison Vial",
+        ]).toContain(r.catalog_name);
         // Power is computed from tier, not random — must be > 0 for tools, 0 or specific for scrolls.
         if (r.type === "tool") expect(r.power).toBeGreaterThan(0);
       }

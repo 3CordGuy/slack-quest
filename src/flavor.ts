@@ -146,6 +146,29 @@ export function generateScar(monster: string): string {
 
 export type ItemType = "weapon" | "armor" | "consumable" | "magic" | "revive" | "tool" | "scroll";
 
+// Status effects — applied to player characters or monsters and tick on the
+// affected actor's own combat action / monster turn. v1 set is HP-based; future
+// effects could touch cooldown, damage modifiers, etc.
+export type EffectType = "regen" | "bleeding" | "burning" | "poisoned";
+
+export interface EffectMeta {
+  emoji: string;
+  name: string;
+  // "buff" = HoT or beneficial; "debuff" = DoT or harmful. Drives display tone.
+  kind: "buff" | "debuff";
+  // True if the per-tick HP change ignores armor (currently informational —
+  // ticks apply directly to HP without the armor reduction in performMonsterTurn).
+  ignoresArmor: boolean;
+  blurb: string;
+}
+
+export const EFFECT_META: Record<EffectType, EffectMeta> = {
+  regen: { emoji: "🟢", name: "Regen", kind: "buff", ignoresArmor: true, blurb: "Restores HP each action." },
+  bleeding: { emoji: "🔴", name: "Bleeding", kind: "debuff", ignoresArmor: false, blurb: "Loses HP each action." },
+  burning: { emoji: "🔥", name: "Burning", kind: "debuff", ignoresArmor: true, blurb: "Loses HP each action; ignores armor." },
+  poisoned: { emoji: "☠️", name: "Poisoned", kind: "debuff", ignoresArmor: true, blurb: "Loses HP each turn." },
+};
+
 export type WeaponRange = "melee" | "ranged";
 
 export const SHIELD_CAP_MULTIPLIER = 2; // shield caps at SHIELD_CAP_MULTIPLIER × max_hp
@@ -235,6 +258,25 @@ export const ITEM_CATALOG: CatalogEntry[] = [
     rarity: "rare",
     computePower: () => 30, // boss damage % — non-boss instakill
     blurb: "Non-boss: instant kill. Boss: drops 30% HP.",
+  },
+  {
+    name: "Espresso Shot",
+    emoji: "☕",
+    type: "tool",
+    rarity: "uncommon",
+    // Power = HP regen per action. Effect duration is fixed at 5 actions, applied
+    // at use time (handleUse → useEspressoShot).
+    computePower: (tier) => 2 + Math.floor(Math.max(1, tier) / 2),
+    blurb: "Self-applies 🟢 Regen — restores power HP per action for 5 actions.",
+  },
+  {
+    name: "Poison Vial",
+    emoji: "🧪",
+    type: "tool",
+    rarity: "uncommon",
+    // Power = HP per monster turn. Tick count fixed at 4.
+    computePower: (tier) => 2 + Math.floor(Math.max(1, tier) / 2),
+    blurb: "Applies ☠️ Poisoned to the monster — drains power HP per monster turn for 4 turns.",
   },
 ];
 

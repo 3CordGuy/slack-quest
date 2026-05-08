@@ -1,6 +1,15 @@
 // D1 query helpers. Raw prepared statements — no ORM.
 
-import type { ItemType, Rarity, WeaponRange } from "./flavor";
+import type { EffectType, ItemType, Rarity, WeaponRange } from "./flavor";
+
+// Active status effect on a character or monster. Ticks on the affected actor's
+// own combat action / monster turn. Cleared at quest end.
+export interface StatusEffect {
+  type: EffectType;
+  magnitude: number;       // per-tick HP delta (positive for HoT, positive number stored, sign derived from kind)
+  remaining: number;       // ticks left before the effect expires
+  source?: string;         // free-form attribution shown in flavor (e.g. "Espresso Shot")
+}
 
 export interface Item {
   id: number;
@@ -48,16 +57,24 @@ export interface Character {
   keys_bronze: number;
   keys_silver: number;
   keys_gold: number;
+  // Active status effects (regen, bleeding, etc.). JSON-serialized in DB; cleared
+  // at quest end. Empty array when none.
+  effects: StatusEffect[];
   created_at: number;
   last_active: number;
 }
 
-interface CharacterRow extends Omit<Character, "scars"> {
+interface CharacterRow extends Omit<Character, "scars" | "effects"> {
   scars: string;
+  effects: string;
 }
 
 function rowToCharacter(row: CharacterRow): Character {
-  return { ...row, scars: JSON.parse(row.scars) as string[] };
+  return {
+    ...row,
+    scars: JSON.parse(row.scars) as string[],
+    effects: JSON.parse(row.effects) as StatusEffect[],
+  };
 }
 
 export async function getCharacter(db: D1Database, userId: string): Promise<Character | null> {
@@ -82,9 +99,9 @@ export async function createCharacter(
   input: CreateCharacterInput,
 ): Promise<Character> {
   const now = Date.now();
-  // Mana, shield, position, last_rest_at, last_long_rest_at, downed_until, and
-  // tiered keys (keys_bronze/silver/gold) all rely on the ALTER TABLE DEFAULTs
-  // from their respective migrations.
+  // Mana, shield, position, last_rest_at, last_long_rest_at, downed_until,
+  // tiered keys (keys_bronze/silver/gold), and effects (defaulting to '[]')
+  // all rely on the ALTER TABLE DEFAULTs from their respective migrations.
   await db
     .prepare(
       `INSERT INTO characters
@@ -216,6 +233,9 @@ export interface SceneJson {
   upcoming_waves?: GauntletWave[];
   // Expedition-only.
   expedition?: ExpeditionState;
+  // Active monster status effects (poisoned, etc.). Tick on monster turns.
+  // Cleared when the monster dies / scene transitions to a new monster.
+  monster_effects?: StatusEffect[];
 }
 
 export interface ActiveQuest {
@@ -861,6 +881,32 @@ export async function addGold(
   await db
     .prepare("UPDATE characters SET gold = gold + ?, last_active = ? WHERE slack_user_id = ?")
     .bind(amount, Date.now(), userId)
+    .run();
+}
+
+// Replaces the character's status-effect array. Used to apply, advance, or clear
+// effects. Callers compute the new array (e.g. via tickPlayerEffects in commands.ts)
+// and write it back atomically.
+export async function setCharacterEffects(
+  db: D1Database,
+  userId: string,
+  effects: StatusEffect[],
+): Promise<void> {
+  await db
+    .prepare("UPDATE characters SET effects = ?, last_active = ? WHERE slack_user_id = ?")
+    .bind(JSON.stringify(effects), Date.now(), userId)
+    .run();
+}
+
+// Clears all effects from every party member of a quest. Called at quest end
+// (resolveVictory / resolveDeath / resolveExpeditionVictory / resolveFlee-fail).
+export async function clearPartyEffects(db: D1Database, questId: number): Promise<void> {
+  await db
+    .prepare(
+      `UPDATE characters SET effects = '[]', last_active = ?
+       WHERE slack_user_id IN (SELECT character_id FROM quest_party WHERE quest_id = ?)`,
+    )
+    .bind(Date.now(), questId)
     .run();
 }
 

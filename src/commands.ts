@@ -62,14 +62,15 @@ import {
   isFighter,
   joinQuest,
   markQuestStatus,
+  clearPartyEffects,
   refillMana,
   releaseShopClaim,
-  resetCooldownsFor,
-  trySetHaggleOutcome,
   removeItem,
+  resetCooldownsFor,
   reviveCharacter,
   saveScene,
   scaleMonsterForJoin,
+  setCharacterEffects,
   setCharacterHp,
   setCharacterHpAndShield,
   setPosition,
@@ -77,6 +78,7 @@ import {
   trySaveExpeditionAdvance,
   tryDeductGold,
   tryDeductMana,
+  trySetHaggleOutcome,
   tryUpdateScene,
   type ActiveQuest,
   type BattlePosition,
@@ -91,6 +93,7 @@ import {
   type QuestVariant,
   type SceneJson,
   type ShopItem,
+  type StatusEffect,
 } from "./db";
 import {
   applyDamageWithShield,
@@ -104,6 +107,7 @@ import {
   resolveSignature,
 } from "./combat";
 import {
+  EFFECT_META,
   classByName,
   dropChance,
   findCatalogEntry,
@@ -580,6 +584,21 @@ function buildSheetBlocks(c: Character, weapon: Item | null, armor: Item | null)
     blocks.push({
       type: "section",
       text: { type: "mrkdwn", text: `*🗝️ Keys*\n${keyDisplay}` },
+    });
+  }
+
+  // 5b. Active status effects (only if any are present)
+  if (c.effects && c.effects.length > 0) {
+    blocks.push({ type: "divider" });
+    const effectLines = c.effects.map((e) => {
+      const meta = EFFECT_META[e.type];
+      if (!meta) return `❓ unknown ${e.remaining}`;
+      const sign = meta.kind === "buff" ? "+" : "-";
+      return `${meta.emoji} *${meta.name}* — ${sign}${e.magnitude} HP/action, *${e.remaining}* action${e.remaining !== 1 ? "s" : ""} left`;
+    });
+    blocks.push({
+      type: "section",
+      text: { type: "mrkdwn", text: `*✨ Active Effects*\n${effectLines.join("\n")}` },
     });
   }
 
@@ -1099,6 +1118,52 @@ function canRestBetweenRooms(quest: ActiveQuest): boolean {
   return true;
 }
 
+// Status-effect tick. Returns the post-tick effects array (with expired entries
+// dropped) and the cumulative HP delta to apply to the actor. Magnitude is
+// stored as a positive integer; sign comes from EFFECT_META.kind (buff = +HP,
+// debuff = -HP). Each entry's `remaining` decrements once per call.
+function tickEffects(effects: StatusEffect[]): { next: StatusEffect[]; hpDelta: number; ticked: StatusEffect[] } {
+  let hpDelta = 0;
+  const ticked: StatusEffect[] = [];
+  const next: StatusEffect[] = [];
+  for (const e of effects) {
+    const meta = EFFECT_META[e.type];
+    if (!meta) {
+      // Unknown effect — drop it gracefully.
+      continue;
+    }
+    const sign = meta.kind === "buff" ? 1 : -1;
+    hpDelta += sign * e.magnitude;
+    ticked.push(e);
+    const remaining = e.remaining - 1;
+    if (remaining > 0) {
+      next.push({ ...e, remaining });
+    }
+  }
+  return { next, hpDelta, ticked };
+}
+
+// Compact effect summary for display next to an actor's name (e.g. in /sq me or
+// combat output). Returns "" when there are no effects.
+function effectsBadge(effects: StatusEffect[] | undefined | null): string {
+  if (!effects || effects.length === 0) return "";
+  return effects.map((e) => `${EFFECT_META[e.type]?.emoji ?? "❓"}${e.remaining}`).join(" ");
+}
+
+// Applies an effect to a character. If an effect of the same type already exists,
+// REFRESHES it (resets remaining to the new value, keeps higher magnitude).
+function withEffectApplied(effects: StatusEffect[], add: StatusEffect): StatusEffect[] {
+  const idx = effects.findIndex((e) => e.type === add.type);
+  if (idx === -1) return [...effects, add];
+  const existing = effects[idx];
+  const merged: StatusEffect = {
+    ...add,
+    magnitude: Math.max(existing.magnitude, add.magnitude),
+    remaining: Math.max(existing.remaining, add.remaining),
+  };
+  return effects.map((e, i) => (i === idx ? merged : e));
+}
+
 // Is there a live monster in the current scene that should retaliate when a player
 // uses mana? Heal/shield call this to skip retaliation when the party is between
 // rooms (dungeon: pending door, or non-combat room, or combat won) — a dead Stale PR
@@ -1436,7 +1501,7 @@ async function handleCombat(
   ctx: ExecutionContext,
   action: CombatAction,
 ): Promise<CommandResponse> {
-  const character = await getCharacter(env.DB, payload.user_id);
+  let character = await getCharacter(env.DB, payload.user_id);
   if (!character) return ephemeral(`You need to \`${payload.command} roll\` a character first.`);
   if (!isFighter(character)) {
     return ephemeral("You're downed and can't act. Recover, then try again.");
@@ -1555,12 +1620,25 @@ async function handleCombat(
       : `<@${payload.user_id}> ${verb} for *${damage}* \`${hit.roll} + ${modBreakdown}\`.`;
   }
 
-  const newMonsterHp = quest.scene.monster_hp - damage;
+  // Tick monster's status effects (e.g. poison) — applied alongside the player's
+  // damage in the same atomic write. Effects with `remaining > 0` after this tick
+  // are kept on the new scene; expired effects are dropped.
+  const monsterTick = tickEffects(quest.scene.monster_effects ?? []);
+  const monsterEffectLines: string[] = monsterTick.ticked.map((e) => {
+    const meta = EFFECT_META[e.type];
+    const sign = meta.kind === "buff" ? "+" : "-";
+    return `${meta.emoji} ${quest.scene.monster_name} ${meta.name.toLowerCase()} ticks ${sign}${e.magnitude} HP.`;
+  });
+  const newMonsterHp = quest.scene.monster_hp - damage + monsterTick.hpDelta;
   const willKill = newMonsterHp <= 0;
 
   // Boss phase 1 → 2 transition: crossing the 50% HP threshold powers it up.
   // Bake the flag into the scene so the same atomic write applies HP + phase together.
-  let updatedScene: SceneJson = { ...quest.scene, monster_hp: Math.max(0, newMonsterHp) };
+  let updatedScene: SceneJson = {
+    ...quest.scene,
+    monster_hp: Math.max(0, newMonsterHp),
+    monster_effects: monsterTick.next,
+  };
   let bossPhaseTransition = false;
   if (
     !willKill &&
@@ -1591,17 +1669,66 @@ async function handleCombat(
   }
   await appendLog(env.DB, quest.id, payload.user_id, action, `${damage} dmg${willKill ? " (kill)" : ""}`);
 
+  // Tick the actor's own status effects (regen heals; bleed/burn damages). Apply
+  // HP delta + save updated effects array. If a debuff DoT kills the actor, route
+  // to resolveDeath with both their attack line AND the tick line in preamble so
+  // partymates see what happened.
+  const playerTick = tickEffects(character.effects ?? []);
+  const playerTickLines: string[] = playerTick.ticked.map((e) => {
+    const meta = EFFECT_META[e.type];
+    const sign = meta.kind === "buff" ? "+" : "-";
+    return `${meta.emoji} <@${payload.user_id}> ${meta.name.toLowerCase()} ticks ${sign}${e.magnitude} HP.`;
+  });
+  let postTickEffects = playerTick.next;
+
+  // Effects applied by this action (NOT yet ticked — they take effect next action).
+  // - Boss phase 2 transition burns the actor: -3 HP per action × 3 actions.
+  const newEffects: StatusEffect[] = [];
+  if (bossPhaseTransition) {
+    newEffects.push({ type: "burning", magnitude: 3, remaining: 3, source: `${quest.scene.monster_name} phase 2` });
+  }
+  const newEffectLines: string[] = [];
+  for (const eff of newEffects) {
+    postTickEffects = withEffectApplied(postTickEffects, eff);
+    const meta = EFFECT_META[eff.type];
+    newEffectLines.push(`${meta.emoji} <@${payload.user_id}> is now *${meta.name}* (${eff.remaining} actions).`);
+  }
+
+  let postTickHp = character.hp + playerTick.hpDelta;
+  const effectsChanged =
+    playerTick.hpDelta !== 0 || playerTick.ticked.length > 0 || newEffects.length > 0;
+  if (effectsChanged) {
+    await setCharacterEffects(env.DB, payload.user_id, postTickEffects);
+  }
+  if (playerTick.hpDelta !== 0) {
+    postTickHp = Math.max(0, Math.min(character.max_hp, postTickHp));
+    await setCharacterHp(env.DB, payload.user_id, postTickHp);
+  }
+  // DoT tick killed the actor — death-by-effect. Route through standard death flow
+  // before the kill/turn branches so the narration order makes sense.
+  if (postTickHp <= 0) {
+    return resolveDeath(payload, env, ctx, character, quest, fighters, [
+      playerLine,
+      ...monsterEffectLines,
+      ...playerTickLines,
+      ...newEffectLines,
+    ]);
+  }
+  // Update the in-memory character so downstream code (monster turn target HP,
+  // ephemeral stat lines) sees the post-tick HP.
+  character = { ...character, hp: postTickHp, effects: postTickEffects };
+
   if (willKill) {
     // Gauntlet: advance to next wave instead of triggering victory.
     if (quest.scene.variant === "gauntlet" && quest.scene.upcoming_waves && quest.scene.upcoming_waves.length > 0) {
-      return resolveGauntletAdvance(payload, env, ctx, quest, [playerLine, `🏆 *${quest.scene.monster_name}* falls.`]);
+      return resolveGauntletAdvance(payload, env, ctx, quest, [playerLine, ...monsterEffectLines, ...playerTickLines, ...newEffectLines, `🏆 *${quest.scene.monster_name}* falls.`]);
     }
     // Expedition (dungeon): branch on whether this was a mid-dungeon room or the
     // final sub-boss. The next room being treasure means we just killed the boss.
     if (quest.scene.variant === "dungeon") {
       const exp = quest.scene.expedition;
       const currentNode = exp?.nodes[exp.current];
-      const preamble: string[] = [playerLine, `🏆 *${quest.scene.monster_name}* falls.`];
+      const preamble: string[] = [playerLine, ...monsterEffectLines, ...playerTickLines, ...newEffectLines, `🏆 *${quest.scene.monster_name}* falls.`];
       // Drop a tiered key onto the killing player. Sub-boss drops silver, regular
       // combat rooms drop bronze. Legacy nodes (pre-tier rollout) default to bronze.
       if (currentNode?.drops_key) {
@@ -1617,6 +1744,9 @@ async function handleCombat(
     }
     return resolveVictory(payload, env, ctx, character, quest, fighters, [
       playerLine,
+      ...monsterEffectLines,
+      ...playerTickLines,
+      ...newEffectLines,
       `🏆 *${quest.scene.monster_name}* falls.`,
     ]);
   }
@@ -1626,7 +1756,13 @@ async function handleCombat(
   const turn = await performMonsterTurn(env, quest, fighters, character, equippedArmor);
 
   if (turn.willKillTarget) {
-    return resolveDeath(payload, env, ctx, turn.target, quest, fighters, [playerLine, turn.monsterLine]);
+    return resolveDeath(payload, env, ctx, turn.target, quest, fighters, [
+      playerLine,
+      ...monsterEffectLines,
+      ...playerTickLines,
+      ...newEffectLines,
+      turn.monsterLine,
+    ]);
   }
 
   await setCharacterHpAndShield(env.DB, turn.target.slack_user_id, turn.dmg.newHp, turn.dmg.newShield);
@@ -1635,6 +1771,9 @@ async function handleCombat(
   const shieldDisplay = turn.dmg.newShield > 0 ? ` 🛡${turn.dmg.newShield}` : "";
   const ephemeralLines = [
     playerLine,
+    ...monsterEffectLines,
+    ...playerTickLines,
+      ...newEffectLines,
     `*${quest.scene.monster_name}*: ${Math.max(0, newMonsterHp)}/${quest.scene.monster_max_hp}`,
     turn.monsterLine,
     `*${turn.target.name}*: ${turn.dmg.newHp}/${turn.target.max_hp}${shieldDisplay}`,
@@ -1661,7 +1800,7 @@ async function handleCombat(
     // Both player + monster lines already include the dice math (e.g. "5 dmg `3 + 2`"
      // and "hits back for 4 `4 − 0 armor` — 2 absorbed by shield, 2 to HP"), so they
      // double as the events section.
-    const events = [playerLine, turn.monsterLine];
+    const events = [playerLine, ...monsterEffectLines, ...playerTickLines, ...newEffectLines, turn.monsterLine];
 
     // Notification fallback: plain text. Block Kit drives the actual visual layout.
     const fallbackText = [
@@ -1701,7 +1840,10 @@ async function resolveFlee(
     await appendLog(env.DB, quest.id, payload.user_id, "flee", "escaped");
     const others = fighters.filter((c) => c.slack_user_id !== payload.user_id);
     const partyContinues = others.length > 0;
-    if (!partyContinues) await markQuestStatus(env.DB, quest.id, "failed");
+    if (!partyContinues) {
+      await markQuestStatus(env.DB, quest.id, "failed");
+      await clearPartyEffects(env.DB, quest.id);
+    }
 
     const ephem = partyContinues
       ? `🏃 You escape *${quest.scene.monster_name}*. The rest fight on.`
@@ -1827,6 +1969,7 @@ async function resolveVictory(
     .filter(() => Math.random() < variantDrop);
 
   await markQuestStatus(env.DB, quest.id, "completed");
+  await clearPartyEffects(env.DB, quest.id);
   await appendLog(env.DB, quest.id, payload.user_id, "victory", `+${xpEach}xp/+${goldEach}g × ${fighters.length}, ${lootRolls.length} drops`);
 
   const ephemeralLines = [
@@ -1907,6 +2050,9 @@ async function resolveGauntletAdvance(
     scene: next.scene,
     wave: newWave,
     upcoming_waves: remaining,
+    // New wave's monster starts fresh — clear any effects (poison etc.) that were
+    // on the previous wave's foe.
+    monster_effects: [],
   };
 
   // Reached only after a kill-blow conditional update succeeded, so no concurrent
@@ -1951,6 +2097,7 @@ async function resolveExpeditionToTreasure(
     // Shouldn't be reachable — expeditions always build combat → treasure. If it ever
     // does (corrupted scene_json, manual DB edit, etc.), end the quest cleanly.
     await markQuestStatus(env.DB, quest.id, "completed");
+    await clearPartyEffects(env.DB, quest.id);
     return ephemeral([...preamble, "_(no treasure node found — quest closed.)_"].join("\n"));
   }
 
@@ -2013,6 +2160,7 @@ async function resolveExpeditionVictory(
   }
 
   await markQuestStatus(env.DB, quest.id, "completed");
+  await clearPartyEffects(env.DB, quest.id);
   await appendLog(env.DB, quest.id, payload.user_id, "expedition_complete", `taker:${taker.name}, item:${takenItem.item_name}`);
 
   ctx.waitUntil((async () => {
@@ -2159,6 +2307,8 @@ async function advanceDungeonRoom(
     monster_max_hp: isCombat ? nextNode.monster_max_hp! : 0,
     monster_hp: isCombat ? nextNode.monster_max_hp! : 0,
     tier: isCombat ? nextNode.tier! : quest.scene.tier,
+    // New room's monster starts fresh — clear any effects from the prior room.
+    monster_effects: [],
   };
 
   const advanced = await trySaveExpeditionAdvance(env.DB, quest.id, updatedScene, exp.current);
@@ -2216,6 +2366,8 @@ async function resolveDoorChoice(
     monster_max_hp: isCombat ? chosenNode.monster_max_hp! : 0,
     monster_hp: isCombat ? chosenNode.monster_max_hp! : 0,
     tier: isCombat ? chosenNode.tier! : quest.scene.tier,
+    // Door pick — new room's monster starts fresh.
+    monster_effects: [],
   };
 
   const ok = await trySaveExpeditionAdvance(env.DB, quest.id, updatedScene, exp.current);
@@ -2511,6 +2663,7 @@ async function resolveDeath(
 
   if (questEnds) {
     await markQuestStatus(env.DB, quest.id, "failed");
+    await clearPartyEffects(env.DB, quest.id);
     ephemeralLines.push(`☠️ The party is broken. Quest fails.`);
   } else {
     ephemeralLines.push(
@@ -2923,7 +3076,89 @@ async function useToolOrScroll(
   if (entry.name === "Production Outage") {
     return useProductionOutage(payload, env, ctx, character, item, quest, entry);
   }
+  if (entry.name === "Espresso Shot") {
+    return useEspressoShot(payload, env, ctx, character, item, quest, entry);
+  }
+  if (entry.name === "Poison Vial") {
+    return usePoisonVial(payload, env, ctx, character, item, quest, entry);
+  }
   return ephemeral(`*${item.item_name}* doesn't have a wired-up effect yet.`);
+}
+
+// Espresso Shot — self-applies 🟢 Regen for 5 actions at item.power HP/tick.
+// Free action variant: the buff applies but the monster does NOT retaliate (it's
+// a quick chug, not a swing). Item is consumed.
+async function useEspressoShot(
+  payload: SlashCommandPayload,
+  env: Env,
+  ctx: ExecutionContext,
+  character: Character,
+  item: Item,
+  quest: ActiveQuest,
+  entry: { name: string; emoji: string },
+): Promise<CommandResponse> {
+  const newEffect: StatusEffect = {
+    type: "regen",
+    magnitude: item.power,
+    remaining: 5,
+    source: entry.name,
+  };
+  const updated = withEffectApplied(character.effects ?? [], newEffect);
+  await setCharacterEffects(env.DB, payload.user_id, updated);
+  await removeItem(env.DB, item.id);
+  await appendLog(env.DB, quest.id, payload.user_id, "tool", `${entry.name}: regen +${item.power} × 5`);
+
+  const playerLine = `${entry.emoji} <@${payload.user_id}> chugs *${item.item_name}* — gains 🟢 *Regen* (+${item.power} HP × 5 actions). _(free action)_`;
+  ctx.waitUntil(postToThread(env, quest, blockQuote(playerLine)));
+  return ephemeral(playerLine);
+}
+
+// Poison Vial — applies ☠️ Poisoned to the monster for 4 ticks at item.power HP each.
+// Tool consumes a turn (cooldown + monster retaliates).
+async function usePoisonVial(
+  payload: SlashCommandPayload,
+  env: Env,
+  ctx: ExecutionContext,
+  character: Character,
+  item: Item,
+  quest: ActiveQuest,
+  entry: { name: string; emoji: string },
+): Promise<CommandResponse> {
+  if (!hasLiveMonster(quest)) {
+    return ephemeral(`*${item.item_name}* needs a live foe to inject.`);
+  }
+  const newEffect: StatusEffect = {
+    type: "poisoned",
+    magnitude: item.power,
+    remaining: 4,
+    source: entry.name,
+  };
+  const updatedMonsterEffects = withEffectApplied(quest.scene.monster_effects ?? [], newEffect);
+  const updatedScene: SceneJson = { ...quest.scene, monster_effects: updatedMonsterEffects };
+  const ok = await tryUpdateScene(env.DB, quest.id, updatedScene, quest.scene.monster_hp);
+  if (!ok) return ephemeral("⏱️ The fight moved on. Your tool wasn't consumed — try again.");
+
+  await removeItem(env.DB, item.id);
+  await appendLog(env.DB, quest.id, payload.user_id, "tool", `${entry.name}: poison ${item.power}/tick × 4`);
+
+  const playerLine = `${entry.emoji} <@${payload.user_id}> hurls *${item.item_name}* — *${quest.scene.monster_name}* is now ☠️ *Poisoned* (-${item.power} HP × 4 turns).`;
+
+  // Tool consumes a turn — monster gets a swing in retaliation.
+  const fighters = (await getQuestParty(env.DB, quest.id)).filter(isFighter);
+  const actorArmor = await getEquipped(env.DB, payload.user_id, "armor");
+  const turn = await performMonsterTurn(env, quest, fighters, character, actorArmor);
+
+  if (turn.willKillTarget) {
+    return resolveDeath(payload, env, ctx, turn.target, quest, fighters, [playerLine, turn.monsterLine]);
+  }
+  await setCharacterHpAndShield(env.DB, turn.target.slack_user_id, turn.dmg.newHp, turn.dmg.newShield);
+  await appendLog(env.DB, quest.id, "monster", "attack", `${turn.positionAdjusted} dmg → ${turn.target.name}`);
+
+  const targetShield = turn.dmg.newShield > 0 ? ` 🛡${turn.dmg.newShield}` : "";
+  const targetStat = `*${turn.target.name}*: ${turn.dmg.newHp}/${turn.target.max_hp}${targetShield}`;
+  const ephem = [playerLine, turn.monsterLine, targetStat].join("\n");
+  ctx.waitUntil(postToThread(env, quest, [blockQuote(playerLine), "", turn.monsterLine, targetStat].join("\n")));
+  return ephemeral(ephem);
 }
 
 // Caffeine Bomb / Hotfix Grenade — deal item.power damage, ignores armor, capped
@@ -4022,7 +4257,9 @@ function formatPartyLine(party: Character[]): string {
 // Monster line with the boss phase 2 marker if active.
 function formatMonsterLine(scene: SceneJson, currentHp: number): string {
   const phase = scene.variant === "boss" && scene.boss_phase === 2 ? " 👑 *P2*" : "";
-  return `*${scene.monster_name}*${phase} — ${Math.max(0, currentHp)}/${scene.monster_max_hp}`;
+  const effectsTag = effectsBadge(scene.monster_effects);
+  const effectsPart = effectsTag ? ` ${effectsTag}` : "";
+  return `*${scene.monster_name}*${phase}${effectsPart} — ${Math.max(0, currentHp)}/${scene.monster_max_hp}`;
 }
 
 // One character's compact stat card for Block Kit fields. Downed members render as
