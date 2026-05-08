@@ -97,15 +97,19 @@ async function generateMonsterIdentity(
     ...avoidLines,
   ].join("\n");
 
+  console.log("identity:start", { variant, hpFloor, hpCeil, avoidCount: avoidNames.length });
   try {
     const res = (await ai.run(MODEL, {
       messages: [
         { role: "system", content: system },
         { role: "user", content: "Pick the next foe now." },
       ],
-      max_tokens: 60,
+      // Bumped from 60 to 150 — Llama sometimes adds a brief preamble before
+      // the field block, and 60 was too tight to fit both fields after that.
+      max_tokens: 150,
     })) as AiRunResponse;
     const text = res.response ?? "";
+    console.log("identity:received", { len: text.length, preview: text.slice(0, 200) });
     const nameMatch = /\*{0,2}MONSTER_NAME\*{0,2}\s*:\s*(.+)/i.exec(text);
     const hpMatch = /\*{0,2}MONSTER_HP\*{0,2}\s*:\s*\*{0,2}(\d+)/i.exec(text);
     const name = nameMatch?.[1] ? stripWrappers(nameMatch[1].split("\n")[0]) : "";
@@ -113,11 +117,13 @@ async function generateMonsterIdentity(
     if (Number.isNaN(hp)) hp = Math.floor((hpFloor + hpCeil) / 2);
     hp = Math.min(hpCeil, Math.max(hpFloor, hp));
     if (!name) {
-      console.warn("identity parse fallback", { preview: text.slice(0, 160) });
+      console.warn("identity:parse-fallback", { preview: text.slice(0, 200) });
       return { name: fallbackMonsterName(), hp };
     }
+    console.log("identity:done", { name, hp });
     return { name, hp };
-  } catch {
+  } catch (err) {
+    console.error("identity:error", { err: err instanceof Error ? err.message : String(err) });
     return { name: fallbackMonsterName(), hp: Math.floor((hpFloor + hpCeil) / 2) };
   }
 }
@@ -147,24 +153,31 @@ async function generateSceneForMonster(
     elite ? "ELITE quest — perma-death looms." : "",
     `Beat: ${variantLine}`,
   ].filter(Boolean).join("\n");
+  console.log("scene:start", { monsterName, variant });
   try {
     const res = (await ai.run(MODEL, {
       messages: [
         { role: "system", content: system },
         { role: "user", content: user },
       ],
-      max_tokens: 160,
+      max_tokens: 220,
     })) as AiRunResponse;
     const text = (res.response ?? "").trim().replace(/^["'`]|["'`]$/g, "");
-    if (!text) return fallbackSceneText();
+    console.log("scene:received", { len: text.length, preview: text.slice(0, 200) });
+    if (!text) {
+      console.warn("scene:empty-fallback");
+      return fallbackSceneText();
+    }
     // Final consistency check — log a warning if the LLM still slipped a different
     // name in (rare with the explicit-name prompt). We return the text anyway since
     // it's still on-tone narration; the alternative is a generic fallback.
     if (!sceneMentionsName(text, monsterName)) {
-      console.warn("scene/name mismatch in step-2 regen", { monsterName, preview: text.slice(0, 120) });
+      console.warn("scene:name-mismatch", { monsterName, preview: text.slice(0, 120) });
     }
+    console.log("scene:done", { monsterName });
     return text;
-  } catch {
+  } catch (err) {
+    console.error("scene:error", { err: err instanceof Error ? err.message : String(err) });
     return fallbackSceneText();
   }
 }
