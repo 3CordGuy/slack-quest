@@ -502,25 +502,106 @@ async function handleMe(payload: SlashCommandPayload, env: Env): Promise<Command
     getEquipped(env.DB, payload.user_id, "weapon"),
     getEquipped(env.DB, payload.user_id, "armor"),
   ]);
-  const text = formatSheet(c, weapon, armor);
-  // Block Kit version: same content as the plain-text sheet, plus a row of action
-  // buttons (Inventory). Slack falls back to `text` on clients that don't render blocks.
-  const blocks: unknown[] = [
-    { type: "section", text: { type: "mrkdwn", text } },
-    {
-      type: "actions",
-      block_id: "me_actions",
-      elements: [
-        {
-          type: "button",
-          action_id: "inventory",
-          value: "open",
-          text: { type: "plain_text", text: "🎒 Inventory" },
-        },
-      ],
-    },
+  const text = formatSheet(c, weapon, armor); // plain-text fallback for non-Block-Kit clients
+  return { text, response_type: "ephemeral", blocks: buildSheetBlocks(c, weapon, armor) };
+}
+
+// Sectioned Block Kit layout for /sq me. Sections (with dividers between):
+//   1. Header: name + class
+//   2. Vitals: level, xp, position, HP, mana, gold, shield (if any)
+//   3. Equipped: weapon + armor
+//   4. Signature: class signature ability
+//   5. Keys: tiered dungeon keys (only shown if non-zero)
+//   6. Scars / downed status (only shown if applicable)
+//   7. Actions: [🎒 Inventory] button
+function buildSheetBlocks(c: Character, weapon: Item | null, armor: Item | null): unknown[] {
+  const blocks: unknown[] = [];
+
+  // 1. Header
+  blocks.push({
+    type: "section",
+    text: { type: "mrkdwn", text: `*${c.name}*, the *${c.class}*` },
+  });
+
+  // 2. Vitals — 2-row fields layout for compact density. Slack fields render
+  // as a 2-col grid; first row is one combined line for cleaner mobile reading.
+  const shieldNote = c.shield > 0 ? `  •  🛡️ ${c.shield}` : "";
+  const vitalsLines = [
+    `🎚️ *Level ${c.level}*  •  ✨ ${c.xp} XP  •  ${positionEmoji(c.position)} ${c.position}`,
+    `❤️ *${c.hp}/${c.max_hp}* HP  •  🔮 *${c.mana}/${c.max_mana}* mana  •  💰 *${c.gold}* gold${shieldNote}`,
   ];
-  return { text, response_type: "ephemeral", blocks };
+  blocks.push({
+    type: "section",
+    text: { type: "mrkdwn", text: vitalsLines.join("\n") },
+  });
+
+  // 3. Equipped
+  blocks.push({ type: "divider" });
+  const equipLines: string[] = ["*⚔️ Equipped*"];
+  if (weapon) {
+    const wIcon = (weapon.weapon_range ?? "melee") === "ranged" ? "🏹" : "⚔️";
+    equipLines.push(`${wIcon} *${weapon.item_name}* (+${weapon.power})`);
+  } else {
+    equipLines.push("⚔️ _no weapon_");
+  }
+  if (armor) {
+    equipLines.push(`🛡️ *${armor.item_name}* (+${armor.power})`);
+  } else {
+    equipLines.push("🛡️ _no armor_");
+  }
+  blocks.push({ type: "section", text: { type: "mrkdwn", text: equipLines.join("\n") } });
+
+  // 4. Signature
+  const sig = signatureFor(c.class);
+  if (sig) {
+    blocks.push({ type: "divider" });
+    blocks.push({
+      type: "section",
+      text: {
+        type: "mrkdwn",
+        text: `*✨ Signature — ${sig.name}*\n_${sig.blurb}_`,
+      },
+    });
+  }
+
+  // 5. Keys (only if any held)
+  const keyDisplay = characterKeyDisplay(c);
+  if (keyDisplay) {
+    blocks.push({ type: "divider" });
+    blocks.push({
+      type: "section",
+      text: { type: "mrkdwn", text: `*🗝️ Keys*\n${keyDisplay}` },
+    });
+  }
+
+  // 6. Scars + downed status
+  const statusLines: string[] = [];
+  if (c.scars.length > 0) {
+    statusLines.push(`🩹 *Scars:* ${c.scars.join(", ")}`);
+  }
+  if (c.downed_until && c.downed_until > Date.now()) {
+    statusLines.push(`💀 *Downed* until <!date^${Math.floor(c.downed_until / 1000)}^{date_short_pretty} {time}|soon>`);
+  }
+  if (statusLines.length > 0) {
+    blocks.push({ type: "divider" });
+    blocks.push({ type: "section", text: { type: "mrkdwn", text: statusLines.join("\n") } });
+  }
+
+  // 7. Actions
+  blocks.push({
+    type: "actions",
+    block_id: "me_actions",
+    elements: [
+      {
+        type: "button",
+        action_id: "inventory",
+        value: "open",
+        text: { type: "plain_text", text: "🎒 Inventory" },
+      },
+    ],
+  });
+
+  return blocks;
 }
 
 function formatSheet(c: Character, weapon: Item | null, armor: Item | null): string {
