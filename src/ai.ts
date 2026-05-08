@@ -43,6 +43,7 @@ export async function generateOpeningScene(
     `MONSTER_NAME: <a ${variant === "boss" ? "2-5" : "1-4"} word name, slightly absurd, never repeat the same name>`,
     `MONSTER_HP: <integer between ${monsterHpFloor} and ${monsterHpCeil}>`,
     "SCENE: <2-3 sentences, ~60 words total, introducing the monster and the setting>",
+    "CRITICAL: the SCENE field MUST refer to the monster by the EXACT same name you wrote in MONSTER_NAME. Do not invent a different name, title, or species in the scene. If MONSTER_NAME is 'the Schemaless Shrieker', the scene must say 'the Schemaless Shrieker' — not 'the Bloat King', 'the beast', 'the dragon', etc.",
   ].join("\n");
 
   const user = [
@@ -100,13 +101,45 @@ function parseScene(text: string, tier: number, hpFloor: number, hpCeil: number)
     });
   }
 
+  const finalName = monster_name || fallbackMonsterName();
+  const finalScene = scene_raw || fallbackSceneText();
+
+  // Llama 3.1 8B occasionally invents a *different* monster name in the SCENE prose
+  // than what it wrote for MONSTER_NAME. Logging this lets us measure how often the
+  // tightened prompt is failing — if it's still common, escalate to a 2-step generation.
+  if (monster_name && scene_raw && !sceneMentionsName(scene_raw, monster_name)) {
+    console.warn("scene/name mismatch", { monster_name, scene_preview: scene_raw.slice(0, 160) });
+  }
+
   return {
-    monster_name: monster_name || fallbackMonsterName(),
+    monster_name: finalName,
     monster_hp,
     monster_max_hp: monster_hp,
     tier,
-    scene: scene_raw || fallbackSceneText(),
+    scene: finalScene,
   };
+}
+
+// Does the scene prose actually mention the monster's name? Lenient match: case-insensitive,
+// strips a leading "the " from the name (so "the Bloat King" matches "Bloat King"), and
+// passes if any 2+ consecutive words from the name appear in the scene.
+function sceneMentionsName(scene: string, name: string): boolean {
+  const norm = (s: string) => s.toLowerCase().replace(/^the\s+/, "").trim();
+  const sceneL = scene.toLowerCase();
+  const nameL = norm(name);
+  if (!nameL) return true;
+  if (sceneL.includes(nameL)) return true;
+  const words = nameL.split(/\s+/).filter((w) => w.length > 2);
+  if (words.length === 0) return true;
+  // For multi-word names, require any 2 consecutive name words to appear together.
+  if (words.length >= 2) {
+    for (let i = 0; i < words.length - 1; i++) {
+      if (sceneL.includes(`${words[i]} ${words[i + 1]}`)) return true;
+    }
+    return false;
+  }
+  // Single-word name: match if it shows up anywhere.
+  return sceneL.includes(words[0]);
 }
 
 // Shared system prompt for one-line combat flavor. Tight constraints — the model gets
