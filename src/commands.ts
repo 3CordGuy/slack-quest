@@ -1533,27 +1533,46 @@ function buildDoorPromptBlocks(exp: ExpeditionState, cmd: string): unknown[] {
   const doors = exp.pending_doors ?? [];
   const visited = exp.visited_count ?? 1;
   const middleTotal = (exp.middle_count ?? 0) + 2;
+  const isSingle = doors.length === 1;
+  const isSubBossAhead = isSingle && doors[0] === exp.nodes.length - 2;
+
+  const headline = isSubBossAhead
+    ? `*👑 The way opens to the sub-boss chamber* — Room ${visited + 1}/${middleTotal}.`
+    : isSingle
+    ? `*🚪 One path forward* — Room ${visited + 1}/${middleTotal}. Catch your breath.`
+    : `*🚪 Two paths diverge* — Room ${visited + 1}/${middleTotal} ahead.`;
+
   const blocks: unknown[] = [
     {
       type: "section",
-      text: { type: "mrkdwn", text: `*Two paths diverge* — Room ${visited + 1}/${middleTotal} ahead.\n${renderPathTrail(exp)}` },
+      text: { type: "mrkdwn", text: `${headline}\n${renderPathTrail(exp)}` },
     },
     {
       type: "actions",
       block_id: "dungeon_door",
       elements: doors.map((idx, i) => {
         const node = exp.nodes[idx];
+        // Single-option button label: "Continue" (instead of Door 1) since
+        // there's no real choice. Sub-boss gets its own framing.
+        const text = isSingle
+          ? (isSubBossAhead
+            ? `👑 Continue to sub-boss`
+            : `🚪 Continue: ${dungeonRoomLabel(node.type)}`)
+          : `🚪 Door ${i + 1}: ${dungeonRoomLabel(node.type)}`;
         return {
           type: "button",
           action_id: "dungeon_choose",
           value: String(i + 1),
-          text: { type: "plain_text", text: `🚪 Door ${i + 1}: ${dungeonRoomLabel(node.type)}` },
+          text: { type: "plain_text", text },
         };
       }),
     },
     {
       type: "context",
-      elements: [{ type: "mrkdwn", text: `_First \`${cmd} choose <n>\` picks for the party. The unchosen door is sealed behind you._` }],
+      elements: [{ type: "mrkdwn", text: isSingle
+        ? `_Use \`${cmd} rest\` to short-rest first (HP + mana). Then \`${cmd} choose 1\` to advance._`
+        : `_First \`${cmd} choose <n>\` picks for the party. Use \`${cmd} rest\` to short-rest first._`,
+      }],
     },
   ];
   return blocks;
@@ -2248,15 +2267,25 @@ function renderDoorPrompt(exp: ExpeditionState, cmd: string): string {
   const doors = exp.pending_doors ?? [];
   const visited = exp.visited_count ?? 1;
   const middleTotal = (exp.middle_count ?? 0) + 2;
-  const lines = [
-    `*Two paths diverge* — Room ${visited + 1}/${middleTotal} ahead.`,
-    renderPathTrail(exp),
-  ];
+  const isSingle = doors.length === 1;
+  const isSubBossAhead = isSingle && doors[0] === exp.nodes.length - 2;
+  // Header reflects how many paths there are. Single-option transitions get a
+  // "catch your breath" header so players know it's their cue to rest if needed.
+  const headline = isSubBossAhead
+    ? `*👑 The way opens to the sub-boss chamber* — Room ${visited + 1}/${middleTotal}.`
+    : isSingle
+    ? `*🚪 One path forward* — Room ${visited + 1}/${middleTotal}. Catch your breath.`
+    : `*🚪 Two paths diverge* — Room ${visited + 1}/${middleTotal} ahead.`;
+  const lines = [headline, renderPathTrail(exp)];
   for (let i = 0; i < doors.length; i++) {
     const node = exp.nodes[doors[i]];
     lines.push(`\`${i + 1}\` ${dungeonRoomLabel(node.type)}`);
   }
-  lines.push("", `_First \`${cmd} choose <n>\` picks for the party. The unchosen door is sealed behind you._`);
+  const restHint = `\`${cmd} rest\` to short-rest first (HP+mana, 10-min cooldown).`;
+  const advanceHint = isSingle
+    ? `\`${cmd} choose 1\` to advance.`
+    : `_First \`${cmd} choose <n>\` picks for the party. The unchosen door is sealed behind you._`;
+  lines.push("", advanceHint, restHint);
   return lines.join("\n");
 }
 
@@ -2275,19 +2304,26 @@ function pickNextRoom(exp: ExpeditionState): NextRoom {
   const treasureIdx = exp.nodes.length - 1;
   const pool = [...(exp.pool ?? [])];
 
+  // Sub-boss → treasure: still auto-advance (treasure is the take-prompt UI,
+  // not a fight, no need for a rest opportunity).
   if (exp.current === subBossIdx) {
     return { type: "node", index: treasureIdx, remainingPool: pool };
   }
+  // 2+ pool: regular door pick (left vs right).
   if (pool.length >= 2) {
     const a = pool.shift()!;
     const b = pool.shift()!;
     return { type: "doors", pair: [a, b], remainingPool: pool };
   }
+  // 1 pool OR pool empty (sub-boss): present as a SINGLE-OPTION door so the
+  // player gets a pause + a chance to rest/heal before walking into the next
+  // fight. Without this, the previous flow auto-advanced and dropped them
+  // straight into the next combat room with no breather.
   if (pool.length === 1) {
     const idx = pool.shift()!;
-    return { type: "node", index: idx, remainingPool: pool };
+    return { type: "doors", pair: [idx], remainingPool: pool };
   }
-  return { type: "node", index: subBossIdx, remainingPool: pool };
+  return { type: "doors", pair: [subBossIdx], remainingPool: pool };
 }
 
 async function advanceDungeonRoom(
