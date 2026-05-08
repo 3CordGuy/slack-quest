@@ -11,6 +11,8 @@ import {
 export interface Env {
   DB: D1Database;
   AI: Ai;
+  // R2 bucket for static images (shop header, etc.) served via /img/<key>.
+  ASSETS: R2Bucket;
   SLACK_SIGNING_SECRET: string;
   SLACK_BOT_TOKEN: string;
   ALLOWED_CHANNEL_ID: string; // Set via .dev.vars locally / `wrangler secret put` in prod. Empty = allow any channel.
@@ -18,11 +20,29 @@ export interface Env {
   // message). Set via wrangler.jsonc `vars` to override per-workspace branding.
   // Defaults to "Slack Quest" when unset. Helper: `botName(env)` in commands.ts.
   BOT_NAME?: string;
+  // Public base URL of this worker (e.g. https://gantt-quest.3cordguy.workers.dev).
+  // Used to build absolute image URLs that Slack can fetch for image blocks.
+  // Optional — when unset, image blocks are simply omitted.
+  IMAGE_BASE_URL?: string;
 }
 
 const app = new Hono<{ Bindings: Env }>();
 
 app.get("/", (c) => c.text("slack-quest is alive."));
+
+// Serves static images from the ASSETS R2 bucket. Public — no auth needed; Slack
+// fetches these to render image blocks in shop / quest displays. Cache headers
+// keep traffic to R2 minimal once the image has been seen.
+app.get("/img/:key{.+}", async (c) => {
+  const key = c.req.param("key");
+  const obj = await c.env.ASSETS.get(key);
+  if (!obj) return c.text("not found", 404);
+  const headers = new Headers();
+  obj.writeHttpMetadata(headers);
+  headers.set("etag", obj.httpEtag);
+  headers.set("cache-control", "public, max-age=86400, immutable");
+  return new Response(obj.body, { headers });
+});
 
 app.post("/slack/commands", async (c) => {
   const body = await c.req.text();

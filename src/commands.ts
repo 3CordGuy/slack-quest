@@ -3076,7 +3076,7 @@ async function handleShop(
     return {
       text: formatShopText(existing, character.gold, payload.command),
       response_type: "ephemeral",
-      blocks: formatShopBlocks(existing, character.gold, payload.command),
+      blocks: formatShopBlocks(existing, character.gold, payload.command, env),
     };
   }
 
@@ -3150,9 +3150,18 @@ function formatShopText(items: ShopItem[], gold: number, cmd: string): string {
 // Block Kit shop view: header + per-item (section + Buy button), with sold items
 // styled as struck-through and no Buy button. The Buy button carries the shop_stock
 // id as `value` and routes through handleInteraction → handleBuy.
-function formatShopBlocks(items: ShopItem[], gold: number, cmd: string): unknown[] {
+function formatShopBlocks(items: ShopItem[], gold: number, cmd: string, env: Env): unknown[] {
   const available = items.filter((i) => !i.bought_by).length;
-  const blocks: unknown[] = [
+  const blocks: unknown[] = [];
+  // Optional shop header banner — served from R2 when IMAGE_BASE_URL is configured.
+  if (env.IMAGE_BASE_URL) {
+    blocks.push({
+      type: "image",
+      image_url: `${env.IMAGE_BASE_URL}/img/shop-header.jpg`,
+      alt_text: "the shop",
+    });
+  }
+  blocks.push(
     {
       type: "header",
       text: { type: "plain_text", text: `🛒 Shop — ${available}/${items.length} available` },
@@ -3162,7 +3171,7 @@ function formatShopBlocks(items: ShopItem[], gold: number, cmd: string): unknown
       elements: [{ type: "mrkdwn", text: `You have *${gold}g*. Cap: ${SHOP_BUY_CAP_PER_CYCLE} purchases per restock cycle.` }],
     },
     { type: "divider" },
-  ];
+  );
   for (const it of items) {
     const sold = !!it.bought_by;
     const powerStr = powerLabel(it.item_type, it.power);
