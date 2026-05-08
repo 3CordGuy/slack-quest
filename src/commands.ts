@@ -1355,6 +1355,12 @@ function renderPathTrail(exp: ExpeditionState): string {
 function renderDungeonMap(exp: ExpeditionState): string {
   const visited = exp.visited_indices ?? [exp.current];
   const sealed = exp.sealed_doors ?? [];
+  // Labels keyed off node-index, not position-in-visited, so the markers stay
+  // correct even mid-quest (treasure not visited yet) or in legacy dungeons
+  // built before the merchant slot existed.
+  const treasureIdx = exp.nodes.length - 1;
+  const subBossIdx = exp.nodes.length - 2;
+  const merchantIdx = exp.nodes.length - 3;
   const lines: string[] = ["🗺️ *Dungeon path*"];
   let sealedCursor = 0;
   for (let i = 0; i < visited.length; i++) {
@@ -1365,11 +1371,12 @@ function renderDungeonMap(exp: ExpeditionState): string {
     let line: string;
     if (i === 0) {
       line = `▸ ${label}  _entry_`;
-    } else if (node.type === "treasure") {
+    } else if (idx === treasureIdx) {
       line = `▸ ${label}  _heart-chamber_`;
-    } else if (i === visited.length - 2 && node.type === "combat") {
-      // The penultimate visited node is the sub-boss in completed dungeons.
+    } else if (idx === subBossIdx) {
       line = `▸ ${label}  _sub-boss_`;
+    } else if (idx === merchantIdx && node.type === "merchant") {
+      line = `▸ ${label}  _merchant_`;
     } else {
       const sealedIdx = sealed[sealedCursor++];
       const sealedNode = sealedIdx !== undefined ? exp.nodes[sealedIdx] : null;
@@ -1960,14 +1967,20 @@ async function handleCombat(
   await appendLog(env.DB, quest.id, "monster", "attack", `${turn.positionAdjusted} dmg → ${turn.target.name}`);
 
   const shieldDisplay = turn.dmg.newShield > 0 ? ` 🛡${turn.dmg.newShield}` : "";
+  // Multi-party clarity: if the monster's retaliation hit a different party
+  // member than the actor, tag that target with their @mention in the stat
+  // line so it's unmistakable who took the damage.
+  const targetStatLabel = turn.victimWasActor
+    ? `*${turn.target.name}*`
+    : `<@${turn.target.slack_user_id}> (*${turn.target.name}*)`;
   const ephemeralLines = [
     playerLine,
     ...monsterEffectLines,
     ...playerTickLines,
-      ...newEffectLines,
+    ...newEffectLines,
     `*${quest.scene.monster_name}*: ${Math.max(0, newMonsterHp)}/${quest.scene.monster_max_hp}`,
     turn.monsterLine,
-    `*${turn.target.name}*: ${turn.dmg.newHp}/${turn.target.max_hp}${shieldDisplay}`,
+    `${targetStatLabel}: ${turn.dmg.newHp}/${turn.target.max_hp}${shieldDisplay}`,
   ];
 
   // For the thread cards: show the actor (whose action this was). If they weren't the
@@ -2292,7 +2305,15 @@ async function resolveExpeditionToTreasure(
     return ephemeral([...preamble, "_(no treasure node found — quest closed.)_"].join("\n"));
   }
 
-  const updatedExp: ExpeditionState = { ...exp, current: treasureIdx };
+  const updatedExp: ExpeditionState = {
+    ...exp,
+    current: treasureIdx,
+    // Track the treasure visit so the completion-path map shows it as the
+    // final 🎁 row. Without this, visited_indices stops at the sub-boss and
+    // the map drops the heart-chamber line.
+    visited_indices: [...(exp.visited_indices ?? [exp.current]), treasureIdx],
+    visited_count: (exp.visited_count ?? 1) + 1,
+  };
   const updatedScene: SceneJson = {
     ...quest.scene,
     expedition: updatedExp,
@@ -3512,7 +3533,7 @@ async function usePoisonVial(
   await appendLog(env.DB, quest.id, "monster", "attack", `${turn.positionAdjusted} dmg → ${turn.target.name}`);
 
   const targetShield = turn.dmg.newShield > 0 ? ` 🛡${turn.dmg.newShield}` : "";
-  const targetStat = `*${turn.target.name}*: ${turn.dmg.newHp}/${turn.target.max_hp}${targetShield}`;
+  const targetStat = `${turn.victimWasActor ? `*${turn.target.name}*` : `<@${turn.target.slack_user_id}> (*${turn.target.name}*)`}: ${turn.dmg.newHp}/${turn.target.max_hp}${targetShield}`;
   const ephem = [playerLine, ...tick.tickLines, turn.monsterLine, targetStat].join("\n");
   ctx.waitUntil(postToThread(env, quest, [blockQuote(playerLine), "", ...tick.tickLines, turn.monsterLine, targetStat].join("\n")));
   return ephemeral(ephem);
@@ -3567,7 +3588,7 @@ async function useDamageTool(
 
   const monsterStat = `*${quest.scene.monster_name}*: ${newMonsterHp}/${quest.scene.monster_max_hp}`;
   const targetShield = turn.dmg.newShield > 0 ? ` 🛡${turn.dmg.newShield}` : "";
-  const targetStat = `*${turn.target.name}*: ${turn.dmg.newHp}/${turn.target.max_hp}${targetShield}`;
+  const targetStat = `${turn.victimWasActor ? `*${turn.target.name}*` : `<@${turn.target.slack_user_id}> (*${turn.target.name}*)`}: ${turn.dmg.newHp}/${turn.target.max_hp}${targetShield}`;
   const ephem = [playerLine, ...tick.tickLines, monsterStat, turn.monsterLine, targetStat].join("\n");
   ctx.waitUntil(postToThread(env, quest, [blockQuote(playerLine), "", ...tick.tickLines, monsterStat, turn.monsterLine, targetStat].join("\n")));
   return ephemeral(ephem);
@@ -3671,7 +3692,7 @@ async function useProductionOutage(
 
   const monsterStat = `*${quest.scene.monster_name}*: ${newMonsterHp}/${quest.scene.monster_max_hp}`;
   const targetShield = turn.dmg.newShield > 0 ? ` 🛡${turn.dmg.newShield}` : "";
-  const targetStat = `*${turn.target.name}*: ${turn.dmg.newHp}/${turn.target.max_hp}${targetShield}`;
+  const targetStat = `${turn.victimWasActor ? `*${turn.target.name}*` : `<@${turn.target.slack_user_id}> (*${turn.target.name}*)`}: ${turn.dmg.newHp}/${turn.target.max_hp}${targetShield}`;
   const ephem = [playerLine, ...tick.tickLines, monsterStat, turn.monsterLine, targetStat].join("\n");
   ctx.waitUntil(postToThread(env, quest, [blockQuote(playerLine), "", ...tick.tickLines, monsterStat, turn.monsterLine, targetStat].join("\n")));
   return ephemeral(ephem);
@@ -4241,7 +4262,7 @@ async function handleHeal(
 
   const healStat = `*${target.name}*: ${target.hp + healed}/${target.max_hp}`;
   const targetShield = turn.dmg.newShield > 0 ? ` 🛡${turn.dmg.newShield}` : "";
-  const monsterStat = `*${turn.target.name}*: ${turn.dmg.newHp}/${turn.target.max_hp}${targetShield}`;
+  const monsterStat = `${turn.victimWasActor ? `*${turn.target.name}*` : `<@${turn.target.slack_user_id}> (*${turn.target.name}*)`}: ${turn.dmg.newHp}/${turn.target.max_hp}${targetShield}`;
   const ephem = [healLine, ...tickLines, healStat, turn.monsterLine, monsterStat].join("\n");
 
   // Thread post: heal + monster retaliation as the events, with monster + actor cards.
@@ -4335,7 +4356,7 @@ async function handleShield(
 
   const shieldStat = `*${target.name}*: 🛡${target.shield + added}/${cap}`;
   const turnShield = turn.dmg.newShield > 0 ? ` 🛡${turn.dmg.newShield}` : "";
-  const monsterStat = `*${turn.target.name}*: ${turn.dmg.newHp}/${turn.target.max_hp}${turnShield}`;
+  const monsterStat = `${turn.victimWasActor ? `*${turn.target.name}*` : `<@${turn.target.slack_user_id}> (*${turn.target.name}*)`}: ${turn.dmg.newHp}/${turn.target.max_hp}${turnShield}`;
   const ephem = [shieldLine, ...tickLines, shieldStat, turn.monsterLine, monsterStat].join("\n");
 
   const updatedActor: Character = turn.victimWasActor
