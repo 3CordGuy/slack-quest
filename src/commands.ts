@@ -179,6 +179,7 @@ function helpText(cmd: string, name: string): string {
     `*${name} commands*`,
     `• \`${cmd} roll\` — roll a new character (or reroll: free until your first XP, then \`level × 50g\`; confirm with \`${cmd} roll confirm\`)`,
     `• \`${cmd} me\` — show your character sheet`,
+    `• \`${cmd} inspect @user\` — view another player's public sheet (level, gear, signature)`,
     `• \`${cmd} quest [variant] [@user1 @user2…]\` — start a quest, optionally inviting party members`,
     `• \`${cmd} quest boss\` — single tougher monster, 2 phases (L3+, 2× rewards)`,
     `• \`${cmd} quest gauntlet\` — 3 monsters back-to-back, no flee (L5+, 3× rewards, guaranteed drop)`,
@@ -363,6 +364,9 @@ export async function handleCommand(
     case "me":
     case "sheet":
       return handleMe(payload, env);
+    case "inspect":
+    case "view":
+      return handleInspect(payload, args, env);
     case "quest":
       return handleQuest(payload, args, env, ctx);
     case "attack":
@@ -524,6 +528,44 @@ async function handleMe(payload: SlashCommandPayload, env: Env): Promise<Command
   ]);
   const text = formatSheet(c, weapon, armor); // plain-text fallback for non-Block-Kit clients
   return { text, response_type: "ephemeral", blocks: buildSheetBlocks(c, weapon, armor) };
+}
+
+// /sq inspect @user — view another player's public sheet. Same shape as /sq me
+// but without the [Inventory] action button (you can't see someone else's pack)
+// and explicitly tagged with their @mention so it's clear whose stats you're
+// looking at. Ephemeral — only the requester sees it.
+async function handleInspect(
+  payload: SlashCommandPayload,
+  args: string[],
+  env: Env,
+): Promise<CommandResponse> {
+  const targetId = parseMention(args.join(" "));
+  if (!targetId) {
+    return ephemeral(`Usage: \`${payload.command} inspect @user\`.`);
+  }
+  const target = await getCharacter(env.DB, targetId);
+  if (!target) {
+    return ephemeral(`<@${targetId}> hasn't rolled a character.`);
+  }
+  const [weapon, armor] = await Promise.all([
+    getEquipped(env.DB, targetId, "weapon"),
+    getEquipped(env.DB, targetId, "armor"),
+  ]);
+  const text = `Inspecting <@${targetId}>:\n${formatSheet(target, weapon, armor)}`;
+  // Reuse buildSheetBlocks but strip the trailing actions block (no [Inventory]
+  // button on someone else's sheet) and prepend a header noting who you're
+  // looking at.
+  const sheetBlocks = buildSheetBlocks(target, weapon, armor).filter(
+    (b) => (b as { type?: string }).type !== "actions",
+  );
+  const blocks: unknown[] = [
+    {
+      type: "context",
+      elements: [{ type: "mrkdwn", text: `_Inspecting <@${targetId}>'s public sheet._` }],
+    },
+    ...sheetBlocks,
+  ];
+  return { text, response_type: "ephemeral", blocks };
 }
 
 // Sectioned Block Kit layout for /sq me. Sections (with dividers between):
