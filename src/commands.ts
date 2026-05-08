@@ -325,6 +325,8 @@ export async function handleInteraction(
   if (action.action_id === "use") return handleUse(slash, args, env, ctx);
   if (action.action_id === "sell") return handleSell(slash, args, env);
   if (action.action_id === "inventory") return handleInventory(slash, env);
+  if (action.action_id === "dungeon_choose") return handleChoose(slash, args, env, ctx);
+  if (action.action_id === "dungeon_take") return handleTake(slash, args, env, ctx);
   return ephemeral(`Unknown action \`${action.action_id}\`.`);
 }
 
@@ -1186,6 +1188,155 @@ function renderDungeonRoom(node: ExpeditionNode, exp: ExpeditionState, cmd: stri
   ].join("\n");
 }
 
+// Block Kit version of renderDungeonRoom — same content but with action buttons
+// for trap/lockbox/npc/treasure choices. Combat rooms get no buttons (combat uses
+// /sq attack/cast/sig). Action_id values route via /slack/interactive →
+// handleInteraction → handleChoose / handleTake. value = the same idx the slash
+// form takes.
+function buildDungeonRoomBlocks(node: ExpeditionNode, exp: ExpeditionState, cmd: string): unknown[] {
+  const visited = exp.visited_count ?? 1;
+  const middleTotal = (exp.middle_count ?? 0) + 2;
+  const trail = renderPathTrail(exp);
+  const header = `*Room ${visited}/${middleTotal}* — ${dungeonRoomLabel(node.type)}\n${trail}`;
+  const blocks: unknown[] = [
+    { type: "section", text: { type: "mrkdwn", text: header } },
+    { type: "section", text: { type: "mrkdwn", text: blockQuote(node.scene) } },
+  ];
+
+  if (node.type === "combat") {
+    blocks.push({
+      type: "section",
+      text: { type: "mrkdwn", text: `Foe: *${node.monster_name}* — HP ${node.monster_max_hp}\n\nCombat: \`${cmd} attack\` • \`${cmd} cast\` • \`${cmd} signature\`.` },
+    });
+    return blocks;
+  }
+
+  if (node.type === "trap") {
+    const choices = node.trap_choices ?? [];
+    const optionLines = choices.map((c, i) =>
+      `\`${i + 1}\` ${c.emoji} ${c.text}  _(${SKILL_META[c.skill].label})_`,
+    ).join("\n");
+    blocks.push({ type: "section", text: { type: "mrkdwn", text: optionLines } });
+    blocks.push({
+      type: "actions",
+      block_id: "dungeon_trap",
+      elements: choices.map((c, i) => ({
+        type: "button",
+        action_id: "dungeon_choose",
+        value: String(i + 1),
+        text: { type: "plain_text", text: `${c.emoji} ${SKILL_META[c.skill].label}` },
+      })),
+    });
+    const dmg = choices[0]?.fail_damage ?? 0;
+    blocks.push({
+      type: "context",
+      elements: [{ type: "mrkdwn", text: `_Failing rolls 1d6, need 4+. Fail = take *${dmg}* HP. Class with the matching skill auto-passes._` }],
+    });
+    return blocks;
+  }
+
+  if (node.type === "lockbox") {
+    const opts = node.loot_options ?? [];
+    const lockTier = node.lock_tier ?? "bronze";
+    const optionLines = opts.map((l, i) => {
+      const power = l.item_type === "consumable" ? `heals ${l.power}` : `+${l.power}`;
+      return `\`${i + 1}\` ${RARITY_BADGE[l.rarity]} *${l.name}* — ${l.item_type}, ${power}`;
+    }).join("\n");
+    const lockBadge = `${KEY_EMOJI[lockTier]} *${lockTier}* lock — needs ${KEY_EMOJI[lockTier]} ${lockTier}+ key.`;
+    blocks.push({ type: "section", text: { type: "mrkdwn", text: `${lockBadge}\n${optionLines}` } });
+    const skipNum = opts.length + 1;
+    const buttons: unknown[] = opts.map((_, i) => ({
+      type: "button",
+      action_id: "dungeon_choose",
+      value: String(i + 1),
+      text: { type: "plain_text", text: `${KEY_EMOJI[lockTier]} Claim ${i + 1}` },
+      style: "primary",
+    }));
+    buttons.push({
+      type: "button",
+      action_id: "dungeon_choose",
+      value: String(skipNum),
+      text: { type: "plain_text", text: "Skip" },
+    });
+    blocks.push({ type: "actions", block_id: "dungeon_lockbox", elements: buttons });
+    return blocks;
+  }
+
+  if (node.type === "npc") {
+    const item = node.npc?.item;
+    const greeting = `> "${node.npc?.greeting ?? "..."}"`;
+    const itemLine = item
+      ? `\nOffers: ${RARITY_BADGE[item.rarity]} *${item.name}* — ${item.item_type}, ${item.item_type === "consumable" ? `heals ${item.power}` : `+${item.power}`}`
+      : "";
+    blocks.push({ type: "section", text: { type: "mrkdwn", text: `${greeting}${itemLine}` } });
+    blocks.push({
+      type: "actions",
+      block_id: "dungeon_npc",
+      elements: [
+        { type: "button", action_id: "dungeon_choose", value: "1", text: { type: "plain_text", text: "🤝 Trust (take item)" }, style: "primary" },
+        { type: "button", action_id: "dungeon_choose", value: "2", text: { type: "plain_text", text: "👋 Refuse" } },
+      ],
+    });
+    return blocks;
+  }
+
+  // treasure
+  const opts = node.loot_options ?? [];
+  const optionLines = opts.map((l, i) => {
+    const power = l.item_type === "consumable" ? `heals ${l.power}` : `+${l.power}`;
+    return `\`${i + 1}\` ${RARITY_BADGE[l.rarity]} *${l.name}* — ${l.item_type}, ${power}`;
+  }).join("\n");
+  blocks.push({ type: "section", text: { type: "mrkdwn", text: optionLines } });
+  blocks.push({
+    type: "actions",
+    block_id: "dungeon_treasure",
+    elements: opts.map((_, i) => ({
+      type: "button",
+      action_id: "dungeon_take",
+      value: String(i + 1),
+      text: { type: "plain_text", text: `🎁 Take ${i + 1}` },
+      style: "primary",
+    })),
+  });
+  blocks.push({
+    type: "context",
+    elements: [{ type: "mrkdwn", text: `_First \`${cmd} take <n>\` claims for the party._` }],
+  });
+  return blocks;
+}
+
+// Block Kit version of renderDoorPrompt — door buttons labeled with the room
+// type behind each (so the player can see what they're picking).
+function buildDoorPromptBlocks(exp: ExpeditionState, cmd: string): unknown[] {
+  const doors = exp.pending_doors ?? [];
+  const visited = exp.visited_count ?? 1;
+  const middleTotal = (exp.middle_count ?? 0) + 2;
+  const blocks: unknown[] = [
+    {
+      type: "section",
+      text: { type: "mrkdwn", text: `*Two paths diverge* — Room ${visited + 1}/${middleTotal} ahead.\n${renderPathTrail(exp)}` },
+    },
+    {
+      type: "actions",
+      block_id: "dungeon_door",
+      elements: doors.map((idx, i) => {
+        const node = exp.nodes[idx];
+        return {
+          type: "button",
+          action_id: "dungeon_choose",
+          value: String(i + 1),
+          text: { type: "plain_text", text: `🚪 Door ${i + 1}: ${dungeonRoomLabel(node.type)}` },
+        };
+      }),
+    },
+    {
+      type: "context",
+      elements: [{ type: "mrkdwn", text: `_First \`${cmd} choose <n>\` picks for the party. The unchosen door is sealed behind you._` }],
+    },
+  ];
+  return blocks;
+}
+
 type CombatAction = "attack" | "cast" | "flee" | "signature";
 
 async function handleCombat(
@@ -1873,8 +2024,17 @@ async function advanceDungeonRoom(
 
     const prompt = renderDoorPrompt(updatedExp, payload.command);
     const threadText = [blockQuote(preamble.join("\n")), "", prompt].join("\n");
-    ctx.waitUntil(postToThread(env, quest, threadText));
-    return ephemeral([...preamble, "", prompt].join("\n"));
+    const doorBlocks = buildDoorPromptBlocks(updatedExp, payload.command);
+    const threadBlocks = [
+      { type: "section", text: { type: "mrkdwn", text: blockQuote(preamble.join("\n")) } },
+      ...doorBlocks,
+    ];
+    ctx.waitUntil(postToThread(env, quest, threadText, { blocks: threadBlocks }));
+    const ephemBlocks = [
+      { type: "section", text: { type: "mrkdwn", text: preamble.join("\n") } },
+      ...doorBlocks,
+    ];
+    return { text: [...preamble, "", prompt].join("\n"), response_type: "ephemeral", blocks: ephemBlocks };
   }
 
   // Direct advance to next.index (auto-advance — last middle room, sub-boss, or treasure).
@@ -1908,8 +2068,17 @@ async function advanceDungeonRoom(
 
   const roomBody = renderDungeonRoom(nextNode, updatedExp, payload.command);
   const threadText = [blockQuote(preamble.join("\n")), "", roomBody].join("\n");
-  ctx.waitUntil(postToThread(env, quest, threadText));
-  return ephemeral([...preamble, "", roomBody].join("\n"));
+  const roomBlocks = buildDungeonRoomBlocks(nextNode, updatedExp, payload.command);
+  const threadBlocks = [
+    { type: "section", text: { type: "mrkdwn", text: blockQuote(preamble.join("\n")) } },
+    ...roomBlocks,
+  ];
+  ctx.waitUntil(postToThread(env, quest, threadText, { blocks: threadBlocks }));
+  const ephemBlocks = [
+    { type: "section", text: { type: "mrkdwn", text: preamble.join("\n") } },
+    ...roomBlocks,
+  ];
+  return { text: [...preamble, "", roomBody].join("\n"), response_type: "ephemeral", blocks: ephemBlocks };
 }
 
 // Resolves a door pick — advances to the chosen room, discards the unchosen.
@@ -1957,8 +2126,17 @@ async function resolveDoorChoice(
   const roomBody = renderDungeonRoom(chosenNode, updatedExp, payload.command);
   const headLine = `🚪 <@${payload.user_id}> opens Door ${pickIdx} — ${dungeonRoomLabel(chosenNode.type).toLowerCase()}.`;
   const threadText = [blockQuote(headLine), "", roomBody].join("\n");
-  ctx.waitUntil(postToThread(env, quest, threadText));
-  return ephemeral([headLine, "", roomBody].join("\n"));
+  const roomBlocks = buildDungeonRoomBlocks(chosenNode, updatedExp, payload.command);
+  const threadBlocks = [
+    { type: "section", text: { type: "mrkdwn", text: blockQuote(headLine) } },
+    ...roomBlocks,
+  ];
+  ctx.waitUntil(postToThread(env, quest, threadText, { blocks: threadBlocks }));
+  const ephemBlocks = [
+    { type: "section", text: { type: "mrkdwn", text: headLine } },
+    ...roomBlocks,
+  ];
+  return { text: [headLine, "", roomBody].join("\n"), response_type: "ephemeral", blocks: ephemBlocks };
 }
 
 async function handleChoose(
@@ -2369,11 +2547,19 @@ async function handleLook(payload: SlashCommandPayload, env: Env): Promise<Comma
   if (quest.scene.variant === "dungeon" && quest.scene.expedition) {
     const exp = quest.scene.expedition;
     if (exp.pending_doors && exp.pending_doors.length > 0) {
-      return ephemeral(renderDoorPrompt(exp, payload.command));
+      return {
+        text: renderDoorPrompt(exp, payload.command),
+        response_type: "ephemeral",
+        blocks: buildDoorPromptBlocks(exp, payload.command),
+      };
     }
     const node = exp.nodes[exp.current];
     if (node) {
-      return ephemeral(renderDungeonRoom(node, exp, payload.command));
+      return {
+        text: renderDungeonRoom(node, exp, payload.command),
+        response_type: "ephemeral",
+        blocks: buildDungeonRoomBlocks(node, exp, payload.command),
+      };
     }
   }
 
