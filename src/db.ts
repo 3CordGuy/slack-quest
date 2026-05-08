@@ -715,6 +715,9 @@ export interface ShopItem {
   price: number;
   bought_by: string | null;
   weapon_range: WeaponRange | null;
+  // Haggle state. NULL = not attempted. "failed" = rolled and failed (no further
+  // attempts). "15"/"25"/"30" = succeeded at that % off (price already discounted).
+  haggled: string | null;
 }
 
 // Returns active shop stock (generated within the cutoff window, available items only),
@@ -727,7 +730,7 @@ export async function getActiveShopStock(
   const cutoff = Date.now() - windowMs;
   const result = await db
     .prepare(
-      `SELECT id, channel_id, generated_at, item_name, item_type, power, rarity, flavor, price, bought_by, weapon_range
+      `SELECT id, channel_id, generated_at, item_name, item_type, power, rarity, flavor, price, bought_by, weapon_range, haggled
        FROM shop_stock
        WHERE channel_id = ? AND generated_at > ?
        ORDER BY id ASC`,
@@ -772,11 +775,30 @@ export async function getShopItem(
 ): Promise<ShopItem | null> {
   return db
     .prepare(
-      `SELECT id, channel_id, generated_at, item_name, item_type, power, rarity, flavor, price, bought_by, weapon_range
+      `SELECT id, channel_id, generated_at, item_name, item_type, power, rarity, flavor, price, bought_by, weapon_range, haggled
        FROM shop_stock WHERE id = ? AND channel_id = ?`,
     )
     .bind(itemId, channelId)
     .first<ShopItem>();
+}
+
+// Atomically attempts a haggle on a shop item. Returns true if the row was
+// updated (no concurrent haggle won the race). Caller has already rolled the
+// outcome — passes the resulting tag ("failed" | "15" | "25" | "30") and the
+// new price (unchanged on failure, discounted on success).
+export async function trySetHaggleOutcome(
+  db: D1Database,
+  stockId: number,
+  outcome: "failed" | "15" | "25" | "30",
+  newPrice: number,
+): Promise<boolean> {
+  const result = await db
+    .prepare(
+      "UPDATE shop_stock SET haggled = ?, price = ? WHERE id = ? AND haggled IS NULL AND bought_by IS NULL",
+    )
+    .bind(outcome, newPrice, stockId)
+    .run();
+  return (result.meta.changes ?? 0) > 0;
 }
 
 // Marks the stock row as bought atomically (returns true if we got it, false if someone

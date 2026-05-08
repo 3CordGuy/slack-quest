@@ -65,6 +65,7 @@ import {
   refillMana,
   releaseShopClaim,
   resetCooldownsFor,
+  trySetHaggleOutcome,
   removeItem,
   reviveCharacter,
   saveScene,
@@ -107,6 +108,8 @@ import {
   dropChance,
   findCatalogEntry,
   generateNpcName,
+  haggleMod,
+  pickHaggleLine,
   generateScar,
   pickRandomClass,
   priceFor,
@@ -190,6 +193,7 @@ function helpText(cmd: string, name: string): string {
     `• \`${cmd} use <id>\` — use a consumable (free action, no cooldown)`,
     `• \`${cmd} shop\` — view the channel's shop (restocks every 6h)`,
     `• \`${cmd} buy <id>\` — purchase a shop item with gold`,
+    `• \`${cmd} haggle <id>\` — try to talk down the price (1d6 + class mod; communal, once per item)`,
     `• \`${cmd} sell <id>\` — sell an inventory item for 30% of shop price`,
     `• \`${cmd} give <id> @user\` — gift an inventory item to another player (unequip first)`,
     `• \`${cmd} party\` — show the current quest's roster + HP`,
@@ -248,6 +252,7 @@ function rulesText(cmd: string, name: string): string {
     `• *Per-player cap:* 2 purchases per restock cycle (no whale-clearing).`,
     `• Pricing (flat per rarity): gear 15g/50g/150g; magic 100g/250g/500g; revive 150g/280g/450g.`,
     `• \`${cmd} sell\` returns 30% of buy price. No shopping mid-quest.`,
+    `• \`${cmd} haggle <id>\` — *free action*, once per item (any party member). Roll 1d6 + class mod: 🎭 Bard +2, 🗡️ Rogue +1, 🧙 Sage +1. ≤3 fail (price locks), 4-5 → 15% off, 6 → 25% off, 7+ → 30% steal. The discount is communal — anyone can buy at the haggled price.`,
     ``,
     `*━━ Quest Variants ━━*`,
     `• \`${cmd} quest\` — standard, 1 monster, 1× rewards`,
@@ -328,6 +333,7 @@ export async function handleInteraction(
   if (action.action_id === "dungeon_choose") return handleChoose(slash, args, env, ctx);
   if (action.action_id === "dungeon_take") return handleTake(slash, args, env, ctx);
   if (action.action_id === "shop_buy") return handleBuy(slash, args, env);
+  if (action.action_id === "shop_haggle") return handleHaggle(slash, args, env);
   return ephemeral(`Unknown action \`${action.action_id}\`.`);
 }
 
@@ -389,6 +395,8 @@ export async function handleCommand(
       return handleShop(payload, env, ctx);
     case "buy":
       return handleBuy(payload, args, env);
+    case "haggle":
+      return handleHaggle(payload, args, env);
     case "sell":
       return handleSell(payload, args, env);
     case "give":
@@ -3161,7 +3169,13 @@ function formatShopBlocks(items: ShopItem[], gold: number, cmd: string): unknown
     const effect = catalogEffectLine(it.item_name);
     const effectLine = effect ? `\n${effect}` : "";
     const flavorLine = it.flavor ? `\n_${it.flavor}_` : "";
-    const summaryRaw = `\`${it.id}\` ${RARITY_BADGE[it.rarity]} *${it.item_name}* — ${it.item_type}${rangeBadge(it)}, ${powerStr} • *${it.price}g*${effectLine}${flavorLine}`;
+    // Haggle status badge — appended to the price line so the discount is visible.
+    const haggleBadge =
+      it.haggled === "failed" ? "  🪙 _haggle failed_" :
+      it.haggled === "15" ? "  🪙 _-15% haggled_" :
+      it.haggled === "25" ? "  🪙 _-25% haggled_" :
+      it.haggled === "30" ? "  🪙 _-30% STEAL_" : "";
+    const summaryRaw = `\`${it.id}\` ${RARITY_BADGE[it.rarity]} *${it.item_name}* — ${it.item_type}${rangeBadge(it)}, ${powerStr} • *${it.price}g*${haggleBadge}${effectLine}${flavorLine}`;
     // Sold items: render dimmed + tagged. We can't truly grey out a section in
     // Block Kit, so we strikethrough the name and append "❌ sold by <user>".
     const summary = sold
@@ -3171,23 +3185,34 @@ function formatShopBlocks(items: ShopItem[], gold: number, cmd: string): unknown
 
     if (!sold) {
       const canAfford = gold >= it.price;
-      const button: Record<string, unknown> = {
-        type: "button",
-        action_id: "shop_buy",
-        value: String(it.id),
-        text: { type: "plain_text", text: canAfford ? `🛍️ Buy ${it.price}g` : `Not enough gold (${it.price}g)` },
-        style: "primary",
-        confirm: {
-          title: { type: "plain_text", text: "Buy this item?" },
-          text: { type: "mrkdwn", text: `Buy *${it.item_name}* for ${it.price}g? You'll have ${gold - it.price}g left.` },
-          confirm: { type: "plain_text", text: "Buy" },
-          deny: { type: "plain_text", text: "Cancel" },
+      const elements: unknown[] = [
+        {
+          type: "button",
+          action_id: "shop_buy",
+          value: String(it.id),
+          text: { type: "plain_text", text: canAfford ? `🛍️ Buy ${it.price}g` : `Not enough gold (${it.price}g)` },
+          style: "primary",
+          confirm: {
+            title: { type: "plain_text", text: "Buy this item?" },
+            text: { type: "mrkdwn", text: `Buy *${it.item_name}* for ${it.price}g? You'll have ${gold - it.price}g left.` },
+            confirm: { type: "plain_text", text: "Buy" },
+            deny: { type: "plain_text", text: "Cancel" },
+          },
         },
-      };
+      ];
+      // Haggle button — only when not yet attempted on this item.
+      if (!it.haggled) {
+        elements.push({
+          type: "button",
+          action_id: "shop_haggle",
+          value: String(it.id),
+          text: { type: "plain_text", text: "🪙 Haggle" },
+        });
+      }
       blocks.push({
         type: "actions",
         block_id: `shop_${it.id}`,
-        elements: [button],
+        elements,
       });
     }
   }
@@ -3263,6 +3288,72 @@ async function handleBuy(
   return ephemeral(
     `🛍️ Bought ${RARITY_BADGE[stock.rarity]} *${stock.item_name}* for ${stock.price}g (now ${character.gold - stock.price}g). Inventory id \`${item.id}\`.`,
   );
+}
+
+// Haggle for a discount on a single shop item. Communal: any party member can
+// haggle each item once per cycle; the outcome locks for everyone.
+//   Roll: 1d6 + class haggle modifier (Bard +2, Rogue/Sage +1, others 0).
+//   ≤3 → failed (price unchanged, locked from further haggling)
+//   4-5 → 15% off
+//   6   → 25% off
+//   7+  → 30% off (the "steal" tier — Bards live for this)
+//
+// Free action — no gold cost, no shop-buy-cap consumption. The per-item lock is
+// the only gate.
+async function handleHaggle(
+  payload: SlashCommandPayload,
+  args: string[],
+  env: Env,
+): Promise<CommandResponse> {
+  const character = await getCharacter(env.DB, payload.user_id);
+  if (!character) return ephemeral(`You need to \`${payload.command} roll\` a character first.`);
+
+  const activeQuest = await getActiveQuestForCharacter(env.DB, payload.user_id);
+  if (activeQuest) {
+    return ephemeral("🛒 No haggling mid-quest. Finish the fight first.");
+  }
+
+  const id = parseInt(args[0] ?? "", 10);
+  if (Number.isNaN(id)) return ephemeral(`Usage: \`${payload.command} haggle <shop id>\`.`);
+
+  const stock = await getShopItem(env.DB, id, payload.channel_id);
+  if (!stock) return ephemeral("No such shop item in this channel.");
+  if (stock.bought_by) return ephemeral(`*${stock.item_name}* was already bought — too late to haggle.`);
+  if (stock.haggled) {
+    return ephemeral(
+      stock.haggled === "failed"
+        ? `🪙 *${stock.item_name}* — haggle already failed. Price locked at ${stock.price}g.`
+        : `🪙 *${stock.item_name}* — already haggled (-${stock.haggled}%). Price: ${stock.price}g.`,
+    );
+  }
+
+  const mod = haggleMod(character.class);
+  const roll = rollDice(6);
+  const total = roll + mod;
+  let bucket: "failed" | "modest" | "solid" | "steal";
+  let pct = 0;
+  if (total <= 3) bucket = "failed";
+  else if (total <= 5) { bucket = "modest"; pct = 15; }
+  else if (total === 6) { bucket = "solid"; pct = 25; }
+  else { bucket = "steal"; pct = 30; }
+
+  const newPrice = pct > 0 ? Math.max(1, Math.floor(stock.price * (1 - pct / 100))) : stock.price;
+  const outcomeTag: "failed" | "15" | "25" | "30" = bucket === "failed" ? "failed" : (String(pct) as "15" | "25" | "30");
+
+  const ok = await trySetHaggleOutcome(env.DB, stock.id, outcomeTag, newPrice);
+  if (!ok) {
+    return ephemeral(`*${stock.item_name}* was already haggled by someone else.`);
+  }
+
+  const flavor = pickHaggleLine(bucket);
+  const modBreakdown = mod > 0 ? `${roll} + ${mod}m` : `${roll}`;
+  const headline = bucket === "failed"
+    ? `🪙 <@${payload.user_id}> tries to haggle *${stock.item_name}* — *failed* \`1d6 + ${modBreakdown} = ${total}\`. Price locked at ${stock.price}g.`
+    : bucket === "steal"
+    ? `🪙 <@${payload.user_id}> haggles *${stock.item_name}* — *STEAL!* -${pct}% \`1d6 + ${modBreakdown} = ${total}\`. New price: *${newPrice}g* (was ${stock.price}g).`
+    : `🪙 <@${payload.user_id}> haggles *${stock.item_name}* — *-${pct}%* \`1d6 + ${modBreakdown} = ${total}\`. New price: *${newPrice}g* (was ${stock.price}g).`;
+
+  return ephemeral(`${headline}\n_${flavor}_`);
 }
 
 async function handleSell(

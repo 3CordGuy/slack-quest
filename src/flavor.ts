@@ -44,6 +44,54 @@ export function classByName(name: string): CharClass {
     { id: "unknown", name, base_hp: 20, attack_mod: 1, magic_mod: 1, skills: ["int"], blurb: "" };
 }
 
+// Per-class haggle modifier — added to the 1d6 haggle roll. Charisma classes (Bard)
+// get the biggest bump; persuasive support classes (Sage) and slick rogues get a
+// small one. Default 0 for everyone else. Negative mods are reserved for future
+// "intimidating" classes that scare merchants off.
+export function haggleMod(className: string): number {
+  const cls = classByName(className);
+  if (cls.id === "frontend_bard") return 2;
+  if (cls.id === "refactor_rogue") return 1;
+  if (cls.id === "staff_sage") return 1;
+  return 0;
+}
+
+// Static flavor lines for haggle outcomes. Picked at random per attempt — keeps
+// the cost zero (no AI call per click) while still feeling fresh across multiple
+// shop visits.
+export const HAGGLE_LINES = {
+  failed: [
+    "The shopkeep snorts. \"You think this is a bazaar? Pay or walk.\"",
+    "\"That's the price. I'm not running a charity for engineers.\"",
+    "Your pitch lands flat. The shopkeep cracks their knuckles.",
+    "\"My grandfather sold this stock at the same price. Show some respect.\"",
+    "The shopkeep narrows their eyes. The price holds — and you've made an enemy.",
+    "\"Go negotiate with my Q4 budget,\" they growl. Doesn't even blink.",
+  ],
+  modest: [
+    "You point out a scratch on the box. The shopkeep sighs.",
+    "\"Fine, fine. But don't tell anyone.\"",
+    "After a long pause, the shopkeep mutters something about scope creep and relents.",
+    "\"You drive a hard standup,\" they say, slightly impressed.",
+  ],
+  solid: [
+    "The shopkeep barks a laugh. \"Alright, you've earned it.\"",
+    "You bring up a competitor's gantt chart. The shopkeep capitulates.",
+    "\"That was actually a pretty good critical-path argument. Take the deal.\"",
+  ],
+  steal: [
+    "🎉 The shopkeep is nearly in tears. \"You're a menace. Take it. Take it.\"",
+    "🎉 You've turned this into a 1:1. The shopkeep emerges shaken and generous.",
+    "🎉 \"That sprint retrospective broke me,\" the shopkeep whispers, defeated.",
+  ],
+} as const;
+
+// Picks a random line for a given outcome bucket.
+export function pickHaggleLine(bucket: "failed" | "modest" | "solid" | "steal"): string {
+  const lines = HAGGLE_LINES[bucket];
+  return lines[Math.floor(Math.random() * lines.length)];
+}
+
 // Fallback monster names — used when the AI response can't be parsed. Themed for the
 // engineering dungeon-crawl vibe so even a parse failure feels in-world.
 const FALLBACK_MONSTER_NAMES = [
