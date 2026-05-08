@@ -719,16 +719,14 @@ async function buildDungeonScene(
 
   const failDamage = 4 + Math.max(1, character.level);
   const baseTier = Math.max(1, character.level + (elite ? 1 : 0));
-  const nodes: ExpeditionNode[] = [];
 
-  for (let i = 0; i < poolMiddleCount; i++) {
+  // Build every middle-pool room in parallel — they're independent. Sequential was
+  // ~30s wall-clock for a 10-room pool; parallel is closer to the slowest single call.
+  const middleNodePromises: Promise<ExpeditionNode>[] = poolTypes.map(async (type, i) => {
     const roomNum = i + 1;
-    const type = poolTypes[i];
-
     if (type === "combat") {
       const monster = await generateOpeningScene(env.AI, character, elite, "gauntlet-wave", { wave: roomNum, total: totalRoomsVisited });
-      // Every combat room drops a 🥉 bronze key. Sub-boss (added below) drops 🥈 silver.
-      nodes.push({
+      const node: ExpeditionNode = {
         type: "combat",
         scene: monster.scene,
         monster_name: monster.monster_name,
@@ -736,10 +734,12 @@ async function buildDungeonScene(
         tier: monster.tier,
         drops_key: true,
         drops_key_tier: "bronze",
-      });
-    } else if (type === "trap") {
+      };
+      return node;
+    }
+    if (type === "trap") {
       const trap = await generateTrapRoom(env.AI, theme, roomNum, totalRoomsVisited);
-      nodes.push({
+      const node: ExpeditionNode = {
         type: "trap",
         scene: trap.scene,
         trap_choices: [
@@ -747,54 +747,70 @@ async function buildDungeonScene(
           { text: trap.options.dex, emoji: "🔧", skill: "dex", fail_damage: failDamage },
           { text: trap.options.int, emoji: "📜", skill: "int", fail_damage: failDamage },
         ],
-      });
-    } else if (type === "lockbox") {
-      const lockboxScene = await generateLockboxScene(env.AI, theme, roomNum, totalRoomsVisited);
-      // Tier-weighted: 70% bronze / 25% silver / 5% gold. Higher tier = bigger
-      // loot bump and a scarcer key requirement.
+      };
+      return node;
+    }
+    if (type === "lockbox") {
       const r = Math.random();
       const lockTier: KeyTier = r < 0.70 ? "bronze" : r < 0.95 ? "silver" : "gold";
       const tierBump = lockTier === "bronze" ? 1 : lockTier === "silver" ? 2 : 3;
-      const opts: LootOption[] = [];
-      for (let j = 0; j < 2; j++) {
-        const roll = rollItem(baseTier + tierBump);
-        const named = await flavorLootDrop(env.AI, "the locked chest", roll.type, roll.rarity, roll.power, roll.weapon_range);
-        opts.push({
-          name: named.name,
-          item_type: roll.type,
-          power: roll.power,
-          rarity: roll.rarity,
-          flavor: named.flavor,
-          weapon_range: roll.weapon_range ?? null,
-        });
-      }
-      nodes.push({ type: "lockbox", scene: lockboxScene, loot_options: opts, lock_tier: lockTier });
-    } else {
-      // npc
-      const npcName = generateNpcName();
-      const npc = await generateNpcRoom(env.AI, theme, roomNum, totalRoomsVisited, npcName);
-      const offerRoll = rollItem(baseTier);
-      const offerNamed = await flavorLootDrop(env.AI, `${npcName}'s pack`, offerRoll.type, offerRoll.rarity, offerRoll.power, offerRoll.weapon_range);
-      nodes.push({
-        type: "npc",
-        scene: npc.scene,
-        npc: {
-          greeting: npc.greeting,
-          item: {
-            name: offerNamed.name,
-            item_type: offerRoll.type,
-            power: offerRoll.power,
-            rarity: offerRoll.rarity,
-            flavor: offerNamed.flavor,
-            weapon_range: offerRoll.weapon_range ?? null,
-          },
-        },
-      });
+      const rolls = Array.from({ length: 2 }, () => rollItem(baseTier + tierBump));
+      const [lockboxScene, ...named] = await Promise.all([
+        generateLockboxScene(env.AI, theme, roomNum, totalRoomsVisited),
+        ...rolls.map((roll) => flavorLootDrop(env.AI, "the locked chest", roll.type, roll.rarity, roll.power, roll.weapon_range)),
+      ]);
+      const opts: LootOption[] = rolls.map((roll, j) => ({
+        name: named[j].name,
+        item_type: roll.type,
+        power: roll.power,
+        rarity: roll.rarity,
+        flavor: named[j].flavor,
+        weapon_range: roll.weapon_range ?? null,
+      }));
+      const node: ExpeditionNode = { type: "lockbox", scene: lockboxScene, loot_options: opts, lock_tier: lockTier };
+      return node;
     }
-  }
+    // npc
+    const npcName = generateNpcName();
+    const offerRoll = rollItem(baseTier);
+    const [npc, offerNamed] = await Promise.all([
+      generateNpcRoom(env.AI, theme, roomNum, totalRoomsVisited, npcName),
+      flavorLootDrop(env.AI, `${npcName}'s pack`, offerRoll.type, offerRoll.rarity, offerRoll.power, offerRoll.weapon_range),
+    ]);
+    const node: ExpeditionNode = {
+      type: "npc",
+      scene: npc.scene,
+      npc: {
+        greeting: npc.greeting,
+        item: {
+          name: offerNamed.name,
+          item_type: offerRoll.type,
+          power: offerRoll.power,
+          rarity: offerRoll.rarity,
+          flavor: offerNamed.flavor,
+          weapon_range: offerRoll.weapon_range ?? null,
+        },
+      },
+    };
+    return node;
+  });
 
-  // Sub-boss room — beefier monster (boss variant). Drops 🥈 silver on victory.
-  const boss = await generateOpeningScene(env.AI, character, elite, "boss");
+  // Sub-boss + treasure loot also fire in parallel with the pool.
+  const bossPromise = generateOpeningScene(env.AI, character, elite, "boss");
+  // Treasure loot rolls don't depend on boss tier — fire them at baseTier+1 in parallel
+  // (was: baseTier from boss, but boss tier is already character.level + elite bump).
+  const treasureRolls = Array.from({ length: EXPEDITION_TREASURE_OPTIONS }, () => rollItem(baseTier + 1));
+  const treasureNamedPromises = treasureRolls.map((roll) =>
+    flavorLootDrop(env.AI, "the dungeon's heart-chamber", roll.type, roll.rarity, roll.power, roll.weapon_range),
+  );
+
+  const [middleNodes, boss, treasureNamed] = await Promise.all([
+    Promise.all(middleNodePromises),
+    bossPromise,
+    Promise.all(treasureNamedPromises),
+  ]);
+
+  const nodes: ExpeditionNode[] = [...middleNodes];
   nodes.push({
     type: "combat",
     scene: boss.scene,
@@ -805,20 +821,14 @@ async function buildDungeonScene(
     drops_key_tier: "silver",
   });
 
-  // Final treasure — 2 high-tier loot options.
-  const treasureLoot: LootOption[] = [];
-  for (let i = 0; i < EXPEDITION_TREASURE_OPTIONS; i++) {
-    const roll = rollItem(boss.tier);
-    const named = await flavorLootDrop(env.AI, "the dungeon's heart-chamber", roll.type, roll.rarity, roll.power, roll.weapon_range);
-    treasureLoot.push({
-      name: named.name,
-      item_type: roll.type,
-      power: roll.power,
-      rarity: roll.rarity,
-      flavor: named.flavor,
-      weapon_range: roll.weapon_range ?? null,
-    });
-  }
+  const treasureLoot: LootOption[] = treasureRolls.map((roll, i) => ({
+    name: treasureNamed[i].name,
+    item_type: roll.type,
+    power: roll.power,
+    rarity: roll.rarity,
+    flavor: treasureNamed[i].flavor,
+    weapon_range: roll.weapon_range ?? null,
+  }));
   nodes.push({
     type: "treasure",
     scene: "The dungeon opens onto its heart-chamber. A chest awaits.",
