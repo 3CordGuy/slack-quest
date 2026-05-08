@@ -2030,6 +2030,13 @@ async function handleCombat(
   const updatedActor: Character = turn.victimWasActor
     ? { ...character, hp: turn.dmg.newHp, shield: turn.dmg.newShield }
     : character;
+  // For the thread post: when the monster hit a different partymate, build a
+  // separate "target" character card so their post-hit HP shows publicly. The
+  // ephemeral already includes the target stat line, but the thread (visible
+  // to everyone) was only showing the actor's card.
+  const updatedTarget: Character | null = turn.victimWasActor
+    ? null
+    : { ...turn.target, hp: turn.dmg.newHp, shield: turn.dmg.newShield };
 
   const weaponName = equippedWeapon?.item_name;
   const armorName = equippedArmor?.item_name;
@@ -2049,13 +2056,16 @@ async function handleCombat(
     const events = [playerLine, ...monsterEffectLines, ...playerTickLines, ...newEffectLines, turn.monsterLine];
 
     // Notification fallback: plain text. Block Kit drives the actual visual layout.
+    const targetFallback = updatedTarget
+      ? `\n*${updatedTarget.name}* — ${updatedTarget.hp}/${updatedTarget.max_hp}${updatedTarget.shield > 0 ? ` 🛡${updatedTarget.shield}` : ""}`
+      : "";
     const fallbackText = [
       blockQuote(narration),
       "",
       ...events,
       "",
       formatMonsterLine(quest.scene, newMonsterHp),
-      `*${updatedActor.name}* — ${updatedActor.hp}/${updatedActor.max_hp}${updatedActor.shield > 0 ? ` 🛡${updatedActor.shield}` : ""}`,
+      `*${updatedActor.name}* — ${updatedActor.hp}/${updatedActor.max_hp}${updatedActor.shield > 0 ? ` 🛡${updatedActor.shield}` : ""}${targetFallback}`,
     ].join("\n");
     const blocks = buildCombatBlocks({
       narration,
@@ -2063,6 +2073,7 @@ async function handleCombat(
       scene: quest.scene,
       monsterHp: newMonsterHp,
       actor: updatedActor,
+      target: updatedTarget,
     });
 
     // Mid-quest combat stays in-thread; only quest start + finish broadcast.
@@ -4307,10 +4318,14 @@ async function handleHeal(
   const monsterStat = `${turn.victimWasActor ? `*${turn.target.name}*` : `<@${turn.target.slack_user_id}> (*${turn.target.name}*)`}: ${turn.dmg.newHp}/${turn.target.max_hp}${targetShield}`;
   const ephem = [healLine, ...tickLines, healStat, turn.monsterLine, monsterStat].join("\n");
 
-  // Thread post: heal + monster retaliation as the events, with monster + actor cards.
+  // Thread post: heal + monster retaliation as the events, with monster + actor
+  // cards (+ target card when the monster picked a different partymate).
   const updatedActor: Character = turn.victimWasActor
     ? { ...casterTick.character, hp: turn.dmg.newHp, shield: turn.dmg.newShield }
     : casterTick.character;
+  const updatedTarget: Character | null = turn.victimWasActor
+    ? null
+    : { ...turn.target, hp: turn.dmg.newHp, shield: turn.dmg.newShield };
   ctx.waitUntil((async () => {
     const blocks = buildCombatBlocks({
       narration: healLine,
@@ -4318,6 +4333,7 @@ async function handleHeal(
       scene: quest.scene,
       monsterHp: quest.scene.monster_hp,
       actor: updatedActor,
+      target: updatedTarget,
     });
     const fallback = [blockQuote(healLine), "", ...tickLines, healStat, turn.monsterLine, monsterStat].join("\n");
     await postToThread(env, quest, fallback, { blocks });
@@ -4404,6 +4420,9 @@ async function handleShield(
   const updatedActor: Character = turn.victimWasActor
     ? { ...casterTick.character, hp: turn.dmg.newHp, shield: turn.dmg.newShield }
     : casterTick.character;
+  const updatedTarget: Character | null = turn.victimWasActor
+    ? null
+    : { ...turn.target, hp: turn.dmg.newHp, shield: turn.dmg.newShield };
   ctx.waitUntil((async () => {
     const blocks = buildCombatBlocks({
       narration: shieldLine,
@@ -4411,6 +4430,7 @@ async function handleShield(
       scene: quest.scene,
       monsterHp: quest.scene.monster_hp,
       actor: updatedActor,
+      target: updatedTarget,
     });
     const fallback = [blockQuote(shieldLine), "", ...tickLines, shieldStat, turn.monsterLine, monsterStat].join("\n");
     await postToThread(env, quest, fallback, { blocks });
@@ -4763,6 +4783,10 @@ function buildCombatBlocks(opts: {
   scene: SceneJson;
   monsterHp: number;
   actor: Character;
+  // Optional second character card for the monster's hit target when it differs
+  // from the actor. Without this, multi-party combat thread posts only showed
+  // the actor's HP — the partymate who actually got hit didn't appear.
+  target?: Character | null;
 }): unknown[] {
   const blocks: unknown[] = [
     { type: "section", text: { type: "mrkdwn", text: blockQuote(opts.narration) } },
@@ -4772,7 +4796,11 @@ function buildCombatBlocks(opts: {
     blocks.push({ type: "section", text: { type: "mrkdwn", text: opts.events.join("\n") } });
     blocks.push({ type: "divider" });
   }
-  blocks.push({ type: "section", fields: [monsterField(opts.scene, opts.monsterHp), characterField(opts.actor)] });
+  const fields = [monsterField(opts.scene, opts.monsterHp), characterField(opts.actor)];
+  if (opts.target && opts.target.slack_user_id !== opts.actor.slack_user_id) {
+    fields.push(characterField(opts.target));
+  }
+  blocks.push({ type: "section", fields });
   return blocks;
 }
 
