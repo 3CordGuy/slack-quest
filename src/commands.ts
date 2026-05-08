@@ -1841,6 +1841,11 @@ async function resolveVictory(
   }
 
   ctx.waitUntil((async () => {
+    // Post the killing-blow combat line to thread first so party members see who
+    // landed the kill, not just the fanfare. Without this, the killer's attack
+    // is ephemeral-only and partymates wonder how the fight ended.
+    await postToThread(env, quest, blockQuote(preamble.join("\n")));
+
     const flavor = await flavorVictory(env.AI, killer, quest.scene.monster_name, fighters.length);
     const lootLines: string[] = [];
     for (const { fighter, roll } of lootRolls) {
@@ -1916,6 +1921,9 @@ async function resolveGauntletAdvance(
 
   const waveLabel = `wave ${newWave}/${totalWaves}`;
   ctx.waitUntil((async () => {
+    // Post the killing-blow line first so partymates see who downed the wave's foe.
+    await postToThread(env, quest, blockQuote(preamble.join("\n")));
+
     const flavor = await flavorGauntletNext(env.AI, previousMonster, next.name, waveLabel);
     const intro = `⚔️ ${flavor}`;
     const tail = `⚔️ *${waveLabel}* — *${next.name}* (HP ${next.max_hp})\n${blockQuote(next.scene)}`;
@@ -2515,6 +2523,11 @@ async function resolveDeath(
     : `Survivors fight on: ${survivors.map((s) => `*${s.name}*`).join(", ")}.`;
 
   ctx.waitUntil((async () => {
+    // Post the death-blow combat line to thread first so partymates see how the
+    // character fell (the monster's hit, the trap fail, etc.). Without this, the
+    // killing line is ephemeral-only and partymates jump straight to "downed."
+    await postToThread(env, quest, blockQuote(preamble.join("\n")));
+
     const flavor = await flavorDeath(env.AI, character, quest.scene.monster_name, isPerma);
     const marker = isPerma ? "💀💀 " : "💀 ";
 
