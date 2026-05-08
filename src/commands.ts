@@ -2259,8 +2259,13 @@ async function handleInventory(payload: SlashCommandPayload, env: Env): Promise<
   if (!character) return ephemeral(`You need to \`${payload.command} roll\` a character first.`);
 
   const items = await getInventory(env.DB, payload.user_id);
+  const keyDisplay = characterKeyDisplay(character);
+  const keyLine = keyDisplay ? `Keys: ${keyDisplay}` : "";
+
   if (items.length === 0) {
-    return ephemeral("Your pack is empty. Win quests to find loot.");
+    const emptyLines = ["Your pack is empty. Win quests to find loot."];
+    if (keyLine) emptyLines.push("", keyLine);
+    return ephemeral(emptyLines.join("\n"));
   }
 
   const lines = [
@@ -2274,6 +2279,7 @@ async function handleInventory(payload: SlashCommandPayload, env: Env): Promise<
     );
     if (item.flavor) lines.push(`   _${item.flavor}_`);
   }
+  if (keyLine) lines.push("", keyLine);
   lines.push("", `Equip with \`${payload.command} equip <id>\`, use a consumable with \`${payload.command} use <id>\`.`);
   return ephemeral(lines.join("\n"));
 }
