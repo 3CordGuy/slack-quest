@@ -751,7 +751,7 @@ async function handleQuest(
           : variant === "gauntlet"
           ? `⚔️ *GAUNTLET — ${GAUNTLET_WAVES} waves, no flee*\n`
           : variant === "dungeon"
-          ? `🗺️ *DUNGEON — ${scene.expedition?.nodes.length ?? 5} rooms, treasure at the end*\n`
+          ? `🗺️ *DUNGEON — ${(scene.expedition?.middle_count ?? 4) + 2} rooms, treasure at the end*\n`
           : "";
 
       // Expedition: render the first room (could be combat/trap/lockbox/npc).
