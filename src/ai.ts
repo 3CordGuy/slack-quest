@@ -682,6 +682,52 @@ export async function generateNpcRoom(
   }
 }
 
+// Generates a merchant room scene + greeting. Merchant is a guaranteed slot
+// that always lands as the last middle room (right before the sub-boss),
+// giving the party a "last chance to gear up" beat.
+export interface GeneratedMerchant {
+  scene: string;
+  greeting: string;
+}
+
+export async function generateMerchantRoom(
+  ai: Ai,
+  theme: string,
+  roomNumber: number,
+  totalRooms: number,
+  merchantName: string,
+): Promise<GeneratedMerchant> {
+  const user = [
+    `Room ${roomNumber}/${totalRooms} of a dungeon themed: "${theme}".`,
+    `A traveling merchant named "${merchantName}" has set up a tiny shop here, mid-dungeon.`,
+    "Output exactly:",
+    "SCENE: <2 sentences setting the encounter — what their stall looks like, where they came from>",
+    "GREETING: <1-2 sentences of what they say to the party, hawking their wares>",
+  ].join("\n");
+
+  const fallback: GeneratedMerchant = {
+    scene: `${merchantName} has improvised a shopfront from overturned standing-desks and a fluttering Gantt chart.`,
+    greeting: `"You look like trouble waiting to happen. Lucky for you, I sell trouble preparation."`,
+  };
+
+  try {
+    const result = (await ai.run(MODEL, {
+      messages: [
+        { role: "system", content: COMBAT_SYSTEM },
+        { role: "user", content: user },
+      ],
+      max_tokens: 180,
+    })) as AiRunResponse;
+    const text = (result.response ?? "").trim();
+    const scene = /SCENE:\s*(.+)/i.exec(text)?.[1]?.trim();
+    const greeting = /GREETING:\s*([\s\S]+)/i.exec(text)?.[1]?.trim().replace(/^["'`]|["'`]$/g, "");
+    if (!scene || !greeting) return fallback;
+    return { scene, greeting };
+  } catch {
+    return fallback;
+  }
+}
+
 export async function flavorBossPhase(
   ai: Ai,
   monsterName: string,

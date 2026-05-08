@@ -22,6 +22,7 @@ import {
   flavorVictory,
   generateExpeditionTheme,
   generateLockboxScene,
+  generateMerchantRoom,
   generateNpcRoom,
   generateOpeningScene,
   generateTrapRoom,
@@ -112,6 +113,7 @@ import {
   classByName,
   dropChance,
   findCatalogEntry,
+  generateMerchantName,
   generateNpcName,
   haggleMod,
   npcTrustMod,
@@ -271,6 +273,7 @@ function rulesText(cmd: string, name: string): string {
     `   _Lockbox rooms_ — tiered locks (🥉 bronze / 🥈 silver / 🥇 gold). Need a matching-or-higher key from your inventory; bigger tier = bigger loot.`,
     `   _Keys_ — 🥉 bronze drops from each combat room; 🥈 silver from the sub-boss; 🥇 gold rarely from chests. *Keys persist on your character* across dungeons.`,
     `   _NPC rooms_ — trust is risky! Roll 1d6 + class trust mod (🎭 Bard +2, 🧙 Sage +2, 🗡️ Rogue +1, 👁️ Warlock +1, others 0). ≤2: betrayed (no item + damage). 3: tainted (item + 🔴 Bleeding). 4+: clean exchange. Refuse to walk away safely.`,
+    `   _Merchant_ — guaranteed once per dungeon, right before the sub-boss. Buys with gold (+15% markup over shop). Stock evaporates when you walk past.`,
     `   _Map_ — \`🗺️\` trail shown each room; full reveal (with sealed doors) on completion.`,
     `   Class skills: 💪 *STR*: Paladin, Warden, Druid · 🔧 *DEX*: Rogue, Mage · 📜 *INT*: Bard, Sage, Warlock, Mage, Druid`,
     `• \`${cmd} quest elite\` — modifier: *perma-death* on 0 HP. Composes: \`${cmd} quest boss elite\`.`,
@@ -918,6 +921,12 @@ async function buildDungeonScene(
   }
   // Force first slot to be combat — that's the entry room and drops the first key.
   poolTypes[0] = "combat";
+  // Force ONE middle slot to be a merchant. We pick a random non-entry index
+  // and override its rolled type. Later (after pool shuffle) we'll move that
+  // index to the END of the pool so it lands as the forced single-option door
+  // right before the sub-boss — guaranteed visit, "last chance to gear up" beat.
+  const merchantNodeIdx = 1 + Math.floor(Math.random() * (poolMiddleCount - 1));
+  poolTypes[merchantNodeIdx] = "merchant";
 
   const failDamage = 4 + Math.max(1, character.level);
   const baseTier = Math.max(1, character.level + (elite ? 1 : 0));
@@ -970,6 +979,36 @@ async function buildDungeonScene(
         weapon_range: roll.weapon_range ?? null,
       }));
       const node: ExpeditionNode = { type: "lockbox", scene: lockboxScene, loot_options: opts, lock_tier: lockTier };
+      return node;
+    }
+    if (type === "merchant") {
+      const merchantName = generateMerchantName();
+      // 3 stocked items at slightly higher tier than mid-dungeon — last chance
+      // to gear up before sub-boss, prices are stiff (+15% over shop).
+      const stockRolls = Array.from({ length: 3 }, () => rollItem(baseTier + 1));
+      const [merchant, ...stockNamed] = await Promise.all([
+        generateMerchantRoom(env.AI, theme, roomNum, totalRoomsVisited, merchantName),
+        ...stockRolls.map((roll) => resolveLootDrop(env, `${merchantName}'s stall`, roll)),
+      ]);
+      const opts: LootOption[] = stockRolls.map((roll, j) => ({
+        name: stockNamed[j].name,
+        item_type: roll.type,
+        power: roll.power,
+        rarity: roll.rarity,
+        flavor: stockNamed[j].flavor,
+        weapon_range: roll.weapon_range ?? null,
+      }));
+      const node: ExpeditionNode = {
+        type: "merchant",
+        scene: merchant.scene,
+        loot_options: opts, // reuse loot_options for merchant stock
+        npc: {
+          greeting: merchant.greeting,
+          // npc.item is unused for merchants but the type requires it — set to
+          // a placeholder. resolveMerchantChoice reads from loot_options.
+          item: opts[0],
+        },
+      };
       return node;
     }
     // npc
@@ -1045,6 +1084,14 @@ async function buildDungeonScene(
     const j = Math.floor(Math.random() * (i + 1));
     [pool[i], pool[j]] = [pool[j], pool[i]];
   }
+  // Force merchant to be the LAST element of the shuffled pool. With pool size
+  // always odd (2*middleCount - 1), pool[-1] becomes the forced single-option
+  // door right before the sub-boss — a guaranteed merchant visit, "last chance
+  // to gear up" beat.
+  const merchantPos = pool.indexOf(merchantNodeIdx);
+  if (merchantPos !== -1 && merchantPos !== pool.length - 1) {
+    [pool[merchantPos], pool[pool.length - 1]] = [pool[pool.length - 1], pool[merchantPos]];
+  }
 
   const expedition: ExpeditionState = {
     theme,
@@ -1116,6 +1163,7 @@ function dungeonRoomLabel(t: ExpeditionNodeType): string {
   if (t === "trap") return "⚠️ Trap";
   if (t === "lockbox") return "🔒 Lockbox";
   if (t === "npc") return "🤝 Encounter";
+  if (t === "merchant") return "🛒 Merchant";
   return "🎁 Treasure";
 }
 
@@ -1275,6 +1323,7 @@ function dungeonRoomIcon(t: ExpeditionNodeType): string {
   if (t === "trap") return "⚠️";
   if (t === "lockbox") return "🔒";
   if (t === "npc") return "🤝";
+  if (t === "merchant") return "🛒";
   return "🎁";
 }
 
@@ -1395,6 +1444,25 @@ function renderDungeonRoom(node: ExpeditionNode, exp: ExpeditionState, cmd: stri
       `\`${cmd} choose 1\` Trust them (take the item) • \`${cmd} choose 2\` Refuse and pass.`,
     ].filter(Boolean).join("\n");
   }
+  if (node.type === "merchant") {
+    const stock = node.loot_options ?? [];
+    const stockLines = stock.map((l, i) => {
+      const power = powerLabel(l.item_type, l.power);
+      const price = merchantPrice(l.item_type, l.rarity);
+      return `\`${i + 1}\` ${RARITY_BADGE[l.rarity]} *${l.name}* — ${l.item_type}, ${power} • *${price}g*`;
+    });
+    const skipNum = stock.length + 1;
+    return [
+      header,
+      sceneBlock,
+      "",
+      `> "${node.npc?.greeting ?? "..."}"`,
+      "",
+      ...stockLines,
+      "",
+      `\`${cmd} choose 1-${stock.length}\` to buy • \`${cmd} choose ${skipNum}\` to walk past. _Prices include a +15% dungeon markup._`,
+    ].join("\n");
+  }
   // treasure
   const opts = (node.loot_options ?? []).map((l, i) => {
     const power = l.item_type === "consumable" ? `heals ${l.power}` : `+${l.power}`;
@@ -1498,6 +1566,40 @@ function buildDungeonRoomBlocks(node: ExpeditionNode, exp: ExpeditionState, cmd:
         { type: "button", action_id: "dungeon_choose", value: "1", text: { type: "plain_text", text: "🤝 Trust (take item)" }, style: "primary" },
         { type: "button", action_id: "dungeon_choose", value: "2", text: { type: "plain_text", text: "👋 Refuse" } },
       ],
+    });
+    return blocks;
+  }
+
+  if (node.type === "merchant") {
+    const stock = node.loot_options ?? [];
+    const greeting = `> "${node.npc?.greeting ?? "..."}"`;
+    const stockLines = stock.map((l, i) => {
+      const power = powerLabel(l.item_type, l.power);
+      const price = merchantPrice(l.item_type, l.rarity);
+      return `\`${i + 1}\` ${RARITY_BADGE[l.rarity]} *${l.name}* — ${l.item_type}, ${power} • *${price}g*`;
+    }).join("\n");
+    const noteParts = stock.length === 0
+      ? `_The merchant's stall is empty — you bought everything good._`
+      : `${greeting}\n${stockLines}`;
+    blocks.push({ type: "section", text: { type: "mrkdwn", text: noteParts } });
+    const skipNum = stock.length + 1;
+    const elements: unknown[] = stock.map((l, i) => ({
+      type: "button",
+      action_id: "dungeon_choose",
+      value: String(i + 1),
+      text: { type: "plain_text", text: `🛍️ Buy ${merchantPrice(l.item_type, l.rarity)}g` },
+      style: "primary",
+    }));
+    elements.push({
+      type: "button",
+      action_id: "dungeon_choose",
+      value: String(skipNum),
+      text: { type: "plain_text", text: "👋 Walk past" },
+    });
+    blocks.push({ type: "actions", block_id: "dungeon_merchant", elements });
+    blocks.push({
+      type: "context",
+      elements: [{ type: "mrkdwn", text: `_Prices include a +15% dungeon markup. Stock is gone after you walk past._` }],
     });
     return blocks;
   }
@@ -2511,7 +2613,7 @@ async function handleChoose(
   }
 
   const node = exp.nodes[exp.current];
-  if (!node || (node.type !== "trap" && node.type !== "lockbox" && node.type !== "npc")) {
+  if (!node || (node.type !== "trap" && node.type !== "lockbox" && node.type !== "npc" && node.type !== "merchant")) {
     return ephemeral("No room choice to make right now.");
   }
 
@@ -2520,6 +2622,9 @@ async function handleChoose(
   }
   if (node.type === "lockbox") {
     return resolveLockboxChoice(payload, env, ctx, character, quest, exp, node, idx);
+  }
+  if (node.type === "merchant") {
+    return resolveMerchantChoice(payload, env, ctx, character, quest, exp, node, idx);
   }
   return resolveNpcChoice(payload, env, ctx, character, quest, exp, node, idx);
 }
@@ -2704,6 +2809,83 @@ async function resolveNpcChoice(
   const headline = `🤝 <@${payload.user_id}> trusts the stranger — *honest exchange* \`1d6 + ${modBreakdown} = ${total}\`. Claims ${RARITY_BADGE[offer.rarity]} *${offer.name}* (id \`${item.id}\`).`;
   const flavorLine = `_${flavor}_`;
   return advanceDungeonRoom(payload, env, ctx, quest, character, [headline, flavorLine]);
+}
+
+// Merchant room — buy stocked items with gold, or walk past. Stock is dungeon-
+// instance-scoped: items not bought before advancing are gone forever.
+//   /sq choose 1..N → buy item N (deducts gold + adds to inventory)
+//   /sq choose N+1 → walk past
+async function resolveMerchantChoice(
+  payload: SlashCommandPayload,
+  env: Env,
+  ctx: ExecutionContext,
+  character: Character,
+  quest: ActiveQuest,
+  exp: ExpeditionState,
+  node: ExpeditionNode,
+  idx: number,
+): Promise<CommandResponse> {
+  const stock = node.loot_options ?? [];
+  const skipIdx = stock.length + 1;
+  if (idx < 1 || idx > skipIdx) {
+    return ephemeral(`Usage: \`${payload.command} choose <1-${skipIdx}>\` (last option = walk past).`);
+  }
+  if (idx === skipIdx) {
+    return advanceDungeonRoom(payload, env, ctx, quest, character, [
+      `🛒 <@${payload.user_id}> waves the merchant off and walks on.`,
+    ]);
+  }
+
+  const choice = stock[idx - 1];
+  const price = merchantPrice(choice.item_type, choice.rarity);
+  if (character.gold < price) {
+    return ephemeral(
+      `🛒 *${choice.name}* costs ${price}g — you have ${character.gold}g. \`${payload.command} choose ${skipIdx}\` to walk past.`,
+    );
+  }
+
+  // Atomic gold deduct so two players can't double-spend the same gold pile.
+  const paid = await tryDeductGold(env.DB, payload.user_id, price);
+  if (!paid) {
+    return ephemeral(`Couldn't afford that — looks like the gold went elsewhere.`);
+  }
+
+  // Remove this item from the merchant's stock so it can't be bought twice.
+  // Also set node.scene = updated to reflect the sold state for future renders.
+  const remainingStock = stock.filter((_, i) => i !== idx - 1);
+  const updatedNode: ExpeditionNode = { ...node, loot_options: remainingStock };
+  const updatedExp: ExpeditionState = {
+    ...exp,
+    nodes: exp.nodes.map((n, i) => (i === exp.current ? updatedNode : n)),
+  };
+  const updatedScene: SceneJson = { ...quest.scene, expedition: updatedExp };
+  await trySaveExpeditionAdvance(env.DB, quest.id, updatedScene, exp.current);
+
+  const item = await addItem(env.DB, {
+    character_id: payload.user_id,
+    item_name: choice.name,
+    item_type: choice.item_type,
+    power: choice.power,
+    rarity: choice.rarity,
+    flavor: choice.flavor,
+    weapon_range: choice.weapon_range ?? null,
+  });
+  await appendLog(env.DB, quest.id, payload.user_id, "merchant", `bought ${item.item_name} for ${price}g`);
+
+  const headline = `🛍️ <@${payload.user_id}> buys ${RARITY_BADGE[choice.rarity]} *${choice.name}* from the merchant for *${price}g* (id \`${item.id}\`, now ${character.gold - price}g).`;
+  // Don't advance — let the player potentially buy a second item. Return the
+  // updated room render so they see what's left.
+  const roomBody = renderDungeonRoom(updatedNode, updatedExp, payload.command);
+  const blocks = buildDungeonRoomBlocks(updatedNode, updatedExp, payload.command);
+  ctx.waitUntil(postToThread(env, quest, [blockQuote(headline), "", roomBody].join("\n")));
+  return {
+    text: [headline, "", roomBody].join("\n"),
+    response_type: "ephemeral",
+    blocks: [
+      { type: "section", text: { type: "mrkdwn", text: headline } },
+      ...blocks,
+    ],
+  };
 }
 
 async function handleTake(
@@ -4407,6 +4589,14 @@ function powerLabel(itemType: Item["item_type"], power: number): string {
   if (itemType === "tool") return `${power} dmg`;
   if (itemType === "scroll") return power > 0 ? `+${power}` : "ritual";
   return `+${power}`;
+}
+
+// Merchants charge a flat +15% over the standard shop price for the inconvenience
+// of dragging their stall into a dungeon. Uses the same priceFor() base table
+// (which already accounts for tier/rarity differences across item types).
+const MERCHANT_MARKUP = 1.15;
+function merchantPrice(type: Parameters<typeof priceFor>[0], rarity: Parameters<typeof priceFor>[1]): number {
+  return Math.ceil(priceFor(type, rarity) * MERCHANT_MARKUP);
 }
 
 // For catalog items (tool / scroll), returns a short *Effect:* line describing

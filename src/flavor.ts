@@ -502,3 +502,19 @@ export function generateNpcName(): string {
   const epithet = EPITHET[Math.floor(Math.random() * EPITHET.length)];
   return `${given} ${epithet}`;
 }
+
+// Merchants get a tradesperson-flavored epithet pool. Same prefix/mid as NPCs
+// but with shopkeep-y suffixes.
+const MERCHANT_EPITHET = [
+  "the Marked-Up", "the Travelling Codemonger", "the Sprint Vendor",
+  "the Underdocumented", "the Off-by-One", "the Markdown Trader",
+  "the Quartermaster of Q4", "the Lukewarm Reseller", "the Cache-Hawker",
+  "the Roadmap Reseller",
+];
+
+export function generateMerchantName(): string {
+  const given = PREFIX[Math.floor(Math.random() * PREFIX.length)] +
+                MID[Math.floor(Math.random() * MID.length)];
+  const epithet = MERCHANT_EPITHET[Math.floor(Math.random() * MERCHANT_EPITHET.length)];
+  return `${given} ${epithet}`;
+}

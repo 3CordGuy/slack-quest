@@ -149,7 +149,7 @@ export interface GauntletWave {
 //   "lockbox"  → /sq choose 1|2 — use a key for bonus loot, or skip
 //   "npc"      → /sq choose 1|2 — trust (get item) or refuse (free pass)
 //   "treasure" → /sq take 1|2 — final reward, always the dungeon's last room
-export type ExpeditionNodeType = "combat" | "trap" | "lockbox" | "npc" | "treasure";
+export type ExpeditionNodeType = "combat" | "trap" | "lockbox" | "npc" | "treasure" | "merchant";
 
 export type SkillType = "str" | "dex" | "int";
 
