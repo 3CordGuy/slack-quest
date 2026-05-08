@@ -110,22 +110,70 @@ async function generateMonsterIdentity(
     })) as AiRunResponse;
     const text = res.response ?? "";
     console.log("identity:received", { len: text.length, preview: text.slice(0, 200) });
-    const nameMatch = /\*{0,2}MONSTER_NAME\*{0,2}\s*:\s*(.+)/i.exec(text);
-    const hpMatch = /\*{0,2}MONSTER_HP\*{0,2}\s*:\s*\*{0,2}(\d+)/i.exec(text);
-    const name = nameMatch?.[1] ? stripWrappers(nameMatch[1].split("\n")[0]) : "";
-    let hp = hpMatch ? parseInt(hpMatch[1], 10) : NaN;
-    if (Number.isNaN(hp)) hp = Math.floor((hpFloor + hpCeil) / 2);
-    hp = Math.min(hpCeil, Math.max(hpFloor, hp));
-    if (!name) {
+    const parsed = parseIdentityResponse(text, hpFloor, hpCeil);
+    if (!parsed) {
       console.warn("identity:parse-fallback", { preview: text.slice(0, 200) });
-      return { name: fallbackMonsterName(), hp };
+      return { name: fallbackMonsterName(), hp: Math.floor((hpFloor + hpCeil) / 2) };
     }
-    console.log("identity:done", { name, hp });
-    return { name, hp };
+    console.log("identity:done", parsed);
+    return parsed;
   } catch (err) {
     console.error("identity:error", { err: err instanceof Error ? err.message : String(err) });
     return { name: fallbackMonsterName(), hp: Math.floor((hpFloor + hpCeil) / 2) };
   }
+}
+
+// Lenient parser for the identity step's AI response. Tries strict
+// "MONSTER_NAME: X / MONSTER_HP: Y" format first, then falls back to a
+// label-less interpretation: first non-numeric line = name, first standalone
+// integer = HP. Llama frequently drops the field labels and returns "<name>:
+// <hp>" or "<name>\n<hp>" — this catches both modes.
+function parseIdentityResponse(
+  text: string,
+  hpFloor: number,
+  hpCeil: number,
+): { name: string; hp: number } | null {
+  // Strict pass first — most-specific match.
+  const strictName = /\*{0,2}MONSTER_NAME\*{0,2}\s*:\s*(.+)/i.exec(text);
+  const strictHp = /\*{0,2}MONSTER_HP\*{0,2}\s*:\s*\*{0,2}(\d+)/i.exec(text);
+  if (strictName?.[1]) {
+    const name = stripWrappers(strictName[1].split("\n")[0]);
+    let hp = strictHp ? parseInt(strictHp[1], 10) : Math.floor((hpFloor + hpCeil) / 2);
+    hp = Math.min(hpCeil, Math.max(hpFloor, hp));
+    if (name) return { name, hp };
+  }
+
+  // Lenient pass — split into lines, identify name + integer.
+  const lines = text.split("\n").map((l) => l.trim()).filter(Boolean);
+  let name = "";
+  let hp = NaN;
+  for (const raw of lines) {
+    // Strip any leading label-ish prefix (MONSTER_NAME, NAME, HP, etc.) + trailing colons.
+    const cleaned = raw
+      .replace(/^\*{0,2}(monster[_\s]?name|monster[_\s]?hp|name|hp|foe)\*{0,2}\s*:?\s*/i, "")
+      .replace(/[:;]+$/, "")
+      .trim();
+    if (!cleaned) continue;
+    // Standalone integer? Treat as HP if not yet captured AND it's plausibly in range.
+    const intOnly = /^(\d+)\s*$/.exec(cleaned);
+    if (intOnly && Number.isNaN(hp)) {
+      const val = parseInt(intOnly[1], 10);
+      // Loose range check — Llama might pick slightly outside the floor/ceil.
+      // We clamp later. Just need to filter accidental matches like "4 limbs."
+      if (val >= 1 && val <= hpCeil * 3) {
+        hp = val;
+        continue;
+      }
+    }
+    // First alphabetic line = name candidate.
+    if (!name && /[A-Za-z]/.test(cleaned)) {
+      name = stripWrappers(cleaned);
+    }
+  }
+  if (!name) return null;
+  if (Number.isNaN(hp)) hp = Math.floor((hpFloor + hpCeil) / 2);
+  hp = Math.min(hpCeil, Math.max(hpFloor, hp));
+  return { name, hp };
 }
 
 // Step 2 of opening-scene generation: write the scene prose with the chosen
