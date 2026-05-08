@@ -333,7 +333,7 @@ export async function handleInteraction(
   if (action.action_id === "dungeon_choose") return handleChoose(slash, args, env, ctx);
   if (action.action_id === "dungeon_take") return handleTake(slash, args, env, ctx);
   if (action.action_id === "shop_buy") return handleBuy(slash, args, env);
-  if (action.action_id === "shop_haggle") return handleHaggle(slash, args, env);
+  if (action.action_id === "shop_haggle") return handleHaggle(slash, args, env, ctx);
   if (action.action_id === "shop_open") return handleShop(slash, env, ctx);
   return ephemeral(`Unknown action \`${action.action_id}\`.`);
 }
@@ -397,7 +397,7 @@ export async function handleCommand(
     case "buy":
       return handleBuy(payload, args, env);
     case "haggle":
-      return handleHaggle(payload, args, env);
+      return handleHaggle(payload, args, env, ctx);
     case "sell":
       return handleSell(payload, args, env);
     case "give":
@@ -3320,6 +3320,7 @@ async function handleHaggle(
   payload: SlashCommandPayload,
   args: string[],
   env: Env,
+  ctx: ExecutionContext,
 ): Promise<CommandResponse> {
   const character = await getCharacter(env.DB, payload.user_id);
   if (!character) return ephemeral(`You need to \`${payload.command} roll\` a character first.`);
@@ -3370,6 +3371,18 @@ async function handleHaggle(
     : `🪙 <@${payload.user_id}> haggles *${stock.item_name}* — *-${pct}%* \`1d6 + ${modBreakdown} = ${total}\`. New price: *${newPrice}g* (was ${stock.price}g).`;
 
   const text = `${headline}\n_${flavor}_`;
+
+  // Post the haggle result to the channel publicly — everyone sees the win/fail
+  // (and can react). Top-level message (no thread_ts) since shopping happens
+  // between quests. The haggler still gets an ephemeral copy with a [Shop]
+  // button for quick navigation.
+  ctx.waitUntil(
+    postMessage(env.SLACK_BOT_TOKEN, {
+      channel: payload.channel_id,
+      text,
+    }),
+  );
+
   return {
     text,
     response_type: "ephemeral",
