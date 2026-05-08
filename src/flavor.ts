@@ -56,6 +56,18 @@ export function haggleMod(className: string): number {
   return 0;
 }
 
+// Per-class NPC-trust modifier — added to the 1d6 trust roll. Reading-people
+// classes (Bard, Sage) and paranoid types (Warlock) catch betrayals more often.
+// Slick rogues lean street-smart. Other classes take it on the chin.
+export function npcTrustMod(className: string): number {
+  const cls = classByName(className);
+  if (cls.id === "frontend_bard") return 2;
+  if (cls.id === "staff_sage") return 2;
+  if (cls.id === "refactor_rogue") return 1;
+  if (cls.id === "data_warlock") return 1;
+  return 0;
+}
+
 // Static flavor lines for haggle outcomes. Picked at random per attempt — keeps
 // the cost zero (no AI call per click) while still feeling fresh across multiple
 // shop visits.
@@ -89,6 +101,38 @@ export const HAGGLE_LINES = {
 // Picks a random line for a given outcome bucket.
 export function pickHaggleLine(bucket: "failed" | "modest" | "solid" | "steal"): string {
   const lines = HAGGLE_LINES[bucket];
+  return lines[Math.floor(Math.random() * lines.length)];
+}
+
+// Static flavor lines for NPC-trust outcomes. Sketchier classes get more
+// frequent betrayals; perceptive ones get clean exchanges.
+export const NPC_TRUST_LINES = {
+  betrayed: [
+    "You hand over your trust. They hand you a knife.",
+    "The NPC's smile sours into a sneer as they bolt with your confidence.",
+    "Should have read the body language. They cut and run with everything they could grab.",
+    "\"Thanks for the trust!\" they shout, already three corridors away.",
+    "You feel the prick of a hidden blade as they vanish into the gloom.",
+    "Turns out the offered satchel was a decoy. They lift a pouch from your belt instead.",
+  ],
+  tainted: [
+    "They press a satchel into your hand — only later do you notice the cuts on your palm.",
+    "The bargain holds, but something about that handshake felt wrong.",
+    "You take the offered item. The NPC's grin lingers a beat too long.",
+    "A fair trade — though the satchel's drawstring is suspiciously sticky.",
+    "You leave with the goods. You also leave with a slow leak.",
+  ],
+  clean: [
+    "The stranger presses the satchel into your hand and vanishes with a nod.",
+    "An honest deal in unhonest times.",
+    "They wish you well — and they actually mean it.",
+    "The NPC tips their hood and slips into the shadows. The item's yours, no strings.",
+    "\"Don't tell anyone where you got it,\" they whisper, then they're gone.",
+  ],
+} as const;
+
+export function pickNpcTrustLine(bucket: "betrayed" | "tainted" | "clean"): string {
+  const lines = NPC_TRUST_LINES[bucket];
   return lines[Math.floor(Math.random() * lines.length)];
 }
 

@@ -113,7 +113,9 @@ import {
   findCatalogEntry,
   generateNpcName,
   haggleMod,
+  npcTrustMod,
   pickHaggleLine,
+  pickNpcTrustLine,
   generateScar,
   pickRandomClass,
   priceFor,
@@ -267,7 +269,7 @@ function rulesText(cmd: string, name: string): string {
     `   _Trap rooms_ — 3 class-skill options. Match → auto-pass; mismatch → \`1d6 ≥ 4\`. Fail = HP damage.`,
     `   _Lockbox rooms_ — tiered locks (🥉 bronze / 🥈 silver / 🥇 gold). Need a matching-or-higher key from your inventory; bigger tier = bigger loot.`,
     `   _Keys_ — 🥉 bronze drops from each combat room; 🥈 silver from the sub-boss; 🥇 gold rarely from chests. *Keys persist on your character* across dungeons.`,
-    `   _NPC rooms_ — trust them for an item, or refuse and pass.`,
+    `   _NPC rooms_ — trust is risky! Roll 1d6 + class trust mod (🎭 Bard +2, 🧙 Sage +2, 🗡️ Rogue +1, 👁️ Warlock +1, others 0). ≤3: betrayed (no item + damage). 4-5: tainted (item + 🔴 Bleeding). 6+: clean exchange. Refuse to walk away safely.`,
     `   _Map_ — \`🗺️\` trail shown each room; full reveal (with sealed doors) on completion.`,
     `   Class skills: 💪 *STR*: Paladin, Warden, Druid · 🔧 *DEX*: Rogue, Mage · 📜 *INT*: Bard, Sage, Warlock, Mage, Druid`,
     `• \`${cmd} quest elite\` — modifier: *perma-death* on 0 HP. Composes: \`${cmd} quest boss elite\`.`,
@@ -2576,13 +2578,47 @@ async function resolveNpcChoice(
       `🤝 <@${payload.user_id}> waves the stranger off and presses on.`,
     ]);
   }
-  // Trust — take the offered item.
+  // Trust — roll 1d6 + class trust mod against the stranger.
+  //   ≤3: betrayed (no item, take damage)
+  //   4-5: tainted gift (item given, but applies 🔴 Bleeding for 3 actions)
+  //   6+:  clean exchange (item, no strings)
   const offer = node.npc?.item;
   if (!offer) {
     return advanceDungeonRoom(payload, env, ctx, quest, character, [
       `🤝 The stranger fades into the gloom with nothing to give.`,
     ]);
   }
+
+  const mod = npcTrustMod(character.class);
+  const roll = rollDice(6);
+  const total = roll + mod;
+  const modBreakdown = mod > 0 ? `${roll} + ${mod}m` : `${roll}`;
+  let bucket: "betrayed" | "tainted" | "clean";
+  if (total <= 3) bucket = "betrayed";
+  else if (total <= 5) bucket = "tainted";
+  else bucket = "clean";
+
+  const flavor = pickNpcTrustLine(bucket);
+  const tier = quest.scene.tier;
+
+  if (bucket === "betrayed") {
+    // No item. Take 1d4 + tier damage. Route to death if it kills.
+    const damage = rollDice(4) + tier;
+    const newHp = Math.max(0, character.hp - damage);
+    const headline = `🤝 <@${payload.user_id}> trusts the stranger — *BETRAYED!* \`1d6 + ${modBreakdown} = ${total}\`. Takes *${damage}* HP.`;
+    const flavorLine = `_${flavor}_`;
+    await appendLog(env.DB, quest.id, payload.user_id, "npc", `betrayed, -${damage} HP`);
+
+    if (newHp <= 0) {
+      const fighters = (await getQuestParty(env.DB, quest.id)).filter(isFighter);
+      return resolveDeath(payload, env, ctx, character, quest, fighters, [headline, flavorLine]);
+    }
+    return advanceDungeonRoom(payload, env, ctx, quest, character, [headline, flavorLine], {
+      actorHpAfter: newHp,
+    });
+  }
+
+  // Both "tainted" and "clean" hand over the item.
   const item = await addItem(env.DB, {
     character_id: payload.user_id,
     item_name: offer.name,
@@ -2592,10 +2628,28 @@ async function resolveNpcChoice(
     flavor: offer.flavor,
     weapon_range: offer.weapon_range ?? null,
   });
-  await appendLog(env.DB, quest.id, payload.user_id, "npc", `trusted, took ${item.item_name}`);
 
-  const headline = `🤝 <@${payload.user_id}> trusts the stranger — claims ${RARITY_BADGE[offer.rarity]} *${offer.name}* (id \`${item.id}\`).`;
-  return advanceDungeonRoom(payload, env, ctx, quest, character, [headline]);
+  if (bucket === "tainted") {
+    // Apply 🔴 Bleeding via withEffectApplied. Save effects.
+    const bleed: StatusEffect = {
+      type: "bleeding",
+      magnitude: 2,
+      remaining: 3,
+      source: `tainted gift from a stranger`,
+    };
+    const updatedEffects = withEffectApplied(character.effects ?? [], bleed);
+    await setCharacterEffects(env.DB, payload.user_id, updatedEffects);
+    await appendLog(env.DB, quest.id, payload.user_id, "npc", `tainted, took ${item.item_name} + bleeding`);
+    const headline = `🤝 <@${payload.user_id}> trusts the stranger — *tainted gift* \`1d6 + ${modBreakdown} = ${total}\`. Claims ${RARITY_BADGE[offer.rarity]} *${offer.name}* (id \`${item.id}\`) — but is now 🔴 *Bleeding* (-2 HP × 3 actions).`;
+    const flavorLine = `_${flavor}_`;
+    return advanceDungeonRoom(payload, env, ctx, quest, character, [headline, flavorLine]);
+  }
+
+  // Clean
+  await appendLog(env.DB, quest.id, payload.user_id, "npc", `trusted, took ${item.item_name}`);
+  const headline = `🤝 <@${payload.user_id}> trusts the stranger — *honest exchange* \`1d6 + ${modBreakdown} = ${total}\`. Claims ${RARITY_BADGE[offer.rarity]} *${offer.name}* (id \`${item.id}\`).`;
+  const flavorLine = `_${flavor}_`;
+  return advanceDungeonRoom(payload, env, ctx, quest, character, [headline, flavorLine]);
 }
 
 async function handleTake(
