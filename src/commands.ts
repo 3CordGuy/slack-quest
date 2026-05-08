@@ -121,7 +121,7 @@ import {
   SHIELD_CAP_MULTIPLIER,
   SKILL_META,
 } from "./flavor";
-import { postMessage, respondToCommand, type SlashCommandPayload } from "./slack";
+import { postMessage, respondToCommand, type InteractivePayload, type SlashCommandPayload } from "./slack";
 
 export interface CommandResponse {
   text: string;
@@ -282,6 +282,49 @@ function rulesText(cmd: string, name: string): string {
     ``,
     `_Use \`${cmd} help\` for the command list. \`${cmd} me\` for your sheet._`,
   ].join("\n");
+}
+
+// Routes Block Kit button clicks to the same handlers slash commands use. We
+// build a synthetic SlashCommandPayload from the interactive payload so we can
+// reuse the existing per-action functions without duplicating their logic.
+//
+// action_id values used today (set in /sq inventory render):
+//   "equip" | "use" | "sell"   — value = inventory id (string)
+//
+// Slack's interactive endpoint expects a fast 200. The actual handler may post
+// to thread / response_url asynchronously; we just return the immediate response.
+export async function handleInteraction(
+  payload: InteractivePayload,
+  env: Env,
+  ctx: ExecutionContext,
+): Promise<CommandResponse> {
+  if (payload.type !== "block_actions" || payload.actions.length === 0) {
+    return ephemeral("Unknown interaction.");
+  }
+  const action = payload.actions[0];
+  const slash: SlashCommandPayload = {
+    token: "",
+    team_id: payload.team.id,
+    team_domain: payload.team.domain ?? "",
+    channel_id: payload.channel.id,
+    channel_name: payload.channel.name ?? "",
+    user_id: payload.user.id,
+    user_name: payload.user.username ?? "",
+    // Use the same command label slash commands use so the help/error text reads
+    // naturally. We don't have access to the original command name here, so
+    // default to the bot's display alias.
+    command: "/" + (env.BOT_NAME?.toLowerCase().replace(/\s+/g, "") || "sq"),
+    text: action.value,
+    response_url: payload.response_url,
+    trigger_id: payload.trigger_id,
+    api_app_id: payload.api_app_id,
+  };
+  const args = [action.value];
+
+  if (action.action_id === "equip") return handleEquip(slash, args, env);
+  if (action.action_id === "use") return handleUse(slash, args, env, ctx);
+  if (action.action_id === "sell") return handleSell(slash, args, env);
+  return ephemeral(`Unknown action \`${action.action_id}\`.`);
 }
 
 export async function handleCommand(
@@ -2341,20 +2384,86 @@ async function handleInventory(payload: SlashCommandPayload, env: Env): Promise<
     return ephemeral(emptyLines.join("\n"));
   }
 
-  const lines = [
-    `*Inventory* — ${items.length} item${items.length > 1 ? "s" : ""}`,
+  // Per-item: section block (item description) + actions block ([Equip] [Use] [Sell]).
+  // The actions block carries action_id values that the /slack/interactive endpoint
+  // routes via handleInteraction. value = inventory id as string.
+  const blocks: unknown[] = [
+    {
+      type: "header",
+      text: { type: "plain_text", text: `Inventory — ${items.length} item${items.length > 1 ? "s" : ""}` },
+    },
   ];
   for (const item of items) {
     const equipMark = item.equipped ? " ✅" : "";
     const powerStr = powerLabel(item.item_type, item.power);
-    lines.push(
-      `\`${item.id}\` ${RARITY_BADGE[item.rarity]} *${item.item_name}* — ${item.item_type}${rangeBadge(item)}, ${powerStr}${equipMark}`,
-    );
-    if (item.flavor) lines.push(`   _${item.flavor}_`);
+    const flavorLine = item.flavor ? `\n_${item.flavor}_` : "";
+    const summary = `\`${item.id}\` ${RARITY_BADGE[item.rarity]} *${item.item_name}* — ${item.item_type}${rangeBadge(item)}, ${powerStr}${equipMark}${flavorLine}`;
+    blocks.push({
+      type: "section",
+      text: { type: "mrkdwn", text: summary },
+    });
+
+    // Build the action row. Equip is only meaningful for weapon/armor; Use is only
+    // for consumable/magic/revive/tool/scroll. Sell always available.
+    const elements: unknown[] = [];
+    const isEquippable = item.item_type === "weapon" || item.item_type === "armor";
+    const isUsable =
+      item.item_type === "consumable" ||
+      item.item_type === "magic" ||
+      item.item_type === "revive" ||
+      item.item_type === "tool" ||
+      item.item_type === "scroll";
+    if (isEquippable && !item.equipped) {
+      elements.push({
+        type: "button",
+        action_id: "equip",
+        value: String(item.id),
+        text: { type: "plain_text", text: "Equip" },
+      });
+    }
+    if (isUsable) {
+      elements.push({
+        type: "button",
+        action_id: "use",
+        value: String(item.id),
+        text: { type: "plain_text", text: "Use" },
+        style: "primary",
+      });
+    }
+    elements.push({
+      type: "button",
+      action_id: "sell",
+      value: String(item.id),
+      text: { type: "plain_text", text: `Sell ${sellPriceFor(item.item_type, item.rarity)}g` },
+      style: "danger",
+      confirm: {
+        title: { type: "plain_text", text: "Sell this item?" },
+        text: { type: "mrkdwn", text: `Sell *${item.item_name}* for ${sellPriceFor(item.item_type, item.rarity)}g? This is permanent.` },
+        confirm: { type: "plain_text", text: "Sell" },
+        deny: { type: "plain_text", text: "Cancel" },
+      },
+    });
+    blocks.push({
+      type: "actions",
+      block_id: `inv_${item.id}`,
+      elements,
+    });
   }
-  if (keyLine) lines.push("", keyLine);
-  lines.push("", `Equip with \`${payload.command} equip <id>\`, use a consumable with \`${payload.command} use <id>\`.`);
-  return ephemeral(lines.join("\n"));
+
+  // Footer: keys + slash-command hints.
+  const footerParts: string[] = [];
+  if (keyLine) footerParts.push(keyLine);
+  footerParts.push(`_Buttons require Slack interactivity. Slash forms: \`${payload.command} equip <id>\` • \`${payload.command} use <id>\` • \`${payload.command} sell <id>\`._`);
+  blocks.push({
+    type: "context",
+    elements: [{ type: "mrkdwn", text: footerParts.join("  •  ") }],
+  });
+
+  // Plain-text fallback for clients/contexts that don't render Block Kit.
+  const fallback = items
+    .map((it) => `\`${it.id}\` ${RARITY_BADGE[it.rarity]} *${it.item_name}* — ${it.item_type}, ${powerLabel(it.item_type, it.power)}${it.equipped ? " ✅" : ""}`)
+    .join("\n");
+  return { text: fallback, response_type: "ephemeral", blocks };
 }
 
 async function handleEquip(

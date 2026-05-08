@@ -57,6 +57,38 @@ export function parseSlashCommand(body: string): SlashCommandPayload {
   return Object.fromEntries(params.entries()) as unknown as SlashCommandPayload;
 }
 
+// Slack's interactivity payloads (button clicks, menu selects, etc.) come in as
+// URL-encoded form bodies with a single `payload` field containing JSON. We only
+// care about block_actions for the inventory buttons today.
+export interface InteractiveAction {
+  action_id: string;       // e.g. "equip" | "use" | "sell"
+  block_id: string;        // e.g. "inv_42"
+  value: string;           // typically the inventory id as a string
+  type: string;            // "button" | "static_select" | ...
+}
+
+export interface InteractivePayload {
+  type: "block_actions" | string;
+  user: { id: string; username?: string };
+  channel: { id: string; name?: string };
+  team: { id: string; domain?: string };
+  api_app_id: string;
+  trigger_id: string;
+  response_url: string;
+  actions: InteractiveAction[];
+}
+
+export function parseInteractivePayload(body: string): InteractivePayload | null {
+  const params = new URLSearchParams(body);
+  const raw = params.get("payload");
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw) as InteractivePayload;
+  } catch {
+    return null;
+  }
+}
+
 export interface PostMessageArgs {
   channel: string;
   text: string;
