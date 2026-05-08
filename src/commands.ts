@@ -269,7 +269,7 @@ function rulesText(cmd: string, name: string): string {
     `   _Trap rooms_ — 3 class-skill options. Match → auto-pass; mismatch → \`1d6 ≥ 4\`. Fail = HP damage.`,
     `   _Lockbox rooms_ — tiered locks (🥉 bronze / 🥈 silver / 🥇 gold). Need a matching-or-higher key from your inventory; bigger tier = bigger loot.`,
     `   _Keys_ — 🥉 bronze drops from each combat room; 🥈 silver from the sub-boss; 🥇 gold rarely from chests. *Keys persist on your character* across dungeons.`,
-    `   _NPC rooms_ — trust is risky! Roll 1d6 + class trust mod (🎭 Bard +2, 🧙 Sage +2, 🗡️ Rogue +1, 👁️ Warlock +1, others 0). ≤3: betrayed (no item + damage). 4: tainted (item + 🔴 Bleeding). 5+: clean exchange. Refuse to walk away safely.`,
+    `   _NPC rooms_ — trust is risky! Roll 1d6 + class trust mod (🎭 Bard +2, 🧙 Sage +2, 🗡️ Rogue +1, 👁️ Warlock +1, others 0). ≤2: betrayed (no item + damage). 3: tainted (item + 🔴 Bleeding). 4+: clean exchange. Refuse to walk away safely.`,
     `   _Map_ — \`🗺️\` trail shown each room; full reveal (with sealed doors) on completion.`,
     `   Class skills: 💪 *STR*: Paladin, Warden, Druid · 🔧 *DEX*: Rogue, Mage · 📜 *INT*: Bard, Sage, Warlock, Mage, Druid`,
     `• \`${cmd} quest elite\` — modifier: *perma-death* on 0 HP. Composes: \`${cmd} quest boss elite\`.`,
@@ -2594,8 +2594,8 @@ async function resolveNpcChoice(
   const total = roll + mod;
   const modBreakdown = mod > 0 ? `${roll} + ${mod}m` : `${roll}`;
   let bucket: "betrayed" | "tainted" | "clean";
-  if (total <= 3) bucket = "betrayed";
-  else if (total === 4) bucket = "tainted";
+  if (total <= 2) bucket = "betrayed";
+  else if (total === 3) bucket = "tainted";
   else bucket = "clean";
 
   const flavor = pickNpcTrustLine(bucket);
