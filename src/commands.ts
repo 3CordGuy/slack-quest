@@ -208,8 +208,8 @@ function rulesText(cmd: string, name: string): string {
     `• \`${cmd} cast\` — \`1d8 + mag_mod + weapon\`, crit on nat 8`,
     `• \`${cmd} signature\` (\`sig\`) — class-specific big move, costs 1 mana`,
     `• \`${cmd} flee\` — \`1d2\`. 1 = escape (party fights on); 2 = trip + free monster hit. Blocked in gauntlet/expedition.`,
-    `• \`${cmd} heal [@user]\` — \`1d6 + mag_mod\` HP to a partymate, costs 1 mana`,
-    `• \`${cmd} shield [@user]\` — \`1d6 + mag_mod\` absorbing HP, costs 1 mana, caps at 2× max HP`,
+    `• \`${cmd} heal [@user]\` — \`1d6 + mag_mod\` HP to a partymate, costs 1 mana, *triggers monster retaliation*`,
+    `• \`${cmd} shield [@user]\` — \`1d6 + mag_mod\` absorbing HP, costs 1 mana, caps at 2× max HP, *triggers monster retaliation*`,
     `• \`${cmd} revive <id> @user\` — bring downed partymate back, consumes a revive item (no mana cost)`,
     `• Monster damage: \`1d4 + tier + party_bonus\`, mitigated by armor (\`floor(power/2)\`, min 1) and back-row position (×0.6, min 1). Boss phase 2 adds +tier.`,
     `• *Targeting:* monster picks a victim weighted 3:1 front:back from alive fighters — front-line tanks soak hits for back-line casters.`,
@@ -895,68 +895,29 @@ async function handleCombat(
     ]);
   }
 
-  // Monster turn — picks a target from the alive party weighted by battle position.
-  // Front-row players are 3× more likely to be hit than back-row. Back-row takes 60%
-  // damage when hit. This forces real party composition: tanks up front, casters back.
+  // Monster turn — see performMonsterTurn for targeting + damage logic.
   const isMagic = action === "cast";
-  const target = pickMonsterTarget(fighters, Math.random);
-  const targetIsActor = target.slack_user_id === payload.user_id;
+  const turn = await performMonsterTurn(env, quest, fighters, character, equippedArmor);
 
-  // Armor is per-target — re-fetch if we're hitting someone other than the actor
-  // (the actor's equippedArmor was already loaded above).
-  const targetArmor = targetIsActor
-    ? equippedArmor
-    : await getEquipped(env.DB, target.slack_user_id, "armor");
-
-  const monster = resolveMonsterHit(
-    quest.scene.tier,
-    fighters.length,
-    targetArmor?.power ?? 0,
-    updatedScene.variant === "boss" && updatedScene.boss_phase === 2,
-    rollDice,
-  );
-  // Position damage mod applies only in parties of 2+. Solo fights ignore position
-  // entirely — there's no front/back tradeoff with one fighter.
-  const positionAdjusted = fighters.length > 1
-    ? positionDamageMod(target.position, monster.final)
-    : monster.final;
-  // Shield absorbs damage before HP.
-  const dmg = applyDamageWithShield(positionAdjusted, target.shield, target.hp);
-  const targetHpAfter = dmg.newHp;
-
-  const armorPart = monster.armorReduction > 0
-    ? ` \`${monster.raw} − ${monster.armorReduction} armor\``
-    : "";
-  const positionPart = fighters.length > 1 && target.position === "back" && positionAdjusted < monster.final
-    ? ` (${target.position}-row: ${positionAdjusted})`
-    : "";
-  const shieldPart = dmg.shieldAbsorbed > 0
-    ? ` — *${dmg.shieldAbsorbed}* absorbed by shield, *${dmg.hpDamage}* to HP`
-    : "";
-  const targetTag = targetIsActor ? "back" : `*${target.name}*`;
-  const monsterLine = `*${quest.scene.monster_name}* hits ${targetTag} for *${positionAdjusted}*${armorPart}${positionPart}${shieldPart}.`;
-
-  if (targetHpAfter <= 0) {
-    // Pass the dying TARGET to resolveDeath, not the actor. Survivors include
-    // everyone-except-target.
-    return resolveDeath(payload, env, ctx, target, quest, fighters, [playerLine, monsterLine]);
+  if (turn.willKillTarget) {
+    return resolveDeath(payload, env, ctx, turn.target, quest, fighters, [playerLine, turn.monsterLine]);
   }
 
-  await setCharacterHpAndShield(env.DB, target.slack_user_id, targetHpAfter, dmg.newShield);
-  await appendLog(env.DB, quest.id, "monster", "attack", `${positionAdjusted} dmg → ${target.name}`);
+  await setCharacterHpAndShield(env.DB, turn.target.slack_user_id, turn.dmg.newHp, turn.dmg.newShield);
+  await appendLog(env.DB, quest.id, "monster", "attack", `${turn.positionAdjusted} dmg → ${turn.target.name}`);
 
-  const shieldDisplay = dmg.newShield > 0 ? ` 🛡${dmg.newShield}` : "";
+  const shieldDisplay = turn.dmg.newShield > 0 ? ` 🛡${turn.dmg.newShield}` : "";
   const ephemeralLines = [
     playerLine,
     `*${quest.scene.monster_name}*: ${Math.max(0, newMonsterHp)}/${quest.scene.monster_max_hp}`,
-    monsterLine,
-    `*${target.name}*: ${targetHpAfter}/${target.max_hp}${shieldDisplay}`,
+    turn.monsterLine,
+    `*${turn.target.name}*: ${turn.dmg.newHp}/${turn.target.max_hp}${shieldDisplay}`,
   ];
 
   // For the thread cards: show the actor (whose action this was). If they weren't the
   // target, their stats are unchanged from pre-turn — still informative.
-  const updatedActor: Character = targetIsActor
-    ? { ...character, hp: targetHpAfter, shield: dmg.newShield }
+  const updatedActor: Character = turn.victimWasActor
+    ? { ...character, hp: turn.dmg.newHp, shield: turn.dmg.newShield }
     : character;
 
   const weaponName = equippedWeapon?.item_name;
@@ -974,7 +935,7 @@ async function handleCombat(
     // Both player + monster lines already include the dice math (e.g. "5 dmg `3 + 2`"
      // and "hits back for 4 `4 − 0 armor` — 2 absorbed by shield, 2 to HP"), so they
      // double as the events section.
-    const events = [playerLine, monsterLine];
+    const events = [playerLine, turn.monsterLine];
 
     // Notification fallback: plain text. Block Kit drives the actual visual layout.
     const fallbackText = [
@@ -2056,10 +2017,42 @@ async function handleHeal(
   const targetTag = target.slack_user_id === payload.user_id
     ? `themselves`
     : `<@${target.slack_user_id}>`;
-  const headline = `💚 <@${payload.user_id}> heals ${targetTag} for *${healed}* HP \`${heal.roll} + ${cls.magic_mod}m\`.`;
-  const stat = `*${target.name}*: ${target.hp + healed}/${target.max_hp}`;
-  const ephem = `${headline}\n${stat}`;
-  ctx.waitUntil(postToThread(env, quest, `${blockQuote(headline)}\n\n${stat}`));
+  const healLine = `💚 <@${payload.user_id}> heals ${targetTag} for *${healed}* HP \`${heal.roll} + ${cls.magic_mod}m\`.`;
+
+  // Monster retaliates while you're channeling the heal — mana actions cost a turn,
+  // so the monster gets one too. Pick target via the same position-weighted RNG.
+  const fighters = (await getQuestParty(env.DB, quest.id)).filter(isFighter);
+  const actorArmor = await getEquipped(env.DB, payload.user_id, "armor");
+  const turn = await performMonsterTurn(env, quest, fighters, character, actorArmor);
+
+  if (turn.willKillTarget) {
+    return resolveDeath(payload, env, ctx, turn.target, quest, fighters, [healLine, turn.monsterLine]);
+  }
+
+  await setCharacterHpAndShield(env.DB, turn.target.slack_user_id, turn.dmg.newHp, turn.dmg.newShield);
+  await appendLog(env.DB, quest.id, "monster", "attack", `${turn.positionAdjusted} dmg → ${turn.target.name}`);
+
+  const healStat = `*${target.name}*: ${target.hp + healed}/${target.max_hp}`;
+  const targetShield = turn.dmg.newShield > 0 ? ` 🛡${turn.dmg.newShield}` : "";
+  const monsterStat = `*${turn.target.name}*: ${turn.dmg.newHp}/${turn.target.max_hp}${targetShield}`;
+  const ephem = [healLine, healStat, turn.monsterLine, monsterStat].join("\n");
+
+  // Thread post: heal + monster retaliation as the events, with monster + actor cards.
+  const updatedActor: Character = turn.victimWasActor
+    ? { ...character, hp: turn.dmg.newHp, shield: turn.dmg.newShield }
+    : character;
+  ctx.waitUntil((async () => {
+    const blocks = buildCombatBlocks({
+      narration: healLine,
+      events: [healStat, turn.monsterLine],
+      scene: quest.scene,
+      monsterHp: quest.scene.monster_hp,
+      actor: updatedActor,
+    });
+    const fallback = [blockQuote(healLine), "", healStat, turn.monsterLine, monsterStat].join("\n");
+    await postToThread(env, quest, fallback, { blocks });
+  })());
+
   return ephemeral(ephem);
 }
 
@@ -2103,10 +2096,40 @@ async function handleShield(
     : `<@${target.slack_user_id}>`;
   const wasted = shield.amount - added;
   const wastedNote = wasted > 0 ? ` (${wasted} over the cap)` : "";
-  const headline = `🛡️ <@${payload.user_id}> shields ${targetTag} for *${added}*${wastedNote} \`${shield.roll} + ${cls.magic_mod}m\`.`;
-  const stat = `*${target.name}*: 🛡${target.shield + added}/${cap}`;
-  const ephem = `${headline}\n${stat}`;
-  ctx.waitUntil(postToThread(env, quest, `${blockQuote(headline)}\n\n${stat}`));
+  const shieldLine = `🛡️ <@${payload.user_id}> shields ${targetTag} for *${added}*${wastedNote} \`${shield.roll} + ${cls.magic_mod}m\`.`;
+
+  // Monster retaliates on mana use, same as heal/cast.
+  const fighters = (await getQuestParty(env.DB, quest.id)).filter(isFighter);
+  const actorArmor = await getEquipped(env.DB, payload.user_id, "armor");
+  const turn = await performMonsterTurn(env, quest, fighters, character, actorArmor);
+
+  if (turn.willKillTarget) {
+    return resolveDeath(payload, env, ctx, turn.target, quest, fighters, [shieldLine, turn.monsterLine]);
+  }
+
+  await setCharacterHpAndShield(env.DB, turn.target.slack_user_id, turn.dmg.newHp, turn.dmg.newShield);
+  await appendLog(env.DB, quest.id, "monster", "attack", `${turn.positionAdjusted} dmg → ${turn.target.name}`);
+
+  const shieldStat = `*${target.name}*: 🛡${target.shield + added}/${cap}`;
+  const turnShield = turn.dmg.newShield > 0 ? ` 🛡${turn.dmg.newShield}` : "";
+  const monsterStat = `*${turn.target.name}*: ${turn.dmg.newHp}/${turn.target.max_hp}${turnShield}`;
+  const ephem = [shieldLine, shieldStat, turn.monsterLine, monsterStat].join("\n");
+
+  const updatedActor: Character = turn.victimWasActor
+    ? { ...character, hp: turn.dmg.newHp, shield: turn.dmg.newShield }
+    : character;
+  ctx.waitUntil((async () => {
+    const blocks = buildCombatBlocks({
+      narration: shieldLine,
+      events: [shieldStat, turn.monsterLine],
+      scene: quest.scene,
+      monsterHp: quest.scene.monster_hp,
+      actor: updatedActor,
+    });
+    const fallback = [blockQuote(shieldLine), "", shieldStat, turn.monsterLine, monsterStat].join("\n");
+    await postToThread(env, quest, fallback, { blocks });
+  })());
+
   return ephemeral(ephem);
 }
 
@@ -2433,6 +2456,73 @@ function buildCombatBlocks(opts: {
   }
   blocks.push({ type: "section", fields: [monsterField(opts.scene, opts.monsterHp), characterField(opts.actor)] });
   return blocks;
+}
+
+interface MonsterTurnOutcome {
+  target: Character;
+  victimWasActor: boolean;
+  monsterLine: string;          // formatted line for events section
+  dmg: { newShield: number; newHp: number; shieldAbsorbed: number; hpDamage: number };
+  positionAdjusted: number;     // damage after position modifier (pre-shield)
+  willKillTarget: boolean;
+}
+
+// Resolves a monster's counter-attack: picks a target via pickMonsterTarget, computes
+// damage through armor + position modifier + shield, and returns the outcome WITHOUT
+// writing to DB. Caller decides to either route to resolveDeath or persist + narrate.
+//
+// Used by: handleCombat (attack/cast/sig), handleHeal, handleShield. Any "trigger
+// monster on mana use" actions go through this so the retaliation rules stay
+// centralized and consistent.
+async function performMonsterTurn(
+  env: Env,
+  quest: ActiveQuest,
+  fighters: Character[],
+  actor: Character,
+  actorArmor: Item | null,
+): Promise<MonsterTurnOutcome> {
+  const target = pickMonsterTarget(fighters, Math.random);
+  const victimWasActor = target.slack_user_id === actor.slack_user_id;
+
+  // Re-fetch armor for non-actor targets (the actor's armor was already loaded).
+  const targetArmor = victimWasActor
+    ? actorArmor
+    : await getEquipped(env.DB, target.slack_user_id, "armor");
+
+  const monster = resolveMonsterHit(
+    quest.scene.tier,
+    fighters.length,
+    targetArmor?.power ?? 0,
+    quest.scene.variant === "boss" && quest.scene.boss_phase === 2,
+    rollDice,
+  );
+
+  const positionAdjusted = fighters.length > 1
+    ? positionDamageMod(target.position, monster.final)
+    : monster.final;
+
+  const dmg = applyDamageWithShield(positionAdjusted, target.shield, target.hp);
+
+  const armorPart = monster.armorReduction > 0
+    ? ` \`${monster.raw} − ${monster.armorReduction} armor\``
+    : "";
+  const positionPart = fighters.length > 1 && target.position === "back" && positionAdjusted < monster.final
+    ? ` (${target.position}-row: ${positionAdjusted})`
+    : "";
+  const shieldPart = dmg.shieldAbsorbed > 0
+    ? ` — *${dmg.shieldAbsorbed}* absorbed by shield, *${dmg.hpDamage}* to HP`
+    : "";
+  const targetTag = victimWasActor ? "back" : `*${target.name}*`;
+  const monsterLine = `*${quest.scene.monster_name}* hits ${targetTag} for *${positionAdjusted}*${armorPart}${positionPart}${shieldPart}.`;
+
+  return {
+    target,
+    victimWasActor,
+    monsterLine,
+    dmg,
+    positionAdjusted,
+    willKillTarget: dmg.newHp <= 0,
+  };
 }
 
 // Quest-end blocks. Used by victory/expedition-victory/party-broken-death posts so
