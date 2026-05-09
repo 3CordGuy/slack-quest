@@ -351,8 +351,11 @@ export async function handleInteraction(
   if (action.action_id === "shop_buy") return handleBuy(slash, args, env);
   if (action.action_id === "shop_haggle") return handleHaggle(slash, args, env, ctx);
   if (action.action_id === "shop_open") return handleShop(slash, env, ctx);
-  if (action.action_id === "key_sell") return handleSellKey(slash, args, env);
-  if (action.action_id === "key_transmute") return handleTransmuteKey(slash, args, env);
+  // key_sell_* and key_transmute_* use the action_id suffix as a tier marker
+  // because action_id must be unique within an actions block. The button's
+  // value still carries the tier — we just route by prefix here.
+  if (action.action_id.startsWith("key_sell_")) return handleSellKey(slash, args, env);
+  if (action.action_id.startsWith("key_transmute_")) return handleTransmuteKey(slash, args, env);
   return ephemeral(`Unknown action \`${action.action_id}\`.`);
 }
 
@@ -3435,9 +3438,11 @@ async function handleInventory(payload: SlashCommandPayload, env: Env): Promise<
     });
     const keyActions: unknown[] = [];
     for (const tier of heldTiers) {
+      // action_id must be unique within an actions block — encode the tier in
+      // the id so Slack doesn't reject the message.
       keyActions.push({
         type: "button",
-        action_id: "key_sell",
+        action_id: `key_sell_${tier}`,
         value: tier,
         text: { type: "plain_text", text: `💰 Sell ${KEY_EMOJI[tier]} (${KEY_SELL_PRICE[tier]}g)` },
       });
@@ -3449,7 +3454,7 @@ async function handleInventory(payload: SlashCommandPayload, env: Env): Promise<
         const upTier = nextKeyTier(tier)!;
         keyActions.push({
           type: "button",
-          action_id: "key_transmute",
+          action_id: `key_transmute_${tier}`,
           value: tier,
           text: { type: "plain_text", text: `⚗️ ${KEY_TRANSMUTE_COST}${KEY_EMOJI[tier]} → 1${KEY_EMOJI[upTier]}` },
           style: "primary",
