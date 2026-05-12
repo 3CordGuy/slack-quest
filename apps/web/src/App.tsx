@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 
-// Minimal v1 surface: login form → character read-only card. No router; the
-// view flips based on whether /api/me returns a session. Once we add more
-// pages we'll move to react-router.
+// v0.3: login → active quest + character + inventory. Still single-page, no
+// router. Read-only — actions still happen in Slack until Phase 2 lands the
+// stepwise combat state machine and WS-driven turn UI.
 
 interface Character {
   slack_user_id: string;
@@ -20,6 +20,73 @@ interface Character {
   keys_bronze: number;
   keys_silver: number;
   keys_gold: number;
+  position: "front" | "back";
+  downed_until: number | null;
+}
+
+type ItemType =
+  | "weapon"
+  | "armor"
+  | "consumable"
+  | "magic"
+  | "revive"
+  | "tool"
+  | "scroll";
+type Rarity = "common" | "uncommon" | "rare";
+type WeaponRange = "melee" | "ranged";
+
+interface Item {
+  id: number;
+  character_id: string;
+  item_name: string;
+  item_type: ItemType;
+  power: number;
+  rarity: Rarity;
+  flavor: string | null;
+  equipped: boolean;
+  weapon_range: WeaponRange | null;
+}
+
+type QuestVariant = "standard" | "boss" | "gauntlet" | "dungeon";
+type EffectType = "regen" | "bleeding" | "burning" | "poisoned";
+
+interface StatusEffect {
+  type: EffectType;
+  magnitude: number;
+  remaining: number;
+  source?: string;
+}
+
+interface SceneJson {
+  monster_name: string;
+  monster_hp: number;
+  monster_max_hp: number;
+  tier: number;
+  scene: string;
+  variant?: QuestVariant;
+  boss_phase?: 1 | 2;
+  wave?: number;
+  total_waves?: number;
+  monster_effects?: StatusEffect[];
+}
+
+interface ActiveQuest {
+  id: number;
+  elite: boolean;
+  scene: SceneJson;
+}
+
+interface RecentQuest {
+  id: number;
+  status: "completed" | "failed";
+  elite: boolean;
+  monster_name: string;
+  variant: QuestVariant;
+  boss_phase?: 1 | 2;
+  wave?: number;
+  total_waves?: number;
+  created_at: number;
+  completed_at: number | null;
 }
 
 interface MeResponse {
@@ -28,10 +95,29 @@ interface MeResponse {
   character: Character | null;
 }
 
+interface InventoryResponse {
+  items: Item[];
+}
+
+interface ActiveQuestResponse {
+  quest: ActiveQuest | null;
+  party?: Character[];
+}
+
+interface RecentQuestsResponse {
+  quests: RecentQuest[];
+}
+
 type LoadState =
   | { kind: "loading" }
   | { kind: "anon" }
-  | { kind: "auth"; me: MeResponse };
+  | {
+      kind: "auth";
+      me: MeResponse;
+      inventory: Item[];
+      activeQuest: { quest: ActiveQuest; party: Character[] } | null;
+      recent: RecentQuest[];
+    };
 
 export function App() {
   const [state, setState] = useState<LoadState>({ kind: "loading" });
@@ -41,13 +127,36 @@ export function App() {
   }, []);
 
   async function refresh() {
-    const res = await fetch("/api/me", { credentials: "include" });
-    if (res.status === 401) {
+    const meRes = await fetch("/api/me", { credentials: "include" });
+    if (meRes.status === 401) {
       setState({ kind: "anon" });
       return;
     }
-    const me = (await res.json()) as MeResponse;
-    setState({ kind: "auth", me });
+    const me = (await meRes.json()) as MeResponse;
+
+    let inventory: Item[] = [];
+    let activeQuest: { quest: ActiveQuest; party: Character[] } | null = null;
+    let recent: RecentQuest[] = [];
+    if (me.character) {
+      const [invRes, qRes, recentRes] = await Promise.all([
+        fetch("/api/inventory", { credentials: "include" }),
+        fetch("/api/quest/active", { credentials: "include" }),
+        fetch("/api/quests/recent", { credentials: "include" }),
+      ]);
+      if (invRes.ok) {
+        inventory = ((await invRes.json()) as InventoryResponse).items;
+      }
+      if (qRes.ok) {
+        const body = (await qRes.json()) as ActiveQuestResponse;
+        if (body.quest) {
+          activeQuest = { quest: body.quest, party: body.party ?? [] };
+        }
+      }
+      if (recentRes.ok) {
+        recent = ((await recentRes.json()) as RecentQuestsResponse).quests;
+      }
+    }
+    setState({ kind: "auth", me, inventory, activeQuest, recent });
   }
 
   async function logout() {
@@ -57,7 +166,25 @@ export function App() {
 
   if (state.kind === "loading") return <Centered>Loading…</Centered>;
   if (state.kind === "anon") return <Login onSuccess={refresh} />;
-  return <CharacterView me={state.me} onLogout={logout} />;
+  return (
+    <Centered>
+      <Stack>
+        {state.activeQuest && (
+          <ActiveQuestCard
+            quest={state.activeQuest.quest}
+            party={state.activeQuest.party}
+            selfId={state.me.slack_user_id}
+          />
+        )}
+        <CharacterCard me={state.me} />
+        {state.me.character && <InventoryCard items={state.inventory} />}
+        {state.me.character && state.recent.length > 0 && (
+          <RecentQuestsCard quests={state.recent} />
+        )}
+        <SignOutRow onLogout={logout} />
+      </Stack>
+    </Centered>
+  );
 }
 
 function Login({ onSuccess }: { onSuccess: () => void }) {
@@ -121,53 +248,539 @@ function Login({ onSuccess }: { onSuccess: () => void }) {
   );
 }
 
-function CharacterView({
-  me,
-  onLogout,
+function ActiveQuestCard({
+  quest,
+  party,
+  selfId,
 }: {
-  me: MeResponse;
-  onLogout: () => void;
+  quest: ActiveQuest;
+  party: Character[];
+  selfId: string;
 }) {
+  const s = quest.scene;
+  const variant = s.variant ?? "standard";
+
+  return (
+    <div style={{ ...card, borderColor: "#b89b3a", borderWidth: 1 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <h2 style={h2}>Active Quest</h2>
+        <VariantBadge variant={variant} />
+        {quest.elite && <SmallBadge>elite</SmallBadge>}
+        {variant === "boss" && s.boss_phase === 2 && (
+          <SmallBadge>phase 2</SmallBadge>
+        )}
+        {variant === "gauntlet" && s.wave && s.total_waves && (
+          <SmallBadge>
+            wave {s.wave}/{s.total_waves}
+          </SmallBadge>
+        )}
+      </div>
+
+      <div style={{ marginTop: 16 }}>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "baseline",
+            justifyContent: "space-between",
+            gap: 8,
+          }}
+        >
+          <div style={{ fontSize: 18, fontWeight: 600, color: "#f5f5f5" }}>
+            {s.monster_name || "—"}
+          </div>
+          <div style={{ ...muted, fontVariantNumeric: "tabular-nums" }}>
+            {s.monster_hp} / {s.monster_max_hp} HP
+          </div>
+        </div>
+        <HpBar current={s.monster_hp} max={s.monster_max_hp} flavor="monster" />
+        {s.monster_effects && s.monster_effects.length > 0 && (
+          <EffectChips effects={s.monster_effects} />
+        )}
+      </div>
+
+      {s.scene && (
+        <div
+          style={{
+            ...muted,
+            marginTop: 12,
+            fontStyle: "italic",
+            lineHeight: 1.5,
+          }}
+        >
+          {s.scene}
+        </div>
+      )}
+
+      {party.length > 0 && (
+        <div style={{ marginTop: 20 }}>
+          <div
+            style={{
+              ...muted,
+              fontSize: 11,
+              textTransform: "uppercase",
+              letterSpacing: 1.5,
+              marginBottom: 8,
+            }}
+          >
+            Party ({party.length})
+          </div>
+          <div style={{ display: "grid", gap: 8 }}>
+            {party.map((p) => (
+              <PartyMember key={p.slack_user_id} fighter={p} self={p.slack_user_id === selfId} />
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PartyMember({ fighter, self }: { fighter: Character; self: boolean }) {
+  const downed =
+    fighter.downed_until !== null && fighter.downed_until > Date.now();
+  return (
+    <div
+      style={{
+        padding: 12,
+        background: "#1d1f23",
+        borderRadius: 8,
+        border: self ? "1px solid #3a7bd5" : "1px solid transparent",
+        opacity: downed ? 0.6 : 1,
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          alignItems: "baseline",
+          justifyContent: "space-between",
+          gap: 8,
+          flexWrap: "wrap",
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+          <span style={{ fontWeight: 600, color: "#f5f5f5", fontSize: 15 }}>
+            {fighter.name}
+          </span>
+          <span style={{ ...muted, fontSize: 12 }}>
+            {fighter.class} • Lv {fighter.level}
+          </span>
+          {self && <SmallBadge>you</SmallBadge>}
+          {downed && (
+            <span style={{ ...smallBadge, background: "#3a1f1f", color: "#ff7676", borderColor: "#5a2a2a" }}>
+              downed
+            </span>
+          )}
+          <PositionBadge position={fighter.position} />
+        </div>
+        <div style={{ ...muted, fontVariantNumeric: "tabular-nums" }}>
+          {fighter.hp}/{fighter.max_hp}
+          {fighter.shield > 0 && (
+            <span style={{ color: "#7c83ff", marginLeft: 8 }}>+{fighter.shield} sh</span>
+          )}
+        </div>
+      </div>
+      <HpBar current={fighter.hp} max={fighter.max_hp} flavor="player" />
+      {fighter.max_mana > 0 && (
+        <div style={{ marginTop: 6 }}>
+          <ManaBar current={fighter.mana} max={fighter.max_mana} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function HpBar({
+  current,
+  max,
+  flavor,
+}: {
+  current: number;
+  max: number;
+  flavor: "monster" | "player";
+}) {
+  const pct = max > 0 ? Math.max(0, Math.min(1, current / max)) : 0;
+  let color = "#16a34a";
+  if (pct < 0.25) color = "#dc2626";
+  else if (pct < 0.5) color = "#d97706";
+  if (flavor === "monster") {
+    if (pct < 0.25) color = "#fca5a5";
+    else if (pct < 0.5) color = "#fbbf24";
+    else color = "#ef4444";
+  }
+  return (
+    <div
+      style={{
+        marginTop: 6,
+        width: "100%",
+        height: 8,
+        background: "#0e0f12",
+        borderRadius: 4,
+        overflow: "hidden",
+      }}
+    >
+      <div
+        style={{
+          width: `${pct * 100}%`,
+          height: "100%",
+          background: color,
+          transition: "width 200ms ease",
+        }}
+      />
+    </div>
+  );
+}
+
+function ManaBar({ current, max }: { current: number; max: number }) {
+  const pct = max > 0 ? Math.max(0, Math.min(1, current / max)) : 0;
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
+      }}
+    >
+      <div style={{ ...muted, fontSize: 11, minWidth: 36 }}>
+        {current}/{max}
+      </div>
+      <div
+        style={{
+          flex: 1,
+          height: 6,
+          background: "#0e0f12",
+          borderRadius: 3,
+          overflow: "hidden",
+        }}
+      >
+        <div
+          style={{
+            width: `${pct * 100}%`,
+            height: "100%",
+            background: "#6366f1",
+          }}
+        />
+      </div>
+    </div>
+  );
+}
+
+function EffectChips({ effects }: { effects: StatusEffect[] }) {
+  return (
+    <div
+      style={{
+        display: "flex",
+        flexWrap: "wrap",
+        gap: 6,
+        marginTop: 8,
+      }}
+    >
+      {effects.map((eff, i) => (
+        <span
+          key={i}
+          style={{
+            ...smallBadge,
+            background: EFFECT_COLOR[eff.type] + "22",
+            color: EFFECT_COLOR[eff.type],
+            borderColor: EFFECT_COLOR[eff.type] + "55",
+          }}
+        >
+          {EFFECT_ICON[eff.type]} {eff.type} {eff.remaining}t
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function VariantBadge({ variant }: { variant: QuestVariant }) {
+  return <SmallBadge>{variant}</SmallBadge>;
+}
+
+function PositionBadge({ position }: { position: "front" | "back" }) {
+  return (
+    <span
+      style={{
+        ...smallBadge,
+        background: position === "front" ? "#3a2d1f" : "#1f2a3a",
+        color: position === "front" ? "#fbbf24" : "#7dd3fc",
+        borderColor: position === "front" ? "#5a432a" : "#2a3a5a",
+      }}
+    >
+      {position}
+    </span>
+  );
+}
+
+function CharacterCard({ me }: { me: MeResponse }) {
   const c = me.character;
   if (!c) {
     return (
-      <Centered>
-        <div style={card}>
-          <h1 style={h1}>No character yet</h1>
-          <p style={muted}>
-            Roll one up in Slack with <code style={kbd}>/sq quest</code>, then
-            reload here.
-          </p>
-          <button onClick={onLogout} style={button}>
-            Sign out
-          </button>
-        </div>
-      </Centered>
+      <div style={card}>
+        <h1 style={h1}>No character yet</h1>
+        <p style={muted}>
+          Roll one up in Slack with <code style={kbd}>/sq quest</code>, then
+          reload here.
+        </p>
+      </div>
     );
   }
   return (
-    <Centered>
-      <div style={{ ...card, maxWidth: 520 }}>
-        <h1 style={h1}>{c.name}</h1>
-        <p style={muted}>
-          {c.class} • Lv {c.level} • {c.xp} XP
-        </p>
-        <Stats>
-          <Stat label="HP" value={`${c.hp} / ${c.max_hp}`} />
-          <Stat label="Mana" value={`${c.mana} / ${c.max_mana}`} />
-          <Stat label="Shield" value={c.shield.toString()} />
-          <Stat label="Gold" value={c.gold.toString()} />
-          <Stat label="Scars" value={c.scars.length.toString()} />
-          <Stat
-            label="Keys"
-            value={`🥉${c.keys_bronze} 🥈${c.keys_silver} 🥇${c.keys_gold}`}
-          />
-        </Stats>
-        <button onClick={onLogout} style={{ ...button, marginTop: 24 }}>
-          Sign out
-        </button>
+    <div style={card}>
+      <h1 style={h1}>{c.name}</h1>
+      <p style={muted}>
+        {c.class} • Lv {c.level} • {c.xp} XP
+      </p>
+      <Stats>
+        <Stat label="HP" value={`${c.hp} / ${c.max_hp}`} />
+        <Stat label="Mana" value={`${c.mana} / ${c.max_mana}`} />
+        <Stat label="Shield" value={c.shield.toString()} />
+        <Stat label="Gold" value={c.gold.toString()} />
+        <Stat label="Scars" value={c.scars.length.toString()} />
+        <Stat
+          label="Keys"
+          value={`🥉${c.keys_bronze} 🥈${c.keys_silver} 🥇${c.keys_gold}`}
+        />
+      </Stats>
+    </div>
+  );
+}
+
+function InventoryCard({ items }: { items: Item[] }) {
+  if (items.length === 0) {
+    return (
+      <div style={card}>
+        <h2 style={h2}>Inventory</h2>
+        <p style={muted}>Empty. Win a quest or visit the shop in Slack.</p>
       </div>
-    </Centered>
+    );
+  }
+
+  const equipped = items.filter((i) => i.equipped);
+  const stowed = items.filter((i) => !i.equipped);
+  const groups = groupByType(stowed);
+
+  return (
+    <div style={card}>
+      <h2 style={h2}>Inventory</h2>
+      {equipped.length > 0 && (
+        <Section title="Equipped">
+          {equipped.map((it) => (
+            <ItemRow key={it.id} item={it} />
+          ))}
+        </Section>
+      )}
+      {ITEM_TYPE_ORDER.filter((t) => groups[t]?.length).map((t) => (
+        <Section key={t} title={ITEM_TYPE_LABELS[t]}>
+          {groups[t]!.map((it) => (
+            <ItemRow key={it.id} item={it} />
+          ))}
+        </Section>
+      ))}
+    </div>
+  );
+}
+
+function Section({
+  title,
+  children,
+}: {
+  title: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div style={{ marginTop: 16 }}>
+      <div
+        style={{
+          ...muted,
+          fontSize: 11,
+          textTransform: "uppercase",
+          letterSpacing: 1.5,
+          marginBottom: 8,
+        }}
+      >
+        {title}
+      </div>
+      <div style={{ display: "grid", gap: 8 }}>{children}</div>
+    </div>
+  );
+}
+
+function ItemRow({ item }: { item: Item }) {
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 12,
+        padding: 12,
+        background: "#1d1f23",
+        borderRadius: 8,
+        border: item.equipped
+          ? "1px solid #b89b3a"
+          : "1px solid transparent",
+      }}
+    >
+      <div style={{ fontSize: 24, lineHeight: 1 }}>
+        {ITEM_TYPE_ICON[item.item_type]}
+      </div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            flexWrap: "wrap",
+          }}
+        >
+          <div
+            style={{
+              fontWeight: 600,
+              color: "#f5f5f5",
+              fontSize: 15,
+            }}
+          >
+            {item.item_name}
+          </div>
+          <RarityBadge rarity={item.rarity} />
+          {item.item_type === "weapon" && item.weapon_range === "ranged" && (
+            <SmallBadge>ranged</SmallBadge>
+          )}
+        </div>
+        {item.flavor && (
+          <div
+            style={{
+              ...muted,
+              fontSize: 12,
+              fontStyle: "italic",
+              marginTop: 2,
+            }}
+          >
+            {item.flavor}
+          </div>
+        )}
+      </div>
+      <div
+        style={{
+          fontVariantNumeric: "tabular-nums",
+          color: "#f5f5f5",
+          fontWeight: 600,
+        }}
+      >
+        +{item.power}
+      </div>
+    </div>
+  );
+}
+
+function RarityBadge({ rarity }: { rarity: Rarity }) {
+  const color = RARITY_COLOR[rarity];
+  return (
+    <span
+      style={{
+        ...smallBadge,
+        background: `${color}22`,
+        color,
+        borderColor: `${color}55`,
+      }}
+    >
+      {rarity}
+    </span>
+  );
+}
+
+function SmallBadge({ children }: { children: React.ReactNode }) {
+  return (
+    <span
+      style={{
+        ...smallBadge,
+        background: "#2a2d33",
+        color: "#c4c4c4",
+        borderColor: "#3a3d44",
+      }}
+    >
+      {children}
+    </span>
+  );
+}
+
+function RecentQuestsCard({ quests }: { quests: RecentQuest[] }) {
+  return (
+    <div style={card}>
+      <h2 style={h2}>Recent Quests</h2>
+      <div style={{ display: "grid", gap: 8, marginTop: 16 }}>
+        {quests.map((q) => (
+          <RecentQuestRow key={q.id} q={q} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function RecentQuestRow({ q }: { q: RecentQuest }) {
+  const won = q.status === "completed";
+  const when = q.completed_at ?? q.created_at;
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 12,
+        padding: 12,
+        background: "#1d1f23",
+        borderRadius: 8,
+      }}
+    >
+      <div style={{ fontSize: 20, lineHeight: 1 }}>{won ? "🏆" : "💀"}</div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            flexWrap: "wrap",
+          }}
+        >
+          <span style={{ fontWeight: 600, color: "#f5f5f5", fontSize: 15 }}>
+            {q.monster_name}
+          </span>
+          <SmallBadge>{q.variant}</SmallBadge>
+          {q.elite && <SmallBadge>elite</SmallBadge>}
+          {q.variant === "boss" && q.boss_phase === 2 && (
+            <SmallBadge>phase 2</SmallBadge>
+          )}
+          {q.variant === "gauntlet" && q.wave && q.total_waves && (
+            <SmallBadge>
+              wave {q.wave}/{q.total_waves}
+            </SmallBadge>
+          )}
+        </div>
+        <div style={{ ...muted, fontSize: 12, marginTop: 2 }}>
+          {won ? "Won" : "Lost"} · {formatRelative(when)}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function formatRelative(ts: number): string {
+  const diff = Date.now() - ts;
+  const min = 60_000;
+  const hour = 60 * min;
+  const day = 24 * hour;
+  if (diff < min) return "just now";
+  if (diff < hour) return `${Math.floor(diff / min)}m ago`;
+  if (diff < day) return `${Math.floor(diff / hour)}h ago`;
+  if (diff < 30 * day) return `${Math.floor(diff / day)}d ago`;
+  return new Date(ts).toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+  });
+}
+
+function SignOutRow({ onLogout }: { onLogout: () => void }) {
+  return (
+    <button onClick={onLogout} style={{ ...button, background: "#33363d" }}>
+      Sign out
+    </button>
   );
 }
 
@@ -199,19 +812,15 @@ function Stat({ label, value }: { label: string; value: string }) {
   );
 }
 
-function Centered({ children }: { children: React.ReactNode }) {
+function Stack({ children }: { children: React.ReactNode }) {
   return (
     <div
       style={{
-        minHeight: "100vh",
         display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        background: "#0e0f12",
-        fontFamily:
-          "ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
-        color: "#e6e6e6",
-        padding: 16,
+        flexDirection: "column",
+        gap: 16,
+        width: "100%",
+        maxWidth: 560,
       }}
     >
       {children}
@@ -219,15 +828,99 @@ function Centered({ children }: { children: React.ReactNode }) {
   );
 }
 
+function Centered({ children }: { children: React.ReactNode }) {
+  return (
+    <div
+      style={{
+        minHeight: "100vh",
+        display: "flex",
+        alignItems: "flex-start",
+        justifyContent: "center",
+        background: "#0e0f12",
+        fontFamily:
+          "ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
+        color: "#e6e6e6",
+        padding: 32,
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
+const ITEM_TYPE_ORDER: ItemType[] = [
+  "weapon",
+  "armor",
+  "magic",
+  "consumable",
+  "revive",
+  "tool",
+  "scroll",
+];
+
+const ITEM_TYPE_LABELS: Record<ItemType, string> = {
+  weapon: "Weapons",
+  armor: "Armor",
+  magic: "Magic",
+  consumable: "Consumables",
+  revive: "Revives",
+  tool: "Tools",
+  scroll: "Scrolls",
+};
+
+const ITEM_TYPE_ICON: Record<ItemType, string> = {
+  weapon: "⚔️",
+  armor: "🛡️",
+  magic: "🔮",
+  consumable: "🧪",
+  revive: "💖",
+  tool: "🔧",
+  scroll: "📜",
+};
+
+const RARITY_COLOR: Record<Rarity, string> = {
+  common: "#8a8f98",
+  uncommon: "#16a34a",
+  rare: "#7c83ff",
+};
+
+const EFFECT_COLOR: Record<EffectType, string> = {
+  regen: "#16a34a",
+  bleeding: "#dc2626",
+  burning: "#f97316",
+  poisoned: "#a855f7",
+};
+
+const EFFECT_ICON: Record<EffectType, string> = {
+  regen: "💚",
+  bleeding: "🩸",
+  burning: "🔥",
+  poisoned: "☠️",
+};
+
+function groupByType(items: Item[]): Partial<Record<ItemType, Item[]>> {
+  const out: Partial<Record<ItemType, Item[]>> = {};
+  for (const it of items) {
+    (out[it.item_type] ??= []).push(it);
+  }
+  for (const t of Object.keys(out) as ItemType[]) {
+    out[t]!.sort((a, b) => RARITY_RANK[b.rarity] - RARITY_RANK[a.rarity]);
+  }
+  return out;
+}
+
+const RARITY_RANK: Record<Rarity, number> = { common: 0, uncommon: 1, rare: 2 };
+
 const card: React.CSSProperties = {
   background: "#15171b",
   padding: 32,
   borderRadius: 12,
-  maxWidth: 380,
   width: "100%",
   border: "1px solid #2a2d33",
+  boxSizing: "border-box",
 };
 const h1: React.CSSProperties = { margin: 0, fontSize: 28, color: "#f5f5f5" };
+const h2: React.CSSProperties = { margin: 0, fontSize: 20, color: "#f5f5f5" };
 const muted: React.CSSProperties = { color: "#9aa0a6", fontSize: 14 };
 const input: React.CSSProperties = {
   width: "100%",
@@ -259,4 +952,13 @@ const kbd: React.CSSProperties = {
   padding: "2px 6px",
   borderRadius: 4,
   fontSize: 13,
+};
+const smallBadge: React.CSSProperties = {
+  fontSize: 10,
+  textTransform: "uppercase",
+  letterSpacing: 1,
+  padding: "2px 6px",
+  borderRadius: 4,
+  border: "1px solid",
+  fontWeight: 600,
 };

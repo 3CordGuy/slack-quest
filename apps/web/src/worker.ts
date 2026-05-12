@@ -10,8 +10,11 @@ import {
   consumeWebLoginCode,
   createWebSession,
   deleteWebSession,
+  getActiveQuestForCharacter,
   getCharacter,
   getInventory,
+  getQuestParty,
+  getRecentQuestsForCharacter,
   getWebSession,
 } from "@gantt-quest/db";
 
@@ -79,6 +82,30 @@ app.get("/api/inventory", async (c) => {
   if (!session) return c.json({ error: "unauthenticated" }, 401);
   const items = await getInventory(c.env.DB, session.slack_user_id);
   return c.json({ items });
+});
+
+// Returns the user's currently-active quest (with scene state + party) or
+// { quest: null } if they're not in one. Polled by the active-quest panel.
+app.get("/api/quest/active", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const quest = await getActiveQuestForCharacter(c.env.DB, session.slack_user_id);
+  if (!quest) return c.json({ quest: null });
+  const party = await getQuestParty(c.env.DB, quest.id);
+  return c.json({ quest, party });
+});
+
+// Most-recent completed/failed quests for the signed-in user. Used to render
+// the history card.
+app.get("/api/quests/recent", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const quests = await getRecentQuestsForCharacter(
+    c.env.DB,
+    session.slack_user_id,
+    10,
+  );
+  return c.json({ quests });
 });
 
 // Health check. Anything else falls through to the ASSETS binding via the

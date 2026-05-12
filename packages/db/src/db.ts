@@ -1248,3 +1248,60 @@ export async function getLeaderboard(
     scars_count: (JSON.parse(r.scars) as string[]).length,
   }));
 }
+
+export interface RecentQuestSummary {
+  id: number;
+  status: "completed" | "failed";
+  elite: boolean;
+  monster_name: string;
+  variant: QuestVariant;
+  boss_phase?: 1 | 2;
+  wave?: number;
+  total_waves?: number;
+  created_at: number;
+  completed_at: number | null;
+}
+
+// Player-scoped history: the most recent N completed/failed quests this user
+// participated in, newest first. monster_name is the FINAL scene's monster
+// (for dungeons/gauntlets this is the last fight, not every encounter — fine
+// for a history list).
+export async function getRecentQuestsForCharacter(
+  db: D1Database,
+  userId: string,
+  limit: number,
+): Promise<RecentQuestSummary[]> {
+  const result = await db
+    .prepare(
+      `SELECT q.id, q.status, q.elite, q.scene_json, q.created_at, q.completed_at
+       FROM quests q
+       JOIN quest_party qp ON qp.quest_id = q.id
+       WHERE qp.character_id = ? AND q.status IN ('completed', 'failed')
+       ORDER BY COALESCE(q.completed_at, q.created_at) DESC
+       LIMIT ?`,
+    )
+    .bind(userId, limit)
+    .all<{
+      id: number;
+      status: "completed" | "failed";
+      elite: number;
+      scene_json: string;
+      created_at: number;
+      completed_at: number | null;
+    }>();
+  return (result.results ?? []).map((r) => {
+    const scene = normalizeScene(JSON.parse(r.scene_json) as SceneJson);
+    return {
+      id: r.id,
+      status: r.status,
+      elite: r.elite === 1,
+      monster_name: scene.monster_name ?? "—",
+      variant: scene.variant ?? "standard",
+      boss_phase: scene.boss_phase,
+      wave: scene.wave,
+      total_waves: scene.total_waves,
+      created_at: r.created_at,
+      completed_at: r.completed_at,
+    };
+  });
+}

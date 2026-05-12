@@ -23,7 +23,8 @@
     {
       "binding": "DB",
       "database_name": "slack-quest",
-      "database_id": "REPLACE_WITH_SAME_D1_ID_AS_SLACK_WORKER"
+      "database_id": "REPLACE_WITH_SAME_D1_ID_AS_SLACK_WORKER",
+      "migrations_dir": "../../migrations"
     }
   ]
 }
