@@ -24,6 +24,10 @@ export interface Env {
   // Used to build absolute image URLs that Slack can fetch for image blocks.
   // Optional — when unset, image blocks are simply omitted.
   IMAGE_BASE_URL?: string;
+  // Public base URL of the web app (e.g. https://slack-quest-web.<sub>.workers.dev).
+  // Surfaced in the /sq web-login ephemeral so the player can click through to
+  // paste their code. Optional — when unset, the code is shown without a link.
+  WEB_BASE_URL?: string;
 }
 
 const app = new Hono<{ Bindings: Env }>();

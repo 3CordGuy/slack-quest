@@ -1,0 +1,39 @@
+// Template for apps/slack/wrangler.jsonc. The real file is gitignored.
+//
+// Setup:
+//   1. cp apps/slack/wrangler.example.jsonc apps/slack/wrangler.jsonc
+//   2. Run `pnpm db:create` from the repo root to provision a D1 database.
+//      Copy the returned database_id into `d1_databases[0].database_id` below.
+//   3. Adjust `name`, `database_name`, `bucket_name`, and `vars` to match
+//      your deployment (workspace branding, public URL, etc.).
+//   4. Run `pnpm db:migrate:local` then `pnpm dev`.
+//
+// Whenever you add a new binding (KV, queue, DO, etc.), update this file
+// too so the next clone can hydrate from it.
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "slack-quest",
+  "main": "src/index.ts",
+  "compatibility_date": "2025-05-01",
+  "workers_dev": true,
+  "observability": { "enabled": true },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "slack-quest",
+      "database_id": "REPLACE_AFTER_pnpm_db:create",
+      "migrations_dir": "../../migrations"
+    }
+  ],
+  "ai": { "binding": "AI" },
+  "r2_buckets": [
+    {
+      "binding": "ASSETS",
+      "bucket_name": "slack-quest-assets"
+    }
+  ],
+  "vars": {
+    "BOT_NAME": "Slack Quest",
+    "IMAGE_BASE_URL": "https://slack-quest.<your-subdomain>.workers.dev"
+  }
+}

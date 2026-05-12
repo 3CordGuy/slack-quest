@@ -1,8 +1,7 @@
 // Workers AI helpers. Uses Llama 3.1 8B Instruct — cheap, plenty good for flavor text.
 
-import type { Character } from "./db";
-import type { SceneJson } from "./db";
-import { fallbackMonsterName, fallbackSceneText } from "./flavor";
+import type { Character, SceneJson } from "@gantt-quest/db";
+import { fallbackMonsterName, fallbackSceneText } from "@gantt-quest/core";
 
 const MODEL = "@cf/meta/llama-3.1-8b-instruct";
 

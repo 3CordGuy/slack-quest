@@ -63,6 +63,7 @@ import {
   healCharacter,
   insertShopStock,
   isFighter,
+  issueWebLoginCode,
   joinQuest,
   markQuestStatus,
   clearPartyEffects,
@@ -98,7 +99,7 @@ import {
   type SceneJson,
   type ShopItem,
   type StatusEffect,
-} from "./db";
+} from "@gantt-quest/db";
 import {
   applyDamageWithShield,
   isBossPhaseTransition,
@@ -109,8 +110,6 @@ import {
   resolvePlayerHit,
   resolveShield,
   resolveSignature,
-} from "./combat";
-import {
   EFFECT_META,
   classByName,
   dropChance,
@@ -135,7 +134,7 @@ import {
   RARITY_BADGE,
   SHIELD_CAP_MULTIPLIER,
   SKILL_META,
-} from "./flavor";
+} from "@gantt-quest/core";
 import { postMessage, respondToCommand, type InteractivePayload, type SlashCommandPayload } from "./slack";
 
 export interface CommandResponse {
@@ -435,6 +434,9 @@ export async function handleCommand(
       return handleChoose(payload, args, env, ctx);
     case "take":
       return handleTake(payload, args, env, ctx);
+    case "web-login":
+    case "weblogin":
+      return handleWebLogin(payload, env);
     case "help":
     case "":
       return ephemeral(helpText(payload.command, botName(env)));
@@ -5064,6 +5066,26 @@ function buildQuestEndBlocks(opts: {
     { type: "divider" },
     { type: "section", text: { type: "mrkdwn", text: opts.body.join("\n") } },
   ];
+}
+
+// Issues a 6-digit code for signing into the web app. Returned as an ephemeral
+// response so only the invoking user sees the code — no DM scope required.
+// Each call invalidates the previous unconsumed code for the same user.
+async function handleWebLogin(
+  payload: SlashCommandPayload,
+  env: Env,
+): Promise<CommandResponse> {
+  const { code, expires_at } = await issueWebLoginCode(
+    env.DB,
+    payload.user_id,
+    payload.team_id,
+  );
+  const minutes = Math.max(1, Math.round((expires_at - Date.now()) / 60_000));
+  const webUrl = env.WEB_BASE_URL?.trim();
+  const where = webUrl ? `Enter it at ${webUrl}` : "Enter it in the web app";
+  return ephemeral(
+    `🔐 Your web login code: *${code}*\n${where}. Expires in ~${minutes} min.`,
+  );
 }
 
 function ephemeral(text: string): CommandResponse {

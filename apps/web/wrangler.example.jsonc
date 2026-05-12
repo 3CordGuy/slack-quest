@@ -1,0 +1,29 @@
+// Template for apps/web/wrangler.jsonc. The real file is gitignored.
+//
+// Setup:
+//   1. cp apps/web/wrangler.example.jsonc apps/web/wrangler.jsonc
+//   2. Fill in `d1_databases[0].database_id` — must match the SAME D1 used by
+//      apps/slack so codes issued by /sq web-login are visible to the web app.
+//   3. Adjust `name` if you want a custom subdomain (e.g. "gantt-quest-web").
+//   4. After deploy, set the slack worker's WEB_BASE_URL var to point at this
+//      worker so /sq web-login can render a clickable link.
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "slack-quest-web",
+  "main": "src/worker.ts",
+  "compatibility_date": "2025-05-01",
+  "workers_dev": true,
+  "observability": { "enabled": true },
+  "assets": {
+    "directory": "./dist/client",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "slack-quest",
+      "database_id": "REPLACE_WITH_SAME_D1_ID_AS_SLACK_WORKER"
+    }
+  ]
+}

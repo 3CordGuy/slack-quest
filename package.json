@@ -4,22 +4,13 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "wrangler dev",
-    "deploy": "wrangler deploy",
-    "typecheck": "tsc --noEmit",
-    "test": "vitest run",
-    "test:watch": "vitest",
-    "db:create": "wrangler d1 create gantt-quest",
-    "db:migrate:local": "wrangler d1 migrations apply gantt-quest --local",
-    "db:migrate:remote": "wrangler d1 migrations apply gantt-quest --remote"
-  },
-  "dependencies": {
-    "hono": "^4.6.0"
-  },
-  "devDependencies": {
-    "@cloudflare/workers-types": "^4.20250101.0",
-    "typescript": "^5.6.0",
-    "vitest": "^4.1.5",
-    "wrangler": "^3.95.0"
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test",
+    "test:watch": "pnpm --filter @gantt-quest/core test:watch",
+    "dev": "pnpm --filter @gantt-quest/slack dev",
+    "deploy": "pnpm --filter @gantt-quest/slack deploy",
+    "db:create": "pnpm --filter @gantt-quest/slack db:create",
+    "db:migrate:local": "pnpm --filter @gantt-quest/slack db:migrate:local",
+    "db:migrate:remote": "pnpm --filter @gantt-quest/slack db:migrate:remote"
   }
 }

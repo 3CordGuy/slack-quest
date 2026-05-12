@@ -9,3 +9,6 @@ dist
 .claude/
 # Local-only assets uploaded to R2 (R2 is the source of truth, no need to commit binaries).
 assets/
+# Local deploy config — account-specific D1 ID, R2 bucket, vars. Copy
+# apps/*/wrangler.example.jsonc and fill in your values.
+apps/*/wrangler.jsonc

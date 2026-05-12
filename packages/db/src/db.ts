@@ -1,6 +1,6 @@
 // D1 query helpers. Raw prepared statements — no ORM.
 
-import type { EffectType, ItemType, Rarity, WeaponRange } from "./flavor";
+import type { EffectType, ItemType, Rarity, WeaponRange } from "@gantt-quest/core";
 
 // Active status effect on a character or monster. Ticks on the affected actor's
 // own combat action / monster turn. Cleared at quest end.
