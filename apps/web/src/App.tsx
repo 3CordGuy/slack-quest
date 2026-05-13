@@ -147,6 +147,29 @@ interface InventoryResponse {
   items: Item[];
 }
 
+interface ShopItem {
+  id: number;
+  item_name: string;
+  item_type: ItemType;
+  power: number;
+  rarity: Rarity;
+  flavor: string | null;
+  price: number;
+  bought_by: string | null;
+  weapon_range: WeaponRange | null;
+  haggled: "failed" | "15" | "25" | "30" | null;
+}
+
+interface ShopResponse {
+  stock: ShopItem[];
+  gold: number;
+  channel_id?: string;
+  needs_restock?: boolean;
+  purchases_this_cycle?: number;
+  purchase_cap?: number;
+  error?: string;
+}
+
 interface ActiveQuestResponse {
   quest: ActiveQuest | null;
   party?: Character[];
@@ -165,6 +188,7 @@ type LoadState =
       inventory: Item[];
       activeQuest: { quest: ActiveQuest; party: Character[] } | null;
       recent: RecentQuest[];
+      shop: ShopResponse | null;
     };
 
 export function App() {
@@ -186,11 +210,13 @@ export function App() {
     let inventory: Item[] = [];
     let activeQuest: { quest: ActiveQuest; party: Character[] } | null = null;
     let recent: RecentQuest[] = [];
+    let shop: ShopResponse | null = null;
     if (me.character) {
-      const [invRes, qRes, recentRes] = await Promise.all([
+      const [invRes, qRes, recentRes, shopRes] = await Promise.all([
         fetch("/api/inventory", { credentials: "include" }),
         fetch("/api/quest/active", { credentials: "include" }),
         fetch("/api/quests/recent", { credentials: "include" }),
+        fetch("/api/shop", { credentials: "include" }),
       ]);
       if (invRes.ok) {
         inventory = ((await invRes.json()) as InventoryResponse).items;
@@ -204,8 +230,14 @@ export function App() {
       if (recentRes.ok) {
         recent = ((await recentRes.json()) as RecentQuestsResponse).quests;
       }
+      if (shopRes.ok) {
+        shop = (await shopRes.json()) as ShopResponse;
+      } else {
+        const body = (await shopRes.json().catch(() => ({}))) as ShopResponse;
+        shop = body.error ? body : null;
+      }
     }
-    setState({ kind: "auth", me, inventory, activeQuest, recent });
+    setState({ kind: "auth", me, inventory, activeQuest, recent, shop });
   }
 
   async function logout() {
@@ -296,6 +328,22 @@ export function App() {
     if (res.ok) void refresh();
   }
 
+  async function shopBuy(itemId: number) {
+    const res = await fetch(`/api/shop/${itemId}/buy`, {
+      method: "POST",
+      credentials: "include",
+    });
+    if (res.ok) void refresh();
+  }
+
+  async function shopHaggle(itemId: number) {
+    const res = await fetch(`/api/shop/${itemId}/haggle`, {
+      method: "POST",
+      credentials: "include",
+    });
+    if (res.ok) void refresh();
+  }
+
   async function treasureTake(questId: number, pick: number) {
     const res = await fetch(`/api/quest/${questId}/dungeon/treasure_take`, {
       method: "POST",
@@ -353,6 +401,13 @@ export function App() {
             onEquip={equipItem}
             onSell={sellItem}
             onUse={useItem}
+          />
+        )}
+        {state.me.character && state.shop && !state.activeQuest && (
+          <ShopCard
+            shop={state.shop}
+            onBuy={shopBuy}
+            onHaggle={shopHaggle}
           />
         )}
         {state.me.character && state.recent.length > 0 && (
@@ -1347,6 +1402,161 @@ function SmallBadge({ children }: { children: React.ReactNode }) {
     >
       {children}
     </span>
+  );
+}
+
+const HAGGLE_LABEL: Record<"failed" | "15" | "25" | "30", string> = {
+  failed: "haggle failed",
+  "15": "15% off",
+  "25": "25% off",
+  "30": "30% off",
+};
+
+function ShopCard({
+  shop,
+  onBuy,
+  onHaggle,
+}: {
+  shop: ShopResponse;
+  onBuy: (id: number) => void;
+  onHaggle: (id: number) => void;
+}) {
+  if (shop.error === "mid_quest") {
+    return (
+      <div style={card}>
+        <h2 style={h2}>Shop</h2>
+        <p style={muted}>The shopkeep is afraid of monsters. Finish the quest first.</p>
+      </div>
+    );
+  }
+  if (shop.error === "no_channel" || !shop.channel_id) {
+    return (
+      <div style={card}>
+        <h2 style={h2}>Shop</h2>
+        <p style={muted}>
+          No shop channel yet — start a quest in Slack first so we know which channel's shop to show.
+        </p>
+      </div>
+    );
+  }
+  if (shop.needs_restock) {
+    return (
+      <div style={card}>
+        <h2 style={h2}>Shop</h2>
+        <p style={muted}>
+          Stock is dry. Run <code style={kbd}>/sq shop</code> in Slack to kick off a restock, then refresh here.
+        </p>
+      </div>
+    );
+  }
+  const available = shop.stock.filter((s) => !s.bought_by);
+  const capUsed = shop.purchases_this_cycle ?? 0;
+  const cap = shop.purchase_cap ?? 2;
+  const atCap = capUsed >= cap;
+  return (
+    <div style={card}>
+      <h2 style={h2}>Shop</h2>
+      <p style={muted}>
+        {available.length}/{shop.stock.length} items available · you have{" "}
+        <strong style={{ color: "#fbbf24" }}>{shop.gold}g</strong> · {capUsed}/{cap} bought
+        this cycle.
+      </p>
+      <div style={{ display: "grid", gap: 8, marginTop: 12 }}>
+        {shop.stock.map((s) => (
+          <ShopRow
+            key={s.id}
+            item={s}
+            playerGold={shop.gold}
+            atCap={atCap}
+            onBuy={onBuy}
+            onHaggle={onHaggle}
+          />
+        ))}
+      </div>
+      <p style={{ ...muted, fontSize: 11, marginTop: 8 }}>
+        Haggle is a free action (per item, once per cycle). Bards / Sages / Rogues get a
+        bonus on the d6.
+      </p>
+    </div>
+  );
+}
+
+function ShopRow({
+  item,
+  playerGold,
+  atCap,
+  onBuy,
+  onHaggle,
+}: {
+  item: ShopItem;
+  playerGold: number;
+  atCap: boolean;
+  onBuy: (id: number) => void;
+  onHaggle: (id: number) => void;
+}) {
+  const sold = !!item.bought_by;
+  const canAfford = playerGold >= item.price;
+  const canBuy = !sold && canAfford && !atCap;
+  const canHaggle = !sold && !item.haggled;
+  return (
+    <div
+      style={{
+        padding: 12,
+        background: "#1d1f23",
+        borderRadius: 8,
+        opacity: sold ? 0.5 : 1,
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+        <div style={{ fontSize: 24, lineHeight: 1 }}>{ITEM_TYPE_ICON[item.item_type]}</div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            <span style={{ fontWeight: 600, color: "#f5f5f5", fontSize: 15 }}>{item.item_name}</span>
+            <RarityBadge rarity={item.rarity} />
+            {item.item_type === "weapon" && item.weapon_range === "ranged" && (
+              <SmallBadge>ranged</SmallBadge>
+            )}
+            {item.haggled && (
+              <SmallBadge>{HAGGLE_LABEL[item.haggled]}</SmallBadge>
+            )}
+          </div>
+          {item.flavor && (
+            <div style={{ ...muted, fontSize: 12, fontStyle: "italic", marginTop: 2 }}>
+              {item.flavor}
+            </div>
+          )}
+        </div>
+        <div
+          style={{
+            fontVariantNumeric: "tabular-nums",
+            color: canAfford ? "#fbbf24" : "#c0392b",
+            fontWeight: 600,
+            fontSize: 13,
+          }}
+        >
+          +{item.power} · {item.price}g
+        </div>
+      </div>
+      {!sold && (
+        <div style={{ display: "flex", gap: 6, marginTop: 8, justifyContent: "flex-end" }}>
+          {canHaggle && (
+            <button onClick={() => onHaggle(item.id)} style={smallActionBtn("#33363d", "#e6e6e6")}>
+              Haggle
+            </button>
+          )}
+          <button
+            onClick={() => onBuy(item.id)}
+            disabled={!canBuy}
+            style={smallActionBtn(canBuy ? "#1f3a1f" : "#2a2d33", canBuy ? "#86efac" : "#6a7080")}
+          >
+            {atCap ? "Cap reached" : !canAfford ? "Need more gold" : "Buy"}
+          </button>
+        </div>
+      )}
+      {sold && (
+        <div style={{ ...muted, fontSize: 11, marginTop: 6 }}>Sold.</div>
+      )}
+    </div>
   );
 }
 

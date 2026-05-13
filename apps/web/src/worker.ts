@@ -15,6 +15,7 @@ import {
   dropChance,
   findCatalogEntry,
   generateScar,
+  haggleMod,
   npcTrustMod,
   rollDice,
   rollItem,
@@ -35,9 +36,16 @@ import {
   applyShortRest,
   applySoftDeath,
   bumpMaxMana,
+  claimShopItem,
   clearPartyEffects,
   consumeItem,
+  countPurchasesInCycle,
   equipItem,
+  getActiveShopStock,
+  getShopItem,
+  releaseShopClaim,
+  tryDeductGold,
+  trySetHaggleOutcome,
   awardSpoils,
   consumeWebLoginCode,
   createWebSession,
@@ -65,6 +73,25 @@ const VICTORY_BASE_XP_PER_TIER = 50;
 const VICTORY_BASE_GOLD_PER_TIER = 20;
 const BOSS_REWARD_MULTIPLIER = 2;
 const ELITE_REWARD_MULTIPLIER = 1.5;
+const SHOP_RESTOCK_MS = 6 * 60 * 60 * 1000;
+const SHOP_BUY_CAP_PER_CYCLE = 2;
+
+// Looks up the channel_id of the player's most recent quest. Web doesn't
+// have a Slack channel context directly, so we use this as a proxy — works
+// because shops + quests are channel-scoped and most players stick to one
+// channel. Returns null if the player has never been on a quest.
+async function recentChannelForUser(db: D1Database, userId: string): Promise<string | null> {
+  const row = await db
+    .prepare(
+      `SELECT q.channel_id FROM quests q
+       JOIN quest_party qp ON qp.quest_id = q.id
+       WHERE qp.character_id = ?
+       ORDER BY q.id DESC LIMIT 1`,
+    )
+    .bind(userId)
+    .first<{ channel_id: string }>();
+  return row?.channel_id ?? null;
+}
 
 // Slack uses Workers AI to flavor non-catalog drops; web v1 names them
 // deterministically off (rarity, type) so we don't depend on the AI binding.
@@ -302,6 +329,130 @@ app.post("/api/inventory/:itemId/equip", async (c) => {
   if (item.equipped) return c.json({ error: "already_equipped" }, 400);
   await equipItem(c.env.DB, item);
   return c.json({ ok: true });
+});
+
+// Shop view — lists current stock for the player's last-known channel.
+// Web can't generate a fresh restock (Slack uses AI for item flavor), so
+// if the channel's stock is empty/expired, return a hint to run /sq shop
+// in Slack to seed it.
+app.get("/api/shop", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const character = await getCharacter(c.env.DB, session.slack_user_id);
+  if (!character) return c.json({ error: "no_character" }, 404);
+  const activeQuest = await getActiveQuestForCharacter(c.env.DB, session.slack_user_id);
+  if (activeQuest) return c.json({ error: "mid_quest" }, 400);
+  const channelId = await recentChannelForUser(c.env.DB, session.slack_user_id);
+  if (!channelId) return c.json({ error: "no_channel" }, 404);
+  const stock = await getActiveShopStock(c.env.DB, channelId, SHOP_RESTOCK_MS);
+  if (!stock || stock.length === 0) {
+    return c.json({ stock: [], gold: character.gold, channel_id: channelId, needs_restock: true });
+  }
+  const cycleGeneratedAt = stock[0].generated_at;
+  const purchasesThisCycle = await countPurchasesInCycle(
+    c.env.DB, channelId, session.slack_user_id, cycleGeneratedAt,
+  );
+  return c.json({
+    stock,
+    gold: character.gold,
+    channel_id: channelId,
+    needs_restock: false,
+    purchases_this_cycle: purchasesThisCycle,
+    purchase_cap: SHOP_BUY_CAP_PER_CYCLE,
+  });
+});
+
+// Mirrors /sq buy: claim row + deduct gold atomically; release on either
+// failure so the item goes back to the shop.
+app.post("/api/shop/:itemId/buy", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const itemId = parseInt(c.req.param("itemId"), 10);
+  if (!Number.isFinite(itemId)) return c.json({ error: "bad_item_id" }, 400);
+  const character = await getCharacter(c.env.DB, session.slack_user_id);
+  if (!character) return c.json({ error: "no_character" }, 404);
+  if (await getActiveQuestForCharacter(c.env.DB, session.slack_user_id)) {
+    return c.json({ error: "mid_quest" }, 400);
+  }
+  const channelId = await recentChannelForUser(c.env.DB, session.slack_user_id);
+  if (!channelId) return c.json({ error: "no_channel" }, 404);
+  const stock = await getShopItem(c.env.DB, itemId, channelId);
+  if (!stock) return c.json({ error: "not_in_shop" }, 404);
+  if (stock.bought_by) return c.json({ error: "already_bought" }, 400);
+  if (character.gold < stock.price) {
+    return c.json({ error: "insufficient_gold", price: stock.price, gold: character.gold }, 400);
+  }
+  const alreadyBought = await countPurchasesInCycle(
+    c.env.DB, channelId, session.slack_user_id, stock.generated_at,
+  );
+  if (alreadyBought >= SHOP_BUY_CAP_PER_CYCLE) {
+    return c.json({ error: "cycle_cap", cap: SHOP_BUY_CAP_PER_CYCLE }, 400);
+  }
+  const claimed = await claimShopItem(c.env.DB, stock.id, session.slack_user_id);
+  if (!claimed) return c.json({ error: "raced" }, 409);
+  const paid = await tryDeductGold(c.env.DB, session.slack_user_id, stock.price);
+  if (!paid) {
+    await releaseShopClaim(c.env.DB, stock.id);
+    return c.json({ error: "insufficient_gold_race" }, 400);
+  }
+  const item = await addItem(c.env.DB, {
+    character_id: session.slack_user_id,
+    item_name: stock.item_name,
+    item_type: stock.item_type,
+    power: stock.power,
+    rarity: stock.rarity,
+    flavor: stock.flavor ?? "",
+    weapon_range: stock.weapon_range,
+  });
+  return c.json({
+    ok: true,
+    paid: stock.price,
+    gold_remaining: character.gold - stock.price,
+    item: { id: item.id, name: item.item_name, rarity: item.rarity, type: item.item_type, power: item.power },
+  });
+});
+
+// Haggle on a single shop item. d6 + class haggleMod:
+//   ≤3 → failed (price unchanged, locked from further haggling)
+//   4-5 → 15% off
+//   6   → 25% off
+//   7+  → 30% off
+app.post("/api/shop/:itemId/haggle", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const itemId = parseInt(c.req.param("itemId"), 10);
+  if (!Number.isFinite(itemId)) return c.json({ error: "bad_item_id" }, 400);
+  const character = await getCharacter(c.env.DB, session.slack_user_id);
+  if (!character) return c.json({ error: "no_character" }, 404);
+  if (await getActiveQuestForCharacter(c.env.DB, session.slack_user_id)) {
+    return c.json({ error: "mid_quest" }, 400);
+  }
+  const channelId = await recentChannelForUser(c.env.DB, session.slack_user_id);
+  if (!channelId) return c.json({ error: "no_channel" }, 404);
+  const stock = await getShopItem(c.env.DB, itemId, channelId);
+  if (!stock) return c.json({ error: "not_in_shop" }, 404);
+  if (stock.bought_by) return c.json({ error: "already_bought" }, 400);
+  if (stock.haggled) return c.json({ error: "already_haggled", outcome: stock.haggled }, 400);
+
+  const roll = rollDice(6);
+  const mod = haggleMod(character.class);
+  const total = roll + mod;
+  let outcome: "failed" | "15" | "25" | "30";
+  let newPrice = stock.price;
+  if (total <= 3) outcome = "failed";
+  else if (total <= 5) {
+    outcome = "15";
+    newPrice = Math.max(1, Math.floor(stock.price * 0.85));
+  } else if (total === 6) {
+    outcome = "25";
+    newPrice = Math.max(1, Math.floor(stock.price * 0.75));
+  } else {
+    outcome = "30";
+    newPrice = Math.max(1, Math.floor(stock.price * 0.7));
+  }
+  const ok = await trySetHaggleOutcome(c.env.DB, stock.id, outcome, newPrice);
+  if (!ok) return c.json({ error: "raced" }, 409);
+  return c.json({ outcome, roll, modifier: mod, total, old_price: stock.price, new_price: newPrice });
 });
 
 // Rest — short (50% missing HP + 1 mana, 10-min cooldown) or long
