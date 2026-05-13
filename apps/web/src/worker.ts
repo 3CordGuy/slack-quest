@@ -574,8 +574,10 @@ app.get("/api/quest/joinable", async (c) => {
   const quest = await getActiveQuestInChannel(c.env.DB, channelId);
   if (!quest) return c.json({ joinable: null });
   // Same locks slack uses: gauntlet past wave 1, dungeon past entry room,
-  // and web-mode quests.
+  // web-mode quests, and slack-mode quests (prevent web players from joining
+  // Slack-originated quests which would cause combat lock conflicts).
   if (quest.mode === "web") return c.json({ joinable: null, reason: "web_mode" });
+  if (quest.mode === "slack") return c.json({ joinable: null, reason: "slack_mode" });
   if (quest.scene.variant === "gauntlet" && (quest.scene.wave ?? 1) > 1) {
     return c.json({ joinable: null, reason: "gauntlet_advanced" });
   }

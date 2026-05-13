@@ -555,6 +555,7 @@ export function CombatPage({
   const logScrollRef = useRef<HTMLDivElement | null>(null);
   const diceContainerRef = useRef<HTMLDivElement | null>(null);
   const diceBoxRef = useRef<any>(null);
+  const diceInitStartedRef = useRef(false);
   const pendingDiceRollsRef = useRef<string[]>([]);
   const [diceReady, setDiceReady] = useState(false);
 
@@ -569,17 +570,29 @@ export function CombatPage({
     void loadItems();
   }, []);
 
+  // Initialize DiceBox once the container div is in the DOM. The container
+  // is only rendered after the first `state` message arrives, so we depend
+  // on `state` to re-run until the div exists. `diceInitStartedRef` (not
+  // `diceBoxRef`, which cleanup clears) prevents re-init on every update.
   useEffect(() => {
+    if (diceInitStartedRef.current) return;
     if (!diceContainerRef.current) return;
-    const box = new DiceBox(diceContainerRef.current, {
-      assetPath: "/assets/dice-box/",
-    });
-    diceBoxRef.current = box;
+    diceInitStartedRef.current = true;
+    let box: InstanceType<typeof DiceBox> | null = null;
+    try {
+      box = new DiceBox(diceContainerRef.current, {
+        assetPath: "/assets/dice-box/",
+      });
+      diceBoxRef.current = box;
+    } catch {
+      toast.error("Failed to initialize dice animation.");
+      return;
+    }
     box.init()
       .then(() => {
         setDiceReady(true);
         for (const notation of pendingDiceRollsRef.current) {
-          box.roll(notation);
+          diceBoxRef.current?.roll(notation);
         }
         pendingDiceRollsRef.current = [];
       })
@@ -589,9 +602,11 @@ export function CombatPage({
     return () => {
       if (box && typeof box.destroy === "function") {
         box.destroy();
+        diceBoxRef.current = null;
       }
     };
-  }, []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state]);
 
   useEffect(() => {
     const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
@@ -616,7 +631,17 @@ export function CombatPage({
           | { type: "log_replay"; events: unknown[] };
         if (msg.type === "state") dispatch({ kind: "state", value: msg.state });
         else if (msg.type === "events") {
-          processEventBatch(msg.events);
+          dispatch({ kind: "events", value: msg.events });
+          for (const evt of msg.events) {
+            if (evt.type === "roll") {
+              const notation = `${evt.die}`;
+              if (diceReady && diceBoxRef.current) {
+                diceBoxRef.current.roll(notation);
+              } else {
+                pendingDiceRollsRef.current.push(notation);
+              }
+            }
+          }
         }
         else if (msg.type === "error") {
           toast.error(msg.message);
