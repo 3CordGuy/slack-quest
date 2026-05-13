@@ -1,11 +1,194 @@
-// Workers AI helpers for the web worker. Duplicates the loot-flavor
-// helpers from apps/slack/src/ai.ts; if a third surface needs them we'll
-// factor into a shared package.
+// Workers AI helpers for the web worker. Ports the loot-flavor +
+// opening-scene helpers from apps/slack/src/ai.ts; if a third surface
+// needs them we'll factor into a shared package.
+
+import { fallbackMonsterName, fallbackSceneText } from "@gantt-quest/core";
+import type { Character, SceneJson } from "@gantt-quest/db";
 
 const MODEL = "@cf/meta/llama-3.1-8b-instruct";
+const FAST_MODEL = "@cf/meta/llama-3.2-3b-instruct";
 
 interface AiRunResponse {
   response?: string;
+}
+
+export type SceneVariant = "standard" | "boss" | "gauntlet-wave";
+
+// Two-step opening-scene generation:
+//   1. generateMonsterIdentity → name + HP (FAST_MODEL, small prompt)
+//   2. generateSceneForMonster → scene prose with the name pinned as input
+// Eliminates the name/scene mismatch class of bugs by construction.
+export async function generateOpeningScene(
+  ai: Ai,
+  character: Pick<Character, "name" | "class" | "level">,
+  elite: boolean,
+  variant: SceneVariant = "standard",
+  waveContext?: { wave: number; total: number },
+  avoidNames: string[] = [],
+): Promise<SceneJson> {
+  const baseTier = Math.max(1, character.level + (elite ? 1 : 0));
+  const tier = variant === "boss" ? baseTier + 1 : baseTier;
+  const baseFloor = 8 + tier * 4;
+  const baseCeil = baseFloor + 12;
+  const monsterHpFloor = variant === "boss" ? Math.floor(baseFloor * 1.8) : baseFloor;
+  const monsterHpCeil = variant === "boss" ? Math.floor(baseCeil * 1.8) : baseCeil;
+
+  const identity = await generateMonsterIdentity(
+    ai, variant, monsterHpFloor, monsterHpCeil, avoidNames, waveContext,
+  );
+  const scene = await generateSceneForMonster(
+    ai, identity.name, character, elite, variant, waveContext,
+  );
+  return {
+    monster_name: identity.name,
+    monster_hp: identity.hp,
+    monster_max_hp: identity.hp,
+    tier,
+    scene,
+  };
+}
+
+async function generateMonsterIdentity(
+  ai: Ai,
+  variant: SceneVariant,
+  hpFloor: number,
+  hpCeil: number,
+  avoidNames: string[],
+  waveContext?: { wave: number; total: number },
+): Promise<{ name: string; hp: number }> {
+  const variantHint =
+    variant === "boss"
+      ? "BOSS encounter — name should be imposing, multi-word, slightly mythic."
+      : variant === "gauntlet-wave"
+        ? `Wave ${waveContext?.wave}/${waveContext?.total} of a gauntlet — name should be punchy, single archetype.`
+        : "Standard foe — slightly absurd, single concept.";
+
+  const avoidLines: string[] = [];
+  if (avoidNames.length > 0) {
+    const cleaned = avoidNames.slice(0, 10).map((n) => n.trim()).filter(Boolean);
+    if (cleaned.length > 0) {
+      avoidLines.push(
+        `DO NOT REUSE these recent foes OR their core nouns: ${cleaned.join(", ")}.`,
+        "Pick a different core noun entirely.",
+      );
+    }
+  }
+
+  const system = [
+    "You name comedic engineering + project-management themed monsters for Slack Quest.",
+    "Tone: dry, witty, software-industry + PM (PRs, standups, sprints, gantt charts, scope creep, retros, kanban, blockers, deprecated APIs, on-call pagers).",
+    "Output MUST follow this EXACT format. Plain text only — no markdown, no asterisks, no quotes around values, no commentary.",
+    `MONSTER_NAME: <a ${variant === "boss" ? "2-5" : "1-4"} word name>`,
+    `MONSTER_HP: <integer between ${hpFloor} and ${hpCeil}>`,
+    variantHint,
+    ...avoidLines,
+  ].join("\n");
+
+  try {
+    const res = (await ai.run(FAST_MODEL, {
+      messages: [
+        { role: "system", content: system },
+        { role: "user", content: "Pick the next foe now." },
+      ],
+      max_tokens: 150,
+    })) as AiRunResponse;
+    const text = res.response ?? "";
+    const parsed = parseIdentityResponse(text, hpFloor, hpCeil);
+    if (!parsed) {
+      return { name: fallbackMonsterName(), hp: Math.floor((hpFloor + hpCeil) / 2) };
+    }
+    return parsed;
+  } catch {
+    return { name: fallbackMonsterName(), hp: Math.floor((hpFloor + hpCeil) / 2) };
+  }
+}
+
+function parseIdentityResponse(
+  text: string,
+  hpFloor: number,
+  hpCeil: number,
+): { name: string; hp: number } | null {
+  const strictName = /\*{0,2}MONSTER_NAME\*{0,2}\s*:\s*(.+)/i.exec(text);
+  const strictHp = /\*{0,2}MONSTER_HP\*{0,2}\s*:\s*\*{0,2}(\d+)/i.exec(text);
+  if (strictName?.[1]) {
+    const name = stripWrappers(strictName[1].split("\n")[0]);
+    let hp = strictHp ? parseInt(strictHp[1], 10) : Math.floor((hpFloor + hpCeil) / 2);
+    hp = Math.min(hpCeil, Math.max(hpFloor, hp));
+    if (name) return { name, hp };
+  }
+  const lines = text.split("\n").map((l) => l.trim()).filter(Boolean);
+  let name = "";
+  let hp = NaN;
+  for (const raw of lines) {
+    const cleaned = raw
+      .replace(/^\*{0,2}(monster[_\s]?name|monster[_\s]?hp|name|hp|foe)\*{0,2}\s*:?\s*/i, "")
+      .replace(/[:;]+$/, "")
+      .trim();
+    if (!cleaned) continue;
+    const intOnly = /^(\d+)\s*$/.exec(cleaned);
+    if (intOnly && Number.isNaN(hp)) {
+      const val = parseInt(intOnly[1], 10);
+      if (val >= 1 && val <= hpCeil * 3) {
+        hp = val;
+        continue;
+      }
+    }
+    if (!name && /[A-Za-z]/.test(cleaned)) name = stripWrappers(cleaned);
+  }
+  if (!name) return null;
+  if (Number.isNaN(hp)) hp = Math.floor((hpFloor + hpCeil) / 2);
+  hp = Math.min(hpCeil, Math.max(hpFloor, hp));
+  return { name, hp };
+}
+
+async function generateSceneForMonster(
+  ai: Ai,
+  monsterName: string,
+  character: Pick<Character, "name" | "class" | "level">,
+  elite: boolean,
+  variant: SceneVariant,
+  waveContext?: { wave: number; total: number },
+): Promise<string> {
+  const variantLine =
+    variant === "boss"
+      ? "Climactic, imposing — single big foe."
+      : variant === "gauntlet-wave"
+        ? `Wave ${waveContext?.wave}/${waveContext?.total} — quick, momentum-driven.`
+        : "Standard quest opening.";
+  const system = [
+    "You narrate comedic engineering + project-management themed dungeon scenes for Slack Quest.",
+    "Tone: dry, witty, software-industry + PM winks.",
+    "Output ONE paragraph: 2-3 sentences, ~60 words. Plain text — no markdown, no labels, no quotes.",
+    `The monster's name is "${monsterName}". You MUST refer to it by that EXACT name at least once.`,
+  ].join("\n");
+  const user = [
+    `Write the opening scene for ${character.name}, a Level ${character.level} ${character.class}, facing ${monsterName}.`,
+    elite ? "ELITE quest — perma-death looms." : "",
+    `Beat: ${variantLine}`,
+  ].filter(Boolean).join("\n");
+  try {
+    const res = (await ai.run(MODEL, {
+      messages: [
+        { role: "system", content: system },
+        { role: "user", content: user },
+      ],
+      max_tokens: 220,
+    })) as AiRunResponse;
+    const text = (res.response ?? "").trim().replace(/^["'`]|["'`]$/g, "");
+    return text || fallbackSceneText();
+  } catch {
+    return fallbackSceneText();
+  }
+}
+
+function stripWrappers(s: string): string {
+  let v = s.trim();
+  for (let i = 0; i < 4; i++) {
+    const next = v.replace(/^[*_"'`]+/, "").replace(/[*_"'`]+$/, "").trim();
+    if (next === v) break;
+    v = next;
+  }
+  return v;
 }
 
 const COMBAT_SYSTEM = [

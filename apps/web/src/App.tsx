@@ -389,6 +389,16 @@ export function App() {
     if (res.ok) void refresh();
   }
 
+  async function startQuest(variant: "standard" | "boss", elite: boolean) {
+    const res = await fetch(`/api/quest/start`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({ variant, elite }),
+    });
+    if (res.ok) void refresh();
+  }
+
   async function treasureTake(questId: number, pick: number) {
     const res = await fetch(`/api/quest/${questId}/dungeon/treasure_take`, {
       method: "POST",
@@ -418,6 +428,12 @@ export function App() {
       <Stack>
         {!state.activeQuest && state.joinable && (
           <JoinableQuestCard joinable={state.joinable} onJoin={joinQuest} />
+        )}
+        {!state.activeQuest && !state.joinable && state.me.character && (
+          <StartQuestCard
+            characterLevel={state.me.character.level}
+            onStart={startQuest}
+          />
         )}
         {state.activeQuest && (
           <ActiveQuestCard
@@ -527,6 +543,88 @@ function Login({ onSuccess }: { onSuccess: () => void }) {
         {error && <p style={{ ...muted, color: "#c0392b" }}>{error}</p>}
       </div>
     </Centered>
+  );
+}
+
+function StartQuestCard({
+  characterLevel,
+  onStart,
+}: {
+  characterLevel: number;
+  onStart: (variant: "standard" | "boss", elite: boolean) => void;
+}) {
+  const [elite, setElite] = useState(false);
+  const [pending, setPending] = useState<"standard" | "boss" | null>(null);
+  const bossAllowed = characterLevel >= 3;
+
+  function go(variant: "standard" | "boss") {
+    setPending(variant);
+    onStart(variant, elite);
+  }
+
+  return (
+    <div style={{ ...card, borderColor: "#b89b3a" }}>
+      <h2 style={h2}>Start a new quest</h2>
+      <p style={muted}>
+        The dungeon master will roll a fresh foe via Workers AI. Web supports
+        standard + boss right now; gauntlet / dungeon variants land in a
+        follow-up.
+      </p>
+      <label
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          marginTop: 12,
+          fontSize: 13,
+          color: "#e6e6e6",
+          cursor: "pointer",
+        }}
+      >
+        <input
+          type="checkbox"
+          checked={elite}
+          onChange={(e) => setElite(e.target.checked)}
+          style={{ accentColor: "#dc2626" }}
+        />
+        <span>
+          <strong>Elite mode</strong>
+          <span style={{ ...muted, marginLeft: 6 }}>
+            (perma-death; tier bumped by 1)
+          </span>
+        </span>
+      </label>
+      <div style={{ display: "flex", gap: 8, marginTop: 16, flexWrap: "wrap" }}>
+        <button
+          onClick={() => go("standard")}
+          disabled={pending !== null}
+          style={{
+            ...button,
+            marginTop: 0,
+            flex: "1 1 160px",
+            background: pending === "standard" ? "#33363d" : "#1f3a1f",
+            color: "#86efac",
+          }}
+        >
+          {pending === "standard" ? "Rolling…" : "⚔ Standard"}
+        </button>
+        <button
+          onClick={() => go("boss")}
+          disabled={pending !== null || !bossAllowed}
+          style={{
+            ...button,
+            marginTop: 0,
+            flex: "1 1 160px",
+            background:
+              pending === "boss" ? "#33363d" : bossAllowed ? "#5c1f1f" : "#2a2d33",
+            color: bossAllowed ? "#fca5a5" : "#6a7080",
+          }}
+          title={bossAllowed ? "Climactic single foe" : "Requires character level 3"}
+        >
+          {pending === "boss" ? "Rolling…" : bossAllowed ? "👑 Boss" : "👑 Boss (need L3)"}
+        </button>
+      </div>
+    </div>
   );
 }
 
