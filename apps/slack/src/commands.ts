@@ -2764,6 +2764,8 @@ async function handleChoose(
 
   const quest = await getActiveQuestForCharacter(env.DB, payload.user_id);
   if (!quest) return ephemeral("You're not on an active quest.");
+  const chooseBlocked = webModeLockout(quest);
+  if (chooseBlocked) return chooseBlocked;
   if (quest.scene.variant !== "dungeon" || !quest.scene.expedition) {
     return ephemeral(`No room choice to make — try \`${payload.command} attack\` or similar.`);
   }
@@ -3066,6 +3068,8 @@ async function handleTake(
 
   const quest = await getActiveQuestForCharacter(env.DB, payload.user_id);
   if (!quest) return ephemeral("You're not on an active quest.");
+  const takeBlocked = webModeLockout(quest);
+  if (takeBlocked) return takeBlocked;
   if (quest.scene.variant !== "dungeon" || !quest.scene.expedition) {
     return ephemeral("Not an expedition — there's no chest to open here.");
   }
@@ -4733,6 +4737,8 @@ async function handleRest(
   const isLong = args[0]?.toLowerCase() === "long";
 
   if (activeQuest) {
+    const restBlocked = webModeLockout(activeQuest);
+    if (restBlocked) return restBlocked;
     // Long rest is always blocked mid-quest — too generous, would nullify attrition.
     if (isLong) {
       return ephemeral(`Long rests only happen between quests. Try \`${payload.command} rest\` for a short one.`);

@@ -1206,6 +1206,9 @@ app.post("/api/quest/:id/start_web_combat", async (c) => {
   if (!quest || quest.id !== questId) {
     return c.json({ error: "quest_not_active_for_user" }, 404);
   }
+  if (quest.mode === "slack") {
+    return c.json({ error: "slack_mode" }, 409);
+  }
   const variant = quest.scene.variant ?? "standard";
   if (variant !== "standard" && variant !== "boss" && variant !== "gauntlet" && variant !== "dungeon") {
     return c.json({ error: "unsupported_variant", variant }, 400);
@@ -1824,7 +1827,7 @@ export interface LootDrop {
   power: number;
   rarity: string;
   flavor: string;
-  weapon_range: "melee" | "ranged" | null;
+  weapon_range: "melee" | "ranged" | "focus" | null;
 }
 
 export interface FighterReward {

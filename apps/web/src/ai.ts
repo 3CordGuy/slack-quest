@@ -338,7 +338,7 @@ export async function flavorLootDrop(
   type: "weapon" | "armor" | "consumable" | "magic" | "revive",
   rarity: "common" | "uncommon" | "rare",
   power: number,
-  weaponRange?: "melee" | "ranged" | null,
+  weaponRange?: "melee" | "ranged" | "focus" | null,
 ): Promise<{ name: string; flavor: string }> {
   const weaponHint =
     type === "weapon"
