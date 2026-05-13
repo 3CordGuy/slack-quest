@@ -44,6 +44,7 @@ import {
   getWebSession,
   markQuestStatus,
   removeItem,
+  saveScene,
   saveWebCombatState,
   setCharacterHpAndShield,
   setQuestMode,
@@ -322,8 +323,21 @@ app.post("/api/quest/:id/start_web_combat", async (c) => {
     return c.json({ error: "quest_not_active_for_user" }, 404);
   }
   const variant = quest.scene.variant ?? "standard";
-  if (variant !== "standard" && variant !== "boss" && variant !== "gauntlet") {
+  if (variant !== "standard" && variant !== "boss" && variant !== "gauntlet" && variant !== "dungeon") {
     return c.json({ error: "unsupported_variant", variant }, 400);
+  }
+  // v1 dungeon support: web combat only handles combat rooms. Trap /
+  // lockbox / npc / treasure rooms stay in Slack — player resolves via
+  // /sq choose / /sq take. Door picks also stay in Slack for now.
+  if (variant === "dungeon") {
+    const exp = quest.scene.expedition;
+    const node = exp ? exp.nodes[exp.current] : undefined;
+    if (!node || node.type !== "combat") {
+      return c.json(
+        { error: "non_combat_room", room_type: node?.type ?? null },
+        400,
+      );
+    }
   }
 
   const party = await getQuestParty(c.env.DB, questId);
@@ -539,6 +553,9 @@ export interface OutcomeSummary {
   total_pool_gold: number;
   elite: boolean;
   is_boss: boolean;
+  // True when this was a dungeon combat room — quest stays active, player
+  // returns to Slack to advance through doors / non-combat rooms.
+  dungeon_room_cleared?: boolean;
 }
 
 interface ServerToClient {
@@ -710,7 +727,24 @@ async function applyWebCombatOutcome(
     });
   }
 
-  await markQuestStatus(env.DB, questId, won ? "completed" : "failed");
+  // Dungeon victory only clears the current combat room — the rest of the
+  // expedition continues in Slack. Sync monster_hp=0 to scene_json so the
+  // Slack handlers see the room as resolved, flip mode back to 'slack' so
+  // /sq choose / /sq attack can drive the next room, and skip marking the
+  // quest completed (the dungeon isn't done — Slack will mark it at the
+  // treasure room).
+  const isDungeon = state.monster.upcoming_waves === undefined && won && await isDungeonQuest(env.DB, questId);
+  if (won && isDungeon) {
+    await env.DB
+      .prepare(
+        `UPDATE quests SET scene_json = json_set(scene_json, '$.monster_hp', 0) WHERE id = ?`,
+      )
+      .bind(questId)
+      .run();
+    await setQuestMode(env.DB, questId, "slack");
+  } else {
+    await markQuestStatus(env.DB, questId, won ? "completed" : "failed");
+  }
 
   return {
     status: state.status as "victory" | "defeat",
@@ -721,7 +755,16 @@ async function applyWebCombatOutcome(
     total_pool_gold: totalPoolGold,
     elite,
     is_boss: isBoss,
+    dungeon_room_cleared: !!isDungeon,
   };
+}
+
+async function isDungeonQuest(db: D1Database, questId: number): Promise<boolean> {
+  const row = await db
+    .prepare(`SELECT json_extract(scene_json, '$.variant') AS variant FROM quests WHERE id = ?`)
+    .bind(questId)
+    .first<{ variant: string | null }>();
+  return row?.variant === "dungeon";
 }
 
 interface WsAttachment {

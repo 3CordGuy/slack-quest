@@ -358,7 +358,7 @@ function ActiveQuestCard({
           </div>
         </div>
       )}
-      {(variant === "standard" || variant === "boss" || variant === "gauntlet") && (
+      {(variant === "standard" || variant === "boss" || variant === "gauntlet" || variant === "dungeon") && (
         <button
           onClick={onStartCombat}
           style={{ ...button, marginTop: 20, background: "#b89b3a", color: "#0e0f12" }}

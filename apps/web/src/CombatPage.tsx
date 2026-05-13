@@ -194,6 +194,7 @@ interface OutcomeSummary {
   total_pool_gold: number;
   elite: boolean;
   is_boss: boolean;
+  dungeon_room_cleared?: boolean;
 }
 
 interface UiState {
@@ -1121,7 +1122,8 @@ function EndBanner({
 }) {
   const win = status === "victory";
   const fled = status === "fled";
-  const labelText = win ? "VICTORY" : fled ? "ESCAPED" : "DEFEAT";
+  const dungeonRoom = win && outcome?.dungeon_room_cleared;
+  const labelText = dungeonRoom ? "ROOM CLEARED" : win ? "VICTORY" : fled ? "ESCAPED" : "DEFEAT";
   const borderColor = win ? "#16a34a" : fled ? "#b89b3a" : "#7c2020";
   const bg = win ? "#0f2818" : fled ? "#241e0d" : "#28100f";
   const fg = win ? "#86efac" : fled ? "#facc15" : "#fca5a5";
@@ -1155,7 +1157,9 @@ function EndBanner({
             ))}
           </div>
           <p style={{ ...muted, marginTop: 12, textAlign: "center" }}>
-            Click <strong>← Back</strong> to return.
+            {outcome?.dungeon_room_cleared
+              ? "Room cleared. Use Slack /sq choose to pick the next door (and resolve any trap/lockbox/npc rooms there)."
+              : <>Click <strong>← Back</strong> to return.</>}
           </p>
         </div>
       )}
