@@ -601,7 +601,7 @@ export function CombatPage({
                 purpose: String(evt.purpose ?? ""),
               };
               setDiceRolls((prev) => [...prev.slice(-5), entry]);
-              setTimeout(() => setDiceRolls((prev) => prev.filter((r) => r.id !== id)), 4000);
+              setTimeout(() => setDiceRolls((prev) => prev.filter((r) => r.id !== id)), 7000);
             }
           }
         }
@@ -1707,10 +1707,10 @@ function injectDiceStyles() {
   s.textContent = `
     @keyframes dice-roll-in {
       0%   { transform: rotate(0deg)   scale(0)    translateY(-40px); opacity: 0; }
-      55%  { transform: rotate(450deg) scale(1.14) translateY(0);     opacity: 1; }
-      75%  { transform: rotate(510deg) scale(0.93); }
-      88%  { transform: rotate(526deg) scale(1.06); }
-      100% { transform: rotate(540deg) scale(1); }
+      55%  { transform: rotate(630deg) scale(1.14) translateY(0);     opacity: 1; }
+      75%  { transform: rotate(705deg) scale(0.93); }
+      88%  { transform: rotate(716deg) scale(1.06); }
+      100% { transform: rotate(720deg) scale(1); }
     }
     @keyframes dice-fade-out {
       0%   { opacity: 1; transform: scale(1)   translateY(0);   }
@@ -1785,8 +1785,8 @@ function DiceFace({ roll }: { roll: DiceRollEntry }) {
         setDisplay(Math.ceil(Math.random() * maxFace));
       }
     }, 50);
-    // Begin fade-out 2.6s after settle.
-    const fadeTimer = setTimeout(() => setFading(true), 3250);
+    // Begin fade-out after 6s.
+    const fadeTimer = setTimeout(() => setFading(true), 6000);
     return () => { clearInterval(iv); clearTimeout(fadeTimer); };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [roll.id]);
