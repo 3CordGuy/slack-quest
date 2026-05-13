@@ -181,6 +181,37 @@ async function generateSceneForMonster(
   }
 }
 
+// Generates a 3-wave gauntlet: full opening scene for wave 1 + identity
+// (name + HP) for waves 2 and 3. All AI calls fire in parallel so the
+// total latency is roughly one AI roundtrip (~1.5s) rather than 3-6×.
+export async function generateGauntletWaves(
+  ai: Ai,
+  character: Pick<Character, "name" | "class" | "level">,
+  elite: boolean,
+  totalWaves: number,
+  avoidNames: string[],
+): Promise<{ scene: SceneJson; upcoming_waves: { name: string; max_hp: number }[] }> {
+  // Wave-1 scene mirrors a standard gauntlet-wave opening.
+  const wave1Promise = generateOpeningScene(
+    ai, character, elite, "gauntlet-wave", { wave: 1, total: totalWaves }, avoidNames,
+  );
+  // Waves 2..N: identity only (name + HP). Same HP range as standard.
+  const tier = Math.max(1, character.level + (elite ? 1 : 0));
+  const hpFloor = 8 + tier * 4;
+  const hpCeil = hpFloor + 12;
+  const restPromises: Promise<{ name: string; hp: number }>[] = [];
+  for (let w = 2; w <= totalWaves; w++) {
+    restPromises.push(
+      generateMonsterIdentity(ai, "gauntlet-wave", hpFloor, hpCeil, avoidNames, { wave: w, total: totalWaves }),
+    );
+  }
+  const [wave1, ...rest] = await Promise.all([wave1Promise, ...restPromises]);
+  return {
+    scene: wave1,
+    upcoming_waves: rest.map((r) => ({ name: r.name, max_hp: r.hp })),
+  };
+}
+
 function stripWrappers(s: string): string {
   let v = s.trim();
   for (let i = 0; i < 4; i++) {

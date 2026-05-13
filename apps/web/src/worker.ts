@@ -8,7 +8,12 @@ import { DurableObject } from "cloudflare:workers";
 import { Hono } from "hono";
 import { getCookie, setCookie, deleteCookie } from "hono/cookie";
 
-import { flavorCatalogItem, flavorLootDrop, generateOpeningScene } from "./ai";
+import {
+  flavorCatalogItem,
+  flavorLootDrop,
+  generateGauntletWaves,
+  generateOpeningScene,
+} from "./ai";
 
 import {
   MAX_MANA_CAP,
@@ -74,6 +79,7 @@ import {
   saveWebCombatState,
   setCharacterHpAndShield,
   setQuestMode,
+  type SceneJson,
 } from "@gantt-quest/db";
 
 const DOWNED_COOLDOWN_MS = 12 * 60 * 60 * 1000;
@@ -364,6 +370,8 @@ app.post("/api/inventory/:itemId/equip", async (c) => {
 
 const JOIN_HP_RATIO = 0.4;
 const BOSS_LEVEL_REQUIRED = 3;
+const GAUNTLET_LEVEL_REQUIRED = 5;
+const GAUNTLET_WAVES = 3;
 
 // Start a fresh quest. v1 supports standard + boss variants. Gauntlet and
 // dungeon need bulk scene generation (multi-wave / multi-room) and are
@@ -384,31 +392,41 @@ app.post("/api/quest/start", async (c) => {
     | null;
   const variant = body?.variant;
   const elite = body?.elite === true;
-  if (variant !== "standard" && variant !== "boss") {
+  if (variant !== "standard" && variant !== "boss" && variant !== "gauntlet") {
     return c.json({ error: "unsupported_variant", variant }, 400);
   }
   if (variant === "boss" && character.level < BOSS_LEVEL_REQUIRED) {
     return c.json({ error: "boss_level_gate", required: BOSS_LEVEL_REQUIRED }, 400);
   }
+  if (variant === "gauntlet" && character.level < GAUNTLET_LEVEL_REQUIRED) {
+    return c.json({ error: "gauntlet_level_gate", required: GAUNTLET_LEVEL_REQUIRED }, 400);
+  }
   const channelId = await recentChannelForUser(c.env.DB, session.slack_user_id);
-  // Use the player's most-recent channel for thread_ts uniqueness; if none
-  // exists, fall back to a synthetic "web" channel so multi-channel users
-  // can still start fresh quests from the dashboard.
   const effectiveChannel = channelId ?? `web:${session.slack_user_id}`;
-
-  // Avoid-list = the channel's last few monster names so back-to-back quests
-  // don't repeat. Same helper Slack uses.
   const avoidNames = channelId ? await getRecentMonsterNames(c.env.DB, channelId, 6) : [];
-  const scene = await generateOpeningScene(
-    c.env.AI,
-    character,
-    elite,
-    variant === "boss" ? "boss" : "standard",
-    undefined,
-    avoidNames,
-  );
-  if (variant === "boss") scene.boss_phase = 1;
-  scene.variant = variant;
+
+  let scene: SceneJson;
+  if (variant === "gauntlet") {
+    const gen = await generateGauntletWaves(c.env.AI, character, elite, GAUNTLET_WAVES, avoidNames);
+    scene = {
+      ...gen.scene,
+      variant: "gauntlet",
+      wave: 1,
+      total_waves: GAUNTLET_WAVES,
+      upcoming_waves: gen.upcoming_waves.map((w) => ({ name: w.name, max_hp: w.max_hp, scene: "" })),
+    };
+  } else {
+    scene = await generateOpeningScene(
+      c.env.AI,
+      character,
+      elite,
+      variant === "boss" ? "boss" : "standard",
+      undefined,
+      avoidNames,
+    );
+    if (variant === "boss") scene.boss_phase = 1;
+    scene.variant = variant;
+  }
 
   const questId = await createQuest(c.env.DB, {
     channel_id: effectiveChannel,

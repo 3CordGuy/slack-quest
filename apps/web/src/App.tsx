@@ -389,7 +389,7 @@ export function App() {
     if (res.ok) void refresh();
   }
 
-  async function startQuest(variant: "standard" | "boss", elite: boolean) {
+  async function startQuest(variant: "standard" | "boss" | "gauntlet", elite: boolean) {
     const res = await fetch(`/api/quest/start`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -551,13 +551,14 @@ function StartQuestCard({
   onStart,
 }: {
   characterLevel: number;
-  onStart: (variant: "standard" | "boss", elite: boolean) => void;
+  onStart: (variant: "standard" | "boss" | "gauntlet", elite: boolean) => void;
 }) {
   const [elite, setElite] = useState(false);
-  const [pending, setPending] = useState<"standard" | "boss" | null>(null);
+  const [pending, setPending] = useState<"standard" | "boss" | "gauntlet" | null>(null);
   const bossAllowed = characterLevel >= 3;
+  const gauntletAllowed = characterLevel >= 5;
 
-  function go(variant: "standard" | "boss") {
+  function go(variant: "standard" | "boss" | "gauntlet") {
     setPending(variant);
     onStart(variant, elite);
   }
@@ -566,9 +567,9 @@ function StartQuestCard({
     <div style={{ ...card, borderColor: "#b89b3a" }}>
       <h2 style={h2}>Start a new quest</h2>
       <p style={muted}>
-        The dungeon master will roll a fresh foe via Workers AI. Web supports
-        standard + boss right now; gauntlet / dungeon variants land in a
-        follow-up.
+        The dungeon master rolls a fresh foe via Workers AI. Web supports
+        standard / boss / gauntlet; full dungeon expedition generation lands
+        in a follow-up.
       </p>
       <label
         style={{
@@ -622,6 +623,25 @@ function StartQuestCard({
           title={bossAllowed ? "Climactic single foe" : "Requires character level 3"}
         >
           {pending === "boss" ? "Rolling…" : bossAllowed ? "👑 Boss" : "👑 Boss (need L3)"}
+        </button>
+        <button
+          onClick={() => go("gauntlet")}
+          disabled={pending !== null || !gauntletAllowed}
+          style={{
+            ...button,
+            marginTop: 0,
+            flex: "1 1 160px",
+            background:
+              pending === "gauntlet" ? "#33363d" : gauntletAllowed ? "#3a2d5c" : "#2a2d33",
+            color: gauntletAllowed ? "#c4b5fd" : "#6a7080",
+          }}
+          title={gauntletAllowed ? "3 waves back-to-back" : "Requires character level 5"}
+        >
+          {pending === "gauntlet"
+            ? "Rolling…"
+            : gauntletAllowed
+              ? "⚔ Gauntlet"
+              : "⚔ Gauntlet (need L5)"}
         </button>
       </div>
     </div>
