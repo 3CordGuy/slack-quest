@@ -61,12 +61,22 @@ interface StatusEffect {
 
 type ExpeditionNodeType = "combat" | "trap" | "lockbox" | "npc" | "treasure" | "merchant";
 
+type SkillType = "str" | "dex" | "int";
+
+interface TrapChoice {
+  text: string;
+  emoji: string;
+  skill: SkillType;
+  fail_damage: number;
+}
+
 interface ExpeditionNode {
   type: ExpeditionNodeType;
   scene: string;
   monster_name?: string;
   monster_max_hp?: number;
   tier?: number;
+  trap_choices?: TrapChoice[];
 }
 
 interface ExpeditionState {
@@ -204,6 +214,16 @@ export function App() {
     if (res.ok) void refresh();
   }
 
+  async function trapChoose(questId: number, pick: number) {
+    const res = await fetch(`/api/quest/${questId}/dungeon/trap_choose`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({ pick }),
+    });
+    if (res.ok) void refresh();
+  }
+
   if (state.kind === "loading") return <Centered>Loading…</Centered>;
   if (state.kind === "anon") return <Login onSuccess={refresh} />;
   if (activeCombat) {
@@ -228,6 +248,7 @@ export function App() {
             selfId={state.me.slack_user_id}
             onStartCombat={() => startCombat(state.activeQuest!.quest.id)}
             onChooseDoor={(pick) => chooseDoor(state.activeQuest!.quest.id, pick)}
+            onTrapChoose={(pick) => trapChoose(state.activeQuest!.quest.id, pick)}
           />
         )}
         <CharacterCard me={state.me} />
@@ -308,12 +329,14 @@ function ActiveQuestCard({
   selfId,
   onStartCombat,
   onChooseDoor,
+  onTrapChoose,
 }: {
   quest: ActiveQuest;
   party: Character[];
   selfId: string;
   onStartCombat: () => void;
   onChooseDoor: (pick: number) => void;
+  onTrapChoose: (pick: number) => void;
 }) {
   const s = quest.scene;
   const variant = s.variant ?? "standard";
@@ -389,25 +412,100 @@ function ActiveQuestCard({
           </div>
         </div>
       )}
-      {variant === "dungeon" && s.expedition?.pending_doors && s.expedition.pending_doors.length > 0 ? (
-        <DoorPicker
-          doors={s.expedition.pending_doors.map((idx) => s.expedition!.nodes[idx])}
-          onPick={onChooseDoor}
-        />
-      ) : (variant === "standard" || variant === "boss" || variant === "gauntlet" ||
-            (variant === "dungeon" && s.expedition?.nodes[s.expedition.current]?.type === "combat")) ? (
-        <button
-          onClick={onStartCombat}
-          style={{ ...button, marginTop: 20, background: "#b89b3a", color: "#0e0f12" }}
-        >
-          ⚔ Open Web Combat
-        </button>
-      ) : variant === "dungeon" ? (
-        <p style={{ ...muted, fontSize: 13, marginTop: 20 }}>
-          Current room: <strong>{s.expedition?.nodes[s.expedition.current]?.type ?? "?"}</strong> —
-          resolve in Slack with <code style={kbd}>/sq choose</code> or <code style={kbd}>/sq take</code>.
-        </p>
-      ) : null}
+      {(() => {
+        const currentNode = s.expedition?.nodes[s.expedition.current];
+        const pendingDoors = s.expedition?.pending_doors ?? [];
+        if (variant === "dungeon" && pendingDoors.length > 0) {
+          return (
+            <DoorPicker
+              doors={pendingDoors.map((idx) => s.expedition!.nodes[idx])}
+              onPick={onChooseDoor}
+            />
+          );
+        }
+        if (variant === "dungeon" && currentNode?.type === "trap" && currentNode.trap_choices) {
+          return <TrapPicker choices={currentNode.trap_choices} onPick={onTrapChoose} />;
+        }
+        const combatAvailable =
+          variant === "standard" ||
+          variant === "boss" ||
+          variant === "gauntlet" ||
+          (variant === "dungeon" && currentNode?.type === "combat" && s.monster_hp > 0);
+        if (combatAvailable) {
+          return (
+            <button
+              onClick={onStartCombat}
+              style={{ ...button, marginTop: 20, background: "#b89b3a", color: "#0e0f12" }}
+            >
+              ⚔ Open Web Combat
+            </button>
+          );
+        }
+        if (variant === "dungeon") {
+          return (
+            <p style={{ ...muted, fontSize: 13, marginTop: 20 }}>
+              Current room: <strong>{currentNode?.type ?? "?"}</strong> — resolve in Slack with{" "}
+              <code style={kbd}>/sq choose</code> or <code style={kbd}>/sq take</code>.
+            </p>
+          );
+        }
+        return null;
+      })()}
+    </div>
+  );
+}
+
+const SKILL_LABEL: Record<SkillType, string> = { str: "STR", dex: "DEX", int: "INT" };
+
+function TrapPicker({
+  choices,
+  onPick,
+}: {
+  choices: TrapChoice[];
+  onPick: (pick: number) => void;
+}) {
+  return (
+    <div style={{ marginTop: 20 }}>
+      <div
+        style={{
+          ...muted,
+          fontSize: 11,
+          textTransform: "uppercase",
+          letterSpacing: 1.5,
+          marginBottom: 8,
+        }}
+      >
+        🪤 Trap — choose your approach
+      </div>
+      <div style={{ display: "grid", gap: 8 }}>
+        {choices.map((c, i) => (
+          <button
+            key={i}
+            onClick={() => onPick(i + 1)}
+            style={{
+              padding: "12px 14px",
+              background: "#1d1f23",
+              border: "1px solid #2a2d33",
+              borderRadius: 8,
+              textAlign: "left",
+              cursor: "pointer",
+              color: "#e6e6e6",
+              fontFamily: "inherit",
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+              <span style={{ fontSize: 20 }}>{c.emoji}</span>
+              <span style={{ fontWeight: 600 }}>{c.text}</span>
+              <span style={{ ...muted, fontSize: 11 }}>
+                · {SKILL_LABEL[c.skill]} check · fail = −{c.fail_damage} HP
+              </span>
+            </div>
+          </button>
+        ))}
+      </div>
+      <p style={{ ...muted, fontSize: 11, marginTop: 8 }}>
+        Class experts auto-pass their skill. Others roll d6 — pass on 4+.
+      </p>
     </div>
   );
 }

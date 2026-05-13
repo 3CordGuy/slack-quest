@@ -411,6 +411,140 @@ app.post("/api/quest/:id/start_web_combat", async (c) => {
   return c.json({ quest_id: questId, state: begun.state });
 });
 
+// Mirrors slack's pickNextRoom — picks where the party heads after the
+// current room resolves. Duplicated here for v1; if a third surface needs
+// expedition logic we'll factor this into a shared core helper.
+type ExpNode = {
+  type: "combat" | "trap" | "lockbox" | "npc" | "treasure" | "merchant";
+  scene: string;
+  monster_name?: string;
+  monster_max_hp?: number;
+  tier?: number;
+  loot_options?: unknown[];
+  lock_tier?: "bronze" | "silver" | "gold";
+};
+type ExpState = {
+  theme: string;
+  current: number;
+  nodes: ExpNode[];
+  pool?: number[];
+  pending_doors?: number[];
+  visited_count?: number;
+  visited_indices?: number[];
+  sealed_doors?: number[];
+};
+
+function pickNextRoom(
+  exp: ExpState,
+): { type: "doors"; pair: number[]; remainingPool: number[] } | { type: "node"; index: number; remainingPool: number[] } {
+  const treasureIdx = exp.nodes.length - 1;
+  const subBossIdx = exp.nodes.length - 2;
+  const merchantIdx = exp.nodes.length - 3;
+  const pool = [...(exp.pool ?? [])];
+  if (exp.current === subBossIdx) return { type: "node", index: treasureIdx, remainingPool: pool };
+  if (exp.current === merchantIdx) return { type: "doors", pair: [subBossIdx], remainingPool: pool };
+  if (pool.length >= 2) {
+    const a = pool.shift()!;
+    const b = pool.shift()!;
+    return { type: "doors", pair: [a, b], remainingPool: pool };
+  }
+  if (pool.length === 1) return { type: "doors", pair: [pool.shift()!], remainingPool: pool };
+  return { type: "doors", pair: [merchantIdx], remainingPool: pool };
+}
+
+// Applies a resolved non-combat room outcome: hp damage if any, then
+// advance the expedition (doors or auto-advance) into the next scene.
+async function advanceDungeon(
+  db: D1Database,
+  questId: number,
+  exp: ExpState,
+  scene: { tier: number; [k: string]: unknown },
+  actorHpAfter: { user_id: string; hp: number } | null,
+): Promise<{ next_room?: string; pending_doors?: number[] }> {
+  if (actorHpAfter) {
+    await db
+      .prepare("UPDATE characters SET hp = ?, last_active = ? WHERE slack_user_id = ?")
+      .bind(Math.max(0, actorHpAfter.hp), Date.now(), actorHpAfter.user_id)
+      .run();
+  }
+  const next = pickNextRoom(exp);
+  if (next.type === "doors") {
+    const updatedExp = { ...exp, pool: next.remainingPool, pending_doors: next.pair };
+    const updatedScene = { ...scene, expedition: updatedExp };
+    await saveScene(db, questId, updatedScene as never);
+    return { pending_doors: next.pair };
+  }
+  const nextNode = exp.nodes[next.index];
+  if (!nextNode) return {};
+  const isCombat = nextNode.type === "combat";
+  const updatedExp = {
+    ...exp,
+    current: next.index,
+    pool: next.remainingPool,
+    pending_doors: undefined,
+    visited_count: (exp.visited_count ?? 1) + 1,
+    visited_indices: [...(exp.visited_indices ?? [exp.current]), next.index],
+  };
+  const updatedScene = {
+    ...scene,
+    expedition: updatedExp,
+    scene: nextNode.scene,
+    monster_name: isCombat ? nextNode.monster_name ?? "—" : "—",
+    monster_max_hp: isCombat ? nextNode.monster_max_hp ?? 0 : 0,
+    monster_hp: isCombat ? nextNode.monster_max_hp ?? 0 : 0,
+    tier: isCombat ? nextNode.tier ?? scene.tier : scene.tier,
+    monster_effects: [],
+  };
+  await saveScene(db, questId, updatedScene as never);
+  return { next_room: nextNode.type };
+}
+
+// Mirrors slack's /sq choose for trap rooms — picks among 3 skill-check
+// options. Expert classes auto-pass; others roll d6 ≥ 4. Fail = take the
+// option's fail_damage to HP. Either way advances the expedition.
+app.post("/api/quest/:id/dungeon/trap_choose", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const questId = parseInt(c.req.param("id"), 10);
+  if (!Number.isFinite(questId)) return c.json({ error: "bad_quest_id" }, 400);
+  const quest = await getActiveQuestForCharacter(c.env.DB, session.slack_user_id);
+  if (!quest || quest.id !== questId) return c.json({ error: "quest_not_active" }, 404);
+  const exp = quest.scene.expedition;
+  const node = exp?.nodes[exp.current];
+  if (!exp || !node || node.type !== "trap") return c.json({ error: "not_a_trap_room" }, 400);
+
+  const body = (await c.req.json().catch(() => null)) as { pick?: unknown } | null;
+  const pick = typeof body?.pick === "number" ? body.pick : NaN;
+  const choices = node.trap_choices ?? [];
+  if (!Number.isFinite(pick) || pick < 1 || pick > choices.length) {
+    return c.json({ error: "bad_pick", valid_picks: choices.length }, 400);
+  }
+  const choice = choices[pick - 1];
+  const character = await getCharacter(c.env.DB, session.slack_user_id);
+  if (!character) return c.json({ error: "no_character" }, 404);
+  const cls = classByName(character.class);
+  const isExpert = cls.skills.includes(choice.skill);
+  const roll = isExpert ? null : rollDice(6);
+  const passed = isExpert || (roll !== null && roll >= 4);
+  const hpAfter = passed ? character.hp : Math.max(0, character.hp - choice.fail_damage);
+
+  const advance = await advanceDungeon(
+    c.env.DB,
+    questId,
+    exp as ExpState,
+    quest.scene as never,
+    passed ? null : { user_id: session.slack_user_id, hp: hpAfter },
+  );
+  return c.json({
+    passed,
+    expert: isExpert,
+    roll,
+    skill: choice.skill,
+    fail_damage: passed ? 0 : choice.fail_damage,
+    ...advance,
+  });
+});
+
 // Dungeon door pick from the dashboard — mirrors /sq choose 1|2 in Slack.
 // Advances expedition.current to the chosen room, seals the other door,
 // and updates scene_json's denormalized monster fields to the new room.
