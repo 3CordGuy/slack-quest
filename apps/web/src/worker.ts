@@ -41,9 +41,13 @@ import {
   consumeItem,
   countPurchasesInCycle,
   equipItem,
+  getActiveQuestInChannel,
   getActiveShopStock,
   getShopItem,
+  joinQuest,
+  refillMana,
   releaseShopClaim,
+  scaleMonsterForJoin,
   tryDeductGold,
   trySetHaggleOutcome,
   awardSpoils,
@@ -329,6 +333,135 @@ app.post("/api/inventory/:itemId/equip", async (c) => {
   if (item.equipped) return c.json({ error: "already_equipped" }, 400);
   await equipItem(c.env.DB, item);
   return c.json({ ok: true });
+});
+
+const JOIN_HP_RATIO = 0.4;
+
+// Returns the joinable quest in the player's recent channel (if any).
+// Used by the dashboard to render a "Join Quest" affordance when the
+// player isn't already on a quest.
+app.get("/api/quest/joinable", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  if (await getActiveQuestForCharacter(c.env.DB, session.slack_user_id)) {
+    return c.json({ joinable: null });
+  }
+  const channelId = await recentChannelForUser(c.env.DB, session.slack_user_id);
+  if (!channelId) return c.json({ joinable: null });
+  const quest = await getActiveQuestInChannel(c.env.DB, channelId);
+  if (!quest) return c.json({ joinable: null });
+  // Same locks slack uses: gauntlet past wave 1, dungeon past entry room,
+  // and web-mode quests.
+  if (quest.mode === "web") return c.json({ joinable: null, reason: "web_mode" });
+  if (quest.scene.variant === "gauntlet" && (quest.scene.wave ?? 1) > 1) {
+    return c.json({ joinable: null, reason: "gauntlet_advanced" });
+  }
+  if (quest.scene.variant === "dungeon") {
+    const exp = quest.scene.expedition;
+    const advanced = (exp?.visited_count ?? 1) > 1 || (exp?.pending_doors?.length ?? 0) > 0;
+    if (advanced) return c.json({ joinable: null, reason: "dungeon_advanced" });
+  }
+  return c.json({
+    joinable: {
+      quest_id: quest.id,
+      channel_id: quest.channel_id,
+      variant: quest.scene.variant ?? "standard",
+      elite: quest.elite,
+      monster_name: quest.scene.monster_name,
+      monster_max_hp: quest.scene.monster_max_hp,
+      scene: quest.scene.scene,
+    },
+  });
+});
+
+// Mirrors /sq join: joinQuest insert + refillMana + scaleMonsterForJoin.
+// Uses recentChannelForUser for the channel context.
+app.post("/api/quest/join", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const character = await getCharacter(c.env.DB, session.slack_user_id);
+  if (!character) return c.json({ error: "no_character" }, 404);
+  if (character.downed_until && character.downed_until > Date.now()) {
+    return c.json({ error: "downed" }, 400);
+  }
+  if (await getActiveQuestForCharacter(c.env.DB, session.slack_user_id)) {
+    return c.json({ error: "already_on_quest" }, 400);
+  }
+  const channelId = await recentChannelForUser(c.env.DB, session.slack_user_id);
+  if (!channelId) return c.json({ error: "no_channel" }, 404);
+  const quest = await getActiveQuestInChannel(c.env.DB, channelId);
+  if (!quest) return c.json({ error: "no_quest" }, 404);
+  if (quest.mode === "web") return c.json({ error: "web_mode" }, 400);
+  if (quest.scene.variant === "gauntlet" && (quest.scene.wave ?? 1) > 1) {
+    return c.json({ error: "gauntlet_advanced" }, 400);
+  }
+  if (quest.scene.variant === "dungeon") {
+    const exp = quest.scene.expedition;
+    const advanced = (exp?.visited_count ?? 1) > 1 || (exp?.pending_doors?.length ?? 0) > 0;
+    if (advanced) return c.json({ error: "dungeon_advanced" }, 400);
+  }
+  const inserted = await joinQuest(c.env.DB, quest.id, session.slack_user_id);
+  if (!inserted) return c.json({ error: "already_in_party" }, 400);
+  await refillMana(c.env.DB, session.slack_user_id);
+  const scaled = await scaleMonsterForJoin(c.env.DB, quest.id, quest.scene, JOIN_HP_RATIO);
+  return c.json({
+    ok: true,
+    quest_id: quest.id,
+    monster_hp_added: scaled.monster_max_hp - quest.scene.monster_max_hp,
+  });
+});
+
+// Key economy — sell or transmute dungeon keys between quests.
+// Mirrors /sq sell-key and /sq transmute in Slack.
+const KEY_SELL_PRICE: Record<"bronze" | "silver" | "gold", number> = {
+  bronze: 5,
+  silver: 25,
+  gold: 100,
+};
+const KEY_TRANSMUTE_COST = 3;
+
+app.post("/api/keys/sell", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const body = (await c.req.json().catch(() => null)) as { tier?: unknown } | null;
+  const tier = body?.tier;
+  if (tier !== "bronze" && tier !== "silver" && tier !== "gold") {
+    return c.json({ error: "bad_tier" }, 400);
+  }
+  if (await getActiveQuestForCharacter(c.env.DB, session.slack_user_id)) {
+    return c.json({ error: "mid_quest" }, 400);
+  }
+  const character = await getCharacter(c.env.DB, session.slack_user_id);
+  if (!character) return c.json({ error: "no_character" }, 404);
+  const have = tier === "bronze" ? character.keys_bronze : tier === "silver" ? character.keys_silver : character.keys_gold;
+  if (have < 1) return c.json({ error: "no_keys", have }, 400);
+  const price = KEY_SELL_PRICE[tier];
+  await addCharacterKey(c.env.DB, session.slack_user_id, tier, -1);
+  await addGold(c.env.DB, session.slack_user_id, price);
+  return c.json({ ok: true, tier, price, new_gold: character.gold + price });
+});
+
+app.post("/api/keys/transmute", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const body = (await c.req.json().catch(() => null)) as { from_tier?: unknown } | null;
+  const fromTier = body?.from_tier;
+  if (fromTier !== "bronze" && fromTier !== "silver") {
+    return c.json({ error: "bad_tier" }, 400);
+  }
+  if (await getActiveQuestForCharacter(c.env.DB, session.slack_user_id)) {
+    return c.json({ error: "mid_quest" }, 400);
+  }
+  const character = await getCharacter(c.env.DB, session.slack_user_id);
+  if (!character) return c.json({ error: "no_character" }, 404);
+  const toTier = fromTier === "bronze" ? "silver" : "gold";
+  const have = fromTier === "bronze" ? character.keys_bronze : character.keys_silver;
+  if (have < KEY_TRANSMUTE_COST) {
+    return c.json({ error: "not_enough_keys", have, need: KEY_TRANSMUTE_COST }, 400);
+  }
+  await addCharacterKey(c.env.DB, session.slack_user_id, fromTier, -KEY_TRANSMUTE_COST);
+  await addCharacterKey(c.env.DB, session.slack_user_id, toTier, 1);
+  return c.json({ ok: true, from_tier: fromTier, to_tier: toTier, cost: KEY_TRANSMUTE_COST });
 });
 
 // Shop view — lists current stock for the player's last-known channel.

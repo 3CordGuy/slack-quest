@@ -175,6 +175,16 @@ interface ActiveQuestResponse {
   party?: Character[];
 }
 
+interface JoinableQuest {
+  quest_id: number;
+  channel_id: string;
+  variant: QuestVariant;
+  elite: boolean;
+  monster_name: string;
+  monster_max_hp: number;
+  scene: string;
+}
+
 interface RecentQuestsResponse {
   quests: RecentQuest[];
 }
@@ -189,6 +199,7 @@ type LoadState =
       activeQuest: { quest: ActiveQuest; party: Character[] } | null;
       recent: RecentQuest[];
       shop: ShopResponse | null;
+      joinable: JoinableQuest | null;
     };
 
 export function App() {
@@ -211,12 +222,14 @@ export function App() {
     let activeQuest: { quest: ActiveQuest; party: Character[] } | null = null;
     let recent: RecentQuest[] = [];
     let shop: ShopResponse | null = null;
+    let joinable: JoinableQuest | null = null;
     if (me.character) {
-      const [invRes, qRes, recentRes, shopRes] = await Promise.all([
+      const [invRes, qRes, recentRes, shopRes, joinableRes] = await Promise.all([
         fetch("/api/inventory", { credentials: "include" }),
         fetch("/api/quest/active", { credentials: "include" }),
         fetch("/api/quests/recent", { credentials: "include" }),
         fetch("/api/shop", { credentials: "include" }),
+        fetch("/api/quest/joinable", { credentials: "include" }),
       ]);
       if (invRes.ok) {
         inventory = ((await invRes.json()) as InventoryResponse).items;
@@ -236,8 +249,12 @@ export function App() {
         const body = (await shopRes.json().catch(() => ({}))) as ShopResponse;
         shop = body.error ? body : null;
       }
+      if (joinableRes.ok) {
+        const body = (await joinableRes.json()) as { joinable: JoinableQuest | null };
+        joinable = body.joinable;
+      }
     }
-    setState({ kind: "auth", me, inventory, activeQuest, recent, shop });
+    setState({ kind: "auth", me, inventory, activeQuest, recent, shop, joinable });
   }
 
   async function logout() {
@@ -344,6 +361,34 @@ export function App() {
     if (res.ok) void refresh();
   }
 
+  async function sellKey(tier: "bronze" | "silver" | "gold") {
+    const res = await fetch(`/api/keys/sell`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({ tier }),
+    });
+    if (res.ok) void refresh();
+  }
+
+  async function transmuteKey(fromTier: "bronze" | "silver") {
+    const res = await fetch(`/api/keys/transmute`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({ from_tier: fromTier }),
+    });
+    if (res.ok) void refresh();
+  }
+
+  async function joinQuest() {
+    const res = await fetch(`/api/quest/join`, {
+      method: "POST",
+      credentials: "include",
+    });
+    if (res.ok) void refresh();
+  }
+
   async function treasureTake(questId: number, pick: number) {
     const res = await fetch(`/api/quest/${questId}/dungeon/treasure_take`, {
       method: "POST",
@@ -371,6 +416,9 @@ export function App() {
   return (
     <Centered>
       <Stack>
+        {!state.activeQuest && state.joinable && (
+          <JoinableQuestCard joinable={state.joinable} onJoin={joinQuest} />
+        )}
         {state.activeQuest && (
           <ActiveQuestCard
             quest={state.activeQuest.quest}
@@ -393,6 +441,8 @@ export function App() {
           me={state.me}
           inQuest={!!state.activeQuest}
           onRest={rest}
+          onSellKey={sellKey}
+          onTransmuteKey={transmuteKey}
         />
         {state.me.character && (
           <InventoryCard
@@ -477,6 +527,39 @@ function Login({ onSuccess }: { onSuccess: () => void }) {
         {error && <p style={{ ...muted, color: "#c0392b" }}>{error}</p>}
       </div>
     </Centered>
+  );
+}
+
+function JoinableQuestCard({
+  joinable,
+  onJoin,
+}: {
+  joinable: JoinableQuest;
+  onJoin: () => void;
+}) {
+  return (
+    <div style={{ ...card, borderColor: "#7dd3fc" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <h2 style={h2}>Quest in progress</h2>
+        <SmallBadge>{joinable.variant}</SmallBadge>
+        {joinable.elite && <SmallBadge>elite</SmallBadge>}
+      </div>
+      <p style={{ ...muted, fontSize: 13, marginTop: 8 }}>
+        <strong style={{ color: "#f5f5f5" }}>{joinable.monster_name}</strong> ({joinable.monster_max_hp} HP)
+      </p>
+      {joinable.scene && (
+        <p style={{ ...muted, fontSize: 13, fontStyle: "italic", marginTop: 4 }}>{joinable.scene}</p>
+      )}
+      <button
+        onClick={onJoin}
+        style={{ ...button, marginTop: 16, background: "#1f2a3a", color: "#7dd3fc" }}
+      >
+        🛡 Join the fight
+      </button>
+      <p style={{ ...muted, fontSize: 11, marginTop: 8 }}>
+        Monster max HP scales by 40% for the joiner. Your mana refills on join.
+      </p>
+    </div>
   );
 }
 
@@ -1143,10 +1226,14 @@ function CharacterCard({
   me,
   inQuest,
   onRest,
+  onSellKey,
+  onTransmuteKey,
 }: {
   me: MeResponse;
   inQuest: boolean;
   onRest: (kind: "short" | "long") => void;
+  onSellKey: (tier: "bronze" | "silver" | "gold") => void;
+  onTransmuteKey: (fromTier: "bronze" | "silver") => void;
 }) {
   const c = me.character;
   if (!c) {
@@ -1202,6 +1289,72 @@ function CharacterCard({
       {!downed && inQuest && (
         <p style={{ ...muted, fontSize: 11, marginTop: 8 }}>Rest is disabled mid-quest.</p>
       )}
+      {!inQuest && (c.keys_bronze + c.keys_silver + c.keys_gold > 0) && (
+        <KeyActions
+          keys={{ bronze: c.keys_bronze, silver: c.keys_silver, gold: c.keys_gold }}
+          onSellKey={onSellKey}
+          onTransmuteKey={onTransmuteKey}
+        />
+      )}
+    </div>
+  );
+}
+
+function KeyActions({
+  keys,
+  onSellKey,
+  onTransmuteKey,
+}: {
+  keys: { bronze: number; silver: number; gold: number };
+  onSellKey: (tier: "bronze" | "silver" | "gold") => void;
+  onTransmuteKey: (fromTier: "bronze" | "silver") => void;
+}) {
+  return (
+    <div style={{ marginTop: 16, padding: 12, background: "#1d1f23", borderRadius: 8 }}>
+      <div
+        style={{
+          ...muted,
+          fontSize: 11,
+          textTransform: "uppercase",
+          letterSpacing: 1.5,
+          marginBottom: 8,
+        }}
+      >
+        Keys
+      </div>
+      <div style={{ display: "grid", gap: 6 }}>
+        {(["bronze", "silver", "gold"] as const).map((tier) => {
+          const count = keys[tier];
+          if (count === 0) return null;
+          const sellPrice = tier === "bronze" ? 5 : tier === "silver" ? 25 : 100;
+          const canTransmute = tier !== "gold" && count >= 3;
+          return (
+            <div
+              key={tier}
+              style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13 }}
+            >
+              <span style={{ fontSize: 16 }}>{KEY_EMOJI[tier]}</span>
+              <span style={{ fontWeight: 600, color: "#f5f5f5" }}>{count}</span>
+              <span style={{ ...muted, fontSize: 12, flex: 1 }}>{tier}</span>
+              <button onClick={() => onSellKey(tier)} style={smallActionBtn("#33363d", "#e6e6e6")}>
+                Sell · {sellPrice}g
+              </button>
+              {tier !== "gold" && (
+                <button
+                  onClick={() => onTransmuteKey(tier as "bronze" | "silver")}
+                  disabled={!canTransmute}
+                  style={smallActionBtn(
+                    canTransmute ? "#1f2a3a" : "#2a2d33",
+                    canTransmute ? "#7dd3fc" : "#6a7080",
+                  )}
+                >
+                  Transmute · 3→1
+                </button>
+              )}
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
