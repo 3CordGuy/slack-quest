@@ -78,6 +78,7 @@ import {
   setCharacterHp,
   setCharacterHpAndShield,
   setPosition,
+  upsertSlackUsername,
   transferItem,
   trySaveExpeditionAdvance,
   tryDeductGold,
@@ -318,6 +319,11 @@ export async function handleInteraction(
   env: Env,
   ctx: ExecutionContext,
 ): Promise<CommandResponse> {
+  // Capture handle on every interaction too — covers button-only flows that
+  // wouldn't otherwise pass through handleCommand.
+  if (payload.user.username) {
+    ctx.waitUntil(upsertSlackUsername(env.DB, payload.user.id, payload.user.username).catch(() => {}));
+  }
   if (payload.type !== "block_actions" || payload.actions.length === 0) {
     return ephemeral("Unknown interaction.");
   }
@@ -363,6 +369,11 @@ export async function handleCommand(
   env: Env,
   ctx: ExecutionContext,
 ): Promise<CommandResponse> {
+  // Record the slack handle for the web app's "@josh" rendering. Fire-and-
+  // forget — never blocks the command. No-op until the player has a character.
+  if (payload.user_name) {
+    ctx.waitUntil(upsertSlackUsername(env.DB, payload.user_id, payload.user_name).catch(() => {}));
+  }
   const args = payload.text.trim().split(/\s+/).filter(Boolean);
   const sub = (args.shift() ?? "help").toLowerCase();
 

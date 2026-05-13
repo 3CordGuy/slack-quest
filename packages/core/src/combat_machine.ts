@@ -55,6 +55,9 @@ export interface CombatFighter {
   name: string;
   class: string;
   level: number;
+  // Slack display handle ("josh"). Snapshot at combat start; null if the
+  // player hasn't issued a slash command since the column was added.
+  slack_username?: string | null;
   hp: number;
   max_hp: number;
   mana: number;
@@ -74,6 +77,7 @@ export interface CombatFighter {
   armor_power: number;
   initiative: number;      // rolled at begin
   effects: MachineStatusEffect[];
+  scars: string[];         // battle scars from defeats
 }
 
 export interface GauntletWaveSpec {
@@ -99,6 +103,9 @@ export interface CombatMonster {
   wave?: number;
   total_waves?: number;
   upcoming_waves?: GauntletWaveSpec[];
+  // Optional flux-1-schnell portrait URL from the scene. Surfaced to the UI
+  // so the combat page can render the same image as the active-quest card.
+  art_url?: string;
 }
 
 export type CombatStatus = "pending" | "active" | "victory" | "defeat" | "fled";
@@ -237,6 +244,7 @@ export type CombatEvent =
       shield_absorbed: number;
       hp_damage: number;
     }
+  | { type: "monster_target_blocked"; reason: "vanish" }
   | { type: "boss_phase_transition"; new_phase: 2 }
   | { type: "fighter_down"; target: ActorId }
   | { type: "monster_down"; killed_by: ActorId }
@@ -351,9 +359,12 @@ export type CombatEvent =
 // d20 + relevant modifier. Tuned so low-tier monsters are easy to hit and
 // boss-tier (tier 5+) take real swings to land. Armor still mitigates
 // landed damage in resolveMonsterHit — it doesn't double-up here as AC.
-const MONSTER_BASE_AC = 10;
+const MONSTER_BASE_AC = 8;
 const FIGHTER_AC = 10;
-export const monsterAc = (tier: number) => MONSTER_BASE_AC + Math.max(0, tier);
+// AC scales at half the tier rate so high-tier fights aren't dominated by
+// misses. L5 fighter (attack_mod +2) vs tier-5 monster (AC 10) now needs
+// d20 ≥ 8 for a 65% hit rate instead of the old AC 15 → 40% hit rate.
+export const monsterAc = (tier: number) => MONSTER_BASE_AC + Math.max(0, Math.floor(tier / 2));
 
 export interface StepResult {
   state: CombatState;
@@ -526,7 +537,17 @@ function handlePlayerHit(
   const d20 = roll(20);
   const ac = monsterAc(s.monster.tier);
   const hitTotal = d20 + classMod;
-  const landed = hitTotal >= ac;
+  const baseLanded = hitTotal >= ac;
+  // Refactor Rogue — First Strike. The first `attack` of the fight is a
+  // guaranteed crit. We force the to-hit to land too so an unlucky d20 can't
+  // cancel a passive that the slack version (which has no to-hit) considers
+  // unconditional.
+  const rogueAutoLand =
+    !baseLanded
+    && action.kind === "attack"
+    && classIdOf(tickedFighter) === "refactor_rogue"
+    && !isPassiveUsed(s, action.actor, PASSIVE_ROGUE_FIRST_CRIT);
+  const landed = baseLanded || rogueAutoLand;
   events.push({
     type: "roll",
     actor: action.actor,
@@ -795,7 +816,7 @@ function handleMonsterAct(state: CombatState, roll: RollFn): StepResult {
   const initialTarget = pickMonsterTarget(aliveFighters, () => roll(101) / 100);
   const vanished = s.ability_state?.vanished ?? {};
   const taunted = s.ability_state?.taunt;
-  let target = initialTarget;
+  let target: CombatFighter | null = initialTarget;
   if (taunted && taunted.swings_remaining > 0) {
     const tauntTarget = aliveFighters.find((f) => f.id === taunted.actor_id);
     if (tauntTarget) {
@@ -821,9 +842,15 @@ function handleMonsterAct(state: CombatState, roll: RollFn): StepResult {
         reason: "vanish",
       });
       target = reroll;
+    } else {
+      // If all alive fighters are vanished, the monster can't acquire a target.
+      events.push({ type: "monster_target_blocked", reason: "vanish" });
+      const next = advanceTurn({
+        ...s,
+        ability_state: tickAbilityCountersAfterSwing(s.ability_state),
+      });
+      return { state: next, events: [...events, ...turnStartEvent(next)] };
     }
-    // If all alive fighters are vanished, the swing falls through to the
-    // initial pick — vanish doesn't grant collective invincibility.
   }
 
   // ── d20 to-hit ──

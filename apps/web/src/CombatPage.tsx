@@ -1,4 +1,10 @@
 import { useEffect, useReducer, useRef, useState } from "react";
+import toast from "react-hot-toast";
+
+import DiceBox from "@3d-dice/dice-box";
+import "@3d-dice/dice-box/dist/style.css";
+
+import { Icon } from "./icons";
 
 // Live web-mode combat. Connects to the QuestRoom Durable Object via WS,
 // renders the current state, animates incoming events through a scrolling
@@ -14,6 +20,7 @@ interface StatusEffect {
 interface Fighter {
   id: string;
   name: string;
+  slack_username?: string | null;
   class: string;
   level: number;
   hp: number;
@@ -28,6 +35,7 @@ interface Fighter {
   armor_power: number;
   initiative: number;
   effects: StatusEffect[];
+  scars: string[];
 }
 
 interface Monster {
@@ -41,6 +49,7 @@ interface Monster {
   boss_phase: 1 | 2;
   wave?: number;
   total_waves?: number;
+  art_url?: string;
 }
 
 interface CombatState {
@@ -53,6 +62,25 @@ interface CombatState {
 }
 
 const MONSTER_ID = "__monster__";
+
+// Class display name → flux R2 portrait URL. Pattern mirrors getOrScheduleViewArt
+// + ART_VERSION on the worker side; constructed client-side so the WS state
+// doesn't have to carry a URL per fighter. 404 silently hides via <img onError>.
+const CLASS_PORTRAIT_BASE = "/img/art/views/v6";
+const CLASS_ID_BY_NAME: Record<string, string> = {
+  "DevOps Mage": "devops_mage",
+  "QA Paladin": "qa_paladin",
+  "Backend Druid": "backend_druid",
+  "Frontend Bard": "frontend_bard",
+  "Staff Sage": "staff_sage",
+  "Refactor Rogue": "refactor_rogue",
+  "SRE Warden": "sre_warden",
+  "Data Warlock": "data_warlock",
+};
+function classPortraitUrl(className: string): string | null {
+  const id = CLASS_ID_BY_NAME[className];
+  return id ? `${CLASS_PORTRAIT_BASE}/class_${id}.png` : null;
+}
 
 type CombatEvent =
   | { type: "begin"; turn_order: string[]; initiatives: Record<string, number> }
@@ -258,7 +286,7 @@ interface OutcomeSummary {
 interface UiState {
   connection: "connecting" | "open" | "closed";
   state: CombatState | null;
-  log: { id: number; text: string; tone: "info" | "good" | "bad" | "muted" | "flavor" }[];
+  log: { id: number; content: React.ReactNode; tone: "info" | "good" | "bad" | "muted" | "flavor" }[];
   error: string | null;
   outcome: OutcomeSummary | null;
 }
@@ -285,13 +313,17 @@ function reducer(s: UiState, a: UiAction): UiState {
         log: [...s.log, ...a.value.flatMap((e) => formatEvent(e, s.state))].slice(-50),
       };
     case "flavor": {
-      const prefix = a.value.kind === "victory" ? "🏆"
-        : a.value.kind === "death" ? "💀"
-        : a.value.kind === "flee" ? "🏃"
-        : "✦";
+      const iconName = a.value.kind === "victory" ? "trophy"
+        : a.value.kind === "death" ? "death-skull"
+        : a.value.kind === "flee" ? "footprint"
+        : "fairy";
       return {
         ...s,
-        log: [...s.log, { id: nextLogId++, text: `${prefix} ${a.value.text}`, tone: "flavor" }].slice(-50),
+        log: [...s.log, {
+          id: nextLogId++,
+          content: <><Icon name={iconName} /> {a.value.text}</>,
+          tone: "flavor",
+        }].slice(-50),
       };
     }
     case "error":
@@ -306,363 +338,192 @@ function formatEvent(e: CombatEvent, state: CombatState | null): UiState["log"] 
     if (id === MONSTER_ID) return state?.monster.name ?? "monster";
     return state?.fighters.find((f) => f.id === id)?.name ?? id;
   };
+  const row = (
+    icon: string | null,
+    content: React.ReactNode,
+    tone: UiState["log"][number]["tone"],
+  ): UiState["log"] => [{
+    id: nextLogId++,
+    content: icon ? <><Icon name={icon} /> {content}</> : content,
+    tone,
+  }];
   switch (e.type) {
     case "begin":
-      return [{ id: nextLogId++, text: "⚔️  Combat begins. Rolling initiative…", tone: "info" }];
+      return row("crossed-swords", "Combat begins. Rolling initiative…", "info");
     case "turn_start":
-      return [{ id: nextLogId++, text: `▶ ${nameOf(e.actor)}'s turn (round ${e.round})`, tone: "muted" }];
+      return row("perspective-dice-one", <>{nameOf(e.actor)}'s turn (round {e.round})</>, "muted");
     case "roll":
-      return [
-        {
-          id: nextLogId++,
-          text: `🎲 ${nameOf(e.actor)} rolled ${e.die} → ${e.value}  ·  ${e.purpose}`,
-          tone: "muted",
-        },
-      ];
+      return row("perspective-dice-six", <>{nameOf(e.actor)} rolled {e.die} → {e.value}  ·  {e.purpose}</>, "muted");
     case "hit_check":
-      return [
-        {
-          id: nextLogId++,
-          text: e.hit
-            ? `✅ HIT  ${e.roll}${signed(e.modifier)} = ${e.total} vs AC ${e.ac}`
-            : `❌ MISS  ${e.roll}${signed(e.modifier)} = ${e.total} vs AC ${e.ac}`,
-          tone: e.hit ? "good" : "bad",
-        },
-      ];
+      return row(
+        e.hit ? "crossed-swords" : "x-mark",
+        e.hit
+          ? <>HIT  {e.roll}{signed(e.modifier)} = {e.total} vs AC {e.ac}</>
+          : <>MISS  {e.roll}{signed(e.modifier)} = {e.total} vs AC {e.ac}</>,
+        e.hit ? "good" : "bad",
+      );
     case "player_hit":
-      return [
-        {
-          id: nextLogId++,
-          text: `💥 ${nameOf(e.actor)} → ${nameOf(e.target)}: ${e.damage}${
-            e.crit ? " (CRIT)" : ""
-          }  [${e.formula}]`,
-          tone: "good",
-        },
-      ];
+      return row("blast", <>{nameOf(e.actor)} → {nameOf(e.target)}: {e.damage}{e.crit ? " (CRIT)" : ""}  [{e.formula}]</>, "good");
     case "monster_attack":
-      return [
-        {
-          id: nextLogId++,
-          text:
-            `💢 monster → ${nameOf(e.target)}: ${e.hp_damage} hp` +
-            (e.shield_absorbed > 0 ? ` (+${e.shield_absorbed} shield)` : "") +
-            (e.damage_after_position !== e.damage_after_armor
-              ? ` [pos→ -${e.damage_after_armor - e.damage_after_position} mit]`
-              : ""),
-          tone: "bad",
-        },
-      ];
+      return row(
+        "fire-symbol",
+        <>monster → {nameOf(e.target)}: {e.hp_damage} hp
+          {e.shield_absorbed > 0 ? ` (+${e.shield_absorbed} shield)` : ""}
+          {e.damage_after_position !== e.damage_after_armor
+            ? ` [pos→ -${e.damage_after_armor - e.damage_after_position} mit]`
+            : ""}
+        </>,
+        "bad",
+      );
     case "boss_phase_transition":
-      return [{ id: nextLogId++, text: "🔥 The boss enters phase 2!", tone: "bad" }];
+      return row("fire", "The boss enters phase 2!", "bad");
     case "fighter_down":
-      return [{ id: nextLogId++, text: `💀 ${nameOf(e.target)} is down.`, tone: "bad" }];
+      return row("death-skull", <>{nameOf(e.target)} is down.</>, "bad");
     case "monster_down":
-      return [
-        { id: nextLogId++, text: `🏆 ${nameOf(e.killed_by)} lands the killing blow.`, tone: "good" },
-      ];
+      return row("trophy", <>{nameOf(e.killed_by)} lands the killing blow.</>, "good");
     case "heal_applied":
-      return [
-        {
-          id: nextLogId++,
-          text: `💚 ${nameOf(e.actor)} → ${nameOf(e.target)}: +${e.amount} HP${
-            e.rolled > e.amount ? ` (rolled ${e.rolled}, clamped)` : ""
-          }`,
-          tone: "good",
-        },
-      ];
+      return row(
+        "health-increase",
+        <>{nameOf(e.actor)} → {nameOf(e.target)}: +{e.amount} HP{e.rolled > e.amount ? ` (rolled ${e.rolled}, clamped)` : ""}</>,
+        "good",
+      );
     case "shield_applied":
-      return [
-        {
-          id: nextLogId++,
-          text: `🛡️ ${nameOf(e.actor)} → ${nameOf(e.target)}: +${e.amount} shield${
-            e.rolled > e.amount ? ` (rolled ${e.rolled}, capped)` : ""
-          }`,
-          tone: "good",
-        },
-      ];
+      return row(
+        "shield",
+        <>{nameOf(e.actor)} → {nameOf(e.target)}: +{e.amount} shield{e.rolled > e.amount ? ` (rolled ${e.rolled}, capped)` : ""}</>,
+        "good",
+      );
     case "signature_used":
-      return [
-        {
-          id: nextLogId++,
-          text: `✨ ${nameOf(e.actor)} signature: ${e.damage} dmg  [${e.formula}]  −${e.mana_spent} mana`,
-          tone: "good",
-        },
-      ];
+      return row("fairy-wand", <>{nameOf(e.actor)} signature: {e.damage} dmg  [{e.formula}]  −{e.mana_spent} mana</>, "good");
     case "flee_check":
-      return [
-        {
-          id: nextLogId++,
-          text: e.success
-            ? `🏃 ${nameOf(e.actor)} escape check: ${e.roll}${signed(e.modifier)} = ${e.total} vs DC ${e.dc}: SUCCESS`
-            : `🏃 ${nameOf(e.actor)} escape check: ${e.roll}${signed(e.modifier)} = ${e.total} vs DC ${e.dc}: FAIL — exposed!`,
-          tone: e.success ? "good" : "bad",
-        },
-      ];
+      return row(
+        "footprint",
+        e.success
+          ? <>{nameOf(e.actor)} escape check: {e.roll}{signed(e.modifier)} = {e.total} vs DC {e.dc}: SUCCESS</>
+          : <>{nameOf(e.actor)} escape check: {e.roll}{signed(e.modifier)} = {e.total} vs DC {e.dc}: FAIL — exposed!</>,
+        e.success ? "good" : "bad",
+      );
     case "fled":
-      return [{ id: nextLogId++, text: "🏃 The party escapes.", tone: "info" }];
+      return row("footprint", "The party escapes.", "info");
     case "wave_transition":
-      return [
-        {
-          id: nextLogId++,
-          text: `⚔️  Wave ${e.new_wave}/${e.total_waves}: ${e.to_monster} arrives (${e.to_max_hp} HP)`,
-          tone: "info",
-        },
-      ];
+      return row("crossed-swords", <>Wave {e.new_wave}/{e.total_waves}: {e.to_monster} arrives ({e.to_max_hp} HP)</>, "info");
     case "position_changed":
-      return [
-        {
-          id: nextLogId++,
-          text: `${e.to === "front" ? "🔼" : "🔽"} ${nameOf(e.actor)} moves to ${e.to} row.`,
-          tone: "info",
-        },
-      ];
+      return row(
+        e.to === "front" ? "perspective-dice-one" : "perspective-dice-two",
+        <>{nameOf(e.actor)} moves to {e.to} row.</>,
+        "info",
+      );
     case "effect_tick": {
       const icon =
-        e.effect === "regen"
-          ? "💚"
-          : e.effect === "poisoned"
-            ? "☠️"
-            : e.effect === "burning"
-              ? "🔥"
-              : "🩸";
+        e.effect === "regen" ? "aura"
+        : e.effect === "poisoned" ? "monster-skull"
+        : e.effect === "burning" ? "fire"
+        : "bleeding-hearts";
       const sign = e.hp_delta >= 0 ? `+${e.hp_delta}` : `${e.hp_delta}`;
       const src = e.source ? ` (${e.source})` : "";
-      return [
-        {
-          id: nextLogId++,
-          text: `${icon} ${nameOf(e.actor)} ${e.effect}${src}: ${sign} HP`,
-          tone: e.hp_delta >= 0 ? "good" : "bad",
-        },
-      ];
+      return row(icon, <>{nameOf(e.actor)} {e.effect}{src}: {sign} HP</>, e.hp_delta >= 0 ? "good" : "bad");
     }
     case "item_used": {
       const eff = e.effect;
-      const head = `🎒 ${nameOf(e.actor)} used ${e.item_name}`;
+      const head = <><Icon name="ammo-bag" /> {nameOf(e.actor)} used {e.item_name}</>;
       if (eff.kind === "heal") {
-        return [{ id: nextLogId++, text: `${head}: +${eff.amount} HP`, tone: "good" }];
+        return [{ id: nextLogId++, content: <>{head}: +{eff.amount} HP</>, tone: "good" }];
       } else if (eff.kind === "mana_bump") {
-        return [
-          {
-            id: nextLogId++,
-            text: `${head}: +${eff.added} max mana (now ${eff.new_max_mana})`,
-            tone: "good",
-          },
-        ];
+        return [{ id: nextLogId++, content: <>{head}: +{eff.added} max mana (now {eff.new_max_mana})</>, tone: "good" }];
       } else if (eff.kind === "revive") {
-        return [
-          {
-            id: nextLogId++,
-            text: `${head}: revives ${nameOf(eff.target)} to ${eff.hp_restored} HP`,
-            tone: "good",
-          },
-        ];
+        return [{ id: nextLogId++, content: <>{head}: revives {nameOf(eff.target)} to {eff.hp_restored} HP</>, tone: "good" }];
       } else if (eff.kind === "monster_damage") {
-        const note = eff.capped_from
-          ? ` (capped from ${eff.capped_from})`
-          : "";
-        return [
-          {
-            id: nextLogId++,
-            text: `${head}: ${eff.amount} dmg to ${state?.monster.name ?? "monster"}${note}`,
-            tone: "good",
-          },
-        ];
+        const note = eff.capped_from ? ` (capped from ${eff.capped_from})` : "";
+        return [{ id: nextLogId++, content: <>{head}: {eff.amount} dmg to {state?.monster.name ?? "monster"}{note}</>, tone: "good" }];
       } else if (eff.kind === "self_effect") {
-        return [
-          {
-            id: nextLogId++,
-            text: `${head}: ${nameOf(eff.target)} gains 🟢 regen +${eff.magnitude} × ${eff.remaining}`,
-            tone: "good",
-          },
-        ];
+        return [{
+          id: nextLogId++,
+          content: <>{head}: {nameOf(eff.target)} gains <Icon name="aura" color="#16a34a" /> regen +{eff.magnitude} × {eff.remaining}</>,
+          tone: "good",
+        }];
       } else if (eff.kind === "monster_effect") {
-        return [
-          {
-            id: nextLogId++,
-            text: `${head}: ${state?.monster.name ?? "monster"} ☠️ ${eff.effect} ${eff.magnitude} × ${eff.remaining}`,
-            tone: "good",
-          },
-        ];
+        return [{
+          id: nextLogId++,
+          content: <>{head}: {state?.monster.name ?? "monster"} <Icon name="monster-skull" color="#a855f7" /> {eff.effect} {eff.magnitude} × {eff.remaining}</>,
+          tone: "good",
+        }];
       } else {
-        // party_mana_refill
         const summary = eff.recipients
           .map((r) => `+${r.restored} to ${nameOf(r.user_id)}`)
           .join(", ");
-        return [
-          {
-            id: nextLogId++,
-            text: `${head}: mana refilled — ${summary || "no one needed it"}`,
-            tone: "good",
-          },
-        ];
+        return [{ id: nextLogId++, content: <>{head}: mana refilled — {summary || "no one needed it"}</>, tone: "good" }];
       }
     }
     case "ability_used":
-      return [
-        {
-          id: nextLogId++,
-          text: `✨ ${nameOf(e.actor)} uses ${e.name}  −${e.mana_spent} mana`,
-          tone: "good",
-        },
-      ];
+      return row("fairy-wand", <>{nameOf(e.actor)} uses {e.name}  −{e.mana_spent} mana</>, "good");
     case "ability_taunt":
-      return [
-        {
-          id: nextLogId++,
-          text: `🛡 ${nameOf(e.actor)} bellows — monster locked on for ${e.swings} swings.`,
-          tone: "good",
-        },
-      ];
+      return row("shield", <>{nameOf(e.actor)} bellows — monster locked on for {e.swings} swings.</>, "good");
     case "ability_containerize":
-      return [
-        {
-          id: nextLogId++,
-          text: `🧙 Stasis container — monster will skip ${e.swings} swing.`,
-          tone: "good",
-        },
-      ];
+      return row("cubes", <>Stasis container — monster will skip {e.swings} swing.</>, "good");
     case "ability_regression_shield": {
       const summary = e.grants.length === 0
         ? "everyone at cap"
         : e.grants.map((g) => `+${g.amount} ${nameOf(g.target)}`).join(", ");
-      return [
-        { id: nextLogId++, text: `✨ Regression Shield — ${summary}.`, tone: "good" },
-      ];
+      return row("fairy-wand", <>Regression Shield — {summary}.</>, "good");
     }
     case "ability_vanish":
-      return [
-        {
-          id: nextLogId++,
-          text: `🗡 ${nameOf(e.actor)} vanishes — untargetable for ${e.swings} swings.`,
-          tone: "good",
-        },
-      ];
+      return row("plain-dagger", <>{nameOf(e.actor)} vanishes — untargetable for {e.swings} swings.</>, "good");
     case "ability_soul_drain":
-      return [
-        {
-          id: nextLogId++,
-          text: `💀 Soul Drain: ${e.damage} dmg, +${e.healed} HP  [${e.formula}]`,
-          tone: "good",
-        },
-      ];
+      return row("death-skull", <>Soul Drain: {e.damage} dmg, +{e.healed} HP  [{e.formula}]</>, "good");
     case "ability_battle_hymn":
-      return [
-        {
-          id: nextLogId++,
-          text: `🎵 Battle Hymn — next ${e.charges_added} party attacks deal +2 dmg.`,
-          tone: "good",
-        },
-      ];
+      return row("aura", <>Battle Hymn — next {e.charges_added} party attacks deal +2 dmg.</>, "good");
     case "ability_foresee": {
       const who = e.predicted_target ? nameOf(e.predicted_target) : "no committed target";
-      return [
-        {
-          id: nextLogId++,
-          text: `📜 Foresee — monster looks ready to hit ${who} for ~${e.damage_lo}-${e.damage_hi} HP.`,
-          tone: "info",
-        },
-      ];
+      return row("scroll-unfurled", <>Foresee — monster looks ready to hit {who} for ~{e.damage_lo}-{e.damage_hi} HP.</>, "info");
     }
     case "ability_migrate":
-      return [
-        {
-          id: nextLogId++,
-          text: `🌿 ${nameOf(e.actor)} shifts ${nameOf(e.target)} to the ${e.to} row.`,
-          tone: "info",
-        },
-      ];
+      return row("grass", <>{nameOf(e.actor)} shifts {nameOf(e.target)} to the {e.to} row.</>, "info");
     case "monster_swing_skipped":
-      return [
-        { id: nextLogId++, text: `📦 The monster's swing fizzles — containerized.`, tone: "good" },
-      ];
+      return row("cubes", "The monster's swing fizzles — containerized.", "good");
     case "monster_target_redirected":
-      return [
-        {
-          id: nextLogId++,
-          text: e.reason === "taunt"
-            ? `🛡 Taunt redirects: ${nameOf(e.from)} → ${nameOf(e.to)}`
-            : `🗡 Vanish slips ${nameOf(e.from)} — monster picks ${nameOf(e.to)} instead.`,
-          tone: "good",
-        },
-      ];
+      return row(
+        e.reason === "taunt" ? "shield" : "plain-dagger",
+        e.reason === "taunt"
+          ? <>Taunt redirects: {nameOf(e.from)} → {nameOf(e.to)}</>
+          : <>Vanish slips {nameOf(e.from)} — monster picks {nameOf(e.to)} instead.</>,
+        "good",
+      );
+    case "monster_target_blocked":
+      return row(
+        "plain-dagger",
+        <>Vanish blocks the attack — the monster can't find a target.</>,
+        "good",
+      );
     case "battle_hymn_consumed":
-      return [
-        {
-          id: nextLogId++,
-          text: `🎵 Hymn boosts ${nameOf(e.actor)} by +${e.bonus} (${e.remaining} left).`,
-          tone: "good",
-        },
-      ];
+      return row("aura", <>Hymn boosts {nameOf(e.actor)} by +{e.bonus} ({e.remaining} left).</>, "good");
     case "mark_applied":
-      return [
-        {
-          id: nextLogId++,
-          text: `🎯 ${nameOf(e.actor)} marks the monster — party +${e.bonus} dmg until end of round ${e.expires_after_round}.`,
-          tone: "good",
-        },
-      ];
+      return row("targeted", <>{nameOf(e.actor)} marks the monster — party +{e.bonus} dmg until end of round {e.expires_after_round}.</>, "good");
     case "mark_bonus":
-      return [
-        {
-          id: nextLogId++,
-          text: `🎯 Focus-fire: +${e.bonus} dmg from ${nameOf(e.actor)}.`,
-          tone: "good",
-        },
-      ];
+      return row("targeted", <>Focus-fire: +{e.bonus} dmg from {nameOf(e.actor)}.</>, "good");
     case "passive_warden_shield":
-      return [
-        {
-          id: nextLogId++,
-          text: `🛡 ${nameOf(e.actor)} hardens up — +${e.amount} shield (passive).`,
-          tone: "good",
-        },
-      ];
+      return row("shield", <>{nameOf(e.actor)} hardens up — +{e.amount} shield (passive).</>, "good");
     case "passive_mage_free_sig":
-      return [
-        { id: nextLogId++, text: `🧙 ${nameOf(e.actor)}'s first signature is free.`, tone: "good" },
-      ];
+      return row("crystal-wand", <>{nameOf(e.actor)}'s first signature is free.</>, "good");
     case "passive_druid_regen":
-      return [
-        {
-          id: nextLogId++,
-          text: `🌿 ${nameOf(e.actor)} regen +${e.amount} HP (passive).`,
-          tone: "good",
-        },
-      ];
+      return row("grass", <>{nameOf(e.actor)} regen +{e.amount} HP (passive).</>, "good");
     case "passive_rogue_first_crit":
-      return [
-        { id: nextLogId++, text: `🗡 ${nameOf(e.actor)}'s first strike — guaranteed crit!`, tone: "good" },
-      ];
+      return row("plain-dagger", <>{nameOf(e.actor)}'s first strike — guaranteed crit!</>, "good");
     case "passive_bard_aura":
-      return [
-        {
-          id: nextLogId++,
-          text: `🎵 Bardic Aura: +${e.bonus} dmg from ${nameOf(e.source)}'s song.`,
-          tone: "good",
-        },
-      ];
+      return row("aura", <>Bardic Aura: +{e.bonus} dmg from {nameOf(e.source)}'s song.</>, "good");
     case "passive_warlock_bleed":
-      return [
-        {
-          id: nextLogId++,
-          text: `💀 Cursed Strike: 🩸 bleed ${e.magnitude}/turn × ${e.duration} on monster.`,
-          tone: "good",
-        },
-      ];
+      return [{
+        id: nextLogId++,
+        content: <><Icon name="death-skull" /> Cursed Strike: <Icon name="bleeding-hearts" color="#dc2626" /> bleed {e.magnitude}/turn × {e.duration} on monster.</>,
+        tone: "good",
+      }];
     case "passive_paladin_auto_heal":
-      return [
-        {
-          id: nextLogId++,
-          text: `✨ Lay on Hands: ${nameOf(e.paladin)} → ${nameOf(e.target)} +${e.amount} HP.`,
-          tone: "good",
-        },
-      ];
+      return row("fairy-wand", <>Lay on Hands: {nameOf(e.paladin)} → {nameOf(e.target)} +{e.amount} HP.</>, "good");
     case "victory":
-      return [{ id: nextLogId++, text: "VICTORY", tone: "good" }];
+      return [{ id: nextLogId++, content: <strong>VICTORY</strong>, tone: "good" }];
     case "defeat":
-      return [{ id: nextLogId++, text: "DEFEAT", tone: "bad" }];
+      return [{ id: nextLogId++, content: <strong>DEFEAT</strong>, tone: "bad" }];
     case "rejected":
-      return [{ id: nextLogId++, text: `⚠ rejected: ${e.reason}`, tone: "bad" }];
+      return [{ id: nextLogId++, content: <>⚠ rejected: {e.reason}</>, tone: "bad" }];
   }
 }
 
@@ -692,6 +553,10 @@ export function CombatPage({
   const [items, setItems] = useState<InventoryItem[]>([]);
   const wsRef = useRef<WebSocket | null>(null);
   const logScrollRef = useRef<HTMLDivElement | null>(null);
+  const diceContainerRef = useRef<HTMLDivElement | null>(null);
+  const diceBoxRef = useRef<any>(null);
+  const pendingDiceRollsRef = useRef<string[]>([]);
+  const [diceReady, setDiceReady] = useState(false);
 
   // Inventory loaded once on mount; refreshed after each item_used event so
   // the picker reflects post-use state. Authoritative source is D1 via
@@ -705,6 +570,30 @@ export function CombatPage({
   }, []);
 
   useEffect(() => {
+    if (!diceContainerRef.current) return;
+    const box = new DiceBox(diceContainerRef.current, {
+      assetPath: "/assets/dice-box/",
+    });
+    diceBoxRef.current = box;
+    box.init()
+      .then(() => {
+        setDiceReady(true);
+        for (const notation of pendingDiceRollsRef.current) {
+          box.roll(notation);
+        }
+        pendingDiceRollsRef.current = [];
+      })
+      .catch(() => {
+        toast.error("Failed to initialize dice animation.");
+      });
+    return () => {
+      if (box && typeof box.destroy === "function") {
+        box.destroy();
+      }
+    };
+  }, []);
+
+  useEffect(() => {
     const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
     const url = `${proto}//${window.location.host}/api/ws/quest/${questId}`;
     const ws = new WebSocket(url);
@@ -712,7 +601,10 @@ export function CombatPage({
 
     ws.onopen = () => dispatch({ kind: "connection", value: "open" });
     ws.onclose = () => dispatch({ kind: "connection", value: "closed" });
-    ws.onerror = () => dispatch({ kind: "error", value: "WebSocket error" });
+    ws.onerror = () => {
+      toast.error("WebSocket error");
+      dispatch({ kind: "error", value: "WebSocket error" });
+    };
     ws.onmessage = (ev) => {
       try {
         const msg = JSON.parse(ev.data) as
@@ -724,11 +616,12 @@ export function CombatPage({
           | { type: "log_replay"; events: unknown[] };
         if (msg.type === "state") dispatch({ kind: "state", value: msg.state });
         else if (msg.type === "events") {
-          dispatch({ kind: "events", value: msg.events });
-          // Item use mutates inventory in D1 — refresh the picker.
-          if (msg.events.some((e) => e.type === "item_used")) void loadItems();
+          processEventBatch(msg.events);
         }
-        else if (msg.type === "error") dispatch({ kind: "error", value: msg.message });
+        else if (msg.type === "error") {
+          toast.error(msg.message);
+          dispatch({ kind: "error", value: msg.message });
+        }
         else if (msg.type === "outcome") dispatch({ kind: "outcome", value: msg.outcome });
         else if (msg.type === "flavor") dispatch({ kind: "flavor", value: msg.flavor });
         else if (msg.type === "log_replay") {
@@ -917,6 +810,17 @@ export function CombatPage({
               Resolve monster turn
             </button>
           )}
+          <div
+            ref={diceContainerRef}
+            style={{
+              width: "100%",
+              minHeight: 260,
+              borderRadius: 12,
+              overflow: "hidden",
+              background: "#111",
+              marginTop: 16,
+            }}
+          />
           <EventLog log={ui.log} scrollRef={logScrollRef} />
           {ended && (
             <EndBanner
@@ -945,27 +849,43 @@ function MonsterCard({
   const sageLo = 1 + monster.tier;
   const sageHi = 6 + monster.tier + (monster.is_boss && monster.boss_phase === 2 ? monster.tier : 0);
   return (
-    <div style={{ ...card, borderColor: "#7c2020" }}>
-      <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 12 }}>
-        <div>
-          <div style={{ fontSize: 22, fontWeight: 700, color: "#f5f5f5" }}>{monster.name}</div>
-          <div style={{ ...muted, fontSize: 12 }}>
-            Tier {monster.tier}
-            {monster.is_boss && ` · Boss (phase ${monster.boss_phase})`}
-            {monster.wave && monster.total_waves && ` · Wave ${monster.wave}/${monster.total_waves}`}
-            {` · Round ${round}`}
+    <div style={{ ...card, borderColor: "#7c2020", padding: 0, overflow: "hidden" }}>
+      {monster.art_url && (
+        <img
+          src={monster.art_url}
+          alt={monster.name}
+          style={{
+            width: "100%",
+            maxHeight: 320,
+            objectFit: "cover",
+            display: "block",
+            borderBottom: "1px solid #2a2d33",
+          }}
+          onError={(e) => { e.currentTarget.style.display = "none"; }}
+        />
+      )}
+      <div style={{ padding: 16 }}>
+        <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 12 }}>
+          <div>
+            <div style={{ fontSize: 22, fontWeight: 700, color: "#f5f5f5" }}>{monster.name}</div>
+            <div style={{ ...muted, fontSize: 12 }}>
+              Tier {monster.tier}
+              {monster.is_boss && ` · Boss (phase ${monster.boss_phase})`}
+              {monster.wave && monster.total_waves && ` · Wave ${monster.wave}/${monster.total_waves}`}
+              {` · Round ${round}`}
+            </div>
+          </div>
+          <div style={{ ...muted, fontVariantNumeric: "tabular-nums" }}>
+            {monster.hp} / {monster.max_hp}
           </div>
         </div>
-        <div style={{ ...muted, fontVariantNumeric: "tabular-nums" }}>
-          {monster.hp} / {monster.max_hp}
-        </div>
+        <BigHpBar current={monster.hp} max={monster.max_hp} />
+        {showSageReading && (
+          <div style={{ ...muted, fontSize: 11, marginTop: 6 }}>
+            <Icon name="scroll-unfurled" /> Sage's Reading: next swing ~{sageLo}–{sageHi} HP
+          </div>
+        )}
       </div>
-      <BigHpBar current={monster.hp} max={monster.max_hp} />
-      {showSageReading && (
-        <div style={{ ...muted, fontSize: 11, marginTop: 6 }}>
-          📜 Sage's Reading: next swing ~{sageLo}–{sageHi} HP
-        </div>
-      )}
     </div>
   );
 }
@@ -1046,6 +966,7 @@ function PartySection({
 
 function FighterRow({ fighter, self, current }: { fighter: Fighter; self: boolean; current: boolean }) {
   const down = fighter.hp <= 0;
+  const portrait = classPortraitUrl(fighter.class);
   return (
     <div
       style={{
@@ -1054,53 +975,94 @@ function FighterRow({ fighter, self, current }: { fighter: Fighter; self: boolea
         borderRadius: 8,
         border: current ? "1px solid #b89b3a" : self ? "1px solid #3a7bd5" : "1px solid transparent",
         opacity: down ? 0.5 : 1,
+        display: "flex",
+        gap: 12,
+        alignItems: "stretch",
       }}
     >
-      <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8 }}>
-        <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
-          <span style={{ fontWeight: 600, color: "#f5f5f5", fontSize: 14 }}>{fighter.name}</span>
-          <span style={{ ...muted, fontSize: 12 }}>
-            {fighter.class} · Lv {fighter.level} · {fighter.position}
-          </span>
-          {self && (
-            <span style={badge("#1f2a3a", "#7dd3fc", "#2a3a5a")}>you</span>
-          )}
-          {down && (
-            <span style={badge("#3a1f1f", "#ff7676", "#5a2a2a")}>downed</span>
-          )}
-        </div>
-        <div style={{ ...muted, fontVariantNumeric: "tabular-nums" }}>
-          {fighter.hp}/{fighter.max_hp}
-          {fighter.shield > 0 && (
-            <span style={{ color: "#7c83ff", marginLeft: 6 }}>+{fighter.shield}</span>
-          )}
-        </div>
-      </div>
-      <HpBar current={fighter.hp} max={fighter.max_hp} />
-      {fighter.max_mana > 0 && (
-        <div style={{ marginTop: 6, display: "flex", alignItems: "center", gap: 8 }}>
-          <div style={{ ...muted, fontSize: 11, minWidth: 36 }}>
-            {fighter.mana}/{fighter.max_mana}
-          </div>
-          <div
-            style={{
-              flex: 1,
-              height: 4,
-              background: "#0e0f12",
-              borderRadius: 2,
-              overflow: "hidden",
-            }}
-          >
-            <div
-              style={{
-                width: `${(fighter.mana / Math.max(1, fighter.max_mana)) * 100}%`,
-                height: "100%",
-                background: "#6366f1",
-              }}
-            />
-          </div>
+      {portrait ? (
+        <img
+          src={portrait}
+          alt={`${fighter.class} portrait`}
+          style={{
+            width: 56,
+            height: 56,
+            borderRadius: 6,
+            objectFit: "cover",
+            border: "1px solid #2a2d33",
+            flexShrink: 0,
+            alignSelf: "center",
+          }}
+          onError={(e) => { e.currentTarget.style.display = "none"; }}
+        />
+      ) : (
+        <div
+          style={{
+            width: 56,
+            height: 56,
+            borderRadius: 6,
+            background: "#0e0f12",
+            border: "1px solid #2a2d33",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            alignSelf: "center",
+            flexShrink: 0,
+          }}
+        >
+          <Icon name="player" size={28} color="#6a7080" />
         </div>
       )}
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8 }}>
+          <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
+            <span style={{ fontWeight: 600, color: "#f5f5f5", fontSize: 14 }}>{fighter.name}</span>
+            {fighter.slack_username && (
+              <span style={{ fontSize: 12, color: "#7dd3fc" }}>@{fighter.slack_username}</span>
+            )}
+            <span style={{ ...muted, fontSize: 12 }}>
+              {fighter.class} · <span title={fighter.scars.length > 0 ? fighter.scars.join(", ") : undefined}>Lv {fighter.level}</span> · {fighter.position}
+            </span>
+            {self && (
+              <span style={badge("#1f2a3a", "#7dd3fc", "#2a3a5a")}>you</span>
+            )}
+            {down && (
+              <span style={badge("#3a1f1f", "#ff7676", "#5a2a2a")}>downed</span>
+            )}
+          </div>
+          <div style={{ ...muted, fontVariantNumeric: "tabular-nums" }}>
+            {fighter.hp}/{fighter.max_hp}
+            {fighter.shield > 0 && (
+              <span style={{ color: "#7c83ff", marginLeft: 6 }}>+{fighter.shield}</span>
+            )}
+          </div>
+        </div>
+        <HpBar current={fighter.hp} max={fighter.max_hp} />
+        {fighter.max_mana > 0 && (
+          <div style={{ marginTop: 6, display: "flex", alignItems: "center", gap: 8 }}>
+            <div style={{ ...muted, fontSize: 11, minWidth: 36 }}>
+              {fighter.mana}/{fighter.max_mana}
+            </div>
+            <div
+              style={{
+                flex: 1,
+                height: 4,
+                background: "#0e0f12",
+                borderRadius: 2,
+                overflow: "hidden",
+              }}
+            >
+              <div
+                style={{
+                  width: `${(fighter.mana / Math.max(1, fighter.max_mana)) * 100}%`,
+                  height: "100%",
+                  background: "#6366f1",
+                }}
+              />
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -1123,7 +1085,7 @@ type ActionKind =
 interface AbilityUiSpec {
   id: string;
   name: string;
-  emoji: string;
+  iconName: string;            // rpg-awesome ra-* class
   mana_cost: number;
   blurb: string;
   // migrate is the only ability that needs a target+position picker.
@@ -1131,14 +1093,14 @@ interface AbilityUiSpec {
 }
 
 const ABILITY_BY_CLASS: Record<string, AbilityUiSpec> = {
-  "SRE Warden":      { id: "taunt",              name: "Taunt",             emoji: "🛡", mana_cost: 2, blurb: "Monster targets you for 2 swings" },
-  "DevOps Mage":     { id: "containerize",       name: "Containerize",      emoji: "🧙", mana_cost: 2, blurb: "Monster skips next swing" },
-  "QA Paladin":      { id: "regression_shield",  name: "Regression Shield", emoji: "✨", mana_cost: 2, blurb: "+3 shield to all party" },
-  "Refactor Rogue":  { id: "vanish",             name: "Vanish",            emoji: "🗡", mana_cost: 2, blurb: "Untargetable for 2 swings" },
-  "Data Warlock":    { id: "soul_drain",         name: "Soul Drain",        emoji: "💀", mana_cost: 2, blurb: "1d6+mag dmg, heal 50%" },
-  "Frontend Bard":   { id: "battle_hymn",        name: "Battle Hymn",       emoji: "🎵", mana_cost: 2, blurb: "+2 dmg on next 2 party attacks" },
-  "Staff Sage":      { id: "foresee",            name: "Foresee",           emoji: "📜", mana_cost: 1, blurb: "Read monster's next target" },
-  "Backend Druid":   { id: "migrate",            name: "Migrate",           emoji: "🌿", mana_cost: 1, blurb: "Move a partymate to front/back", needs_migrate_picker: true },
+  "SRE Warden":      { id: "taunt",              name: "Taunt",             iconName: "shield",           mana_cost: 2, blurb: "Monster targets you for 2 swings" },
+  "DevOps Mage":     { id: "containerize",       name: "Containerize",      iconName: "cubes",            mana_cost: 2, blurb: "Monster skips next swing" },
+  "QA Paladin":      { id: "regression_shield",  name: "Regression Shield", iconName: "fairy-wand",       mana_cost: 2, blurb: "+3 shield to all party" },
+  "Refactor Rogue":  { id: "vanish",             name: "Vanish",            iconName: "plain-dagger",     mana_cost: 2, blurb: "Untargetable for 2 swings" },
+  "Data Warlock":    { id: "soul_drain",         name: "Soul Drain",        iconName: "death-skull",      mana_cost: 2, blurb: "1d6+mag dmg, heal 50%" },
+  "Frontend Bard":   { id: "battle_hymn",        name: "Battle Hymn",       iconName: "aura",             mana_cost: 2, blurb: "+2 dmg on next 2 party attacks" },
+  "Staff Sage":      { id: "foresee",            name: "Foresee",           iconName: "scroll-unfurled",  mana_cost: 1, blurb: "Read monster's next target" },
+  "Backend Druid":   { id: "migrate",            name: "Migrate",           iconName: "grass",            mana_cost: 1, blurb: "Move a partymate to front/back", needs_migrate_picker: true },
 };
 
 // Items the worker has dispatch for in handleUseItem. Tools / scrolls are
@@ -1173,39 +1135,39 @@ function ActionBar({
   const otherRow = selfPosition === "front" ? "back" : "front";
   return (
     <div style={{ ...card, display: "flex", gap: 8, flexWrap: "wrap" }}>
-      <ActionBtn label="⚔ Attack" hint="d20+atk vs AC · 1d6 dmg" disabled={disabled} onClick={() => onAct("attack")} />
-      <ActionBtn label="🔮 Cast" hint="d20+mag vs AC · 1d8 dmg" disabled={disabled} onClick={() => onAct("cast")} />
+      <ActionBtn label={<><Icon name="sword" /> Attack</>} hint="d20+atk vs AC · 1d6 dmg" disabled={disabled} onClick={() => onAct("attack")} />
+      <ActionBtn label={<><Icon name="crystal-ball" /> Cast</>} hint="d20+mag vs AC · 1d8 dmg" disabled={disabled} onClick={() => onAct("cast")} />
       <ActionBtn
-        label="✨ Sig"
+        label={<><Icon name="fairy-wand" /> Sig</>}
         hint={mana > 0 ? "Class signature · 1 mana" : "No mana"}
         disabled={disabled || mana < 1}
         onClick={() => onAct("signature")}
       />
       {ability && (
         <ActionBtn
-          label={`${ability.emoji} ${ability.name}`}
+          label={<><Icon name={ability.iconName} /> {ability.name}</>}
           hint={mana >= ability.mana_cost ? `${ability.blurb} · ${ability.mana_cost} mana` : "Not enough mana"}
           disabled={disabled || mana < ability.mana_cost}
           onClick={() => onAct("ability")}
         />
       )}
-      <ActionBtn label="💚 Heal" hint="1d6+mag · pick target" disabled={disabled} onClick={() => onAct("heal")} />
-      <ActionBtn label="🛡 Shield" hint="1d6+mag · pick target" disabled={disabled} onClick={() => onAct("shield")} />
+      <ActionBtn label={<><Icon name="health-increase" /> Heal</>} hint="1d6+mag · pick target" disabled={disabled} onClick={() => onAct("heal")} />
+      <ActionBtn label={<><Icon name="shield" /> Shield</>} hint="1d6+mag · pick target" disabled={disabled} onClick={() => onAct("shield")} />
       <ActionBtn
-        label="🎒 Item"
+        label={<><Icon name="ammo-bag" /> Item</>}
         hint={hasItems ? "Consumable / magic / revive / tool / scroll" : "Nothing usable"}
         disabled={disabled || !hasItems}
         onClick={() => onAct("use_item")}
       />
       <ActionBtn
-        label={otherRow === "front" ? "🔼 To front" : "🔽 To back"}
+        label={<><Icon name={otherRow === "front" ? "muscle-up" : "fall-down"} /> {otherRow === "front" ? "To front" : "To back"}</>}
         hint={otherRow === "front" ? "Soak hits · full damage" : "Less hit risk · 60% dmg taken"}
         disabled={disabled}
         onClick={() => onAct("swap_position")}
       />
-      <ActionBtn label="🎯 Mark" hint="Party gets +2 dmg on monster for 2 rounds" disabled={disabled} onClick={() => onAct("mark")} />
-      <ActionBtn label="🏃 Flee" hint="d20+mod vs DC 10+tier" disabled={disabled} onClick={() => onAct("flee")} />
-      <ActionBtn label="⏸ Wait" hint="Skip your turn" disabled={disabled} onClick={() => onAct("wait")} />
+      <ActionBtn label={<><Icon name="targeted" /> Mark</>} hint="Party gets +2 dmg on monster for 2 rounds" disabled={disabled} onClick={() => onAct("mark")} />
+      <ActionBtn label={<><Icon name="footprint" /> Flee</>} hint="d20+mod vs DC 10+tier" disabled={disabled} onClick={() => onAct("flee")} />
+      <ActionBtn label={<><Icon name="hourglass" /> Wait</>} hint="Skip your turn" disabled={disabled} onClick={() => onAct("wait")} />
     </div>
   );
 }
@@ -1227,7 +1189,7 @@ function MigratePicker({
   const alreadyThere = target?.position === position;
   return (
     <div style={card}>
-      <div style={{ ...muted, fontSize: 12, marginBottom: 8 }}>🌿 Migrate — who and where?</div>
+      <div style={{ ...muted, fontSize: 12, marginBottom: 8 }}><Icon name="grass" /> Migrate — who and where?</div>
       <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 8 }}>
         {fighters
           .filter((f) => f.hp > 0)
@@ -1250,13 +1212,13 @@ function MigratePicker({
           onClick={() => setPosition("front")}
           style={{ ...button, background: position === "front" ? "#2a5a3a" : "#222", fontSize: 13 }}
         >
-          🔼 Front
+          <Icon name="muscle-up" /> Front
         </button>
         <button
           onClick={() => setPosition("back")}
           style={{ ...button, background: position === "back" ? "#2a5a3a" : "#222", fontSize: 13 }}
         >
-          🔽 Back
+          <Icon name="fall-down" /> Back
         </button>
       </div>
       <div style={{ display: "flex", gap: 6 }}>
@@ -1294,7 +1256,7 @@ function ItemPicker({
   const usable = items.filter((i) => isCombatUsable(i.item_type));
   return (
     <div style={card}>
-      <div style={{ ...muted, fontSize: 12, marginBottom: 8 }}>🎒 Use which?</div>
+      <div style={{ ...muted, fontSize: 12, marginBottom: 8 }}><Icon name="ammo-bag" /> Use which?</div>
       {usable.length === 0 && (
         <p style={{ ...muted, fontSize: 13 }}>Nothing usable in combat.</p>
       )}
@@ -1355,7 +1317,7 @@ function ReviveTargetPicker({
   const downed = fighters.filter((f) => f.hp <= 0);
   return (
     <div style={card}>
-      <div style={{ ...muted, fontSize: 12, marginBottom: 8 }}>💖 Revive who?</div>
+      <div style={{ ...muted, fontSize: 12, marginBottom: 8 }}><Icon name="crowned-heart" /> Revive who?</div>
       {downed.length === 0 && (
         <p style={{ ...muted, fontSize: 13 }}>No downed allies.</p>
       )}
@@ -1401,7 +1363,9 @@ function TargetPicker({
   // Only valid for living fighters (heal/shield can't target a downed
   // character — revive will handle that when it lands).
   const targets = fighters.filter((f) => f.hp > 0);
-  const label = kind === "heal" ? "💚 Heal who?" : "🛡 Shield who?";
+  const label = kind === "heal"
+    ? <><Icon name="health-increase" /> Heal who?</>
+    : <><Icon name="shield" /> Shield who?</>;
   return (
     <div style={{ ...card }}>
       <div style={{ ...muted, fontSize: 12, marginBottom: 8 }}>{label}</div>
@@ -1451,7 +1415,7 @@ function ActionBtn({
   disabled,
   onClick,
 }: {
-  label: string;
+  label: React.ReactNode;
   hint: string;
   disabled: boolean;
   onClick: () => void;
@@ -1507,7 +1471,7 @@ function EventLog({
         {log.length === 0 && <span style={muted}>Waiting for events…</span>}
         {log.map((line) => (
           <div key={line.id} style={{ color: TONE_COLOR[line.tone] }}>
-            {line.text}
+            {line.content}
           </div>
         ))}
       </div>
@@ -1564,7 +1528,7 @@ function EndBanner({
           </div>
           <p style={{ ...muted, marginTop: 12, textAlign: "center" }}>
             {outcome?.dungeon_room_cleared
-              ? "Room cleared. Use Slack /sq choose to pick the next door (and resolve any trap/lockbox/npc rooms there)."
+              ? "Room cleared. Use Slack /gq choose to pick the next door (and resolve any trap/lockbox/npc rooms there)."
               : <>Click <strong>← Back</strong> to return.</>}
           </p>
         </div>
@@ -1633,7 +1597,7 @@ function RewardRow({
       )}
       {reward.soft_death && (
         <div style={{ marginTop: 6, fontSize: 12, color: "#fca5a5" }}>
-          💀 −{reward.soft_death.gold_lost}g
+          <Icon name="death-skull" /> −{reward.soft_death.gold_lost}g
           {reward.soft_death.item_lost && ` · lost ${reward.soft_death.item_lost}`}
           {reward.soft_death.scar && ` · scar: "${reward.soft_death.scar}"`}
         </div>

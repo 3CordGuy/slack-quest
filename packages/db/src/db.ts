@@ -22,6 +22,9 @@ export interface Item {
   equipped: boolean;
   weapon_range: WeaponRange | null; // null for non-weapons; legacy weapon rows
                                     // also null and read as "melee".
+  // Number of times this item has been sharpened at the smithy (cap = 3).
+  // Backfills to 0 for legacy rows.
+  sharpens_count: number;
 }
 
 interface ItemRow extends Omit<Item, "equipped"> {
@@ -29,7 +32,15 @@ interface ItemRow extends Omit<Item, "equipped"> {
 }
 
 function rowToItem(row: ItemRow): Item {
-  return { ...row, equipped: row.equipped === 1 };
+  return {
+    ...row,
+    equipped: row.equipped === 1,
+    // Backfill for legacy rows / dev DBs that haven't yet been migrated to
+    // include the smithy column. SELECT returns null on missing columns and
+    // sharpens_count: NumberOrNull won't satisfy the Item shape, so we
+    // normalize here.
+    sharpens_count: typeof row.sharpens_count === "number" ? row.sharpens_count : 0,
+  };
 }
 
 export type BattlePosition = "front" | "back";
@@ -60,6 +71,10 @@ export interface Character {
   // Active status effects (regen, bleeding, etc.). JSON-serialized in DB; cleared
   // at quest end. Empty array when none.
   effects: StatusEffect[];
+  // Slack display handle (e.g. "josh"). Written by the slack worker on every
+  // command/action so it stays fresh as people rename themselves. Null for
+  // characters created before this column landed.
+  slack_username: string | null;
   created_at: number;
   last_active: number;
 }
@@ -236,6 +251,10 @@ export interface SceneJson {
   // Active monster status effects (poisoned, etc.). Tick on monster turns.
   // Cleared when the monster dies / scene transitions to a new monster.
   monster_effects?: StatusEffect[];
+  // Optional flux-1-schnell portrait URL — written by generateOpeningScene
+  // when an ArtTarget is supplied. Persisted with the scene so combat can
+  // render the same portrait without re-checking R2 every render.
+  monster_art_url?: string;
 }
 
 export type QuestMode = "slack" | "web";
@@ -457,6 +476,28 @@ export async function setPosition(
     .run();
 }
 
+// Record the player's slack handle (e.g. "josh") so the web app can render
+// "@josh" next to character names. Idempotent + race-safe — the slack worker
+// calls this on every command/action; the value stays fresh as people rename
+// themselves. Skips the write when the value is unchanged so we don't churn
+// last_active for a no-op. No-op for users without a character row yet.
+export async function upsertSlackUsername(
+  db: D1Database,
+  userId: string,
+  username: string,
+): Promise<void> {
+  if (!username) return;
+  await db
+    .prepare(
+      `UPDATE characters
+         SET slack_username = ?
+       WHERE slack_user_id = ?
+         AND (slack_username IS NULL OR slack_username != ?)`,
+    )
+    .bind(username, userId, username)
+    .run();
+}
+
 // Short rest: partial HP restore + bumps last_rest_at. Caller computes the new HP
 // (e.g. current + 50% of missing) and passes it in so the math stays in commands.ts.
 export async function applyShortRest(
@@ -483,6 +524,26 @@ export async function applyLongRest(db: D1Database, userId: string): Promise<voi
   await db
     .prepare("UPDATE characters SET hp = max_hp, last_long_rest_at = ?, last_active = ? WHERE slack_user_id = ?")
     .bind(now, now, userId)
+    .run();
+}
+
+// Inn room rest. Refills HP, optionally mana, without bumping either rest
+// cooldown — Inn is a parallel paid recovery channel, not a "skip long-rest
+// cooldown" mechanic. Caller has already verified the player can afford and
+// the deduction has succeeded.
+export async function applyInnRest(
+  db: D1Database,
+  userId: string,
+  refills: { hp: boolean; mana: boolean },
+): Promise<void> {
+  const sets: string[] = [];
+  if (refills.hp) sets.push("hp = max_hp");
+  if (refills.mana) sets.push("mana = max_mana");
+  sets.push("last_active = ?");
+  if (sets.length === 1) return; // only last_active update — no-op for inn
+  await db
+    .prepare(`UPDATE characters SET ${sets.join(", ")} WHERE slack_user_id = ?`)
+    .bind(Date.now(), userId)
     .run();
 }
 
@@ -582,6 +643,28 @@ export async function refillMana(db: D1Database, userId: string): Promise<void> 
     .prepare("UPDATE characters SET mana = max_mana, last_active = ? WHERE slack_user_id = ?")
     .bind(Date.now(), userId)
     .run();
+}
+
+// Restores mana up to max_mana. Returns the actual delta granted (caller
+// can show "wasted" overflow). Used when a mana-staple potion is consumed.
+export async function addMana(
+  db: D1Database,
+  userId: string,
+  amount: number,
+): Promise<number> {
+  const before = await db
+    .prepare("SELECT mana, max_mana FROM characters WHERE slack_user_id = ?")
+    .bind(userId)
+    .first<{ mana: number; max_mana: number }>();
+  if (!before) return 0;
+  const newMana = Math.min(before.max_mana, before.mana + amount);
+  const added = newMana - before.mana;
+  if (added <= 0) return 0;
+  await db
+    .prepare("UPDATE characters SET mana = ?, last_active = ? WHERE slack_user_id = ?")
+    .bind(newMana, Date.now(), userId)
+    .run();
+  return added;
 }
 
 // Atomic mana deduction. Returns true if the player had >= amount and it was spent.
@@ -684,7 +767,7 @@ export async function addItem(db: D1Database, input: CreateItemInput): Promise<I
     .run();
   const id = result.meta.last_row_id;
   const row = await db
-    .prepare("SELECT id, character_id, item_name, item_type, power, rarity, flavor, equipped, weapon_range FROM inventory WHERE id = ?")
+    .prepare("SELECT id, character_id, item_name, item_type, power, rarity, flavor, equipped, weapon_range, sharpens_count FROM inventory WHERE id = ?")
     .bind(id)
     .first<ItemRow>();
   if (!row) throw new Error("Failed to read back inserted item");
@@ -694,7 +777,7 @@ export async function addItem(db: D1Database, input: CreateItemInput): Promise<I
 export async function getInventory(db: D1Database, characterId: string): Promise<Item[]> {
   const result = await db
     .prepare(
-      `SELECT id, character_id, item_name, item_type, power, rarity, flavor, equipped, weapon_range
+      `SELECT id, character_id, item_name, item_type, power, rarity, flavor, equipped, weapon_range, sharpens_count
        FROM inventory WHERE character_id = ?
        ORDER BY equipped DESC, item_type ASC,
                 CASE rarity WHEN 'rare' THEN 0 WHEN 'uncommon' THEN 1 ELSE 2 END,
@@ -712,7 +795,7 @@ export async function getItem(
 ): Promise<Item | null> {
   const row = await db
     .prepare(
-      `SELECT id, character_id, item_name, item_type, power, rarity, flavor, equipped, weapon_range
+      `SELECT id, character_id, item_name, item_type, power, rarity, flavor, equipped, weapon_range, sharpens_count
        FROM inventory WHERE id = ? AND character_id = ?`,
     )
     .bind(itemId, characterId)
@@ -752,6 +835,28 @@ export async function applyFocusManaShift(
   }
 }
 
+// Smithy sharpen — atomic UPDATE that refuses past the cap (WHERE
+// sharpens_count < cap is the race guard). Caller has already deducted gold;
+// on a `false` return value the caller refunds.
+export async function sharpenItem(
+  db: D1Database,
+  itemId: number,
+  userId: string,
+  cap: number,
+): Promise<Item | null> {
+  const result = await db
+    .prepare(
+      `UPDATE inventory
+         SET power = power + 1,
+             sharpens_count = sharpens_count + 1
+       WHERE id = ? AND character_id = ? AND sharpens_count < ?`,
+    )
+    .bind(itemId, userId, cap)
+    .run();
+  if ((result.meta.changes ?? 0) === 0) return null;
+  return getItem(db, itemId, userId);
+}
+
 export async function getEquipped(
   db: D1Database,
   characterId: string,
@@ -759,7 +864,7 @@ export async function getEquipped(
 ): Promise<Item | null> {
   const row = await db
     .prepare(
-      `SELECT id, character_id, item_name, item_type, power, rarity, flavor, equipped, weapon_range
+      `SELECT id, character_id, item_name, item_type, power, rarity, flavor, equipped, weapon_range, sharpens_count
        FROM inventory WHERE character_id = ? AND item_type = ? AND equipped = 1
        LIMIT 1`,
     )

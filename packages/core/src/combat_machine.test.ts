@@ -46,6 +46,7 @@ function baseInit(overrides: Partial<CombatInit> = {}): CombatInit {
         magic_mod: 0,
         weapon_power: 4,
         armor_power: 3,
+        scars: [],
       },
     ],
     monster: {
@@ -63,8 +64,8 @@ function runBegin(state: CombatState, initiatives: number[]) {
   return step(state, { kind: "begin" }, seqRoll(initiatives));
 }
 
-// AC reference (tier 3): monster AC = 13, fighter AC = 10.
-// Paladin attack_mod = 2 → needs d20 ≥ 11 to hit. Monster tier 3 → needs ≥ 7.
+// AC reference (tier 3): monster AC = 9 (8 + floor(3/2)), fighter AC = 10.
+// Paladin attack_mod = 2 → needs d20 ≥ 7 to hit. Monster tier 3 → needs ≥ 7.
 
 describe("combat_machine.step", () => {
   describe("begin", () => {
@@ -87,6 +88,7 @@ describe("combat_machine.step", () => {
             magic_mod: 2,
             weapon_power: 2,
             armor_power: 1,
+            scars: [],
           },
         ],
       });
@@ -114,7 +116,7 @@ describe("combat_machine.step", () => {
   describe("attack (hit + damage)", () => {
     it("damages the monster on hit, emits hit_check + roll + player_hit", () => {
       const begun = runBegin(createCombatState(baseInit()), [15, 8]);
-      // d20=15 (+2 = 17 vs AC 13: HIT). d6=4 → damage = (4+2+4) = 10.
+      // d20=15 (+2 = 17 vs AC 9: HIT). d6=4 → damage = (4+2+4) = 10.
       const result = step(
         begun.state,
         { kind: "attack", actor: "U_PALADIN" },
@@ -129,14 +131,14 @@ describe("combat_machine.step", () => {
         "turn_start",
       ]);
       const check = result.events.find((e) => e.type === "hit_check");
-      expect(check).toMatchObject({ hit: true, total: 17, ac: 13 });
+      expect(check).toMatchObject({ hit: true, total: 17, ac: 9 });
       const hit = result.events.find((e) => e.type === "player_hit");
       expect(hit).toMatchObject({ damage: 10, crit: false });
     });
 
     it("misses on a low d20, emits hit_check with hit:false, no damage", () => {
       const begun = runBegin(createCombatState(baseInit()), [15, 8]);
-      // d20=5 (+2 = 7 vs AC 13: MISS). No damage roll consumed.
+      // d20=5 (+2 = 7 vs AC 9: MISS). No damage roll consumed.
       const result = step(
         begun.state,
         { kind: "attack", actor: "U_PALADIN" },
@@ -149,7 +151,7 @@ describe("combat_machine.step", () => {
         "turn_start",
       ]);
       const check = result.events.find((e) => e.type === "hit_check");
-      expect(check).toMatchObject({ hit: false, total: 7, ac: 13 });
+      expect(check).toMatchObject({ hit: false, total: 7, ac: 9 });
       expect(result.events.find((e) => e.type === "player_hit")).toBeUndefined();
     });
 
@@ -233,6 +235,60 @@ describe("combat_machine.step", () => {
       const types = eventTypes(result.events);
       expect(types).toContain("fighter_down");
       expect(types).toContain("defeat");
+    });
+
+    it("rerolls off a vanished target when a non-vanished fighter exists", () => {
+      const init = baseInit({
+        fighters: [
+          ...baseInit().fighters,
+          {
+            id: "U_ROGUE",
+            name: "Fenel the Deprecated",
+            class: "Refactor Rogue",
+            level: 4,
+            hp: 20,
+            max_hp: 20,
+            mana: 3,
+            max_mana: 3,
+            shield: 0,
+            position: "back",
+            attack_mod: 1,
+            magic_mod: 0,
+            weapon_power: 3,
+            armor_power: 1,
+            scars: [],
+          },
+        ],
+      });
+      const begun = runBegin(createCombatState(init), [5, 1, 20]);
+      const vanishedState = {
+        ...begun.state,
+        ability_state: { vanished: { U_PALADIN: 2 } },
+      };
+
+      const result = step(vanishedState, { kind: "monster_act" }, seqRoll([50, 15, 15, 3]));
+      expect(result.state.fighters.find((f) => f.id === "U_PALADIN")?.hp).toBe(30);
+      expect(result.state.fighters.find((f) => f.id === "U_ROGUE")?.hp).toBeLessThan(20);
+      expect(eventTypes(result.events)).toContain("monster_target_redirected");
+      expect(result.events.find((e) => e.type === "monster_target_redirected")).toMatchObject({
+        from: "U_PALADIN",
+        to: "U_ROGUE",
+        reason: "vanish",
+      });
+    });
+
+    it("blocks the monster swing when all alive fighters are vanished", () => {
+      const init = baseInit();
+      const begun = runBegin(createCombatState(init), [5, 18]);
+      const vanishedState = {
+        ...begun.state,
+        ability_state: { vanished: { U_PALADIN: 2 } },
+      };
+
+      const result = step(vanishedState, { kind: "monster_act" }, seqRoll([50]));
+      expect(result.state.fighters[0].hp).toBe(30);
+      expect(eventTypes(result.events)).toEqual(["monster_target_blocked", "turn_start"]);
+      expect(result.events.find((e) => e.type === "monster_attack")).toBeUndefined();
     });
 
     it("rejects monster_act when it isn't the monster's turn", () => {

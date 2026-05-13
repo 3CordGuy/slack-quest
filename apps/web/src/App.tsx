@@ -1,6 +1,104 @@
 import { useEffect, useRef, useState } from "react";
+import toast from "react-hot-toast";
+
+import { findCatalogEntry } from "@gantt-quest/core";
 
 import { CombatPage } from "./CombatPage";
+import { EmojiIcon, Icon, KeyIcon } from "./icons";
+
+// One-liner describing the in-game effect of an item, in plain mechanics
+// (not flavor). Used by the inventory's Info toggle so players can see
+// what "+5" actually means instead of guessing.
+function describeItemEffect(item: {
+  item_type: string;
+  power: number;
+  weapon_range?: "melee" | "ranged" | "focus" | null;
+  item_name: string;
+}): React.ReactNode {
+  const p = item.power;
+  const lead = (name: string) => <Icon name={name} style={{ marginRight: 6 }} />;
+  switch (item.item_type) {
+    case "weapon":
+      if (item.weapon_range === "focus") {
+        return <>{lead("crystal-ball")}Focus weapon: adds +{p} to heal & shield rolls (no attack/cast damage). +1 max mana while equipped.</>;
+      }
+      if (item.weapon_range === "ranged") {
+        return <>{lead("crossbow")}Ranged weapon: +{p} attack/cast damage. Can attack from back row.</>;
+      }
+      return <>{lead("sword")}Melee weapon: +{p} attack/cast damage. Front row only for attack.</>;
+    case "armor":
+      return <>{lead("shield")}Armor: reduces incoming damage by floor({p}/2) = {Math.floor(p / 2)} (min 1).</>;
+    case "consumable":
+      return <>{lead("bubbling-potion")}Restores {p} HP on use. Single-use.</>;
+    case "magic":
+      return <>{lead("crystal-ball")}Permanently grants +{p} max mana on use (capped at 5).</>;
+    case "revive":
+      return <>{lead("crowned-heart")}Revives a downed party member to {p}% of their max HP. Combat-only.</>;
+    case "tool":
+    case "scroll": {
+      const entry = findCatalogEntry(item.item_name);
+      const base = entry?.blurb ?? "Catalog item.";
+      const powerNote = p > 0 ? ` (power ${p})` : "";
+      return <>{lead(item.item_type === "scroll" ? "scroll-unfurled" : "anvil")}{base}{powerNote}</>;
+    }
+    default:
+      return <>Item: +{p}.</>;
+  }
+}
+
+// User-friendly text for error codes returned by the worker. Anything not
+// listed here falls back to the raw `error` string from the response body.
+const ERROR_LABELS: Record<string, string> = {
+  cooldown: "Catching your breath — try again later.",
+  already_full: "Already at full HP/mana — no rest needed.",
+  no_rest_mid_quest: "Can't rest mid-quest. Finish the fight first.",
+  no_long_rest_mid_quest: "Long rest blocked mid-quest. Wrap up first.",
+  downed: "You're downed — wait for the cooldown.",
+  no_character: "Roll a character in Slack first.",
+  unauthenticated: "Session expired — log in again.",
+  not_yours: "That item isn't yours.",
+  already_equipped: "Already equipped.",
+  consumable_not_equippable: "Consumables can't be equipped — use them.",
+  bad_item_id: "Bad item id.",
+  bad_quest_id: "Bad quest id.",
+  not_in_party: "You're not in this party.",
+  web_mode: "This quest is being run from the web — head there.",
+};
+
+// fetch + parse + toast on error. Returns { ok, body } so callers can inspect
+// success payloads. Use this for any user-triggered POST that returns either
+// `{ ok: true, ... }` or `{ error: "code", ... }`.
+async function postJson(
+  url: string,
+  init: RequestInit = {},
+): Promise<{ ok: boolean; body: Record<string, unknown> | null }> {
+  let res: Response;
+  try {
+    res = await fetch(url, { credentials: "include", ...init });
+  } catch (err) {
+    toast.error(`Network error: ${err instanceof Error ? err.message : String(err)}`);
+    return { ok: false, body: null };
+  }
+  let body: Record<string, unknown> | null = null;
+  try {
+    body = (await res.json()) as Record<string, unknown>;
+  } catch {
+    body = null;
+  }
+  if (!res.ok) {
+    const code = typeof body?.error === "string" ? body.error : `http_${res.status}`;
+    const message = ERROR_LABELS[code] ?? code;
+    // Friendly addendum for cooldown timers — show minutes remaining.
+    if (code === "cooldown" && typeof body?.ready_in_ms === "number") {
+      const mins = Math.max(1, Math.ceil(body.ready_in_ms / 60_000));
+      toast.error(`${message} (~${mins}m)`);
+    } else {
+      toast.error(message);
+    }
+    return { ok: false, body };
+  }
+  return { ok: true, body };
+}
 
 // v0.4: read-only views + opt-in web-mode combat. When the active quest is
 // a `standard` or `boss` variant, the player can open a dedicated combat
@@ -8,6 +106,7 @@ import { CombatPage } from "./CombatPage";
 
 interface Character {
   slack_user_id: string;
+  slack_username: string | null;
   name: string;
   class: string;
   level: number;
@@ -141,10 +240,12 @@ interface MeResponse {
   slack_user_id: string;
   slack_team_id: string;
   character: Character | null;
+  class_art_url?: string | null;
 }
 
 interface InventoryResponse {
   items: Item[];
+  art_url?: string | null;
 }
 
 interface ShopItem {
@@ -160,14 +261,85 @@ interface ShopItem {
   haggled: "failed" | "15" | "25" | "30" | null;
 }
 
+interface StapleItem {
+  id: string;
+  name: string;
+  emoji: string;
+  effect: "heal_hp" | "restore_mana";
+  power: number;
+  price: number;
+  blurb: string;
+}
+
 interface ShopResponse {
   stock: ShopItem[];
+  staples?: StapleItem[];
   gold: number;
   channel_id?: string;
   needs_restock?: boolean;
   purchases_this_cycle?: number;
   purchase_cap?: number;
   error?: string;
+  art_url?: string | null;
+}
+
+interface HaggleResult {
+  item_name: string;
+  outcome: "failed" | "15" | "25" | "30";
+  bucket: "failed" | "modest" | "solid" | "steal";
+  flavor: string;
+  roll: number;
+  modifier: number;
+  total: number;
+  old_price: number;
+  new_price: number;
+}
+
+interface InnRoom {
+  id: string;
+  name: string;
+  price: number;
+  refills: { hp: boolean; mana: boolean };
+  blurb: string;
+  iconName: string;
+}
+
+interface InnResponse {
+  rooms: InnRoom[];
+  gold: number;
+  hp: number;
+  max_hp: number;
+  mana: number;
+  max_mana: number;
+  art_url?: string | null;
+  error?: string;
+}
+
+interface SmithyItem {
+  id: number;
+  item_name: string;
+  item_type: ItemType;
+  weapon_range: WeaponRange | null;
+  power: number;
+  sharpens_count: number;
+  cap: number;
+  cost: number;
+  verb: { verb: string; past: string; noun: string; iconName: string; stat: string };
+}
+
+interface SmithyResponse {
+  items: SmithyItem[];
+  gold: number;
+  art_url?: string | null;
+  error?: string;
+}
+
+interface ConfirmRequest {
+  title: string;
+  message: string;
+  confirmLabel?: string;
+  destructive?: boolean;
+  onConfirm: () => void;
 }
 
 interface ActiveQuestResponse {
@@ -197,10 +369,13 @@ type LoadState =
       kind: "auth";
       me: MeResponse;
       inventory: Item[];
+      inventoryArtUrl: string | null;
       activeQuest: { quest: ActiveQuest; party: Character[] } | null;
       recent: RecentQuest[];
       shop: ShopResponse | null;
       joinable: JoinableQuest | null;
+      inn: InnResponse | null;
+      smithy: SmithyResponse | null;
     };
 
 export function App() {
@@ -218,10 +393,31 @@ export function App() {
   // Tracks whether D1 still holds a web combat state for the active quest,
   // so the dashboard can offer a Resume button after Back.
   const [hasWebCombat, setHasWebCombat] = useState(false);
+  // Modal state — haggle outcome and generic confirm. Rendered at the top
+  // of the dashboard tree so they're not subtree-scoped to a single card.
+  const [haggleResult, setHaggleResult] = useState<HaggleResult | null>(null);
+  const [confirm, setConfirm] = useState<ConfirmRequest | null>(null);
 
   useEffect(() => {
     void refresh();
   }, []);
+
+  // Background poll — keep the dashboard in sync with partymate activity
+  // (joins, shop buys, slack-driven combat). Paused when CombatPage is open
+  // (the WS keeps that screen live) and when the tab is hidden to save battery.
+  useEffect(() => {
+    if (activeCombat) return;
+    const POLL_MS = 15_000;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const tick = () => {
+      if (!document.hidden) void refresh();
+      timer = setTimeout(tick, POLL_MS);
+    };
+    timer = setTimeout(tick, POLL_MS);
+    return () => {
+      if (timer) clearTimeout(timer);
+    };
+  }, [activeCombat]);
 
   async function refresh() {
     const meRes = await fetch("/api/me", { credentials: "include" });
@@ -232,20 +428,27 @@ export function App() {
     const me = (await meRes.json()) as MeResponse;
 
     let inventory: Item[] = [];
+    let inventoryArtUrl: string | null = null;
     let activeQuest: { quest: ActiveQuest; party: Character[] } | null = null;
     let recent: RecentQuest[] = [];
     let shop: ShopResponse | null = null;
     let joinable: JoinableQuest | null = null;
+    let inn: InnResponse | null = null;
+    let smithy: SmithyResponse | null = null;
     if (me.character) {
-      const [invRes, qRes, recentRes, shopRes, joinableRes] = await Promise.all([
+      const [invRes, qRes, recentRes, shopRes, joinableRes, innRes, smithyRes] = await Promise.all([
         fetch("/api/inventory", { credentials: "include" }),
         fetch("/api/quest/active", { credentials: "include" }),
         fetch("/api/quests/recent", { credentials: "include" }),
         fetch("/api/shop", { credentials: "include" }),
         fetch("/api/quest/joinable", { credentials: "include" }),
+        fetch("/api/inn", { credentials: "include" }),
+        fetch("/api/smithy", { credentials: "include" }),
       ]);
       if (invRes.ok) {
-        inventory = ((await invRes.json()) as InventoryResponse).items;
+        const body = (await invRes.json()) as InventoryResponse;
+        inventory = body.items;
+        inventoryArtUrl = body.art_url ?? null;
       }
       if (qRes.ok) {
         const body = (await qRes.json()) as ActiveQuestResponse;
@@ -281,8 +484,22 @@ export function App() {
         const body = (await joinableRes.json()) as { joinable: JoinableQuest | null };
         joinable = body.joinable;
       }
+      // Inn / Smithy gracefully degrade to null on error responses (mid-quest,
+      // no character, etc.) — UI hides those cards in that state.
+      if (innRes.ok) {
+        inn = (await innRes.json()) as InnResponse;
+      } else {
+        const body = (await innRes.json().catch(() => ({}))) as InnResponse;
+        inn = body.error ? body : null;
+      }
+      if (smithyRes.ok) {
+        smithy = (await smithyRes.json()) as SmithyResponse;
+      } else {
+        const body = (await smithyRes.json().catch(() => ({}))) as SmithyResponse;
+        smithy = body.error ? body : null;
+      }
     }
-    setState({ kind: "auth", me, inventory, activeQuest, recent, shop, joinable });
+    setState({ kind: "auth", me, inventory, inventoryArtUrl, activeQuest, recent, shop, joinable, inn, smithy });
   }
 
   async function logout() {
@@ -291,151 +508,192 @@ export function App() {
   }
 
   async function startCombat(questId: number) {
-    const res = await fetch(`/api/quest/${questId}/start_web_combat`, {
-      method: "POST",
-      credentials: "include",
-    });
-    if (!res.ok) return;
+    const { ok } = await postJson(`/api/quest/${questId}/start_web_combat`, { method: "POST" });
+    if (!ok) return;
     setCombatDismissed(false);
     setActiveCombat({ questId });
   }
 
   async function chooseDoor(questId: number, pick: number) {
-    const res = await fetch(`/api/quest/${questId}/dungeon/choose_door`, {
+    const { ok } = await postJson(`/api/quest/${questId}/dungeon/choose_door`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      credentials: "include",
       body: JSON.stringify({ pick }),
     });
-    if (res.ok) void refresh();
+    if (ok) void refresh();
   }
 
   async function trapChoose(questId: number, pick: number) {
-    const res = await fetch(`/api/quest/${questId}/dungeon/trap_choose`, {
+    const { ok } = await postJson(`/api/quest/${questId}/dungeon/trap_choose`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      credentials: "include",
       body: JSON.stringify({ pick }),
     });
-    if (res.ok) void refresh();
+    if (ok) void refresh();
   }
 
   async function lockboxChoose(questId: number, pick: number) {
-    const res = await fetch(`/api/quest/${questId}/dungeon/lockbox_choose`, {
+    const { ok } = await postJson(`/api/quest/${questId}/dungeon/lockbox_choose`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      credentials: "include",
       body: JSON.stringify({ pick }),
     });
-    if (res.ok) void refresh();
+    if (ok) void refresh();
   }
 
   async function npcChoose(questId: number, pick: number) {
-    const res = await fetch(`/api/quest/${questId}/dungeon/npc_choose`, {
+    const { ok } = await postJson(`/api/quest/${questId}/dungeon/npc_choose`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      credentials: "include",
       body: JSON.stringify({ pick }),
     });
-    if (res.ok) void refresh();
+    if (ok) void refresh();
   }
 
   async function equipItem(itemId: number) {
-    const res = await fetch(`/api/inventory/${itemId}/equip`, {
-      method: "POST",
-      credentials: "include",
-    });
-    if (res.ok) void refresh();
+    const { ok } = await postJson(`/api/inventory/${itemId}/equip`, { method: "POST" });
+    if (ok) void refresh();
   }
 
-  async function sellItem(itemId: number) {
-    const res = await fetch(`/api/inventory/${itemId}/sell`, {
-      method: "POST",
-      credentials: "include",
+  function sellItem(itemId: number) {
+    const item = state.kind === "auth" ? state.inventory.find((i) => i.id === itemId) : null;
+    if (!item) return;
+    setConfirm({
+      title: `Sell ${item.item_name}?`,
+      message: `You'll get gold (price depends on rarity). This can't be undone.`,
+      confirmLabel: "Sell",
+      destructive: true,
+      onConfirm: async () => {
+        const { ok, body } = await postJson(`/api/inventory/${itemId}/sell`, { method: "POST" });
+        if (ok) {
+          if (body && typeof body.price === "number") toast.success(`Sold for ${body.price}g.`);
+          void refresh();
+        }
+      },
     });
-    if (res.ok) void refresh();
   }
 
   async function useItem(itemId: number) {
-    const res = await fetch(`/api/inventory/${itemId}/use`, {
-      method: "POST",
-      credentials: "include",
-    });
-    if (res.ok) void refresh();
+    const { ok } = await postJson(`/api/inventory/${itemId}/use`, { method: "POST" });
+    if (ok) void refresh();
   }
 
   async function rest(kind: "short" | "long") {
-    const res = await fetch(`/api/character/rest`, {
+    const { ok, body } = await postJson(`/api/character/rest`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      credentials: "include",
       body: JSON.stringify({ kind }),
     });
-    if (res.ok) void refresh();
+    if (!ok) return;
+    if (body && typeof body.healed === "number") {
+      toast.success(`Short rest: +${body.healed} HP.`);
+    } else if (body && body.kind === "long") {
+      toast.success("Long rest: full heal.");
+    }
+    void refresh();
   }
 
   async function shopBuy(itemId: number) {
-    const res = await fetch(`/api/shop/${itemId}/buy`, {
-      method: "POST",
-      credentials: "include",
-    });
-    if (res.ok) void refresh();
+    const { ok } = await postJson(`/api/shop/${itemId}/buy`, { method: "POST" });
+    if (ok) void refresh();
   }
 
   async function shopHaggle(itemId: number) {
-    const res = await fetch(`/api/shop/${itemId}/haggle`, {
-      method: "POST",
-      credentials: "include",
+    const { ok, body } = await postJson(`/api/shop/${itemId}/haggle`, { method: "POST" });
+    if (!ok) return;
+    if (body && typeof body.flavor === "string") {
+      setHaggleResult(body as unknown as HaggleResult);
+    }
+    void refresh();
+  }
+
+  async function innStay(roomId: string) {
+    const { ok, body } = await postJson(`/api/inn/${roomId}/stay`, { method: "POST" });
+    if (!ok) return;
+    if (body) {
+      const parts: string[] = [];
+      if (typeof body.hp_gained === "number" && body.hp_gained > 0) parts.push(`+${body.hp_gained} HP`);
+      if (typeof body.mana_gained === "number" && body.mana_gained > 0) parts.push(`+${body.mana_gained} mana`);
+      if (parts.length > 0) toast.success(`Inn rest: ${parts.join(", ")}.`);
+    }
+    void refresh();
+  }
+
+  async function smithySharpen(itemId: number, itemName: string, cost: number, verb: string) {
+    setConfirm({
+      title: `${verb} ${itemName}?`,
+      message: `Pay ${cost}g to apply one level of ${verb.toLowerCase()}.`,
+      confirmLabel: verb,
+      onConfirm: async () => {
+        const { ok, body } = await postJson(`/api/smithy/${itemId}/sharpen`, { method: "POST" });
+        if (!ok) return;
+        if (body && body.item && typeof body.item === "object") {
+          const item = body.item as { new_power: number; old_power: number };
+          toast.success(`${verb}d to +${item.new_power} (was +${item.old_power}).`);
+        }
+        void refresh();
+      },
     });
-    if (res.ok) void refresh();
+  }
+
+  async function shopBuyStaple(stapleId: string) {
+    const { ok, body } = await postJson(`/api/shop/staple/${stapleId}/buy`, { method: "POST" });
+    if (!ok) return;
+    if (body && typeof body.paid === "number") {
+      toast.success(`Bought for ${body.paid}g.`);
+    }
+    void refresh();
+  }
+
+  function sellKeyConfirmed(tier: "bronze" | "silver" | "gold") {
+    setConfirm({
+      title: `Sell a ${tier} key?`,
+      message: `Trades one ${tier} key for gold.`,
+      confirmLabel: "Sell key",
+      destructive: true,
+      onConfirm: () => { void sellKey(tier); },
+    });
   }
 
   async function sellKey(tier: "bronze" | "silver" | "gold") {
-    const res = await fetch(`/api/keys/sell`, {
+    const { ok } = await postJson(`/api/keys/sell`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      credentials: "include",
       body: JSON.stringify({ tier }),
     });
-    if (res.ok) void refresh();
+    if (ok) void refresh();
   }
 
   async function transmuteKey(fromTier: "bronze" | "silver") {
-    const res = await fetch(`/api/keys/transmute`, {
+    const { ok } = await postJson(`/api/keys/transmute`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      credentials: "include",
       body: JSON.stringify({ from_tier: fromTier }),
     });
-    if (res.ok) void refresh();
+    if (ok) void refresh();
   }
 
   async function joinQuest() {
-    const res = await fetch(`/api/quest/join`, {
-      method: "POST",
-      credentials: "include",
-    });
-    if (res.ok) void refresh();
+    const { ok } = await postJson(`/api/quest/join`, { method: "POST" });
+    if (ok) void refresh();
   }
 
   async function startQuest(variant: "standard" | "boss" | "gauntlet", elite: boolean) {
-    const res = await fetch(`/api/quest/start`, {
+    const { ok } = await postJson(`/api/quest/start`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      credentials: "include",
       body: JSON.stringify({ variant, elite }),
     });
-    if (res.ok) void refresh();
+    if (ok) void refresh();
   }
 
   async function treasureTake(questId: number, pick: number) {
-    const res = await fetch(`/api/quest/${questId}/dungeon/treasure_take`, {
+    const { ok } = await postJson(`/api/quest/${questId}/dungeon/treasure_take`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      credentials: "include",
       body: JSON.stringify({ pick }),
     });
-    if (res.ok) void refresh();
+    if (ok) void refresh();
   }
 
   if (state.kind === "loading") return <Centered>Loading…</Centered>;
@@ -457,63 +715,86 @@ export function App() {
   }
   return (
     <Centered>
-      <Stack>
-        {!state.activeQuest && state.joinable && (
-          <JoinableQuestCard joinable={state.joinable} onJoin={joinQuest} />
-        )}
-        {!state.activeQuest && !state.joinable && state.me.character && (
-          <StartQuestCard
-            characterLevel={state.me.character.level}
-            onStart={startQuest}
-          />
-        )}
-        {state.activeQuest && (
-          <ActiveQuestCard
-            quest={state.activeQuest.quest}
-            party={state.activeQuest.party}
-            selfId={state.me.slack_user_id}
-            combatInProgress={hasWebCombat}
-            onStartCombat={() => startCombat(state.activeQuest!.quest.id)}
-            onChooseDoor={(pick) => chooseDoor(state.activeQuest!.quest.id, pick)}
-            onTrapChoose={(pick) => trapChoose(state.activeQuest!.quest.id, pick)}
-            onLockboxChoose={(pick) => lockboxChoose(state.activeQuest!.quest.id, pick)}
-            onNpcChoose={(pick) => npcChoose(state.activeQuest!.quest.id, pick)}
-            onTreasureTake={(pick) => treasureTake(state.activeQuest!.quest.id, pick)}
-            myKeys={state.me.character ? {
-              bronze: state.me.character.keys_bronze,
-              silver: state.me.character.keys_silver,
-              gold: state.me.character.keys_gold,
-            } : null}
-          />
-        )}
-        <CharacterCard
-          me={state.me}
-          inQuest={!!state.activeQuest}
-          onRest={rest}
-          onSellKey={sellKey}
-          onTransmuteKey={transmuteKey}
-        />
-        {state.me.character && (
-          <InventoryCard
-            items={state.inventory}
-            inQuest={!!state.activeQuest}
-            onEquip={equipItem}
-            onSell={sellItem}
-            onUse={useItem}
-          />
-        )}
-        {state.me.character && state.shop && !state.activeQuest && (
-          <ShopCard
-            shop={state.shop}
-            onBuy={shopBuy}
-            onHaggle={shopHaggle}
-          />
-        )}
-        {state.me.character && state.recent.length > 0 && (
-          <RecentQuestsCard quests={state.recent} />
-        )}
-        <SignOutRow onLogout={logout} />
-      </Stack>
+      <DashboardLayout
+        main={
+          <>
+            {!state.activeQuest && state.joinable && (
+              <JoinableQuestCard joinable={state.joinable} onJoin={joinQuest} />
+            )}
+            {!state.activeQuest && !state.joinable && state.me.character && (
+              <StartQuestCard
+                characterLevel={state.me.character.level}
+                onStart={startQuest}
+              />
+            )}
+            {state.activeQuest && (
+              <ActiveQuestCard
+                quest={state.activeQuest.quest}
+                party={state.activeQuest.party}
+                selfId={state.me.slack_user_id}
+                combatInProgress={hasWebCombat}
+                onStartCombat={() => startCombat(state.activeQuest!.quest.id)}
+                onChooseDoor={(pick) => chooseDoor(state.activeQuest!.quest.id, pick)}
+                onTrapChoose={(pick) => trapChoose(state.activeQuest!.quest.id, pick)}
+                onLockboxChoose={(pick) => lockboxChoose(state.activeQuest!.quest.id, pick)}
+                onNpcChoose={(pick) => npcChoose(state.activeQuest!.quest.id, pick)}
+                onTreasureTake={(pick) => treasureTake(state.activeQuest!.quest.id, pick)}
+                myKeys={state.me.character ? {
+                  bronze: state.me.character.keys_bronze,
+                  silver: state.me.character.keys_silver,
+                  gold: state.me.character.keys_gold,
+                } : null}
+              />
+            )}
+            {state.me.character && state.shop && !state.activeQuest && (
+              <ShopCard
+                shop={state.shop}
+                onBuy={shopBuy}
+                onHaggle={shopHaggle}
+                onBuyStaple={shopBuyStaple}
+              />
+            )}
+            {state.me.character && state.inn && !state.activeQuest && (
+              <InnCard inn={state.inn} onStay={innStay} />
+            )}
+            {state.me.character && state.smithy && !state.activeQuest && (
+              <SmithyCard smithy={state.smithy} onSharpen={smithySharpen} />
+            )}
+            {state.me.character && state.recent.length > 0 && (
+              <RecentQuestsCard quests={state.recent} />
+            )}
+          </>
+        }
+        side={
+          <>
+            <CharacterCard
+              me={state.me}
+              inventory={state.inventory}
+              inQuest={!!state.activeQuest}
+              onRest={rest}
+              onSellKey={sellKeyConfirmed}
+              onTransmuteKey={transmuteKey}
+            />
+            {state.me.character && (
+              <InventoryCard
+                items={state.inventory}
+                inQuest={!!state.activeQuest}
+                artUrl={state.inventoryArtUrl}
+                onEquip={equipItem}
+                onSell={sellItem}
+                onUse={useItem}
+              />
+            )}
+          </>
+        }
+        footer={<SignOutRow onLogout={logout} />}
+      />
+      {haggleResult && (
+        <HaggleResultDialog result={haggleResult} onClose={() => setHaggleResult(null)} />
+      )}
+      {confirm && (
+        <ConfirmDialog request={confirm} onClose={() => setConfirm(null)} />
+      )}
     </Centered>
   );
 }
@@ -545,7 +826,7 @@ function Login({ onSuccess }: { onSuccess: () => void }) {
     const body = (await res.json().catch(() => ({}))) as { error?: string };
     setError(
       body.error === "invalid_or_expired"
-        ? "Invalid or expired code. Run /sq web-login in Slack for a new one."
+        ? "Invalid or expired code. Run /gq web-login in Slack for a new one."
         : "Couldn't verify. Try again.",
     );
   }
@@ -553,9 +834,9 @@ function Login({ onSuccess }: { onSuccess: () => void }) {
   return (
     <Centered>
       <div style={card}>
-        <h1 style={h1}>Slack Quest</h1>
+        <h1 style={h1}>Gantt Quest™</h1>
         <p style={muted}>
-          Run <code style={kbd}>/sq web-login</code> in Slack to get a 6-digit
+          Run <code style={kbd}>/gq web-login</code> in Slack to get a 6-digit
           code, then paste it below.
         </p>
         <form onSubmit={submit}>
@@ -640,7 +921,7 @@ function StartQuestCard({
             color: "#86efac",
           }}
         >
-          {pending === "standard" ? "Rolling…" : "⚔ Standard"}
+          {pending === "standard" ? "Rolling…" : <><Icon name="sword" /> Standard</>}
         </button>
         <button
           onClick={() => go("boss")}
@@ -655,7 +936,7 @@ function StartQuestCard({
           }}
           title={bossAllowed ? "Climactic single foe" : "Requires character level 3"}
         >
-          {pending === "boss" ? "Rolling…" : bossAllowed ? "👑 Boss" : "👑 Boss (need L3)"}
+          {pending === "boss" ? "Rolling…" : <><Icon name="crown" /> {bossAllowed ? "Boss" : "Boss (need L3)"}</>}
         </button>
         <button
           onClick={() => go("gauntlet")}
@@ -672,9 +953,7 @@ function StartQuestCard({
         >
           {pending === "gauntlet"
             ? "Rolling…"
-            : gauntletAllowed
-              ? "⚔ Gauntlet"
-              : "⚔ Gauntlet (need L5)"}
+            : <><Icon name="crossed-swords" /> {gauntletAllowed ? "Gauntlet" : "Gauntlet (need L5)"}</>}
         </button>
       </div>
     </div>
@@ -705,7 +984,7 @@ function JoinableQuestCard({
         onClick={onJoin}
         style={{ ...button, marginTop: 16, background: "#1f2a3a", color: "#7dd3fc" }}
       >
-        🛡 Join the fight
+        <Icon name="shield" /> Join the fight
       </button>
       <p style={{ ...muted, fontSize: 11, marginTop: 8 }}>
         Monster max HP scales by 40% for the joiner. Your mana refills on join.
@@ -741,6 +1020,9 @@ function ActiveQuestCard({
 }) {
   const s = quest.scene;
   const variant = s.variant ?? "standard";
+  const [inspected, setInspected] = useState<Character | null>(null);
+  const selfMember = party.find((p) => p.slack_user_id === selfId) ?? null;
+  const otherParty = party.filter((p) => p.slack_user_id !== selfId);
 
   return (
     <div style={{ ...card, borderColor: "#b89b3a", borderWidth: 1 }}>
@@ -759,6 +1041,21 @@ function ActiveQuestCard({
       </div>
 
       <div style={{ marginTop: 16 }}>
+        {s.monster_art_url && (
+          <img
+            src={s.monster_art_url}
+            alt={s.monster_name}
+            style={{
+              width: "100%",
+              maxHeight: 280,
+              objectFit: "cover",
+              display: "block",
+              borderRadius: 8,
+              marginBottom: 12,
+            }}
+            onError={(e) => { e.currentTarget.style.display = "none"; }}
+          />
+        )}
         <div
           style={{
             display: "flex",
@@ -804,14 +1101,48 @@ function ActiveQuestCard({
               marginBottom: 8,
             }}
           >
-            Party ({party.length})
+            Party
           </div>
           <div style={{ display: "grid", gap: 8 }}>
-            {party.map((p) => (
-              <PartyMember key={p.slack_user_id} fighter={p} self={p.slack_user_id === selfId} />
-            ))}
+            {selfMember && (
+              <PartyMember
+                fighter={selfMember}
+                self={true}
+              />
+            )}
+            {otherParty.length > 0 && (
+              <div style={{ marginTop: 12 }}>
+                <div
+                  style={{
+                    ...muted,
+                    fontSize: 11,
+                    textTransform: "uppercase",
+                    letterSpacing: 1.5,
+                    marginBottom: 6,
+                  }}
+                >
+                  Other players ({otherParty.length})
+                </div>
+                <div style={{ display: "grid", gap: 8 }}>
+                  {otherParty.map((p) => (
+                    <PartyMember
+                      key={p.slack_user_id}
+                      fighter={p}
+                      self={false}
+                      onInspect={() => setInspected(p)}
+                    />
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         </div>
+      )}
+      {inspected && (
+        <CharacterInspectDialog
+          character={inspected}
+          onClose={() => setInspected(null)}
+        />
       )}
       {(() => {
         const currentNode = s.expedition?.nodes[s.expedition.current];
@@ -863,7 +1194,7 @@ function ActiveQuestCard({
               onClick={onStartCombat}
               style={{ ...button, marginTop: 20, background: "#b89b3a", color: "#0e0f12" }}
             >
-              {combatInProgress ? "⚔ Resume Web Combat" : "⚔ Open Web Combat"}
+              <Icon name="sword" /> {combatInProgress ? "Resume Combat" : "Open Combat"}
             </button>
           );
         }
@@ -871,7 +1202,7 @@ function ActiveQuestCard({
           return (
             <p style={{ ...muted, fontSize: 13, marginTop: 20 }}>
               Current room: <strong>{currentNode?.type ?? "?"}</strong> — resolve in Slack with{" "}
-              <code style={kbd}>/sq choose</code> or <code style={kbd}>/sq take</code>.
+              <code style={kbd}>/gq choose</code> or <code style={kbd}>/gq take</code>.
             </p>
           );
         }
@@ -901,7 +1232,7 @@ function TrapPicker({
           marginBottom: 8,
         }}
       >
-        🪤 Trap — choose your approach
+        <Icon name="bear-trap" /> Trap — choose your approach
       </div>
       <div style={{ display: "grid", gap: 8 }}>
         {choices.map((c, i) => (
@@ -937,7 +1268,7 @@ function TrapPicker({
 }
 
 const KEY_RANK: Record<KeyTier, number> = { bronze: 0, silver: 1, gold: 2 };
-const KEY_EMOJI: Record<KeyTier, string> = { bronze: "🥉", silver: "🥈", gold: "🥇" };
+const KEY_LABEL: Record<KeyTier, string> = { bronze: "bronze", silver: "silver", gold: "gold" };
 
 function hasMatchingKey(
   myKeys: { bronze: number; silver: number; gold: number } | null,
@@ -974,7 +1305,7 @@ function LockboxPicker({
           marginBottom: 8,
         }}
       >
-        📦 Lockbox — {KEY_EMOJI[lockTier]} {lockTier} lock {canUnlock ? "(you have a key)" : "(no matching key)"}
+        <Icon name="cubes" /> Lockbox — <KeyIcon tier={lockTier} /> {KEY_LABEL[lockTier]} lock {canUnlock ? "(you have a key)" : "(no matching key)"}
       </div>
       <div style={{ display: "grid", gap: 8 }}>
         {options.map((opt, i) => (
@@ -1043,7 +1374,7 @@ function TreasurePicker({
           marginBottom: 8,
         }}
       >
-        💰 Treasure — pick one. Sealing the dungeon.
+        <Icon name="gold-bar" /> Treasure — pick one. Sealing the dungeon.
       </div>
       <div style={{ display: "grid", gap: 8 }}>
         {options.map((opt, i) => (
@@ -1094,7 +1425,7 @@ function NpcPicker({ npc, onPick }: { npc: NpcOffer; onPick: (pick: number) => v
           marginBottom: 8,
         }}
       >
-        🧙 Stranger
+        <Icon name="hood" /> Stranger
       </div>
       <p style={{ ...muted, fontSize: 13, fontStyle: "italic", marginBottom: 8 }}>
         “{npc.greeting}”
@@ -1136,13 +1467,14 @@ function NpcPicker({ npc, onPick }: { npc: NpcOffer; onPick: (pick: number) => v
   );
 }
 
+// ra-* icon names for dungeon room types, rendered via <Icon name={...}>.
 const ROOM_TYPE_ICON: Record<ExpeditionNodeType, string> = {
-  combat: "⚔️",
-  trap: "🪤",
-  lockbox: "📦",
-  npc: "🧙",
-  treasure: "💰",
-  merchant: "🏪",
+  combat: "sword",
+  trap: "bear-trap",
+  lockbox: "cubes",
+  npc: "crystal-wand",
+  treasure: "gold-bar",
+  merchant: "gem-pendant",
 };
 
 function DoorPicker({
@@ -1182,7 +1514,7 @@ function DoorPicker({
             }}
           >
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <span style={{ fontSize: 20 }}>{ROOM_TYPE_ICON[node.type]}</span>
+              <Icon name={ROOM_TYPE_ICON[node.type]} size={20} color="#cbd5e1" />
               <span style={{ fontWeight: 600, textTransform: "capitalize" }}>{node.type}</span>
               {node.type === "combat" && node.monster_name && (
                 <span style={{ ...muted, fontSize: 12 }}>· {node.monster_name}</span>
@@ -1200,7 +1532,7 @@ function DoorPicker({
   );
 }
 
-function PartyMember({ fighter, self }: { fighter: Character; self: boolean }) {
+function PartyMember({ fighter, self, onInspect }: { fighter: Character; self: boolean; onInspect?: () => void }) {
   const downed =
     fighter.downed_until !== null && fighter.downed_until > Date.now();
   return (
@@ -1222,10 +1554,13 @@ function PartyMember({ fighter, self }: { fighter: Character; self: boolean }) {
           flexWrap: "wrap",
         }}
       >
-        <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+        <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
           <span style={{ fontWeight: 600, color: "#f5f5f5", fontSize: 15 }}>
             {fighter.name}
           </span>
+          {fighter.slack_username && (
+            <span style={{ fontSize: 12, color: "#7dd3fc" }}>@{fighter.slack_username}</span>
+          )}
           <span style={{ ...muted, fontSize: 12 }}>
             {fighter.class} • Lv {fighter.level}
           </span>
@@ -1250,6 +1585,152 @@ function PartyMember({ fighter, self }: { fighter: Character; self: boolean }) {
           <ManaBar current={fighter.mana} max={fighter.max_mana} />
         </div>
       )}
+      {!self && onInspect && (
+        <div style={{ marginTop: 12, display: "flex", justifyContent: "flex-end" }}>
+          <button
+            onClick={onInspect}
+            style={{
+              ...button,
+              padding: "8px 10px",
+              fontSize: 12,
+              background: "#1f2a3a",
+              color: "#7dd3fc",
+              borderRadius: 6,
+            }}
+          >
+            Inspect
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CharacterInspectDialog({
+  character,
+  onClose,
+}: {
+  character: Character;
+  onClose: () => void;
+}) {
+  const isDowned = character.downed_until !== null && character.downed_until > Date.now();
+  return (
+    <div
+      style={{
+        position: "fixed",
+        inset: 0,
+        background: "rgba(0, 0, 0, 0.78)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: 20,
+        zIndex: 999,
+      }}
+      role="dialog"
+      aria-modal="true"
+    >
+      <div
+        style={{
+          width: "min(760px, 100%)",
+          maxHeight: "calc(100vh - 40px)",
+          overflowY: "auto",
+          background: "#111214",
+          border: "1px solid #2a2d33",
+          borderRadius: 16,
+          padding: 22,
+          boxShadow: "0 18px 60px rgba(0,0,0,0.45)",
+        }}
+      >
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 12,
+            flexWrap: "wrap",
+            marginBottom: 18,
+          }}
+        >
+          <div>
+            <h2 style={h2}>Inspect {character.name}</h2>
+            <p style={{ ...muted, margin: 0 }}>
+              {character.class} • Lv {character.level} • {character.xp} XP
+              {character.slack_username ? ` • @${character.slack_username}` : ""}
+            </p>
+          </div>
+          <button
+            onClick={onClose}
+            style={{
+              ...button,
+              background: "#1f2a3a",
+              color: "#cbd5e1",
+              padding: "10px 14px",
+            }}
+          >
+            Close
+          </button>
+        </div>
+
+        <Stats>
+          <Stat
+            label="HP"
+            icon={<Icon name="health-increase" color="#86efac" size={14} />}
+            value={
+              <span style={{ display: "inline-flex", alignItems: "baseline", gap: 6 }}>
+                {character.hp} / {character.max_hp}
+                {character.shield > 0 && (
+                  <span
+                    title="Temporary shield buffer (absorbs damage before HP)."
+                    style={{ fontSize: 12, color: "#7dd3fc", fontWeight: 500 }}
+                  >
+                    +{character.shield} <Icon name="shield" size={12} />
+                  </span>
+                )}
+              </span>
+            }
+          />
+          <Stat
+            label="Mana"
+            icon={<Icon name="crystal-ball" color="#a78bfa" size={14} />}
+            value={`${character.mana} / ${character.max_mana}`}
+          />
+          <Stat
+            label="Position"
+            icon={<Icon name="flag" color="#fbbf24" size={14} />}
+            value={character.position}
+          />
+          <Stat
+            label="Scars"
+            icon={<Icon name="death-skull" color="#ef4444" size={14} />}
+            value={
+              <span title={character.scars.length > 0 ? character.scars.join(", ") : undefined}>
+                {character.scars.length}
+              </span>
+            }
+          />
+          <Stat
+            label="Keys"
+            icon={<Icon name="key" color="#d1d5db" size={14} />}
+            value={
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                <KeyIcon tier="bronze" size={16} /> {character.keys_bronze}
+                <KeyIcon tier="silver" size={16} /> {character.keys_silver}
+                <KeyIcon tier="gold" size={16} /> {character.keys_gold}
+              </span>
+            }
+          />
+          <Stat
+            label="Gold"
+            icon={<Icon name="gold-bar" color="#fbbf24" size={14} />}
+            value={character.gold.toString()}
+          />
+          <Stat
+            label="Status"
+            icon={<Icon name="shield" color="#7dd3fc" size={14} />}
+            value={isDowned ? "Downed" : "Ready"}
+          />
+        </Stats>
+      </div>
     </div>
   );
 }
@@ -1349,7 +1830,7 @@ function EffectChips({ effects }: { effects: StatusEffect[] }) {
             borderColor: EFFECT_COLOR[eff.type] + "55",
           }}
         >
-          {EFFECT_ICON[eff.type]} {eff.type} {eff.remaining}t
+          <Icon name={EFFECT_ICON[eff.type]} color={EFFECT_COLOR[eff.type]} /> {eff.type} {eff.remaining}t
         </span>
       ))}
     </div>
@@ -1377,12 +1858,14 @@ function PositionBadge({ position }: { position: "front" | "back" }) {
 
 function CharacterCard({
   me,
+  inventory,
   inQuest,
   onRest,
   onSellKey,
   onTransmuteKey,
 }: {
   me: MeResponse;
+  inventory: Item[];
   inQuest: boolean;
   onRest: (kind: "short" | "long") => void;
   onSellKey: (tier: "bronze" | "silver" | "gold") => void;
@@ -1394,7 +1877,7 @@ function CharacterCard({
       <div style={card}>
         <h1 style={h1}>No character yet</h1>
         <p style={muted}>
-          Roll one up in Slack with <code style={kbd}>/sq quest</code>, then
+          Roll one up in Slack with <code style={kbd}>/gq quest</code>, then
           reload here.
         </p>
       </div>
@@ -1402,22 +1885,116 @@ function CharacterCard({
   }
   const fullyRecovered = c.hp >= c.max_hp && c.mana >= c.max_mana;
   const downed = c.downed_until !== null && c.downed_until > Date.now();
+  const equippedArmor = inventory.find((i) => i.item_type === "armor" && i.equipped);
+  const armorPower = equippedArmor?.power ?? 0;
   const restDisabled = inQuest || downed || fullyRecovered;
+  const portrait = me.class_art_url;
   return (
     <div style={card}>
-      <h1 style={h1}>{c.name}</h1>
-      <p style={muted}>
-        {c.class} • Lv {c.level} • {c.xp} XP
-      </p>
+      <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 4 }}>
+        {portrait ? (
+          <img
+            src={portrait}
+            alt={`${c.class} portrait`}
+            style={{
+              width: 72,
+              height: 72,
+              borderRadius: 8,
+              objectFit: "cover",
+              border: "1px solid #2a2d33",
+              flexShrink: 0,
+            }}
+            onError={(e) => { e.currentTarget.style.display = "none"; }}
+          />
+        ) : (
+          <div
+            style={{
+              width: 72,
+              height: 72,
+              borderRadius: 8,
+              background: "#1d1f23",
+              border: "1px solid #2a2d33",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              flexShrink: 0,
+            }}
+          >
+            <Icon name="player" size={36} color="#6a7080" />
+          </div>
+        )}
+        <div style={{ minWidth: 0 }}>
+          <h1 style={{ ...h1, margin: 0 }}>{c.name}</h1>
+          {c.slack_username && (
+            <p style={{ ...muted, margin: "2px 0 0", fontSize: 12, color: "#7dd3fc" }}>
+              @{c.slack_username}
+            </p>
+          )}
+          <p style={{ ...muted, margin: "4px 0 0" }}>
+            {c.class} • Lv {c.level} • {c.xp} XP
+          </p>
+        </div>
+      </div>
       <Stats>
-        <Stat label="HP" value={`${c.hp} / ${c.max_hp}`} />
-        <Stat label="Mana" value={`${c.mana} / ${c.max_mana}`} />
-        <Stat label="Shield" value={c.shield.toString()} />
-        <Stat label="Gold" value={c.gold.toString()} />
-        <Stat label="Scars" value={c.scars.length.toString()} />
+        <Stat
+          label="HP"
+          icon={<Icon name="health-increase" color="#86efac" size={14} />}
+          value={
+            <span style={{ display: "inline-flex", alignItems: "baseline", gap: 6 }}>
+              {c.hp} / {c.max_hp}
+              {c.shield > 0 && (
+                <span
+                  title="Temporary shield buffer (absorbs damage before HP). Set by /sq shield casts; clears at quest end."
+                  style={{ fontSize: 12, color: "#7dd3fc", fontWeight: 500 }}
+                >
+                  +{c.shield} <Icon name="shield" size={12} />
+                </span>
+              )}
+            </span>
+          }
+        />
+        <Stat
+          label="Mana"
+          icon={<Icon name="crystal-ball" color="#a78bfa" size={14} />}
+          value={`${c.mana} / ${c.max_mana}`}
+        />
+        <Stat
+          label="Armor"
+          icon={<Icon name="shield" color="#9ca3af" size={14} />}
+          value={
+            <span
+              title={armorPower > 0
+                ? `Equipped armor: reduces incoming damage by floor(${armorPower}/2) = ${Math.floor(armorPower / 2)}.`
+                : "No armor equipped."}
+            >
+              {armorPower > 0 ? `+${armorPower}` : <span style={muted}>—</span>}
+            </span>
+          }
+        />
+        <Stat
+          label="Gold"
+          icon={<Icon name="gold-bar" color="#fbbf24" size={14} />}
+          value={c.gold.toString()}
+        />
+        <Stat
+          label="Scars"
+          icon={<Icon name="death-skull" color="#ef4444" size={14} />}
+          value={
+            <span title={c.scars.length > 0 ? c.scars.join(", ") : undefined}>
+              {c.scars.length.toString()}
+            </span>
+          }
+        />
         <Stat
           label="Keys"
-          value={`🥉${c.keys_bronze} 🥈${c.keys_silver} 🥇${c.keys_gold}`}
+          icon={<Icon name="key" color="#d1d5db" size={14} />}
+          value={
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+              <KeyIcon tier="bronze" size={16} /> {c.keys_bronze}
+              <KeyIcon tier="silver" size={16} /> {c.keys_silver}
+              <KeyIcon tier="gold" size={16} /> {c.keys_gold}
+            </span>
+          }
         />
       </Stats>
       <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
@@ -1426,14 +2003,14 @@ function CharacterCard({
           disabled={restDisabled}
           style={smallActionBtn(restDisabled ? "#2a2d33" : "#1f3a1f", restDisabled ? "#6a7080" : "#86efac")}
         >
-          🛏 Short rest
+          <Icon name="campfire" /> Short rest
         </button>
         <button
           onClick={() => onRest("long")}
           disabled={restDisabled}
           style={smallActionBtn(restDisabled ? "#2a2d33" : "#1f2a3a", restDisabled ? "#6a7080" : "#7dd3fc")}
         >
-          🛌 Long rest
+          <Icon name="moon-sun" /> Long rest
         </button>
       </div>
       {downed && (
@@ -1486,7 +2063,7 @@ function KeyActions({
               key={tier}
               style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13 }}
             >
-              <span style={{ fontSize: 16 }}>{KEY_EMOJI[tier]}</span>
+              <KeyIcon tier={tier} size={16} />
               <span style={{ fontWeight: 600, color: "#f5f5f5" }}>{count}</span>
               <span style={{ ...muted, fontSize: 12, flex: 1 }}>{tier}</span>
               <button onClick={() => onSellKey(tier)} style={smallActionBtn("#33363d", "#e6e6e6")}>
@@ -1512,15 +2089,49 @@ function KeyActions({
   );
 }
 
+// Lazy AI-generated banner. `src` may be null on first miss (flux gen kicked
+// off via ctx.waitUntil server-side); the next dashboard poll picks up the
+// real URL. Null → nothing rendered.
+function Banner({ src, alt }: { src: string | null | undefined; alt: string }) {
+  if (!src) return null;
+  return (
+    <div
+      style={{
+        width: "calc(100% + 32px)",
+        margin: "-16px -16px 12px",
+        // 3:2 aspect ratio — on a ~360px-wide card that lands ~240px tall;
+        // scales naturally on wider/narrower viewports. Replaces the old
+        // fixed 120px-tall strip which read as a header band.
+        aspectRatio: "3 / 2",
+        overflow: "hidden",
+        borderRadius: "8px 8px 0 0",
+      }}
+    >
+      <img
+        src={src}
+        alt={alt}
+        loading="lazy"
+        style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+        onError={(e) => {
+          // Hide on 404 / failure so the card doesn't show a broken-image icon.
+          (e.currentTarget.parentElement as HTMLDivElement).style.display = "none";
+        }}
+      />
+    </div>
+  );
+}
+
 function InventoryCard({
   items,
   inQuest,
+  artUrl,
   onEquip,
   onSell,
   onUse,
 }: {
   items: Item[];
   inQuest: boolean;
+  artUrl: string | null;
   onEquip: (itemId: number) => void;
   onSell: (itemId: number) => void;
   onUse: (itemId: number) => void;
@@ -1528,6 +2139,7 @@ function InventoryCard({
   if (items.length === 0) {
     return (
       <div style={card}>
+        <Banner src={artUrl} alt="Inventory" />
         <h2 style={h2}>Inventory</h2>
         <p style={muted}>Empty. Win a quest or visit the shop in Slack.</p>
       </div>
@@ -1540,6 +2152,7 @@ function InventoryCard({
 
   return (
     <div style={card}>
+      <Banner src={artUrl} alt="Inventory" />
       <h2 style={h2}>Inventory</h2>
       {inQuest && (
         <p style={{ ...muted, fontSize: 12, marginTop: 8 }}>
@@ -1602,6 +2215,7 @@ function ItemRow({
   onSell: (itemId: number) => void;
   onUse: (itemId: number) => void;
 }) {
+  const [showInfo, setShowInfo] = useState(false);
   const canEquip =
     !item.equipped &&
     item.item_type !== "consumable" &&
@@ -1624,13 +2238,16 @@ function ItemRow({
       }}
     >
       <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-        <div style={{ fontSize: 24, lineHeight: 1 }}>{ITEM_TYPE_ICON[item.item_type]}</div>
+        <Icon name={ITEM_TYPE_ICON[item.item_type]} size={24} color="#cbd5e1" />
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
             <div style={{ fontWeight: 600, color: "#f5f5f5", fontSize: 15 }}>{item.item_name}</div>
             <RarityBadge rarity={item.rarity} />
             {item.item_type === "weapon" && item.weapon_range === "ranged" && (
               <SmallBadge>ranged</SmallBadge>
+            )}
+            {item.item_type === "weapon" && item.weapon_range === "focus" && (
+              <SmallBadge>focus</SmallBadge>
             )}
           </div>
           {item.flavor && (
@@ -1643,25 +2260,45 @@ function ItemRow({
           +{item.power}
         </div>
       </div>
-      {(canEquip || canSell || canUse) && (
-        <div style={{ display: "flex", gap: 6, marginTop: 8, justifyContent: "flex-end" }}>
-          {canEquip && (
-            <button onClick={() => onEquip(item.id)} style={smallActionBtn("#1f3a1f", "#86efac")}>
-              Equip
-            </button>
-          )}
-          {canUse && (
-            <button onClick={() => onUse(item.id)} style={smallActionBtn("#1f2a3a", "#7dd3fc")}>
-              Use
-            </button>
-          )}
-          {canSell && (
-            <button onClick={() => onSell(item.id)} style={smallActionBtn("#33363d", "#e6e6e6")}>
-              Sell
-            </button>
-          )}
+      {showInfo && (
+        <div
+          style={{
+            marginTop: 8,
+            padding: "8px 10px",
+            background: "#0e0f12",
+            borderRadius: 6,
+            border: "1px solid #2a2d33",
+            color: "#cbd5e1",
+            fontSize: 12,
+          }}
+        >
+          {describeItemEffect(item)}
         </div>
       )}
+      <div style={{ display: "flex", gap: 6, marginTop: 8, justifyContent: "flex-end" }}>
+        <button
+          onClick={() => setShowInfo((v) => !v)}
+          style={smallActionBtn("#222428", "#cbd5e1")}
+          aria-expanded={showInfo}
+        >
+          {showInfo ? "Hide" : "Info"}
+        </button>
+        {canEquip && (
+          <button onClick={() => onEquip(item.id)} style={smallActionBtn("#1f3a1f", "#86efac")}>
+            Equip
+          </button>
+        )}
+        {canUse && (
+          <button onClick={() => onUse(item.id)} style={smallActionBtn("#1f2a3a", "#7dd3fc")}>
+            Use
+          </button>
+        )}
+        {canSell && (
+          <button onClick={() => onSell(item.id)} style={smallActionBtn("#33363d", "#e6e6e6")}>
+            Sell
+          </button>
+        )}
+      </div>
     </div>
   );
 }
@@ -1722,14 +2359,17 @@ function ShopCard({
   shop,
   onBuy,
   onHaggle,
+  onBuyStaple,
 }: {
   shop: ShopResponse;
   onBuy: (id: number) => void;
   onHaggle: (id: number) => void;
+  onBuyStaple: (id: string) => void;
 }) {
   if (shop.error === "mid_quest") {
     return (
       <div style={card}>
+        <Banner src={shop.art_url ?? null} alt="Shop" />
         <h2 style={h2}>Shop</h2>
         <p style={muted}>The shopkeep is afraid of monsters. Finish the quest first.</p>
       </div>
@@ -1738,6 +2378,7 @@ function ShopCard({
   if (shop.error === "no_channel" || !shop.channel_id) {
     return (
       <div style={card}>
+        <Banner src={shop.art_url ?? null} alt="Shop" />
         <h2 style={h2}>Shop</h2>
         <p style={muted}>
           No shop channel yet — start a quest in Slack first so we know which channel's shop to show.
@@ -1748,10 +2389,15 @@ function ShopCard({
   if (shop.needs_restock) {
     return (
       <div style={card}>
+        <Banner src={shop.art_url ?? null} alt="Shop" />
         <h2 style={h2}>Shop</h2>
         <p style={muted}>
-          Stock is dry. Run <code style={kbd}>/sq shop</code> in Slack to kick off a restock, then refresh here.
+          Rolled stock is dry. Run <code style={kbd}>/gq shop</code> in Slack to kick off a restock,
+          then refresh here. Staples are still available below.
         </p>
+        {shop.staples && shop.staples.length > 0 && (
+          <StaplesSection staples={shop.staples} gold={shop.gold} onBuyStaple={onBuyStaple} />
+        )}
       </div>
     );
   }
@@ -1783,6 +2429,67 @@ function ShopCard({
         Haggle is a free action (per item, once per cycle). Bards / Sages / Rogues get a
         bonus on the d6.
       </p>
+      {shop.staples && shop.staples.length > 0 && (
+        <StaplesSection staples={shop.staples} gold={shop.gold} onBuyStaple={onBuyStaple} />
+      )}
+    </div>
+  );
+}
+
+// Always-in-stock potions — fixed prices, no buy cap, no haggle. Mirrors the
+// slack "🧺 Always in stock" section. Buy buttons gate on gold balance.
+function StaplesSection({
+  staples,
+  gold,
+  onBuyStaple,
+}: {
+  staples: StapleItem[];
+  gold: number;
+  onBuyStaple: (id: string) => void;
+}) {
+  return (
+    <div style={{ marginTop: 20 }}>
+      <div style={{ ...muted, fontSize: 11, textTransform: "uppercase", letterSpacing: 1.5, marginBottom: 8 }}>
+        <Icon name="bubbling-potion" /> Always in stock
+      </div>
+      <div style={{ display: "grid", gap: 8 }}>
+        {staples.map((s) => {
+          const canAfford = gold >= s.price;
+          return (
+            <div
+              key={s.id}
+              style={{
+                padding: 12,
+                background: "#1d1f23",
+                borderRadius: 8,
+                display: "flex",
+                alignItems: "center",
+                gap: 12,
+              }}
+            >
+              <div style={{ fontSize: 22 }}>{s.emoji}</div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontWeight: 600, color: "#f5f5f5", fontSize: 15 }}>{s.name}</div>
+                <div style={{ ...muted, fontSize: 12, marginTop: 2 }}>{s.blurb}</div>
+              </div>
+              <div style={{ color: "#fbbf24", fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>
+                {s.price}g
+              </div>
+              <button
+                onClick={() => onBuyStaple(s.id)}
+                disabled={!canAfford}
+                style={{
+                  ...smallActionBtn(canAfford ? "#1f3a1f" : "#222428", canAfford ? "#86efac" : "#7a7d83"),
+                  opacity: canAfford ? 1 : 0.6,
+                  cursor: canAfford ? "pointer" : "not-allowed",
+                }}
+              >
+                Buy
+              </button>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -1800,6 +2507,7 @@ function ShopRow({
   onBuy: (id: number) => void;
   onHaggle: (id: number) => void;
 }) {
+  const [showInfo, setShowInfo] = useState(false);
   const sold = !!item.bought_by;
   const canAfford = playerGold >= item.price;
   const canBuy = !sold && canAfford && !atCap;
@@ -1814,13 +2522,16 @@ function ShopRow({
       }}
     >
       <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-        <div style={{ fontSize: 24, lineHeight: 1 }}>{ITEM_TYPE_ICON[item.item_type]}</div>
+        <Icon name={ITEM_TYPE_ICON[item.item_type]} size={24} color="#cbd5e1" />
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
             <span style={{ fontWeight: 600, color: "#f5f5f5", fontSize: 15 }}>{item.item_name}</span>
             <RarityBadge rarity={item.rarity} />
             {item.item_type === "weapon" && item.weapon_range === "ranged" && (
               <SmallBadge>ranged</SmallBadge>
+            )}
+            {item.item_type === "weapon" && item.weapon_range === "focus" && (
+              <SmallBadge>focus</SmallBadge>
             )}
             {item.haggled && (
               <SmallBadge>{HAGGLE_LABEL[item.haggled]}</SmallBadge>
@@ -1843,13 +2554,35 @@ function ShopRow({
           +{item.power} · {item.price}g
         </div>
       </div>
-      {!sold && (
-        <div style={{ display: "flex", gap: 6, marginTop: 8, justifyContent: "flex-end" }}>
-          {canHaggle && (
-            <button onClick={() => onHaggle(item.id)} style={smallActionBtn("#33363d", "#e6e6e6")}>
-              Haggle
-            </button>
-          )}
+      {showInfo && (
+        <div
+          style={{
+            marginTop: 8,
+            padding: "8px 10px",
+            background: "#0e0f12",
+            borderRadius: 6,
+            border: "1px solid #2a2d33",
+            color: "#cbd5e1",
+            fontSize: 12,
+          }}
+        >
+          {describeItemEffect(item)}
+        </div>
+      )}
+      <div style={{ display: "flex", gap: 6, marginTop: 8, justifyContent: "flex-end" }}>
+        <button
+          onClick={() => setShowInfo((v) => !v)}
+          style={smallActionBtn("#222428", "#cbd5e1")}
+          aria-expanded={showInfo}
+        >
+          {showInfo ? "Hide" : "Info"}
+        </button>
+        {!sold && canHaggle && (
+          <button onClick={() => onHaggle(item.id)} style={smallActionBtn("#33363d", "#e6e6e6")}>
+            Haggle
+          </button>
+        )}
+        {!sold && (
           <button
             onClick={() => onBuy(item.id)}
             disabled={!canBuy}
@@ -1857,10 +2590,176 @@ function ShopRow({
           >
             {atCap ? "Cap reached" : !canAfford ? "Need more gold" : "Buy"}
           </button>
+        )}
+        {sold && (
+          <span style={{ ...muted, fontSize: 11, alignSelf: "center" }}>Sold.</span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function InnCard({
+  inn,
+  onStay,
+}: {
+  inn: InnResponse;
+  onStay: (roomId: string) => void;
+}) {
+  if (inn.error === "mid_quest") {
+    return (
+      <div style={card}>
+        <h2 style={h2}>The Inn</h2>
+        <p style={muted}>The innkeep won't take questing parties. Finish the fight first.</p>
+      </div>
+    );
+  }
+  return (
+    <div style={card}>
+      <Banner src={inn.art_url ?? null} alt="The Inn" />
+      <h2 style={h2}>The Inn</h2>
+      <p style={muted}>
+        A small hearth crackles in the corner. The innkeep looks up. <em>"Room for the night?"</em>
+      </p>
+      <p style={{ ...muted, fontSize: 12, marginTop: 4 }}>
+        HP {inn.hp}/{inn.max_hp} · Mana {inn.mana}/{inn.max_mana} ·{" "}
+        <span style={{ color: "#fbbf24", fontWeight: 600 }}>{inn.gold}g</span>
+      </p>
+      <div style={{ display: "grid", gap: 8, marginTop: 12 }}>
+        {inn.rooms.map((r) => {
+          const wouldRefillHp = r.refills.hp && inn.hp < inn.max_hp;
+          const wouldRefillMana = r.refills.mana && inn.mana < inn.max_mana;
+          const useful = wouldRefillHp || wouldRefillMana;
+          const canAfford = inn.gold >= r.price;
+          const label = !useful
+            ? `Already rested`
+            : !canAfford
+              ? `Need ${r.price}g`
+              : `Stay — ${r.price}g`;
+          return (
+            <div
+              key={r.id}
+              style={{
+                padding: 12,
+                background: "#1d1f23",
+                borderRadius: 8,
+                display: "flex",
+                alignItems: "center",
+                gap: 12,
+              }}
+            >
+              <Icon name={r.iconName} size={22} color="#cbd5e1" />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontWeight: 600, color: "#f5f5f5", fontSize: 15 }}>{r.name}</div>
+                <div style={{ ...muted, fontSize: 12, marginTop: 2 }}>{r.blurb}</div>
+              </div>
+              <button
+                onClick={() => onStay(r.id)}
+                disabled={!useful || !canAfford}
+                style={{
+                  ...smallActionBtn(
+                    useful && canAfford ? "#1f3a1f" : "#222428",
+                    useful && canAfford ? "#86efac" : "#7a7d83",
+                  ),
+                  opacity: useful && canAfford ? 1 : 0.6,
+                  cursor: useful && canAfford ? "pointer" : "not-allowed",
+                }}
+              >
+                {label}
+              </button>
+            </div>
+          );
+        })}
+      </div>
+      <p style={{ ...muted, fontSize: 11, marginTop: 8 }}>
+        Inn rest bypasses the 24h long-rest cooldown.
+      </p>
+    </div>
+  );
+}
+
+function SmithyCard({
+  smithy,
+  onSharpen,
+}: {
+  smithy: SmithyResponse;
+  onSharpen: (itemId: number, itemName: string, cost: number, verb: string) => void;
+}) {
+  if (smithy.error === "mid_quest") {
+    return (
+      <div style={card}>
+        <h2 style={h2}>The Smithy</h2>
+        <p style={muted}>The smith won't take your steel mid-quest — wrap up the fight first.</p>
+      </div>
+    );
+  }
+  return (
+    <div style={card}>
+      <Banner src={smithy.art_url ?? null} alt="The Smithy" />
+      <h2 style={h2}>The Smithy</h2>
+      <p style={muted}>
+        <em>"Bring me steel and gold. I'll make it sing."</em>
+      </p>
+      <p style={{ ...muted, fontSize: 12, marginTop: 4 }}>
+        <span style={{ color: "#fbbf24", fontWeight: 600 }}>{smithy.gold}g</span>{" "}
+        · each upgrade adds <strong>+1</strong>; capped at <strong>3</strong> per item.
+      </p>
+      {smithy.items.length === 0 ? (
+        <p style={muted}>
+          Nothing equipped to work on. Equip a weapon or armor first, then come back.
+        </p>
+      ) : (
+        <div style={{ display: "grid", gap: 8, marginTop: 12 }}>
+          {smithy.items.map((it) => {
+            const atCap = it.sharpens_count >= it.cap;
+            const canAfford = smithy.gold >= it.cost;
+            const remaining = it.cap - it.sharpens_count;
+            const label = atCap
+              ? `Maxed`
+              : canAfford
+                ? `${it.verb.verb} +1 — ${it.cost}g`
+                : `Need ${it.cost}g`;
+            const meter = "●".repeat(it.sharpens_count) + "○".repeat(remaining);
+            return (
+              <div
+                key={it.id}
+                style={{
+                  padding: 12,
+                  background: "#1d1f23",
+                  borderRadius: 8,
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 12,
+                }}
+              >
+                <Icon name={it.verb.iconName} size={22} color="#cbd5e1" />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontWeight: 600, color: "#f5f5f5", fontSize: 15 }}>
+                    {it.item_name} <span style={{ color: "#fbbf24", fontWeight: 500 }}>+{it.power}</span>{" "}
+                    <span style={{ ...muted, fontSize: 11 }}>{it.verb.stat}</span>
+                  </div>
+                  <div style={{ ...muted, fontSize: 12, marginTop: 2, fontVariantNumeric: "tabular-nums" }}>
+                    {meter} ({it.sharpens_count}/{it.cap} {it.verb.noun})
+                  </div>
+                </div>
+                <button
+                  onClick={() => onSharpen(it.id, it.item_name, it.cost, it.verb.verb)}
+                  disabled={atCap || !canAfford}
+                  style={{
+                    ...smallActionBtn(
+                      !atCap && canAfford ? "#1f3a1f" : "#222428",
+                      !atCap && canAfford ? "#86efac" : "#7a7d83",
+                    ),
+                    opacity: !atCap && canAfford ? 1 : 0.6,
+                    cursor: !atCap && canAfford ? "pointer" : "not-allowed",
+                  }}
+                >
+                  {label}
+                </button>
+              </div>
+            );
+          })}
         </div>
-      )}
-      {sold && (
-        <div style={{ ...muted, fontSize: 11, marginTop: 6 }}>Sold.</div>
       )}
     </div>
   );
@@ -1893,7 +2792,7 @@ function RecentQuestRow({ q }: { q: RecentQuest }) {
         borderRadius: 8,
       }}
     >
-      <div style={{ fontSize: 20, lineHeight: 1 }}>{won ? "🏆" : "💀"}</div>
+      <Icon name={won ? "trophy" : "death-skull"} size={20} color={won ? "#fbbf24" : "#fca5a5"} />
       <div style={{ flex: 1, minWidth: 0 }}>
         <div
           style={{
@@ -1948,6 +2847,119 @@ function SignOutRow({ onLogout }: { onLogout: () => void }) {
   );
 }
 
+// Reusable centered backdrop with a card inside. Click outside closes via
+// onCancel; clicking the card itself doesn't bubble.
+function ModalBackdrop({ children, onCancel }: { children: React.ReactNode; onCancel: () => void }) {
+  return (
+    <div
+      onClick={onCancel}
+      style={{
+        position: "fixed",
+        inset: 0,
+        background: "rgba(0,0,0,0.6)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        zIndex: 1000,
+        padding: 16,
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          background: "#1a1c20",
+          border: "1px solid #2a2d33",
+          borderRadius: 12,
+          padding: 24,
+          maxWidth: 460,
+          width: "100%",
+          boxShadow: "0 10px 40px rgba(0,0,0,0.5)",
+        }}
+      >
+        {children}
+      </div>
+    </div>
+  );
+}
+
+// Shopkeeper haggle outcome dialog. Headline summarizes the roll; flavor
+// is one of the canned NPC lines from core's HAGGLE_LINES table.
+function HaggleResultDialog({
+  result,
+  onClose,
+}: {
+  result: HaggleResult;
+  onClose: () => void;
+}) {
+  const failed = result.bucket === "failed";
+  const steal = result.bucket === "steal";
+  const headline = failed
+    ? "Haggle failed."
+    : steal
+      ? `STEAL! −30% off.`
+      : `−${result.outcome}% off.`;
+  const headlineColor = failed ? "#fca5a5" : steal ? "#fbbf24" : "#86efac";
+  return (
+    <ModalBackdrop onCancel={onClose}>
+      <div style={{ ...muted, fontSize: 12, textTransform: "uppercase", letterSpacing: 1.5 }}>
+        <Icon name="gold-bar" /> Shopkeeper
+      </div>
+      <div style={{ fontSize: 20, fontWeight: 700, color: headlineColor, marginTop: 8 }}>
+        {headline}
+      </div>
+      <div style={{ ...muted, fontSize: 13, marginTop: 4 }}>
+        {result.item_name} · 1d6{result.modifier > 0 ? `+${result.modifier}` : result.modifier < 0 ? `${result.modifier}` : ""} = {result.total}
+      </div>
+      <p style={{ color: "#e6e6e6", fontStyle: "italic", marginTop: 16, lineHeight: 1.5 }}>
+        “{result.flavor}”
+      </p>
+      {!failed && (
+        <div style={{ ...muted, fontSize: 13, marginTop: 12 }}>
+          Price: <span style={{ textDecoration: "line-through" }}>{result.old_price}g</span>{" "}
+          → <strong style={{ color: "#86efac" }}>{result.new_price}g</strong>
+        </div>
+      )}
+      <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 20 }}>
+        <button onClick={onClose} style={button}>OK</button>
+      </div>
+    </ModalBackdrop>
+  );
+}
+
+// Generic confirm dialog — replaces native window.confirm() so styling
+// matches the rest of the app and the destructive action color stays
+// consistent.
+function ConfirmDialog({
+  request,
+  onClose,
+}: {
+  request: ConfirmRequest;
+  onClose: () => void;
+}) {
+  return (
+    <ModalBackdrop onCancel={onClose}>
+      <div style={{ fontSize: 18, fontWeight: 700, color: "#f5f5f5" }}>{request.title}</div>
+      <p style={{ ...muted, marginTop: 8, lineHeight: 1.5 }}>{request.message}</p>
+      <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 20 }}>
+        <button onClick={onClose} style={{ ...button, background: "#33363d" }}>Cancel</button>
+        <button
+          onClick={() => {
+            request.onConfirm();
+            onClose();
+          }}
+          style={{
+            ...button,
+            background: request.destructive ? "#7c2020" : "#1f3a1f",
+            color: request.destructive ? "#fecaca" : "#86efac",
+          }}
+        >
+          {request.confirmLabel ?? "Confirm"}
+        </button>
+      </div>
+    </ModalBackdrop>
+  );
+}
+
 function Stats({ children }: { children: React.ReactNode }) {
   return (
     <div
@@ -1963,10 +2975,11 @@ function Stats({ children }: { children: React.ReactNode }) {
   );
 }
 
-function Stat({ label, value }: { label: string; value: string }) {
+function Stat({ label, value, icon }: { label: string; value: React.ReactNode; icon?: React.ReactNode }) {
   return (
     <div style={{ padding: 12, background: "#1d1f23", borderRadius: 8 }}>
-      <div style={{ ...muted, fontSize: 12, textTransform: "uppercase" }}>
+      <div style={{ ...muted, fontSize: 12, textTransform: "uppercase", display: "flex", alignItems: "center", gap: 6 }}>
+        {icon}
         {label}
       </div>
       <div style={{ fontSize: 18, fontWeight: 600, color: "#f5f5f5" }}>
@@ -1990,6 +3003,62 @@ function Stack({ children }: { children: React.ReactNode }) {
       {children}
     </div>
   );
+}
+
+// Two-column dashboard layout. On wide viewports (≥ 900px) renders main
+// content on the left and `side` on the right at 360px. On narrow screens
+// it falls back to a single stacked column (main above side).
+function DashboardLayout({
+  main,
+  side,
+  footer,
+}: {
+  main: React.ReactNode;
+  side: React.ReactNode;
+  footer?: React.ReactNode;
+}) {
+  const wide = useWideViewport();
+  if (!wide) {
+    // Mobile: stack everything, full viewport width (no 560px cap so tablets
+    // breathe). Login keeps its narrower Stack — only the dashboard goes wide.
+    return (
+      <div style={{ display: "flex", flexDirection: "column", gap: 16, width: "100%" }}>
+        {main}
+        {side}
+        {footer}
+      </div>
+    );
+  }
+  return (
+    <div style={{ width: "100%", display: "flex", flexDirection: "column", gap: 16 }}>
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "minmax(0, 1fr) 420px",
+          gap: 24,
+          alignItems: "start",
+        }}
+      >
+        <div style={{ display: "flex", flexDirection: "column", gap: 16, minWidth: 0 }}>{main}</div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 16, minWidth: 0 }}>{side}</div>
+      </div>
+      {footer}
+    </div>
+  );
+}
+
+function useWideViewport(): boolean {
+  const [wide, setWide] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return window.matchMedia("(min-width: 900px)").matches;
+  });
+  useEffect(() => {
+    const m = window.matchMedia("(min-width: 900px)");
+    const handler = (e: MediaQueryListEvent) => setWide(e.matches);
+    m.addEventListener("change", handler);
+    return () => m.removeEventListener("change", handler);
+  }, []);
+  return wide;
 }
 
 function Centered({ children }: { children: React.ReactNode }) {
@@ -2032,14 +3101,15 @@ const ITEM_TYPE_LABELS: Record<ItemType, string> = {
   scroll: "Scrolls",
 };
 
+// rpg-awesome ra-* class names — rendered via <Icon name={...}> in card rows.
 const ITEM_TYPE_ICON: Record<ItemType, string> = {
-  weapon: "⚔️",
-  armor: "🛡️",
-  magic: "🔮",
-  consumable: "🧪",
-  revive: "💖",
-  tool: "🔧",
-  scroll: "📜",
+  weapon: "sword",
+  armor: "shield",
+  magic: "crystal-ball",
+  consumable: "bubbling-potion",
+  revive: "crowned-heart",
+  tool: "anvil",
+  scroll: "scroll-unfurled",
 };
 
 const RARITY_COLOR: Record<Rarity, string> = {
@@ -2055,11 +3125,12 @@ const EFFECT_COLOR: Record<EffectType, string> = {
   poisoned: "#a855f7",
 };
 
+// ra-* icon names per status effect. Rendered via <Icon> with EFFECT_COLOR.
 const EFFECT_ICON: Record<EffectType, string> = {
-  regen: "💚",
-  bleeding: "🩸",
-  burning: "🔥",
-  poisoned: "☠️",
+  regen: "aura",
+  bleeding: "bleeding-hearts",
+  burning: "fire",
+  poisoned: "monster-skull",
 };
 
 function groupByType(items: Item[]): Partial<Record<ItemType, Item[]>> {

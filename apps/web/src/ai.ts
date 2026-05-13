@@ -25,6 +25,11 @@ export async function generateOpeningScene(
   variant: SceneVariant = "standard",
   waveContext?: { wave: number; total: number },
   avoidNames: string[] = [],
+  // Optional R2 target for flux portrait generation. When supplied, kicks off
+  // a monster-art call in parallel with scene text and writes the URL into
+  // monster_art_url on the returned SceneJson. Fail-soft: any error returns
+  // a scene without the field; combat still loads.
+  art?: ArtTarget,
 ): Promise<SceneJson> {
   const baseTier = Math.max(1, character.level + (elite ? 1 : 0));
   const tier = variant === "boss" ? baseTier + 1 : baseTier;
@@ -36,16 +41,20 @@ export async function generateOpeningScene(
   const identity = await generateMonsterIdentity(
     ai, variant, monsterHpFloor, monsterHpCeil, avoidNames, waveContext,
   );
-  const scene = await generateSceneForMonster(
-    ai, identity.name, character, elite, variant, waveContext,
-  );
-  return {
+  // Run scene text + portrait in parallel — both depend only on identity.
+  const [scene, artUrl] = await Promise.all([
+    generateSceneForMonster(ai, identity.name, character, elite, variant, waveContext),
+    art ? generateMonsterArt(ai, art, identity.name, variant) : Promise.resolve(null),
+  ]);
+  const result: SceneJson = {
     monster_name: identity.name,
     monster_hp: identity.hp,
     monster_max_hp: identity.hp,
     tier,
     scene,
   };
+  if (artUrl) result.monster_art_url = artUrl;
+  return result;
 }
 
 async function generateMonsterIdentity(
@@ -75,7 +84,7 @@ async function generateMonsterIdentity(
   }
 
   const system = [
-    "You name comedic engineering + project-management themed monsters for Slack Quest.",
+    "You name comedic engineering + project-management themed monsters for Gantt Quest.",
     "Tone: dry, witty, software-industry + PM (PRs, standups, sprints, gantt charts, scope creep, retros, kanban, blockers, deprecated APIs, on-call pagers).",
     "Output MUST follow this EXACT format. Plain text only — no markdown, no asterisks, no quotes around values, no commentary.",
     `MONSTER_NAME: <a ${variant === "boss" ? "2-5" : "1-4"} word name>`,
@@ -156,7 +165,7 @@ async function generateSceneForMonster(
         ? `Wave ${waveContext?.wave}/${waveContext?.total} — quick, momentum-driven.`
         : "Standard quest opening.";
   const system = [
-    "You narrate comedic engineering + project-management themed dungeon scenes for Slack Quest.",
+    "You narrate comedic engineering + project-management themed dungeon scenes for Gantt Quest.",
     "Tone: dry, witty, software-industry + PM winks.",
     "Output ONE paragraph: 2-3 sentences, ~60 words. Plain text — no markdown, no labels, no quotes.",
     `The monster's name is "${monsterName}". You MUST refer to it by that EXACT name at least once.`,
@@ -190,10 +199,11 @@ export async function generateGauntletWaves(
   elite: boolean,
   totalWaves: number,
   avoidNames: string[],
+  art?: ArtTarget,
 ): Promise<{ scene: SceneJson; upcoming_waves: { name: string; max_hp: number }[] }> {
   // Wave-1 scene mirrors a standard gauntlet-wave opening.
   const wave1Promise = generateOpeningScene(
-    ai, character, elite, "gauntlet-wave", { wave: 1, total: totalWaves }, avoidNames,
+    ai, character, elite, "gauntlet-wave", { wave: 1, total: totalWaves }, avoidNames, art,
   );
   // Waves 2..N: identity only (name + HP). Same HP range as standard.
   const tier = Math.max(1, character.level + (elite ? 1 : 0));
@@ -223,7 +233,7 @@ function stripWrappers(s: string): string {
 }
 
 const COMBAT_SYSTEM = [
-  'You are the narrator of "Slack Quest", a comedic engineering-themed dungeon crawl bot.',
+  'You are the narrator of "Gantt Quest", a comedic engineering-themed dungeon crawl bot.',
   "Tone: dry, witty, software-industry + project-management winks (PRs, standups, deprecated APIs, YAML, on-call pagers, 502s, kubernetes, regex, sprints, gantt charts, scope creep, kanban, retros, blockers, story points, the critical path, burndown).",
   "Never break character. Never mention you are an AI.",
   "Output ONE line, 1-2 sentences, ~25 words MAX. No markdown formatting. No emoji. Do not include numbers, HP values, or damage amounts.",
@@ -402,7 +412,7 @@ export async function flavorCatalogItem(
   location: string,
 ): Promise<string> {
   const system = [
-    'You are the narrator of "Slack Quest", a comedic engineering + project-management themed dungeon crawl bot.',
+    'You are the narrator of "Gantt Quest", a comedic engineering + project-management themed dungeon crawl bot.',
     "Tone: dry, witty, software-industry winks.",
     "Output ONE line: a 1-2 sentence flavor description (~25 words). No markdown, no quotes, no name field, no labels. Just the prose.",
     `Item: ${catalogName} — ${blurb}`,
@@ -421,4 +431,259 @@ export async function flavorCatalogItem(
   } catch {
     return blurb;
   }
+}
+
+// =============================================================================
+// IMAGE GENERATION — flux-1-schnell + R2 cache. Mirrors slack's apps/slack/ai.ts.
+// =============================================================================
+//
+// All art keys live under art/<version>/ in R2 so prompt iteration can be rolled
+// out without invalidating older quests' references. Failures are silent — any
+// art helper returns null, and callers fall back to no-image rendering.
+
+// Static-view banners (inventory, shop, class portraits, etc.). Bump this when
+// the global style anchor changes; the URLs flip to the new keys and old
+// images are orphaned in R2 until manually cleared.
+const ART_VERSION = "v6";
+// Monster portraits use their own version since the monster style differs from
+// the global anchor (corporate-fantasy office-dungeon, Ghibli watercolor).
+const MONSTER_ART_VERSION = "v8";
+
+// Wrap a bucket + public base-url so art helpers can build full asset URLs
+// without leaking the env type into ai.ts. baseUrl points at whichever worker
+// serves /img/<key> from this bucket.
+export interface ArtTarget {
+  bucket: R2Bucket;
+  baseUrl: string;
+}
+
+const STYLE_ANCHOR =
+  "Studio Ghibli style hand-drawn anime illustration — watercolor textures, soft cel-shading, warm cinematic lighting, vibrant saturated colors, painterly brushwork, atmospheric and dreamlike. The kind of art you'd find in a Hayao Miyazaki film like Spirited Away, My Neighbor Totoro, or Howl's Moving Castle. Gentle, whimsical, expressive composition.";
+
+const NEGATIVES =
+  "edge-to-edge painted illustration, no card frame, no name plate, no border, no text, no logos, no UI elements";
+
+// Monster portraits get their own anchor — corporate-fantasy office-dungeon
+// setting + bright daylight, replacing (not layered on) the global style so
+// flux doesn't fight a competing "dim moody" hint.
+const MONSTER_STYLE_ANCHOR =
+  "Studio Ghibli style hand-drawn anime illustration — watercolor textures, soft cel-shading, vibrant saturated colors, expressive painterly brushwork. The kind of frame you'd see in a Hayao Miyazaki film (Spirited Away / Princess Mononoke / Howl's Moving Castle). SETTING: a corporate-fantasy hybrid world where adventurers fight in a half-stone half-office workplace dungeon. The environment is a high-tech office crossed with a stone keep — warm natural daylight, soft desk lamps, glowing computer monitors lighting the scene. Gantt charts and burndown graphs are pinned to stone walls. Sticky notes and kanban-board cards cover desks. Server racks hum in alcoves. Coffee cups, ergonomic keyboards, mechanical office gear, ethernet cables, and scattered scrolls of printout code are visible in the background. LIGHTING IS BRIGHT, WARM, AND DREAMLIKE — not dim, not shadowy, not dungeon-gloomy. The monster is clearly lit and expressive against the busy office-dungeon backdrop. Whimsical creature design, gentle melancholy or wonder typical of Ghibli antagonists.";
+
+// View-art prompts. Each renders the same image every time — generated once
+// on first cache miss, then served from R2 forever. Keys stable across deploys
+// so an ART_VERSION bump is what invalidates them. Ported from main's src/ai.ts.
+export const VIEW_ART_PROMPTS = {
+  inventory:
+    "An adventurer's open leather pack laid out on a wooden table, contents spilling: a few potion vials with cork stoppers, a rolled scroll, a worn dagger, a small coin pouch, leather-bound journal. Warm candlelight, top-down 3/4 view. Single still-life composition.",
+  channel_shop:
+    "Interior of a bustling fantasy curio shop. A friendly shopkeeper smiling behind a polished wooden COUNTER with a brass ring-up bell, ready to serve customers. Shelves behind the counter stocked with neatly labeled corked potion bottles bearing handwritten price tags, weapons hung on display racks, scrolls in cubby holes, jewelry under a glass case. Hanging sign with a coin-and-key logo over the door. Warm lantern light, dust motes in the air. This is a SHOP for buying goods — not a workshop, not a forge, not a workbench. The mood is welcoming commerce.",
+  treasure:
+    "A heavy ornate chest sits open in the middle of a dim stone chamber, golden light spilling out from inside. Old coins and folded fabric visible. Flagstone floor, faint cobwebs in corners. Single dramatic chest as the focal point.",
+  merchant:
+    "A hooded fantasy merchant standing behind a portable wooden stall in a dim dungeon corridor. Goods displayed: vials, a coiled rope, two weapons, a small wooden box. Single lantern hanging above. Mysterious mood, face partially shadowed.",
+  lockbox_bronze:
+    "A small iron-banded wooden chest with a heavy bronze padlock, sitting in a dim stone alcove. Plain rivets and worn iron straps. Dust and cobwebs around the edges. Single chest, focal-point composition.",
+  lockbox_silver:
+    "An ornate dark-wood chest reinforced with engraved silver bands and a heavy filigreed silver padlock, sitting in a dim stone alcove. Detailed metalwork, slight tarnish. Single chest, focal-point composition.",
+  lockbox_gold:
+    "A lavishly ornate chest covered in gold-leaf engraving with a massive jeweled gold padlock, sitting on a stone pedestal in a dim chamber. Faint glow from cracks in the lid, polished gilt highlights. Single chest, focal-point composition.",
+  class_devops_mage:
+    "Three-quarter view portrait of a fantasy wizard in deep robes, hands wreathed in glowing arcane sigils that resemble stylized YAML brackets and container icons, summoning a translucent ethereal box of code. Single figure, dim arcane chamber, dramatic lighting.",
+  class_qa_paladin:
+    "Three-quarter view portrait of a heavily armored paladin holding a glowing greatsword inscribed with intricate runes, light pouring from the blade onto small bug-like creatures cowering at her feet. Single figure, holy chamber, dramatic lighting.",
+  class_backend_druid:
+    "Three-quarter view portrait of a bearded druid in green robes with vines running through his hair, kneeling beside a luminous tree whose roots form a network of tabular database glyphs. Single figure, mossy underground grove, dappled magical light.",
+  class_frontend_bard:
+    "Three-quarter view portrait of an elaborately dressed bard playing a stringed instrument that emits cascading streams of colored pixels and ribbons. Adoring townsfolk in the background. Single figure, warm tavern light, vibrant.",
+  class_staff_sage:
+    "Three-quarter view portrait of an elderly sage in deep blue robes hunched over a massive ancient tome on a heavy oak desk, surrounded by piles of scrolls and a guttering candle. Single figure, candlelit study, somber mood.",
+  class_refactor_rogue:
+    "Three-quarter view portrait of a hooded rogue in dark leathers with twin daggers drawn, mid-shadow-step, tangled fragments of broken ghostly code dissolving at her feet. Single figure, dim alley, dramatic shadow.",
+  class_sre_warden:
+    "Three-quarter view portrait of a grim heavily-armored warrior in dented plate, standing on a great wall, looking out over a howling formless void of swirling chaos. Single figure, dawn light, stoic mood.",
+  class_data_warlock:
+    "Three-quarter view portrait of a pact-bound warlock in tattered dark robes with glowing eyes, reading from an unholy grimoire whose pages writhe with arcane SQL-like characters and dark tendrils of energy. Single figure, candlelit ritual chamber, sinister atmosphere.",
+  town_overview:
+    "A small fantasy village at golden hour, panoramic establishing view from a low hillside. A timbered tavern with a hanging sign, a stone temple with a bell-tower, a job-board kiosk at the village square, a smith's forge with smoke rising, an inn with warm lit windows. Cobblestone path winding between them. A few villagers in middle distance. Cozy, lived-in, welcoming.",
+  pub_interior:
+    "Interior of a cozy fantasy tavern at evening. Sturdy wooden bar with polished brass rail and rows of corked bottles on shelves behind. A few barrels stacked at one end, a hearth crackling at the back, two or three rough wooden tables with high-backed chairs. Lantern light, warm wood tones, hint of pipe smoke. No specific people in close-up — the room is the subject, intimate but not crowded.",
+  smithy_interior:
+    "Interior of a fantasy blacksmith's workshop. A large iron anvil at center stage with a half-finished sword resting on it. A glowing red-orange forge behind, embers visible. Walls hung with hammers, tongs, files, and a few finished weapons and pieces of armor on display. Sparks frozen in the air, leather apron draped over a wooden stool. Warm fire-light, smoke in the rafters. The room is the subject; no specific smith figure in close-up.",
+  inn_interior:
+    "Interior of a cozy fantasy inn's main room. Two simple straw cots against one wall, a curtained private bed-alcove against the other. A small stone hearth in the corner with a kettle hanging over the fire. Wooden ceiling beams, a few hung lanterns casting warm orange light, a small rug on the plank floor. Quiet, restful, safe. No specific people in close-up — the room is the subject.",
+} as const;
+
+export type ViewArtKey = keyof typeof VIEW_ART_PROMPTS;
+
+function viewArtKeyAndPrompt(shortKey: string, rawPrompt: string): { key: string; fullPrompt: string } {
+  return {
+    key: `art/views/${ART_VERSION}/${shortKey}.png`,
+    fullPrompt: `${rawPrompt} ${STYLE_ANCHOR} ${NEGATIVES}`,
+  };
+}
+
+// Lazy fetch + background generate for a static view-art banner. Returns the
+// public URL when the image is already in R2; on miss, fires generation via
+// ctx.waitUntil and returns null this one time. The next call serves cache.
+export async function getOrScheduleViewArt(
+  ai: Ai,
+  art: ArtTarget,
+  ctx: ExecutionContext,
+  shortKey: ViewArtKey,
+  prompt?: string,
+): Promise<string | null> {
+  const raw = prompt ?? VIEW_ART_PROMPTS[shortKey];
+  const { key, fullPrompt } = viewArtKeyAndPrompt(shortKey, raw);
+  const publicUrl = `${art.baseUrl}/img/${key}`;
+  try {
+    const existing = await art.bucket.head(key);
+    if (existing) return publicUrl;
+  } catch (err) {
+    console.warn("view-art:head-error", { shortKey, err: err instanceof Error ? err.message : String(err) });
+  }
+  ctx.waitUntil(generateAndCacheArt(ai, art, key, fullPrompt, `view:${shortKey}`));
+  return null;
+}
+
+// One-shot batch pre-gen for every VIEW_ART_PROMPTS entry. Sequential to avoid
+// hammering the Workers AI rate limit. Returns per-key status so callers can
+// log what happened. Cached keys no-op (one R2 head each).
+export async function pregenAllViewArt(
+  ai: Ai,
+  art: ArtTarget,
+): Promise<Array<{ shortKey: string; status: "cached" | "generated" | "failed"; url: string | null }>> {
+  const results: Array<{ shortKey: string; status: "cached" | "generated" | "failed"; url: string | null }> = [];
+  for (const shortKey of Object.keys(VIEW_ART_PROMPTS)) {
+    const prompt = VIEW_ART_PROMPTS[shortKey as ViewArtKey];
+    const { key, fullPrompt } = viewArtKeyAndPrompt(shortKey, prompt);
+    const publicUrl = `${art.baseUrl}/img/${key}`;
+    try {
+      const existing = await art.bucket.head(key);
+      if (existing) {
+        results.push({ shortKey, status: "cached", url: publicUrl });
+        continue;
+      }
+    } catch {
+      // Head failure → treat as miss.
+    }
+    const url = await generateAndCacheArt(ai, art, key, fullPrompt, `view:${shortKey}`);
+    results.push({ shortKey, status: url ? "generated" : "failed", url });
+  }
+  return results;
+}
+
+function slugifyMonsterName(name: string): string {
+  return name
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/[̀-ͯ]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 60) || "unnamed";
+}
+
+// Per-monster portrait via flux-1-schnell. R2-keyed by name slug so the same
+// monster always serves the same image (and quickly from cache on repeats).
+// Fail-soft: any error returns null and the scene renders without an image.
+export async function generateMonsterArt(
+  ai: Ai,
+  art: ArtTarget,
+  monsterName: string,
+  variant: SceneVariant,
+): Promise<string | null> {
+  const slug = slugifyMonsterName(monsterName);
+  const key = `art/${MONSTER_ART_VERSION}/${slug}.png`;
+  const variantHint =
+    variant === "boss"
+      ? " dramatic boss creature, looming, more imposing composition,"
+      : variant === "gauntlet-wave"
+        ? " a single creature, mid-tier henchman energy,"
+        : " a single creature, fantasy interpretation,";
+  // SUBJECT first — defines what's painted. We treat the monster name as a
+  // literal noun phrase to render, not a fantasy warrior's title. Examples
+  // anchor flux on the "break compound name → show the thing" pattern.
+  const subject =
+    `ILLUSTRATION SUBJECT: depict "${monsterName}" — break the name into its words and paint a scene that shows that exact thing happening or being.` +
+    ` Treat the name as a literal noun phrase to illustrate, NOT as a fantasy warrior's title.` +
+    ` Examples of the approach: "Bias Bug" = a literal beetle with a skewed/lopsided body; "Race Condition" = two figures colliding mid-stride at a finish line; "Scope Overlord" = a giant figure looming over a tiny worker buried in scrolls.` +
+    `${variantHint}`;
+  const prompt = `${subject} ${MONSTER_STYLE_ANCHOR} ${NEGATIVES}`;
+  return generateAndCacheArt(ai, art, key, prompt, `monster:${monsterName}`);
+}
+
+// Core image-generation primitive. Checks R2 for the cached object first,
+// generates via flux-1-schnell on miss, persists, returns the public URL.
+// Fail-soft: returns null on any error.
+async function generateAndCacheArt(
+  ai: Ai,
+  art: ArtTarget,
+  key: string,
+  prompt: string,
+  label: string,
+): Promise<string | null> {
+  const publicUrl = `${art.baseUrl}/img/${key}`;
+  try {
+    const existing = await art.bucket.head(key);
+    if (existing) {
+      console.log("art:cache-hit", { label, key });
+      return publicUrl;
+    }
+  } catch (err) {
+    console.warn("art:head-error", { label, err: err instanceof Error ? err.message : String(err) });
+  }
+  console.log("art:start", { label, key });
+  try {
+    const result = (await ai.run("@cf/black-forest-labs/flux-1-schnell", {
+      prompt,
+      steps: 4,
+    })) as unknown;
+    const bytes = await coerceImageBytes(result);
+    if (!bytes) {
+      console.warn("art:unrecognized-response", { label, key });
+      return null;
+    }
+    await art.bucket.put(key, bytes, { httpMetadata: { contentType: "image/png" } });
+    console.log("art:done", { label, key, size: bytes.byteLength });
+    return publicUrl;
+  } catch (err) {
+    console.error("art:error", { label, key, err: err instanceof Error ? err.message : String(err) });
+    return null;
+  }
+}
+
+// Defensive coercion for the image-model response. Workers AI has historically
+// returned multiple shapes across versions; tolerate them all and surface a
+// single Uint8Array.
+async function coerceImageBytes(result: unknown): Promise<Uint8Array | null> {
+  if (!result) return null;
+  if (typeof result === "object" && result !== null && "image" in result) {
+    const img = (result as { image?: unknown }).image;
+    if (typeof img === "string") {
+      try {
+        const binary = atob(img);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+        return bytes;
+      } catch {
+        return null;
+      }
+    }
+  }
+  if (result instanceof ReadableStream) {
+    const reader = result.getReader();
+    const chunks: Uint8Array[] = [];
+    let total = 0;
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      if (value) { chunks.push(value); total += value.byteLength; }
+    }
+    const out = new Uint8Array(total);
+    let offset = 0;
+    for (const c of chunks) { out.set(c, offset); offset += c.byteLength; }
+    return out;
+  }
+  if (result instanceof Uint8Array) return result;
+  if (result instanceof ArrayBuffer) return new Uint8Array(result);
+  return null;
 }

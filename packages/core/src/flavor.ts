@@ -386,8 +386,45 @@ export const ITEM_CATALOG: CatalogEntry[] = [
   },
 ];
 
+// Staples — always-in-stock potions sold from the shop at a fixed price,
+// no buy cap, no haggle. Stored in inventory as consumables with the name
+// `"<emoji> <Name>"`. Mana potions get routed to addMana on use via findStaple.
+export interface StapleSpec {
+  id: string;          // short slug used in API form (e.g. "hp", "mp+")
+  name: string;
+  emoji: string;
+  effect: "heal_hp" | "restore_mana";
+  power: number;       // HP healed OR mana restored on use
+  price: number;
+  blurb: string;
+}
+
+export const STAPLES: StapleSpec[] = [
+  { id: "hp",  name: "Health Potion",         emoji: "🧪", effect: "heal_hp",      power: 10, price: 15, blurb: "Restores 10 HP. Always in stock." },
+  { id: "hp+", name: "Greater Health Potion", emoji: "🧪", effect: "heal_hp",      power: 25, price: 40, blurb: "Restores 25 HP. Always in stock." },
+  { id: "mp",  name: "Mana Vial",             emoji: "✨", effect: "restore_mana", power: 1,  price: 30, blurb: "Restores 1 mana. Always in stock." },
+  { id: "mp+", name: "Mana Flask",            emoji: "✨", effect: "restore_mana", power: 2,  price: 60, blurb: "Restores 2 mana. Always in stock." },
+];
+
+// Lookup by short id, display name, or `<emoji> <name>` form (the format
+// stored in inventory). Case-insensitive.
+export function findStaple(query: string): StapleSpec | undefined {
+  const q = query.trim().toLowerCase();
+  return STAPLES.find((s) =>
+    s.id.toLowerCase() === q
+    || s.name.toLowerCase() === q
+    || `${s.emoji} ${s.name}`.toLowerCase() === q,
+  );
+}
+
 export function findCatalogEntry(name: string): CatalogEntry | undefined {
-  return ITEM_CATALOG.find((e) => e.name === name);
+  // Stored item names are `"<emoji> <Catalog Name>"` (web nameLootViaAi
+  // prepends the catalog emoji on drop), so an exact match fails for the
+  // emoji-prefixed form. We try exact first, then suffix (handles "💥 Production
+  // Outage" → "Production Outage").
+  const exact = ITEM_CATALOG.find((e) => e.name === name);
+  if (exact) return exact;
+  return ITEM_CATALOG.find((e) => name.endsWith(e.name));
 }
 
 // Picks a catalog entry of the given type at random. Used by rollItem when the
