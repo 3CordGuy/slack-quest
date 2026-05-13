@@ -1,9 +1,6 @@
 import { useEffect, useReducer, useRef, useState } from "react";
 import toast from "react-hot-toast";
 
-import DiceBox from "@3d-dice/dice-box";
-import "@3d-dice/dice-box/dist/style.css";
-
 import { Icon } from "./icons";
 
 // Live web-mode combat. Connects to the QuestRoom Durable Object via WS,
@@ -554,12 +551,8 @@ export function CombatPage({
   const [items, setItems] = useState<InventoryItem[]>([]);
   const wsRef = useRef<WebSocket | null>(null);
   const logScrollRef = useRef<HTMLDivElement | null>(null);
-  const diceContainerRef = useRef<HTMLDivElement | null>(null);
-  const diceBoxRef = useRef<any>(null);
-  const diceInitStartedRef = useRef(false);
-  const diceReadyRef = useRef(false);
-  const pendingDiceRollsRef = useRef<string[]>([]);
-  const [diceReady, setDiceReady] = useState(false);
+  const [diceRolls, setDiceRolls] = useState<DiceRollEntry[]>([]);
+  const diceRollCounterRef = useRef(0);
 
   // Inventory loaded once on mount; refreshed after each item_used event so
   // the picker reflects post-use state. Authoritative source is D1 via
@@ -572,44 +565,6 @@ export function CombatPage({
     void loadItems();
   }, []);
 
-  // Initialize DiceBox once the container div is in the DOM. The container
-  // is only rendered after the first `state` message arrives, so we depend
-  // on `state` to re-run until the div exists. `diceInitStartedRef` (not
-  // `diceBoxRef`, which cleanup clears) prevents re-init on every update.
-  useEffect(() => {
-    if (diceInitStartedRef.current) return;
-    if (!diceContainerRef.current) return;
-    diceInitStartedRef.current = true;
-    let box: InstanceType<typeof DiceBox> | null = null;
-    try {
-      box = new DiceBox(diceContainerRef.current, {
-        assetPath: "/assets/dice-box/",
-      });
-      diceBoxRef.current = box;
-    } catch {
-      toast.error("Failed to initialize dice animation.");
-      return;
-    }
-    box.init()
-      .then(() => {
-        diceReadyRef.current = true;
-        setDiceReady(true);
-        for (const notation of pendingDiceRollsRef.current) {
-          diceBoxRef.current?.roll(notation);
-        }
-        pendingDiceRollsRef.current = [];
-      })
-      .catch(() => {
-        toast.error("Failed to initialize dice animation.");
-      });
-    return () => {
-      if (box && typeof box.destroy === "function") {
-        box.destroy();
-        diceBoxRef.current = null;
-      }
-    };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ui.state]);
 
   useEffect(() => {
     const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
@@ -637,12 +592,16 @@ export function CombatPage({
           dispatch({ kind: "events", value: msg.events });
           for (const evt of msg.events) {
             if (evt.type === "roll") {
-              const notation = `${evt.die}`;
-              if (diceReadyRef.current && diceBoxRef.current) {
-                diceBoxRef.current.roll(notation);
-              } else {
-                pendingDiceRollsRef.current.push(notation);
-              }
+              const id = ++diceRollCounterRef.current;
+              const entry: DiceRollEntry = {
+                id,
+                die: String(evt.die),
+                value: Number(evt.value),
+                actor: String(evt.actor),
+                purpose: String(evt.purpose ?? ""),
+              };
+              setDiceRolls((prev) => [...prev.slice(-5), entry]);
+              setTimeout(() => setDiceRolls((prev) => prev.filter((r) => r.id !== id)), 4000);
             }
           }
         }
@@ -784,16 +743,7 @@ export function CombatPage({
               selfId={selfId}
             />
             <PartySection fighters={state.fighters} currentActorId={currentActorId} selfId={selfId} />
-            <div
-              ref={diceContainerRef}
-              style={{
-                width: "100%",
-                minHeight: 200,
-                borderRadius: 12,
-                overflow: "hidden",
-                background: "#111",
-              }}
-            />
+            <DiceRollDisplay rolls={diceRolls} />
           </div>
 
           {/* ── Right column: actions · log ── */}
@@ -1731,6 +1681,81 @@ function RewardRow({
           <Icon name="death-skull" /> −{reward.soft_death.gold_lost}g
           {reward.soft_death.item_lost && ` · lost ${reward.soft_death.item_lost}`}
           {reward.soft_death.scar && ` · scar: "${reward.soft_death.scar}"`}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── 2D dice ───────────────────────────────────────────────────────────────
+
+interface DiceRollEntry {
+  id: number;
+  die: string;      // "d20", "d6", etc.
+  value: number;
+  actor: string;
+  purpose: string;
+}
+
+function DiceRollDisplay({ rolls }: { rolls: DiceRollEntry[] }) {
+  if (rolls.length === 0) return null;
+  return (
+    <div style={{ display: "flex", gap: 10, flexWrap: "wrap", padding: "8px 0" }}>
+      {rolls.map((r) => <DiceFace key={r.id} roll={r} />)}
+    </div>
+  );
+}
+
+function DiceFace({ roll }: { roll: DiceRollEntry }) {
+  const maxFace = parseInt(roll.die.replace("d", ""), 10) || 20;
+  const [display, setDisplay] = useState<number>(() => Math.ceil(Math.random() * maxFace));
+  const [settled, setSettled] = useState(false);
+
+  useEffect(() => {
+    let count = 0;
+    const total = 10;
+    const iv = setInterval(() => {
+      count++;
+      if (count >= total) {
+        clearInterval(iv);
+        setDisplay(roll.value);
+        setSettled(true);
+      } else {
+        setDisplay(Math.ceil(Math.random() * maxFace));
+      }
+    }, 55);
+    return () => clearInterval(iv);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [roll.id]);
+
+  const isCrit   = roll.die === "d20" && roll.value === maxFace;
+  const isFumble = roll.die === "d20" && roll.value === 1;
+  const borderColor = isCrit ? "#16a34a" : isFumble ? "#dc2626" : "#3a7bd5";
+  const bg          = isCrit ? "#0f2818" : isFumble ? "#28100f" : "#1d1f23";
+  const numColor    = isCrit ? "#86efac" : isFumble ? "#fca5a5" : "#f5f5f5";
+
+  return (
+    <div style={{
+      width: 68, borderRadius: 12, background: bg,
+      border: `2px solid ${borderColor}`,
+      display: "flex", flexDirection: "column",
+      alignItems: "center", justifyContent: "center",
+      padding: "8px 4px", gap: 2,
+      transition: "border-color 150ms",
+    }}>
+      <div style={{ fontSize: 10, color: "#9aa0a6", textTransform: "uppercase", letterSpacing: 1 }}>
+        {roll.die}
+      </div>
+      <div style={{
+        fontSize: 28, fontWeight: 800, color: numColor,
+        fontVariantNumeric: "tabular-nums", lineHeight: 1,
+        transition: "color 150ms",
+      }}>
+        {display}
+      </div>
+      {settled && roll.purpose && (
+        <div style={{ fontSize: 9, color: "#9aa0a6", textAlign: "center", maxWidth: 60, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {roll.purpose}
         </div>
       )}
     </div>
