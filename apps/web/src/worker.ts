@@ -10,12 +10,17 @@ import { getCookie, setCookie, deleteCookie } from "hono/cookie";
 
 import {
   flavorCatalogItem,
+  flavorDeath,
+  flavorFleeSuccess,
+  flavorHit,
   flavorLootDrop,
+  flavorVictory,
   generateGauntletWaves,
   generateOpeningScene,
 } from "./ai";
 
 import {
+  FOCUS_MAX_MANA_BONUS,
   MAX_MANA_CAP,
   classByName,
   createCombatState,
@@ -24,11 +29,13 @@ import {
   generateScar,
   haggleMod,
   npcTrustMod,
+  resolveMonsterKill,
   rollDice,
   rollItem,
   sellPriceFor,
   step,
   xpForLevel,
+  type CombatEvent,
   type CombatInit,
   type CombatState,
   type ItemRoll,
@@ -39,6 +46,7 @@ import {
   addCharacterKey,
   addGold,
   addItem,
+  applyFocusManaShift,
   applyLongRest,
   applyShortRest,
   applySoftDeath,
@@ -72,6 +80,7 @@ import {
   getQuestParty,
   getRecentQuestsForCharacter,
   getWebCombatState,
+  getWebCombatSnapshot,
   getWebSession,
   markQuestStatus,
   removeItem,
@@ -236,12 +245,34 @@ function applyToolOrScroll(
         fighters,
       };
     }
-    case "Production Outage":
-    case "Caffeine Bomb": // unreachable (handled above) — just for exhaustiveness
+    case "Production Outage": {
+      // Non-boss: instant kill. Boss: drops 30% of max_hp (capped at hp-1 so
+      // it never delivers the killing blow on a boss). Mirrors slack semantics.
+      if (state.monster.hp <= 0) {
+        return {
+          effect: { kind: "heal", target: actor.id, amount: 0, rolled: 0 },
+          error: "no live foe to outage",
+        };
+      }
+      if (state.monster.is_boss) {
+        const requested = Math.floor(state.monster.max_hp * 0.3);
+        const damage = Math.max(1, Math.min(requested, state.monster.hp - 1));
+        return {
+          effect: {
+            kind: "monster_damage",
+            amount: damage,
+            ...(damage < requested ? { capped_from: requested } : {}),
+          },
+          monster: { hp: state.monster.hp - damage },
+        };
+      }
+      // Non-boss instakill — drops monster_hp to 0. handleUseItem detects this
+      // and routes through resolveMonsterKill for victory / wave-transition.
       return {
-        effect: { kind: "heal", target: actor.id, amount: 0, rolled: 0 },
-        error: `${entry.name} isn't supported in web combat yet`,
+        effect: { kind: "monster_damage", amount: state.monster.hp },
+        monster: { hp: 0 },
       };
+    }
     default:
       return {
         effect: { kind: "heal", target: actor.id, amount: 0, rolled: 0 },
@@ -364,8 +395,21 @@ app.post("/api/inventory/:itemId/equip", async (c) => {
   if (!item) return c.json({ error: "not_yours" }, 404);
   if (item.item_type === "consumable") return c.json({ error: "consumable_not_equippable" }, 400);
   if (item.equipped) return c.json({ error: "already_equipped" }, 400);
+  // Focus weapon swap bookkeeping. Swapping to/from a focus weapon shifts
+  // max_mana by FOCUS_MAX_MANA_BONUS in either direction. Armor swaps don't
+  // touch mana — only the weapon slot carries this dynamic.
+  let manaDelta = 0;
+  if (item.item_type === "weapon") {
+    const prev = await getEquipped(c.env.DB, session.slack_user_id, "weapon");
+    const prevBonus = prev?.weapon_range === "focus" ? FOCUS_MAX_MANA_BONUS : 0;
+    const newBonus = item.weapon_range === "focus" ? FOCUS_MAX_MANA_BONUS : 0;
+    manaDelta = newBonus - prevBonus;
+    if (manaDelta !== 0) {
+      await applyFocusManaShift(c.env.DB, session.slack_user_id, manaDelta);
+    }
+  }
   await equipItem(c.env.DB, item);
-  return c.json({ ok: true });
+  return c.json({ ok: true, mana_delta: manaDelta });
 });
 
 const JOIN_HP_RATIO = 0.4;
@@ -814,7 +858,10 @@ app.get("/api/quest/active", async (c) => {
   const quest = await getActiveQuestForCharacter(c.env.DB, session.slack_user_id);
   if (!quest) return c.json({ quest: null });
   const party = await getQuestParty(c.env.DB, quest.id);
-  return c.json({ quest, party });
+  // Expose whether web-mode combat is in progress so the dashboard can
+  // auto-resume the CombatPage on reload / back navigation.
+  const hasWebCombat = quest.mode === "web" && !!(await getWebCombatState(c.env.DB, quest.id));
+  return c.json({ quest, party, has_web_combat: hasWebCombat });
 });
 
 // Most-recent completed/failed quests for the signed-in user. Used to render
@@ -876,6 +923,8 @@ app.post("/api/quest/:id/start_web_combat", async (c) => {
       getEquipped(c.env.DB, member.slack_user_id, "armor"),
     ]);
     const cls = classByName(member.class);
+    const weaponRange = (weapon?.weapon_range as "melee" | "ranged" | "focus" | null | undefined) ?? "melee";
+    const isFocus = weaponRange === "focus";
     fighters.push({
       id: member.slack_user_id,
       name: member.name,
@@ -889,7 +938,11 @@ app.post("/api/quest/:id/start_web_combat", async (c) => {
       position: member.position,
       attack_mod: cls.attack_mod,
       magic_mod: cls.magic_mod,
-      weapon_power: weapon?.power ?? 0,
+      // Focus weapons contribute 0 to attack/cast/sig damage; their power
+      // becomes focus_power for heal/shield instead.
+      weapon_power: isFocus ? 0 : (weapon?.power ?? 0),
+      focus_power: isFocus ? (weapon?.power ?? 0) : 0,
+      weapon_range: weaponRange,
       armor_power: armor?.power ?? 0,
     });
   }
@@ -1489,11 +1542,18 @@ export interface OutcomeSummary {
 }
 
 interface ServerToClient {
-  type: "state" | "events" | "error" | "outcome";
+  type: "state" | "events" | "error" | "outcome" | "flavor" | "log_replay";
   state?: CombatState;
   events?: unknown[];
   message?: string;
   outcome?: OutcomeSummary;
+  // Flavor messages reference the originating event via the corresponding
+  // actor (so the client can render alongside the right combat moment).
+  flavor?: {
+    kind: "hit" | "victory" | "death" | "flee";
+    actor: string;
+    text: string;
+  };
 }
 
 // End-of-combat side-effects:
@@ -1713,6 +1773,12 @@ export class QuestRoom extends DurableObject<Env> {
   // to D1 before broadcasting.
   private cacheState: CombatState | null = null;
   private cacheQuestId: number | null = null;
+  // Recent combat events for replay on reconnect. Capped to LOG_MAX entries
+  // and persisted to D1 alongside cacheState. Holds both engine CombatEvents
+  // and worker-side events (e.g. item_used) — the UI handles both. Typed as
+  // unknown[] for that reason; D1 stores it as plain JSON.
+  private cacheLog: unknown[] = [];
+  private static readonly LOG_MAX = 200;
 
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
@@ -1735,10 +1801,14 @@ export class QuestRoom extends DurableObject<Env> {
     const attach: WsAttachment = { quest_id: questId, user_id: userId };
     server.serializeAttachment(attach);
 
-    // Send initial state snapshot if combat already exists for this quest.
+    // Send initial state snapshot + buffered event log if combat already
+    // exists. The log replay lets a Back-and-Resume user see their scrollback.
     const state = await this.loadState(questId);
     if (state) {
       this.sendOne(server, { type: "state", state });
+      if (this.cacheLog.length > 0) {
+        this.sendOne(server, { type: "log_replay", events: this.cacheLog });
+      }
     }
 
     return new Response(null, { status: 101, webSocket: client });
@@ -1783,7 +1853,8 @@ export class QuestRoom extends DurableObject<Env> {
     // when the state actually advanced.
     const stateChanged = result.state !== state;
     if (stateChanged) {
-      await saveWebCombatState(this.env.DB, attach.quest_id, result.state);
+      const newLog = this.appendLog(result.events);
+      await saveWebCombatState(this.env.DB, attach.quest_id, result.state, newLog);
       this.cacheState = result.state;
     }
 
@@ -1792,6 +1863,10 @@ export class QuestRoom extends DurableObject<Env> {
     if (stateChanged) {
       this.broadcast({ type: "state", state: result.state });
     }
+
+    // Kick off async AI flavor for hits/kills/deaths/flees. Each call broadcasts
+    // a `flavor` message when the model returns; the UI splices it into the log.
+    this.kickOffFlavor(attach.quest_id, result.state, result.events);
 
     // Terminal status transition — apply outcome side-effects exactly once.
     const becameTerminal =
@@ -1922,14 +1997,26 @@ export class QuestRoom extends DurableObject<Env> {
 
     if (!effect) return;
 
-    // Apply effect, then advance turn via engine's "wait" handler so the
-    // turn_start / round-bump logic stays unified.
+    // Apply the item's effect snapshot, then either resolve the monster kill
+    // (if HP hit 0, e.g. Production Outage instakill) or advance the turn via
+    // the engine's "wait" handler so turn_start / round-bump stay unified.
     const withEffect: CombatState = {
       ...state,
       fighters: updatedFighters,
       monster: { ...state.monster, ...monsterPatch },
     };
-    const waitResult = step(withEffect, { kind: "wait", actor: action.actor }, productionRoll);
+
+    let resultState: CombatState;
+    let resultEvents: CombatEvent[];
+    if (withEffect.monster.hp <= 0) {
+      const killed = resolveMonsterKill(withEffect, action.actor, []);
+      resultState = killed.state;
+      resultEvents = killed.events;
+    } else {
+      const waitResult = step(withEffect, { kind: "wait", actor: action.actor }, productionRoll);
+      resultState = waitResult.state;
+      resultEvents = waitResult.events;
+    }
 
     const itemUsed: ItemUsedEvent = {
       type: "item_used",
@@ -1940,12 +2027,31 @@ export class QuestRoom extends DurableObject<Env> {
       effect,
     };
 
-    await saveWebCombatState(this.env.DB, questId, waitResult.state);
+    const newLog = this.appendLog([itemUsed, ...resultEvents]);
+    await saveWebCombatState(this.env.DB, questId, resultState, newLog);
     await removeItem(this.env.DB, item.id);
-    this.cacheState = waitResult.state;
+    this.cacheState = resultState;
 
-    this.broadcast({ type: "events", events: [itemUsed, ...waitResult.events] });
-    this.broadcast({ type: "state", state: waitResult.state });
+    this.broadcast({ type: "events", events: [itemUsed, ...resultEvents] });
+    this.broadcast({ type: "state", state: resultState });
+    this.kickOffFlavor(questId, resultState, resultEvents);
+
+    // Item-driven kill — apply outcome side-effects (loot / xp / gold / level)
+    // the same way a player-action kill would. Mirrors the WS handler logic.
+    const becameTerminal =
+      state.status === "active"
+      && (resultState.status === "victory" || resultState.status === "defeat");
+    if (becameTerminal) {
+      try {
+        const outcome = await applyWebCombatOutcome(this.env, questId, resultState);
+        this.broadcast({ type: "outcome", outcome });
+      } catch (err) {
+        this.broadcast({
+          type: "error",
+          message: `outcome failed: ${err instanceof Error ? err.message : String(err)}`,
+        });
+      }
+    }
   }
 
   async webSocketClose(ws: WebSocket, _code: number, _reason: string, _wasClean: boolean): Promise<void> {
@@ -1955,12 +2061,111 @@ export class QuestRoom extends DurableObject<Env> {
 
   private async loadState(questId: number): Promise<CombatState | null> {
     if (this.cacheState && this.cacheQuestId === questId) return this.cacheState;
-    const state = await getWebCombatState(this.env.DB, questId);
-    if (state) {
-      this.cacheState = state;
+    const snap = await getWebCombatSnapshot(this.env.DB, questId);
+    if (snap) {
+      this.cacheState = snap.state;
       this.cacheQuestId = questId;
+      this.cacheLog = snap.log;
     }
-    return state;
+    return snap?.state ?? null;
+  }
+
+  // Append events to the in-memory log buffer, trim to LOG_MAX. Returns the
+  // new buffer so callers can pass it straight to saveWebCombatState.
+  private appendLog(events: unknown[]): unknown[] {
+    if (events.length === 0) return this.cacheLog;
+    const next = [...this.cacheLog, ...events];
+    this.cacheLog = next.length > QuestRoom.LOG_MAX
+      ? next.slice(next.length - QuestRoom.LOG_MAX)
+      : next;
+    return this.cacheLog;
+  }
+
+  // Broadcast a freshly-generated flavor message AND append it to the
+  // persisted log so a reconnecting client can replay it. The log marker
+  // shape (`_kind: "flavor"`) is distinguishable from CombatEvents (which
+  // have `type`) so the client can dispatch differently on replay.
+  private async broadcastAndLogFlavor(
+    questId: number,
+    flavor: { kind: "hit" | "victory" | "death" | "flee"; actor: string; text: string },
+  ): Promise<void> {
+    this.broadcast({ type: "flavor", flavor });
+    const newLog = this.appendLog([{ _kind: "flavor", flavor }]);
+    // Persist log alongside the current state. Best-effort — a failure here
+    // just means scrollback may miss this flavor entry; the broadcast already
+    // landed for live viewers.
+    if (this.cacheState) {
+      try {
+        await saveWebCombatState(this.env.DB, questId, this.cacheState, newLog);
+      } catch {
+        // ignore — scrollback regression only
+      }
+    }
+  }
+
+  // Scan engine events for moments worth narrating, fire off AI flavor
+  // requests in parallel, and broadcast each result as a `flavor` message
+  // when it returns. Errors fall back to canned text inside the helpers.
+  // Skips: misses, status ticks, position swaps — those aren't dramatic
+  // enough to warrant a model round-trip.
+  private kickOffFlavor(questId: number, state: CombatState, events: CombatEvent[]): void {
+    for (const e of events) {
+      if (e.type === "player_hit") {
+        const fighter = state.fighters.find((f) => f.id === e.actor);
+        if (!fighter) continue;
+        const action = e.formula.includes("aura") || e.crit ? "attack" : "attack";
+        // We can't tell attack vs cast from the player_hit event alone — look
+        // back at the previous `roll` event to disambiguate by die ("d6" vs "d8").
+        const recentRoll = events.find(
+          (x) => x.type === "roll" && x.actor === e.actor && (x.purpose === "damage_attack" || x.purpose === "damage_cast"),
+        );
+        const kind: "attack" | "cast" =
+          recentRoll && recentRoll.type === "roll" && recentRoll.purpose === "damage_cast" ? "cast" : action;
+        const ref = { name: fighter.name, class: fighter.class, level: fighter.level };
+        const monsterName = state.monster.name;
+        const isCrit = e.crit;
+        this.ctx.waitUntil(
+          flavorHit(this.env.AI, ref, monsterName, kind, isCrit)
+            .then((text) => this.broadcastAndLogFlavor(questId, { kind: "hit", actor: e.actor, text }))
+            .catch(() => undefined),
+        );
+      } else if (e.type === "monster_down") {
+        const fighter = state.fighters.find((f) => f.id === e.killed_by);
+        if (!fighter) continue;
+        const ref = { name: fighter.name, class: fighter.class, level: fighter.level };
+        const partySize = state.fighters.filter((f) => f.hp > 0).length;
+        const monsterName = state.monster.name;
+        this.ctx.waitUntil(
+          flavorVictory(this.env.AI, ref, monsterName, partySize)
+            .then((text) => this.broadcastAndLogFlavor(questId, { kind: "victory", actor: e.killed_by, text }))
+            .catch(() => undefined),
+        );
+      } else if (e.type === "fighter_down") {
+        const fighter = state.fighters.find((f) => f.id === e.target);
+        if (!fighter) continue;
+        const ref = { name: fighter.name, class: fighter.class, level: fighter.level };
+        const monsterName = state.monster.name;
+        this.ctx.waitUntil(
+          flavorDeath(this.env.AI, ref, monsterName)
+            .then((text) => this.broadcastAndLogFlavor(questId, { kind: "death", actor: e.target, text }))
+            .catch(() => undefined),
+        );
+      } else if (e.type === "fled") {
+        // Use the most recent flee_check to attribute the escape.
+        const fleeCheck = [...events].reverse().find((x) => x.type === "flee_check");
+        if (!fleeCheck || fleeCheck.type !== "flee_check") continue;
+        const fighter = state.fighters.find((f) => f.id === fleeCheck.actor);
+        if (!fighter) continue;
+        const ref = { name: fighter.name, class: fighter.class, level: fighter.level };
+        const monsterName = state.monster.name;
+        const partyContinues = state.fighters.some((f) => f.id !== fighter.id && f.hp > 0);
+        this.ctx.waitUntil(
+          flavorFleeSuccess(this.env.AI, ref, monsterName, partyContinues)
+            .then((text) => this.broadcastAndLogFlavor(questId, { kind: "flee", actor: fleeCheck.actor, text }))
+            .catch(() => undefined),
+        );
+      }
+    }
   }
 
   private sendOne(ws: WebSocket, msg: ServerToClient): void {

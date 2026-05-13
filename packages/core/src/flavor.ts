@@ -213,10 +213,34 @@ export const EFFECT_META: Record<EffectType, EffectMeta> = {
   poisoned: { emoji: "☠️", name: "Poisoned", kind: "debuff", ignoresArmor: true, blurb: "Loses HP each turn." },
 };
 
-export type WeaponRange = "melee" | "ranged";
+// "focus" weapons are the caster/support tier: wands, staves, codices.
+// They don't add to attack/cast/sig damage (weaponMod is zeroed when
+// range === "focus") and instead boost heal/shield by their power, plus
+// grant +1 max mana while equipped.
+//
+// Keeping focus in the same TEXT column as melee/ranged means no DB
+// migration is needed — the existing weapon_range field carries it.
+export type WeaponRange = "melee" | "ranged" | "focus";
+
+// Flat max-mana bump while a focus weapon is equipped. Single increment
+// regardless of rarity — keeps equip/unequip bookkeeping trivial.
+export const FOCUS_MAX_MANA_BONUS = 1;
 
 export const SHIELD_CAP_MULTIPLIER = 2; // shield caps at SHIELD_CAP_MULTIPLIER × max_hp
 export type Rarity = "common" | "uncommon" | "rare";
+
+// Per-rarity heal/shield bonus when a focus weapon is equipped. Replaces
+// the attack-power bonus melee/ranged weapons would give.
+export const FOCUS_POWER_BY_RARITY: Record<Rarity, number> = {
+  common: 2,
+  uncommon: 4,
+  rare: 6,
+};
+
+// Probability that a random "weapon" roll becomes a focus instead of
+// melee/ranged. ~25% — common enough that support builds get gear,
+// rare enough that damage builds still dominate the table.
+export const FOCUS_WEAPON_ROLL_CHANCE = 0.25;
 
 export const MAX_MANA_CAP = 5;
 
@@ -243,6 +267,44 @@ export function signatureFor(className: string): SignatureSpec | null {
   const cls = CLASSES.find((c) => c.name === className);
   if (!cls) return null;
   return SIGNATURES[cls.id] ?? null;
+}
+
+// Class active abilities. Distinct from signatures: each has a unique combat
+// effect (control / buff / debuff / utility) rather than just damage. Costs
+// mana, ends the actor's turn.
+export type AbilityId =
+  | "taunt"
+  | "containerize"
+  | "regression_shield"
+  | "vanish"
+  | "soul_drain"
+  | "battle_hymn"
+  | "foresee"
+  | "migrate";
+
+export interface AbilitySpec {
+  id: AbilityId;
+  name: string;
+  emoji: string;
+  mana_cost: number;
+  blurb: string;
+}
+
+export const ABILITIES: Record<string, AbilitySpec> = {
+  sre_warden:     { id: "taunt",              name: "Taunt",             emoji: "🛡", mana_cost: 2, blurb: "Force the monster to target you for its next 2 swings." },
+  devops_mage:    { id: "containerize",       name: "Containerize",      emoji: "🧙", mana_cost: 2, blurb: "Lock the monster in stasis — it skips its next swing." },
+  qa_paladin:     { id: "regression_shield",  name: "Regression Shield", emoji: "✨", mana_cost: 2, blurb: "Grant +3 shield to every alive partymate." },
+  refactor_rogue: { id: "vanish",             name: "Vanish",            emoji: "🗡", mana_cost: 2, blurb: "Disappear — the monster can't target you for its next 2 swings." },
+  data_warlock:   { id: "soul_drain",         name: "Soul Drain",        emoji: "💀", mana_cost: 2, blurb: "Deal 1d6 + mag damage, heal yourself for 50% of damage dealt." },
+  frontend_bard:  { id: "battle_hymn",        name: "Battle Hymn",       emoji: "🎵", mana_cost: 2, blurb: "Next 2 partymate attacks deal +2 damage." },
+  staff_sage:     { id: "foresee",            name: "Foresee",           emoji: "📜", mana_cost: 1, blurb: "Read the monster's tells — see who it's about to hit." },
+  backend_druid:  { id: "migrate",            name: "Migrate",           emoji: "🌿", mana_cost: 1, blurb: "Move any partymate (or yourself) to front or back row." },
+};
+
+export function abilityFor(className: string): AbilitySpec | null {
+  const cls = CLASSES.find((c) => c.name === className);
+  if (!cls) return null;
+  return ABILITIES[cls.id] ?? null;
 }
 
 export interface ItemRoll {
@@ -335,10 +397,19 @@ export function rollCatalogEntry(type: "tool" | "scroll"): CatalogEntry {
   return pool[Math.floor(Math.random() * pool.length)];
 }
 
-// 60% melee / 40% ranged. Melee skews more common because most class signatures
-// + the standard /sq attack assume hand-to-hand by default.
+// Weapon-range distribution: focus rolls FOCUS_WEAPON_ROLL_CHANCE (~25%);
+// the remainder splits 60/40 melee/ranged. Melee skews higher in the damage
+// bucket since most class signatures + the standard attack assume hand-to-hand.
 function rollWeaponRange(): WeaponRange {
+  if (Math.random() < FOCUS_WEAPON_ROLL_CHANCE) return "focus";
   return Math.random() < 0.6 ? "melee" : "ranged";
+}
+
+// Flat focus-weapon power ladder by rarity. Predictable support output beats
+// the +1-spread randomness for healer builds that want to know "this Rare
+// heals for +6 every cast."
+function rollFocusPower(rarity: Rarity): number {
+  return FOCUS_POWER_BY_RARITY[rarity];
 }
 
 // Slot weights. Magic items (permanent max_mana boost) and revive items (rare combat
@@ -406,8 +477,12 @@ export function rollItem(tier: number): ItemRoll {
     };
   }
   const rarity = rollRarity(tier);
-  const power = rollPower(type, rarity);
   const weapon_range = type === "weapon" ? rollWeaponRange() : undefined;
+  // Focus weapons override the regular weapon-power formula with a flat
+  // ladder by rarity — predictable support output for healer builds.
+  const power = type === "weapon" && weapon_range === "focus"
+    ? rollFocusPower(rarity)
+    : rollPower(type, rarity);
   return { type, rarity, power, weapon_range };
 }
 
@@ -436,8 +511,10 @@ export function rollMerchantItem(tier: number): ItemRoll {
     };
   }
   const rarity = rollRarity(tier);
-  const power = rollPower(type, rarity);
   const weapon_range = type === "weapon" ? rollWeaponRange() : undefined;
+  const power = type === "weapon" && weapon_range === "focus"
+    ? rollFocusPower(rarity)
+    : rollPower(type, rarity);
   return { type, rarity, power, weapon_range };
 }
 

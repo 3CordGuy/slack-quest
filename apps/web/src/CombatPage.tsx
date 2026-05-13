@@ -116,6 +116,56 @@ type CombatEvent =
       hp_delta: number;
       source?: string;
     }
+  | {
+      type: "ability_used";
+      actor: string;
+      ability_id: string;
+      name: string;
+      mana_spent: number;
+    }
+  | { type: "ability_taunt"; actor: string; swings: number }
+  | { type: "ability_containerize"; swings: number }
+  | {
+      type: "ability_regression_shield";
+      actor: string;
+      grants: { target: string; amount: number }[];
+    }
+  | { type: "ability_vanish"; actor: string; swings: number }
+  | {
+      type: "ability_soul_drain";
+      actor: string;
+      damage: number;
+      healed: number;
+      roll: number;
+      formula: string;
+    }
+  | { type: "ability_battle_hymn"; actor: string; charges_added: number }
+  | {
+      type: "ability_foresee";
+      actor: string;
+      predicted_target: string | null;
+      damage_lo: number;
+      damage_hi: number;
+    }
+  | {
+      type: "ability_migrate";
+      actor: string;
+      target: string;
+      from: "front" | "back";
+      to: "front" | "back";
+    }
+  | { type: "monster_swing_skipped"; reason: string }
+  | { type: "monster_target_redirected"; from: string; to: string; reason: string }
+  | { type: "battle_hymn_consumed"; actor: string; bonus: number; remaining: number }
+  | { type: "mark_applied"; actor: string; expires_after_round: number; bonus: number }
+  | { type: "mark_bonus"; actor: string; bonus: number }
+  | { type: "passive_warden_shield"; actor: string; amount: number }
+  | { type: "passive_mage_free_sig"; actor: string }
+  | { type: "passive_druid_regen"; actor: string; amount: number }
+  | { type: "passive_rogue_first_crit"; actor: string }
+  | { type: "passive_bard_aura"; actor: string; source: string; bonus: number }
+  | { type: "passive_warlock_bleed"; actor: string; magnitude: number; duration: number }
+  | { type: "passive_paladin_auto_heal"; paladin: string; target: string; amount: number }
   | { type: "victory" }
   | { type: "defeat" }
   | { type: "rejected"; reason: string }
@@ -130,6 +180,14 @@ type TurnAction =
   | { kind: "flee"; actor: string }
   | { kind: "position"; actor: string; to: "front" | "back" }
   | { kind: "wait"; actor: string }
+  | { kind: "mark"; actor: string }
+  | {
+      kind: "ability";
+      actor: string;
+      ability_id: string;
+      target?: string;
+      position?: "front" | "back";
+    }
   | { kind: "monster_act" }
   | { kind: "use_item"; actor: string; item_id: number; target_id?: string };
 
@@ -200,7 +258,7 @@ interface OutcomeSummary {
 interface UiState {
   connection: "connecting" | "open" | "closed";
   state: CombatState | null;
-  log: { id: number; text: string; tone: "info" | "good" | "bad" | "muted" }[];
+  log: { id: number; text: string; tone: "info" | "good" | "bad" | "muted" | "flavor" }[];
   error: string | null;
   outcome: OutcomeSummary | null;
 }
@@ -210,7 +268,8 @@ type UiAction =
   | { kind: "state"; value: CombatState }
   | { kind: "events"; value: CombatEvent[] }
   | { kind: "error"; value: string }
-  | { kind: "outcome"; value: OutcomeSummary };
+  | { kind: "outcome"; value: OutcomeSummary }
+  | { kind: "flavor"; value: { kind: "hit" | "victory" | "death" | "flee"; actor: string; text: string } };
 
 let nextLogId = 1;
 
@@ -225,6 +284,16 @@ function reducer(s: UiState, a: UiAction): UiState {
         ...s,
         log: [...s.log, ...a.value.flatMap((e) => formatEvent(e, s.state))].slice(-50),
       };
+    case "flavor": {
+      const prefix = a.value.kind === "victory" ? "🏆"
+        : a.value.kind === "death" ? "💀"
+        : a.value.kind === "flee" ? "🏃"
+        : "✦";
+      return {
+        ...s,
+        log: [...s.log, { id: nextLogId++, text: `${prefix} ${a.value.text}`, tone: "flavor" }].slice(-50),
+      };
+    }
     case "error":
       return { ...s, error: a.value };
     case "outcome":
@@ -428,6 +497,166 @@ function formatEvent(e: CombatEvent, state: CombatState | null): UiState["log"] 
         ];
       }
     }
+    case "ability_used":
+      return [
+        {
+          id: nextLogId++,
+          text: `✨ ${nameOf(e.actor)} uses ${e.name}  −${e.mana_spent} mana`,
+          tone: "good",
+        },
+      ];
+    case "ability_taunt":
+      return [
+        {
+          id: nextLogId++,
+          text: `🛡 ${nameOf(e.actor)} bellows — monster locked on for ${e.swings} swings.`,
+          tone: "good",
+        },
+      ];
+    case "ability_containerize":
+      return [
+        {
+          id: nextLogId++,
+          text: `🧙 Stasis container — monster will skip ${e.swings} swing.`,
+          tone: "good",
+        },
+      ];
+    case "ability_regression_shield": {
+      const summary = e.grants.length === 0
+        ? "everyone at cap"
+        : e.grants.map((g) => `+${g.amount} ${nameOf(g.target)}`).join(", ");
+      return [
+        { id: nextLogId++, text: `✨ Regression Shield — ${summary}.`, tone: "good" },
+      ];
+    }
+    case "ability_vanish":
+      return [
+        {
+          id: nextLogId++,
+          text: `🗡 ${nameOf(e.actor)} vanishes — untargetable for ${e.swings} swings.`,
+          tone: "good",
+        },
+      ];
+    case "ability_soul_drain":
+      return [
+        {
+          id: nextLogId++,
+          text: `💀 Soul Drain: ${e.damage} dmg, +${e.healed} HP  [${e.formula}]`,
+          tone: "good",
+        },
+      ];
+    case "ability_battle_hymn":
+      return [
+        {
+          id: nextLogId++,
+          text: `🎵 Battle Hymn — next ${e.charges_added} party attacks deal +2 dmg.`,
+          tone: "good",
+        },
+      ];
+    case "ability_foresee": {
+      const who = e.predicted_target ? nameOf(e.predicted_target) : "no committed target";
+      return [
+        {
+          id: nextLogId++,
+          text: `📜 Foresee — monster looks ready to hit ${who} for ~${e.damage_lo}-${e.damage_hi} HP.`,
+          tone: "info",
+        },
+      ];
+    }
+    case "ability_migrate":
+      return [
+        {
+          id: nextLogId++,
+          text: `🌿 ${nameOf(e.actor)} shifts ${nameOf(e.target)} to the ${e.to} row.`,
+          tone: "info",
+        },
+      ];
+    case "monster_swing_skipped":
+      return [
+        { id: nextLogId++, text: `📦 The monster's swing fizzles — containerized.`, tone: "good" },
+      ];
+    case "monster_target_redirected":
+      return [
+        {
+          id: nextLogId++,
+          text: e.reason === "taunt"
+            ? `🛡 Taunt redirects: ${nameOf(e.from)} → ${nameOf(e.to)}`
+            : `🗡 Vanish slips ${nameOf(e.from)} — monster picks ${nameOf(e.to)} instead.`,
+          tone: "good",
+        },
+      ];
+    case "battle_hymn_consumed":
+      return [
+        {
+          id: nextLogId++,
+          text: `🎵 Hymn boosts ${nameOf(e.actor)} by +${e.bonus} (${e.remaining} left).`,
+          tone: "good",
+        },
+      ];
+    case "mark_applied":
+      return [
+        {
+          id: nextLogId++,
+          text: `🎯 ${nameOf(e.actor)} marks the monster — party +${e.bonus} dmg until end of round ${e.expires_after_round}.`,
+          tone: "good",
+        },
+      ];
+    case "mark_bonus":
+      return [
+        {
+          id: nextLogId++,
+          text: `🎯 Focus-fire: +${e.bonus} dmg from ${nameOf(e.actor)}.`,
+          tone: "good",
+        },
+      ];
+    case "passive_warden_shield":
+      return [
+        {
+          id: nextLogId++,
+          text: `🛡 ${nameOf(e.actor)} hardens up — +${e.amount} shield (passive).`,
+          tone: "good",
+        },
+      ];
+    case "passive_mage_free_sig":
+      return [
+        { id: nextLogId++, text: `🧙 ${nameOf(e.actor)}'s first signature is free.`, tone: "good" },
+      ];
+    case "passive_druid_regen":
+      return [
+        {
+          id: nextLogId++,
+          text: `🌿 ${nameOf(e.actor)} regen +${e.amount} HP (passive).`,
+          tone: "good",
+        },
+      ];
+    case "passive_rogue_first_crit":
+      return [
+        { id: nextLogId++, text: `🗡 ${nameOf(e.actor)}'s first strike — guaranteed crit!`, tone: "good" },
+      ];
+    case "passive_bard_aura":
+      return [
+        {
+          id: nextLogId++,
+          text: `🎵 Bardic Aura: +${e.bonus} dmg from ${nameOf(e.source)}'s song.`,
+          tone: "good",
+        },
+      ];
+    case "passive_warlock_bleed":
+      return [
+        {
+          id: nextLogId++,
+          text: `💀 Cursed Strike: 🩸 bleed ${e.magnitude}/turn × ${e.duration} on monster.`,
+          tone: "good",
+        },
+      ];
+    case "passive_paladin_auto_heal":
+      return [
+        {
+          id: nextLogId++,
+          text: `✨ Lay on Hands: ${nameOf(e.paladin)} → ${nameOf(e.target)} +${e.amount} HP.`,
+          tone: "good",
+        },
+      ];
     case "victory":
       return [{ id: nextLogId++, text: "VICTORY", tone: "good" }];
     case "defeat":
@@ -459,6 +688,7 @@ export function CombatPage({
   });
   const [picking, setPicking] = useState<"heal" | "shield" | null>(null);
   const [itemPicker, setItemPicker] = useState<"closed" | "open" | { reviveItemId: number }>("closed");
+  const [migratePicker, setMigratePicker] = useState<boolean>(false);
   const [items, setItems] = useState<InventoryItem[]>([]);
   const wsRef = useRef<WebSocket | null>(null);
   const logScrollRef = useRef<HTMLDivElement | null>(null);
@@ -489,7 +719,9 @@ export function CombatPage({
           | { type: "state"; state: CombatState }
           | { type: "events"; events: CombatEvent[] }
           | { type: "error"; message: string }
-          | { type: "outcome"; outcome: OutcomeSummary };
+          | { type: "outcome"; outcome: OutcomeSummary }
+          | { type: "flavor"; flavor: { kind: "hit" | "victory" | "death" | "flee"; actor: string; text: string } }
+          | { type: "log_replay"; events: unknown[] };
         if (msg.type === "state") dispatch({ kind: "state", value: msg.state });
         else if (msg.type === "events") {
           dispatch({ kind: "events", value: msg.events });
@@ -498,6 +730,25 @@ export function CombatPage({
         }
         else if (msg.type === "error") dispatch({ kind: "error", value: msg.message });
         else if (msg.type === "outcome") dispatch({ kind: "outcome", value: msg.outcome });
+        else if (msg.type === "flavor") dispatch({ kind: "flavor", value: msg.flavor });
+        else if (msg.type === "log_replay") {
+          // Replayed log mixes CombatEvents (have `type`) and flavor markers
+          // (have `_kind: "flavor"`). Split + dispatch in arrival order.
+          const events: CombatEvent[] = [];
+          for (const entry of msg.events) {
+            if (entry && typeof entry === "object" && (entry as { _kind?: string })._kind === "flavor") {
+              // Flush any buffered events first so timing is preserved.
+              if (events.length > 0) {
+                dispatch({ kind: "events", value: events.splice(0) });
+              }
+              const f = (entry as { flavor: { kind: "hit" | "victory" | "death" | "flee"; actor: string; text: string } }).flavor;
+              dispatch({ kind: "flavor", value: f });
+            } else {
+              events.push(entry as CombatEvent);
+            }
+          }
+          if (events.length > 0) dispatch({ kind: "events", value: events });
+        }
       } catch {
         dispatch({ kind: "error", value: "bad message" });
       }
@@ -521,15 +772,11 @@ export function CombatPage({
     ws.send(JSON.stringify({ type: "action", action }));
   }
 
-  async function exit() {
-    try {
-      await fetch(`/api/quest/${questId}/end_web_combat`, {
-        method: "POST",
-        credentials: "include",
-      });
-    } finally {
-      onExit();
-    }
+  function exit() {
+    // Just navigate away — combat state stays in D1 so the player can resume
+    // from the dashboard. Use the EndBanner's Abandon control (or the dashboard's
+    // explicit abandon button) to actually clear web combat state.
+    onExit();
   }
 
   const state = ui.state;
@@ -542,6 +789,7 @@ export function CombatPage({
     state?.status === "victory" || state?.status === "defeat" || state?.status === "fled";
   const me = state?.fighters.find((f) => f.id === selfId);
   const myMana = me?.mana ?? 0;
+  const myAbility = me ? ABILITY_BY_CLASS[me.class] ?? null : null;
 
   function fireOnTarget(targetId: string) {
     if (!picking) return;
@@ -552,6 +800,27 @@ export function CombatPage({
   function fireUseItem(itemId: number, targetId?: string) {
     send({ kind: "use_item", actor: selfId, item_id: itemId, target_id: targetId });
     setItemPicker("closed");
+  }
+
+  function fireAbility() {
+    if (!myAbility) return;
+    if (myAbility.needs_migrate_picker) {
+      setMigratePicker(true);
+      return;
+    }
+    send({ kind: "ability", actor: selfId, ability_id: myAbility.id });
+  }
+
+  function fireMigrate(targetId: string, position: "front" | "back") {
+    if (!myAbility) return;
+    send({
+      kind: "ability",
+      actor: selfId,
+      ability_id: myAbility.id,
+      target: targetId,
+      position,
+    });
+    setMigratePicker(false);
   }
 
   return (
@@ -574,7 +843,11 @@ export function CombatPage({
 
       {state && (
         <>
-          <MonsterCard monster={state.monster} round={state.round} />
+          <MonsterCard
+            monster={state.monster}
+            round={state.round}
+            showSageReading={me?.class === "Staff Sage"}
+          />
           <InitiativeTrack
             order={state.turn_order}
             currentIndex={state.turn_index % state.turn_order.length}
@@ -608,12 +881,21 @@ export function CombatPage({
                 onCancel={() => setItemPicker("open")}
               />
             )}
-          {state.status === "active" && !picking && itemPicker === "closed" && (
+          {state.status === "active" && migratePicker && (
+            <MigratePicker
+              fighters={state.fighters}
+              selfId={selfId}
+              onPick={fireMigrate}
+              onCancel={() => setMigratePicker(false)}
+            />
+          )}
+          {state.status === "active" && !picking && itemPicker === "closed" && !migratePicker && (
             <ActionBar
               disabled={!myTurn}
               mana={myMana}
               hasItems={items.some((i) => isCombatUsable(i.item_type))}
               selfPosition={me?.position ?? "front"}
+              ability={myAbility}
               onAct={(kind) => {
                 if (kind === "heal" || kind === "shield") {
                   setPicking(kind);
@@ -622,7 +904,9 @@ export function CombatPage({
                 } else if (kind === "swap_position") {
                   const to = me?.position === "front" ? "back" : "front";
                   send({ kind: "position", actor: selfId, to });
-                } else if (kind === "signature" || kind === "flee" || kind === "attack" || kind === "cast" || kind === "wait") {
+                } else if (kind === "ability") {
+                  fireAbility();
+                } else if (kind === "signature" || kind === "flee" || kind === "attack" || kind === "cast" || kind === "wait" || kind === "mark") {
                   send({ kind, actor: selfId } as TurnAction);
                 }
               }}
@@ -648,7 +932,18 @@ export function CombatPage({
   );
 }
 
-function MonsterCard({ monster, round }: { monster: Monster; round: number }) {
+function MonsterCard({
+  monster,
+  round,
+  showSageReading,
+}: {
+  monster: Monster;
+  round: number;
+  showSageReading: boolean;
+}) {
+  // Sage's Reading — passive tells the Sage the monster's tier-derived swing range.
+  const sageLo = 1 + monster.tier;
+  const sageHi = 6 + monster.tier + (monster.is_boss && monster.boss_phase === 2 ? monster.tier : 0);
   return (
     <div style={{ ...card, borderColor: "#7c2020" }}>
       <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 12 }}>
@@ -666,6 +961,11 @@ function MonsterCard({ monster, round }: { monster: Monster; round: number }) {
         </div>
       </div>
       <BigHpBar current={monster.hp} max={monster.max_hp} />
+      {showSageReading && (
+        <div style={{ ...muted, fontSize: 11, marginTop: 6 }}>
+          📜 Sage's Reading: next swing ~{sageLo}–{sageHi} HP
+        </div>
+      )}
     </div>
   );
 }
@@ -814,7 +1114,32 @@ type ActionKind =
   | "flee"
   | "wait"
   | "use_item"
-  | "swap_position";
+  | "swap_position"
+  | "mark"
+  | "ability";
+
+// Class → active ability spec. Mirrors packages/core/src/flavor.ts ABILITIES.
+// Kept inline here to avoid coupling the page to the core barrel.
+interface AbilityUiSpec {
+  id: string;
+  name: string;
+  emoji: string;
+  mana_cost: number;
+  blurb: string;
+  // migrate is the only ability that needs a target+position picker.
+  needs_migrate_picker?: boolean;
+}
+
+const ABILITY_BY_CLASS: Record<string, AbilityUiSpec> = {
+  "SRE Warden":      { id: "taunt",              name: "Taunt",             emoji: "🛡", mana_cost: 2, blurb: "Monster targets you for 2 swings" },
+  "DevOps Mage":     { id: "containerize",       name: "Containerize",      emoji: "🧙", mana_cost: 2, blurb: "Monster skips next swing" },
+  "QA Paladin":      { id: "regression_shield",  name: "Regression Shield", emoji: "✨", mana_cost: 2, blurb: "+3 shield to all party" },
+  "Refactor Rogue":  { id: "vanish",             name: "Vanish",            emoji: "🗡", mana_cost: 2, blurb: "Untargetable for 2 swings" },
+  "Data Warlock":    { id: "soul_drain",         name: "Soul Drain",        emoji: "💀", mana_cost: 2, blurb: "1d6+mag dmg, heal 50%" },
+  "Frontend Bard":   { id: "battle_hymn",        name: "Battle Hymn",       emoji: "🎵", mana_cost: 2, blurb: "+2 dmg on next 2 party attacks" },
+  "Staff Sage":      { id: "foresee",            name: "Foresee",           emoji: "📜", mana_cost: 1, blurb: "Read monster's next target" },
+  "Backend Druid":   { id: "migrate",            name: "Migrate",           emoji: "🌿", mana_cost: 1, blurb: "Move a partymate to front/back", needs_migrate_picker: true },
+};
 
 // Items the worker has dispatch for in handleUseItem. Tools / scrolls are
 // catalog-dispatched, so even though we filter by type here, the worker
@@ -835,12 +1160,14 @@ function ActionBar({
   mana,
   hasItems,
   selfPosition,
+  ability,
   onAct,
 }: {
   disabled: boolean;
   mana: number;
   hasItems: boolean;
   selfPosition: "front" | "back";
+  ability: AbilityUiSpec | null;
   onAct: (kind: ActionKind) => void;
 }) {
   const otherRow = selfPosition === "front" ? "back" : "front";
@@ -854,6 +1181,14 @@ function ActionBar({
         disabled={disabled || mana < 1}
         onClick={() => onAct("signature")}
       />
+      {ability && (
+        <ActionBtn
+          label={`${ability.emoji} ${ability.name}`}
+          hint={mana >= ability.mana_cost ? `${ability.blurb} · ${ability.mana_cost} mana` : "Not enough mana"}
+          disabled={disabled || mana < ability.mana_cost}
+          onClick={() => onAct("ability")}
+        />
+      )}
       <ActionBtn label="💚 Heal" hint="1d6+mag · pick target" disabled={disabled} onClick={() => onAct("heal")} />
       <ActionBtn label="🛡 Shield" hint="1d6+mag · pick target" disabled={disabled} onClick={() => onAct("shield")} />
       <ActionBtn
@@ -868,8 +1203,79 @@ function ActionBar({
         disabled={disabled}
         onClick={() => onAct("swap_position")}
       />
+      <ActionBtn label="🎯 Mark" hint="Party gets +2 dmg on monster for 2 rounds" disabled={disabled} onClick={() => onAct("mark")} />
       <ActionBtn label="🏃 Flee" hint="d20+mod vs DC 10+tier" disabled={disabled} onClick={() => onAct("flee")} />
       <ActionBtn label="⏸ Wait" hint="Skip your turn" disabled={disabled} onClick={() => onAct("wait")} />
+    </div>
+  );
+}
+
+function MigratePicker({
+  fighters,
+  selfId,
+  onPick,
+  onCancel,
+}: {
+  fighters: Fighter[];
+  selfId: string;
+  onPick: (targetId: string, position: "front" | "back") => void;
+  onCancel: () => void;
+}) {
+  const [targetId, setTargetId] = useState<string>(selfId);
+  const [position, setPosition] = useState<"front" | "back">("front");
+  const target = fighters.find((f) => f.id === targetId);
+  const alreadyThere = target?.position === position;
+  return (
+    <div style={card}>
+      <div style={{ ...muted, fontSize: 12, marginBottom: 8 }}>🌿 Migrate — who and where?</div>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 8 }}>
+        {fighters
+          .filter((f) => f.hp > 0)
+          .map((f) => (
+            <button
+              key={f.id}
+              onClick={() => setTargetId(f.id)}
+              style={{
+                ...button,
+                background: targetId === f.id ? "#2a5a3a" : "#222",
+                fontSize: 13,
+              }}
+            >
+              {f.name} · {f.position}
+            </button>
+          ))}
+      </div>
+      <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
+        <button
+          onClick={() => setPosition("front")}
+          style={{ ...button, background: position === "front" ? "#2a5a3a" : "#222", fontSize: 13 }}
+        >
+          🔼 Front
+        </button>
+        <button
+          onClick={() => setPosition("back")}
+          style={{ ...button, background: position === "back" ? "#2a5a3a" : "#222", fontSize: 13 }}
+        >
+          🔽 Back
+        </button>
+      </div>
+      <div style={{ display: "flex", gap: 6 }}>
+        <button
+          onClick={() => onPick(targetId, position)}
+          disabled={alreadyThere}
+          style={{ ...button, opacity: alreadyThere ? 0.5 : 1 }}
+        >
+          Migrate
+        </button>
+        <button onClick={onCancel} style={{ ...button, background: "#444" }}>
+          Cancel
+        </button>
+      </div>
+      {alreadyThere && (
+        <div style={{ ...muted, fontSize: 12, marginTop: 6 }}>
+          Already in {position} row.
+        </div>
+      )}
     </div>
   );
 }
@@ -1309,6 +1715,7 @@ const TONE_COLOR: Record<string, string> = {
   good: "#86efac",
   bad: "#fca5a5",
   muted: "#9aa0a6",
+  flavor: "#f5d390",
 };
 
 const page: React.CSSProperties = {

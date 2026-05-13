@@ -730,6 +730,28 @@ export async function equipItem(db: D1Database, item: Item): Promise<void> {
   ]);
 }
 
+// Adjusts a character's max_mana by `delta` (and current mana proportionally).
+// Used when equipping/unequipping focus weapons to grant/refund FOCUS_MAX_MANA_BONUS.
+// Negative delta clamps current mana so we don't end up with mana > max_mana.
+export async function applyFocusManaShift(
+  db: D1Database,
+  userId: string,
+  delta: number,
+): Promise<void> {
+  if (delta === 0) return;
+  if (delta > 0) {
+    await db
+      .prepare(`UPDATE characters SET max_mana = max_mana + ?, mana = mana + ?, last_active = ? WHERE slack_user_id = ?`)
+      .bind(delta, delta, Date.now(), userId)
+      .run();
+  } else {
+    await db
+      .prepare(`UPDATE characters SET max_mana = max_mana + ?, mana = MIN(mana, max_mana + ?), last_active = ? WHERE slack_user_id = ?`)
+      .bind(delta, delta, Date.now(), userId)
+      .run();
+  }
+}
+
 export async function getEquipped(
   db: D1Database,
   characterId: string,

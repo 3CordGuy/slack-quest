@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { CombatPage } from "./CombatPage";
 
@@ -173,6 +173,7 @@ interface ShopResponse {
 interface ActiveQuestResponse {
   quest: ActiveQuest | null;
   party?: Character[];
+  has_web_combat?: boolean;
 }
 
 interface JoinableQuest {
@@ -205,6 +206,18 @@ type LoadState =
 export function App() {
   const [state, setState] = useState<LoadState>({ kind: "loading" });
   const [activeCombat, setActiveCombat] = useState<{ questId: number } | null>(null);
+  // True after the user explicitly backed out of CombatPage — suppresses
+  // auto-resume on subsequent refresh() calls (e.g. after a shop purchase)
+  // until they click Resume or combat ends. Reset when combat actually ends.
+  // Stored in a ref because refresh() is called synchronously after the
+  // dismiss flag is flipped — useState wouldn't propagate in time.
+  const combatDismissedRef = useRef(false);
+  const setCombatDismissed = (v: boolean) => {
+    combatDismissedRef.current = v;
+  };
+  // Tracks whether D1 still holds a web combat state for the active quest,
+  // so the dashboard can offer a Resume button after Back.
+  const [hasWebCombat, setHasWebCombat] = useState(false);
 
   useEffect(() => {
     void refresh();
@@ -238,6 +251,21 @@ export function App() {
         const body = (await qRes.json()) as ActiveQuestResponse;
         if (body.quest) {
           activeQuest = { quest: body.quest, party: body.party ?? [] };
+          setHasWebCombat(!!body.has_web_combat);
+          // Auto-resume CombatPage on initial load (or after combat ends and
+          // a new one starts). Skipped if the user explicitly backed out —
+          // they'll see a Resume button on the dashboard instead.
+          if (body.has_web_combat && !combatDismissedRef.current) {
+            setActiveCombat({ questId: body.quest.id });
+          }
+          // Combat ended (D1 state cleared) — reset the dismiss flag so a
+          // future fight on the same quest will auto-resume again.
+          if (!body.has_web_combat && combatDismissedRef.current) {
+            setCombatDismissed(false);
+          }
+        } else {
+          setHasWebCombat(false);
+          setCombatDismissed(false);
         }
       }
       if (recentRes.ok) {
@@ -268,6 +296,7 @@ export function App() {
       credentials: "include",
     });
     if (!res.ok) return;
+    setCombatDismissed(false);
     setActiveCombat({ questId });
   }
 
@@ -417,7 +446,10 @@ export function App() {
         questId={activeCombat.questId}
         selfId={state.me.slack_user_id}
         onExit={() => {
+          // Just navigate away — combat state stays in D1, DO keeps caching.
+          // The dashboard will show a Resume button so the user can come back.
           setActiveCombat(null);
+          setCombatDismissed(true);
           void refresh();
         }}
       />
@@ -440,6 +472,7 @@ export function App() {
             quest={state.activeQuest.quest}
             party={state.activeQuest.party}
             selfId={state.me.slack_user_id}
+            combatInProgress={hasWebCombat}
             onStartCombat={() => startCombat(state.activeQuest!.quest.id)}
             onChooseDoor={(pick) => chooseDoor(state.activeQuest!.quest.id, pick)}
             onTrapChoose={(pick) => trapChoose(state.activeQuest!.quest.id, pick)}
@@ -685,6 +718,7 @@ function ActiveQuestCard({
   quest,
   party,
   selfId,
+  combatInProgress,
   onStartCombat,
   onChooseDoor,
   onTrapChoose,
@@ -696,6 +730,7 @@ function ActiveQuestCard({
   quest: ActiveQuest;
   party: Character[];
   selfId: string;
+  combatInProgress: boolean;
   onStartCombat: () => void;
   onChooseDoor: (pick: number) => void;
   onTrapChoose: (pick: number) => void;
@@ -828,7 +863,7 @@ function ActiveQuestCard({
               onClick={onStartCombat}
               style={{ ...button, marginTop: 20, background: "#b89b3a", color: "#0e0f12" }}
             >
-              ⚔ Open Web Combat
+              {combatInProgress ? "⚔ Resume Web Combat" : "⚔ Open Web Combat"}
             </button>
           );
         }

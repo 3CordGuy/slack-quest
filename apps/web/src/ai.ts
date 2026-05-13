@@ -229,6 +229,95 @@ const COMBAT_SYSTEM = [
   "Output ONE line, 1-2 sentences, ~25 words MAX. No markdown formatting. No emoji. Do not include numbers, HP values, or damage amounts.",
 ].join("\n");
 
+// Single-shot AI flavor generation. Returns trimmed text on success or
+// `fallback` on any error / empty response. Used by the combat flavor helpers.
+async function generateFlavor(
+  ai: Ai,
+  user: string,
+  fallback: string,
+  maxTokens = 90,
+): Promise<string> {
+  try {
+    const res = (await ai.run(MODEL, {
+      messages: [
+        { role: "system", content: COMBAT_SYSTEM },
+        { role: "user", content: user },
+      ],
+      max_tokens: maxTokens,
+    })) as AiRunResponse;
+    const text = (res.response ?? "").trim().replace(/^["'`]|["'`]$/g, "");
+    return text || fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+interface FlavorFighterRef {
+  name: string;
+  class: string;
+  level: number;
+}
+
+// One-line narration of a player's landed attack/cast. Pulled to AI so the
+// log doesn't read like raw mechanical events. Crit fork emphasizes
+// devastation; non-crit is a beat of contact.
+export async function flavorHit(
+  ai: Ai,
+  fighter: FlavorFighterRef,
+  monsterName: string,
+  action: "attack" | "cast",
+  isCrit: boolean,
+): Promise<string> {
+  const verb = action === "cast" ? "casts a spell at" : "swings a weapon at";
+  const intensity = isCrit
+    ? "The blow lands as a CRITICAL hit — devastating."
+    : "The blow connects solidly.";
+  const user = `${fighter.name}, a Level ${fighter.level} ${fighter.class}, ${verb} ${monsterName}. ${intensity} Narrate this single moment in-world.`;
+  const fallback = isCrit
+    ? `${fighter.name} lands a brutal blow on ${monsterName}.`
+    : `${fighter.name} strikes ${monsterName}.`;
+  return generateFlavor(ai, user, fallback);
+}
+
+// Victory narration on the killing blow.
+export async function flavorVictory(
+  ai: Ai,
+  fighter: FlavorFighterRef,
+  monsterName: string,
+  partySize: number,
+): Promise<string> {
+  const partyText = partySize === 1 ? "fighting solo" : `fighting alongside ${partySize - 1} other heroes`;
+  const user = `${fighter.name}, a Level ${fighter.level} ${fighter.class} ${partyText}, just landed the killing blow on ${monsterName}. Narrate the triumph.`;
+  const fallback = `${fighter.name} delivers the killing blow. ${monsterName} is no more.`;
+  return generateFlavor(ai, user, fallback, 110);
+}
+
+// Fighter went to 0 HP. Soft-death; they'll come back after a cooldown.
+export async function flavorDeath(
+  ai: Ai,
+  fighter: FlavorFighterRef,
+  monsterName: string,
+): Promise<string> {
+  const user = `${fighter.name}, a Level ${fighter.level} ${fighter.class}, was just dropped to 0 HP by ${monsterName} and is now downed. They'll recover after a 12-hour cooldown. Narrate the indignity in one line.`;
+  const fallback = `${fighter.name} crumples under ${monsterName}'s onslaught.`;
+  return generateFlavor(ai, user, fallback, 110);
+}
+
+// Flee succeeded. partyContinues=true if the rest of the party is fighting on.
+export async function flavorFleeSuccess(
+  ai: Ai,
+  fighter: FlavorFighterRef,
+  monsterName: string,
+  partyContinues: boolean,
+): Promise<string> {
+  const tail = partyContinues
+    ? "The rest of the party fights on without them."
+    : "Nobody is left to fight; the quest ends in retreat.";
+  const user = `${fighter.name}, a Level ${fighter.level} ${fighter.class}, just successfully fled from ${monsterName}. ${tail} Narrate the escape with wry humor.`;
+  const fallback = `${fighter.name} slips away from ${monsterName} and lives to debug another day.`;
+  return generateFlavor(ai, user, fallback);
+}
+
 // AI-flavored name + flavor text for a non-catalog loot drop (weapon /
 // armor / consumable / magic / revive). Catalog items (tool / scroll) use
 // flavorCatalogItem — their names come from the fixed catalog and only the
