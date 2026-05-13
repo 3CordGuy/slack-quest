@@ -8,6 +8,8 @@ import { DurableObject } from "cloudflare:workers";
 import { Hono } from "hono";
 import { getCookie, setCookie, deleteCookie } from "hono/cookie";
 
+import { flavorCatalogItem, flavorLootDrop } from "./ai";
+
 import {
   MAX_MANA_CAP,
   classByName,
@@ -240,13 +242,35 @@ function applyToolOrScroll(
   }
 }
 
-function nameLoot(roll: ItemRoll, monsterName: string): { name: string; flavor: string } {
+// Picks the right flavor path for a rolled drop: catalog items keep their
+// fixed name + emoji and get AI flavor only; everything else gets a full
+// AI name + flavor (with deterministic fallbacks on either failure).
+async function nameLootViaAi(
+  env: Env,
+  roll: ItemRoll,
+  monsterName: string,
+): Promise<{ name: string; flavor: string }> {
   if (roll.catalog_name) {
     const entry = findCatalogEntry(roll.catalog_name);
     if (entry) {
-      return { name: `${entry.emoji} ${entry.name}`, flavor: entry.blurb };
+      const flavor = await flavorCatalogItem(env.AI, entry.name, entry.blurb, `the corpse of ${monsterName}`);
+      return { name: `${entry.emoji} ${entry.name}`, flavor };
     }
   }
+  // Non-catalog drops — full AI naming. flavorLootDrop returns a fallback
+  // if the model misbehaves, so this never throws.
+  if (
+    roll.type === "weapon" ||
+    roll.type === "armor" ||
+    roll.type === "consumable" ||
+    roll.type === "magic" ||
+    roll.type === "revive"
+  ) {
+    return flavorLootDrop(
+      env.AI, monsterName, roll.type, roll.rarity, roll.power, roll.weapon_range,
+    );
+  }
+  // Unknown / future type — fall back to the deterministic name.
   const adj = RARITY_ADJ[roll.rarity] ?? roll.rarity;
   const noun = TYPE_NOUN[roll.type] ?? roll.type;
   return { name: `${adj} ${noun}`, flavor: `Spoils from ${monsterName}.` };
@@ -256,6 +280,7 @@ interface Env {
   DB: D1Database;
   ASSETS: Fetcher;
   QUEST_ROOM: DurableObjectNamespace<QuestRoom>;
+  AI: Ai;
 }
 
 const SESSION_COOKIE = "sq_session";
@@ -1498,10 +1523,13 @@ async function applyWebCombatOutcome(
 
       // Loot roll — per-fighter chance using the existing tier-scaled
       // dropChance + rollItem helpers (same probabilities as Slack drops).
-      // Web mode names items deterministically (no AI flavor pass yet).
+      // Catalog items (tool / scroll) keep their fixed catalog names and
+      // get AI flavor for the description only. Other types get full AI
+      // name + flavor via flavorLootDrop. Both helpers fall back to
+      // deterministic strings if the AI call fails.
       if (Math.random() < dropChance(tier)) {
         const roll = rollItem(tier);
-        const named = nameLoot(roll, state.monster.name);
+        const named = await nameLootViaAi(env, roll, state.monster.name);
         const created = await addItem(env.DB, {
           character_id: fighter.id,
           item_name: named.name,

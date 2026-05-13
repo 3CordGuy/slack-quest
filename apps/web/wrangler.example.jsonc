@@ -27,6 +27,7 @@
       "migrations_dir": "../../migrations"
     }
   ],
+  "ai": { "binding": "AI" },
   "durable_objects": {
     "bindings": [
       { "name": "QUEST_ROOM", "class_name": "QuestRoom" }
