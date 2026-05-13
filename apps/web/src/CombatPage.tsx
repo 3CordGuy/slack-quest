@@ -39,6 +39,8 @@ interface Monster {
   effects: StatusEffect[];
   is_boss: boolean;
   boss_phase: 1 | 2;
+  wave?: number;
+  total_waves?: number;
 }
 
 interface CombatState {
@@ -92,6 +94,14 @@ type CombatEvent =
       success: boolean;
     }
   | { type: "fled" }
+  | {
+      type: "wave_transition";
+      from_monster: string;
+      to_monster: string;
+      to_max_hp: number;
+      new_wave: number;
+      total_waves: number;
+    }
   | {
       type: "effect_tick";
       actor: string;
@@ -304,6 +314,14 @@ function formatEvent(e: CombatEvent, state: CombatState | null): UiState["log"] 
       ];
     case "fled":
       return [{ id: nextLogId++, text: "🏃 The party escapes.", tone: "info" }];
+    case "wave_transition":
+      return [
+        {
+          id: nextLogId++,
+          text: `⚔️  Wave ${e.new_wave}/${e.total_waves}: ${e.to_monster} arrives (${e.to_max_hp} HP)`,
+          tone: "info",
+        },
+      ];
     case "effect_tick": {
       const icon =
         e.effect === "regen"
@@ -572,6 +590,7 @@ function MonsterCard({ monster, round }: { monster: Monster; round: number }) {
           <div style={{ ...muted, fontSize: 12 }}>
             Tier {monster.tier}
             {monster.is_boss && ` · Boss (phase ${monster.boss_phase})`}
+            {monster.wave && monster.total_waves && ` · Wave ${monster.wave}/${monster.total_waves}`}
             {` · Round ${round}`}
           </div>
         </div>

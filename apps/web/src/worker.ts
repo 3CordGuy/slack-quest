@@ -197,7 +197,7 @@ app.post("/api/quest/:id/start_web_combat", async (c) => {
     return c.json({ error: "quest_not_active_for_user" }, 404);
   }
   const variant = quest.scene.variant ?? "standard";
-  if (variant !== "standard" && variant !== "boss") {
+  if (variant !== "standard" && variant !== "boss" && variant !== "gauntlet") {
     return c.json({ error: "unsupported_variant", variant }, 400);
   }
 
@@ -236,6 +236,14 @@ app.post("/api/quest/:id/start_web_combat", async (c) => {
       tier: quest.scene.tier,
       is_boss: variant === "boss",
       boss_phase: quest.scene.boss_phase,
+      // Gauntlet wave state — undefined for standard/boss; pulled straight
+      // from scene_json which Slack populates when creating the quest.
+      wave: quest.scene.wave,
+      total_waves: quest.scene.total_waves,
+      upcoming_waves: quest.scene.upcoming_waves?.map((w) => ({
+        name: w.name,
+        max_hp: w.max_hp,
+      })),
     },
   };
   const initial = createCombatState(init);

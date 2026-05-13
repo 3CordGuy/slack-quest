@@ -62,6 +62,11 @@ export interface CombatFighter {
   effects: MachineStatusEffect[];
 }
 
+export interface GauntletWaveSpec {
+  name: string;
+  max_hp: number;
+}
+
 export interface CombatMonster {
   name: string;
   hp: number;
@@ -71,6 +76,15 @@ export interface CombatMonster {
   effects: MachineStatusEffect[];
   is_boss: boolean;
   boss_phase: 1 | 2;
+  // Gauntlet wave state. Set only when the quest variant is "gauntlet";
+  // undefined for standard / boss combats. `wave` is 1-indexed. On the
+  // current monster's death, the engine pops the next entry from
+  // `upcoming_waves` and continues combat (same turn order + initiative)
+  // instead of emitting victory. Combat ends only when all waves are
+  // cleared.
+  wave?: number;
+  total_waves?: number;
+  upcoming_waves?: GauntletWaveSpec[];
 }
 
 export type CombatStatus = "pending" | "active" | "victory" | "defeat" | "fled";
@@ -157,6 +171,14 @@ export type CombatEvent =
   | { type: "fighter_down"; target: ActorId }
   | { type: "monster_down"; killed_by: ActorId }
   | {
+      type: "wave_transition";
+      from_monster: string;     // the monster that just fell
+      to_monster: string;       // the next wave's monster
+      to_max_hp: number;
+      new_wave: number;         // 1-indexed
+      total_waves: number;
+    }
+  | {
       type: "heal_applied";
       actor: ActorId;
       target: ActorId;
@@ -216,6 +238,7 @@ export type RollFn = (sides: number) => number;
 
 // Inputs for the initial state. Build it once from D1 data, then feed into
 // step({ kind: "begin" }) to roll initiative and enter the active phase.
+// Wave fields on monster are opt-in: omit them for standard/boss combats.
 export interface CombatInit {
   fighters: Omit<CombatFighter, "initiative" | "effects">[];
   monster: Omit<CombatMonster, "initiative" | "effects" | "boss_phase"> & {
@@ -421,9 +444,7 @@ function handlePlayerHit(
   }
 
   if (monsterKilled) {
-    events.push({ type: "monster_down", killed_by: action.actor });
-    events.push({ type: "victory" });
-    return { state: { ...nextState, status: "victory" }, events };
+    return resolveMonsterKill(nextState, action.actor, events);
   }
 
   return { state: advanceTurn(nextState), events: [...events, ...turnStartEvent(nextState)] };
@@ -701,9 +722,7 @@ function handleSignature(
     events.push({ type: "boss_phase_transition", new_phase: 2 });
   }
   if (monsterKilled) {
-    events.push({ type: "monster_down", killed_by: action.actor });
-    events.push({ type: "victory" });
-    return { state: { ...nextState, status: "victory" }, events };
+    return resolveMonsterKill(nextState, action.actor, events);
   }
   nextState = advanceTurn(nextState);
   return { state: nextState, events: [...events, ...turnStartEvent(nextState)] };
@@ -784,6 +803,55 @@ function handleFlee(
   return { state: next, events: [...events, ...turnStartEvent(next)] };
 }
 
+// ── Monster-kill resolution ───────────────────────────────────────────────
+//
+// Called every time monster hp drops to 0. If the quest is a gauntlet with
+// remaining waves, transitions to the next wave's monster (preserving turn
+// order + initiative + the killer's credit) and continues combat. Otherwise
+// emits victory. monster_down always fires either way so the UI gets the
+// "killing blow" beat.
+function resolveMonsterKill(
+  state: CombatState,
+  killedBy: ActorId,
+  precedingEvents: CombatEvent[],
+): StepResult {
+  const events: CombatEvent[] = [...precedingEvents];
+  events.push({ type: "monster_down", killed_by: killedBy });
+
+  const upcoming = state.monster.upcoming_waves ?? [];
+  if (upcoming.length === 0) {
+    events.push({ type: "victory" });
+    return { state: { ...state, status: "victory" }, events };
+  }
+
+  const [next, ...rest] = upcoming;
+  const newMonster: CombatMonster = {
+    name: next.name,
+    hp: next.max_hp,
+    max_hp: next.max_hp,
+    tier: state.monster.tier,
+    initiative: state.monster.initiative,
+    effects: [],
+    is_boss: false,            // gauntlet waves are never boss-tier
+    boss_phase: 1,
+    wave: (state.monster.wave ?? 1) + 1,
+    total_waves: state.monster.total_waves,
+    upcoming_waves: rest,
+  };
+  events.push({
+    type: "wave_transition",
+    from_monster: state.monster.name,
+    to_monster: next.name,
+    to_max_hp: next.max_hp,
+    new_wave: newMonster.wave!,
+    total_waves: newMonster.total_waves ?? newMonster.wave!,
+  });
+  // Combat continues — advance turn from the killer to the next actor so
+  // the new monster doesn't immediately get hit again by the same fighter.
+  const advanced = advanceTurn({ ...state, monster: newMonster });
+  return { state: advanced, events: [...events, ...turnStartEvent(advanced)] };
+}
+
 // ── Status effect tick handling ───────────────────────────────────────────
 //
 // Ticks once at the start of every actor's turn. regen heals; bleeding /
@@ -860,11 +928,6 @@ function tickAtTurnStart(state: CombatState, actorId: ActorId): TickGate {
         state.monster.effects.find((e) => e.source)?.source ??
         state.fighters.find((f) => f.hp > 0)?.id ??
         MONSTER_ID;
-      const events = [
-        ...tick.events,
-        { type: "monster_down" as const, killed_by: killerId },
-        { type: "victory" as const },
-      ];
       // Credit the killing tick's damage to the source so the contribution
       // split on victory matches what actually happened.
       const tickDmg = state.monster.hp - tick.newHp;
@@ -875,11 +938,11 @@ function tickAtTurnStart(state: CombatState, actorId: ActorId): TickGate {
               [killerId]: (state.contribution[killerId] ?? 0) + tickDmg,
             }
           : state.contribution;
-      return {
-        state: newState,
-        events,
-        earlyReturn: { state: { ...newState, status: "victory", contribution }, events },
-      };
+      // Defer victory vs wave transition to the shared resolver so
+      // gauntlet quests keep going past a poison-kill.
+      const withContribution: CombatState = { ...newState, contribution };
+      const result = resolveMonsterKill(withContribution, killerId, tick.events);
+      return { state: result.state, events: result.events, earlyReturn: result };
     }
     return { state: newState, events: tick.events, earlyReturn: null };
   }

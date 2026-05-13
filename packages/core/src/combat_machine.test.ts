@@ -391,6 +391,59 @@ describe("combat_machine.step", () => {
     });
   });
 
+  describe("gauntlet waves", () => {
+    it("transitions to the next wave on monster kill instead of ending combat", () => {
+      const init = baseInit();
+      init.monster.hp = 1;
+      init.monster.max_hp = 10;
+      init.monster.wave = 1;
+      init.monster.total_waves = 3;
+      init.monster.upcoming_waves = [
+        { name: "Drift Wraith", max_hp: 14 },
+        { name: "Schema Hydra", max_hp: 22 },
+      ];
+      const begun = runBegin(createCombatState(init), [15, 8]);
+      // d20=15 hit, d6=1 → damage 7 > 1, monster falls.
+      const result = step(
+        begun.state,
+        { kind: "attack", actor: "U_PALADIN" },
+        seqRoll([15, 1]),
+      );
+      expect(result.state.status).toBe("active");
+      expect(result.state.monster.name).toBe("Drift Wraith");
+      expect(result.state.monster.hp).toBe(14);
+      expect(result.state.monster.max_hp).toBe(14);
+      expect(result.state.monster.wave).toBe(2);
+      expect(result.state.monster.upcoming_waves).toEqual([
+        { name: "Schema Hydra", max_hp: 22 },
+      ]);
+      const types = eventTypes(result.events);
+      expect(types).toContain("monster_down");
+      expect(types).toContain("wave_transition");
+      expect(types).not.toContain("victory");
+    });
+
+    it("emits victory after killing the final wave's monster", () => {
+      const init = baseInit();
+      init.monster.hp = 1;
+      init.monster.max_hp = 10;
+      init.monster.wave = 3;
+      init.monster.total_waves = 3;
+      init.monster.upcoming_waves = [];
+      const begun = runBegin(createCombatState(init), [15, 8]);
+      const result = step(
+        begun.state,
+        { kind: "attack", actor: "U_PALADIN" },
+        seqRoll([15, 1]),
+      );
+      expect(result.state.status).toBe("victory");
+      const types = eventTypes(result.events);
+      expect(types).toContain("monster_down");
+      expect(types).toContain("victory");
+      expect(types).not.toContain("wave_transition");
+    });
+  });
+
   describe("status effect ticks", () => {
     it("ticks monster effects on monster_act; poison damages monster", () => {
       const init = baseInit();
