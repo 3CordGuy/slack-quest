@@ -298,6 +298,128 @@ describe("combat_machine.step", () => {
       expect(after.events.find((e) => e.type === "rejected")).toBeDefined();
     });
   });
+
+  describe("heal", () => {
+    it("restores HP up to max, emits heal_applied", () => {
+      const init = baseInit();
+      init.fighters[0].hp = 10;
+      init.fighters[0].magic_mod = 1; // re-purpose paladin's magic mod for the test
+      const begun = runBegin(createCombatState(init), [15, 8]);
+      // d6=4 → heal = 4 + 1 = 5.
+      const result = step(
+        begun.state,
+        { kind: "heal", actor: "U_PALADIN", target: "U_PALADIN" },
+        seqRoll([4]),
+      );
+      expect(result.state.fighters[0].hp).toBe(15);
+      const heal = result.events.find((e) => e.type === "heal_applied");
+      expect(heal).toMatchObject({ amount: 5, rolled: 5 });
+    });
+
+    it("clamps to max_hp; reports actual applied vs rolled", () => {
+      const init = baseInit();
+      init.fighters[0].hp = 28; // max 30
+      const begun = runBegin(createCombatState(init), [15, 8]);
+      const result = step(
+        begun.state,
+        { kind: "heal", actor: "U_PALADIN", target: "U_PALADIN" },
+        seqRoll([6]),
+      );
+      const heal = result.events.find((e) => e.type === "heal_applied");
+      // Paladin magic_mod=0 → rolled=6, applied=2.
+      expect(heal).toMatchObject({ amount: 2, rolled: 6 });
+      expect(result.state.fighters[0].hp).toBe(30);
+    });
+
+    it("rejects healing a downed target", () => {
+      const init = baseInit();
+      init.fighters[0].hp = 0;
+      const begun = runBegin(createCombatState(init), [15, 8]);
+      const result = step(
+        begun.state,
+        { kind: "heal", actor: "U_PALADIN", target: "U_PALADIN" },
+        seqRoll([4]),
+      );
+      // Actor is downed so the actor-check rejects first; either way no heal.
+      expect(result.events.find((e) => e.type === "rejected")).toBeDefined();
+    });
+  });
+
+  describe("shield", () => {
+    it("adds shield, capped at 2× max_hp", () => {
+      const init = baseInit();
+      init.fighters[0].shield = 0;
+      const begun = runBegin(createCombatState(init), [15, 8]);
+      const result = step(
+        begun.state,
+        { kind: "shield", actor: "U_PALADIN", target: "U_PALADIN" },
+        seqRoll([4]),
+      );
+      expect(result.state.fighters[0].shield).toBe(4);
+    });
+  });
+
+  describe("signature", () => {
+    it("spends 1 mana, damages monster via class-specific dice", () => {
+      const init = baseInit();
+      init.fighters[0].class = "QA Paladin"; // Smite: 2d6 + atk×2 + weapon
+      init.fighters[0].mana = 2;
+      const begun = runBegin(createCombatState(init), [15, 8]);
+      // 2d6 → 4 + 3 = 7. atk_mod 2 × 2 = 4. weapon 4. damage = 7 + 4 + 4 = 15.
+      const result = step(
+        begun.state,
+        { kind: "signature", actor: "U_PALADIN" },
+        seqRoll([4, 3]),
+      );
+      expect(result.state.fighters[0].mana).toBe(1);
+      expect(result.state.monster.hp).toBe(40 - 15);
+      const sig = result.events.find((e) => e.type === "signature_used");
+      expect(sig).toMatchObject({ damage: 15, mana_spent: 1 });
+    });
+
+    it("rejects when mana is 0", () => {
+      const init = baseInit();
+      init.fighters[0].mana = 0;
+      const begun = runBegin(createCombatState(init), [15, 8]);
+      const result = step(
+        begun.state,
+        { kind: "signature", actor: "U_PALADIN" },
+        seqRoll([4, 3]),
+      );
+      expect(result.events.find((e) => e.type === "rejected")).toBeDefined();
+      expect(result.state.monster.hp).toBe(40);
+    });
+  });
+
+  describe("flee", () => {
+    it("ends combat with status 'fled' on a successful d20 check", () => {
+      const begun = runBegin(createCombatState(baseInit()), [15, 8]);
+      // DC = 10 + 3 = 13. Paladin atk_mod 2, mag_mod 0 → mod 2. d20=15 → 17 ≥ 13.
+      const result = step(
+        begun.state,
+        { kind: "flee", actor: "U_PALADIN" },
+        seqRoll([15]),
+      );
+      expect(result.state.status).toBe("fled");
+      const fc = result.events.find((e) => e.type === "flee_check");
+      expect(fc).toMatchObject({ success: true });
+    });
+
+    it("on failure takes a free monster hit and advances turn", () => {
+      const begun = runBegin(createCombatState(baseInit()), [15, 8]);
+      // d20=5 + 2 = 7 < 13 → fail. Then resolveMonsterHit: d4=3 + tier 3 + 0 = 6. armor 0 → 6.
+      const result = step(
+        begun.state,
+        { kind: "flee", actor: "U_PALADIN" },
+        seqRoll([5, 3]),
+      );
+      expect(result.state.status).toBe("active");
+      expect(result.state.fighters[0].hp).toBe(30 - 6);
+      const fc = result.events.find((e) => e.type === "flee_check");
+      expect(fc).toMatchObject({ success: false });
+      expect(result.events.find((e) => e.type === "monster_attack")).toBeDefined();
+    });
+  });
 });
 
 function eventTypes(events: CombatEvent[]): string[] {

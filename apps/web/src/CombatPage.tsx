@@ -1,4 +1,4 @@
-import { useEffect, useReducer, useRef } from "react";
+import { useEffect, useReducer, useRef, useState } from "react";
 
 // Live web-mode combat. Connects to the QuestRoom Durable Object via WS,
 // renders the current state, animates incoming events through a scrolling
@@ -47,7 +47,7 @@ interface CombatState {
   turn_order: string[];
   turn_index: number;
   round: number;
-  status: "pending" | "active" | "victory" | "defeat";
+  status: "pending" | "active" | "victory" | "defeat" | "fled";
 }
 
 const MONSTER_ID = "__monster__";
@@ -79,6 +79,19 @@ type CombatEvent =
   | { type: "boss_phase_transition"; new_phase: 2 }
   | { type: "fighter_down"; target: string }
   | { type: "monster_down"; killed_by: string }
+  | { type: "heal_applied"; actor: string; target: string; amount: number; rolled: number }
+  | { type: "shield_applied"; actor: string; target: string; amount: number; rolled: number }
+  | { type: "signature_used"; actor: string; damage: number; formula: string; mana_spent: number }
+  | {
+      type: "flee_check";
+      actor: string;
+      roll: number;
+      modifier: number;
+      total: number;
+      dc: number;
+      success: boolean;
+    }
+  | { type: "fled" }
   | { type: "victory" }
   | { type: "defeat" }
   | { type: "rejected"; reason: string };
@@ -86,6 +99,10 @@ type CombatEvent =
 type TurnAction =
   | { kind: "attack"; actor: string }
   | { kind: "cast"; actor: string }
+  | { kind: "heal"; actor: string; target: string }
+  | { kind: "shield"; actor: string; target: string }
+  | { kind: "signature"; actor: string }
+  | { kind: "flee"; actor: string }
   | { kind: "wait"; actor: string }
   | { kind: "monster_act" };
 
@@ -213,6 +230,46 @@ function formatEvent(e: CombatEvent, state: CombatState | null): UiState["log"] 
       return [
         { id: nextLogId++, text: `🏆 ${nameOf(e.killed_by)} lands the killing blow.`, tone: "good" },
       ];
+    case "heal_applied":
+      return [
+        {
+          id: nextLogId++,
+          text: `💚 ${nameOf(e.actor)} → ${nameOf(e.target)}: +${e.amount} HP${
+            e.rolled > e.amount ? ` (rolled ${e.rolled}, clamped)` : ""
+          }`,
+          tone: "good",
+        },
+      ];
+    case "shield_applied":
+      return [
+        {
+          id: nextLogId++,
+          text: `🛡️ ${nameOf(e.actor)} → ${nameOf(e.target)}: +${e.amount} shield${
+            e.rolled > e.amount ? ` (rolled ${e.rolled}, capped)` : ""
+          }`,
+          tone: "good",
+        },
+      ];
+    case "signature_used":
+      return [
+        {
+          id: nextLogId++,
+          text: `✨ ${nameOf(e.actor)} signature: ${e.damage} dmg  [${e.formula}]  −${e.mana_spent} mana`,
+          tone: "good",
+        },
+      ];
+    case "flee_check":
+      return [
+        {
+          id: nextLogId++,
+          text: e.success
+            ? `🏃 ${nameOf(e.actor)} escape check: ${e.roll}${signed(e.modifier)} = ${e.total} vs DC ${e.dc}: SUCCESS`
+            : `🏃 ${nameOf(e.actor)} escape check: ${e.roll}${signed(e.modifier)} = ${e.total} vs DC ${e.dc}: FAIL — exposed!`,
+          tone: e.success ? "good" : "bad",
+        },
+      ];
+    case "fled":
+      return [{ id: nextLogId++, text: "🏃 The party escapes.", tone: "info" }];
     case "victory":
       return [{ id: nextLogId++, text: "VICTORY", tone: "good" }];
     case "defeat":
@@ -242,6 +299,7 @@ export function CombatPage({
     error: null,
     outcome: null,
   });
+  const [picking, setPicking] = useState<"heal" | "shield" | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const logScrollRef = useRef<HTMLDivElement | null>(null);
 
@@ -305,7 +363,16 @@ export function CombatPage({
       ? state.turn_order[state.turn_index % state.turn_order.length]
       : null;
   const myTurn = currentActorId === selfId;
-  const ended = state?.status === "victory" || state?.status === "defeat";
+  const ended =
+    state?.status === "victory" || state?.status === "defeat" || state?.status === "fled";
+  const me = state?.fighters.find((f) => f.id === selfId);
+  const myMana = me?.mana ?? 0;
+
+  function fireOnTarget(targetId: string) {
+    if (!picking) return;
+    send({ kind: picking, actor: selfId, target: targetId } as TurnAction);
+    setPicking(null);
+  }
 
   return (
     <div style={page}>
@@ -336,8 +403,26 @@ export function CombatPage({
             selfId={selfId}
           />
           <PartySection fighters={state.fighters} currentActorId={currentActorId} selfId={selfId} />
-          {state.status === "active" && (
-            <ActionBar disabled={!myTurn} onAct={(kind) => send({ kind, actor: selfId } as TurnAction)} />
+          {state.status === "active" && picking && (
+            <TargetPicker
+              kind={picking}
+              fighters={state.fighters}
+              onPick={fireOnTarget}
+              onCancel={() => setPicking(null)}
+            />
+          )}
+          {state.status === "active" && !picking && (
+            <ActionBar
+              disabled={!myTurn}
+              mana={myMana}
+              onAct={(kind) => {
+                if (kind === "heal" || kind === "shield") {
+                  setPicking(kind);
+                } else if (kind === "signature" || kind === "flee" || kind === "attack" || kind === "cast" || kind === "wait") {
+                  send({ kind, actor: selfId } as TurnAction);
+                }
+              }}
+            />
           )}
           {!myTurn && state.status === "active" && currentActorId === MONSTER_ID && (
             <button style={{ ...button, background: "#5c1f1f" }} onClick={() => send({ kind: "monster_act" })}>
@@ -347,7 +432,7 @@ export function CombatPage({
           <EventLog log={ui.log} scrollRef={logScrollRef} />
           {ended && (
             <EndBanner
-              status={state.status as "victory" | "defeat"}
+              status={state.status as "victory" | "defeat" | "fled"}
               outcome={ui.outcome}
               selfId={selfId}
               fighters={state.fighters}
@@ -515,12 +600,89 @@ function FighterRow({ fighter, self, current }: { fighter: Fighter; self: boolea
   );
 }
 
-function ActionBar({ disabled, onAct }: { disabled: boolean; onAct: (kind: "attack" | "cast" | "wait") => void }) {
+type ActionKind = "attack" | "cast" | "heal" | "shield" | "signature" | "flee" | "wait";
+
+function ActionBar({
+  disabled,
+  mana,
+  onAct,
+}: {
+  disabled: boolean;
+  mana: number;
+  onAct: (kind: ActionKind) => void;
+}) {
   return (
     <div style={{ ...card, display: "flex", gap: 8, flexWrap: "wrap" }}>
-      <ActionBtn label="Attack" hint="d20 + atk vs AC · 1d6 dmg" disabled={disabled} onClick={() => onAct("attack")} />
-      <ActionBtn label="Cast" hint="d20 + mag vs AC · 1d8 dmg" disabled={disabled} onClick={() => onAct("cast")} />
-      <ActionBtn label="Wait" hint="Skip your turn" disabled={disabled} onClick={() => onAct("wait")} />
+      <ActionBtn label="⚔ Attack" hint="d20+atk vs AC · 1d6 dmg" disabled={disabled} onClick={() => onAct("attack")} />
+      <ActionBtn label="🔮 Cast" hint="d20+mag vs AC · 1d8 dmg" disabled={disabled} onClick={() => onAct("cast")} />
+      <ActionBtn
+        label="✨ Sig"
+        hint={mana > 0 ? "Class signature · 1 mana" : "No mana"}
+        disabled={disabled || mana < 1}
+        onClick={() => onAct("signature")}
+      />
+      <ActionBtn label="💚 Heal" hint="1d6+mag · pick target" disabled={disabled} onClick={() => onAct("heal")} />
+      <ActionBtn label="🛡 Shield" hint="1d6+mag · pick target" disabled={disabled} onClick={() => onAct("shield")} />
+      <ActionBtn label="🏃 Flee" hint="d20+mod vs DC 10+tier" disabled={disabled} onClick={() => onAct("flee")} />
+      <ActionBtn label="⏸ Wait" hint="Skip your turn" disabled={disabled} onClick={() => onAct("wait")} />
+    </div>
+  );
+}
+
+function TargetPicker({
+  kind,
+  fighters,
+  onPick,
+  onCancel,
+}: {
+  kind: "heal" | "shield";
+  fighters: Fighter[];
+  onPick: (id: string) => void;
+  onCancel: () => void;
+}) {
+  // Only valid for living fighters (heal/shield can't target a downed
+  // character — revive will handle that when it lands).
+  const targets = fighters.filter((f) => f.hp > 0);
+  const label = kind === "heal" ? "💚 Heal who?" : "🛡 Shield who?";
+  return (
+    <div style={{ ...card }}>
+      <div style={{ ...muted, fontSize: 12, marginBottom: 8 }}>{label}</div>
+      <div style={{ display: "grid", gap: 8 }}>
+        {targets.map((f) => (
+          <button
+            key={f.id}
+            onClick={() => onPick(f.id)}
+            style={{
+              ...button,
+              marginTop: 0,
+              padding: "10px 14px",
+              background: "#1d1f23",
+              border: "1px solid #2a2d33",
+              textAlign: "left",
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+            }}
+          >
+            <span>
+              {f.name}{" "}
+              <span style={{ ...muted, fontSize: 12 }}>
+                · {f.class}
+              </span>
+            </span>
+            <span style={{ ...muted, fontVariantNumeric: "tabular-nums" }}>
+              {f.hp}/{f.max_hp}
+              {f.shield > 0 && <span style={{ color: "#7c83ff" }}> +{f.shield}</span>}
+            </span>
+          </button>
+        ))}
+      </div>
+      <button
+        onClick={onCancel}
+        style={{ ...button, marginTop: 8, background: "transparent", border: "1px solid #2a2d33", color: "#9aa0a6" }}
+      >
+        Cancel
+      </button>
     </div>
   );
 }
@@ -601,24 +763,27 @@ function EndBanner({
   selfId,
   fighters,
 }: {
-  status: "victory" | "defeat";
+  status: "victory" | "defeat" | "fled";
   outcome: OutcomeSummary | null;
   selfId: string;
   fighters: Fighter[];
 }) {
   const win = status === "victory";
+  const fled = status === "fled";
+  const labelText = win ? "VICTORY" : fled ? "ESCAPED" : "DEFEAT";
+  const borderColor = win ? "#16a34a" : fled ? "#b89b3a" : "#7c2020";
+  const bg = win ? "#0f2818" : fled ? "#241e0d" : "#28100f";
+  const fg = win ? "#86efac" : fled ? "#facc15" : "#fca5a5";
   return (
     <div
       style={{
         ...card,
-        borderColor: win ? "#16a34a" : "#7c2020",
-        background: win ? "#0f2818" : "#28100f",
+        borderColor,
+        background: bg,
         textAlign: "center",
       }}
     >
-      <div style={{ fontSize: 32, fontWeight: 800, color: win ? "#86efac" : "#fca5a5" }}>
-        {win ? "VICTORY" : "DEFEAT"}
-      </div>
+      <div style={{ fontSize: 32, fontWeight: 800, color: fg }}>{labelText}</div>
       {!outcome && <p style={muted}>Resolving outcome…</p>}
       {outcome && (
         <div style={{ marginTop: 12, textAlign: "left" }}>

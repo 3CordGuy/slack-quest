@@ -437,8 +437,16 @@ async function applyWebCombatOutcome(
     let loot: LootDrop[] = [];
     let softDeath: FighterReward["soft_death"] = null;
 
-    // Sync HP + shield first so subsequent helpers see fresh state.
+    // Sync HP, shield, AND mana to D1 first so subsequent helpers see fresh
+    // state. Mana isn't covered by setCharacterHpAndShield so we add a small
+    // follow-up query.
     await setCharacterHpAndShield(env.DB, fighter.id, fighter.hp, fighter.shield);
+    await env.DB
+      .prepare(
+        "UPDATE characters SET mana = ?, last_active = ? WHERE slack_user_id = ?",
+      )
+      .bind(fighter.mana, Date.now(), fighter.id)
+      .run();
 
     const character = await getCharacter(env.DB, fighter.id);
     if (!character) {

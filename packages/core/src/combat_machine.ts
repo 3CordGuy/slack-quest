@@ -20,11 +20,14 @@ import {
   isBossPhaseTransition,
   pickMonsterTarget,
   positionDamageMod,
+  resolveHeal,
   resolveMonsterHit,
   resolvePlayerHit,
+  resolveShield,
+  resolveSignature,
   type BattlePosition,
 } from "./combat";
-import type { EffectType } from "./flavor";
+import { SHIELD_CAP_MULTIPLIER, classByName, type EffectType } from "./flavor";
 
 export type ActorId = string;
 export const MONSTER_ID: ActorId = "__monster__";
@@ -70,7 +73,7 @@ export interface CombatMonster {
   boss_phase: 1 | 2;
 }
 
-export type CombatStatus = "pending" | "active" | "victory" | "defeat";
+export type CombatStatus = "pending" | "active" | "victory" | "defeat" | "fled";
 
 export interface CombatState {
   fighters: CombatFighter[];
@@ -96,6 +99,10 @@ export type TurnAction =
   | { kind: "begin" }
   | { kind: "attack"; actor: ActorId }
   | { kind: "cast"; actor: ActorId }
+  | { kind: "heal"; actor: ActorId; target: ActorId }
+  | { kind: "shield"; actor: ActorId; target: ActorId }
+  | { kind: "signature"; actor: ActorId }
+  | { kind: "flee"; actor: ActorId }
   | { kind: "wait"; actor: ActorId }
   | { kind: "monster_act" };
 
@@ -104,7 +111,11 @@ export type RollPurpose =
   | "hit_check"
   | "damage_attack"
   | "damage_cast"
-  | "damage_monster";
+  | "damage_monster"
+  | "heal"
+  | "shield"
+  | "signature"
+  | "flee_check";
 
 // Stream of events emitted by step(). The UI animates each in sequence.
 //   roll       — a die hits the table; UI shows it spinning + landing on value
@@ -145,6 +156,37 @@ export type CombatEvent =
   | { type: "boss_phase_transition"; new_phase: 2 }
   | { type: "fighter_down"; target: ActorId }
   | { type: "monster_down"; killed_by: ActorId }
+  | {
+      type: "heal_applied";
+      actor: ActorId;
+      target: ActorId;
+      amount: number;        // actual HP restored (clamped to max_hp)
+      rolled: number;        // amount before clamp
+    }
+  | {
+      type: "shield_applied";
+      actor: ActorId;
+      target: ActorId;
+      amount: number;        // actual shield added (clamped to cap)
+      rolled: number;        // shield rolled before clamp
+    }
+  | {
+      type: "signature_used";
+      actor: ActorId;
+      damage: number;
+      formula: string;
+      mana_spent: number;
+    }
+  | {
+      type: "flee_check";
+      actor: ActorId;
+      roll: number;
+      modifier: number;
+      total: number;
+      dc: number;
+      success: boolean;
+    }
+  | { type: "fled" }
   | { type: "victory" }
   | { type: "defeat" }
   | { type: "rejected"; reason: string };
@@ -198,7 +240,7 @@ export function createCombatState(init: CombatInit): CombatState {
 
 // The engine. Pure function: same (state, action, rng) → same (state', events).
 export function step(state: CombatState, action: TurnAction, roll: RollFn): StepResult {
-  if (state.status === "victory" || state.status === "defeat") {
+  if (state.status === "victory" || state.status === "defeat" || state.status === "fled") {
     return reject(state, `combat already ended (${state.status})`);
   }
 
@@ -208,6 +250,14 @@ export function step(state: CombatState, action: TurnAction, roll: RollFn): Step
     case "attack":
     case "cast":
       return handlePlayerHit(state, action, roll);
+    case "heal":
+      return handleHeal(state, action, roll);
+    case "shield":
+      return handleShield(state, action, roll);
+    case "signature":
+      return handleSignature(state, action, roll);
+    case "flee":
+      return handleFlee(state, action, roll);
     case "wait":
       return handleWait(state, action);
     case "monster_act":
@@ -461,6 +511,226 @@ function handleMonsterAct(state: CombatState, roll: RollFn): StepResult {
     events.push({ type: "fighter_down", target: target.id });
   }
 
+  const allDown = updatedFighters.every((f) => f.hp <= 0);
+  let next: CombatState = { ...state, fighters: updatedFighters };
+  if (allDown) {
+    events.push({ type: "defeat" });
+    return { state: { ...next, status: "defeat" }, events };
+  }
+  next = advanceTurn(next);
+  return { state: next, events: [...events, ...turnStartEvent(next)] };
+}
+
+function handleHeal(
+  state: CombatState,
+  action: { kind: "heal"; actor: ActorId; target: ActorId },
+  roll: RollFn,
+): StepResult {
+  const actor = state.fighters.find((f) => f.id === action.actor);
+  if (!actor) return reject(state, `unknown actor: ${action.actor}`);
+  if (currentActor(state) !== action.actor) {
+    return reject(state, `not ${action.actor}'s turn`);
+  }
+  if (actor.hp <= 0) return reject(state, `${action.actor} is downed`);
+  const target = state.fighters.find((f) => f.id === action.target);
+  if (!target) return reject(state, `unknown heal target: ${action.target}`);
+  if (target.hp <= 0) return reject(state, `cannot heal a downed target`);
+
+  const { amount: rolled, roll: rollValue } = resolveHeal(actor.magic_mod, roll);
+  const newHp = Math.min(target.max_hp, target.hp + rolled);
+  const applied = newHp - target.hp;
+
+  const events: CombatEvent[] = [
+    { type: "roll", actor: action.actor, die: "d6", value: rollValue, purpose: "heal" },
+    {
+      type: "heal_applied",
+      actor: action.actor,
+      target: action.target,
+      amount: applied,
+      rolled,
+    },
+  ];
+
+  const next = advanceTurn({
+    ...state,
+    fighters: state.fighters.map((f) =>
+      f.id === action.target ? { ...f, hp: newHp } : f,
+    ),
+  });
+  return { state: next, events: [...events, ...turnStartEvent(next)] };
+}
+
+function handleShield(
+  state: CombatState,
+  action: { kind: "shield"; actor: ActorId; target: ActorId },
+  roll: RollFn,
+): StepResult {
+  const actor = state.fighters.find((f) => f.id === action.actor);
+  if (!actor) return reject(state, `unknown actor: ${action.actor}`);
+  if (currentActor(state) !== action.actor) {
+    return reject(state, `not ${action.actor}'s turn`);
+  }
+  if (actor.hp <= 0) return reject(state, `${action.actor} is downed`);
+  const target = state.fighters.find((f) => f.id === action.target);
+  if (!target) return reject(state, `unknown shield target: ${action.target}`);
+  if (target.hp <= 0) return reject(state, `cannot shield a downed target`);
+
+  const { amount: rolled, roll: rollValue } = resolveShield(actor.magic_mod, roll);
+  const cap = target.max_hp * SHIELD_CAP_MULTIPLIER;
+  const newShield = Math.min(cap, target.shield + rolled);
+  const applied = newShield - target.shield;
+
+  const events: CombatEvent[] = [
+    { type: "roll", actor: action.actor, die: "d6", value: rollValue, purpose: "shield" },
+    {
+      type: "shield_applied",
+      actor: action.actor,
+      target: action.target,
+      amount: applied,
+      rolled,
+    },
+  ];
+
+  const next = advanceTurn({
+    ...state,
+    fighters: state.fighters.map((f) =>
+      f.id === action.target ? { ...f, shield: newShield } : f,
+    ),
+  });
+  return { state: next, events: [...events, ...turnStartEvent(next)] };
+}
+
+function handleSignature(
+  state: CombatState,
+  action: { kind: "signature"; actor: ActorId },
+  roll: RollFn,
+): StepResult {
+  const actor = state.fighters.find((f) => f.id === action.actor);
+  if (!actor) return reject(state, `unknown actor: ${action.actor}`);
+  if (currentActor(state) !== action.actor) {
+    return reject(state, `not ${action.actor}'s turn`);
+  }
+  if (actor.hp <= 0) return reject(state, `${action.actor} is downed`);
+  if (actor.mana < 1) return reject(state, `${action.actor} has no mana for signature`);
+
+  const cls = classByName(actor.class);
+  const partySize = state.fighters.filter((f) => f.hp > 0).length;
+  const sig = resolveSignature(
+    cls.id,
+    actor.attack_mod,
+    actor.magic_mod,
+    actor.weapon_power,
+    state.monster.tier,
+    partySize,
+    state.monster.max_hp,
+    roll,
+  );
+
+  const oldHp = state.monster.hp;
+  const newHp = Math.max(0, oldHp - sig.damage);
+  const monsterKilled = newHp <= 0;
+  const phaseTransition =
+    state.monster.is_boss &&
+    state.monster.boss_phase === 1 &&
+    isBossPhaseTransition(state.monster.max_hp, oldHp, newHp);
+
+  const events: CombatEvent[] = [
+    {
+      type: "signature_used",
+      actor: action.actor,
+      damage: sig.damage,
+      formula: sig.formula,
+      mana_spent: 1,
+    },
+  ];
+
+  let nextState: CombatState = {
+    ...state,
+    fighters: state.fighters.map((f) =>
+      f.id === action.actor ? { ...f, mana: Math.max(0, f.mana - 1) } : f,
+    ),
+    monster: {
+      ...state.monster,
+      hp: newHp,
+      ...(phaseTransition ? { boss_phase: 2 as const } : {}),
+    },
+    contribution: {
+      ...state.contribution,
+      [action.actor]: (state.contribution[action.actor] ?? 0) + sig.damage,
+    },
+  };
+
+  if (phaseTransition) {
+    events.push({ type: "boss_phase_transition", new_phase: 2 });
+  }
+  if (monsterKilled) {
+    events.push({ type: "monster_down", killed_by: action.actor });
+    events.push({ type: "victory" });
+    return { state: { ...nextState, status: "victory" }, events };
+  }
+  nextState = advanceTurn(nextState);
+  return { state: nextState, events: [...events, ...turnStartEvent(nextState)] };
+}
+
+function handleFlee(
+  state: CombatState,
+  action: { kind: "flee"; actor: ActorId },
+  roll: RollFn,
+): StepResult {
+  const actor = state.fighters.find((f) => f.id === action.actor);
+  if (!actor) return reject(state, `unknown actor: ${action.actor}`);
+  if (currentActor(state) !== action.actor) {
+    return reject(state, `not ${action.actor}'s turn`);
+  }
+  if (actor.hp <= 0) return reject(state, `${action.actor} is downed`);
+
+  // d20 + max(atk, mag) vs DC = 10 + monster.tier. Flexible — fighter-y
+  // classes get atk, caster-y classes get mag; nobody is locked out.
+  const d20 = roll(20);
+  const modifier = Math.max(actor.attack_mod, actor.magic_mod);
+  const dc = 10 + state.monster.tier;
+  const total = d20 + modifier;
+  const success = total >= dc;
+
+  const events: CombatEvent[] = [
+    { type: "roll", actor: action.actor, die: "d20", value: d20, purpose: "flee_check" },
+    { type: "flee_check", actor: action.actor, roll: d20, modifier, total, dc, success },
+  ];
+
+  if (success) {
+    events.push({ type: "fled" });
+    return { state: { ...state, status: "fled" }, events };
+  }
+
+  // Failed flee: free hit from the monster. No d20 to hit (you're exposed),
+  // no armor mitigation (back turned). Damage = resolveMonsterHit's normal
+  // damage roll, applied through shield/HP.
+  const alive = state.fighters.filter((f) => f.hp > 0);
+  const bossPhase2 = state.monster.is_boss && state.monster.boss_phase === 2;
+  const hit = resolveMonsterHit(state.monster.tier, alive.length, 0, bossPhase2, roll);
+  const positionAdjusted = positionDamageMod(actor.position, hit.final);
+  const { newShield, newHp, shieldAbsorbed, hpDamage } = applyDamageWithShield(
+    positionAdjusted,
+    actor.shield,
+    actor.hp,
+  );
+
+  events.push({
+    type: "monster_attack",
+    target: action.actor,
+    raw_damage: hit.raw,
+    damage_after_position: positionAdjusted,
+    damage_after_armor: hit.final,
+    shield_absorbed: shieldAbsorbed,
+    hp_damage: hpDamage,
+  });
+
+  const updatedFighters = state.fighters.map((f) =>
+    f.id === action.actor ? { ...f, hp: Math.max(0, newHp), shield: newShield } : f,
+  );
+  if (newHp <= 0 && actor.hp > 0) {
+    events.push({ type: "fighter_down", target: action.actor });
+  }
   const allDown = updatedFighters.every((f) => f.hp <= 0);
   let next: CombatState = { ...state, fighters: updatedFighters };
   if (allDown) {
