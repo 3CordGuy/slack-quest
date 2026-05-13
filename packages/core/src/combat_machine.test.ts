@@ -391,6 +391,79 @@ describe("combat_machine.step", () => {
     });
   });
 
+  describe("status effect ticks", () => {
+    it("ticks monster effects on monster_act; poison damages monster", () => {
+      const init = baseInit();
+      const begun = runBegin(createCombatState(init), [5, 18]); // monster first
+      // Manually inject a poison effect on the monster.
+      const withPoison = {
+        ...begun.state,
+        monster: {
+          ...begun.state.monster,
+          effects: [
+            { type: "poisoned" as const, magnitude: 3, remaining: 2, source: "U_PALADIN" },
+          ],
+        },
+      };
+      // monster_act consumes target pick (50), d20 hit (15), then damage d4 (1).
+      const result = step(withPoison, { kind: "monster_act" }, seqRoll([50, 15, 1]));
+      // Monster ticks first: 40 hp - 3 = 37 hp, remaining 2 → 1.
+      expect(result.state.monster.hp).toBe(37);
+      expect(result.state.monster.effects).toEqual([
+        { type: "poisoned", magnitude: 3, remaining: 1, source: "U_PALADIN" },
+      ]);
+      const tickEvt = result.events.find((e) => e.type === "effect_tick");
+      expect(tickEvt).toMatchObject({
+        actor: MONSTER_ID,
+        effect: "poisoned",
+        hp_delta: -3,
+        source: "U_PALADIN",
+      });
+    });
+
+    it("kills the monster on a poison tick and credits the source", () => {
+      const init = baseInit();
+      init.monster.hp = 2;
+      const begun = runBegin(createCombatState(init), [5, 18]);
+      const withPoison = {
+        ...begun.state,
+        monster: {
+          ...begun.state.monster,
+          effects: [
+            { type: "burning" as const, magnitude: 5, remaining: 3, source: "U_PALADIN" },
+          ],
+        },
+      };
+      const result = step(withPoison, { kind: "monster_act" }, seqRoll([50, 15, 1]));
+      expect(result.state.status).toBe("victory");
+      expect(result.state.monster.hp).toBe(0);
+      // Source got credit on the contribution counter.
+      expect(result.state.contribution.U_PALADIN).toBe(2);
+      const types = eventTypes(result.events);
+      expect(types).toContain("monster_down");
+      expect(types).toContain("victory");
+    });
+
+    it("regen on a fighter heals up to max_hp", () => {
+      const init = baseInit();
+      init.fighters[0].hp = 25; // 5 below max
+      const begun = runBegin(createCombatState(init), [15, 8]); // paladin first
+      const withRegen = {
+        ...begun.state,
+        fighters: begun.state.fighters.map((f, i) =>
+          i === 0
+            ? {
+                ...f,
+                effects: [{ type: "regen" as const, magnitude: 3, remaining: 2 }],
+              }
+            : f,
+        ),
+      };
+      const result = step(withRegen, { kind: "wait", actor: "U_PALADIN" }, seqRoll([]));
+      expect(result.state.fighters[0].hp).toBe(28);
+    });
+  });
+
   describe("flee", () => {
     it("ends combat with status 'fled' on a successful d20 check", () => {
       const begun = runBegin(createCombatState(baseInit()), [15, 8]);

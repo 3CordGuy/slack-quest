@@ -92,6 +92,14 @@ type CombatEvent =
       success: boolean;
     }
   | { type: "fled" }
+  | {
+      type: "effect_tick";
+      actor: string;
+      effect: "regen" | "bleeding" | "burning" | "poisoned";
+      magnitude: number;
+      hp_delta: number;
+      source?: string;
+    }
   | { type: "victory" }
   | { type: "defeat" }
   | { type: "rejected"; reason: string }
@@ -296,6 +304,25 @@ function formatEvent(e: CombatEvent, state: CombatState | null): UiState["log"] 
       ];
     case "fled":
       return [{ id: nextLogId++, text: "🏃 The party escapes.", tone: "info" }];
+    case "effect_tick": {
+      const icon =
+        e.effect === "regen"
+          ? "💚"
+          : e.effect === "poisoned"
+            ? "☠️"
+            : e.effect === "burning"
+              ? "🔥"
+              : "🩸";
+      const sign = e.hp_delta >= 0 ? `+${e.hp_delta}` : `${e.hp_delta}`;
+      const src = e.source ? ` (${e.source})` : "";
+      return [
+        {
+          id: nextLogId++,
+          text: `${icon} ${nameOf(e.actor)} ${e.effect}${src}: ${sign} HP`,
+          tone: e.hp_delta >= 0 ? "good" : "bad",
+        },
+      ];
+    }
     case "item_used": {
       const eff = e.effect;
       const head = `🎒 ${nameOf(e.actor)} used ${e.item_name}`;

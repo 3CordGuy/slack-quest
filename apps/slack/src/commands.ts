@@ -1815,12 +1815,8 @@ async function handleCombat(
 
   const quest = await getActiveQuestForCharacter(env.DB, payload.user_id);
   if (!quest) return ephemeral(`You're not on an active quest. Try \`${payload.command} quest\` or \`${payload.command} join\`.`);
-
-  if (quest.mode === "web") {
-    return ephemeral(
-      "🪐 This quest is being run from the web app. Open it there to take your turn.",
-    );
-  }
+  const blocked = webModeLockout(quest);
+  if (blocked) return blocked;
 
   const cooldown = await cooldownRemaining(env.DB, quest.id, payload.user_id, ACTION_COOLDOWN_MS);
   if (cooldown > 0) {
@@ -3534,6 +3530,10 @@ async function handleUse(
   // mid-quest so the rest of the party sees the action. Out-of-quest use stays
   // ephemeral (no thread to post to).
   const activeQuest = await getActiveQuestForCharacter(env.DB, payload.user_id);
+  if (activeQuest) {
+    const useBlocked = webModeLockout(activeQuest);
+    if (useBlocked) return useBlocked;
+  }
 
   if (item.item_type === "magic") {
     if (character.max_mana >= MAX_MANA_CAP) {
@@ -4428,6 +4428,8 @@ async function handleHeal(
 
   const quest = await getActiveQuestForCharacter(env.DB, payload.user_id);
   if (!quest) return ephemeral("You're not on an active quest.");
+  const blocked = webModeLockout(quest);
+  if (blocked) return blocked;
 
   const cooldown = await cooldownRemaining(env.DB, quest.id, payload.user_id, ACTION_COOLDOWN_MS);
   if (cooldown > 0) {
@@ -4532,6 +4534,8 @@ async function handleShield(
 
   const quest = await getActiveQuestForCharacter(env.DB, payload.user_id);
   if (!quest) return ephemeral("You're not on an active quest.");
+  const blocked = webModeLockout(quest);
+  if (blocked) return blocked;
 
   const cooldown = await cooldownRemaining(env.DB, quest.id, payload.user_id, ACTION_COOLDOWN_MS);
   if (cooldown > 0) {
@@ -4629,6 +4633,8 @@ async function handleRevive(
 
   const quest = await getActiveQuestForCharacter(env.DB, payload.user_id);
   if (!quest) return ephemeral("You're not on an active quest.");
+  const reviveBlocked = webModeLockout(quest);
+  if (reviveBlocked) return reviveBlocked;
 
   // Cooldown applies — revive is a combat-tier action.
   const cooldown = await cooldownRemaining(env.DB, quest.id, payload.user_id, ACTION_COOLDOWN_MS);
@@ -4791,6 +4797,8 @@ async function handlePosition(
   // a real action, not a free swap. Outside a quest it's free preparation.
   const activeQuest = await getActiveQuestForCharacter(env.DB, payload.user_id);
   if (activeQuest) {
+    const positionBlocked = webModeLockout(activeQuest);
+    if (positionBlocked) return positionBlocked;
     const cd = await cooldownRemaining(env.DB, activeQuest.id, payload.user_id, ACTION_COOLDOWN_MS);
     if (cd > 0) {
       return ephemeral(`⏳ Catching your breath — try again in ${Math.ceil(cd / 1000)}s.`);
@@ -5096,6 +5104,17 @@ async function handleWebLogin(
 
 function ephemeral(text: string): CommandResponse {
   return { text, response_type: "ephemeral" };
+}
+
+// Returns an ephemeral lockout response when the quest has been claimed by
+// the web app, otherwise null. Slack combat / item / position handlers
+// short-circuit on a non-null result so the two surfaces don't both mutate
+// the same scene_json / character row.
+function webModeLockout(quest: ActiveQuest): CommandResponse | null {
+  if (quest.mode !== "web") return null;
+  return ephemeral(
+    "🪐 This quest is being run from the web app. Open it there to take your turn.",
+  );
 }
 
 function inChannel(text: string): CommandResponse {

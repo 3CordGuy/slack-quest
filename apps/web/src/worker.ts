@@ -239,7 +239,22 @@ app.post("/api/quest/:id/start_web_combat", async (c) => {
     },
   };
   const initial = createCombatState(init);
-  const begun = step(initial, { kind: "begin" }, productionRoll);
+  // Seed the monster's status effects from scene_json so an active Slack-mode
+  // poison/burn carries into web combat. Fighters arrive via D1 with their
+  // own .effects column (status effects already in core.MachineStatusEffect
+  // shape).
+  const seeded: CombatState = {
+    ...initial,
+    monster: {
+      ...initial.monster,
+      effects: quest.scene.monster_effects ?? [],
+    },
+    fighters: initial.fighters.map((f) => {
+      const character = party.find((p) => p.slack_user_id === f.id);
+      return character ? { ...f, effects: character.effects ?? [] } : f;
+    }),
+  };
+  const begun = step(seeded, { kind: "begin" }, productionRoll);
   await saveWebCombatState(c.env.DB, questId, begun.state);
   // Lock the quest into web mode so Slack combat handlers refuse further
   // /sq attack actions on it. Once flipped to 'web' it stays there for the

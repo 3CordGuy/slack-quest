@@ -187,6 +187,14 @@ export type CombatEvent =
       success: boolean;
     }
   | { type: "fled" }
+  | {
+      type: "effect_tick";
+      actor: ActorId;
+      effect: EffectType;
+      magnitude: number;
+      hp_delta: number;     // signed; positive for regen, negative for DoTs
+      source?: string;
+    }
   | { type: "victory" }
   | { type: "defeat" }
   | { type: "rejected"; reason: string };
@@ -332,12 +340,17 @@ function handlePlayerHit(
   }
   if (fighter.hp <= 0) return reject(state, `${action.actor} is downed`);
 
-  const events: CombatEvent[] = [];
-  const classMod = action.kind === "cast" ? fighter.magic_mod : fighter.attack_mod;
+  const tick = tickAtTurnStart(state, action.actor);
+  if (tick.earlyReturn) return tick.earlyReturn;
+  const s = tick.state;
+  const tickedFighter = s.fighters.find((f) => f.id === action.actor)!;
+
+  const events: CombatEvent[] = [...tick.events];
+  const classMod = action.kind === "cast" ? tickedFighter.magic_mod : tickedFighter.attack_mod;
 
   // ── d20 to-hit ──
   const d20 = roll(20);
-  const ac = monsterAc(state.monster.tier);
+  const ac = monsterAc(s.monster.tier);
   const hitTotal = d20 + classMod;
   const landed = hitTotal >= ac;
   events.push({
@@ -359,12 +372,12 @@ function handlePlayerHit(
   });
 
   if (!landed) {
-    const next = advanceTurn(state);
+    const next = advanceTurn(s);
     return { state: next, events: [...events, ...turnStartEvent(next)] };
   }
 
   // ── damage roll on hit ──
-  const hit = resolvePlayerHit(action.kind, classMod, fighter.weapon_power, roll);
+  const hit = resolvePlayerHit(action.kind, classMod, tickedFighter.weapon_power, roll);
   events.push({
     type: "roll",
     actor: action.actor,
@@ -373,13 +386,13 @@ function handlePlayerHit(
     purpose: action.kind === "cast" ? "damage_cast" : "damage_attack",
   });
 
-  const oldHp = state.monster.hp;
+  const oldHp = s.monster.hp;
   const newHp = Math.max(0, oldHp - hit.damage);
   const monsterKilled = newHp <= 0;
   const phaseTransition =
-    state.monster.is_boss &&
-    state.monster.boss_phase === 1 &&
-    isBossPhaseTransition(state.monster.max_hp, oldHp, newHp);
+    s.monster.is_boss &&
+    s.monster.boss_phase === 1 &&
+    isBossPhaseTransition(s.monster.max_hp, oldHp, newHp);
 
   events.push({
     type: "player_hit",
@@ -391,15 +404,15 @@ function handlePlayerHit(
   });
 
   let nextState: CombatState = {
-    ...state,
+    ...s,
     monster: {
-      ...state.monster,
+      ...s.monster,
       hp: newHp,
       ...(phaseTransition ? { boss_phase: 2 as const } : {}),
     },
     contribution: {
-      ...state.contribution,
-      [action.actor]: (state.contribution[action.actor] ?? 0) + hit.damage,
+      ...s.contribution,
+      [action.actor]: (s.contribution[action.actor] ?? 0) + hit.damage,
     },
   };
 
@@ -423,8 +436,10 @@ function handleWait(
   if (currentActor(state) !== action.actor) {
     return reject(state, `not ${action.actor}'s turn`);
   }
-  const next = advanceTurn(state);
-  return { state: next, events: turnStartEvent(next) };
+  const tick = tickAtTurnStart(state, action.actor);
+  if (tick.earlyReturn) return tick.earlyReturn;
+  const next = advanceTurn(tick.state);
+  return { state: next, events: [...tick.events, ...turnStartEvent(next)] };
 }
 
 function handleMonsterAct(state: CombatState, roll: RollFn): StepResult {
@@ -432,18 +447,22 @@ function handleMonsterAct(state: CombatState, roll: RollFn): StepResult {
     return reject(state, "not the monster's turn");
   }
 
-  const events: CombatEvent[] = [];
-  const aliveFighters = state.fighters.filter((f) => f.hp > 0);
+  const tick = tickAtTurnStart(state, MONSTER_ID);
+  if (tick.earlyReturn) return tick.earlyReturn;
+  const s = tick.state;
+
+  const events: CombatEvent[] = [...tick.events];
+  const aliveFighters = s.fighters.filter((f) => f.hp > 0);
   if (aliveFighters.length === 0) {
     // Should be unreachable — defeat is checked after each fighter falls.
-    return { state: { ...state, status: "defeat" }, events: [{ type: "defeat" }] };
+    return { state: { ...s, status: "defeat" }, events: [...events, { type: "defeat" }] };
   }
 
   const target = pickMonsterTarget(aliveFighters, () => roll(101) / 100);
 
   // ── d20 to-hit ──
   const d20 = roll(20);
-  const modifier = state.monster.tier;
+  const modifier = s.monster.tier;
   const hitTotal = d20 + modifier;
   const landed = hitTotal >= FIGHTER_AC;
   events.push({
@@ -465,15 +484,15 @@ function handleMonsterAct(state: CombatState, roll: RollFn): StepResult {
   });
 
   if (!landed) {
-    const next = advanceTurn(state);
+    const next = advanceTurn(s);
     return { state: next, events: [...events, ...turnStartEvent(next)] };
   }
 
   // ── damage roll on hit ──
   const totalArmor = target.armor_power;
-  const bossPhase2 = state.monster.is_boss && state.monster.boss_phase === 2;
+  const bossPhase2 = s.monster.is_boss && s.monster.boss_phase === 2;
   const hit = resolveMonsterHit(
-    state.monster.tier,
+    s.monster.tier,
     aliveFighters.length,
     totalArmor,
     bossPhase2,
@@ -490,7 +509,7 @@ function handleMonsterAct(state: CombatState, roll: RollFn): StepResult {
     type: "roll",
     actor: MONSTER_ID,
     die: "d4",
-    value: hit.raw - state.monster.tier - Math.floor((aliveFighters.length - 1) / 2) - (bossPhase2 ? state.monster.tier : 0),
+    value: hit.raw - s.monster.tier - Math.floor((aliveFighters.length - 1) / 2) - (bossPhase2 ? s.monster.tier : 0),
     purpose: "damage_monster",
   });
   events.push({
@@ -503,7 +522,7 @@ function handleMonsterAct(state: CombatState, roll: RollFn): StepResult {
     hp_damage: hpDamage,
   });
 
-  const updatedFighters = state.fighters.map((f) =>
+  const updatedFighters = s.fighters.map((f) =>
     f.id === target.id ? { ...f, shield: newShield, hp: Math.max(0, newHp) } : f,
   );
   const targetDowned = newHp <= 0 && target.hp > 0;
@@ -512,7 +531,7 @@ function handleMonsterAct(state: CombatState, roll: RollFn): StepResult {
   }
 
   const allDown = updatedFighters.every((f) => f.hp <= 0);
-  let next: CombatState = { ...state, fighters: updatedFighters };
+  let next: CombatState = { ...s, fighters: updatedFighters };
   if (allDown) {
     events.push({ type: "defeat" });
     return { state: { ...next, status: "defeat" }, events };
@@ -532,15 +551,21 @@ function handleHeal(
     return reject(state, `not ${action.actor}'s turn`);
   }
   if (actor.hp <= 0) return reject(state, `${action.actor} is downed`);
-  const target = state.fighters.find((f) => f.id === action.target);
-  if (!target) return reject(state, `unknown heal target: ${action.target}`);
-  if (target.hp <= 0) return reject(state, `cannot heal a downed target`);
 
-  const { amount: rolled, roll: rollValue } = resolveHeal(actor.magic_mod, roll);
+  const tick = tickAtTurnStart(state, action.actor);
+  if (tick.earlyReturn) return tick.earlyReturn;
+  const s = tick.state;
+  const tickedActor = s.fighters.find((f) => f.id === action.actor)!;
+  const target = s.fighters.find((f) => f.id === action.target);
+  if (!target) return reject(s, `unknown heal target: ${action.target}`);
+  if (target.hp <= 0) return reject(s, `cannot heal a downed target`);
+
+  const { amount: rolled, roll: rollValue } = resolveHeal(tickedActor.magic_mod, roll);
   const newHp = Math.min(target.max_hp, target.hp + rolled);
   const applied = newHp - target.hp;
 
   const events: CombatEvent[] = [
+    ...tick.events,
     { type: "roll", actor: action.actor, die: "d6", value: rollValue, purpose: "heal" },
     {
       type: "heal_applied",
@@ -552,8 +577,8 @@ function handleHeal(
   ];
 
   const next = advanceTurn({
-    ...state,
-    fighters: state.fighters.map((f) =>
+    ...s,
+    fighters: s.fighters.map((f) =>
       f.id === action.target ? { ...f, hp: newHp } : f,
     ),
   });
@@ -571,16 +596,22 @@ function handleShield(
     return reject(state, `not ${action.actor}'s turn`);
   }
   if (actor.hp <= 0) return reject(state, `${action.actor} is downed`);
-  const target = state.fighters.find((f) => f.id === action.target);
-  if (!target) return reject(state, `unknown shield target: ${action.target}`);
-  if (target.hp <= 0) return reject(state, `cannot shield a downed target`);
 
-  const { amount: rolled, roll: rollValue } = resolveShield(actor.magic_mod, roll);
+  const tick = tickAtTurnStart(state, action.actor);
+  if (tick.earlyReturn) return tick.earlyReturn;
+  const s = tick.state;
+  const tickedActor = s.fighters.find((f) => f.id === action.actor)!;
+  const target = s.fighters.find((f) => f.id === action.target);
+  if (!target) return reject(s, `unknown shield target: ${action.target}`);
+  if (target.hp <= 0) return reject(s, `cannot shield a downed target`);
+
+  const { amount: rolled, roll: rollValue } = resolveShield(tickedActor.magic_mod, roll);
   const cap = target.max_hp * SHIELD_CAP_MULTIPLIER;
   const newShield = Math.min(cap, target.shield + rolled);
   const applied = newShield - target.shield;
 
   const events: CombatEvent[] = [
+    ...tick.events,
     { type: "roll", actor: action.actor, die: "d6", value: rollValue, purpose: "shield" },
     {
       type: "shield_applied",
@@ -592,8 +623,8 @@ function handleShield(
   ];
 
   const next = advanceTurn({
-    ...state,
-    fighters: state.fighters.map((f) =>
+    ...s,
+    fighters: s.fighters.map((f) =>
       f.id === action.target ? { ...f, shield: newShield } : f,
     ),
   });
@@ -613,28 +644,34 @@ function handleSignature(
   if (actor.hp <= 0) return reject(state, `${action.actor} is downed`);
   if (actor.mana < 1) return reject(state, `${action.actor} has no mana for signature`);
 
-  const cls = classByName(actor.class);
-  const partySize = state.fighters.filter((f) => f.hp > 0).length;
+  const tick = tickAtTurnStart(state, action.actor);
+  if (tick.earlyReturn) return tick.earlyReturn;
+  const s = tick.state;
+  const tickedActor = s.fighters.find((f) => f.id === action.actor)!;
+
+  const cls = classByName(tickedActor.class);
+  const partySize = s.fighters.filter((f) => f.hp > 0).length;
   const sig = resolveSignature(
     cls.id,
-    actor.attack_mod,
-    actor.magic_mod,
-    actor.weapon_power,
-    state.monster.tier,
+    tickedActor.attack_mod,
+    tickedActor.magic_mod,
+    tickedActor.weapon_power,
+    s.monster.tier,
     partySize,
-    state.monster.max_hp,
+    s.monster.max_hp,
     roll,
   );
 
-  const oldHp = state.monster.hp;
+  const oldHp = s.monster.hp;
   const newHp = Math.max(0, oldHp - sig.damage);
   const monsterKilled = newHp <= 0;
   const phaseTransition =
-    state.monster.is_boss &&
-    state.monster.boss_phase === 1 &&
-    isBossPhaseTransition(state.monster.max_hp, oldHp, newHp);
+    s.monster.is_boss &&
+    s.monster.boss_phase === 1 &&
+    isBossPhaseTransition(s.monster.max_hp, oldHp, newHp);
 
   const events: CombatEvent[] = [
+    ...tick.events,
     {
       type: "signature_used",
       actor: action.actor,
@@ -645,18 +682,18 @@ function handleSignature(
   ];
 
   let nextState: CombatState = {
-    ...state,
-    fighters: state.fighters.map((f) =>
+    ...s,
+    fighters: s.fighters.map((f) =>
       f.id === action.actor ? { ...f, mana: Math.max(0, f.mana - 1) } : f,
     ),
     monster: {
-      ...state.monster,
+      ...s.monster,
       hp: newHp,
       ...(phaseTransition ? { boss_phase: 2 as const } : {}),
     },
     contribution: {
-      ...state.contribution,
-      [action.actor]: (state.contribution[action.actor] ?? 0) + sig.damage,
+      ...s.contribution,
+      [action.actor]: (s.contribution[action.actor] ?? 0) + sig.damage,
     },
   };
 
@@ -684,35 +721,41 @@ function handleFlee(
   }
   if (actor.hp <= 0) return reject(state, `${action.actor} is downed`);
 
+  const tick = tickAtTurnStart(state, action.actor);
+  if (tick.earlyReturn) return tick.earlyReturn;
+  const s = tick.state;
+  const tickedActor = s.fighters.find((f) => f.id === action.actor)!;
+
   // d20 + max(atk, mag) vs DC = 10 + monster.tier. Flexible — fighter-y
   // classes get atk, caster-y classes get mag; nobody is locked out.
   const d20 = roll(20);
-  const modifier = Math.max(actor.attack_mod, actor.magic_mod);
-  const dc = 10 + state.monster.tier;
+  const modifier = Math.max(tickedActor.attack_mod, tickedActor.magic_mod);
+  const dc = 10 + s.monster.tier;
   const total = d20 + modifier;
   const success = total >= dc;
 
   const events: CombatEvent[] = [
+    ...tick.events,
     { type: "roll", actor: action.actor, die: "d20", value: d20, purpose: "flee_check" },
     { type: "flee_check", actor: action.actor, roll: d20, modifier, total, dc, success },
   ];
 
   if (success) {
     events.push({ type: "fled" });
-    return { state: { ...state, status: "fled" }, events };
+    return { state: { ...s, status: "fled" }, events };
   }
 
   // Failed flee: free hit from the monster. No d20 to hit (you're exposed),
   // no armor mitigation (back turned). Damage = resolveMonsterHit's normal
   // damage roll, applied through shield/HP.
-  const alive = state.fighters.filter((f) => f.hp > 0);
-  const bossPhase2 = state.monster.is_boss && state.monster.boss_phase === 2;
-  const hit = resolveMonsterHit(state.monster.tier, alive.length, 0, bossPhase2, roll);
-  const positionAdjusted = positionDamageMod(actor.position, hit.final);
+  const alive = s.fighters.filter((f) => f.hp > 0);
+  const bossPhase2 = s.monster.is_boss && s.monster.boss_phase === 2;
+  const hit = resolveMonsterHit(s.monster.tier, alive.length, 0, bossPhase2, roll);
+  const positionAdjusted = positionDamageMod(tickedActor.position, hit.final);
   const { newShield, newHp, shieldAbsorbed, hpDamage } = applyDamageWithShield(
     positionAdjusted,
-    actor.shield,
-    actor.hp,
+    tickedActor.shield,
+    tickedActor.hp,
   );
 
   events.push({
@@ -725,20 +768,159 @@ function handleFlee(
     hp_damage: hpDamage,
   });
 
-  const updatedFighters = state.fighters.map((f) =>
+  const updatedFighters = s.fighters.map((f) =>
     f.id === action.actor ? { ...f, hp: Math.max(0, newHp), shield: newShield } : f,
   );
-  if (newHp <= 0 && actor.hp > 0) {
+  if (newHp <= 0 && tickedActor.hp > 0) {
     events.push({ type: "fighter_down", target: action.actor });
   }
   const allDown = updatedFighters.every((f) => f.hp <= 0);
-  let next: CombatState = { ...state, fighters: updatedFighters };
+  let next: CombatState = { ...s, fighters: updatedFighters };
   if (allDown) {
     events.push({ type: "defeat" });
     return { state: { ...next, status: "defeat" }, events };
   }
   next = advanceTurn(next);
   return { state: next, events: [...events, ...turnStartEvent(next)] };
+}
+
+// ── Status effect tick handling ───────────────────────────────────────────
+//
+// Ticks once at the start of every actor's turn. regen heals; bleeding /
+// burning / poisoned damage. Effects decrement `remaining` each tick and
+// drop off when remaining hits 0. If a tick lowers the actor below 1 hp,
+// the wrapping handler treats it as the actor being downed before they
+// can act.
+
+interface TickResult {
+  newHp: number;
+  newEffects: MachineStatusEffect[];
+  events: CombatEvent[];
+}
+
+function tickEffects(
+  hp: number,
+  maxHp: number,
+  effects: MachineStatusEffect[],
+  actorId: ActorId,
+): TickResult {
+  let newHp = hp;
+  const newEffects: MachineStatusEffect[] = [];
+  const events: CombatEvent[] = [];
+  for (const eff of effects) {
+    const delta = eff.type === "regen" ? eff.magnitude : -eff.magnitude;
+    newHp = Math.max(0, Math.min(maxHp, newHp + delta));
+    events.push({
+      type: "effect_tick",
+      actor: actorId,
+      effect: eff.type,
+      magnitude: eff.magnitude,
+      hp_delta: delta,
+      source: eff.source,
+    });
+    if (eff.remaining > 1) {
+      newEffects.push({ ...eff, remaining: eff.remaining - 1 });
+    }
+  }
+  return { newHp, newEffects, events };
+}
+
+// Apply pre-turn ticks to whichever actor is about to act. Returns the
+// updated state, the events to emit, and — if the tick killed the actor —
+// an `earlyReturn` StepResult so the caller can skip the action handler
+// entirely. Centralizes the down/victory/defeat bookkeeping so each action
+// handler just has to prepend `tick.events` and bail on `earlyReturn`.
+interface TickGate {
+  state: CombatState;
+  events: CombatEvent[];
+  earlyReturn: StepResult | null;
+}
+
+function tickAtTurnStart(state: CombatState, actorId: ActorId): TickGate {
+  if (actorId === MONSTER_ID) {
+    const tick = tickEffects(
+      state.monster.hp,
+      state.monster.max_hp,
+      state.monster.effects,
+      MONSTER_ID,
+    );
+    const newState: CombatState = {
+      ...state,
+      monster: {
+        ...state.monster,
+        hp: tick.newHp,
+        effects: tick.newEffects,
+      },
+    };
+    if (tick.newHp <= 0) {
+      // Credit the kill to whoever applied the longest-running tick source,
+      // falling back to the first alive fighter. Pure best-effort — used
+      // for the UI's "killed by" banner and contribution count.
+      const killerId =
+        state.monster.effects.find((e) => e.source)?.source ??
+        state.fighters.find((f) => f.hp > 0)?.id ??
+        MONSTER_ID;
+      const events = [
+        ...tick.events,
+        { type: "monster_down" as const, killed_by: killerId },
+        { type: "victory" as const },
+      ];
+      // Credit the killing tick's damage to the source so the contribution
+      // split on victory matches what actually happened.
+      const tickDmg = state.monster.hp - tick.newHp;
+      const contribution =
+        killerId !== MONSTER_ID
+          ? {
+              ...state.contribution,
+              [killerId]: (state.contribution[killerId] ?? 0) + tickDmg,
+            }
+          : state.contribution;
+      return {
+        state: newState,
+        events,
+        earlyReturn: { state: { ...newState, status: "victory", contribution }, events },
+      };
+    }
+    return { state: newState, events: tick.events, earlyReturn: null };
+  }
+
+  const fighter = state.fighters.find((f) => f.id === actorId);
+  if (!fighter) {
+    // Shouldn't happen — turn_order is built from current fighters — but
+    // defensively pass through.
+    return { state, events: [], earlyReturn: null };
+  }
+  const tick = tickEffects(fighter.hp, fighter.max_hp, fighter.effects, actorId);
+  const updatedFighters = state.fighters.map((f) =>
+    f.id === actorId ? { ...f, hp: tick.newHp, effects: tick.newEffects } : f,
+  );
+  const newState: CombatState = { ...state, fighters: updatedFighters };
+
+  if (tick.newHp <= 0 && fighter.hp > 0) {
+    // Tick downed the fighter — skip their action, advance turn (or end
+    // combat on full party wipe).
+    const events: CombatEvent[] = [
+      ...tick.events,
+      { type: "fighter_down", target: actorId },
+    ];
+    const allDown = updatedFighters.every((f) => f.hp <= 0);
+    if (allDown) {
+      events.push({ type: "defeat" });
+      return {
+        state: newState,
+        events,
+        earlyReturn: { state: { ...newState, status: "defeat" }, events },
+      };
+    }
+    const advanced = advanceTurn(newState);
+    return {
+      state: newState,
+      events,
+      earlyReturn: { state: advanced, events: [...events, ...turnStartEvent(advanced)] },
+    };
+  }
+
+  return { state: newState, events: tick.events, earlyReturn: null };
 }
 
 // --- Helpers ---
