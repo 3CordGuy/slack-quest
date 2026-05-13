@@ -62,12 +62,27 @@ interface StatusEffect {
 type ExpeditionNodeType = "combat" | "trap" | "lockbox" | "npc" | "treasure" | "merchant";
 
 type SkillType = "str" | "dex" | "int";
+type KeyTier = "bronze" | "silver" | "gold";
 
 interface TrapChoice {
   text: string;
   emoji: string;
   skill: SkillType;
   fail_damage: number;
+}
+
+interface LootOption {
+  name: string;
+  item_type: ItemType;
+  power: number;
+  rarity: Rarity;
+  flavor: string;
+  weapon_range?: WeaponRange | null;
+}
+
+interface NpcOffer {
+  greeting: string;
+  item: LootOption;
 }
 
 interface ExpeditionNode {
@@ -77,6 +92,9 @@ interface ExpeditionNode {
   monster_max_hp?: number;
   tier?: number;
   trap_choices?: TrapChoice[];
+  loot_options?: LootOption[];
+  lock_tier?: KeyTier;
+  npc?: NpcOffer;
 }
 
 interface ExpeditionState {
@@ -224,6 +242,26 @@ export function App() {
     if (res.ok) void refresh();
   }
 
+  async function lockboxChoose(questId: number, pick: number) {
+    const res = await fetch(`/api/quest/${questId}/dungeon/lockbox_choose`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({ pick }),
+    });
+    if (res.ok) void refresh();
+  }
+
+  async function npcChoose(questId: number, pick: number) {
+    const res = await fetch(`/api/quest/${questId}/dungeon/npc_choose`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({ pick }),
+    });
+    if (res.ok) void refresh();
+  }
+
   if (state.kind === "loading") return <Centered>Loading…</Centered>;
   if (state.kind === "anon") return <Login onSuccess={refresh} />;
   if (activeCombat) {
@@ -249,6 +287,13 @@ export function App() {
             onStartCombat={() => startCombat(state.activeQuest!.quest.id)}
             onChooseDoor={(pick) => chooseDoor(state.activeQuest!.quest.id, pick)}
             onTrapChoose={(pick) => trapChoose(state.activeQuest!.quest.id, pick)}
+            onLockboxChoose={(pick) => lockboxChoose(state.activeQuest!.quest.id, pick)}
+            onNpcChoose={(pick) => npcChoose(state.activeQuest!.quest.id, pick)}
+            myKeys={state.me.character ? {
+              bronze: state.me.character.keys_bronze,
+              silver: state.me.character.keys_silver,
+              gold: state.me.character.keys_gold,
+            } : null}
           />
         )}
         <CharacterCard me={state.me} />
@@ -330,6 +375,9 @@ function ActiveQuestCard({
   onStartCombat,
   onChooseDoor,
   onTrapChoose,
+  onLockboxChoose,
+  onNpcChoose,
+  myKeys,
 }: {
   quest: ActiveQuest;
   party: Character[];
@@ -337,6 +385,9 @@ function ActiveQuestCard({
   onStartCombat: () => void;
   onChooseDoor: (pick: number) => void;
   onTrapChoose: (pick: number) => void;
+  onLockboxChoose: (pick: number) => void;
+  onNpcChoose: (pick: number) => void;
+  myKeys: { bronze: number; silver: number; gold: number } | null;
 }) {
   const s = quest.scene;
   const variant = s.variant ?? "standard";
@@ -426,6 +477,24 @@ function ActiveQuestCard({
         if (variant === "dungeon" && currentNode?.type === "trap" && currentNode.trap_choices) {
           return <TrapPicker choices={currentNode.trap_choices} onPick={onTrapChoose} />;
         }
+        if (
+          variant === "dungeon" &&
+          currentNode?.type === "lockbox" &&
+          currentNode.loot_options &&
+          currentNode.lock_tier
+        ) {
+          return (
+            <LockboxPicker
+              options={currentNode.loot_options}
+              lockTier={currentNode.lock_tier}
+              myKeys={myKeys}
+              onPick={onLockboxChoose}
+            />
+          );
+        }
+        if (variant === "dungeon" && currentNode?.type === "npc" && currentNode.npc) {
+          return <NpcPicker npc={currentNode.npc} onPick={onNpcChoose} />;
+        }
         const combatAvailable =
           variant === "standard" ||
           variant === "boss" ||
@@ -505,6 +574,149 @@ function TrapPicker({
       </div>
       <p style={{ ...muted, fontSize: 11, marginTop: 8 }}>
         Class experts auto-pass their skill. Others roll d6 — pass on 4+.
+      </p>
+    </div>
+  );
+}
+
+const KEY_RANK: Record<KeyTier, number> = { bronze: 0, silver: 1, gold: 2 };
+const KEY_EMOJI: Record<KeyTier, string> = { bronze: "🥉", silver: "🥈", gold: "🥇" };
+
+function hasMatchingKey(
+  myKeys: { bronze: number; silver: number; gold: number } | null,
+  lock: KeyTier,
+): boolean {
+  if (!myKeys) return false;
+  return (
+    (KEY_RANK.bronze >= KEY_RANK[lock] && myKeys.bronze > 0) ||
+    (KEY_RANK.silver >= KEY_RANK[lock] && myKeys.silver > 0) ||
+    (KEY_RANK.gold >= KEY_RANK[lock] && myKeys.gold > 0)
+  );
+}
+
+function LockboxPicker({
+  options,
+  lockTier,
+  myKeys,
+  onPick,
+}: {
+  options: LootOption[];
+  lockTier: KeyTier;
+  myKeys: { bronze: number; silver: number; gold: number } | null;
+  onPick: (pick: number) => void;
+}) {
+  const canUnlock = hasMatchingKey(myKeys, lockTier);
+  return (
+    <div style={{ marginTop: 20 }}>
+      <div
+        style={{
+          ...muted,
+          fontSize: 11,
+          textTransform: "uppercase",
+          letterSpacing: 1.5,
+          marginBottom: 8,
+        }}
+      >
+        📦 Lockbox — {KEY_EMOJI[lockTier]} {lockTier} lock {canUnlock ? "(you have a key)" : "(no matching key)"}
+      </div>
+      <div style={{ display: "grid", gap: 8 }}>
+        {options.map((opt, i) => (
+          <button
+            key={i}
+            onClick={() => onPick(i + 1)}
+            disabled={!canUnlock}
+            style={{
+              padding: "12px 14px",
+              background: canUnlock ? "#1d1f23" : "#15171b",
+              border: "1px solid " + (canUnlock ? "#2a2d33" : "#222428"),
+              borderRadius: 8,
+              textAlign: "left",
+              cursor: canUnlock ? "pointer" : "not-allowed",
+              color: canUnlock ? "#e6e6e6" : "#6a7080",
+              fontFamily: "inherit",
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
+              <span style={{ fontWeight: 600 }}>{opt.name}</span>
+              <span style={{ ...muted, fontSize: 11 }}>
+                · {opt.rarity} {opt.item_type} +{opt.power}
+              </span>
+            </div>
+            {opt.flavor && (
+              <div style={{ ...muted, fontSize: 12, marginTop: 4, fontStyle: "italic" }}>
+                {opt.flavor}
+              </div>
+            )}
+          </button>
+        ))}
+        <button
+          onClick={() => onPick(options.length + 1)}
+          style={{
+            padding: "12px 14px",
+            background: "transparent",
+            border: "1px solid #2a2d33",
+            borderRadius: 8,
+            cursor: "pointer",
+            color: "#9aa0a6",
+            fontFamily: "inherit",
+          }}
+        >
+          Skip (no key spent)
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function NpcPicker({ npc, onPick }: { npc: NpcOffer; onPick: (pick: number) => void }) {
+  return (
+    <div style={{ marginTop: 20 }}>
+      <div
+        style={{
+          ...muted,
+          fontSize: 11,
+          textTransform: "uppercase",
+          letterSpacing: 1.5,
+          marginBottom: 8,
+        }}
+      >
+        🧙 Stranger
+      </div>
+      <p style={{ ...muted, fontSize: 13, fontStyle: "italic", marginBottom: 8 }}>
+        “{npc.greeting}”
+      </p>
+      <p style={{ ...muted, fontSize: 12, marginBottom: 12 }}>
+        Offers: <strong>{npc.item.name}</strong> ({npc.item.rarity} {npc.item.item_type} +
+        {npc.item.power})
+      </p>
+      <div style={{ display: "grid", gap: 8, gridTemplateColumns: "1fr 1fr" }}>
+        <button
+          onClick={() => onPick(1)}
+          style={{
+            ...button,
+            marginTop: 0,
+            background: "#1f3a1f",
+            color: "#86efac",
+            border: "1px solid #2a5a2a",
+          }}
+        >
+          Trust
+        </button>
+        <button
+          onClick={() => onPick(2)}
+          style={{
+            ...button,
+            marginTop: 0,
+            background: "#33363d",
+            color: "#e6e6e6",
+          }}
+        >
+          Refuse
+        </button>
+      </div>
+      <p style={{ ...muted, fontSize: 11, marginTop: 8 }}>
+        Trust rolls d6 + class trust mod — 1-2 betrayed, 3 tainted (item + bleed),
+        4+ clean.
       </p>
     </div>
   );

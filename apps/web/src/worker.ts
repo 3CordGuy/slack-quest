@@ -15,6 +15,7 @@ import {
   dropChance,
   findCatalogEntry,
   generateScar,
+  npcTrustMod,
   rollDice,
   rollItem,
   step,
@@ -26,6 +27,7 @@ import {
   type TurnAction,
 } from "@gantt-quest/core";
 import {
+  addCharacterKey,
   addItem,
   applySoftDeath,
   awardSpoils,
@@ -541,6 +543,146 @@ app.post("/api/quest/:id/dungeon/trap_choose", async (c) => {
     roll,
     skill: choice.skill,
     fail_damage: passed ? 0 : choice.fail_damage,
+    ...advance,
+  });
+});
+
+// Mirrors slack's pickKeyForLock — picks the cheapest key on the character
+// that meets or exceeds the lock tier. Returns null if none qualifies.
+const TIER_RANK: Record<"bronze" | "silver" | "gold", number> = { bronze: 0, silver: 1, gold: 2 };
+function pickKeyForLock(
+  character: { keys_bronze: number; keys_silver: number; keys_gold: number },
+  lock: "bronze" | "silver" | "gold",
+): "bronze" | "silver" | "gold" | null {
+  for (const t of ["bronze", "silver", "gold"] as const) {
+    if (TIER_RANK[t] < TIER_RANK[lock]) continue;
+    const count = t === "bronze" ? character.keys_bronze : t === "silver" ? character.keys_silver : character.keys_gold;
+    if (count > 0) return t;
+  }
+  return null;
+}
+
+// Lockbox resolution — mirrors /sq choose for lockbox rooms. Pick 1..N to
+// claim a loot option (spends a key of node.lock_tier or higher); pick
+// length+1 to skip without spending.
+app.post("/api/quest/:id/dungeon/lockbox_choose", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const questId = parseInt(c.req.param("id"), 10);
+  if (!Number.isFinite(questId)) return c.json({ error: "bad_quest_id" }, 400);
+  const quest = await getActiveQuestForCharacter(c.env.DB, session.slack_user_id);
+  if (!quest || quest.id !== questId) return c.json({ error: "quest_not_active" }, 404);
+  const exp = quest.scene.expedition;
+  const node = exp?.nodes[exp.current];
+  if (!exp || !node || node.type !== "lockbox") return c.json({ error: "not_a_lockbox_room" }, 400);
+
+  const body = (await c.req.json().catch(() => null)) as { pick?: unknown } | null;
+  const pick = typeof body?.pick === "number" ? body.pick : NaN;
+  const opts = node.loot_options ?? [];
+  const skipIdx = opts.length + 1;
+  if (!Number.isFinite(pick) || pick < 1 || pick > skipIdx) {
+    return c.json({ error: "bad_pick", valid_picks: skipIdx }, 400);
+  }
+  if (pick === skipIdx) {
+    const advance = await advanceDungeon(c.env.DB, questId, exp as ExpState, quest.scene as never, null);
+    return c.json({ skipped: true, ...advance });
+  }
+  const character = await getCharacter(c.env.DB, session.slack_user_id);
+  if (!character) return c.json({ error: "no_character" }, 404);
+  const lockTier = node.lock_tier ?? "bronze";
+  const keyTier = pickKeyForLock(character, lockTier);
+  if (!keyTier) return c.json({ error: "no_key", lock_tier: lockTier }, 400);
+
+  const choice = opts[pick - 1];
+  await addCharacterKey(c.env.DB, session.slack_user_id, keyTier, -1);
+  const item = await addItem(c.env.DB, {
+    character_id: session.slack_user_id,
+    item_name: choice.name,
+    item_type: choice.item_type,
+    power: choice.power,
+    rarity: choice.rarity,
+    flavor: choice.flavor,
+    weapon_range: choice.weapon_range ?? null,
+  });
+  const advance = await advanceDungeon(c.env.DB, questId, exp as ExpState, quest.scene as never, null);
+  return c.json({
+    skipped: false,
+    key_spent: keyTier,
+    item: { id: item.id, name: item.item_name, rarity: item.rarity, type: item.item_type, power: item.power },
+    ...advance,
+  });
+});
+
+// NPC resolution — pick 1 = trust (1d6 + npcTrustMod against three buckets
+// betrayed/tainted/clean), pick 2 = refuse (no effect, free advance).
+app.post("/api/quest/:id/dungeon/npc_choose", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const questId = parseInt(c.req.param("id"), 10);
+  if (!Number.isFinite(questId)) return c.json({ error: "bad_quest_id" }, 400);
+  const quest = await getActiveQuestForCharacter(c.env.DB, session.slack_user_id);
+  if (!quest || quest.id !== questId) return c.json({ error: "quest_not_active" }, 404);
+  const exp = quest.scene.expedition;
+  const node = exp?.nodes[exp.current];
+  if (!exp || !node || node.type !== "npc") return c.json({ error: "not_an_npc_room" }, 400);
+
+  const body = (await c.req.json().catch(() => null)) as { pick?: unknown } | null;
+  const pick = typeof body?.pick === "number" ? body.pick : NaN;
+  if (pick !== 1 && pick !== 2) return c.json({ error: "bad_pick" }, 400);
+
+  if (pick === 2) {
+    const advance = await advanceDungeon(c.env.DB, questId, exp as ExpState, quest.scene as never, null);
+    return c.json({ refused: true, ...advance });
+  }
+
+  // Trust path
+  const character = await getCharacter(c.env.DB, session.slack_user_id);
+  if (!character) return c.json({ error: "no_character" }, 404);
+  const offer = node.npc?.item;
+  if (!offer) {
+    const advance = await advanceDungeon(c.env.DB, questId, exp as ExpState, quest.scene as never, null);
+    return c.json({ outcome: "empty", ...advance });
+  }
+  const mod = npcTrustMod(character.class);
+  const roll = rollDice(6);
+  const total = roll + mod;
+  const bucket: "betrayed" | "tainted" | "clean" =
+    total <= 2 ? "betrayed" : total === 3 ? "tainted" : "clean";
+
+  if (bucket === "betrayed") {
+    const damage = rollDice(4) + quest.scene.tier;
+    const newHp = Math.max(0, character.hp - damage);
+    const advance = await advanceDungeon(
+      c.env.DB, questId, exp as ExpState, quest.scene as never,
+      { user_id: session.slack_user_id, hp: newHp },
+    );
+    return c.json({ outcome: "betrayed", roll, modifier: mod, total, damage, ...advance });
+  }
+
+  const item = await addItem(c.env.DB, {
+    character_id: session.slack_user_id,
+    item_name: offer.name,
+    item_type: offer.item_type,
+    power: offer.power,
+    rarity: offer.rarity,
+    flavor: offer.flavor,
+    weapon_range: offer.weapon_range ?? null,
+  });
+  if (bucket === "tainted") {
+    const bleed = { type: "bleeding" as const, magnitude: 2, remaining: 3, source: "tainted gift from a stranger" };
+    const updatedEffects = [...(character.effects ?? []), bleed];
+    await c.env.DB
+      .prepare("UPDATE characters SET effects = ?, last_active = ? WHERE slack_user_id = ?")
+      .bind(JSON.stringify(updatedEffects), Date.now(), session.slack_user_id)
+      .run();
+  }
+  const advance = await advanceDungeon(c.env.DB, questId, exp as ExpState, quest.scene as never, null);
+  return c.json({
+    outcome: bucket,
+    roll,
+    modifier: mod,
+    total,
+    item: { id: item.id, name: item.item_name, rarity: item.rarity, type: item.item_type, power: item.power },
     ...advance,
   });
 });
