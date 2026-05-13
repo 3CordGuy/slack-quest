@@ -743,7 +743,6 @@ export function CombatPage({
               selfId={selfId}
             />
             <PartySection fighters={state.fighters} currentActorId={currentActorId} selfId={selfId} />
-            <DiceRollDisplay rolls={diceRolls} />
           </div>
 
           {/* ── Right column: actions · log ── */}
@@ -816,6 +815,8 @@ export function CombatPage({
           </div>
         </div>
       )}
+
+      <DiceRollDisplay rolls={diceRolls} />
 
       {/* Victory modal — overlays everything */}
       {ended && state?.status === "victory" && (
@@ -1700,7 +1701,18 @@ interface DiceRollEntry {
 function DiceRollDisplay({ rolls }: { rolls: DiceRollEntry[] }) {
   if (rolls.length === 0) return null;
   return (
-    <div style={{ display: "flex", gap: 10, flexWrap: "wrap", padding: "8px 0" }}>
+    <div style={{
+      position: "fixed",
+      bottom: 32,
+      left: "50%",
+      transform: "translateX(-50%)",
+      display: "flex",
+      gap: 10,
+      flexWrap: "wrap",
+      justifyContent: "center",
+      zIndex: 200,
+      pointerEvents: "none",
+    }}>
       {rolls.map((r) => <DiceFace key={r.id} roll={r} />)}
     </div>
   );
