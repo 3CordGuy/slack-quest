@@ -1816,6 +1816,12 @@ async function handleCombat(
   const quest = await getActiveQuestForCharacter(env.DB, payload.user_id);
   if (!quest) return ephemeral(`You're not on an active quest. Try \`${payload.command} quest\` or \`${payload.command} join\`.`);
 
+  if (quest.mode === "web") {
+    return ephemeral(
+      "🪐 This quest is being run from the web app. Open it there to take your turn.",
+    );
+  }
+
   const cooldown = await cooldownRemaining(env.DB, quest.id, payload.user_id, ACTION_COOLDOWN_MS);
   if (cooldown > 0) {
     return ephemeral(`⏳ Catching your breath — try again in ${Math.ceil(cooldown / 1000)}s.`);

@@ -238,12 +238,15 @@ export interface SceneJson {
   monster_effects?: StatusEffect[];
 }
 
+export type QuestMode = "slack" | "web";
+
 export interface ActiveQuest {
   id: number;
   channel_id: string;
   thread_ts: string;
   elite: boolean;
   scene: SceneJson;
+  mode: QuestMode;
 }
 
 interface QuestRow {
@@ -252,6 +255,7 @@ interface QuestRow {
   thread_ts: string;
   elite: number;
   scene_json: string;
+  mode: string;
 }
 
 // Returns the active quest for a character, with scene data loaded.
@@ -261,7 +265,7 @@ export async function getActiveQuestForCharacter(
 ): Promise<ActiveQuest | null> {
   const row = await db
     .prepare(
-      `SELECT q.id, q.thread_ts, q.channel_id, q.elite, q.scene_json
+      `SELECT q.id, q.thread_ts, q.channel_id, q.elite, q.scene_json, q.mode
        FROM quests q
        JOIN quest_party qp ON qp.quest_id = q.id
        WHERE qp.character_id = ? AND q.status = 'active'
@@ -270,13 +274,32 @@ export async function getActiveQuestForCharacter(
     .bind(userId)
     .first<QuestRow>();
   if (!row) return null;
+  return rowToActiveQuest(row);
+}
+
+function rowToActiveQuest(row: QuestRow): ActiveQuest {
   return {
     id: row.id,
     channel_id: row.channel_id,
     thread_ts: row.thread_ts,
     elite: row.elite === 1,
     scene: normalizeScene(JSON.parse(row.scene_json) as SceneJson),
+    mode: row.mode === "web" ? "web" : "slack",
   };
+}
+
+// Updates which surface is driving this quest. Set to 'web' when the player
+// opens the QuestRoom DO; Slack combat handlers refuse on 'web' so the two
+// surfaces don't race each other against the same scene_json.
+export async function setQuestMode(
+  db: D1Database,
+  questId: number,
+  mode: QuestMode,
+): Promise<void> {
+  await db
+    .prepare("UPDATE quests SET mode = ? WHERE id = ?")
+    .bind(mode, questId)
+    .run();
 }
 
 export async function createQuest(
@@ -1090,7 +1113,7 @@ export async function getActiveQuestInChannel(
 ): Promise<ActiveQuest | null> {
   const row = await db
     .prepare(
-      `SELECT id, channel_id, thread_ts, elite, scene_json
+      `SELECT id, channel_id, thread_ts, elite, scene_json, mode
        FROM quests
        WHERE channel_id = ? AND status = 'active'
        ORDER BY created_at DESC LIMIT 1`,
@@ -1098,13 +1121,7 @@ export async function getActiveQuestInChannel(
     .bind(channelId)
     .first<QuestRow>();
   if (!row) return null;
-  return {
-    id: row.id,
-    channel_id: row.channel_id,
-    thread_ts: row.thread_ts,
-    elite: row.elite === 1,
-    scene: normalizeScene(JSON.parse(row.scene_json) as SceneJson),
-  };
+  return rowToActiveQuest(row);
 }
 
 // Returns true if the character was newly inserted; false if they were already a member.

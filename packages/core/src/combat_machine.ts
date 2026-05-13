@@ -82,6 +82,10 @@ export interface CombatState {
   turn_index: number;
   round: number;
   status: CombatStatus;
+  // Per-fighter total damage dealt to the monster across this combat. Drives
+  // contribution-proportional spoils on victory. Updated on every player_hit
+  // (only fighters appear here; the monster doesn't accumulate contribution).
+  contribution: Record<ActorId, number>;
 }
 
 // Action shape submitted to step(). `actor` is required for player actions and
@@ -170,6 +174,8 @@ export interface CombatInit {
 }
 
 export function createCombatState(init: CombatInit): CombatState {
+  const contribution: Record<ActorId, number> = {};
+  for (const f of init.fighters) contribution[f.id] = 0;
   return {
     fighters: init.fighters.map((f) => ({
       ...f,
@@ -186,6 +192,7 @@ export function createCombatState(init: CombatInit): CombatState {
     turn_index: 0,
     round: 0,
     status: "pending",
+    contribution,
   };
 }
 
@@ -339,6 +346,10 @@ function handlePlayerHit(
       ...state.monster,
       hp: newHp,
       ...(phaseTransition ? { boss_phase: 2 as const } : {}),
+    },
+    contribution: {
+      ...state.contribution,
+      [action.actor]: (state.contribution[action.actor] ?? 0) + hit.damage,
     },
   };
 

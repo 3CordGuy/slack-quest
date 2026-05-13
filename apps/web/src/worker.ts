@@ -9,15 +9,26 @@ import { Hono } from "hono";
 import { getCookie, setCookie, deleteCookie } from "hono/cookie";
 
 import {
+  MAX_MANA_CAP,
   classByName,
   createCombatState,
+  dropChance,
+  findCatalogEntry,
+  generateScar,
+  rollDice,
+  rollItem,
   step,
+  xpForLevel,
   type CombatInit,
   type CombatState,
+  type ItemRoll,
   type RollFn,
   type TurnAction,
 } from "@gantt-quest/core";
 import {
+  addItem,
+  applySoftDeath,
+  awardSpoils,
   consumeWebLoginCode,
   createWebSession,
   deleteWebCombatState,
@@ -30,8 +41,47 @@ import {
   getRecentQuestsForCharacter,
   getWebCombatState,
   getWebSession,
+  markQuestStatus,
   saveWebCombatState,
+  setCharacterHpAndShield,
+  setQuestMode,
 } from "@gantt-quest/db";
+
+const DOWNED_COOLDOWN_MS = 12 * 60 * 60 * 1000;
+const VICTORY_BASE_XP_PER_TIER = 50;
+const VICTORY_BASE_GOLD_PER_TIER = 20;
+const BOSS_REWARD_MULTIPLIER = 2;
+const ELITE_REWARD_MULTIPLIER = 1.5;
+
+// Slack uses Workers AI to flavor non-catalog drops; web v1 names them
+// deterministically off (rarity, type) so we don't depend on the AI binding.
+// Tool / scroll drops still use the fixed catalog names + blurbs from core.
+const RARITY_ADJ: Record<string, string> = {
+  common: "Worn",
+  uncommon: "Sturdy",
+  rare: "Resplendent",
+};
+const TYPE_NOUN: Record<string, string> = {
+  weapon: "Blade",
+  armor: "Vest",
+  consumable: "Elixir",
+  magic: "Trinket",
+  revive: "Vial",
+  tool: "Tool",
+  scroll: "Scroll",
+};
+
+function nameLoot(roll: ItemRoll, monsterName: string): { name: string; flavor: string } {
+  if (roll.catalog_name) {
+    const entry = findCatalogEntry(roll.catalog_name);
+    if (entry) {
+      return { name: `${entry.emoji} ${entry.name}`, flavor: entry.blurb };
+    }
+  }
+  const adj = RARITY_ADJ[roll.rarity] ?? roll.rarity;
+  const noun = TYPE_NOUN[roll.type] ?? roll.type;
+  return { name: `${adj} ${noun}`, flavor: `Spoils from ${monsterName}.` };
+}
 
 interface Env {
   DB: D1Database;
@@ -189,6 +239,11 @@ app.post("/api/quest/:id/start_web_combat", async (c) => {
   const initial = createCombatState(init);
   const begun = step(initial, { kind: "begin" }, productionRoll);
   await saveWebCombatState(c.env.DB, questId, begun.state);
+  // Lock the quest into web mode so Slack combat handlers refuse further
+  // /sq attack actions on it. Once flipped to 'web' it stays there for the
+  // life of this quest (no automatic unlock on web combat end — the quest
+  // is over either way).
+  await setQuestMode(c.env.DB, questId, "web");
   return c.json({ quest_id: questId, state: begun.state });
 });
 
@@ -271,11 +326,211 @@ interface ClientToServer {
   action: TurnAction;
 }
 
+export interface LootDrop {
+  item_name: string;
+  item_type: string;
+  power: number;
+  rarity: string;
+  flavor: string;
+  weapon_range: "melee" | "ranged" | null;
+}
+
+export interface FighterReward {
+  user_id: string;
+  damage_dealt: number;
+  xp_awarded: number;
+  gold_awarded: number;
+  level_up: boolean;
+  new_level: number;
+  loot: LootDrop[];
+  // Populated only on defeat for fighters at 0 HP.
+  soft_death: { gold_lost: number; item_lost: string | null; scar: string } | null;
+}
+
+export interface OutcomeSummary {
+  status: "victory" | "defeat";
+  rewards: FighterReward[];
+  monster_name: string;
+  monster_tier: number;
+  total_pool_xp: number;
+  total_pool_gold: number;
+  elite: boolean;
+  is_boss: boolean;
+}
+
 interface ServerToClient {
-  type: "state" | "events" | "error";
+  type: "state" | "events" | "error" | "outcome";
   state?: CombatState;
   events?: unknown[];
   message?: string;
+  outcome?: OutcomeSummary;
+}
+
+// End-of-combat side-effects:
+//   - Victory: contribution-proportional XP + gold split, scaled for boss
+//     (×2) / elite (×1.5); awardSpoils handles level-ups; per-fighter loot
+//     roll using existing dropChance / rollItem helpers.
+//   - Defeat: applySoftDeath for any fighter at 0 HP (25% gold loss, 1
+//     random item drop, downed timer, +1 scar). Survivors keep their final
+//     HP and shield from the combat state.
+//   - Either way: mark the quest completed/failed.
+async function applyWebCombatOutcome(
+  env: Env,
+  questId: number,
+  state: CombatState,
+): Promise<OutcomeSummary> {
+  const won = state.status === "victory";
+  const tier = state.monster.tier;
+  const isBoss = state.monster.is_boss;
+  const eliteRow = await env.DB.prepare("SELECT elite FROM quests WHERE id = ?")
+    .bind(questId)
+    .first<{ elite: number }>();
+  const elite = eliteRow?.elite === 1;
+
+  const multiplier =
+    (isBoss ? BOSS_REWARD_MULTIPLIER : 1) * (elite ? ELITE_REWARD_MULTIPLIER : 1);
+  const totalPoolXp = won ? Math.round(tier * VICTORY_BASE_XP_PER_TIER * multiplier) : 0;
+  const totalPoolGold = won ? Math.round(tier * VICTORY_BASE_GOLD_PER_TIER * multiplier) : 0;
+
+  // Contribution split: proportional to damage dealt; remainder goes to top
+  // contributor. Equal split when nobody dealt damage (degenerate but
+  // possible if the fight ended on monster status-effect ticks).
+  const totalDmg = state.fighters.reduce(
+    (s, f) => s + (state.contribution[f.id] ?? 0),
+    0,
+  );
+  const xpShares: Record<string, number> = {};
+  const goldShares: Record<string, number> = {};
+  if (won) {
+    let xpRemainder = totalPoolXp;
+    let goldRemainder = totalPoolGold;
+    for (const f of state.fighters) {
+      const dmg = state.contribution[f.id] ?? 0;
+      const xpShare = totalDmg > 0
+        ? Math.floor((dmg / totalDmg) * totalPoolXp)
+        : Math.floor(totalPoolXp / state.fighters.length);
+      const goldShare = totalDmg > 0
+        ? Math.floor((dmg / totalDmg) * totalPoolGold)
+        : Math.floor(totalPoolGold / state.fighters.length);
+      xpShares[f.id] = xpShare;
+      goldShares[f.id] = goldShare;
+      xpRemainder -= xpShare;
+      goldRemainder -= goldShare;
+    }
+    // Hand any rounding remainder to the top contributor (or first fighter).
+    const top = [...state.fighters]
+      .sort((a, b) => (state.contribution[b.id] ?? 0) - (state.contribution[a.id] ?? 0))[0];
+    if (top) {
+      xpShares[top.id] += Math.max(0, xpRemainder);
+      goldShares[top.id] += Math.max(0, goldRemainder);
+    }
+  }
+
+  const rewards: FighterReward[] = [];
+
+  for (const fighter of state.fighters) {
+    const dmg = state.contribution[fighter.id] ?? 0;
+    let xpAwarded = 0;
+    let goldAwarded = 0;
+    let levelUp = false;
+    let newLevel = fighter.level;
+    let loot: LootDrop[] = [];
+    let softDeath: FighterReward["soft_death"] = null;
+
+    // Sync HP + shield first so subsequent helpers see fresh state.
+    await setCharacterHpAndShield(env.DB, fighter.id, fighter.hp, fighter.shield);
+
+    const character = await getCharacter(env.DB, fighter.id);
+    if (!character) {
+      rewards.push({
+        user_id: fighter.id,
+        damage_dealt: dmg,
+        xp_awarded: 0,
+        gold_awarded: 0,
+        level_up: false,
+        new_level: fighter.level,
+        loot: [],
+        soft_death: null,
+      });
+      continue;
+    }
+
+    if (won) {
+      xpAwarded = xpShares[fighter.id] ?? 0;
+      goldAwarded = goldShares[fighter.id] ?? 0;
+      const result = await awardSpoils(
+        env.DB,
+        character,
+        xpAwarded,
+        goldAwarded,
+        () => rollDice(6),
+        xpForLevel,
+        MAX_MANA_CAP,
+      );
+      levelUp = result.levelsGained > 0;
+      newLevel = result.newLevel;
+
+      // Loot roll — per-fighter chance using the existing tier-scaled
+      // dropChance + rollItem helpers (same probabilities as Slack drops).
+      // Web mode names items deterministically (no AI flavor pass yet).
+      if (Math.random() < dropChance(tier)) {
+        const roll = rollItem(tier);
+        const named = nameLoot(roll, state.monster.name);
+        const created = await addItem(env.DB, {
+          character_id: fighter.id,
+          item_name: named.name,
+          item_type: roll.type,
+          power: roll.power,
+          rarity: roll.rarity,
+          flavor: named.flavor,
+          weapon_range: roll.weapon_range ?? null,
+        });
+        loot.push({
+          item_name: created.item_name,
+          item_type: created.item_type,
+          power: created.power,
+          rarity: created.rarity,
+          flavor: created.flavor ?? named.flavor,
+          weapon_range: created.weapon_range,
+        });
+      }
+    } else if (fighter.hp <= 0) {
+      // Soft death: only triggers on actual defeat AND for the fighters
+      // that fell. Survivors of a wipe (none here, since defeat means full
+      // wipe) would skip this branch.
+      const scar = generateScar(state.monster.name);
+      const death = await applySoftDeath(env.DB, character, scar, DOWNED_COOLDOWN_MS);
+      softDeath = {
+        gold_lost: death.goldLost,
+        item_lost: death.itemLost,
+        scar,
+      };
+    }
+
+    rewards.push({
+      user_id: fighter.id,
+      damage_dealt: dmg,
+      xp_awarded: xpAwarded,
+      gold_awarded: goldAwarded,
+      level_up: levelUp,
+      new_level: newLevel,
+      loot,
+      soft_death: softDeath,
+    });
+  }
+
+  await markQuestStatus(env.DB, questId, won ? "completed" : "failed");
+
+  return {
+    status: state.status as "victory" | "defeat",
+    rewards,
+    monster_name: state.monster.name,
+    monster_tier: tier,
+    total_pool_xp: totalPoolXp,
+    total_pool_gold: totalPoolGold,
+    elite,
+    is_boss: isBoss,
+  };
 }
 
 interface WsAttachment {
@@ -363,6 +618,23 @@ export class QuestRoom extends DurableObject<Env> {
     this.broadcast({ type: "events", events: result.events });
     if (stateChanged) {
       this.broadcast({ type: "state", state: result.state });
+    }
+
+    // Terminal status transition — apply outcome side-effects exactly once.
+    const becameTerminal =
+      stateChanged &&
+      state.status === "active" &&
+      (result.state.status === "victory" || result.state.status === "defeat");
+    if (becameTerminal) {
+      try {
+        const outcome = await applyWebCombatOutcome(this.env, attach.quest_id, result.state);
+        this.broadcast({ type: "outcome", outcome });
+      } catch (err) {
+        this.broadcast({
+          type: "error",
+          message: `outcome failed: ${err instanceof Error ? err.message : String(err)}`,
+        });
+      }
     }
   }
 

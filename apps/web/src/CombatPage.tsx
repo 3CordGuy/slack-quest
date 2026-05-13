@@ -89,18 +89,50 @@ type TurnAction =
   | { kind: "wait"; actor: string }
   | { kind: "monster_act" };
 
+interface LootDrop {
+  item_name: string;
+  item_type: string;
+  power: number;
+  rarity: string;
+  flavor: string;
+}
+
+interface FighterReward {
+  user_id: string;
+  damage_dealt: number;
+  xp_awarded: number;
+  gold_awarded: number;
+  level_up: boolean;
+  new_level: number;
+  loot: LootDrop[];
+  soft_death: { gold_lost: number; item_lost: string | null; scar: string } | null;
+}
+
+interface OutcomeSummary {
+  status: "victory" | "defeat";
+  rewards: FighterReward[];
+  monster_name: string;
+  monster_tier: number;
+  total_pool_xp: number;
+  total_pool_gold: number;
+  elite: boolean;
+  is_boss: boolean;
+}
+
 interface UiState {
   connection: "connecting" | "open" | "closed";
   state: CombatState | null;
   log: { id: number; text: string; tone: "info" | "good" | "bad" | "muted" }[];
   error: string | null;
+  outcome: OutcomeSummary | null;
 }
 
 type UiAction =
   | { kind: "connection"; value: UiState["connection"] }
   | { kind: "state"; value: CombatState }
   | { kind: "events"; value: CombatEvent[] }
-  | { kind: "error"; value: string };
+  | { kind: "error"; value: string }
+  | { kind: "outcome"; value: OutcomeSummary };
 
 let nextLogId = 1;
 
@@ -117,6 +149,8 @@ function reducer(s: UiState, a: UiAction): UiState {
       };
     case "error":
       return { ...s, error: a.value };
+    case "outcome":
+      return { ...s, outcome: a.value };
   }
 }
 
@@ -206,6 +240,7 @@ export function CombatPage({
     state: null,
     log: [],
     error: null,
+    outcome: null,
   });
   const wsRef = useRef<WebSocket | null>(null);
   const logScrollRef = useRef<HTMLDivElement | null>(null);
@@ -224,10 +259,12 @@ export function CombatPage({
         const msg = JSON.parse(ev.data) as
           | { type: "state"; state: CombatState }
           | { type: "events"; events: CombatEvent[] }
-          | { type: "error"; message: string };
+          | { type: "error"; message: string }
+          | { type: "outcome"; outcome: OutcomeSummary };
         if (msg.type === "state") dispatch({ kind: "state", value: msg.state });
         else if (msg.type === "events") dispatch({ kind: "events", value: msg.events });
         else if (msg.type === "error") dispatch({ kind: "error", value: msg.message });
+        else if (msg.type === "outcome") dispatch({ kind: "outcome", value: msg.outcome });
       } catch {
         dispatch({ kind: "error", value: "bad message" });
       }
@@ -308,7 +345,14 @@ export function CombatPage({
             </button>
           )}
           <EventLog log={ui.log} scrollRef={logScrollRef} />
-          {ended && <EndBanner status={state.status as "victory" | "defeat"} />}
+          {ended && (
+            <EndBanner
+              status={state.status as "victory" | "defeat"}
+              outcome={ui.outcome}
+              selfId={selfId}
+              fighters={state.fighters}
+            />
+          )}
         </>
       )}
     </div>
@@ -551,7 +595,17 @@ function EventLog({
   );
 }
 
-function EndBanner({ status }: { status: "victory" | "defeat" }) {
+function EndBanner({
+  status,
+  outcome,
+  selfId,
+  fighters,
+}: {
+  status: "victory" | "defeat";
+  outcome: OutcomeSummary | null;
+  selfId: string;
+  fighters: Fighter[];
+}) {
   const win = status === "victory";
   return (
     <div
@@ -565,9 +619,99 @@ function EndBanner({ status }: { status: "victory" | "defeat" }) {
       <div style={{ fontSize: 32, fontWeight: 800, color: win ? "#86efac" : "#fca5a5" }}>
         {win ? "VICTORY" : "DEFEAT"}
       </div>
-      <p style={muted}>
-        Click <strong>← Back</strong> to return. Outcome resolution (XP, loot) is wired in Phase 2d.
-      </p>
+      {!outcome && <p style={muted}>Resolving outcome…</p>}
+      {outcome && (
+        <div style={{ marginTop: 12, textAlign: "left" }}>
+          {win && (outcome.is_boss || outcome.elite) && (
+            <div style={{ ...muted, fontSize: 12, textAlign: "center", marginBottom: 8 }}>
+              {outcome.is_boss && "Boss "} {outcome.elite && "Elite "} pool: {outcome.total_pool_xp} XP · {outcome.total_pool_gold}g (split by contribution)
+            </div>
+          )}
+          <div style={{ display: "grid", gap: 8 }}>
+            {outcome.rewards.map((r) => (
+              <RewardRow
+                key={r.user_id}
+                reward={r}
+                fighterName={fighters.find((x) => x.id === r.user_id)?.name ?? r.user_id}
+                isSelf={r.user_id === selfId}
+                won={win}
+              />
+            ))}
+          </div>
+          <p style={{ ...muted, marginTop: 12, textAlign: "center" }}>
+            Click <strong>← Back</strong> to return.
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function RewardRow({
+  reward,
+  fighterName,
+  isSelf,
+  won,
+}: {
+  reward: FighterReward;
+  fighterName: string;
+  isSelf: boolean;
+  won: boolean;
+}) {
+  return (
+    <div
+      style={{
+        padding: 12,
+        background: "#0e0f12",
+        borderRadius: 8,
+        border: isSelf ? "1px solid #3a7bd5" : "1px solid transparent",
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          alignItems: "baseline",
+          justifyContent: "space-between",
+          gap: 8,
+          flexWrap: "wrap",
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+          <span style={{ fontWeight: 700, color: "#f5f5f5" }}>{fighterName}</span>
+          {isSelf && <span style={{ ...muted, fontSize: 12 }}>(you)</span>}
+          <span style={{ ...muted, fontSize: 11, fontVariantNumeric: "tabular-nums" }}>
+            · {reward.damage_dealt} dmg
+          </span>
+        </div>
+        <div style={{ fontSize: 13, fontVariantNumeric: "tabular-nums", color: "#e6e6e6" }}>
+          {won
+            ? `+${reward.xp_awarded} XP · +${reward.gold_awarded}g`
+            : reward.soft_death
+              ? "downed"
+              : "—"}
+        </div>
+      </div>
+      {reward.level_up && (
+        <div style={{ marginTop: 6, fontSize: 13, color: "#facc15", fontWeight: 600 }}>
+          ⭐ Level {reward.new_level}!
+        </div>
+      )}
+      {reward.loot.length > 0 && (
+        <div style={{ marginTop: 6, display: "grid", gap: 4 }}>
+          {reward.loot.map((it, i) => (
+            <div key={i} style={{ fontSize: 12, color: "#86efac" }}>
+              🎁 {it.item_name} · {it.rarity} {it.item_type} +{it.power}
+            </div>
+          ))}
+        </div>
+      )}
+      {reward.soft_death && (
+        <div style={{ marginTop: 6, fontSize: 12, color: "#fca5a5" }}>
+          💀 −{reward.soft_death.gold_lost}g
+          {reward.soft_death.item_lost && ` · lost ${reward.soft_death.item_lost}`}
+          {reward.soft_death.scar && ` · scar: "${reward.soft_death.scar}"`}
+        </div>
+      )}
     </div>
   );
 }
