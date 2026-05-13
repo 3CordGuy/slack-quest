@@ -32,7 +32,9 @@ import {
   addGold,
   addItem,
   applySoftDeath,
+  bumpMaxMana,
   clearPartyEffects,
+  consumeItem,
   equipItem,
   awardSpoils,
   consumeWebLoginCode,
@@ -298,6 +300,43 @@ app.post("/api/inventory/:itemId/equip", async (c) => {
   if (item.equipped) return c.json({ error: "already_equipped" }, 400);
   await equipItem(c.env.DB, item);
   return c.json({ ok: true });
+});
+
+// Use an inventory item out of combat. Mirrors /sq use for the contexts
+// that don't need a foe: consumables heal the user (clamped to max_hp),
+// magic items bump max_mana (capped at MAX_MANA_CAP). Tools / scrolls /
+// revive items reject — those require combat context (use_item via WS)
+// or a target picker (revive). Mid-combat use also rejects; route those
+// through the WS protocol's use_item action instead.
+app.post("/api/inventory/:itemId/use", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const itemId = parseInt(c.req.param("itemId"), 10);
+  if (!Number.isFinite(itemId)) return c.json({ error: "bad_item_id" }, 400);
+  const character = await getCharacter(c.env.DB, session.slack_user_id);
+  if (!character) return c.json({ error: "no_character" }, 404);
+  const item = await getItem(c.env.DB, itemId, session.slack_user_id);
+  if (!item) return c.json({ error: "not_yours" }, 404);
+
+  if (item.item_type === "consumable") {
+    const healed = await consumeItem(c.env.DB, character, item);
+    return c.json({ ok: true, kind: "heal", healed });
+  }
+  if (item.item_type === "magic") {
+    const result = await bumpMaxMana(c.env.DB, character, item.power, 5 /* MAX_MANA_CAP */);
+    await removeItem(c.env.DB, item.id);
+    return c.json({
+      ok: true,
+      kind: "mana_bump",
+      added: result.added,
+      new_max_mana: result.newMaxMana,
+    });
+  }
+  return c.json({
+    error: "use_in_combat",
+    item_type: item.item_type,
+    hint: "Tools / scrolls / revives have combat-only effects on the web — open a fight first.",
+  }, 400);
 });
 
 // Sell an inventory item. Mirrors /sq sell: no mid-quest, no equipped

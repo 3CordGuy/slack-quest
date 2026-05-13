@@ -278,6 +278,14 @@ export function App() {
     if (res.ok) void refresh();
   }
 
+  async function useItem(itemId: number) {
+    const res = await fetch(`/api/inventory/${itemId}/use`, {
+      method: "POST",
+      credentials: "include",
+    });
+    if (res.ok) void refresh();
+  }
+
   async function treasureTake(questId: number, pick: number) {
     const res = await fetch(`/api/quest/${questId}/dungeon/treasure_take`, {
       method: "POST",
@@ -330,6 +338,7 @@ export function App() {
             inQuest={!!state.activeQuest}
             onEquip={equipItem}
             onSell={sellItem}
+            onUse={useItem}
           />
         )}
         {state.me.character && state.recent.length > 0 && (
@@ -1100,11 +1109,13 @@ function InventoryCard({
   inQuest,
   onEquip,
   onSell,
+  onUse,
 }: {
   items: Item[];
   inQuest: boolean;
   onEquip: (itemId: number) => void;
   onSell: (itemId: number) => void;
+  onUse: (itemId: number) => void;
 }) {
   if (items.length === 0) {
     return (
@@ -1130,14 +1141,14 @@ function InventoryCard({
       {equipped.length > 0 && (
         <Section title="Equipped">
           {equipped.map((it) => (
-            <ItemRow key={it.id} item={it} inQuest={inQuest} onEquip={onEquip} onSell={onSell} />
+            <ItemRow key={it.id} item={it} inQuest={inQuest} onEquip={onEquip} onSell={onSell} onUse={onUse} />
           ))}
         </Section>
       )}
       {ITEM_TYPE_ORDER.filter((t) => groups[t]?.length).map((t) => (
         <Section key={t} title={ITEM_TYPE_LABELS[t]}>
           {groups[t]!.map((it) => (
-            <ItemRow key={it.id} item={it} inQuest={inQuest} onEquip={onEquip} onSell={onSell} />
+            <ItemRow key={it.id} item={it} inQuest={inQuest} onEquip={onEquip} onSell={onSell} onUse={onUse} />
           ))}
         </Section>
       ))}
@@ -1175,11 +1186,13 @@ function ItemRow({
   inQuest,
   onEquip,
   onSell,
+  onUse,
 }: {
   item: Item;
   inQuest: boolean;
   onEquip: (itemId: number) => void;
   onSell: (itemId: number) => void;
+  onUse: (itemId: number) => void;
 }) {
   const canEquip =
     !item.equipped &&
@@ -1189,6 +1202,10 @@ function ItemRow({
     item.item_type !== "tool" &&
     item.item_type !== "scroll";
   const canSell = !item.equipped && !inQuest;
+  // Out-of-combat use: consumable (heal user) + magic (bump max_mana).
+  // Tools / scrolls / revives require combat context — disabled here.
+  const canUse =
+    !item.equipped && (item.item_type === "consumable" || item.item_type === "magic");
   return (
     <div
       style={{
@@ -1218,11 +1235,16 @@ function ItemRow({
           +{item.power}
         </div>
       </div>
-      {(canEquip || canSell) && (
+      {(canEquip || canSell || canUse) && (
         <div style={{ display: "flex", gap: 6, marginTop: 8, justifyContent: "flex-end" }}>
           {canEquip && (
             <button onClick={() => onEquip(item.id)} style={smallActionBtn("#1f3a1f", "#86efac")}>
               Equip
+            </button>
+          )}
+          {canUse && (
+            <button onClick={() => onUse(item.id)} style={smallActionBtn("#1f2a3a", "#7dd3fc")}>
+              Use
             </button>
           )}
           {canSell && (
