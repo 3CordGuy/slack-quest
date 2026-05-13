@@ -31,6 +31,8 @@ import {
   addCharacterKey,
   addGold,
   addItem,
+  applyLongRest,
+  applyShortRest,
   applySoftDeath,
   bumpMaxMana,
   clearPartyEffects,
@@ -300,6 +302,57 @@ app.post("/api/inventory/:itemId/equip", async (c) => {
   if (item.equipped) return c.json({ error: "already_equipped" }, 400);
   await equipItem(c.env.DB, item);
   return c.json({ ok: true });
+});
+
+// Rest — short (50% missing HP + 1 mana, 10-min cooldown) or long
+// (full HP + last_long_rest_at bumped, 24h cooldown). Mirrors /sq rest;
+// long rest is blocked mid-quest and downed players can't rest at all.
+const SHORT_REST_COOLDOWN_MS = 10 * 60 * 1000;
+const LONG_REST_COOLDOWN_MS = 24 * 60 * 60 * 1000;
+const SHORT_REST_HEAL_RATIO = 0.5;
+
+app.post("/api/character/rest", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const body = (await c.req.json().catch(() => null)) as { kind?: unknown } | null;
+  const isLong = body?.kind === "long";
+  const character = await getCharacter(c.env.DB, session.slack_user_id);
+  if (!character) return c.json({ error: "no_character" }, 404);
+  if (character.downed_until && character.downed_until > Date.now()) {
+    return c.json({ error: "downed", ready_at: character.downed_until }, 400);
+  }
+  const activeQuest = await getActiveQuestForCharacter(c.env.DB, session.slack_user_id);
+  if (activeQuest && isLong) return c.json({ error: "no_long_rest_mid_quest" }, 400);
+  // v1 mid-quest short rest only allowed between fights; for simplicity web
+  // refuses any mid-quest short rest with a clear hint. Slack's
+  // canRestBetweenRooms gate is more permissive — bring that in if needed.
+  if (activeQuest) return c.json({ error: "no_rest_mid_quest" }, 400);
+  if (character.hp >= character.max_hp && character.mana >= character.max_mana) {
+    return c.json({ error: "already_full" }, 400);
+  }
+
+  if (isLong) {
+    const since = character.last_long_rest_at == null
+      ? Infinity
+      : Date.now() - character.last_long_rest_at;
+    if (since < LONG_REST_COOLDOWN_MS) {
+      return c.json({ error: "cooldown", ready_in_ms: LONG_REST_COOLDOWN_MS - since }, 400);
+    }
+    await applyLongRest(c.env.DB, session.slack_user_id);
+    return c.json({ ok: true, kind: "long", new_hp: character.max_hp });
+  }
+
+  const since = character.last_rest_at == null
+    ? Infinity
+    : Date.now() - character.last_rest_at;
+  if (since < SHORT_REST_COOLDOWN_MS) {
+    return c.json({ error: "cooldown", ready_in_ms: SHORT_REST_COOLDOWN_MS - since }, 400);
+  }
+  const missing = character.max_hp - character.hp;
+  const healed = Math.max(1, Math.floor(missing * SHORT_REST_HEAL_RATIO));
+  const newHp = Math.min(character.max_hp, character.hp + healed);
+  await applyShortRest(c.env.DB, session.slack_user_id, newHp);
+  return c.json({ ok: true, kind: "short", healed, new_hp: newHp });
 });
 
 // Use an inventory item out of combat. Mirrors /sq use for the contexts

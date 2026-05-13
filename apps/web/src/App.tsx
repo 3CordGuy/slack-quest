@@ -286,6 +286,16 @@ export function App() {
     if (res.ok) void refresh();
   }
 
+  async function rest(kind: "short" | "long") {
+    const res = await fetch(`/api/character/rest`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({ kind }),
+    });
+    if (res.ok) void refresh();
+  }
+
   async function treasureTake(questId: number, pick: number) {
     const res = await fetch(`/api/quest/${questId}/dungeon/treasure_take`, {
       method: "POST",
@@ -331,7 +341,11 @@ export function App() {
             } : null}
           />
         )}
-        <CharacterCard me={state.me} />
+        <CharacterCard
+          me={state.me}
+          inQuest={!!state.activeQuest}
+          onRest={rest}
+        />
         {state.me.character && (
           <InventoryCard
             items={state.inventory}
@@ -1070,7 +1084,15 @@ function PositionBadge({ position }: { position: "front" | "back" }) {
   );
 }
 
-function CharacterCard({ me }: { me: MeResponse }) {
+function CharacterCard({
+  me,
+  inQuest,
+  onRest,
+}: {
+  me: MeResponse;
+  inQuest: boolean;
+  onRest: (kind: "short" | "long") => void;
+}) {
   const c = me.character;
   if (!c) {
     return (
@@ -1083,6 +1105,9 @@ function CharacterCard({ me }: { me: MeResponse }) {
       </div>
     );
   }
+  const fullyRecovered = c.hp >= c.max_hp && c.mana >= c.max_mana;
+  const downed = c.downed_until !== null && c.downed_until > Date.now();
+  const restDisabled = inQuest || downed || fullyRecovered;
   return (
     <div style={card}>
       <h1 style={h1}>{c.name}</h1>
@@ -1100,6 +1125,28 @@ function CharacterCard({ me }: { me: MeResponse }) {
           value={`🥉${c.keys_bronze} 🥈${c.keys_silver} 🥇${c.keys_gold}`}
         />
       </Stats>
+      <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
+        <button
+          onClick={() => onRest("short")}
+          disabled={restDisabled}
+          style={smallActionBtn(restDisabled ? "#2a2d33" : "#1f3a1f", restDisabled ? "#6a7080" : "#86efac")}
+        >
+          🛏 Short rest
+        </button>
+        <button
+          onClick={() => onRest("long")}
+          disabled={restDisabled}
+          style={smallActionBtn(restDisabled ? "#2a2d33" : "#1f2a3a", restDisabled ? "#6a7080" : "#7dd3fc")}
+        >
+          🛌 Long rest
+        </button>
+      </div>
+      {downed && (
+        <p style={{ ...muted, fontSize: 11, marginTop: 8 }}>You're downed — wait the cooldown.</p>
+      )}
+      {!downed && inQuest && (
+        <p style={{ ...muted, fontSize: 11, marginTop: 8 }}>Rest is disabled mid-quest.</p>
+      )}
     </div>
   );
 }
