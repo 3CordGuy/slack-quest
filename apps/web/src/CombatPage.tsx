@@ -748,9 +748,9 @@ export function CombatPage({
     <div style={page}>
       <div style={topBar}>
         <button onClick={exit} style={exitBtn}>
-          ← Back
+          ← Dashboard
         </button>
-        <span style={{ ...muted, fontSize: 12 }}>
+        <span style={{ fontSize: 12, color: ui.connection === "open" ? "#39ff14" : ui.connection === "connecting" ? "#9aa0a6" : "#fca5a5" }}>
           {ui.connection === "open" ? "● connected" : ui.connection === "connecting" ? "○ connecting" : "× disconnected"}
         </span>
       </div>
@@ -763,102 +763,118 @@ export function CombatPage({
       )}
 
       {state && (
-        <>
-          <MonsterCard
-            monster={state.monster}
-            round={state.round}
-            showSageReading={me?.class === "Staff Sage"}
-          />
-          <InitiativeTrack
-            order={state.turn_order}
-            currentIndex={state.turn_index % state.turn_order.length}
-            fighters={state.fighters}
-            monster={state.monster}
-            selfId={selfId}
-          />
-          <PartySection fighters={state.fighters} currentActorId={currentActorId} selfId={selfId} />
-          {state.status === "active" && picking && (
-            <TargetPicker
-              kind={picking}
-              fighters={state.fighters}
-              onPick={fireOnTarget}
-              onCancel={() => setPicking(null)}
+        <div style={combatGrid}>
+          {/* ── Left column: enemy · initiative · party · dice ── */}
+          <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+            <MonsterCard
+              monster={state.monster}
+              round={state.round}
+              showSageReading={me?.class === "Staff Sage"}
             />
-          )}
-          {state.status === "active" && itemPicker === "open" && (
-            <ItemPicker
-              items={items}
-              onPickNoTarget={(id) => fireUseItem(id)}
-              onPickRevive={(id) => setItemPicker({ reviveItemId: id })}
-              onCancel={() => setItemPicker("closed")}
-            />
-          )}
-          {state.status === "active" &&
-            typeof itemPicker === "object" &&
-            "reviveItemId" in itemPicker && (
-              <ReviveTargetPicker
-                fighters={state.fighters}
-                onPick={(targetId) => fireUseItem(itemPicker.reviveItemId, targetId)}
-                onCancel={() => setItemPicker("open")}
-              />
+            {!myTurn && state.status === "active" && currentActorId === MONSTER_ID && (
+              <button style={{ ...button, marginTop: 0, background: "#5c1f1f" }} onClick={() => send({ kind: "monster_act" })}>
+                ⚔️ Resolve monster turn
+              </button>
             )}
-          {state.status === "active" && migratePicker && (
-            <MigratePicker
+            <InitiativeTrack
+              order={state.turn_order}
+              currentIndex={state.turn_index % state.turn_order.length}
               fighters={state.fighters}
+              monster={state.monster}
               selfId={selfId}
-              onPick={fireMigrate}
-              onCancel={() => setMigratePicker(false)}
             />
-          )}
-          {state.status === "active" && !picking && itemPicker === "closed" && !migratePicker && (
-            <ActionBar
-              disabled={!myTurn}
-              mana={myMana}
-              hasItems={items.some((i) => isCombatUsable(i.item_type))}
-              selfPosition={me?.position ?? "front"}
-              ability={myAbility}
-              onAct={(kind) => {
-                if (kind === "heal" || kind === "shield") {
-                  setPicking(kind);
-                } else if (kind === "use_item") {
-                  setItemPicker("open");
-                } else if (kind === "swap_position") {
-                  const to = me?.position === "front" ? "back" : "front";
-                  send({ kind: "position", actor: selfId, to });
-                } else if (kind === "ability") {
-                  fireAbility();
-                } else if (kind === "signature" || kind === "flee" || kind === "attack" || kind === "cast" || kind === "wait" || kind === "mark") {
-                  send({ kind, actor: selfId } as TurnAction);
-                }
+            <PartySection fighters={state.fighters} currentActorId={currentActorId} selfId={selfId} />
+            <div
+              ref={diceContainerRef}
+              style={{
+                width: "100%",
+                minHeight: 200,
+                borderRadius: 12,
+                overflow: "hidden",
+                background: "#111",
               }}
             />
-          )}
-          {!myTurn && state.status === "active" && currentActorId === MONSTER_ID && (
-            <button style={{ ...button, background: "#5c1f1f" }} onClick={() => send({ kind: "monster_act" })}>
-              Resolve monster turn
-            </button>
-          )}
-          <div
-            ref={diceContainerRef}
-            style={{
-              width: "100%",
-              minHeight: 260,
-              borderRadius: 12,
-              overflow: "hidden",
-              background: "#111",
-              marginTop: 16,
-            }}
-          />
-          <EventLog log={ui.log} scrollRef={logScrollRef} />
-          {ended && (
-            <EndBanner
-              status={state.status as "victory" | "defeat" | "fled"}
-              outcome={ui.outcome}
-              selfId={selfId}
-              fighters={state.fighters}
-            />
-          )}
-        </>
+          </div>
+
+          {/* ── Right column: actions · log ── */}
+          <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+            {state.status === "active" && picking && (
+              <TargetPicker
+                kind={picking}
+                fighters={state.fighters}
+                onPick={fireOnTarget}
+                onCancel={() => setPicking(null)}
+              />
+            )}
+            {state.status === "active" && itemPicker === "open" && (
+              <ItemPicker
+                items={items}
+                onPickNoTarget={(id) => fireUseItem(id)}
+                onPickRevive={(id) => setItemPicker({ reviveItemId: id })}
+                onCancel={() => setItemPicker("closed")}
+              />
+            )}
+            {state.status === "active" &&
+              typeof itemPicker === "object" &&
+              "reviveItemId" in itemPicker && (
+                <ReviveTargetPicker
+                  fighters={state.fighters}
+                  onPick={(targetId) => fireUseItem(itemPicker.reviveItemId, targetId)}
+                  onCancel={() => setItemPicker("open")}
+                />
+              )}
+            {state.status === "active" && migratePicker && (
+              <MigratePicker
+                fighters={state.fighters}
+                selfId={selfId}
+                onPick={fireMigrate}
+                onCancel={() => setMigratePicker(false)}
+              />
+            )}
+            {state.status === "active" && !picking && itemPicker === "closed" && !migratePicker && (
+              <ActionBar
+                disabled={!myTurn}
+                mana={myMana}
+                hasItems={items.some((i) => isCombatUsable(i.item_type))}
+                selfPosition={me?.position ?? "front"}
+                ability={myAbility}
+                onAct={(kind) => {
+                  if (kind === "heal" || kind === "shield") {
+                    setPicking(kind);
+                  } else if (kind === "use_item") {
+                    setItemPicker("open");
+                  } else if (kind === "swap_position") {
+                    const to = me?.position === "front" ? "back" : "front";
+                    send({ kind: "position", actor: selfId, to });
+                  } else if (kind === "ability") {
+                    fireAbility();
+                  } else if (kind === "signature" || kind === "flee" || kind === "attack" || kind === "cast" || kind === "wait" || kind === "mark") {
+                    send({ kind, actor: selfId } as TurnAction);
+                  }
+                }}
+              />
+            )}
+            <EventLog log={ui.log} scrollRef={logScrollRef} />
+            {ended && state.status !== "victory" && (
+              <EndBanner
+                status={state.status as "defeat" | "fled"}
+                outcome={ui.outcome}
+                selfId={selfId}
+                fighters={state.fighters}
+              />
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Victory modal — overlays everything */}
+      {ended && state?.status === "victory" && (
+        <VictoryModal
+          outcome={ui.outcome}
+          selfId={selfId}
+          fighters={state.fighters}
+          onBack={exit}
+        />
       )}
     </div>
   );
@@ -877,25 +893,34 @@ function MonsterCard({
   const sageLo = 1 + monster.tier;
   const sageHi = 6 + monster.tier + (monster.is_boss && monster.boss_phase === 2 ? monster.tier : 0);
   return (
-    <div style={{ ...card, borderColor: "#7c2020", padding: 0, overflow: "hidden" }}>
-      {monster.art_url && (
+    <div style={{ ...card, borderColor: "#7c2020", display: "flex", gap: 16, alignItems: "flex-start" }}>
+      {monster.art_url ? (
         <img
           src={monster.art_url}
           alt={monster.name}
           style={{
-            width: "100%",
-            maxHeight: 320,
+            width: 96,
+            height: 96,
+            borderRadius: 10,
             objectFit: "cover",
-            display: "block",
-            borderBottom: "1px solid #2a2d33",
+            flexShrink: 0,
+            border: "1px solid #7c2020",
           }}
           onError={(e) => { e.currentTarget.style.display = "none"; }}
         />
+      ) : (
+        <div style={{
+          width: 96, height: 96, borderRadius: 10, flexShrink: 0,
+          background: "#1d1f23", border: "1px solid #7c2020",
+          display: "flex", alignItems: "center", justifyContent: "center",
+        }}>
+          <Icon name="dragon-head" size={40} color="#7c2020" />
+        </div>
       )}
-      <div style={{ padding: 16 }}>
-        <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 12 }}>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
           <div>
-            <div style={{ fontSize: 22, fontWeight: 700, color: "#f5f5f5" }}>{monster.name}</div>
+            <div style={{ fontSize: 20, fontWeight: 700, color: "#f5f5f5" }}>{monster.name}</div>
             <div style={{ ...muted, fontSize: 12 }}>
               Tier {monster.tier}
               {monster.is_boss && ` · Boss (phase ${monster.boss_phase})`}
@@ -973,21 +998,36 @@ function PartySection({
   currentActorId: string | null;
   selfId: string;
 }) {
+  const front = fighters.filter((f) => f.position === "front");
+  const back = fighters.filter((f) => f.position === "back");
+  const rowLabel: React.CSSProperties = {
+    ...muted, fontSize: 10, textTransform: "uppercase", letterSpacing: 1.5, marginBottom: 6,
+  };
   return (
     <div style={card}>
-      <div style={{ ...muted, fontSize: 11, textTransform: "uppercase", letterSpacing: 1.5, marginBottom: 8 }}>
+      <div style={{ ...muted, fontSize: 11, textTransform: "uppercase", letterSpacing: 1.5, marginBottom: 10 }}>
         Party
       </div>
-      <div style={{ display: "grid", gap: 8 }}>
-        {fighters.map((f) => (
-          <FighterRow
-            key={f.id}
-            fighter={f}
-            self={f.id === selfId}
-            current={f.id === currentActorId}
-          />
-        ))}
-      </div>
+      {front.length > 0 && (
+        <div style={{ marginBottom: back.length > 0 ? 12 : 0 }}>
+          <div style={rowLabel}>⚔️ Front row</div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 8 }}>
+            {front.map((f) => (
+              <FighterRow key={f.id} fighter={f} self={f.id === selfId} current={f.id === currentActorId} />
+            ))}
+          </div>
+        </div>
+      )}
+      {back.length > 0 && (
+        <div>
+          <div style={rowLabel}>🛡️ Back row</div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 8 }}>
+            {back.map((f) => (
+              <FighterRow key={f.id} fighter={f} self={f.id === selfId} current={f.id === currentActorId} />
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1049,7 +1089,14 @@ function FighterRow({ fighter, self, current }: { fighter: Fighter; self: boolea
               <span style={{ fontSize: 12, color: "#7dd3fc" }}>@{fighter.slack_username}</span>
             )}
             <span style={{ ...muted, fontSize: 12 }}>
-              {fighter.class} · <span title={fighter.scars.length > 0 ? fighter.scars.join(", ") : undefined}>Lv {fighter.level}</span> · {fighter.position}
+              {fighter.class} · <span title={fighter.scars.length > 0 ? fighter.scars.join(", ") : undefined}>Lv {fighter.level}</span>
+            </span>
+            <span style={badge(
+              fighter.position === "front" ? "#2a1f3a" : "#1a2a1a",
+              fighter.position === "front" ? "#c084fc" : "#86efac",
+              fighter.position === "front" ? "#4a2f6a" : "#2a5a2a",
+            )}>
+              {fighter.position}
             </span>
             {self && (
               <span style={badge("#1f2a3a", "#7dd3fc", "#2a3a5a")}>you</span>
@@ -1068,9 +1115,6 @@ function FighterRow({ fighter, self, current }: { fighter: Fighter; self: boolea
         <HpBar current={fighter.hp} max={fighter.max_hp} />
         {fighter.max_mana > 0 && (
           <div style={{ marginTop: 6, display: "flex", alignItems: "center", gap: 8 }}>
-            <div style={{ ...muted, fontSize: 11, minWidth: 36 }}>
-              {fighter.mana}/{fighter.max_mana}
-            </div>
             <div
               style={{
                 flex: 1,
@@ -1087,6 +1131,9 @@ function FighterRow({ fighter, self, current }: { fighter: Fighter; self: boolea
                   background: "#6366f1",
                 }}
               />
+            </div>
+            <div style={{ ...muted, fontSize: 11, minWidth: 36, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
+              {fighter.mana}/{fighter.max_mana}
             </div>
           </div>
         )}
@@ -1507,42 +1554,100 @@ function EventLog({
   );
 }
 
+function VictoryModal({
+  outcome,
+  selfId,
+  fighters,
+  onBack,
+}: {
+  outcome: OutcomeSummary | null;
+  selfId: string;
+  fighters: Fighter[];
+  onBack: () => void;
+}) {
+  const dungeonRoom = outcome?.dungeon_room_cleared;
+  const title = dungeonRoom ? "ROOM CLEARED" : "VICTORY";
+  return (
+    <div style={{
+      position: "fixed",
+      inset: 0,
+      background: "rgba(0,0,0,0.88)",
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      zIndex: 100,
+      padding: 24,
+    }}>
+      <div style={{
+        background: "#0f2818",
+        border: "2px solid #16a34a",
+        borderRadius: 16,
+        padding: 32,
+        maxWidth: 520,
+        width: "100%",
+        maxHeight: "85vh",
+        overflowY: "auto",
+        boxSizing: "border-box",
+      }}>
+        <div style={{ fontSize: 36, fontWeight: 800, color: "#86efac", textAlign: "center", marginBottom: 4 }}>
+          {title}
+        </div>
+        {!outcome && <p style={{ ...muted, textAlign: "center" }}>Resolving outcome…</p>}
+        {outcome && (
+          <>
+            {(outcome.is_boss || outcome.elite) && (
+              <div style={{ ...muted, fontSize: 12, textAlign: "center", marginBottom: 12 }}>
+                {outcome.is_boss && "Boss "}{outcome.elite && "Elite "} pool: {outcome.total_pool_xp} XP · {outcome.total_pool_gold}g
+              </div>
+            )}
+            <div style={{ display: "grid", gap: 8, marginBottom: 16 }}>
+              {outcome.rewards.map((r) => (
+                <RewardRow
+                  key={r.user_id}
+                  reward={r}
+                  fighterName={fighters.find((x) => x.id === r.user_id)?.name ?? r.user_id}
+                  isSelf={r.user_id === selfId}
+                  won={true}
+                />
+              ))}
+            </div>
+            {dungeonRoom && (
+              <p style={{ ...muted, fontSize: 12, textAlign: "center", marginBottom: 12 }}>
+                Room cleared. Use Slack /gq choose to pick the next door.
+              </p>
+            )}
+          </>
+        )}
+        <button onClick={onBack} style={{ ...button, marginTop: 8, background: "#16a34a" }}>
+          Back to town
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function EndBanner({
   status,
   outcome,
   selfId,
   fighters,
 }: {
-  status: "victory" | "defeat" | "fled";
+  status: "defeat" | "fled";
   outcome: OutcomeSummary | null;
   selfId: string;
   fighters: Fighter[];
 }) {
-  const win = status === "victory";
   const fled = status === "fled";
-  const dungeonRoom = win && outcome?.dungeon_room_cleared;
-  const labelText = dungeonRoom ? "ROOM CLEARED" : win ? "VICTORY" : fled ? "ESCAPED" : "DEFEAT";
-  const borderColor = win ? "#16a34a" : fled ? "#b89b3a" : "#7c2020";
-  const bg = win ? "#0f2818" : fled ? "#241e0d" : "#28100f";
-  const fg = win ? "#86efac" : fled ? "#facc15" : "#fca5a5";
+  const labelText = fled ? "ESCAPED" : "DEFEAT";
+  const borderColor = fled ? "#b89b3a" : "#7c2020";
+  const bg = fled ? "#241e0d" : "#28100f";
+  const fg = fled ? "#facc15" : "#fca5a5";
   return (
-    <div
-      style={{
-        ...card,
-        borderColor,
-        background: bg,
-        textAlign: "center",
-      }}
-    >
+    <div style={{ ...card, borderColor, background: bg, textAlign: "center" }}>
       <div style={{ fontSize: 32, fontWeight: 800, color: fg }}>{labelText}</div>
       {!outcome && <p style={muted}>Resolving outcome…</p>}
       {outcome && (
         <div style={{ marginTop: 12, textAlign: "left" }}>
-          {win && (outcome.is_boss || outcome.elite) && (
-            <div style={{ ...muted, fontSize: 12, textAlign: "center", marginBottom: 8 }}>
-              {outcome.is_boss && "Boss "} {outcome.elite && "Elite "} pool: {outcome.total_pool_xp} XP · {outcome.total_pool_gold}g (split by contribution)
-            </div>
-          )}
           <div style={{ display: "grid", gap: 8 }}>
             {outcome.rewards.map((r) => (
               <RewardRow
@@ -1550,14 +1655,12 @@ function EndBanner({
                 reward={r}
                 fighterName={fighters.find((x) => x.id === r.user_id)?.name ?? r.user_id}
                 isSelf={r.user_id === selfId}
-                won={win}
+                won={false}
               />
             ))}
           </div>
           <p style={{ ...muted, marginTop: 12, textAlign: "center" }}>
-            {outcome?.dungeon_room_cleared
-              ? "Room cleared. Use Slack /gq choose to pick the next door (and resolve any trap/lockbox/npc rooms there)."
-              : <>Click <strong>← Back</strong> to return.</>}
+            Click <strong>← Dashboard</strong> to return.
           </p>
         </div>
       )}
@@ -1715,9 +1818,14 @@ const page: React.CSSProperties = {
   flexDirection: "column",
   gap: 16,
   width: "100%",
-  maxWidth: 720,
-  margin: "0 auto",
   padding: 24,
+  boxSizing: "border-box",
+};
+const combatGrid: React.CSSProperties = {
+  display: "grid",
+  gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
+  gap: 16,
+  alignItems: "start",
 };
 const topBar: React.CSSProperties = {
   display: "flex",
