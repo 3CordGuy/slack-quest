@@ -1692,22 +1692,66 @@ function RewardRow({
 
 interface DiceRollEntry {
   id: number;
-  die: string;      // "d20", "d6", etc.
+  die: string;
   value: number;
   actor: string;
   purpose: string;
 }
 
+// Inject tumble + fade keyframes once into the document head.
+let _diceStylesInjected = false;
+function injectDiceStyles() {
+  if (_diceStylesInjected || typeof document === "undefined") return;
+  _diceStylesInjected = true;
+  const s = document.createElement("style");
+  s.textContent = `
+    @keyframes dice-roll-in {
+      0%   { transform: rotate(0deg)   scale(0)    translateY(-40px); opacity: 0; }
+      55%  { transform: rotate(450deg) scale(1.14) translateY(0);     opacity: 1; }
+      75%  { transform: rotate(510deg) scale(0.93); }
+      88%  { transform: rotate(526deg) scale(1.06); }
+      100% { transform: rotate(540deg) scale(1); }
+    }
+    @keyframes dice-fade-out {
+      0%   { opacity: 1; transform: scale(1)   translateY(0);   }
+      100% { opacity: 0; transform: scale(0.7) translateY(18px); }
+    }
+  `;
+  document.head.appendChild(s);
+}
+
+// SVG polygons for each die type. Viewbox is 0 0 100 100.
+const DIE_SHAPE: Record<string, { points: string; textY: number }> = {
+  d4:  { points: "50,6 96,90 4,90",                                textY: 70 },
+  d6:  { points: "8,8 92,8 92,92 8,92",                            textY: 56 },
+  d8:  { points: "50,4 96,50 50,96 4,50",                          textY: 56 },
+  d10: { points: "50,4 93,34 76,90 24,90 7,34",                    textY: 58 },
+  d12: { points: "50,4 91,27 98,70 70,96 30,96 2,70 9,27",         textY: 58 },
+  d20: { points: "50,4 91,28 91,72 50,96 9,72 9,28",               textY: 56 },
+};
+const DEFAULT_SHAPE = DIE_SHAPE.d20;
+
+// Pip positions [col, row] in a 3×3 grid (0=left/top, 1=center, 2=right/bottom).
+const D6_PIPS: Record<number, [number, number][]> = {
+  1: [[1,1]],
+  2: [[0,0],[2,2]],
+  3: [[0,0],[1,1],[2,2]],
+  4: [[0,0],[2,0],[0,2],[2,2]],
+  5: [[0,0],[2,0],[1,1],[0,2],[2,2]],
+  6: [[0,0],[2,0],[0,1],[2,1],[0,2],[2,2]],
+};
+
 function DiceRollDisplay({ rolls }: { rolls: DiceRollEntry[] }) {
+  useEffect(() => { injectDiceStyles(); }, []);
   if (rolls.length === 0) return null;
   return (
     <div style={{
       position: "fixed",
-      bottom: 32,
+      bottom: 40,
       left: "50%",
       transform: "translateX(-50%)",
       display: "flex",
-      gap: 10,
+      gap: 14,
       flexWrap: "wrap",
       justifyContent: "center",
       zIndex: 200,
@@ -1720,12 +1764,17 @@ function DiceRollDisplay({ rolls }: { rolls: DiceRollEntry[] }) {
 
 function DiceFace({ roll }: { roll: DiceRollEntry }) {
   const maxFace = parseInt(roll.die.replace("d", ""), 10) || 20;
-  const [display, setDisplay] = useState<number>(() => Math.ceil(Math.random() * maxFace));
-  const [settled, setSettled] = useState(false);
+  const shape   = DIE_SHAPE[roll.die] ?? DEFAULT_SHAPE;
+  const isD6    = roll.die === "d6";
 
+  const [display,  setDisplay]  = useState<number>(() => Math.ceil(Math.random() * maxFace));
+  const [settled,  setSettled]  = useState(false);
+  const [fading,   setFading]   = useState(false);
+
+  // Shuffle for ~650ms then snap to the real value.
   useEffect(() => {
     let count = 0;
-    const total = 10;
+    const total = 13;
     const iv = setInterval(() => {
       count++;
       if (count >= total) {
@@ -1735,41 +1784,130 @@ function DiceFace({ roll }: { roll: DiceRollEntry }) {
       } else {
         setDisplay(Math.ceil(Math.random() * maxFace));
       }
-    }, 55);
-    return () => clearInterval(iv);
+    }, 50);
+    // Begin fade-out 2.6s after settle.
+    const fadeTimer = setTimeout(() => setFading(true), 3250);
+    return () => { clearInterval(iv); clearTimeout(fadeTimer); };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [roll.id]);
 
   const isCrit   = roll.die === "d20" && roll.value === maxFace;
   const isFumble = roll.die === "d20" && roll.value === 1;
-  const borderColor = isCrit ? "#16a34a" : isFumble ? "#dc2626" : "#3a7bd5";
-  const bg          = isCrit ? "#0f2818" : isFumble ? "#28100f" : "#1d1f23";
-  const numColor    = isCrit ? "#86efac" : isFumble ? "#fca5a5" : "#f5f5f5";
+
+  const strokeColor = settled
+    ? (isCrit ? "#22c55e" : isFumble ? "#ef4444" : "#7dd3fc")
+    : "#4a5568";
+  const fillColor   = settled
+    ? (isCrit ? "#052e12" : isFumble ? "#2e0505" : "#0d1b2e")
+    : "#111827";
+  const numColor    = settled
+    ? (isCrit ? "#86efac" : isFumble ? "#fca5a5" : "#f5f5f5")
+    : "#6b7280";
+
+  const SIZE = 92;
 
   return (
     <div style={{
-      width: 68, borderRadius: 12, background: bg,
-      border: `2px solid ${borderColor}`,
-      display: "flex", flexDirection: "column",
-      alignItems: "center", justifyContent: "center",
-      padding: "8px 4px", gap: 2,
-      transition: "border-color 150ms",
+      width: SIZE,
+      height: SIZE,
+      position: "relative",
+      filter: settled ? `drop-shadow(0 0 8px ${strokeColor}60)` : "none",
+      animationName: fading ? "dice-fade-out" : "dice-roll-in",
+      animationDuration: fading ? "350ms" : "700ms",
+      animationTimingFunction: fading ? "ease-in" : "cubic-bezier(0.22,1,0.36,1)",
+      animationFillMode: "forwards",
+      transition: "filter 200ms",
     }}>
-      <div style={{ fontSize: 10, color: "#9aa0a6", textTransform: "uppercase", letterSpacing: 1 }}>
-        {roll.die}
-      </div>
+      {/* Die shape */}
+      <svg
+        width={SIZE} height={SIZE}
+        viewBox="0 0 100 100"
+        style={{ position: "absolute", top: 0, left: 0 }}
+      >
+        <polygon
+          points={shape.points}
+          fill={fillColor}
+          stroke={strokeColor}
+          strokeWidth={settled ? 3.5 : 2.5}
+          strokeLinejoin="round"
+          style={{ transition: "fill 150ms, stroke 150ms" }}
+        />
+        {/* Die label inside the shape */}
+        <text
+          x="50" y="16"
+          textAnchor="middle"
+          fontSize="9"
+          fill="#6b7280"
+          fontFamily="ui-monospace, monospace"
+          letterSpacing="1"
+          style={{ textTransform: "uppercase" }}
+        >
+          {roll.die.toUpperCase()}
+        </text>
+      </svg>
+
+      {/* Value — pips for d6, number for everything else */}
       <div style={{
-        fontSize: 28, fontWeight: 800, color: numColor,
-        fontVariantNumeric: "tabular-nums", lineHeight: 1,
-        transition: "color 150ms",
+        position: "absolute",
+        top: 0, left: 0,
+        width: SIZE, height: SIZE,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        paddingTop: 8,
       }}>
-        {display}
+        {isD6 && settled ? (
+          <D6Pips value={display} color={numColor} />
+        ) : (
+          <span style={{
+            fontSize: roll.die === "d4" ? 22 : 28,
+            fontWeight: 900,
+            color: numColor,
+            fontVariantNumeric: "tabular-nums",
+            lineHeight: 1,
+            transition: "color 200ms",
+            fontFamily: "ui-monospace, monospace",
+          }}>
+            {display}
+          </span>
+        )}
       </div>
+
+      {/* Purpose label below shape after settling */}
       {settled && roll.purpose && (
-        <div style={{ fontSize: 9, color: "#9aa0a6", textAlign: "center", maxWidth: 60, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+        <div style={{
+          position: "absolute",
+          bottom: -18,
+          left: "50%",
+          transform: "translateX(-50%)",
+          fontSize: 9,
+          color: "#6b7280",
+          whiteSpace: "nowrap",
+          fontFamily: "ui-monospace, monospace",
+          letterSpacing: 0.5,
+        }}>
           {roll.purpose}
         </div>
       )}
+    </div>
+  );
+}
+
+function D6Pips({ value, color }: { value: number; color: string }) {
+  const pips = D6_PIPS[Math.min(6, Math.max(1, value))] ?? [];
+  const cells: [number, number][] = [[0,0],[1,0],[2,0],[0,1],[1,1],[2,1],[0,2],[1,2],[2,2]];
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 12px)", gap: 5 }}>
+      {cells.map(([c, r]) => {
+        const active = pips.some(([pc, pr]) => pc === c && pr === r);
+        return (
+          <div key={`${c},${r}`} style={{
+            width: 10, height: 10, borderRadius: "50%",
+            background: active ? color : "transparent",
+            transition: "background 100ms",
+          }} />
+        );
+      })}
     </div>
   );
 }
