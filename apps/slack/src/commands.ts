@@ -3209,6 +3209,8 @@ async function handleJoin(
 
   const quest = await getActiveQuestInChannel(env.DB, payload.channel_id);
   if (!quest) return ephemeral(`No active quest in this channel. Start one with \`${payload.command} quest\`.`);
+  const joinBlocked = webModeLockout(quest);
+  if (joinBlocked) return joinBlocked;
 
   // Gauntlet locks once wave 2+ begins; up through wave 1 you can still join. Joiners
   // get caught up by the existing scaleMonsterForJoin HP bump.

@@ -117,6 +117,7 @@ export type TurnAction =
   | { kind: "shield"; actor: ActorId; target: ActorId }
   | { kind: "signature"; actor: ActorId }
   | { kind: "flee"; actor: ActorId }
+  | { kind: "position"; actor: ActorId; to: BattlePosition }
   | { kind: "wait"; actor: ActorId }
   | { kind: "monster_act" };
 
@@ -210,6 +211,12 @@ export type CombatEvent =
     }
   | { type: "fled" }
   | {
+      type: "position_changed";
+      actor: ActorId;
+      from: BattlePosition;
+      to: BattlePosition;
+    }
+  | {
       type: "effect_tick";
       actor: ActorId;
       effect: EffectType;
@@ -289,6 +296,8 @@ export function step(state: CombatState, action: TurnAction, roll: RollFn): Step
       return handleSignature(state, action, roll);
     case "flee":
       return handleFlee(state, action, roll);
+    case "position":
+      return handlePosition(state, action);
     case "wait":
       return handleWait(state, action);
     case "monster_act":
@@ -448,6 +457,37 @@ function handlePlayerHit(
   }
 
   return { state: advanceTurn(nextState), events: [...events, ...turnStartEvent(nextState)] };
+}
+
+function handlePosition(
+  state: CombatState,
+  action: { kind: "position"; actor: ActorId; to: BattlePosition },
+): StepResult {
+  const fighter = state.fighters.find((f) => f.id === action.actor);
+  if (!fighter) return reject(state, `unknown actor: ${action.actor}`);
+  if (currentActor(state) !== action.actor) {
+    return reject(state, `not ${action.actor}'s turn`);
+  }
+  if (fighter.hp <= 0) return reject(state, `${action.actor} is downed`);
+  if (fighter.position === action.to) {
+    return reject(state, `already in ${action.to} row`);
+  }
+
+  const tick = tickAtTurnStart(state, action.actor);
+  if (tick.earlyReturn) return tick.earlyReturn;
+  const s = tick.state;
+
+  const events: CombatEvent[] = [
+    ...tick.events,
+    { type: "position_changed", actor: action.actor, from: fighter.position, to: action.to },
+  ];
+  const next = advanceTurn({
+    ...s,
+    fighters: s.fighters.map((f) =>
+      f.id === action.actor ? { ...f, position: action.to } : f,
+    ),
+  });
+  return { state: next, events: [...events, ...turnStartEvent(next)] };
 }
 
 function handleWait(

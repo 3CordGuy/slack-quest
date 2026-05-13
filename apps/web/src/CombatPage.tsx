@@ -95,6 +95,12 @@ type CombatEvent =
     }
   | { type: "fled" }
   | {
+      type: "position_changed";
+      actor: string;
+      from: "front" | "back";
+      to: "front" | "back";
+    }
+  | {
       type: "wave_transition";
       from_monster: string;
       to_monster: string;
@@ -122,6 +128,7 @@ type TurnAction =
   | { kind: "shield"; actor: string; target: string }
   | { kind: "signature"; actor: string }
   | { kind: "flee"; actor: string }
+  | { kind: "position"; actor: string; to: "front" | "back" }
   | { kind: "wait"; actor: string }
   | { kind: "monster_act" }
   | { kind: "use_item"; actor: string; item_id: number; target_id?: string };
@@ -319,6 +326,14 @@ function formatEvent(e: CombatEvent, state: CombatState | null): UiState["log"] 
         {
           id: nextLogId++,
           text: `⚔️  Wave ${e.new_wave}/${e.total_waves}: ${e.to_monster} arrives (${e.to_max_hp} HP)`,
+          tone: "info",
+        },
+      ];
+    case "position_changed":
+      return [
+        {
+          id: nextLogId++,
+          text: `${e.to === "front" ? "🔼" : "🔽"} ${nameOf(e.actor)} moves to ${e.to} row.`,
           tone: "info",
         },
       ];
@@ -550,11 +565,15 @@ export function CombatPage({
               disabled={!myTurn}
               mana={myMana}
               hasItems={items.some((i) => isCombatUsable(i.item_type))}
+              selfPosition={me?.position ?? "front"}
               onAct={(kind) => {
                 if (kind === "heal" || kind === "shield") {
                   setPicking(kind);
                 } else if (kind === "use_item") {
                   setItemPicker("open");
+                } else if (kind === "swap_position") {
+                  const to = me?.position === "front" ? "back" : "front";
+                  send({ kind: "position", actor: selfId, to });
                 } else if (kind === "signature" || kind === "flee" || kind === "attack" || kind === "cast" || kind === "wait") {
                   send({ kind, actor: selfId } as TurnAction);
                 }
@@ -746,7 +765,8 @@ type ActionKind =
   | "signature"
   | "flee"
   | "wait"
-  | "use_item";
+  | "use_item"
+  | "swap_position";
 
 function isCombatUsable(t: string): boolean {
   return t === "consumable" || t === "magic" || t === "revive";
@@ -756,13 +776,16 @@ function ActionBar({
   disabled,
   mana,
   hasItems,
+  selfPosition,
   onAct,
 }: {
   disabled: boolean;
   mana: number;
   hasItems: boolean;
+  selfPosition: "front" | "back";
   onAct: (kind: ActionKind) => void;
 }) {
+  const otherRow = selfPosition === "front" ? "back" : "front";
   return (
     <div style={{ ...card, display: "flex", gap: 8, flexWrap: "wrap" }}>
       <ActionBtn label="⚔ Attack" hint="d20+atk vs AC · 1d6 dmg" disabled={disabled} onClick={() => onAct("attack")} />
@@ -780,6 +803,12 @@ function ActionBar({
         hint={hasItems ? "Use a consumable / magic / revive" : "Nothing usable"}
         disabled={disabled || !hasItems}
         onClick={() => onAct("use_item")}
+      />
+      <ActionBtn
+        label={otherRow === "front" ? "🔼 To front" : "🔽 To back"}
+        hint={otherRow === "front" ? "Soak hits · full damage" : "Less hit risk · 60% dmg taken"}
+        disabled={disabled}
+        onClick={() => onAct("swap_position")}
       />
       <ActionBtn label="🏃 Flee" hint="d20+mod vs DC 10+tier" disabled={disabled} onClick={() => onAct("flee")} />
       <ActionBtn label="⏸ Wait" hint="Skip your turn" disabled={disabled} onClick={() => onAct("wait")} />

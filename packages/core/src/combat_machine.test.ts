@@ -444,6 +444,30 @@ describe("combat_machine.step", () => {
     });
   });
 
+  describe("position", () => {
+    it("flips the fighter's row and advances turn", () => {
+      const begun = runBegin(createCombatState(baseInit()), [15, 8]);
+      const result = step(
+        begun.state,
+        { kind: "position", actor: "U_PALADIN", to: "back" },
+        seqRoll([]),
+      );
+      expect(result.state.fighters[0].position).toBe("back");
+      const evt = result.events.find((e) => e.type === "position_changed");
+      expect(evt).toMatchObject({ from: "front", to: "back" });
+    });
+
+    it("rejects a no-op position swap", () => {
+      const begun = runBegin(createCombatState(baseInit()), [15, 8]);
+      const result = step(
+        begun.state,
+        { kind: "position", actor: "U_PALADIN", to: "front" },
+        seqRoll([]),
+      );
+      expect(result.events.find((e) => e.type === "rejected")).toBeDefined();
+    });
+  });
+
   describe("status effect ticks", () => {
     it("ticks monster effects on monster_act; poison damages monster", () => {
       const init = baseInit();
