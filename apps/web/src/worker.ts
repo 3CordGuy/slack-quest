@@ -411,6 +411,61 @@ app.post("/api/quest/:id/start_web_combat", async (c) => {
   return c.json({ quest_id: questId, state: begun.state });
 });
 
+// Dungeon door pick from the dashboard — mirrors /sq choose 1|2 in Slack.
+// Advances expedition.current to the chosen room, seals the other door,
+// and updates scene_json's denormalized monster fields to the new room.
+// No combat is started here — if the new room is combat, the player can
+// click "Open Web Combat" on the dashboard next.
+app.post("/api/quest/:id/dungeon/choose_door", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const questId = parseInt(c.req.param("id"), 10);
+  if (!Number.isFinite(questId)) return c.json({ error: "bad_quest_id" }, 400);
+
+  const quest = await getActiveQuestForCharacter(c.env.DB, session.slack_user_id);
+  if (!quest || quest.id !== questId) return c.json({ error: "quest_not_active" }, 404);
+  if (quest.scene.variant !== "dungeon") return c.json({ error: "not_a_dungeon" }, 400);
+  const exp = quest.scene.expedition;
+  const doors = exp?.pending_doors ?? [];
+  if (!exp || doors.length === 0) return c.json({ error: "no_pending_doors" }, 400);
+
+  const body = (await c.req.json().catch(() => null)) as { pick?: unknown } | null;
+  const pick = typeof body?.pick === "number" ? body.pick : NaN;
+  if (!Number.isFinite(pick) || pick < 1 || pick > doors.length) {
+    return c.json({ error: "bad_pick", valid_picks: doors.length }, 400);
+  }
+
+  const chosenIdx = doors[pick - 1];
+  const otherIdx = doors[pick === 1 ? Math.min(1, doors.length - 1) : 0];
+  const chosenNode = exp.nodes[chosenIdx];
+  if (!chosenNode) return c.json({ error: "bad_dungeon_state" }, 500);
+
+  const isCombat = chosenNode.type === "combat";
+  const updatedExp = {
+    ...exp,
+    current: chosenIdx,
+    pending_doors: undefined,
+    visited_count: (exp.visited_count ?? 1) + 1,
+    visited_indices: [...(exp.visited_indices ?? [exp.current]), chosenIdx],
+    sealed_doors:
+      doors.length > 1
+        ? [...(exp.sealed_doors ?? []), otherIdx]
+        : (exp.sealed_doors ?? []),
+  };
+  const updatedScene = {
+    ...quest.scene,
+    expedition: updatedExp,
+    scene: chosenNode.scene,
+    monster_name: isCombat ? chosenNode.monster_name ?? "—" : "—",
+    monster_max_hp: isCombat ? chosenNode.monster_max_hp ?? 0 : 0,
+    monster_hp: isCombat ? chosenNode.monster_max_hp ?? 0 : 0,
+    tier: isCombat ? chosenNode.tier ?? quest.scene.tier : quest.scene.tier,
+    monster_effects: [],
+  };
+  await saveScene(c.env.DB, quest.id, updatedScene);
+  return c.json({ ok: true, room_type: chosenNode.type, is_combat: isCombat });
+});
+
 // Clears the web combat state for a quest. Used when the player exits the
 // combat page. Doesn't touch the underlying quest row — quest outcome
 // resolution (XP/gold/loot) lives in Phase 2d.

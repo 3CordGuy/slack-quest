@@ -59,6 +59,23 @@ interface StatusEffect {
   source?: string;
 }
 
+type ExpeditionNodeType = "combat" | "trap" | "lockbox" | "npc" | "treasure" | "merchant";
+
+interface ExpeditionNode {
+  type: ExpeditionNodeType;
+  scene: string;
+  monster_name?: string;
+  monster_max_hp?: number;
+  tier?: number;
+}
+
+interface ExpeditionState {
+  theme: string;
+  current: number;
+  nodes: ExpeditionNode[];
+  pending_doors?: number[];
+}
+
 interface SceneJson {
   monster_name: string;
   monster_hp: number;
@@ -70,6 +87,7 @@ interface SceneJson {
   wave?: number;
   total_waves?: number;
   monster_effects?: StatusEffect[];
+  expedition?: ExpeditionState;
 }
 
 interface ActiveQuest {
@@ -176,6 +194,16 @@ export function App() {
     setActiveCombat({ questId });
   }
 
+  async function chooseDoor(questId: number, pick: number) {
+    const res = await fetch(`/api/quest/${questId}/dungeon/choose_door`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({ pick }),
+    });
+    if (res.ok) void refresh();
+  }
+
   if (state.kind === "loading") return <Centered>Loading…</Centered>;
   if (state.kind === "anon") return <Login onSuccess={refresh} />;
   if (activeCombat) {
@@ -199,6 +227,7 @@ export function App() {
             party={state.activeQuest.party}
             selfId={state.me.slack_user_id}
             onStartCombat={() => startCombat(state.activeQuest!.quest.id)}
+            onChooseDoor={(pick) => chooseDoor(state.activeQuest!.quest.id, pick)}
           />
         )}
         <CharacterCard me={state.me} />
@@ -278,11 +307,13 @@ function ActiveQuestCard({
   party,
   selfId,
   onStartCombat,
+  onChooseDoor,
 }: {
   quest: ActiveQuest;
   party: Character[];
   selfId: string;
   onStartCombat: () => void;
+  onChooseDoor: (pick: number) => void;
 }) {
   const s = quest.scene;
   const variant = s.variant ?? "standard";
@@ -358,14 +389,89 @@ function ActiveQuestCard({
           </div>
         </div>
       )}
-      {(variant === "standard" || variant === "boss" || variant === "gauntlet" || variant === "dungeon") && (
+      {variant === "dungeon" && s.expedition?.pending_doors && s.expedition.pending_doors.length > 0 ? (
+        <DoorPicker
+          doors={s.expedition.pending_doors.map((idx) => s.expedition!.nodes[idx])}
+          onPick={onChooseDoor}
+        />
+      ) : (variant === "standard" || variant === "boss" || variant === "gauntlet" ||
+            (variant === "dungeon" && s.expedition?.nodes[s.expedition.current]?.type === "combat")) ? (
         <button
           onClick={onStartCombat}
           style={{ ...button, marginTop: 20, background: "#b89b3a", color: "#0e0f12" }}
         >
           ⚔ Open Web Combat
         </button>
-      )}
+      ) : variant === "dungeon" ? (
+        <p style={{ ...muted, fontSize: 13, marginTop: 20 }}>
+          Current room: <strong>{s.expedition?.nodes[s.expedition.current]?.type ?? "?"}</strong> —
+          resolve in Slack with <code style={kbd}>/sq choose</code> or <code style={kbd}>/sq take</code>.
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+const ROOM_TYPE_ICON: Record<ExpeditionNodeType, string> = {
+  combat: "⚔️",
+  trap: "🪤",
+  lockbox: "📦",
+  npc: "🧙",
+  treasure: "💰",
+  merchant: "🏪",
+};
+
+function DoorPicker({
+  doors,
+  onPick,
+}: {
+  doors: ExpeditionNode[];
+  onPick: (pick: number) => void;
+}) {
+  return (
+    <div style={{ marginTop: 20 }}>
+      <div
+        style={{
+          ...muted,
+          fontSize: 11,
+          textTransform: "uppercase",
+          letterSpacing: 1.5,
+          marginBottom: 8,
+        }}
+      >
+        Pick a door
+      </div>
+      <div style={{ display: "grid", gap: 8 }}>
+        {doors.map((node, i) => (
+          <button
+            key={i}
+            onClick={() => onPick(i + 1)}
+            style={{
+              padding: "12px 14px",
+              background: "#1d1f23",
+              border: "1px solid #b89b3a",
+              borderRadius: 8,
+              textAlign: "left",
+              cursor: "pointer",
+              color: "#e6e6e6",
+              fontFamily: "inherit",
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <span style={{ fontSize: 20 }}>{ROOM_TYPE_ICON[node.type]}</span>
+              <span style={{ fontWeight: 600, textTransform: "capitalize" }}>{node.type}</span>
+              {node.type === "combat" && node.monster_name && (
+                <span style={{ ...muted, fontSize: 12 }}>· {node.monster_name}</span>
+              )}
+            </div>
+            {node.scene && (
+              <div style={{ ...muted, fontSize: 12, marginTop: 4, fontStyle: "italic" }}>
+                {node.scene}
+              </div>
+            )}
+          </button>
+        ))}
+      </div>
     </div>
   );
 }
