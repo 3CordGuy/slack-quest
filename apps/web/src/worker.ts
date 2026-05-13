@@ -37,11 +37,13 @@ import {
   getCharacter,
   getEquipped,
   getInventory,
+  getItem,
   getQuestParty,
   getRecentQuestsForCharacter,
   getWebCombatState,
   getWebSession,
   markQuestStatus,
+  removeItem,
   saveWebCombatState,
   setCharacterHpAndShield,
   setQuestMode,
@@ -321,9 +323,33 @@ export default app;
 //      sockets the runtime tells it have gone away. (No explicit timer here
 //      — adding it would need DO Alarms, deferred until we see real abuse.)
 
+// Item-use action lives outside the engine (it does D1 I/O for inventory
+// load + delete, which the pure machine can't do). The DO dispatches it
+// before falling through to step() for engine-handled actions.
+type UseItemAction = {
+  kind: "use_item";
+  actor: string;
+  item_id: number;
+  target_id?: string;
+};
+
 interface ClientToServer {
   type: "action";
-  action: TurnAction;
+  action: TurnAction | UseItemAction;
+}
+
+export type ItemEffect =
+  | { kind: "heal"; target: string; amount: number; rolled: number }
+  | { kind: "mana_bump"; target: string; added: number; new_max_mana: number }
+  | { kind: "revive"; target: string; hp_restored: number };
+
+export interface ItemUsedEvent {
+  type: "item_used";
+  actor: string;
+  item_id: number;
+  item_name: string;
+  item_type: string;
+  effect: ItemEffect;
 }
 
 export interface LootDrop {
@@ -613,6 +639,12 @@ export class QuestRoom extends DurableObject<Env> {
       return;
     }
 
+    // use_item lives outside the engine (it reads + deletes inventory in D1).
+    if (parsed.action.kind === "use_item") {
+      await this.handleUseItem(ws, attach.quest_id, state, parsed.action);
+      return;
+    }
+
     const result = step(state, parsed.action, productionRoll);
     // Persist even on rejected actions? No — state didn't change. Only save
     // when the state actually advanced.
@@ -644,6 +676,122 @@ export class QuestRoom extends DurableObject<Env> {
         });
       }
     }
+  }
+
+  // Inventory-driven combat action. Validates the item belongs to the
+  // actor, applies the effect to CombatState, deletes the item from D1,
+  // then reuses the engine's "wait" handler to advance the turn so the
+  // turn-cycling logic stays in one place.
+  //
+  // Supported types for v1: consumable (heal user), magic (+max_mana on
+  // user), revive (raise a downed party member). Tools are dungeon-only;
+  // scrolls have named effects (rebase, etc.) we'll plumb in a follow-up.
+  private async handleUseItem(
+    ws: WebSocket,
+    questId: number,
+    state: CombatState,
+    action: UseItemAction,
+  ): Promise<void> {
+    if (state.status !== "active") {
+      this.sendOne(ws, { type: "error", message: "combat ended" });
+      return;
+    }
+    const currentActor =
+      state.turn_order[state.turn_index % state.turn_order.length] ?? "";
+    if (currentActor !== action.actor) {
+      this.sendOne(ws, { type: "error", message: "not your turn" });
+      return;
+    }
+    const actor = state.fighters.find((f) => f.id === action.actor);
+    if (!actor || actor.hp <= 0) {
+      this.sendOne(ws, { type: "error", message: "actor downed" });
+      return;
+    }
+
+    const item = await getItem(this.env.DB, action.item_id, action.actor);
+    if (!item) {
+      this.sendOne(ws, { type: "error", message: "item not found" });
+      return;
+    }
+
+    let updatedFighters = state.fighters;
+    let effect: ItemEffect | null = null;
+
+    switch (item.item_type) {
+      case "consumable": {
+        const before = actor.hp;
+        const after = Math.min(actor.max_hp, before + item.power);
+        const amount = after - before;
+        updatedFighters = state.fighters.map((f) =>
+          f.id === actor.id ? { ...f, hp: after } : f,
+        );
+        effect = { kind: "heal", target: actor.id, amount, rolled: item.power };
+        break;
+      }
+      case "magic": {
+        const newMax = Math.min(5 /* MAX_MANA_CAP */, actor.max_mana + item.power);
+        const added = newMax - actor.max_mana;
+        updatedFighters = state.fighters.map((f) =>
+          f.id === actor.id
+            ? { ...f, max_mana: newMax, mana: Math.min(newMax, f.mana + added) }
+            : f,
+        );
+        effect = {
+          kind: "mana_bump",
+          target: actor.id,
+          added,
+          new_max_mana: newMax,
+        };
+        break;
+      }
+      case "revive": {
+        const target = state.fighters.find((f) => f.id === action.target_id);
+        if (!target) {
+          this.sendOne(ws, { type: "error", message: "no revive target" });
+          return;
+        }
+        if (target.hp > 0) {
+          this.sendOne(ws, { type: "error", message: "target not downed" });
+          return;
+        }
+        // Item power is a % of max_hp restored (matches Slack convention).
+        const restored = Math.max(1, Math.floor((target.max_hp * item.power) / 100));
+        updatedFighters = state.fighters.map((f) =>
+          f.id === target.id ? { ...f, hp: restored } : f,
+        );
+        effect = { kind: "revive", target: target.id, hp_restored: restored };
+        break;
+      }
+      default:
+        this.sendOne(ws, {
+          type: "error",
+          message: `cannot use ${item.item_type} in combat yet`,
+        });
+        return;
+    }
+
+    if (!effect) return;
+
+    // Apply effect, then advance turn via engine's "wait" handler so the
+    // turn_start / round-bump logic stays unified.
+    const withEffect: CombatState = { ...state, fighters: updatedFighters };
+    const waitResult = step(withEffect, { kind: "wait", actor: action.actor }, productionRoll);
+
+    const itemUsed: ItemUsedEvent = {
+      type: "item_used",
+      actor: action.actor,
+      item_id: item.id,
+      item_name: item.item_name,
+      item_type: item.item_type,
+      effect,
+    };
+
+    await saveWebCombatState(this.env.DB, questId, waitResult.state);
+    await removeItem(this.env.DB, item.id);
+    this.cacheState = waitResult.state;
+
+    this.broadcast({ type: "events", events: [itemUsed, ...waitResult.events] });
+    this.broadcast({ type: "state", state: waitResult.state });
   }
 
   async webSocketClose(ws: WebSocket, _code: number, _reason: string, _wasClean: boolean): Promise<void> {

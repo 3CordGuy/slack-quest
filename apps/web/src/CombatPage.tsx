@@ -94,7 +94,8 @@ type CombatEvent =
   | { type: "fled" }
   | { type: "victory" }
   | { type: "defeat" }
-  | { type: "rejected"; reason: string };
+  | { type: "rejected"; reason: string }
+  | ItemUsedEvent;
 
 type TurnAction =
   | { kind: "attack"; actor: string }
@@ -104,7 +105,32 @@ type TurnAction =
   | { kind: "signature"; actor: string }
   | { kind: "flee"; actor: string }
   | { kind: "wait"; actor: string }
-  | { kind: "monster_act" };
+  | { kind: "monster_act" }
+  | { kind: "use_item"; actor: string; item_id: number; target_id?: string };
+
+type ItemEffect =
+  | { kind: "heal"; target: string; amount: number; rolled: number }
+  | { kind: "mana_bump"; target: string; added: number; new_max_mana: number }
+  | { kind: "revive"; target: string; hp_restored: number };
+
+interface ItemUsedEvent {
+  type: "item_used";
+  actor: string;
+  item_id: number;
+  item_name: string;
+  item_type: string;
+  effect: ItemEffect;
+}
+
+interface InventoryItem {
+  id: number;
+  item_name: string;
+  item_type: "weapon" | "armor" | "consumable" | "magic" | "revive" | "tool" | "scroll";
+  power: number;
+  rarity: "common" | "uncommon" | "rare";
+  flavor: string | null;
+  equipped: boolean;
+}
 
 interface LootDrop {
   item_name: string;
@@ -270,6 +296,29 @@ function formatEvent(e: CombatEvent, state: CombatState | null): UiState["log"] 
       ];
     case "fled":
       return [{ id: nextLogId++, text: "🏃 The party escapes.", tone: "info" }];
+    case "item_used": {
+      const eff = e.effect;
+      const head = `🎒 ${nameOf(e.actor)} used ${e.item_name}`;
+      if (eff.kind === "heal") {
+        return [{ id: nextLogId++, text: `${head}: +${eff.amount} HP`, tone: "good" }];
+      } else if (eff.kind === "mana_bump") {
+        return [
+          {
+            id: nextLogId++,
+            text: `${head}: +${eff.added} max mana (now ${eff.new_max_mana})`,
+            tone: "good",
+          },
+        ];
+      } else {
+        return [
+          {
+            id: nextLogId++,
+            text: `${head}: revives ${nameOf(eff.target)} to ${eff.hp_restored} HP`,
+            tone: "good",
+          },
+        ];
+      }
+    }
     case "victory":
       return [{ id: nextLogId++, text: "VICTORY", tone: "good" }];
     case "defeat":
@@ -300,8 +349,21 @@ export function CombatPage({
     outcome: null,
   });
   const [picking, setPicking] = useState<"heal" | "shield" | null>(null);
+  const [itemPicker, setItemPicker] = useState<"closed" | "open" | { reviveItemId: number }>("closed");
+  const [items, setItems] = useState<InventoryItem[]>([]);
   const wsRef = useRef<WebSocket | null>(null);
   const logScrollRef = useRef<HTMLDivElement | null>(null);
+
+  // Inventory loaded once on mount; refreshed after each item_used event so
+  // the picker reflects post-use state. Authoritative source is D1 via
+  // /api/inventory.
+  async function loadItems() {
+    const res = await fetch("/api/inventory", { credentials: "include" });
+    if (res.ok) setItems(((await res.json()) as { items: InventoryItem[] }).items);
+  }
+  useEffect(() => {
+    void loadItems();
+  }, []);
 
   useEffect(() => {
     const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
@@ -320,7 +382,11 @@ export function CombatPage({
           | { type: "error"; message: string }
           | { type: "outcome"; outcome: OutcomeSummary };
         if (msg.type === "state") dispatch({ kind: "state", value: msg.state });
-        else if (msg.type === "events") dispatch({ kind: "events", value: msg.events });
+        else if (msg.type === "events") {
+          dispatch({ kind: "events", value: msg.events });
+          // Item use mutates inventory in D1 — refresh the picker.
+          if (msg.events.some((e) => e.type === "item_used")) void loadItems();
+        }
         else if (msg.type === "error") dispatch({ kind: "error", value: msg.message });
         else if (msg.type === "outcome") dispatch({ kind: "outcome", value: msg.outcome });
       } catch {
@@ -374,6 +440,11 @@ export function CombatPage({
     setPicking(null);
   }
 
+  function fireUseItem(itemId: number, targetId?: string) {
+    send({ kind: "use_item", actor: selfId, item_id: itemId, target_id: targetId });
+    setItemPicker("closed");
+  }
+
   return (
     <div style={page}>
       <div style={topBar}>
@@ -411,13 +482,34 @@ export function CombatPage({
               onCancel={() => setPicking(null)}
             />
           )}
-          {state.status === "active" && !picking && (
+          {state.status === "active" && itemPicker === "open" && (
+            <ItemPicker
+              items={items}
+              onPickConsumable={(id) => fireUseItem(id)}
+              onPickMagic={(id) => fireUseItem(id)}
+              onPickRevive={(id) => setItemPicker({ reviveItemId: id })}
+              onCancel={() => setItemPicker("closed")}
+            />
+          )}
+          {state.status === "active" &&
+            typeof itemPicker === "object" &&
+            "reviveItemId" in itemPicker && (
+              <ReviveTargetPicker
+                fighters={state.fighters}
+                onPick={(targetId) => fireUseItem(itemPicker.reviveItemId, targetId)}
+                onCancel={() => setItemPicker("open")}
+              />
+            )}
+          {state.status === "active" && !picking && itemPicker === "closed" && (
             <ActionBar
               disabled={!myTurn}
               mana={myMana}
+              hasItems={items.some((i) => isCombatUsable(i.item_type))}
               onAct={(kind) => {
                 if (kind === "heal" || kind === "shield") {
                   setPicking(kind);
+                } else if (kind === "use_item") {
+                  setItemPicker("open");
                 } else if (kind === "signature" || kind === "flee" || kind === "attack" || kind === "cast" || kind === "wait") {
                   send({ kind, actor: selfId } as TurnAction);
                 }
@@ -600,15 +692,29 @@ function FighterRow({ fighter, self, current }: { fighter: Fighter; self: boolea
   );
 }
 
-type ActionKind = "attack" | "cast" | "heal" | "shield" | "signature" | "flee" | "wait";
+type ActionKind =
+  | "attack"
+  | "cast"
+  | "heal"
+  | "shield"
+  | "signature"
+  | "flee"
+  | "wait"
+  | "use_item";
+
+function isCombatUsable(t: string): boolean {
+  return t === "consumable" || t === "magic" || t === "revive";
+}
 
 function ActionBar({
   disabled,
   mana,
+  hasItems,
   onAct,
 }: {
   disabled: boolean;
   mana: number;
+  hasItems: boolean;
   onAct: (kind: ActionKind) => void;
 }) {
   return (
@@ -623,8 +729,126 @@ function ActionBar({
       />
       <ActionBtn label="💚 Heal" hint="1d6+mag · pick target" disabled={disabled} onClick={() => onAct("heal")} />
       <ActionBtn label="🛡 Shield" hint="1d6+mag · pick target" disabled={disabled} onClick={() => onAct("shield")} />
+      <ActionBtn
+        label="🎒 Item"
+        hint={hasItems ? "Use a consumable / magic / revive" : "Nothing usable"}
+        disabled={disabled || !hasItems}
+        onClick={() => onAct("use_item")}
+      />
       <ActionBtn label="🏃 Flee" hint="d20+mod vs DC 10+tier" disabled={disabled} onClick={() => onAct("flee")} />
       <ActionBtn label="⏸ Wait" hint="Skip your turn" disabled={disabled} onClick={() => onAct("wait")} />
+    </div>
+  );
+}
+
+function ItemPicker({
+  items,
+  onPickConsumable,
+  onPickMagic,
+  onPickRevive,
+  onCancel,
+}: {
+  items: InventoryItem[];
+  onPickConsumable: (id: number) => void;
+  onPickMagic: (id: number) => void;
+  onPickRevive: (id: number) => void;
+  onCancel: () => void;
+}) {
+  const usable = items.filter((i) => isCombatUsable(i.item_type));
+  return (
+    <div style={card}>
+      <div style={{ ...muted, fontSize: 12, marginBottom: 8 }}>🎒 Use which?</div>
+      {usable.length === 0 && (
+        <p style={{ ...muted, fontSize: 13 }}>
+          Nothing usable in combat. Tools and scrolls aren't supported on the web yet.
+        </p>
+      )}
+      <div style={{ display: "grid", gap: 8 }}>
+        {usable.map((it) => (
+          <button
+            key={it.id}
+            onClick={() => {
+              if (it.item_type === "consumable") onPickConsumable(it.id);
+              else if (it.item_type === "magic") onPickMagic(it.id);
+              else if (it.item_type === "revive") onPickRevive(it.id);
+            }}
+            style={{
+              ...button,
+              marginTop: 0,
+              padding: "10px 14px",
+              background: "#1d1f23",
+              border: "1px solid #2a2d33",
+              textAlign: "left",
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "flex-start",
+              gap: 2,
+            }}
+          >
+            <span style={{ display: "flex", justifyContent: "space-between", width: "100%" }}>
+              <span style={{ fontWeight: 600 }}>{it.item_name}</span>
+              <span style={{ ...muted, fontSize: 12 }}>
+                {it.item_type} · {it.rarity} · +{it.power}
+              </span>
+            </span>
+            {it.flavor && (
+              <span style={{ ...muted, fontSize: 11, fontStyle: "italic" }}>
+                {it.flavor}
+              </span>
+            )}
+          </button>
+        ))}
+      </div>
+      <button
+        onClick={onCancel}
+        style={{ ...button, marginTop: 8, background: "transparent", border: "1px solid #2a2d33", color: "#9aa0a6" }}
+      >
+        Cancel
+      </button>
+    </div>
+  );
+}
+
+function ReviveTargetPicker({
+  fighters,
+  onPick,
+  onCancel,
+}: {
+  fighters: Fighter[];
+  onPick: (id: string) => void;
+  onCancel: () => void;
+}) {
+  const downed = fighters.filter((f) => f.hp <= 0);
+  return (
+    <div style={card}>
+      <div style={{ ...muted, fontSize: 12, marginBottom: 8 }}>💖 Revive who?</div>
+      {downed.length === 0 && (
+        <p style={{ ...muted, fontSize: 13 }}>No downed allies.</p>
+      )}
+      <div style={{ display: "grid", gap: 8 }}>
+        {downed.map((f) => (
+          <button
+            key={f.id}
+            onClick={() => onPick(f.id)}
+            style={{
+              ...button,
+              marginTop: 0,
+              padding: "10px 14px",
+              background: "#1d1f23",
+              border: "1px solid #2a2d33",
+              textAlign: "left",
+            }}
+          >
+            {f.name} <span style={{ ...muted, fontSize: 12 }}>· {f.class}</span>
+          </button>
+        ))}
+      </div>
+      <button
+        onClick={onCancel}
+        style={{ ...button, marginTop: 8, background: "transparent", border: "1px solid #2a2d33", color: "#9aa0a6" }}
+      >
+        Back
+      </button>
     </div>
   );
 }
