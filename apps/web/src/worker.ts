@@ -18,6 +18,7 @@ import {
   npcTrustMod,
   rollDice,
   rollItem,
+  sellPriceFor,
   step,
   xpForLevel,
   type CombatInit,
@@ -28,9 +29,11 @@ import {
 } from "@gantt-quest/core";
 import {
   addCharacterKey,
+  addGold,
   addItem,
   applySoftDeath,
   clearPartyEffects,
+  equipItem,
   awardSpoils,
   consumeWebLoginCode,
   createWebSession,
@@ -279,6 +282,40 @@ app.get("/api/inventory", async (c) => {
   if (!session) return c.json({ error: "unauthenticated" }, 401);
   const items = await getInventory(c.env.DB, session.slack_user_id);
   return c.json({ items });
+});
+
+// Equip an inventory item. Mirrors /sq equip: consumables can't equip,
+// already-equipped is a no-op, otherwise equip + unequip any other item
+// of the same type.
+app.post("/api/inventory/:itemId/equip", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const itemId = parseInt(c.req.param("itemId"), 10);
+  if (!Number.isFinite(itemId)) return c.json({ error: "bad_item_id" }, 400);
+  const item = await getItem(c.env.DB, itemId, session.slack_user_id);
+  if (!item) return c.json({ error: "not_yours" }, 404);
+  if (item.item_type === "consumable") return c.json({ error: "consumable_not_equippable" }, 400);
+  if (item.equipped) return c.json({ error: "already_equipped" }, 400);
+  await equipItem(c.env.DB, item);
+  return c.json({ ok: true });
+});
+
+// Sell an inventory item. Mirrors /sq sell: no mid-quest, no equipped
+// items. Price is sellPriceFor(type, rarity) — same table as slack.
+app.post("/api/inventory/:itemId/sell", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const itemId = parseInt(c.req.param("itemId"), 10);
+  if (!Number.isFinite(itemId)) return c.json({ error: "bad_item_id" }, 400);
+  const activeQuest = await getActiveQuestForCharacter(c.env.DB, session.slack_user_id);
+  if (activeQuest) return c.json({ error: "mid_quest" }, 400);
+  const item = await getItem(c.env.DB, itemId, session.slack_user_id);
+  if (!item) return c.json({ error: "not_yours" }, 404);
+  if (item.equipped) return c.json({ error: "unequip_first" }, 400);
+  const price = sellPriceFor(item.item_type, item.rarity);
+  await removeItem(c.env.DB, item.id);
+  await addGold(c.env.DB, session.slack_user_id, price);
+  return c.json({ ok: true, price });
 });
 
 // Returns the user's currently-active quest (with scene state + party) or

@@ -262,6 +262,22 @@ export function App() {
     if (res.ok) void refresh();
   }
 
+  async function equipItem(itemId: number) {
+    const res = await fetch(`/api/inventory/${itemId}/equip`, {
+      method: "POST",
+      credentials: "include",
+    });
+    if (res.ok) void refresh();
+  }
+
+  async function sellItem(itemId: number) {
+    const res = await fetch(`/api/inventory/${itemId}/sell`, {
+      method: "POST",
+      credentials: "include",
+    });
+    if (res.ok) void refresh();
+  }
+
   async function treasureTake(questId: number, pick: number) {
     const res = await fetch(`/api/quest/${questId}/dungeon/treasure_take`, {
       method: "POST",
@@ -308,7 +324,14 @@ export function App() {
           />
         )}
         <CharacterCard me={state.me} />
-        {state.me.character && <InventoryCard items={state.inventory} />}
+        {state.me.character && (
+          <InventoryCard
+            items={state.inventory}
+            inQuest={!!state.activeQuest}
+            onEquip={equipItem}
+            onSell={sellItem}
+          />
+        )}
         {state.me.character && state.recent.length > 0 && (
           <RecentQuestsCard quests={state.recent} />
         )}
@@ -1072,7 +1095,17 @@ function CharacterCard({ me }: { me: MeResponse }) {
   );
 }
 
-function InventoryCard({ items }: { items: Item[] }) {
+function InventoryCard({
+  items,
+  inQuest,
+  onEquip,
+  onSell,
+}: {
+  items: Item[];
+  inQuest: boolean;
+  onEquip: (itemId: number) => void;
+  onSell: (itemId: number) => void;
+}) {
   if (items.length === 0) {
     return (
       <div style={card}>
@@ -1089,17 +1122,22 @@ function InventoryCard({ items }: { items: Item[] }) {
   return (
     <div style={card}>
       <h2 style={h2}>Inventory</h2>
+      {inQuest && (
+        <p style={{ ...muted, fontSize: 12, marginTop: 8 }}>
+          Selling is disabled while a quest is active.
+        </p>
+      )}
       {equipped.length > 0 && (
         <Section title="Equipped">
           {equipped.map((it) => (
-            <ItemRow key={it.id} item={it} />
+            <ItemRow key={it.id} item={it} inQuest={inQuest} onEquip={onEquip} onSell={onSell} />
           ))}
         </Section>
       )}
       {ITEM_TYPE_ORDER.filter((t) => groups[t]?.length).map((t) => (
         <Section key={t} title={ITEM_TYPE_LABELS[t]}>
           {groups[t]!.map((it) => (
-            <ItemRow key={it.id} item={it} />
+            <ItemRow key={it.id} item={it} inQuest={inQuest} onEquip={onEquip} onSell={onSell} />
           ))}
         </Section>
       ))}
@@ -1132,71 +1170,84 @@ function Section({
   );
 }
 
-function ItemRow({ item }: { item: Item }) {
+function ItemRow({
+  item,
+  inQuest,
+  onEquip,
+  onSell,
+}: {
+  item: Item;
+  inQuest: boolean;
+  onEquip: (itemId: number) => void;
+  onSell: (itemId: number) => void;
+}) {
+  const canEquip =
+    !item.equipped &&
+    item.item_type !== "consumable" &&
+    item.item_type !== "magic" &&
+    item.item_type !== "revive" &&
+    item.item_type !== "tool" &&
+    item.item_type !== "scroll";
+  const canSell = !item.equipped && !inQuest;
   return (
     <div
       style={{
-        display: "flex",
-        alignItems: "center",
-        gap: 12,
         padding: 12,
         background: "#1d1f23",
         borderRadius: 8,
-        border: item.equipped
-          ? "1px solid #b89b3a"
-          : "1px solid transparent",
+        border: item.equipped ? "1px solid #b89b3a" : "1px solid transparent",
       }}
     >
-      <div style={{ fontSize: 24, lineHeight: 1 }}>
-        {ITEM_TYPE_ICON[item.item_type]}
-      </div>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 8,
-            flexWrap: "wrap",
-          }}
-        >
-          <div
-            style={{
-              fontWeight: 600,
-              color: "#f5f5f5",
-              fontSize: 15,
-            }}
-          >
-            {item.item_name}
+      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+        <div style={{ fontSize: 24, lineHeight: 1 }}>{ITEM_TYPE_ICON[item.item_type]}</div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            <div style={{ fontWeight: 600, color: "#f5f5f5", fontSize: 15 }}>{item.item_name}</div>
+            <RarityBadge rarity={item.rarity} />
+            {item.item_type === "weapon" && item.weapon_range === "ranged" && (
+              <SmallBadge>ranged</SmallBadge>
+            )}
           </div>
-          <RarityBadge rarity={item.rarity} />
-          {item.item_type === "weapon" && item.weapon_range === "ranged" && (
-            <SmallBadge>ranged</SmallBadge>
+          {item.flavor && (
+            <div style={{ ...muted, fontSize: 12, fontStyle: "italic", marginTop: 2 }}>
+              {item.flavor}
+            </div>
           )}
         </div>
-        {item.flavor && (
-          <div
-            style={{
-              ...muted,
-              fontSize: 12,
-              fontStyle: "italic",
-              marginTop: 2,
-            }}
-          >
-            {item.flavor}
-          </div>
-        )}
+        <div style={{ fontVariantNumeric: "tabular-nums", color: "#f5f5f5", fontWeight: 600 }}>
+          +{item.power}
+        </div>
       </div>
-      <div
-        style={{
-          fontVariantNumeric: "tabular-nums",
-          color: "#f5f5f5",
-          fontWeight: 600,
-        }}
-      >
-        +{item.power}
-      </div>
+      {(canEquip || canSell) && (
+        <div style={{ display: "flex", gap: 6, marginTop: 8, justifyContent: "flex-end" }}>
+          {canEquip && (
+            <button onClick={() => onEquip(item.id)} style={smallActionBtn("#1f3a1f", "#86efac")}>
+              Equip
+            </button>
+          )}
+          {canSell && (
+            <button onClick={() => onSell(item.id)} style={smallActionBtn("#33363d", "#e6e6e6")}>
+              Sell
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
+}
+
+function smallActionBtn(bg: string, fg: string): React.CSSProperties {
+  return {
+    background: bg,
+    color: fg,
+    border: "1px solid #2a2d33",
+    borderRadius: 6,
+    padding: "4px 12px",
+    fontSize: 12,
+    fontWeight: 600,
+    cursor: "pointer",
+    fontFamily: "inherit",
+  };
 }
 
 function RarityBadge({ rarity }: { rarity: Rarity }) {
