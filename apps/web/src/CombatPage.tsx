@@ -184,6 +184,7 @@ type CombatEvent =
     }
   | { type: "monster_swing_skipped"; reason: string }
   | { type: "monster_target_redirected"; from: string; to: string; reason: string }
+  | { type: "monster_target_blocked"; reason: string }
   | { type: "battle_hymn_consumed"; actor: string; bonus: number; remaining: number }
   | { type: "mark_applied"; actor: string; expires_after_round: number; bonus: number }
   | { type: "mark_bonus"; actor: string; bonus: number }
@@ -322,7 +323,7 @@ function reducer(s: UiState, a: UiAction): UiState {
         log: [...s.log, {
           id: nextLogId++,
           content: <><Icon name={iconName} /> {a.value.text}</>,
-          tone: "flavor",
+          tone: "flavor" as const,
         }].slice(-50),
       };
     }
@@ -556,6 +557,7 @@ export function CombatPage({
   const diceContainerRef = useRef<HTMLDivElement | null>(null);
   const diceBoxRef = useRef<any>(null);
   const diceInitStartedRef = useRef(false);
+  const diceReadyRef = useRef(false);
   const pendingDiceRollsRef = useRef<string[]>([]);
   const [diceReady, setDiceReady] = useState(false);
 
@@ -590,6 +592,7 @@ export function CombatPage({
     }
     box.init()
       .then(() => {
+        diceReadyRef.current = true;
         setDiceReady(true);
         for (const notation of pendingDiceRollsRef.current) {
           diceBoxRef.current?.roll(notation);
@@ -606,7 +609,7 @@ export function CombatPage({
       }
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [state]);
+  }, [ui.state]);
 
   useEffect(() => {
     const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
@@ -635,7 +638,7 @@ export function CombatPage({
           for (const evt of msg.events) {
             if (evt.type === "roll") {
               const notation = `${evt.die}`;
-              if (diceReady && diceBoxRef.current) {
+              if (diceReadyRef.current && diceBoxRef.current) {
                 diceBoxRef.current.roll(notation);
               } else {
                 pendingDiceRollsRef.current.push(notation);
