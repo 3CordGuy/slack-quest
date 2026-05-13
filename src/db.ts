@@ -1,6 +1,6 @@
 // D1 query helpers. Raw prepared statements — no ORM.
 
-import type { EffectType, ItemType, Rarity, WeaponRange } from "./flavor";
+import type { DrinkBuff, EffectType, ItemType, Rarity, TownState, WeaponRange } from "./flavor";
 
 // Active status effect on a character or monster. Ticks on the affected actor's
 // own combat action / monster turn. Cleared at quest end.
@@ -22,6 +22,10 @@ export interface Item {
   equipped: boolean;
   weapon_range: WeaponRange | null; // null for non-weapons; legacy weapon rows
                                     // also null and read as "melee".
+  // Number of times this item has been sharpened at the smithy. Capped at
+  // SMITHY_SHARPEN_CAP (3) in handlers — beyond that the smith refuses.
+  // current_power - sharpens_count = original_power (useful for the cap math).
+  sharpens_count: number;
 }
 
 interface ItemRow extends Omit<Item, "equipped"> {
@@ -35,6 +39,11 @@ function rowToItem(row: ItemRow): Item {
 export type BattlePosition = "front" | "back";
 
 export type KeyTier = "bronze" | "silver" | "gold";
+
+// "m" or "f" — null for legacy characters rolled before the field existed.
+// Drives pronoun choice in AI flavor text and gender of the per-character
+// art so regenerations don't swing between presentations.
+export type CharGender = "m" | "f";
 
 export interface Character {
   slack_user_id: string;
@@ -60,13 +69,20 @@ export interface Character {
   // Active status effects (regen, bleeding, etc.). JSON-serialized in DB; cleared
   // at quest end. Empty array when none.
   effects: StatusEffect[];
+  // "m" or "f" — null for legacy pre-gender rolls. Pure flavor / art-anchor.
+  gender: CharGender | null;
+  // Single active drink buff from the pub. Null when no buff is in flight.
+  // Stored as JSON on drink_buff_json; one buff at a time (second drink
+  // replaces the first). See flavor.ts/DrinkBuff for shape.
+  drink_buff: DrinkBuff | null;
   created_at: number;
   last_active: number;
 }
 
-interface CharacterRow extends Omit<Character, "scars" | "effects"> {
+interface CharacterRow extends Omit<Character, "scars" | "effects" | "drink_buff"> {
   scars: string;
   effects: string;
+  drink_buff_json: string | null;
 }
 
 function rowToCharacter(row: CharacterRow): Character {
@@ -74,6 +90,7 @@ function rowToCharacter(row: CharacterRow): Character {
     ...row,
     scars: JSON.parse(row.scars) as string[],
     effects: JSON.parse(row.effects) as StatusEffect[],
+    drink_buff: row.drink_buff_json ? (JSON.parse(row.drink_buff_json) as DrinkBuff) : null,
   };
 }
 
@@ -92,6 +109,7 @@ export interface CreateCharacterInput {
   class: string;
   hp: number;
   max_hp: number;
+  gender: CharGender;
 }
 
 export async function createCharacter(
@@ -99,20 +117,26 @@ export async function createCharacter(
   input: CreateCharacterInput,
 ): Promise<Character> {
   const now = Date.now();
-  // Mana, shield, position, last_rest_at, last_long_rest_at, downed_until,
+  // Shield, position, last_rest_at, last_long_rest_at, downed_until,
   // tiered keys (keys_bronze/silver/gold), and effects (defaulting to '[]')
   // all rely on the ALTER TABLE DEFAULTs from their respective migrations.
+  //
+  // Mana/max_mana are written explicitly at 2/2 (overriding the legacy
+  // DEFAULT 1 in migrations/0005_mana.sql). Two is the new floor because
+  // every class active ability costs 1-2 mana — starting at 1 made Lvl 1s
+  // unable to use their active until the level-5 bump landed.
   await db
     .prepare(
       `INSERT INTO characters
-       (slack_user_id, slack_team_id, name, class, level, xp, hp, max_hp, gold, scars, created_at, last_active)
-       VALUES (?, ?, ?, ?, 1, 0, ?, ?, 10, '[]', ?, ?)`,
+       (slack_user_id, slack_team_id, name, class, gender, level, xp, hp, max_hp, mana, max_mana, gold, scars, created_at, last_active)
+       VALUES (?, ?, ?, ?, ?, 1, 0, ?, ?, 2, 2, 10, '[]', ?, ?)`,
     )
     .bind(
       input.slack_user_id,
       input.slack_team_id,
       input.name,
       input.class,
+      input.gender,
       input.hp,
       input.max_hp,
       now,
@@ -140,6 +164,10 @@ export interface GauntletWave {
   name: string;
   max_hp: number;
   scene: string;
+  // Optional pre-rendered portrait URL — populated when the wave was generated
+  // with art enabled. Promoted to scene.monster_art_url when the wave
+  // activates. Old gauntlets pre-art won't have it; render code skips silently.
+  art_url?: string;
 }
 
 // An expedition (dungeon) node is one room players step into. Each type maps to a
@@ -172,6 +200,12 @@ export interface TrapChoice {
 export interface NpcOffer {
   greeting: string;   // AI-generated NPC line
   item: LootOption;   // what they offer if trusted
+  // Optional pre-rendered character portrait URL — set during dungeon
+  // construction by generateEncounterArt(kind="npc"|"merchant"). Each NPC
+  // and merchant has a generated name so we cache by name slug, which means
+  // the same name always renders the same portrait. Old expeditions don't
+  // have this; render code falls back to no image when missing.
+  art_url?: string;
 }
 
 export interface ExpeditionNode {
@@ -185,9 +219,18 @@ export interface ExpeditionNode {
   tier?: number;
   drops_key?: boolean;
   drops_key_tier?: KeyTier;
+  // AI-generated portrait URL (R2-cached). Pre-rolled at dungeon-creation time
+  // alongside the room's other content. Copied to scene.monster_art_url when
+  // the room becomes the active scene. Optional — old expeditions don't have it
+  // and image-block render must skip silently when missing.
+  monster_art_url?: string;
 
   // trap-only
   trap_choices?: TrapChoice[];
+  // AI-generated illustration of the trap scene. Pre-rolled at dungeon-
+  // creation time alongside the trap text. Optional — old expeditions
+  // (pre-trap-art) don't have it and the image block is skipped silently.
+  trap_art_url?: string;
 
   // npc-only
   npc?: NpcOffer;
@@ -236,6 +279,53 @@ export interface SceneJson {
   // Active monster status effects (poisoned, etc.). Tick on monster turns.
   // Cleared when the monster dies / scene transitions to a new monster.
   monster_effects?: StatusEffect[];
+  // Optional public URL of the AI-generated monster portrait. Rendered as an
+  // image block above the combat scene. Cached in R2 keyed by name slug —
+  // same monster name always renders the same picture across quests. Field
+  // is missing on legacy quests (pre-art) and on any path where art gen
+  // failed; render code must treat absence as "skip image block".
+  monster_art_url?: string;
+  // Mark / focus-fire state. When a player marks the current monster, their
+  // slack_user_id lands in marked_by and the expiry timestamp in marked_until.
+  // Other party members attacking the marked monster get a focus-fire damage
+  // bonus until expiry. Self-attacks by the marker DON'T get the bonus —
+  // marking is for calling targets, not buffing yourself. Cleared when the
+  // monster dies or a new scene/wave/room transitions.
+  marked_by?: string;
+  marked_until?: number;
+  // Telegraphed target — who the monster commits to attack on its NEXT swing.
+  // Set after each monster turn resolves (and at relevant transition points)
+  // so the party gets a reactive window to heal/shield/reposition that
+  // target before the hit lands. performMonsterTurn honors this commitment
+  // when the next swing happens (if the target is still a viable fighter);
+  // re-picks fresh otherwise. Cleared on scene transitions like the mark.
+  monster_telegraph?: { target_user_id: string };
+  // Per-fight class-passive trigger log. Keyed by slack_user_id, value is a
+  // list of passive-keys that have already fired this fight (so once-per-
+  // fight passives like the Rogue's first-attack crit or the Mage's free
+  // cast can't repeat). Cleared on every scene transition (room / wave /
+  // monster death) so each new fight gets fresh triggers. Always-on passives
+  // (Druid regen, Bard aura, Warlock crit-bleed) don't use this — they
+  // trigger every time their condition is met.
+  passives_used?: Record<string, string[]>;
+  // Per-fight active-ability state. Each sub-field tracks a different
+  // ongoing effect:
+  //   • taunt: forces monster to target this user for N more swings (Warden)
+  //   • vanished: { user_id → swings_remaining } map (Rogue Vanish)
+  //   • skip_swings: monster skips this many swings (Mage Containerize)
+  //   • battle_hymn: party attacks get +bonus for this many more uses (Bard)
+  // Cleared on scene transitions like passives_used.
+  ability_state?: {
+    taunt?: { user_id: string; swings_remaining: number };
+    vanished?: Record<string, number>;
+    skip_swings?: number;
+    battle_hymn?: number;
+  };
+  // Set true when the quest was accepted from the Job Board (vs. started
+  // directly via /sq quest <variant>). Drives a reward bonus at victory
+  // time — the town pays extra for posted contracts. Absent / false on
+  // self-started quests.
+  from_job_board?: boolean;
 }
 
 export interface ActiveQuest {
@@ -504,6 +594,22 @@ export async function appendLog(
     .run();
 }
 
+// Patches just the monster_art_url field on a quest's scene_json without
+// touching anything else. Used by the phase-2 transition flow: when a boss
+// drops below 50% HP we kick off a wounded-portrait regen in the background;
+// when it finishes we want to swap the URL in but combat may have moved on,
+// so a full saveScene would race. json_set patches one field atomically.
+export async function patchMonsterArtUrl(
+  db: D1Database,
+  questId: number,
+  url: string,
+): Promise<void> {
+  await db
+    .prepare("UPDATE quests SET scene_json = json_set(scene_json, '$.monster_art_url', ?) WHERE id = ?")
+    .bind(url, questId)
+    .run();
+}
+
 // Awards XP and gold; applies any level-ups and returns the deltas.
 // Level-up effects: max_hp += 1d6, hp restored to new max, mana refilled to max,
 // and every 5 levels max_mana grows by 1 (capped at maxManaCap).
@@ -559,6 +665,25 @@ export async function refillMana(db: D1Database, userId: string): Promise<void> 
     .prepare("UPDATE characters SET mana = max_mana, last_active = ? WHERE slack_user_id = ?")
     .bind(Date.now(), userId)
     .run();
+}
+
+// Grants mana up to the character's max_mana cap. Returns the amount actually
+// added (clamped if near cap). Used by trap rewards (INT pass restores mana).
+// Mirrors the addShield pattern — caller passes the character so we can
+// compute the delta in JS rather than re-reading.
+export async function addMana(
+  db: D1Database,
+  target: Character,
+  amount: number,
+): Promise<number> {
+  const newMana = Math.min(target.max_mana, target.mana + amount);
+  const added = newMana - target.mana;
+  if (added <= 0) return 0;
+  await db
+    .prepare("UPDATE characters SET mana = ?, last_active = ? WHERE slack_user_id = ?")
+    .bind(newMana, Date.now(), target.slack_user_id)
+    .run();
+  return added;
 }
 
 // Atomic mana deduction. Returns true if the player had >= amount and it was spent.
@@ -661,7 +786,7 @@ export async function addItem(db: D1Database, input: CreateItemInput): Promise<I
     .run();
   const id = result.meta.last_row_id;
   const row = await db
-    .prepare("SELECT id, character_id, item_name, item_type, power, rarity, flavor, equipped, weapon_range FROM inventory WHERE id = ?")
+    .prepare("SELECT id, character_id, item_name, item_type, power, rarity, flavor, equipped, weapon_range, sharpens_count FROM inventory WHERE id = ?")
     .bind(id)
     .first<ItemRow>();
   if (!row) throw new Error("Failed to read back inserted item");
@@ -671,7 +796,7 @@ export async function addItem(db: D1Database, input: CreateItemInput): Promise<I
 export async function getInventory(db: D1Database, characterId: string): Promise<Item[]> {
   const result = await db
     .prepare(
-      `SELECT id, character_id, item_name, item_type, power, rarity, flavor, equipped, weapon_range
+      `SELECT id, character_id, item_name, item_type, power, rarity, flavor, equipped, weapon_range, sharpens_count
        FROM inventory WHERE character_id = ?
        ORDER BY equipped DESC, item_type ASC,
                 CASE rarity WHEN 'rare' THEN 0 WHEN 'uncommon' THEN 1 ELSE 2 END,
@@ -689,7 +814,7 @@ export async function getItem(
 ): Promise<Item | null> {
   const row = await db
     .prepare(
-      `SELECT id, character_id, item_name, item_type, power, rarity, flavor, equipped, weapon_range
+      `SELECT id, character_id, item_name, item_type, power, rarity, flavor, equipped, weapon_range, sharpens_count
        FROM inventory WHERE id = ? AND character_id = ?`,
     )
     .bind(itemId, characterId)
@@ -707,6 +832,48 @@ export async function equipItem(db: D1Database, item: Item): Promise<void> {
   ]);
 }
 
+// Unequips a single item — opposite of equipItem when the player wants to
+// drop a slot without replacing. Used by /sq unequip <id> and the [Unequip]
+// inventory button. Safe to call on an already-unequipped item (no-op).
+export async function unequipItem(db: D1Database, item: Item): Promise<void> {
+  await db
+    .prepare("UPDATE inventory SET equipped = 0 WHERE id = ?")
+    .bind(item.id)
+    .run();
+}
+
+// Adjusts a character's max_mana + current mana by `delta`. Used when a
+// focus weapon is equipped or unequipped to add/subtract its mana
+// ceiling bonus.
+//
+// Positive delta: max_mana increases AND current mana also bumps up so
+// the player immediately has access to the extra mana (no waiting for
+// regen). Negative delta: max_mana decreases AND current mana is
+// clamped down to the new ceiling if it was above it.
+//
+// Single UPDATE keeps the two columns consistent — no race window where
+// max_mana drops below mana.
+export async function applyFocusManaShift(
+  db: D1Database,
+  userId: string,
+  delta: number,
+): Promise<void> {
+  if (delta === 0) return;
+  if (delta > 0) {
+    await db
+      .prepare(`UPDATE characters SET max_mana = max_mana + ?, mana = mana + ?, last_active = ? WHERE slack_user_id = ?`)
+      .bind(delta, delta, Date.now(), userId)
+      .run();
+  } else {
+    // Negative delta: bump max_mana down; clamp current mana to the new
+    // max so we don't end up with mana > max_mana.
+    await db
+      .prepare(`UPDATE characters SET max_mana = max_mana + ?, mana = MIN(mana, max_mana + ?), last_active = ? WHERE slack_user_id = ?`)
+      .bind(delta, delta, Date.now(), userId)
+      .run();
+  }
+}
+
 export async function getEquipped(
   db: D1Database,
   characterId: string,
@@ -714,7 +881,7 @@ export async function getEquipped(
 ): Promise<Item | null> {
   const row = await db
     .prepare(
-      `SELECT id, character_id, item_name, item_type, power, rarity, flavor, equipped, weapon_range
+      `SELECT id, character_id, item_name, item_type, power, rarity, flavor, equipped, weapon_range, sharpens_count
        FROM inventory WHERE character_id = ? AND item_type = ? AND equipped = 1
        LIMIT 1`,
     )
@@ -900,10 +1067,12 @@ export async function setCharacterEffects(
 
 // Clears all effects from every party member of a quest. Called at quest end
 // (resolveVictory / resolveDeath / resolveExpeditionVictory / resolveFlee-fail).
+// Also nukes drink buffs in the same write — pub buffs don't persist past
+// the quest they were drunk for, regardless of unspent charges.
 export async function clearPartyEffects(db: D1Database, questId: number): Promise<void> {
   await db
     .prepare(
-      `UPDATE characters SET effects = '[]', last_active = ?
+      `UPDATE characters SET effects = '[]', drink_buff_json = NULL, last_active = ?
        WHERE slack_user_id IN (SELECT character_id FROM quest_party WHERE quest_id = ?)`,
     )
     .bind(Date.now(), questId)
@@ -961,12 +1130,111 @@ export async function countCharacters(db: D1Database): Promise<number> {
   return row?.n ?? 0;
 }
 
+// Lifetime stats for a single user, aggregated across every quest they've
+// taken part in. Same parsing approach as getQuestDamageStats — we read
+// the quest_log table and parse outcome strings, since we never bothered
+// to denormalize damage/heal/shield into dedicated columns.
+//
+// Quest counts are joined via quest_party (which uses character_id but
+// stores slack_user_id values — the column name is legacy).
+export interface LifetimeStats {
+  user_id: string;
+  quests_completed: number;
+  quests_failed: number;
+  quests_active: number;
+  damage_dealt: number;
+  healing_done: number;
+  shielding_done: number;
+  kills: number;            // last-hit count from logged "(kill)" markers
+  revives: number;          // count of /sq revive uses
+  deaths_soft: number;      // soft-death actions (12h cooldown)
+  deaths_perma: number;     // perma-death actions (elite quests)
+  by_variant: { standard: number; boss: number; gauntlet: number; dungeon: number };
+}
+
+export async function getLifetimeStats(
+  db: D1Database,
+  userId: string,
+): Promise<LifetimeStats> {
+  const result: LifetimeStats = {
+    user_id: userId,
+    quests_completed: 0,
+    quests_failed: 0,
+    quests_active: 0,
+    damage_dealt: 0,
+    healing_done: 0,
+    shielding_done: 0,
+    kills: 0,
+    revives: 0,
+    deaths_soft: 0,
+    deaths_perma: 0,
+    by_variant: { standard: 0, boss: 0, gauntlet: 0, dungeon: 0 },
+  };
+
+  // 1. Quest counts by status + by variant. quest_party.character_id stores
+  // slack_user_id (legacy column name).
+  const questRows = await db
+    .prepare(
+      `SELECT q.status, json_extract(q.scene_json, '$.variant') AS variant
+       FROM quests q
+       JOIN quest_party qp ON qp.quest_id = q.id
+       WHERE qp.character_id = ?`,
+    )
+    .bind(userId)
+    .all<{ status: string; variant: string | null }>();
+  for (const row of questRows.results ?? []) {
+    if (row.status === "completed") result.quests_completed += 1;
+    else if (row.status === "failed") result.quests_failed += 1;
+    else if (row.status === "active") result.quests_active += 1;
+    const v = row.variant ?? "standard";
+    if (v === "standard" || v === "boss" || v === "gauntlet" || v === "dungeon") {
+      result.by_variant[v] += 1;
+    } else {
+      result.by_variant.standard += 1;
+    }
+  }
+
+  // 2. Damage / heal / shield / kills aggregated from quest_log.
+  // Same outcome-string parsing as getQuestDamageStats.
+  const logRows = await db
+    .prepare(
+      `SELECT action, outcome FROM quest_log
+       WHERE actor = ?
+         AND action IN ('attack','cast','signature','tool','scroll','heal','shield','revive','death')`,
+    )
+    .bind(userId)
+    .all<{ action: string; outcome: string | null }>();
+  for (const row of logRows.results ?? []) {
+    const o = row.outcome ?? "";
+    if (row.action === "heal") {
+      const m = /\+(\d+)\s*HP/.exec(o);
+      if (m) result.healing_done += parseInt(m[1], 10);
+    } else if (row.action === "shield") {
+      const m = /\+(\d+)\s*sh/.exec(o);
+      if (m) result.shielding_done += parseInt(m[1], 10);
+    } else if (row.action === "revive") {
+      result.revives += 1;
+    } else if (row.action === "death") {
+      if (o === "perma") result.deaths_perma += 1;
+      else result.deaths_soft += 1;
+    } else {
+      // attack / cast / signature / tool / scroll → damage to monster
+      const dmgMatch = /(\d+)\s*dmg/.exec(o);
+      if (dmgMatch) result.damage_dealt += parseInt(dmgMatch[1], 10);
+      if (/\(kill\)/.test(o)) result.kills += 1;
+    }
+  }
+
+  return result;
+}
+
 // Per-character contribution stats for a quest. Aggregated from quest_log
 // outcome strings — we don't store damage in a dedicated column, but every
 // combat action's appendLog encodes the numbers in a parseable format.
 export interface QuestDamageStats {
   user_id: string;
   damage_dealt: number;     // sum of attack/cast/sig/tool/scroll damage to monsters
+  damage_taken: number;     // sum of monster-attack damage absorbed by this player (HP loss after armor/position)
   healing_done: number;     // sum of HP healed via /sq heal
   shielding_done: number;   // sum of shield added via /sq shield
   kills: number;            // count of finishing blows
@@ -974,6 +1242,14 @@ export interface QuestDamageStats {
 
 // Reads quest_log for a quest, parses outcome strings, returns per-actor stats
 // sorted by damage_dealt desc. Used at quest end for the damage-breakdown post.
+//
+// Two log shapes feed this:
+//   • Player rows (actor = slack_user_id) — attack/cast/sig/tool/scroll
+//     have "<N> dmg" in outcome; heal/shield have "+<N> HP"/"+<N> sh".
+//   • Monster rows (actor = 'monster') — attack has "<N> dmg → <name>
+//     <@user_id>" in outcome. The user_id tag was added so we can
+//     credit damage TAKEN to the right player; legacy rows without the
+//     tag are ignored for that stat (damage_dealt etc. unaffected).
 export async function getQuestDamageStats(
   db: D1Database,
   questId: number,
@@ -982,20 +1258,37 @@ export async function getQuestDamageStats(
     .prepare(
       `SELECT actor, action, outcome FROM quest_log
        WHERE quest_id = ?
-         AND actor != 'monster'
          AND action IN ('attack', 'cast', 'signature', 'tool', 'scroll', 'heal', 'shield')`,
     )
     .bind(questId)
     .all<{ actor: string; action: string; outcome: string | null }>();
 
   const stats = new Map<string, QuestDamageStats>();
+  const ensure = (userId: string): QuestDamageStats => {
+    let s = stats.get(userId);
+    if (!s) {
+      s = { user_id: userId, damage_dealt: 0, damage_taken: 0, healing_done: 0, shielding_done: 0, kills: 0 };
+      stats.set(userId, s);
+    }
+    return s;
+  };
+
   for (const row of rows.results ?? []) {
     if (!row.outcome) continue;
-    let s = stats.get(row.actor);
-    if (!s) {
-      s = { user_id: row.actor, damage_dealt: 0, healing_done: 0, shielding_done: 0, kills: 0 };
-      stats.set(row.actor, s);
+    if (row.actor === "monster") {
+      // Monster attack: "X dmg → Name <@user_id>". Extract the user_id
+      // tag and credit damage_taken. Older logs without the tag fall
+      // through silently — damage_taken just stays 0 for those quests.
+      if (row.action !== "attack") continue;
+      const dmgMatch = /(\d+)\s*dmg/.exec(row.outcome);
+      const userMatch = /<@([A-Z0-9]+)>/.exec(row.outcome);
+      if (dmgMatch && userMatch) {
+        ensure(userMatch[1]).damage_taken += parseInt(dmgMatch[1], 10);
+      }
+      continue;
     }
+
+    const s = ensure(row.actor);
     if (row.action === "heal") {
       const m = /\+(\d+)\s*HP/.exec(row.outcome);
       if (m) s.healing_done += parseInt(m[1], 10);
@@ -1019,25 +1312,66 @@ export async function getQuestDamageStats(
 // For dungeon and gauntlet quests, monster_name is the FINAL one (the last
 // monster fought / on scene). It misses earlier waves and dungeon rooms. v1
 // acceptable — eliminates the most-visible repetition (entry combat + boss).
+// Recent monster names from this channel's last N quests, for the AI scene
+// generator's avoid-list. Earlier version only read top-level monster_name,
+// which is just the FINAL monster of each quest — a dungeon's sub-boss, a
+// gauntlet's last wave, a standard's only foe. That missed dozens of names
+// hidden in dungeon middle rooms and gauntlet wave queues, so the AI could
+// (and frequently did) re-mint a name that had just been used inside a
+// recent dungeon (e.g. "API Abandoner" appearing as a middle room in two
+// different dungeons because neither saw the other's roster).
+//
+// Now extracts ALL monster names per quest:
+//   • top-level monster_name (always)
+//   • dungeon: every combat node's monster_name from expedition.nodes
+//   • gauntlet: every queued wave's name from upcoming_waves
+//
+// Deduped, ordered most-recent-first. Caller can slice however many they want
+// to feed into the prompt's avoid-list. `questLimit` is now QUESTS scanned,
+// not names returned — a single dungeon yields ~4-6 names.
 export async function getRecentMonsterNames(
   db: D1Database,
   channelId: string,
-  limit: number,
+  questLimit: number,
 ): Promise<string[]> {
   const rows = await db
     .prepare(
-      `SELECT json_extract(scene_json, '$.monster_name') AS name
-       FROM quests
-       WHERE channel_id = ?
-       ORDER BY id DESC
-       LIMIT ?`,
+      `SELECT scene_json FROM quests WHERE channel_id = ? ORDER BY id DESC LIMIT ?`,
     )
-    .bind(channelId, limit)
-    .all<{ name: string | null }>();
+    .bind(channelId, questLimit)
+    .all<{ scene_json: string }>();
+
   const names: string[] = [];
+  const seen = new Set<string>();
+  const tryAdd = (raw: unknown) => {
+    if (typeof raw !== "string") return;
+    const trimmed = raw.trim();
+    if (!trimmed || trimmed === "—") return;
+    if (seen.has(trimmed)) return;
+    seen.add(trimmed);
+    names.push(trimmed);
+  };
+
   for (const r of rows.results ?? []) {
-    if (r.name && typeof r.name === "string" && r.name.trim() && r.name !== "—") {
-      names.push(r.name);
+    try {
+      const scene = JSON.parse(r.scene_json) as SceneJson;
+      tryAdd(scene.monster_name);
+      // Dungeon: every combat node's monster (middle rooms + sub-boss).
+      // Sub-boss is also the top-level name, but tryAdd dedupes.
+      if (scene.expedition?.nodes) {
+        for (const node of scene.expedition.nodes) {
+          if (node.type === "combat") tryAdd(node.monster_name);
+        }
+      }
+      // Gauntlet: each queued wave's name. The active wave's name lives in
+      // monster_name (already captured above); upcoming_waves carries the
+      // rest.
+      if (scene.upcoming_waves) {
+        for (const wave of scene.upcoming_waves) tryAdd(wave.name);
+      }
+    } catch {
+      // Skip malformed scene_json rows — they're rare and shouldn't crash
+      // the avoid-list build.
     }
   }
   return names;
@@ -1141,6 +1475,727 @@ export async function getQuestParty(
   return (result.results ?? []).map(rowToCharacter);
 }
 
+// Fast headcount of a quest's roster. Used to switch combat cadence: solo
+// quests get a shorter action cooldown so the player isn't sitting through
+// 45s with nothing to do, while parties keep the slower cadence so other
+// players have time to react / coordinate.
+//
+// A simple COUNT vs the full character JOIN in getQuestParty — keeps the
+// hot-path cooldown check cheap (~1ms).
+export async function getQuestPartySize(
+  db: D1Database,
+  questId: number,
+): Promise<number> {
+  const row = await db
+    .prepare(`SELECT COUNT(*) AS n FROM quest_party WHERE quest_id = ?`)
+    .bind(questId)
+    .first<{ n: number }>();
+  return row?.n ?? 0;
+}
+
+// Atomically bumps an item's power + sharpens_count by 1, gated on owner
+// match + sharpens_count < cap. Returns true if the update landed. Caller
+// is responsible for deducting gold separately (and refunding on failure).
+//
+// The WHERE clause is the race guard: two simultaneous /sq smithy sharpen
+// clicks from the same user can't double-spend a sharpen — only one writes.
+// The other gets `false` and the caller re-charges nothing because the
+// gold deduct happens BEFORE this call.
+export async function sharpenItem(
+  db: D1Database,
+  itemId: number,
+  userId: string,
+  cap: number,
+): Promise<Item | null> {
+  const result = await db
+    .prepare(
+      `UPDATE inventory
+         SET power = power + 1,
+             sharpens_count = sharpens_count + 1
+       WHERE id = ? AND character_id = ? AND sharpens_count < ?`,
+    )
+    .bind(itemId, userId, cap)
+    .run();
+  if (result.meta.changes === 0) return null;
+  return getItem(db, itemId, userId);
+}
+
+// =============================================================================
+// TOWN / PUB
+// =============================================================================
+// Per-channel town state — single row per channel, JSON blob carries the
+// AI-generated town name, bartender, regulars (with baked dialog trees), and
+// daily special drink id. Returns null if no state exists OR if `windowMs`
+// has elapsed since the last refresh (caller schedules a fresh gen).
+export async function getTownState(
+  db: D1Database,
+  channelId: string,
+  windowMs: number,
+): Promise<TownState | null> {
+  const row = await db
+    .prepare(`SELECT channel_id, refreshed_at, state_json FROM town_state WHERE channel_id = ?`)
+    .bind(channelId)
+    .first<{ channel_id: string; refreshed_at: number; state_json: string }>();
+  if (!row) return null;
+  if (Date.now() - row.refreshed_at > windowMs) return null;
+  return JSON.parse(row.state_json) as TownState;
+}
+
+// Reads the raw row even when stale — used by gen code that wants to
+// preserve the town NAME across daily refreshes (weekly cadence) while
+// rotating the bartender / regulars / special.
+export async function getStaleTownState(
+  db: D1Database,
+  channelId: string,
+): Promise<TownState | null> {
+  const row = await db
+    .prepare(`SELECT state_json FROM town_state WHERE channel_id = ?`)
+    .bind(channelId)
+    .first<{ state_json: string }>();
+  return row ? (JSON.parse(row.state_json) as TownState) : null;
+}
+
+export async function saveTownState(
+  db: D1Database,
+  state: TownState,
+): Promise<void> {
+  await db
+    .prepare(
+      `INSERT INTO town_state (channel_id, refreshed_at, state_json)
+       VALUES (?, ?, ?)
+       ON CONFLICT(channel_id) DO UPDATE SET refreshed_at = excluded.refreshed_at, state_json = excluded.state_json`,
+    )
+    .bind(state.channel_id, state.refreshed_at, JSON.stringify(state))
+    .run();
+}
+
+// Returns the set of dialog-tree branch paths a player has already claimed
+// a payload from for this NPC on this refresh. Empty set if no row, or if
+// the row's refresh_date doesn't match (treated as fresh tree → no claims).
+export async function getClaimedNpcPaths(
+  db: D1Database,
+  channelId: string,
+  userId: string,
+  npcId: string,
+  refreshDate: number,
+): Promise<Set<string>> {
+  const row = await db
+    .prepare(
+      `SELECT claimed_paths_json, refresh_date FROM npc_payloads_claimed
+       WHERE channel_id = ? AND user_id = ? AND npc_id = ?`,
+    )
+    .bind(channelId, userId, npcId)
+    .first<{ claimed_paths_json: string; refresh_date: number }>();
+  if (!row) return new Set();
+  // Stale claim row for a previous tree refresh — treat as no claims.
+  if (row.refresh_date !== refreshDate) return new Set();
+  return new Set(JSON.parse(row.claimed_paths_json) as string[]);
+}
+
+// Records that a player has claimed the payload at the given branch path.
+// Idempotent — re-recording the same path is a no-op. Migrates the row to
+// the current refresh_date if it was stale (resetting prior claims).
+export async function recordClaimedNpcPath(
+  db: D1Database,
+  channelId: string,
+  userId: string,
+  npcId: string,
+  refreshDate: number,
+  path: string,
+): Promise<void> {
+  const existing = await getClaimedNpcPaths(db, channelId, userId, npcId, refreshDate);
+  existing.add(path);
+  const json = JSON.stringify([...existing]);
+  await db
+    .prepare(
+      `INSERT INTO npc_payloads_claimed (channel_id, user_id, npc_id, refresh_date, claimed_paths_json, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?)
+       ON CONFLICT(channel_id, user_id, npc_id) DO UPDATE SET
+         refresh_date = excluded.refresh_date,
+         claimed_paths_json = excluded.claimed_paths_json,
+         updated_at = excluded.updated_at`,
+    )
+    .bind(channelId, userId, npcId, refreshDate, json, Date.now())
+    .run();
+}
+
+// =============================================================================
+// PUB GAMES LEADERBOARD
+// =============================================================================
+//
+// Channel-scoped, derived purely from existing tables — no new persistence.
+// Every gold flow through Liars' Roll + SPD matches + SPD side bets is
+// summed per user; the renderer sorts by net P/L.
+//
+// "Games played" counts each independent settlement event:
+//   - one resolved Liars' round = one event
+//   - one done SPD match = one event each for initiator and challenger
+//   - one SPD side bet on a done match = one event for the bettor
+// A win is an event with net > 0. Ties (refunded SPD matches) don't
+// count; cancelled / open / abandoned rows are excluded entirely.
+
+export interface PubLeaderboardEntry {
+  user_id: string;
+  games: number;
+  wins: number;
+  net: number;                              // total net gold (positive = profit)
+  biggest_win: { amount: number; game: "liars" | "spd_match" | "spd_bet" } | null;
+  biggest_loss: { amount: number; game: "liars" | "spd_match" | "spd_bet" } | null;
+}
+
+export async function getPubLeaderboard(
+  db: D1Database,
+  channelId: string,
+): Promise<PubLeaderboardEntry[]> {
+  // Pull the three event sources in parallel. Each query already filters
+  // to resolved/done status so we don't have to dance around in-flight
+  // matches. SPD bets join their match to pull winner_user_id +
+  // channel_id for the gating + payout logic.
+  const [liarsRows, spdMatchRows, spdBetRows] = await Promise.all([
+    db.prepare(
+      `SELECT user_id, stake, payout, outcome
+         FROM liars_rounds
+        WHERE channel_id = ? AND status = 'resolved'`,
+    ).bind(channelId).all<{ user_id: string; stake: number; payout: number | null; outcome: string }>(),
+    db.prepare(
+      `SELECT initiator_user_id, challenger_user_id, initiator_stake, winner_user_id, house_bump
+         FROM spd_matches
+        WHERE channel_id = ? AND status = 'done'`,
+    ).bind(channelId).all<{
+      initiator_user_id: string; challenger_user_id: string | null;
+      initiator_stake: number; winner_user_id: string | null; house_bump: number | null;
+    }>(),
+    db.prepare(
+      `SELECT b.bettor_user_id, b.side, b.amount, m.winner_user_id, m.initiator_user_id, m.challenger_user_id
+         FROM spd_bets b
+         JOIN spd_matches m ON m.id = b.match_id
+        WHERE m.channel_id = ? AND m.status = 'done'`,
+    ).bind(channelId).all<{
+      bettor_user_id: string; side: string; amount: number;
+      winner_user_id: string | null; initiator_user_id: string; challenger_user_id: string | null;
+    }>(),
+  ]);
+
+  const stats = new Map<string, PubLeaderboardEntry>();
+  const ensure = (userId: string): PubLeaderboardEntry => {
+    let s = stats.get(userId);
+    if (!s) {
+      s = { user_id: userId, games: 0, wins: 0, net: 0, biggest_win: null, biggest_loss: null };
+      stats.set(userId, s);
+    }
+    return s;
+  };
+  const recordEvent = (userId: string, net: number, game: "liars" | "spd_match" | "spd_bet") => {
+    const s = ensure(userId);
+    s.games += 1;
+    s.net += net;
+    if (net > 0) {
+      s.wins += 1;
+      if (!s.biggest_win || net > s.biggest_win.amount) s.biggest_win = { amount: net, game };
+    } else if (net < 0) {
+      if (!s.biggest_loss || -net > s.biggest_loss.amount) s.biggest_loss = { amount: -net, game };
+    }
+  };
+
+  // Liars rounds — payout already includes the 5% house rake; loss = -stake.
+  for (const r of liarsRows.results ?? []) {
+    const won = r.outcome === "trust_win" || r.outcome === "challenge_win";
+    const net = won ? ((r.payout ?? 0) - r.stake) : -r.stake;
+    recordEvent(r.user_id, net, "liars");
+  }
+
+  // SPD matches — winner takes 2× stake + house_bump; loser drops their stake.
+  // Ties (winner_user_id null) shouldn't appear here because they're refunded
+  // and finalize with winner=null and bump=0; we still skip them defensively.
+  for (const m of spdMatchRows.results ?? []) {
+    if (!m.winner_user_id || !m.challenger_user_id) continue;
+    const bump = m.house_bump ?? 0;
+    const winnerNet = m.initiator_stake + bump;       // stake back + opponent's stake (= 2×stake) - own stake = +stake; plus bump
+    const loserNet = -m.initiator_stake;
+    if (m.winner_user_id === m.initiator_user_id) {
+      recordEvent(m.initiator_user_id, winnerNet, "spd_match");
+      recordEvent(m.challenger_user_id, loserNet, "spd_match");
+    } else {
+      recordEvent(m.challenger_user_id, winnerNet, "spd_match");
+      recordEvent(m.initiator_user_id, loserNet, "spd_match");
+    }
+  }
+
+  // SPD bets — winning bet pays 2× (so net = +amount); losing bet net = -amount.
+  for (const b of spdBetRows.results ?? []) {
+    if (!b.winner_user_id) continue;
+    const winningSideUserId = b.winner_user_id === b.initiator_user_id ? b.initiator_user_id : b.challenger_user_id;
+    const sideMatchesWinner = (b.side === "initiator" && winningSideUserId === b.initiator_user_id)
+      || (b.side === "challenger" && winningSideUserId === b.challenger_user_id);
+    const net = sideMatchesWinner ? b.amount : -b.amount;
+    recordEvent(b.bettor_user_id, net, "spd_bet");
+  }
+
+  return Array.from(stats.values()).sort((a, b) => b.net - a.net);
+}
+//
+// Server-side state for the bluff mini-game. The bartender's secret
+// dice + whether they're lying about the zone live here so the round
+// can't be exploited by inspecting button payloads. Round row created
+// when the player picks a stake; resolved when they click Trust /
+// Challenge.
+
+export type LiarsClaim = "low" | "medium" | "high";
+export type LiarsOutcome = "trust_win" | "trust_lose" | "challenge_win" | "challenge_lose";
+
+export interface LiarsRound {
+  id: number;
+  user_id: string;
+  channel_id: string;
+  stake: number;
+  player_dice: number[];
+  bartender_dice: number[];
+  claim: LiarsClaim;
+  lied: boolean;
+  status: "open" | "resolved";
+  outcome: LiarsOutcome | null;
+  payout: number | null;
+  created_at: number;
+  resolved_at: number | null;
+}
+
+interface LiarsRoundRow extends Omit<LiarsRound, "player_dice" | "bartender_dice" | "lied"> {
+  player_dice: string;
+  bartender_dice: string;
+  lied: number;
+}
+
+function rowToLiarsRound(row: LiarsRoundRow): LiarsRound {
+  return {
+    ...row,
+    player_dice: JSON.parse(row.player_dice) as number[],
+    bartender_dice: JSON.parse(row.bartender_dice) as number[],
+    lied: row.lied === 1,
+  };
+}
+
+export interface CreateLiarsRoundInput {
+  user_id: string;
+  channel_id: string;
+  stake: number;
+  player_dice: number[];
+  bartender_dice: number[];
+  claim: LiarsClaim;
+  lied: boolean;
+}
+export async function createLiarsRound(
+  db: D1Database,
+  input: CreateLiarsRoundInput,
+): Promise<number> {
+  const result = await db
+    .prepare(
+      `INSERT INTO liars_rounds (user_id, channel_id, stake, player_dice, bartender_dice, claim, lied, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .bind(
+      input.user_id,
+      input.channel_id,
+      input.stake,
+      JSON.stringify(input.player_dice),
+      JSON.stringify(input.bartender_dice),
+      input.claim,
+      input.lied ? 1 : 0,
+      Date.now(),
+    )
+    .run();
+  return result.meta.last_row_id as number;
+}
+
+export async function getLiarsRound(
+  db: D1Database,
+  roundId: number,
+): Promise<LiarsRound | null> {
+  const row = await db
+    .prepare(`SELECT * FROM liars_rounds WHERE id = ?`)
+    .bind(roundId)
+    .first<LiarsRoundRow>();
+  return row ? rowToLiarsRound(row) : null;
+}
+
+// Race-safe finalize: only writes if status is still 'open'. Caller
+// computed payout + outcome; returns true if THIS call's UPDATE won.
+// The losing race-claimant gets false back and shouldn't apply gold
+// changes (the winner already did).
+export async function finalizeLiarsRound(
+  db: D1Database,
+  roundId: number,
+  outcome: LiarsOutcome,
+  payout: number,
+): Promise<boolean> {
+  const result = await db
+    .prepare(
+      `UPDATE liars_rounds SET status = 'resolved', outcome = ?, payout = ?, resolved_at = ? WHERE id = ? AND status = 'open'`,
+    )
+    .bind(outcome, payout, Date.now(), roundId)
+    .run();
+  return (result.meta.changes ?? 0) > 0;
+}
+
+// =============================================================================
+// STONE-PARCHMENT-DAGGER
+// =============================================================================
+//
+// Persistent two-player match state + spectator side bets. Matches are
+// per-channel (one open at a time, enforced by a single-row query gate),
+// bets are per (match, bettor). All amounts are stored as raw gold — no
+// derived state is cached on disk; payouts compute fresh at resolution.
+
+export type SpdStatus = "open" | "resolving" | "done" | "cancelled";
+
+export interface SpdMatch {
+  id: number;
+  channel_id: string;
+  initiator_user_id: string;
+  initiator_stake: number;
+  initiator_throw: string;             // SpdThrow string; typed in callers via flavor.ts cast
+  challenger_user_id: string | null;
+  challenger_throw: string | null;
+  status: SpdStatus;
+  winner_user_id: string | null;
+  house_bump: number | null;
+  message_ts: string | null;
+  created_at: number;
+  resolved_at: number | null;
+  // Last time the initiator surfaced this match via the Bump button.
+  // Null = never bumped; the cooldown check then uses created_at as
+  // the floor instead. Updated atomically in tryBumpSpdMatch.
+  last_bumped_at: number | null;
+}
+
+export interface SpdBet {
+  match_id: number;
+  bettor_user_id: string;
+  side: "initiator" | "challenger";
+  amount: number;
+  created_at: number;
+}
+
+// Returns the channel's single in-flight match if any, or null. Used as
+// the gate before creating a new match — only one open match per channel.
+export async function getOpenSpdMatch(
+  db: D1Database,
+  channelId: string,
+): Promise<SpdMatch | null> {
+  return db
+    .prepare(
+      `SELECT * FROM spd_matches WHERE channel_id = ? AND status = 'open' ORDER BY id DESC LIMIT 1`,
+    )
+    .bind(channelId)
+    .first<SpdMatch>();
+}
+
+export async function getSpdMatch(
+  db: D1Database,
+  matchId: number,
+): Promise<SpdMatch | null> {
+  return db
+    .prepare(`SELECT * FROM spd_matches WHERE id = ?`)
+    .bind(matchId)
+    .first<SpdMatch>();
+}
+
+export interface CreateSpdMatchInput {
+  channel_id: string;
+  initiator_user_id: string;
+  initiator_stake: number;
+  initiator_throw: string;
+}
+export async function createSpdMatch(
+  db: D1Database,
+  input: CreateSpdMatchInput,
+): Promise<number> {
+  const result = await db
+    .prepare(
+      `INSERT INTO spd_matches (channel_id, initiator_user_id, initiator_stake, initiator_throw, created_at)
+       VALUES (?, ?, ?, ?, ?)`,
+    )
+    .bind(input.channel_id, input.initiator_user_id, input.initiator_stake, input.initiator_throw, Date.now())
+    .run();
+  return result.meta.last_row_id as number;
+}
+
+// Attaches the public-message ts to a match so future state-update posts
+// can reply in-thread. Fire-and-forget; non-fatal if it fails.
+export async function setSpdMessageTs(
+  db: D1Database,
+  matchId: number,
+  messageTs: string,
+): Promise<void> {
+  await db
+    .prepare(`UPDATE spd_matches SET message_ts = ? WHERE id = ?`)
+    .bind(messageTs, matchId)
+    .run();
+}
+
+// Atomic "accept" + transition to resolving in one shot. The UPDATE's
+// WHERE clause is the race guard:
+//   - status must still be 'open'
+//   - challenger_user_id must still be NULL
+//   - the would-be challenger must not be the initiator
+// If meta.changes = 0, the second of two simultaneous accepts lost the
+// race and the caller refuses with "someone else already accepted."
+export async function acceptSpdMatch(
+  db: D1Database,
+  matchId: number,
+  challengerUserId: string,
+  challengerThrow: string,
+): Promise<boolean> {
+  const result = await db
+    .prepare(
+      `UPDATE spd_matches
+          SET challenger_user_id = ?,
+              challenger_throw = ?,
+              status = 'resolving'
+        WHERE id = ?
+          AND status = 'open'
+          AND challenger_user_id IS NULL
+          AND initiator_user_id != ?`,
+    )
+    .bind(challengerUserId, challengerThrow, matchId, challengerUserId)
+    .run();
+  return (result.meta.changes ?? 0) > 0;
+}
+
+// Final state write. Single statement so the row is consistent — winner,
+// bump, resolution time, and status all land together. Caller has
+// already done the payout DB writes for participants + bettors.
+export async function finalizeSpdMatch(
+  db: D1Database,
+  matchId: number,
+  winnerUserId: string | null,
+  houseBump: number,
+): Promise<void> {
+  await db
+    .prepare(
+      `UPDATE spd_matches SET status = 'done', winner_user_id = ?, house_bump = ?, resolved_at = ? WHERE id = ?`,
+    )
+    .bind(winnerUserId, houseBump, Date.now(), matchId)
+    .run();
+}
+
+// Race-safe cancel: only flips status to 'cancelled' if it was 'open'.
+// Caller checks the boolean and runs refunds if true. Used by both
+// initiator-cancel and auto-expiry.
+export async function cancelSpdMatch(
+  db: D1Database,
+  matchId: number,
+): Promise<boolean> {
+  const result = await db
+    .prepare(
+      `UPDATE spd_matches SET status = 'cancelled', resolved_at = ? WHERE id = ? AND status = 'open'`,
+    )
+    .bind(Date.now(), matchId)
+    .run();
+  return (result.meta.changes ?? 0) > 0;
+}
+
+// Race-safe bet placement. INSERT OR IGNORE on the composite PK means
+// double-clicks AND simultaneous-spectator races both resolve to one
+// row. Returns true if THIS call's INSERT won.
+export async function placeSpdBet(
+  db: D1Database,
+  bet: SpdBet,
+): Promise<boolean> {
+  const result = await db
+    .prepare(
+      `INSERT OR IGNORE INTO spd_bets (match_id, bettor_user_id, side, amount, created_at) VALUES (?, ?, ?, ?, ?)`,
+    )
+    .bind(bet.match_id, bet.bettor_user_id, bet.side, bet.amount, Date.now())
+    .run();
+  return (result.meta.changes ?? 0) > 0;
+}
+
+export async function getSpdBets(
+  db: D1Database,
+  matchId: number,
+): Promise<SpdBet[]> {
+  const result = await db
+    .prepare(`SELECT * FROM spd_bets WHERE match_id = ? ORDER BY created_at ASC`)
+    .bind(matchId)
+    .all<SpdBet>();
+  return result.results ?? [];
+}
+
+// Looks up THIS user's bet on THIS match (one bet per user enforced by
+// the table's PK). Used to refuse double-bets cleanly with the original
+// side+amount surfaced.
+export async function getSpdBetByUser(
+  db: D1Database,
+  matchId: number,
+  bettorUserId: string,
+): Promise<SpdBet | null> {
+  return db
+    .prepare(`SELECT * FROM spd_bets WHERE match_id = ? AND bettor_user_id = ?`)
+    .bind(matchId, bettorUserId)
+    .first<SpdBet>();
+}
+
+// Atomic Bump: writes last_bumped_at = now ONLY if the match is open,
+// owned by the requested user, AND its prior bump (or creation) is
+// older than the cooldown cutoff. The WHERE clause is the race +
+// cooldown guard — caller checks meta.changes to know if it landed.
+//
+// Returns true if THIS call's UPDATE won. False = either someone else
+// raced us, the cooldown isn't up yet, or the match isn't open.
+export async function tryBumpSpdMatch(
+  db: D1Database,
+  matchId: number,
+  initiatorUserId: string,
+  cooldownMs: number,
+): Promise<boolean> {
+  const cutoff = Date.now() - cooldownMs;
+  const result = await db
+    .prepare(
+      `UPDATE spd_matches SET last_bumped_at = ?
+       WHERE id = ?
+         AND initiator_user_id = ?
+         AND status = 'open'
+         AND ((last_bumped_at IS NULL AND created_at < ?) OR last_bumped_at < ?)`,
+    )
+    .bind(Date.now(), matchId, initiatorUserId, cutoff, cutoff)
+    .run();
+  return (result.meta.changes ?? 0) > 0;
+}
+
+// Sweeps any open match in the channel that's past its expiry cutoff.
+// Returns the swept matches so the caller can refund stakes/bets. Lazy
+// — only runs from view paths so we don't need a cron.
+export async function findExpiredSpdMatches(
+  db: D1Database,
+  channelId: string,
+  expiryMs: number,
+): Promise<SpdMatch[]> {
+  const cutoff = Date.now() - expiryMs;
+  const result = await db
+    .prepare(
+      `SELECT * FROM spd_matches WHERE channel_id = ? AND status = 'open' AND created_at < ?`,
+    )
+    .bind(channelId, cutoff)
+    .all<SpdMatch>();
+  return result.results ?? [];
+}
+
+// =============================================================================
+// JOB BOARD CLAIMS
+// =============================================================================
+//
+// Each board posting (per channel, per refresh stamp) can be claimed by
+// at most one player. The atomic claim is an INSERT OR IGNORE on the
+// composite primary key — if two players click "Take Job" simultaneously,
+// exactly one INSERT succeeds and the other is rejected by the uniqueness
+// constraint. The caller checks `meta.changes` to know which side won.
+
+export async function tryClaimJob(
+  db: D1Database,
+  channelId: string,
+  refreshStamp: number,
+  jobId: string,
+  userId: string,
+): Promise<boolean> {
+  const result = await db
+    .prepare(
+      `INSERT OR IGNORE INTO job_claims (channel_id, refresh_stamp, job_id, taken_by, taken_at)
+       VALUES (?, ?, ?, ?, ?)`,
+    )
+    .bind(channelId, refreshStamp, jobId, userId, Date.now())
+    .run();
+  return (result.meta.changes ?? 0) > 0;
+}
+
+// Returns a map of job_id → claim info for every job claimed under a
+// given (channel, refresh_stamp). Caller folds this into the renderer
+// to show "taken by @user" badges and disable claimed buttons.
+export async function getJobClaims(
+  db: D1Database,
+  channelId: string,
+  refreshStamp: number,
+): Promise<Record<string, { taken_by: string; taken_at: number }>> {
+  const result = await db
+    .prepare(`SELECT job_id, taken_by, taken_at FROM job_claims WHERE channel_id = ? AND refresh_stamp = ?`)
+    .bind(channelId, refreshStamp)
+    .all<{ job_id: string; taken_by: string; taken_at: number }>();
+  const out: Record<string, { taken_by: string; taken_at: number }> = {};
+  for (const row of result.results ?? []) {
+    out[row.job_id] = { taken_by: row.taken_by, taken_at: row.taken_at };
+  }
+  return out;
+}
+
+// Reads a single claim if present. Cheaper than getJobClaims for the
+// take-handler path which only cares about one job at a time. Returns
+// the claimant on win (caller can show "Sorry, @taker beat you to it")
+// or null if no claim exists yet.
+export async function getJobClaim(
+  db: D1Database,
+  channelId: string,
+  refreshStamp: number,
+  jobId: string,
+): Promise<{ taken_by: string; taken_at: number } | null> {
+  const row = await db
+    .prepare(
+      `SELECT taken_by, taken_at FROM job_claims
+       WHERE channel_id = ? AND refresh_stamp = ? AND job_id = ?`,
+    )
+    .bind(channelId, refreshStamp, jobId)
+    .first<{ taken_by: string; taken_at: number }>();
+  return row ?? null;
+}
+
+// =============================================================================
+// DRINK BUFFS
+// =============================================================================
+// Single-buff JSON on characters.drink_buff_json. Second drink replaces
+// first — no stacking. Cleared at quest end (clearDrinkBuff called from
+// the quest-end paths).
+export async function setDrinkBuff(
+  db: D1Database,
+  userId: string,
+  buff: DrinkBuff,
+): Promise<void> {
+  await db
+    .prepare(`UPDATE characters SET drink_buff_json = ?, last_active = ? WHERE slack_user_id = ?`)
+    .bind(JSON.stringify(buff), Date.now(), userId)
+    .run();
+}
+
+export async function clearDrinkBuff(
+  db: D1Database,
+  userId: string,
+): Promise<void> {
+  await db
+    .prepare(`UPDATE characters SET drink_buff_json = NULL WHERE slack_user_id = ?`)
+    .bind(userId)
+    .run();
+}
+
+// Decrement the buff's remaining counter by 1; clears the buff entirely if
+// it hits zero. Returns the post-tick buff (or null if it expired). Called
+// after each combat action consumes a buff charge.
+export async function tickDrinkBuff(
+  db: D1Database,
+  userId: string,
+): Promise<DrinkBuff | null> {
+  const row = await db
+    .prepare(`SELECT drink_buff_json FROM characters WHERE slack_user_id = ?`)
+    .bind(userId)
+    .first<{ drink_buff_json: string | null }>();
+  if (!row?.drink_buff_json) return null;
+  const buff = JSON.parse(row.drink_buff_json) as DrinkBuff;
+  const remaining = buff.remaining - 1;
+  if (remaining <= 0) {
+    await clearDrinkBuff(db, userId);
+    return null;
+  }
+  const next: DrinkBuff = { ...buff, remaining };
+  await setDrinkBuff(db, userId, next);
+  return next;
+}
+
 // A "fighter" is a party member who can still act: alive HP and not on a cooldown'd downed timer.
 export function isFighter(c: Character): boolean {
   return c.hp > 0 && (!c.downed_until || c.downed_until <= Date.now());
@@ -1163,7 +2218,7 @@ export async function cooldownRemaining(
     .prepare(
       `SELECT MAX(ts) AS last_ts FROM quest_log
        WHERE quest_id = ? AND actor = ?
-         AND action IN ('attack', 'cast', 'flee', 'signature', 'heal', 'shield', 'revive', 'position', 'tool', 'scroll')
+         AND action IN ('attack', 'cast', 'flee', 'signature', 'ability', 'heal', 'shield', 'revive', 'position', 'tool', 'scroll')
          AND ts > COALESCE(
            (SELECT MAX(ts) FROM quest_log WHERE quest_id = ? AND actor = ? AND action = 'cooldown_reset'),
            0

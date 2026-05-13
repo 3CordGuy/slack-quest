@@ -213,7 +213,39 @@ export const EFFECT_META: Record<EffectType, EffectMeta> = {
   poisoned: { emoji: "☠️", name: "Poisoned", kind: "debuff", ignoresArmor: true, blurb: "Loses HP each turn." },
 };
 
-export type WeaponRange = "melee" | "ranged";
+// "focus" weapons are the caster/support tier: wands, staves, codices.
+// They don't add to attack/cast/sig damage (the bot zeroes weaponMod
+// when range = "focus") and instead boost /sq heal + /sq shield by
+// their power, plus grant +1 max mana while equipped.
+//
+// Keeping focus in the same TEXT column as melee/ranged means no DB
+// migration is needed — the existing weapon_range field carries it.
+// Old code that switches on melee/ranged needs a focus branch (or
+// `(weapon_range ?? "melee") === "ranged"` style fallbacks gracefully
+// treat focus as ranged-positioning by accident — we explicitly handle
+// the case where it matters).
+export type WeaponRange = "melee" | "ranged" | "focus";
+
+// Constant mana ceiling lift while a focus weapon is equipped. Single
+// flat bump regardless of rarity — keeps the bookkeeping simple (one
+// integer to add/subtract on equip swaps). Caps still enforced via
+// MAX_MANA_CAP at higher level paths.
+export const FOCUS_MAX_MANA_BONUS = 1;
+
+// Per-rarity heal/shield bonus when a focus weapon is equipped. Scales
+// the same way weapon power scales for melee/ranged, just applied to
+// support actions instead of damage.
+export const FOCUS_POWER_BY_RARITY: Record<Rarity, number> = {
+  common: 2,
+  uncommon: 4,
+  rare: 6,
+};
+
+// Probability that a random "weapon" roll becomes a focus instead of
+// melee/ranged. Players who want a damage weapon still get one ~75% of
+// the time; focus shows up often enough that healer/support builds
+// have a real shot at gear without farming forever.
+export const FOCUS_WEAPON_ROLL_CHANCE = 0.25;
 
 export const SHIELD_CAP_MULTIPLIER = 2; // shield caps at SHIELD_CAP_MULTIPLIER × max_hp
 export type Rarity = "common" | "uncommon" | "rare";
@@ -243,6 +275,117 @@ export function signatureFor(className: string): SignatureSpec | null {
   const cls = CLASSES.find((c) => c.name === className);
   if (!cls) return null;
   return SIGNATURES[cls.id] ?? null;
+}
+
+// Class passive abilities. Always-on or once-per-fight triggers that fire
+// automatically based on combat conditions — no command to invoke them. The
+// actual mechanics live in commands.ts (handleCombat, applyPlayerTick,
+// buildCombatBlocks). This map is the player-facing description shown on
+// /sq sheet so players know what their class quietly does.
+export interface PassiveSpec {
+  name: string;
+  blurb: string;
+}
+
+export const PASSIVES: Record<string, PassiveSpec> = {
+  devops_mage: {
+    name: "Mana Catalyst",
+    blurb: "First signature each fight costs 0 mana.",
+  },
+  qa_paladin: {
+    name: "Lay on Hands",
+    blurb: "Once per fight, when an ally drops below 30% HP after a hit, auto-heal them.",
+  },
+  backend_druid: {
+    name: "Database-Tree Communion",
+    blurb: "Regen +1 HP on every own action (always-on).",
+  },
+  frontend_bard: {
+    name: "Bardic Aura",
+    blurb: "While you're alive, other party members' attacks deal +1 damage.",
+  },
+  staff_sage: {
+    name: "Sage's Reading",
+    blurb: "When viewing combat, see the monster's next-swing damage range.",
+  },
+  refactor_rogue: {
+    name: "First Strike",
+    blurb: "Your first basic attack each fight is a guaranteed crit.",
+  },
+  sre_warden: {
+    name: "Harden Up",
+    blurb: "Gain a small starting shield on your first action each fight.",
+  },
+  data_warlock: {
+    name: "Cursed Strike",
+    blurb: "Critical attacks/casts inflict a 2-turn 🩸 bleed on the monster.",
+  },
+};
+
+export function passiveFor(className: string): PassiveSpec | null {
+  const cls = CLASSES.find((c) => c.name === className);
+  if (!cls) return null;
+  return PASSIVES[cls.id] ?? null;
+}
+
+// Class active abilities — each class gets one tactical move invoked via
+// /sq ability. Distinct from signatures (which are damage); actives are
+// utility/control/support. All cost mana, share the 45s combat cooldown.
+// The mechanics live in commands.ts (handleAbility); this map is the
+// player-facing description shown on /sq sheet and in help text.
+export interface AbilitySpec {
+  name: string;
+  mana_cost: number;
+  blurb: string;
+}
+
+export const ABILITIES: Record<string, AbilitySpec> = {
+  devops_mage: {
+    name: "Containerize",
+    mana_cost: 2,
+    blurb: "Locks the monster in a stasis container. It skips its next swing entirely.",
+  },
+  qa_paladin: {
+    name: "Regression Shield",
+    mana_cost: 2,
+    blurb: "Grants 🛡 +3 shield to every alive partymate.",
+  },
+  backend_druid: {
+    name: "Migrate",
+    mana_cost: 1,
+    blurb: "Move any partymate to front or back without consuming their turn.",
+  },
+  frontend_bard: {
+    name: "Battle Hymn",
+    mana_cost: 2,
+    blurb: "Bardic aura jumps from +1 to +3 damage for the next 2 partymate attacks.",
+  },
+  staff_sage: {
+    name: "Foresee",
+    mana_cost: 1,
+    blurb: "Read the monster's tells — see the next 2 telegraphed targets with damage ranges.",
+  },
+  refactor_rogue: {
+    name: "Vanish",
+    mana_cost: 2,
+    blurb: "Disappear into the shadows — the monster can't target you for its next 2 swings.",
+  },
+  sre_warden: {
+    name: "Taunt",
+    mana_cost: 2,
+    blurb: "Force the monster to target you for its next 2 swings, overriding the telegraph.",
+  },
+  data_warlock: {
+    name: "Soul Drain",
+    mana_cost: 2,
+    blurb: "Deal 1d6 + magic_mod damage and heal yourself for 50% of damage dealt.",
+  },
+};
+
+export function abilityFor(className: string): AbilitySpec | null {
+  const cls = CLASSES.find((c) => c.name === className);
+  if (!cls) return null;
+  return ABILITIES[cls.id] ?? null;
 }
 
 export interface ItemRoll {
@@ -324,8 +467,471 @@ export const ITEM_CATALOG: CatalogEntry[] = [
   },
 ];
 
+// Looks up a catalog entry by name. Catalog items are stored in inventory
+// with their emoji PREFIXED into the name ("🧪 Poison Vial"), so a plain
+// equality check against the catalog's bare name ("Poison Vial") misses.
+// We strip a leading emoji + whitespace before matching to make lookups
+// robust regardless of whether the caller passes the bare or prefixed form.
+//
+// This is the bug that caused "/gq use" to report "Unknown effect" for
+// every catalog item — items were saved as "🧪 Poison Vial" but the
+// dispatcher couldn't match them to the catalog because of the prefix.
+// "Staples" — commodity potions that are always in stock at the channel shop
+// AND every dungeon merchant. Fixed price, no per-cycle buy cap, infinite
+// supply. Separate from ITEM_CATALOG because:
+//   (a) we don't want them in the random-loot pool (rolled drops should feel
+//       like loot, not commodities)
+//   (b) staples bypass the shop's restock + buy-cap machinery entirely
+//
+// Stored in inventory with the normal item_type so handleUse routes correctly:
+// Health potions are item_type="consumable" (existing HP-heal path); mana
+// potions are item_type="consumable" too with a name marker so handleUse
+// dispatches to the mana-restore branch.
+export interface StapleSpec {
+  id: string;          // short slug used in slash form (`/sq buy hp`, etc.)
+  name: string;        // display name, stored as inventory item_name
+  emoji: string;
+  effect: "heal_hp" | "restore_mana";
+  power: number;       // HP healed OR mana restored on use
+  price: number;       // gold
+  blurb: string;
+}
+
+export const STAPLES: StapleSpec[] = [
+  {
+    id: "hp",
+    name: "Health Potion",
+    emoji: "🧪",
+    effect: "heal_hp",
+    power: 10,
+    price: 15,
+    blurb: "Restores 10 HP. Always in stock.",
+  },
+  {
+    id: "hp+",
+    name: "Greater Health Potion",
+    emoji: "🧪",
+    effect: "heal_hp",
+    power: 25,
+    price: 40,
+    blurb: "Restores 25 HP. Always in stock.",
+  },
+  {
+    id: "mp",
+    name: "Mana Vial",
+    emoji: "✨",
+    effect: "restore_mana",
+    power: 1,
+    price: 30,
+    blurb: "Restores 1 mana. Always in stock.",
+  },
+  {
+    id: "mp+",
+    name: "Mana Flask",
+    emoji: "✨",
+    effect: "restore_mana",
+    power: 2,
+    price: 60,
+    blurb: "Restores 2 mana. Always in stock.",
+  },
+];
+
+// Lookup by short id (slash form), display name, or "<emoji> <name>" form
+// (handleUse calls this with the prefixed inventory name). Case-insensitive.
+export function findStaple(query: string): StapleSpec | undefined {
+  const q = query.trim().toLowerCase();
+  return STAPLES.find((s) =>
+    s.id.toLowerCase() === q
+    || s.name.toLowerCase() === q
+    || `${s.emoji} ${s.name}`.toLowerCase() === q,
+  );
+}
+
+// =============================================================================
+// TOWN / PUB
+// =============================================================================
+//
+// The pub serves drinks (catalog below) and hosts AI-generated NPCs with
+// pre-baked multi-choice dialog trees. Town infrastructure lives here in
+// flavor.ts alongside other catalog-style data (DRINKS sits next to STAPLES;
+// types live next to the existing item types).
+//
+// Drinks split into two effect classes:
+//   * *Instant* — fire-and-forget effects (heal HP, restore mana, grant
+//     shield). Apply at purchase time; no buff state stored.
+//   * *Buff* — stat modifiers that tick down on quest combat actions. Only
+//     ONE active drink buff per character at a time; a second drink
+//     replaces the first.
+//
+// Buffs are stored on `characters.drink_buff_json` as a single JSON blob
+// rather than the multi-effect `character.effects` array, because:
+//   1. The "one at a time" rule maps cleanly to one row field.
+//   2. Buffs aren't HP-tick effects (the existing StatusEffect framework
+//      assumes per-action HP deltas).
+//   3. Combat math reads `character.drink_buff` directly instead of
+//      iterating an effect array.
+export type DrinkEffectKind =
+  | "buff_attack"        // +N to attack dice for `remaining` actions
+  | "buff_magic"         // +N to cast/sig magic_mod for `remaining` actions
+  | "buff_next_crit"     // next attack/cast/sig is a guaranteed crit
+  | "instant_shield"     // +N shield, instant
+  | "instant_hp"         // +N HP, instant
+  | "instant_mana"       // +N mana, instant
+  | "instant_combo";     // multi-effect instant (HP + mana, etc.)
+
+export interface DrinkSpec {
+  id: string;
+  name: string;
+  emoji: string;
+  price: number;
+  effect: DrinkEffect;
+  blurb: string;
+}
+
+export type DrinkEffect =
+  | { kind: "buff_attack"; magnitude: number; duration: number }
+  | { kind: "buff_magic"; magnitude: number; duration: number }
+  | { kind: "buff_next_crit" }
+  | { kind: "instant_shield"; amount: number }
+  | { kind: "instant_hp"; amount: number }
+  | { kind: "instant_mana"; amount: number }
+  | { kind: "instant_combo"; hp: number; mana: number };
+
+// Active drink buff stored on the character. Only present when there's a
+// time-bounded buff in flight; instant effects don't write here.
+export interface DrinkBuff {
+  // Lowercase mirror of the relevant DrinkEffect kinds. Combat code keys
+  // off this to apply the right modifier.
+  kind: "buff_attack" | "buff_magic" | "buff_next_crit";
+  magnitude: number;        // stat bonus; 1 for next_crit (charges)
+  remaining: number;        // actions remaining (1 for next_crit)
+  drink_id: string;         // for display: emoji + name from the catalog
+}
+
+// 8 drinks, two tiers. Starter tier (8-15g) is everyday support; premium tier
+// (25-30g) is for the late-game pockets-full crowd. Numbers tuned against the
+// existing combat math:
+//   * +1 atk = roughly one extra damage on every swing for 3 swings. Worth
+//     ~5g compared to a Health Potion's 10 HP. 8g is a fair-but-tempting price.
+//   * +5 shield from Iron Brew matches roughly half the value of a 1-mana
+//     `/sq shield` (which rolls 1d6 + mag_mod ≈ 5-9), but without spending mana
+//     and at the cost of gold instead.
+//   * +1 mana from Bitter Tea costs 12g — comparable to a Mana Vial (30g
+//     for the same +1) but cheaper because it's gated to between-quest
+//     consumption, where staples are useful mid-quest too.
+//   * Lucky Sip's guaranteed crit is roughly 1.5-2× a normal attack's damage.
+//     Worth 15g compared to two Tavern Ales (16g for +3 over 3 swings).
+//   * Premium tier (Whiskey/Reset): 2-3× the starter prices for stronger
+//     effects. Aimed at level-5+ players who can afford it.
+export const DRINKS: DrinkSpec[] = [
+  {
+    id: "ale", emoji: "🍺", name: "Tavern Ale", price: 8,
+    effect: { kind: "buff_attack", magnitude: 1, duration: 3 },
+    blurb: "Cheap, foamy, gives you the courage to swing harder. *+1 attack* for 3 actions.",
+  },
+  {
+    id: "mead", emoji: "🍷", name: "Spiced Mead", price: 8,
+    effect: { kind: "buff_magic", magnitude: 1, duration: 3 },
+    blurb: "Cinnamon, clove, and a tingle in the fingertips. *+1 magic* for 3 actions.",
+  },
+  {
+    id: "brew", emoji: "🥃", name: "Iron Brew", price: 8,
+    effect: { kind: "instant_shield", amount: 5 },
+    blurb: "Tastes like ore. Lines your gut with grit. *+5 🛡 shield*, instant.",
+  },
+  {
+    id: "tea", emoji: "🍵", name: "Bitter Tea", price: 12,
+    effect: { kind: "instant_mana", amount: 2 },
+    blurb: "Clarifies the mind, reignites the channel. *+2 mana*, instant.",
+  },
+  {
+    id: "milk", emoji: "🥛", name: "Frothy Milk", price: 10,
+    effect: { kind: "instant_hp", amount: 8 },
+    blurb: "Comfort in a glass. The bartender knows. *+8 HP*, instant.",
+  },
+  {
+    id: "lucky", emoji: "💧", name: "Lucky Sip", price: 15,
+    effect: { kind: "buff_next_crit" },
+    blurb: "A shimmer of fate. Your *next attack/cast/signature is a guaranteed crit*.",
+  },
+  {
+    id: "whiskey", emoji: "🍶", name: "Aged Whiskey", price: 25,
+    effect: { kind: "buff_attack", magnitude: 2, duration: 3 },
+    blurb: "Smoke, leather, twenty harvests of patience. *+2 attack* for 3 actions.",
+  },
+  {
+    id: "reset", emoji: "🍹", name: "Engineer's Reset", price: 30,
+    effect: { kind: "instant_combo", hp: 4, mana: 4 },
+    blurb: "Mystery cocktail. Tastes like everything went green. *+4 HP and +4 mana*, instant.",
+  },
+];
+
+export function findDrink(query: string): DrinkSpec | undefined {
+  const q = query.trim().toLowerCase();
+  return DRINKS.find((d) =>
+    d.id.toLowerCase() === q
+    || d.name.toLowerCase() === q
+    || `${d.emoji} ${d.name}`.toLowerCase() === q,
+  );
+}
+
+// Pre-baked NPC dialog tree. AI generates the whole tree at town refresh
+// time (one call per NPC), then players navigate it via button clicks.
+// Three levels deep is the default: opening + 3 options × (reply + 2-3
+// sub-options × (reply + maybe terminal)). Terminal leaves have no
+// `options`; the UI shows "🚪 Walk away" on those.
+export interface DialogNode {
+  npc_says: string;
+  options?: DialogOption[];     // omit / empty = terminal node
+}
+
+export interface DialogOption {
+  player_says: string;          // short button label
+  next: DialogNode;
+  payload?: DialogPayload;      // optional reward when this branch is picked
+}
+
+export type DialogPayload =
+  | { type: "rumor"; text: string }
+  | { type: "gold"; amount: number }
+  | { type: "drink_token"; drink_id: string }   // one free pour of a specific drink
+  | { type: "xp"; amount: number };
+
+// An NPC at the pub. Bartender is permanent (one per town); regulars rotate.
+export interface NpcSpec {
+  id: string;                   // "bartender", "regular_1", "regular_2"
+  role: "bartender" | "regular";
+  name: string;
+  archetype: string;            // "weary engineer", "retired adventurer", ...
+  vibe: string;                 // tone hint used in AI prompt
+  concern?: string;             // optional topic seed
+  dialog: DialogNode;           // pre-baked tree
+}
+
+// Archetype pools — hand-written seeds the AI dialog generator gets fed.
+// Each entry is a template the AI fleshes out into a name + dialog tree.
+// We keep ~6-8 templates per role so the same channel sees variety across
+// weekly refreshes (seeded pick from these arrays).
+//
+// Names are intentionally generic placeholders here — the AI generator
+// invents the actual name on each refresh. The archetype/vibe/concern do
+// the heavy character lifting.
+export interface ArchetypeTemplate {
+  archetype: string;            // "weary engineer", "retired adventurer", ...
+  vibe: string;                 // tone hints — feeds AI prompt
+  concern: string;              // a "what's bothering them" hook
+  name_seeds: string[];         // 3-5 plausible first names AI can riff on
+}
+
+export const BARTENDER_ARCHETYPES: ArchetypeTemplate[] = [
+  {
+    archetype: "ex-staff-engineer turned tavern keeper",
+    vibe: "dry, knowing, has seen every failure mode at least twice",
+    concern: "the new apprentice keeps merging to main without review",
+    name_seeds: ["Bramfel", "Cordwin", "Maelthar", "Yshtra"],
+  },
+  {
+    archetype: "boisterous brewer with a chef's pride",
+    vibe: "loud, generous, takes the craft very seriously",
+    concern: "a rival tavern is undercutting prices using a cursed recipe",
+    name_seeds: ["Gorm", "Hella", "Druzh", "Pelinka"],
+  },
+  {
+    archetype: "soft-spoken ex-cleric pouring drinks for atonement",
+    vibe: "gentle, patient, listens more than speaks",
+    concern: "a former student keeps coming in to drown a grief",
+    name_seeds: ["Sephras", "Mirelle", "Aldwen", "Thessa"],
+  },
+  {
+    archetype: "retired adventurer with a famously bad map collection",
+    vibe: "rambling, exaggerates everything, names every chair",
+    concern: "someone keeps stealing the maps off the back wall",
+    name_seeds: ["Old Pelm", "Captain Hask", "Rurik", "Vethra"],
+  },
+  {
+    archetype: "tightly-wound deploy-manager turned bartender",
+    vibe: "hyperalert, narrates every pour like a postmortem",
+    concern: "the cellar inventory keeps drifting from the manifest",
+    name_seeds: ["Korvath", "Lessia", "Tarn", "Bevern"],
+  },
+  {
+    archetype: "war-veteran who refuses to talk about the war",
+    vibe: "few words, sharp eyes, every silence is meaningful",
+    concern: "a new patron is asking questions they shouldn't",
+    name_seeds: ["Vossel", "Drenna", "Hadrik", "Suvia"],
+  },
+];
+
+export const REGULAR_ARCHETYPES: ArchetypeTemplate[] = [
+  {
+    archetype: "weary engineer who took a wrong turn out of the team",
+    vibe: "tired, cynical, but kind underneath the sarcasm",
+    concern: "their last PR is six weeks unmerged and no one will tell them why",
+    name_seeds: ["Edrin", "Lornic", "Pessa", "Yveth"],
+  },
+  {
+    archetype: "former boss-killer who lost their nerve at the worst time",
+    vibe: "carries a sword they no longer draw; jumpy at sudden movements",
+    concern: "rumors of an old foe returning have them rattled",
+    name_seeds: ["Kessrin", "Mardun", "Wessa", "Goric"],
+  },
+  {
+    archetype: "self-taught bard between gigs",
+    vibe: "smooth-talking, always angling for a free drink and a story",
+    concern: "their new ballad keeps getting stuck on the third verse",
+    name_seeds: ["Lilial", "Brennan", "Aerith", "Pellow"],
+  },
+  {
+    archetype: "exhausted on-call rotation veteran",
+    vibe: "twitches at distant bells, jaw permanently set",
+    concern: "their pager went off twice in the last hour and they're ignoring it",
+    name_seeds: ["Threva", "Olin", "Mardel", "Sephie"],
+  },
+  {
+    archetype: "junior dev who got lost en route to a different tavern",
+    vibe: "wide-eyed, asks too many questions, generally lovable",
+    concern: "they don't know how to get home and don't want to admit it",
+    name_seeds: ["Pip", "Wren", "Doll", "Castor"],
+  },
+  {
+    archetype: "retired DBA contemplating a return",
+    vibe: "speaks in dry koans about indexing, watches everyone carefully",
+    concern: "someone has been asking after old query plans",
+    name_seeds: ["Halan", "Vessa", "Dornik", "Mreth"],
+  },
+  {
+    archetype: "wandering apothecary with questionable credentials",
+    vibe: "warm but evasive, pockets full of unmarked vials",
+    concern: "a deal at the next town fell through and they need coin",
+    name_seeds: ["Yssel", "Brem", "Trella", "Knox"],
+  },
+  {
+    archetype: "wood-elf scout pretending not to know magic",
+    vibe: "guarded, observant, lights a candle without touching it",
+    concern: "their cover keeps slipping when the tavern hearth misbehaves",
+    name_seeds: ["Sylven", "Aerwen", "Tarion", "Lirella"],
+  },
+];
+
+// =============================================================================
+// STONE-PARCHMENT-DAGGER
+// =============================================================================
+//
+// Multiplayer pub mini-game. Two players each pick one throw; spectators
+// can side-bet on either player; resolution pays out per a fixed payout
+// formula (see commands.ts handleSpdResolve).
+//
+// Throw relationships — same shape as rock-paper-scissors with renamed
+// pieces fitting the engineering-fantasy bot voice:
+//
+//   🪨 Stone     crushes 🗡 Dagger
+//   🗡 Dagger    cuts    📜 Parchment
+//   📜 Parchment wraps   🪨 Stone
+//
+// Game-logic constants (stake/bet tiers + house bump %) live here too
+// so they're scannable next to the rules. Handlers read these directly.
+
+export type SpdThrow = "stone" | "parchment" | "dagger";
+
+export interface SpdThrowMeta {
+  emoji: string;
+  name: string;
+  beats: SpdThrow;
+  verb: string;            // past-tense action vs. the throw it beats
+}
+export const SPD_THROW_META: Record<SpdThrow, SpdThrowMeta> = {
+  stone:     { emoji: "🪨", name: "Stone",     beats: "dagger",    verb: "crushed" },
+  parchment: { emoji: "📜", name: "Parchment", beats: "stone",     verb: "wrapped" },
+  dagger:    { emoji: "🗡", name: "Dagger",    beats: "parchment", verb: "cut" },
+};
+
+// Returns 1 if A beats B, -1 if B beats A, 0 on tie.
+export function spdCompareThrows(a: SpdThrow, b: SpdThrow): 1 | -1 | 0 {
+  if (a === b) return 0;
+  return SPD_THROW_META[a].beats === b ? 1 : -1;
+}
+
+// Player-stake tiers offered when starting a match. Mirrors Liars' Roll
+// for consistency — 10/25/50 reads as "small/standard/spicy."
+export const SPD_STAKE_TIERS = [10, 25, 50] as const;
+// Spectator bet tiers. Independent from the stake tiers so a spectator
+// can bet 5g on a 50g match (small risk, small gain) or 25g on a 10g
+// match (big risk on a low-stakes flicker). One bet per spectator per
+// match — chosen amount is locked in.
+export const SPD_BET_TIERS = [5, 10, 25] as const;
+// House bump expressed as a percentage of the TOTAL wagered (player
+// stakes + all side bets). The winner takes this as a "tavern wager-
+// share" — the bot's contribution that makes betting feel celebratory
+// rather than zero-sum.
+export const SPD_HOUSE_BUMP_PCT = 0.20;
+// Match auto-expiry. Any open match older than this gets swept to
+// cancelled+refunded on the next pub/town render. 24h is generous;
+// initiators have a full day to find an opponent.
+export const SPD_MATCH_EXPIRY_MS = 24 * 60 * 60 * 1000;
+// Bump cooldown. Initiator can re-surface a stale open match by
+// posting a fresh channel announcement, but only every N minutes —
+// otherwise the bump is a spam vector in slow channels.
+export const SPD_BUMP_COOLDOWN_MS = 30 * 60 * 1000;
+
+// Deterministic per-day archetype pick. Same channel + same day = same NPCs.
+// Mix two stable inputs into a single u32 seed, then xor-shift to spread
+// nearby seeds (e.g. consecutive days) into very different selections.
+function hashStringToUint(s: string): number {
+  let h = 2166136261 >>> 0;
+  for (let i = 0; i < s.length; i++) {
+    h = Math.imul(h ^ s.charCodeAt(i), 16777619);
+  }
+  return h >>> 0;
+}
+export function pickArchetype<T>(
+  pool: T[],
+  channelId: string,
+  daySalt: number,
+  saltModifier: number,    // varies bartender vs. regular_1 vs. regular_2
+): T {
+  const seed = (hashStringToUint(channelId) ^ Math.imul(daySalt, 2654435761) ^ saltModifier) >>> 0;
+  return pool[seed % pool.length];
+}
+
+// A single posted job on the channel's Job Board. Wraps a quest variant in
+// AI-flavored storytelling chrome. Clicking "Take Job" routes through the
+// existing handleQuest flow with this variant — no separate quest engine.
+// Jobs are display-only state; multiple players can take the same posted
+// job (each gets their own quest), and the job persists on the board until
+// the daily refresh.
+export interface JobListing {
+  id: string;                   // stable within the day, e.g. "job_1"
+  variant: "standard" | "boss" | "dungeon" | "gauntlet";
+  required_level: number;       // 1 / 3 / 1 / 5 by variant — gates the click
+  title: string;                // AI-generated, e.g. "The Stale PR at the Merge Gate"
+  blurb: string;                // AI-generated, 1-2 sentence hook
+  reward_summary: string;       // hand-formatted display string (XP/gold preview)
+}
+
+// Per-channel town state. Refreshes on a daily cadence; town NAME refreshes
+// less often (weekly) for persistence feel — tracked via a separate inner
+// timestamp.
+export interface TownState {
+  channel_id: string;
+  refreshed_at: number;         // ms — daily refresh stamp
+  town_name: string;
+  town_name_set_at: number;     // ms — weekly cadence for the name itself
+  pub: {
+    bartender: NpcSpec;
+    regulars: NpcSpec[];        // 2-3
+    daily_special_drink_id: string;
+  };
+  // 📋 Job Board postings. Optional for backwards-compat — older cached
+  // states pre-jobboard-rollout won't have it; renderer treats missing as
+  // empty and triggers a refresh in the background.
+  jobs?: JobListing[];
+}
+
 export function findCatalogEntry(name: string): CatalogEntry | undefined {
-  return ITEM_CATALOG.find((e) => e.name === name);
+  // Strip a leading emoji + space. Emojis are non-ASCII Unicode, so we use
+  // a permissive prefix match: any leading non-alphanumeric chars + spaces.
+  const stripped = name.replace(/^[^A-Za-z0-9]+\s*/, "").trim();
+  return ITEM_CATALOG.find((e) => e.name === stripped || e.name === name);
 }
 
 // Picks a catalog entry of the given type at random. Used by rollItem when the
@@ -335,24 +941,36 @@ export function rollCatalogEntry(type: "tool" | "scroll"): CatalogEntry {
   return pool[Math.floor(Math.random() * pool.length)];
 }
 
-// 60% melee / 40% ranged. Melee skews more common because most class signatures
-// + the standard /sq attack assume hand-to-hand by default.
+// Weapon-range distribution. Focus weapons roll FOCUS_WEAPON_ROLL_CHANCE
+// of the time (~25%); the remaining ~75% splits 60/40 melee/ranged as
+// before. Melee skews more common in the damage-weapon bucket because
+// most class signatures + the standard /sq attack assume hand-to-hand
+// by default.
 function rollWeaponRange(): WeaponRange {
+  if (Math.random() < FOCUS_WEAPON_ROLL_CHANCE) return "focus";
   return Math.random() < 0.6 ? "melee" : "ranged";
 }
 
 // Slot weights. Magic items (permanent max_mana boost) and revive items (rare combat
 // life-saver) sit at the bottom of the table on purpose — their effects are stronger
 // than per-fight gear so the drop rates are throttled.
+//
+// Consumables were rebalanced from 24% → 10% when the Staples system shipped.
+// Basic potions (Health Potion, Greater Health Potion) are now always-in-stock
+// at the shop for fixed prices, so rolled consumables are reserved as a
+// PREMIUM drop — always rare-tier, larger heal magnitudes, and meaningfully
+// better than the Greater Health Potion (25 HP). The 14% freed up by the
+// consumable cut got redistributed to tools (+5), scrolls (+3), magic (+3),
+// and revives (+3) — items players actually want more of.
 function rollItemType(): ItemType {
   const r = Math.random();
   if (r < 0.30) return "weapon";       // 30%
   if (r < 0.50) return "armor";        // 20%
-  if (r < 0.74) return "consumable";   // 24%
-  if (r < 0.86) return "magic";        // 12%
-  if (r < 0.92) return "revive";       //  6%
-  if (r < 0.97) return "tool";         //  5%
-  return "scroll";                     //  3%
+  if (r < 0.60) return "consumable";   // 10% (was 24% — staples cover commodity heals)
+  if (r < 0.75) return "magic";        // 15% (+3)
+  if (r < 0.84) return "revive";       //  9% (+3)
+  if (r < 0.94) return "tool";         // 10% (+5)
+  return "scroll";                     //  6% (+3)
 }
 
 // Rarity weights skew rarer as the monster tier rises.
@@ -372,9 +990,16 @@ function rollRarity(tier: number): Rarity {
 //   magic        → max_mana increase on `<cmd> use` (capped at MAX_MANA_CAP)
 function rollPower(type: ItemType, rarity: Rarity): number {
   if (type === "consumable") {
-    if (rarity === "rare") return 25 + rollDice(11);      // 26-35
-    if (rarity === "uncommon") return 12 + rollDice(7);   // 13-18
-    return 5 + rollDice(4);                               // 6-8 (small)
+    // Rolled consumables are rare-only post-staples-rebalance; the
+    // uncommon/common branches stay for backwards-compat with older saved
+    // items (legacy rolls might still be in inventories) but new drops only
+    // hit the rare branch via the forced-rarity in rollItem/rollMerchantItem.
+    // Rare range bumped from 26-35 → 31-50 so rare rolls visibly outclass
+    // the Greater Health Potion (25 HP) — these are premium drops, should
+    // feel like a meaningful pull.
+    if (rarity === "rare") return 30 + rollDice(20);      // 31-50
+    if (rarity === "uncommon") return 12 + rollDice(7);   // 13-18 (legacy)
+    return 5 + rollDice(4);                               // 6-8 (legacy)
   }
   if (type === "magic") {
     // Granular max_mana boost. Rarity tiers are flat — caller clamps to MAX_MANA_CAP.
@@ -394,6 +1019,14 @@ function rollPower(type: ItemType, rarity: Rarity): number {
   return 1 + rollDice(2);                                 // 2-3
 }
 
+// Power for focus weapons specifically — flat per rarity (no dice
+// randomness). 2/4/6 ladder matches the average roll of regular weapons
+// at each rarity while keeping the value predictable for support
+// builds that need to know "this Rare will heal for +6 every cast."
+function rollFocusPower(rarity: Rarity): number {
+  return FOCUS_POWER_BY_RARITY[rarity];
+}
+
 export function rollItem(tier: number): ItemRoll {
   const type = rollItemType();
   if (type === "tool" || type === "scroll") {
@@ -405,9 +1038,17 @@ export function rollItem(tier: number): ItemRoll {
       catalog_name: entry.name,
     };
   }
-  const rarity = rollRarity(tier);
-  const power = rollPower(type, rarity);
+  // Consumable rolls are always RARE-tier post-staples-rebalance — they're
+  // premium drops that outclass the always-in-stock Greater Health Potion.
+  // Other types still roll their normal rarity distribution.
+  const rarity = type === "consumable" ? "rare" : rollRarity(tier);
   const weapon_range = type === "weapon" ? rollWeaponRange() : undefined;
+  // Focus weapons override the regular weapon-power formula with a flat
+  // ladder by rarity — predictable support output beats the +1-spread
+  // randomness for healer builds.
+  const power = type === "weapon" && weapon_range === "focus"
+    ? rollFocusPower(rarity)
+    : rollPower(type, rarity);
   return { type, rarity, power, weapon_range };
 }
 
@@ -435,7 +1076,9 @@ export function rollMerchantItem(tier: number): ItemRoll {
       catalog_name: entry.name,
     };
   }
-  const rarity = rollRarity(tier);
+  // Same rare-only consumable rule as rollItem — merchants' rolled stock
+  // doesn't compete with their always-in-stock staples on basic potions.
+  const rarity = type === "consumable" ? "rare" : rollRarity(tier);
   const power = rollPower(type, rarity);
   const weapon_range = type === "weapon" ? rollWeaponRange() : undefined;
   return { type, rarity, power, weapon_range };
@@ -476,13 +1119,17 @@ export const REVIVE_PRICE: Record<Rarity, number> = {
   rare: 450,
 };
 
-// Tool: tactical one-shot offensive consumables (Caffeine Bomb, Hotfix Grenade).
-// Mid-tier pricing — they consume a combat turn and don't auto-scale, so a stockpile
-// from L1 becomes irrelevant late.
+// Tool: tactical consumables — damage (Caffeine Bomb / Hotfix Grenade), heal-
+// over-time (Espresso Shot), or status (Poison Vial). Pricing was originally
+// 50/150/350 on the theory that tools are combat-defining; in practice the
+// uncommon tier was unaffordable for low-level players (4-10 quests of
+// dedicated saving for one item) and tools were ignored entirely. Rebalanced
+// down to slot tools between consumables and scrolls — meaningful but
+// reachable.
 export const TOOL_PRICE: Record<Rarity, number> = {
-  common: 50,
-  uncommon: 150,
-  rare: 350,
+  common: 25,
+  uncommon: 75,
+  rare: 200,
 };
 
 // Scroll: party-affecting / boss-altering rituals (Rebase Scroll, Production Outage).
@@ -501,8 +1148,35 @@ export function priceFor(type: ItemType, rarity: Rarity): number {
   return SHOP_PRICE[rarity];
 }
 
-export function sellPriceFor(type: ItemType, rarity: Rarity): number {
-  return Math.floor(priceFor(type, rarity) * 0.3);
+// Sell price for an inventory item. Returns 30% of the equivalent shop
+// price for the item's type + rarity — same baseline rebate as before.
+//
+// Sharpened items recoup PART of the invested gold: each sharpen the
+// smithy applied gets folded into the rebate at the same 30% rate. So a
+// player who spent 80 + 100 + 120 = 300g sharpening a base-3 weapon to +6
+// gets back roughly base_rebate + 90g (30% of 300g). Without this,
+// sharpening is a pure one-way sink and players are punished for
+// upgrading instead of saving for new gear.
+//
+// The smithy cost formula MUST stay in sync with this — if cost-per-level
+// changes in commands.ts (SMITHY_SHARPEN_PRICE_PER_LEVEL), update
+// SHARPEN_PRICE_PER_LEVEL below too.
+const SHARPEN_PRICE_PER_LEVEL = 20;
+const SELL_REBATE_RATIO = 0.3;
+export function sellPriceFor(type: ItemType, rarity: Rarity, opts?: { power?: number; sharpens_count?: number }): number {
+  const base = priceFor(type, rarity);
+  const power = opts?.power ?? 0;
+  const sharpens = opts?.sharpens_count ?? 0;
+  // Reconstruct the smithy cost ladder. The sharpens were applied at
+  // powers (P-sharpens), (P-sharpens+1), ..., (P-1), each costing
+  // (P_i + 1) * SHARPEN_PRICE_PER_LEVEL. Closed form for the sum:
+  //   total = SHARPEN_PRICE_PER_LEVEL × Σ (i+1) for i in [P-sharpens, P-1]
+  //         = SHARPEN_PRICE_PER_LEVEL × sharpens × (P + (P - sharpens + 1)) / 2
+  //         = (SHARPEN_PRICE_PER_LEVEL / 2) × sharpens × (2P - sharpens + 1)
+  const sharpenInvested = sharpens > 0
+    ? Math.floor((SHARPEN_PRICE_PER_LEVEL / 2) * sharpens * (2 * power - sharpens + 1))
+    : 0;
+  return Math.floor((base + sharpenInvested) * SELL_REBATE_RATIO);
 }
 
 export function rollDice(sides: number, count = 1): number {

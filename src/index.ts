@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 
+import { pregenAllViewArt } from "./ai";
 import { handleCommand, handleInteraction } from "./commands";
 import {
   parseInteractivePayload,
@@ -29,6 +30,30 @@ export interface Env {
 const app = new Hono<{ Bindings: Env }>();
 
 app.get("/", (c) => c.text("slack-quest is alive."));
+
+// One-shot pre-warm endpoint for the singleton view-art banners (inventory,
+// shop, lockbox tiers, merchant, treasure). Runs every prompt through flux
+// once and persists to R2 so the first player to hit each surface in Slack
+// sees the banner immediately rather than after the lazy-gen completes.
+//
+// Gated by the same secret used for Slack signature verification — not
+// strictly auth, but keeps drive-by traffic from triggering generations.
+// Idempotent: already-cached keys are short-circuit no-ops, so running it
+// twice is harmless.
+app.get("/admin/warm-views", async (c) => {
+  const provided = c.req.query("key");
+  if (!provided || provided !== c.env.SLACK_SIGNING_SECRET) {
+    return c.text("forbidden", 403);
+  }
+  if (!c.env.IMAGE_BASE_URL) {
+    return c.json({ error: "IMAGE_BASE_URL is not configured" }, 500);
+  }
+  const results = await pregenAllViewArt(c.env.AI, {
+    bucket: c.env.ASSETS,
+    baseUrl: c.env.IMAGE_BASE_URL,
+  });
+  return c.json({ ok: true, results });
+});
 
 // Serves static images from the ASSETS R2 bucket. Public — no auth needed; Slack
 // fetches these to render image blocks in shop / quest displays. Cache headers
@@ -64,8 +89,25 @@ app.post("/slack/commands", async (c) => {
     });
   }
 
-  const response = await handleCommand(payload, c.env, c.executionCtx);
-  return c.json(response);
+  // Wrap handleCommand so any thrown error surfaces as an ephemeral text
+  // response instead of a 500 (which Slack reports back to the user as the
+  // opaque "invalid_command_response" error). Logs the stack so we can debug
+  // via wrangler tail.
+  try {
+    const response = await handleCommand(payload, c.env, c.executionCtx);
+    return c.json(response);
+  } catch (err) {
+    console.error("command:unhandled", {
+      command: payload.command,
+      text: payload.text,
+      user: payload.user_id,
+      err: err instanceof Error ? err.stack || err.message : String(err),
+    });
+    return c.json({
+      response_type: "ephemeral",
+      text: `⚠️ Something broke: ${err instanceof Error ? err.message : String(err)}`,
+    });
+  }
 });
 
 // Block Kit button clicks come here. Slack's interactivity Request URL must be
@@ -105,11 +147,20 @@ app.post("/slack/interactive", async (c) => {
     (async () => {
       try {
         const response = await handleInteraction(payload, c.env, c.executionCtx);
-        await respondToCommand(payload.response_url, {
-          response_type: response.response_type ?? "ephemeral",
-          text: response.text,
-          blocks: response.blocks,
-        });
+        // When the handler sets _deleteOriginal, the actual new content went
+        // to the thread via postToThread — response_url is used only to
+        // remove the now-stale prompt (with its expired buttons). This keeps
+        // the thread clean and avoids the duplicate-render problem where the
+        // actor used to see both their ephemeral and the public thread post.
+        if (response._deleteOriginal) {
+          await respondToCommand(payload.response_url, { delete_original: true });
+        } else {
+          await respondToCommand(payload.response_url, {
+            response_type: response.response_type ?? "ephemeral",
+            text: response.text,
+            blocks: response.blocks,
+          });
+        }
       } catch (err) {
         await respondToCommand(payload.response_url, {
           response_type: "ephemeral",
