@@ -28,6 +28,12 @@
     }
   ],
   "ai": { "binding": "AI" },
+  "r2_buckets": [
+    {
+      "binding": "ART",
+      "bucket_name": "REPLACE_WITH_YOUR_R2_BUCKET"
+    }
+  ],
   "durable_objects": {
     "bindings": [
       { "name": "QUEST_ROOM", "class_name": "QuestRoom" }
