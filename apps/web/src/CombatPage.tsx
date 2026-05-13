@@ -136,7 +136,16 @@ type TurnAction =
 type ItemEffect =
   | { kind: "heal"; target: string; amount: number; rolled: number }
   | { kind: "mana_bump"; target: string; added: number; new_max_mana: number }
-  | { kind: "revive"; target: string; hp_restored: number };
+  | { kind: "revive"; target: string; hp_restored: number }
+  | { kind: "monster_damage"; amount: number; capped_from?: number }
+  | { kind: "self_effect"; target: string; effect: "regen"; magnitude: number; remaining: number }
+  | {
+      kind: "monster_effect";
+      effect: "poisoned" | "bleeding" | "burning";
+      magnitude: number;
+      remaining: number;
+    }
+  | { kind: "party_mana_refill"; recipients: { user_id: string; restored: number }[] };
 
 interface ItemUsedEvent {
   type: "item_used";
@@ -369,11 +378,50 @@ function formatEvent(e: CombatEvent, state: CombatState | null): UiState["log"] 
             tone: "good",
           },
         ];
-      } else {
+      } else if (eff.kind === "revive") {
         return [
           {
             id: nextLogId++,
             text: `${head}: revives ${nameOf(eff.target)} to ${eff.hp_restored} HP`,
+            tone: "good",
+          },
+        ];
+      } else if (eff.kind === "monster_damage") {
+        const note = eff.capped_from
+          ? ` (capped from ${eff.capped_from})`
+          : "";
+        return [
+          {
+            id: nextLogId++,
+            text: `${head}: ${eff.amount} dmg to ${state?.monster.name ?? "monster"}${note}`,
+            tone: "good",
+          },
+        ];
+      } else if (eff.kind === "self_effect") {
+        return [
+          {
+            id: nextLogId++,
+            text: `${head}: ${nameOf(eff.target)} gains 🟢 regen +${eff.magnitude} × ${eff.remaining}`,
+            tone: "good",
+          },
+        ];
+      } else if (eff.kind === "monster_effect") {
+        return [
+          {
+            id: nextLogId++,
+            text: `${head}: ${state?.monster.name ?? "monster"} ☠️ ${eff.effect} ${eff.magnitude} × ${eff.remaining}`,
+            tone: "good",
+          },
+        ];
+      } else {
+        // party_mana_refill
+        const summary = eff.recipients
+          .map((r) => `+${r.restored} to ${nameOf(r.user_id)}`)
+          .join(", ");
+        return [
+          {
+            id: nextLogId++,
+            text: `${head}: mana refilled — ${summary || "no one needed it"}`,
             tone: "good",
           },
         ];
@@ -545,8 +593,7 @@ export function CombatPage({
           {state.status === "active" && itemPicker === "open" && (
             <ItemPicker
               items={items}
-              onPickConsumable={(id) => fireUseItem(id)}
-              onPickMagic={(id) => fireUseItem(id)}
+              onPickNoTarget={(id) => fireUseItem(id)}
               onPickRevive={(id) => setItemPicker({ reviveItemId: id })}
               onCancel={() => setItemPicker("closed")}
             />
@@ -768,8 +815,18 @@ type ActionKind =
   | "use_item"
   | "swap_position";
 
+// Items the worker has dispatch for in handleUseItem. Tools / scrolls are
+// catalog-dispatched, so even though we filter by type here, the worker
+// can still reject named items it doesn't yet support (e.g. Crowbar,
+// Production Outage) — UI surfaces the error message inline.
 function isCombatUsable(t: string): boolean {
-  return t === "consumable" || t === "magic" || t === "revive";
+  return (
+    t === "consumable" ||
+    t === "magic" ||
+    t === "revive" ||
+    t === "tool" ||
+    t === "scroll"
+  );
 }
 
 function ActionBar({
@@ -800,7 +857,7 @@ function ActionBar({
       <ActionBtn label="🛡 Shield" hint="1d6+mag · pick target" disabled={disabled} onClick={() => onAct("shield")} />
       <ActionBtn
         label="🎒 Item"
-        hint={hasItems ? "Use a consumable / magic / revive" : "Nothing usable"}
+        hint={hasItems ? "Consumable / magic / revive / tool / scroll" : "Nothing usable"}
         disabled={disabled || !hasItems}
         onClick={() => onAct("use_item")}
       />
@@ -818,15 +875,13 @@ function ActionBar({
 
 function ItemPicker({
   items,
-  onPickConsumable,
-  onPickMagic,
+  onPickNoTarget,
   onPickRevive,
   onCancel,
 }: {
   items: InventoryItem[];
-  onPickConsumable: (id: number) => void;
-  onPickMagic: (id: number) => void;
-  onPickRevive: (id: number) => void;
+  onPickNoTarget: (id: number) => void;       // consumable / magic / tool / scroll
+  onPickRevive: (id: number) => void;          // needs a target picker step
   onCancel: () => void;
 }) {
   const usable = items.filter((i) => isCombatUsable(i.item_type));
@@ -834,18 +889,15 @@ function ItemPicker({
     <div style={card}>
       <div style={{ ...muted, fontSize: 12, marginBottom: 8 }}>🎒 Use which?</div>
       {usable.length === 0 && (
-        <p style={{ ...muted, fontSize: 13 }}>
-          Nothing usable in combat. Tools and scrolls aren't supported on the web yet.
-        </p>
+        <p style={{ ...muted, fontSize: 13 }}>Nothing usable in combat.</p>
       )}
       <div style={{ display: "grid", gap: 8 }}>
         {usable.map((it) => (
           <button
             key={it.id}
             onClick={() => {
-              if (it.item_type === "consumable") onPickConsumable(it.id);
-              else if (it.item_type === "magic") onPickMagic(it.id);
-              else if (it.item_type === "revive") onPickRevive(it.id);
+              if (it.item_type === "revive") onPickRevive(it.id);
+              else onPickNoTarget(it.id);
             }}
             style={{
               ...button,

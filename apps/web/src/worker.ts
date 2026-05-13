@@ -73,6 +73,131 @@ const TYPE_NOUN: Record<string, string> = {
   scroll: "Scroll",
 };
 
+interface ToolDispatchResult {
+  effect: ItemEffect;
+  fighters?: CombatState["fighters"];
+  monster?: Partial<CombatState["monster"]>;
+  error?: string;
+}
+
+// Catalog dispatch for tool/scroll items. Mirrors the named effects in
+// apps/slack/src/commands.ts useToolOrScroll. v1 web supports the five
+// items that have purely-combat effects:
+//   Caffeine Bomb / Hotfix Grenade — direct monster damage (capped at
+//     monster.hp − 1 to never kill; v1 web matches Slack's safety rail)
+//   Espresso Shot — self-applies regen for 5 actions
+//   Poison Vial — applies poisoned to the monster for 4 ticks
+//   Rebase Scroll — refills mana to max for every alive party member
+//
+// Production Outage (instakill / boss 30%) and Crowbar of Last Resort
+// (dungeon-only lockbox) intentionally return an error here; both need
+// support that doesn't make sense until either monster-kill integration
+// or dungeon support lands.
+function applyToolOrScroll(
+  state: CombatState,
+  actor: CombatState["fighters"][number],
+  item: { id: number; item_name: string; item_type: string; power: number },
+): ToolDispatchResult {
+  const entry = findCatalogEntry(item.item_name);
+  if (!entry) {
+    return {
+      effect: { kind: "heal", target: actor.id, amount: 0, rolled: 0 },
+      error: `${item.item_name} has no wired-up effect`,
+    };
+  }
+
+  switch (entry.name) {
+    case "Caffeine Bomb":
+    case "Hotfix Grenade": {
+      // Damage tools ignore armor and never kill (Slack convention v1).
+      const requested = item.power;
+      const damage = Math.max(1, Math.min(requested, state.monster.hp - 1));
+      return {
+        effect: {
+          kind: "monster_damage",
+          amount: damage,
+          ...(damage < requested ? { capped_from: requested } : {}),
+        },
+        monster: { hp: state.monster.hp - damage },
+      };
+    }
+    case "Espresso Shot": {
+      // Self-applied regen. Stacks alongside whatever's already on the
+      // actor — withEffectApplied semantics in Slack just push to the
+      // array; v1 web does the same (Slack: append to effects).
+      const eff = {
+        type: "regen" as const,
+        magnitude: item.power,
+        remaining: 5,
+        source: entry.name,
+      };
+      const fighters = state.fighters.map((f) =>
+        f.id === actor.id ? { ...f, effects: [...f.effects, eff] } : f,
+      );
+      return {
+        effect: {
+          kind: "self_effect",
+          target: actor.id,
+          effect: "regen",
+          magnitude: item.power,
+          remaining: 5,
+        },
+        fighters,
+      };
+    }
+    case "Poison Vial": {
+      if (state.monster.hp <= 0) {
+        return {
+          effect: { kind: "heal", target: actor.id, amount: 0, rolled: 0 },
+          error: "no live foe to poison",
+        };
+      }
+      const eff = {
+        type: "poisoned" as const,
+        magnitude: item.power,
+        remaining: 4,
+        source: actor.id,
+      };
+      return {
+        effect: {
+          kind: "monster_effect",
+          effect: "poisoned",
+          magnitude: item.power,
+          remaining: 4,
+        },
+        monster: { effects: [...state.monster.effects, eff] },
+      };
+    }
+    case "Rebase Scroll": {
+      // Party mana refill — every alive fighter goes back to max_mana.
+      // Slack's wider behavior (wipe cooldowns) is moot here since web
+      // combat is strictly turn-based.
+      const recipients: { user_id: string; restored: number }[] = [];
+      const fighters = state.fighters.map((f) => {
+        if (f.hp <= 0) return f;
+        const restored = f.max_mana - f.mana;
+        if (restored > 0) recipients.push({ user_id: f.id, restored });
+        return { ...f, mana: f.max_mana };
+      });
+      return {
+        effect: { kind: "party_mana_refill", recipients },
+        fighters,
+      };
+    }
+    case "Production Outage":
+    case "Caffeine Bomb": // unreachable (handled above) — just for exhaustiveness
+      return {
+        effect: { kind: "heal", target: actor.id, amount: 0, rolled: 0 },
+        error: `${entry.name} isn't supported in web combat yet`,
+      };
+    default:
+      return {
+        effect: { kind: "heal", target: actor.id, amount: 0, rolled: 0 },
+        error: `${entry.name} isn't supported in web combat yet`,
+      };
+  }
+}
+
 function nameLoot(roll: ItemRoll, monsterName: string): { name: string; flavor: string } {
   if (roll.catalog_name) {
     const entry = findCatalogEntry(roll.catalog_name);
@@ -364,7 +489,16 @@ interface ClientToServer {
 export type ItemEffect =
   | { kind: "heal"; target: string; amount: number; rolled: number }
   | { kind: "mana_bump"; target: string; added: number; new_max_mana: number }
-  | { kind: "revive"; target: string; hp_restored: number };
+  | { kind: "revive"; target: string; hp_restored: number }
+  | { kind: "monster_damage"; amount: number; capped_from?: number }
+  | { kind: "self_effect"; target: string; effect: "regen"; magnitude: number; remaining: number }
+  | {
+      kind: "monster_effect";
+      effect: "poisoned" | "bleeding" | "burning";
+      magnitude: number;
+      remaining: number;
+    }
+  | { kind: "party_mana_refill"; recipients: { user_id: string; restored: number }[] };
 
 export interface ItemUsedEvent {
   type: "item_used";
@@ -739,6 +873,7 @@ export class QuestRoom extends DurableObject<Env> {
 
     let updatedFighters = state.fighters;
     let effect: ItemEffect | null = null;
+    const monsterPatch: Partial<CombatState["monster"]> = {};
 
     switch (item.item_type) {
       case "consumable": {
@@ -785,6 +920,22 @@ export class QuestRoom extends DurableObject<Env> {
         effect = { kind: "revive", target: target.id, hp_restored: restored };
         break;
       }
+      case "tool":
+      case "scroll": {
+        const dispatch = applyToolOrScroll(state, actor, item);
+        if (dispatch.error) {
+          this.sendOne(ws, { type: "error", message: dispatch.error });
+          return;
+        }
+        if (dispatch.fighters) updatedFighters = dispatch.fighters;
+        if (dispatch.monster) {
+          // Apply via separate object copy below so we keep both in sync.
+        }
+        effect = dispatch.effect;
+        // Stash monster patch for the state assembly below.
+        Object.assign(monsterPatch, dispatch.monster ?? {});
+        break;
+      }
       default:
         this.sendOne(ws, {
           type: "error",
@@ -797,7 +948,11 @@ export class QuestRoom extends DurableObject<Env> {
 
     // Apply effect, then advance turn via engine's "wait" handler so the
     // turn_start / round-bump logic stays unified.
-    const withEffect: CombatState = { ...state, fighters: updatedFighters };
+    const withEffect: CombatState = {
+      ...state,
+      fighters: updatedFighters,
+      monster: { ...state.monster, ...monsterPatch },
+    };
     const waitResult = step(withEffect, { kind: "wait", actor: action.actor }, productionRoll);
 
     const itemUsed: ItemUsedEvent = {
