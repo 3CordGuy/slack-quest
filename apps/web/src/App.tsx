@@ -1,8 +1,10 @@
 import { useEffect, useState } from "react";
 
-// v0.3: login → active quest + character + inventory. Still single-page, no
-// router. Read-only — actions still happen in Slack until Phase 2 lands the
-// stepwise combat state machine and WS-driven turn UI.
+import { CombatPage } from "./CombatPage";
+
+// v0.4: read-only views + opt-in web-mode combat. When the active quest is
+// a `standard` or `boss` variant, the player can open a dedicated combat
+// page that drives a Durable-Object-backed turn-based loop via WebSocket.
 
 interface Character {
   slack_user_id: string;
@@ -121,6 +123,7 @@ type LoadState =
 
 export function App() {
   const [state, setState] = useState<LoadState>({ kind: "loading" });
+  const [activeCombat, setActiveCombat] = useState<{ questId: number } | null>(null);
 
   useEffect(() => {
     void refresh();
@@ -164,8 +167,29 @@ export function App() {
     setState({ kind: "anon" });
   }
 
+  async function startCombat(questId: number) {
+    const res = await fetch(`/api/quest/${questId}/start_web_combat`, {
+      method: "POST",
+      credentials: "include",
+    });
+    if (!res.ok) return;
+    setActiveCombat({ questId });
+  }
+
   if (state.kind === "loading") return <Centered>Loading…</Centered>;
   if (state.kind === "anon") return <Login onSuccess={refresh} />;
+  if (activeCombat) {
+    return (
+      <CombatPage
+        questId={activeCombat.questId}
+        selfId={state.me.slack_user_id}
+        onExit={() => {
+          setActiveCombat(null);
+          void refresh();
+        }}
+      />
+    );
+  }
   return (
     <Centered>
       <Stack>
@@ -174,6 +198,7 @@ export function App() {
             quest={state.activeQuest.quest}
             party={state.activeQuest.party}
             selfId={state.me.slack_user_id}
+            onStartCombat={() => startCombat(state.activeQuest!.quest.id)}
           />
         )}
         <CharacterCard me={state.me} />
@@ -252,10 +277,12 @@ function ActiveQuestCard({
   quest,
   party,
   selfId,
+  onStartCombat,
 }: {
   quest: ActiveQuest;
   party: Character[];
   selfId: string;
+  onStartCombat: () => void;
 }) {
   const s = quest.scene;
   const variant = s.variant ?? "standard";
@@ -330,6 +357,14 @@ function ActiveQuestCard({
             ))}
           </div>
         </div>
+      )}
+      {(variant === "standard" || variant === "boss") && (
+        <button
+          onClick={onStartCombat}
+          style={{ ...button, marginTop: 20, background: "#b89b3a", color: "#0e0f12" }}
+        >
+          ⚔ Open Web Combat
+        </button>
       )}
     </div>
   );

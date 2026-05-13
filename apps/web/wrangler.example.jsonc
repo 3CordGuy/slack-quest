@@ -26,5 +26,13 @@
       "database_id": "REPLACE_WITH_SAME_D1_ID_AS_SLACK_WORKER",
       "migrations_dir": "../../migrations"
     }
+  ],
+  "durable_objects": {
+    "bindings": [
+      { "name": "QUEST_ROOM", "class_name": "QuestRoom" }
+    ]
+  },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["QuestRoom"] }
   ]
 }
