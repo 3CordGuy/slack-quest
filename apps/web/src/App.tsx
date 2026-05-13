@@ -262,6 +262,16 @@ export function App() {
     if (res.ok) void refresh();
   }
 
+  async function treasureTake(questId: number, pick: number) {
+    const res = await fetch(`/api/quest/${questId}/dungeon/treasure_take`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({ pick }),
+    });
+    if (res.ok) void refresh();
+  }
+
   if (state.kind === "loading") return <Centered>Loading…</Centered>;
   if (state.kind === "anon") return <Login onSuccess={refresh} />;
   if (activeCombat) {
@@ -289,6 +299,7 @@ export function App() {
             onTrapChoose={(pick) => trapChoose(state.activeQuest!.quest.id, pick)}
             onLockboxChoose={(pick) => lockboxChoose(state.activeQuest!.quest.id, pick)}
             onNpcChoose={(pick) => npcChoose(state.activeQuest!.quest.id, pick)}
+            onTreasureTake={(pick) => treasureTake(state.activeQuest!.quest.id, pick)}
             myKeys={state.me.character ? {
               bronze: state.me.character.keys_bronze,
               silver: state.me.character.keys_silver,
@@ -377,6 +388,7 @@ function ActiveQuestCard({
   onTrapChoose,
   onLockboxChoose,
   onNpcChoose,
+  onTreasureTake,
   myKeys,
 }: {
   quest: ActiveQuest;
@@ -387,6 +399,7 @@ function ActiveQuestCard({
   onTrapChoose: (pick: number) => void;
   onLockboxChoose: (pick: number) => void;
   onNpcChoose: (pick: number) => void;
+  onTreasureTake: (pick: number) => void;
   myKeys: { bronze: number; silver: number; gold: number } | null;
 }) {
   const s = quest.scene;
@@ -494,6 +507,13 @@ function ActiveQuestCard({
         }
         if (variant === "dungeon" && currentNode?.type === "npc" && currentNode.npc) {
           return <NpcPicker npc={currentNode.npc} onPick={onNpcChoose} />;
+        }
+        if (
+          variant === "dungeon" &&
+          currentNode?.type === "treasure" &&
+          currentNode.loot_options
+        ) {
+          return <TreasurePicker options={currentNode.loot_options} onPick={onTreasureTake} />;
         }
         const combatAvailable =
           variant === "standard" ||
@@ -664,6 +684,63 @@ function LockboxPicker({
           Skip (no key spent)
         </button>
       </div>
+    </div>
+  );
+}
+
+function TreasurePicker({
+  options,
+  onPick,
+}: {
+  options: LootOption[];
+  onPick: (pick: number) => void;
+}) {
+  return (
+    <div style={{ marginTop: 20 }}>
+      <div
+        style={{
+          ...muted,
+          fontSize: 11,
+          textTransform: "uppercase",
+          letterSpacing: 1.5,
+          marginBottom: 8,
+        }}
+      >
+        💰 Treasure — pick one. Sealing the dungeon.
+      </div>
+      <div style={{ display: "grid", gap: 8 }}>
+        {options.map((opt, i) => (
+          <button
+            key={i}
+            onClick={() => onPick(i + 1)}
+            style={{
+              padding: "12px 14px",
+              background: "#1d1f23",
+              border: "1px solid #b89b3a",
+              borderRadius: 8,
+              textAlign: "left",
+              cursor: "pointer",
+              color: "#e6e6e6",
+              fontFamily: "inherit",
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
+              <span style={{ fontWeight: 600 }}>{opt.name}</span>
+              <span style={{ ...muted, fontSize: 11 }}>
+                · {opt.rarity} {opt.item_type} +{opt.power}
+              </span>
+            </div>
+            {opt.flavor && (
+              <div style={{ ...muted, fontSize: 12, marginTop: 4, fontStyle: "italic" }}>
+                {opt.flavor}
+              </div>
+            )}
+          </button>
+        ))}
+      </div>
+      <p style={{ ...muted, fontSize: 11, marginTop: 8 }}>
+        Other option is left in the chest. Quest completes; spoils awarded to the party.
+      </p>
     </div>
   );
 }

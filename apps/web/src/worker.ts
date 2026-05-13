@@ -30,6 +30,7 @@ import {
   addCharacterKey,
   addItem,
   applySoftDeath,
+  clearPartyEffects,
   awardSpoils,
   consumeWebLoginCode,
   createWebSession,
@@ -544,6 +545,79 @@ app.post("/api/quest/:id/dungeon/trap_choose", async (c) => {
     skill: choice.skill,
     fail_damage: passed ? 0 : choice.fail_damage,
     ...advance,
+  });
+});
+
+// Treasure pick — final dungeon room. Player picks 1 of N loot options;
+// item lands in their inventory; quest is marked completed with full
+// dungeon spoils (mult 2.5). Mirrors slack's resolveExpeditionVictory.
+app.post("/api/quest/:id/dungeon/treasure_take", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const questId = parseInt(c.req.param("id"), 10);
+  if (!Number.isFinite(questId)) return c.json({ error: "bad_quest_id" }, 400);
+  const quest = await getActiveQuestForCharacter(c.env.DB, session.slack_user_id);
+  if (!quest || quest.id !== questId) return c.json({ error: "quest_not_active" }, 404);
+  const exp = quest.scene.expedition;
+  const node = exp?.nodes[exp.current];
+  if (!exp || !node || node.type !== "treasure") return c.json({ error: "not_a_treasure_room" }, 400);
+
+  const body = (await c.req.json().catch(() => null)) as { pick?: unknown } | null;
+  const pick = typeof body?.pick === "number" ? body.pick : NaN;
+  const opts = node.loot_options ?? [];
+  if (!Number.isFinite(pick) || pick < 1 || pick > opts.length) {
+    return c.json({ error: "bad_pick", valid_picks: opts.length }, 400);
+  }
+  const choice = opts[pick - 1];
+  const taken = await addItem(c.env.DB, {
+    character_id: session.slack_user_id,
+    item_name: choice.name,
+    item_type: choice.item_type,
+    power: choice.power,
+    rarity: choice.rarity,
+    flavor: choice.flavor,
+    weapon_range: choice.weapon_range ?? null,
+  });
+
+  // Full dungeon spoils — dungeon variant rewardMultiplier = 2.5.
+  const tier = quest.scene.tier;
+  const totalXp = Math.round((10 + tier * 5) * 2.5);
+  const totalGold = Math.round((5 + tier * 3) * 2.5);
+  const party = await getQuestParty(c.env.DB, questId);
+  const partySize = Math.max(1, party.length);
+  const xpEach = Math.max(1, Math.floor(totalXp / partySize));
+  const goldEach = Math.max(0, Math.floor(totalGold / partySize));
+  const levelUps: { user_id: string; new_level: number }[] = [];
+  for (const f of party) {
+    const result = await awardSpoils(
+      c.env.DB,
+      f,
+      xpEach,
+      goldEach,
+      () => rollDice(6),
+      xpForLevel,
+      MAX_MANA_CAP,
+    );
+    if (result.levelsGained > 0) {
+      levelUps.push({ user_id: f.slack_user_id, new_level: result.newLevel });
+    }
+  }
+  await markQuestStatus(c.env.DB, questId, "completed");
+  await clearPartyEffects(c.env.DB, questId);
+
+  return c.json({
+    completed: true,
+    taken_item: {
+      id: taken.id,
+      name: taken.item_name,
+      rarity: taken.rarity,
+      type: taken.item_type,
+      power: taken.power,
+    },
+    xp_each: xpEach,
+    gold_each: goldEach,
+    party_size: partySize,
+    level_ups: levelUps,
   });
 });
 
