@@ -502,6 +502,7 @@ interface KnownCharacter {
   hp: number;
   max_hp: number;
   last_active: number; // unix seconds
+  slack_username: string | null;
 }
 
 interface ConfirmRequest {
@@ -2671,7 +2672,10 @@ function AdventurersCard({ selfId }: { selfId: string }) {
                     <span style={{ fontWeight: 600, fontSize: 12, color: "#f5f5f5", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{ch.name}</span>
                     <span style={{ ...muted, fontSize: 11, flexShrink: 0 }}>Lv {ch.level}</span>
                   </div>
-                  <div style={{ ...muted, fontSize: 11, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{ch.class}</div>
+                  <div style={{ display: "flex", gap: 4, overflow: "hidden" }}>
+                    <span style={{ ...muted, fontSize: 11, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{ch.class}</span>
+                    {ch.slack_username && <span style={{ fontSize: 11, color: "#7dd3fc", flexShrink: 0 }}>@{ch.slack_username}</span>}
+                  </div>
                   <div style={{ marginTop: 3, height: 3, background: "#0e0f12", borderRadius: 2, overflow: "hidden" }}>
                     <div style={{ width: `${hpPct * 100}%`, height: "100%", background: hpPct < 0.25 ? "#dc2626" : hpPct < 0.5 ? "#d97706" : "#16a34a" }} />
                   </div>
@@ -2728,6 +2732,9 @@ function AdventurerSheet({ character, onClose }: { character: KnownCharacter; on
 
         <div>
           <h2 style={{ ...h2, margin: "0 0 2px" }}>{character.name}</h2>
+          {character.slack_username && (
+            <div style={{ fontSize: 13, color: "#7dd3fc", marginBottom: 2 }}>@{character.slack_username}</div>
+          )}
           <div style={{ ...muted, fontSize: 13 }}>{character.class}</div>
           <div style={{ ...muted, fontSize: 12, marginTop: 4, color: isOnline ? "#22c55e" : "#6b7280" }}>
             {isOnline ? "● Online" : `Last seen ${ago}`}

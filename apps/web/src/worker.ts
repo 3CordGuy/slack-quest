@@ -1929,13 +1929,13 @@ app.get("/api/characters", async (c) => {
   if (!session) return c.json({ error: "unauthenticated" }, 401);
   const rows = await c.env.DB
     .prepare(
-      `SELECT slack_user_id, name, class, level, xp, hp, max_hp, last_active
+      `SELECT slack_user_id, name, class, level, xp, hp, max_hp, last_active, slack_username
        FROM characters
        WHERE slack_user_id != ? AND slack_team_id = ?
        ORDER BY last_active DESC LIMIT 20`,
     )
     .bind(session.slack_user_id, session.slack_team_id)
-    .all<{ slack_user_id: string; name: string; class: string; level: number; xp: number; hp: number; max_hp: number; last_active: number }>();
+    .all<{ slack_user_id: string; name: string; class: string; level: number; xp: number; hp: number; max_hp: number; last_active: number; slack_username: string | null }>();
   return c.json({ characters: rows.results ?? [] });
 });
 
