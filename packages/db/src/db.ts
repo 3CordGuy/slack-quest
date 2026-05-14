@@ -375,6 +375,34 @@ export async function getActiveQuestForCharacter(
   };
 }
 
+// Fetch an active quest by id. Used by cross-surface callers (e.g. the
+// QuestRoom DO booting combat from a Slack-side trigger) that have the
+// quest id but not the caller's character/channel. Returns null when the
+// quest doesn't exist or has already terminated.
+export async function getQuestById(
+  db: D1Database,
+  questId: number,
+): Promise<ActiveQuest | null> {
+  const row = await db
+    .prepare(
+      `SELECT id, channel_id, thread_ts, elite, scene_json, mode
+       FROM quests
+       WHERE id = ? AND status = 'active'
+       LIMIT 1`,
+    )
+    .bind(questId)
+    .first<QuestRow>();
+  if (!row) return null;
+  return {
+    id: row.id,
+    channel_id: row.channel_id,
+    thread_ts: row.thread_ts,
+    elite: row.elite === 1,
+    scene: normalizeScene(JSON.parse(row.scene_json) as SceneJson),
+    mode: row.mode === "web" ? "web" : "slack",
+  };
+}
+
 export async function setQuestMode(
   db: D1Database,
   questId: number,

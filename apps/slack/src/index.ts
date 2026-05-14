@@ -29,6 +29,26 @@ export interface Env {
   // Surfaced in the /sq web-login ephemeral so the player can click through to
   // paste their code. Optional — when unset, the code is shown without a link.
   WEB_BASE_URL?: string;
+  // Cross-worker DO binding pointing at the web worker's QuestRoom class.
+  // Same namespace as the web worker uses; the wrangler config supplies
+  // `script_name: "<web-worker-name>"` so this Slack worker can route into
+  // the existing DO instance without owning its migrations.
+  //
+  // Used in PR 3 onward to drive the shared step() engine for combat
+  // actions originating from Slack. Optional in v1 deploys that haven't
+  // re-deployed wrangler — combat handlers must guard with `if (!env.QUEST_ROOM)`.
+  QUEST_ROOM?: DurableObjectNamespace;
+}
+
+// Stable name → DO id mapping. Both the web worker (apps/web/src/worker.ts)
+// and the Slack worker use this convention so cross-bound stubs route to
+// the same instance per quest. Don't change without updating the web worker.
+export function questRoomId(
+  env: Pick<Env, "QUEST_ROOM">,
+  questId: number,
+): DurableObjectId | null {
+  if (!env.QUEST_ROOM) return null;
+  return env.QUEST_ROOM.idFromName(`quest:${questId}`);
 }
 
 const app = new Hono<{ Bindings: Env }>();

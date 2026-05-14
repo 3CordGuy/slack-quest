@@ -103,6 +103,7 @@ import {
   getEquipped,
   getInventory,
   getItem,
+  getQuestById,
   getQuestParty,
   getClaimedNpcPaths,
   getRecentQuestsForCharacter,
@@ -117,6 +118,7 @@ import {
   saveWebCombatState,
   setCharacterHpAndShield,
   setQuestMode,
+  type ActiveQuest,
   type Character,
   type ExpeditionNode,
   type ExpeditionNodeType,
@@ -2853,97 +2855,15 @@ app.post("/api/quest/:id/start_web_combat", async (c) => {
   if (quest.mode === "slack") {
     return c.json({ error: "slack_mode" }, 409);
   }
-  const variant = quest.scene.variant ?? "standard";
-  if (variant !== "standard" && variant !== "boss" && variant !== "gauntlet" && variant !== "dungeon") {
-    return c.json({ error: "unsupported_variant", variant }, 400);
-  }
-  // v1 dungeon support: web combat only handles combat rooms. Trap /
-  // lockbox / npc / treasure rooms stay in Slack — player resolves via
-  // /sq choose / /sq take. Door picks also stay in Slack for now.
-  if (variant === "dungeon") {
-    const exp = quest.scene.expedition;
-    const node = exp ? exp.nodes[exp.current] : undefined;
-    if (!node || node.type !== "combat") {
-      return c.json(
-        { error: "non_combat_room", room_type: node?.type ?? null },
-        400,
-      );
+
+  const built = await buildInitialCombatState(c.env.DB, quest);
+  if (!built.ok) {
+    if (built.reason === "non_combat_room") {
+      return c.json({ error: "non_combat_room", room_type: built.detail ?? null }, 400);
     }
+    return c.json({ error: built.reason, variant: built.detail }, 400);
   }
-
-  const party = await getQuestParty(c.env.DB, questId);
-  const fighters: CombatInit["fighters"] = [];
-  for (const member of party) {
-    const [weapon, armor] = await Promise.all([
-      getEquipped(c.env.DB, member.slack_user_id, "weapon"),
-      getEquipped(c.env.DB, member.slack_user_id, "armor"),
-    ]);
-    const cls = classByName(member.class);
-    const weaponRange = (weapon?.weapon_range as "melee" | "ranged" | "focus" | null | undefined) ?? "melee";
-    const isFocus = weaponRange === "focus";
-    fighters.push({
-      id: member.slack_user_id,
-      name: member.name,
-      class: member.class,
-      level: member.level,
-      hp: member.hp,
-      max_hp: member.max_hp,
-      mana: member.mana,
-      max_mana: member.max_mana,
-      shield: member.shield,
-      position: member.position,
-      // attack_mod and magic_mod gain a level bonus (+1 per 4 levels) so
-      // hit rate and spell accuracy stay meaningful at high tiers.
-      attack_mod: cls.attack_mod + Math.floor(member.level / 4),
-      magic_mod: cls.magic_mod + Math.floor(member.level / 4),
-      // Focus weapons contribute 0 to attack/cast/sig damage; their power
-      // becomes focus_power for heal/shield instead.
-      weapon_power: isFocus ? 0 : (weapon?.power ?? 0),
-      focus_power: isFocus ? (weapon?.power ?? 0) : 0,
-      weapon_range: weaponRange,
-      slack_username: member.slack_username,
-      armor_power: armor?.power ?? 0,
-      scars: member.scars,
-    });
-  }
-
-  const init: CombatInit = {
-    fighters,
-    monster: {
-      name: quest.scene.monster_name,
-      hp: quest.scene.monster_hp,
-      max_hp: quest.scene.monster_max_hp,
-      tier: quest.scene.tier,
-      is_boss: variant === "boss",
-      boss_phase: quest.scene.boss_phase,
-      // Gauntlet wave state — undefined for standard/boss; pulled straight
-      // from scene_json which Slack populates when creating the quest.
-      wave: quest.scene.wave,
-      total_waves: quest.scene.total_waves,
-      upcoming_waves: quest.scene.upcoming_waves?.map((w) => ({
-        name: w.name,
-        max_hp: w.max_hp,
-      })),
-      art_url: quest.scene.monster_art_url,
-    },
-  };
-  const initial = createCombatState(init);
-  // Seed the monster's status effects from scene_json so an active Slack-mode
-  // poison/burn carries into web combat. Fighters arrive via D1 with their
-  // own .effects column (status effects already in core.MachineStatusEffect
-  // shape).
-  const seeded: CombatState = {
-    ...initial,
-    monster: {
-      ...initial.monster,
-      effects: quest.scene.monster_effects ?? [],
-    },
-    fighters: initial.fighters.map((f) => {
-      const character = party.find((p) => p.slack_user_id === f.id);
-      return character ? { ...f, effects: character.effects ?? [] } : f;
-    }),
-  };
-  const begun = step(seeded, { kind: "begin" }, productionRoll);
+  const begun = step(built.seeded, { kind: "begin" }, productionRoll);
   await saveWebCombatState(c.env.DB, questId, begun.state);
   // Lock the quest into web mode so Slack combat handlers refuse further
   // /sq attack actions on it. Once flipped to 'web' it stays there for the
@@ -3797,6 +3717,100 @@ interface WsAttachment {
 
 const productionRoll: RollFn = (sides) => Math.floor(Math.random() * sides) + 1;
 
+// Shared loader used by both the HTTP `/api/quest/:id/start_web_combat`
+// route and the DO's `bootstrapFromSlack` RPC. Reads the party from D1,
+// builds CombatInit, runs createCombatState, then seeds the resulting
+// state's effects from scene_json (monster status effects) and each
+// character row (player status effects) so an active poison/burn carries
+// across the boundary.
+//
+// Variant guard: dungeon rooms are only supported for `type === 'combat'`
+// nodes; trap/lockbox/npc/treasure stay in Slack via /sq choose, /sq take.
+// Returns a discriminated union so callers can render specific errors.
+async function buildInitialCombatState(
+  db: D1Database,
+  quest: ActiveQuest,
+): Promise<
+  | { ok: true; seeded: CombatState }
+  | { ok: false; reason: "unsupported_variant" | "non_combat_room"; detail?: string }
+> {
+  const variant = quest.scene.variant ?? "standard";
+  if (variant !== "standard" && variant !== "boss" && variant !== "gauntlet" && variant !== "dungeon") {
+    return { ok: false, reason: "unsupported_variant", detail: variant };
+  }
+  if (variant === "dungeon") {
+    const exp = quest.scene.expedition;
+    const node = exp ? exp.nodes[exp.current] : undefined;
+    if (!node || node.type !== "combat") {
+      return { ok: false, reason: "non_combat_room", detail: node?.type ?? "missing" };
+    }
+  }
+
+  const party = await getQuestParty(db, quest.id);
+  const fighters: CombatInit["fighters"] = [];
+  for (const member of party) {
+    const [weapon, armor] = await Promise.all([
+      getEquipped(db, member.slack_user_id, "weapon"),
+      getEquipped(db, member.slack_user_id, "armor"),
+    ]);
+    const cls = classByName(member.class);
+    const weaponRange = (weapon?.weapon_range as "melee" | "ranged" | "focus" | null | undefined) ?? "melee";
+    const isFocus = weaponRange === "focus";
+    fighters.push({
+      id: member.slack_user_id,
+      name: member.name,
+      class: member.class,
+      level: member.level,
+      hp: member.hp,
+      max_hp: member.max_hp,
+      mana: member.mana,
+      max_mana: member.max_mana,
+      shield: member.shield,
+      position: member.position,
+      attack_mod: cls.attack_mod + Math.floor(member.level / 4),
+      magic_mod: cls.magic_mod + Math.floor(member.level / 4),
+      weapon_power: isFocus ? 0 : (weapon?.power ?? 0),
+      focus_power: isFocus ? (weapon?.power ?? 0) : 0,
+      weapon_range: weaponRange,
+      slack_username: member.slack_username,
+      armor_power: armor?.power ?? 0,
+      scars: member.scars,
+    });
+  }
+
+  const init: CombatInit = {
+    fighters,
+    monster: {
+      name: quest.scene.monster_name,
+      hp: quest.scene.monster_hp,
+      max_hp: quest.scene.monster_max_hp,
+      tier: quest.scene.tier,
+      is_boss: variant === "boss",
+      boss_phase: quest.scene.boss_phase,
+      wave: quest.scene.wave,
+      total_waves: quest.scene.total_waves,
+      upcoming_waves: quest.scene.upcoming_waves?.map((w) => ({
+        name: w.name,
+        max_hp: w.max_hp,
+      })),
+      art_url: quest.scene.monster_art_url,
+    },
+  };
+  const initial = createCombatState(init);
+  const seeded: CombatState = {
+    ...initial,
+    monster: {
+      ...initial.monster,
+      effects: quest.scene.monster_effects ?? [],
+    },
+    fighters: initial.fighters.map((f) => {
+      const character = party.find((p) => p.slack_user_id === f.id);
+      return character ? { ...f, effects: character.effects ?? [] } : f;
+    }),
+  };
+  return { ok: true, seeded };
+}
+
 export class QuestRoom extends DurableObject<Env> {
   // We hold a best-effort in-memory cache of the combat state, but always
   // reload from D1 when uncertain (post-hibernate) and always persist back
@@ -3879,41 +3893,129 @@ export class QuestRoom extends DurableObject<Env> {
     }
 
     const result = step(state, parsed.action, productionRoll);
-    // Persist even on rejected actions? No — state didn't change. Only save
-    // when the state actually advanced.
-    const stateChanged = result.state !== state;
+    try {
+      await this.handleStepResult(attach.quest_id, state, result);
+    } catch (err) {
+      this.broadcast({
+        type: "error",
+        message: `outcome failed: ${err instanceof Error ? err.message : String(err)}`,
+      });
+    }
+  }
+
+  // Shared post-step pipeline: persist state if it changed, broadcast events
+  // and the new state to every connected WebSocket client, kick off async AI
+  // flavor, and on a terminal transition apply combat outcome side-effects
+  // (XP/gold/scars/etc.) exactly once.
+  //
+  // Returns the OutcomeSummary on terminal transition (so RPC callers can
+  // forward it to the Slack thread), or null otherwise. Throws on outcome
+  // failure so callers can decide how to surface it (the WS path broadcasts
+  // an error frame; an RPC caller could include it in the response).
+  private async handleStepResult(
+    questId: number,
+    prevState: CombatState,
+    result: { state: CombatState; events: CombatEvent[] },
+  ): Promise<OutcomeSummary | null> {
+    const stateChanged = result.state !== prevState;
     if (stateChanged) {
       const newLog = this.appendLog(result.events);
-      await saveWebCombatState(this.env.DB, attach.quest_id, result.state, newLog);
+      await saveWebCombatState(this.env.DB, questId, result.state, newLog);
       this.cacheState = result.state;
+      this.cacheQuestId = questId;
     }
-
-    // Broadcast events + the new state to every connected client.
     this.broadcast({ type: "events", events: result.events });
     if (stateChanged) {
       this.broadcast({ type: "state", state: result.state });
     }
+    this.kickOffFlavor(questId, result.state, result.events);
 
-    // Kick off async AI flavor for hits/kills/deaths/flees. Each call broadcasts
-    // a `flavor` message when the model returns; the UI splices it into the log.
-    this.kickOffFlavor(attach.quest_id, result.state, result.events);
-
-    // Terminal status transition — apply outcome side-effects exactly once.
     const becameTerminal =
       stateChanged &&
-      state.status === "active" &&
+      prevState.status === "active" &&
       (result.state.status === "victory" || result.state.status === "defeat");
     if (becameTerminal) {
-      try {
-        const outcome = await applyWebCombatOutcome(this.env, attach.quest_id, result.state);
-        this.broadcast({ type: "outcome", outcome });
-      } catch (err) {
-        this.broadcast({
-          type: "error",
-          message: `outcome failed: ${err instanceof Error ? err.message : String(err)}`,
-        });
-      }
+      const outcome = await applyWebCombatOutcome(this.env, questId, result.state);
+      this.broadcast({ type: "outcome", outcome });
+      return outcome;
     }
+    return null;
+  }
+
+  // ─── RPC entry points (callable from cross-bound Workers) ───────────────────
+  //
+  // Both methods are direct DurableObject RPC — call as
+  //   env.QUEST_ROOM.get(env.QUEST_ROOM.idFromName(`quest:${questId}`))
+  //     .serverAction(questId, action)
+  //
+  // The DO is the single owner of step() for a given quest regardless of
+  // whether the actor came in via WebSocket (web client) or RPC (Slack
+  // worker). Web clients still see the same broadcasts they always have —
+  // a Slack-driven turn is broadcast to web WS clients identically to a
+  // web-driven turn.
+
+  async serverAction(
+    questId: number,
+    action: TurnAction,
+  ): Promise<
+    | { ok: true; state: CombatState; events: CombatEvent[]; outcome?: OutcomeSummary }
+    | { ok: false; reason: string }
+  > {
+    const state = await this.loadState(questId);
+    if (!state) return { ok: false, reason: "no_combat" };
+    if (state.status !== "active") return { ok: false, reason: "combat_ended" };
+
+    const result = step(state, action, productionRoll);
+    try {
+      const outcome = await this.handleStepResult(questId, state, result);
+      return {
+        ok: true,
+        state: result.state,
+        events: result.events,
+        outcome: outcome ?? undefined,
+      };
+    } catch (err) {
+      return {
+        ok: false,
+        reason: `outcome_failed: ${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
+  }
+
+  async bootstrapFromSlack(
+    questId: number,
+  ): Promise<
+    | { ok: true; state: CombatState; events: CombatEvent[]; created: boolean }
+    | { ok: false; reason: string; detail?: string }
+  > {
+    // Idempotent: if a state already exists, return it without re-running
+    // begin. Slack-side combat handler treats `created: false` as "join
+    // the in-progress fight"; `created: true` as "fresh — initiative was
+    // just rolled."
+    const existing = await this.loadState(questId);
+    if (existing) {
+      return { ok: true, state: existing, events: [], created: false };
+    }
+
+    const quest = await getQuestById(this.env.DB, questId);
+    if (!quest) return { ok: false, reason: "quest_not_found" };
+
+    const built = await buildInitialCombatState(this.env.DB, quest);
+    if (!built.ok) return { ok: false, reason: built.reason, detail: built.detail };
+
+    const begun = step(built.seeded, { kind: "begin" }, productionRoll);
+    const newLog = this.appendLog(begun.events);
+    await saveWebCombatState(this.env.DB, questId, begun.state, newLog);
+    this.cacheState = begun.state;
+    this.cacheQuestId = questId;
+
+    // Broadcast to any web clients that may already be connected (e.g. a
+    // user who opened the web app expecting to start combat but a Slack
+    // user got there first).
+    this.broadcast({ type: "state", state: begun.state });
+    this.broadcast({ type: "events", events: begun.events });
+
+    return { ok: true, state: begun.state, events: begun.events, created: true };
   }
 
   // Inventory-driven combat action. Validates the item belongs to the
