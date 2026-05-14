@@ -1156,6 +1156,8 @@ export function App() {
               onRest={rest}
               onSellKey={sellKeyConfirmed}
               onTransmuteKey={transmuteKey}
+              onLogout={logout}
+              onReroll={rerollCharacter}
             />
             {state.me.character && (
               <InventoryCard
@@ -1172,7 +1174,7 @@ export function App() {
             )}
           </>
         }
-        footer={<AccountPopover onLogout={logout} onReroll={rerollCharacter} character={state.me.character ?? null} />}
+        footer={undefined}
       />
       {haggleResult && (
         <HaggleResultDialog result={haggleResult} onClose={() => setHaggleResult(null)} />
@@ -2803,6 +2805,8 @@ function CharacterCard({
   onRest,
   onSellKey,
   onTransmuteKey,
+  onLogout,
+  onReroll,
 }: {
   me: MeResponse;
   inventory: Item[];
@@ -2810,6 +2814,8 @@ function CharacterCard({
   onRest: (kind: "short" | "long") => void;
   onSellKey: (tier: "bronze" | "silver" | "gold") => void;
   onTransmuteKey: (fromTier: "bronze" | "silver") => void;
+  onLogout: () => void;
+  onReroll: () => Promise<void>;
 }) {
   const c = me.character;
   if (!c) {
@@ -2835,7 +2841,8 @@ function CharacterCard({
   const restDisabled = inQuest || downed || fullyRecovered;
   const portrait = me.class_art_url;
   return (
-    <div style={card}>
+    <div style={{ ...card, position: "relative" }}>
+      <AccountPopover onLogout={onLogout} onReroll={onReroll} character={c} />
       <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 4 }}>
         <Avatar
           src={portrait}
@@ -4992,12 +4999,13 @@ function AccountPopover({
         onClick={() => { setOpen((v) => !v); setRerollStep("idle"); }}
         title="Account"
         style={{
-          background: "#1e2025", border: "1px solid #2a2d33", borderRadius: 6,
-          color: "#9ca3af", cursor: "pointer", padding: "6px 10px",
-          fontFamily: "inherit", fontSize: 13, display: "inline-flex", alignItems: "center", gap: 6,
+          position: "absolute", top: 8, right: 8,
+          background: "none", border: "1px solid #3a3d44", borderRadius: 5,
+          color: "#9ca3af", cursor: "pointer", padding: "3px 7px",
+          lineHeight: 1, fontFamily: "inherit", display: "flex", alignItems: "center",
         }}
       >
-        <Icon name="gears" size={14} /> Account
+        <Icon name="gears" size={14} />
       </button>
       {open && (
         <FloatingPortal>
