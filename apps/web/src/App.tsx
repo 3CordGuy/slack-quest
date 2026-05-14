@@ -1165,6 +1165,165 @@ function Login({ onSuccess }: { onSuccess: () => void }) {
   );
 }
 
+const DUNGEON_QUIPS = [
+  "Licking envelopes...",
+  "Finding the critical path...",
+  "Arguing with the compiler...",
+  "Reticulating splines...",
+  "Partitioning the dungeon table...",
+  "Rolling for encounter seeds...",
+  "Deploying goblin infrastructure...",
+  "Checking the backlog...",
+  "Migrating the kobold schema...",
+  "Resolving merge conflicts...",
+  "Spinning up monster containers...",
+  "Running goblin unit tests...",
+  "Calculating technical debt...",
+  "Allocating dungeon memory...",
+  "Garbage collecting old traps...",
+  "Compiling boss stats...",
+  "Indexing treasure tables...",
+  "Minifying the dungeon map...",
+  "Transpiling ancient runes...",
+  "Scaffolding the dungeon rooms...",
+  "Installing trap dependencies...",
+  "Debouncing monster spawns...",
+  "Bundling loot drops...",
+  "Optimizing the critical hit path...",
+  "Linting the quest description...",
+  "Running dungeon CI pipeline...",
+  "Seeding the random number generator...",
+  "Normalizing monster HP...",
+  "Patching the dragon's firewall...",
+  "Hydrating the puzzle state...",
+  "Lazy loading the sub-boss...",
+  "Memoizing the treasure map...",
+  "Refactoring the skeleton code...",
+  "Documenting nothing...",
+  "Closing 47 browser tabs...",
+  "Asking the AI nicely...",
+  "Waiting for the AI to think...",
+  "Negotiating with the dungeon master...",
+  "Bribing the RNG...",
+  "Rolling for flavor text...",
+  "Generating procedural excuses...",
+  "Herding the kobolds...",
+  "Waking the sleeping dragon...",
+  "Sharpening the puzzle edges...",
+  "Greasing the trap hinges...",
+  "Counting the treasure coins...",
+  "Drafting the NPC dialogue...",
+  "Stress-testing the dungeon walls...",
+  "Proofreading the evil monologue...",
+  "Tuning the ambient dungeon ambiance...",
+  "Placing the 'secret' button...",
+  "Connecting corridor nodes...",
+  "Balancing the encounter table...",
+  "Generating lore nobody will read...",
+  "Summoning demons from the database...",
+  "Calculating pathfinding for 30 goblins...",
+  "Applying dark mode to the dungeon...",
+  "Finding parking for the dragon...",
+  "Persuading the mimic to behave...",
+  "Filing paperwork for the boss fight...",
+  "Checking if the treasure is load-bearing...",
+  "Ensuring ADA compliance in the dungeon...",
+  "Placing unnecessary torches...",
+  "Polishing the boss's monologue...",
+  "Arguing about room naming conventions...",
+  "Deciding if the chest is a mimic...",
+  "Randomizing the dead ends...",
+  "Triple-checking the exit...",
+  "Hiding the macguffin...",
+  "Scheduling the ambush...",
+  "Overengineering the puzzle...",
+  "Reviewing the monster's PR...",
+  "Approving the goblin's PTO request...",
+  "Sourcing ethically-farmed loot...",
+  "Loading ancient prophecy...",
+  "Annotating the treasure map...",
+  "Translating the rune inscriptions...",
+  "Adjusting monster difficulty sliders...",
+  "Generating 47 locked doors...",
+  "Placing the one key you need...",
+  "Balancing the loot economy...",
+  "Installing the boss's dialogue tree...",
+  "Verifying the dungeon doesn't softlock...",
+  "Nesting callbacks in the trap logic...",
+  "Spinning up the skeleton microservice...",
+  "Querying the Dungeon-as-a-Service API...",
+  "Rate limiting the goblin spawner...",
+  "Provisioning a haunted room...",
+  "Configuring the fog of war...",
+  "Adding last-minute twists...",
+  "Second-guessing everything...",
+  "Clicking 'Generate' one more time...",
+  "Definitely not panicking...",
+  "This is fine. The dungeon is fine.",
+  "Almost there... probably...",
+  "Making sure the boss is scary enough...",
+  "Confirming the dragon ate already...",
+  "Checking if the wizard is available...",
+  "Sourcing authentic cobblestone textures...",
+  "Just one more yield point...",
+  "Warming up the dungeon...",
+  "The servers are thinking very hard...",
+];
+
+function DungeonLoadingBar() {
+  const [progress, setProgress] = useState(0);
+  const [quip, setQuip] = useState(
+    () => DUNGEON_QUIPS[Math.floor(Math.random() * DUNGEON_QUIPS.length)],
+  );
+  const [quipVisible, setQuipVisible] = useState(true);
+
+  useEffect(() => {
+    const totalMs = 15_000;
+    const tickMs = 80;
+    const step = tickMs / totalMs;
+    const t = setInterval(() => setProgress((p) => Math.min(1, p + step)), tickMs);
+    return () => clearInterval(t);
+  }, []);
+
+  useEffect(() => {
+    const t = setInterval(() => {
+      setQuipVisible(false);
+      setTimeout(() => {
+        setQuip(DUNGEON_QUIPS[Math.floor(Math.random() * DUNGEON_QUIPS.length)]);
+        setQuipVisible(true);
+      }, 250);
+    }, 3_000);
+    return () => clearInterval(t);
+  }, []);
+
+  return (
+    <div style={{ marginTop: 10 }}>
+      <div style={{ height: 4, background: "#0e1520", borderRadius: 2, overflow: "hidden" }}>
+        <div
+          style={{
+            height: "100%",
+            background: "linear-gradient(90deg, #1e3a5f, #7dd3fc)",
+            borderRadius: 2,
+            width: `${progress * 100}%`,
+            transition: "width 0.08s linear",
+          }}
+        />
+      </div>
+      <p style={{
+        ...muted,
+        fontSize: 11,
+        marginTop: 7,
+        textAlign: "center",
+        fontStyle: "italic",
+        opacity: quipVisible ? 0.85 : 0,
+        transition: "opacity 0.25s ease",
+      }}>
+        {quip}
+      </p>
+    </div>
+  );
+}
+
 interface QuestOption {
   id: QuestVariant;
   label: string;
@@ -1370,11 +1529,7 @@ function StartQuestCard({
               ? selectedOption.pendingLabel
               : <><Icon name={selectedOption.icon} /> {selectedOption.beginLabel}</>}
           </button>
-          {pending === "dungeon" && (
-            <p style={{ ...muted, fontSize: 11, marginTop: 6, textAlign: "center" }}>
-              Generating 5-7 rooms with AI — this takes ~15s.
-            </p>
-          )}
+          {pending === "dungeon" && <DungeonLoadingBar />}
         </div>
       )}
     </div>
@@ -3221,7 +3376,7 @@ function ShopCard({
     return (
       <div style={card}>
         {hero}
-        <h2 style={h2}>Shop</h2>
+        {!navOverlay && <h2 style={h2}>Shop</h2>}
         <p style={muted}>The shopkeep is afraid of monsters. Finish the quest first.</p>
       </div>
     );
@@ -3230,7 +3385,7 @@ function ShopCard({
     return (
       <div style={card}>
         {hero}
-        <h2 style={h2}>Shop</h2>
+        {!navOverlay && <h2 style={h2}>Shop</h2>}
         <p style={muted}>
           No shop channel yet — start a quest in Slack first so we know which channel's shop to show.
         </p>
@@ -3241,7 +3396,7 @@ function ShopCard({
     return (
       <div style={card}>
         {hero}
-        <h2 style={h2}>Shop</h2>
+        {!navOverlay && <h2 style={h2}>Shop</h2>}
         <p style={muted}>
           Rolled stock is dry. Run <code style={kbd}>/gq shop</code> in Slack to kick off a restock,
           then refresh here. Staples are still available below.
@@ -3475,7 +3630,7 @@ function InnCard({
     return (
       <div style={card}>
         {hero}
-        <h2 style={h2}>The Inn</h2>
+        {!navOverlay && <h2 style={h2}>The Inn</h2>}
         <p style={muted}>The innkeep won't take questing parties. Finish the fight first.</p>
       </div>
     );
@@ -3560,7 +3715,7 @@ function SmithyCard({
     return (
       <div style={card}>
         {hero}
-        <h2 style={h2}>The Smithy</h2>
+        {!navOverlay && <h2 style={h2}>The Smithy</h2>}
         <p style={muted}>The smith won't take your steel mid-quest — wrap up the fight first.</p>
       </div>
     );
@@ -3789,7 +3944,7 @@ function PubCard({
       {navOverlay
         ? <LocationHero src={pub.art_url} label="The Pub" nav={navOverlay} />
         : pub.art_url ? <Banner src={pub.art_url} alt="The Pub" /> : null}
-      <h2 style={h2}>🍺 The Pub</h2>
+      {!navOverlay && <h2 style={h2}>🍺 The Pub</h2>}
       <p style={{ ...muted, marginTop: 4 }}>
         <em>"Smoke, sawdust, a thousand failed deployments worth of regret in the air."</em>
       </p>
