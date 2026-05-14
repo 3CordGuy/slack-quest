@@ -1048,13 +1048,16 @@ export function App() {
         );
       } else if (townSection === "pub" && state.me.character && state.pub) {
         sectionContent = (
-          <PubCard
-            pub={state.pub}
-            selfId={state.me.slack_user_id}
-            navOverlay={townNav}
-            onBuyDrink={buyDrink}
-            onRefresh={refresh}
-          />
+          <>
+            <PubCard
+              pub={state.pub}
+              navOverlay={townNav}
+              onBuyDrink={buyDrink}
+              onRefresh={refresh}
+            />
+            <LiarsRollCard gold={state.pub.gold} onRefresh={refresh} />
+            <SpdCard pub={state.pub} selfId={state.me.slack_user_id} onRefresh={refresh} />
+          </>
         );
       } else if (townSection === "shop" && state.me.character && state.shop) {
         sectionContent = (
@@ -2892,17 +2895,18 @@ function CharacterCard({
             </span>
           }
         />
-        <Stat
-          label="Keys"
-          icon={<Icon name="key" color="#d1d5db" size={14} />}
-          value={
+        <div style={{ padding: 12, background: "#1d1f23", borderRadius: 8, position: "relative" }}>
+          <div style={{ ...muted, fontSize: 12, textTransform: "uppercase", display: "flex", alignItems: "center", gap: 6 }}>
+            <Icon name="key" color="#d1d5db" size={14} /> Keys
+          </div>
+          <div style={{ fontSize: 18, fontWeight: 600, color: "#f5f5f5" }}>
             <KeysPopover
               keys={{ bronze: c.keys_bronze, silver: c.keys_silver, gold: c.keys_gold }}
               onSellKey={onSellKey}
               onTransmuteKey={onTransmuteKey}
             />
-          }
-        />
+          </div>
+        </div>
       </Stats>
       {/* Camp section */}
       <div style={{ marginTop: 16, padding: "10px 12px", background: "#16181c", borderRadius: 8, border: "1px solid #2a2d33" }}>
@@ -2963,21 +2967,24 @@ function KeysPopover({
         <KeyIcon tier="bronze" size={14} /> {keys.bronze}
         <KeyIcon tier="silver" size={14} /> {keys.silver}
         <KeyIcon tier="gold" size={14} /> {keys.gold}
-        {total > 0 && (
-          <button
-            ref={refs.setReference}
-            onClick={() => setOpen((v) => !v)}
-            title="Sell or transmute keys"
-            style={{
-              background: "none", border: "1px solid #3a3d44", borderRadius: 4,
-              color: "#9ca3af", cursor: "pointer", fontSize: 11, padding: "1px 5px",
-              lineHeight: 1.4, fontFamily: "inherit",
-            }}
-          >
-            <Icon name="gear" size={11} />
-          </button>
-        )}
       </span>
+      {total > 0 && (
+        <button
+          ref={refs.setReference}
+          onClick={() => setOpen((v) => !v)}
+          title="Sell or transmute keys"
+          style={{
+            position: "absolute", top: 8, right: 8,
+            background: "none", border: "1px solid #3a3d44", borderRadius: 5,
+            color: "#9ca3af", cursor: "pointer", padding: "2px 5px",
+            lineHeight: 1, fontFamily: "inherit", display: "flex", gap: 2, alignItems: "center",
+          }}
+        >
+          <KeyIcon tier="bronze" size={10} />
+          <KeyIcon tier="silver" size={10} />
+          <KeyIcon tier="gold" size={10} />
+        </button>
+      )}
       {open && (
         <FloatingPortal>
           <div
@@ -4260,151 +4267,15 @@ function NpcConversation({ npc, onClose }: { npc: PubNpc; onClose: () => void })
 
 function PubCard({
   pub,
-  selfId,
   navOverlay,
   onBuyDrink,
   onRefresh,
 }: {
   pub: PubResponse;
-  selfId: string;
   navOverlay?: React.ReactNode;
   onBuyDrink: (drinkId: string) => void;
   onRefresh: () => void;
 }) {
-  // Liars' Roll state machine: idle → pending (after start) → result → idle
-  const [liarsState, setLiarsState] = useState<
-    | { phase: "idle" }
-    | { phase: "pending"; round: LiarsRoundPending }
-    | { phase: "result"; result: LiarsRoundResult }
-  >({ phase: "idle" });
-  const [liarsLoading, setLiarsLoading] = useState(false);
-
-  // SPD state machine
-  const [spdStake, setSpdStake] = useState<number | null>(null);
-  const [spdLoading, setSpdLoading] = useState(false);
-  const [spdResult, setSpdResult] = useState<SpdResult | null>(null);
-
-  async function startLiars(stake: number) {
-    setLiarsLoading(true);
-    try {
-      const res = await fetch("/api/pub/liars/start", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({ stake }),
-      });
-      const body = (await res.json()) as Record<string, unknown>;
-      if (!res.ok) {
-        const code = typeof body.error === "string" ? body.error : `http_${res.status}`;
-        toast.error(code === "insufficient_gold" ? "Not enough gold." : code);
-        return;
-      }
-      setLiarsState({ phase: "pending", round: body as unknown as LiarsRoundPending });
-    } finally {
-      setLiarsLoading(false);
-    }
-  }
-
-  async function decideLiars(roundId: number, choice: "trust" | "challenge") {
-    setLiarsLoading(true);
-    try {
-      const res = await fetch(`/api/pub/liars/${roundId}/decide`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({ choice }),
-      });
-      const body = (await res.json()) as Record<string, unknown>;
-      if (!res.ok) {
-        toast.error(typeof body.error === "string" ? body.error : "Something went wrong.");
-        return;
-      }
-      setLiarsState({ phase: "result", result: body as unknown as LiarsRoundResult });
-    } finally {
-      setLiarsLoading(false);
-    }
-  }
-
-  // SPD helpers
-  async function spdStart(stake: number, throwChoice: SpdThrow) {
-    setSpdLoading(true);
-    try {
-      const { ok } = await postJson("/api/pub/spd/start", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ stake, throw: throwChoice }),
-      });
-      if (ok) {
-        setSpdStake(null);
-        onRefresh();
-      }
-    } finally {
-      setSpdLoading(false);
-    }
-  }
-
-  async function spdAccept(matchId: number, throwChoice: SpdThrow) {
-    setSpdLoading(true);
-    try {
-      const res = await fetch(`/api/pub/spd/${matchId}/accept`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({ throw: throwChoice }),
-      });
-      const body = (await res.json()) as Record<string, unknown>;
-      if (!res.ok) {
-        const code = typeof body.error === "string" ? body.error : `http_${res.status}`;
-        const label = (ERROR_LABELS as Record<string, string>)[code] ?? code;
-        toast.error(label);
-        return;
-      }
-      setSpdResult(body as unknown as SpdResult);
-      onRefresh();
-    } finally {
-      setSpdLoading(false);
-    }
-  }
-
-  async function spdBet(matchId: number, side: "initiator" | "challenger", amount: number) {
-    setSpdLoading(true);
-    try {
-      const { ok } = await postJson(`/api/pub/spd/${matchId}/bet`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ side, amount }),
-      });
-      if (ok) onRefresh();
-    } finally {
-      setSpdLoading(false);
-    }
-  }
-
-  async function spdCancel(matchId: number) {
-    setSpdLoading(true);
-    try {
-      const { ok } = await postJson(`/api/pub/spd/${matchId}/cancel`, { method: "POST" });
-      if (ok) onRefresh();
-    } finally {
-      setSpdLoading(false);
-    }
-  }
-
-  const spd = pub.spd;
-  const openMatch = spd?.open_match ?? null;
-  const myBet = spd?.my_bet ?? null;
-  const betTotals = spd?.bet_totals ?? { initiator: 0, challenger: 0 };
-
-  const iAmInitiator = openMatch?.initiator_user_id === selfId;
-  const iAmChallenger = openMatch?.challenger_user_id === selfId;
-  const canBet = openMatch !== null && !iAmInitiator && !iAmChallenger && myBet === null;
-
-  const SPD_THROW_LABELS: Record<SpdThrow, React.ReactNode> = {
-    stone: <><Icon name="rune-stone" size={12} /> Stone</>,
-    parchment: <><Icon name="scroll-unfurled" size={12} /> Parchment</>,
-    dagger: <><Icon name="plain-dagger" size={12} /> Dagger</>,
-  };
-
   return (
     <div style={card}>
       {navOverlay
@@ -4497,386 +4368,420 @@ function PubCard({
       {pub.npcs && (pub.npcs.bartender || pub.npcs.regulars.length > 0) && (
         <NpcSection npcs={pub.npcs} />
       )}
-
-      {/* Liars' Roll mini-game */}
-      <div style={{ marginTop: 24, borderTop: "1px solid #2a2d33", paddingTop: 16 }}>
-        <div style={{ ...muted, fontSize: 11, textTransform: "uppercase", letterSpacing: 1.5, marginBottom: 10 }}>
-          <Icon name="perspective-dice-six" size={11} /> Liars&apos; Roll — vs. the Bartender
-        </div>
-        <p style={{ ...muted, fontSize: 13, marginBottom: 12 }}>
-          Both roll 3d6. The bartender claims a zone (Low/Mid/High) — lies 45% of the time.
-          Trust ({LIARS_TRUST_MULT_DISPLAY}×) or Challenge ({LIARS_CHALLENGE_MULT_DISPLAY}×)?
-        </p>
-
-        {liarsState.phase === "idle" && (
-          <div>
-            <div style={{ ...muted, fontSize: 12, marginBottom: 8 }}>Pick a stake:</div>
-            <div style={{ display: "flex", gap: 8 }}>
-              {[10, 25, 50].map((s) => (
-                <button
-                  key={s}
-                  onClick={() => void startLiars(s)}
-                  disabled={liarsLoading || pub.gold < s}
-                  style={{
-                    ...smallActionBtn(pub.gold >= s ? "#2a1f1f" : "#222428", pub.gold >= s ? "#fca5a5" : "#7a7d83"),
-                    opacity: pub.gold >= s ? 1 : 0.5,
-                    cursor: pub.gold >= s ? "pointer" : "not-allowed",
-                  }}
-                >
-                  <Icon name="gold-bar" size={11} /> {s}g
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {liarsState.phase === "pending" && (() => {
-          const r = liarsState.round;
-          return (
-            <div>
-              <div style={{ background: "#1d1f23", borderRadius: 8, padding: 12, marginBottom: 10 }}>
-                <div style={{ color: "#f5f5f5", fontWeight: 600, marginBottom: 4 }}>
-                  Bartender&apos;s claim: <span style={{ color: "#fbbf24" }}>{r.claim_label}</span>
-                </div>
-                <div style={{ ...muted, fontSize: 13 }}>
-                  Your dice: {r.player_dice.join(", ")} (sum: <strong>{r.player_sum}</strong>)
-                </div>
-                <div style={{ ...muted, fontSize: 12, marginTop: 4 }}>
-                  Stake: {r.stake}g · Trust pays {r.trust_mult}× · Challenge pays {r.challenge_mult}× · {r.house_cut_pct}% house rake on wins
-                </div>
-              </div>
-              <div style={{ display: "flex", gap: 8 }}>
-                <button
-                  onClick={() => void decideLiars(r.round_id, "trust")}
-                  disabled={liarsLoading}
-                  style={smallActionBtn("#1f3a1f", "#86efac")}
-                >
-                  <Icon name="hand" size={12} /> Trust ({r.trust_mult}×)
-                </button>
-                <button
-                  onClick={() => void decideLiars(r.round_id, "challenge")}
-                  disabled={liarsLoading}
-                  style={smallActionBtn("#3a1f1f", "#fca5a5")}
-                >
-                  <Icon name="fire" size={12} /> Challenge ({r.challenge_mult}×)
-                </button>
-              </div>
-            </div>
-          );
-        })()}
-
-        {liarsState.phase === "result" && (() => {
-          const r = liarsState.result;
-          const won = r.payout > 0;
-          return (
-            <div>
-              <div
-                style={{
-                  background: won ? "#1a2a1a" : "#2a1a1a",
-                  border: `1px solid ${won ? "#2d5a2d" : "#5a2d2d"}`,
-                  borderRadius: 8,
-                  padding: 12,
-                  marginBottom: 10,
-                }}
-              >
-                <div style={{ fontWeight: 700, color: won ? "#86efac" : "#fca5a5", marginBottom: 6 }}>
-                  {won ? (
-                    r.choice === "trust"
-                      ? <><Icon name="hand" size={13} /> Trusted correctly — +{r.payout}g!</>
-                      : <><Icon name="fire" size={13} /> Called the bluff — +{r.payout}g!</>
-                  ) : (
-                    r.choice === "trust"
-                      ? <><Icon name="daggers" size={13} /> Trusted a liar — lost the stake.</>
-                      : <><Icon name="daggers" size={13} /> Called an honest claim — lost the stake.</>
-                  )}
-                </div>
-                <div style={{ ...muted, fontSize: 13 }}>
-                  {r.lied ? "The bartender was lying." : "The bartender told the truth."}{" "}
-                  True zone: <strong>{r.truth_label}</strong>.
-                </div>
-                <div style={{ ...muted, fontSize: 12, marginTop: 4 }}>
-                  Your dice: {r.player_dice.join(", ")} · Bartender: {r.bartender_dice.join(", ")} · Combined: {r.combined}
-                </div>
-                <div style={{ marginTop: 6, color: "#fbbf24", fontSize: 13, fontWeight: 600 }}>
-                  Gold: {r.gold}g
-                </div>
-              </div>
-              <button
-                onClick={() => setLiarsState({ phase: "idle" })}
-                style={smallActionBtn("#222428", "#cbd5e1")}
-              >
-                Play again
-              </button>
-            </div>
-          );
-        })()}
-      </div>
-
-      {/* Stone-Parchment-Dagger */}
-      <div style={{ marginTop: 24, borderTop: "1px solid #2a2d33", paddingTop: 16 }}>
-        <div style={{ ...muted, fontSize: 11, textTransform: "uppercase", letterSpacing: 1.5, marginBottom: 10 }}>
-          <Icon name="plain-dagger" size={11} /> Stone-Parchment-Dagger
-        </div>
-
-        {/* Show resolved result */}
-        {spdResult && (
-          <div>
-            <div
-              style={{
-                background: spdResult.tie
-                  ? "#1d2a2d"
-                  : spdResult.winner_user_id === selfId
-                    ? "#1a2a1a"
-                    : "#2a1a1a",
-                border: `1px solid ${spdResult.tie ? "#2d4a5a" : spdResult.winner_user_id === selfId ? "#2d5a2d" : "#5a2d2d"}`,
-                borderRadius: 8,
-                padding: 12,
-                marginBottom: 10,
-              }}
-            >
-              <div
-                style={{
-                  fontWeight: 700,
-                  color: spdResult.tie ? "#93c5fd" : spdResult.winner_user_id === selfId ? "#86efac" : "#fca5a5",
-                  marginBottom: 6,
-                }}
-              >
-                {spdResult.tie
-                  ? <><Icon name="hand" size={13} /> Tie! Everything refunded.</>
-                  : spdResult.winner_user_id === selfId
-                    ? <><Icon name="trophy" size={13} /> You won! +{spdResult.payout}g</>
-                    : <><Icon name="daggers" size={13} /> You lost the match.</>}
-              </div>
-              <div style={{ ...muted, fontSize: 13 }}>
-                {spdResult.initiator_name} threw {SPD_THROW_LABELS[spdResult.initiator_throw]} · You threw {SPD_THROW_LABELS[spdResult.challenger_throw]}
-              </div>
-              {!spdResult.tie && spdResult.house_bump > 0 && (
-                <div style={{ ...muted, fontSize: 12, marginTop: 4 }}>
-                  House bump: +{spdResult.house_bump}g on total pot
-                </div>
-              )}
-              <div style={{ marginTop: 6, color: "#fbbf24", fontSize: 13, fontWeight: 600 }}>
-                Gold: {spdResult.gold}g
-              </div>
-            </div>
-            <button
-              onClick={() => setSpdResult(null)}
-              style={smallActionBtn("#222428", "#cbd5e1")}
-            >
-              Done
-            </button>
-          </div>
-        )}
-
-        {/* No result showing — normal SPD view */}
-        {!spdResult && (<>
-          {/* No open match — allow initiating */}
-          {!openMatch && (
-            <div>
-              <p style={{ ...muted, fontSize: 13, marginBottom: 12 }}>
-                Commit a throw secretly. Any pub-goer can accept — loser pays. Winner takes both stakes +20%.
-                Side bets pay 2×. Ties refund all.
-              </p>
-              {spdStake === null ? (
-                <div>
-                  <div style={{ ...muted, fontSize: 12, marginBottom: 8 }}>Pick a stake:</div>
-                  <div style={{ display: "flex", gap: 8 }}>
-                    {[10, 25, 50].map((s) => (
-                      <button
-                        key={s}
-                        onClick={() => setSpdStake(s)}
-                        disabled={spdLoading || pub.gold < s}
-                        style={{
-                          ...smallActionBtn(pub.gold >= s ? "#2a1f2a" : "#222428", pub.gold >= s ? "#d8b4fe" : "#7a7d83"),
-                          opacity: pub.gold >= s ? 1 : 0.5,
-                          cursor: pub.gold >= s ? "pointer" : "not-allowed",
-                        }}
-                      >
-                        <Icon name="gold-bar" size={11} /> {s}g
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              ) : (
-                <div>
-                  <div style={{ ...muted, fontSize: 12, marginBottom: 8 }}>
-                    Stake: <strong style={{ color: "#fbbf24" }}>{spdStake}g</strong> — pick your throw (only you will see it):
-                  </div>
-                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                    {(["stone", "parchment", "dagger"] as SpdThrow[]).map((t) => (
-                      <button
-                        key={t}
-                        onClick={() => void spdStart(spdStake, t)}
-                        disabled={spdLoading}
-                        style={smallActionBtn("#2a2010", "#fde68a")}
-                      >
-                        {SPD_THROW_LABELS[t]}
-                      </button>
-                    ))}
-                    <button
-                      onClick={() => setSpdStake(null)}
-                      disabled={spdLoading}
-                      style={smallActionBtn("#222428", "#94a3b8")}
-                    >
-                      Cancel
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* Open match — and I am the initiator */}
-          {openMatch && iAmInitiator && (
-            <div>
-              <div
-                style={{
-                  background: "#1d2a1d",
-                  border: "1px solid #2d5a2d",
-                  borderRadius: 8,
-                  padding: 12,
-                  marginBottom: 10,
-                }}
-              >
-                <div style={{ color: "#86efac", fontWeight: 600, marginBottom: 4 }}>
-                  Your match is open — waiting for a challenger
-                </div>
-                <div style={{ ...muted, fontSize: 13 }}>
-                  Stake: <strong style={{ color: "#fbbf24" }}>{openMatch.initiator_stake}g</strong> · Your throw is hidden until someone accepts.
-                </div>
-                {(betTotals.initiator > 0 || betTotals.challenger > 0) && (
-                  <div style={{ ...muted, fontSize: 12, marginTop: 4 }}>
-                    Side bets: {betTotals.initiator}g on you · {betTotals.challenger}g on challenger
-                  </div>
-                )}
-              </div>
-              <button
-                onClick={() => void spdCancel(openMatch.id)}
-                disabled={spdLoading}
-                style={smallActionBtn("#2a1a1a", "#fca5a5")}
-              >
-                Cancel match (refunds your stake)
-              </button>
-            </div>
-          )}
-
-          {/* Open match — and I am not the initiator (can accept or bet) */}
-          {openMatch && !iAmInitiator && (
-            <div>
-              <div
-                style={{
-                  background: "#1d1f23",
-                  borderRadius: 8,
-                  padding: 12,
-                  marginBottom: 10,
-                  border: "1px solid #3a3d45",
-                }}
-              >
-                <div style={{ color: "#f5f5f5", fontWeight: 600, marginBottom: 4 }}>
-                  ⚔️ {openMatch.initiator_name} threw something for {openMatch.initiator_stake}g
-                </div>
-                <div style={{ ...muted, fontSize: 13 }}>
-                  Their throw is secret until you accept. Stakes: {openMatch.initiator_stake}g each — winner gets {openMatch.initiator_stake * 2}g + 20% house bump.
-                </div>
-                {(betTotals.initiator > 0 || betTotals.challenger > 0) && (
-                  <div style={{ ...muted, fontSize: 12, marginTop: 4 }}>
-                    Side bets: {betTotals.initiator}g on {openMatch.initiator_name} · {betTotals.challenger}g on challenger
-                  </div>
-                )}
-              </div>
-
-              {/* Challenger throw picker (if not already challenger) */}
-              {!iAmChallenger && (
-                <div style={{ marginBottom: 12 }}>
-                  <div style={{ ...muted, fontSize: 12, marginBottom: 8 }}>
-                    Accept the challenge — pick your throw:
-                  </div>
-                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                    {(["stone", "parchment", "dagger"] as SpdThrow[]).map((t) => (
-                      <button
-                        key={t}
-                        onClick={() => void spdAccept(openMatch.id, t)}
-                        disabled={spdLoading || pub.gold < openMatch.initiator_stake}
-                        style={{
-                          ...smallActionBtn(
-                            pub.gold >= openMatch.initiator_stake ? "#2a1020" : "#222428",
-                            pub.gold >= openMatch.initiator_stake ? "#f9a8d4" : "#7a7d83",
-                          ),
-                          opacity: pub.gold >= openMatch.initiator_stake ? 1 : 0.5,
-                          cursor: pub.gold >= openMatch.initiator_stake ? "pointer" : "not-allowed",
-                        }}
-                      >
-                        {SPD_THROW_LABELS[t]}
-                      </button>
-                    ))}
-                  </div>
-                  {pub.gold < openMatch.initiator_stake && (
-                    <div style={{ ...muted, fontSize: 12, marginTop: 6, color: "#fca5a5" }}>
-                      Need {openMatch.initiator_stake}g to accept (you have {pub.gold}g)
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* Side bet section */}
-              {canBet && (
-                <div>
-                  <div style={{ ...muted, fontSize: 12, marginBottom: 8 }}>
-                    Or place a side bet (pays 2× if your pick wins):
-                  </div>
-                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
-                    <span style={{ ...muted, fontSize: 12, alignSelf: "center" }}>Back {openMatch.initiator_name}:</span>
-                    {[5, 10, 25].map((amt) => (
-                      <button
-                        key={`init-${amt}`}
-                        onClick={() => void spdBet(openMatch.id, "initiator", amt)}
-                        disabled={spdLoading || pub.gold < amt}
-                        style={{
-                          ...smallActionBtn(pub.gold >= amt ? "#2a1f10" : "#222428", pub.gold >= amt ? "#fdba74" : "#7a7d83"),
-                          opacity: pub.gold >= amt ? 1 : 0.5,
-                          cursor: pub.gold >= amt ? "pointer" : "not-allowed",
-                        }}
-                      >
-                        {amt}g
-                      </button>
-                    ))}
-                  </div>
-                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                    <span style={{ ...muted, fontSize: 12, alignSelf: "center" }}>Back challenger:</span>
-                    {[5, 10, 25].map((amt) => (
-                      <button
-                        key={`chall-${amt}`}
-                        onClick={() => void spdBet(openMatch.id, "challenger", amt)}
-                        disabled={spdLoading || pub.gold < amt}
-                        style={{
-                          ...smallActionBtn(pub.gold >= amt ? "#10202a" : "#222428", pub.gold >= amt ? "#93c5fd" : "#7a7d83"),
-                          opacity: pub.gold >= amt ? 1 : 0.5,
-                          cursor: pub.gold >= amt ? "pointer" : "not-allowed",
-                        }}
-                      >
-                        {amt}g
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Already bet */}
-              {myBet && (
-                <div style={{ ...muted, fontSize: 13, marginTop: 8 }}>
-                  You bet {myBet.amount}g on {myBet.side === "initiator" ? openMatch.initiator_name : "the challenger"}.
-                </div>
-              )}
-            </div>
-          )}
-        </>)}
-      </div>
     </div>
   );
 }
 
 const LIARS_TRUST_MULT_DISPLAY = "1.7";
 const LIARS_CHALLENGE_MULT_DISPLAY = "2.5";
+
+// =============================================================================
+// GAME CARDS — Liars' Roll and SPD as standalone cards
+// =============================================================================
+
+function GameCardHeader({ icon, title, subtitle }: { icon: string; title: string; subtitle: string }) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 16 }}>
+      <div style={{
+        width: 56, height: 56, borderRadius: 10,
+        background: "#16181c", border: "1px solid #2a2d33",
+        display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
+      }}>
+        <Icon name={icon} size={32} />
+      </div>
+      <div>
+        <div style={{ fontWeight: 700, fontSize: 16, color: "#f5f5f5" }}>{title}</div>
+        <div style={{ ...muted, fontSize: 12, marginTop: 2 }}>{subtitle}</div>
+      </div>
+    </div>
+  );
+}
+
+function StakeButtons({
+  stakes,
+  gold,
+  disabled,
+  btnStyle,
+  customInputStyle,
+  onPick,
+}: {
+  stakes: number[];
+  gold: number;
+  disabled: boolean;
+  btnStyle: (canAfford: boolean) => React.CSSProperties;
+  customInputStyle: React.CSSProperties;
+  onPick: (amount: number) => void;
+}) {
+  const [showCustom, setShowCustom] = useState(false);
+  const [customVal, setCustomVal] = useState("");
+
+  if (showCustom) {
+    const parsed = parseInt(customVal, 10);
+    const valid = !isNaN(parsed) && parsed >= 1 && parsed <= gold;
+    return (
+      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+        <input
+          type="number"
+          min={1}
+          max={gold}
+          value={customVal}
+          onChange={(e) => setCustomVal(e.target.value)}
+          placeholder="amount"
+          autoFocus
+          style={{
+            width: 90, padding: "4px 8px", borderRadius: 6,
+            border: "1px solid #3a3d44", background: "#0e0f12",
+            color: "#f5f5f5", fontSize: 13, fontFamily: "inherit",
+          }}
+        />
+        <button
+          disabled={disabled || !valid}
+          onClick={() => { onPick(parsed); setShowCustom(false); setCustomVal(""); }}
+          style={{ ...customInputStyle, opacity: valid ? 1 : 0.4, cursor: valid ? "pointer" : "not-allowed" }}
+        >
+          Bet
+        </button>
+        <button
+          onClick={() => { setShowCustom(false); setCustomVal(""); }}
+          style={smallActionBtn("#222428", "#94a3b8")}
+        >
+          Cancel
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+      {stakes.map((s) => (
+        <button
+          key={s}
+          onClick={() => onPick(s)}
+          disabled={disabled || gold < s}
+          style={{ ...btnStyle(gold >= s), opacity: gold >= s ? 1 : 0.5, cursor: gold >= s ? "pointer" : "not-allowed" }}
+        >
+          <Icon name="gold-bar" size={11} /> {s}g
+        </button>
+      ))}
+      <button
+        onClick={() => setShowCustom(true)}
+        disabled={disabled || gold < 1}
+        style={{ ...smallActionBtn("#1a1c24", "#94a3b8"), opacity: gold >= 1 ? 1 : 0.5, cursor: gold >= 1 ? "pointer" : "not-allowed" }}
+      >
+        Custom…
+      </button>
+    </div>
+  );
+}
+
+function LiarsRollCard({ gold, onRefresh }: { gold: number; onRefresh: () => void }) {
+  const [liarsState, setLiarsState] = useState<
+    | { phase: "idle" }
+    | { phase: "pending"; round: LiarsRoundPending }
+    | { phase: "result"; result: LiarsRoundResult }
+  >({ phase: "idle" });
+  const [loading, setLoading] = useState(false);
+
+  async function startLiars(stake: number) {
+    setLoading(true);
+    try {
+      const res = await fetch("/api/pub/liars/start", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ stake }),
+      });
+      const body = (await res.json()) as Record<string, unknown>;
+      if (!res.ok) {
+        const code = typeof body.error === "string" ? body.error : `http_${res.status}`;
+        toast.error(code === "insufficient_gold" ? "Not enough gold." : code);
+        return;
+      }
+      setLiarsState({ phase: "pending", round: body as unknown as LiarsRoundPending });
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function decideLiars(roundId: number, choice: "trust" | "challenge") {
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/pub/liars/${roundId}/decide`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ choice }),
+      });
+      const body = (await res.json()) as Record<string, unknown>;
+      if (!res.ok) {
+        toast.error(typeof body.error === "string" ? body.error : "Something went wrong.");
+        return;
+      }
+      setLiarsState({ phase: "result", result: body as unknown as LiarsRoundResult });
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div style={card}>
+      <GameCardHeader
+        icon="perspective-dice-six"
+        title="Liars' Roll"
+        subtitle={`Both roll 3d6. Bartender claims a zone — lies 45% of the time. Trust (${LIARS_TRUST_MULT_DISPLAY}×) or Challenge (${LIARS_CHALLENGE_MULT_DISPLAY}×)?`}
+      />
+
+      {liarsState.phase === "idle" && (
+        <div>
+          <div style={{ ...muted, fontSize: 12, marginBottom: 8 }}>Pick a stake:</div>
+          <StakeButtons
+            stakes={[10, 25, 50]}
+            gold={gold}
+            disabled={loading}
+            btnStyle={(can) => ({ ...smallActionBtn(can ? "#2a1f1f" : "#222428", can ? "#fca5a5" : "#7a7d83") })}
+            customInputStyle={smallActionBtn("#2a1f1f", "#fca5a5")}
+            onPick={(s) => void startLiars(s)}
+          />
+        </div>
+      )}
+
+      {liarsState.phase === "pending" && (() => {
+        const r = liarsState.round;
+        return (
+          <div>
+            <div style={{ background: "#1d1f23", borderRadius: 8, padding: 12, marginBottom: 10 }}>
+              <div style={{ color: "#f5f5f5", fontWeight: 600, marginBottom: 4 }}>
+                Bartender&apos;s claim: <span style={{ color: "#fbbf24" }}>{r.claim_label}</span>
+              </div>
+              <div style={{ ...muted, fontSize: 13 }}>
+                Your dice: {r.player_dice.join(", ")} (sum: <strong>{r.player_sum}</strong>)
+              </div>
+              <div style={{ ...muted, fontSize: 12, marginTop: 4 }}>
+                Stake: {r.stake}g · Trust pays {r.trust_mult}× · Challenge pays {r.challenge_mult}× · {r.house_cut_pct}% house rake on wins
+              </div>
+            </div>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button onClick={() => void decideLiars(r.round_id, "trust")} disabled={loading} style={smallActionBtn("#1f3a1f", "#86efac")}>
+                <Icon name="hand" size={12} /> Trust ({r.trust_mult}×)
+              </button>
+              <button onClick={() => void decideLiars(r.round_id, "challenge")} disabled={loading} style={smallActionBtn("#3a1f1f", "#fca5a5")}>
+                <Icon name="fire" size={12} /> Challenge ({r.challenge_mult}×)
+              </button>
+            </div>
+          </div>
+        );
+      })()}
+
+      {liarsState.phase === "result" && (() => {
+        const r = liarsState.result;
+        const won = r.payout > 0;
+        return (
+          <div>
+            <div style={{ background: won ? "#1a2a1a" : "#2a1a1a", border: `1px solid ${won ? "#2d5a2d" : "#5a2d2d"}`, borderRadius: 8, padding: 12, marginBottom: 10 }}>
+              <div style={{ fontWeight: 700, color: won ? "#86efac" : "#fca5a5", marginBottom: 6 }}>
+                {won
+                  ? r.choice === "trust" ? <><Icon name="hand" size={13} /> Trusted correctly — +{r.payout}g!</> : <><Icon name="fire" size={13} /> Called the bluff — +{r.payout}g!</>
+                  : r.choice === "trust" ? <><Icon name="daggers" size={13} /> Trusted a liar — lost the stake.</> : <><Icon name="daggers" size={13} /> Called an honest claim — lost the stake.</>}
+              </div>
+              <div style={{ ...muted, fontSize: 13 }}>
+                {r.lied ? "The bartender was lying." : "The bartender told the truth."}{" "}
+                True zone: <strong>{r.truth_label}</strong>.
+              </div>
+              <div style={{ ...muted, fontSize: 12, marginTop: 4 }}>
+                Your dice: {r.player_dice.join(", ")} · Bartender: {r.bartender_dice.join(", ")} · Combined: {r.combined}
+              </div>
+              <div style={{ marginTop: 6, color: "#fbbf24", fontSize: 13, fontWeight: 600 }}>Gold: {r.gold}g</div>
+            </div>
+            <button onClick={() => { setLiarsState({ phase: "idle" }); onRefresh(); }} style={smallActionBtn("#222428", "#cbd5e1")}>
+              Play again
+            </button>
+          </div>
+        );
+      })()}
+    </div>
+  );
+}
+
+function SpdCard({ pub, selfId, onRefresh }: { pub: PubResponse; selfId: string; onRefresh: () => void }) {
+  const [spdStake, setSpdStake] = useState<number | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [spdResult, setSpdResult] = useState<SpdResult | null>(null);
+
+  const SPD_THROW_LABELS: Record<SpdThrow, React.ReactNode> = {
+    stone: <><Icon name="rune-stone" size={12} /> Stone</>,
+    parchment: <><Icon name="scroll-unfurled" size={12} /> Parchment</>,
+    dagger: <><Icon name="plain-dagger" size={12} /> Dagger</>,
+  };
+
+  async function spdStart(stake: number, throwChoice: SpdThrow) {
+    setLoading(true);
+    try {
+      const { ok } = await postJson("/api/pub/spd/start", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ stake, throw: throwChoice }) });
+      if (ok) { setSpdStake(null); onRefresh(); }
+    } finally { setLoading(false); }
+  }
+
+  async function spdAccept(matchId: number, throwChoice: SpdThrow) {
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/pub/spd/${matchId}/accept`, { method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include", body: JSON.stringify({ throw: throwChoice }) });
+      const body = (await res.json()) as Record<string, unknown>;
+      if (!res.ok) { const code = typeof body.error === "string" ? body.error : `http_${res.status}`; toast.error((ERROR_LABELS as Record<string, string>)[code] ?? code); return; }
+      setSpdResult(body as unknown as SpdResult);
+      onRefresh();
+    } finally { setLoading(false); }
+  }
+
+  async function spdBet(matchId: number, side: "initiator" | "challenger", amount: number) {
+    setLoading(true);
+    try {
+      const { ok } = await postJson(`/api/pub/spd/${matchId}/bet`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ side, amount }) });
+      if (ok) onRefresh();
+    } finally { setLoading(false); }
+  }
+
+  async function spdCancel(matchId: number) {
+    setLoading(true);
+    try {
+      const { ok } = await postJson(`/api/pub/spd/${matchId}/cancel`, { method: "POST" });
+      if (ok) onRefresh();
+    } finally { setLoading(false); }
+  }
+
+  const spd = pub.spd;
+  const openMatch = spd?.open_match ?? null;
+  const myBet = spd?.my_bet ?? null;
+  const betTotals = spd?.bet_totals ?? { initiator: 0, challenger: 0 };
+  const iAmInitiator = openMatch?.initiator_user_id === selfId;
+  const iAmChallenger = openMatch?.challenger_user_id === selfId;
+  const canBet = openMatch !== null && !iAmInitiator && !iAmChallenger && myBet === null;
+
+  return (
+    <div style={card}>
+      <GameCardHeader
+        icon="plain-dagger"
+        title="Stone-Parchment-Dagger"
+        subtitle="Commit a throw secretly. Loser pays winner both stakes +20%. Side bets pay 2×. Ties refund all."
+      />
+
+      {spdResult && (
+        <div>
+          <div style={{ background: spdResult.tie ? "#1d2a2d" : spdResult.winner_user_id === selfId ? "#1a2a1a" : "#2a1a1a", border: `1px solid ${spdResult.tie ? "#2d4a5a" : spdResult.winner_user_id === selfId ? "#2d5a2d" : "#5a2d2d"}`, borderRadius: 8, padding: 12, marginBottom: 10 }}>
+            <div style={{ fontWeight: 700, color: spdResult.tie ? "#93c5fd" : spdResult.winner_user_id === selfId ? "#86efac" : "#fca5a5", marginBottom: 6 }}>
+              {spdResult.tie ? <><Icon name="hand" size={13} /> Tie! Everything refunded.</> : spdResult.winner_user_id === selfId ? <><Icon name="trophy" size={13} /> You won! +{spdResult.payout}g</> : <><Icon name="daggers" size={13} /> You lost the match.</>}
+            </div>
+            <div style={{ ...muted, fontSize: 13 }}>
+              {spdResult.initiator_name} threw {SPD_THROW_LABELS[spdResult.initiator_throw]} · You threw {SPD_THROW_LABELS[spdResult.challenger_throw]}
+            </div>
+            {!spdResult.tie && spdResult.house_bump > 0 && <div style={{ ...muted, fontSize: 12, marginTop: 4 }}>House bump: +{spdResult.house_bump}g on total pot</div>}
+            <div style={{ marginTop: 6, color: "#fbbf24", fontSize: 13, fontWeight: 600 }}>Gold: {spdResult.gold}g</div>
+          </div>
+          <button onClick={() => { setSpdResult(null); onRefresh(); }} style={smallActionBtn("#222428", "#cbd5e1")}>Done</button>
+        </div>
+      )}
+
+      {!spdResult && (<>
+        {!openMatch && (
+          <div>
+            {spdStake === null ? (
+              <div>
+                <div style={{ ...muted, fontSize: 12, marginBottom: 8 }}>Pick a stake:</div>
+                <StakeButtons
+                  stakes={[10, 25, 50]}
+                  gold={pub.gold}
+                  disabled={loading}
+                  btnStyle={(can) => ({ ...smallActionBtn(can ? "#2a1f2a" : "#222428", can ? "#d8b4fe" : "#7a7d83") })}
+                  customInputStyle={smallActionBtn("#2a1f2a", "#d8b4fe")}
+                  onPick={(s) => setSpdStake(s)}
+                />
+              </div>
+            ) : (
+              <div>
+                <div style={{ ...muted, fontSize: 12, marginBottom: 8 }}>
+                  Stake: <strong style={{ color: "#fbbf24" }}>{spdStake}g</strong> — pick your throw (only you will see it):
+                </div>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  {(["stone", "parchment", "dagger"] as SpdThrow[]).map((t) => (
+                    <button key={t} onClick={() => void spdStart(spdStake, t)} disabled={loading} style={smallActionBtn("#2a2010", "#fde68a")}>
+                      {SPD_THROW_LABELS[t]}
+                    </button>
+                  ))}
+                  <button onClick={() => setSpdStake(null)} disabled={loading} style={smallActionBtn("#222428", "#94a3b8")}>Cancel</button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {openMatch && iAmInitiator && (
+          <div>
+            <div style={{ background: "#1d2a1d", border: "1px solid #2d5a2d", borderRadius: 8, padding: 12, marginBottom: 10 }}>
+              <div style={{ color: "#86efac", fontWeight: 600, marginBottom: 4 }}>Your match is open — waiting for a challenger</div>
+              <div style={{ ...muted, fontSize: 13 }}>Stake: <strong style={{ color: "#fbbf24" }}>{openMatch.initiator_stake}g</strong> · Your throw is hidden until someone accepts.</div>
+              {(betTotals.initiator > 0 || betTotals.challenger > 0) && <div style={{ ...muted, fontSize: 12, marginTop: 4 }}>Side bets: {betTotals.initiator}g on you · {betTotals.challenger}g on challenger</div>}
+            </div>
+            <button onClick={() => void spdCancel(openMatch.id)} disabled={loading} style={smallActionBtn("#2a1a1a", "#fca5a5")}>Cancel match (refunds your stake)</button>
+          </div>
+        )}
+
+        {openMatch && !iAmInitiator && (
+          <div>
+            <div style={{ background: "#1d1f23", borderRadius: 8, padding: 12, marginBottom: 10, border: "1px solid #3a3d45" }}>
+              <div style={{ color: "#f5f5f5", fontWeight: 600, marginBottom: 4 }}>⚔️ {openMatch.initiator_name} threw something for {openMatch.initiator_stake}g</div>
+              <div style={{ ...muted, fontSize: 13 }}>Their throw is secret until you accept. Winner gets {openMatch.initiator_stake * 2}g + 20% bump.</div>
+              {(betTotals.initiator > 0 || betTotals.challenger > 0) && <div style={{ ...muted, fontSize: 12, marginTop: 4 }}>Side bets: {betTotals.initiator}g on {openMatch.initiator_name} · {betTotals.challenger}g on challenger</div>}
+            </div>
+
+            {!iAmChallenger && (
+              <div style={{ marginBottom: 12 }}>
+                <div style={{ ...muted, fontSize: 12, marginBottom: 8 }}>Accept the challenge — pick your throw:</div>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  {(["stone", "parchment", "dagger"] as SpdThrow[]).map((t) => (
+                    <button key={t} onClick={() => void spdAccept(openMatch.id, t)} disabled={loading || pub.gold < openMatch.initiator_stake}
+                      style={{ ...smallActionBtn(pub.gold >= openMatch.initiator_stake ? "#2a1020" : "#222428", pub.gold >= openMatch.initiator_stake ? "#f9a8d4" : "#7a7d83"), opacity: pub.gold >= openMatch.initiator_stake ? 1 : 0.5, cursor: pub.gold >= openMatch.initiator_stake ? "pointer" : "not-allowed" }}>
+                      {SPD_THROW_LABELS[t]}
+                    </button>
+                  ))}
+                </div>
+                {pub.gold < openMatch.initiator_stake && <div style={{ ...muted, fontSize: 12, marginTop: 6, color: "#fca5a5" }}>Need {openMatch.initiator_stake}g to accept (you have {pub.gold}g)</div>}
+              </div>
+            )}
+
+            {canBet && (
+              <div>
+                <div style={{ ...muted, fontSize: 12, marginBottom: 8 }}>Or place a side bet (pays 2× if your pick wins):</div>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 8 }}>
+                  <span style={{ ...muted, fontSize: 12 }}>Back {openMatch.initiator_name}:</span>
+                  <StakeButtons
+                    stakes={[5, 10, 25]}
+                    gold={pub.gold}
+                    disabled={loading}
+                    btnStyle={(can) => ({ ...smallActionBtn(can ? "#2a1f10" : "#222428", can ? "#fdba74" : "#7a7d83") })}
+                    customInputStyle={smallActionBtn("#2a1f10", "#fdba74")}
+                    onPick={(amt) => void spdBet(openMatch.id, "initiator", amt)}
+                  />
+                </div>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                  <span style={{ ...muted, fontSize: 12 }}>Back challenger:</span>
+                  <StakeButtons
+                    stakes={[5, 10, 25]}
+                    gold={pub.gold}
+                    disabled={loading}
+                    btnStyle={(can) => ({ ...smallActionBtn(can ? "#10202a" : "#222428", can ? "#93c5fd" : "#7a7d83") })}
+                    customInputStyle={smallActionBtn("#10202a", "#93c5fd")}
+                    onPick={(amt) => void spdBet(openMatch.id, "challenger", amt)}
+                  />
+                </div>
+              </div>
+            )}
+
+            {myBet && <div style={{ ...muted, fontSize: 13, marginTop: 8 }}>You bet {myBet.amount}g on {myBet.side === "initiator" ? openMatch.initiator_name : "the challenger"}.</div>}
+          </div>
+        )}
+      </>)}
+    </div>
+  );
+}
 
 function drinkBuffLabel(buff: DrinkBuff): string {
   if (buff.kind === "buff_attack") return `+${buff.magnitude} attack`;
