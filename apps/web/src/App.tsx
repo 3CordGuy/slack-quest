@@ -74,6 +74,7 @@ const ERROR_LABELS: Record<string, string> = {
   bad_quest_id: "Bad quest id.",
   not_in_party: "You're not in this party.",
   web_mode: "This quest is being run from the web — head there.",
+  slack_mode: "This quest was started in Slack — use Slack commands to fight.",
   cant_give_to_self: "Can't give an item to yourself.",
   unequip_first: "Unequip the item first before giving or selling.",
   recipient_no_character: "That player hasn't rolled a character yet.",

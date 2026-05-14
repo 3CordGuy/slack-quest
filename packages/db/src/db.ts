@@ -470,14 +470,15 @@ export async function createQuest(
   const now = Date.now();
   const result = await db
     .prepare(
-      `INSERT INTO quests (channel_id, thread_ts, status, elite, scene_json, created_by, created_at)
-       VALUES (?, ?, 'active', ?, ?, ?, ?)`,
+      `INSERT INTO quests (channel_id, thread_ts, status, elite, scene_json, mode, created_by, created_at)
+       VALUES (?, ?, 'active', ?, ?, ?, ?, ?)`,
     )
     .bind(
       args.channel_id,
       args.thread_ts,
       args.elite ? 1 : 0,
       JSON.stringify(args.scene),
+      args.mode,
       args.created_by,
       now,
     )
