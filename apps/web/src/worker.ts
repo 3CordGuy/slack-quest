@@ -357,6 +357,7 @@ async function recentChannelForUser(db: D1Database, userId: string): Promise<str
       `SELECT q.channel_id FROM quests q
        JOIN quest_party qp ON qp.quest_id = q.id
        WHERE qp.character_id = ?
+         AND q.channel_id NOT LIKE 'web:%'
        ORDER BY q.id DESC LIMIT 1`,
     )
     .bind(userId)
