@@ -1165,122 +1165,217 @@ function Login({ onSuccess }: { onSuccess: () => void }) {
   );
 }
 
+interface QuestOption {
+  id: QuestVariant;
+  label: string;
+  icon: string;
+  accentColor: string;
+  bg: string;
+  border: string;
+  lockedBorder: string;
+  tag: string;
+  description: string;
+  rewards: string;
+  beginLabel: string;
+  pendingLabel: string;
+  minLevel: number;
+}
+
+const QUEST_OPTIONS: QuestOption[] = [
+  {
+    id: "standard",
+    label: "Standard",
+    icon: "sword",
+    accentColor: "#86efac",
+    bg: "#1a2e1a",
+    border: "#22543d",
+    lockedBorder: "#2a2d33",
+    tag: "Single encounter",
+    description:
+      "The dungeon master conjures a single AI-generated foe scaled to your party's level. A reliable source of XP, gold, and loot.",
+    rewards: "Normal XP & gold",
+    beginLabel: "Begin Standard Quest",
+    pendingLabel: "Rolling…",
+    minLevel: 1,
+  },
+  {
+    id: "boss",
+    label: "Boss",
+    icon: "crown",
+    accentColor: "#fca5a5",
+    bg: "#2e1a1a",
+    border: "#7f1d1d",
+    lockedBorder: "#2a2d33",
+    tag: "Climactic single foe",
+    description:
+      "One fearsome creature with elevated HP and an extra tier of attack power. Every action matters — a single mistake can turn the tide.",
+    rewards: "Bonus XP + chance at rare drop",
+    beginLabel: "Challenge the Boss",
+    pendingLabel: "Rolling…",
+    minLevel: 3,
+  },
+  {
+    id: "gauntlet",
+    label: "Gauntlet",
+    icon: "crossed-swords",
+    accentColor: "#c4b5fd",
+    bg: "#1e1a2e",
+    border: "#4c1d95",
+    lockedBorder: "#2a2d33",
+    tag: "3 waves, no recovery",
+    description:
+      "Three enemies back-to-back with no rest between waves. HP and mana carry over — positioning and resource management are everything.",
+    rewards: "3× monster loot + milestone bonus",
+    beginLabel: "Enter the Gauntlet",
+    pendingLabel: "Rolling…",
+    minLevel: 5,
+  },
+  {
+    id: "dungeon",
+    label: "Dungeon",
+    icon: "tower",
+    accentColor: "#7dd3fc",
+    bg: "#111e2e",
+    border: "#1e3a5f",
+    lockedBorder: "#2a2d33",
+    tag: "Multi-room crawl",
+    description:
+      "A 5-7 room AI-generated crawl — combat encounters, traps, lockboxes, and NPC events lead through a sub-boss to a treasure vault. Takes ~15s to generate.",
+    rewards: "2.5× rewards + dungeon keys",
+    beginLabel: "Descend into the Dungeon",
+    pendingLabel: "Generating dungeon…",
+    minLevel: 1,
+  },
+];
+
 function StartQuestCard({
   characterLevel,
   onStart,
 }: {
   characterLevel: number;
-  onStart: (variant: "standard" | "boss" | "gauntlet" | "dungeon", elite: boolean) => void;
+  onStart: (variant: QuestVariant, elite: boolean) => void;
 }) {
   const [elite, setElite] = useState(false);
-  const [pending, setPending] = useState<"standard" | "boss" | "gauntlet" | "dungeon" | null>(null);
-  const bossAllowed = characterLevel >= 3;
-  const gauntletAllowed = characterLevel >= 5;
-  const dungeonAllowed = characterLevel >= 1;
+  const [selected, setSelected] = useState<QuestVariant | null>(null);
+  const [pending, setPending] = useState<QuestVariant | null>(null);
 
-  function go(variant: "standard" | "boss" | "gauntlet" | "dungeon") {
-    setPending(variant);
-    onStart(variant, elite);
+  const selectedOption = QUEST_OPTIONS.find((o) => o.id === selected) ?? null;
+
+  function go() {
+    if (!selected || pending) return;
+    setPending(selected);
+    onStart(selected, elite);
   }
 
   return (
     <div style={{ ...card, borderColor: "#b89b3a" }}>
       <h2 style={h2}>Start a new quest</h2>
-      <p style={muted}>
-        The dungeon master rolls a fresh foe via Workers AI.
-      </p>
-      <label
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 8,
-          marginTop: 12,
-          fontSize: 13,
-          color: "#e6e6e6",
-          cursor: "pointer",
-        }}
-      >
-        <input
-          type="checkbox"
-          checked={elite}
-          onChange={(e) => setElite(e.target.checked)}
-          style={{ accentColor: "#dc2626" }}
-        />
-        <span>
-          <strong>Elite mode</strong>
-          <span style={{ ...muted, marginLeft: 6 }}>
-            (perma-death; tier bumped by 1)
-          </span>
-        </span>
-      </label>
-      <div style={{ display: "flex", gap: 8, marginTop: 16, flexWrap: "wrap" }}>
-        <button
-          onClick={() => go("standard")}
-          disabled={pending !== null}
-          style={{
-            ...button,
-            marginTop: 0,
-            flex: "1 1 160px",
-            background: pending === "standard" ? "#33363d" : "#1f3a1f",
-            color: "#86efac",
-          }}
-        >
-          {pending === "standard" ? "Rolling…" : <><Icon name="sword" /> Standard</>}
-        </button>
-        <button
-          onClick={() => go("boss")}
-          disabled={pending !== null || !bossAllowed}
-          style={{
-            ...button,
-            marginTop: 0,
-            flex: "1 1 160px",
-            background:
-              pending === "boss" ? "#33363d" : bossAllowed ? "#5c1f1f" : "#2a2d33",
-            color: bossAllowed ? "#fca5a5" : "#6a7080",
-          }}
-          title={bossAllowed ? "Climactic single foe" : "Requires character level 3"}
-        >
-          {pending === "boss" ? "Rolling…" : <><Icon name="crown" /> {bossAllowed ? "Boss" : "Boss (need L3)"}</>}
-        </button>
-        <button
-          onClick={() => go("gauntlet")}
-          disabled={pending !== null || !gauntletAllowed}
-          style={{
-            ...button,
-            marginTop: 0,
-            flex: "1 1 160px",
-            background:
-              pending === "gauntlet" ? "#33363d" : gauntletAllowed ? "#3a2d5c" : "#2a2d33",
-            color: gauntletAllowed ? "#c4b5fd" : "#6a7080",
-          }}
-          title={gauntletAllowed ? "3 waves back-to-back" : "Requires character level 5"}
-        >
-          {pending === "gauntlet"
-            ? "Rolling…"
-            : <><Icon name="crossed-swords" /> {gauntletAllowed ? "Gauntlet" : "Gauntlet (need L5)"}</>}
-        </button>
-        <button
-          onClick={() => go("dungeon")}
-          disabled={pending !== null || !dungeonAllowed}
-          style={{
-            ...button,
-            marginTop: 0,
-            flex: "1 1 160px",
-            background:
-              pending === "dungeon" ? "#33363d" : dungeonAllowed ? "#1a2d3a" : "#2a2d33",
-            color: dungeonAllowed ? "#7dd3fc" : "#6a7080",
-          }}
-          title="5-7 room dungeon crawl: combat, traps, lockboxes, NPC encounters → sub-boss → treasure (2.5× rewards)"
-        >
-          {pending === "dungeon"
-            ? "Generating dungeon…"
-            : <><Icon name="tower" /> Dungeon</>}
-        </button>
+
+      {/* 2×2 radio card grid */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 12 }}>
+        {QUEST_OPTIONS.map((opt) => {
+          const locked = characterLevel < opt.minLevel;
+          const isSelected = selected === opt.id;
+          return (
+            <button
+              key={opt.id}
+              disabled={locked || pending !== null}
+              onClick={() => setSelected(isSelected ? null : opt.id)}
+              style={{
+                background: isSelected ? opt.bg : "#16181c",
+                border: `2px solid ${isSelected ? opt.border : locked ? opt.lockedBorder : "#2a2d33"}`,
+                borderRadius: 8,
+                padding: "12px 14px",
+                cursor: locked ? "not-allowed" : "pointer",
+                textAlign: "left",
+                opacity: locked ? 0.45 : 1,
+                transition: "border-color 0.15s, background 0.15s",
+                position: "relative",
+              }}
+            >
+              {isSelected && (
+                <span style={{
+                  position: "absolute", top: 6, right: 8,
+                  fontSize: 11, color: opt.accentColor, fontWeight: 700,
+                }}>✓</span>
+              )}
+              <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 4 }}>
+                <Icon name={opt.icon} color={locked ? "#4a5060" : opt.accentColor} size={16} />
+                <span style={{ fontWeight: 600, fontSize: 13, color: locked ? "#4a5060" : opt.accentColor }}>
+                  {opt.label}
+                </span>
+              </div>
+              <div style={{ fontSize: 11, color: locked ? "#3a3d44" : "#6b7280" }}>
+                {locked ? `Requires level ${opt.minLevel}` : opt.tag}
+              </div>
+            </button>
+          );
+        })}
       </div>
-      {pending === "dungeon" && (
-        <p style={{ ...muted, fontSize: 11, marginTop: 8 }}>
-          Generating 5-7 rooms with AI — this takes ~15s.
-        </p>
+
+      {/* Description panel — expands when a variant is selected */}
+      {selectedOption && (
+        <div style={{
+          marginTop: 12,
+          padding: "14px 16px",
+          background: selectedOption.bg,
+          border: `1px solid ${selectedOption.border}`,
+          borderRadius: 8,
+        }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+            <Icon name={selectedOption.icon} color={selectedOption.accentColor} size={18} />
+            <span style={{ fontWeight: 700, fontSize: 14, color: selectedOption.accentColor }}>
+              {selectedOption.label}
+            </span>
+          </div>
+          <p style={{ ...muted, fontSize: 13, margin: 0, lineHeight: 1.55 }}>
+            {selectedOption.description}
+          </p>
+          <div style={{ marginTop: 8, fontSize: 12, color: "#9ca3af" }}>
+            <Icon name="gold-bar" size={11} color="#fbbf24" /> {selectedOption.rewards}
+          </div>
+
+          {/* Elite toggle + begin button */}
+          <label style={{
+            display: "flex", alignItems: "center", gap: 8,
+            marginTop: 14, fontSize: 13, color: "#e6e6e6", cursor: "pointer",
+          }}>
+            <input
+              type="checkbox"
+              checked={elite}
+              onChange={(e) => setElite(e.target.checked)}
+              style={{ accentColor: "#dc2626" }}
+            />
+            <span>
+              <strong>Elite mode</strong>
+              <span style={{ ...muted, marginLeft: 6 }}>(perma-death; tier bumped by 1)</span>
+            </span>
+          </label>
+
+          <button
+            onClick={go}
+            disabled={pending !== null}
+            style={{
+              ...button,
+              marginTop: 12,
+              width: "100%",
+              background: elite ? "#3a1a1a" : selectedOption.bg,
+              color: selectedOption.accentColor,
+              border: `1px solid ${elite ? "#7f1d1d" : selectedOption.border}`,
+              fontWeight: 700,
+              opacity: pending ? 0.6 : 1,
+            }}
+          >
+            {pending
+              ? selectedOption.pendingLabel
+              : <><Icon name={selectedOption.icon} /> {selectedOption.beginLabel}</>}
+          </button>
+          {pending === "dungeon" && (
+            <p style={{ ...muted, fontSize: 11, marginTop: 6, textAlign: "center" }}>
+              Generating 5-7 rooms with AI — this takes ~15s.
+            </p>
+          )}
+        </div>
       )}
     </div>
   );

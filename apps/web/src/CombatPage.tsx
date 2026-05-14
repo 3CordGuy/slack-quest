@@ -1104,6 +1104,22 @@ function PartySection({
   );
 }
 
+function FighterHpRow({ hp, maxHp, shield }: { hp: number; maxHp: number; shield: number }) {
+  const pct = maxHp > 0 ? Math.max(0, Math.min(1, hp / maxHp)) : 0;
+  const color = pct < 0.25 ? "#dc2626" : pct < 0.5 ? "#d97706" : "#16a34a";
+  return (
+    <div style={{ marginTop: 6, display: "flex", alignItems: "center", gap: 8 }}>
+      <div style={{ flex: 1, height: 8, background: "#0e0f12", borderRadius: 4, overflow: "hidden" }}>
+        <div style={{ width: `${pct * 100}%`, height: "100%", background: color, transition: "width 0.3s ease" }} />
+      </div>
+      <div style={{ ...muted, fontSize: 11, minWidth: 48, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
+        {hp}/{maxHp}
+        {shield > 0 && <span style={{ color: "#7c83ff", marginLeft: 4 }}>+{shield}</span>}
+      </div>
+    </div>
+  );
+}
+
 function FighterRow({ fighter, self, current }: { fighter: Fighter; self: boolean; current: boolean }) {
   const down = fighter.hp <= 0;
   const portrait = classPortraitUrl(fighter.class);
@@ -1130,37 +1146,30 @@ function FighterRow({ fighter, self, current }: { fighter: Fighter; self: boolea
         style={{ alignSelf: "center" }}
       />
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8 }}>
-          <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
-            <span style={{ fontWeight: 600, color: "#f5f5f5", fontSize: 14 }}>{fighter.name}</span>
-            {fighter.slack_username && (
-              <span style={{ fontSize: 12, color: "#7dd3fc" }}>@{fighter.slack_username}</span>
-            )}
-            <span style={{ ...muted, fontSize: 12 }}>
-              {fighter.class} · <span title={fighter.scars.length > 0 ? fighter.scars.join(", ") : undefined}>Lv {fighter.level}</span>
-            </span>
-            <span style={badge(
-              fighter.position === "front" ? "#2a1f3a" : "#1a2a1a",
-              fighter.position === "front" ? "#c084fc" : "#86efac",
-              fighter.position === "front" ? "#4a2f6a" : "#2a5a2a",
-            )}>
-              {fighter.position}
-            </span>
-            {self && (
-              <span style={badge("#1f2a3a", "#7dd3fc", "#2a3a5a")}>you</span>
-            )}
-            {down && (
-              <span style={badge("#3a1f1f", "#ff7676", "#5a2a2a")}>downed</span>
-            )}
-          </div>
-          <div style={{ ...muted, fontVariantNumeric: "tabular-nums" }}>
-            {fighter.hp}/{fighter.max_hp}
-            {fighter.shield > 0 && (
-              <span style={{ color: "#7c83ff", marginLeft: 6 }}>+{fighter.shield}</span>
-            )}
-          </div>
+        <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
+          <span style={{ fontWeight: 600, color: "#f5f5f5", fontSize: 14 }}>{fighter.name}</span>
+          {fighter.slack_username && (
+            <span style={{ fontSize: 12, color: "#7dd3fc" }}>@{fighter.slack_username}</span>
+          )}
+          <span style={{ ...muted, fontSize: 12 }}>
+            {fighter.class} · <span title={fighter.scars.length > 0 ? fighter.scars.join(", ") : undefined}>Lv {fighter.level}</span>
+          </span>
+          <span style={badge(
+            fighter.position === "front" ? "#2a1f3a" : "#1a2a1a",
+            fighter.position === "front" ? "#c084fc" : "#86efac",
+            fighter.position === "front" ? "#4a2f6a" : "#2a5a2a",
+          )}>
+            {fighter.position}
+          </span>
+          {self && (
+            <span style={badge("#1f2a3a", "#7dd3fc", "#2a3a5a")}>you</span>
+          )}
+          {down && (
+            <span style={badge("#3a1f1f", "#ff7676", "#5a2a2a")}>downed</span>
+          )}
         </div>
-        <HpBar current={fighter.hp} max={fighter.max_hp} />
+        {/* HP bar row — matches mana bar layout so numbers stay column-aligned */}
+        <FighterHpRow hp={fighter.hp} maxHp={fighter.max_hp} shield={fighter.shield} />
         {fighter.max_mana > 0 && (
           <div style={{ marginTop: 6, display: "flex", alignItems: "center", gap: 8 }}>
             <div
@@ -1180,7 +1189,7 @@ function FighterRow({ fighter, self, current }: { fighter: Fighter; self: boolea
                 }}
               />
             </div>
-            <div style={{ ...muted, fontSize: 11, minWidth: 36, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
+            <div style={{ ...muted, fontSize: 11, minWidth: 48, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
               {fighter.mana}/{fighter.max_mana}
             </div>
           </div>
