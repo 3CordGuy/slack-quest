@@ -609,6 +609,7 @@ export function App() {
   const [haggleResult, setHaggleResult] = useState<HaggleResult | null>(null);
   const [confirm, setConfirm] = useState<ConfirmRequest | null>(null);
   const [townSection, setTownSection] = useState<TownSection | null>(null);
+  const isMobile = useMobileViewport();
 
   useEffect(() => {
     void refresh();
@@ -1032,7 +1033,7 @@ export function App() {
             art={state.townArt}
             onNavigate={setTownSection}
           />
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, alignItems: "start" }}>
+          <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 16, alignItems: "start" }}>
             {state.me.character && state.recent.length > 0 && (
               <RecentQuestsCard quests={state.recent} />
             )}
