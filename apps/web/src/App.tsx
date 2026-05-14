@@ -2841,7 +2841,7 @@ function ItemSlot({
           E
         </div>
       )}
-      <Icon name={itemIcon(item)} size={28} color={rc} />
+      <Icon name={itemIcon(item)} size={28} color={itemIconColor(item) ?? rc} />
       <div
         style={{
           position: "absolute",
@@ -2947,7 +2947,7 @@ function ItemDetailPopover({
             flexShrink: 0,
           }}
         >
-          <Icon name={itemIcon(item)} size={22} color={rc} />
+          <Icon name={itemIcon(item)} size={22} color={itemIconColor(item) ?? rc} />
         </div>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontWeight: 700, color: "#f5f5f5", fontSize: 13, lineHeight: 1.3, wordBreak: "break-word" }}>
@@ -3280,7 +3280,7 @@ function ShopRow({
       }}
     >
       <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-        <Icon name={itemIcon(item)} size={24} color="#cbd5e1" />
+        <Icon name={itemIcon(item)} size={24} color={itemIconColor(item) ?? "#cbd5e1"} />
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
             <span style={{ fontWeight: 600, color: "#f5f5f5", fontSize: 15 }}>{item.item_name}</span>
@@ -5170,6 +5170,21 @@ function itemIcon(item: {
     default:
       return "scroll-unfurled";
   }
+}
+
+// Returns an explicit icon color override for items where color carries meaning
+// (health = red, mana = indigo), or null to fall through to the rarity color.
+function itemIconColor(item: {
+  item_type: ItemType;
+  item_name: string;
+}): string | null {
+  const n = item.item_name.toLowerCase();
+  if (item.item_type === "consumable" || item.item_type === "tool") {
+    if (/\b(health|heal|hp|restore|mend|cure|potion|elixir|life)\b/.test(n)) return "#ef4444";
+    if (/\b(mana|mp|arcane|magic|mystic|flask|vial)\b/.test(n))              return "#818cf8";
+    if (/\bgreater\b/.test(n) && /\bhealth\b/.test(n))                       return "#ef4444";
+  }
+  return null;
 }
 
 const RARITY_COLOR: Record<Rarity, string> = {
