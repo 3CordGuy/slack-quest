@@ -13,6 +13,12 @@ export interface SlashCommandPayload {
   response_url: string;
   trigger_id: string;
   api_app_id: string;
+  // Set to true when this payload was synthesized from a Block Kit button
+  // click (interactive flow) rather than a real slash command. Handlers use
+  // this to avoid the duplicate-render issue: button clicks already get a
+  // public update via response_url's response_type, so they should skip the
+  // separate postToThread that slash commands rely on for visibility.
+  _interactive?: boolean;
 }
 
 const encoder = new TextEncoder();
@@ -116,11 +122,47 @@ export async function postMessage(
   return (await res.json()) as { ok: boolean; ts?: string; error?: string };
 }
 
+// Edits an existing channel message. Used to retire stale interactive
+// buttons after a multi-player game resolves (the original "Accept /
+// Bet" buttons would otherwise stay live and return errors on click).
+export interface UpdateMessageArgs {
+  channel: string;
+  ts: string;
+  text: string;
+  blocks?: unknown[];
+}
+export async function updateMessage(
+  botToken: string,
+  args: UpdateMessageArgs,
+): Promise<{ ok: boolean; error?: string }> {
+  const res = await fetch("https://slack.com/api/chat.update", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${botToken}`,
+      "Content-Type": "application/json; charset=utf-8",
+    },
+    body: JSON.stringify(args),
+  });
+  return (await res.json()) as { ok: boolean; error?: string };
+}
+
 // Reply asynchronously to a slash command using its response_url.
 // Use this when work takes >3s — Slack's initial ack must return faster than that.
+//
+// Supports the response_url-specific flags: replace_original deletes the
+// previous message and posts the new content in its place; delete_original
+// removes the message that triggered this interaction without posting
+// anything new. Both only meaningful for interactive (button click)
+// payloads — slash command response_urls ignore them.
 export async function respondToCommand(
   responseUrl: string,
-  payload: { text: string; response_type?: "ephemeral" | "in_channel"; blocks?: unknown[] },
+  payload: {
+    text?: string;
+    response_type?: "ephemeral" | "in_channel";
+    blocks?: unknown[];
+    replace_original?: boolean;
+    delete_original?: boolean;
+  },
 ): Promise<void> {
   await fetch(responseUrl, {
     method: "POST",
