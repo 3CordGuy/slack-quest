@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@3d-dice/dice-box": "^1.1.4",
+    "@floating-ui/react": "^0.27.19",
     "@gantt-quest/core": "workspace:*",
     "@gantt-quest/db": "workspace:*",
     "hono": "^4.6.0",

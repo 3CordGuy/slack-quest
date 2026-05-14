@@ -1,5 +1,16 @@
 import { useEffect, useRef, useState } from "react";
 import toast from "react-hot-toast";
+import {
+  FloatingFocusManager,
+  FloatingPortal,
+  autoUpdate,
+  flip,
+  offset,
+  shift,
+  useDismiss,
+  useFloating,
+  useInteractions,
+} from "@floating-ui/react";
 
 import { findCatalogEntry, priceFor } from "@gantt-quest/core";
 
@@ -2698,12 +2709,30 @@ function InventoryCard({
   const [sort, setSort] = useState<InventorySort>("type");
   const [selectedId, setSelectedId] = useState<number | null>(null);
 
+  const { refs, floatingStyles, context } = useFloating({
+    open: selectedId !== null,
+    onOpenChange: (open) => { if (!open) setSelectedId(null); },
+    middleware: [offset(10), flip({ padding: 8 }), shift({ padding: 8 })],
+    placement: "right",
+    whileElementsMounted: autoUpdate,
+  });
+
+  const { getFloatingProps } = useInteractions([
+    useDismiss(context, { outsidePress: true }),
+  ]);
+
+  function toggleSelect(id: number, el: HTMLElement) {
+    if (selectedId === id) {
+      setSelectedId(null);
+      refs.setReference(null);
+    } else {
+      setSelectedId(id);
+      refs.setReference(el);
+    }
+  }
+
   const sorted = sortItems(items, sort);
   const selected = selectedId != null ? items.find((i) => i.id === selectedId) ?? null : null;
-
-  function toggleSelect(id: number) {
-    setSelectedId((prev) => (prev === id ? null : id));
-  }
 
   if (items.length === 0) {
     return (
@@ -2757,45 +2786,47 @@ function InventoryCard({
           {items.length} item{items.length !== 1 ? "s" : ""}
         </span>
       </div>
-      {/* Grid + detail panel */}
+      {/* Slot grid */}
       <div
         style={{
-          display: "flex",
-          gap: 16,
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fill, 72px)",
+          gap: 6,
           marginTop: 14,
-          alignItems: "flex-start",
         }}
       >
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(auto-fill, 72px)",
-            gap: 6,
-            flex: 1,
-          }}
-        >
-          {sorted.map((item) => (
-            <ItemSlot
-              key={item.id}
-              item={item}
-              selected={selectedId === item.id}
-              onSelect={() => toggleSelect(item.id)}
-            />
-          ))}
-        </div>
-        {selected && (
-          <ItemDetailPanel
-            item={selected}
-            inQuest={inQuest}
-            selfId={selfId}
-            onEquip={onEquip}
-            onSell={onSell}
-            onUse={onUse}
-            onGive={onGive}
-            onClose={() => setSelectedId(null)}
+        {sorted.map((item) => (
+          <ItemSlot
+            key={item.id}
+            item={item}
+            selected={selectedId === item.id}
+            onSelect={(el) => toggleSelect(item.id, el)}
           />
-        )}
+        ))}
       </div>
+      {/* Floating popover — rendered outside the card via portal */}
+      {selected && (
+        <FloatingPortal>
+          <FloatingFocusManager context={context} modal={false} initialFocus={-1}>
+            <div
+              ref={refs.setFloating}
+              style={{ ...floatingStyles, zIndex: 1000, outline: "none" }}
+              {...getFloatingProps()}
+            >
+              <ItemDetailPopover
+                item={selected}
+                inQuest={inQuest}
+                selfId={selfId}
+                onEquip={(id) => { onEquip(id); setSelectedId(null); }}
+                onSell={(id) => { onSell(id); setSelectedId(null); }}
+                onUse={(id) => { onUse(id); setSelectedId(null); }}
+                onGive={(id, uid, name) => { onGive(id, uid, name); setSelectedId(null); }}
+                onClose={() => setSelectedId(null)}
+              />
+            </div>
+          </FloatingFocusManager>
+        </FloatingPortal>
+      )}
     </div>
   );
 }
@@ -2807,13 +2838,13 @@ function ItemSlot({
 }: {
   item: Item;
   selected: boolean;
-  onSelect: () => void;
+  onSelect: (el: HTMLElement) => void;
 }) {
   const rc = RARITY_COLOR[item.rarity];
   const borderColor = selected ? "#fff" : item.equipped ? "#b89b3a" : `${rc}99`;
   return (
     <div
-      onClick={onSelect}
+      onClick={(e) => onSelect(e.currentTarget)}
       title={item.item_name}
       style={{
         width: 72,
@@ -2880,7 +2911,7 @@ function ItemSlot({
   );
 }
 
-function ItemDetailPanel({
+function ItemDetailPopover({
   item,
   inQuest,
   selfId,
@@ -2930,28 +2961,26 @@ function ItemDetailPanel({
   const canUse =
     !item.equipped && (item.item_type === "consumable" || item.item_type === "magic");
   const canGive = !item.equipped;
-
   const rc = RARITY_COLOR[item.rarity];
 
   return (
     <div
       style={{
-        width: 220,
-        flexShrink: 0,
-        background: "#1a1c20",
-        border: `1px solid ${rc}44`,
+        width: 240,
+        background: "#12141a",
+        border: `1px solid ${rc}55`,
         borderRadius: 10,
         padding: "14px 14px 12px",
-        position: "sticky",
-        top: 16,
+        boxShadow: "0 8px 32px rgba(0,0,0,0.7), 0 0 0 1px rgba(255,255,255,0.04)",
+        fontFamily: "inherit",
       }}
     >
-      {/* Header row */}
+      {/* Header */}
       <div style={{ display: "flex", alignItems: "flex-start", gap: 10, marginBottom: 10 }}>
         <div
           style={{
-            width: 44,
-            height: 44,
+            width: 40,
+            height: 40,
             background: "#0e0f12",
             border: `2px solid ${rc}66`,
             borderRadius: 8,
@@ -2961,31 +2990,16 @@ function ItemDetailPanel({
             flexShrink: 0,
           }}
         >
-          <Icon name={ITEM_TYPE_ICON[item.item_type]} size={24} color={rc} />
+          <Icon name={ITEM_TYPE_ICON[item.item_type]} size={22} color={rc} />
         </div>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div
-            style={{
-              fontWeight: 700,
-              color: "#f5f5f5",
-              fontSize: 14,
-              lineHeight: 1.3,
-              wordBreak: "break-word",
-            }}
-          >
+          <div style={{ fontWeight: 700, color: "#f5f5f5", fontSize: 13, lineHeight: 1.3, wordBreak: "break-word" }}>
             {item.item_name}
           </div>
           <div style={{ display: "flex", gap: 5, marginTop: 4, flexWrap: "wrap" }}>
             <RarityBadge rarity={item.rarity} />
             {item.equipped && (
-              <span
-                style={{
-                  ...smallBadge,
-                  background: "#3a2a00",
-                  color: "#b89b3a",
-                  borderColor: "#b89b3a55",
-                }}
-              >
+              <span style={{ ...smallBadge, background: "#3a2a00", color: "#b89b3a", borderColor: "#b89b3a55" }}>
                 equipped
               </span>
             )}
@@ -2993,30 +3007,21 @@ function ItemDetailPanel({
         </div>
         <button
           onClick={onClose}
-          style={{
-            background: "none",
-            border: "none",
-            color: "#666",
-            cursor: "pointer",
-            fontSize: 16,
-            padding: 0,
-            lineHeight: 1,
-            flexShrink: 0,
-          }}
+          style={{ background: "none", border: "none", color: "#555", cursor: "pointer", fontSize: 18, padding: 0, lineHeight: 1, flexShrink: 0 }}
           aria-label="Close"
         >
           ×
         </button>
       </div>
 
-      {/* Type + weapon_range */}
+      {/* Type line */}
       <div style={{ ...muted, fontSize: 11, textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>
         {ITEM_TYPE_LABELS[item.item_type]}
         {item.item_type === "weapon" && item.weapon_range && ` · ${item.weapon_range}`}
         {" · "}+{item.power} power
       </div>
 
-      {/* Flavor text */}
+      {/* Flavor */}
       {item.flavor && (
         <div
           style={{
@@ -3033,10 +3038,10 @@ function ItemDetailPanel({
         </div>
       )}
 
-      {/* Effect description */}
+      {/* Effect */}
       <div
         style={{
-          background: "#0e0f12",
+          background: "#0a0b0e",
           borderRadius: 6,
           padding: "8px 10px",
           fontSize: 12,
@@ -3051,71 +3056,40 @@ function ItemDetailPanel({
       {/* Actions */}
       <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
         {canEquip && (
-          <button onClick={() => onEquip(item.id)} style={smallActionBtn("#1f3a1f", "#86efac")}>
-            Equip
-          </button>
+          <button onClick={() => onEquip(item.id)} style={smallActionBtn("#1f3a1f", "#86efac")}>Equip</button>
         )}
         {canUse && (
-          <button onClick={() => onUse(item.id)} style={smallActionBtn("#1f2a3a", "#7dd3fc")}>
-            Use
-          </button>
+          <button onClick={() => onUse(item.id)} style={smallActionBtn("#1f2a3a", "#7dd3fc")}>Use</button>
         )}
         {canGive && (
           <button
-            onClick={() => {
-              if (showGivePicker) {
-                setShowGivePicker(false);
-              } else {
-                void openGivePicker();
-              }
-            }}
-            style={smallActionBtn(
-              showGivePicker ? "#3a2030" : "#2a2030",
-              showGivePicker ? "#f9a8d4" : "#c084fc",
-            )}
+            onClick={() => { if (showGivePicker) { setShowGivePicker(false); } else { void openGivePicker(); } }}
+            style={smallActionBtn(showGivePicker ? "#3a2030" : "#2a2030", showGivePicker ? "#f9a8d4" : "#c084fc")}
           >
             Give
           </button>
         )}
         {canSell && (
-          <button onClick={() => onSell(item.id)} style={smallActionBtn("#33363d", "#e6e6e6")}>
-            Sell
-          </button>
+          <button onClick={() => onSell(item.id)} style={smallActionBtn("#33363d", "#e6e6e6")}>Sell</button>
         )}
       </div>
 
       {/* Give picker */}
       {showGivePicker && (
-        <div
-          style={{
-            marginTop: 10,
-            padding: "8px 10px",
-            background: "#0e0f12",
-            borderRadius: 6,
-            border: "1px solid #2a2d33",
-            fontSize: 12,
-          }}
-        >
+        <div style={{ marginTop: 10, padding: "8px 10px", background: "#0a0b0e", borderRadius: 6, border: "1px solid #2a2d33", fontSize: 12 }}>
           <div style={{ ...muted, marginBottom: 6 }}>Give to:</div>
           {charsLoading && <div style={muted}>Loading players…</div>}
-          {!charsLoading && characters.length === 0 && (
-            <div style={muted}>No other players found.</div>
-          )}
+          {!charsLoading && characters.length === 0 && <div style={muted}>No other players found.</div>}
           <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-            {characters
-              .filter((ch) => ch.slack_user_id !== selfId)
-              .map((ch) => (
-                <button
-                  key={ch.slack_user_id}
-                  style={smallActionBtn("#1a1a2e", "#c084fc")}
-                  onClick={() => {
-                    setShowGivePicker(false);
-                    onGive(item.id, ch.slack_user_id, ch.name);
-                  }}
-                >
-                  {ch.name} ({ch.class})
-                </button>
-              ))}
+            {characters.filter((ch) => ch.slack_user_id !== selfId).map((ch) => (
+              <button
+                key={ch.slack_user_id}
+                style={smallActionBtn("#1a1a2e", "#c084fc")}
+                onClick={() => { setShowGivePicker(false); onGive(item.id, ch.slack_user_id, ch.name); }}
+              >
+                {ch.name} ({ch.class})
+              </button>
+            ))}
           </div>
         </div>
       )}
