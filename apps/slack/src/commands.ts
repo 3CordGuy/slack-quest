@@ -1,7 +1,9 @@
 // Slash sub-command handlers. Each returns an immediate Slack response payload.
 // Long-running work (AI calls, chat.postMessage) goes through ctx.waitUntil.
 
-import type { Env } from "./index";
+import type { Env, QuestRoomStub } from "./index";
+import { questRoomId } from "./index";
+import { renderTurnToThread } from "./render_combat";
 
 // Public-facing display name. Defaults to "Slack Quest"; operators override per
 // deployment by setting BOT_NAME in wrangler.jsonc `vars` or as a secret.
@@ -242,6 +244,7 @@ import {
   RARITY_BADGE,
   SHIELD_CAP_MULTIPLIER,
   SKILL_META,
+  type TurnAction,
 } from "@gantt-quest/core";
 import { postJoinableQuest, postMessage, respondToCommand, updateMessage, type InteractivePayload, type SlashCommandPayload } from "./slack";
 
@@ -3048,12 +3051,123 @@ function buildDoorPromptBlocks(exp: ExpeditionState, cmd: string): unknown[] {
 
 type CombatAction = "attack" | "cast" | "flee" | "signature";
 
+// Engine-driven combat dispatcher. Translates a Slack `(payload, action)`
+// pair into a TurnAction, calls QuestRoom.serverAction over RPC, and posts
+// the resulting CombatEvent[] as a thread reply via renderTurnToThread.
+//
+// Gated on env.LEGACY_SLACK_COMBAT — handleCombat reads the toggle at its
+// top and routes here only when the operator has flipped to the engine
+// path (default stays legacy). When the toggle is on but the cross-bound
+// QUEST_ROOM binding is missing (e.g. local dev without the wrangler
+// redeploy), we fall through to legacy with an ephemeral note so the
+// operator notices the misconfiguration without breaking the player's
+// action.
+//
+// Out of scope this commit (will follow up on the same branch):
+//   - Pinned-battlefield chat.update via quests.battlefield_ts
+//   - New /gq commands: heal, shield, position, mark, wait, ability
+//   - Heal/migrate target-picker ephemerals
+//   - Drink-buff consumption inside the engine
+//   - AI flavor fanout from the DO to the Slack thread
+async function handleCombatViaEngine(
+  payload: SlashCommandPayload,
+  env: Env,
+  _ctx: ExecutionContext,
+  action: CombatAction,
+): Promise<CommandResponse> {
+  const character = await getCharacter(env.DB, payload.user_id);
+  if (!character) return ephemeral(`You need to \`${payload.command} roll\` a character first.`);
+  if (!isFighter(character)) {
+    return ephemeral("You're downed and can't act. Recover, then try again.");
+  }
+
+  const quest = await getActiveQuestForCharacter(env.DB, payload.user_id);
+  if (!quest) return ephemeral(`You're not on an active quest. Try \`${payload.command} quest\` or \`${payload.command} join\`.`);
+  if (quest.channel_id !== payload.channel_id) {
+    return ephemeral(`Your active quest is in <#${quest.channel_id}>.`);
+  }
+
+  const doId = questRoomId(env, quest.id);
+  if (!doId || !env.QUEST_ROOM) {
+    // Engine path requires the cross-bound DO binding. If it's missing we
+    // refuse to fall through silently — the operator turned the toggle on
+    // deliberately, so an ephemeral surfaces what's wrong.
+    return ephemeral(
+      "⚠️ Engine combat is enabled but QUEST_ROOM binding is missing — redeploy the slack worker with the web worker's script_name.",
+    );
+  }
+  // Cast to QuestRoomStub — we're cross-binding a DO that lives in apps/web
+  // and the runtime returns an opaque stub. Type-only assertion; no runtime
+  // cost. The two methods we call (bootstrapFromSlack, serverAction) are
+  // declared on QuestRoomStub in apps/slack/src/index.ts.
+  const stub = env.QUEST_ROOM.get(doId) as unknown as QuestRoomStub;
+
+  // Idempotent: bootstrapFromSlack returns the existing state if combat
+  // already started (via web `/api/quest/:id/start_web_combat`); otherwise
+  // it builds CombatInit from D1, runs step({kind: "begin"}), persists,
+  // and returns the begun state. `created: true` means initiative was
+  // just rolled — we surface that as a kickoff thread post so spectators
+  // see the transition from legacy → engine combat. Non-combat dungeon
+  // rooms bail with a clear error.
+  const boot = await stub.bootstrapFromSlack(quest.id);
+  if (!boot.ok) {
+    if (boot.reason === "non_combat_room") {
+      return ephemeral(
+        `Not in combat right now (${boot.detail ?? "unknown"} room). Try \`${payload.command} choose\` or \`${payload.command} take\`.`,
+      );
+    }
+    return ephemeral(`Can't start combat: ${boot.reason}${boot.detail ? ` (${boot.detail})` : ""}.`);
+  }
+  if (boot.created) {
+    await postToThread(env, quest, "🎲 *Initiative rolled.* Turn-based combat begins.");
+    // Also render the begin events (initiative reveal + first turn_start)
+    // as their own thread post so the order is visible to spectators.
+    const beginText = renderTurnToThread(boot.state, boot.events);
+    if (beginText) {
+      await postToThread(env, quest, beginText);
+    }
+  }
+
+  const turnAction: TurnAction =
+    action === "attack" ? { kind: "attack", actor: payload.user_id }
+    : action === "cast" ? { kind: "cast", actor: payload.user_id }
+    : action === "signature" ? { kind: "signature", actor: payload.user_id }
+    : { kind: "flee", actor: payload.user_id };
+
+  const result = await stub.serverAction(quest.id, turnAction);
+  if (!result.ok) {
+    return ephemeral(`Can't act: ${result.reason}.`);
+  }
+
+  // Engine rejection events surface as ephemeral feedback (e.g. "not your
+  // turn") without being posted to the thread. Detect via a `rejected`
+  // event in the returned stream when the state didn't advance.
+  const rejection = result.events.find((e) => e.type === "rejected");
+  if (rejection && rejection.type === "rejected") {
+    return ephemeral(`⏳ ${rejection.reason}`);
+  }
+
+  const turnText = renderTurnToThread(result.state, result.events);
+  if (turnText) {
+    await postToThread(env, quest, turnText);
+  }
+
+  return ephemeral("✅ Action resolved.");
+}
+
 async function handleCombat(
   payload: SlashCommandPayload,
   env: Env,
   ctx: ExecutionContext,
   action: CombatAction,
 ): Promise<CommandResponse> {
+  // Engine path opt-in. Default keeps legacy cooldown-paced combat live
+  // until the engine path is verified end-to-end in dev. See the LEGACY_
+  // SLACK_COMBAT comment in apps/slack/src/index.ts for the toggle.
+  if (env.LEGACY_SLACK_COMBAT === "0") {
+    return handleCombatViaEngine(payload, env, ctx, action);
+  }
+
   let character = await getCharacter(env.DB, payload.user_id);
   if (!character) return ephemeral(`You need to \`${payload.command} roll\` a character first.`);
   if (!isFighter(character)) {

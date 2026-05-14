@@ -1,5 +1,7 @@
 import { Hono } from "hono";
 
+import type { CombatEvent, CombatState, TurnAction } from "@gantt-quest/core";
+
 import { pregenAllViewArt } from "./ai";
 import { handleCommand, handleInteraction } from "./commands";
 import {
@@ -38,6 +40,39 @@ export interface Env {
   // actions originating from Slack. Optional in v1 deploys that haven't
   // re-deployed wrangler — combat handlers must guard with `if (!env.QUEST_ROOM)`.
   QUEST_ROOM?: DurableObjectNamespace;
+  // Routing toggle for the unified engine combat path. Default = legacy
+  // cooldown-paced Slack combat (current behavior). Set to "0" to route
+  // /gq attack | cast | signature | flee through QuestRoom.serverAction
+  // instead — turns become strict-order, drink-buff + AI flavor fanout
+  // wiring follow up in later commits on the same branch.
+  //
+  // The toggle is read at the top of handleCombat. Two code paths share
+  // zero state; flipping it mid-quest is fine for new actions, but
+  // in-flight legacy combat scenes can't migrate retroactively without
+  // re-rolling initiative. See the PR-3 drain plan for the production
+  // rollout.
+  LEGACY_SLACK_COMBAT?: string;
+}
+
+// Structural stub for the cross-bound QuestRoom DO. We don't import the
+// QuestRoom class type from apps/web (that would couple the slack tsc
+// build to the web worker's tree) — instead we declare the two RPC
+// method signatures we call so TypeScript can type-check the call sites
+// here without paying the dependency cost. Engine types (CombatState,
+// CombatEvent, TurnAction) come from @gantt-quest/core which both
+// workers already depend on.
+export interface QuestRoomStub {
+  bootstrapFromSlack(questId: number): Promise<
+    | { ok: true; state: CombatState; events: CombatEvent[]; created: boolean }
+    | { ok: false; reason: string; detail?: string }
+  >;
+  serverAction(
+    questId: number,
+    action: TurnAction,
+  ): Promise<
+    | { ok: true; state: CombatState; events: CombatEvent[]; outcome?: unknown }
+    | { ok: false; reason: string }
+  >;
 }
 
 // Stable name → DO id mapping. Both the web worker (apps/web/src/worker.ts)
