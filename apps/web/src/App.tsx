@@ -12,7 +12,7 @@ import {
   useInteractions,
 } from "@floating-ui/react";
 
-import { findCatalogEntry, priceFor } from "@gantt-quest/core";
+import { findCatalogEntry, priceFor, xpForLevel } from "@gantt-quest/core";
 
 import { CombatPage } from "./CombatPage";
 import { Avatar, EmojiIcon, Icon, KeyIcon } from "./icons";
@@ -2298,6 +2298,11 @@ function CharacterInspectDialog({
   onClose: () => void;
 }) {
   const isDowned = character.downed_until !== null && character.downed_until > Date.now();
+  const cxpAtLevel = xpForLevel(character.level);
+  const cxpAtNext = xpForLevel(character.level + 1);
+  const cxpIntoLevel = character.xp - cxpAtLevel;
+  const cxpSpan = cxpAtNext - cxpAtLevel;
+  const cxpPct = cxpSpan > 0 ? Math.min(1, cxpIntoLevel / cxpSpan) : 1;
   return (
     <div
       style={{
@@ -2338,9 +2343,23 @@ function CharacterInspectDialog({
           <div>
             <h2 style={h2}>Inspect {character.name}</h2>
             <p style={{ ...muted, margin: 0 }}>
-              {character.class} • Lv {character.level} • {character.xp} XP
+              {character.class} • Lv {character.level}
               {character.slack_username ? ` • @${character.slack_username}` : ""}
             </p>
+            <div style={{ marginTop: 6, minWidth: 200 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: "#6b7280", marginBottom: 3 }}>
+                <span style={{ color: "#d97706", fontWeight: 600 }}>XP</span>
+                <span>{cxpIntoLevel} / {cxpSpan} → Lv {character.level + 1}</span>
+              </div>
+              <div style={{ height: 5, background: "#1a1a1f", borderRadius: 3, overflow: "hidden" }}>
+                <div style={{
+                  width: `${cxpPct * 100}%`,
+                  height: "100%",
+                  background: "linear-gradient(90deg, #92400e, #fbbf24)",
+                  borderRadius: 3,
+                }} />
+              </div>
+            </div>
           </div>
           <button
             onClick={onClose}
@@ -2567,6 +2586,11 @@ function CharacterCard({
       </div>
     );
   }
+  const xpAtLevel = xpForLevel(c.level);
+  const xpAtNext = xpForLevel(c.level + 1);
+  const xpIntoLevel = c.xp - xpAtLevel;
+  const xpSpan = xpAtNext - xpAtLevel;
+  const xpPct = xpSpan > 0 ? Math.min(1, xpIntoLevel / xpSpan) : 1;
   const fullyRecovered = c.hp >= c.max_hp && c.mana >= c.max_mana;
   const downed = c.downed_until !== null && c.downed_until > Date.now();
   const equippedArmor = inventory.find((i) => i.item_type === "armor" && i.equipped);
@@ -2592,8 +2616,23 @@ function CharacterCard({
             </p>
           )}
           <p style={{ ...muted, margin: "4px 0 0" }}>
-            {c.class} • Lv {c.level} • {c.xp} XP
+            {c.class} • Lv {c.level}
           </p>
+          <div style={{ marginTop: 6, minWidth: 160 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: "#6b7280", marginBottom: 3 }}>
+              <span style={{ color: "#d97706", fontWeight: 600 }}>XP</span>
+              <span>{xpIntoLevel} / {xpSpan}</span>
+            </div>
+            <div style={{ height: 5, background: "#1a1a1f", borderRadius: 3, overflow: "hidden" }}>
+              <div style={{
+                width: `${xpPct * 100}%`,
+                height: "100%",
+                background: "linear-gradient(90deg, #92400e, #fbbf24)",
+                borderRadius: 3,
+                transition: "width 0.4s ease",
+              }} />
+            </div>
+          </div>
         </div>
       </div>
       <Stats>
