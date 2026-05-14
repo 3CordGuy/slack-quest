@@ -243,7 +243,7 @@ import {
   SHIELD_CAP_MULTIPLIER,
   SKILL_META,
 } from "@gantt-quest/core";
-import { postMessage, respondToCommand, updateMessage, type InteractivePayload, type SlashCommandPayload } from "./slack";
+import { postJoinableQuest, postMessage, respondToCommand, updateMessage, type InteractivePayload, type SlashCommandPayload } from "./slack";
 
 export interface CommandResponse {
   text: string;
@@ -868,6 +868,13 @@ export async function handleInteraction(
   };
   const args = [action.value];
 
+  // Recruitment-card "Join Quest" button. action_id encodes the quest id
+  // (`join_quest_<id>`) for uniqueness, but handleJoin looks up the active
+  // quest in the channel naturally — the encoded id is for action_id
+  // uniqueness only, not as a lookup key. If the quest has since advanced
+  // past join-window (gauntlet wave 2+, dungeon past room 1) handleJoin's
+  // own checks ephemerally reject the click.
+  if (action.action_id.startsWith("join_quest_")) return handleJoin(slash, env, ctx);
   if (action.action_id === "equip") return handleEquip(slash, args, env);
   if (action.action_id === "unequip") return handleUnequip(slash, args, env);
   if (action.action_id === "use") return handleUse(slash, args, env, ctx);
@@ -1850,6 +1857,30 @@ async function handleQuest(
         await joinQuest(env.DB, questId, j.slack_user_id);
         await refillMana(env.DB, j.slack_user_id);
         await appendLog(env.DB, questId, j.slack_user_id, "join", "invited at quest start");
+      }
+
+      // Recruitment card — proactively invites the channel to drop into the
+      // quest with a single Join button. Skip for elite (perma-death is
+      // opt-in via direct invite, not channel drive-bys). Fresh quests are
+      // always at wave 1 / room 1, but we keep the mid-flow checks for the
+      // hypothetical future "rebroadcast" path. Job-board quests still
+      // broadcast — joiners get the bonus too.
+      const isMidGauntlet =
+        scene.variant === "gauntlet" && (scene.wave ?? 1) > 1;
+      const isMidDungeon =
+        scene.variant === "dungeon" &&
+        (((scene.expedition?.visited_count ?? 1) > 1) ||
+          ((scene.expedition?.pending_doors?.length ?? 0) > 0));
+      if (!elite && !isMidGauntlet && !isMidDungeon) {
+        await postJoinableQuest(env.SLACK_BOT_TOKEN, {
+          channel: payload.channel_id,
+          questId,
+          variant: scene.variant ?? "standard",
+          monsterName: scene.monster_name,
+          monsterMaxHp: scene.monster_max_hp,
+          createdByUserId: payload.user_id,
+          partySize: 1 + joiners.length,
+        });
       }
     } catch (err) {
       await respondToCommand(payload.response_url, {

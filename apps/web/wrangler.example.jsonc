@@ -7,6 +7,10 @@
 //   3. Adjust `name` if you want a custom subdomain (e.g. "gantt-quest-web").
 //   4. After deploy, set the slack worker's WEB_BASE_URL var to point at this
 //      worker so /sq web-login can render a clickable link.
+//   5. Set SLACK_BOT_TOKEN as a secret (`wrangler secret put SLACK_BOT_TOKEN`).
+//      Same token used by the slack worker — enables cross-surface notifications
+//      (e.g. "joined from the web" thread replies, combat milestone broadcasts).
+//      Optional; when unset, those notifications are silently skipped.
 {
   "$schema": "../../node_modules/wrangler/config-schema.json",
   "name": "slack-quest-web",

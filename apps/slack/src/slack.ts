@@ -146,6 +146,77 @@ export async function updateMessage(
   return (await res.json()) as { ok: boolean; error?: string };
 }
 
+// Recruitment-card post for a freshly-started quest. Lands in the channel
+// alongside the opening narrative with a single "Join Quest" button so
+// spectators can drop in without typing `/sq join`.
+//
+// Skipped for elite quests (perma-death — opt-in by direct invite only) and
+// for any mid-flow quest (dungeon past room 1, gauntlet past wave 1). Quest
+// creation is always at the start of those flows so the check is a no-op
+// today, but we keep it explicit so future "resurrect dropped quest" code
+// paths don't accidentally re-broadcast a half-played quest as joinable.
+//
+// `action_id` encodes the quest id (`join_quest_<id>`) so it stays unique
+// even if a future change ever renders two recruitment cards in one block.
+export interface JoinableQuestArgs {
+  channel: string;
+  questId: number;
+  variant: "standard" | "boss" | "gauntlet" | "dungeon" | string;
+  monsterName: string;
+  monsterMaxHp: number;
+  createdByUserId: string;
+  partySize: number;
+}
+
+export async function postJoinableQuest(
+  botToken: string,
+  args: JoinableQuestArgs,
+): Promise<{ ok: boolean; ts?: string; error?: string }> {
+  const variantBadge =
+    args.variant === "boss"
+      ? "👑 Boss"
+      : args.variant === "gauntlet"
+      ? "⚔️ Gauntlet"
+      : args.variant === "dungeon"
+      ? "🗺️ Dungeon"
+      : "⚔️ Quest";
+
+  const partyLine =
+    args.partySize > 1
+      ? `Party of ${args.partySize} — *${args.monsterName}* (${args.monsterMaxHp} HP)`
+      : `<@${args.createdByUserId}> vs. *${args.monsterName}* (${args.monsterMaxHp} HP)`;
+
+  const text = `${variantBadge} — joinable quest. ${partyLine}`;
+
+  const blocks = [
+    {
+      type: "section",
+      text: {
+        type: "mrkdwn",
+        text: `${variantBadge} — *Joinable quest*\n${partyLine}`,
+      },
+    },
+    {
+      type: "actions",
+      elements: [
+        {
+          type: "button",
+          style: "primary",
+          text: { type: "plain_text", text: "🤝 Join Quest", emoji: true },
+          action_id: `join_quest_${args.questId}`,
+          value: String(args.questId),
+        },
+      ],
+    },
+  ];
+
+  return postMessage(botToken, {
+    channel: args.channel,
+    text,
+    blocks,
+  });
+}
+
 // Reply asynchronously to a slash command using its response_url.
 // Use this when work takes >3s — Slack's initial ack must return faster than that.
 //
