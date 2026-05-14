@@ -115,6 +115,7 @@ import {
   getWebSession,
   markQuestStatus,
   recordClaimedNpcPath,
+  getPubLeaderboard,
   removeItem,
   saveScene,
   saveWebCombatState,
@@ -2437,8 +2438,20 @@ app.get("/api/pub", async (c) => {
     }
   }
 
+  // Leaderboard — top earners across all pub games for this channel.
+  let leaderboard: Array<{ user_id: string; name: string; slack_username: string | null; games: number; wins: number; net: number }> = [];
+  if (channelId) {
+    const rawLb = await getPubLeaderboard(c.env.DB, channelId);
+    leaderboard = await Promise.all(
+      rawLb.slice(0, 10).map(async (e) => {
+        const char = await getCharacter(c.env.DB, e.user_id);
+        return { user_id: e.user_id, name: char?.name ?? e.user_id, slack_username: char?.slack_username ?? null, games: e.games, wins: e.wins, net: e.net };
+      }),
+    );
+  }
+
   const art_url = await getOrScheduleViewArt(c.env.AI, artTarget(c.env), c.executionCtx, "pub_interior", undefined, TOWN_WEEKLY_MS);
-  return c.json({ drinks: drinksWithPrice, drink_buff: drinkBuff, gold: character.gold, spd: spdData, art_url, drinks_remaining: drinksRemaining, npcs });
+  return c.json({ drinks: drinksWithPrice, drink_buff: drinkBuff, gold: character.gold, spd: spdData, art_url, drinks_remaining: drinksRemaining, npcs, leaderboard });
 });
 
 // POST /api/pub/drink/:drinkId — order a drink. Deducts gold, applies the

@@ -453,6 +453,15 @@ interface PubNpc {
   archetype: string;
 }
 
+interface PubLeaderboardEntry {
+  user_id: string;
+  name: string;
+  slack_username: string | null;
+  games: number;
+  wins: number;
+  net: number;
+}
+
 interface PubResponse {
   drinks: DrinkItem[];
   drink_buff: DrinkBuff | null;
@@ -462,6 +471,7 @@ interface PubResponse {
   art_url?: string | null;
   error?: string;
   npcs?: { bartender: PubNpc | null; regulars: PubNpc[] };
+  leaderboard?: PubLeaderboardEntry[];
 }
 
 // Liars' Roll pending state (after start, before decide)
@@ -1057,6 +1067,9 @@ export function App() {
             />
             <LiarsRollCard gold={state.pub.gold} onRefresh={refresh} />
             <SpdCard pub={state.pub} selfId={state.me.slack_user_id} onRefresh={refresh} />
+            {state.pub.leaderboard && state.pub.leaderboard.length > 0 && (
+              <PubLeaderboardCard entries={state.pub.leaderboard} />
+            )}
           </>
         );
       } else if (townSection === "shop" && state.me.character && state.shop) {
@@ -3704,7 +3717,10 @@ function ShopCard({
     return (
       <div style={card}>
         {hero}
-        {!navOverlay && <h2 style={h2}>Shop</h2>}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
+          {!navOverlay && <h2 style={{ ...h2, margin: 0 }}>Shop</h2>}
+          <button onClick={onRefresh} style={refreshBtn}>↺ Refresh</button>
+        </div>
         <p style={muted}>
           No shop channel yet — start a quest in Slack first so we know which channel's shop to show.
         </p>
@@ -3715,7 +3731,10 @@ function ShopCard({
     return (
       <div style={card}>
         {hero}
-        {!navOverlay && <h2 style={h2}>Shop</h2>}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
+          {!navOverlay && <h2 style={{ ...h2, margin: 0 }}>Shop</h2>}
+          <button onClick={onRefresh} style={refreshBtn}>↺ Refresh</button>
+        </div>
         <p style={muted}>
           Rolled stock is dry. Run <code style={kbd}>/gq shop</code> in Slack to kick off a restock,
           then refresh here. Staples are still available below.
@@ -4779,6 +4798,54 @@ function SpdCard({ pub, selfId, onRefresh }: { pub: PubResponse; selfId: string;
           </div>
         )}
       </>)}
+    </div>
+  );
+}
+
+const GAME_LABELS: Record<string, string> = { liars: "Liar's Roll", spd_match: "SPD match", spd_bet: "SPD side-bet" };
+
+function PubLeaderboardCard({ entries }: { entries: PubLeaderboardEntry[] }) {
+  return (
+    <div style={card}>
+      <h2 style={{ ...h2, marginBottom: 12 }}>
+        <Icon name="trophy" size={1} /> Pub Leaderboard
+      </h2>
+      <div style={{ overflowX: "auto" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+          <thead>
+            <tr style={{ borderBottom: "1px solid #2a2d33" }}>
+              <th style={{ textAlign: "left", padding: "4px 8px 4px 0", color: "#7a7d83", fontWeight: 500, whiteSpace: "nowrap" }}>#</th>
+              <th style={{ textAlign: "left", padding: "4px 8px", color: "#7a7d83", fontWeight: 500 }}>Player</th>
+              <th style={{ textAlign: "right", padding: "4px 8px", color: "#7a7d83", fontWeight: 500, whiteSpace: "nowrap" }}>Games</th>
+              <th style={{ textAlign: "right", padding: "4px 8px", color: "#7a7d83", fontWeight: 500, whiteSpace: "nowrap" }}>Wins</th>
+              <th style={{ textAlign: "right", padding: "4px 0 4px 8px", color: "#7a7d83", fontWeight: 500, whiteSpace: "nowrap" }}>Net</th>
+            </tr>
+          </thead>
+          <tbody>
+            {entries.map((e, i) => {
+              const rank = i + 1;
+              const rankColor = rank === 1 ? "#fbbf24" : rank === 2 ? "#d1d5db" : rank === 3 ? "#cd7c2f" : "#7a7d83";
+              const netColor = e.net > 0 ? "#86efac" : e.net < 0 ? "#fca5a5" : "#7a7d83";
+              const winRate = e.games > 0 ? Math.round((e.wins / e.games) * 100) : 0;
+              return (
+                <tr key={e.user_id} style={{ borderBottom: "1px solid #1e2025" }}>
+                  <td style={{ padding: "6px 8px 6px 0", color: rankColor, fontWeight: rank <= 3 ? 700 : 400 }}>{rank}</td>
+                  <td style={{ padding: "6px 8px" }}>
+                    <div style={{ fontWeight: 500, color: "#f5f5f5" }}>{e.name}</div>
+                    {e.slack_username && <div style={{ color: "#7a7d83", fontSize: 11 }}>@{e.slack_username}</div>}
+                  </td>
+                  <td style={{ padding: "6px 8px", textAlign: "right", color: "#cbd5e1" }}>{e.games}</td>
+                  <td style={{ padding: "6px 8px", textAlign: "right", color: "#cbd5e1" }}>{e.wins} <span style={{ color: "#7a7d83", fontSize: 11 }}>({winRate}%)</span></td>
+                  <td style={{ padding: "6px 0 6px 8px", textAlign: "right", color: netColor, fontWeight: 600 }}>
+                    {e.net > 0 ? "+" : ""}{e.net}g
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <p style={{ ...muted, fontSize: 11, marginTop: 10 }}>All-time across Liar's Roll, SPD matches, and side bets.</p>
     </div>
   );
 }
