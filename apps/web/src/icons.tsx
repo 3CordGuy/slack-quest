@@ -9,6 +9,7 @@
 //
 // Inline log strings often contain emoji embedded in template literals; for
 // those we either flip the surrounding code to JSX or keep the emoji.
+import { useState } from "react";
 import type { CSSProperties } from "react";
 
 interface IconProps {
@@ -121,6 +122,135 @@ export function EmojiIcon({
   const mapped = EMOJI_MAP[emoji];
   if (!mapped) return <span>{emoji}</span>;
   return <Icon name={mapped} size={size} color={color} />;
+}
+
+// Unified avatar for player portraits and monster art.
+// - src present: renders image with a magnifying-glass overlay on hover; click expands full-screen.
+// - src absent / 404: renders a centered fallback icon in a styled box.
+// Props:
+//   src           — image URL (null/undefined → fallback)
+//   alt           — accessible label
+//   size          — square pixel dimension (default 56)
+//   radius        — border-radius px (default 6)
+//   fallbackIcon  — ra-* icon name (default "player")
+//   fallbackColor — icon + border color (default "#4a5568")
+//   border        — CSS border string applied to both states
+//   style         — extra CSSProperties merged onto the outer container
+export function Avatar({
+  src,
+  alt,
+  size = 56,
+  radius = 6,
+  fallbackIcon = "player",
+  fallbackColor = "#4a5568",
+  border,
+  style: extraStyle,
+}: {
+  src?: string | null;
+  alt: string;
+  size?: number;
+  radius?: number;
+  fallbackIcon?: string;
+  fallbackColor?: string;
+  border?: string;
+  style?: CSSProperties;
+}): JSX.Element {
+  const [failed, setFailed] = useState(false);
+  const [hovered, setHovered] = useState(false);
+  const [open, setOpen] = useState(false);
+
+  const showImage = !!src && !failed;
+
+  const containerStyle: CSSProperties = {
+    width: size,
+    height: size,
+    borderRadius: radius,
+    flexShrink: 0,
+    position: "relative",
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    overflow: "hidden",
+    border: border ?? "1px solid #2a2d33",
+    background: showImage ? "transparent" : "#0e0f12",
+    cursor: showImage ? "zoom-in" : "default",
+    ...extraStyle,
+  };
+
+  return (
+    <>
+      <div
+        style={containerStyle}
+        onClick={() => { if (showImage) setOpen(true); }}
+        onMouseEnter={() => { if (showImage) setHovered(true); }}
+        onMouseLeave={() => setHovered(false)}
+      >
+        {showImage ? (
+          <>
+            <img
+              src={src!}
+              alt={alt}
+              onError={() => setFailed(true)}
+              style={{
+                width: "100%",
+                height: "100%",
+                objectFit: "cover",
+                display: "block",
+                transition: "transform 0.15s ease",
+                transform: hovered ? "scale(1.07)" : "scale(1)",
+              }}
+            />
+            {hovered && (
+              <div style={{
+                position: "absolute",
+                inset: 0,
+                background: "rgba(0,0,0,0.35)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                pointerEvents: "none",
+              }}>
+                <i className="ra ra-magnifying-glass" style={{ fontSize: 20, color: "#fff", opacity: 0.9 }} />
+              </div>
+            )}
+          </>
+        ) : (
+          <i
+            className={`ra ra-${fallbackIcon}`}
+            aria-hidden
+            style={{ fontSize: Math.round(size * 0.5), color: fallbackColor, lineHeight: 1 }}
+          />
+        )}
+      </div>
+      {open && (
+        <div
+          onClick={() => setOpen(false)}
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.88)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 9999,
+            cursor: "zoom-out",
+          }}
+        >
+          <img
+            src={src!}
+            alt={alt}
+            style={{
+              maxWidth: "min(90vw, 640px)",
+              maxHeight: "85vh",
+              borderRadius: 12,
+              objectFit: "contain",
+              boxShadow: "0 16px 48px rgba(0,0,0,0.8)",
+            }}
+          />
+        </div>
+      )}
+    </>
+  );
 }
 
 // Tier-colored key icon — replaces 🥉/🥈/🥇.

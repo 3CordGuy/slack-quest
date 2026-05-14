@@ -1,7 +1,7 @@
 import { useEffect, useReducer, useRef, useState } from "react";
 import toast from "react-hot-toast";
 
-import { Icon } from "./icons";
+import { Avatar, Icon } from "./icons";
 
 // Live web-mode combat. Connects to the QuestRoom Durable Object via WS,
 // renders the current state, animates incoming events through a scrolling
@@ -942,30 +942,16 @@ function MonsterCard({
         </div>
       )}
       {/* Portrait */}
-      <div style={{ position: "relative", flexShrink: 0 }}>
-        {monster.art_url ? (
-          <img
-            src={monster.art_url}
-            alt={monster.name}
-            style={{
-              width: 96,
-              height: 96,
-              borderRadius: 10,
-              objectFit: "cover",
-              border: `1px solid ${isMarked ? "#f59e0b" : "#7c2020"}`,
-            }}
-            onError={(e) => { e.currentTarget.style.display = "none"; }}
-          />
-        ) : (
-          <div style={{
-            width: 96, height: 96, borderRadius: 10,
-            background: "#1d1f23", border: `1px solid ${isMarked ? "#f59e0b" : "#7c2020"}`,
-            display: "flex", alignItems: "center", justifyContent: "center",
-          }}>
-            <Icon name="dragon-head" size={40} color={isMarked ? "#f59e0b" : "#7c2020"} />
-          </div>
-        )}
-      </div>
+      <Avatar
+        src={monster.art_url}
+        alt={monster.name}
+        size={96}
+        radius={10}
+        fallbackIcon="dragon-head"
+        fallbackColor={isMarked ? "#f59e0b" : "#7c2020"}
+        border={`1px solid ${isMarked ? "#f59e0b" : "#7c2020"}`}
+        style={{ flexShrink: 0 }}
+      />
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
           <div>
@@ -1036,31 +1022,18 @@ function InitiativeTrack({
                 transition: "box-shadow 300ms, border-color 300ms",
                 flexShrink: 0,
               }}>
-                {portrait ? (
-                  <img
-                    src={portrait}
-                    alt={name}
-                    style={{ width: "100%", height: "100%", objectFit: "cover", display: "block", borderRadius: RADIUS }}
-                  />
-                ) : isMonster ? (
-                  <div style={{
-                    width: "100%", height: "100%", borderRadius: RADIUS,
-                    background: isCurrent ? "#3a0a0a" : "#1a0808",
-                    display: "flex", alignItems: "center", justifyContent: "center",
-                    fontSize: 32, color: isCurrent ? "#ef4444" : "#7a3030",
-                  }}>
-                    <Icon name="dragon-head" />
-                  </div>
-                ) : (
-                  <div style={{
-                    width: "100%", height: "100%", borderRadius: RADIUS,
-                    background: "#1d1f23",
-                    display: "flex", alignItems: "center", justifyContent: "center",
-                    fontSize: 28, color: "#4a5568",
-                  }}>
-                    <Icon name="player" />
-                  </div>
-                )}
+                <Avatar
+                  src={portrait}
+                  alt={name}
+                  size={AVATAR}
+                  radius={RADIUS}
+                  fallbackIcon={isMonster ? "dragon-head" : "player"}
+                  fallbackColor={isMonster ? (isCurrent ? "#ef4444" : "#7a3030") : "#4a5568"}
+                  style={{
+                    background: isMonster ? (isCurrent ? "#3a0a0a" : "#1a0808") : "#1d1f23",
+                    border: "none",
+                  }}
+                />
               </div>
               {/* name + init */}
               <div style={{ textAlign: "center" }}>
@@ -1147,39 +1120,15 @@ function FighterRow({ fighter, self, current }: { fighter: Fighter; self: boolea
         alignItems: "stretch",
       }}
     >
-      {portrait ? (
-        <img
-          src={portrait}
-          alt={`${fighter.class} portrait`}
-          style={{
-            width: 56,
-            height: 56,
-            borderRadius: 6,
-            objectFit: "cover",
-            border: "1px solid #2a2d33",
-            flexShrink: 0,
-            alignSelf: "center",
-          }}
-          onError={(e) => { e.currentTarget.style.display = "none"; }}
-        />
-      ) : (
-        <div
-          style={{
-            width: 56,
-            height: 56,
-            borderRadius: 6,
-            background: "#0e0f12",
-            border: "1px solid #2a2d33",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            alignSelf: "center",
-            flexShrink: 0,
-          }}
-        >
-          <Icon name="player" size={28} color="#6a7080" />
-        </div>
-      )}
+      <Avatar
+        src={portrait}
+        alt={`${fighter.class} portrait`}
+        size={56}
+        radius={6}
+        fallbackIcon="player"
+        fallbackColor="#6a7080"
+        style={{ alignSelf: "center" }}
+      />
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8 }}>
           <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>

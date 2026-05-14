@@ -15,7 +15,7 @@ import {
 import { findCatalogEntry, priceFor } from "@gantt-quest/core";
 
 import { CombatPage } from "./CombatPage";
-import { EmojiIcon, Icon, KeyIcon } from "./icons";
+import { Avatar, EmojiIcon, Icon, KeyIcon } from "./icons";
 
 // One-liner describing the in-game effect of an item, in plain mechanics
 // (not flavor). Used by the inventory's Info toggle so players can see
@@ -2326,32 +2326,14 @@ function CharacterCard({
   return (
     <div style={card}>
       <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 4 }}>
-        {portrait ? (
-          <ClickablePortrait
-            src={portrait}
-            alt={`${c.class} portrait`}
-            width={72}
-            height={72}
-            borderRadius={8}
-            style={{ border: "1px solid #2a2d33", flexShrink: 0 }}
-          />
-        ) : (
-          <div
-            style={{
-              width: 72,
-              height: 72,
-              borderRadius: 8,
-              background: "#1d1f23",
-              border: "1px solid #2a2d33",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              flexShrink: 0,
-            }}
-          >
-            <Icon name="player" size={36} color="#6a7080" />
-          </div>
-        )}
+        <Avatar
+          src={portrait}
+          alt={`${c.class} portrait`}
+          size={72}
+          radius={8}
+          fallbackIcon="player"
+          fallbackColor="#6a7080"
+        />
         <div style={{ minWidth: 0 }}>
           <h1 style={{ ...h1, margin: 0 }}>{c.name}</h1>
           {c.slack_username && (
@@ -4409,12 +4391,13 @@ function Stack({ children }: { children: React.ReactNode }) {
   );
 }
 
-// Clickable portrait — hover to scale, click to expand full-screen.
+// Wide scene/banner image — click to expand full-screen. Used for landscape
+// art (monster scene, quest banners). For square portraits use <Avatar>.
 function ClickablePortrait({
   src,
   alt,
-  width = 72,
-  height = 72,
+  width = "100%",
+  height = "auto",
   borderRadius = 8,
   style: extraStyle,
 }: {
@@ -4426,15 +4409,12 @@ function ClickablePortrait({
   style?: React.CSSProperties;
 }) {
   const [open, setOpen] = useState(false);
-  const [hovered, setHovered] = useState(false);
   return (
     <>
       <img
         src={src}
         alt={alt}
         onClick={() => setOpen(true)}
-        onMouseEnter={() => setHovered(true)}
-        onMouseLeave={() => setHovered(false)}
         style={{
           width,
           height,
@@ -4442,9 +4422,6 @@ function ClickablePortrait({
           objectFit: "cover",
           display: "block",
           cursor: "zoom-in",
-          transition: "transform 0.15s ease, box-shadow 0.15s ease",
-          transform: hovered ? "scale(1.07)" : "scale(1)",
-          boxShadow: hovered ? "0 4px 16px rgba(0,0,0,0.6)" : "none",
           ...extraStyle,
         }}
         onError={(e) => { e.currentTarget.style.display = "none"; }}
@@ -4467,7 +4444,7 @@ function ClickablePortrait({
             src={src}
             alt={alt}
             style={{
-              maxWidth: "min(90vw, 640px)",
+              maxWidth: "min(90vw, 800px)",
               maxHeight: "85vh",
               borderRadius: 12,
               objectFit: "contain",
