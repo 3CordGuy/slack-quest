@@ -750,6 +750,24 @@ export function App() {
     setState({ kind: "anon" });
   }
 
+  async function refreshPub() {
+    const res = await fetch("/api/pub", { credentials: "include", cache: "no-store" });
+    const body = res.ok
+      ? (await res.json()) as PubResponse
+      : ((await res.json().catch(() => ({}))) as PubResponse);
+    const pub = body.error ? body : res.ok ? body : null;
+    setState((prev) => prev.kind === "auth" ? { ...prev, pub } : prev);
+  }
+
+  async function refreshShop() {
+    const res = await fetch("/api/shop", { credentials: "include", cache: "no-store" });
+    const body = res.ok
+      ? (await res.json()) as ShopResponse
+      : ((await res.json().catch(() => ({}))) as ShopResponse);
+    const shop = body.error ? body : res.ok ? body : null;
+    setState((prev) => prev.kind === "auth" ? { ...prev, shop } : prev);
+  }
+
   async function rerollCharacter() {
     const res = await fetch("/api/character/reroll", { method: "POST", credentials: "include" });
     if (!res.ok) {
@@ -1076,10 +1094,10 @@ export function App() {
               pub={state.pub}
               navOverlay={townNav}
               onBuyDrink={buyDrink}
-              onRefresh={refresh}
+              onRefresh={refreshPub}
             />
-            <LiarsRollCard gold={state.pub.gold} onRefresh={refresh} />
-            <SpdCard pub={state.pub} selfId={state.me.slack_user_id} onRefresh={refresh} />
+            <LiarsRollCard gold={state.pub.gold} onRefresh={refreshPub} />
+            <SpdCard pub={state.pub} selfId={state.me.slack_user_id} onRefresh={refreshPub} />
             {state.pub.leaderboard && state.pub.leaderboard.length > 0 && (
               <PubLeaderboardCard entries={state.pub.leaderboard} />
             )}
@@ -1093,7 +1111,7 @@ export function App() {
             onBuy={shopBuy}
             onHaggle={shopHaggle}
             onBuyStaple={shopBuyStaple}
-            onRefresh={refresh}
+            onRefresh={refreshShop}
           />
         );
       } else if (townSection === "inn" && state.me.character && state.inn) {
@@ -3720,7 +3738,7 @@ function ShopCard({
   onBuy: (id: number, name: string) => void;
   onHaggle: (id: number) => void;
   onBuyStaple: (id: string) => void;
-  onRefresh: () => void;
+  onRefresh: () => Promise<void>;
 }) {
   const hero = navOverlay
     ? <LocationHero src={shop.art_url} label="Shop" nav={navOverlay} />
@@ -3740,7 +3758,7 @@ function ShopCard({
         {hero}
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
           {!navOverlay && <h2 style={{ ...h2, margin: 0 }}>Shop</h2>}
-          <button onClick={onRefresh} style={refreshBtn}>↺ Refresh</button>
+          <RefreshButton onRefresh={onRefresh} />
         </div>
         <p style={muted}>
           No shop channel yet — start a quest in Slack first so we know which channel's shop to show.
@@ -3754,7 +3772,7 @@ function ShopCard({
         {hero}
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
           {!navOverlay && <h2 style={{ ...h2, margin: 0 }}>Shop</h2>}
-          <button onClick={onRefresh} style={refreshBtn}>↺ Refresh</button>
+          <RefreshButton onRefresh={onRefresh} />
         </div>
         <p style={muted}>
           Rolled stock is dry. Run <code style={kbd}>/gq shop</code> in Slack to kick off a restock,
@@ -3775,7 +3793,7 @@ function ShopCard({
       {hero}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
         <h2 style={{ ...h2, margin: 0 }}>Shop</h2>
-        <button onClick={onRefresh} style={refreshBtn}>↺ Refresh</button>
+        <RefreshButton onRefresh={onRefresh} />
       </div>
       <p style={muted}>
         {available.length}/{shop.stock.length} items available · you have{" "}
@@ -4314,7 +4332,7 @@ function PubCard({
   pub: PubResponse;
   navOverlay?: React.ReactNode;
   onBuyDrink: (drinkId: string) => void;
-  onRefresh: () => void;
+  onRefresh: () => Promise<void>;
 }) {
   return (
     <div style={card}>
@@ -4323,7 +4341,7 @@ function PubCard({
         : pub.art_url ? <Banner src={pub.art_url} alt="The Pub" /> : null}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: navOverlay ? 0 : undefined }}>
         {!navOverlay && <h2 style={{ ...h2, margin: 0 }}><Icon name="beer" size={18} /> The Pub</h2>}
-        <button onClick={onRefresh} style={{ ...refreshBtn, marginLeft: "auto" }}>↺ Refresh</button>
+        <RefreshButton onRefresh={onRefresh} style={{ marginLeft: "auto" }} />
       </div>
       <p style={{ ...muted, marginTop: 4 }}>
         <em>"Smoke, sawdust, a thousand failed deployments worth of regret in the air."</em>
@@ -4514,7 +4532,7 @@ function StakeButtons({
   );
 }
 
-function LiarsRollCard({ gold, onRefresh }: { gold: number; onRefresh: () => void }) {
+function LiarsRollCard({ gold, onRefresh }: { gold: number; onRefresh: () => Promise<void> }) {
   const [liarsState, setLiarsState] = useState<
     | { phase: "idle" }
     | { phase: "pending"; round: LiarsRoundPending }
@@ -4642,7 +4660,7 @@ function LiarsRollCard({ gold, onRefresh }: { gold: number; onRefresh: () => voi
   );
 }
 
-function SpdCard({ pub, selfId, onRefresh }: { pub: PubResponse; selfId: string; onRefresh: () => void }) {
+function SpdCard({ pub, selfId, onRefresh }: { pub: PubResponse; selfId: string; onRefresh: () => Promise<void> }) {
   const [spdStake, setSpdStake] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
   const [spdResult, setSpdResult] = useState<SpdResult | null>(null);
@@ -6105,6 +6123,19 @@ const refreshBtn: React.CSSProperties = {
   padding: "3px 8px",
   fontFamily: "inherit",
 };
+
+function RefreshButton({ onRefresh, style }: { onRefresh: () => Promise<void>; style?: React.CSSProperties }) {
+  const [spinning, setSpinning] = useState(false);
+  async function handleClick() {
+    setSpinning(true);
+    try { await onRefresh(); } finally { setSpinning(false); }
+  }
+  return (
+    <button onClick={handleClick} disabled={spinning} style={{ ...refreshBtn, ...style, opacity: spinning ? 0.6 : 1 }}>
+      {spinning ? "…" : "↺ Refresh"}
+    </button>
+  );
+}
 const smallBadge: React.CSSProperties = {
   fontSize: 10,
   textTransform: "uppercase",
