@@ -2628,6 +2628,26 @@ function Banner({ src, alt }: { src: string | null | undefined; alt: string }) {
   );
 }
 
+type InventorySort = "type" | "rarity" | "power" | "name";
+
+function sortItems(items: Item[], sort: InventorySort): Item[] {
+  return [...items].sort((a, b) => {
+    switch (sort) {
+      case "type": {
+        const ti = ITEM_TYPE_ORDER.indexOf(a.item_type) - ITEM_TYPE_ORDER.indexOf(b.item_type);
+        if (ti !== 0) return ti;
+        return RARITY_RANK[b.rarity] - RARITY_RANK[a.rarity];
+      }
+      case "rarity":
+        return RARITY_RANK[b.rarity] - RARITY_RANK[a.rarity] || a.item_name.localeCompare(b.item_name);
+      case "power":
+        return b.power - a.power || RARITY_RANK[b.rarity] - RARITY_RANK[a.rarity];
+      case "name":
+        return a.item_name.localeCompare(b.item_name);
+    }
+  });
+}
+
 function InventoryCard({
   items,
   inQuest,
@@ -2647,6 +2667,16 @@ function InventoryCard({
   onUse: (itemId: number) => void;
   onGive: (itemId: number, toUserId: string, toName: string) => void;
 }) {
+  const [sort, setSort] = useState<InventorySort>("type");
+  const [selectedId, setSelectedId] = useState<number | null>(null);
+
+  const sorted = sortItems(items, sort);
+  const selected = selectedId != null ? items.find((i) => i.id === selectedId) ?? null : null;
+
+  function toggleSelect(id: number) {
+    setSelectedId((prev) => (prev === id ? null : id));
+  }
+
   if (items.length === 0) {
     return (
       <div style={card}>
@@ -2657,9 +2687,12 @@ function InventoryCard({
     );
   }
 
-  const equipped = items.filter((i) => i.equipped);
-  const stowed = items.filter((i) => !i.equipped);
-  const groups = groupByType(stowed);
+  const SORT_LABELS: { key: InventorySort; label: string }[] = [
+    { key: "type", label: "Type" },
+    { key: "rarity", label: "Rarity" },
+    { key: "power", label: "Power" },
+    { key: "name", label: "Name" },
+  ];
 
   return (
     <div style={card}>
@@ -2670,50 +2703,156 @@ function InventoryCard({
           Selling is disabled while a quest is active.
         </p>
       )}
-      {equipped.length > 0 && (
-        <Section title="Equipped">
-          {equipped.map((it) => (
-            <ItemRow key={it.id} item={it} inQuest={inQuest} selfId={selfId} onEquip={onEquip} onSell={onSell} onUse={onUse} onGive={onGive} />
-          ))}
-        </Section>
-      )}
-      {ITEM_TYPE_ORDER.filter((t) => groups[t]?.length).map((t) => (
-        <Section key={t} title={ITEM_TYPE_LABELS[t]}>
-          {groups[t]!.map((it) => (
-            <ItemRow key={it.id} item={it} inQuest={inQuest} selfId={selfId} onEquip={onEquip} onSell={onSell} onUse={onUse} onGive={onGive} />
-          ))}
-        </Section>
-      ))}
-    </div>
-  );
-}
-
-function Section({
-  title,
-  children,
-}: {
-  title: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <div style={{ marginTop: 16 }}>
+      {/* Sort bar */}
+      <div style={{ display: "flex", gap: 6, marginTop: 12, flexWrap: "wrap" }}>
+        {SORT_LABELS.map(({ key, label }) => (
+          <button
+            key={key}
+            onClick={() => setSort(key)}
+            style={{
+              background: sort === key ? "#2a2d3a" : "#1d1f23",
+              color: sort === key ? "#c084fc" : "#9aa0a6",
+              border: sort === key ? "1px solid #c084fc55" : "1px solid #2a2d33",
+              borderRadius: 20,
+              padding: "4px 14px",
+              fontSize: 12,
+              fontWeight: 600,
+              cursor: "pointer",
+              fontFamily: "inherit",
+              transition: "all 0.1s",
+            }}
+          >
+            {label}
+          </button>
+        ))}
+        <span style={{ ...muted, fontSize: 12, marginLeft: "auto", alignSelf: "center" }}>
+          {items.length} item{items.length !== 1 ? "s" : ""}
+        </span>
+      </div>
+      {/* Grid + detail panel */}
       <div
         style={{
-          ...muted,
-          fontSize: 11,
-          textTransform: "uppercase",
-          letterSpacing: 1.5,
-          marginBottom: 8,
+          display: "flex",
+          gap: 16,
+          marginTop: 14,
+          alignItems: "flex-start",
         }}
       >
-        {title}
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fill, 72px)",
+            gap: 6,
+            flex: 1,
+          }}
+        >
+          {sorted.map((item) => (
+            <ItemSlot
+              key={item.id}
+              item={item}
+              selected={selectedId === item.id}
+              onSelect={() => toggleSelect(item.id)}
+            />
+          ))}
+        </div>
+        {selected && (
+          <ItemDetailPanel
+            item={selected}
+            inQuest={inQuest}
+            selfId={selfId}
+            onEquip={onEquip}
+            onSell={onSell}
+            onUse={onUse}
+            onGive={onGive}
+            onClose={() => setSelectedId(null)}
+          />
+        )}
       </div>
-      <div style={{ display: "grid", gap: 8 }}>{children}</div>
     </div>
   );
 }
 
-function ItemRow({
+function ItemSlot({
+  item,
+  selected,
+  onSelect,
+}: {
+  item: Item;
+  selected: boolean;
+  onSelect: () => void;
+}) {
+  const rc = RARITY_COLOR[item.rarity];
+  const borderColor = selected ? "#fff" : item.equipped ? "#b89b3a" : `${rc}99`;
+  return (
+    <div
+      onClick={onSelect}
+      title={item.item_name}
+      style={{
+        width: 72,
+        height: 72,
+        background: selected ? "#1e1c2e" : "#1d1f23",
+        borderRadius: 8,
+        border: `2px solid ${borderColor}`,
+        position: "relative",
+        cursor: "pointer",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        boxShadow: selected ? `0 0 0 1px ${rc}66` : undefined,
+        transition: "border-color 0.1s, background 0.1s",
+        flexShrink: 0,
+      }}
+    >
+      {item.equipped && (
+        <div
+          style={{
+            position: "absolute",
+            top: 3,
+            left: 3,
+            width: 14,
+            height: 14,
+            background: "#b89b3a",
+            borderRadius: 3,
+            fontSize: 8,
+            fontWeight: 800,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            color: "#000",
+            lineHeight: 1,
+          }}
+        >
+          E
+        </div>
+      )}
+      <Icon name={ITEM_TYPE_ICON[item.item_type]} size={28} color={rc} />
+      <div
+        style={{
+          position: "absolute",
+          bottom: 3,
+          right: 3,
+          minWidth: 18,
+          height: 18,
+          background: "#0a0b0e",
+          border: `1px solid ${rc}55`,
+          borderRadius: "50%",
+          fontSize: 9,
+          fontWeight: 700,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          color: rc,
+          padding: "0 2px",
+          lineHeight: 1,
+        }}
+      >
+        +{item.power}
+      </div>
+    </div>
+  );
+}
+
+function ItemDetailPanel({
   item,
   inQuest,
   selfId,
@@ -2721,6 +2860,7 @@ function ItemRow({
   onSell,
   onUse,
   onGive,
+  onClose,
 }: {
   item: Item;
   inQuest: boolean;
@@ -2729,8 +2869,8 @@ function ItemRow({
   onSell: (itemId: number) => void;
   onUse: (itemId: number) => void;
   onGive: (itemId: number, toUserId: string, toName: string) => void;
+  onClose: () => void;
 }) {
-  const [showInfo, setShowInfo] = useState(false);
   const [showGivePicker, setShowGivePicker] = useState(false);
   const [characters, setCharacters] = useState<KnownCharacter[]>([]);
   const [charsLoading, setCharsLoading] = useState(false);
@@ -2759,66 +2899,129 @@ function ItemRow({
     item.item_type !== "tool" &&
     item.item_type !== "scroll";
   const canSell = !item.equipped && !inQuest;
-  // Out-of-combat use: consumable (heal user) + magic (bump max_mana).
-  // Tools / scrolls / revives require combat context — disabled here.
   const canUse =
     !item.equipped && (item.item_type === "consumable" || item.item_type === "magic");
   const canGive = !item.equipped;
+
+  const rc = RARITY_COLOR[item.rarity];
+
   return (
     <div
       style={{
-        padding: 12,
-        background: "#1d1f23",
-        borderRadius: 8,
-        border: item.equipped ? "1px solid #b89b3a" : "1px solid transparent",
+        width: 220,
+        flexShrink: 0,
+        background: "#1a1c20",
+        border: `1px solid ${rc}44`,
+        borderRadius: 10,
+        padding: "14px 14px 12px",
+        position: "sticky",
+        top: 16,
       }}
     >
-      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-        <Icon name={ITEM_TYPE_ICON[item.item_type]} size={24} color="#cbd5e1" />
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-            <div style={{ fontWeight: 600, color: "#f5f5f5", fontSize: 15 }}>{item.item_name}</div>
-            <RarityBadge rarity={item.rarity} />
-            {item.item_type === "weapon" && item.weapon_range === "ranged" && (
-              <SmallBadge>ranged</SmallBadge>
-            )}
-            {item.item_type === "weapon" && item.weapon_range === "focus" && (
-              <SmallBadge>focus</SmallBadge>
-            )}
-          </div>
-          {item.flavor && (
-            <div style={{ ...muted, fontSize: 12, fontStyle: "italic", marginTop: 2 }}>
-              {item.flavor}
-            </div>
-          )}
-        </div>
-        <div style={{ fontVariantNumeric: "tabular-nums", color: "#f5f5f5", fontWeight: 600 }}>
-          +{item.power}
-        </div>
-      </div>
-      {showInfo && (
+      {/* Header row */}
+      <div style={{ display: "flex", alignItems: "flex-start", gap: 10, marginBottom: 10 }}>
         <div
           style={{
-            marginTop: 8,
-            padding: "8px 10px",
+            width: 44,
+            height: 44,
             background: "#0e0f12",
-            borderRadius: 6,
-            border: "1px solid #2a2d33",
-            color: "#cbd5e1",
-            fontSize: 12,
+            border: `2px solid ${rc}66`,
+            borderRadius: 8,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            flexShrink: 0,
           }}
         >
-          {describeItemEffect(item)}
+          <Icon name={ITEM_TYPE_ICON[item.item_type]} size={24} color={rc} />
+        </div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div
+            style={{
+              fontWeight: 700,
+              color: "#f5f5f5",
+              fontSize: 14,
+              lineHeight: 1.3,
+              wordBreak: "break-word",
+            }}
+          >
+            {item.item_name}
+          </div>
+          <div style={{ display: "flex", gap: 5, marginTop: 4, flexWrap: "wrap" }}>
+            <RarityBadge rarity={item.rarity} />
+            {item.equipped && (
+              <span
+                style={{
+                  ...smallBadge,
+                  background: "#3a2a00",
+                  color: "#b89b3a",
+                  borderColor: "#b89b3a55",
+                }}
+              >
+                equipped
+              </span>
+            )}
+          </div>
+        </div>
+        <button
+          onClick={onClose}
+          style={{
+            background: "none",
+            border: "none",
+            color: "#666",
+            cursor: "pointer",
+            fontSize: 16,
+            padding: 0,
+            lineHeight: 1,
+            flexShrink: 0,
+          }}
+          aria-label="Close"
+        >
+          ×
+        </button>
+      </div>
+
+      {/* Type + weapon_range */}
+      <div style={{ ...muted, fontSize: 11, textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>
+        {ITEM_TYPE_LABELS[item.item_type]}
+        {item.item_type === "weapon" && item.weapon_range && ` · ${item.weapon_range}`}
+        {" · "}+{item.power} power
+      </div>
+
+      {/* Flavor text */}
+      {item.flavor && (
+        <div
+          style={{
+            ...muted,
+            fontSize: 12,
+            fontStyle: "italic",
+            marginBottom: 10,
+            lineHeight: 1.5,
+            borderLeft: `2px solid ${rc}44`,
+            paddingLeft: 8,
+          }}
+        >
+          {item.flavor}
         </div>
       )}
-      <div style={{ display: "flex", gap: 6, marginTop: 8, justifyContent: "flex-end" }}>
-        <button
-          onClick={() => setShowInfo((v) => !v)}
-          style={smallActionBtn("#222428", "#cbd5e1")}
-          aria-expanded={showInfo}
-        >
-          {showInfo ? "Hide" : "Info"}
-        </button>
+
+      {/* Effect description */}
+      <div
+        style={{
+          background: "#0e0f12",
+          borderRadius: 6,
+          padding: "8px 10px",
+          fontSize: 12,
+          color: "#cbd5e1",
+          lineHeight: 1.5,
+          marginBottom: 12,
+        }}
+      >
+        {describeItemEffect(item)}
+      </div>
+
+      {/* Actions */}
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
         {canEquip && (
           <button onClick={() => onEquip(item.id)} style={smallActionBtn("#1f3a1f", "#86efac")}>
             Equip
@@ -2838,7 +3041,10 @@ function ItemRow({
                 void openGivePicker();
               }
             }}
-            style={smallActionBtn(showGivePicker ? "#3a2030" : "#2a2030", showGivePicker ? "#f9a8d4" : "#c084fc")}
+            style={smallActionBtn(
+              showGivePicker ? "#3a2030" : "#2a2030",
+              showGivePicker ? "#f9a8d4" : "#c084fc",
+            )}
           >
             Give
           </button>
@@ -2849,10 +3055,12 @@ function ItemRow({
           </button>
         )}
       </div>
+
+      {/* Give picker */}
       {showGivePicker && (
         <div
           style={{
-            marginTop: 8,
+            marginTop: 10,
             padding: "8px 10px",
             background: "#0e0f12",
             borderRadius: 6,
@@ -2866,18 +3074,20 @@ function ItemRow({
             <div style={muted}>No other players found.</div>
           )}
           <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-            {characters.filter((ch) => ch.slack_user_id !== selfId).map((ch) => (
-              <button
-                key={ch.slack_user_id}
-                style={smallActionBtn("#1a1a2e", "#c084fc")}
-                onClick={() => {
-                  setShowGivePicker(false);
-                  onGive(item.id, ch.slack_user_id, ch.name);
-                }}
-              >
-                {ch.name} ({ch.class})
-              </button>
-            ))}
+            {characters
+              .filter((ch) => ch.slack_user_id !== selfId)
+              .map((ch) => (
+                <button
+                  key={ch.slack_user_id}
+                  style={smallActionBtn("#1a1a2e", "#c084fc")}
+                  onClick={() => {
+                    setShowGivePicker(false);
+                    onGive(item.id, ch.slack_user_id, ch.name);
+                  }}
+                >
+                  {ch.name} ({ch.class})
+                </button>
+              ))}
           </div>
         </div>
       )}
