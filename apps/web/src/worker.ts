@@ -768,8 +768,7 @@ app.post("/api/auth/logout", async (c) => {
 });
 
 // POST /api/character/reroll — delete and recreate the player's character.
-// Free if xp === 0 (never earned XP), otherwise costs level × 50g.
-// Blocked mid-quest. Returns the new character on success.
+// Always free — forfeit of all gear/gold/level is the cost. Blocked mid-quest.
 app.post("/api/character/reroll", async (c) => {
   const session = await currentSession(c.env.DB, c.req.header("cookie"));
   if (!session) return c.json({ error: "unauthenticated" }, 401);
@@ -778,9 +777,6 @@ app.post("/api/character/reroll", async (c) => {
 
   const activeQuest = await getActiveQuestForCharacter(c.env.DB, session.slack_user_id);
   if (activeQuest) return c.json({ error: "mid_quest" }, 400);
-
-  const cost = existing.xp === 0 ? 0 : existing.level * 50;
-  if (existing.gold < cost) return c.json({ error: "insufficient_gold", cost, gold: existing.gold }, 400);
 
   await deleteCharacter(c.env.DB, session.slack_user_id);
 

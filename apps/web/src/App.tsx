@@ -773,7 +773,6 @@ export function App() {
     if (!res.ok) {
       const body = await res.json().catch(() => ({})) as { error?: string; cost?: number; gold?: number };
       if (body.error === "mid_quest") { toast.error("Finish your quest before rerolling."); return; }
-      if (body.error === "insufficient_gold") { toast.error(`Need ${body.cost}g to reroll (you have ${body.gold}g).`); return; }
       toast.error("Reroll failed."); return;
     }
     toast.success("New hero rolled! Refreshing…");
@@ -4984,7 +4983,7 @@ function AccountPopover({
 }: {
   onLogout: () => void;
   onReroll: () => Promise<void>;
-  character: { level: number; xp: number; gold: number; name: string } | null;
+  character: { name: string } | null;
 }) {
   const [open, setOpen] = useState(false);
   const [rerollStep, setRerollStep] = useState<"idle" | "confirm">("idle");
@@ -4998,9 +4997,6 @@ function AccountPopover({
     whileElementsMounted: autoUpdate,
   });
   const { getFloatingProps } = useInteractions([useDismiss(context)]);
-
-  const cost = character ? (character.xp === 0 ? 0 : character.level * 50) : null;
-  const canAfford = cost !== null && character !== null && character.gold >= cost;
 
   async function confirmReroll() {
     setRerolling(true);
@@ -5054,19 +5050,12 @@ function AccountPopover({
                   <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                     <div style={{ fontSize: 12, color: "#f5f5f5", fontWeight: 600 }}>Reroll {character?.name ?? "your character"}?</div>
                     <div style={{ fontSize: 11, color: "#9ca3af", lineHeight: 1.4 }}>
-                      {cost === 0
-                        ? "Free — you haven't earned XP yet. All gear and gold will be lost."
-                        : `Costs ${cost}g (level × 50). All gear and gold will be lost.`}
-                      {cost !== null && cost > 0 && !canAfford && (
-                        <span style={{ color: "#fca5a5", display: "block", marginTop: 4 }}>
-                          You need {cost! - (character?.gold ?? 0)}g more.
-                        </span>
-                      )}
+                      All gear, gold, and levels will be lost. Free to do — the forfeit is the cost.
                     </div>
                     <div style={{ display: "flex", gap: 6 }}>
                       <button
                         onClick={confirmReroll}
-                        disabled={rerolling || (cost !== null && cost > 0 && !canAfford)}
+                        disabled={rerolling}
                         style={{ ...smallActionBtn("#2a0f0f", "#fca5a5"), flex: 1 }}
                       >
                         {rerolling ? "Rolling…" : "Confirm reroll"}
