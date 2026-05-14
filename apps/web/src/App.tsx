@@ -433,6 +433,26 @@ interface SpdResult {
   initiator_name: string;
 }
 
+interface PubNpcOption {
+  index: number;
+  player_says: string;
+  has_payload: boolean;
+}
+
+interface PubTalkResponse {
+  npc_says: string;
+  options: PubNpcOption[];
+  payload_applied: string | null;
+  is_terminal: boolean;
+}
+
+interface PubNpc {
+  id: string;
+  role: "bartender" | "regular";
+  name: string;
+  archetype: string;
+}
+
 interface PubResponse {
   drinks: DrinkItem[];
   drink_buff: DrinkBuff | null;
@@ -441,6 +461,7 @@ interface PubResponse {
   spd?: SpdData;
   art_url?: string | null;
   error?: string;
+  npcs?: { bartender: PubNpc | null; regulars: PubNpc[] };
 }
 
 // Liars' Roll pending state (after start, before decide)
@@ -4080,6 +4101,153 @@ function SmithyCard({
 }
 
 // =============================================================================
+// PUB NPC CONVERSATIONS
+// =============================================================================
+
+function NpcSection({ npcs }: { npcs: { bartender: PubNpc | null; regulars: PubNpc[] } }) {
+  const [active, setActive] = useState<PubNpc | null>(null);
+  const all = [npcs.bartender, ...npcs.regulars].filter((n): n is PubNpc => n !== null);
+
+  return (
+    <div style={{ marginTop: 24, borderTop: "1px solid #2a2d33", paddingTop: 16 }}>
+      <div style={{ ...muted, fontSize: 11, textTransform: "uppercase", letterSpacing: 1.5, marginBottom: 10 }}>
+        <Icon name="player" size={11} /> At the Bar
+      </div>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: active ? 16 : 0 }}>
+        {all.map((npc) => (
+          <button
+            key={npc.id}
+            onClick={() => setActive(active?.id === npc.id ? null : npc)}
+            style={{
+              padding: "5px 12px",
+              borderRadius: 6,
+              border: `1px solid ${active?.id === npc.id ? "#6366f1" : "#2a2d33"}`,
+              background: active?.id === npc.id ? "#1e1e3a" : "#16181c",
+              color: active?.id === npc.id ? "#a5b4fc" : "#d1d5db",
+              cursor: "pointer", fontSize: 12, fontFamily: "inherit",
+            }}
+          >
+            <Icon name="conversation" size={10} /> {npc.name}
+            {npc.role === "bartender" && <span style={{ ...muted, fontSize: 10, marginLeft: 4 }}>(bartender)</span>}
+          </button>
+        ))}
+      </div>
+      {active && <NpcConversation key={active.id} npc={active} onClose={() => setActive(null)} />}
+    </div>
+  );
+}
+
+function NpcConversation({ npc, onClose }: { npc: PubNpc; onClose: () => void }) {
+  const [path, setPath] = useState("");
+  const [dialog, setDialog] = useState<PubTalkResponse | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function talk(newPath: string) {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/pub/talk/${npc.id}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ path: newPath }),
+      });
+      const body = (await res.json()) as PubTalkResponse & { error?: string };
+      if (!res.ok) {
+        setError(body.error ?? "Something went wrong.");
+        return;
+      }
+      setPath(newPath);
+      setDialog(body);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  // Auto-open on mount
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { void talk(""); }, []);
+
+  return (
+    <div style={{
+      background: "#16181c", border: "1px solid #2a2d33", borderRadius: 8,
+      padding: "14px 16px", display: "flex", flexDirection: "column", gap: 10,
+    }}>
+      <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between" }}>
+        <span style={{ fontWeight: 600, color: "#f5f5f5", fontSize: 13 }}>
+          {npc.name}
+          <span style={{ ...muted, fontSize: 11, fontWeight: 400, marginLeft: 6 }}>({npc.archetype})</span>
+        </span>
+        {path && (
+          <button
+            onClick={() => { setPath(""); setDialog(null); void talk(""); }}
+            style={{ background: "none", border: "none", color: "#6b7280", cursor: "pointer", fontSize: 11, fontFamily: "inherit" }}
+          >
+            ↺ restart
+          </button>
+        )}
+      </div>
+
+      {loading && <p style={{ ...muted, fontSize: 13 }}>…</p>}
+      {error && <p style={{ color: "#fca5a5", fontSize: 13 }}>{error}</p>}
+
+      {dialog && !loading && (
+        <>
+          <p style={{ color: "#e5e7eb", fontSize: 14, lineHeight: 1.55, margin: 0, fontStyle: "italic" }}>
+            &ldquo;{dialog.npc_says}&rdquo;
+          </p>
+
+          {dialog.payload_applied && (
+            <div style={{
+              padding: "6px 10px", borderRadius: 6,
+              background: "#1a2a1a", border: "1px solid #2d5a2d",
+              color: "#86efac", fontSize: 12,
+            }}>
+              🎁 {dialog.payload_applied}
+            </div>
+          )}
+
+          {!dialog.is_terminal ? (
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              {dialog.options.map((opt) => (
+                <button
+                  key={opt.index}
+                  onClick={() => {
+                    const next = path ? `${path},${opt.index}` : String(opt.index);
+                    void talk(next);
+                  }}
+                  style={{
+                    padding: "8px 12px", borderRadius: 6, textAlign: "left",
+                    border: "1px solid #2a2d33", background: "#1d1f23",
+                    color: "#d1d5db", cursor: "pointer", fontSize: 13,
+                    fontFamily: "inherit",
+                  }}
+                >
+                  {opt.has_payload && <span style={{ color: "#fbbf24", marginRight: 5 }}>✦</span>}
+                  {opt.player_says}
+                </button>
+              ))}
+            </div>
+          ) : (
+            <button
+              onClick={onClose}
+              style={{
+                padding: "6px 12px", borderRadius: 6, border: "1px solid #2a2d33",
+                background: "none", color: "#9ca3af", cursor: "pointer",
+                fontSize: 12, fontFamily: "inherit", alignSelf: "flex-start",
+              }}
+            >
+              🚪 Walk away
+            </button>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+// =============================================================================
 // PUB CARD — Drink menu + Liars' Roll mini-game
 // =============================================================================
 
@@ -4317,6 +4485,11 @@ function PubCard({
           ))}
         </div>
       </div>
+
+      {/* At the Bar — NPC conversations */}
+      {pub.npcs && (pub.npcs.bartender || pub.npcs.regulars.length > 0) && (
+        <NpcSection npcs={pub.npcs} />
+      )}
 
       {/* Liars' Roll mini-game */}
       <div style={{ marginTop: 24, borderTop: "1px solid #2a2d33", paddingTop: 16 }}>

@@ -54,7 +54,11 @@ import {
   type CombatEvent,
   type CombatInit,
   type CombatState,
+  type DialogNode,
+  type DialogOption,
+  type DialogPayload,
   type ItemRoll,
+  type NpcSpec,
   type RollFn,
   type TurnAction,
 } from "@gantt-quest/core";
@@ -100,11 +104,14 @@ import {
   getInventory,
   getItem,
   getQuestParty,
+  getClaimedNpcPaths,
   getRecentQuestsForCharacter,
+  getStaleTownState,
   getWebCombatState,
   getWebCombatSnapshot,
   getWebSession,
   markQuestStatus,
+  recordClaimedNpcPath,
   removeItem,
   saveScene,
   saveWebCombatState,
@@ -2178,8 +2185,17 @@ app.get("/api/pub", async (c) => {
     .first<{ drinks_since_last_quest: number }>();
   const drinksRemaining = Math.max(0, DRINK_CAP - (drinksSince?.drinks_since_last_quest ?? 0));
 
+  // Load NPC specs from stale town state (no expiry — best-effort).
+  let npcs: { bartender: NpcSpec | null; regulars: NpcSpec[] } = { bartender: null, regulars: [] };
+  if (channelId) {
+    const townState = await getStaleTownState(c.env.DB, channelId);
+    if (townState?.pub) {
+      npcs = { bartender: townState.pub.bartender, regulars: townState.pub.regulars };
+    }
+  }
+
   const art_url = await getOrScheduleViewArt(c.env.AI, artTarget(c.env), c.executionCtx, "pub_interior", undefined, TOWN_WEEKLY_MS);
-  return c.json({ drinks: drinksWithPrice, drink_buff: drinkBuff, gold: character.gold, spd: spdData, art_url, drinks_remaining: drinksRemaining });
+  return c.json({ drinks: drinksWithPrice, drink_buff: drinkBuff, gold: character.gold, spd: spdData, art_url, drinks_remaining: drinksRemaining, npcs });
 });
 
 // POST /api/pub/drink/:drinkId — order a drink. Deducts gold, applies the
@@ -2272,6 +2288,119 @@ app.post("/api/pub/drink/:drinkId", async (c) => {
 
   return c.json({ ok: true, drink_name: drink.name, emoji: drink.emoji, price, summary, drink_buff: newBuff });
 });
+
+// POST /api/pub/talk/:npcId — walk an NPC's dialog tree.
+// Body: { path: string } — comma-separated option indices, "" = root.
+// Returns { npc_says, options, payload_applied } for the reached node.
+app.post("/api/pub/talk/:npcId", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const character = await getCharacter(c.env.DB, session.slack_user_id);
+  if (!character) return c.json({ error: "no_character" }, 404);
+  const activeQuest = await getActiveQuestForCharacter(c.env.DB, session.slack_user_id);
+  if (activeQuest) return c.json({ error: "mid_quest" }, 400);
+
+  const npcId = c.req.param("npcId");
+  const channelId = await recentChannelForUser(c.env.DB, session.slack_user_id);
+  if (!channelId) return c.json({ error: "no_channel" }, 400);
+
+  const townState = await getStaleTownState(c.env.DB, channelId);
+  if (!townState?.pub) return c.json({ error: "no_town_state" }, 404);
+
+  const npc: NpcSpec | undefined =
+    npcId === "bartender"
+      ? townState.pub.bartender
+      : townState.pub.regulars.find((r) => r.id === npcId);
+  if (!npc) return c.json({ error: "npc_not_found" }, 404);
+
+  const body = await c.req.json<{ path?: string }>().catch(() => ({ path: "" }));
+  const rawPath = body.path ?? "";
+  const indices = rawPath.split(",").filter((s) => s.length > 0).map((s) => parseInt(s, 10));
+
+  let node: DialogNode = npc.dialog;
+  let optionChosen: DialogOption | undefined;
+  for (const idx of indices) {
+    if (!node.options || idx < 0 || idx >= node.options.length) {
+      return c.json({ error: "invalid_path" }, 400);
+    }
+    optionChosen = node.options[idx];
+    node = optionChosen.next;
+  }
+
+  // Claim reward once per day per NPC path.
+  let payloadApplied: string | null = null;
+  if (optionChosen?.payload) {
+    const today = Math.floor(Date.now() / (24 * 60 * 60 * 1000));
+    const claimed = await getClaimedNpcPaths(c.env.DB, channelId, session.slack_user_id, npc.id, today);
+    const pathKey = indices.join(",");
+    if (!claimed.has(pathKey)) {
+      await recordClaimedNpcPath(c.env.DB, channelId, session.slack_user_id, npc.id, today, pathKey);
+      payloadApplied = await applyNpcPayload(c.env.DB, character, optionChosen.payload);
+    } else {
+      payloadApplied = "(already claimed today)";
+    }
+  }
+
+  return c.json({
+    npc_says: node.npc_says,
+    options: (node.options ?? []).map((o, i) => ({
+      index: i,
+      player_says: o.player_says,
+      has_payload: !!o.payload,
+    })),
+    payload_applied: payloadApplied,
+    is_terminal: !node.options || node.options.length === 0,
+  });
+});
+
+async function applyNpcPayload(
+  db: D1Database,
+  character: Character,
+  payload: DialogPayload,
+): Promise<string> {
+  if (payload.type === "rumor") {
+    return `_${payload.text}_`;
+  }
+  if (payload.type === "gold") {
+    await addGold(db, character.slack_user_id, payload.amount);
+    return `+${payload.amount}g slides across the bar.`;
+  }
+  if (payload.type === "xp") {
+    await db
+      .prepare("UPDATE characters SET xp = xp + ?, last_active = ? WHERE slack_user_id = ?")
+      .bind(payload.amount, Date.now(), character.slack_user_id)
+      .run();
+    return `+${payload.amount} XP — that story was worth something.`;
+  }
+  if (payload.type === "drink_token") {
+    const drink = findDrinkById(payload.drink_id);
+    if (!drink) return "";
+    const eff = drink.effect;
+    switch (eff.kind) {
+      case "instant_hp": {
+        const healed = await healCharacter(db, character, eff.amount);
+        return `Free ${drink.name}: +${healed} HP.`;
+      }
+      case "instant_mana": {
+        const added = await addMana(db, character, eff.amount);
+        return `Free ${drink.name}: +${added} mana.`;
+      }
+      case "instant_shield": {
+        const cap = character.max_hp * SHIELD_CAP_MULTIPLIER;
+        const added = await addShield(db, character, eff.amount, cap);
+        return `Free ${drink.name}: +${added} shield.`;
+      }
+      case "instant_combo": {
+        const healed = await healCharacter(db, character, eff.hp);
+        const added = await addMana(db, character, eff.mana);
+        return `Free ${drink.name}: +${healed} HP, +${added} mana.`;
+      }
+      default:
+        return `Free ${drink.name}.`;
+    }
+  }
+  return "";
+}
 
 // POST /api/pub/liars/start — begin a Liars' Roll round. Body: { stake: number }.
 // Rolls dice, generates bartender's claim, persists round, returns the
