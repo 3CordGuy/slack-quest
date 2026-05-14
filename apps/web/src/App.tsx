@@ -2841,7 +2841,7 @@ function ItemSlot({
           E
         </div>
       )}
-      <Icon name={ITEM_TYPE_ICON[item.item_type]} size={28} color={rc} />
+      <Icon name={itemIcon(item)} size={28} color={rc} />
       <div
         style={{
           position: "absolute",
@@ -2947,7 +2947,7 @@ function ItemDetailPopover({
             flexShrink: 0,
           }}
         >
-          <Icon name={ITEM_TYPE_ICON[item.item_type]} size={22} color={rc} />
+          <Icon name={itemIcon(item)} size={22} color={rc} />
         </div>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontWeight: 700, color: "#f5f5f5", fontSize: 13, lineHeight: 1.3, wordBreak: "break-word" }}>
@@ -3280,7 +3280,7 @@ function ShopRow({
       }}
     >
       <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-        <Icon name={ITEM_TYPE_ICON[item.item_type]} size={24} color="#cbd5e1" />
+        <Icon name={itemIcon(item)} size={24} color="#cbd5e1" />
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
             <span style={{ fontWeight: 600, color: "#f5f5f5", fontSize: 15 }}>{item.item_name}</span>
@@ -5073,16 +5073,104 @@ const ITEM_TYPE_LABELS: Record<ItemType, string> = {
   scroll: "Scrolls",
 };
 
-// rpg-awesome ra-* class names — rendered via <Icon name={...}> in card rows.
-const ITEM_TYPE_ICON: Record<ItemType, string> = {
-  weapon: "sword",
-  armor: "shield",
-  magic: "crystal-ball",
-  consumable: "bubbling-potion",
-  revive: "crowned-heart",
-  tool: "anvil",
-  scroll: "scroll-unfurled",
-};
+// Picks the best RPG-Awesome icon for an item using type, weapon_range, and
+// name keywords. Exact catalog names are matched first, then broad patterns,
+// then type/range defaults so there's always a sensible fallback.
+function itemIcon(item: {
+  item_type: ItemType;
+  weapon_range?: WeaponRange | null;
+  item_name: string;
+}): string {
+  const n = item.item_name.toLowerCase();
+
+  switch (item.item_type) {
+    case "weapon": {
+      if (item.weapon_range === "focus") return "crystal-wand";
+      if (/\b(axe|hatchet|cleaver|tomahawk)\b/.test(n))                   return "axe";
+      if (/\b(dagger|knife|dirk|shiv|stiletto|shank)\b/.test(n))          return "plain-dagger";
+      if (/\b(hammer|maul|mace|club)\b/.test(n))                          return "hammer";
+      if (/\b(staff|stave|wand|rod|scepter|sceptre)\b/.test(n))           return "crystal-wand";
+      if (/\b(spear|lance|pike|javelin|halberd|polearm)\b/.test(n))       return "spear-head";
+      if (/\bcrossbow\b/.test(n))                                          return "crossbow";
+      if (/\b(bow|longbow|shortbow|recurve)\b/.test(n))                   return "archer";
+      if (/\b(arrow|bolt|quiver)\b/.test(n))                              return "barbed-arrow";
+      if (/\b(gun|pistol|revolver|musket|rifle)\b/.test(n))               return "revolver";
+      if (/\b(scythe|sickle)\b/.test(n))                                  return "scythe";
+      if (/\btrident\b/.test(n))                                          return "trident";
+      if (/\b(whip|lash|flail)\b/.test(n))                               return "vine-whip";
+      if (/\b(saber|sabre|rapier|foil|estoc)\b/.test(n))                 return "spinning-sword";
+      if (/\b(broadsword|greatsword|longsword|claymore)\b/.test(n))      return "broadsword";
+      if (item.weapon_range === "ranged")                                  return "crossbow";
+      return "sword";
+    }
+
+    case "armor": {
+      if (/\b(helm|helmet|cap|hat|hood|crown|circlet|coif)\b/.test(n))   return "helmet";
+      if (/\b(boot|shoe|greave|sabatons?|sandal)\b/.test(n))             return "boot-stomp";
+      if (/\b(glove|gauntlet|bracer|vambrace)\b/.test(n))                return "hand";
+      if (/\b(robe|vestment|raiment|cassock)\b/.test(n))                 return "hood";
+      if (/\b(cloak|mantle|cape|shroud)\b/.test(n))                      return "hood";
+      if (/\b(amulet|pendant|necklace|talisman|charm|locket|ring)\b/.test(n)) return "gem-pendant";
+      if (/\b(vest|jerkin|jacket|coat|doublet|tunic)\b/.test(n))         return "vest";
+      if (/\b(plate|cuirass|breastplate|full.?armor|heavy)\b/.test(n))   return "heavy-shield";
+      if (/\b(chain|mail|maille|hauberk|ringmail)\b/.test(n))            return "circular-shield";
+      if (/\b(leather|hide|studded|buckler)\b/.test(n))                  return "round-shield";
+      return "shield";
+    }
+
+    case "consumable": {
+      if (/\b(mushroom|fungi|fungus|shroom)\b/.test(n))                   return "super-mushroom";
+      if (/\b(meat|chicken|drumstick|steak|food|ration|bread)\b/.test(n)) return "roast-chicken";
+      if (/\b(herb|leaf|clover|root|petal|flower)\b/.test(n))            return "leaf";
+      if (/\b(bandage|salve|poultice|balm|ointment)\b/.test(n))          return "medical-pack";
+      if (/\b(elixir|essence|tincture|draught|brew)\b/.test(n))          return "heart-bottle";
+      if (/\b(mana|arcane)\b/.test(n))                                    return "crystal-ball";
+      return "bubbling-potion";
+    }
+
+    case "magic": {
+      if (/\b(tome|book|grimoire|codex|manual)\b/.test(n))               return "book";
+      if (/\b(rune|glyph|sigil)\b/.test(n))                              return "rune-stone";
+      if (/\b(crystal|gem|jewel|prism)\b/.test(n))                       return "crystals";
+      if (/\b(ring|band)\b/.test(n))                                     return "gem-pendant";
+      return "crystal-ball";
+    }
+
+    case "revive":
+      return "crowned-heart";
+
+    case "tool": {
+      if (/caffeine bomb|hotfix grenade/.test(n))                         return "bomb-explosion";
+      if (/espresso shot/.test(n))                                        return "coffee-mug";
+      if (/poison vial/.test(n))                                          return "poison-cloud";
+      if (/\b(bomb|explosive|grenade|nuke)\b/.test(n))                   return "bomb-explosion";
+      if (/\b(torch|lantern|light)\b/.test(n))                           return "torch";
+      if (/\b(rope|grapple|hook)\b/.test(n))                             return "grappling-hook";
+      if (/\b(trap|snare|net)\b/.test(n))                                return "bear-trap";
+      if (/\b(lockpick|picks?)\b/.test(n))                               return "key-basic";
+      if (/\b(shovel|spade)\b/.test(n))                                  return "shovel";
+      if (/\b(vial|flask|bottle)\b/.test(n))                             return "vial";
+      return "anvil";
+    }
+
+    case "scroll": {
+      if (/rebase/.test(n))                                               return "cycle";
+      if (/production outage/.test(n))                                    return "lightning-bolt";
+      if (/\b(fire|flame|burn|inferno)\b/.test(n))                       return "fire";
+      if (/\b(lightning|thunder|storm|shock)\b/.test(n))                 return "lightning-bolt";
+      if (/\b(frost|ice|cold|freeze|glacial)\b/.test(n))                 return "snowflake";
+      if (/\b(heal|mend|restore|cure|life)\b/.test(n))                   return "health-increase";
+      if (/\b(poison|venom|toxin|blight)\b/.test(n))                     return "poison-cloud";
+      if (/\b(shadow|dark|void|death|necrotic)\b/.test(n))               return "death-skull";
+      if (/\b(shield|protect|ward|barrier)\b/.test(n))                   return "bolt-shield";
+      if (/\b(arcane|magic|spell|enchant)\b/.test(n))                    return "fairy-wand";
+      return "scroll-unfurled";
+    }
+
+    default:
+      return "scroll-unfurled";
+  }
+}
 
 const RARITY_COLOR: Record<Rarity, string> = {
   common: "#8a8f98",
