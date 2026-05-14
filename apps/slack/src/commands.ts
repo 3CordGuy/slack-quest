@@ -1880,6 +1880,7 @@ async function handleQuest(
           monsterMaxHp: scene.monster_max_hp,
           createdByUserId: payload.user_id,
           partySize: 1 + joiners.length,
+          webBaseUrl: env.WEB_BASE_URL,
         });
       }
     } catch (err) {

@@ -156,8 +156,14 @@ export async function updateMessage(
 // today, but we keep it explicit so future "resurrect dropped quest" code
 // paths don't accidentally re-broadcast a half-played quest as joinable.
 //
-// `action_id` encodes the quest id (`join_quest_<id>`) so it stays unique
-// even if a future change ever renders two recruitment cards in one block.
+// Two buttons:
+//   1. "Join on web" — a Block Kit link button to `webBaseUrl`. Drops the
+//      user into the web app where the dashboard's joinable-quest banner
+//      handles the actual /api/quest/join POST. Omitted when WEB_BASE_URL
+//      is unset so dev iteration doesn't render a dead link.
+//   2. "Join here" — Slack-side join. `action_id` encodes the quest id
+//      (`join_quest_<id>`) for in-block uniqueness, but handleJoin looks
+//      up the active quest in the channel naturally.
 export interface JoinableQuestArgs {
   channel: string;
   questId: number;
@@ -166,6 +172,11 @@ export interface JoinableQuestArgs {
   monsterMaxHp: number;
   createdByUserId: string;
   partySize: number;
+  // Public base URL of the web app (e.g. https://quest.heylets.party).
+  // When provided, the recruitment card renders a "Join on web" link
+  // button alongside the Slack "Join here" button so users can pick
+  // whichever surface they prefer.
+  webBaseUrl?: string;
 }
 
 export async function postJoinableQuest(
@@ -188,6 +199,28 @@ export async function postJoinableQuest(
 
   const text = `${variantBadge} — joinable quest. ${partyLine}`;
 
+  // Buttons render in declaration order: web link first, Slack join
+  // second. action_ids must be unique within the actions block; the
+  // link button's action_id is decorative (Slack doesn't deliver an
+  // interactive payload for url buttons) but we still set one for
+  // future analytics + the uniqueness rule.
+  const elements: unknown[] = [];
+  if (args.webBaseUrl) {
+    elements.push({
+      type: "button",
+      text: { type: "plain_text", text: "Join on web", emoji: true },
+      action_id: `join_quest_web_${args.questId}`,
+      url: args.webBaseUrl,
+    });
+  }
+  elements.push({
+    type: "button",
+    style: "primary",
+    text: { type: "plain_text", text: "Join here", emoji: true },
+    action_id: `join_quest_${args.questId}`,
+    value: String(args.questId),
+  });
+
   const blocks = [
     {
       type: "section",
@@ -198,15 +231,7 @@ export async function postJoinableQuest(
     },
     {
       type: "actions",
-      elements: [
-        {
-          type: "button",
-          style: "primary",
-          text: { type: "plain_text", text: "🤝 Join Quest", emoji: true },
-          action_id: `join_quest_${args.questId}`,
-          value: String(args.questId),
-        },
-      ],
+      elements,
     },
   ];
 
