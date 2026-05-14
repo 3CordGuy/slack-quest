@@ -366,6 +366,21 @@ export type CombatEvent =
   | { type: "passive_bard_aura"; actor: ActorId; source: ActorId; bonus: number }
   | { type: "passive_warlock_bleed"; actor: ActorId; magnitude: number; duration: number }
   | { type: "passive_paladin_auto_heal"; paladin: ActorId; target: ActorId; amount: number }
+  | {
+      type: "drink_buff_consumed";
+      actor: ActorId;
+      drink_id: string;
+      kind: "buff_attack" | "buff_magic" | "buff_next_crit";
+      // Damage bonus from the buff. For buff_attack / buff_magic this is the
+      // flat magnitude; for buff_next_crit it's `baseDamage` (the doubling
+      // delta from forcing a crit on what would have been a non-crit hit).
+      bonus: number;
+      // True when this consumption forced a crit (buff_next_crit only).
+      force_crit: boolean;
+      // Charges left on the buff AFTER this consumption. 0 means the buff
+      // expired and was cleared from state.drink_buffs.
+      remaining: number;
+    }
   | { type: "victory" }
   | { type: "defeat" }
   | { type: "rejected"; reason: string };
@@ -614,6 +629,16 @@ function handlePlayerHit(
     rogueFirstCritFired = true;
   }
 
+  // Pub drink-buff. Applied between rogue first-crit and bard aura so the
+  // crit-doubling has happened (buff_next_crit gates on !isCrit) but the
+  // aura/mark bonuses haven't yet (those are partymate-driven additive
+  // bonuses, distinct from the actor's own consumable buff).
+  const drinkResult = applyDrinkBuff(s, action.actor, action.kind, damage, isCrit);
+  damage = drinkResult.damage;
+  if (drinkResult.forceCrit) {
+    isCrit = true;
+  }
+
   // Bard Aura — non-Bard attackers gain +1 dmg while a Bard is alive; Battle
   // Hymn boosts the aura to +3 for HYMN_USES landed swings.
   const aura = computeBardAuraBonus(s, tickedFighter);
@@ -647,6 +672,9 @@ function handlePlayerHit(
   if (rogueFirstCritFired) {
     events.push({ type: "passive_rogue_first_crit", actor: action.actor });
   }
+  if (drinkResult.event) {
+    events.push(drinkResult.event);
+  }
   if (aura.bonus > 0) {
     events.push({
       type: "passive_bard_aura",
@@ -658,13 +686,17 @@ function handlePlayerHit(
   if (markBonus > 0) {
     events.push({ type: "mark_bonus", actor: action.actor, bonus: markBonus });
   }
+  const drinkBonusForFormula =
+    drinkResult.event && drinkResult.event.type === "drink_buff_consumed" && !drinkResult.forceCrit
+      ? ` +${drinkResult.event.bonus} drink`
+      : "";
   events.push({
     type: "player_hit",
     actor: action.actor,
     target: MONSTER_ID,
     damage: finalDamage,
     crit: isCrit,
-    formula: `${hit.roll}+${hit.totalMod}${isCrit ? " ×2" : ""}${aura.bonus > 0 ? ` +${aura.bonus} aura` : ""}${markBonus > 0 ? ` +${markBonus} mark` : ""}`,
+    formula: `${hit.roll}+${hit.totalMod}${isCrit ? " ×2" : ""}${drinkBonusForFormula}${aura.bonus > 0 ? ` +${aura.bonus} aura` : ""}${markBonus > 0 ? ` +${markBonus} mark` : ""}`,
   });
   if (aura.hymn_consumed) {
     events.push({
@@ -687,6 +719,10 @@ function handlePlayerHit(
       [action.actor]: (s.contribution[action.actor] ?? 0) + finalDamage,
     },
     ability_state: abilityStateAfterHymn,
+    // Only overwrite drink_buffs when this turn actually consumed one —
+    // otherwise leave the existing map untouched so the optional field
+    // doesn't get coerced to undefined for unrelated turns.
+    ...(drinkResult.event ? { drink_buffs: drinkResult.nextDrinkBuffs } : {}),
   };
   if (rogueFirstCritFired) {
     nextState = markPassiveUsed(nextState, action.actor, PASSIVE_ROGUE_FIRST_CRIT);
@@ -1104,8 +1140,18 @@ function handleSignature(
     trackRoll,
   );
 
+  // Pub drink-buff. Only buff_next_crit fires on signatures (per legacy
+  // design: attack/magic buffs don't compound class powerhouses, but Lucky
+  // Sip's guaranteed crit can land on a signature for the killing-blow play).
+  // applyDrinkBuff gates buff_attack/buff_magic out via the context arg.
+  // We pass isCrit=false because signature damage isn't represented with a
+  // crit flag in CombatEvent today — any consumption of buff_next_crit on
+  // a signature is treated as "force the doubling."
+  const drinkResult = applyDrinkBuff(s, action.actor, "signature", sig.damage, false);
+  const finalSigDamage = drinkResult.damage;
+
   const oldHp = s.monster.hp;
-  const newHp = Math.max(0, oldHp - sig.damage);
+  const newHp = Math.max(0, oldHp - finalSigDamage);
   const monsterKilled = newHp <= 0;
   const phaseTransition =
     s.monster.is_boss &&
@@ -1125,13 +1171,18 @@ function handleSignature(
     {
       type: "signature_used",
       actor: action.actor,
-      damage: sig.damage,
-      formula: sig.formula,
+      damage: finalSigDamage,
+      formula: drinkResult.event
+        ? `${sig.formula} ×2 (lucky sip)`
+        : sig.formula,
       mana_spent: manaSpent,
     },
   ];
   if (mageFreeSig) {
     events.push({ type: "passive_mage_free_sig", actor: action.actor });
+  }
+  if (drinkResult.event) {
+    events.push(drinkResult.event);
   }
 
   let nextState: CombatState = {
@@ -1146,8 +1197,11 @@ function handleSignature(
     },
     contribution: {
       ...s.contribution,
-      [action.actor]: (s.contribution[action.actor] ?? 0) + sig.damage,
+      [action.actor]: (s.contribution[action.actor] ?? 0) + finalSigDamage,
     },
+    // Same gate as handlePlayerHit: only overwrite drink_buffs when this
+    // turn actually consumed one.
+    ...(drinkResult.event ? { drink_buffs: drinkResult.nextDrinkBuffs } : {}),
   };
   if (mageFreeSig) {
     nextState = markPassiveUsed(nextState, action.actor, PASSIVE_MAGE_FREE_SIG);
@@ -1943,6 +1997,89 @@ function tickAbilityCountersAfterSwing(
 }
 
 // --- Helpers ---
+
+// Pub drink-buff consumption. Called from handlePlayerHit (attack | cast)
+// and handleSignature when there's a damage event in flight. Returns the
+// adjusted damage, whether a crit was forced (buff_next_crit), the event
+// to append, and the new drink_buffs map for nextState. When the buff
+// doesn't apply (wrong kind for the action, already-crit + buff_next_crit,
+// or no buff present), returns the inputs unchanged with `event: null` so
+// the caller can early-out cheaply.
+//
+// Application rules mirror the legacy slack handler:
+//   buff_attack — only on attack actions; adds +magnitude flat damage
+//   buff_magic  — only on cast actions; adds +magnitude flat damage
+//   buff_next_crit — any of attack/cast/signature; force-crits when the
+//     hit wasn't already a crit, doubling the (post-mod) damage. Skipped
+//     when the hit was already a crit so we don't waste the single charge
+//     on a redundant doubling.
+// Consumption: decrement `remaining`; clear from the map when it hits 0.
+function applyDrinkBuff(
+  state: CombatState,
+  actor: ActorId,
+  context: "attack" | "cast" | "signature",
+  baseDamage: number,
+  isCrit: boolean,
+): {
+  damage: number;
+  forceCrit: boolean;
+  event: CombatEvent | null;
+  nextDrinkBuffs: Record<ActorId, DrinkBuff> | undefined;
+} {
+  const buffs = state.drink_buffs;
+  if (!buffs) {
+    return { damage: baseDamage, forceCrit: false, event: null, nextDrinkBuffs: buffs };
+  }
+  const buff = buffs[actor];
+  if (!buff) {
+    return { damage: baseDamage, forceCrit: false, event: null, nextDrinkBuffs: buffs };
+  }
+
+  let applies = false;
+  let damage = baseDamage;
+  let forceCrit = false;
+  if (buff.kind === "buff_attack" && context === "attack") {
+    damage = baseDamage + buff.magnitude;
+    applies = true;
+  } else if (buff.kind === "buff_magic" && context === "cast") {
+    damage = baseDamage + buff.magnitude;
+    applies = true;
+  } else if (buff.kind === "buff_next_crit" && !isCrit) {
+    damage = baseDamage * 2;
+    forceCrit = true;
+    applies = true;
+  }
+
+  if (!applies) {
+    return { damage: baseDamage, forceCrit: false, event: null, nextDrinkBuffs: buffs };
+  }
+
+  const newRemaining = Math.max(0, buff.remaining - 1);
+  const expired = newRemaining === 0;
+  const nextDrinkBuffs: Record<ActorId, DrinkBuff> = { ...buffs };
+  if (expired) {
+    delete nextDrinkBuffs[actor];
+  } else {
+    nextDrinkBuffs[actor] = { ...buff, remaining: newRemaining };
+  }
+
+  const event: CombatEvent = {
+    type: "drink_buff_consumed",
+    actor,
+    drink_id: buff.drink_id,
+    kind: buff.kind,
+    bonus: damage - baseDamage,
+    force_crit: forceCrit,
+    remaining: newRemaining,
+  };
+
+  return {
+    damage,
+    forceCrit,
+    event,
+    nextDrinkBuffs: Object.keys(nextDrinkBuffs).length > 0 ? nextDrinkBuffs : undefined,
+  };
+}
 
 function reject(state: CombatState, reason: string): StepResult {
   return { state, events: [{ type: "rejected", reason }] };

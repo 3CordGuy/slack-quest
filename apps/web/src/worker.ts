@@ -105,6 +105,8 @@ import {
   getItem,
   getQuestById,
   getQuestParty,
+  clearDrinkBuff as dbClearDrinkBuff,
+  setDrinkBuff as dbSetDrinkBuff,
   getClaimedNpcPaths,
   getRecentQuestsForCharacter,
   getStaleTownState,
@@ -2863,7 +2865,10 @@ app.post("/api/quest/:id/start_web_combat", async (c) => {
     }
     return c.json({ error: built.reason, variant: built.detail }, 400);
   }
-  const begun = step(built.seeded, { kind: "begin" }, productionRoll);
+  // Pub drink buffs survive into the engine fight — same helper used by
+  // the DO's bootstrapFromSlack path so both surfaces seed identically.
+  const seededWithBuffs = await seedDrinkBuffs(c.env.DB, built.seeded);
+  const begun = step(seededWithBuffs, { kind: "begin" }, productionRoll);
   await saveWebCombatState(c.env.DB, questId, begun.state);
   // Lock the quest into web mode so Slack combat handlers refuse further
   // /sq attack actions on it. Once flipped to 'web' it stays there for the
@@ -3811,6 +3816,58 @@ async function buildInitialCombatState(
   return { ok: true, seeded };
 }
 
+// Reads each fighter's stored drink_buff_json from the characters table
+// and folds it onto state.drink_buffs. Called once at combat bootstrap
+// (both /api/quest/:id/start_web_combat and QuestRoom.bootstrapFromSlack)
+// so a pub buff that was active before combat applies inside the engine.
+//
+// D1 is left UNCHANGED here — the in-combat state has a working copy via
+// state.drink_buffs, and the residual is written back on combat exit by
+// writebackDrinkBuffs. Leaving D1 intact through combat means a crashed
+// or otherwise abandoned fight doesn't silently eat the player's buff.
+async function seedDrinkBuffs(
+  db: D1Database,
+  state: CombatState,
+): Promise<CombatState> {
+  const buffs: Record<string, DrinkBuff> = {};
+  for (const fighter of state.fighters) {
+    const character = await getCharacter(db, fighter.id);
+    if (character?.drink_buff) {
+      buffs[fighter.id] = character.drink_buff;
+    }
+  }
+  if (Object.keys(buffs).length === 0) return state;
+  return { ...state, drink_buffs: buffs };
+}
+
+// Writes each fighter's residual drink buff back to D1 after combat ends.
+// Called from handleStepResult's terminal branch (victory/defeat) so the
+// next pub visit or next combat sees an accurate buff state.
+//
+// We diff against every party member, not just those whose buffs were
+// consumed this fight: a buff that was seeded but never applied still
+// belongs in D1 unchanged; a buff that consumed all charges this fight
+// needs an explicit clear. Single SELECT per fighter keeps it cheap for
+// typical 1–4-fighter parties.
+async function writebackDrinkBuffs(
+  db: D1Database,
+  state: CombatState,
+): Promise<void> {
+  const finalBuffs = state.drink_buffs ?? {};
+  for (const fighter of state.fighters) {
+    const inState = finalBuffs[fighter.id];
+    if (inState) {
+      // Overwrite even when remaining is unchanged — cheap, and keeps D1
+      // converging on the engine view of the buff.
+      await dbSetDrinkBuff(db, fighter.id, inState);
+    } else {
+      // Engine cleared this fighter's buff (consumed to expiry) — clear in
+      // D1 too. Safe to call even when D1 already had it null.
+      await dbClearDrinkBuff(db, fighter.id);
+    }
+  }
+}
+
 export class QuestRoom extends DurableObject<Env> {
   // We hold a best-effort in-memory cache of the combat state, but always
   // reload from D1 when uncertain (post-hibernate) and always persist back
@@ -3935,6 +3992,18 @@ export class QuestRoom extends DurableObject<Env> {
       prevState.status === "active" &&
       (result.state.status === "victory" || result.state.status === "defeat");
     if (becameTerminal) {
+      // Write residual drink buffs back to D1 BEFORE applyWebCombatOutcome
+      // — the latter may call clearPartyEffects which already nulls
+      // drink_buff_json on quest-end paths. By writing back first we make
+      // sure mid-quest combats (dungeon room cleared, gauntlet wave
+      // advanced) carry an accurate post-tick buff into the next fight.
+      // Best-effort: a failure here doesn't block outcome processing —
+      // the buff just stays at its pre-combat value.
+      try {
+        await writebackDrinkBuffs(this.env.DB, result.state);
+      } catch (err) {
+        console.warn("drink-buff writeback failed", err);
+      }
       const outcome = await applyWebCombatOutcome(this.env, questId, result.state);
       this.broadcast({ type: "outcome", outcome });
       return outcome;
@@ -4003,7 +4072,13 @@ export class QuestRoom extends DurableObject<Env> {
     const built = await buildInitialCombatState(this.env.DB, quest);
     if (!built.ok) return { ok: false, reason: built.reason, detail: built.detail };
 
-    const begun = step(built.seeded, { kind: "begin" }, productionRoll);
+    // Seed drink_buffs from the characters table so a pub buff bought before
+    // /gq quest survives into the engine-driven fight. D1 stays the source
+    // of truth between combats; the residual gets written back when combat
+    // exits (writebackDrinkBuffs in handleStepResult terminal branch).
+    const seededWithBuffs = await seedDrinkBuffs(this.env.DB, built.seeded);
+
+    const begun = step(seededWithBuffs, { kind: "begin" }, productionRoll);
     const newLog = this.appendLog(begun.events);
     await saveWebCombatState(this.env.DB, questId, begun.state, newLog);
     this.cacheState = begun.state;
@@ -4174,6 +4249,13 @@ export class QuestRoom extends DurableObject<Env> {
       state.status === "active"
       && (resultState.status === "victory" || resultState.status === "defeat");
     if (becameTerminal) {
+      try {
+        // Mirror handleStepResult's terminal branch: write drink_buffs back
+        // to D1 first so mid-quest residuals carry into the next fight.
+        await writebackDrinkBuffs(this.env.DB, resultState);
+      } catch (err) {
+        console.warn("drink-buff writeback failed", err);
+      }
       try {
         const outcome = await applyWebCombatOutcome(this.env, questId, resultState);
         this.broadcast({ type: "outcome", outcome });

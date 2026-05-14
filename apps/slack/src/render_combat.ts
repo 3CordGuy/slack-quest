@@ -203,6 +203,23 @@ function renderEvent(state: CombatState, e: CombatEvent): string {
     case "passive_paladin_auto_heal":
       return `✨ *Paladin* passive: ${nameOf(state, e.paladin)} mends ${nameOf(state, e.target)} for +${e.amount} HP.`;
 
+    case "drink_buff_consumed": {
+      // Drink IDs map to emoji+name in apps/slack/src/flavor.ts DRINKS (and
+      // apps/web/src/worker.ts DRINKS). We don't import the catalog here to
+      // avoid a render-side dep on slack-internal data — instead surface the
+      // mechanic in plain terms and let the drink_id ride along for any
+      // future enrichment. Lucky Sip (buff_next_crit) gets its own framing
+      // since it doesn't add flat damage — it forces the crit.
+      const tail = e.remaining > 0
+        ? ` _(${e.remaining} charge${e.remaining === 1 ? "" : "s"} left)_`
+        : ` _(buff wears off)_`;
+      if (e.kind === "buff_next_crit") {
+        return `💧 *Lucky Sip* fires — guaranteed crit, +${e.bonus} damage.${tail}`;
+      }
+      const label = e.kind === "buff_attack" ? "attack" : "magic";
+      return `🍺 ${nameOf(state, e.actor)} drink buff: +${e.bonus} ${label}.${tail}`;
+    }
+
     case "victory":
       return `🏆 *Victory!* The party stands triumphant.`;
 
