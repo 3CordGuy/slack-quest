@@ -1004,7 +1004,7 @@ function InitiativeTrack({
           const init = isMonster ? monster.initiative : fighter?.initiative ?? 0;
           const isCurrent = i === currentIndex;
           const isSelf = id === selfId;
-          const portrait = isMonster ? null : classPortraitUrl(fighter?.class ?? "");
+          const portrait = isMonster ? (monster.art_url ?? null) : classPortraitUrl(fighter?.class ?? "");
           const borderColor = isCurrent ? "#b89b3a" : isSelf ? "#3a7bd5" : "#2a2d33";
           const AVATAR = 72;
           const RADIUS = 10;
