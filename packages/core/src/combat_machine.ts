@@ -32,6 +32,7 @@ import {
   SHIELD_CAP_MULTIPLIER,
   classByName,
   type AbilityId,
+  type DrinkBuff,
   type EffectType,
   type WeaponRange,
 } from "./flavor";
@@ -132,6 +133,20 @@ export interface CombatState {
   // Always-on passives (Bard aura, Druid regen, Warlock crit-bleed, Sage info)
   // don't appear here — they don't burn out.
   passives_used?: Record<ActorId, string[]>;
+  // Pub drink buffs carried into this combat, keyed by fighter id. Seeded
+  // by the DO bootstrap step from characters.drink_buff_json so a buff
+  // bought in the pub before /sq quest survives into the engine-driven
+  // fight. Engine consumes per-fighter on attack/cast/signature; absent
+  // means no buff. Cleared (written back to D1) on combat exit. Optional
+  // for backward compatibility with quests created before the unified
+  // engine landed — older saved states deserialize cleanly without it.
+  drink_buffs?: Record<ActorId, DrinkBuff>;
+  // Channel-broadcast idempotency for PR 4's milestone posts. Each
+  // milestone key (e.g. "boss_reveal", "phase_2", "down:U123") is
+  // recorded the moment the broadcast is queued so a DO crash between
+  // queue and actual post can't double-broadcast on replay. Engine
+  // ignores this field — the DO is the only writer/reader.
+  milestones_posted?: string[];
 }
 
 // Passive tuning knobs. Mirror src/commands.ts constants in main.
