@@ -202,14 +202,21 @@ export async function postJoinableQuest(
   // Buttons render in declaration order: web link first, Slack join
   // second. action_ids must be unique within the actions block; the
   // link button's action_id is decorative (Slack doesn't deliver an
-  // interactive payload for url buttons) but we still set one for
+  // interactivity payload for url buttons) but we still set one for
   // future analytics + the uniqueness rule.
+  //
+  // Important: prefix MUST differ from `join_quest_` so that
+  // handleInteraction's prefix dispatcher (`action_id.startsWith
+  // ("join_quest_")` → handleJoin) can't accidentally route a URL-button
+  // click into the Slack-side join handler if Slack ever changes how
+  // url buttons are delivered. `link_quest_web_` keeps the routing
+  // explicit and one-way.
   const elements: unknown[] = [];
   if (args.webBaseUrl) {
     elements.push({
       type: "button",
       text: { type: "plain_text", text: "Join on web", emoji: true },
-      action_id: `join_quest_web_${args.questId}`,
+      action_id: `link_quest_web_${args.questId}`,
       url: args.webBaseUrl,
     });
   }
