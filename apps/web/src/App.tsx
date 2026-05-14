@@ -2323,95 +2323,70 @@ function CharacterCard({
   const armorPower = equippedArmor?.power ?? 0;
   const restDisabled = inQuest || downed || fullyRecovered;
   const portrait = me.class_art_url;
-  const hpPct = c.max_hp > 0 ? Math.max(0, Math.min(1, c.hp / c.max_hp)) : 0;
-  const hpColor = hpPct < 0.25 ? "#dc2626" : hpPct < 0.5 ? "#d97706" : "#16a34a";
-  const manaPct = c.max_mana > 0 ? Math.max(0, Math.min(1, c.mana / c.max_mana)) : 0;
   return (
     <div style={card}>
-      {/* Combat-style header: portrait + name/bars side-by-side */}
-      <div
-        style={{
-          padding: 12,
-          background: "#1d1f23",
-          borderRadius: 8,
-          border: "1px solid #3a7bd5",
-          display: "flex",
-          gap: 12,
-          alignItems: "stretch",
-          marginBottom: 16,
-        }}
-      >
+      <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 4 }}>
         {portrait ? (
           <ClickablePortrait
             src={portrait}
             alt={`${c.class} portrait`}
-            width={64}
-            height={64}
-            borderRadius={6}
-            style={{ border: "1px solid #2a2d33", flexShrink: 0, alignSelf: "center" }}
+            width={72}
+            height={72}
+            borderRadius={8}
+            style={{ border: "1px solid #2a2d33", flexShrink: 0 }}
           />
         ) : (
           <div
             style={{
-              width: 64,
-              height: 64,
-              borderRadius: 6,
-              background: "#0e0f12",
+              width: 72,
+              height: 72,
+              borderRadius: 8,
+              background: "#1d1f23",
               border: "1px solid #2a2d33",
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
               flexShrink: 0,
-              alignSelf: "center",
             }}
           >
-            <Icon name="player" size={32} color="#6a7080" />
+            <Icon name="player" size={36} color="#6a7080" />
           </div>
         )}
-        <div style={{ flex: 1, minWidth: 0 }}>
-          {/* Name row */}
-          <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8 }}>
-            <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
-              <span style={{ fontWeight: 700, color: "#f5f5f5", fontSize: 15 }}>{c.name}</span>
-              {c.slack_username && (
-                <span style={{ fontSize: 12, color: "#7dd3fc" }}>@{c.slack_username}</span>
-              )}
-              <span style={{ ...muted, fontSize: 12 }}>{c.class} · Lv {c.level}</span>
-              <PositionBadge position={c.position} />
-            </div>
-            <span style={{ ...muted, fontSize: 12, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>
-              {c.xp} XP
-            </span>
-          </div>
-          {/* HP bar */}
-          <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8 }}>
-            <div style={{ flex: 1, height: 8, background: "#0e0f12", borderRadius: 4, overflow: "hidden" }}>
-              <div style={{ width: `${hpPct * 100}%`, height: "100%", background: hpColor, transition: "width 200ms ease" }} />
-            </div>
-            <div style={{ ...muted, fontSize: 11, minWidth: 52, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
-              {c.hp}/{c.max_hp}
-              {c.shield > 0 && (
-                <span
-                  title="Shield absorbs damage before HP"
-                  style={{ color: "#7dd3fc", marginLeft: 4 }}
-                >
-                  +{c.shield}
-                </span>
-              )}
-            </div>
-          </div>
-          {/* Mana bar */}
-          <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 5 }}>
-            <div style={{ flex: 1, height: 6, background: "#0e0f12", borderRadius: 3, overflow: "hidden" }}>
-              <div style={{ width: `${manaPct * 100}%`, height: "100%", background: "#6366f1" }} />
-            </div>
-            <div style={{ ...muted, fontSize: 11, minWidth: 52, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
-              {c.mana}/{c.max_mana}
-            </div>
-          </div>
+        <div style={{ minWidth: 0 }}>
+          <h1 style={{ ...h1, margin: 0 }}>{c.name}</h1>
+          {c.slack_username && (
+            <p style={{ ...muted, margin: "2px 0 0", fontSize: 12, color: "#7dd3fc" }}>
+              @{c.slack_username}
+            </p>
+          )}
+          <p style={{ ...muted, margin: "4px 0 0" }}>
+            {c.class} • Lv {c.level} • {c.xp} XP
+          </p>
         </div>
       </div>
       <Stats>
+        <Stat
+          label="HP"
+          icon={<Icon name="health-increase" color="#86efac" size={14} />}
+          value={
+            <span style={{ display: "inline-flex", alignItems: "baseline", gap: 6 }}>
+              {c.hp} / {c.max_hp}
+              {c.shield > 0 && (
+                <span
+                  title="Temporary shield buffer (absorbs damage before HP). Set by /sq shield casts; clears at quest end."
+                  style={{ fontSize: 12, color: "#7dd3fc", fontWeight: 500 }}
+                >
+                  +{c.shield} <Icon name="shield" size={12} />
+                </span>
+              )}
+            </span>
+          }
+        />
+        <Stat
+          label="Mana"
+          icon={<Icon name="crystal-ball" color="#a78bfa" size={14} />}
+          value={`${c.mana} / ${c.max_mana}`}
+        />
         <Stat
           label="Armor"
           icon={<Icon name="shield" color="#9ca3af" size={14} />}
