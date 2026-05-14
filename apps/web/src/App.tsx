@@ -2641,7 +2641,7 @@ function AdventurersCard({ selfId }: { selfId: string }) {
 
   if (loading || characters.length === 0) return null;
 
-  const now = Math.floor(Date.now() / 1000);
+  const nowMs = Date.now();
 
   return (
     <>
@@ -2651,9 +2651,10 @@ function AdventurersCard({ selfId }: { selfId: string }) {
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
           {characters.slice(0, 8).map((ch) => {
-            const secsAgo = now - (ch.last_active ?? 0);
-            const isOnline = secsAgo < 15 * 60;
-            const isRecent = secsAgo < 60 * 60;
+            const msAgo = nowMs - (ch.last_active ?? 0);
+            const secsAgo = Math.floor(msAgo / 1000);
+            const isOnline = msAgo < 15 * 60 * 1000;
+            const isRecent = msAgo < 60 * 60 * 1000;
             const ago = secsAgo < 60 ? "just now"
               : secsAgo < 3600 ? `${Math.floor(secsAgo / 60)}m ago`
               : secsAgo < 86400 ? `${Math.floor(secsAgo / 3600)}h ago`
@@ -2709,8 +2710,8 @@ function AdventurersCard({ selfId }: { selfId: string }) {
 }
 
 function AdventurerSheet({ character, onClose }: { character: KnownCharacter; onClose: () => void }) {
-  const now = Math.floor(Date.now() / 1000);
-  const secsAgo = now - (character.last_active ?? 0);
+  const msAgo = Date.now() - (character.last_active ?? 0);
+  const secsAgo = Math.floor(msAgo / 1000);
   const hpPct = character.max_hp > 0 ? Math.max(0, Math.min(1, character.hp / character.max_hp)) : 0;
   const xpAtLevel = xpForLevel(character.level);
   const xpAtNext = xpForLevel(character.level + 1);
@@ -2722,7 +2723,7 @@ function AdventurerSheet({ character, onClose }: { character: KnownCharacter; on
     : secsAgo < 3600 ? `${Math.floor(secsAgo / 60)}m ago`
     : secsAgo < 86400 ? `${Math.floor(secsAgo / 3600)}h ago`
     : `${Math.floor(secsAgo / 86400)}d ago`;
-  const isOnline = secsAgo < 15 * 60;
+  const isOnline = msAgo < 15 * 60 * 1000;
 
   return (
     <>
