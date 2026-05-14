@@ -3,7 +3,7 @@
 
 import type { Env, QuestRoomStub } from "./index";
 import { questRoomId } from "./index";
-import { renderTurnToThread } from "./render_combat";
+import { renderBattlefieldBlocks, renderTurnToThread } from "./render_combat";
 
 // Public-facing display name. Defaults to "Slack Quest"; operators override per
 // deployment by setting BOT_NAME in wrangler.jsonc `vars` or as a secret.
@@ -153,6 +153,7 @@ import {
   scaleMonsterForJoin,
   setCharacterEffects,
   setCharacterHp,
+  setBattlefieldTs,
   setCharacterHpAndShield,
   setPosition,
   sharpenItem,
@@ -878,6 +879,17 @@ export async function handleInteraction(
   // past join-window (gauntlet wave 2+, dungeon past room 1) handleJoin's
   // own checks ephemerally reject the click.
   if (action.action_id.startsWith("join_quest_")) return handleJoin(slash, env, ctx);
+  // Pinned-battlefield action buttons. action_id format:
+  //   turn_<action>_<questId>_<actorId>
+  // The engine validates turn order — actor mismatch surfaces as an
+  // ephemeral "not your turn" rather than a Slack-side gate. handleCombat
+  // reads env.LEGACY_SLACK_COMBAT and routes to legacy when set; for
+  // button-driven turns we always go via the engine path (the legacy
+  // cooldown loop has no equivalent battlefield buttons).
+  if (action.action_id.startsWith("turn_attack_")) return handleCombatViaEngine(slash, env, ctx, "attack");
+  if (action.action_id.startsWith("turn_cast_")) return handleCombatViaEngine(slash, env, ctx, "cast");
+  if (action.action_id.startsWith("turn_signature_")) return handleCombatViaEngine(slash, env, ctx, "signature");
+  if (action.action_id.startsWith("turn_flee_")) return handleCombatViaEngine(slash, env, ctx, "flee");
   if (action.action_id === "equip") return handleEquip(slash, args, env);
   if (action.action_id === "unequip") return handleUnequip(slash, args, env);
   if (action.action_id === "use") return handleUse(slash, args, env, ctx);
@@ -3051,6 +3063,60 @@ function buildDoorPromptBlocks(exp: ExpeditionState, cmd: string): unknown[] {
 
 type CombatAction = "attack" | "cast" | "flee" | "signature";
 
+// Upserts the pinned-battlefield message in the quest thread. First call
+// (no battlefield_ts yet) does chat.postMessage and persists the new ts
+// onto the quests row; subsequent calls do chat.update against that ts.
+// Best-effort — a failure here logs a warning but doesn't fail the turn.
+//
+// Why a pinned message: each engine turn would otherwise post a fresh
+// "current state" block to the thread, drowning the narrative. With a
+// pinned message, spectators see the LATEST state in one place; the
+// turn-summary thread replies become a scrollback log of what just
+// happened. Mirrors the web client's two-pane "live view + log" split.
+async function upsertBattlefield(
+  env: Env,
+  quest: ActiveQuest,
+  state: import("@gantt-quest/core").CombatState,
+): Promise<void> {
+  const blocks = renderBattlefieldBlocks(state, quest.id);
+  const fallbackText = `Battlefield: ${state.monster.name} (${state.monster.hp}/${state.monster.max_hp} HP)`;
+  try {
+    if (quest.battlefield_ts) {
+      const res = await updateMessage(env.SLACK_BOT_TOKEN, {
+        channel: quest.channel_id,
+        ts: quest.battlefield_ts,
+        text: fallbackText,
+        blocks,
+      });
+      if (!res.ok) {
+        // Stale ts (message deleted by an admin, etc.) — fall back to a
+        // new post and re-store. Single retry; if that fails too, give up.
+        const post = await postMessage(env.SLACK_BOT_TOKEN, {
+          channel: quest.channel_id,
+          thread_ts: quest.thread_ts,
+          text: fallbackText,
+          blocks,
+        });
+        if (post.ok && post.ts) {
+          await setBattlefieldTs(env.DB, quest.id, post.ts);
+        }
+      }
+    } else {
+      const post = await postMessage(env.SLACK_BOT_TOKEN, {
+        channel: quest.channel_id,
+        thread_ts: quest.thread_ts,
+        text: fallbackText,
+        blocks,
+      });
+      if (post.ok && post.ts) {
+        await setBattlefieldTs(env.DB, quest.id, post.ts);
+      }
+    }
+  } catch (err) {
+    console.warn("upsertBattlefield failed", err);
+  }
+}
+
 // Engine-driven combat dispatcher. Translates a Slack `(payload, action)`
 // pair into a TurnAction, calls QuestRoom.serverAction over RPC, and posts
 // the resulting CombatEvent[] as a thread reply via renderTurnToThread.
@@ -3081,7 +3147,7 @@ async function handleCombatViaEngine(
     return ephemeral("You're downed and can't act. Recover, then try again.");
   }
 
-  const quest = await getActiveQuestForCharacter(env.DB, payload.user_id);
+  let quest = await getActiveQuestForCharacter(env.DB, payload.user_id);
   if (!quest) return ephemeral(`You're not on an active quest. Try \`${payload.command} quest\` or \`${payload.command} join\`.`);
   if (quest.channel_id !== payload.channel_id) {
     return ephemeral(`Your active quest is in <#${quest.channel_id}>.`);
@@ -3126,6 +3192,14 @@ async function handleCombatViaEngine(
     if (beginText) {
       await postToThread(env, quest, beginText);
     }
+    // Drop the pinned battlefield into the thread on first action. From
+    // here on it's chat.update'd in place per turn.
+    await upsertBattlefield(env, quest, boot.state);
+    // upsertBattlefield wrote battlefield_ts to D1; re-read it so the
+    // next branch (post-action update) hits chat.update on the just-posted
+    // message instead of trying to post a second pinned block.
+    const refreshed = await getActiveQuestForCharacter(env.DB, payload.user_id);
+    if (refreshed) quest = refreshed;
   }
 
   const turnAction: TurnAction =
@@ -3150,6 +3224,14 @@ async function handleCombatViaEngine(
   const turnText = renderTurnToThread(result.state, result.events);
   if (turnText) {
     await postToThread(env, quest, turnText);
+  }
+
+  // Update the pinned battlefield with the post-turn state. chat.update is
+  // ~1/sec per channel — well under that since each Slack turn is gated on
+  // a slash command or button click. Skip when combat ended (victory/defeat/
+  // fled) so the final state stays visible without a stale button row.
+  if (result.state.status === "active") {
+    await upsertBattlefield(env, quest, result.state);
   }
 
   return ephemeral("✅ Action resolved.");

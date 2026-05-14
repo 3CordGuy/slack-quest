@@ -338,6 +338,11 @@ export interface ActiveQuest {
   elite: boolean;
   scene: SceneJson;
   mode: QuestMode;
+  // Pinned-battlefield message ts (migrations/0028_battlefield_ts.sql).
+  // Null when the quest hasn't started engine-driven combat yet. Slack's
+  // engine handler upserts this: first turn -> chat.postMessage + persist
+  // the returned ts; later turns -> chat.update against this ts.
+  battlefield_ts: string | null;
 }
 
 interface QuestRow {
@@ -347,6 +352,7 @@ interface QuestRow {
   elite: number;
   scene_json: string;
   mode: string;
+  battlefield_ts: string | null;
 }
 
 // Returns the active quest for a character, with scene data loaded.
@@ -356,7 +362,7 @@ export async function getActiveQuestForCharacter(
 ): Promise<ActiveQuest | null> {
   const row = await db
     .prepare(
-      `SELECT q.id, q.thread_ts, q.channel_id, q.elite, q.scene_json, q.mode
+      `SELECT q.id, q.thread_ts, q.channel_id, q.elite, q.scene_json, q.mode, q.battlefield_ts
        FROM quests q
        JOIN quest_party qp ON qp.quest_id = q.id
        WHERE qp.character_id = ? AND q.status = 'active'
@@ -372,6 +378,7 @@ export async function getActiveQuestForCharacter(
     elite: row.elite === 1,
     scene: normalizeScene(JSON.parse(row.scene_json) as SceneJson),
     mode: row.mode === "web" ? "web" : "slack",
+    battlefield_ts: row.battlefield_ts,
   };
 }
 
@@ -385,7 +392,7 @@ export async function getQuestById(
 ): Promise<ActiveQuest | null> {
   const row = await db
     .prepare(
-      `SELECT id, channel_id, thread_ts, elite, scene_json, mode
+      `SELECT id, channel_id, thread_ts, elite, scene_json, mode, battlefield_ts
        FROM quests
        WHERE id = ? AND status = 'active'
        LIMIT 1`,
@@ -400,7 +407,24 @@ export async function getQuestById(
     elite: row.elite === 1,
     scene: normalizeScene(JSON.parse(row.scene_json) as SceneJson),
     mode: row.mode === "web" ? "web" : "slack",
+    battlefield_ts: row.battlefield_ts,
   };
+}
+
+// Persist the pinned-battlefield message ts after Slack's first
+// chat.postMessage of a fight. Subsequent turns chat.update against this
+// ts. Cleared at quest completion via the existing cleanup paths (no
+// dedicated clearBattlefieldTs needed — quests with status != 'active'
+// are never re-rendered).
+export async function setBattlefieldTs(
+  db: D1Database,
+  questId: number,
+  ts: string,
+): Promise<void> {
+  await db
+    .prepare("UPDATE quests SET battlefield_ts = ? WHERE id = ?")
+    .bind(ts, questId)
+    .run();
 }
 
 export async function setQuestMode(
@@ -1504,7 +1528,7 @@ export async function getActiveQuestInChannel(
 ): Promise<ActiveQuest | null> {
   const row = await db
     .prepare(
-      `SELECT id, channel_id, thread_ts, elite, scene_json, mode
+      `SELECT id, channel_id, thread_ts, elite, scene_json, mode, battlefield_ts
        FROM quests
        WHERE channel_id = ? AND status = 'active'
        ORDER BY created_at DESC LIMIT 1`,
@@ -1519,6 +1543,7 @@ export async function getActiveQuestInChannel(
     elite: row.elite === 1,
     scene: normalizeScene(JSON.parse(row.scene_json) as SceneJson),
     mode: row.mode === "web" ? "web" : "slack",
+    battlefield_ts: row.battlefield_ts,
   };
 }
 
