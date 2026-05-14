@@ -80,6 +80,7 @@ const ERROR_LABELS: Record<string, string> = {
   mid_quest: "Not available mid-quest.",
   insufficient_gold: "Not enough gold.",
   unknown_drink: "Unknown drink.",
+  drink_cap_reached: "The bartender cuts you off — you've had your fill before the fight.",
   invalid_stake: "Invalid stake amount.",
   invalid_throw: "Invalid throw — pick stone, parchment, or dagger.",
   match_already_open: "There's already an open match in your channel.",
@@ -436,6 +437,7 @@ interface PubResponse {
   drinks: DrinkItem[];
   drink_buff: DrinkBuff | null;
   gold: number;
+  drinks_remaining: number;
   spd?: SpdData;
   art_url?: string | null;
   error?: string;
@@ -4130,14 +4132,18 @@ function PubCard({
   const iAmChallenger = openMatch?.challenger_user_id === selfId;
   const canBet = openMatch !== null && !iAmInitiator && !iAmChallenger && myBet === null;
 
-  const SPD_THROW_LABELS: Record<SpdThrow, string> = { stone: "🪨 Stone", parchment: "📜 Parchment", dagger: "🗡️ Dagger" };
+  const SPD_THROW_LABELS: Record<SpdThrow, React.ReactNode> = {
+    stone: <><Icon name="rune-stone" size={12} /> Stone</>,
+    parchment: <><Icon name="scroll-unfurled" size={12} /> Parchment</>,
+    dagger: <><Icon name="plain-dagger" size={12} /> Dagger</>,
+  };
 
   return (
     <div style={card}>
       {navOverlay
         ? <LocationHero src={pub.art_url} label="The Pub" nav={navOverlay} />
         : pub.art_url ? <Banner src={pub.art_url} alt="The Pub" /> : null}
-      {!navOverlay && <h2 style={h2}>🍺 The Pub</h2>}
+      {!navOverlay && <h2 style={h2}><Icon name="beer" size={18} /> The Pub</h2>}
       <p style={{ ...muted, marginTop: 4 }}>
         <em>"Smoke, sawdust, a thousand failed deployments worth of regret in the air."</em>
       </p>
@@ -4161,8 +4167,11 @@ function PubCard({
 
       {/* Drink menu */}
       <div style={{ marginTop: 16 }}>
-        <div style={{ ...muted, fontSize: 11, textTransform: "uppercase", letterSpacing: 1.5, marginBottom: 10 }}>
-          Drink Menu · <span style={{ color: "#fbbf24" }}>{pub.gold}g</span>
+        <div style={{ ...muted, fontSize: 11, textTransform: "uppercase", letterSpacing: 1.5, marginBottom: 10, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <span>Drink Menu · <span style={{ color: "#fbbf24" }}>{pub.gold}g</span></span>
+          <span style={{ color: pub.drinks_remaining > 0 ? "#86efac" : "#fca5a5" }}>
+            <Icon name="beer" size={10} /> {pub.drinks_remaining}/{2} before quest
+          </span>
         </div>
         <div style={{ display: "grid", gap: 8 }}>
           {pub.drinks.map((d) => (
@@ -4199,14 +4208,14 @@ function PubCard({
                 </div>
                 <button
                   onClick={() => onBuyDrink(d.id)}
-                  disabled={pub.gold < d.actual_price}
+                  disabled={pub.gold < d.actual_price || pub.drinks_remaining <= 0}
                   style={{
-                    ...smallActionBtn(pub.gold >= d.actual_price ? "#1f2a3a" : "#222428", pub.gold >= d.actual_price ? "#7dd3fc" : "#7a7d83"),
-                    opacity: pub.gold >= d.actual_price ? 1 : 0.6,
-                    cursor: pub.gold >= d.actual_price ? "pointer" : "not-allowed",
+                    ...smallActionBtn(pub.gold >= d.actual_price && pub.drinks_remaining > 0 ? "#1f2a3a" : "#222428", pub.gold >= d.actual_price && pub.drinks_remaining > 0 ? "#7dd3fc" : "#7a7d83"),
+                    opacity: pub.gold >= d.actual_price && pub.drinks_remaining > 0 ? 1 : 0.6,
+                    cursor: pub.gold >= d.actual_price && pub.drinks_remaining > 0 ? "pointer" : "not-allowed",
                   }}
                 >
-                  Order
+                  {pub.drinks_remaining <= 0 ? "Cutoff" : "Order"}
                 </button>
               </div>
             </div>
@@ -4217,7 +4226,7 @@ function PubCard({
       {/* Liars' Roll mini-game */}
       <div style={{ marginTop: 24, borderTop: "1px solid #2a2d33", paddingTop: 16 }}>
         <div style={{ ...muted, fontSize: 11, textTransform: "uppercase", letterSpacing: 1.5, marginBottom: 10 }}>
-          🎲 Liars&apos; Roll — vs. the Bartender
+          <Icon name="perspective-dice-six" size={11} /> Liars&apos; Roll — vs. the Bartender
         </div>
         <p style={{ ...muted, fontSize: 13, marginBottom: 12 }}>
           Both roll 3d6. The bartender claims a zone (Low/Mid/High) — lies 45% of the time.
@@ -4239,7 +4248,7 @@ function PubCard({
                     cursor: pub.gold >= s ? "pointer" : "not-allowed",
                   }}
                 >
-                  🪙 {s}g
+                  <Icon name="gold-bar" size={11} /> {s}g
                 </button>
               ))}
             </div>
@@ -4267,14 +4276,14 @@ function PubCard({
                   disabled={liarsLoading}
                   style={smallActionBtn("#1f3a1f", "#86efac")}
                 >
-                  🤝 Trust ({r.trust_mult}×)
+                  <Icon name="hand" size={12} /> Trust ({r.trust_mult}×)
                 </button>
                 <button
                   onClick={() => void decideLiars(r.round_id, "challenge")}
                   disabled={liarsLoading}
                   style={smallActionBtn("#3a1f1f", "#fca5a5")}
                 >
-                  🔥 Challenge ({r.challenge_mult}×)
+                  <Icon name="fire" size={12} /> Challenge ({r.challenge_mult}×)
                 </button>
               </div>
             </div>
@@ -4296,9 +4305,15 @@ function PubCard({
                 }}
               >
                 <div style={{ fontWeight: 700, color: won ? "#86efac" : "#fca5a5", marginBottom: 6 }}>
-                  {won
-                    ? `${r.choice === "trust" ? "🤝 Trusted correctly" : "🔥 Called the bluff"} — +${r.payout}g!`
-                    : `${r.choice === "trust" ? "💸 Trusted a liar" : "💸 Called an honest claim"} — lost the stake.`}
+                  {won ? (
+                    r.choice === "trust"
+                      ? <><Icon name="hand" size={13} /> Trusted correctly — +{r.payout}g!</>
+                      : <><Icon name="fire" size={13} /> Called the bluff — +{r.payout}g!</>
+                  ) : (
+                    r.choice === "trust"
+                      ? <><Icon name="daggers" size={13} /> Trusted a liar — lost the stake.</>
+                      : <><Icon name="daggers" size={13} /> Called an honest claim — lost the stake.</>
+                  )}
                 </div>
                 <div style={{ ...muted, fontSize: 13 }}>
                   {r.lied ? "The bartender was lying." : "The bartender told the truth."}{" "}
@@ -4325,7 +4340,7 @@ function PubCard({
       {/* Stone-Parchment-Dagger */}
       <div style={{ marginTop: 24, borderTop: "1px solid #2a2d33", paddingTop: 16 }}>
         <div style={{ ...muted, fontSize: 11, textTransform: "uppercase", letterSpacing: 1.5, marginBottom: 10 }}>
-          ⚔️ Stone-Parchment-Dagger
+          <Icon name="plain-dagger" size={11} /> Stone-Parchment-Dagger
         </div>
 
         {/* Show resolved result */}
@@ -4352,10 +4367,10 @@ function PubCard({
                 }}
               >
                 {spdResult.tie
-                  ? "🤝 Tie! Everything refunded."
+                  ? <><Icon name="hand" size={13} /> Tie! Everything refunded.</>
                   : spdResult.winner_user_id === selfId
-                    ? `🏆 You won! +${spdResult.payout}g`
-                    : `💸 You lost the match.`}
+                    ? <><Icon name="trophy" size={13} /> You won! +{spdResult.payout}g</>
+                    : <><Icon name="daggers" size={13} /> You lost the match.</>}
               </div>
               <div style={{ ...muted, fontSize: 13 }}>
                 {spdResult.initiator_name} threw {SPD_THROW_LABELS[spdResult.initiator_throw]} · You threw {SPD_THROW_LABELS[spdResult.challenger_throw]}
@@ -4402,7 +4417,7 @@ function PubCard({
                           cursor: pub.gold >= s ? "pointer" : "not-allowed",
                         }}
                       >
-                        ⚔️ {s}g
+                        <Icon name="gold-bar" size={11} /> {s}g
                       </button>
                     ))}
                   </div>

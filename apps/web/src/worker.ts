@@ -121,6 +121,7 @@ import {
 // =============================================================================
 // PUB — Drink catalog (mirrors apps/slack/src/flavor.ts DRINKS)
 // =============================================================================
+const DRINK_CAP = 2; // max drinks between quests; reset when joining/starting
 
 type DrinkEffectKind =
   | "buff_attack"
@@ -1011,6 +1012,10 @@ app.post("/api/quest/start", async (c) => {
   });
   await setQuestMode(c.env.DB, questId, "web");
   await refillMana(c.env.DB, session.slack_user_id);
+  await c.env.DB
+    .prepare("UPDATE characters SET drinks_since_last_quest = 0 WHERE slack_user_id = ?")
+    .bind(session.slack_user_id)
+    .run();
   return c.json({
     ok: true,
     quest_id: questId,
@@ -1092,6 +1097,10 @@ app.post("/api/quest/join", async (c) => {
   const inserted = await joinQuest(c.env.DB, quest.id, session.slack_user_id);
   if (!inserted) return c.json({ error: "already_in_party" }, 400);
   await refillMana(c.env.DB, session.slack_user_id);
+  await c.env.DB
+    .prepare("UPDATE characters SET drinks_since_last_quest = 0 WHERE slack_user_id = ?")
+    .bind(session.slack_user_id)
+    .run();
   const scaled = await scaleMonsterForJoin(c.env.DB, quest.id, quest.scene, JOIN_HP_RATIO);
   return c.json({
     ok: true,
@@ -2163,8 +2172,14 @@ app.get("/api/pub", async (c) => {
     }
   }
 
+  const drinksSince = await c.env.DB
+    .prepare("SELECT drinks_since_last_quest FROM characters WHERE slack_user_id = ?")
+    .bind(session.slack_user_id)
+    .first<{ drinks_since_last_quest: number }>();
+  const drinksRemaining = Math.max(0, DRINK_CAP - (drinksSince?.drinks_since_last_quest ?? 0));
+
   const art_url = await getOrScheduleViewArt(c.env.AI, artTarget(c.env), c.executionCtx, "pub_interior", undefined, TOWN_WEEKLY_MS);
-  return c.json({ drinks: drinksWithPrice, drink_buff: drinkBuff, gold: character.gold, spd: spdData, art_url });
+  return c.json({ drinks: drinksWithPrice, drink_buff: drinkBuff, gold: character.gold, spd: spdData, art_url, drinks_remaining: drinksRemaining });
 });
 
 // POST /api/pub/drink/:drinkId — order a drink. Deducts gold, applies the
@@ -2180,6 +2195,15 @@ app.post("/api/pub/drink/:drinkId", async (c) => {
   const drinkId = c.req.param("drinkId");
   const drink = findDrinkById(drinkId);
   if (!drink) return c.json({ error: "unknown_drink" }, 404);
+
+  // Enforce drink cap between quests.
+  const drinkRow = await c.env.DB
+    .prepare("SELECT drinks_since_last_quest FROM characters WHERE slack_user_id = ?")
+    .bind(session.slack_user_id)
+    .first<{ drinks_since_last_quest: number }>();
+  if ((drinkRow?.drinks_since_last_quest ?? 0) >= DRINK_CAP) {
+    return c.json({ error: "drink_cap_reached", cap: DRINK_CAP }, 400);
+  }
 
   // Daily special pricing.
   const channelId = await recentChannelForUser(c.env.DB, session.slack_user_id);
@@ -2240,6 +2264,11 @@ app.post("/api/pub/drink/:drinkId", async (c) => {
       break;
     }
   }
+
+  await c.env.DB
+    .prepare("UPDATE characters SET drinks_since_last_quest = drinks_since_last_quest + 1, last_active = ? WHERE slack_user_id = ?")
+    .bind(Date.now(), session.slack_user_id)
+    .run();
 
   return c.json({ ok: true, drink_name: drink.name, emoji: drink.emoji, price, summary, drink_buff: newBuff });
 });
