@@ -1837,6 +1837,7 @@ async function handleQuest(
         thread_ts: post.ts,
         elite,
         scene,
+        mode: "slack",
         created_by: payload.user_id,
       });
       // Mana refills to max for the questing character at quest start. Anyone who

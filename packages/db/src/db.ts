@@ -75,6 +75,7 @@ export interface Character {
   // Stored as JSON on drink_buff_json; one buff at a time (second drink
   // replaces the first). See flavor.ts/DrinkBuff for shape.
   drink_buff: DrinkBuff | null;
+  slack_username: string | null;
   created_at: number;
   last_active: number;
 }
@@ -328,12 +329,15 @@ export interface SceneJson {
   from_job_board?: boolean;
 }
 
+export type QuestMode = "slack" | "web";
+
 export interface ActiveQuest {
   id: number;
   channel_id: string;
   thread_ts: string;
   elite: boolean;
   scene: SceneJson;
+  mode: QuestMode;
 }
 
 interface QuestRow {
@@ -342,6 +346,7 @@ interface QuestRow {
   thread_ts: string;
   elite: number;
   scene_json: string;
+  mode: string;
 }
 
 // Returns the active quest for a character, with scene data loaded.
@@ -351,7 +356,7 @@ export async function getActiveQuestForCharacter(
 ): Promise<ActiveQuest | null> {
   const row = await db
     .prepare(
-      `SELECT q.id, q.thread_ts, q.channel_id, q.elite, q.scene_json
+      `SELECT q.id, q.thread_ts, q.channel_id, q.elite, q.scene_json, q.mode
        FROM quests q
        JOIN quest_party qp ON qp.quest_id = q.id
        WHERE qp.character_id = ? AND q.status = 'active'
@@ -366,7 +371,19 @@ export async function getActiveQuestForCharacter(
     thread_ts: row.thread_ts,
     elite: row.elite === 1,
     scene: normalizeScene(JSON.parse(row.scene_json) as SceneJson),
+    mode: row.mode === "web" ? "web" : "slack",
   };
+}
+
+export async function setQuestMode(
+  db: D1Database,
+  questId: number,
+  mode: QuestMode,
+): Promise<void> {
+  await db
+    .prepare("UPDATE quests SET mode = ? WHERE id = ?")
+    .bind(mode, questId)
+    .run();
 }
 
 export async function createQuest(
@@ -376,6 +393,7 @@ export async function createQuest(
     thread_ts: string;
     elite: boolean;
     scene: SceneJson;
+  mode: QuestMode;
     created_by: string;
   },
 ): Promise<number> {
@@ -550,6 +568,40 @@ export async function applyLongRest(db: D1Database, userId: string): Promise<voi
   await db
     .prepare("UPDATE characters SET hp = max_hp, last_long_rest_at = ?, last_active = ? WHERE slack_user_id = ?")
     .bind(now, now, userId)
+    .run();
+}
+
+// Inn room rest: refills HP and/or mana without consuming either rest cooldown.
+export async function applyInnRest(
+  db: D1Database,
+  userId: string,
+  refills: { hp: boolean; mana: boolean },
+): Promise<void> {
+  const sets: string[] = [];
+  if (refills.hp) sets.push("hp = max_hp");
+  if (refills.mana) sets.push("mana = max_mana");
+  sets.push("last_active = ?");
+  if (sets.length === 1) return;
+  await db
+    .prepare(`UPDATE characters SET ${sets.join(", ")} WHERE slack_user_id = ?`)
+    .bind(Date.now(), userId)
+    .run();
+}
+
+export async function upsertSlackUsername(
+  db: D1Database,
+  userId: string,
+  username: string,
+): Promise<void> {
+  if (!username) return;
+  await db
+    .prepare(
+      `UPDATE characters
+         SET slack_username = ?
+       WHERE slack_user_id = ?
+         AND (slack_username IS NULL OR slack_username != ?)`,
+    )
+    .bind(username, userId, username)
     .run();
 }
 
@@ -1424,7 +1476,7 @@ export async function getActiveQuestInChannel(
 ): Promise<ActiveQuest | null> {
   const row = await db
     .prepare(
-      `SELECT id, channel_id, thread_ts, elite, scene_json
+      `SELECT id, channel_id, thread_ts, elite, scene_json, mode
        FROM quests
        WHERE channel_id = ? AND status = 'active'
        ORDER BY created_at DESC LIMIT 1`,
@@ -1438,6 +1490,7 @@ export async function getActiveQuestInChannel(
     thread_ts: row.thread_ts,
     elite: row.elite === 1,
     scene: normalizeScene(JSON.parse(row.scene_json) as SceneJson),
+    mode: row.mode === "web" ? "web" : "slack",
   };
 }
 
@@ -2302,4 +2355,57 @@ export async function getLeaderboard(
     gold: r.gold,
     scars_count: (JSON.parse(r.scars) as string[]).length,
   }));
+}
+
+export interface RecentQuestSummary {
+  id: number;
+  status: "completed" | "failed";
+  elite: boolean;
+  monster_name: string;
+  variant: QuestVariant;
+  boss_phase?: 1 | 2;
+  wave?: number;
+  total_waves?: number;
+  created_at: number;
+  completed_at: number | null;
+}
+
+export async function getRecentQuestsForCharacter(
+  db: D1Database,
+  userId: string,
+  limit: number,
+): Promise<RecentQuestSummary[]> {
+  const result = await db
+    .prepare(
+      `SELECT q.id, q.status, q.elite, q.scene_json, q.created_at, q.completed_at
+       FROM quests q
+       JOIN quest_party qp ON qp.quest_id = q.id
+       WHERE qp.character_id = ? AND q.status IN ('completed', 'failed')
+       ORDER BY COALESCE(q.completed_at, q.created_at) DESC
+       LIMIT ?`,
+    )
+    .bind(userId, limit)
+    .all<{
+      id: number;
+      status: "completed" | "failed";
+      elite: number;
+      scene_json: string;
+      created_at: number;
+      completed_at: number | null;
+    }>();
+  return (result.results ?? []).map((r) => {
+    const scene = normalizeScene(JSON.parse(r.scene_json) as SceneJson);
+    return {
+      id: r.id,
+      status: r.status,
+      elite: r.elite === 1,
+      monster_name: scene.monster_name ?? "—",
+      variant: scene.variant ?? "standard",
+      boss_phase: scene.boss_phase,
+      wave: scene.wave,
+      total_waves: scene.total_waves,
+      created_at: r.created_at,
+      completed_at: r.completed_at,
+    };
+  });
 }

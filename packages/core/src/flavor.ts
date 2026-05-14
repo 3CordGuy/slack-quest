@@ -333,7 +333,10 @@ export function passiveFor(className: string): PassiveSpec | null {
 // utility/control/support. All cost mana, share the 45s combat cooldown.
 // The mechanics live in commands.ts (handleAbility); this map is the
 // player-facing description shown on /sq sheet and in help text.
+export type AbilityId = "taunt" | "containerize" | "regression_shield" | "vanish" | "soul_drain" | "battle_hymn" | "foresee" | "migrate";
+
 export interface AbilitySpec {
+  id: AbilityId;
   name: string;
   mana_cost: number;
   blurb: string;
@@ -341,41 +344,49 @@ export interface AbilitySpec {
 
 export const ABILITIES: Record<string, AbilitySpec> = {
   devops_mage: {
+    id: "containerize",
     name: "Containerize",
     mana_cost: 2,
     blurb: "Locks the monster in a stasis container. It skips its next swing entirely.",
   },
   qa_paladin: {
+    id: "regression_shield",
     name: "Regression Shield",
     mana_cost: 2,
     blurb: "Grants 🛡 +3 shield to every alive partymate.",
   },
   backend_druid: {
+    id: "migrate",
     name: "Migrate",
     mana_cost: 1,
     blurb: "Move any partymate to front or back without consuming their turn.",
   },
   frontend_bard: {
+    id: "battle_hymn",
     name: "Battle Hymn",
     mana_cost: 2,
     blurb: "Bardic aura jumps from +1 to +3 damage for the next 2 partymate attacks.",
   },
   staff_sage: {
+    id: "foresee",
     name: "Foresee",
     mana_cost: 1,
     blurb: "Read the monster's tells — see the next 2 telegraphed targets with damage ranges.",
   },
   refactor_rogue: {
+    id: "vanish",
     name: "Vanish",
     mana_cost: 2,
     blurb: "Disappear into the shadows — the monster can't target you for its next 2 swings.",
   },
   sre_warden: {
+    id: "taunt",
     name: "Taunt",
     mana_cost: 2,
     blurb: "Force the monster to target you for its next 2 swings, overriding the telegraph.",
   },
   data_warlock: {
+    id: "soul_drain",
     name: "Soul Drain",
     mana_cost: 2,
     blurb: "Deal 1d6 + magic_mod damage and heal yourself for 50% of damage dealt.",

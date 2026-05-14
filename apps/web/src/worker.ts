@@ -1008,9 +1008,9 @@ app.post("/api/quest/start", async (c) => {
     thread_ts: `web-${Date.now()}-${session.slack_user_id}`,
     elite,
     scene,
+    mode: "web",
     created_by: session.slack_user_id,
   });
-  await setQuestMode(c.env.DB, questId, "web");
   await refillMana(c.env.DB, session.slack_user_id);
   await c.env.DB
     .prepare("UPDATE characters SET drinks_since_last_quest = 0 WHERE slack_user_id = ?")
@@ -1371,9 +1371,9 @@ app.post("/api/board/take", async (c) => {
     thread_ts: `web-${Date.now()}-${session.slack_user_id}`,
     elite: false,
     scene,
+    mode: "web",
     created_by: session.slack_user_id,
   });
-  await setQuestMode(c.env.DB, questId, "web");
   await refillMana(c.env.DB, session.slack_user_id);
   return c.json({ ok: true, quest_id: questId });
 });
@@ -1458,9 +1458,9 @@ app.post("/api/hunt", async (c) => {
     thread_ts: `web-${Date.now()}-${session.slack_user_id}`,
     elite: false,
     scene,
+    mode: "web",
     created_by: session.slack_user_id,
   });
-  await setQuestMode(c.env.DB, questId, "web");
   await refillMana(c.env.DB, session.slack_user_id);
   return c.json({ ok: true, quest_id: questId });
 });
@@ -1852,7 +1852,7 @@ app.post("/api/inventory/:itemId/use", async (c) => {
     // any non-staple consumable fall through to consumeItem (HP heal).
     const staple = findStaple(item.item_name);
     if (staple?.effect === "restore_mana") {
-      const restored = await addMana(c.env.DB, session.slack_user_id, item.power);
+      const restored = await addMana(c.env.DB, character, item.power);
       await removeItem(c.env.DB, item.id);
       return c.json({ ok: true, kind: "mana", restored, requested: item.power });
     }
@@ -2253,13 +2253,13 @@ app.post("/api/pub/drink/:drinkId", async (c) => {
       break;
     }
     case "instant_mana": {
-      const added = await addMana(c.env.DB, session.slack_user_id, eff.amount);
+      const added = await addMana(c.env.DB, character, eff.amount);
       summary = `+${added} mana`;
       break;
     }
     case "instant_combo": {
       const healed = await healCharacter(c.env.DB, character, eff.hp);
-      const added = await addMana(c.env.DB, session.slack_user_id, eff.mana);
+      const added = await addMana(c.env.DB, character, eff.mana);
       summary = `+${healed} HP, +${added} mana`;
       break;
     }
