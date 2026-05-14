@@ -38,6 +38,7 @@ import {
   generateScar,
   generateMerchantName,
   generateNpcName,
+  pickRandomClass,
   STAPLES,
   findStaple,
   haggleMod,
@@ -96,6 +97,8 @@ import {
   createWebSession,
   deleteWebCombatState,
   deleteWebSession,
+  deleteCharacter,
+  createCharacter,
   createQuest,
   getActiveQuestForCharacter,
   getRecentMonsterNames,
@@ -124,6 +127,7 @@ import {
   setQuestThreadTs,
   type ActiveQuest,
   type Character,
+  type CharGender,
   type ExpeditionNode,
   type ExpeditionNodeType,
   type ExpeditionState,
@@ -761,6 +765,39 @@ app.post("/api/auth/logout", async (c) => {
   if (sessionId) await deleteWebSession(c.env.DB, sessionId);
   deleteCookie(c, SESSION_COOKIE, { path: "/" });
   return c.json({ ok: true });
+});
+
+// POST /api/character/reroll — delete and recreate the player's character.
+// Free if xp === 0 (never earned XP), otherwise costs level × 50g.
+// Blocked mid-quest. Returns the new character on success.
+app.post("/api/character/reroll", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const existing = await getCharacter(c.env.DB, session.slack_user_id);
+  if (!existing) return c.json({ error: "no_character" }, 404);
+
+  const activeQuest = await getActiveQuestForCharacter(c.env.DB, session.slack_user_id);
+  if (activeQuest) return c.json({ error: "mid_quest" }, 400);
+
+  const cost = existing.xp === 0 ? 0 : existing.level * 50;
+  if (existing.gold < cost) return c.json({ error: "insufficient_gold", cost, gold: existing.gold }, 400);
+
+  await deleteCharacter(c.env.DB, session.slack_user_id);
+
+  const cls = pickRandomClass();
+  const hp = cls.base_hp + rollDice(4);
+  const gender: CharGender = rollDice(2) === 1 ? "m" : "f";
+  const newChar = await createCharacter(c.env.DB, {
+    slack_user_id: session.slack_user_id,
+    slack_team_id: session.slack_team_id,
+    name: generateNpcName(),
+    class: cls.name,
+    hp,
+    max_hp: hp,
+    gender,
+  });
+
+  return c.json({ ok: true, character: newChar });
 });
 
 // Returns the authenticated user's character (or null if they haven't created

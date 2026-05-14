@@ -750,6 +750,18 @@ export function App() {
     setState({ kind: "anon" });
   }
 
+  async function rerollCharacter() {
+    const res = await fetch("/api/character/reroll", { method: "POST", credentials: "include" });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({})) as { error?: string; cost?: number; gold?: number };
+      if (body.error === "mid_quest") { toast.error("Finish your quest before rerolling."); return; }
+      if (body.error === "insufficient_gold") { toast.error(`Need ${body.cost}g to reroll (you have ${body.gold}g).`); return; }
+      toast.error("Reroll failed."); return;
+    }
+    toast.success("New hero rolled! Refreshing…");
+    void refresh();
+  }
+
   async function startCombat(questId: number) {
     const { ok } = await postJson(`/api/quest/${questId}/start_web_combat`, { method: "POST" });
     if (!ok) return;
@@ -1160,7 +1172,7 @@ export function App() {
             )}
           </>
         }
-        footer={<SignOutRow onLogout={logout} />}
+        footer={<AccountPopover onLogout={logout} onReroll={rerollCharacter} character={state.me.character ?? null} />}
       />
       {haggleResult && (
         <HaggleResultDialog result={haggleResult} onClose={() => setHaggleResult(null)} />
@@ -4937,6 +4949,114 @@ function SignOutRow({ onLogout }: { onLogout: () => void }) {
     <button onClick={onLogout} style={{ ...button, background: "#33363d" }}>
       Sign out
     </button>
+  );
+}
+
+function AccountPopover({
+  onLogout,
+  onReroll,
+  character,
+}: {
+  onLogout: () => void;
+  onReroll: () => Promise<void>;
+  character: { level: number; xp: number; gold: number; name: string } | null;
+}) {
+  const [open, setOpen] = useState(false);
+  const [rerollStep, setRerollStep] = useState<"idle" | "confirm">("idle");
+  const [rerolling, setRerolling] = useState(false);
+
+  const { refs, floatingStyles, context } = useFloating({
+    open,
+    onOpenChange: (v) => { setOpen(v); if (!v) setRerollStep("idle"); },
+    middleware: [offset(8), flip({ padding: 8 }), shift({ padding: 8 })],
+    placement: "top-start",
+    whileElementsMounted: autoUpdate,
+  });
+  const { getFloatingProps } = useInteractions([useDismiss(context)]);
+
+  const cost = character ? (character.xp === 0 ? 0 : character.level * 50) : null;
+  const canAfford = cost !== null && character !== null && character.gold >= cost;
+
+  async function confirmReroll() {
+    setRerolling(true);
+    await onReroll();
+    setRerolling(false);
+    setOpen(false);
+    setRerollStep("idle");
+  }
+
+  return (
+    <>
+      <button
+        ref={refs.setReference}
+        onClick={() => { setOpen((v) => !v); setRerollStep("idle"); }}
+        title="Account"
+        style={{
+          background: "#1e2025", border: "1px solid #2a2d33", borderRadius: 6,
+          color: "#9ca3af", cursor: "pointer", padding: "6px 10px",
+          fontFamily: "inherit", fontSize: 13, display: "inline-flex", alignItems: "center", gap: 6,
+        }}
+      >
+        <Icon name="gears" size={14} /> Account
+      </button>
+      {open && (
+        <FloatingPortal>
+          <div
+            ref={refs.setFloating}
+            style={{ ...floatingStyles, zIndex: 300 }}
+            {...getFloatingProps()}
+          >
+            <div style={{ padding: 12, background: "#1d1f23", borderRadius: 8, border: "1px solid #2a2d33", boxShadow: "0 8px 24px rgba(0,0,0,0.6)", minWidth: 220, display: "flex", flexDirection: "column", gap: 6 }}>
+              {/* Sign Out */}
+              <button
+                onClick={() => { setOpen(false); onLogout(); }}
+                style={{ ...smallActionBtn("#1a1c20", "#f87171"), textAlign: "left" }}
+              >
+                <Icon name="player" size={13} /> Sign out
+              </button>
+
+              {/* Reroll */}
+              <div style={{ borderTop: "1px solid #2a2d33", paddingTop: 8, marginTop: 2 }}>
+                {rerollStep === "idle" ? (
+                  <button
+                    onClick={() => setRerollStep("confirm")}
+                    style={{ ...smallActionBtn("#1a1c20", "#fde68a"), width: "100%", textAlign: "left" }}
+                  >
+                    <Icon name="dice-six-faces-random" size={13} /> Reroll character
+                  </button>
+                ) : (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                    <div style={{ fontSize: 12, color: "#f5f5f5", fontWeight: 600 }}>Reroll {character?.name ?? "your character"}?</div>
+                    <div style={{ fontSize: 11, color: "#9ca3af", lineHeight: 1.4 }}>
+                      {cost === 0
+                        ? "Free — you haven't earned XP yet. All gear and gold will be lost."
+                        : `Costs ${cost}g (level × 50). All gear and gold will be lost.`}
+                      {cost !== null && cost > 0 && !canAfford && (
+                        <span style={{ color: "#fca5a5", display: "block", marginTop: 4 }}>
+                          You need {cost! - (character?.gold ?? 0)}g more.
+                        </span>
+                      )}
+                    </div>
+                    <div style={{ display: "flex", gap: 6 }}>
+                      <button
+                        onClick={confirmReroll}
+                        disabled={rerolling || (cost !== null && cost > 0 && !canAfford)}
+                        style={{ ...smallActionBtn("#2a0f0f", "#fca5a5"), flex: 1 }}
+                      >
+                        {rerolling ? "Rolling…" : "Confirm reroll"}
+                      </button>
+                      <button onClick={() => setRerollStep("idle")} style={smallActionBtn("#222428", "#6b7280")}>
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </FloatingPortal>
+      )}
+    </>
   );
 }
 
