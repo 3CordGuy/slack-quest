@@ -18,7 +18,7 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
           fontSize: 14,
         },
         error: { iconTheme: { primary: "#fca5a5", secondary: "#1a1c20" } },
-        success: { iconTheme: { primary: "#86efac", secondary: "#1a1c20" } },
+        success: { duration: 3000, iconTheme: { primary: "#86efac", secondary: "#1a1c20" } },
       }}
     />
   </React.StrictMode>,

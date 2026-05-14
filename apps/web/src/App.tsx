@@ -1000,9 +1000,12 @@ export function App() {
             art={state.townArt}
             onNavigate={setTownSection}
           />
-          {state.me.character && state.recent.length > 0 && (
-            <RecentQuestsCard quests={state.recent} />
-          )}
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, alignItems: "start" }}>
+            {state.me.character && state.recent.length > 0 && (
+              <RecentQuestsCard quests={state.recent} />
+            )}
+            <AdventurersCard selfId={state.me.slack_user_id} />
+          </div>
         </>
       );
     } else {
@@ -1039,6 +1042,7 @@ export function App() {
             onBuy={shopBuy}
             onHaggle={shopHaggle}
             onBuyStaple={shopBuyStaple}
+            onRefresh={refresh}
           />
         );
       } else if (townSection === "inn" && state.me.character && state.inn) {
@@ -1115,7 +1119,6 @@ export function App() {
                 onGive={giveItem}
               />
             )}
-            <AdventurersCard selfId={state.me.slack_user_id} />
           </>
         }
         footer={<SignOutRow onLogout={logout} />}
@@ -2588,6 +2591,7 @@ function PositionBadge({ position }: { position: "front" | "back" }) {
 function AdventurersCard({ selfId }: { selfId: string }) {
   const [characters, setCharacters] = useState<KnownCharacter[]>([]);
   const [loading, setLoading] = useState(true);
+  const [sheet, setSheet] = useState<KnownCharacter | null>(null);
 
   useEffect(() => {
     fetch("/api/characters", { credentials: "include" })
@@ -2601,53 +2605,136 @@ function AdventurersCard({ selfId }: { selfId: string }) {
   const now = Math.floor(Date.now() / 1000);
 
   return (
-    <div style={card}>
-      <div style={{ ...muted, fontSize: 11, textTransform: "uppercase", letterSpacing: 1.5, marginBottom: 10 }}>
-        <Icon name="player" size={11} /> Adventurers
-      </div>
-      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-        {characters.slice(0, 8).map((ch) => {
-          const secsAgo = now - (ch.last_active ?? 0);
-          const isOnline = secsAgo < 15 * 60;
-          const isRecent = secsAgo < 60 * 60;
-          const ago = secsAgo < 60 ? "just now"
-            : secsAgo < 3600 ? `${Math.floor(secsAgo / 60)}m ago`
-            : secsAgo < 86400 ? `${Math.floor(secsAgo / 3600)}h ago`
-            : `${Math.floor(secsAgo / 86400)}d ago`;
-          const hpPct = ch.max_hp > 0 ? Math.max(0, Math.min(1, ch.hp / ch.max_hp)) : 0;
-          const portraitSrc = `/img/art/views/v6/class_${ch.class.toLowerCase().replace(/[\s-]+/g, "_")}.png`;
+    <>
+      <div style={card}>
+        <div style={{ ...muted, fontSize: 11, textTransform: "uppercase", letterSpacing: 1.5, marginBottom: 10 }}>
+          <Icon name="player" size={11} /> Adventurers
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          {characters.slice(0, 8).map((ch) => {
+            const secsAgo = now - (ch.last_active ?? 0);
+            const isOnline = secsAgo < 15 * 60;
+            const isRecent = secsAgo < 60 * 60;
+            const ago = secsAgo < 60 ? "just now"
+              : secsAgo < 3600 ? `${Math.floor(secsAgo / 60)}m ago`
+              : secsAgo < 86400 ? `${Math.floor(secsAgo / 3600)}h ago`
+              : `${Math.floor(secsAgo / 86400)}d ago`;
+            const hpPct = ch.max_hp > 0 ? Math.max(0, Math.min(1, ch.hp / ch.max_hp)) : 0;
+            const portraitSrc = `/img/art/views/v6/class_${ch.class.toLowerCase().replace(/[\s-]+/g, "_")}.png`;
 
-          return (
-            <div key={ch.slack_user_id} style={{
-              display: "flex", alignItems: "center", gap: 8,
-              padding: "6px 8px", borderRadius: 6, background: "#16181c",
-            }}>
-              <div style={{ position: "relative", flexShrink: 0 }}>
-                <Avatar src={portraitSrc} alt={ch.name} size={32} radius={4} fallbackIcon="player" fallbackColor="#4a5568" />
-                {isOnline && (
-                  <span style={{
-                    position: "absolute", bottom: -1, right: -1,
-                    width: 8, height: 8, borderRadius: "50%",
-                    background: "#22c55e", border: "1.5px solid #16181c",
-                  }} />
-                )}
-              </div>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
-                  <span style={{ fontWeight: 600, fontSize: 12, color: "#f5f5f5", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{ch.name}</span>
-                  <span style={{ ...muted, fontSize: 11, flexShrink: 0 }}>Lv {ch.level}</span>
+            return (
+              <button
+                key={ch.slack_user_id}
+                onClick={() => setSheet(ch)}
+                style={{
+                  display: "flex", alignItems: "center", gap: 8,
+                  padding: "6px 8px", borderRadius: 6, background: "#16181c",
+                  border: "1px solid transparent", cursor: "pointer", width: "100%",
+                  textAlign: "left", fontFamily: "inherit",
+                }}
+                onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.borderColor = "#2a2d33"; }}
+                onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.borderColor = "transparent"; }}
+              >
+                <div style={{ position: "relative", flexShrink: 0 }}>
+                  <Avatar src={portraitSrc} alt={ch.name} size={32} radius={4} fallbackIcon="player" fallbackColor="#4a5568" />
+                  {isOnline && (
+                    <span style={{
+                      position: "absolute", bottom: -1, right: -1,
+                      width: 8, height: 8, borderRadius: "50%",
+                      background: "#22c55e", border: "1.5px solid #16181c",
+                    }} />
+                  )}
                 </div>
-                <div style={{ ...muted, fontSize: 11, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{ch.class}</div>
-                <div style={{ marginTop: 3, height: 3, background: "#0e0f12", borderRadius: 2, overflow: "hidden" }}>
-                  <div style={{ width: `${hpPct * 100}%`, height: "100%", background: hpPct < 0.25 ? "#dc2626" : hpPct < 0.5 ? "#d97706" : "#16a34a" }} />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
+                    <span style={{ fontWeight: 600, fontSize: 12, color: "#f5f5f5", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{ch.name}</span>
+                    <span style={{ ...muted, fontSize: 11, flexShrink: 0 }}>Lv {ch.level}</span>
+                  </div>
+                  <div style={{ ...muted, fontSize: 11, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{ch.class}</div>
+                  <div style={{ marginTop: 3, height: 3, background: "#0e0f12", borderRadius: 2, overflow: "hidden" }}>
+                    <div style={{ width: `${hpPct * 100}%`, height: "100%", background: hpPct < 0.25 ? "#dc2626" : hpPct < 0.5 ? "#d97706" : "#16a34a" }} />
+                  </div>
                 </div>
-              </div>
-              <span style={{ ...muted, fontSize: 10, flexShrink: 0, color: isOnline ? "#22c55e" : isRecent ? "#9ca3af" : "#4a5060" }}>{ago}</span>
-            </div>
-          );
-        })}
+                <span style={{ ...muted, fontSize: 10, flexShrink: 0, color: isOnline ? "#22c55e" : isRecent ? "#9ca3af" : "#4a5060" }}>{ago}</span>
+              </button>
+            );
+          })}
+        </div>
       </div>
-    </div>
+      {sheet && <AdventurerSheet character={sheet} onClose={() => setSheet(null)} />}
+    </>
+  );
+}
+
+function AdventurerSheet({ character, onClose }: { character: KnownCharacter; onClose: () => void }) {
+  const now = Math.floor(Date.now() / 1000);
+  const secsAgo = now - (character.last_active ?? 0);
+  const hpPct = character.max_hp > 0 ? Math.max(0, Math.min(1, character.hp / character.max_hp)) : 0;
+  const xpAtLevel = xpForLevel(character.level);
+  const xpAtNext = xpForLevel(character.level + 1);
+  const xpIntoLevel = character.xp - xpAtLevel;
+  const xpSpan = xpAtNext - xpAtLevel;
+  const xpPct = xpSpan > 0 ? Math.min(1, xpIntoLevel / xpSpan) : 1;
+  const portraitSrc = `/img/art/views/v6/class_${character.class.toLowerCase().replace(/[\s-]+/g, "_")}.png`;
+  const ago = secsAgo < 60 ? "just now"
+    : secsAgo < 3600 ? `${Math.floor(secsAgo / 60)}m ago`
+    : secsAgo < 86400 ? `${Math.floor(secsAgo / 3600)}h ago`
+    : `${Math.floor(secsAgo / 86400)}d ago`;
+  const isOnline = secsAgo < 15 * 60;
+
+  return (
+    <>
+      <div
+        onClick={onClose}
+        style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", zIndex: 200 }}
+      />
+      <div style={{
+        position: "fixed", top: 0, right: 0, bottom: 0, width: 300,
+        background: "#13141a", borderLeft: "1px solid #2a2d33",
+        zIndex: 201, overflowY: "auto", padding: "24px 20px",
+        display: "flex", flexDirection: "column", gap: 16,
+      }}>
+        <button
+          onClick={onClose}
+          style={{
+            position: "absolute", top: 14, right: 14,
+            background: "none", border: "none", color: "#6b7280",
+            cursor: "pointer", fontSize: 18, lineHeight: 1, padding: 4,
+          }}
+        >✕</button>
+
+        <Avatar src={portraitSrc} alt={character.name} size={80} radius={8} fallbackIcon="player" fallbackColor="#4a5568" />
+
+        <div>
+          <h2 style={{ ...h2, margin: "0 0 2px" }}>{character.name}</h2>
+          <div style={{ ...muted, fontSize: 13 }}>{character.class}</div>
+          <div style={{ ...muted, fontSize: 12, marginTop: 4, color: isOnline ? "#22c55e" : "#6b7280" }}>
+            {isOnline ? "● Online" : `Last seen ${ago}`}
+          </div>
+        </div>
+
+        <div>
+          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 4 }}>
+            <span style={{ color: "#9ca3af" }}><Icon name="player" size={10} /> Level {character.level}</span>
+          </div>
+          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "#9ca3af", marginBottom: 4 }}>
+            <span><Icon name="heart" size={10} /> HP</span>
+            <span style={{ color: hpPct < 0.25 ? "#fca5a5" : "#f5f5f5" }}>{character.hp} / {character.max_hp}</span>
+          </div>
+          <div style={{ height: 6, background: "#1d1f23", borderRadius: 3, overflow: "hidden", marginBottom: 12 }}>
+            <div style={{ width: `${hpPct * 100}%`, height: "100%", background: hpPct < 0.25 ? "#dc2626" : hpPct < 0.5 ? "#d97706" : "#16a34a", transition: "width 0.3s" }} />
+          </div>
+
+          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "#9ca3af", marginBottom: 4 }}>
+            <span><Icon name="lightning-sword" size={10} /> XP</span>
+            <span style={{ color: "#f5f5f5" }}>{xpIntoLevel} / {xpSpan}</span>
+          </div>
+          <div style={{ height: 6, background: "#1d1f23", borderRadius: 3, overflow: "hidden" }}>
+            <div style={{ width: `${xpPct * 100}%`, height: "100%", background: "#6366f1", transition: "width 0.3s" }} />
+          </div>
+        </div>
+      </div>
+    </>
   );
 }
 
@@ -3557,12 +3644,14 @@ function ShopCard({
   onBuy,
   onHaggle,
   onBuyStaple,
+  onRefresh,
 }: {
   shop: ShopResponse;
   navOverlay?: React.ReactNode;
   onBuy: (id: number, name: string) => void;
   onHaggle: (id: number) => void;
   onBuyStaple: (id: string) => void;
+  onRefresh: () => void;
 }) {
   const hero = navOverlay
     ? <LocationHero src={shop.art_url} label="Shop" nav={navOverlay} />
@@ -3609,7 +3698,10 @@ function ShopCard({
   return (
     <div style={card}>
       {hero}
-      <h2 style={h2}>Shop</h2>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
+        <h2 style={{ ...h2, margin: 0 }}>Shop</h2>
+        <button onClick={onRefresh} style={refreshBtn}>↺ Refresh</button>
+      </div>
       <p style={muted}>
         {available.length}/{shop.stock.length} items available · you have{" "}
         <strong style={{ color: "#fbbf24" }}>{shop.gold}g</strong> · {capUsed}/{cap} bought
@@ -4143,7 +4235,10 @@ function PubCard({
       {navOverlay
         ? <LocationHero src={pub.art_url} label="The Pub" nav={navOverlay} />
         : pub.art_url ? <Banner src={pub.art_url} alt="The Pub" /> : null}
-      {!navOverlay && <h2 style={h2}><Icon name="beer" size={18} /> The Pub</h2>}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: navOverlay ? 0 : undefined }}>
+        {!navOverlay && <h2 style={{ ...h2, margin: 0 }}><Icon name="beer" size={18} /> The Pub</h2>}
+        <button onClick={onRefresh} style={{ ...refreshBtn, marginLeft: "auto" }}>↺ Refresh</button>
+      </div>
       <p style={{ ...muted, marginTop: 4 }}>
         <em>"Smoke, sawdust, a thousand failed deployments worth of regret in the air."</em>
       </p>
@@ -5717,6 +5812,16 @@ const kbd: React.CSSProperties = {
   padding: "2px 6px",
   borderRadius: 4,
   fontSize: 13,
+};
+const refreshBtn: React.CSSProperties = {
+  background: "none",
+  border: "1px solid #2a2d33",
+  borderRadius: 5,
+  color: "#9ca3af",
+  cursor: "pointer",
+  fontSize: 11,
+  padding: "3px 8px",
+  fontFamily: "inherit",
 };
 const smallBadge: React.CSSProperties = {
   fontSize: 10,
