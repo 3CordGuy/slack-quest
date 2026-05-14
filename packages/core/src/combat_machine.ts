@@ -360,10 +360,11 @@ export type CombatEvent =
 // boss-tier (tier 5+) take real swings to land. Armor still mitigates
 // landed damage in resolveMonsterHit — it doesn't double-up here as AC.
 const MONSTER_BASE_AC = 8;
-const FIGHTER_AC = 10;
-// AC scales at half the tier rate so high-tier fights aren't dominated by
-// misses. L5 fighter (attack_mod +2) vs tier-5 monster (AC 10) now needs
-// d20 ≥ 8 for a 65% hit rate instead of the old AC 15 → 40% hit rate.
+// Fighter AC scales with level so high-tier monsters can't auto-hit.
+// Base 10 + floor(level/2): level 1 → 10, level 10 → 15, level 16 → 18.
+export const fighterAc = (level: number) => 10 + Math.floor(level / 2);
+// Monster AC scales at half the tier rate; player attack_mod (augmented by
+// level in the host app) stays meaningful throughout progression.
 export const monsterAc = (tier: number) => MONSTER_BASE_AC + Math.max(0, Math.floor(tier / 2));
 
 export interface StepResult {
@@ -854,10 +855,13 @@ function handleMonsterAct(state: CombatState, roll: RollFn): StepResult {
   }
 
   // ── d20 to-hit ──
+  // Modifier grows at half-tier + 4 so it never auto-hits even at high tiers.
+  // Fighter AC = 10 + floor(level/2) so the miss window stays meaningful.
   const d20 = roll(20);
-  const modifier = s.monster.tier;
+  const modifier = Math.floor(s.monster.tier / 2) + 4;
   const hitTotal = d20 + modifier;
-  const landed = hitTotal >= FIGHTER_AC;
+  const targetAc = fighterAc(target.level);
+  const landed = hitTotal >= targetAc;
   events.push({
     type: "roll",
     actor: MONSTER_ID,
@@ -872,7 +876,7 @@ function handleMonsterAct(state: CombatState, roll: RollFn): StepResult {
     roll: d20,
     modifier,
     total: hitTotal,
-    ac: FIGHTER_AC,
+    ac: targetAc,
     hit: landed,
   });
 
@@ -1068,6 +1072,12 @@ function handleSignature(
 
   const cls = classByName(tickedActor.class);
   const partySize = s.fighters.filter((f) => f.hp > 0).length;
+  const sigRolls: { sides: number; value: number }[] = [];
+  const trackRoll = (sides: number) => {
+    const v = roll(sides);
+    sigRolls.push({ sides, value: v });
+    return v;
+  };
   const sig = resolveSignature(
     cls.id,
     tickedActor.attack_mod,
@@ -1076,7 +1086,7 @@ function handleSignature(
     s.monster.tier,
     partySize,
     s.monster.max_hp,
-    roll,
+    trackRoll,
   );
 
   const oldHp = s.monster.hp;
@@ -1090,6 +1100,13 @@ function handleSignature(
   const manaSpent = mageFreeSig ? 0 : 1;
   const events: CombatEvent[] = [
     ...tick.events,
+    ...sigRolls.map((r) => ({
+      type: "roll" as const,
+      actor: action.actor,
+      die: `d${r.sides}`,
+      value: r.value,
+      purpose: "signature" as const,
+    })),
     {
       type: "signature_used",
       actor: action.actor,
@@ -1154,7 +1171,8 @@ function handleFlee(
   const modifier = Math.max(tickedActor.attack_mod, tickedActor.magic_mod);
   const dc = 10 + s.monster.tier;
   const total = d20 + modifier;
-  const success = total >= dc;
+  // Natural 20 always escapes — a perfect roll should never punish the player.
+  const success = d20 === 20 || total >= dc;
 
   const events: CombatEvent[] = [
     ...tick.events,

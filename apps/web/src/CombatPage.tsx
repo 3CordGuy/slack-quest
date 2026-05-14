@@ -56,6 +56,10 @@ interface CombatState {
   turn_index: number;
   round: number;
   status: "pending" | "active" | "victory" | "defeat" | "fled";
+  ability_state?: {
+    mark?: { marked_by: string; expires_after_round: number };
+    [key: string]: unknown;
+  };
 }
 
 const MONSTER_ID = "__monster__";
@@ -281,10 +285,20 @@ interface OutcomeSummary {
   dungeon_room_cleared?: boolean;
 }
 
+type LogEntry =
+  | { kind?: "entry"; id: number; content: React.ReactNode; tone: "info" | "good" | "bad" | "muted" | "flavor" }
+  | { kind: "divider"; id: number; label: string }
+  | {
+      kind: "monster_hit"; id: number;
+      monsterName: string; targetName: string;
+      raw_damage: number; damage_after_armor: number;
+      damage_after_position: number; shield_absorbed: number; hp_damage: number;
+    };
+
 interface UiState {
   connection: "connecting" | "open" | "closed";
   state: CombatState | null;
-  log: { id: number; content: React.ReactNode; tone: "info" | "good" | "bad" | "muted" | "flavor" }[];
+  log: LogEntry[];
   error: string | null;
   outcome: OutcomeSummary | null;
 }
@@ -339,7 +353,7 @@ function formatEvent(e: CombatEvent, state: CombatState | null): UiState["log"] 
   const row = (
     icon: string | null,
     content: React.ReactNode,
-    tone: UiState["log"][number]["tone"],
+    tone: Extract<LogEntry, { kind?: "entry" }>["tone"],
   ): UiState["log"] => [{
     id: nextLogId++,
     content: icon ? <><Icon name={icon} /> {content}</> : content,
@@ -348,10 +362,15 @@ function formatEvent(e: CombatEvent, state: CombatState | null): UiState["log"] 
   switch (e.type) {
     case "begin":
       return row("crossed-swords", "Combat begins. Rolling initiative…", "info");
-    case "turn_start":
-      return row("perspective-dice-one", <>{nameOf(e.actor)}'s turn (round {e.round})</>, "muted");
+    case "turn_start": {
+      const actor = nameOf(e.actor);
+      const label = actor === (state?.monster.name ?? "monster")
+        ? `Monster's Turn · Round ${e.round}`
+        : `${actor}'s Turn · Round ${e.round}`;
+      return [{ kind: "divider", id: nextLogId++, label }];
+    }
     case "roll":
-      return row("perspective-dice-six", <>{nameOf(e.actor)} rolled {e.die} → {e.value}  ·  {e.purpose}</>, "muted");
+      return row("perspective-dice-six", <>{nameOf(e.actor)} rolled {e.die} → <strong>{e.value}</strong> ({PURPOSE_LABEL[e.purpose] ?? e.purpose})</>, "muted");
     case "hit_check":
       return row(
         e.hit ? "crossed-swords" : "x-mark",
@@ -363,16 +382,17 @@ function formatEvent(e: CombatEvent, state: CombatState | null): UiState["log"] 
     case "player_hit":
       return row("blast", <>{nameOf(e.actor)} → {nameOf(e.target)}: {e.damage}{e.crit ? " (CRIT)" : ""}  [{e.formula}]</>, "good");
     case "monster_attack":
-      return row(
-        "fire-symbol",
-        <>monster → {nameOf(e.target)}: {e.hp_damage} hp
-          {e.shield_absorbed > 0 ? ` (+${e.shield_absorbed} shield)` : ""}
-          {e.damage_after_position !== e.damage_after_armor
-            ? ` [pos→ -${e.damage_after_armor - e.damage_after_position} mit]`
-            : ""}
-        </>,
-        "bad",
-      );
+      return [{
+        kind: "monster_hit" as const,
+        id: nextLogId++,
+        monsterName: state?.monster.name ?? "Monster",
+        targetName: nameOf(e.target),
+        raw_damage: e.raw_damage,
+        damage_after_armor: e.damage_after_armor,
+        damage_after_position: e.damage_after_position,
+        shield_absorbed: e.shield_absorbed,
+        hp_damage: e.hp_damage,
+      }];
     case "boss_phase_transition":
       return row("fire", "The boss enters phase 2!", "bad");
     case "fighter_down":
@@ -465,7 +485,7 @@ function formatEvent(e: CombatEvent, state: CombatState | null): UiState["log"] 
       return row("fairy-wand", <>Regression Shield — {summary}.</>, "good");
     }
     case "ability_vanish":
-      return row("plain-dagger", <>{nameOf(e.actor)} vanishes — untargetable for {e.swings} swings.</>, "good");
+      return row("player-dodge", <>{nameOf(e.actor)} vanishes — untargetable for {e.swings} swings.</>, "good");
     case "ability_soul_drain":
       return row("death-skull", <>Soul Drain: {e.damage} dmg, +{e.healed} HP  [{e.formula}]</>, "good");
     case "ability_battle_hymn":
@@ -480,7 +500,7 @@ function formatEvent(e: CombatEvent, state: CombatState | null): UiState["log"] 
       return row("cubes", "The monster's swing fizzles — containerized.", "good");
     case "monster_target_redirected":
       return row(
-        e.reason === "taunt" ? "shield" : "plain-dagger",
+        e.reason === "taunt" ? "shield" : "player-dodge",
         e.reason === "taunt"
           ? <>Taunt redirects: {nameOf(e.from)} → {nameOf(e.to)}</>
           : <>Vanish slips {nameOf(e.from)} — monster picks {nameOf(e.to)} instead.</>,
@@ -488,7 +508,7 @@ function formatEvent(e: CombatEvent, state: CombatState | null): UiState["log"] 
       );
     case "monster_target_blocked":
       return row(
-        "plain-dagger",
+        "player-dodge",
         <>Vanish blocks the attack — the monster can't find a target.</>,
         "good",
       );
@@ -553,6 +573,9 @@ export function CombatPage({
   const logScrollRef = useRef<HTMLDivElement | null>(null);
   const [diceRolls, setDiceRolls] = useState<DiceRollEntry[]>([]);
   const diceRollCounterRef = useRef(0);
+  // Delay victory modal until after dice settle so player sees the killing blow.
+  const [victoryModalReady, setVictoryModalReady] = useState(false);
+  const [defeatModalReady, setDefeatModalReady] = useState(false);
 
   // Inventory loaded once on mount; refreshed after each item_used event so
   // the picker reflects post-use state. Authoritative source is D1 via
@@ -589,9 +612,13 @@ export function CombatPage({
           | { type: "log_replay"; events: unknown[] };
         if (msg.type === "state") dispatch({ kind: "state", value: msg.state });
         else if (msg.type === "events") {
-          dispatch({ kind: "events", value: msg.events });
+          // Show dice first. Delay the state update (HP bars, log, turn
+          // advance) until after the roll animation settles so the player
+          // sees the dice result before the world reacts to it.
+          let hasRolls = false;
           for (const evt of msg.events) {
             if (evt.type === "roll") {
+              hasRolls = true;
               const id = ++diceRollCounterRef.current;
               const entry: DiceRollEntry = {
                 id,
@@ -601,9 +628,22 @@ export function CombatPage({
                 purpose: String(evt.purpose ?? ""),
               };
               setDiceRolls((prev) => [...prev.slice(-5), entry]);
-              setTimeout(() => setDiceRolls((prev) => prev.filter((r) => r.id !== id)), 7000);
+              setTimeout(() => setDiceRolls((prev) => prev.filter((r) => r.id !== id)), 14000);
+            }
+            // Fire passive toasts immediately so they appear while dice are visible.
+            if (evt.type === "passive_rogue_first_crit") {
+              toast("🗡 First Strike — guaranteed crit!", { icon: "⚡", duration: 4000 });
+            } else if (evt.type === "passive_warden_shield") {
+              toast(`🛡 Hardened Up — +${(evt as { amount: number }).amount} shield`, { duration: 3000 });
+            } else if (evt.type === "passive_mage_free_sig") {
+              toast("✨ First signature is free!", { duration: 3000 });
+            } else if (evt.type === "passive_paladin_auto_heal") {
+              toast(`💛 Lay on Hands — +${(evt as { amount: number }).amount} HP`, { duration: 3000 });
             }
           }
+          // 950ms ≈ tumble duration (700ms) + brief pause to read the value.
+          const delay = hasRolls ? 950 : 0;
+          setTimeout(() => dispatch({ kind: "events", value: msg.events }), delay);
         }
         else if (msg.type === "error") {
           toast.error(msg.message);
@@ -641,10 +681,13 @@ export function CombatPage({
   }, [questId]);
 
   // Auto-scroll log to bottom as new entries arrive.
+  // Depend on the last entry's id (not length) so the effect still fires
+  // once the log is capped at 50 and length stops changing.
+  const lastLogId = ui.log[ui.log.length - 1]?.id;
   useEffect(() => {
     const el = logScrollRef.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, [ui.log.length]);
+  }, [lastLogId]);
 
   function send(action: TurnAction) {
     const ws = wsRef.current;
@@ -667,6 +710,25 @@ export function CombatPage({
   const myTurn = currentActorId === selfId;
   const ended =
     state?.status === "victory" || state?.status === "defeat" || state?.status === "fled";
+
+  // Gate victory/defeat modals so they don't interrupt dice animation.
+  // If dice are rolling when combat ends, wait for them to settle (~1.8s).
+  useEffect(() => {
+    if (state?.status !== "victory") { setVictoryModalReady(false); return; }
+    const delay = diceRolls.length > 0 ? 1800 : 0;
+    const t = setTimeout(() => setVictoryModalReady(true), delay);
+    return () => clearTimeout(t);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state?.status]);
+
+  useEffect(() => {
+    if (state?.status !== "defeat" && state?.status !== "fled") { setDefeatModalReady(false); return; }
+    const delay = diceRolls.length > 0 ? 1800 : 0;
+    const t = setTimeout(() => setDefeatModalReady(true), delay);
+    return () => clearTimeout(t);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state?.status]);
+
   const me = state?.fighters.find((f) => f.id === selfId);
   const myMana = me?.mana ?? 0;
   const myAbility = me ? ABILITY_BY_CLASS[me.class] ?? null : null;
@@ -723,18 +785,8 @@ export function CombatPage({
 
       {state && (
         <div style={combatGrid}>
-          {/* ── Left column: enemy · initiative · party · dice ── */}
+          {/* ── Left column: initiative · enemy · party ── */}
           <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-            <MonsterCard
-              monster={state.monster}
-              round={state.round}
-              showSageReading={me?.class === "Staff Sage"}
-            />
-            {!myTurn && state.status === "active" && currentActorId === MONSTER_ID && (
-              <button style={{ ...button, marginTop: 0, background: "#5c1f1f" }} onClick={() => send({ kind: "monster_act" })}>
-                ⚔️ Resolve monster turn
-              </button>
-            )}
             <InitiativeTrack
               order={state.turn_order}
               currentIndex={state.turn_index % state.turn_order.length}
@@ -742,6 +794,17 @@ export function CombatPage({
               monster={state.monster}
               selfId={selfId}
             />
+            <MonsterCard
+              monster={state.monster}
+              round={state.round}
+              showSageReading={me?.class === "Staff Sage"}
+              isMarked={!!(state.ability_state?.mark && state.round <= state.ability_state.mark.expires_after_round)}
+            />
+            {!myTurn && state.status === "active" && currentActorId === MONSTER_ID && (
+              <button style={{ ...button, marginTop: 0, background: "#5c1f1f" }} onClick={() => send({ kind: "monster_act" })}>
+                <Icon name="dragon-head" /> Resolve monster turn
+              </button>
+            )}
             <PartySection fighters={state.fighters} currentActorId={currentActorId} selfId={selfId} />
           </div>
 
@@ -804,13 +867,13 @@ export function CombatPage({
               />
             )}
             <EventLog log={ui.log} scrollRef={logScrollRef} />
-            {ended && state.status !== "victory" && (
-              <EndBanner
-                status={state.status as "defeat" | "fled"}
-                outcome={ui.outcome}
-                selfId={selfId}
-                fighters={state.fighters}
-              />
+            {ended && state.status !== "victory" && !defeatModalReady && (
+              <div style={{ ...card, borderColor: "#7c2020", background: "#28100f", textAlign: "center" }}>
+                <div style={{ fontSize: 28, fontWeight: 800, color: "#fca5a5" }}>
+                  <Icon name="death-skull" /> {state.status === "fled" ? "ESCAPED" : "DEFEAT"}
+                </div>
+                <p style={{ ...muted, fontSize: 13 }}>Resolving outcome…</p>
+              </div>
             )}
           </div>
         </div>
@@ -818,9 +881,20 @@ export function CombatPage({
 
       <DiceRollDisplay rolls={diceRolls} />
 
-      {/* Victory modal — overlays everything */}
-      {ended && state?.status === "victory" && (
+      {/* Victory modal — delayed until dice settle */}
+      {ended && state?.status === "victory" && victoryModalReady && (
         <VictoryModal
+          outcome={ui.outcome}
+          selfId={selfId}
+          fighters={state.fighters}
+          onBack={exit}
+        />
+      )}
+
+      {/* Defeat / fled modal — delayed until dice settle */}
+      {ended && state?.status !== "victory" && defeatModalReady && (
+        <DefeatModal
+          status={state.status as "defeat" | "fled"}
           outcome={ui.outcome}
           selfId={selfId}
           fighters={state.fighters}
@@ -835,39 +909,63 @@ function MonsterCard({
   monster,
   round,
   showSageReading,
+  isMarked = false,
 }: {
   monster: Monster;
   round: number;
   showSageReading: boolean;
+  isMarked?: boolean;
 }) {
   // Sage's Reading — passive tells the Sage the monster's tier-derived swing range.
   const sageLo = 1 + monster.tier;
   const sageHi = 6 + monster.tier + (monster.is_boss && monster.boss_phase === 2 ? monster.tier : 0);
   return (
-    <div style={{ ...card, borderColor: "#7c2020", display: "flex", gap: 16, alignItems: "flex-start" }}>
-      {monster.art_url ? (
-        <img
-          src={monster.art_url}
-          alt={monster.name}
-          style={{
-            width: 96,
-            height: 96,
-            borderRadius: 10,
-            objectFit: "cover",
-            flexShrink: 0,
-            border: "1px solid #7c2020",
-          }}
-          onError={(e) => { e.currentTarget.style.display = "none"; }}
-        />
-      ) : (
+    <div style={{ ...card, borderColor: isMarked ? "#f59e0b" : "#7c2020", display: "flex", gap: 16, alignItems: "flex-start", position: "relative" }}>
+      {/* Marked target indicator */}
+      {isMarked && (
         <div style={{
-          width: 96, height: 96, borderRadius: 10, flexShrink: 0,
-          background: "#1d1f23", border: "1px solid #7c2020",
-          display: "flex", alignItems: "center", justifyContent: "center",
+          position: "absolute",
+          top: -10,
+          right: -10,
+          width: 36,
+          height: 36,
+          borderRadius: "50%",
+          background: "#78350f",
+          border: "2px solid #f59e0b",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          zIndex: 10,
+          boxShadow: "0 0 12px #f59e0b80",
         }}>
-          <Icon name="dragon-head" size={40} color="#7c2020" />
+          <Icon name="targeted" size={20} color="#fbbf24" />
         </div>
       )}
+      {/* Portrait */}
+      <div style={{ position: "relative", flexShrink: 0 }}>
+        {monster.art_url ? (
+          <img
+            src={monster.art_url}
+            alt={monster.name}
+            style={{
+              width: 96,
+              height: 96,
+              borderRadius: 10,
+              objectFit: "cover",
+              border: `1px solid ${isMarked ? "#f59e0b" : "#7c2020"}`,
+            }}
+            onError={(e) => { e.currentTarget.style.display = "none"; }}
+          />
+        ) : (
+          <div style={{
+            width: 96, height: 96, borderRadius: 10,
+            background: "#1d1f23", border: `1px solid ${isMarked ? "#f59e0b" : "#7c2020"}`,
+            display: "flex", alignItems: "center", justifyContent: "center",
+          }}>
+            <Icon name="dragon-head" size={40} color={isMarked ? "#f59e0b" : "#7c2020"} />
+          </div>
+        )}
+      </div>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
           <div>
@@ -909,29 +1007,79 @@ function InitiativeTrack({
 }) {
   return (
     <div style={card}>
-      <div style={{ ...muted, fontSize: 11, textTransform: "uppercase", letterSpacing: 1.5, marginBottom: 8 }}>
+      <div style={{ ...muted, fontSize: 11, textTransform: "uppercase", letterSpacing: 1.5, marginBottom: 10 }}>
         Initiative
       </div>
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-start" }}>
         {order.map((id, i) => {
-          const name = id === MONSTER_ID ? monster.name : fighters.find((f) => f.id === id)?.name ?? id;
-          const init = id === MONSTER_ID ? monster.initiative : fighters.find((f) => f.id === id)?.initiative ?? 0;
+          const isMonster = id === MONSTER_ID;
+          const fighter = isMonster ? null : fighters.find((f) => f.id === id);
+          const name = isMonster ? monster.name : fighter?.name ?? id;
+          const init = isMonster ? monster.initiative : fighter?.initiative ?? 0;
           const isCurrent = i === currentIndex;
           const isSelf = id === selfId;
+          const portrait = isMonster ? null : classPortraitUrl(fighter?.class ?? "");
+          const borderColor = isCurrent ? "#b89b3a" : isSelf ? "#3a7bd5" : "#2a2d33";
+          const AVATAR = 72;
+          const RADIUS = 10;
           return (
-            <div
-              key={id}
-              style={{
-                padding: "8px 12px",
-                borderRadius: 20,
-                background: isCurrent ? "#b89b3a" : "#1d1f23",
-                color: isCurrent ? "#0e0f12" : "#e6e6e6",
-                fontSize: 13,
-                fontWeight: 600,
-                border: isSelf && !isCurrent ? "1px solid #3a7bd5" : "1px solid transparent",
-              }}
-            >
-              {name} · {init}
+            <div key={id} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6, width: AVATAR + 8 }}>
+              {/* avatar card */}
+              <div style={{
+                width: AVATAR + 4,
+                height: AVATAR + 4,
+                borderRadius: RADIUS + 2,
+                border: `2px solid ${borderColor}`,
+                boxShadow: isCurrent ? `0 0 12px ${borderColor}90, 0 0 4px ${borderColor}40` : "none",
+                background: isCurrent ? `${borderColor}18` : "#0e0f12",
+                overflow: "hidden",
+                transition: "box-shadow 300ms, border-color 300ms",
+                flexShrink: 0,
+              }}>
+                {portrait ? (
+                  <img
+                    src={portrait}
+                    alt={name}
+                    style={{ width: "100%", height: "100%", objectFit: "cover", display: "block", borderRadius: RADIUS }}
+                  />
+                ) : isMonster ? (
+                  <div style={{
+                    width: "100%", height: "100%", borderRadius: RADIUS,
+                    background: isCurrent ? "#3a0a0a" : "#1a0808",
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    fontSize: 32, color: isCurrent ? "#ef4444" : "#7a3030",
+                  }}>
+                    <Icon name="dragon-head" />
+                  </div>
+                ) : (
+                  <div style={{
+                    width: "100%", height: "100%", borderRadius: RADIUS,
+                    background: "#1d1f23",
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    fontSize: 28, color: "#4a5568",
+                  }}>
+                    <Icon name="player" />
+                  </div>
+                )}
+              </div>
+              {/* name + init */}
+              <div style={{ textAlign: "center" }}>
+                <div style={{
+                  fontSize: 11, fontWeight: isCurrent ? 700 : 500,
+                  color: isCurrent ? "#f5f5f5" : "#9aa0a6",
+                  maxWidth: AVATAR + 8,
+                  overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                }}>
+                  {isMonster ? "Monster" : (isSelf ? "You" : name.split(" ")[0])}
+                </div>
+                <div style={{
+                  fontSize: 13, fontWeight: 700,
+                  color: isCurrent ? "#b89b3a" : "#6b7280",
+                  marginTop: 1,
+                }}>
+                  {init}
+                </div>
+              </div>
             </div>
           );
         })}
@@ -1122,7 +1270,7 @@ const ABILITY_BY_CLASS: Record<string, AbilityUiSpec> = {
   "SRE Warden":      { id: "taunt",              name: "Taunt",             iconName: "shield",           mana_cost: 2, blurb: "Monster targets you for 2 swings" },
   "DevOps Mage":     { id: "containerize",       name: "Containerize",      iconName: "cubes",            mana_cost: 2, blurb: "Monster skips next swing" },
   "QA Paladin":      { id: "regression_shield",  name: "Regression Shield", iconName: "fairy-wand",       mana_cost: 2, blurb: "+3 shield to all party" },
-  "Refactor Rogue":  { id: "vanish",             name: "Vanish",            iconName: "plain-dagger",     mana_cost: 2, blurb: "Untargetable for 2 swings" },
+  "Refactor Rogue":  { id: "vanish",             name: "Vanish",            iconName: "player-dodge",     mana_cost: 2, blurb: "Untargetable for 2 swings" },
   "Data Warlock":    { id: "soul_drain",         name: "Soul Drain",        iconName: "death-skull",      mana_cost: 2, blurb: "1d6+mag dmg, heal 50%" },
   "Frontend Bard":   { id: "battle_hymn",        name: "Battle Hymn",       iconName: "aura",             mana_cost: 2, blurb: "+2 dmg on next 2 party attacks" },
   "Staff Sage":      { id: "foresee",            name: "Foresee",           iconName: "scroll-unfurled",  mana_cost: 1, blurb: "Read monster's next target" },
@@ -1268,6 +1416,18 @@ function MigratePicker({
   );
 }
 
+function combatItemEffect(item: InventoryItem): React.ReactNode {
+  const p = item.power;
+  switch (item.item_type) {
+    case "consumable": return <>Restores {p} HP. Single-use.</>;
+    case "magic":      return <>+{p} max mana permanently (capped at 5).</>;
+    case "revive":     return <>Revive a downed ally to {p}% HP.</>;
+    case "tool":
+    case "scroll":     return <>Combat tool (power {p}).</>;
+    default:           return <>+{p} power.</>;
+  }
+}
+
 function ItemPicker({
   items,
   onPickNoTarget,
@@ -1275,8 +1435,8 @@ function ItemPicker({
   onCancel,
 }: {
   items: InventoryItem[];
-  onPickNoTarget: (id: number) => void;       // consumable / magic / tool / scroll
-  onPickRevive: (id: number) => void;          // needs a target picker step
+  onPickNoTarget: (id: number) => void;
+  onPickRevive: (id: number) => void;
   onCancel: () => void;
 }) {
   const usable = items.filter((i) => isCombatUsable(i.item_type));
@@ -1304,18 +1464,19 @@ function ItemPicker({
               display: "flex",
               flexDirection: "column",
               alignItems: "flex-start",
-              gap: 2,
+              gap: 4,
             }}
           >
-            <span style={{ display: "flex", justifyContent: "space-between", width: "100%" }}>
+            <span style={{ display: "flex", justifyContent: "space-between", width: "100%", alignItems: "baseline" }}>
               <span style={{ fontWeight: 600 }}>{it.item_name}</span>
-              <span style={{ ...muted, fontSize: 12 }}>
-                {it.item_type} · {it.rarity} · +{it.power}
-              </span>
+              <span style={{ ...muted, fontSize: 11 }}>{it.rarity}</span>
+            </span>
+            <span style={{ fontSize: 12, color: "#86efac" }}>
+              {combatItemEffect(it)}
             </span>
             {it.flavor && (
               <span style={{ ...muted, fontSize: 11, fontStyle: "italic" }}>
-                {it.flavor}
+                "{it.flavor}"
               </span>
             )}
           </button>
@@ -1468,6 +1629,66 @@ function ActionBtn({
   );
 }
 
+function MonsterHitEntry({ line }: { line: Extract<LogEntry, { kind: "monster_hit" }> }) {
+  const [open, setOpen] = useState(false);
+  const armorReduction = line.raw_damage - line.damage_after_armor;
+  const positionReduction = line.damage_after_armor - line.damage_after_position;
+
+  const tags: string[] = [];
+  if (armorReduction > 0) tags.push(`−${armorReduction} armor`);
+  if (positionReduction > 0) tags.push(`−${positionReduction} back row`);
+  if (line.shield_absorbed > 0) tags.push(`−${line.shield_absorbed} shield`);
+
+  const badColor = TONE_COLOR["bad"];
+  const mutedColor = TONE_COLOR["muted"];
+
+  return (
+    <div style={{ color: badColor }}>
+      <span>
+        <Icon name="fire-symbol" />{" "}
+        {line.monsterName} hits {line.targetName} for{" "}
+        <strong>{line.hp_damage} HP</strong>
+        {tags.length > 0 && <span style={{ color: mutedColor }}> ({tags.join(", ")})</span>}
+        {" "}
+        <button
+          onClick={() => setOpen((v) => !v)}
+          style={{
+            background: "none", border: "1px solid #3a3d44", borderRadius: 3,
+            color: mutedColor, cursor: "pointer", fontSize: 10, padding: "1px 5px",
+            fontFamily: "inherit", verticalAlign: "middle", lineHeight: 1.4,
+          }}
+        >
+          {open ? "▲ Hide" : "Details ▼"}
+        </button>
+      </span>
+      {open && (
+        <div style={{
+          marginTop: 6, marginLeft: 18, padding: "6px 10px",
+          background: "#131519", borderRadius: 6, border: "1px solid #2a2d33",
+          fontSize: 11, color: mutedColor, display: "grid",
+          gridTemplateColumns: "max-content 1fr", gap: "3px 12px",
+        }}>
+          <span>⚔ Raw damage</span><span style={{ color: "#e5e7eb" }}>{line.raw_damage}</span>
+          {armorReduction > 0 && <>
+            <span>🛡 Armor</span>
+            <span>−{armorReduction} → <span style={{ color: "#e5e7eb" }}>{line.damage_after_armor}</span></span>
+          </>}
+          {positionReduction > 0 && <>
+            <span>↩ Back row</span>
+            <span>−{positionReduction} → <span style={{ color: "#e5e7eb" }}>{line.damage_after_position}</span></span>
+          </>}
+          {line.shield_absorbed > 0 && <>
+            <span>🔷 Shield</span>
+            <span>−{line.shield_absorbed} absorbed</span>
+          </>}
+          <span style={{ borderTop: "1px solid #2a2d33", paddingTop: 3 }}>❤ HP lost</span>
+          <span style={{ borderTop: "1px solid #2a2d33", paddingTop: 3, color: badColor, fontWeight: 600 }}>{line.hp_damage}</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function EventLog({
   log,
   scrollRef,
@@ -1495,14 +1716,88 @@ function EventLog({
         }}
       >
         {log.length === 0 && <span style={muted}>Waiting for events…</span>}
-        {log.map((line) => (
-          <div key={line.id} style={{ color: TONE_COLOR[line.tone] }}>
-            {line.content}
-          </div>
-        ))}
+        {log.map((line) => {
+          if (line.kind === "divider") {
+            return (
+              <div key={line.id} style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+                margin: "6px 0 2px",
+                color: "#4b5563",
+                fontSize: 10,
+                textTransform: "uppercase",
+                letterSpacing: 1,
+              }}>
+                <div style={{ flex: 1, height: 1, background: "#2a2d33" }} />
+                {line.label}
+                <div style={{ flex: 1, height: 1, background: "#2a2d33" }} />
+              </div>
+            );
+          }
+          if (line.kind === "monster_hit") {
+            return <MonsterHitEntry key={line.id} line={line} />;
+          }
+          return (
+            <div key={line.id} style={{ color: TONE_COLOR[line.tone ?? "info"] }}>
+
+              {line.content}
+            </div>
+          );
+        })}
       </div>
     </div>
   );
+}
+
+function ConfettiOverlay() {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    const colors = ["#86efac", "#fbbf24", "#a855f7", "#7dd3fc", "#fb7185", "#34d399", "#f9a8d4"];
+    interface Particle { x: number; y: number; vx: number; vy: number; color: string; w: number; h: number; rot: number; rotV: number }
+    const particles: Particle[] = Array.from({ length: 90 }, () => ({
+      x: Math.random() * canvas.width,
+      y: -20 - Math.random() * 120,
+      vx: (Math.random() - 0.5) * 3,
+      vy: 2.5 + Math.random() * 3,
+      color: colors[Math.floor(Math.random() * colors.length)],
+      w: 7 + Math.random() * 9,
+      h: 4 + Math.random() * 5,
+      rot: Math.random() * Math.PI * 2,
+      rotV: (Math.random() - 0.5) * 0.18,
+    }));
+    let frame: number;
+    let t = 0;
+    function draw() {
+      ctx!.clearRect(0, 0, canvas!.width, canvas!.height);
+      t++;
+      for (const p of particles) {
+        p.x += p.vx + Math.sin(t / 18 + p.x * 0.05) * 0.6;
+        p.y += p.vy;
+        p.rot += p.rotV;
+        if (p.y > canvas!.height + 20) p.y = -20;
+        ctx!.save();
+        ctx!.translate(p.x, p.y);
+        ctx!.rotate(p.rot);
+        const alpha = t > 200 ? Math.max(0, 1 - (t - 200) / 60) : 1;
+        ctx!.globalAlpha = alpha;
+        ctx!.fillStyle = p.color;
+        ctx!.fillRect(-p.w / 2, -p.h / 2, p.w, p.h);
+        ctx!.restore();
+      }
+      if (t < 260) frame = requestAnimationFrame(draw);
+      else ctx!.clearRect(0, 0, canvas!.width, canvas!.height);
+    }
+    frame = requestAnimationFrame(draw);
+    return () => cancelAnimationFrame(frame);
+  }, []);
+  return <canvas ref={canvasRef} style={{ position: "fixed", inset: 0, pointerEvents: "none", zIndex: 200 }} />;
 }
 
 function VictoryModal({
@@ -1519,6 +1814,8 @@ function VictoryModal({
   const dungeonRoom = outcome?.dungeon_room_cleared;
   const title = dungeonRoom ? "ROOM CLEARED" : "VICTORY";
   return (
+    <>
+    <ConfettiOverlay />
     <div style={{
       position: "fixed",
       inset: 0,
@@ -1574,6 +1871,101 @@ function VictoryModal({
         </button>
       </div>
     </div>
+    </>
+  );
+}
+
+function DefeatModal({
+  status,
+  outcome,
+  selfId,
+  fighters,
+  onBack,
+}: {
+  status: "defeat" | "fled";
+  outcome: OutcomeSummary | null;
+  selfId: string;
+  fighters: Fighter[];
+  onBack: () => void;
+}) {
+  const fled = status === "fled";
+  return (
+    <div style={{
+      position: "fixed", inset: 0,
+      background: "rgba(0,0,0,0.92)",
+      display: "flex", alignItems: "center", justifyContent: "center",
+      zIndex: 100, padding: 24,
+    }}>
+      <div style={{
+        background: fled ? "#241e0d" : "#1c0a09",
+        border: `2px solid ${fled ? "#b89b3a" : "#7c2020"}`,
+        borderRadius: 16, padding: 32,
+        maxWidth: 520, width: "100%", maxHeight: "85vh", overflowY: "auto", boxSizing: "border-box",
+      }}>
+        <div style={{ textAlign: "center", marginBottom: 20 }}>
+          <Icon name={fled ? "footprint" : "death-skull"} size={48} color={fled ? "#facc15" : "#ef4444"} />
+          <div style={{ fontSize: 36, fontWeight: 800, color: fled ? "#facc15" : "#fca5a5", marginTop: 8 }}>
+            {fled ? "ESCAPED" : "DEFEAT"}
+          </div>
+          {!fled && (
+            <p style={{ ...muted, fontSize: 13, marginTop: 4 }}>The party has fallen.</p>
+          )}
+        </div>
+
+        {!outcome && <p style={{ ...muted, textAlign: "center" }}>Resolving outcome…</p>}
+        {outcome && (
+          <div style={{ display: "grid", gap: 10, marginBottom: 16 }}>
+            {outcome.rewards.map((r) => {
+              const fighter = fighters.find((f) => f.id === r.user_id);
+              const isSelf = r.user_id === selfId;
+              const sd = r.soft_death;
+              return (
+                <div key={r.user_id} style={{
+                  padding: 14, borderRadius: 10,
+                  background: "#0e0f12",
+                  border: `1px solid ${isSelf ? "#7c2020" : "#1e1e1e"}`,
+                }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: sd ? 10 : 0 }}>
+                    <span style={{ fontWeight: 700, color: "#f5f5f5" }}>
+                      {fighter?.name ?? r.user_id}
+                      {isSelf && <span style={{ ...muted, fontSize: 12, marginLeft: 6 }}>(you)</span>}
+                    </span>
+                    {!sd && <span style={{ ...muted, fontSize: 12 }}>survived</span>}
+                  </div>
+                  {sd && (
+                    <div style={{ display: "grid", gap: 6 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 15, color: "#fbbf24" }}>
+                        <Icon name="death-skull" size={16} color="#ef4444" />
+                        <span style={{ color: "#fca5a5", fontWeight: 600 }}>Downed</span>
+                      </div>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 14, color: "#fbbf24" }}>
+                        <Icon name="gold-bar" size={14} color="#fbbf24" />
+                        <span>Lost <strong style={{ color: "#ef4444" }}>{sd.gold_lost}g</strong></span>
+                      </div>
+                      {sd.item_lost && (
+                        <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 14, color: "#e2e8f0" }}>
+                          <Icon name="drop-weapon" size={14} color="#f97316" />
+                          <span>Dropped <strong style={{ color: "#f97316" }}>{sd.item_lost}</strong></span>
+                        </div>
+                      )}
+                      {sd.scar && (
+                        <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 14, color: "#d1d5db" }}>
+                          <Icon name="bleeding-hearts" size={14} color="#dc2626" />
+                          <span>Scar: <em style={{ color: "#fca5a5" }}>"{sd.scar}"</em></span>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+        <button onClick={onBack} style={{ ...button, marginTop: 8, background: fled ? "#78350f" : "#7c2020" }}>
+          ← Back to town
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -1615,6 +2007,78 @@ function EndBanner({
           </p>
         </div>
       )}
+    </div>
+  );
+}
+
+const LOOT_ICON: Record<string, string> = {
+  weapon: "sword",
+  armor: "shield",
+  consumable: "potion",
+  magic: "crystal-ball",
+  revive: "crowned-heart",
+  tool: "hammer",
+  scroll: "scroll-unfurled",
+};
+
+const RARITY_COLOR: Record<string, string> = {
+  common: "#9aa0a6",
+  uncommon: "#22c55e",
+  rare: "#a855f7",
+};
+
+function LootCard({ item, index }: { item: LootDrop; index: number }) {
+  const color = RARITY_COLOR[item.rarity] ?? "#9aa0a6";
+  const icon  = LOOT_ICON[item.item_type] ?? "chest";
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 12,
+        background: "#111827",
+        border: `1.5px solid ${color}55`,
+        borderLeft: `4px solid ${color}`,
+        borderRadius: 8,
+        padding: "10px 14px",
+        animationName: "dice-roll-in",
+        animationDuration: "500ms",
+        animationDelay: `${index * 120}ms`,
+        animationTimingFunction: "cubic-bezier(0.22,1,0.36,1)",
+        animationFillMode: "both",
+      }}
+    >
+      <div
+        style={{
+          width: 40,
+          height: 40,
+          borderRadius: 8,
+          background: `${color}18`,
+          border: `1px solid ${color}44`,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          flexShrink: 0,
+          fontSize: 22,
+          color,
+        }}
+      >
+        <Icon name={icon} />
+      </div>
+      <div style={{ minWidth: 0 }}>
+        <div style={{ fontWeight: 700, fontSize: 15, color: "#f5f5f5", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+          {item.item_name}
+        </div>
+        <div style={{ fontSize: 11, color, textTransform: "capitalize", marginTop: 2 }}>
+          {item.rarity} {item.item_type}
+          {item.power > 0 && <span style={{ color: "#e2e8f0", marginLeft: 4 }}>+{item.power}</span>}
+        </div>
+        {item.flavor && (
+          <div style={{ fontSize: 11, color: "#6b7280", fontStyle: "italic", marginTop: 3 }}>
+            "{item.flavor}"
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -1669,11 +2133,9 @@ function RewardRow({
         </div>
       )}
       {reward.loot.length > 0 && (
-        <div style={{ marginTop: 6, display: "grid", gap: 4 }}>
+        <div style={{ marginTop: 10, display: "grid", gap: 8 }}>
           {reward.loot.map((it, i) => (
-            <div key={i} style={{ fontSize: 12, color: "#86efac" }}>
-              🎁 {it.item_name} · {it.rarity} {it.item_type} +{it.power}
-            </div>
+            <LootCard key={i} item={it} index={i} />
           ))}
         </div>
       )}
@@ -1762,6 +2224,18 @@ function DiceRollDisplay({ rolls }: { rolls: DiceRollEntry[] }) {
   );
 }
 
+const PURPOSE_LABEL: Record<string, string> = {
+  hit_check:      "To Hit",
+  damage_attack:  "Damage",
+  damage_cast:    "Spell Dmg",
+  damage_monster: "Monster Dmg",
+  signature:      "Signature",
+  heal:           "Healing",
+  shield:         "Shield",
+  flee_check:     "Escape",
+  initiative:     "Initiative",
+};
+
 function DiceFace({ roll }: { roll: DiceRollEntry }) {
   const maxFace = parseInt(roll.die.replace("d", ""), 10) || 20;
   const shape   = DIE_SHAPE[roll.die] ?? DEFAULT_SHAPE;
@@ -1785,8 +2259,8 @@ function DiceFace({ roll }: { roll: DiceRollEntry }) {
         setDisplay(Math.ceil(Math.random() * maxFace));
       }
     }, 50);
-    // Begin fade-out after 6s.
-    const fadeTimer = setTimeout(() => setFading(true), 6000);
+    // Begin fade-out after 10s.
+    const fadeTimer = setTimeout(() => setFading(true), 10000);
     return () => { clearInterval(iv); clearTimeout(fadeTimer); };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [roll.id]);
@@ -1854,7 +2328,6 @@ function DiceFace({ roll }: { roll: DiceRollEntry }) {
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
-        paddingTop: 8,
       }}>
         {isD6 && settled ? (
           <D6Pips value={display} color={numColor} />
@@ -1880,13 +2353,14 @@ function DiceFace({ roll }: { roll: DiceRollEntry }) {
           bottom: -18,
           left: "50%",
           transform: "translateX(-50%)",
-          fontSize: 9,
-          color: "#6b7280",
+          fontSize: 10,
+          color: "#9ca3af",
           whiteSpace: "nowrap",
-          fontFamily: "ui-monospace, monospace",
-          letterSpacing: 0.5,
+          fontFamily: "system-ui, sans-serif",
+          letterSpacing: 0.3,
+          fontWeight: 500,
         }}>
-          {roll.purpose}
+          {PURPOSE_LABEL[roll.purpose] ?? roll.purpose}
         </div>
       )}
     </div>
@@ -1914,55 +2388,104 @@ function D6Pips({ value, color }: { value: number; color: string }) {
 
 // ─── styles + helpers ──────────────────────────────────────────────────────
 
-function BigHpBar({ current, max }: { current: number; max: number }) {
+// Animated HP bar — the lost portion flashes red then shrinks away.
+function HpBarCore({
+  current,
+  max,
+  height,
+  borderRadius,
+  marginTop,
+  healthColor,
+}: {
+  current: number;
+  max: number;
+  height: number;
+  borderRadius: number;
+  marginTop: number;
+  healthColor: (pct: number) => string;
+}) {
   const pct = max > 0 ? Math.max(0, Math.min(1, current / max)) : 0;
-  const color = pct < 0.25 ? "#fca5a5" : pct < 0.5 ? "#fbbf24" : "#ef4444";
+  const color = healthColor(pct);
+  const prevPctRef = useRef(pct);
+  // damagePct: the "ghost" segment (right of the current bar) that flashes red
+  const [damagePct, setDamagePct] = useState(0);
+  const [damageVisible, setDamageVisible] = useState(false);
+
+  useEffect(() => {
+    const prev = prevPctRef.current;
+    if (pct < prev - 0.001) {
+      const lost = prev - pct;
+      setDamagePct(lost);
+      setDamageVisible(true);
+      // After 500ms flash, begin shrink by hiding
+      const hide = setTimeout(() => setDamageVisible(false), 500);
+      // After transition completes, zero out
+      const clear = setTimeout(() => setDamagePct(0), 1100);
+      prevPctRef.current = pct;
+      return () => { clearTimeout(hide); clearTimeout(clear); };
+    }
+    prevPctRef.current = pct;
+  }, [pct]);
+
   return (
-    <div
-      style={{
-        marginTop: 10,
-        width: "100%",
-        height: 14,
-        background: "#0e0f12",
-        borderRadius: 7,
-        overflow: "hidden",
-      }}
-    >
-      <div
-        style={{
-          width: `${pct * 100}%`,
+    <div style={{
+      marginTop,
+      width: "100%",
+      height,
+      background: "#0e0f12",
+      borderRadius,
+      overflow: "hidden",
+      position: "relative",
+    }}>
+      {/* Current HP */}
+      <div style={{
+        position: "absolute", left: 0, top: 0,
+        width: `${pct * 100}%`, height: "100%",
+        background: color,
+        transition: "width 300ms ease",
+        zIndex: 1,
+      }} />
+      {/* Damage ghost — sits right of current bar, flashes then shrinks */}
+      {damagePct > 0 && (
+        <div style={{
+          position: "absolute",
+          left: `${pct * 100}%`,
+          top: 0,
+          width: damageVisible ? `${damagePct * 100}%` : "0%",
           height: "100%",
-          background: color,
-          transition: "width 200ms ease",
-        }}
-      />
+          background: "#ef4444",
+          transition: damageVisible ? "none" : "width 600ms ease",
+          zIndex: 2,
+          opacity: damageVisible ? 1 : 0,
+        }} />
+      )}
     </div>
   );
 }
 
-function HpBar({ current, max }: { current: number; max: number }) {
-  const pct = max > 0 ? Math.max(0, Math.min(1, current / max)) : 0;
-  const color = pct < 0.25 ? "#dc2626" : pct < 0.5 ? "#d97706" : "#16a34a";
+function BigHpBar({ current, max }: { current: number; max: number }) {
   return (
-    <div
-      style={{
-        marginTop: 6,
-        width: "100%",
-        height: 8,
-        background: "#0e0f12",
-        borderRadius: 4,
-        overflow: "hidden",
-      }}
-    >
-      <div
-        style={{
-          width: `${pct * 100}%`,
-          height: "100%",
-          background: color,
-          transition: "width 200ms ease",
-        }}
-      />
-    </div>
+    <HpBarCore
+      current={current}
+      max={max}
+      height={14}
+      borderRadius={7}
+      marginTop={10}
+      healthColor={(pct) => pct < 0.25 ? "#fca5a5" : pct < 0.5 ? "#fbbf24" : "#ef4444"}
+    />
+  );
+}
+
+function HpBar({ current, max }: { current: number; max: number }) {
+  return (
+    <HpBarCore
+      current={current}
+      max={max}
+      height={8}
+      borderRadius={4}
+      marginTop={6}
+      healthColor={(pct) => pct < 0.25 ? "#dc2626" : pct < 0.5 ? "#d97706" : "#16a34a"}
+    />
   );
 }
 

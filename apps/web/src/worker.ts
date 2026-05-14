@@ -16,8 +16,15 @@ import {
   flavorHit,
   flavorLootDrop,
   flavorVictory,
+  generateExpeditionTheme,
   generateGauntletWaves,
+  generateJobListing,
+  generateLockboxScene,
+  generateMerchantRoom,
+  generateNpcRoom,
   generateOpeningScene,
+  generateTrapRoom,
+  generateTownName,
   getOrScheduleViewArt,
 } from "./ai";
 
@@ -29,14 +36,18 @@ import {
   dropChance,
   findCatalogEntry,
   generateScar,
+  generateMerchantName,
+  generateNpcName,
   STAPLES,
   findStaple,
   haggleMod,
   pickHaggleLine,
   npcTrustMod,
+  priceFor,
   resolveMonsterKill,
   rollDice,
   rollItem,
+  rollMerchantItem,
   sellPriceFor,
   step,
   xpForLevel,
@@ -52,6 +63,7 @@ import {
   addGold,
   addItem,
   addMana,
+  addShield,
   applyFocusManaShift,
   applyInnRest,
   applyLongRest,
@@ -67,10 +79,12 @@ import {
   getActiveQuestInChannel,
   getActiveShopStock,
   getShopItem,
+  healCharacter,
   joinQuest,
   refillMana,
   releaseShopClaim,
   scaleMonsterForJoin,
+  transferItem,
   tryDeductGold,
   trySetHaggleOutcome,
   awardSpoils,
@@ -96,17 +110,224 @@ import {
   saveWebCombatState,
   setCharacterHpAndShield,
   setQuestMode,
+  type Character,
+  type ExpeditionNode,
+  type ExpeditionNodeType,
+  type ExpeditionState,
+  type KeyTier,
   type SceneJson,
 } from "@gantt-quest/db";
 
+// =============================================================================
+// PUB — Drink catalog (mirrors apps/slack/src/flavor.ts DRINKS)
+// =============================================================================
+
+type DrinkEffectKind =
+  | "buff_attack"
+  | "buff_magic"
+  | "buff_next_crit"
+  | "instant_shield"
+  | "instant_hp"
+  | "instant_mana"
+  | "instant_combo";
+
+type DrinkEffect =
+  | { kind: "buff_attack"; magnitude: number; duration: number }
+  | { kind: "buff_magic"; magnitude: number; duration: number }
+  | { kind: "buff_next_crit" }
+  | { kind: "instant_shield"; amount: number }
+  | { kind: "instant_hp"; amount: number }
+  | { kind: "instant_mana"; amount: number }
+  | { kind: "instant_combo"; hp: number; mana: number };
+
+interface DrinkSpec {
+  id: string;
+  name: string;
+  emoji: string;
+  price: number;
+  effect: DrinkEffect;
+  blurb: string;
+}
+
+interface DrinkBuff {
+  kind: "buff_attack" | "buff_magic" | "buff_next_crit";
+  magnitude: number;
+  remaining: number;
+  drink_id: string;
+}
+
+const DRINKS: DrinkSpec[] = [
+  { id: "ale",     emoji: "🍺", name: "Tavern Ale",        price: 8,  effect: { kind: "buff_attack",   magnitude: 1, duration: 3 }, blurb: "Cheap, foamy, gives you the courage to swing harder. +1 attack for 3 actions." },
+  { id: "mead",    emoji: "🍷", name: "Spiced Mead",       price: 8,  effect: { kind: "buff_magic",    magnitude: 1, duration: 3 }, blurb: "Cinnamon, clove, and a tingle in the fingertips. +1 magic for 3 actions." },
+  { id: "brew",    emoji: "🥃", name: "Iron Brew",         price: 8,  effect: { kind: "instant_shield", amount: 5 },                blurb: "Tastes like ore. Lines your gut with grit. +5 shield, instant." },
+  { id: "tea",     emoji: "🍵", name: "Bitter Tea",        price: 12, effect: { kind: "instant_mana",  amount: 2 },                blurb: "Clarifies the mind, reignites the channel. +2 mana, instant." },
+  { id: "milk",    emoji: "🥛", name: "Frothy Milk",       price: 10, effect: { kind: "instant_hp",    amount: 8 },                blurb: "Comfort in a glass. The bartender knows. +8 HP, instant." },
+  { id: "lucky",   emoji: "💧", name: "Lucky Sip",         price: 15, effect: { kind: "buff_next_crit" },                          blurb: "A shimmer of fate. Your next attack/cast/signature is a guaranteed crit." },
+  { id: "whiskey", emoji: "🍶", name: "Aged Whiskey",      price: 25, effect: { kind: "buff_attack",   magnitude: 2, duration: 3 }, blurb: "Smoke, leather, twenty harvests of patience. +2 attack for 3 actions." },
+  { id: "reset",   emoji: "🍹", name: "Engineer's Reset",  price: 30, effect: { kind: "instant_combo", hp: 4, mana: 4 },           blurb: "Mystery cocktail. Tastes like everything went green. +4 HP and +4 mana, instant." },
+];
+
+function findDrinkById(id: string): DrinkSpec | undefined {
+  return DRINKS.find((d) => d.id === id);
+}
+
+async function getDailySpecialId(db: D1Database, channelId: string): Promise<string | null> {
+  const row = await db
+    .prepare("SELECT state_json FROM town_state WHERE channel_id = ?")
+    .bind(channelId)
+    .first<{ state_json: string }>();
+  if (!row) return null;
+  const state = JSON.parse(row.state_json) as { pub?: { daily_special_drink_id?: string } };
+  return state.pub?.daily_special_drink_id ?? null;
+}
+
+async function setDrinkBuff(db: D1Database, userId: string, buff: DrinkBuff): Promise<void> {
+  await db
+    .prepare("UPDATE characters SET drink_buff_json = ?, last_active = ? WHERE slack_user_id = ?")
+    .bind(JSON.stringify(buff), Date.now(), userId)
+    .run();
+}
+
+// =============================================================================
+// LIARS' ROLL — solo pub mini-game (mirrors apps/slack/src/commands.ts)
+// =============================================================================
+
+type LiarsClaim = "low" | "medium" | "high";
+type LiarsOutcome = "trust_win" | "trust_lose" | "challenge_win" | "challenge_lose";
+
+interface LiarsRound {
+  id: number;
+  user_id: string;
+  channel_id: string;
+  stake: number;
+  player_dice: number[];
+  bartender_dice: number[];
+  claim: LiarsClaim;
+  lied: boolean;
+  status: "open" | "resolved";
+  outcome: LiarsOutcome | null;
+  payout: number | null;
+  created_at: number;
+}
+
+const LIARS_STAKES = [10, 25, 50];
+const LIARS_HOUSE_CUT = 0.05;
+const LIARS_TRUTH_RATE = 0.55;
+const LIARS_TRUST_MULT = 1.7;
+const LIARS_CHALLENGE_MULT = 2.5;
+const SHIELD_CAP_MULTIPLIER = 1.5; // mirrors Slack's cap logic
+
+function liarsZoneFor(total: number): LiarsClaim {
+  if (total <= 18) return "low";
+  if (total <= 23) return "medium";
+  return "high";
+}
+
+function liarsZoneLabel(z: LiarsClaim): string {
+  if (z === "low") return "Low (≤18)";
+  if (z === "medium") return "Medium (19-23)";
+  return "High (≥24)";
+}
+
+function rollD6(): number {
+  return Math.floor(Math.random() * 6) + 1;
+}
+
+function rollThreeD6(): number[] {
+  return [rollD6(), rollD6(), rollD6()];
+}
+
+async function createLiarsRound(
+  db: D1Database,
+  input: {
+    user_id: string;
+    channel_id: string;
+    stake: number;
+    player_dice: number[];
+    bartender_dice: number[];
+    claim: LiarsClaim;
+    lied: boolean;
+  },
+): Promise<number> {
+  const result = await db
+    .prepare(
+      `INSERT INTO liars_rounds (user_id, channel_id, stake, player_dice, bartender_dice, claim, lied, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .bind(
+      input.user_id,
+      input.channel_id,
+      input.stake,
+      JSON.stringify(input.player_dice),
+      JSON.stringify(input.bartender_dice),
+      input.claim,
+      input.lied ? 1 : 0,
+      Date.now(),
+    )
+    .run();
+  return result.meta.last_row_id as number;
+}
+
+async function getLiarsRound(db: D1Database, roundId: number): Promise<LiarsRound | null> {
+  const row = await db
+    .prepare("SELECT * FROM liars_rounds WHERE id = ?")
+    .bind(roundId)
+    .first<{
+      id: number; user_id: string; channel_id: string; stake: number;
+      player_dice: string; bartender_dice: string; claim: string;
+      lied: number; status: string; outcome: string | null;
+      payout: number | null; created_at: number;
+    }>();
+  if (!row) return null;
+  return {
+    id: row.id,
+    user_id: row.user_id,
+    channel_id: row.channel_id,
+    stake: row.stake,
+    player_dice: JSON.parse(row.player_dice) as number[],
+    bartender_dice: JSON.parse(row.bartender_dice) as number[],
+    claim: row.claim as LiarsClaim,
+    lied: row.lied === 1,
+    status: row.status as "open" | "resolved",
+    outcome: row.outcome as LiarsOutcome | null,
+    payout: row.payout,
+    created_at: row.created_at,
+  };
+}
+
+async function finalizeLiarsRound(
+  db: D1Database,
+  roundId: number,
+  outcome: LiarsOutcome,
+  payout: number,
+): Promise<boolean> {
+  const result = await db
+    .prepare(
+      `UPDATE liars_rounds SET status = 'resolved', outcome = ?, payout = ?, resolved_at = ? WHERE id = ? AND status = 'open'`,
+    )
+    .bind(outcome, payout, Date.now(), roundId)
+    .run();
+  return (result.meta.changes ?? 0) > 0;
+}
+
+// =============================================================================
+
 const DOWNED_COOLDOWN_MS = 12 * 60 * 60 * 1000;
-const VICTORY_BASE_XP_PER_TIER = 50;
-const VICTORY_BASE_GOLD_PER_TIER = 20;
+// Reward formula: 15 × tier^1.2 for XP, 8 × tier^1.2 for gold.
+// Grows faster than the old linear formula so higher-tier fights feel
+// proportionally more rewarding, while early tiers stay grindy.
+function baseRewardXp(tier: number): number { return Math.round(15 * Math.pow(tier, 1.2)); }
+function baseRewardGold(tier: number): number { return Math.round(8 * Math.pow(tier, 1.2)); }
 const BOSS_REWARD_MULTIPLIER = 2;
 const ELITE_REWARD_MULTIPLIER = 1.5;
 const SUPPORT_BASE_CONTRIBUTION = 1;
 const SHOP_RESTOCK_MS = 6 * 60 * 60 * 1000;
 const SHOP_BUY_CAP_PER_CYCLE = 2;
+// Town refresh cadences — kept in sync with Slack's rebuildTownState:
+//   weekly: town name + location art
+//   daily: job board + pub regulars (handled by Slack; web checks staleness)
+const TOWN_WEEKLY_MS = 7 * 24 * 60 * 60 * 1000;
+const TOWN_DAILY_MS = 24 * 60 * 60 * 1000;
 
 // Looks up the channel_id of the player's most recent quest. Web doesn't
 // have a Slack channel context directly, so we use this as a proxy — works
@@ -482,10 +703,232 @@ const JOIN_HP_RATIO = 0.4;
 const BOSS_LEVEL_REQUIRED = 3;
 const GAUNTLET_LEVEL_REQUIRED = 5;
 const GAUNTLET_WAVES = 3;
+const DUNGEON_LEVEL_REQUIRED = 1;
+const DUNGEON_MIN_ROOMS = 5;
+const DUNGEON_MAX_ROOMS = 7;
+const EXPEDITION_TREASURE_OPTIONS = 2;
 
-// Start a fresh quest. v1 supports standard + boss variants. Gauntlet and
-// dungeon need bulk scene generation (multi-wave / multi-room) and are
-// deferred to a follow-up push.
+// Builds a fresh dungeon SceneJson. All AI calls run in parallel.
+// Layout mirrors Slack: entry combat → middle pool (door-choice navigation) →
+// guaranteed merchant → sub-boss → treasure.
+async function buildDungeonScene(
+  env: Pick<Env, "AI" | "ART">,
+  character: Pick<Character, "name" | "class" | "level">,
+  elite: boolean,
+  avoidNames: string[] = [],
+): Promise<SceneJson> {
+  const art = { bucket: env.ART, baseUrl: WEB_PUBLIC_BASE };
+  const theme = await generateExpeditionTheme(env.AI);
+  const totalRoomsVisited =
+    DUNGEON_MIN_ROOMS + Math.floor(Math.random() * (DUNGEON_MAX_ROOMS - DUNGEON_MIN_ROOMS + 1));
+  const middleCount = totalRoomsVisited - 2;
+  const poolMiddleCount = middleCount * 2;
+
+  const poolTypes: ExpeditionNodeType[] = [];
+  for (let i = 0; i < poolMiddleCount; i++) {
+    const r = Math.random();
+    if (r < 0.40) poolTypes.push("combat");
+    else if (r < 0.65) poolTypes.push("trap");
+    else if (r < 0.85) poolTypes.push("lockbox");
+    else poolTypes.push("npc");
+  }
+  poolTypes[0] = "combat";
+
+  const failDamage = 4 + Math.max(1, character.level);
+  const baseTier = Math.max(1, character.level + (elite ? 1 : 0));
+
+  // Resolves an ItemRoll to a { name, flavor } pair.
+  async function resolveLoot(location: string, roll: ItemRoll): Promise<{ name: string; flavor: string }> {
+    if (roll.catalog_name) {
+      const entry = findCatalogEntry(roll.catalog_name);
+      if (entry) {
+        const flavor = await flavorCatalogItem(env.AI, entry.name, entry.blurb, location);
+        return { name: `${entry.emoji} ${entry.name}`, flavor };
+      }
+    }
+    return flavorLootDrop(
+      env.AI,
+      location,
+      roll.type as "weapon" | "armor" | "consumable" | "magic" | "revive",
+      roll.rarity,
+      roll.power,
+      roll.weapon_range,
+    );
+  }
+
+  const middleNodePromises: Promise<ExpeditionNode>[] = poolTypes.map(async (type, i) => {
+    const roomNum = i + 1;
+    if (type === "combat") {
+      const monster = await generateOpeningScene(env.AI, character, elite, "gauntlet-wave", { wave: roomNum, total: totalRoomsVisited }, avoidNames, art);
+      return {
+        type: "combat" as const,
+        scene: monster.scene,
+        monster_name: monster.monster_name,
+        monster_max_hp: monster.monster_max_hp,
+        monster_art_url: monster.monster_art_url,
+        tier: monster.tier,
+        drops_key: true,
+        drops_key_tier: "bronze" as KeyTier,
+      };
+    }
+    if (type === "trap") {
+      const trap = await generateTrapRoom(env.AI, theme, roomNum, totalRoomsVisited);
+      return {
+        type: "trap" as const,
+        scene: trap.scene,
+        trap_choices: [
+          { text: trap.options.str, emoji: "💪", skill: "str" as const, fail_damage: failDamage },
+          { text: trap.options.dex, emoji: "🔧", skill: "dex" as const, fail_damage: failDamage },
+          { text: trap.options.int, emoji: "📜", skill: "int" as const, fail_damage: failDamage },
+        ],
+      };
+    }
+    if (type === "lockbox") {
+      const r = Math.random();
+      const lockTier: KeyTier = r < 0.70 ? "bronze" : r < 0.95 ? "silver" : "gold";
+      const tierBump = lockTier === "bronze" ? 1 : lockTier === "silver" ? 2 : 3;
+      const rolls = Array.from({ length: 2 }, () => rollItem(baseTier + tierBump));
+      const [lockboxScene, ...named] = await Promise.all([
+        generateLockboxScene(env.AI, theme, roomNum, totalRoomsVisited),
+        ...rolls.map((roll) => resolveLoot("the locked chest", roll)),
+      ]);
+      const opts = rolls.map((roll, j) => ({
+        name: named[j].name,
+        item_type: roll.type,
+        power: roll.power,
+        rarity: roll.rarity,
+        flavor: named[j].flavor,
+        weapon_range: roll.weapon_range ?? null,
+      }));
+      return { type: "lockbox" as const, scene: lockboxScene, loot_options: opts, lock_tier: lockTier };
+    }
+    // npc
+    const npcName = generateNpcName();
+    const offerRoll = rollItem(baseTier);
+    const [npc, offerNamed] = await Promise.all([
+      generateNpcRoom(env.AI, theme, roomNum, totalRoomsVisited, npcName),
+      resolveLoot(`${npcName}'s pack`, offerRoll),
+    ]);
+    return {
+      type: "npc" as const,
+      scene: npc.scene,
+      npc: {
+        greeting: npc.greeting,
+        item: {
+          name: offerNamed.name,
+          item_type: offerRoll.type,
+          power: offerRoll.power,
+          rarity: offerRoll.rarity,
+          flavor: offerNamed.flavor,
+          weapon_range: offerRoll.weapon_range ?? null,
+        },
+      },
+    };
+  });
+
+  const bossPromise = generateOpeningScene(env.AI, character, elite, "boss", undefined, avoidNames, art);
+  const treasureRolls = Array.from({ length: EXPEDITION_TREASURE_OPTIONS }, () => rollItem(baseTier + 1));
+  const treasureNamedPromises = treasureRolls.map((roll) => resolveLoot("the dungeon's heart-chamber", roll));
+
+  const merchantName = generateMerchantName();
+  const merchantStockRolls = Array.from({ length: 3 }, () => rollMerchantItem(baseTier + 1));
+  const merchantPromise = (async () => {
+    const [info, ...named] = await Promise.all([
+      generateMerchantRoom(env.AI, theme, totalRoomsVisited - 2, totalRoomsVisited, merchantName),
+      ...merchantStockRolls.map((roll) => resolveLoot(`${merchantName}'s stall`, roll)),
+    ]);
+    const stock = merchantStockRolls.map((roll, j) => ({
+      name: named[j].name,
+      item_type: roll.type,
+      power: roll.power,
+      rarity: roll.rarity,
+      flavor: named[j].flavor,
+      weapon_range: roll.weapon_range ?? null,
+    }));
+    return { info, stock };
+  })();
+
+  const [middleNodes, merchantData, boss, treasureNamed] = await Promise.all([
+    Promise.all(middleNodePromises),
+    merchantPromise,
+    bossPromise,
+    Promise.all(treasureNamedPromises),
+  ]);
+
+  const nodes: ExpeditionNode[] = [...middleNodes];
+  nodes.push({
+    type: "merchant",
+    scene: merchantData.info.scene,
+    loot_options: merchantData.stock,
+    npc: { greeting: merchantData.info.greeting, item: merchantData.stock[0] },
+  });
+  nodes.push({
+    type: "combat",
+    scene: boss.scene,
+    monster_name: boss.monster_name,
+    monster_max_hp: boss.monster_max_hp,
+    tier: boss.tier,
+    drops_key: true,
+    drops_key_tier: "silver" as KeyTier,
+  });
+  const treasureLoot = treasureRolls.map((roll, i) => ({
+    name: treasureNamed[i].name,
+    item_type: roll.type,
+    power: roll.power,
+    rarity: roll.rarity,
+    flavor: treasureNamed[i].flavor,
+    weapon_range: roll.weapon_range ?? null,
+  }));
+  nodes.push({
+    type: "treasure",
+    scene: "The dungeon opens onto its heart-chamber. A chest awaits.",
+    loot_options: treasureLoot,
+  });
+
+  const pool: number[] = [];
+  for (let i = 1; i < poolMiddleCount; i++) pool.push(i);
+  for (let i = pool.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [pool[i], pool[j]] = [pool[j], pool[i]];
+  }
+
+  const expedition: ExpeditionState = {
+    theme,
+    current: 0,
+    nodes,
+    path_taken: [],
+    keys: 0,
+    pool,
+    middle_count: middleCount,
+    visited_count: 1,
+    visited_indices: [0],
+    sealed_doors: [],
+  };
+
+  const first = nodes[0];
+  if (first.type === "combat") {
+    return {
+      monster_name: first.monster_name!,
+      monster_hp: first.monster_max_hp!,
+      monster_max_hp: first.monster_max_hp!,
+      tier: first.tier!,
+      scene: first.scene,
+      variant: "dungeon",
+      expedition,
+    };
+  }
+  return {
+    monster_name: "—",
+    monster_hp: 0,
+    monster_max_hp: 0,
+    tier: baseTier,
+    scene: first.scene,
+    variant: "dungeon",
+    expedition,
+  };
+}
+
+// Start a fresh quest. Supports standard / boss / gauntlet / dungeon variants.
 app.post("/api/quest/start", async (c) => {
   const session = await currentSession(c.env.DB, c.req.header("cookie"));
   if (!session) return c.json({ error: "unauthenticated" }, 401);
@@ -502,7 +945,7 @@ app.post("/api/quest/start", async (c) => {
     | null;
   const variant = body?.variant;
   const elite = body?.elite === true;
-  if (variant !== "standard" && variant !== "boss" && variant !== "gauntlet") {
+  if (variant !== "standard" && variant !== "boss" && variant !== "gauntlet" && variant !== "dungeon") {
     return c.json({ error: "unsupported_variant", variant }, 400);
   }
   if (variant === "boss" && character.level < BOSS_LEVEL_REQUIRED) {
@@ -510,6 +953,9 @@ app.post("/api/quest/start", async (c) => {
   }
   if (variant === "gauntlet" && character.level < GAUNTLET_LEVEL_REQUIRED) {
     return c.json({ error: "gauntlet_level_gate", required: GAUNTLET_LEVEL_REQUIRED }, 400);
+  }
+  if (variant === "dungeon" && character.level < DUNGEON_LEVEL_REQUIRED) {
+    return c.json({ error: "dungeon_level_gate", required: DUNGEON_LEVEL_REQUIRED }, 400);
   }
   const channelId = await recentChannelForUser(c.env.DB, session.slack_user_id);
   const effectiveChannel = channelId ?? `web:${session.slack_user_id}`;
@@ -525,6 +971,8 @@ app.post("/api/quest/start", async (c) => {
       total_waves: GAUNTLET_WAVES,
       upcoming_waves: gen.upcoming_waves.map((w) => ({ name: w.name, max_hp: w.max_hp, scene: "" })),
     };
+  } else if (variant === "dungeon") {
+    scene = await buildDungeonScene(c.env, character, elite, avoidNames);
   } else {
     scene = await generateOpeningScene(
       c.env.AI,
@@ -546,6 +994,7 @@ app.post("/api/quest/start", async (c) => {
     scene,
     created_by: session.slack_user_id,
   });
+  await setQuestMode(c.env.DB, questId, "web");
   await refillMana(c.env.DB, session.slack_user_id);
   return c.json({
     ok: true,
@@ -689,6 +1138,222 @@ app.post("/api/keys/transmute", async (c) => {
   return c.json({ ok: true, from_tier: fromTier, to_tier: toTier, cost: KEY_TRANSMUTE_COST });
 });
 
+// Town overview — returns AI art URLs for the map + each district. Lightweight:
+// no quest/character check required, just session.
+app.get("/api/town", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const art = artTarget(c.env);
+  const [overview, pub, shop, inn, smithy] = await Promise.all([
+    getOrScheduleViewArt(c.env.AI, art, c.executionCtx, "town_overview", undefined, TOWN_WEEKLY_MS),
+    getOrScheduleViewArt(c.env.AI, art, c.executionCtx, "pub_interior", undefined, TOWN_WEEKLY_MS),
+    getOrScheduleViewArt(c.env.AI, art, c.executionCtx, "channel_shop", undefined, TOWN_WEEKLY_MS),
+    getOrScheduleViewArt(c.env.AI, art, c.executionCtx, "inn_interior", undefined, TOWN_WEEKLY_MS),
+    getOrScheduleViewArt(c.env.AI, art, c.executionCtx, "smithy_interior", undefined, TOWN_WEEKLY_MS),
+  ]);
+  return c.json({ overview_art_url: overview, pub_art_url: pub, shop_art_url: shop, inn_art_url: inn, smithy_art_url: smithy });
+});
+
+// Regenerates stale town jobs (daily) and/or town name (weekly) for the web
+// app, mirroring Slack's rebuildTownState cadences. Designed to be called via
+// ctx.waitUntil so it never blocks the API response.
+async function refreshWebTownIfStale(db: D1Database, ai: Ai, channelId: string): Promise<void> {
+  const row = await db
+    .prepare("SELECT state_json FROM town_state WHERE channel_id = ?")
+    .bind(channelId)
+    .first<{ state_json: string }>();
+  if (!row) return;
+
+  const state = JSON.parse(row.state_json) as {
+    channel_id: string;
+    town_name: string;
+    town_name_set_at?: number;
+    refreshed_at: number;
+    pub?: unknown;
+    jobs?: Array<{
+      id: string;
+      variant: "standard" | "boss" | "dungeon" | "gauntlet";
+      required_level: number;
+      title: string;
+      blurb: string;
+      reward_summary: string;
+    }>;
+  };
+
+  const now = Date.now();
+  const jobsStale = !state.jobs || state.jobs.length === 0 || now - state.refreshed_at > TOWN_DAILY_MS;
+  const nameStale = !state.town_name || now - (state.town_name_set_at ?? 0) > TOWN_WEEKLY_MS;
+
+  if (!jobsStale && !nameStale) return; // nothing to do
+
+  let townName = state.town_name;
+  let townNameSetAt = state.town_name_set_at ?? 0;
+  if (nameStale) {
+    townName = await generateTownName(ai, state.town_name ? [state.town_name] : []);
+    townNameSetAt = now;
+  }
+
+  const BOSS_LEVEL_REQUIRED_LOCAL = 3;
+  const EXPEDITION_LEVEL_REQUIRED_LOCAL = 1;
+
+  const [jobStd, jobBoss, jobDung] = await Promise.all([
+    generateJobListing(ai, "standard", townName),
+    generateJobListing(ai, "boss", townName),
+    generateJobListing(ai, "dungeon", townName),
+  ]);
+
+  const jobs = [
+    { id: "job_1", variant: "standard" as const, required_level: 1, title: jobStd.title, blurb: jobStd.blurb, reward_summary: "1× rewards · +12% town bonus · single foe." },
+    { id: "job_2", variant: "boss" as const, required_level: BOSS_LEVEL_REQUIRED_LOCAL, title: jobBoss.title, blurb: jobBoss.blurb, reward_summary: "2× rewards · +12% town bonus · two phases." },
+    { id: "job_3", variant: "dungeon" as const, required_level: EXPEDITION_LEVEL_REQUIRED_LOCAL, title: jobDung.title, blurb: jobDung.blurb, reward_summary: "2.5× rewards · +12% town bonus · 5-7 rooms, sub-boss, treasure." },
+  ];
+
+  const updated = { ...state, town_name: townName, town_name_set_at: townNameSetAt, refreshed_at: now, jobs };
+  await db
+    .prepare("INSERT OR REPLACE INTO town_state (channel_id, state_json) VALUES (?, ?)")
+    .bind(channelId, JSON.stringify(updated))
+    .run();
+}
+
+// GET /api/board — daily job postings + claim status for the current player.
+app.get("/api/board", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const character = await getCharacter(c.env.DB, session.slack_user_id);
+  if (!character) return c.json({ error: "no_character" }, 404);
+  const channelId = await recentChannelForUser(c.env.DB, session.slack_user_id);
+  if (!channelId) return c.json({ town_name: "Heylets", jobs: [], claims: {}, character_level: character.level });
+
+  // Refresh stale jobs/name in the background — serve current state immediately.
+  c.executionCtx.waitUntil(
+    refreshWebTownIfStale(c.env.DB, c.env.AI, channelId).catch((err) =>
+      console.warn("board:refresh-failed", { channelId, err: err instanceof Error ? err.message : String(err) })
+    )
+  );
+
+  const townRow = await c.env.DB
+    .prepare("SELECT state_json FROM town_state WHERE channel_id = ?")
+    .bind(channelId)
+    .first<{ state_json: string }>();
+  if (!townRow) return c.json({ town_name: "Heylets", jobs: [], claims: {}, character_level: character.level });
+
+  const townState = JSON.parse(townRow.state_json) as {
+    town_name: string;
+    refreshed_at: number;
+    jobs?: Array<{
+      id: string;
+      variant: "standard" | "boss" | "dungeon" | "gauntlet";
+      required_level: number;
+      title: string;
+      blurb: string;
+      reward_summary: string;
+    }>;
+  };
+
+  const jobs = townState.jobs ?? [];
+  const claims: Record<string, { taken_by: string }> = {};
+  if (jobs.length > 0) {
+    const claimRows = await c.env.DB
+      .prepare("SELECT job_id, taken_by FROM job_claims WHERE channel_id = ? AND refresh_stamp = ?")
+      .bind(channelId, townState.refreshed_at)
+      .all<{ job_id: string; taken_by: string }>();
+    for (const row of claimRows.results) {
+      claims[row.job_id] = { taken_by: row.taken_by };
+    }
+  }
+
+  return c.json({ town_name: townState.town_name, jobs, claims, character_level: character.level, refresh_stamp: townState.refreshed_at });
+});
+
+// POST /api/board/take — claim a job posting and start the quest.
+app.post("/api/board/take", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const character = await getCharacter(c.env.DB, session.slack_user_id);
+  if (!character) return c.json({ error: "no_character" }, 404);
+  if (character.downed_until && character.downed_until > Date.now()) {
+    return c.json({ error: "downed" }, 400);
+  }
+  if (await getActiveQuestForCharacter(c.env.DB, session.slack_user_id)) {
+    return c.json({ error: "already_on_quest" }, 400);
+  }
+  const body = await c.req.json().catch(() => null) as { job_id?: string } | null;
+  const jobId = body?.job_id;
+  if (!jobId) return c.json({ error: "missing_job_id" }, 400);
+
+  const channelId = await recentChannelForUser(c.env.DB, session.slack_user_id);
+  if (!channelId) return c.json({ error: "no_channel" }, 400);
+
+  const townRow = await c.env.DB
+    .prepare("SELECT state_json FROM town_state WHERE channel_id = ?")
+    .bind(channelId)
+    .first<{ state_json: string }>();
+  if (!townRow) return c.json({ error: "no_board" }, 404);
+
+  const townState = JSON.parse(townRow.state_json) as {
+    town_name: string;
+    refreshed_at: number;
+    jobs?: Array<{
+      id: string;
+      variant: "standard" | "boss" | "dungeon" | "gauntlet";
+      required_level: number;
+      title: string;
+      blurb: string;
+      reward_summary: string;
+    }>;
+  };
+
+  const job = townState.jobs?.find((j) => j.id === jobId);
+  if (!job) return c.json({ error: "job_not_found" }, 404);
+  if (character.level < job.required_level) {
+    return c.json({ error: "level_gate", required: job.required_level }, 400);
+  }
+
+  // Atomic claim — INSERT OR IGNORE, then check if we got it.
+  const claimResult = await c.env.DB
+    .prepare("INSERT OR IGNORE INTO job_claims (channel_id, refresh_stamp, job_id, taken_by, taken_at) VALUES (?, ?, ?, ?, ?)")
+    .bind(channelId, townState.refreshed_at, jobId, session.slack_user_id, Date.now())
+    .run();
+  if (claimResult.meta.changes === 0) {
+    return c.json({ error: "already_claimed" }, 409);
+  }
+
+  const avoidNames = await getRecentMonsterNames(c.env.DB, channelId, 6);
+  const { variant } = job;
+  let scene: SceneJson;
+  if (variant === "gauntlet") {
+    const gen = await generateGauntletWaves(c.env.AI, character, false, GAUNTLET_WAVES, avoidNames, artTarget(c.env));
+    scene = {
+      ...gen.scene,
+      variant: "gauntlet",
+      wave: 1,
+      total_waves: GAUNTLET_WAVES,
+      upcoming_waves: gen.upcoming_waves.map((w) => ({ name: w.name, max_hp: w.max_hp, scene: "" })),
+    };
+  } else if (variant === "dungeon") {
+    scene = await buildDungeonScene(c.env, character, false, avoidNames);
+  } else {
+    scene = await generateOpeningScene(
+      c.env.AI, character, false,
+      variant === "boss" ? "boss" : "standard",
+      undefined, avoidNames, artTarget(c.env),
+    );
+    if (variant === "boss") scene.boss_phase = 1;
+    scene.variant = variant;
+  }
+
+  const questId = await createQuest(c.env.DB, {
+    channel_id: channelId,
+    thread_ts: `web-${Date.now()}-${session.slack_user_id}`,
+    elite: false,
+    scene,
+    created_by: session.slack_user_id,
+  });
+  await setQuestMode(c.env.DB, questId, "web");
+  await refillMana(c.env.DB, session.slack_user_id);
+  return c.json({ ok: true, quest_id: questId });
+});
+
 // Shop view — lists current stock for the player's last-known channel.
 // Web can't generate a fresh restock (Slack uses AI for item flavor), so
 // if the channel's stock is empty/expired, return a hint to run /sq shop
@@ -703,7 +1368,7 @@ app.get("/api/shop", async (c) => {
   const channelId = await recentChannelForUser(c.env.DB, session.slack_user_id);
   if (!channelId) return c.json({ error: "no_channel" }, 404);
   const stock = await getActiveShopStock(c.env.DB, channelId, SHOP_RESTOCK_MS);
-  const art_url = await getOrScheduleViewArt(c.env.AI, artTarget(c.env), c.executionCtx, "channel_shop");
+  const art_url = await getOrScheduleViewArt(c.env.AI, artTarget(c.env), c.executionCtx, "channel_shop", undefined, TOWN_WEEKLY_MS);
   if (!stock || stock.length === 0) {
     return c.json({
       stock: [],
@@ -728,6 +1393,52 @@ app.get("/api/shop", async (c) => {
     purchases_this_cycle: purchasesThisCycle,
     purchase_cap: SHOP_BUY_CAP_PER_CYCLE,
   });
+});
+
+// POST /api/hunt — start a free-roam standard quest at a player-chosen tier
+// (1 ≤ tier ≤ character.level). No job-board claim; no town bonus; XP/gold
+// scale with scene.tier via baseRewardXp/baseRewardGold so grinding lower
+// tiers naturally yields proportionally less per fight.
+app.post("/api/hunt", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const character = await getCharacter(c.env.DB, session.slack_user_id);
+  if (!character) return c.json({ error: "no_character" }, 404);
+  if (character.downed_until && character.downed_until > Date.now()) {
+    return c.json({ error: "downed" }, 400);
+  }
+  if (await getActiveQuestForCharacter(c.env.DB, session.slack_user_id)) {
+    return c.json({ error: "already_on_quest" }, 400);
+  }
+  const body = await c.req.json().catch(() => null) as { tier?: number } | null;
+  const requestedTier = body?.tier;
+  if (typeof requestedTier !== "number" || !Number.isInteger(requestedTier) || requestedTier < 1) {
+    return c.json({ error: "invalid_tier" }, 400);
+  }
+  const tier = Math.min(requestedTier, character.level);
+
+  const channelId = await recentChannelForUser(c.env.DB, session.slack_user_id);
+  if (!channelId) return c.json({ error: "no_channel" }, 400);
+
+  const avoidNames = await getRecentMonsterNames(c.env.DB, channelId, 6);
+  // Build a fake character at the chosen tier so the scene generator scales
+  // HP, damage, and flavor to the requested difficulty, not the player's level.
+  const scaledCharacter = { ...character, level: tier };
+  const scene = await generateOpeningScene(
+    c.env.AI, scaledCharacter, false, "standard", undefined, avoidNames, artTarget(c.env),
+  );
+  scene.variant = "standard";
+
+  const questId = await createQuest(c.env.DB, {
+    channel_id: channelId,
+    thread_ts: `web-${Date.now()}-${session.slack_user_id}`,
+    elite: false,
+    scene,
+    created_by: session.slack_user_id,
+  });
+  await setQuestMode(c.env.DB, questId, "web");
+  await refillMana(c.env.DB, session.slack_user_id);
+  return c.json({ ok: true, quest_id: questId });
 });
 
 // Mirrors /sq buy: claim row + deduct gold atomically; release on either
@@ -944,7 +1655,7 @@ app.get("/api/inn", async (c) => {
   if (!character) return c.json({ error: "no_character" }, 404);
   const activeQuest = await getActiveQuestForCharacter(c.env.DB, session.slack_user_id);
   if (activeQuest) return c.json({ error: "mid_quest" }, 400);
-  const art_url = await getOrScheduleViewArt(c.env.AI, artTarget(c.env), c.executionCtx, "inn_interior");
+  const art_url = await getOrScheduleViewArt(c.env.AI, artTarget(c.env), c.executionCtx, "inn_interior", undefined, TOWN_WEEKLY_MS);
   return c.json({
     rooms: INN_ROOMS,
     gold: character.gold,
@@ -1013,7 +1724,7 @@ app.get("/api/smithy", async (c) => {
       cost: it.sharpens_count >= SMITHY_SHARPEN_CAP ? 0 : smithySharpenCost(it.power),
       verb: smithVerbFor(it),
     }));
-  const art_url = await getOrScheduleViewArt(c.env.AI, artTarget(c.env), c.executionCtx, "smithy_interior");
+  const art_url = await getOrScheduleViewArt(c.env.AI, artTarget(c.env), c.executionCtx, "smithy_interior", undefined, TOWN_WEEKLY_MS);
   return c.json({ items, gold: character.gold, art_url });
 });
 
@@ -1159,6 +1870,715 @@ app.post("/api/inventory/:itemId/sell", async (c) => {
   return c.json({ ok: true, price });
 });
 
+// Give an unequipped inventory item to another player. Mirrors /sq give.
+// Body: { to_user_id: string }. Item must be owned + unequipped. The
+// recipient must have a character. No mid-quest restriction — matches
+// the Slack version's "works anywhere" design.
+app.post("/api/inventory/:itemId/give", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const itemId = parseInt(c.req.param("itemId"), 10);
+  if (!Number.isFinite(itemId)) return c.json({ error: "bad_item_id" }, 400);
+  const body = await c.req.json<{ to_user_id?: string }>().catch(() => ({ to_user_id: undefined }));
+  const toUserId = body.to_user_id?.trim();
+  if (!toUserId) return c.json({ error: "missing_to_user_id" }, 400);
+  if (toUserId === session.slack_user_id) return c.json({ error: "cant_give_to_self" }, 400);
+  const item = await getItem(c.env.DB, itemId, session.slack_user_id);
+  if (!item) return c.json({ error: "not_yours" }, 404);
+  if (item.equipped) return c.json({ error: "unequip_first" }, 400);
+  const recipient = await getCharacter(c.env.DB, toUserId);
+  if (!recipient) return c.json({ error: "recipient_no_character" }, 404);
+  await transferItem(c.env.DB, item.id, toUserId);
+  return c.json({ ok: true, item_name: item.item_name, to_name: recipient.name });
+});
+
+// List all characters — used by the "Give" picker in the UI. Returns
+// basic info only (user_id + name + class) for privacy.
+app.get("/api/characters", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const rows = await c.env.DB
+    .prepare(
+      `SELECT slack_user_id, name, class FROM characters
+       WHERE slack_user_id != ?
+       ORDER BY last_active DESC LIMIT 50`,
+    )
+    .bind(session.slack_user_id)
+    .all<{ slack_user_id: string; name: string; class: string }>();
+  return c.json({ characters: rows.results ?? [] });
+});
+
+// =============================================================================
+// PUB ENDPOINTS
+// =============================================================================
+
+// =============================================================================
+// STONE-PARCHMENT-DAGGER (SPD) — async 1v1 pub mini-game
+// =============================================================================
+
+type SpdThrow = "stone" | "parchment" | "dagger";
+
+const SPD_STAKES = [10, 25, 50];
+const SPD_BET_AMOUNTS = [5, 10, 25];
+const SPD_HOUSE_BUMP_PCT = 0.2; // +20% house bump on total pot for winner
+const SPD_BET_PAYOUT_MULT = 2;  // winning side bets pay 2×
+const SPD_EXPIRY_MS = 24 * 60 * 60 * 1000;
+
+// Returns the winning side: 'initiator' | 'challenger' | 'tie'
+function spdResolveThrow(initiator: SpdThrow, challenger: SpdThrow): "initiator" | "challenger" | "tie" {
+  if (initiator === challenger) return "tie";
+  // Stone crushes Dagger, Parchment wraps Stone, Dagger cuts Parchment
+  if (
+    (initiator === "stone" && challenger === "dagger") ||
+    (initiator === "parchment" && challenger === "stone") ||
+    (initiator === "dagger" && challenger === "parchment")
+  ) {
+    return "initiator";
+  }
+  return "challenger";
+}
+
+interface SpdMatchRow {
+  id: number;
+  channel_id: string;
+  initiator_user_id: string;
+  initiator_stake: number;
+  initiator_throw: string;
+  challenger_user_id: string | null;
+  challenger_throw: string | null;
+  status: string;
+  winner_user_id: string | null;
+  house_bump: number | null;
+  message_ts: string | null;
+  created_at: number;
+  resolved_at: number | null;
+  last_bumped_at: number | null;
+}
+
+interface SpdBetRow {
+  match_id: number;
+  bettor_user_id: string;
+  side: string;
+  amount: number;
+  created_at: number;
+}
+
+// Sweep expired open matches in a channel — refund stakes and cancel.
+async function spdSweepExpired(db: D1Database, channelId: string): Promise<void> {
+  const cutoff = Date.now() - SPD_EXPIRY_MS;
+  const expired = await db
+    .prepare(
+      `SELECT id, initiator_user_id, initiator_stake FROM spd_matches
+       WHERE channel_id = ? AND status = 'open' AND created_at < ?`,
+    )
+    .bind(channelId, cutoff)
+    .all<{ id: number; initiator_user_id: string; initiator_stake: number }>();
+
+  for (const row of expired.results) {
+    await db
+      .prepare(`UPDATE spd_matches SET status = 'cancelled' WHERE id = ? AND status = 'open'`)
+      .bind(row.id)
+      .run();
+    await addGold(db, row.initiator_user_id, row.initiator_stake);
+    // Also refund any side bets that were placed
+    const bets = await db
+      .prepare(`SELECT bettor_user_id, amount FROM spd_bets WHERE match_id = ?`)
+      .bind(row.id)
+      .all<{ bettor_user_id: string; amount: number }>();
+    for (const bet of bets.results) {
+      await addGold(db, bet.bettor_user_id, bet.amount);
+    }
+  }
+}
+
+// Resolve a match after challenger_throw is set. Returns payout info.
+async function spdResolveMatch(
+  db: D1Database,
+  match: SpdMatchRow,
+): Promise<{ winner_user_id: string | null; house_bump: number; payout: number; tie: boolean }> {
+  const outcome = spdResolveThrow(match.initiator_throw as SpdThrow, match.challenger_throw as SpdThrow);
+  const totalStakes = match.initiator_stake * 2;
+  const bets = await db
+    .prepare(`SELECT * FROM spd_bets WHERE match_id = ?`)
+    .bind(match.id)
+    .all<SpdBetRow>();
+
+  const initiatorBetTotal = bets.results.filter((b) => b.side === "initiator").reduce((s, b) => s + b.amount, 0);
+  const challengerBetTotal = bets.results.filter((b) => b.side === "challenger").reduce((s, b) => s + b.amount, 0);
+  const totalBetted = initiatorBetTotal + challengerBetTotal;
+  const totalPot = totalStakes + totalBetted;
+
+  if (outcome === "tie") {
+    // Refund everything
+    await addGold(db, match.initiator_user_id, match.initiator_stake);
+    await addGold(db, match.challenger_user_id!, match.initiator_stake);
+    for (const bet of bets.results) {
+      await addGold(db, bet.bettor_user_id, bet.amount);
+    }
+    await db
+      .prepare(
+        `UPDATE spd_matches SET status = 'resolved', winner_user_id = NULL, house_bump = 0, resolved_at = ? WHERE id = ?`,
+      )
+      .bind(Date.now(), match.id)
+      .run();
+    return { winner_user_id: null, house_bump: 0, payout: 0, tie: true };
+  }
+
+  const winnerUserId = outcome === "initiator" ? match.initiator_user_id : match.challenger_user_id!;
+  const houseBump = Math.floor(totalPot * SPD_HOUSE_BUMP_PCT);
+  const winnerPayout = totalStakes + houseBump; // winner gets both stakes + bump
+  await addGold(db, winnerUserId, winnerPayout);
+
+  // Pay winning side bets 2×
+  const winningSide = outcome;
+  for (const bet of bets.results) {
+    if (bet.side === winningSide) {
+      await addGold(db, bet.bettor_user_id, bet.amount * SPD_BET_PAYOUT_MULT);
+    }
+    // Losing bets kept by house — no payout
+  }
+
+  await db
+    .prepare(
+      `UPDATE spd_matches SET status = 'resolved', winner_user_id = ?, house_bump = ?, resolved_at = ? WHERE id = ?`,
+    )
+    .bind(winnerUserId, houseBump, Date.now(), match.id)
+    .run();
+
+  return { winner_user_id: winnerUserId, house_bump: houseBump, payout: winnerPayout, tie: false };
+}
+
+// GET /api/pub — drink menu + active buff state. Channel-scoped via the
+// player's most-recent quest (same fallback pattern as /api/shop).
+app.get("/api/pub", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const character = await getCharacter(c.env.DB, session.slack_user_id);
+  if (!character) return c.json({ error: "no_character" }, 404);
+  const activeQuest = await getActiveQuestForCharacter(c.env.DB, session.slack_user_id);
+  if (activeQuest) return c.json({ error: "mid_quest" }, 400);
+
+  const channelId = await recentChannelForUser(c.env.DB, session.slack_user_id);
+
+  // Daily special from town_state (optional — null means no special today).
+  let dailySpecialId: string | null = null;
+  if (channelId) {
+    dailySpecialId = await getDailySpecialId(c.env.DB, channelId);
+  }
+
+  // Active drink buff from character row (column added by migration 0016_town,
+  // not yet reflected in the @gantt-quest/db Character type, so raw query).
+  const drinkBuffRow = await c.env.DB
+    .prepare("SELECT drink_buff_json FROM characters WHERE slack_user_id = ?")
+    .bind(session.slack_user_id)
+    .first<{ drink_buff_json: string | null }>();
+  const drinkBuff = drinkBuffRow?.drink_buff_json
+    ? (JSON.parse(drinkBuffRow.drink_buff_json) as DrinkBuff)
+    : null;
+
+  const drinksWithPrice = DRINKS.map((d) => {
+    const isSpecial = d.id === dailySpecialId;
+    return {
+      ...d,
+      actual_price: isSpecial ? Math.floor(d.price * 0.7) : d.price,
+      is_daily_special: isSpecial,
+    };
+  });
+
+  // SPD — current open match in the user's channel (if any)
+  let spdData: {
+    open_match: Record<string, unknown> | null;
+    my_bet: { side: string; amount: number } | null;
+    bet_totals: { initiator: number; challenger: number };
+  } = { open_match: null, my_bet: null, bet_totals: { initiator: 0, challenger: 0 } };
+
+  if (channelId) {
+    // Sweep expired matches first
+    await spdSweepExpired(c.env.DB, channelId);
+
+    const openMatch = await c.env.DB
+      .prepare(
+        `SELECT id, channel_id, initiator_user_id, initiator_stake, challenger_user_id,
+                status, winner_user_id, house_bump, created_at, resolved_at
+         FROM spd_matches WHERE channel_id = ? AND status = 'open' ORDER BY created_at DESC LIMIT 1`,
+      )
+      .bind(channelId)
+      .first<{
+        id: number;
+        channel_id: string;
+        initiator_user_id: string;
+        initiator_stake: number;
+        challenger_user_id: string | null;
+        status: string;
+        winner_user_id: string | null;
+        house_bump: number | null;
+        created_at: number;
+        resolved_at: number | null;
+      }>();
+
+    if (openMatch) {
+      // Look up initiator name
+      const initiatorChar = await getCharacter(c.env.DB, openMatch.initiator_user_id);
+
+      const bets = await c.env.DB
+        .prepare(`SELECT side, amount, bettor_user_id FROM spd_bets WHERE match_id = ?`)
+        .bind(openMatch.id)
+        .all<{ side: string; amount: number; bettor_user_id: string }>();
+
+      const initiatorBetTotal = bets.results.filter((b) => b.side === "initiator").reduce((s, b) => s + b.amount, 0);
+      const challengerBetTotal = bets.results.filter((b) => b.side === "challenger").reduce((s, b) => s + b.amount, 0);
+
+      const myBet = bets.results.find((b) => b.bettor_user_id === session.slack_user_id);
+
+      spdData = {
+        open_match: {
+          id: openMatch.id,
+          initiator_user_id: openMatch.initiator_user_id,
+          initiator_name: initiatorChar?.name ?? openMatch.initiator_user_id,
+          initiator_stake: openMatch.initiator_stake,
+          challenger_user_id: openMatch.challenger_user_id,
+          status: openMatch.status,
+          created_at: openMatch.created_at,
+          expires_at: openMatch.created_at + SPD_EXPIRY_MS,
+          // initiator_throw intentionally omitted
+        },
+        my_bet: myBet ? { side: myBet.side, amount: myBet.amount } : null,
+        bet_totals: { initiator: initiatorBetTotal, challenger: challengerBetTotal },
+      };
+    }
+  }
+
+  const art_url = await getOrScheduleViewArt(c.env.AI, artTarget(c.env), c.executionCtx, "pub_interior", undefined, TOWN_WEEKLY_MS);
+  return c.json({ drinks: drinksWithPrice, drink_buff: drinkBuff, gold: character.gold, spd: spdData, art_url });
+});
+
+// POST /api/pub/drink/:drinkId — order a drink. Deducts gold, applies the
+// effect immediately (instant) or stores a buff on the character.
+app.post("/api/pub/drink/:drinkId", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const character = await getCharacter(c.env.DB, session.slack_user_id);
+  if (!character) return c.json({ error: "no_character" }, 404);
+  const activeQuest = await getActiveQuestForCharacter(c.env.DB, session.slack_user_id);
+  if (activeQuest) return c.json({ error: "mid_quest" }, 400);
+
+  const drinkId = c.req.param("drinkId");
+  const drink = findDrinkById(drinkId);
+  if (!drink) return c.json({ error: "unknown_drink" }, 404);
+
+  // Daily special pricing.
+  const channelId = await recentChannelForUser(c.env.DB, session.slack_user_id);
+  let price = drink.price;
+  if (channelId) {
+    const specialId = await getDailySpecialId(c.env.DB, channelId);
+    if (specialId === drink.id) price = Math.floor(drink.price * 0.7);
+  }
+
+  if (character.gold < price) return c.json({ error: "insufficient_gold", price, gold: character.gold }, 400);
+
+  const ok = await tryDeductGold(c.env.DB, session.slack_user_id, price);
+  if (!ok) return c.json({ error: "insufficient_gold_race" }, 400);
+
+  const eff = drink.effect;
+  let summary = "";
+  let newBuff: DrinkBuff | null = null;
+
+  switch (eff.kind) {
+    case "buff_attack": {
+      newBuff = { kind: "buff_attack", magnitude: eff.magnitude, remaining: eff.duration, drink_id: drink.id };
+      await setDrinkBuff(c.env.DB, session.slack_user_id, newBuff);
+      summary = `+${eff.magnitude} attack for ${eff.duration} actions`;
+      break;
+    }
+    case "buff_magic": {
+      newBuff = { kind: "buff_magic", magnitude: eff.magnitude, remaining: eff.duration, drink_id: drink.id };
+      await setDrinkBuff(c.env.DB, session.slack_user_id, newBuff);
+      summary = `+${eff.magnitude} magic for ${eff.duration} actions`;
+      break;
+    }
+    case "buff_next_crit": {
+      newBuff = { kind: "buff_next_crit", magnitude: 1, remaining: 1, drink_id: drink.id };
+      await setDrinkBuff(c.env.DB, session.slack_user_id, newBuff);
+      summary = "next attack/cast/signature is a guaranteed crit";
+      break;
+    }
+    case "instant_shield": {
+      const cap = character.max_hp * SHIELD_CAP_MULTIPLIER;
+      const added = await addShield(c.env.DB, character, eff.amount, cap);
+      summary = `+${added} shield`;
+      break;
+    }
+    case "instant_hp": {
+      const healed = await healCharacter(c.env.DB, character, eff.amount);
+      summary = `+${healed} HP`;
+      break;
+    }
+    case "instant_mana": {
+      const added = await addMana(c.env.DB, session.slack_user_id, eff.amount);
+      summary = `+${added} mana`;
+      break;
+    }
+    case "instant_combo": {
+      const healed = await healCharacter(c.env.DB, character, eff.hp);
+      const added = await addMana(c.env.DB, session.slack_user_id, eff.mana);
+      summary = `+${healed} HP, +${added} mana`;
+      break;
+    }
+  }
+
+  return c.json({ ok: true, drink_name: drink.name, emoji: drink.emoji, price, summary, drink_buff: newBuff });
+});
+
+// POST /api/pub/liars/start — begin a Liars' Roll round. Body: { stake: number }.
+// Rolls dice, generates bartender's claim, persists round, returns the
+// player's dice + bartender's claim so the UI can render the decide prompt.
+app.post("/api/pub/liars/start", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const character = await getCharacter(c.env.DB, session.slack_user_id);
+  if (!character) return c.json({ error: "no_character" }, 404);
+  const activeQuest = await getActiveQuestForCharacter(c.env.DB, session.slack_user_id);
+  if (activeQuest) return c.json({ error: "mid_quest" }, 400);
+
+  const body = await c.req.json<{ stake?: number }>().catch(() => ({ stake: undefined }));
+  const stake = body.stake;
+  if (typeof stake !== "number" || !LIARS_STAKES.includes(stake)) {
+    return c.json({ error: "invalid_stake", valid_stakes: LIARS_STAKES }, 400);
+  }
+  if (character.gold < stake) {
+    return c.json({ error: "insufficient_gold", gold: character.gold }, 400);
+  }
+
+  const goldOk = await tryDeductGold(c.env.DB, session.slack_user_id, stake);
+  if (!goldOk) return c.json({ error: "insufficient_gold_race" }, 400);
+
+  const playerDice = rollThreeD6();
+  const bartenderDice = rollThreeD6();
+  const total = [...playerDice, ...bartenderDice].reduce((a, b) => a + b, 0);
+  const truth = liarsZoneFor(total);
+
+  const isLying = Math.random() >= LIARS_TRUTH_RATE;
+  let claim: LiarsClaim;
+  if (!isLying) {
+    claim = truth;
+  } else {
+    const others = (["low", "medium", "high"] as LiarsClaim[]).filter((z) => z !== truth);
+    claim = others[Math.floor(Math.random() * others.length)];
+  }
+
+  const channelId = (await recentChannelForUser(c.env.DB, session.slack_user_id)) ?? "web";
+  const roundId = await createLiarsRound(c.env.DB, {
+    user_id: session.slack_user_id,
+    channel_id: channelId,
+    stake,
+    player_dice: playerDice,
+    bartender_dice: bartenderDice,
+    claim,
+    lied: isLying,
+  });
+
+  const playerSum = playerDice.reduce((a, b) => a + b, 0);
+  return c.json({
+    round_id: roundId,
+    stake,
+    player_dice: playerDice,
+    player_sum: playerSum,
+    claim,
+    claim_label: liarsZoneLabel(claim),
+    trust_mult: LIARS_TRUST_MULT,
+    challenge_mult: LIARS_CHALLENGE_MULT,
+    house_cut_pct: Math.round(LIARS_HOUSE_CUT * 100),
+  });
+});
+
+// POST /api/pub/liars/:roundId/decide — resolve a Liars' Roll round.
+// Body: { choice: "trust" | "challenge" }. Race-safe via conditional UPDATE.
+app.post("/api/pub/liars/:roundId/decide", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const roundId = parseInt(c.req.param("roundId"), 10);
+  if (!Number.isFinite(roundId)) return c.json({ error: "bad_round_id" }, 400);
+
+  const body = await c.req.json<{ choice?: string }>().catch(() => ({ choice: undefined }));
+  if (body.choice !== "trust" && body.choice !== "challenge") {
+    return c.json({ error: "invalid_choice" }, 400);
+  }
+  const choice = body.choice;
+
+  const round = await getLiarsRound(c.env.DB, roundId);
+  if (!round) return c.json({ error: "round_not_found" }, 404);
+  if (round.user_id !== session.slack_user_id) return c.json({ error: "not_your_round" }, 403);
+  if (round.status !== "open") return c.json({ error: "already_resolved" }, 400);
+
+  const totalPlayer = round.player_dice.reduce((a, b) => a + b, 0);
+  const totalBartender = round.bartender_dice.reduce((a, b) => a + b, 0);
+  const combined = totalPlayer + totalBartender;
+  const truth = liarsZoneFor(combined);
+  const correct = choice === "trust" ? !round.lied : round.lied;
+
+  let outcome: LiarsOutcome;
+  let payout = 0;
+  if (correct) {
+    const mult = choice === "trust" ? LIARS_TRUST_MULT : LIARS_CHALLENGE_MULT;
+    const gross = round.stake * mult;
+    payout = Math.floor(gross * (1 - LIARS_HOUSE_CUT));
+    outcome = choice === "trust" ? "trust_win" : "challenge_win";
+  } else {
+    outcome = choice === "trust" ? "trust_lose" : "challenge_lose";
+  }
+
+  const won = await finalizeLiarsRound(c.env.DB, roundId, outcome, payout);
+  if (!won) return c.json({ error: "already_resolved_race" }, 409);
+
+  if (payout > 0) {
+    await addGold(c.env.DB, session.slack_user_id, payout);
+  }
+
+  const updatedChar = await getCharacter(c.env.DB, session.slack_user_id);
+
+  return c.json({
+    ok: true,
+    outcome,
+    correct,
+    choice,
+    lied: round.lied,
+    truth,
+    truth_label: liarsZoneLabel(truth),
+    claim_label: liarsZoneLabel(round.claim),
+    player_dice: round.player_dice,
+    bartender_dice: round.bartender_dice,
+    combined,
+    payout,
+    gold: updatedChar?.gold ?? 0,
+  });
+});
+
+// =============================================================================
+// SPD ENDPOINTS
+// =============================================================================
+
+// POST /api/pub/spd/start — initiator opens a new match.
+// Body: { stake: 10|25|50, throw: "stone"|"parchment"|"dagger" }
+app.post("/api/pub/spd/start", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const character = await getCharacter(c.env.DB, session.slack_user_id);
+  if (!character) return c.json({ error: "no_character" }, 404);
+  const activeQuest = await getActiveQuestForCharacter(c.env.DB, session.slack_user_id);
+  if (activeQuest) return c.json({ error: "mid_quest" }, 400);
+
+  const body = await c.req.json<{ stake?: number; throw?: string }>().catch(() => ({} as { stake?: number; throw?: string }));
+  const stake = body.stake;
+  const throwChoice = body.throw;
+  if (typeof stake !== "number" || !SPD_STAKES.includes(stake)) {
+    return c.json({ error: "invalid_stake", valid_stakes: SPD_STAKES }, 400);
+  }
+  if (throwChoice !== "stone" && throwChoice !== "parchment" && throwChoice !== "dagger") {
+    return c.json({ error: "invalid_throw" }, 400);
+  }
+
+  const channelId = await recentChannelForUser(c.env.DB, session.slack_user_id);
+  if (!channelId) return c.json({ error: "no_channel" }, 400);
+
+  // Sweep expired matches
+  await spdSweepExpired(c.env.DB, channelId);
+
+  // Check for existing open match in channel
+  const existing = await c.env.DB
+    .prepare(`SELECT id FROM spd_matches WHERE channel_id = ? AND status = 'open' LIMIT 1`)
+    .bind(channelId)
+    .first<{ id: number }>();
+  if (existing) return c.json({ error: "match_already_open", match_id: existing.id }, 409);
+
+  // Check gold
+  if (character.gold < stake) return c.json({ error: "insufficient_gold", gold: character.gold }, 400);
+  const goldOk = await tryDeductGold(c.env.DB, session.slack_user_id, stake);
+  if (!goldOk) return c.json({ error: "insufficient_gold_race" }, 400);
+
+  const result = await c.env.DB
+    .prepare(
+      `INSERT INTO spd_matches (channel_id, initiator_user_id, initiator_stake, initiator_throw, status, created_at)
+       VALUES (?, ?, ?, ?, 'open', ?)`,
+    )
+    .bind(channelId, session.slack_user_id, stake, throwChoice, Date.now())
+    .run();
+
+  return c.json({ ok: true, match_id: result.meta.last_row_id as number, status: "open" });
+});
+
+// POST /api/pub/spd/:matchId/accept — challenger picks throw and resolves instantly.
+// Body: { throw: "stone"|"parchment"|"dagger" }
+app.post("/api/pub/spd/:matchId/accept", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const matchId = parseInt(c.req.param("matchId"), 10);
+  if (!Number.isFinite(matchId)) return c.json({ error: "bad_match_id" }, 400);
+
+  const body = await c.req.json<{ throw?: string }>().catch(() => ({} as { throw?: string }));
+  const throwChoice = body.throw;
+  if (throwChoice !== "stone" && throwChoice !== "parchment" && throwChoice !== "dagger") {
+    return c.json({ error: "invalid_throw" }, 400);
+  }
+
+  const match = await c.env.DB
+    .prepare(`SELECT * FROM spd_matches WHERE id = ?`)
+    .bind(matchId)
+    .first<SpdMatchRow>();
+  if (!match) return c.json({ error: "match_not_found" }, 404);
+  if (match.status !== "open") return c.json({ error: "match_not_open" }, 409);
+  if (match.initiator_user_id === session.slack_user_id) {
+    return c.json({ error: "cant_accept_own_match" }, 400);
+  }
+
+  const character = await getCharacter(c.env.DB, session.slack_user_id);
+  if (!character) return c.json({ error: "no_character" }, 404);
+  if (character.gold < match.initiator_stake) {
+    return c.json({ error: "insufficient_gold", gold: character.gold }, 400);
+  }
+
+  // Race-safe: atomically claim the match
+  const updateResult = await c.env.DB
+    .prepare(
+      `UPDATE spd_matches SET status = 'resolving', challenger_user_id = ?, challenger_throw = ?
+       WHERE id = ? AND status = 'open'`,
+    )
+    .bind(session.slack_user_id, throwChoice, matchId)
+    .run();
+  if ((updateResult.meta.changes ?? 0) !== 1) return c.json({ error: "match_taken" }, 409);
+
+  const goldOk = await tryDeductGold(c.env.DB, session.slack_user_id, match.initiator_stake);
+  if (!goldOk) {
+    // Rollback the claim
+    await c.env.DB
+      .prepare(
+        `UPDATE spd_matches SET status = 'open', challenger_user_id = NULL, challenger_throw = NULL WHERE id = ?`,
+      )
+      .bind(matchId)
+      .run();
+    return c.json({ error: "insufficient_gold_race" }, 400);
+  }
+
+  // Reload match with challenger data
+  const fullMatch = await c.env.DB
+    .prepare(`SELECT * FROM spd_matches WHERE id = ?`)
+    .bind(matchId)
+    .first<SpdMatchRow>();
+  if (!fullMatch) return c.json({ error: "match_not_found" }, 404);
+
+  const resolution = await spdResolveMatch(c.env.DB, fullMatch);
+  const updatedChar = await getCharacter(c.env.DB, session.slack_user_id);
+  const initiatorChar = await getCharacter(c.env.DB, match.initiator_user_id);
+
+  return c.json({
+    ok: true,
+    match_id: matchId,
+    initiator_throw: match.initiator_throw,
+    challenger_throw: throwChoice,
+    tie: resolution.tie,
+    winner_user_id: resolution.winner_user_id,
+    payout: resolution.payout,
+    house_bump: resolution.house_bump,
+    gold: updatedChar?.gold ?? 0,
+    initiator_name: initiatorChar?.name ?? match.initiator_user_id,
+  });
+});
+
+// POST /api/pub/spd/:matchId/bet — place a side bet on an open match.
+// Body: { side: "initiator"|"challenger", amount: 5|10|25 }
+app.post("/api/pub/spd/:matchId/bet", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const matchId = parseInt(c.req.param("matchId"), 10);
+  if (!Number.isFinite(matchId)) return c.json({ error: "bad_match_id" }, 400);
+
+  const body = await c.req.json<{ side?: string; amount?: number }>().catch(() => ({} as { side?: string; amount?: number }));
+  const side = body.side;
+  const amount = body.amount;
+  if (side !== "initiator" && side !== "challenger") {
+    return c.json({ error: "invalid_side" }, 400);
+  }
+  if (typeof amount !== "number" || !SPD_BET_AMOUNTS.includes(amount)) {
+    return c.json({ error: "invalid_bet_amount", valid_amounts: SPD_BET_AMOUNTS }, 400);
+  }
+
+  const match = await c.env.DB
+    .prepare(`SELECT * FROM spd_matches WHERE id = ?`)
+    .bind(matchId)
+    .first<SpdMatchRow>();
+  if (!match) return c.json({ error: "match_not_found" }, 404);
+  if (match.status !== "open") return c.json({ error: "match_not_open" }, 409);
+  if (
+    match.initiator_user_id === session.slack_user_id ||
+    match.challenger_user_id === session.slack_user_id
+  ) {
+    return c.json({ error: "cant_bet_on_own_match" }, 400);
+  }
+
+  // One bet per user per match
+  const existingBet = await c.env.DB
+    .prepare(`SELECT 1 FROM spd_bets WHERE match_id = ? AND bettor_user_id = ?`)
+    .bind(matchId, session.slack_user_id)
+    .first();
+  if (existingBet) return c.json({ error: "already_bet" }, 409);
+
+  const character = await getCharacter(c.env.DB, session.slack_user_id);
+  if (!character) return c.json({ error: "no_character" }, 404);
+  if (character.gold < amount) return c.json({ error: "insufficient_gold", gold: character.gold }, 400);
+
+  const goldOk = await tryDeductGold(c.env.DB, session.slack_user_id, amount);
+  if (!goldOk) return c.json({ error: "insufficient_gold_race" }, 400);
+
+  await c.env.DB
+    .prepare(
+      `INSERT INTO spd_bets (match_id, bettor_user_id, side, amount, created_at)
+       VALUES (?, ?, ?, ?, ?)`,
+    )
+    .bind(matchId, session.slack_user_id, side, amount, Date.now())
+    .run();
+
+  const updatedChar = await getCharacter(c.env.DB, session.slack_user_id);
+  return c.json({ ok: true, match_id: matchId, side, amount, gold: updatedChar?.gold ?? 0 });
+});
+
+// POST /api/pub/spd/:matchId/cancel — initiator cancels their open match.
+app.post("/api/pub/spd/:matchId/cancel", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const matchId = parseInt(c.req.param("matchId"), 10);
+  if (!Number.isFinite(matchId)) return c.json({ error: "bad_match_id" }, 400);
+
+  const match = await c.env.DB
+    .prepare(`SELECT * FROM spd_matches WHERE id = ?`)
+    .bind(matchId)
+    .first<SpdMatchRow>();
+  if (!match) return c.json({ error: "match_not_found" }, 404);
+  if (match.initiator_user_id !== session.slack_user_id) {
+    return c.json({ error: "not_initiator" }, 403);
+  }
+  if (match.status !== "open") return c.json({ error: "match_not_open" }, 409);
+
+  const updateResult = await c.env.DB
+    .prepare(`UPDATE spd_matches SET status = 'cancelled' WHERE id = ? AND status = 'open'`)
+    .bind(matchId)
+    .run();
+  if ((updateResult.meta.changes ?? 0) !== 1) return c.json({ error: "already_resolved" }, 409);
+
+  // Refund stake
+  await addGold(c.env.DB, session.slack_user_id, match.initiator_stake);
+
+  // Refund any side bets
+  const bets = await c.env.DB
+    .prepare(`SELECT bettor_user_id, amount FROM spd_bets WHERE match_id = ?`)
+    .bind(matchId)
+    .all<{ bettor_user_id: string; amount: number }>();
+  for (const bet of bets.results) {
+    await addGold(c.env.DB, bet.bettor_user_id, bet.amount);
+  }
+
+  const updatedChar = await getCharacter(c.env.DB, session.slack_user_id);
+  return c.json({ ok: true, match_id: matchId, refunded: match.initiator_stake, gold: updatedChar?.gold ?? 0 });
+});
+
 // Returns the user's currently-active quest (with scene state + party) or
 // { quest: null } if they're not in one. Polled by the active-quest panel.
 app.get("/api/quest/active", async (c) => {
@@ -1248,8 +2668,10 @@ app.post("/api/quest/:id/start_web_combat", async (c) => {
       max_mana: member.max_mana,
       shield: member.shield,
       position: member.position,
-      attack_mod: cls.attack_mod,
-      magic_mod: cls.magic_mod,
+      // attack_mod and magic_mod gain a level bonus (+1 per 4 levels) so
+      // hit rate and spell accuracy stay meaningful at high tiers.
+      attack_mod: cls.attack_mod + Math.floor(member.level / 4),
+      magic_mod: cls.magic_mod + Math.floor(member.level / 4),
       // Focus weapons contribute 0 to attack/cast/sig damage; their power
       // becomes focus_power for heal/shield instead.
       weapon_power: isFocus ? 0 : (weapon?.power ?? 0),
@@ -1654,6 +3076,80 @@ app.post("/api/quest/:id/dungeon/npc_choose", async (c) => {
   });
 });
 
+// Merchant room — buy stocked items with gold, or walk past. Mirrors
+// /sq choose for merchant rooms in Slack.
+//   pick 1..N → buy that item (deducts gold, adds to inventory, removes from stock)
+//   pick N+1  → walk past (advance without spending)
+// Stock is dungeon-instance-scoped: items not bought before advancing are gone.
+app.post("/api/quest/:id/dungeon/merchant_choose", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const questId = parseInt(c.req.param("id"), 10);
+  if (!Number.isFinite(questId)) return c.json({ error: "bad_quest_id" }, 400);
+  const quest = await getActiveQuestForCharacter(c.env.DB, session.slack_user_id);
+  if (!quest || quest.id !== questId) return c.json({ error: "quest_not_active" }, 404);
+  const exp = quest.scene.expedition;
+  const node = exp?.nodes[exp.current];
+  if (!exp || !node || node.type !== "merchant") return c.json({ error: "not_a_merchant_room" }, 400);
+
+  const body = (await c.req.json().catch(() => null)) as { pick?: unknown } | null;
+  const pick = typeof body?.pick === "number" ? body.pick : NaN;
+  const stock = node.loot_options ?? [];
+  const skipIdx = stock.length + 1;
+  if (!Number.isFinite(pick) || pick < 1 || pick > skipIdx) {
+    return c.json({ error: "bad_pick", valid_picks: skipIdx }, 400);
+  }
+
+  // Walk past — advance without buying.
+  if (pick === skipIdx) {
+    const advance = await advanceDungeon(c.env.DB, questId, exp as ExpState, quest.scene as never, null);
+    return c.json({ purchased: false, walked_past: true, ...advance });
+  }
+
+  // Buy path
+  const character = await getCharacter(c.env.DB, session.slack_user_id);
+  if (!character) return c.json({ error: "no_character" }, 404);
+  const choice = stock[pick - 1];
+  if (!choice) return c.json({ error: "bad_pick" }, 400);
+
+  const price = priceFor(choice.item_type, choice.rarity);
+  if (character.gold < price) {
+    return c.json({ error: "insufficient_gold", price, gold: character.gold }, 400);
+  }
+
+  const paid = await tryDeductGold(c.env.DB, session.slack_user_id, price);
+  if (!paid) return c.json({ error: "insufficient_gold", price }, 400);
+
+  // Remove this item from stock (so it can't be bought twice) and persist.
+  const remainingStock = stock.filter((_, i) => i !== pick - 1);
+  const updatedNode = { ...node, loot_options: remainingStock };
+  const updatedExp = {
+    ...exp,
+    nodes: exp.nodes.map((n, i) => (i === exp.current ? updatedNode : n)),
+  };
+  const updatedScene = { ...quest.scene, expedition: updatedExp };
+  await saveScene(c.env.DB, questId, updatedScene);
+
+  const item = await addItem(c.env.DB, {
+    character_id: session.slack_user_id,
+    item_name: choice.name,
+    item_type: choice.item_type,
+    power: choice.power,
+    rarity: choice.rarity,
+    flavor: choice.flavor,
+    weapon_range: choice.weapon_range ?? null,
+  });
+
+  return c.json({
+    purchased: true,
+    walked_past: false,
+    price,
+    gold_remaining: character.gold - price,
+    item: { id: item.id, name: item.item_name, rarity: item.rarity, type: item.item_type, power: item.power },
+    remaining_stock: remainingStock.length,
+  });
+});
+
 // Dungeon door pick from the dashboard — mirrors /sq choose 1|2 in Slack.
 // Advances expedition.current to the chosen room, seals the other door,
 // and updates scene_json's denormalized monster fields to the new room.
@@ -1894,8 +3390,8 @@ async function applyWebCombatOutcome(
 
   const multiplier =
     (isBoss ? BOSS_REWARD_MULTIPLIER : 1) * (elite ? ELITE_REWARD_MULTIPLIER : 1);
-  const totalPoolXp = won ? Math.round(tier * VICTORY_BASE_XP_PER_TIER * multiplier) : 0;
-  const totalPoolGold = won ? Math.round(tier * VICTORY_BASE_GOLD_PER_TIER * multiplier) : 0;
+  const totalPoolXp = won ? Math.round(baseRewardXp(tier) * multiplier) : 0;
+  const totalPoolGold = won ? Math.round(baseRewardGold(tier) * multiplier) : 0;
 
   // Contribution split: proportional to damage dealt, with a small support
   // baseline so fighters who contribute via heals/shields/other support

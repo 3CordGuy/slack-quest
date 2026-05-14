@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import toast from "react-hot-toast";
 
-import { findCatalogEntry } from "@gantt-quest/core";
+import { findCatalogEntry, priceFor } from "@gantt-quest/core";
 
 import { CombatPage } from "./CombatPage";
 import { EmojiIcon, Icon, KeyIcon } from "./icons";
@@ -63,6 +63,26 @@ const ERROR_LABELS: Record<string, string> = {
   bad_quest_id: "Bad quest id.",
   not_in_party: "You're not in this party.",
   web_mode: "This quest is being run from the web — head there.",
+  cant_give_to_self: "Can't give an item to yourself.",
+  unequip_first: "Unequip the item first before giving or selling.",
+  recipient_no_character: "That player hasn't rolled a character yet.",
+  mid_quest: "Not available mid-quest.",
+  insufficient_gold: "Not enough gold.",
+  unknown_drink: "Unknown drink.",
+  invalid_stake: "Invalid stake amount.",
+  invalid_throw: "Invalid throw — pick stone, parchment, or dagger.",
+  match_already_open: "There's already an open match in your channel.",
+  no_channel: "No channel found — join a quest first.",
+  match_not_found: "Match not found.",
+  match_not_open: "Match is no longer open.",
+  match_taken: "Someone else accepted the match first.",
+  cant_accept_own_match: "You can't accept your own match.",
+  cant_bet_on_own_match: "You can't bet on your own match.",
+  already_bet: "You've already placed a bet on this match.",
+  invalid_side: "Pick initiator or challenger.",
+  invalid_bet_amount: "Bet must be 5g, 10g, or 25g.",
+  not_initiator: "Only the initiator can cancel the match.",
+  already_resolved: "Match is already resolved.",
 };
 
 // fetch + parse + toast on error. Returns { ok, body } so callers can inspect
@@ -134,7 +154,7 @@ type ItemType =
   | "tool"
   | "scroll";
 type Rarity = "common" | "uncommon" | "rare";
-type WeaponRange = "melee" | "ranged";
+type WeaponRange = "melee" | "ranged" | "focus";
 
 interface Item {
   id: number;
@@ -201,6 +221,11 @@ interface ExpeditionState {
   current: number;
   nodes: ExpeditionNode[];
   pending_doors?: number[];
+  pool?: number[];
+  middle_count?: number;
+  visited_count?: number;
+  visited_indices?: number[];
+  sealed_doors?: number[];
 }
 
 interface SceneJson {
@@ -215,6 +240,7 @@ interface SceneJson {
   total_waves?: number;
   monster_effects?: StatusEffect[];
   expedition?: ExpeditionState;
+  monster_art_url?: string | null;
 }
 
 interface ActiveQuest {
@@ -334,6 +360,111 @@ interface SmithyResponse {
   error?: string;
 }
 
+// Pub / drinks
+interface DrinkItem {
+  id: string;
+  name: string;
+  emoji: string;
+  price: number;
+  actual_price: number;
+  is_daily_special: boolean;
+  blurb: string;
+}
+
+interface DrinkBuff {
+  kind: "buff_attack" | "buff_magic" | "buff_next_crit";
+  magnitude: number;
+  remaining: number;
+  drink_id: string;
+}
+
+// Stone-Parchment-Dagger
+type SpdThrow = "stone" | "parchment" | "dagger";
+
+interface SpdOpenMatch {
+  id: number;
+  initiator_user_id: string;
+  initiator_name: string;
+  initiator_stake: number;
+  challenger_user_id: string | null;
+  status: string;
+  created_at: number;
+  expires_at: number;
+}
+
+interface SpdBet {
+  side: "initiator" | "challenger";
+  amount: number;
+}
+
+interface SpdBetTotals {
+  initiator: number;
+  challenger: number;
+}
+
+interface SpdData {
+  open_match: SpdOpenMatch | null;
+  my_bet: SpdBet | null;
+  bet_totals: SpdBetTotals;
+}
+
+// SPD resolution result (returned from /accept)
+interface SpdResult {
+  match_id: number;
+  initiator_throw: SpdThrow;
+  challenger_throw: SpdThrow;
+  tie: boolean;
+  winner_user_id: string | null;
+  payout: number;
+  house_bump: number;
+  gold: number;
+  initiator_name: string;
+}
+
+interface PubResponse {
+  drinks: DrinkItem[];
+  drink_buff: DrinkBuff | null;
+  gold: number;
+  spd?: SpdData;
+  art_url?: string | null;
+  error?: string;
+}
+
+// Liars' Roll pending state (after start, before decide)
+interface LiarsRoundPending {
+  round_id: number;
+  stake: number;
+  player_dice: number[];
+  player_sum: number;
+  claim: string;
+  claim_label: string;
+  trust_mult: number;
+  challenge_mult: number;
+  house_cut_pct: number;
+}
+
+// Liars' Roll result (after decide)
+interface LiarsRoundResult {
+  outcome: string;
+  correct: boolean;
+  choice: "trust" | "challenge";
+  lied: boolean;
+  truth_label: string;
+  claim_label: string;
+  player_dice: number[];
+  bartender_dice: number[];
+  combined: number;
+  payout: number;
+  gold: number;
+}
+
+// Give: known characters for picker
+interface KnownCharacter {
+  slack_user_id: string;
+  name: string;
+  class: string;
+}
+
 interface ConfirmRequest {
   title: string;
   message: string;
@@ -362,6 +493,33 @@ interface RecentQuestsResponse {
   quests: RecentQuest[];
 }
 
+type TownSection = "job_board" | "pub" | "shop" | "inn" | "smithy" | "hunt";
+
+interface TownArt {
+  overview_art_url: string | null;
+  pub_art_url: string | null;
+  shop_art_url: string | null;
+  inn_art_url: string | null;
+  smithy_art_url: string | null;
+}
+
+interface JobListing {
+  id: string;
+  variant: "standard" | "boss" | "dungeon" | "gauntlet";
+  required_level: number;
+  title: string;
+  blurb: string;
+  reward_summary: string;
+}
+
+interface BoardResponse {
+  town_name: string;
+  jobs: JobListing[];
+  claims: Record<string, { taken_by: string }>;
+  character_level: number;
+  refresh_stamp: number;
+}
+
 type LoadState =
   | { kind: "loading" }
   | { kind: "anon" }
@@ -376,6 +534,9 @@ type LoadState =
       joinable: JoinableQuest | null;
       inn: InnResponse | null;
       smithy: SmithyResponse | null;
+      pub: PubResponse | null;
+      townArt: TownArt | null;
+      board: BoardResponse | null;
     };
 
 export function App() {
@@ -397,6 +558,7 @@ export function App() {
   // of the dashboard tree so they're not subtree-scoped to a single card.
   const [haggleResult, setHaggleResult] = useState<HaggleResult | null>(null);
   const [confirm, setConfirm] = useState<ConfirmRequest | null>(null);
+  const [townSection, setTownSection] = useState<TownSection | null>(null);
 
   useEffect(() => {
     void refresh();
@@ -435,8 +597,11 @@ export function App() {
     let joinable: JoinableQuest | null = null;
     let inn: InnResponse | null = null;
     let smithy: SmithyResponse | null = null;
+    let pub: PubResponse | null = null;
+    let townArt: TownArt | null = null;
+    let board: BoardResponse | null = null;
     if (me.character) {
-      const [invRes, qRes, recentRes, shopRes, joinableRes, innRes, smithyRes] = await Promise.all([
+      const [invRes, qRes, recentRes, shopRes, joinableRes, innRes, smithyRes, pubRes, townRes, boardRes] = await Promise.all([
         fetch("/api/inventory", { credentials: "include" }),
         fetch("/api/quest/active", { credentials: "include" }),
         fetch("/api/quests/recent", { credentials: "include" }),
@@ -444,6 +609,9 @@ export function App() {
         fetch("/api/quest/joinable", { credentials: "include" }),
         fetch("/api/inn", { credentials: "include" }),
         fetch("/api/smithy", { credentials: "include" }),
+        fetch("/api/pub", { credentials: "include" }),
+        fetch("/api/town", { credentials: "include" }),
+        fetch("/api/board", { credentials: "include" }),
       ]);
       if (invRes.ok) {
         const body = (await invRes.json()) as InventoryResponse;
@@ -498,8 +666,20 @@ export function App() {
         const body = (await smithyRes.json().catch(() => ({}))) as SmithyResponse;
         smithy = body.error ? body : null;
       }
+      if (pubRes.ok) {
+        pub = (await pubRes.json()) as PubResponse;
+      } else {
+        const body = (await pubRes.json().catch(() => ({}))) as PubResponse;
+        pub = body.error ? body : null;
+      }
+      if (townRes.ok) {
+        townArt = (await townRes.json()) as TownArt;
+      }
+      if (boardRes.ok) {
+        board = (await boardRes.json()) as BoardResponse;
+      }
     }
-    setState({ kind: "auth", me, inventory, inventoryArtUrl, activeQuest, recent, shop, joinable, inn, smithy });
+    setState({ kind: "auth", me, inventory, inventoryArtUrl, activeQuest, recent, shop, joinable, inn, smithy, pub, townArt, board });
   }
 
   async function logout() {
@@ -550,6 +730,15 @@ export function App() {
     if (ok) void refresh();
   }
 
+  async function merchantChoose(questId: number, pick: number) {
+    const { ok } = await postJson(`/api/quest/${questId}/dungeon/merchant_choose`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ pick }),
+    });
+    if (ok) void refresh();
+  }
+
   async function equipItem(itemId: number) {
     const { ok } = await postJson(`/api/inventory/${itemId}/equip`, { method: "POST" });
     if (ok) void refresh();
@@ -576,6 +765,27 @@ export function App() {
   async function useItem(itemId: number) {
     const { ok } = await postJson(`/api/inventory/${itemId}/use`, { method: "POST" });
     if (ok) void refresh();
+  }
+
+  async function giveItem(itemId: number, toUserId: string, toName: string) {
+    const item = state.kind === "auth" ? state.inventory.find((i) => i.id === itemId) : null;
+    if (!item) return;
+    setConfirm({
+      title: `Give ${item.item_name} to ${toName}?`,
+      message: `This will transfer the item to ${toName}. This cannot be undone.`,
+      confirmLabel: "Give",
+      onConfirm: async () => {
+        const { ok, body } = await postJson(`/api/inventory/${itemId}/give`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ to_user_id: toUserId }),
+        });
+        if (ok) {
+          toast.success(`Gave ${body?.item_name ?? item.item_name} to ${toName}.`);
+          void refresh();
+        }
+      },
+    });
   }
 
   async function rest(kind: "short" | "long") {
@@ -636,6 +846,15 @@ export function App() {
     });
   }
 
+  async function buyDrink(drinkId: string) {
+    const { ok, body } = await postJson(`/api/pub/drink/${drinkId}`, { method: "POST" });
+    if (!ok) return;
+    if (body && typeof body.emoji === "string" && typeof body.drink_name === "string") {
+      toast.success(`${body.emoji} ${body.drink_name}: ${body.summary ?? ""}`);
+    }
+    void refresh();
+  }
+
   async function shopBuyStaple(stapleId: string) {
     const { ok, body } = await postJson(`/api/shop/staple/${stapleId}/buy`, { method: "POST" });
     if (!ok) return;
@@ -678,11 +897,29 @@ export function App() {
     if (ok) void refresh();
   }
 
-  async function startQuest(variant: "standard" | "boss" | "gauntlet", elite: boolean) {
+  async function startQuest(variant: "standard" | "boss" | "gauntlet" | "dungeon", elite: boolean) {
     const { ok } = await postJson(`/api/quest/start`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ variant, elite }),
+    });
+    if (ok) void refresh();
+  }
+
+  async function takeJob(jobId: string) {
+    const { ok } = await postJson("/api/board/take", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ job_id: jobId }),
+    });
+    if (ok) void refresh();
+  }
+
+  async function startHunt(tier: number) {
+    const { ok } = await postJson("/api/hunt", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ tier }),
     });
     if (ok) void refresh();
   }
@@ -713,20 +950,87 @@ export function App() {
       />
     );
   }
+  const inQuest = !!state.activeQuest;
+
+  // Town section main content
+  let sectionContent: React.ReactNode = null;
+  if (!inQuest) {
+    if (townSection === null) {
+      sectionContent = (
+        <>
+          <TownMap
+            art={state.townArt}
+            onNavigate={setTownSection}
+          />
+          {state.me.character && state.recent.length > 0 && (
+            <RecentQuestsCard quests={state.recent} />
+          )}
+        </>
+      );
+    } else {
+      const townNav = <TownNav active={townSection} onNavigate={setTownSection} />;
+      if (townSection === "job_board") {
+        sectionContent = (
+          <JobBoardSection
+            board={state.board}
+            overviewArt={state.townArt?.overview_art_url ?? null}
+            selfId={state.me.slack_user_id}
+            characterLevel={state.me.character?.level ?? 0}
+            joinable={state.joinable}
+            navOverlay={townNav}
+            onTakeJob={takeJob}
+            onStartQuest={startQuest}
+            onJoin={joinQuest}
+          />
+        );
+      } else if (townSection === "pub" && state.me.character && state.pub) {
+        sectionContent = (
+          <PubCard
+            pub={state.pub}
+            selfId={state.me.slack_user_id}
+            navOverlay={townNav}
+            onBuyDrink={buyDrink}
+            onRefresh={refresh}
+          />
+        );
+      } else if (townSection === "shop" && state.me.character && state.shop) {
+        sectionContent = (
+          <ShopCard
+            shop={state.shop}
+            navOverlay={townNav}
+            onBuy={shopBuy}
+            onHaggle={shopHaggle}
+            onBuyStaple={shopBuyStaple}
+          />
+        );
+      } else if (townSection === "inn" && state.me.character && state.inn) {
+        sectionContent = (
+          <InnCard inn={state.inn} navOverlay={townNav} onStay={innStay} />
+        );
+      } else if (townSection === "smithy" && state.me.character && state.smithy) {
+        sectionContent = (
+          <SmithyCard smithy={state.smithy} navOverlay={townNav} onSharpen={smithySharpen} />
+        );
+      } else if (townSection === "hunt" && state.me.character) {
+        sectionContent = (
+          <HuntSection
+            characterLevel={state.me.character.level}
+            overviewArt={state.townArt?.overview_art_url ?? null}
+            navOverlay={townNav}
+            onStartHunt={startHunt}
+          />
+        );
+      } else {
+        sectionContent = townNav;
+      }
+    }
+  }
+
   return (
     <Centered>
       <DashboardLayout
         main={
           <>
-            {!state.activeQuest && state.joinable && (
-              <JoinableQuestCard joinable={state.joinable} onJoin={joinQuest} />
-            )}
-            {!state.activeQuest && !state.joinable && state.me.character && (
-              <StartQuestCard
-                characterLevel={state.me.character.level}
-                onStart={startQuest}
-              />
-            )}
             {state.activeQuest && (
               <ActiveQuestCard
                 quest={state.activeQuest.quest}
@@ -739,6 +1043,7 @@ export function App() {
                 onLockboxChoose={(pick) => lockboxChoose(state.activeQuest!.quest.id, pick)}
                 onNpcChoose={(pick) => npcChoose(state.activeQuest!.quest.id, pick)}
                 onTreasureTake={(pick) => treasureTake(state.activeQuest!.quest.id, pick)}
+                onMerchantChoose={(pick) => merchantChoose(state.activeQuest!.quest.id, pick)}
                 myKeys={state.me.character ? {
                   bronze: state.me.character.keys_bronze,
                   silver: state.me.character.keys_silver,
@@ -746,23 +1051,7 @@ export function App() {
                 } : null}
               />
             )}
-            {state.me.character && state.shop && !state.activeQuest && (
-              <ShopCard
-                shop={state.shop}
-                onBuy={shopBuy}
-                onHaggle={shopHaggle}
-                onBuyStaple={shopBuyStaple}
-              />
-            )}
-            {state.me.character && state.inn && !state.activeQuest && (
-              <InnCard inn={state.inn} onStay={innStay} />
-            )}
-            {state.me.character && state.smithy && !state.activeQuest && (
-              <SmithyCard smithy={state.smithy} onSharpen={smithySharpen} />
-            )}
-            {state.me.character && state.recent.length > 0 && (
-              <RecentQuestsCard quests={state.recent} />
-            )}
+            {sectionContent}
           </>
         }
         side={
@@ -780,9 +1069,11 @@ export function App() {
                 items={state.inventory}
                 inQuest={!!state.activeQuest}
                 artUrl={state.inventoryArtUrl}
+                selfId={state.me.slack_user_id}
                 onEquip={equipItem}
                 onSell={sellItem}
                 onUse={useItem}
+                onGive={giveItem}
               />
             )}
           </>
@@ -865,14 +1156,15 @@ function StartQuestCard({
   onStart,
 }: {
   characterLevel: number;
-  onStart: (variant: "standard" | "boss" | "gauntlet", elite: boolean) => void;
+  onStart: (variant: "standard" | "boss" | "gauntlet" | "dungeon", elite: boolean) => void;
 }) {
   const [elite, setElite] = useState(false);
-  const [pending, setPending] = useState<"standard" | "boss" | "gauntlet" | null>(null);
+  const [pending, setPending] = useState<"standard" | "boss" | "gauntlet" | "dungeon" | null>(null);
   const bossAllowed = characterLevel >= 3;
   const gauntletAllowed = characterLevel >= 5;
+  const dungeonAllowed = characterLevel >= 1;
 
-  function go(variant: "standard" | "boss" | "gauntlet") {
+  function go(variant: "standard" | "boss" | "gauntlet" | "dungeon") {
     setPending(variant);
     onStart(variant, elite);
   }
@@ -881,9 +1173,7 @@ function StartQuestCard({
     <div style={{ ...card, borderColor: "#b89b3a" }}>
       <h2 style={h2}>Start a new quest</h2>
       <p style={muted}>
-        The dungeon master rolls a fresh foe via Workers AI. Web supports
-        standard / boss / gauntlet; full dungeon expedition generation lands
-        in a follow-up.
+        The dungeon master rolls a fresh foe via Workers AI.
       </p>
       <label
         style={{
@@ -955,7 +1245,29 @@ function StartQuestCard({
             ? "Rolling…"
             : <><Icon name="crossed-swords" /> {gauntletAllowed ? "Gauntlet" : "Gauntlet (need L5)"}</>}
         </button>
+        <button
+          onClick={() => go("dungeon")}
+          disabled={pending !== null || !dungeonAllowed}
+          style={{
+            ...button,
+            marginTop: 0,
+            flex: "1 1 160px",
+            background:
+              pending === "dungeon" ? "#33363d" : dungeonAllowed ? "#1a2d3a" : "#2a2d33",
+            color: dungeonAllowed ? "#7dd3fc" : "#6a7080",
+          }}
+          title="5-7 room dungeon crawl: combat, traps, lockboxes, NPC encounters → sub-boss → treasure (2.5× rewards)"
+        >
+          {pending === "dungeon"
+            ? "Generating dungeon…"
+            : <><Icon name="tower" /> Dungeon</>}
+        </button>
       </div>
+      {pending === "dungeon" && (
+        <p style={{ ...muted, fontSize: 11, marginTop: 8 }}>
+          Generating 5-7 rooms with AI — this takes ~15s.
+        </p>
+      )}
     </div>
   );
 }
@@ -1004,6 +1316,7 @@ function ActiveQuestCard({
   onLockboxChoose,
   onNpcChoose,
   onTreasureTake,
+  onMerchantChoose,
   myKeys,
 }: {
   quest: ActiveQuest;
@@ -1016,6 +1329,7 @@ function ActiveQuestCard({
   onLockboxChoose: (pick: number) => void;
   onNpcChoose: (pick: number) => void;
   onTreasureTake: (pick: number) => void;
+  onMerchantChoose: (pick: number) => void;
   myKeys: { bronze: number; silver: number; gold: number } | null;
 }) {
   const s = quest.scene;
@@ -1038,22 +1352,30 @@ function ActiveQuestCard({
             wave {s.wave}/{s.total_waves}
           </SmallBadge>
         )}
+        {variant === "dungeon" && s.expedition && (() => {
+          const exp = s.expedition;
+          const visited = exp.visited_count ?? 1;
+          const middleTotal = (exp.middle_count ?? 0) + 3;
+          return (
+            <SmallBadge>room {visited}/{middleTotal}</SmallBadge>
+          );
+        })()}
       </div>
+      {variant === "dungeon" && s.expedition?.theme && (
+        <div style={{ ...muted, fontSize: 12, marginTop: 4, fontStyle: "italic" }}>
+          🗺️ {s.expedition.theme}
+        </div>
+      )}
 
       <div style={{ marginTop: 16 }}>
         {s.monster_art_url && (
-          <img
+          <ClickablePortrait
             src={s.monster_art_url}
             alt={s.monster_name}
-            style={{
-              width: "100%",
-              maxHeight: 280,
-              objectFit: "cover",
-              display: "block",
-              borderRadius: 8,
-              marginBottom: 12,
-            }}
-            onError={(e) => { e.currentTarget.style.display = "none"; }}
+            width="100%"
+            height="auto"
+            borderRadius={8}
+            style={{ maxHeight: 280, objectFit: "cover", marginBottom: 12 }}
           />
         )}
         <div
@@ -1178,6 +1500,18 @@ function ActiveQuestCard({
         }
         if (
           variant === "dungeon" &&
+          currentNode?.type === "merchant" &&
+          currentNode.loot_options
+        ) {
+          return (
+            <MerchantPicker
+              node={currentNode}
+              onPick={onMerchantChoose}
+            />
+          );
+        }
+        if (
+          variant === "dungeon" &&
           currentNode?.type === "treasure" &&
           currentNode.loot_options
         ) {
@@ -1196,14 +1530,6 @@ function ActiveQuestCard({
             >
               <Icon name="sword" /> {combatInProgress ? "Resume Combat" : "Open Combat"}
             </button>
-          );
-        }
-        if (variant === "dungeon") {
-          return (
-            <p style={{ ...muted, fontSize: 13, marginTop: 20 }}>
-              Current room: <strong>{currentNode?.type ?? "?"}</strong> — resolve in Slack with{" "}
-              <code style={kbd}>/gq choose</code> or <code style={kbd}>/gq take</code>.
-            </p>
           );
         }
         return null;
@@ -1408,6 +1734,100 @@ function TreasurePicker({
       </div>
       <p style={{ ...muted, fontSize: 11, marginTop: 8 }}>
         Other option is left in the chest. Quest completes; spoils awarded to the party.
+      </p>
+    </div>
+  );
+}
+
+// Merchant room: buy an item from the in-dungeon merchant or walk past.
+// pick 1..N = buy item N; pick N+1 = walk past (stock evaporates once advanced).
+function MerchantPicker({
+  node,
+  onPick,
+}: {
+  node: ExpeditionNode;
+  onPick: (pick: number) => void;
+}) {
+  const stock = node.loot_options ?? [];
+  const greeting = node.npc?.greeting;
+  return (
+    <div style={{ marginTop: 20 }}>
+      <div
+        style={{
+          ...muted,
+          fontSize: 11,
+          textTransform: "uppercase",
+          letterSpacing: 1.5,
+          marginBottom: 8,
+        }}
+      >
+        <Icon name="gem-pendant" /> Merchant
+      </div>
+      {greeting && (
+        <p style={{ ...muted, fontSize: 13, fontStyle: "italic", marginBottom: 8 }}>
+          "{greeting}"
+        </p>
+      )}
+      {stock.length === 0 ? (
+        <p style={{ ...muted, fontSize: 13, marginBottom: 8 }}>
+          The merchant's stall is empty — you bought everything good.
+        </p>
+      ) : (
+        <div style={{ display: "grid", gap: 8 }}>
+          {stock.map((opt, i) => {
+            const price = priceFor(opt.item_type, opt.rarity);
+            return (
+              <button
+                key={i}
+                onClick={() => onPick(i + 1)}
+                style={{
+                  padding: "12px 14px",
+                  background: "#1d1f23",
+                  border: "1px solid #2a2d33",
+                  borderRadius: 8,
+                  textAlign: "left",
+                  cursor: "pointer",
+                  color: "#e6e6e6",
+                  fontFamily: "inherit",
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+                  <div>
+                    <span style={{ fontWeight: 600 }}>{opt.name}</span>
+                    <span style={{ ...muted, fontSize: 11, marginLeft: 6 }}>
+                      · {opt.rarity} {opt.item_type} +{opt.power}
+                    </span>
+                  </div>
+                  <span style={{ color: "#fbbf24", fontWeight: 600, fontSize: 13 }}>{price}g</span>
+                </div>
+                {opt.flavor && (
+                  <div style={{ ...muted, fontSize: 12, marginTop: 4, fontStyle: "italic" }}>
+                    {opt.flavor}
+                  </div>
+                )}
+              </button>
+            );
+          })}
+        </div>
+      )}
+      <button
+        onClick={() => onPick(stock.length + 1)}
+        style={{
+          marginTop: 8,
+          padding: "10px 14px",
+          background: "transparent",
+          border: "1px solid #2a2d33",
+          borderRadius: 8,
+          cursor: "pointer",
+          color: "#9aa0a6",
+          fontFamily: "inherit",
+          width: "100%",
+        }}
+      >
+        Walk past
+      </button>
+      <p style={{ ...muted, fontSize: 11, marginTop: 8 }}>
+        Stock evaporates once you leave. Prices match the town shop.
       </p>
     </div>
   );
@@ -1893,18 +2313,13 @@ function CharacterCard({
     <div style={card}>
       <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 4 }}>
         {portrait ? (
-          <img
+          <ClickablePortrait
             src={portrait}
             alt={`${c.class} portrait`}
-            style={{
-              width: 72,
-              height: 72,
-              borderRadius: 8,
-              objectFit: "cover",
-              border: "1px solid #2a2d33",
-              flexShrink: 0,
-            }}
-            onError={(e) => { e.currentTarget.style.display = "none"; }}
+            width={72}
+            height={72}
+            borderRadius={8}
+            style={{ border: "1px solid #2a2d33", flexShrink: 0 }}
           />
         ) : (
           <div
@@ -2091,33 +2506,125 @@ function KeyActions({
 
 // Lazy AI-generated banner. `src` may be null on first miss (flux gen kicked
 // off via ctx.waitUntil server-side); the next dashboard poll picks up the
-// real URL. Null → nothing rendered.
+// real URL. Null → nothing rendered. Click to expand.
+// Full-bleed hero image with a nav ribbon overlaid at the top.
+// Used by full-screen town sections (pub, shop, inn, smithy).
+// card padding is 32px, so we bleed -32px on each edge.
+function LocationHero({
+  src,
+  label,
+  nav,
+  flush = false,
+}: {
+  src?: string | null;
+  label: string;
+  nav: React.ReactNode;
+  flush?: boolean;
+}) {
+  return (
+    <div style={{
+      ...(flush
+        ? { width: "100%", margin: "0 0 0", borderRadius: 0 }
+        : {
+            width: "calc(100% + calc(var(--card-pad, 32px) * 2))",
+            margin: "calc(-1 * var(--card-pad, 32px)) calc(-1 * var(--card-pad, 32px)) 20px",
+            borderRadius: "12px 12px 0 0",
+          }),
+      overflow: "hidden",
+      position: "relative",
+      background: "#0d0d10",
+      ...(src ? { aspectRatio: "16/7" } : { minHeight: 56 }),
+    }}>
+      {src && (
+        <img
+          src={src}
+          alt={label}
+          style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+          onError={(e) => { e.currentTarget.style.display = "none"; }}
+        />
+      )}
+      <div style={{
+        position: "absolute", top: 0, left: 0, right: 0,
+        background: "rgba(10,11,14,0.6)",
+        backdropFilter: "blur(8px)",
+        WebkitBackdropFilter: "blur(8px)",
+        padding: "10px 20px",
+      }}>
+        {nav}
+      </div>
+      {src && (
+        <div style={{
+          position: "absolute", bottom: 0, left: 0, right: 0,
+          background: "linear-gradient(transparent, rgba(10,11,14,0.88))",
+          padding: "36px 20px 14px",
+        }}>
+          <span style={{ color: "#f1e8c8", fontSize: 17, fontWeight: 600, letterSpacing: 0.5 }}>
+            {label}
+          </span>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function Banner({ src, alt }: { src: string | null | undefined; alt: string }) {
+  const [open, setOpen] = useState(false);
+  const [hovered, setHovered] = useState(false);
   if (!src) return null;
   return (
-    <div
-      style={{
-        width: "calc(100% + 32px)",
-        margin: "-16px -16px 12px",
-        // 3:2 aspect ratio — on a ~360px-wide card that lands ~240px tall;
-        // scales naturally on wider/narrower viewports. Replaces the old
-        // fixed 120px-tall strip which read as a header band.
-        aspectRatio: "3 / 2",
-        overflow: "hidden",
-        borderRadius: "8px 8px 0 0",
-      }}
-    >
-      <img
-        src={src}
-        alt={alt}
-        loading="lazy"
-        style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
-        onError={(e) => {
-          // Hide on 404 / failure so the card doesn't show a broken-image icon.
-          (e.currentTarget.parentElement as HTMLDivElement).style.display = "none";
+    <>
+      <div
+        onClick={() => setOpen(true)}
+        onMouseEnter={() => setHovered(true)}
+        onMouseLeave={() => setHovered(false)}
+        style={{
+          width: "calc(100% + 32px)",
+          margin: "-16px -16px 12px",
+          aspectRatio: "3 / 2",
+          overflow: "hidden",
+          borderRadius: "8px 8px 0 0",
+          cursor: "zoom-in",
+          position: "relative",
         }}
-      />
-    </div>
+      >
+        <img
+          src={src}
+          alt={alt}
+          loading="lazy"
+          style={{
+            width: "100%", height: "100%", objectFit: "cover", display: "block",
+            transition: "transform 0.2s ease",
+            transform: hovered ? "scale(1.03)" : "scale(1)",
+          }}
+          onError={(e) => {
+            (e.currentTarget.parentElement as HTMLDivElement).style.display = "none";
+          }}
+        />
+      </div>
+      {open && (
+        <div
+          onClick={() => setOpen(false)}
+          style={{
+            position: "fixed", inset: 0,
+            background: "rgba(0,0,0,0.85)",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            zIndex: 9999, cursor: "zoom-out",
+          }}
+        >
+          <img
+            src={src}
+            alt={alt}
+            style={{
+              maxWidth: "min(90vw, 800px)",
+              maxHeight: "85vh",
+              borderRadius: 12,
+              objectFit: "contain",
+              boxShadow: "0 16px 48px rgba(0,0,0,0.8)",
+            }}
+          />
+        </div>
+      )}
+    </>
   );
 }
 
@@ -2125,16 +2632,20 @@ function InventoryCard({
   items,
   inQuest,
   artUrl,
+  selfId,
   onEquip,
   onSell,
   onUse,
+  onGive,
 }: {
   items: Item[];
   inQuest: boolean;
   artUrl: string | null;
+  selfId: string;
   onEquip: (itemId: number) => void;
   onSell: (itemId: number) => void;
   onUse: (itemId: number) => void;
+  onGive: (itemId: number, toUserId: string, toName: string) => void;
 }) {
   if (items.length === 0) {
     return (
@@ -2162,14 +2673,14 @@ function InventoryCard({
       {equipped.length > 0 && (
         <Section title="Equipped">
           {equipped.map((it) => (
-            <ItemRow key={it.id} item={it} inQuest={inQuest} onEquip={onEquip} onSell={onSell} onUse={onUse} />
+            <ItemRow key={it.id} item={it} inQuest={inQuest} selfId={selfId} onEquip={onEquip} onSell={onSell} onUse={onUse} onGive={onGive} />
           ))}
         </Section>
       )}
       {ITEM_TYPE_ORDER.filter((t) => groups[t]?.length).map((t) => (
         <Section key={t} title={ITEM_TYPE_LABELS[t]}>
           {groups[t]!.map((it) => (
-            <ItemRow key={it.id} item={it} inQuest={inQuest} onEquip={onEquip} onSell={onSell} onUse={onUse} />
+            <ItemRow key={it.id} item={it} inQuest={inQuest} selfId={selfId} onEquip={onEquip} onSell={onSell} onUse={onUse} onGive={onGive} />
           ))}
         </Section>
       ))}
@@ -2205,17 +2716,41 @@ function Section({
 function ItemRow({
   item,
   inQuest,
+  selfId,
   onEquip,
   onSell,
   onUse,
+  onGive,
 }: {
   item: Item;
   inQuest: boolean;
+  selfId: string;
   onEquip: (itemId: number) => void;
   onSell: (itemId: number) => void;
   onUse: (itemId: number) => void;
+  onGive: (itemId: number, toUserId: string, toName: string) => void;
 }) {
   const [showInfo, setShowInfo] = useState(false);
+  const [showGivePicker, setShowGivePicker] = useState(false);
+  const [characters, setCharacters] = useState<KnownCharacter[]>([]);
+  const [charsLoading, setCharsLoading] = useState(false);
+
+  async function openGivePicker() {
+    setShowGivePicker(true);
+    if (characters.length === 0) {
+      setCharsLoading(true);
+      try {
+        const res = await fetch("/api/characters", { credentials: "include" });
+        if (res.ok) {
+          const body = (await res.json()) as { characters: KnownCharacter[] };
+          setCharacters(body.characters);
+        }
+      } finally {
+        setCharsLoading(false);
+      }
+    }
+  }
+
   const canEquip =
     !item.equipped &&
     item.item_type !== "consumable" &&
@@ -2228,6 +2763,7 @@ function ItemRow({
   // Tools / scrolls / revives require combat context — disabled here.
   const canUse =
     !item.equipped && (item.item_type === "consumable" || item.item_type === "magic");
+  const canGive = !item.equipped;
   return (
     <div
       style={{
@@ -2293,12 +2829,58 @@ function ItemRow({
             Use
           </button>
         )}
+        {canGive && (
+          <button
+            onClick={() => {
+              if (showGivePicker) {
+                setShowGivePicker(false);
+              } else {
+                void openGivePicker();
+              }
+            }}
+            style={smallActionBtn(showGivePicker ? "#3a2030" : "#2a2030", showGivePicker ? "#f9a8d4" : "#c084fc")}
+          >
+            Give
+          </button>
+        )}
         {canSell && (
           <button onClick={() => onSell(item.id)} style={smallActionBtn("#33363d", "#e6e6e6")}>
             Sell
           </button>
         )}
       </div>
+      {showGivePicker && (
+        <div
+          style={{
+            marginTop: 8,
+            padding: "8px 10px",
+            background: "#0e0f12",
+            borderRadius: 6,
+            border: "1px solid #2a2d33",
+            fontSize: 12,
+          }}
+        >
+          <div style={{ ...muted, marginBottom: 6 }}>Give to:</div>
+          {charsLoading && <div style={muted}>Loading players…</div>}
+          {!charsLoading && characters.length === 0 && (
+            <div style={muted}>No other players found.</div>
+          )}
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+            {characters.filter((ch) => ch.slack_user_id !== selfId).map((ch) => (
+              <button
+                key={ch.slack_user_id}
+                style={smallActionBtn("#1a1a2e", "#c084fc")}
+                onClick={() => {
+                  setShowGivePicker(false);
+                  onGive(item.id, ch.slack_user_id, ch.name);
+                }}
+              >
+                {ch.name} ({ch.class})
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -2357,19 +2939,24 @@ const HAGGLE_LABEL: Record<"failed" | "15" | "25" | "30", string> = {
 
 function ShopCard({
   shop,
+  navOverlay,
   onBuy,
   onHaggle,
   onBuyStaple,
 }: {
   shop: ShopResponse;
+  navOverlay?: React.ReactNode;
   onBuy: (id: number) => void;
   onHaggle: (id: number) => void;
   onBuyStaple: (id: string) => void;
 }) {
+  const hero = navOverlay
+    ? <LocationHero src={shop.art_url} label="Shop" nav={navOverlay} />
+    : <Banner src={shop.art_url ?? null} alt="Shop" />;
   if (shop.error === "mid_quest") {
     return (
       <div style={card}>
-        <Banner src={shop.art_url ?? null} alt="Shop" />
+        {hero}
         <h2 style={h2}>Shop</h2>
         <p style={muted}>The shopkeep is afraid of monsters. Finish the quest first.</p>
       </div>
@@ -2378,7 +2965,7 @@ function ShopCard({
   if (shop.error === "no_channel" || !shop.channel_id) {
     return (
       <div style={card}>
-        <Banner src={shop.art_url ?? null} alt="Shop" />
+        {hero}
         <h2 style={h2}>Shop</h2>
         <p style={muted}>
           No shop channel yet — start a quest in Slack first so we know which channel's shop to show.
@@ -2389,7 +2976,7 @@ function ShopCard({
   if (shop.needs_restock) {
     return (
       <div style={card}>
-        <Banner src={shop.art_url ?? null} alt="Shop" />
+        {hero}
         <h2 style={h2}>Shop</h2>
         <p style={muted}>
           Rolled stock is dry. Run <code style={kbd}>/gq shop</code> in Slack to kick off a restock,
@@ -2407,6 +2994,7 @@ function ShopCard({
   const atCap = capUsed >= cap;
   return (
     <div style={card}>
+      {hero}
       <h2 style={h2}>Shop</h2>
       <p style={muted}>
         {available.length}/{shop.stock.length} items available · you have{" "}
@@ -2601,14 +3189,20 @@ function ShopRow({
 
 function InnCard({
   inn,
+  navOverlay,
   onStay,
 }: {
   inn: InnResponse;
+  navOverlay?: React.ReactNode;
   onStay: (roomId: string) => void;
 }) {
+  const hero = navOverlay
+    ? <LocationHero src={inn.art_url} label="The Inn" nav={navOverlay} />
+    : <Banner src={inn.art_url ?? null} alt="The Inn" />;
   if (inn.error === "mid_quest") {
     return (
       <div style={card}>
+        {hero}
         <h2 style={h2}>The Inn</h2>
         <p style={muted}>The innkeep won't take questing parties. Finish the fight first.</p>
       </div>
@@ -2616,7 +3210,7 @@ function InnCard({
   }
   return (
     <div style={card}>
-      <Banner src={inn.art_url ?? null} alt="The Inn" />
+      {hero}
       <h2 style={h2}>The Inn</h2>
       <p style={muted}>
         A small hearth crackles in the corner. The innkeep looks up. <em>"Room for the night?"</em>
@@ -2680,14 +3274,20 @@ function InnCard({
 
 function SmithyCard({
   smithy,
+  navOverlay,
   onSharpen,
 }: {
   smithy: SmithyResponse;
+  navOverlay?: React.ReactNode;
   onSharpen: (itemId: number, itemName: string, cost: number, verb: string) => void;
 }) {
+  const hero = navOverlay
+    ? <LocationHero src={smithy.art_url} label="The Smithy" nav={navOverlay} />
+    : <Banner src={smithy.art_url ?? null} alt="The Smithy" />;
   if (smithy.error === "mid_quest") {
     return (
       <div style={card}>
+        {hero}
         <h2 style={h2}>The Smithy</h2>
         <p style={muted}>The smith won't take your steel mid-quest — wrap up the fight first.</p>
       </div>
@@ -2695,7 +3295,7 @@ function SmithyCard({
   }
   return (
     <div style={card}>
-      <Banner src={smithy.art_url ?? null} alt="The Smithy" />
+      {hero}
       <h2 style={h2}>The Smithy</h2>
       <p style={muted}>
         <em>"Bring me steel and gold. I'll make it sing."</em>
@@ -2763,6 +3363,615 @@ function SmithyCard({
       )}
     </div>
   );
+}
+
+// =============================================================================
+// PUB CARD — Drink menu + Liars' Roll mini-game
+// =============================================================================
+
+function PubCard({
+  pub,
+  selfId,
+  navOverlay,
+  onBuyDrink,
+  onRefresh,
+}: {
+  pub: PubResponse;
+  selfId: string;
+  navOverlay?: React.ReactNode;
+  onBuyDrink: (drinkId: string) => void;
+  onRefresh: () => void;
+}) {
+  // Liars' Roll state machine: idle → pending (after start) → result → idle
+  const [liarsState, setLiarsState] = useState<
+    | { phase: "idle" }
+    | { phase: "pending"; round: LiarsRoundPending }
+    | { phase: "result"; result: LiarsRoundResult }
+  >({ phase: "idle" });
+  const [liarsLoading, setLiarsLoading] = useState(false);
+
+  // SPD state machine
+  const [spdStake, setSpdStake] = useState<number | null>(null);
+  const [spdLoading, setSpdLoading] = useState(false);
+  const [spdResult, setSpdResult] = useState<SpdResult | null>(null);
+
+  async function startLiars(stake: number) {
+    setLiarsLoading(true);
+    try {
+      const res = await fetch("/api/pub/liars/start", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ stake }),
+      });
+      const body = (await res.json()) as Record<string, unknown>;
+      if (!res.ok) {
+        const code = typeof body.error === "string" ? body.error : `http_${res.status}`;
+        toast.error(code === "insufficient_gold" ? "Not enough gold." : code);
+        return;
+      }
+      setLiarsState({ phase: "pending", round: body as unknown as LiarsRoundPending });
+    } finally {
+      setLiarsLoading(false);
+    }
+  }
+
+  async function decideLiars(roundId: number, choice: "trust" | "challenge") {
+    setLiarsLoading(true);
+    try {
+      const res = await fetch(`/api/pub/liars/${roundId}/decide`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ choice }),
+      });
+      const body = (await res.json()) as Record<string, unknown>;
+      if (!res.ok) {
+        toast.error(typeof body.error === "string" ? body.error : "Something went wrong.");
+        return;
+      }
+      setLiarsState({ phase: "result", result: body as unknown as LiarsRoundResult });
+    } finally {
+      setLiarsLoading(false);
+    }
+  }
+
+  // SPD helpers
+  async function spdStart(stake: number, throwChoice: SpdThrow) {
+    setSpdLoading(true);
+    try {
+      const { ok } = await postJson("/api/pub/spd/start", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ stake, throw: throwChoice }),
+      });
+      if (ok) {
+        setSpdStake(null);
+        onRefresh();
+      }
+    } finally {
+      setSpdLoading(false);
+    }
+  }
+
+  async function spdAccept(matchId: number, throwChoice: SpdThrow) {
+    setSpdLoading(true);
+    try {
+      const res = await fetch(`/api/pub/spd/${matchId}/accept`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ throw: throwChoice }),
+      });
+      const body = (await res.json()) as Record<string, unknown>;
+      if (!res.ok) {
+        const code = typeof body.error === "string" ? body.error : `http_${res.status}`;
+        const label = (ERROR_LABELS as Record<string, string>)[code] ?? code;
+        toast.error(label);
+        return;
+      }
+      setSpdResult(body as unknown as SpdResult);
+      onRefresh();
+    } finally {
+      setSpdLoading(false);
+    }
+  }
+
+  async function spdBet(matchId: number, side: "initiator" | "challenger", amount: number) {
+    setSpdLoading(true);
+    try {
+      const { ok } = await postJson(`/api/pub/spd/${matchId}/bet`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ side, amount }),
+      });
+      if (ok) onRefresh();
+    } finally {
+      setSpdLoading(false);
+    }
+  }
+
+  async function spdCancel(matchId: number) {
+    setSpdLoading(true);
+    try {
+      const { ok } = await postJson(`/api/pub/spd/${matchId}/cancel`, { method: "POST" });
+      if (ok) onRefresh();
+    } finally {
+      setSpdLoading(false);
+    }
+  }
+
+  const spd = pub.spd;
+  const openMatch = spd?.open_match ?? null;
+  const myBet = spd?.my_bet ?? null;
+  const betTotals = spd?.bet_totals ?? { initiator: 0, challenger: 0 };
+
+  const iAmInitiator = openMatch?.initiator_user_id === selfId;
+  const iAmChallenger = openMatch?.challenger_user_id === selfId;
+  const canBet = openMatch !== null && !iAmInitiator && !iAmChallenger && myBet === null;
+
+  const SPD_THROW_LABELS: Record<SpdThrow, string> = { stone: "🪨 Stone", parchment: "📜 Parchment", dagger: "🗡️ Dagger" };
+
+  return (
+    <div style={card}>
+      {navOverlay
+        ? <LocationHero src={pub.art_url} label="The Pub" nav={navOverlay} />
+        : pub.art_url ? <Banner src={pub.art_url} alt="The Pub" /> : null}
+      <h2 style={h2}>🍺 The Pub</h2>
+      <p style={{ ...muted, marginTop: 4 }}>
+        <em>"Smoke, sawdust, a thousand failed deployments worth of regret in the air."</em>
+      </p>
+
+      {/* Active drink buff display */}
+      {pub.drink_buff && (
+        <div
+          style={{
+            marginTop: 12,
+            padding: "8px 12px",
+            background: "#1a2a1a",
+            border: "1px solid #2d5a2d",
+            borderRadius: 8,
+            fontSize: 13,
+            color: "#86efac",
+          }}
+        >
+          Active buff: <strong>{drinkBuffLabel(pub.drink_buff)}</strong> · {pub.drink_buff.remaining} action{pub.drink_buff.remaining === 1 ? "" : "s"} remaining
+        </div>
+      )}
+
+      {/* Drink menu */}
+      <div style={{ marginTop: 16 }}>
+        <div style={{ ...muted, fontSize: 11, textTransform: "uppercase", letterSpacing: 1.5, marginBottom: 10 }}>
+          Drink Menu · <span style={{ color: "#fbbf24" }}>{pub.gold}g</span>
+        </div>
+        <div style={{ display: "grid", gap: 8 }}>
+          {pub.drinks.map((d) => (
+            <div
+              key={d.id}
+              style={{
+                padding: "10px 12px",
+                background: "#1d1f23",
+                borderRadius: 8,
+                border: d.is_daily_special ? "1px solid #b89b3a" : "1px solid transparent",
+                display: "flex",
+                alignItems: "center",
+                gap: 10,
+              }}
+            >
+              <span style={{ fontSize: 20 }}>{d.emoji}</span>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontWeight: 600, color: "#f5f5f5", fontSize: 14, display: "flex", alignItems: "center", gap: 6 }}>
+                  {d.name}
+                  {d.is_daily_special && (
+                    <span style={{ fontSize: 10, background: "#b89b3a22", color: "#fbbf24", border: "1px solid #b89b3a55", borderRadius: 4, padding: "1px 5px", fontWeight: 700 }}>
+                      SPECIAL
+                    </span>
+                  )}
+                </div>
+                <div style={{ ...muted, fontSize: 12, marginTop: 2 }}>{d.blurb}</div>
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4, flexShrink: 0 }}>
+                <div style={{ fontVariantNumeric: "tabular-nums", fontWeight: 600, color: "#fbbf24", fontSize: 14 }}>
+                  {d.actual_price}g
+                  {d.is_daily_special && (
+                    <span style={{ ...muted, textDecoration: "line-through", marginLeft: 4, fontSize: 11 }}>{d.price}g</span>
+                  )}
+                </div>
+                <button
+                  onClick={() => onBuyDrink(d.id)}
+                  disabled={pub.gold < d.actual_price}
+                  style={{
+                    ...smallActionBtn(pub.gold >= d.actual_price ? "#1f2a3a" : "#222428", pub.gold >= d.actual_price ? "#7dd3fc" : "#7a7d83"),
+                    opacity: pub.gold >= d.actual_price ? 1 : 0.6,
+                    cursor: pub.gold >= d.actual_price ? "pointer" : "not-allowed",
+                  }}
+                >
+                  Order
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Liars' Roll mini-game */}
+      <div style={{ marginTop: 24, borderTop: "1px solid #2a2d33", paddingTop: 16 }}>
+        <div style={{ ...muted, fontSize: 11, textTransform: "uppercase", letterSpacing: 1.5, marginBottom: 10 }}>
+          🎲 Liars&apos; Roll — vs. the Bartender
+        </div>
+        <p style={{ ...muted, fontSize: 13, marginBottom: 12 }}>
+          Both roll 3d6. The bartender claims a zone (Low/Mid/High) — lies 45% of the time.
+          Trust ({LIARS_TRUST_MULT_DISPLAY}×) or Challenge ({LIARS_CHALLENGE_MULT_DISPLAY}×)?
+        </p>
+
+        {liarsState.phase === "idle" && (
+          <div>
+            <div style={{ ...muted, fontSize: 12, marginBottom: 8 }}>Pick a stake:</div>
+            <div style={{ display: "flex", gap: 8 }}>
+              {[10, 25, 50].map((s) => (
+                <button
+                  key={s}
+                  onClick={() => void startLiars(s)}
+                  disabled={liarsLoading || pub.gold < s}
+                  style={{
+                    ...smallActionBtn(pub.gold >= s ? "#2a1f1f" : "#222428", pub.gold >= s ? "#fca5a5" : "#7a7d83"),
+                    opacity: pub.gold >= s ? 1 : 0.5,
+                    cursor: pub.gold >= s ? "pointer" : "not-allowed",
+                  }}
+                >
+                  🪙 {s}g
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {liarsState.phase === "pending" && (() => {
+          const r = liarsState.round;
+          return (
+            <div>
+              <div style={{ background: "#1d1f23", borderRadius: 8, padding: 12, marginBottom: 10 }}>
+                <div style={{ color: "#f5f5f5", fontWeight: 600, marginBottom: 4 }}>
+                  Bartender&apos;s claim: <span style={{ color: "#fbbf24" }}>{r.claim_label}</span>
+                </div>
+                <div style={{ ...muted, fontSize: 13 }}>
+                  Your dice: {r.player_dice.join(", ")} (sum: <strong>{r.player_sum}</strong>)
+                </div>
+                <div style={{ ...muted, fontSize: 12, marginTop: 4 }}>
+                  Stake: {r.stake}g · Trust pays {r.trust_mult}× · Challenge pays {r.challenge_mult}× · {r.house_cut_pct}% house rake on wins
+                </div>
+              </div>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button
+                  onClick={() => void decideLiars(r.round_id, "trust")}
+                  disabled={liarsLoading}
+                  style={smallActionBtn("#1f3a1f", "#86efac")}
+                >
+                  🤝 Trust ({r.trust_mult}×)
+                </button>
+                <button
+                  onClick={() => void decideLiars(r.round_id, "challenge")}
+                  disabled={liarsLoading}
+                  style={smallActionBtn("#3a1f1f", "#fca5a5")}
+                >
+                  🔥 Challenge ({r.challenge_mult}×)
+                </button>
+              </div>
+            </div>
+          );
+        })()}
+
+        {liarsState.phase === "result" && (() => {
+          const r = liarsState.result;
+          const won = r.payout > 0;
+          return (
+            <div>
+              <div
+                style={{
+                  background: won ? "#1a2a1a" : "#2a1a1a",
+                  border: `1px solid ${won ? "#2d5a2d" : "#5a2d2d"}`,
+                  borderRadius: 8,
+                  padding: 12,
+                  marginBottom: 10,
+                }}
+              >
+                <div style={{ fontWeight: 700, color: won ? "#86efac" : "#fca5a5", marginBottom: 6 }}>
+                  {won
+                    ? `${r.choice === "trust" ? "🤝 Trusted correctly" : "🔥 Called the bluff"} — +${r.payout}g!`
+                    : `${r.choice === "trust" ? "💸 Trusted a liar" : "💸 Called an honest claim"} — lost the stake.`}
+                </div>
+                <div style={{ ...muted, fontSize: 13 }}>
+                  {r.lied ? "The bartender was lying." : "The bartender told the truth."}{" "}
+                  True zone: <strong>{r.truth_label}</strong>.
+                </div>
+                <div style={{ ...muted, fontSize: 12, marginTop: 4 }}>
+                  Your dice: {r.player_dice.join(", ")} · Bartender: {r.bartender_dice.join(", ")} · Combined: {r.combined}
+                </div>
+                <div style={{ marginTop: 6, color: "#fbbf24", fontSize: 13, fontWeight: 600 }}>
+                  Gold: {r.gold}g
+                </div>
+              </div>
+              <button
+                onClick={() => setLiarsState({ phase: "idle" })}
+                style={smallActionBtn("#222428", "#cbd5e1")}
+              >
+                Play again
+              </button>
+            </div>
+          );
+        })()}
+      </div>
+
+      {/* Stone-Parchment-Dagger */}
+      <div style={{ marginTop: 24, borderTop: "1px solid #2a2d33", paddingTop: 16 }}>
+        <div style={{ ...muted, fontSize: 11, textTransform: "uppercase", letterSpacing: 1.5, marginBottom: 10 }}>
+          ⚔️ Stone-Parchment-Dagger
+        </div>
+
+        {/* Show resolved result */}
+        {spdResult && (
+          <div>
+            <div
+              style={{
+                background: spdResult.tie
+                  ? "#1d2a2d"
+                  : spdResult.winner_user_id === selfId
+                    ? "#1a2a1a"
+                    : "#2a1a1a",
+                border: `1px solid ${spdResult.tie ? "#2d4a5a" : spdResult.winner_user_id === selfId ? "#2d5a2d" : "#5a2d2d"}`,
+                borderRadius: 8,
+                padding: 12,
+                marginBottom: 10,
+              }}
+            >
+              <div
+                style={{
+                  fontWeight: 700,
+                  color: spdResult.tie ? "#93c5fd" : spdResult.winner_user_id === selfId ? "#86efac" : "#fca5a5",
+                  marginBottom: 6,
+                }}
+              >
+                {spdResult.tie
+                  ? "🤝 Tie! Everything refunded."
+                  : spdResult.winner_user_id === selfId
+                    ? `🏆 You won! +${spdResult.payout}g`
+                    : `💸 You lost the match.`}
+              </div>
+              <div style={{ ...muted, fontSize: 13 }}>
+                {spdResult.initiator_name} threw {SPD_THROW_LABELS[spdResult.initiator_throw]} · You threw {SPD_THROW_LABELS[spdResult.challenger_throw]}
+              </div>
+              {!spdResult.tie && spdResult.house_bump > 0 && (
+                <div style={{ ...muted, fontSize: 12, marginTop: 4 }}>
+                  House bump: +{spdResult.house_bump}g on total pot
+                </div>
+              )}
+              <div style={{ marginTop: 6, color: "#fbbf24", fontSize: 13, fontWeight: 600 }}>
+                Gold: {spdResult.gold}g
+              </div>
+            </div>
+            <button
+              onClick={() => setSpdResult(null)}
+              style={smallActionBtn("#222428", "#cbd5e1")}
+            >
+              Done
+            </button>
+          </div>
+        )}
+
+        {/* No result showing — normal SPD view */}
+        {!spdResult && (<>
+          {/* No open match — allow initiating */}
+          {!openMatch && (
+            <div>
+              <p style={{ ...muted, fontSize: 13, marginBottom: 12 }}>
+                Commit a throw secretly. Any pub-goer can accept — loser pays. Winner takes both stakes +20%.
+                Side bets pay 2×. Ties refund all.
+              </p>
+              {spdStake === null ? (
+                <div>
+                  <div style={{ ...muted, fontSize: 12, marginBottom: 8 }}>Pick a stake:</div>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    {[10, 25, 50].map((s) => (
+                      <button
+                        key={s}
+                        onClick={() => setSpdStake(s)}
+                        disabled={spdLoading || pub.gold < s}
+                        style={{
+                          ...smallActionBtn(pub.gold >= s ? "#2a1f2a" : "#222428", pub.gold >= s ? "#d8b4fe" : "#7a7d83"),
+                          opacity: pub.gold >= s ? 1 : 0.5,
+                          cursor: pub.gold >= s ? "pointer" : "not-allowed",
+                        }}
+                      >
+                        ⚔️ {s}g
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <div>
+                  <div style={{ ...muted, fontSize: 12, marginBottom: 8 }}>
+                    Stake: <strong style={{ color: "#fbbf24" }}>{spdStake}g</strong> — pick your throw (only you will see it):
+                  </div>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    {(["stone", "parchment", "dagger"] as SpdThrow[]).map((t) => (
+                      <button
+                        key={t}
+                        onClick={() => void spdStart(spdStake, t)}
+                        disabled={spdLoading}
+                        style={smallActionBtn("#2a2010", "#fde68a")}
+                      >
+                        {SPD_THROW_LABELS[t]}
+                      </button>
+                    ))}
+                    <button
+                      onClick={() => setSpdStake(null)}
+                      disabled={spdLoading}
+                      style={smallActionBtn("#222428", "#94a3b8")}
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Open match — and I am the initiator */}
+          {openMatch && iAmInitiator && (
+            <div>
+              <div
+                style={{
+                  background: "#1d2a1d",
+                  border: "1px solid #2d5a2d",
+                  borderRadius: 8,
+                  padding: 12,
+                  marginBottom: 10,
+                }}
+              >
+                <div style={{ color: "#86efac", fontWeight: 600, marginBottom: 4 }}>
+                  Your match is open — waiting for a challenger
+                </div>
+                <div style={{ ...muted, fontSize: 13 }}>
+                  Stake: <strong style={{ color: "#fbbf24" }}>{openMatch.initiator_stake}g</strong> · Your throw is hidden until someone accepts.
+                </div>
+                {(betTotals.initiator > 0 || betTotals.challenger > 0) && (
+                  <div style={{ ...muted, fontSize: 12, marginTop: 4 }}>
+                    Side bets: {betTotals.initiator}g on you · {betTotals.challenger}g on challenger
+                  </div>
+                )}
+              </div>
+              <button
+                onClick={() => void spdCancel(openMatch.id)}
+                disabled={spdLoading}
+                style={smallActionBtn("#2a1a1a", "#fca5a5")}
+              >
+                Cancel match (refunds your stake)
+              </button>
+            </div>
+          )}
+
+          {/* Open match — and I am not the initiator (can accept or bet) */}
+          {openMatch && !iAmInitiator && (
+            <div>
+              <div
+                style={{
+                  background: "#1d1f23",
+                  borderRadius: 8,
+                  padding: 12,
+                  marginBottom: 10,
+                  border: "1px solid #3a3d45",
+                }}
+              >
+                <div style={{ color: "#f5f5f5", fontWeight: 600, marginBottom: 4 }}>
+                  ⚔️ {openMatch.initiator_name} threw something for {openMatch.initiator_stake}g
+                </div>
+                <div style={{ ...muted, fontSize: 13 }}>
+                  Their throw is secret until you accept. Stakes: {openMatch.initiator_stake}g each — winner gets {openMatch.initiator_stake * 2}g + 20% house bump.
+                </div>
+                {(betTotals.initiator > 0 || betTotals.challenger > 0) && (
+                  <div style={{ ...muted, fontSize: 12, marginTop: 4 }}>
+                    Side bets: {betTotals.initiator}g on {openMatch.initiator_name} · {betTotals.challenger}g on challenger
+                  </div>
+                )}
+              </div>
+
+              {/* Challenger throw picker (if not already challenger) */}
+              {!iAmChallenger && (
+                <div style={{ marginBottom: 12 }}>
+                  <div style={{ ...muted, fontSize: 12, marginBottom: 8 }}>
+                    Accept the challenge — pick your throw:
+                  </div>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    {(["stone", "parchment", "dagger"] as SpdThrow[]).map((t) => (
+                      <button
+                        key={t}
+                        onClick={() => void spdAccept(openMatch.id, t)}
+                        disabled={spdLoading || pub.gold < openMatch.initiator_stake}
+                        style={{
+                          ...smallActionBtn(
+                            pub.gold >= openMatch.initiator_stake ? "#2a1020" : "#222428",
+                            pub.gold >= openMatch.initiator_stake ? "#f9a8d4" : "#7a7d83",
+                          ),
+                          opacity: pub.gold >= openMatch.initiator_stake ? 1 : 0.5,
+                          cursor: pub.gold >= openMatch.initiator_stake ? "pointer" : "not-allowed",
+                        }}
+                      >
+                        {SPD_THROW_LABELS[t]}
+                      </button>
+                    ))}
+                  </div>
+                  {pub.gold < openMatch.initiator_stake && (
+                    <div style={{ ...muted, fontSize: 12, marginTop: 6, color: "#fca5a5" }}>
+                      Need {openMatch.initiator_stake}g to accept (you have {pub.gold}g)
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Side bet section */}
+              {canBet && (
+                <div>
+                  <div style={{ ...muted, fontSize: 12, marginBottom: 8 }}>
+                    Or place a side bet (pays 2× if your pick wins):
+                  </div>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
+                    <span style={{ ...muted, fontSize: 12, alignSelf: "center" }}>Back {openMatch.initiator_name}:</span>
+                    {[5, 10, 25].map((amt) => (
+                      <button
+                        key={`init-${amt}`}
+                        onClick={() => void spdBet(openMatch.id, "initiator", amt)}
+                        disabled={spdLoading || pub.gold < amt}
+                        style={{
+                          ...smallActionBtn(pub.gold >= amt ? "#2a1f10" : "#222428", pub.gold >= amt ? "#fdba74" : "#7a7d83"),
+                          opacity: pub.gold >= amt ? 1 : 0.5,
+                          cursor: pub.gold >= amt ? "pointer" : "not-allowed",
+                        }}
+                      >
+                        {amt}g
+                      </button>
+                    ))}
+                  </div>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    <span style={{ ...muted, fontSize: 12, alignSelf: "center" }}>Back challenger:</span>
+                    {[5, 10, 25].map((amt) => (
+                      <button
+                        key={`chall-${amt}`}
+                        onClick={() => void spdBet(openMatch.id, "challenger", amt)}
+                        disabled={spdLoading || pub.gold < amt}
+                        style={{
+                          ...smallActionBtn(pub.gold >= amt ? "#10202a" : "#222428", pub.gold >= amt ? "#93c5fd" : "#7a7d83"),
+                          opacity: pub.gold >= amt ? 1 : 0.5,
+                          cursor: pub.gold >= amt ? "pointer" : "not-allowed",
+                        }}
+                      >
+                        {amt}g
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Already bet */}
+              {myBet && (
+                <div style={{ ...muted, fontSize: 13, marginTop: 8 }}>
+                  You bet {myBet.amount}g on {myBet.side === "initiator" ? openMatch.initiator_name : "the challenger"}.
+                </div>
+              )}
+            </div>
+          )}
+        </>)}
+      </div>
+    </div>
+  );
+}
+
+const LIARS_TRUST_MULT_DISPLAY = "1.7";
+const LIARS_CHALLENGE_MULT_DISPLAY = "2.5";
+
+function drinkBuffLabel(buff: DrinkBuff): string {
+  if (buff.kind === "buff_attack") return `+${buff.magnitude} attack`;
+  if (buff.kind === "buff_magic") return `+${buff.magnitude} magic`;
+  return "next attack/cast/sig crits";
 }
 
 function RecentQuestsCard({ quests }: { quests: RecentQuest[] }) {
@@ -3005,6 +4214,569 @@ function Stack({ children }: { children: React.ReactNode }) {
   );
 }
 
+// Clickable portrait — hover to scale, click to expand full-screen.
+function ClickablePortrait({
+  src,
+  alt,
+  width = 72,
+  height = 72,
+  borderRadius = 8,
+  style: extraStyle,
+}: {
+  src: string;
+  alt: string;
+  width?: number | string;
+  height?: number | string;
+  borderRadius?: number;
+  style?: React.CSSProperties;
+}) {
+  const [open, setOpen] = useState(false);
+  const [hovered, setHovered] = useState(false);
+  return (
+    <>
+      <img
+        src={src}
+        alt={alt}
+        onClick={() => setOpen(true)}
+        onMouseEnter={() => setHovered(true)}
+        onMouseLeave={() => setHovered(false)}
+        style={{
+          width,
+          height,
+          borderRadius,
+          objectFit: "cover",
+          display: "block",
+          cursor: "zoom-in",
+          transition: "transform 0.15s ease, box-shadow 0.15s ease",
+          transform: hovered ? "scale(1.07)" : "scale(1)",
+          boxShadow: hovered ? "0 4px 16px rgba(0,0,0,0.6)" : "none",
+          ...extraStyle,
+        }}
+        onError={(e) => { e.currentTarget.style.display = "none"; }}
+      />
+      {open && (
+        <div
+          onClick={() => setOpen(false)}
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.85)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 9999,
+            cursor: "zoom-out",
+          }}
+        >
+          <img
+            src={src}
+            alt={alt}
+            style={{
+              maxWidth: "min(90vw, 640px)",
+              maxHeight: "85vh",
+              borderRadius: 12,
+              objectFit: "contain",
+              boxShadow: "0 16px 48px rgba(0,0,0,0.8)",
+            }}
+          />
+        </div>
+      )}
+    </>
+  );
+}
+
+const DISTRICT_CONFIG: {
+  key: TownSection;
+  label: string;
+  icon: string;
+  color: string;
+  artKey: keyof TownArt;
+}[] = [
+  { key: "job_board", label: "Job Board", icon: "scroll-unfurled", color: "#b89b3a", artKey: "overview_art_url" },
+  { key: "pub",       label: "The Pub",   icon: "beer",            color: "#92400e", artKey: "pub_art_url" },
+  { key: "shop",      label: "Shop",      icon: "gold-bar",        color: "#1e3a5f", artKey: "shop_art_url" },
+  { key: "inn",       label: "Inn",       icon: "campfire",        color: "#1a3a2a", artKey: "inn_art_url" },
+  { key: "smithy",    label: "Smithy",    icon: "anvil",           color: "#2a1a1a", artKey: "smithy_art_url" },
+  { key: "hunt",      label: "Outskirts", icon: "sword",           color: "#1a1a2e", artKey: "overview_art_url" },
+];
+
+// Persistent top navigation shown whenever a town section is active.
+function TownNav({
+  active,
+  onNavigate,
+}: {
+  active: TownSection;
+  onNavigate: (section: TownSection | null) => void;
+}) {
+  return (
+    <div style={{
+      display: "flex",
+      gap: 6,
+      overflowX: "auto",
+      padding: "0 0 4px",
+      msOverflowStyle: "none",
+    }}>
+      <button
+        onClick={() => onNavigate(null)}
+        style={{
+          display: "flex", alignItems: "center", gap: 6,
+          padding: "6px 14px", borderRadius: 20,
+          border: "1.5px solid #2a2d33",
+          background: "transparent",
+          color: "#9ca3af",
+          cursor: "pointer", fontSize: 13, fontWeight: 400,
+          flexShrink: 0, whiteSpace: "nowrap",
+        }}
+      >
+        <Icon name="tower" size={13} /> Town
+      </button>
+      {DISTRICT_CONFIG.map((d) => {
+        const isActive = d.key === active;
+        return (
+          <button
+            key={d.key}
+            onClick={() => onNavigate(d.key)}
+            style={{
+              display: "flex", alignItems: "center", gap: 6,
+              padding: "6px 14px", borderRadius: 20,
+              border: `1.5px solid ${isActive ? "#b89b3a" : "#2a2d33"}`,
+              background: isActive ? "rgba(184,155,58,0.15)" : "transparent",
+              color: isActive ? "#f1e8c8" : "#9ca3af",
+              cursor: "pointer", fontSize: 13,
+              fontWeight: isActive ? 600 : 400,
+              flexShrink: 0, whiteSpace: "nowrap",
+              transition: "all 0.15s",
+            }}
+          >
+            <Icon name={d.icon} size={13} /> {d.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+const VARIANT_STYLE: Record<string, { icon: string; color: string; bg: string; label: string }> = {
+  standard: { icon: "sword",         color: "#86efac", bg: "#0a1f0a", label: "STANDARD" },
+  boss:     { icon: "crown",         color: "#fca5a5", bg: "#1f0a0a", label: "BOSS" },
+  dungeon:  { icon: "tower",         color: "#7dd3fc", bg: "#0a121f", label: "DUNGEON" },
+  gauntlet: { icon: "crossed-swords",color: "#c4b5fd", bg: "#130a1f", label: "GAUNTLET" },
+};
+
+function JobPostingCard({
+  job,
+  claim,
+  characterLevel,
+  selfId,
+  onTake,
+}: {
+  job: JobListing;
+  claim: { taken_by: string } | undefined;
+  characterLevel: number;
+  selfId: string;
+  onTake: () => void;
+}) {
+  const [pending, setPending] = useState(false);
+  const isTaken = !!claim;
+  const isMyClaim = claim?.taken_by === selfId;
+  const meetsLevel = characterLevel >= job.required_level;
+  const vs = VARIANT_STYLE[job.variant] ?? VARIANT_STYLE.standard;
+
+  return (
+    <div style={{
+      background: isTaken ? "#141416" : vs.bg,
+      border: `1px solid ${isTaken ? "#22242a" : vs.color + "44"}`,
+      borderRadius: 10,
+      padding: "14px 16px",
+      opacity: isTaken && !isMyClaim ? 0.6 : 1,
+      position: "relative",
+    }}>
+      {/* Variant badge + level row */}
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+        <div style={{
+          display: "inline-flex", alignItems: "center", gap: 4,
+          background: vs.color + "1a", border: `1px solid ${vs.color}44`,
+          borderRadius: 4, padding: "2px 8px",
+        }}>
+          <Icon name={vs.icon} size={11} color={vs.color} />
+          <span style={{ fontSize: 10, fontWeight: 700, color: vs.color, letterSpacing: 0.6 }}>
+            {vs.label}
+          </span>
+        </div>
+        {job.required_level > 1 && (
+          <span style={{ fontSize: 11, color: "#6a7080" }}>L{job.required_level}+</span>
+        )}
+        {isMyClaim && (
+          <span style={{ fontSize: 11, color: "#86efac", marginLeft: "auto" }}>✓ Claimed by you</span>
+        )}
+        {isTaken && !isMyClaim && (
+          <span style={{ fontSize: 11, color: "#6a7080", marginLeft: "auto" }}>✓ Taken</span>
+        )}
+      </div>
+
+      <div style={{ fontWeight: 600, color: isTaken ? "#6a7080" : "#f1f5f9", marginBottom: 6, fontSize: 14, lineHeight: 1.3 }}>
+        {job.title}
+      </div>
+
+      <p style={{ ...muted, fontSize: 12, margin: "0 0 10px", fontStyle: "italic", lineHeight: 1.5 }}>
+        {job.blurb}
+      </p>
+
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+        <span style={{ fontSize: 12, color: "#9ca3af" }}>
+          <Icon name="gold-bar" size={11} color="#f1c26b" style={{ marginRight: 4 }} />{job.reward_summary}
+        </span>
+        {!isTaken && !meetsLevel && (
+          <span style={{ fontSize: 12, color: "#6a7080" }}>
+            🔒 Need L{job.required_level}
+          </span>
+        )}
+        {!isTaken && meetsLevel && (
+          <button
+            onClick={() => { setPending(true); onTake(); }}
+            disabled={pending}
+            style={{
+              ...button, padding: "5px 14px", marginTop: 0, fontSize: 12,
+              background: pending ? "#2a2d33" : "#2a1f0a",
+              color: pending ? "#6a7080" : "#f1e8c8",
+              border: `1px solid ${vs.color}55`,
+            }}
+          >
+            {pending ? "Claiming…" : "🪙 Take Job"}
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function HuntSection({
+  characterLevel,
+  overviewArt,
+  navOverlay,
+  onStartHunt,
+}: {
+  characterLevel: number;
+  overviewArt: string | null;
+  navOverlay: React.ReactNode;
+  onStartHunt: (tier: number) => void;
+}) {
+  const [tier, setTier] = useState(characterLevel);
+  const [busy, setBusy] = useState(false);
+  const clampedTier = Math.max(1, Math.min(tier, characterLevel));
+
+  // Rough XP preview: 15 * tier^1.2, no multiplier, single fighter.
+  const xpEstimate = Math.round(15 * Math.pow(clampedTier, 1.2));
+  const goldEstimate = Math.round(8 * Math.pow(clampedTier, 1.2));
+
+  const atLevel = clampedTier === characterLevel;
+  const tierLabel = atLevel
+    ? "Your level — full rewards"
+    : clampedTier >= characterLevel - 2
+    ? `Tier ${clampedTier} — slightly easier`
+    : `Tier ${clampedTier} — grinding territory`;
+
+  async function handle() {
+    setBusy(true);
+    try { await onStartHunt(clampedTier); } finally { setBusy(false); }
+  }
+
+  return (
+    <div style={{ ...card, padding: 0 }}>
+      <LocationHero src={overviewArt} label="Outskirts" nav={navOverlay} flush />
+      <div style={{ padding: "var(--card-pad, 32px)" }}>
+        <div style={{ marginBottom: 20 }}>
+          <div style={{ fontSize: 13, fontWeight: 600, color: "#f1e8c8", marginBottom: 4 }}>
+            Free Hunt
+          </div>
+          <div style={{ fontSize: 12, color: "#9ca3af", lineHeight: 1.5 }}>
+            Pick a tier and head into the outskirts. No job board contract — rewards scale
+            with the tier you choose, so lower tiers mean faster fights but smaller gains.
+          </div>
+        </div>
+
+        <div style={{ marginBottom: 20 }}>
+          <div style={{ fontSize: 11, color: "#6b7280", textTransform: "uppercase", letterSpacing: 1, marginBottom: 10 }}>
+            Difficulty
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <button
+              onClick={() => setTier((t) => Math.max(1, t - 1))}
+              disabled={clampedTier <= 1}
+              style={{
+                width: 32, height: 32, borderRadius: 6,
+                border: "1px solid #2a2d33", background: "#1a1d22",
+                color: clampedTier <= 1 ? "#3a3d44" : "#e5e7eb",
+                cursor: clampedTier <= 1 ? "not-allowed" : "pointer",
+                fontSize: 18, lineHeight: 1, display: "flex", alignItems: "center", justifyContent: "center",
+              }}
+            >−</button>
+            <div style={{ textAlign: "center", minWidth: 60 }}>
+              <div style={{ fontSize: 28, fontWeight: 700, color: "#f1e8c8", lineHeight: 1 }}>
+                {clampedTier}
+              </div>
+              <div style={{ fontSize: 10, color: "#6b7280", marginTop: 2 }}>
+                TIER
+              </div>
+            </div>
+            <button
+              onClick={() => setTier((t) => Math.min(characterLevel, t + 1))}
+              disabled={clampedTier >= characterLevel}
+              style={{
+                width: 32, height: 32, borderRadius: 6,
+                border: "1px solid #2a2d33", background: "#1a1d22",
+                color: clampedTier >= characterLevel ? "#3a3d44" : "#e5e7eb",
+                cursor: clampedTier >= characterLevel ? "not-allowed" : "pointer",
+                fontSize: 18, lineHeight: 1, display: "flex", alignItems: "center", justifyContent: "center",
+              }}
+            >+</button>
+            <div style={{ fontSize: 12, color: "#9ca3af", marginLeft: 4 }}>{tierLabel}</div>
+          </div>
+        </div>
+
+        <div style={{
+          display: "flex", gap: 20, marginBottom: 20,
+          padding: "10px 14px", background: "#0e1014", borderRadius: 8, border: "1px solid #2a2d33",
+        }}>
+          <div style={{ textAlign: "center" }}>
+            <div style={{ fontSize: 18, fontWeight: 700, color: "#a3e635" }}>~{xpEstimate}</div>
+            <div style={{ fontSize: 10, color: "#6b7280", marginTop: 2 }}>XP</div>
+          </div>
+          <div style={{ textAlign: "center" }}>
+            <div style={{ fontSize: 18, fontWeight: 700, color: "#fbbf24" }}>~{goldEstimate}</div>
+            <div style={{ fontSize: 10, color: "#6b7280", marginTop: 2 }}>Gold</div>
+          </div>
+          <div style={{ fontSize: 11, color: "#6b7280", alignSelf: "center", lineHeight: 1.4 }}>
+            Estimated single-fighter rewards.<br />Boss / elite quests give more.
+          </div>
+        </div>
+
+        <button
+          onClick={handle}
+          disabled={busy}
+          style={{
+            width: "100%", padding: "12px 0", borderRadius: 8,
+            border: "none", background: busy ? "#2a2d33" : "#7c3aed",
+            color: busy ? "#6b7280" : "#fff",
+            fontSize: 15, fontWeight: 600, cursor: busy ? "not-allowed" : "pointer",
+          }}
+        >
+          {busy ? "Scouting…" : `Hunt Tier ${clampedTier}`}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function JobBoardSection({
+  board,
+  overviewArt,
+  selfId,
+  characterLevel,
+  joinable,
+  navOverlay,
+  onTakeJob,
+  onStartQuest,
+  onJoin,
+}: {
+  board: BoardResponse | null;
+  overviewArt: string | null;
+  selfId: string;
+  characterLevel: number;
+  joinable: JoinableQuest | null;
+  navOverlay: React.ReactNode;
+  onTakeJob: (jobId: string) => void;
+  onStartQuest: (variant: "standard" | "boss" | "gauntlet" | "dungeon", elite: boolean) => void;
+  onJoin: () => void;
+}) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      {/* Bulletin board card */}
+      <div style={{
+        ...card,
+        borderColor: "#5c4010",
+        background: "linear-gradient(180deg, #1e1508 0%, #130f05 100%)",
+        padding: 0,
+        overflow: "hidden",
+      }}>
+        <LocationHero flush src={overviewArt} label={`${board?.town_name ?? "Town"} — Job Board`} nav={navOverlay} />
+
+        {/* Board subheader */}
+        <div style={{
+          borderBottom: "1px solid #2a1c08",
+          padding: "12px 20px",
+        }}>
+          <p style={{ ...muted, margin: 0, fontSize: 12 }}>
+            Three contracts posted today. Each can only be claimed by one adventurer — first come, first served.
+          </p>
+        </div>
+
+        {/* Job listings */}
+        <div style={{ padding: "16px 20px 20px", display: "flex", flexDirection: "column", gap: 10 }}>
+          {board && board.jobs.length > 0 ? (
+            board.jobs.map((job) => (
+              <JobPostingCard
+                key={job.id}
+                job={job}
+                claim={board.claims[job.id]}
+                characterLevel={characterLevel}
+                selfId={selfId}
+                onTake={() => onTakeJob(job.id)}
+              />
+            ))
+          ) : (
+            <p style={{ ...muted, fontSize: 13 }}>
+              The board is bare — run <code>/sq board</code> in Slack to seed today's postings.
+            </p>
+          )}
+        </div>
+
+        <div style={{
+          borderTop: "1px solid #2a1c08",
+          padding: "10px 20px",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+        }}>
+          <span style={{ ...muted, fontSize: 11 }}>
+            <Icon name="hourglass" size={11} style={{ marginRight: 4 }} />Postings refresh daily.
+          </span>
+        </div>
+      </div>
+
+      {/* Divider */}
+      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+        <div style={{ flex: 1, height: 1, background: "#22242a" }} />
+        <span style={{ ...muted, fontSize: 12 }}>or start any quest</span>
+        <div style={{ flex: 1, height: 1, background: "#22242a" }} />
+      </div>
+
+      {joinable ? (
+        <JoinableQuestCard joinable={joinable} onJoin={onJoin} />
+      ) : (
+        <StartQuestCard characterLevel={characterLevel} onStart={onStartQuest} />
+      )}
+    </div>
+  );
+}
+
+function DistrictTile({
+  label,
+  icon,
+  color,
+  artUrl,
+  onClick,
+}: {
+  label: string;
+  icon: string;
+  color: string;
+  artUrl: string | null;
+  onClick: () => void;
+}) {
+  const [hovered, setHovered] = useState(false);
+  return (
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6, cursor: "pointer" }}
+      onClick={onClick}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+    >
+      <div
+        style={{
+          width: 90,
+          height: 90,
+          borderRadius: 12,
+          overflow: "hidden",
+          border: `2px solid ${hovered ? "#7dd3fc" : "#2a2d33"}`,
+          background: color,
+          position: "relative",
+          transition: "border-color 0.15s, transform 0.15s, box-shadow 0.15s",
+          transform: hovered ? "scale(1.06)" : "scale(1)",
+          boxShadow: hovered ? "0 4px 20px rgba(125,209,252,0.25)" : "none",
+          flexShrink: 0,
+        }}
+      >
+        {artUrl ? (
+          <img
+            src={artUrl}
+            alt={label}
+            style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+            onError={(e) => { e.currentTarget.style.display = "none"; }}
+          />
+        ) : (
+          <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <Icon name={icon} size={36} color="#9ca3af" />
+          </div>
+        )}
+        {artUrl && (
+          <div style={{
+            position: "absolute", inset: 0,
+            display: "flex", alignItems: "center", justifyContent: "center",
+            background: "rgba(0,0,0,0.35)",
+          }}>
+            <Icon name={icon} size={28} color="rgba(255,255,255,0.85)" />
+          </div>
+        )}
+      </div>
+      <span style={{ fontSize: 12, color: "#cbd5e1", fontWeight: 500, textAlign: "center" }}>{label}</span>
+    </div>
+  );
+}
+
+function TownMap({
+  art,
+  onNavigate,
+}: {
+  art: TownArt | null;
+  onNavigate: (section: TownSection) => void;
+}) {
+  return (
+    <div style={{ ...card, padding: 0, overflow: "hidden" }}>
+      {/* Town overview image */}
+      <div style={{ position: "relative", width: "100%", aspectRatio: "16/7", background: "#111" }}>
+        {art?.overview_art_url ? (
+          <img
+            src={art.overview_art_url}
+            alt="Town of Heylets"
+            style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+          />
+        ) : (
+          <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <span style={{ color: "#4b5563", fontSize: 13 }}>Generating town map…</span>
+          </div>
+        )}
+        <div style={{
+          position: "absolute", bottom: 0, left: 0, right: 0,
+          background: "linear-gradient(transparent, rgba(14,15,18,0.95))",
+          padding: "32px 20px 14px",
+        }}>
+          <h2 style={{ ...h2, margin: 0, color: "#f1e8c8", letterSpacing: 1 }}>Town of Heylets</h2>
+          <p style={{ ...muted, margin: "2px 0 0", fontSize: 12 }}>Choose your destination</p>
+        </div>
+      </div>
+
+      {/* District tiles */}
+      <div style={{
+        display: "flex",
+        gap: 16,
+        padding: "16px 20px 20px",
+        overflowX: "auto",
+        flexWrap: "wrap",
+      }}>
+        {DISTRICT_CONFIG.map((d) => (
+          <DistrictTile
+            key={d.key}
+            label={d.label}
+            icon={d.icon}
+            color={d.color}
+            artUrl={art ? art[d.artKey] : null}
+            onClick={() => onNavigate(d.key)}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // Two-column dashboard layout. On wide viewports (≥ 900px) renders main
 // content on the left and `side` on the right at 360px. On narrow screens
 // it falls back to a single stacked column (main above side).
@@ -3012,19 +4784,30 @@ function DashboardLayout({
   main,
   side,
   footer,
+  hideSide = false,
 }: {
   main: React.ReactNode;
   side: React.ReactNode;
   footer?: React.ReactNode;
+  hideSide?: boolean;
 }) {
   const wide = useWideViewport();
+  const mobile = useMobileViewport();
   if (!wide) {
     // Mobile: stack everything, full viewport width (no 560px cap so tablets
     // breathe). Login keeps its narrower Stack — only the dashboard goes wide.
     return (
-      <div style={{ display: "flex", flexDirection: "column", gap: 16, width: "100%" }}>
+      <div style={{ display: "flex", flexDirection: "column", gap: mobile ? 8 : 16, width: "100%" }}>
         {main}
-        {side}
+        {!hideSide && side}
+        {footer}
+      </div>
+    );
+  }
+  if (hideSide) {
+    return (
+      <div style={{ width: "100%", display: "flex", flexDirection: "column", gap: 16 }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 16, minWidth: 0 }}>{main}</div>
         {footer}
       </div>
     );
@@ -3061,7 +4844,22 @@ function useWideViewport(): boolean {
   return wide;
 }
 
+function useMobileViewport(): boolean {
+  const [mobile, setMobile] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return window.matchMedia("(max-width: 639px)").matches;
+  });
+  useEffect(() => {
+    const m = window.matchMedia("(max-width: 639px)");
+    const handler = (e: MediaQueryListEvent) => setMobile(e.matches);
+    m.addEventListener("change", handler);
+    return () => m.removeEventListener("change", handler);
+  }, []);
+  return mobile;
+}
+
 function Centered({ children }: { children: React.ReactNode }) {
+  const mobile = useMobileViewport();
   return (
     <div
       style={{
@@ -3073,8 +4871,10 @@ function Centered({ children }: { children: React.ReactNode }) {
         fontFamily:
           "ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
         color: "#e6e6e6",
-        padding: 32,
-      }}
+        padding: mobile ? 8 : 32,
+        // CSS custom property consumed by `card` const and LocationHero
+        ["--card-pad" as string]: mobile ? "16px" : "32px",
+      } as React.CSSProperties}
     >
       {children}
     </div>
@@ -3148,7 +4948,7 @@ const RARITY_RANK: Record<Rarity, number> = { common: 0, uncommon: 1, rare: 2 };
 
 const card: React.CSSProperties = {
   background: "#15171b",
-  padding: 32,
+  padding: "var(--card-pad, 32px)",
   borderRadius: 12,
   width: "100%",
   border: "1px solid #2a2d33",

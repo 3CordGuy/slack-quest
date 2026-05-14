@@ -434,6 +434,167 @@ export async function flavorCatalogItem(
 }
 
 // =============================================================================
+// DUNGEON GENERATION — AI room generators ported from apps/slack/src/ai.ts.
+// These are used by the web worker when starting a dungeon expedition.
+// =============================================================================
+
+export async function generateExpeditionTheme(ai: Ai): Promise<string> {
+  const user = "Generate a single short evocative theme for an expedition into a hostile codebase. 4-7 words. No quotes. Examples: 'the cursed monorepo merge', 'haunted staging environment', 'forgotten sprint of 2019'.";
+  const fallback = "the abandoned staging environment";
+  return generateFlavor(ai, user, fallback, 30);
+}
+
+export interface GeneratedTrap {
+  scene: string;
+  options: { str: string; dex: string; int: string };
+}
+
+export async function generateTrapRoom(
+  ai: Ai,
+  theme: string,
+  roomNumber: number,
+  totalRooms: number,
+): Promise<GeneratedTrap> {
+  const user = [
+    `You are running room ${roomNumber}/${totalRooms} of a dungeon themed: "${theme}".`,
+    "This room contains a TRAP. Generate scene + 3 disarm options matching three approaches:",
+    "  STR — brute force (smash, charge, bend, lift)",
+    "  DEX — finesse (disarm, slip past, defuse, sneak)",
+    "  INT — wits (decode, riddle, calculate, identify)",
+    "Output exactly:",
+    "SCENE: <2 sentences, ~35 words, set the trap with menace>",
+    "STR: <imperative phrase, 4-6 words>",
+    "DEX: <imperative phrase, 4-6 words>",
+    "INT: <imperative phrase, 4-6 words>",
+  ].join("\n");
+
+  const fallback: GeneratedTrap = {
+    scene: "A pressure plate clicks under your boot. The room hisses — definitely a trap.",
+    options: {
+      str: "Smash through the wall",
+      dex: "Disarm the trigger gently",
+      int: "Decode the warding glyphs",
+    },
+  };
+
+  try {
+    const result = (await ai.run(MODEL, {
+      messages: [
+        { role: "system", content: COMBAT_SYSTEM },
+        { role: "user", content: user },
+      ],
+      max_tokens: 200,
+    })) as AiRunResponse;
+    const text = (result.response ?? "").trim();
+    const scene = /SCENE:\s*(.+)/i.exec(text)?.[1]?.trim();
+    const str = /STR:\s*(.+)/i.exec(text)?.[1]?.trim().replace(/^["'`]|["'`]$/g, "");
+    const dex = /DEX:\s*(.+)/i.exec(text)?.[1]?.trim().replace(/^["'`]|["'`]$/g, "");
+    const int = /INT:\s*(.+)/i.exec(text)?.[1]?.trim().replace(/^["'`]|["'`]$/g, "");
+    if (!scene || !str || !dex || !int) return fallback;
+    return { scene, options: { str, dex, int } };
+  } catch {
+    return fallback;
+  }
+}
+
+export async function generateLockboxScene(
+  ai: Ai,
+  theme: string,
+  roomNumber: number,
+  totalRooms: number,
+): Promise<string> {
+  const user = `Room ${roomNumber}/${totalRooms} of a dungeon themed: "${theme}". This room has a *locked* chest. Narrate the discovery in 2 sentences (~35 words). Hint that without a key, players can only walk past empty-handed.`;
+  const fallback = "A chest sits at the room's center, bound in three iron locks and humming with promise. You'd need a key — or your conscience to leave it.";
+  return generateFlavor(ai, user, fallback, 110);
+}
+
+export interface GeneratedNpc {
+  scene: string;
+  greeting: string;
+}
+
+export async function generateNpcRoom(
+  ai: Ai,
+  theme: string,
+  roomNumber: number,
+  totalRooms: number,
+  npcName: string,
+): Promise<GeneratedNpc> {
+  const user = [
+    `Room ${roomNumber}/${totalRooms} of a dungeon themed: "${theme}".`,
+    `An NPC named "${npcName}" is here, offering an item to the party.`,
+    "Output exactly:",
+    "SCENE: <2 sentences setting the encounter — what they look like, what they're doing>",
+    "GREETING: <1-2 sentences of what they say to the party, offering their wares>",
+  ].join("\n");
+
+  const fallback: GeneratedNpc = {
+    scene: "A figure in patched robes warms hands by a battered terminal. They look up and grin.",
+    greeting: `"You look like trustworthy adventurers. I've got something you might want — for the right offer."`,
+  };
+
+  try {
+    const result = (await ai.run(MODEL, {
+      messages: [
+        { role: "system", content: COMBAT_SYSTEM },
+        { role: "user", content: user },
+      ],
+      max_tokens: 180,
+    })) as AiRunResponse;
+    const text = (result.response ?? "").trim();
+    const scene = /SCENE:\s*(.+)/i.exec(text)?.[1]?.trim();
+    const greeting = /GREETING:\s*([\s\S]+)/i.exec(text)?.[1]?.trim().replace(/^["'`]|["'`]$/g, "");
+    if (!scene || !greeting) return fallback;
+    return { scene, greeting };
+  } catch {
+    return fallback;
+  }
+}
+
+export interface GeneratedMerchant {
+  scene: string;
+  greeting: string;
+}
+
+export async function generateMerchantRoom(
+  ai: Ai,
+  theme: string,
+  roomNumber: number,
+  totalRooms: number,
+  merchantName: string,
+): Promise<GeneratedMerchant> {
+  const user = [
+    `Room ${roomNumber}/${totalRooms} of a dungeon themed: "${theme}".`,
+    `A traveling merchant named "${merchantName}" has set up a tiny shop here, mid-dungeon.`,
+    "Output exactly:",
+    "SCENE: <2 sentences setting the encounter — what their stall looks like, where they came from>",
+    "GREETING: <1-2 sentences of what they say to the party, hawking their wares>",
+  ].join("\n");
+
+  const fallback: GeneratedMerchant = {
+    scene: `${merchantName} has improvised a shopfront from overturned standing-desks and a fluttering Gantt chart.`,
+    greeting: `"You look like trouble waiting to happen. Lucky for you, I sell trouble preparation."`,
+  };
+
+  try {
+    const result = (await ai.run(MODEL, {
+      messages: [
+        { role: "system", content: COMBAT_SYSTEM },
+        { role: "user", content: user },
+      ],
+      max_tokens: 180,
+    })) as AiRunResponse;
+    const text = (result.response ?? "").trim();
+    const scene = /SCENE:\s*(.+)/i.exec(text)?.[1]?.trim();
+    const greeting = /GREETING:\s*([\s\S]+)/i.exec(text)?.[1]?.trim().replace(/^["'`]|["'`]$/g, "");
+    if (!scene || !greeting) return fallback;
+    return { scene, greeting };
+  } catch {
+    return fallback;
+  }
+}
+
+// =============================================================================
 // IMAGE GENERATION — flux-1-schnell + R2 cache. Mirrors slack's apps/slack/ai.ts.
 // =============================================================================
 //
@@ -525,19 +686,31 @@ function viewArtKeyAndPrompt(shortKey: string, rawPrompt: string): { key: string
 // Lazy fetch + background generate for a static view-art banner. Returns the
 // public URL when the image is already in R2; on miss, fires generation via
 // ctx.waitUntil and returns null this one time. The next call serves cache.
+// When ttlMs is set, a cached image older than ttlMs is returned immediately
+// (never breaks the UI) while a background regen is queued.
 export async function getOrScheduleViewArt(
   ai: Ai,
   art: ArtTarget,
   ctx: ExecutionContext,
   shortKey: ViewArtKey,
   prompt?: string,
+  ttlMs?: number,
 ): Promise<string | null> {
   const raw = prompt ?? VIEW_ART_PROMPTS[shortKey];
   const { key, fullPrompt } = viewArtKeyAndPrompt(shortKey, raw);
   const publicUrl = `${art.baseUrl}/img/${key}`;
   try {
     const existing = await art.bucket.head(key);
-    if (existing) return publicUrl;
+    if (existing) {
+      if (ttlMs) {
+        const uploadedAt = existing.uploaded?.getTime() ?? 0;
+        if (Date.now() - uploadedAt > ttlMs) {
+          // Stale but serve it — regen in background, don't block the request.
+          ctx.waitUntil(generateAndCacheArt(ai, art, key, fullPrompt, `view:${shortKey}`));
+        }
+      }
+      return publicUrl;
+    }
   } catch (err) {
     console.warn("view-art:head-error", { shortKey, err: err instanceof Error ? err.message : String(err) });
   }
@@ -686,4 +859,104 @@ async function coerceImageBytes(result: unknown): Promise<Uint8Array | null> {
   if (result instanceof Uint8Array) return result;
   if (result instanceof ArrayBuffer) return new Uint8Array(result);
   return null;
+}
+
+// ---------- Town generation helpers (ported from Slack src/ai.ts) ----------
+// These have no Slack dependencies — they only require the Ai binding.
+
+export async function generateTownName(
+  ai: Ai,
+  recentNames: string[] = [],
+): Promise<string> {
+  const avoidLine = recentNames.length > 0
+    ? `\nAvoid these recently-used names: ${recentNames.join(", ")}.`
+    : "";
+  const user = [
+    "Generate a single evocative fantasy-RPG town name with a software-engineering wink.",
+    'Examples: "Stale Logfile Township", "The Sprintward Hamlet", "Old Mainbranch on the Hill".',
+    "Output ONLY the name itself, nothing else. 3-6 words. No quotes, no preamble.",
+    avoidLine,
+  ].filter(Boolean).join("\n");
+  const fallback = "Stale Logfile Township";
+  try {
+    const result = (await ai.run(FAST_MODEL, {
+      messages: [
+        { role: "system", content: "You are a creative fantasy worldbuilder for a software-engineering-themed RPG." },
+        { role: "user", content: user },
+      ],
+      max_tokens: 30,
+    })) as AiRunResponse;
+    const cleaned = (result.response ?? "")
+      .replace(/^name:\s*/i, "")
+      .split("\n")[0]
+      .trim();
+    return cleaned.length >= 3 && cleaned.length <= 60 ? cleaned : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+export interface JobListingFlavor {
+  title: string;
+  blurb: string;
+}
+
+export async function generateJobListing(
+  ai: Ai,
+  variant: "standard" | "boss" | "dungeon" | "gauntlet",
+  townName: string,
+): Promise<JobListingFlavor> {
+  const variantHint = (() => {
+    switch (variant) {
+      case "standard": return "A single foe somewhere outside town. Modest difficulty.";
+      case "boss": return "A named, beefy foe with two phases. Group recommended.";
+      case "dungeon": return "A 5-7 room expedition with traps, lockboxes, NPC encounters, sub-boss + treasure.";
+      case "gauntlet": return "Three monsters back-to-back with no rest between waves. No fleeing.";
+    }
+  })();
+  const user = [
+    `Generate a posting for a ${variant} job on the ${townName} job board.`,
+    `Variant context: ${variantHint}`,
+    "",
+    "Return STRICTLY VALID JSON in this shape:",
+    `{ "title": "<3-7 word evocative job title with software-engineering wink>", "blurb": "<1-2 sentence hook from the poster's perspective>" }`,
+    "",
+    "Examples:",
+    `{ "title": "The Stale PR at the Merge Gate", "blurb": "A goblin is hoarding rebased commits up in the hills. Bring its scalp; we'll pay." }`,
+    `{ "title": "Schemaless Shrieker — Sub-cellar", "blurb": "Something old has woken under the data temple. Two phases, by the rumors. Group up." }`,
+    `{ "title": "Lost Sprint Crypts", "blurb": "Five rooms, locks, traps, and whatever's haunting the burndown chart. Bring keys." }`,
+    "",
+    "Output JSON ONLY. No prose. No code fences.",
+  ].join("\n");
+
+  const fallback: JobListingFlavor = (() => {
+    switch (variant) {
+      case "standard": return { title: "Goblin Trouble in the Outskirts", blurb: "Something's been ransacking the kanban field. Bring it down." };
+      case "boss": return { title: "The Underlying Bug", blurb: "Old and stubborn, holed up in the temple ruins. Two phases by the rumors." };
+      case "dungeon": return { title: "Sprint Crypts", blurb: "Five rooms, locks, traps. Bring keys and friends." };
+      case "gauntlet": return { title: "The On-Call Rotation", blurb: "Three pages, three monsters, no rest between. Light a candle." };
+    }
+  })();
+
+  try {
+    const result = (await ai.run(MODEL, {
+      messages: [
+        { role: "system", content: "You output strictly valid JSON. No prose, no code fences." },
+        { role: "user", content: user },
+      ],
+      max_tokens: 200,
+    })) as AiRunResponse;
+    const raw = (result.response ?? "").trim()
+      .replace(/^```(?:json)?\s*/i, "")
+      .replace(/```\s*$/i, "")
+      .trim();
+    const parsed = JSON.parse(raw) as Partial<JobListingFlavor>;
+    if (typeof parsed.title === "string" && parsed.title.trim().length > 0
+        && typeof parsed.blurb === "string" && parsed.blurb.trim().length > 0) {
+      return { title: parsed.title.trim(), blurb: parsed.blurb.trim() };
+    }
+    return fallback;
+  } catch {
+    return fallback;
+  }
 }
