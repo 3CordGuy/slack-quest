@@ -699,6 +699,21 @@ app.post("/api/inventory/:itemId/equip", async (c) => {
   return c.json({ ok: true, mana_delta: manaDelta });
 });
 
+app.post("/api/inventory/:itemId/unequip", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const itemId = parseInt(c.req.param("itemId"), 10);
+  if (!Number.isFinite(itemId)) return c.json({ error: "bad_item_id" }, 400);
+  const item = await getItem(c.env.DB, itemId, session.slack_user_id);
+  if (!item) return c.json({ error: "not_yours" }, 404);
+  if (!item.equipped) return c.json({ error: "not_equipped" }, 400);
+  if (item.item_type === "weapon" && item.weapon_range === "focus") {
+    await applyFocusManaShift(c.env.DB, session.slack_user_id, -FOCUS_MAX_MANA_BONUS);
+  }
+  await c.env.DB.prepare("UPDATE inventory SET equipped = 0 WHERE id = ?").bind(itemId).run();
+  return c.json({ ok: true });
+});
+
 const JOIN_HP_RATIO = 0.4;
 const BOSS_LEVEL_REQUIRED = 3;
 const GAUNTLET_LEVEL_REQUIRED = 5;
@@ -1892,19 +1907,19 @@ app.post("/api/inventory/:itemId/give", async (c) => {
   return c.json({ ok: true, item_name: item.item_name, to_name: recipient.name });
 });
 
-// List all characters — used by the "Give" picker in the UI. Returns
-// basic info only (user_id + name + class) for privacy.
+// List team characters — used by the "Give" picker and the Adventurers panel.
 app.get("/api/characters", async (c) => {
   const session = await currentSession(c.env.DB, c.req.header("cookie"));
   if (!session) return c.json({ error: "unauthenticated" }, 401);
   const rows = await c.env.DB
     .prepare(
-      `SELECT slack_user_id, name, class FROM characters
-       WHERE slack_user_id != ?
-       ORDER BY last_active DESC LIMIT 50`,
+      `SELECT slack_user_id, name, class, level, xp, hp, max_hp, last_active
+       FROM characters
+       WHERE slack_user_id != ? AND slack_team_id = ?
+       ORDER BY last_active DESC LIMIT 20`,
     )
-    .bind(session.slack_user_id)
-    .all<{ slack_user_id: string; name: string; class: string }>();
+    .bind(session.slack_user_id, session.slack_team_id)
+    .all<{ slack_user_id: string; name: string; class: string; level: number; xp: number; hp: number; max_hp: number; last_active: number }>();
   return c.json({ characters: rows.results ?? [] });
 });
 

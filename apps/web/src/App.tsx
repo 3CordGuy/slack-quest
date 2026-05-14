@@ -474,6 +474,11 @@ interface KnownCharacter {
   slack_user_id: string;
   name: string;
   class: string;
+  level: number;
+  xp: number;
+  hp: number;
+  max_hp: number;
+  last_active: number; // unix seconds
 }
 
 interface ConfirmRequest {
@@ -574,6 +579,18 @@ export function App() {
   useEffect(() => {
     void refresh();
   }, []);
+
+  // Toast once when a joinable quest first appears
+  const prevJoinableIdRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (state.kind !== "auth") return;
+    const jId = state.joinable?.quest_id ?? null;
+    if (jId !== null && jId !== prevJoinableIdRef.current) {
+      const j = state.joinable!;
+      toast(`⚔ ${j.monster_name} stirs — a ${j.variant} quest is open!`, { duration: 7000 });
+    }
+    prevJoinableIdRef.current = jId;
+  }, [state.kind === "auth" ? state.joinable?.quest_id : null]);
 
   // Background poll — keep the dashboard in sync with partymate activity
   // (joins, shop buys, slack-driven combat). Paused when CombatPage is open
@@ -752,6 +769,11 @@ export function App() {
 
   async function equipItem(itemId: number) {
     const { ok } = await postJson(`/api/inventory/${itemId}/equip`, { method: "POST" });
+    if (ok) void refresh();
+  }
+
+  async function unequipItem(itemId: number) {
+    const { ok } = await postJson(`/api/inventory/${itemId}/unequip`, { method: "POST" });
     if (ok) void refresh();
   }
 
@@ -1085,11 +1107,13 @@ export function App() {
                 artUrl={state.inventoryArtUrl}
                 selfId={state.me.slack_user_id}
                 onEquip={equipItem}
+                onUnequip={unequipItem}
                 onSell={sellItem}
                 onUse={useItem}
                 onGive={giveItem}
               />
             )}
+            <AdventurersCard selfId={state.me.slack_user_id} />
           </>
         }
         footer={<SignOutRow onLogout={logout} />}
@@ -2559,6 +2583,72 @@ function PositionBadge({ position }: { position: "front" | "back" }) {
   );
 }
 
+function AdventurersCard({ selfId }: { selfId: string }) {
+  const [characters, setCharacters] = useState<KnownCharacter[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetch("/api/characters", { credentials: "include" })
+      .then((r) => r.ok ? r.json() as Promise<{ characters: KnownCharacter[] }> : Promise.resolve({ characters: [] }))
+      .then((b) => setCharacters(b.characters))
+      .finally(() => setLoading(false));
+  }, [selfId]);
+
+  if (loading || characters.length === 0) return null;
+
+  const now = Math.floor(Date.now() / 1000);
+
+  return (
+    <div style={card}>
+      <div style={{ ...muted, fontSize: 11, textTransform: "uppercase", letterSpacing: 1.5, marginBottom: 10 }}>
+        <Icon name="player" size={11} /> Adventurers
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+        {characters.slice(0, 8).map((ch) => {
+          const secsAgo = now - (ch.last_active ?? 0);
+          const isOnline = secsAgo < 15 * 60;
+          const isRecent = secsAgo < 60 * 60;
+          const ago = secsAgo < 60 ? "just now"
+            : secsAgo < 3600 ? `${Math.floor(secsAgo / 60)}m ago`
+            : secsAgo < 86400 ? `${Math.floor(secsAgo / 3600)}h ago`
+            : `${Math.floor(secsAgo / 86400)}d ago`;
+          const hpPct = ch.max_hp > 0 ? Math.max(0, Math.min(1, ch.hp / ch.max_hp)) : 0;
+          const portraitSrc = `/img/art/views/v6/class_${ch.class.toLowerCase().replace(/[\s-]+/g, "_")}.png`;
+
+          return (
+            <div key={ch.slack_user_id} style={{
+              display: "flex", alignItems: "center", gap: 8,
+              padding: "6px 8px", borderRadius: 6, background: "#16181c",
+            }}>
+              <div style={{ position: "relative", flexShrink: 0 }}>
+                <Avatar src={portraitSrc} alt={ch.name} size={32} radius={4} fallbackIcon="player" fallbackColor="#4a5568" />
+                {isOnline && (
+                  <span style={{
+                    position: "absolute", bottom: -1, right: -1,
+                    width: 8, height: 8, borderRadius: "50%",
+                    background: "#22c55e", border: "1.5px solid #16181c",
+                  }} />
+                )}
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
+                  <span style={{ fontWeight: 600, fontSize: 12, color: "#f5f5f5", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{ch.name}</span>
+                  <span style={{ ...muted, fontSize: 11, flexShrink: 0 }}>Lv {ch.level}</span>
+                </div>
+                <div style={{ ...muted, fontSize: 11, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{ch.class}</div>
+                <div style={{ marginTop: 3, height: 3, background: "#0e0f12", borderRadius: 2, overflow: "hidden" }}>
+                  <div style={{ width: `${hpPct * 100}%`, height: "100%", background: hpPct < 0.25 ? "#dc2626" : hpPct < 0.5 ? "#d97706" : "#16a34a" }} />
+                </div>
+              </div>
+              <span style={{ ...muted, fontSize: 10, flexShrink: 0, color: isOnline ? "#22c55e" : isRecent ? "#9ca3af" : "#4a5060" }}>{ago}</span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function CharacterCard({
   me,
   inventory,
@@ -2689,48 +2779,104 @@ function CharacterCard({
           label="Keys"
           icon={<Icon name="key" color="#d1d5db" size={14} />}
           value={
-            <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-              <KeyIcon tier="bronze" size={16} /> {c.keys_bronze}
-              <KeyIcon tier="silver" size={16} /> {c.keys_silver}
-              <KeyIcon tier="gold" size={16} /> {c.keys_gold}
-            </span>
+            <KeysPopover
+              keys={{ bronze: c.keys_bronze, silver: c.keys_silver, gold: c.keys_gold }}
+              onSellKey={onSellKey}
+              onTransmuteKey={onTransmuteKey}
+            />
           }
         />
       </Stats>
-      <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
-        <button
-          onClick={() => onRest("short")}
-          disabled={restDisabled}
-          style={smallActionBtn(restDisabled ? "#2a2d33" : "#1f3a1f", restDisabled ? "#6a7080" : "#86efac")}
-        >
-          <Icon name="campfire" /> Short rest
-        </button>
-        <button
-          onClick={() => onRest("long")}
-          disabled={restDisabled}
-          style={smallActionBtn(restDisabled ? "#2a2d33" : "#1f2a3a", restDisabled ? "#6a7080" : "#7dd3fc")}
-        >
-          <Icon name="moon-sun" /> Long rest
-        </button>
+      {/* Camp section */}
+      <div style={{ marginTop: 16, padding: "10px 12px", background: "#16181c", borderRadius: 8, border: "1px solid #2a2d33" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+          <span style={{ ...muted, fontSize: 11, textTransform: "uppercase", letterSpacing: 1.5 }}>
+            <Icon name="campfire" size={11} /> Camp
+          </span>
+          {(downed || (!downed && inQuest)) && (
+            <span style={{ ...muted, fontSize: 11 }}>
+              {downed ? "Downed — wait cooldown" : "Disabled mid-quest"}
+            </span>
+          )}
+        </div>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button
+            onClick={() => onRest("short")}
+            disabled={restDisabled}
+            style={{ ...smallActionBtn(restDisabled ? "#2a2d33" : "#1f3a1f", restDisabled ? "#6a7080" : "#86efac"), flex: 1 }}
+          >
+            <Icon name="campfire" /> Short rest
+          </button>
+          <button
+            onClick={() => onRest("long")}
+            disabled={restDisabled}
+            style={{ ...smallActionBtn(restDisabled ? "#2a2d33" : "#1f2a3a", restDisabled ? "#6a7080" : "#7dd3fc"), flex: 1 }}
+          >
+            <Icon name="moon-sun" /> Long rest
+          </button>
+        </div>
       </div>
-      {downed && (
-        <p style={{ ...muted, fontSize: 11, marginTop: 8 }}>You're downed — wait the cooldown.</p>
-      )}
-      {!downed && inQuest && (
-        <p style={{ ...muted, fontSize: 11, marginTop: 8 }}>Rest is disabled mid-quest.</p>
-      )}
-      {!inQuest && (c.keys_bronze + c.keys_silver + c.keys_gold > 0) && (
-        <KeyActions
-          keys={{ bronze: c.keys_bronze, silver: c.keys_silver, gold: c.keys_gold }}
-          onSellKey={onSellKey}
-          onTransmuteKey={onTransmuteKey}
-        />
-      )}
     </div>
   );
 }
 
-function KeyActions({
+function KeysPopover({
+  keys,
+  onSellKey,
+  onTransmuteKey,
+}: {
+  keys: { bronze: number; silver: number; gold: number };
+  onSellKey: (tier: "bronze" | "silver" | "gold") => void;
+  onTransmuteKey: (fromTier: "bronze" | "silver") => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const { refs, floatingStyles, context } = useFloating({
+    open,
+    onOpenChange: setOpen,
+    middleware: [offset(8), flip({ padding: 8 }), shift({ padding: 8 })],
+    placement: "bottom-end",
+    whileElementsMounted: autoUpdate,
+  });
+  const { getFloatingProps } = useInteractions([useDismiss(context)]);
+  const total = keys.bronze + keys.silver + keys.gold;
+
+  return (
+    <>
+      <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+        <KeyIcon tier="bronze" size={14} /> {keys.bronze}
+        <KeyIcon tier="silver" size={14} /> {keys.silver}
+        <KeyIcon tier="gold" size={14} /> {keys.gold}
+        {total > 0 && (
+          <button
+            ref={refs.setReference}
+            onClick={() => setOpen((v) => !v)}
+            title="Sell or transmute keys"
+            style={{
+              background: "none", border: "1px solid #3a3d44", borderRadius: 4,
+              color: "#9ca3af", cursor: "pointer", fontSize: 11, padding: "1px 5px",
+              lineHeight: 1.4, fontFamily: "inherit",
+            }}
+          >
+            <Icon name="gear" size={11} />
+          </button>
+        )}
+      </span>
+      {open && (
+        <FloatingPortal>
+          <div
+            ref={refs.setFloating}
+            style={{ ...floatingStyles, zIndex: 200 }}
+            {...getFloatingProps()}
+          >
+            <KeyActionsPanel keys={keys} onSellKey={(t) => { onSellKey(t); setOpen(false); }} onTransmuteKey={(t) => { onTransmuteKey(t); setOpen(false); }} />
+          </div>
+        </FloatingPortal>
+      )}
+    </>
+  );
+}
+
+function KeyActionsPanel({
   keys,
   onSellKey,
   onTransmuteKey,
@@ -2740,7 +2886,7 @@ function KeyActions({
   onTransmuteKey: (fromTier: "bronze" | "silver") => void;
 }) {
   return (
-    <div style={{ marginTop: 16, padding: 12, background: "#1d1f23", borderRadius: 8 }}>
+    <div style={{ padding: 12, background: "#1d1f23", borderRadius: 8, border: "1px solid #2a2d33", boxShadow: "0 8px 24px rgba(0,0,0,0.6)", minWidth: 200 }}>
       <div
         style={{
           ...muted,
@@ -2939,6 +3085,7 @@ function InventoryCard({
   artUrl,
   selfId,
   onEquip,
+  onUnequip,
   onSell,
   onUse,
   onGive,
@@ -2948,6 +3095,7 @@ function InventoryCard({
   artUrl: string | null;
   selfId: string;
   onEquip: (itemId: number) => void;
+  onUnequip: (itemId: number) => void;
   onSell: (itemId: number) => void;
   onUse: (itemId: number) => void;
   onGive: (itemId: number, toUserId: string, toName: string) => void;
@@ -3064,6 +3212,7 @@ function InventoryCard({
                 inQuest={inQuest}
                 selfId={selfId}
                 onEquip={(id) => { onEquip(id); setSelectedId(null); }}
+                onUnequip={(id) => { onUnequip(id); setSelectedId(null); }}
                 onSell={(id) => { onSell(id); setSelectedId(null); }}
                 onUse={(id) => { onUse(id); setSelectedId(null); }}
                 onGive={(id, uid, name) => { onGive(id, uid, name); setSelectedId(null); }}
@@ -3162,6 +3311,7 @@ function ItemDetailPopover({
   inQuest,
   selfId,
   onEquip,
+  onUnequip,
   onSell,
   onUse,
   onGive,
@@ -3171,6 +3321,7 @@ function ItemDetailPopover({
   inQuest: boolean;
   selfId: string;
   onEquip: (itemId: number) => void;
+  onUnequip: (itemId: number) => void;
   onSell: (itemId: number) => void;
   onUse: (itemId: number) => void;
   onGive: (itemId: number, toUserId: string, toName: string) => void;
@@ -3303,6 +3454,9 @@ function ItemDetailPopover({
       <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
         {canEquip && (
           <button onClick={() => onEquip(item.id)} style={smallActionBtn("#1f3a1f", "#86efac")}>Equip</button>
+        )}
+        {item.equipped && (
+          <button onClick={() => onUnequip(item.id)} style={smallActionBtn("#2a1a1a", "#fca5a5")}>Unequip</button>
         )}
         {canUse && (
           <button onClick={() => onUse(item.id)} style={smallActionBtn("#1f2a3a", "#7dd3fc")}>Use</button>
@@ -4770,26 +4924,21 @@ function TownNav({
   onNavigate: (section: TownSection | null) => void;
 }) {
   return (
-    <div style={{
-      display: "flex",
-      gap: 6,
-      overflowX: "auto",
-      padding: "0 0 4px",
-      msOverflowStyle: "none",
-    }}>
+    <div style={{ display: "flex", gap: 4 }}>
       <button
         onClick={() => onNavigate(null)}
         style={{
-          display: "flex", alignItems: "center", gap: 6,
-          padding: "6px 14px", borderRadius: 20,
+          display: "flex", alignItems: "center", justifyContent: "center", gap: 5,
+          padding: "7px 10px", borderRadius: 8,
           border: "1.5px solid #2a2d33",
           background: "transparent",
           color: "#9ca3af",
-          cursor: "pointer", fontSize: 13, fontWeight: 400,
-          flexShrink: 0, whiteSpace: "nowrap",
+          cursor: "pointer", fontSize: 12, fontWeight: 400,
+          flex: "0 0 auto",
         }}
+        title="Town overview"
       >
-        <Icon name="tower" size={13} /> Town
+        <Icon name="tower" size={13} />
       </button>
       {DISTRICT_CONFIG.map((d) => {
         const isActive = d.key === active;
@@ -4798,18 +4947,20 @@ function TownNav({
             key={d.key}
             onClick={() => onNavigate(d.key)}
             style={{
-              display: "flex", alignItems: "center", gap: 6,
-              padding: "6px 14px", borderRadius: 20,
+              display: "flex", alignItems: "center", justifyContent: "center", gap: 5,
+              padding: "7px 6px", borderRadius: 8,
               border: `1.5px solid ${isActive ? "#b89b3a" : "#2a2d33"}`,
               background: isActive ? "rgba(184,155,58,0.15)" : "transparent",
               color: isActive ? "#f1e8c8" : "#9ca3af",
-              cursor: "pointer", fontSize: 13,
+              cursor: "pointer", fontSize: 12,
               fontWeight: isActive ? 600 : 400,
-              flexShrink: 0, whiteSpace: "nowrap",
+              flex: 1, minWidth: 0,
               transition: "all 0.15s",
+              whiteSpace: "nowrap", overflow: "hidden",
             }}
           >
-            <Icon name={d.icon} size={13} /> {d.label}
+            <Icon name={d.icon} size={12} />
+            <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{d.label}</span>
           </button>
         );
       })}
