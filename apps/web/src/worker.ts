@@ -3994,6 +3994,15 @@ export class QuestRoom extends DurableObject<Env> {
     }
     this.kickOffFlavor(questId, result.state, result.events);
 
+    // Combat-milestone broadcasts to the channel. Single source of truth
+    // for boss-reveal / phase-2 / fighter-down / victory / defeat —
+    // because handleStepResult runs for both WS-driven and RPC-driven
+    // turns, the broadcast fires identically regardless of which surface
+    // the actor came from.
+    if (stateChanged) {
+      this.fireMilestoneBroadcasts(questId, prevState, result);
+    }
+
     const becameTerminal =
       stateChanged &&
       prevState.status === "active" &&
@@ -4382,6 +4391,136 @@ export class QuestRoom extends DurableObject<Env> {
         // ignore — scrollback regression only
       }
     }
+  }
+
+  // Channel-broadcast combat milestones to the Slack thread (with
+  // reply_broadcast: true so they surface in the channel too — these are
+  // the "OH SHIT" beats spectators should see without having to follow
+  // the thread). Idempotent via CombatState.milestones_posted: the
+  // dedupe set is recorded INTO state BEFORE the post fires, so a DO
+  // crash between post and save can't double-broadcast on retry.
+  //
+  // Detected events (in order of detection priority):
+  //   - boss reveal on first turn_start when monster.is_boss
+  //   - boss_phase_transition (phase 2)
+  //   - fighter_down (each unique fighter at most once)
+  //   - victory + monster.is_boss (boss-only — non-boss victories are
+  //     surfaced by the existing thread broadcast in resolveVictory)
+  //   - defeat (always — party wipes are channel-noteworthy)
+  //
+  // SLACK_BOT_TOKEN optional: when unset, broadcasts are skipped silently
+  // (same pattern as the flavor fanout).
+  private fireMilestoneBroadcasts(
+    questId: number,
+    prevState: CombatState,
+    result: { state: CombatState; events: CombatEvent[] },
+  ): void {
+    if (!this.env.SLACK_BOT_TOKEN) return;
+    const token = this.env.SLACK_BOT_TOKEN;
+
+    const alreadyPosted = new Set(result.state.milestones_posted ?? []);
+    const newlyPosted: { key: string; text: string }[] = [];
+
+    // Boss reveal — first turn_start emitted in the same step that produces
+    // begin. Surface only when the monster is actually a boss; non-boss
+    // quests don't need a "👑 appears" beat.
+    if (result.state.monster.is_boss && !alreadyPosted.has("boss_reveal")) {
+      const sawBegin = result.events.some((e) => e.type === "begin");
+      if (sawBegin) {
+        newlyPosted.push({
+          key: "boss_reveal",
+          text: `👑 A boss appears: *${result.state.monster.name}*.`,
+        });
+      }
+    }
+
+    // Phase 2 transition
+    if (
+      !alreadyPosted.has("phase_2") &&
+      result.events.some((e) => e.type === "boss_phase_transition")
+    ) {
+      newlyPosted.push({
+        key: "phase_2",
+        text: `👑 *${result.state.monster.name}* shifts — *phase 2*.`,
+      });
+    }
+
+    // Fighter downs (one beat per unique fighter per fight)
+    for (const e of result.events) {
+      if (e.type !== "fighter_down") continue;
+      const key = `down:${e.target}`;
+      if (alreadyPosted.has(key)) continue;
+      const fighter = result.state.fighters.find((f) => f.id === e.target);
+      const display = fighter ? `*${fighter.name}*` : `<@${e.target}>`;
+      newlyPosted.push({
+        key,
+        text: `💀 ${display} falls.`,
+      });
+    }
+
+    // Victory — only emit for boss quests (non-boss has its own thread
+    // narration via the existing post-victory path). Detected via the
+    // engine's "victory" event combined with monster.is_boss.
+    if (
+      !alreadyPosted.has("victory") &&
+      result.state.status === "victory" &&
+      result.state.monster.is_boss &&
+      result.events.some((e) => e.type === "victory")
+    ) {
+      newlyPosted.push({
+        key: "victory",
+        text: `🏆 Boss slain: *${result.state.monster.name}*.`,
+      });
+    }
+
+    // Defeat — always a notable channel beat; wipes are the rare loud
+    // moment that earns the broadcast.
+    if (
+      !alreadyPosted.has("defeat") &&
+      result.state.status === "defeat" &&
+      result.events.some((e) => e.type === "defeat")
+    ) {
+      newlyPosted.push({
+        key: "defeat",
+        text: `☠️ The party falls to *${result.state.monster.name}*.`,
+      });
+    }
+
+    if (newlyPosted.length === 0) return;
+
+    // Update milestones_posted ON the saved state BEFORE issuing the posts.
+    // saveWebCombatState has already run with the un-flagged state — but
+    // saving again with the flags set means a DO crash between save and
+    // post leaves the state marked posted, which is the safe failure mode
+    // (false negative beats double-broadcast).
+    const updatedState: CombatState = {
+      ...result.state,
+      milestones_posted: [
+        ...(result.state.milestones_posted ?? []),
+        ...newlyPosted.map((m) => m.key),
+      ],
+    };
+    this.cacheState = updatedState;
+    this.cacheQuestId = questId;
+    this.ctx.waitUntil(
+      (async () => {
+        try {
+          await saveWebCombatState(this.env.DB, questId, updatedState, this.cacheLog);
+          const meta = await this.ensureQuestMeta(questId);
+          if (!meta) return;
+          for (const m of newlyPosted) {
+            await postSlackMessage(token, {
+              channel: meta.channel_id,
+              thread_ts: meta.thread_ts,
+              reply_broadcast: true,
+              text: m.text,
+            });
+          }
+        } catch (err) {
+          console.warn("milestone broadcast failed", err);
+        }
+      })(),
+    );
   }
 
   // Scan engine events for moments worth narrating, fire off AI flavor
