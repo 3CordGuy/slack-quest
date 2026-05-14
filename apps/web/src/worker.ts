@@ -3874,6 +3874,13 @@ export class QuestRoom extends DurableObject<Env> {
   // to D1 before broadcasting.
   private cacheState: CombatState | null = null;
   private cacheQuestId: number | null = null;
+  // Channel + thread coordinates for the active quest, cached on first
+  // load so the AI flavor fanout can chat.postMessage to the Slack thread
+  // without re-reading D1 on every flavor result. Quest's channel_id and
+  // thread_ts are immutable for the life of the quest so cached values
+  // remain valid through DO hibernation/wakeup. Cleared when cacheQuestId
+  // changes (different quest takes over the same DO).
+  private cacheQuestMeta: { channel_id: string; thread_ts: string } | null = null;
   // Recent combat events for replay on reconnect. Capped to LOG_MAX entries
   // and persisted to D1 alongside cacheState. Holds both engine CombatEvents
   // and worker-side events (e.g. item_used) — the UI handles both. Typed as
@@ -4068,6 +4075,14 @@ export class QuestRoom extends DurableObject<Env> {
 
     const quest = await getQuestById(this.env.DB, questId);
     if (!quest) return { ok: false, reason: "quest_not_found" };
+
+    // Pre-seed the channel+thread cache so the very first flavor fanout
+    // after begin() doesn't have to hit D1 again. ensureQuestMeta would
+    // fetch it lazily on first need, but we already have the row here.
+    if (quest.thread_ts) {
+      this.cacheQuestMeta = { channel_id: quest.channel_id, thread_ts: quest.thread_ts };
+      this.cacheQuestId = questId;
+    }
 
     const built = await buildInitialCombatState(this.env.DB, quest);
     if (!built.ok) return { ok: false, reason: built.reason, detail: built.detail };
@@ -4280,8 +4295,27 @@ export class QuestRoom extends DurableObject<Env> {
       this.cacheState = snap.state;
       this.cacheQuestId = questId;
       this.cacheLog = snap.log;
+      // Reset quest meta on quest-id change — populated lazily by
+      // ensureQuestMeta when the flavor fanout needs it.
+      this.cacheQuestMeta = null;
     }
     return snap?.state ?? null;
+  }
+
+  // Lazily fetch the quest's channel_id + thread_ts so the AI flavor
+  // fanout can post into the Slack thread. Returns null when the quest
+  // has already ended or no row exists; that's a soft failure — flavor
+  // still reaches web clients via WebSocket.
+  private async ensureQuestMeta(
+    questId: number,
+  ): Promise<{ channel_id: string; thread_ts: string } | null> {
+    if (this.cacheQuestMeta && this.cacheQuestId === questId) {
+      return this.cacheQuestMeta;
+    }
+    const quest = await getQuestById(this.env.DB, questId);
+    if (!quest || !quest.thread_ts) return null;
+    this.cacheQuestMeta = { channel_id: quest.channel_id, thread_ts: quest.thread_ts };
+    return this.cacheQuestMeta;
   }
 
   // Append events to the in-memory log buffer, trim to LOG_MAX. Returns the
@@ -4299,12 +4333,45 @@ export class QuestRoom extends DurableObject<Env> {
   // persisted log so a reconnecting client can replay it. The log marker
   // shape (`_kind: "flavor"`) is distinguishable from CombatEvents (which
   // have `type`) so the client can dispatch differently on replay.
+  //
+  // Cross-surface fanout: when SLACK_BOT_TOKEN is bound on the web worker
+  // (it's optional — see the Env comment), each flavor result is also
+  // chat.postMessage'd into the quest's Slack thread. This way a Slack
+  // spectator sees the AI-narrated beats (hit color, victory cry, etc.)
+  // that today only reach the web client. Fire-and-forget — Slack failure
+  // never blocks WS broadcast or log persistence.
   private async broadcastAndLogFlavor(
     questId: number,
     flavor: { kind: "hit" | "victory" | "death" | "flee"; actor: string; text: string },
   ): Promise<void> {
     this.broadcast({ type: "flavor", flavor });
     const newLog = this.appendLog([{ _kind: "flavor", flavor }]);
+
+    // Slack-thread fanout. Wrapped in a try so any failure (no token, no
+    // thread_ts cached, network blip) doesn't disturb the local log
+    // persistence below. The waitUntil keeps the post off the critical
+    // path — the WS broadcast already fired so live viewers are served.
+    if (this.env.SLACK_BOT_TOKEN) {
+      const token = this.env.SLACK_BOT_TOKEN;
+      this.ctx.waitUntil(
+        (async () => {
+          try {
+            const meta = await this.ensureQuestMeta(questId);
+            if (!meta) return;
+            // Italicize for "narration" tone — distinguishes AI flavor
+            // from the mechanical turn-summary posts.
+            await postSlackMessage(token, {
+              channel: meta.channel_id,
+              thread_ts: meta.thread_ts,
+              text: `_${flavor.text}_`,
+            });
+          } catch (err) {
+            console.warn("flavor fanout to slack failed", err);
+          }
+        })(),
+      );
+    }
+
     // Persist log alongside the current state. Best-effort — a failure here
     // just means scrollback may miss this flavor entry; the broadcast already
     // landed for live viewers.
