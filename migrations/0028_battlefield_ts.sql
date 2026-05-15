@@ -1,0 +1,14 @@
+-- Pinned-battlefield message ts for turn-based Slack combat.
+--
+-- When Slack drives the shared step() engine (PR 3 of the unification
+-- push), each turn updates a single "battlefield" message in the quest
+-- thread via chat.update — monster HP bar, party stat fragments, turn
+-- pointer, and the active actor's available action buttons. Storing
+-- the ts lets us round-trip chat.update on every step() call.
+--
+-- Nullable: quests created before PR 3 lands stay on the legacy
+-- cooldown-paced combat path and never populate this. After PR 6's
+-- cleanup, every new combat fight populates it; older quests that
+-- never reached web/Slack turn-based combat (e.g. quests that ended
+-- before unified combat shipped) keep it as NULL.
+ALTER TABLE quests ADD COLUMN battlefield_ts TEXT NULL;

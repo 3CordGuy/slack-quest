@@ -32,6 +32,21 @@
       "bucket_name": "slack-quest-assets"
     }
   ],
+  // Cross-worker Durable Object binding. The web worker
+  // (apps/web/wrangler.jsonc) owns the QuestRoom class + its migration;
+  // this Slack worker just binds to the same namespace so it can call
+  // into the existing DO instance for turn-based combat. The script_name
+  // must match the web worker's `name` field exactly. Deploy order
+  // matters: web worker must be deployed first.
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "QUEST_ROOM",
+        "class_name": "QuestRoom",
+        "script_name": "gantt-quest-web"
+      }
+    ]
+  },
   "vars": {
     "BOT_NAME": "Slack Quest",
     "IMAGE_BASE_URL": "https://slack-quest.<your-subdomain>.workers.dev"

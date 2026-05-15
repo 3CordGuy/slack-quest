@@ -196,6 +196,15 @@ type CombatEvent =
   | { type: "passive_bard_aura"; actor: string; source: string; bonus: number }
   | { type: "passive_warlock_bleed"; actor: string; magnitude: number; duration: number }
   | { type: "passive_paladin_auto_heal"; paladin: string; target: string; amount: number }
+  | {
+      type: "drink_buff_consumed";
+      actor: string;
+      drink_id: string;
+      kind: "buff_attack" | "buff_magic" | "buff_next_crit";
+      bonus: number;
+      force_crit: boolean;
+      remaining: number;
+    }
   | { type: "victory" }
   | { type: "defeat" }
   | { type: "rejected"; reason: string }
@@ -536,12 +545,28 @@ function formatEvent(e: CombatEvent, state: CombatState | null): UiState["log"] 
       }];
     case "passive_paladin_auto_heal":
       return row("fairy-wand", <>Lay on Hands: {nameOf(e.paladin)} → {nameOf(e.target)} +{e.amount} HP.</>, "good");
+    case "drink_buff_consumed":
+      if (e.kind === "buff_next_crit") {
+        return row("lucky-fish", <>Lucky Sip — guaranteed crit, +{e.bonus} damage.{e.remaining === 0 ? " Buff wears off." : ""}</>, "good");
+      }
+      return row(
+        "spell-book",
+        <>{nameOf(e.actor)} drink buff: +{e.bonus} {e.kind === "buff_attack" ? "attack" : "magic"}{e.remaining === 0 ? " — wears off" : ` (${e.remaining} left)`}.</>,
+        "good",
+      );
     case "victory":
       return [{ id: nextLogId++, content: <strong>VICTORY</strong>, tone: "good" }];
     case "defeat":
       return [{ id: nextLogId++, content: <strong>DEFEAT</strong>, tone: "bad" }];
     case "rejected":
       return [{ id: nextLogId++, content: <>⚠ rejected: {e.reason}</>, tone: "bad" }];
+    default: {
+      // Guard against future engine events not yet known to the client —
+      // unknown event → drop silently rather than crash the React tree.
+      const _exhaustive: never = e;
+      void _exhaustive;
+      return [];
+    }
   }
 }
 

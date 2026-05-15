@@ -1,5 +1,7 @@
 import { Hono } from "hono";
 
+import type { CombatEvent, CombatState, TurnAction } from "@gantt-quest/core";
+
 import { pregenAllViewArt } from "./ai";
 import { handleCommand, handleInteraction } from "./commands";
 import {
@@ -29,6 +31,59 @@ export interface Env {
   // Surfaced in the /sq web-login ephemeral so the player can click through to
   // paste their code. Optional — when unset, the code is shown without a link.
   WEB_BASE_URL?: string;
+  // Cross-worker DO binding pointing at the web worker's QuestRoom class.
+  // Same namespace as the web worker uses; the wrangler config supplies
+  // `script_name: "<web-worker-name>"` so this Slack worker can route into
+  // the existing DO instance without owning its migrations.
+  //
+  // Used in PR 3 onward to drive the shared step() engine for combat
+  // actions originating from Slack. Optional in v1 deploys that haven't
+  // re-deployed wrangler — combat handlers must guard with `if (!env.QUEST_ROOM)`.
+  QUEST_ROOM?: DurableObjectNamespace;
+  // Routing toggle for the unified engine combat path. Default = legacy
+  // cooldown-paced Slack combat (current behavior). Set to "0" to route
+  // /gq attack | cast | signature | flee through QuestRoom.serverAction
+  // instead — turns become strict-order, drink-buff + AI flavor fanout
+  // wiring follow up in later commits on the same branch.
+  //
+  // The toggle is read at the top of handleCombat. Two code paths share
+  // zero state; flipping it mid-quest is fine for new actions, but
+  // in-flight legacy combat scenes can't migrate retroactively without
+  // re-rolling initiative. See the PR-3 drain plan for the production
+  // rollout.
+  LEGACY_SLACK_COMBAT?: string;
+}
+
+// Structural stub for the cross-bound QuestRoom DO. We don't import the
+// QuestRoom class type from apps/web (that would couple the slack tsc
+// build to the web worker's tree) — instead we declare the two RPC
+// method signatures we call so TypeScript can type-check the call sites
+// here without paying the dependency cost. Engine types (CombatState,
+// CombatEvent, TurnAction) come from @gantt-quest/core which both
+// workers already depend on.
+export interface QuestRoomStub {
+  bootstrapFromSlack(questId: number): Promise<
+    | { ok: true; state: CombatState; events: CombatEvent[]; created: boolean }
+    | { ok: false; reason: string; detail?: string }
+  >;
+  serverAction(
+    questId: number,
+    action: TurnAction,
+  ): Promise<
+    | { ok: true; state: CombatState; events: CombatEvent[]; outcome?: unknown }
+    | { ok: false; reason: string }
+  >;
+}
+
+// Stable name → DO id mapping. Both the web worker (apps/web/src/worker.ts)
+// and the Slack worker use this convention so cross-bound stubs route to
+// the same instance per quest. Don't change without updating the web worker.
+export function questRoomId(
+  env: Pick<Env, "QUEST_ROOM">,
+  questId: number,
+): DurableObjectId | null {
+  if (!env.QUEST_ROOM) return null;
+  return env.QUEST_ROOM.idFromName(`quest:${questId}`);
 }
 
 const app = new Hono<{ Bindings: Env }>();
@@ -163,6 +218,11 @@ app.post("/slack/interactive", async (c) => {
             response_type: response.response_type ?? "ephemeral",
             text: response.text,
             blocks: response.blocks,
+            // Only pass replace_original when the handler explicitly opted
+            // out (false). Leaving it undefined lets Slack apply its
+            // default for block_actions (replace_original: true), which is
+            // what most action handlers want.
+            ...(response._replaceOriginal === false ? { replace_original: false } : {}),
           });
         }
       } catch (err) {

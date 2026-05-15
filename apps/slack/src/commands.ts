@@ -1,7 +1,9 @@
 // Slash sub-command handlers. Each returns an immediate Slack response payload.
 // Long-running work (AI calls, chat.postMessage) goes through ctx.waitUntil.
 
-import type { Env } from "./index";
+import type { Env, QuestRoomStub } from "./index";
+import { questRoomId } from "./index";
+import { renderBattlefieldBlocks, renderTurnToThread } from "./render_combat";
 
 // Public-facing display name. Defaults to "Slack Quest"; operators override per
 // deployment by setting BOT_NAME in wrangler.jsonc `vars` or as a secret.
@@ -151,6 +153,7 @@ import {
   scaleMonsterForJoin,
   setCharacterEffects,
   setCharacterHp,
+  setBattlefieldTs,
   setCharacterHpAndShield,
   setPosition,
   sharpenItem,
@@ -242,8 +245,9 @@ import {
   RARITY_BADGE,
   SHIELD_CAP_MULTIPLIER,
   SKILL_META,
+  type TurnAction,
 } from "@gantt-quest/core";
-import { postMessage, respondToCommand, updateMessage, type InteractivePayload, type SlashCommandPayload } from "./slack";
+import { postJoinableQuest, postMessage, respondToCommand, updateMessage, type InteractivePayload, type SlashCommandPayload } from "./slack";
 
 export interface CommandResponse {
   text: string;
@@ -257,6 +261,14 @@ export interface CommandResponse {
   // expired buttons is cleared so the chat stays clean. NEVER sent to
   // Slack as a normal response field.
   _deleteOriginal?: boolean;
+  // Internal-only flag: when false, the /slack/interactive route passes
+  // `replace_original: false` to response_url so the ephemeral does NOT
+  // edit/replace the original message that the user clicked from. Used
+  // for fire-and-forget acks like the [Join on web] URL-button click,
+  // which should leave the recruitment card intact for other users.
+  // Slack's default for block_actions response_urls is replace_original:
+  // true, hence the explicit opt-out. NEVER sent as a normal response field.
+  _replaceOriginal?: boolean;
 }
 
 const DOWNED_COOLDOWN_MS = 12 * 60 * 60 * 1000;
@@ -868,6 +880,40 @@ export async function handleInteraction(
   };
   const args = [action.value];
 
+  // Recruitment-card "Join on web" link button. Slack DOES deliver an
+  // interactivity payload for URL buttons even though it also opens the
+  // URL in the user's browser; we ack with a brief ephemeral instead of
+  // letting it fall through to the "Unknown action" error message.
+  // _replaceOriginal: false keeps the recruitment card intact (Slack's
+  // default for block_actions response_urls is to REPLACE the original;
+  // here that would dismiss the card for the clicker so they can't come
+  // back to use [Join here], and other channel members would still see
+  // it — confusing inconsistency we explicitly opt out of).
+  if (action.action_id.startsWith("link_quest_web_")) {
+    return {
+      text: "🌐 Opening on web…",
+      response_type: "ephemeral",
+      _replaceOriginal: false,
+    };
+  }
+  // Recruitment-card "Join here" button. action_id encodes the quest id
+  // (`join_quest_<id>`) for uniqueness, but handleJoin looks up the active
+  // quest in the channel naturally — the encoded id is for action_id
+  // uniqueness only, not as a lookup key. If the quest has since advanced
+  // past join-window (gauntlet wave 2+, dungeon past room 1) handleJoin's
+  // own checks ephemerally reject the click.
+  if (action.action_id.startsWith("join_quest_")) return handleJoin(slash, env, ctx);
+  // Pinned-battlefield action buttons. action_id format:
+  //   turn_<action>_<questId>_<actorId>
+  // The engine validates turn order — actor mismatch surfaces as an
+  // ephemeral "not your turn" rather than a Slack-side gate. handleCombat
+  // reads env.LEGACY_SLACK_COMBAT and routes to legacy when set; for
+  // button-driven turns we always go via the engine path (the legacy
+  // cooldown loop has no equivalent battlefield buttons).
+  if (action.action_id.startsWith("turn_attack_")) return handleCombatViaEngine(slash, env, ctx, "attack");
+  if (action.action_id.startsWith("turn_cast_")) return handleCombatViaEngine(slash, env, ctx, "cast");
+  if (action.action_id.startsWith("turn_signature_")) return handleCombatViaEngine(slash, env, ctx, "signature");
+  if (action.action_id.startsWith("turn_flee_")) return handleCombatViaEngine(slash, env, ctx, "flee");
   if (action.action_id === "equip") return handleEquip(slash, args, env);
   if (action.action_id === "unequip") return handleUnequip(slash, args, env);
   if (action.action_id === "use") return handleUse(slash, args, env, ctx);
@@ -1850,6 +1896,31 @@ async function handleQuest(
         await joinQuest(env.DB, questId, j.slack_user_id);
         await refillMana(env.DB, j.slack_user_id);
         await appendLog(env.DB, questId, j.slack_user_id, "join", "invited at quest start");
+      }
+
+      // Recruitment card — proactively invites the channel to drop into the
+      // quest with a single Join button. Skip for elite (perma-death is
+      // opt-in via direct invite, not channel drive-bys). Fresh quests are
+      // always at wave 1 / room 1, but we keep the mid-flow checks for the
+      // hypothetical future "rebroadcast" path. Job-board quests still
+      // broadcast — joiners get the bonus too.
+      const isMidGauntlet =
+        scene.variant === "gauntlet" && (scene.wave ?? 1) > 1;
+      const isMidDungeon =
+        scene.variant === "dungeon" &&
+        (((scene.expedition?.visited_count ?? 1) > 1) ||
+          ((scene.expedition?.pending_doors?.length ?? 0) > 0));
+      if (!elite && !isMidGauntlet && !isMidDungeon) {
+        await postJoinableQuest(env.SLACK_BOT_TOKEN, {
+          channel: payload.channel_id,
+          questId,
+          variant: scene.variant ?? "standard",
+          monsterName: scene.monster_name,
+          monsterMaxHp: scene.monster_max_hp,
+          createdByUserId: payload.user_id,
+          partySize: 1 + joiners.length,
+          webBaseUrl: env.WEB_BASE_URL,
+        });
       }
     } catch (err) {
       await respondToCommand(payload.response_url, {
@@ -3016,12 +3087,193 @@ function buildDoorPromptBlocks(exp: ExpeditionState, cmd: string): unknown[] {
 
 type CombatAction = "attack" | "cast" | "flee" | "signature";
 
+// Upserts the pinned-battlefield message in the quest thread. First call
+// (no battlefield_ts yet) does chat.postMessage and persists the new ts
+// onto the quests row; subsequent calls do chat.update against that ts.
+// Best-effort — a failure here logs a warning but doesn't fail the turn.
+//
+// Why a pinned message: each engine turn would otherwise post a fresh
+// "current state" block to the thread, drowning the narrative. With a
+// pinned message, spectators see the LATEST state in one place; the
+// turn-summary thread replies become a scrollback log of what just
+// happened. Mirrors the web client's two-pane "live view + log" split.
+async function upsertBattlefield(
+  env: Env,
+  quest: ActiveQuest,
+  state: import("@gantt-quest/core").CombatState,
+): Promise<void> {
+  const blocks = renderBattlefieldBlocks(state, quest.id);
+  const fallbackText = `Battlefield: ${state.monster.name} (${state.monster.hp}/${state.monster.max_hp} HP)`;
+  try {
+    if (quest.battlefield_ts) {
+      const res = await updateMessage(env.SLACK_BOT_TOKEN, {
+        channel: quest.channel_id,
+        ts: quest.battlefield_ts,
+        text: fallbackText,
+        blocks,
+      });
+      if (!res.ok) {
+        // Stale ts (message deleted by an admin, etc.) — fall back to a
+        // new post and re-store. Single retry; if that fails too, give up.
+        const post = await postMessage(env.SLACK_BOT_TOKEN, {
+          channel: quest.channel_id,
+          thread_ts: quest.thread_ts,
+          text: fallbackText,
+          blocks,
+        });
+        if (post.ok && post.ts) {
+          await setBattlefieldTs(env.DB, quest.id, post.ts);
+        }
+      }
+    } else {
+      const post = await postMessage(env.SLACK_BOT_TOKEN, {
+        channel: quest.channel_id,
+        thread_ts: quest.thread_ts,
+        text: fallbackText,
+        blocks,
+      });
+      if (post.ok && post.ts) {
+        await setBattlefieldTs(env.DB, quest.id, post.ts);
+      }
+    }
+  } catch (err) {
+    console.warn("upsertBattlefield failed", err);
+  }
+}
+
+// Engine-driven combat dispatcher. Translates a Slack `(payload, action)`
+// pair into a TurnAction, calls QuestRoom.serverAction over RPC, and posts
+// the resulting CombatEvent[] as a thread reply via renderTurnToThread.
+//
+// Gated on env.LEGACY_SLACK_COMBAT — handleCombat reads the toggle at its
+// top and routes here only when the operator has flipped to the engine
+// path (default stays legacy). When the toggle is on but the cross-bound
+// QUEST_ROOM binding is missing (e.g. local dev without the wrangler
+// redeploy), we fall through to legacy with an ephemeral note so the
+// operator notices the misconfiguration without breaking the player's
+// action.
+//
+// Out of scope this commit (will follow up on the same branch):
+//   - Pinned-battlefield chat.update via quests.battlefield_ts
+//   - New /gq commands: heal, shield, position, mark, wait, ability
+//   - Heal/migrate target-picker ephemerals
+//   - Drink-buff consumption inside the engine
+//   - AI flavor fanout from the DO to the Slack thread
+async function handleCombatViaEngine(
+  payload: SlashCommandPayload,
+  env: Env,
+  _ctx: ExecutionContext,
+  action: CombatAction,
+): Promise<CommandResponse> {
+  const character = await getCharacter(env.DB, payload.user_id);
+  if (!character) return ephemeral(`You need to \`${payload.command} roll\` a character first.`);
+  if (!isFighter(character)) {
+    return ephemeral("You're downed and can't act. Recover, then try again.");
+  }
+
+  let quest = await getActiveQuestForCharacter(env.DB, payload.user_id);
+  if (!quest) return ephemeral(`You're not on an active quest. Try \`${payload.command} quest\` or \`${payload.command} join\`.`);
+  if (quest.channel_id !== payload.channel_id) {
+    return ephemeral(`Your active quest is in <#${quest.channel_id}>.`);
+  }
+
+  const doId = questRoomId(env, quest.id);
+  if (!doId || !env.QUEST_ROOM) {
+    // Engine path requires the cross-bound DO binding. If it's missing we
+    // refuse to fall through silently — the operator turned the toggle on
+    // deliberately, so an ephemeral surfaces what's wrong.
+    return ephemeral(
+      "⚠️ Engine combat is enabled but QUEST_ROOM binding is missing — redeploy the slack worker with the web worker's script_name.",
+    );
+  }
+  // Cast to QuestRoomStub — we're cross-binding a DO that lives in apps/web
+  // and the runtime returns an opaque stub. Type-only assertion; no runtime
+  // cost. The two methods we call (bootstrapFromSlack, serverAction) are
+  // declared on QuestRoomStub in apps/slack/src/index.ts.
+  const stub = env.QUEST_ROOM.get(doId) as unknown as QuestRoomStub;
+
+  // Idempotent: bootstrapFromSlack returns the existing state if combat
+  // already started (via web `/api/quest/:id/start_web_combat`); otherwise
+  // it builds CombatInit from D1, runs step({kind: "begin"}), persists,
+  // and returns the begun state. `created: true` means initiative was
+  // just rolled — we surface that as a kickoff thread post so spectators
+  // see the transition from legacy → engine combat. Non-combat dungeon
+  // rooms bail with a clear error.
+  const boot = await stub.bootstrapFromSlack(quest.id);
+  if (!boot.ok) {
+    if (boot.reason === "non_combat_room") {
+      return ephemeral(
+        `Not in combat right now (${boot.detail ?? "unknown"} room). Try \`${payload.command} choose\` or \`${payload.command} take\`.`,
+      );
+    }
+    return ephemeral(`Can't start combat: ${boot.reason}${boot.detail ? ` (${boot.detail})` : ""}.`);
+  }
+  if (boot.created) {
+    await postToThread(env, quest, "🎲 *Initiative rolled.* Turn-based combat begins.");
+    // Also render the begin events (initiative reveal + first turn_start)
+    // as their own thread post so the order is visible to spectators.
+    const beginText = renderTurnToThread(boot.state, boot.events);
+    if (beginText) {
+      await postToThread(env, quest, beginText);
+    }
+    // Drop the pinned battlefield into the thread on first action. From
+    // here on it's chat.update'd in place per turn.
+    await upsertBattlefield(env, quest, boot.state);
+    // upsertBattlefield wrote battlefield_ts to D1; re-read it so the
+    // next branch (post-action update) hits chat.update on the just-posted
+    // message instead of trying to post a second pinned block.
+    const refreshed = await getActiveQuestForCharacter(env.DB, payload.user_id);
+    if (refreshed) quest = refreshed;
+  }
+
+  const turnAction: TurnAction =
+    action === "attack" ? { kind: "attack", actor: payload.user_id }
+    : action === "cast" ? { kind: "cast", actor: payload.user_id }
+    : action === "signature" ? { kind: "signature", actor: payload.user_id }
+    : { kind: "flee", actor: payload.user_id };
+
+  const result = await stub.serverAction(quest.id, turnAction);
+  if (!result.ok) {
+    return ephemeral(`Can't act: ${result.reason}.`);
+  }
+
+  // Engine rejection events surface as ephemeral feedback (e.g. "not your
+  // turn") without being posted to the thread. Detect via a `rejected`
+  // event in the returned stream when the state didn't advance.
+  const rejection = result.events.find((e) => e.type === "rejected");
+  if (rejection && rejection.type === "rejected") {
+    return ephemeral(`⏳ ${rejection.reason}`);
+  }
+
+  const turnText = renderTurnToThread(result.state, result.events);
+  if (turnText) {
+    await postToThread(env, quest, turnText);
+  }
+
+  // Update the pinned battlefield with the post-turn state. chat.update is
+  // ~1/sec per channel — well under that since each Slack turn is gated on
+  // a slash command or button click. Skip when combat ended (victory/defeat/
+  // fled) so the final state stays visible without a stale button row.
+  if (result.state.status === "active") {
+    await upsertBattlefield(env, quest, result.state);
+  }
+
+  return ephemeral("✅ Action resolved.");
+}
+
 async function handleCombat(
   payload: SlashCommandPayload,
   env: Env,
   ctx: ExecutionContext,
   action: CombatAction,
 ): Promise<CommandResponse> {
+  // Engine path opt-in. Default keeps legacy cooldown-paced combat live
+  // until the engine path is verified end-to-end in dev. See the LEGACY_
+  // SLACK_COMBAT comment in apps/slack/src/index.ts for the toggle.
+  if (env.LEGACY_SLACK_COMBAT === "0") {
+    return handleCombatViaEngine(payload, env, ctx, action);
+  }
+
   let character = await getCharacter(env.DB, payload.user_id);
   if (!character) return ephemeral(`You need to \`${payload.command} roll\` a character first.`);
   if (!isFighter(character)) {
@@ -4834,6 +5086,16 @@ async function handleJoin(
 
   const existing = await getActiveQuestForCharacter(env.DB, payload.user_id);
   if (existing) {
+    // Distinguish "you're already in THIS quest" from "you're on a quest
+    // elsewhere" — the former is the common case for the quest creator
+    // clicking their own recruitment card's [Join here] button and the
+    // generic "you're on a quest in <channel>" message reads as confusing
+    // noise (it points at the same channel they're in).
+    if (existing.channel_id === payload.channel_id) {
+      return ephemeral(
+        `You're already in this quest. \`${payload.command} attack\` to fight, \`${payload.command} look\` to see where you are.`,
+      );
+    }
     return ephemeral(`You're already on an active quest in <#${existing.channel_id}>.`);
   }
 

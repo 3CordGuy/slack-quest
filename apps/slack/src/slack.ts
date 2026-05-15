@@ -146,6 +146,109 @@ export async function updateMessage(
   return (await res.json()) as { ok: boolean; error?: string };
 }
 
+// Recruitment-card post for a freshly-started quest. Lands in the channel
+// alongside the opening narrative with a single "Join Quest" button so
+// spectators can drop in without typing `/sq join`.
+//
+// Skipped for elite quests (perma-death — opt-in by direct invite only) and
+// for any mid-flow quest (dungeon past room 1, gauntlet past wave 1). Quest
+// creation is always at the start of those flows so the check is a no-op
+// today, but we keep it explicit so future "resurrect dropped quest" code
+// paths don't accidentally re-broadcast a half-played quest as joinable.
+//
+// Two buttons:
+//   1. "Join on web" — a Block Kit link button to `webBaseUrl`. Drops the
+//      user into the web app where the dashboard's joinable-quest banner
+//      handles the actual /api/quest/join POST. Omitted when WEB_BASE_URL
+//      is unset so dev iteration doesn't render a dead link.
+//   2. "Join here" — Slack-side join. `action_id` encodes the quest id
+//      (`join_quest_<id>`) for in-block uniqueness, but handleJoin looks
+//      up the active quest in the channel naturally.
+export interface JoinableQuestArgs {
+  channel: string;
+  questId: number;
+  variant: "standard" | "boss" | "gauntlet" | "dungeon" | string;
+  monsterName: string;
+  monsterMaxHp: number;
+  createdByUserId: string;
+  partySize: number;
+  // Public base URL of the web app (e.g. https://quest.heylets.party).
+  // When provided, the recruitment card renders a "Join on web" link
+  // button alongside the Slack "Join here" button so users can pick
+  // whichever surface they prefer.
+  webBaseUrl?: string;
+}
+
+export async function postJoinableQuest(
+  botToken: string,
+  args: JoinableQuestArgs,
+): Promise<{ ok: boolean; ts?: string; error?: string }> {
+  const variantBadge =
+    args.variant === "boss"
+      ? "👑 Boss"
+      : args.variant === "gauntlet"
+      ? "⚔️ Gauntlet"
+      : args.variant === "dungeon"
+      ? "🗺️ Dungeon"
+      : "⚔️ Quest";
+
+  const partyLine =
+    args.partySize > 1
+      ? `Party of ${args.partySize} — *${args.monsterName}* (${args.monsterMaxHp} HP)`
+      : `<@${args.createdByUserId}> vs. *${args.monsterName}* (${args.monsterMaxHp} HP)`;
+
+  const text = `${variantBadge} — joinable quest. ${partyLine}`;
+
+  // Buttons render in declaration order: web link first, Slack join
+  // second. action_ids must be unique within the actions block; the
+  // link button's action_id is decorative (Slack doesn't deliver an
+  // interactivity payload for url buttons) but we still set one for
+  // future analytics + the uniqueness rule.
+  //
+  // Important: prefix MUST differ from `join_quest_` so that
+  // handleInteraction's prefix dispatcher (`action_id.startsWith
+  // ("join_quest_")` → handleJoin) can't accidentally route a URL-button
+  // click into the Slack-side join handler if Slack ever changes how
+  // url buttons are delivered. `link_quest_web_` keeps the routing
+  // explicit and one-way.
+  const elements: unknown[] = [];
+  if (args.webBaseUrl) {
+    elements.push({
+      type: "button",
+      text: { type: "plain_text", text: "Join on web", emoji: true },
+      action_id: `link_quest_web_${args.questId}`,
+      url: args.webBaseUrl,
+    });
+  }
+  elements.push({
+    type: "button",
+    style: "primary",
+    text: { type: "plain_text", text: "Join here", emoji: true },
+    action_id: `join_quest_${args.questId}`,
+    value: String(args.questId),
+  });
+
+  const blocks = [
+    {
+      type: "section",
+      text: {
+        type: "mrkdwn",
+        text: `${variantBadge} — *Joinable quest*\n${partyLine}`,
+      },
+    },
+    {
+      type: "actions",
+      elements,
+    },
+  ];
+
+  return postMessage(botToken, {
+    channel: args.channel,
+    text,
+    blocks,
+  });
+}
+
 // Reply asynchronously to a slash command using its response_url.
 // Use this when work takes >3s — Slack's initial ack must return faster than that.
 //
