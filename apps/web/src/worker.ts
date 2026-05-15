@@ -120,6 +120,7 @@ import {
   saveWebCombatState,
   setCharacterHpAndShield,
   setQuestMode,
+  setQuestThreadTs,
   type ActiveQuest,
   type Character,
   type ExpeditionNode,
@@ -600,6 +601,118 @@ async function postSlackMessage(
   return (await res.json()) as { ok: boolean; ts?: string; error?: string };
 }
 
+// Announces a web-originated quest into the player's recent Slack channel.
+// Mirrors what Slack's handleQuest does on /gq quest: an opening narrative
+// post (creator + monster + variant banner + scene), then a separate
+// recruitment card with [Join on web] / [Join here] buttons.
+//
+// Returns the opening post's ts so the caller can update the quest's
+// thread_ts via setQuestThreadTs. Quests start with a synthetic placeholder
+// (`web-<timestamp>-<userId>`) because the DB row must exist before we can
+// announce it; the announcement then replaces the placeholder with the
+// real Slack ts so subsequent flavor/milestone broadcasts land in the
+// right thread.
+//
+// Skipped when SLACK_BOT_TOKEN isn't bound or the channel can't be
+// resolved. Failure logs a warning but doesn't break the player's quest.
+interface WebQuestAnnounceArgs {
+  channelId: string;
+  questId: number;
+  userId: string;
+  characterName: string;
+  characterClass: string;
+  characterLevel: number;
+  elite: boolean;
+  variant: "standard" | "boss" | "gauntlet" | "dungeon";
+  monsterName: string;
+  monsterMaxHp: number;
+  sceneText: string;
+  totalWaves?: number;
+  webBaseUrl?: string;
+}
+async function announceWebQuestToSlack(
+  env: Env,
+  args: WebQuestAnnounceArgs,
+): Promise<string | null> {
+  if (!env.SLACK_BOT_TOKEN) return null;
+  const token = env.SLACK_BOT_TOKEN;
+
+  const eliteBanner = args.elite ? "⚠️ *ELITE — perma-death enabled* ⚠️\n" : "";
+  const variantBanner =
+    args.variant === "boss" ? "👑 *BOSS QUEST*\n"
+    : args.variant === "gauntlet" ? `⚔️ *GAUNTLET — ${args.totalWaves ?? "?"} waves, no flee*\n`
+    : args.variant === "dungeon" ? "🗺️ *DUNGEON*\n"
+    : "";
+
+  const variantBadge =
+    args.variant === "boss" ? "👑 Boss"
+    : args.variant === "gauntlet" ? "⚔️ Gauntlet"
+    : args.variant === "dungeon" ? "🗺️ Dungeon"
+    : "⚔️ Quest";
+
+  const openingText = [
+    `${eliteBanner}${variantBanner}*A new quest begins* (from web). <@${args.userId}> as *${args.characterName}* the ${args.characterClass} (L${args.characterLevel}).`,
+    ``,
+    `_${args.sceneText}_`,
+    ``,
+    `Foe: *${args.monsterName}* — HP ${args.monsterMaxHp}`,
+  ].join("\n");
+
+  try {
+    const opening = await postSlackMessage(token, {
+      channel: args.channelId,
+      text: openingText,
+    });
+    if (!opening.ok || !opening.ts) {
+      console.warn("web-quest opening post failed", opening.error);
+      return null;
+    }
+
+    // Recruitment card — same shape as Slack's postJoinableQuest. Elite
+    // quests skip the card (perma-death opt-in by direct invite only,
+    // matching the Slack behavior). Mid-flow quests can't happen here
+    // because this is a fresh creation path.
+    if (!args.elite) {
+      const partyLine = `<@${args.userId}> vs. *${args.monsterName}* (${args.monsterMaxHp} HP)`;
+      const elements: unknown[] = [];
+      if (args.webBaseUrl) {
+        elements.push({
+          type: "button",
+          text: { type: "plain_text", text: "Join on web", emoji: true },
+          // Different prefix from join_quest_ to avoid colliding with
+          // handleInteraction's handleJoin dispatch (matches the slack
+          // worker's link_quest_web_ convention).
+          action_id: `link_quest_web_${args.questId}`,
+          url: args.webBaseUrl,
+        });
+      }
+      elements.push({
+        type: "button",
+        style: "primary",
+        text: { type: "plain_text", text: "Join here", emoji: true },
+        action_id: `join_quest_${args.questId}`,
+        value: String(args.questId),
+      });
+      await postSlackMessage(token, {
+        channel: args.channelId,
+        text: `${variantBadge} — joinable quest. ${partyLine}`,
+        blocks: [
+          {
+            type: "section",
+            text: { type: "mrkdwn", text: `${variantBadge} — *Joinable quest*\n${partyLine}` },
+          },
+          { type: "actions", elements },
+        ],
+      });
+    }
+
+    return opening.ts;
+  } catch (err) {
+    console.warn("web-quest announce failed", err);
+    return null;
+  }
+}
+
 // Web worker's own public domain. Used as the baseUrl for art assets so the
 // browser fetches them from the same origin (no extra CORS, same cookie scope).
 const WEB_PUBLIC_BASE = "https://quest.heylets.party";
@@ -1059,6 +1172,32 @@ app.post("/api/quest/start", async (c) => {
     .prepare("UPDATE characters SET drinks_since_last_quest = 0 WHERE slack_user_id = ?")
     .bind(session.slack_user_id)
     .run();
+
+  // Slack announcement + recruitment card. Fire-and-forget via waitUntil
+  // so the response doesn't wait on Slack API latency. Skipped when no
+  // real Slack channel is known (web-only users have effectiveChannel
+  // set to a synthetic "web:<userId>" sentinel which we filter on).
+  if (channelId && c.env.SLACK_BOT_TOKEN) {
+    c.executionCtx.waitUntil((async () => {
+      const ts = await announceWebQuestToSlack(c.env, {
+        channelId,
+        questId,
+        userId: session.slack_user_id,
+        characterName: character.name,
+        characterClass: character.class,
+        characterLevel: character.level,
+        elite,
+        variant: variant as "standard" | "boss" | "gauntlet" | "dungeon",
+        monsterName: scene.monster_name,
+        monsterMaxHp: scene.monster_max_hp,
+        sceneText: scene.scene,
+        totalWaves: scene.total_waves,
+        webBaseUrl: WEB_PUBLIC_BASE,
+      });
+      if (ts) await setQuestThreadTs(c.env.DB, questId, ts);
+    })());
+  }
+
   return c.json({
     ok: true,
     quest_id: questId,
@@ -1438,6 +1577,31 @@ app.post("/api/board/take", async (c) => {
     created_by: session.slack_user_id,
   });
   await refillMana(c.env.DB, session.slack_user_id);
+
+  // Announce the board-claim quest the same way the main /api/quest/start
+  // path does. Job-board quests are always non-elite + non-dungeon-mid-flow
+  // by definition (fresh claim, fresh quest).
+  if (c.env.SLACK_BOT_TOKEN) {
+    c.executionCtx.waitUntil((async () => {
+      const ts = await announceWebQuestToSlack(c.env, {
+        channelId,
+        questId,
+        userId: session.slack_user_id,
+        characterName: character.name,
+        characterClass: character.class,
+        characterLevel: character.level,
+        elite: false,
+        variant: variant as "standard" | "boss" | "gauntlet" | "dungeon",
+        monsterName: scene.monster_name,
+        monsterMaxHp: scene.monster_max_hp,
+        sceneText: scene.scene,
+        totalWaves: scene.total_waves,
+        webBaseUrl: WEB_PUBLIC_BASE,
+      });
+      if (ts) await setQuestThreadTs(c.env.DB, questId, ts);
+    })());
+  }
+
   return c.json({ ok: true, quest_id: questId });
 });
 
@@ -1525,6 +1689,29 @@ app.post("/api/hunt", async (c) => {
     created_by: session.slack_user_id,
   });
   await refillMana(c.env.DB, session.slack_user_id);
+
+  // /api/hunt always produces a standard, non-elite quest. Announce it
+  // the same as the other web creation paths.
+  if (c.env.SLACK_BOT_TOKEN) {
+    c.executionCtx.waitUntil((async () => {
+      const ts = await announceWebQuestToSlack(c.env, {
+        channelId,
+        questId,
+        userId: session.slack_user_id,
+        characterName: character.name,
+        characterClass: character.class,
+        characterLevel: character.level,
+        elite: false,
+        variant: "standard",
+        monsterName: scene.monster_name,
+        monsterMaxHp: scene.monster_max_hp,
+        sceneText: scene.scene,
+        webBaseUrl: WEB_PUBLIC_BASE,
+      });
+      if (ts) await setQuestThreadTs(c.env.DB, questId, ts);
+    })());
+  }
+
   return c.json({ ok: true, quest_id: questId });
 });
 

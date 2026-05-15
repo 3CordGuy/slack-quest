@@ -3142,23 +3142,24 @@ async function upsertBattlefield(
 }
 
 // Engine-driven combat dispatcher. Translates a Slack `(payload, action)`
-// pair into a TurnAction, calls QuestRoom.serverAction over RPC, and posts
-// the resulting CombatEvent[] as a thread reply via renderTurnToThread.
+// pair into a TurnAction, calls QuestRoom.serverAction over RPC, posts
+// the resulting CombatEvent[] as a thread reply via renderTurnToThread,
+// and upserts the pinned battlefield message via chat.update. Drink-buff
+// consumption + AI flavor fanout to the Slack thread run server-side
+// inside the DO, so they reach this path automatically.
 //
 // Gated on env.LEGACY_SLACK_COMBAT — handleCombat reads the toggle at its
 // top and routes here only when the operator has flipped to the engine
 // path (default stays legacy). When the toggle is on but the cross-bound
 // QUEST_ROOM binding is missing (e.g. local dev without the wrangler
-// redeploy), we fall through to legacy with an ephemeral note so the
-// operator notices the misconfiguration without breaking the player's
-// action.
+// redeploy), we surface an operator-facing ephemeral instead of falling
+// through silently so the misconfiguration is visible.
 //
-// Out of scope this commit (will follow up on the same branch):
-//   - Pinned-battlefield chat.update via quests.battlefield_ts
-//   - New /gq commands: heal, shield, position, mark, wait, ability
-//   - Heal/migrate target-picker ephemerals
-//   - Drink-buff consumption inside the engine
-//   - AI flavor fanout from the DO to the Slack thread
+// Still missing (follow-up PR — tracked in the unification plan):
+//   - /gq heal, /gq shield, /gq position, /gq mark, /gq wait, /gq ability
+//     slash commands. Engine supports each TurnAction kind; the Slack
+//     dispatch layer just doesn't expose them yet.
+//   - Heal / migrate target-picker ephemerals (engine needs target id).
 async function handleCombatViaEngine(
   payload: SlashCommandPayload,
   env: Env,

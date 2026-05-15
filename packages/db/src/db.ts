@@ -427,6 +427,24 @@ export async function setBattlefieldTs(
     .run();
 }
 
+// Updates the quest's thread_ts to the real Slack message ts returned by
+// chat.postMessage. Used by web-originated quests: createQuest is called
+// with a synthetic placeholder (`web-<timestamp>-<userId>`) because the
+// quest row needs to exist before we can announce it; this writes the
+// real ts back so subsequent flavor/milestone broadcasts find the actual
+// thread. Safe to call on quests that never got announced — the
+// placeholder just stays.
+export async function setQuestThreadTs(
+  db: D1Database,
+  questId: number,
+  threadTs: string,
+): Promise<void> {
+  await db
+    .prepare("UPDATE quests SET thread_ts = ? WHERE id = ?")
+    .bind(threadTs, questId)
+    .run();
+}
+
 export async function setQuestMode(
   db: D1Database,
   questId: number,
