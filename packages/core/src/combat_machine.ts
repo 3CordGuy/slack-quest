@@ -1140,14 +1140,26 @@ function handleSignature(
     trackRoll,
   );
 
+  // Refactor Rogue — Backstab auto-crit. The signature deals 2× damage when
+  // the monster is at or below 50% HP. resolveSignature in packages/core/
+  // src/combat.ts intentionally returns the raw damage and leaves this
+  // doubling to the engine (it needs s.monster.hp and s.monster.max_hp,
+  // which resolveSignature isn't passed by design).
+  //
+  // Applied BEFORE drink-buff so a Lucky Sip on a Rogue backstab won't
+  // redundantly double an already-doubled hit (applyDrinkBuff gates
+  // buff_next_crit on !isCrit; we pass rogueBackstab as the isCrit arg).
+  const rogueBackstab =
+    cls.id === "refactor_rogue" && s.monster.hp <= s.monster.max_hp / 2;
+  const damageAfterBackstab = rogueBackstab ? sig.damage * 2 : sig.damage;
+
   // Pub drink-buff. Only buff_next_crit fires on signatures (per legacy
   // design: attack/magic buffs don't compound class powerhouses, but Lucky
   // Sip's guaranteed crit can land on a signature for the killing-blow play).
   // applyDrinkBuff gates buff_attack/buff_magic out via the context arg.
-  // We pass isCrit=false because signature damage isn't represented with a
-  // crit flag in CombatEvent today — any consumption of buff_next_crit on
-  // a signature is treated as "force the doubling."
-  const drinkResult = applyDrinkBuff(s, action.actor, "signature", sig.damage, false);
+  // When rogueBackstab already doubled the damage, buff_next_crit is gated
+  // out by the isCrit=true arg — no redundant doubling.
+  const drinkResult = applyDrinkBuff(s, action.actor, "signature", damageAfterBackstab, rogueBackstab);
   const finalSigDamage = drinkResult.damage;
 
   const oldHp = s.monster.hp;
@@ -1172,7 +1184,13 @@ function handleSignature(
       type: "signature_used",
       actor: action.actor,
       damage: finalSigDamage,
-      formula: drinkResult.event
+      // Annotate the formula with whichever doubler fired. rogueBackstab
+      // takes precedence (it's the class-defining mechanic); Lucky Sip
+      // appears only when no backstab. The two are mutually exclusive
+      // via the applyDrinkBuff isCrit gate above.
+      formula: rogueBackstab
+        ? `${sig.formula} ×2 (backstab)`
+        : drinkResult.event
         ? `${sig.formula} ×2 (lucky sip)`
         : sig.formula,
       mana_spent: manaSpent,
