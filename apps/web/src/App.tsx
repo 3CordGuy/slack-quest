@@ -1378,7 +1378,7 @@ export function App() {
           selfId={state.me.slack_user_id}
           onEquip={equipItem}
           onUnequip={unequipItem}
-          onSell={(id) => { setInventoryOpen(false); sellItem(id); }}
+          onSell={sellItem}
           onUse={useItem}
           onGive={giveItem}
           onClose={() => setInventoryOpen(false)}

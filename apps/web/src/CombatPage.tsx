@@ -825,7 +825,9 @@ export function CombatPage({
       if (fired) autoResolvedTurnRef.current = stateForAuto.turn_index;
     }, 800);
     return () => clearTimeout(timer);
-  }, [stateForAuto?.turn_index, stateForAuto?.status]);
+    // autoResolve is in deps so flipping the checkbox on while a monster turn
+    // is already active re-evaluates the effect and schedules a resolve.
+  }, [stateForAuto?.turn_index, stateForAuto?.status, autoResolve]);
 
   function exit() {
     // Just navigate away — combat state stays in D1 so the player can resume
@@ -1029,7 +1031,12 @@ export function CombatPage({
                 ability={myAbility}
                 onAct={(kind) => {
                   if (kind === "heal" || kind === "shield") {
-                    setPicking(kind);
+                    // Solo quest: no one else to target, so skip the picker.
+                    if (state.fighters.length === 1) {
+                      send({ kind, actor: selfId, target: selfId } as TurnAction);
+                    } else {
+                      setPicking(kind);
+                    }
                   } else if (kind === "use_item") {
                     setItemPicker("open");
                   } else if (kind === "swap_position") {
@@ -2452,6 +2459,24 @@ const D6_PIPS: Record<number, [number, number][]> = {
 function DiceRollDisplay({ rolls }: { rolls: DiceRollEntry[] }) {
   useEffect(() => { injectDiceStyles(); }, []);
   if (rolls.length === 0) return null;
+  const enemyRolls = rolls.filter((r) => r.actor === MONSTER_ID);
+  const partyRolls = rolls.filter((r) => r.actor !== MONSTER_ID);
+  const rowStyle: React.CSSProperties = {
+    display: "flex",
+    gap: 14,
+    flexWrap: "wrap",
+    justifyContent: "center",
+    alignItems: "flex-start",
+  };
+  const labelStyle: React.CSSProperties = {
+    fontSize: 9,
+    color: "#6b7280",
+    textTransform: "uppercase",
+    letterSpacing: 1.5,
+    fontFamily: "ui-monospace, monospace",
+    textAlign: "center",
+    marginBottom: 6,
+  };
   return (
     <div style={{
       position: "fixed",
@@ -2459,13 +2484,27 @@ function DiceRollDisplay({ rolls }: { rolls: DiceRollEntry[] }) {
       left: "50%",
       transform: "translateX(-50%)",
       display: "flex",
-      gap: 14,
-      flexWrap: "wrap",
-      justifyContent: "center",
+      flexDirection: "column",
+      gap: 28,
       zIndex: 200,
       pointerEvents: "none",
     }}>
-      {rolls.map((r) => <DiceFace key={r.id} roll={r} />)}
+      {enemyRolls.length > 0 && (
+        <div>
+          <div style={{ ...labelStyle, color: "#9c4242" }}>Enemy</div>
+          <div style={rowStyle}>
+            {enemyRolls.map((r) => <DiceFace key={r.id} roll={r} />)}
+          </div>
+        </div>
+      )}
+      {partyRolls.length > 0 && (
+        <div>
+          <div style={{ ...labelStyle, color: "#4a7c8c" }}>Party</div>
+          <div style={rowStyle}>
+            {partyRolls.map((r) => <DiceFace key={r.id} roll={r} />)}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
