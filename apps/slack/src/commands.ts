@@ -5086,6 +5086,16 @@ async function handleJoin(
 
   const existing = await getActiveQuestForCharacter(env.DB, payload.user_id);
   if (existing) {
+    // Distinguish "you're already in THIS quest" from "you're on a quest
+    // elsewhere" — the former is the common case for the quest creator
+    // clicking their own recruitment card's [Join here] button and the
+    // generic "you're on a quest in <channel>" message reads as confusing
+    // noise (it points at the same channel they're in).
+    if (existing.channel_id === payload.channel_id) {
+      return ephemeral(
+        `You're already in this quest. \`${payload.command} attack\` to fight, \`${payload.command} look\` to see where you are.`,
+      );
+    }
     return ephemeral(`You're already on an active quest in <#${existing.channel_id}>.`);
   }
 
