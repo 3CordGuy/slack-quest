@@ -872,7 +872,15 @@ export async function handleInteraction(
   };
   const args = [action.value];
 
-  // Recruitment-card "Join Quest" button. action_id encodes the quest id
+  // Recruitment-card "Join on web" link button. Slack DOES deliver an
+  // interactivity payload for URL buttons even though it also opens the
+  // URL in the user's browser; we ack with a brief ephemeral instead of
+  // letting it fall through to the "Unknown action" error message.
+  // No dispatch needed — the actual navigation already happened.
+  if (action.action_id.startsWith("link_quest_web_")) {
+    return ephemeral("🌐 Opening on web…");
+  }
+  // Recruitment-card "Join here" button. action_id encodes the quest id
   // (`join_quest_<id>`) for uniqueness, but handleJoin looks up the active
   // quest in the channel naturally — the encoded id is for action_id
   // uniqueness only, not as a lookup key. If the quest has since advanced
