@@ -154,6 +154,7 @@ import {
   setCharacterEffects,
   setCharacterHp,
   setBattlefieldTs,
+  setJoinableTs,
   setCharacterHpAndShield,
   setPosition,
   sharpenItem,
@@ -182,6 +183,7 @@ import {
   type SceneJson,
   type ShopItem,
   type StatusEffect,
+  issueWebLoginCode,
 } from "@gantt-quest/db";
 import {
   applyDamageWithShield,
@@ -255,7 +257,7 @@ import {
   checkSpdAchievements,
   checkProgressionAchievements,
 } from "@gantt-quest/core";
-import { postJoinableQuest, postMessage, respondToCommand, updateMessage, type InteractivePayload, type SlashCommandPayload } from "./slack";
+import { deleteMessage, postJoinableQuest, postMessage, respondToCommand, updateMessage, type InteractivePayload, type SlashCommandPayload } from "./slack";
 
 export interface CommandResponse {
   text: string;
@@ -1204,6 +1206,9 @@ export async function handleCommand(
       return handleChoose(payload, args, env, ctx);
     case "take":
       return handleTake(payload, args, env, ctx);
+    case "web-login":
+    case "weblogin":
+      return handleWebLogin(payload, env);
     case "town":
     case "village":
       return handleTown(payload, env, ctx);
@@ -1248,6 +1253,9 @@ export async function handleCommand(
       // navigation; plain-text fallback included for clients that strip
       // blocks).
       return rulesResponse(payload.command, botName(env), args[0]);
+    case "web-login":
+    case "weblogin":
+      return handleWebLogin(payload, env);
     default:
       return ephemeral(`Unknown command: \`${sub}\`. Try \`${payload.command} help\`.`);
   }
@@ -1925,7 +1933,7 @@ async function handleQuest(
         (((scene.expedition?.visited_count ?? 1) > 1) ||
           ((scene.expedition?.pending_doors?.length ?? 0) > 0));
       if (!elite && !isMidGauntlet && !isMidDungeon) {
-        await postJoinableQuest(env.SLACK_BOT_TOKEN, {
+        const joinCard = await postJoinableQuest(env.SLACK_BOT_TOKEN, {
           channel: payload.channel_id,
           questId,
           variant: scene.variant ?? "standard",
@@ -1935,6 +1943,9 @@ async function handleQuest(
           partySize: 1 + joiners.length,
           webBaseUrl: env.WEB_BASE_URL,
         });
+        if (joinCard.ok && joinCard.ts) {
+          await setJoinableTs(env.DB, questId, joinCard.ts);
+        }
       }
     } catch (err) {
       await respondToCommand(payload.response_url, {
@@ -3990,6 +4001,7 @@ async function resolveFlee(
     const others = fighters.filter((c) => c.slack_user_id !== payload.user_id);
     const partyContinues = others.length > 0;
     if (!partyContinues) {
+      clearJoinableCard(env, quest);
       await markQuestStatus(env.DB, quest.id, "failed");
       await clearPartyEffects(env.DB, quest.id);
     }
@@ -4087,6 +4099,11 @@ function variantDropChance(variant: QuestVariant | undefined, tier: number): num
   return base;
 }
 
+function clearJoinableCard(env: Env, quest: ActiveQuest): void {
+  if (!quest.joinable_ts || !env.SLACK_BOT_TOKEN) return;
+  void deleteMessage(env.SLACK_BOT_TOKEN, quest.channel_id, quest.joinable_ts);
+}
+
 async function resolveVictory(
   payload: SlashCommandPayload,
   env: Env,
@@ -4171,6 +4188,7 @@ async function resolveVictory(
     .map((f) => ({ fighter: f, roll: rollItem(quest.scene.tier) }))
     .filter(() => Math.random() < variantDrop);
 
+  clearJoinableCard(env, quest);
   await markQuestStatus(env.DB, quest.id, "completed");
   await clearPartyEffects(env.DB, quest.id);
   await appendLog(env.DB, quest.id, payload.user_id, "victory", `+${xpEach}xp/+${goldEach}g × ${fighters.length}, ${lootRolls.length} drops`);
@@ -4332,6 +4350,7 @@ async function resolveExpeditionToTreasure(
   if (!treasureNode || treasureNode.type !== "treasure") {
     // Shouldn't be reachable — expeditions always build combat → treasure. If it ever
     // does (corrupted scene_json, manual DB edit, etc.), end the quest cleanly.
+    clearJoinableCard(env, quest);
     await markQuestStatus(env.DB, quest.id, "completed");
     await clearPartyEffects(env.DB, quest.id);
     return ephemeral([...preamble, "_(no treasure node found — quest closed.)_"].join("\n"));
@@ -4406,6 +4425,7 @@ async function resolveExpeditionVictory(
     }
   }
 
+  clearJoinableCard(env, quest);
   await markQuestStatus(env.DB, quest.id, "completed");
   await clearPartyEffects(env.DB, quest.id);
   await appendLog(env.DB, quest.id, payload.user_id, "expedition_complete", `taker:${taker.name}, item:${takenItem.item_name}`);
@@ -5172,6 +5192,7 @@ async function resolveDeath(
   }
 
   if (questEnds) {
+    clearJoinableCard(env, quest);
     await markQuestStatus(env.DB, quest.id, "failed");
     await clearPartyEffects(env.DB, quest.id);
     ephemeralLines.push(`☠️ The party is broken. Quest fails.`);
@@ -10904,6 +10925,17 @@ function buildQuestEndBlocks(opts: {
     { type: "divider" },
     { type: "section", text: { type: "mrkdwn", text: opts.body.join("\n") } },
   ];
+}
+
+async function handleWebLogin(
+  payload: SlashCommandPayload,
+  env: Env,
+): Promise<CommandResponse> {
+  const { code, expires_at } = await issueWebLoginCode(env.DB, payload.user_id, payload.team_id);
+  const minutes = Math.max(1, Math.round((expires_at - Date.now()) / 60_000));
+  const webUrl = env.WEB_BASE_URL?.trim();
+  const where = webUrl ? `Enter it at ${webUrl}` : "Enter it in the web app";
+  return ephemeral(`🔐 Your web login code: *${code}*\n${where}. Expires in ~${minutes} min.`);
 }
 
 function ephemeral(text: string): CommandResponse {

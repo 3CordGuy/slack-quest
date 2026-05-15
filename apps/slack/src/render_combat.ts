@@ -89,6 +89,15 @@ function renderEvent(state: CombatState, e: CombatEvent): string {
       }
       return `🩸 *${state.monster.name}* hits ${nameOf(state, e.target)} for *${e.hp_damage}* HP.`;
 
+    case "monster_splash": {
+      const parts = e.targets.map((t) =>
+        t.shield_absorbed > 0
+          ? `${nameOf(state, t.target)} *${t.hp_damage}* HP (shield −${t.shield_absorbed})`
+          : `${nameOf(state, t.target)} *${t.hp_damage}* HP`
+      );
+      return `💥 *${state.monster.name}* splashes everyone — ${parts.join(", ")}.`;
+    }
+
     case "monster_target_blocked":
       return `👁 *${state.monster.name}* lashes out but finds nothing to strike — vanish holds.`;
 

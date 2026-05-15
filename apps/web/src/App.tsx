@@ -998,8 +998,21 @@ export function App() {
   }
 
   async function useItem(itemId: number) {
-    const { ok } = await postJson(`/api/inventory/${itemId}/use`, { method: "POST" });
-    if (ok) void refresh();
+    const { ok, body } = await postJson(`/api/inventory/${itemId}/use`, { method: "POST" });
+    if (ok) {
+      if (body?.kind === "heal") {
+        const healed = typeof body.healed === "number" ? body.healed : 0;
+        if (healed > 0) toast.success(`+${healed} HP`);
+        else toast("Already at full HP — item consumed.");
+      } else if (body?.kind === "mana") {
+        const restored = typeof body.restored === "number" ? body.restored : 0;
+        if (restored > 0) toast.success(`+${restored} mana`);
+        else toast("Mana already full — item consumed.");
+      } else if (body?.kind === "mana_bump") {
+        toast.success(`+${body.added ?? 0} max mana`);
+      }
+      void refresh();
+    }
   }
 
   async function giveItem(itemId: number, toUserId: string, toName: string) {
@@ -6592,8 +6605,8 @@ function DistrictTile({
     >
       <div
         style={{
-          width: 90,
-          height: 90,
+          width: "100%",
+          aspectRatio: "1 / 1",
           borderRadius: 12,
           overflow: "hidden",
           border: `2px solid ${hovered ? "#7dd3fc" : "#2a2d33"}`,
@@ -6666,11 +6679,10 @@ function TownMap({
 
       {/* District tiles */}
       <div style={{
-        display: "flex",
-        gap: 16,
+        display: "grid",
+        gridTemplateColumns: "repeat(auto-fill, minmax(80px, 1fr))",
+        gap: 12,
         padding: "16px 20px 20px",
-        overflowX: "auto",
-        flexWrap: "wrap",
       }}>
         {DISTRICT_CONFIG.map((d) => (
           <DistrictTile

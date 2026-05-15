@@ -131,6 +131,21 @@ export interface UpdateMessageArgs {
   text: string;
   blocks?: unknown[];
 }
+export async function deleteMessage(
+  botToken: string,
+  channel: string,
+  ts: string,
+): Promise<void> {
+  await fetch("https://slack.com/api/chat.delete", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${botToken}`,
+      "Content-Type": "application/json; charset=utf-8",
+    },
+    body: JSON.stringify({ channel, ts }),
+  });
+}
+
 export async function updateMessage(
   botToken: string,
   args: UpdateMessageArgs,

@@ -60,6 +60,7 @@ import {
   sellPriceFor,
   step,
   xpForLevel,
+  RARITY_BADGE,
   type CombatEvent,
   type CombatInit,
   type CombatState,
@@ -4488,6 +4489,7 @@ export class QuestRoom extends DurableObject<Env> {
       }
       const outcome = await applyWebCombatOutcome(this.env, questId, result.state, killedBy);
       this.broadcast({ type: "outcome", outcome });
+      this.postVictoryWrapup(questId, outcome);
       return outcome;
     }
     return null;
@@ -4748,6 +4750,7 @@ export class QuestRoom extends DurableObject<Env> {
       try {
         const outcome = await applyWebCombatOutcome(this.env, questId, resultState, itemKilledBy);
         this.broadcast({ type: "outcome", outcome });
+        this.postVictoryWrapup(questId, outcome);
       } catch (err) {
         this.broadcast({
           type: "error",
@@ -4856,6 +4859,56 @@ export class QuestRoom extends DurableObject<Env> {
         // ignore — scrollback regression only
       }
     }
+  }
+
+  // Post a wrap-up summary to the Slack thread after a web combat victory.
+  // Skipped for pure-web quests (channel_id starts with "web:") and when
+  // SLACK_BOT_TOKEN is absent. Fire-and-forget via ctx.waitUntil.
+  private postVictoryWrapup(questId: number, outcome: OutcomeSummary): void {
+    if (outcome.status !== "victory") return;
+    if (!this.env.SLACK_BOT_TOKEN) return;
+    const token = this.env.SLACK_BOT_TOKEN;
+    this.ctx.waitUntil(
+      (async () => {
+        try {
+          const meta = await this.ensureQuestMeta(questId);
+          if (!meta || meta.channel_id.startsWith("web:")) return;
+
+          const header = [
+            outcome.is_boss ? "👑" : "⚔️",
+            `*${outcome.monster_name}* defeated`,
+            outcome.elite ? " _(elite)_" : "",
+            outcome.dungeon_room_cleared ? " _(dungeon room cleared)_" : "",
+          ].join("") + "!";
+
+          const lines: string[] = [header];
+          for (const r of outcome.rewards) {
+            const parts: string[] = [
+              `<@${r.user_id}>: +${r.xp_awarded} XP · +${r.gold_awarded}g`,
+            ];
+            if (r.level_up) parts.push(`→ Lv ${r.new_level} ↑`);
+            for (const l of r.loot) {
+              const badge = (RARITY_BADGE as Record<string, string>)[l.rarity] ?? "🎁";
+              const power =
+                l.item_type === "consumable" ? `heals ${l.power}` :
+                l.item_type === "magic"      ? `+${l.power} max mana` :
+                l.item_type === "revive"     ? `revive ${l.power}%` :
+                                               `+${l.power}`;
+              parts.push(`🎁 ${badge} *${l.item_name}* (${l.item_type}, ${power})`);
+            }
+            lines.push(parts.join(" · "));
+          }
+
+          await postSlackMessage(token, {
+            channel: meta.channel_id,
+            thread_ts: meta.thread_ts,
+            text: lines.join("\n"),
+          });
+        } catch (err) {
+          console.warn("victory wrapup to slack failed", err);
+        }
+      })(),
+    );
   }
 
   // Channel-broadcast combat milestones to the Slack thread (with

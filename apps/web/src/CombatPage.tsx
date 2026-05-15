@@ -450,7 +450,7 @@ function formatEvent(e: CombatEvent, state: CombatState | null): UiState["log"] 
         "good",
       );
     case "signature_used":
-      return row("fairy-wand", <>{nameOf(e.actor)} signature: {e.damage} dmg  [{e.formula}]  −{e.mana_spent} mana</>, "good");
+      return row("wax-seal", <>{nameOf(e.actor)} signature: {e.damage} dmg  [{e.formula}]  −{e.mana_spent} mana</>, "good");
     case "flee_check":
       return row(
         "footprint",
@@ -604,7 +604,7 @@ function formatEvent(e: CombatEvent, state: CombatState | null): UiState["log"] 
     case "passive_warden_shield":
       return row("shield", <>{nameOf(e.actor)} hardens up — +{e.amount} shield (passive).</>, "good");
     case "passive_mage_free_sig":
-      return row("crystal-wand", <>{nameOf(e.actor)}'s first signature is free.</>, "good");
+      return row("wax-seal", <>{nameOf(e.actor)}'s first signature is free.</>, "good");
     case "passive_druid_regen":
       return row("grass", <>{nameOf(e.actor)} regen +{e.amount} HP (passive).</>, "good");
     case "passive_rogue_first_crit":
@@ -667,6 +667,12 @@ export function CombatPage({
   const [migratePicker, setMigratePicker] = useState<boolean>(false);
   const [givePicker, setGivePicker] = useState<"closed" | "selectItem" | { itemId: number }>("closed");
   const [items, setItems] = useState<InventoryItem[]>([]);
+  const [autoResolve, setAutoResolve] = useState<boolean>(
+    () => localStorage.getItem("combat_auto_resolve") === "true",
+  );
+  const autoResolveRef = useRef(autoResolve);
+  // Tracks the last turn_index for which we fired an auto-resolve so we don't double-fire.
+  const autoResolvedTurnRef = useRef<number>(-1);
   const wsRef = useRef<WebSocket | null>(null);
   const logScrollRef = useRef<HTMLDivElement | null>(null);
   const [diceRolls, setDiceRolls] = useState<DiceRollEntry[]>([]);
@@ -739,6 +745,10 @@ export function CombatPage({
               toast(`💛 Lay on Hands — +${(evt as { amount: number }).amount} HP`, { duration: 3000 });
             }
           }
+          // Refresh inventory after any item use so the picker reflects the new state.
+          if (msg.events.some((evt: { type?: string }) => evt.type === "item_used")) {
+            void loadItems();
+          }
           // 950ms ≈ tumble duration (700ms) + brief pause to read the value.
           const delay = hasRolls ? 950 : 0;
           setTimeout(() => dispatch({ kind: "events", value: msg.events }), delay);
@@ -787,11 +797,35 @@ export function CombatPage({
     if (el) el.scrollTop = el.scrollHeight;
   }, [lastLogId]);
 
-  function send(action: TurnAction) {
+  function send(action: TurnAction): boolean {
     const ws = wsRef.current;
-    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    if (!ws || ws.readyState !== WebSocket.OPEN) return false;
     ws.send(JSON.stringify({ type: "action", action }));
+    return true;
   }
+
+  // Keep ref in sync so the auto-resolve effect can read it without a stale closure.
+  useEffect(() => {
+    autoResolveRef.current = autoResolve;
+    localStorage.setItem("combat_auto_resolve", String(autoResolve));
+  }, [autoResolve]);
+
+  // Auto-resolve monster turn: fires monster_act ~800ms after the monster's turn
+  // becomes active, so the player still sees the turn transition before it resolves.
+  const { state: stateForAuto } = ui;
+  useEffect(() => {
+    if (!autoResolveRef.current) return;
+    if (!stateForAuto || stateForAuto.status !== "active") return;
+    const actorId = stateForAuto.turn_order[stateForAuto.turn_index % stateForAuto.turn_order.length];
+    if (actorId !== MONSTER_ID) return;
+    if (autoResolvedTurnRef.current === stateForAuto.turn_index) return;
+    const timer = setTimeout(() => {
+      if (!autoResolveRef.current) return;
+      const fired = send({ kind: "monster_act" });
+      if (fired) autoResolvedTurnRef.current = stateForAuto.turn_index;
+    }, 800);
+    return () => clearTimeout(timer);
+  }, [stateForAuto?.turn_index, stateForAuto?.status]);
 
   function exit() {
     // Just navigate away — combat state stays in D1 so the player can resume
@@ -838,7 +872,15 @@ export function CombatPage({
   }
 
   function fireUseItem(itemId: number, targetId?: string) {
+    const ws = wsRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      toast.error("Disconnected — reconnecting. Try again in a moment.");
+      return;
+    }
     send({ kind: "use_item", actor: selfId, item_id: itemId, target_id: targetId });
+    // Optimistically remove from local list; loadItems() confirms the real state
+    // once the server broadcasts the item_used event.
+    setItems((prev) => prev.filter((i) => i.id !== itemId));
     setItemPicker("closed");
   }
 
@@ -909,10 +951,21 @@ export function CombatPage({
               showSageReading={me?.class === "Staff Sage"}
               isMarked={!!(state.ability_state?.mark && state.round <= state.ability_state.mark.expires_after_round)}
             />
-            {!myTurn && state.status === "active" && currentActorId === MONSTER_ID && (
+            {!myTurn && state.status === "active" && currentActorId === MONSTER_ID && !autoResolve && (
               <button style={{ ...button, marginTop: 0, background: "#5c1f1f" }} onClick={() => send({ kind: "monster_act" })}>
                 <Icon name="dragon-head" /> Resolve monster turn
               </button>
+            )}
+            {state.status === "active" && (
+              <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "#9098a8", cursor: "pointer", userSelect: "none" }}>
+                <input
+                  type="checkbox"
+                  checked={autoResolve}
+                  onChange={(e) => setAutoResolve(e.target.checked)}
+                  style={{ accentColor: "#5c1f1f", cursor: "pointer" }}
+                />
+                Auto-resolve enemy turns
+              </label>
             )}
             <PartySection fighters={state.fighters} currentActorId={currentActorId} selfId={selfId} />
           </div>
@@ -1429,9 +1482,9 @@ function ActionBar({
   return (
     <div style={{ ...card, display: "flex", gap: 8, flexWrap: "wrap" }}>
       <ActionBtn label={<><Icon name="sword" /> Attack</>} hint="d20+atk vs AC · 1d6 dmg" disabled={disabled} onClick={() => onAct("attack")} />
-      <ActionBtn label={<><Icon name="crystal-ball" /> Cast</>} hint="d20+mag vs AC · 1d8 dmg" disabled={disabled} onClick={() => onAct("cast")} />
+      <ActionBtn label={<><Icon name="arcing-bolt" /> Cast</>} hint="d20+mag vs AC · 1d8 dmg" disabled={disabled} onClick={() => onAct("cast")} />
       <ActionBtn
-        label={<><Icon name="fairy-wand" /> Sig</>}
+        label={<><Icon name="wax-seal" /> Sig</>}
         hint={mana > 0 ? "Class signature · 1 mana" : "No mana"}
         disabled={disabled || mana < 1}
         onClick={() => onAct("signature")}

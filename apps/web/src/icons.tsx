@@ -22,7 +22,7 @@ const SVG_ICONS = new Set([
   "spinning-sword", "trident", "trophy",
   // Close-match remaps (original ra- name → this SVG file)
   "battle-axe", "barbed-spear", "boots", "beer-stein", "lightning-saber",
-  "blunderbuss", "poison-bottle",
+  "blunderbuss", "poison-bottle", "arcing-bolt", "wax-seal",
 ]);
 
 interface IconProps {
