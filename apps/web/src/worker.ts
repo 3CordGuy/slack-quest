@@ -1085,11 +1085,10 @@ app.get("/api/quest/joinable", async (c) => {
   if (!channelId) return c.json({ joinable: null });
   const quest = await getActiveQuestInChannel(c.env.DB, channelId);
   if (!quest) return c.json({ joinable: null });
-  // Same locks slack uses: gauntlet past wave 1, dungeon past entry room,
-  // web-mode quests, and slack-mode quests (prevent web players from joining
-  // Slack-originated quests which would cause combat lock conflicts).
-  if (quest.mode === "web") return c.json({ joinable: null, reason: "web_mode" });
-  if (quest.mode === "slack") return c.json({ joinable: null, reason: "slack_mode" });
+  // Mode is informational only — both surfaces drive the same step() engine
+  // via QuestRoom RPC when LEGACY_SLACK_COMBAT="0" is set on the slack
+  // worker. Quest-shape locks (gauntlet wave 1+, dungeon past entry room)
+  // still apply because those are about state, not surface ownership.
   if (quest.scene.variant === "gauntlet" && (quest.scene.wave ?? 1) > 1) {
     return c.json({ joinable: null, reason: "gauntlet_advanced" });
   }
@@ -1128,7 +1127,9 @@ app.post("/api/quest/join", async (c) => {
   if (!channelId) return c.json({ error: "no_channel" }, 404);
   const quest = await getActiveQuestInChannel(c.env.DB, channelId);
   if (!quest) return c.json({ error: "no_quest" }, 404);
-  if (quest.mode === "web") return c.json({ error: "web_mode" }, 400);
+  // Mode is informational only — engine path lets either surface drive
+  // combat on the same web_combat_state row. Quest-shape locks below
+  // still apply.
   if (quest.scene.variant === "gauntlet" && (quest.scene.wave ?? 1) > 1) {
     return c.json({ error: "gauntlet_advanced" }, 400);
   }
@@ -2815,9 +2816,12 @@ app.get("/api/quest/active", async (c) => {
   const quest = await getActiveQuestForCharacter(c.env.DB, session.slack_user_id);
   if (!quest) return c.json({ quest: null });
   const party = await getQuestParty(c.env.DB, quest.id);
-  // Expose whether web-mode combat is in progress so the dashboard can
-  // auto-resume the CombatPage on reload / back navigation.
-  const hasWebCombat = quest.mode === "web" && !!(await getWebCombatState(c.env.DB, quest.id));
+  // Expose whether engine-driven combat is in progress so the dashboard
+  // can auto-resume the CombatPage on reload / back navigation. Mode is
+  // informational only; presence of web_combat_state is what indicates
+  // engine combat is live (whether bootstrapped via start_web_combat
+  // from web, or via QuestRoom.bootstrapFromSlack from Slack).
+  const hasWebCombat = !!(await getWebCombatState(c.env.DB, quest.id));
   return c.json({ quest, party, has_web_combat: hasWebCombat });
 });
 
@@ -2854,10 +2858,10 @@ app.post("/api/quest/:id/start_web_combat", async (c) => {
   if (!quest || quest.id !== questId) {
     return c.json({ error: "quest_not_active_for_user" }, 404);
   }
-  if (quest.mode === "slack") {
-    return c.json({ error: "slack_mode" }, 409);
-  }
-
+  // Mode lock removed — engine path enables both surfaces on the same
+  // web_combat_state row. start_web_combat is idempotent: if state already
+  // exists (e.g. Slack /gq attack already ran bootstrapFromSlack), the
+  // earlier check above returned the existing state.
   const built = await buildInitialCombatState(c.env.DB, quest);
   if (!built.ok) {
     if (built.reason === "non_combat_room") {
