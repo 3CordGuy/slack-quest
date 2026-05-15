@@ -1,0 +1,55 @@
+// Template — copy to wrangler.jsonc and fill in your values. wrangler.jsonc
+// itself is gitignored so per-developer deploy details (database IDs, R2
+// bucket names, brand overrides) don't get committed to the public repo.
+//
+// Setup checklist:
+//   1. Copy this file:  cp wrangler.example.jsonc wrangler.jsonc
+//   2. Pick names:      change "slack-quest" → "your-bot-name" everywhere
+//      below if you want a custom worker / D1 / R2 identity
+//   3. Create the D1:   pnpm db:create   (then paste the returned id into
+//                       d1_databases[0].database_id below)
+//   4. Create R2:       wrangler r2 bucket create <your-bucket-name>
+//   5. Set secrets:     wrangler secret put SLACK_SIGNING_SECRET
+//                       wrangler secret put SLACK_BOT_TOKEN
+//                       (and ALLOWED_CHANNEL_ID for the channel gate, or
+//                       leave blank for "any channel")
+//   6. Local .dev.vars: same three secrets for `wrangler dev`
+//   7. Deploy:          pnpm deploy
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "slack-quest",
+  "main": "src/index.ts",
+  "compatibility_date": "2025-05-01",
+  // Toggle if you want the *.workers.dev URL (true) or only a custom
+  // domain (false). The "vars.IMAGE_BASE_URL" below should match
+  // whichever public hostname Slack will fetch image blocks from.
+  "workers_dev": true,
+  "observability": { "enabled": true },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "slack-quest",
+      "database_id": "REPLACE_AFTER_pnpm_db:create",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "ai": { "binding": "AI" },
+  // R2 bucket for AI-generated art (monster portraits, view banners).
+  // The code REQUIRES this binding — without it the worker won't boot.
+  "r2_buckets": [
+    {
+      "binding": "ASSETS",
+      "bucket_name": "slack-quest-assets"
+    }
+  ],
+  // Optional brand overrides.
+  //   BOT_NAME — display name in help / rules / channel-gate messages.
+  //              Defaults to "Slack Quest" if unset.
+  //   IMAGE_BASE_URL — public base URL where Slack will fetch image
+  //              blocks (must match the deployed worker's hostname).
+  //              When unset, image blocks are silently omitted.
+  "vars": {
+    "BOT_NAME": "Slack Quest",
+    "IMAGE_BASE_URL": "https://your-worker.workers.dev"
+  }
+}

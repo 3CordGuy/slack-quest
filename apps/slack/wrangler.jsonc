@@ -1,0 +1,30 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "gantt-quest",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-05-01",
+  "workers_dev": true,
+  "observability": { "enabled": true },
+  "triggers": {
+    "crons": ["0 11 * * *"]
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "gantt-quest",
+      "database_id": "76c6ce34-5599-4f43-80d9-9a77062a90a7",
+      "migrations_dir": "../../migrations"
+    }
+  ],
+  "ai": { "binding": "AI" },
+  "r2_buckets": [
+    {
+      "binding": "ASSETS",
+      "bucket_name": "gantt-quest-assets"
+    }
+  ],
+  "vars": {
+    "BOT_NAME": "Gantt Quest",
+    "IMAGE_BASE_URL": "https://gantt-quest.3cordguy.workers.dev"
+  }
+}
