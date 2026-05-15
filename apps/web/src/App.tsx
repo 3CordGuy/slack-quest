@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from "react";
+import { Component, useEffect, useRef, useState } from "react";
+import type { ErrorInfo, ReactNode } from "react";
 import toast from "react-hot-toast";
 import {
   FloatingFocusManager,
@@ -12,7 +13,7 @@ import {
   useInteractions,
 } from "@floating-ui/react";
 
-import { findCatalogEntry, priceFor, xpForLevel } from "@gantt-quest/core";
+import { classByName, findCatalogEntry, priceFor, sellPriceFor, xpForLevel, type Achievement, type EarnedAchievement } from "@gantt-quest/core";
 
 import { CombatPage } from "./CombatPage";
 import { Avatar, EmojiIcon, Icon, KeyIcon } from "./icons";
@@ -179,6 +180,7 @@ interface Item {
   flavor: string | null;
   equipped: boolean;
   weapon_range: WeaponRange | null;
+  sharpens_count: number;
 }
 
 type QuestVariant = "standard" | "boss" | "gauntlet" | "dungeon";
@@ -514,6 +516,14 @@ interface KnownCharacter {
   max_hp: number;
   last_active: number; // unix seconds
   slack_username: string | null;
+  scars: string[];
+  achievements?: EarnedAchievement[];
+}
+
+interface AchievementsResponse {
+  definitions: Achievement[];
+  earned: EarnedAchievement[];
+  new_achievements?: string[];
 }
 
 interface ConfirmRequest {
@@ -544,7 +554,7 @@ interface RecentQuestsResponse {
   quests: RecentQuest[];
 }
 
-type TownSection = "job_board" | "pub" | "shop" | "inn" | "smithy" | "hunt";
+type TownSection = "job_board" | "pub" | "shop" | "inn" | "smithy" | "hunt" | "apothecary";
 
 interface TownArt {
   overview_art_url: string | null;
@@ -552,6 +562,35 @@ interface TownArt {
   shop_art_url: string | null;
   inn_art_url: string | null;
   smithy_art_url: string | null;
+  apothecary_art_url: string | null;
+}
+
+interface ApothecaryDownedChar {
+  slack_user_id: string;
+  name: string;
+  class: string;
+  downed_until: number;
+  slack_username: string | null;
+}
+
+interface ApothecaryStapleItem {
+  id: string;
+  name: string;
+  emoji: string;
+  effect: "poison_enemy" | "regen_self" | "empower_self";
+  turns: number;
+  blurb: string;
+  power: number;
+  price: number;
+}
+
+interface ApothecaryResponse {
+  downed: ApothecaryDownedChar[];
+  staples: ApothecaryStapleItem[];
+  gold: number;
+  revive_count: number;
+  art_url: string | null;
+  error?: string;
 }
 
 interface JobListing {
@@ -586,13 +625,52 @@ type LoadState =
       inn: InnResponse | null;
       smithy: SmithyResponse | null;
       pub: PubResponse | null;
+      apothecary: ApothecaryResponse | null;
       townArt: TownArt | null;
       board: BoardResponse | null;
     };
 
+class CombatErrorBoundary extends Component<{ children: ReactNode; onReset: () => void }, { crashed: boolean; message: string }> {
+  constructor(props: { children: ReactNode; onReset: () => void }) {
+    super(props);
+    this.state = { crashed: false, message: "" };
+  }
+  static getDerivedStateFromError(err: unknown) {
+    return { crashed: true, message: err instanceof Error ? err.message : String(err) };
+  }
+  componentDidCatch(err: Error, info: ErrorInfo) {
+    console.error("[CombatPage] render error:", err, info);
+  }
+  render() {
+    if (this.state.crashed) {
+      return (
+        <div style={{ background: "#0e0f12", minHeight: "100vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 16, color: "#f5f5f5" }}>
+          <p style={{ color: "#fca5a5" }}>Combat display error — {this.state.message}</p>
+          <button
+            style={{ padding: "8px 20px", borderRadius: 6, border: "1px solid #6366f1", background: "#1d1f23", color: "#f5f5f5", cursor: "pointer" }}
+            onClick={() => { this.setState({ crashed: false, message: "" }); this.props.onReset(); }}
+          >
+            ← Return to dashboard
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 export function App() {
   const [state, setState] = useState<LoadState>({ kind: "loading" });
   const [activeCombat, setActiveCombat] = useState<{ questId: number } | null>(null);
+  const [toastQueue, setToastQueue] = useState<Achievement[]>([]);
+
+  useEffect(() => {
+    const style = document.createElement("style");
+    style.textContent = `@keyframes achievement-in { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: translateY(0); } }`;
+    document.head.appendChild(style);
+    return () => { style.remove(); };
+  }, []);
+
   // True after the user explicitly backed out of CombatPage — suppresses
   // auto-resume on subsequent refresh() calls (e.g. after a shop purchase)
   // until they click Resume or combat ends. Reset when combat actually ends.
@@ -610,6 +688,7 @@ export function App() {
   const [haggleResult, setHaggleResult] = useState<HaggleResult | null>(null);
   const [confirm, setConfirm] = useState<ConfirmRequest | null>(null);
   const [townSection, setTownSection] = useState<TownSection | null>(null);
+  const [inventoryOpen, setInventoryOpen] = useState(false);
   const isMobile = useMobileViewport();
 
   useEffect(() => {
@@ -662,10 +741,11 @@ export function App() {
     let inn: InnResponse | null = null;
     let smithy: SmithyResponse | null = null;
     let pub: PubResponse | null = null;
+    let apothecary: ApothecaryResponse | null = null;
     let townArt: TownArt | null = null;
     let board: BoardResponse | null = null;
     if (me.character) {
-      const [invRes, qRes, recentRes, shopRes, joinableRes, innRes, smithyRes, pubRes, townRes, boardRes] = await Promise.all([
+      const [invRes, qRes, recentRes, shopRes, joinableRes, innRes, smithyRes, pubRes, townRes, boardRes, apoRes] = await Promise.all([
         fetch("/api/inventory", { credentials: "include" }),
         fetch("/api/quest/active", { credentials: "include" }),
         fetch("/api/quests/recent", { credentials: "include" }),
@@ -676,6 +756,7 @@ export function App() {
         fetch("/api/pub", { credentials: "include" }),
         fetch("/api/town", { credentials: "include" }),
         fetch("/api/board", { credentials: "include" }),
+        fetch("/api/apothecary", { credentials: "include" }),
       ]);
       if (invRes.ok) {
         const body = (await invRes.json()) as InventoryResponse;
@@ -742,8 +823,28 @@ export function App() {
       if (boardRes.ok) {
         board = (await boardRes.json()) as BoardResponse;
       }
+      if (apoRes.ok) {
+        apothecary = (await apoRes.json()) as ApothecaryResponse;
+      } else {
+        const body = (await apoRes.json().catch(() => ({}))) as ApothecaryResponse;
+        apothecary = body.error ? body : null;
+      }
+
+      // Fetch achievements — clears pending on the server, fires toasts for new ones
+      const achRes = await fetch("/api/achievements", { credentials: "include" });
+      if (achRes.ok) {
+        const achBody = (await achRes.json()) as AchievementsResponse;
+        if (achBody.new_achievements && achBody.new_achievements.length > 0) {
+          const newDefs = achBody.new_achievements
+            .map((id) => achBody.definitions.find((d) => d.id === id))
+            .filter((d): d is Achievement => !!d);
+          if (newDefs.length > 0) {
+            setToastQueue((q) => [...q, ...newDefs]);
+          }
+        }
+      }
     }
-    setState({ kind: "auth", me, inventory, inventoryArtUrl, activeQuest, recent, shop, joinable, inn, smithy, pub, townArt, board });
+    setState({ kind: "auth", me, inventory, inventoryArtUrl, activeQuest, recent, shop, joinable, inn, smithy, pub, apothecary, townArt, board });
   }
 
   async function logout() {
@@ -767,6 +868,41 @@ export function App() {
       : ((await res.json().catch(() => ({}))) as ShopResponse);
     const shop = body.error ? body : res.ok ? body : null;
     setState((prev) => prev.kind === "auth" ? { ...prev, shop } : prev);
+  }
+
+  async function refreshApothecary() {
+    const res = await fetch("/api/apothecary", { credentials: "include", cache: "no-store" });
+    const body = res.ok
+      ? (await res.json()) as ApothecaryResponse
+      : ((await res.json().catch(() => ({}))) as ApothecaryResponse);
+    const apothecary = body.error ? body : res.ok ? body : null;
+    setState((prev) => prev.kind === "auth" ? { ...prev, apothecary } : prev);
+  }
+
+  async function apothecaryBuyStaple(stapleId: string) {
+    const res = await fetch(`/api/apothecary/staple/${stapleId}/buy`, { method: "POST", credentials: "include" });
+    const body = await res.json() as { ok?: boolean; error?: string; gold_remaining?: number };
+    if (!res.ok) {
+      if (body.error === "insufficient_gold") { toast.error("Not enough gold."); }
+      else { toast.error("Purchase failed."); }
+      return;
+    }
+    toast.success("Added to inventory.");
+    void refreshApothecary();
+    void refresh();
+  }
+
+  async function apothecaryRevive(targetUserId: string, targetName: string) {
+    const res = await fetch(`/api/apothecary/revive/${targetUserId}`, { method: "POST", credentials: "include" });
+    const body = await res.json() as { ok?: boolean; error?: string; hp_restored?: number; target_name?: string };
+    if (!res.ok) {
+      if (body.error === "no_revive_item") { toast.error("You need a Revive item to do that."); }
+      else if (body.error === "not_downed") { toast.error(`${targetName} is no longer downed.`); }
+      else { toast.error("Revive failed."); }
+      return;
+    }
+    toast.success(`${body.target_name ?? targetName} revived with ${body.hp_restored ?? 50}% HP!`);
+    void refreshApothecary();
   }
 
   async function rerollCharacter() {
@@ -845,9 +981,10 @@ export function App() {
   function sellItem(itemId: number) {
     const item = state.kind === "auth" ? state.inventory.find((i) => i.id === itemId) : null;
     if (!item) return;
+    const price = sellPriceFor(item.item_type, item.rarity, { power: item.power, sharpens_count: item.sharpens_count });
     setConfirm({
       title: `Sell ${item.item_name}?`,
-      message: `You'll get gold (price depends on rarity). This can't be undone.`,
+      message: `You'll receive ${price}g. This can't be undone.`,
       confirmLabel: "Sell",
       destructive: true,
       onConfirm: async () => {
@@ -1038,17 +1175,19 @@ export function App() {
   if (state.kind === "anon") return <Login onSuccess={refresh} />;
   if (activeCombat) {
     return (
-      <CombatPage
-        questId={activeCombat.questId}
-        selfId={state.me.slack_user_id}
-        onExit={() => {
-          // Just navigate away — combat state stays in D1, DO keeps caching.
-          // The dashboard will show a Resume button so the user can come back.
-          setActiveCombat(null);
-          setCombatDismissed(true);
-          void refresh();
-        }}
-      />
+      <CombatErrorBoundary onReset={() => { setActiveCombat(null); setCombatDismissed(true); void refresh(); }}>
+        <CombatPage
+          questId={activeCombat.questId}
+          selfId={state.me.slack_user_id}
+          onExit={() => {
+            // Just navigate away — combat state stays in D1, DO keeps caching.
+            // The dashboard will show a Resume button so the user can come back.
+            setActiveCombat(null);
+            setCombatDismissed(true);
+            void refresh();
+          }}
+        />
+      </CombatErrorBoundary>
     );
   }
   const inQuest = !!state.activeQuest;
@@ -1063,6 +1202,9 @@ export function App() {
             art={state.townArt}
             onNavigate={setTownSection}
           />
+          {state.joinable && (
+            <JoinableQuestCard joinable={state.joinable} onJoin={joinQuest} />
+          )}
           <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 16, alignItems: "start" }}>
             {state.me.character && state.recent.length > 0 && (
               <RecentQuestsCard quests={state.recent} />
@@ -1131,6 +1273,17 @@ export function App() {
             onStartHunt={startHunt}
           />
         );
+      } else if (townSection === "apothecary" && state.me.character) {
+        sectionContent = (
+          <ApothecaryCard
+            apothecary={state.apothecary}
+            navOverlay={townNav}
+            selfId={state.me.slack_user_id}
+            onBuyStaple={apothecaryBuyStaple}
+            onRevive={apothecaryRevive}
+            onRefresh={refreshApothecary}
+          />
+        );
       } else {
         sectionContent = townNav;
       }
@@ -1188,6 +1341,7 @@ export function App() {
                 onSell={sellItem}
                 onUse={useItem}
                 onGive={giveItem}
+                onOpenFull={() => setInventoryOpen(true)}
               />
             )}
           </>
@@ -1199,6 +1353,23 @@ export function App() {
       )}
       {confirm && (
         <ConfirmDialog request={confirm} onClose={() => setConfirm(null)} />
+      )}
+      <AchievementToastStack
+        queue={toastQueue}
+        onDismiss={(id) => setToastQueue((q) => q.filter((a) => a.id !== id))}
+      />
+      {inventoryOpen && state.kind === "auth" && state.me.character && (
+        <InventoryFullScreen
+          items={state.inventory}
+          inQuest={!!state.activeQuest}
+          selfId={state.me.slack_user_id}
+          onEquip={equipItem}
+          onUnequip={unequipItem}
+          onSell={(id) => { setInventoryOpen(false); sellItem(id); }}
+          onUse={useItem}
+          onGive={giveItem}
+          onClose={() => setInventoryOpen(false)}
+        />
       )}
     </Centered>
   );
@@ -2736,12 +2907,248 @@ function AdventurersCard({ selfId }: { selfId: string }) {
           })}
         </div>
       </div>
-      {sheet && <AdventurerSheet character={sheet} onClose={() => setSheet(null)} />}
+      {sheet && (
+        <AdventurerSheet
+          character={sheet}
+          isOwn={sheet.slack_user_id === selfId}
+          onClose={() => setSheet(null)}
+        />
+      )}
     </>
   );
 }
 
-function AdventurerSheet({ character, onClose }: { character: KnownCharacter; onClose: () => void }) {
+function AchievementToast({ def, onDismiss }: { def: Achievement; onDismiss: () => void }) {
+  useEffect(() => {
+    const t = setTimeout(onDismiss, 5000);
+    return () => clearTimeout(t);
+  }, []);
+  const gradient = `linear-gradient(135deg, ${def.gradient[0]}, ${def.gradient[1]})`;
+  const glowColor = def.gradient[1];
+  return (
+    <div
+      onClick={onDismiss}
+      style={{
+        display: "flex", alignItems: "center", gap: 12,
+        background: "#13141a", border: "1px solid #2a2d33",
+        borderRadius: 12, padding: "12px 16px",
+        boxShadow: "0 8px 32px rgba(0,0,0,0.6)",
+        cursor: "pointer", minWidth: 280, maxWidth: 320,
+        animation: "achievement-in 0.3s ease",
+      }}
+    >
+      <div style={{
+        width: 44, height: 44, borderRadius: "50%",
+        background: gradient,
+        display: "flex", alignItems: "center", justifyContent: "center",
+        flexShrink: 0,
+        boxShadow: `0 0 12px 3px ${glowColor}55`,
+      }}>
+        <i className={`ra ra-${def.icon}`} style={{ fontSize: 18, color: "#fff" }} />
+      </div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 10, color: "#f59e0b", textTransform: "uppercase", letterSpacing: 1, fontWeight: 600 }}>
+          Achievement Unlocked!
+        </div>
+        <div style={{ fontSize: 13, fontWeight: 700, color: "#f5f5f5", marginTop: 2 }}>{def.title}</div>
+        <div style={{ fontSize: 11, color: "#9ca3af", fontStyle: "italic", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{def.flavor}</div>
+      </div>
+    </div>
+  );
+}
+
+function AchievementToastStack({ queue, onDismiss }: { queue: Achievement[]; onDismiss: (id: string) => void }) {
+  if (queue.length === 0) return null;
+  return (
+    <div style={{
+      position: "fixed", bottom: 24, right: 24,
+      display: "flex", flexDirection: "column", gap: 10,
+      zIndex: 9999, pointerEvents: "none",
+    }}>
+      {queue.map((def) => (
+        <div key={def.id} style={{ pointerEvents: "auto" }}>
+          <AchievementToast def={def} onDismiss={() => onDismiss(def.id)} />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function TrophyBadge({ def, earned, isOwn }: { def: Achievement; earned: EarnedAchievement | null; isOwn: boolean }) {
+  const [open, setOpen] = useState(false);
+  const [hovered, setHovered] = useState(false);
+  const { refs, floatingStyles, context } = useFloating({
+    open,
+    onOpenChange: setOpen,
+    placement: "top",
+    middleware: [offset(8), flip(), shift({ padding: 8 })],
+  });
+  const { getReferenceProps, getFloatingProps } = useInteractions([useDismiss(context)]);
+  const isEarned = earned !== null;
+  const gradient = `linear-gradient(135deg, ${def.gradient[0]}, ${def.gradient[1]})`;
+  const glowColor = def.gradient[1];
+
+  return (
+    <>
+      <button
+        ref={refs.setReference}
+        {...getReferenceProps()}
+        onClick={() => isEarned && setOpen((o) => !o)}
+        onMouseEnter={() => setHovered(true)}
+        onMouseLeave={() => setHovered(false)}
+        title={isEarned ? def.title : isOwn ? "???" : undefined}
+        style={{
+          width: 44, height: 44,
+          borderRadius: "50%",
+          background: gradient,
+          border: "none",
+          cursor: isEarned ? "pointer" : "default",
+          display: "flex", alignItems: "center", justifyContent: "center",
+          filter: isEarned ? undefined : "grayscale(1)",
+          opacity: isEarned ? 1 : 0.2,
+          boxShadow: isEarned ? `0 0 10px 2px ${glowColor}44, 0 0 4px 1px ${glowColor}88` : undefined,
+          transition: "box-shadow 0.2s, opacity 0.2s",
+          flexShrink: 0,
+          position: "relative",
+        }}
+      >
+        <i className={`ra ra-${def.icon}`} style={{ fontSize: 18, color: "#fff", textShadow: "0 1px 3px rgba(0,0,0,0.5)" }} />
+        {isEarned && hovered && (
+          <div style={{
+            position: "absolute", bottom: "calc(100% + 6px)", left: "50%", transform: "translateX(-50%)",
+            background: "#1d1f23", border: "1px solid #2a2d33", borderRadius: 6,
+            padding: "4px 8px", fontSize: 11, color: "#f5f5f5", whiteSpace: "nowrap",
+            pointerEvents: "none", zIndex: 10,
+          }}>
+            {def.title}
+          </div>
+        )}
+        {!isEarned && isOwn && hovered && (
+          <div style={{
+            position: "absolute", bottom: "calc(100% + 6px)", left: "50%", transform: "translateX(-50%)",
+            background: "#1d1f23", border: "1px solid #2a2d33", borderRadius: 6,
+            padding: "4px 8px", fontSize: 11, color: "#6b7280", whiteSpace: "nowrap",
+            pointerEvents: "none", zIndex: 10,
+          }}>
+            ???
+          </div>
+        )}
+      </button>
+      {isEarned && open && (
+        <FloatingPortal>
+          <FloatingFocusManager context={context} modal={false} initialFocus={-1}>
+            <div
+              ref={refs.setFloating}
+              {...getFloatingProps()}
+              style={{
+                ...floatingStyles,
+                background: "#13141a",
+                border: "1px solid #2a2d33",
+                borderRadius: 12,
+                padding: 16,
+                width: 240,
+                zIndex: 500,
+                boxShadow: "0 8px 32px rgba(0,0,0,0.6)",
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 10 }}>
+                <div style={{
+                  width: 52, height: 52, borderRadius: "50%",
+                  background: gradient,
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  boxShadow: `0 0 14px 3px ${glowColor}55`,
+                  flexShrink: 0,
+                }}>
+                  <i className={`ra ra-${def.icon}`} style={{ fontSize: 22, color: "#fff" }} />
+                </div>
+                <div>
+                  <div style={{ fontWeight: 700, fontSize: 13, color: "#f5f5f5" }}>{def.title}</div>
+                  <div style={{ fontSize: 10, color: "#9ca3af", marginTop: 2, textTransform: "uppercase", letterSpacing: 0.5 }}>{def.category}</div>
+                </div>
+              </div>
+              <div style={{ fontSize: 12, color: "#818cf8", fontStyle: "italic", marginBottom: 6, lineHeight: 1.4 }}>{def.flavor}</div>
+              <div style={{ fontSize: 11, color: "#9ca3af", lineHeight: 1.4, marginBottom: 8 }}>{def.description}</div>
+              {earned && (
+                <div style={{ fontSize: 10, color: "#4ade80", borderTop: "1px solid #2a2d33", paddingTop: 6 }}>
+                  Earned {new Date(earned.unlocked_at).toLocaleDateString()}
+                </div>
+              )}
+              <button
+                onClick={() => setOpen(false)}
+                style={{ position: "absolute", top: 8, right: 8, background: "none", border: "none", color: "#6b7280", cursor: "pointer", fontSize: 14, padding: 4 }}
+              >✕</button>
+            </div>
+          </FloatingFocusManager>
+        </FloatingPortal>
+      )}
+    </>
+  );
+}
+
+function TrophyShelf({ earned, allDefs, isOwn }: { earned: EarnedAchievement[]; allDefs: Achievement[]; isOwn: boolean }) {
+  const [expanded, setExpanded] = useState(false);
+  const earnedMap = new Map(earned.map((e) => [e.id, e]));
+  const allEarnedDefs = isOwn ? allDefs : allDefs.filter((d) => earnedMap.has(d.id));
+  if (allEarnedDefs.length === 0 && !isOwn) return null;
+
+  // Collapsed: show last 5 most recently earned
+  const sortedEarned = [...earned].sort((a, b) => b.unlocked_at - a.unlocked_at);
+  const recent5Ids = new Set(sortedEarned.slice(0, 5).map((e) => e.id));
+  const collapsedDefs = allDefs.filter((d) => recent5Ids.has(d.id));
+  const visibleDefs = expanded ? allEarnedDefs : collapsedDefs;
+  const count = earned.length;
+  const label = isOwn ? `${count} / ${allDefs.length} earned` : `${count} earned`;
+  const canExpand = allEarnedDefs.length > 5 || (isOwn && allDefs.length > 5);
+
+  return (
+    <div style={{ padding: "12px", background: "#1d1f23", borderRadius: 8, border: "1px solid #2a2d33" }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+        <div style={{ fontSize: 11, color: "#9ca3af", textTransform: "uppercase", letterSpacing: 1 }}>
+          <Icon name="trophy" size={10} /> Trophies · {label}
+        </div>
+        {canExpand && (
+          <button
+            onClick={() => setExpanded((v) => !v)}
+            title={expanded ? "Collapse" : "Show all"}
+            style={{
+              background: "none", border: "none", cursor: "pointer", padding: "2px 4px",
+              color: "#6b7280", fontFamily: "inherit", fontSize: 11, display: "flex", alignItems: "center", gap: 3,
+            }}
+          >
+            {expanded ? "▼" : "▶"} {expanded ? "Less" : "All"}
+          </button>
+        )}
+      </div>
+      {count === 0 && !expanded ? (
+        <p style={{ ...muted, fontSize: 12, margin: 0 }}>No trophies earned yet.</p>
+      ) : (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+          {visibleDefs.map((def) => (
+            <TrophyBadge key={def.id} def={def} earned={earnedMap.get(def.id) ?? null} isOwn={isOwn} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AdventurerSheet({ character, isOwn = false, onClose }: { character: KnownCharacter; isOwn?: boolean; onClose: () => void }) {
+  const [sheetEarned, setSheetEarned] = useState<EarnedAchievement[]>(character.achievements ?? []);
+  const [sheetDefs, setSheetDefs] = useState<Achievement[]>([]);
+
+  useEffect(() => {
+    const url = isOwn ? "/api/achievements" : `/api/achievements/${character.slack_user_id}`;
+    fetch(url, { credentials: "include" })
+      .then((r) => r.ok ? r.json() as Promise<AchievementsResponse> : null)
+      .then((body) => {
+        if (body) {
+          setSheetEarned(body.earned);
+          setSheetDefs(body.definitions);
+        }
+      })
+      .catch(() => {});
+  }, [character.slack_user_id, isOwn]);
+
   const msAgo = Date.now() - (character.last_active ?? 0);
   const secsAgo = Math.floor(msAgo / 1000);
   const hpPct = character.max_hp > 0 ? Math.max(0, Math.min(1, character.hp / character.max_hp)) : 0;
@@ -2786,6 +3193,11 @@ function AdventurerSheet({ character, onClose }: { character: KnownCharacter; on
             <div style={{ fontSize: 13, color: "#7dd3fc", marginBottom: 2 }}>@{character.slack_username}</div>
           )}
           <div style={{ ...muted, fontSize: 13 }}>{character.class}</div>
+          {classByName(character.class)?.blurb && (
+            <div style={{ fontSize: 11, color: "#6b7280", fontStyle: "italic", marginTop: 3, lineHeight: 1.4 }}>
+              {classByName(character.class)?.blurb}
+            </div>
+          )}
           <div style={{ ...muted, fontSize: 12, marginTop: 4, color: isOnline ? "#22c55e" : "#6b7280" }}>
             {isOnline ? "● Online" : `Last seen ${ago}`}
           </div>
@@ -2811,6 +3223,23 @@ function AdventurerSheet({ character, onClose }: { character: KnownCharacter; on
             <div style={{ width: `${xpPct * 100}%`, height: "100%", background: "#6366f1", transition: "width 0.3s" }} />
           </div>
         </div>
+
+        {character.scars && character.scars.length > 0 && (
+          <div style={{ padding: "10px 12px", background: "#1d1f23", borderRadius: 8, border: "1px solid #2a2d33" }}>
+            <div style={{ fontSize: 11, color: "#ef4444", textTransform: "uppercase", letterSpacing: 1, marginBottom: 6 }}>
+              <Icon name="death-skull" size={10} /> {character.scars.length === 1 ? "1 Scar" : `${character.scars.length} Scars`}
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              {character.scars.map((scar, i) => (
+                <div key={i} style={{ fontSize: 12, color: "#9ca3af", fontStyle: "italic" }}>"{scar}"</div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {(sheetDefs.length > 0 || (isOwn && sheetEarned.length >= 0)) && (
+          <TrophyShelf earned={sheetEarned} allDefs={sheetDefs} isOwn={isOwn} />
+        )}
       </div>
     </>
   );
@@ -2835,6 +3264,18 @@ function CharacterCard({
   onLogout: () => void;
   onReroll: () => Promise<void>;
 }) {
+  const [trophyDefs, setTrophyDefs] = useState<Achievement[]>([]);
+  const [trophyEarned, setTrophyEarned] = useState<EarnedAchievement[]>([]);
+  useEffect(() => {
+    fetch("/api/achievements")
+      .then((r) => r.ok ? r.json() as Promise<AchievementsResponse> : null)
+      .then((data) => {
+        if (!data) return;
+        setTrophyDefs(data.definitions);
+        setTrophyEarned(data.earned);
+      })
+      .catch(() => {});
+  }, [me.character?.slack_user_id]);
   const c = me.character;
   if (!c) {
     return (
@@ -2879,6 +3320,9 @@ function CharacterCard({
           )}
           <p style={{ ...muted, margin: "4px 0 0" }}>
             {c.class} • Lv {c.level}
+          </p>
+          <p style={{ margin: "4px 0 0", fontSize: 11, color: "#6b7280", fontStyle: "italic", lineHeight: 1.4 }}>
+            {classByName(c.class)?.blurb}
           </p>
           <div style={{ marginTop: 6, minWidth: 160 }}>
             <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: "#6b7280", marginBottom: 3 }}>
@@ -2989,6 +3433,11 @@ function CharacterCard({
           </button>
         </div>
       </div>
+      {trophyDefs.length > 0 && (
+        <div style={{ marginTop: 16 }}>
+          <TrophyShelf earned={trophyEarned} allDefs={trophyDefs} isOwn={true} />
+        </div>
+      )}
     </div>
   );
 }
@@ -3265,6 +3714,7 @@ function InventoryCard({
   onSell,
   onUse,
   onGive,
+  onOpenFull,
 }: {
   items: Item[];
   inQuest: boolean;
@@ -3275,6 +3725,7 @@ function InventoryCard({
   onSell: (itemId: number) => void;
   onUse: (itemId: number) => void;
   onGive: (itemId: number, toUserId: string, toName: string) => void;
+  onOpenFull?: () => void;
 }) {
   const [sort, setSort] = useState<InventorySort>("type");
   const [selectedId, setSelectedId] = useState<number | null>(null);
@@ -3324,7 +3775,22 @@ function InventoryCard({
   return (
     <div style={card}>
       <Banner src={artUrl} alt="Inventory" />
-      <h2 style={h2}>Inventory</h2>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <h2 style={{ ...h2, margin: 0 }}>Inventory</h2>
+        {onOpenFull && items.length > 0 && (
+          <button
+            onClick={onOpenFull}
+            title="Open full inventory"
+            style={{
+              background: "none", border: "1px solid #2a2d33", borderRadius: 6,
+              color: "#9ca3af", cursor: "pointer", padding: "3px 8px",
+              fontSize: 11, fontFamily: "inherit", display: "flex", alignItems: "center", gap: 4,
+            }}
+          >
+            <Icon name="perspective-dice-six" size={11} /> Full view
+          </button>
+        )}
+      </div>
       {inQuest && (
         <p style={{ ...muted, fontSize: 12, marginTop: 8 }}>
           Selling is disabled while a quest is active.
@@ -3398,6 +3864,244 @@ function InventoryCard({
           </FloatingFocusManager>
         </FloatingPortal>
       )}
+    </div>
+  );
+}
+
+function InventoryFullScreen({
+  items,
+  inQuest,
+  selfId,
+  onEquip,
+  onUnequip,
+  onSell,
+  onUse,
+  onGive,
+  onClose,
+}: {
+  items: Item[];
+  inQuest: boolean;
+  selfId: string;
+  onEquip: (itemId: number) => void;
+  onUnequip: (itemId: number) => void;
+  onSell: (itemId: number) => void;
+  onUse: (itemId: number) => void;
+  onGive: (itemId: number, toUserId: string, toName: string) => void;
+  onClose: () => void;
+}) {
+  const [sort, setSort] = useState<InventorySort>("type");
+  const [viewMode, setViewMode] = useState<"grid" | "list">(
+    () => (localStorage.getItem("inv_view") === "list" ? "list" : "grid"),
+  );
+  function changeViewMode(mode: "grid" | "list") {
+    localStorage.setItem("inv_view", mode);
+    setViewMode(mode);
+  }
+  const sorted = sortItems(items, sort);
+  const equippedItems = sorted.filter((i) => i.equipped);
+  const unequippedItems = sorted.filter((i) => !i.equipped);
+  const [selectedId, setSelectedId] = useState<number | null>(() => sorted[0]?.id ?? null);
+  const selected = selectedId != null ? items.find((i) => i.id === selectedId) ?? null : null;
+
+  const SORT_LABELS: { key: InventorySort; label: string }[] = [
+    { key: "type", label: "Type" },
+    { key: "rarity", label: "Rarity" },
+    { key: "power", label: "Power" },
+    { key: "name", label: "Name" },
+  ];
+
+  return (
+    <div
+      style={{
+        position: "fixed", inset: 0, zIndex: 500,
+        background: "rgba(0,0,0,0.85)",
+        display: "flex", alignItems: "center", justifyContent: "center",
+        padding: 16,
+      }}
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+    >
+      <div
+        style={{
+          background: "#12141a",
+          border: "1px solid #2a2d33",
+          borderRadius: 12,
+          width: "min(900px, 100%)",
+          maxHeight: "90vh",
+          display: "flex",
+          flexDirection: "column",
+          overflow: "hidden",
+          boxShadow: "0 24px 64px rgba(0,0,0,0.8)",
+        }}
+      >
+        {/* Header */}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 18px", borderBottom: "1px solid #2a2d33", flexShrink: 0 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <span style={{ fontSize: 16, fontWeight: 700, color: "#f5f5f5" }}>Inventory</span>
+            <span style={{ ...muted, fontSize: 12 }}>{items.length} item{items.length !== 1 ? "s" : ""}</span>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            {SORT_LABELS.map(({ key, label }) => (
+              <button
+                key={key}
+                onClick={() => setSort(key)}
+                style={{
+                  background: sort === key ? "#2a2d3a" : "none",
+                  color: sort === key ? "#c084fc" : "#6b7280",
+                  border: sort === key ? "1px solid #c084fc55" : "1px solid transparent",
+                  borderRadius: 20, padding: "3px 12px", fontSize: 12,
+                  fontWeight: 600, cursor: "pointer", fontFamily: "inherit",
+                }}
+              >{label}</button>
+            ))}
+            <div style={{ width: 1, height: 16, background: "#2a2d33", margin: "0 2px" }} />
+            {(["grid", "list"] as const).map((mode) => (
+              <button
+                key={mode}
+                onClick={() => changeViewMode(mode)}
+                title={mode === "grid" ? "Grid view" : "List view"}
+                style={{
+                  background: viewMode === mode ? "#2a2d3a" : "none",
+                  color: viewMode === mode ? "#7dd3fc" : "#6b7280",
+                  border: viewMode === mode ? "1px solid #7dd3fc55" : "1px solid transparent",
+                  borderRadius: 6, padding: "3px 8px", fontSize: 14,
+                  cursor: "pointer", fontFamily: "inherit", lineHeight: 1,
+                }}
+              >
+                {mode === "grid" ? "⊞" : "☰"}
+              </button>
+            ))}
+            <button
+              onClick={onClose}
+              style={{
+                background: "none", border: "1px solid #3a3d44", borderRadius: 6,
+                color: "#9ca3af", cursor: "pointer", padding: "4px 10px",
+                fontSize: 13, fontFamily: "inherit", marginLeft: 4,
+              }}
+            >✕</button>
+          </div>
+        </div>
+        {/* Grid + detail pane */}
+        <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
+          {/* Item grid / list */}
+          <div style={{ flex: 1, overflowY: "auto", padding: 18 }}>
+            {viewMode === "grid" ? (
+              <>
+                {equippedItems.length > 0 && (
+                  <>
+                    <div style={{ ...muted, fontSize: 10, textTransform: "uppercase", letterSpacing: 1.5, marginBottom: 8 }}>Equipped</div>
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(110px, 1fr))", gap: 10, marginBottom: 18 }}>
+                      {equippedItems.map((item) => {
+                        const rc = RARITY_COLOR[item.rarity];
+                        const isSelected = selectedId === item.id;
+                        return (
+                          <div key={item.id} onClick={() => setSelectedId(isSelected ? null : item.id)} style={{ background: isSelected ? "#1e1c2e" : "#1d1f23", border: `2px solid ${isSelected ? "#fff" : "#b89b3a"}`, borderRadius: 10, padding: "10px 8px 8px", cursor: "pointer", textAlign: "center", position: "relative", boxShadow: isSelected ? `0 0 0 1px ${rc}66` : "0 0 0 1px #b89b3a22", transition: "border-color 0.1s, background 0.1s" }}>
+                            <div style={{ position: "absolute", top: 4, left: 4, background: "#b89b3a", color: "#000", borderRadius: 3, fontSize: 8, fontWeight: 800, padding: "1px 3px", lineHeight: 1 }}>E</div>
+                            <Icon name={itemIcon(item)} size={40} color={itemIconColor(item) ?? rc} />
+                            <div style={{ marginTop: 6, fontSize: 10, fontWeight: 600, color: "#e2e8f0", lineHeight: 1.3, wordBreak: "break-word" }}>{item.item_name}</div>
+                            <div style={{ marginTop: 3, fontSize: 10, color: rc, fontWeight: 600 }}>+{item.power}</div>
+                            <div style={{ fontSize: 9, color: "#6b7280", marginTop: 1, textTransform: "capitalize" }}>{item.item_type}</div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    {unequippedItems.length > 0 && <div style={{ ...muted, fontSize: 10, textTransform: "uppercase", letterSpacing: 1.5, marginBottom: 8 }}>Other</div>}
+                  </>
+                )}
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(110px, 1fr))", gap: 10 }}>
+                  {unequippedItems.map((item) => {
+                    const rc = RARITY_COLOR[item.rarity];
+                    const isSelected = selectedId === item.id;
+                    return (
+                      <div
+                        key={item.id}
+                        onClick={() => setSelectedId(isSelected ? null : item.id)}
+                        style={{
+                          background: isSelected ? "#1e1c2e" : "#1d1f23",
+                          border: `2px solid ${isSelected ? "#fff" : `${rc}99`}`,
+                          borderRadius: 10, padding: "10px 8px 8px",
+                          cursor: "pointer", textAlign: "center", position: "relative",
+                          boxShadow: isSelected ? `0 0 0 1px ${rc}66` : undefined,
+                          transition: "border-color 0.1s, background 0.1s",
+                        }}
+                      >
+                        <Icon name={itemIcon(item)} size={40} color={itemIconColor(item) ?? rc} />
+                        <div style={{ marginTop: 6, fontSize: 10, fontWeight: 600, color: "#e2e8f0", lineHeight: 1.3, wordBreak: "break-word" }}>{item.item_name}</div>
+                        <div style={{ marginTop: 3, fontSize: 10, color: rc, fontWeight: 600 }}>+{item.power}</div>
+                        <div style={{ fontSize: 9, color: "#6b7280", marginTop: 1, textTransform: "capitalize" }}>{item.item_type}</div>
+                        <div style={{ fontSize: 9, color: "#fbbf24", marginTop: 2 }}>
+                          {sellPriceFor(item.item_type, item.rarity, { power: item.power, sharpens_count: item.sharpens_count })}g
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+                {equippedItems.length > 0 && (
+                  <>
+                    <div style={{ ...muted, fontSize: 10, textTransform: "uppercase", letterSpacing: 1.5, marginBottom: 4 }}>Equipped</div>
+                    {equippedItems.map((item) => {
+                      const rc = RARITY_COLOR[item.rarity];
+                      const isSelected = selectedId === item.id;
+                      return (
+                        <div key={item.id} onClick={() => setSelectedId(isSelected ? null : item.id)} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 10px", borderRadius: 8, background: isSelected ? "#1e1c2e" : "#1d1f23", border: `1px solid ${isSelected ? "#fff" : "#b89b3a88"}`, cursor: "pointer", transition: "background 0.1s" }}>
+                          <Icon name={itemIcon(item)} size={20} color={itemIconColor(item) ?? rc} />
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontSize: 13, fontWeight: 600, color: "#f5f5f5", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{item.item_name}</div>
+                            <div style={{ fontSize: 10, color: "#6b7280", textTransform: "capitalize", marginTop: 1 }}>{item.item_type}</div>
+                          </div>
+                          <span style={{ ...smallBadge, borderColor: `${rc}55`, color: rc, background: `${rc}15`, flexShrink: 0 }}>{item.rarity}</span>
+                          <span style={{ fontSize: 11, color: rc, fontWeight: 600, flexShrink: 0, minWidth: 30, textAlign: "right" }}>+{item.power}</span>
+                          <span style={{ ...smallBadge, background: "#3a2a00", color: "#b89b3a", borderColor: "#b89b3a55", flexShrink: 0 }}>equipped</span>
+                        </div>
+                      );
+                    })}
+                    {unequippedItems.length > 0 && <div style={{ ...muted, fontSize: 10, textTransform: "uppercase", letterSpacing: 1.5, margin: "10px 0 4px" }}>Other</div>}
+                  </>
+                )}
+                {unequippedItems.map((item) => {
+                  const rc = RARITY_COLOR[item.rarity];
+                  const isSelected = selectedId === item.id;
+                  const sellPrice = sellPriceFor(item.item_type, item.rarity, { power: item.power, sharpens_count: item.sharpens_count });
+                  return (
+                    <div key={item.id} onClick={() => setSelectedId(isSelected ? null : item.id)} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 10px", borderRadius: 8, background: isSelected ? "#1e1c2e" : "#1d1f23", border: `1px solid ${isSelected ? "#fff" : "#2a2d33"}`, cursor: "pointer", transition: "background 0.1s" }}>
+                      <Icon name={itemIcon(item)} size={20} color={itemIconColor(item) ?? rc} />
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 13, fontWeight: 600, color: "#f5f5f5", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{item.item_name}</div>
+                        <div style={{ fontSize: 10, color: "#6b7280", textTransform: "capitalize", marginTop: 1 }}>{item.item_type}</div>
+                      </div>
+                      <span style={{ ...smallBadge, borderColor: `${rc}55`, color: rc, background: `${rc}15`, flexShrink: 0 }}>{item.rarity}</span>
+                      <span style={{ fontSize: 11, color: rc, fontWeight: 600, flexShrink: 0, minWidth: 30, textAlign: "right" }}>+{item.power}</span>
+                      <span style={{ fontSize: 11, color: "#fbbf24", flexShrink: 0, minWidth: 28, textAlign: "right" }}>{sellPrice}g</span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+          {/* Detail pane */}
+          {selected && (
+            <div style={{
+              width: 260, flexShrink: 0, borderLeft: "1px solid #2a2d33",
+              overflowY: "auto", padding: 18,
+            }}>
+              <ItemDetailPopover
+                item={selected}
+                inQuest={inQuest}
+                selfId={selfId}
+                inline
+                onEquip={(id) => { onEquip(id); setSelectedId(null); }}
+                onUnequip={(id) => { onUnequip(id); setSelectedId(null); }}
+                onSell={(id) => { onSell(id); setSelectedId(null); }}
+                onUse={(id) => { onUse(id); setSelectedId(null); }}
+                onGive={(id, uid, name) => { onGive(id, uid, name); setSelectedId(null); }}
+                onClose={() => setSelectedId(null)}
+              />
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
@@ -3492,6 +4196,7 @@ function ItemDetailPopover({
   onUse,
   onGive,
   onClose,
+  inline,
 }: {
   item: Item;
   inQuest: boolean;
@@ -3502,6 +4207,7 @@ function ItemDetailPopover({
   onUse: (itemId: number) => void;
   onGive: (itemId: number, toUserId: string, toName: string) => void;
   onClose: () => void;
+  inline?: boolean;
 }) {
   const [showGivePicker, setShowGivePicker] = useState(false);
   const [characters, setCharacters] = useState<KnownCharacter[]>([]);
@@ -3539,12 +4245,11 @@ function ItemDetailPopover({
   return (
     <div
       style={{
-        width: 240,
+        ...(inline ? {} : { width: 240, boxShadow: "0 8px 32px rgba(0,0,0,0.7), 0 0 0 1px rgba(255,255,255,0.04)" }),
         background: "#12141a",
         border: `1px solid ${rc}55`,
         borderRadius: 10,
         padding: "14px 14px 12px",
-        boxShadow: "0 8px 32px rgba(0,0,0,0.7), 0 0 0 1px rgba(255,255,255,0.04)",
         fontFamily: "inherit",
       }}
     >
@@ -3646,7 +4351,9 @@ function ItemDetailPopover({
           </button>
         )}
         {canSell && (
-          <button onClick={() => onSell(item.id)} style={smallActionBtn("#33363d", "#e6e6e6")}>Sell</button>
+          <button onClick={() => onSell(item.id)} style={smallActionBtn("#33363d", "#e6e6e6")}>
+            Sell · {sellPriceFor(item.item_type, item.rarity, { power: item.power, sharpens_count: item.sharpens_count })}g
+          </button>
         )}
       </div>
 
@@ -4340,7 +5047,7 @@ function PubCard({
         ? <LocationHero src={pub.art_url} label="The Pub" nav={navOverlay} />
         : pub.art_url ? <Banner src={pub.art_url} alt="The Pub" /> : null}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: navOverlay ? 0 : undefined }}>
-        {!navOverlay && <h2 style={{ ...h2, margin: 0 }}><Icon name="beer" size={18} /> The Pub</h2>}
+        {!navOverlay && <h2 style={{ ...h2, margin: 0 }}><Icon name="beer-stein" size={18} /> The Pub</h2>}
         <RefreshButton onRefresh={onRefresh} style={{ marginLeft: "auto" }} />
       </div>
       <p style={{ ...muted, marginTop: 4 }}>
@@ -4369,7 +5076,7 @@ function PubCard({
         <div style={{ ...muted, fontSize: 11, textTransform: "uppercase", letterSpacing: 1.5, marginBottom: 10, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
           <span>Drink Menu · <span style={{ color: "#fbbf24" }}>{pub.gold}g</span></span>
           <span style={{ color: pub.drinks_remaining > 0 ? "#86efac" : "#fca5a5" }}>
-            <Icon name="beer" size={10} /> {pub.drinks_remaining}/{2} before quest
+            <Icon name="beer-stein" size={10} /> {pub.drinks_remaining}/{2} before quest
           </span>
         </div>
         <div style={{ display: "grid", gap: 8 }}>
@@ -5300,6 +6007,196 @@ function ClickablePortrait({
   );
 }
 
+function ApothecaryCard({
+  apothecary,
+  navOverlay,
+  selfId,
+  onBuyStaple,
+  onRevive,
+  onRefresh,
+}: {
+  apothecary: ApothecaryResponse | null;
+  navOverlay?: React.ReactNode;
+  selfId: string;
+  onBuyStaple: (stapleId: string) => void;
+  onRevive: (targetUserId: string, targetName: string) => void;
+  onRefresh: () => Promise<void>;
+}) {
+  const hero = navOverlay
+    ? <LocationHero src={apothecary?.art_url} label="Apothecary" nav={navOverlay} />
+    : <Banner src={apothecary?.art_url ?? null} alt="Apothecary" />;
+
+  if (!apothecary) {
+    return (
+      <div style={card}>
+        {hero}
+        <h2 style={h2}>Apothecary</h2>
+        <p style={muted}>The apothecary is closed. Finish your quest first.</p>
+      </div>
+    );
+  }
+
+  if (apothecary.error === "mid_quest") {
+    return (
+      <div style={card}>
+        {hero}
+        {!navOverlay && <h2 style={h2}>Apothecary</h2>}
+        <p style={muted}>The apothecary won't deal with you mid-quest. Wrap up the fight first.</p>
+      </div>
+    );
+  }
+
+  const downed = apothecary.downed.filter((d) => d.slack_user_id !== selfId);
+  const isSelfDowned = apothecary.downed.some((d) => d.slack_user_id === selfId);
+
+  return (
+    <div style={card}>
+      {hero}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
+        <h2 style={{ ...h2, margin: 0 }}>Apothecary</h2>
+        <RefreshButton onRefresh={onRefresh} />
+      </div>
+      <p style={muted}>
+        <em>"Venom, vigor, or revival — I deal in all three."</em>
+      </p>
+      <p style={{ ...muted, fontSize: 12, marginTop: 4 }}>
+        You have <strong style={{ color: "#fbbf24" }}>{apothecary.gold}g</strong>
+        {apothecary.revive_count > 0 && (
+          <> · <strong style={{ color: "#f472b6" }}>{apothecary.revive_count} revive{apothecary.revive_count !== 1 ? "s" : ""}</strong> in pack</>
+        )}
+      </p>
+
+      {/* Maimed adventurers panel */}
+      {(downed.length > 0 || isSelfDowned) && (
+        <div style={{ marginTop: 20 }}>
+          <div style={{ ...muted, fontSize: 11, textTransform: "uppercase" as const, letterSpacing: 1.5, marginBottom: 8 }}>
+            <Icon name="fall-down" /> Maimed Adventurers
+          </div>
+          {isSelfDowned && (
+            <div style={{
+              padding: "10px 12px",
+              background: "#1f0a0a",
+              border: "1px solid #7f1d1d44",
+              borderRadius: 8,
+              marginBottom: 8,
+              color: "#fca5a5",
+              fontSize: 13,
+            }}>
+              ☠ You are downed — wait for a companion with a revive item to help you.
+            </div>
+          )}
+          {downed.map((d) => {
+            const timeLeftMs = d.downed_until - Date.now();
+            const hrs = Math.floor(timeLeftMs / 3600000);
+            const mins = Math.floor((timeLeftMs % 3600000) / 60000);
+            const timeStr = hrs > 0 ? `${hrs}h ${mins}m` : `${mins}m`;
+            const canRevive = apothecary.revive_count > 0;
+            return (
+              <div
+                key={d.slack_user_id}
+                style={{
+                  padding: 12,
+                  background: "#1a0a0a",
+                  borderRadius: 8,
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 12,
+                  marginBottom: 6,
+                  border: "1px solid #7f1d1d33",
+                }}
+              >
+                <Icon name="fall-down" size={20} color="#f87171" />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontWeight: 600, color: "#f5f5f5", fontSize: 14 }}>{d.name}</div>
+                  <div style={{ ...muted, fontSize: 12 }}>{d.class} · downed for {timeStr} more</div>
+                </div>
+                <button
+                  onClick={() => onRevive(d.slack_user_id, d.name)}
+                  disabled={!canRevive}
+                  title={canRevive ? "Use a revive item to restore them to 50% HP" : "You need a revive item"}
+                  style={{
+                    ...smallActionBtn(canRevive ? "#2d1a3a" : "#222428", canRevive ? "#e879f9" : "#7a7d83"),
+                    opacity: canRevive ? 1 : 0.5,
+                    cursor: canRevive ? "pointer" : "not-allowed",
+                  }}
+                >
+                  Revive
+                </button>
+              </div>
+            );
+          })}
+          {downed.length === 0 && !isSelfDowned && null}
+        </div>
+      )}
+      {apothecary.downed.length === 0 && (
+        <div style={{ marginTop: 20 }}>
+          <div style={{ ...muted, fontSize: 11, textTransform: "uppercase" as const, letterSpacing: 1.5, marginBottom: 8 }}>
+            <Icon name="fall-down" /> Maimed Adventurers
+          </div>
+          <p style={{ ...muted, fontSize: 13 }}>No adventurers are downed right now.</p>
+        </div>
+      )}
+
+      {/* Apothecary staples */}
+      <div style={{ marginTop: 20 }}>
+        <div style={{ ...muted, fontSize: 11, textTransform: "uppercase" as const, letterSpacing: 1.5, marginBottom: 8 }}>
+          <Icon name="bubbling-potion" /> Concoctions
+        </div>
+        <div style={{ display: "grid", gap: 8 }}>
+          {apothecary.staples.map((s) => {
+            const canAfford = apothecary.gold >= s.price;
+            const powerLine = s.effect === "poison_enemy"
+              ? `${s.power} poison/tick × ${s.turns} turns`
+              : s.effect === "regen_self"
+                ? `${s.power} HP/tick × ${s.turns} turns`
+                : `+25% damage × ${s.turns} turns`;
+            return (
+              <div
+                key={s.id}
+                style={{
+                  padding: 12,
+                  background: "#1d1f23",
+                  borderRadius: 8,
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 12,
+                }}
+              >
+                <div style={{ width: 36, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                  <Icon
+                    name={s.effect === "poison_enemy" ? "vial" : s.effect === "regen_self" ? "health-increase" : "bubbling-potion"}
+                    size={28}
+                    color={s.effect === "poison_enemy" ? "#a3e635" : s.effect === "regen_self" ? "#4ade80" : "#c084fc"}
+                  />
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontWeight: 600, color: "#f5f5f5", fontSize: 15 }}>{s.name}</div>
+                  <div style={{ ...muted, fontSize: 12, marginTop: 2 }}>{s.blurb}</div>
+                  <div style={{ color: "#86efac", fontSize: 11, marginTop: 3 }}>{powerLine}</div>
+                </div>
+                <div style={{ color: "#fbbf24", fontWeight: 600, fontVariantNumeric: "tabular-nums", flexShrink: 0 }}>
+                  {s.price}g
+                </div>
+                <button
+                  onClick={() => onBuyStaple(s.id)}
+                  disabled={!canAfford}
+                  style={{
+                    ...smallActionBtn(canAfford ? "#1a2d1a" : "#222428", canAfford ? "#86efac" : "#7a7d83"),
+                    opacity: canAfford ? 1 : 0.6,
+                    cursor: canAfford ? "pointer" : "not-allowed",
+                  }}
+                >
+                  Buy
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 const DISTRICT_CONFIG: {
   key: TownSection;
   label: string;
@@ -5308,11 +6205,12 @@ const DISTRICT_CONFIG: {
   artKey: keyof TownArt;
 }[] = [
   { key: "job_board", label: "Job Board", icon: "scroll-unfurled", color: "#b89b3a", artKey: "overview_art_url" },
-  { key: "pub",       label: "The Pub",   icon: "beer",            color: "#92400e", artKey: "pub_art_url" },
+  { key: "pub",       label: "The Pub",   icon: "beer-stein",      color: "#92400e", artKey: "pub_art_url" },
   { key: "shop",      label: "Shop",      icon: "gold-bar",        color: "#1e3a5f", artKey: "shop_art_url" },
   { key: "inn",       label: "Inn",       icon: "campfire",        color: "#1a3a2a", artKey: "inn_art_url" },
-  { key: "smithy",    label: "Smithy",    icon: "anvil",           color: "#2a1a1a", artKey: "smithy_art_url" },
-  { key: "hunt",      label: "Outskirts", icon: "sword",           color: "#1a1a2e", artKey: "overview_art_url" },
+  { key: "smithy",      label: "Smithy",      icon: "anvil",          color: "#2a1a1a", artKey: "smithy_art_url" },
+  { key: "apothecary", label: "Apothecary",  icon: "poison-bottle",  color: "#1a2d1a", artKey: "apothecary_art_url" },
+  { key: "hunt",       label: "Outskirts",   icon: "sword",          color: "#1a1a2e", artKey: "overview_art_url" },
 ];
 
 // Persistent top navigation shown whenever a town section is active.
@@ -5926,14 +6824,15 @@ function itemIcon(item: {
   switch (item.item_type) {
     case "weapon": {
       if (item.weapon_range === "focus") return "crystal-wand";
-      if (/\b(axe|hatchet|cleaver|tomahawk)\b/.test(n))                   return "axe";
+      if (/\b(axe|hatchet|cleaver|tomahawk)\b/.test(n))                   return "battle-axe";
       if (/\b(dagger|knife|dirk|shiv|stiletto|shank)\b/.test(n))          return "plain-dagger";
       if (/\b(hammer|maul|mace|club)\b/.test(n))                          return "hammer";
       if (/\b(staff|stave|wand|rod|scepter|sceptre)\b/.test(n))           return "crystal-wand";
-      if (/\b(spear|lance|pike|javelin|halberd|polearm)\b/.test(n))       return "spear-head";
+      if (/\b(spear|lance|pike|javelin|halberd|polearm)\b/.test(n))       return "barbed-spear";
       if (/\bcrossbow\b/.test(n))                                          return "crossbow";
       if (/\b(bow|longbow|shortbow|recurve)\b/.test(n))                   return "archer";
       if (/\b(arrow|bolt|quiver)\b/.test(n))                              return "barbed-arrow";
+      if (/\bblunderbuss\b/.test(n))                                        return "blunderbuss";
       if (/\b(gun|pistol|revolver|musket|rifle)\b/.test(n))               return "revolver";
       if (/\b(scythe|sickle)\b/.test(n))                                  return "scythe";
       if (/\btrident\b/.test(n))                                          return "trident";
@@ -5946,7 +6845,7 @@ function itemIcon(item: {
 
     case "armor": {
       if (/\b(helm|helmet|cap|hat|hood|crown|circlet|coif)\b/.test(n))   return "helmet";
-      if (/\b(boot|shoe|greave|sabatons?|sandal)\b/.test(n))             return "boot-stomp";
+      if (/\b(boot|shoe|greave|sabatons?|sandal)\b/.test(n))             return "boots";
       if (/\b(glove|gauntlet|bracer|vambrace)\b/.test(n))                return "hand";
       if (/\b(robe|vestment|raiment|cassock)\b/.test(n))                 return "hood";
       if (/\b(cloak|mantle|cape|shroud)\b/.test(n))                      return "hood";
@@ -5995,9 +6894,9 @@ function itemIcon(item: {
 
     case "scroll": {
       if (/rebase/.test(n))                                               return "cycle";
-      if (/production outage/.test(n))                                    return "lightning-bolt";
+      if (/production outage/.test(n))                                    return "lightning-saber";
       if (/\b(fire|flame|burn|inferno)\b/.test(n))                       return "fire";
-      if (/\b(lightning|thunder|storm|shock)\b/.test(n))                 return "lightning-bolt";
+      if (/\b(lightning|thunder|storm|shock)\b/.test(n))                 return "lightning-saber";
       if (/\b(frost|ice|cold|freeze|glacial)\b/.test(n))                 return "snowflake";
       if (/\b(heal|mend|restore|cure|life)\b/.test(n))                   return "health-increase";
       if (/\b(poison|venom|toxin|blight)\b/.test(n))                     return "poison-cloud";

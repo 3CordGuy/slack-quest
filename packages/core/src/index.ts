@@ -4,3 +4,4 @@
 export * from "./combat";
 export * from "./flavor";
 export * from "./combat_machine";
+export * from "./achievements";

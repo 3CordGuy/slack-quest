@@ -17,6 +17,11 @@
   "compatibility_date": "2025-05-01",
   "workers_dev": true,
   "observability": { "enabled": true },
+  // Daily town refresh: rebuilds job board, NPCs, and shop stock for every
+  // channel at 7 AM ET (11:00 UTC). Adjust to taste.
+  "triggers": {
+    "crons": ["0 11 * * *"]
+  },
   "d1_databases": [
     {
       "binding": "DB",

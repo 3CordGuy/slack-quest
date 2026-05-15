@@ -125,6 +125,13 @@ export interface CombatState {
   // contribution-proportional spoils on victory. Updated on every player_hit
   // (only fighters appear here; the monster doesn't accumulate contribution).
   contribution: Record<ActorId, number>;
+  // Per-fighter stats accumulator for end-of-combat breakdown display.
+  stats: Record<ActorId, {
+    damage_taken: number;
+    healing_done: number;
+    shielding_done: number;
+    kills: number;
+  }>;
   // Active class abilities write transient buffs/debuffs here. Each field
   // counts down on use; absence means inactive. Persists across rounds until
   // exhausted or combat ends.
@@ -178,6 +185,9 @@ export interface AbilityRuntimeState {
   // damage on attack/cast until `expires_after_round` is exceeded. Cleared
   // when the monster falls or a wave transition fires.
   mark?: { marked_by: ActorId; expires_after_round: number };
+  // Staff Sage Foresee — re-appends full intel readout for this many more
+  // of the Sage's own combat turns after the initial cast.
+  foresee_turns?: number;
 }
 
 // +damage to non-marker partymate attacks while a mark is active. Tuned to
@@ -258,6 +268,16 @@ export type CombatEvent =
       damage_after_armor: number;
       shield_absorbed: number;
       hp_damage: number;
+    }
+  | {
+      type: "monster_splash";
+      targets: Array<{
+        target: ActorId;
+        raw_damage: number;
+        damage_after_armor: number;
+        shield_absorbed: number;
+        hp_damage: number;
+      }>;
     }
   | { type: "monster_target_blocked"; reason: "vanish" }
   | { type: "boss_phase_transition"; new_phase: 2 }
@@ -343,9 +363,24 @@ export type CombatEvent =
   | {
       type: "ability_foresee";
       actor: ActorId;
+      // Committed telegraph target (null = no target yet).
       predicted_target: ActorId | null;
+      // Raw damage range (pre-armor/position).
       damage_lo: number;
       damage_hi: number;
+      // Net damage range after target's armor + position modifier.
+      net_lo: number;
+      net_hi: number;
+      // Survivability verdict for the predicted target.
+      verdict: "safe" | "at_risk" | "lethal";
+      // Targeting probability (0-100) per alive, non-vanished fighter.
+      probabilities: Array<{ id: ActorId; position: BattlePosition; pct: number }>;
+      // Party HP snapshot for triage.
+      triage: Array<{ id: ActorId; hp: number; max_hp: number; shield: number; position: BattlePosition }>;
+      // Active ability effects summary.
+      active: { containerize: number; taunt_actor: ActorId | null; taunt_swings: number; vanished: ActorId[] };
+      // How many more turns this readout will re-appear (counts down after cast).
+      turns_remaining: number;
     }
   | {
       type: "ability_migrate";
@@ -422,6 +457,8 @@ export interface CombatInit {
 export function createCombatState(init: CombatInit): CombatState {
   const contribution: Record<ActorId, number> = {};
   for (const f of init.fighters) contribution[f.id] = 0;
+  const stats: CombatState["stats"] = {};
+  for (const f of init.fighters) stats[f.id] = { damage_taken: 0, healing_done: 0, shielding_done: 0, kills: 0 };
   return {
     fighters: init.fighters.map((f) => ({
       ...f,
@@ -441,6 +478,7 @@ export function createCombatState(init: CombatInit): CombatState {
     round: 0,
     status: "pending",
     contribution,
+    stats,
   };
 }
 
@@ -473,7 +511,10 @@ export function step(state: CombatState, action: TurnAction, roll: RollFn): Step
     case "ability":
       return handleAbility(state, action, roll);
     case "monster_act":
-      return handleMonsterAct(state, roll);
+      // After the monster acts, if the next actor is a Staff Sage with Foresee
+      // active, inject the intel refresh right before the turn_start divider so
+      // the Sage sees fresh info at the top of their incoming turn.
+      return withForeseeForNextActor(handleMonsterAct(state, roll), roll);
   }
 }
 
@@ -639,6 +680,10 @@ function handlePlayerHit(
     isCrit = true;
   }
 
+  // Battle Elixir — Empowered: +25% damage for N turns.
+  const hasEmpowered = tickedFighter.effects.some((e) => e.type === "empowered");
+  if (hasEmpowered) damage = Math.round(damage * 1.25);
+
   // Bard Aura — non-Bard attackers gain +1 dmg while a Bard is alive; Battle
   // Hymn boosts the aura to +3 for HYMN_USES landed swings.
   const aura = computeBardAuraBonus(s, tickedFighter);
@@ -696,7 +741,7 @@ function handlePlayerHit(
     target: MONSTER_ID,
     damage: finalDamage,
     crit: isCrit,
-    formula: `${hit.roll}+${hit.totalMod}${isCrit ? " ×2" : ""}${drinkBonusForFormula}${aura.bonus > 0 ? ` +${aura.bonus} aura` : ""}${markBonus > 0 ? ` +${markBonus} mark` : ""}`,
+    formula: `${hit.roll}+${hit.totalMod}${isCrit ? " ×2" : ""}${drinkBonusForFormula}${hasEmpowered ? " ⚡" : ""}${aura.bonus > 0 ? ` +${aura.bonus} aura` : ""}${markBonus > 0 ? ` +${markBonus} mark` : ""}`,
   });
   if (aura.hymn_consumed) {
     events.push({
@@ -905,6 +950,71 @@ function handleMonsterAct(state: CombatState, roll: RollFn): StepResult {
     }
   }
 
+  // ── Boss splash (AoE) ──
+  // Bosses have a chance to forgo single-target targeting and slam the whole
+  // party for reduced damage. Taunt does NOT redirect a splash — it hits every
+  // alive non-vanished fighter. Only fires when multiple fighters are alive.
+  const bossPhase2 = s.monster.is_boss && s.monster.boss_phase === 2;
+  const splashChance = bossPhase2 ? 2 : 1; // 2-in-5 P2, 1-in-5 P1
+  const doSplash = s.monster.is_boss && aliveFighters.length > 1 && roll(5) <= splashChance;
+
+  if (doSplash) {
+    const splashTargets = aliveFighters.filter((f) => (vanished[f.id] ?? 0) <= 0);
+    const splashHits = splashTargets.map((f) => {
+      const hit = resolveMonsterHit(s.monster.tier, aliveFighters.length, f.armor_power, bossPhase2, roll);
+      const posAdj = positionDamageMod(f.position, hit.final);
+      const dmg = applyDamageWithShield(posAdj, f.shield, f.hp);
+      return { fighter: f, hit, posAdj, dmg };
+    });
+
+    const splashEvent: CombatEvent = {
+      type: "monster_splash",
+      targets: splashHits.map(({ fighter, hit, dmg }) => ({
+        target: fighter.id,
+        raw_damage: hit.raw,
+        damage_after_armor: hit.final,
+        shield_absorbed: dmg.shieldAbsorbed,
+        hp_damage: dmg.hpDamage,
+      })),
+    };
+    events.push(splashEvent);
+
+    // Apply HP changes and emit fighter_down for casualties
+    let updatedFighters = s.fighters;
+    let updatedStats = s.stats;
+    for (const { fighter, dmg } of splashHits) {
+      const wasAlive = fighter.hp > 0;
+      updatedFighters = updatedFighters.map((f) =>
+        f.id === fighter.id ? { ...f, shield: dmg.newShield, hp: Math.max(0, dmg.newHp) } : f,
+      );
+      updatedStats = {
+        ...updatedStats,
+        [fighter.id]: {
+          ...(updatedStats[fighter.id] ?? { damage_taken: 0, healing_done: 0, shielding_done: 0, kills: 0 }),
+          damage_taken: (updatedStats[fighter.id]?.damage_taken ?? 0) + dmg.hpDamage,
+        },
+      };
+      if (wasAlive && dmg.newHp <= 0) {
+        events.push({ type: "fighter_down", target: fighter.id });
+      }
+    }
+
+    const postSplashState: CombatState = {
+      ...s,
+      fighters: updatedFighters,
+      ability_state: tickAbilityCountersAfterSwing(s.ability_state),
+      stats: updatedStats,
+    };
+
+    const allDown = postSplashState.fighters.every((f) => f.hp <= 0);
+    if (allDown) {
+      events.push({ type: "defeat" });
+      return { state: { ...postSplashState, status: "defeat" }, events };
+    }
+    const next = advanceTurn(postSplashState);
+    return { state: next, events: [...events, ...turnStartEvent(next)] };
+  }
+
   // ── d20 to-hit ──
   // Modifier grows at half-tier + 4 so it never auto-hits even at high tiers.
   // Fighter AC = 10 + floor(level/2) so the miss window stays meaningful.
@@ -940,7 +1050,6 @@ function handleMonsterAct(state: CombatState, roll: RollFn): StepResult {
 
   // ── damage roll on hit ──
   const totalArmor = target.armor_power;
-  const bossPhase2 = s.monster.is_boss && s.monster.boss_phase === 2;
   const hit = resolveMonsterHit(
     s.monster.tier,
     aliveFighters.length,
@@ -984,6 +1093,13 @@ function handleMonsterAct(state: CombatState, roll: RollFn): StepResult {
     ...s,
     fighters: updatedFighters,
     ability_state: tickAbilityCountersAfterSwing(s.ability_state),
+    stats: {
+      ...s.stats,
+      [target.id]: {
+        ...(s.stats[target.id] ?? { damage_taken: 0, healing_done: 0, shielding_done: 0, kills: 0 }),
+        damage_taken: (s.stats[target.id]?.damage_taken ?? 0) + hpDamage,
+      },
+    },
   };
 
   // QA Paladin — Lay on Hands. Trigger if the target survived but dropped
@@ -1046,6 +1162,13 @@ function handleHeal(
     fighters: s.fighters.map((f) =>
       f.id === action.target ? { ...f, hp: newHp } : f,
     ),
+    stats: {
+      ...s.stats,
+      [action.actor]: {
+        ...(s.stats[action.actor] ?? { damage_taken: 0, healing_done: 0, shielding_done: 0, kills: 0 }),
+        healing_done: (s.stats[action.actor]?.healing_done ?? 0) + applied,
+      },
+    },
   });
   return { state: next, events: [...events, ...turnStartEvent(next)] };
 }
@@ -1093,6 +1216,13 @@ function handleShield(
     fighters: s.fighters.map((f) =>
       f.id === action.target ? { ...f, shield: newShield } : f,
     ),
+    stats: {
+      ...s.stats,
+      [action.actor]: {
+        ...(s.stats[action.actor] ?? { damage_taken: 0, healing_done: 0, shielding_done: 0, kills: 0 }),
+        shielding_done: (s.stats[action.actor]?.shielding_done ?? 0) + applied,
+      },
+    },
   });
   return { state: next, events: [...events, ...turnStartEvent(next)] };
 }
@@ -1302,7 +1432,17 @@ function handleFlee(
     events.push({ type: "fighter_down", target: action.actor });
   }
   const allDown = updatedFighters.every((f) => f.hp <= 0);
-  let next: CombatState = { ...s, fighters: updatedFighters };
+  let next: CombatState = {
+    ...s,
+    fighters: updatedFighters,
+    stats: {
+      ...s.stats,
+      [action.actor]: {
+        ...(s.stats[action.actor] ?? { damage_taken: 0, healing_done: 0, shielding_done: 0, kills: 0 }),
+        damage_taken: (s.stats[action.actor]?.damage_taken ?? 0) + hpDamage,
+      },
+    },
+  };
   if (allDown) {
     events.push({ type: "defeat" });
     return { state: { ...next, status: "defeat" }, events };
@@ -1526,48 +1666,150 @@ function abilityBattleHymn(state: CombatState, actor: ActorId, events: CombatEve
   };
 }
 
+// Builds the full Foresee intel payload from current state. Shared between
+// the initial cast and subsequent turn refreshes.
+function buildForeseeEvent(
+  state: CombatState,
+  actor: ActorId,
+  roll: RollFn,
+  turnsRemaining: number,
+): Extract<CombatEvent, { type: "ability_foresee" }> {
+  const aliveFighters = state.fighters.filter((f) => f.hp > 0);
+  const abilityState = state.ability_state ?? {};
+  const vanishedMap = abilityState.vanished ?? {};
+  const partyBonus = Math.floor((Math.max(1, aliveFighters.length) - 1) / 2);
+  const isBossP2 = state.monster.is_boss && state.monster.boss_phase === 2;
+  const bossBonus = isBossP2 ? state.monster.tier : 0;
+  const tier = state.monster.tier;
+  const rawLo = 1 + tier + partyBonus + bossBonus;
+  const rawHi = 4 + tier + partyBonus + bossBonus;
+
+  // Determine confirmed/predicted target (honors taunt and vanish).
+  let predicted: ActorId | null = null;
+  const taunted = abilityState.taunt;
+  if (taunted && taunted.swings_remaining > 0) {
+    const tauntTarget = aliveFighters.find((f) => f.id === taunted.actor_id);
+    if (tauntTarget) predicted = tauntTarget.id;
+  }
+  if (!predicted && aliveFighters.length > 0) {
+    const eligible = aliveFighters.filter((f) => (vanishedMap[f.id] ?? 0) <= 0);
+    const pool = eligible.length > 0 ? eligible : aliveFighters;
+    const pick = pickMonsterTarget(pool, () => roll(101) / 100);
+    predicted = pick.id;
+  }
+
+  // Net damage range for the predicted target.
+  const targetFighter = predicted ? aliveFighters.find((f) => f.id === predicted) : null;
+  let netLo = rawLo;
+  let netHi = rawHi;
+  let verdict: "safe" | "at_risk" | "lethal" = "safe";
+  if (targetFighter) {
+    const armorReduction = Math.floor(targetFighter.armor_power / 2);
+    const isBack = targetFighter.position === "back";
+    netLo = isBack
+      ? Math.max(1, Math.round((rawLo - armorReduction) * 0.6))
+      : Math.max(1, rawLo - armorReduction);
+    netHi = isBack
+      ? Math.max(1, Math.round((rawHi - armorReduction) * 0.6))
+      : Math.max(1, rawHi - armorReduction);
+    verdict = targetFighter.hp > netHi ? "safe"
+      : targetFighter.hp <= netLo ? "lethal"
+      : "at_risk";
+  }
+
+  // Targeting probabilities for each non-vanished alive fighter.
+  const targetable = aliveFighters.filter((f) => (vanishedMap[f.id] ?? 0) <= 0);
+  const weights = targetable.map((f) => (f.position === "back" ? 1 : 3));
+  const total = weights.reduce((a, b) => a + b, 0);
+  const probabilities = targetable.map((f, i) => ({
+    id: f.id,
+    position: f.position,
+    pct: Math.round((weights[i] / total) * 100),
+  }));
+
+  // Party triage snapshot.
+  const triage = aliveFighters.map((f) => ({
+    id: f.id, hp: f.hp, max_hp: f.max_hp, shield: f.shield, position: f.position,
+  }));
+
+  // Active effects summary.
+  const vanishedIds = Object.entries(vanishedMap)
+    .filter(([, v]) => v > 0)
+    .map(([id]) => id);
+  const active = {
+    containerize: abilityState.skip_swings ?? 0,
+    taunt_actor: taunted && taunted.swings_remaining > 0 ? taunted.actor_id : null,
+    taunt_swings: taunted?.swings_remaining ?? 0,
+    vanished: vanishedIds,
+  };
+
+  return {
+    type: "ability_foresee",
+    actor,
+    predicted_target: predicted,
+    damage_lo: rawLo,
+    damage_hi: rawHi,
+    net_lo: netLo,
+    net_hi: netHi,
+    verdict,
+    probabilities,
+    triage,
+    active,
+    turns_remaining: turnsRemaining,
+  };
+}
+
 function abilityForesee(
   state: CombatState,
   actor: ActorId,
   events: CombatEvent[],
   roll: RollFn,
 ): StepResult {
-  // Predict who the monster will hit next: same picker it'll use on its
-  // turn, honoring taunt/vanish. Info-only; we don't lock the actual pick.
-  const aliveFighters = state.fighters.filter((f) => f.hp > 0);
-  let predicted: ActorId | null = null;
-  if (aliveFighters.length > 0) {
-    const taunted = state.ability_state?.taunt;
-    if (taunted && taunted.swings_remaining > 0) {
-      const tauntTarget = aliveFighters.find((f) => f.id === taunted.actor_id);
-      if (tauntTarget) predicted = tauntTarget.id;
-    }
-    if (!predicted) {
-      const vanished = state.ability_state?.vanished ?? {};
-      const eligible = aliveFighters.filter((f) => (vanished[f.id] ?? 0) <= 0);
-      const pool = eligible.length > 0 ? eligible : aliveFighters;
-      const pick = pickMonsterTarget(pool, () => roll(101) / 100);
-      predicted = pick.id;
-    }
-  }
-  const tier = state.monster.tier;
-  const lo = 1 + tier;
-  const hi = 6 + tier;
-  const next = advanceTurn(state);
+  const FORESEE_TURNS = 2;
+  const ability_state: AbilityRuntimeState = {
+    ...(state.ability_state ?? {}),
+    foresee_turns: FORESEE_TURNS,
+  };
+  const next = advanceTurn({ ...state, ability_state });
   return {
     state: next,
     events: [
       ...events,
-      {
-        type: "ability_foresee",
-        actor,
-        predicted_target: predicted,
-        damage_lo: lo,
-        damage_hi: hi,
-      },
+      buildForeseeEvent({ ...state, ability_state }, actor, roll, FORESEE_TURNS),
       ...turnStartEvent(next),
     ],
   };
+}
+
+// After the monster acts, checks if the next actor is a Staff Sage with
+// foresee_turns > 0. If so, inserts the intel refresh event immediately
+// BEFORE the final turn_start divider so the Sage sees fresh info at the
+// top of their own turn — after the monster's swing settled, before they
+// pick their action.
+function withForeseeForNextActor(result: StepResult, roll: RollFn): StepResult {
+  const actorId = currentActor(result.state);
+  if (!actorId || actorId === MONSTER_ID) return result;
+  const sage = result.state.fighters.find((f) => f.id === actorId && f.class === "Staff Sage");
+  if (!sage) return result;
+  const turns = result.state.ability_state?.foresee_turns ?? 0;
+  if (turns <= 0) return result;
+
+  const remaining = turns - 1;
+  const ability_state: AbilityRuntimeState = remaining > 0
+    ? { ...(result.state.ability_state ?? {}), foresee_turns: remaining }
+    : (stripField(result.state.ability_state, "foresee_turns") ?? {});
+  const newState = { ...result.state, ability_state };
+  const refreshEvent = buildForeseeEvent(newState, actorId, roll, remaining);
+
+  // Insert before the last turn_start event so the readout appears inside
+  // the Sage's upcoming turn block rather than at the tail of the monster's.
+  const events = [...result.events];
+  let insertAt = events.length;
+  for (let i = events.length - 1; i >= 0; i--) {
+    if (events[i].type === "turn_start") { insertAt = i; break; }
+  }
+  events.splice(insertAt, 0, refreshEvent);
+  return { state: newState, events };
 }
 
 function abilityMigrate(
@@ -1618,10 +1860,24 @@ export function resolveMonsterKill(
   const events: CombatEvent[] = [...precedingEvents];
   events.push({ type: "monster_down", killed_by: killedBy });
 
-  const upcoming = state.monster.upcoming_waves ?? [];
+  // Track kill credit for the killing blow actor.
+  const stateWithKill: CombatState = killedBy !== MONSTER_ID
+    ? {
+        ...state,
+        stats: {
+          ...state.stats,
+          [killedBy]: {
+            ...(state.stats[killedBy] ?? { damage_taken: 0, healing_done: 0, shielding_done: 0, kills: 0 }),
+            kills: (state.stats[killedBy]?.kills ?? 0) + 1,
+          },
+        },
+      }
+    : state;
+
+  const upcoming = stateWithKill.monster.upcoming_waves ?? [];
   if (upcoming.length === 0) {
     events.push({ type: "victory" });
-    return { state: { ...state, status: "victory" }, events };
+    return { state: { ...stateWithKill, status: "victory" }, events };
   }
 
   const [next, ...rest] = upcoming;
@@ -1629,28 +1885,28 @@ export function resolveMonsterKill(
     name: next.name,
     hp: next.max_hp,
     max_hp: next.max_hp,
-    tier: state.monster.tier,
-    initiative: state.monster.initiative,
+    tier: stateWithKill.monster.tier,
+    initiative: stateWithKill.monster.initiative,
     effects: [],
     is_boss: false,            // gauntlet waves are never boss-tier
     boss_phase: 1,
-    wave: (state.monster.wave ?? 1) + 1,
-    total_waves: state.monster.total_waves,
+    wave: (stateWithKill.monster.wave ?? 1) + 1,
+    total_waves: stateWithKill.monster.total_waves,
     upcoming_waves: rest,
   };
   events.push({
     type: "wave_transition",
-    from_monster: state.monster.name,
+    from_monster: stateWithKill.monster.name,
     to_monster: next.name,
     to_max_hp: next.max_hp,
     new_wave: newMonster.wave!,
     total_waves: newMonster.total_waves ?? newMonster.wave!,
   });
   // Wave transition clears mark — the previous focus target is gone.
-  const ability_state = stripField(state.ability_state, "mark");
+  const ability_state = stripField(stateWithKill.ability_state, "mark");
   // Combat continues — advance turn from the killer to the next actor so
   // the new monster doesn't immediately get hit again by the same fighter.
-  const advanced = advanceTurn({ ...state, monster: newMonster, ability_state });
+  const advanced = advanceTurn({ ...stateWithKill, monster: newMonster, ability_state });
   return { state: advanced, events: [...events, ...turnStartEvent(advanced)] };
 }
 
@@ -1678,6 +1934,12 @@ function tickEffects(
   const newEffects: MachineStatusEffect[] = [];
   const events: CombatEvent[] = [];
   for (const eff of effects) {
+    if (eff.type === "empowered") {
+      // Passive — no HP delta. Silently count down; the damage boost is applied
+      // inline in the attack/cast handlers via the fighter's effects array.
+      if (eff.remaining > 1) newEffects.push({ ...eff, remaining: eff.remaining - 1 });
+      continue;
+    }
     const delta = eff.type === "regen" ? eff.magnitude : -eff.magnitude;
     newHp = Math.max(0, Math.min(maxHp, newHp + delta));
     events.push({

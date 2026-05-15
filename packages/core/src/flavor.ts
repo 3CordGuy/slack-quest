@@ -193,13 +193,13 @@ export type ItemType = "weapon" | "armor" | "consumable" | "magic" | "revive" | 
 // Status effects — applied to player characters or monsters and tick on the
 // affected actor's own combat action / monster turn. v1 set is HP-based; future
 // effects could touch cooldown, damage modifiers, etc.
-export type EffectType = "regen" | "bleeding" | "burning" | "poisoned";
+export type EffectType = "regen" | "bleeding" | "burning" | "poisoned" | "empowered";
 
 export interface EffectMeta {
   emoji: string;
   name: string;
-  // "buff" = HoT or beneficial; "debuff" = DoT or harmful. Drives display tone.
-  kind: "buff" | "debuff";
+  // "buff" = HoT or beneficial; "debuff" = DoT or harmful; "passive" = no HP delta.
+  kind: "buff" | "debuff" | "passive";
   // True if the per-tick HP change ignores armor (currently informational —
   // ticks apply directly to HP without the armor reduction in performMonsterTurn).
   ignoresArmor: boolean;
@@ -207,10 +207,11 @@ export interface EffectMeta {
 }
 
 export const EFFECT_META: Record<EffectType, EffectMeta> = {
-  regen: { emoji: "🟢", name: "Regen", kind: "buff", ignoresArmor: true, blurb: "Restores HP each action." },
-  bleeding: { emoji: "🔴", name: "Bleeding", kind: "debuff", ignoresArmor: false, blurb: "Loses HP each action." },
-  burning: { emoji: "🔥", name: "Burning", kind: "debuff", ignoresArmor: true, blurb: "Loses HP each action; ignores armor." },
-  poisoned: { emoji: "☠️", name: "Poisoned", kind: "debuff", ignoresArmor: true, blurb: "Loses HP each turn." },
+  regen:     { emoji: "🟢", name: "Regen",     kind: "buff",    ignoresArmor: true,  blurb: "Restores HP each action." },
+  bleeding:  { emoji: "🔴", name: "Bleeding",  kind: "debuff",  ignoresArmor: false, blurb: "Loses HP each action." },
+  burning:   { emoji: "🔥", name: "Burning",   kind: "debuff",  ignoresArmor: true,  blurb: "Loses HP each action; ignores armor." },
+  poisoned:  { emoji: "☠️", name: "Poisoned",  kind: "debuff",  ignoresArmor: true,  blurb: "Loses HP each turn." },
+  empowered: { emoji: "⚡", name: "Empowered", kind: "passive", ignoresArmor: false, blurb: "+25% damage dealt for N turns." },
 };
 
 // "focus" weapons are the caster/support tier: wands, staves, codices.
@@ -371,7 +372,7 @@ export const ABILITIES: Record<string, AbilitySpec> = {
     id: "foresee",
     name: "Foresee",
     mana_cost: 1,
-    blurb: "Read the monster's tells — see the next 2 telegraphed targets with damage ranges.",
+    blurb: "Full battle read: next swing target with net damage range + survivability verdict, targeting odds for every fighter, full party HP triage, and active ability state.",
   },
   refactor_rogue: {
     id: "vanish",
@@ -422,6 +423,9 @@ export interface CatalogEntry {
   // time — a Caffeine Bomb bought at L1 stays L1-tier forever. Sell or use.
   computePower: (tier: number) => number;
   blurb: string;
+  // True for items sold at the Apothecary — excluded from shop/merchant rolling
+  // so they're apothecary-exclusive purchases (but can still drop as monster loot).
+  shopExcluded?: boolean;
 }
 
 export const ITEM_CATALOG: CatalogEntry[] = [
@@ -475,6 +479,36 @@ export const ITEM_CATALOG: CatalogEntry[] = [
     // Power = HP per monster turn. Tick count fixed at 4.
     computePower: (tier) => 2 + Math.floor(Math.max(1, tier) / 2),
     blurb: "Applies ☠️ Poisoned to the monster — drains power HP per monster turn for 4 turns.",
+    shopExcluded: true,
+  },
+  // Apothecary items — purchasable from the Apothecary with level-scaled power/price.
+  // Also available as random drops at higher tiers, but excluded from shop/merchant rolling.
+  {
+    name: "Venom Vial",
+    emoji: "💉",
+    type: "tool",
+    rarity: "common",
+    computePower: (tier) => 3 + tier,
+    blurb: "Applies ☠️ Poisoned to the monster for 4 turns. Damage scales with level.",
+    shopExcluded: true,
+  },
+  {
+    name: "Regen Draft",
+    emoji: "🫙",
+    type: "tool",
+    rarity: "common",
+    computePower: (tier) => 3 + tier,
+    blurb: "Self-applies 🟢 Regen — restores power HP per action for 3 actions. Free action.",
+    shopExcluded: true,
+  },
+  {
+    name: "Battle Elixir",
+    emoji: "⚗️",
+    type: "tool",
+    rarity: "uncommon",
+    computePower: () => 0,
+    blurb: "Grants ⚡ Empowered — boosts damage dealt by 25% for 3 turns. Free action.",
+    shopExcluded: true,
   },
 ];
 
@@ -556,6 +590,80 @@ export function findStaple(query: string): StapleSpec | undefined {
     || s.name.toLowerCase() === q
     || `${s.emoji} ${s.name}`.toLowerCase() === q,
   );
+}
+
+// Apothecary staples — Venom Vial, Regen Draft, Battle Elixir. Always in stock
+// at the Apothecary. Power and price both scale with the buyer's level so the
+// items stay relevant as players progress.
+//
+// item_type is "tool" so combat dispatch routes them through applyToolOrScroll /
+// useToolOrScroll in both web and Slack paths.
+export interface ApothecaryStaple {
+  id: string;
+  name: string;
+  emoji: string;
+  effect: "poison_enemy" | "regen_self" | "empower_self";
+  // Base power before level scaling. power = base_power + level (or 0 for passive buffs).
+  base_power: number;
+  level_scale: number;   // power += floor(level * level_scale)
+  turns: number;         // combat turn duration
+  base_price: number;
+  level_price: number;   // price += level * level_price
+  blurb: string;
+}
+
+export const APOTHECARY_STAPLES: ApothecaryStaple[] = [
+  {
+    id: "venom",
+    name: "Venom Vial",
+    emoji: "💉",
+    effect: "poison_enemy",
+    base_power: 3,
+    level_scale: 1,
+    turns: 4,
+    base_price: 30,
+    level_price: 5,
+    blurb: "Poisons the active monster for 4 turns. Damage and price scale with your level.",
+  },
+  {
+    id: "draft",
+    name: "Regen Draft",
+    emoji: "🫙",
+    effect: "regen_self",
+    base_power: 3,
+    level_scale: 1,
+    turns: 3,
+    base_price: 25,
+    level_price: 4,
+    blurb: "Applies regeneration for 3 combat turns. Healing and price scale with your level.",
+  },
+  {
+    id: "elixir",
+    name: "Battle Elixir",
+    emoji: "⚗️",
+    effect: "empower_self",
+    base_power: 0,
+    level_scale: 0,
+    turns: 3,
+    base_price: 55,
+    level_price: 7,
+    blurb: "Boosts your damage by 25% for 3 combat turns. Price scales with your level.",
+  },
+];
+
+export function findApothecaryStaple(id: string): ApothecaryStaple | undefined {
+  return APOTHECARY_STAPLES.find((s) => s.id === id);
+}
+
+// Compute level-scaled power and price for an apothecary staple.
+export function apothecaryItemStats(
+  staple: ApothecaryStaple,
+  level: number,
+): { power: number; price: number } {
+  return {
+    power: staple.base_power + Math.floor(level * staple.level_scale),
+    price: staple.base_price + level * staple.level_price,
+  };
 }
 
 // =============================================================================
@@ -946,9 +1054,10 @@ export function findCatalogEntry(name: string): CatalogEntry | undefined {
 }
 
 // Picks a catalog entry of the given type at random. Used by rollItem when the
-// item-type roll lands on tool or scroll.
-export function rollCatalogEntry(type: "tool" | "scroll"): CatalogEntry {
-  const pool = ITEM_CATALOG.filter((e) => e.type === type);
+// item-type roll lands on tool or scroll. forShop=true excludes apothecary-only
+// items so they can't appear in shop or merchant rolled stock.
+export function rollCatalogEntry(type: "tool" | "scroll", forShop = false): CatalogEntry {
+  const pool = ITEM_CATALOG.filter((e) => e.type === type && (!forShop || !e.shopExcluded));
   return pool[Math.floor(Math.random() * pool.length)];
 }
 
@@ -1038,10 +1147,10 @@ function rollFocusPower(rarity: Rarity): number {
   return FOCUS_POWER_BY_RARITY[rarity];
 }
 
-export function rollItem(tier: number): ItemRoll {
+export function rollItem(tier: number, forShop = false): ItemRoll {
   const type = rollItemType();
   if (type === "tool" || type === "scroll") {
-    const entry = rollCatalogEntry(type);
+    const entry = rollCatalogEntry(type, forShop);
     return {
       type,
       rarity: entry.rarity,
@@ -1079,7 +1188,7 @@ function rollMerchantType(): ItemType {
 export function rollMerchantItem(tier: number): ItemRoll {
   const type = rollMerchantType();
   if (type === "tool" || type === "scroll") {
-    const entry = rollCatalogEntry(type);
+    const entry = rollCatalogEntry(type, true);
     return {
       type,
       rarity: entry.rarity,

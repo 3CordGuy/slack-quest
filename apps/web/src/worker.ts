@@ -29,12 +29,20 @@ import {
 } from "./ai";
 
 import {
+  ACHIEVEMENTS,
+  APOTHECARY_STAPLES,
   FOCUS_MAX_MANA_BONUS,
   MAX_MANA_CAP,
+  checkApothecaryAchievements,
+  checkCombatAchievements,
+  checkDeathAchievements,
+  checkProgressionAchievements,
   classByName,
   createCombatState,
   dropChance,
+  findApothecaryStaple,
   findCatalogEntry,
+  apothecaryItemStats,
   generateScar,
   generateMerchantName,
   generateNpcName,
@@ -118,6 +126,13 @@ import {
   getWebSession,
   markQuestStatus,
   recordClaimedNpcPath,
+  grantAchievement,
+  consumePendingAchievements,
+  getDownedCharacters,
+  incrementApothecaryPurchases,
+  incrementRevivesGiven,
+  reviveCharacter,
+  getLifetimeStats,
   getPubLeaderboard,
   removeItem,
   saveScene,
@@ -347,10 +362,10 @@ const SHOP_BUY_CAP_PER_CYCLE = 2;
 const TOWN_WEEKLY_MS = 7 * 24 * 60 * 60 * 1000;
 const TOWN_DAILY_MS = 24 * 60 * 60 * 1000;
 
-// Looks up the channel_id of the player's most recent quest. Web doesn't
-// have a Slack channel context directly, so we use this as a proxy — works
-// because shops + quests are channel-scoped and most players stick to one
-// channel. Returns null if the player has never been on a quest.
+// Looks up the channel_id of the player's most recent quest. Falls back to
+// the most recently active channel in the whole DB — covers new players who
+// haven't started a Slack quest yet but the team is already playing in a known
+// channel.
 async function recentChannelForUser(db: D1Database, userId: string): Promise<string | null> {
   const row = await db
     .prepare(
@@ -362,7 +377,12 @@ async function recentChannelForUser(db: D1Database, userId: string): Promise<str
     )
     .bind(userId)
     .first<{ channel_id: string }>();
-  return row?.channel_id ?? null;
+  if (row) return row.channel_id;
+  // Fallback: most recently used real channel in the system
+  const fallback = await db
+    .prepare(`SELECT channel_id FROM quests WHERE channel_id NOT LIKE 'web:%' ORDER BY id DESC LIMIT 1`)
+    .first<{ channel_id: string }>();
+  return fallback?.channel_id ?? null;
 }
 
 // Slack uses Workers AI to flavor non-catalog drops; web v1 names them
@@ -520,6 +540,36 @@ function applyToolOrScroll(
       return {
         effect: { kind: "monster_damage", amount: state.monster.hp },
         monster: { hp: 0 },
+      };
+    }
+    case "Venom Vial": {
+      if (state.monster.hp <= 0) {
+        return { effect: { kind: "heal", target: actor.id, amount: 0, rolled: 0 }, error: "no live foe to poison" };
+      }
+      const eff = { type: "poisoned" as const, magnitude: item.power, remaining: 4, source: actor.id };
+      return {
+        effect: { kind: "monster_effect", effect: "poisoned", magnitude: item.power, remaining: 4 },
+        monster: { effects: [...state.monster.effects, eff] },
+      };
+    }
+    case "Regen Draft": {
+      const eff = { type: "regen" as const, magnitude: item.power, remaining: 3, source: entry.name };
+      const fighters = state.fighters.map((f) =>
+        f.id === actor.id ? { ...f, effects: [...f.effects, eff] } : f,
+      );
+      return {
+        effect: { kind: "self_effect", target: actor.id, effect: "regen", magnitude: item.power, remaining: 3 },
+        fighters,
+      };
+    }
+    case "Battle Elixir": {
+      const eff = { type: "empowered" as const, magnitude: 25, remaining: 3, source: entry.name };
+      const fighters = state.fighters.map((f) =>
+        f.id === actor.id ? { ...f, effects: [...f.effects, eff] } : f,
+      );
+      return {
+        effect: { kind: "self_effect", target: actor.id, effect: "empowered", magnitude: 25, remaining: 3 },
+        fighters,
       };
     }
     default:
@@ -852,6 +902,27 @@ app.get("/api/me", async (c) => {
     character,
     class_art_url,
   });
+});
+
+// GET /api/achievements — current user's earned achievements + all definitions.
+// Clears pending_achievements so toasts only fire once.
+app.get("/api/achievements", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const char = await getCharacter(c.env.DB, session.slack_user_id);
+  if (!char) return c.json({ error: "character not found" }, 404);
+  const pending = await consumePendingAchievements(c.env.DB, session.slack_user_id);
+  return c.json({ definitions: ACHIEVEMENTS, earned: char.achievements, new_achievements: pending });
+});
+
+// GET /api/achievements/:userId — public view of another player's achievements.
+// Only returns earned; does not expose locked silhouettes or pending.
+app.get("/api/achievements/:userId", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const char = await getCharacter(c.env.DB, c.req.param("userId"));
+  if (!char) return c.json({ error: "character not found" }, 404);
+  return c.json({ definitions: ACHIEVEMENTS, earned: char.achievements });
 });
 
 app.get("/api/inventory", async (c) => {
@@ -1405,14 +1476,15 @@ app.get("/api/town", async (c) => {
   const session = await currentSession(c.env.DB, c.req.header("cookie"));
   if (!session) return c.json({ error: "unauthenticated" }, 401);
   const art = artTarget(c.env);
-  const [overview, pub, shop, inn, smithy] = await Promise.all([
+  const [overview, pub, shop, inn, smithy, apothecary] = await Promise.all([
     getOrScheduleViewArt(c.env.AI, art, c.executionCtx, "town_overview", undefined, TOWN_WEEKLY_MS),
     getOrScheduleViewArt(c.env.AI, art, c.executionCtx, "pub_interior", undefined, TOWN_WEEKLY_MS),
     getOrScheduleViewArt(c.env.AI, art, c.executionCtx, "channel_shop", undefined, TOWN_WEEKLY_MS),
     getOrScheduleViewArt(c.env.AI, art, c.executionCtx, "inn_interior", undefined, TOWN_WEEKLY_MS),
     getOrScheduleViewArt(c.env.AI, art, c.executionCtx, "smithy_interior", undefined, TOWN_WEEKLY_MS),
+    getOrScheduleViewArt(c.env.AI, art, c.executionCtx, "apothecary", undefined, TOWN_WEEKLY_MS),
   ]);
-  return c.json({ overview_art_url: overview, pub_art_url: pub, shop_art_url: shop, inn_art_url: inn, smithy_art_url: smithy });
+  return c.json({ overview_art_url: overview, pub_art_url: pub, shop_art_url: shop, inn_art_url: inn, smithy_art_url: smithy, apothecary_art_url: apothecary });
 });
 
 // Regenerates stale town jobs (daily) and/or town name (weekly) for the web
@@ -1792,6 +1864,7 @@ app.post("/api/shop/:itemId/buy", async (c) => {
     flavor: stock.flavor ?? "",
     weapon_range: stock.weapon_range,
   });
+  await grantAchievement(c.env.DB, session.slack_user_id, "first_purchase");
   return c.json({
     ok: true,
     paid: stock.price,
@@ -1956,6 +2029,97 @@ const INN_ROOMS: InnRoom[] = [
   { id: "cot",  name: "Common Cot",      price: 20, refills: { hp: true, mana: false }, blurb: "A straw cot, a wool blanket, a guarantee nobody'll loot you in your sleep. Wakes you at full HP.", iconName: "campfire" },
   { id: "bath", name: "Hot Bath & Bed",  price: 50, refills: { hp: true, mana: true },  blurb: "A copper tub, lavender soap, a real mattress. Wakes you at full HP and full mana.",            iconName: "moon-sun" },
 ];
+
+// =============================================================================
+// Apothecary
+// =============================================================================
+
+app.get("/api/apothecary", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const character = await getCharacter(c.env.DB, session.slack_user_id);
+  if (!character) return c.json({ error: "no_character" }, 404);
+  const activeQuest = await getActiveQuestForCharacter(c.env.DB, session.slack_user_id);
+  if (activeQuest) return c.json({ error: "mid_quest" }, 400);
+
+  const [downed, allItems] = await Promise.all([
+    getDownedCharacters(c.env.DB),
+    getInventory(c.env.DB, session.slack_user_id),
+  ]);
+  const reviveCount = allItems.filter((i) => i.item_type === "revive").length;
+
+  // Level-scale staple prices and powers for this character.
+  const staples = APOTHECARY_STAPLES.map((s) => ({
+    ...s,
+    ...apothecaryItemStats(s, character.level),
+  }));
+
+  const art_url = await getOrScheduleViewArt(c.env.AI, artTarget(c.env), c.executionCtx, "apothecary", undefined, TOWN_WEEKLY_MS);
+
+  return c.json({ downed, staples, gold: character.gold, revive_count: reviveCount, art_url });
+});
+
+app.post("/api/apothecary/staple/:stapleId/buy", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const staple = findApothecaryStaple(c.req.param("stapleId"));
+  if (!staple) return c.json({ error: "unknown_staple" }, 404);
+  const character = await getCharacter(c.env.DB, session.slack_user_id);
+  if (!character) return c.json({ error: "no_character" }, 404);
+  const { power, price } = apothecaryItemStats(staple, character.level);
+  if (character.gold < price) return c.json({ error: "insufficient_gold", price, gold: character.gold }, 400);
+  const paid = await tryDeductGold(c.env.DB, session.slack_user_id, price);
+  if (!paid) return c.json({ error: "insufficient_gold_race" }, 400);
+  const item = await addItem(c.env.DB, {
+    character_id: session.slack_user_id,
+    item_name: `${staple.emoji} ${staple.name}`,
+    item_type: "tool",
+    power,
+    rarity: "common",
+    flavor: staple.blurb,
+    weapon_range: null,
+  });
+  const totalPurchases = await incrementApothecaryPurchases(c.env.DB, session.slack_user_id);
+  const freshChar = await getCharacter(c.env.DB, session.slack_user_id);
+  const apoAchIds = checkApothecaryAchievements({
+    existingAchievements: freshChar?.achievements ?? [],
+    totalPurchases,
+    totalRevives: freshChar?.revives_given ?? 0,
+    action: "purchase",
+  });
+  for (const id of apoAchIds) await grantAchievement(c.env.DB, session.slack_user_id, id);
+  return c.json({ ok: true, paid: price, gold_remaining: character.gold - price, item });
+});
+
+app.post("/api/apothecary/revive/:targetUserId", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const targetId = c.req.param("targetUserId");
+  const [reviver, target, allItems] = await Promise.all([
+    getCharacter(c.env.DB, session.slack_user_id),
+    getCharacter(c.env.DB, targetId),
+    getInventory(c.env.DB, session.slack_user_id),
+  ]);
+  if (!reviver) return c.json({ error: "no_character" }, 404);
+  if (!target) return c.json({ error: "target_not_found" }, 404);
+  if (!target.downed_until || target.downed_until <= Date.now()) {
+    return c.json({ error: "not_downed" }, 400);
+  }
+  const reviveItem = allItems.find((i) => i.item_type === "revive");
+  if (!reviveItem) return c.json({ error: "no_revive_item" }, 400);
+  await removeItem(c.env.DB, reviveItem.id);
+  const hp_restored = await reviveCharacter(c.env.DB, target, 50);
+  const totalRevives = await incrementRevivesGiven(c.env.DB, session.slack_user_id);
+  const freshReviver = await getCharacter(c.env.DB, session.slack_user_id);
+  const reviveAchIds = checkApothecaryAchievements({
+    existingAchievements: freshReviver?.achievements ?? [],
+    totalPurchases: freshReviver?.apothecary_purchases ?? 0,
+    totalRevives,
+    action: "revive",
+  });
+  for (const id of reviveAchIds) await grantAchievement(c.env.DB, session.slack_user_id, id);
+  return c.json({ ok: true, hp_restored, target_name: target.name });
+});
 
 app.get("/api/inn", async (c) => {
   const session = await currentSession(c.env.DB, c.req.header("cookie"));
@@ -2207,14 +2371,15 @@ app.get("/api/characters", async (c) => {
   if (!session) return c.json({ error: "unauthenticated" }, 401);
   const rows = await c.env.DB
     .prepare(
-      `SELECT slack_user_id, name, class, level, xp, hp, max_hp, last_active, slack_username
+      `SELECT slack_user_id, name, class, level, xp, hp, max_hp, last_active, slack_username, scars
        FROM characters
        WHERE slack_user_id != ? AND slack_team_id = ?
        ORDER BY last_active DESC LIMIT 20`,
     )
     .bind(session.slack_user_id, session.slack_team_id)
-    .all<{ slack_user_id: string; name: string; class: string; level: number; xp: number; hp: number; max_hp: number; last_active: number; slack_username: string | null }>();
-  return c.json({ characters: rows.results ?? [] });
+    .all<{ slack_user_id: string; name: string; class: string; level: number; xp: number; hp: number; max_hp: number; last_active: number; slack_username: string | null; scars: string }>();
+  const characters = (rows.results ?? []).map((r) => ({ ...r, scars: JSON.parse(r.scars ?? "[]") as string[] }));
+  return c.json({ characters });
 });
 
 // =============================================================================
@@ -3686,7 +3851,7 @@ export type ItemEffect =
   | { kind: "mana_bump"; target: string; added: number; new_max_mana: number }
   | { kind: "revive"; target: string; hp_restored: number }
   | { kind: "monster_damage"; amount: number; capped_from?: number }
-  | { kind: "self_effect"; target: string; effect: "regen"; magnitude: number; remaining: number }
+  | { kind: "self_effect"; target: string; effect: "regen" | "empowered"; magnitude: number; remaining: number }
   | {
       kind: "monster_effect";
       effect: "poisoned" | "bleeding" | "burning";
@@ -3716,6 +3881,10 @@ export interface LootDrop {
 export interface FighterReward {
   user_id: string;
   damage_dealt: number;
+  damage_taken: number;
+  healing_done: number;
+  shielding_done: number;
+  kills: number;
   xp_awarded: number;
   gold_awarded: number;
   level_up: boolean;
@@ -3766,6 +3935,7 @@ async function applyWebCombatOutcome(
   env: Env,
   questId: number,
   state: CombatState,
+  killedBy?: string,
 ): Promise<OutcomeSummary> {
   const won = state.status === "victory";
   const tier = state.monster.tier;
@@ -3832,10 +4002,15 @@ async function applyWebCombatOutcome(
       .run();
 
     const character = await getCharacter(env.DB, fighter.id);
+    const fighterStats = state.stats?.[fighter.id] ?? { damage_taken: 0, healing_done: 0, shielding_done: 0, kills: 0 };
     if (!character) {
       rewards.push({
         user_id: fighter.id,
         damage_dealt: dmg,
+        damage_taken: fighterStats.damage_taken,
+        healing_done: fighterStats.healing_done,
+        shielding_done: fighterStats.shielding_done,
+        kills: fighterStats.kills,
         xp_awarded: 0,
         gold_awarded: 0,
         level_up: false,
@@ -3901,9 +4076,61 @@ async function applyWebCombatOutcome(
       };
     }
 
+    // Achievement checks for this fighter
+    const charAfter = await getCharacter(env.DB, fighter.id);
+    if (charAfter) {
+      const stats = await getLifetimeStats(env.DB, fighter.id);
+      const variantRow = await env.DB
+        .prepare(`SELECT json_extract(scene_json, '$.variant') AS variant FROM quests WHERE id = ?`)
+        .bind(questId)
+        .first<{ variant: string | null }>();
+      const questVariant = variantRow?.variant ?? "standard";
+      const combatIds = checkCombatAchievements({
+        fighterClass: charAfter.class,
+        finalHp: fighter.hp,
+        maxHp: fighter.max_hp,
+        roundsTotal: state.round,
+        partySize: state.fighters.length,
+        status: state.status as "victory" | "defeat" | "fled",
+        monster: { is_boss: state.monster.is_boss, total_waves: state.monster.total_waves },
+        existingAchievements: charAfter.achievements,
+        lifetimeWins: stats.quests_completed,
+        lifetimeKills: stats.kills,
+        landedKillingBlow: killedBy === fighter.id,
+        scarsCount: charAfter.scars.length,
+        softDeathsTotal: stats.deaths_soft,
+        isJobBoard: questVariant === "job_board",
+        isDungeon: questVariant === "dungeon",
+        isElite: elite,
+        isNoDeathRun: state.fighters.every((f) => f.hp > 0),
+      });
+      const progIds = checkProgressionAchievements({
+        existingAchievements: charAfter.achievements,
+        level: charAfter.level,
+        gold: charAfter.gold,
+        keysBronze: charAfter.keys_bronze,
+        keysSilver: charAfter.keys_silver,
+        keysGold: charAfter.keys_gold,
+      });
+      const deathIds = softDeath
+        ? checkDeathAchievements({
+            existingAchievements: charAfter.achievements,
+            newScarsCount: charAfter.scars.length + 1,
+            totalSoftDeaths: stats.deaths_soft + 1,
+          })
+        : [];
+      for (const id of [...combatIds, ...progIds, ...deathIds]) {
+        await grantAchievement(env.DB, fighter.id, id);
+      }
+    }
+
     rewards.push({
       user_id: fighter.id,
       damage_dealt: dmg,
+      damage_taken: fighterStats.damage_taken,
+      healing_done: fighterStats.healing_done,
+      shielding_done: fighterStats.shielding_done,
+      kills: fighterStats.kills,
       xp_awarded: xpAwarded,
       gold_awarded: goldAwarded,
       level_up: levelUp,
@@ -4253,12 +4480,13 @@ export class QuestRoom extends DurableObject<Env> {
       // advanced) carry an accurate post-tick buff into the next fight.
       // Best-effort: a failure here doesn't block outcome processing —
       // the buff just stays at its pre-combat value.
+      const killedBy = result.events.find((e): e is Extract<CombatEvent, { type: "monster_down" }> => e.type === "monster_down")?.killed_by;
       try {
         await writebackDrinkBuffs(this.env.DB, result.state);
       } catch (err) {
         console.warn("drink-buff writeback failed", err);
       }
-      const outcome = await applyWebCombatOutcome(this.env, questId, result.state);
+      const outcome = await applyWebCombatOutcome(this.env, questId, result.state, killedBy);
       this.broadcast({ type: "outcome", outcome });
       return outcome;
     }
@@ -4511,15 +4739,14 @@ export class QuestRoom extends DurableObject<Env> {
       state.status === "active"
       && (resultState.status === "victory" || resultState.status === "defeat");
     if (becameTerminal) {
+      const itemKilledBy = resultEvents.find((e): e is Extract<CombatEvent, { type: "monster_down" }> => e.type === "monster_down")?.killed_by;
       try {
-        // Mirror handleStepResult's terminal branch: write drink_buffs back
-        // to D1 first so mid-quest residuals carry into the next fight.
         await writebackDrinkBuffs(this.env.DB, resultState);
       } catch (err) {
         console.warn("drink-buff writeback failed", err);
       }
       try {
-        const outcome = await applyWebCombatOutcome(this.env, questId, resultState);
+        const outcome = await applyWebCombatOutcome(this.env, questId, resultState, itemKilledBy);
         this.broadcast({ type: "outcome", outcome });
       } catch (err) {
         this.broadcast({

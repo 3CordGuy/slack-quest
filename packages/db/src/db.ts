@@ -1,6 +1,6 @@
 // D1 query helpers. Raw prepared statements — no ORM.
 
-import type { DrinkBuff, EffectType, ItemType, Rarity, TownState, WeaponRange } from "@gantt-quest/core";
+import type { DrinkBuff, EffectType, EarnedAchievement, ItemType, Rarity, TownState, WeaponRange } from "@gantt-quest/core";
 
 // Active status effect on a character or monster. Ticks on the affected actor's
 // own combat action / monster turn. Cleared at quest end.
@@ -76,14 +76,20 @@ export interface Character {
   // replaces the first). See flavor.ts/DrinkBuff for shape.
   drink_buff: DrinkBuff | null;
   slack_username: string | null;
+  achievements: EarnedAchievement[];
+  pending_achievements: string[];
+  apothecary_purchases: number;
+  revives_given: number;
   created_at: number;
   last_active: number;
 }
 
-interface CharacterRow extends Omit<Character, "scars" | "effects" | "drink_buff"> {
+interface CharacterRow extends Omit<Character, "scars" | "effects" | "drink_buff" | "achievements" | "pending_achievements"> {
   scars: string;
   effects: string;
   drink_buff_json: string | null;
+  achievements: string;
+  pending_achievements: string;
 }
 
 function rowToCharacter(row: CharacterRow): Character {
@@ -92,6 +98,8 @@ function rowToCharacter(row: CharacterRow): Character {
     scars: JSON.parse(row.scars) as string[],
     effects: JSON.parse(row.effects) as StatusEffect[],
     drink_buff: row.drink_buff_json ? (JSON.parse(row.drink_buff_json) as DrinkBuff) : null,
+    achievements: JSON.parse(row.achievements ?? "[]") as EarnedAchievement[],
+    pending_achievements: JSON.parse(row.pending_achievements ?? "[]") as string[],
   };
 }
 
@@ -321,6 +329,9 @@ export interface SceneJson {
     vanished?: Record<string, number>;
     skip_swings?: number;
     battle_hymn?: number;
+    // Staff Sage Foresee — re-appends the intel readout to the Sage's
+    // ephemeral for this many more of their own combat turns.
+    foresee_turns?: number;
   };
   // Set true when the quest was accepted from the Job Board (vs. started
   // directly via /sq quest <variant>). Drives a reward bonus at victory
@@ -2480,4 +2491,73 @@ export async function getRecentQuestsForCharacter(
       completed_at: r.completed_at,
     };
   });
+}
+
+// ── Achievement helpers ───────────────────────────────────────────────────────
+
+export async function grantAchievement(
+  db: D1Database,
+  userId: string,
+  achievementId: string,
+): Promise<boolean> {
+  const char = await getCharacter(db, userId);
+  if (!char) return false;
+  if (char.achievements.some((a) => a.id === achievementId)) return false;
+  const updated: EarnedAchievement[] = [...char.achievements, { id: achievementId, unlocked_at: Date.now() }];
+  const pending = [...char.pending_achievements, achievementId];
+  await db
+    .prepare("UPDATE characters SET achievements = ?, pending_achievements = ?, last_active = ? WHERE slack_user_id = ?")
+    .bind(JSON.stringify(updated), JSON.stringify(pending), Date.now(), userId)
+    .run();
+  return true;
+}
+
+export async function consumePendingAchievements(
+  db: D1Database,
+  userId: string,
+): Promise<string[]> {
+  const char = await getCharacter(db, userId);
+  if (!char || char.pending_achievements.length === 0) return [];
+  await db
+    .prepare("UPDATE characters SET pending_achievements = '[]' WHERE slack_user_id = ?")
+    .bind(userId)
+    .run();
+  return char.pending_achievements;
+}
+
+export async function incrementApothecaryPurchases(db: D1Database, userId: string): Promise<number> {
+  await db.prepare("UPDATE characters SET apothecary_purchases = apothecary_purchases + 1 WHERE slack_user_id = ?")
+    .bind(userId).run();
+  const row = await db.prepare("SELECT apothecary_purchases FROM characters WHERE slack_user_id = ?")
+    .bind(userId).first<{ apothecary_purchases: number }>();
+  return row?.apothecary_purchases ?? 1;
+}
+
+export async function incrementRevivesGiven(db: D1Database, userId: string): Promise<number> {
+  await db.prepare("UPDATE characters SET revives_given = revives_given + 1 WHERE slack_user_id = ?")
+    .bind(userId).run();
+  const row = await db.prepare("SELECT revives_given FROM characters WHERE slack_user_id = ?")
+    .bind(userId).first<{ revives_given: number }>();
+  return row?.revives_given ?? 1;
+}
+
+// Characters currently on a soft-death cooldown. Used by the Apothecary to
+// show who can be revived by a party member with a revive item.
+export interface DownedCharacter {
+  slack_user_id: string;
+  name: string;
+  class: string;
+  downed_until: number;
+  slack_username: string | null;
+}
+
+export async function getDownedCharacters(db: D1Database): Promise<DownedCharacter[]> {
+  const rows = await db
+    .prepare(
+      `SELECT slack_user_id, name, class, downed_until, slack_username
+       FROM characters WHERE downed_until IS NOT NULL AND downed_until > ?`,
+    )
+    .bind(Date.now())
+    .all<DownedCharacter>();
+  return rows.results ?? [];
 }

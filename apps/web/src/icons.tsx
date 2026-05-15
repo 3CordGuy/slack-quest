@@ -12,6 +12,19 @@
 import { useState } from "react";
 import type { CSSProperties } from "react";
 
+// Icons with local SVG files in /icons/. These render as <img> instead of
+// the ra- font, which gives crisper rendering at all sizes.
+const SVG_ICONS = new Set([
+  "anvil", "bolt-shield", "broadsword", "coffee-mug", "conversation",
+  "crossbow", "crowned-heart", "crystal-wand", "cubes", "cycle", "daggers",
+  "fairy-wand", "gold-bar", "helmet", "hood", "key", "perspective-dice-six",
+  "plain-dagger", "revolver", "round-shield", "scythe", "shield",
+  "spinning-sword", "trident", "trophy",
+  // Close-match remaps (original ra- name → this SVG file)
+  "battle-axe", "barbed-spear", "boots", "beer-stein", "lightning-saber",
+  "blunderbuss", "poison-bottle",
+]);
+
 interface IconProps {
   name: string;             // e.g. "sword" → renders className "ra ra-sword"
   size?: number | string;   // px or any css length; sets font-size
@@ -33,6 +46,38 @@ export function Icon({
   fw,
   title,
 }: IconProps): JSX.Element {
+  const cssSize = typeof size === "number" ? `${size}px` : size;
+
+  if (SVG_ICONS.has(name)) {
+    // Use CSS mask-image so background-color becomes the icon color.
+    // This gives pixel-perfect color via any CSS color value or currentColor.
+    const dim = cssSize ?? "1em";
+    return (
+      <span
+        aria-hidden={title ? undefined : true}
+        title={title}
+        style={{
+          display: "inline-block",
+          width: dim,
+          height: dim,
+          flexShrink: 0,
+          verticalAlign: "middle",
+          backgroundColor: color ?? "currentColor",
+          maskImage: `url(/icons/${name}.svg)`,
+          maskRepeat: "no-repeat",
+          maskPosition: "center",
+          maskSize: "contain",
+          WebkitMaskImage: `url(/icons/${name}.svg)`,
+          WebkitMaskRepeat: "no-repeat",
+          WebkitMaskPosition: "center",
+          WebkitMaskSize: "contain",
+          ...(spin ? { animation: "ra-spin 2s linear infinite" } : {}),
+          ...style,
+        }}
+      />
+    );
+  }
+
   const classes = [
     "ra",
     `ra-${name}`,
@@ -46,7 +91,7 @@ export function Icon({
       aria-hidden={title ? undefined : true}
       title={title}
       style={{
-        fontSize: typeof size === "number" ? `${size}px` : size,
+        fontSize: cssSize,
         color,
         lineHeight: 1,
         verticalAlign: "middle",

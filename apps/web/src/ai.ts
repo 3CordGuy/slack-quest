@@ -672,6 +672,8 @@ export const VIEW_ART_PROMPTS = {
     "Interior of a fantasy blacksmith's workshop. A large iron anvil at center stage with a half-finished sword resting on it. A glowing red-orange forge behind, embers visible. Walls hung with hammers, tongs, files, and a few finished weapons and pieces of armor on display. Sparks frozen in the air, leather apron draped over a wooden stool. Warm fire-light, smoke in the rafters. The room is the subject; no specific smith figure in close-up.",
   inn_interior:
     "Interior of a cozy fantasy inn's main room. Two simple straw cots against one wall, a curtained private bed-alcove against the other. A small stone hearth in the corner with a kettle hanging over the fire. Wooden ceiling beams, a few hung lanterns casting warm orange light, a small rug on the plank floor. Quiet, restful, safe. No specific people in close-up — the room is the subject.",
+  apothecary:
+    "Interior of a dim fantasy apothecary shop. Shelves lined with labeled glass vials, stoppered bottles in amber and green and blue, bundles of dried herbs hanging from the ceiling, small clay pots of unguents and powders. A heavy wooden counter with a set of brass scales, mortar and pestle, and a few open recipe books. Candlelight, earthy tones, a faint haze of incense. The room is the subject — no specific figure in close-up.",
 } as const;
 
 export type ViewArtKey = keyof typeof VIEW_ART_PROMPTS;

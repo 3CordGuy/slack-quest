@@ -163,6 +163,9 @@ import {
   tryDeductMana,
   trySetHaggleOutcome,
   tryUpdateScene,
+  grantAchievement,
+  consumePendingAchievements,
+  upsertSlackUsername,
   type ActiveQuest,
   type BattlePosition,
   type CharGender,
@@ -246,6 +249,11 @@ import {
   SHIELD_CAP_MULTIPLIER,
   SKILL_META,
   type TurnAction,
+  checkCombatAchievements,
+  checkDeathAchievements,
+  checkLiarsAchievements,
+  checkSpdAchievements,
+  checkProgressionAchievements,
 } from "@gantt-quest/core";
 import { postJoinableQuest, postMessage, respondToCommand, updateMessage, type InteractivePayload, type SlashCommandPayload } from "./slack";
 
@@ -852,6 +860,9 @@ export async function handleInteraction(
   env: Env,
   ctx: ExecutionContext,
 ): Promise<CommandResponse> {
+  if (payload.user.username) {
+    ctx.waitUntil(upsertSlackUsername(env.DB, payload.user.id, payload.user.username).catch(() => {}));
+  }
   if (payload.type !== "block_actions" || payload.actions.length === 0) {
     return ephemeral("Unknown interaction.");
   }
@@ -1102,6 +1113,9 @@ export async function handleCommand(
   env: Env,
   ctx: ExecutionContext,
 ): Promise<CommandResponse> {
+  if (payload.user_name) {
+    ctx.waitUntil(upsertSlackUsername(env.DB, payload.user_id, payload.user_name).catch(() => {}));
+  }
   const args = payload.text.trim().split(/\s+/).filter(Boolean);
   const sub = (args.shift() ?? "help").toLowerCase();
 
@@ -1120,14 +1134,14 @@ export async function handleCommand(
     case "quest":
       return handleQuest(payload, args, env, ctx);
     case "attack":
-      return handleCombat(payload, env, ctx, "attack");
     case "cast":
-      return handleCombat(payload, env, ctx, "cast");
     case "flee":
-      return handleCombat(payload, env, ctx, "flee");
     case "signature":
-    case "sig":
-      return handleCombat(payload, env, ctx, "signature");
+    case "sig": {
+      const combatAction = (sub === "sig" ? "signature" : sub) as CombatAction;
+      const combatResult = await handleCombat(payload, env, ctx, combatAction);
+      return appendForeseeIfActive(combatResult, env, payload.user_id);
+    }
     case "ability":
     case "active":
       return handleAbility(payload, args, env, ctx);
@@ -2336,6 +2350,12 @@ function tickEffects(effects: StatusEffect[]): { next: StatusEffect[]; hpDelta: 
       // Unknown effect — drop it gracefully.
       continue;
     }
+    if (meta.kind === "passive") {
+      // Passive effects (e.g. empowered) have no HP delta — just count down silently.
+      const remaining = e.remaining - 1;
+      if (remaining > 0) next.push({ ...e, remaining });
+      continue;
+    }
     const sign = meta.kind === "buff" ? 1 : -1;
     hpDelta += sign * e.magnitude;
     ticked.push(e);
@@ -3435,6 +3455,11 @@ async function handleCombat(
     damage = hit.damage;
     isCrit = hit.isCrit;
 
+    // ⚡ Battle Elixir — Empowered: +25% damage for N turns.
+    if (character.effects.some((e) => e.type === "empowered")) {
+      damage = Math.round(damage * 1.25);
+    }
+
     // 🗡 Refactor Rogue passive: first attack each fight is a guaranteed crit
     // (doubles the (roll + mods) total). Only fires for `attack`, not `cast`
     // — the Rogue's identity is the dagger-strike opener. If the natural
@@ -3714,6 +3739,67 @@ async function handleCombat(
   // Monster turn — see performMonsterTurn for targeting + damage logic.
   const isMagic = action === "cast";
   const turn = await performMonsterTurn(env, quest, fighters, character, equippedArmor);
+
+  if (turn.isSplash && turn.splashTargets) {
+    // Boss AoE splash — hits the whole non-vanished party.
+    const preamble = [
+      ...passiveLines,
+      playerLine,
+      ...monsterEffectLines,
+      ...playerTickLines,
+      ...newEffectLines,
+    ];
+    const firstKilled = turn.splashTargets.find((st) => st.willKill);
+    if (firstKilled) {
+      // Persist HP for non-killed targets first.
+      for (const st of turn.splashTargets.filter((s) => !s.willKill)) {
+        await setCharacterHpAndShield(env.DB, st.fighter.slack_user_id, st.dmg.newHp, st.dmg.newShield);
+      }
+      await appendLog(env.DB, quest.id, "monster", "splash", `splash → all fighters`);
+      return resolveDeath(payload, env, ctx, firstKilled.fighter, quest, fighters, [
+        ...preamble,
+        turn.monsterLine,
+      ]);
+    }
+    for (const st of turn.splashTargets) {
+      await setCharacterHpAndShield(env.DB, st.fighter.slack_user_id, st.dmg.newHp, st.dmg.newShield);
+    }
+    await appendLog(env.DB, quest.id, "monster", "splash", `splash → all fighters`);
+    await persistNextTelegraph(env, quest, fighters, turn);
+    // Mana regen still happens after splash.
+    let actorPostManaSplash = character.mana;
+    if (manaCost === 0 && character.mana < character.max_mana) {
+      const added = await addMana(env.DB, character, MANA_REGEN_PER_TURN);
+      actorPostManaSplash = character.mana + added;
+      if (added > 0) {
+        passiveLines.push(`✨ <@${payload.user_id}> catches their breath — *+${added}* mana.`);
+      }
+    }
+    const actorSplashSt = turn.splashTargets.find((st) => st.fighter.slack_user_id === character.slack_user_id);
+    const updatedActorSplash: Character = actorSplashSt
+      ? { ...character, hp: actorSplashSt.dmg.newHp, shield: actorSplashSt.dmg.newShield, mana: actorPostManaSplash }
+      : { ...character, mana: actorPostManaSplash };
+    const splashStatLines = turn.splashTargets
+      .filter((st) => st.fighter.slack_user_id !== character.slack_user_id)
+      .map((st) => {
+        const sh = st.dmg.newShield > 0 ? ` 🛡${st.dmg.newShield}` : "";
+        return `<@${st.fighter.slack_user_id}> (*${st.fighter.name}*): ${st.dmg.newHp}/${st.fighter.max_hp}${sh}`;
+      });
+    const actorShSplash = actorSplashSt && actorSplashSt.dmg.newShield > 0 ? ` 🛡${actorSplashSt.dmg.newShield}` : "";
+    const ephemeralLinesSplash = [
+      ...passiveLines,
+      playerLine,
+      ...monsterEffectLines,
+      ...playerTickLines,
+      ...newEffectLines,
+      `*${quest.scene.monster_name}*: ${Math.max(0, newMonsterHp)}/${quest.scene.monster_max_hp}`,
+      turn.monsterLine,
+      `*${updatedActorSplash.name}*: ${updatedActorSplash.hp}/${updatedActorSplash.max_hp}${actorShSplash}`,
+      ...splashStatLines,
+    ];
+    ctx.waitUntil(postToThread(env, quest, ephemeralLinesSplash.join("\n")));
+    return ephemeral(ephemeralLinesSplash.join("\n"));
+  }
 
   if (turn.willKillTarget) {
     return resolveDeath(payload, env, ctx, turn.target, quest, fighters, [
@@ -4017,6 +4103,13 @@ async function resolveVictory(
   const xpEach = Math.max(1, Math.floor(totalXp / fighters.length));
   const goldEach = Math.max(0, Math.floor(totalGold / fighters.length));
 
+  const isJobBoard = quest.scene.from_job_board === true;
+  const isDungeonVariant = quest.scene.variant === "dungeon";
+  const isBossVariant = quest.scene.variant === "boss";
+  const isElite = quest.elite;
+  const isNoDeathRun = fighters.every((f) => f.hp > 0);
+  const killerUserId = killer.slack_user_id;
+
   const levelUpLines: string[] = [];
   for (const fighter of fighters) {
     const result = await awardSpoils(
@@ -4033,6 +4126,42 @@ async function resolveVictory(
       levelUpLines.push(
         `🎚️ *${fighter.name}* hits Level ${result.newLevel} (max HP ${result.newMaxHp}${manaPart}).`,
       );
+    }
+
+    // Achievement checks — fire and forget; Slack doesn't use pending toasts
+    const charAfter = await getCharacter(env.DB, fighter.slack_user_id);
+    if (charAfter) {
+      const stats = await getLifetimeStats(env.DB, fighter.slack_user_id);
+      const combatIds = checkCombatAchievements({
+        fighterClass: fighter.class,
+        finalHp: fighter.hp,
+        maxHp: fighter.max_hp,
+        roundsTotal: 0, // Slack path doesn't track rounds
+        partySize: fighters.length,
+        status: "victory",
+        monster: { is_boss: isBossVariant, total_waves: quest.scene.total_waves },
+        existingAchievements: charAfter.achievements,
+        lifetimeWins: stats.quests_completed,
+        lifetimeKills: stats.kills,
+        landedKillingBlow: fighter.slack_user_id === killerUserId,
+        scarsCount: fighter.scars.length,
+        softDeathsTotal: stats.deaths_soft,
+        isJobBoard,
+        isDungeon: isDungeonVariant,
+        isElite,
+        isNoDeathRun,
+      });
+      const progIds = checkProgressionAchievements({
+        existingAchievements: charAfter.achievements,
+        level: result.newLevel,
+        gold: charAfter.gold,
+        keysBronze: charAfter.keys_bronze,
+        keysSilver: charAfter.keys_silver,
+        keysGold: charAfter.keys_gold,
+      });
+      for (const id of [...combatIds, ...progIds]) {
+        await grantAchievement(env.DB, fighter.slack_user_id, id);
+      }
     }
   }
 
@@ -5018,6 +5147,21 @@ async function resolveDeath(
     const scar = generateScar(quest.scene.monster_name);
     const { goldLost, itemLost } = await applySoftDeath(env.DB, character, scar, DOWNED_COOLDOWN_MS);
     await appendLog(env.DB, quest.id, character.slack_user_id, "death", `soft, -${goldLost} gold`);
+    // Death achievements
+    {
+      const stats = await getLifetimeStats(env.DB, character.slack_user_id);
+      const charAfter = await getCharacter(env.DB, character.slack_user_id);
+      if (charAfter) {
+        const deathIds = checkDeathAchievements({
+          existingAchievements: charAfter.achievements,
+          newScarsCount: charAfter.scars.length,
+          totalSoftDeaths: stats.deaths_soft,
+        });
+        for (const id of deathIds) {
+          await grantAchievement(env.DB, character.slack_user_id, id);
+        }
+      }
+    }
     const recoveryTs = Math.floor((Date.now() + DOWNED_COOLDOWN_MS) / 1000);
     ephemeralLines.push(
       `💀 <@${character.slack_user_id}> (*${character.name}*) is *downed*.`,
@@ -5647,6 +5791,15 @@ async function useToolOrScroll(
   if (entry.name === "Poison Vial") {
     return usePoisonVial(payload, env, ctx, character, item, quest, entry);
   }
+  if (entry.name === "Venom Vial") {
+    return useVenomVial(payload, env, ctx, character, item, quest, entry);
+  }
+  if (entry.name === "Regen Draft") {
+    return useRegenDraft(payload, env, ctx, character, item, quest, entry);
+  }
+  if (entry.name === "Battle Elixir") {
+    return useBattleElixir(payload, env, ctx, character, item, quest, entry);
+  }
   return ephemeral(`*${item.item_name}* doesn't have a wired-up effect yet.`);
 }
 
@@ -5719,6 +5872,29 @@ async function usePoisonVial(
   const actorArmor = await getEquipped(env.DB, payload.user_id, "armor");
   const turn = await performMonsterTurn(env, quest, fighters, tick.character, actorArmor);
 
+  if (turn.isSplash && turn.splashTargets) {
+    const firstKilled = turn.splashTargets.find((st) => st.willKill);
+    if (firstKilled) {
+      for (const st of turn.splashTargets.filter((s) => !s.willKill)) {
+        await setCharacterHpAndShield(env.DB, st.fighter.slack_user_id, st.dmg.newHp, st.dmg.newShield);
+      }
+      await appendLog(env.DB, quest.id, "monster", "splash", `splash → all fighters`);
+      return resolveDeath(payload, env, ctx, firstKilled.fighter, quest, fighters, [playerLine, ...tick.tickLines, turn.monsterLine]);
+    }
+    for (const st of turn.splashTargets) {
+      await setCharacterHpAndShield(env.DB, st.fighter.slack_user_id, st.dmg.newHp, st.dmg.newShield);
+    }
+    await appendLog(env.DB, quest.id, "monster", "splash", `splash → all fighters`);
+    await persistNextTelegraph(env, quest, fighters, turn);
+    const splashStatLines = turn.splashTargets.map((st) => {
+      const sh = st.dmg.newShield > 0 ? ` 🛡${st.dmg.newShield}` : "";
+      return `${st.fighter.slack_user_id === tick.character.slack_user_id ? `*${st.fighter.name}*` : `<@${st.fighter.slack_user_id}> (*${st.fighter.name}*)`}: ${st.dmg.newHp}/${st.fighter.max_hp}${sh}`;
+    });
+    const ephem = [playerLine, ...tick.tickLines, turn.monsterLine, ...splashStatLines].join("\n");
+    ctx.waitUntil(postToThread(env, quest, [blockQuote(playerLine), "", ...tick.tickLines, turn.monsterLine, ...splashStatLines].join("\n")));
+    return ephemeral(ephem);
+  }
+
   if (turn.willKillTarget) {
     return resolveDeath(payload, env, ctx, turn.target, quest, fighters, [playerLine, ...tick.tickLines, turn.monsterLine]);
   }
@@ -5774,6 +5950,30 @@ async function useDamageTool(
   const actorArmor = await getEquipped(env.DB, payload.user_id, "armor");
   const turn = await performMonsterTurn(env, quest, fighters, tick.character, actorArmor);
 
+  if (turn.isSplash && turn.splashTargets) {
+    const firstKilled = turn.splashTargets.find((st) => st.willKill);
+    if (firstKilled) {
+      for (const st of turn.splashTargets.filter((s) => !s.willKill)) {
+        await setCharacterHpAndShield(env.DB, st.fighter.slack_user_id, st.dmg.newHp, st.dmg.newShield);
+      }
+      await appendLog(env.DB, quest.id, "monster", "splash", `splash → all fighters`);
+      return resolveDeath(payload, env, ctx, firstKilled.fighter, quest, fighters, [playerLine, ...tick.tickLines, turn.monsterLine]);
+    }
+    for (const st of turn.splashTargets) {
+      await setCharacterHpAndShield(env.DB, st.fighter.slack_user_id, st.dmg.newHp, st.dmg.newShield);
+    }
+    await appendLog(env.DB, quest.id, "monster", "splash", `splash → all fighters`);
+    await persistNextTelegraph(env, quest, fighters, turn);
+    const monsterStatSplash = `*${quest.scene.monster_name}*: ${newMonsterHp}/${quest.scene.monster_max_hp}`;
+    const splashStats = turn.splashTargets.map((st) => {
+      const sh = st.dmg.newShield > 0 ? ` 🛡${st.dmg.newShield}` : "";
+      return `${st.fighter.slack_user_id === tick.character.slack_user_id ? `*${st.fighter.name}*` : `<@${st.fighter.slack_user_id}> (*${st.fighter.name}*)`}: ${st.dmg.newHp}/${st.fighter.max_hp}${sh}`;
+    });
+    const ephem = [playerLine, ...tick.tickLines, monsterStatSplash, turn.monsterLine, ...splashStats].join("\n");
+    ctx.waitUntil(postToThread(env, quest, [blockQuote(playerLine), "", ...tick.tickLines, monsterStatSplash, turn.monsterLine, ...splashStats].join("\n")));
+    return ephemeral(ephem);
+  }
+
   if (turn.willKillTarget) {
     return resolveDeath(payload, env, ctx, turn.target, quest, fighters, [playerLine, ...tick.tickLines, turn.monsterLine]);
   }
@@ -5787,6 +5987,113 @@ async function useDamageTool(
   const ephem = [playerLine, ...tick.tickLines, monsterStat, turn.monsterLine, targetStat].join("\n");
   ctx.waitUntil(postToThread(env, quest, [blockQuote(playerLine), "", ...tick.tickLines, monsterStat, turn.monsterLine, targetStat].join("\n")));
   return ephemeral(ephem);
+}
+
+// Venom Vial — applies ☠️ Poisoned to monster for 4 turns. Apothecary variant of
+// Poison Vial; same mechanic, different name/emoji. Consumes a turn.
+async function useVenomVial(
+  payload: SlashCommandPayload,
+  env: Env,
+  ctx: ExecutionContext,
+  character: Character,
+  item: Item,
+  quest: ActiveQuest,
+  entry: { name: string; emoji: string },
+): Promise<CommandResponse> {
+  if (!hasLiveMonster(quest)) {
+    return ephemeral(`*${item.item_name}* needs a live foe to inject.`);
+  }
+  const newEffect: StatusEffect = { type: "poisoned", magnitude: item.power, remaining: 4, source: entry.name };
+  const updatedMonsterEffects = withEffectApplied(quest.scene.monster_effects ?? [], newEffect);
+  const updatedScene: SceneJson = { ...quest.scene, monster_effects: updatedMonsterEffects };
+  const ok = await tryUpdateScene(env.DB, quest.id, updatedScene, quest.scene.monster_hp);
+  if (!ok) return ephemeral("⏱️ The fight moved on. Your item wasn't consumed — try again.");
+  await removeItem(env.DB, item.id);
+  await appendLog(env.DB, quest.id, payload.user_id, "tool", `${entry.name}: poison ${item.power}/tick × 4`);
+
+  const playerLine = `${entry.emoji} <@${payload.user_id}> injects *${item.item_name}* — *${quest.scene.monster_name}* is now ☠️ *Poisoned* (-${item.power} HP × 4 turns).`;
+  const fighters = (await getQuestParty(env.DB, quest.id)).filter(isFighter);
+  const tick = await applyPlayerTick(env, payload.user_id, character);
+  if (tick.postTickHp <= 0) {
+    return resolveDeath(payload, env, ctx, character, quest, fighters, [playerLine, ...tick.tickLines]);
+  }
+  const actorArmor = await getEquipped(env.DB, payload.user_id, "armor");
+  const turn = await performMonsterTurn(env, quest, fighters, tick.character, actorArmor);
+  if (turn.isSplash && turn.splashTargets) {
+    const firstKilled = turn.splashTargets.find((st) => st.willKill);
+    if (firstKilled) {
+      for (const st of turn.splashTargets.filter((s) => !s.willKill)) {
+        await setCharacterHpAndShield(env.DB, st.fighter.slack_user_id, st.dmg.newHp, st.dmg.newShield);
+      }
+      await appendLog(env.DB, quest.id, "monster", "splash", `splash → all fighters`);
+      return resolveDeath(payload, env, ctx, firstKilled.fighter, quest, fighters, [playerLine, ...tick.tickLines, turn.monsterLine]);
+    }
+    for (const st of turn.splashTargets) {
+      await setCharacterHpAndShield(env.DB, st.fighter.slack_user_id, st.dmg.newHp, st.dmg.newShield);
+    }
+    await appendLog(env.DB, quest.id, "monster", "splash", `splash → all fighters`);
+    await persistNextTelegraph(env, quest, fighters, turn);
+    const splashStatLines = turn.splashTargets.map((st) => {
+      const sh = st.dmg.newShield > 0 ? ` 🛡${st.dmg.newShield}` : "";
+      return `${st.fighter.slack_user_id === tick.character.slack_user_id ? `*${st.fighter.name}*` : `<@${st.fighter.slack_user_id}> (*${st.fighter.name}*)`}: ${st.dmg.newHp}/${st.fighter.max_hp}${sh}`;
+    });
+    const ephem = [playerLine, ...tick.tickLines, turn.monsterLine, ...splashStatLines].join("\n");
+    ctx.waitUntil(postToThread(env, quest, [blockQuote(playerLine), "", ...tick.tickLines, turn.monsterLine, ...splashStatLines].join("\n")));
+    return ephemeral(ephem);
+  }
+  if (turn.willKillTarget) {
+    return resolveDeath(payload, env, ctx, turn.target, quest, fighters, [playerLine, ...tick.tickLines, turn.monsterLine]);
+  }
+  await setCharacterHpAndShield(env.DB, turn.target.slack_user_id, turn.dmg.newHp, turn.dmg.newShield);
+  await appendLog(env.DB, quest.id, "monster", "attack", `${turn.positionAdjusted} dmg → ${turn.target.name} <@${turn.target.slack_user_id}>`);
+  await persistNextTelegraph(env, quest, fighters, turn);
+  const targetShield = turn.dmg.newShield > 0 ? ` 🛡${turn.dmg.newShield}` : "";
+  const targetStat = `${turn.victimWasActor ? `*${turn.target.name}*` : `<@${turn.target.slack_user_id}> (*${turn.target.name}*)`}: ${turn.dmg.newHp}/${turn.target.max_hp}${targetShield}`;
+  const ephem = [playerLine, ...tick.tickLines, turn.monsterLine, targetStat].join("\n");
+  ctx.waitUntil(postToThread(env, quest, [blockQuote(playerLine), "", ...tick.tickLines, turn.monsterLine, targetStat].join("\n")));
+  return ephemeral(ephem);
+}
+
+// Regen Draft — self-applies 🟢 Regen for 3 turns. Free action (no monster retaliation).
+async function useRegenDraft(
+  payload: SlashCommandPayload,
+  env: Env,
+  ctx: ExecutionContext,
+  character: Character,
+  item: Item,
+  quest: ActiveQuest,
+  entry: { name: string; emoji: string },
+): Promise<CommandResponse> {
+  const newEffect: StatusEffect = { type: "regen", magnitude: item.power, remaining: 3, source: entry.name };
+  const updated = withEffectApplied(character.effects ?? [], newEffect);
+  await setCharacterEffects(env.DB, payload.user_id, updated);
+  await removeItem(env.DB, item.id);
+  await appendLog(env.DB, quest.id, payload.user_id, "tool", `${entry.name}: regen +${item.power} × 3`);
+
+  const playerLine = `${entry.emoji} <@${payload.user_id}> quaffs *${item.item_name}* — gains 🟢 *Regen* (+${item.power} HP × 3 actions). _(free action)_`;
+  ctx.waitUntil(postToThread(env, quest, blockQuote(playerLine)));
+  return ephemeral(playerLine);
+}
+
+// Battle Elixir — grants ⚡ Empowered (+25% damage) for 3 turns. Free action.
+async function useBattleElixir(
+  payload: SlashCommandPayload,
+  env: Env,
+  ctx: ExecutionContext,
+  character: Character,
+  item: Item,
+  quest: ActiveQuest,
+  entry: { name: string; emoji: string },
+): Promise<CommandResponse> {
+  const newEffect: StatusEffect = { type: "empowered", magnitude: 25, remaining: 3, source: entry.name };
+  const updated = withEffectApplied(character.effects ?? [], newEffect);
+  await setCharacterEffects(env.DB, payload.user_id, updated);
+  await removeItem(env.DB, item.id);
+  await appendLog(env.DB, quest.id, payload.user_id, "tool", `${entry.name}: empowered × 3`);
+
+  const playerLine = `${entry.emoji} <@${payload.user_id}> drinks *${item.item_name}* — gains ⚡ *Empowered* (+25% damage × 3 turns). _(free action)_`;
+  ctx.waitUntil(postToThread(env, quest, blockQuote(playerLine)));
+  return ephemeral(playerLine);
 }
 
 // Rebase Scroll — a "fast ritual" treated as a free action:
@@ -5879,6 +6186,30 @@ async function useProductionOutage(
   const actorArmor = await getEquipped(env.DB, payload.user_id, "armor");
   const turn = await performMonsterTurn(env, quest, fighters, tick.character, actorArmor);
 
+  if (turn.isSplash && turn.splashTargets) {
+    const firstKilled = turn.splashTargets.find((st) => st.willKill);
+    if (firstKilled) {
+      for (const st of turn.splashTargets.filter((s) => !s.willKill)) {
+        await setCharacterHpAndShield(env.DB, st.fighter.slack_user_id, st.dmg.newHp, st.dmg.newShield);
+      }
+      await appendLog(env.DB, quest.id, "monster", "splash", `splash → all fighters`);
+      return resolveDeath(payload, env, ctx, firstKilled.fighter, quest, fighters, [playerLine, ...tick.tickLines, turn.monsterLine]);
+    }
+    for (const st of turn.splashTargets) {
+      await setCharacterHpAndShield(env.DB, st.fighter.slack_user_id, st.dmg.newHp, st.dmg.newShield);
+    }
+    await appendLog(env.DB, quest.id, "monster", "splash", `splash → all fighters`);
+    await persistNextTelegraph(env, quest, fighters, turn);
+    const monsterStatSplash = `*${quest.scene.monster_name}*: ${newMonsterHp}/${quest.scene.monster_max_hp}`;
+    const splashStats = turn.splashTargets.map((st) => {
+      const sh = st.dmg.newShield > 0 ? ` 🛡${st.dmg.newShield}` : "";
+      return `${st.fighter.slack_user_id === tick.character.slack_user_id ? `*${st.fighter.name}*` : `<@${st.fighter.slack_user_id}> (*${st.fighter.name}*)`}: ${st.dmg.newHp}/${st.fighter.max_hp}${sh}`;
+    });
+    const ephem = [playerLine, ...tick.tickLines, monsterStatSplash, turn.monsterLine, ...splashStats].join("\n");
+    ctx.waitUntil(postToThread(env, quest, [blockQuote(playerLine), "", ...tick.tickLines, monsterStatSplash, turn.monsterLine, ...splashStats].join("\n")));
+    return ephemeral(ephem);
+  }
+
   if (turn.willKillTarget) {
     return resolveDeath(payload, env, ctx, turn.target, quest, fighters, [playerLine, ...tick.tickLines, turn.monsterLine]);
   }
@@ -5929,7 +6260,7 @@ function todayStamp(): number {
 // Cost: weekly bumps generate 1 town-name call + 1 bartender dialog call
 // + 2 regular dialog calls = 4 AI calls. Daily-only refreshes generate
 // 2 regular dialog calls. All fail-soft to fallback dialog trees.
-async function rebuildTownState(
+export async function rebuildTownState(
   env: Env,
   channelId: string,
 ): Promise<TownState> {
@@ -6964,6 +7295,27 @@ async function handleLiarsDecide(
   const character = await getCharacter(env.DB, payload.user_id);
   const goldNow = character?.gold ?? 0;
 
+  // Liar's achievement checks
+  if (character) {
+    // Count how many challenges this player has issued (approximate via DB query)
+    const challengeCountRow = await env.DB
+      .prepare(`SELECT COUNT(*) AS cnt FROM liars_rounds WHERE user_id = ? AND status IN ('challenge_win','challenge_lose')`)
+      .bind(payload.user_id)
+      .first<{ cnt: number }>();
+    const totalChallenges = (challengeCountRow?.cnt ?? 0) + (choice === "challenge" ? 1 : 0);
+    const liarsIds = checkLiarsAchievements({
+      existingAchievements: character.achievements,
+      won: correct,
+      stake: round.stake,
+      isChallenge: choice === "challenge",
+      challengeWon: choice === "challenge" && correct,
+      totalChallenges,
+    });
+    for (const id of liarsIds) {
+      await grantAchievement(env.DB, payload.user_id, id);
+    }
+  }
+
   const verdict = round.lied
     ? `*${bartender} was lying!* The truth was *${liarsZoneLabel(truth)}*.`
     : `*${bartender} told the truth.* The combined zone was indeed *${liarsZoneLabel(truth)}*.`;
@@ -7626,6 +7978,9 @@ async function handleSpdBetPlace(
     return ephemeral("💰 You've already bet on this match. Refunded.");
   }
 
+  // Spectator bet achievement
+  await grantAchievement(env.DB, payload.user_id, "spd_spectator_bet");
+
   // Update the public message's bet summary. Cheap fire-and-forget —
   // missing the update isn't fatal; the next /sq pub or refresh would
   // show stale info but the bet itself is on the books.
@@ -7823,6 +8178,47 @@ async function resolveSpdMatch(env: Env, matchId: number): Promise<void> {
   const losingBetCount = bets.filter((b) => b.side !== winningSide).length;
 
   await finalizeSpdMatch(env.DB, matchId, winnerId, houseBump);
+
+  // SPD achievements for both players
+  for (const [playerId, playerThrow, playerWon] of [
+    [match.initiator_user_id, a, cmp === 1] as const,
+    [match.challenger_user_id!, b, cmp === -1] as const,
+  ]) {
+    const char = await getCharacter(env.DB, playerId);
+    if (char) {
+      const winsRow = await env.DB
+        .prepare(`SELECT COUNT(*) AS cnt FROM spd_matches WHERE (initiator_user_id = ? OR challenger_user_id = ?) AND status = 'resolved' AND winner_user_id = ?`)
+        .bind(playerId, playerId, playerId)
+        .first<{ cnt: number }>();
+      const totalWins = (winsRow?.cnt ?? 0) + (playerWon ? 1 : 0);
+      const spdIds = checkSpdAchievements({
+        existingAchievements: char.achievements,
+        won: playerWon,
+        throw_used: playerThrow,
+        isSpectator: false,
+        totalWins,
+      });
+      for (const id of spdIds) {
+        await grantAchievement(env.DB, playerId, id);
+      }
+    }
+  }
+  // Spectator bet achievement
+  for (const bet of bets) {
+    const betChar = await getCharacter(env.DB, bet.bettor_user_id);
+    if (betChar) {
+      const spectIds = checkSpdAchievements({
+        existingAchievements: betChar.achievements,
+        won: false,
+        throw_used: "stone",
+        isSpectator: true,
+        totalWins: 0,
+      });
+      for (const id of spectIds) {
+        await grantAchievement(env.DB, bet.bettor_user_id, id);
+      }
+    }
+  }
 
   const verb = SPD_THROW_META[winnerThrow].verb;
   const lines = [
@@ -8392,7 +8788,7 @@ async function restockShop(env: Env, channelId: string): Promise<void> {
   const generatedAt = Date.now();
   const items: Parameters<typeof insertShopStock>[1] = [];
   for (let i = 0; i < stockSize; i++) {
-    const roll = rollItem(tier);
+    const roll = rollItem(tier, true);
     const named = await resolveLootDrop(env, "the shopkeep's chest", roll);
     items.push({
       channel_id: channelId,
@@ -9287,7 +9683,96 @@ async function useBattleHymn(
 }
 
 // 📜 Staff Sage — Foresee. Reveal the current AND speculative next-next
-// telegraphed targets, with damage range estimates. Info-only; no state.
+// Shared intel body for Foresee — called on cast and on each subsequent
+// turn while foresee_turns > 0. Returns the multi-line readout string so
+// useForesee and appendForeseeIfActive can both call it without duplicating
+// the damage / triage logic.
+async function buildForeseeText(
+  env: Env,
+  quest: ActiveQuest,
+  header: string,
+): Promise<string> {
+  const fighters = (await getQuestParty(env.DB, quest.id)).filter(isFighter);
+  const tier = quest.scene.tier;
+  const partyBonus = Math.floor((Math.max(1, fighters.length) - 1) / 2);
+  const isBossP2 = quest.scene.variant === "boss" && quest.scene.boss_phase === 2;
+  const bossBonus = isBossP2 ? tier : 0;
+  const rawLo = 1 + tier + partyBonus + bossBonus;
+  const rawHi = 4 + tier + partyBonus + bossBonus;
+  const abilityState = quest.scene.ability_state ?? {};
+
+  const targetId = quest.scene.monster_telegraph?.target_user_id;
+  const target = targetId ? fighters.find((f) => f.slack_user_id === targetId) : null;
+
+  const lines: string[] = [header];
+
+  if (target) {
+    const targetItems = await getInventory(env.DB, target.slack_user_id);
+    const targetArmor = targetItems.find((i) => i.item_type === "armor" && i.equipped);
+    const armorPower = targetArmor?.power ?? 0;
+    const armorReduction = Math.floor(armorPower / 2);
+    const isBack = target.position === "back";
+    const netLo = isBack
+      ? Math.max(1, Math.round((rawLo - armorReduction) * 0.6))
+      : Math.max(1, rawLo - armorReduction);
+    const netHi = isBack
+      ? Math.max(1, Math.round((rawHi - armorReduction) * 0.6))
+      : Math.max(1, rawHi - armorReduction);
+    const survives = target.hp > netHi;
+    const verdict = survives
+      ? `✅ survives worst-case`
+      : target.hp <= netLo
+        ? `💀 *cannot survive* even min hit`
+        : `⚠️ *at risk* — worst case could down them`;
+    const armorNote = armorReduction > 0 ? ` (−${armorReduction} armor)` : "";
+    const posNote = isBack ? ` ×0.6 back-row` : "";
+    lines.push(
+      `\n🎯 *Next swing:* <@${targetId}> _(${target.position}-row, ${target.hp}/${target.max_hp} HP)_`,
+      `   Raw: *${rawLo}–${rawHi}*${armorNote}${posNote} → net *${netLo}–${netHi}* HP`,
+      `   ${verdict}`,
+    );
+  } else {
+    lines.push(`\n🎯 *Next swing:* no committed target yet — random pick next swing.`);
+  }
+
+  if (fighters.length > 1) {
+    const vanishedMap = abilityState.vanished ?? {};
+    const targetable = fighters.filter((f) => (vanishedMap[f.slack_user_id] ?? 0) <= 0);
+    const weights = targetable.map((f) => (f.position === "back" ? 1 : 3));
+    const total = weights.reduce((a, b) => a + b, 0);
+    const probLines = targetable.map((f, i) => {
+      const pct = Math.round((weights[i] / total) * 100);
+      return `<@${f.slack_user_id}> ${f.position} ${pct}%`;
+    });
+    lines.push(`\n🔮 *Next swing odds:* ${probLines.join("  ·  ")}`);
+    const vanished = Object.entries(vanishedMap).filter(([, v]) => (v as number) > 0);
+    if (vanished.length > 0) {
+      lines.push(`   _(${vanished.map(([id]) => `<@${id}> vanished`).join(", ")} — excluded from pool)_`);
+    }
+  }
+
+  lines.push(`\n💉 *Party triage:*`);
+  for (const f of fighters) {
+    const hpPct = f.max_hp > 0 ? f.hp / f.max_hp : 1;
+    const bar = hpPct >= 0.66 ? "🟩" : hpPct >= 0.33 ? "🟨" : "🟥";
+    const shieldNote = f.shield > 0 ? ` +${f.shield}🛡` : "";
+    lines.push(`   ${bar} <@${f.slack_user_id}> *${f.hp}/${f.max_hp}*${shieldNote} _(${f.position})_`);
+  }
+
+  const stateNotes: string[] = [];
+  const skipSwings = abilityState.skip_swings ?? 0;
+  if (skipSwings > 0) stateNotes.push(`⏸ Containerize: ${skipSwings} swing(s) remaining`);
+  const taunt = abilityState.taunt;
+  if (taunt && (taunt.swings_remaining ?? 0) > 0) stateNotes.push(`🛡 Taunt: <@${taunt.user_id}> drawing fire (${taunt.swings_remaining} left)`);
+  if (stateNotes.length > 0) lines.push(`\n⚙️ *Active effects:* ${stateNotes.join("  ·  ")}`);
+
+  return lines.join("\n");
+}
+
+// Full battle-intelligence readout for the Staff Sage. Costs 1 mana and
+// persists for 2 more of the Sage's own combat turns (foresee_turns in
+// ability_state). Each subsequent turn re-runs the readout against fresh
+// quest state so the intel stays current after each monster swing.
 async function useForesee(
   payload: SlashCommandPayload,
   env: Env,
@@ -9298,26 +9783,43 @@ async function useForesee(
 ): Promise<CommandResponse> {
   const ok = await tryDeductMana(env.DB, payload.user_id, ability.mana_cost);
   if (!ok) return ephemeral("Couldn't deduct mana — try again.");
-  // Current telegraph (committed).
-  const current = quest.scene.monster_telegraph?.target_user_id;
-  // Speculative next-next: pick a target from the alive fighter list,
-  // simulating what persistNextTelegraph would do after the next swing.
-  const fighters = (await getQuestParty(env.DB, quest.id)).filter(isFighter);
-  const speculative = fighters.length > 0
-    ? pickMonsterTarget(fighters, Math.random).slack_user_id
-    : null;
-  const tier = quest.scene.tier;
-  const lo = 1 + tier;
-  const hi = 6 + tier;
+
+  await patchAbilityState(env.DB, quest.id, { foresee_turns: 2 });
   await appendLog(env.DB, quest.id, payload.user_id, "ability", "Foresee");
-  const lines: string[] = [`📜 *${ability.name}!* <@${payload.user_id}> reads *${quest.scene.monster_name}*'s tells:`];
-  if (current) lines.push(`  🎯 Next swing → <@${current}> for est. *${lo}-${hi}* HP.`);
-  else lines.push(`  🎯 Next swing → no committed target yet (random pick).`);
-  if (speculative) lines.push(`  🔮 Round after → likely <@${speculative}> (subject to who's alive).`);
-  const text = lines.join("\n");
-  // Foresee is private to the Sage — knowing the monster's tells is the
-  // class's edge. Other players can ask but don't see automatically.
+
+  const header = `📜 *${ability.name}!* <@${payload.user_id}> reads *${quest.scene.monster_name}*'s tells:`;
+  const text = await buildForeseeText(env, quest, header);
   return ephemeral(text);
+}
+
+// Called after every combat action the Sage takes. If foresee_turns > 0,
+// re-runs the intel readout against current quest state (telegraph will have
+// updated since the cast) and appends it to the Sage's ephemeral response.
+// Decrements the counter; clears the key when it hits zero.
+async function appendForeseeIfActive(
+  response: CommandResponse,
+  env: Env,
+  userId: string,
+): Promise<CommandResponse> {
+  const quest = await getActiveQuestForCharacter(env.DB, userId);
+  if (!quest) return response;
+  const turns = quest.scene.ability_state?.foresee_turns ?? 0;
+  if (turns <= 0) return response;
+
+  const remaining = turns - 1;
+  // patchAbilityState serialises via JSON.stringify, so undefined drops the key.
+  await patchAbilityState(env.DB, quest.id, { foresee_turns: remaining > 0 ? remaining : undefined });
+
+  // Re-fetch so triage and telegraph reflect post-action state.
+  const freshQuest = await getActiveQuestForCharacter(env.DB, userId);
+  if (!freshQuest) return response;
+
+  const turnsNote = remaining > 0 ? ` _(${remaining} turn${remaining === 1 ? "" : "s"} remaining)_` : ` _(Foresee fades)_`;
+  const header = `📜 *Foresee* — *${freshQuest.scene.monster_name}* intel update:${turnsNote}`;
+  const foreseeText = await buildForeseeText(env, freshQuest, header);
+
+  const existing = "text" in response ? (response.text ?? "") : "";
+  return ephemeral(`${existing}\n\n${foreseeText}`);
 }
 
 // 🌿 Backend Druid — Migrate. Move any partymate (including self) to
@@ -9780,6 +10282,9 @@ function catalogPowerUnit(itemName: string): string | null {
     case "Production Outage":  return "% boss HP";
     case "Espresso Shot":      return "HP/tick × 5";
     case "Poison Vial":        return "poison/tick × 4";
+    case "Venom Vial":         return "poison/tick × 4";
+    case "Regen Draft":        return "HP/tick × 3";
+    case "Battle Elixir":      return "+25% dmg × 3";
     default:                   return null;
   }
 }
@@ -9984,6 +10489,14 @@ interface MonsterTurnOutcome {
   // persists the target's new HP/shield and treat this as a no-op turn.
   // The monsterLine still describes the fizzle so the thread reads coherently.
   skipped?: boolean;
+  // Set when this is a boss AoE splash (hits the whole party).
+  isSplash?: boolean;
+  splashTargets?: Array<{
+    fighter: Character;
+    dmg: { newShield: number; newHp: number; shieldAbsorbed: number; hpDamage: number };
+    positionAdjusted: number;
+    willKill: boolean;
+  }>;
 }
 
 // Picks the next monster target and stores it on scene.monster_telegraph so
@@ -10175,6 +10688,78 @@ async function performMonsterTurn(
     };
   }
   const targetPool = targetable;
+
+  // ── Boss splash (AoE) ──
+  // Bosses have a ~25% (phase 1) or ~40% (phase 2) chance to slam the whole
+  // non-vanished party instead of a single target. Taunt does NOT redirect a
+  // splash. Only fires when multiple fighters are alive.
+  const isBossVariant = quest.scene.variant === "boss";
+  const isBossPhase2 = isBossVariant && quest.scene.boss_phase === 2;
+  const splashRoll = Math.ceil(Math.random() * 5);
+  const doSplash = isBossVariant && targetPool.length > 1 && splashRoll <= (isBossPhase2 ? 2 : 1);
+
+  if (doSplash) {
+    const splashResults: NonNullable<MonsterTurnOutcome["splashTargets"]> = [];
+    for (const f of targetPool) {
+      const fArmor = f.slack_user_id === actor.slack_user_id
+        ? actorArmor
+        : await getEquipped(env.DB, f.slack_user_id, "armor");
+      const hit = resolveMonsterHit(
+        quest.scene.tier,
+        fighters.length,
+        fArmor?.power ?? 0,
+        isBossPhase2,
+        rollDice,
+      );
+      const posAdj = fighters.length > 1
+        ? positionDamageMod(f.position, hit.final)
+        : hit.final;
+      const dmg = applyDamageWithShield(posAdj, f.shield, f.hp);
+      splashResults.push({ fighter: f, dmg, positionAdjusted: posAdj, willKill: dmg.newHp <= 0 });
+    }
+
+    // Decrement vanished counters (splash still "uses up" the swing).
+    // Taunt is NOT decremented — splash ignores taunt.
+    const vanishedUserIds = Object.keys(vanishedMap).filter((uid) => (vanishedMap[uid] ?? 0) > 0);
+    if (vanishedUserIds.length > 0) {
+      const nextVanished: Record<string, number> = {};
+      for (const uid of vanishedUserIds) {
+        const remaining = (vanishedMap[uid] ?? 0) - 1;
+        if (remaining > 0) nextVanished[uid] = remaining;
+      }
+      const nextState: NonNullable<SceneJson["ability_state"]> = { ...abilityState };
+      nextState.vanished = Object.keys(nextVanished).length > 0 ? nextVanished : undefined;
+      await writeAbilityState(env.DB, quest.id, nextState);
+    }
+
+    const firstKilled = splashResults.find((r) => r.willKill);
+    const representative = firstKilled?.fighter ?? actor;
+    const monsterLines: string[] = [
+      `💥 *${quest.scene.monster_name}* unleashes a devastating slam — the whole party takes the hit!`,
+    ];
+    for (const r of splashResults) {
+      const armorPart = r.fighter.slack_user_id === actor.slack_user_id
+        ? ""
+        : "";
+      const shieldPart = r.dmg.shieldAbsorbed > 0
+        ? ` — *${r.dmg.shieldAbsorbed}* absorbed by shield, *${r.dmg.hpDamage}* to HP`
+        : "";
+      monsterLines.push(`• <@${r.fighter.slack_user_id}> (*${r.fighter.name}*): *${r.positionAdjusted}* dmg${shieldPart} → *${Math.max(0, r.dmg.newHp)}*/*${r.fighter.max_hp}* HP`);
+      void armorPart;
+    }
+
+    return {
+      target: representative,
+      victimWasActor: representative.slack_user_id === actor.slack_user_id,
+      monsterLine: monsterLines.join("\n"),
+      dmg: splashResults.find((r) => r.fighter.slack_user_id === representative.slack_user_id)?.dmg
+        ?? { newShield: representative.shield, newHp: representative.hp, shieldAbsorbed: 0, hpDamage: 0 },
+      positionAdjusted: splashResults.find((r) => r.fighter.slack_user_id === representative.slack_user_id)?.positionAdjusted ?? 0,
+      willKillTarget: !!firstKilled,
+      isSplash: true,
+      splashTargets: splashResults,
+    };
+  }
 
   // 🛡 SRE Warden Taunt — overrides the telegraph if the taunter is still in
   // the target pool (alive + not vanished). Otherwise fall through to the

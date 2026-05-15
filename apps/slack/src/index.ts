@@ -3,7 +3,7 @@ import { Hono } from "hono";
 import type { CombatEvent, CombatState, TurnAction } from "@gantt-quest/core";
 
 import { pregenAllViewArt } from "./ai";
-import { handleCommand, handleInteraction } from "./commands";
+import { handleCommand, handleInteraction, rebuildTownState } from "./commands";
 import {
   parseInteractivePayload,
   parseSlashCommand,
@@ -236,4 +236,30 @@ app.post("/slack/interactive", async (c) => {
   return c.text("", 200);
 });
 
-export default app;
+// Daily cron: rebuild town state (job board, NPCs, shop) for every channel
+// that has an existing town_state row. Runs early morning so the board is
+// fresh before players arrive. Configure the trigger time in wrangler.jsonc
+// under `triggers.crons`.
+async function scheduledRefresh(env: Env, ctx: ExecutionContext) {
+  const rows = await env.DB
+    .prepare(`SELECT DISTINCT channel_id FROM town_state`)
+    .all<{ channel_id: string }>();
+  const channels = rows.results?.map((r) => r.channel_id) ?? [];
+  // Fallback: if no town state exists yet, seed the configured channel.
+  if (channels.length === 0 && env.ALLOWED_CHANNEL_ID) {
+    channels.push(env.ALLOWED_CHANNEL_ID);
+  }
+  console.log("scheduled:town_refresh", { channels });
+  ctx.waitUntil(
+    Promise.all(channels.map((ch) => rebuildTownState(env, ch).catch((err) => {
+      console.error("scheduled:town_refresh:error", { channel: ch, err: String(err) });
+    }))),
+  );
+}
+
+export default {
+  fetch: app.fetch.bind(app),
+  async scheduled(_event: ScheduledEvent, env: Env, ctx: ExecutionContext) {
+    await scheduledRefresh(env, ctx);
+  },
+};

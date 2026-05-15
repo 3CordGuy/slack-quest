@@ -175,6 +175,13 @@ type CombatEvent =
       predicted_target: string | null;
       damage_lo: number;
       damage_hi: number;
+      net_lo: number;
+      net_hi: number;
+      verdict: "safe" | "at_risk" | "lethal";
+      probabilities: Array<{ id: string; position: "front" | "back"; pct: number }>;
+      triage: Array<{ id: string; hp: number; max_hp: number; shield: number; position: "front" | "back" }>;
+      active: { containerize: number; taunt_actor: string | null; taunt_swings: number; vanished: string[] };
+      turns_remaining: number;
     }
   | {
       type: "ability_migrate";
@@ -186,6 +193,16 @@ type CombatEvent =
   | { type: "monster_swing_skipped"; reason: string }
   | { type: "monster_target_redirected"; from: string; to: string; reason: string }
   | { type: "monster_target_blocked"; reason: string }
+  | {
+      type: "monster_splash";
+      targets: Array<{
+        target: string;
+        raw_damage: number;
+        damage_after_armor: number;
+        shield_absorbed: number;
+        hp_damage: number;
+      }>;
+    }
   | { type: "battle_hymn_consumed"; actor: string; bonus: number; remaining: number }
   | { type: "mark_applied"; actor: string; expires_after_round: number; bonus: number }
   | { type: "mark_bonus"; actor: string; bonus: number }
@@ -274,6 +291,10 @@ interface LootDrop {
 interface FighterReward {
   user_id: string;
   damage_dealt: number;
+  damage_taken: number;
+  healing_done: number;
+  shielding_done: number;
+  kills: number;
   xp_awarded: number;
   gold_awarded: number;
   level_up: boolean;
@@ -328,11 +349,17 @@ function reducer(s: UiState, a: UiAction): UiState {
       return { ...s, connection: a.value };
     case "state":
       return { ...s, state: a.value };
-    case "events":
-      return {
-        ...s,
-        log: [...s.log, ...a.value.flatMap((e) => formatEvent(e, s.state))].slice(-50),
-      };
+    case "events": {
+      try {
+        return {
+          ...s,
+          log: [...s.log, ...a.value.flatMap((e) => formatEvent(e, s.state))].slice(-50),
+        };
+      } catch (err) {
+        console.error("[CombatPage] event render error:", err);
+        return s;
+      }
+    }
     case "flavor": {
       const iconName = a.value.kind === "victory" ? "trophy"
         : a.value.kind === "death" ? "death-skull"
@@ -402,6 +429,8 @@ function formatEvent(e: CombatEvent, state: CombatState | null): UiState["log"] 
         shield_absorbed: e.shield_absorbed,
         hp_damage: e.hp_damage,
       }];
+    case "monster_splash":
+      return row("fire", <span style={{ color: "#f97316" }}>💥 SPLASH — {e.targets.map(t => `${nameOf(t.target)} (${t.hp_damage} dmg)`).join(", ")}</span>, "bad");
     case "boss_phase_transition":
       return row("fire", "The boss enters phase 2!", "bad");
     case "fighter_down":
@@ -488,9 +517,10 @@ function formatEvent(e: CombatEvent, state: CombatState | null): UiState["log"] 
     case "ability_containerize":
       return row("cubes", <>Stasis container — monster will skip {e.swings} swing.</>, "good");
     case "ability_regression_shield": {
-      const summary = e.grants.length === 0
+      const grants = e.grants ?? [];
+      const summary = grants.length === 0
         ? "everyone at cap"
-        : e.grants.map((g) => `+${g.amount} ${nameOf(g.target)}`).join(", ");
+        : grants.map((g) => `+${g.amount} ${nameOf(g.target)}`).join(", ");
       return row("fairy-wand", <>Regression Shield — {summary}.</>, "good");
     }
     case "ability_vanish":
@@ -500,8 +530,52 @@ function formatEvent(e: CombatEvent, state: CombatState | null): UiState["log"] 
     case "ability_battle_hymn":
       return row("aura", <>Battle Hymn — next {e.charges_added} party attacks deal +2 dmg.</>, "good");
     case "ability_foresee": {
-      const who = e.predicted_target ? nameOf(e.predicted_target) : "no committed target";
-      return row("scroll-unfurled", <>Foresee — monster looks ready to hit {who} for ~{e.damage_lo}-{e.damage_hi} HP.</>, "info");
+      const target = e.predicted_target ? nameOf(e.predicted_target) : null;
+      const verdictEl = e.verdict === "safe"
+        ? <><Icon name="aura" color="#22c55e" /> safe</>
+        : e.verdict === "lethal"
+        ? <><Icon name="death-skull" color="#dc2626" /> lethal</>
+        : <><Icon name="fire-symbol" color="#d97706" /> at risk</>;
+      const remaining = e.turns_remaining ?? 0;
+      const refreshNote = remaining > 0
+        ? ` (${remaining} turn${remaining === 1 ? "" : "s"} left)`
+        : " (fades)";
+      const hasNet = e.net_lo != null && e.net_hi != null;
+      const swingLine = target
+        ? row("targeted", <> → {target} · raw {e.damage_lo}–{e.damage_hi}{hasNet ? <> net {e.net_lo}–{e.net_hi} HP</> : ""} · {verdictEl}</>, "info")
+        : row("targeted", <> No committed target yet</>, "info");
+      const probs = e.probabilities ?? [];
+      const probLine = probs.length > 1
+        ? row("crystal-ball", <>{probs.map((p) => `${nameOf(p.id)} ${p.position} ${p.pct}%`).join(" · ")}</>, "info")
+        : [];
+      const triage = e.triage ?? [];
+      const triageLine = triage.length > 0
+        ? row("health-increase", <>{triage.map((f) => {
+            const pct = f.max_hp > 0 ? f.hp / f.max_hp : 1;
+            const dot = pct >= 0.66
+              ? <Icon name="aura" color="#22c55e" />
+              : pct >= 0.33
+              ? <span style={{ color: "#d97706" }}>◆</span>
+              : <Icon name="death-skull" color="#dc2626" />;
+            return <span key={f.id} style={{ marginRight: 8 }}>{dot} {nameOf(f.id)} {f.hp}/{f.max_hp}{f.shield > 0 ? <> +{f.shield}<Icon name="shield" /></> : ""}</span>;
+          })}</>, "info")
+        : [];
+      const active = e.active;
+      const effectNotes = active ? [
+        (active.containerize ?? 0) > 0 && `Containerize ×${active.containerize}`,
+        active.taunt_actor && `Taunt→${nameOf(active.taunt_actor)} (${active.taunt_swings})`,
+        (active.vanished ?? []).length > 0 && `Vanished: ${active.vanished.map(nameOf).join(", ")}`,
+      ].filter(Boolean) : [];
+      const effectLine = effectNotes.length > 0
+        ? row("shield", <>{effectNotes.join(" · ")}</>, "info")
+        : [];
+      return [
+        ...row("scroll-unfurled", <>Foresee{refreshNote}</>, "info"),
+        ...swingLine,
+        ...probLine,
+        ...triageLine,
+        ...effectLine,
+      ];
     }
     case "ability_migrate":
       return row("grass", <>{nameOf(e.actor)} shifts {nameOf(e.target)} to the {e.to} row.</>, "info");
@@ -561,8 +635,6 @@ function formatEvent(e: CombatEvent, state: CombatState | null): UiState["log"] 
     case "rejected":
       return [{ id: nextLogId++, content: <>⚠ rejected: {e.reason}</>, tone: "bad" }];
     default: {
-      // Guard against future engine events not yet known to the client —
-      // unknown event → drop silently rather than crash the React tree.
       const _exhaustive: never = e;
       void _exhaustive;
       return [];
@@ -593,6 +665,7 @@ export function CombatPage({
   const [picking, setPicking] = useState<"heal" | "shield" | null>(null);
   const [itemPicker, setItemPicker] = useState<"closed" | "open" | { reviveItemId: number }>("closed");
   const [migratePicker, setMigratePicker] = useState<boolean>(false);
+  const [givePicker, setGivePicker] = useState<"closed" | "selectItem" | { itemId: number }>("closed");
   const [items, setItems] = useState<InventoryItem[]>([]);
   const wsRef = useRef<WebSocket | null>(null);
   const logScrollRef = useRef<HTMLDivElement | null>(null);
@@ -790,6 +863,17 @@ export function CombatPage({
     setMigratePicker(false);
   }
 
+  async function fireGive(itemId: number, toUserId: string) {
+    const res = await fetch(`/api/inventory/${itemId}/give`, {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ to_user_id: toUserId }),
+    });
+    if (res.ok) await loadItems();
+    setGivePicker("closed");
+  }
+
   return (
     <div style={page}>
       <div style={topBar}>
@@ -868,7 +952,22 @@ export function CombatPage({
                 onCancel={() => setMigratePicker(false)}
               />
             )}
-            {state.status === "active" && !picking && itemPicker === "closed" && !migratePicker && (
+            {state.status === "active" && givePicker === "selectItem" && (
+              <GiveItemPicker
+                items={items}
+                onPickItem={(id) => setGivePicker({ itemId: id })}
+                onCancel={() => setGivePicker("closed")}
+              />
+            )}
+            {state.status === "active" && typeof givePicker === "object" && "itemId" in givePicker && (
+              <GiveTargetPicker
+                fighters={state.fighters}
+                selfId={selfId}
+                onPick={(toId) => void fireGive((givePicker as { itemId: number }).itemId, toId)}
+                onCancel={() => setGivePicker("selectItem")}
+              />
+            )}
+            {state.status === "active" && !picking && itemPicker === "closed" && !migratePicker && givePicker === "closed" && (
               <ActionBar
                 disabled={!myTurn}
                 mana={myMana}
@@ -890,6 +989,18 @@ export function CombatPage({
                   }
                 }}
               />
+            )}
+            {state.status === "active" && givePicker === "closed" && !picking && itemPicker === "closed" && !migratePicker && items.some((i) => !i.equipped) && state.fighters.filter((f) => f.hp > 0 && f.id !== selfId).length > 0 && (
+              <button
+                onClick={() => setGivePicker("selectItem")}
+                style={{
+                  background: "none", border: "1px solid #3a3d44", borderRadius: 6,
+                  color: "#9ca3af", cursor: "pointer", padding: "4px 10px",
+                  fontSize: 11, fontFamily: "inherit", marginTop: 0,
+                }}
+              >
+                <Icon name="ammo-bag" size={10} /> Give item to ally
+              </button>
             )}
             <EventLog log={ui.log} scrollRef={logScrollRef} />
             {ended && state.status !== "victory" && !defeatModalReady && (
@@ -1177,7 +1288,7 @@ function FighterRow({ fighter, self, current }: { fighter: Fighter; self: boolea
             <span style={{ fontSize: 12, color: "#7dd3fc" }}>@{fighter.slack_username}</span>
           )}
           <span style={{ ...muted, fontSize: 12 }}>
-            {fighter.class} · <span title={fighter.scars.length > 0 ? fighter.scars.join(", ") : undefined}>Lv {fighter.level}</span>
+            {fighter.class} · <span title={(fighter.scars?.length ?? 0) > 0 ? fighter.scars.join(", ") : undefined}>Lv {fighter.level}</span>
           </span>
           <span style={badge(
             fighter.position === "front" ? "#2a1f3a" : "#1a2a1a",
@@ -1193,6 +1304,31 @@ function FighterRow({ fighter, self, current }: { fighter: Fighter; self: boolea
             <span style={badge("#3a1f1f", "#ff7676", "#5a2a2a")}>downed</span>
           )}
         </div>
+        {/* Status effects */}
+        {fighter.effects && fighter.effects.length > 0 && (
+          <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginBottom: 4, marginTop: 2 }}>
+            {fighter.effects.map((e, i) => {
+              const [color, icon] = e.type === "regen" ? ["#4ade80", "regeneration"]
+                : e.type === "bleeding" ? ["#f87171", "bleeding-hearts"]
+                : e.type === "burning" ? ["#fb923c", "fire"]
+                : ["#c084fc", "poison-cloud"];
+              return (
+                <span
+                  key={i}
+                  title={`${e.type} ×${e.magnitude} (${e.remaining} turns${e.source ? ` — ${e.source}` : ""})`}
+                  style={{
+                    display: "inline-flex", alignItems: "center", gap: 3,
+                    background: `${color}22`, border: `1px solid ${color}55`,
+                    borderRadius: 4, padding: "1px 5px",
+                    fontSize: 10, color, fontWeight: 600,
+                  }}
+                >
+                  <Icon name={icon} size={9} /> {e.magnitude}×{e.remaining}t
+                </span>
+              );
+            })}
+          </div>
+        )}
         {/* HP bar row — matches mana bar layout so numbers stay column-aligned */}
         <FighterHpRow hp={fighter.hp} maxHp={fighter.max_hp} shield={fighter.shield} />
         {fighter.max_mana > 0 && (
@@ -1256,7 +1392,7 @@ const ABILITY_BY_CLASS: Record<string, AbilityUiSpec> = {
   "Refactor Rogue":  { id: "vanish",             name: "Vanish",            iconName: "player-dodge",     mana_cost: 2, blurb: "Untargetable for 2 swings" },
   "Data Warlock":    { id: "soul_drain",         name: "Soul Drain",        iconName: "death-skull",      mana_cost: 2, blurb: "1d6+mag dmg, heal 50%" },
   "Frontend Bard":   { id: "battle_hymn",        name: "Battle Hymn",       iconName: "aura",             mana_cost: 2, blurb: "+2 dmg on next 2 party attacks" },
-  "Staff Sage":      { id: "foresee",            name: "Foresee",           iconName: "scroll-unfurled",  mana_cost: 1, blurb: "Read monster's next target" },
+  "Staff Sage":      { id: "foresee",            name: "Foresee",           iconName: "scroll-unfurled",  mana_cost: 1, blurb: "Full battle intel: next target, net damage, party triage, targeting odds. Persists 2 turns." },
   "Backend Druid":   { id: "migrate",            name: "Migrate",           iconName: "grass",            mana_cost: 1, blurb: "Move a partymate to front/back", needs_migrate_picker: true },
 };
 
@@ -1519,6 +1655,76 @@ function ReviveTargetPicker({
   );
 }
 
+function GiveItemPicker({
+  items,
+  onPickItem,
+  onCancel,
+}: {
+  items: InventoryItem[];
+  onPickItem: (id: number) => void;
+  onCancel: () => void;
+}) {
+  const giveable = items.filter((i) => !i.equipped);
+  return (
+    <div style={card}>
+      <div style={{ ...muted, fontSize: 12, marginBottom: 8 }}><Icon name="ammo-bag" /> Give which item?</div>
+      {giveable.length === 0 && <p style={{ ...muted, fontSize: 13 }}>No items to give.</p>}
+      <div style={{ display: "grid", gap: 8 }}>
+        {giveable.map((it) => (
+          <button
+            key={it.id}
+            onClick={() => onPickItem(it.id)}
+            style={{
+              ...button, marginTop: 0, padding: "8px 12px",
+              background: "#1d1f23", border: "1px solid #2a2d33",
+              textAlign: "left", display: "flex", justifyContent: "space-between", alignItems: "baseline",
+            }}
+          >
+            <span style={{ fontWeight: 600 }}>{it.item_name}</span>
+            <span style={{ ...muted, fontSize: 11 }}>+{it.power} · {it.rarity}</span>
+          </button>
+        ))}
+      </div>
+      <button onClick={onCancel} style={{ ...button, marginTop: 8, background: "transparent", border: "1px solid #2a2d33", color: "#9aa0a6" }}>Cancel</button>
+    </div>
+  );
+}
+
+function GiveTargetPicker({
+  fighters,
+  selfId,
+  onPick,
+  onCancel,
+}: {
+  fighters: Fighter[];
+  selfId: string;
+  onPick: (id: string) => void;
+  onCancel: () => void;
+}) {
+  const eligible = fighters.filter((f) => f.hp > 0 && f.id !== selfId);
+  return (
+    <div style={card}>
+      <div style={{ ...muted, fontSize: 12, marginBottom: 8 }}><Icon name="player" /> Give to who?</div>
+      {eligible.length === 0 && <p style={{ ...muted, fontSize: 13 }}>No alive allies.</p>}
+      <div style={{ display: "grid", gap: 8 }}>
+        {eligible.map((f) => (
+          <button
+            key={f.id}
+            onClick={() => onPick(f.id)}
+            style={{
+              ...button, marginTop: 0, padding: "10px 14px",
+              background: "#1d1f23", border: "1px solid #2a2d33", textAlign: "left",
+            }}
+          >
+            {f.name} <span style={{ ...muted, fontSize: 12 }}>· {f.class}</span>
+          </button>
+        ))}
+      </div>
+      <button onClick={onCancel} style={{ ...button, marginTop: 8, background: "transparent", border: "1px solid #2a2d33", color: "#9aa0a6" }}>Back</button>
+    </div>
+  );
+}
+
 function TargetPicker({
   kind,
   fighters,
@@ -1690,7 +1896,7 @@ function EventLog({
           maxHeight: 280,
           overflowY: "auto",
           fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
-          fontSize: 12,
+          fontSize: 13,
           background: "#0e0f12",
           borderRadius: 8,
           padding: 12,
@@ -1708,7 +1914,7 @@ function EventLog({
                 gap: 6,
                 margin: "6px 0 2px",
                 color: "#4b5563",
-                fontSize: 10,
+                fontSize: 11,
                 textTransform: "uppercase",
                 letterSpacing: 1,
               }}>
@@ -2098,9 +2304,6 @@ function RewardRow({
         <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
           <span style={{ fontWeight: 700, color: "#f5f5f5" }}>{fighterName}</span>
           {isSelf && <span style={{ ...muted, fontSize: 12 }}>(you)</span>}
-          <span style={{ ...muted, fontSize: 11, fontVariantNumeric: "tabular-nums" }}>
-            · {reward.damage_dealt} dmg
-          </span>
         </div>
         <div style={{ fontSize: 13, fontVariantNumeric: "tabular-nums", color: "#e6e6e6" }}>
           {won
@@ -2109,6 +2312,13 @@ function RewardRow({
               ? "downed"
               : "—"}
         </div>
+      </div>
+      <div style={{ marginTop: 6, display: "flex", flexWrap: "wrap", gap: 10, fontSize: 11 }}>
+        {reward.damage_dealt > 0 && <span style={{ color: "#f87171" }}>⚔ {reward.damage_dealt} dealt</span>}
+        {reward.damage_taken > 0 && <span style={{ color: "#94a3b8" }}>🛡 {reward.damage_taken} taken</span>}
+        {reward.healing_done > 0 && <span style={{ color: "#4ade80" }}>💚 {reward.healing_done} healed</span>}
+        {reward.shielding_done > 0 && <span style={{ color: "#7dd3fc" }}>🔷 {reward.shielding_done} shielded</span>}
+        {reward.kills > 0 && <span style={{ color: "#facc15" }}>🏆 killing blow</span>}
       </div>
       {reward.level_up && (
         <div style={{ marginTop: 6, fontSize: 13, color: "#facc15", fontWeight: 600 }}>
@@ -2454,7 +2664,7 @@ function BigHpBar({ current, max }: { current: number; max: number }) {
       height={14}
       borderRadius={7}
       marginTop={10}
-      healthColor={(pct) => pct < 0.25 ? "#fca5a5" : pct < 0.5 ? "#fbbf24" : "#ef4444"}
+      healthColor={(pct) => pct < 0.25 ? "#dc2626" : pct < 0.5 ? "#d97706" : "#16a34a"}
     />
   );
 }
