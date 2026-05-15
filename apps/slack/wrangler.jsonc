@@ -23,6 +23,15 @@
       "bucket_name": "gantt-quest-assets"
     }
   ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "QUEST_ROOM",
+        "class_name": "QuestRoom",
+        "script_name": "gantt-quest-web"
+      }
+    ]
+  },
   "vars": {
     "BOT_NAME": "Gantt Quest",
     "IMAGE_BASE_URL": "https://gantt-quest.3cordguy.workers.dev"
