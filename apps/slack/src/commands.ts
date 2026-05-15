@@ -261,6 +261,14 @@ export interface CommandResponse {
   // expired buttons is cleared so the chat stays clean. NEVER sent to
   // Slack as a normal response field.
   _deleteOriginal?: boolean;
+  // Internal-only flag: when false, the /slack/interactive route passes
+  // `replace_original: false` to response_url so the ephemeral does NOT
+  // edit/replace the original message that the user clicked from. Used
+  // for fire-and-forget acks like the [Join on web] URL-button click,
+  // which should leave the recruitment card intact for other users.
+  // Slack's default for block_actions response_urls is replace_original:
+  // true, hence the explicit opt-out. NEVER sent as a normal response field.
+  _replaceOriginal?: boolean;
 }
 
 const DOWNED_COOLDOWN_MS = 12 * 60 * 60 * 1000;
@@ -876,9 +884,17 @@ export async function handleInteraction(
   // interactivity payload for URL buttons even though it also opens the
   // URL in the user's browser; we ack with a brief ephemeral instead of
   // letting it fall through to the "Unknown action" error message.
-  // No dispatch needed — the actual navigation already happened.
+  // _replaceOriginal: false keeps the recruitment card intact (Slack's
+  // default for block_actions response_urls is to REPLACE the original;
+  // here that would dismiss the card for the clicker so they can't come
+  // back to use [Join here], and other channel members would still see
+  // it — confusing inconsistency we explicitly opt out of).
   if (action.action_id.startsWith("link_quest_web_")) {
-    return ephemeral("🌐 Opening on web…");
+    return {
+      text: "🌐 Opening on web…",
+      response_type: "ephemeral",
+      _replaceOriginal: false,
+    };
   }
   // Recruitment-card "Join here" button. action_id encodes the quest id
   // (`join_quest_<id>`) for uniqueness, but handleJoin looks up the active

@@ -218,6 +218,11 @@ app.post("/slack/interactive", async (c) => {
             response_type: response.response_type ?? "ephemeral",
             text: response.text,
             blocks: response.blocks,
+            // Only pass replace_original when the handler explicitly opted
+            // out (false). Leaving it undefined lets Slack apply its
+            // default for block_actions (replace_original: true), which is
+            // what most action handlers want.
+            ...(response._replaceOriginal === false ? { replace_original: false } : {}),
           });
         }
       } catch (err) {
