@@ -162,14 +162,22 @@ import {
   type ActiveQuest,
   type Character,
   type CharGender,
+  generateGridDungeon,
+  openDoor,
+  tryMove,
   type DungeonDirection,
   type DungeonGraph,
   type DungeonNode,
   type ExpeditionNode,
   type ExpeditionNodeType,
   type ExpeditionState,
+  type GridDoor,
+  type GridRoomContent,
   type KeyTier,
+  type LootOption,
+  type MonsterSpec,
   type SceneJson,
+  type TrapChoice,
 } from "@gantt-quest/db";
 
 // =============================================================================
@@ -1283,6 +1291,143 @@ async function buildDungeonScene(
   };
 }
 
+// ── Grid dungeon scene builder (new system) ─────────────────────────────────
+// Generates a SceneJson with `graph` populated (grid-based dungeon). The grid
+// generator (packages/db/src/dungeon_grid.ts) handles layout + door placement;
+// this function fills in AI-generated theme + monster names + loot flavor.
+//
+// Grid sizing: 4×4 (low tier), 4×5 (mid), 5×5 (high). Target ~10 rooms.
+async function buildGridDungeonScene(
+  env: Pick<Env, "AI" | "ART">,
+  character: Pick<Character, "name" | "class" | "level">,
+  elite: boolean,
+  avoidNames: string[] = [],
+): Promise<SceneJson> {
+  const art = { bucket: env.ART, baseUrl: WEB_PUBLIC_BASE };
+  const baseTier = Math.max(1, character.level + (elite ? 1 : 0));
+  const seed = Math.floor(Math.random() * 0x7fffffff);
+
+  // Grid dims scale with level
+  const width = character.level >= 5 ? 5 : 4;
+  const height = character.level >= 4 ? 5 : 4;
+  const targetRoomCount = Math.min(width * height, character.level >= 5 ? 14 : character.level >= 3 ? 12 : 10);
+
+  // Pre-roll loot pools. We over-provision and pop from these in the callbacks.
+  function mkLoot(rollTier: number): LootOption {
+    const r = rollItem(rollTier);
+    return {
+      name: `${r.type === "weapon" ? "Weapon" : r.type === "armor" ? "Armor" : "Item"} (power ${r.power})`,
+      item_type: r.type,
+      power: r.power,
+      rarity: r.rarity,
+      flavor: "",
+      weapon_range: r.weapon_range ?? null,
+      ...(r.slot ? { slot: r.slot } : {}),
+      ...(r.stat_bonus ? { stat_bonus: r.stat_bonus as Record<string, number> } : {}),
+      ...(r.item_subtype ? { item_subtype: r.item_subtype } : {}),
+    };
+  }
+
+  // Roll AI theme + boss + a few monster packs in parallel.
+  const monsterPackSize = 1; // one monster per encounter for v1
+  const encounterCount = Math.max(3, Math.floor(targetRoomCount * 0.4));
+  const [theme, ...encounterScenes] = await Promise.all([
+    generateExpeditionTheme(env.AI),
+    ...Array.from({ length: encounterCount }, () =>
+      generateOpeningScene(env.AI, character, elite, "standard", undefined, avoidNames, art),
+    ),
+  ]);
+
+  const bossScene = await generateOpeningScene(env.AI, character, elite, "boss", undefined, avoidNames, art);
+
+  // Build a queue of monster packs the generator's callback can pop from.
+  const encounterPacks: MonsterSpec[][] = encounterScenes.map((s) => [{
+    name: s.monster_name,
+    hp: s.monster_max_hp,
+    max_hp: s.monster_max_hp,
+    tier: s.tier,
+    art_url: s.monster_art_url ?? null,
+  }]);
+  const bossPack: MonsterSpec[] = [{
+    name: bossScene.monster_name,
+    hp: bossScene.monster_max_hp,
+    max_hp: bossScene.monster_max_hp,
+    tier: bossScene.tier,
+    is_boss: true,
+    art_url: bossScene.monster_art_url ?? null,
+  }];
+
+  let encounterIdx = 0;
+  function rollMonsterPack(_tier: number, isBoss: boolean): MonsterSpec[] {
+    if (isBoss) return bossPack;
+    // Cycle through pre-rolled encounters; if we run out, dupe the last one.
+    const pack = encounterPacks[encounterIdx % encounterPacks.length];
+    encounterIdx++;
+    return pack.map((m) => ({ ...m, hp: m.max_hp })); // fresh copy
+  }
+
+  function rollLoot(rollTier: number, kind: "loot" | "treasure" | "merchant" | "npc"): LootOption[] {
+    const count = kind === "treasure" ? 3 : kind === "merchant" ? 3 : kind === "loot" ? 2 : 1;
+    return Array.from({ length: count }, () => mkLoot(rollTier));
+  }
+
+  const failDamage = 4 + Math.max(1, character.level);
+  function rollTrap(_tier: number): TrapChoice[] {
+    return [
+      { text: "Force your way through", emoji: "💪", skill: "str", fail_damage: failDamage },
+      { text: "Disarm the mechanism", emoji: "🔧", skill: "dex", fail_damage: failDamage },
+      { text: "Decipher the ward", emoji: "📜", skill: "int", fail_damage: failDamage },
+    ];
+  }
+
+  function npcGreeting(): string {
+    return "A weary traveler nods at you. \"Care to trade?\"";
+  }
+  function merchantGreeting(): string {
+    return "A hooded merchant gestures at their wares.";
+  }
+  function describeRoom(kind: GridRoomContent["kind"], _shape: string): string {
+    switch (kind) {
+      case "entry": return "You step into the dungeon. The way forward beckons.";
+      case "empty": return "A quiet stretch of corridor. Dust drifts in shafts of light.";
+      case "encounter": return "A foe lurks ahead.";
+      case "boss": return "The boss-chamber. Something terrible waits within.";
+      case "loot": return "An item glints on the floor.";
+      case "key_pickup": return "A key dangles from a rusted hook.";
+      case "trap": return "Suspicious mechanisms line the walls.";
+      case "lockbox": return "A locked chest sits in the room.";
+      case "npc": return "Someone is here.";
+      case "merchant": return "A merchant's stall has been set up here.";
+    }
+  }
+
+  const graph = generateGridDungeon({
+    seed,
+    tier: baseTier,
+    width,
+    height,
+    targetRoomCount,
+    rollMonsterPack,
+    rollLoot,
+    rollTrap,
+    npcGreeting,
+    merchantGreeting,
+    describeRoom,
+  });
+
+  // Entry node carries the scene's display info.
+  const entry = graph.nodes[graph.current];
+  return {
+    monster_name: "—",
+    monster_hp: 0,
+    monster_max_hp: 0,
+    tier: baseTier,
+    scene: entry.description,
+    variant: "dungeon",
+    graph,
+  };
+}
+
 // Start a fresh quest. Supports standard / boss / gauntlet / dungeon variants.
 app.post("/api/quest/start", async (c) => {
   const session = await currentSession(c.env.DB, c.req.header("cookie"));
@@ -1327,7 +1472,7 @@ app.post("/api/quest/start", async (c) => {
       upcoming_waves: gen.upcoming_waves.map((w) => ({ name: w.name, max_hp: w.max_hp, scene: "" })),
     };
   } else if (variant === "dungeon") {
-    scene = await buildDungeonScene(c.env, character, elite, avoidNames);
+    scene = await buildGridDungeonScene(c.env, character, elite, avoidNames);
   } else {
     scene = await generateOpeningScene(
       c.env.AI,
@@ -1753,7 +1898,7 @@ app.post("/api/board/take", async (c) => {
       upcoming_waves: gen.upcoming_waves.map((w) => ({ name: w.name, max_hp: w.max_hp, scene: "" })),
     };
   } else if (variant === "dungeon") {
-    scene = await buildDungeonScene(c.env, character, false, avoidNames);
+    scene = await buildGridDungeonScene(c.env, character, false, avoidNames);
   } else {
     scene = await generateOpeningScene(
       c.env.AI, character, false,
@@ -3967,12 +4112,32 @@ app.post("/api/quest/:id/dungeon/graph/move", async (c) => {
 
   const currentNode = graph.nodes[graph.current];
   if (!currentNode) return c.json({ error: "corrupt_graph" }, 500);
+  // Grid content uses `content.kind === 'encounter'`, legacy uses `currentNode.encounter`.
+  const hasGridEncounter = currentNode.content?.kind === "encounter" && !currentNode.content.cleared;
+  const hasGridBoss = currentNode.content?.kind === "boss" && !currentNode.content.cleared;
   if (currentNode.encounter && !currentNode.encounter.cleared) {
     return c.json({ error: "encounter_active", monster: currentNode.encounter.monsters[0]?.name }, 409);
   }
+  if (hasGridEncounter || hasGridBoss) {
+    const monsters = currentNode.content?.kind === "encounter" ? currentNode.content.monsters
+      : currentNode.content?.kind === "boss" ? currentNode.content.monsters : [];
+    return c.json({ error: "encounter_active", monster: monsters[0]?.name }, 409);
+  }
 
-  const targetId = currentNode.exits[dir as DungeonDirection];
-  if (!targetId) return c.json({ error: "no_exit" }, 400);
+  // Grid-aware door check: locked/barred doors block movement.
+  const move = tryMove(graph, graph.current, dir as DungeonDirection);
+  if (move.kind === "needs_key") {
+    const door = currentNode.doors?.[dir as DungeonDirection];
+    return c.json({ error: "door_locked", door, tier: move.tier }, 423);
+  }
+  if (move.kind === "must_skill_check") {
+    const door = currentNode.doors?.[dir as DungeonDirection];
+    return c.json({ error: "door_barred", door }, 423);
+  }
+  if (move.kind === "blocked") {
+    return c.json({ error: "no_exit", reason: move.reason }, 400);
+  }
+  const targetId = move.toRoomId;
   const targetNode = graph.nodes[targetId];
   if (!targetNode) return c.json({ error: "corrupt_graph" }, 500);
 
@@ -3984,7 +4149,23 @@ app.post("/api/quest/:id/dungeon/graph/move", async (c) => {
     nodes: { ...graph.nodes, [targetId]: updatedTarget },
   };
   let updatedScene: SceneJson = { ...quest.scene, graph: updatedGraph };
-  if (updatedTarget.encounter && !updatedTarget.encounter.cleared && updatedTarget.encounter.monsters.length > 0) {
+  // Grid content takes priority; fall through to legacy encounter for AI graphs.
+  const gridMonsters =
+    updatedTarget.content?.kind === "encounter" && !updatedTarget.content.cleared ? updatedTarget.content.monsters
+    : updatedTarget.content?.kind === "boss" && !updatedTarget.content.cleared ? updatedTarget.content.monsters
+    : null;
+  if (gridMonsters && gridMonsters.length > 0) {
+    const m = gridMonsters[0];
+    updatedScene = {
+      ...updatedScene,
+      monster_name: m.name,
+      monster_hp: m.hp,
+      monster_max_hp: m.max_hp,
+      tier: m.tier,
+      monster_art_url: m.art_url ?? undefined,
+      monster_effects: [],
+    };
+  } else if (updatedTarget.encounter && !updatedTarget.encounter.cleared && updatedTarget.encounter.monsters.length > 0) {
     const monster = updatedTarget.encounter.monsters[0];
     updatedScene = {
       ...updatedScene,
@@ -3994,12 +4175,122 @@ app.post("/api/quest/:id/dungeon/graph/move", async (c) => {
       tier: monster.tier,
       monster_art_url: monster.art_url ?? undefined,
       monster_effects: [],
-      marked_by: undefined,
-      marked_until: undefined,
     };
+  } else {
+    // Non-combat room — reset monster fields so the UI doesn't show a stale bar.
+    updatedScene = { ...updatedScene, monster_name: "—", monster_hp: 0, monster_max_hp: 0, monster_effects: [] };
   }
   await saveScene(c.env.DB, quest.id, updatedScene);
-  return c.json({ ok: true, current_node: updatedTarget, has_encounter: !!(updatedTarget.encounter && !updatedTarget.encounter.cleared) });
+  return c.json({
+    ok: true,
+    current_node: updatedTarget,
+    has_encounter: !!(gridMonsters || (updatedTarget.encounter && !updatedTarget.encounter.cleared)),
+  });
+});
+
+// ── Door interactions: use_key, pick, bash ──────────────────────────────────
+// Shared loader: returns (session, quest, graph, currentNode, dir, door) or an error.
+async function loadDoorContext(c: { env: Env; req: Request }, p: { id: string }) {
+  // No-op placeholder; inline in each handler for clarity.
+  return null;
+}
+
+app.post("/api/quest/:id/dungeon/grid/use_key", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const questId = parseInt(c.req.param("id"), 10);
+  if (!Number.isFinite(questId)) return c.json({ error: "bad_quest_id" }, 400);
+  const quest = await getActiveQuestForCharacter(c.env.DB, session.slack_user_id);
+  if (!quest || quest.id !== questId) return c.json({ error: "quest_not_active" }, 404);
+  const graph = quest.scene.graph;
+  if (!graph) return c.json({ error: "not_a_graph_dungeon" }, 400);
+  const body = (await c.req.json().catch(() => null)) as { direction?: unknown } | null;
+  const dir = typeof body?.direction === "string" ? body.direction.toLowerCase() as DungeonDirection : null;
+  if (!dir || !["n","e","s","w"].includes(dir)) return c.json({ error: "bad_direction" }, 400);
+  const currentNode = graph.nodes[graph.current];
+  const door = currentNode?.doors?.[dir];
+  if (!door || door.state !== "locked") return c.json({ error: "door_not_locked" }, 400);
+  const character = await getCharacter(c.env.DB, session.slack_user_id);
+  if (!character) return c.json({ error: "no_character" }, 404);
+  const tier = door.lock_tier ?? "bronze";
+  const keyField = tier === "bronze" ? "keys_bronze" : tier === "silver" ? "keys_silver" : "keys_gold";
+  const have = character[keyField as keyof Character] as number;
+  if (have <= 0) return c.json({ error: "no_key", tier }, 400);
+  // Deduct one key.
+  await c.env.DB.prepare(`UPDATE characters SET ${keyField} = ${keyField} - 1 WHERE slack_user_id = ?`)
+    .bind(session.slack_user_id).run();
+  // Open both sides of the door.
+  openDoor(graph, graph.current, dir, "open");
+  await saveScene(c.env.DB, quest.id, { ...quest.scene, graph });
+  return c.json({ ok: true, action: "used_key", tier });
+});
+
+app.post("/api/quest/:id/dungeon/grid/pick", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const questId = parseInt(c.req.param("id"), 10);
+  if (!Number.isFinite(questId)) return c.json({ error: "bad_quest_id" }, 400);
+  const quest = await getActiveQuestForCharacter(c.env.DB, session.slack_user_id);
+  if (!quest || quest.id !== questId) return c.json({ error: "quest_not_active" }, 404);
+  const graph = quest.scene.graph;
+  if (!graph) return c.json({ error: "not_a_graph_dungeon" }, 400);
+  const body = (await c.req.json().catch(() => null)) as { direction?: unknown } | null;
+  const dir = typeof body?.direction === "string" ? body.direction.toLowerCase() as DungeonDirection : null;
+  if (!dir || !["n","e","s","w"].includes(dir)) return c.json({ error: "bad_direction" }, 400);
+  const currentNode = graph.nodes[graph.current];
+  const door = currentNode?.doors?.[dir];
+  if (!door || door.state !== "locked") return c.json({ error: "door_not_locked" }, 400);
+  const character = await getCharacter(c.env.DB, session.slack_user_id);
+  if (!character) return c.json({ error: "no_character" }, 404);
+  // d20 + DEX mod vs pick_dc
+  const dexMod = Math.floor(((character.dex ?? 5) - 5) / 2);
+  const roll = 1 + Math.floor(Math.random() * 20);
+  const total = roll + dexMod;
+  const dc = door.pick_dc ?? 12;
+  const success = total >= dc;
+  if (success) {
+    openDoor(graph, graph.current, dir, "open");
+    await saveScene(c.env.DB, quest.id, { ...quest.scene, graph });
+  }
+  return c.json({ ok: true, action: "pick", roll, modifier: dexMod, total, dc, success });
+});
+
+app.post("/api/quest/:id/dungeon/grid/bash", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const questId = parseInt(c.req.param("id"), 10);
+  if (!Number.isFinite(questId)) return c.json({ error: "bad_quest_id" }, 400);
+  const quest = await getActiveQuestForCharacter(c.env.DB, session.slack_user_id);
+  if (!quest || quest.id !== questId) return c.json({ error: "quest_not_active" }, 404);
+  const graph = quest.scene.graph;
+  if (!graph) return c.json({ error: "not_a_graph_dungeon" }, 400);
+  const body = (await c.req.json().catch(() => null)) as { direction?: unknown } | null;
+  const dir = typeof body?.direction === "string" ? body.direction.toLowerCase() as DungeonDirection : null;
+  if (!dir || !["n","e","s","w"].includes(dir)) return c.json({ error: "bad_direction" }, 400);
+  const currentNode = graph.nodes[graph.current];
+  const door = currentNode?.doors?.[dir];
+  if (!door || (door.state !== "locked" && door.state !== "barred")) {
+    return c.json({ error: "door_not_breakable" }, 400);
+  }
+  const character = await getCharacter(c.env.DB, session.slack_user_id);
+  if (!character) return c.json({ error: "no_character" }, 404);
+  const strMod = Math.floor(((character.str ?? 5) - 5) / 2);
+  const roll = 1 + Math.floor(Math.random() * 20);
+  const total = roll + strMod;
+  const dc = door.bash_dc ?? 14;
+  const success = total >= dc;
+  let damageDealt = 0;
+  if (success) {
+    openDoor(graph, graph.current, dir, "broken");
+    await saveScene(c.env.DB, quest.id, { ...quest.scene, graph });
+  } else {
+    // Failure costs HP — 1d6.
+    damageDealt = 1 + Math.floor(Math.random() * 6);
+    const newHp = Math.max(0, character.hp - damageDealt);
+    await c.env.DB.prepare("UPDATE characters SET hp = ? WHERE slack_user_id = ?")
+      .bind(newHp, session.slack_user_id).run();
+  }
+  return c.json({ ok: true, action: "bash", roll, modifier: strMod, total, dc, success, damage_dealt: damageDealt });
 });
 
 app.post("/api/quest/:id/dungeon/graph/take", async (c) => {
