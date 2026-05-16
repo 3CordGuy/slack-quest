@@ -10,6 +10,37 @@ import { Avatar, Icon } from "./icons";
 
 const DISPLAY_FONT = "'Uncial Antiqua', serif";
 
+// Inject hit-flash keyframes once. The animation lasts ~550ms; cards get a
+// "hit-flash" class for that long when their target is hit by an attack.
+const HIT_FLASH_CSS = `
+@keyframes gq-hit-shake {
+  0%   { transform: translate(0, 0); }
+  10%  { transform: translate(-5px, -2px); }
+  20%  { transform: translate(5px, 2px); }
+  30%  { transform: translate(-4px, 1px); }
+  40%  { transform: translate(4px, -1px); }
+  55%  { transform: translate(-2px, 0); }
+  70%  { transform: translate(2px, 0); }
+  100% { transform: translate(0, 0); }
+}
+@keyframes gq-hit-tint {
+  0%   { box-shadow: inset 0 0 0 0 rgba(239,68,68,0); }
+  20%  { box-shadow: inset 0 0 0 9999px rgba(239,68,68,0.45); }
+  60%  { box-shadow: inset 0 0 0 9999px rgba(239,68,68,0.28); }
+  100% { box-shadow: inset 0 0 0 0 rgba(239,68,68,0); }
+}
+.gq-hit-flash {
+  animation: gq-hit-shake 550ms ease-in-out, gq-hit-tint 550ms ease-out;
+}
+`;
+
+if (typeof document !== "undefined" && !document.getElementById("gq-hit-flash-style")) {
+  const s = document.createElement("style");
+  s.id = "gq-hit-flash-style";
+  s.textContent = HIT_FLASH_CSS;
+  document.head.appendChild(s);
+}
+
 // ─── Types mirrored from db (the web app doesn't import db directly) ─────────
 
 type DungeonDirection = "n" | "e" | "s" | "w";
@@ -263,9 +294,10 @@ function HpBar({ current, max, color, height = 6 }: { current: number; max: numb
   );
 }
 
-function PartyBar({ fighters, selfId, party, onClickSelf }: {
+function PartyBar({ fighters, selfId, party, onClickSelf, flashIds }: {
   fighters: Fighter[] | null; selfId: string; party: Character[];
   onClickSelf?: () => void;
+  flashIds?: Set<string>;
 }) {
   const seen = new Set<string>();
   type Member = { key: string; name: string; cls: string; hp: number; max_hp: number; mana: number; max_mana: number; shield: number; isSelf: boolean; isDead: boolean };
@@ -277,35 +309,61 @@ function PartyBar({ fighters, selfId, party, onClickSelf }: {
         return [{ key: c.slack_user_id, name: c.name, cls: c.class, hp: c.hp, max_hp: c.max_hp, mana: c.mana, max_mana: c.max_mana, shield: c.shield, isSelf: c.slack_user_id === selfId, isDead: c.hp <= 0 }];
       });
   return (
-    <div style={{ background: "rgba(10,11,14,0.96)", borderTop: "1px solid #1e2028", padding: "8px 12px", display: "flex", gap: 10, alignItems: "center", overflowX: "auto", flexShrink: 0 }}>
-      {members.map((f) => (
-        <div key={f.key}
-          onClick={f.isSelf && onClickSelf ? onClickSelf : undefined}
-          title={f.isSelf && onClickSelf ? "Open inventory" : undefined}
-          style={{ display: "flex", alignItems: "center", gap: 8, background: f.isSelf ? "rgba(245,245,220,0.06)" : "transparent", border: f.isSelf ? "1px solid rgba(245,245,220,0.15)" : "1px solid transparent", borderRadius: 8, padding: "4px 8px", opacity: f.isDead ? 0.45 : 1, flexShrink: 0, minWidth: 140, cursor: f.isSelf && onClickSelf ? "pointer" : "default" }}>
-          <Avatar src={charPortraitUrl(f.name)} fallbackSrc={classPortraitUrl(f.cls)} alt={f.name} size={36} radius={5} fallbackIcon="player" fallbackColor="#4a5568" border="1px solid #2a2d33" />
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: 11, fontWeight: 600, color: "#e2e8f0", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{f.name}</div>
-            <HpBar current={f.hp} max={f.max_hp} height={5} />
-            <div style={{ fontSize: 10, color: "#9aa0a6", marginTop: 1 }}>
-              {f.hp}/{f.max_hp} HP{f.shield > 0 && <span style={{ color: "#60a5fa", marginLeft: 4 }}>+{f.shield}<Icon name="shield" size={9} /></span>}
-            </div>
-            <div style={{ display: "flex", gap: 3, marginTop: 2 }}>
-              {Array.from({ length: f.max_mana }, (_, mi) => (
-                <div key={mi} style={{ width: 7, height: 7, borderRadius: "50%", background: mi < f.mana ? "#818cf8" : "#1e2028", border: "1px solid #3a3d43" }} />
-              ))}
+    <div style={{
+      background: "rgba(10,11,14,0.55)",
+      border: "1px solid rgba(255,255,255,0.08)",
+      borderRadius: 12,
+      backdropFilter: "blur(10px)",
+      WebkitBackdropFilter: "blur(10px)",
+      boxShadow: "0 8px 32px rgba(0,0,0,0.5)",
+      padding: "10px 12px",
+      display: "flex", gap: 12, alignItems: "center", overflowX: "auto",
+    }}>
+      {members.map((f) => {
+        const isHit = flashIds?.has(f.key) ?? false;
+        return (
+          <div key={f.key}
+            className={isHit ? "gq-hit-flash" : undefined}
+            onClick={f.isSelf && onClickSelf ? onClickSelf : undefined}
+            title={f.isSelf && onClickSelf ? "Open inventory" : undefined}
+            style={{
+              display: "flex", alignItems: "center", gap: 10,
+              background: f.isSelf ? "rgba(245,245,220,0.10)" : "rgba(255,255,255,0.04)",
+              border: f.isSelf ? "1px solid rgba(245,245,220,0.28)" : "1px solid rgba(255,255,255,0.08)",
+              borderRadius: 10,
+              padding: "8px 12px",
+              opacity: f.isDead ? 0.45 : 1,
+              flexShrink: 0,
+              minWidth: 200,
+              cursor: f.isSelf && onClickSelf ? "pointer" : "default",
+            }}>
+            <Avatar src={charPortraitUrl(f.name)} fallbackSrc={classPortraitUrl(f.cls)} alt={f.name} size={56} radius={6} fallbackIcon="player" fallbackColor="#4a5568" border="1px solid #2a2d33" />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: "#e2e8f0", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{f.name}</div>
+              <HpBar current={f.hp} max={f.max_hp} height={7} />
+              <div style={{ fontSize: 11, color: "#9aa0a6", marginTop: 2 }}>
+                {f.hp}/{f.max_hp} HP{f.shield > 0 && <span style={{ color: "#60a5fa", marginLeft: 4 }}>+{f.shield}<Icon name="shield" size={10} /></span>}
+              </div>
+              <div style={{ display: "flex", gap: 4, marginTop: 4 }}>
+                {Array.from({ length: f.max_mana }, (_, mi) => (
+                  <div key={mi} style={{ width: 9, height: 9, borderRadius: "50%", background: mi < f.mana ? "#818cf8" : "#1e2028", border: "1px solid #3a3d43" }} />
+                ))}
+              </div>
             </div>
           </div>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
 
-function MonsterOverlay({ monster, isBoss }: { monster: Monster | null; isBoss: boolean }) {
+function MonsterOverlay({ monster, isBoss, flashIds }: { monster: Monster | null; isBoss: boolean; flashIds?: Set<string> }) {
   if (!monster || monster.hp <= 0) return null;
+  const isHit = !!(monster.id && flashIds?.has(monster.id));
   return (
-    <div style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%, -65%)", background: "rgba(10,11,14,0.88)", border: `1px solid ${isBoss ? "#fca5a5" : "#2a2d33"}`, borderRadius: 12, padding: "10px 14px", minWidth: 220, maxWidth: 300, backdropFilter: "blur(8px)", boxShadow: isBoss ? "0 0 32px rgba(239,68,68,0.3)" : "0 4px 24px rgba(0,0,0,0.6)" }}>
+    <div
+      className={isHit ? "gq-hit-flash" : undefined}
+      style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%, -65%)", background: "rgba(10,11,14,0.88)", border: `1px solid ${isBoss ? "#fca5a5" : "#2a2d33"}`, borderRadius: 12, padding: "10px 14px", minWidth: 220, maxWidth: 300, backdropFilter: "blur(8px)", boxShadow: isBoss ? "0 0 32px rgba(239,68,68,0.3)" : "0 4px 24px rgba(0,0,0,0.6)" }}>
       {monster.art_url && (
         <img src={monster.art_url} alt={monster.name} style={{ width: "100%", height: 140, objectFit: "cover", borderRadius: 8, marginBottom: 8, display: "block" }} />
       )}
@@ -321,7 +379,16 @@ function MonsterOverlay({ monster, isBoss }: { monster: Monster | null; isBoss: 
 function InitStrip({ state, selfId }: { state: CombatState; selfId: string }) {
   const currentIdx = state.turn_index % state.turn_order.length;
   return (
-    <div style={{ background: "rgba(10,11,14,0.92)", borderBottom: "1px solid #1e2028", padding: "5px 12px", display: "flex", gap: 6, alignItems: "center", overflowX: "auto", flexShrink: 0 }}>
+    <div style={{
+      background: "rgba(10,11,14,0.55)",
+      border: "1px solid rgba(255,255,255,0.08)",
+      borderRadius: 999,
+      backdropFilter: "blur(10px)",
+      WebkitBackdropFilter: "blur(10px)",
+      boxShadow: "0 6px 24px rgba(0,0,0,0.4)",
+      padding: "6px 14px",
+      display: "flex", gap: 8, alignItems: "center", maxWidth: "min(720px, 92vw)", overflowX: "auto",
+    }}>
       <span style={{ fontSize: 10, color: "#9aa0a6", textTransform: "uppercase", letterSpacing: 1, marginRight: 4, whiteSpace: "nowrap" }}>Turn order</span>
       {state.turn_order.map((id, i) => {
         const isCurrent = i === currentIdx;
@@ -484,7 +551,7 @@ function CompassNav({ node, onMove, disabled }: { node: GridNode; onMove: (dir: 
     );
   }
   return (
-    <div style={{ position: "absolute", bottom: 16, left: "50%", transform: "translateX(-50%)", display: "grid", gridTemplateColumns: "60px 60px 60px", gridTemplateRows: "32px 32px 32px", gap: 4, alignItems: "center", justifyItems: "center", padding: 6, background: "rgba(0,0,0,0.5)", borderRadius: 10, backdropFilter: "blur(4px)" }}>
+    <div style={{ position: "absolute", bottom: 130, left: "50%", transform: "translateX(-50%)", display: "grid", gridTemplateColumns: "60px 60px 60px", gridTemplateRows: "32px 32px 32px", gap: 4, alignItems: "center", justifyItems: "center", padding: 6, background: "rgba(0,0,0,0.55)", borderRadius: 10, backdropFilter: "blur(4px)", zIndex: 7 }}>
       <div /> {btn("n", "N")} <div />
       {btn("w", "W")} <div style={{ width: 60, height: 32, display: "flex", alignItems: "center", justifyContent: "center" }}>
         <Icon name="footprint" size={16} color="#6b7280" />
@@ -528,6 +595,15 @@ export function GridDungeonView({
   const [moving, setMoving] = useState(false);
   const [contentBusy, setContentBusy] = useState(false);
   const [items, setItems] = useState<UsableItem[]>([]);
+  // IDs (fighter id OR monster id) currently being flashed-red after a hit.
+  // Cleared 600ms after the event lands.
+  const [flashIds, setFlashIds] = useState<Set<string>>(new Set());
+  function flashHit(id: string) {
+    setFlashIds((prev) => { const n = new Set(prev); n.add(id); return n; });
+    setTimeout(() => {
+      setFlashIds((prev) => { const n = new Set(prev); n.delete(id); return n; });
+    }, 600);
+  }
 
   async function loadItems() {
     const res = await fetch("/api/inventory", { credentials: "include" });
@@ -563,6 +639,16 @@ export function GridDungeonView({
         } else if (msg.type === "events" && msg.events) {
           dispatch({ kind: "events", value: msg.events });
           if (msg.events.some((e) => e.type === "item_used")) void loadItems();
+          for (const evt of msg.events) {
+            // player_hit: actor (player) hits target (monster). Flash the monster.
+            if (evt.type === "player_hit" && typeof evt.target === "string") {
+              flashHit(evt.target);
+            }
+            // monster_attack: monster hits target (fighter), only flash if damage landed.
+            if (evt.type === "monster_attack" && typeof evt.target === "string" && (evt.hp_damage as number) > 0) {
+              flashHit(evt.target as string);
+            }
+          }
         } else if (msg.type === "outcome" && msg.outcome) {
           dispatch({ kind: "outcome", value: msg.outcome });
         }
@@ -706,14 +792,12 @@ export function GridDungeonView({
 
   return (
     <div style={{ position: "fixed", inset: 0, background: "#0a0b0e", display: "flex", flexDirection: "column", overflow: "hidden", fontFamily: "Inter, system-ui, sans-serif" }}>
-      {/* Top bar */}
-      <div style={{ background: "rgba(10,11,14,0.95)", borderBottom: "1px solid #1e2028", padding: "0 12px", height: 44, display: "flex", alignItems: "center", justifyContent: "space-between", flexShrink: 0, zIndex: 10 }}>
+      {/* Top bar — slimmed: exit, keys + status. Room type/content removed
+          (it was redundant with the scene itself + minimap). */}
+      <div style={{ background: "rgba(10,11,14,0.95)", borderBottom: "1px solid #1e2028", padding: "0 12px", height: 40, display: "flex", alignItems: "center", justifyContent: "space-between", flexShrink: 0, zIndex: 10 }}>
         <button onClick={onExit} style={{ background: "none", border: "none", color: "#9aa0a6", cursor: "pointer", fontSize: 13, padding: "4px 8px", borderRadius: 6, display: "flex", alignItems: "center", gap: 6 }}>
           <Icon name="footprint" size={13} /> Exit
         </button>
-        <div style={{ fontSize: 12, fontFamily: DISPLAY_FONT, color: "#c4a35a" }}>
-          {currentNode.shape?.replace(/_/g, " ") ?? "room"} · {content?.kind ?? "—"}
-        </div>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           {combatActive && <span style={{ fontSize: 11, color: ws.connection === "open" ? "#39ff14" : "#9aa0a6" }}>{ws.connection === "open" ? "● live" : "○ …"}</span>}
           <span style={{ fontSize: 11, color: "#9aa0a6" }}>
@@ -724,16 +808,20 @@ export function GridDungeonView({
         </div>
       </div>
 
-      {/* Initiative strip (combat only) */}
-      {combatActive && combatState && <InitStrip state={combatState} selfId={selfId} />}
-
       {/* Room view */}
       <div style={{ flex: 1, position: "relative", overflow: "hidden", minHeight: 0 }}>
         <img src={bgUrl} alt="" style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover" }} onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
         <div style={{ position: "absolute", inset: 0, background: "linear-gradient(to bottom, rgba(0,0,0,0.15) 0%, rgba(0,0,0,0.05) 40%, rgba(0,0,0,0.55) 100%)", pointerEvents: "none" }} />
 
+        {/* Floating initiative strip (combat only) — top center overlay */}
+        {combatActive && combatState && (
+          <div style={{ position: "absolute", top: 12, left: "50%", transform: "translateX(-50%)", zIndex: 8 }}>
+            <InitStrip state={combatState} selfId={selfId} />
+          </div>
+        )}
+
         {/* Monster overlay during combat */}
-        {combatActive && liveMonsters.length > 0 && <MonsterOverlay monster={liveMonsters[0]} isBoss={isBoss} />}
+        {combatActive && liveMonsters.length > 0 && <MonsterOverlay monster={liveMonsters[0]} isBoss={isBoss} flashIds={flashIds} />}
 
         {/* Content figure overlay — when the room contains a person or
             object, paint a visible indicator on the scene so the room
@@ -780,6 +868,19 @@ export function GridDungeonView({
             )}
           </div>
         )}
+
+        {/* Floating party bar — bottom of the room view, overlaid on the scene */}
+        <div style={{ position: "absolute", bottom: 8, left: 8, right: 8, zIndex: 8, pointerEvents: "none" }}>
+          <div style={{ pointerEvents: "auto" }}>
+            <PartyBar
+              fighters={combatActive ? (combatState?.fighters ?? null) : null}
+              selfId={selfId}
+              party={party.length > 0 ? party : [character]}
+              onClickSelf={onOpenInventory}
+              flashIds={flashIds}
+            />
+          </div>
+        </div>
       </div>
 
       {/* Content interaction overlay (non-combat rooms with stuff to do) */}
@@ -810,13 +911,7 @@ export function GridDungeonView({
         />
       )}
 
-      {/* Party bar — click self to open inventory (rendered by App.tsx) */}
-      <PartyBar
-        fighters={combatActive ? (combatState?.fighters ?? null) : null}
-        selfId={selfId}
-        party={party.length > 0 ? party : [character]}
-        onClickSelf={onOpenInventory}
-      />
+      {/* (Party bar is now a floating overlay inside the room view above.) */}
     </div>
   );
 }
