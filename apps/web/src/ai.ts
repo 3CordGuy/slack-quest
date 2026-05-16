@@ -763,6 +763,98 @@ export const VIEW_ART_PROMPTS = {
     "First-person view of a curved stone chamber repurposed as a trading post. Display cases made from old server casings line the walls. A warm brass desk lamp glows on the central counter. Small handwritten price tags are visible on items.",
   dungeon_merchant_4:
     "First-person view of a stone passage booth. Hand-painted price signs hang from the ceiling on strings. Cord lighting wraps around the stall frame. A cozy rug on the stone floor. Impossibly cheerful atmosphere for somewhere this deep underground.",
+
+  // ── Grid dungeon room shapes (v2) ──────────────────────────────────────────
+  // Each key is `room_<shape>` or `room_<shape>_<content>`. The DungeonView
+  // composes the URL from the current room's shape + content kind, falling
+  // back to a shape-only background if the combo is absent.
+  //
+  // CORRIDOR — straight passages
+  room_straight_ns:
+    "First-person view down a long stone corridor running directly north-to-south. The corridor extends straight ahead into shadow, narrow flagstone floor flanked by ancient stone walls. Iron sconces with flickering torches on both walls. Strands of network cable trail along the floor like vines. Empty corridor — no doors visible on the side walls. Composed, symmetrical, vanishing-point in the center.",
+  room_straight_ew:
+    "First-person view down a long stone corridor running directly east-to-west, the camera looking down its length. Continuous unbroken side walls of fitted stone, the path stretches into the distance. Lantern fixtures and pinned sticky notes on both walls. A worn wooden door at the far end. No side passages.",
+  // CORRIDOR — corners (the corridor turns one direction)
+  room_corner_ne:
+    "First-person view of a stone corridor that comes in from the south, turns ahead, and exits to the east. The bend is clearly visible: the corridor wall on the right opens into a side passage running east. Stone arches frame the turn. A burnt-out torch in the corner. Network cables snake around the bend.",
+  room_corner_nw:
+    "First-person view of a stone corridor that comes in from the south, turns ahead, and exits to the west. The corridor opens to the left into another stone passage. Iron torch bracket on the corner wall. The far wall is solid stone with a small carved sigil.",
+  room_corner_se:
+    "First-person view of a stone corridor that comes in from the north, turns immediately ahead, and exits to the east. The view shows the floor turning right into a side passage. A coffee-stained scroll lies on the floor at the corner. Warm torchlight from a sconce.",
+  room_corner_sw:
+    "First-person view of a stone corridor that comes in from the north, turns immediately ahead, and exits to the west. The view shows the corridor opening left. A small alcove in the corner holds a stack of project printouts. Single lantern hanging.",
+  // CORRIDOR — T-junctions (three exits)
+  room_t_n:
+    "First-person view of a T-junction in a stone corridor. The corridor splits ahead: paths visible to the east and west, plus the corridor continues north (away from the camera). The viewer is looking at the junction wall. A hanging sign with a worn arrow points both ways.",
+  room_t_e:
+    "First-person view of a T-junction in a stone corridor. The corridor splits: paths visible to the north and south, plus the corridor continues east (toward the camera). The junction wall stands ahead with carved arrows. Bracketed torches at each corner.",
+  room_t_s:
+    "First-person view of a T-junction. The corridor opens ahead with paths to the east and west, plus a corridor leading south. A wooden signpost stands at the junction with handwritten labels. Stone floor worn smooth by traffic.",
+  room_t_w:
+    "First-person view of a T-junction. Paths visible to the north and south, plus the corridor continues west toward the viewer. A blackboard mounted on the junction wall lists room directions like a map. Warm lamplight.",
+  // CORRIDOR — 4-way intersection
+  room_cross:
+    "First-person view of a 4-way stone intersection. Corridors extend in all four directions from a central junction. A round mosaic on the floor at the center, depicting a compass rose. Tall stone columns at each corner support arched ceilings. Multiple torches give warm overlapping light.",
+
+  // DEAD-END SHAPES (corridor ends at a wall) — each with content variants.
+  // The direction names which wall the player faces (the only open exit is opposite).
+  room_dead_n_empty:
+    "First-person view of a stone corridor ending at a flat north wall. Plain fitted stone, a single torch on the wall, dust on the floor. An empty alcove on one side. Nothing remarkable — just a dead end.",
+  room_dead_e_empty:
+    "First-person view of a stone corridor ending at a flat east wall. Plain fitted stone, mossy lower courses, a single torch. Empty. The far wall has faint scratch marks but nothing else.",
+  room_dead_s_empty:
+    "First-person view of a stone corridor ending at a flat south wall. Cobwebs in the corners. A worn-out leather glove on the floor. Otherwise empty.",
+  room_dead_w_empty:
+    "First-person view of a stone corridor ending at a flat west wall. A flickering wall sconce, an abandoned coffee mug on a shelf. Empty.",
+  // Dead-end + treasure (chest sits at the end of the corridor)
+  room_dead_n_treasure:
+    "First-person view of a stone corridor ending at a north wall. A heavy ornate chest sits open at the end, golden light spilling out, gold coins and folded fabric visible. Dust motes drift in the light beam. Dramatic chest as the focal point.",
+  room_dead_e_treasure:
+    "First-person view of a stone corridor ending at an east wall. A polished wooden chest with brass fittings is open at the far wall, contents glowing gently. Flagstone floor, faint cobwebs in corners.",
+  room_dead_s_treasure:
+    "First-person view of a stone corridor ending at a south wall. An ornate chest is propped against the wall, lid open, faint golden glow inside. Two extinguished candles flank it on the floor.",
+  room_dead_w_treasure:
+    "First-person view of a stone corridor ending at a west wall. A small jeweled chest rests on a stone pedestal flush against the far wall. Beams of warm light play across it.",
+  // Dead-end + lockbox (locked chest)
+  room_dead_n_lockbox:
+    "First-person view of a stone corridor ending at a north wall. A heavy iron-banded wooden chest with a large padlock sits against the far wall. A single lantern hanging above. Dust on the floor.",
+  room_dead_e_lockbox:
+    "First-person view of a stone corridor ending at an east wall. An ornate dark-wood chest reinforced with engraved silver bands, padlocked, sits at the dead end. Detailed metalwork, slight tarnish.",
+  room_dead_s_lockbox:
+    "First-person view of a stone corridor ending at a south wall. A lavishly ornate chest covered in gold-leaf engraving, with a heavy jeweled gold padlock, sits at the end of the passage. Faint glow leaks from cracks in the lid.",
+  room_dead_w_lockbox:
+    "First-person view of a stone corridor ending at a west wall. A weathered chest banded in dull iron, secured with a thick padlock, sits at the dead end. Cobwebs in the corners.",
+  // Dead-end + npc (someone present)
+  room_dead_n_npc:
+    "First-person view of a stone corridor ending at a north wall. A small campfire ring with glowing embers, a bedroll, and a wooden stool are set up at the end. A traveler's pack against the wall. Cozy in the cold stone.",
+  room_dead_e_npc:
+    "First-person view of a stone corridor ending at an east wall. A rough wooden desk is pushed against the far wall, candle still burning, scattered scrolls. A high-backed chair pulled slightly out, as if someone just stood up.",
+  room_dead_s_npc:
+    "First-person view of a stone corridor ending at a south wall. A low wooden counter has been improvised as a desk, with a steaming cup of tea, a quill, an open ledger. Warm and human.",
+  room_dead_w_npc:
+    "First-person view of a stone corridor ending at a west wall. A stone alcove holds a scrying mirror on a pedestal and two carved chairs facing each other. The mirror surface shimmers faintly.",
+
+  // CHAMBERS — large open rooms (more square than corridor-like)
+  room_chamber_empty:
+    "First-person view of a large open stone chamber. Vaulted ceiling supported by stone columns. Flagstone floor, swept relatively clean. Empty — no furniture, no contents — just the volume of the room. Warm light from wall sconces.",
+  room_chamber_combat:
+    "First-person view of a large open stone chamber prepared for battle. Vaulted ceiling, stone columns, scuff marks and faint bloodstains on the flagstones. Discarded weapons by one wall. Tension in the air. Empty of figures — the room awaits.",
+  room_chamber_treasure:
+    "First-person view of a large open stone chamber. A mossy stone pedestal in the center bathed in a column of warm golden light from a hole in the vaulted ceiling. Dust motes drift in the beam. Reverent atmosphere.",
+  room_chamber_npc:
+    "First-person view of a large open stone chamber furnished as a meeting room. A long wooden table with high-backed chairs, a stone fireplace with embers, scrolls and maps pinned to the walls. Inviting.",
+  room_chamber_merchant:
+    "First-person view of a large open stone chamber repurposed as a market. Several wooden stalls with brightly colored cloth banners line one side. Display shelves of vials, weapons, and curios. Warm lamplight, a cozy carpet on the stone floor.",
+  room_chamber_trap:
+    "First-person view of a large open stone chamber with elaborate mechanical traps embedded in the floor and walls. Pressure plates with circular grooves on the floor, blade slots in the walls, swinging-pendulum chains hanging from the ceiling. Empty — but lethal.",
+  room_chamber_loot:
+    "First-person view of a large open stone chamber that has been used as a storeroom. Wooden crates and barrels stacked against the walls, scattered items on a long table — vials, scrolls, a few weapons. Cluttered, abandoned.",
+
+  // SPECIALS
+  room_entry:
+    "First-person view of a stone dungeon entryway. Heavy iron-bound doors are open behind the viewer (suggested by their long shadows on the floor), revealing a stone corridor extending forward. Natural daylight from the entrance mingles with torchlight from inside. The threshold between safety and adventure.",
+  room_boss:
+    "First-person view of a vast boss chamber. Cathedral-high vaulted ceiling supported by massive stone pillars wrapped in server-tower vines with blinking LEDs. War banners hanging from rusted chains display corrupted sprint-velocity graphs. A raised dais at the far end with cracked stone thrones. Faint ominous red glow. Empty — the boss has not yet emerged.",
 } as const;
 
 export type ViewArtKey = keyof typeof VIEW_ART_PROMPTS;

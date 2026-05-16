@@ -18,6 +18,7 @@ import { classByName, deriveAll, findCatalogEntry, priceFor, sellPriceFor, xpFor
 
 import { CombatPage } from "./CombatPage";
 import { DungeonView } from "./DungeonView";
+import { GridDungeonView } from "./GridDungeonView";
 import { Avatar, EmojiIcon, Icon, KeyIcon } from "./icons";
 
 // One-liner describing the in-game effect of an item, in plain mechanics
@@ -1350,9 +1351,25 @@ export function App() {
   // Dungeon quests use the immersive DungeonView full-screen experience.
   // This check runs before the activeCombat guard so dungeon combat stays
   // in-room instead of launching the separate CombatPage.
+  // Grid dungeons (scene.graph present) use the new GridDungeonView;
+  // legacy linear expeditions use the original DungeonView.
   if (state.kind === "auth" && state.activeQuest?.quest.scene.variant === "dungeon" && state.me.character) {
     const aq = state.activeQuest;
     const chr = state.me.character;
+    if (aq.quest.scene.graph) {
+      return (
+        <GridDungeonView
+          questId={aq.quest.id}
+          selfId={state.me.slack_user_id}
+          scene={aq.quest.scene as unknown as Parameters<typeof GridDungeonView>[0]["scene"]}
+          party={aq.party as unknown as Parameters<typeof GridDungeonView>[0]["party"]}
+          character={chr as unknown as Parameters<typeof GridDungeonView>[0]["character"]}
+          hasWebCombat={hasWebCombat}
+          onExit={() => void refresh()}
+          onRefresh={() => void refresh()}
+        />
+      );
+    }
     return (
       <DungeonView
         questId={aq.quest.id}
