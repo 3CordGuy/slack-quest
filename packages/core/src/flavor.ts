@@ -202,6 +202,27 @@ export function generateScar(monster: string): string {
 
 export type ItemType = "weapon" | "armor" | "consumable" | "magic" | "revive" | "tool" | "scroll";
 
+// 8-slot equipment system (Phase 2). Items carry a `slot` field indicating
+// which body location they occupy when equipped. The equip-swap logic unequips
+// any other item in the same slot before equipping the new one.
+//   main_hand — primary weapon
+//   off_hand  — shield only in Phase 2 (dual-wield deferred to Phase 5)
+//   body      — chest armor
+//   helmet    — head armor (armor_power contribution: floor(power/2))
+//   pants     — leg armor (armor_power contribution: floor(power/4))
+//   boots     — footwear (stat_bonus only, no armor contribution)
+//   ring      — finger ring (stat_bonus only)
+//   amulet    — neck amulet (stat_bonus only)
+export type EquipSlot =
+  | "main_hand"
+  | "off_hand"
+  | "body"
+  | "helmet"
+  | "pants"
+  | "boots"
+  | "ring"
+  | "amulet";
+
 // Status effects — applied to player characters or monsters and tick on the
 // affected actor's own combat action / monster turn. v1 set is HP-based; future
 // effects could touch cooldown, damage modifiers, etc.
@@ -418,6 +439,11 @@ export interface ItemRoll {
   power: number;
   weapon_range?: WeaponRange; // only set when type === "weapon"
   catalog_name?: string;       // set for type === "tool"|"scroll" — fixed name from CATALOG
+  // Phase 2 additions — present on new armor-subtype rolls (helmet/pants/boots/ring/amulet/shield).
+  // Absent on legacy weapon/armor rolls so callers don't need updating for the common path.
+  slot?: EquipSlot;
+  stat_bonus?: Partial<Record<string, number>>; // e.g. { int_stat: 2 }
+  item_subtype?: string;                        // "shield" for off_hand items
 }
 
 // Tool & scroll catalog. Names are fixed (no AI naming) so handleUse can dispatch
@@ -1159,6 +1185,54 @@ function rollFocusPower(rarity: Rarity): number {
   return FOCUS_POWER_BY_RARITY[rarity];
 }
 
+// Phase 2: when the base roll lands on "armor", subdivide into one of 7
+// sub-slots. Body armor keeps ~50% share; the other 50% spreads across new
+// slots. Returns a full ItemRoll with slot + stat_bonus pre-populated so
+// callers can pass the roll straight to addItem without further inspection.
+function rollArmorSlot(tier: number): ItemRoll {
+  const rarity = rollRarity(tier);
+  const r = Math.random();
+  const statBonus = (key: string, v: number) => ({ [key]: v });
+  const bonusAmt = rarity === "rare" ? 3 : rarity === "uncommon" ? 2 : 1;
+
+  if (r < 0.50) {
+    // Body armor — standard slot, existing power formula.
+    return { type: "armor", rarity, power: rollPower("armor", rarity), slot: "body" };
+  }
+  if (r < 0.65) {
+    // Helmet — half-armor contribution (floor(power/2) in buildInitialCombatState).
+    return { type: "armor", rarity, power: rollPower("armor", rarity), slot: "helmet",
+      stat_bonus: statBonus(Math.random() < 0.5 ? "int_stat" : "vit", bonusAmt) };
+  }
+  if (r < 0.77) {
+    // Pants — quarter-armor contribution.
+    return { type: "armor", rarity, power: rollPower("armor", rarity), slot: "pants",
+      stat_bonus: statBonus("agi", bonusAmt) };
+  }
+  if (r < 0.87) {
+    // Boots — no armor; pure AGI buff.
+    return { type: "armor", rarity, power: 0, slot: "boots",
+      stat_bonus: statBonus("agi", bonusAmt) };
+  }
+  if (r < 0.93) {
+    // Ring — no armor; STR/INT/DEX buff depending on roll.
+    const statKeys = ["str", "int_stat", "dex"] as const;
+    const key = statKeys[Math.floor(Math.random() * statKeys.length)];
+    return { type: "armor", rarity, power: 0, slot: "ring",
+      stat_bonus: statBonus(key, bonusAmt) };
+  }
+  if (r < 0.98) {
+    // Amulet — no armor; INT/VIT buff.
+    const key = Math.random() < 0.5 ? "int_stat" : "vit";
+    return { type: "armor", rarity, power: 0, slot: "amulet",
+      stat_bonus: statBonus(key, bonusAmt) };
+  }
+  // Shield (off_hand) — adds power to armor_power; small +VIT stat bonus.
+  return { type: "armor", rarity, power: rollPower("armor", rarity), slot: "off_hand",
+    item_subtype: "shield",
+    stat_bonus: statBonus("vit", bonusAmt) };
+}
+
 export function rollItem(tier: number, forShop = false): ItemRoll {
   const type = rollItemType();
   if (type === "tool" || type === "scroll") {
@@ -1175,13 +1249,15 @@ export function rollItem(tier: number, forShop = false): ItemRoll {
   // Other types still roll their normal rarity distribution.
   const rarity = type === "consumable" ? "rare" : rollRarity(tier);
   const weapon_range = type === "weapon" ? rollWeaponRange() : undefined;
+  // Armor rolls sub-divide into 8 slots in Phase 2.
+  if (type === "armor") return rollArmorSlot(tier);
   // Focus weapons override the regular weapon-power formula with a flat
   // ladder by rarity — predictable support output beats the +1-spread
   // randomness for healer builds.
   const power = type === "weapon" && weapon_range === "focus"
     ? rollFocusPower(rarity)
     : rollPower(type, rarity);
-  return { type, rarity, power, weapon_range };
+  return { type, rarity, power, weapon_range, slot: type === "weapon" ? "main_hand" : undefined };
 }
 
 // Merchant slot weights — practical-for-this-fight stock only. Excludes magic

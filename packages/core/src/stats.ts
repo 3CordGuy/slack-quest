@@ -194,6 +194,9 @@ export interface StatSnapshotInput {
   level: number;
   stats?: Stats; // optional — falls back to statsAtLevel(className, level)
   v2Enabled: boolean;
+  // Phase 2: summed stat_bonus from all equipped slot items. Added on top of
+  // the character's base stats before derivation when v2Enabled is true.
+  equipBonuses?: Partial<Stats>;
 }
 
 export interface StatSnapshot {
@@ -202,7 +205,7 @@ export interface StatSnapshot {
 }
 
 export function statSnapshot(input: StatSnapshotInput): StatSnapshot {
-  const stats = input.stats ?? statsAtLevel(input.className, input.level);
+  const base = input.stats ?? statsAtLevel(input.className, input.level);
   if (!input.v2Enabled) {
     // Legacy path: produce stats that exactly reproduce the class-fixed
     // attack_mod/magic_mod values, so downstream combat math is unchanged.
@@ -212,7 +215,7 @@ export function statSnapshot(input: StatSnapshotInput): StatSnapshot {
     const legacy: Stats = {
       str: 5 + 2 * cls.attack_mod,
       int_stat: 5 + 2 * cls.magic_mod,
-      vit: stats.vit, // preserve real VIT so HP scaling stays consistent
+      vit: base.vit, // preserve real VIT so HP scaling stays consistent
       agi: 5,
       dex: 5,
     };
@@ -221,6 +224,15 @@ export function statSnapshot(input: StatSnapshotInput): StatSnapshot {
       derived: deriveAll(legacy, input.level),
     };
   }
+  // Phase 2: sum equip bonuses from slot items into base stats.
+  const eq = input.equipBonuses;
+  const stats: Stats = eq ? {
+    str: base.str + (eq.str ?? 0),
+    int_stat: base.int_stat + (eq.int_stat ?? 0),
+    vit: base.vit + (eq.vit ?? 0),
+    agi: base.agi + (eq.agi ?? 0),
+    dex: base.dex + (eq.dex ?? 0),
+  } : base;
   return {
     stats,
     derived: deriveAll(stats, input.level),

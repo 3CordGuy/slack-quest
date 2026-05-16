@@ -1016,6 +1016,20 @@ export async function flavorDeath(
 // Note: this function is for items whose names are AI-generated (weapon, armor,
 // consumable, magic, revive). Tool & scroll catalog items use flavorCatalogItem
 // instead — their names are fixed and the AI only writes the flavor blurb.
+// Slot-specific type hint overrides for Phase 2 armor subtypes. Called when the
+// item roll carries a slot value that isn't handled by the generic armor hint.
+function slotTypeHint(slot: string): string | null {
+  switch (slot) {
+    case "ring":     return "a finger ring or accessory (e.g. signet ring, debug ring, null-pointer ring, uptime band)";
+    case "amulet":   return "a neck amulet or pendant (e.g. data-crystal pendant, uptime medallion, recursion talisman)";
+    case "boots":    return "footwear (e.g. runtime sandals, debug boots, null-pointer treads, stack-overflow cleats)";
+    case "helmet":   return "head armor (e.g. crash helmet, null-guard visor, incident commander's helm, merge-conflict cap)";
+    case "pants":    return "leg armor or trousers (e.g. cargo pants, quantum leggings, debug denims, load-balanced greaves)";
+    case "off_hand": return "a shield (e.g. firewall buckler, rate-limiting shield, null-check barrier, abstraction layer)";
+    default:         return null;
+  }
+}
+
 export async function flavorLootDrop(
   ai: Ai,
   monsterName: string,
@@ -1023,6 +1037,7 @@ export async function flavorLootDrop(
   rarity: "common" | "uncommon" | "rare",
   power: number,
   weaponRange?: "melee" | "ranged" | "focus",
+  slot?: string,
 ): Promise<{ name: string; flavor: string }> {
   const weaponHint = type === "weapon"
     ? weaponRange === "ranged"
@@ -1033,7 +1048,8 @@ export async function flavorLootDrop(
     : null;
   const typeHint =
     weaponHint ??
-    (type === "armor"  ? "armor (e.g. vest, robe, cloak, helm, plating, gloves)" :
+    (slot ? (slotTypeHint(slot) ?? "armor (e.g. vest, robe, cloak, helm, plating, gloves)") :
+     type === "armor"  ? "armor (e.g. vest, robe, cloak, helm, plating, gloves)" :
      type === "magic"  ? "a magical focus (e.g. tome, crystal, sigil, talisman, rune-stone)" :
      type === "revive" ? "a revival item (e.g. phoenix down, defib paddles, hot-fix kit, sacred patch)" :
                          "a consumable (e.g. potion, brew, scroll, capsule, energy drink, snack)");

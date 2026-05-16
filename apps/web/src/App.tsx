@@ -177,6 +177,8 @@ type ItemType =
 type Rarity = "common" | "uncommon" | "rare";
 type WeaponRange = "melee" | "ranged" | "focus";
 
+type EquipSlot = "main_hand" | "off_hand" | "body" | "helmet" | "pants" | "boots" | "ring" | "amulet";
+
 interface Item {
   id: number;
   character_id: string;
@@ -188,6 +190,9 @@ interface Item {
   equipped: boolean;
   weapon_range: WeaponRange | null;
   sharpens_count: number;
+  slot: EquipSlot | null;
+  stat_bonus: Record<string, number> | null;
+  item_subtype: string | null;
 }
 
 type QuestVariant = "standard" | "boss" | "gauntlet" | "dungeon";
@@ -219,6 +224,9 @@ interface LootOption {
   rarity: Rarity;
   flavor: string;
   weapon_range?: WeaponRange | null;
+  slot?: EquipSlot;
+  stat_bonus?: Record<string, number>;
+  item_subtype?: string;
 }
 
 interface NpcOffer {
@@ -2240,7 +2248,7 @@ function LockboxPicker({
             <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
               <span style={{ fontWeight: 600 }}>{opt.name}</span>
               <span style={{ ...muted, fontSize: 11 }}>
-                · {opt.rarity} {opt.item_type} +{opt.power}
+                · {opt.rarity} {opt.slot ? SLOT_LABELS[opt.slot] : opt.item_type} +{opt.power}{opt.stat_bonus && statBonusSummary(opt.stat_bonus) ? ` · ${statBonusSummary(opt.stat_bonus)}` : ""}
               </span>
             </div>
             {opt.flavor && (
@@ -2308,7 +2316,7 @@ function TreasurePicker({
             <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
               <span style={{ fontWeight: 600 }}>{opt.name}</span>
               <span style={{ ...muted, fontSize: 11 }}>
-                · {opt.rarity} {opt.item_type} +{opt.power}
+                · {opt.rarity} {opt.slot ? SLOT_LABELS[opt.slot] : opt.item_type} +{opt.power}{opt.stat_bonus && statBonusSummary(opt.stat_bonus) ? ` · ${statBonusSummary(opt.stat_bonus)}` : ""}
               </span>
             </div>
             {opt.flavor && (
@@ -2382,7 +2390,7 @@ function MerchantPicker({
                   <div>
                     <span style={{ fontWeight: 600 }}>{opt.name}</span>
                     <span style={{ ...muted, fontSize: 11, marginLeft: 6 }}>
-                      · {opt.rarity} {opt.item_type} +{opt.power}
+                      · {opt.rarity} {opt.slot ? SLOT_LABELS[opt.slot] : opt.item_type} +{opt.power}{opt.stat_bonus && statBonusSummary(opt.stat_bonus) ? ` · ${statBonusSummary(opt.stat_bonus)}` : ""}
                     </span>
                   </div>
                   <span style={{ color: "#fbbf24", fontWeight: 600, fontSize: 13 }}>{price}g</span>
@@ -2438,8 +2446,7 @@ function NpcPicker({ npc, onPick }: { npc: NpcOffer; onPick: (pick: number) => v
         “{npc.greeting}”
       </p>
       <p style={{ ...muted, fontSize: 12, marginBottom: 12 }}>
-        Offers: <strong>{npc.item.name}</strong> ({npc.item.rarity} {npc.item.item_type} +
-        {npc.item.power})
+        Offers: <strong>{npc.item.name}</strong> ({npc.item.rarity} {npc.item.slot ? SLOT_LABELS[npc.item.slot] : npc.item.item_type} +{npc.item.power}{npc.item.stat_bonus && statBonusSummary(npc.item.stat_bonus) ? ` · ${statBonusSummary(npc.item.stat_bonus)}` : ""})
       </p>
       <div style={{ display: "grid", gap: 8, gridTemplateColumns: "1fr 1fr" }}>
         <button
@@ -3379,8 +3386,12 @@ function CharacterCard({
   const xpPct = xpSpan > 0 ? Math.min(1, xpIntoLevel / xpSpan) : 1;
   const fullyRecovered = c.hp >= c.max_hp && c.mana >= c.max_mana;
   const downed = c.downed_until !== null && c.downed_until > Date.now();
-  const equippedArmor = inventory.find((i) => i.item_type === "armor" && i.equipped);
-  const armorPower = equippedArmor?.power ?? 0;
+  const equippedBySlot = (slot: EquipSlot) => inventory.find((i) => i.equipped && (i.slot === slot || (i.slot === null && i.item_type === (slot === "main_hand" ? "weapon" : slot === "body" ? "armor" : ""))));
+  const bodyArmor = equippedBySlot("body");
+  const helmetArmor = equippedBySlot("helmet");
+  const pantsArmor = equippedBySlot("pants");
+  const shieldArmor = inventory.find((i) => i.equipped && (i.slot === "off_hand" || i.item_subtype === "shield"));
+  const armorPower = (bodyArmor?.power ?? 0) + Math.floor((helmetArmor?.power ?? 0) / 2) + Math.floor((pantsArmor?.power ?? 0) / 4) + (shieldArmor?.power ?? 0);
   const restDisabled = inQuest || downed || fullyRecovered;
   const portrait = me.class_art_url;
   const primaryStats: Stats = {
@@ -3464,7 +3475,7 @@ function CharacterCard({
           value={
             <span
               title={armorPower > 0
-                ? `Equipped armor: reduces incoming damage by floor(${armorPower}/2) = ${Math.floor(armorPower / 2)}.`
+                ? `Combined armor power ${armorPower}: reduces incoming damage by floor(${armorPower}/2) = ${Math.floor(armorPower / 2)}.`
                 : "No armor equipped."}
             >
               {armorPower > 0 ? `+${armorPower}` : <span style={muted}>—</span>}
@@ -4146,7 +4157,7 @@ function InventoryFullScreen({
                             <Icon name={itemIcon(item)} size={40} color={itemIconColor(item) ?? rc} />
                             <div style={{ marginTop: 6, fontSize: 10, fontWeight: 600, color: "#e2e8f0", lineHeight: 1.3, wordBreak: "break-word" }}>{item.item_name}</div>
                             <div style={{ marginTop: 3, fontSize: 10, color: rc, fontWeight: 600 }}>+{item.power}</div>
-                            <div style={{ fontSize: 9, color: "#6b7280", marginTop: 1, textTransform: "capitalize" }}>{item.item_type}</div>
+                            <div style={{ fontSize: 9, color: "#6b7280", marginTop: 1 }}>{slotLabel(item)}</div>
                           </div>
                         );
                       })}
@@ -4174,7 +4185,10 @@ function InventoryFullScreen({
                         <Icon name={itemIcon(item)} size={40} color={itemIconColor(item) ?? rc} />
                         <div style={{ marginTop: 6, fontSize: 10, fontWeight: 600, color: "#e2e8f0", lineHeight: 1.3, wordBreak: "break-word" }}>{item.item_name}</div>
                         <div style={{ marginTop: 3, fontSize: 10, color: rc, fontWeight: 600 }}>+{item.power}</div>
-                        <div style={{ fontSize: 9, color: "#6b7280", marginTop: 1, textTransform: "capitalize" }}>{item.item_type}</div>
+                        <div style={{ fontSize: 9, color: "#6b7280", marginTop: 1 }}>{slotLabel(item)}</div>
+                        {item.stat_bonus && statBonusSummary(item.stat_bonus) && (
+                          <div style={{ fontSize: 8, color: "#86efac", marginTop: 1 }}>{statBonusSummary(item.stat_bonus)}</div>
+                        )}
                         <div style={{ fontSize: 9, color: "#fbbf24", marginTop: 2 }}>
                           {sellPriceFor(item.item_type, item.rarity, { power: item.power, sharpens_count: item.sharpens_count })}g
                         </div>
@@ -4196,7 +4210,9 @@ function InventoryFullScreen({
                           <Icon name={itemIcon(item)} size={20} color={itemIconColor(item) ?? rc} />
                           <div style={{ flex: 1, minWidth: 0 }}>
                             <div style={{ fontSize: 13, fontWeight: 600, color: "#f5f5f5", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{item.item_name}</div>
-                            <div style={{ fontSize: 10, color: "#6b7280", textTransform: "capitalize", marginTop: 1 }}>{item.item_type}</div>
+                            <div style={{ fontSize: 10, color: "#6b7280", marginTop: 1 }}>
+                              {slotLabel(item)}{item.stat_bonus && statBonusSummary(item.stat_bonus) ? ` · ${statBonusSummary(item.stat_bonus)}` : ""}
+                            </div>
                           </div>
                           <span style={{ ...smallBadge, borderColor: `${rc}55`, color: rc, background: `${rc}15`, flexShrink: 0 }}>{item.rarity}</span>
                           <span style={{ fontSize: 11, color: rc, fontWeight: 600, flexShrink: 0, minWidth: 30, textAlign: "right" }}>+{item.power}</span>
@@ -4216,7 +4232,9 @@ function InventoryFullScreen({
                       <Icon name={itemIcon(item)} size={20} color={itemIconColor(item) ?? rc} />
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{ fontSize: 13, fontWeight: 600, color: "#f5f5f5", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{item.item_name}</div>
-                        <div style={{ fontSize: 10, color: "#6b7280", textTransform: "capitalize", marginTop: 1 }}>{item.item_type}</div>
+                        <div style={{ fontSize: 10, color: "#6b7280", marginTop: 1 }}>
+                          {slotLabel(item)}{item.stat_bonus && statBonusSummary(item.stat_bonus) ? ` · ${statBonusSummary(item.stat_bonus)}` : ""}
+                        </div>
                       </div>
                       <span style={{ ...smallBadge, borderColor: `${rc}55`, color: rc, background: `${rc}15`, flexShrink: 0 }}>{item.rarity}</span>
                       <span style={{ fontSize: 11, color: rc, fontWeight: 600, flexShrink: 0, minWidth: 30, textAlign: "right" }}>+{item.power}</span>
@@ -4441,10 +4459,15 @@ function ItemDetailPopover({
 
       {/* Type line */}
       <div style={{ ...muted, fontSize: 11, textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>
-        {ITEM_TYPE_LABELS[item.item_type]}
+        {slotLabel(item)}
         {item.item_type === "weapon" && item.weapon_range && ` · ${item.weapon_range}`}
         {" · "}+{item.power} power
       </div>
+      {item.stat_bonus && statBonusSummary(item.stat_bonus) && (
+        <div style={{ fontSize: 11, color: "#86efac", marginBottom: 8, fontWeight: 600 }}>
+          {statBonusSummary(item.stat_bonus)}
+        </div>
+      )}
 
       {/* Flavor */}
       {item.flavor && (
@@ -6962,6 +6985,30 @@ const ITEM_TYPE_LABELS: Record<ItemType, string> = {
   tool: "Tools",
   scroll: "Scrolls",
 };
+
+const SLOT_LABELS: Record<EquipSlot, string> = {
+  main_hand: "Main Hand",
+  off_hand: "Off Hand",
+  body: "Body",
+  helmet: "Helmet",
+  pants: "Legs",
+  boots: "Boots",
+  ring: "Ring",
+  amulet: "Amulet",
+};
+
+function slotLabel(item: Item): string {
+  if (item.slot) return SLOT_LABELS[item.slot];
+  return item.item_type.charAt(0).toUpperCase() + item.item_type.slice(1);
+}
+
+function statBonusSummary(bonus: Record<string, number> | null): string {
+  if (!bonus) return "";
+  return Object.entries(bonus)
+    .filter(([, v]) => v !== 0)
+    .map(([k, v]) => `+${v} ${k === "int_stat" ? "INT" : k.toUpperCase()}`)
+    .join(", ");
+}
 
 // Picks the best RPG-Awesome icon for an item using type, weapon_range, and
 // name keywords. Exact catalog names are matched first, then broad patterns,

@@ -147,6 +147,7 @@ import {
   setQuestMode,
   setQuestThreadTs,
   trySaveExpeditionAdvance,
+  getAllEquippedSlots,
   type ActiveQuest,
   type Character,
   type CharGender,
@@ -1044,6 +1045,21 @@ async function buildDungeonScene(
   const failDamage = 4 + Math.max(1, character.level);
   const baseTier = Math.max(1, character.level + (elite ? 1 : 0));
 
+  // Merges a roll + named result into a LootOption, preserving Phase 2 fields.
+  function mkLootOption(roll: ItemRoll, named: { name: string; flavor: string }) {
+    return {
+      name: named.name,
+      item_type: roll.type,
+      power: roll.power,
+      rarity: roll.rarity,
+      flavor: named.flavor,
+      weapon_range: roll.weapon_range ?? null,
+      ...(roll.slot ? { slot: roll.slot } : {}),
+      ...(roll.stat_bonus ? { stat_bonus: roll.stat_bonus as Record<string, number> } : {}),
+      ...(roll.item_subtype ? { item_subtype: roll.item_subtype } : {}),
+    };
+  }
+
   // Resolves an ItemRoll to a { name, flavor } pair.
   async function resolveLoot(location: string, roll: ItemRoll): Promise<{ name: string; flavor: string }> {
     if (roll.catalog_name) {
@@ -1060,6 +1076,7 @@ async function buildDungeonScene(
       roll.rarity,
       roll.power,
       roll.weapon_range,
+      roll.slot ?? undefined,
     );
   }
 
@@ -1099,14 +1116,7 @@ async function buildDungeonScene(
         generateLockboxScene(env.AI, theme, roomNum, totalRoomsVisited),
         ...rolls.map((roll) => resolveLoot("the locked chest", roll)),
       ]);
-      const opts = rolls.map((roll, j) => ({
-        name: named[j].name,
-        item_type: roll.type,
-        power: roll.power,
-        rarity: roll.rarity,
-        flavor: named[j].flavor,
-        weapon_range: roll.weapon_range ?? null,
-      }));
+      const opts = rolls.map((roll, j) => mkLootOption(roll, named[j]));
       return { type: "lockbox" as const, scene: lockboxScene, loot_options: opts, lock_tier: lockTier };
     }
     // npc
@@ -1121,14 +1131,7 @@ async function buildDungeonScene(
       scene: npc.scene,
       npc: {
         greeting: npc.greeting,
-        item: {
-          name: offerNamed.name,
-          item_type: offerRoll.type,
-          power: offerRoll.power,
-          rarity: offerRoll.rarity,
-          flavor: offerNamed.flavor,
-          weapon_range: offerRoll.weapon_range ?? null,
-        },
+        item: mkLootOption(offerRoll, offerNamed),
       },
     };
   });
@@ -1144,14 +1147,7 @@ async function buildDungeonScene(
       generateMerchantRoom(env.AI, theme, totalRoomsVisited - 2, totalRoomsVisited, merchantName),
       ...merchantStockRolls.map((roll) => resolveLoot(`${merchantName}'s stall`, roll)),
     ]);
-    const stock = merchantStockRolls.map((roll, j) => ({
-      name: named[j].name,
-      item_type: roll.type,
-      power: roll.power,
-      rarity: roll.rarity,
-      flavor: named[j].flavor,
-      weapon_range: roll.weapon_range ?? null,
-    }));
+    const stock = merchantStockRolls.map((roll, j) => mkLootOption(roll, named[j]));
     return { info, stock };
   })();
 
@@ -1178,14 +1174,7 @@ async function buildDungeonScene(
     drops_key: true,
     drops_key_tier: "silver" as KeyTier,
   });
-  const treasureLoot = treasureRolls.map((roll, i) => ({
-    name: treasureNamed[i].name,
-    item_type: roll.type,
-    power: roll.power,
-    rarity: roll.rarity,
-    flavor: treasureNamed[i].flavor,
-    weapon_range: roll.weapon_range ?? null,
-  }));
+  const treasureLoot = treasureRolls.map((roll, i) => mkLootOption(roll, treasureNamed[i]));
   nodes.push({
     type: "treasure",
     scene: "The dungeon opens onto its heart-chamber. A chest awaits.",
@@ -3574,6 +3563,9 @@ app.post("/api/quest/:id/dungeon/lockbox_choose", async (c) => {
     rarity: choice.rarity,
     flavor: choice.flavor,
     weapon_range: choice.weapon_range ?? null,
+    slot: (choice as { slot?: string }).slot as import("@gantt-quest/core").EquipSlot | undefined,
+    stat_bonus: (choice as { stat_bonus?: Record<string, number> }).stat_bonus,
+    item_subtype: (choice as { item_subtype?: string }).item_subtype,
   });
   const advance = await advanceDungeon(c.env.DB, questId, exp as ExpState, quest.scene as never, null);
   return c.json({
@@ -3638,6 +3630,9 @@ app.post("/api/quest/:id/dungeon/npc_choose", async (c) => {
     rarity: offer.rarity,
     flavor: offer.flavor,
     weapon_range: offer.weapon_range ?? null,
+    slot: (offer as { slot?: string }).slot as import("@gantt-quest/core").EquipSlot | undefined,
+    stat_bonus: (offer as { stat_bonus?: Record<string, number> }).stat_bonus,
+    item_subtype: (offer as { item_subtype?: string }).item_subtype,
   });
   if (bucket === "tainted") {
     const bleed = { type: "bleeding" as const, magnitude: 2, remaining: 3, source: "tainted gift from a stranger" };
@@ -3720,6 +3715,9 @@ app.post("/api/quest/:id/dungeon/merchant_choose", async (c) => {
     rarity: choice.rarity,
     flavor: choice.flavor,
     weapon_range: choice.weapon_range ?? null,
+    slot: (choice as { slot?: string }).slot as import("@gantt-quest/core").EquipSlot | undefined,
+    stat_bonus: (choice as { stat_bonus?: Record<string, number> }).stat_bonus,
+    item_subtype: (choice as { item_subtype?: string }).item_subtype,
   });
 
   return c.json({
@@ -4354,12 +4352,28 @@ async function buildInitialCombatState(
   const party = await getQuestParty(db, quest.id);
   const fighters: CombatInit["fighters"] = [];
   for (const member of party) {
-    const [weapon, armor] = await Promise.all([
-      getEquipped(db, member.slack_user_id, "weapon"),
-      getEquipped(db, member.slack_user_id, "armor"),
-    ]);
+    const slots = await getAllEquippedSlots(db, member.slack_user_id);
+    const weapon = slots.main_hand;
     const weaponRange = (weapon?.weapon_range as "melee" | "ranged" | "focus" | null | undefined) ?? "melee";
     const isFocus = weaponRange === "focus";
+
+    // Sum armor_power from all armor-contributing slots.
+    // helmet contributes floor(power/2); pants floor(power/4); others full power.
+    const armorPower =
+      (slots.body?.power ?? 0) +
+      Math.floor((slots.helmet?.power ?? 0) / 2) +
+      Math.floor((slots.pants?.power ?? 0) / 4) +
+      (slots.off_hand?.item_subtype === "shield" ? (slots.off_hand?.power ?? 0) : 0);
+
+    // Sum stat_bonus from all equipped items for STATS_V2 path.
+    const equipBonuses: Partial<Stats> = {};
+    for (const item of Object.values(slots)) {
+      if (!item?.stat_bonus) continue;
+      for (const [key, val] of Object.entries(item.stat_bonus)) {
+        (equipBonuses as Record<string, number>)[key] = ((equipBonuses as Record<string, number>)[key] ?? 0) + val;
+      }
+    }
+
     const memberStats: Stats = {
       str: member.str,
       int_stat: member.int_stat,
@@ -4372,6 +4386,7 @@ async function buildInitialCombatState(
       level: member.level,
       stats: memberStats,
       v2Enabled: statsV2Enabled,
+      equipBonuses: statsV2Enabled ? equipBonuses : undefined,
     });
     // Level-scaling bonus on top of the class mod (legacy path only).
     // STATS_V2 derives scaling from per-level stat growth instead.
@@ -4393,7 +4408,7 @@ async function buildInitialCombatState(
       focus_power: isFocus ? (weapon?.power ?? 0) : 0,
       weapon_range: weaponRange,
       slack_username: member.slack_username,
-      armor_power: armor?.power ?? 0,
+      armor_power: armorPower,
       scars: member.scars,
       stats: statsV2Enabled ? snap.stats : undefined,
     });

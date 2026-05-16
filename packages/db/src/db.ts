@@ -1,6 +1,6 @@
 // D1 query helpers. Raw prepared statements — no ORM.
 
-import type { DrinkBuff, EffectType, EarnedAchievement, ItemType, Rarity, StatKey, TownState, WeaponRange } from "@gantt-quest/core";
+import type { DrinkBuff, EffectType, EarnedAchievement, EquipSlot, ItemType, Rarity, StatKey, Stats, TownState, WeaponRange } from "@gantt-quest/core";
 import { startingStatsForClass } from "@gantt-quest/core";
 
 // Active status effect on a character or monster. Ticks on the affected actor's
@@ -27,14 +27,23 @@ export interface Item {
   // SMITHY_SHARPEN_CAP (3) in handlers — beyond that the smith refuses.
   // current_power - sharpens_count = original_power (useful for the cap math).
   sharpens_count: number;
+  // Phase 2 additions — null on pre-migration rows; present on new drops.
+  slot: EquipSlot | null;
+  stat_bonus: Record<string, number> | null; // e.g. { int_stat: 2 }
+  item_subtype: string | null;               // "shield" for off_hand shields
 }
 
-interface ItemRow extends Omit<Item, "equipped"> {
+interface ItemRow extends Omit<Item, "equipped" | "stat_bonus"> {
   equipped: number;
+  stat_bonus: string | null; // stored as JSON text in D1
 }
 
 function rowToItem(row: ItemRow): Item {
-  return { ...row, equipped: row.equipped === 1 };
+  return {
+    ...row,
+    equipped: row.equipped === 1,
+    stat_bonus: row.stat_bonus ? JSON.parse(row.stat_bonus) as Record<string, number> : null,
+  };
 }
 
 export type BattlePosition = "front" | "back";
@@ -222,6 +231,10 @@ export interface LootOption {
   rarity: Rarity;
   flavor: string;
   weapon_range?: WeaponRange | null;
+  // Phase 2 additions — present when the loot drop originated from rollItem.
+  slot?: EquipSlot | null;
+  stat_bonus?: Record<string, number> | null;
+  item_subtype?: string | null;
 }
 
 export interface TrapChoice {
@@ -951,19 +964,38 @@ export interface CreateItemInput {
   rarity: Rarity;
   flavor: string;
   weapon_range?: WeaponRange | null; // only meaningful for weapons; null otherwise
+  // Phase 2 optional fields.
+  slot?: EquipSlot | null;
+  stat_bonus?: Record<string, number> | null;
+  item_subtype?: string | null;
 }
 
+const ITEM_COLS = "id, character_id, item_name, item_type, power, rarity, flavor, equipped, weapon_range, sharpens_count, slot, stat_bonus, item_subtype";
+
 export async function addItem(db: D1Database, input: CreateItemInput): Promise<Item> {
+  // Infer slot from item_type for legacy callers (shop purchases, etc.) that
+  // don't supply an explicit slot. New slot items (rings, amulets…) always
+  // supply slot explicitly via the rollItem path.
+  const slot: EquipSlot | null = input.slot
+    ?? (input.item_type === "weapon" ? "main_hand"
+      : input.item_type === "armor" ? "body"
+      : null);
   const result = await db
     .prepare(
-      `INSERT INTO inventory (character_id, item_name, item_type, power, rarity, flavor, qty, equipped, weapon_range)
-       VALUES (?, ?, ?, ?, ?, ?, 1, 0, ?)`,
+      `INSERT INTO inventory (character_id, item_name, item_type, power, rarity, flavor, qty, equipped, weapon_range, slot, stat_bonus, item_subtype)
+       VALUES (?, ?, ?, ?, ?, ?, 1, 0, ?, ?, ?, ?)`,
     )
-    .bind(input.character_id, input.item_name, input.item_type, input.power, input.rarity, input.flavor, input.weapon_range ?? null)
+    .bind(
+      input.character_id, input.item_name, input.item_type, input.power, input.rarity, input.flavor,
+      input.weapon_range ?? null,
+      slot,
+      input.stat_bonus ? JSON.stringify(input.stat_bonus) : null,
+      input.item_subtype ?? null,
+    )
     .run();
   const id = result.meta.last_row_id;
   const row = await db
-    .prepare("SELECT id, character_id, item_name, item_type, power, rarity, flavor, equipped, weapon_range, sharpens_count FROM inventory WHERE id = ?")
+    .prepare(`SELECT ${ITEM_COLS} FROM inventory WHERE id = ?`)
     .bind(id)
     .first<ItemRow>();
   if (!row) throw new Error("Failed to read back inserted item");
@@ -973,7 +1005,7 @@ export async function addItem(db: D1Database, input: CreateItemInput): Promise<I
 export async function getInventory(db: D1Database, characterId: string): Promise<Item[]> {
   const result = await db
     .prepare(
-      `SELECT id, character_id, item_name, item_type, power, rarity, flavor, equipped, weapon_range, sharpens_count
+      `SELECT ${ITEM_COLS}
        FROM inventory WHERE character_id = ?
        ORDER BY equipped DESC, item_type ASC,
                 CASE rarity WHEN 'rare' THEN 0 WHEN 'uncommon' THEN 1 ELSE 2 END,
@@ -991,20 +1023,23 @@ export async function getItem(
 ): Promise<Item | null> {
   const row = await db
     .prepare(
-      `SELECT id, character_id, item_name, item_type, power, rarity, flavor, equipped, weapon_range, sharpens_count
-       FROM inventory WHERE id = ? AND character_id = ?`,
+      `SELECT ${ITEM_COLS} FROM inventory WHERE id = ? AND character_id = ?`,
     )
     .bind(itemId, characterId)
     .first<ItemRow>();
   return row ? rowToItem(row) : null;
 }
 
-// Equips an item, unequipping any other item of the same type for that character.
+// Equips an item. Unequips any other item in the same slot (when slot is set)
+// or same item_type (legacy fallback for pre-migration rows without a slot).
 export async function equipItem(db: D1Database, item: Item): Promise<void> {
+  const unequipStmt = item.slot
+    ? db.prepare(`UPDATE inventory SET equipped = 0 WHERE character_id = ? AND slot = ?`)
+        .bind(item.character_id, item.slot)
+    : db.prepare(`UPDATE inventory SET equipped = 0 WHERE character_id = ? AND item_type = ?`)
+        .bind(item.character_id, item.item_type);
   await db.batch([
-    db.prepare(
-      `UPDATE inventory SET equipped = 0 WHERE character_id = ? AND item_type = ?`,
-    ).bind(item.character_id, item.item_type),
+    unequipStmt,
     db.prepare("UPDATE inventory SET equipped = 1 WHERE id = ?").bind(item.id),
   ]);
 }
@@ -1058,13 +1093,35 @@ export async function getEquipped(
 ): Promise<Item | null> {
   const row = await db
     .prepare(
-      `SELECT id, character_id, item_name, item_type, power, rarity, flavor, equipped, weapon_range, sharpens_count
-       FROM inventory WHERE character_id = ? AND item_type = ? AND equipped = 1
-       LIMIT 1`,
+      `SELECT ${ITEM_COLS} FROM inventory WHERE character_id = ? AND item_type = ? AND equipped = 1 LIMIT 1`,
     )
     .bind(characterId, type)
     .first<ItemRow>();
   return row ? rowToItem(row) : null;
+}
+
+// Returns every equipped item keyed by slot. Unoccupied slots are null.
+// Falls back to item_type-based slot inference for pre-migration rows
+// (weapon→main_hand, armor→body) so callers don't need special-casing.
+export async function getAllEquippedSlots(
+  db: D1Database,
+  characterId: string,
+): Promise<Record<EquipSlot, Item | null>> {
+  const result = await db
+    .prepare(`SELECT ${ITEM_COLS} FROM inventory WHERE character_id = ? AND equipped = 1`)
+    .bind(characterId)
+    .all<ItemRow>();
+  const equipped = (result.results ?? []).map(rowToItem);
+  const slots: Record<EquipSlot, Item | null> = {
+    main_hand: null, off_hand: null, body: null, helmet: null,
+    pants: null, boots: null, ring: null, amulet: null,
+  };
+  for (const item of equipped) {
+    const slot: EquipSlot | null = item.slot
+      ?? (item.item_type === "weapon" ? "main_hand" : item.item_type === "armor" ? "body" : null);
+    if (slot && slot in slots) slots[slot] = item;
+  }
+  return slots;
 }
 
 export interface ShopItem {

@@ -332,6 +332,18 @@ export async function flavorFleeSuccess(
 // armor / consumable / magic / revive). Catalog items (tool / scroll) use
 // flavorCatalogItem — their names come from the fixed catalog and only the
 // flavor blurb is AI-written.
+function slotTypeHint(slot: string): string | null {
+  switch (slot) {
+    case "ring":     return "a finger ring or accessory (e.g. signet ring, debug ring, null-pointer ring, uptime band)";
+    case "amulet":   return "a neck amulet or pendant (e.g. data-crystal pendant, uptime medallion, recursion talisman)";
+    case "boots":    return "footwear (e.g. runtime sandals, debug boots, null-pointer treads, stack-overflow cleats)";
+    case "helmet":   return "head armor (e.g. crash helmet, null-guard visor, incident commander's helm, merge-conflict cap)";
+    case "pants":    return "leg armor or trousers (e.g. cargo pants, quantum leggings, debug denims, load-balanced greaves)";
+    case "off_hand": return "a shield (e.g. firewall buckler, rate-limiting shield, null-check barrier, abstraction layer)";
+    default:         return null;
+  }
+}
+
 export async function flavorLootDrop(
   ai: Ai,
   monsterName: string,
@@ -339,6 +351,7 @@ export async function flavorLootDrop(
   rarity: "common" | "uncommon" | "rare",
   power: number,
   weaponRange?: "melee" | "ranged" | "focus" | null,
+  slot?: string,
 ): Promise<{ name: string; flavor: string }> {
   const weaponHint =
     type === "weapon"
@@ -348,7 +361,8 @@ export async function flavorLootDrop(
       : null;
   const typeHint =
     weaponHint ??
-    (type === "armor"
+    (slot ? (slotTypeHint(slot) ?? "armor (e.g. vest, robe, cloak, helm, plating, gloves)") :
+     type === "armor"
       ? "armor (e.g. vest, robe, cloak, helm, plating, gloves)"
       : type === "magic"
         ? "a magical focus (e.g. tome, crystal, sigil, talisman, rune-stone)"

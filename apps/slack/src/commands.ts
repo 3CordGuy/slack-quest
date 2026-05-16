@@ -168,6 +168,7 @@ import {
   grantAchievement,
   consumePendingAchievements,
   upsertSlackUsername,
+  getAllEquippedSlots,
   type ActiveQuest,
   type BattlePosition,
   type CharGender,
@@ -258,6 +259,7 @@ import {
   checkSpdAchievements,
   checkProgressionAchievements,
   deriveAll,
+  type EquipSlot,
   type StatKey,
   type Stats,
   statSnapshot,
@@ -2190,14 +2192,7 @@ async function buildDungeonScene(
         generateLockboxScene(env.AI, theme, roomNum, totalRoomsVisited),
         ...rolls.map((roll) => resolveLootDrop(env, "the locked chest", roll)),
       ]);
-      const opts: LootOption[] = rolls.map((roll, j) => ({
-        name: named[j].name,
-        item_type: roll.type,
-        power: roll.power,
-        rarity: roll.rarity,
-        flavor: named[j].flavor,
-        weapon_range: roll.weapon_range ?? null,
-      }));
+      const opts: LootOption[] = rolls.map((roll, j) => rollToLootOption(roll, named[j]));
       const node: ExpeditionNode = { type: "lockbox", scene: lockboxScene, loot_options: opts, lock_tier: lockTier };
       return node;
     }
@@ -2221,14 +2216,7 @@ async function buildDungeonScene(
       scene: npc.scene,
       npc: {
         greeting: npc.greeting,
-        item: {
-          name: offerNamed.name,
-          item_type: offerRoll.type,
-          power: offerRoll.power,
-          rarity: offerRoll.rarity,
-          flavor: offerNamed.flavor,
-          weapon_range: offerRoll.weapon_range ?? null,
-        },
+        item: rollToLootOption(offerRoll, offerNamed),
         ...(npcArtUrl ? { art_url: npcArtUrl } : {}),
       },
     };
@@ -2272,14 +2260,7 @@ async function buildDungeonScene(
       merchantName,
       stockNames,
     );
-    const stock: LootOption[] = merchantStockRolls.map((roll, j) => ({
-      name: named[j].name,
-      item_type: roll.type,
-      power: roll.power,
-      rarity: roll.rarity,
-      flavor: named[j].flavor,
-      weapon_range: roll.weapon_range ?? null,
-    }));
+    const stock: LootOption[] = merchantStockRolls.map((roll, j) => rollToLootOption(roll, named[j]));
     return { info, stock, artUrl };
   })();
 
@@ -2313,14 +2294,7 @@ async function buildDungeonScene(
     monster_art_url: boss.monster_art_url,
   });
 
-  const treasureLoot: LootOption[] = treasureRolls.map((roll, i) => ({
-    name: treasureNamed[i].name,
-    item_type: roll.type,
-    power: roll.power,
-    rarity: roll.rarity,
-    flavor: treasureNamed[i].flavor,
-    weapon_range: roll.weapon_range ?? null,
-  }));
+  const treasureLoot: LootOption[] = treasureRolls.map((roll, i) => rollToLootOption(roll, treasureNamed[i]));
   nodes.push({
     type: "treasure",
     scene: "The dungeon opens onto its heart-chamber. A chest awaits.",
@@ -2402,7 +2376,24 @@ async function resolveLootDrop(
     roll.rarity,
     roll.power,
     roll.weapon_range,
+    roll.slot ?? undefined,
   );
+}
+
+// Merges a roll + AI-named result into a LootOption. Preserves all Phase 2
+// slot/stat_bonus/item_subtype fields so they flow through to addItem.
+function rollToLootOption(roll: ItemRoll, named: { name: string; flavor: string }): LootOption {
+  return {
+    name: named.name,
+    item_type: roll.type,
+    power: roll.power,
+    rarity: roll.rarity,
+    flavor: named.flavor,
+    weapon_range: roll.weapon_range ?? null,
+    ...(roll.slot ? { slot: roll.slot } : {}),
+    ...(roll.stat_bonus ? { stat_bonus: roll.stat_bonus as Record<string, number> } : {}),
+    ...(roll.item_subtype ? { item_subtype: roll.item_subtype } : {}),
+  };
 }
 
 function dungeonRoomLabel(t: ExpeditionNodeType): string {
@@ -4298,14 +4289,18 @@ async function resolveVictory(
     const lootLines: string[] = [];
     for (const { fighter, roll } of lootRolls) {
       const named = await resolveLootDrop(env, quest.scene.monster_name, roll);
+      const opt = rollToLootOption(roll, named);
       const item = await addItem(env.DB, {
         character_id: fighter.slack_user_id,
-        item_name: named.name,
-        item_type: roll.type,
-        power: roll.power,
-        rarity: roll.rarity,
-        flavor: named.flavor,
-        weapon_range: roll.weapon_range ?? null,
+        item_name: opt.name,
+        item_type: opt.item_type,
+        power: opt.power,
+        rarity: opt.rarity,
+        flavor: opt.flavor,
+        weapon_range: opt.weapon_range,
+        slot: opt.slot,
+        stat_bonus: opt.stat_bonus,
+        item_subtype: opt.item_subtype,
       });
       const powerStr = powerLabel(roll.type, roll.power, item.item_name);
       const rangeNote = roll.weapon_range
@@ -4982,6 +4977,9 @@ async function resolveLockboxChoice(
     rarity: choice.rarity,
     flavor: choice.flavor,
     weapon_range: choice.weapon_range ?? null,
+    slot: choice.slot,
+    stat_bonus: choice.stat_bonus,
+    item_subtype: choice.item_subtype,
   });
   await appendLog(env.DB, quest.id, payload.user_id, "lockbox", `unlocked ${lockTier} → ${item.item_name}`);
 
@@ -5057,6 +5055,9 @@ async function resolveNpcChoice(
     rarity: offer.rarity,
     flavor: offer.flavor,
     weapon_range: offer.weapon_range ?? null,
+    slot: offer.slot,
+    stat_bonus: offer.stat_bonus,
+    item_subtype: offer.item_subtype,
   });
 
   if (bucket === "tainted") {
@@ -5140,6 +5141,9 @@ async function resolveMerchantChoice(
     rarity: choice.rarity,
     flavor: choice.flavor,
     weapon_range: choice.weapon_range ?? null,
+    slot: choice.slot,
+    stat_bonus: choice.stat_bonus,
+    item_subtype: choice.item_subtype,
   });
   await appendLog(env.DB, quest.id, payload.user_id, "merchant", `bought ${item.item_name} for ${price}g`);
 
@@ -5208,6 +5212,9 @@ async function handleTake(
     rarity: choice.rarity,
     flavor: choice.flavor,
     weapon_range: choice.weapon_range ?? null,
+    slot: choice.slot,
+    stat_bonus: choice.stat_bonus,
+    item_subtype: choice.item_subtype,
   });
 
   await resolveExpeditionVictory(payload, env, ctx, character, item, quest);
@@ -5713,6 +5720,11 @@ async function handleEquip(
   }
   if (item.equipped) return ephemeral(`*${item.item_name}* is already equipped.`);
 
+  // Off-hand slot only accepts shields in Phase 2.
+  if (item.slot === "off_hand" && item.item_subtype !== "shield") {
+    return ephemeral(`Only shields can go in the off-hand slot. Dual-wielding is not yet supported.`);
+  }
+
   // 🔮 Focus weapon swap bookkeeping. Equipping a focus bumps max_mana
   // by FOCUS_MAX_MANA_BONUS (and current mana too); unequipping the
   // focus to swap to another weapon refunds that bonus. Only the
@@ -5730,9 +5742,13 @@ async function handleEquip(
     }
   }
 
+  const slotLabel = item.slot ?? item.item_type;
+  const statLine = item.stat_bonus
+    ? ` · ${Object.entries(item.stat_bonus).map(([k, v]) => `+${v} ${k === "int_stat" ? "INT" : k.toUpperCase()}`).join(", ")}`
+    : "";
   await equipItem(env.DB, item);
   return ephemeral(
-    `✅ Equipped *${item.item_name}* (${item.item_type}${rangeBadge(item)}, +${item.power}). Previous ${item.item_type} unequipped.${manaShiftLine}`,
+    `✅ Equipped *${item.item_name}* (${slotLabel}${rangeBadge(item)}, +${item.power}${statLine}). Previous ${slotLabel} unequipped.${manaShiftLine}`,
   );
 }
 
@@ -5763,8 +5779,9 @@ async function handleUnequip(
   }
 
   await unequipItem(env.DB, item);
+  const unequipSlotLabel = item.slot ?? item.item_type;
   return ephemeral(
-    `🎒 Unequipped *${item.item_name}* (${item.item_type}${rangeBadge(item)}, +${item.power}). Slot is now empty.${manaShiftLine}`,
+    `🎒 Unequipped *${item.item_name}* (${unequipSlotLabel}${rangeBadge(item)}, +${item.power}). Slot is now empty.${manaShiftLine}`,
   );
 }
 
