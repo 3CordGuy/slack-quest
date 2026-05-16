@@ -927,9 +927,52 @@ const CLASS_DESCRIPTOR: Record<string, string> = {
   data_warlock: "Warlock in dark scholarly robes hunched over a glowing grimoire whose pages writhe with SQL incantations and data-pipeline diagrams, eyes lit with arcane insight. Background: a bright analytics den — multiple monitors showing dashboards and query results, whiteboards covered in funnel diagrams, a stack of printed reports. Warm desk-lamp light.",
 };
 
-// Cached in R2 by character-name slug — same key as the Slack worker so both
-// apps share the same portrait cache. Returns the URL when cached, fires
-// generation in the background on miss, and falls back to the class singleton.
+function buildCharacterArtPrompt(
+  character: { name: string; class: string; gender?: "m" | "f" | null },
+  classId: string,
+): string {
+  // Gender MUST be the first word so Flux anchors subject sex before reading
+  // class/name descriptors. Burying it mid-sentence causes ~30% wrong-gender
+  // outputs with Flux-1-schnell.
+  const genderWord = character.gender === "m" ? "male" : character.gender === "f" ? "female" : "fantasy";
+  const descriptor = CLASS_DESCRIPTOR[classId] ?? "Adventurer in fantasy attire, dramatic lighting.";
+  const traitIdx = character.name.charCodeAt(0) % CHARACTER_TRAITS.length;
+  const trait = CHARACTER_TRAITS[traitIdx];
+  const subject =
+    `A ${genderWord} character named "${character.name}", a ${character.class}.` +
+    ` Personality: ${trait}.` +
+    ` Interpret the name "${character.name}" literally — let the words shape appearance, posture, gear, scars, or aura.` +
+    ` ${descriptor}`;
+  return `${subject} ${CHARACTER_STYLE_ANCHOR} ${NEGATIVES}`;
+}
+
+// Returns the R2 key + public URL for this character, without touching the bucket.
+function characterArtKey(art: ArtTarget, name: string): { key: string; url: string } {
+  const slug = slugifyMonsterName(name);
+  const key = `art/${CHARACTER_ART_VERSION}/character/${slug}.png`;
+  return { key, url: `${art.baseUrl}/img/${key}` };
+}
+
+// Awaited variant used at reroll time: blocks until the portrait is stored in
+// R2 so the response can include the URL immediately. Falls back gracefully on
+// AI error so a slow Flux call doesn't fail the whole reroll.
+export async function generateCharacterArtNow(
+  ai: Ai,
+  art: ArtTarget,
+  character: { name: string; class: string; gender?: "m" | "f" | null },
+  classId: string,
+): Promise<string | null> {
+  const { key, url } = characterArtKey(art, character.name);
+  const prompt = buildCharacterArtPrompt(character, classId);
+  return generateAndCacheArt(ai, art, key, prompt, `character:${character.name}`).then(
+    (result) => result ?? url,
+    () => null,
+  );
+}
+
+// Background variant used at first-view time (/gq me, first WS connect, etc.):
+// starts generation as a waitUntil so the current response isn't delayed, and
+// returns the fallback class-singleton banner while gen runs.
 export async function getOrScheduleCharacterArt(
   ai: Ai,
   art: ArtTarget,
@@ -937,33 +980,21 @@ export async function getOrScheduleCharacterArt(
   character: { name: string; class: string; gender?: "m" | "f" | null },
   classId: string,
 ): Promise<string | null> {
-  const slug = slugifyMonsterName(character.name);
-  const charKey = `art/${CHARACTER_ART_VERSION}/character/${slug}.png`;
-  const charUrl = `${art.baseUrl}/img/${charKey}`;
+  const { key, url } = characterArtKey(art, character.name);
   try {
-    const existing = await art.bucket.head(charKey);
-    if (existing) return charUrl;
+    const existing = await art.bucket.head(key);
+    if (existing) return url;
   } catch (err) {
     console.warn("character-art:head-error", { name: character.name, err: err instanceof Error ? err.message : String(err) });
   }
-  const descriptor = CLASS_DESCRIPTOR[classId] ?? "Adventurer in fantasy attire, dramatic lighting.";
-  const traitIdx = character.name.charCodeAt(0) % CHARACTER_TRAITS.length;
-  const trait = CHARACTER_TRAITS[traitIdx];
-  const genderHint = character.gender === "m" ? " The character is MALE." : character.gender === "f" ? " The character is FEMALE." : "";
-  const subject =
-    `Single-figure character portrait of "${character.name}", a fantasy ${character.class}.${genderHint}` +
-    ` Personality and bearing: ${trait}.` +
-    ` Treat the character name literally — interpret what the words suggest about appearance, posture, gear, scars, or aura.` +
-    ` ${descriptor}` +
-    ` Three-quarter view, RPG fantasy art style, single character in a bright office-dungeon setting.`;
-  const prompt = `${subject} ${CHARACTER_STYLE_ANCHOR} ${NEGATIVES}`;
-  ctx.waitUntil(generateAndCacheArt(ai, art, charKey, prompt, `character:${character.name}`));
+  const prompt = buildCharacterArtPrompt(character, classId);
+  ctx.waitUntil(generateAndCacheArt(ai, art, key, prompt, `character:${character.name}`));
   const fallbackKey = `art/views/${ART_VERSION}/class_${classId}.png`;
   try {
     const existing = await art.bucket.head(fallbackKey);
     if (existing) return `${art.baseUrl}/img/${fallbackKey}`;
   } catch {
-    // no fallback
+    // no fallback available yet
   }
   return null;
 }

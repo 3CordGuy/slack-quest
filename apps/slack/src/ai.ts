@@ -522,6 +522,24 @@ const CLASS_DESCRIPTOR: Record<string, string> = {
 // "Brudor the Halflinter") feed the same literal-name interpretation we use
 // for monsters: flux reads the words as visual cues.
 //
+// Builds the Flux prompt for a character portrait. Gender is the FIRST word
+// so Flux-1-schnell anchors subject sex before reading class/name descriptors.
+function buildCharacterArtPrompt(
+  character: { name: string; class: string; gender?: "m" | "f" | null },
+  classId: string,
+): string {
+  const genderWord = character.gender === "m" ? "male" : character.gender === "f" ? "female" : "fantasy";
+  const descriptor = CLASS_DESCRIPTOR[classId] ?? "Adventurer in fantasy attire, dramatic lighting.";
+  const traitIdx = character.name.charCodeAt(0) % CHARACTER_TRAITS.length;
+  const trait = CHARACTER_TRAITS[traitIdx];
+  const subject =
+    `A ${genderWord} character named "${character.name}", a ${character.class}.` +
+    ` Personality: ${trait}.` +
+    ` Interpret the name "${character.name}" literally — let the words shape appearance, posture, gear, scars, or aura.` +
+    ` ${descriptor}`;
+  return `${subject} ${CHARACTER_STYLE_ANCHOR} ${NEGATIVES}`;
+}
+
 // Generation is lazy. On cache miss we schedule the gen via ctx.waitUntil
 // and return the class-singleton banner as a placeholder so the first view
 // of /sq sheet shows *something* while the unique portrait renders. The
@@ -548,28 +566,7 @@ export async function getOrScheduleCharacterArt(
   }
 
   // Cache miss — fire the per-character gen as background work.
-  const descriptor = CLASS_DESCRIPTOR[classId] ?? "Adventurer in fantasy attire, dramatic lighting.";
-  // Pick a random personality trait so two same-class rolls look distinct —
-  // different expression, stance, or aura. The trait is seeded by the
-  // character name's first byte so regenerations are stable for the same
-  // name, but different names (almost always) draw different traits.
-  const traitIdx = character.name.charCodeAt(0) % CHARACTER_TRAITS.length;
-  const trait = CHARACTER_TRAITS[traitIdx];
-  // Anchor gender so regenerations of the same character don't swing between
-  // male and female interpretations. Empty hint for legacy nulls lets flux
-  // pick freely.
-  const genderHint = character.gender === "m"
-    ? " The character is MALE."
-    : character.gender === "f"
-    ? " The character is FEMALE."
-    : "";
-  const subject =
-    `Single-figure character portrait of "${character.name}", a fantasy ${character.class}.${genderHint}` +
-    ` Personality and bearing: ${trait}.` +
-    ` Treat the character name (especially any epithet like "the Patient" or "Stack-Cleaver") LITERALLY — interpret what the words suggest about appearance, posture, gear, scars, or aura.` +
-    ` ${descriptor}` +
-    ` Three-quarter view, RPG fantasy art style, single character in a bright office-dungeon setting.`;
-  const prompt = `${subject} ${CHARACTER_STYLE_ANCHOR} ${NEGATIVES}`;
+  const prompt = buildCharacterArtPrompt(character, classId);
   ctx.waitUntil(generateAndCacheArt(ai, art, charKey, prompt, `character:${character.name}`));
 
   // Fallback to the class-singleton banner while the unique gen runs. We

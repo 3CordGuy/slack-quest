@@ -342,6 +342,7 @@ interface MeResponse {
   slack_team_id: string;
   character: Character | null;
   class_art_url?: string | null;
+  char_art_url?: string | null;
 }
 
 interface InventoryResponse {
@@ -1004,11 +1005,27 @@ export function App() {
   async function rerollCharacter() {
     const res = await fetch("/api/character/reroll", { method: "POST", credentials: "include" });
     if (!res.ok) {
-      const body = await res.json().catch(() => ({})) as { error?: string; cost?: number; gold?: number };
+      const body = await res.json().catch(() => ({})) as { error?: string };
       if (body.error === "mid_quest") { toast.error("Finish your quest before rerolling."); return; }
       toast.error("Reroll failed."); return;
     }
-    toast.success("New hero rolled! Refreshing…");
+    const body = await res.json().catch(() => ({})) as { ok?: boolean; character?: Character; art_url?: string | null };
+    // Apply the returned portrait immediately so the UI shows the new character
+    // without waiting for the full refresh to hit /api/me.
+    if (body.character) {
+      setState((prev) => {
+        if (prev.kind !== "auth") return prev;
+        return {
+          ...prev,
+          me: {
+            ...prev.me,
+            character: body.character!,
+            char_art_url: body.art_url ?? null,
+          },
+        };
+      });
+    }
+    toast.success("New hero rolled!");
     void refresh();
   }
 
@@ -3697,7 +3714,7 @@ function CharacterCard({
   const shieldArmor = inventory.find((i) => i.equipped && (i.slot === "off_hand" || i.item_subtype === "shield"));
   const armorPower = (bodyArmor?.power ?? 0) + Math.floor((helmetArmor?.power ?? 0) / 2) + Math.floor((pantsArmor?.power ?? 0) / 4) + (shieldArmor?.power ?? 0);
   const restDisabled = inQuest || downed || fullyRecovered;
-  const portrait = me.class_art_url;
+  const portrait = me.char_art_url ?? me.class_art_url;
   const primaryStats: Stats = {
     str: c.str ?? 5,
     int_stat: c.int_stat ?? 5,

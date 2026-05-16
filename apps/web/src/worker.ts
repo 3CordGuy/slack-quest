@@ -26,6 +26,7 @@ import {
   generateTrapRoom,
   generateTownName,
   getOrScheduleViewArt,
+  generateCharacterArtNow,
   getOrScheduleCharacterArt,
 } from "./ai";
 
@@ -879,12 +880,19 @@ app.post("/api/character/reroll", async (c) => {
     gender,
   });
 
-  c.executionCtx.waitUntil(
-    getOrScheduleCharacterArt(c.env.AI, artTarget(c.env), c.executionCtx, { name: newChar.name, class: newChar.class, gender: newChar.gender }, cls.id)
-      .catch((err) => console.warn("reroll:char-art-gen-error", { err: err instanceof Error ? err.message : String(err) })),
-  );
+  // Block on art generation so the response includes the URL and the UI can
+  // display the portrait immediately without a second round-trip.
+  const art_url = await generateCharacterArtNow(
+    c.env.AI,
+    artTarget(c.env),
+    { name: newChar.name, class: newChar.class, gender: newChar.gender },
+    cls.id,
+  ).catch((err) => {
+    console.warn("reroll:char-art-gen-error", { err: err instanceof Error ? err.message : String(err) });
+    return null;
+  });
 
-  return c.json({ ok: true, character: newChar });
+  return c.json({ ok: true, character: newChar, art_url });
 });
 
 // POST /api/character/spend — spends 1 unspent_point on the chosen primary stat.
@@ -944,16 +952,23 @@ app.get("/api/me", async (c) => {
   const session = await currentSession(c.env.DB, c.req.header("cookie"));
   if (!session) return c.json({ error: "unauthenticated" }, 401);
   const character = await getCharacter(c.env.DB, session.slack_user_id);
-  // Lazy class-portrait lookup. classByName resolves the display name back
-  // to a stable class id ("DevOps Mage" → "devops_mage") which is the suffix
-  // of the matching `class_*` VIEW_ART_PROMPTS key. Cache miss → background
-  // flux gen, next poll picks up the URL. Fail-soft.
   let class_art_url: string | null = null;
+  let char_art_url: string | null = null;
   if (character) {
     const id = classByName(character.class).id;
     const shortKey = `class_${id}` as keyof typeof VIEW_ART_PROMPTS;
     if (shortKey in VIEW_ART_PROMPTS) {
       class_art_url = await getOrScheduleViewArt(c.env.AI, artTarget(c.env), c.executionCtx, shortKey);
+    }
+    // Per-character portrait keyed by name slug. Cache hit → return URL; miss →
+    // schedule background gen and fall through to class_art_url fallback.
+    const art = artTarget(c.env);
+    if (art) {
+      char_art_url = await getOrScheduleCharacterArt(
+        c.env.AI, art, c.executionCtx,
+        { name: character.name, class: character.class, gender: character.gender },
+        id,
+      );
     }
   }
   return c.json({
@@ -961,6 +976,7 @@ app.get("/api/me", async (c) => {
     slack_team_id: session.slack_team_id,
     character,
     class_art_url,
+    char_art_url,
   });
 });
 
