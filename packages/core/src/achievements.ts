@@ -289,7 +289,7 @@ export const ACHIEVEMENTS: Achievement[] = [
     id: "warlock_wins_5",
     title: "Dark Pact",
     flavor: "The contract was signed in blood. Both yours and theirs.",
-    description: "Win 5 combats as a Data Warlock.",
+    description: "Win 5 combats as a Data Wizard.",
     icon: "death-skull",
     gradient: ["#2e1065", "#7c3aed"],
     category: "class",

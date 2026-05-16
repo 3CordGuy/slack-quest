@@ -207,7 +207,7 @@ function renderEvent(state: CombatState, e: CombatEvent): string {
       return `🎵 *Bard aura*: ${nameOf(state, e.actor)} +${e.bonus} damage (from ${nameOf(state, e.source)}).`;
 
     case "passive_warlock_bleed":
-      return `💀 *Data Warlock* passive: critical strike inflicts 🩸 *Bleeding* (${e.magnitude}/turn × ${e.duration}).`;
+      return `💀 *Data Wizard* passive: critical strike inflicts 🩸 *Bleeding* (${e.magnitude}/turn × ${e.duration}).`;
 
     case "passive_paladin_auto_heal":
       return `✨ *Paladin* passive: ${nameOf(state, e.paladin)} mends ${nameOf(state, e.target)} for +${e.amount} HP.`;

@@ -76,7 +76,8 @@ const CLASS_ID_BY_NAME: Record<string, string> = {
   "Staff Sage": "staff_sage",
   "Refactor Rogue": "refactor_rogue",
   "SRE Warden": "sre_warden",
-  "Data Warlock": "data_warlock",
+  "Data Wizard": "data_warlock",
+  "Data Warlock": "data_warlock", // legacy alias for pre-rename DO state
 };
 function classPortraitUrl(className: string): string | null {
   const id = CLASS_ID_BY_NAME[className];
@@ -1450,7 +1451,8 @@ const ABILITY_BY_CLASS: Record<string, AbilityUiSpec> = {
   "DevOps Mage":     { id: "containerize",       name: "Containerize",      iconName: "cubes",            mana_cost: 2, blurb: "Monster skips next swing" },
   "QA Paladin":      { id: "regression_shield",  name: "Regression Shield", iconName: "fairy-wand",       mana_cost: 2, blurb: "+3 shield to all party" },
   "Refactor Rogue":  { id: "vanish",             name: "Vanish",            iconName: "player-dodge",     mana_cost: 2, blurb: "Untargetable for 2 swings" },
-  "Data Warlock":    { id: "soul_drain",         name: "Soul Drain",        iconName: "death-skull",      mana_cost: 2, blurb: "1d6+mag dmg, heal 50%" },
+  "Data Wizard":     { id: "soul_drain",         name: "Soul Drain",        iconName: "death-skull",      mana_cost: 2, blurb: "1d6+mag dmg, heal 50%" },
+  "Data Warlock":    { id: "soul_drain",         name: "Soul Drain",        iconName: "death-skull",      mana_cost: 2, blurb: "1d6+mag dmg, heal 50%" }, // legacy alias
   "Frontend Bard":   { id: "battle_hymn",        name: "Battle Hymn",       iconName: "aura",             mana_cost: 2, blurb: "+2 dmg on next 2 party attacks" },
   "Staff Sage":      { id: "foresee",            name: "Foresee",           iconName: "scroll-unfurled",  mana_cost: 1, blurb: "Full battle intel: next target, net damage, party triage, targeting odds. Persists 2 turns." },
   "Backend Druid":   { id: "migrate",            name: "Migrate",           iconName: "grass",            mana_cost: 1, blurb: "Move a partymate to front/back", needs_migrate_picker: true },

@@ -1,6 +1,7 @@
 // D1 query helpers. Raw prepared statements — no ORM.
 
 import type { DrinkBuff, EffectType, EarnedAchievement, ItemType, Rarity, TownState, WeaponRange } from "@gantt-quest/core";
+import { startingStatsForClass } from "@gantt-quest/core";
 
 // Active status effect on a character or monster. Ticks on the affected actor's
 // own combat action / monster turn. Cleared at quest end.
@@ -58,6 +59,18 @@ export interface Character {
   max_mana: number;
   shield: number;
   gold: number;
+  // Primary stats (migration 0032). Drive derived combat numbers via
+  // statSnapshot() in @gantt-quest/core. Pre-migration rows return DEFAULT_STATS
+  // values (5 each) — the migration backfills real allocations by class+level.
+  str: number;
+  int_stat: number;
+  vit: number;
+  agi: number;
+  dex: number;
+  // Free points the player can spend via /gq spend <stat>. Migration 0032
+  // seeds (level - 1) for every existing row so retroactive levels grant
+  // retroactive allocations.
+  unspent_points: number;
   scars: string[];
   downed_until: number | null;
   last_rest_at: number | null;
@@ -134,11 +147,17 @@ export async function createCharacter(
   // DEFAULT 1 in migrations/0005_mana.sql). Two is the new floor because
   // every class active ability costs 1-2 mana — starting at 1 made Lvl 1s
   // unable to use their active until the level-5 bump landed.
+  //
+  // Primary stats (migration 0032) come from STARTING_STATS by class.
+  // Pre-migration columns default to 5 each — overriding here so a fresh
+  // character lands with proper class flavor from turn 1.
+  const stats = startingStatsForClass(input.class);
   await db
     .prepare(
       `INSERT INTO characters
-       (slack_user_id, slack_team_id, name, class, gender, level, xp, hp, max_hp, mana, max_mana, gold, scars, created_at, last_active)
-       VALUES (?, ?, ?, ?, ?, 1, 0, ?, ?, 2, 2, 10, '[]', ?, ?)`,
+       (slack_user_id, slack_team_id, name, class, gender, level, xp, hp, max_hp, mana, max_mana, gold, scars, created_at, last_active,
+        str, int_stat, vit, agi, dex, unspent_points)
+       VALUES (?, ?, ?, ?, ?, 1, 0, ?, ?, 2, 2, 10, '[]', ?, ?, ?, ?, ?, ?, ?, 0)`,
     )
     .bind(
       input.slack_user_id,
@@ -150,12 +169,18 @@ export async function createCharacter(
       input.max_hp,
       now,
       now,
+      stats.str,
+      stats.int_stat,
+      stats.vit,
+      stats.agi,
+      stats.dex,
     )
     .run();
   const row = await getCharacter(db, input.slack_user_id);
   if (!row) throw new Error("Failed to read back created character");
   return row;
 }
+
 
 export type QuestVariant = "standard" | "boss" | "gauntlet" | "dungeon";
 

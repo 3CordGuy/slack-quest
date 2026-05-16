@@ -23,7 +23,11 @@ export const CLASSES: CharClass[] = [
   { id: "staff_sage",        name: "Staff Sage",         base_hp: 26, attack_mod: 0, magic_mod: 2, skills: ["int"],         blurb: "Dispenses ancient wisdom and the occasional postmortem." },
   { id: "refactor_rogue",    name: "Refactor Rogue",     base_hp: 18, attack_mod: 2, magic_mod: 0, skills: ["dex"],         blurb: "Strikes from the shadows; leaves no dead code behind." },
   { id: "sre_warden",        name: "SRE Warden",         base_hp: 30, attack_mod: 2, magic_mod: 0, skills: ["str"],         blurb: "Stands the wall between prod and the howling void." },
-  { id: "data_warlock",      name: "Data Warlock",       base_hp: 22, attack_mod: 0, magic_mod: 2, skills: ["int"],         blurb: "Bound to a query plan most mortals dare not read." },
+  // Internal id stays "data_warlock" to keep R2 art slugs, AI prompt keys,
+  // signature/passive map keys, and persisted achievement records stable.
+  // Display name is "Data Wizard" — classByName aliases the old "Data Warlock"
+  // string so legacy character rows (pre-migration 0032) still resolve.
+  { id: "data_warlock",      name: "Data Wizard",        base_hp: 22, attack_mod: 0, magic_mod: 2, skills: ["int"],         blurb: "Bound to a query plan most mortals dare not read." },
 ];
 
 // Skill emojis used in trap choice display so players see at a glance which option
@@ -38,10 +42,18 @@ export function pickRandomClass(): CharClass {
   return CLASSES[Math.floor(Math.random() * CLASSES.length)];
 }
 
+// Legacy display-name aliases. When a class is rebranded its row in
+// characters.class is migrated, but in-flight DO state, log entries, and
+// achievement records may still carry the old string for a while.
+const CLASS_NAME_ALIASES: Record<string, string> = {
+  "Data Warlock": "Data Wizard",
+};
+
 export function classByName(name: string): CharClass {
+  const resolved = CLASS_NAME_ALIASES[name] ?? name;
   // Falls back to a balanced default so a renamed/stale class string still works.
-  return CLASSES.find((c) => c.name === name) ??
-    { id: "unknown", name, base_hp: 20, attack_mod: 1, magic_mod: 1, skills: ["int"], blurb: "" };
+  return CLASSES.find((c) => c.name === resolved) ??
+    { id: "unknown", name: resolved, base_hp: 20, attack_mod: 1, magic_mod: 1, skills: ["int"], blurb: "" };
 }
 
 // Per-class haggle modifier — added to the 1d6 haggle roll. Charisma classes (Bard)
