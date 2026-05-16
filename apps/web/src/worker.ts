@@ -26,6 +26,7 @@ import {
   generateTrapRoom,
   generateTownName,
   getOrScheduleViewArt,
+  getOrScheduleCharacterArt,
 } from "./ai";
 
 import {
@@ -66,6 +67,7 @@ import {
   upgradeCombatState,
   MONSTER_ID,
   type CombatEvent,
+  type CombatFighter,
   type CombatMonster,
   type StatKey,
   type CombatInit,
@@ -153,7 +155,7 @@ import {
   trySaveExpeditionAdvance,
   getAllEquippedSlots,
   insertShopStock,
-  averageCharacterLevel,
+  characterLevelRange,
   countCharacters,
   type ActiveQuest,
   type Character,
@@ -400,11 +402,16 @@ async function recentChannelForUser(db: D1Database, userId: string): Promise<str
     .bind(userId)
     .first<{ channel_id: string }>();
   if (row) return row.channel_id;
-  // Fallback: most recently used real channel in the system
-  const fallback = await db
+  // Fallback 1: most recently used real channel in the quest table
+  const questFallback = await db
     .prepare(`SELECT channel_id FROM quests WHERE channel_id NOT LIKE 'web:%' ORDER BY id DESC LIMIT 1`)
     .first<{ channel_id: string }>();
-  return fallback?.channel_id ?? null;
+  if (questFallback) return questFallback.channel_id;
+  // Fallback 2: any channel that has town state — survives a full quest wipe
+  const townFallback = await db
+    .prepare(`SELECT channel_id FROM town_state ORDER BY refreshed_at DESC LIMIT 1`)
+    .first<{ channel_id: string }>();
+  return townFallback?.channel_id ?? null;
 }
 
 // Slack uses Workers AI to flavor non-catalog drops; web v1 names them
@@ -871,6 +878,11 @@ app.post("/api/character/reroll", async (c) => {
     max_hp: hp,
     gender,
   });
+
+  c.executionCtx.waitUntil(
+    getOrScheduleCharacterArt(c.env.AI, artTarget(c.env), c.executionCtx, { name: newChar.name, class: newChar.class, gender: newChar.gender }, cls.id)
+      .catch((err) => console.warn("reroll:char-art-gen-error", { err: err instanceof Error ? err.message : String(err) })),
+  );
 
   return c.json({ ok: true, character: newChar });
 });
@@ -1432,6 +1444,18 @@ app.post("/api/quest/join", async (c) => {
     .run();
   const scaled = await scaleMonsterForJoin(c.env.DB, quest.id, quest.scene, JOIN_HP_RATIO);
 
+  // Patch the in-memory DO state so the new fighter appears in live combat.
+  // Fire-and-forget: if the DO isn't running yet (combat not started),
+  // notifyFighterJoined is a no-op and the fighter will be included when
+  // bootstrapFromSlack / start_web_combat runs.
+  const doId = c.env.QUEST_ROOM.idFromName(`quest:${quest.id}`);
+  const doStub = c.env.QUEST_ROOM.get(doId);
+  c.executionCtx.waitUntil(
+    (doStub as unknown as { notifyFighterJoined(q: number, u: string, hp: number): Promise<void> })
+      .notifyFighterJoined(quest.id, session.slack_user_id, scaled.monster_max_hp)
+      .catch((err) => console.warn("notifyFighterJoined failed", err)),
+  );
+
   // Cross-surface notification: Slack players watching the thread see who
   // walked in from the browser. Fire-and-forget via ctx.waitUntil so a slow
   // or failing Slack call doesn't slow down the user's join response. Plain
@@ -1808,7 +1832,10 @@ app.post("/api/shop/restock", async (c) => {
     .first();
   if (recent) return c.json({ ok: true, skipped: true });
 
-  const tier = Math.max(2, await averageCharacterLevel(c.env.DB));
+  const { min: minLevel, max: maxLevel } = await characterLevelRange(c.env.DB);
+  const tierLo = Math.max(2, minLevel);
+  const tierHi = Math.max(tierLo, maxLevel);
+  const randomTier = () => tierLo + Math.floor(Math.random() * (tierHi - tierLo + 1));
   const playerCount = await countCharacters(c.env.DB);
   const stockSize = Math.min(
     SHOP_STOCK_CAP,
@@ -1817,8 +1844,8 @@ app.post("/api/shop/restock", async (c) => {
   const generatedAt = Date.now();
   const ACCESSORY_GUARANTEE = 2;
   const rolls: ItemRoll[] = [
-    ...Array.from({ length: ACCESSORY_GUARANTEE }, () => rollAccessorySlot(tier)),
-    ...Array.from({ length: Math.max(0, stockSize - ACCESSORY_GUARANTEE) }, () => rollItem(tier, true)),
+    ...Array.from({ length: ACCESSORY_GUARANTEE }, () => rollAccessorySlot(randomTier())),
+    ...Array.from({ length: Math.max(0, stockSize - ACCESSORY_GUARANTEE) }, () => rollItem(randomTier(), true)),
   ];
   const items: Parameters<typeof insertShopStock>[1] = [];
   for (const roll of rolls) {
@@ -5080,6 +5107,109 @@ export class QuestRoom extends DurableObject<Env> {
     this.broadcast({ type: "events", events: begun.events });
 
     return { ok: true, state: begun.state, events: begun.events, created: true };
+  }
+
+  // Patches the in-memory CombatState when a new fighter joins a quest that
+  // has already started combat. Called from both the web /api/quest/join
+  // route and the Slack handleJoin handler so the live fighters list stays
+  // in sync regardless of which surface the joiner used.
+  //
+  // Idempotent: if the fighter is already present (e.g. the DO was freshly
+  // bootstrapped from D1 which already includes them), this is a no-op.
+  // Safe to call when no combat state exists yet — the fighter will be
+  // included when bootstrapFromSlack / start_web_combat runs later.
+  async notifyFighterJoined(questId: number, userId: string, newMonsterMaxHp: number): Promise<void> {
+    const state = await this.loadState(questId);
+    if (!state || state.status !== "active") return;
+    if (state.fighters.some((f) => f.id === userId)) return;
+
+    const character = await getCharacter(this.env.DB, userId);
+    if (!character) return;
+
+    const statsV2Enabled = this.env.STATS_V2 === "1";
+    const slots = await getAllEquippedSlots(this.env.DB, userId);
+    const weapon = slots.main_hand;
+    const weaponRange = (weapon?.weapon_range as "melee" | "ranged" | "focus" | null | undefined) ?? "melee";
+    const isFocus = weaponRange === "focus";
+
+    const armorPower =
+      (slots.body?.power ?? 0) +
+      Math.floor((slots.helmet?.power ?? 0) / 2) +
+      Math.floor((slots.pants?.power ?? 0) / 4) +
+      (slots.off_hand?.item_subtype === "shield" ? (slots.off_hand?.power ?? 0) : 0);
+
+    const equipBonuses: Partial<Stats> = {};
+    for (const item of Object.values(slots)) {
+      if (!item?.stat_bonus) continue;
+      for (const [key, val] of Object.entries(item.stat_bonus)) {
+        (equipBonuses as Record<string, number>)[key] =
+          ((equipBonuses as Record<string, number>)[key] ?? 0) + (val as number);
+      }
+    }
+
+    const memberStats: Stats = {
+      str: character.str,
+      int_stat: character.int_stat,
+      vit: character.vit,
+      agi: character.agi,
+      dex: character.dex,
+    };
+    const snap = statSnapshot({
+      className: character.class,
+      level: character.level,
+      stats: memberStats,
+      v2Enabled: statsV2Enabled,
+      equipBonuses: statsV2Enabled ? equipBonuses : undefined,
+    });
+    const levelBonus = statsV2Enabled ? 0 : Math.floor(character.level / 4);
+
+    const newFighter: CombatFighter = {
+      id: character.slack_user_id,
+      name: character.name,
+      class: character.class,
+      level: character.level,
+      hp: character.hp,
+      max_hp: character.max_hp,
+      mana: character.mana,
+      max_mana: character.max_mana,
+      shield: character.shield,
+      position: character.position,
+      attack_mod: snap.derived.attack_mod + levelBonus,
+      magic_mod: snap.derived.magic_mod + levelBonus,
+      weapon_power: isFocus ? 0 : (weapon?.power ?? 0),
+      focus_power: isFocus ? (weapon?.power ?? 0) : 0,
+      weapon_range: weaponRange,
+      slack_username: character.slack_username,
+      armor_power: armorPower,
+      scars: character.scars,
+      stats: statsV2Enabled ? snap.stats : undefined,
+      effects: character.effects ?? [],
+      initiative: 0,
+    };
+
+    // Append to end of turn_order so the joiner acts last in the current
+    // cycle without disrupting existing turn indices.
+    const hpDelta = newMonsterMaxHp - state.monsters[0].max_hp;
+    const updatedState: CombatState = {
+      ...state,
+      fighters: [...state.fighters, newFighter],
+      monsters: state.monsters.map((m, i) =>
+        i === 0
+          ? { ...m, hp: Math.min(m.max_hp + hpDelta, m.hp + hpDelta), max_hp: newMonsterMaxHp }
+          : m
+      ),
+      turn_order: [...state.turn_order, newFighter.id],
+      contribution: { ...state.contribution, [newFighter.id]: 0 },
+      stats: {
+        ...state.stats,
+        [newFighter.id]: { damage_taken: 0, healing_done: 0, shielding_done: 0, kills: 0 },
+      },
+    };
+
+    const newLog = this.appendLog([{ _kind: "fighter_joined", fighter_id: userId, name: character.name }]);
+    await saveWebCombatState(this.env.DB, questId, updatedState, newLog);
+    this.cacheState = updatedState;
+    this.broadcast({ type: "state", state: updatedState });
   }
 
   // Inventory-driven combat action. Validates the item belongs to the

@@ -79,6 +79,7 @@ export interface QuestRoomStub {
     | { ok: true; state: CombatState; events: CombatEvent[]; outcome?: unknown }
     | { ok: false; reason: string }
   >;
+  notifyFighterJoined(questId: number, userId: string, newMonsterMaxHp: number): Promise<void>;
 }
 
 // Stable name → DO id mapping. Both the web worker (apps/web/src/worker.ts)

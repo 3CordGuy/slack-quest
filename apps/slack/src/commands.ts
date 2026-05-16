@@ -112,7 +112,7 @@ import {
   type SpdMatch,
   applyShortRest,
   applySoftDeath,
-  averageCharacterLevel,
+  characterLevelRange,
   awardSpoils,
   bumpMaxMana,
   claimShopItem,
@@ -5866,6 +5866,19 @@ async function handleJoin(
   const scaled = await scaleMonsterForJoin(env.DB, quest.id, quest.scene, JOIN_HP_RATIO);
   await appendLog(env.DB, quest.id, payload.user_id, "join", `monster +${scaled.monster_max_hp - quest.scene.monster_max_hp} HP`);
 
+  // Patch the in-memory DO state so the new fighter appears in live combat.
+  // Fire-and-forget: no-op when the DO isn't running yet.
+  if (env.QUEST_ROOM) {
+    const doId = questRoomId(env, quest.id);
+    if (doId) {
+      const stub = env.QUEST_ROOM.get(doId) as unknown as QuestRoomStub;
+      ctx.waitUntil(
+        stub.notifyFighterJoined(quest.id, payload.user_id, scaled.monster_max_hp)
+          .catch((err) => console.warn("notifyFighterJoined failed", err)),
+      );
+    }
+  }
+
   // Joiners post arrives with the actor's character card so the rest of the party can
   // see the new arrival's HP/mana at a glance — same 2-card grid as combat actions.
   ctx.waitUntil((async () => {
@@ -9408,7 +9421,10 @@ async function restockShop(env: Env, channelId: string): Promise<void> {
     .first();
   if (recent) return;
 
-  const tier = Math.max(2, await averageCharacterLevel(env.DB));
+  const { min: minLevel, max: maxLevel } = await characterLevelRange(env.DB);
+  const tierLo = Math.max(2, minLevel);
+  const tierHi = Math.max(tierLo, maxLevel);
+  const randomTier = () => tierLo + Math.floor(Math.random() * (tierHi - tierLo + 1));
   const playerCount = await countCharacters(env.DB);
   const stockSize = Math.min(
     SHOP_STOCK_CAP,
@@ -9420,8 +9436,8 @@ async function restockShop(env: Env, channelId: string): Promise<void> {
   // always appear regardless of the overall armor-type probability.
   const ACCESSORY_GUARANTEE = 2;
   const rolls: ItemRoll[] = [
-    ...Array.from({ length: ACCESSORY_GUARANTEE }, () => rollAccessorySlot(tier)),
-    ...Array.from({ length: Math.max(0, stockSize - ACCESSORY_GUARANTEE) }, () => rollItem(tier, true)),
+    ...Array.from({ length: ACCESSORY_GUARANTEE }, () => rollAccessorySlot(randomTier())),
+    ...Array.from({ length: Math.max(0, stockSize - ACCESSORY_GUARANTEE) }, () => rollItem(randomTier(), true)),
   ];
   for (const roll of rolls) {
     const named = await resolveLootDrop(env, "the shopkeep's chest", roll);

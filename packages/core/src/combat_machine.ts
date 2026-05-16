@@ -443,9 +443,10 @@ export type CombatEvent =
 // boss-tier (tier 5+) take real swings to land. Armor still mitigates
 // landed damage in resolveMonsterHit — it doesn't double-up here as AC.
 const MONSTER_BASE_AC = 8;
-// Fighter AC scales with level so high-tier monsters can't auto-hit.
-// Base 10 + floor(level/2): level 1 → 10, level 10 → 15, level 16 → 18.
-export const fighterAc = (level: number) => 10 + Math.floor(level / 2);
+// Fighter AC scales with level so high-tier monsters can't auto-hit, capped at 20
+// so monsters never become literally unable to land hits at high levels.
+// level 1→10, level 10→15, level 20+→20 (hard cap).
+export const fighterAc = (level: number) => 10 + Math.min(Math.floor(level / 2), 10);
 // Monster AC scales at half the tier rate; player attack_mod (augmented by
 // level in the host app) stays meaningful throughout progression.
 export const monsterAc = (tier: number) => MONSTER_BASE_AC + Math.max(0, Math.floor(tier / 2));

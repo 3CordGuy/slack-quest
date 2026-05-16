@@ -894,6 +894,80 @@ async function coerceImageBytes(result: unknown): Promise<Uint8Array | null> {
   return null;
 }
 
+// ---------- Per-character portrait (ported from Slack src/ai.ts) ----------
+
+// v2 — bumped after character reset (2026-05-16) to force fresh portraits.
+// v3 — switched to CHARACTER_STYLE_ANCHOR (office hybrid, bright warm lighting).
+const CHARACTER_ART_VERSION = "v3";
+
+const CHARACTER_STYLE_ANCHOR =
+  "Studio Ghibli style hand-drawn anime illustration — watercolor textures, soft cel-shading, vibrant saturated colors, expressive painterly brushwork. The kind of frame you'd see in a Hayao Miyazaki film (Spirited Away / Princess Mononoke / Howl's Moving Castle). SETTING: a corporate-fantasy hybrid world — a half-stone half-office workplace where adventurers are also developers, PMs, and SREs. The environment blends a stone keep with a modern tech office: glowing computer monitors, kanban boards and sticky notes pinned to stone walls, server racks in alcoves, ergonomic keyboards on wooden desks, coffee cups and ethernet cables alongside scrolls and spell books, burndown charts hanging next to torches. LIGHTING IS BRIGHT, WARM, AND DREAMLIKE — natural daylight through arched windows, soft desk-lamp glow, not dim, not shadowy, not dungeon-gloomy. The character is the clear subject, lit from the front, expressive and alive. Three-quarter view portrait composition.";
+
+const CHARACTER_TRAITS = [
+  "battle-worn and world-weary, thousand-yard stare",
+  "bright-eyed and eager, barely containing nervous energy",
+  "cocky and self-assured, slight smirk, chin raised",
+  "haunted and intense, shadowed eyes, coiled tension",
+  "cheerful and irreverent, slightly disheveled",
+  "stoic and unreadable, arms crossed, jaw set",
+  "curious and distracted, peering at something just off-frame",
+  "exhausted but resolute, mid-breath, gear askew",
+  "calm and meditative, serene half-smile",
+  "fierce and focused, eyes locked forward, weapons at the ready",
+];
+
+const CLASS_DESCRIPTOR: Record<string, string> = {
+  devops_mage: "Wizard in deep robes, hands crackling with glowing YAML-bracket sigils and container runes, conjuring a translucent deployment pipeline in the air. Background: a stone office alcove with glowing monitors showing CI/CD dashboards, sticky notes and pull-request printouts pinned to the wall, server rack humming nearby. Warm desk-lamp light.",
+  qa_paladin: "Heavily armored paladin wielding a glowing greatsword etched with test-coverage runes, a halo of passing-green checkmarks radiating behind. Background: a bright open-plan office-keep, bug-report scrolls stacked on desks, a wall-mounted kanban board with bug tickets, monitors showing green test suites. Warm daylight through arched windows.",
+  backend_druid: "Druid in earthy green robes kneeling beside a luminous tree whose roots form glowing database-schema glyphs and ER-diagram branches. Background: a stone server room crossed with a forest grove — rack units draped in vines, soft LED indicator lights, a whiteboard schema behind. Warm dappled light.",
+  frontend_bard: "Elaborately dressed bard strumming an instrument that emits cascading streams of colored UI components and pixel ribbons. Background: a bright studio with multiple monitors showing design mockups and component libraries, sticky color-coded notes everywhere, warm desk lamps, a coffee mug with a pixel-heart sticker. Vibrant warm light.",
+  staff_sage: "Elderly sage in deep blue robes surrounded by towering stacks of roadmap scrolls and sticky-note-covered planning boards, pointing at an enormous Gantt chart pinned to a stone wall. Background: a bright meeting room-keep hybrid, whiteboards full of timelines, a projector casting a sprint burndown. Warm overhead light.",
+  refactor_rogue: "Hooded rogue in dark leathers with twin daggers drawn, mid-step through a cascade of dissolving legacy code — old files unraveling into clean lines behind. Background: a brightly lit office corridor, monitors showing diff views with red lines vanishing and green lines emerging, a half-drunk coffee on a standing desk. Dramatic but warm light.",
+  sre_warden: "Grim heavily-armored warrior standing before a wall of monitoring dashboards, arms crossed, jaw set — every panel green except one flashing amber. Background: a bright NOC-keep hybrid, server racks behind stone arches, alert runbooks open on a desk, an on-call pager clipped to the belt. Steady warm light.",
+  data_warlock: "Warlock in dark scholarly robes hunched over a glowing grimoire whose pages writhe with SQL incantations and data-pipeline diagrams, eyes lit with arcane insight. Background: a bright analytics den — multiple monitors showing dashboards and query results, whiteboards covered in funnel diagrams, a stack of printed reports. Warm desk-lamp light.",
+};
+
+// Cached in R2 by character-name slug — same key as the Slack worker so both
+// apps share the same portrait cache. Returns the URL when cached, fires
+// generation in the background on miss, and falls back to the class singleton.
+export async function getOrScheduleCharacterArt(
+  ai: Ai,
+  art: ArtTarget,
+  ctx: ExecutionContext,
+  character: { name: string; class: string; gender?: "m" | "f" | null },
+  classId: string,
+): Promise<string | null> {
+  const slug = slugifyMonsterName(character.name);
+  const charKey = `art/${CHARACTER_ART_VERSION}/character/${slug}.png`;
+  const charUrl = `${art.baseUrl}/img/${charKey}`;
+  try {
+    const existing = await art.bucket.head(charKey);
+    if (existing) return charUrl;
+  } catch (err) {
+    console.warn("character-art:head-error", { name: character.name, err: err instanceof Error ? err.message : String(err) });
+  }
+  const descriptor = CLASS_DESCRIPTOR[classId] ?? "Adventurer in fantasy attire, dramatic lighting.";
+  const traitIdx = character.name.charCodeAt(0) % CHARACTER_TRAITS.length;
+  const trait = CHARACTER_TRAITS[traitIdx];
+  const genderHint = character.gender === "m" ? " The character is MALE." : character.gender === "f" ? " The character is FEMALE." : "";
+  const subject =
+    `Single-figure character portrait of "${character.name}", a fantasy ${character.class}.${genderHint}` +
+    ` Personality and bearing: ${trait}.` +
+    ` Treat the character name literally — interpret what the words suggest about appearance, posture, gear, scars, or aura.` +
+    ` ${descriptor}` +
+    ` Three-quarter view, RPG fantasy art style, single character in a bright office-dungeon setting.`;
+  const prompt = `${subject} ${CHARACTER_STYLE_ANCHOR} ${NEGATIVES}`;
+  ctx.waitUntil(generateAndCacheArt(ai, art, charKey, prompt, `character:${character.name}`));
+  const fallbackKey = `art/views/${ART_VERSION}/class_${classId}.png`;
+  try {
+    const existing = await art.bucket.head(fallbackKey);
+    if (existing) return `${art.baseUrl}/img/${fallbackKey}`;
+  } catch {
+    // no fallback
+  }
+  return null;
+}
+
 // ---------- Town generation helpers (ported from Slack src/ai.ts) ----------
 // These have no Slack dependencies — they only require the Ai binding.
 

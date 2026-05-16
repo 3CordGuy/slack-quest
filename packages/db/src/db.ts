@@ -1431,6 +1431,33 @@ export async function averageCharacterLevel(db: D1Database): Promise<number> {
   return Math.max(1, Math.round(row?.avg_level ?? 1));
 }
 
+// Median level — far more representative than mean when one high-level outlier exists.
+// SQLite lacks MEDIAN(), so we pick the middle row by offset.
+export async function medianCharacterLevel(db: D1Database): Promise<number> {
+  const countRow = await db
+    .prepare("SELECT COUNT(*) AS n FROM characters")
+    .first<{ n: number }>();
+  const n = countRow?.n ?? 0;
+  if (n === 0) return 1;
+  const offset = Math.floor(n / 2);
+  const row = await db
+    .prepare("SELECT level FROM characters ORDER BY level LIMIT 1 OFFSET ?")
+    .bind(offset)
+    .first<{ level: number }>();
+  return Math.max(1, row?.level ?? 1);
+}
+
+// Min/max character level range — used to spread shop tiers across the full
+// spectrum of active players so low- and high-level characters both find relevant gear.
+export async function characterLevelRange(db: D1Database): Promise<{ min: number; max: number }> {
+  const row = await db
+    .prepare("SELECT MIN(level) AS min_level, MAX(level) AS max_level FROM characters")
+    .first<{ min_level: number | null; max_level: number | null }>();
+  const min = Math.max(1, row?.min_level ?? 1);
+  const max = Math.max(min, row?.max_level ?? 1);
+  return { min, max };
+}
+
 // Total character count — used to scale shop stock size to community size so an
 // 8-person channel doesn't get a stock built for 4.
 export async function countCharacters(db: D1Database): Promise<number> {

@@ -137,6 +137,17 @@ const ART_VERSION = "v6";
 //        drawn anime watercolor, soft cel-shading, warm cinematic lighting.
 //        Corporate-fantasy office-dungeon setting preserved.
 const MONSTER_ART_VERSION = "v8";
+// Character portraits get their own version so a reset or prompt tweak doesn't
+// invalidate monster/view art that's already cached correctly.
+//   v2 — bumped after character reset (2026-05-16) to force fresh portraits.
+//   v3 — switched to CHARACTER_STYLE_ANCHOR (office hybrid, bright warm lighting).
+const CHARACTER_ART_VERSION = "v3";
+
+// Character portraits share the Ghibli aesthetic but the setting is the
+// corporate-fantasy office-dungeon hybrid, same world as monster art. Bright
+// warm lighting replaces dim/moody so the portrait palette matches the game UI.
+const CHARACTER_STYLE_ANCHOR =
+  "Studio Ghibli style hand-drawn anime illustration — watercolor textures, soft cel-shading, vibrant saturated colors, expressive painterly brushwork. The kind of frame you'd see in a Hayao Miyazaki film (Spirited Away / Princess Mononoke / Howl's Moving Castle). SETTING: a corporate-fantasy hybrid world — a half-stone half-office workplace where adventurers are also developers, PMs, and SREs. The environment blends a stone keep with a modern tech office: glowing computer monitors, kanban boards and sticky notes pinned to stone walls, server racks in alcoves, ergonomic keyboards on wooden desks, coffee cups and ethernet cables alongside scrolls and spell books, burndown charts hanging next to torches. LIGHTING IS BRIGHT, WARM, AND DREAMLIKE — natural daylight through arched windows, soft desk-lamp glow, not dim, not shadowy, not dungeon-gloomy. The character is the clear subject, lit from the front, expressive and alive. Three-quarter view portrait composition.";
 
 // Slug for the R2 key. Lowercase a-z0-9 only, hyphenated, capped to 60 chars
 // to keep keys reasonable. Two different monsters with the same name (rare,
@@ -488,21 +499,21 @@ const CHARACTER_TRAITS = [
 // fallback while a fresh per-character gen runs in the background.
 const CLASS_DESCRIPTOR: Record<string, string> = {
   devops_mage:
-    "Wizard in deep robes, hands wreathed in glowing arcane sigils that resemble stylized YAML brackets and container icons, summoning a translucent ethereal box of code. Dim arcane chamber, dramatic lighting.",
+    "Wizard in deep robes, hands crackling with glowing YAML-bracket sigils and container runes, conjuring a translucent deployment pipeline in the air. Background: a stone office alcove with glowing monitors showing CI/CD dashboards, sticky notes and pull-request printouts pinned to the wall, server rack humming nearby. Warm desk-lamp light.",
   qa_paladin:
-    "Heavily armored paladin holding a glowing greatsword inscribed with intricate runes, light pouring from the blade onto small bug-like creatures cowering at the feet. Holy chamber, dramatic lighting.",
+    "Heavily armored paladin wielding a glowing greatsword etched with test-coverage runes, a halo of passing-green checkmarks radiating behind. Background: a bright open-plan office-keep, bug-report scrolls stacked on desks, a wall-mounted kanban board with bug tickets, monitors showing green test suites. Warm daylight through arched windows.",
   backend_druid:
-    "Bearded druid in green robes with vines running through hair, kneeling beside a luminous tree whose roots form a network of tabular database glyphs. Mossy underground grove, dappled magical light.",
+    "Druid in earthy green robes kneeling beside a luminous tree whose roots form glowing database-schema glyphs and ER-diagram branches. Background: a stone server room crossed with a forest grove — rack units draped in vines, soft LED indicator lights, a whiteboard schema behind. Warm dappled light.",
   frontend_bard:
-    "Elaborately dressed bard playing a stringed instrument that emits cascading streams of colored pixels and ribbons. Adoring townsfolk in the background. Warm tavern light, vibrant.",
+    "Elaborately dressed bard strumming an instrument that emits cascading streams of colored UI components and pixel ribbons. Background: a bright studio with multiple monitors showing design mockups and component libraries, sticky color-coded notes everywhere, warm desk lamps, a coffee mug with a pixel-heart sticker. Vibrant warm light.",
   staff_sage:
-    "Elderly sage in deep blue robes hunched over a massive ancient tome on a heavy oak desk, surrounded by piles of scrolls and a guttering candle. Candlelit study, somber mood.",
+    "Elderly sage in deep blue robes surrounded by towering stacks of roadmap scrolls and sticky-note-covered planning boards, pointing at an enormous Gantt chart pinned to a stone wall. Background: a bright meeting room-keep hybrid, whiteboards full of timelines, a projector casting a sprint burndown. Warm overhead light.",
   refactor_rogue:
-    "Hooded rogue in dark leathers with twin daggers drawn, mid-shadow-step, tangled fragments of broken ghostly code dissolving at the feet. Dim alley, dramatic shadow.",
+    "Hooded rogue in dark leathers with twin daggers drawn, mid-step through a cascade of dissolving legacy code — old files unraveling into clean lines behind. Background: a brightly lit office corridor, monitors showing diff views with red lines vanishing and green lines emerging, a half-drunk coffee on a standing desk. Dramatic but warm light.",
   sre_warden:
-    "Grim heavily-armored warrior in dented plate, standing on a great wall, looking out over a howling formless void of swirling chaos. Dawn light, stoic mood.",
+    "Grim heavily-armored warrior standing before a wall of monitoring dashboards, arms crossed, jaw set — every panel green except one flashing amber. Background: a bright NOC-keep hybrid, server racks behind stone arches, alert runbooks open on a desk, an on-call pager clipped to the belt. Steady warm light.",
   data_warlock:
-    "Pact-bound warlock in tattered dark robes with glowing eyes, reading from an unholy grimoire whose pages writhe with arcane SQL-like characters and dark tendrils of energy. Candlelit ritual chamber, sinister atmosphere.",
+    "Warlock in dark scholarly robes hunched over a glowing grimoire whose pages writhe with SQL incantations and data-pipeline diagrams, eyes lit with arcane insight. Background: a bright analytics den — multiple monitors showing dashboards and query results, whiteboards covered in funnel diagrams, a stack of printed reports. Warm desk-lamp light.",
 };
 
 // Per-character portrait. Cached in R2 keyed by the character-name slug, so
@@ -526,7 +537,7 @@ export async function getOrScheduleCharacterArt(
   classId: string,
 ): Promise<string | null> {
   const slug = slugifyMonsterName(character.name);
-  const charKey = `art/${ART_VERSION}/character/${slug}.png`;
+  const charKey = `art/${CHARACTER_ART_VERSION}/character/${slug}.png`;
   const charUrl = `${art.baseUrl}/img/${charKey}`;
 
   try {
@@ -557,8 +568,8 @@ export async function getOrScheduleCharacterArt(
     ` Personality and bearing: ${trait}.` +
     ` Treat the character name (especially any epithet like "the Patient" or "Stack-Cleaver") LITERALLY — interpret what the words suggest about appearance, posture, gear, scars, or aura.` +
     ` ${descriptor}` +
-    ` Three-quarter view, RPG fantasy art style, single character against a moody background.`;
-  const prompt = `${subject} ${STYLE_ANCHOR} ${NEGATIVES}`;
+    ` Three-quarter view, RPG fantasy art style, single character in a bright office-dungeon setting.`;
+  const prompt = `${subject} ${CHARACTER_STYLE_ANCHOR} ${NEGATIVES}`;
   ctx.waitUntil(generateAndCacheArt(ai, art, charKey, prompt, `character:${character.name}`));
 
   // Fallback to the class-singleton banner while the unique gen runs. We
