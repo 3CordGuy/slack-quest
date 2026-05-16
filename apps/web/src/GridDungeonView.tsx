@@ -880,19 +880,39 @@ export function GridDungeonView({
           </div>
         )}
 
-        {/* Floating party bar — bottom of the room view, overlaid on the scene */}
-        <div style={{ position: "absolute", bottom: 8, left: 8, right: 8, zIndex: 8, pointerEvents: "none" }}>
-          <div style={{ pointerEvents: "auto" }}>
-            <PartyBar
-              fighters={combatActive ? (combatState?.fighters ?? null) : null}
-              selfId={selfId}
-              party={party.length > 0 ? party : [character]}
-              onClickSelf={onOpenInventory}
-              flashIds={flashIds}
-            />
+        {/* Combat log — floating overlay so the room art stays the focus.
+            Top-right area, below the minimap. Shows last 3 entries. */}
+        {combatActive && ws.log.length > 0 && (
+          <div style={{
+            position: "absolute",
+            top: 12,
+            left: 12,
+            maxWidth: 360,
+            background: "rgba(0,0,0,0.55)",
+            border: "1px solid rgba(255,255,255,0.08)",
+            borderRadius: 8,
+            padding: "6px 10px",
+            backdropFilter: "blur(6px)",
+            zIndex: 6,
+          }}>
+            {ws.log.slice(-3).map((e) => (
+              <div key={e.id} style={{
+                fontSize: 12, lineHeight: 1.4,
+                color: e.tone === "good" ? "#86efac" : e.tone === "bad" ? "#fca5a5" : e.tone === "info" ? "#93c5fd" : "#9aa0a6",
+              }}>{e.text}</div>
+            ))}
           </div>
-        </div>
+        )}
       </div>
+
+      {/* Party bar (BLUE area) — its own row above the action buttons. */}
+      <PartyBar
+        fighters={combatActive ? (combatState?.fighters ?? null) : null}
+        selfId={selfId}
+        party={party.length > 0 ? party : [character]}
+        onClickSelf={onOpenInventory}
+        flashIds={flashIds}
+      />
 
       {/* Content interaction overlay (non-combat rooms with stuff to do) */}
       {!combatActive && (
@@ -907,7 +927,7 @@ export function GridDungeonView({
         />
       )}
 
-      {/* Combat panel (in-room) */}
+      {/* Action buttons row (RED area) — own row at the very bottom. */}
       {combatActive && !combatEnded && combatState && (
         <CombatPanel
           state={combatState}
@@ -915,7 +935,6 @@ export function GridDungeonView({
           onSend={send}
           autoResolve={autoResolve}
           setAutoResolve={setAutoResolve}
-          log={ws.log}
           myTurn={myTurn}
           isMonsterTurn={isMonsterTurn}
           items={items}
@@ -1318,11 +1337,11 @@ interface UsableItem {
   equipped: boolean;
 }
 
-function CombatPanel({ state, selfId, onSend, autoResolve, setAutoResolve, log, myTurn, isMonsterTurn, items }: {
+function CombatPanel({ state, selfId, onSend, autoResolve, setAutoResolve, myTurn, isMonsterTurn, items }: {
   state: CombatState; selfId: string;
   onSend: (a: TurnAction) => boolean;
   autoResolve: boolean; setAutoResolve: (b: boolean) => void;
-  log: LogEntry[]; myTurn: boolean; isMonsterTurn: boolean;
+  myTurn: boolean; isMonsterTurn: boolean;
   items: UsableItem[];
 }) {
   const me = state.fighters.find((f) => f.id === selfId);
@@ -1334,17 +1353,21 @@ function CombatPanel({ state, selfId, onSend, autoResolve, setAutoResolve, log, 
   const [itemOpen, setItemOpen] = useState(false);
   const usable = items.filter((it) => !it.equipped && ["consumable", "magic", "revive"].includes(it.item_type));
 
-  return (
-    <div style={{ background: "rgba(10,11,14,0.97)", borderTop: "1px solid #1e2028", flexShrink: 0, overflow: "hidden" }}>
-      <div style={{ padding: "6px 12px 4px", display: "flex", flexDirection: "column", gap: 2, maxHeight: 64, overflowY: "auto" }}>
-        {log.slice(-3).map((e) => (
-          <div key={e.id} style={{ fontSize: 12, color: e.tone === "good" ? "#86efac" : e.tone === "bad" ? "#fca5a5" : e.tone === "info" ? "#93c5fd" : "#9aa0a6" }}>{e.text}</div>
-        ))}
-      </div>
+  // Disabled state for the action row when it isn't the player's turn.
+  // Buttons stay visible so the bottom row doesn't disappear; they grey out
+  // and the user gets a turn-status hint instead of an empty bar.
+  const otherActor = state.fighters.find((f) => f.id === state.turn_order[state.turn_index % state.turn_order.length]);
+  const turnStatus = myTurn
+    ? null
+    : isMonsterTurn
+      ? (autoResolve ? "Enemy turn — auto-resolving…" : null)
+      : `Waiting for ${otherActor?.name ?? "another player"}…`;
 
-      {/* Inline target picker for heal/shield */}
+  return (
+    <div style={{ background: "rgba(10,11,14,0.92)", borderTop: "1px solid #1e2028", flexShrink: 0, overflow: "hidden", backdropFilter: "blur(6px)" }}>
+      {/* Inline target picker for heal/shield (slides in above the buttons) */}
       {picking && myTurn && (
-        <div style={{ padding: "6px 10px 4px", display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", borderTop: "1px solid #1a1c21" }}>
+        <div style={{ padding: "6px 12px 4px", display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", borderBottom: "1px solid #1a1c21" }}>
           <span style={{ fontSize: 11, color: "#9aa0a6" }}>{picking === "heal" ? "Heal who?" : "Shield who?"}</span>
           {state.fighters.filter((f) => f.hp > 0).map((f) => (
             <button key={f.id}
@@ -1359,7 +1382,7 @@ function CombatPanel({ state, selfId, onSend, autoResolve, setAutoResolve, log, 
 
       {/* Inline item picker */}
       {itemOpen && myTurn && (
-        <div style={{ padding: "6px 10px 4px", display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", borderTop: "1px solid #1a1c21" }}>
+        <div style={{ padding: "6px 12px 4px", display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", borderBottom: "1px solid #1a1c21" }}>
           <span style={{ fontSize: 11, color: "#9aa0a6" }}>Use item:</span>
           {usable.length === 0 && <span style={{ fontSize: 11, color: "#4a5568" }}>No usable items</span>}
           {usable.map((it) => (
@@ -1373,28 +1396,28 @@ function CombatPanel({ state, selfId, onSend, autoResolve, setAutoResolve, log, 
         </div>
       )}
 
-      <div style={{ padding: "6px 10px 8px", display: "flex", gap: 5, flexWrap: "wrap", borderTop: "1px solid #1a1c21" }}>
-        {myTurn && (
-          <>
-            <CBtn label="Attack" icon="sword" color="#b89b3a" onClick={() => onSend({ kind: "attack", actor: selfId, target_id: target })} />
-            <CBtn label="Cast" icon="crystal-wand" color="#818cf8" manaCost={1} disabled={mana < 1} onClick={() => onSend({ kind: "cast", actor: selfId, target_id: target })} />
-            <CBtn label="Signature" icon="wax-seal" color="#a78bfa" manaCost={2} disabled={mana < 2} onClick={() => onSend({ kind: "signature", actor: selfId, target_id: target })} />
-            <CBtn label="Heal" icon="health-increase" color="#22c55e" manaCost={1} disabled={mana < 1} onClick={() => { setPicking("heal"); setItemOpen(false); }} />
-            <CBtn label="Shield" icon="shield" color="#60a5fa" manaCost={1} disabled={mana < 1} onClick={() => { setPicking("shield"); setItemOpen(false); }} />
-            <CBtn label={myPos === "front" ? "Back row" : "Front row"} icon={myPos === "front" ? "perspective-dice-two" : "perspective-dice-one"} color="#6b7280" onClick={() => onSend({ kind: "position", actor: selfId, to: myPos === "front" ? "back" : "front" })} />
-            <CBtn label="Item" icon="ammo-bag" color="#c084fc" disabled={usable.length === 0} onClick={() => { setItemOpen((o) => !o); setPicking(null); }} />
-            <CBtn label="Flee" icon="footprint" color="#9aa0a6" onClick={() => onSend({ kind: "flee", actor: selfId })} />
-          </>
-        )}
+      {/* Turn status hint (when not the player's turn) */}
+      {turnStatus && (
+        <div style={{ padding: "2px 12px 0", fontSize: 11, color: "#9aa0a6", fontStyle: "italic" }}>{turnStatus}</div>
+      )}
+
+      {/* Action buttons — vertical-style (icon top, label, mana below) */}
+      <div style={{ padding: "8px 10px 10px", display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", justifyContent: "center" }}>
+        <CBtn label="Attack" icon="sword" color="#b89b3a" disabled={!myTurn || !target} onClick={() => onSend({ kind: "attack", actor: selfId, target_id: target })} />
+        <CBtn label="Cast" icon="crystal-wand" color="#818cf8" manaCost={1} disabled={!myTurn || mana < 1 || !target} onClick={() => onSend({ kind: "cast", actor: selfId, target_id: target })} />
+        <CBtn label="Signature" icon="wax-seal" color="#a78bfa" manaCost={2} disabled={!myTurn || mana < 2 || !target} onClick={() => onSend({ kind: "signature", actor: selfId, target_id: target })} />
+        <CBtn label="Heal" icon="health-increase" color="#22c55e" manaCost={1} disabled={!myTurn || mana < 1} onClick={() => { setPicking("heal"); setItemOpen(false); }} />
+        <CBtn label="Shield" icon="shield" color="#60a5fa" manaCost={1} disabled={!myTurn || mana < 1} onClick={() => { setPicking("shield"); setItemOpen(false); }} />
+        <CBtn label={myPos === "front" ? "Back row" : "Front row"} icon={myPos === "front" ? "perspective-dice-two" : "perspective-dice-one"} color="#6b7280" disabled={!myTurn} onClick={() => onSend({ kind: "position", actor: selfId, to: myPos === "front" ? "back" : "front" })} />
+        <CBtn label="Item" icon="ammo-bag" color="#c084fc" disabled={!myTurn || usable.length === 0} onClick={() => { setItemOpen((o) => !o); setPicking(null); }} />
+        <CBtn label="Flee" icon="footprint" color="#9aa0a6" disabled={!myTurn} onClick={() => onSend({ kind: "flee", actor: selfId })} />
         {!myTurn && isMonsterTurn && !autoResolve && (
-          <CBtn label="Resolve enemy" icon="dragon-head" color="#5c1f1f" onClick={() => onSend({ kind: "monster_act" })} />
+          <CBtn label="Resolve" icon="dragon-head" color="#5c1f1f" onClick={() => onSend({ kind: "monster_act" })} />
         )}
-        <div style={{ marginLeft: "auto", display: "flex", alignItems: "center" }}>
-          <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, color: "#4a5568", cursor: "pointer" }}>
-            <input type="checkbox" checked={autoResolve} onChange={(e) => setAutoResolve(e.target.checked)} style={{ accentColor: "#5c1f1f" }} />
-            Auto
-          </label>
-        </div>
+        <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, color: "#4a5568", cursor: "pointer", marginLeft: 6 }}>
+          <input type="checkbox" checked={autoResolve} onChange={(e) => setAutoResolve(e.target.checked)} style={{ accentColor: "#5c1f1f" }} />
+          Auto
+        </label>
       </div>
     </div>
   );
@@ -1405,44 +1428,47 @@ function CBtn({ label, icon, color, disabled, manaCost, onClick }: {
   icon?: string;
   color: string;
   disabled?: boolean;
-  manaCost?: number;       // shown as a "−N mana" pill on the right
+  manaCost?: number;
   onClick: () => void;
 }) {
+  // Classic dungeon-crawler skill-button: icon prominent on top, label below,
+  // mana cost as small numeric info beneath. Square-ish so a row of them
+  // reads as a control panel rather than a chip row.
   return (
     <button
       onClick={onClick}
       disabled={disabled}
       title={manaCost ? `${label} (costs ${manaCost} mana)` : label}
       style={{
-        display: "inline-flex",
+        display: "flex",
+        flexDirection: "column",
         alignItems: "center",
-        gap: 6,
-        padding: "7px 12px",
+        justifyContent: "center",
+        gap: 3,
+        padding: "8px 6px",
+        width: 78,
+        height: 78,
         background: disabled ? "#1a1c21" : color,
-        border: `1px solid ${disabled ? "#2a2d33" : color}`,
-        borderRadius: 7,
+        border: `2px solid ${disabled ? "#2a2d33" : color}`,
+        borderRadius: 8,
         color: disabled ? "#4a5568" : "#0e0f12",
-        fontSize: 13,
-        fontWeight: 600,
         cursor: disabled ? "not-allowed" : "pointer",
-        opacity: disabled ? 0.5 : 1,
-        transition: "opacity 0.15s, transform 0.08s",
-        whiteSpace: "nowrap",
+        opacity: disabled ? 0.55 : 1,
+        transition: "opacity 0.15s, transform 0.08s, filter 0.1s",
+        flexShrink: 0,
       }}
+      onMouseDown={(e) => { if (!disabled) e.currentTarget.style.transform = "translateY(1px)"; }}
+      onMouseUp={(e) => { e.currentTarget.style.transform = ""; }}
+      onMouseLeave={(e) => { e.currentTarget.style.transform = ""; }}
     >
-      {icon && <Icon name={icon} size={14} />}
-      <span>{label}</span>
-      {manaCost ? (
-        <span style={{
-          fontSize: 10,
-          fontWeight: 700,
-          color: disabled ? "#4a5568" : "#1e1b4b",
-          background: disabled ? "transparent" : "rgba(255,255,255,0.35)",
-          borderRadius: 4,
-          padding: "1px 5px",
-          marginLeft: 2,
-        }}>−{manaCost}</span>
-      ) : null}
+      {icon && <Icon name={icon} size={26} />}
+      <span style={{ fontSize: 12, fontWeight: 700, lineHeight: 1, letterSpacing: 0.3 }}>{label}</span>
+      <span style={{
+        fontSize: 10, fontWeight: 700, lineHeight: 1, minHeight: 10,
+        color: disabled ? "#4a5568" : "rgba(0,0,0,0.7)",
+      }}>
+        {manaCost ? `−${manaCost} mana` : ""}
+      </span>
     </button>
   );
 }
