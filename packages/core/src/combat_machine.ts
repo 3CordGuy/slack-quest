@@ -1768,7 +1768,11 @@ function abilitySoulDrain(
 }
 
 function abilityBattleHymn(state: CombatState, actor: ActorId, events: CombatEvent[]): StepResult {
-  const CHARGES = 2;
+  // Charges scale with Bard level: +1 every 5 levels beyond 1.
+  // L1→2, L5→3, L10→4, L15→5, L20→6. Caps naturally — durational buff only,
+  // no per-hit damage change, so high-level Bards sustain more turns of aura.
+  const bard = state.fighters.find((f) => f.id === actor);
+  const CHARGES = 2 + Math.floor((bard?.level ?? 1) / 5);
   const prev = state.ability_state?.battle_hymn ?? 0;
   const ability_state: AbilityRuntimeState = {
     ...(state.ability_state ?? {}),

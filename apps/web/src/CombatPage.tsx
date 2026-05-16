@@ -83,6 +83,9 @@ function classPortraitUrl(className: string): string | null {
   const id = CLASS_ID_BY_NAME[className];
   return id ? `${CLASS_PORTRAIT_BASE}/class_${id}.png` : null;
 }
+// Mirrors BARD_AURA_HYMN_DAMAGE in combat_machine.ts — keep in sync.
+const BARD_HYMN_BONUS = 3;
+
 // Per-character portrait — same key the server writes in getOrScheduleCharacterArt.
 // Avatar's onError fallback handles the case where the portrait hasn't generated yet.
 const CHAR_ART_VERSION = "v3";
@@ -541,7 +544,7 @@ function formatEvent(e: CombatEvent, state: CombatState | null): UiState["log"] 
     case "ability_soul_drain":
       return row("death-skull", <>Soul Drain: {e.damage} dmg, +{e.healed} HP  [{e.formula}]</>, "good");
     case "ability_battle_hymn":
-      return row("aura", <>Battle Hymn — next {e.charges_added} party attacks deal +2 dmg.</>, "good");
+      return row("aura", <>Battle Hymn — next {e.charges_added} party attacks deal +{BARD_HYMN_BONUS} dmg.</>, "good");
     case "ability_foresee": {
       const target = e.predicted_target ? nameOf(e.predicted_target) : null;
       const verdictEl = e.verdict === "safe"
@@ -1507,7 +1510,7 @@ const ABILITY_BY_CLASS: Record<string, AbilityUiSpec> = {
   "Refactor Rogue":  { id: "vanish",             name: "Vanish",            iconName: "player-dodge",     mana_cost: 2, blurb: "Untargetable for 2 swings" },
   "Data Wizard":     { id: "soul_drain",         name: "Soul Drain",        iconName: "death-skull",      mana_cost: 2, blurb: "1d6+mag dmg, heal 50%" },
   "Data Warlock":    { id: "soul_drain",         name: "Soul Drain",        iconName: "death-skull",      mana_cost: 2, blurb: "1d6+mag dmg, heal 50%" }, // legacy alias
-  "Frontend Bard":   { id: "battle_hymn",        name: "Battle Hymn",       iconName: "aura",             mana_cost: 2, blurb: "+2 dmg on next 2 party attacks" },
+  "Frontend Bard":   { id: "battle_hymn",        name: "Battle Hymn",       iconName: "aura",             mana_cost: 2, blurb: `+${BARD_HYMN_BONUS} dmg on next N party attacks (N scales with level)` },
   "Staff Sage":      { id: "foresee",            name: "Foresee",           iconName: "scroll-unfurled",  mana_cost: 1, blurb: "Full battle intel: next target, net damage, party triage, targeting odds. Persists 2 turns." },
   "Backend Druid":   { id: "migrate",            name: "Migrate",           iconName: "grass",            mana_cost: 1, blurb: "Move a partymate to front/back", needs_migrate_picker: true },
 };
