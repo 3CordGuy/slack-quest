@@ -4144,13 +4144,30 @@ async function applyWebCombatOutcome(
   }
 
   // Dungeon victory only clears the current combat room — the rest of the
-  // expedition continues in Slack. Mirror the Slack-side advanceDungeonRoom
-  // so the expedition actually moves forward: compute next room via
-  // pickNextRoom, write the doors/auto-advance state, flip mode back to
-  // 'slack' so /sq choose / /sq attack can drive the next room, and skip
-  // marking the quest completed (Slack will mark it at the treasure room).
+  // expedition continues from the dashboard (or Slack). Advance the
+  // expedition the same way the Slack-side advanceDungeonRoom does, so
+  // pending_doors / pool / auto-advance to sub-boss are persisted. Without
+  // this, scene_json.expedition stays pinned to the just-cleared combat
+  // room and the dashboard's DoorPicker has nothing to render, while
+  // Slack /gq choose returns "No room choice to make right now." Mode
+  // flips to 'slack' so the quest isn't held in web-combat state — the
+  // next combat room will flip it back when entered.
   const isDungeon = state.monster.upcoming_waves === undefined && won && await isDungeonQuest(env.DB, questId);
   if (won && isDungeon) {
+    const sceneRow = await env.DB
+      .prepare("SELECT scene_json FROM quests WHERE id = ?")
+      .bind(questId)
+      .first<{ scene_json: string }>();
+    if (sceneRow) {
+      const scene = JSON.parse(sceneRow.scene_json) as {
+        tier: number;
+        expedition?: ExpState;
+        [k: string]: unknown;
+      };
+      if (scene.expedition) {
+        await advanceDungeon(env.DB, questId, scene.expedition, scene, null);
+      }
+    }
     await setQuestMode(env.DB, questId, "slack");
     await advanceExpeditionAfterWebCombat(env, questId);
   } else {

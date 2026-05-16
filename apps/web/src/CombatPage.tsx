@@ -2103,7 +2103,7 @@ function VictoryModal({
             </div>
             {dungeonRoom && (
               <p style={{ ...muted, fontSize: 12, textAlign: "center", marginBottom: 12 }}>
-                Room cleared. Use Slack /gq choose to pick the next door.
+                Room cleared. Head back to town to pick the next door.
               </p>
             )}
           </>
