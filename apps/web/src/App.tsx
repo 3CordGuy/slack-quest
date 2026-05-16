@@ -7801,6 +7801,7 @@ function itemIcon(item: {
   weapon_range?: WeaponRange | null;
   item_name: string;
   slot?: EquipSlot | null;
+  item_subtype?: string | null;
 }): string {
   const n = item.item_name.toLowerCase();
 
@@ -7808,7 +7809,7 @@ function itemIcon(item: {
   // main_hand falls through so weapons keep their keyword-matched variety.
   if (item.slot && item.slot !== "main_hand") {
     switch (item.slot) {
-      case "off_hand":  return "round-shield";
+      case "off_hand":  return item.item_subtype === "gloves" ? "gloves" : "round-shield";
       case "body":      return "chest-armor";
       case "helmet":    return "heavy-helm";
       case "pants":     return "armored-pants";
