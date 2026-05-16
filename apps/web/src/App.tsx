@@ -4969,7 +4969,11 @@ function ItemSlot({
           lineHeight: 1,
         }}
       >
-        +{item.power}
+        +{item.power > 0
+          ? item.power
+          : item.stat_bonus
+          ? Object.values(item.stat_bonus).reduce((a, b) => a + b, 0)
+          : 0}
       </div>
     </div>
   );
