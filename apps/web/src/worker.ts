@@ -63,6 +63,7 @@ import {
   RARITY_BADGE,
   statSnapshot,
   type CombatEvent,
+  type StatKey,
   type CombatInit,
   type CombatState,
   type DialogNode,
@@ -141,6 +142,7 @@ import {
   saveScene,
   saveWebCombatOutcome,
   saveWebCombatState,
+  spendStatPoint,
   setCharacterHpAndShield,
   setQuestMode,
   setQuestThreadTs,
@@ -852,6 +854,26 @@ app.post("/api/character/reroll", async (c) => {
   });
 
   return c.json({ ok: true, character: newChar });
+});
+
+// POST /api/character/spend — spends 1 unspent_point on the chosen primary stat.
+// Body: { stat: "str" | "int_stat" | "vit" | "agi" | "dex" }
+app.post("/api/character/spend", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+
+  const VALID_STATS = new Set<StatKey>(["str", "int_stat", "vit", "agi", "dex"]);
+  const body = await c.req.json<{ stat?: string }>().catch((): { stat?: string } => ({}));
+  const stat = body.stat as StatKey | undefined;
+  if (!stat || !VALID_STATS.has(stat)) {
+    return c.json({ error: "invalid_stat", valid: Array.from(VALID_STATS) }, 400);
+  }
+
+  const updated = await spendStatPoint(c.env.DB, session.slack_user_id, stat);
+  if (!updated) {
+    return c.json({ error: "no_unspent_points" }, 400);
+  }
+  return c.json({ ok: true, character: updated });
 });
 
 // Returns the authenticated user's character (or null if they haven't created
@@ -2378,13 +2400,14 @@ app.get("/api/characters", async (c) => {
   if (!session) return c.json({ error: "unauthenticated" }, 401);
   const rows = await c.env.DB
     .prepare(
-      `SELECT slack_user_id, name, class, level, xp, hp, max_hp, last_active, slack_username, scars
+      `SELECT slack_user_id, name, class, level, xp, hp, max_hp, last_active, slack_username, scars,
+              str, int_stat, vit, agi, dex, unspent_points
        FROM characters
        WHERE slack_user_id != ? AND slack_team_id = ?
        ORDER BY last_active DESC LIMIT 20`,
     )
     .bind(session.slack_user_id, session.slack_team_id)
-    .all<{ slack_user_id: string; name: string; class: string; level: number; xp: number; hp: number; max_hp: number; last_active: number; slack_username: string | null; scars: string }>();
+    .all<{ slack_user_id: string; name: string; class: string; level: number; xp: number; hp: number; max_hp: number; last_active: number; slack_username: string | null; scars: string; str: number; int_stat: number; vit: number; agi: number; dex: number; unspent_points: number }>();
   const characters = (rows.results ?? []).map((r) => ({ ...r, scars: JSON.parse(r.scars ?? "[]") as string[] }));
   return c.json({ characters });
 });

@@ -52,6 +52,8 @@ export interface Env {
   // re-rolling initiative. See the PR-3 drain plan for the production
   // rollout.
   LEGACY_SLACK_COMBAT?: string;
+  // Feature flag: "1" enables STATS_V2 primary stat derivations in combat.
+  STATS_V2?: string;
 }
 
 // Structural stub for the cross-bound QuestRoom DO. We don't import the

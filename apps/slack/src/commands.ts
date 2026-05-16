@@ -158,6 +158,7 @@ import {
   setCharacterHpAndShield,
   setPosition,
   sharpenItem,
+  spendStatPoint,
   transferItem,
   trySaveExpeditionAdvance,
   tryDeductGold,
@@ -256,6 +257,10 @@ import {
   checkLiarsAchievements,
   checkSpdAchievements,
   checkProgressionAchievements,
+  deriveAll,
+  type StatKey,
+  type Stats,
+  statSnapshot,
 } from "@gantt-quest/core";
 import { deleteMessage, postJoinableQuest, postMessage, respondToCommand, updateMessage, type InteractivePayload, type SlashCommandPayload } from "./slack";
 
@@ -1124,6 +1129,11 @@ export async function handleCommand(
   switch (sub) {
     case "roll":
       return handleRoll(payload, args, env, ctx);
+    case "character":
+    case "char":
+      return handleCharacterStats(payload, env);
+    case "spend":
+      return handleSpend(payload, args, env);
     case "me":
     case "sheet":
       return handleMe(payload, env, ctx);
@@ -1392,6 +1402,79 @@ async function handleMe(
     console.error("sheet:error", { err: err instanceof Error ? err.stack || err.message : String(err) });
     return ephemeral(`⚠️ Sheet failed to render: ${err instanceof Error ? err.message : String(err)}`);
   }
+}
+
+// `/gq character` — ephemeral stat sheet showing primary stats (STR/INT/VIT/AGI/DEX),
+// their derived combat values, and how many points are available to spend.
+async function handleCharacterStats(
+  payload: SlashCommandPayload,
+  env: Env,
+): Promise<CommandResponse> {
+  const c = await getCharacter(env.DB, payload.user_id);
+  if (!c) return ephemeral(`You haven't rolled a character yet. Try \`${payload.command} roll\`.`);
+
+  const stats: Stats = { str: c.str, int_stat: c.int_stat, vit: c.vit, agi: c.agi, dex: c.dex };
+  const derived = deriveAll(stats, c.level);
+
+  const bar = (val: number) => "█".repeat(Math.min(20, val)) + (val > 20 ? "+" : "");
+  const statLine = (label: string, val: number) => `*${label}* ${val}  ${bar(val)}`;
+
+  const lines = [
+    `*${c.name}* — ${c.class} (Level ${c.level})`,
+    ``,
+    statLine("STR", c.str),
+    statLine("INT", c.int_stat),
+    statLine("VIT", c.vit),
+    statLine("AGI", c.agi),
+    statLine("DEX", c.dex),
+    ``,
+    `_Derived:_ atk +${derived.attack_mod}  mag +${derived.magic_mod}  max HP ${derived.max_hp}  dodge ${Math.round(derived.dodge_chance * 100)}%  crit+${Math.round(derived.crit_bonus * 100)}%  init+${derived.initiative_bonus}`,
+  ];
+
+  if (c.unspent_points > 0) {
+    lines.push(``, `✨ *${c.unspent_points} unspent point${c.unspent_points > 1 ? "s" : ""}* — spend with \`${payload.command} spend <str|int|vit|agi|dex>\``);
+  }
+
+  return ephemeral(lines.join("\n"));
+}
+
+// `/gq spend <stat>` — spends 1 unspent point on the chosen stat.
+async function handleSpend(
+  payload: SlashCommandPayload,
+  args: string[],
+  env: Env,
+): Promise<CommandResponse> {
+  const VALID_STATS: Record<string, StatKey> = {
+    str: "str", strength: "str",
+    int: "int_stat", int_stat: "int_stat", intelligence: "int_stat",
+    vit: "vit", vitality: "vit",
+    agi: "agi", agility: "agi",
+    dex: "dex", dexterity: "dex",
+  };
+  const raw = (args[0] ?? "").toLowerCase();
+  const stat = VALID_STATS[raw];
+  if (!stat) {
+    return ephemeral(
+      `Usage: \`${payload.command} spend <str|int|vit|agi|dex>\`. Choose a stat to invest your free point.`,
+    );
+  }
+
+  const updated = await spendStatPoint(env.DB, payload.user_id, stat);
+  if (!updated) {
+    const c = await getCharacter(env.DB, payload.user_id);
+    if (!c) return ephemeral(`You haven't rolled a character yet. Try \`${payload.command} roll\`.`);
+    return ephemeral(`No unspent points. You'll earn one per level — next at ${c.level + 1}.`);
+  }
+
+  const statLabels: Record<StatKey, string> = {
+    str: "STR", int_stat: "INT", vit: "VIT", agi: "AGI", dex: "DEX",
+  };
+  const newVal = updated[stat];
+  const label = statLabels[stat];
+  const remainingMsg = updated.unspent_points > 0
+    ? ` (${updated.unspent_points} left)`
+    : "";
+  return ephemeral(`✨ *${label}* raised to *${newVal}*${remainingMsg}. Use \`${payload.command} character\` to see your full stats.`);
 }
 
 // Resolves a per-character portrait URL — unique per character name, with the

@@ -1,6 +1,6 @@
 // D1 query helpers. Raw prepared statements — no ORM.
 
-import type { DrinkBuff, EffectType, EarnedAchievement, ItemType, Rarity, TownState, WeaponRange } from "@gantt-quest/core";
+import type { DrinkBuff, EffectType, EarnedAchievement, ItemType, Rarity, StatKey, TownState, WeaponRange } from "@gantt-quest/core";
 import { startingStatsForClass } from "@gantt-quest/core";
 
 // Active status effect on a character or monster. Ticks on the affected actor's
@@ -2604,4 +2604,27 @@ export async function getDownedCharacters(db: D1Database): Promise<DownedCharact
     .bind(Date.now())
     .all<DownedCharacter>();
   return rows.results ?? [];
+}
+
+// Atomically spends 1 unspent_point on the chosen primary stat. The WHERE
+// guard prevents spending when points = 0. Returns the updated character, or
+// null when the write didn't land (no points left or unknown userId).
+// stat must be a valid StatKey column name.
+export async function spendStatPoint(
+  db: D1Database,
+  userId: string,
+  stat: StatKey,
+): Promise<Character | null> {
+  // Map StatKey to the exact column name (int_stat uses its column name directly).
+  const col = stat === "int_stat" ? "int_stat" : stat;
+  const result = await db
+    .prepare(
+      `UPDATE characters
+          SET ${col} = ${col} + 1, unspent_points = unspent_points - 1
+        WHERE slack_user_id = ? AND unspent_points > 0`,
+    )
+    .bind(userId)
+    .run();
+  if (result.meta.changes === 0) return null;
+  return getCharacter(db, userId);
 }

@@ -13,7 +13,7 @@ import {
   useInteractions,
 } from "@floating-ui/react";
 
-import { classByName, findCatalogEntry, priceFor, sellPriceFor, xpForLevel, type Achievement, type EarnedAchievement } from "@gantt-quest/core";
+import { classByName, deriveAll, findCatalogEntry, priceFor, sellPriceFor, xpForLevel, type Achievement, type EarnedAchievement, type StatKey, type Stats } from "@gantt-quest/core";
 
 import { CombatPage } from "./CombatPage";
 import { Avatar, EmojiIcon, Icon, KeyIcon } from "./icons";
@@ -157,6 +157,13 @@ interface Character {
   keys_gold: number;
   position: "front" | "back";
   downed_until: number | null;
+  // Primary stats (Phase 1). Present on characters migrated via 0032.
+  str?: number;
+  int_stat?: number;
+  vit?: number;
+  agi?: number;
+  dex?: number;
+  unspent_points?: number;
 }
 
 type ItemType =
@@ -518,6 +525,13 @@ interface KnownCharacter {
   slack_username: string | null;
   scars: string[];
   achievements?: EarnedAchievement[];
+  // Primary stats (Phase 1 / optional — present after migration 0032).
+  str?: number;
+  int_stat?: number;
+  vit?: number;
+  agi?: number;
+  dex?: number;
+  unspent_points?: number;
 }
 
 interface AchievementsResponse {
@@ -852,6 +866,13 @@ export function App() {
     setState({ kind: "anon" });
   }
 
+  async function refreshMe() {
+    const res = await fetch("/api/me", { credentials: "include", cache: "no-store" });
+    if (!res.ok) return;
+    const me = (await res.json()) as MeResponse;
+    setState((prev) => prev.kind === "auth" ? { ...prev, me } : prev);
+  }
+
   async function refreshPub() {
     const res = await fetch("/api/pub", { credentials: "include", cache: "no-store" });
     const body = res.ok
@@ -903,6 +924,23 @@ export function App() {
     }
     toast.success(`${body.target_name ?? targetName} revived with ${body.hp_restored ?? 50}% HP!`);
     void refreshApothecary();
+  }
+
+  async function spendStatPoint(stat: StatKey) {
+    const res = await fetch("/api/character/spend", {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ stat }),
+    });
+    const body = await res.json() as { ok?: boolean; error?: string };
+    if (!res.ok) {
+      if (body.error === "no_unspent_points") toast.error("No unspent points.");
+      else toast.error("Could not spend point.");
+      return;
+    }
+    toast.success(`${stat === "int_stat" ? "INT" : stat.toUpperCase()} increased!`);
+    void refreshMe();
   }
 
   async function rerollCharacter() {
@@ -1342,6 +1380,7 @@ export function App() {
               onTransmuteKey={transmuteKey}
               onLogout={logout}
               onReroll={rerollCharacter}
+              onSpend={spendStatPoint}
             />
             {state.me.character && (
               <InventoryCard
@@ -3237,6 +3276,36 @@ function AdventurerSheet({ character, isOwn = false, onClose }: { character: Kno
           </div>
         </div>
 
+        {character.str !== undefined && (() => {
+          const stats: Stats = {
+            str: character.str ?? 5,
+            int_stat: character.int_stat ?? 5,
+            vit: character.vit ?? 5,
+            agi: character.agi ?? 5,
+            dex: character.dex ?? 5,
+          };
+          const derived = deriveAll(stats, character.level);
+          return (
+            <div style={{ padding: "10px 12px", background: "#1d1f23", borderRadius: 8, border: "1px solid #2a2d33" }}>
+              <div style={{ fontSize: 10, color: "#6b7280", textTransform: "uppercase", letterSpacing: 1, marginBottom: 7 }}>Stats</div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 4, marginBottom: 7 }}>
+                {(["str", "int_stat", "vit", "agi", "dex"] as StatKey[]).map((key) => (
+                  <div key={key} style={{ textAlign: "center", background: "#13141a", borderRadius: 5, padding: "5px 3px" }}>
+                    <div style={{ fontSize: 9, color: "#6b7280", textTransform: "uppercase" }}>{key === "int_stat" ? "INT" : key.toUpperCase()}</div>
+                    <div style={{ fontSize: 14, fontWeight: 700, color: "#f5f5f5" }}>{stats[key]}</div>
+                  </div>
+                ))}
+              </div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: "2px 9px", fontSize: 10, color: "#9ca3af" }}>
+                <span>ATK {derived.attack_mod >= 0 ? `+${derived.attack_mod}` : derived.attack_mod}</span>
+                <span>MAG {derived.magic_mod >= 0 ? `+${derived.magic_mod}` : derived.magic_mod}</span>
+                <span>Dodge {Math.round(derived.dodge_chance * 100)}%</span>
+                <span>Crit +{Math.round(derived.crit_bonus * 100)}%</span>
+              </div>
+            </div>
+          );
+        })()}
+
         {character.scars && character.scars.length > 0 && (
           <div style={{ padding: "10px 12px", background: "#1d1f23", borderRadius: 8, border: "1px solid #2a2d33" }}>
             <div style={{ fontSize: 11, color: "#ef4444", textTransform: "uppercase", letterSpacing: 1, marginBottom: 6 }}>
@@ -3267,6 +3336,7 @@ function CharacterCard({
   onTransmuteKey,
   onLogout,
   onReroll,
+  onSpend,
 }: {
   me: MeResponse;
   inventory: Item[];
@@ -3276,6 +3346,7 @@ function CharacterCard({
   onTransmuteKey: (fromTier: "bronze" | "silver") => void;
   onLogout: () => void;
   onReroll: () => Promise<void>;
+  onSpend?: (stat: StatKey) => void;
 }) {
   const [trophyDefs, setTrophyDefs] = useState<Achievement[]>([]);
   const [trophyEarned, setTrophyEarned] = useState<EarnedAchievement[]>([]);
@@ -3312,6 +3383,16 @@ function CharacterCard({
   const armorPower = equippedArmor?.power ?? 0;
   const restDisabled = inQuest || downed || fullyRecovered;
   const portrait = me.class_art_url;
+  const primaryStats: Stats = {
+    str: c.str ?? 5,
+    int_stat: c.int_stat ?? 5,
+    vit: c.vit ?? 5,
+    agi: c.agi ?? 5,
+    dex: c.dex ?? 5,
+  };
+  const derivedStats = deriveAll(primaryStats, c.level);
+  const hasUnspentPoints = (c.unspent_points ?? 0) > 0;
+  const statHasData = c.str !== undefined;
   return (
     <div style={{ ...card, position: "relative" }}>
       <AccountPopover onLogout={onLogout} onReroll={onReroll} character={c} />
@@ -3420,6 +3501,56 @@ function CharacterCard({
           </div>
         </div>
       </Stats>
+      {/* Primary stats block — only shown after migration 0032 */}
+      {(statHasData || hasUnspentPoints) && (
+        <div style={{ marginTop: 12, padding: "10px 12px", background: "#16181c", borderRadius: 8, border: "1px solid #2a2d33" }}>
+          <div style={{ fontSize: 11, color: "#6b7280", textTransform: "uppercase", letterSpacing: 1.2, marginBottom: 8 }}>Primary Stats</div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 5, marginBottom: 8 }}>
+            {(["str", "int_stat", "vit", "agi", "dex"] as StatKey[]).map((key) => (
+              <div key={key} style={{ textAlign: "center", background: "#1d1f23", borderRadius: 6, padding: "6px 4px" }}>
+                <div style={{ fontSize: 9, color: "#6b7280", textTransform: "uppercase", letterSpacing: 0.8 }}>
+                  {key === "int_stat" ? "INT" : key.toUpperCase()}
+                </div>
+                <div style={{ fontSize: 15, fontWeight: 700, color: "#f5f5f5", lineHeight: 1.2 }}>{primaryStats[key]}</div>
+              </div>
+            ))}
+          </div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: "3px 10px", fontSize: 11, color: "#9ca3af" }}>
+            <span title="Attack modifier added to weapon damage">ATK {derivedStats.attack_mod >= 0 ? `+${derivedStats.attack_mod}` : derivedStats.attack_mod}</span>
+            <span title="Magic modifier added to spell damage">MAG {derivedStats.magic_mod >= 0 ? `+${derivedStats.magic_mod}` : derivedStats.magic_mod}</span>
+            <span title="Chance to negate an incoming monster hit">Dodge {Math.round(derivedStats.dodge_chance * 100)}%</span>
+            <span title="Bonus crit chance on attack or cast">Crit +{Math.round(derivedStats.crit_bonus * 100)}%</span>
+            <span title="Added to initiative roll at combat start">Init +{derivedStats.initiative_bonus}</span>
+            {derivedStats.armor_bonus > 0 && (
+              <span title="VIT-derived armor bonus on top of equipped armor">+{derivedStats.armor_bonus} armor</span>
+            )}
+          </div>
+          {hasUnspentPoints && onSpend && (
+            <div style={{ marginTop: 10, padding: "8px 10px", background: "#0f172a", borderRadius: 6, border: "1px solid #3b82f6" }}>
+              <div style={{ fontSize: 11, color: "#7dd3fc", marginBottom: 7 }}>
+                +{c.unspent_points} unspent {c.unspent_points === 1 ? "point" : "points"} — choose a stat:
+              </div>
+              <div style={{ display: "flex", gap: 5 }}>
+                {(["str", "int_stat", "vit", "agi", "dex"] as StatKey[]).map((key) => (
+                  <button
+                    key={key}
+                    onClick={() => onSpend(key)}
+                    style={{
+                      flex: 1, padding: "5px 0",
+                      background: "#1e3a5f", border: "1px solid #3b82f6",
+                      borderRadius: 5, color: "#93c5fd", fontSize: 10,
+                      fontWeight: 700, cursor: "pointer",
+                      textTransform: "uppercase", letterSpacing: 0.5,
+                    }}
+                  >
+                    {key === "int_stat" ? "INT" : key.toUpperCase()}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
       {/* Camp section */}
       <div style={{ marginTop: 16, padding: "10px 12px", background: "#16181c", borderRadius: 8, border: "1px solid #2a2d33" }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
