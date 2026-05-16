@@ -1358,16 +1358,34 @@ export function App() {
     const chr = state.me.character;
     if (aq.quest.scene.graph) {
       return (
-        <GridDungeonView
-          questId={aq.quest.id}
-          selfId={state.me.slack_user_id}
-          scene={aq.quest.scene as unknown as Parameters<typeof GridDungeonView>[0]["scene"]}
-          party={aq.party as unknown as Parameters<typeof GridDungeonView>[0]["party"]}
-          character={chr as unknown as Parameters<typeof GridDungeonView>[0]["character"]}
-          hasWebCombat={hasWebCombat}
-          onExit={() => void refresh()}
-          onRefresh={() => void refresh()}
-        />
+        <>
+          <GridDungeonView
+            questId={aq.quest.id}
+            selfId={state.me.slack_user_id}
+            scene={aq.quest.scene as unknown as Parameters<typeof GridDungeonView>[0]["scene"]}
+            party={aq.party as unknown as Parameters<typeof GridDungeonView>[0]["party"]}
+            character={chr as unknown as Parameters<typeof GridDungeonView>[0]["character"]}
+            hasWebCombat={hasWebCombat}
+            onOpenInventory={() => setInventoryOpen(true)}
+            onExit={() => void refresh()}
+            onRefresh={() => void refresh()}
+          />
+          {inventoryOpen && (
+            <InventoryFullScreen
+              items={state.inventory}
+              inQuest={true}
+              selfId={state.me.slack_user_id}
+              characterLevel={chr.level}
+              character={chr}
+              onEquip={equipItem}
+              onUnequip={unequipItem}
+              onSell={sellItem}
+              onUse={useItem}
+              onGive={giveItem}
+              onClose={() => setInventoryOpen(false)}
+            />
+          )}
+        </>
       );
     }
     return (

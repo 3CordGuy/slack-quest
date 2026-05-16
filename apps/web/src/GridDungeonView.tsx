@@ -503,12 +503,13 @@ interface GridDungeonViewProps {
   party: Character[];
   character: Character;
   hasWebCombat: boolean;
+  onOpenInventory?: () => void;
   onExit: () => void;
   onRefresh: () => void;
 }
 
 export function GridDungeonView({
-  questId, selfId, scene, party, character, hasWebCombat, onExit, onRefresh,
+  questId, selfId, scene, party, character, hasWebCombat, onOpenInventory, onExit, onRefresh,
 }: GridDungeonViewProps) {
   const graph = scene.graph!;
   const currentNode = graph.nodes[graph.current];
@@ -527,7 +528,6 @@ export function GridDungeonView({
   const [moving, setMoving] = useState(false);
   const [contentBusy, setContentBusy] = useState(false);
   const [items, setItems] = useState<UsableItem[]>([]);
-  const [inventoryOpen, setInventoryOpen] = useState(false);
 
   async function loadItems() {
     const res = await fetch("/api/inventory", { credentials: "include" });
@@ -810,23 +810,13 @@ export function GridDungeonView({
         />
       )}
 
-      {/* Party bar — click self to open inventory */}
+      {/* Party bar — click self to open inventory (rendered by App.tsx) */}
       <PartyBar
         fighters={combatActive ? (combatState?.fighters ?? null) : null}
         selfId={selfId}
         party={party.length > 0 ? party : [character]}
-        onClickSelf={() => setInventoryOpen(true)}
+        onClickSelf={onOpenInventory}
       />
-
-      {/* Inventory modal */}
-      {inventoryOpen && (
-        <InventoryModal
-          character={character}
-          items={items}
-          onClose={() => setInventoryOpen(false)}
-          onChange={() => void loadItems()}
-        />
-      )}
     </div>
   );
 }
@@ -1317,146 +1307,6 @@ const lootBtn: React.CSSProperties = {
   color: "#d1d5db", cursor: "pointer", textAlign: "left", fontSize: 12,
 };
 
-// ─── Inventory modal (party-bar click target) ────────────────────────────────
-// Lightweight inline inventory: shows the character header (name/class/level/
-// HP/mana/gold/keys), an "equipped" section grouped by slot, and a pack grid.
-// Equip/unequip toggles via /api/inventory/:id/equip|unequip. For deeper
-// management (sell, give, paper-doll) players can return to town.
-
-function InventoryModal({ character, items, onClose, onChange }: {
-  character: Character;
-  items: UsableItem[];
-  onClose: () => void;
-  onChange: () => void;
-}) {
-  // Use a separate fetch so we get full item details (slot, rarity, etc.)
-  // rather than the slim UsableItem shape used in the action panel.
-  const [full, setFull] = useState<Array<UsableItem & { rarity: string; slot?: string | null; flavor?: string | null; stat_bonus?: Record<string, number> | null; level_req?: number }>>([]);
-  const [busy, setBusy] = useState(false);
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      const res = await fetch("/api/inventory", { credentials: "include" });
-      if (!res.ok || cancelled) return;
-      const body = await res.json() as { items: typeof full };
-      if (!cancelled) setFull(body.items);
-    })();
-    return () => { cancelled = true; };
-  }, [items.length]); // refresh when count changes from outside
-
-  async function toggleEquip(it: typeof full[number]) {
-    if (busy) return;
-    setBusy(true);
-    try {
-      const url = it.equipped ? `/api/inventory/${it.id}/unequip` : `/api/inventory/${it.id}/equip`;
-      const res = await fetch(url, { method: "POST", credentials: "include" });
-      if (res.ok) {
-        const fresh = await fetch("/api/inventory", { credentials: "include" });
-        if (fresh.ok) setFull(((await fresh.json()) as { items: typeof full }).items);
-        onChange();
-      } else {
-        const b = await res.json().catch(() => ({})) as { error?: string };
-        toast.error(b.error ?? "Could not change equip");
-      }
-    } finally { setBusy(false); }
-  }
-
-  const equipped = full.filter((it) => it.equipped);
-  const pack = full.filter((it) => !it.equipped);
-
-  return (
-    <div
-      onClick={onClose}
-      style={{
-        position: "fixed", inset: 0, background: "rgba(0,0,0,0.78)",
-        display: "flex", alignItems: "center", justifyContent: "center",
-        zIndex: 100, backdropFilter: "blur(6px)",
-      }}>
-      <div
-        onClick={(e) => e.stopPropagation()}
-        style={{
-          background: "#0e0f12", border: "1px solid #2a2d33", borderRadius: 12,
-          width: "min(720px, 92vw)", maxHeight: "86vh", overflow: "auto",
-          padding: 18,
-        }}>
-        {/* Header */}
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
-          <div>
-            <div style={{ fontFamily: DISPLAY_FONT, fontSize: 22, color: "#f5f5dc" }}>{character.name}</div>
-            <div style={{ fontSize: 12, color: "#9aa0a6" }}>
-              Lvl {character.level} {character.class} · {character.hp}/{character.max_hp} HP · {character.mana}/{character.max_mana} mana
-            </div>
-          </div>
-          <button onClick={onClose} style={{ background: "none", border: "1px solid #2a2d33", color: "#9aa0a6", borderRadius: 6, padding: "4px 12px", cursor: "pointer" }}>Close ✕</button>
-        </div>
-
-        {/* Equipped */}
-        <SectionHeader>Equipped</SectionHeader>
-        {equipped.length === 0 ? (
-          <p style={{ fontSize: 12, color: "#4a5568", margin: "0 0 16px" }}>Nothing equipped.</p>
-        ) : (
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: 8, marginBottom: 16 }}>
-            {equipped.map((it) => (
-              <ItemTile key={it.id} item={it} onClick={() => void toggleEquip(it)} busy={busy} action="Unequip" />
-            ))}
-          </div>
-        )}
-
-        {/* Pack */}
-        <SectionHeader>Pack ({pack.length})</SectionHeader>
-        {pack.length === 0 ? (
-          <p style={{ fontSize: 12, color: "#4a5568", margin: "0 0 8px" }}>Pack is empty.</p>
-        ) : (
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: 8 }}>
-            {pack.map((it) => {
-              const canEquip = !!it.slot && (it.level_req ?? 1) <= character.level;
-              return (
-                <ItemTile
-                  key={it.id}
-                  item={it}
-                  onClick={canEquip ? () => void toggleEquip(it) : undefined}
-                  busy={busy}
-                  action={canEquip ? "Equip" : (it.level_req && it.level_req > character.level ? `L${it.level_req}` : "")}
-                />
-              );
-            })}
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function SectionHeader({ children }: { children: React.ReactNode }) {
-  return (
-    <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: 1.5, color: "#9aa0a6", marginBottom: 8 }}>
-      {children}
-    </div>
-  );
-}
-
-function ItemTile({ item, onClick, busy, action }: {
-  item: { id: number; item_name: string; item_type: string; power: number; rarity: string; slot?: string | null; flavor?: string | null };
-  onClick?: () => void;
-  busy: boolean;
-  action: string;
-}) {
-  const rarityColor = item.rarity === "rare" ? "#fbbf24" : item.rarity === "uncommon" ? "#60a5fa" : "#9aa0a6";
-  return (
-    <div style={{ padding: 10, background: "#131519", border: `1px solid ${rarityColor}33`, borderRadius: 8, fontSize: 12, display: "flex", flexDirection: "column", gap: 4 }}>
-      <div style={{ fontWeight: 600, color: "#e2e8f0" }}>{item.item_name}</div>
-      <div style={{ fontSize: 11, color: rarityColor }}>
-        {item.slot ? `${item.slot} · ` : ""}power {item.power} · {item.rarity}
-      </div>
-      {item.flavor && <div style={{ fontSize: 10, color: "#6b7280", fontStyle: "italic" }}>{item.flavor.slice(0, 90)}{item.flavor.length > 90 ? "…" : ""}</div>}
-      {action && onClick && (
-        <button onClick={onClick} disabled={busy} style={{ marginTop: 4, padding: "3px 8px", background: "#1a2e1a", border: "1px solid #166534", borderRadius: 5, color: "#86efac", fontSize: 11, cursor: busy ? "wait" : "pointer", alignSelf: "flex-start" }}>
-          {action}
-        </button>
-      )}
-      {action && !onClick && (
-        <div style={{ marginTop: 4, fontSize: 11, color: "#5c1f1f" }}>{action}</div>
-      )}
-    </div>
-  );
-}
+// Inventory modal lives in App.tsx (uses the dashboard's InventoryFullScreen
+// with full drag-and-drop, paper-doll, give/use/equip). The party-bar click
+// calls onOpenInventory which App.tsx routes to that modal.
