@@ -261,101 +261,161 @@ function HpBar({ current, max, color, height = 6 }: { current: number; max: numb
   );
 }
 
+// Rooms snake through a grid: row 0 goes →, row 1 goes ←, row 2 goes →, etc.
+// Corridors are drawn as SVG lines between room centers.
+const MINIMAP_ROW_WIDTH = 3;
+const R = 10;   // room square size (px)
+const G = 7;    // gap between rooms (corridor width)
+const CELL = R + G; // grid unit
+
+function minimapPos(idx: number): { cx: number; cy: number } {
+  const row = Math.floor(idx / MINIMAP_ROW_WIDTH);
+  const posInRow = idx % MINIMAP_ROW_WIDTH;
+  const col = row % 2 === 0 ? posInRow : MINIMAP_ROW_WIDTH - 1 - posInRow;
+  return { cx: col * CELL + R / 2, cy: row * CELL + R / 2 };
+}
+
 function Minimap({ expedition }: { expedition: ExpeditionState }) {
-  const total = expedition.nodes.length;
+  const n = expedition.nodes.length;
   const current = expedition.current;
   const sealed = expedition.sealed_doors ?? [];
+
+  const numRows = Math.ceil(n / MINIMAP_ROW_WIDTH);
+  const svgW = MINIMAP_ROW_WIDTH * CELL - G;
+  const svgH = numRows * CELL - G;
+
+  // Node type icons for SVG text
+  const typeGlyph: Record<string, string> = {
+    combat: "⚔", trap: "⚠", lockbox: "🔒",
+    npc: "👤", treasure: "★", merchant: "₿",
+  };
 
   return (
     <div style={{
       position: "absolute",
       top: 12,
       right: 12,
-      background: "rgba(0,0,0,0.72)",
-      border: "1px solid rgba(255,255,255,0.12)",
+      background: "rgba(0,0,0,0.78)",
+      border: "1px solid rgba(255,255,255,0.14)",
       borderRadius: 8,
-      padding: "6px 10px",
+      padding: "7px 9px 5px",
       display: "flex",
       flexDirection: "column",
       gap: 4,
-      backdropFilter: "blur(4px)",
+      backdropFilter: "blur(6px)",
+      userSelect: "none",
     }}>
-      <div style={{ fontSize: 9, color: "#9aa0a6", textTransform: "uppercase", letterSpacing: 1, marginBottom: 2 }}>
-        {expedition.theme.slice(0, 20)}
+      <div style={{ fontSize: 9, color: "#6b7280", textTransform: "uppercase", letterSpacing: 1 }}>
+        {expedition.theme.length > 22 ? expedition.theme.slice(0, 20) + "…" : expedition.theme}
       </div>
-      <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
-        {Array.from({ length: total }, (_, i) => {
-          const node = expedition.nodes[i];
-          const isCurrent = i === current;
-          const isSealed = sealed.includes(i);
-          const isPast = i < current;
-          const isBoss = i === total - 2;
-          const isTreasure = i === total - 1;
-
-          let bg = "#2a2d33";
-          let border = "1px solid #3a3d43";
-          if (isCurrent) { bg = "#f5f5dc"; border = "1px solid #f5f5dc"; }
-          else if (isSealed) { bg = "#1a0000"; border = "1px solid #5c1f1f"; }
-          else if (isPast) { bg = "#4a5568"; border = "1px solid #6b7280"; }
-
-          const size = isBoss || isTreasure ? 12 : 9;
-
+      <svg width={svgW} height={svgH} style={{ display: "block" }}>
+        {/* Corridors — draw first so rooms render on top */}
+        {Array.from({ length: n - 1 }, (_, i) => {
+          const a = minimapPos(i);
+          const b = minimapPos(i + 1);
+          const visited = i < current;
+          const active = i === current - 1 || i === current;
           return (
-            <div key={i} style={{
-              width: size, height: size,
-              background: bg, border,
-              borderRadius: 2,
-              flexShrink: 0,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-            }}>
-              {isBoss && !isCurrent && (
-                <div style={{ width: 4, height: 4, background: "#fca5a5", borderRadius: 1 }} />
-              )}
-              {isTreasure && !isCurrent && (
-                <div style={{ width: 4, height: 4, background: "#fbbf24", borderRadius: "50%" }} />
-              )}
-              {node?.type === "lockbox" && !isCurrent && !isPast && (
-                <div style={{ width: 3, height: 3, background: "#60a5fa", borderRadius: 1 }} />
-              )}
-            </div>
+            <line
+              key={`c${i}`}
+              x1={a.cx} y1={a.cy} x2={b.cx} y2={b.cy}
+              stroke={visited ? "#4b5563" : "#1f2937"}
+              strokeWidth={active ? 3 : 2}
+            />
           );
         })}
-      </div>
-      <div style={{ fontSize: 9, color: "#9aa0a6", textAlign: "center" }}>
-        {current + 1} / {total}
+
+        {/* Room squares */}
+        {Array.from({ length: n }, (_, i) => {
+          const { cx, cy } = minimapPos(i);
+          const isCurrent = i === current;
+          const isPast = i < current;
+          const isSealed = sealed.includes(i);
+          const isBoss = i === n - 2;
+          const isTreasure = i === n - 1;
+          const node = expedition.nodes[i];
+
+          const size = (isBoss || isTreasure) ? R + 2 : R;
+          const x = cx - size / 2;
+          const y = cy - size / 2;
+
+          let fill = "#111318";
+          let stroke = "#2a2d33";
+          let strokeW = 1;
+          if (isCurrent) { fill = "#f5f5dc"; stroke = "#f5f5dc"; strokeW = 1.5; }
+          else if (isSealed) { fill = "#1a0000"; stroke = "#5c1f1f"; }
+          else if (isPast) { fill = "#374151"; stroke = "#4b5563"; }
+          else if (isBoss) { stroke = "#7f1d1d"; }
+          else if (isTreasure) { stroke = "#92400e"; }
+
+          return (
+            <g key={`r${i}`}>
+              <rect x={x} y={y} width={size} height={size} fill={fill} stroke={stroke} strokeWidth={strokeW} rx={2} />
+              {/* Pulsing dot for current room */}
+              {isCurrent && (
+                <circle cx={cx} cy={cy} r={2.5} fill="#0e0f12" />
+              )}
+              {/* Boss marker */}
+              {isBoss && !isCurrent && (
+                <circle cx={cx} cy={cy} r={2} fill={isPast ? "#6b7280" : "#fca5a5"} />
+              )}
+              {/* Treasure marker */}
+              {isTreasure && !isCurrent && (
+                <circle cx={cx} cy={cy} r={2} fill={isPast ? "#6b7280" : "#fbbf24"} />
+              )}
+              {/* Lockbox key dot */}
+              {node?.type === "lockbox" && !isCurrent && !isPast && (
+                <circle cx={cx} cy={cy} r={1.5} fill="#60a5fa" />
+              )}
+            </g>
+          );
+        })}
+      </svg>
+      <div style={{ fontSize: 9, color: "#6b7280", textAlign: "right" }}>
+        {current + 1}/{n}
       </div>
     </div>
   );
 }
 
-function PartyBar({ fighters, selfId, scene, party }: {
+function PartyBar({ fighters, selfId, party }: {
   fighters: Fighter[] | null;
   selfId: string;
-  scene: SceneJson;
   party: Character[];
 }) {
-  const allMembers = fighters ?? party.map((c): Fighter => ({
-    id: "",
-    name: c.name,
-    slack_username: null,
-    class: c.class,
-    level: c.level,
-    hp: c.hp,
-    max_hp: c.max_hp,
-    mana: c.mana ?? 0,
-    max_mana: c.max_mana ?? 2,
-    shield: 0,
-    position: "front",
-    attack_mod: 0,
-    magic_mod: 0,
-    weapon_power: 0,
-    armor_power: 0,
-    initiative: 0,
-    effects: [],
-    scars: [],
-  }));
+  // Normalise to a unified shape regardless of combat vs exploration state.
+  // Dedup characters by slack_user_id so a solo player doesn't appear twice.
+  const seen = new Set<string>();
+  type Member = { key: string; name: string; cls: string; hp: number; max_hp: number; mana: number; max_mana: number; shield: number; isSelf: boolean; isDead: boolean };
+  const members: Member[] = fighters
+    ? fighters.map((f) => ({
+        key: f.id,
+        name: f.name,
+        cls: f.class,
+        hp: f.hp,
+        max_hp: f.max_hp,
+        mana: f.mana,
+        max_mana: f.max_mana,
+        shield: f.shield,
+        isSelf: f.id === selfId,
+        isDead: f.hp <= 0,
+      }))
+    : party.flatMap((c) => {
+        if (seen.has(c.slack_user_id)) return [];
+        seen.add(c.slack_user_id);
+        return [{
+          key: c.slack_user_id,
+          name: c.name,
+          cls: c.class,
+          hp: c.hp,
+          max_hp: c.max_hp,
+          mana: c.mana,
+          max_mana: c.max_mana,
+          shield: c.shield,
+          isSelf: c.slack_user_id === selfId,
+          isDead: c.hp <= 0,
+        }];
+      });
 
   return (
     <div style={{
@@ -368,13 +428,13 @@ function PartyBar({ fighters, selfId, scene, party }: {
       overflowX: "auto",
       flexShrink: 0,
     }}>
-      {allMembers.map((f, i) => {
+      {members.map((f) => {
         const portrait = charPortraitUrl(f.name);
-        const classPic = classPortraitUrl(f.class);
-        const isSelf = fighters ? f.id === selfId : true;
-        const isDead = f.hp <= 0;
+        const classPic = classPortraitUrl(f.cls);
+        const isSelf = f.isSelf;
+        const isDead = f.isDead;
         return (
-          <div key={i} style={{
+          <div key={f.key} style={{
             display: "flex",
             alignItems: "center",
             gap: 8,
@@ -591,6 +651,9 @@ export function DungeonView({
   const logScrollRef = useRef<HTMLDivElement | null>(null);
   const [targeting, setTargeting] = useState<string | null>(null); // monster id to target
   const [autoResolve, setAutoResolve] = useState(true);
+  const [pickingSupport, setPickingSupport] = useState<"heal" | "shield" | null>(null);
+  const [itemPickerOpen, setItemPickerOpen] = useState(false);
+  const [items, setItems] = useState<Array<{ id: number; item_name: string; item_type: string; power: number; equipped: boolean }>>([]);
   const autoResolvedTurnRef = useRef(-1);
 
   // Connect WS when combat is active
@@ -628,6 +691,7 @@ export function DungeonView({
           dispatch({ kind: "state", value: normalised });
         } else if (msg.type === "events" && msg.events) {
           dispatch({ kind: "events", value: msg.events });
+          if (msg.events.some((e) => e.type === "item_used")) void loadItems();
         } else if (msg.type === "outcome" && msg.outcome) {
           dispatch({ kind: "outcome", value: msg.outcome });
         }
@@ -683,6 +747,12 @@ export function DungeonView({
     }
     setCombatActive(true);
   }
+
+  async function loadItems() {
+    const res = await fetch("/api/inventory", { credentials: "include" });
+    if (res.ok) setItems(((await res.json()) as { items: typeof items }).items);
+  }
+  useEffect(() => { void loadItems(); }, []);
 
   // After dungeon room victory, refresh expedition state from server
   useEffect(() => {
@@ -988,64 +1058,113 @@ export function DungeonView({
             )}
           </div>
 
-          {/* Action buttons */}
-          <div style={{ padding: "6px 10px 8px", display: "flex", gap: 6, flexWrap: "wrap", borderTop: "1px solid #1a1c21" }}>
-            {myTurn && (
-              <>
-                <CombatBtn
-                  label="Attack"
-                  icon="sword"
-                  color="#b89b3a"
-                  disabled={liveMonsters.length > 1 && !effectiveTarget}
-                  onClick={() => send({ kind: "attack", actor: selfId, target_id: effectiveTarget })}
-                />
-                <CombatBtn
-                  label="Cast"
-                  icon="crystal-wand"
-                  color="#818cf8"
-                  disabled={(ws.state?.fighters.find((f) => f.id === selfId)?.mana ?? 0) < 1 || (liveMonsters.length > 1 && !effectiveTarget)}
-                  onClick={() => send({ kind: "cast", actor: selfId, target_id: effectiveTarget })}
-                />
-                <CombatBtn
-                  label="Signature"
-                  icon="wax-seal"
-                  color="#a78bfa"
-                  disabled={(ws.state?.fighters.find((f) => f.id === selfId)?.mana ?? 0) < 2 || (liveMonsters.length > 1 && !effectiveTarget)}
-                  onClick={() => send({ kind: "signature", actor: selfId, target_id: effectiveTarget })}
-                />
-                <CombatBtn
-                  label="Flee"
-                  icon="footprint"
-                  color="#9aa0a6"
-                  onClick={() => send({ kind: "flee", actor: selfId })}
-                />
-              </>
-            )}
-            {!myTurn && isMonsterTurn && !autoResolve && (
-              <CombatBtn
-                label="Resolve enemy turn"
-                icon="dragon-head"
-                color="#5c1f1f"
-                onClick={() => send({ kind: "monster_act" })}
-              />
-            )}
-            {!myTurn && !isMonsterTurn && (
-              <span style={{ fontSize: 12, color: "#4a5568", padding: "4px 8px", alignSelf: "center" }}>
-                Waiting for {combatState.fighters.find((f) => f.id === currentActorId)?.name ?? "other player"}…
-              </span>
-            )}
-            <div style={{ marginLeft: "auto", display: "flex", alignItems: "center" }}>
-              <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, color: "#4a5568", cursor: "pointer" }}>
-                <input type="checkbox" checked={autoResolve} onChange={(e) => setAutoResolve(e.target.checked)} style={{ accentColor: "#5c1f1f" }} />
-                Auto
-              </label>
-            </div>
-          </div>
-          {liveMonsters.length > 1 && !effectiveTarget && myTurn && (
-            <div style={{ padding: "4px 12px 6px", fontSize: 11, color: "#c084fc" }}>
-              ↑ Click a monster above to target it
-            </div>
-          )}
+          {/* Action panel */}
+          {(() => {
+            const me = combatState.fighters.find((f) => f.id === selfId);
+            const mana = me?.mana ?? 0;
+            const myPos = me?.position ?? "front";
+            const needsTarget = liveMonsters.length > 1 && !effectiveTarget;
+            const usableItems = items.filter((it) => !it.equipped && ["consumable", "magic", "revive"].includes(it.item_type));
+
+            return (
+              <div style={{ borderTop: "1px solid #1a1c21" }}>
+                {/* Inline target picker for heal/shield */}
+                {pickingSupport && myTurn && (
+                  <div style={{ padding: "6px 10px 4px", display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                    <span style={{ fontSize: 11, color: "#9aa0a6" }}>
+                      {pickingSupport === "heal" ? "Heal who?" : "Shield who?"}
+                    </span>
+                    {combatState.fighters.filter((f) => f.hp > 0).map((f) => (
+                      <button
+                        key={f.id}
+                        onClick={() => {
+                          send({ kind: pickingSupport, actor: selfId, target: f.id });
+                          setPickingSupport(null);
+                        }}
+                        style={{ padding: "3px 10px", background: "#1a2e1a", border: "1px solid #166534", borderRadius: 5, color: "#86efac", fontSize: 11, cursor: "pointer" }}
+                      >
+                        {f.name.split(" ")[0]} {f.hp}/{f.max_hp}
+                      </button>
+                    ))}
+                    <button onClick={() => setPickingSupport(null)} style={{ padding: "3px 8px", background: "none", border: "1px solid #2a2d33", borderRadius: 5, color: "#9aa0a6", fontSize: 11, cursor: "pointer" }}>✕</button>
+                  </div>
+                )}
+                {/* Inline item picker */}
+                {itemPickerOpen && myTurn && (
+                  <div style={{ padding: "6px 10px 4px", display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                    <span style={{ fontSize: 11, color: "#9aa0a6" }}>Use item:</span>
+                    {usableItems.length === 0 && <span style={{ fontSize: 11, color: "#4a5568" }}>No usable items</span>}
+                    {usableItems.map((it) => (
+                      <button
+                        key={it.id}
+                        onClick={() => {
+                          send({ kind: "use_item", actor: selfId, item_id: it.id });
+                          setItemPickerOpen(false);
+                        }}
+                        style={{ padding: "3px 10px", background: "#1a1529", border: "1px solid #4c1d95", borderRadius: 5, color: "#c4b5fd", fontSize: 11, cursor: "pointer" }}
+                      >
+                        {it.item_name}
+                      </button>
+                    ))}
+                    <button onClick={() => setItemPickerOpen(false)} style={{ padding: "3px 8px", background: "none", border: "1px solid #2a2d33", borderRadius: 5, color: "#9aa0a6", fontSize: 11, cursor: "pointer" }}>✕</button>
+                  </div>
+                )}
+                <div style={{ padding: "6px 10px 8px", display: "flex", gap: 5, flexWrap: "wrap" }}>
+                  {myTurn && (
+                    <>
+                      {/* Offensive row */}
+                      <CombatBtn label="Attack" icon="sword" color="#b89b3a"
+                        disabled={needsTarget}
+                        onClick={() => send({ kind: "attack", actor: selfId, target_id: effectiveTarget })} />
+                      <CombatBtn label="Cast" icon="crystal-wand" color="#818cf8"
+                        disabled={mana < 1 || needsTarget}
+                        onClick={() => send({ kind: "cast", actor: selfId, target_id: effectiveTarget })} />
+                      <CombatBtn label="Signature" icon="wax-seal" color="#a78bfa"
+                        disabled={mana < 2 || needsTarget}
+                        onClick={() => send({ kind: "signature", actor: selfId, target_id: effectiveTarget })} />
+                      {/* Support row */}
+                      <CombatBtn label="Heal" icon="health-increase" color="#22c55e"
+                        disabled={mana < 1}
+                        onClick={() => { setPickingSupport("heal"); setItemPickerOpen(false); }} />
+                      <CombatBtn label="Shield" icon="shield" color="#60a5fa"
+                        disabled={mana < 1}
+                        onClick={() => { setPickingSupport("shield"); setItemPickerOpen(false); }} />
+                      <CombatBtn
+                        label={myPos === "front" ? "→ Back" : "→ Front"}
+                        icon={myPos === "front" ? "perspective-dice-two" : "perspective-dice-one"}
+                        color="#6b7280"
+                        onClick={() => send({ kind: "position", actor: selfId, to: myPos === "front" ? "back" : "front" })} />
+                      <CombatBtn label="Item" icon="ammo-bag" color="#c084fc"
+                        disabled={usableItems.length === 0}
+                        onClick={() => { setItemPickerOpen((o) => !o); setPickingSupport(null); }} />
+                      <CombatBtn label="Flee" icon="footprint" color="#4b5563"
+                        onClick={() => send({ kind: "flee", actor: selfId })} />
+                    </>
+                  )}
+                  {!myTurn && isMonsterTurn && !autoResolve && (
+                    <CombatBtn label="Resolve enemy" icon="dragon-head" color="#5c1f1f"
+                      onClick={() => send({ kind: "monster_act" })} />
+                  )}
+                  {!myTurn && !isMonsterTurn && currentActorId && (
+                    <span style={{ fontSize: 12, color: "#4a5568", padding: "4px 8px", alignSelf: "center" }}>
+                      {combatState.fighters.find((f) => f.id === currentActorId)?.name ?? "Other player"}'s turn…
+                    </span>
+                  )}
+                  <div style={{ marginLeft: "auto", display: "flex", alignItems: "center" }}>
+                    <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, color: "#4a5568", cursor: "pointer" }}>
+                      <input type="checkbox" checked={autoResolve} onChange={(e) => setAutoResolve(e.target.checked)} style={{ accentColor: "#5c1f1f" }} />
+                      Auto
+                    </label>
+                  </div>
+                </div>
+                {needsTarget && myTurn && (
+                  <div style={{ padding: "0 12px 6px", fontSize: 11, color: "#c084fc" }}>
+                    ↑ Click a monster to target it first
+                  </div>
+                )}
+              </div>
+            );
+          })()}
         </div>
       )}
 
@@ -1053,8 +1172,7 @@ export function DungeonView({
       <PartyBar
         fighters={combatActive ? (combatState?.fighters ?? null) : null}
         selfId={selfId}
-        scene={scene}
-        party={[character, ...party]}
+        party={party.length > 0 ? party : [character]}
       />
     </div>
   );
