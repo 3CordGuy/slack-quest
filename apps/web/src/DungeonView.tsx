@@ -10,7 +10,7 @@ import toast from "react-hot-toast";
 import { isMonsterActor } from "@gantt-quest/core";
 import { Avatar, Icon } from "./icons";
 
-const DISPLAY_FONT = "'Uncial Antiqua', serif";
+const DISPLAY_FONT = "'Metamorphous', serif";
 
 // ─── Types (mirrors CombatPage; duplicated to keep DungeonView self-contained) ──
 

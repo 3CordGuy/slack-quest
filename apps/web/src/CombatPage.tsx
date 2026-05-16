@@ -4,7 +4,7 @@ import { isMonsterActor } from "@gantt-quest/core";
 
 import { Avatar, Icon } from "./icons";
 
-const DISPLAY_FONT = "'Uncial Antiqua', serif";
+const DISPLAY_FONT = "'Metamorphous', serif";
 
 // Live web-mode combat. Connects to the QuestRoom Durable Object via WS,
 // renders the current state, animates incoming events through a scrolling

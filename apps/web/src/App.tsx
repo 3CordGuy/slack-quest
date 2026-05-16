@@ -8034,7 +8034,7 @@ const card: React.CSSProperties = {
   border: "1px solid #2a2d33",
   boxSizing: "border-box",
 };
-const DISPLAY_FONT = "'Uncial Antiqua', serif";
+const DISPLAY_FONT = "'Metamorphous', serif";
 const h1: React.CSSProperties = { margin: 0, fontSize: 28, color: "#f5f5f5", fontFamily: DISPLAY_FONT };
 const h2: React.CSSProperties = { margin: 0, fontSize: 20, color: "#f5f5f5", fontFamily: DISPLAY_FONT };
 const muted: React.CSSProperties = { color: "#9aa0a6", fontSize: 14 };

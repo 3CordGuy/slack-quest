@@ -8,7 +8,19 @@ import toast from "react-hot-toast";
 import { isMonsterActor } from "@gantt-quest/core";
 import { Avatar, Icon } from "./icons";
 
-const DISPLAY_FONT = "'Uncial Antiqua', serif";
+const DISPLAY_FONT = "'Metamorphous', serif";
+
+// Minimap and combat log share a fixed width on the right side of the room
+// view (~1/8 of viewport on desktop). On mobile they move to the bottom.
+function useIsMobile(breakpoint = 700): boolean {
+  const [isMobile, setIsMobile] = useState(() => typeof window !== "undefined" && window.innerWidth < breakpoint);
+  useEffect(() => {
+    const handler = () => setIsMobile(window.innerWidth < breakpoint);
+    window.addEventListener("resize", handler);
+    return () => window.removeEventListener("resize", handler);
+  }, [breakpoint]);
+  return isMobile;
+}
 
 // Inject hit-flash keyframes once. The animation lasts ~550ms; cards get a
 // "hit-flash" class for that long when their target is hit by an attack.
@@ -160,6 +172,7 @@ type TurnAction =
   | { kind: "flee"; actor: string }
   | { kind: "position"; actor: string; to: "front" | "back" }
   | { kind: "wait"; actor: string }
+  | { kind: "mark"; actor: string }
   | { kind: "ability"; actor: string; ability_id: string; target?: string; position?: "front" | "back" }
   | { kind: "monster_act" }
   | { kind: "use_item"; actor: string; item_id: number; target_id?: string };
@@ -491,7 +504,7 @@ function GridMinimap({ graph }: { graph: GridGraph }) {
   const current = graph.nodes[graph.current];
   const visited = new Set(graph.visited);
   return (
-    <div style={{ position: "absolute", top: 12, right: 12, background: "rgba(0,0,0,0.78)", border: "1px solid rgba(255,255,255,0.14)", borderRadius: 8, padding: "8px 10px 6px", backdropFilter: "blur(6px)", userSelect: "none" }}>
+    <div style={{ background: "rgba(0,0,0,0.55)", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 8, padding: "8px 10px 6px", backdropFilter: "blur(6px)", userSelect: "none" }}>
       <div style={{ fontSize: 9, color: "#6b7280", textTransform: "uppercase", letterSpacing: 1, marginBottom: 4 }}>Map</div>
       <div style={{ display: "grid", gridTemplateColumns: `repeat(${w}, ${CELL}px)`, gridTemplateRows: `repeat(${h}, ${CELL}px)`, gap: 1, background: "#1a1c21" }}>
         {Array.from({ length: w * h }, (_, idx) => {
@@ -820,6 +833,14 @@ export function GridDungeonView({
   const combatEnded = combatState?.status === "victory" || combatState?.status === "defeat" || combatState?.status === "fled";
 
   const bgUrl = roomBgUrl(currentNode.shape, content);
+  const isMobile = useIsMobile(700);
+  // Right-rail container that holds minimap + combat log. On desktop it sits
+  // top-right at ~1/8 viewport width. On mobile it shifts to the bottom of
+  // the room view, left+right anchored, so the controls stay legible.
+  const railStyle: React.CSSProperties = isMobile
+    ? { position: "absolute", left: 8, right: 8, bottom: 8, display: "flex", flexDirection: "row", gap: 8, zIndex: 6 }
+    : { position: "absolute", top: 12, right: 12, width: "min(160px, 12.5vw)", display: "flex", flexDirection: "column", gap: 8, zIndex: 6 };
+  const railItemStyle: React.CSSProperties = isMobile ? { flex: 1, minWidth: 0 } : { width: "100%" };
 
   return (
     <div style={{ position: "fixed", inset: 0, background: "#0a0b0e", display: "flex", flexDirection: "column", overflow: "hidden", fontFamily: "Inter, system-ui, sans-serif" }}>
@@ -862,8 +883,26 @@ export function GridDungeonView({
           <ContentFigureOverlay content={content} />
         )}
 
-        {/* Minimap */}
-        <GridMinimap graph={graph} />
+        {/* Right rail — minimap on top, combat log below. Same width.
+            Stacks at the bottom of the room view on mobile. */}
+        <div style={railStyle}>
+          <div style={railItemStyle}>
+            <GridMinimap graph={graph} />
+          </div>
+          {combatActive && ws.log.length > 0 && (
+            <div style={{ ...railItemStyle, background: "rgba(0,0,0,0.55)", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 8, padding: "6px 10px", backdropFilter: "blur(6px)" }}>
+              <div style={{ fontSize: 9, color: "#6b7280", textTransform: "uppercase", letterSpacing: 1, marginBottom: 4 }}>Log</div>
+              <div style={{ maxHeight: isMobile ? 80 : 200, overflowY: "auto", display: "flex", flexDirection: "column", gap: 2 }}>
+                {ws.log.slice(-8).map((e) => (
+                  <div key={e.id} style={{
+                    fontSize: 11, lineHeight: 1.4,
+                    color: e.tone === "good" ? "#86efac" : e.tone === "bad" ? "#fca5a5" : e.tone === "info" ? "#93c5fd" : "#9aa0a6",
+                  }}>{e.text}</div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
 
         {/* Scene description (non-combat) */}
         {!combatActive && currentNode.description && (
@@ -900,29 +939,6 @@ export function GridDungeonView({
           </div>
         )}
 
-        {/* Combat log — floating overlay so the room art stays the focus.
-            Top-right area, below the minimap. Shows last 3 entries. */}
-        {combatActive && ws.log.length > 0 && (
-          <div style={{
-            position: "absolute",
-            top: 12,
-            left: 12,
-            maxWidth: 360,
-            background: "rgba(0,0,0,0.55)",
-            border: "1px solid rgba(255,255,255,0.08)",
-            borderRadius: 8,
-            padding: "6px 10px",
-            backdropFilter: "blur(6px)",
-            zIndex: 6,
-          }}>
-            {ws.log.slice(-3).map((e) => (
-              <div key={e.id} style={{
-                fontSize: 12, lineHeight: 1.4,
-                color: e.tone === "good" ? "#86efac" : e.tone === "bad" ? "#fca5a5" : e.tone === "info" ? "#93c5fd" : "#9aa0a6",
-              }}>{e.text}</div>
-            ))}
-          </div>
-        )}
       </div>
 
       {/* Party bar (BLUE area) — its own row above the action buttons. */}
@@ -1387,8 +1403,21 @@ function CombatPanel({ state, selfId, onSend, autoResolve, setAutoResolve, myTur
   const target = liveMonsters[0]?.id ?? null;
   const [picking, setPicking] = useState<"heal" | "shield" | null>(null);
   const [itemOpen, setItemOpen] = useState(false);
+  // Give flow: select item → select ally. itemId stays set across the two-step picker.
+  const [givePicker, setGivePicker] = useState<"closed" | "selectItem" | { itemId: number }>("closed");
   const usable = items.filter((it) => !it.equipped && ["consumable", "magic", "revive"].includes(it.item_type));
+  const giveable = items.filter((it) => !it.equipped);
+  const otherFighters = state.fighters.filter((f) => f.id !== selfId && f.hp > 0);
   const ability = ABILITY_BY_CLASS[characterClass] ?? null;
+
+  async function fireGive(itemId: number, toUserId: string) {
+    await fetch(`/api/inventory/${itemId}/give`, {
+      method: "POST", credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ to_user_id: toUserId }),
+    });
+    setGivePicker("closed");
+  }
 
   // Disabled state for the action row when it isn't the player's turn.
   // Buttons stay visible so the bottom row doesn't disappear; they grey out
@@ -1414,6 +1443,36 @@ function CombatPanel({ state, selfId, onSend, autoResolve, setAutoResolve, myTur
             </button>
           ))}
           <button onClick={() => setPicking(null)} style={{ padding: "3px 8px", background: "none", border: "1px solid #2a2d33", borderRadius: 5, color: "#9aa0a6", fontSize: 11, cursor: "pointer" }}>✕</button>
+        </div>
+      )}
+
+      {/* Inline give pickers — step 1 (item) then step 2 (ally) */}
+      {givePicker === "selectItem" && myTurn && (
+        <div style={{ padding: "6px 12px 4px", display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", borderBottom: "1px solid #1a1c21" }}>
+          <span style={{ fontSize: 11, color: "#9aa0a6" }}>Give which item?</span>
+          {giveable.length === 0 && <span style={{ fontSize: 11, color: "#4a5568" }}>No items to give</span>}
+          {giveable.map((it) => (
+            <button key={it.id}
+              onClick={() => setGivePicker({ itemId: it.id })}
+              style={{ padding: "3px 10px", background: "#291515", border: "1px solid #663a3a", borderRadius: 5, color: "#fcd34d", fontSize: 11, cursor: "pointer" }}>
+              {it.item_name}
+            </button>
+          ))}
+          <button onClick={() => setGivePicker("closed")} style={{ padding: "3px 8px", background: "none", border: "1px solid #2a2d33", borderRadius: 5, color: "#9aa0a6", fontSize: 11, cursor: "pointer" }}>✕</button>
+        </div>
+      )}
+      {typeof givePicker === "object" && "itemId" in givePicker && myTurn && (
+        <div style={{ padding: "6px 12px 4px", display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", borderBottom: "1px solid #1a1c21" }}>
+          <span style={{ fontSize: 11, color: "#9aa0a6" }}>Give to whom?</span>
+          {otherFighters.length === 0 && <span style={{ fontSize: 11, color: "#4a5568" }}>No allies in combat</span>}
+          {otherFighters.map((f) => (
+            <button key={f.id}
+              onClick={() => void fireGive(givePicker.itemId, f.id)}
+              style={{ padding: "3px 10px", background: "#1a2e1a", border: "1px solid #166534", borderRadius: 5, color: "#86efac", fontSize: 11, cursor: "pointer" }}>
+              {f.name.split(" ")[0]}
+            </button>
+          ))}
+          <button onClick={() => setGivePicker("selectItem")} style={{ padding: "3px 8px", background: "none", border: "1px solid #2a2d33", borderRadius: 5, color: "#9aa0a6", fontSize: 11, cursor: "pointer" }}>← back</button>
         </div>
       )}
 
@@ -1456,7 +1515,9 @@ function CombatPanel({ state, selfId, onSend, autoResolve, setAutoResolve, myTur
         <CBtn label="Heal" icon="health-increase" color="#22c55e" manaCost={1} disabled={!myTurn || mana < 1} onClick={() => { setPicking("heal"); setItemOpen(false); }} />
         <CBtn label="Shield" icon="shield" color="#60a5fa" manaCost={1} disabled={!myTurn || mana < 1} onClick={() => { setPicking("shield"); setItemOpen(false); }} />
         <CBtn label={myPos === "front" ? "Back row" : "Front row"} icon={myPos === "front" ? "perspective-dice-two" : "perspective-dice-one"} color="#6b7280" disabled={!myTurn} onClick={() => onSend({ kind: "position", actor: selfId, to: myPos === "front" ? "back" : "front" })} />
-        <CBtn label="Item" icon="ammo-bag" color="#c084fc" disabled={!myTurn || usable.length === 0} onClick={() => { setItemOpen((o) => !o); setPicking(null); }} />
+        <CBtn label="Item" icon="ammo-bag" color="#c084fc" disabled={!myTurn || usable.length === 0} onClick={() => { setItemOpen((o) => !o); setPicking(null); setGivePicker("closed"); }} />
+        <CBtn label="Give" icon="conversation" color="#fcd34d" disabled={!myTurn || giveable.length === 0 || otherFighters.length === 0} onClick={() => { setGivePicker("selectItem"); setItemOpen(false); setPicking(null); }} />
+        <CBtn label="Mark" icon="target-poster" color="#f97316" disabled={!myTurn || !target} onClick={() => onSend({ kind: "mark", actor: selfId })} />
         <CBtn label="Wait" icon="hourglass" color="#475569" disabled={!myTurn} onClick={() => onSend({ kind: "wait", actor: selfId })} />
         <CBtn label="Flee" icon="run" color="#9aa0a6" disabled={!myTurn} onClick={() => onSend({ kind: "flee", actor: selfId })} />
         {!myTurn && isMonsterTurn && !autoResolve && (
