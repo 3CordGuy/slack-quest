@@ -40,6 +40,7 @@ import { deriveArmorBonus, deriveCritBonus, deriveDodgeChance, deriveInitiativeB
 
 export type ActorId = string;
 export const MONSTER_ID: ActorId = "__monster__";
+export const isMonsterActor = (id: ActorId): boolean => id === MONSTER_ID || id.startsWith("__monster_");
 
 export interface MachineStatusEffect {
   type: EffectType;
@@ -91,6 +92,7 @@ export interface GauntletWaveSpec {
 }
 
 export interface CombatMonster {
+  id: ActorId;
   name: string;
   hp: number;
   max_hp: number;
@@ -117,7 +119,13 @@ export type CombatStatus = "pending" | "active" | "victory" | "defeat" | "fled";
 
 export interface CombatState {
   fighters: CombatFighter[];
-  monster: CombatMonster;
+  // Multi-monster array (Phase 3). Dead monsters remain in the array with hp<=0
+  // until the combat ends so the turn-order index stays stable.
+  monsters: CombatMonster[];
+  // Deprecated: single-monster field kept for backward-compat with persisted
+  // DO states created before Phase 3. upgradeCombatState() populates `monsters`
+  // from this when deserializing old states.
+  monster?: CombatMonster;
   // Turn order is the actor IDs sorted by initiative descending. The current
   // turn is turn_order[turn_index % turn_order.length]; round increments when
   // we wrap.
@@ -207,11 +215,11 @@ const MARK_ROUNDS = 2;
 // rolls to the monster.
 export type TurnAction =
   | { kind: "begin" }
-  | { kind: "attack"; actor: ActorId }
-  | { kind: "cast"; actor: ActorId }
+  | { kind: "attack"; actor: ActorId; target_id?: ActorId }
+  | { kind: "cast"; actor: ActorId; target_id?: ActorId }
   | { kind: "heal"; actor: ActorId; target: ActorId }
   | { kind: "shield"; actor: ActorId; target: ActorId }
-  | { kind: "signature"; actor: ActorId }
+  | { kind: "signature"; actor: ActorId; target_id?: ActorId }
   | { kind: "flee"; actor: ActorId }
   | { kind: "position"; actor: ActorId; to: BattlePosition }
   | { kind: "wait"; actor: ActorId }
@@ -220,6 +228,7 @@ export type TurnAction =
       kind: "ability";
       actor: ActorId;
       ability_id: AbilityId;
+      target_id?: ActorId;   // monster target for damage abilities (soul_drain)
       // Used by migrate (target+position) and would be ignored otherwise.
       target?: ActorId;
       position?: BattlePosition;
@@ -447,6 +456,11 @@ export type RollFn = (sides: number) => number;
 // Inputs for the initial state. Build it once from D1 data, then feed into
 // step({ kind: "begin" }) to roll initiative and enter the active phase.
 // Wave fields on monster are opt-in: omit them for standard/boss combats.
+// Use `monsters` for multi-enemy; `monster` for single-enemy (backward compat).
+type MonsterInitSpec = Omit<CombatMonster, "initiative" | "effects" | "boss_phase" | "id"> & {
+  id?: ActorId;    // auto-generated if omitted
+  boss_phase?: 1 | 2;
+};
 export interface CombatInit {
   // focus_power and weapon_range default to 0 and "melee" when omitted — keeps
   // older call sites and tests valid without having to know about focus weapons.
@@ -454,9 +468,10 @@ export interface CombatInit {
     focus_power?: number;
     weapon_range?: WeaponRange;
   })[];
-  monster: Omit<CombatMonster, "initiative" | "effects" | "boss_phase"> & {
-    boss_phase?: 1 | 2;
-  };
+  // Single monster (legacy). Alias for monsters: [monster].
+  monster?: MonsterInitSpec;
+  // Multi-monster (Phase 3). When present, `monster` is ignored.
+  monsters?: MonsterInitSpec[];
 }
 
 export function createCombatState(init: CombatInit): CombatState {
@@ -464,6 +479,7 @@ export function createCombatState(init: CombatInit): CombatState {
   for (const f of init.fighters) contribution[f.id] = 0;
   const stats: CombatState["stats"] = {};
   for (const f of init.fighters) stats[f.id] = { damage_taken: 0, healing_done: 0, shielding_done: 0, kills: 0 };
+  const monsterSpecs = init.monsters ?? (init.monster ? [init.monster] : []);
   return {
     fighters: init.fighters.map((f) => ({
       ...f,
@@ -472,12 +488,13 @@ export function createCombatState(init: CombatInit): CombatState {
       initiative: 0,
       effects: [],
     })),
-    monster: {
-      ...init.monster,
+    monsters: monsterSpecs.map((m, i) => ({
+      ...m,
+      id: m.id ?? (monsterSpecs.length === 1 ? MONSTER_ID : `__monster_${i}__`),
       initiative: 0,
       effects: [],
-      boss_phase: init.monster.boss_phase ?? 1,
-    },
+      boss_phase: m.boss_phase ?? 1,
+    })),
     turn_order: [],
     turn_index: 0,
     round: 0,
@@ -485,6 +502,15 @@ export function createCombatState(init: CombatInit): CombatState {
     contribution,
     stats,
   };
+}
+
+// Upgrades a persisted combat state from pre-Phase-3 format (single `monster`)
+// to the current `monsters[]` format. Safe to call on already-upgraded states.
+export function upgradeCombatState(raw: CombatState): CombatState {
+  if (raw.monsters && raw.monsters.length > 0) return raw;
+  const legacy = raw.monster;
+  if (!legacy) return raw;
+  return { ...raw, monsters: [{ ...legacy, id: legacy.id ?? MONSTER_ID }] };
 }
 
 // The engine. Pure function: same (state, action, rng) → same (state', events).
@@ -539,14 +565,11 @@ function handleBegin(state: CombatState, roll: RollFn): StepResult {
       initiatives[f.id] = init;
       return { ...f, initiative: init };
     }),
-    monster: {
-      ...state.monster,
-      initiative: (() => {
-        const init = roll(20);
-        initiatives[MONSTER_ID] = init;
-        return init;
-      })(),
-    },
+    monsters: state.monsters.map((m) => {
+      const init = roll(20);
+      initiatives[m.id] = init;
+      return { ...m, initiative: init };
+    }),
     status: "active",
     turn_index: 0,
     round: 1,
@@ -568,13 +591,16 @@ function handleBegin(state: CombatState, roll: RollFn): StepResult {
             purpose: "initiative",
           }) as CombatEvent,
       ),
-      {
-        type: "roll",
-        actor: MONSTER_ID,
-        die: "d20",
-        value: next.monster.initiative,
-        purpose: "initiative",
-      },
+      ...next.monsters.map(
+        (m) =>
+          ({
+            type: "roll",
+            actor: m.id,
+            die: "d20",
+            value: m.initiative,
+            purpose: "initiative",
+          }) as CombatEvent,
+      ),
       { type: "turn_start", actor: firstActor, round: 1 },
     ],
   };
@@ -582,7 +608,7 @@ function handleBegin(state: CombatState, roll: RollFn): StepResult {
 
 function handlePlayerHit(
   state: CombatState,
-  action: { kind: "attack" | "cast"; actor: ActorId },
+  action: { kind: "attack" | "cast"; actor: ActorId; target_id?: ActorId },
   roll: RollFn,
 ): StepResult {
   const fighter = state.fighters.find((f) => f.id === action.actor);
@@ -604,17 +630,26 @@ function handlePlayerHit(
     return reject(state, "back-row melee blocked — equip a ranged or focus weapon, cast, or move to front");
   }
 
+  // Target selection: use explicit target_id if provided, else pick first alive monster.
+  const targetMonster = action.target_id
+    ? state.monsters.find((m) => m.id === action.target_id && m.hp > 0)
+    : state.monsters.find((m) => m.hp > 0);
+  if (!targetMonster) return reject(state, "no valid target");
+
   const tick = tickAtTurnStart(state, action.actor);
   if (tick.earlyReturn) return tick.earlyReturn;
   const s = tick.state;
   const tickedFighter = s.fighters.find((f) => f.id === action.actor)!;
+  // Re-resolve target from updated state (tick may have killed the monster).
+  const monster = s.monsters.find((m) => m.id === targetMonster.id && m.hp > 0);
+  if (!monster) return reject(s, "target died before action resolved");
 
   const events: CombatEvent[] = [...tick.events];
   const classMod = action.kind === "cast" ? tickedFighter.magic_mod : tickedFighter.attack_mod;
 
   // ── d20 to-hit ──
   const d20 = roll(20);
-  const ac = monsterAc(s.monster.tier);
+  const ac = monsterAc(monster.tier);
   const hitTotal = d20 + classMod;
   const baseLanded = hitTotal >= ac;
   // Refactor Rogue — First Strike. The first `attack` of the fight is a
@@ -637,7 +672,7 @@ function handlePlayerHit(
   events.push({
     type: "hit_check",
     actor: action.actor,
-    target: MONSTER_ID,
+    target: monster.id,
     roll: d20,
     modifier: classMod,
     total: hitTotal,
@@ -723,13 +758,13 @@ function handlePlayerHit(
 
   const finalDamage = damage + aura.bonus + markBonus;
 
-  const oldHp = s.monster.hp;
+  const oldHp = monster.hp;
   const newHp = Math.max(0, oldHp - finalDamage);
   const monsterKilled = newHp <= 0;
   const phaseTransition =
-    s.monster.is_boss &&
-    s.monster.boss_phase === 1 &&
-    isBossPhaseTransition(s.monster.max_hp, oldHp, newHp);
+    monster.is_boss &&
+    monster.boss_phase === 1 &&
+    isBossPhaseTransition(monster.max_hp, oldHp, newHp);
 
   if (rogueFirstCritFired) {
     events.push({ type: "passive_rogue_first_crit", actor: action.actor });
@@ -755,7 +790,7 @@ function handlePlayerHit(
   events.push({
     type: "player_hit",
     actor: action.actor,
-    target: MONSTER_ID,
+    target: monster.id,
     damage: finalDamage,
     crit: isCrit,
     formula: `${hit.roll}+${hit.totalMod}${isCrit ? " ×2" : ""}${drinkBonusForFormula}${hasEmpowered ? " ⚡" : ""}${aura.bonus > 0 ? ` +${aura.bonus} aura` : ""}${markBonus > 0 ? ` +${markBonus} mark` : ""}`,
@@ -771,11 +806,11 @@ function handlePlayerHit(
 
   let nextState: CombatState = {
     ...s,
-    monster: {
-      ...s.monster,
-      hp: newHp,
-      ...(phaseTransition ? { boss_phase: 2 as const } : {}),
-    },
+    monsters: s.monsters.map((m) =>
+      m.id === monster.id
+        ? { ...m, hp: newHp, ...(phaseTransition ? { boss_phase: 2 as const } : {}) }
+        : m,
+    ),
     contribution: {
       ...s.contribution,
       [action.actor]: (s.contribution[action.actor] ?? 0) + finalDamage,
@@ -792,7 +827,7 @@ function handlePlayerHit(
 
   // Data Warlock — Cursed Strike. Applies bleed on a crit attack/cast. Always-on.
   if (isCrit && !monsterKilled) {
-    const bleed = applyWarlockBleed(nextState, tickedFighter, true);
+    const bleed = applyWarlockBleed(nextState, tickedFighter, monster.id, true);
     nextState = bleed.state;
     events.push(...bleed.events);
   }
@@ -802,7 +837,7 @@ function handlePlayerHit(
   }
 
   if (monsterKilled) {
-    return resolveMonsterKill(nextState, action.actor, events);
+    return resolveMonsterKill(nextState, monster.id, action.actor, events);
   }
 
   return { state: advanceTurn(nextState), events: [...events, ...turnStartEvent(nextState)] };
@@ -867,7 +902,7 @@ function handleMark(
     return reject(state, `not ${action.actor}'s turn`);
   }
   if (fighter.hp <= 0) return reject(state, `${action.actor} is downed`);
-  if (state.monster.hp <= 0) return reject(state, `no live foe to mark`);
+  if (state.monsters.every((m) => m.hp <= 0)) return reject(state, `no live foe to mark`);
 
   const tick = tickAtTurnStart(state, action.actor);
   if (tick.earlyReturn) return tick.earlyReturn;
@@ -890,13 +925,26 @@ function handleMark(
 }
 
 function handleMonsterAct(state: CombatState, roll: RollFn): StepResult {
-  if (currentActor(state) !== MONSTER_ID) {
-    return reject(state, "not the monster's turn");
+  const actorId = currentActor(state);
+  if (!actorId || !isMonsterActor(actorId)) {
+    return reject(state, "not a monster's turn");
+  }
+  const actingMonster = state.monsters.find((m) => m.id === actorId);
+  if (!actingMonster || actingMonster.hp <= 0) {
+    // Dead monster's turn slot — skip it silently.
+    const next = advanceTurn(state);
+    return { state: next, events: [...turnStartEvent(next)] };
   }
 
-  const tick = tickAtTurnStart(state, MONSTER_ID);
+  const tick = tickAtTurnStart(state, actorId);
   if (tick.earlyReturn) return tick.earlyReturn;
   const s = tick.state;
+  // Re-resolve monster after tick (tick may have applied DoT to it).
+  const monster = s.monsters.find((m) => m.id === actorId);
+  if (!monster || monster.hp <= 0) {
+    // Tick killed this monster — resolveMonsterKill already fired via earlyReturn above.
+    return tick.earlyReturn ?? { state: s, events: tick.events };
+  }
 
   const events: CombatEvent[] = [...tick.events];
 
@@ -971,14 +1019,14 @@ function handleMonsterAct(state: CombatState, roll: RollFn): StepResult {
   // Bosses have a chance to forgo single-target targeting and slam the whole
   // party for reduced damage. Taunt does NOT redirect a splash — it hits every
   // alive non-vanished fighter. Only fires when multiple fighters are alive.
-  const bossPhase2 = s.monster.is_boss && s.monster.boss_phase === 2;
+  const bossPhase2 = monster.is_boss && monster.boss_phase === 2;
   const splashChance = bossPhase2 ? 2 : 1; // 2-in-5 P2, 1-in-5 P1
-  const doSplash = s.monster.is_boss && aliveFighters.length > 1 && roll(5) <= splashChance;
+  const doSplash = monster.is_boss && aliveFighters.length > 1 && roll(5) <= splashChance;
 
   if (doSplash) {
     const splashTargets = aliveFighters.filter((f) => (vanished[f.id] ?? 0) <= 0);
     const splashHits = splashTargets.map((f) => {
-      const hit = resolveMonsterHit(s.monster.tier, aliveFighters.length, f.armor_power, bossPhase2, roll);
+      const hit = resolveMonsterHit(monster.tier, aliveFighters.length, f.armor_power, bossPhase2, roll);
       const posAdj = positionDamageMod(f.position, hit.final);
       const dmg = applyDamageWithShield(posAdj, f.shield, f.hp);
       return { fighter: f, hit, posAdj, dmg };
@@ -1036,20 +1084,20 @@ function handleMonsterAct(state: CombatState, roll: RollFn): StepResult {
   // Modifier grows at half-tier + 4 so it never auto-hits even at high tiers.
   // Fighter AC = 10 + floor(level/2) so the miss window stays meaningful.
   const d20 = roll(20);
-  const modifier = Math.floor(s.monster.tier / 2) + 4;
+  const modifier = Math.floor(monster.tier / 2) + 4;
   const hitTotal = d20 + modifier;
   const targetAc = fighterAc(target.level);
   const landed = hitTotal >= targetAc;
   events.push({
     type: "roll",
-    actor: MONSTER_ID,
+    actor: actorId,
     die: "d20",
     value: d20,
     purpose: "hit_check",
   });
   events.push({
     type: "hit_check",
-    actor: MONSTER_ID,
+    actor: actorId,
     target: target.id,
     roll: d20,
     modifier,
@@ -1084,7 +1132,7 @@ function handleMonsterAct(state: CombatState, roll: RollFn): StepResult {
   // ── damage roll on hit ──
   const totalArmor = target.armor_power + (target.stats ? deriveArmorBonus(target.stats) : 0);
   const hit = resolveMonsterHit(
-    s.monster.tier,
+    monster.tier,
     aliveFighters.length,
     totalArmor,
     bossPhase2,
@@ -1099,9 +1147,9 @@ function handleMonsterAct(state: CombatState, roll: RollFn): StepResult {
 
   events.push({
     type: "roll",
-    actor: MONSTER_ID,
+    actor: actorId,
     die: "d4",
-    value: hit.raw - s.monster.tier - Math.floor((aliveFighters.length - 1) / 2) - (bossPhase2 ? s.monster.tier : 0),
+    value: hit.raw - monster.tier - Math.floor((aliveFighters.length - 1) / 2) - (bossPhase2 ? monster.tier : 0),
     purpose: "damage_monster",
   });
   events.push({
@@ -1262,7 +1310,7 @@ function handleShield(
 
 function handleSignature(
   state: CombatState,
-  action: { kind: "signature"; actor: ActorId },
+  action: { kind: "signature"; actor: ActorId; target_id?: ActorId },
   roll: RollFn,
 ): StepResult {
   const actor = state.fighters.find((f) => f.id === action.actor);
@@ -1279,10 +1327,17 @@ function handleSignature(
     && !isPassiveUsed(state, action.actor, PASSIVE_MAGE_FREE_SIG);
   if (!mageFreeSig && actor.mana < 1) return reject(state, `${action.actor} has no mana for signature`);
 
+  const targetMonster = action.target_id
+    ? state.monsters.find((m) => m.id === action.target_id && m.hp > 0)
+    : state.monsters.find((m) => m.hp > 0);
+  if (!targetMonster) return reject(state, "no valid target");
+
   const tick = tickAtTurnStart(state, action.actor);
   if (tick.earlyReturn) return tick.earlyReturn;
   const s = tick.state;
   const tickedActor = s.fighters.find((f) => f.id === action.actor)!;
+  const monster = s.monsters.find((m) => m.id === targetMonster.id && m.hp > 0);
+  if (!monster) return reject(s, "target died before action resolved");
 
   const cls = classByName(tickedActor.class);
   const partySize = s.fighters.filter((f) => f.hp > 0).length;
@@ -1297,23 +1352,23 @@ function handleSignature(
     tickedActor.attack_mod,
     tickedActor.magic_mod,
     tickedActor.weapon_power,
-    s.monster.tier,
+    monster.tier,
     partySize,
-    s.monster.max_hp,
+    monster.max_hp,
     trackRoll,
   );
 
   // Refactor Rogue — Backstab auto-crit. The signature deals 2× damage when
   // the monster is at or below 50% HP. resolveSignature in packages/core/
   // src/combat.ts intentionally returns the raw damage and leaves this
-  // doubling to the engine (it needs s.monster.hp and s.monster.max_hp,
+  // doubling to the engine (it needs monster.hp and monster.max_hp,
   // which resolveSignature isn't passed by design).
   //
   // Applied BEFORE drink-buff so a Lucky Sip on a Rogue backstab won't
   // redundantly double an already-doubled hit (applyDrinkBuff gates
   // buff_next_crit on !isCrit; we pass rogueBackstab as the isCrit arg).
   const rogueBackstab =
-    cls.id === "refactor_rogue" && s.monster.hp <= s.monster.max_hp / 2;
+    cls.id === "refactor_rogue" && monster.hp <= monster.max_hp / 2;
   const damageAfterBackstab = rogueBackstab ? sig.damage * 2 : sig.damage;
 
   // Pub drink-buff. Only buff_next_crit fires on signatures (per legacy
@@ -1325,13 +1380,13 @@ function handleSignature(
   const drinkResult = applyDrinkBuff(s, action.actor, "signature", damageAfterBackstab, rogueBackstab);
   const finalSigDamage = drinkResult.damage;
 
-  const oldHp = s.monster.hp;
+  const oldHp = monster.hp;
   const newHp = Math.max(0, oldHp - finalSigDamage);
   const monsterKilled = newHp <= 0;
   const phaseTransition =
-    s.monster.is_boss &&
-    s.monster.boss_phase === 1 &&
-    isBossPhaseTransition(s.monster.max_hp, oldHp, newHp);
+    monster.is_boss &&
+    monster.boss_phase === 1 &&
+    isBossPhaseTransition(monster.max_hp, oldHp, newHp);
 
   const manaSpent = mageFreeSig ? 0 : 1;
   const events: CombatEvent[] = [
@@ -1371,11 +1426,11 @@ function handleSignature(
     fighters: s.fighters.map((f) =>
       f.id === action.actor ? { ...f, mana: Math.max(0, f.mana - manaSpent) } : f,
     ),
-    monster: {
-      ...s.monster,
-      hp: newHp,
-      ...(phaseTransition ? { boss_phase: 2 as const } : {}),
-    },
+    monsters: s.monsters.map((m) =>
+      m.id === monster.id
+        ? { ...m, hp: newHp, ...(phaseTransition ? { boss_phase: 2 as const } : {}) }
+        : m,
+    ),
     contribution: {
       ...s.contribution,
       [action.actor]: (s.contribution[action.actor] ?? 0) + finalSigDamage,
@@ -1392,7 +1447,7 @@ function handleSignature(
     events.push({ type: "boss_phase_transition", new_phase: 2 });
   }
   if (monsterKilled) {
-    return resolveMonsterKill(nextState, action.actor, events);
+    return resolveMonsterKill(nextState, monster.id, action.actor, events);
   }
   nextState = advanceTurn(nextState);
   return { state: nextState, events: [...events, ...turnStartEvent(nextState)] };
@@ -1417,9 +1472,10 @@ function handleFlee(
 
   // d20 + max(atk, mag) vs DC = 10 + monster.tier. Flexible — fighter-y
   // classes get atk, caster-y classes get mag; nobody is locked out.
+  const fleeMonster = s.monsters.find((m) => m.hp > 0) ?? s.monsters[0];
   const d20 = roll(20);
   const modifier = Math.max(tickedActor.attack_mod, tickedActor.magic_mod);
-  const dc = 10 + s.monster.tier;
+  const dc = 10 + (fleeMonster?.tier ?? 1);
   const total = d20 + modifier;
   // Natural 20 always escapes — a perfect roll should never punish the player.
   const success = d20 === 20 || total >= dc;
@@ -1439,8 +1495,8 @@ function handleFlee(
   // no armor mitigation (back turned). Damage = resolveMonsterHit's normal
   // damage roll, applied through shield/HP.
   const alive = s.fighters.filter((f) => f.hp > 0);
-  const bossPhase2 = s.monster.is_boss && s.monster.boss_phase === 2;
-  const hit = resolveMonsterHit(s.monster.tier, alive.length, 0, bossPhase2, roll);
+  const bossPhase2 = (fleeMonster?.is_boss && fleeMonster?.boss_phase === 2) ?? false;
+  const hit = resolveMonsterHit(fleeMonster?.tier ?? 1, alive.length, 0, bossPhase2, roll);
   const positionAdjusted = positionDamageMod(tickedActor.position, hit.final);
   const { newShield, newHp, shieldAbsorbed, hpDamage } = applyDamageWithShield(
     positionAdjusted,
@@ -1496,6 +1552,7 @@ function handleAbility(
     kind: "ability";
     actor: ActorId;
     ability_id: AbilityId;
+    target_id?: ActorId;
     target?: ActorId;
     position?: BattlePosition;
   },
@@ -1549,8 +1606,13 @@ function handleAbility(
       return abilityRegressionShield(sPostMana, action.actor, preEvents);
     case "vanish":
       return abilityVanish(sPostMana, action.actor, preEvents);
-    case "soul_drain":
-      return abilitySoulDrain(sPostMana, action.actor, tickedActor, preEvents, roll);
+    case "soul_drain": {
+      const drainTarget = action.target_id
+        ? sPostMana.monsters.find((m) => m.id === action.target_id && m.hp > 0)
+        : sPostMana.monsters.find((m) => m.hp > 0);
+      if (!drainTarget) return reject(sPostMana, "no valid target for soul drain");
+      return abilitySoulDrain(sPostMana, action.actor, tickedActor, drainTarget.id, preEvents, roll);
+    }
     case "battle_hymn":
       return abilityBattleHymn(sPostMana, action.actor, preEvents);
     case "foresee":
@@ -1635,16 +1697,19 @@ function abilitySoulDrain(
   state: CombatState,
   actor: ActorId,
   tickedActor: CombatFighter,
+  targetMonsterId: ActorId,
   events: CombatEvent[],
   roll: RollFn,
 ): StepResult {
+  const targetMonster = state.monsters.find((m) => m.id === targetMonsterId && m.hp > 0);
+  if (!targetMonster) return reject(state, "no valid target for soul drain");
   const d6 = roll(6);
   const rawDamage = d6 + tickedActor.magic_mod;
   // Cap at monster_hp - 1 so soul_drain never delivers the kill blow (matches
   // slack's pattern — keeps the engine's killed_by logic working off attacks).
-  const damage = Math.min(rawDamage, Math.max(1, state.monster.hp - 1));
+  const damage = Math.min(rawDamage, Math.max(1, targetMonster.hp - 1));
   const heal = Math.floor(damage / 2);
-  const newMonsterHp = Math.max(0, state.monster.hp - damage);
+  const newMonsterHp = Math.max(0, targetMonster.hp - damage);
   const oldHp = tickedActor.hp;
   const newHp = Math.min(tickedActor.max_hp, oldHp + heal);
   const applied = newHp - oldHp;
@@ -1656,7 +1721,7 @@ function abilitySoulDrain(
   const next = advanceTurn({
     ...state,
     fighters: updatedFighters,
-    monster: { ...state.monster, hp: newMonsterHp },
+    monsters: state.monsters.map((m) => m.id === targetMonsterId ? { ...m, hp: newMonsterHp } : m),
     contribution: {
       ...state.contribution,
       [actor]: (state.contribution[actor] ?? 0) + damage,
@@ -1711,9 +1776,11 @@ function buildForeseeEvent(
   const abilityState = state.ability_state ?? {};
   const vanishedMap = abilityState.vanished ?? {};
   const partyBonus = Math.floor((Math.max(1, aliveFighters.length) - 1) / 2);
-  const isBossP2 = state.monster.is_boss && state.monster.boss_phase === 2;
-  const bossBonus = isBossP2 ? state.monster.tier : 0;
-  const tier = state.monster.tier;
+  // Foresee targets the first alive monster (primary threat).
+  const foreseeMon = state.monsters.find((m) => m.hp > 0) ?? state.monsters[0];
+  const isBossP2 = foreseeMon?.is_boss && foreseeMon?.boss_phase === 2;
+  const bossBonus = isBossP2 ? (foreseeMon?.tier ?? 0) : 0;
+  const tier = foreseeMon?.tier ?? 1;
   const rawLo = 1 + tier + partyBonus + bossBonus;
   const rawHi = 4 + tier + partyBonus + bossBonus;
 
@@ -1821,7 +1888,7 @@ function abilityForesee(
 // pick their action.
 function withForeseeForNextActor(result: StepResult, roll: RollFn): StepResult {
   const actorId = currentActor(result.state);
-  if (!actorId || actorId === MONSTER_ID) return result;
+  if (!actorId || isMonsterActor(actorId)) return result;
   const sage = result.state.fighters.find((f) => f.id === actorId && f.class === "Staff Sage");
   if (!sage) return result;
   const turns = result.state.ability_state?.foresee_turns ?? 0;
@@ -1880,13 +1947,13 @@ function abilityMigrate(
 
 // ── Monster-kill resolution ───────────────────────────────────────────────
 //
-// Called every time monster hp drops to 0. If the quest is a gauntlet with
-// remaining waves, transitions to the next wave's monster (preserving turn
-// order + initiative + the killer's credit) and continues combat. Otherwise
-// emits victory. monster_down always fires either way so the UI gets the
-// "killing blow" beat.
+// Called every time a monster's hp drops to 0.
+// For gauntlet quests with remaining waves, transitions to the next wave
+// (preserving turn order + initiative + killer's credit). Otherwise, victory
+// fires when ALL monsters are dead. monster_down always fires for the "kill" beat.
 export function resolveMonsterKill(
   state: CombatState,
+  monsterId: ActorId,
   killedBy: ActorId,
   precedingEvents: CombatEvent[],
 ): StepResult {
@@ -1894,7 +1961,7 @@ export function resolveMonsterKill(
   events.push({ type: "monster_down", killed_by: killedBy });
 
   // Track kill credit for the killing blow actor.
-  const stateWithKill: CombatState = killedBy !== MONSTER_ID
+  const stateWithKill: CombatState = killedBy !== MONSTER_ID && !isMonsterActor(killedBy)
     ? {
         ...state,
         stats: {
@@ -1907,39 +1974,52 @@ export function resolveMonsterKill(
       }
     : state;
 
-  const upcoming = stateWithKill.monster.upcoming_waves ?? [];
-  if (upcoming.length === 0) {
+  const deadMonster = stateWithKill.monsters.find((m) => m.id === monsterId);
+  const upcoming = deadMonster?.upcoming_waves ?? [];
+
+  if (upcoming.length > 0) {
+    // Gauntlet wave transition — replace the dead monster in-place.
+    const [next, ...rest] = upcoming;
+    const newMonster: CombatMonster = {
+      id: monsterId,           // keep the same slot ID so turn_order stays valid
+      name: next.name,
+      hp: next.max_hp,
+      max_hp: next.max_hp,
+      tier: deadMonster!.tier,
+      initiative: deadMonster!.initiative,
+      effects: [],
+      is_boss: false,          // gauntlet waves are never boss-tier
+      boss_phase: 1,
+      wave: (deadMonster!.wave ?? 1) + 1,
+      total_waves: deadMonster!.total_waves,
+      upcoming_waves: rest,
+      art_url: deadMonster!.art_url,
+    };
+    events.push({
+      type: "wave_transition",
+      from_monster: deadMonster!.name,
+      to_monster: next.name,
+      to_max_hp: next.max_hp,
+      new_wave: newMonster.wave!,
+      total_waves: newMonster.total_waves ?? newMonster.wave!,
+    });
+    // Wave transition clears mark — the previous focus target is gone.
+    const ability_state = stripField(stateWithKill.ability_state, "mark");
+    const updatedMonsters = stateWithKill.monsters.map((m) => m.id === monsterId ? newMonster : m);
+    const advanced = advanceTurn({ ...stateWithKill, monsters: updatedMonsters, ability_state });
+    return { state: advanced, events: [...events, ...turnStartEvent(advanced)] };
+  }
+
+  // Check if ALL monsters are now dead.
+  const allMonstersDown = stateWithKill.monsters.every((m) => m.id === monsterId || m.hp <= 0);
+  if (allMonstersDown) {
     events.push({ type: "victory" });
     return { state: { ...stateWithKill, status: "victory" }, events };
   }
 
-  const [next, ...rest] = upcoming;
-  const newMonster: CombatMonster = {
-    name: next.name,
-    hp: next.max_hp,
-    max_hp: next.max_hp,
-    tier: stateWithKill.monster.tier,
-    initiative: stateWithKill.monster.initiative,
-    effects: [],
-    is_boss: false,            // gauntlet waves are never boss-tier
-    boss_phase: 1,
-    wave: (stateWithKill.monster.wave ?? 1) + 1,
-    total_waves: stateWithKill.monster.total_waves,
-    upcoming_waves: rest,
-  };
-  events.push({
-    type: "wave_transition",
-    from_monster: stateWithKill.monster.name,
-    to_monster: next.name,
-    to_max_hp: next.max_hp,
-    new_wave: newMonster.wave!,
-    total_waves: newMonster.total_waves ?? newMonster.wave!,
-  });
-  // Wave transition clears mark — the previous focus target is gone.
+  // Some monsters still alive — combat continues. Clear mark (target is dead).
   const ability_state = stripField(stateWithKill.ability_state, "mark");
-  // Combat continues — advance turn from the killer to the next actor so
-  // the new monster doesn't immediately get hit again by the same fighter.
-  const advanced = advanceTurn({ ...stateWithKill, monster: newMonster, ability_state });
+  const advanced = advanceTurn({ ...stateWithKill, ability_state });
   return { state: advanced, events: [...events, ...turnStartEvent(advanced)] };
 }
 
@@ -2002,34 +2082,29 @@ interface TickGate {
 }
 
 function tickAtTurnStart(state: CombatState, actorId: ActorId): TickGate {
-  if (actorId === MONSTER_ID) {
-    const tick = tickEffects(
-      state.monster.hp,
-      state.monster.max_hp,
-      state.monster.effects,
-      MONSTER_ID,
-    );
+  if (isMonsterActor(actorId)) {
+    const monster = state.monsters.find((m) => m.id === actorId);
+    if (!monster) return { state, events: [], earlyReturn: null };
+    const tick = tickEffects(monster.hp, monster.max_hp, monster.effects, actorId);
     const newState: CombatState = {
       ...state,
-      monster: {
-        ...state.monster,
-        hp: tick.newHp,
-        effects: tick.newEffects,
-      },
+      monsters: state.monsters.map((m) =>
+        m.id === actorId ? { ...m, hp: tick.newHp, effects: tick.newEffects } : m,
+      ),
     };
-    if (tick.newHp <= 0) {
+    if (tick.newHp <= 0 && monster.hp > 0) {
       // Credit the kill to whoever applied the longest-running tick source,
       // falling back to the first alive fighter. Pure best-effort — used
       // for the UI's "killed by" banner and contribution count.
       const killerId =
-        state.monster.effects.find((e) => e.source)?.source ??
+        monster.effects.find((e) => e.source)?.source ??
         state.fighters.find((f) => f.hp > 0)?.id ??
-        MONSTER_ID;
+        actorId;
       // Credit the killing tick's damage to the source so the contribution
       // split on victory matches what actually happened.
-      const tickDmg = state.monster.hp - tick.newHp;
+      const tickDmg = monster.hp - tick.newHp;
       const contribution =
-        killerId !== MONSTER_ID
+        !isMonsterActor(killerId)
           ? {
               ...state.contribution,
               [killerId]: (state.contribution[killerId] ?? 0) + tickDmg,
@@ -2038,7 +2113,7 @@ function tickAtTurnStart(state: CombatState, actorId: ActorId): TickGate {
       // Defer victory vs wave transition to the shared resolver so
       // gauntlet quests keep going past a poison-kill.
       const withContribution: CombatState = { ...newState, contribution };
-      const result = resolveMonsterKill(withContribution, killerId, tick.events);
+      const result = resolveMonsterKill(withContribution, actorId, killerId, tick.events);
       return { state: result.state, events: result.events, earlyReturn: result };
     }
     return { state: newState, events: tick.events, earlyReturn: null };
@@ -2201,14 +2276,16 @@ function computeBardAuraBonus(
 }
 
 // Data Warlock — Cursed Strike. On a critical attack/cast, apply a 2-turn
-// bleed to the monster. Always-on (no usage tracking).
+// bleed to the target monster. Always-on (no usage tracking).
 function applyWarlockBleed(
   state: CombatState,
   actor: CombatFighter,
+  targetMonsterId: ActorId,
   isCrit: boolean,
 ): { state: CombatState; events: CombatEvent[] } {
   if (!isCrit || classIdOf(actor) !== "data_warlock") return { state, events: [] };
-  if (state.monster.hp <= 0) return { state, events: [] };
+  const targetMonster = state.monsters.find((m) => m.id === targetMonsterId && m.hp > 0);
+  if (!targetMonster) return { state, events: [] };
   const newEffect: MachineStatusEffect = {
     type: "bleeding",
     magnitude: WARLOCK_BLEED_MAGNITUDE,
@@ -2217,10 +2294,9 @@ function applyWarlockBleed(
   };
   const updated: CombatState = {
     ...state,
-    monster: {
-      ...state.monster,
-      effects: [...state.monster.effects, newEffect],
-    },
+    monsters: state.monsters.map((m) =>
+      m.id === targetMonsterId ? { ...m, effects: [...m.effects, newEffect] } : m,
+    ),
   };
   return {
     state: updated,
@@ -2406,35 +2482,33 @@ function currentActor(state: CombatState): ActorId | undefined {
 function computeTurnOrder(state: CombatState): ActorId[] {
   const entries: { id: ActorId; init: number }[] = [
     ...state.fighters.map((f) => ({ id: f.id, init: f.initiative })),
-    { id: MONSTER_ID, init: state.monster.initiative },
+    ...state.monsters.map((m) => ({ id: m.id, init: m.initiative })),
   ];
   // Highest initiative first; ties broken by id for determinism.
   entries.sort((a, b) => (b.init - a.init) || a.id.localeCompare(b.id));
   return entries.map((e) => e.id);
 }
 
-// Advances turn_index past any downed fighters so the next live actor takes
-// the turn. Increments round when wrapping.
+// Advances turn_index past any downed fighters or dead monsters so the next
+// live actor takes the turn. Increments round when wrapping.
 function advanceTurn(state: CombatState): CombatState {
   if (state.turn_order.length === 0) return state;
   const total = state.turn_order.length;
   for (let i = 1; i <= total; i++) {
     const candidate = state.turn_index + i;
     const id = state.turn_order[candidate % total];
-    if (id === MONSTER_ID) {
-      return {
-        ...state,
-        turn_index: candidate,
-        round: state.round + (candidate >= total && Math.floor(state.turn_index / total) < Math.floor(candidate / total) ? 1 : 0),
-      };
+    const roundBump = Math.floor(state.turn_index / total) < Math.floor(candidate / total) ? 1 : 0;
+    if (isMonsterActor(id)) {
+      const m = state.monsters.find((x) => x.id === id);
+      if (m && m.hp > 0) {
+        return { ...state, turn_index: candidate, round: state.round + roundBump };
+      }
+      // Dead monster slot — keep scanning.
+      continue;
     }
     const f = state.fighters.find((x) => x.id === id);
     if (f && f.hp > 0) {
-      return {
-        ...state,
-        turn_index: candidate,
-        round: state.round + (Math.floor(state.turn_index / total) < Math.floor(candidate / total) ? 1 : 0),
-      };
+      return { ...state, turn_index: candidate, round: state.round + roundBump };
     }
   }
   // Shouldn't reach here unless the whole party is down — defeat is detected

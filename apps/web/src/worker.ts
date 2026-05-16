@@ -62,7 +62,10 @@ import {
   xpForLevel,
   RARITY_BADGE,
   statSnapshot,
+  upgradeCombatState,
+  MONSTER_ID,
   type CombatEvent,
+  type CombatMonster,
   type StatKey,
   type CombatInit,
   type CombatState,
@@ -449,14 +452,15 @@ function applyToolOrScroll(
     case "Hotfix Grenade": {
       // Damage tools ignore armor and never kill (Slack convention v1).
       const requested = item.power;
-      const damage = Math.max(1, Math.min(requested, state.monster.hp - 1));
+      const m = state.monsters[0];
+      const damage = Math.max(1, Math.min(requested, m.hp - 1));
       return {
         effect: {
           kind: "monster_damage",
           amount: damage,
           ...(damage < requested ? { capped_from: requested } : {}),
         },
-        monster: { hp: state.monster.hp - damage },
+        monster: { hp: m.hp - damage },
       };
     }
     case "Espresso Shot": {
@@ -484,7 +488,7 @@ function applyToolOrScroll(
       };
     }
     case "Poison Vial": {
-      if (state.monster.hp <= 0) {
+      if (state.monsters[0].hp <= 0) {
         return {
           effect: { kind: "heal", target: actor.id, amount: 0, rolled: 0 },
           error: "no live foe to poison",
@@ -503,7 +507,7 @@ function applyToolOrScroll(
           magnitude: item.power,
           remaining: 4,
         },
-        monster: { effects: [...state.monster.effects, eff] },
+        monster: { effects: [...state.monsters[0].effects, eff] },
       };
     }
     case "Rebase Scroll": {
@@ -525,39 +529,40 @@ function applyToolOrScroll(
     case "Production Outage": {
       // Non-boss: instant kill. Boss: drops 30% of max_hp (capped at hp-1 so
       // it never delivers the killing blow on a boss). Mirrors slack semantics.
-      if (state.monster.hp <= 0) {
+      const m = state.monsters[0];
+      if (m.hp <= 0) {
         return {
           effect: { kind: "heal", target: actor.id, amount: 0, rolled: 0 },
           error: "no live foe to outage",
         };
       }
-      if (state.monster.is_boss) {
-        const requested = Math.floor(state.monster.max_hp * 0.3);
-        const damage = Math.max(1, Math.min(requested, state.monster.hp - 1));
+      if (m.is_boss) {
+        const requested = Math.floor(m.max_hp * 0.3);
+        const damage = Math.max(1, Math.min(requested, m.hp - 1));
         return {
           effect: {
             kind: "monster_damage",
             amount: damage,
             ...(damage < requested ? { capped_from: requested } : {}),
           },
-          monster: { hp: state.monster.hp - damage },
+          monster: { hp: m.hp - damage },
         };
       }
       // Non-boss instakill — drops monster_hp to 0. handleUseItem detects this
       // and routes through resolveMonsterKill for victory / wave-transition.
       return {
-        effect: { kind: "monster_damage", amount: state.monster.hp },
+        effect: { kind: "monster_damage", amount: m.hp },
         monster: { hp: 0 },
       };
     }
     case "Venom Vial": {
-      if (state.monster.hp <= 0) {
+      if (state.monsters[0].hp <= 0) {
         return { effect: { kind: "heal", target: actor.id, amount: 0, rolled: 0 }, error: "no live foe to poison" };
       }
       const eff = { type: "poisoned" as const, magnitude: item.power, remaining: 4, source: actor.id };
       return {
         effect: { kind: "monster_effect", effect: "poisoned", magnitude: item.power, remaining: 4 },
-        monster: { effects: [...state.monster.effects, eff] },
+        monster: { effects: [...state.monsters[0].effects, eff] },
       };
     }
     case "Regen Draft": {
@@ -3969,8 +3974,9 @@ async function applyWebCombatOutcome(
   killedBy?: string,
 ): Promise<OutcomeSummary> {
   const won = state.status === "victory";
-  const tier = state.monster.tier;
-  const isBoss = state.monster.is_boss;
+  const primaryMonster = state.monsters[0];
+  const tier = primaryMonster.tier;
+  const isBoss = primaryMonster.is_boss;
   const eliteRow = await env.DB.prepare("SELECT elite FROM quests WHERE id = ?")
     .bind(questId)
     .first<{ elite: number }>();
@@ -4075,7 +4081,7 @@ async function applyWebCombatOutcome(
       // deterministic strings if the AI call fails.
       if (Math.random() < dropChance(tier)) {
         const roll = rollItem(tier);
-        const named = await nameLootViaAi(env, roll, state.monster.name);
+        const named = await nameLootViaAi(env, roll, primaryMonster.name);
         const created = await addItem(env.DB, {
           character_id: fighter.id,
           item_name: named.name,
@@ -4098,7 +4104,7 @@ async function applyWebCombatOutcome(
       // Soft death: only triggers on actual defeat AND for the fighters
       // that fell. Survivors of a wipe (none here, since defeat means full
       // wipe) would skip this branch.
-      const scar = generateScar(state.monster.name);
+      const scar = generateScar(primaryMonster.name);
       const death = await applySoftDeath(env.DB, character, scar, DOWNED_COOLDOWN_MS);
       softDeath = {
         gold_lost: death.goldLost,
@@ -4123,7 +4129,7 @@ async function applyWebCombatOutcome(
         roundsTotal: state.round,
         partySize: state.fighters.length,
         status: state.status as "victory" | "defeat" | "fled",
-        monster: { is_boss: state.monster.is_boss, total_waves: state.monster.total_waves },
+        monster: { is_boss: primaryMonster.is_boss, total_waves: primaryMonster.total_waves },
         existingAchievements: charAfter.achievements,
         lifetimeWins: stats.quests_completed,
         lifetimeKills: stats.kills,
@@ -4180,7 +4186,7 @@ async function applyWebCombatOutcome(
   // Slack /gq choose returns "No room choice to make right now." Mode
   // flips to 'slack' so the quest isn't held in web-combat state — the
   // next combat room will flip it back when entered.
-  const isDungeon = state.monster.upcoming_waves === undefined && won && await isDungeonQuest(env.DB, questId);
+  const isDungeon = primaryMonster.upcoming_waves === undefined && won && await isDungeonQuest(env.DB, questId);
   if (won && isDungeon) {
     const sceneRow = await env.DB
       .prepare("SELECT scene_json FROM quests WHERE id = ?")
@@ -4205,7 +4211,7 @@ async function applyWebCombatOutcome(
   return {
     status: state.status as "victory" | "defeat",
     rewards,
-    monster_name: state.monster.name,
+    monster_name: primaryMonster.name,
     monster_tier: tier,
     total_pool_xp: totalPoolXp,
     total_pool_gold: totalPoolGold,
@@ -4435,10 +4441,9 @@ async function buildInitialCombatState(
   const initial = createCombatState(init);
   const seeded: CombatState = {
     ...initial,
-    monster: {
-      ...initial.monster,
-      effects: quest.scene.monster_effects ?? [],
-    },
+    monsters: initial.monsters.map((m, i) =>
+      i === 0 ? { ...m, effects: quest.scene.monster_effects ?? [] } : m
+    ),
     fighters: initial.fighters.map((f) => {
       const character = party.find((p) => p.slack_user_id === f.id);
       return character ? { ...f, effects: character.effects ?? [] } : f;
@@ -4810,7 +4815,7 @@ export class QuestRoom extends DurableObject<Env> {
 
     let updatedFighters = state.fighters;
     let effect: ItemEffect | null = null;
-    const monsterPatch: Partial<CombatState["monster"]> = {};
+    const monsterPatch: Partial<CombatMonster> = {};
 
     switch (item.item_type) {
       case "consumable": {
@@ -4889,13 +4894,13 @@ export class QuestRoom extends DurableObject<Env> {
     const withEffect: CombatState = {
       ...state,
       fighters: updatedFighters,
-      monster: { ...state.monster, ...monsterPatch },
+      monsters: state.monsters.map((m, i) => i === 0 ? { ...m, ...monsterPatch } : m),
     };
 
     let resultState: CombatState;
     let resultEvents: CombatEvent[];
-    if (withEffect.monster.hp <= 0) {
-      const killed = resolveMonsterKill(withEffect, action.actor, []);
+    if (withEffect.monsters[0].hp <= 0) {
+      const killed = resolveMonsterKill(withEffect, withEffect.monsters[0].id, action.actor, []);
       resultState = killed.state;
       resultEvents = killed.events;
     } else {
@@ -4959,7 +4964,7 @@ export class QuestRoom extends DurableObject<Env> {
     if (this.cacheState && this.cacheQuestId === questId) return this.cacheState;
     const snap = await getWebCombatSnapshot(this.env.DB, questId);
     if (snap) {
-      this.cacheState = snap.state;
+      this.cacheState = upgradeCombatState(snap.state);
       this.cacheQuestId = questId;
       this.cacheLog = snap.log;
       // Reset quest meta on quest-id change — populated lazily by
@@ -5132,12 +5137,13 @@ export class QuestRoom extends DurableObject<Env> {
     // Boss reveal — first turn_start emitted in the same step that produces
     // begin. Surface only when the monster is actually a boss; non-boss
     // quests don't need a "👑 appears" beat.
-    if (result.state.monster.is_boss && !alreadyPosted.has("boss_reveal")) {
+    const bossMonster = result.state.monsters[0];
+    if (bossMonster?.is_boss && !alreadyPosted.has("boss_reveal")) {
       const sawBegin = result.events.some((e) => e.type === "begin");
       if (sawBegin) {
         newlyPosted.push({
           key: "boss_reveal",
-          text: `👑 A boss appears: *${result.state.monster.name}*.`,
+          text: `👑 A boss appears: *${bossMonster.name}*.`,
         });
       }
     }
@@ -5149,7 +5155,7 @@ export class QuestRoom extends DurableObject<Env> {
     ) {
       newlyPosted.push({
         key: "phase_2",
-        text: `👑 *${result.state.monster.name}* shifts — *phase 2*.`,
+        text: `👑 *${bossMonster?.name ?? "Boss"}* shifts — *phase 2*.`,
       });
     }
 
@@ -5172,12 +5178,12 @@ export class QuestRoom extends DurableObject<Env> {
     if (
       !alreadyPosted.has("victory") &&
       result.state.status === "victory" &&
-      result.state.monster.is_boss &&
+      bossMonster?.is_boss &&
       result.events.some((e) => e.type === "victory")
     ) {
       newlyPosted.push({
         key: "victory",
-        text: `🏆 Boss slain: *${result.state.monster.name}*.`,
+        text: `🏆 Boss slain: *${bossMonster.name}*.`,
       });
     }
 
@@ -5190,7 +5196,7 @@ export class QuestRoom extends DurableObject<Env> {
     ) {
       newlyPosted.push({
         key: "defeat",
-        text: `☠️ The party falls to *${result.state.monster.name}*.`,
+        text: `☠️ The party falls to *${bossMonster?.name ?? "the enemy"}*.`,
       });
     }
 
@@ -5250,7 +5256,7 @@ export class QuestRoom extends DurableObject<Env> {
         const kind: "attack" | "cast" =
           recentRoll && recentRoll.type === "roll" && recentRoll.purpose === "damage_cast" ? "cast" : action;
         const ref = { name: fighter.name, class: fighter.class, level: fighter.level };
-        const monsterName = state.monster.name;
+        const monsterName = state.monsters[0].name;
         const isCrit = e.crit;
         this.ctx.waitUntil(
           flavorHit(this.env.AI, ref, monsterName, kind, isCrit)
@@ -5262,7 +5268,7 @@ export class QuestRoom extends DurableObject<Env> {
         if (!fighter) continue;
         const ref = { name: fighter.name, class: fighter.class, level: fighter.level };
         const partySize = state.fighters.filter((f) => f.hp > 0).length;
-        const monsterName = state.monster.name;
+        const monsterName = state.monsters[0].name;
         this.ctx.waitUntil(
           flavorVictory(this.env.AI, ref, monsterName, partySize)
             .then((text) => this.broadcastAndLogFlavor(questId, { kind: "victory", actor: e.killed_by, text }))
@@ -5272,7 +5278,7 @@ export class QuestRoom extends DurableObject<Env> {
         const fighter = state.fighters.find((f) => f.id === e.target);
         if (!fighter) continue;
         const ref = { name: fighter.name, class: fighter.class, level: fighter.level };
-        const monsterName = state.monster.name;
+        const monsterName = state.monsters[0].name;
         this.ctx.waitUntil(
           flavorDeath(this.env.AI, ref, monsterName)
             .then((text) => this.broadcastAndLogFlavor(questId, { kind: "death", actor: e.target, text }))
@@ -5285,7 +5291,7 @@ export class QuestRoom extends DurableObject<Env> {
         const fighter = state.fighters.find((f) => f.id === fleeCheck.actor);
         if (!fighter) continue;
         const ref = { name: fighter.name, class: fighter.class, level: fighter.level };
-        const monsterName = state.monster.name;
+        const monsterName = state.monsters[0].name;
         const partyContinues = state.fighters.some((f) => f.id !== fighter.id && f.hp > 0);
         this.ctx.waitUntil(
           flavorFleeSuccess(this.env.AI, ref, monsterName, partyContinues)

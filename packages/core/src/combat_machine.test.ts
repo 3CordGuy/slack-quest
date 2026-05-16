@@ -122,7 +122,7 @@ describe("combat_machine.step", () => {
         { kind: "attack", actor: "U_PALADIN" },
         seqRoll([15, 4]),
       );
-      expect(result.state.monster.hp).toBe(30); // 40 - 10
+      expect(result.state.monsters[0].hp).toBe(30); // 40 - 10
       expect(eventTypes(result.events)).toEqual([
         "roll",
         "hit_check",
@@ -144,7 +144,7 @@ describe("combat_machine.step", () => {
         { kind: "attack", actor: "U_PALADIN" },
         seqRoll([5]),
       );
-      expect(result.state.monster.hp).toBe(40);
+      expect(result.state.monsters[0].hp).toBe(40);
       expect(eventTypes(result.events)).toEqual([
         "roll",
         "hit_check",
@@ -163,7 +163,7 @@ describe("combat_machine.step", () => {
         { kind: "attack", actor: "U_PALADIN" },
         seqRoll([12, 6]),
       );
-      expect(result.state.monster.hp).toBe(40 - 24);
+      expect(result.state.monsters[0].hp).toBe(40 - 24);
       const hit = result.events.find((e) => e.type === "player_hit");
       expect(hit).toMatchObject({ damage: 24, crit: true });
     });
@@ -181,8 +181,8 @@ describe("combat_machine.step", () => {
 
     it("ends combat with victory when monster dies", () => {
       const init = baseInit();
-      init.monster.hp = 5;
-      init.monster.max_hp = 5;
+      init.monster!.hp = 5;
+      init.monster!.max_hp = 5;
       const begun = runBegin(createCombatState(init), [15, 8]);
       // d20=20 hit, d6=6 crit → 24 damage > 5 hp.
       const result = step(
@@ -191,7 +191,7 @@ describe("combat_machine.step", () => {
         seqRoll([20, 6]),
       );
       expect(result.state.status).toBe("victory");
-      expect(result.state.monster.hp).toBe(0);
+      expect(result.state.monsters[0].hp).toBe(0);
       const types = eventTypes(result.events);
       expect(types).toContain("monster_down");
       expect(types).toContain("victory");
@@ -302,9 +302,9 @@ describe("combat_machine.step", () => {
   describe("boss phase transition", () => {
     it("flips to phase 2 when HP crosses 50% on the killing chip", () => {
       const init = baseInit();
-      init.monster.hp = 21;
-      init.monster.max_hp = 40; // 50% threshold = 20
-      init.monster.is_boss = true;
+      init.monster!.hp = 21;
+      init.monster!.max_hp = 40; // 50% threshold = 20
+      init.monster!.is_boss = true;
       const begun = runBegin(createCombatState(init), [15, 8]);
       // d20=15 hit, d6=4 → damage 10, newHp 11, crosses below 20.
       const result = step(
@@ -312,7 +312,7 @@ describe("combat_machine.step", () => {
         { kind: "attack", actor: "U_PALADIN" },
         seqRoll([15, 4]),
       );
-      expect(result.state.monster.boss_phase).toBe(2);
+      expect(result.state.monsters[0].boss_phase).toBe(2);
       expect(eventTypes(result.events)).toContain("boss_phase_transition");
     });
   });
@@ -337,8 +337,8 @@ describe("combat_machine.step", () => {
   describe("post-combat actions", () => {
     it("rejects further actions after victory", () => {
       const init = baseInit();
-      init.monster.hp = 1;
-      init.monster.max_hp = 1;
+      init.monster!.hp = 1;
+      init.monster!.max_hp = 1;
       const begun = runBegin(createCombatState(init), [15, 8]);
       // d20=15 hit, d6=1 → damage 7 > 1.
       const won = step(
@@ -431,7 +431,7 @@ describe("combat_machine.step", () => {
         seqRoll([4, 3]),
       );
       expect(result.state.fighters[0].mana).toBe(1);
-      expect(result.state.monster.hp).toBe(40 - 15);
+      expect(result.state.monsters[0].hp).toBe(40 - 15);
       const sig = result.events.find((e) => e.type === "signature_used");
       expect(sig).toMatchObject({ damage: 15, mana_spent: 1 });
     });
@@ -446,18 +446,18 @@ describe("combat_machine.step", () => {
         seqRoll([4, 3]),
       );
       expect(result.events.find((e) => e.type === "rejected")).toBeDefined();
-      expect(result.state.monster.hp).toBe(40);
+      expect(result.state.monsters[0].hp).toBe(40);
     });
   });
 
   describe("gauntlet waves", () => {
     it("transitions to the next wave on monster kill instead of ending combat", () => {
       const init = baseInit();
-      init.monster.hp = 1;
-      init.monster.max_hp = 10;
-      init.monster.wave = 1;
-      init.monster.total_waves = 3;
-      init.monster.upcoming_waves = [
+      init.monster!.hp = 1;
+      init.monster!.max_hp = 10;
+      init.monster!.wave = 1;
+      init.monster!.total_waves = 3;
+      init.monster!.upcoming_waves = [
         { name: "Drift Wraith", max_hp: 14 },
         { name: "Schema Hydra", max_hp: 22 },
       ];
@@ -469,11 +469,11 @@ describe("combat_machine.step", () => {
         seqRoll([15, 1]),
       );
       expect(result.state.status).toBe("active");
-      expect(result.state.monster.name).toBe("Drift Wraith");
-      expect(result.state.monster.hp).toBe(14);
-      expect(result.state.monster.max_hp).toBe(14);
-      expect(result.state.monster.wave).toBe(2);
-      expect(result.state.monster.upcoming_waves).toEqual([
+      expect(result.state.monsters[0].name).toBe("Drift Wraith");
+      expect(result.state.monsters[0].hp).toBe(14);
+      expect(result.state.monsters[0].max_hp).toBe(14);
+      expect(result.state.monsters[0].wave).toBe(2);
+      expect(result.state.monsters[0].upcoming_waves).toEqual([
         { name: "Schema Hydra", max_hp: 22 },
       ]);
       const types = eventTypes(result.events);
@@ -484,11 +484,11 @@ describe("combat_machine.step", () => {
 
     it("emits victory after killing the final wave's monster", () => {
       const init = baseInit();
-      init.monster.hp = 1;
-      init.monster.max_hp = 10;
-      init.monster.wave = 3;
-      init.monster.total_waves = 3;
-      init.monster.upcoming_waves = [];
+      init.monster!.hp = 1;
+      init.monster!.max_hp = 10;
+      init.monster!.wave = 3;
+      init.monster!.total_waves = 3;
+      init.monster!.upcoming_waves = [];
       const begun = runBegin(createCombatState(init), [15, 8]);
       const result = step(
         begun.state,
@@ -534,18 +534,18 @@ describe("combat_machine.step", () => {
       // Manually inject a poison effect on the monster.
       const withPoison = {
         ...begun.state,
-        monster: {
-          ...begun.state.monster,
+        monsters: begun.state.monsters.map((m) => ({
+          ...m,
           effects: [
             { type: "poisoned" as const, magnitude: 3, remaining: 2, source: "U_PALADIN" },
           ],
-        },
+        })),
       };
       // monster_act consumes target pick (50), d20 hit (15), then damage d4 (1).
       const result = step(withPoison, { kind: "monster_act" }, seqRoll([50, 15, 1]));
       // Monster ticks first: 40 hp - 3 = 37 hp, remaining 2 → 1.
-      expect(result.state.monster.hp).toBe(37);
-      expect(result.state.monster.effects).toEqual([
+      expect(result.state.monsters[0].hp).toBe(37);
+      expect(result.state.monsters[0].effects).toEqual([
         { type: "poisoned", magnitude: 3, remaining: 1, source: "U_PALADIN" },
       ]);
       const tickEvt = result.events.find((e) => e.type === "effect_tick");
@@ -559,20 +559,20 @@ describe("combat_machine.step", () => {
 
     it("kills the monster on a poison tick and credits the source", () => {
       const init = baseInit();
-      init.monster.hp = 2;
+      init.monster!.hp = 2;
       const begun = runBegin(createCombatState(init), [5, 18]);
       const withPoison = {
         ...begun.state,
-        monster: {
-          ...begun.state.monster,
+        monsters: begun.state.monsters.map((m) => ({
+          ...m,
           effects: [
             { type: "burning" as const, magnitude: 5, remaining: 3, source: "U_PALADIN" },
           ],
-        },
+        })),
       };
       const result = step(withPoison, { kind: "monster_act" }, seqRoll([50, 15, 1]));
       expect(result.state.status).toBe("victory");
-      expect(result.state.monster.hp).toBe(0);
+      expect(result.state.monsters[0].hp).toBe(0);
       // Source got credit on the contribution counter.
       expect(result.state.contribution.U_PALADIN).toBe(2);
       const types = eventTypes(result.events);

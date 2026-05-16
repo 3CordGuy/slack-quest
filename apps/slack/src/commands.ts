@@ -3208,7 +3208,8 @@ async function upsertBattlefield(
   state: import("@gantt-quest/core").CombatState,
 ): Promise<void> {
   const blocks = renderBattlefieldBlocks(state, quest.id);
-  const fallbackText = `Battlefield: ${state.monster.name} (${state.monster.hp}/${state.monster.max_hp} HP)`;
+  const m0 = state.monsters[0];
+  const fallbackText = m0 ? `Battlefield: ${m0.name} (${m0.hp}/${m0.max_hp} HP)` : `Battlefield`;
   try {
     if (quest.battlefield_ts) {
       const res = await updateMessage(env.SLACK_BOT_TOKEN, {

@@ -18,7 +18,8 @@ import type { CombatEvent, CombatState } from "@gantt-quest/core";
 function nameOf(state: CombatState, actorId: string): string {
   const fighter = state.fighters.find((f) => f.id === actorId);
   if (fighter) return `<@${actorId}>`;
-  return `*${state.monster.name}*`;
+  const monster = state.monsters.find((m) => m.id === actorId) ?? state.monsters[0];
+  return `*${monster?.name ?? "Monster"}*`;
 }
 
 // Compact HP bar — 10 segments, █ filled and ░ empty. Matches the web
@@ -75,19 +76,19 @@ function renderEvent(state: CombatState, e: CombatEvent): string {
       return "";
 
     case "player_hit":
-      return `${e.crit ? "💥 *CRIT!* " : ""}${nameOf(state, e.actor)} hits *${state.monster.name}* for *${e.damage}* \`${e.formula}\`.`;
+      return `${e.crit ? "💥 *CRIT!* " : ""}${nameOf(state, e.actor)} hits *${state.monsters[0].name}* for *${e.damage}* \`${e.formula}\`.`;
 
     case "monster_attack":
       // Show absorbed-by-shield separately when meaningful — matches the
       // legacy "shield absorbed N, you took M" cadence so a player whose
       // shield held knows the buff is working.
       if (e.shield_absorbed > 0 && e.hp_damage === 0) {
-        return `🛡 *${state.monster.name}* hits ${nameOf(state, e.target)} for *${e.damage_after_armor}* — shield absorbs all ${e.shield_absorbed}.`;
+        return `🛡 *${state.monsters[0].name}* hits ${nameOf(state, e.target)} for *${e.damage_after_armor}* — shield absorbs all ${e.shield_absorbed}.`;
       }
       if (e.shield_absorbed > 0) {
-        return `🩸 *${state.monster.name}* hits ${nameOf(state, e.target)} for *${e.hp_damage}* HP (shield absorbed ${e.shield_absorbed}).`;
+        return `🩸 *${state.monsters[0].name}* hits ${nameOf(state, e.target)} for *${e.hp_damage}* HP (shield absorbed ${e.shield_absorbed}).`;
       }
-      return `🩸 *${state.monster.name}* hits ${nameOf(state, e.target)} for *${e.hp_damage}* HP.`;
+      return `🩸 *${state.monsters[0].name}* hits ${nameOf(state, e.target)} for *${e.hp_damage}* HP.`;
 
     case "monster_splash": {
       const parts = e.targets.map((t) =>
@@ -95,29 +96,29 @@ function renderEvent(state: CombatState, e: CombatEvent): string {
           ? `${nameOf(state, t.target)} *${t.hp_damage}* HP (shield −${t.shield_absorbed})`
           : `${nameOf(state, t.target)} *${t.hp_damage}* HP`
       );
-      return `💥 *${state.monster.name}* splashes everyone — ${parts.join(", ")}.`;
+      return `💥 *${state.monsters[0].name}* splashes everyone — ${parts.join(", ")}.`;
     }
 
     case "monster_dodged":
       return `💨 ${nameOf(state, e.target)} sidesteps the blow — dodged!`;
 
     case "monster_target_blocked":
-      return `👁 *${state.monster.name}* lashes out but finds nothing to strike — vanish holds.`;
+      return `👁 *${state.monsters[0].name}* lashes out but finds nothing to strike — vanish holds.`;
 
     case "monster_target_redirected":
       return `🎯 ${nameOf(state, e.from)} draws the swing onto themself (${e.reason}).`;
 
     case "monster_swing_skipped":
-      return `🚧 *${state.monster.name}* loses the turn — containerized.`;
+      return `🚧 *${state.monsters[0].name}* loses the turn — containerized.`;
 
     case "boss_phase_transition":
-      return `👑 *${state.monster.name}* shifts — *phase ${e.new_phase}*!`;
+      return `👑 *${state.monsters[0].name}* shifts — *phase ${e.new_phase}*!`;
 
     case "fighter_down":
       return `💀 ${nameOf(state, e.target)} falls.`;
 
     case "monster_down":
-      return `⚔️ ${nameOf(state, e.killed_by)} fells *${state.monster.name}*.`;
+      return `⚔️ ${nameOf(state, e.killed_by)} fells *${state.monsters[0].name}*.`;
 
     case "wave_transition":
       return `🌊 *Wave ${e.new_wave}/${e.total_waves}* — ${e.from_monster} falls, *${e.to_monster}* steps up (${e.to_max_hp} HP).`;
@@ -137,7 +138,7 @@ function renderEvent(state: CombatState, e: CombatEvent): string {
     case "flee_check":
       return e.success
         ? `🏃 ${nameOf(state, e.actor)} cracks the line (rolled ${e.total} vs DC ${e.dc}).`
-        : `💢 ${nameOf(state, e.actor)} can't break free (rolled ${e.total} vs DC ${e.dc}) — *${state.monster.name}* gets a free swing.`;
+        : `💢 ${nameOf(state, e.actor)} can't break free (rolled ${e.total} vs DC ${e.dc}) — *${state.monsters[0].name}* gets a free swing.`;
 
     case "fled":
       return `🏃 The party flees.`;
@@ -163,7 +164,7 @@ function renderEvent(state: CombatState, e: CombatEvent): string {
       return `🛡 ${nameOf(state, e.actor)} taunts — next ${e.swings} swings forced.`;
 
     case "ability_containerize":
-      return `📦 *Containerize* — *${state.monster.name}* loses its next ${e.swings} swings.`;
+      return `📦 *Containerize* — *${state.monsters[0].name}* loses its next ${e.swings} swings.`;
 
     case "ability_regression_shield":
       return `🛡 ${nameOf(state, e.actor)} ripples regression shields: ${e.grants.map((g) => `${nameOf(state, g.target)} +${g.amount}`).join(", ")}.`;
@@ -179,7 +180,7 @@ function renderEvent(state: CombatState, e: CombatEvent): string {
 
     case "ability_foresee":
       return e.predicted_target
-        ? `🔮 ${nameOf(state, e.actor)} foresees: *${state.monster.name}* targets ${nameOf(state, e.predicted_target)} for ${e.damage_lo}–${e.damage_hi} damage.`
+        ? `🔮 ${nameOf(state, e.actor)} foresees: *${state.monsters[0].name}* targets ${nameOf(state, e.predicted_target)} for ${e.damage_lo}–${e.damage_hi} damage.`
         : `🔮 ${nameOf(state, e.actor)} foresees — but the target is unreadable.`;
 
     case "ability_migrate":
@@ -265,13 +266,12 @@ function renderEvent(state: CombatState, e: CombatEvent): string {
 // Compact one-line monster summary for the battlefield header. Used by
 // renderBattlefieldBlocks below.
 export function monsterStatusLine(state: CombatState): string {
-  const hp = state.monster.hp;
-  const max = state.monster.max_hp;
-  const bar = hpBar(hp, max);
-  const wave = state.monster.wave && state.monster.total_waves
-    ? ` _(wave ${state.monster.wave}/${state.monster.total_waves})_`
-    : "";
-  return `*${state.monster.name}* — ${hp}/${max} HP \`${bar}\`${wave}`;
+  return state.monsters.map((m) => {
+    const bar = hpBar(m.hp, m.max_hp);
+    const dead = m.hp <= 0 ? " ☠️" : "";
+    const wave = m.wave && m.total_waves ? ` _(wave ${m.wave}/${m.total_waves})_` : "";
+    return `*${m.name}* — ${m.hp}/${m.max_hp} HP \`${bar}\`${wave}${dead}`;
+  }).join(" │ ");
 }
 
 // Compact party roster. One short line per fighter. Marks the current

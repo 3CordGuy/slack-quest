@@ -126,9 +126,11 @@ describe("rollItem", () => {
       const r = rollItem(2);
       // Utility items with no numeric payload: Rebase Scroll clears cooldowns/mana;
       // Battle Elixir grants the Empowered status — neither uses power as a number.
+      // Stat-bonus-only armor slots (boots, ring, amulet) likewise have power=0.
       if (
         (r.type === "scroll" && r.catalog_name === "Rebase Scroll") ||
-        (r.type === "tool" && r.catalog_name === "Battle Elixir")
+        (r.type === "tool" && r.catalog_name === "Battle Elixir") ||
+        (r.type === "armor" && ["boots", "ring", "amulet"].includes(r.slot ?? ""))
       ) {
         expect(r.power).toBe(0);
         continue;
