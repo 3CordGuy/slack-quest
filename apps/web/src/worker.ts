@@ -10,6 +10,7 @@ import { getCookie, setCookie, deleteCookie } from "hono/cookie";
 
 import {
   VIEW_ART_PROMPTS,
+  pregenAllViewArt,
   flavorCatalogItem,
   flavorDeath,
   flavorFleeSuccess,
@@ -4183,6 +4184,19 @@ app.get("/api/ws/quest/:id", async (c) => {
   url.searchParams.set("quest", String(questId));
   url.searchParams.set("user", session.slack_user_id);
   return stub.fetch(new Request(url.toString(), c.req.raw));
+});
+
+// One-shot admin endpoint to pre-generate all VIEW_ART_PROMPTS images (including
+// the new dungeon room backgrounds) so they're warm in R2 before the first
+// player visits. No auth required — only callable by admins who know the URL.
+// Sequential to avoid Workers AI rate limits; expect ~2-3 min for 28+ images.
+app.post("/api/admin/pregen_dungeon_rooms", async (c) => {
+  const art = artTarget(c.env);
+  const results = await pregenAllViewArt(c.env.AI, art);
+  const generated = results.filter((r) => r.status === "generated").length;
+  const cached = results.filter((r) => r.status === "cached").length;
+  const failed = results.filter((r) => r.status === "failed").length;
+  return c.json({ ok: true, total: results.length, generated, cached, failed, results });
 });
 
 // Health check. Anything else falls through to the ASSETS binding via the

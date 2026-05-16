@@ -692,6 +692,77 @@ export const VIEW_ART_PROMPTS = {
     "Interior of a cozy fantasy inn's main room. Two simple straw cots against one wall, a curtained private bed-alcove against the other. A small stone hearth in the corner with a kettle hanging over the fire. Wooden ceiling beams, a few hung lanterns casting warm orange light, a small rug on the plank floor. Quiet, restful, safe. No specific people in close-up — the room is the subject.",
   apothecary:
     "Interior of a dim fantasy apothecary shop. Shelves lined with labeled glass vials, stoppered bottles in amber and green and blue, bundles of dried herbs hanging from the ceiling, small clay pots of unguents and powders. A heavy wooden counter with a set of brass scales, mortar and pestle, and a few open recipe books. Candlelight, earthy tones, a faint haze of incense. The room is the subject — no specific figure in close-up.",
+
+  // ── Dungeon room backgrounds (first-person POV, empty of characters) ──────
+  // Combat rooms — stone corridors and chambers with signs of impending battle.
+  dungeon_combat_1:
+    "First-person view looking down a dim stone corridor. Scattered papers and printed project timelines litter the floor. A broken server rack leans against the wall on the right, ethernet cables trailing into darkness. Wall-mounted torches cast orange shadows. Tension in the air. No people, no creatures — just the empty corridor ahead.",
+  dungeon_combat_2:
+    "First-person view of a circular stone chamber. Glowing project-management runes are etched into the flagstone floor — gantt chart glyphs and sprint-burndown spirals. Cables run along the baseboards. Two overturned office chairs are pushed to the sides. The room is empty but feels watched. Warm torchlight from iron wall sconces.",
+  dungeon_combat_3:
+    "First-person view down a narrow stone hallway. Overhead, old fluorescent tubes flicker and buzz between stone-framed arches. Ancient sword-slash marks scar the walls. An ethernet cable trails along the floor like a vine. Empty. A feeling of something nearby. Stone floor, stone ceiling, stone walls — oppressively close.",
+  dungeon_combat_4:
+    "First-person view of a large stone room divided by rough stone and old-wood cubicle partitions. Broken monitors are stacked in one corner. Smoke stains darken the ceiling above a scorch mark on the floor. Scattered sticky notes cover the walls. Everything is still — but the air smells of ozone and old coffee.",
+
+  // Boss rooms — grand imposing chambers.
+  dungeon_boss_1:
+    "First-person view of a grand vaulted chamber. Massive stone pillars flank the path ahead, wrapped in server-tower vines with blinking LEDs. War banners hanging from rusted chains display corrupted sprint-velocity graphs. A faint ominous purple glow emanates from the far end of the chamber. Monumental, threatening, empty.",
+  dungeon_boss_2:
+    "First-person view of a cavernous boss arena with tiered stone steps leading to a raised central platform. Scorched project timelines and burnt gantt charts are pinned to every wall. Chunks of broken concrete and melted keyboard shards ring the central dais. Dim red emergency lighting.",
+  dungeon_boss_3:
+    "First-person view of a massive underground hall with cathedral-high ceilings. Giant monitor screens mounted on the stone walls display scrolling corrupted red data. Dramatic spotlights from above illuminate the center. The floor is polished black stone. Oppressive silence. The scale makes everything feel small.",
+  dungeon_boss_4:
+    "First-person view of a circular boss chamber. Ritual circles carved deep into the stone floor form concentric rings around the center. Glowing network cables form a web pattern overhead. Four cracked stone thrones sit at the cardinal points. Dark and solemn, lit only by the cold blue glow of the cable-web.",
+
+  // Trap rooms — rooms with visible danger mechanisms.
+  dungeon_trap_1:
+    "First-person view of a stone corridor where the floor is covered in raised pressure plates, each slightly discolored. Small holes line both walls at ankle and knee height — nozzle openings. A hand-written warning note is pinned to the far door. Empty, but obviously dangerous.",
+  dungeon_trap_2:
+    "First-person view of a room with taut tripwires stretched across the path at irregular heights — old ethernet cables rigged as triggers. Some already lie coiled and spent on the floor. Mechanical contraptions are bolted to the walls at the ends of the wires. The room is otherwise empty.",
+  dungeon_trap_3:
+    "First-person view of a stone chamber with a massive pendulum mechanism suspended from the ceiling — a heavy stone blade on a long chain, frozen mid-swing. Gear teeth are visible at the base pivot. Maintenance-manual printouts are scattered across the floor. A warning placard written in marker is nailed to a post.",
+  dungeon_trap_4:
+    "First-person view of a narrow passage with jets set flush into the walls at regular intervals. A large blast-scorch pattern marks the far door and ceiling. A sticky note reading 'deploy to prod' is stuck to the wall beside the first jet. The air smells faintly of smoke.",
+
+  // Treasure rooms — the final reward chamber.
+  dungeon_treasure_1:
+    "First-person view of the dungeon's heart-chamber. A circular room with a low mossy stone pedestal at its center, bathed in a column of warm golden light from a hole in the vaulted ceiling far above. Dust motes drift lazily through the beam. Everything else is dim and still.",
+  dungeon_treasure_2:
+    "First-person view of a wide stone vault. Ancient wooden shelves line the curved walls. Dust motes drift in a wide shaft of golden light from a hole in the ceiling. The floor is swept clean except for a ring of old candlestick holders arranged around the center. Quiet and reverent.",
+  dungeon_treasure_3:
+    "First-person view of a stone treasure vault with elaborate relief carvings on every wall depicting epic sprints and legendary deployments. Aged oak shelves with empty display brackets. A single dramatic spotlight from an ancient crystal lens illuminates the center of the room.",
+  dungeon_treasure_4:
+    "First-person view of a quiet stone alcove at the end of the dungeon. Warm amber light from crystal sconces set into the walls. A velvet-draped stone platform sits at the center. The room has a hushed, ceremonial quality — the end of a long journey.",
+
+  // Lockbox rooms — dim alcoves with locked chests.
+  dungeon_lockbox_1:
+    "First-person view of a stone alcove. A heavy iron-banded wooden chest sits on a stone table in the center, heavy padlock clearly visible. A single lantern hanging from an iron hook above. Dust on the floor, cobwebs in the corners. Quiet and deliberate.",
+  dungeon_lockbox_2:
+    "First-person view of a dim stone corridor ending in a recessed niche. An ornate dark-wood chest with engraved silver fittings rests on a stone ledge. Faint torchlight from the passage behind makes the silver glint. The chest is the only thing in the niche.",
+  dungeon_lockbox_3:
+    "First-person view of a small stone chamber. A lavishly decorated chest sits on a raised stone pedestal at the back of the room. Gold gilt catches the torchlight. Stone walls carved with geometric patterns. The chest radiates quiet importance.",
+  dungeon_lockbox_4:
+    "First-person view of a rough-cut stone room. A weathered wooden chest sits in the far corner, half-hidden in shadow. Thick dust covers the floor and the chest alike, with only a narrow path of disturbed dust leading to it. An old heavy padlock.",
+
+  // NPC rooms — spaces suggesting a recent or imminent presence.
+  dungeon_npc_1:
+    "First-person view of a warm-lit stone alcove furnished with a rough wooden desk. Scattered scrolls and a quill and inkpot. A high-backed chair pulled slightly out, as if someone just stood up. A single candle still burning. Someone was just here.",
+  dungeon_npc_2:
+    "First-person view of a cozy stone nook. A small campfire ring with glowing embers, a bedroll neatly rolled beside it, two cooking pots on a trivet. A traveler's pack leaned against the wall. Warm and human among the cold stone.",
+  dungeon_npc_3:
+    "First-person view of a stone room with a low wooden counter across the middle — an improvised desk or stall. Empty hooks on the wall behind, a stool on the near side. A half-finished cup of tea sits on the counter, still steaming.",
+  dungeon_npc_4:
+    "First-person view of a stone chamber with a scrying mirror on a tall pedestal and two rough stone chairs facing each other. The mirror surface shimmers faintly. A carved stone side table holds a teapot and two cups. A meeting place.",
+
+  // Merchant rooms — impromptu trading posts deep in the dungeon.
+  dungeon_merchant_1:
+    "First-person view of a tiny market stall cut into a wide stone alcove. Wooden shelves hold neatly arranged goods — vials, small crates, rolled scrolls. A brass service bell on the counter. Warm lamplight. Improbably tidy and well-stocked for a dungeon.",
+  dungeon_merchant_2:
+    "First-person view of a wider stone alcove where a portable folding table has been set up as a market counter. Colorful cloth banners hang from stalactites above. Wooden crates form the back wall shelving. Candles in tin holders line the edges.",
+  dungeon_merchant_3:
+    "First-person view of a curved stone chamber repurposed as a trading post. Display cases made from old server casings line the walls. A warm brass desk lamp glows on the central counter. Small handwritten price tags are visible on items.",
+  dungeon_merchant_4:
+    "First-person view of a stone passage booth. Hand-painted price signs hang from the ceiling on strings. Cord lighting wraps around the stall frame. A cozy rug on the stone floor. Impossibly cheerful atmosphere for somewhere this deep underground.",
 } as const;
 
 export type ViewArtKey = keyof typeof VIEW_ART_PROMPTS;

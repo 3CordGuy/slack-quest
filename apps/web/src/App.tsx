@@ -17,6 +17,7 @@ import {
 import { classByName, deriveAll, findCatalogEntry, priceFor, sellPriceFor, xpForLevel, type Achievement, type EarnedAchievement, type StatKey, type Stats } from "@gantt-quest/core";
 
 import { CombatPage } from "./CombatPage";
+import { DungeonView } from "./DungeonView";
 import { Avatar, EmojiIcon, Icon, KeyIcon } from "./icons";
 
 // One-liner describing the in-game effect of an item, in plain mechanics
@@ -1345,6 +1346,34 @@ export function App() {
 
   if (state.kind === "loading") return <Centered>Loading…</Centered>;
   if (state.kind === "anon") return <Login onSuccess={refresh} />;
+
+  // Dungeon quests use the immersive DungeonView full-screen experience.
+  // This check runs before the activeCombat guard so dungeon combat stays
+  // in-room instead of launching the separate CombatPage.
+  if (state.kind === "auth" && state.activeQuest?.quest.scene.variant === "dungeon" && state.me.character) {
+    const aq = state.activeQuest;
+    const chr = state.me.character;
+    return (
+      <DungeonView
+        questId={aq.quest.id}
+        selfId={state.me.slack_user_id}
+        scene={aq.quest.scene}
+        party={aq.party}
+        character={chr}
+        hasWebCombat={hasWebCombat}
+        myKeys={{ bronze: chr.keys_bronze, silver: chr.keys_silver, gold: chr.keys_gold }}
+        onChooseDoor={(pick) => chooseDoor(aq.quest.id, pick)}
+        onTrapChoose={(pick) => trapChoose(aq.quest.id, pick)}
+        onLockboxChoose={(pick) => lockboxChoose(aq.quest.id, pick)}
+        onNpcChoose={(pick) => npcChoose(aq.quest.id, pick)}
+        onMerchantChoose={(pick) => merchantChoose(aq.quest.id, pick)}
+        onTreasureTake={(pick) => treasureTake(aq.quest.id, pick)}
+        onExit={() => void refresh()}
+        onRefresh={() => void refresh()}
+      />
+    );
+  }
+
   if (activeCombat) {
     return (
       <CombatErrorBoundary onReset={() => { setActiveCombat(null); setCombatDismissed(true); void refresh(); }}>
