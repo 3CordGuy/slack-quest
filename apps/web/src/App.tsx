@@ -4252,10 +4252,12 @@ function InventoryCard({
         <div style={{ fontSize: 11, color: "#6b7280", textTransform: "uppercase" as const, letterSpacing: 0.8, fontWeight: 600, marginBottom: 6 }}>
           Equipped
         </div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 72px)", gap: 4 }}>
-          {([null, "helmet", null, "main_hand", "body", "off_hand", "amulet", "pants", "ring", null, "boots", null] as (EquipSlot | null)[]).map((s, i) =>
-            s ? renderDollSlot(s) : <div key={i} style={{ width: 72, height: 72 }} />
-          )}
+        <div style={{ display: "flex", justifyContent: "center" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 72px)", gap: 4 }}>
+            {([null, "helmet", null, "main_hand", "body", "off_hand", "amulet", "pants", "ring", null, "boots", null] as (EquipSlot | null)[]).map((s, i) =>
+              s ? renderDollSlot(s) : <div key={i} style={{ width: 72, height: 72 }} />
+            )}
+          </div>
         </div>
       </div>
       {/* Pack */}
@@ -7309,8 +7311,8 @@ const SLOT_ICON: Record<EquipSlot, string> = {
   main_hand: "spinning-sword",
   off_hand: "round-shield",
   body: "shield",
-  helmet: "helmet",
-  pants: "hood",
+  helmet: "heavy-helm",
+  pants: "armored-pants",
   boots: "boots",
   ring: "gem-pendant",
   amulet: "crystal-wand",
@@ -7362,7 +7364,7 @@ function itemIcon(item: {
     }
 
     case "armor": {
-      if (/\b(helm|helmet|cap|hat|hood|crown|circlet|coif)\b/.test(n))   return "helmet";
+      if (/\b(helm|helmet|cap|hat|hood|crown|circlet|coif)\b/.test(n))   return "heavy-helm";
       if (/\b(boot|shoe|greave|sabatons?|sandal)\b/.test(n))             return "boots";
       if (/\b(glove|gauntlet|bracer|vambrace)\b/.test(n))                return "hand";
       if (/\b(robe|vestment|raiment|cassock)\b/.test(n))                 return "hood";
