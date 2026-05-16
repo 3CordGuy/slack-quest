@@ -4293,6 +4293,221 @@ app.post("/api/quest/:id/dungeon/grid/bash", async (c) => {
   return c.json({ ok: true, action: "bash", roll, modifier: strMod, total, dc, success, damage_dealt: damageDealt });
 });
 
+// ── Grid content interactions ────────────────────────────────────────────────
+// Shared shape: load active quest + graph + current node, then dispatch on
+// content.kind. Each route writes back the updated content state and saves.
+
+// Internal helper: add a LootOption to the character's inventory.
+async function addLootToInventory(
+  db: D1Database,
+  userId: string,
+  opt: LootOption,
+) {
+  return await addItem(db, {
+    character_id: userId,
+    item_name: opt.name,
+    item_type: opt.item_type,
+    power: opt.power,
+    rarity: opt.rarity,
+    flavor: opt.flavor,
+    weapon_range: opt.weapon_range ?? null,
+    slot: (opt as { slot?: string }).slot as import("@gantt-quest/core").EquipSlot | undefined,
+    stat_bonus: (opt as { stat_bonus?: Record<string, number> }).stat_bonus,
+    item_subtype: (opt as { item_subtype?: string }).item_subtype,
+  });
+}
+
+// Handle loot pickup or key pickup. Body: `{ pick?: number }` (1-based index
+// for loot; ignored for key_pickup).
+app.post("/api/quest/:id/dungeon/grid/take", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const questId = parseInt(c.req.param("id"), 10);
+  if (!Number.isFinite(questId)) return c.json({ error: "bad_quest_id" }, 400);
+  const quest = await getActiveQuestForCharacter(c.env.DB, session.slack_user_id);
+  if (!quest || quest.id !== questId) return c.json({ error: "quest_not_active" }, 404);
+  const graph = quest.scene.graph;
+  if (!graph) return c.json({ error: "not_a_graph_dungeon" }, 400);
+  const node = graph.nodes[graph.current];
+  const content = node?.content;
+  if (!content) return c.json({ error: "nothing_to_take" }, 400);
+  const body = (await c.req.json().catch(() => ({}))) as { pick?: number };
+
+  if (content.kind === "loot") {
+    if (content.taken) return c.json({ error: "already_taken" }, 400);
+    const pick = typeof body.pick === "number" ? body.pick : 1;
+    const choice = content.items[pick - 1];
+    if (!choice) return c.json({ error: "bad_pick" }, 400);
+    const item = await addLootToInventory(c.env.DB, session.slack_user_id, choice);
+    const updatedContent: GridRoomContent = { ...content, taken: true };
+    const updatedNode = { ...node, content: updatedContent };
+    const updatedGraph: DungeonGraph = { ...graph, nodes: { ...graph.nodes, [node.id]: updatedNode } };
+    await saveScene(c.env.DB, questId, { ...quest.scene, graph: updatedGraph });
+    return c.json({ ok: true, action: "loot", item: { id: item.id, name: item.item_name } });
+  }
+
+  if (content.kind === "key_pickup") {
+    if (content.taken) return c.json({ error: "already_taken" }, 400);
+    const keyField = content.tier === "bronze" ? "keys_bronze" : content.tier === "silver" ? "keys_silver" : "keys_gold";
+    await c.env.DB.prepare(`UPDATE characters SET ${keyField} = ${keyField} + 1 WHERE slack_user_id = ?`)
+      .bind(session.slack_user_id).run();
+    const updatedContent: GridRoomContent = { ...content, taken: true };
+    const updatedNode = { ...node, content: updatedContent };
+    const updatedGraph: DungeonGraph = { ...graph, nodes: { ...graph.nodes, [node.id]: updatedNode } };
+    await saveScene(c.env.DB, questId, { ...quest.scene, graph: updatedGraph });
+    return c.json({ ok: true, action: "key_pickup", tier: content.tier });
+  }
+
+  return c.json({ error: "not_takeable", content_kind: content.kind }, 400);
+});
+
+// Trap resolution. Body: `{ pick: 1|2|3 }` — index into content.choices.
+app.post("/api/quest/:id/dungeon/grid/trap", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const questId = parseInt(c.req.param("id"), 10);
+  if (!Number.isFinite(questId)) return c.json({ error: "bad_quest_id" }, 400);
+  const quest = await getActiveQuestForCharacter(c.env.DB, session.slack_user_id);
+  if (!quest || quest.id !== questId) return c.json({ error: "quest_not_active" }, 404);
+  const graph = quest.scene.graph;
+  if (!graph) return c.json({ error: "not_a_graph_dungeon" }, 400);
+  const node = graph.nodes[graph.current];
+  const content = node?.content;
+  if (!content || content.kind !== "trap") return c.json({ error: "not_a_trap" }, 400);
+  if (content.resolved) return c.json({ error: "already_resolved" }, 400);
+  const body = (await c.req.json().catch(() => ({}))) as { pick?: number };
+  const idx = typeof body.pick === "number" ? body.pick - 1 : -1;
+  const choice = content.choices[idx];
+  if (!choice) return c.json({ error: "bad_pick" }, 400);
+  const character = await getCharacter(c.env.DB, session.slack_user_id);
+  if (!character) return c.json({ error: "no_character" }, 404);
+  // d20 + stat mod vs DC 10 + character level
+  const statRaw = choice.skill === "str" ? (character.str ?? 5)
+    : choice.skill === "dex" ? (character.dex ?? 5) : (character.int_stat ?? 5);
+  const mod = Math.floor((statRaw - 5) / 2);
+  const roll = 1 + Math.floor(Math.random() * 20);
+  const total = roll + mod;
+  const dc = 10 + Math.max(1, character.level);
+  const success = total >= dc;
+  let damage = 0;
+  if (!success) {
+    damage = choice.fail_damage;
+    const newHp = Math.max(0, character.hp - damage);
+    await c.env.DB.prepare("UPDATE characters SET hp = ? WHERE slack_user_id = ?")
+      .bind(newHp, session.slack_user_id).run();
+  }
+  const updatedContent: GridRoomContent = { ...content, resolved: true };
+  const updatedNode = { ...node, content: updatedContent };
+  const updatedGraph: DungeonGraph = { ...graph, nodes: { ...graph.nodes, [node.id]: updatedNode } };
+  await saveScene(c.env.DB, questId, { ...quest.scene, graph: updatedGraph });
+  return c.json({ ok: true, action: "trap", success, roll, modifier: mod, total, dc, damage });
+});
+
+// Lockbox: consume a key + grab one loot option. Body: `{ pick: number }`.
+app.post("/api/quest/:id/dungeon/grid/lockbox", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const questId = parseInt(c.req.param("id"), 10);
+  if (!Number.isFinite(questId)) return c.json({ error: "bad_quest_id" }, 400);
+  const quest = await getActiveQuestForCharacter(c.env.DB, session.slack_user_id);
+  if (!quest || quest.id !== questId) return c.json({ error: "quest_not_active" }, 404);
+  const graph = quest.scene.graph;
+  if (!graph) return c.json({ error: "not_a_graph_dungeon" }, 400);
+  const node = graph.nodes[graph.current];
+  const content = node?.content;
+  if (!content || content.kind !== "lockbox") return c.json({ error: "not_a_lockbox" }, 400);
+  if (content.resolved) return c.json({ error: "already_resolved" }, 400);
+  const body = (await c.req.json().catch(() => ({}))) as { pick?: number };
+  const idx = typeof body.pick === "number" ? body.pick - 1 : -1;
+  const choice = content.options[idx];
+  if (!choice) return c.json({ error: "bad_pick" }, 400);
+  const character = await getCharacter(c.env.DB, session.slack_user_id);
+  if (!character) return c.json({ error: "no_character" }, 404);
+  const keyField = content.lock_tier === "bronze" ? "keys_bronze" : content.lock_tier === "silver" ? "keys_silver" : "keys_gold";
+  if ((character[keyField as keyof Character] as number) <= 0) {
+    return c.json({ error: "no_key", tier: content.lock_tier }, 400);
+  }
+  await c.env.DB.prepare(`UPDATE characters SET ${keyField} = ${keyField} - 1 WHERE slack_user_id = ?`)
+    .bind(session.slack_user_id).run();
+  const item = await addLootToInventory(c.env.DB, session.slack_user_id, choice);
+  const updatedContent: GridRoomContent = { ...content, resolved: true };
+  const updatedNode = { ...node, content: updatedContent };
+  const updatedGraph: DungeonGraph = { ...graph, nodes: { ...graph.nodes, [node.id]: updatedNode } };
+  await saveScene(c.env.DB, questId, { ...quest.scene, graph: updatedGraph });
+  return c.json({ ok: true, action: "lockbox", item: { id: item.id, name: item.item_name }, key_spent: content.lock_tier });
+});
+
+// NPC offer. Body: `{ pick: 0 | 1 }` (0 = decline, 1 = accept).
+app.post("/api/quest/:id/dungeon/grid/npc", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const questId = parseInt(c.req.param("id"), 10);
+  if (!Number.isFinite(questId)) return c.json({ error: "bad_quest_id" }, 400);
+  const quest = await getActiveQuestForCharacter(c.env.DB, session.slack_user_id);
+  if (!quest || quest.id !== questId) return c.json({ error: "quest_not_active" }, 404);
+  const graph = quest.scene.graph;
+  if (!graph) return c.json({ error: "not_a_graph_dungeon" }, 400);
+  const node = graph.nodes[graph.current];
+  const content = node?.content;
+  if (!content || content.kind !== "npc") return c.json({ error: "not_an_npc" }, 400);
+  if (content.resolved) return c.json({ error: "already_resolved" }, 400);
+  const body = (await c.req.json().catch(() => ({}))) as { pick?: number };
+  let item: { id: number; item_name: string } | null = null;
+  if (body.pick === 1) {
+    const added = await addLootToInventory(c.env.DB, session.slack_user_id, content.offer);
+    item = { id: added.id, item_name: added.item_name };
+  }
+  const updatedContent: GridRoomContent = { ...content, resolved: true };
+  const updatedNode = { ...node, content: updatedContent };
+  const updatedGraph: DungeonGraph = { ...graph, nodes: { ...graph.nodes, [node.id]: updatedNode } };
+  await saveScene(c.env.DB, questId, { ...quest.scene, graph: updatedGraph });
+  return c.json({ ok: true, action: "npc", accepted: body.pick === 1, item });
+});
+
+// Merchant: spend gold to buy one item. Body: `{ pick: number }` (1-based;
+// 0 = skip).
+app.post("/api/quest/:id/dungeon/grid/merchant", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const questId = parseInt(c.req.param("id"), 10);
+  if (!Number.isFinite(questId)) return c.json({ error: "bad_quest_id" }, 400);
+  const quest = await getActiveQuestForCharacter(c.env.DB, session.slack_user_id);
+  if (!quest || quest.id !== questId) return c.json({ error: "quest_not_active" }, 404);
+  const graph = quest.scene.graph;
+  if (!graph) return c.json({ error: "not_a_graph_dungeon" }, 400);
+  const node = graph.nodes[graph.current];
+  const content = node?.content;
+  if (!content || content.kind !== "merchant") return c.json({ error: "not_a_merchant" }, 400);
+  if (content.resolved) return c.json({ error: "already_resolved" }, 400);
+  const body = (await c.req.json().catch(() => ({}))) as { pick?: number };
+  const pick = typeof body.pick === "number" ? body.pick : 0;
+
+  // Skip: mark resolved without buying.
+  if (pick === 0) {
+    const updatedContent: GridRoomContent = { ...content, resolved: true };
+    const updatedNode = { ...node, content: updatedContent };
+    const updatedGraph: DungeonGraph = { ...graph, nodes: { ...graph.nodes, [node.id]: updatedNode } };
+    await saveScene(c.env.DB, questId, { ...quest.scene, graph: updatedGraph });
+    return c.json({ ok: true, action: "merchant_skip" });
+  }
+
+  const choice = content.stock[pick - 1];
+  if (!choice) return c.json({ error: "bad_pick" }, 400);
+  const character = await getCharacter(c.env.DB, session.slack_user_id);
+  if (!character) return c.json({ error: "no_character" }, 404);
+  const price = priceFor(choice.item_type, choice.rarity);
+  if (character.gold < price) return c.json({ error: "insufficient_gold", price, gold: character.gold }, 400);
+  const paid = await tryDeductGold(c.env.DB, session.slack_user_id, price);
+  if (!paid) return c.json({ error: "insufficient_gold", price }, 400);
+  const item = await addLootToInventory(c.env.DB, session.slack_user_id, choice);
+  // Mark the entire room resolved (single purchase per merchant in grid mode).
+  const updatedContent: GridRoomContent = { ...content, resolved: true };
+  const updatedNode = { ...node, content: updatedContent };
+  const updatedGraph: DungeonGraph = { ...graph, nodes: { ...graph.nodes, [node.id]: updatedNode } };
+  await saveScene(c.env.DB, questId, { ...quest.scene, graph: updatedGraph });
+  return c.json({ ok: true, action: "merchant_buy", item: { id: item.id, name: item.item_name }, price });
+});
+
 app.post("/api/quest/:id/dungeon/graph/take", async (c) => {
   const session = await currentSession(c.env.DB, c.req.header("cookie"));
   if (!session) return c.json({ error: "unauthenticated" }, 401);

@@ -649,11 +649,24 @@ export function GridDungeonView({
     if (contentBusy) return;
     setContentBusy(true);
     try {
-      const res = await fetch(`/api/quest/${questId}/dungeon/treasure_take`, {
+      const res = await fetch(`/api/quest/${questId}/dungeon/grid/take`, {
         method: "POST", credentials: "include", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ pick: idx + 1 }),
       });
       if (res.ok) { toast.success("Picked up"); onRefresh(); }
+      else toast.error("Could not pick up");
+    } finally { setContentBusy(false); }
+  }
+
+  async function takeKey() {
+    if (contentBusy) return;
+    setContentBusy(true);
+    try {
+      const res = await fetch(`/api/quest/${questId}/dungeon/grid/take`, {
+        method: "POST", credentials: "include", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      if (res.ok) { const b = await res.json() as { tier?: string }; toast.success(`Got the ${b.tier} key`); onRefresh(); }
       else toast.error("Could not pick up");
     } finally { setContentBusy(false); }
   }
@@ -745,6 +758,7 @@ export function GridDungeonView({
           content={content}
           onEnterCombat={enterCombat}
           onTakeLoot={takeLoot}
+          onTakeKey={takeKey}
           onRefresh={onRefresh}
           questId={questId}
         />
@@ -835,9 +849,9 @@ function DoorInteractionModal({ dir, door, character, onUseKey, onPick, onBash, 
   );
 }
 
-function ContentOverlay({ node, content, onEnterCombat, onTakeLoot, onRefresh, questId }: {
+function ContentOverlay({ node, content, onEnterCombat, onTakeLoot, onTakeKey, onRefresh, questId }: {
   node: GridNode; content: GridRoomContent | undefined;
-  onEnterCombat: () => void; onTakeLoot: (idx: number) => void;
+  onEnterCombat: () => void; onTakeLoot: (idx: number) => void; onTakeKey: () => void;
   onRefresh: () => void; questId: number;
 }) {
   if (!content) return null;
@@ -882,15 +896,7 @@ function ContentOverlay({ node, content, onEnterCombat, onTakeLoot, onRefresh, q
     return (
       <OverlayPanel title={`A ${content.tier} key`}>
         <button
-          onClick={async () => {
-            // Mark taken and increment key on character.
-            const res = await fetch(`/api/quest/${questId}/dungeon/treasure_take`, {
-              method: "POST", credentials: "include", headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ pick: 1 }),
-            });
-            if (res.ok) onRefresh();
-            else toast.error("Could not pick up");
-          }}
+          onClick={onTakeKey}
           style={{ padding: "10px 14px", background: "#131519", border: `1px solid ${tierColor}`, borderRadius: 8, color: tierColor, cursor: "pointer", display: "flex", alignItems: "center", gap: 8, fontSize: 13 }}>
           <Icon name="key" color={tierColor} /> Take the {content.tier} key
         </button>
@@ -905,12 +911,15 @@ function ContentOverlay({ node, content, onEnterCombat, onTakeLoot, onRefresh, q
           {content.choices.map((c, i) => (
             <button key={i}
               onClick={async () => {
-                const res = await fetch(`/api/quest/${questId}/dungeon/trap_choose`, {
+                const res = await fetch(`/api/quest/${questId}/dungeon/grid/trap`, {
                   method: "POST", credentials: "include", headers: { "Content-Type": "application/json" },
                   body: JSON.stringify({ pick: i + 1 }),
                 });
-                if (res.ok) onRefresh();
-                else toast.error("Trap choice failed");
+                if (res.ok) {
+                  const b = await res.json() as { success: boolean; roll: number; total: number; dc: number; damage: number };
+                  toast(`${c.skill.toUpperCase()}: ${b.roll} → ${b.total} vs DC ${b.dc} — ${b.success ? "passed" : `failed (-${b.damage} HP)`}`);
+                  onRefresh();
+                } else toast.error("Trap choice failed");
               }}
               style={{ padding: "10px 14px", background: "#131519", border: "1px solid #2a2d33", borderRadius: 8, color: "#d1d5db", cursor: "pointer", textAlign: "left", fontSize: 12, display: "flex", alignItems: "center", gap: 10 }}>
               <span style={{ fontSize: 18 }}>{c.emoji}</span>
@@ -934,12 +943,12 @@ function ContentOverlay({ node, content, onEnterCombat, onTakeLoot, onRefresh, q
           {content.options.map((opt, i) => (
             <button key={i}
               onClick={async () => {
-                const res = await fetch(`/api/quest/${questId}/dungeon/lockbox_choose`, {
+                const res = await fetch(`/api/quest/${questId}/dungeon/grid/lockbox`, {
                   method: "POST", credentials: "include", headers: { "Content-Type": "application/json" },
                   body: JSON.stringify({ pick: i + 1 }),
                 });
-                if (res.ok) onRefresh();
-                else toast.error("No key or failed");
+                if (res.ok) { toast.success("Chest opened"); onRefresh(); }
+                else { const b = await res.json().catch(() => ({})) as { error?: string }; toast.error(b.error === "no_key" ? `No ${tier} key` : "Could not open"); }
               }}
               style={{ padding: "10px", background: "#131519", border: `1px solid ${tierColor}`, borderRadius: 8, color: "#d1d5db", cursor: "pointer", textAlign: "left", fontSize: 12 }}>
               <div style={{ fontWeight: 600 }}>{opt.name}</div>
@@ -958,18 +967,18 @@ function ContentOverlay({ node, content, onEnterCombat, onTakeLoot, onRefresh, q
         <div style={{ display: "flex", gap: 8 }}>
           <button
             onClick={async () => {
-              const res = await fetch(`/api/quest/${questId}/dungeon/npc_choose`, {
+              const res = await fetch(`/api/quest/${questId}/dungeon/grid/npc`, {
                 method: "POST", credentials: "include", headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ pick: 1 }),
               });
-              if (res.ok) onRefresh();
+              if (res.ok) { toast.success("Accepted"); onRefresh(); }
             }}
             style={{ padding: "7px 14px", background: "#1a2e1a", border: "1px solid #166534", borderRadius: 6, color: "#86efac", cursor: "pointer" }}>
             Accept: {content.offer.name}
           </button>
           <button
             onClick={async () => {
-              const res = await fetch(`/api/quest/${questId}/dungeon/npc_choose`, {
+              const res = await fetch(`/api/quest/${questId}/dungeon/grid/npc`, {
                 method: "POST", credentials: "include", headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ pick: 0 }),
               });
@@ -989,11 +998,12 @@ function ContentOverlay({ node, content, onEnterCombat, onTakeLoot, onRefresh, q
           {content.stock.map((opt, i) => (
             <button key={i}
               onClick={async () => {
-                const res = await fetch(`/api/quest/${questId}/dungeon/merchant_choose`, {
+                const res = await fetch(`/api/quest/${questId}/dungeon/grid/merchant`, {
                   method: "POST", credentials: "include", headers: { "Content-Type": "application/json" },
                   body: JSON.stringify({ pick: i + 1 }),
                 });
-                if (res.ok) onRefresh();
+                if (res.ok) { toast.success("Purchased"); onRefresh(); }
+                else { const b = await res.json().catch(() => ({})) as { error?: string }; toast.error(b.error === "insufficient_gold" ? "Not enough gold" : "Could not buy"); }
               }}
               style={lootBtn}>
               <div style={{ fontWeight: 600 }}>{opt.name}</div>
