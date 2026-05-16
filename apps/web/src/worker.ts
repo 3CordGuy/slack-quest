@@ -5272,14 +5272,16 @@ async function buildInitialCombatState(
     return { ok: false, reason: "unsupported_variant", detail: variant };
   }
   if (variant === "dungeon") {
-    // Grid dungeons: check the current graph node's content kind. Legacy
-    // expedition dungeons: check the current expedition node's type.
+    // Grid dungeons: check the current graph node's content.kind.
+    // Legacy AI-graph dungeons: check the current graph node's encounter field.
+    // Legacy expedition dungeons: check the current expedition node's type.
     const graph = quest.scene.graph;
     const exp = quest.scene.expedition;
     if (graph) {
       const node = graph.nodes[graph.current];
       const kind = node?.content?.kind;
-      if (kind !== "encounter" && kind !== "boss") {
+      const hasLegacyEncounter = !!(node?.encounter && !node.encounter.cleared);
+      if (kind !== "encounter" && kind !== "boss" && !hasLegacyEncounter) {
         return { ok: false, reason: "non_combat_room", detail: kind ?? "missing" };
       }
     } else if (exp) {

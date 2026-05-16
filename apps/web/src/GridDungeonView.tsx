@@ -85,6 +85,10 @@ interface GridNode {
   x?: number;
   y?: number;
   visited: boolean;
+  // Legacy AI-graph dungeons (pre-grid) populate `encounter` instead of
+  // `content`. Tracked here so we can render Engage / monster overlay for
+  // legacy in-flight quests.
+  encounter?: { monsters: MonsterSpec[]; cleared: boolean };
 }
 
 interface GridGraph {
@@ -581,9 +585,16 @@ export function GridDungeonView({
   const graph = scene.graph!;
   const currentNode = graph.nodes[graph.current];
   const content = currentNode.content;
+  // Legacy AI-graph dungeons (pre-grid) don't have node.content but DO have
+  // node.encounter with the same monster info. Synthesize content from it so
+  // the rest of the view (Engage button, monster overlay, etc.) works on
+  // legacy quests without crashing.
+  const legacyEncounter = !content && currentNode.encounter && !currentNode.encounter.cleared
+    ? currentNode.encounter
+    : null;
   const isBoss = content?.kind === "boss";
-  const isCombatRoom = content?.kind === "encounter" || content?.kind === "boss";
-  const monsterAlive = isCombatRoom && !(content as { cleared: boolean }).cleared;
+  const isCombatRoom = content?.kind === "encounter" || content?.kind === "boss" || !!legacyEncounter;
+  const monsterAlive = isCombatRoom && (legacyEncounter ? true : !(content as { cleared: boolean }).cleared);
 
   const [combatActive, setCombatActive] = useState(hasWebCombat && monsterAlive);
   const [ws, dispatch] = useReducer(wsReducer, { connection: "connecting" as const, state: null, log: [], outcome: null });
@@ -1128,33 +1139,40 @@ function ContentOverlay({ node, content, onEnterCombat, onTakeLoot, onTakeKey, o
   onEnterCombat: () => void; onTakeLoot: (idx: number) => void; onTakeKey: () => void;
   onRefresh: () => void; questId: number;
 }) {
-  if (!content) return null;
-  if (content.kind === "empty" || content.kind === "entry") return null;
+  // Legacy AI-graph fallback: synthesise an encounter content from the
+  // node.encounter field so legacy quests still see the Engage panel.
+  const effectiveContent: GridRoomContent | undefined = content
+    ?? (node.encounter && !node.encounter.cleared
+      ? { kind: "encounter" as const, monsters: node.encounter.monsters, cleared: false }
+      : undefined);
+  if (!effectiveContent) return null;
+  if (effectiveContent.kind === "empty" || effectiveContent.kind === "entry") return null;
+  const c = effectiveContent;
 
-  if ((content.kind === "encounter" || content.kind === "boss") && !content.cleared) {
-    const m = content.monsters[0];
+  if ((c.kind === "encounter" || c.kind === "boss") && !c.cleared) {
+    const m = c.monsters[0];
     if (!m) return null;
     return (
-      <div style={{ background: content.kind === "boss" ? "rgba(80,10,10,0.95)" : "rgba(10,11,14,0.95)", borderTop: `1px solid ${content.kind === "boss" ? "#7f1d1d" : "#1e2028"}`, padding: "12px 16px", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+      <div style={{ background: c.kind === "boss" ? "rgba(80,10,10,0.95)" : "rgba(10,11,14,0.95)", borderTop: `1px solid ${c.kind === "boss" ? "#7f1d1d" : "#1e2028"}`, padding: "12px 16px", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
         <div>
-          <div style={{ fontSize: 13, fontWeight: 600, color: content.kind === "boss" ? "#fca5a5" : "#f5f5f5", fontFamily: DISPLAY_FONT }}>
-            {content.kind === "boss" && <Icon name="dragon-head" size={14} color="#fca5a5" />} {m.name}
+          <div style={{ fontSize: 13, fontWeight: 600, color: c.kind === "boss" ? "#fca5a5" : "#f5f5f5", fontFamily: DISPLAY_FONT }}>
+            {c.kind === "boss" && <Icon name="dragon-head" size={14} color="#fca5a5" />} {m.name}
           </div>
-          <HpBar current={m.hp} max={m.max_hp} color={content.kind === "boss" ? "#ef4444" : undefined} height={5} />
-          <div style={{ fontSize: 11, color: "#9aa0a6", marginTop: 2 }}>{m.hp}/{m.max_hp} HP{content.kind === "boss" ? " · BOSS" : ""}</div>
+          <HpBar current={m.hp} max={m.max_hp} color={c.kind === "boss" ? "#ef4444" : undefined} height={5} />
+          <div style={{ fontSize: 11, color: "#9aa0a6", marginTop: 2 }}>{m.hp}/{m.max_hp} HP{c.kind === "boss" ? " · BOSS" : ""}</div>
         </div>
-        <button onClick={onEnterCombat} style={{ padding: "8px 20px", background: content.kind === "boss" ? "#7f1d1d" : "#b89b3a", border: `1px solid ${content.kind === "boss" ? "#991b1b" : "#c4a35a"}`, borderRadius: 8, color: content.kind === "boss" ? "#fca5a5" : "#0e0f12", fontSize: 13, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap", display: "flex", alignItems: "center", gap: 6 }}>
+        <button onClick={onEnterCombat} style={{ padding: "8px 20px", background: c.kind === "boss" ? "#7f1d1d" : "#b89b3a", border: `1px solid ${c.kind === "boss" ? "#991b1b" : "#c4a35a"}`, borderRadius: 8, color: c.kind === "boss" ? "#fca5a5" : "#0e0f12", fontSize: 13, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap", display: "flex", alignItems: "center", gap: 6 }}>
           <Icon name="sword" size={14} /> Engage
         </button>
       </div>
     );
   }
 
-  if (content.kind === "loot" && !content.taken) {
+  if (c.kind === "loot" && !c.taken) {
     return (
       <OverlayPanel title="Found items">
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: 8 }}>
-          {content.items.map((opt, i) => (
+          {c.items.map((opt, i) => (
             <button key={i} onClick={() => onTakeLoot(i)} style={lootBtn}>
               <div style={{ fontWeight: 600, marginBottom: 2 }}>{opt.name}</div>
               <div style={{ fontSize: 11, color: "#9aa0a6" }}>power {opt.power} · {opt.rarity}</div>
@@ -1165,24 +1183,24 @@ function ContentOverlay({ node, content, onEnterCombat, onTakeLoot, onTakeKey, o
     );
   }
 
-  if (content.kind === "key_pickup" && !content.taken) {
-    const tierColor = content.tier === "gold" ? "#fbbf24" : content.tier === "silver" ? "#d1d5db" : "#b45309";
+  if (c.kind === "key_pickup" && !c.taken) {
+    const tierColor = c.tier === "gold" ? "#fbbf24" : c.tier === "silver" ? "#d1d5db" : "#b45309";
     return (
-      <OverlayPanel title={`A ${content.tier} key`}>
+      <OverlayPanel title={`A ${c.tier} key`}>
         <button
           onClick={onTakeKey}
           style={{ padding: "10px 14px", background: "#131519", border: `1px solid ${tierColor}`, borderRadius: 8, color: tierColor, cursor: "pointer", display: "flex", alignItems: "center", gap: 8, fontSize: 13 }}>
-          <Icon name="key" color={tierColor} /> Take the {content.tier} key
+          <Icon name="key" color={tierColor} /> Take the {c.tier} key
         </button>
       </OverlayPanel>
     );
   }
 
-  if (content.kind === "trap" && !content.resolved) {
+  if (c.kind === "trap" && !c.resolved) {
     return (
       <OverlayPanel title="A trap is set">
         <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-          {content.choices.map((c, i) => (
+          {c.choices.map((tc, i) => (
             <button key={i}
               onClick={async () => {
                 const res = await fetch(`/api/quest/${questId}/dungeon/grid/trap`, {
@@ -1191,15 +1209,15 @@ function ContentOverlay({ node, content, onEnterCombat, onTakeLoot, onTakeKey, o
                 });
                 if (res.ok) {
                   const b = await res.json() as { success: boolean; roll: number; total: number; dc: number; damage: number };
-                  toast(`${c.skill.toUpperCase()}: ${b.roll} → ${b.total} vs DC ${b.dc} — ${b.success ? "passed" : `failed (-${b.damage} HP)`}`);
+                  toast(`${tc.skill.toUpperCase()}: ${b.roll} → ${b.total} vs DC ${b.dc} — ${b.success ? "passed" : `failed (-${b.damage} HP)`}`);
                   onRefresh();
                 } else toast.error("Trap choice failed");
               }}
               style={{ padding: "10px 14px", background: "#131519", border: "1px solid #2a2d33", borderRadius: 8, color: "#d1d5db", cursor: "pointer", textAlign: "left", fontSize: 12, display: "flex", alignItems: "center", gap: 10 }}>
-              <span style={{ fontSize: 18 }}>{c.emoji}</span>
+              <span style={{ fontSize: 18 }}>{tc.emoji}</span>
               <div>
-                <div style={{ fontWeight: 600 }}>{c.text}</div>
-                <div style={{ fontSize: 11, color: "#9aa0a6" }}>{c.skill.toUpperCase()} check — {c.fail_damage} dmg on fail</div>
+                <div style={{ fontWeight: 600 }}>{tc.text}</div>
+                <div style={{ fontSize: 11, color: "#9aa0a6" }}>{tc.skill.toUpperCase()} check — {tc.fail_damage} dmg on fail</div>
               </div>
             </button>
           ))}
@@ -1208,13 +1226,13 @@ function ContentOverlay({ node, content, onEnterCombat, onTakeLoot, onTakeKey, o
     );
   }
 
-  if (content.kind === "lockbox" && !content.resolved) {
-    const tier = content.lock_tier;
+  if (c.kind === "lockbox" && !c.resolved) {
+    const tier = c.lock_tier;
     const tierColor = tier === "gold" ? "#fbbf24" : tier === "silver" ? "#d1d5db" : "#b45309";
     return (
       <OverlayPanel title={`Locked chest — needs ${tier} key`}>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: 8 }}>
-          {content.options.map((opt, i) => (
+          {c.options.map((opt, i) => (
             <button key={i}
               onClick={async () => {
                 const res = await fetch(`/api/quest/${questId}/dungeon/grid/lockbox`, {
@@ -1234,10 +1252,10 @@ function ContentOverlay({ node, content, onEnterCombat, onTakeLoot, onTakeKey, o
     );
   }
 
-  if (content.kind === "npc" && !content.resolved) {
+  if (c.kind === "npc" && !c.resolved) {
     return (
       <OverlayPanel title="A traveler">
-        <p style={{ fontSize: 13, color: "#d1d5db", fontStyle: "italic", margin: "0 0 10px" }}>{content.greeting}</p>
+        <p style={{ fontSize: 13, color: "#d1d5db", fontStyle: "italic", margin: "0 0 10px" }}>{c.greeting}</p>
         <div style={{ display: "flex", gap: 8 }}>
           <button
             onClick={async () => {
@@ -1248,7 +1266,7 @@ function ContentOverlay({ node, content, onEnterCombat, onTakeLoot, onTakeKey, o
               if (res.ok) { toast.success("Accepted"); onRefresh(); }
             }}
             style={{ padding: "7px 14px", background: "#1a2e1a", border: "1px solid #166534", borderRadius: 6, color: "#86efac", cursor: "pointer" }}>
-            Accept: {content.offer.name}
+            Accept: {c.offer.name}
           </button>
           <button
             onClick={async () => {
@@ -1264,12 +1282,12 @@ function ContentOverlay({ node, content, onEnterCombat, onTakeLoot, onTakeKey, o
     );
   }
 
-  if (content.kind === "merchant" && !content.resolved) {
+  if (c.kind === "merchant" && !c.resolved) {
     return (
       <OverlayPanel title="Merchant">
-        <p style={{ fontSize: 13, color: "#d1d5db", fontStyle: "italic", margin: "0 0 10px" }}>{content.greeting}</p>
+        <p style={{ fontSize: 13, color: "#d1d5db", fontStyle: "italic", margin: "0 0 10px" }}>{c.greeting}</p>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: 8 }}>
-          {content.stock.map((opt, i) => (
+          {c.stock.map((opt, i) => (
             <button key={i}
               onClick={async () => {
                 const res = await fetch(`/api/quest/${questId}/dungeon/grid/merchant`, {
