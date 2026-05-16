@@ -875,7 +875,7 @@ export const VIEW_ART_PROMPTS = {
   merchant_portrait_3:
     "Three-quarter view portrait of a scroll-and-book merchant in long indigo robes covered in pinned bookmarks and ribboned page markers. A heavy ledger in one arm, a quill behind the ear. Pince-nez glasses, neat goatee. Bookshelves with stacked tomes visible behind. Polite, professorial smile. Single figure, candlelight.",
   merchant_portrait_4:
-    "Three-quarter view portrait of a weapons dealer with a leather-strapped chest harness displaying a row of small mechanical-magical daggers. Bandolier of vials across the chest. One steel-blue eye, one mechanical brass eyepiece. Mischievous grin. Single figure, dim torchlit alcove, weapon racks blurred behind.",
+    "Three-quarter view portrait of a relic merchant in a long traveling coat with many pockets. A bandolier of glass vials across the chest, a worn leather satchel at the hip stuffed with curios. One steel-blue eye, one polished brass monocle. Mischievous knowing grin. Single figure, dim torchlit alcove, blurred shelves of curios behind.",
   merchant_portrait_5:
     "Three-quarter view portrait of a potion vendor in a stained earth-toned apron over a green tunic. Holds a stoppered glass vial up to the light, examining it. Bundles of dried herbs around the neck, a leather harness of small bottles across the chest. Kindly weathered face, easy smile. Single figure, soft amber light from hanging lanterns.",
 
