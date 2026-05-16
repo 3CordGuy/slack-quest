@@ -1,4 +1,5 @@
 import { Component, useEffect, useRef, useState } from "react";
+import { DndContext, DragOverlay, useDraggable, useDroppable, type DragEndEvent, type DragStartEvent } from "@dnd-kit/core";
 import type { ErrorInfo, ReactNode } from "react";
 import toast from "react-hot-toast";
 import {
@@ -4329,6 +4330,147 @@ function InventoryCard({
   );
 }
 
+// ── dnd-kit sub-components for InventoryFullScreen ──────────────────────────
+
+function DollSlotCell({
+  slot, item, isHighlighted, isSelected, onSlotClick, onItemClick,
+}: {
+  slot: EquipSlot; item: Item | undefined;
+  isHighlighted: boolean; isSelected: boolean;
+  onSlotClick: (slot: EquipSlot) => void;
+  onItemClick: (itemId: number) => void;
+}) {
+  const { setNodeRef: setDropRef, isOver } = useDroppable({ id: `drop-slot-${slot}`, data: { slot } });
+  const { attributes, listeners, setNodeRef: setDragRef, isDragging } = useDraggable({
+    id: item ? `doll-item-${item.id}` : `empty-slot-${slot}`,
+    data: item ? { itemId: item.id, equipped: true } : undefined,
+    disabled: !item,
+  });
+  const mergeRef = (el: HTMLElement | null) => { setDropRef(el); setDragRef(el); };
+  const S = 96;
+  const label = SLOT_LABELS[slot];
+  if (item) {
+    const rc = RARITY_COLOR[item.rarity];
+    return (
+      <div ref={mergeRef} {...listeners} {...attributes}
+        onClick={() => onItemClick(item.id)} title={item.item_name}
+        style={{
+          width: S, height: S, background: isSelected ? "#1e1c2e" : isOver ? "#151d2e" : "#1d1f23",
+          border: `2px solid ${isOver ? "#7dd3fc" : isSelected ? "#fff" : "#b89b3a"}`,
+          borderRadius: 10, cursor: "grab", position: "relative",
+          display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 3,
+          opacity: isDragging ? 0.35 : 1, transition: "border-color 0.15s, background 0.15s",
+          touchAction: "none",
+        }}
+      >
+        <div style={{ position: "absolute", top: 4, left: 4, background: "#b89b3a", color: "#000", borderRadius: 3, fontSize: 8, fontWeight: 800, padding: "1px 3px", lineHeight: 1 }}>E</div>
+        <Icon name={itemIcon(item)} size={38} color={itemIconColor(item) ?? rc} />
+        <div style={{ fontSize: 10, color: "#9ca3af", textAlign: "center", lineHeight: 1.1, maxWidth: S - 10, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", padding: "0 4px" }}>{item.item_name}</div>
+      </div>
+    );
+  }
+  return (
+    <div ref={setDropRef} onClick={() => onSlotClick(slot)} title={`${label} — empty`}
+      style={{
+        width: S, height: S, background: isOver ? "#151d2e" : "#141618",
+        border: isOver ? "2px solid #7dd3fc88" : isHighlighted ? "2px solid #c084fc55" : "2px dashed #1e2128",
+        borderRadius: 10, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 4,
+        cursor: "pointer", transition: "border-color 0.15s, background 0.15s",
+      }}
+    >
+      <Icon name={SLOT_ICON[slot]} size={30}
+        color={isOver ? "#7dd3fc55" : isHighlighted ? "#c084fc66" : "#2e3440"}
+        style={slot === "main_hand" ? { transform: "scaleX(-1)" } : undefined}
+      />
+      <div style={{ fontSize: 11, color: isOver ? "#7dd3fc88" : isHighlighted ? "#c084fc88" : "#374151", textAlign: "center", lineHeight: 1.2 }}>{label}</div>
+    </div>
+  );
+}
+
+function DroppablePackPanel({ children }: { children: React.ReactNode }) {
+  const { setNodeRef, isOver } = useDroppable({ id: "pack-drop-zone" });
+  return (
+    <div ref={setNodeRef} style={{
+      flex: 1, overflowY: "auto", padding: 18,
+      outline: isOver ? "2px dashed #7dd3fc44" : "2px dashed transparent",
+      outlineOffset: -6, borderRadius: 8, transition: "outline-color 0.15s",
+    }}>
+      {children}
+    </div>
+  );
+}
+
+function DraggablePackItem({
+  item, isSelected, isMatch, viewMode, onSelect,
+}: {
+  item: Item; isSelected: boolean; isMatch: boolean;
+  viewMode: "grid" | "list"; onSelect: () => void;
+}) {
+  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
+    id: `pack-item-${item.id}`,
+    data: { itemId: item.id, equipped: false, itemSlot: item.slot },
+  });
+  const rc = RARITY_COLOR[item.rarity];
+  const sellPrice = sellPriceFor(item.item_type, item.rarity, { power: item.power, sharpens_count: item.sharpens_count });
+  if (viewMode === "list") {
+    return (
+      <div ref={setNodeRef} {...listeners} {...attributes} onClick={onSelect}
+        style={{
+          display: "flex", alignItems: "center", gap: 10, padding: "8px 10px",
+          borderRadius: 8, background: isSelected ? "#1e1c2e" : "#1d1f23",
+          border: `1px solid ${isSelected ? "#fff" : isMatch ? "#c084fc" : "#2a2d33"}`,
+          cursor: isDragging ? "grabbing" : "grab", opacity: isDragging ? 0.35 : 1,
+          transition: "background 0.1s", boxShadow: isMatch ? "0 0 6px #c084fc33" : undefined,
+          touchAction: "none",
+        }}
+      >
+        <Icon name={itemIcon(item)} size={20} color={itemIconColor(item) ?? rc} />
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 13, fontWeight: 600, color: "#f5f5f5", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{item.item_name}</div>
+          <div style={{ fontSize: 10, color: "#6b7280", marginTop: 1 }}>
+            {slotLabel(item)}{item.stat_bonus && statBonusSummary(item.stat_bonus) ? ` · ${statBonusSummary(item.stat_bonus)}` : ""}
+          </div>
+        </div>
+        <span style={{ ...smallBadge, borderColor: `${rc}55`, color: rc, background: `${rc}15`, flexShrink: 0 }}>{item.rarity}</span>
+        <span style={{ fontSize: 11, color: rc, fontWeight: 600, flexShrink: 0, minWidth: 30, textAlign: "right" }}>+{item.power}</span>
+        <span style={{ fontSize: 11, color: "#fbbf24", flexShrink: 0, minWidth: 28, textAlign: "right" }}>{sellPrice}g</span>
+      </div>
+    );
+  }
+  return (
+    <div ref={setNodeRef} {...listeners} {...attributes} onClick={onSelect}
+      style={{
+        background: isSelected ? "#1e1c2e" : "#1d1f23",
+        border: `2px solid ${isSelected ? "#fff" : isMatch ? "#c084fc" : `${rc}99`}`,
+        borderRadius: 10, padding: "10px 8px 8px",
+        cursor: isDragging ? "grabbing" : "grab", textAlign: "center",
+        opacity: isDragging ? 0.35 : 1,
+        boxShadow: isMatch ? "0 0 8px #c084fc44" : isSelected ? `0 0 0 1px ${rc}66` : undefined,
+        transition: "border-color 0.1s, background 0.1s", touchAction: "none",
+      }}
+    >
+      <Icon name={itemIcon(item)} size={40} color={itemIconColor(item) ?? rc} />
+      <div style={{ marginTop: 6, fontSize: 10, fontWeight: 600, color: "#e2e8f0", lineHeight: 1.3, wordBreak: "break-word" }}>{item.item_name}</div>
+      <div style={{ marginTop: 3, fontSize: 10, color: rc, fontWeight: 600 }}>+{item.power}</div>
+      <div style={{ fontSize: 9, color: "#6b7280", marginTop: 1 }}>{slotLabel(item)}</div>
+      {item.stat_bonus && statBonusSummary(item.stat_bonus) && (
+        <div style={{ fontSize: 8, color: "#86efac", marginTop: 1 }}>{statBonusSummary(item.stat_bonus)}</div>
+      )}
+      <div style={{ fontSize: 9, color: "#fbbf24", marginTop: 2 }}>{sellPrice}g</div>
+    </div>
+  );
+}
+
+function DragItemPreview({ item }: { item: Item }) {
+  const rc = RARITY_COLOR[item.rarity];
+  return (
+    <div style={{ width: 80, background: "#1d1f23", border: `2px solid ${rc}`, borderRadius: 10, padding: "8px 6px 6px", textAlign: "center", boxShadow: "0 8px 24px rgba(0,0,0,0.7)", opacity: 0.95 }}>
+      <Icon name={itemIcon(item)} size={32} color={itemIconColor(item) ?? rc} />
+      <div style={{ marginTop: 5, fontSize: 9, fontWeight: 600, color: "#e2e8f0", lineHeight: 1.3, wordBreak: "break-word" }}>{item.item_name}</div>
+    </div>
+  );
+}
+
 function InventoryFullScreen({
   items,
   inQuest,
@@ -4365,8 +4507,10 @@ function InventoryFullScreen({
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const selected = selectedId != null ? items.find((i) => i.id === selectedId) ?? null : null;
   const [highlightSlot, setHighlightSlot] = useState<EquipSlot | null>(null);
+  const [activeItemId, setActiveItemId] = useState<number | null>(null);
+  const activeItem = activeItemId != null ? items.find((i) => i.id === activeItemId) ?? null : null;
 
-  function equippedForSlotFS(slot: EquipSlot): Item | undefined {
+  function equippedForSlot(slot: EquipSlot): Item | undefined {
     return items.find((i) => i.equipped && (
       i.slot === slot
       || (slot === "main_hand" && !i.slot && i.item_type === "weapon")
@@ -4374,52 +4518,23 @@ function InventoryFullScreen({
     ));
   }
 
-  function renderDollSlotLarge(slot: EquipSlot) {
-    const item = equippedForSlotFS(slot);
-    const isHighlighted = highlightSlot === slot;
-    const label = SLOT_LABELS[slot];
-    const S = 96;
-    if (item) {
-      const rc = RARITY_COLOR[item.rarity];
-      const isSelected = selectedId === item.id;
-      return (
-        <div key={slot} style={{ position: "relative" }}>
-          <div
-            onClick={() => setSelectedId(isSelected ? null : item.id)}
-            title={item.item_name}
-            style={{
-              width: S, height: S,
-              background: isSelected ? "#1e1c2e" : "#1d1f23",
-              border: `2px solid ${isSelected ? "#fff" : "#b89b3a"}`,
-              borderRadius: 10, cursor: "pointer", position: "relative",
-              display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 3,
-            }}
-          >
-            <div style={{ position: "absolute", top: 4, left: 4, background: "#b89b3a", color: "#000", borderRadius: 3, fontSize: 8, fontWeight: 800, padding: "1px 3px", lineHeight: 1 }}>E</div>
-            <Icon name={itemIcon(item)} size={38} color={itemIconColor(item) ?? rc} />
-            <div style={{ fontSize: 8, color: "#9ca3af", textAlign: "center", lineHeight: 1.1, maxWidth: S - 10, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", padding: "0 4px" }}>{item.item_name}</div>
-          </div>
-        </div>
-      );
+  function handleDragStart(event: DragStartEvent) {
+    const data = event.active.data.current as { itemId: number } | undefined;
+    if (data) setActiveItemId(data.itemId);
+  }
+
+  function handleDragEnd(event: DragEndEvent) {
+    setActiveItemId(null);
+    const { active, over } = event;
+    if (!over) return;
+    const data = active.data.current as { itemId: number; equipped: boolean } | undefined;
+    if (!data) return;
+    const overId = over.id.toString();
+    if (overId.startsWith("drop-slot-")) {
+      if (!data.equipped) onEquip(data.itemId);
+    } else if (overId === "pack-drop-zone" && data.equipped) {
+      onUnequip(data.itemId);
     }
-    return (
-      <div
-        key={slot}
-        onClick={() => setHighlightSlot(isHighlighted ? null : slot)}
-        title={`${label} — empty`}
-        style={{
-          width: S, height: S,
-          background: "#141618",
-          border: isHighlighted ? "2px solid #c084fc55" : "2px dashed #1e2128",
-          borderRadius: 10,
-          display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 4,
-          cursor: "pointer", transition: "border-color 0.15s",
-        }}
-      >
-        <Icon name={SLOT_ICON[slot]} size={30} color={isHighlighted ? "#c084fc66" : "#2e3440"} style={slot === "main_hand" ? { transform: "scaleX(-1)" } : undefined} />
-        <div style={{ fontSize: 9, color: isHighlighted ? "#c084fc88" : "#374151", textAlign: "center", lineHeight: 1.2 }}>{label}</div>
-      </div>
-    );
   }
 
   const SORT_LABELS: { key: InventorySort; label: string }[] = [
@@ -4460,9 +4575,7 @@ function InventoryFullScreen({
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
             {SORT_LABELS.map(({ key, label }) => (
-              <button
-                key={key}
-                onClick={() => setSort(key)}
+              <button key={key} onClick={() => setSort(key)}
                 style={{
                   background: sort === key ? "#2a2d3a" : "none",
                   color: sort === key ? "#c084fc" : "#6b7280",
@@ -4474,10 +4587,7 @@ function InventoryFullScreen({
             ))}
             <div style={{ width: 1, height: 16, background: "#2a2d33", margin: "0 2px" }} />
             {(["grid", "list"] as const).map((mode) => (
-              <button
-                key={mode}
-                onClick={() => changeViewMode(mode)}
-                title={mode === "grid" ? "Grid view" : "List view"}
+              <button key={mode} onClick={() => changeViewMode(mode)} title={mode === "grid" ? "Grid view" : "List view"}
                 style={{
                   background: viewMode === mode ? "#2a2d3a" : "none",
                   color: viewMode === mode ? "#7dd3fc" : "#6b7280",
@@ -4485,128 +4595,96 @@ function InventoryFullScreen({
                   borderRadius: 6, padding: "3px 8px", fontSize: 14,
                   cursor: "pointer", fontFamily: "inherit", lineHeight: 1,
                 }}
-              >
-                {mode === "grid" ? "⊞" : "☰"}
-              </button>
+              >{mode === "grid" ? "⊞" : "☰"}</button>
             ))}
-            <button
-              onClick={onClose}
-              style={{
-                background: "none", border: "1px solid #3a3d44", borderRadius: 6,
-                color: "#9ca3af", cursor: "pointer", padding: "4px 10px",
-                fontSize: 13, fontFamily: "inherit", marginLeft: 4,
-              }}
+            <button onClick={onClose}
+              style={{ background: "none", border: "1px solid #3a3d44", borderRadius: 6, color: "#9ca3af", cursor: "pointer", padding: "4px 10px", fontSize: 13, fontFamily: "inherit", marginLeft: 4 }}
             >✕</button>
           </div>
         </div>
-        {/* 3-panel body: paper doll | pack | detail */}
-        <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
-          {/* Left — paper doll */}
-          <div style={{ width: 340, flexShrink: 0, borderRight: "1px solid #2a2d33", overflowY: "auto", padding: "20px 16px", display: "flex", flexDirection: "column", alignItems: "center", gap: 12 }}>
-            <div style={{ ...muted, fontSize: 10, textTransform: "uppercase", letterSpacing: 1.5, alignSelf: "flex-start" }}>Equipped</div>
-            <div style={{ display: "flex", justifyContent: "center" }}>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 96px)", gap: 6 }}>
-                {([null, "helmet", null, "main_hand", "body", "off_hand", "amulet", "pants", "ring", null, "boots", null] as (EquipSlot | null)[]).map((s, i) =>
-                  s ? renderDollSlotLarge(s) : <div key={i} style={{ width: 96, height: 96 }} />
-                )}
-              </div>
-            </div>
-            {highlightSlot && (
-              <div style={{ fontSize: 11, color: "#c084fc88", marginTop: 4 }}>
-                Click a highlighted item in the pack to equip it in {SLOT_LABELS[highlightSlot]}
-              </div>
-            )}
-          </div>
 
-          {/* Center — pack */}
-          <div style={{ flex: 1, overflowY: "auto", padding: 18 }}>
-            <div style={{ ...muted, fontSize: 10, textTransform: "uppercase", letterSpacing: 1.5, marginBottom: 12 }}>
-              Pack {packItems.length > 0 ? `(${packItems.length})` : "(empty)"}
+        {/* 3-panel body with dnd context */}
+        <DndContext onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
+          <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
+            {/* Left — paper doll */}
+            <div style={{ width: 340, flexShrink: 0, borderRight: "1px solid #2a2d33", overflowY: "auto", padding: "20px 16px", display: "flex", flexDirection: "column", alignItems: "center", gap: 12 }}>
+              <div style={{ ...muted, fontSize: 10, textTransform: "uppercase", letterSpacing: 1.5, alignSelf: "flex-start" }}>Equipped — drag items here to equip</div>
+              <div style={{ display: "flex", justifyContent: "center" }}>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 96px)", gap: 6 }}>
+                  {([null, "helmet", null, "main_hand", "body", "off_hand", "amulet", "pants", "ring", null, "boots", null] as (EquipSlot | null)[]).map((s, i) =>
+                    s
+                      ? <DollSlotCell key={s} slot={s} item={equippedForSlot(s)}
+                          isHighlighted={highlightSlot === s} isSelected={selectedId === (equippedForSlot(s)?.id ?? -1)}
+                          onSlotClick={(sl) => setHighlightSlot(highlightSlot === sl ? null : sl)}
+                          onItemClick={(id) => setSelectedId(selectedId === id ? null : id)}
+                        />
+                      : <div key={i} style={{ width: 96, height: 96 }} />
+                  )}
+                </div>
+              </div>
+              {highlightSlot && (
+                <div style={{ fontSize: 11, color: "#c084fc88", marginTop: 4, textAlign: "center" }}>
+                  Drag or click a matching item to equip in {SLOT_LABELS[highlightSlot]}
+                </div>
+              )}
             </div>
-            {packItems.length === 0 ? (
-              <div style={{ color: "#374151", fontSize: 13, textAlign: "center", marginTop: 32 }}>Nothing in your pack</div>
-            ) : viewMode === "grid" ? (
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(110px, 1fr))", gap: 10 }}>
-                {packItems.map((item) => {
-                  const rc = RARITY_COLOR[item.rarity];
-                  const isSelected = selectedId === item.id;
-                  const isMatch = highlightSlot !== null && item.slot === highlightSlot;
-                  return (
-                    <div
-                      key={item.id}
-                      onClick={() => setSelectedId(isSelected ? null : item.id)}
-                      style={{
-                        background: isSelected ? "#1e1c2e" : "#1d1f23",
-                        border: `2px solid ${isSelected ? "#fff" : isMatch ? "#c084fc" : `${rc}99`}`,
-                        borderRadius: 10, padding: "10px 8px 8px",
-                        cursor: "pointer", textAlign: "center", position: "relative",
-                        boxShadow: isMatch ? "0 0 8px #c084fc44" : isSelected ? `0 0 0 1px ${rc}66` : undefined,
-                        transition: "border-color 0.1s, background 0.1s",
-                      }}
-                    >
-                      <Icon name={itemIcon(item)} size={40} color={itemIconColor(item) ?? rc} />
-                      <div style={{ marginTop: 6, fontSize: 10, fontWeight: 600, color: "#e2e8f0", lineHeight: 1.3, wordBreak: "break-word" }}>{item.item_name}</div>
-                      <div style={{ marginTop: 3, fontSize: 10, color: rc, fontWeight: 600 }}>+{item.power}</div>
-                      <div style={{ fontSize: 9, color: "#6b7280", marginTop: 1 }}>{slotLabel(item)}</div>
-                      {item.stat_bonus && statBonusSummary(item.stat_bonus) && (
-                        <div style={{ fontSize: 8, color: "#86efac", marginTop: 1 }}>{statBonusSummary(item.stat_bonus)}</div>
-                      )}
-                      <div style={{ fontSize: 9, color: "#fbbf24", marginTop: 2 }}>
-                        {sellPriceFor(item.item_type, item.rarity, { power: item.power, sharpens_count: item.sharpens_count })}g
-                      </div>
-                    </div>
-                  );
-                })}
+
+            {/* Center — pack */}
+            <DroppablePackPanel>
+              <div style={{ ...muted, fontSize: 10, textTransform: "uppercase", letterSpacing: 1.5, marginBottom: 12 }}>
+                Pack {packItems.length > 0 ? `(${packItems.length})` : "(empty)"} — drag equipped items here to unequip
+              </div>
+              {packItems.length === 0 ? (
+                <div style={{ color: "#374151", fontSize: 13, textAlign: "center", marginTop: 32 }}>Nothing in your pack</div>
+              ) : viewMode === "grid" ? (
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(110px, 1fr))", gap: 10 }}>
+                  {packItems.map((item) => (
+                    <DraggablePackItem key={item.id} item={item}
+                      isSelected={selectedId === item.id}
+                      isMatch={highlightSlot !== null && item.slot === highlightSlot}
+                      viewMode="grid"
+                      onSelect={() => setSelectedId(selectedId === item.id ? null : item.id)}
+                    />
+                  ))}
+                </div>
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+                  {packItems.map((item) => (
+                    <DraggablePackItem key={item.id} item={item}
+                      isSelected={selectedId === item.id}
+                      isMatch={highlightSlot !== null && item.slot === highlightSlot}
+                      viewMode="list"
+                      onSelect={() => setSelectedId(selectedId === item.id ? null : item.id)}
+                    />
+                  ))}
+                </div>
+              )}
+            </DroppablePackPanel>
+
+            {/* Right — detail pane */}
+            {selected ? (
+              <div style={{ width: 280, flexShrink: 0, borderLeft: "1px solid #2a2d33", overflowY: "auto", padding: 18 }}>
+                <ItemDetailPopover
+                  item={selected} inQuest={inQuest} selfId={selfId} characterLevel={characterLevel} inline
+                  onEquip={(id) => { onEquip(id); setSelectedId(null); }}
+                  onUnequip={(id) => { onUnequip(id); setSelectedId(null); }}
+                  onSell={(id) => { onSell(id); setSelectedId(null); }}
+                  onUse={(id) => { onUse(id); setSelectedId(null); }}
+                  onGive={(id, uid, name) => { onGive(id, uid, name); setSelectedId(null); }}
+                  onClose={() => setSelectedId(null)}
+                />
               </div>
             ) : (
-              <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
-                {packItems.map((item) => {
-                  const rc = RARITY_COLOR[item.rarity];
-                  const isSelected = selectedId === item.id;
-                  const isMatch = highlightSlot !== null && item.slot === highlightSlot;
-                  const sellPrice = sellPriceFor(item.item_type, item.rarity, { power: item.power, sharpens_count: item.sharpens_count });
-                  return (
-                    <div key={item.id} onClick={() => setSelectedId(isSelected ? null : item.id)} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 10px", borderRadius: 8, background: isSelected ? "#1e1c2e" : "#1d1f23", border: `1px solid ${isSelected ? "#fff" : isMatch ? "#c084fc" : "#2a2d33"}`, cursor: "pointer", transition: "background 0.1s", boxShadow: isMatch ? "0 0 6px #c084fc33" : undefined }}>
-                      <Icon name={itemIcon(item)} size={20} color={itemIconColor(item) ?? rc} />
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontSize: 13, fontWeight: 600, color: "#f5f5f5", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{item.item_name}</div>
-                        <div style={{ fontSize: 10, color: "#6b7280", marginTop: 1 }}>
-                          {slotLabel(item)}{item.stat_bonus && statBonusSummary(item.stat_bonus) ? ` · ${statBonusSummary(item.stat_bonus)}` : ""}
-                        </div>
-                      </div>
-                      <span style={{ ...smallBadge, borderColor: `${rc}55`, color: rc, background: `${rc}15`, flexShrink: 0 }}>{item.rarity}</span>
-                      <span style={{ fontSize: 11, color: rc, fontWeight: 600, flexShrink: 0, minWidth: 30, textAlign: "right" }}>+{item.power}</span>
-                      <span style={{ fontSize: 11, color: "#fbbf24", flexShrink: 0, minWidth: 28, textAlign: "right" }}>{sellPrice}g</span>
-                    </div>
-                  );
-                })}
+              <div style={{ width: 280, flexShrink: 0, borderLeft: "1px solid #2a2d33", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <div style={{ color: "#374151", fontSize: 12, textAlign: "center", padding: 16 }}>Select an item to view details</div>
               </div>
             )}
           </div>
 
-          {/* Right — detail pane */}
-          {selected ? (
-            <div style={{ width: 280, flexShrink: 0, borderLeft: "1px solid #2a2d33", overflowY: "auto", padding: 18 }}>
-              <ItemDetailPopover
-                item={selected}
-                inQuest={inQuest}
-                selfId={selfId}
-                characterLevel={characterLevel}
-                inline
-                onEquip={(id) => { onEquip(id); setSelectedId(null); }}
-                onUnequip={(id) => { onUnequip(id); setSelectedId(null); }}
-                onSell={(id) => { onSell(id); setSelectedId(null); }}
-                onUse={(id) => { onUse(id); setSelectedId(null); }}
-                onGive={(id, uid, name) => { onGive(id, uid, name); setSelectedId(null); }}
-                onClose={() => setSelectedId(null)}
-              />
-            </div>
-          ) : (
-            <div style={{ width: 280, flexShrink: 0, borderLeft: "1px solid #2a2d33", display: "flex", alignItems: "center", justifyContent: "center" }}>
-              <div style={{ color: "#374151", fontSize: 12, textAlign: "center", padding: 16 }}>Select an item to view details</div>
-            </div>
-          )}
-        </div>
+          <DragOverlay dropAnimation={null}>
+            {activeItem ? <DragItemPreview item={activeItem} /> : null}
+          </DragOverlay>
+        </DndContext>
       </div>
     </div>
   );
