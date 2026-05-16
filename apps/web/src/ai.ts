@@ -850,6 +850,35 @@ export const VIEW_ART_PROMPTS = {
   room_chamber_loot:
     "First-person view of a large open stone chamber that has been used as a storeroom. Wooden crates and barrels stacked against the walls, scattered items on a long table — vials, scrolls, a few weapons. Cluttered, abandoned.",
 
+  // ── NPC portraits (random pool) ───────────────────────────────────────────
+  // Generator picks one of these at random for each NPC room so dungeons
+  // don't all show the same person. Office-fantasy aesthetic — these are
+  // adventurers + engineers, not generic medieval villagers.
+  npc_portrait_1:
+    "Three-quarter view portrait of a weary senior engineer wearing leather-strapped robes and round spectacles. Holds a steaming ceramic mug of coffee in one hand and an unrolled scroll covered in code snippets in the other. Tied-back grey-streaked hair, kind crow's-feet eyes, scattered sticky notes pinned to the lapels of their coat. Single figure, warm lantern light, faint stone wall behind them. Friendly, knowing expression.",
+  npc_portrait_2:
+    "Three-quarter view portrait of a sharp-eyed project manager wearing fitted dark traveling clothes layered over a polished brigandine. A roll of burndown charts tucked under one arm, a quill behind one ear. Polished brass-rimmed monocle. Confident, slightly impatient smile. Single figure, warm interior light, blurred kanban-board glyphs behind them.",
+  npc_portrait_3:
+    "Three-quarter view portrait of a hooded fantasy consultant in deep blue robes embroidered with arcane terminal-command runes. Hood shadows the upper face; a sly knowing smile is visible. Carries a worn clipboard and a brass-tipped wand. Single figure, dim torchlight, mysterious atmosphere.",
+  npc_portrait_4:
+    "Three-quarter view portrait of an eager junior developer adventurer. Patchwork leather armor with brass buckles, a backpack stuffed with rolled scrolls of printout code, an ethernet-cord wrapped around their waist as a belt. Bright wide-eyed expression, a smudge of ink on their cheek. Single figure, warm daylight, faint stone hallway behind.",
+  npc_portrait_5:
+    "Three-quarter view portrait of a veteran SRE in dented plate armor partially covered by a server-room apron. Carries a heavy iron hammer at the hip and an oil-stained logbook in their hand. A pair of fiber-optic strands glow faintly along their pauldrons. Weathered, calm face. Single figure, dawn light, stoic mood.",
+  npc_portrait_6:
+    "Three-quarter view portrait of a tech-writer archivist in soft grey robes belted with a strap of pens and quills. A small leather satchel of bound books and parchments at their side. Wire-rimmed spectacles pushed up into curly hair. Kind, scholarly expression. Single figure, candlelit study atmosphere, faint shelves behind.",
+
+  // ── Merchant portraits (random pool) ──────────────────────────────────────
+  merchant_portrait_1:
+    "Three-quarter view portrait of a wandering trinket merchant in a colorful patchwork cloak hung with vials, charms, and small mechanical curios that dangle on copper chains. Wide friendly grin. Single figure, warm lantern light, a hint of a wooden stall behind them piled with goods.",
+  merchant_portrait_2:
+    "Three-quarter view portrait of an armor-smith merchant in a thick leather apron with welding goggles pushed up on their forehead. Soot-streaked arms, a heavy hammer at their belt. Stands in front of a small portable forge, sparks visible in the air. Confident, no-nonsense expression. Single figure, warm orange firelight.",
+  merchant_portrait_3:
+    "Three-quarter view portrait of a scroll-and-book merchant in long indigo robes covered in pinned bookmarks and ribboned page markers. A heavy ledger in one arm, a quill behind the ear. Pince-nez glasses, neat goatee. Bookshelves with stacked tomes visible behind. Polite, professorial smile. Single figure, candlelight.",
+  merchant_portrait_4:
+    "Three-quarter view portrait of a weapons dealer with a leather-strapped chest harness displaying a row of small mechanical-magical daggers. Bandolier of vials across the chest. One steel-blue eye, one mechanical brass eyepiece. Mischievous grin. Single figure, dim torchlit alcove, weapon racks blurred behind.",
+  merchant_portrait_5:
+    "Three-quarter view portrait of a potion vendor in a stained earth-toned apron over a green tunic. Holds a stoppered glass vial up to the light, examining it. Bundles of dried herbs around the neck, a leather harness of small bottles across the chest. Kindly weathered face, easy smile. Single figure, soft amber light from hanging lanterns.",
+
   // SPECIALS
   room_entry:
     "First-person view of a stone dungeon entryway. Heavy iron-bound doors are open behind the viewer (suggested by their long shadows on the floor), revealing a stone corridor extending forward. Natural daylight from the entrance mingles with torchlight from inside. The threshold between safety and adventure.",

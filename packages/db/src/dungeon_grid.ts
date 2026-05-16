@@ -171,6 +171,10 @@ export interface GridGenInputs {
   rollTrap(tier: number): TrapChoice[];
   npcGreeting(): string;
   merchantGreeting(): string;
+  // Returns the public URL of a pre-rendered NPC portrait, randomly picked
+  // from a pool. Optional so callers without an art pool can return null.
+  npcArtUrl?: () => string | null;
+  merchantArtUrl?: () => string | null;
   // Default flavor descriptions per content kind. Caller can rewrite with AI.
   describeRoom(kind: GridRoomContent["kind"], shape: string): string;
 }
@@ -250,6 +254,7 @@ export function generateGridDungeon(inputs: GridGenInputs): DungeonGraph {
         greeting: inputs.npcGreeting(),
         offer: offers[0],
         resolved: false,
+        art_url: inputs.npcArtUrl ? inputs.npcArtUrl() : null,
       });
     }
   }
@@ -261,6 +266,7 @@ export function generateGridDungeon(inputs: GridGenInputs): DungeonGraph {
         greeting: inputs.merchantGreeting(),
         stock: inputs.rollLoot(inputs.tier, "merchant"),
         resolved: false,
+        art_url: inputs.merchantArtUrl ? inputs.merchantArtUrl() : null,
       });
     }
   }

@@ -41,8 +41,8 @@ type GridRoomContent =
   | { kind: "key_pickup"; tier: KeyTier; taken: boolean }
   | { kind: "trap"; choices: TrapChoice[]; resolved: boolean }
   | { kind: "lockbox"; lock_tier: KeyTier; options: LootOption[]; resolved: boolean }
-  | { kind: "npc"; greeting: string; offer: LootOption; resolved: boolean }
-  | { kind: "merchant"; greeting: string; stock: LootOption[]; resolved: boolean };
+  | { kind: "npc"; greeting: string; offer: LootOption; resolved: boolean; art_url?: string | null }
+  | { kind: "merchant"; greeting: string; stock: LootOption[]; resolved: boolean; art_url?: string | null };
 
 interface GridNode {
   id: string;
@@ -263,8 +263,9 @@ function HpBar({ current, max, color, height = 6 }: { current: number; max: numb
   );
 }
 
-function PartyBar({ fighters, selfId, party }: {
+function PartyBar({ fighters, selfId, party, onClickSelf }: {
   fighters: Fighter[] | null; selfId: string; party: Character[];
+  onClickSelf?: () => void;
 }) {
   const seen = new Set<string>();
   type Member = { key: string; name: string; cls: string; hp: number; max_hp: number; mana: number; max_mana: number; shield: number; isSelf: boolean; isDead: boolean };
@@ -278,7 +279,10 @@ function PartyBar({ fighters, selfId, party }: {
   return (
     <div style={{ background: "rgba(10,11,14,0.96)", borderTop: "1px solid #1e2028", padding: "8px 12px", display: "flex", gap: 10, alignItems: "center", overflowX: "auto", flexShrink: 0 }}>
       {members.map((f) => (
-        <div key={f.key} style={{ display: "flex", alignItems: "center", gap: 8, background: f.isSelf ? "rgba(245,245,220,0.06)" : "transparent", border: f.isSelf ? "1px solid rgba(245,245,220,0.15)" : "1px solid transparent", borderRadius: 8, padding: "4px 8px", opacity: f.isDead ? 0.45 : 1, flexShrink: 0, minWidth: 140 }}>
+        <div key={f.key}
+          onClick={f.isSelf && onClickSelf ? onClickSelf : undefined}
+          title={f.isSelf && onClickSelf ? "Open inventory" : undefined}
+          style={{ display: "flex", alignItems: "center", gap: 8, background: f.isSelf ? "rgba(245,245,220,0.06)" : "transparent", border: f.isSelf ? "1px solid rgba(245,245,220,0.15)" : "1px solid transparent", borderRadius: 8, padding: "4px 8px", opacity: f.isDead ? 0.45 : 1, flexShrink: 0, minWidth: 140, cursor: f.isSelf && onClickSelf ? "pointer" : "default" }}>
           <Avatar src={charPortraitUrl(f.name)} fallbackSrc={classPortraitUrl(f.cls)} alt={f.name} size={36} radius={5} fallbackIcon="player" fallbackColor="#4a5568" border="1px solid #2a2d33" />
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontSize: 11, fontWeight: 600, color: "#e2e8f0", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{f.name}</div>
@@ -522,6 +526,14 @@ export function GridDungeonView({
   const [doorPrompt, setDoorPrompt] = useState<{ dir: DungeonDirection; door: GridDoor } | null>(null);
   const [moving, setMoving] = useState(false);
   const [contentBusy, setContentBusy] = useState(false);
+  const [items, setItems] = useState<UsableItem[]>([]);
+  const [inventoryOpen, setInventoryOpen] = useState(false);
+
+  async function loadItems() {
+    const res = await fetch("/api/inventory", { credentials: "include" });
+    if (res.ok) setItems(((await res.json()) as { items: UsableItem[] }).items);
+  }
+  useEffect(() => { void loadItems(); }, []);
 
   useEffect(() => { autoResolveRef.current = autoResolve; }, [autoResolve]);
 
@@ -550,6 +562,7 @@ export function GridDungeonView({
           dispatch({ kind: "state", value: normalised });
         } else if (msg.type === "events" && msg.events) {
           dispatch({ kind: "events", value: msg.events });
+          if (msg.events.some((e) => e.type === "item_used")) void loadItems();
         } else if (msg.type === "outcome" && msg.outcome) {
           dispatch({ kind: "outcome", value: msg.outcome });
         }
@@ -793,11 +806,27 @@ export function GridDungeonView({
           log={ws.log}
           myTurn={myTurn}
           isMonsterTurn={isMonsterTurn}
+          items={items}
         />
       )}
 
-      {/* Party bar */}
-      <PartyBar fighters={combatActive ? (combatState?.fighters ?? null) : null} selfId={selfId} party={party.length > 0 ? party : [character]} />
+      {/* Party bar — click self to open inventory */}
+      <PartyBar
+        fighters={combatActive ? (combatState?.fighters ?? null) : null}
+        selfId={selfId}
+        party={party.length > 0 ? party : [character]}
+        onClickSelf={() => setInventoryOpen(true)}
+      />
+
+      {/* Inventory modal */}
+      {inventoryOpen && (
+        <InventoryModal
+          character={character}
+          items={items}
+          onClose={() => setInventoryOpen(false)}
+          onChange={() => void loadItems()}
+        />
+      )}
     </div>
   );
 }
@@ -867,6 +896,38 @@ function ContentFigureOverlay({ content }: { content: GridRoomContent }) {
           </div>
         </div>
         <HpBar current={m.hp} max={m.max_hp} color={isBoss ? "#ef4444" : undefined} height={5} />
+      </div>
+    );
+  }
+
+  // NPCs and merchants with a generated portrait render as an actual figure
+  // overlay so the player sees a real person in the scene.
+  if ((content.kind === "npc" || content.kind === "merchant") && content.art_url) {
+    const isMerchant = content.kind === "merchant";
+    const borderColor = isMerchant ? "#fcd34d" : "#fef3c7";
+    const label = isMerchant ? "Merchant" : "A traveler";
+    return (
+      <div style={{
+        position: "absolute",
+        top: "50%",
+        left: "50%",
+        transform: "translate(-50%, -55%)",
+        background: "rgba(10,11,14,0.88)",
+        border: `2px solid ${borderColor}`,
+        borderRadius: 12,
+        padding: "8px 10px 10px",
+        width: 200,
+        backdropFilter: "blur(8px)",
+        boxShadow: `0 0 28px ${borderColor}40`,
+        pointerEvents: "none",
+      }}>
+        <img src={content.art_url} alt={label} style={{
+          width: "100%", height: 180, objectFit: "cover",
+          borderRadius: 8, display: "block",
+        }} />
+        <div style={{ fontFamily: DISPLAY_FONT, fontSize: 15, fontWeight: 700, color: borderColor, textAlign: "center", marginTop: 6, letterSpacing: 1 }}>
+          {label}
+        </div>
       </div>
     );
   }
@@ -1146,16 +1207,29 @@ function ContentOverlay({ node, content, onEnterCombat, onTakeLoot, onTakeKey, o
   return null;
 }
 
-function CombatPanel({ state, selfId, onSend, autoResolve, setAutoResolve, log, myTurn, isMonsterTurn }: {
+interface UsableItem {
+  id: number;
+  item_name: string;
+  item_type: string;
+  power: number;
+  equipped: boolean;
+}
+
+function CombatPanel({ state, selfId, onSend, autoResolve, setAutoResolve, log, myTurn, isMonsterTurn, items }: {
   state: CombatState; selfId: string;
   onSend: (a: TurnAction) => boolean;
   autoResolve: boolean; setAutoResolve: (b: boolean) => void;
   log: LogEntry[]; myTurn: boolean; isMonsterTurn: boolean;
+  items: UsableItem[];
 }) {
   const me = state.fighters.find((f) => f.id === selfId);
   const mana = me?.mana ?? 0;
+  const myPos = me?.position ?? "front";
   const liveMonsters = state.monsters.filter((m) => m.hp > 0);
   const target = liveMonsters[0]?.id ?? null;
+  const [picking, setPicking] = useState<"heal" | "shield" | null>(null);
+  const [itemOpen, setItemOpen] = useState(false);
+  const usable = items.filter((it) => !it.equipped && ["consumable", "magic", "revive"].includes(it.item_type));
 
   return (
     <div style={{ background: "rgba(10,11,14,0.97)", borderTop: "1px solid #1e2028", flexShrink: 0, overflow: "hidden" }}>
@@ -1164,12 +1238,48 @@ function CombatPanel({ state, selfId, onSend, autoResolve, setAutoResolve, log, 
           <div key={e.id} style={{ fontSize: 12, color: e.tone === "good" ? "#86efac" : e.tone === "bad" ? "#fca5a5" : e.tone === "info" ? "#93c5fd" : "#9aa0a6" }}>{e.text}</div>
         ))}
       </div>
+
+      {/* Inline target picker for heal/shield */}
+      {picking && myTurn && (
+        <div style={{ padding: "6px 10px 4px", display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", borderTop: "1px solid #1a1c21" }}>
+          <span style={{ fontSize: 11, color: "#9aa0a6" }}>{picking === "heal" ? "Heal who?" : "Shield who?"}</span>
+          {state.fighters.filter((f) => f.hp > 0).map((f) => (
+            <button key={f.id}
+              onClick={() => { onSend({ kind: picking, actor: selfId, target: f.id }); setPicking(null); }}
+              style={{ padding: "3px 10px", background: "#1a2e1a", border: "1px solid #166534", borderRadius: 5, color: "#86efac", fontSize: 11, cursor: "pointer" }}>
+              {f.name.split(" ")[0]} {f.hp}/{f.max_hp}
+            </button>
+          ))}
+          <button onClick={() => setPicking(null)} style={{ padding: "3px 8px", background: "none", border: "1px solid #2a2d33", borderRadius: 5, color: "#9aa0a6", fontSize: 11, cursor: "pointer" }}>✕</button>
+        </div>
+      )}
+
+      {/* Inline item picker */}
+      {itemOpen && myTurn && (
+        <div style={{ padding: "6px 10px 4px", display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", borderTop: "1px solid #1a1c21" }}>
+          <span style={{ fontSize: 11, color: "#9aa0a6" }}>Use item:</span>
+          {usable.length === 0 && <span style={{ fontSize: 11, color: "#4a5568" }}>No usable items</span>}
+          {usable.map((it) => (
+            <button key={it.id}
+              onClick={() => { onSend({ kind: "use_item", actor: selfId, item_id: it.id }); setItemOpen(false); }}
+              style={{ padding: "3px 10px", background: "#1a1529", border: "1px solid #4c1d95", borderRadius: 5, color: "#c4b5fd", fontSize: 11, cursor: "pointer" }}>
+              {it.item_name}
+            </button>
+          ))}
+          <button onClick={() => setItemOpen(false)} style={{ padding: "3px 8px", background: "none", border: "1px solid #2a2d33", borderRadius: 5, color: "#9aa0a6", fontSize: 11, cursor: "pointer" }}>✕</button>
+        </div>
+      )}
+
       <div style={{ padding: "6px 10px 8px", display: "flex", gap: 5, flexWrap: "wrap", borderTop: "1px solid #1a1c21" }}>
         {myTurn && (
           <>
             <CBtn label="Attack" color="#b89b3a" onClick={() => onSend({ kind: "attack", actor: selfId, target_id: target })} />
             <CBtn label="Cast" color="#818cf8" disabled={mana < 1} onClick={() => onSend({ kind: "cast", actor: selfId, target_id: target })} />
             <CBtn label="Signature" color="#a78bfa" disabled={mana < 2} onClick={() => onSend({ kind: "signature", actor: selfId, target_id: target })} />
+            <CBtn label="Heal" color="#22c55e" disabled={mana < 1} onClick={() => { setPicking("heal"); setItemOpen(false); }} />
+            <CBtn label="Shield" color="#60a5fa" disabled={mana < 1} onClick={() => { setPicking("shield"); setItemOpen(false); }} />
+            <CBtn label={myPos === "front" ? "→ Back" : "→ Front"} color="#6b7280" onClick={() => onSend({ kind: "position", actor: selfId, to: myPos === "front" ? "back" : "front" })} />
+            <CBtn label="Item" color="#c084fc" disabled={usable.length === 0} onClick={() => { setItemOpen((o) => !o); setPicking(null); }} />
             <CBtn label="Flee" color="#4b5563" onClick={() => onSend({ kind: "flee", actor: selfId })} />
           </>
         )}
@@ -1206,3 +1316,147 @@ const lootBtn: React.CSSProperties = {
   padding: "10px", background: "#131519", border: "1px solid #2a2d33", borderRadius: 8,
   color: "#d1d5db", cursor: "pointer", textAlign: "left", fontSize: 12,
 };
+
+// ─── Inventory modal (party-bar click target) ────────────────────────────────
+// Lightweight inline inventory: shows the character header (name/class/level/
+// HP/mana/gold/keys), an "equipped" section grouped by slot, and a pack grid.
+// Equip/unequip toggles via /api/inventory/:id/equip|unequip. For deeper
+// management (sell, give, paper-doll) players can return to town.
+
+function InventoryModal({ character, items, onClose, onChange }: {
+  character: Character;
+  items: UsableItem[];
+  onClose: () => void;
+  onChange: () => void;
+}) {
+  // Use a separate fetch so we get full item details (slot, rarity, etc.)
+  // rather than the slim UsableItem shape used in the action panel.
+  const [full, setFull] = useState<Array<UsableItem & { rarity: string; slot?: string | null; flavor?: string | null; stat_bonus?: Record<string, number> | null; level_req?: number }>>([]);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const res = await fetch("/api/inventory", { credentials: "include" });
+      if (!res.ok || cancelled) return;
+      const body = await res.json() as { items: typeof full };
+      if (!cancelled) setFull(body.items);
+    })();
+    return () => { cancelled = true; };
+  }, [items.length]); // refresh when count changes from outside
+
+  async function toggleEquip(it: typeof full[number]) {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const url = it.equipped ? `/api/inventory/${it.id}/unequip` : `/api/inventory/${it.id}/equip`;
+      const res = await fetch(url, { method: "POST", credentials: "include" });
+      if (res.ok) {
+        const fresh = await fetch("/api/inventory", { credentials: "include" });
+        if (fresh.ok) setFull(((await fresh.json()) as { items: typeof full }).items);
+        onChange();
+      } else {
+        const b = await res.json().catch(() => ({})) as { error?: string };
+        toast.error(b.error ?? "Could not change equip");
+      }
+    } finally { setBusy(false); }
+  }
+
+  const equipped = full.filter((it) => it.equipped);
+  const pack = full.filter((it) => !it.equipped);
+
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: "fixed", inset: 0, background: "rgba(0,0,0,0.78)",
+        display: "flex", alignItems: "center", justifyContent: "center",
+        zIndex: 100, backdropFilter: "blur(6px)",
+      }}>
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          background: "#0e0f12", border: "1px solid #2a2d33", borderRadius: 12,
+          width: "min(720px, 92vw)", maxHeight: "86vh", overflow: "auto",
+          padding: 18,
+        }}>
+        {/* Header */}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+          <div>
+            <div style={{ fontFamily: DISPLAY_FONT, fontSize: 22, color: "#f5f5dc" }}>{character.name}</div>
+            <div style={{ fontSize: 12, color: "#9aa0a6" }}>
+              Lvl {character.level} {character.class} · {character.hp}/{character.max_hp} HP · {character.mana}/{character.max_mana} mana
+            </div>
+          </div>
+          <button onClick={onClose} style={{ background: "none", border: "1px solid #2a2d33", color: "#9aa0a6", borderRadius: 6, padding: "4px 12px", cursor: "pointer" }}>Close ✕</button>
+        </div>
+
+        {/* Equipped */}
+        <SectionHeader>Equipped</SectionHeader>
+        {equipped.length === 0 ? (
+          <p style={{ fontSize: 12, color: "#4a5568", margin: "0 0 16px" }}>Nothing equipped.</p>
+        ) : (
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: 8, marginBottom: 16 }}>
+            {equipped.map((it) => (
+              <ItemTile key={it.id} item={it} onClick={() => void toggleEquip(it)} busy={busy} action="Unequip" />
+            ))}
+          </div>
+        )}
+
+        {/* Pack */}
+        <SectionHeader>Pack ({pack.length})</SectionHeader>
+        {pack.length === 0 ? (
+          <p style={{ fontSize: 12, color: "#4a5568", margin: "0 0 8px" }}>Pack is empty.</p>
+        ) : (
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: 8 }}>
+            {pack.map((it) => {
+              const canEquip = !!it.slot && (it.level_req ?? 1) <= character.level;
+              return (
+                <ItemTile
+                  key={it.id}
+                  item={it}
+                  onClick={canEquip ? () => void toggleEquip(it) : undefined}
+                  busy={busy}
+                  action={canEquip ? "Equip" : (it.level_req && it.level_req > character.level ? `L${it.level_req}` : "")}
+                />
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function SectionHeader({ children }: { children: React.ReactNode }) {
+  return (
+    <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: 1.5, color: "#9aa0a6", marginBottom: 8 }}>
+      {children}
+    </div>
+  );
+}
+
+function ItemTile({ item, onClick, busy, action }: {
+  item: { id: number; item_name: string; item_type: string; power: number; rarity: string; slot?: string | null; flavor?: string | null };
+  onClick?: () => void;
+  busy: boolean;
+  action: string;
+}) {
+  const rarityColor = item.rarity === "rare" ? "#fbbf24" : item.rarity === "uncommon" ? "#60a5fa" : "#9aa0a6";
+  return (
+    <div style={{ padding: 10, background: "#131519", border: `1px solid ${rarityColor}33`, borderRadius: 8, fontSize: 12, display: "flex", flexDirection: "column", gap: 4 }}>
+      <div style={{ fontWeight: 600, color: "#e2e8f0" }}>{item.item_name}</div>
+      <div style={{ fontSize: 11, color: rarityColor }}>
+        {item.slot ? `${item.slot} · ` : ""}power {item.power} · {item.rarity}
+      </div>
+      {item.flavor && <div style={{ fontSize: 10, color: "#6b7280", fontStyle: "italic" }}>{item.flavor.slice(0, 90)}{item.flavor.length > 90 ? "…" : ""}</div>}
+      {action && onClick && (
+        <button onClick={onClick} disabled={busy} style={{ marginTop: 4, padding: "3px 8px", background: "#1a2e1a", border: "1px solid #166534", borderRadius: 5, color: "#86efac", fontSize: 11, cursor: busy ? "wait" : "pointer", alignSelf: "flex-start" }}>
+          {action}
+        </button>
+      )}
+      {action && !onClick && (
+        <div style={{ marginTop: 4, fontSize: 11, color: "#5c1f1f" }}>{action}</div>
+      )}
+    </div>
+  );
+}

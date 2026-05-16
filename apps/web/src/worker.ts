@@ -1386,6 +1386,18 @@ async function buildGridDungeonScene(
   function merchantGreeting(): string {
     return "A hooded merchant gestures at their wares.";
   }
+  // Random portraits from the pre-generated NPC/merchant pools. Each room
+  // picks a different one (deterministic by seed once we read it).
+  const NPC_KEYS = ["npc_portrait_1", "npc_portrait_2", "npc_portrait_3", "npc_portrait_4", "npc_portrait_5", "npc_portrait_6"];
+  const MERCHANT_KEYS = ["merchant_portrait_1", "merchant_portrait_2", "merchant_portrait_3", "merchant_portrait_4", "merchant_portrait_5"];
+  function npcArtUrl(): string {
+    const k = NPC_KEYS[Math.floor(Math.random() * NPC_KEYS.length)];
+    return `${WEB_PUBLIC_BASE}/img/art/views/v6/${k}.png`;
+  }
+  function merchantArtUrl(): string {
+    const k = MERCHANT_KEYS[Math.floor(Math.random() * MERCHANT_KEYS.length)];
+    return `${WEB_PUBLIC_BASE}/img/art/views/v6/${k}.png`;
+  }
   function describeRoom(kind: GridRoomContent["kind"], _shape: string): string {
     switch (kind) {
       case "entry": return "You step into the dungeon. The way forward beckons.";
@@ -1412,6 +1424,8 @@ async function buildGridDungeonScene(
     rollTrap,
     npcGreeting,
     merchantGreeting,
+    npcArtUrl,
+    merchantArtUrl,
     describeRoom,
   });
 

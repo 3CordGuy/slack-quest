@@ -385,8 +385,8 @@ export type GridRoomContent =
   | { kind: "key_pickup"; tier: KeyTier; taken: boolean }
   | { kind: "trap"; choices: TrapChoice[]; resolved: boolean }
   | { kind: "lockbox"; lock_tier: KeyTier; options: LootOption[]; resolved: boolean }
-  | { kind: "npc"; greeting: string; offer: LootOption; resolved: boolean }
-  | { kind: "merchant"; greeting: string; stock: LootOption[]; resolved: boolean };
+  | { kind: "npc"; greeting: string; offer: LootOption; resolved: boolean; art_url?: string | null }
+  | { kind: "merchant"; greeting: string; stock: LootOption[]; resolved: boolean; art_url?: string | null };
 
 // Room shape codes drive which background art to render. Derived from the
 // exit direction set: e.g. {n, e} → "corner_ne", {n, s} → "straight_ns",
