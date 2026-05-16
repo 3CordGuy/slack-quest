@@ -1238,17 +1238,24 @@ function rollArmorSlot(tier: number): ItemRoll {
     return { type: "armor", rarity, power: 0, slot: "boots",
       stat_bonus: statBonus("agi", bonusAmt) };
   }
-  if (r < 0.93) {
+  if (r < 0.91) {
     // Ring — no armor; STR/INT/DEX buff depending on roll.
     const statKeys = ["str", "int_stat", "dex"] as const;
     const key = statKeys[Math.floor(Math.random() * statKeys.length)];
     return { type: "armor", rarity, power: 0, slot: "ring",
       stat_bonus: statBonus(key, bonusAmt) };
   }
-  if (r < 0.98) {
+  if (r < 0.95) {
     // Amulet — no armor; INT/VIT buff.
     const key = Math.random() < 0.5 ? "int_stat" : "vit";
     return { type: "armor", rarity, power: 0, slot: "amulet",
+      stat_bonus: statBonus(key, bonusAmt) };
+  }
+  if (r < 0.98) {
+    // Gloves (off_hand, non-shield) — small armor; STR or DEX buff.
+    const key = Math.random() < 0.5 ? "str" : "dex";
+    return { type: "armor", rarity, power: Math.max(0, Math.floor(rollPower("armor", rarity, tier) / 3)), slot: "off_hand",
+      item_subtype: "gloves",
       stat_bonus: statBonus(key, bonusAmt) };
   }
   // Shield (off_hand) — adds power to armor_power; small +VIT stat bonus.
@@ -1284,9 +1291,14 @@ export function rollAccessorySlot(tier: number): ItemRoll {
     return { type: "armor", rarity, power: 0, slot: "ring",
       stat_bonus: statBonus(statKeys[Math.floor(Math.random() * statKeys.length)], bonusAmt) };
   }
-  if (r < 0.88) {
+  if (r < 0.85) {
     return { type: "armor", rarity, power: 0, slot: "amulet",
       stat_bonus: statBonus(Math.random() < 0.5 ? "int_stat" : "vit", bonusAmt) };
+  }
+  if (r < 0.93) {
+    const key = Math.random() < 0.5 ? "str" : "dex";
+    return { type: "armor", rarity, power: Math.max(0, Math.floor(rollPower("armor", rarity, tier) / 3)), slot: "off_hand",
+      item_subtype: "gloves", stat_bonus: statBonus(key, bonusAmt) };
   }
   return { type: "armor", rarity, power: rollPower("armor", rarity, tier), slot: "off_hand",
     item_subtype: "shield", stat_bonus: statBonus("vit", bonusAmt) };
@@ -1470,7 +1482,7 @@ export function rollDice(sides: number, count = 1): number {
 // XP threshold to reach a given level. Curve is gentle early, steeper later.
 export function xpForLevel(level: number): number {
   if (level <= 1) return 0;
-  return Math.floor(50 * Math.pow(level - 1, 1.6));
+  return Math.floor(100 * Math.pow(level - 1, 1.8));
 }
 
 // Cheap syllable-based name generator. Two-part: given + epithet.

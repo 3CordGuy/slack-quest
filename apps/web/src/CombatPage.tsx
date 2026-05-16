@@ -4,6 +4,8 @@ import { isMonsterActor } from "@gantt-quest/core";
 
 import { Avatar, Icon } from "./icons";
 
+const DISPLAY_FONT = "'Uncial Antiqua', serif";
+
 // Live web-mode combat. Connects to the QuestRoom Durable Object via WS,
 // renders the current state, animates incoming events through a scrolling
 // log, and lets the active player submit actions.
@@ -299,6 +301,7 @@ interface LootDrop {
   power: number;
   rarity: string;
   flavor: string;
+  level_req?: number;
 }
 
 interface FighterReward {
@@ -326,6 +329,7 @@ interface OutcomeSummary {
   elite: boolean;
   is_boss: boolean;
   dungeon_room_cleared?: boolean;
+  dungeon_doors?: Array<{ type: string; monster_name: string | null; scene: string | null }>;
 }
 
 type LogEntry =
@@ -689,6 +693,7 @@ export function CombatPage({
   const autoResolveRef = useRef(autoResolve);
   // Tracks the last turn_index for which we fired an auto-resolve so we don't double-fire.
   const autoResolvedTurnRef = useRef<number>(-1);
+  const [reconnectKey, setReconnectKey] = useState(0);
   const wsRef = useRef<WebSocket | null>(null);
   const logScrollRef = useRef<HTMLDivElement | null>(null);
   const [diceRolls, setDiceRolls] = useState<DiceRollEntry[]>([]);
@@ -710,10 +715,18 @@ export function CombatPage({
 
 
   useEffect(() => {
+    dispatch({ kind: "connection", value: "connecting" });
     const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
     const url = `${proto}//${window.location.host}/api/ws/quest/${questId}`;
     const ws = new WebSocket(url);
     wsRef.current = ws;
+
+    // Heartbeat every 45s to keep the Cloudflare WS alive (60s idle limit).
+    const heartbeat = setInterval(() => {
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: "ping" }));
+      }
+    }, 45_000);
 
     ws.onopen = () => dispatch({ kind: "connection", value: "open" });
     ws.onclose = () => dispatch({ kind: "connection", value: "closed" });
@@ -806,10 +819,11 @@ export function CombatPage({
     };
 
     return () => {
+      clearInterval(heartbeat);
       ws.close();
       wsRef.current = null;
     };
-  }, [questId]);
+  }, [questId, reconnectKey]);
 
   // Auto-scroll log to bottom as new entries arrive.
   // Depend on the last entry's id (not length) so the effect still fires
@@ -1114,7 +1128,7 @@ export function CombatPage({
             <EventLog log={ui.log} scrollRef={logScrollRef} />
             {ended && state.status !== "victory" && !defeatModalReady && (
               <div style={{ ...card, borderColor: "#7c2020", background: "#28100f", textAlign: "center" }}>
-                <div style={{ fontSize: 28, fontWeight: 800, color: "#fca5a5" }}>
+                <div style={{ fontSize: 28, fontWeight: 800, color: "#fca5a5", fontFamily: DISPLAY_FONT }}>
                   <Icon name="death-skull" /> {state.status === "fled" ? "ESCAPED" : "DEFEAT"}
                 </div>
                 <p style={{ ...muted, fontSize: 13 }}>Resolving outcome…</p>
@@ -1132,6 +1146,7 @@ export function CombatPage({
           outcome={ui.outcome}
           selfId={selfId}
           fighters={state.fighters}
+          questId={questId}
           onBack={exit}
         />
       )}
@@ -1146,6 +1161,59 @@ export function CombatPage({
           onBack={exit}
         />
       )}
+
+      {/* Disconnection warning — only when combat is still live */}
+      {ui.connection === "closed" && !ended && (
+        <DisconnectedModal onReconnect={() => setReconnectKey((k) => k + 1)} />
+      )}
+    </div>
+  );
+}
+
+function DisconnectedModal({ onReconnect }: { onReconnect: () => void }): JSX.Element {
+  return (
+    <div style={{
+      position: "fixed",
+      inset: 0,
+      background: "rgba(0,0,0,0.75)",
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      zIndex: 900,
+    }}>
+      <div style={{
+        background: "#1a1d23",
+        border: "1px solid #ef4444",
+        borderRadius: 12,
+        padding: "32px 40px",
+        textAlign: "center",
+        maxWidth: 360,
+        display: "flex",
+        flexDirection: "column",
+        gap: 16,
+      }}>
+        <span style={{ fontSize: 36 }}>⚡</span>
+        <div style={{ color: "#f1f5f9", fontSize: 18, fontWeight: 700, fontFamily: DISPLAY_FONT }}>Connection Lost</div>
+        <div style={{ color: "#94a3b8", fontSize: 14 }}>
+          Your combat connection dropped. The battle is still going — reconnect to rejoin.
+        </div>
+        <button
+          onClick={onReconnect}
+          style={{
+            marginTop: 4,
+            padding: "10px 24px",
+            background: "#2563eb",
+            color: "#fff",
+            border: "none",
+            borderRadius: 8,
+            fontWeight: 700,
+            fontSize: 15,
+            cursor: "pointer",
+          }}
+        >
+          Reconnect
+        </button>
+      </div>
     </div>
   );
 }
@@ -1207,7 +1275,7 @@ function MonsterCard({
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
           <div>
-            <div style={{ fontSize: 20, fontWeight: 700, color: "#f5f5f5" }}>{monster.name}</div>
+            <div style={{ fontSize: 20, fontWeight: 700, color: "#f5f5f5", fontFamily: DISPLAY_FONT }}>{monster.name}</div>
             <div style={{ ...muted, fontSize: 12 }}>
               Tier {monster.tier}
               {monster.is_boss && ` · Boss (phase ${monster.boss_phase})`}
@@ -1257,7 +1325,10 @@ function InitiativeTrack({
           const init = isMon ? (monster?.initiative ?? 0) : fighter?.initiative ?? 0;
           const isCurrent = i === currentIndex;
           const isSelf = id === selfId;
-          const portrait = isMon ? (monster?.art_url ?? null) : classPortraitUrl(fighter?.class ?? "");
+          const portrait = isMon
+            ? (monster?.art_url ?? null)
+            : fighter ? charPortraitUrl(fighter.name) : null;
+          const portraitFallback = isMon ? null : classPortraitUrl(fighter?.class ?? "");
           const borderColor = isCurrent ? "#b89b3a" : isSelf ? "#3a7bd5" : "#2a2d33";
           const AVATAR = 72;
           const RADIUS = 10;
@@ -1277,6 +1348,7 @@ function InitiativeTrack({
               }}>
                 <Avatar
                   src={portrait}
+                  fallbackSrc={portraitFallback}
                   alt={name}
                   size={AVATAR}
                   radius={RADIUS}
@@ -1293,6 +1365,7 @@ function InitiativeTrack({
                 <div style={{
                   fontSize: 11, fontWeight: isCurrent ? 700 : 500,
                   color: isCurrent ? "#f5f5f5" : "#9aa0a6",
+                  fontFamily: DISPLAY_FONT,
                   maxWidth: AVATAR + 8,
                   overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
                 }}>
@@ -1401,7 +1474,7 @@ function FighterRow({ fighter, self, current }: { fighter: Fighter; self: boolea
       />
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
-          <span style={{ fontWeight: 600, color: "#f5f5f5", fontSize: 14 }}>{fighter.name}</span>
+          <span style={{ fontWeight: 600, color: "#f5f5f5", fontSize: 14, fontFamily: DISPLAY_FONT }}>{fighter.name}</span>
           {fighter.slack_username && (
             <span style={{ fontSize: 12, color: "#7dd3fc" }}>@{fighter.slack_username}</span>
           )}
@@ -2112,15 +2185,35 @@ function VictoryModal({
   outcome,
   selfId,
   fighters,
+  questId,
   onBack,
 }: {
   outcome: OutcomeSummary | null;
   selfId: string;
   fighters: Fighter[];
+  questId: number;
   onBack: () => void;
 }) {
+  const [choosingDoor, setChoosingDoor] = useState(false);
   const dungeonRoom = outcome?.dungeon_room_cleared;
+  const dungeonDoors = outcome?.dungeon_doors;
+  const hasDoorChoice = dungeonRoom && dungeonDoors && dungeonDoors.length > 0;
   const title = dungeonRoom ? "ROOM CLEARED" : "VICTORY";
+
+  async function pickDoor(pick: number) {
+    if (choosingDoor) return;
+    setChoosingDoor(true);
+    try {
+      await fetch(`/api/quest/${questId}/dungeon/choose_door`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pick }),
+      });
+    } finally {
+      onBack();
+    }
+  }
+
   return (
     <>
     <ConfettiOverlay />
@@ -2145,7 +2238,7 @@ function VictoryModal({
         overflowY: "auto",
         boxSizing: "border-box",
       }}>
-        <div style={{ fontSize: 36, fontWeight: 800, color: "#86efac", textAlign: "center", marginBottom: 4 }}>
+        <div style={{ fontSize: 36, fontWeight: 800, color: "#86efac", textAlign: "center", marginBottom: 4, fontFamily: DISPLAY_FONT }}>
           {title}
         </div>
         {!outcome && <p style={{ ...muted, textAlign: "center" }}>Resolving outcome…</p>}
@@ -2167,16 +2260,66 @@ function VictoryModal({
                 />
               ))}
             </div>
-            {dungeonRoom && (
+            {hasDoorChoice && (
+              <div style={{ marginBottom: 16 }}>
+                <p style={{ ...muted, fontSize: 13, textAlign: "center", marginBottom: 12 }}>
+                  🚪 Two paths diverge ahead. Choose your next room:
+                </p>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                  {dungeonDoors.map((door, i) => {
+                    const dirs = ["🧭 North", "🧭 East", "🧭 South", "🧭 West"];
+                    const dir = dirs[i] ?? `🧭 Door ${i + 1}`;
+                    const roomLabel = door.type === "combat"
+                      ? `⚔️ ${door.monster_name ?? "Combat"}`
+                      : door.type === "treasure"
+                      ? "🎁 Treasure"
+                      : door.type === "boss"
+                      ? `💀 ${door.monster_name ?? "Boss"}`
+                      : door.type === "npc"
+                      ? "🧙 NPC"
+                      : door.type === "trap"
+                      ? "⚠️ Trap"
+                      : door.type === "lockbox"
+                      ? "🔒 Lockbox"
+                      : "Room";
+                    return (
+                      <button
+                        key={i}
+                        disabled={choosingDoor}
+                        onClick={() => void pickDoor(i + 1)}
+                        style={{
+                          ...button,
+                          background: "#1a3a4a",
+                          border: "1.5px solid #38bdf8",
+                          color: "#e0f2fe",
+                          padding: "14px 10px",
+                          display: "flex",
+                          flexDirection: "column",
+                          alignItems: "center",
+                          gap: 4,
+                          opacity: choosingDoor ? 0.6 : 1,
+                        }}
+                      >
+                        <span style={{ fontSize: 13, fontFamily: DISPLAY_FONT, color: "#7dd3fc" }}>{dir}</span>
+                        <span style={{ fontSize: 12 }}>{roomLabel}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+            {dungeonRoom && !hasDoorChoice && (
               <p style={{ ...muted, fontSize: 12, textAlign: "center", marginBottom: 12 }}>
-                Room cleared. Head back to town to pick the next door.
+                Room cleared. Check the dashboard for the next room.
               </p>
             )}
           </>
         )}
-        <button onClick={onBack} style={{ ...button, marginTop: 8, background: "#16a34a" }}>
-          Back to town
-        </button>
+        {!hasDoorChoice && (
+          <button onClick={onBack} style={{ ...button, marginTop: 8, background: "#16a34a" }}>
+            Back to town
+          </button>
+        )}
       </div>
     </div>
     </>
@@ -2212,7 +2355,7 @@ function DefeatModal({
       }}>
         <div style={{ textAlign: "center", marginBottom: 20 }}>
           <Icon name={fled ? "footprint" : "death-skull"} size={48} color={fled ? "#facc15" : "#ef4444"} />
-          <div style={{ fontSize: 36, fontWeight: 800, color: fled ? "#facc15" : "#fca5a5", marginTop: 8 }}>
+          <div style={{ fontSize: 36, fontWeight: 800, color: fled ? "#facc15" : "#fca5a5", marginTop: 8, fontFamily: DISPLAY_FONT }}>
             {fled ? "ESCAPED" : "DEFEAT"}
           </div>
           {!fled && (
@@ -2295,7 +2438,7 @@ function EndBanner({
   const fg = fled ? "#facc15" : "#fca5a5";
   return (
     <div style={{ ...card, borderColor, background: bg, textAlign: "center" }}>
-      <div style={{ fontSize: 32, fontWeight: 800, color: fg }}>{labelText}</div>
+      <div style={{ fontSize: 32, fontWeight: 800, color: fg, fontFamily: DISPLAY_FONT }}>{labelText}</div>
       {!outcome && <p style={muted}>Resolving outcome…</p>}
       {outcome && (
         <div style={{ marginTop: 12, textAlign: "left" }}>
@@ -2380,6 +2523,9 @@ function LootCard({ item, index }: { item: LootDrop; index: number }) {
         <div style={{ fontSize: 11, color, textTransform: "capitalize", marginTop: 2 }}>
           {item.rarity} {item.item_type}
           {item.power > 0 && <span style={{ color: "#e2e8f0", marginLeft: 4 }}>+{item.power}</span>}
+          {item.level_req != null && item.level_req > 1 && (
+            <span style={{ marginLeft: 6, color: "#9ca3af" }}>· Req L{item.level_req}</span>
+          )}
         </div>
         {item.flavor && (
           <div style={{ fontSize: 11, color: "#6b7280", fontStyle: "italic", marginTop: 3 }}>

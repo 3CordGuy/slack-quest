@@ -1,6 +1,6 @@
-import { Component, useEffect, useRef, useState } from "react";
+import { Component, forwardRef, useEffect, useRef, useState } from "react";
 import { DndContext, DragOverlay, PointerSensor, useDraggable, useDroppable, useSensor, useSensors, type DragEndEvent, type DragStartEvent } from "@dnd-kit/core";
-import type { ErrorInfo, ReactNode } from "react";
+import type { CSSProperties, ErrorInfo, ReactNode } from "react";
 import toast from "react-hot-toast";
 import {
   FloatingFocusManager,
@@ -1542,6 +1542,7 @@ export function App() {
           inQuest={!!state.activeQuest}
           selfId={state.me.slack_user_id}
           characterLevel={state.me.character.level}
+          character={state.me.character}
           onEquip={equipItem}
           onUnequip={unequipItem}
           onSell={sellItem}
@@ -1920,7 +1921,7 @@ function StartQuestCard({
               )}
               <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 4 }}>
                 <Icon name={opt.icon} color={locked ? "#4a5060" : opt.accentColor} size={16} />
-                <span style={{ fontWeight: 600, fontSize: 13, color: locked ? "#4a5060" : opt.accentColor }}>
+                <span style={{ fontWeight: 600, fontSize: 13, color: locked ? "#4a5060" : opt.accentColor, fontFamily: DISPLAY_FONT }}>
                   {opt.label}
                 </span>
               </div>
@@ -1943,7 +1944,7 @@ function StartQuestCard({
         }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
             <Icon name={selectedOption.icon} color={selectedOption.accentColor} size={18} />
-            <span style={{ fontWeight: 700, fontSize: 14, color: selectedOption.accentColor }}>
+            <span style={{ fontWeight: 700, fontSize: 14, color: selectedOption.accentColor, fontFamily: DISPLAY_FONT }}>
               {selectedOption.label}
             </span>
           </div>
@@ -2085,7 +2086,7 @@ function ActiveQuestCard({
         {variant === "dungeon" && s.expedition && (() => {
           const exp = s.expedition;
           const visited = exp.visited_count ?? 1;
-          const middleTotal = (exp.middle_count ?? 0) + 3;
+          const middleTotal = (exp.middle_count ?? 0) + 4;
           return (
             <SmallBadge>room {visited}/{middleTotal}</SmallBadge>
           );
@@ -2116,7 +2117,7 @@ function ActiveQuestCard({
             gap: 8,
           }}
         >
-          <div style={{ fontSize: 18, fontWeight: 600, color: "#f5f5f5" }}>
+          <div style={{ fontSize: 18, fontWeight: 600, color: "#f5f5f5", fontFamily: DISPLAY_FONT }}>
             {s.monster_name || "—"}
           </div>
           <div style={{ ...muted, fontVariantNumeric: "tabular-nums" }}>
@@ -2518,7 +2519,7 @@ function GraphDungeonPanel({
   return (
     <div style={{ marginTop: 16 }}>
       {node.name && (
-        <div style={{ fontSize: 13, fontWeight: 600, color: "#b89b3a", marginBottom: 6 }}>
+        <div style={{ fontSize: 13, fontWeight: 600, color: "#b89b3a", marginBottom: 6, fontFamily: DISPLAY_FONT }}>
           {node.name}
         </div>
       )}
@@ -2848,7 +2849,7 @@ function PartyMember({ fighter, self, onInspect }: { fighter: Character; self: b
         }}
       >
         <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
-          <span style={{ fontWeight: 600, color: "#f5f5f5", fontSize: 15 }}>
+          <span style={{ fontWeight: 600, color: "#f5f5f5", fontSize: 15, fontFamily: DISPLAY_FONT }}>
             {fighter.name}
           </span>
           {fighter.slack_username && (
@@ -2909,7 +2910,7 @@ function CharacterInspectDialog({
   const isDowned = character.downed_until !== null && character.downed_until > Date.now();
   const cxpAtLevel = xpForLevel(character.level);
   const cxpAtNext = xpForLevel(character.level + 1);
-  const cxpIntoLevel = character.xp - cxpAtLevel;
+  const cxpIntoLevel = Math.max(0, character.xp - cxpAtLevel);
   const cxpSpan = cxpAtNext - cxpAtLevel;
   const cxpPct = cxpSpan > 0 ? Math.min(1, cxpIntoLevel / cxpSpan) : 1;
   return (
@@ -2957,7 +2958,7 @@ function CharacterInspectDialog({
             </p>
             <div style={{ marginTop: 6, minWidth: 200 }}>
               <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: "#6b7280", marginBottom: 3 }}>
-                <span style={{ color: "#d97706", fontWeight: 600 }}>XP</span>
+                <span style={{ color: "#d97706", fontWeight: 600, fontFamily: DISPLAY_FONT }}>XP</span>
                 <span>{cxpIntoLevel} / {cxpSpan} → Lv {character.level + 1}</span>
               </div>
               <div style={{ height: 5, background: "#1a1a1f", borderRadius: 3, overflow: "hidden" }}>
@@ -3285,10 +3286,10 @@ function AchievementToast({ def, onDismiss }: { def: Achievement; onDismiss: () 
         <i className={`ra ra-${def.icon}`} style={{ fontSize: 18, color: "#fff" }} />
       </div>
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontSize: 10, color: "#f59e0b", textTransform: "uppercase", letterSpacing: 1, fontWeight: 600 }}>
+        <div style={{ fontSize: 10, color: "#f59e0b", textTransform: "uppercase", letterSpacing: 1, fontWeight: 600, fontFamily: DISPLAY_FONT }}>
           Achievement Unlocked!
         </div>
-        <div style={{ fontSize: 13, fontWeight: 700, color: "#f5f5f5", marginTop: 2 }}>{def.title}</div>
+        <div style={{ fontSize: 13, fontWeight: 700, color: "#f5f5f5", marginTop: 2, fontFamily: DISPLAY_FONT }}>{def.title}</div>
         <div style={{ fontSize: 11, color: "#9ca3af", fontStyle: "italic", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{def.flavor}</div>
       </div>
     </div>
@@ -3400,8 +3401,8 @@ function TrophyBadge({ def, earned, isOwn }: { def: Achievement; earned: EarnedA
                   <i className={`ra ra-${def.icon}`} style={{ fontSize: 22, color: "#fff" }} />
                 </div>
                 <div>
-                  <div style={{ fontWeight: 700, fontSize: 13, color: "#f5f5f5" }}>{def.title}</div>
-                  <div style={{ fontSize: 10, color: "#9ca3af", marginTop: 2, textTransform: "uppercase", letterSpacing: 0.5 }}>{def.category}</div>
+                  <div style={{ fontWeight: 700, fontSize: 13, color: "#f5f5f5", fontFamily: DISPLAY_FONT }}>{def.title}</div>
+                  <div style={{ fontSize: 10, color: "#9ca3af", marginTop: 2, textTransform: "uppercase", letterSpacing: 0.5, fontFamily: DISPLAY_FONT }}>{def.category}</div>
                 </div>
               </div>
               <div style={{ fontSize: 12, color: "#818cf8", fontStyle: "italic", marginBottom: 6, lineHeight: 1.4 }}>{def.flavor}</div>
@@ -3492,7 +3493,7 @@ function AdventurerSheet({ character, isOwn = false, onClose }: { character: Kno
   const hpPct = character.max_hp > 0 ? Math.max(0, Math.min(1, character.hp / character.max_hp)) : 0;
   const xpAtLevel = xpForLevel(character.level);
   const xpAtNext = xpForLevel(character.level + 1);
-  const xpIntoLevel = character.xp - xpAtLevel;
+  const xpIntoLevel = Math.max(0, character.xp - xpAtLevel);
   const xpSpan = xpAtNext - xpAtLevel;
   const xpPct = xpSpan > 0 ? Math.min(1, xpIntoLevel / xpSpan) : 1;
   const portraitSrc = `/img/art/views/v6/class_${character.class.toLowerCase().replace(/[\s-]+/g, "_")}.png`;
@@ -3573,12 +3574,12 @@ function AdventurerSheet({ character, isOwn = false, onClose }: { character: Kno
           const derived = deriveAll(stats, character.level);
           return (
             <div style={{ padding: "10px 12px", background: "#1d1f23", borderRadius: 8, border: "1px solid #2a2d33" }}>
-              <div style={{ fontSize: 10, color: "#6b7280", textTransform: "uppercase", letterSpacing: 1, marginBottom: 7 }}>Stats</div>
+              <div style={{ fontSize: 10, color: "#6b7280", textTransform: "uppercase", letterSpacing: 1, marginBottom: 7, fontFamily: DISPLAY_FONT }}>Stats</div>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 4, marginBottom: 7 }}>
                 {(["str", "int_stat", "vit", "agi", "dex"] as StatKey[]).map((key) => (
                   <div key={key} style={{ textAlign: "center", background: "#13141a", borderRadius: 5, padding: "5px 3px" }}>
-                    <div style={{ fontSize: 9, color: "#6b7280", textTransform: "uppercase" }}>{key === "int_stat" ? "INT" : key.toUpperCase()}</div>
-                    <div style={{ fontSize: 14, fontWeight: 700, color: "#f5f5f5" }}>{stats[key]}</div>
+                    <div style={{ fontSize: 9, color: "#6b7280", textTransform: "uppercase", fontFamily: DISPLAY_FONT }}>{key === "int_stat" ? "INT" : key.toUpperCase()}</div>
+                    <div style={{ fontSize: 14, fontWeight: 700, color: "#f5f5f5", fontFamily: DISPLAY_FONT }}>{stats[key]}</div>
                   </div>
                 ))}
               </div>
@@ -3633,8 +3634,8 @@ function DerivedStatCard({
         cursor: "default", transition: "background 0.12s, border-color 0.12s",
       }}>
         <Icon name={icon} size={18} color={color} />
-        <div style={{ fontSize: 14, fontWeight: 800, color, lineHeight: 1 }}>{value}</div>
-        <div style={{ fontSize: 8, color: "#6b7280", textTransform: "uppercase", letterSpacing: 0.7, lineHeight: 1 }}>{label}</div>
+        <div style={{ fontSize: 14, fontWeight: 800, color, lineHeight: 1, fontFamily: DISPLAY_FONT }}>{value}</div>
+        <div style={{ fontSize: 8, color: "#6b7280", textTransform: "uppercase", letterSpacing: 0.7, lineHeight: 1, fontFamily: DISPLAY_FONT }}>{label}</div>
       </div>
       {hovered && (
         <div style={{
@@ -3647,7 +3648,7 @@ function DerivedStatCard({
           pointerEvents: "none",
           whiteSpace: "pre-line",
         }}>
-          <div style={{ fontSize: 10, color: "#6b7280", textTransform: "uppercase", letterSpacing: 0.8, marginBottom: 4 }}>{label}</div>
+          <div style={{ fontSize: 10, color: "#6b7280", textTransform: "uppercase", letterSpacing: 0.8, marginBottom: 4, fontFamily: DISPLAY_FONT }}>{label}</div>
           <div style={{ fontSize: 11, color: "#c9cdd4", lineHeight: 1.55, fontFamily: "monospace" }}>{formula}</div>
         </div>
       )}
@@ -3702,7 +3703,7 @@ function CharacterCard({
   }
   const xpAtLevel = xpForLevel(c.level);
   const xpAtNext = xpForLevel(c.level + 1);
-  const xpIntoLevel = c.xp - xpAtLevel;
+  const xpIntoLevel = Math.max(0, c.xp - xpAtLevel);
   const xpSpan = xpAtNext - xpAtLevel;
   const xpPct = xpSpan > 0 ? Math.min(1, xpIntoLevel / xpSpan) : 1;
   const fullyRecovered = c.hp >= c.max_hp && c.mana >= c.max_mana;
@@ -3715,12 +3716,27 @@ function CharacterCard({
   const armorPower = (bodyArmor?.power ?? 0) + Math.floor((helmetArmor?.power ?? 0) / 2) + Math.floor((pantsArmor?.power ?? 0) / 4) + (shieldArmor?.power ?? 0);
   const restDisabled = inQuest || downed || fullyRecovered;
   const portrait = me.char_art_url ?? me.class_art_url;
-  const primaryStats: Stats = {
+  const equipBonuses: Partial<Record<StatKey, number>> = {};
+  for (const item of inventory) {
+    if (item.equipped && item.stat_bonus) {
+      for (const [k, v] of Object.entries(item.stat_bonus)) {
+        equipBonuses[k as StatKey] = (equipBonuses[k as StatKey] ?? 0) + v;
+      }
+    }
+  }
+  const baseStats: Stats = {
     str: c.str ?? 5,
     int_stat: c.int_stat ?? 5,
     vit: c.vit ?? 5,
     agi: c.agi ?? 5,
     dex: c.dex ?? 5,
+  };
+  const primaryStats: Stats = {
+    str: baseStats.str + (equipBonuses.str ?? 0),
+    int_stat: baseStats.int_stat + (equipBonuses.int_stat ?? 0),
+    vit: baseStats.vit + (equipBonuses.vit ?? 0),
+    agi: baseStats.agi + (equipBonuses.agi ?? 0),
+    dex: baseStats.dex + (equipBonuses.dex ?? 0),
   };
   const derivedStats = deriveAll(primaryStats, c.level);
   const hasUnspentPoints = (c.unspent_points ?? 0) > 0;
@@ -3822,7 +3838,7 @@ function CharacterCard({
             <Icon name="key" color="#d1d5db" size={36} />
           </div>
           <div style={{ minWidth: 0 }}>
-            <div style={{ ...muted, fontSize: 11, textTransform: "uppercase", letterSpacing: 0.8, lineHeight: 1 }}>Keys</div>
+            <div style={{ ...muted, fontSize: 11, textTransform: "uppercase", letterSpacing: 0.8, lineHeight: 1, fontFamily: DISPLAY_FONT }}>Keys</div>
             <div style={{ fontSize: 18, fontWeight: 600, color: "#f5f5f5", marginTop: 3 }}>
               <KeysPopover
                 keys={{ bronze: c.keys_bronze, silver: c.keys_silver, gold: c.keys_gold }}
@@ -3836,16 +3852,22 @@ function CharacterCard({
       {/* Primary stats block — only shown after migration 0032 */}
       {(statHasData || hasUnspentPoints) && (
         <div style={{ marginTop: 12, padding: "10px 12px", background: "#16181c", borderRadius: 8, border: "1px solid #2a2d33" }}>
-          <div style={{ fontSize: 11, color: "#6b7280", textTransform: "uppercase", letterSpacing: 1.2, marginBottom: 8 }}>Primary Stats</div>
+          <div style={{ fontSize: 11, color: "#6b7280", textTransform: "uppercase", letterSpacing: 1.2, marginBottom: 8, fontFamily: DISPLAY_FONT }}>Primary Stats</div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 5, marginBottom: 8 }}>
-            {(["str", "int_stat", "vit", "agi", "dex"] as StatKey[]).map((key) => (
-              <div key={key} style={{ textAlign: "center", background: "#1d1f23", borderRadius: 6, padding: "6px 4px" }}>
-                <div style={{ fontSize: 9, color: "#6b7280", textTransform: "uppercase", letterSpacing: 0.8 }}>
-                  {key === "int_stat" ? "INT" : key.toUpperCase()}
+            {(["str", "int_stat", "vit", "agi", "dex"] as StatKey[]).map((key) => {
+              const bonus = equipBonuses[key] ?? 0;
+              return (
+                <div key={key} style={{ textAlign: "center", background: "#1d1f23", borderRadius: 6, padding: "6px 4px" }}>
+                  <div style={{ fontSize: 9, color: "#6b7280", textTransform: "uppercase", letterSpacing: 0.8, fontFamily: DISPLAY_FONT }}>
+                    {key === "int_stat" ? "INT" : key.toUpperCase()}
+                  </div>
+                  <div style={{ fontSize: 15, fontWeight: 700, color: "#f5f5f5", lineHeight: 1.2, fontFamily: DISPLAY_FONT }}>{primaryStats[key]}</div>
+                  {bonus > 0 && (
+                    <div style={{ fontSize: 8, color: "#86efac", lineHeight: 1.3 }}>+{bonus} gear</div>
+                  )}
                 </div>
-                <div style={{ fontSize: 15, fontWeight: 700, color: "#f5f5f5", lineHeight: 1.2 }}>{primaryStats[key]}</div>
-              </div>
-            ))}
+              );
+            })}
           </div>
           {(() => {
             const { str, int_stat: int, vit, agi, dex } = primaryStats;
@@ -3915,7 +3937,7 @@ function CharacterCard({
       {/* Camp section */}
       <div style={{ marginTop: 16, padding: "10px 12px", background: "#16181c", borderRadius: 8, border: "1px solid #2a2d33" }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
-          <span style={{ ...muted, fontSize: 11, textTransform: "uppercase", letterSpacing: 1.5 }}>
+          <span style={{ ...muted, fontSize: 11, textTransform: "uppercase", letterSpacing: 1.5, fontFamily: DISPLAY_FONT }}>
             <Icon name="campfire" size={11} /> Camp
           </span>
           {(downed || (!downed && inQuest)) && (
@@ -4354,7 +4376,7 @@ function InventoryCard({
       )}
       {/* Equipment paper-doll */}
       <div style={{ marginTop: 14 }}>
-        <div style={{ fontSize: 11, color: "#6b7280", textTransform: "uppercase" as const, letterSpacing: 0.8, fontWeight: 600, marginBottom: 6 }}>
+        <div style={{ fontSize: 11, color: "#6b7280", textTransform: "uppercase" as const, letterSpacing: 0.8, fontWeight: 600, marginBottom: 6, fontFamily: DISPLAY_FONT }}>
           Equipped
         </div>
         <div style={{ display: "flex", justifyContent: "center" }}>
@@ -4369,7 +4391,7 @@ function InventoryCard({
       {packItems.length > 0 && (
         <div style={{ marginTop: 14 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8, flexWrap: "wrap" as const }}>
-            <span style={{ fontSize: 11, color: "#6b7280", textTransform: "uppercase" as const, letterSpacing: 0.8, fontWeight: 600 }}>
+            <span style={{ fontSize: 11, color: "#6b7280", textTransform: "uppercase" as const, letterSpacing: 0.8, fontWeight: 600, fontFamily: DISPLAY_FONT }}>
               Pack ({packItems.length})
             </span>
             {SORT_LABELS.map(({ key, label }) => (
@@ -4454,23 +4476,20 @@ function DollSlotCell({
   const S = 96;
   const label = SLOT_LABELS[slot];
   if (item) {
-    const rc = RARITY_COLOR[item.rarity];
     return (
-      <div ref={mergeRef} {...listeners} {...attributes}
-        onClick={() => onItemClick(item.id)} title={item.item_name}
-        style={{
-          width: S, height: S, background: isSelected ? "#1e1c2e" : isOver ? "#151d2e" : "#1d1f23",
-          border: `2px solid ${isOver ? "#7dd3fc" : isSelected ? "#fff" : "#b89b3a"}`,
-          borderRadius: 10, cursor: "grab", position: "relative",
-          display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 3,
-          opacity: isDragging ? 0.35 : 1, transition: "border-color 0.15s, background 0.15s",
-          touchAction: "none",
-        }}
-      >
-        <div style={{ position: "absolute", top: 4, left: 4, background: "#b89b3a", color: "#000", borderRadius: 3, fontSize: 8, fontWeight: 800, padding: "1px 3px", lineHeight: 1 }}>E</div>
-        <Icon name={itemIcon(item)} size={38} color={itemIconColor(item) ?? rc} />
-        <div style={{ fontSize: 10, color: "#9ca3af", textAlign: "center", lineHeight: 1.1, maxWidth: S - 10, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", padding: "0 4px" }}>{item.item_name}</div>
-      </div>
+      <ItemCell
+        ref={mergeRef}
+        item={item}
+        size={S}
+        mode="compact"
+        selected={isSelected}
+        isOver={isOver}
+        isDragging={isDragging}
+        cursor="grab"
+        onClick={() => onItemClick(item.id)}
+        {...(listeners as React.HTMLAttributes<HTMLDivElement>)}
+        {...(attributes as React.HTMLAttributes<HTMLDivElement>)}
+      />
     );
   }
   return (
@@ -4535,6 +4554,9 @@ function DraggablePackItem({
             {slotLabel(item)}{item.stat_bonus && statBonusSummary(item.stat_bonus) ? ` · ${statBonusSummary(item.stat_bonus)}` : ""}
           </div>
         </div>
+        {(item.level_req ?? 1) > 1 && (
+          <span style={{ fontSize: 10, color: "#6b7280", flexShrink: 0 }}>L{item.level_req}</span>
+        )}
         <span style={{ ...smallBadge, borderColor: `${rc}55`, color: rc, background: `${rc}15`, flexShrink: 0 }}>{item.rarity}</span>
         <span style={{ fontSize: 11, color: rc, fontWeight: 600, flexShrink: 0, minWidth: 30, textAlign: "right" }}>+{item.power}</span>
         <span style={{ fontSize: 11, color: "#fbbf24", flexShrink: 0, minWidth: 28, textAlign: "right" }}>{sellPrice}g</span>
@@ -4542,26 +4564,19 @@ function DraggablePackItem({
     );
   }
   return (
-    <div ref={setNodeRef} {...listeners} {...attributes} onClick={onSelect}
-      style={{
-        background: isSelected ? "#1e1c2e" : "#1d1f23",
-        border: `2px solid ${isSelected ? "#fff" : isMatch ? "#c084fc" : `${rc}99`}`,
-        borderRadius: 10, padding: "10px 8px 8px",
-        cursor: isDragging ? "grabbing" : "grab", textAlign: "center",
-        opacity: isDragging ? 0.35 : 1,
-        boxShadow: isMatch ? "0 0 8px #c084fc44" : isSelected ? `0 0 0 1px ${rc}66` : undefined,
-        transition: "border-color 0.1s, background 0.1s", touchAction: "none",
-      }}
-    >
-      <Icon name={itemIcon(item)} size={40} color={itemIconColor(item) ?? rc} />
-      <div style={{ marginTop: 6, fontSize: 10, fontWeight: 600, color: "#e2e8f0", lineHeight: 1.3, wordBreak: "break-word" }}>{item.item_name}</div>
-      <div style={{ marginTop: 3, fontSize: 10, color: rc, fontWeight: 600 }}>+{item.power}</div>
-      <div style={{ fontSize: 9, color: "#6b7280", marginTop: 1 }}>{slotLabel(item)}</div>
-      {item.stat_bonus && statBonusSummary(item.stat_bonus) && (
-        <div style={{ fontSize: 8, color: "#86efac", marginTop: 1 }}>{statBonusSummary(item.stat_bonus)}</div>
-      )}
-      <div style={{ fontSize: 9, color: "#fbbf24", marginTop: 2 }}>{sellPrice}g</div>
-    </div>
+    <ItemCell
+      ref={setNodeRef}
+      item={item}
+      mode="detailed"
+      selected={isSelected}
+      isDragging={isDragging}
+      isMatch={isMatch}
+      showSellPrice
+      cursor={isDragging ? "grabbing" : "grab"}
+      onClick={onSelect}
+      {...(listeners as React.HTMLAttributes<HTMLDivElement>)}
+      {...(attributes as React.HTMLAttributes<HTMLDivElement>)}
+    />
   );
 }
 
@@ -4580,6 +4595,7 @@ function InventoryFullScreen({
   inQuest,
   selfId,
   characterLevel,
+  character,
   onEquip,
   onUnequip,
   onSell,
@@ -4591,6 +4607,7 @@ function InventoryFullScreen({
   inQuest: boolean;
   selfId: string;
   characterLevel?: number;
+  character?: Character;
   onEquip: (itemId: number) => void;
   onUnequip: (itemId: number) => void;
   onSell: (itemId: number) => void;
@@ -4605,6 +4622,14 @@ function InventoryFullScreen({
   function changeViewMode(mode: "grid" | "list") {
     localStorage.setItem("inv_view", mode);
     setViewMode(mode);
+  }
+  const dollEquipBonuses: Partial<Record<StatKey, number>> = {};
+  for (const item of items) {
+    if (item.equipped && item.stat_bonus) {
+      for (const [k, v] of Object.entries(item.stat_bonus)) {
+        dollEquipBonuses[k as StatKey] = (dollEquipBonuses[k as StatKey] ?? 0) + v;
+      }
+    }
   }
   const sorted = sortItems(items, sort);
   const packItems = sorted.filter((i) => !i.equipped);
@@ -4681,7 +4706,7 @@ function InventoryFullScreen({
         {/* Header */}
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: isMobile ? "12px 14px" : "14px 18px", borderBottom: "1px solid #2a2d33", flexShrink: 0 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <span style={{ fontSize: 16, fontWeight: 700, color: "#f5f5f5" }}>Inventory</span>
+            <span style={{ fontSize: 16, fontWeight: 700, color: "#f5f5f5", fontFamily: DISPLAY_FONT }}>Inventory</span>
             <span style={{ ...muted, fontSize: 12 }}>{items.length} item{items.length !== 1 ? "s" : ""}</span>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
@@ -4723,7 +4748,7 @@ function InventoryFullScreen({
                 {([["doll", "Equipped"], ["pack", `Pack (${packItems.length})`]] as const).map(([tab, label]) => (
                   <button key={tab} onClick={() => setMobileTab(tab)}
                     style={{
-                      flex: 1, padding: "10px 0", fontSize: 13, fontWeight: 600, fontFamily: "inherit",
+                      flex: 1, padding: "10px 0", fontSize: 13, fontWeight: 600, fontFamily: DISPLAY_FONT,
                       background: "none", border: "none", cursor: "pointer",
                       color: mobileTab === tab ? "#f5f5f5" : "#6b7280",
                       borderBottom: mobileTab === tab ? "2px solid #c084fc" : "2px solid transparent",
@@ -4745,16 +4770,15 @@ function InventoryFullScreen({
                         const isHighlighted = highlightSlot === s;
                         const isSelected = selectedId === (item?.id ?? -1);
                         if (item) {
-                          const rc = RARITY_COLOR[item.rarity];
                           return (
-                            <div key={s} onClick={() => { setSelectedId(isSelected ? null : item.id); }}
-                              title={item.item_name}
-                              style={{ width: 72, height: 72, background: isSelected ? "#1e1c2e" : "#1d1f23", border: `2px solid ${isSelected ? "#fff" : "#b89b3a"}`, borderRadius: 8, cursor: "pointer", position: "relative", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 2 }}
-                            >
-                              <div style={{ position: "absolute", top: 3, left: 3, background: "#b89b3a", color: "#000", borderRadius: 2, fontSize: 7, fontWeight: 800, padding: "1px 2px", lineHeight: 1 }}>E</div>
-                              <Icon name={itemIcon(item)} size={28} color={itemIconColor(item) ?? rc} />
-                              <div style={{ fontSize: 8, color: "#9ca3af", textAlign: "center", lineHeight: 1.1, maxWidth: 64, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.item_name}</div>
-                            </div>
+                            <ItemCell
+                              key={s}
+                              item={item}
+                              size={72}
+                              mode="compact"
+                              selected={isSelected}
+                              onClick={() => setSelectedId(isSelected ? null : item.id)}
+                            />
                           );
                         }
                         return (
@@ -4762,7 +4786,7 @@ function InventoryFullScreen({
                             style={{ width: 72, height: 72, background: "#141618", border: isHighlighted ? "2px solid #c084fc55" : "2px dashed #1e2128", borderRadius: 8, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 3, cursor: "pointer" }}
                           >
                             <Icon name={SLOT_ICON[s]} size={22} color={isHighlighted ? "#c084fc66" : "#2e3440"} style={s === "main_hand" ? { transform: "scaleX(-1)" } : undefined} />
-                            <div style={{ fontSize: 9, color: isHighlighted ? "#c084fc88" : "#374151", textAlign: "center" }}>{SLOT_LABELS[s]}</div>
+                            <div style={{ fontSize: 9, color: isHighlighted ? "#c084fc88" : "#374151", textAlign: "center", fontFamily: DISPLAY_FONT }}>{SLOT_LABELS[s]}</div>
                           </div>
                         );
                       })}
@@ -4770,6 +4794,26 @@ function InventoryFullScreen({
                     {highlightSlot && (
                       <div style={{ fontSize: 11, color: "#c084fc88", textAlign: "center" }}>
                         Switch to Pack tab to equip in {SLOT_LABELS[highlightSlot]}
+                      </div>
+                    )}
+                    {character?.str !== undefined && (
+                      <div style={{ alignSelf: "stretch", padding: "10px 12px", background: "#16181c", borderRadius: 8, border: "1px solid #2a2d33" }}>
+                        <div style={{ fontSize: 10, color: "#6b7280", textTransform: "uppercase", letterSpacing: 1.2, marginBottom: 6, fontFamily: DISPLAY_FONT }}>Primary Stats</div>
+                        <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 4 }}>
+                          {(["str", "int_stat", "vit", "agi", "dex"] as StatKey[]).map((key) => {
+                            const base = character[key] ?? 5;
+                            const bonus = dollEquipBonuses[key] ?? 0;
+                            return (
+                              <div key={key} style={{ textAlign: "center", background: "#1d1f23", borderRadius: 5, padding: "5px 3px" }}>
+                                <div style={{ fontSize: 8, color: "#6b7280", textTransform: "uppercase", letterSpacing: 0.8, fontFamily: DISPLAY_FONT }}>
+                                  {key === "int_stat" ? "INT" : key.toUpperCase()}
+                                </div>
+                                <div style={{ fontSize: 14, fontWeight: 700, color: "#f5f5f5", lineHeight: 1.2, fontFamily: DISPLAY_FONT }}>{base + bonus}</div>
+                                {bonus > 0 && <div style={{ fontSize: 7, color: "#86efac" }}>+{bonus}</div>}
+                              </div>
+                            );
+                          })}
+                        </div>
                       </div>
                     )}
                   </div>
@@ -4802,6 +4846,9 @@ function InventoryFullScreen({
                                   {slotLabel(item)}{item.stat_bonus && statBonusSummary(item.stat_bonus) ? ` · ${statBonusSummary(item.stat_bonus)}` : ""}
                                 </div>
                               </div>
+                              {(item.level_req ?? 1) > 1 && (
+                                <span style={{ fontSize: 10, color: "#6b7280", flexShrink: 0 }}>L{item.level_req}</span>
+                              )}
                               <div style={{ flexShrink: 0, textAlign: "right" }}>
                                 <div style={{ fontSize: 12, color: rc, fontWeight: 600 }}>+{item.power}</div>
                                 <span style={{ ...smallBadge, borderColor: `${rc}55`, color: rc, background: `${rc}15` }}>{item.rarity}</span>
@@ -4835,7 +4882,7 @@ function InventoryFullScreen({
             <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
               {/* Left — paper doll */}
               <div style={{ width: 340, flexShrink: 0, borderRight: "1px solid #2a2d33", overflowY: "auto", padding: "20px 16px", display: "flex", flexDirection: "column", alignItems: "center", gap: 12 }}>
-                <div style={{ ...muted, fontSize: 10, textTransform: "uppercase", letterSpacing: 1.5, alignSelf: "flex-start" }}>Equipped — drag items here to equip</div>
+                <div style={{ ...muted, fontSize: 10, textTransform: "uppercase", letterSpacing: 1.5, alignSelf: "flex-start", fontFamily: DISPLAY_FONT }}>Equipped — drag items here to equip</div>
                 <div style={{ display: "flex", justifyContent: "center" }}>
                   <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 96px)", gap: 6 }}>
                     {([null, "helmet", null, "main_hand", "body", "off_hand", "amulet", "pants", "ring", null, "boots", null] as (EquipSlot | null)[]).map((s, i) =>
@@ -4854,11 +4901,31 @@ function InventoryFullScreen({
                     Drag or click a matching item to equip in {SLOT_LABELS[highlightSlot]}
                   </div>
                 )}
+                {character?.str !== undefined && (
+                  <div style={{ alignSelf: "stretch", padding: "10px 12px", background: "#16181c", borderRadius: 8, border: "1px solid #2a2d33" }}>
+                    <div style={{ fontSize: 10, color: "#6b7280", textTransform: "uppercase", letterSpacing: 1.2, marginBottom: 6, fontFamily: DISPLAY_FONT }}>Primary Stats</div>
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 4 }}>
+                      {(["str", "int_stat", "vit", "agi", "dex"] as StatKey[]).map((key) => {
+                        const base = character[key] ?? 5;
+                        const bonus = dollEquipBonuses[key] ?? 0;
+                        return (
+                          <div key={key} style={{ textAlign: "center", background: "#1d1f23", borderRadius: 5, padding: "5px 3px" }}>
+                            <div style={{ fontSize: 8, color: "#6b7280", textTransform: "uppercase", letterSpacing: 0.8, fontFamily: DISPLAY_FONT }}>
+                              {key === "int_stat" ? "INT" : key.toUpperCase()}
+                            </div>
+                            <div style={{ fontSize: 14, fontWeight: 700, color: "#f5f5f5", lineHeight: 1.2, fontFamily: DISPLAY_FONT }}>{base + bonus}</div>
+                            {bonus > 0 && <div style={{ fontSize: 7, color: "#86efac" }}>+{bonus}</div>}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Center — pack */}
               <DroppablePackPanel>
-                <div style={{ ...muted, fontSize: 10, textTransform: "uppercase", letterSpacing: 1.5, marginBottom: 12 }}>
+                <div style={{ ...muted, fontSize: 10, textTransform: "uppercase", letterSpacing: 1.5, marginBottom: 12, fontFamily: DISPLAY_FONT }}>
                   Pack {packItems.length > 0 ? `(${packItems.length})` : "(empty)"} — drag equipped items here to unequip
                 </div>
                 {packItems.length === 0 ? (
@@ -4918,89 +4985,117 @@ function InventoryFullScreen({
   );
 }
 
-function ItemSlot({
-  item,
-  selected,
-  onSelect,
-}: {
-  item: Item;
-  selected: boolean;
-  onSelect: (el: HTMLElement) => void;
-}) {
+// ── Unified item cell ─────────────────────────────────────────────────────
+// mode="icon"     — fixed square, power badge circle       (InventoryCard)
+// mode="compact"  — fixed square, icon + truncated name    (doll slots)
+// mode="detailed" — auto-height, icon + full stats + price (pack grid)
+type ItemCellMode = "icon" | "compact" | "detailed";
+
+const ItemCell = forwardRef<
+  HTMLDivElement,
+  {
+    item: Item;
+    size?: number;
+    mode?: ItemCellMode;
+    selected?: boolean;
+    isOver?: boolean;
+    isDragging?: boolean;
+    isMatch?: boolean;
+    showSellPrice?: boolean;
+    cursor?: CSSProperties["cursor"];
+    onClick?: React.MouseEventHandler<HTMLDivElement>;
+  } & Omit<React.HTMLAttributes<HTMLDivElement>, "onClick">
+>(function ItemCell(
+  { item, size = 72, mode = "icon", selected, isOver, isDragging, isMatch,
+    showSellPrice, cursor, onClick, style: extraStyle, ...rest },
+  ref,
+) {
   const rc = RARITY_COLOR[item.rarity];
-  const borderColor = selected ? "#fff" : item.equipped ? "#b89b3a" : `${rc}99`;
+  const borderColor = isOver ? "#7dd3fc"
+    : selected ? "#fff"
+    : item.equipped ? "#b89b3a"
+    : isMatch ? "#c084fc"
+    : `${rc}99`;
+  const iconSize = mode === "detailed" ? 40 : mode === "compact" ? 38 : 28;
+  const powerValue = item.power > 0
+    ? item.power
+    : (item.stat_bonus ? Object.values(item.stat_bonus).reduce((a: number, b: number) => a + b, 0) : 0);
+  const sellPrice = showSellPrice
+    ? sellPriceFor(item.item_type, item.rarity, { power: item.power, sharpens_count: item.sharpens_count })
+    : null;
+
   return (
     <div
-      onClick={(e) => onSelect(e.currentTarget)}
+      ref={ref}
+      onClick={onClick}
       title={item.item_name}
       style={{
-        width: 72,
-        height: 72,
-        background: selected ? "#1e1c2e" : "#1d1f23",
-        borderRadius: 8,
+        width: mode !== "detailed" ? size : undefined,
+        height: mode !== "detailed" ? size : undefined,
+        padding: mode === "detailed" ? "10px 8px 8px" : undefined,
+        background: selected ? "#1e1c2e" : isOver ? "#151d2e" : "#1d1f23",
         border: `2px solid ${borderColor}`,
+        borderRadius: mode === "icon" ? 8 : 10,
+        cursor: cursor ?? (onClick ? "pointer" : undefined),
         position: "relative",
-        cursor: "pointer",
         display: "flex",
+        flexDirection: "column",
         alignItems: "center",
-        justifyContent: "center",
-        boxShadow: selected ? `0 0 0 1px ${rc}66` : undefined,
+        justifyContent: mode !== "detailed" ? "center" : undefined,
+        gap: mode !== "icon" ? 2 : undefined,
+        opacity: isDragging ? 0.35 : 1,
+        boxShadow: isMatch ? "0 0 8px #c084fc44" : selected ? `0 0 0 1px ${rc}66` : undefined,
         transition: "border-color 0.1s, background 0.1s",
+        touchAction: "none",
         flexShrink: 0,
+        textAlign: "center",
+        ...extraStyle,
       }}
+      {...rest}
     >
+      {item.equipped && (
+        <div style={{ position: "absolute", top: 4, left: 4, background: "#b89b3a", color: "#000", borderRadius: 3, fontSize: 8, fontWeight: 800, padding: "1px 3px", lineHeight: 1 }}>E</div>
+      )}
       {(item.level_req ?? 1) > 1 && (
-        <div
-          style={{
-            position: "absolute",
-            top: 3,
-            left: 3,
-            minWidth: 14,
-            height: 14,
-            background: "#1d1f23",
-            border: "1px solid #4b5563",
-            borderRadius: 3,
-            fontSize: 8,
-            fontWeight: 700,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            color: "#9ca3af",
-            lineHeight: 1,
-            padding: "0 2px",
-          }}
-        >
-          L{item.level_req}
+        <div style={{ position: "absolute", top: 4, [item.equipped ? "right" : "left"]: 4, background: "#1d1f23", border: "1px solid #4b5563", borderRadius: 3, fontSize: 8, fontWeight: 700, padding: "1px 3px", lineHeight: 1, color: "#9ca3af" }}>L{item.level_req}</div>
+      )}
+      <Icon name={itemIcon(item)} size={iconSize} color={itemIconColor(item) ?? rc} />
+      {mode === "icon" && (
+        <div style={{ position: "absolute", bottom: 3, right: 3, minWidth: 18, height: 18, background: "#0a0b0e", border: `1px solid ${rc}55`, borderRadius: "50%", fontSize: 9, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", color: rc, lineHeight: 1, padding: "0 2px" }}>
+          +{powerValue}
         </div>
       )}
-      <Icon name={itemIcon(item)} size={28} color={itemIconColor(item) ?? rc} />
-      <div
-        style={{
-          position: "absolute",
-          bottom: 3,
-          right: 3,
-          minWidth: 18,
-          height: 18,
-          background: "#0a0b0e",
-          border: `1px solid ${rc}55`,
-          borderRadius: "50%",
-          fontSize: 9,
-          fontWeight: 700,
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          color: rc,
-          padding: "0 2px",
-          lineHeight: 1,
-        }}
-      >
-        +{item.power > 0
-          ? item.power
-          : item.stat_bonus
-          ? Object.values(item.stat_bonus).reduce((a, b) => a + b, 0)
-          : 0}
-      </div>
+      {mode === "compact" && (
+        <div style={{ fontSize: 10, color: "#9ca3af", lineHeight: 1.1, maxWidth: size - 10, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", padding: "0 4px" }}>
+          {item.item_name}
+        </div>
+      )}
+      {mode === "detailed" && (
+        <>
+          <div style={{ marginTop: 2, fontSize: 10, fontWeight: 600, color: "#e2e8f0", lineHeight: 1.3, wordBreak: "break-word" }}>{item.item_name}</div>
+          <div style={{ fontSize: 10, color: rc, fontWeight: 600 }}>+{powerValue}</div>
+          <div style={{ fontSize: 9, color: "#6b7280" }}>{slotLabel(item)}</div>
+          {item.stat_bonus && statBonusSummary(item.stat_bonus) && (
+            <div style={{ fontSize: 8, color: "#86efac" }}>{statBonusSummary(item.stat_bonus)}</div>
+          )}
+          {showSellPrice && sellPrice !== null && (
+            <div style={{ fontSize: 9, color: "#fbbf24" }}>{sellPrice}g</div>
+          )}
+        </>
+      )}
     </div>
+  );
+});
+
+function ItemSlot({ item, selected, onSelect }: { item: Item; selected: boolean; onSelect: (el: HTMLElement) => void }) {
+  return (
+    <ItemCell
+      item={item}
+      size={72}
+      mode="icon"
+      selected={selected}
+      onClick={(e) => onSelect(e.currentTarget)}
+    />
   );
 }
 
@@ -5086,7 +5181,7 @@ function ItemDetailPopover({
           <Icon name={itemIcon(item)} size={22} color={itemIconColor(item) ?? rc} />
         </div>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontWeight: 700, color: "#f5f5f5", fontSize: 13, lineHeight: 1.3, wordBreak: "break-word" }}>
+          <div style={{ fontWeight: 700, color: "#f5f5f5", fontSize: 13, lineHeight: 1.3, wordBreak: "break-word", fontFamily: DISPLAY_FONT }}>
             {item.item_name}
           </div>
           <div style={{ display: "flex", gap: 5, marginTop: 4, flexWrap: "wrap" }}>
@@ -5392,7 +5487,7 @@ function StaplesSection({
             >
               <div style={{ fontSize: 22 }}>{s.emoji}</div>
               <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontWeight: 600, color: "#f5f5f5", fontSize: 15 }}>{s.name}</div>
+                <div style={{ fontWeight: 600, color: "#f5f5f5", fontSize: 15, fontFamily: DISPLAY_FONT }}>{s.name}</div>
                 <div style={{ ...muted, fontSize: 12, marginTop: 2 }}>{s.blurb}</div>
               </div>
               <div style={{ color: "#fbbf24", fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>
@@ -5449,7 +5544,7 @@ function ShopRow({
         <Icon name={itemIcon(item)} size={24} color={itemIconColor(item) ?? "#cbd5e1"} />
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-            <span style={{ fontWeight: 600, color: "#f5f5f5", fontSize: 15 }}>{item.item_name}</span>
+            <span style={{ fontWeight: 600, color: "#f5f5f5", fontSize: 15, fontFamily: DISPLAY_FONT }}>{item.item_name}</span>
             <RarityBadge rarity={item.rarity} />
             {item.item_type === "weapon" && item.weapon_range === "ranged" && (
               <SmallBadge>ranged</SmallBadge>
@@ -5587,7 +5682,7 @@ function InnCard({
             >
               <Icon name={r.iconName} size={22} color="#cbd5e1" />
               <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontWeight: 600, color: "#f5f5f5", fontSize: 15 }}>{r.name}</div>
+                <div style={{ fontWeight: 600, color: "#f5f5f5", fontSize: 15, fontFamily: DISPLAY_FONT }}>{r.name}</div>
                 <div style={{ ...muted, fontSize: 12, marginTop: 2 }}>{r.blurb}</div>
               </div>
               <button
@@ -5677,7 +5772,7 @@ function SmithyCard({
               >
                 <Icon name={it.verb.iconName} size={22} color="#cbd5e1" />
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontWeight: 600, color: "#f5f5f5", fontSize: 15 }}>
+                  <div style={{ fontWeight: 600, color: "#f5f5f5", fontSize: 15, fontFamily: DISPLAY_FONT }}>
                     {it.item_name} <span style={{ color: "#fbbf24", fontWeight: 500 }}>+{it.power}</span>{" "}
                     <span style={{ ...muted, fontSize: 11 }}>{it.verb.stat}</span>
                   </div>
@@ -5924,7 +6019,7 @@ function PubCard({
             >
               <span style={{ fontSize: 20 }}>{d.emoji}</span>
               <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontWeight: 600, color: "#f5f5f5", fontSize: 14, display: "flex", alignItems: "center", gap: 6 }}>
+                <div style={{ fontWeight: 600, color: "#f5f5f5", fontSize: 14, display: "flex", alignItems: "center", gap: 6, fontFamily: DISPLAY_FONT }}>
                   {d.name}
                   {d.is_daily_special && (
                     <span style={{ fontSize: 10, background: "#b89b3a22", color: "#fbbf24", border: "1px solid #b89b3a55", borderRadius: 4, padding: "1px 5px", fontWeight: 700 }}>
@@ -5984,7 +6079,7 @@ function GameCardHeader({ icon, title, subtitle }: { icon: string; title: string
         <Icon name={icon} size={32} />
       </div>
       <div>
-        <div style={{ fontWeight: 700, fontSize: 16, color: "#f5f5f5" }}>{title}</div>
+        <div style={{ fontWeight: 700, fontSize: 16, color: "#f5f5f5", fontFamily: DISPLAY_FONT }}>{title}</div>
         <div style={{ ...muted, fontSize: 12, marginTop: 2 }}>{subtitle}</div>
       </div>
     </div>
@@ -6172,7 +6267,7 @@ function LiarsRollCard({ gold, onRefresh }: { gold: number; onRefresh: () => Pro
         return (
           <div>
             <div style={{ background: won ? "#1a2a1a" : "#2a1a1a", border: `1px solid ${won ? "#2d5a2d" : "#5a2d2d"}`, borderRadius: 8, padding: 12, marginBottom: 10 }}>
-              <div style={{ fontWeight: 700, color: won ? "#86efac" : "#fca5a5", marginBottom: 6 }}>
+              <div style={{ fontWeight: 700, color: won ? "#86efac" : "#fca5a5", marginBottom: 6, fontFamily: DISPLAY_FONT }}>
                 {won
                   ? r.choice === "trust" ? <><Icon name="hand" size={13} /> Trusted correctly — +{r.payout}g!</> : <><Icon name="fire" size={13} /> Called the bluff — +{r.payout}g!</>
                   : r.choice === "trust" ? <><Icon name="daggers" size={13} /> Trusted a liar — lost the stake.</> : <><Icon name="daggers" size={13} /> Called an honest claim — lost the stake.</>}
@@ -6261,7 +6356,7 @@ function SpdCard({ pub, selfId, onRefresh }: { pub: PubResponse; selfId: string;
       {spdResult && (
         <div>
           <div style={{ background: spdResult.tie ? "#1d2a2d" : spdResult.winner_user_id === selfId ? "#1a2a1a" : "#2a1a1a", border: `1px solid ${spdResult.tie ? "#2d4a5a" : spdResult.winner_user_id === selfId ? "#2d5a2d" : "#5a2d2d"}`, borderRadius: 8, padding: 12, marginBottom: 10 }}>
-            <div style={{ fontWeight: 700, color: spdResult.tie ? "#93c5fd" : spdResult.winner_user_id === selfId ? "#86efac" : "#fca5a5", marginBottom: 6 }}>
+            <div style={{ fontWeight: 700, color: spdResult.tie ? "#93c5fd" : spdResult.winner_user_id === selfId ? "#86efac" : "#fca5a5", marginBottom: 6, fontFamily: DISPLAY_FONT }}>
               {spdResult.tie ? <><Icon name="hand" size={13} /> Tie! Everything refunded.</> : spdResult.winner_user_id === selfId ? <><Icon name="trophy" size={13} /> You won! +{spdResult.payout}g</> : <><Icon name="daggers" size={13} /> You lost the match.</>}
             </div>
             <div style={{ ...muted, fontSize: 13 }}>
@@ -6666,10 +6761,10 @@ function HaggleResultDialog({
   const headlineColor = failed ? "#fca5a5" : steal ? "#fbbf24" : "#86efac";
   return (
     <ModalBackdrop onCancel={onClose}>
-      <div style={{ ...muted, fontSize: 12, textTransform: "uppercase", letterSpacing: 1.5 }}>
+      <div style={{ ...muted, fontSize: 12, textTransform: "uppercase", letterSpacing: 1.5, fontFamily: DISPLAY_FONT }}>
         <Icon name="gold-bar" /> Shopkeeper
       </div>
-      <div style={{ fontSize: 20, fontWeight: 700, color: headlineColor, marginTop: 8 }}>
+      <div style={{ fontSize: 20, fontWeight: 700, color: headlineColor, marginTop: 8, fontFamily: DISPLAY_FONT }}>
         {headline}
       </div>
       <div style={{ ...muted, fontSize: 13, marginTop: 4 }}>
@@ -6754,10 +6849,10 @@ function Stat({ label, value, icon, tooltip }: { label: string; value: React.Rea
         </div>
       )}
       <div style={{ minWidth: 0 }}>
-        <div style={{ ...muted, fontSize: 11, textTransform: "uppercase", letterSpacing: 0.8, lineHeight: 1 }}>
+        <div style={{ ...muted, fontSize: 11, textTransform: "uppercase", letterSpacing: 0.8, lineHeight: 1, fontFamily: DISPLAY_FONT }}>
           {label}
         </div>
-        <div style={{ fontSize: 18, fontWeight: 600, color: "#f5f5f5", marginTop: 3 }}>
+        <div style={{ fontSize: 18, fontWeight: 600, color: "#f5f5f5", marginTop: 3, fontFamily: DISPLAY_FONT }}>
           {value}
         </div>
       </div>
@@ -7023,7 +7118,7 @@ function ApothecaryCard({
                   />
                 </div>
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontWeight: 600, color: "#f5f5f5", fontSize: 15 }}>{s.name}</div>
+                  <div style={{ fontWeight: 600, color: "#f5f5f5", fontSize: 15, fontFamily: DISPLAY_FONT }}>{s.name}</div>
                   <div style={{ ...muted, fontSize: 12, marginTop: 2 }}>{s.blurb}</div>
                   <div style={{ color: "#86efac", fontSize: 11, marginTop: 3 }}>{powerLine}</div>
                 </div>
@@ -7275,7 +7370,7 @@ function HuntSection({
               }}
             >−</button>
             <div style={{ textAlign: "center", minWidth: 60 }}>
-              <div style={{ fontSize: 28, fontWeight: 700, color: "#f1e8c8", lineHeight: 1 }}>
+              <div style={{ fontSize: 28, fontWeight: 700, color: "#f1e8c8", lineHeight: 1, fontFamily: DISPLAY_FONT }}>
                 {clampedTier}
               </div>
               <div style={{ fontSize: 10, color: "#6b7280", marginTop: 2 }}>
@@ -7303,11 +7398,11 @@ function HuntSection({
         }}>
           <div style={{ textAlign: "center" }}>
             <div style={{ fontSize: 18, fontWeight: 700, color: "#a3e635" }}>~{xpEstimate}</div>
-            <div style={{ fontSize: 10, color: "#6b7280", marginTop: 2 }}>XP</div>
+            <div style={{ fontSize: 10, color: "#6b7280", marginTop: 2, fontFamily: DISPLAY_FONT }}>XP</div>
           </div>
           <div style={{ textAlign: "center" }}>
             <div style={{ fontSize: 18, fontWeight: 700, color: "#fbbf24" }}>~{goldEstimate}</div>
-            <div style={{ fontSize: 10, color: "#6b7280", marginTop: 2 }}>Gold</div>
+            <div style={{ fontSize: 10, color: "#6b7280", marginTop: 2, fontFamily: DISPLAY_FONT }}>Gold</div>
           </div>
           <div style={{ fontSize: 11, color: "#6b7280", alignSelf: "center", lineHeight: 1.4 }}>
             Estimated single-fighter rewards.<br />Boss / elite quests give more.
@@ -7874,8 +7969,9 @@ const card: React.CSSProperties = {
   border: "1px solid #2a2d33",
   boxSizing: "border-box",
 };
-const h1: React.CSSProperties = { margin: 0, fontSize: 28, color: "#f5f5f5" };
-const h2: React.CSSProperties = { margin: 0, fontSize: 20, color: "#f5f5f5" };
+const DISPLAY_FONT = "'Uncial Antiqua', serif";
+const h1: React.CSSProperties = { margin: 0, fontSize: 28, color: "#f5f5f5", fontFamily: DISPLAY_FONT };
+const h2: React.CSSProperties = { margin: 0, fontSize: 20, color: "#f5f5f5", fontFamily: DISPLAY_FONT };
 const muted: React.CSSProperties = { color: "#9aa0a6", fontSize: 14 };
 const input: React.CSSProperties = {
   width: "100%",

@@ -672,6 +672,14 @@ interface Env {
 // The function is 12 lines and stable; lifting it into a shared package
 // would couple the web worker to slack-specific types it doesn't otherwise
 // need. If a third caller appears we'll lift then.
+async function deleteSlackMessage(botToken: string, channel: string, ts: string): Promise<void> {
+  await fetch("https://slack.com/api/chat.delete", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${botToken}`, "Content-Type": "application/json; charset=utf-8" },
+    body: JSON.stringify({ channel, ts }),
+  });
+}
+
 async function postSlackMessage(
   botToken: string,
   args: {
@@ -3592,6 +3600,10 @@ app.post("/api/quest/:id/dungeon/treasure_take", async (c) => {
     rarity: choice.rarity,
     flavor: choice.flavor,
     weapon_range: choice.weapon_range ?? null,
+    slot: choice.slot ?? null,
+    stat_bonus: choice.stat_bonus ?? null,
+    item_subtype: choice.item_subtype ?? null,
+    level_req: choice.level_req,
   });
 
   // Full dungeon spoils — dungeon variant rewardMultiplier = 2.5.
@@ -4213,7 +4225,7 @@ type UseItemAction = {
 };
 
 interface ClientToServer {
-  type: "action";
+  type: "action" | "ping";
   action: TurnAction | UseItemAction;
 }
 
@@ -4247,6 +4259,7 @@ export interface LootDrop {
   rarity: string;
   flavor: string;
   weapon_range: "melee" | "ranged" | "focus" | null;
+  level_req: number;
 }
 
 export interface FighterReward {
@@ -4275,8 +4288,11 @@ export interface OutcomeSummary {
   elite: boolean;
   is_boss: boolean;
   // True when this was a dungeon combat room — quest stays active, player
-  // returns to Slack to advance through doors / non-combat rooms.
+  // picks the next door to advance.
   dungeon_room_cleared?: boolean;
+  // When dungeon_room_cleared and the expedition produced two door choices,
+  // these are the node stubs the client shows in the VictoryModal door picker.
+  dungeon_doors?: Array<{ type: string; monster_name: string | null; scene: string | null }>;
 }
 
 interface ServerToClient {
@@ -4322,13 +4338,17 @@ async function applyWebCombatOutcome(
   const totalPoolXp = won ? Math.round(baseRewardXp(tier) * multiplier) : 0;
   const totalPoolGold = won ? Math.round(baseRewardGold(tier) * multiplier) : 0;
 
-  // Contribution split: proportional to damage dealt, with a small support
-  // baseline so fighters who contribute via heals/shields/other support
-  // actions still earn spoils even if they dealt zero damage.
-  const contributions = state.fighters.map((f) => ({
-    id: f.id,
-    points: (state.contribution[f.id] ?? 0) + SUPPORT_BASE_CONTRIBUTION,
-  }));
+  // Contribution split: damage dealt + support actions (healing counts at
+  // 50%, shielding at 25%) + small baseline so pure-support fighters always
+  // earn a meaningful share even if they dealt no direct damage.
+  const contributions = state.fighters.map((f) => {
+    const fs = state.stats?.[f.id] ?? { damage_taken: 0, healing_done: 0, shielding_done: 0, kills: 0 };
+    const supportCredit = Math.floor(fs.healing_done / 2) + Math.floor(fs.shielding_done / 4);
+    return {
+      id: f.id,
+      points: (state.contribution[f.id] ?? 0) + supportCredit + SUPPORT_BASE_CONTRIBUTION,
+    };
+  });
   const totalContribution = contributions.reduce((s, f) => s + f.points, 0);
   const xpShares: Record<string, number> = {};
   const goldShares: Record<string, number> = {};
@@ -4394,8 +4414,10 @@ async function applyWebCombatOutcome(
     }
 
     if (won) {
-      xpAwarded = xpShares[fighter.id] ?? 0;
-      goldAwarded = goldShares[fighter.id] ?? 0;
+      // Guarantee at least 1 XP/gold so support fighters with 0 damage
+      // dealt never see "+0 XP" due to integer rounding of a tiny share.
+      xpAwarded = Math.max(1, xpShares[fighter.id] ?? 0);
+      goldAwarded = Math.max(1, goldShares[fighter.id] ?? 0);
       const result = await awardSpoils(
         env.DB,
         character,
@@ -4433,6 +4455,7 @@ async function applyWebCombatOutcome(
           rarity: created.rarity,
           flavor: created.flavor ?? named.flavor,
           weapon_range: created.weapon_range,
+          level_req: created.level_req,
         });
       }
     } else if (fighter.hp <= 0) {
@@ -4551,7 +4574,21 @@ async function applyWebCombatOutcome(
         .bind(questId).run();
     }
     await setQuestMode(env.DB, questId, "slack");
-    await advanceExpeditionAfterWebCombat(env, questId);
+    const dungeonDoors = await advanceExpeditionAfterWebCombat(env, questId);
+    if (dungeonDoors) {
+      return {
+        status: state.status as "victory" | "defeat",
+        rewards,
+        monster_name: primaryMonster.name,
+        monster_tier: tier,
+        total_pool_xp: totalPoolXp,
+        total_pool_gold: totalPoolGold,
+        elite,
+        is_boss: isBoss,
+        dungeon_room_cleared: true,
+        dungeon_doors: dungeonDoors,
+      };
+    }
   } else {
     await markQuestStatus(env.DB, questId, won ? "completed" : "failed");
   }
@@ -4588,10 +4625,10 @@ async function isDungeonQuest(db: D1Database, questId: number): Promise<boolean>
 async function advanceExpeditionAfterWebCombat(
   env: Env,
   questId: number,
-): Promise<void> {
+): Promise<Array<{ type: string; monster_name: string | null; scene: string | null }> | null> {
   const quest = await getQuestById(env.DB, questId);
   const exp = quest?.scene.expedition;
-  if (!quest || !exp) return;
+  if (!quest || !exp) return null;
 
   const next = pickNextRoom(exp as ExpState);
 
@@ -4607,7 +4644,11 @@ async function advanceExpeditionAfterWebCombat(
       monster_hp: 0,
     };
     const ok = await trySaveExpeditionAdvance(env.DB, questId, updatedScene, exp.current);
-    if (!ok) return;
+    if (!ok) return null;
+    const doorNodes = next.pair.map((idx) => {
+      const n = exp.nodes[idx];
+      return { type: n?.type ?? "combat", monster_name: n?.monster_name ?? null, scene: n?.scene ?? null };
+    });
     if (env.SLACK_BOT_TOKEN && quest.thread_ts) {
       const single = next.pair.length === 1;
       const subBossAhead = single && next.pair[0] === exp.nodes.length - 2;
@@ -4618,7 +4659,7 @@ async function advanceExpeditionAfterWebCombat(
         : "🚪 *Two paths diverge ahead.*";
       const advanceHint = single
         ? "`/gq choose 1` to advance"
-        : "`/gq choose 1` or `/gq choose 2`";
+        : "`/gq choose 1` (N) or `/gq choose 2` (E)";
       const text = `${headline}\nRun \`/gq look\` to see the prompt, or ${advanceHint}.`;
       await postSlackMessage(env.SLACK_BOT_TOKEN, {
         channel: quest.channel_id,
@@ -4626,13 +4667,13 @@ async function advanceExpeditionAfterWebCombat(
         text,
       }).catch((err) => console.warn("dungeon door post failed", err));
     }
-    return;
+    return doorNodes;
   }
 
   // Auto-advance — only fires when current was the sub-boss and the next
   // node is treasure. Mirrors advanceDungeon's node branch.
   const nextNode = exp.nodes[next.index];
-  if (!nextNode) return;
+  if (!nextNode) return null;
   const isCombat = nextNode.type === "combat";
   const updatedExp: ExpeditionState = {
     ...exp,
@@ -4653,7 +4694,7 @@ async function advanceExpeditionAfterWebCombat(
     monster_effects: [],
   };
   const ok = await trySaveExpeditionAdvance(env.DB, questId, updatedScene, exp.current);
-  if (!ok) return;
+  if (!ok) return null;
   if (env.SLACK_BOT_TOKEN && quest.thread_ts) {
     const text = nextNode.type === "treasure"
       ? "🎁 *Treasure ahead.* Run `/gq look` to see the loot, then `/gq take <n>` to claim."
@@ -4664,6 +4705,7 @@ async function advanceExpeditionAfterWebCombat(
       text,
     }).catch((err) => console.warn("dungeon advance post failed", err));
   }
+  return null;
 }
 
 interface WsAttachment {
@@ -4864,7 +4906,7 @@ export class QuestRoom extends DurableObject<Env> {
   // thread_ts are immutable for the life of the quest so cached values
   // remain valid through DO hibernation/wakeup. Cleared when cacheQuestId
   // changes (different quest takes over the same DO).
-  private cacheQuestMeta: { channel_id: string; thread_ts: string } | null = null;
+  private cacheQuestMeta: { channel_id: string; thread_ts: string; joinable_ts: string | null } | null = null;
   // Recent combat events for replay on reconnect. Capped to LOG_MAX entries
   // and persisted to D1 alongside cacheState. Holds both engine CombatEvents
   // and worker-side events (e.g. item_used) — the UI handles both. Typed as
@@ -4939,6 +4981,9 @@ export class QuestRoom extends DurableObject<Env> {
       this.sendOne(ws, { type: "error", message: "invalid json" });
       return;
     }
+
+    // Client heartbeat — silently ignore, keeps idle timer alive.
+    if (parsed?.type === "ping") return;
 
     if (!parsed || parsed.type !== "action" || !parsed.action) {
       this.sendOne(ws, { type: "error", message: "expected { type: 'action', action: {...} }" });
@@ -5097,7 +5142,7 @@ export class QuestRoom extends DurableObject<Env> {
     // after begin() doesn't have to hit D1 again. ensureQuestMeta would
     // fetch it lazily on first need, but we already have the row here.
     if (quest.thread_ts) {
-      this.cacheQuestMeta = { channel_id: quest.channel_id, thread_ts: quest.thread_ts };
+      this.cacheQuestMeta = { channel_id: quest.channel_id, thread_ts: quest.thread_ts, joinable_ts: quest.joinable_ts };
       this.cacheQuestId = questId;
     }
 
@@ -5431,13 +5476,13 @@ export class QuestRoom extends DurableObject<Env> {
   // still reaches web clients via WebSocket.
   private async ensureQuestMeta(
     questId: number,
-  ): Promise<{ channel_id: string; thread_ts: string } | null> {
+  ): Promise<{ channel_id: string; thread_ts: string; joinable_ts: string | null } | null> {
     if (this.cacheQuestMeta && this.cacheQuestId === questId) {
       return this.cacheQuestMeta;
     }
     const quest = await getQuestById(this.env.DB, questId);
     if (!quest || !quest.thread_ts) return null;
-    this.cacheQuestMeta = { channel_id: quest.channel_id, thread_ts: quest.thread_ts };
+    this.cacheQuestMeta = { channel_id: quest.channel_id, thread_ts: quest.thread_ts, joinable_ts: quest.joinable_ts };
     return this.cacheQuestMeta;
   }
 
@@ -5507,11 +5552,11 @@ export class QuestRoom extends DurableObject<Env> {
     }
   }
 
-  // Post a wrap-up summary to the Slack thread after a web combat victory.
-  // Skipped for pure-web quests (channel_id starts with "web:") and when
-  // SLACK_BOT_TOKEN is absent. Fire-and-forget via ctx.waitUntil.
+  // Post a wrap-up summary to the Slack thread after web combat ends, and
+  // delete the joinable-card regardless of outcome. Skipped for pure-web quests
+  // (channel_id starts with "web:") and when SLACK_BOT_TOKEN is absent.
+  // Fire-and-forget via ctx.waitUntil.
   private postVictoryWrapup(questId: number, outcome: OutcomeSummary): void {
-    if (outcome.status !== "victory") return;
     if (!this.env.SLACK_BOT_TOKEN) return;
     const token = this.env.SLACK_BOT_TOKEN;
     this.ctx.waitUntil(
@@ -5519,6 +5564,13 @@ export class QuestRoom extends DurableObject<Env> {
         try {
           const meta = await this.ensureQuestMeta(questId);
           if (!meta || meta.channel_id.startsWith("web:")) return;
+
+          // Always delete the join-post so it doesn't linger after combat ends.
+          if (meta.joinable_ts) {
+            void deleteSlackMessage(token, meta.channel_id, meta.joinable_ts);
+          }
+
+          if (outcome.status !== "victory") return;
 
           const header = [
             outcome.is_boss ? "👑" : "⚔️",
@@ -5551,7 +5603,7 @@ export class QuestRoom extends DurableObject<Env> {
             text: lines.join("\n"),
           });
         } catch (err) {
-          console.warn("victory wrapup to slack failed", err);
+          console.warn("combat wrapup to slack failed", err);
         }
       })(),
     );

@@ -2635,6 +2635,7 @@ async function handleGraphTake(
         lootSpec.power,
         (lootSpec.weapon_range ?? undefined) as "melee" | "ranged" | "focus" | undefined,
         lootSpec.slot ?? undefined,
+        lootSpec.item_subtype ?? undefined,
       );
       itemName = named.name;
       itemFlavor = named.flavor;
@@ -2807,6 +2808,7 @@ async function resolveLootDrop(
     roll.power,
     roll.weapon_range,
     roll.slot ?? undefined,
+    roll.item_subtype ?? undefined,
   );
 }
 
@@ -3603,7 +3605,7 @@ function buildDoorPromptBlocks(exp: ExpeditionState, cmd: string): unknown[] {
           ? (isSubBossAhead
             ? `👑 Continue to sub-boss`
             : `🚪 Continue: ${dungeonRoomLabel(node.type)}`)
-          : `🚪 Door ${i + 1}: ${dungeonRoomLabel(node.type)}`;
+          : `🧭 ${["N", "E", "S", "W"][i] ?? i + 1}: ${dungeonRoomLabel(node.type)}`;
         return {
           type: "button",
           // action_id must be unique within the block — encode the index.
@@ -5029,10 +5031,12 @@ function renderDoorPrompt(exp: ExpeditionState, cmd: string): string {
     : isSingle
     ? `*🚪 One path forward* — Room ${visited + 1}/${middleTotal}. Catch your breath.`
     : `*🚪 Two paths diverge* — Room ${visited + 1}/${middleTotal} ahead.`;
+  const DOOR_DIRS = ["N", "E", "S", "W"];
   const lines = [headline, renderPathTrail(exp)];
   for (let i = 0; i < doors.length; i++) {
     const node = exp.nodes[doors[i]];
-    lines.push(`\`${i + 1}\` ${dungeonRoomLabel(node.type)}`);
+    const dir = isSingle ? "" : ` (${DOOR_DIRS[i] ?? i + 1})`;
+    lines.push(`\`${i + 1}\`${dir} ${dungeonRoomLabel(node.type)}`);
   }
   const restHint = `\`${cmd} rest\` to short-rest first (HP+mana, 10-min cooldown).`;
   const lookHint = `\`${cmd} look\` to re-show this prompt if you scroll past it.`;

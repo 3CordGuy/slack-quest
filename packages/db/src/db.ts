@@ -891,10 +891,11 @@ export async function awardSpoils(
        SET xp = ?, gold = gold + ?, level = ?,
            max_hp = ?, hp = ?,
            max_mana = ?, mana = ?,
+           unspent_points = unspent_points + ?,
            last_active = ?
        WHERE slack_user_id = ?`,
     )
-    .bind(totalXp, gold, level, maxHp, newHp, maxMana, newMana, Date.now(), character.slack_user_id)
+    .bind(totalXp, gold, level, maxHp, newHp, maxMana, newMana, levelsGained, Date.now(), character.slack_user_id)
     .run();
   return { levelsGained, newLevel: level, newMaxHp: maxHp, newHp, newMaxMana: maxMana, newMana };
 }

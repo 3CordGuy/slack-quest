@@ -816,10 +816,21 @@ function handlePlayerHit(
         ? { ...m, hp: newHp, ...(phaseTransition ? { boss_phase: 2 as const } : {}) }
         : m,
     ),
-    contribution: {
-      ...s.contribution,
-      [action.actor]: (s.contribution[action.actor] ?? 0) + finalDamage,
-    },
+    contribution: (() => {
+      const base = {
+        ...s.contribution,
+        [action.actor]: (s.contribution[action.actor] ?? 0) + finalDamage,
+      };
+      // When a Battle Hymn charge is consumed by someone other than the Bard,
+      // credit the Bard for the aura bonus they provided.
+      if (aura.hymn_consumed) {
+        const bard = s.fighters.find(
+          (f) => classIdOf(f) === "frontend_bard" && f.id !== action.actor,
+        );
+        if (bard) base[bard.id] = (base[bard.id] ?? 0) + aura.bonus;
+      }
+      return base;
+    })(),
     ability_state: abilityStateAfterHymn,
     // Only overwrite drink_buffs when this turn actually consumed one —
     // otherwise leave the existing map untouched so the optional field
@@ -1674,7 +1685,8 @@ function abilityRegressionShield(
   actor: ActorId,
   events: CombatEvent[],
 ): StepResult {
-  const SHIELD_AMOUNT = 3;
+  const paladin = state.fighters.find((f) => f.id === actor);
+  const SHIELD_AMOUNT = 3 + Math.floor((paladin?.level ?? 1) / 4);
   const grants: { target: ActorId; amount: number }[] = [];
   const updatedFighters = state.fighters.map((f) => {
     if (f.hp <= 0) return f;
@@ -2227,8 +2239,12 @@ function applyWardenStartingShield(
 ): { state: CombatState; events: CombatEvent[] } {
   if (classIdOf(actor) !== "sre_warden") return { state, events: [] };
   if (isPassiveUsed(state, actor.id, PASSIVE_WARDEN_SHIELD)) return { state, events: [] };
+  // VIT-based when STATS_V2 stats are present; level fallback for legacy states.
+  const wardenShield = actor.stats
+    ? Math.floor(actor.stats.vit / 2)
+    : WARDEN_STARTING_SHIELD + Math.floor(actor.level / 6);
   const cap = actor.max_hp * SHIELD_CAP_MULTIPLIER;
-  const newShield = Math.min(cap, actor.shield + WARDEN_STARTING_SHIELD);
+  const newShield = Math.min(cap, actor.shield + wardenShield);
   const added = newShield - actor.shield;
   const updated = state.fighters.map((f) =>
     f.id === actor.id ? { ...f, shield: newShield } : f,
@@ -2248,7 +2264,8 @@ function applyDruidRegen(
 ): { state: CombatState; events: CombatEvent[] } {
   if (classIdOf(actor) !== "backend_druid") return { state, events: [] };
   if (actor.hp <= 0) return { state, events: [] };
-  const newHp = Math.min(actor.max_hp, actor.hp + DRUID_PASSIVE_REGEN);
+  const regenAmount = DRUID_PASSIVE_REGEN + Math.floor(actor.level / 6);
+  const newHp = Math.min(actor.max_hp, actor.hp + regenAmount);
   const added = newHp - actor.hp;
   if (added <= 0) return { state, events: [] };
   const updated = state.fighters.map((f) =>
@@ -2354,7 +2371,8 @@ function applyPaladinAutoHeal(
       && !isPassiveUsed(state, f.id, PASSIVE_PALADIN_AUTO_HEAL),
   );
   if (!paladin) return { state, events: [] };
-  const newHp = Math.min(target.max_hp, target.hp + PALADIN_AUTO_HEAL_AMOUNT);
+  const healAmount = PALADIN_AUTO_HEAL_AMOUNT + Math.floor((paladin.level ?? 1) / 4);
+  const newHp = Math.min(target.max_hp, target.hp + healAmount);
   const added = newHp - target.hp;
   const healed = state.fighters.map((f) =>
     f.id === target.id ? { ...f, hp: newHp } : f,
