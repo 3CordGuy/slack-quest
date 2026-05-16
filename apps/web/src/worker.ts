@@ -1840,6 +1840,9 @@ app.post("/api/shop/restock", async (c) => {
       flavor,
       price: priceFor(roll.type, roll.rarity),
       weapon_range: roll.weapon_range ?? null,
+      slot: roll.slot ?? null,
+      stat_bonus: (roll.stat_bonus ?? null) as Record<string, number> | null,
+      item_subtype: roll.item_subtype ?? null,
     });
   }
   await insertShopStock(c.env.DB, items);
@@ -1956,6 +1959,9 @@ app.post("/api/shop/:itemId/buy", async (c) => {
     rarity: stock.rarity,
     flavor: stock.flavor ?? "",
     weapon_range: stock.weapon_range,
+    slot: stock.slot ?? undefined,
+    stat_bonus: stock.stat_bonus ?? undefined,
+    item_subtype: stock.item_subtype ?? undefined,
   });
   await grantAchievement(c.env.DB, session.slack_user_id, "first_purchase");
   return c.json({

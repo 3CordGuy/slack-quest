@@ -9428,6 +9428,9 @@ async function restockShop(env: Env, channelId: string): Promise<void> {
       flavor: named.flavor,
       price: priceFor(roll.type, roll.rarity),
       weapon_range: roll.weapon_range ?? null,
+      slot: roll.slot ?? null,
+      stat_bonus: (roll.stat_bonus ?? null) as Record<string, number> | null,
+      item_subtype: roll.item_subtype ?? null,
     });
   }
   await insertShopStock(env.DB, items);
@@ -9646,6 +9649,9 @@ async function handleBuy(
     rarity: stock.rarity,
     flavor: stock.flavor ?? "",
     weapon_range: stock.weapon_range,
+    slot: stock.slot ?? undefined,
+    stat_bonus: stock.stat_bonus ?? undefined,
+    item_subtype: stock.item_subtype ?? undefined,
   });
   const text = `🛍️ Bought ${RARITY_BADGE[stock.rarity]} *${stock.item_name}* for ${stock.price}g (now ${character.gold - stock.price}g). Inventory id \`${item.id}\`.`;
   return {

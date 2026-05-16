@@ -1190,6 +1190,9 @@ export interface ShopItem {
   price: number;
   bought_by: string | null;
   weapon_range: WeaponRange | null;
+  slot: EquipSlot | null;
+  stat_bonus: Record<string, number> | null;
+  item_subtype: string | null;
   // Haggle state. NULL = not attempted. "failed" = rolled and failed (no further
   // attempts). "15"/"25"/"30" = succeeded at that % off (price already discounted).
   haggled: string | null;
@@ -1205,16 +1208,19 @@ export async function getActiveShopStock(
   const cutoff = Date.now() - windowMs;
   const result = await db
     .prepare(
-      `SELECT id, channel_id, generated_at, item_name, item_type, power, rarity, flavor, price, bought_by, weapon_range, haggled
+      `SELECT id, channel_id, generated_at, item_name, item_type, power, rarity, flavor, price, bought_by, weapon_range, slot, stat_bonus, item_subtype, haggled
        FROM shop_stock
        WHERE channel_id = ? AND generated_at > ?
        ORDER BY id ASC`,
     )
     .bind(channelId, cutoff)
-    .all<ShopItem>();
+    .all<ShopItem & { stat_bonus: string | null }>();
   const rows = result.results ?? [];
   if (rows.length === 0) return null;
-  return rows;
+  return rows.map((row) => ({
+    ...row,
+    stat_bonus: row.stat_bonus ? JSON.parse(row.stat_bonus) as Record<string, number> : null,
+  })) as ShopItem[];
 }
 
 export interface ShopStockInput {
@@ -1227,6 +1233,9 @@ export interface ShopStockInput {
   flavor: string;
   price: number;
   weapon_range?: WeaponRange | null;
+  slot?: EquipSlot | null;
+  stat_bonus?: Record<string, number> | null;
+  item_subtype?: string | null;
 }
 
 export async function insertShopStock(
@@ -1236,9 +1245,15 @@ export async function insertShopStock(
   if (items.length === 0) return;
   const stmts = items.map((it) =>
     db.prepare(
-      `INSERT INTO shop_stock (channel_id, generated_at, item_name, item_type, power, rarity, flavor, price, weapon_range)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).bind(it.channel_id, it.generated_at, it.item_name, it.item_type, it.power, it.rarity, it.flavor, it.price, it.weapon_range ?? null),
+      `INSERT INTO shop_stock (channel_id, generated_at, item_name, item_type, power, rarity, flavor, price, weapon_range, slot, stat_bonus, item_subtype)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).bind(
+      it.channel_id, it.generated_at, it.item_name, it.item_type, it.power, it.rarity, it.flavor, it.price,
+      it.weapon_range ?? null,
+      it.slot ?? null,
+      it.stat_bonus ? JSON.stringify(it.stat_bonus) : null,
+      it.item_subtype ?? null,
+    ),
   );
   await db.batch(stmts);
 }
@@ -1250,11 +1265,18 @@ export async function getShopItem(
 ): Promise<ShopItem | null> {
   return db
     .prepare(
-      `SELECT id, channel_id, generated_at, item_name, item_type, power, rarity, flavor, price, bought_by, weapon_range, haggled
+      `SELECT id, channel_id, generated_at, item_name, item_type, power, rarity, flavor, price, bought_by, weapon_range, slot, stat_bonus, item_subtype, haggled
        FROM shop_stock WHERE id = ? AND channel_id = ?`,
     )
     .bind(itemId, channelId)
-    .first<ShopItem>();
+    .first<ShopItem & { stat_bonus: string | null }>()
+    .then((row) => {
+      if (!row) return null;
+      return {
+        ...row,
+        stat_bonus: row.stat_bonus ? JSON.parse(row.stat_bonus) as Record<string, number> : null,
+      } as ShopItem;
+    });
 }
 
 // Atomically attempts a haggle on a shop item. Returns true if the row was
