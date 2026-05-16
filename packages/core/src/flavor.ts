@@ -1257,6 +1257,41 @@ function rollArmorSlot(tier: number): ItemRoll {
     stat_bonus: statBonus("vit", bonusAmt) };
 }
 
+// Rolls an armor item that is guaranteed NOT to be body armor. Used by shop
+// restock to ensure at least 2 accessory items appear per cycle regardless
+// of the overall armor-type probability.
+export function rollAccessorySlot(tier: number): ItemRoll {
+  const rarity = rollRarity(tier);
+  const r = Math.random();
+  const statBonus = (key: string, v: number) => ({ [key]: v });
+  const tierStatBoost = Math.floor((Math.max(1, tier) - 1) / 2);
+  const bonusAmt = (rarity === "legendary" ? 6 : rarity === "epic" ? 5 : rarity === "rare" ? 3 : rarity === "uncommon" ? 2 : 1) + tierStatBoost;
+  // Equal-ish weights across the 6 non-body slots so variety is visible.
+  if (r < 0.22) {
+    return { type: "armor", rarity, power: rollPower("armor", rarity, tier), slot: "helmet",
+      stat_bonus: statBonus(Math.random() < 0.5 ? "int_stat" : "vit", bonusAmt) };
+  }
+  if (r < 0.44) {
+    return { type: "armor", rarity, power: rollPower("armor", rarity, tier), slot: "pants",
+      stat_bonus: statBonus("agi", bonusAmt) };
+  }
+  if (r < 0.61) {
+    return { type: "armor", rarity, power: 0, slot: "boots",
+      stat_bonus: statBonus("agi", bonusAmt) };
+  }
+  if (r < 0.75) {
+    const statKeys = ["str", "int_stat", "dex"] as const;
+    return { type: "armor", rarity, power: 0, slot: "ring",
+      stat_bonus: statBonus(statKeys[Math.floor(Math.random() * statKeys.length)], bonusAmt) };
+  }
+  if (r < 0.88) {
+    return { type: "armor", rarity, power: 0, slot: "amulet",
+      stat_bonus: statBonus(Math.random() < 0.5 ? "int_stat" : "vit", bonusAmt) };
+  }
+  return { type: "armor", rarity, power: rollPower("armor", rarity, tier), slot: "off_hand",
+    item_subtype: "shield", stat_bonus: statBonus("vit", bonusAmt) };
+}
+
 export function rollItem(tier: number, forShop = false): ItemRoll {
   const type = rollItemType();
   if (type === "tool" || type === "scroll") {

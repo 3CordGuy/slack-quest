@@ -56,6 +56,7 @@ import {
   resolveMonsterKill,
   rollDice,
   rollItem,
+  rollAccessorySlot,
   rollMerchantItem,
   sellPriceFor,
   step,
@@ -1814,9 +1815,13 @@ app.post("/api/shop/restock", async (c) => {
     SHOP_STOCK_BASE + Math.max(0, playerCount - SHOP_STOCK_PLAYER_BASELINE) * SHOP_STOCK_PER_EXTRA_PLAYER,
   );
   const generatedAt = Date.now();
+  const ACCESSORY_GUARANTEE = 2;
+  const rolls: ItemRoll[] = [
+    ...Array.from({ length: ACCESSORY_GUARANTEE }, () => rollAccessorySlot(tier)),
+    ...Array.from({ length: Math.max(0, stockSize - ACCESSORY_GUARANTEE) }, () => rollItem(tier, true)),
+  ];
   const items: Parameters<typeof insertShopStock>[1] = [];
-  for (let i = 0; i < stockSize; i++) {
-    const roll = rollItem(tier, true);
+  for (const roll of rolls) {
     let name: string;
     let flavor: string;
     if (roll.catalog_name) {

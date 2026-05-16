@@ -230,6 +230,7 @@ import {
   priceFor,
   rollDice,
   rollItem,
+  rollAccessorySlot,
   rollMerchantItem,
   sellPriceFor,
   signatureFor,
@@ -9415,8 +9416,14 @@ async function restockShop(env: Env, channelId: string): Promise<void> {
   );
   const generatedAt = Date.now();
   const items: Parameters<typeof insertShopStock>[1] = [];
-  for (let i = 0; i < stockSize; i++) {
-    const roll = rollItem(tier, true);
+  // Guarantee 2 accessory slots per cycle so rings/amulets/boots/helmets/pants
+  // always appear regardless of the overall armor-type probability.
+  const ACCESSORY_GUARANTEE = 2;
+  const rolls: ItemRoll[] = [
+    ...Array.from({ length: ACCESSORY_GUARANTEE }, () => rollAccessorySlot(tier)),
+    ...Array.from({ length: Math.max(0, stockSize - ACCESSORY_GUARANTEE) }, () => rollItem(tier, true)),
+  ];
+  for (const roll of rolls) {
     const named = await resolveLootDrop(env, "the shopkeep's chest", roll);
     items.push({
       channel_id: channelId,
