@@ -2029,8 +2029,8 @@ interface InnRoom {
   iconName: string;
 }
 const INN_ROOMS: InnRoom[] = [
-  { id: "cot",  name: "Common Cot",      price: 20, refills: { hp: true, mana: false }, blurb: "A straw cot, a wool blanket, a guarantee nobody'll loot you in your sleep. Wakes you at full HP.", iconName: "campfire" },
-  { id: "bath", name: "Hot Bath & Bed",  price: 50, refills: { hp: true, mana: true },  blurb: "A copper tub, lavender soap, a real mattress. Wakes you at full HP and full mana.",            iconName: "moon-sun" },
+  { id: "cot",  name: "Common Cot",      price: 20, refills: { hp: true, mana: false }, blurb: "A straw cot, a wool blanket, a guarantee nobody'll loot you in your sleep. Wakes you at full HP.", iconName: "bed" },
+  { id: "bath", name: "Hot Bath & Bed",  price: 50, refills: { hp: true, mana: true },  blurb: "A copper tub, lavender soap, a real mattress. Wakes you at full HP and full mana.",            iconName: "bathtub" },
 ];
 
 // =============================================================================

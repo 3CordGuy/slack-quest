@@ -19,7 +19,7 @@ const SVG_ICONS = new Set([
   "crossbow", "crowned-heart", "crystal-wand", "cubes", "cycle", "daggers",
   "fairy-wand", "gold-bar", "helmet", "hood", "key", "perspective-dice-six",
   "plain-dagger", "revolver", "round-shield", "scythe", "shield",
-  "spinning-sword", "trident", "trophy",
+  "spinning-sword", "trident", "trophy", "bed", "bathtub", "cash",
   // Close-match remaps (original ra- name → this SVG file)
   "battle-axe", "barbed-spear", "boots", "beer-stein", "lightning-saber",
   "blunderbuss", "poison-bottle", "arcing-bolt", "wax-seal",
@@ -135,8 +135,8 @@ const EMOJI_MAP: Record<string, string | null> = {
   "🥉": null,                // medals — colored ra-key below
   "🥈": null,
   "🥇": null,
-  "🛏": "campfire",
-  "🛌": "campfire",
+  "🛏": "bed",
+  "🛌": "bed",
   "💢": "fire-symbol",
   "💥": "blast",
   "🎲": "perspective-dice-six",

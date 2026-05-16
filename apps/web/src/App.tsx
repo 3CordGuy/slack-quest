@@ -2661,7 +2661,7 @@ function CharacterInspectDialog({
         <Stats>
           <Stat
             label="HP"
-            icon={<Icon name="health-increase" color="#86efac" size={14} />}
+            icon={<Icon name="health-increase" color="#86efac" size={36} />}
             value={
               <span style={{ display: "inline-flex", alignItems: "baseline", gap: 6 }}>
                 {character.hp} / {character.max_hp}
@@ -2678,17 +2678,17 @@ function CharacterInspectDialog({
           />
           <Stat
             label="Mana"
-            icon={<Icon name="crystal-ball" color="#a78bfa" size={14} />}
+            icon={<Icon name="crystal-ball" color="#a78bfa" size={36} />}
             value={`${character.mana} / ${character.max_mana}`}
           />
           <Stat
             label="Position"
-            icon={<Icon name="flag" color="#fbbf24" size={14} />}
+            icon={<Icon name="flag" color="#fbbf24" size={36} />}
             value={character.position}
           />
           <Stat
             label="Scars"
-            icon={<Icon name="death-skull" color="#ef4444" size={14} />}
+            icon={<Icon name="death-skull" color="#ef4444" size={36} />}
             value={
               <span title={character.scars.length > 0 ? character.scars.join(", ") : undefined}>
                 {character.scars.length}
@@ -2697,7 +2697,7 @@ function CharacterInspectDialog({
           />
           <Stat
             label="Keys"
-            icon={<Icon name="key" color="#d1d5db" size={14} />}
+            icon={<Icon name="key" color="#d1d5db" size={36} />}
             value={
               <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
                 <KeyIcon tier="bronze" size={16} /> {character.keys_bronze}
@@ -2708,12 +2708,12 @@ function CharacterInspectDialog({
           />
           <Stat
             label="Gold"
-            icon={<Icon name="gold-bar" color="#fbbf24" size={14} />}
+            icon={<Icon name="cash" color="#fbbf24" size={36} />}
             value={character.gold.toString()}
           />
           <Stat
             label="Status"
-            icon={<Icon name="shield" color="#7dd3fc" size={14} />}
+            icon={<Icon name="shield" color="#7dd3fc" size={36} />}
             value={isDowned ? "Downed" : "Ready"}
           />
         </Stats>
@@ -3357,7 +3357,7 @@ function CharacterCard({
       <Stats>
         <Stat
           label="HP"
-          icon={<Icon name="health-increase" color="#86efac" size={14} />}
+          icon={<Icon name="health-increase" color="#86efac" size={36} />}
           value={
             <span style={{ display: "inline-flex", alignItems: "baseline", gap: 6 }}>
               {c.hp} / {c.max_hp}
@@ -3374,12 +3374,12 @@ function CharacterCard({
         />
         <Stat
           label="Mana"
-          icon={<Icon name="crystal-ball" color="#a78bfa" size={14} />}
+          icon={<Icon name="crystal-ball" color="#a78bfa" size={36} />}
           value={`${c.mana} / ${c.max_mana}`}
         />
         <Stat
           label="Armor"
-          icon={<Icon name="shield" color="#9ca3af" size={14} />}
+          icon={<Icon name="shield" color="#9ca3af" size={36} />}
           value={
             <span
               title={armorPower > 0
@@ -3392,28 +3392,31 @@ function CharacterCard({
         />
         <Stat
           label="Gold"
-          icon={<Icon name="gold-bar" color="#fbbf24" size={14} />}
+          icon={<Icon name="cash" color="#fbbf24" size={36} />}
           value={c.gold.toString()}
         />
         <Stat
           label="Scars"
-          icon={<Icon name="death-skull" color="#ef4444" size={14} />}
+          icon={<Icon name="death-skull" color="#ef4444" size={36} />}
           value={
             <span title={c.scars.length > 0 ? c.scars.join(", ") : undefined}>
               {c.scars.length.toString()}
             </span>
           }
         />
-        <div style={{ padding: 12, background: "#1d1f23", borderRadius: 8, position: "relative" }}>
-          <div style={{ ...muted, fontSize: 12, textTransform: "uppercase", display: "flex", alignItems: "center", gap: 6 }}>
-            <Icon name="key" color="#d1d5db" size={14} /> Keys
+        <div style={{ padding: 12, background: "#1d1f23", borderRadius: 8, display: "flex", alignItems: "center", gap: 12 }}>
+          <div style={{ flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", width: 36, height: 36 }}>
+            <Icon name="key" color="#d1d5db" size={36} />
           </div>
-          <div style={{ fontSize: 18, fontWeight: 600, color: "#f5f5f5" }}>
-            <KeysPopover
-              keys={{ bronze: c.keys_bronze, silver: c.keys_silver, gold: c.keys_gold }}
-              onSellKey={onSellKey}
-              onTransmuteKey={onTransmuteKey}
-            />
+          <div style={{ minWidth: 0 }}>
+            <div style={{ ...muted, fontSize: 11, textTransform: "uppercase", letterSpacing: 0.8, lineHeight: 1 }}>Keys</div>
+            <div style={{ fontSize: 18, fontWeight: 600, color: "#f5f5f5", marginTop: 3 }}>
+              <KeysPopover
+                keys={{ bronze: c.keys_bronze, silver: c.keys_silver, gold: c.keys_gold }}
+                onSellKey={onSellKey}
+                onTransmuteKey={onTransmuteKey}
+              />
+            </div>
           </div>
         </div>
       </Stats>
@@ -5926,13 +5929,19 @@ function Stats({ children }: { children: React.ReactNode }) {
 
 function Stat({ label, value, icon }: { label: string; value: React.ReactNode; icon?: React.ReactNode }) {
   return (
-    <div style={{ padding: 12, background: "#1d1f23", borderRadius: 8 }}>
-      <div style={{ ...muted, fontSize: 12, textTransform: "uppercase", display: "flex", alignItems: "center", gap: 6 }}>
-        {icon}
-        {label}
-      </div>
-      <div style={{ fontSize: 18, fontWeight: 600, color: "#f5f5f5" }}>
-        {value}
+    <div style={{ padding: 12, background: "#1d1f23", borderRadius: 8, display: "flex", alignItems: "center", gap: 12 }}>
+      {icon && (
+        <div style={{ flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", width: 36, height: 36 }}>
+          {icon}
+        </div>
+      )}
+      <div style={{ minWidth: 0 }}>
+        <div style={{ ...muted, fontSize: 11, textTransform: "uppercase", letterSpacing: 0.8, lineHeight: 1 }}>
+          {label}
+        </div>
+        <div style={{ fontSize: 18, fontWeight: 600, color: "#f5f5f5", marginTop: 3 }}>
+          {value}
+        </div>
       </div>
     </div>
   );
@@ -6220,7 +6229,7 @@ const DISTRICT_CONFIG: {
   { key: "job_board", label: "Job Board", icon: "scroll-unfurled", color: "#b89b3a", artKey: "overview_art_url" },
   { key: "pub",       label: "The Pub",   icon: "beer-stein",      color: "#92400e", artKey: "pub_art_url" },
   { key: "shop",      label: "Shop",      icon: "gold-bar",        color: "#1e3a5f", artKey: "shop_art_url" },
-  { key: "inn",       label: "Inn",       icon: "campfire",        color: "#1a3a2a", artKey: "inn_art_url" },
+  { key: "inn",       label: "Inn",       icon: "bed",             color: "#1a3a2a", artKey: "inn_art_url" },
   { key: "smithy",      label: "Smithy",      icon: "anvil",          color: "#2a1a1a", artKey: "smithy_art_url" },
   { key: "apothecary", label: "Apothecary",  icon: "poison-bottle",  color: "#1a2d1a", artKey: "apothecary_art_url" },
   { key: "hunt",       label: "Outskirts",   icon: "sword",          color: "#1a1a2e", artKey: "overview_art_url" },
