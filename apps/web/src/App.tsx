@@ -7315,7 +7315,7 @@ const SLOT_ICON: Record<EquipSlot, string> = {
   pants: "armored-pants",
   boots: "boots",
   ring: "ring",
-  amulet: "crystal-wand",
+  amulet: "gem-chain",
 };
 
 function slotLabel(item: Item): string {
