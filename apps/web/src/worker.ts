@@ -3757,6 +3757,9 @@ app.post("/api/quest/:id/dungeon/choose_door", async (c) => {
     monster_effects: [],
   };
   await saveScene(c.env.DB, quest.id, updatedScene);
+  // Clear any stale combat state from the previous room so the dashboard
+  // doesn't show "Resume Combat" when the player hasn't started the new one.
+  await deleteWebCombatState(c.env.DB, quest.id);
   return c.json({ ok: true, room_type: chosenNode.type, is_combat: isCombat });
 });
 
