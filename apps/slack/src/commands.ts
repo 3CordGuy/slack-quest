@@ -32,6 +32,7 @@ import {
   generateJobListing,
   generateNpcDialog,
   generateNpcRoom,
+  generateDungeonGraph,
   generateOpeningScene,
   generateTownName,
   generateTrapArt,
@@ -173,6 +174,9 @@ import {
   type BattlePosition,
   type CharGender,
   type Character,
+  type DungeonDirection,
+  type DungeonGraph,
+  type DungeonNode,
   type ExpeditionNode,
   type ExpeditionNodeType,
   type ExpeditionState,
@@ -180,6 +184,7 @@ import {
   type Item,
   type KeyTier,
   type LootOption,
+  type MonsterSpec,
   type QuestDamageStats,
   type QuestVariant,
   type SceneJson,
@@ -1193,6 +1198,9 @@ export async function handleCommand(
     case "where":
     case "scene":
       return handleLook(payload, env, ctx);
+    case "move":
+    case "go":
+      return handleGraphMove(payload, args, env, ctx);
     case "equip":
       return handleEquip(payload, args, env);
     case "unequip":
@@ -2099,6 +2107,9 @@ async function buildQuestScene(
   }
 
   if (variant === "dungeon") {
+    if (env.DUNGEON_GRAPH === "1") {
+      return buildGraphDungeonScene(env, character, elite, recentNames);
+    }
     return buildDungeonScene(env, character, elite, variant, recentNames);
   }
 
@@ -2349,6 +2360,347 @@ async function buildDungeonScene(
     variant,
     expedition,
   };
+}
+
+// ── Phase 4: Graph dungeon ────────────────────────────────────────────────────
+
+const DIR_LABELS: Record<DungeonDirection, string> = { n: "North", e: "East", s: "South", w: "West" };
+
+function directionLabel(dir: DungeonDirection): string {
+  return DIR_LABELS[dir] ?? dir.toUpperCase();
+}
+
+// Renders the current room for Slack (mrkdwn text). Used by handleLook and
+// handleGraphMove. Shows description, exits, encounter, and available objects.
+function renderGraphRoom(node: DungeonNode, graph: DungeonGraph, cmd: string): string {
+  const lines: string[] = [blockQuote(node.description)];
+  const exitParts = Object.entries(node.exits).map(([d, id]) => {
+    const targetNode = graph.nodes[id];
+    const visited = targetNode?.visited ? "" : " _(unexplored)_";
+    return `*${directionLabel(d as DungeonDirection)}*${visited}`;
+  });
+  if (exitParts.length > 0) {
+    lines.push(`Exits: ${exitParts.join("  |  ")}`);
+  }
+  if (node.encounter && !node.encounter.cleared) {
+    const m = node.encounter.monsters[0];
+    lines.push(``, `⚔️ *${m.name}* (${m.hp}/${m.max_hp} HP) — use \`${cmd} attack\` to fight.`);
+  } else if (node.encounter?.cleared) {
+    lines.push(``, `✅ Encounter cleared.`);
+  }
+  const activeObjects = node.objects.filter(o => !o.used || o.takeable);
+  if (activeObjects.length > 0) {
+    const names = activeObjects.map(o => `*${o.name}*`).join(", ");
+    lines.push(``, `Objects: ${names} — \`${cmd} use <name>\` to interact.`);
+  }
+  return lines.join("\n");
+}
+
+async function buildGraphDungeonScene(
+  env: Env,
+  character: Character,
+  elite: boolean,
+  recentNames: string[] = [],
+): Promise<SceneJson> {
+  const theme = await generateExpeditionTheme(env.AI);
+  const art = artTargetFromEnv(env);
+  const graph = await generateDungeonGraph(env.AI, theme, character.level, recentNames, art);
+  const entranceNode = graph.nodes["entrance"]!;
+  const baseTier = Math.max(1, Math.ceil(character.level / 2));
+  return {
+    monster_name: "—",
+    monster_hp: 0,
+    monster_max_hp: 0,
+    tier: baseTier,
+    scene: entranceNode.description,
+    variant: "dungeon",
+    graph,
+  };
+}
+
+// Handles /gq move <n|e|s|w> for graph dungeons.
+async function handleGraphMove(
+  payload: SlashCommandPayload,
+  args: string[],
+  env: Env,
+  ctx: ExecutionContext,
+): Promise<CommandResponse> {
+  const rawDir = (args[0] ?? "").toLowerCase();
+  const validDirs: DungeonDirection[] = ["n", "e", "s", "w"];
+  if (!validDirs.includes(rawDir as DungeonDirection)) {
+    return ephemeral(`Usage: \`${payload.command} move <n|e|s|w>\`. Valid directions: n (north), e (east), s (south), w (west).`);
+  }
+  const dir = rawDir as DungeonDirection;
+
+  const character = await getCharacter(env.DB, payload.user_id);
+  if (!character) return ephemeral(`You need to \`${payload.command} roll\` a character first.`);
+  if (!isFighter(character)) return ephemeral("You're downed and can't move.");
+
+  const quest = await getActiveQuestForCharacter(env.DB, payload.user_id);
+  if (!quest) return ephemeral("You're not on an active quest.");
+
+  const graph = quest.scene.graph;
+  if (!graph) {
+    return ephemeral(`This quest doesn't use graph navigation. Try \`${payload.command} choose\` for the classic dungeon.`);
+  }
+
+  const currentNode = graph.nodes[graph.current];
+  if (!currentNode) return ephemeral("Dungeon state is corrupted — no current room.");
+
+  if (currentNode.encounter && !currentNode.encounter.cleared) {
+    const m = currentNode.encounter.monsters[0];
+    return ephemeral(`⚔️ *${m.name}* blocks the way! Finish the fight first.`);
+  }
+
+  const targetId = currentNode.exits[dir];
+  if (!targetId) {
+    return ephemeral(`No exit to the *${directionLabel(dir)}* from here.`);
+  }
+
+  const targetNode = graph.nodes[targetId];
+  if (!targetNode) return ephemeral("That exit leads nowhere — dungeon state is corrupted.");
+
+  const firstVisit = !targetNode.visited;
+  const updatedTarget: DungeonNode = { ...targetNode, visited: true };
+  const updatedGraph: DungeonGraph = {
+    ...graph,
+    current: targetId,
+    visited: graph.visited.includes(targetId) ? graph.visited : [...graph.visited, targetId],
+    nodes: { ...graph.nodes, [targetId]: updatedTarget },
+  };
+
+  // If entering a combat room with an active encounter, promote monster fields.
+  let updatedScene: SceneJson = { ...quest.scene, graph: updatedGraph };
+  if (updatedTarget.encounter && !updatedTarget.encounter.cleared && updatedTarget.encounter.monsters.length > 0) {
+    const monster = updatedTarget.encounter.monsters[0];
+    updatedScene = {
+      ...updatedScene,
+      monster_name: monster.name,
+      monster_hp: monster.hp,
+      monster_max_hp: monster.max_hp,
+      tier: monster.tier,
+      monster_art_url: monster.art_url ?? undefined,
+      monster_effects: [],
+      marked_by: undefined,
+      marked_until: undefined,
+      monster_telegraph: undefined,
+      passives_used: undefined,
+      ability_state: undefined,
+    };
+  }
+
+  await saveScene(env.DB, quest.id, updatedScene);
+  await appendLog(env.DB, quest.id, payload.user_id, "dungeon", `graph move ${dir} → ${targetId}`);
+  if (firstVisit) await regenPartyMana(env.DB, quest.id, MANA_REGEN_BETWEEN_ROOMS);
+
+  const roomName = updatedTarget.name ?? targetId;
+  const moveNote = `🧭 <@${payload.user_id}> moves *${directionLabel(dir)}* — *${roomName}*.`;
+  const roomText = renderGraphRoom(updatedTarget, updatedGraph, payload.command);
+
+  if (updatedTarget.encounter?.monsters[0]?.art_url) {
+    const m = updatedTarget.encounter.monsters[0];
+    const imgBlocks: unknown[] = [
+      { type: "image", image_url: m.art_url as string, alt_text: m.name },
+      { type: "section", text: { type: "mrkdwn", text: [moveNote, "", roomText].join("\n") } },
+    ];
+    ctx.waitUntil(postToThread(env, quest, [blockQuote(moveNote), "", roomText].join("\n"), { blocks: imgBlocks }));
+  } else {
+    ctx.waitUntil(postToThread(env, quest, [blockQuote(moveNote), "", roomText].join("\n")));
+  }
+
+  return { text: [moveNote, "", roomText].join("\n"), response_type: "ephemeral" };
+}
+
+// Called when a monster dies in a graph dungeon room. Marks the encounter
+// cleared. Boss kill → full resolveVictory; normal kill → show room prompt.
+async function resolveGraphEncounterKill(
+  payload: SlashCommandPayload,
+  env: Env,
+  ctx: ExecutionContext,
+  character: Character,
+  quest: ActiveQuest,
+  fighters: Character[],
+  preamble: string[],
+): Promise<CommandResponse> {
+  const graph = quest.scene.graph!;
+  const currentNodeId = graph.current;
+  const currentNode = graph.nodes[currentNodeId];
+  if (!currentNode) return ephemeral(preamble.join("\n"));
+
+  const isBoss = currentNode.encounter?.monsters[0]?.is_boss ?? false;
+
+  // Mark encounter cleared in the graph.
+  const updatedNode: DungeonNode = currentNode.encounter
+    ? { ...currentNode, encounter: { ...currentNode.encounter, cleared: true } }
+    : currentNode;
+  const updatedGraph: DungeonGraph = {
+    ...graph,
+    nodes: { ...graph.nodes, [currentNodeId]: updatedNode },
+  };
+  const updatedScene: SceneJson = { ...quest.scene, graph: updatedGraph, monster_hp: 0 };
+  await saveScene(env.DB, quest.id, updatedScene);
+  await appendLog(env.DB, quest.id, payload.user_id, "dungeon", `graph encounter cleared: ${currentNodeId}${isBoss ? " (boss)" : ""}`);
+
+  if (isBoss) {
+    // Boss killed — full victory flow.
+    return resolveVictory(payload, env, ctx, character, { ...quest, scene: updatedScene }, fighters, preamble);
+  }
+
+  // Regular encounter cleared — show the room so the party sees available exits.
+  const roomText = renderGraphRoom(updatedNode, updatedGraph, payload.command);
+  const lines = [...preamble, ``, `✅ Room clear. Use \`${payload.command} move <n|e|s|w>\` to continue.`, ``, roomText];
+  ctx.waitUntil(postToThread(env, { ...quest, scene: updatedScene }, lines.join("\n")));
+  return ephemeral(lines.join("\n"));
+}
+
+// Picks up a takeable object in the current graph dungeon room.
+async function handleGraphTake(
+  payload: SlashCommandPayload,
+  args: string[],
+  env: Env,
+  quest: ActiveQuest,
+): Promise<CommandResponse> {
+  const graph = quest.scene.graph!;
+  const node = graph.nodes[graph.current];
+  if (!node) return ephemeral("Dungeon state is corrupted.");
+
+  const query = args.join(" ").toLowerCase().trim();
+  if (!query) return ephemeral(`Usage: \`${payload.command} take <object name>\`.`);
+
+  const obj = node.objects.find(o => o.takeable && !o.used && o.name.toLowerCase().includes(query));
+  if (!obj) {
+    const available = node.objects.filter(o => o.takeable && !o.used).map(o => `*${o.name}*`).join(", ");
+    return available
+      ? ephemeral(`No match for "${query}". Takeable objects here: ${available}.`)
+      : ephemeral("There's nothing to take here.");
+  }
+
+  const item = await addItem(env.DB, {
+    character_id: payload.user_id,
+    item_name: obj.name,
+    item_type: "tool",
+    power: 0,
+    rarity: "common",
+    flavor: "Retrieved from the dungeon.",
+    weapon_range: null,
+    slot: null,
+    stat_bonus: null,
+    item_subtype: null,
+  });
+
+  const updatedObjects = node.objects.map(o => o.id === obj.id ? { ...o, used: true } : o);
+  const updatedNode: DungeonNode = { ...node, objects: updatedObjects };
+  const updatedGraph: DungeonGraph = { ...graph, nodes: { ...graph.nodes, [graph.current]: updatedNode } };
+  await saveScene(env.DB, quest.id, { ...quest.scene, graph: updatedGraph });
+
+  return ephemeral(`🎒 You pick up *${obj.name}*. Added to inventory as item \`${item.id}\`.`);
+}
+
+// Runs the on_use effect of a named object in the current graph dungeon room.
+async function handleGraphUseObject(
+  payload: SlashCommandPayload,
+  args: string[],
+  env: Env,
+  quest: ActiveQuest,
+): Promise<CommandResponse> {
+  const graph = quest.scene.graph!;
+  const node = graph.nodes[graph.current];
+  if (!node) return ephemeral("Dungeon state is corrupted.");
+
+  const query = args.join(" ").toLowerCase().trim();
+  if (!query) return ephemeral(`Usage: \`${payload.command} use <object name>\`.`);
+
+  const obj = node.objects.find(o => !o.used && o.name.toLowerCase().includes(query));
+  if (!obj) {
+    const available = node.objects.filter(o => !o.used && o.on_use).map(o => `*${o.name}*`).join(", ");
+    return available
+      ? ephemeral(`No match for "${query}". Usable objects here: ${available}.`)
+      : ephemeral("There's nothing to interact with here.");
+  }
+
+  if (!obj.on_use) {
+    return ephemeral(`*${obj.name}* can't be used — it's just there.`);
+  }
+
+  const markUsed = (o: typeof obj) => node.objects.map(x => x.id === o.id ? { ...x, used: true } : x);
+
+  const effect = obj.on_use;
+
+  if (effect.effect === "flavor") {
+    const updatedObjects = markUsed(obj);
+    const updatedNode: DungeonNode = { ...node, objects: updatedObjects };
+    const updatedGraph: DungeonGraph = { ...graph, nodes: { ...graph.nodes, [graph.current]: updatedNode } };
+    await saveScene(env.DB, quest.id, { ...quest.scene, graph: updatedGraph });
+    return ephemeral(`🔍 *${obj.name}*: ${effect.text}`);
+  }
+
+  if (effect.effect === "open_exit") {
+    if (node.exits[effect.direction]) {
+      return ephemeral(`The exit to the *${directionLabel(effect.direction)}* is already open.`);
+    }
+    const updatedObjects = markUsed(obj);
+    const updatedNode: DungeonNode = {
+      ...node,
+      objects: updatedObjects,
+      exits: { ...node.exits, [effect.direction]: effect.reveals_node },
+    };
+    const updatedGraph: DungeonGraph = { ...graph, nodes: { ...graph.nodes, [graph.current]: updatedNode } };
+    await saveScene(env.DB, quest.id, { ...quest.scene, graph: updatedGraph });
+    return ephemeral(`🚪 *${obj.name}* reveals a passage to the *${directionLabel(effect.direction)}*. Use \`${payload.command} move ${effect.direction}\` to proceed.`);
+  }
+
+  if (effect.effect === "spawn_item") {
+    const loot = effect.item;
+    const item = await addItem(env.DB, {
+      character_id: payload.user_id,
+      item_name: loot.name,
+      item_type: loot.item_type,
+      power: loot.power,
+      rarity: loot.rarity,
+      flavor: loot.flavor,
+      weapon_range: loot.weapon_range ?? null,
+      slot: loot.slot ?? null,
+      stat_bonus: loot.stat_bonus ?? null,
+      item_subtype: loot.item_subtype ?? null,
+    });
+    const updatedObjects = markUsed(obj);
+    const updatedNode: DungeonNode = { ...node, objects: updatedObjects };
+    const updatedGraph: DungeonGraph = { ...graph, nodes: { ...graph.nodes, [graph.current]: updatedNode } };
+    await saveScene(env.DB, quest.id, { ...quest.scene, graph: updatedGraph });
+    const badge = RARITY_BADGE[loot.rarity] ?? "";
+    return ephemeral(`✨ *${obj.name}* yields ${badge} *${loot.name}*! Added to inventory as item \`${item.id}\`.`);
+  }
+
+  if (effect.effect === "trigger_encounter") {
+    if (node.encounter && !node.encounter.cleared) {
+      return ephemeral("There's already an active encounter in this room.");
+    }
+    const [spec] = effect.monsters;
+    if (!spec) return ephemeral("No monster defined for this encounter.");
+    const updatedObjects = markUsed(obj);
+    const updatedNode: DungeonNode = {
+      ...node,
+      objects: updatedObjects,
+      encounter: { monsters: effect.monsters, cleared: false },
+    };
+    const updatedGraph: DungeonGraph = { ...graph, nodes: { ...graph.nodes, [graph.current]: updatedNode } };
+    const updatedScene: SceneJson = {
+      ...quest.scene,
+      graph: updatedGraph,
+      monster_name: spec.name,
+      monster_hp: spec.hp,
+      monster_max_hp: spec.max_hp,
+      tier: spec.tier,
+      monster_art_url: spec.art_url ?? undefined,
+      monster_effects: [],
+      marked_by: undefined,
+      marked_until: undefined,
+    };
+    await saveScene(env.DB, quest.id, updatedScene);
+    return ephemeral(`⚔️ *${obj.name}* triggers an encounter! *${spec.name}* (${spec.hp}/${spec.max_hp} HP) attacks! Use \`${payload.command} attack\` to fight.`);
+  }
+
+  return ephemeral(`*${obj.name}* has no effect.`);
 }
 
 // Resolves an ItemRoll into a (name, flavor) pair. Catalog items (tool/scroll) keep
@@ -3794,6 +4146,13 @@ async function handleCombat(
     if (quest.scene.variant === "gauntlet" && quest.scene.upcoming_waves && quest.scene.upcoming_waves.length > 0) {
       return resolveGauntletAdvance(payload, env, ctx, quest, [...passiveLines, playerLine, ...monsterEffectLines, ...playerTickLines, ...newEffectLines, `🏆 *${quest.scene.monster_name}* falls.`]);
     }
+    // Graph dungeon: mark encounter cleared; boss kill → victory; other rooms → stay + look.
+    if (quest.scene.variant === "dungeon" && quest.scene.graph) {
+      return resolveGraphEncounterKill(payload, env, ctx, character, quest, fighters, [
+        ...passiveLines, playerLine, ...monsterEffectLines, ...playerTickLines, ...newEffectLines,
+        `🏆 *${quest.scene.monster_name}* falls.`,
+      ]);
+    }
     // Expedition (dungeon): branch on whether this was a mid-dungeon room or the
     // final sub-boss. The next room being treasure means we just killed the boss.
     if (quest.scene.variant === "dungeon") {
@@ -5175,6 +5534,9 @@ async function handleTake(
 
   const quest = await getActiveQuestForCharacter(env.DB, payload.user_id);
   if (!quest) return ephemeral("You're not on an active quest.");
+
+  if (quest.scene.graph) return handleGraphTake(payload, args, env, quest);
+
   if (quest.scene.variant !== "dungeon" || !quest.scene.expedition) {
     return ephemeral("Not an expedition — there's no chest to open here.");
   }
@@ -5435,6 +5797,17 @@ async function handleLook(
   const quest = await getActiveQuestForCharacter(env.DB, payload.user_id);
   if (!quest) {
     return ephemeral(`You're not on an active quest. Try \`${payload.command} quest\` to start one.`);
+  }
+
+  if (quest.scene.variant === "dungeon" && quest.scene.graph) {
+    const graph = quest.scene.graph;
+    const node = graph.nodes[graph.current];
+    if (!node) return ephemeral("Dungeon state is corrupted.");
+    const liveHp = node.encounter && !node.encounter.cleared ? quest.scene.monster_hp : undefined;
+    const nodeWithLiveHp: DungeonNode = liveHp !== undefined && node.encounter
+      ? { ...node, encounter: { ...node.encounter, monsters: node.encounter.monsters.map((m, i) => i === 0 ? { ...m, hp: liveHp } : m) } }
+      : node;
+    return ephemeral(renderGraphRoom(nodeWithLiveHp, graph, payload.command));
   }
 
   if (quest.scene.variant === "dungeon" && quest.scene.expedition) {
@@ -5795,8 +6168,13 @@ async function handleUse(
   const character = await getCharacter(env.DB, payload.user_id);
   if (!character) return ephemeral(`You need to \`${payload.command} roll\` a character first.`);
 
+  // Non-integer arg → graph dungeon object interaction.
   const id = parseInt(args[0] ?? "", 10);
-  if (Number.isNaN(id)) return ephemeral(`Usage: \`${payload.command} use <inventory id>\` (find ids with \`${payload.command} inventory\`).`);
+  if (Number.isNaN(id)) {
+    const quest = await getActiveQuestForCharacter(env.DB, payload.user_id);
+    if (quest?.scene.graph) return handleGraphUseObject(payload, args, env, quest);
+    return ephemeral(`Usage: \`${payload.command} use <inventory id>\` (find ids with \`${payload.command} inventory\`).`);
+  }
 
   const item = await getItem(env.DB, id, payload.user_id);
   if (!item) return ephemeral("No such item in your inventory.");

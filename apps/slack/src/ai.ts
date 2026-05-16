@@ -1,6 +1,6 @@
 // Workers AI helpers. Uses Llama 3.1 8B Instruct — cheap, plenty good for flavor text.
 
-import type { Character, SceneJson } from "@gantt-quest/db";
+import type { Character, DungeonGraph, DungeonNode, DungeonObject, MonsterSpec, SceneJson } from "@gantt-quest/db";
 import { fallbackMonsterName, fallbackSceneText } from "@gantt-quest/core";
 
 const MODEL = "@cf/meta/llama-3.1-8b-instruct";
@@ -1753,4 +1753,145 @@ function fallbackDialogTree(input: NpcDialogInput): AiDialogNode {
       },
     ],
   };
+}
+
+// ── Phase 4: Graph Dungeon Generation ────────────────────────────────────────
+
+// Programmatic topology for a graph dungeon with 7 rooms:
+//
+//   entrance ──[n]──► room_1 ──[n]──► junction
+//                                        │
+//                         [n] room_3    [e] room_2b  (optional branch)
+//                              │              │
+//                         boss_ante ◄──────────┘
+//                              │
+//                         boss_room
+//
+// Players use /gq move n/e/s/w to navigate. One optional branch room gives
+// a choice moment. Boss kill triggers resolveVictory.
+const GRAPH_TOPOLOGY: Array<{
+  id: string;
+  exits: Record<string, string>;
+  role: "entrance" | "combat" | "safe" | "branch" | "boss_ante" | "boss";
+}> = [
+  { id: "entrance",  exits: { n: "room_1" },                          role: "entrance" },
+  { id: "room_1",    exits: { s: "entrance", n: "junction" },         role: "combat" },
+  { id: "junction",  exits: { s: "room_1", n: "room_3", e: "room_2b" }, role: "safe" },
+  { id: "room_2b",   exits: { w: "junction" },                        role: "branch" },
+  { id: "room_3",    exits: { s: "junction", n: "boss_ante" },        role: "combat" },
+  { id: "boss_ante", exits: { s: "room_3", n: "boss_room" },          role: "boss_ante" },
+  { id: "boss_room", exits: { s: "boss_ante" },                       role: "boss" },
+];
+
+export async function generateDungeonGraph(
+  ai: Ai,
+  theme: string,
+  level: number,
+  recentNames: string[] = [],
+  art?: ArtTarget,
+): Promise<DungeonGraph> {
+  const descriptions = await generateGraphRoomDescriptions(ai, theme, level);
+  const baseTier = Math.max(1, Math.ceil(level / 2));
+  const encounterSlots = GRAPH_TOPOLOGY.filter(r => r.role === "combat" || r.role === "branch" || r.role === "boss");
+
+  const monsterEntries = await Promise.all(
+    encounterSlots.map(async (slot) => {
+      const isBoss = slot.role === "boss";
+      const tier = isBoss ? baseTier + 1 : baseTier;
+      const hpFloor = isBoss ? 28 + level * 3 : 12 + level * 2;
+      const hpCeil  = isBoss ? 40 + level * 5 : 22 + level * 3;
+      const identity = await generateMonsterIdentity(ai, isBoss ? "boss" : "gauntlet-wave", hpFloor, hpCeil, recentNames);
+      const artUrl = isBoss && art ? await generateMonsterArt(ai, art, identity.name, "boss") : null;
+      const spec: MonsterSpec = {
+        name: identity.name,
+        hp: identity.hp,
+        max_hp: identity.hp,
+        tier,
+        is_boss: isBoss || undefined,
+        art_url: artUrl,
+      };
+      return [slot.id, spec] as const;
+    }),
+  );
+  const monsterByRoom = new Map(monsterEntries);
+
+  const nodes: Record<string, DungeonNode> = {};
+  for (const slot of GRAPH_TOPOLOGY) {
+    const desc = descriptions[slot.id] ?? { name: slot.id, text: "A room in the dungeon." };
+    const objects: DungeonObject[] = slot.id === "junction"
+      ? [{ id: "sign", name: "Faded Directory Sign", takeable: false, used: false,
+           on_use: { effect: "flavor", text: "The sign reads: 'All paths lead to the same deadline.'" } }]
+      : [];
+    const monster = monsterByRoom.get(slot.id);
+    nodes[slot.id] = {
+      id: slot.id,
+      name: desc.name,
+      description: desc.text,
+      exits: slot.exits as DungeonNode["exits"],
+      objects,
+      encounter: monster ? { monsters: [monster], cleared: false } : undefined,
+      visited: slot.id === "entrance",
+    };
+  }
+
+  return { nodes, current: "entrance", visited: ["entrance"] };
+}
+
+const GRAPH_ROLE_HINTS: Record<string, string> = {
+  entrance:  "Entrance — no enemies, just atmosphere. Foreboding.",
+  room_1:    "First combat room — tension. Something lurks here.",
+  junction:  "Junction / crossroads — brief rest. Two paths diverge.",
+  room_2b:   "Optional branch — dangerous, potentially rewarding.",
+  room_3:    "Deep room — darker tone, battle ahead.",
+  boss_ante: "Anteroom before the boss — dread, pre-battle quiet.",
+  boss_room: "Boss chamber — final confrontation, dramatic and imposing.",
+};
+
+async function generateGraphRoomDescriptions(
+  ai: Ai,
+  theme: string,
+  level: number,
+): Promise<Record<string, { name: string; text: string }>> {
+  const fallback: Record<string, { name: string; text: string }> = {
+    entrance:  { name: "Server Lobby",      text: "Emergency lighting casts red shadows across overturned chairs. The air smells of burnt circuits." },
+    room_1:    { name: "North Corridor",    text: "The overhead fluorescents flicker in a sickly rhythm. Something breathes in the dark." },
+    junction:  { name: "Crossroads Hub",   text: "Two corridors diverge here. A faded directory sign offers no useful guidance." },
+    room_2b:   { name: "Side Lab",          text: "Dust coats every surface like static. Old equipment hums as if still waiting for commands." },
+    room_3:    { name: "Deep Server Bay",   text: "Banks of ancient servers blink status lights in no discernible pattern. Heat rolls off them in waves." },
+    boss_ante: { name: "Ops Center",        text: "The door ahead is heavier than the others. The hum behind it is not mechanical." },
+    boss_room: { name: "The Core",          text: "A pulsing node of compressed technical debt fills the room. It has been waiting for you." },
+  };
+
+  const user = [
+    `Design a dungeon for a comedic engineering RPG. Theme: "${theme}". Player level: ${level}.`,
+    `For each room below, output exactly: ID | Short Room Name (2-4 words) | Two atmospheric sentences (~40 words).`,
+    `Use office/software imagery. Output only lines, no commentary.`,
+    ``,
+    ...GRAPH_TOPOLOGY.map(r => `${r.id}: ${GRAPH_ROLE_HINTS[r.id] ?? "Exploration room."}`),
+  ].join("\n");
+
+  try {
+    const res = (await ai.run(MODEL, {
+      messages: [
+        { role: "system", content: "You write concise dungeon room descriptions. Follow the format exactly." },
+        { role: "user", content: user },
+      ],
+      max_tokens: 700,
+    })) as AiRunResponse;
+    const text = (res.response ?? "").trim();
+    const result: Record<string, { name: string; text: string }> = { ...fallback };
+    for (const line of text.split("\n")) {
+      const parts = line.split("|").map(s => s.trim());
+      if (parts.length < 3) continue;
+      const [rawId, rawName, ...rest] = parts;
+      const id = rawId.toLowerCase().replace(/\s+/g, "_");
+      const desc = rest.join(" ").trim();
+      if (id && rawName && desc && id in fallback) {
+        result[id] = { name: rawName, text: desc };
+      }
+    }
+    return result;
+  } catch {
+    return fallback;
+  }
 }

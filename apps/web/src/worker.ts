@@ -154,6 +154,9 @@ import {
   type ActiveQuest,
   type Character,
   type CharGender,
+  type DungeonDirection,
+  type DungeonGraph,
+  type DungeonNode,
   type ExpeditionNode,
   type ExpeditionNodeType,
   type ExpeditionState,
@@ -3793,6 +3796,217 @@ app.post("/api/quest/:id/dungeon/choose_door", async (c) => {
   return c.json({ ok: true, room_type: chosenNode.type, is_combat: isCombat });
 });
 
+// ── Graph Dungeon routes (Phase 4) ───────────────────────────────────────────
+// All graph dungeon mutations share the same auth + quest lookup boilerplate.
+// The graph lives in scene_json.graph; these routes are feature-flagged by the
+// presence of that field, not an env var (since the web doesn't carry DUNGEON_GRAPH).
+
+app.get("/api/quest/:id/dungeon/graph", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const questId = parseInt(c.req.param("id"), 10);
+  if (!Number.isFinite(questId)) return c.json({ error: "bad_quest_id" }, 400);
+  const quest = await getActiveQuestForCharacter(c.env.DB, session.slack_user_id);
+  if (!quest || quest.id !== questId) return c.json({ error: "quest_not_active" }, 404);
+  const graph = quest.scene.graph;
+  if (!graph) return c.json({ error: "not_a_graph_dungeon" }, 400);
+  const currentNode = graph.nodes[graph.current];
+  return c.json({ ok: true, graph, current_node: currentNode ?? null });
+});
+
+app.post("/api/quest/:id/dungeon/graph/move", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const questId = parseInt(c.req.param("id"), 10);
+  if (!Number.isFinite(questId)) return c.json({ error: "bad_quest_id" }, 400);
+  const quest = await getActiveQuestForCharacter(c.env.DB, session.slack_user_id);
+  if (!quest || quest.id !== questId) return c.json({ error: "quest_not_active" }, 404);
+  const graph = quest.scene.graph;
+  if (!graph) return c.json({ error: "not_a_graph_dungeon" }, 400);
+
+  const body = (await c.req.json().catch(() => null)) as { direction?: unknown } | null;
+  const dir = typeof body?.direction === "string" ? body.direction.toLowerCase() : "";
+  const validDirs: DungeonDirection[] = ["n", "e", "s", "w"];
+  if (!validDirs.includes(dir as DungeonDirection)) {
+    return c.json({ error: "bad_direction", valid: validDirs }, 400);
+  }
+
+  const currentNode = graph.nodes[graph.current];
+  if (!currentNode) return c.json({ error: "corrupt_graph" }, 500);
+  if (currentNode.encounter && !currentNode.encounter.cleared) {
+    return c.json({ error: "encounter_active", monster: currentNode.encounter.monsters[0]?.name }, 409);
+  }
+
+  const targetId = currentNode.exits[dir as DungeonDirection];
+  if (!targetId) return c.json({ error: "no_exit" }, 400);
+  const targetNode = graph.nodes[targetId];
+  if (!targetNode) return c.json({ error: "corrupt_graph" }, 500);
+
+  const updatedTarget: DungeonNode = { ...targetNode, visited: true };
+  const updatedGraph: DungeonGraph = {
+    ...graph,
+    current: targetId,
+    visited: graph.visited.includes(targetId) ? graph.visited : [...graph.visited, targetId],
+    nodes: { ...graph.nodes, [targetId]: updatedTarget },
+  };
+  let updatedScene: SceneJson = { ...quest.scene, graph: updatedGraph };
+  if (updatedTarget.encounter && !updatedTarget.encounter.cleared && updatedTarget.encounter.monsters.length > 0) {
+    const monster = updatedTarget.encounter.monsters[0];
+    updatedScene = {
+      ...updatedScene,
+      monster_name: monster.name,
+      monster_hp: monster.hp,
+      monster_max_hp: monster.max_hp,
+      tier: monster.tier,
+      monster_art_url: monster.art_url ?? undefined,
+      monster_effects: [],
+      marked_by: undefined,
+      marked_until: undefined,
+    };
+  }
+  await saveScene(c.env.DB, quest.id, updatedScene);
+  return c.json({ ok: true, current_node: updatedTarget, has_encounter: !!(updatedTarget.encounter && !updatedTarget.encounter.cleared) });
+});
+
+app.post("/api/quest/:id/dungeon/graph/take", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const questId = parseInt(c.req.param("id"), 10);
+  if (!Number.isFinite(questId)) return c.json({ error: "bad_quest_id" }, 400);
+  const quest = await getActiveQuestForCharacter(c.env.DB, session.slack_user_id);
+  if (!quest || quest.id !== questId) return c.json({ error: "quest_not_active" }, 404);
+  const graph = quest.scene.graph;
+  if (!graph) return c.json({ error: "not_a_graph_dungeon" }, 400);
+
+  const body = (await c.req.json().catch(() => null)) as { object_id?: unknown } | null;
+  const objectId = typeof body?.object_id === "string" ? body.object_id : null;
+  if (!objectId) return c.json({ error: "missing_object_id" }, 400);
+
+  const currentNode = graph.nodes[graph.current];
+  if (!currentNode) return c.json({ error: "corrupt_graph" }, 500);
+
+  const obj = currentNode.objects.find(o => o.id === objectId && o.takeable && !o.used);
+  if (!obj) return c.json({ error: "object_not_found_or_taken" }, 404);
+
+  const item = await addItem(c.env.DB, {
+    character_id: session.slack_user_id,
+    item_name: obj.name,
+    item_type: "tool",
+    power: 0,
+    rarity: "common",
+    flavor: "Retrieved from the dungeon.",
+    weapon_range: null,
+    slot: null,
+    stat_bonus: null,
+    item_subtype: null,
+  });
+
+  const updatedObjects = currentNode.objects.map(o => o.id === objectId ? { ...o, used: true } : o);
+  const updatedNode: DungeonNode = { ...currentNode, objects: updatedObjects };
+  const updatedGraph: DungeonGraph = { ...graph, nodes: { ...graph.nodes, [graph.current]: updatedNode } };
+  await saveScene(c.env.DB, quest.id, { ...quest.scene, graph: updatedGraph });
+
+  return c.json({ ok: true, item: { id: item.id, name: item.item_name } });
+});
+
+app.post("/api/quest/:id/dungeon/graph/use", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const questId = parseInt(c.req.param("id"), 10);
+  if (!Number.isFinite(questId)) return c.json({ error: "bad_quest_id" }, 400);
+  const quest = await getActiveQuestForCharacter(c.env.DB, session.slack_user_id);
+  if (!quest || quest.id !== questId) return c.json({ error: "quest_not_active" }, 404);
+  const graph = quest.scene.graph;
+  if (!graph) return c.json({ error: "not_a_graph_dungeon" }, 400);
+
+  const body = (await c.req.json().catch(() => null)) as { object_id?: unknown } | null;
+  const objectId = typeof body?.object_id === "string" ? body.object_id : null;
+  if (!objectId) return c.json({ error: "missing_object_id" }, 400);
+
+  const currentNode = graph.nodes[graph.current];
+  if (!currentNode) return c.json({ error: "corrupt_graph" }, 500);
+
+  const obj = currentNode.objects.find(o => o.id === objectId && !o.used);
+  if (!obj) return c.json({ error: "object_not_found_or_used" }, 404);
+  if (!obj.on_use) return c.json({ error: "object_not_usable" }, 400);
+
+  const markUsed = (objects: typeof currentNode.objects) =>
+    objects.map(o => o.id === objectId ? { ...o, used: true } : o);
+
+  const effect = obj.on_use;
+
+  if (effect.effect === "flavor") {
+    const updatedNode: DungeonNode = { ...currentNode, objects: markUsed(currentNode.objects) };
+    const updatedGraph: DungeonGraph = { ...graph, nodes: { ...graph.nodes, [graph.current]: updatedNode } };
+    await saveScene(c.env.DB, quest.id, { ...quest.scene, graph: updatedGraph });
+    return c.json({ ok: true, effect: "flavor", text: effect.text });
+  }
+
+  if (effect.effect === "open_exit") {
+    if (currentNode.exits[effect.direction]) {
+      return c.json({ error: "exit_already_open" }, 409);
+    }
+    const updatedNode: DungeonNode = {
+      ...currentNode,
+      objects: markUsed(currentNode.objects),
+      exits: { ...currentNode.exits, [effect.direction]: effect.reveals_node },
+    };
+    const updatedGraph: DungeonGraph = { ...graph, nodes: { ...graph.nodes, [graph.current]: updatedNode } };
+    await saveScene(c.env.DB, quest.id, { ...quest.scene, graph: updatedGraph });
+    return c.json({ ok: true, effect: "open_exit", direction: effect.direction, reveals_node: effect.reveals_node });
+  }
+
+  if (effect.effect === "spawn_item") {
+    const loot = effect.item;
+    const item = await addItem(c.env.DB, {
+      character_id: session.slack_user_id,
+      item_name: loot.name,
+      item_type: loot.item_type,
+      power: loot.power,
+      rarity: loot.rarity,
+      flavor: loot.flavor,
+      weapon_range: loot.weapon_range ?? null,
+      slot: loot.slot ?? null,
+      stat_bonus: loot.stat_bonus ?? null,
+      item_subtype: loot.item_subtype ?? null,
+    });
+    const updatedNode: DungeonNode = { ...currentNode, objects: markUsed(currentNode.objects) };
+    const updatedGraph: DungeonGraph = { ...graph, nodes: { ...graph.nodes, [graph.current]: updatedNode } };
+    await saveScene(c.env.DB, quest.id, { ...quest.scene, graph: updatedGraph });
+    return c.json({ ok: true, effect: "spawn_item", item: { id: item.id, name: item.item_name, rarity: loot.rarity } });
+  }
+
+  if (effect.effect === "trigger_encounter") {
+    if (currentNode.encounter && !currentNode.encounter.cleared) {
+      return c.json({ error: "encounter_already_active" }, 409);
+    }
+    const [spec] = effect.monsters;
+    if (!spec) return c.json({ error: "no_monster_defined" }, 500);
+    const updatedNode: DungeonNode = {
+      ...currentNode,
+      objects: markUsed(currentNode.objects),
+      encounter: { monsters: effect.monsters, cleared: false },
+    };
+    const updatedGraph: DungeonGraph = { ...graph, nodes: { ...graph.nodes, [graph.current]: updatedNode } };
+    const updatedScene: SceneJson = {
+      ...quest.scene,
+      graph: updatedGraph,
+      monster_name: spec.name,
+      monster_hp: spec.hp,
+      monster_max_hp: spec.max_hp,
+      tier: spec.tier,
+      monster_art_url: spec.art_url ?? undefined,
+      monster_effects: [],
+      marked_by: undefined,
+      marked_until: undefined,
+    };
+    await saveScene(c.env.DB, quest.id, updatedScene);
+    return c.json({ ok: true, effect: "trigger_encounter", monster: spec });
+  }
+
+  return c.json({ error: "unknown_effect" }, 500);
+});
+
 // Clears the web combat state for a quest. Used when the player exits the
 // combat page. Doesn't touch the underlying quest row — quest outcome
 // resolution (XP/gold/loot) lives in Phase 2d.
@@ -4188,19 +4402,32 @@ async function applyWebCombatOutcome(
   // next combat room will flip it back when entered.
   const isDungeon = primaryMonster.upcoming_waves === undefined && won && await isDungeonQuest(env.DB, questId);
   if (won && isDungeon) {
+    // For graph dungeons, also mark the current room's encounter as cleared.
     const sceneRow = await env.DB
-      .prepare("SELECT scene_json FROM quests WHERE id = ?")
+      .prepare(`SELECT scene_json FROM quests WHERE id = ?`)
       .bind(questId)
       .first<{ scene_json: string }>();
-    if (sceneRow) {
-      const scene = JSON.parse(sceneRow.scene_json) as {
-        tier: number;
-        expedition?: ExpState;
-        [k: string]: unknown;
-      };
-      if (scene.expedition) {
-        await advanceDungeon(env.DB, questId, scene.expedition, scene, null);
+    const parsedScene = sceneRow ? (JSON.parse(sceneRow.scene_json) as SceneJson) : null;
+    if (parsedScene?.graph) {
+      const graph = parsedScene.graph;
+      const currentNode = graph.nodes[graph.current];
+      if (currentNode?.encounter) {
+        const updatedNode = { ...currentNode, encounter: { ...currentNode.encounter, cleared: true } };
+        const updatedScene: SceneJson = {
+          ...parsedScene,
+          graph: { ...graph, nodes: { ...graph.nodes, [graph.current]: updatedNode } },
+          monster_hp: 0,
+        };
+        await saveScene(env.DB, questId, updatedScene);
+      } else {
+        await env.DB
+          .prepare(`UPDATE quests SET scene_json = json_set(scene_json, '$.monster_hp', 0) WHERE id = ?`)
+          .bind(questId).run();
       }
+    } else {
+      await env.DB
+        .prepare(`UPDATE quests SET scene_json = json_set(scene_json, '$.monster_hp', 0) WHERE id = ?`)
+        .bind(questId).run();
     }
     await setQuestMode(env.DB, questId, "slack");
     await advanceExpeditionAfterWebCombat(env, questId);

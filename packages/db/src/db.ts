@@ -308,6 +308,50 @@ export interface ExpeditionState {
   visited_indices?: number[]; // ordered list of node indices walked through
 }
 
+// ── Phase 4: Graph Dungeon ────────────────────────────────────────────────────
+
+export type DungeonDirection = "n" | "e" | "s" | "w";
+
+export interface MonsterSpec {
+  name: string;
+  hp: number;
+  max_hp: number;
+  tier: number;
+  is_boss?: boolean;
+  art_url?: string | null;
+}
+
+export type DungeonObjectEffect =
+  | { effect: "open_exit"; direction: DungeonDirection; reveals_node: string }
+  | { effect: "spawn_item"; item: LootOption }
+  | { effect: "trigger_encounter"; monsters: MonsterSpec[] }
+  | { effect: "flavor"; text: string };
+
+export interface DungeonObject {
+  id: string;
+  name: string;
+  takeable: boolean;
+  used: boolean;
+  on_use?: DungeonObjectEffect;
+}
+
+export interface DungeonNode {
+  id: string;
+  name?: string;
+  description: string;
+  art_url?: string;
+  exits: Partial<Record<DungeonDirection, string>>;
+  objects: DungeonObject[];
+  encounter?: { monsters: MonsterSpec[]; cleared: boolean };
+  visited: boolean;
+}
+
+export interface DungeonGraph {
+  nodes: Record<string, DungeonNode>;
+  current: string;
+  visited: string[];
+}
+
 export interface SceneJson {
   monster_name: string;
   monster_hp: number;
@@ -321,8 +365,10 @@ export interface SceneJson {
   wave?: number;
   total_waves?: number;
   upcoming_waves?: GauntletWave[];
-  // Expedition-only.
+  // Expedition-only (legacy dungeon).
   expedition?: ExpeditionState;
+  // Graph dungeon (Phase 4). When set, navigation uses /gq move instead of /gq choose.
+  graph?: DungeonGraph;
   // Active monster status effects (poisoned, etc.). Tick on monster turns.
   // Cleared when the monster dies / scene transitions to a new monster.
   monster_effects?: StatusEffect[];

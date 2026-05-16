@@ -258,6 +258,48 @@ interface ExpeditionState {
   sealed_doors?: number[];
 }
 
+type DungeonDirection = "n" | "e" | "s" | "w";
+
+interface MonsterSpec {
+  name: string;
+  hp: number;
+  max_hp: number;
+  tier: number;
+  is_boss?: boolean;
+  art_url?: string | null;
+}
+
+type DungeonObjectEffect =
+  | { effect: "open_exit"; direction: DungeonDirection; reveals_node: string }
+  | { effect: "spawn_item"; item: LootOption }
+  | { effect: "trigger_encounter"; monsters: MonsterSpec[] }
+  | { effect: "flavor"; text: string };
+
+interface DungeonObject {
+  id: string;
+  name: string;
+  takeable: boolean;
+  used: boolean;
+  on_use?: DungeonObjectEffect;
+}
+
+interface DungeonNode {
+  id: string;
+  name?: string;
+  description: string;
+  art_url?: string;
+  exits: Partial<Record<DungeonDirection, string>>;
+  objects: DungeonObject[];
+  encounter?: { monsters: MonsterSpec[]; cleared: boolean };
+  visited: boolean;
+}
+
+interface DungeonGraph {
+  nodes: Record<string, DungeonNode>;
+  current: string;
+  visited: string[];
+}
+
 interface SceneJson {
   monster_name: string;
   monster_hp: number;
@@ -270,6 +312,7 @@ interface SceneJson {
   total_waves?: number;
   monster_effects?: StatusEffect[];
   expedition?: ExpeditionState;
+  graph?: DungeonGraph;
   monster_art_url?: string | null;
 }
 
@@ -1014,6 +1057,52 @@ export function App() {
     if (ok) void refresh();
   }
 
+  async function graphMove(questId: number, direction: DungeonDirection) {
+    const res = await fetch(`/api/quest/${questId}/dungeon/graph/move`, {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ direction }),
+    });
+    const body = await res.json() as { ok?: boolean; error?: string; has_encounter?: boolean };
+    if (!res.ok) {
+      if (body.error === "encounter_active") toast.error("Finish the encounter first!");
+      else if (body.error === "no_exit") toast.error("No exit in that direction.");
+      else toast.error("Can't move there.");
+      return;
+    }
+    void refresh();
+  }
+
+  async function graphTakeObject(questId: number, objectId: string) {
+    const res = await fetch(`/api/quest/${questId}/dungeon/graph/take`, {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ object_id: objectId }),
+    });
+    const body = await res.json() as { ok?: boolean; error?: string; item?: { id: number; name: string } };
+    if (!res.ok) { toast.error("Couldn't take that."); return; }
+    toast.success(`Picked up ${body.item?.name ?? "item"}!`);
+    void refresh();
+  }
+
+  async function graphUseObject(questId: number, objectId: string) {
+    const res = await fetch(`/api/quest/${questId}/dungeon/graph/use`, {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ object_id: objectId }),
+    });
+    const body = await res.json() as { ok?: boolean; error?: string; effect?: string; text?: string; direction?: string; item?: { name: string; rarity: string } };
+    if (!res.ok) { toast.error("Nothing happens."); return; }
+    if (body.effect === "flavor" && body.text) toast(body.text, { duration: 6000 });
+    else if (body.effect === "open_exit") toast.success(`A passage to the ${body.direction?.toUpperCase()} opens!`);
+    else if (body.effect === "spawn_item") toast.success(`Found: ${body.item?.name ?? "item"}!`);
+    else if (body.effect === "trigger_encounter") toast("⚔ An enemy appears!");
+    void refresh();
+  }
+
   async function equipItem(itemId: number) {
     const { ok } = await postJson(`/api/inventory/${itemId}/equip`, { method: "POST" });
     if (ok) void refresh();
@@ -1367,6 +1456,9 @@ export function App() {
                 onNpcChoose={(pick) => npcChoose(state.activeQuest!.quest.id, pick)}
                 onTreasureTake={(pick) => treasureTake(state.activeQuest!.quest.id, pick)}
                 onMerchantChoose={(pick) => merchantChoose(state.activeQuest!.quest.id, pick)}
+                onGraphMove={(dir) => graphMove(state.activeQuest!.quest.id, dir)}
+                onGraphTake={(objectId) => graphTakeObject(state.activeQuest!.quest.id, objectId)}
+                onGraphUse={(objectId) => graphUseObject(state.activeQuest!.quest.id, objectId)}
                 myKeys={state.me.character ? {
                   bronze: state.me.character.keys_bronze,
                   silver: state.me.character.keys_silver,
@@ -1912,6 +2004,9 @@ function ActiveQuestCard({
   onNpcChoose,
   onTreasureTake,
   onMerchantChoose,
+  onGraphMove,
+  onGraphTake,
+  onGraphUse,
   myKeys,
 }: {
   quest: ActiveQuest;
@@ -1925,6 +2020,9 @@ function ActiveQuestCard({
   onNpcChoose: (pick: number) => void;
   onTreasureTake: (pick: number) => void;
   onMerchantChoose: (pick: number) => void;
+  onGraphMove: (dir: DungeonDirection) => void;
+  onGraphTake: (objectId: string) => void;
+  onGraphUse: (objectId: string) => void;
   myKeys: { bronze: number; silver: number; gold: number } | null;
 }) {
   const s = quest.scene;
@@ -2062,6 +2160,31 @@ function ActiveQuestCard({
         />
       )}
       {(() => {
+        // Graph dungeon takes priority over legacy expedition.
+        if (s.graph) {
+          const graph = s.graph;
+          const node = graph.nodes[graph.current];
+          const hasEncounter = !!(node?.encounter && !node.encounter.cleared);
+          return (
+            <>
+              <GraphDungeonPanel
+                graph={graph}
+                node={node ?? null}
+                onMove={onGraphMove}
+                onTake={onGraphTake}
+                onUse={onGraphUse}
+              />
+              {hasEncounter && (
+                <button
+                  onClick={onStartCombat}
+                  style={{ ...button, marginTop: 12, background: "#b89b3a", color: "#0e0f12" }}
+                >
+                  <Icon name="sword" /> {combatInProgress ? "Resume Combat" : "Open Combat"}
+                </button>
+              )}
+            </>
+          );
+        }
         const currentNode = s.expedition?.nodes[s.expedition.current];
         const pendingDoors = s.expedition?.pending_doors ?? [];
         if (variant === "dungeon" && pendingDoors.length > 0) {
@@ -2330,6 +2453,125 @@ function TreasurePicker({
       <p style={{ ...muted, fontSize: 11, marginTop: 8 }}>
         Other option is left in the chest. Quest completes; spoils awarded to the party.
       </p>
+    </div>
+  );
+}
+
+const DIR_LABEL: Record<DungeonDirection, string> = { n: "N", e: "E", s: "S", w: "W" };
+const DIR_FULL: Record<DungeonDirection, string> = { n: "North", e: "East", s: "South", w: "West" };
+
+function GraphDungeonPanel({
+  graph,
+  node,
+  onMove,
+  onTake,
+  onUse,
+}: {
+  graph: DungeonGraph;
+  node: DungeonNode | null;
+  onMove: (dir: DungeonDirection) => void;
+  onTake: (objectId: string) => void;
+  onUse: (objectId: string) => void;
+}) {
+  if (!node) return <div style={{ ...muted, marginTop: 16, fontStyle: "italic" }}>Dungeon state corrupted.</div>;
+
+  const allDirs: DungeonDirection[] = ["n", "e", "s", "w"];
+  const activeObjects = node.objects.filter(o => !o.used || o.takeable);
+
+  return (
+    <div style={{ marginTop: 16 }}>
+      {node.name && (
+        <div style={{ fontSize: 13, fontWeight: 600, color: "#b89b3a", marginBottom: 6 }}>
+          {node.name}
+        </div>
+      )}
+      <div style={{ ...muted, fontStyle: "italic", lineHeight: 1.5, marginBottom: 12 }}>
+        {node.description}
+      </div>
+
+      {node.encounter && !node.encounter.cleared && (
+        <div style={{ background: "#1a0d0d", border: "1px solid #7a3030", borderRadius: 6, padding: "8px 12px", marginBottom: 12 }}>
+          <span style={{ color: "#e06060", fontWeight: 600 }}>
+            ⚔ {node.encounter.monsters[0]?.name ?? "Enemy"} lurks here. Fight before moving!
+          </span>
+        </div>
+      )}
+      {node.encounter?.cleared && (
+        <div style={{ color: "#5a9e5a", fontSize: 12, marginBottom: 10 }}>✓ Encounter cleared</div>
+      )}
+
+      {/* Compass exits */}
+      <div style={{ marginBottom: 12 }}>
+        <div style={{ ...muted, fontSize: 11, textTransform: "uppercase", letterSpacing: 1.5, marginBottom: 6 }}>
+          Exits
+        </div>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+          {allDirs.map((dir) => {
+            const targetId = node.exits[dir];
+            if (!targetId) return null;
+            const targetNode = graph.nodes[targetId];
+            const explored = targetNode?.visited ?? false;
+            const blocked = !!(node.encounter && !node.encounter.cleared);
+            return (
+              <button
+                key={dir}
+                onClick={() => !blocked && onMove(dir)}
+                disabled={blocked}
+                title={`${DIR_FULL[dir]}${explored ? "" : " (unexplored)"}`}
+                style={{
+                  padding: "6px 14px",
+                  background: blocked ? "#1a1c20" : "#1d1f23",
+                  border: `1px solid ${blocked ? "#333" : "#3a3d44"}`,
+                  borderRadius: 6,
+                  color: blocked ? "#555" : (explored ? "#e6e6e6" : "#b89b3a"),
+                  cursor: blocked ? "not-allowed" : "pointer",
+                  fontFamily: "inherit",
+                  fontWeight: 600,
+                  fontSize: 13,
+                  opacity: blocked ? 0.5 : 1,
+                }}
+              >
+                {DIR_LABEL[dir]}{!explored ? " ?" : ""}
+              </button>
+            );
+          })}
+          {allDirs.every(d => !node.exits[d]) && (
+            <span style={{ ...muted, fontSize: 13, fontStyle: "italic" }}>No exits.</span>
+          )}
+        </div>
+      </div>
+
+      {/* Objects */}
+      {activeObjects.length > 0 && (
+        <div>
+          <div style={{ ...muted, fontSize: 11, textTransform: "uppercase", letterSpacing: 1.5, marginBottom: 6 }}>
+            Objects
+          </div>
+          <div style={{ display: "grid", gap: 6 }}>
+            {activeObjects.map((obj) => (
+              <div key={obj.id} style={{ display: "flex", alignItems: "center", gap: 8, background: "#1d1f23", border: "1px solid #2a2d33", borderRadius: 6, padding: "8px 12px" }}>
+                <span style={{ flex: 1, color: "#e6e6e6", fontSize: 13 }}>{obj.name}</span>
+                {obj.takeable && !obj.used && (
+                  <button
+                    onClick={() => onTake(obj.id)}
+                    style={{ padding: "4px 10px", background: "#23351a", border: "1px solid #3a5528", borderRadius: 4, color: "#8bc96e", cursor: "pointer", fontFamily: "inherit", fontSize: 12 }}
+                  >
+                    Take
+                  </button>
+                )}
+                {obj.on_use && !obj.used && (
+                  <button
+                    onClick={() => onUse(obj.id)}
+                    style={{ padding: "4px 10px", background: "#1a2535", border: "1px solid #2a3d5a", borderRadius: 4, color: "#6ea8c9", cursor: "pointer", fontFamily: "inherit", fontSize: 12 }}
+                  >
+                    Use
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
