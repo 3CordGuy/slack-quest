@@ -4252,9 +4252,10 @@ function InventoryCard({
         <div style={{ fontSize: 11, color: "#6b7280", textTransform: "uppercase" as const, letterSpacing: 0.8, fontWeight: 600, marginBottom: 6 }}>
           Equipped
         </div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 72px)", gap: 4 }}>
-          {(["helmet", "body", "pants", "boots"] as EquipSlot[]).map((s) => renderDollSlot(s))}
-          {(["main_hand", "off_hand", "ring", "amulet"] as EquipSlot[]).map((s) => renderDollSlot(s))}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 72px)", gap: 4 }}>
+          {([null, "helmet", null, "main_hand", "body", "off_hand", "amulet", "pants", "ring", null, "boots", null] as (EquipSlot | null)[]).map((s, i) =>
+            s ? renderDollSlot(s) : <div key={i} style={{ width: 72, height: 72 }} />
+          )}
         </div>
       </div>
       {/* Pack */}
