@@ -151,6 +151,9 @@ import {
   setQuestThreadTs,
   trySaveExpeditionAdvance,
   getAllEquippedSlots,
+  insertShopStock,
+  averageCharacterLevel,
+  countCharacters,
   type ActiveQuest,
   type Character,
   type CharGender,
@@ -370,6 +373,10 @@ const ELITE_REWARD_MULTIPLIER = 1.5;
 const SUPPORT_BASE_CONTRIBUTION = 1;
 const SHOP_RESTOCK_MS = 6 * 60 * 60 * 1000;
 const SHOP_BUY_CAP_PER_CYCLE = 2;
+const SHOP_STOCK_BASE = 6;
+const SHOP_STOCK_PER_EXTRA_PLAYER = 1;
+const SHOP_STOCK_CAP = 12;
+const SHOP_STOCK_PLAYER_BASELINE = 4;
 // Town refresh cadences — kept in sync with Slack's rebuildTownState:
 //   weekly: town name + location art
 //   daily: job board + pub regulars (handled by Slack; web checks staleness)
@@ -1783,6 +1790,60 @@ app.get("/api/shop", async (c) => {
     purchases_this_cycle: purchasesThisCycle,
     purchase_cap: SHOP_BUY_CAP_PER_CYCLE,
   });
+});
+
+// POST /api/shop/restock — triggers a fresh stock generation. Mirrors the
+// restockShop logic from the Slack worker. Idempotent: bails if stock was
+// generated in the last 60s so rapid clicks don't double-generate.
+app.post("/api/shop/restock", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const channelId = await recentChannelForUser(c.env.DB, session.slack_user_id);
+  if (!channelId) return c.json({ error: "no_channel" }, 404);
+
+  const recent = await c.env.DB
+    .prepare("SELECT 1 FROM shop_stock WHERE channel_id = ? AND generated_at > ? LIMIT 1")
+    .bind(channelId, Date.now() - 60_000)
+    .first();
+  if (recent) return c.json({ ok: true, skipped: true });
+
+  const tier = Math.max(2, await averageCharacterLevel(c.env.DB));
+  const playerCount = await countCharacters(c.env.DB);
+  const stockSize = Math.min(
+    SHOP_STOCK_CAP,
+    SHOP_STOCK_BASE + Math.max(0, playerCount - SHOP_STOCK_PLAYER_BASELINE) * SHOP_STOCK_PER_EXTRA_PLAYER,
+  );
+  const generatedAt = Date.now();
+  const items: Parameters<typeof insertShopStock>[1] = [];
+  for (let i = 0; i < stockSize; i++) {
+    const roll = rollItem(tier, true);
+    let name: string;
+    let flavor: string;
+    if (roll.catalog_name) {
+      const entry = findCatalogEntry(roll.catalog_name);
+      if (entry) {
+        flavor = await flavorCatalogItem(c.env.AI, entry.name, entry.blurb, "the shopkeep's chest");
+        name = `${entry.emoji} ${entry.name}`;
+      } else {
+        ({ name, flavor } = await flavorLootDrop(c.env.AI, "the shopkeep's chest", roll.type as "weapon" | "armor" | "consumable" | "magic" | "revive", roll.rarity, roll.power));
+      }
+    } else {
+      ({ name, flavor } = await flavorLootDrop(c.env.AI, "the shopkeep's chest", roll.type as "weapon" | "armor" | "consumable" | "magic" | "revive", roll.rarity, roll.power));
+    }
+    items.push({
+      channel_id: channelId,
+      generated_at: generatedAt,
+      item_name: name,
+      item_type: roll.type,
+      power: roll.power,
+      rarity: roll.rarity,
+      flavor,
+      price: priceFor(roll.type, roll.rarity),
+      weapon_range: roll.weapon_range ?? null,
+    });
+  }
+  await insertShopStock(c.env.DB, items);
+  return c.json({ ok: true });
 });
 
 // POST /api/hunt — start a free-roam standard quest at a player-chosen tier

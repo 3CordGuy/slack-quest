@@ -944,6 +944,11 @@ export function App() {
     setState((prev) => prev.kind === "auth" ? { ...prev, shop } : prev);
   }
 
+  async function restockShop() {
+    await fetch("/api/shop/restock", { method: "POST", credentials: "include" });
+    await refreshShop();
+  }
+
   async function refreshApothecary() {
     const res = await fetch("/api/apothecary", { credentials: "include", cache: "no-store" });
     const body = res.ok
@@ -1404,6 +1409,7 @@ export function App() {
             onHaggle={shopHaggle}
             onBuyStaple={shopBuyStaple}
             onRefresh={refreshShop}
+            onRestock={restockShop}
           />
         );
       } else if (townSection === "inn" && state.me.character && state.inn) {
@@ -5243,6 +5249,7 @@ function ShopCard({
   onHaggle,
   onBuyStaple,
   onRefresh,
+  onRestock,
 }: {
   shop: ShopResponse;
   navOverlay?: React.ReactNode;
@@ -5250,6 +5257,7 @@ function ShopCard({
   onHaggle: (id: number) => void;
   onBuyStaple: (id: string) => void;
   onRefresh: () => Promise<void>;
+  onRestock?: () => Promise<void>;
 }) {
   const hero = navOverlay
     ? <LocationHero src={shop.art_url} label="Shop" nav={navOverlay} />
@@ -5285,10 +5293,10 @@ function ShopCard({
           {!navOverlay && <h2 style={{ ...h2, margin: 0 }}>Shop</h2>}
           <RefreshButton onRefresh={onRefresh} />
         </div>
-        <p style={muted}>
-          Rolled stock is dry. Run <code style={kbd}>/gq shop</code> in Slack to kick off a restock,
-          then refresh here. Staples are still available below.
-        </p>
+        <p style={muted}>The shopkeep's shelves are bare.</p>
+        {onRestock && (
+          <RestockButton onRestock={onRestock} />
+        )}
         {shop.staples && shop.staples.length > 0 && (
           <StaplesSection staples={shop.staples} gold={shop.gold} onBuyStaple={onBuyStaple} />
         )}
@@ -7903,6 +7911,35 @@ function RefreshButton({ onRefresh, style }: { onRefresh: () => Promise<void>; s
   return (
     <button onClick={handleClick} disabled={spinning} style={{ ...refreshBtn, ...style, opacity: spinning ? 0.6 : 1 }}>
       {spinning ? "…" : "↺ Refresh"}
+    </button>
+  );
+}
+
+function RestockButton({ onRestock }: { onRestock: () => Promise<void> }) {
+  const [state, setState] = useState<"idle" | "loading" | "done">("idle");
+  async function handleClick() {
+    setState("loading");
+    try { await onRestock(); setState("done"); } catch { setState("idle"); }
+  }
+  return (
+    <button
+      onClick={handleClick}
+      disabled={state !== "idle"}
+      style={{
+        background: "#1a2a1a",
+        border: "1px solid #4ade8055",
+        borderRadius: 6,
+        color: "#4ade80",
+        cursor: state === "idle" ? "pointer" : "default",
+        fontSize: 12,
+        padding: "6px 14px",
+        fontFamily: "inherit",
+        fontWeight: 600,
+        opacity: state === "loading" ? 0.6 : 1,
+        marginBottom: 12,
+      }}
+    >
+      {state === "loading" ? "Restocking…" : state === "done" ? "✓ Done" : "🛒 Restock Shop"}
     </button>
   );
 }
