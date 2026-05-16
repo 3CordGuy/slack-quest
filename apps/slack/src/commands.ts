@@ -1158,7 +1158,8 @@ export async function handleCommand(
     case "signature":
     case "sig": {
       const combatAction = (sub === "sig" ? "signature" : sub) as CombatAction;
-      const combatResult = await handleCombat(payload, env, ctx, combatAction);
+      const targetArg = args[0] && /^\d+$/.test(args[0]) ? args[0] : undefined;
+      const combatResult = await handleCombat(payload, env, ctx, combatAction, targetArg);
       return appendForeseeIfActive(combatResult, env, payload.user_id);
     }
     case "ability":
@@ -2742,6 +2743,7 @@ function rollToLootOption(roll: ItemRoll, named: { name: string; flavor: string 
     rarity: roll.rarity,
     flavor: named.flavor,
     weapon_range: roll.weapon_range ?? null,
+    level_req: Math.max(1, Math.ceil(roll.power / 3)),
     ...(roll.slot ? { slot: roll.slot } : {}),
     ...(roll.stat_bonus ? { stat_bonus: roll.stat_bonus as Record<string, number> } : {}),
     ...(roll.item_subtype ? { item_subtype: roll.item_subtype } : {}),
@@ -3623,6 +3625,7 @@ async function handleCombatViaEngine(
   env: Env,
   _ctx: ExecutionContext,
   action: CombatAction,
+  targetArg?: string,
 ): Promise<CommandResponse> {
   const character = await getCharacter(env.DB, payload.user_id);
   if (!character) return ephemeral(`You need to \`${payload.command} roll\` a character first.`);
@@ -3685,10 +3688,26 @@ async function handleCombatViaEngine(
     if (refreshed) quest = refreshed;
   }
 
+  // Resolve target_id for multi-monster combat. `/gq attack 2` picks the
+  // monster at 1-based index; without an arg, auto-pick the lowest-HP live
+  // monster (consistent with the engine's existing pickMonsterTarget).
+  let targetId: string | undefined;
+  if (action === "attack" || action === "cast" || action === "signature") {
+    const monsters = boot.state.monsters ?? [];
+    const live = monsters.filter((m) => m.hp > 0);
+    if (live.length > 1) {
+      const idx = targetArg ? parseInt(targetArg, 10) - 1 : -1;
+      const picked = idx >= 0 && idx < monsters.length && monsters[idx].hp > 0
+        ? monsters[idx]
+        : live.reduce((a, b) => (a.hp <= b.hp ? a : b));
+      targetId = picked.id ?? undefined;
+    }
+  }
+
   const turnAction: TurnAction =
-    action === "attack" ? { kind: "attack", actor: payload.user_id }
-    : action === "cast" ? { kind: "cast", actor: payload.user_id }
-    : action === "signature" ? { kind: "signature", actor: payload.user_id }
+    action === "attack" ? { kind: "attack", actor: payload.user_id, target_id: targetId }
+    : action === "cast" ? { kind: "cast", actor: payload.user_id, target_id: targetId }
+    : action === "signature" ? { kind: "signature", actor: payload.user_id, target_id: targetId }
     : { kind: "flee", actor: payload.user_id };
 
   const result = await stub.serverAction(quest.id, turnAction);
@@ -3725,12 +3744,13 @@ async function handleCombat(
   env: Env,
   ctx: ExecutionContext,
   action: CombatAction,
+  targetArg?: string,
 ): Promise<CommandResponse> {
   // Engine path opt-in. Default keeps legacy cooldown-paced combat live
   // until the engine path is verified end-to-end in dev. See the LEGACY_
   // SLACK_COMBAT comment in apps/slack/src/index.ts for the toggle.
   if (env.LEGACY_SLACK_COMBAT === "0") {
-    return handleCombatViaEngine(payload, env, ctx, action);
+    return handleCombatViaEngine(payload, env, ctx, action, targetArg);
   }
 
   let character = await getCharacter(env.DB, payload.user_id);
@@ -5898,15 +5918,14 @@ async function handleInventory(
   const SLACK_BLOCK_CAP = 50;
   let chromeBlocks = 1 /* header */ + 1 /* footer */;
   if (env.IMAGE_BASE_URL) chromeBlocks += 1; // banner
-  if (equippedItems.length > 0) chromeBlocks += 1; // "Equipped" subheader
+  // New equipped rendering: 1 slot-summary section + 1 actions block per equipped item.
+  if (equippedItems.length > 0) chromeBlocks += 1 + equippedItems.length; // slot summary + unequip rows
   if (equippedItems.length > 0 && packItems.length > 0) chromeBlocks += 2; // pack divider + subheader
   if (heldTiers.length > 0) chromeBlocks += 2; // keys section + keys actions
-  const equippedBlockCount = equippedItems.length * 2;
-  const packBudgetBlocks = SLACK_BLOCK_CAP - chromeBlocks - equippedBlockCount;
+  const packBudgetBlocks = SLACK_BLOCK_CAP - chromeBlocks;
   const maxPackItems = Math.max(0, Math.floor(packBudgetBlocks / 2));
   const visiblePackItems = packItems.slice(0, maxPackItems);
   const hiddenItemCount = packItems.length - visiblePackItems.length;
-  const orderedItems = [...equippedItems, ...visiblePackItems];
 
   // Per-item: section block (item description) + actions block ([Equip] [Use] [Sell]).
   // The actions block carries action_id values that the /slack/interactive endpoint
@@ -5928,94 +5947,99 @@ async function handleInventory(
     type: "header",
     text: { type: "plain_text", text: `Inventory — ${items.length} item${items.length > 1 ? "s" : ""}` },
   });
+  // ── Equipped section: one slot-summary section + one actions row per item ──
   if (equippedItems.length > 0) {
+    const SLOT_EMOJI_MAP: Record<string, string> = {
+      main_hand: "⚔️", off_hand: "🛡️", body: "🧥", helmet: "🪖",
+      pants: "👖", boots: "👟", ring: "💍", amulet: "📿",
+    };
+    const SLOT_NAME_MAP: Record<string, string> = {
+      main_hand: "Main Hand", off_hand: "Off Hand", body: "Body", helmet: "Helmet",
+      pants: "Legs", boots: "Boots", ring: "Ring", amulet: "Amulet",
+    };
+    const ALL_EQUIP_SLOTS: EquipSlot[] = ["main_hand", "off_hand", "body", "helmet", "pants", "boots", "ring", "amulet"];
+    const equippedBySlot = new Map(
+      equippedItems.map((i) => [i.slot ?? (i.item_type === "weapon" ? "main_hand" : "body"), i])
+    );
+    const slotLines: string[] = [];
+    const emptySlots: string[] = [];
+    for (const s of ALL_EQUIP_SLOTS) {
+      const ei = equippedBySlot.get(s);
+      if (ei) {
+        const powerStr = powerLabel(ei.item_type, ei.power, ei.item_name);
+        const statLine = ei.stat_bonus
+          ? ` · ${Object.entries(ei.stat_bonus).map(([k, v]) => `+${v} ${k === "int_stat" ? "INT" : k.toUpperCase()}`).join(", ")}`
+          : "";
+        slotLines.push(`${SLOT_EMOJI_MAP[s]} *${SLOT_NAME_MAP[s]}:* ${ei.item_name} — ${powerStr}${statLine}`);
+      } else {
+        emptySlots.push(SLOT_NAME_MAP[s]);
+      }
+    }
+    if (emptySlots.length > 0) slotLines.push(`_${emptySlots.join(", ")} — empty_`);
     blocks.push({
       type: "section",
-      text: { type: "mrkdwn", text: `*✅ Equipped — ${equippedItems.length}*` },
+      text: { type: "mrkdwn", text: `*✅ Equipped*\n${slotLines.join("\n")}` },
+    });
+    for (const item of equippedItems) {
+      const sellPrice = sellPriceFor(item.item_type, item.rarity, { power: item.power, sharpens_count: item.sharpens_count });
+      blocks.push({
+        type: "actions",
+        block_id: `inv_eq_${item.id}`,
+        elements: [
+          { type: "button", action_id: "unequip", value: String(item.id), text: { type: "plain_text", text: `Unequip ${item.item_name}` } },
+          {
+            type: "button", action_id: "sell", value: String(item.id),
+            text: { type: "plain_text", text: `Sell ${sellPrice}g` }, style: "danger",
+            confirm: {
+              title: { type: "plain_text", text: "Sell equipped item?" },
+              text: { type: "mrkdwn", text: `Unequip and sell *${item.item_name}* for ${sellPrice}g?` },
+              confirm: { type: "plain_text", text: "Sell" }, deny: { type: "plain_text", text: "Cancel" },
+            },
+          },
+        ],
+      });
+    }
+  }
+
+  // ── Pack section ─────────────────────────────────────────────────────────
+  if (visiblePackItems.length > 0) {
+    if (equippedItems.length > 0) blocks.push({ type: "divider" });
+    blocks.push({
+      type: "section",
+      text: { type: "mrkdwn", text: `*🎒 Pack — ${packItems.length}*` },
     });
   }
-  let firstPackItem = equippedItems.length > 0;
-  for (const item of orderedItems) {
-    // When we transition from equipped → pack, drop a visual divider + label.
-    if (firstPackItem && !item.equipped) {
-      blocks.push({ type: "divider" });
-      if (packItems.length > 0) {
-        blocks.push({
-          type: "section",
-          text: { type: "mrkdwn", text: `*🎒 Pack — ${packItems.length}*` },
-        });
-      }
-      firstPackItem = false;
-    }
-    const equipPrefix = item.equipped ? "✅ " : "";
+  for (const item of visiblePackItems) {
+    const locked = item.level_req > 1 && character.level < item.level_req;
+    const lockPrefix = locked ? "🔒 " : "";
+    const levelGate = locked ? ` _(requires L${item.level_req})_` : "";
     const powerStr = powerLabel(item.item_type, item.power, item.item_name);
     const effect = catalogEffectLine(item.item_name);
     const effectLine = effect ? `\n${effect}` : "";
     const flavorLine = item.flavor ? `\n_${item.flavor}_` : "";
-    const summary = `${equipPrefix}\`${item.id}\` ${RARITY_BADGE[item.rarity]} *${item.item_name}* — ${item.item_type}${rangeBadge(item)}, ${powerStr}${effectLine}${flavorLine}`;
-    blocks.push({
-      type: "section",
-      text: { type: "mrkdwn", text: summary },
-    });
+    const summary = `${lockPrefix}\`${item.id}\` ${RARITY_BADGE[item.rarity]} *${item.item_name}* — ${item.item_type}${rangeBadge(item)}, ${powerStr}${levelGate}${effectLine}${flavorLine}`;
+    blocks.push({ type: "section", text: { type: "mrkdwn", text: summary } });
 
-    // Build the action row. Equip is only meaningful for weapon/armor; Use is only
-    // for consumable/magic/revive/tool/scroll. Sell always available.
     const elements: unknown[] = [];
-    const isEquippable = item.item_type === "weapon" || item.item_type === "armor";
-    const isUsable =
-      item.item_type === "consumable" ||
-      item.item_type === "magic" ||
-      item.item_type === "revive" ||
-      item.item_type === "tool" ||
-      item.item_type === "scroll";
-    if (isEquippable && !item.equipped) {
-      elements.push({
-        type: "button",
-        action_id: "equip",
-        value: String(item.id),
-        text: { type: "plain_text", text: "Equip" },
-      });
-    }
-    // Currently-equipped items get an Unequip button instead — lets players
-    // empty a slot without first having to swap to another piece.
-    if (isEquippable && item.equipped) {
-      elements.push({
-        type: "button",
-        action_id: "unequip",
-        value: String(item.id),
-        text: { type: "plain_text", text: "Unequip" },
-      });
+    const isEquippable = item.slot !== null && !locked;
+    const isUsable = item.item_type === "consumable" || item.item_type === "magic" || item.item_type === "revive" || item.item_type === "tool" || item.item_type === "scroll";
+    if (isEquippable) {
+      elements.push({ type: "button", action_id: "equip", value: String(item.id), text: { type: "plain_text", text: "Equip" } });
     }
     if (isUsable) {
-      elements.push({
-        type: "button",
-        action_id: "use",
-        value: String(item.id),
-        text: { type: "plain_text", text: "Use" },
-        style: "primary",
-      });
+      elements.push({ type: "button", action_id: "use", value: String(item.id), text: { type: "plain_text", text: "Use" }, style: "primary" });
     }
-    // Sharpen rebate folds into the sell price — fully-sharpened gear
-    // sells for more than baseline.
     const sellPrice = sellPriceFor(item.item_type, item.rarity, { power: item.power, sharpens_count: item.sharpens_count });
     elements.push({
-      type: "button",
-      action_id: "sell",
-      value: String(item.id),
-      text: { type: "plain_text", text: `Sell ${sellPrice}g` },
-      style: "danger",
+      type: "button", action_id: "sell", value: String(item.id),
+      text: { type: "plain_text", text: `Sell ${sellPrice}g` }, style: "danger",
       confirm: {
         title: { type: "plain_text", text: "Sell this item?" },
         text: { type: "mrkdwn", text: `Sell *${item.item_name}* for ${sellPrice}g? This is permanent.` },
-        confirm: { type: "plain_text", text: "Sell" },
-        deny: { type: "plain_text", text: "Cancel" },
+        confirm: { type: "plain_text", text: "Sell" }, deny: { type: "plain_text", text: "Cancel" },
       },
     });
-    blocks.push({
-      type: "actions",
-      block_id: `inv_${item.id}`,
-      elements,
-    });
+    blocks.push({ type: "actions", block_id: `inv_${item.id}`, elements });
   }
 
   // Keys section — rendered separately from the footer so we can attach action
@@ -6097,6 +6121,10 @@ async function handleEquip(
   // Off-hand slot only accepts shields in Phase 2.
   if (item.slot === "off_hand" && item.item_subtype !== "shield") {
     return ephemeral(`Only shields can go in the off-hand slot. Dual-wielding is not yet supported.`);
+  }
+
+  if (character.level < item.level_req) {
+    return ephemeral(`⚠️ You need to be level ${item.level_req} to equip *${item.item_name}*.`);
   }
 
   // 🔮 Focus weapon swap bookkeeping. Equipping a focus bumps max_mana

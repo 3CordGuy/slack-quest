@@ -983,6 +983,10 @@ app.post("/api/inventory/:itemId/equip", async (c) => {
   if (!item) return c.json({ error: "not_yours" }, 404);
   if (item.item_type === "consumable") return c.json({ error: "consumable_not_equippable" }, 400);
   if (item.equipped) return c.json({ error: "already_equipped" }, 400);
+  const charForEquip = await getCharacter(c.env.DB, session.slack_user_id);
+  if (charForEquip && charForEquip.level < item.level_req) {
+    return c.json({ error: "level_requirement", required: item.level_req }, 400);
+  }
   // Focus weapon swap bookkeeping. Swapping to/from a focus weapon shifts
   // max_mana by FOCUS_MAX_MANA_BONUS in either direction. Armor swaps don't
   // touch mana — only the weapon slot carries this dynamic.

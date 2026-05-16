@@ -31,6 +31,8 @@ export interface Item {
   slot: EquipSlot | null;
   stat_bonus: Record<string, number> | null; // e.g. { int_stat: 2 }
   item_subtype: string | null;               // "shield" for off_hand shields
+  // Phase 3 — minimum character level to equip. Defaults to 1 on legacy rows.
+  level_req: number;
 }
 
 interface ItemRow extends Omit<Item, "equipped" | "stat_bonus"> {
@@ -235,6 +237,8 @@ export interface LootOption {
   slot?: EquipSlot | null;
   stat_bonus?: Record<string, number> | null;
   item_subtype?: string | null;
+  // Phase 3 — caller-supplied level gate; defaults to ceil(power/3) in addItem.
+  level_req?: number;
 }
 
 export interface TrapChoice {
@@ -1014,9 +1018,11 @@ export interface CreateItemInput {
   slot?: EquipSlot | null;
   stat_bonus?: Record<string, number> | null;
   item_subtype?: string | null;
+  // Phase 3 — defaults to ceil(power/3), minimum 1.
+  level_req?: number;
 }
 
-const ITEM_COLS = "id, character_id, item_name, item_type, power, rarity, flavor, equipped, weapon_range, sharpens_count, slot, stat_bonus, item_subtype";
+const ITEM_COLS = "id, character_id, item_name, item_type, power, rarity, flavor, equipped, weapon_range, sharpens_count, slot, stat_bonus, item_subtype, level_req";
 
 export async function addItem(db: D1Database, input: CreateItemInput): Promise<Item> {
   // Infer slot from item_type for legacy callers (shop purchases, etc.) that
@@ -1026,10 +1032,11 @@ export async function addItem(db: D1Database, input: CreateItemInput): Promise<I
     ?? (input.item_type === "weapon" ? "main_hand"
       : input.item_type === "armor" ? "body"
       : null);
+  const levelReq = input.level_req ?? Math.max(1, Math.ceil(input.power / 3));
   const result = await db
     .prepare(
-      `INSERT INTO inventory (character_id, item_name, item_type, power, rarity, flavor, qty, equipped, weapon_range, slot, stat_bonus, item_subtype)
-       VALUES (?, ?, ?, ?, ?, ?, 1, 0, ?, ?, ?, ?)`,
+      `INSERT INTO inventory (character_id, item_name, item_type, power, rarity, flavor, qty, equipped, weapon_range, slot, stat_bonus, item_subtype, level_req)
+       VALUES (?, ?, ?, ?, ?, ?, 1, 0, ?, ?, ?, ?, ?)`,
     )
     .bind(
       input.character_id, input.item_name, input.item_type, input.power, input.rarity, input.flavor,
@@ -1037,6 +1044,7 @@ export async function addItem(db: D1Database, input: CreateItemInput): Promise<I
       slot,
       input.stat_bonus ? JSON.stringify(input.stat_bonus) : null,
       input.item_subtype ?? null,
+      levelReq,
     )
     .run();
   const id = result.meta.last_row_id;

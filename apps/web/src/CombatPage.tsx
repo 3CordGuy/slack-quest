@@ -1,5 +1,6 @@
 import { useEffect, useReducer, useRef, useState } from "react";
 import toast from "react-hot-toast";
+import { isMonsterActor } from "@gantt-quest/core";
 
 import { Avatar, Icon } from "./icons";
 
@@ -36,6 +37,7 @@ interface Fighter {
 }
 
 interface Monster {
+  id?: string;
   name: string;
   hp: number;
   max_hp: number;
@@ -51,7 +53,7 @@ interface Monster {
 
 interface CombatState {
   fighters: Fighter[];
-  monster: Monster;
+  monsters: Monster[];
   turn_order: string[];
   turn_index: number;
   round: number;
@@ -61,8 +63,6 @@ interface CombatState {
     [key: string]: unknown;
   };
 }
-
-const MONSTER_ID = "__monster__";
 
 // Class display name → flux R2 portrait URL. Pattern mirrors getOrScheduleViewArt
 // + ART_VERSION on the worker side; constructed client-side so the WS state
@@ -229,11 +229,11 @@ type CombatEvent =
   | ItemUsedEvent;
 
 type TurnAction =
-  | { kind: "attack"; actor: string }
-  | { kind: "cast"; actor: string }
+  | { kind: "attack"; actor: string; target_id?: string | null }
+  | { kind: "cast"; actor: string; target_id?: string | null }
   | { kind: "heal"; actor: string; target: string }
   | { kind: "shield"; actor: string; target: string }
-  | { kind: "signature"; actor: string }
+  | { kind: "signature"; actor: string; target_id?: string | null }
   | { kind: "flee"; actor: string }
   | { kind: "position"; actor: string; to: "front" | "back" }
   | { kind: "wait"; actor: string }
@@ -384,7 +384,10 @@ function reducer(s: UiState, a: UiAction): UiState {
 
 function formatEvent(e: CombatEvent, state: CombatState | null): UiState["log"] {
   const nameOf = (id: string) => {
-    if (id === MONSTER_ID) return state?.monster.name ?? "monster";
+    if (isMonsterActor(id)) {
+      const m = state?.monsters.find((mo) => mo.id === id) ?? state?.monsters[0];
+      return m?.name ?? "monster";
+    }
     return state?.fighters.find((f) => f.id === id)?.name ?? id;
   };
   const row = (
@@ -401,7 +404,7 @@ function formatEvent(e: CombatEvent, state: CombatState | null): UiState["log"] 
       return row("crossed-swords", "Combat begins. Rolling initiative…", "info");
     case "turn_start": {
       const actor = nameOf(e.actor);
-      const label = actor === (state?.monster.name ?? "monster")
+      const label = actor === (state?.monsters[0]?.name ?? "monster")
         ? `Monster's Turn · Round ${e.round}`
         : `${actor}'s Turn · Round ${e.round}`;
       return [{ kind: "divider", id: nextLogId++, label }];
@@ -422,7 +425,7 @@ function formatEvent(e: CombatEvent, state: CombatState | null): UiState["log"] 
       return [{
         kind: "monster_hit" as const,
         id: nextLogId++,
-        monsterName: state?.monster.name ?? "Monster",
+        monsterName: state?.monsters[0]?.name ?? "Monster",
         targetName: nameOf(e.target),
         raw_damage: e.raw_damage,
         damage_after_armor: e.damage_after_armor,
@@ -491,7 +494,7 @@ function formatEvent(e: CombatEvent, state: CombatState | null): UiState["log"] 
         return [{ id: nextLogId++, content: <>{head}: revives {nameOf(eff.target)} to {eff.hp_restored} HP</>, tone: "good" }];
       } else if (eff.kind === "monster_damage") {
         const note = eff.capped_from ? ` (capped from ${eff.capped_from})` : "";
-        return [{ id: nextLogId++, content: <>{head}: {eff.amount} dmg to {state?.monster.name ?? "monster"}{note}</>, tone: "good" }];
+        return [{ id: nextLogId++, content: <>{head}: {eff.amount} dmg to {state?.monsters[0]?.name ?? "monster"}{note}</>, tone: "good" }];
       } else if (eff.kind === "self_effect") {
         return [{
           id: nextLogId++,
@@ -501,7 +504,7 @@ function formatEvent(e: CombatEvent, state: CombatState | null): UiState["log"] 
       } else if (eff.kind === "monster_effect") {
         return [{
           id: nextLogId++,
-          content: <>{head}: {state?.monster.name ?? "monster"} <Icon name="monster-skull" color="#a855f7" /> {eff.effect} {eff.magnitude} × {eff.remaining}</>,
+          content: <>{head}: {state?.monsters[0]?.name ?? "monster"} <Icon name="monster-skull" color="#a855f7" /> {eff.effect} {eff.magnitude} × {eff.remaining}</>,
           tone: "good",
         }];
       } else {
@@ -709,13 +712,20 @@ export function CombatPage({
     ws.onmessage = (ev) => {
       try {
         const msg = JSON.parse(ev.data) as
-          | { type: "state"; state: CombatState }
+          | { type: "state"; state: CombatState & { monster?: Monster } }
           | { type: "events"; events: CombatEvent[] }
           | { type: "error"; message: string }
           | { type: "outcome"; outcome: OutcomeSummary }
           | { type: "flavor"; flavor: { kind: "hit" | "victory" | "death" | "flee"; actor: string; text: string } }
           | { type: "log_replay"; events: unknown[] };
-        if (msg.type === "state") dispatch({ kind: "state", value: msg.state });
+        if (msg.type === "state") {
+          // Normalise legacy DOs that still send `monster` (singular) instead of `monsters[]`.
+          const s = msg.state;
+          const normalised: CombatState = "monsters" in s && Array.isArray(s.monsters)
+            ? s
+            : { ...s, monsters: [(s as unknown as { monster: Monster }).monster] };
+          dispatch({ kind: "state", value: normalised });
+        }
         else if (msg.type === "events") {
           // Show dice first. Delay the state update (HP bars, log, turn
           // advance) until after the roll animation settles so the player
@@ -818,7 +828,7 @@ export function CombatPage({
     if (!autoResolveRef.current) return;
     if (!stateForAuto || stateForAuto.status !== "active") return;
     const actorId = stateForAuto.turn_order[stateForAuto.turn_index % stateForAuto.turn_order.length];
-    if (actorId !== MONSTER_ID) return;
+    if (!isMonsterActor(actorId)) return;
     if (autoResolvedTurnRef.current === stateForAuto.turn_index) return;
     const timer = setTimeout(() => {
       if (!autoResolveRef.current) return;
@@ -867,6 +877,17 @@ export function CombatPage({
   const me = state?.fighters.find((f) => f.id === selfId);
   const myMana = me?.mana ?? 0;
   const myAbility = me ? ABILITY_BY_CLASS[me.class] ?? null : null;
+  const liveMonsters = state?.monsters.filter((m) => m.hp > 0) ?? [];
+  const [targetMonsterId, setTargetMonsterId] = useState<string | null>(null);
+  // Auto-select the only live monster; clear stale target when that monster dies.
+  useEffect(() => {
+    if (liveMonsters.length === 1) setTargetMonsterId(liveMonsters[0].id ?? null);
+    else if (targetMonsterId !== null && !liveMonsters.find((m) => m.id === targetMonsterId)) {
+      setTargetMonsterId(null);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [liveMonsters.map((m) => `${m.id}:${m.hp}`).join(",")]);
+  const effectiveTarget = liveMonsters.length === 1 ? (liveMonsters[0].id ?? null) : targetMonsterId;
 
   function fireOnTarget(targetId: string) {
     if (!picking) return;
@@ -945,16 +966,23 @@ export function CombatPage({
               order={state.turn_order}
               currentIndex={state.turn_index % state.turn_order.length}
               fighters={state.fighters}
-              monster={state.monster}
+              monsters={state.monsters}
               selfId={selfId}
             />
-            <MonsterCard
-              monster={state.monster}
-              round={state.round}
-              showSageReading={me?.class === "Staff Sage"}
-              isMarked={!!(state.ability_state?.mark && state.round <= state.ability_state.mark.expires_after_round)}
-            />
-            {!myTurn && state.status === "active" && currentActorId === MONSTER_ID && !autoResolve && (
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              {state.monsters.map((m, i) => (
+                <MonsterCard
+                  key={m.id ?? i}
+                  monster={m}
+                  round={state.round}
+                  showSageReading={me?.class === "Staff Sage"}
+                  isMarked={!!(state.ability_state?.mark && state.round <= state.ability_state.mark.expires_after_round)}
+                  isTargeted={effectiveTarget !== null && (m.id ?? null) === effectiveTarget}
+                  onClick={liveMonsters.length > 1 && m.hp > 0 ? () => setTargetMonsterId(m.id ?? null) : undefined}
+                />
+              ))}
+            </div>
+            {!myTurn && state.status === "active" && currentActorId !== null && isMonsterActor(currentActorId) && !autoResolve && (
               <button style={{ ...button, marginTop: 0, background: "#5c1f1f" }} onClick={() => send({ kind: "monster_act" })}>
                 <Icon name="dragon-head" /> Resolve monster turn
               </button>
@@ -1023,9 +1051,15 @@ export function CombatPage({
                 onCancel={() => setGivePicker("selectItem")}
               />
             )}
+            {state.status === "active" && myTurn && liveMonsters.length > 1 && targetMonsterId === null && !picking && itemPicker === "closed" && !migratePicker && givePicker === "closed" && (
+              <div style={{ ...card, textAlign: "center", padding: "10px 14px", borderColor: "#c084fc", background: "#1e1a2e" }}>
+                <span style={{ color: "#e9d5ff", fontSize: 13, fontWeight: 600 }}>Pick a target</span>
+                <span style={{ color: "#9ca3af", fontSize: 12, marginLeft: 8 }}>Click a monster above to select it</span>
+              </div>
+            )}
             {state.status === "active" && !picking && itemPicker === "closed" && !migratePicker && givePicker === "closed" && (
               <ActionBar
-                disabled={!myTurn}
+                disabled={!myTurn || (liveMonsters.length > 1 && targetMonsterId === null)}
                 mana={myMana}
                 hasItems={items.some((i) => isCombatUsable(i.item_type))}
                 selfPosition={me?.position ?? "front"}
@@ -1045,7 +1079,9 @@ export function CombatPage({
                     send({ kind: "position", actor: selfId, to });
                   } else if (kind === "ability") {
                     fireAbility();
-                  } else if (kind === "signature" || kind === "flee" || kind === "attack" || kind === "cast" || kind === "wait" || kind === "mark") {
+                  } else if (kind === "attack" || kind === "cast" || kind === "signature") {
+                    send({ kind, actor: selfId, target_id: effectiveTarget } as TurnAction);
+                  } else if (kind === "flee" || kind === "wait" || kind === "mark") {
                     send({ kind, actor: selfId } as TurnAction);
                   }
                 }}
@@ -1107,17 +1143,24 @@ function MonsterCard({
   round,
   showSageReading,
   isMarked = false,
+  isTargeted = false,
+  onClick,
 }: {
   monster: Monster;
   round: number;
   showSageReading: boolean;
   isMarked?: boolean;
+  isTargeted?: boolean;
+  onClick?: () => void;
 }) {
   // Sage's Reading — passive tells the Sage the monster's tier-derived swing range.
   const sageLo = 1 + monster.tier;
   const sageHi = 6 + monster.tier + (monster.is_boss && monster.boss_phase === 2 ? monster.tier : 0);
   return (
-    <div style={{ ...card, borderColor: isMarked ? "#f59e0b" : "#7c2020", display: "flex", gap: 16, alignItems: "flex-start", position: "relative" }}>
+    <div
+      style={{ ...card, borderColor: isTargeted ? "#b89b3a" : isMarked ? "#f59e0b" : "#7c2020", display: "flex", gap: 16, alignItems: "flex-start", position: "relative", cursor: onClick ? "pointer" : undefined, transition: "border-color 0.15s" }}
+      onClick={onClick}
+    >
       {/* Marked target indicator */}
       {isMarked && (
         <div style={{
@@ -1179,13 +1222,13 @@ function InitiativeTrack({
   order,
   currentIndex,
   fighters,
-  monster,
+  monsters,
   selfId,
 }: {
   order: string[];
   currentIndex: number;
   fighters: Fighter[];
-  monster: Monster;
+  monsters: Monster[];
   selfId: string;
 }) {
   return (
@@ -1195,13 +1238,14 @@ function InitiativeTrack({
       </div>
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-start" }}>
         {order.map((id, i) => {
-          const isMonster = id === MONSTER_ID;
-          const fighter = isMonster ? null : fighters.find((f) => f.id === id);
-          const name = isMonster ? monster.name : fighter?.name ?? id;
-          const init = isMonster ? monster.initiative : fighter?.initiative ?? 0;
+          const isMon = isMonsterActor(id);
+          const monster = isMon ? (monsters.find((m) => m.id === id) ?? monsters[0]) : null;
+          const fighter = isMon ? null : fighters.find((f) => f.id === id);
+          const name = isMon ? (monster?.name ?? "Monster") : fighter?.name ?? id;
+          const init = isMon ? (monster?.initiative ?? 0) : fighter?.initiative ?? 0;
           const isCurrent = i === currentIndex;
           const isSelf = id === selfId;
-          const portrait = isMonster ? (monster.art_url ?? null) : classPortraitUrl(fighter?.class ?? "");
+          const portrait = isMon ? (monster?.art_url ?? null) : classPortraitUrl(fighter?.class ?? "");
           const borderColor = isCurrent ? "#b89b3a" : isSelf ? "#3a7bd5" : "#2a2d33";
           const AVATAR = 72;
           const RADIUS = 10;
@@ -1224,10 +1268,10 @@ function InitiativeTrack({
                   alt={name}
                   size={AVATAR}
                   radius={RADIUS}
-                  fallbackIcon={isMonster ? "dragon-head" : "player"}
-                  fallbackColor={isMonster ? (isCurrent ? "#ef4444" : "#7a3030") : "#4a5568"}
+                  fallbackIcon={isMon ? "dragon-head" : "player"}
+                  fallbackColor={isMon ? (isCurrent ? "#ef4444" : "#7a3030") : "#4a5568"}
                   style={{
-                    background: isMonster ? (isCurrent ? "#3a0a0a" : "#1a0808") : "#1d1f23",
+                    background: isMon ? (isCurrent ? "#3a0a0a" : "#1a0808") : "#1d1f23",
                     border: "none",
                   }}
                 />
@@ -1240,7 +1284,7 @@ function InitiativeTrack({
                   maxWidth: AVATAR + 8,
                   overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
                 }}>
-                  {isMonster ? "Monster" : (isSelf ? "You" : name.split(" ")[0])}
+                  {isMon ? name.split(" ")[0] : (isSelf ? "You" : name.split(" ")[0])}
                 </div>
                 <div style={{
                   fontSize: 13, fontWeight: 700,
@@ -2461,8 +2505,8 @@ const D6_PIPS: Record<number, [number, number][]> = {
 function DiceRollDisplay({ rolls }: { rolls: DiceRollEntry[] }) {
   useEffect(() => { injectDiceStyles(); }, []);
   if (rolls.length === 0) return null;
-  const enemyRolls = rolls.filter((r) => r.actor === MONSTER_ID);
-  const partyRolls = rolls.filter((r) => r.actor !== MONSTER_ID);
+  const enemyRolls = rolls.filter((r) => isMonsterActor(r.actor));
+  const partyRolls = rolls.filter((r) => !isMonsterActor(r.actor));
   const rowStyle: React.CSSProperties = {
     display: "flex",
     gap: 14,

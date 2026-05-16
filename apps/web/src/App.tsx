@@ -193,6 +193,7 @@ interface Item {
   slot: EquipSlot | null;
   stat_bonus: Record<string, number> | null;
   item_subtype: string | null;
+  level_req: number;
 }
 
 type QuestVariant = "standard" | "boss" | "gauntlet" | "dungeon";
@@ -1488,6 +1489,7 @@ export function App() {
                 inQuest={!!state.activeQuest}
                 artUrl={state.inventoryArtUrl}
                 selfId={state.me.slack_user_id}
+                characterLevel={state.me.character.level}
                 onEquip={equipItem}
                 onUnequip={unequipItem}
                 onSell={sellItem}
@@ -1515,6 +1517,7 @@ export function App() {
           items={state.inventory}
           inQuest={!!state.activeQuest}
           selfId={state.me.slack_user_id}
+          characterLevel={state.me.character.level}
           onEquip={equipItem}
           onUnequip={unequipItem}
           onSell={sellItem}
@@ -4109,6 +4112,7 @@ function InventoryCard({
   inQuest,
   artUrl,
   selfId,
+  characterLevel,
   onEquip,
   onUnequip,
   onSell,
@@ -4120,6 +4124,7 @@ function InventoryCard({
   inQuest: boolean;
   artUrl: string | null;
   selfId: string;
+  characterLevel?: number;
   onEquip: (itemId: number) => void;
   onUnequip: (itemId: number) => void;
   onSell: (itemId: number) => void;
@@ -4152,8 +4157,54 @@ function InventoryCard({
     }
   }
 
+  const [highlightSlot, setHighlightSlot] = useState<EquipSlot | null>(null);
+  const equippedForSlot = (slot: EquipSlot) => items.find(
+    (i) => i.equipped && (i.slot === slot || (i.slot === null && (
+      (slot === "main_hand" && i.item_type === "weapon") ||
+      (slot === "body" && i.item_type === "armor")
+    )))
+  );
+
   const sorted = sortItems(items, sort);
+  const packItems = sorted.filter((i) => !i.equipped);
   const selected = selectedId != null ? items.find((i) => i.id === selectedId) ?? null : null;
+
+  function renderDollSlot(slot: EquipSlot) {
+    const item = equippedForSlot(slot);
+    const isHighlighted = highlightSlot === slot;
+    const label = SLOT_LABELS[slot];
+    if (item) {
+      return (
+        <div key={slot} style={{ position: "relative" }}>
+          {isHighlighted && (
+            <div style={{ position: "absolute", inset: 0, borderRadius: 9, border: "2px solid #c084fc", zIndex: 2, pointerEvents: "none" }} />
+          )}
+          <ItemSlot item={item} selected={selectedId === item.id} onSelect={(el) => { toggleSelect(item.id, el); setHighlightSlot(null); }} />
+        </div>
+      );
+    }
+    return (
+      <div
+        key={slot}
+        onClick={() => setHighlightSlot(isHighlighted ? null : slot)}
+        title={`${label} — empty`}
+        style={{
+          width: 72, height: 72,
+          background: "#141618",
+          border: isHighlighted ? "2px solid #c084fc55" : "2px dashed #1e2128",
+          borderRadius: 8,
+          display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 3,
+          cursor: "pointer",
+          transition: "border-color 0.15s",
+        }}
+      >
+        <Icon name={SLOT_ICON[slot]} size={20} color={isHighlighted ? "#c084fc66" : "#2e3440"} />
+        <div style={{ fontSize: 8, color: isHighlighted ? "#c084fc88" : "#374151", textAlign: "center", lineHeight: 1.2 }}>
+          {label}
+        </div>
+      </div>
+    );
+  }
 
   if (items.length === 0) {
     return (
@@ -4196,50 +4247,56 @@ function InventoryCard({
           Selling is disabled while a quest is active.
         </p>
       )}
-      {/* Sort bar */}
-      <div style={{ display: "flex", gap: 6, marginTop: 12, flexWrap: "wrap" }}>
-        {SORT_LABELS.map(({ key, label }) => (
-          <button
-            key={key}
-            onClick={() => setSort(key)}
-            style={{
-              background: sort === key ? "#2a2d3a" : "#1d1f23",
-              color: sort === key ? "#c084fc" : "#9aa0a6",
-              border: sort === key ? "1px solid #c084fc55" : "1px solid #2a2d33",
-              borderRadius: 20,
-              padding: "4px 14px",
-              fontSize: 12,
-              fontWeight: 600,
-              cursor: "pointer",
-              fontFamily: "inherit",
-              transition: "all 0.1s",
-            }}
-          >
-            {label}
-          </button>
-        ))}
-        <span style={{ ...muted, fontSize: 12, marginLeft: "auto", alignSelf: "center" }}>
-          {items.length} item{items.length !== 1 ? "s" : ""}
-        </span>
+      {/* Equipment paper-doll */}
+      <div style={{ marginTop: 14 }}>
+        <div style={{ fontSize: 11, color: "#6b7280", textTransform: "uppercase" as const, letterSpacing: 0.8, fontWeight: 600, marginBottom: 6 }}>
+          Equipped
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 72px)", gap: 4 }}>
+          {(["helmet", "body", "pants", "boots"] as EquipSlot[]).map((s) => renderDollSlot(s))}
+          {(["main_hand", "off_hand", "ring", "amulet"] as EquipSlot[]).map((s) => renderDollSlot(s))}
+        </div>
       </div>
-      {/* Slot grid */}
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fill, 72px)",
-          gap: 6,
-          marginTop: 14,
-        }}
-      >
-        {sorted.map((item) => (
-          <ItemSlot
-            key={item.id}
-            item={item}
-            selected={selectedId === item.id}
-            onSelect={(el) => toggleSelect(item.id, el)}
-          />
-        ))}
-      </div>
+      {/* Pack */}
+      {packItems.length > 0 && (
+        <div style={{ marginTop: 14 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8, flexWrap: "wrap" as const }}>
+            <span style={{ fontSize: 11, color: "#6b7280", textTransform: "uppercase" as const, letterSpacing: 0.8, fontWeight: 600 }}>
+              Pack ({packItems.length})
+            </span>
+            {SORT_LABELS.map(({ key, label }) => (
+              <button
+                key={key}
+                onClick={() => setSort(key)}
+                style={{
+                  background: sort === key ? "#2a2d3a" : "#1d1f23",
+                  color: sort === key ? "#c084fc" : "#9aa0a6",
+                  border: sort === key ? "1px solid #c084fc55" : "1px solid #2a2d33",
+                  borderRadius: 20,
+                  padding: "3px 10px",
+                  fontSize: 11,
+                  fontWeight: 600,
+                  cursor: "pointer",
+                  fontFamily: "inherit",
+                  transition: "all 0.1s",
+                }}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, 72px)", gap: 6 }}>
+            {packItems.map((item) => (
+              <div key={item.id} style={{ position: "relative" }}>
+                {highlightSlot !== null && item.slot === highlightSlot && (
+                  <div style={{ position: "absolute", inset: 0, borderRadius: 9, border: "2px solid #c084fc", zIndex: 2, pointerEvents: "none" }} />
+                )}
+                <ItemSlot item={item} selected={selectedId === item.id} onSelect={(el) => toggleSelect(item.id, el)} />
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
       {/* Floating popover — rendered outside the card via portal */}
       {selected && (
         <FloatingPortal>
@@ -4253,6 +4310,7 @@ function InventoryCard({
                 item={selected}
                 inQuest={inQuest}
                 selfId={selfId}
+                characterLevel={characterLevel}
                 onEquip={(id) => { onEquip(id); setSelectedId(null); }}
                 onUnequip={(id) => { onUnequip(id); setSelectedId(null); }}
                 onSell={(id) => { onSell(id); setSelectedId(null); }}
@@ -4272,6 +4330,7 @@ function InventoryFullScreen({
   items,
   inQuest,
   selfId,
+  characterLevel,
   onEquip,
   onUnequip,
   onSell,
@@ -4282,6 +4341,7 @@ function InventoryFullScreen({
   items: Item[];
   inQuest: boolean;
   selfId: string;
+  characterLevel?: number;
   onEquip: (itemId: number) => void;
   onUnequip: (itemId: number) => void;
   onSell: (itemId: number) => void;
@@ -4497,6 +4557,7 @@ function InventoryFullScreen({
                 item={selected}
                 inQuest={inQuest}
                 selfId={selfId}
+                characterLevel={characterLevel}
                 inline
                 onEquip={(id) => { onEquip(id); setSelectedId(null); }}
                 onUnequip={(id) => { onUnequip(id); setSelectedId(null); }}
@@ -4597,6 +4658,7 @@ function ItemDetailPopover({
   item,
   inQuest,
   selfId,
+  characterLevel,
   onEquip,
   onUnequip,
   onSell,
@@ -4608,6 +4670,7 @@ function ItemDetailPopover({
   item: Item;
   inQuest: boolean;
   selfId: string;
+  characterLevel?: number;
   onEquip: (itemId: number) => void;
   onUnequip: (itemId: number) => void;
   onSell: (itemId: number) => void;
@@ -4636,13 +4699,8 @@ function ItemDetailPopover({
     }
   }
 
-  const canEquip =
-    !item.equipped &&
-    item.item_type !== "consumable" &&
-    item.item_type !== "magic" &&
-    item.item_type !== "revive" &&
-    item.item_type !== "tool" &&
-    item.item_type !== "scroll";
+  const meetsLevel = (characterLevel ?? 1) >= (item.level_req ?? 1);
+  const canEquip = !item.equipped && item.slot !== null && meetsLevel;
   const canSell = !item.equipped && !inQuest;
   const canUse =
     !item.equipped && (item.item_type === "consumable" || item.item_type === "magic");
@@ -4742,6 +4800,13 @@ function ItemDetailPopover({
       >
         {describeItemEffect(item)}
       </div>
+
+      {/* Level requirement badge */}
+      {item.slot !== null && !item.equipped && !meetsLevel && (
+        <div style={{ fontSize: 11, color: "#f87171", fontWeight: 600, marginBottom: 10 }}>
+          Requires level {item.level_req}
+        </div>
+      )}
 
       {/* Actions */}
       <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
@@ -7237,6 +7302,17 @@ const SLOT_LABELS: Record<EquipSlot, string> = {
   boots: "Boots",
   ring: "Ring",
   amulet: "Amulet",
+};
+
+const SLOT_ICON: Record<EquipSlot, string> = {
+  main_hand: "spinning-sword",
+  off_hand: "round-shield",
+  body: "shield",
+  helmet: "helmet",
+  pants: "hood",
+  boots: "boots",
+  ring: "gem-pendant",
+  amulet: "crystal-wand",
 };
 
 function slotLabel(item: Item): string {
