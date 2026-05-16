@@ -137,6 +137,7 @@ import {
   getPubLeaderboard,
   removeItem,
   saveScene,
+  saveWebCombatOutcome,
   saveWebCombatState,
   setCharacterHpAndShield,
   setQuestMode,
@@ -4462,11 +4463,28 @@ export class QuestRoom extends DurableObject<Env> {
 
     // Send initial state snapshot + buffered event log if combat already
     // exists. The log replay lets a Back-and-Resume user see their scrollback.
-    const state = await this.loadState(questId);
-    if (state) {
-      this.sendOne(server, { type: "state", state });
-      if (this.cacheLog.length > 0) {
-        this.sendOne(server, { type: "log_replay", events: this.cacheLog });
+    // If combat is terminal and we have a saved outcome, replay it too — a
+    // client that missed the live broadcast (lost WS, refresh, network blip)
+    // would otherwise hang on "Resolving outcome…" forever. Pulled via
+    // getWebCombatSnapshot directly so state + log + outcome come in one read,
+    // priming the DO cache the same way loadState() does.
+    const snap = await getWebCombatSnapshot(this.env.DB, questId);
+    if (snap) {
+      this.cacheState = snap.state;
+      this.cacheQuestId = questId;
+      this.cacheLog = snap.log;
+      this.cacheQuestMeta = null;
+
+      this.sendOne(server, { type: "state", state: snap.state });
+      if (snap.log.length > 0) {
+        this.sendOne(server, { type: "log_replay", events: snap.log });
+      }
+      const isTerminal =
+        snap.state.status === "victory" ||
+        snap.state.status === "defeat" ||
+        snap.state.status === "fled";
+      if (isTerminal && snap.outcome) {
+        this.sendOne(server, { type: "outcome", outcome: snap.outcome as OutcomeSummary });
       }
     }
 
@@ -4573,6 +4591,11 @@ export class QuestRoom extends DurableObject<Env> {
         console.warn("drink-buff writeback failed", err);
       }
       const outcome = await applyWebCombatOutcome(this.env, questId, result.state, killedBy);
+      // Persist BEFORE broadcasting so a client that misses the live frame
+      // (lost WS, refresh, network blip) can be replayed it on reconnect via
+      // the WS handshake. Without this the outcome is broadcast-only and a
+      // missed frame strands the player at "Resolving outcome…" forever.
+      await saveWebCombatOutcome(this.env.DB, questId, outcome);
       this.broadcast({ type: "outcome", outcome });
       this.postVictoryWrapup(questId, outcome);
       return outcome;
@@ -4834,6 +4857,9 @@ export class QuestRoom extends DurableObject<Env> {
       }
       try {
         const outcome = await applyWebCombatOutcome(this.env, questId, resultState, itemKilledBy);
+        // Persist before broadcasting — same reasoning as the WS-driven kill
+        // path. Replayed on reconnect via the WS handshake.
+        await saveWebCombatOutcome(this.env.DB, questId, outcome);
         this.broadcast({ type: "outcome", outcome });
         this.postVictoryWrapup(questId, outcome);
       } catch (err) {

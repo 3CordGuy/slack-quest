@@ -7,9 +7,14 @@ import type { CombatState } from "@gantt-quest/core";
 
 // Log entries are stored as opaque JSON — they can be engine CombatEvents or
 // worker-side events (e.g. item_used). Callers re-cast when needed.
+// `outcome` is the OutcomeSummary computed once at terminal transition; null
+// while combat is still active. Persisted so a reconnecting client that
+// missed the live broadcast can be replayed it instead of hanging on
+// "Resolving outcome…".
 export interface WebCombatSnapshot {
   state: CombatState;
   log: unknown[];
+  outcome: unknown | null;
 }
 
 export async function getWebCombatState(
@@ -25,13 +30,14 @@ export async function getWebCombatSnapshot(
   questId: number,
 ): Promise<WebCombatSnapshot | null> {
   const row = await db
-    .prepare("SELECT state, log_json FROM web_combat_state WHERE quest_id = ?")
+    .prepare("SELECT state, log_json, outcome_json FROM web_combat_state WHERE quest_id = ?")
     .bind(questId)
-    .first<{ state: string; log_json: string }>();
+    .first<{ state: string; log_json: string; outcome_json: string | null }>();
   if (!row) return null;
   return {
     state: JSON.parse(row.state) as CombatState,
     log: row.log_json ? (JSON.parse(row.log_json) as unknown[]) : [],
+    outcome: row.outcome_json ? JSON.parse(row.outcome_json) : null,
   };
 }
 
@@ -74,5 +80,22 @@ export async function deleteWebCombatState(
   await db
     .prepare("DELETE FROM web_combat_state WHERE quest_id = ?")
     .bind(questId)
+    .run();
+}
+
+// Write the final OutcomeSummary into the existing combat row. The mid-combat
+// path (saveWebCombatState) intentionally doesn't carry outcome — keeping the
+// hot path narrow — so this dedicated UPDATE runs exactly once per fight, at
+// terminal transition. The row already exists because handleStepResult /
+// handleUseItem call saveWebCombatState for the terminal state before
+// reaching the becameTerminal branch.
+export async function saveWebCombatOutcome(
+  db: D1Database,
+  questId: number,
+  outcome: unknown,
+): Promise<void> {
+  await db
+    .prepare("UPDATE web_combat_state SET outcome_json = ?, updated_at = ? WHERE quest_id = ?")
+    .bind(JSON.stringify(outcome), Date.now(), questId)
     .run();
 }
