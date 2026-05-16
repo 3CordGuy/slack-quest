@@ -413,8 +413,10 @@ function GridMinimap({ graph }: { graph: GridGraph }) {
               {isEntry && !isCurrent && <div style={{ position: "absolute", top: 1, right: 1, width: 4, height: 4, background: "#86efac", borderRadius: "50%" }} />}
               {isTreasure && isVisited && !isCurrent && <div style={{ position: "absolute", bottom: 1, right: 1, width: 4, height: 4, background: "#fbbf24", borderRadius: "50%" }} />}
               {isLockbox && isVisited && !isCurrent && <div style={{ position: "absolute", bottom: 1, right: 1, width: 4, height: 4, background: "#60a5fa", borderRadius: "50%" }} />}
-              {/* Door indicators on edges */}
-              {(["n", "e", "s", "w"] as DungeonDirection[]).map((dir) => {
+              {/* Door indicators — only render on visited rooms so unvisited
+                  doors aren't telegraphed. Once you've been in the room you
+                  can physically see the doors, so they show on the map. */}
+              {isVisited && (["n", "e", "s", "w"] as DungeonDirection[]).map((dir) => {
                 const door = node.doors?.[dir];
                 if (!door || door.state === "open" || door.state === "broken") return null;
                 const color = door.state === "locked" ? "#ef4444" : "#f59e0b";
