@@ -4926,26 +4926,28 @@ function ItemSlot({
         flexShrink: 0,
       }}
     >
-      {item.equipped && (
+      {(item.level_req ?? 1) > 1 && (
         <div
           style={{
             position: "absolute",
             top: 3,
             left: 3,
-            width: 14,
+            minWidth: 14,
             height: 14,
-            background: "#b89b3a",
+            background: "#1d1f23",
+            border: "1px solid #4b5563",
             borderRadius: 3,
             fontSize: 8,
-            fontWeight: 800,
+            fontWeight: 700,
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
-            color: "#000",
+            color: "#9ca3af",
             lineHeight: 1,
+            padding: "0 2px",
           }}
         >
-          E
+          L{item.level_req}
         </div>
       )}
       <Icon name={itemIcon(item)} size={28} color={itemIconColor(item) ?? rc} />
