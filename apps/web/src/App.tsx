@@ -4361,10 +4361,66 @@ function InventoryFullScreen({
     setViewMode(mode);
   }
   const sorted = sortItems(items, sort);
-  const equippedItems = sorted.filter((i) => i.equipped);
-  const unequippedItems = sorted.filter((i) => !i.equipped);
-  const [selectedId, setSelectedId] = useState<number | null>(() => sorted[0]?.id ?? null);
+  const packItems = sorted.filter((i) => !i.equipped);
+  const [selectedId, setSelectedId] = useState<number | null>(null);
   const selected = selectedId != null ? items.find((i) => i.id === selectedId) ?? null : null;
+  const [highlightSlot, setHighlightSlot] = useState<EquipSlot | null>(null);
+
+  function equippedForSlotFS(slot: EquipSlot): Item | undefined {
+    return items.find((i) => i.equipped && (
+      i.slot === slot
+      || (slot === "main_hand" && !i.slot && i.item_type === "weapon")
+      || (slot === "body" && !i.slot && i.item_type === "armor")
+    ));
+  }
+
+  function renderDollSlotLarge(slot: EquipSlot) {
+    const item = equippedForSlotFS(slot);
+    const isHighlighted = highlightSlot === slot;
+    const label = SLOT_LABELS[slot];
+    const S = 96;
+    if (item) {
+      const rc = RARITY_COLOR[item.rarity];
+      const isSelected = selectedId === item.id;
+      return (
+        <div key={slot} style={{ position: "relative" }}>
+          <div
+            onClick={() => setSelectedId(isSelected ? null : item.id)}
+            title={item.item_name}
+            style={{
+              width: S, height: S,
+              background: isSelected ? "#1e1c2e" : "#1d1f23",
+              border: `2px solid ${isSelected ? "#fff" : "#b89b3a"}`,
+              borderRadius: 10, cursor: "pointer", position: "relative",
+              display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 3,
+            }}
+          >
+            <div style={{ position: "absolute", top: 4, left: 4, background: "#b89b3a", color: "#000", borderRadius: 3, fontSize: 8, fontWeight: 800, padding: "1px 3px", lineHeight: 1 }}>E</div>
+            <Icon name={itemIcon(item)} size={38} color={itemIconColor(item) ?? rc} />
+            <div style={{ fontSize: 8, color: "#9ca3af", textAlign: "center", lineHeight: 1.1, maxWidth: S - 10, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", padding: "0 4px" }}>{item.item_name}</div>
+          </div>
+        </div>
+      );
+    }
+    return (
+      <div
+        key={slot}
+        onClick={() => setHighlightSlot(isHighlighted ? null : slot)}
+        title={`${label} — empty`}
+        style={{
+          width: S, height: S,
+          background: "#141618",
+          border: isHighlighted ? "2px solid #c084fc55" : "2px dashed #1e2128",
+          borderRadius: 10,
+          display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 4,
+          cursor: "pointer", transition: "border-color 0.15s",
+        }}
+      >
+        <Icon name={SLOT_ICON[slot]} size={30} color={isHighlighted ? "#c084fc66" : "#2e3440"} style={slot === "main_hand" ? { transform: "scaleX(-1)" } : undefined} />
+        <div style={{ fontSize: 9, color: isHighlighted ? "#c084fc88" : "#374151", textAlign: "center", lineHeight: 1.2 }}>{label}</div>
+      </div>
+    );
+  }
 
   const SORT_LABELS: { key: InventorySort; label: string }[] = [
     { key: "type", label: "Type" },
@@ -4377,9 +4433,9 @@ function InventoryFullScreen({
     <div
       style={{
         position: "fixed", inset: 0, zIndex: 500,
-        background: "rgba(0,0,0,0.85)",
+        background: "rgba(0,0,0,0.92)",
         display: "flex", alignItems: "center", justifyContent: "center",
-        padding: 16,
+        padding: 12,
       }}
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
@@ -4388,8 +4444,8 @@ function InventoryFullScreen({
           background: "#12141a",
           border: "1px solid #2a2d33",
           borderRadius: 12,
-          width: "min(900px, 100%)",
-          maxHeight: "90vh",
+          width: "min(1200px, 96vw)",
+          height: "92vh",
           display: "flex",
           flexDirection: "column",
           overflow: "hidden",
@@ -4443,97 +4499,74 @@ function InventoryFullScreen({
             >✕</button>
           </div>
         </div>
-        {/* Grid + detail pane */}
+        {/* 3-panel body: paper doll | pack | detail */}
         <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
-          {/* Item grid / list */}
+          {/* Left — paper doll */}
+          <div style={{ width: 340, flexShrink: 0, borderRight: "1px solid #2a2d33", overflowY: "auto", padding: "20px 16px", display: "flex", flexDirection: "column", alignItems: "center", gap: 12 }}>
+            <div style={{ ...muted, fontSize: 10, textTransform: "uppercase", letterSpacing: 1.5, alignSelf: "flex-start" }}>Equipped</div>
+            <div style={{ display: "flex", justifyContent: "center" }}>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 96px)", gap: 6 }}>
+                {([null, "helmet", null, "main_hand", "body", "off_hand", "amulet", "pants", "ring", null, "boots", null] as (EquipSlot | null)[]).map((s, i) =>
+                  s ? renderDollSlotLarge(s) : <div key={i} style={{ width: 96, height: 96 }} />
+                )}
+              </div>
+            </div>
+            {highlightSlot && (
+              <div style={{ fontSize: 11, color: "#c084fc88", marginTop: 4 }}>
+                Click a highlighted item in the pack to equip it in {SLOT_LABELS[highlightSlot]}
+              </div>
+            )}
+          </div>
+
+          {/* Center — pack */}
           <div style={{ flex: 1, overflowY: "auto", padding: 18 }}>
-            {viewMode === "grid" ? (
-              <>
-                {equippedItems.length > 0 && (
-                  <>
-                    <div style={{ ...muted, fontSize: 10, textTransform: "uppercase", letterSpacing: 1.5, marginBottom: 8 }}>Equipped</div>
-                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(110px, 1fr))", gap: 10, marginBottom: 18 }}>
-                      {equippedItems.map((item) => {
-                        const rc = RARITY_COLOR[item.rarity];
-                        const isSelected = selectedId === item.id;
-                        return (
-                          <div key={item.id} onClick={() => setSelectedId(isSelected ? null : item.id)} style={{ background: isSelected ? "#1e1c2e" : "#1d1f23", border: `2px solid ${isSelected ? "#fff" : "#b89b3a"}`, borderRadius: 10, padding: "10px 8px 8px", cursor: "pointer", textAlign: "center", position: "relative", boxShadow: isSelected ? `0 0 0 1px ${rc}66` : "0 0 0 1px #b89b3a22", transition: "border-color 0.1s, background 0.1s" }}>
-                            <div style={{ position: "absolute", top: 4, left: 4, background: "#b89b3a", color: "#000", borderRadius: 3, fontSize: 8, fontWeight: 800, padding: "1px 3px", lineHeight: 1 }}>E</div>
-                            <Icon name={itemIcon(item)} size={40} color={itemIconColor(item) ?? rc} />
-                            <div style={{ marginTop: 6, fontSize: 10, fontWeight: 600, color: "#e2e8f0", lineHeight: 1.3, wordBreak: "break-word" }}>{item.item_name}</div>
-                            <div style={{ marginTop: 3, fontSize: 10, color: rc, fontWeight: 600 }}>+{item.power}</div>
-                            <div style={{ fontSize: 9, color: "#6b7280", marginTop: 1 }}>{slotLabel(item)}</div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                    {unequippedItems.length > 0 && <div style={{ ...muted, fontSize: 10, textTransform: "uppercase", letterSpacing: 1.5, marginBottom: 8 }}>Other</div>}
-                  </>
-                )}
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(110px, 1fr))", gap: 10 }}>
-                  {unequippedItems.map((item) => {
-                    const rc = RARITY_COLOR[item.rarity];
-                    const isSelected = selectedId === item.id;
-                    return (
-                      <div
-                        key={item.id}
-                        onClick={() => setSelectedId(isSelected ? null : item.id)}
-                        style={{
-                          background: isSelected ? "#1e1c2e" : "#1d1f23",
-                          border: `2px solid ${isSelected ? "#fff" : `${rc}99`}`,
-                          borderRadius: 10, padding: "10px 8px 8px",
-                          cursor: "pointer", textAlign: "center", position: "relative",
-                          boxShadow: isSelected ? `0 0 0 1px ${rc}66` : undefined,
-                          transition: "border-color 0.1s, background 0.1s",
-                        }}
-                      >
-                        <Icon name={itemIcon(item)} size={40} color={itemIconColor(item) ?? rc} />
-                        <div style={{ marginTop: 6, fontSize: 10, fontWeight: 600, color: "#e2e8f0", lineHeight: 1.3, wordBreak: "break-word" }}>{item.item_name}</div>
-                        <div style={{ marginTop: 3, fontSize: 10, color: rc, fontWeight: 600 }}>+{item.power}</div>
-                        <div style={{ fontSize: 9, color: "#6b7280", marginTop: 1 }}>{slotLabel(item)}</div>
-                        {item.stat_bonus && statBonusSummary(item.stat_bonus) && (
-                          <div style={{ fontSize: 8, color: "#86efac", marginTop: 1 }}>{statBonusSummary(item.stat_bonus)}</div>
-                        )}
-                        <div style={{ fontSize: 9, color: "#fbbf24", marginTop: 2 }}>
-                          {sellPriceFor(item.item_type, item.rarity, { power: item.power, sharpens_count: item.sharpens_count })}g
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </>
-            ) : (
-              <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
-                {equippedItems.length > 0 && (
-                  <>
-                    <div style={{ ...muted, fontSize: 10, textTransform: "uppercase", letterSpacing: 1.5, marginBottom: 4 }}>Equipped</div>
-                    {equippedItems.map((item) => {
-                      const rc = RARITY_COLOR[item.rarity];
-                      const isSelected = selectedId === item.id;
-                      return (
-                        <div key={item.id} onClick={() => setSelectedId(isSelected ? null : item.id)} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 10px", borderRadius: 8, background: isSelected ? "#1e1c2e" : "#1d1f23", border: `1px solid ${isSelected ? "#fff" : "#b89b3a88"}`, cursor: "pointer", transition: "background 0.1s" }}>
-                          <Icon name={itemIcon(item)} size={20} color={itemIconColor(item) ?? rc} />
-                          <div style={{ flex: 1, minWidth: 0 }}>
-                            <div style={{ fontSize: 13, fontWeight: 600, color: "#f5f5f5", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{item.item_name}</div>
-                            <div style={{ fontSize: 10, color: "#6b7280", marginTop: 1 }}>
-                              {slotLabel(item)}{item.stat_bonus && statBonusSummary(item.stat_bonus) ? ` · ${statBonusSummary(item.stat_bonus)}` : ""}
-                            </div>
-                          </div>
-                          <span style={{ ...smallBadge, borderColor: `${rc}55`, color: rc, background: `${rc}15`, flexShrink: 0 }}>{item.rarity}</span>
-                          <span style={{ fontSize: 11, color: rc, fontWeight: 600, flexShrink: 0, minWidth: 30, textAlign: "right" }}>+{item.power}</span>
-                          <span style={{ ...smallBadge, background: "#3a2a00", color: "#b89b3a", borderColor: "#b89b3a55", flexShrink: 0 }}>equipped</span>
-                        </div>
-                      );
-                    })}
-                    {unequippedItems.length > 0 && <div style={{ ...muted, fontSize: 10, textTransform: "uppercase", letterSpacing: 1.5, margin: "10px 0 4px" }}>Other</div>}
-                  </>
-                )}
-                {unequippedItems.map((item) => {
+            <div style={{ ...muted, fontSize: 10, textTransform: "uppercase", letterSpacing: 1.5, marginBottom: 12 }}>
+              Pack {packItems.length > 0 ? `(${packItems.length})` : "(empty)"}
+            </div>
+            {packItems.length === 0 ? (
+              <div style={{ color: "#374151", fontSize: 13, textAlign: "center", marginTop: 32 }}>Nothing in your pack</div>
+            ) : viewMode === "grid" ? (
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(110px, 1fr))", gap: 10 }}>
+                {packItems.map((item) => {
                   const rc = RARITY_COLOR[item.rarity];
                   const isSelected = selectedId === item.id;
+                  const isMatch = highlightSlot !== null && item.slot === highlightSlot;
+                  return (
+                    <div
+                      key={item.id}
+                      onClick={() => setSelectedId(isSelected ? null : item.id)}
+                      style={{
+                        background: isSelected ? "#1e1c2e" : "#1d1f23",
+                        border: `2px solid ${isSelected ? "#fff" : isMatch ? "#c084fc" : `${rc}99`}`,
+                        borderRadius: 10, padding: "10px 8px 8px",
+                        cursor: "pointer", textAlign: "center", position: "relative",
+                        boxShadow: isMatch ? "0 0 8px #c084fc44" : isSelected ? `0 0 0 1px ${rc}66` : undefined,
+                        transition: "border-color 0.1s, background 0.1s",
+                      }}
+                    >
+                      <Icon name={itemIcon(item)} size={40} color={itemIconColor(item) ?? rc} />
+                      <div style={{ marginTop: 6, fontSize: 10, fontWeight: 600, color: "#e2e8f0", lineHeight: 1.3, wordBreak: "break-word" }}>{item.item_name}</div>
+                      <div style={{ marginTop: 3, fontSize: 10, color: rc, fontWeight: 600 }}>+{item.power}</div>
+                      <div style={{ fontSize: 9, color: "#6b7280", marginTop: 1 }}>{slotLabel(item)}</div>
+                      {item.stat_bonus && statBonusSummary(item.stat_bonus) && (
+                        <div style={{ fontSize: 8, color: "#86efac", marginTop: 1 }}>{statBonusSummary(item.stat_bonus)}</div>
+                      )}
+                      <div style={{ fontSize: 9, color: "#fbbf24", marginTop: 2 }}>
+                        {sellPriceFor(item.item_type, item.rarity, { power: item.power, sharpens_count: item.sharpens_count })}g
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+                {packItems.map((item) => {
+                  const rc = RARITY_COLOR[item.rarity];
+                  const isSelected = selectedId === item.id;
+                  const isMatch = highlightSlot !== null && item.slot === highlightSlot;
                   const sellPrice = sellPriceFor(item.item_type, item.rarity, { power: item.power, sharpens_count: item.sharpens_count });
                   return (
-                    <div key={item.id} onClick={() => setSelectedId(isSelected ? null : item.id)} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 10px", borderRadius: 8, background: isSelected ? "#1e1c2e" : "#1d1f23", border: `1px solid ${isSelected ? "#fff" : "#2a2d33"}`, cursor: "pointer", transition: "background 0.1s" }}>
+                    <div key={item.id} onClick={() => setSelectedId(isSelected ? null : item.id)} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 10px", borderRadius: 8, background: isSelected ? "#1e1c2e" : "#1d1f23", border: `1px solid ${isSelected ? "#fff" : isMatch ? "#c084fc" : "#2a2d33"}`, cursor: "pointer", transition: "background 0.1s", boxShadow: isMatch ? "0 0 6px #c084fc33" : undefined }}>
                       <Icon name={itemIcon(item)} size={20} color={itemIconColor(item) ?? rc} />
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{ fontSize: 13, fontWeight: 600, color: "#f5f5f5", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{item.item_name}</div>
@@ -4550,12 +4583,10 @@ function InventoryFullScreen({
               </div>
             )}
           </div>
-          {/* Detail pane */}
-          {selected && (
-            <div style={{
-              width: 260, flexShrink: 0, borderLeft: "1px solid #2a2d33",
-              overflowY: "auto", padding: 18,
-            }}>
+
+          {/* Right — detail pane */}
+          {selected ? (
+            <div style={{ width: 280, flexShrink: 0, borderLeft: "1px solid #2a2d33", overflowY: "auto", padding: 18 }}>
               <ItemDetailPopover
                 item={selected}
                 inQuest={inQuest}
@@ -4569,6 +4600,10 @@ function InventoryFullScreen({
                 onGive={(id, uid, name) => { onGive(id, uid, name); setSelectedId(null); }}
                 onClose={() => setSelectedId(null)}
               />
+            </div>
+          ) : (
+            <div style={{ width: 280, flexShrink: 0, borderLeft: "1px solid #2a2d33", display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <div style={{ color: "#374151", fontSize: 12, textAlign: "center", padding: 16 }}>Select an item to view details</div>
             </div>
           )}
         </div>
