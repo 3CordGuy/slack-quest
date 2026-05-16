@@ -1531,6 +1531,16 @@ export function App() {
   );
 }
 
+function useIsMobile(breakpoint = 700) {
+  const [isMobile, setIsMobile] = useState(() => typeof window !== "undefined" && window.innerWidth < breakpoint);
+  useEffect(() => {
+    const handler = () => setIsMobile(window.innerWidth < breakpoint);
+    window.addEventListener("resize", handler);
+    return () => window.removeEventListener("resize", handler);
+  }, [breakpoint]);
+  return isMobile;
+}
+
 function Login({ onSuccess }: { onSuccess: () => void }) {
   const [code, setCode] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -4508,6 +4518,8 @@ function InventoryFullScreen({
   const selected = selectedId != null ? items.find((i) => i.id === selectedId) ?? null : null;
   const [highlightSlot, setHighlightSlot] = useState<EquipSlot | null>(null);
   const [activeItemId, setActiveItemId] = useState<number | null>(null);
+  const [mobileTab, setMobileTab] = useState<"doll" | "pack">("pack");
+  const isMobile = useIsMobile();
   const activeItem = activeItemId != null ? items.find((i) => i.id === activeItemId) ?? null : null;
 
   function equippedForSlot(slot: EquipSlot): Item | undefined {
@@ -4559,22 +4571,23 @@ function InventoryFullScreen({
           background: "#12141a",
           border: "1px solid #2a2d33",
           borderRadius: 12,
-          width: "min(1200px, 96vw)",
-          height: "92vh",
+          width: isMobile ? "100vw" : "min(1200px, 96vw)",
+          height: isMobile ? "100dvh" : "92vh",
           display: "flex",
           flexDirection: "column",
           overflow: "hidden",
+          position: "relative",
           boxShadow: "0 24px 64px rgba(0,0,0,0.8)",
         }}
       >
         {/* Header */}
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 18px", borderBottom: "1px solid #2a2d33", flexShrink: 0 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: isMobile ? "12px 14px" : "14px 18px", borderBottom: "1px solid #2a2d33", flexShrink: 0 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <span style={{ fontSize: 16, fontWeight: 700, color: "#f5f5f5" }}>Inventory</span>
             <span style={{ ...muted, fontSize: 12 }}>{items.length} item{items.length !== 1 ? "s" : ""}</span>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-            {SORT_LABELS.map(({ key, label }) => (
+            {!isMobile && SORT_LABELS.map(({ key, label }) => (
               <button key={key} onClick={() => setSort(key)}
                 style={{
                   background: sort === key ? "#2a2d3a" : "none",
@@ -4585,8 +4598,8 @@ function InventoryFullScreen({
                 }}
               >{label}</button>
             ))}
-            <div style={{ width: 1, height: 16, background: "#2a2d33", margin: "0 2px" }} />
-            {(["grid", "list"] as const).map((mode) => (
+            {!isMobile && <div style={{ width: 1, height: 16, background: "#2a2d33", margin: "0 2px" }} />}
+            {!isMobile && (["grid", "list"] as const).map((mode) => (
               <button key={mode} onClick={() => changeViewMode(mode)} title={mode === "grid" ? "Grid view" : "List view"}
                 style={{
                   background: viewMode === mode ? "#2a2d3a" : "none",
@@ -4603,83 +4616,200 @@ function InventoryFullScreen({
           </div>
         </div>
 
-        {/* 3-panel body with dnd context */}
         <DndContext onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
-          <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
-            {/* Left — paper doll */}
-            <div style={{ width: 340, flexShrink: 0, borderRight: "1px solid #2a2d33", overflowY: "auto", padding: "20px 16px", display: "flex", flexDirection: "column", alignItems: "center", gap: 12 }}>
-              <div style={{ ...muted, fontSize: 10, textTransform: "uppercase", letterSpacing: 1.5, alignSelf: "flex-start" }}>Equipped — drag items here to equip</div>
-              <div style={{ display: "flex", justifyContent: "center" }}>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 96px)", gap: 6 }}>
-                  {([null, "helmet", null, "main_hand", "body", "off_hand", "amulet", "pants", "ring", null, "boots", null] as (EquipSlot | null)[]).map((s, i) =>
-                    s
-                      ? <DollSlotCell key={s} slot={s} item={equippedForSlot(s)}
-                          isHighlighted={highlightSlot === s} isSelected={selectedId === (equippedForSlot(s)?.id ?? -1)}
-                          onSlotClick={(sl) => setHighlightSlot(highlightSlot === sl ? null : sl)}
-                          onItemClick={(id) => setSelectedId(selectedId === id ? null : id)}
-                        />
-                      : <div key={i} style={{ width: 96, height: 96 }} />
-                  )}
-                </div>
+          {isMobile ? (
+            /* ── Mobile: tab bar + single-panel view ── */
+            <div style={{ display: "flex", flexDirection: "column", flex: 1, overflow: "hidden" }}>
+              {/* Tab bar */}
+              <div style={{ display: "flex", borderBottom: "1px solid #2a2d33", flexShrink: 0 }}>
+                {([["doll", "Equipped"], ["pack", `Pack (${packItems.length})`]] as const).map(([tab, label]) => (
+                  <button key={tab} onClick={() => setMobileTab(tab)}
+                    style={{
+                      flex: 1, padding: "10px 0", fontSize: 13, fontWeight: 600, fontFamily: "inherit",
+                      background: "none", border: "none", cursor: "pointer",
+                      color: mobileTab === tab ? "#f5f5f5" : "#6b7280",
+                      borderBottom: mobileTab === tab ? "2px solid #c084fc" : "2px solid transparent",
+                      marginBottom: -1,
+                    }}
+                  >{label}</button>
+                ))}
               </div>
-              {highlightSlot && (
-                <div style={{ fontSize: 11, color: "#c084fc88", marginTop: 4, textAlign: "center" }}>
-                  Drag or click a matching item to equip in {SLOT_LABELS[highlightSlot]}
+
+              {/* Tab content */}
+              <div style={{ flex: 1, overflowY: "auto", padding: 14 }}>
+                {mobileTab === "doll" ? (
+                  <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 10 }}>
+                    <div style={{ ...muted, fontSize: 10, textTransform: "uppercase", letterSpacing: 1.5, alignSelf: "flex-start" }}>Tap a slot to highlight matchable items</div>
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 72px)", gap: 5 }}>
+                      {([null, "helmet", null, "main_hand", "body", "off_hand", "amulet", "pants", "ring", null, "boots", null] as (EquipSlot | null)[]).map((s, i) => {
+                        if (!s) return <div key={i} style={{ width: 72, height: 72 }} />;
+                        const item = equippedForSlot(s);
+                        const isHighlighted = highlightSlot === s;
+                        const isSelected = selectedId === (item?.id ?? -1);
+                        if (item) {
+                          const rc = RARITY_COLOR[item.rarity];
+                          return (
+                            <div key={s} onClick={() => { setSelectedId(isSelected ? null : item.id); }}
+                              title={item.item_name}
+                              style={{ width: 72, height: 72, background: isSelected ? "#1e1c2e" : "#1d1f23", border: `2px solid ${isSelected ? "#fff" : "#b89b3a"}`, borderRadius: 8, cursor: "pointer", position: "relative", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 2 }}
+                            >
+                              <div style={{ position: "absolute", top: 3, left: 3, background: "#b89b3a", color: "#000", borderRadius: 2, fontSize: 7, fontWeight: 800, padding: "1px 2px", lineHeight: 1 }}>E</div>
+                              <Icon name={itemIcon(item)} size={28} color={itemIconColor(item) ?? rc} />
+                              <div style={{ fontSize: 8, color: "#9ca3af", textAlign: "center", lineHeight: 1.1, maxWidth: 64, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.item_name}</div>
+                            </div>
+                          );
+                        }
+                        return (
+                          <div key={s} onClick={() => setHighlightSlot(isHighlighted ? null : s)}
+                            style={{ width: 72, height: 72, background: "#141618", border: isHighlighted ? "2px solid #c084fc55" : "2px dashed #1e2128", borderRadius: 8, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 3, cursor: "pointer" }}
+                          >
+                            <Icon name={SLOT_ICON[s]} size={22} color={isHighlighted ? "#c084fc66" : "#2e3440"} style={s === "main_hand" ? { transform: "scaleX(-1)" } : undefined} />
+                            <div style={{ fontSize: 9, color: isHighlighted ? "#c084fc88" : "#374151", textAlign: "center" }}>{SLOT_LABELS[s]}</div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    {highlightSlot && (
+                      <div style={{ fontSize: 11, color: "#c084fc88", textAlign: "center" }}>
+                        Switch to Pack tab to equip in {SLOT_LABELS[highlightSlot]}
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  /* Pack tab */
+                  <>
+                    <div style={{ display: "flex", gap: 6, marginBottom: 12, flexWrap: "wrap" }}>
+                      {SORT_LABELS.map(({ key, label }) => (
+                        <button key={key} onClick={() => setSort(key)}
+                          style={{ background: sort === key ? "#2a2d3a" : "none", color: sort === key ? "#c084fc" : "#6b7280", border: sort === key ? "1px solid #c084fc55" : "1px solid #2a2d33", borderRadius: 20, padding: "4px 12px", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}
+                        >{label}</button>
+                      ))}
+                    </div>
+                    {packItems.length === 0 ? (
+                      <div style={{ color: "#374151", fontSize: 13, textAlign: "center", marginTop: 32 }}>Nothing in your pack</div>
+                    ) : (
+                      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                        {packItems.map((item) => {
+                          const rc = RARITY_COLOR[item.rarity];
+                          const isSelected = selectedId === item.id;
+                          const isMatch = highlightSlot !== null && item.slot === highlightSlot;
+                          return (
+                            <div key={item.id} onClick={() => setSelectedId(isSelected ? null : item.id)}
+                              style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 12px", borderRadius: 10, background: isSelected ? "#1e1c2e" : "#1d1f23", border: `1px solid ${isSelected ? "#fff" : isMatch ? "#c084fc" : "#2a2d33"}`, cursor: "pointer", boxShadow: isMatch ? "0 0 6px #c084fc33" : undefined }}
+                            >
+                              <Icon name={itemIcon(item)} size={28} color={itemIconColor(item) ?? rc} />
+                              <div style={{ flex: 1, minWidth: 0 }}>
+                                <div style={{ fontSize: 14, fontWeight: 600, color: "#f5f5f5", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{item.item_name}</div>
+                                <div style={{ fontSize: 11, color: "#6b7280", marginTop: 2 }}>
+                                  {slotLabel(item)}{item.stat_bonus && statBonusSummary(item.stat_bonus) ? ` · ${statBonusSummary(item.stat_bonus)}` : ""}
+                                </div>
+                              </div>
+                              <div style={{ flexShrink: 0, textAlign: "right" }}>
+                                <div style={{ fontSize: 12, color: rc, fontWeight: 600 }}>+{item.power}</div>
+                                <span style={{ ...smallBadge, borderColor: `${rc}55`, color: rc, background: `${rc}15` }}>{item.rarity}</span>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
+
+              {/* Bottom sheet — item detail */}
+              {selected && (
+                <div style={{ position: "absolute", left: 0, right: 0, bottom: 0, zIndex: 10, background: "#12141a", borderTop: "1px solid #2a2d33", borderRadius: "12px 12px 0 0", maxHeight: "60vh", overflowY: "auto", padding: 18, boxShadow: "0 -8px 32px rgba(0,0,0,0.7)" }}>
+                  <ItemDetailPopover
+                    item={selected} inQuest={inQuest} selfId={selfId} characterLevel={characterLevel} inline
+                    onEquip={(id) => { onEquip(id); setSelectedId(null); }}
+                    onUnequip={(id) => { onUnequip(id); setSelectedId(null); }}
+                    onSell={(id) => { onSell(id); setSelectedId(null); }}
+                    onUse={(id) => { onUse(id); setSelectedId(null); }}
+                    onGive={(id, uid, name) => { onGive(id, uid, name); setSelectedId(null); }}
+                    onClose={() => setSelectedId(null)}
+                  />
                 </div>
               )}
             </div>
-
-            {/* Center — pack */}
-            <DroppablePackPanel>
-              <div style={{ ...muted, fontSize: 10, textTransform: "uppercase", letterSpacing: 1.5, marginBottom: 12 }}>
-                Pack {packItems.length > 0 ? `(${packItems.length})` : "(empty)"} — drag equipped items here to unequip
+          ) : (
+            /* ── Desktop: 3-panel layout ── */
+            <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
+              {/* Left — paper doll */}
+              <div style={{ width: 340, flexShrink: 0, borderRight: "1px solid #2a2d33", overflowY: "auto", padding: "20px 16px", display: "flex", flexDirection: "column", alignItems: "center", gap: 12 }}>
+                <div style={{ ...muted, fontSize: 10, textTransform: "uppercase", letterSpacing: 1.5, alignSelf: "flex-start" }}>Equipped — drag items here to equip</div>
+                <div style={{ display: "flex", justifyContent: "center" }}>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 96px)", gap: 6 }}>
+                    {([null, "helmet", null, "main_hand", "body", "off_hand", "amulet", "pants", "ring", null, "boots", null] as (EquipSlot | null)[]).map((s, i) =>
+                      s
+                        ? <DollSlotCell key={s} slot={s} item={equippedForSlot(s)}
+                            isHighlighted={highlightSlot === s} isSelected={selectedId === (equippedForSlot(s)?.id ?? -1)}
+                            onSlotClick={(sl) => setHighlightSlot(highlightSlot === sl ? null : sl)}
+                            onItemClick={(id) => setSelectedId(selectedId === id ? null : id)}
+                          />
+                        : <div key={i} style={{ width: 96, height: 96 }} />
+                    )}
+                  </div>
+                </div>
+                {highlightSlot && (
+                  <div style={{ fontSize: 11, color: "#c084fc88", marginTop: 4, textAlign: "center" }}>
+                    Drag or click a matching item to equip in {SLOT_LABELS[highlightSlot]}
+                  </div>
+                )}
               </div>
-              {packItems.length === 0 ? (
-                <div style={{ color: "#374151", fontSize: 13, textAlign: "center", marginTop: 32 }}>Nothing in your pack</div>
-              ) : viewMode === "grid" ? (
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(110px, 1fr))", gap: 10 }}>
-                  {packItems.map((item) => (
-                    <DraggablePackItem key={item.id} item={item}
-                      isSelected={selectedId === item.id}
-                      isMatch={highlightSlot !== null && item.slot === highlightSlot}
-                      viewMode="grid"
-                      onSelect={() => setSelectedId(selectedId === item.id ? null : item.id)}
-                    />
-                  ))}
+
+              {/* Center — pack */}
+              <DroppablePackPanel>
+                <div style={{ ...muted, fontSize: 10, textTransform: "uppercase", letterSpacing: 1.5, marginBottom: 12 }}>
+                  Pack {packItems.length > 0 ? `(${packItems.length})` : "(empty)"} — drag equipped items here to unequip
+                </div>
+                {packItems.length === 0 ? (
+                  <div style={{ color: "#374151", fontSize: 13, textAlign: "center", marginTop: 32 }}>Nothing in your pack</div>
+                ) : viewMode === "grid" ? (
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(110px, 1fr))", gap: 10 }}>
+                    {packItems.map((item) => (
+                      <DraggablePackItem key={item.id} item={item}
+                        isSelected={selectedId === item.id}
+                        isMatch={highlightSlot !== null && item.slot === highlightSlot}
+                        viewMode="grid"
+                        onSelect={() => setSelectedId(selectedId === item.id ? null : item.id)}
+                      />
+                    ))}
+                  </div>
+                ) : (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+                    {packItems.map((item) => (
+                      <DraggablePackItem key={item.id} item={item}
+                        isSelected={selectedId === item.id}
+                        isMatch={highlightSlot !== null && item.slot === highlightSlot}
+                        viewMode="list"
+                        onSelect={() => setSelectedId(selectedId === item.id ? null : item.id)}
+                      />
+                    ))}
+                  </div>
+                )}
+              </DroppablePackPanel>
+
+              {/* Right — detail pane */}
+              {selected ? (
+                <div style={{ width: 280, flexShrink: 0, borderLeft: "1px solid #2a2d33", overflowY: "auto", padding: 18 }}>
+                  <ItemDetailPopover
+                    item={selected} inQuest={inQuest} selfId={selfId} characterLevel={characterLevel} inline
+                    onEquip={(id) => { onEquip(id); setSelectedId(null); }}
+                    onUnequip={(id) => { onUnequip(id); setSelectedId(null); }}
+                    onSell={(id) => { onSell(id); setSelectedId(null); }}
+                    onUse={(id) => { onUse(id); setSelectedId(null); }}
+                    onGive={(id, uid, name) => { onGive(id, uid, name); setSelectedId(null); }}
+                    onClose={() => setSelectedId(null)}
+                  />
                 </div>
               ) : (
-                <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
-                  {packItems.map((item) => (
-                    <DraggablePackItem key={item.id} item={item}
-                      isSelected={selectedId === item.id}
-                      isMatch={highlightSlot !== null && item.slot === highlightSlot}
-                      viewMode="list"
-                      onSelect={() => setSelectedId(selectedId === item.id ? null : item.id)}
-                    />
-                  ))}
+                <div style={{ width: 280, flexShrink: 0, borderLeft: "1px solid #2a2d33", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  <div style={{ color: "#374151", fontSize: 12, textAlign: "center", padding: 16 }}>Select an item to view details</div>
                 </div>
               )}
-            </DroppablePackPanel>
-
-            {/* Right — detail pane */}
-            {selected ? (
-              <div style={{ width: 280, flexShrink: 0, borderLeft: "1px solid #2a2d33", overflowY: "auto", padding: 18 }}>
-                <ItemDetailPopover
-                  item={selected} inQuest={inQuest} selfId={selfId} characterLevel={characterLevel} inline
-                  onEquip={(id) => { onEquip(id); setSelectedId(null); }}
-                  onUnequip={(id) => { onUnequip(id); setSelectedId(null); }}
-                  onSell={(id) => { onSell(id); setSelectedId(null); }}
-                  onUse={(id) => { onUse(id); setSelectedId(null); }}
-                  onGive={(id, uid, name) => { onGive(id, uid, name); setSelectedId(null); }}
-                  onClose={() => setSelectedId(null)}
-                />
-              </div>
-            ) : (
-              <div style={{ width: 280, flexShrink: 0, borderLeft: "1px solid #2a2d33", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                <div style={{ color: "#374151", fontSize: 12, textAlign: "center", padding: 16 }}>Select an item to view details</div>
-              </div>
-            )}
-          </div>
+            </div>
+          )}
 
           <DragOverlay dropAnimation={null}>
             {activeItem ? <DragItemPreview item={activeItem} /> : null}
