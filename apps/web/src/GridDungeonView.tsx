@@ -160,8 +160,28 @@ type TurnAction =
   | { kind: "flee"; actor: string }
   | { kind: "position"; actor: string; to: "front" | "back" }
   | { kind: "wait"; actor: string }
+  | { kind: "ability"; actor: string; ability_id: string; target?: string; position?: "front" | "back" }
   | { kind: "monster_act" }
   | { kind: "use_item"; actor: string; item_id: number; target_id?: string };
+
+// Class → active ability spec (mirrors CombatPage.ABILITY_BY_CLASS).
+interface AbilityUiSpec {
+  id: string; name: string; iconName: string; mana_cost: number; blurb: string;
+  // migrate needs a partymate + position picker; not supported in grid view
+  // for v1 — we just disable the button with a note.
+  needs_picker?: boolean;
+}
+const ABILITY_BY_CLASS: Record<string, AbilityUiSpec> = {
+  "SRE Warden":     { id: "taunt",             name: "Taunt",      iconName: "shield",          mana_cost: 2, blurb: "Monster targets you for 2 swings" },
+  "DevOps Mage":    { id: "containerize",      name: "Container",  iconName: "cubes",           mana_cost: 2, blurb: "Monster skips next swing" },
+  "QA Paladin":     { id: "regression_shield", name: "Regress",    iconName: "fairy-wand",      mana_cost: 2, blurb: "+3 shield to all party" },
+  "Refactor Rogue": { id: "vanish",            name: "Vanish",     iconName: "hood",            mana_cost: 2, blurb: "Untargetable for 2 swings" },
+  "Data Wizard":    { id: "soul_drain",        name: "Soul Drain", iconName: "death-skull",     mana_cost: 2, blurb: "1d6+mag dmg, heal 50%" },
+  "Data Warlock":   { id: "soul_drain",        name: "Soul Drain", iconName: "death-skull",     mana_cost: 2, blurb: "1d6+mag dmg, heal 50%" },
+  "Frontend Bard":  { id: "battle_hymn",       name: "Hymn",       iconName: "aura",            mana_cost: 2, blurb: "+dmg buff on next party attacks" },
+  "Staff Sage":     { id: "foresee",           name: "Foresee",    iconName: "scroll-unfurled", mana_cost: 1, blurb: "Full battle intel for 2 turns" },
+  "Backend Druid":  { id: "migrate",           name: "Migrate",    iconName: "leaf",            mana_cost: 1, blurb: "Move a partymate to front/back", needs_picker: true },
+};
 
 interface OutcomeSummary {
   status: "victory" | "defeat";
@@ -927,18 +947,33 @@ export function GridDungeonView({
         />
       )}
 
-      {/* Action buttons row (RED area) — own row at the very bottom. */}
-      {combatActive && !combatEnded && combatState && (
-        <CombatPanel
-          state={combatState}
-          selfId={selfId}
-          onSend={send}
-          autoResolve={autoResolve}
-          setAutoResolve={setAutoResolve}
-          myTurn={myTurn}
-          isMonsterTurn={isMonsterTurn}
-          items={items}
-        />
+      {/* Action buttons row (RED area) — own row at the very bottom. Always
+          rendered while combat is active so the player never sees an empty
+          bottom bar; falls back to a connecting/loading state if the WS
+          hasn't seeded combatState yet. */}
+      {combatActive && !combatEnded && (
+        combatState ? (
+          <CombatPanel
+            state={combatState}
+            selfId={selfId}
+            onSend={send}
+            autoResolve={autoResolve}
+            setAutoResolve={setAutoResolve}
+            myTurn={myTurn}
+            isMonsterTurn={isMonsterTurn}
+            items={items}
+            characterClass={character.class}
+          />
+        ) : (
+          <div style={{ background: "rgba(10,11,14,0.92)", borderTop: "1px solid #1e2028", padding: "16px", flexShrink: 0, textAlign: "center", color: "#9aa0a6", fontSize: 13 }}>
+            <Icon name="hourglass" size={14} /> Connecting to combat…
+            <button
+              onClick={() => { setCombatActive(false); setTimeout(() => setCombatActive(true), 100); }}
+              style={{ marginLeft: 12, padding: "4px 10px", background: "#1a1c21", border: "1px solid #2a2d33", borderRadius: 5, color: "#9aa0a6", fontSize: 11, cursor: "pointer" }}>
+              Retry
+            </button>
+          </div>
+        )
       )}
 
       {/* (Party bar is now a floating overlay inside the room view above.) */}
@@ -1337,12 +1372,13 @@ interface UsableItem {
   equipped: boolean;
 }
 
-function CombatPanel({ state, selfId, onSend, autoResolve, setAutoResolve, myTurn, isMonsterTurn, items }: {
+function CombatPanel({ state, selfId, onSend, autoResolve, setAutoResolve, myTurn, isMonsterTurn, items, characterClass }: {
   state: CombatState; selfId: string;
   onSend: (a: TurnAction) => boolean;
   autoResolve: boolean; setAutoResolve: (b: boolean) => void;
   myTurn: boolean; isMonsterTurn: boolean;
   items: UsableItem[];
+  characterClass: string;
 }) {
   const me = state.fighters.find((f) => f.id === selfId);
   const mana = me?.mana ?? 0;
@@ -1352,6 +1388,7 @@ function CombatPanel({ state, selfId, onSend, autoResolve, setAutoResolve, myTur
   const [picking, setPicking] = useState<"heal" | "shield" | null>(null);
   const [itemOpen, setItemOpen] = useState(false);
   const usable = items.filter((it) => !it.equipped && ["consumable", "magic", "revive"].includes(it.item_type));
+  const ability = ABILITY_BY_CLASS[characterClass] ?? null;
 
   // Disabled state for the action row when it isn't the player's turn.
   // Buttons stay visible so the bottom row doesn't disappear; they grey out
@@ -1406,11 +1443,22 @@ function CombatPanel({ state, selfId, onSend, autoResolve, setAutoResolve, myTur
         <CBtn label="Attack" icon="sword" color="#b89b3a" disabled={!myTurn || !target} onClick={() => onSend({ kind: "attack", actor: selfId, target_id: target })} />
         <CBtn label="Cast" icon="crystal-wand" color="#818cf8" manaCost={1} disabled={!myTurn || mana < 1 || !target} onClick={() => onSend({ kind: "cast", actor: selfId, target_id: target })} />
         <CBtn label="Signature" icon="wax-seal" color="#a78bfa" manaCost={2} disabled={!myTurn || mana < 2 || !target} onClick={() => onSend({ kind: "signature", actor: selfId, target_id: target })} />
+        {ability && (
+          <CBtn
+            label={ability.name}
+            icon={ability.iconName}
+            color="#d946ef"
+            manaCost={ability.mana_cost}
+            disabled={!myTurn || mana < ability.mana_cost || !!ability.needs_picker}
+            onClick={() => onSend({ kind: "ability", actor: selfId, ability_id: ability.id })}
+          />
+        )}
         <CBtn label="Heal" icon="health-increase" color="#22c55e" manaCost={1} disabled={!myTurn || mana < 1} onClick={() => { setPicking("heal"); setItemOpen(false); }} />
         <CBtn label="Shield" icon="shield" color="#60a5fa" manaCost={1} disabled={!myTurn || mana < 1} onClick={() => { setPicking("shield"); setItemOpen(false); }} />
         <CBtn label={myPos === "front" ? "Back row" : "Front row"} icon={myPos === "front" ? "perspective-dice-two" : "perspective-dice-one"} color="#6b7280" disabled={!myTurn} onClick={() => onSend({ kind: "position", actor: selfId, to: myPos === "front" ? "back" : "front" })} />
         <CBtn label="Item" icon="ammo-bag" color="#c084fc" disabled={!myTurn || usable.length === 0} onClick={() => { setItemOpen((o) => !o); setPicking(null); }} />
-        <CBtn label="Flee" icon="footprint" color="#9aa0a6" disabled={!myTurn} onClick={() => onSend({ kind: "flee", actor: selfId })} />
+        <CBtn label="Wait" icon="hourglass" color="#475569" disabled={!myTurn} onClick={() => onSend({ kind: "wait", actor: selfId })} />
+        <CBtn label="Flee" icon="run" color="#9aa0a6" disabled={!myTurn} onClick={() => onSend({ kind: "flee", actor: selfId })} />
         {!myTurn && isMonsterTurn && !autoResolve && (
           <CBtn label="Resolve" icon="dragon-head" color="#5c1f1f" onClick={() => onSend({ kind: "monster_act" })} />
         )}

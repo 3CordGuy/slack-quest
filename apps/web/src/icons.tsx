@@ -27,6 +27,8 @@ const SVG_ICONS = new Set([
   "armored-pants", "heavy-helm", "hand", "ring", "gem-chain", "chest-armor", "gloves",
   // Derived-stat icons
   "sword-brandish", "wizard-staff", "target-poster", "coffee-cup", "dodge", "dodging",
+  // Action-button icons
+  "run",
 ]);
 
 interface IconProps {
