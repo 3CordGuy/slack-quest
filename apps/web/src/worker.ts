@@ -1830,10 +1830,10 @@ app.post("/api/shop/restock", async (c) => {
         flavor = await flavorCatalogItem(c.env.AI, entry.name, entry.blurb, "the shopkeep's chest");
         name = `${entry.emoji} ${entry.name}`;
       } else {
-        ({ name, flavor } = await flavorLootDrop(c.env.AI, "the shopkeep's chest", roll.type as "weapon" | "armor" | "consumable" | "magic" | "revive", roll.rarity, roll.power));
+        ({ name, flavor } = await flavorLootDrop(c.env.AI, "the shopkeep's chest", roll.type as "weapon" | "armor" | "consumable" | "magic" | "revive", roll.rarity, roll.power, roll.weapon_range, roll.slot ?? undefined));
       }
     } else {
-      ({ name, flavor } = await flavorLootDrop(c.env.AI, "the shopkeep's chest", roll.type as "weapon" | "armor" | "consumable" | "magic" | "revive", roll.rarity, roll.power));
+      ({ name, flavor } = await flavorLootDrop(c.env.AI, "the shopkeep's chest", roll.type as "weapon" | "armor" | "consumable" | "magic" | "revive", roll.rarity, roll.power, roll.weapon_range, roll.slot ?? undefined));
     }
     items.push({
       channel_id: channelId,
