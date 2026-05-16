@@ -141,6 +141,7 @@ import {
   setCharacterHpAndShield,
   setQuestMode,
   setQuestThreadTs,
+  trySaveExpeditionAdvance,
   type ActiveQuest,
   type Character,
   type CharGender,
@@ -4142,20 +4143,15 @@ async function applyWebCombatOutcome(
   }
 
   // Dungeon victory only clears the current combat room — the rest of the
-  // expedition continues in Slack. Sync monster_hp=0 to scene_json so the
-  // Slack handlers see the room as resolved, flip mode back to 'slack' so
-  // /sq choose / /sq attack can drive the next room, and skip marking the
-  // quest completed (the dungeon isn't done — Slack will mark it at the
-  // treasure room).
+  // expedition continues in Slack. Mirror the Slack-side advanceDungeonRoom
+  // so the expedition actually moves forward: compute next room via
+  // pickNextRoom, write the doors/auto-advance state, flip mode back to
+  // 'slack' so /sq choose / /sq attack can drive the next room, and skip
+  // marking the quest completed (Slack will mark it at the treasure room).
   const isDungeon = state.monster.upcoming_waves === undefined && won && await isDungeonQuest(env.DB, questId);
   if (won && isDungeon) {
-    await env.DB
-      .prepare(
-        `UPDATE quests SET scene_json = json_set(scene_json, '$.monster_hp', 0) WHERE id = ?`,
-      )
-      .bind(questId)
-      .run();
     await setQuestMode(env.DB, questId, "slack");
+    await advanceExpeditionAfterWebCombat(env, questId);
   } else {
     await markQuestStatus(env.DB, questId, won ? "completed" : "failed");
   }
@@ -4179,6 +4175,95 @@ async function isDungeonQuest(db: D1Database, questId: number): Promise<boolean>
     .bind(questId)
     .first<{ variant: string | null }>();
   return row?.variant === "dungeon";
+}
+
+// Post-web-combat dungeon advance. Mirrors apps/slack/src/commands.ts
+// advanceDungeonRoom: picks the next room via pickNextRoom and either
+// (a) writes pending_doors + remaining pool — the player picks a door
+// next via /sq choose (or the web dashboard), or
+// (b) auto-advances to the next node (only case: sub-boss → treasure).
+// Also leaves a Slack-thread breadcrumb so a player who switches back to
+// Slack sees that the expedition has moved on instead of "no room choice
+// to make right now".
+async function advanceExpeditionAfterWebCombat(
+  env: Env,
+  questId: number,
+): Promise<void> {
+  const quest = await getQuestById(env.DB, questId);
+  const exp = quest?.scene.expedition;
+  if (!quest || !exp) return;
+
+  const next = pickNextRoom(exp as ExpState);
+
+  if (next.type === "doors") {
+    const updatedExp: ExpeditionState = {
+      ...exp,
+      pool: next.remainingPool,
+      pending_doors: next.pair,
+    };
+    const updatedScene: SceneJson = {
+      ...quest.scene,
+      expedition: updatedExp,
+      monster_hp: 0,
+    };
+    const ok = await trySaveExpeditionAdvance(env.DB, questId, updatedScene, exp.current);
+    if (!ok) return;
+    if (env.SLACK_BOT_TOKEN && quest.thread_ts) {
+      const single = next.pair.length === 1;
+      const subBossAhead = single && next.pair[0] === exp.nodes.length - 2;
+      const headline = subBossAhead
+        ? "👑 *The way opens to the sub-boss chamber.*"
+        : single
+        ? "🚪 *One path forward — catch your breath.*"
+        : "🚪 *Two paths diverge ahead.*";
+      const advanceHint = single
+        ? "`/gq choose 1` to advance"
+        : "`/gq choose 1` or `/gq choose 2`";
+      const text = `${headline}\nRun \`/gq look\` to see the prompt, or ${advanceHint}.`;
+      await postSlackMessage(env.SLACK_BOT_TOKEN, {
+        channel: quest.channel_id,
+        thread_ts: quest.thread_ts,
+        text,
+      }).catch((err) => console.warn("dungeon door post failed", err));
+    }
+    return;
+  }
+
+  // Auto-advance — only fires when current was the sub-boss and the next
+  // node is treasure. Mirrors advanceDungeon's node branch.
+  const nextNode = exp.nodes[next.index];
+  if (!nextNode) return;
+  const isCombat = nextNode.type === "combat";
+  const updatedExp: ExpeditionState = {
+    ...exp,
+    current: next.index,
+    pool: next.remainingPool,
+    pending_doors: undefined,
+    visited_count: (exp.visited_count ?? 1) + 1,
+    visited_indices: [...(exp.visited_indices ?? [exp.current]), next.index],
+  };
+  const updatedScene: SceneJson = {
+    ...quest.scene,
+    expedition: updatedExp,
+    scene: nextNode.scene,
+    monster_name: isCombat ? nextNode.monster_name ?? "—" : "—",
+    monster_max_hp: isCombat ? nextNode.monster_max_hp ?? 0 : 0,
+    monster_hp: isCombat ? nextNode.monster_max_hp ?? 0 : 0,
+    tier: isCombat ? nextNode.tier ?? quest.scene.tier : quest.scene.tier,
+    monster_effects: [],
+  };
+  const ok = await trySaveExpeditionAdvance(env.DB, questId, updatedScene, exp.current);
+  if (!ok) return;
+  if (env.SLACK_BOT_TOKEN && quest.thread_ts) {
+    const text = nextNode.type === "treasure"
+      ? "🎁 *Treasure ahead.* Run `/gq look` to see the loot, then `/gq take <n>` to claim."
+      : `🗺️ *Next room: ${nextNode.type}.* Run \`/gq look\` to see what's ahead.`;
+    await postSlackMessage(env.SLACK_BOT_TOKEN, {
+      channel: quest.channel_id,
+      thread_ts: quest.thread_ts,
+      text,
+    }).catch((err) => console.warn("dungeon advance post failed", err));
+  }
 }
 
 interface WsAttachment {
