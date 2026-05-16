@@ -806,7 +806,12 @@ export function GridDungeonView({
 // art) AND the content kind is a "visible thing in the room". In those cases
 // we overlay a figure/object indicator so the scene isn't empty-looking.
 function needsFigureOverlay(shape: RoomShape, content: GridRoomContent): boolean {
-  // Dead-ends and chambers already get content-baked art.
+  // Encounters and bosses ALWAYS overlay regardless of shape — the bg art
+  // never includes the actual monster, and the player should see what
+  // they're about to fight before clicking Engage.
+  if ((content.kind === "encounter" || content.kind === "boss") && !content.cleared) return true;
+  // Other content overlays only on corridor shapes (dead-ends and chambers
+  // already get content-baked art).
   if (shape.startsWith("dead_") || shape === "chamber" || shape === "entry" || shape === "boss") return false;
   if (content.kind === "npc" && !content.resolved) return true;
   if (content.kind === "merchant" && !content.resolved) return true;
@@ -818,44 +823,91 @@ function needsFigureOverlay(shape: RoomShape, content: GridRoomContent): boolean
 }
 
 function ContentFigureOverlay({ content }: { content: GridRoomContent }) {
-  // Icon + label centered on the scene. Big enough to read at a glance,
-  // not so big it hides the corridor art.
+  // Encounter/boss rooms show the actual monster portrait — same visual
+  // language as in-combat MonsterOverlay so the player knows exactly what
+  // they're about to engage.
+  if ((content.kind === "encounter" || content.kind === "boss") && !content.cleared) {
+    const m = content.monsters[0];
+    if (!m) return null;
+    const isBoss = content.kind === "boss";
+    const borderColor = isBoss ? "#fca5a5" : "#fcd34d";
+    return (
+      <div style={{
+        position: "absolute",
+        top: "50%",
+        left: "50%",
+        transform: "translate(-50%, -55%)",
+        background: "rgba(10,11,14,0.88)",
+        border: `2px solid ${borderColor}`,
+        borderRadius: 12,
+        padding: "10px 14px",
+        minWidth: 220,
+        maxWidth: 300,
+        backdropFilter: "blur(8px)",
+        boxShadow: isBoss ? "0 0 36px rgba(239,68,68,0.4)" : "0 0 28px rgba(252,211,77,0.3)",
+        pointerEvents: "none",
+      }}>
+        {m.art_url && (
+          <img src={m.art_url} alt={m.name} style={{
+            width: "100%", height: 150, objectFit: "cover",
+            borderRadius: 8, marginBottom: 8, display: "block",
+          }} />
+        )}
+        {!m.art_url && (
+          <div style={{ display: "flex", justifyContent: "center", padding: "20px 0" }}>
+            <Icon name="dragon-head" size={64} color={borderColor} />
+          </div>
+        )}
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8 }}>
+          <div style={{ fontFamily: DISPLAY_FONT, fontSize: 15, fontWeight: 700, color: isBoss ? "#fca5a5" : "#f5f5f5" }}>
+            {isBoss && <Icon name="dragon-head" size={13} color="#fca5a5" />} {m.name}
+          </div>
+          <div style={{ fontSize: 12, color: "#9aa0a6", fontVariantNumeric: "tabular-nums" }}>
+            {m.hp}/{m.max_hp}
+          </div>
+        </div>
+        <HpBar current={m.hp} max={m.max_hp} color={isBoss ? "#ef4444" : undefined} height={5} />
+      </div>
+    );
+  }
+
+  // Other content kinds: icon + label centered on the scene.
   let icon = "player";
   let color = "#d1d5db";
   let label = "";
   switch (content.kind) {
     case "npc": icon = "hood"; color = "#fef3c7"; label = "A traveler"; break;
-    case "merchant": icon = "shop"; color = "#fcd34d"; label = "Merchant"; break;
-    case "loot": icon = "ammo-bag"; color = "#a7f3d0"; label = "Loot"; break;
+    case "merchant": icon = "gold-bar"; color = "#fcd34d"; label = "Merchant"; break;
+    case "loot": icon = "gold-bar"; color = "#a7f3d0"; label = "Loot"; break;
     case "key_pickup": {
       const tier = content.tier;
       color = tier === "gold" ? "#fbbf24" : tier === "silver" ? "#d1d5db" : "#b45309";
       icon = "key"; label = `${tier[0].toUpperCase()}${tier.slice(1)} key`;
       break;
     }
-    case "lockbox": icon = "chest-armor"; color = "#60a5fa"; label = "Locked chest"; break;
-    case "trap": icon = "bear-trap"; color = "#fca5a5"; label = "Trap"; break;
+    case "lockbox": icon = "key"; color = "#60a5fa"; label = "Locked chest"; break;
+    case "trap": icon = "bolt-shield"; color = "#fca5a5"; label = "Trap"; break;
   }
   return (
     <div style={{
       position: "absolute",
-      top: "42%",
+      top: "50%",
       left: "50%",
       transform: "translate(-50%, -50%)",
       display: "flex",
       flexDirection: "column",
       alignItems: "center",
-      gap: 8,
-      padding: "12px 20px",
-      background: "rgba(0,0,0,0.45)",
-      border: `1px solid ${color}`,
-      borderRadius: 12,
-      backdropFilter: "blur(4px)",
-      boxShadow: `0 0 24px ${color}40`,
+      gap: 10,
+      padding: "16px 28px",
+      background: "rgba(0,0,0,0.62)",
+      border: `2px solid ${color}`,
+      borderRadius: 14,
+      backdropFilter: "blur(6px)",
+      boxShadow: `0 0 36px ${color}50`,
       pointerEvents: "none",
     }}>
-      <Icon name={icon} size={48} color={color} />
-      <div style={{ fontFamily: DISPLAY_FONT, fontSize: 14, color, letterSpacing: 1 }}>{label}</div>
+      <Icon name={icon} size={80} color={color} />
+      <div style={{ fontFamily: DISPLAY_FONT, fontSize: 18, color, letterSpacing: 1.5, textShadow: "0 2px 8px rgba(0,0,0,0.8)" }}>{label}</div>
     </div>
   );
 }
