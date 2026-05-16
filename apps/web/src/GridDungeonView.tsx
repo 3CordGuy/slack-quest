@@ -202,7 +202,14 @@ interface OutcomeSummary {
   monster_name: string;
 }
 
-interface LogEntry { id: number; text: string; tone: "info" | "good" | "bad" | "muted" }
+interface LogEntry {
+  id: number;
+  text: string;
+  tone: "info" | "good" | "bad" | "muted";
+  // Optional sub-line shown only when the user toggles "Details" — the
+  // d20 roll, formula, AC, etc. Hidden by default for a cleaner log.
+  detail?: string;
+}
 
 interface WsUiState {
   connection: "connecting" | "open" | "closed";
@@ -303,19 +310,54 @@ function wsReducer(s: WsUiState, a: WsAction): WsUiState {
 }
 
 function formatCombatEvent(e: { type: string; [k: string]: unknown }, nameOf: (id: string) => string): LogEntry | null {
-  const row = (text: string, tone: LogEntry["tone"]): LogEntry => ({ id: nextLogId++, text, tone });
+  const row = (text: string, tone: LogEntry["tone"], detail?: string): LogEntry => ({ id: nextLogId++, text, tone, detail });
+  const sign = (n: number) => (n >= 0 ? `+${n}` : `${n}`);
   switch (e.type) {
     case "begin": return row("Combat begins — rolling initiative…", "info");
-    case "player_hit": return row(`${nameOf(e.actor as string)} hits for ${e.damage} dmg${e.crit ? " (CRIT!)" : ""}`, "good");
-    case "monster_attack": return row(`Monster strikes — ${e.hp_damage} HP damage`, "bad");
+    case "turn_start": return row(`— ${nameOf(e.actor as string)}'s turn (round ${e.round})`, "muted");
+    case "hit_check": return row(
+      e.hit ? "Hit lands" : "Attack misses",
+      e.hit ? "good" : "bad",
+      `d20 ${e.roll}${sign(e.modifier as number)} = ${e.total} vs AC ${e.ac}`,
+    );
+    case "player_hit": return row(
+      `${nameOf(e.actor as string)} hits for ${e.damage} dmg${e.crit ? " (CRIT!)" : ""}`,
+      "good",
+      typeof e.formula === "string" ? String(e.formula) : undefined,
+    );
+    case "monster_attack": return row(
+      `Monster strikes — ${e.hp_damage} HP damage`,
+      "bad",
+      `raw ${e.raw_damage} · armor ${(e.raw_damage as number) - (e.damage_after_armor as number)} · shield ${e.shield_absorbed} → ${e.hp_damage} HP`,
+    );
     case "fighter_down": return row(`${nameOf(e.target as string)} is down!`, "bad");
     case "monster_down": return row(`${nameOf(e.killed_by as string)} lands the killing blow!`, "good");
-    case "heal_applied": return row(`${nameOf(e.actor as string)}: +${e.amount} HP healed`, "good");
-    case "shield_applied": return row(`${nameOf(e.actor as string)}: +${e.amount} shield`, "good");
-    case "signature_used": return row(`${nameOf(e.actor as string)} signature: ${e.damage} dmg`, "good");
+    case "heal_applied": return row(
+      `${nameOf(e.actor as string)}: +${e.amount} HP healed`,
+      "good",
+      (e.rolled as number) > (e.amount as number) ? `rolled ${e.rolled}, clamped to ${e.amount}` : undefined,
+    );
+    case "shield_applied": return row(
+      `${nameOf(e.actor as string)}: +${e.amount} shield`,
+      "good",
+      (e.rolled as number) > (e.amount as number) ? `rolled ${e.rolled}, clamped to ${e.amount}` : undefined,
+    );
+    case "signature_used": return row(
+      `${nameOf(e.actor as string)} signature: ${e.damage} dmg`,
+      "good",
+      `${e.formula ?? ""} · −${e.mana_spent ?? 0} mana`,
+    );
+    case "flee_check": return row(
+      e.success ? `${nameOf(e.actor as string)} escapes!` : `${nameOf(e.actor as string)} fails to escape`,
+      e.success ? "good" : "bad",
+      `d20 ${e.roll}${sign(e.modifier as number)} = ${e.total} vs DC ${e.dc}`,
+    );
     case "victory": return row("Victory!", "good");
     case "defeat": return row("The party falls…", "bad");
     case "fled": return row("The party escapes!", "muted");
+    case "ability_used": return row(`${nameOf(e.actor as string)} uses ${e.name}`, "good", `−${e.mana_spent ?? 0} mana`);
+    case "wave_transition": return row(`Wave ${e.new_wave}/${e.total_waves}: ${e.to_monster} arrives`, "info");
+    case "mark_applied": return row(`${nameOf(e.actor as string)} marks the target`, "info", `+${e.bonus} dmg through round ${e.expires_after_round}`);
     default: return null;
   }
 }
@@ -337,14 +379,68 @@ function PartyBar({ fighters, selfId, party, onClickSelf, flashIds }: {
   flashIds?: Set<string>;
 }) {
   const seen = new Set<string>();
-  type Member = { key: string; name: string; cls: string; hp: number; max_hp: number; mana: number; max_mana: number; shield: number; isSelf: boolean; isDead: boolean };
+  type Member = { key: string; name: string; cls: string; level: number; position: "front" | "back"; hp: number; max_hp: number; mana: number; max_mana: number; shield: number; isSelf: boolean; isDead: boolean };
   const members: Member[] = fighters
-    ? fighters.map((f) => ({ key: f.id, name: f.name, cls: f.class, hp: f.hp, max_hp: f.max_hp, mana: f.mana, max_mana: f.max_mana, shield: f.shield, isSelf: f.id === selfId, isDead: f.hp <= 0 }))
+    ? fighters.map((f) => ({ key: f.id, name: f.name, cls: f.class, level: f.level, position: f.position, hp: f.hp, max_hp: f.max_hp, mana: f.mana, max_mana: f.max_mana, shield: f.shield, isSelf: f.id === selfId, isDead: f.hp <= 0 }))
     : party.flatMap((c) => {
         if (seen.has(c.slack_user_id)) return [];
         seen.add(c.slack_user_id);
-        return [{ key: c.slack_user_id, name: c.name, cls: c.class, hp: c.hp, max_hp: c.max_hp, mana: c.mana, max_mana: c.max_mana, shield: c.shield, isSelf: c.slack_user_id === selfId, isDead: c.hp <= 0 }];
+        return [{ key: c.slack_user_id, name: c.name, cls: c.class, level: c.level, position: c.position, hp: c.hp, max_hp: c.max_hp, mana: c.mana, max_mana: c.max_mana, shield: c.shield, isSelf: c.slack_user_id === selfId, isDead: c.hp <= 0 }];
       });
+
+  const backRow = members.filter((m) => m.position === "back");
+  const frontRow = members.filter((m) => m.position === "front");
+
+  function renderCard(f: Member) {
+    const isHit = flashIds?.has(f.key) ?? false;
+    return (
+      <div key={f.key}
+        className={isHit ? "gq-hit-flash" : undefined}
+        onClick={f.isSelf && onClickSelf ? onClickSelf : undefined}
+        title={f.isSelf && onClickSelf ? "Open inventory" : undefined}
+        style={{
+          position: "relative",
+          display: "flex", alignItems: "center", gap: 10,
+          background: f.isSelf ? "rgba(245,245,220,0.10)" : "rgba(255,255,255,0.04)",
+          border: f.isSelf ? "1px solid rgba(245,245,220,0.28)" : "1px solid rgba(255,255,255,0.08)",
+          borderRadius: 10,
+          padding: "8px 12px",
+          opacity: f.isDead ? 0.45 : 1,
+          flexShrink: 0,
+          minWidth: 200,
+          cursor: f.isSelf && onClickSelf ? "pointer" : "default",
+        }}>
+        {/* Lvl badge in top-right corner */}
+        <div style={{
+          position: "absolute", top: 4, right: 6,
+          fontSize: 9, fontWeight: 700, letterSpacing: 0.5,
+          color: "#fcd34d", background: "rgba(0,0,0,0.55)",
+          padding: "1px 6px", borderRadius: 4,
+          fontFamily: "ui-monospace, monospace",
+        }}>
+          LV {f.level}
+        </div>
+        <Avatar src={charPortraitUrl(f.name)} fallbackSrc={classPortraitUrl(f.cls)} alt={f.name} size={56} radius={6} fallbackIcon="player" fallbackColor="#4a5568" border="1px solid #2a2d33" />
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 13, fontWeight: 600, color: "#e2e8f0", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", paddingRight: 30 }}>{f.name}</div>
+          <HpBar current={f.hp} max={f.max_hp} height={7} />
+          <div style={{ fontSize: 11, color: "#9aa0a6", marginTop: 2 }}>
+            {f.hp}/{f.max_hp} HP{f.shield > 0 && <span style={{ color: "#60a5fa", marginLeft: 4 }}>+{f.shield}<Icon name="shield" size={10} /></span>}
+          </div>
+          <div style={{ display: "flex", gap: 4, marginTop: 4 }}>
+            {Array.from({ length: f.max_mana }, (_, mi) => (
+              <div key={mi} style={{ width: 9, height: 9, borderRadius: "50%", background: mi < f.mana ? "#818cf8" : "#1e2028", border: "1px solid #3a3d43" }} />
+            ))}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Two rows, both center-aligned. Back row on top, front row on bottom
+  // (matches the visual metaphor: front fighters stand closer to camera).
+  const rowStyle: React.CSSProperties = { display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap" };
+  const labelStyle: React.CSSProperties = { fontSize: 9, fontWeight: 700, letterSpacing: 1.5, color: "#6b7280", alignSelf: "center", textTransform: "uppercase", minWidth: 38 };
   return (
     <div style={{
       background: "rgba(10,11,14,0.55)",
@@ -354,42 +450,16 @@ function PartyBar({ fighters, selfId, party, onClickSelf, flashIds }: {
       WebkitBackdropFilter: "blur(10px)",
       boxShadow: "0 8px 32px rgba(0,0,0,0.5)",
       padding: "10px 12px",
-      display: "flex", gap: 12, alignItems: "center", overflowX: "auto",
+      display: "flex", flexDirection: "column", gap: 8,
     }}>
-      {members.map((f) => {
-        const isHit = flashIds?.has(f.key) ?? false;
-        return (
-          <div key={f.key}
-            className={isHit ? "gq-hit-flash" : undefined}
-            onClick={f.isSelf && onClickSelf ? onClickSelf : undefined}
-            title={f.isSelf && onClickSelf ? "Open inventory" : undefined}
-            style={{
-              display: "flex", alignItems: "center", gap: 10,
-              background: f.isSelf ? "rgba(245,245,220,0.10)" : "rgba(255,255,255,0.04)",
-              border: f.isSelf ? "1px solid rgba(245,245,220,0.28)" : "1px solid rgba(255,255,255,0.08)",
-              borderRadius: 10,
-              padding: "8px 12px",
-              opacity: f.isDead ? 0.45 : 1,
-              flexShrink: 0,
-              minWidth: 200,
-              cursor: f.isSelf && onClickSelf ? "pointer" : "default",
-            }}>
-            <Avatar src={charPortraitUrl(f.name)} fallbackSrc={classPortraitUrl(f.cls)} alt={f.name} size={56} radius={6} fallbackIcon="player" fallbackColor="#4a5568" border="1px solid #2a2d33" />
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: 13, fontWeight: 600, color: "#e2e8f0", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{f.name}</div>
-              <HpBar current={f.hp} max={f.max_hp} height={7} />
-              <div style={{ fontSize: 11, color: "#9aa0a6", marginTop: 2 }}>
-                {f.hp}/{f.max_hp} HP{f.shield > 0 && <span style={{ color: "#60a5fa", marginLeft: 4 }}>+{f.shield}<Icon name="shield" size={10} /></span>}
-              </div>
-              <div style={{ display: "flex", gap: 4, marginTop: 4 }}>
-                {Array.from({ length: f.max_mana }, (_, mi) => (
-                  <div key={mi} style={{ width: 9, height: 9, borderRadius: "50%", background: mi < f.mana ? "#818cf8" : "#1e2028", border: "1px solid #3a3d43" }} />
-                ))}
-              </div>
-            </div>
-          </div>
-        );
-      })}
+      <div style={rowStyle}>
+        <div style={labelStyle}>Back</div>
+        {backRow.length === 0 ? <span style={{ fontSize: 11, color: "#4a5568", alignSelf: "center", fontStyle: "italic" }}>—</span> : backRow.map(renderCard)}
+      </div>
+      <div style={rowStyle}>
+        <div style={labelStyle}>Front</div>
+        {frontRow.length === 0 ? <span style={{ fontSize: 11, color: "#4a5568", alignSelf: "center", fontStyle: "italic" }}>—</span> : frontRow.map(renderCard)}
+      </div>
     </div>
   );
 }
@@ -504,7 +574,7 @@ function GridMinimap({ graph }: { graph: GridGraph }) {
   const current = graph.nodes[graph.current];
   const visited = new Set(graph.visited);
   return (
-    <div style={{ background: "rgba(0,0,0,0.55)", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 8, padding: "8px 10px 6px", backdropFilter: "blur(6px)", userSelect: "none" }}>
+    <div style={{ userSelect: "none" }}>
       <div style={{ fontSize: 9, color: "#6b7280", textTransform: "uppercase", letterSpacing: 1, marginBottom: 4 }}>Map</div>
       <div style={{ display: "grid", gridTemplateColumns: `repeat(${w}, ${CELL}px)`, gridTemplateRows: `repeat(${h}, ${CELL}px)`, gap: 1, background: "#1a1c21" }}>
         {Array.from({ length: w * h }, (_, idx) => {
@@ -642,6 +712,16 @@ export function GridDungeonView({
   // IDs (fighter id OR monster id) currently being flashed-red after a hit.
   // Cleared 600ms after the event lands.
   const [flashIds, setFlashIds] = useState<Set<string>>(new Set());
+  // Combat log details toggle — when true, log entries show the dice / formula
+  // sub-line under their summary. Persisted across remounts for the session.
+  const [logDetails, setLogDetails] = useState<boolean>(() => typeof window !== "undefined" && localStorage.getItem("gq_log_details") === "1");
+  useEffect(() => {
+    if (typeof window !== "undefined") localStorage.setItem("gq_log_details", logDetails ? "1" : "0");
+  }, [logDetails]);
+  // Floating animated dice — incoming `roll` events spawn dice that tumble
+  // and settle to the rolled value, then fade after ~10s.
+  const [diceRolls, setDiceRolls] = useState<DiceRollEntry[]>([]);
+  const diceRollCounterRef = useRef(0);
   function flashHit(id: string) {
     setFlashIds((prev) => { const n = new Set(prev); n.add(id); return n; });
     setTimeout(() => {
@@ -691,6 +771,19 @@ export function GridDungeonView({
             // monster_attack: monster hits target (fighter), only flash if damage landed.
             if (evt.type === "monster_attack" && typeof evt.target === "string" && (evt.hp_damage as number) > 0) {
               flashHit(evt.target as string);
+            }
+            // roll: dice events become floating animated polygons.
+            if (evt.type === "roll") {
+              const id = ++diceRollCounterRef.current;
+              const entry: DiceRollEntry = {
+                id,
+                die: String(evt.die),
+                value: Number(evt.value),
+                actor: String(evt.actor),
+                purpose: String(evt.purpose ?? ""),
+              };
+              setDiceRolls((prev) => [...prev.slice(-7), entry]);
+              setTimeout(() => setDiceRolls((prev) => prev.filter((r) => r.id !== id)), 14000);
             }
           }
         } else if (msg.type === "outcome" && msg.outcome) {
@@ -883,25 +976,53 @@ export function GridDungeonView({
           <ContentFigureOverlay content={content} />
         )}
 
-        {/* Right rail — minimap on top, combat log below. Same width.
-            Stacks at the bottom of the room view on mobile. */}
+        {/* Right rail — single combined pane with minimap on top, combat log
+            below. On desktop: vertical column on the right side at ~1/8
+            viewport wide. On mobile: bottom of the room view, horizontal.
+            Log has a Details toggle: simple text default, expand to show
+            dice rolls (d20 + mod = total vs AC etc) and formulas. */}
         <div style={railStyle}>
-          <div style={railItemStyle}>
-            <GridMinimap graph={graph} />
-          </div>
-          {combatActive && ws.log.length > 0 && (
-            <div style={{ ...railItemStyle, background: "rgba(0,0,0,0.55)", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 8, padding: "6px 10px", backdropFilter: "blur(6px)" }}>
-              <div style={{ fontSize: 9, color: "#6b7280", textTransform: "uppercase", letterSpacing: 1, marginBottom: 4 }}>Log</div>
-              <div style={{ maxHeight: isMobile ? 80 : 200, overflowY: "auto", display: "flex", flexDirection: "column", gap: 2 }}>
-                {ws.log.slice(-8).map((e) => (
-                  <div key={e.id} style={{
-                    fontSize: 11, lineHeight: 1.4,
-                    color: e.tone === "good" ? "#86efac" : e.tone === "bad" ? "#fca5a5" : e.tone === "info" ? "#93c5fd" : "#9aa0a6",
-                  }}>{e.text}</div>
-                ))}
-              </div>
+          <div style={{
+            ...railItemStyle,
+            background: "rgba(0,0,0,0.6)",
+            border: "1px solid rgba(255,255,255,0.12)",
+            borderRadius: 8,
+            backdropFilter: "blur(6px)",
+            display: "flex",
+            flexDirection: isMobile ? "row" : "column",
+          }}>
+            <div style={{ padding: "8px 10px 6px", borderRight: isMobile ? "1px solid rgba(255,255,255,0.08)" : "none", borderBottom: !isMobile ? "1px solid rgba(255,255,255,0.08)" : "none", flex: isMobile ? 1 : "0 0 auto" }}>
+              <GridMinimap graph={graph} />
             </div>
-          )}
+            {combatActive && ws.log.length > 0 && (
+              <div style={{ padding: "6px 10px 8px", flex: isMobile ? 1 : "1 1 auto", minWidth: 0, display: "flex", flexDirection: "column" }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
+                  <div style={{ fontSize: 9, color: "#6b7280", textTransform: "uppercase", letterSpacing: 1 }}>Log</div>
+                  <button
+                    onClick={() => setLogDetails((v) => !v)}
+                    title={logDetails ? "Hide dice / formulas" : "Show dice / formulas"}
+                    style={{ background: "none", border: "1px solid #2a2d33", color: logDetails ? "#fcd34d" : "#6b7280", fontSize: 8, padding: "1px 5px", borderRadius: 3, cursor: "pointer", letterSpacing: 0.5 }}>
+                    {logDetails ? "DETAILS" : "DETAILS"}
+                  </button>
+                </div>
+                <div style={{ maxHeight: isMobile ? 80 : 220, overflowY: "auto", display: "flex", flexDirection: "column", gap: 2 }}>
+                  {ws.log.slice(-12).map((e) => (
+                    <div key={e.id} style={{
+                      fontSize: 11, lineHeight: 1.4,
+                      color: e.tone === "good" ? "#86efac" : e.tone === "bad" ? "#fca5a5" : e.tone === "info" ? "#93c5fd" : "#9aa0a6",
+                    }}>
+                      <div>{e.text}</div>
+                      {logDetails && e.detail && (
+                        <div style={{ fontSize: 10, color: "#6b7280", paddingLeft: 8, fontFamily: "ui-monospace, monospace" }}>
+                          {e.detail}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Scene description (non-combat) */}
@@ -993,6 +1114,9 @@ export function GridDungeonView({
       )}
 
       {/* (Party bar is now a floating overlay inside the room view above.) */}
+
+      {/* Animated dice rolls — float in mid-screen above everything */}
+      <DiceRollDisplay rolls={diceRolls} />
     </div>
   );
 }
@@ -1599,3 +1723,188 @@ const lootBtn: React.CSSProperties = {
 // Inventory modal lives in App.tsx (uses the dashboard's InventoryFullScreen
 // with full drag-and-drop, paper-doll, give/use/equip). The party-bar click
 // calls onOpenInventory which App.tsx routes to that modal.
+
+// ─── Animated dice rolls (ported from CombatPage) ─────────────────────────────
+// On every `roll` WS event we push an entry into diceRolls; DiceRollDisplay
+// renders each one as a tumbling polygon that settles to the rolled value,
+// then fades after ~10s. Self-cleans after 14s via setTimeout.
+
+interface DiceRollEntry {
+  id: number;
+  die: string;
+  value: number;
+  actor: string;
+  purpose: string;
+}
+
+let _diceStylesInjected = false;
+function injectDiceStyles() {
+  if (_diceStylesInjected || typeof document === "undefined") return;
+  _diceStylesInjected = true;
+  const s = document.createElement("style");
+  s.textContent = `
+    @keyframes dice-roll-in {
+      0%   { transform: rotate(0deg)   scale(0)    translateY(-40px); opacity: 0; }
+      55%  { transform: rotate(630deg) scale(1.14) translateY(0);     opacity: 1; }
+      75%  { transform: rotate(705deg) scale(0.93); }
+      88%  { transform: rotate(716deg) scale(1.06); }
+      100% { transform: rotate(720deg) scale(1); }
+    }
+    @keyframes dice-fade-out {
+      0%   { opacity: 1; transform: scale(1)   translateY(0);   }
+      100% { opacity: 0; transform: scale(0.7) translateY(18px); }
+    }
+  `;
+  document.head.appendChild(s);
+}
+
+const DIE_SHAPE: Record<string, { points: string; textY: number }> = {
+  d4:  { points: "50,6 96,90 4,90",                                textY: 70 },
+  d6:  { points: "8,8 92,8 92,92 8,92",                            textY: 56 },
+  d8:  { points: "50,4 96,50 50,96 4,50",                          textY: 56 },
+  d10: { points: "50,4 93,34 76,90 24,90 7,34",                    textY: 58 },
+  d12: { points: "50,4 91,27 98,70 70,96 30,96 2,70 9,27",         textY: 58 },
+  d20: { points: "50,4 91,28 91,72 50,96 9,72 9,28",               textY: 56 },
+};
+const DEFAULT_SHAPE = DIE_SHAPE.d20;
+
+const D6_PIPS: Record<number, [number, number][]> = {
+  1: [[1,1]],
+  2: [[0,0],[2,2]],
+  3: [[0,0],[1,1],[2,2]],
+  4: [[0,0],[2,0],[0,2],[2,2]],
+  5: [[0,0],[2,0],[1,1],[0,2],[2,2]],
+  6: [[0,0],[2,0],[0,1],[2,1],[0,2],[2,2]],
+};
+
+const PURPOSE_LABEL: Record<string, string> = {
+  hit_check:      "To Hit",
+  damage_attack:  "Damage",
+  damage_cast:    "Spell Dmg",
+  damage_monster: "Monster Dmg",
+  signature:      "Signature",
+  heal:           "Healing",
+  shield:         "Shield",
+  flee_check:     "Escape",
+  initiative:     "Initiative",
+};
+
+function DiceRollDisplay({ rolls }: { rolls: DiceRollEntry[] }) {
+  useEffect(() => { injectDiceStyles(); }, []);
+  if (rolls.length === 0) return null;
+  const enemyRolls = rolls.filter((r) => isMonsterActor(r.actor));
+  const partyRolls = rolls.filter((r) => !isMonsterActor(r.actor));
+  const rowStyle: React.CSSProperties = { display: "flex", gap: 14, flexWrap: "wrap", justifyContent: "center", alignItems: "flex-start" };
+  const labelStyle: React.CSSProperties = { fontSize: 9, color: "#6b7280", textTransform: "uppercase", letterSpacing: 1.5, fontFamily: "ui-monospace, monospace", textAlign: "center", marginBottom: 6 };
+  return (
+    <div style={{
+      position: "fixed",
+      bottom: 280,
+      left: "50%",
+      transform: "translateX(-50%)",
+      display: "flex",
+      flexDirection: "column",
+      gap: 28,
+      zIndex: 200,
+      pointerEvents: "none",
+    }}>
+      {enemyRolls.length > 0 && (
+        <div>
+          <div style={{ ...labelStyle, color: "#9c4242" }}>Enemy</div>
+          <div style={rowStyle}>
+            {enemyRolls.map((r) => <DiceFace key={r.id} roll={r} />)}
+          </div>
+        </div>
+      )}
+      {partyRolls.length > 0 && (
+        <div>
+          <div style={{ ...labelStyle, color: "#4a7c8c" }}>Party</div>
+          <div style={rowStyle}>
+            {partyRolls.map((r) => <DiceFace key={r.id} roll={r} />)}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function DiceFace({ roll }: { roll: DiceRollEntry }) {
+  const maxFace = parseInt(roll.die.replace("d", ""), 10) || 20;
+  const shape = DIE_SHAPE[roll.die] ?? DEFAULT_SHAPE;
+  const isD6 = roll.die === "d6";
+
+  const [display, setDisplay] = useState<number>(() => Math.ceil(Math.random() * maxFace));
+  const [settled, setSettled] = useState(false);
+  const [fading, setFading] = useState(false);
+
+  useEffect(() => {
+    let count = 0;
+    const total = 13;
+    const iv = setInterval(() => {
+      count++;
+      if (count >= total) {
+        clearInterval(iv);
+        setDisplay(roll.value);
+        setSettled(true);
+      } else {
+        setDisplay(Math.ceil(Math.random() * maxFace));
+      }
+    }, 50);
+    const fadeTimer = setTimeout(() => setFading(true), 10000);
+    return () => { clearInterval(iv); clearTimeout(fadeTimer); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [roll.id]);
+
+  const isCrit = roll.die === "d20" && roll.value === maxFace;
+  const isFumble = roll.die === "d20" && roll.value === 1;
+  const strokeColor = settled ? (isCrit ? "#22c55e" : isFumble ? "#ef4444" : "#7dd3fc") : "#4a5568";
+  const fillColor = settled ? (isCrit ? "#052e12" : isFumble ? "#2e0505" : "#0d1b2e") : "#111827";
+  const numColor = settled ? (isCrit ? "#86efac" : isFumble ? "#fca5a5" : "#f5f5f5") : "#6b7280";
+  const SIZE = 80;
+
+  return (
+    <div style={{
+      width: SIZE, height: SIZE, position: "relative",
+      filter: settled ? `drop-shadow(0 0 8px ${strokeColor}60)` : "none",
+      animationName: fading ? "dice-fade-out" : "dice-roll-in",
+      animationDuration: fading ? "350ms" : "700ms",
+      animationTimingFunction: fading ? "ease-in" : "cubic-bezier(0.22,1,0.36,1)",
+      animationFillMode: "forwards",
+      transition: "filter 200ms",
+    }}>
+      <svg width={SIZE} height={SIZE} viewBox="0 0 100 100" style={{ position: "absolute", top: 0, left: 0 }}>
+        <polygon points={shape.points} fill={fillColor} stroke={strokeColor} strokeWidth={settled ? 3.5 : 2.5} strokeLinejoin="round" style={{ transition: "fill 150ms, stroke 150ms" }} />
+        <text x="50" y="16" textAnchor="middle" fontSize="9" fill="#6b7280" fontFamily="ui-monospace, monospace" letterSpacing="1" style={{ textTransform: "uppercase" }}>
+          {roll.die.toUpperCase()}
+        </text>
+      </svg>
+      <div style={{ position: "absolute", top: 0, left: 0, width: SIZE, height: SIZE, display: "flex", alignItems: "center", justifyContent: "center" }}>
+        {isD6 && settled ? (
+          <D6Pips value={display} color={numColor} />
+        ) : (
+          <span style={{ fontSize: roll.die === "d4" ? 18 : 24, fontWeight: 900, color: numColor, fontVariantNumeric: "tabular-nums", lineHeight: 1, transition: "color 200ms", fontFamily: "ui-monospace, monospace" }}>
+            {display}
+          </span>
+        )}
+      </div>
+      {settled && roll.purpose && (
+        <div style={{ position: "absolute", bottom: -16, left: "50%", transform: "translateX(-50%)", fontSize: 9, color: "#9ca3af", whiteSpace: "nowrap", letterSpacing: 0.3, fontWeight: 500 }}>
+          {PURPOSE_LABEL[roll.purpose] ?? roll.purpose}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function D6Pips({ value, color }: { value: number; color: string }) {
+  const pips = D6_PIPS[Math.min(6, Math.max(1, value))] ?? [];
+  const cells: [number, number][] = [[0,0],[1,0],[2,0],[0,1],[1,1],[2,1],[0,2],[1,2],[2,2]];
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 10px)", gap: 4 }}>
+      {cells.map(([c, r], i) => {
+        const active = pips.some(([pc, pr]) => pc === c && pr === r);
+        return <div key={i} style={{ width: 10, height: 10, borderRadius: "50%", background: active ? color : "transparent" }} />;
+      })}
+    </div>
+  );
+}
