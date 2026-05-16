@@ -192,6 +192,7 @@ export function Avatar({
   radius = 6,
   fallbackIcon = "player",
   fallbackColor = "#4a5568",
+  fallbackSrc,
   border,
   style: extraStyle,
 }: {
@@ -201,14 +202,17 @@ export function Avatar({
   radius?: number;
   fallbackIcon?: string;
   fallbackColor?: string;
+  fallbackSrc?: string | null;
   border?: string;
   style?: CSSProperties;
 }): JSX.Element {
   const [failed, setFailed] = useState(false);
+  const [fallbackFailed, setFallbackFailed] = useState(false);
   const [hovered, setHovered] = useState(false);
   const [open, setOpen] = useState(false);
 
-  const showImage = !!src && !failed;
+  const activeSrc = !failed ? (src ?? null) : (!fallbackFailed && fallbackSrc) ? fallbackSrc : null;
+  const showImage = !!activeSrc;
 
   const containerStyle: CSSProperties = {
     width: size,
@@ -237,9 +241,9 @@ export function Avatar({
         {showImage ? (
           <>
             <img
-              src={src!}
+              src={activeSrc!}
               alt={alt}
-              onError={() => setFailed(true)}
+              onError={() => { if (!failed) setFailed(true); else setFallbackFailed(true); }}
               style={{
                 width: "100%",
                 height: "100%",
@@ -286,7 +290,7 @@ export function Avatar({
           }}
         >
           <img
-            src={src!}
+            src={activeSrc!}
             alt={alt}
             style={{
               maxWidth: "min(90vw, 640px)",

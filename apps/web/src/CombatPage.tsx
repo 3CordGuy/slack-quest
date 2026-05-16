@@ -83,6 +83,15 @@ function classPortraitUrl(className: string): string | null {
   const id = CLASS_ID_BY_NAME[className];
   return id ? `${CLASS_PORTRAIT_BASE}/class_${id}.png` : null;
 }
+// Per-character portrait — same key the server writes in getOrScheduleCharacterArt.
+// Avatar's onError fallback handles the case where the portrait hasn't generated yet.
+const CHAR_ART_VERSION = "v3";
+function slugifyName(name: string): string {
+  return name.toLowerCase().normalize("NFKD").replace(/[̀-ͯ]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60) || "unnamed";
+}
+function charPortraitUrl(name: string): string {
+  return `/img/art/${CHAR_ART_VERSION}/character/${slugifyName(name)}.png`;
+}
 
 type CombatEvent =
   | { type: "begin"; turn_order: string[]; initiatives: Record<string, number> }
@@ -1363,7 +1372,7 @@ function FighterHpRow({ hp, maxHp, shield }: { hp: number; maxHp: number; shield
 
 function FighterRow({ fighter, self, current }: { fighter: Fighter; self: boolean; current: boolean }) {
   const down = fighter.hp <= 0;
-  const portrait = classPortraitUrl(fighter.class);
+  const portrait = charPortraitUrl(fighter.name);
   return (
     <div
       style={{
@@ -1379,6 +1388,7 @@ function FighterRow({ fighter, self, current }: { fighter: Fighter; self: boolea
     >
       <Avatar
         src={portrait}
+        fallbackSrc={classPortraitUrl(fighter.class)}
         alt={`${fighter.class} portrait`}
         size={56}
         radius={6}
