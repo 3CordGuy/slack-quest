@@ -1,0 +1,11 @@
+-- Phase 4: graph dungeon
+-- No DDL changes — the graph dungeon lives entirely in scene_json.graph (JSON column).
+-- This file exists to document the schema version bump.
+--
+-- scene_json.graph?: DungeonGraph  (TypeScript interface in packages/db/src/db.ts)
+--   nodes: Record<string, DungeonNode>  — keyed by room id
+--   current: string                     — id of current room
+--   visited: string[]                   — ids of visited rooms
+--
+-- Feature-flagged via env.DUNGEON_GRAPH = "1".
+-- Legacy expedition dungeons (scene_json.expedition) remain fully functional.

@@ -1,5 +1,5 @@
 import { Component, useEffect, useRef, useState } from "react";
-import { DndContext, DragOverlay, useDraggable, useDroppable, type DragEndEvent, type DragStartEvent } from "@dnd-kit/core";
+import { DndContext, DragOverlay, PointerSensor, useDraggable, useDroppable, useSensor, useSensors, type DragEndEvent, type DragStartEvent } from "@dnd-kit/core";
 import type { ErrorInfo, ReactNode } from "react";
 import toast from "react-hot-toast";
 import {
@@ -175,7 +175,7 @@ type ItemType =
   | "revive"
   | "tool"
   | "scroll";
-type Rarity = "common" | "uncommon" | "rare";
+type Rarity = "common" | "uncommon" | "rare" | "epic" | "legendary";
 type WeaponRange = "melee" | "ranged" | "focus";
 
 type EquipSlot = "main_hand" | "off_hand" | "body" | "helmet" | "pants" | "boots" | "ring" | "amulet";
@@ -3590,6 +3590,48 @@ function AdventurerSheet({ character, isOwn = false, onClose }: { character: Kno
   );
 }
 
+function DerivedStatCard({
+  icon, label, value, color, formula,
+}: {
+  icon: string; label: string; value: string; color: string; formula: string;
+}) {
+  const [hovered, setHovered] = useState(false);
+  return (
+    <div
+      style={{ position: "relative" }}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+    >
+      <div style={{
+        background: hovered ? "#22252c" : "#1d1f23",
+        borderRadius: 7, padding: "6px 4px 5px",
+        display: "flex", flexDirection: "column", alignItems: "center", gap: 3,
+        border: `1px solid ${hovered ? color + "66" : color + "22"}`,
+        cursor: "default", transition: "background 0.12s, border-color 0.12s",
+      }}>
+        <Icon name={icon} size={18} color={color} />
+        <div style={{ fontSize: 14, fontWeight: 800, color, lineHeight: 1 }}>{value}</div>
+        <div style={{ fontSize: 8, color: "#6b7280", textTransform: "uppercase", letterSpacing: 0.7, lineHeight: 1 }}>{label}</div>
+      </div>
+      {hovered && (
+        <div style={{
+          position: "absolute", bottom: "calc(100% + 6px)", left: "50%",
+          transform: "translateX(-50%)",
+          background: "#0e1014", border: `1px solid ${color}44`,
+          borderRadius: 7, padding: "7px 10px", zIndex: 50,
+          minWidth: 160, maxWidth: 220,
+          boxShadow: `0 4px 16px rgba(0,0,0,0.7), 0 0 0 1px ${color}22`,
+          pointerEvents: "none",
+          whiteSpace: "pre-line",
+        }}>
+          <div style={{ fontSize: 10, color: "#6b7280", textTransform: "uppercase", letterSpacing: 0.8, marginBottom: 4 }}>{label}</div>
+          <div style={{ fontSize: 11, color: "#c9cdd4", lineHeight: 1.55, fontFamily: "monospace" }}>{formula}</div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function CharacterCard({
   me,
   inventory,
@@ -3706,12 +3748,16 @@ function CharacterCard({
         <Stat
           label="HP"
           icon={<Icon name="health-increase" color="#86efac" size={36} />}
+          tooltip={[
+            `VIT ${primaryStats.vit}  ·  Level ${c.level}`,
+            `16 + 2×${primaryStats.vit} + 2×${c.level} = ${c.max_hp} max HP`,
+            c.shield > 0 ? `Shield: +${c.shield} (absorbs hits first)` : "",
+          ].filter(Boolean).join("\n")}
           value={
             <span style={{ display: "inline-flex", alignItems: "baseline", gap: 6 }}>
               {c.hp} / {c.max_hp}
               {c.shield > 0 && (
                 <span
-                  title="Temporary shield buffer (absorbs damage before HP). Set by /sq shield casts; clears at quest end."
                   style={{ fontSize: 12, color: "#7dd3fc", fontWeight: 500 }}
                 >
                   +{c.shield} <Icon name="shield" size={12} />
@@ -3723,36 +3769,32 @@ function CharacterCard({
         <Stat
           label="Mana"
           icon={<Icon name="crystal-ball" color="#a78bfa" size={36} />}
+          tooltip={`INT ${primaryStats.int_stat}\n1 + floor(${primaryStats.int_stat} / 4) = ${c.max_mana} max mana\nSpent to cast signature abilities`}
           value={`${c.mana} / ${c.max_mana}`}
         />
         <Stat
           label="Armor"
           icon={<Icon name="shield" color="#9ca3af" size={36} />}
-          value={
-            <span
-              title={armorPower > 0
-                ? `Combined armor power ${armorPower}: reduces incoming damage by floor(${armorPower}/2) = ${Math.floor(armorPower / 2)}.`
-                : "No armor equipped."}
-            >
-              {armorPower > 0 ? `+${armorPower}` : <span style={muted}>—</span>}
-            </span>
-          }
+          tooltip={armorPower > 0
+            ? `Armor power ${armorPower}\nReduces incoming damage by floor(${armorPower}/2) = ${Math.floor(armorPower / 2)}${derivedStats.armor_bonus > 0 ? `\n+${derivedStats.armor_bonus} bonus from VIT ${primaryStats.vit}` : ""}`
+            : `No armor equipped\nEquip body armor, helmet, pants,\nor a shield to reduce damage`}
+          value={armorPower > 0 ? `+${armorPower}` : <span style={muted}>—</span>}
         />
         <Stat
           label="Gold"
           icon={<Icon name="cash" color="#fbbf24" size={36} />}
+          tooltip={`Current balance: ${c.gold}g\nEarned from kills, quests, and selling\nSpend at the Shop or Apothecary`}
           value={c.gold.toString()}
         />
         <Stat
           label="Scars"
           icon={<Icon name="death-skull" color="#ef4444" size={36} />}
-          value={
-            <span title={c.scars.length > 0 ? c.scars.join(", ") : undefined}>
-              {c.scars.length.toString()}
-            </span>
-          }
+          tooltip={c.scars.length > 0
+            ? `${c.scars.length} permanent ${c.scars.length === 1 ? "penalty" : "penalties"}\n${c.scars.join("\n")}`
+            : "No scars yet\nEarned by dying in combat\n(soft death mode — capped at 3)"}
+          value={c.scars.length.toString()}
         />
-        <div style={{ padding: 12, background: "#1d1f23", borderRadius: 8, display: "flex", alignItems: "center", gap: 12 }}>
+        <div style={{ padding: 12, background: "#1d1f23", borderRadius: 8, display: "flex", alignItems: "center", gap: 12, position: "relative" }}>
           <div style={{ flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", width: 36, height: 36 }}>
             <Icon name="key" color="#d1d5db" size={36} />
           </div>
@@ -3782,16 +3824,45 @@ function CharacterCard({
               </div>
             ))}
           </div>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: "3px 10px", fontSize: 11, color: "#9ca3af" }}>
-            <span title="Attack modifier added to weapon damage">ATK {derivedStats.attack_mod >= 0 ? `+${derivedStats.attack_mod}` : derivedStats.attack_mod}</span>
-            <span title="Magic modifier added to spell damage">MAG {derivedStats.magic_mod >= 0 ? `+${derivedStats.magic_mod}` : derivedStats.magic_mod}</span>
-            <span title="Chance to negate an incoming monster hit">Dodge {Math.round(derivedStats.dodge_chance * 100)}%</span>
-            <span title="Bonus crit chance on attack or cast">Crit +{Math.round(derivedStats.crit_bonus * 100)}%</span>
-            <span title="Added to initiative roll at combat start">Init +{derivedStats.initiative_bonus}</span>
-            {derivedStats.armor_bonus > 0 && (
-              <span title="VIT-derived armor bonus on top of equipped armor">+{derivedStats.armor_bonus} armor</span>
-            )}
-          </div>
+          {(() => {
+            const { str, int_stat: int, vit, agi, dex } = primaryStats;
+            const atkVal = derivedStats.attack_mod >= 0 ? `+${derivedStats.attack_mod}` : `${derivedStats.attack_mod}`;
+            const magVal = derivedStats.magic_mod >= 0 ? `+${derivedStats.magic_mod}` : `${derivedStats.magic_mod}`;
+            const dodgePct = Math.round(derivedStats.dodge_chance * 100);
+            const critPct  = Math.round(derivedStats.crit_bonus * 100);
+            const initVal  = derivedStats.initiative_bonus >= 0 ? `+${derivedStats.initiative_bonus}` : `${derivedStats.initiative_bonus}`;
+            const stats: { icon: string; label: string; value: string; color: string; formula: string }[] = [
+              {
+                icon: "sword-brandish", label: "Attack", value: atkVal, color: "#f87171",
+                formula: `STR ${str}\nfloor((${str} − 5) / 2) = ${atkVal}\nAdded to weapon damage rolls`,
+              },
+              {
+                icon: "wizard-staff", label: "Magic", value: magVal, color: "#7dd3fc",
+                formula: `INT ${int}\nfloor((${int} − 5) / 2) = ${magVal}\nAdded to spell & heal rolls`,
+              },
+              {
+                icon: "dodging", label: "Dodge", value: `${dodgePct}%`, color: "#34d399",
+                formula: `AGI ${agi}\nmin(15%, (${agi} − 5) × 1%) = ${dodgePct}%\nChance to fully negate a hit`,
+              },
+              {
+                icon: "target-poster", label: "Crit", value: `+${critPct}%`, color: "#fbbf24",
+                formula: `DEX ${dex}\nmax(0, (${dex} − 5) × 1%) = +${critPct}%\nBonus crit chance (cap 10%)`,
+              },
+              {
+                icon: "coffee-cup", label: "Init", value: initVal, color: "#fb923c",
+                formula: `AGI ${agi}\nfloor((${agi} − 5) / 2) = ${initVal}\nAdded to d6 initiative roll`,
+              },
+              ...(derivedStats.armor_bonus > 0 ? [{
+                icon: "round-shield", label: "Armor", value: `+${derivedStats.armor_bonus}`, color: "#a78bfa",
+                formula: `VIT ${vit}\nfloor((${vit} − 5) / 4) = +${derivedStats.armor_bonus}\nBonus armor on top of gear`,
+              }] : []),
+            ];
+            return (
+              <div style={{ display: "grid", gridTemplateColumns: `repeat(${stats.length}, 1fr)`, gap: 5 }}>
+                {stats.map((s) => <DerivedStatCard key={s.label} {...s} />)}
+              </div>
+            );
+          })()}
           {hasUnspentPoints && onSpend && (
             <div style={{ marginTop: 10, padding: "8px 10px", background: "#0f172a", borderRadius: 6, border: "1px solid #3b82f6" }}>
               <div style={{ fontSize: 11, color: "#7dd3fc", marginBottom: 7 }}>
@@ -4522,6 +4593,10 @@ function InventoryFullScreen({
   const isMobile = useIsMobile();
   const activeItem = activeItemId != null ? items.find((i) => i.id === activeItemId) ?? null : null;
 
+  // Require 5px of movement before a drag activates — lets regular clicks
+  // fire on doll slots and pack items without starting an unintended drag.
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
+
   function equippedForSlot(slot: EquipSlot): Item | undefined {
     return items.find((i) => i.equipped && (
       i.slot === slot
@@ -4616,7 +4691,7 @@ function InventoryFullScreen({
           </div>
         </div>
 
-        <DndContext onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
+        <DndContext sensors={sensors} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
           {isMobile ? (
             /* ── Mobile: tab bar + single-panel view ── */
             <div style={{ display: "flex", flexDirection: "column", flex: 1, overflow: "hidden" }}>
@@ -6634,9 +6709,14 @@ function Stats({ children }: { children: React.ReactNode }) {
   );
 }
 
-function Stat({ label, value, icon }: { label: string; value: React.ReactNode; icon?: React.ReactNode }) {
+function Stat({ label, value, icon, tooltip }: { label: string; value: React.ReactNode; icon?: React.ReactNode; tooltip?: string }) {
+  const [hovered, setHovered] = useState(false);
   return (
-    <div style={{ padding: 12, background: "#1d1f23", borderRadius: 8, display: "flex", alignItems: "center", gap: 12 }}>
+    <div
+      style={{ padding: 12, background: "#1d1f23", borderRadius: 8, display: "flex", alignItems: "center", gap: 12, position: "relative", cursor: tooltip ? "default" : undefined }}
+      onMouseEnter={() => tooltip && setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+    >
       {icon && (
         <div style={{ flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", width: 36, height: 36 }}>
           {icon}
@@ -6650,6 +6730,19 @@ function Stat({ label, value, icon }: { label: string; value: React.ReactNode; i
           {value}
         </div>
       </div>
+      {tooltip && hovered && (
+        <div style={{
+          position: "absolute", bottom: "calc(100% + 6px)", left: 0,
+          background: "#0e1014", border: "1px solid #2a2d33",
+          borderRadius: 7, padding: "7px 10px", zIndex: 50,
+          minWidth: 180, maxWidth: 260,
+          boxShadow: "0 4px 16px rgba(0,0,0,0.7)",
+          pointerEvents: "none", whiteSpace: "pre-line",
+        }}>
+          <div style={{ fontSize: 10, color: "#6b7280", textTransform: "uppercase", letterSpacing: 0.8, marginBottom: 4 }}>{label}</div>
+          <div style={{ fontSize: 11, color: "#c9cdd4", lineHeight: 1.55, fontFamily: "monospace" }}>{tooltip}</div>
+        </div>
+      )}
     </div>
   );
 }
@@ -7709,7 +7802,9 @@ function itemIconColor(item: {
 const RARITY_COLOR: Record<Rarity, string> = {
   common: "#8a8f98",
   uncommon: "#16a34a",
-  rare: "#7c83ff",
+  rare: "#3b82f6",
+  epic: "#a855f7",
+  legendary: "#f59e0b",
 };
 
 const EFFECT_COLOR: Record<EffectType, string> = {
@@ -7738,7 +7833,7 @@ function groupByType(items: Item[]): Partial<Record<ItemType, Item[]>> {
   return out;
 }
 
-const RARITY_RANK: Record<Rarity, number> = { common: 0, uncommon: 1, rare: 2 };
+const RARITY_RANK: Record<Rarity, number> = { common: 0, uncommon: 1, rare: 2, epic: 3, legendary: 4 };
 
 const card: React.CSSProperties = {
   background: "#15171b",

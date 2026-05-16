@@ -44,7 +44,7 @@ export async function generateOpeningScene(
   // Run scene text + portrait in parallel — both depend only on identity.
   const [scene, artUrl] = await Promise.all([
     generateSceneForMonster(ai, identity.name, character, elite, variant, waveContext),
-    art ? generateMonsterArt(ai, art, identity.name, variant) : Promise.resolve(null),
+    art ? generateMonsterArt(ai, art, identity.name, variant, tier) : Promise.resolve(null),
   ]);
   const result: SceneJson = {
     monster_name: identity.name,
@@ -348,7 +348,7 @@ export async function flavorLootDrop(
   ai: Ai,
   monsterName: string,
   type: "weapon" | "armor" | "consumable" | "magic" | "revive",
-  rarity: "common" | "uncommon" | "rare",
+  rarity: "common" | "uncommon" | "rare" | "epic" | "legendary",
   power: number,
   weaponRange?: "melee" | "ranged" | "focus" | null,
   slot?: string,
@@ -370,11 +370,15 @@ export async function flavorLootDrop(
           ? "a revival item (e.g. phoenix down, defib paddles, hot-fix kit, sacred patch)"
           : "a consumable (e.g. potion, brew, scroll, capsule, energy drink, snack)");
   const rarityHint =
-    rarity === "rare"
-      ? "Rare and weighty — name it like a legendary artifact."
-      : rarity === "uncommon"
-        ? "Uncommon — slightly notable, has some history."
-        : "Common — workmanlike, mildly absurd is fine.";
+    rarity === "legendary"
+      ? "LEGENDARY — this is a mythic relic, name it like something whispered in engineering lore. Grandiose, unforgettable."
+      : rarity === "epic"
+        ? "EPIC quality — prestigious and powerful, name it like something a senior architect would write a blog post about."
+        : rarity === "rare"
+          ? "Rare and weighty — name it like a notable artifact with some history."
+          : rarity === "uncommon"
+            ? "Uncommon — slightly notable, has some history."
+            : "Common — workmanlike, mildly absurd is fine.";
   const powerHint =
     type === "consumable"
       ? `It restores about ${power} HP when used.`
@@ -774,20 +778,33 @@ function slugifyMonsterName(name: string): string {
 // Per-monster portrait via flux-1-schnell. R2-keyed by name slug so the same
 // monster always serves the same image (and quickly from cache on repeats).
 // Fail-soft: any error returns null and the scene renders without an image.
+// Returns a size descriptor phrase based on monster tier/level, used to
+// convey scale in the image prompt. Higher tiers produce larger, more
+// imposing creatures so players can read danger at a glance.
+function monsterSizeHint(tier: number): string {
+  if (tier <= 3) return "small creature, could fit in your palm, non-threatening, tiny";
+  if (tier <= 6) return "medium-sized creature, about knee-height, slightly menacing";
+  if (tier <= 9) return "human-sized creature, clearly dangerous and imposing";
+  if (tier <= 14) return "large creature, larger than a human, hulking and fearsome";
+  return "massive hulking creature, towers over humans, terrifying presence";
+}
+
 export async function generateMonsterArt(
   ai: Ai,
   art: ArtTarget,
   monsterName: string,
   variant: SceneVariant,
+  tier = 1,
 ): Promise<string | null> {
   const slug = slugifyMonsterName(monsterName);
   const key = `art/${MONSTER_ART_VERSION}/${slug}.png`;
+  const sizeHint = monsterSizeHint(tier);
   const variantHint =
     variant === "boss"
-      ? " dramatic boss creature, looming, more imposing composition,"
+      ? ` dramatic boss creature, looming, more imposing composition, ${sizeHint},`
       : variant === "gauntlet-wave"
-        ? " a single creature, mid-tier henchman energy,"
-        : " a single creature, fantasy interpretation,";
+        ? ` a single creature, mid-tier henchman energy, ${sizeHint},`
+        : ` a single creature, fantasy interpretation, ${sizeHint},`;
   // SUBJECT first — defines what's painted. We treat the monster name as a
   // literal noun phrase to render, not a fantasy warrior's title. Examples
   // anchor flux on the "break compound name → show the thing" pattern.

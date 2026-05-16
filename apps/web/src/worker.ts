@@ -406,6 +406,8 @@ const RARITY_ADJ: Record<string, string> = {
   common: "Worn",
   uncommon: "Sturdy",
   rare: "Resplendent",
+  epic: "Illustrious",
+  legendary: "Mythic",
 };
 const TYPE_NOUN: Record<string, string> = {
   weapon: "Blade",

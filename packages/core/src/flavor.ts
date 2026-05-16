@@ -273,6 +273,8 @@ export const FOCUS_POWER_BY_RARITY: Record<Rarity, number> = {
   common: 2,
   uncommon: 4,
   rare: 6,
+  epic: 9,
+  legendary: 12,
 };
 
 // Probability that a random "weapon" roll becomes a focus instead of
@@ -282,7 +284,7 @@ export const FOCUS_POWER_BY_RARITY: Record<Rarity, number> = {
 export const FOCUS_WEAPON_ROLL_CHANCE = 0.25;
 
 export const SHIELD_CAP_MULTIPLIER = 2; // shield caps at SHIELD_CAP_MULTIPLIER × max_hp
-export type Rarity = "common" | "uncommon" | "rare";
+export type Rarity = "common" | "uncommon" | "rare" | "epic" | "legendary";
 
 export const MAX_MANA_CAP = 5;
 
@@ -1132,13 +1134,19 @@ function rollItemType(): ItemType {
 }
 
 // Rarity weights skew rarer as the monster tier rises.
+// Epic unlocks at tier 3 (5% → 12% at tier 7+).
+// Legendary unlocks at tier 5 (2% → 6% at tier 7+).
 function rollRarity(tier: number): Rarity {
   const t = Math.max(1, tier);
+  const legendaryChance = t >= 5 ? Math.min(0.06, 0.02 + 0.01 * (t - 5)) : 0;
+  const epicChance = t >= 3 ? Math.min(0.12, 0.05 + 0.02 * (t - 3)) : 0;
   const rareChance = Math.min(0.25, 0.05 + 0.05 * (t - 1));
   const uncommonChance = Math.min(0.45, 0.25 + 0.05 * (t - 1));
   const r = Math.random();
-  if (r < rareChance) return "rare";
-  if (r < rareChance + uncommonChance) return "uncommon";
+  if (r < legendaryChance) return "legendary";
+  if (r < legendaryChance + epicChance) return "epic";
+  if (r < legendaryChance + epicChance + rareChance) return "rare";
+  if (r < legendaryChance + epicChance + rareChance + uncommonChance) return "uncommon";
   return "common";
 }
 
@@ -1146,43 +1154,56 @@ function rollRarity(tier: number): Rarity {
 //   weapon/armor → flat modifier added to attack/cast (weapon) or subtracted /2 from incoming dmg (armor)
 //   consumable   → HP healed on `<cmd> use`
 //   magic        → max_mana increase on `<cmd> use` (capped at MAX_MANA_CAP)
-function rollPower(type: ItemType, rarity: Rarity): number {
+//
+// Weapon and armor power scales with monster tier (+2 base per tier above 1)
+// so gear from higher-tier fights is meaningfully better regardless of rarity.
+// T1 base ranges are preserved as-is for backwards compat.
+function rollPower(type: ItemType, rarity: Rarity, tier = 1): number {
   if (type === "consumable") {
     // Rolled consumables are rare-only post-staples-rebalance; the
     // uncommon/common branches stay for backwards-compat with older saved
     // items (legacy rolls might still be in inventories) but new drops only
     // hit the rare branch via the forced-rarity in rollItem/rollMerchantItem.
-    // Rare range bumped from 26-35 → 31-50 so rare rolls visibly outclass
-    // the Greater Health Potion (25 HP) — these are premium drops, should
-    // feel like a meaningful pull.
-    if (rarity === "rare") return 30 + rollDice(20);      // 31-50
-    if (rarity === "uncommon") return 12 + rollDice(7);   // 13-18 (legacy)
-    return 5 + rollDice(4);                               // 6-8 (legacy)
+    // Heal value scales +5 HP per tier so drops stay useful as max_hp grows.
+    const hpScale = (Math.max(1, tier) - 1) * 5;
+    if (rarity === "legendary") return 55 + hpScale + rollDice(20);  // 56-75 at T1
+    if (rarity === "epic") return 42 + hpScale + rollDice(13);       // 43-55 at T1
+    if (rarity === "rare") return 30 + hpScale + rollDice(20);       // 31-50 at T1
+    if (rarity === "uncommon") return 12 + hpScale + rollDice(7);    // 13-18 (legacy)
+    return 5 + hpScale + rollDice(4);                                // 6-8 (legacy)
   }
   if (type === "magic") {
-    // Granular max_mana boost. Rarity tiers are flat — caller clamps to MAX_MANA_CAP.
+    // max_mana boost — flat by rarity, capped by caller at MAX_MANA_CAP.
+    // Tier-invariant: mana pools don't scale with level.
+    if (rarity === "legendary") return 5;
+    if (rarity === "epic") return 4;
     if (rarity === "rare") return 3;
     if (rarity === "uncommon") return 2;
     return 1;
   }
   if (type === "revive") {
-    // Single-tier revive — power is the % HP restored on use.
+    // % HP restored on use — tier-invariant (always heals a % of current max_hp).
+    if (rarity === "legendary" || rarity === "epic") return 100;
     if (rarity === "rare") return 100;
     if (rarity === "uncommon") return 75;
     return 50;
   }
-  // weapon | armor
-  if (rarity === "rare") return 5 + rollDice(2);          // 6-7
-  if (rarity === "uncommon") return 3 + rollDice(2);      // 4-5
-  return 1 + rollDice(2);                                 // 2-3
+  // weapon | armor — scale base by +2 per tier above 1.
+  // T1: common 2-3, uncommon 4-5, rare 6-7, epic 9-10, legendary 12-15
+  // T3: common 6-7, uncommon 8-9, rare 10-11, epic 13-14, legendary 16-19
+  const tb = (Math.max(1, tier) - 1) * 2;
+  if (rarity === "legendary") return tb + 11 + rollDice(4);
+  if (rarity === "epic") return tb + 8 + rollDice(2);
+  if (rarity === "rare") return tb + 5 + rollDice(2);
+  if (rarity === "uncommon") return tb + 3 + rollDice(2);
+  return tb + 1 + rollDice(2);
 }
 
-// Power for focus weapons specifically — flat per rarity (no dice
-// randomness). 2/4/6 ladder matches the average roll of regular weapons
-// at each rarity while keeping the value predictable for support
-// builds that need to know "this Rare will heal for +6 every cast."
-function rollFocusPower(rarity: Rarity): number {
-  return FOCUS_POWER_BY_RARITY[rarity];
+// Focus weapon heal/shield bonus — flat per rarity + tier scaling.
+// Predictable output matters more than weapon power randomness for healer builds.
+function rollFocusPower(rarity: Rarity, tier = 1): number {
+  const tb = (Math.max(1, tier) - 1) * 2;
+  return FOCUS_POWER_BY_RARITY[rarity] + tb;
 }
 
 // Phase 2: when the base roll lands on "armor", subdivide into one of 7
@@ -1193,20 +1214,23 @@ function rollArmorSlot(tier: number): ItemRoll {
   const rarity = rollRarity(tier);
   const r = Math.random();
   const statBonus = (key: string, v: number) => ({ [key]: v });
-  const bonusAmt = rarity === "rare" ? 3 : rarity === "uncommon" ? 2 : 1;
+  // Stat bonuses on accessory slots scale +1 every 2 tiers above 1 so rings/amulets
+  // from higher-tier fights remain upgrade candidates against the same rarity drop.
+  const tierStatBoost = Math.floor((Math.max(1, tier) - 1) / 2);
+  const bonusAmt = (rarity === "legendary" ? 6 : rarity === "epic" ? 5 : rarity === "rare" ? 3 : rarity === "uncommon" ? 2 : 1) + tierStatBoost;
 
   if (r < 0.50) {
     // Body armor — standard slot, existing power formula.
-    return { type: "armor", rarity, power: rollPower("armor", rarity), slot: "body" };
+    return { type: "armor", rarity, power: rollPower("armor", rarity, tier), slot: "body" };
   }
   if (r < 0.65) {
     // Helmet — half-armor contribution (floor(power/2) in buildInitialCombatState).
-    return { type: "armor", rarity, power: rollPower("armor", rarity), slot: "helmet",
+    return { type: "armor", rarity, power: rollPower("armor", rarity, tier), slot: "helmet",
       stat_bonus: statBonus(Math.random() < 0.5 ? "int_stat" : "vit", bonusAmt) };
   }
   if (r < 0.77) {
     // Pants — quarter-armor contribution.
-    return { type: "armor", rarity, power: rollPower("armor", rarity), slot: "pants",
+    return { type: "armor", rarity, power: rollPower("armor", rarity, tier), slot: "pants",
       stat_bonus: statBonus("agi", bonusAmt) };
   }
   if (r < 0.87) {
@@ -1228,7 +1252,7 @@ function rollArmorSlot(tier: number): ItemRoll {
       stat_bonus: statBonus(key, bonusAmt) };
   }
   // Shield (off_hand) — adds power to armor_power; small +VIT stat bonus.
-  return { type: "armor", rarity, power: rollPower("armor", rarity), slot: "off_hand",
+  return { type: "armor", rarity, power: rollPower("armor", rarity, tier), slot: "off_hand",
     item_subtype: "shield",
     stat_bonus: statBonus("vit", bonusAmt) };
 }
@@ -1255,8 +1279,8 @@ export function rollItem(tier: number, forShop = false): ItemRoll {
   // ladder by rarity — predictable support output beats the +1-spread
   // randomness for healer builds.
   const power = type === "weapon" && weapon_range === "focus"
-    ? rollFocusPower(rarity)
-    : rollPower(type, rarity);
+    ? rollFocusPower(rarity, tier)
+    : rollPower(type, rarity, tier);
   return { type, rarity, power, weapon_range, slot: type === "weapon" ? "main_hand" : undefined };
 }
 
@@ -1287,8 +1311,11 @@ export function rollMerchantItem(tier: number): ItemRoll {
   // Same rare-only consumable rule as rollItem — merchants' rolled stock
   // doesn't compete with their always-in-stock staples on basic potions.
   const rarity = type === "consumable" ? "rare" : rollRarity(tier);
-  const power = rollPower(type, rarity);
+  if (type === "armor") return rollArmorSlot(tier);
   const weapon_range = type === "weapon" ? rollWeaponRange() : undefined;
+  const power = type === "weapon" && weapon_range === "focus"
+    ? rollFocusPower(rarity, tier)
+    : rollPower(type, rarity, tier);
   return { type, rarity, power, weapon_range };
 }
 
@@ -1301,6 +1328,8 @@ export const RARITY_BADGE: Record<Rarity, string> = {
   common: "⚪",
   uncommon: "🟢",
   rare: "🟣",
+  epic: "🟡",
+  legendary: "🔶",
 };
 
 // Flat per-rarity pricing. Power varies within rarity but the price doesn't —
@@ -1309,6 +1338,8 @@ export const SHOP_PRICE: Record<Rarity, number> = {
   common: 15,
   uncommon: 50,
   rare: 150,
+  epic: 400,
+  legendary: 900,
 };
 
 // Magic items grant permanent max_mana — priced higher than consumables/gear of the
@@ -1317,6 +1348,8 @@ export const MAGIC_PRICE: Record<Rarity, number> = {
   common: 100,
   uncommon: 250,
   rare: 500,
+  epic: 1000,
+  legendary: 2000,
 };
 
 // Revive items pull a downed party member back into the fight. Pricier than gear,
@@ -1325,6 +1358,8 @@ export const REVIVE_PRICE: Record<Rarity, number> = {
   common: 150,
   uncommon: 280,
   rare: 450,
+  epic: 700,
+  legendary: 1000,
 };
 
 // Tool: tactical consumables — damage (Caffeine Bomb / Hotfix Grenade), heal-
@@ -1338,6 +1373,8 @@ export const TOOL_PRICE: Record<Rarity, number> = {
   common: 25,
   uncommon: 75,
   rare: 200,
+  epic: 450,
+  legendary: 900,
 };
 
 // Scroll: party-affecting / boss-altering rituals (Rebase Scroll, Production Outage).
@@ -1346,6 +1383,8 @@ export const SCROLL_PRICE: Record<Rarity, number> = {
   common: 100,
   uncommon: 250,
   rare: 500,
+  epic: 1000,
+  legendary: 2000,
 };
 
 export function priceFor(type: ItemType, rarity: Rarity): number {

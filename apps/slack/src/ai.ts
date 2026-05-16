@@ -1,7 +1,7 @@
 // Workers AI helpers. Uses Llama 3.1 8B Instruct — cheap, plenty good for flavor text.
 
-import type { Character, DungeonGraph, DungeonNode, DungeonObject, MonsterSpec, SceneJson } from "@gantt-quest/db";
-import { fallbackMonsterName, fallbackSceneText } from "@gantt-quest/core";
+import type { Character, DungeonGraph, DungeonNode, DungeonObject, LootOption, MonsterSpec, SceneJson } from "@gantt-quest/db";
+import { fallbackMonsterName, fallbackSceneText, rollItem } from "@gantt-quest/core";
 
 const MODEL = "@cf/meta/llama-3.1-8b-instruct";
 
@@ -78,7 +78,7 @@ export async function generateOpeningScene(
   // a target (e.g. test paths) or returns null on failure.
   const [scene, artUrl] = await Promise.all([
     generateSceneForMonster(ai, identity.name, character, elite, variant, waveContext),
-    art ? generateMonsterArt(ai, art, identity.name, variant) : Promise.resolve(null),
+    art ? generateMonsterArt(ai, art, identity.name, variant, tier) : Promise.resolve(null),
   ]);
 
   const result: SceneJson = {
@@ -356,21 +356,34 @@ const MONSTER_STYLE_ANCHOR =
 //
 // Fail-soft: any error returns null. The caller's scene still renders, just
 // without an image block. We never block a quest on art.
+// Returns a size descriptor phrase based on monster tier/level, used to
+// convey scale in the image prompt. Higher tiers produce larger, more
+// imposing creatures so players can read danger at a glance.
+function monsterSizeHint(tier: number): string {
+  if (tier <= 3) return "small creature, could fit in your palm, non-threatening, tiny";
+  if (tier <= 6) return "medium-sized creature, about knee-height, slightly menacing";
+  if (tier <= 9) return "human-sized creature, clearly dangerous and imposing";
+  if (tier <= 14) return "large creature, larger than a human, hulking and fearsome";
+  return "massive hulking creature, towers over humans, terrifying presence";
+}
+
 async function generateMonsterArt(
   ai: Ai,
   art: ArtTarget,
   monsterName: string,
   variant: SceneVariant,
+  tier = 1,
 ): Promise<string | null> {
   const slug = slugifyMonsterName(monsterName);
   const key = `art/${MONSTER_ART_VERSION}/${slug}.png`;
 
+  const sizeHint = monsterSizeHint(tier);
   const variantHint =
     variant === "boss"
-      ? " dramatic boss creature, looming, more imposing composition,"
+      ? ` dramatic boss creature, looming, more imposing composition, ${sizeHint},`
       : variant === "gauntlet-wave"
-      ? " a single creature, mid-tier henchman energy,"
-      : " a single creature, fantasy interpretation,";
+      ? ` a single creature, mid-tier henchman energy, ${sizeHint},`
+      : ` a single creature, fantasy interpretation, ${sizeHint},`;
 
   // SUBJECT is the literal noun phrase from the monster's name. We separate it
   // from the style deliberately — flux's default fantasy-art training pulls
@@ -423,6 +436,50 @@ export async function generateMonsterArtPhase2(
   const prompt = `${subject} ${MONSTER_STYLE_ANCHOR} ${NEGATIVES}`;
   return generateAndCacheArt(ai, art, key, prompt, `monster-p2:${monsterName}`);
 }
+
+const ROOM_ART_VERSION = "v1";
+
+// Generates a dungeon room illustration for the graph dungeon. Cached per
+// room slug so the same room always shows the same picture after its first
+// visit. Room art is intentionally lazier than monster art — we don't need
+// the full monster-subject breakdown, just a scene impression.
+//
+// Key is stable: room-slug + dungeon-theme-slug, versioned by ROOM_ART_VERSION.
+// Returns null on any failure; caller skips the image block.
+export async function generateRoomArt(
+  ai: Ai,
+  art: ArtTarget,
+  roomId: string,
+  roomName: string,
+  roomDescription: string,
+): Promise<string | null> {
+  const slug = slugifyMonsterName(`${roomId}-${roomName}`);
+  const key = `art/rooms/${ROOM_ART_VERSION}/${slug}.png`;
+
+  const subject =
+    `ILLUSTRATION SUBJECT: a dungeon room called "${roomName}". Scene: ${roomDescription.slice(0, 200)}.` +
+    ` Wide establishing shot, no characters, environment only.`;
+
+  const prompt = `${subject} ${MONSTER_STYLE_ANCHOR} ${NEGATIVES}`;
+  return generateAndCacheArt(ai, art, key, prompt, `room:${roomName}`);
+}
+
+// Personality traits injected into the character portrait prompt to push
+// flux toward a unique emotional/postural read per roll. One is picked
+// randomly so two characters of the same class look distinct — different
+// expression, stance, or aura even when the class descriptor is identical.
+const CHARACTER_TRAITS = [
+  "battle-worn and world-weary, thousand-yard stare",
+  "bright-eyed and eager, barely containing nervous energy",
+  "cocky and self-assured, slight smirk, chin raised",
+  "haunted and intense, shadowed eyes, coiled tension",
+  "cheerful and irreverent, slightly disheveled",
+  "stoic and unreadable, arms crossed, jaw set",
+  "curious and distracted, peering at something just off-frame",
+  "exhausted but resolute, mid-breath, gear askew",
+  "calm and meditative, serene half-smile",
+  "fierce and focused, eyes locked forward, weapons at the ready",
+];
 
 // Per-class scene descriptors used by the per-character portrait prompt.
 // These are stripped-down versions of the singleton class_* banners — same
@@ -481,6 +538,12 @@ export async function getOrScheduleCharacterArt(
 
   // Cache miss — fire the per-character gen as background work.
   const descriptor = CLASS_DESCRIPTOR[classId] ?? "Adventurer in fantasy attire, dramatic lighting.";
+  // Pick a random personality trait so two same-class rolls look distinct —
+  // different expression, stance, or aura. The trait is seeded by the
+  // character name's first byte so regenerations are stable for the same
+  // name, but different names (almost always) draw different traits.
+  const traitIdx = character.name.charCodeAt(0) % CHARACTER_TRAITS.length;
+  const trait = CHARACTER_TRAITS[traitIdx];
   // Anchor gender so regenerations of the same character don't swing between
   // male and female interpretations. Empty hint for legacy nulls lets flux
   // pick freely.
@@ -491,9 +554,10 @@ export async function getOrScheduleCharacterArt(
     : "";
   const subject =
     `Single-figure character portrait of "${character.name}", a fantasy ${character.class}.${genderHint}` +
+    ` Personality and bearing: ${trait}.` +
     ` Treat the character name (especially any epithet like "the Patient" or "Stack-Cleaver") LITERALLY — interpret what the words suggest about appearance, posture, gear, scars, or aura.` +
     ` ${descriptor}` +
-    ` Three-quarter view, single character against a moody background.`;
+    ` Three-quarter view, RPG fantasy art style, single character against a moody background.`;
   const prompt = `${subject} ${STYLE_ANCHOR} ${NEGATIVES}`;
   ctx.waitUntil(generateAndCacheArt(ai, art, charKey, prompt, `character:${character.name}`));
 
@@ -1034,7 +1098,7 @@ export async function flavorLootDrop(
   ai: Ai,
   monsterName: string,
   type: "weapon" | "armor" | "consumable" | "magic" | "revive",
-  rarity: "common" | "uncommon" | "rare",
+  rarity: "common" | "uncommon" | "rare" | "epic" | "legendary",
   power: number,
   weaponRange?: "melee" | "ranged" | "focus",
   slot?: string,
@@ -1054,7 +1118,9 @@ export async function flavorLootDrop(
      type === "revive" ? "a revival item (e.g. phoenix down, defib paddles, hot-fix kit, sacred patch)" :
                          "a consumable (e.g. potion, brew, scroll, capsule, energy drink, snack)");
   const rarityHint =
-    rarity === "rare" ? "Rare and weighty — name it like a legendary artifact." :
+    rarity === "legendary" ? "LEGENDARY — this is a mythic relic, name it like something whispered in the halls of engineering lore. Grandiose, unforgettable." :
+    rarity === "epic" ? "EPIC quality — prestigious and powerful, name it like something a senior architect would write a blog post about." :
+    rarity === "rare" ? "Rare and weighty — name it like a notable artifact with some history." :
     rarity === "uncommon" ? "Uncommon — slightly notable, has some history." :
     "Common — workmanlike, mildly absurd is fine.";
   const powerHint =
@@ -1801,7 +1867,7 @@ export async function generateDungeonGraph(
       const hpFloor = isBoss ? 28 + level * 3 : 12 + level * 2;
       const hpCeil  = isBoss ? 40 + level * 5 : 22 + level * 3;
       const identity = await generateMonsterIdentity(ai, isBoss ? "boss" : "gauntlet-wave", hpFloor, hpCeil, recentNames);
-      const artUrl = isBoss && art ? await generateMonsterArt(ai, art, identity.name, "boss") : null;
+      const artUrl = isBoss && art ? await generateMonsterArt(ai, art, identity.name, "boss", tier) : null;
       const spec: MonsterSpec = {
         name: identity.name,
         hp: identity.hp,
@@ -1815,13 +1881,45 @@ export async function generateDungeonGraph(
   );
   const monsterByRoom = new Map(monsterEntries);
 
+  // Pre-roll loot specs for the two loot-bearing rooms. Names/flavor are
+  // placeholders — the take command calls flavorLootDrop at pickup time so
+  // each player sees freshly-generated text rather than frozen graph text.
+  const rollToLootSpec = (tier: number): LootOption => {
+    const r = rollItem(tier);
+    return {
+      name: "Dungeon Find",
+      item_type: r.type,
+      power: r.power,
+      rarity: r.rarity,
+      flavor: "Found in the depths.",
+      weapon_range: r.weapon_range ?? null,
+      slot: r.slot ?? null,
+      stat_bonus: (r.stat_bonus ?? null) as Record<string, number> | null,
+      item_subtype: r.item_subtype ?? null,
+    };
+  };
+  // junction gets an uncommon-biased roll (safe rest-stop feel);
+  // room_2b (optional branch) gets a tier+1 roll as the risk/reward payoff.
+  const junctionLoot = rollToLootSpec(baseTier);
+  const branchLoot   = rollToLootSpec(Math.min(baseTier + 1, 5));
+
   const nodes: Record<string, DungeonNode> = {};
   for (const slot of GRAPH_TOPOLOGY) {
     const desc = descriptions[slot.id] ?? { name: slot.id, text: "A room in the dungeon." };
-    const objects: DungeonObject[] = slot.id === "junction"
-      ? [{ id: "sign", name: "Faded Directory Sign", takeable: false, used: false,
-           on_use: { effect: "flavor", text: "The sign reads: 'All paths lead to the same deadline.'" } }]
-      : [];
+    let objects: DungeonObject[] = [];
+    if (slot.id === "junction") {
+      objects = [
+        { id: "sign", name: "Faded Directory Sign", takeable: false, used: false,
+          on_use: { effect: "flavor", text: "The sign reads: 'All paths lead to the same deadline.'" } },
+        { id: "locker", name: "Maintenance Locker", takeable: true, used: false,
+          on_use: { effect: "spawn_item", item: junctionLoot } },
+      ];
+    } else if (slot.id === "room_2b") {
+      objects = [
+        { id: "cache", name: "Abandoned Cache", takeable: true, used: false,
+          on_use: { effect: "spawn_item", item: branchLoot } },
+      ];
+    }
     const monster = monsterByRoom.get(slot.id);
     nodes[slot.id] = {
       id: slot.id,

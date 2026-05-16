@@ -22,6 +22,15 @@ function nameOf(state: CombatState, actorId: string): string {
   return `*${monster?.name ?? "Monster"}*`;
 }
 
+// Returns the name of the first live monster, or the last monster if all are
+// dead. Used for events that don't carry a monster actor ID (monster_attack,
+// boss_phase_transition, etc.). When Track B adds actor IDs to those events
+// this helper can be replaced with nameOf() calls.
+function activeMonsterName(state: CombatState): string {
+  const live = state.monsters.find((m) => m.hp > 0);
+  return (live ?? state.monsters[0])?.name ?? "Monster";
+}
+
 // Compact HP bar — 10 segments, █ filled and ░ empty. Matches the web
 // client's stat-card aesthetic for cross-surface visual continuity.
 function hpBar(hp: number, maxHp: number, segments = 10): string {
@@ -76,19 +85,19 @@ function renderEvent(state: CombatState, e: CombatEvent): string {
       return "";
 
     case "player_hit":
-      return `${e.crit ? "💥 *CRIT!* " : ""}${nameOf(state, e.actor)} hits *${state.monsters[0].name}* for *${e.damage}* \`${e.formula}\`.`;
+      return `${e.crit ? "💥 *CRIT!* " : ""}${nameOf(state, e.actor)} hits ${nameOf(state, e.target)} for *${e.damage}* \`${e.formula}\`.`;
 
     case "monster_attack":
       // Show absorbed-by-shield separately when meaningful — matches the
       // legacy "shield absorbed N, you took M" cadence so a player whose
       // shield held knows the buff is working.
       if (e.shield_absorbed > 0 && e.hp_damage === 0) {
-        return `🛡 *${state.monsters[0].name}* hits ${nameOf(state, e.target)} for *${e.damage_after_armor}* — shield absorbs all ${e.shield_absorbed}.`;
+        return `🛡 *${activeMonsterName(state)}* hits ${nameOf(state, e.target)} for *${e.damage_after_armor}* — shield absorbs all ${e.shield_absorbed}.`;
       }
       if (e.shield_absorbed > 0) {
-        return `🩸 *${state.monsters[0].name}* hits ${nameOf(state, e.target)} for *${e.hp_damage}* HP (shield absorbed ${e.shield_absorbed}).`;
+        return `🩸 *${activeMonsterName(state)}* hits ${nameOf(state, e.target)} for *${e.hp_damage}* HP (shield absorbed ${e.shield_absorbed}).`;
       }
-      return `🩸 *${state.monsters[0].name}* hits ${nameOf(state, e.target)} for *${e.hp_damage}* HP.`;
+      return `🩸 *${activeMonsterName(state)}* hits ${nameOf(state, e.target)} for *${e.hp_damage}* HP.`;
 
     case "monster_splash": {
       const parts = e.targets.map((t) =>
@@ -96,29 +105,29 @@ function renderEvent(state: CombatState, e: CombatEvent): string {
           ? `${nameOf(state, t.target)} *${t.hp_damage}* HP (shield −${t.shield_absorbed})`
           : `${nameOf(state, t.target)} *${t.hp_damage}* HP`
       );
-      return `💥 *${state.monsters[0].name}* splashes everyone — ${parts.join(", ")}.`;
+      return `💥 *${activeMonsterName(state)}* splashes everyone — ${parts.join(", ")}.`;
     }
 
     case "monster_dodged":
       return `💨 ${nameOf(state, e.target)} sidesteps the blow — dodged!`;
 
     case "monster_target_blocked":
-      return `👁 *${state.monsters[0].name}* lashes out but finds nothing to strike — vanish holds.`;
+      return `👁 *${activeMonsterName(state)}* lashes out but finds nothing to strike — vanish holds.`;
 
     case "monster_target_redirected":
       return `🎯 ${nameOf(state, e.from)} draws the swing onto themself (${e.reason}).`;
 
     case "monster_swing_skipped":
-      return `🚧 *${state.monsters[0].name}* loses the turn — containerized.`;
+      return `🚧 *${activeMonsterName(state)}* loses the turn — containerized.`;
 
     case "boss_phase_transition":
-      return `👑 *${state.monsters[0].name}* shifts — *phase ${e.new_phase}*!`;
+      return `👑 *${activeMonsterName(state)}* shifts — *phase ${e.new_phase}*!`;
 
     case "fighter_down":
       return `💀 ${nameOf(state, e.target)} falls.`;
 
     case "monster_down":
-      return `⚔️ ${nameOf(state, e.killed_by)} fells *${state.monsters[0].name}*.`;
+      return `⚔️ ${nameOf(state, e.killed_by)} fells *${activeMonsterName(state)}*.`;
 
     case "wave_transition":
       return `🌊 *Wave ${e.new_wave}/${e.total_waves}* — ${e.from_monster} falls, *${e.to_monster}* steps up (${e.to_max_hp} HP).`;
@@ -138,7 +147,7 @@ function renderEvent(state: CombatState, e: CombatEvent): string {
     case "flee_check":
       return e.success
         ? `🏃 ${nameOf(state, e.actor)} cracks the line (rolled ${e.total} vs DC ${e.dc}).`
-        : `💢 ${nameOf(state, e.actor)} can't break free (rolled ${e.total} vs DC ${e.dc}) — *${state.monsters[0].name}* gets a free swing.`;
+        : `💢 ${nameOf(state, e.actor)} can't break free (rolled ${e.total} vs DC ${e.dc}) — *${activeMonsterName(state)}* gets a free swing.`;
 
     case "fled":
       return `🏃 The party flees.`;
@@ -164,7 +173,7 @@ function renderEvent(state: CombatState, e: CombatEvent): string {
       return `🛡 ${nameOf(state, e.actor)} taunts — next ${e.swings} swings forced.`;
 
     case "ability_containerize":
-      return `📦 *Containerize* — *${state.monsters[0].name}* loses its next ${e.swings} swings.`;
+      return `📦 *Containerize* — *${activeMonsterName(state)}* loses its next ${e.swings} swings.`;
 
     case "ability_regression_shield":
       return `🛡 ${nameOf(state, e.actor)} ripples regression shields: ${e.grants.map((g) => `${nameOf(state, g.target)} +${g.amount}`).join(", ")}.`;
@@ -180,7 +189,7 @@ function renderEvent(state: CombatState, e: CombatEvent): string {
 
     case "ability_foresee":
       return e.predicted_target
-        ? `🔮 ${nameOf(state, e.actor)} foresees: *${state.monsters[0].name}* targets ${nameOf(state, e.predicted_target)} for ${e.damage_lo}–${e.damage_hi} damage.`
+        ? `🔮 ${nameOf(state, e.actor)} foresees: *${activeMonsterName(state)}* targets ${nameOf(state, e.predicted_target)} for ${e.damage_lo}–${e.damage_hi} damage.`
         : `🔮 ${nameOf(state, e.actor)} foresees — but the target is unreadable.`;
 
     case "ability_migrate":

@@ -25,6 +25,8 @@ const SVG_ICONS = new Set([
   "blunderbuss", "poison-bottle", "arcing-bolt", "wax-seal",
   // Item slot icons
   "armored-pants", "heavy-helm", "hand", "ring", "gem-chain", "chest-armor",
+  // Derived-stat icons
+  "sword-brandish", "wizard-staff", "target-poster", "coffee-cup", "dodge", "dodging",
 ]);
 
 interface IconProps {

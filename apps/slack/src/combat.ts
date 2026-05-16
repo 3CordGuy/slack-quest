@@ -92,24 +92,24 @@ export function isBossPhaseTransition(
   return oldHp >= monsterMaxHp / 2 && newHp < monsterMaxHp / 2;
 }
 
-// Heal: 1d6 + magic_mod HP restored. Caster's class mod is the lever — physical
-// classes (mag_mod 0) heal for 1-7; casters (mag_mod 2) heal for 3-8.
+// Heal: 2d6 + magic_mod HP restored. 2d6 gives a tighter bell-curve than 1d6
+// so healing is reliable enough to be meaningful without being a free win.
 export function resolveHeal(
   magicMod: number,
   rollFn: (sides: number) => number,
 ): { amount: number; roll: number } {
-  const roll = rollFn(6);
+  const roll = rollFn(6) + rollFn(6);
   const amount = Math.max(1, roll + magicMod);
   return { amount, roll };
 }
 
-// Shield: 1d6 + magic_mod absorbing HP. Same formula shape as heal so caster classes
-// are good at both, intentional.
+// Shield: 2d6 + magic_mod absorbing HP. Matches the heal formula — same
+// caster classes are good at both, intentional.
 export function resolveShield(
   magicMod: number,
   rollFn: (sides: number) => number,
 ): { amount: number; roll: number } {
-  const roll = rollFn(6);
+  const roll = rollFn(6) + rollFn(6);
   const amount = Math.max(1, roll + magicMod);
   return { amount, roll };
 }

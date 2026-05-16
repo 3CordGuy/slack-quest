@@ -160,6 +160,10 @@ export interface CombatState {
   // for backward compatibility with quests created before the unified
   // engine landed — older saved states deserialize cleanly without it.
   drink_buffs?: Record<ActorId, DrinkBuff>;
+  // Anti-pile-on: tracks how many monsters have targeted each fighter in the
+  // current round. Cleared when round advances. Used by pickMonsterTarget to
+  // reduce the chance of multiple monsters focusing the same fighter.
+  round_monster_targets?: { round: number; counts: Record<ActorId, number> };
   // Channel-broadcast idempotency for PR 4's milestone posts. Each
   // milestone key (e.g. "boss_reveal", "phase_2", "down:U123") is
   // recorded the moment the broadcast is queued so a DO crash between
@@ -170,11 +174,11 @@ export interface CombatState {
 
 // Passive tuning knobs. Mirror src/commands.ts constants in main.
 const WARDEN_STARTING_SHIELD = 5;
-const DRUID_PASSIVE_REGEN = 1;
+const DRUID_PASSIVE_REGEN = 2;
 const BARD_AURA_DAMAGE = 1;
 const BARD_AURA_HYMN_DAMAGE = 3;
-const WARLOCK_BLEED_MAGNITUDE = 2;
-const WARLOCK_BLEED_DURATION = 2;
+const WARLOCK_BLEED_MAGNITUDE = 3;
+const WARLOCK_BLEED_DURATION = 3;
 const PALADIN_AUTO_HEAL_AMOUNT = 8;
 const PALADIN_AUTO_HEAL_THRESHOLD = 0.3;
 
@@ -974,8 +978,14 @@ function handleMonsterAct(state: CombatState, roll: RollFn): StepResult {
     return { state: { ...s, status: "defeat" }, events: [...events, { type: "defeat" }] };
   }
 
+  // Anti-pile-on: fetch (or reset) the round-scoped target tally so monsters
+  // in the same round are less likely to all converge on the same fighter.
+  const prevRmt = s.round_monster_targets;
+  const rmtCounts: Record<ActorId, number> =
+    prevRmt && prevRmt.round === s.round ? { ...prevRmt.counts } : {};
+
   // Target selection honors taunt (override) and vanish (filter out).
-  const initialTarget = pickMonsterTarget(aliveFighters, () => roll(101) / 100);
+  const initialTarget = pickMonsterTarget(aliveFighters, () => roll(101) / 100, rmtCounts);
   const vanished = s.ability_state?.vanished ?? {};
   const taunted = s.ability_state?.taunt;
   let target: CombatFighter | null = initialTarget;
@@ -996,7 +1006,7 @@ function handleMonsterAct(state: CombatState, roll: RollFn): StepResult {
     // Vanish blocks this target — re-pick from the non-vanished alive pool.
     const eligible = aliveFighters.filter((f) => (vanished[f.id] ?? 0) <= 0);
     if (eligible.length > 0) {
-      const reroll = pickMonsterTarget(eligible, () => roll(101) / 100);
+      const reroll = pickMonsterTarget(eligible, () => roll(101) / 100, rmtCounts);
       events.push({
         type: "monster_target_redirected",
         from: initialTarget.id,
@@ -1014,6 +1024,13 @@ function handleMonsterAct(state: CombatState, roll: RollFn): StepResult {
       return { state: next, events: [...events, ...turnStartEvent(next)] };
     }
   }
+
+  // Record this monster's target pick so subsequent monsters this round see
+  // the tally and apply reduced weight to already-targeted fighters.
+  if (target !== null) {
+    rmtCounts[target.id] = (rmtCounts[target.id] ?? 0) + 1;
+  }
+  const rmt = { round: s.round, counts: rmtCounts };
 
   // ── Boss splash (AoE) ──
   // Bosses have a chance to forgo single-target targeting and slam the whole
@@ -1069,6 +1086,7 @@ function handleMonsterAct(state: CombatState, roll: RollFn): StepResult {
       fighters: updatedFighters,
       ability_state: tickAbilityCountersAfterSwing(s.ability_state),
       stats: updatedStats,
+      round_monster_targets: rmt,
     };
 
     const allDown = postSplashState.fighters.every((f) => f.hp <= 0);
@@ -1108,7 +1126,7 @@ function handleMonsterAct(state: CombatState, roll: RollFn): StepResult {
 
   if (!landed) {
     // Even a miss consumes one tick of taunt / vanish — the swing happened.
-    const decremented: CombatState = { ...s, ability_state: tickAbilityCountersAfterSwing(s.ability_state) };
+    const decremented: CombatState = { ...s, ability_state: tickAbilityCountersAfterSwing(s.ability_state), round_monster_targets: rmt };
     const next = advanceTurn(decremented);
     return { state: next, events: [...events, ...turnStartEvent(next)] };
   }
@@ -1123,6 +1141,7 @@ function handleMonsterAct(state: CombatState, roll: RollFn): StepResult {
       const decremented: CombatState = {
         ...s,
         ability_state: tickAbilityCountersAfterSwing(s.ability_state),
+        round_monster_targets: rmt,
       };
       const next = advanceTurn(decremented);
       return { state: next, events: [...events, ...turnStartEvent(next)] };
@@ -1181,6 +1200,7 @@ function handleMonsterAct(state: CombatState, roll: RollFn): StepResult {
         damage_taken: (s.stats[target.id]?.damage_taken ?? 0) + hpDamage,
       },
     },
+    round_monster_targets: rmt,
   };
 
   // QA Paladin — Lay on Hands. Trigger if the target survived but dropped

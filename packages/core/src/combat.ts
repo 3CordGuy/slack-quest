@@ -14,12 +14,21 @@ export function positionDamageMod(position: BattlePosition, rawDamage: number): 
 // Picks a monster's target from the alive party, weighted by battle position.
 // Front-row characters are 3× more likely to be hit than back-row. If only back-row
 // fighters remain, the monster targets back. Random injection makes it testable.
-export function pickMonsterTarget<T extends { position: BattlePosition }>(
+export function pickMonsterTarget<T extends { id: string; position: BattlePosition }>(
   fighters: T[],
   random: () => number,
+  alreadyTargeted?: Record<string, number>,
 ): T {
   if (fighters.length === 0) throw new Error("pickMonsterTarget: empty fighters list");
-  const weights = fighters.map((f) => (f.position === "back" ? 1 : 3));
+  // Base weight: front row 3×, back row 1×.
+  // Anti-pile-on: divide by (1 + times already targeted this round) so a
+  // fighter who was just picked by another monster is 2× less likely to get
+  // picked again, 3× less likely if picked twice, etc.
+  const weights = fighters.map((f) => {
+    const base = f.position === "back" ? 1 : 3;
+    const already = alreadyTargeted?.[f.id] ?? 0;
+    return base / (1 + already);
+  });
   const total = weights.reduce((a, b) => a + b, 0);
   let r = random() * total;
   for (let i = 0; i < fighters.length; i++) {

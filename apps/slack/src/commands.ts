@@ -34,6 +34,7 @@ import {
   generateNpcRoom,
   generateDungeonGraph,
   generateOpeningScene,
+  generateRoomArt,
   generateTownName,
   generateTrapArt,
   generateTrapRoom,
@@ -391,9 +392,9 @@ const PALADIN_AUTO_HEAL_THRESHOLD = 0.3; // trigger when target.hp/target.max_hp
 const WARDEN_STARTING_SHIELD = 5;       // shield granted at first action of each fight
 const BARD_AURA_DAMAGE = 1;              // +damage to non-Bard party attacks while a Bard is alive
 const BARD_AURA_HYMN_DAMAGE = 3;         // Battle Hymn boosts the aura to this for HYMN_USES attacks
-const DRUID_PASSIVE_REGEN = 1;           // HP/tick on Druid's own action
-const WARLOCK_BLEED_MAGNITUDE = 2;       // HP/tick of the bleed applied on crit
-const WARLOCK_BLEED_DURATION = 2;        // monster turns the bleed lasts
+const DRUID_PASSIVE_REGEN = 2;           // HP/tick on Druid's own action
+const WARLOCK_BLEED_MAGNITUDE = 3;       // HP/tick of the bleed applied on crit
+const WARLOCK_BLEED_DURATION = 3;        // monster turns the bleed lasts
 const SHOP_RESTOCK_MS = 6 * 60 * 60 * 1000; // 6h channel-wide restock cadence
 // Stock scales with the active community: 6 base, +1 per character above 4, capped
 // at 12 to keep AI-call cost bounded. 8 players → 10 items per restock.
@@ -2498,10 +2499,44 @@ async function handleGraphMove(
   const moveNote = `🧭 <@${payload.user_id}> moves *${directionLabel(dir)}* — *${roomName}*.`;
   const roomText = renderGraphRoom(updatedTarget, updatedGraph, payload.command);
 
-  if (updatedTarget.encounter?.monsters[0]?.art_url) {
-    const m = updatedTarget.encounter.monsters[0];
+  // On first visit, fire room art generation in the background. When it
+  // resolves, save the URL back to the node so subsequent visits show the image.
+  const artTarget = artTargetFromEnv(env);
+  if (firstVisit && artTarget && !updatedTarget.encounter) {
+    ctx.waitUntil(
+      (async () => {
+        const url = await generateRoomArt(
+          env.AI,
+          artTarget,
+          targetId,
+          roomName,
+          updatedTarget.description ?? "",
+        );
+        if (!url) return;
+        // Re-read the scene to get the latest state, then patch in the art URL.
+        const latestQuest = await getActiveQuestForCharacter(env.DB, payload.user_id);
+        if (!latestQuest?.scene.graph) return;
+        const latestGraph = latestQuest.scene.graph;
+        const latestNode = latestGraph.nodes[targetId];
+        if (!latestNode) return;
+        const patchedGraph: DungeonGraph = {
+          ...latestGraph,
+          nodes: { ...latestGraph.nodes, [targetId]: { ...latestNode, art_url: url } },
+        };
+        await saveScene(env.DB, quest.id, { ...latestQuest.scene, graph: patchedGraph });
+      })(),
+    );
+  }
+
+  // Build image blocks: encounter art takes priority; room art shown on non-combat rooms.
+  const roomArtUrl = updatedTarget.art_url ?? null;
+  const encounterArtUrl = updatedTarget.encounter?.monsters[0]?.art_url ?? null;
+  const displayArtUrl = encounterArtUrl ?? roomArtUrl;
+
+  if (displayArtUrl) {
+    const altText = updatedTarget.encounter?.monsters[0]?.name ?? roomName;
     const imgBlocks: unknown[] = [
-      { type: "image", image_url: m.art_url as string, alt_text: m.name },
+      { type: "image", image_url: displayArtUrl, alt_text: altText },
       { type: "section", text: { type: "mrkdwn", text: [moveNote, "", roomText].join("\n") } },
     ];
     ctx.waitUntil(postToThread(env, quest, [blockQuote(moveNote), "", roomText].join("\n"), { blocks: imgBlocks }));
@@ -2576,17 +2611,55 @@ async function handleGraphTake(
       : ephemeral("There's nothing to take here.");
   }
 
+  // If the object carries a spawn_item loot spec, generate AI name/flavor at
+  // pickup time so the item feels fresh. Falls back to the spec's placeholder
+  // strings if the AI call fails.
+  const lootSpec = obj.on_use?.effect === "spawn_item" ? obj.on_use.item : null;
+  let itemName = obj.name;
+  let itemFlavor = "Retrieved from the dungeon.";
+  let itemType: "weapon" | "armor" | "consumable" | "magic" | "revive" | "tool" = "tool";
+  let itemPower = 0;
+  let itemRarity: "common" | "uncommon" | "rare" | "epic" | "legendary" = "common";
+  let itemWeaponRange: "melee" | "ranged" | "focus" | null = null;
+  let itemSlot: import("@gantt-quest/core").EquipSlot | null = null;
+  let itemStatBonus: Record<string, number> | null = null;
+  let itemSubtype: string | null = null;
+  if (lootSpec) {
+    try {
+      const named = await flavorLootDrop(
+        env.AI,
+        quest.scene.monster_name ?? "the dungeon",
+        lootSpec.item_type as "weapon" | "armor" | "consumable" | "magic" | "revive",
+        lootSpec.rarity as "common" | "uncommon" | "rare" | "epic" | "legendary",
+        lootSpec.power,
+        (lootSpec.weapon_range ?? undefined) as "melee" | "ranged" | "focus" | undefined,
+        lootSpec.slot ?? undefined,
+      );
+      itemName = named.name;
+      itemFlavor = named.flavor;
+    } catch {
+      itemName = lootSpec.name;
+      itemFlavor = lootSpec.flavor;
+    }
+    itemType = lootSpec.item_type as typeof itemType;
+    itemPower = lootSpec.power;
+    itemRarity = lootSpec.rarity as typeof itemRarity;
+    itemWeaponRange = (lootSpec.weapon_range ?? null) as typeof itemWeaponRange;
+    itemSlot = (lootSpec.slot ?? null) as typeof itemSlot;
+    itemStatBonus = lootSpec.stat_bonus ?? null;
+    itemSubtype = lootSpec.item_subtype ?? null;
+  }
   const item = await addItem(env.DB, {
     character_id: payload.user_id,
-    item_name: obj.name,
-    item_type: "tool",
-    power: 0,
-    rarity: "common",
-    flavor: "Retrieved from the dungeon.",
-    weapon_range: null,
-    slot: null,
-    stat_bonus: null,
-    item_subtype: null,
+    item_name: itemName,
+    item_type: itemType,
+    power: itemPower,
+    rarity: itemRarity,
+    flavor: itemFlavor,
+    weapon_range: itemWeaponRange,
+    slot: itemSlot,
+    stat_bonus: itemStatBonus,
+    item_subtype: itemSubtype,
   });
 
   const updatedObjects = node.objects.map(o => o.id === obj.id ? { ...o, used: true } : o);
@@ -2594,7 +2667,10 @@ async function handleGraphTake(
   const updatedGraph: DungeonGraph = { ...graph, nodes: { ...graph.nodes, [graph.current]: updatedNode } };
   await saveScene(env.DB, quest.id, { ...quest.scene, graph: updatedGraph });
 
-  return ephemeral(`🎒 You pick up *${obj.name}*. Added to inventory as item \`${item.id}\`.`);
+  const lootLine = lootSpec
+    ? `🎒 You open *${obj.name}* and find ${RARITY_BADGE[itemRarity]} *${itemName}* (id \`${item.id}\`). _${itemFlavor}_`
+    : `🎒 You pick up *${obj.name}*. Added to inventory as item \`${item.id}\`.`;
+  return ephemeral(lootLine);
 }
 
 // Runs the on_use effect of a named object in the current graph dungeon room.
@@ -2873,15 +2949,18 @@ async function applyPlayerTick(
   };
 }
 
-// Applies an effect to a character. If an effect of the same type already exists,
-// REFRESHES it (resets remaining to the new value, keeps higher magnitude).
+// Applies an effect to a character or monster. If an effect of the same type
+// already exists, STACKS it: magnitudes add together, remaining takes the max.
+// Two Poison Vials on the same monster double the damage per tick; a Warlock
+// who crits twice inflicts 2× bleed. No hard cap — party coordination is the
+// balancing lever.
 function withEffectApplied(effects: StatusEffect[], add: StatusEffect): StatusEffect[] {
   const idx = effects.findIndex((e) => e.type === add.type);
   if (idx === -1) return [...effects, add];
   const existing = effects[idx];
   const merged: StatusEffect = {
     ...add,
-    magnitude: Math.max(existing.magnitude, add.magnitude),
+    magnitude: existing.magnitude + add.magnitude,
     remaining: Math.max(existing.remaining, add.remaining),
   };
   return effects.map((e, i) => (i === idx ? merged : e));
@@ -3771,10 +3850,31 @@ async function handleCombat(
   const fighters = party.filter(isFighter);
 
   // Equipment loaded once for both attack/cast and flee paths (failed flee takes a hit too).
-  const [equippedWeapon, equippedArmor] = await Promise.all([
-    getEquipped(env.DB, payload.user_id, "weapon"),
-    getEquipped(env.DB, payload.user_id, "armor"),
-  ]);
+  const slots = await getAllEquippedSlots(env.DB, payload.user_id);
+  const equippedWeapon = slots.main_hand;
+  const equippedArmor = slots.body;
+
+  // STATS_V2: derive attack/magic mods from primary stats + equip bonuses.
+  const statsV2Enabled = env.STATS_V2 === "1";
+  const equipBonuses: Partial<Record<string, number>> = {};
+  if (statsV2Enabled) {
+    for (const item of Object.values(slots)) {
+      if (!item?.stat_bonus) continue;
+      for (const [key, val] of Object.entries(item.stat_bonus)) {
+        equipBonuses[key] = (equipBonuses[key] ?? 0) + val;
+      }
+    }
+  }
+  const snap = statSnapshot({
+    className: character.class,
+    level: character.level,
+    stats: { str: character.str, int_stat: character.int_stat, vit: character.vit, agi: character.agi, dex: character.dex },
+    v2Enabled: statsV2Enabled,
+    equipBonuses: statsV2Enabled ? (equipBonuses as Partial<Stats>) : undefined,
+  });
+  const levelBonus = statsV2Enabled ? 0 : Math.floor(character.level / 4);
+  const attackMod = snap.derived.attack_mod + levelBonus;
+  const magicMod = snap.derived.magic_mod + levelBonus;
 
   if (action === "flee") {
     if (quest.scene.variant === "gauntlet" || quest.scene.variant === "dungeon") {
@@ -3867,8 +3967,8 @@ async function handleCombat(
 
     const sigResult = resolveSignature(
       cls.id,
-      cls.attack_mod,
-      cls.magic_mod,
+      attackMod,
+      magicMod,
       sigWpn,
       quest.scene.tier,
       fighters.length,
@@ -3901,7 +4001,7 @@ async function handleCombat(
       : `✨ *${sig.name}* — <@${payload.user_id}> hits for *${damage}* \`${sigResult.formula}\`.`;
   } else {
     const isMagic = action === "cast";
-    const classMod = isMagic ? cls.magic_mod : cls.attack_mod;
+    const classMod = isMagic ? magicMod : attackMod;
     // Focus weapons add zero to attack + cast damage (their power is a
     // /sq heal + /sq shield bonus instead — applied in those handlers).
     // Regular weapons add their power as usual.
@@ -5444,7 +5544,7 @@ async function resolveNpcChoice(
     // Apply 🔴 Bleeding via withEffectApplied. Save effects.
     const bleed: StatusEffect = {
       type: "bleeding",
-      magnitude: 2,
+      magnitude: 3,
       remaining: 3,
       source: `tainted gift from a stranger`,
     };
@@ -10166,10 +10266,17 @@ async function useSoulDrain(
   const cls = classByName(character.class);
   const ok = await tryDeductMana(env.DB, payload.user_id, ability.mana_cost);
   if (!ok) return ephemeral("Couldn't deduct mana — try again.");
+  const abilitySnap = statSnapshot({
+    className: character.class,
+    level: character.level,
+    stats: { str: character.str, int_stat: character.int_stat, vit: character.vit, agi: character.agi, dex: character.dex },
+    v2Enabled: env.STATS_V2 === "1",
+  });
+  const abilityMagicMod = abilitySnap.derived.magic_mod + (env.STATS_V2 === "1" ? 0 : Math.floor(character.level / 4));
   // Damage = 1d6 + magic_mod. Capped at monster_hp - 1 so this never delivers
   // the kill blow (matches the damage-tool pattern); follow-up attack closes it.
   const roll = rollDice(6);
-  const rawDamage = roll + cls.magic_mod;
+  const rawDamage = roll + abilityMagicMod;
   const damage = Math.min(rawDamage, Math.max(1, quest.scene.monster_hp - 1));
   const heal = Math.floor(damage / 2);
   // Atomic monster HP write conditional on prior monster_hp.
@@ -10184,7 +10291,7 @@ async function useSoulDrain(
   }
   const healed = await healCharacter(env.DB, character, heal);
   await appendLog(env.DB, quest.id, payload.user_id, "ability", `Soul Drain → ${damage} dmg, +${healed} HP`);
-  const headline = `💀 *${ability.name}!* <@${payload.user_id}> rips life-essence from *${quest.scene.monster_name}* — *${damage}* damage, *+${healed}* HP \`${roll} + ${cls.magic_mod}m, half drained\`.`;
+  const headline = `💀 *${ability.name}!* <@${payload.user_id}> rips life-essence from *${quest.scene.monster_name}* — *${damage}* damage, *+${healed}* HP \`${roll} + ${abilityMagicMod}m, half drained\`.`;
   ctx.waitUntil(postToThread(env, quest, blockQuote(headline)));
   return ephemeral(headline);
 }
@@ -10426,10 +10533,28 @@ async function handleHeal(
   }
 
   const cls = classByName(character.class);
-  const heal = resolveHeal(cls.magic_mod, rollDice);
+  const healSlots = await getAllEquippedSlots(env.DB, payload.user_id);
+  const healEquipBonuses: Partial<Record<string, number>> = {};
+  if (env.STATS_V2 === "1") {
+    for (const item of Object.values(healSlots)) {
+      if (!item?.stat_bonus) continue;
+      for (const [key, val] of Object.entries(item.stat_bonus)) {
+        healEquipBonuses[key] = (healEquipBonuses[key] ?? 0) + val;
+      }
+    }
+  }
+  const healSnap = statSnapshot({
+    className: character.class,
+    level: character.level,
+    stats: { str: character.str, int_stat: character.int_stat, vit: character.vit, agi: character.agi, dex: character.dex },
+    v2Enabled: env.STATS_V2 === "1",
+    equipBonuses: env.STATS_V2 === "1" ? (healEquipBonuses as Partial<Stats>) : undefined,
+  });
+  const healMagicMod = healSnap.derived.magic_mod + (env.STATS_V2 === "1" ? 0 : Math.floor(character.level / 4));
+  const heal = resolveHeal(healMagicMod, rollDice);
   // 🔮 Focus weapons add their power as a flat bonus to heal amount.
   // Caster's existing 1d6 + magic_mod becomes 1d6 + magic_mod + focus.power.
-  const focusWeapon = await getEquipped(env.DB, payload.user_id, "weapon");
+  const focusWeapon = healSlots.main_hand;
   const focusBonus = (focusWeapon?.weapon_range === "focus") ? focusWeapon.power : 0;
   const finalHealAmount = heal.amount + focusBonus;
   const healed = await healCharacter(env.DB, target, finalHealAmount);
@@ -10443,7 +10568,7 @@ async function handleHeal(
   // where the extra HP came from. Without focus, the line reads the same
   // as before.
   const focusBreakdown = focusBonus > 0 ? ` + ${focusBonus}🔮` : "";
-  const healLine = `💚 <@${payload.user_id}> heals ${targetTag} for *${healed}* HP \`${heal.roll} + ${cls.magic_mod}m${focusBreakdown}\`.`;
+  const healLine = `💚 <@${payload.user_id}> heals ${targetTag} for *${healed}* HP \`${heal.roll} + ${healMagicMod}m${focusBreakdown}\`.`;
 
   // Tick the caster's status effects — heal is a combat-tier action so it should
   // tick effects just like attack/cast. The actor's tick (regen/bleed/burn) fires
@@ -10496,11 +10621,29 @@ async function handleShield(
   }
 
   const cls = classByName(character.class);
-  const shield = resolveShield(cls.magic_mod, rollDice);
+  const shieldSlots = await getAllEquippedSlots(env.DB, payload.user_id);
+  const shieldEquipBonuses: Partial<Record<string, number>> = {};
+  if (env.STATS_V2 === "1") {
+    for (const item of Object.values(shieldSlots)) {
+      if (!item?.stat_bonus) continue;
+      for (const [key, val] of Object.entries(item.stat_bonus)) {
+        shieldEquipBonuses[key] = (shieldEquipBonuses[key] ?? 0) + val;
+      }
+    }
+  }
+  const shieldSnap = statSnapshot({
+    className: character.class,
+    level: character.level,
+    stats: { str: character.str, int_stat: character.int_stat, vit: character.vit, agi: character.agi, dex: character.dex },
+    v2Enabled: env.STATS_V2 === "1",
+    equipBonuses: env.STATS_V2 === "1" ? (shieldEquipBonuses as Partial<Stats>) : undefined,
+  });
+  const shieldMagicMod = shieldSnap.derived.magic_mod + (env.STATS_V2 === "1" ? 0 : Math.floor(character.level / 4));
+  const shield = resolveShield(shieldMagicMod, rollDice);
   // 🔮 Focus weapons add their power flat to shield amount too — same
   // pattern as the heal bonus. The flat bonus applies before the cap
   // check, so an over-cap shield with focus still wastes the surplus.
-  const focusWeapon = await getEquipped(env.DB, payload.user_id, "weapon");
+  const focusWeapon = shieldSlots.main_hand;
   const focusBonus = (focusWeapon?.weapon_range === "focus") ? focusWeapon.power : 0;
   const finalShieldAmount = shield.amount + focusBonus;
   const cap = target.max_hp * SHIELD_CAP_MULTIPLIER;
@@ -10514,7 +10657,7 @@ async function handleShield(
   const wasted = finalShieldAmount - added;
   const wastedNote = wasted > 0 ? ` (${wasted} over the cap)` : "";
   const focusBreakdown = focusBonus > 0 ? ` + ${focusBonus}🔮` : "";
-  const shieldLine = `🛡️ <@${payload.user_id}> shields ${targetTag} for *${added}*${wastedNote} \`${shield.roll} + ${cls.magic_mod}m${focusBreakdown}\`.`;
+  const shieldLine = `🛡️ <@${payload.user_id}> shields ${targetTag} for *${added}*${wastedNote} \`${shield.roll} + ${shieldMagicMod}m${focusBreakdown}\`.`;
 
   // Tick the caster's status effects — shield is a combat-tier action.
   const casterTick = await applyPlayerTick(env, payload.user_id, character);

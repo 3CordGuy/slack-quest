@@ -1158,7 +1158,7 @@ function MonsterCard({
   const sageHi = 6 + monster.tier + (monster.is_boss && monster.boss_phase === 2 ? monster.tier : 0);
   return (
     <div
-      style={{ ...card, borderColor: isTargeted ? "#b89b3a" : isMarked ? "#f59e0b" : "#7c2020", display: "flex", gap: 16, alignItems: "flex-start", position: "relative", cursor: onClick ? "pointer" : undefined, transition: "border-color 0.15s" }}
+      style={{ ...card, borderColor: isTargeted ? "#b89b3a" : isMarked ? "#f59e0b" : "#7c2020", boxShadow: isTargeted ? "0 0 0 2px #fbbf24" : undefined, display: "flex", gap: 16, alignItems: "flex-start", position: "relative", cursor: onClick ? "pointer" : undefined, transition: "border-color 0.15s, box-shadow 0.15s" }}
       onClick={onClick}
     >
       {/* Marked target indicator */}
