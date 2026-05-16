@@ -4198,7 +4198,7 @@ function InventoryCard({
           transition: "border-color 0.15s",
         }}
       >
-        <Icon name={SLOT_ICON[slot]} size={20} color={isHighlighted ? "#c084fc66" : "#2e3440"} />
+        <Icon name={SLOT_ICON[slot]} size={20} color={isHighlighted ? "#c084fc66" : "#2e3440"} style={slot === "off_hand" ? { transform: "scaleX(-1)" } : undefined} />
         <div style={{ fontSize: 8, color: isHighlighted ? "#c084fc88" : "#374151", textAlign: "center", lineHeight: 1.2 }}>
           {label}
         </div>
@@ -7308,13 +7308,13 @@ const SLOT_LABELS: Record<EquipSlot, string> = {
 };
 
 const SLOT_ICON: Record<EquipSlot, string> = {
-  main_hand: "spinning-sword",
-  off_hand: "round-shield",
+  main_hand: "hand",
+  off_hand: "hand",
   body: "shield",
   helmet: "heavy-helm",
   pants: "armored-pants",
   boots: "boots",
-  ring: "gem-pendant",
+  ring: "ring",
   amulet: "crystal-wand",
 };
 
