@@ -1376,18 +1376,18 @@ function CombatPanel({ state, selfId, onSend, autoResolve, setAutoResolve, log, 
       <div style={{ padding: "6px 10px 8px", display: "flex", gap: 5, flexWrap: "wrap", borderTop: "1px solid #1a1c21" }}>
         {myTurn && (
           <>
-            <CBtn label="Attack" color="#b89b3a" onClick={() => onSend({ kind: "attack", actor: selfId, target_id: target })} />
-            <CBtn label="Cast" color="#818cf8" disabled={mana < 1} onClick={() => onSend({ kind: "cast", actor: selfId, target_id: target })} />
-            <CBtn label="Signature" color="#a78bfa" disabled={mana < 2} onClick={() => onSend({ kind: "signature", actor: selfId, target_id: target })} />
-            <CBtn label="Heal" color="#22c55e" disabled={mana < 1} onClick={() => { setPicking("heal"); setItemOpen(false); }} />
-            <CBtn label="Shield" color="#60a5fa" disabled={mana < 1} onClick={() => { setPicking("shield"); setItemOpen(false); }} />
-            <CBtn label={myPos === "front" ? "→ Back" : "→ Front"} color="#6b7280" onClick={() => onSend({ kind: "position", actor: selfId, to: myPos === "front" ? "back" : "front" })} />
-            <CBtn label="Item" color="#c084fc" disabled={usable.length === 0} onClick={() => { setItemOpen((o) => !o); setPicking(null); }} />
-            <CBtn label="Flee" color="#4b5563" onClick={() => onSend({ kind: "flee", actor: selfId })} />
+            <CBtn label="Attack" icon="sword" color="#b89b3a" onClick={() => onSend({ kind: "attack", actor: selfId, target_id: target })} />
+            <CBtn label="Cast" icon="crystal-wand" color="#818cf8" manaCost={1} disabled={mana < 1} onClick={() => onSend({ kind: "cast", actor: selfId, target_id: target })} />
+            <CBtn label="Signature" icon="wax-seal" color="#a78bfa" manaCost={2} disabled={mana < 2} onClick={() => onSend({ kind: "signature", actor: selfId, target_id: target })} />
+            <CBtn label="Heal" icon="health-increase" color="#22c55e" manaCost={1} disabled={mana < 1} onClick={() => { setPicking("heal"); setItemOpen(false); }} />
+            <CBtn label="Shield" icon="shield" color="#60a5fa" manaCost={1} disabled={mana < 1} onClick={() => { setPicking("shield"); setItemOpen(false); }} />
+            <CBtn label={myPos === "front" ? "Back row" : "Front row"} icon={myPos === "front" ? "perspective-dice-two" : "perspective-dice-one"} color="#6b7280" onClick={() => onSend({ kind: "position", actor: selfId, to: myPos === "front" ? "back" : "front" })} />
+            <CBtn label="Item" icon="ammo-bag" color="#c084fc" disabled={usable.length === 0} onClick={() => { setItemOpen((o) => !o); setPicking(null); }} />
+            <CBtn label="Flee" icon="footprint" color="#9aa0a6" onClick={() => onSend({ kind: "flee", actor: selfId })} />
           </>
         )}
         {!myTurn && isMonsterTurn && !autoResolve && (
-          <CBtn label="Resolve enemy" color="#5c1f1f" onClick={() => onSend({ kind: "monster_act" })} />
+          <CBtn label="Resolve enemy" icon="dragon-head" color="#5c1f1f" onClick={() => onSend({ kind: "monster_act" })} />
         )}
         <div style={{ marginLeft: "auto", display: "flex", alignItems: "center" }}>
           <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, color: "#4a5568", cursor: "pointer" }}>
@@ -1400,9 +1400,50 @@ function CombatPanel({ state, selfId, onSend, autoResolve, setAutoResolve, log, 
   );
 }
 
-function CBtn({ label, color, disabled, onClick }: { label: string; color: string; disabled?: boolean; onClick: () => void }) {
+function CBtn({ label, icon, color, disabled, manaCost, onClick }: {
+  label: string;
+  icon?: string;
+  color: string;
+  disabled?: boolean;
+  manaCost?: number;       // shown as a "−N mana" pill on the right
+  onClick: () => void;
+}) {
   return (
-    <button onClick={onClick} disabled={disabled} style={{ padding: "5px 12px", background: disabled ? "#1a1c21" : color, border: `1px solid ${disabled ? "#2a2d33" : color}`, borderRadius: 6, color: disabled ? "#4a5568" : "#0e0f12", fontSize: 12, fontWeight: 600, cursor: disabled ? "not-allowed" : "pointer", opacity: disabled ? 0.5 : 1 }}>{label}</button>
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      title={manaCost ? `${label} (costs ${manaCost} mana)` : label}
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 6,
+        padding: "7px 12px",
+        background: disabled ? "#1a1c21" : color,
+        border: `1px solid ${disabled ? "#2a2d33" : color}`,
+        borderRadius: 7,
+        color: disabled ? "#4a5568" : "#0e0f12",
+        fontSize: 13,
+        fontWeight: 600,
+        cursor: disabled ? "not-allowed" : "pointer",
+        opacity: disabled ? 0.5 : 1,
+        transition: "opacity 0.15s, transform 0.08s",
+        whiteSpace: "nowrap",
+      }}
+    >
+      {icon && <Icon name={icon} size={14} />}
+      <span>{label}</span>
+      {manaCost ? (
+        <span style={{
+          fontSize: 10,
+          fontWeight: 700,
+          color: disabled ? "#4a5568" : "#1e1b4b",
+          background: disabled ? "transparent" : "rgba(255,255,255,0.35)",
+          borderRadius: 4,
+          padding: "1px 5px",
+          marginLeft: 2,
+        }}>−{manaCost}</span>
+      ) : null}
+    </button>
   );
 }
 
