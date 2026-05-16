@@ -166,35 +166,45 @@ function classPortraitUrl(name: string): string | null {
   return id ? `${CLASS_PORTRAIT_BASE}/class_${id}.png` : null;
 }
 
-// Room background URL composition. Try shape+content first, fall back to
-// shape-only, then to a generic chamber if neither exists in R2.
+// Room background URL composition. The prompts in ai.ts use these key shapes:
+// - Specials: room_entry, room_boss
+// - Dead-ends: room_dead_<dir>_<empty|treasure|lockbox|npc>  (always suffixed)
+// - Chamber: room_chamber_<empty|combat|loot|treasure|npc|merchant|trap>  (always suffixed)
+// - Corridor shapes (straight, corner, T, cross): bare shape name
 function roomBgUrl(shape: RoomShape | undefined, content: GridRoomContent | undefined): string {
+  const base = "/img/art/views/v6";
   const s: RoomShape = shape ?? "chamber";
-  // Specific shape+content combos that have dedicated art:
-  const key = `room_${s}`;
-  if (content) {
-    const c = content.kind;
-    // Dead-ends have content-specific art for treasure/lockbox/npc
-    if (s.startsWith("dead_") && (c === "loot" || c === "lockbox" || c === "npc" || c === "key_pickup")) {
-      const sub = c === "loot" ? "treasure" : c === "key_pickup" ? "treasure" : c;
-      return `/img/art/views/v6/${key}_${sub}.png`;
-    }
-    // Chambers have many content variants
-    if (s === "chamber") {
-      const sub = c === "encounter" || c === "boss" ? "combat"
-        : c === "loot" || c === "key_pickup" ? "loot"
-        : c === "merchant" ? "merchant"
-        : c === "npc" ? "npc"
-        : c === "trap" ? "trap"
-        : c === "lockbox" ? "treasure"
-        : "empty";
-      return `/img/art/views/v6/room_chamber_${sub}.png`;
-    }
-    // Entry / boss specials
-    if (c === "entry") return `/img/art/views/v6/room_entry.png`;
-    if (c === "boss") return `/img/art/views/v6/room_boss.png`;
+
+  // Specials override based on content kind
+  if (content?.kind === "entry") return `${base}/room_entry.png`;
+  if (content?.kind === "boss" || s === "boss") return `${base}/room_boss.png`;
+  if (s === "entry") return `${base}/room_entry.png`;
+
+  const c = content?.kind ?? "empty";
+
+  // Dead-ends: every variant has a content suffix
+  if (s.startsWith("dead_")) {
+    const sub = c === "loot" || c === "key_pickup" ? "treasure"
+      : c === "lockbox" ? "lockbox"
+      : c === "npc" || c === "merchant" ? "npc"
+      : "empty";
+    return `${base}/room_${s}_${sub}.png`;
   }
-  return `/img/art/views/v6/${key}.png`;
+
+  // Chambers: always have a content suffix
+  if (s === "chamber") {
+    const sub = c === "encounter" ? "combat"
+      : c === "loot" || c === "key_pickup" ? "loot"
+      : c === "merchant" ? "merchant"
+      : c === "npc" ? "npc"
+      : c === "trap" ? "trap"
+      : c === "lockbox" ? "treasure"
+      : "empty";
+    return `${base}/room_chamber_${sub}.png`;
+  }
+
+  // Corridor shapes: bare name (no content variant — overlay handles NPC/etc)
+  return `${base}/room_${s}.png`;
 }
 
 // ─── WS reducer (combat) ─────────────────────────────────────────────────────
@@ -712,6 +722,14 @@ export function GridDungeonView({
         {/* Monster overlay during combat */}
         {combatActive && liveMonsters.length > 0 && <MonsterOverlay monster={liveMonsters[0]} isBoss={isBoss} />}
 
+        {/* Content figure overlay — when the room contains a person or
+            object, paint a visible indicator on the scene so the room
+            doesn't look empty. Only shows for non-chamber, non-dead-end
+            shapes where the bg art is just an empty corridor. */}
+        {!combatActive && content && currentNode.shape && needsFigureOverlay(currentNode.shape, content) && (
+          <ContentFigureOverlay content={content} />
+        )}
+
         {/* Minimap */}
         <GridMinimap graph={graph} />
 
@@ -780,6 +798,64 @@ export function GridDungeonView({
 
       {/* Party bar */}
       <PartyBar fighters={combatActive ? (combatState?.fighters ?? null) : null} selfId={selfId} party={party.length > 0 ? party : [character]} />
+    </div>
+  );
+}
+
+// True when the room's bg is a generic corridor (no content baked into the
+// art) AND the content kind is a "visible thing in the room". In those cases
+// we overlay a figure/object indicator so the scene isn't empty-looking.
+function needsFigureOverlay(shape: RoomShape, content: GridRoomContent): boolean {
+  // Dead-ends and chambers already get content-baked art.
+  if (shape.startsWith("dead_") || shape === "chamber" || shape === "entry" || shape === "boss") return false;
+  if (content.kind === "npc" && !content.resolved) return true;
+  if (content.kind === "merchant" && !content.resolved) return true;
+  if (content.kind === "loot" && !content.taken) return true;
+  if (content.kind === "key_pickup" && !content.taken) return true;
+  if (content.kind === "lockbox" && !content.resolved) return true;
+  if (content.kind === "trap" && !content.resolved) return true;
+  return false;
+}
+
+function ContentFigureOverlay({ content }: { content: GridRoomContent }) {
+  // Icon + label centered on the scene. Big enough to read at a glance,
+  // not so big it hides the corridor art.
+  let icon = "player";
+  let color = "#d1d5db";
+  let label = "";
+  switch (content.kind) {
+    case "npc": icon = "hood"; color = "#fef3c7"; label = "A traveler"; break;
+    case "merchant": icon = "shop"; color = "#fcd34d"; label = "Merchant"; break;
+    case "loot": icon = "ammo-bag"; color = "#a7f3d0"; label = "Loot"; break;
+    case "key_pickup": {
+      const tier = content.tier;
+      color = tier === "gold" ? "#fbbf24" : tier === "silver" ? "#d1d5db" : "#b45309";
+      icon = "key"; label = `${tier[0].toUpperCase()}${tier.slice(1)} key`;
+      break;
+    }
+    case "lockbox": icon = "chest-armor"; color = "#60a5fa"; label = "Locked chest"; break;
+    case "trap": icon = "bear-trap"; color = "#fca5a5"; label = "Trap"; break;
+  }
+  return (
+    <div style={{
+      position: "absolute",
+      top: "42%",
+      left: "50%",
+      transform: "translate(-50%, -50%)",
+      display: "flex",
+      flexDirection: "column",
+      alignItems: "center",
+      gap: 8,
+      padding: "12px 20px",
+      background: "rgba(0,0,0,0.45)",
+      border: `1px solid ${color}`,
+      borderRadius: 12,
+      backdropFilter: "blur(4px)",
+      boxShadow: `0 0 24px ${color}40`,
+      pointerEvents: "none",
+    }}>
+      <Icon name={icon} size={48} color={color} />
+      <div style={{ fontFamily: DISPLAY_FONT, fontSize: 14, color, letterSpacing: 1 }}>{label}</div>
     </div>
   );
 }
