@@ -98,6 +98,9 @@ function renderEvent(state: CombatState, e: CombatEvent): string {
       return `💥 *${state.monster.name}* splashes everyone — ${parts.join(", ")}.`;
     }
 
+    case "monster_dodged":
+      return `💨 ${nameOf(state, e.target)} sidesteps the blow — dodged!`;
+
     case "monster_target_blocked":
       return `👁 *${state.monster.name}* lashes out but finds nothing to strike — vanish holds.`;
 

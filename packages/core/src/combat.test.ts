@@ -154,27 +154,28 @@ describe("resolveSignature", () => {
 });
 
 describe("resolveHeal", () => {
+  // r(val) returns a constant rollFn — both d6 calls return val.
   const r = (val: number) => () => val;
 
-  it("base heal is 1d6 + magic_mod", () => {
-    expect(resolveHeal(2, r(4)).amount).toBe(6);
-    expect(resolveHeal(0, r(3)).amount).toBe(3);
+  it("base heal is 2d6 + magic_mod", () => {
+    expect(resolveHeal(2, r(4)).amount).toBe(10); // 4+4+2=10
+    expect(resolveHeal(0, r(3)).amount).toBe(6);  // 3+3+0=6
   });
 
-  it("never heals less than 1, even with negative mod", () => {
-    expect(resolveHeal(-10, r(1)).amount).toBe(1);
+  it("never heals less than 2 (floor prevents perma-zero healing)", () => {
+    expect(resolveHeal(-10, r(1)).amount).toBe(2); // max(2, 1+1-10)=2
   });
 });
 
 describe("resolveShield", () => {
   const r = (val: number) => () => val;
 
-  it("base shield is 1d6 + magic_mod", () => {
-    expect(resolveShield(2, r(5)).amount).toBe(7);
+  it("base shield is 2d6 + magic_mod", () => {
+    expect(resolveShield(2, r(5)).amount).toBe(12); // 5+5+2=12
   });
 
-  it("never grants less than 1", () => {
-    expect(resolveShield(-99, r(1)).amount).toBe(1);
+  it("never grants less than 2", () => {
+    expect(resolveShield(-99, r(1)).amount).toBe(2); // max(2, 1+1-99)=2
   });
 });
 

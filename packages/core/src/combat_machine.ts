@@ -36,6 +36,7 @@ import {
   type EffectType,
   type WeaponRange,
 } from "./flavor";
+import { deriveArmorBonus, deriveCritBonus, deriveDodgeChance, deriveInitiativeBonus, type Stats } from "./stats";
 
 export type ActorId = string;
 export const MONSTER_ID: ActorId = "__monster__";
@@ -79,6 +80,9 @@ export interface CombatFighter {
   initiative: number;      // rolled at begin
   effects: MachineStatusEffect[];
   scars: string[];         // battle scars from defeats
+  // Primary stats (Phase 1 / STATS_V2). Present when the flag is on; absent
+  // on legacy combats so older persisted states deserialise without a schema bump.
+  stats?: Stats;
 }
 
 export interface GauntletWaveSpec {
@@ -279,6 +283,7 @@ export type CombatEvent =
         hp_damage: number;
       }>;
     }
+  | { type: "monster_dodged"; target: ActorId }
   | { type: "monster_target_blocked"; reason: "vanish" }
   | { type: "boss_phase_transition"; new_phase: 2 }
   | { type: "fighter_down"; target: ActorId }
@@ -528,7 +533,9 @@ function handleBegin(state: CombatState, roll: RollFn): StepResult {
   const next: CombatState = {
     ...state,
     fighters: state.fighters.map((f) => {
-      const init = roll(20);
+      const base = roll(20);
+      const agiBonus = f.stats ? deriveInitiativeBonus(f.stats) : 0;
+      const init = base + agiBonus;
       initiatives[f.id] = init;
       return { ...f, initiative: init };
     }),
@@ -668,6 +675,16 @@ function handlePlayerHit(
     isCrit = true;
     damage = damage * 2;
     rogueFirstCritFired = true;
+  }
+
+  // DEX crit bonus — secondary crit chance for DEX > 5 (STATS_V2 only).
+  // Only fires when not already a nat-crit or rogue first-crit.
+  if (!isCrit && tickedFighter.stats) {
+    const threshold = Math.round(deriveCritBonus(tickedFighter.stats) * 100);
+    if (threshold > 0 && roll(100) <= threshold) {
+      isCrit = true;
+      damage = damage * 2;
+    }
   }
 
   // Pub drink-buff. Applied between rogue first-crit and bard aura so the
@@ -1048,8 +1065,24 @@ function handleMonsterAct(state: CombatState, roll: RollFn): StepResult {
     return { state: next, events: [...events, ...turnStartEvent(next)] };
   }
 
+  // AGI dodge — checked after the to-hit succeeds, before damage is rolled.
+  // deriveDodgeChance returns a fraction (0..0.15); we compare against a
+  // 1-100 roll so max 15 is cap (Rogue at AGI 8 → 3%, end-game AGI 15 → 10%).
+  if (target.stats) {
+    const threshold = Math.round(deriveDodgeChance(target.stats) * 100);
+    if (threshold > 0 && roll(100) <= threshold) {
+      events.push({ type: "monster_dodged", target: target.id });
+      const decremented: CombatState = {
+        ...s,
+        ability_state: tickAbilityCountersAfterSwing(s.ability_state),
+      };
+      const next = advanceTurn(decremented);
+      return { state: next, events: [...events, ...turnStartEvent(next)] };
+    }
+  }
+
   // ── damage roll on hit ──
-  const totalArmor = target.armor_power;
+  const totalArmor = target.armor_power + (target.stats ? deriveArmorBonus(target.stats) : 0);
   const hit = resolveMonsterHit(
     s.monster.tier,
     aliveFighters.length,

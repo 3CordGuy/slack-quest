@@ -91,9 +91,13 @@ describe("rollItem", () => {
           "Production Outage",
           "Espresso Shot",
           "Poison Vial",
+          "Venom Vial",
+          "Regen Draft",
+          "Battle Elixir",
         ]).toContain(r.catalog_name);
-        // Power is computed from tier, not random — must be > 0 for tools, 0 or specific for scrolls.
-        if (r.type === "tool") expect(r.power).toBeGreaterThan(0);
+        // Power is computed from tier — 0 for utility effects (Rebase Scroll, Battle Elixir).
+        const zeroPower = r.catalog_name === "Rebase Scroll" || r.catalog_name === "Battle Elixir";
+        if (r.type === "tool" && !zeroPower) expect(r.power).toBeGreaterThan(0);
       }
     }
     // ~8% combined drop weight × 500 rolls = expect at least one. Flaky-tolerant.
@@ -117,11 +121,15 @@ describe("rollItem", () => {
     }
   });
 
-  it("power is always positive (or zero for utility scrolls)", () => {
+  it("power is always positive (or zero for utility effects)", () => {
     for (let i = 0; i < 100; i++) {
       const r = rollItem(2);
-      // Utility scrolls (Rebase Scroll) have power 0 — they don't deal damage.
-      if (r.type === "scroll" && r.catalog_name === "Rebase Scroll") {
+      // Utility items with no numeric payload: Rebase Scroll clears cooldowns/mana;
+      // Battle Elixir grants the Empowered status — neither uses power as a number.
+      if (
+        (r.type === "scroll" && r.catalog_name === "Rebase Scroll") ||
+        (r.type === "tool" && r.catalog_name === "Battle Elixir")
+      ) {
         expect(r.power).toBe(0);
         continue;
       }

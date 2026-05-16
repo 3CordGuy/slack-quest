@@ -61,6 +61,7 @@ import {
   step,
   xpForLevel,
   RARITY_BADGE,
+  statSnapshot,
   type CombatEvent,
   type CombatInit,
   type CombatState,
@@ -70,6 +71,7 @@ import {
   type ItemRoll,
   type NpcSpec,
   type RollFn,
+  type Stats,
   type TurnAction,
 } from "@gantt-quest/core";
 import {
@@ -633,6 +635,8 @@ interface Env {
   // local web-only iteration doesn't require the secret; when unset the
   // post calls are skipped silently.
   SLACK_BOT_TOKEN?: string;
+  // Feature flag: "1" enables STATS_V2 primary stat derivations in combat.
+  STATS_V2?: string;
 }
 
 // Minimal chat.postMessage wrapper duplicated from apps/slack/src/slack.ts.
@@ -3264,7 +3268,7 @@ app.post("/api/quest/:id/start_web_combat", async (c) => {
   // web_combat_state row. start_web_combat is idempotent: if state already
   // exists (e.g. Slack /gq attack already ran bootstrapFromSlack), the
   // earlier check above returned the existing state.
-  const built = await buildInitialCombatState(c.env.DB, quest);
+  const built = await buildInitialCombatState(c.env.DB, quest, c.env.STATS_V2 === "1");
   if (!built.ok) {
     if (built.reason === "non_combat_room") {
       return c.json({ error: "non_combat_room", room_type: built.detail ?? null }, 400);
@@ -4307,6 +4311,7 @@ const productionRoll: RollFn = (sides) => Math.floor(Math.random() * sides) + 1;
 async function buildInitialCombatState(
   db: D1Database,
   quest: ActiveQuest,
+  statsV2Enabled = false,
 ): Promise<
   | { ok: true; seeded: CombatState }
   | { ok: false; reason: "unsupported_variant" | "non_combat_room"; detail?: string }
@@ -4330,9 +4335,24 @@ async function buildInitialCombatState(
       getEquipped(db, member.slack_user_id, "weapon"),
       getEquipped(db, member.slack_user_id, "armor"),
     ]);
-    const cls = classByName(member.class);
     const weaponRange = (weapon?.weapon_range as "melee" | "ranged" | "focus" | null | undefined) ?? "melee";
     const isFocus = weaponRange === "focus";
+    const memberStats: Stats = {
+      str: member.str,
+      int_stat: member.int_stat,
+      vit: member.vit,
+      agi: member.agi,
+      dex: member.dex,
+    };
+    const snap = statSnapshot({
+      className: member.class,
+      level: member.level,
+      stats: memberStats,
+      v2Enabled: statsV2Enabled,
+    });
+    // Level-scaling bonus on top of the class mod (legacy path only).
+    // STATS_V2 derives scaling from per-level stat growth instead.
+    const levelBonus = statsV2Enabled ? 0 : Math.floor(member.level / 4);
     fighters.push({
       id: member.slack_user_id,
       name: member.name,
@@ -4344,14 +4364,15 @@ async function buildInitialCombatState(
       max_mana: member.max_mana,
       shield: member.shield,
       position: member.position,
-      attack_mod: cls.attack_mod + Math.floor(member.level / 4),
-      magic_mod: cls.magic_mod + Math.floor(member.level / 4),
+      attack_mod: snap.derived.attack_mod + levelBonus,
+      magic_mod: snap.derived.magic_mod + levelBonus,
       weapon_power: isFocus ? 0 : (weapon?.power ?? 0),
       focus_power: isFocus ? (weapon?.power ?? 0) : 0,
       weapon_range: weaponRange,
       slack_username: member.slack_username,
       armor_power: armor?.power ?? 0,
       scars: member.scars,
+      stats: statsV2Enabled ? snap.stats : undefined,
     });
   }
 
@@ -4689,7 +4710,7 @@ export class QuestRoom extends DurableObject<Env> {
       this.cacheQuestId = questId;
     }
 
-    const built = await buildInitialCombatState(this.env.DB, quest);
+    const built = await buildInitialCombatState(this.env.DB, quest, this.env.STATS_V2 === "1");
     if (!built.ok) return { ok: false, reason: built.reason, detail: built.detail };
 
     // Seed drink_buffs from the characters table so a pub buff bought before

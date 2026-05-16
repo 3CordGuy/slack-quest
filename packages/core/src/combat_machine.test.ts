@@ -215,11 +215,12 @@ describe("combat_machine.step", () => {
 
     it("misses on a low d20, no damage applied", () => {
       const begun = runBegin(createCombatState(baseInit()), [5, 18]);
-      // d20=3 (+3 = 6 vs AC 10: MISS).
+      // Monster tier=3 → modifier = floor(3/2)+4=5. Fighter level=5 → AC=12.
+      // d20=3 → total=8 < AC 12: MISS.
       const result = step(begun.state, { kind: "monster_act" }, seqRoll([50, 3]));
       expect(result.state.fighters[0].hp).toBe(30);
       const check = result.events.find((e) => e.type === "hit_check");
-      expect(check).toMatchObject({ hit: false, total: 6, ac: 10 });
+      expect(check).toMatchObject({ hit: false, total: 8, ac: 12 });
       expect(result.events.find((e) => e.type === "monster_attack")).toBeUndefined();
     });
 
@@ -361,11 +362,11 @@ describe("combat_machine.step", () => {
       init.fighters[0].hp = 10;
       init.fighters[0].magic_mod = 1; // re-purpose paladin's magic mod for the test
       const begun = runBegin(createCombatState(init), [15, 8]);
-      // d6=4 → heal = 4 + 1 = 5.
+      // resolveHeal rolls 2d6: 3+1=4 → amount=max(2,4+1)=5. hp 10→15.
       const result = step(
         begun.state,
         { kind: "heal", actor: "U_PALADIN", target: "U_PALADIN" },
-        seqRoll([4]),
+        seqRoll([3, 1]),
       );
       expect(result.state.fighters[0].hp).toBe(15);
       const heal = result.events.find((e) => e.type === "heal_applied");
@@ -376,10 +377,11 @@ describe("combat_machine.step", () => {
       const init = baseInit();
       init.fighters[0].hp = 28; // max 30
       const begun = runBegin(createCombatState(init), [15, 8]);
+      // resolveHeal rolls 2d6: 3+3=6 → amount=max(2,6+0)=6. hp would be 34, clamped to 30. applied=2.
       const result = step(
         begun.state,
         { kind: "heal", actor: "U_PALADIN", target: "U_PALADIN" },
-        seqRoll([6]),
+        seqRoll([3, 3]),
       );
       const heal = result.events.find((e) => e.type === "heal_applied");
       // Paladin magic_mod=0 → rolled=6, applied=2.
@@ -406,10 +408,11 @@ describe("combat_machine.step", () => {
       const init = baseInit();
       init.fighters[0].shield = 0;
       const begun = runBegin(createCombatState(init), [15, 8]);
+      // resolveShield rolls 2d6: 2+2=4 → amount=max(2,4+0)=4.
       const result = step(
         begun.state,
         { kind: "shield", actor: "U_PALADIN", target: "U_PALADIN" },
-        seqRoll([4]),
+        seqRoll([2, 2]),
       );
       expect(result.state.fighters[0].shield).toBe(4);
     });
@@ -625,6 +628,112 @@ describe("combat_machine.step", () => {
       expect(fc).toMatchObject({ success: false });
       expect(result.events.find((e) => e.type === "monster_attack")).toBeDefined();
     });
+  });
+});
+
+// ─── STATS_V2 behaviors ────────────────────────────────────────────────────
+
+describe("STATS_V2 — DEX crit bonus", () => {
+  it("fires a secondary crit when DEX roll beats threshold", () => {
+    // DEX=8 → deriveCritBonus = min(10%, (8-5)*1%) = 3%. threshold = 3.
+    const init = baseInit();
+    (init.fighters[0] as unknown as Record<string, unknown>).stats = {
+      str: 5, int_stat: 5, vit: 5, agi: 5, dex: 8,
+    };
+    const begun = runBegin(createCombatState(init), [15, 8]);
+    // Roll order: d20=15 (hit, 15+2=17 vs mAC=9), d6=4 (no nat-crit),
+    // roll(100)=2 (≤ 3 threshold → DEX crit).
+    const result = step(begun.state, { kind: "attack", actor: "U_PALADIN" }, seqRoll([15, 4, 2]));
+    const hit = result.events.find((e) => e.type === "player_hit");
+    expect(hit).toBeDefined();
+    expect((hit as { crit?: boolean })?.crit).toBe(true);
+    // Damage: (4 + attack_mod=2 + weapon=4) * 2 = 20.
+    expect((hit as { damage?: number })?.damage).toBe(20);
+  });
+
+  it("does not fire when roll exceeds threshold", () => {
+    // Same fighter, DEX=8, threshold=3. Roll(100)=5 > 3 → no secondary crit.
+    const init = baseInit();
+    (init.fighters[0] as unknown as Record<string, unknown>).stats = {
+      str: 5, int_stat: 5, vit: 5, agi: 5, dex: 8,
+    };
+    const begun = runBegin(createCombatState(init), [15, 8]);
+    const result = step(begun.state, { kind: "attack", actor: "U_PALADIN" }, seqRoll([15, 4, 5]));
+    const hit = result.events.find((e) => e.type === "player_hit");
+    expect((hit as { crit?: boolean })?.crit).toBe(false);
+    expect((hit as { damage?: number })?.damage).toBe(10); // (4+2+4)*1
+  });
+
+  it("skips the DEX roll when stats is absent (no STATS_V2)", () => {
+    // baseInit fighter has no stats field — no extra roll consumed.
+    const begun = runBegin(createCombatState(baseInit()), [15, 8]);
+    // Only d20 + d6 needed — no roll(100). If seqRoll had [15,4] it would error
+    // on a third call; we pass exactly two values to prove no extra roll occurs.
+    expect(() =>
+      step(begun.state, { kind: "attack", actor: "U_PALADIN" }, seqRoll([15, 4])),
+    ).not.toThrow();
+  });
+});
+
+describe("STATS_V2 — AGI dodge", () => {
+  it("emits monster_dodged and leaves fighter HP intact", () => {
+    // AGI=8 → deriveDodgeChance = (8-5)*1% = 3%. threshold = 3.
+    const init = baseInit();
+    (init.fighters[0] as unknown as Record<string, unknown>).stats = {
+      str: 5, int_stat: 5, vit: 5, agi: 8, dex: 5,
+    };
+    const begun = runBegin(createCombatState(init), [5, 18]); // monster first
+    // Roll order: roll(101)=50 (target pick), d20=15 (hit, 15+5=20 ≥ AC=12),
+    // roll(100)=2 (≤ 3 → DODGE). No damage roll.
+    const result = step(begun.state, { kind: "monster_act" }, seqRoll([50, 15, 2]));
+    expect(result.state.fighters[0].hp).toBe(30);
+    expect(eventTypes(result.events)).toContain("monster_dodged");
+    expect(result.events.find((e) => e.type === "monster_attack")).toBeUndefined();
+  });
+
+  it("does not dodge when roll exceeds threshold", () => {
+    const init = baseInit();
+    (init.fighters[0] as unknown as Record<string, unknown>).stats = {
+      str: 5, int_stat: 5, vit: 5, agi: 8, dex: 5,
+    };
+    const begun = runBegin(createCombatState(init), [5, 18]);
+    // roll(100)=5 > 3 → no dodge; then d4=1 for damage.
+    const result = step(begun.state, { kind: "monster_act" }, seqRoll([50, 15, 5, 1]));
+    expect(result.state.fighters[0].hp).toBeLessThan(30);
+    expect(eventTypes(result.events)).not.toContain("monster_dodged");
+  });
+
+  it("skips the dodge roll when AGI is 5 (threshold = 0)", () => {
+    const init = baseInit();
+    (init.fighters[0] as unknown as Record<string, unknown>).stats = {
+      str: 5, int_stat: 5, vit: 5, agi: 5, dex: 5,
+    };
+    const begun = runBegin(createCombatState(init), [5, 18]);
+    // agi=5 → threshold=0 → roll(100) not called. Only target + d20 + d4.
+    expect(() =>
+      step(begun.state, { kind: "monster_act" }, seqRoll([50, 15, 3])),
+    ).not.toThrow();
+  });
+});
+
+describe("STATS_V2 — VIT armor bonus", () => {
+  it("adds VIT-derived armor on top of equipped armor_power", () => {
+    // VIT=9 → deriveArmorBonus = floor((9-5)/4) = 1. armor_power=3 → total=4.
+    // resolveMonsterHit: d4=3, tier=3, party=1 → raw=6. reduction=floor(4/2)=2. final=4.
+    const init = baseInit();
+    (init.fighters[0] as unknown as Record<string, unknown>).stats = {
+      str: 5, int_stat: 5, vit: 9, agi: 5, dex: 5,
+    };
+    const begun = runBegin(createCombatState(init), [5, 18]);
+    const result = step(begun.state, { kind: "monster_act" }, seqRoll([50, 15, 3]));
+    expect(result.state.fighters[0].hp).toBe(26); // 30 - 4 = 26
+  });
+
+  it("without VIT bonus the same roll deals 1 more damage", () => {
+    // Same d4=3, tier=3. armor=3 → reduction=floor(3/2)=1. final=5.
+    const begun = runBegin(createCombatState(baseInit()), [5, 18]);
+    const result = step(begun.state, { kind: "monster_act" }, seqRoll([50, 15, 3]));
+    expect(result.state.fighters[0].hp).toBe(25); // 30 - 5 = 25
   });
 });
 
