@@ -348,12 +348,95 @@ export interface DungeonNode {
   objects: DungeonObject[];
   encounter?: { monsters: MonsterSpec[]; cleared: boolean };
   visited: boolean;
+
+  // ── Grid dungeon enhancements (set when the dungeon was grid-generated).
+  // Legacy AI-graph dungeons leave these undefined and fall back to old rendering.
+  x?: number;                                              // grid column (0-indexed)
+  y?: number;                                              // grid row (0-indexed)
+  doors?: Partial<Record<DungeonDirection, GridDoor>>;     // door state per direction
+  content?: GridRoomContent;                                // first-class room contents
+  shape?: RoomShape;                                        // derived from exit dirs; stored for rendering convenience
+}
+
+// Door between two adjacent grid rooms. The door lives "on" the exit; both
+// adjacent rooms point to logically-equivalent door records but we store the
+// authoritative copy on the room with the lower (x, y).
+export interface GridDoor {
+  state: "open" | "locked" | "barred" | "broken";
+  // For locked doors: the key tier required.
+  lock_tier?: KeyTier;
+  // DC for the appropriate skill check. Picking is DEX, bashing is STR.
+  pick_dc?: number;
+  bash_dc?: number;
+  // True once any party member has bashed through (lets others walk through
+  // without re-rolling).
+  visible?: boolean;
+}
+
+// First-class room contents — replaces the implicit "encounter + objects[]"
+// scheme. A grid-generated room has exactly one content kind (boss rooms have
+// content="boss" which carries the monster + treasure together).
+export type GridRoomContent =
+  | { kind: "empty" }
+  | { kind: "entry" }
+  | { kind: "encounter"; monsters: MonsterSpec[]; cleared: boolean }
+  | { kind: "boss"; monsters: MonsterSpec[]; cleared: boolean; treasure: LootOption[] }
+  | { kind: "loot"; items: LootOption[]; taken: boolean }
+  | { kind: "key_pickup"; tier: KeyTier; taken: boolean }
+  | { kind: "trap"; choices: TrapChoice[]; resolved: boolean }
+  | { kind: "lockbox"; lock_tier: KeyTier; options: LootOption[]; resolved: boolean }
+  | { kind: "npc"; greeting: string; offer: LootOption; resolved: boolean }
+  | { kind: "merchant"; greeting: string; stock: LootOption[]; resolved: boolean };
+
+// Room shape codes drive which background art to render. Derived from the
+// exit direction set: e.g. {n, e} → "corner_ne", {n, s} → "straight_ns",
+// {n, e, s, w} → "cross". Empty set → "chamber" (entry/boss rooms tend to be
+// chambers regardless of exits, but exits decide otherwise).
+export type RoomShape =
+  | "dead_n" | "dead_e" | "dead_s" | "dead_w"
+  | "straight_ns" | "straight_ew"
+  | "corner_ne" | "corner_nw" | "corner_se" | "corner_sw"
+  | "t_n" | "t_e" | "t_s" | "t_w"
+  | "cross"
+  | "chamber"
+  | "entry"
+  | "boss";
+
+// Compute a RoomShape from the set of exit directions and optional content type.
+// Special rooms (entry, boss) override the derived shape so their bespoke art
+// renders.
+export function shapeFromExits(exits: ReadonlySet<DungeonDirection>, contentKind?: GridRoomContent["kind"]): RoomShape {
+  if (contentKind === "entry") return "entry";
+  if (contentKind === "boss") return "boss";
+  const has = (d: DungeonDirection) => exits.has(d);
+  const n = has("n"), e = has("e"), s = has("s"), w = has("w");
+  const count = (n ? 1 : 0) + (e ? 1 : 0) + (s ? 1 : 0) + (w ? 1 : 0);
+  if (count === 4) return "cross";
+  if (count === 3) {
+    if (!n) return "t_s"; if (!e) return "t_w"; if (!s) return "t_n"; return "t_e";
+  }
+  if (count === 2) {
+    if (n && s) return "straight_ns";
+    if (e && w) return "straight_ew";
+    if (n && e) return "corner_ne";
+    if (n && w) return "corner_nw";
+    if (s && e) return "corner_se";
+    return "corner_sw";
+  }
+  if (count === 1) {
+    if (n) return "dead_n"; if (e) return "dead_e"; if (s) return "dead_s"; return "dead_w";
+  }
+  return "chamber";
 }
 
 export interface DungeonGraph {
   nodes: Record<string, DungeonNode>;
   current: string;
   visited: string[];
+
+  // Grid dungeons set these so the minimap and traversal know the layout.
+  grid_width?: number;
+  grid_height?: number;
 }
 
 export interface SceneJson {
