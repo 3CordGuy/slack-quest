@@ -2,10 +2,13 @@ import { describe, expect, it } from "vitest";
 
 import {
   createCombatState,
+  isMonsterActor,
   MONSTER_ID,
   step,
+  upgradeCombatState,
   type CombatEvent,
   type CombatInit,
+  type CombatMonster,
   type CombatState,
   type RollFn,
   type TurnAction,
@@ -743,4 +746,162 @@ function eventTypes(events: CombatEvent[]): string[] {
 
 // Type smoke check.
 const _unused: TurnAction = { kind: "begin" };
+
+// ---------------------------------------------------------------------------
+
+describe("isMonsterActor", () => {
+  it("matches the legacy single-monster sentinel", () => {
+    expect(isMonsterActor("__monster__")).toBe(true);
+  });
+  it("matches multi-monster indexed IDs", () => {
+    expect(isMonsterActor("__monster_0__")).toBe(true);
+    expect(isMonsterActor("__monster_5__")).toBe(true);
+  });
+  it("does not match a player id", () => {
+    expect(isMonsterActor("U_PALADIN")).toBe(false);
+    expect(isMonsterActor("U_12345")).toBe(false);
+  });
+  it("does not match an empty string", () => {
+    expect(isMonsterActor("")).toBe(false);
+  });
+});
+
+describe("upgradeCombatState", () => {
+  it("is a no-op when monsters[] is already populated", () => {
+    const state = createCombatState(baseInit());
+    const upgraded = upgradeCombatState(state);
+    expect(upgraded).toBe(state); // same reference
+  });
+
+  it("promotes legacy monster to monsters[0] with MONSTER_ID", () => {
+    const legacyMonster: CombatMonster = {
+      id: MONSTER_ID,
+      name: "Stale Wraith",
+      hp: 20,
+      max_hp: 20,
+      tier: 2,
+      initiative: 0,
+      effects: [],
+      is_boss: false,
+      boss_phase: 1,
+    };
+    const legacyState: CombatState = {
+      fighters: [],
+      monsters: [],
+      monster: legacyMonster,
+      turn_order: [],
+      turn_index: 0,
+      round: 0,
+      status: "pending",
+      contribution: {},
+      stats: {},
+    };
+    const upgraded = upgradeCombatState(legacyState);
+    expect(upgraded.monsters).toHaveLength(1);
+    expect(upgraded.monsters[0].name).toBe("Stale Wraith");
+    expect(upgraded.monsters[0].id).toBe(MONSTER_ID);
+  });
+
+  it("returns state unchanged when neither monster nor monsters are present", () => {
+    const empty: CombatState = {
+      fighters: [],
+      monsters: [],
+      turn_order: [],
+      turn_index: 0,
+      round: 0,
+      status: "pending",
+      contribution: {},
+      stats: {},
+    };
+    expect(upgradeCombatState(empty)).toBe(empty);
+  });
+});
+
+describe("multi-monster combat", () => {
+  // Helper: two-monster init. Monsters get IDs __monster_0__ and __monster_1__.
+  function twoMonsterInit(overrides: Partial<CombatInit> = {}): CombatInit {
+    return {
+      fighters: baseInit().fighters,
+      monsters: [
+        { name: "Goblin A", hp: 5, max_hp: 5, tier: 1, is_boss: false },
+        { name: "Goblin B", hp: 8, max_hp: 8, tier: 1, is_boss: false },
+      ],
+      ...overrides,
+    };
+  }
+
+  it("assigns __monster_N__ IDs when multiple monsters are present", () => {
+    const state = createCombatState(twoMonsterInit());
+    expect(state.monsters[0].id).toBe("__monster_0__");
+    expect(state.monsters[1].id).toBe("__monster_1__");
+  });
+
+  it("single monster still gets the legacy __monster__ ID", () => {
+    const state = createCombatState(baseInit());
+    expect(state.monsters[0].id).toBe(MONSTER_ID);
+  });
+
+  it("turn order includes a slot for each monster", () => {
+    // Fighter initiative 15, monster_0 initiative 10, monster_1 initiative 5.
+    const begun = runBegin(createCombatState(twoMonsterInit()), [15, 10, 5]);
+    expect(begun.state.turn_order).toContain("__monster_0__");
+    expect(begun.state.turn_order).toContain("__monster_1__");
+    expect(begun.state.turn_order).toContain("U_PALADIN");
+    expect(begun.state.turn_order).toHaveLength(3);
+  });
+
+  it("attack with target_id damages only the targeted monster", () => {
+    // Fighter goes first (initiative 15). Monsters have initiative 10 and 5.
+    const begun = runBegin(createCombatState(twoMonsterInit()), [15, 10, 5]);
+    // d20=15 hit, d6=4 — Goblin A (hp 5) takes 4+attack_mod(2)+weapon(4)=10 → dies.
+    const result = step(
+      begun.state,
+      { kind: "attack", actor: "U_PALADIN", target_id: "__monster_0__" },
+      seqRoll([15, 4]),
+    );
+    expect(result.state.monsters[0].hp).toBeLessThanOrEqual(0); // Goblin A dead
+    expect(result.state.monsters[1].hp).toBe(8);                // Goblin B untouched
+  });
+
+  it("combat stays active until ALL monsters are dead", () => {
+    const begun = runBegin(createCombatState(twoMonsterInit()), [15, 10, 5]);
+    // Kill Goblin A — combat should still be active.
+    const after1 = step(
+      begun.state,
+      { kind: "attack", actor: "U_PALADIN", target_id: "__monster_0__" },
+      seqRoll([15, 4]),
+    );
+    expect(after1.state.status).toBe("active");
+    expect(eventTypes(after1.events)).not.toContain("victory");
+  });
+
+  it("emits victory only after the last monster falls", () => {
+    // Give both monsters 1 HP so one attack kills each.
+    const init = twoMonsterInit();
+    init.monsters![0].hp = 1;
+    init.monsters![1].hp = 1;
+    const begun = runBegin(createCombatState(init), [15, 10, 5]);
+
+    // Kill Goblin A — still active.
+    const after1 = step(
+      begun.state,
+      { kind: "attack", actor: "U_PALADIN", target_id: "__monster_0__" },
+      seqRoll([15, 1]),
+    );
+    expect(after1.state.status).toBe("active");
+
+    // Advance past the dead Goblin A's turn and Goblin B's turn to get back to
+    // the fighter. seqRoll for monster_act: target pick d101 + d20 hit + d4 dmg.
+    // monster_0 is dead so its turn is a no-op pass; monster_1 acts.
+    const monB = step(after1.state, { kind: "monster_act" }, seqRoll([50, 5, 1])); // B misses or hits
+    // Now it's the fighter's turn again — kill Goblin B.
+    const after2 = step(
+      monB.state,
+      { kind: "attack", actor: "U_PALADIN", target_id: "__monster_1__" },
+      seqRoll([15, 1]),
+    );
+    expect(after2.state.status).toBe("victory");
+    expect(eventTypes(after2.events)).toContain("victory");
+  });
+});
 void _unused;
