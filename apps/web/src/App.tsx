@@ -7574,67 +7574,84 @@ function statBonusSummary(bonus: Record<string, number> | null): string {
     .join(", ");
 }
 
-// Picks the best RPG-Awesome icon for an item using type, weapon_range, and
-// name keywords. Exact catalog names are matched first, then broad patterns,
-// then type/range defaults so there's always a sensible fallback.
+// Picks the best icon for an item. Slot takes priority for non-weapon slots
+// so the equipped icon always matches its doll ghost placeholder. Weapons use
+// keyword matching for variety. The armor fallback handles legacy slotless items.
 function itemIcon(item: {
   item_type: ItemType;
   weapon_range?: WeaponRange | null;
   item_name: string;
+  slot?: EquipSlot | null;
 }): string {
   const n = item.item_name.toLowerCase();
+
+  // Slot-based fast path — matches the doll ghost icon for every non-weapon slot.
+  // main_hand falls through so weapons keep their keyword-matched variety.
+  if (item.slot && item.slot !== "main_hand") {
+    switch (item.slot) {
+      case "off_hand":  return "round-shield";
+      case "body":      return "chest-armor";
+      case "helmet":    return "heavy-helm";
+      case "pants":     return "armored-pants";
+      case "boots":     return "boots";
+      case "ring":      return "ring";
+      case "amulet":    return "gem-chain";
+    }
+  }
 
   switch (item.item_type) {
     case "weapon": {
       if (item.weapon_range === "focus") return "crystal-wand";
-      if (/\b(axe|hatchet|cleaver|tomahawk)\b/.test(n))                   return "battle-axe";
-      if (/\b(dagger|knife|dirk|shiv|stiletto|shank)\b/.test(n))          return "plain-dagger";
-      if (/\b(hammer|maul|mace|club)\b/.test(n))                          return "hammer";
-      if (/\b(staff|stave|wand|rod|scepter|sceptre)\b/.test(n))           return "crystal-wand";
-      if (/\b(spear|lance|pike|javelin|halberd|polearm)\b/.test(n))       return "barbed-spear";
-      if (/\bcrossbow\b/.test(n))                                          return "crossbow";
-      if (/\b(bow|longbow|shortbow|recurve)\b/.test(n))                   return "archer";
-      if (/\b(arrow|bolt|quiver)\b/.test(n))                              return "barbed-arrow";
-      if (/\bblunderbuss\b/.test(n))                                        return "blunderbuss";
-      if (/\b(gun|pistol|revolver|musket|rifle)\b/.test(n))               return "revolver";
-      if (/\b(scythe|sickle)\b/.test(n))                                  return "scythe";
-      if (/\btrident\b/.test(n))                                          return "trident";
-      if (/\b(whip|lash|flail)\b/.test(n))                               return "vine-whip";
-      if (/\b(saber|sabre|rapier|foil|estoc)\b/.test(n))                 return "spinning-sword";
-      if (/\b(broadsword|greatsword|longsword|claymore)\b/.test(n))      return "broadsword";
-      if (item.weapon_range === "ranged")                                  return "crossbow";
+      if (/\bdaggers\b/.test(n))                                          return "daggers";
+      if (/\b(axe|hatchet|cleaver|tomahawk)\b/.test(n))                  return "battle-axe";
+      if (/\b(dagger|knife|dirk|shiv|stiletto|shank)\b/.test(n))         return "plain-dagger";
+      if (/\b(hammer|maul|mace|club)\b/.test(n))                         return "hammer";
+      if (/\b(staff|stave|wand|rod|scepter|sceptre)\b/.test(n))          return "crystal-wand";
+      if (/\b(spear|lance|pike|javelin|halberd|polearm)\b/.test(n))      return "barbed-spear";
+      if (/\bcrossbow\b/.test(n))                                         return "crossbow";
+      if (/\b(bow|longbow|shortbow|recurve)\b/.test(n))                  return "crossbow";
+      if (/\bblunderbuss\b/.test(n))                                      return "blunderbuss";
+      if (/\b(gun|pistol|revolver|musket|rifle)\b/.test(n))              return "revolver";
+      if (/\b(scythe|sickle)\b/.test(n))                                 return "scythe";
+      if (/\btrident\b/.test(n))                                         return "trident";
+      if (/\b(saber|sabre|rapier|foil|estoc)\b/.test(n))                return "spinning-sword";
+      if (/\b(broadsword|greatsword|longsword|claymore)\b/.test(n))     return "broadsword";
+      if (item.weapon_range === "ranged")                                 return "crossbow";
       return "sword";
     }
 
     case "armor": {
-      if (/\b(helm|helmet|cap|hat|hood|crown|circlet|coif)\b/.test(n))   return "heavy-helm";
-      if (/\b(boot|shoe|greave|sabatons?|sandal)\b/.test(n))             return "boots";
-      if (/\b(glove|gauntlet|bracer|vambrace)\b/.test(n))                return "hand";
-      if (/\b(robe|vestment|raiment|cassock)\b/.test(n))                 return "hood";
-      if (/\b(cloak|mantle|cape|shroud)\b/.test(n))                      return "hood";
-      if (/\b(amulet|pendant|necklace|talisman|charm|locket|ring)\b/.test(n)) return "gem-pendant";
-      if (/\b(vest|jerkin|jacket|coat|doublet|tunic)\b/.test(n))         return "vest";
-      if (/\b(plate|cuirass|breastplate|full.?armor|heavy)\b/.test(n))   return "heavy-shield";
-      if (/\b(chain|mail|maille|hauberk|ringmail)\b/.test(n))            return "circular-shield";
-      if (/\b(leather|hide|studded|buckler)\b/.test(n))                  return "round-shield";
-      return "shield";
+      // Slot handles most armor items. This branch is a fallback for legacy
+      // slotless items or items whose slot hasn't been backfilled yet.
+      if (/\b(helm|helmet|cap|hat|crown|circlet|coif)\b/.test(n))       return "heavy-helm";
+      if (/\b(hood|cowl)\b/.test(n))                                     return "hood";
+      if (/\b(boot|shoe|greave|sabatons?|sandal)\b/.test(n))            return "boots";
+      if (/\b(glove|gauntlet|bracer|vambrace)\b/.test(n))               return "hand";
+      if (/\b(cloak|mantle|cape|robe|shroud|vestment|cassock)\b/.test(n)) return "hood";
+      if (/\b(amulet|pendant|necklace|talisman|charm|locket)\b/.test(n)) return "gem-chain";
+      if (/\b(ring|band)\b/.test(n))                                    return "ring";
+      if (/\b(pant|leg|greave|legging|trouser)\b/.test(n))             return "armored-pants";
+      if (/\b(shield|buckler|targe)\b/.test(n))                         return "round-shield";
+      return "chest-armor";
     }
 
     case "consumable": {
-      if (/\b(mushroom|fungi|fungus|shroom)\b/.test(n))                   return "super-mushroom";
+      if (/\b(mushroom|fungi|fungus|shroom)\b/.test(n))                  return "super-mushroom";
       if (/\b(meat|chicken|drumstick|steak|food|ration|bread)\b/.test(n)) return "roast-chicken";
-      if (/\b(herb|leaf|clover|root|petal|flower)\b/.test(n))            return "leaf";
-      if (/\b(bandage|salve|poultice|balm|ointment)\b/.test(n))          return "medical-pack";
-      if (/\b(elixir|essence|tincture|draught|brew)\b/.test(n))          return "heart-bottle";
-      if (/\b(mana|arcane)\b/.test(n))                                    return "crystal-ball";
+      if (/\b(herb|leaf|clover|root|petal|flower)\b/.test(n))           return "leaf";
+      if (/\b(bandage|salve|poultice|balm|ointment)\b/.test(n))         return "medical-pack";
+      if (/\b(elixir|essence|tincture|draught|brew)\b/.test(n))         return "heart-bottle";
+      if (/\b(poison|venom|toxin)\b/.test(n))                           return "poison-bottle";
+      if (/\b(mana|arcane)\b/.test(n))                                   return "crystal-ball";
       return "bubbling-potion";
     }
 
     case "magic": {
-      if (/\b(tome|book|grimoire|codex|manual)\b/.test(n))               return "book";
-      if (/\b(rune|glyph|sigil)\b/.test(n))                              return "rune-stone";
-      if (/\b(crystal|gem|jewel|prism)\b/.test(n))                       return "crystals";
-      if (/\b(ring|band)\b/.test(n))                                     return "gem-pendant";
+      if (/\b(tome|book|grimoire|codex|manual)\b/.test(n))              return "book";
+      if (/\b(rune|glyph|sigil)\b/.test(n))                             return "rune-stone";
+      if (/\b(crystal|gem|jewel|prism)\b/.test(n))                      return "crystals";
+      if (/\b(ring|band)\b/.test(n))                                    return "ring";
+      if (/\b(amulet|pendant|necklace|talisman|charm|locket)\b/.test(n)) return "gem-chain";
       return "crystal-ball";
     }
 
@@ -7642,30 +7659,30 @@ function itemIcon(item: {
       return "crowned-heart";
 
     case "tool": {
-      if (/caffeine bomb|hotfix grenade/.test(n))                         return "bomb-explosion";
-      if (/espresso shot/.test(n))                                        return "coffee-mug";
-      if (/poison vial/.test(n))                                          return "poison-cloud";
-      if (/\b(bomb|explosive|grenade|nuke)\b/.test(n))                   return "bomb-explosion";
-      if (/\b(torch|lantern|light)\b/.test(n))                           return "torch";
-      if (/\b(rope|grapple|hook)\b/.test(n))                             return "grappling-hook";
-      if (/\b(trap|snare|net)\b/.test(n))                                return "bear-trap";
-      if (/\b(lockpick|picks?)\b/.test(n))                               return "key-basic";
-      if (/\b(shovel|spade)\b/.test(n))                                  return "shovel";
-      if (/\b(vial|flask|bottle)\b/.test(n))                             return "vial";
+      if (/caffeine bomb|hotfix grenade/.test(n))                        return "bomb-explosion";
+      if (/espresso shot/.test(n))                                       return "coffee-mug";
+      if (/poison vial/.test(n))                                         return "poison-bottle";
+      if (/\b(bomb|explosive|grenade|nuke)\b/.test(n))                  return "bomb-explosion";
+      if (/\b(torch|lantern|light)\b/.test(n))                          return "torch";
+      if (/\b(rope|grapple|hook)\b/.test(n))                            return "grappling-hook";
+      if (/\b(trap|snare|net)\b/.test(n))                               return "bear-trap";
+      if (/\b(lockpick|picks?)\b/.test(n))                              return "key-basic";
+      if (/\b(shovel|spade)\b/.test(n))                                 return "shovel";
+      if (/\b(vial|flask|bottle)\b/.test(n))                            return "poison-bottle";
       return "anvil";
     }
 
     case "scroll": {
-      if (/rebase/.test(n))                                               return "cycle";
-      if (/production outage/.test(n))                                    return "lightning-saber";
-      if (/\b(fire|flame|burn|inferno)\b/.test(n))                       return "fire";
-      if (/\b(lightning|thunder|storm|shock)\b/.test(n))                 return "lightning-saber";
-      if (/\b(frost|ice|cold|freeze|glacial)\b/.test(n))                 return "snowflake";
-      if (/\b(heal|mend|restore|cure|life)\b/.test(n))                   return "health-increase";
-      if (/\b(poison|venom|toxin|blight)\b/.test(n))                     return "poison-cloud";
-      if (/\b(shadow|dark|void|death|necrotic)\b/.test(n))               return "death-skull";
-      if (/\b(shield|protect|ward|barrier)\b/.test(n))                   return "bolt-shield";
-      if (/\b(arcane|magic|spell|enchant)\b/.test(n))                    return "fairy-wand";
+      if (/rebase/.test(n))                                              return "cycle";
+      if (/production outage/.test(n))                                   return "lightning-saber";
+      if (/\b(fire|flame|burn|inferno)\b/.test(n))                      return "fire";
+      if (/\b(lightning|thunder|storm|shock)\b/.test(n))                return "lightning-saber";
+      if (/\b(frost|ice|cold|freeze|glacial)\b/.test(n))                return "snowflake";
+      if (/\b(heal|mend|restore|cure|life)\b/.test(n))                  return "health-increase";
+      if (/\b(poison|venom|toxin|blight)\b/.test(n))                    return "poison-cloud";
+      if (/\b(shadow|dark|void|death|necrotic)\b/.test(n))              return "death-skull";
+      if (/\b(shield|protect|ward|barrier)\b/.test(n))                  return "bolt-shield";
+      if (/\b(arcane|magic|spell|enchant)\b/.test(n))                   return "fairy-wand";
       return "scroll-unfurled";
     }
 
