@@ -2162,27 +2162,8 @@ app.post("/api/hunt", async (c) => {
   });
   await refillMana(c.env.DB, session.slack_user_id);
 
-  // /api/hunt always produces a standard, non-elite quest. Announce it
-  // the same as the other web creation paths.
-  if (c.env.SLACK_BOT_TOKEN) {
-    c.executionCtx.waitUntil((async () => {
-      const ts = await announceWebQuestToSlack(c.env, {
-        channelId,
-        questId,
-        userId: session.slack_user_id,
-        characterName: character.name,
-        characterClass: character.class,
-        characterLevel: character.level,
-        elite: false,
-        variant: "standard",
-        monsterName: scene.monster_name,
-        monsterMaxHp: scene.monster_max_hp,
-        sceneText: scene.scene,
-        webBaseUrl: WEB_PUBLIC_BASE,
-      });
-      if (ts) await setQuestThreadTs(c.env.DB, questId, ts);
-    })());
-  }
+  // Hunt quests are rapid solo grind — skip the Slack announcement so the
+  // channel isn't spammed every time someone grinds outskirts mobs.
 
   return c.json({ ok: true, quest_id: questId });
 });
