@@ -569,6 +569,28 @@ interface LiarsRoundResult {
 }
 
 // Give: known characters for picker
+// Portrait URL helpers. Custom per-character portraits live at
+// /img/art/v3/character/<slug>.png and the class-default fallback at
+// /img/art/views/v6/class_<class_id>.png. The Adventurers list and the
+// AdventurerSheet both prefer the custom portrait — falling back to the
+// class image only when the custom one 404s — so updates to a character's
+// portrait show up consistently across the dashboard.
+function adventurerSlug(name: string): string {
+  return name
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/[̀-ͯ]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 60) || "unnamed";
+}
+function adventurerCharPortrait(name: string): string {
+  return `/img/art/v3/character/${adventurerSlug(name)}.png`;
+}
+function adventurerClassPortrait(className: string): string {
+  return `/img/art/views/v6/class_${className.toLowerCase().replace(/[\s-]+/g, "_")}.png`;
+}
+
 interface KnownCharacter {
   slack_user_id: string;
   name: string;
@@ -3266,7 +3288,10 @@ function AdventurersCard({ selfId }: { selfId: string }) {
               : secsAgo < 86400 ? `${Math.floor(secsAgo / 3600)}h ago`
               : `${Math.floor(secsAgo / 86400)}d ago`;
             const hpPct = ch.max_hp > 0 ? Math.max(0, Math.min(1, ch.hp / ch.max_hp)) : 0;
-            const portraitSrc = `/img/art/views/v6/class_${ch.class.toLowerCase().replace(/[\s-]+/g, "_")}.png`;
+            // Prefer the per-character custom portrait, fall back to the
+            // class default if the user hasn't generated one (or it 404s).
+            const portraitSrc = adventurerCharPortrait(ch.name);
+            const fallbackPortrait = adventurerClassPortrait(ch.class);
 
             return (
               <button
@@ -3282,7 +3307,7 @@ function AdventurersCard({ selfId }: { selfId: string }) {
                 onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.borderColor = "transparent"; }}
               >
                 <div style={{ position: "relative", flexShrink: 0 }}>
-                  <Avatar src={portraitSrc} alt={ch.name} size={32} radius={4} fallbackIcon="player" fallbackColor="#4a5568" />
+                  <Avatar src={portraitSrc} fallbackSrc={fallbackPortrait} alt={ch.name} size={32} radius={4} fallbackIcon="player" fallbackColor="#4a5568" />
                   {isOnline && (
                     <span style={{
                       position: "absolute", bottom: -1, right: -1,
@@ -3560,7 +3585,8 @@ function AdventurerSheet({ character, isOwn = false, onClose }: { character: Kno
   const xpIntoLevel = Math.max(0, character.xp - xpAtLevel);
   const xpSpan = xpAtNext - xpAtLevel;
   const xpPct = xpSpan > 0 ? Math.min(1, xpIntoLevel / xpSpan) : 1;
-  const portraitSrc = `/img/art/views/v6/class_${character.class.toLowerCase().replace(/[\s-]+/g, "_")}.png`;
+  const portraitSrc = adventurerCharPortrait(character.name);
+  const fallbackPortrait = adventurerClassPortrait(character.class);
   const ago = secsAgo < 60 ? "just now"
     : secsAgo < 3600 ? `${Math.floor(secsAgo / 60)}m ago`
     : secsAgo < 86400 ? `${Math.floor(secsAgo / 3600)}h ago`
@@ -3588,7 +3614,7 @@ function AdventurerSheet({ character, isOwn = false, onClose }: { character: Kno
           }}
         >✕</button>
 
-        <Avatar src={portraitSrc} alt={character.name} size={80} radius={8} fallbackIcon="player" fallbackColor="#4a5568" />
+        <Avatar src={portraitSrc} fallbackSrc={fallbackPortrait} alt={character.name} size={80} radius={8} fallbackIcon="player" fallbackColor="#4a5568" />
 
         <div>
           <h2 style={{ ...h2, margin: "0 0 2px" }}>{character.name}</h2>
