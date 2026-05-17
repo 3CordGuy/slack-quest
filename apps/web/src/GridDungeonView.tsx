@@ -611,7 +611,10 @@ function MonsterOverlay({ monster, isBoss, flashIds, lungeTick, slashTick, defea
     <div
       key={`monster-overlay-${isDead ? "defeated" : (lungeTick ?? 0)}`}
       className={classes}
-      style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%, -65%)", background: "rgba(10,11,14,0.88)", border: `1px solid ${isBoss ? "#fca5a5" : "#2a2d33"}`, borderRadius: 12, padding: "10px 14px", minWidth: 220, maxWidth: 300, backdropFilter: "blur(8px)", boxShadow: isBoss ? "0 0 32px rgba(239,68,68,0.3)" : "0 4px 24px rgba(0,0,0,0.6)", overflow: "hidden" }}>
+      // overflow:visible so the mark badge + status pills can sit at
+      // the card corners (and even spill slightly). The slash streak
+      // gets its own clipped sub-layer below.
+      style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%, -65%)", background: "rgba(10,11,14,0.88)", border: `1px solid ${isBoss ? "#fca5a5" : "#2a2d33"}`, borderRadius: 12, padding: "10px 14px", minWidth: 220, maxWidth: 300, backdropFilter: "blur(8px)", boxShadow: isBoss ? "0 0 32px rgba(239,68,68,0.3)" : "0 4px 24px rgba(0,0,0,0.6)" }}>
       {monster.art_url && (
         <img src={monster.art_url} alt={monster.name} style={{ width: "100%", height: 140, objectFit: "cover", borderRadius: 8, marginBottom: 8, display: "block" }} />
       )}
@@ -621,9 +624,16 @@ function MonsterOverlay({ monster, isBoss, flashIds, lungeTick, slashTick, defea
       </div>
       <HpBar current={Math.max(0, monster.hp)} max={monster.max_hp} color={isBoss ? "#ef4444" : undefined} height={6} />
       {/* Slash streak — fires whenever slashTick bumps (player landed a
-          hit). Keyed so each tick re-mounts and re-runs the animation. */}
+          hit). Lives in its own overflow-hidden layer so the streak is
+          clipped to the card edge without the parent's overflow having
+          to be hidden (which would clip the corner badges). */}
       {slashTick !== undefined && slashTick > 0 && !isDead && (
-        <span key={`slash-${slashTick}`} className="gq-slash-streak" aria-hidden />
+        <div
+          aria-hidden
+          style={{ position: "absolute", inset: 0, overflow: "hidden", borderRadius: 12, pointerEvents: "none" }}
+        >
+          <span key={`slash-${slashTick}`} className="gq-slash-streak" />
+        </div>
       )}
       {/* Mark badge (top-right corner). Mirrors the CombatPage pattern
           so /sq mark + the Mark button both surface the same way: a
