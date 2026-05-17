@@ -71,7 +71,7 @@ interface GridDoor {
   bash_dc?: number;
 }
 
-interface MonsterSpec { name: string; hp: number; max_hp: number; tier: number; is_boss?: boolean; art_url?: string | null }
+interface MonsterSpec { name: string; hp: number; max_hp: number; tier: number; is_boss?: boolean; art_url?: string | null; flavor?: string | null }
 interface LootOption { name: string; item_type: string; power: number; rarity: string; flavor: string; slot?: string | null; stat_bonus?: Record<string, number> | null }
 interface TrapChoice { text: string; emoji: string; skill: "str" | "dex" | "int"; fail_damage: number }
 
@@ -452,13 +452,15 @@ function PartyBar({ fighters, selfId, party, onClickSelf, flashIds }: {
       padding: "10px 12px",
       display: "flex", flexDirection: "column", gap: 8,
     }}>
-      <div style={rowStyle}>
-        <div style={labelStyle}>Back</div>
-        {backRow.length === 0 ? <span style={{ fontSize: 11, color: "#4a5568", alignSelf: "center", fontStyle: "italic" }}>—</span> : backRow.map(renderCard)}
-      </div>
+      {/* Front row above Back row — Front stands closer to the foe, which
+          is at the top of the screen in first-person view. */}
       <div style={rowStyle}>
         <div style={labelStyle}>Front</div>
         {frontRow.length === 0 ? <span style={{ fontSize: 11, color: "#4a5568", alignSelf: "center", fontStyle: "italic" }}>—</span> : frontRow.map(renderCard)}
+      </div>
+      <div style={rowStyle}>
+        <div style={labelStyle}>Back</div>
+        {backRow.length === 0 ? <span style={{ fontSize: 11, color: "#4a5568", alignSelf: "center", fontStyle: "italic" }}>—</span> : backRow.map(renderCard)}
       </div>
     </div>
   );
@@ -928,11 +930,12 @@ export function GridDungeonView({
   const bgUrl = roomBgUrl(currentNode.shape, content);
   const isMobile = useIsMobile(700);
   // Right-rail container that holds minimap + combat log. On desktop it sits
-  // top-right at ~1/8 viewport width. On mobile it shifts to the bottom of
-  // the room view, left+right anchored, so the controls stay legible.
+  // top-right at ~22% viewport width (wide enough for the legacy monospace
+  // log to breathe). On mobile it shifts to the bottom of the room view,
+  // left+right anchored, so the controls stay legible.
   const railStyle: React.CSSProperties = isMobile
     ? { position: "absolute", left: 8, right: 8, bottom: 8, display: "flex", flexDirection: "row", gap: 8, zIndex: 6 }
-    : { position: "absolute", top: 12, right: 12, width: "min(160px, 12.5vw)", display: "flex", flexDirection: "column", gap: 8, zIndex: 6 };
+    : { position: "absolute", top: 12, right: 12, width: "min(300px, 22vw)", display: "flex", flexDirection: "column", gap: 8, zIndex: 6 };
   const railItemStyle: React.CSSProperties = isMobile ? { flex: 1, minWidth: 0 } : { width: "100%" };
 
   return (
@@ -997,24 +1000,36 @@ export function GridDungeonView({
             {combatActive && ws.log.length > 0 && (
               <div style={{ padding: "6px 10px 8px", flex: isMobile ? 1 : "1 1 auto", minWidth: 0, display: "flex", flexDirection: "column" }}>
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
-                  <div style={{ fontSize: 9, color: "#6b7280", textTransform: "uppercase", letterSpacing: 1 }}>Log</div>
+                  <div style={{ fontSize: 10, color: "#6b7280", textTransform: "uppercase", letterSpacing: 1.5, fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" }}>Combat log</div>
                   <button
                     onClick={() => setLogDetails((v) => !v)}
                     title={logDetails ? "Hide dice / formulas" : "Show dice / formulas"}
-                    style={{ background: "none", border: "1px solid #2a2d33", color: logDetails ? "#fcd34d" : "#6b7280", fontSize: 8, padding: "1px 5px", borderRadius: 3, cursor: "pointer", letterSpacing: 0.5 }}>
-                    {logDetails ? "DETAILS" : "DETAILS"}
+                    style={{ background: "none", border: "1px solid #2a2d33", color: logDetails ? "#fcd34d" : "#6b7280", fontSize: 9, padding: "1px 6px", borderRadius: 3, cursor: "pointer", letterSpacing: 0.5, fontFamily: "ui-monospace, monospace" }}>
+                    DETAILS
                   </button>
                 </div>
-                <div style={{ maxHeight: isMobile ? 80 : 220, overflowY: "auto", display: "flex", flexDirection: "column", gap: 2 }}>
-                  {ws.log.slice(-12).map((e) => (
+                {/* Legacy combat log: inset dark panel, monospace, 13px, generous
+                    line-height; events flow like a console scrollback. */}
+                <div style={{
+                  maxHeight: isMobile ? 100 : 240,
+                  overflowY: "auto",
+                  background: "#0e0f12",
+                  borderRadius: 6,
+                  padding: "8px 10px",
+                  fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+                  fontSize: 12,
+                  lineHeight: 1.45,
+                  display: "flex", flexDirection: "column", gap: 3,
+                }}>
+                  {ws.log.slice(-20).map((e) => (
                     <div key={e.id} style={{
-                      fontSize: 11, lineHeight: 1.4,
                       color: e.tone === "good" ? "#86efac" : e.tone === "bad" ? "#fca5a5" : e.tone === "info" ? "#93c5fd" : "#9aa0a6",
+                      wordBreak: "break-word",
                     }}>
                       <div>{e.text}</div>
                       {logDetails && e.detail && (
-                        <div style={{ fontSize: 10, color: "#6b7280", paddingLeft: 8, fontFamily: "ui-monospace, monospace" }}>
-                          {e.detail}
+                        <div style={{ fontSize: 11, color: "#6b7280", paddingLeft: 10 }}>
+                          ↳ {e.detail}
                         </div>
                       )}
                     </div>
@@ -1346,16 +1361,22 @@ function ContentOverlay({ node, content, onEnterCombat, onTakeLoot, onTakeKey, o
   if ((c.kind === "encounter" || c.kind === "boss") && !c.cleared) {
     const m = c.monsters[0];
     if (!m) return null;
+    const isBoss = c.kind === "boss";
     return (
-      <div style={{ background: c.kind === "boss" ? "rgba(80,10,10,0.95)" : "rgba(10,11,14,0.95)", borderTop: `1px solid ${c.kind === "boss" ? "#7f1d1d" : "#1e2028"}`, padding: "12px 16px", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
-        <div>
-          <div style={{ fontSize: 13, fontWeight: 600, color: c.kind === "boss" ? "#fca5a5" : "#f5f5f5", fontFamily: DISPLAY_FONT }}>
-            {c.kind === "boss" && <Icon name="dragon-head" size={14} color="#fca5a5" />} {m.name}
+      <div style={{ background: isBoss ? "rgba(80,10,10,0.95)" : "rgba(10,11,14,0.95)", borderTop: `1px solid ${isBoss ? "#7f1d1d" : "#1e2028"}`, padding: "12px 16px", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 14 }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 14, fontWeight: 600, color: isBoss ? "#fca5a5" : "#f5f5f5", fontFamily: DISPLAY_FONT }}>
+            {isBoss && <Icon name="dragon-head" size={14} color="#fca5a5" />} {m.name}
           </div>
-          <HpBar current={m.hp} max={m.max_hp} color={c.kind === "boss" ? "#ef4444" : undefined} height={5} />
-          <div style={{ fontSize: 11, color: "#9aa0a6", marginTop: 2 }}>{m.hp}/{m.max_hp} HP{c.kind === "boss" ? " · BOSS" : ""}</div>
+          {m.flavor && (
+            <div style={{ fontSize: 12, color: "#d1d5db", fontStyle: "italic", marginTop: 4, marginBottom: 6, lineHeight: 1.4, maxWidth: 560 }}>
+              {m.flavor}
+            </div>
+          )}
+          <HpBar current={m.hp} max={m.max_hp} color={isBoss ? "#ef4444" : undefined} height={5} />
+          <div style={{ fontSize: 11, color: "#9aa0a6", marginTop: 2 }}>{m.hp}/{m.max_hp} HP{isBoss ? " · BOSS" : ""}</div>
         </div>
-        <button onClick={onEnterCombat} style={{ padding: "8px 20px", background: c.kind === "boss" ? "#7f1d1d" : "#b89b3a", border: `1px solid ${c.kind === "boss" ? "#991b1b" : "#c4a35a"}`, borderRadius: 8, color: c.kind === "boss" ? "#fca5a5" : "#0e0f12", fontSize: 13, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap", display: "flex", alignItems: "center", gap: 6 }}>
+        <button onClick={onEnterCombat} style={{ padding: "8px 20px", background: isBoss ? "#7f1d1d" : "#b89b3a", border: `1px solid ${isBoss ? "#991b1b" : "#c4a35a"}`, borderRadius: 8, color: isBoss ? "#fca5a5" : "#0e0f12", fontSize: 13, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap", display: "flex", alignItems: "center", gap: 6, alignSelf: "center", flexShrink: 0 }}>
           <Icon name="sword" size={14} /> Engage
         </button>
       </div>

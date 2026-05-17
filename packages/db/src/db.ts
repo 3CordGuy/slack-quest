@@ -323,6 +323,9 @@ export interface MonsterSpec {
   tier: number;
   is_boss?: boolean;
   art_url?: string | null;
+  // AI-generated scene text introducing the foe ("Standing amid coiled cables,
+  // the API Abandoner sneers…"). Shown in the engage banner pre-combat.
+  flavor?: string | null;
 }
 
 export type DungeonObjectEffect =

@@ -1347,6 +1347,7 @@ async function buildGridDungeonScene(
     max_hp: s.monster_max_hp,
     tier: s.tier,
     art_url: s.monster_art_url ?? null,
+    flavor: s.scene,
   }]);
   const bossPack: MonsterSpec[] = [{
     name: bossScene.monster_name,
@@ -1355,6 +1356,7 @@ async function buildGridDungeonScene(
     tier: bossScene.tier,
     is_boss: true,
     art_url: bossScene.monster_art_url ?? null,
+    flavor: bossScene.scene,
   }];
 
   let encounterIdx = 0;
@@ -4188,6 +4190,9 @@ app.post("/api/quest/:id/dungeon/graph/move", async (c) => {
       tier: m.tier,
       monster_art_url: m.art_url ?? undefined,
       monster_effects: [],
+      // Surface the AI-generated monster intro as the room scene text so
+      // the combat UI shows it (mirrors legacy non-grid combat behaviour).
+      scene: m.flavor || updatedTarget.description,
     };
   } else if (updatedTarget.encounter && !updatedTarget.encounter.cleared && updatedTarget.encounter.monsters.length > 0) {
     const monster = updatedTarget.encounter.monsters[0];
