@@ -4727,11 +4727,19 @@ app.get("/api/ws/quest/:id", async (c) => {
 // Sequential to avoid Workers AI rate limits; expect ~2-3 min for 28+ images.
 app.post("/api/admin/pregen_dungeon_rooms", async (c) => {
   const art = artTarget(c.env);
-  const results = await pregenAllViewArt(c.env.AI, art);
+  // ?force=1 wipes every cached view-art before regenerating.
+  // ?force=rooms wipes only the room_* keys (grid dungeon backgrounds) and
+  // leaves town / inventory / class portraits untouched.
+  const force = c.req.query("force");
+  const forceMode: boolean | "room_only" | undefined =
+    force === "1" || force === "true" ? true
+    : force === "rooms" || force === "room" ? "room_only"
+    : undefined;
+  const results = await pregenAllViewArt(c.env.AI, art, forceMode ? { force: forceMode } : undefined);
   const generated = results.filter((r) => r.status === "generated").length;
   const cached = results.filter((r) => r.status === "cached").length;
   const failed = results.filter((r) => r.status === "failed").length;
-  return c.json({ ok: true, total: results.length, generated, cached, failed, results });
+  return c.json({ ok: true, total: results.length, generated, cached, failed, force: forceMode ?? null, results });
 });
 
 // Health check. Anything else falls through to the ASSETS binding via the
