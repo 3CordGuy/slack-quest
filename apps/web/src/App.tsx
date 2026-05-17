@@ -4687,6 +4687,12 @@ function InventoryFullScreen({
     localStorage.setItem("inv_view", mode);
     setViewMode(mode);
   }
+  // Esc closes the modal — capture early so it beats any inner handlers.
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [onClose]);
   const dollEquipBonuses: Partial<Record<StatKey, number>> = {};
   for (const item of items) {
     if (item.equipped && item.stat_bonus) {

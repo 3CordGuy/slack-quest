@@ -44,6 +44,17 @@ const HIT_FLASH_CSS = `
 .gq-hit-flash {
   animation: gq-hit-shake 550ms ease-in-out, gq-hit-tint 550ms ease-out;
 }
+/* Monster lunge — when the enemy attacks, the centred monster card pushes
+   downward (toward the player) and snaps back. Communicates the swing. */
+@keyframes gq-monster-lunge {
+  0%   { transform: translate(-50%, -65%); }
+  35%  { transform: translate(-50%, -45%) scale(1.04); }
+  60%  { transform: translate(-50%, -55%) scale(1.02); }
+  100% { transform: translate(-50%, -65%); }
+}
+.gq-monster-lunge {
+  animation: gq-monster-lunge 520ms cubic-bezier(0.22, 1.4, 0.36, 1) both;
+}
 `;
 
 if (typeof document !== "undefined" && !document.getElementById("gq-hit-flash-style")) {
@@ -466,12 +477,17 @@ function PartyBar({ fighters, selfId, party, onClickSelf, flashIds }: {
   );
 }
 
-function MonsterOverlay({ monster, isBoss, flashIds }: { monster: Monster | null; isBoss: boolean; flashIds?: Set<string> }) {
+function MonsterOverlay({ monster, isBoss, flashIds, lungeTick }: { monster: Monster | null; isBoss: boolean; flashIds?: Set<string>; lungeTick?: number }) {
   if (!monster || monster.hp <= 0) return null;
   const isHit = !!(monster.id && flashIds?.has(monster.id));
+  // Combine hit-flash + monster-lunge classes. The lunge is animation-based
+  // and only fires when the element re-mounts on each lungeTick bump, so we
+  // include it in the key.
+  const classes = [isHit ? "gq-hit-flash" : null, "gq-monster-lunge"].filter(Boolean).join(" ");
   return (
     <div
-      className={isHit ? "gq-hit-flash" : undefined}
+      key={`monster-overlay-${lungeTick ?? 0}`}
+      className={classes}
       style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%, -65%)", background: "rgba(10,11,14,0.88)", border: `1px solid ${isBoss ? "#fca5a5" : "#2a2d33"}`, borderRadius: 12, padding: "10px 14px", minWidth: 220, maxWidth: 300, backdropFilter: "blur(8px)", boxShadow: isBoss ? "0 0 32px rgba(239,68,68,0.3)" : "0 4px 24px rgba(0,0,0,0.6)" }}>
       {monster.art_url && (
         <img src={monster.art_url} alt={monster.name} style={{ width: "100%", height: 140, objectFit: "cover", borderRadius: 8, marginBottom: 8, display: "block" }} />
@@ -594,12 +610,15 @@ function GridMinimap({ graph }: { graph: GridGraph }) {
           const isTreasure = content === "loot" || content === "key_pickup";
           const isLockbox = content === "lockbox";
           let bg = isCurrent ? "#f5f5dc" : isVisited ? "#374151" : "#1a1c21";
-          if (isBoss && !isCurrent) bg = isVisited ? "#7f1d1d" : "#5c1f1f";
+          // Boss room only telegraphs once the player has actually been there.
+          // Unvisited boss rooms look like any other unexplored cell so the
+          // map doesn't spoil the layout.
+          if (isBoss && !isCurrent && isVisited) bg = "#7f1d1d";
           return (
             <div key={idx} style={{ position: "relative", width: CELL, height: CELL, background: bg, display: "flex", alignItems: "center", justifyContent: "center" }}>
               <ShapeIcon shape={node.shape} size={CELL - 2} />
               {isCurrent && <div style={{ position: "absolute", top: 1, right: 1, width: 4, height: 4, background: "#ef4444", borderRadius: "50%" }} />}
-              {isBoss && !isCurrent && <div style={{ position: "absolute", top: 1, right: 1, width: 4, height: 4, background: "#fca5a5", borderRadius: "50%" }} />}
+              {isBoss && !isCurrent && isVisited && <div style={{ position: "absolute", top: 1, right: 1, width: 4, height: 4, background: "#fca5a5", borderRadius: "50%" }} />}
               {isEntry && !isCurrent && <div style={{ position: "absolute", top: 1, right: 1, width: 4, height: 4, background: "#86efac", borderRadius: "50%" }} />}
               {isTreasure && isVisited && !isCurrent && <div style={{ position: "absolute", bottom: 1, right: 1, width: 4, height: 4, background: "#fbbf24", borderRadius: "50%" }} />}
               {isLockbox && isVisited && !isCurrent && <div style={{ position: "absolute", bottom: 1, right: 1, width: 4, height: 4, background: "#60a5fa", borderRadius: "50%" }} />}
@@ -714,6 +733,9 @@ export function GridDungeonView({
   // IDs (fighter id OR monster id) currently being flashed-red after a hit.
   // Cleared 600ms after the event lands.
   const [flashIds, setFlashIds] = useState<Set<string>>(new Set());
+  // Monster lunge counter — bumped on every monster_attack that lands. The
+  // MonsterOverlay re-keys when this changes, re-running the lunge animation.
+  const [monsterLungeTick, setMonsterLungeTick] = useState(0);
   // Combat log details toggle — when true, log entries show the dice / formula
   // sub-line under their summary. Persisted across remounts for the session.
   const [logDetails, setLogDetails] = useState<boolean>(() => typeof window !== "undefined" && localStorage.getItem("gq_log_details") === "1");
@@ -773,6 +795,9 @@ export function GridDungeonView({
             // monster_attack: monster hits target (fighter), only flash if damage landed.
             if (evt.type === "monster_attack" && typeof evt.target === "string" && (evt.hp_damage as number) > 0) {
               flashHit(evt.target as string);
+              // Bump the lunge counter so the monster card jabs downward toward
+              // the party. Visualises the swing even when auto-resolve is on.
+              setMonsterLungeTick((t) => t + 1);
             }
             // roll: dice events become floating animated polygons.
             if (evt.type === "roll") {
@@ -969,7 +994,7 @@ export function GridDungeonView({
         )}
 
         {/* Monster overlay during combat */}
-        {combatActive && liveMonsters.length > 0 && <MonsterOverlay monster={liveMonsters[0]} isBoss={isBoss} flashIds={flashIds} />}
+        {combatActive && liveMonsters.length > 0 && <MonsterOverlay monster={liveMonsters[0]} isBoss={isBoss} flashIds={flashIds} lungeTick={monsterLungeTick} />}
 
         {/* Content figure overlay — when the room contains a person or
             object, paint a visible indicator on the scene so the room
@@ -1077,16 +1102,10 @@ export function GridDungeonView({
 
       </div>
 
-      {/* Party bar (BLUE area) — its own row above the action buttons. */}
-      <PartyBar
-        fighters={combatActive ? (combatState?.fighters ?? null) : null}
-        selfId={selfId}
-        party={party.length > 0 ? party : [character]}
-        onClickSelf={onOpenInventory}
-        flashIds={flashIds}
-      />
-
-      {/* Content interaction overlay (non-combat rooms with stuff to do) */}
+      {/* Content interaction overlay (non-combat rooms with stuff to do).
+          Renders ABOVE the party bar so an encounter's enemy HP bar lives
+          between the centred monster card and the heroes — matching the
+          first-person spatial metaphor (foes overhead, heroes at the bottom). */}
       {!combatActive && (
         <ContentOverlay
           node={currentNode}
@@ -1098,6 +1117,15 @@ export function GridDungeonView({
           questId={questId}
         />
       )}
+
+      {/* Party bar (BLUE area) — its own row above the action buttons. */}
+      <PartyBar
+        fighters={combatActive ? (combatState?.fighters ?? null) : null}
+        selfId={selfId}
+        party={party.length > 0 ? party : [character]}
+        onClickSelf={onOpenInventory}
+        flashIds={flashIds}
+      />
 
       {/* Action buttons row (RED area) — own row at the very bottom. Always
           rendered while combat is active so the player never sees an empty
