@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   createCombatState,
   isMonsterActor,
+  mergeEffect,
   MONSTER_ID,
   step,
   upgradeCombatState,
@@ -10,6 +11,7 @@ import {
   type CombatInit,
   type CombatMonster,
   type CombatState,
+  type MachineStatusEffect,
   type RollFn,
   type TurnAction,
 } from "./combat_machine";
@@ -902,6 +904,60 @@ describe("multi-monster combat", () => {
     );
     expect(after2.state.status).toBe("victory");
     expect(eventTypes(after2.events)).toContain("victory");
+  });
+});
+
+describe("mergeEffect — status stacking policy", () => {
+  const make = (overrides: Partial<MachineStatusEffect> = {}): MachineStatusEffect => ({
+    type: "bleeding",
+    magnitude: 2,
+    remaining: 3,
+    source: "src_a",
+    ...overrides,
+  });
+
+  it("appends a new type rather than merging", () => {
+    const out = mergeEffect([make({ type: "bleeding" })], make({ type: "burning" }));
+    expect(out).toHaveLength(2);
+    expect(out.map((e) => e.type).sort()).toEqual(["bleeding", "burning"]);
+  });
+
+  it("stack-mode (bleed) sums magnitude and keeps the longest remaining", () => {
+    const out = mergeEffect(
+      [make({ magnitude: 2, remaining: 3 })],
+      make({ magnitude: 3, remaining: 5 }),
+    );
+    expect(out).toHaveLength(1);
+    expect(out[0].magnitude).toBe(5);
+    expect(out[0].remaining).toBe(5);
+  });
+
+  it("stack-mode caps magnitude at the per-type ceiling", () => {
+    const out = mergeEffect(
+      [make({ magnitude: 5 })],
+      make({ magnitude: 5 }),
+    );
+    expect(out[0].magnitude).toBe(6); // bleeding cap is 6
+  });
+
+  it("refresh-mode (regen) takes the better magnitude, not the sum", () => {
+    const out = mergeEffect(
+      [make({ type: "regen", magnitude: 4, remaining: 3 })],
+      make({ type: "regen", magnitude: 2, remaining: 5 }),
+    );
+    expect(out).toHaveLength(1);
+    expect(out[0].magnitude).toBe(4); // kept the bigger value
+    expect(out[0].remaining).toBe(5); // refreshed to longer
+  });
+
+  it("refresh-mode (empowered) refreshes duration on re-application", () => {
+    const out = mergeEffect(
+      [make({ type: "empowered", magnitude: 25, remaining: 1 })],
+      make({ type: "empowered", magnitude: 25, remaining: 3 }),
+    );
+    expect(out).toHaveLength(1);
+    expect(out[0].magnitude).toBe(25);
+    expect(out[0].remaining).toBe(3);
   });
 });
 void _unused;

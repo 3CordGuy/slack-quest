@@ -2365,7 +2365,7 @@ function applyWarlockBleed(
   const updated: CombatState = {
     ...state,
     monsters: state.monsters.map((m) =>
-      m.id === targetMonsterId ? { ...m, effects: [...m.effects, newEffect] } : m,
+      m.id === targetMonsterId ? { ...m, effects: mergeEffect(m.effects, newEffect) } : m,
     ),
   };
   return {
@@ -2379,6 +2379,61 @@ function applyWarlockBleed(
       },
     ],
   };
+}
+
+// Status-effect stacking policy. Without this, applying the same effect
+// twice produced two parallel timers that each ticked independently —
+// correct under "independent dots" semantics but visually noisy in the UI
+// (one pill per stack) and not what most players intuit. We pick one of
+// two merge modes per type:
+//   - "stack":   damage-over-time effects merge into one entry. Magnitude
+//                sums up to `maxMagnitude`. Remaining ticks = max(existing,
+//                incoming) so you can't shorten an effect by overstacking.
+//   - "refresh": buffs/regen take the BETTER magnitude (max) and the
+//                LONGER duration. A new stronger application overrides; a
+//                weaker one just refreshes the timer.
+const EFFECT_STACK_POLICY: Record<EffectType, { mode: "stack" | "refresh"; maxMagnitude: number }> = {
+  regen:     { mode: "refresh", maxMagnitude: 12 },
+  bleeding:  { mode: "stack",   maxMagnitude: 6 },
+  burning:   { mode: "stack",   maxMagnitude: 6 },
+  poisoned:  { mode: "stack",   maxMagnitude: 6 },
+  empowered: { mode: "refresh", maxMagnitude: 50 },
+};
+
+// Merge `incoming` into the existing effect list. If an effect of the
+// same type is already present, applies the per-type policy; otherwise
+// appends. Returns a fresh array (never mutates input). All effect-apply
+// sites (warlock bleed, consumables, future class actives) should go
+// through this so the engine + UI behave consistently.
+export function mergeEffect(
+  effects: MachineStatusEffect[],
+  incoming: MachineStatusEffect,
+): MachineStatusEffect[] {
+  const policy = EFFECT_STACK_POLICY[incoming.type];
+  const existingIdx = effects.findIndex((e) => e.type === incoming.type);
+  if (existingIdx < 0) {
+    // First instance of this type — clamp magnitude to cap and push.
+    return [...effects, { ...incoming, magnitude: Math.min(incoming.magnitude, policy.maxMagnitude) }];
+  }
+  const existing = effects[existingIdx];
+  const mergedMagnitude = policy.mode === "stack"
+    ? Math.min(existing.magnitude + incoming.magnitude, policy.maxMagnitude)
+    : Math.min(Math.max(existing.magnitude, incoming.magnitude), policy.maxMagnitude);
+  const mergedRemaining = Math.max(existing.remaining, incoming.remaining);
+  // Source attribution: keep whichever provided the bigger contribution.
+  // For "stack" mode we credit the latest applier; for "refresh" the one
+  // whose magnitude won. Mostly cosmetic — used in tick-event flavor.
+  const source = policy.mode === "stack"
+    ? (incoming.source ?? existing.source)
+    : (incoming.magnitude >= existing.magnitude ? (incoming.source ?? existing.source) : (existing.source ?? incoming.source));
+  const next = [...effects];
+  next[existingIdx] = {
+    ...existing,
+    magnitude: mergedMagnitude,
+    remaining: mergedRemaining,
+    source,
+  };
+  return next;
 }
 
 // QA Paladin — Lay on Hands. After a monster swing lands, if any alive

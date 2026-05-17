@@ -67,6 +67,7 @@ import {
   RARITY_BADGE,
   statSnapshot,
   upgradeCombatState,
+  mergeEffect,
   MONSTER_ID,
   type CombatEvent,
   type CombatFighter,
@@ -494,9 +495,9 @@ function applyToolOrScroll(
       };
     }
     case "Espresso Shot": {
-      // Self-applied regen. Stacks alongside whatever's already on the
-      // actor — withEffectApplied semantics in Slack just push to the
-      // array; v1 web does the same (Slack: append to effects).
+      // Self-applied regen. Goes through mergeEffect so a second sip
+      // refreshes duration + takes the better magnitude (per the regen
+      // "refresh" policy) instead of stacking two parallel timers.
       const eff = {
         type: "regen" as const,
         magnitude: item.power,
@@ -504,7 +505,7 @@ function applyToolOrScroll(
         source: entry.name,
       };
       const fighters = state.fighters.map((f) =>
-        f.id === actor.id ? { ...f, effects: [...f.effects, eff] } : f,
+        f.id === actor.id ? { ...f, effects: mergeEffect(f.effects, eff) } : f,
       );
       return {
         effect: {
@@ -537,7 +538,7 @@ function applyToolOrScroll(
           magnitude: item.power,
           remaining: 4,
         },
-        monster: { effects: [...state.monsters[0].effects, eff] },
+        monster: { effects: mergeEffect(state.monsters[0].effects, eff) },
       };
     }
     case "Rebase Scroll": {
@@ -592,13 +593,13 @@ function applyToolOrScroll(
       const eff = { type: "poisoned" as const, magnitude: item.power, remaining: 4, source: actor.id };
       return {
         effect: { kind: "monster_effect", effect: "poisoned", magnitude: item.power, remaining: 4 },
-        monster: { effects: [...state.monsters[0].effects, eff] },
+        monster: { effects: mergeEffect(state.monsters[0].effects, eff) },
       };
     }
     case "Regen Draft": {
       const eff = { type: "regen" as const, magnitude: item.power, remaining: 3, source: entry.name };
       const fighters = state.fighters.map((f) =>
-        f.id === actor.id ? { ...f, effects: [...f.effects, eff] } : f,
+        f.id === actor.id ? { ...f, effects: mergeEffect(f.effects, eff) } : f,
       );
       return {
         effect: { kind: "self_effect", target: actor.id, effect: "regen", magnitude: item.power, remaining: 3 },
@@ -608,7 +609,7 @@ function applyToolOrScroll(
     case "Battle Elixir": {
       const eff = { type: "empowered" as const, magnitude: 25, remaining: 3, source: entry.name };
       const fighters = state.fighters.map((f) =>
-        f.id === actor.id ? { ...f, effects: [...f.effects, eff] } : f,
+        f.id === actor.id ? { ...f, effects: mergeEffect(f.effects, eff) } : f,
       );
       return {
         effect: { kind: "self_effect", target: actor.id, effect: "empowered", magnitude: 25, remaining: 3 },
@@ -1329,26 +1330,41 @@ async function buildGridDungeonScene(
   }
 
   // Roll AI theme + boss + a few monster packs in parallel.
-  const monsterPackSize = 1; // one monster per encounter for v1
+  // Encounter rooms get one "leader" monster from `encounterScenes`. From
+  // tier 3 onward, some encounters also pull a "minion" from a separate
+  // bonus pool — minions are pre-generated so their names stay flavorful
+  // even when we double up. Minion HP is reduced (~70%) so packs don't
+  // overwhelm pacing relative to the single-monster baseline.
   const encounterCount = Math.max(3, Math.floor(targetRoomCount * 0.4));
-  const [theme, ...encounterScenes] = await Promise.all([
+  const bonusPoolSize = baseTier >= 3 ? Math.max(2, Math.ceil(encounterCount / 2)) : 0;
+  const [theme, ...allScenes] = await Promise.all([
     generateExpeditionTheme(env.AI),
-    ...Array.from({ length: encounterCount }, () =>
+    ...Array.from({ length: encounterCount + bonusPoolSize }, () =>
       generateOpeningScene(env.AI, character, elite, "standard", undefined, avoidNames, art),
     ),
   ]);
+  const encounterScenes = allScenes.slice(0, encounterCount);
+  const bonusScenes = allScenes.slice(encounterCount);
 
   const bossScene = await generateOpeningScene(env.AI, character, elite, "boss", undefined, avoidNames, art);
 
-  // Build a queue of monster packs the generator's callback can pop from.
-  const encounterPacks: MonsterSpec[][] = encounterScenes.map((s) => [{
+  const encounterLeaders: MonsterSpec[] = encounterScenes.map((s) => ({
     name: s.monster_name,
     hp: s.monster_max_hp,
     max_hp: s.monster_max_hp,
     tier: s.tier,
     art_url: s.monster_art_url ?? null,
     flavor: s.scene,
-  }]);
+  }));
+  const bonusMinions: MonsterSpec[] = bonusScenes.map((s) => ({
+    name: s.monster_name,
+    // Minions are ~70% HP — keeps the fight from doubling in length.
+    hp: Math.max(8, Math.round(s.monster_max_hp * 0.7)),
+    max_hp: Math.max(8, Math.round(s.monster_max_hp * 0.7)),
+    tier: Math.max(1, s.tier - 1),
+    art_url: s.monster_art_url ?? null,
+    flavor: s.scene,
+  }));
   const bossPack: MonsterSpec[] = [{
     name: bossScene.monster_name,
     hp: bossScene.monster_max_hp,
@@ -1360,12 +1376,27 @@ async function buildGridDungeonScene(
   }];
 
   let encounterIdx = 0;
-  function rollMonsterPack(_tier: number, isBoss: boolean): MonsterSpec[] {
+  let bonusIdx = 0;
+  function rollMonsterPack(tier: number, isBoss: boolean): MonsterSpec[] {
     if (isBoss) return bossPack;
-    // Cycle through pre-rolled encounters; if we run out, dupe the last one.
-    const pack = encounterPacks[encounterIdx % encounterPacks.length];
+    // Cycle through pre-rolled leaders; if we run out, dupe the last one.
+    const leader = encounterLeaders[encounterIdx % encounterLeaders.length];
     encounterIdx++;
-    return pack.map((m) => ({ ...m, hp: m.max_hp })); // fresh copy
+    const pack: MonsterSpec[] = [{ ...leader, hp: leader.max_hp }]; // fresh copy
+
+    // Tier-based pack size. Below tier 3 stays solo (matches v1 pacing).
+    // From tier 3+ pairs become common; tier 5+ adds rare triples.
+    const pairChance  = tier >= 5 ? 0.35 : tier >= 3 ? 0.30 : 0;
+    const tripleChance = tier >= 5 ? 0.15 : tier >= 3 ? 0.05 : 0;
+    const r = Math.random();
+    const extras = r < tripleChance ? 2 : r < tripleChance + pairChance ? 1 : 0;
+
+    for (let i = 0; i < extras && bonusMinions.length > 0; i++) {
+      const minion = bonusMinions[bonusIdx % bonusMinions.length];
+      bonusIdx++;
+      pack.push({ ...minion, hp: minion.max_hp }); // fresh copy
+    }
+    return pack;
   }
 
   function rollLoot(rollTier: number, kind: "loot" | "treasure" | "merchant" | "npc"): LootOption[] {
@@ -5474,38 +5505,65 @@ async function buildInitialCombatState(
     });
   }
 
-  // Grid dungeon boss-room check. `variant === "boss"` only fires for
-  // legacy boss-variant quests; grid dungeons run under variant="dungeon"
-  // and signal a boss by the current node's `content.kind === "boss"`.
-  // Without this, killing the grid boss yielded `is_boss: false` in the
-  // outcome, skipping the boss-kill branch in applyWebCombatOutcome — the
-  // quest never marked completed, treasure never distributed, player stuck.
-  const isGridBoss = !!(
-    quest.scene.graph &&
-    quest.scene.graph.nodes[quest.scene.graph.current]?.content?.kind === "boss"
-  );
-  const init: CombatInit = {
-    fighters,
-    monster: {
-      name: quest.scene.monster_name,
-      hp: quest.scene.monster_hp,
-      max_hp: quest.scene.monster_max_hp,
-      tier: quest.scene.tier,
-      is_boss: variant === "boss" || isGridBoss,
-      boss_phase: quest.scene.boss_phase,
-      wave: quest.scene.wave,
-      total_waves: quest.scene.total_waves,
-      upcoming_waves: quest.scene.upcoming_waves?.map((w) => ({
-        name: w.name,
-        max_hp: w.max_hp,
-      })),
-      art_url: quest.scene.monster_art_url,
-    },
-  };
+  // Grid dungeon: read the full monster array from the current node's
+  // content. The generator now produces multi-monster encounter packs
+  // (tier 3+); reading content.monsters here is how those reach the
+  // engine. Boss rooms stay solo for now (generator returns one boss).
+  // Falls back to the scene-root single-monster mirror for legacy
+  // variants (standard / boss / gauntlet) and AI-graph dungeons.
+  const gridNode = quest.scene.graph
+    ? quest.scene.graph.nodes[quest.scene.graph.current]
+    : null;
+  const gridContentMonsters = (() => {
+    if (!gridNode) return null;
+    const c = gridNode.content;
+    if (!c) return null;
+    if ((c.kind === "encounter" || c.kind === "boss") && !c.cleared) {
+      return c.monsters;
+    }
+    return null;
+  })();
+  const isGridBoss = gridNode?.content?.kind === "boss";
+
+  const init: CombatInit = (gridContentMonsters && gridContentMonsters.length > 0)
+    ? {
+        fighters,
+        monsters: gridContentMonsters.map((m, i) => ({
+          name: m.name,
+          hp: m.hp,
+          max_hp: m.max_hp,
+          tier: m.tier,
+          // Only the lead monster carries the boss flag — minions in a
+          // future "boss + adds" encounter still die to ordinary kills.
+          is_boss: isGridBoss && i === 0,
+          art_url: m.art_url ?? undefined,
+        })),
+      }
+    : {
+        fighters,
+        monster: {
+          name: quest.scene.monster_name,
+          hp: quest.scene.monster_hp,
+          max_hp: quest.scene.monster_max_hp,
+          tier: quest.scene.tier,
+          is_boss: variant === "boss" || isGridBoss,
+          boss_phase: quest.scene.boss_phase,
+          wave: quest.scene.wave,
+          total_waves: quest.scene.total_waves,
+          upcoming_waves: quest.scene.upcoming_waves?.map((w) => ({
+            name: w.name,
+            max_hp: w.max_hp,
+          })),
+          art_url: quest.scene.monster_art_url,
+        },
+      };
   const initial = createCombatState(init);
   const seeded: CombatState = {
     ...initial,
     monsters: initial.monsters.map((m, i) =>
+      // Seed effects only onto the lead monster — scene.monster_effects
+      // is the legacy mirror for the primary slot. Additional monsters
+      // start clean (no per-spawn effect mirror exists yet).
       i === 0 ? { ...m, effects: quest.scene.monster_effects ?? [] } : m
     ),
     fighters: initial.fighters.map((f) => {

@@ -45,16 +45,19 @@ const HIT_FLASH_CSS = `
 .gq-hit-flash {
   animation: gq-hit-shake 550ms ease-in-out, gq-hit-tint 550ms ease-out;
 }
-/* Monster lunge — when the enemy attacks, the centred monster card pushes
-   downward (toward the player) and snaps back. Communicates the swing. */
-@keyframes gq-monster-lunge {
-  0%   { transform: translate(-50%, -65%); }
-  35%  { transform: translate(-50%, -45%) scale(1.04); }
-  60%  { transform: translate(-50%, -55%) scale(1.02); }
-  100% { transform: translate(-50%, -65%); }
+/* Monster lunge — when the enemy attacks, its card pushes downward
+   (toward the player) and snaps back. Communicates the swing. The
+   *-card variant operates in the card's own space (translate Y only)
+   so it works inside MonsterStrip's flex layout without depending on
+   the old absolute -50%/-65% centering. */
+@keyframes gq-monster-lunge-card {
+  0%   { transform: translateY(0); }
+  35%  { transform: translateY(20px) scale(1.04); }
+  60%  { transform: translateY(10px) scale(1.02); }
+  100% { transform: translateY(0); }
 }
-.gq-monster-lunge {
-  animation: gq-monster-lunge 520ms cubic-bezier(0.22, 1.4, 0.36, 1) both;
+.gq-monster-lunge-card {
+  animation: gq-monster-lunge-card 520ms cubic-bezier(0.22, 1.4, 0.36, 1) both;
 }
 /* Slash effect when a player lands a hit on the enemy. A diagonal white
    streak sweeps across the monster card; lasts ~420ms then fades. The
@@ -78,18 +81,29 @@ const HIT_FLASH_CSS = `
   border-radius: 6px;
 }
 /* Monster defeat — fall backwards, fade out, shrink. Triggered when HP
-   reaches 0 so the card lingers for ~1.1s before unmounting. Gives the
-   "you won" beat the brief flash-of-green overlay never had on its own. */
-@keyframes gq-monster-defeated {
-  0%   { transform: translate(-50%, -65%) rotateX(0deg) scale(1); opacity: 1; filter: brightness(1) saturate(1); }
-  25%  { transform: translate(-50%, -65%) rotateX(-12deg) scale(1.03); opacity: 1; filter: brightness(1.35) saturate(1.4); }
-  70%  { transform: translate(-50%, -25%) rotateX(-65deg) scale(0.92); opacity: 0.55; filter: brightness(0.6) saturate(0.4); }
-  100% { transform: translate(-50%, -10%) rotateX(-85deg) scale(0.78); opacity: 0; filter: brightness(0.2) saturate(0); }
+   reaches 0 so the card lingers for ~1.1s before unmounting. The
+   *-card variant uses card-local transforms (no absolute centering)
+   so each MonsterCard in a strip falls independently. */
+@keyframes gq-monster-defeated-card {
+  0%   { transform: rotateX(0deg) scale(1) translateY(0); opacity: 1; filter: brightness(1) saturate(1); }
+  25%  { transform: rotateX(-12deg) scale(1.03) translateY(0); opacity: 1; filter: brightness(1.35) saturate(1.4); }
+  70%  { transform: rotateX(-65deg) scale(0.92) translateY(40px); opacity: 0.55; filter: brightness(0.6) saturate(0.4); }
+  100% { transform: rotateX(-85deg) scale(0.78) translateY(55px); opacity: 0; filter: brightness(0.2) saturate(0); }
 }
-.gq-monster-defeated {
-  animation: gq-monster-defeated 1100ms cubic-bezier(0.45, 0, 0.65, 1) forwards;
+.gq-monster-defeated-card {
+  animation: gq-monster-defeated-card 1100ms cubic-bezier(0.45, 0, 0.65, 1) forwards;
   transform-style: preserve-3d;
   perspective: 600px;
+}
+/* Targeted-card pulse — subtle gold inner glow on the picked enemy.
+   Pairs with the gold border so the active target is obvious even
+   while another monster is animating. */
+@keyframes gq-target-pulse {
+  0%, 100% { box-shadow: 0 0 16px rgba(251,191,36,0.4), inset 0 0 0 0 rgba(251,191,36,0); }
+  50%      { box-shadow: 0 0 22px rgba(251,191,36,0.55), inset 0 0 12px 0 rgba(251,191,36,0.15); }
+}
+.gq-monster-targeted {
+  animation: gq-target-pulse 1800ms ease-in-out infinite;
 }
 /* Victory / defeat overlay enters with a staged fade so it doesn't just
    appear on top of the monster animation. Tint fades up first, then the
@@ -577,57 +591,89 @@ function PartyBar({ fighters, selfId, party, onClickSelf, flashIds }: {
   );
 }
 
-function MonsterOverlay({ monster, isBoss, flashIds, lungeTick, slashTick, defeatedRemovedAtRef, isMarked, effects }: {
-  monster: Monster | null;
+// Single monster card. Used by MonsterStrip — one card per monster.
+// Card-local state manages its own defeat animation lifecycle so each
+// monster falls back independently when it dies (in a multi-monster
+// fight, killing one shouldn't restart the other's animation).
+function MonsterCard({ monster, isBoss, isHit, lungeTick, slashTick, isMarked, isTargeted, size, onClick }: {
+  monster: Monster;
   isBoss: boolean;
-  flashIds?: Set<string>;
-  lungeTick?: number;
-  slashTick?: number;
-  // When the monster hits 0 HP we keep rendering it briefly with the
-  // defeat animation, then unmount. The parent tracks when "now" passed
-  // the unmount deadline so re-renders don't restart the animation.
-  defeatedRemovedAtRef?: React.MutableRefObject<number>;
-  // Mark badge (top-right corner) — focus-fire indicator from /sq mark.
-  isMarked?: boolean;
-  // Status effects (regen / bleeding / burning / poisoned) for the
-  // current monster. Renders as small pills just under the corner mark.
-  effects?: StatusEffect[];
+  isHit: boolean;
+  // Re-mounts the card on bump so the lunge keyframe re-fires.
+  lungeTick: number;
+  // Re-mounts the slash streak on bump (when this card was the hit target).
+  slashTick: number;
+  isMarked: boolean;
+  isTargeted: boolean;
+  // "primary" = single-monster centered look, "strip" = smaller card
+  // in a row of monsters. Drives art height + card width.
+  size: "primary" | "strip";
+  onClick?: () => void;
 }) {
-  if (!monster) return null;
   const isDead = monster.hp <= 0;
-  const isHit = !!(monster.id && flashIds?.has(monster.id));
-  // If the monster died long enough ago for the defeat animation to
-  // finish, stop rendering. defeatedRemovedAtRef lives in the parent so
-  // a re-render mid-animation doesn't reset the clock.
-  if (isDead && defeatedRemovedAtRef && Date.now() > defeatedRemovedAtRef.current) {
-    return null;
-  }
-  // Combine hit-flash + monster-lunge + (optional) defeated classes.
+  // Card-local defeat clock. Triggered when HP first transitions to 0,
+  // resets if HP returns >0 (e.g. revive). Stays mounted with the
+  // gq-monster-defeated keyframes running, then unmounts at +1100ms.
+  const [defeatedAt, setDefeatedAt] = useState<number | null>(null);
+  useEffect(() => {
+    if (monster.hp <= 0 && defeatedAt === null) {
+      setDefeatedAt(Date.now());
+    } else if (monster.hp > 0 && defeatedAt !== null) {
+      setDefeatedAt(null);
+    }
+  }, [monster.hp, defeatedAt]);
+  useEffect(() => {
+    if (defeatedAt === null) return;
+    const t = setTimeout(() => setDefeatedAt((v) => v), 1150); // nudge re-render past unmount window
+    return () => clearTimeout(t);
+  }, [defeatedAt]);
+  if (defeatedAt !== null && Date.now() > defeatedAt + 1100) return null;
+
+  const isPrimary = size === "primary";
+  const cardWidth = isPrimary ? undefined : 200;
+  const artHeight = isPrimary ? 140 : 100;
+  const nameFontSize = isPrimary ? 15 : 13;
   const classes = [
     isHit && !isDead ? "gq-hit-flash" : null,
-    !isDead ? "gq-monster-lunge" : "gq-monster-defeated",
+    !isDead ? "gq-monster-lunge-card" : "gq-monster-defeated-card",
+    isTargeted ? "gq-monster-targeted" : null,
   ].filter(Boolean).join(" ");
+  const borderColor = isDead ? "#2a2d33" : isTargeted ? "#fbbf24" : isBoss ? "#fca5a5" : "#2a2d33";
   return (
     <div
-      key={`monster-overlay-${isDead ? "defeated" : (lungeTick ?? 0)}`}
+      key={`monster-card-${monster.id ?? ""}-${isDead ? "defeated" : lungeTick}`}
       className={classes}
-      // overflow:visible so the mark badge + status pills can sit at
-      // the card corners (and even spill slightly). The slash streak
-      // gets its own clipped sub-layer below.
-      style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%, -65%)", background: "rgba(10,11,14,0.88)", border: `1px solid ${isBoss ? "#fca5a5" : "#2a2d33"}`, borderRadius: 12, padding: "10px 14px", minWidth: 220, maxWidth: 300, backdropFilter: "blur(8px)", boxShadow: isBoss ? "0 0 32px rgba(239,68,68,0.3)" : "0 4px 24px rgba(0,0,0,0.6)" }}>
+      onClick={!isDead && onClick ? onClick : undefined}
+      role={onClick ? "button" : undefined}
+      title={onClick && !isDead ? `Target ${monster.name}` : undefined}
+      style={{
+        position: "relative",
+        background: "rgba(10,11,14,0.88)",
+        border: `2px solid ${borderColor}`,
+        borderRadius: 12,
+        padding: isPrimary ? "10px 14px" : "8px 10px",
+        minWidth: cardWidth ?? 220,
+        maxWidth: isPrimary ? 300 : cardWidth,
+        width: cardWidth,
+        backdropFilter: "blur(8px)",
+        boxShadow: isBoss && !isDead ? "0 0 32px rgba(239,68,68,0.3)" : isTargeted ? "0 0 16px rgba(251,191,36,0.4)" : "0 4px 24px rgba(0,0,0,0.6)",
+        cursor: onClick && !isDead ? "pointer" : "default",
+        transition: "border-color 0.15s, box-shadow 0.15s",
+        flexShrink: 0,
+      }}
+    >
       {monster.art_url && (
-        <img src={monster.art_url} alt={monster.name} style={{ width: "100%", height: 140, objectFit: "cover", borderRadius: 8, marginBottom: 8, display: "block" }} />
+        <img src={monster.art_url} alt={monster.name} style={{ width: "100%", height: artHeight, objectFit: "cover", borderRadius: 8, marginBottom: 8, display: "block" }} />
       )}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8 }}>
-        <div style={{ fontFamily: DISPLAY_FONT, fontSize: 15, fontWeight: 700, color: isBoss ? "#fca5a5" : "#f5f5f5" }}>{monster.name}</div>
-        <div style={{ fontSize: 12, color: "#9aa0a6", fontVariantNumeric: "tabular-nums" }}>{Math.max(0, monster.hp)} / {monster.max_hp}</div>
+        <div style={{ fontFamily: DISPLAY_FONT, fontSize: nameFontSize, fontWeight: 700, color: isBoss ? "#fca5a5" : "#f5f5f5", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{monster.name}</div>
+        <div style={{ fontSize: 11, color: "#9aa0a6", fontVariantNumeric: "tabular-nums", flexShrink: 0 }}>{Math.max(0, monster.hp)} / {monster.max_hp}</div>
       </div>
       <HpBar current={Math.max(0, monster.hp)} max={monster.max_hp} color={isBoss ? "#ef4444" : undefined} height={6} />
-      {/* Slash streak — fires whenever slashTick bumps (player landed a
-          hit). Lives in its own overflow-hidden layer so the streak is
-          clipped to the card edge without the parent's overflow having
-          to be hidden (which would clip the corner badges). */}
-      {slashTick !== undefined && slashTick > 0 && !isDead && (
+      {/* Slash streak — re-mounts when slashTick bumps. Lives in its
+          own overflow-hidden layer so it clips to the card edge without
+          the parent's overflow having to be hidden. */}
+      {slashTick > 0 && !isDead && (
         <div
           aria-hidden
           style={{ position: "absolute", inset: 0, overflow: "hidden", borderRadius: 12, pointerEvents: "none" }}
@@ -635,16 +681,13 @@ function MonsterOverlay({ monster, isBoss, flashIds, lungeTick, slashTick, defea
           <span key={`slash-${slashTick}`} className="gq-slash-streak" />
         </div>
       )}
-      {/* Mark badge (top-right corner). Mirrors the CombatPage pattern
-          so /sq mark + the Mark button both surface the same way: a
-          targeted-icon disc clipped to the card corner. */}
       {isMarked && !isDead && (
         <div
           title="Marked target — party gets bonus damage"
           style={{
             position: "absolute",
             top: -10, right: -10,
-            width: 32, height: 32,
+            width: 28, height: 28,
             borderRadius: "50%",
             background: "#78350f",
             border: "2px solid #f59e0b",
@@ -653,14 +696,12 @@ function MonsterOverlay({ monster, isBoss, flashIds, lungeTick, slashTick, defea
             boxShadow: "0 0 12px rgba(245,158,11,0.6)",
           }}
         >
-          <Icon name="targeted" size={18} color="#fbbf24" />
+          <Icon name="targeted" size={16} color="#fbbf24" />
         </div>
       )}
-      {/* Status effect pills (regen / bleeding / burning / poisoned).
-          Stack just below the mark corner so both stay visible. */}
-      {effects && effects.length > 0 && !isDead && (
+      {monster.effects && monster.effects.length > 0 && !isDead && (
         <div style={{ position: "absolute", top: 6, right: 6, display: "flex", flexDirection: "column", gap: 3, alignItems: "flex-end", zIndex: 9 }}>
-          {effects.map((e, i) => {
+          {monster.effects.map((e, i) => {
             const [color, icon] = e.type === "regen" ? ["#4ade80", "regeneration"]
               : e.type === "bleeding" ? ["#f87171", "bleeding-hearts"]
               : e.type === "burning" ? ["#fb923c", "fire"]
@@ -683,6 +724,63 @@ function MonsterOverlay({ monster, isBoss, flashIds, lungeTick, slashTick, defea
           })}
         </div>
       )}
+    </div>
+  );
+}
+
+// Renders all monsters in the encounter. One monster → centered "primary"
+// card (matches the old single-monster overlay look). Two or more →
+// horizontal row of smaller cards centered above the party. Click-to-
+// target sets targetMonsterId; the targeted card gets a gold border.
+function MonsterStrip({ monsters, flashIds, lastSlash, lastLunge, markedMonsterId, targetMonsterId, onTarget }: {
+  monsters: Monster[];
+  flashIds: Set<string>;
+  // Most-recent slash event — id of the hit monster + a monotonic seq.
+  // The MonsterCard with the matching id re-keys its slash element so
+  // the animation fires only on the actual target.
+  lastSlash: { id: string; seq: number } | null;
+  lastLunge: { id: string; seq: number } | null;
+  markedMonsterId: string | null;
+  targetMonsterId: string | null;
+  onTarget: (id: string) => void;
+}) {
+  if (monsters.length === 0) return null;
+  const isSingle = monsters.length === 1;
+  // Targeting is only useful when there are 2+ live monsters. With one,
+  // the engine auto-resolves to that monster anyway.
+  const liveCount = monsters.filter((m) => m.hp > 0).length;
+  const showTargeting = liveCount > 1;
+  return (
+    <div
+      style={{
+        position: "absolute",
+        top: "50%", left: "50%",
+        transform: "translate(-50%, -65%)",
+        display: "flex",
+        gap: 10,
+        alignItems: "flex-start",
+        justifyContent: "center",
+        maxWidth: "92vw",
+        flexWrap: "wrap",
+      }}
+    >
+      {monsters.map((m) => {
+        const id = m.id ?? "";
+        return (
+          <MonsterCard
+            key={id || m.name}
+            monster={m}
+            isBoss={!!m.is_boss}
+            isHit={flashIds.has(id)}
+            lungeTick={lastLunge?.id === id ? lastLunge.seq : 0}
+            slashTick={lastSlash?.id === id ? lastSlash.seq : 0}
+            isMarked={markedMonsterId === id}
+            isTargeted={showTargeting && targetMonsterId === id}
+            size={isSingle ? "primary" : "strip"}
+            onClick={showTargeting && m.hp > 0 ? () => onTarget(id) : undefined}
+          />
+        );
+      })}
     </div>
   );
 }
@@ -958,17 +1056,16 @@ export function GridDungeonView({
   // IDs (fighter id OR monster id) currently being flashed-red after a hit.
   // Cleared 600ms after the event lands.
   const [flashIds, setFlashIds] = useState<Set<string>>(new Set());
-  // Monster lunge counter — bumped on every monster_attack that lands. The
-  // MonsterOverlay re-keys when this changes, re-running the lunge animation.
-  const [monsterLungeTick, setMonsterLungeTick] = useState(0);
-  // Slash counter — bumped on every player_hit that lands so the
-  // MonsterOverlay re-mounts a slash streak across the enemy card.
-  // Complements the screen-shake feedback the player attack used to lack.
-  const [slashTick, setSlashTick] = useState(0);
-  // Deadline (ms epoch) for when the monster's defeat animation finishes
-  // and the card should fully unmount. Set once when HP first hits 0;
-  // re-renders don't reset it because it lives in a ref.
-  const defeatedRemovedAtRef = useRef<number>(Infinity);
+  // Per-target animation triggers. Multi-monster combat means a slash or
+  // lunge applies to ONE specific monster, not the whole strip. We track
+  // { id, seq } so the matching MonsterCard re-keys its animation while
+  // the others stay put.
+  const [lastSlash, setLastSlash] = useState<{ id: string; seq: number } | null>(null);
+  const [lastLunge, setLastLunge] = useState<{ id: string; seq: number } | null>(null);
+  const animSeqRef = useRef(0);
+  // Player's currently-picked target. Auto-falls back to the lowest-HP
+  // live monster when null. Cleared between fights via the reset action.
+  const [targetMonsterId, setTargetMonsterId] = useState<string | null>(null);
   // Combat log details toggle — when true, log entries show the dice / formula
   // sub-line under their summary. Persisted across remounts for the session.
   const [logDetails, setLogDetails] = useState<boolean>(() => typeof window !== "undefined" && localStorage.getItem("gq_log_details") === "1");
@@ -1022,19 +1119,21 @@ export function GridDungeonView({
           if (msg.events.some((e) => e.type === "item_used")) void loadItems();
           for (const evt of msg.events) {
             // player_hit: actor (player) hits target (monster). Flash the
-            // monster card red AND fire a slash streak across it. Two
-            // distinct cues so the attack reads as impactful instead of
-            // disappearing into the void it was before.
+            // monster card red AND fire a slash streak across it. The
+            // slash is per-target so multi-monster strips only animate
+            // the actually-hit card.
             if (evt.type === "player_hit" && typeof evt.target === "string") {
-              flashHit(evt.target);
-              setSlashTick((t) => t + 1);
+              const id = evt.target;
+              flashHit(id);
+              setLastSlash({ id, seq: ++animSeqRef.current });
             }
-            // monster_attack: monster hits target (fighter), only flash if damage landed.
+            // monster_attack: monster hits a fighter. Flash the fighter
+            // (already wired below) AND lunge the specific attacking
+            // monster's card. evt.actor is the monster id.
             if (evt.type === "monster_attack" && typeof evt.target === "string" && (evt.hp_damage as number) > 0) {
               flashHit(evt.target as string);
-              // Bump the lunge counter so the monster card jabs downward toward
-              // the party. Visualises the swing even when auto-resolve is on.
-              setMonsterLungeTick((t) => t + 1);
+              const actorId = typeof evt.actor === "string" ? evt.actor : null;
+              if (actorId) setLastLunge({ id: actorId, seq: ++animSeqRef.current });
             }
             // roll: dice events become floating animated polygons. When the
             // PLAYER rolls (not a monster) and no player rolls are currently
@@ -1094,6 +1193,9 @@ export function GridDungeonView({
         onRefresh();
         setCombatActive(false);
         dispatch({ kind: "reset" });
+        setTargetMonsterId(null);
+        setLastSlash(null);
+        setLastLunge(null);
       }, 3200);
       return () => clearTimeout(t);
     }
@@ -1112,6 +1214,9 @@ export function GridDungeonView({
     // Clear any lingering victory/defeat overlay from a previous fight so it
     // doesn't flash during the brief window before the new state arrives.
     dispatch({ kind: "reset" });
+    setTargetMonsterId(null);
+    setLastSlash(null);
+    setLastLunge(null);
     setCombatActive(true);
   }
 
@@ -1209,30 +1314,36 @@ export function GridDungeonView({
   const combatState = ws.state;
   const currentActorId = combatState?.status === "active" ? combatState.turn_order[combatState.turn_index % combatState.turn_order.length] : null;
   const myTurn = currentActorId === selfId;
-  const liveMonsters = combatState?.monsters.filter((m) => m.hp > 0) ?? [];
-  // The primary monster card. Keep rendering the slot-0 monster even at
-  // hp=0 so the defeat animation has something to animate. MonsterOverlay
-  // self-unmounts once defeatedRemovedAtRef's deadline elapses.
-  const primaryMonster = combatState?.monsters[0] ?? null;
+  const allMonsters = combatState?.monsters ?? [];
+  const liveMonsters = allMonsters.filter((m) => m.hp > 0);
   const isMonsterTurn = currentActorId ? isMonsterActor(currentActorId) : false;
   const combatEnded = combatState?.status === "victory" || combatState?.status === "defeat" || combatState?.status === "fled";
 
-  // When the slot-0 monster transitions to hp=0, start the defeat-anim
-  // unmount clock. ~1100ms matches the gq-monster-defeated keyframes;
-  // force a re-render at that point so the overlay actually goes away.
-  const monsterHp = primaryMonster?.hp ?? null;
+  // Auto-target: when there's exactly one live monster, target it. When
+  // the picked target dies, switch to the lowest-HP live monster so the
+  // player isn't stuck on a corpse. Keyed on the live-id list so it
+  // re-runs whenever monsters die/spawn.
+  const liveIdsKey = liveMonsters.map((m) => m.id ?? "").join(",");
   useEffect(() => {
-    if (monsterHp === null) return;
-    if (monsterHp > 0) {
-      defeatedRemovedAtRef.current = Infinity; // reset between fights
+    if (liveMonsters.length === 0) {
+      setTargetMonsterId(null);
       return;
     }
-    if (defeatedRemovedAtRef.current === Infinity) {
-      defeatedRemovedAtRef.current = Date.now() + 1100;
-      const t = setTimeout(() => setSlashTick((x) => x), 1150); // nudge a re-render
-      return () => clearTimeout(t);
+    if (liveMonsters.length === 1) {
+      setTargetMonsterId(liveMonsters[0].id ?? null);
+      return;
     }
-  }, [monsterHp]);
+    // Multi-monster: if current target is dead/missing, pick the lowest
+    // HP live monster (focus-fire the wounded one).
+    setTargetMonsterId((cur) => {
+      const stillAlive = cur && liveMonsters.some((m) => m.id === cur);
+      if (stillAlive) return cur;
+      const lowestHp = [...liveMonsters].sort((a, b) => a.hp - b.hp)[0];
+      return lowestHp.id ?? null;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [liveIdsKey]);
+  const effectiveTarget = liveMonsters.length > 0 ? (targetMonsterId ?? liveMonsters[0].id ?? null) : null;
 
   const bgUrl = roomBgUrl(currentNode.shape, content);
   const isMobile = useIsMobile(700);
@@ -1282,22 +1393,26 @@ export function GridDungeonView({
           </div>
         )}
 
-        {/* Monster overlay during combat. We pass primaryMonster (not the
-            filtered live one) so the card sticks around long enough to
-            play its defeat animation when hp hits 0. */}
-        {combatActive && primaryMonster && (() => {
+        {/* Monster strip during combat. One monster → centered "primary"
+            card (visual continuity with the old single overlay). Two or
+            more → row of smaller cards, click-to-target. Each card owns
+            its own defeat animation so kills don't restart sibling anims. */}
+        {combatActive && allMonsters.length > 0 && (() => {
           const mark = combatState?.ability_state?.mark;
-          const isMarked = !!(mark && combatState && combatState.round <= mark.expires_after_round);
+          const markActive = !!(mark && combatState && combatState.round <= mark.expires_after_round);
+          // The marked monster is the most recently target_id'd by /sq mark.
+          // Engine doesn't store which monster — mark_applied event carries
+          // it. For now: highlight the current target if mark is active.
+          const markedId = markActive ? effectiveTarget : null;
           return (
-            <MonsterOverlay
-              monster={primaryMonster}
-              isBoss={isBoss}
+            <MonsterStrip
+              monsters={allMonsters}
               flashIds={flashIds}
-              lungeTick={monsterLungeTick}
-              slashTick={slashTick}
-              defeatedRemovedAtRef={defeatedRemovedAtRef}
-              isMarked={isMarked}
-              effects={primaryMonster.effects}
+              lastSlash={lastSlash}
+              lastLunge={lastLunge}
+              markedMonsterId={markedId}
+              targetMonsterId={effectiveTarget}
+              onTarget={setTargetMonsterId}
             />
           );
         })()}
@@ -1507,6 +1622,7 @@ export function GridDungeonView({
             isMonsterTurn={isMonsterTurn}
             items={items}
             characterClass={character.class}
+            targetMonsterId={effectiveTarget}
           />
         ) : (
           <div style={{ background: "rgba(10,11,14,0.92)", borderTop: "1px solid #1e2028", padding: "16px", flexShrink: 0, textAlign: "center", color: "#9aa0a6", fontSize: 13 }}>
@@ -1935,19 +2051,26 @@ interface UsableItem {
   item_subtype?: string | null;
 }
 
-function CombatPanel({ state, selfId, onSend, autoResolve, setAutoResolve, myTurn, isMonsterTurn, items, characterClass }: {
+function CombatPanel({ state, selfId, onSend, autoResolve, setAutoResolve, myTurn, isMonsterTurn, items, characterClass, targetMonsterId }: {
   state: CombatState; selfId: string;
   onSend: (a: TurnAction) => boolean;
   autoResolve: boolean; setAutoResolve: (b: boolean) => void;
   myTurn: boolean; isMonsterTurn: boolean;
   items: UsableItem[];
   characterClass: string;
+  // Currently-picked enemy. Parent manages this via MonsterStrip click-
+  // to-target; we just use it as the target_id for attack/cast/sig.
+  targetMonsterId: string | null;
 }) {
   const me = state.fighters.find((f) => f.id === selfId);
   const mana = me?.mana ?? 0;
   const myPos = me?.position ?? "front";
   const liveMonsters = state.monsters.filter((m) => m.hp > 0);
-  const target = liveMonsters[0]?.id ?? null;
+  // Use the parent-managed target; fall back to first live monster if
+  // unset (e.g. mid-state-transition).
+  const target = targetMonsterId && liveMonsters.some((m) => m.id === targetMonsterId)
+    ? targetMonsterId
+    : (liveMonsters[0]?.id ?? null);
   const [picking, setPicking] = useState<"heal" | "shield" | null>(null);
   const [itemOpen, setItemOpen] = useState(false);
   // Give flow: select item → select ally. itemId stays set across the two-step picker.
