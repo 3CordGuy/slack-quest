@@ -4,6 +4,7 @@
 // keys/pick/bash, and room content overlays.
 
 import { useEffect, useReducer, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import toast from "react-hot-toast";
 import { isMonsterActor } from "@gantt-quest/core";
 import { Avatar, Icon } from "./icons";
@@ -2035,8 +2036,9 @@ function itemToLootOpt(it: UsableItem): LootOption {
 
 // Centered modal used by in-combat pickers (Use Item, Give Item) so card
 // grids have real estate. Click-outside or ✕ closes; Esc handled at the
-// component level. zIndex sits above the rail (6) and dice (4) but below
-// the global toast layer.
+// component level. Rendered via a portal to document.body so it escapes
+// the CombatPanel's `backdrop-filter` containing block (which otherwise
+// scopes `position: fixed` to the panel and clips the modal).
 function PickerModal({ title, onClose, children }: {
   title: React.ReactNode;
   onClose: () => void;
@@ -2047,13 +2049,14 @@ function PickerModal({ title, onClose, children }: {
     window.addEventListener("keydown", h);
     return () => window.removeEventListener("keydown", h);
   }, [onClose]);
-  return (
+  if (typeof document === "undefined") return null;
+  return createPortal(
     <div
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
       style={{
         position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)",
         display: "flex", alignItems: "center", justifyContent: "center",
-        zIndex: 30, padding: 16, backdropFilter: "blur(4px)",
+        zIndex: 1000, padding: 16, backdropFilter: "blur(4px)",
       }}>
       <div style={{
         background: "#12141a", border: "1px solid #2a2d33", borderRadius: 12,
@@ -2066,7 +2069,8 @@ function PickerModal({ title, onClose, children }: {
         </div>
         <div style={{ padding: 16, overflowY: "auto", flex: 1 }}>{children}</div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 

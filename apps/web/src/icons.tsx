@@ -9,7 +9,8 @@
 //
 // Inline log strings often contain emoji embedded in template literals; for
 // those we either flip the surrounding code to JSX or keep the emoji.
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import type { CSSProperties } from "react";
 
 // Icons with local SVG files in /icons/. These render as <img> instead of
@@ -232,11 +233,23 @@ export function Avatar({
     ...extraStyle,
   };
 
+  // Close zoom on Esc. Local listener — only attaches while open so we don't
+  // intercept Esc when the avatar's collapsed.
+  useEffect(() => {
+    if (!open) return;
+    const h = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
+    window.addEventListener("keydown", h);
+    return () => window.removeEventListener("keydown", h);
+  }, [open]);
+
   return (
     <>
       <div
         style={containerStyle}
-        onClick={() => { if (showImage) setOpen(true); }}
+        // stopPropagation so clicking the avatar doesn't also fire the
+        // parent card's onClick (e.g. open-inventory). Without this, the
+        // user gets both a zoom AND an inventory at once.
+        onClick={(e) => { if (showImage) { e.stopPropagation(); setOpen(true); } }}
         onMouseEnter={() => { if (showImage) setHovered(true); }}
         onMouseLeave={() => setHovered(false)}
       >
@@ -277,7 +290,7 @@ export function Avatar({
           />
         )}
       </div>
-      {open && (
+      {open && typeof document !== "undefined" && createPortal(
         <div
           onClick={() => setOpen(false)}
           style={{
@@ -302,7 +315,8 @@ export function Avatar({
               boxShadow: "0 16px 48px rgba(0,0,0,0.8)",
             }}
           />
-        </div>
+        </div>,
+        document.body,
       )}
     </>
   );
