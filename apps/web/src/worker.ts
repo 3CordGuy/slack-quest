@@ -1377,17 +1377,28 @@ async function buildGridDungeonScene(
 
   let encounterIdx = 0;
   let bonusIdx = 0;
-  function rollMonsterPack(tier: number, isBoss: boolean): MonsterSpec[] {
+  function rollMonsterPack(isBoss: boolean): MonsterSpec[] {
     if (isBoss) return bossPack;
-    // Cycle through pre-rolled leaders; if we run out, dupe the last one.
+    // Cycle through pre-rolled leaders; if we run out, wrap.
     const leader = encounterLeaders[encounterIdx % encounterLeaders.length];
     encounterIdx++;
     const pack: MonsterSpec[] = [{ ...leader, hp: leader.max_hp }]; // fresh copy
 
-    // Tier-based pack size. Below tier 3 stays solo (matches v1 pacing).
-    // From tier 3+ pairs become common; tier 5+ adds rare triples.
-    const pairChance  = tier >= 5 ? 0.35 : tier >= 3 ? 0.30 : 0;
-    const tripleChance = tier >= 5 ? 0.15 : tier >= 3 ? 0.05 : 0;
+    // Pack-size odds driven by character level (progression gate) + elite
+    // difficulty (hard-mode bump). Low levels stay solo so new players aren't
+    // overwhelmed; mid-game pairs become common; high-level elite quests can
+    // see rare triples.
+    //   Level 1-2 : solo only
+    //   Level 3-4 : 20% pair  /  2% triple
+    //   Level 5-6 : 30% pair  / 10% triple
+    //   Level 7+  : 40% pair  / 18% triple
+    // Elite adds  :+15% pair  /+10% triple on top of the base
+    const lvl = character.level;
+    const basePair   = lvl >= 7 ? 0.40 : lvl >= 5 ? 0.30 : lvl >= 3 ? 0.20 : 0;
+    const baseTriple = lvl >= 7 ? 0.18 : lvl >= 5 ? 0.10 : lvl >= 3 ? 0.02 : 0;
+    const pairChance   = Math.min(0.65, basePair   + (elite ? 0.15 : 0));
+    const tripleChance = Math.min(0.35, baseTriple + (elite ? 0.10 : 0));
+
     const r = Math.random();
     const extras = r < tripleChance ? 2 : r < tripleChance + pairChance ? 1 : 0;
 

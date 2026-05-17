@@ -166,7 +166,7 @@ export interface GridGenInputs {
   height: number;
   targetRoomCount: number;
   // Caller-supplied generators so this stays pure-data:
-  rollMonsterPack(tier: number, isBoss: boolean): MonsterSpec[];
+  rollMonsterPack(isBoss: boolean): MonsterSpec[];
   rollLoot(tier: number, kind: "loot" | "treasure" | "merchant" | "npc"): LootOption[];
   rollTrap(tier: number): TrapChoice[];
   npcGreeting(): string;
@@ -195,7 +195,7 @@ export function generateGridDungeon(inputs: GridGenInputs): DungeonGraph {
   contents.set(layout.entry, { kind: "entry" });
   contents.set(layout.boss, {
     kind: "boss",
-    monsters: inputs.rollMonsterPack(inputs.tier, true),
+    monsters: inputs.rollMonsterPack(true),
     cleared: false,
     treasure: inputs.rollLoot(inputs.tier + 1, "treasure"),
   });
@@ -220,7 +220,7 @@ export function generateGridDungeon(inputs: GridGenInputs): DungeonGraph {
     if (!c) break;
     contents.set(c, {
       kind: "encounter",
-      monsters: inputs.rollMonsterPack(inputs.tier, false),
+      monsters: inputs.rollMonsterPack(false),
       cleared: false,
     });
   }
