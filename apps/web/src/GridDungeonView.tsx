@@ -56,6 +56,55 @@ const HIT_FLASH_CSS = `
 .gq-monster-lunge {
   animation: gq-monster-lunge 520ms cubic-bezier(0.22, 1.4, 0.36, 1) both;
 }
+/* Slash effect when a player lands a hit on the enemy. A diagonal white
+   streak sweeps across the monster card; lasts ~420ms then fades. The
+   streak element re-keys per hit so each shot fires a fresh animation. */
+@keyframes gq-slash-sweep {
+  0%   { opacity: 0; transform: translate(-110%, -50%) rotate(-22deg) scaleX(0.6); }
+  18%  { opacity: 1; }
+  60%  { opacity: 0.9; transform: translate(110%, -50%) rotate(-22deg) scaleX(1.4); }
+  100% { opacity: 0; transform: translate(130%, -50%) rotate(-22deg) scaleX(1.4); }
+}
+.gq-slash-streak {
+  position: absolute;
+  top: 50%; left: 0;
+  width: 70%;
+  height: 6px;
+  background: linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.9) 30%, rgba(254,202,202,1) 50%, rgba(255,255,255,0.9) 70%, transparent 100%);
+  filter: drop-shadow(0 0 8px rgba(252,165,165,0.9)) drop-shadow(0 0 14px rgba(239,68,68,0.55));
+  pointer-events: none;
+  transform-origin: 50% 50%;
+  animation: gq-slash-sweep 420ms ease-out forwards;
+  border-radius: 6px;
+}
+/* Monster defeat — fall backwards, fade out, shrink. Triggered when HP
+   reaches 0 so the card lingers for ~1.1s before unmounting. Gives the
+   "you won" beat the brief flash-of-green overlay never had on its own. */
+@keyframes gq-monster-defeated {
+  0%   { transform: translate(-50%, -65%) rotateX(0deg) scale(1); opacity: 1; filter: brightness(1) saturate(1); }
+  25%  { transform: translate(-50%, -65%) rotateX(-12deg) scale(1.03); opacity: 1; filter: brightness(1.35) saturate(1.4); }
+  70%  { transform: translate(-50%, -25%) rotateX(-65deg) scale(0.92); opacity: 0.55; filter: brightness(0.6) saturate(0.4); }
+  100% { transform: translate(-50%, -10%) rotateX(-85deg) scale(0.78); opacity: 0; filter: brightness(0.2) saturate(0); }
+}
+.gq-monster-defeated {
+  animation: gq-monster-defeated 1100ms cubic-bezier(0.45, 0, 0.65, 1) forwards;
+  transform-style: preserve-3d;
+  perspective: 600px;
+}
+/* Victory / defeat overlay enters with a staged fade so it doesn't just
+   appear on top of the monster animation. Tint fades up first, then the
+   banner pops; the whole thing reads as a beat rather than a cut. */
+@keyframes gq-outcome-tint {
+  0%   { opacity: 0; backdrop-filter: blur(0); }
+  100% { opacity: 1; backdrop-filter: blur(4px); }
+}
+@keyframes gq-outcome-banner {
+  0%   { opacity: 0; transform: scale(0.7) translateY(20px); letter-spacing: 0; }
+  60%  { opacity: 1; transform: scale(1.12) translateY(0); letter-spacing: 6px; }
+  100% { opacity: 1; transform: scale(1) translateY(0); letter-spacing: 3px; }
+}
+.gq-outcome-tint { animation: gq-outcome-tint 700ms ease-out both; animation-delay: 600ms; }
+.gq-outcome-banner { animation: gq-outcome-banner 900ms cubic-bezier(0.22, 1.4, 0.36, 1) both; animation-delay: 900ms; }
 `;
 
 if (typeof document !== "undefined" && !document.getElementById("gq-hit-flash-style")) {
@@ -231,6 +280,14 @@ interface LogEntry {
   // Optional sub-line shown only when the user toggles "Details" — the
   // d20 roll, formula, AC, etc. Hidden by default for a cleaner log.
   detail?: string;
+  // Visual band. "party" = green left-rule + faint tint, "enemy" = red,
+  // "divider" = horizontal rule (turn change), null = inline neutral
+  // (begin / victory / wave headers, etc.).
+  side?: "party" | "enemy" | "divider" | null;
+  // For divider rows: which side acts next ("party" / "enemy"), so the
+  // following block of events gets a matching accent before any per-entry
+  // side classification.
+  divider_side?: "party" | "enemy" | null;
 }
 
 interface WsUiState {
@@ -336,54 +393,71 @@ function wsReducer(s: WsUiState, a: WsAction): WsUiState {
 }
 
 function formatCombatEvent(e: { type: string; [k: string]: unknown }, nameOf: (id: string) => string): LogEntry | null {
-  const row = (text: string, tone: LogEntry["tone"], detail?: string): LogEntry => ({ id: nextLogId++, text, tone, detail });
+  const row = (text: string, tone: LogEntry["tone"], detail?: string, side?: LogEntry["side"]): LogEntry => ({ id: nextLogId++, text, tone, detail, side: side ?? null });
   const sign = (n: number) => (n >= 0 ? `+${n}` : `${n}`);
   switch (e.type) {
     case "begin": return row("Combat begins — rolling initiative…", "info");
-    case "turn_start": return row(`— ${nameOf(e.actor as string)}'s turn (round ${e.round})`, "muted");
+    case "turn_start": {
+      const actorId = String(e.actor ?? "");
+      const dividerSide: "party" | "enemy" = isMonsterActor(actorId) ? "enemy" : "party";
+      return {
+        id: nextLogId++,
+        text: `${nameOf(actorId)} — round ${e.round}`,
+        tone: "muted",
+        side: "divider",
+        divider_side: dividerSide,
+      };
+    }
     case "hit_check": return row(
       e.hit ? "Hit lands" : "Attack misses",
       e.hit ? "good" : "bad",
       `d20 ${e.roll}${sign(e.modifier as number)} = ${e.total} vs AC ${e.ac}`,
+      isMonsterActor(String(e.actor ?? "")) ? "enemy" : "party",
     );
     case "player_hit": return row(
       `${nameOf(e.actor as string)} hits for ${e.damage} dmg${e.crit ? " (CRIT!)" : ""}`,
       "good",
       typeof e.formula === "string" ? String(e.formula) : undefined,
+      "party",
     );
     case "monster_attack": return row(
       `Monster strikes — ${e.hp_damage} HP damage`,
       "bad",
       `raw ${e.raw_damage} · armor ${(e.raw_damage as number) - (e.damage_after_armor as number)} · shield ${e.shield_absorbed} → ${e.hp_damage} HP`,
+      "enemy",
     );
-    case "fighter_down": return row(`${nameOf(e.target as string)} is down!`, "bad");
-    case "monster_down": return row(`${nameOf(e.killed_by as string)} lands the killing blow!`, "good");
+    case "fighter_down": return row(`${nameOf(e.target as string)} is down!`, "bad", undefined, "enemy");
+    case "monster_down": return row(`${nameOf(e.killed_by as string)} lands the killing blow!`, "good", undefined, "party");
     case "heal_applied": return row(
       `${nameOf(e.actor as string)}: +${e.amount} HP healed`,
       "good",
       (e.rolled as number) > (e.amount as number) ? `rolled ${e.rolled}, clamped to ${e.amount}` : undefined,
+      "party",
     );
     case "shield_applied": return row(
       `${nameOf(e.actor as string)}: +${e.amount} shield`,
       "good",
       (e.rolled as number) > (e.amount as number) ? `rolled ${e.rolled}, clamped to ${e.amount}` : undefined,
+      "party",
     );
     case "signature_used": return row(
       `${nameOf(e.actor as string)} signature: ${e.damage} dmg`,
       "good",
       `${e.formula ?? ""} · −${e.mana_spent ?? 0} mana`,
+      "party",
     );
     case "flee_check": return row(
       e.success ? `${nameOf(e.actor as string)} escapes!` : `${nameOf(e.actor as string)} fails to escape`,
       e.success ? "good" : "bad",
       `d20 ${e.roll}${sign(e.modifier as number)} = ${e.total} vs DC ${e.dc}`,
+      "party",
     );
     case "victory": return row("Victory!", "good");
     case "defeat": return row("The party falls…", "bad");
     case "fled": return row("The party escapes!", "muted");
-    case "ability_used": return row(`${nameOf(e.actor as string)} uses ${e.name}`, "good", `−${e.mana_spent ?? 0} mana`);
+    case "ability_used": return row(`${nameOf(e.actor as string)} uses ${e.name}`, "good", `−${e.mana_spent ?? 0} mana`, "party");
     case "wave_transition": return row(`Wave ${e.new_wave}/${e.total_waves}: ${e.to_monster} arrives`, "info");
-    case "mark_applied": return row(`${nameOf(e.actor as string)} marks the target`, "info", `+${e.bonus} dmg through round ${e.expires_after_round}`);
+    case "mark_applied": return row(`${nameOf(e.actor as string)} marks the target`, "info", `+${e.bonus} dmg through round ${e.expires_after_round}`, "party");
     default: return null;
   }
 }
@@ -497,26 +571,49 @@ function PartyBar({ fighters, selfId, party, onClickSelf, flashIds }: {
   );
 }
 
-function MonsterOverlay({ monster, isBoss, flashIds, lungeTick }: { monster: Monster | null; isBoss: boolean; flashIds?: Set<string>; lungeTick?: number }) {
-  if (!monster || monster.hp <= 0) return null;
+function MonsterOverlay({ monster, isBoss, flashIds, lungeTick, slashTick, defeatedRemovedAtRef }: {
+  monster: Monster | null;
+  isBoss: boolean;
+  flashIds?: Set<string>;
+  lungeTick?: number;
+  slashTick?: number;
+  // When the monster hits 0 HP we keep rendering it briefly with the
+  // defeat animation, then unmount. The parent tracks when "now" passed
+  // the unmount deadline so re-renders don't restart the animation.
+  defeatedRemovedAtRef?: React.MutableRefObject<number>;
+}) {
+  if (!monster) return null;
+  const isDead = monster.hp <= 0;
   const isHit = !!(monster.id && flashIds?.has(monster.id));
-  // Combine hit-flash + monster-lunge classes. The lunge is animation-based
-  // and only fires when the element re-mounts on each lungeTick bump, so we
-  // include it in the key.
-  const classes = [isHit ? "gq-hit-flash" : null, "gq-monster-lunge"].filter(Boolean).join(" ");
+  // If the monster died long enough ago for the defeat animation to
+  // finish, stop rendering. defeatedRemovedAtRef lives in the parent so
+  // a re-render mid-animation doesn't reset the clock.
+  if (isDead && defeatedRemovedAtRef && Date.now() > defeatedRemovedAtRef.current) {
+    return null;
+  }
+  // Combine hit-flash + monster-lunge + (optional) defeated classes.
+  const classes = [
+    isHit && !isDead ? "gq-hit-flash" : null,
+    !isDead ? "gq-monster-lunge" : "gq-monster-defeated",
+  ].filter(Boolean).join(" ");
   return (
     <div
-      key={`monster-overlay-${lungeTick ?? 0}`}
+      key={`monster-overlay-${isDead ? "defeated" : (lungeTick ?? 0)}`}
       className={classes}
-      style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%, -65%)", background: "rgba(10,11,14,0.88)", border: `1px solid ${isBoss ? "#fca5a5" : "#2a2d33"}`, borderRadius: 12, padding: "10px 14px", minWidth: 220, maxWidth: 300, backdropFilter: "blur(8px)", boxShadow: isBoss ? "0 0 32px rgba(239,68,68,0.3)" : "0 4px 24px rgba(0,0,0,0.6)" }}>
+      style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%, -65%)", background: "rgba(10,11,14,0.88)", border: `1px solid ${isBoss ? "#fca5a5" : "#2a2d33"}`, borderRadius: 12, padding: "10px 14px", minWidth: 220, maxWidth: 300, backdropFilter: "blur(8px)", boxShadow: isBoss ? "0 0 32px rgba(239,68,68,0.3)" : "0 4px 24px rgba(0,0,0,0.6)", overflow: "hidden" }}>
       {monster.art_url && (
         <img src={monster.art_url} alt={monster.name} style={{ width: "100%", height: 140, objectFit: "cover", borderRadius: 8, marginBottom: 8, display: "block" }} />
       )}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8 }}>
         <div style={{ fontFamily: DISPLAY_FONT, fontSize: 15, fontWeight: 700, color: isBoss ? "#fca5a5" : "#f5f5f5" }}>{monster.name}</div>
-        <div style={{ fontSize: 12, color: "#9aa0a6", fontVariantNumeric: "tabular-nums" }}>{monster.hp} / {monster.max_hp}</div>
+        <div style={{ fontSize: 12, color: "#9aa0a6", fontVariantNumeric: "tabular-nums" }}>{Math.max(0, monster.hp)} / {monster.max_hp}</div>
       </div>
-      <HpBar current={monster.hp} max={monster.max_hp} color={isBoss ? "#ef4444" : undefined} height={6} />
+      <HpBar current={Math.max(0, monster.hp)} max={monster.max_hp} color={isBoss ? "#ef4444" : undefined} height={6} />
+      {/* Slash streak — fires whenever slashTick bumps (player landed a
+          hit). Keyed so each tick re-mounts and re-runs the animation. */}
+      {slashTick !== undefined && slashTick > 0 && !isDead && (
+        <span key={`slash-${slashTick}`} className="gq-slash-streak" aria-hidden />
+      )}
     </div>
   );
 }
@@ -774,15 +871,17 @@ export function GridDungeonView({
   const [autoResolve, setAutoResolve] = useState(true);
   const autoResolveRef = useRef(true);
   const autoResolvedTurnRef = useRef(-1);
-  // Auto-scroll combat log to bottom when entries arrive. Without this the
-  // user has to manually scroll after every action — newest lines hide
-  // below the fold.
+  // Auto-scroll combat log to bottom when entries arrive. We key on the
+  // last entry's id rather than .length — the log is capped at 20 entries
+  // via slice, so length plateaus and a length-only dep stops firing once
+  // we hit the cap. The id is monotonic so it always changes on new entries.
   const logScrollRef = useRef<HTMLDivElement | null>(null);
+  const lastLogId = ws.log[ws.log.length - 1]?.id ?? 0;
   useEffect(() => {
     const el = logScrollRef.current;
     if (!el) return;
     el.scrollTop = el.scrollHeight;
-  }, [ws.log.length]);
+  }, [lastLogId]);
   const [doorPrompt, setDoorPrompt] = useState<{ dir: DungeonDirection; door: GridDoor } | null>(null);
   const [moving, setMoving] = useState(false);
   const [contentBusy, setContentBusy] = useState(false);
@@ -793,6 +892,14 @@ export function GridDungeonView({
   // Monster lunge counter — bumped on every monster_attack that lands. The
   // MonsterOverlay re-keys when this changes, re-running the lunge animation.
   const [monsterLungeTick, setMonsterLungeTick] = useState(0);
+  // Slash counter — bumped on every player_hit that lands so the
+  // MonsterOverlay re-mounts a slash streak across the enemy card.
+  // Complements the screen-shake feedback the player attack used to lack.
+  const [slashTick, setSlashTick] = useState(0);
+  // Deadline (ms epoch) for when the monster's defeat animation finishes
+  // and the card should fully unmount. Set once when HP first hits 0;
+  // re-renders don't reset it because it lives in a ref.
+  const defeatedRemovedAtRef = useRef<number>(Infinity);
   // Combat log details toggle — when true, log entries show the dice / formula
   // sub-line under their summary. Persisted across remounts for the session.
   const [logDetails, setLogDetails] = useState<boolean>(() => typeof window !== "undefined" && localStorage.getItem("gq_log_details") === "1");
@@ -845,9 +952,13 @@ export function GridDungeonView({
           dispatch({ kind: "events", value: msg.events });
           if (msg.events.some((e) => e.type === "item_used")) void loadItems();
           for (const evt of msg.events) {
-            // player_hit: actor (player) hits target (monster). Flash the monster.
+            // player_hit: actor (player) hits target (monster). Flash the
+            // monster card red AND fire a slash streak across it. Two
+            // distinct cues so the attack reads as impactful instead of
+            // disappearing into the void it was before.
             if (evt.type === "player_hit" && typeof evt.target === "string") {
               flashHit(evt.target);
+              setSlashTick((t) => t + 1);
             }
             // monster_attack: monster hits target (fighter), only flash if damage landed.
             if (evt.type === "monster_attack" && typeof evt.target === "string" && (evt.hp_damage as number) > 0) {
@@ -908,11 +1019,13 @@ export function GridDungeonView({
   // room or moving on doesn't re-show "Victory!".
   useEffect(() => {
     if (ws.outcome?.status === "victory") {
+      // 3.2s window: ~1.1s monster defeat fall, ~0.6s tint fade-in,
+      // ~0.9s banner pop, ~0.6s breathe. Then refresh + exit.
       const t = setTimeout(() => {
         onRefresh();
         setCombatActive(false);
         dispatch({ kind: "reset" });
-      }, 2500);
+      }, 3200);
       return () => clearTimeout(t);
     }
   }, [ws.outcome?.status]);
@@ -1028,8 +1141,29 @@ export function GridDungeonView({
   const currentActorId = combatState?.status === "active" ? combatState.turn_order[combatState.turn_index % combatState.turn_order.length] : null;
   const myTurn = currentActorId === selfId;
   const liveMonsters = combatState?.monsters.filter((m) => m.hp > 0) ?? [];
+  // The primary monster card. Keep rendering the slot-0 monster even at
+  // hp=0 so the defeat animation has something to animate. MonsterOverlay
+  // self-unmounts once defeatedRemovedAtRef's deadline elapses.
+  const primaryMonster = combatState?.monsters[0] ?? null;
   const isMonsterTurn = currentActorId ? isMonsterActor(currentActorId) : false;
   const combatEnded = combatState?.status === "victory" || combatState?.status === "defeat" || combatState?.status === "fled";
+
+  // When the slot-0 monster transitions to hp=0, start the defeat-anim
+  // unmount clock. ~1100ms matches the gq-monster-defeated keyframes;
+  // force a re-render at that point so the overlay actually goes away.
+  const monsterHp = primaryMonster?.hp ?? null;
+  useEffect(() => {
+    if (monsterHp === null) return;
+    if (monsterHp > 0) {
+      defeatedRemovedAtRef.current = Infinity; // reset between fights
+      return;
+    }
+    if (defeatedRemovedAtRef.current === Infinity) {
+      defeatedRemovedAtRef.current = Date.now() + 1100;
+      const t = setTimeout(() => setSlashTick((x) => x), 1150); // nudge a re-render
+      return () => clearTimeout(t);
+    }
+  }, [monsterHp]);
 
   const bgUrl = roomBgUrl(currentNode.shape, content);
   const isMobile = useIsMobile(700);
@@ -1079,8 +1213,19 @@ export function GridDungeonView({
           </div>
         )}
 
-        {/* Monster overlay during combat */}
-        {combatActive && liveMonsters.length > 0 && <MonsterOverlay monster={liveMonsters[0]} isBoss={isBoss} flashIds={flashIds} lungeTick={monsterLungeTick} />}
+        {/* Monster overlay during combat. We pass primaryMonster (not the
+            filtered live one) so the card sticks around long enough to
+            play its defeat animation when hp hits 0. */}
+        {combatActive && primaryMonster && (
+          <MonsterOverlay
+            monster={primaryMonster}
+            isBoss={isBoss}
+            flashIds={flashIds}
+            lungeTick={monsterLungeTick}
+            slashTick={slashTick}
+            defeatedRemovedAtRef={defeatedRemovedAtRef}
+          />
+        )}
 
         {/* Content figure overlay — when the room contains a person or
             object, paint a visible indicator on the scene so the room
@@ -1151,19 +1296,50 @@ export function GridDungeonView({
                   lineHeight: 1.45,
                   display: "flex", flexDirection: "column", gap: 3,
                 }}>
-                  {ws.log.slice(-20).map((e) => (
-                    <div key={e.id} style={{
-                      color: e.tone === "good" ? "#86efac" : e.tone === "bad" ? "#fca5a5" : e.tone === "info" ? "#93c5fd" : "#9aa0a6",
-                      wordBreak: "break-word",
-                    }}>
-                      <div>{e.text}</div>
-                      {logDetails && e.detail && (
-                        <div style={{ fontSize: 11, color: "#6b7280", paddingLeft: 10 }}>
-                          ↳ {e.detail}
+                  {ws.log.slice(-20).map((e) => {
+                    const toneColor = e.tone === "good" ? "#86efac" : e.tone === "bad" ? "#fca5a5" : e.tone === "info" ? "#93c5fd" : "#9aa0a6";
+                    if (e.side === "divider") {
+                      // Turn-change divider: thin rule + actor name on a
+                      // tinted slab so the eye can find "where am I in the
+                      // round" at a glance.
+                      const accent = e.divider_side === "enemy" ? "#7f1d1d" : "#166534";
+                      const label = e.divider_side === "enemy" ? "#fca5a5" : "#86efac";
+                      return (
+                        <div key={e.id} style={{
+                          display: "flex", alignItems: "center", gap: 6,
+                          margin: "2px -10px 1px",
+                          padding: "1px 10px",
+                          background: `linear-gradient(90deg, ${accent}33 0%, transparent 100%)`,
+                          borderTop: `1px solid ${accent}55`,
+                          borderBottom: `1px solid ${accent}22`,
+                          fontSize: 10, letterSpacing: 1, textTransform: "uppercase",
+                          color: label, fontWeight: 700,
+                        }}>
+                          <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{e.text}</span>
                         </div>
-                      )}
-                    </div>
-                  ))}
+                      );
+                    }
+                    // Side-colored left rule + subtle bg tint so eye can
+                    // scan party-vs-enemy bursts without reading text.
+                    const sideAccent = e.side === "party" ? "#16a34a" : e.side === "enemy" ? "#dc2626" : "transparent";
+                    return (
+                      <div key={e.id} style={{
+                        color: toneColor,
+                        wordBreak: "break-word",
+                        paddingLeft: e.side ? 7 : 0,
+                        borderLeft: e.side ? `2px solid ${sideAccent}88` : "none",
+                        background: e.side ? `${sideAccent}11` : "transparent",
+                        borderRadius: 2,
+                      }}>
+                        <div>{e.text}</div>
+                        {logDetails && e.detail && (
+                          <div style={{ fontSize: 11, color: "#6b7280", paddingLeft: 10 }}>
+                            ↳ {e.detail}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             )}
@@ -1193,11 +1369,19 @@ export function GridDungeonView({
           />
         )}
 
-        {/* Combat victory/defeat overlay */}
+        {/* Combat victory/defeat overlay — staged fade so the monster's
+            defeat animation gets a clean ~0.6s solo before the tint
+            covers it. Banner pops a beat after with letter-spacing flare. */}
         {combatActive && combatEnded && ws.outcome && (
-          <div style={{ position: "absolute", inset: 0, background: ws.outcome.status === "victory" ? "rgba(0,80,20,0.6)" : "rgba(80,0,0,0.6)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 12, backdropFilter: "blur(4px)", zIndex: 20 }}>
-            <div style={{ fontFamily: DISPLAY_FONT, fontSize: 32, color: ws.outcome.status === "victory" ? "#86efac" : "#fca5a5" }}>
-              {ws.outcome.status === "victory" ? "Victory!" : "Defeated…"}
+          <div
+            className="gq-outcome-tint"
+            style={{ position: "absolute", inset: 0, background: ws.outcome.status === "victory" ? "rgba(0,80,20,0.55)" : "rgba(80,0,0,0.6)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 14, zIndex: 20 }}
+          >
+            <div
+              className="gq-outcome-banner"
+              style={{ fontFamily: DISPLAY_FONT, fontSize: 44, color: ws.outcome.status === "victory" ? "#86efac" : "#fca5a5", textShadow: ws.outcome.status === "victory" ? "0 0 24px rgba(134,239,172,0.6)" : "0 0 24px rgba(252,165,165,0.5)" }}
+            >
+              {ws.outcome.status === "victory" ? "VICTORY" : "DEFEATED"}
             </div>
             {ws.outcome.status === "defeat" && (
               <button onClick={onExit} style={{ padding: "8px 20px", background: "#5c1f1f", border: "1px solid #7f1d1d", borderRadius: 6, color: "#fca5a5", cursor: "pointer" }}>Return to town</button>
