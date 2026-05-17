@@ -3566,8 +3566,18 @@ app.post("/api/quest/:id/start_web_combat", async (c) => {
   const questId = parseInt(c.req.param("id"), 10);
   if (!Number.isFinite(questId)) return c.json({ error: "bad_quest_id" }, 400);
 
+  // If a previous combat ended (victory / defeat / fled) the row lingers so
+  // the broadcast outcome stays replayable. Don't return that stale state to
+  // a fresh Engage click — clear it and rebuild instead.
   const existing = await getWebCombatState(c.env.DB, questId);
-  if (existing) return c.json({ quest_id: questId, state: existing });
+  if (existing) {
+    const endStates = new Set(["victory", "defeat", "fled"]);
+    if (endStates.has(existing.status as string)) {
+      await deleteWebCombatState(c.env.DB, questId);
+    } else {
+      return c.json({ quest_id: questId, state: existing });
+    }
+  }
 
   const quest = await getActiveQuestForCharacter(c.env.DB, session.slack_user_id);
   if (!quest || quest.id !== questId) {
@@ -5089,8 +5099,18 @@ async function applyWebCombatOutcome(
     if (parsedScene?.graph) {
       const graph = parsedScene.graph;
       const currentNode = graph.nodes[graph.current];
-      if (currentNode?.encounter) {
-        const updatedNode = { ...currentNode, encounter: { ...currentNode.encounter, cleared: true } };
+      if (currentNode) {
+        // Mark the room cleared in BOTH the legacy `encounter` field (used by
+        // pre-grid AI-graph dungeons) and the new `content.cleared` field
+        // (used by grid dungeons). Without the content branch a grid encounter
+        // would reset and let the player engage the same defeated foe again.
+        const updatedNode: typeof currentNode = { ...currentNode };
+        if (currentNode.encounter) {
+          updatedNode.encounter = { ...currentNode.encounter, cleared: true };
+        }
+        if (currentNode.content?.kind === "encounter" || currentNode.content?.kind === "boss") {
+          updatedNode.content = { ...currentNode.content, cleared: true };
+        }
         const updatedScene: SceneJson = {
           ...parsedScene,
           graph: { ...graph, nodes: { ...graph.nodes, [graph.current]: updatedNode } },
@@ -5280,8 +5300,12 @@ async function buildInitialCombatState(
     if (graph) {
       const node = graph.nodes[graph.current];
       const kind = node?.content?.kind;
+      // The content union narrows differently per kind; cleared only exists
+      // on encounter/boss. Cast through unknown to read it generically.
+      const contentCleared = (node?.content as { cleared?: boolean } | undefined)?.cleared === true;
+      const isUnclearedGridCombat = (kind === "encounter" || kind === "boss") && !contentCleared;
       const hasLegacyEncounter = !!(node?.encounter && !node.encounter.cleared);
-      if (kind !== "encounter" && kind !== "boss" && !hasLegacyEncounter) {
+      if (!isUnclearedGridCombat && !hasLegacyEncounter) {
         return { ok: false, reason: "non_combat_room", detail: kind ?? "missing" };
       }
     } else if (exp) {
