@@ -4452,18 +4452,26 @@ app.post("/api/quest/:id/dungeon/grid/lockbox", async (c) => {
   if (!choice) return c.json({ error: "bad_pick" }, 400);
   const character = await getCharacter(c.env.DB, session.slack_user_id);
   if (!character) return c.json({ error: "no_character" }, 404);
-  const keyField = content.lock_tier === "bronze" ? "keys_bronze" : content.lock_tier === "silver" ? "keys_silver" : "keys_gold";
-  if ((character[keyField as keyof Character] as number) <= 0) {
+  // Allow a higher-tier key to open a lower-tier lock (gold opens silver
+  // opens bronze) — matches Slack's `pickKeyForLock` behaviour so the two
+  // surfaces stay in sync. Fails if the character has no qualifying key.
+  const keyToSpend = pickKeyForLock(character, content.lock_tier);
+  if (!keyToSpend) return c.json({ error: "no_key", tier: content.lock_tier }, 400);
+  const keyField = keyToSpend === "bronze" ? "keys_bronze" : keyToSpend === "silver" ? "keys_silver" : "keys_gold";
+  // Atomic decrement guarded by `> 0` — if a concurrent request raced us
+  // to the same key, the UPDATE affects 0 rows and we bail without
+  // resolving the lockbox. Prevents the "opened with no key" symptom.
+  const dec = await c.env.DB.prepare(`UPDATE characters SET ${keyField} = ${keyField} - 1 WHERE slack_user_id = ? AND ${keyField} > 0`)
+    .bind(session.slack_user_id).run();
+  if (!dec.meta?.changes || dec.meta.changes === 0) {
     return c.json({ error: "no_key", tier: content.lock_tier }, 400);
   }
-  await c.env.DB.prepare(`UPDATE characters SET ${keyField} = ${keyField} - 1 WHERE slack_user_id = ?`)
-    .bind(session.slack_user_id).run();
   const item = await addLootToInventory(c.env.DB, session.slack_user_id, choice);
   const updatedContent: GridRoomContent = { ...content, resolved: true };
   const updatedNode = { ...node, content: updatedContent };
   const updatedGraph: DungeonGraph = { ...graph, nodes: { ...graph.nodes, [node.id]: updatedNode } };
   await saveScene(c.env.DB, questId, { ...quest.scene, graph: updatedGraph });
-  return c.json({ ok: true, action: "lockbox", item: { id: item.id, name: item.item_name }, key_spent: content.lock_tier });
+  return c.json({ ok: true, action: "lockbox", item: { id: item.id, name: item.item_name }, key_spent: keyToSpend });
 });
 
 // NPC offer. Body: `{ pick: 0 | 1 }` (0 = decline, 1 = accept).

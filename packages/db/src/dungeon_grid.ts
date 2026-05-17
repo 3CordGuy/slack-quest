@@ -318,28 +318,69 @@ export function generateGridDungeon(inputs: GridGenInputs): DungeonGraph {
     return `${a.x},${a.y}|${dir}`;
   }
 
-  // Reserve which key tiers are present so locked doors match available keys.
-  const keyTiersAvailable: KeyTier[] = [];
+  // Budget key supply per tier: keys_placed − lockboxes_of_that_tier. This
+  // is the surplus the player can spend on doors AFTER opening every
+  // matching chest. We never lock more doors than the surplus, so a player
+  // who burns their bronze key on a chest can still reach the boss.
+  // Higher-tier keys also open lower-tier locks (matches Slack +
+  // pickKeyForLock), so gold/silver keys count toward bronze budget.
+  const TIER_RANK: Record<KeyTier, number> = { bronze: 0, silver: 1, gold: 2 };
+  const keysByTier: Record<KeyTier, number> = { bronze: 0, silver: 0, gold: 0 };
+  const lockboxesByTier: Record<KeyTier, number> = { bronze: 0, silver: 0, gold: 0 };
   for (const [, content] of contents) {
-    if (content.kind === "key_pickup") keyTiersAvailable.push(content.tier);
+    if (content.kind === "key_pickup") keysByTier[content.tier]++;
+    if (content.kind === "lockbox") lockboxesByTier[content.lock_tier]++;
+  }
+  // Net surplus = keys at this tier or higher, minus locks (chests +
+  // already-placed doors) at this tier or higher. Computed lazily inside
+  // the placement loop so each placement consumes the budget.
+  function surplusFor(tier: KeyTier, doorLocksByTier: Record<KeyTier, number>): number {
+    let supply = 0, demand = 0;
+    for (const t of ["bronze", "silver", "gold"] as KeyTier[]) {
+      if (TIER_RANK[t] >= TIER_RANK[tier]) supply += keysByTier[t];
+    }
+    // A bronze chest can be opened by silver or gold too, so when sizing
+    // the "bronze budget" we count ALL chests of bronze tier as demanding
+    // *something*. Conservative model: every chest at-or-below `tier` may
+    // pull a key of `tier`-or-higher. Picks the cheapest, but worst case
+    // it pulls a tier-or-higher key.
+    for (const t of ["bronze", "silver", "gold"] as KeyTier[]) {
+      if (TIER_RANK[t] <= TIER_RANK[tier]) demand += lockboxesByTier[t];
+    }
+    demand += doorLocksByTier[tier];
+    return supply - demand;
+  }
+
+  // Edges incident to the boss room are never locked — the boss path must
+  // remain reachable even when the player spends every key on chests.
+  function touchesBoss(edge: Edge): boolean {
+    return edge.a === layout.boss || edge.b === layout.boss;
   }
 
   let lockedPlaced = 0, barredPlaced = 0;
+  const doorLocksByTier: Record<KeyTier, number> = { bronze: 0, silver: 0, gold: 0 };
   for (const edge of shuffled) {
     // Skip the entry room's doors so the player can always start.
     if (edge.a === layout.entry || edge.b === layout.entry) continue;
-    if (lockedPlaced < numLocked && keyTiersAvailable.length > 0) {
-      const tier = keyTiersAvailable[lockedPlaced % keyTiersAvailable.length];
-      doors.set(edgeKey(edge.a, edge.dir), {
-        state: "locked",
-        lock_tier: tier,
-        pick_dc: 10 + inputs.tier + (tier === "gold" ? 4 : tier === "silver" ? 2 : 0),
-        bash_dc: 12 + inputs.tier + (tier === "gold" ? 4 : tier === "silver" ? 2 : 0),
-      });
-      lockedPlaced++;
-      continue;
+    if (lockedPlaced < numLocked && !touchesBoss(edge)) {
+      // Find the cheapest tier whose budget still has surplus. Prefer the
+      // tier-of-most-keys so we use them up evenly. Fall through to barred
+      // if every tier is over-budget.
+      const tierChoice = (["bronze", "silver", "gold"] as KeyTier[])
+        .filter((t) => keysByTier[t] > 0 && surplusFor(t, doorLocksByTier) > 0)[0];
+      if (tierChoice) {
+        doors.set(edgeKey(edge.a, edge.dir), {
+          state: "locked",
+          lock_tier: tierChoice,
+          pick_dc: 10 + inputs.tier + (tierChoice === "gold" ? 4 : tierChoice === "silver" ? 2 : 0),
+          bash_dc: 12 + inputs.tier + (tierChoice === "gold" ? 4 : tierChoice === "silver" ? 2 : 0),
+        });
+        doorLocksByTier[tierChoice]++;
+        lockedPlaced++;
+        continue;
+      }
     }
-    if (barredPlaced < numBarred) {
+    if (barredPlaced < numBarred && !touchesBoss(edge)) {
       doors.set(edgeKey(edge.a, edge.dir), {
         state: "barred",
         bash_dc: 11 + inputs.tier,

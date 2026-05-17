@@ -4278,7 +4278,7 @@ function Banner({ src, alt }: { src: string | null | undefined; alt: string }) {
   );
 }
 
-type InventorySort = "type" | "rarity" | "power" | "name";
+type InventorySort = "type" | "rarity" | "power" | "lvl";
 
 function sortItems(items: Item[], sort: InventorySort): Item[] {
   return [...items].sort((a, b) => {
@@ -4292,8 +4292,11 @@ function sortItems(items: Item[], sort: InventorySort): Item[] {
         return RARITY_RANK[b.rarity] - RARITY_RANK[a.rarity] || a.item_name.localeCompare(b.item_name);
       case "power":
         return b.power - a.power || RARITY_RANK[b.rarity] - RARITY_RANK[a.rarity];
-      case "name":
-        return a.item_name.localeCompare(b.item_name);
+      case "lvl": {
+        const al = a.level_req ?? 1;
+        const bl = b.level_req ?? 1;
+        return bl - al || RARITY_RANK[b.rarity] - RARITY_RANK[a.rarity] || a.item_name.localeCompare(b.item_name);
+      }
     }
   });
 }
@@ -4411,7 +4414,7 @@ function InventoryCard({
     { key: "type", label: "Type" },
     { key: "rarity", label: "Rarity" },
     { key: "power", label: "Power" },
-    { key: "name", label: "Name" },
+    { key: "lvl", label: "Lvl" },
   ];
 
   return (
@@ -4746,7 +4749,7 @@ function InventoryFullScreen({
     { key: "type", label: "Type" },
     { key: "rarity", label: "Rarity" },
     { key: "power", label: "Power" },
-    { key: "name", label: "Name" },
+    { key: "lvl", label: "Lvl" },
   ];
 
   return (
@@ -4774,10 +4777,32 @@ function InventoryFullScreen({
         }}
       >
         {/* Header */}
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: isMobile ? "12px 14px" : "14px 18px", borderBottom: "1px solid #2a2d33", flexShrink: 0 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: isMobile ? "12px 14px" : "14px 18px", borderBottom: "1px solid #2a2d33", flexShrink: 0, gap: 8, flexWrap: "wrap" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
             <span style={{ fontSize: 16, fontWeight: 700, color: "#f5f5f5", fontFamily: DISPLAY_FONT }}>Inventory</span>
             <span style={{ ...muted, fontSize: 12 }}>{items.length} item{items.length !== 1 ? "s" : ""}</span>
+            {character && (
+              <div style={{ display: "flex", alignItems: "center", gap: 10, paddingLeft: 12, borderLeft: "1px solid #2a2d33", fontSize: 12, color: "#9aa0a6", flexWrap: "wrap" }}>
+                <span style={{ color: "#f5f5f5", fontWeight: 600, fontFamily: DISPLAY_FONT }}>{character.name}</span>
+                <span style={{ color: "#c084fc" }}>{character.class}</span>
+                <span title="Level">Lv {character.level}</span>
+                <span style={{ color: "#86efac" }} title="HP"><Icon name="heart" size={11} /> {character.hp}/{character.max_hp}</span>
+                {character.max_mana > 0 && (
+                  <span style={{ color: "#a78bfa" }} title="Mana"><Icon name="crystal-ball" size={11} /> {character.mana}/{character.max_mana}</span>
+                )}
+                {character.shield > 0 && (
+                  <span style={{ color: "#60a5fa" }} title="Shield"><Icon name="round-shield" size={11} /> {character.shield}</span>
+                )}
+                <span style={{ color: "#fbbf24" }} title="Gold"><Icon name="gold-bar" size={11} /> {character.gold}g</span>
+                {(character.keys_bronze + character.keys_silver + character.keys_gold) > 0 && (
+                  <span style={{ color: "#9aa0a6" }} title="Keys">
+                    {character.keys_bronze > 0 && <><Icon name="key" size={10} color="#b45309" /> {character.keys_bronze} </>}
+                    {character.keys_silver > 0 && <><Icon name="key" size={10} color="#d1d5db" /> {character.keys_silver} </>}
+                    {character.keys_gold > 0 && <><Icon name="key" size={10} color="#fbbf24" /> {character.keys_gold}</>}
+                  </span>
+                )}
+              </div>
+            )}
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
             {!isMobile && SORT_LABELS.map(({ key, label }) => (

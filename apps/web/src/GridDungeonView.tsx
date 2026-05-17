@@ -83,7 +83,17 @@ interface GridDoor {
 }
 
 interface MonsterSpec { name: string; hp: number; max_hp: number; tier: number; is_boss?: boolean; art_url?: string | null; flavor?: string | null }
-interface LootOption { name: string; item_type: string; power: number; rarity: string; flavor: string; slot?: string | null; stat_bonus?: Record<string, number> | null }
+interface LootOption {
+  name: string;
+  item_type: string;
+  power: number;
+  rarity: string;
+  flavor: string;
+  slot?: string | null;
+  stat_bonus?: Record<string, number> | null;
+  weapon_range?: "melee" | "ranged" | "focus" | null;
+  item_subtype?: string | null;
+}
 interface TrapChoice { text: string; emoji: string; skill: "str" | "dex" | "int"; fail_damage: number }
 
 type GridRoomContent =
@@ -299,7 +309,8 @@ type WsAction =
   | { kind: "connection"; value: WsUiState["connection"] }
   | { kind: "state"; value: CombatState }
   | { kind: "events"; value: Array<{ type: string; [k: string]: unknown }> }
-  | { kind: "outcome"; value: OutcomeSummary };
+  | { kind: "outcome"; value: OutcomeSummary }
+  | { kind: "reset" };
 
 function wsReducer(s: WsUiState, a: WsAction): WsUiState {
   switch (a.kind) {
@@ -317,6 +328,9 @@ function wsReducer(s: WsUiState, a: WsAction): WsUiState {
       return { ...s, log: [...s.log, ...newEntries].slice(-20) };
     }
     case "outcome": return { ...s, outcome: a.value };
+    // Reset between fights: clear stale outcome + log so the victory
+    // overlay from a previous combat doesn't bleed into the next one.
+    case "reset": return { connection: s.connection, state: null, log: [], outcome: null };
   }
 }
 
@@ -544,25 +558,21 @@ function InitStrip({ state, selfId }: { state: CombatState; selfId: string }) {
 const CELL = 18; // px per cell
 const WALL = 2;  // wall thickness
 
-function ShapeIcon({ shape, size }: { shape: RoomShape | undefined; size: number }) {
-  // Draw the shape as small SVG line art. Each shape has its corridor "openings"
-  // matching the exit directions.
-  const s = size;
-  const c = s / 2;
+function ShapeIcon({ shape }: { shape: RoomShape | undefined }) {
+  // Draw the shape as small SVG line art. Uses a fixed viewBox and scales to
+  // its parent cell — so cells can be any pixel size and the art tracks.
+  const VB = 20;
+  const c = VB / 2;
   const stroke = "#9aa0a6";
   const sw = 1.5;
   const exits = exitsForShape(shape ?? "chamber");
-  // The room body is a centered square; corridors extend from the body to the
-  // edge in each exit direction.
-  const bodyR = s * 0.18;
+  const bodyR = VB * 0.18;
   return (
-    <svg width={s} height={s} viewBox={`0 0 ${s} ${s}`} style={{ display: "block" }}>
-      {/* Corridor stubs */}
+    <svg width="100%" height="100%" viewBox={`0 0 ${VB} ${VB}`} preserveAspectRatio="xMidYMid meet" style={{ display: "block" }}>
       {exits.has("n") && <line x1={c} y1={0} x2={c} y2={c} stroke={stroke} strokeWidth={sw} />}
-      {exits.has("e") && <line x1={c} y1={c} x2={s} y2={c} stroke={stroke} strokeWidth={sw} />}
-      {exits.has("s") && <line x1={c} y1={c} x2={c} y2={s} stroke={stroke} strokeWidth={sw} />}
+      {exits.has("e") && <line x1={c} y1={c} x2={VB} y2={c} stroke={stroke} strokeWidth={sw} />}
+      {exits.has("s") && <line x1={c} y1={c} x2={c} y2={VB} stroke={stroke} strokeWidth={sw} />}
       {exits.has("w") && <line x1={0} y1={c} x2={c} y2={c} stroke={stroke} strokeWidth={sw} />}
-      {/* Room body */}
       <circle cx={c} cy={c} r={bodyR} fill={stroke} />
     </svg>
   );
@@ -594,21 +604,47 @@ function exitsForShape(shape: RoomShape): Set<DungeonDirection> {
   return e;
 }
 
-function GridMinimap({ graph }: { graph: GridGraph }) {
+function GridMinimap({ graph, fluid = false }: { graph: GridGraph; fluid?: boolean }) {
   const w = graph.grid_width ?? 4;
   const h = graph.grid_height ?? 4;
   const current = graph.nodes[graph.current];
   const visited = new Set(graph.visited);
+  // Fluid mode: grid cells size to 1fr inside a container with fixed
+  // aspectRatio = w/h. The wrapping flex column constrains both axes via
+  // max-width / max-height so the map stays inside the rail while keeping
+  // its aspect ratio. Fixed mode: each cell is CELL px (legacy chip).
+  const gridStyle: React.CSSProperties = fluid
+    ? {
+        display: "grid",
+        gridTemplateColumns: `repeat(${w}, 1fr)`,
+        gridTemplateRows: `repeat(${h}, 1fr)`,
+        gap: 1,
+        background: "#1a1c21",
+        aspectRatio: `${w} / ${h}`,
+        maxWidth: "100%",
+        maxHeight: "100%",
+        width: "100%",
+      }
+    : {
+        display: "grid",
+        gridTemplateColumns: `repeat(${w}, ${CELL}px)`,
+        gridTemplateRows: `repeat(${h}, ${CELL}px)`,
+        gap: 1,
+        background: "#1a1c21",
+      };
+  const wrapStyle: React.CSSProperties = fluid
+    ? { userSelect: "none", display: "flex", flexDirection: "column", alignItems: "center", minHeight: 0, flex: "1 1 auto" }
+    : { userSelect: "none" };
   return (
-    <div style={{ userSelect: "none" }}>
-      <div style={{ fontSize: 9, color: "#6b7280", textTransform: "uppercase", letterSpacing: 1, marginBottom: 4 }}>Map</div>
-      <div style={{ display: "grid", gridTemplateColumns: `repeat(${w}, ${CELL}px)`, gridTemplateRows: `repeat(${h}, ${CELL}px)`, gap: 1, background: "#1a1c21" }}>
+    <div style={wrapStyle}>
+      <div style={{ fontSize: 9, color: "#6b7280", textTransform: "uppercase", letterSpacing: 1, marginBottom: 4, alignSelf: fluid ? "flex-start" : undefined, flexShrink: 0 }}>Map</div>
+      <div style={gridStyle}>
         {Array.from({ length: w * h }, (_, idx) => {
           const x = idx % w;
           const y = Math.floor(idx / w);
           const node = Object.values(graph.nodes).find((n) => n.x === x && n.y === y);
           if (!node) {
-            return <div key={idx} style={{ width: CELL, height: CELL, background: "#0a0b0e" }} />;
+            return <div key={idx} style={fluid ? { background: "#0a0b0e" } : { width: CELL, height: CELL, background: "#0a0b0e" }} />;
           }
           const isCurrent = node.id === graph.current;
           const isVisited = visited.has(node.id);
@@ -622,9 +658,12 @@ function GridMinimap({ graph }: { graph: GridGraph }) {
           // Unvisited boss rooms look like any other unexplored cell so the
           // map doesn't spoil the layout.
           if (isBoss && !isCurrent && isVisited) bg = "#7f1d1d";
+          const cellStyle: React.CSSProperties = fluid
+            ? { position: "relative", background: bg, display: "flex", alignItems: "center", justifyContent: "center", minWidth: 0, minHeight: 0 }
+            : { position: "relative", width: CELL, height: CELL, background: bg, display: "flex", alignItems: "center", justifyContent: "center" };
           return (
-            <div key={idx} style={{ position: "relative", width: CELL, height: CELL, background: bg, display: "flex", alignItems: "center", justifyContent: "center" }}>
-              <ShapeIcon shape={node.shape} size={CELL - 2} />
+            <div key={idx} style={cellStyle}>
+              <ShapeIcon shape={node.shape} />
               {isCurrent && <div style={{ position: "absolute", top: 1, right: 1, width: 4, height: 4, background: "#ef4444", borderRadius: "50%" }} />}
               {isBoss && !isCurrent && isVisited && <div style={{ position: "absolute", top: 1, right: 1, width: 4, height: 4, background: "#fca5a5", borderRadius: "50%" }} />}
               {isEntry && !isCurrent && <div style={{ position: "absolute", top: 1, right: 1, width: 4, height: 4, background: "#86efac", borderRadius: "50%" }} />}
@@ -807,7 +846,11 @@ export function GridDungeonView({
               // the party. Visualises the swing even when auto-resolve is on.
               setMonsterLungeTick((t) => t + 1);
             }
-            // roll: dice events become floating animated polygons.
+            // roll: dice events become floating animated polygons. When the
+            // PLAYER rolls (not a monster) and no player rolls are currently
+            // on screen, clear any lingering enemy dice so the new attack
+            // gets a fresh stage. Multi-roll batches (e.g. d20 + d6 for
+            // hit + damage) keep accumulating in the same turn.
             if (evt.type === "roll") {
               const id = ++diceRollCounterRef.current;
               const entry: DiceRollEntry = {
@@ -817,8 +860,17 @@ export function GridDungeonView({
                 actor: String(evt.actor),
                 purpose: String(evt.purpose ?? ""),
               };
-              setDiceRolls((prev) => [...prev.slice(-7), entry]);
-              setTimeout(() => setDiceRolls((prev) => prev.filter((r) => r.id !== id)), 14000);
+              if (!isMonsterActor(String(evt.actor))) {
+                setDiceRolls((prev) => {
+                  const hasPlayerRoll = prev.some((r) => !isMonsterActor(r.actor));
+                  return hasPlayerRoll ? [...prev, entry] : [entry];
+                });
+              } else {
+                setDiceRolls((prev) => [...prev.slice(-7), entry]);
+              }
+              // ~5s total on screen (was 14s — felt sticky). DiceFace fades
+              // from 3.5s; this cleanup is the hard removal.
+              setTimeout(() => setDiceRolls((prev) => prev.filter((r) => r.id !== id)), 5000);
             }
           }
         } else if (msg.type === "outcome" && msg.outcome) {
@@ -841,10 +893,16 @@ export function GridDungeonView({
     return () => clearTimeout(t);
   }, [stateForAuto?.turn_index, stateForAuto?.status, autoResolve]);
 
-  // On combat victory, refresh quest state
+  // On combat victory, refresh quest state. After the overlay's grace
+  // window, drop combat and clear the WS slate so re-entering the same
+  // room or moving on doesn't re-show "Victory!".
   useEffect(() => {
     if (ws.outcome?.status === "victory") {
-      const t = setTimeout(() => { onRefresh(); setCombatActive(false); }, 2500);
+      const t = setTimeout(() => {
+        onRefresh();
+        setCombatActive(false);
+        dispatch({ kind: "reset" });
+      }, 2500);
       return () => clearTimeout(t);
     }
   }, [ws.outcome?.status]);
@@ -859,6 +917,9 @@ export function GridDungeonView({
   async function enterCombat() {
     const res = await fetch(`/api/quest/${questId}/start_web_combat`, { method: "POST", credentials: "include" });
     if (!res.ok) { toast.error("Could not start combat"); return; }
+    // Clear any lingering victory/defeat overlay from a previous fight so it
+    // doesn't flash during the brief window before the new state arrives.
+    dispatch({ kind: "reset" });
     setCombatActive(true);
   }
 
@@ -971,8 +1032,12 @@ export function GridDungeonView({
     ? (showLog
         ? { position: "absolute", left: 8, right: 8, bottom: 8, display: "flex", flexDirection: "row", gap: 8, zIndex: 6 }
         : { position: "absolute", top: 8, right: 8, display: "flex", flexDirection: "column", gap: 8, zIndex: 6 })
-    : { position: "absolute", top: 12, right: 12, width: "min(300px, 22vw)", display: "flex", flexDirection: "column", gap: 8, zIndex: 6 };
+    // Desktop: anchor rail to both top and bottom so the combined map+log
+    // pane fills the full vertical height of the room view. The map keeps
+    // its aspect ratio (fluid mode); the log flexes to take remaining space.
+    : { position: "absolute", top: 12, right: 12, bottom: 12, width: "min(300px, 22vw)", display: "flex", flexDirection: "column", gap: 8, zIndex: 6 };
   const railItemStyle: React.CSSProperties = isMobile && showLog ? { flex: 1, minWidth: 0 } : { width: "100%" };
+  const useFluidMap = !isMobile || showLog;
 
   return (
     <div style={{ position: "fixed", inset: 0, background: "#0a0b0e", display: "flex", flexDirection: "column", overflow: "hidden", fontFamily: "Inter, system-ui, sans-serif" }}>
@@ -1023,19 +1088,36 @@ export function GridDungeonView({
         <div style={railStyle}>
           <div style={{
             ...railItemStyle,
+            // On desktop, the inner pane fills the rail's full height so
+            // the map sits at the top and the log expands beneath it.
+            flex: !isMobile ? 1 : undefined,
+            minHeight: !isMobile ? 0 : undefined,
             background: "rgba(0,0,0,0.6)",
             border: "1px solid rgba(255,255,255,0.12)",
             borderRadius: 8,
             backdropFilter: "blur(6px)",
             display: "flex",
             flexDirection: isMobile ? "row" : "column",
+            overflow: "hidden",
           }}>
-            <div style={{ padding: "8px 10px 6px", borderRight: isMobile ? "1px solid rgba(255,255,255,0.08)" : "none", borderBottom: !isMobile ? "1px solid rgba(255,255,255,0.08)" : "none", flex: isMobile ? 1 : "0 0 auto" }}>
-              <GridMinimap graph={graph} />
+            <div style={{
+              padding: "8px 10px 6px",
+              borderRight: isMobile ? "1px solid rgba(255,255,255,0.08)" : "none",
+              borderBottom: !isMobile && showLog ? "1px solid rgba(255,255,255,0.08)" : "none",
+              // Desktop with log: map area sizes to its content (aspect-
+              // ratio'd map). Desktop without log: map area takes the
+              // whole pane, map grows to fit. Mobile: split with log.
+              flex: isMobile ? 1 : (showLog ? "0 0 auto" : "1 1 auto"),
+              minHeight: 0,
+              minWidth: 0,
+              display: "flex",
+              flexDirection: "column",
+            }}>
+              <GridMinimap graph={graph} fluid={useFluidMap} />
             </div>
             {combatActive && ws.log.length > 0 && (
-              <div style={{ padding: "6px 10px 8px", flex: isMobile ? 1 : "1 1 auto", minWidth: 0, display: "flex", flexDirection: "column" }}>
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
+              <div style={{ padding: "6px 10px 8px", flex: isMobile ? 1 : "1 1 auto", minWidth: 0, minHeight: 0, display: "flex", flexDirection: "column" }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4, flexShrink: 0 }}>
                   <div style={{ fontSize: 10, color: "#6b7280", textTransform: "uppercase", letterSpacing: 1.5, fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" }}>Combat log</div>
                   <button
                     onClick={() => setLogDetails((v) => !v)}
@@ -1047,7 +1129,9 @@ export function GridDungeonView({
                 {/* Legacy combat log: inset dark panel, monospace, 13px, generous
                     line-height; events flow like a console scrollback. */}
                 <div style={{
-                  maxHeight: isMobile ? 100 : 240,
+                  maxHeight: isMobile ? 100 : undefined,
+                  flex: isMobile ? undefined : "1 1 auto",
+                  minHeight: 0,
                   overflowY: "auto",
                   background: "#0e0f12",
                   borderRadius: 6,
@@ -1425,12 +1509,9 @@ function ContentOverlay({ node, content, onEnterCombat, onTakeLoot, onTakeKey, o
   if (c.kind === "loot" && !c.taken) {
     return (
       <OverlayPanel title="Found items">
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: 8 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: 8 }}>
           {c.items.map((opt, i) => (
-            <button key={i} onClick={() => onTakeLoot(i)} style={lootBtn}>
-              <div style={{ fontWeight: 600, marginBottom: 2 }}>{opt.name}</div>
-              <div style={{ fontSize: 11, color: "#9aa0a6" }}>power {opt.power} · {opt.rarity}</div>
-            </button>
+            <LootOptionTile key={i} opt={opt} onClick={() => onTakeLoot(i)} />
           ))}
         </div>
       </OverlayPanel>
@@ -1484,10 +1565,16 @@ function ContentOverlay({ node, content, onEnterCombat, onTakeLoot, onTakeKey, o
     const tier = c.lock_tier;
     const tierColor = tier === "gold" ? "#fbbf24" : tier === "silver" ? "#d1d5db" : "#b45309";
     return (
-      <OverlayPanel title={`Locked chest — needs ${tier} key`}>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: 8 }}>
+      <OverlayPanel title={
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+          <Icon name="key" color={tierColor} size={14} /> Locked chest — needs {tier} key
+        </span>
+      }>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 8 }}>
           {c.options.map((opt, i) => (
-            <button key={i}
+            <LootOptionTile
+              key={i}
+              opt={opt}
               onClick={async () => {
                 const res = await fetch(`/api/quest/${questId}/dungeon/grid/lockbox`, {
                   method: "POST", credentials: "include", headers: { "Content-Type": "application/json" },
@@ -1496,10 +1583,7 @@ function ContentOverlay({ node, content, onEnterCombat, onTakeLoot, onTakeKey, o
                 if (res.ok) { toast.success("Chest opened"); onRefresh(); }
                 else { const b = await res.json().catch(() => ({})) as { error?: string }; toast.error(b.error === "no_key" ? `No ${tier} key` : "Could not open"); }
               }}
-              style={{ padding: "10px", background: "#131519", border: `1px solid ${tierColor}`, borderRadius: 8, color: "#d1d5db", cursor: "pointer", textAlign: "left", fontSize: 12 }}>
-              <div style={{ fontWeight: 600 }}>{opt.name}</div>
-              <div style={{ fontSize: 11, color: "#9aa0a6" }}>power {opt.power} · {opt.rarity}</div>
-            </button>
+            />
           ))}
         </div>
       </OverlayPanel>
@@ -1538,11 +1622,18 @@ function ContentOverlay({ node, content, onEnterCombat, onTakeLoot, onTakeKey, o
 
   if (c.kind === "merchant" && !c.resolved) {
     return (
-      <OverlayPanel title="Merchant">
+      <OverlayPanel title={
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+          <Icon name="gold-bar" color="#fbbf24" size={14} /> Merchant
+        </span>
+      }>
         <p style={{ fontSize: 13, color: "#d1d5db", fontStyle: "italic", margin: "0 0 10px" }}>{c.greeting}</p>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: 8 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 8 }}>
           {c.stock.map((opt, i) => (
-            <button key={i}
+            <LootOptionTile
+              key={i}
+              opt={opt}
+              price={priceForDisplay(opt.item_type, opt.rarity)}
               onClick={async () => {
                 const res = await fetch(`/api/quest/${questId}/dungeon/grid/merchant`, {
                   method: "POST", credentials: "include", headers: { "Content-Type": "application/json" },
@@ -1551,10 +1642,7 @@ function ContentOverlay({ node, content, onEnterCombat, onTakeLoot, onTakeKey, o
                 if (res.ok) { toast.success("Purchased"); onRefresh(); }
                 else { const b = await res.json().catch(() => ({})) as { error?: string }; toast.error(b.error === "insufficient_gold" ? "Not enough gold" : "Could not buy"); }
               }}
-              style={lootBtn}>
-              <div style={{ fontWeight: 600 }}>{opt.name}</div>
-              <div style={{ fontSize: 11, color: "#9aa0a6" }}>power {opt.power} · {opt.rarity}</div>
-            </button>
+            />
           ))}
         </div>
       </OverlayPanel>
@@ -1570,6 +1658,12 @@ interface UsableItem {
   item_type: string;
   power: number;
   equipped: boolean;
+  rarity?: string;
+  flavor?: string | null;
+  slot?: string | null;
+  stat_bonus?: Record<string, number> | null;
+  weapon_range?: "melee" | "ranged" | "focus" | null;
+  item_subtype?: string | null;
 }
 
 function CombatPanel({ state, selfId, onSend, autoResolve, setAutoResolve, myTurn, isMonsterTurn, items, characterClass }: {
@@ -1630,20 +1724,23 @@ function CombatPanel({ state, selfId, onSend, autoResolve, setAutoResolve, myTur
         </div>
       )}
 
-      {/* Inline give pickers — step 1 (item) then step 2 (ally) */}
+      {/* Give-item: step 1 (item) as a modal, step 2 (ally) stays inline. */}
       {givePicker === "selectItem" && myTurn && (
-        <div style={{ padding: "6px 12px 4px", display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", borderBottom: "1px solid #1a1c21" }}>
-          <span style={{ fontSize: 11, color: "#9aa0a6" }}>Give which item?</span>
-          {giveable.length === 0 && <span style={{ fontSize: 11, color: "#4a5568" }}>No items to give</span>}
-          {giveable.map((it) => (
-            <button key={it.id}
-              onClick={() => setGivePicker({ itemId: it.id })}
-              style={{ padding: "3px 10px", background: "#291515", border: "1px solid #663a3a", borderRadius: 5, color: "#fcd34d", fontSize: 11, cursor: "pointer" }}>
-              {it.item_name}
-            </button>
-          ))}
-          <button onClick={() => setGivePicker("closed")} style={{ padding: "3px 8px", background: "none", border: "1px solid #2a2d33", borderRadius: 5, color: "#9aa0a6", fontSize: 11, cursor: "pointer" }}>✕</button>
-        </div>
+        <PickerModal title="Give which item?" onClose={() => setGivePicker("closed")}>
+          {giveable.length === 0 ? (
+            <p style={{ fontSize: 13, color: "#6b7280", margin: 0 }}>No items to give.</p>
+          ) : (
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 8 }}>
+              {giveable.map((it) => (
+                <LootOptionTile
+                  key={it.id}
+                  opt={itemToLootOpt(it)}
+                  onClick={() => setGivePicker({ itemId: it.id })}
+                />
+              ))}
+            </div>
+          )}
+        </PickerModal>
       )}
       {typeof givePicker === "object" && "itemId" in givePicker && myTurn && (
         <div style={{ padding: "6px 12px 4px", display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", borderBottom: "1px solid #1a1c21" }}>
@@ -1660,20 +1757,26 @@ function CombatPanel({ state, selfId, onSend, autoResolve, setAutoResolve, myTur
         </div>
       )}
 
-      {/* Inline item picker */}
+      {/* Item picker — modal so the cards have room to breathe */}
       {itemOpen && myTurn && (
-        <div style={{ padding: "6px 12px 4px", display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", borderBottom: "1px solid #1a1c21" }}>
-          <span style={{ fontSize: 11, color: "#9aa0a6" }}>Use item:</span>
-          {usable.length === 0 && <span style={{ fontSize: 11, color: "#4a5568" }}>No usable items</span>}
-          {usable.map((it) => (
-            <button key={it.id}
-              onClick={() => { onSend({ kind: "use_item", actor: selfId, item_id: it.id }); setItemOpen(false); }}
-              style={{ padding: "3px 10px", background: "#1a1529", border: "1px solid #4c1d95", borderRadius: 5, color: "#c4b5fd", fontSize: 11, cursor: "pointer" }}>
-              {it.item_name}
-            </button>
-          ))}
-          <button onClick={() => setItemOpen(false)} style={{ padding: "3px 8px", background: "none", border: "1px solid #2a2d33", borderRadius: 5, color: "#9aa0a6", fontSize: 11, cursor: "pointer" }}>✕</button>
-        </div>
+        <PickerModal title="Use item" onClose={() => setItemOpen(false)}>
+          {usable.length === 0 ? (
+            <p style={{ fontSize: 13, color: "#6b7280", margin: 0 }}>No usable items in your pack.</p>
+          ) : (
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 8 }}>
+              {usable.map((it) => (
+                <LootOptionTile
+                  key={it.id}
+                  opt={itemToLootOpt(it)}
+                  onClick={() => {
+                    onSend({ kind: "use_item", actor: selfId, item_id: it.id });
+                    setItemOpen(false);
+                  }}
+                />
+              ))}
+            </div>
+          )}
+        </PickerModal>
       )}
 
       {/* Turn status hint (when not the player's turn) */}
@@ -1685,7 +1788,7 @@ function CombatPanel({ state, selfId, onSend, autoResolve, setAutoResolve, myTur
       <div style={{ padding: "8px 10px 10px", display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", justifyContent: "center" }}>
         <CBtn label="Attack" icon="sword" color="#b89b3a" disabled={!myTurn || !target} onClick={() => onSend({ kind: "attack", actor: selfId, target_id: target })} />
         <CBtn label="Cast" icon="crystal-wand" color="#818cf8" manaCost={1} disabled={!myTurn || mana < 1 || !target} onClick={() => onSend({ kind: "cast", actor: selfId, target_id: target })} />
-        <CBtn label="Signature" icon="wax-seal" color="#a78bfa" manaCost={2} disabled={!myTurn || mana < 2 || !target} onClick={() => onSend({ kind: "signature", actor: selfId, target_id: target })} />
+        <CBtn label="Signature" icon="wax-seal" color="#a78bfa" manaCost={1} disabled={!myTurn || mana < 1 || !target} onClick={() => onSend({ kind: "signature", actor: selfId, target_id: target })} />
         {ability && (
           <CBtn
             label={ability.name}
@@ -1766,7 +1869,7 @@ function CBtn({ label, icon, color, disabled, manaCost, onClick }: {
   );
 }
 
-function OverlayPanel({ title, children }: { title: string; children: React.ReactNode }) {
+function OverlayPanel({ title, children }: { title: React.ReactNode; children: React.ReactNode }) {
   return (
     <div style={{ background: "rgba(10,11,14,0.97)", borderTop: "1px solid #1e2028", padding: "10px 14px", flexShrink: 0, maxHeight: "38vh", overflowY: "auto" }}>
       <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: 1.5, color: "#9aa0a6", marginBottom: 10 }}>{title}</div>
@@ -1779,6 +1882,205 @@ const lootBtn: React.CSSProperties = {
   padding: "10px", background: "#131519", border: "1px solid #2a2d33", borderRadius: 8,
   color: "#d1d5db", cursor: "pointer", textAlign: "left", fontSize: 12,
 };
+
+// Rarity → border + name color. Kept inline so this module doesn't depend
+// on the dashboard's RARITY_COLOR export.
+const RARITY_TINT: Record<string, string> = {
+  common: "#8a8f98",
+  uncommon: "#16a34a",
+  rare: "#3b82f6",
+  epic: "#a855f7",
+  legendary: "#f59e0b",
+};
+
+// Pick a sensible icon for a LootOption. Slot wins for non-weapons; weapons
+// fall back to weapon_range or generic sword. Mirrors apps/web/src/App.tsx
+// itemIcon() but trimmed to the fields LootOption carries.
+function lootIcon(opt: { item_type: string; slot?: string | null; weapon_range?: "melee" | "ranged" | "focus" | null; item_subtype?: string | null }): string {
+  if (opt.slot && opt.slot !== "main_hand") {
+    switch (opt.slot) {
+      case "off_hand":  return opt.item_subtype === "gloves" ? "gloves" : "round-shield";
+      case "body":      return "chest-armor";
+      case "helmet":    return "heavy-helm";
+      case "pants":     return "armored-pants";
+      case "boots":     return "boots";
+      case "ring":      return "ring";
+      case "amulet":    return "gem-chain";
+    }
+  }
+  if (opt.item_type === "weapon") {
+    if (opt.weapon_range === "focus") return "crystal-wand";
+    if (opt.weapon_range === "ranged") return "crossbow";
+    return "sword";
+  }
+  if (opt.item_type === "armor")     return "chest-armor";
+  if (opt.item_type === "consumable") return "bubbling-potion";
+  if (opt.item_type === "magic")     return "crystal-ball";
+  if (opt.item_type === "revive")    return "crowned-heart";
+  if (opt.item_type === "tool")      return "anvil";
+  if (opt.item_type === "scroll")    return "scroll-unfurled";
+  return "anvil";
+}
+
+// Human-readable secondary line for a loot tile: slot · range · stat bonuses.
+function lootSubLabel(opt: LootOption): string {
+  const parts: string[] = [];
+  if (opt.slot && opt.slot !== "main_hand") {
+    const slotLabel = opt.slot.replace("_", " ");
+    parts.push(slotLabel);
+  } else if (opt.item_type === "weapon") {
+    parts.push(opt.weapon_range ?? "melee");
+  } else if (opt.item_type === "consumable") {
+    parts.push(`${opt.power} HP`);
+  } else if (opt.item_type === "magic") {
+    parts.push(`+${opt.power} max mana`);
+  } else if (opt.item_type === "revive") {
+    parts.push(`revive · ${opt.power}%`);
+  } else {
+    parts.push(opt.item_type);
+  }
+  if (opt.power > 0 && opt.item_type !== "consumable" && opt.item_type !== "magic" && opt.item_type !== "revive") {
+    parts.push(`pwr ${opt.power}`);
+  }
+  if (opt.stat_bonus) {
+    const bonuses = Object.entries(opt.stat_bonus)
+      .filter(([, v]) => v !== 0)
+      .map(([k, v]) => `+${v} ${k === "int_stat" ? "INT" : k.toUpperCase()}`)
+      .join(", ");
+    if (bonuses) parts.push(bonuses);
+  }
+  return parts.join(" · ");
+}
+
+// Display-friendly name: strip the boring "Weapon (power N)" / "Armor (power N)"
+// / "Item (power N)" placeholders that grid dungeons use when AI-flavored
+// names aren't generated. Falls back to a typed label.
+function displayLootName(opt: LootOption): string {
+  if (/^(Weapon|Armor|Item) \(power \d+\)$/.test(opt.name)) {
+    if (opt.slot && opt.slot !== "main_hand") {
+      const slot = opt.slot.replace("_", " ");
+      return slot.charAt(0).toUpperCase() + slot.slice(1);
+    }
+    if (opt.item_type === "weapon") {
+      const range = opt.weapon_range ?? "melee";
+      return `${range.charAt(0).toUpperCase() + range.slice(1)} weapon`;
+    }
+    return opt.item_type.charAt(0).toUpperCase() + opt.item_type.slice(1);
+  }
+  return opt.name;
+}
+
+// Reusable visual tile for loot / lockbox / merchant choices. Rarity-tinted
+// border, type icon, name, secondary line (slot/range/stats), optional
+// flavor blurb, and an optional price (merchant only). The whole tile is a
+// button so the existing onClick handlers continue to work unchanged.
+function LootOptionTile({ opt, price, disabled, onClick }: {
+  opt: LootOption;
+  price?: number;
+  disabled?: boolean;
+  onClick: () => void;
+}) {
+  const tint = RARITY_TINT[opt.rarity] ?? "#2a2d33";
+  const name = displayLootName(opt);
+  const sub = lootSubLabel(opt);
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      title={opt.flavor || undefined}
+      style={{
+        padding: "10px", background: "#131519",
+        border: `1px solid ${tint}55`, borderLeft: `3px solid ${tint}`,
+        borderRadius: 8, color: "#d1d5db", textAlign: "left", fontSize: 12,
+        cursor: disabled ? "not-allowed" : "pointer", opacity: disabled ? 0.5 : 1,
+        display: "flex", flexDirection: "column", gap: 4,
+      }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <Icon name={lootIcon(opt)} size={18} color={tint} />
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontWeight: 700, color: tint, fontSize: 13, lineHeight: 1.2 }}>{name}</div>
+          <div style={{ fontSize: 10, color: "#6b7280", textTransform: "uppercase", letterSpacing: 0.5 }}>
+            {opt.rarity}{sub ? ` · ${sub}` : ""}
+          </div>
+        </div>
+        {typeof price === "number" && (
+          <div style={{ fontSize: 13, fontWeight: 700, color: "#fbbf24", whiteSpace: "nowrap" }}>{price}g</div>
+        )}
+      </div>
+      {opt.flavor && (
+        <div style={{ fontSize: 11, color: "#9aa0a6", fontStyle: "italic", lineHeight: 1.35 }}>{opt.flavor}</div>
+      )}
+    </button>
+  );
+}
+
+// Convert an inventory item (combat-side UsableItem) into the LootOption
+// shape that LootOptionTile understands. Lets the in-combat use-item /
+// give-item pickers reuse the same rarity-tinted card visuals as the
+// merchant / lockbox / loot tiles. `flavor`/`rarity` fall back to common
+// when absent so legacy items still render.
+function itemToLootOpt(it: UsableItem): LootOption {
+  return {
+    name: it.item_name,
+    item_type: it.item_type,
+    power: it.power,
+    rarity: it.rarity ?? "common",
+    flavor: it.flavor ?? "",
+    slot: it.slot ?? null,
+    stat_bonus: it.stat_bonus ?? null,
+    weapon_range: it.weapon_range ?? null,
+    item_subtype: it.item_subtype ?? null,
+  };
+}
+
+// Centered modal used by in-combat pickers (Use Item, Give Item) so card
+// grids have real estate. Click-outside or ✕ closes; Esc handled at the
+// component level. zIndex sits above the rail (6) and dice (4) but below
+// the global toast layer.
+function PickerModal({ title, onClose, children }: {
+  title: React.ReactNode;
+  onClose: () => void;
+  children: React.ReactNode;
+}) {
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", h);
+    return () => window.removeEventListener("keydown", h);
+  }, [onClose]);
+  return (
+    <div
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+      style={{
+        position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)",
+        display: "flex", alignItems: "center", justifyContent: "center",
+        zIndex: 30, padding: 16, backdropFilter: "blur(4px)",
+      }}>
+      <div style={{
+        background: "#12141a", border: "1px solid #2a2d33", borderRadius: 12,
+        width: "min(700px, 100%)", maxHeight: "85vh", display: "flex",
+        flexDirection: "column", boxShadow: "0 24px 64px rgba(0,0,0,0.8)",
+      }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 16px", borderBottom: "1px solid #2a2d33", flexShrink: 0 }}>
+          <div style={{ fontSize: 14, fontWeight: 700, color: "#f5f5f5", fontFamily: DISPLAY_FONT }}>{title}</div>
+          <button onClick={onClose} style={{ background: "none", border: "1px solid #3a3d44", borderRadius: 6, color: "#9ca3af", cursor: "pointer", padding: "3px 10px", fontSize: 13 }}>✕</button>
+        </div>
+        <div style={{ padding: 16, overflowY: "auto", flex: 1 }}>{children}</div>
+      </div>
+    </div>
+  );
+}
+
+// Rarity-based fallback price for grid dungeons where we don't have a
+// type-aware priceFor handy. Mirrors core's SHOP_PRICE for weapons/armor,
+// scaled slightly for consumables/magic. Used only for display in the
+// merchant card — server still computes authoritative price via priceFor.
+function priceForDisplay(type: string, rarity: string): number {
+  const base: Record<string, number> = { common: 25, uncommon: 60, rare: 140, epic: 320, legendary: 720 };
+  const r = base[rarity] ?? 25;
+  if (type === "consumable" || type === "tool") return Math.round(r * 0.4);
+  if (type === "magic" || type === "revive")    return Math.round(r * 1.2);
+  return r;
+}
 
 // Inventory modal lives in App.tsx (uses the dashboard's InventoryFullScreen
 // with full drag-and-drop, paper-doll, give/use/equip). The party-bar click
@@ -1910,7 +2212,7 @@ function DiceFace({ roll }: { roll: DiceRollEntry }) {
         setDisplay(Math.ceil(Math.random() * maxFace));
       }
     }, 50);
-    const fadeTimer = setTimeout(() => setFading(true), 10000);
+    const fadeTimer = setTimeout(() => setFading(true), 3500);
     return () => { clearInterval(iv); clearTimeout(fadeTimer); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [roll.id]);
