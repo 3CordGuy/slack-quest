@@ -1982,6 +1982,7 @@ app.get("/api/shop", async (c) => {
       stock: [],
       staples: STAPLES,
       gold: character.gold,
+      level: character.level,
       channel_id: channelId,
       needs_restock: true,
       art_url,
@@ -1991,11 +1992,19 @@ app.get("/api/shop", async (c) => {
   const purchasesThisCycle = await countPurchasesInCycle(
     c.env.DB, channelId, session.slack_user_id, cycleGeneratedAt,
   );
+  // Derive level_req from power — same rule addItem uses when a shop
+  // purchase lands in the player's inventory. Surfacing it on the shop
+  // listing prevents the "buy → can't equip" surprise.
+  const stockWithLevelReq = stock.map((s) => ({
+    ...s,
+    level_req: Math.max(1, Math.ceil(s.power / 3)),
+  }));
   return c.json({
-    stock,
+    stock: stockWithLevelReq,
     staples: STAPLES,
     art_url,
     gold: character.gold,
+    level: character.level,
     channel_id: channelId,
     needs_restock: false,
     purchases_this_cycle: purchasesThisCycle,

@@ -363,6 +363,10 @@ interface ShopItem {
   bought_by: string | null;
   weapon_range: WeaponRange | null;
   haggled: "failed" | "15" | "25" | "30" | null;
+  // Computed server-side from power (same rule as inventory): a power-9
+  // weapon needs level 3 to equip. Surfaced here so the shop UI can warn
+  // before the player drops gold on something they can't use yet.
+  level_req: number;
 }
 
 interface StapleItem {
@@ -379,6 +383,9 @@ interface ShopResponse {
   stock: ShopItem[];
   staples?: StapleItem[];
   gold: number;
+  // Character's current level. Used by ShopRow to colour the level-req
+  // badge red when the player can't yet equip the item.
+  level?: number;
   channel_id?: string;
   needs_restock?: boolean;
   purchases_this_cycle?: number;
@@ -5558,6 +5565,7 @@ function ShopCard({
             key={s.id}
             item={s}
             playerGold={shop.gold}
+            playerLevel={shop.level ?? 1}
             atCap={atCap}
             onBuy={onBuy}
             onHaggle={onHaggle}
@@ -5636,12 +5644,14 @@ function StaplesSection({
 function ShopRow({
   item,
   playerGold,
+  playerLevel,
   atCap,
   onBuy,
   onHaggle,
 }: {
   item: ShopItem;
   playerGold: number;
+  playerLevel: number;
   atCap: boolean;
   onBuy: (id: number, name: string) => void;
   onHaggle: (id: number) => void;
@@ -5652,6 +5662,8 @@ function ShopRow({
   const canAfford = playerGold >= item.price;
   const canBuy = !sold && canAfford && !atCap;
   const canHaggle = !sold && !item.haggled;
+  const levelReq = item.level_req ?? Math.max(1, Math.ceil(item.power / 3));
+  const underLevel = playerLevel < levelReq;
   return (
     <div
       style={{
@@ -5667,6 +5679,19 @@ function ShopRow({
           <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
             <span style={{ fontWeight: 600, color: "#f5f5f5", fontSize: 15, fontFamily: DISPLAY_FONT }}>{item.item_name}</span>
             <RarityBadge rarity={item.rarity} />
+            {levelReq > 1 && (
+              <span
+                title={underLevel ? `Requires level ${levelReq} to equip — you're level ${playerLevel}` : `Requires level ${levelReq} to equip`}
+                style={{
+                  ...smallBadge,
+                  borderColor: underLevel ? "#dc262688" : "#3a3d44",
+                  color: underLevel ? "#fca5a5" : "#9ca3af",
+                  background: underLevel ? "#7f1d1d22" : "transparent",
+                }}
+              >
+                L{levelReq}{underLevel ? " ⚠" : ""}
+              </span>
+            )}
             {item.item_type === "weapon" && item.weapon_range === "ranged" && (
               <SmallBadge>ranged</SmallBadge>
             )}
