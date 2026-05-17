@@ -1347,6 +1347,7 @@ async function buildGridDungeonScene(
     max_hp: s.monster_max_hp,
     tier: s.tier,
     art_url: s.monster_art_url ?? null,
+    flavor: s.scene,
   }]);
   const bossPack: MonsterSpec[] = [{
     name: bossScene.monster_name,
@@ -1355,6 +1356,7 @@ async function buildGridDungeonScene(
     tier: bossScene.tier,
     is_boss: true,
     art_url: bossScene.monster_art_url ?? null,
+    flavor: bossScene.scene,
   }];
 
   let encounterIdx = 0;
@@ -1980,6 +1982,7 @@ app.get("/api/shop", async (c) => {
       stock: [],
       staples: STAPLES,
       gold: character.gold,
+      level: character.level,
       channel_id: channelId,
       needs_restock: true,
       art_url,
@@ -1989,11 +1992,19 @@ app.get("/api/shop", async (c) => {
   const purchasesThisCycle = await countPurchasesInCycle(
     c.env.DB, channelId, session.slack_user_id, cycleGeneratedAt,
   );
+  // Derive level_req from power — same rule addItem uses when a shop
+  // purchase lands in the player's inventory. Surfacing it on the shop
+  // listing prevents the "buy → can't equip" surprise.
+  const stockWithLevelReq = stock.map((s) => ({
+    ...s,
+    level_req: Math.max(1, Math.ceil(s.power / 3)),
+  }));
   return c.json({
-    stock,
+    stock: stockWithLevelReq,
     staples: STAPLES,
     art_url,
     gold: character.gold,
+    level: character.level,
     channel_id: channelId,
     needs_restock: false,
     purchases_this_cycle: purchasesThisCycle,
@@ -3531,12 +3542,17 @@ app.get("/api/quest/active", async (c) => {
   const quest = await getActiveQuestForCharacter(c.env.DB, session.slack_user_id);
   if (!quest) return c.json({ quest: null });
   const party = await getQuestParty(c.env.DB, quest.id);
-  // Expose whether engine-driven combat is in progress so the dashboard
-  // can auto-resume the CombatPage on reload / back navigation. Mode is
-  // informational only; presence of web_combat_state is what indicates
-  // engine combat is live (whether bootstrapped via start_web_combat
-  // from web, or via QuestRoom.bootstrapFromSlack from Slack).
-  const hasWebCombat = !!(await getWebCombatState(c.env.DB, quest.id));
+  // Expose whether engine-driven combat is *in progress* so the dashboard
+  // can auto-resume the CombatPage on reload / back navigation. We treat
+  // a row whose status is victory/defeat/fled as "no active combat" —
+  // it lingers post-fight so the outcome stays replayable for a client
+  // that missed the WS frame, but mounting GridDungeonView with that
+  // row still present caused the previous fight's victory overlay to
+  // flash on every new room entry until the next start_web_combat
+  // cleaned it up.
+  const existingCombat = await getWebCombatState(c.env.DB, quest.id);
+  const terminalStates = new Set(["victory", "defeat", "fled"]);
+  const hasWebCombat = !!existingCombat && !terminalStates.has(existingCombat.status as string);
   return c.json({ quest, party, has_web_combat: hasWebCombat });
 });
 
@@ -3566,8 +3582,18 @@ app.post("/api/quest/:id/start_web_combat", async (c) => {
   const questId = parseInt(c.req.param("id"), 10);
   if (!Number.isFinite(questId)) return c.json({ error: "bad_quest_id" }, 400);
 
+  // If a previous combat ended (victory / defeat / fled) the row lingers so
+  // the broadcast outcome stays replayable. Don't return that stale state to
+  // a fresh Engage click — clear it and rebuild instead.
   const existing = await getWebCombatState(c.env.DB, questId);
-  if (existing) return c.json({ quest_id: questId, state: existing });
+  if (existing) {
+    const endStates = new Set(["victory", "defeat", "fled"]);
+    if (endStates.has(existing.status as string)) {
+      await deleteWebCombatState(c.env.DB, questId);
+    } else {
+      return c.json({ quest_id: questId, state: existing });
+    }
+  }
 
   const quest = await getActiveQuestForCharacter(c.env.DB, session.slack_user_id);
   if (!quest || quest.id !== questId) {
@@ -4178,6 +4204,9 @@ app.post("/api/quest/:id/dungeon/graph/move", async (c) => {
       tier: m.tier,
       monster_art_url: m.art_url ?? undefined,
       monster_effects: [],
+      // Surface the AI-generated monster intro as the room scene text so
+      // the combat UI shows it (mirrors legacy non-grid combat behaviour).
+      scene: m.flavor || updatedTarget.description,
     };
   } else if (updatedTarget.encounter && !updatedTarget.encounter.cleared && updatedTarget.encounter.monsters.length > 0) {
     const monster = updatedTarget.encounter.monsters[0];
@@ -4437,18 +4466,26 @@ app.post("/api/quest/:id/dungeon/grid/lockbox", async (c) => {
   if (!choice) return c.json({ error: "bad_pick" }, 400);
   const character = await getCharacter(c.env.DB, session.slack_user_id);
   if (!character) return c.json({ error: "no_character" }, 404);
-  const keyField = content.lock_tier === "bronze" ? "keys_bronze" : content.lock_tier === "silver" ? "keys_silver" : "keys_gold";
-  if ((character[keyField as keyof Character] as number) <= 0) {
+  // Allow a higher-tier key to open a lower-tier lock (gold opens silver
+  // opens bronze) — matches Slack's `pickKeyForLock` behaviour so the two
+  // surfaces stay in sync. Fails if the character has no qualifying key.
+  const keyToSpend = pickKeyForLock(character, content.lock_tier);
+  if (!keyToSpend) return c.json({ error: "no_key", tier: content.lock_tier }, 400);
+  const keyField = keyToSpend === "bronze" ? "keys_bronze" : keyToSpend === "silver" ? "keys_silver" : "keys_gold";
+  // Atomic decrement guarded by `> 0` — if a concurrent request raced us
+  // to the same key, the UPDATE affects 0 rows and we bail without
+  // resolving the lockbox. Prevents the "opened with no key" symptom.
+  const dec = await c.env.DB.prepare(`UPDATE characters SET ${keyField} = ${keyField} - 1 WHERE slack_user_id = ? AND ${keyField} > 0`)
+    .bind(session.slack_user_id).run();
+  if (!dec.meta?.changes || dec.meta.changes === 0) {
     return c.json({ error: "no_key", tier: content.lock_tier }, 400);
   }
-  await c.env.DB.prepare(`UPDATE characters SET ${keyField} = ${keyField} - 1 WHERE slack_user_id = ?`)
-    .bind(session.slack_user_id).run();
   const item = await addLootToInventory(c.env.DB, session.slack_user_id, choice);
   const updatedContent: GridRoomContent = { ...content, resolved: true };
   const updatedNode = { ...node, content: updatedContent };
   const updatedGraph: DungeonGraph = { ...graph, nodes: { ...graph.nodes, [node.id]: updatedNode } };
   await saveScene(c.env.DB, questId, { ...quest.scene, graph: updatedGraph });
-  return c.json({ ok: true, action: "lockbox", item: { id: item.id, name: item.item_name }, key_spent: content.lock_tier });
+  return c.json({ ok: true, action: "lockbox", item: { id: item.id, name: item.item_name }, key_spent: keyToSpend });
 });
 
 // NPC offer. Body: `{ pick: 0 | 1 }` (0 = decline, 1 = accept).
@@ -4712,11 +4749,19 @@ app.get("/api/ws/quest/:id", async (c) => {
 // Sequential to avoid Workers AI rate limits; expect ~2-3 min for 28+ images.
 app.post("/api/admin/pregen_dungeon_rooms", async (c) => {
   const art = artTarget(c.env);
-  const results = await pregenAllViewArt(c.env.AI, art);
+  // ?force=1 wipes every cached view-art before regenerating.
+  // ?force=rooms wipes only the room_* keys (grid dungeon backgrounds) and
+  // leaves town / inventory / class portraits untouched.
+  const force = c.req.query("force");
+  const forceMode: boolean | "room_only" | undefined =
+    force === "1" || force === "true" ? true
+    : force === "rooms" || force === "room" ? "room_only"
+    : undefined;
+  const results = await pregenAllViewArt(c.env.AI, art, forceMode ? { force: forceMode } : undefined);
   const generated = results.filter((r) => r.status === "generated").length;
   const cached = results.filter((r) => r.status === "cached").length;
   const failed = results.filter((r) => r.status === "failed").length;
-  return c.json({ ok: true, total: results.length, generated, cached, failed, results });
+  return c.json({ ok: true, total: results.length, generated, cached, failed, force: forceMode ?? null, results });
 });
 
 // Health check. Anything else falls through to the ASSETS binding via the
@@ -5089,8 +5134,18 @@ async function applyWebCombatOutcome(
     if (parsedScene?.graph) {
       const graph = parsedScene.graph;
       const currentNode = graph.nodes[graph.current];
-      if (currentNode?.encounter) {
-        const updatedNode = { ...currentNode, encounter: { ...currentNode.encounter, cleared: true } };
+      if (currentNode) {
+        // Mark the room cleared in BOTH the legacy `encounter` field (used by
+        // pre-grid AI-graph dungeons) and the new `content.cleared` field
+        // (used by grid dungeons). Without the content branch a grid encounter
+        // would reset and let the player engage the same defeated foe again.
+        const updatedNode: typeof currentNode = { ...currentNode };
+        if (currentNode.encounter) {
+          updatedNode.encounter = { ...currentNode.encounter, cleared: true };
+        }
+        if (currentNode.content?.kind === "encounter" || currentNode.content?.kind === "boss") {
+          updatedNode.content = { ...currentNode.content, cleared: true };
+        }
         const updatedScene: SceneJson = {
           ...parsedScene,
           graph: { ...graph, nodes: { ...graph.nodes, [graph.current]: updatedNode } },
@@ -5108,6 +5163,62 @@ async function applyWebCombatOutcome(
         .bind(questId).run();
     }
     await setQuestMode(env.DB, questId, "slack");
+
+    // Grid dungeon boss kill: distribute boss treasure to surviving fighters
+    // (round-robin), append to each fighter's loot in the outcome, and mark
+    // the quest completed. Without this the player kills the boss, clears
+    // the room, and is then stuck — no exit, no treasure, no end-state.
+    if (parsedScene?.graph && primaryMonster.is_boss) {
+      const bossNode = parsedScene.graph.nodes[parsedScene.graph.current];
+      const bossContent = bossNode?.content;
+      if (bossContent?.kind === "boss" && bossContent.treasure?.length) {
+        const survivors = state.fighters.filter((f) => f.hp > 0);
+        if (survivors.length === 0) survivors.push(state.fighters[0]); // edge: pyrrhic — give to first fighter
+        for (let i = 0; i < bossContent.treasure.length; i++) {
+          const item = bossContent.treasure[i];
+          const recipient = survivors[i % survivors.length];
+          if (!recipient) break;
+          const added = await addItem(env.DB, {
+            character_id: recipient.id,
+            item_name: item.name,
+            item_type: item.item_type,
+            power: item.power,
+            rarity: item.rarity,
+            flavor: item.flavor,
+            weapon_range: item.weapon_range ?? null,
+            slot: item.slot ?? undefined,
+            stat_bonus: item.stat_bonus ?? undefined,
+            item_subtype: item.item_subtype ?? undefined,
+          });
+          const reward = rewards.find((r) => r.user_id === recipient.id);
+          if (reward) {
+            reward.loot.push({
+              item_name: added.item_name,
+              item_type: added.item_type,
+              power: added.power,
+              rarity: added.rarity,
+              flavor: added.flavor ?? "",
+              weapon_range: added.weapon_range,
+              level_req: added.level_req,
+            });
+          }
+        }
+      }
+      await markQuestStatus(env.DB, questId, "completed");
+      // Skip advanceExpeditionAfterWebCombat — grid dungeons don't use it.
+      return {
+        status: state.status as "victory" | "defeat",
+        rewards,
+        monster_name: primaryMonster.name,
+        monster_tier: tier,
+        total_pool_xp: totalPoolXp,
+        total_pool_gold: totalPoolGold,
+        elite,
+        is_boss: true,
+        dungeon_room_cleared: true,
+      };
+    }
+
     const dungeonDoors = await advanceExpeditionAfterWebCombat(env, questId);
     if (dungeonDoors) {
       return {
@@ -5280,8 +5391,12 @@ async function buildInitialCombatState(
     if (graph) {
       const node = graph.nodes[graph.current];
       const kind = node?.content?.kind;
+      // The content union narrows differently per kind; cleared only exists
+      // on encounter/boss. Cast through unknown to read it generically.
+      const contentCleared = (node?.content as { cleared?: boolean } | undefined)?.cleared === true;
+      const isUnclearedGridCombat = (kind === "encounter" || kind === "boss") && !contentCleared;
       const hasLegacyEncounter = !!(node?.encounter && !node.encounter.cleared);
-      if (kind !== "encounter" && kind !== "boss" && !hasLegacyEncounter) {
+      if (!isUnclearedGridCombat && !hasLegacyEncounter) {
         return { ok: false, reason: "non_combat_room", detail: kind ?? "missing" };
       }
     } else if (exp) {
@@ -5359,6 +5474,16 @@ async function buildInitialCombatState(
     });
   }
 
+  // Grid dungeon boss-room check. `variant === "boss"` only fires for
+  // legacy boss-variant quests; grid dungeons run under variant="dungeon"
+  // and signal a boss by the current node's `content.kind === "boss"`.
+  // Without this, killing the grid boss yielded `is_boss: false` in the
+  // outcome, skipping the boss-kill branch in applyWebCombatOutcome — the
+  // quest never marked completed, treasure never distributed, player stuck.
+  const isGridBoss = !!(
+    quest.scene.graph &&
+    quest.scene.graph.nodes[quest.scene.graph.current]?.content?.kind === "boss"
+  );
   const init: CombatInit = {
     fighters,
     monster: {
@@ -5366,7 +5491,7 @@ async function buildInitialCombatState(
       hp: quest.scene.monster_hp,
       max_hp: quest.scene.monster_max_hp,
       tier: quest.scene.tier,
-      is_boss: variant === "boss",
+      is_boss: variant === "boss" || isGridBoss,
       boss_phase: quest.scene.boss_phase,
       wave: quest.scene.wave,
       total_waves: quest.scene.total_waves,

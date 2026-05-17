@@ -363,6 +363,10 @@ interface ShopItem {
   bought_by: string | null;
   weapon_range: WeaponRange | null;
   haggled: "failed" | "15" | "25" | "30" | null;
+  // Computed server-side from power (same rule as inventory): a power-9
+  // weapon needs level 3 to equip. Surfaced here so the shop UI can warn
+  // before the player drops gold on something they can't use yet.
+  level_req: number;
 }
 
 interface StapleItem {
@@ -379,6 +383,9 @@ interface ShopResponse {
   stock: ShopItem[];
   staples?: StapleItem[];
   gold: number;
+  // Character's current level. Used by ShopRow to colour the level-req
+  // badge red when the player can't yet equip the item.
+  level?: number;
   channel_id?: string;
   needs_restock?: boolean;
   purchases_this_cycle?: number;
@@ -569,6 +576,28 @@ interface LiarsRoundResult {
 }
 
 // Give: known characters for picker
+// Portrait URL helpers. Custom per-character portraits live at
+// /img/art/v3/character/<slug>.png and the class-default fallback at
+// /img/art/views/v6/class_<class_id>.png. The Adventurers list and the
+// AdventurerSheet both prefer the custom portrait — falling back to the
+// class image only when the custom one 404s — so updates to a character's
+// portrait show up consistently across the dashboard.
+function adventurerSlug(name: string): string {
+  return name
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/[̀-ͯ]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 60) || "unnamed";
+}
+function adventurerCharPortrait(name: string): string {
+  return `/img/art/v3/character/${adventurerSlug(name)}.png`;
+}
+function adventurerClassPortrait(className: string): string {
+  return `/img/art/views/v6/class_${className.toLowerCase().replace(/[\s-]+/g, "_")}.png`;
+}
+
 interface KnownCharacter {
   slack_user_id: string;
   name: string;
@@ -3266,7 +3295,10 @@ function AdventurersCard({ selfId }: { selfId: string }) {
               : secsAgo < 86400 ? `${Math.floor(secsAgo / 3600)}h ago`
               : `${Math.floor(secsAgo / 86400)}d ago`;
             const hpPct = ch.max_hp > 0 ? Math.max(0, Math.min(1, ch.hp / ch.max_hp)) : 0;
-            const portraitSrc = `/img/art/views/v6/class_${ch.class.toLowerCase().replace(/[\s-]+/g, "_")}.png`;
+            // Prefer the per-character custom portrait, fall back to the
+            // class default if the user hasn't generated one (or it 404s).
+            const portraitSrc = adventurerCharPortrait(ch.name);
+            const fallbackPortrait = adventurerClassPortrait(ch.class);
 
             return (
               <button
@@ -3282,7 +3314,7 @@ function AdventurersCard({ selfId }: { selfId: string }) {
                 onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.borderColor = "transparent"; }}
               >
                 <div style={{ position: "relative", flexShrink: 0 }}>
-                  <Avatar src={portraitSrc} alt={ch.name} size={32} radius={4} fallbackIcon="player" fallbackColor="#4a5568" />
+                  <Avatar src={portraitSrc} fallbackSrc={fallbackPortrait} alt={ch.name} size={32} radius={4} fallbackIcon="player" fallbackColor="#4a5568" />
                   {isOnline && (
                     <span style={{
                       position: "absolute", bottom: -1, right: -1,
@@ -3560,7 +3592,8 @@ function AdventurerSheet({ character, isOwn = false, onClose }: { character: Kno
   const xpIntoLevel = Math.max(0, character.xp - xpAtLevel);
   const xpSpan = xpAtNext - xpAtLevel;
   const xpPct = xpSpan > 0 ? Math.min(1, xpIntoLevel / xpSpan) : 1;
-  const portraitSrc = `/img/art/views/v6/class_${character.class.toLowerCase().replace(/[\s-]+/g, "_")}.png`;
+  const portraitSrc = adventurerCharPortrait(character.name);
+  const fallbackPortrait = adventurerClassPortrait(character.class);
   const ago = secsAgo < 60 ? "just now"
     : secsAgo < 3600 ? `${Math.floor(secsAgo / 60)}m ago`
     : secsAgo < 86400 ? `${Math.floor(secsAgo / 3600)}h ago`
@@ -3588,7 +3621,7 @@ function AdventurerSheet({ character, isOwn = false, onClose }: { character: Kno
           }}
         >✕</button>
 
-        <Avatar src={portraitSrc} alt={character.name} size={80} radius={8} fallbackIcon="player" fallbackColor="#4a5568" />
+        <Avatar src={portraitSrc} fallbackSrc={fallbackPortrait} alt={character.name} size={80} radius={8} fallbackIcon="player" fallbackColor="#4a5568" />
 
         <div>
           <h2 style={{ ...h2, margin: "0 0 2px" }}>{character.name}</h2>
@@ -4278,7 +4311,7 @@ function Banner({ src, alt }: { src: string | null | undefined; alt: string }) {
   );
 }
 
-type InventorySort = "type" | "rarity" | "power" | "name";
+type InventorySort = "type" | "rarity" | "power" | "lvl";
 
 function sortItems(items: Item[], sort: InventorySort): Item[] {
   return [...items].sort((a, b) => {
@@ -4292,8 +4325,11 @@ function sortItems(items: Item[], sort: InventorySort): Item[] {
         return RARITY_RANK[b.rarity] - RARITY_RANK[a.rarity] || a.item_name.localeCompare(b.item_name);
       case "power":
         return b.power - a.power || RARITY_RANK[b.rarity] - RARITY_RANK[a.rarity];
-      case "name":
-        return a.item_name.localeCompare(b.item_name);
+      case "lvl": {
+        const al = a.level_req ?? 1;
+        const bl = b.level_req ?? 1;
+        return bl - al || RARITY_RANK[b.rarity] - RARITY_RANK[a.rarity] || a.item_name.localeCompare(b.item_name);
+      }
     }
   });
 }
@@ -4411,7 +4447,7 @@ function InventoryCard({
     { key: "type", label: "Type" },
     { key: "rarity", label: "Rarity" },
     { key: "power", label: "Power" },
-    { key: "name", label: "Name" },
+    { key: "lvl", label: "Lvl" },
   ];
 
   return (
@@ -4687,6 +4723,12 @@ function InventoryFullScreen({
     localStorage.setItem("inv_view", mode);
     setViewMode(mode);
   }
+  // Esc closes the modal — capture early so it beats any inner handlers.
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [onClose]);
   const dollEquipBonuses: Partial<Record<StatKey, number>> = {};
   for (const item of items) {
     if (item.equipped && item.stat_bonus) {
@@ -4740,7 +4782,7 @@ function InventoryFullScreen({
     { key: "type", label: "Type" },
     { key: "rarity", label: "Rarity" },
     { key: "power", label: "Power" },
-    { key: "name", label: "Name" },
+    { key: "lvl", label: "Lvl" },
   ];
 
   return (
@@ -4768,10 +4810,32 @@ function InventoryFullScreen({
         }}
       >
         {/* Header */}
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: isMobile ? "12px 14px" : "14px 18px", borderBottom: "1px solid #2a2d33", flexShrink: 0 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: isMobile ? "12px 14px" : "14px 18px", borderBottom: "1px solid #2a2d33", flexShrink: 0, gap: 8, flexWrap: "wrap" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
             <span style={{ fontSize: 16, fontWeight: 700, color: "#f5f5f5", fontFamily: DISPLAY_FONT }}>Inventory</span>
             <span style={{ ...muted, fontSize: 12 }}>{items.length} item{items.length !== 1 ? "s" : ""}</span>
+            {character && (
+              <div style={{ display: "flex", alignItems: "center", gap: 10, paddingLeft: 12, borderLeft: "1px solid #2a2d33", fontSize: 12, color: "#9aa0a6", flexWrap: "wrap" }}>
+                <span style={{ color: "#f5f5f5", fontWeight: 600, fontFamily: DISPLAY_FONT }}>{character.name}</span>
+                <span style={{ color: "#c084fc" }}>{character.class}</span>
+                <span title="Level">Lv {character.level}</span>
+                <span style={{ color: "#86efac" }} title="HP"><Icon name="heart" size={11} /> {character.hp}/{character.max_hp}</span>
+                {character.max_mana > 0 && (
+                  <span style={{ color: "#a78bfa" }} title="Mana"><Icon name="crystal-ball" size={11} /> {character.mana}/{character.max_mana}</span>
+                )}
+                {character.shield > 0 && (
+                  <span style={{ color: "#60a5fa" }} title="Shield"><Icon name="round-shield" size={11} /> {character.shield}</span>
+                )}
+                <span style={{ color: "#fbbf24" }} title="Gold"><Icon name="gold-bar" size={11} /> {character.gold}g</span>
+                {(character.keys_bronze + character.keys_silver + character.keys_gold) > 0 && (
+                  <span style={{ color: "#9aa0a6" }} title="Keys">
+                    {character.keys_bronze > 0 && <><Icon name="key" size={10} color="#b45309" /> {character.keys_bronze} </>}
+                    {character.keys_silver > 0 && <><Icon name="key" size={10} color="#d1d5db" /> {character.keys_silver} </>}
+                    {character.keys_gold > 0 && <><Icon name="key" size={10} color="#fbbf24" /> {character.keys_gold}</>}
+                  </span>
+                )}
+              </div>
+            )}
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
             {!isMobile && SORT_LABELS.map(({ key, label }) => (
@@ -5501,6 +5565,7 @@ function ShopCard({
             key={s.id}
             item={s}
             playerGold={shop.gold}
+            playerLevel={shop.level ?? 1}
             atCap={atCap}
             onBuy={onBuy}
             onHaggle={onHaggle}
@@ -5579,12 +5644,14 @@ function StaplesSection({
 function ShopRow({
   item,
   playerGold,
+  playerLevel,
   atCap,
   onBuy,
   onHaggle,
 }: {
   item: ShopItem;
   playerGold: number;
+  playerLevel: number;
   atCap: boolean;
   onBuy: (id: number, name: string) => void;
   onHaggle: (id: number) => void;
@@ -5595,6 +5662,8 @@ function ShopRow({
   const canAfford = playerGold >= item.price;
   const canBuy = !sold && canAfford && !atCap;
   const canHaggle = !sold && !item.haggled;
+  const levelReq = item.level_req ?? Math.max(1, Math.ceil(item.power / 3));
+  const underLevel = playerLevel < levelReq;
   return (
     <div
       style={{
@@ -5610,6 +5679,19 @@ function ShopRow({
           <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
             <span style={{ fontWeight: 600, color: "#f5f5f5", fontSize: 15, fontFamily: DISPLAY_FONT }}>{item.item_name}</span>
             <RarityBadge rarity={item.rarity} />
+            {levelReq > 1 && (
+              <span
+                title={underLevel ? `Requires level ${levelReq} to equip — you're level ${playerLevel}` : `Requires level ${levelReq} to equip`}
+                style={{
+                  ...smallBadge,
+                  borderColor: underLevel ? "#dc262688" : "#3a3d44",
+                  color: underLevel ? "#fca5a5" : "#9ca3af",
+                  background: underLevel ? "#7f1d1d22" : "transparent",
+                }}
+              >
+                L{levelReq}{underLevel ? " ⚠" : ""}
+              </span>
+            )}
             {item.item_type === "weapon" && item.weapon_range === "ranged" && (
               <SmallBadge>ranged</SmallBadge>
             )}

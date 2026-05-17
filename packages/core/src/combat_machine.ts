@@ -622,6 +622,10 @@ function handlePlayerHit(
     return reject(state, `not ${action.actor}'s turn (current: ${currentActor(state)})`);
   }
   if (fighter.hp <= 0) return reject(state, `${action.actor} is downed`);
+  // Cast costs 1 mana. Gate before tick so the rejection message is clean.
+  if (action.kind === "cast" && fighter.mana < 1) {
+    return reject(state, `${action.actor} has no mana to cast`);
+  }
   // Back-row melee restriction only applies in a party — solo fights have
   // no positioning concept. Only ranged or focus weapons can attack from
   // the back row; melee weapons demand front-row engagement.
@@ -643,7 +647,17 @@ function handlePlayerHit(
 
   const tick = tickAtTurnStart(state, action.actor);
   if (tick.earlyReturn) return tick.earlyReturn;
-  const s = tick.state;
+  // Deduct cast mana on the post-tick state so subsequent reads see the
+  // updated value. Hit/miss both consume — mana pays for the attempt.
+  const manaCost = action.kind === "cast" ? 1 : 0;
+  const s = manaCost > 0
+    ? {
+        ...tick.state,
+        fighters: tick.state.fighters.map((f) =>
+          f.id === action.actor ? { ...f, mana: Math.max(0, f.mana - manaCost) } : f,
+        ),
+      }
+    : tick.state;
   const tickedFighter = s.fighters.find((f) => f.id === action.actor)!;
   // Re-resolve target from updated state (tick may have killed the monster).
   const monster = s.monsters.find((m) => m.id === targetMonster.id && m.hp > 0);
@@ -1243,10 +1257,17 @@ function handleHeal(
     return reject(state, `not ${action.actor}'s turn`);
   }
   if (actor.hp <= 0) return reject(state, `${action.actor} is downed`);
+  if (actor.mana < 1) return reject(state, `${action.actor} has no mana to heal`);
 
   const tick = tickAtTurnStart(state, action.actor);
   if (tick.earlyReturn) return tick.earlyReturn;
-  const s = tick.state;
+  // Heal costs 1 mana — deduct on the post-tick state.
+  const s = {
+    ...tick.state,
+    fighters: tick.state.fighters.map((f) =>
+      f.id === action.actor ? { ...f, mana: Math.max(0, f.mana - 1) } : f,
+    ),
+  };
   const tickedActor = s.fighters.find((f) => f.id === action.actor)!;
   const target = s.fighters.find((f) => f.id === action.target);
   if (!target) return reject(s, `unknown heal target: ${action.target}`);
@@ -1297,10 +1318,17 @@ function handleShield(
     return reject(state, `not ${action.actor}'s turn`);
   }
   if (actor.hp <= 0) return reject(state, `${action.actor} is downed`);
+  if (actor.mana < 1) return reject(state, `${action.actor} has no mana to shield`);
 
   const tick = tickAtTurnStart(state, action.actor);
   if (tick.earlyReturn) return tick.earlyReturn;
-  const s = tick.state;
+  // Shield costs 1 mana — deduct on the post-tick state.
+  const s = {
+    ...tick.state,
+    fighters: tick.state.fighters.map((f) =>
+      f.id === action.actor ? { ...f, mana: Math.max(0, f.mana - 1) } : f,
+    ),
+  };
   const tickedActor = s.fighters.find((f) => f.id === action.actor)!;
   const target = s.fighters.find((f) => f.id === action.target);
   if (!target) return reject(s, `unknown shield target: ${action.target}`);
