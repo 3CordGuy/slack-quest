@@ -5460,6 +5460,16 @@ async function buildInitialCombatState(
     });
   }
 
+  // Grid dungeon boss-room check. `variant === "boss"` only fires for
+  // legacy boss-variant quests; grid dungeons run under variant="dungeon"
+  // and signal a boss by the current node's `content.kind === "boss"`.
+  // Without this, killing the grid boss yielded `is_boss: false` in the
+  // outcome, skipping the boss-kill branch in applyWebCombatOutcome — the
+  // quest never marked completed, treasure never distributed, player stuck.
+  const isGridBoss = !!(
+    quest.scene.graph &&
+    quest.scene.graph.nodes[quest.scene.graph.current]?.content?.kind === "boss"
+  );
   const init: CombatInit = {
     fighters,
     monster: {
@@ -5467,7 +5477,7 @@ async function buildInitialCombatState(
       hp: quest.scene.monster_hp,
       max_hp: quest.scene.monster_max_hp,
       tier: quest.scene.tier,
-      is_boss: variant === "boss",
+      is_boss: variant === "boss" || isGridBoss,
       boss_phase: quest.scene.boss_phase,
       wave: quest.scene.wave,
       total_waves: quest.scene.total_waves,

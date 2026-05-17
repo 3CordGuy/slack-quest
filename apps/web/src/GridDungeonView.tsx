@@ -774,6 +774,15 @@ export function GridDungeonView({
   const [autoResolve, setAutoResolve] = useState(true);
   const autoResolveRef = useRef(true);
   const autoResolvedTurnRef = useRef(-1);
+  // Auto-scroll combat log to bottom when entries arrive. Without this the
+  // user has to manually scroll after every action — newest lines hide
+  // below the fold.
+  const logScrollRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const el = logScrollRef.current;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
+  }, [ws.log.length]);
   const [doorPrompt, setDoorPrompt] = useState<{ dir: DungeonDirection; door: GridDoor } | null>(null);
   const [moving, setMoving] = useState(false);
   const [contentBusy, setContentBusy] = useState(false);
@@ -1129,7 +1138,7 @@ export function GridDungeonView({
                 </div>
                 {/* Legacy combat log: inset dark panel, monospace, 13px, generous
                     line-height; events flow like a console scrollback. */}
-                <div style={{
+                <div ref={logScrollRef} style={{
                   maxHeight: isMobile ? 100 : undefined,
                   flex: isMobile ? undefined : "1 1 auto",
                   minHeight: 0,
