@@ -3542,12 +3542,17 @@ app.get("/api/quest/active", async (c) => {
   const quest = await getActiveQuestForCharacter(c.env.DB, session.slack_user_id);
   if (!quest) return c.json({ quest: null });
   const party = await getQuestParty(c.env.DB, quest.id);
-  // Expose whether engine-driven combat is in progress so the dashboard
-  // can auto-resume the CombatPage on reload / back navigation. Mode is
-  // informational only; presence of web_combat_state is what indicates
-  // engine combat is live (whether bootstrapped via start_web_combat
-  // from web, or via QuestRoom.bootstrapFromSlack from Slack).
-  const hasWebCombat = !!(await getWebCombatState(c.env.DB, quest.id));
+  // Expose whether engine-driven combat is *in progress* so the dashboard
+  // can auto-resume the CombatPage on reload / back navigation. We treat
+  // a row whose status is victory/defeat/fled as "no active combat" —
+  // it lingers post-fight so the outcome stays replayable for a client
+  // that missed the WS frame, but mounting GridDungeonView with that
+  // row still present caused the previous fight's victory overlay to
+  // flash on every new room entry until the next start_web_combat
+  // cleaned it up.
+  const existingCombat = await getWebCombatState(c.env.DB, quest.id);
+  const terminalStates = new Set(["victory", "defeat", "fled"]);
+  const hasWebCombat = !!existingCombat && !terminalStates.has(existingCombat.status as string);
   return c.json({ quest, party, has_web_combat: hasWebCombat });
 });
 
