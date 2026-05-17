@@ -232,6 +232,12 @@ interface CombatState {
   fighters: Fighter[]; monsters: Monster[]; turn_order: string[];
   turn_index: number; round: number;
   status: "pending" | "active" | "victory" | "defeat" | "fled";
+  // Per-fight scratch state from the engine. Only the bits the UI cares
+  // about are typed — mark is the marked-target tag emitted by `mark_applied`.
+  ability_state?: {
+    mark?: { marked_by: string; expires_after_round: number };
+    [k: string]: unknown;
+  };
 }
 
 type TurnAction =
@@ -571,7 +577,7 @@ function PartyBar({ fighters, selfId, party, onClickSelf, flashIds }: {
   );
 }
 
-function MonsterOverlay({ monster, isBoss, flashIds, lungeTick, slashTick, defeatedRemovedAtRef }: {
+function MonsterOverlay({ monster, isBoss, flashIds, lungeTick, slashTick, defeatedRemovedAtRef, isMarked, effects }: {
   monster: Monster | null;
   isBoss: boolean;
   flashIds?: Set<string>;
@@ -581,6 +587,11 @@ function MonsterOverlay({ monster, isBoss, flashIds, lungeTick, slashTick, defea
   // defeat animation, then unmount. The parent tracks when "now" passed
   // the unmount deadline so re-renders don't restart the animation.
   defeatedRemovedAtRef?: React.MutableRefObject<number>;
+  // Mark badge (top-right corner) — focus-fire indicator from /sq mark.
+  isMarked?: boolean;
+  // Status effects (regen / bleeding / burning / poisoned) for the
+  // current monster. Renders as small pills just under the corner mark.
+  effects?: StatusEffect[];
 }) {
   if (!monster) return null;
   const isDead = monster.hp <= 0;
@@ -613,6 +624,54 @@ function MonsterOverlay({ monster, isBoss, flashIds, lungeTick, slashTick, defea
           hit). Keyed so each tick re-mounts and re-runs the animation. */}
       {slashTick !== undefined && slashTick > 0 && !isDead && (
         <span key={`slash-${slashTick}`} className="gq-slash-streak" aria-hidden />
+      )}
+      {/* Mark badge (top-right corner). Mirrors the CombatPage pattern
+          so /sq mark + the Mark button both surface the same way: a
+          targeted-icon disc clipped to the card corner. */}
+      {isMarked && !isDead && (
+        <div
+          title="Marked target — party gets bonus damage"
+          style={{
+            position: "absolute",
+            top: -10, right: -10,
+            width: 32, height: 32,
+            borderRadius: "50%",
+            background: "#78350f",
+            border: "2px solid #f59e0b",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            zIndex: 10,
+            boxShadow: "0 0 12px rgba(245,158,11,0.6)",
+          }}
+        >
+          <Icon name="targeted" size={18} color="#fbbf24" />
+        </div>
+      )}
+      {/* Status effect pills (regen / bleeding / burning / poisoned).
+          Stack just below the mark corner so both stay visible. */}
+      {effects && effects.length > 0 && !isDead && (
+        <div style={{ position: "absolute", top: 6, right: 6, display: "flex", flexDirection: "column", gap: 3, alignItems: "flex-end", zIndex: 9 }}>
+          {effects.map((e, i) => {
+            const [color, icon] = e.type === "regen" ? ["#4ade80", "regeneration"]
+              : e.type === "bleeding" ? ["#f87171", "bleeding-hearts"]
+              : e.type === "burning" ? ["#fb923c", "fire"]
+              : ["#c084fc", "poison-cloud"];
+            return (
+              <span
+                key={i}
+                title={`${e.type} ×${e.magnitude} (${e.remaining} turns)`}
+                style={{
+                  display: "inline-flex", alignItems: "center", gap: 3,
+                  background: `${color}33`, border: `1px solid ${color}88`,
+                  borderRadius: 4, padding: "1px 5px",
+                  fontSize: 10, color, fontWeight: 700,
+                  textShadow: "0 1px 2px rgba(0,0,0,0.8)",
+                }}
+              >
+                <Icon name={icon} size={9} /> {e.magnitude}×{e.remaining}t
+              </span>
+            );
+          })}
+        </div>
       )}
     </div>
   );
@@ -1216,16 +1275,22 @@ export function GridDungeonView({
         {/* Monster overlay during combat. We pass primaryMonster (not the
             filtered live one) so the card sticks around long enough to
             play its defeat animation when hp hits 0. */}
-        {combatActive && primaryMonster && (
-          <MonsterOverlay
-            monster={primaryMonster}
-            isBoss={isBoss}
-            flashIds={flashIds}
-            lungeTick={monsterLungeTick}
-            slashTick={slashTick}
-            defeatedRemovedAtRef={defeatedRemovedAtRef}
-          />
-        )}
+        {combatActive && primaryMonster && (() => {
+          const mark = combatState?.ability_state?.mark;
+          const isMarked = !!(mark && combatState && combatState.round <= mark.expires_after_round);
+          return (
+            <MonsterOverlay
+              monster={primaryMonster}
+              isBoss={isBoss}
+              flashIds={flashIds}
+              lungeTick={monsterLungeTick}
+              slashTick={slashTick}
+              defeatedRemovedAtRef={defeatedRemovedAtRef}
+              isMarked={isMarked}
+              effects={primaryMonster.effects}
+            />
+          );
+        })()}
 
         {/* Content figure overlay — when the room contains a person or
             object, paint a visible indicator on the scene so the room
@@ -2354,7 +2419,22 @@ function DiceRollDisplay({ rolls }: { rolls: DiceRollEntry[] }) {
   const enemyRolls = rolls.filter((r) => isMonsterActor(r.actor));
   const partyRolls = rolls.filter((r) => !isMonsterActor(r.actor));
   const rowStyle: React.CSSProperties = { display: "flex", gap: 14, flexWrap: "wrap", justifyContent: "center", alignItems: "flex-start" };
-  const labelStyle: React.CSSProperties = { fontSize: 9, color: "#6b7280", textTransform: "uppercase", letterSpacing: 1.5, fontFamily: "ui-monospace, monospace", textAlign: "center", marginBottom: 6 };
+  // Pill labels: solid dark bg + colored ring + drop-shadow. Readable on
+  // any room background — the previous flat text vanished against busy
+  // art (monster portraits especially).
+  const pillStyle = (color: string, ring: string): React.CSSProperties => ({
+    fontSize: 10, fontWeight: 800, color,
+    textTransform: "uppercase", letterSpacing: 2,
+    fontFamily: "ui-monospace, monospace",
+    background: "rgba(10,11,14,0.92)",
+    border: `1px solid ${ring}`,
+    padding: "3px 12px",
+    borderRadius: 999,
+    marginBottom: 8,
+    display: "inline-block",
+    boxShadow: "0 2px 12px rgba(0,0,0,0.6)",
+    textShadow: "0 0 6px rgba(0,0,0,0.8)",
+  });
   return (
     <div style={{
       position: "fixed",
@@ -2368,16 +2448,16 @@ function DiceRollDisplay({ rolls }: { rolls: DiceRollEntry[] }) {
       pointerEvents: "none",
     }}>
       {enemyRolls.length > 0 && (
-        <div>
-          <div style={{ ...labelStyle, color: "#9c4242" }}>Enemy</div>
+        <div style={{ textAlign: "center" }}>
+          <div style={pillStyle("#fca5a5", "#7f1d1d")}>Enemy</div>
           <div style={rowStyle}>
             {enemyRolls.map((r) => <DiceFace key={r.id} roll={r} />)}
           </div>
         </div>
       )}
       {partyRolls.length > 0 && (
-        <div>
-          <div style={{ ...labelStyle, color: "#4a7c8c" }}>Party</div>
+        <div style={{ textAlign: "center" }}>
+          <div style={pillStyle("#86efac", "#166534")}>Party</div>
           <div style={rowStyle}>
             {partyRolls.map((r) => <DiceFace key={r.id} roll={r} />)}
           </div>
