@@ -418,7 +418,8 @@ function PartyBar({ fighters, selfId, party, onClickSelf, flashIds }: {
           padding: "8px 12px",
           opacity: f.isDead ? 0.45 : 1,
           flexShrink: 0,
-          minWidth: 200,
+          minWidth: typeof window !== "undefined" && window.innerWidth < 700 ? 0 : 200,
+          flex: typeof window !== "undefined" && window.innerWidth < 700 ? "1 1 auto" : "0 0 auto",
           cursor: f.isSelf && onClickSelf ? "pointer" : "default",
         }}>
         {/* Lvl badge in top-right corner */}
@@ -448,10 +449,14 @@ function PartyBar({ fighters, selfId, party, onClickSelf, flashIds }: {
     );
   }
 
-  // Two rows, both center-aligned. Back row on top, front row on bottom
-  // (matches the visual metaphor: front fighters stand closer to camera).
-  const rowStyle: React.CSSProperties = { display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap" };
-  const labelStyle: React.CSSProperties = { fontSize: 9, fontWeight: 700, letterSpacing: 1.5, color: "#6b7280", alignSelf: "center", textTransform: "uppercase", minWidth: 38 };
+  // Two rows, both center-aligned. Front above Back. On mobile the row
+  // labels move inline above each row (saves horizontal space and avoids
+  // the cramped narrow-column look).
+  const partyIsMobile = typeof window !== "undefined" && window.innerWidth < 700;
+  const rowStyle: React.CSSProperties = { display: "flex", gap: partyIsMobile ? 8 : 12, justifyContent: "center", flexWrap: "wrap", alignItems: "center" };
+  const labelStyle: React.CSSProperties = partyIsMobile
+    ? { fontSize: 8, fontWeight: 700, letterSpacing: 1.2, color: "#6b7280", textTransform: "uppercase", padding: "0 4px" }
+    : { fontSize: 9, fontWeight: 700, letterSpacing: 1.5, color: "#6b7280", alignSelf: "center", textTransform: "uppercase", minWidth: 38 };
   return (
     <div style={{
       background: "rgba(10,11,14,0.55)",
@@ -460,8 +465,8 @@ function PartyBar({ fighters, selfId, party, onClickSelf, flashIds }: {
       backdropFilter: "blur(10px)",
       WebkitBackdropFilter: "blur(10px)",
       boxShadow: "0 8px 32px rgba(0,0,0,0.5)",
-      padding: "10px 12px",
-      display: "flex", flexDirection: "column", gap: 8,
+      padding: partyIsMobile ? "8px 8px" : "10px 12px",
+      display: "flex", flexDirection: "column", gap: partyIsMobile ? 4 : 8,
     }}>
       {/* Front row above Back row — Front stands closer to the foe, which
           is at the top of the screen in first-person view. */}
@@ -576,10 +581,13 @@ function exitsForShape(shape: RoomShape): Set<DungeonDirection> {
     case "corner_nw": e.add("n"); e.add("w"); break;
     case "corner_se": e.add("s"); e.add("e"); break;
     case "corner_sw": e.add("s"); e.add("w"); break;
-    case "t_n": e.add("e"); e.add("s"); e.add("w"); break;
-    case "t_e": e.add("n"); e.add("s"); e.add("w"); break;
-    case "t_s": e.add("n"); e.add("e"); e.add("w"); break;
-    case "t_w": e.add("n"); e.add("e"); e.add("s"); break;
+    // T-junction naming matches packages/db shapeFromExits: t_X = "T points
+    // X direction" = the wall is on the OPPOSITE side. So t_n has open
+    // exits on N + the two perpendicular sides; the S wall is closed.
+    case "t_n": e.add("n"); e.add("e"); e.add("w"); break; // no s
+    case "t_e": e.add("n"); e.add("e"); e.add("s"); break; // no w
+    case "t_s": e.add("e"); e.add("s"); e.add("w"); break; // no n
+    case "t_w": e.add("n"); e.add("s"); e.add("w"); break; // no e
     case "cross": e.add("n"); e.add("e"); e.add("s"); e.add("w"); break;
     default: break;
   }
@@ -954,14 +962,17 @@ export function GridDungeonView({
 
   const bgUrl = roomBgUrl(currentNode.shape, content);
   const isMobile = useIsMobile(700);
-  // Right-rail container that holds minimap + combat log. On desktop it sits
-  // top-right at ~22% viewport width (wide enough for the legacy monospace
-  // log to breathe). On mobile it shifts to the bottom of the room view,
-  // left+right anchored, so the controls stay legible.
+  // Right-rail container that holds minimap + combat log.
+  // - Desktop: top-right, vertical stack, ~22vw wide.
+  // - Mobile: bottom of room view. If combat (log visible) → full-width row;
+  //   if exploring (no log) → small chip top-right to save room view space.
+  const showLog = combatActive && ws.log.length > 0;
   const railStyle: React.CSSProperties = isMobile
-    ? { position: "absolute", left: 8, right: 8, bottom: 8, display: "flex", flexDirection: "row", gap: 8, zIndex: 6 }
+    ? (showLog
+        ? { position: "absolute", left: 8, right: 8, bottom: 8, display: "flex", flexDirection: "row", gap: 8, zIndex: 6 }
+        : { position: "absolute", top: 8, right: 8, display: "flex", flexDirection: "column", gap: 8, zIndex: 6 })
     : { position: "absolute", top: 12, right: 12, width: "min(300px, 22vw)", display: "flex", flexDirection: "column", gap: 8, zIndex: 6 };
-  const railItemStyle: React.CSSProperties = isMobile ? { flex: 1, minWidth: 0 } : { width: "100%" };
+  const railItemStyle: React.CSSProperties = isMobile && showLog ? { flex: 1, minWidth: 0 } : { width: "100%" };
 
   return (
     <div style={{ position: "fixed", inset: 0, background: "#0a0b0e", display: "flex", flexDirection: "column", overflow: "hidden", fontFamily: "Inter, system-ui, sans-serif" }}>

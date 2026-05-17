@@ -5141,6 +5141,62 @@ async function applyWebCombatOutcome(
         .bind(questId).run();
     }
     await setQuestMode(env.DB, questId, "slack");
+
+    // Grid dungeon boss kill: distribute boss treasure to surviving fighters
+    // (round-robin), append to each fighter's loot in the outcome, and mark
+    // the quest completed. Without this the player kills the boss, clears
+    // the room, and is then stuck — no exit, no treasure, no end-state.
+    if (parsedScene?.graph && primaryMonster.is_boss) {
+      const bossNode = parsedScene.graph.nodes[parsedScene.graph.current];
+      const bossContent = bossNode?.content;
+      if (bossContent?.kind === "boss" && bossContent.treasure?.length) {
+        const survivors = state.fighters.filter((f) => f.hp > 0);
+        if (survivors.length === 0) survivors.push(state.fighters[0]); // edge: pyrrhic — give to first fighter
+        for (let i = 0; i < bossContent.treasure.length; i++) {
+          const item = bossContent.treasure[i];
+          const recipient = survivors[i % survivors.length];
+          if (!recipient) break;
+          const added = await addItem(env.DB, {
+            character_id: recipient.id,
+            item_name: item.name,
+            item_type: item.item_type,
+            power: item.power,
+            rarity: item.rarity,
+            flavor: item.flavor,
+            weapon_range: item.weapon_range ?? null,
+            slot: item.slot ?? undefined,
+            stat_bonus: item.stat_bonus ?? undefined,
+            item_subtype: item.item_subtype ?? undefined,
+          });
+          const reward = rewards.find((r) => r.user_id === recipient.id);
+          if (reward) {
+            reward.loot.push({
+              item_name: added.item_name,
+              item_type: added.item_type,
+              power: added.power,
+              rarity: added.rarity,
+              flavor: added.flavor ?? "",
+              weapon_range: added.weapon_range,
+              level_req: added.level_req,
+            });
+          }
+        }
+      }
+      await markQuestStatus(env.DB, questId, "completed");
+      // Skip advanceExpeditionAfterWebCombat — grid dungeons don't use it.
+      return {
+        status: state.status as "victory" | "defeat",
+        rewards,
+        monster_name: primaryMonster.name,
+        monster_tier: tier,
+        total_pool_xp: totalPoolXp,
+        total_pool_gold: totalPoolGold,
+        elite,
+        is_boss: true,
+        dungeon_room_cleared: true,
+      };
+    }
+
     const dungeonDoors = await advanceExpeditionAfterWebCombat(env, questId);
     if (dungeonDoors) {
       return {
