@@ -779,70 +779,74 @@ export const VIEW_ART_PROMPTS = {
   // is supplied by ROOM_STYLE_ANCHOR (sticky notes, gantt charts, server
   // racks, ethernet cables, monitors, ergonomic keyboards, etc.).
 
-  // CORRIDOR — straight passages
+  // CORRIDOR — straight passages (compass-agnostic geometry)
   room_straight_ns:
-    "First-person view down a long office-keep corridor running north-to-south, vanishing point at the far end. Flagstone floor, fitted stone walls covered in pinned sticky-notes and gantt charts. Empty corridor, symmetrical, warm daylight.",
+    "First-person view down a long straight office-keep corridor. Vanishing point at the far end, flagstone floor between fitted stone walls covered in pinned sticky-notes and gantt charts. Empty, symmetrical, warm daylight.",
   room_straight_ew:
-    "First-person view down a long office-keep corridor running east-to-west. Stone walls plastered with kanban cards and architecture-diagram whiteboards. A wooden double door at the far end. No side passages.",
-  // CORRIDOR — corners (the corridor turns one direction)
+    "First-person view down a long straight office-keep corridor. Stone walls plastered with kanban cards and architecture-diagram whiteboards. A wooden double door at the far end. No side passages.",
+  // CORRIDOR — L-shaped corners (no compass direction in the art; minimap
+  // shows which two cardinal directions the openings are in)
   room_corner_ne:
-    "First-person view of an office-keep corridor that enters from the south and turns ahead to exit east. The right-hand wall opens into a side passage. Stone arches frame the bend, pinned sticky-notes and a gantt chart on the corner wall.",
+    "First-person view of an L-shaped office-keep corridor that bends 90 degrees. Two visible openings on adjacent walls. Stone arches frame the bend; pinned sticky-notes and a gantt chart on the corner wall.",
   room_corner_nw:
-    "First-person view of an office-keep corridor that comes in from the south, turns ahead, and exits to the west. The corridor opens to the left into another passage. A small alcove on the right holds a glowing monitor displaying scrolling code. Sticky-notes and kanban cards cover the corner wall. Bundled cables snake around the bend along the flagstones.",
+    "First-person view of an L-shaped office-keep corridor that bends 90 degrees. Two visible openings on adjacent walls. A glowing monitor in a wall alcove displaying scrolling code. Sticky-notes and kanban cards cover the corner wall.",
   room_corner_se:
-    "First-person view of an office-keep corridor that enters from the north and turns ahead to exit east. The floor turns right into the side passage. A stone standing-desk in the bend with sticky-notes and a coffee mug. Pinned burndown charts on the wall.",
+    "First-person view of an L-shaped office-keep corridor that bends 90 degrees. Two visible openings on adjacent walls. A stone standing-desk in the bend with sticky-notes and a coffee mug. Pinned burndown charts on the wall.",
   room_corner_sw:
-    "First-person view of an office-keep corridor that comes in from the north, turns immediately ahead, and exits to the west. The corridor opens left. A small wall-niche on the right holds a stack of printout-code scrolls and a humming server rack with blinking LEDs. Sticky-notes plaster the corner wall. Cables trail along the floor around the bend.",
-  // CORRIDOR — T-junctions (three exits)
+    "First-person view of an L-shaped office-keep corridor that bends 90 degrees. Two visible openings on adjacent walls. A small wall-niche holds a stack of printout-code scrolls and a humming server rack with blinking LEDs. Sticky-notes plaster the corner wall.",
+  // T-junctions — three-way passage (compass-agnostic art)
   room_t_n:
-    "First-person view of a T-junction in the office-keep. Corridor splits ahead: paths to east and west, continuing north away from the camera. Architecture-diagram whiteboard on the junction wall. Pinned sticky-notes everywhere.",
+    "First-person view of a three-way T-junction in the office-keep. Corridor branches into three passages from a central area. Architecture-diagram whiteboard on the junction wall. Pinned sticky-notes everywhere.",
   room_t_e:
-    "First-person view of a T-junction in the office-keep. Paths to north and south, corridor continues east toward the camera. Pinned gantt charts and sticky-notes on the junction wall. A hand-painted directional sign hangs overhead.",
+    "First-person view of a three-way T-junction in the office-keep. Three passages meet at the central area. Pinned gantt charts and sticky-notes on the junction wall. A hand-painted directional sign hangs overhead.",
   room_t_s:
-    "First-person view of a T-junction. The corridor opens ahead with paths to east and west, plus a corridor leading south back toward the camera. A wooden signpost stands at the junction, hand-labeled with marker. Behind it, the junction wall is covered in pinned burndown charts and a small whiteboard listing room directions. Server rack hums in a side alcove.",
+    "First-person view of a three-way T-junction in the office-keep. Three passages diverge from a junction area. A wooden signpost stands at the center, hand-labeled with marker. Burndown charts and a small whiteboard on the walls. Server rack hums in a side alcove.",
   room_t_w:
-    "First-person view of a T-junction. Paths visible to north and south, plus the corridor continues west toward the viewer. A large blackboard mounted on the junction wall lists room directions as a hand-drawn map with marker. Sticky-note clusters fan out around it. Ethernet cables run into all three passages. Warm desk-lamp glow from an adjacent alcove.",
-  // CORRIDOR — 4-way intersection
+    "First-person view of a three-way T-junction in the office-keep. Three passages branch from the central area. A large blackboard at the junction lists room directions as a hand-drawn map with marker. Sticky-note clusters fan out around it.",
+  // 4-way intersection
   room_cross:
-    "First-person view of a 4-way intersection in the office-keep. Corridors extend in all four cardinal directions. A circuitry-inlaid compass mosaic on the floor at the center. Stone columns at each corner, sticky-notes on every wall.",
+    "First-person view of a four-way crossroads in the office-keep. Four corridors meet at a central junction. A circuitry-inlaid compass mosaic on the floor at the center. Stone columns at each corner, sticky-notes on every wall.",
 
-  // DEAD-END SHAPES (corridor ends at a wall) — each with content variants.
-  // The direction names which wall the player faces (the only open exit is opposite).
+  // DEAD-END SHAPES (corridor terminates in a wall ahead) — content variants
+  // describe what's at the dead-end. The directional suffix (n/e/s/w) keys
+  // visual variety but the art is compass-agnostic: every variant shows a
+  // dead-end with the back wall blocking and a single opening behind/around
+  // the camera. The minimap is authoritative for which cardinal exit applies.
   room_dead_n_empty:
-    "First-person view of an office-keep corridor ending at a flat north wall. Plain fitted stone with a pinned, abandoned sprint-retro whiteboard (mostly erased), a single coffee mug on a stone ledge. Faint dust on the flagstones. Empty, but lived-in — just a dead end.",
+    "First-person view of a dead-end office-keep corridor. A flat stone wall at the far end blocks the path. A pinned abandoned sprint-retro whiteboard (mostly erased), a single coffee mug on a stone ledge. Faint dust on the flagstones. Empty, lived-in.",
   room_dead_e_empty:
-    "First-person view of an office-keep corridor ending at a flat east wall. Mossy lower courses of stone, a forgotten kanban-board on the far wall with curled corners, scattered sticky-notes on the floor. A single ethernet port glowing green on the wall. Empty.",
+    "First-person view of a dead-end office-keep corridor. A flat stone wall blocks the path. Mossy lower courses, a forgotten kanban-board with curled corners, scattered sticky-notes on the floor. A single ethernet port glowing green on the wall.",
   room_dead_s_empty:
-    "First-person view of an office-keep corridor ending at a flat south wall. A peeling architecture diagram pinned to the wall, a worn-out laptop bag on the floor, an empty take-out cup. Otherwise empty.",
+    "First-person view of a dead-end office-keep corridor. A flat stone wall blocks the path. A peeling architecture diagram pinned to the wall, a worn-out laptop bag on the floor, an empty take-out cup.",
   room_dead_w_empty:
-    "First-person view of an office-keep corridor ending at a flat west wall. A flickering desk lamp on a stone shelf, an abandoned coffee mug, a single sticky-note marked TODO. Empty.",
-  // Dead-end + treasure (chest sits at the end of the corridor)
+    "First-person view of a dead-end office-keep corridor. A flat stone wall blocks the path. A flickering desk lamp on a stone shelf, an abandoned coffee mug, a single sticky-note marked TODO.",
+  // Dead-end + treasure (chest sits at the end)
   room_dead_n_treasure:
-    "First-person view of an office-keep corridor ending at a north wall. A heavy ornate chest sits open at the end, golden light spilling out — gold coins mixed with rolled printout scrolls. Dust motes in a warm light beam from above.",
+    "First-person view of a dead-end office-keep corridor. A heavy ornate chest sits open at the far end, golden light spilling out — gold coins mixed with rolled printout scrolls. Dust motes in a warm light beam from above.",
   room_dead_e_treasure:
-    "First-person view of an office-keep corridor ending at an east wall. A polished wooden chest with brass fittings is open at the far wall, contents glowing gently — credentials, vials, and elegantly-rolled printout scrolls. Architecture-diagram whiteboards flank it on the walls. Warm light.",
+    "First-person view of a dead-end office-keep corridor. A polished wooden chest with brass fittings is open at the far end, contents glowing gently — credentials, vials, elegantly-rolled printout scrolls. Architecture-diagram whiteboards flank it on the walls.",
   room_dead_s_treasure:
-    "First-person view of an office-keep corridor ending at a south wall. An ornate chest is propped open against the wall, faint golden glow inside, gold coins and rolled scrolls visible. Two extinguished candles and a forgotten coffee mug flank it on the floor. Sticky-notes on the wall above.",
+    "First-person view of a dead-end office-keep corridor. An ornate chest propped open against the back wall, faint golden glow inside, gold coins and rolled scrolls visible. Two extinguished candles and a forgotten coffee mug on the floor. Sticky-notes above.",
   room_dead_w_treasure:
-    "First-person view of an office-keep corridor ending at a west wall. A small jeweled chest rests on a stone pedestal flush against the far wall, lid open, contents catching warm light. Behind it: a pinned burndown chart and a humming server rack alcove glowing faintly.",
+    "First-person view of a dead-end office-keep corridor. A small jeweled chest rests on a stone pedestal at the back of the room, lid open, contents catching warm light. A pinned burndown chart behind it; a humming server rack alcove glowing faintly.",
   // Dead-end + lockbox (locked chest)
   room_dead_n_lockbox:
-    "First-person view of an office-keep corridor ending at a north wall. A heavy iron-banded wooden chest with a large padlock sits against the far wall, the lock prominently visible. A single hanging desk lamp casts warm light. Sticky-notes and a pinned kanban board on the wall around it. Server rack humming in an alcove.",
+    "First-person view of a dead-end office-keep corridor. A heavy iron-banded wooden chest with a large padlock sits at the far end, the lock prominently visible. A single hanging desk lamp casts warm light. Sticky-notes and a kanban board nearby. Server rack hums in an alcove.",
   room_dead_e_lockbox:
-    "First-person view of an office-keep corridor ending at an east wall. An ornate dark-wood chest reinforced with engraved silver bands and a heavy silver padlock sits at the dead end. Surrounded by clustered sticky-notes and a pinned gantt chart on the back wall. Cool monitor glow from a nearby alcove.",
+    "First-person view of a dead-end office-keep corridor. An ornate dark-wood chest reinforced with engraved silver bands and a heavy silver padlock sits at the far end. Sticky-notes and a pinned gantt chart on the back wall. Cool monitor glow from a nearby alcove.",
   room_dead_s_lockbox:
-    "First-person view of an office-keep corridor ending at a south wall. A lavishly ornate chest covered in gold-leaf engraving with a jeweled gold padlock sits at the end. Faint glow leaks from cracks in the lid. Pinned project bulletins fan around it on the wall.",
+    "First-person view of a dead-end office-keep corridor. A lavishly ornate chest covered in gold-leaf engraving with a jeweled gold padlock sits at the back of the room. Faint glow leaks from cracks in the lid. Pinned project bulletins around it.",
   room_dead_w_lockbox:
-    "First-person view of an office-keep corridor ending at a west wall. A weathered chest banded in dull iron, secured with a thick padlock, sits at the dead end. Cobwebs at the corners, a humming server rack alcove glowing blue beside it. Sticky-notes everywhere.",
-  // Dead-end + npc (someone present)
+    "First-person view of a dead-end office-keep corridor. A weathered chest banded in dull iron, secured with a thick padlock, sits at the dead end. Cobwebs at the corners, a humming server rack alcove glowing blue beside it. Sticky-notes everywhere.",
+  // Dead-end + npc (workspace nook)
   room_dead_n_npc:
-    "First-person view of an office-keep corridor ending at a north wall. A small workspace nook is set up: a standing desk with a glowing monitor and an ergonomic keyboard, a steaming coffee mug, a comfortable rolling chair pushed slightly back. A pinned to-do list on the wall. Lived-in, recently occupied — a traveler's pack against the wall.",
+    "First-person view of a dead-end office-keep corridor with a workspace nook at the far end. A standing desk with a glowing monitor and ergonomic keyboard, a steaming coffee mug, a comfortable rolling chair pushed slightly back. A pinned to-do list. Lived-in.",
   room_dead_e_npc:
-    "First-person view of an office-keep corridor ending at an east wall. A rough wooden desk pushed against the far wall, candle still burning beside a glowing laptop, scattered sticky-notes and scrolls of printout code. A high-backed office chair pulled slightly out, as if someone just stood up. Pinned architecture diagram behind.",
+    "First-person view of a dead-end office-keep corridor with a workspace at the back. A rough wooden desk against the wall, candle still burning beside a glowing laptop, scattered sticky-notes and scrolls of printout code. A high-backed office chair pulled slightly out.",
   room_dead_s_npc:
-    "First-person view of an office-keep corridor ending at a south wall. A low wooden counter improvised as a desk — steaming cup of tea, a quill, an open ledger that resembles a sprint planning notebook. Pinned kanban-board cards on the wall above. Warm and human.",
+    "First-person view of a dead-end office-keep corridor with a workspace at the back. A low wooden counter improvised as a desk — steaming cup of tea, a quill, an open ledger that resembles a sprint planning notebook. Pinned kanban-board cards on the wall above.",
   room_dead_w_npc:
-    "First-person view of an office-keep corridor ending at a west wall. A stone alcove holds an old monitor showing a faint blue-glowing screen on a pedestal, and two carved stone chairs facing each other as if for a 1:1 meeting. Sticky-notes plastered around the alcove. Quiet.",
+    "First-person view of a dead-end office-keep corridor with a meeting nook at the back. A stone alcove holds an old monitor on a pedestal with a faint blue-glowing screen, and two carved stone chairs facing each other as if for a 1:1. Sticky-notes plastered around.",
 
   // CHAMBERS — large open rooms (more square than corridor-like)
   room_chamber_empty:
