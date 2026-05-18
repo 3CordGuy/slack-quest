@@ -110,6 +110,7 @@ import {
   refillMana,
   releaseShopClaim,
   scaleMonsterForJoin,
+  getQuestPartySize,
   transferItem,
   tryDeductGold,
   trySetHaggleOutcome,
@@ -386,6 +387,14 @@ function baseRewardXp(tier: number): number { return Math.round(15 * Math.pow(ti
 function baseRewardGold(tier: number): number { return Math.round(8 * Math.pow(tier, 1.2)); }
 const BOSS_REWARD_MULTIPLIER = 2;
 const ELITE_REWARD_MULTIPLIER = 1.5;
+// Party bonus: each member earns more XP (not gold) when fighting as a group.
+// n=1 → 1.0×, n=2 → 1.1×, n=3 → 1.2×, n≥4 → 1.25×
+function partyXpBonus(partySize: number): number {
+  if (partySize <= 1) return 1.0;
+  if (partySize === 2) return 1.1;
+  if (partySize === 3) return 1.2;
+  return 1.25;
+}
 const SUPPORT_BASE_CONTRIBUTION = 1;
 const SHOP_RESTOCK_MS = 6 * 60 * 60 * 1000;
 const SHOP_BUY_CAP_PER_CYCLE = 2;
@@ -1078,6 +1087,29 @@ app.post("/api/inventory/:itemId/unequip", async (c) => {
 });
 
 const JOIN_HP_RATIO = 0.4;
+
+function addPackMonstersForParty(scene: SceneJson, partySize: number): SceneJson {
+  if (scene.monsters && scene.monsters.length > 1) return scene;
+  if (scene.variant === "boss" || scene.variant === "dungeon") return scene;
+  const count = Math.min(3, Math.max(1, partySize));
+  if (count <= 1) return scene;
+  const minionHp = Math.max(8, Math.round(scene.monster_max_hp * 0.65));
+  const minions = Array.from({ length: count - 1 }, () => ({
+    name: scene.monster_name,
+    hp: minionHp,
+    max_hp: minionHp,
+    tier: Math.max(1, scene.tier - 1),
+    art_url: scene.monster_art_url ?? null,
+    is_boss: false,
+  }));
+  return {
+    ...scene,
+    monsters: [
+      { name: scene.monster_name, hp: scene.monster_max_hp, max_hp: scene.monster_max_hp, tier: scene.tier, art_url: scene.monster_art_url ?? null, is_boss: false },
+      ...minions,
+    ] as MonsterSpec[],
+  };
+}
 const BOSS_LEVEL_REQUIRED = 3;
 const GAUNTLET_LEVEL_REQUIRED = 5;
 const GAUNTLET_WAVES = 3;
@@ -1501,11 +1533,12 @@ app.post("/api/quest/start", async (c) => {
     return c.json({ error: "already_on_quest" }, 400);
   }
   const body = (await c.req.json().catch(() => null)) as
-    | { variant?: unknown; elite?: unknown }
+    | { variant?: unknown; elite?: unknown; monster_count?: unknown }
     | null;
   const variant = body?.variant;
   const elite = body?.elite === true;
-  if (variant !== "standard" && variant !== "boss" && variant !== "gauntlet" && variant !== "dungeon") {
+  const jobMonsterCount = typeof body?.monster_count === "number" ? Math.max(1, Math.min(3, body.monster_count as number)) : 1;
+  if (variant !== "standard" && variant !== "boss" && variant !== "gauntlet" && variant !== "dungeon" && variant !== "bounty_pack") {
     return c.json({ error: "unsupported_variant", variant }, 400);
   }
   if (variant === "boss" && character.level < BOSS_LEVEL_REQUIRED) {
@@ -1533,6 +1566,29 @@ app.post("/api/quest/start", async (c) => {
     };
   } else if (variant === "dungeon") {
     scene = await buildGridDungeonScene(c.env, character, elite, avoidNames);
+  } else if (variant === "bounty_pack") {
+    const art = artTarget(c.env);
+    const packScenes = await Promise.all(
+      Array.from({ length: jobMonsterCount }, () =>
+        generateOpeningScene(c.env.AI, character, elite, "standard", undefined, avoidNames, art)
+      )
+    );
+    const [leader, ...minions] = packScenes;
+    leader.variant = "standard";
+    leader.from_job_board = true;
+    if (jobMonsterCount > 1) {
+      leader.monsters = [
+        { name: leader.monster_name, hp: leader.monster_max_hp, max_hp: leader.monster_max_hp, tier: leader.tier, art_url: leader.monster_art_url ?? null },
+        ...minions.map((s) => ({
+          name: s.monster_name,
+          hp: Math.max(8, Math.round(s.monster_max_hp * 0.75)),
+          max_hp: Math.max(8, Math.round(s.monster_max_hp * 0.75)),
+          tier: Math.max(1, s.tier - 1),
+          art_url: s.monster_art_url ?? null,
+        })),
+      ] as typeof leader.monsters;
+    }
+    scene = leader;
   } else {
     scene = await generateOpeningScene(
       c.env.AI,
@@ -1673,6 +1729,14 @@ app.post("/api/quest/join", async (c) => {
     .bind(session.slack_user_id)
     .run();
   const scaled = await scaleMonsterForJoin(c.env.DB, quest.id, quest.scene, JOIN_HP_RATIO);
+  const partySize = await getQuestPartySize(c.env.DB, quest.id);
+  const withPack = addPackMonstersForParty(scaled, partySize);
+  if (withPack !== scaled) {
+    await c.env.DB
+      .prepare("UPDATE quests SET scene_json = ? WHERE id = ?")
+      .bind(JSON.stringify(withPack), quest.id)
+      .run();
+  }
 
   // Patch the in-memory DO state so the new fighter appears in live combat.
   // Fire-and-forget: if the DO isn't running yet (combat not started),
@@ -1823,16 +1887,21 @@ async function refreshWebTownIfStale(db: D1Database, ai: Ai, channelId: string):
   const BOSS_LEVEL_REQUIRED_LOCAL = 3;
   const EXPEDITION_LEVEL_REQUIRED_LOCAL = 1;
 
-  const [jobStd, jobBoss, jobDung] = await Promise.all([
+  const [jobStd, jobBoss, jobDung, jobPack] = await Promise.all([
     generateJobListing(ai, "standard", townName),
     generateJobListing(ai, "boss", townName),
     generateJobListing(ai, "dungeon", townName),
+    generateJobListing(ai, "bounty_pack", townName),
   ]);
+
+  // Pack size 2 vs 3: alternate daily based on refresh timestamp parity.
+  const packSize = Math.floor(now / (24 * 60 * 60 * 1000)) % 2 === 0 ? 2 : 3;
 
   const jobs = [
     { id: "job_1", variant: "standard" as const, required_level: 1, title: jobStd.title, blurb: jobStd.blurb, reward_summary: "1× rewards · +12% town bonus · single foe." },
     { id: "job_2", variant: "boss" as const, required_level: BOSS_LEVEL_REQUIRED_LOCAL, title: jobBoss.title, blurb: jobBoss.blurb, reward_summary: "2× rewards · +12% town bonus · two phases." },
     { id: "job_3", variant: "dungeon" as const, required_level: EXPEDITION_LEVEL_REQUIRED_LOCAL, title: jobDung.title, blurb: jobDung.blurb, reward_summary: "2.5× rewards · +12% town bonus · 5-7 rooms, sub-boss, treasure." },
+    { id: "job_4", variant: "bounty_pack" as const, required_level: 2, monster_count: packSize, title: jobPack.title, blurb: jobPack.blurb, reward_summary: `1.6× rewards · +12% town bonus · fight ${packSize} enemies at once · first come first served.` },
   ];
 
   const updated = { ...state, town_name: townName, town_name_set_at: townNameSetAt, refreshed_at: now, jobs };
@@ -1869,8 +1938,9 @@ app.get("/api/board", async (c) => {
     refreshed_at: number;
     jobs?: Array<{
       id: string;
-      variant: "standard" | "boss" | "dungeon" | "gauntlet";
+      variant: "standard" | "boss" | "dungeon" | "gauntlet" | "bounty_pack";
       required_level: number;
+      monster_count?: number;
       title: string;
       blurb: string;
       reward_summary: string;
@@ -1922,8 +1992,9 @@ app.post("/api/board/take", async (c) => {
     refreshed_at: number;
     jobs?: Array<{
       id: string;
-      variant: "standard" | "boss" | "dungeon" | "gauntlet";
+      variant: "standard" | "boss" | "dungeon" | "gauntlet" | "bounty_pack";
       required_level: number;
+      monster_count?: number;
       title: string;
       blurb: string;
       reward_summary: string;
@@ -1959,6 +2030,30 @@ app.post("/api/board/take", async (c) => {
     };
   } else if (variant === "dungeon") {
     scene = await buildGridDungeonScene(c.env, character, false, avoidNames);
+  } else if (variant === "bounty_pack") {
+    const packSize = Math.max(1, Math.min(3, job.monster_count ?? 2));
+    const art = artTarget(c.env);
+    const packScenes = await Promise.all(
+      Array.from({ length: packSize }, () =>
+        generateOpeningScene(c.env.AI, character, false, "standard", undefined, avoidNames, art)
+      )
+    );
+    const [leader, ...minions] = packScenes;
+    leader.variant = "standard";
+    leader.from_job_board = true;
+    if (packSize > 1) {
+      leader.monsters = [
+        { name: leader.monster_name, hp: leader.monster_max_hp, max_hp: leader.monster_max_hp, tier: leader.tier, art_url: leader.monster_art_url ?? null },
+        ...minions.map((s) => ({
+          name: s.monster_name,
+          hp: Math.max(8, Math.round(s.monster_max_hp * 0.75)),
+          max_hp: Math.max(8, Math.round(s.monster_max_hp * 0.75)),
+          tier: Math.max(1, s.tier - 1),
+          art_url: s.monster_art_url ?? null,
+        })),
+      ] as typeof leader.monsters;
+    }
+    scene = leader;
   } else {
     scene = await generateOpeningScene(
       c.env.AI, character, false,
@@ -2135,30 +2230,51 @@ app.post("/api/hunt", async (c) => {
   if (await getActiveQuestForCharacter(c.env.DB, session.slack_user_id)) {
     return c.json({ error: "already_on_quest" }, 400);
   }
-  const body = await c.req.json().catch(() => null) as { tier?: number } | null;
+  const body = await c.req.json().catch(() => null) as { tier?: number; monster_count?: number } | null;
   const requestedTier = body?.tier;
   if (typeof requestedTier !== "number" || !Number.isInteger(requestedTier) || requestedTier < 1) {
     return c.json({ error: "invalid_tier" }, 400);
   }
   const tier = Math.min(requestedTier, character.level);
+  const monsterCount = Math.max(1, Math.min(3, Number.isInteger(body?.monster_count) ? (body!.monster_count as number) : 1));
 
   const channelId = await recentChannelForUser(c.env.DB, session.slack_user_id);
   if (!channelId) return c.json({ error: "no_channel" }, 400);
 
   const avoidNames = await getRecentMonsterNames(c.env.DB, channelId, 6);
-  // Build a fake character at the chosen tier so the scene generator scales
-  // HP, damage, and flavor to the requested difficulty, not the player's level.
   const scaledCharacter = { ...character, level: tier };
-  const scene = await generateOpeningScene(
-    c.env.AI, scaledCharacter, false, "standard", undefined, avoidNames, artTarget(c.env),
+  const art = artTarget(c.env);
+
+  // Generate all scenes in parallel — leader + optional minions.
+  const scenes = await Promise.all(
+    Array.from({ length: monsterCount }, (_, i) =>
+      generateOpeningScene(c.env.AI, scaledCharacter, false, "standard", undefined, avoidNames, art)
+        .then((s) => ({ ...s, _idx: i }))
+    )
   );
-  scene.variant = "standard";
+  const [leaderScene, ...minionScenes] = scenes;
+  leaderScene.variant = "standard";
+
+  // Pack hunts embed extra monsters in scene_json so buildInitialCombatState
+  // picks them up the same way dungeon encounters do.
+  if (monsterCount > 1) {
+    leaderScene.monsters = [
+      { name: leaderScene.monster_name, hp: leaderScene.monster_max_hp, max_hp: leaderScene.monster_max_hp, tier: leaderScene.tier, art_url: leaderScene.monster_art_url ?? null },
+      ...minionScenes.map((s) => ({
+        name: s.monster_name,
+        hp: Math.max(8, Math.round(s.monster_max_hp * 0.75)),
+        max_hp: Math.max(8, Math.round(s.monster_max_hp * 0.75)),
+        tier: Math.max(1, s.tier - 1),
+        art_url: s.monster_art_url ?? null,
+      })),
+    ] as typeof leaderScene.monsters;
+  }
 
   const questId = await createQuest(c.env.DB, {
     channel_id: channelId,
     thread_ts: `web-${Date.now()}-${session.slack_user_id}`,
     elite: false,
-    scene,
+    scene: leaderScene,
     mode: "web",
     created_by: session.slack_user_id,
   });
@@ -3222,8 +3338,8 @@ app.post("/api/pub/liars/start", async (c) => {
 
   const body = await c.req.json<{ stake?: number }>().catch(() => ({ stake: undefined }));
   const stake = body.stake;
-  if (typeof stake !== "number" || !LIARS_STAKES.includes(stake)) {
-    return c.json({ error: "invalid_stake", valid_stakes: LIARS_STAKES }, 400);
+  if (typeof stake !== "number" || !Number.isInteger(stake) || stake < 1 || stake > 1000) {
+    return c.json({ error: "invalid_stake" }, 400);
   }
   if (character.gold < stake) {
     return c.json({ error: "insufficient_gold", gold: character.gold }, 400);
@@ -3350,8 +3466,8 @@ app.post("/api/pub/spd/start", async (c) => {
   const body = await c.req.json<{ stake?: number; throw?: string }>().catch(() => ({} as { stake?: number; throw?: string }));
   const stake = body.stake;
   const throwChoice = body.throw;
-  if (typeof stake !== "number" || !SPD_STAKES.includes(stake)) {
-    return c.json({ error: "invalid_stake", valid_stakes: SPD_STAKES }, 400);
+  if (typeof stake !== "number" || !Number.isInteger(stake) || stake < 1 || stake > 1000) {
+    return c.json({ error: "invalid_stake" }, 400);
   }
   if (throwChoice !== "stone" && throwChoice !== "parchment" && throwChoice !== "dagger") {
     return c.json({ error: "invalid_throw" }, 400);
@@ -3383,7 +3499,61 @@ app.post("/api/pub/spd/start", async (c) => {
     .bind(channelId, session.slack_user_id, stake, throwChoice, Date.now())
     .run();
 
-  return c.json({ ok: true, match_id: result.meta.last_row_id as number, status: "open" });
+  const matchId = result.meta.last_row_id as number;
+
+  // Announce to Slack so channel members can see and join or side-bet.
+  if (c.env.SLACK_BOT_TOKEN) {
+    c.executionCtx.waitUntil((async () => {
+      try {
+        const slackResult = await postSlackMessage(c.env.SLACK_BOT_TOKEN!, {
+          channel: channelId,
+          text: `🪨📜🗡 *Stone-Parchment-Dagger* — <@${session.slack_user_id}> opened a match for *${stake}g* from the web. Their throw is committed.\n_Join with \`/gq pub\` to accept or place a side bet (pays 2×)._`,
+          blocks: [
+            {
+              type: "section",
+              text: {
+                type: "mrkdwn",
+                text: `🪨📜🗡 *Stone-Parchment-Dagger*\n<@${session.slack_user_id}> opened a match for *${stake}g* from the web. Their throw is committed.`,
+              },
+            },
+            {
+              type: "section",
+              text: {
+                type: "mrkdwn",
+                text: `_No side bets yet._`,
+              },
+            },
+            {
+              type: "actions",
+              elements: [
+                {
+                  type: "button",
+                  text: { type: "plain_text", text: "⚔️ Accept match", emoji: true },
+                  action_id: `spd_accept_${matchId}`,
+                  style: "primary",
+                },
+                {
+                  type: "button",
+                  text: { type: "plain_text", text: `💰 Bet on ${character.name}`, emoji: true },
+                  action_id: `spd_bet_${matchId}`,
+                },
+              ],
+            },
+          ],
+        });
+        if (slackResult.ok && slackResult.ts) {
+          await c.env.DB
+            .prepare("UPDATE spd_matches SET message_ts = ? WHERE id = ?")
+            .bind(slackResult.ts, matchId)
+            .run();
+        }
+      } catch (err) {
+        console.warn("spd:web-open-announce-error", { matchId, err: err instanceof Error ? err.message : String(err) });
+      }
+    })());
+  }
+
+  return c.json({ ok: true, match_id: matchId, status: "open" });
 });
 
 // POST /api/pub/spd/:matchId/accept — challenger picks throw and resolves instantly.
@@ -3477,8 +3647,8 @@ app.post("/api/pub/spd/:matchId/bet", async (c) => {
   if (side !== "initiator" && side !== "challenger") {
     return c.json({ error: "invalid_side" }, 400);
   }
-  if (typeof amount !== "number" || !SPD_BET_AMOUNTS.includes(amount)) {
-    return c.json({ error: "invalid_bet_amount", valid_amounts: SPD_BET_AMOUNTS }, 400);
+  if (typeof amount !== "number" || !Number.isInteger(amount) || amount < 1 || amount > 1000) {
+    return c.json({ error: "invalid_bet_amount" }, 400);
   }
 
   const match = await c.env.DB
@@ -3840,7 +4010,7 @@ app.post("/api/quest/:id/dungeon/treasure_take", async (c) => {
   const totalGold = Math.round((5 + tier * 3) * 2.5);
   const party = await getQuestParty(c.env.DB, questId);
   const partySize = Math.max(1, party.length);
-  const xpEach = Math.max(1, Math.floor(totalXp / partySize));
+  const xpEach = Math.max(1, Math.floor(totalXp / partySize * partyXpBonus(partySize)));
   const goldEach = Math.max(0, Math.floor(totalGold / partySize));
   const levelUps: { user_id: string; new_level: number }[] = [];
   for (const f of party) {
@@ -4956,7 +5126,7 @@ async function applyWebCombatOutcome(
 
   const multiplier =
     (isBoss ? BOSS_REWARD_MULTIPLIER : 1) * (elite ? ELITE_REWARD_MULTIPLIER : 1);
-  const totalPoolXp = won ? Math.round(baseRewardXp(tier) * multiplier) : 0;
+  const totalPoolXp = won ? Math.round(baseRewardXp(tier) * multiplier * partyXpBonus(state.fighters.length)) : 0;
   const totalPoolGold = won ? Math.round(baseRewardGold(tier) * multiplier) : 0;
 
   // Contribution split: damage dealt + support actions (healing counts at
@@ -5119,6 +5289,7 @@ async function applyWebCombatOutcome(
         isDungeon: questVariant === "dungeon",
         isElite: elite,
         isNoDeathRun: state.fighters.every((f) => f.hp > 0),
+        initialMonsterCount: state.monsters.length,
       });
       const progIds = checkProgressionAchievements({
         existingAchievements: charAfter.achievements,
@@ -5536,6 +5707,11 @@ async function buildInitialCombatState(
   })();
   const isGridBoss = gridNode?.content?.kind === "boss";
 
+  // scene.monsters[] covers pack hunts and job-board pack quests.
+  const scenePackMonsters = quest.scene.monsters && quest.scene.monsters.length > 1
+    ? quest.scene.monsters
+    : null;
+
   const init: CombatInit = (gridContentMonsters && gridContentMonsters.length > 0)
     ? {
         fighters,
@@ -5544,9 +5720,19 @@ async function buildInitialCombatState(
           hp: m.hp,
           max_hp: m.max_hp,
           tier: m.tier,
-          // Only the lead monster carries the boss flag — minions in a
-          // future "boss + adds" encounter still die to ordinary kills.
           is_boss: isGridBoss && i === 0,
+          art_url: m.art_url ?? undefined,
+        })),
+      }
+    : scenePackMonsters
+    ? {
+        fighters,
+        monsters: scenePackMonsters.map((m) => ({
+          name: m.name,
+          hp: m.hp,
+          max_hp: m.max_hp,
+          tier: m.tier,
+          is_boss: false,
           art_url: m.art_url ?? undefined,
         })),
       }
@@ -6268,7 +6454,10 @@ export class QuestRoom extends DurableObject<Env> {
         (async () => {
           try {
             const meta = await this.ensureQuestMeta(questId);
-            if (!meta) return;
+            // Skip if no real Slack thread_ts (hunt/outskirts quests have a
+            // synthetic "web-<ts>-<userId>" placeholder that Slack would
+            // silently drop the thread param on and post as a new channel message).
+            if (!meta || meta.thread_ts.startsWith("web-")) return;
             // Italicize for "narration" tone — distinguishes AI flavor
             // from the mechanical turn-summary posts.
             await postSlackMessage(token, {
@@ -6306,7 +6495,9 @@ export class QuestRoom extends DurableObject<Env> {
       (async () => {
         try {
           const meta = await this.ensureQuestMeta(questId);
-          if (!meta || meta.channel_id.startsWith("web:")) return;
+          // Skip pure-web quests and hunt/outskirts quests (synthetic thread_ts
+          // "web-<ts>-<userId>" has no real Slack thread to reply into).
+          if (!meta || meta.channel_id.startsWith("web:") || meta.thread_ts.startsWith("web-")) return;
 
           // Always delete the join-post so it doesn't linger after combat ends.
           if (meta.joinable_ts) {
@@ -6322,7 +6513,10 @@ export class QuestRoom extends DurableObject<Env> {
             outcome.dungeon_room_cleared ? " _(dungeon room cleared)_" : "",
           ].join("") + "!";
 
-          const lines: string[] = [header];
+          const partySize = outcome.rewards.length;
+          const partyBonusPct = partyXpBonus(partySize);
+          const partyTag = partyBonusPct > 1 ? ` _(🎉 +${Math.round((partyBonusPct - 1) * 100)}% party XP)_` : "";
+          const lines: string[] = [header + partyTag];
           for (const r of outcome.rewards) {
             const parts: string[] = [
               `<@${r.user_id}>: +${r.xp_awarded} XP · +${r.gold_awarded}g`,

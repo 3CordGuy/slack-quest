@@ -1707,7 +1707,7 @@ export interface JobListingFlavor {
 }
 export async function generateJobListing(
   ai: Ai,
-  variant: "standard" | "boss" | "dungeon" | "gauntlet",
+  variant: "standard" | "boss" | "dungeon" | "gauntlet" | "bounty_pack",
   townName: string,
 ): Promise<JobListingFlavor> {
   const variantHint = (() => {
@@ -1716,6 +1716,7 @@ export async function generateJobListing(
       case "boss": return "A named, beefy foe with two phases. Group recommended.";
       case "dungeon": return "A 5-7 room expedition with traps, lockboxes, NPC encounters, sub-boss + treasure.";
       case "gauntlet": return "Three monsters back-to-back with no rest between waves. No fleeing.";
+      case "bounty_pack": return "Take out a small pack of 2-3 enemies at once — more dangerous but the contract pays extra. First group to engage gets dibs.";
     }
   })();
   const user = [
@@ -1739,6 +1740,7 @@ export async function generateJobListing(
       case "boss": return { title: "The Underlying Bug", blurb: "Old and stubborn, holed up in the temple ruins. Two phases by the rumors." };
       case "dungeon": return { title: "Sprint Crypts", blurb: "Five rooms, locks, traps. Bring keys and friends." };
       case "gauntlet": return { title: "The On-Call Rotation", blurb: "Three pages, three monsters, no rest between. Light a candle." };
+      case "bounty_pack": return { title: "Pack Sighting Near the Pipeline", blurb: "Two or three of them, running together. Double bounty. First squad gets credit." };
     }
   })();
 

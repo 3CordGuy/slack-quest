@@ -512,6 +512,9 @@ export interface SceneJson {
   // time — the town pays extra for posted contracts. Absent / false on
   // self-started quests.
   from_job_board?: boolean;
+  // Multi-monster pack for standard/hunt quests. When present, buildInitialCombatState
+  // uses this instead of synthesising a single monster from the root fields.
+  monsters?: MonsterSpec[];
 }
 
 export type QuestMode = "slack" | "web";

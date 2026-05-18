@@ -534,7 +534,7 @@ export const ACHIEVEMENTS: Achievement[] = [
     title: "First Concoction",
     flavor: "You handed over gold. The apothecary handed back trouble in a vial.",
     description: "Purchase your first item from the Apothecary.",
-    icon: "potion-bottle",
+    icon: "poison-bottle",
     gradient: ["#14532d", "#22c55e"],
     category: "economy",
   },
@@ -612,6 +612,33 @@ export const ACHIEVEMENTS: Achievement[] = [
     gradient: ["#292524", "#a8a29e"],
     category: "quest",
   },
+  {
+    id: "pack_hunter",
+    title: "Pack Hunter",
+    flavor: "They ran together. You put them down together.",
+    description: "Defeat a 2-monster encounter.",
+    icon: "wolf-howl",
+    gradient: ["#1c2a1a", "#86efac"],
+    category: "quest",
+  },
+  {
+    id: "crowd_control",
+    title: "Crowd Control",
+    flavor: "Three at once, all dead. You make it look like a bug fix.",
+    description: "Defeat a 3-monster encounter.",
+    icon: "skulls",
+    gradient: ["#2a1a1a", "#fca5a5"],
+    category: "quest",
+  },
+  {
+    id: "lone_wolf_pack",
+    title: "Lone Wolf",
+    flavor: "Solo run against multiple enemies. No backup. No excuses.",
+    description: "Defeat 2 or more monsters in a single encounter while playing solo.",
+    icon: "player",
+    gradient: ["#1a1a2a", "#c4b5fd"],
+    category: "quest",
+  },
 ];
 
 export const ACHIEVEMENT_MAP = new Map(ACHIEVEMENTS.map((a) => [a.id, a]));
@@ -652,6 +679,7 @@ export interface CombatAchievementOpts {
   isDungeon: boolean;
   isElite: boolean;
   isNoDeathRun: boolean; // nobody downed during this quest
+  initialMonsterCount: number; // total monsters at start of encounter (1 for single, 2-3 for pack)
 }
 
 export function checkCombatAchievements(opts: CombatAchievementOpts): string[] {
@@ -672,6 +700,7 @@ export function checkCombatAchievements(opts: CombatAchievementOpts): string[] {
     isDungeon,
     isElite,
     isNoDeathRun,
+    initialMonsterCount,
   } = opts;
 
   const ids: string[] = [];
@@ -789,6 +818,17 @@ export function checkCombatAchievements(opts: CombatAchievementOpts): string[] {
     isDungeon && !has(ex, "dungeon_first") && "dungeon_first",
     isElite && isNoDeathRun && !has(ex, "elite_no_death") && "elite_no_death",
   );
+
+  // Multi-monster pack achievements
+  if (initialMonsterCount >= 2) {
+    award(ids, ex, !has(ex, "pack_hunter") && "pack_hunter");
+  }
+  if (initialMonsterCount >= 3) {
+    award(ids, ex, !has(ex, "crowd_control") && "crowd_control");
+  }
+  if (initialMonsterCount >= 2 && partySize === 1) {
+    award(ids, ex, !has(ex, "lone_wolf_pack") && "lone_wolf_pack");
+  }
 
   return ids;
 }

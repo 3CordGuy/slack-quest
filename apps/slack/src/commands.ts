@@ -1918,7 +1918,8 @@ async function handleQuest(
       // Also tag the scene as Job-Board-derived so resolveVictory applies the
       // reward bonus when the quest completes.
       const scaled = preScaleForJoiners(baseScene, joiners.length, JOIN_HP_RATIO);
-      const scene: SceneJson = fromJobBoard ? { ...scaled, from_job_board: true } : scaled;
+      const sceneBase: SceneJson = fromJobBoard ? { ...scaled, from_job_board: true } : scaled;
+      const scene = joiners.length > 0 ? addPackMonstersForParty(sceneBase, 1 + joiners.length) : sceneBase;
       const eliteBanner = elite ? "⚠️ *ELITE — perma-death enabled* ⚠️\n" : "";
       const variantBanner =
         variant === "boss"
@@ -4633,6 +4634,15 @@ function rewardMultiplier(variant?: QuestVariant): number {
   return 1;
 }
 
+// 🎉 Party bonus: each member earns more XP (not gold) when fighting as a group.
+// n=1 → 1.0×, n=2 → 1.1×, n=3 → 1.2×, n≥4 → 1.25×
+function partyXpBonus(partySize: number): number {
+  if (partySize <= 1) return 1.0;
+  if (partySize === 2) return 1.1;
+  if (partySize === 3) return 1.2;
+  return 1.25;
+}
+
 // 📋 Job Board bonus. The town pays extra for posted contracts — gives the
 // board a real mechanical edge over self-started quests. 12% pulls a job
 // quest meaningfully above baseline without breaking the economy (a base
@@ -4674,7 +4684,7 @@ async function resolveVictory(
   const bonus = jobBoardBonus(quest.scene);
   const totalXp = (10 + quest.scene.tier * 5) * mult * (1 + bonus);
   const totalGold = (5 + quest.scene.tier * 3) * mult * (1 + bonus);
-  const xpEach = Math.max(1, Math.floor(totalXp / fighters.length));
+  const xpEach = Math.max(1, Math.floor(totalXp / fighters.length * partyXpBonus(fighters.length)));
   const goldEach = Math.max(0, Math.floor(totalGold / fighters.length));
 
   const isJobBoard = quest.scene.from_job_board === true;
@@ -4724,6 +4734,7 @@ async function resolveVictory(
         isDungeon: isDungeonVariant,
         isElite,
         isNoDeathRun,
+        initialMonsterCount: quest.scene.monsters?.length ?? 1,
       });
       const progIds = checkProgressionAchievements({
         existingAchievements: charAfter.achievements,
@@ -4751,9 +4762,11 @@ async function resolveVictory(
   await appendLog(env.DB, quest.id, payload.user_id, "victory", `+${xpEach}xp/+${goldEach}g × ${fighters.length}, ${lootRolls.length} drops`);
 
   const bonusTag = bonus > 0 ? " _(📋 +12% job board bonus)_" : "";
+  const partyBonusPct = partyXpBonus(fighters.length);
+  const partyTag = partyBonusPct > 1 ? ` _(🎉 +${Math.round((partyBonusPct - 1) * 100)}% party XP bonus)_` : "";
   const ephemeralLines = [
     ...preamble,
-    `✨ Spoils split across ${fighters.length}: +${xpEach} XP, +${goldEach} gold each.${bonusTag}`,
+    `✨ Spoils split across ${fighters.length}: +${xpEach} XP, +${goldEach} gold each.${bonusTag}${partyTag}`,
     ...levelUpLines,
   ];
   if (lootRolls.length > 0) {
@@ -4972,7 +4985,7 @@ async function resolveExpeditionVictory(
   const bonus = jobBoardBonus(quest.scene);
   const totalXp = (10 + quest.scene.tier * 5) * mult * (1 + bonus);
   const totalGold = (5 + quest.scene.tier * 3) * mult * (1 + bonus);
-  const xpEach = Math.max(1, Math.floor(totalXp / partySize));
+  const xpEach = Math.max(1, Math.floor(totalXp / partySize * partyXpBonus(partySize)));
   const goldEach = Math.max(0, Math.floor(totalGold / partySize));
 
   const levelUpLines: string[] = [];
@@ -4998,7 +5011,7 @@ async function resolveExpeditionVictory(
     const breakdown = renderDamageBreakdown(stats);
     const body = [
       `🎁 *${taker.name}* claims *${takenItem.item_name}* (${takenItem.item_type}, ${powerLabel(takenItem.item_type, takenItem.power, takenItem.item_name)}).`,
-      `✨ +${xpEach} XP, +${goldEach} gold to each of ${partySize} fighter${partySize > 1 ? "s" : ""}.`,
+      `✨ +${xpEach} XP, +${goldEach} gold to each of ${partySize} fighter${partySize > 1 ? "s" : ""}${partyXpBonus(partySize) > 1 ? ` _(🎉 +${Math.round((partyXpBonus(partySize) - 1) * 100)}% party XP)_` : ""}.`,
       ...levelUpLines,
       ...(breakdown ? ["", breakdown] : []),
       ...(map ? ["", map] : []),
@@ -10014,6 +10027,34 @@ function preScaleForJoiners(scene: SceneJson, joinerCount: number, ratio: number
     };
   }
   return s;
+}
+
+// For parties of 2+ on standard/gauntlet quests: guarantee extra monsters so
+// multi-player fights are always multi-monster. Minions are the same creature
+// type at tier-1, 65% of the (post-scaled) main HP — weaker but real threats.
+// Boss and dungeon variants are excluded: boss has phases, dungeon handles its
+// own room-level packs.
+function addPackMonstersForParty(scene: SceneJson, partySize: number): SceneJson {
+  if (scene.monsters && scene.monsters.length > 1) return scene; // already a pack
+  if (scene.variant === "boss" || scene.variant === "dungeon") return scene;
+  const count = Math.min(3, Math.max(1, partySize));
+  if (count <= 1) return scene;
+  const minionHp = Math.max(8, Math.round(scene.monster_max_hp * 0.65));
+  const minions = Array.from({ length: count - 1 }, () => ({
+    name: scene.monster_name,
+    hp: minionHp,
+    max_hp: minionHp,
+    tier: Math.max(1, scene.tier - 1),
+    art_url: scene.monster_art_url ?? null,
+    is_boss: false,
+  }));
+  return {
+    ...scene,
+    monsters: [
+      { name: scene.monster_name, hp: scene.monster_max_hp, max_hp: scene.monster_max_hp, tier: scene.tier, art_url: scene.monster_art_url ?? null, is_boss: false },
+      ...minions,
+    ] as typeof scene.monsters,
+  };
 }
 
 // Shared validation for heal/shield: target must be on the same active quest.

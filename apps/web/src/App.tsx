@@ -199,7 +199,7 @@ interface Item {
   level_req: number;
 }
 
-type QuestVariant = "standard" | "boss" | "gauntlet" | "dungeon";
+type QuestVariant = "standard" | "boss" | "gauntlet" | "dungeon" | "bounty_pack";
 type EffectType = "regen" | "bleeding" | "burning" | "poisoned";
 
 interface StatusEffect {
@@ -719,7 +719,8 @@ interface ApothecaryResponse {
 
 interface JobListing {
   id: string;
-  variant: "standard" | "boss" | "dungeon" | "gauntlet";
+  variant: "standard" | "boss" | "dungeon" | "gauntlet" | "bounty_pack";
+  monster_count?: number;
   required_level: number;
   title: string;
   blurb: string;
@@ -1375,11 +1376,11 @@ export function App() {
     if (ok) void refresh();
   }
 
-  async function startQuest(variant: "standard" | "boss" | "gauntlet" | "dungeon", elite: boolean) {
+  async function startQuest(variant: QuestVariant, elite: boolean, monsterCount?: number) {
     const { ok } = await postJson(`/api/quest/start`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ variant, elite }),
+      body: JSON.stringify({ variant, elite, ...(monsterCount && monsterCount > 1 ? { monster_count: monsterCount } : {}) }),
     });
     if (ok) void refresh();
   }
@@ -1393,11 +1394,11 @@ export function App() {
     if (ok) void refresh();
   }
 
-  async function startHunt(tier: number) {
+  async function startHunt(tier: number, monsterCount: number) {
     const { ok } = await postJson("/api/hunt", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ tier }),
+      body: JSON.stringify({ tier, monster_count: monsterCount }),
     });
     if (ok) void refresh();
   }
@@ -1482,10 +1483,12 @@ export function App() {
           questId={activeCombat.questId}
           selfId={state.me.slack_user_id}
           onExit={() => {
-            // Just navigate away — combat state stays in D1, DO keeps caching.
-            // The dashboard will show a Resume button so the user can come back.
             setActiveCombat(null);
             setCombatDismissed(true);
+            // Optimistically clear activeQuest so React 18's automatic batching
+            // renders a clean town view immediately — avoids the brief "engagement
+            // screen" flash before refresh() returns the completed quest state.
+            setState((prev) => prev.kind === "auth" ? { ...prev, activeQuest: null } : prev);
             void refresh();
           }}
         />
@@ -7540,10 +7543,11 @@ function TownNav({
 }
 
 const VARIANT_STYLE: Record<string, { icon: string; color: string; bg: string; label: string }> = {
-  standard: { icon: "sword",         color: "#86efac", bg: "#0a1f0a", label: "STANDARD" },
-  boss:     { icon: "crown",         color: "#fca5a5", bg: "#1f0a0a", label: "BOSS" },
-  dungeon:  { icon: "tower",         color: "#7dd3fc", bg: "#0a121f", label: "DUNGEON" },
-  gauntlet: { icon: "crossed-swords",color: "#c4b5fd", bg: "#130a1f", label: "GAUNTLET" },
+  standard:     { icon: "sword",         color: "#86efac", bg: "#0a1f0a", label: "STANDARD" },
+  boss:         { icon: "crown",         color: "#fca5a5", bg: "#1f0a0a", label: "BOSS" },
+  dungeon:      { icon: "tower",         color: "#7dd3fc", bg: "#0a121f", label: "DUNGEON" },
+  gauntlet:     { icon: "crossed-swords",color: "#c4b5fd", bg: "#130a1f", label: "GAUNTLET" },
+  bounty_pack:  { icon: "dragon-head",   color: "#fb923c", bg: "#1f0e00", label: "BOUNTY PACK" },
 };
 
 function JobPostingCard({
@@ -7589,6 +7593,15 @@ function JobPostingCard({
         {job.required_level > 1 && (
           <span style={{ fontSize: 11, color: "#6a7080" }}>L{job.required_level}+</span>
         )}
+        {job.variant === "bounty_pack" && job.monster_count && job.monster_count > 1 && (
+          <span style={{
+            fontSize: 10, fontWeight: 700, color: "#fb923c",
+            background: "#fb923c1a", border: "1px solid #fb923c44",
+            borderRadius: 4, padding: "2px 7px",
+          }}>
+            ×{job.monster_count} enemies
+          </span>
+        )}
         {isMyClaim && (
           <span style={{ fontSize: 11, color: "#86efac", marginLeft: "auto" }}>✓ Claimed by you</span>
         )}
@@ -7633,6 +7646,45 @@ function JobPostingCard({
   );
 }
 
+const HUNT_PACK_LABEL = ["", "Solo", "Pair", "Trio"] as const;
+
+function StepPicker({
+  value, min, max, onChange, label,
+}: { value: number; min: number; max: number; onChange: (n: number) => void; label: string }) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+      <button
+        onClick={() => onChange(Math.max(min, value - 1))}
+        disabled={value <= min}
+        style={{
+          width: 32, height: 32, borderRadius: 6,
+          border: "1px solid #2a2d33", background: "#1a1d22",
+          color: value <= min ? "#3a3d44" : "#e5e7eb",
+          cursor: value <= min ? "not-allowed" : "pointer",
+          fontSize: 18, lineHeight: 1, display: "flex", alignItems: "center", justifyContent: "center",
+        }}
+      >−</button>
+      <div style={{ textAlign: "center", minWidth: 56 }}>
+        <div style={{ fontSize: 28, fontWeight: 700, color: "#f1e8c8", lineHeight: 1, fontFamily: DISPLAY_FONT }}>
+          {value}
+        </div>
+        <div style={{ fontSize: 10, color: "#6b7280", marginTop: 2 }}>{label}</div>
+      </div>
+      <button
+        onClick={() => onChange(Math.min(max, value + 1))}
+        disabled={value >= max}
+        style={{
+          width: 32, height: 32, borderRadius: 6,
+          border: "1px solid #2a2d33", background: "#1a1d22",
+          color: value >= max ? "#3a3d44" : "#e5e7eb",
+          cursor: value >= max ? "not-allowed" : "pointer",
+          fontSize: 18, lineHeight: 1, display: "flex", alignItems: "center", justifyContent: "center",
+        }}
+      >+</button>
+    </div>
+  );
+}
+
 function HuntSection({
   characterLevel,
   overviewArt,
@@ -7642,15 +7694,16 @@ function HuntSection({
   characterLevel: number;
   overviewArt: string | null;
   navOverlay: React.ReactNode;
-  onStartHunt: (tier: number) => void;
+  onStartHunt: (tier: number, monsterCount: number) => void;
 }) {
   const [tier, setTier] = useState(characterLevel);
+  const [monsterCount, setMonsterCount] = useState(1);
   const [busy, setBusy] = useState(false);
   const clampedTier = Math.max(1, Math.min(tier, characterLevel));
 
-  // Rough XP preview: 15 * tier^1.2, no multiplier, single fighter.
-  const xpEstimate = Math.round(15 * Math.pow(clampedTier, 1.2));
-  const goldEstimate = Math.round(8 * Math.pow(clampedTier, 1.2));
+  const packMultiplier = monsterCount === 3 ? 2.2 : monsterCount === 2 ? 1.5 : 1;
+  const xpEstimate = Math.round(15 * Math.pow(clampedTier, 1.2) * packMultiplier);
+  const goldEstimate = Math.round(8 * Math.pow(clampedTier, 1.2) * packMultiplier);
 
   const atLevel = clampedTier === characterLevel;
   const tierLabel = atLevel
@@ -7659,9 +7712,15 @@ function HuntSection({
     ? `Tier ${clampedTier} — slightly easier`
     : `Tier ${clampedTier} — grinding territory`;
 
+  const packLabel = monsterCount === 1
+    ? "Solo fight — normal XP"
+    : monsterCount === 2
+    ? "Pair — harder, +50% rewards"
+    : "Trio — brutal, ×2.2 rewards";
+
   async function handle() {
     setBusy(true);
-    try { await onStartHunt(clampedTier); } finally { setBusy(false); }
+    try { await onStartHunt(clampedTier, monsterCount); } finally { setBusy(false); }
   }
 
   return (
@@ -7678,42 +7737,21 @@ function HuntSection({
           </div>
         </div>
 
-        <div style={{ marginBottom: 20 }}>
-          <div style={{ fontSize: 11, color: "#6b7280", textTransform: "uppercase", letterSpacing: 1, marginBottom: 10 }}>
-            Difficulty
-          </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-            <button
-              onClick={() => setTier((t) => Math.max(1, t - 1))}
-              disabled={clampedTier <= 1}
-              style={{
-                width: 32, height: 32, borderRadius: 6,
-                border: "1px solid #2a2d33", background: "#1a1d22",
-                color: clampedTier <= 1 ? "#3a3d44" : "#e5e7eb",
-                cursor: clampedTier <= 1 ? "not-allowed" : "pointer",
-                fontSize: 18, lineHeight: 1, display: "flex", alignItems: "center", justifyContent: "center",
-              }}
-            >−</button>
-            <div style={{ textAlign: "center", minWidth: 60 }}>
-              <div style={{ fontSize: 28, fontWeight: 700, color: "#f1e8c8", lineHeight: 1, fontFamily: DISPLAY_FONT }}>
-                {clampedTier}
-              </div>
-              <div style={{ fontSize: 10, color: "#6b7280", marginTop: 2 }}>
-                TIER
-              </div>
+        {/* Two pickers side by side */}
+        <div style={{ display: "flex", gap: 32, marginBottom: 16, flexWrap: "wrap" }}>
+          <div>
+            <div style={{ fontSize: 11, color: "#6b7280", textTransform: "uppercase", letterSpacing: 1, marginBottom: 10 }}>
+              Difficulty
             </div>
-            <button
-              onClick={() => setTier((t) => Math.min(characterLevel, t + 1))}
-              disabled={clampedTier >= characterLevel}
-              style={{
-                width: 32, height: 32, borderRadius: 6,
-                border: "1px solid #2a2d33", background: "#1a1d22",
-                color: clampedTier >= characterLevel ? "#3a3d44" : "#e5e7eb",
-                cursor: clampedTier >= characterLevel ? "not-allowed" : "pointer",
-                fontSize: 18, lineHeight: 1, display: "flex", alignItems: "center", justifyContent: "center",
-              }}
-            >+</button>
-            <div style={{ fontSize: 12, color: "#9ca3af", marginLeft: 4 }}>{tierLabel}</div>
+            <StepPicker value={clampedTier} min={1} max={characterLevel} onChange={setTier} label="TIER" />
+            <div style={{ fontSize: 12, color: "#9ca3af", marginTop: 6 }}>{tierLabel}</div>
+          </div>
+          <div>
+            <div style={{ fontSize: 11, color: "#6b7280", textTransform: "uppercase", letterSpacing: 1, marginBottom: 10 }}>
+              Pack size
+            </div>
+            <StepPicker value={monsterCount} min={1} max={3} onChange={setMonsterCount} label={HUNT_PACK_LABEL[monsterCount]} />
+            <div style={{ fontSize: 12, color: monsterCount > 1 ? "#fbbf24" : "#9ca3af", marginTop: 6 }}>{packLabel}</div>
           </div>
         </div>
 
@@ -7730,7 +7768,7 @@ function HuntSection({
             <div style={{ fontSize: 10, color: "#6b7280", marginTop: 2, fontFamily: DISPLAY_FONT }}>Gold</div>
           </div>
           <div style={{ fontSize: 11, color: "#6b7280", alignSelf: "center", lineHeight: 1.4 }}>
-            Estimated single-fighter rewards.<br />Boss / elite quests give more.
+            Estimated single-fighter rewards.<br />Actual split across party members.
           </div>
         </div>
 
@@ -7744,7 +7782,7 @@ function HuntSection({
             fontSize: 15, fontWeight: 600, cursor: busy ? "not-allowed" : "pointer",
           }}
         >
-          {busy ? "Scouting…" : `Hunt Tier ${clampedTier}`}
+          {busy ? "Scouting…" : `Hunt Tier ${clampedTier}${monsterCount > 1 ? ` · ${HUNT_PACK_LABEL[monsterCount]}` : ""}`}
         </button>
       </div>
     </div>
@@ -7769,7 +7807,7 @@ function JobBoardSection({
   joinable: JoinableQuest | null;
   navOverlay: React.ReactNode;
   onTakeJob: (jobId: string) => void;
-  onStartQuest: (variant: "standard" | "boss" | "gauntlet" | "dungeon", elite: boolean) => void;
+  onStartQuest: (variant: QuestVariant, elite: boolean) => void;
   onJoin: () => void;
 }) {
   return (

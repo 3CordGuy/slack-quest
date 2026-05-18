@@ -200,7 +200,7 @@ export interface AbilityRuntimeState {
   // Mark / focus-fire — partymates other than the marker get +MARK_BONUS
   // damage on attack/cast until `expires_after_round` is exceeded. Cleared
   // when the monster falls or a wave transition fires.
-  mark?: { marked_by: ActorId; expires_after_round: number };
+  mark?: { marked_by: ActorId; expires_after_round: number; monster_id?: string };
   // Staff Sage Foresee — re-appends full intel readout for this many more
   // of the Sage's own combat turns after the initial cast.
   foresee_turns?: number;
@@ -227,7 +227,7 @@ export type TurnAction =
   | { kind: "flee"; actor: ActorId }
   | { kind: "position"; actor: ActorId; to: BattlePosition }
   | { kind: "wait"; actor: ActorId }
-  | { kind: "mark"; actor: ActorId }
+  | { kind: "mark"; actor: ActorId; target_id?: string | null }
   | {
       kind: "ability";
       actor: ActorId;
@@ -279,6 +279,7 @@ export type CombatEvent =
     }
   | {
       type: "monster_attack";
+      actor: ActorId;
       target: ActorId;
       raw_damage: number;
       damage_after_position: number;
@@ -772,7 +773,8 @@ function handlePlayerHit(
   const markActive =
     mark
     && mark.marked_by !== action.actor
-    && s.round <= mark.expires_after_round;
+    && s.round <= mark.expires_after_round
+    && (!mark.monster_id || mark.monster_id === action.target_id);
   const markBonus = markActive ? MARK_BONUS : 0;
 
   const finalDamage = damage + aura.bonus + markBonus;
@@ -924,7 +926,7 @@ function handleWait(
 // resets the expiry.
 function handleMark(
   state: CombatState,
-  action: { kind: "mark"; actor: ActorId },
+  action: { kind: "mark"; actor: ActorId; target_id?: string | null },
 ): StepResult {
   const fighter = state.fighters.find((f) => f.id === action.actor);
   if (!fighter) return reject(state, `unknown actor: ${action.actor}`);
@@ -938,10 +940,15 @@ function handleMark(
   if (tick.earlyReturn) return tick.earlyReturn;
   const s = tick.state;
 
+  // Resolve which monster is being marked. Explicit target_id wins; falls
+  // back to the first live monster (single-monster fights, Slack path).
+  const monster_id = action.target_id
+    ?? s.monsters.find((m) => m.hp > 0)?.id;
+
   const expires_after_round = s.round + MARK_ROUNDS;
   const ability_state: AbilityRuntimeState = {
     ...(s.ability_state ?? {}),
-    mark: { marked_by: action.actor, expires_after_round },
+    mark: { marked_by: action.actor, expires_after_round, monster_id },
   };
   const next = advanceTurn({ ...s, ability_state });
   return {
@@ -1199,6 +1206,7 @@ function handleMonsterAct(state: CombatState, roll: RollFn): StepResult {
   });
   events.push({
     type: "monster_attack",
+    actor: actorId,
     target: target.id,
     raw_damage: hit.raw,
     damage_after_position: positionAdjusted,
@@ -1566,6 +1574,7 @@ function handleFlee(
 
   events.push({
     type: "monster_attack",
+    actor: fleeMonster?.id ?? MONSTER_ID,
     target: action.actor,
     raw_damage: hit.raw,
     damage_after_position: positionAdjusted,
