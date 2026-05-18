@@ -2049,10 +2049,11 @@ function VictoryModal({
       inset: 0,
       background: "rgba(0,0,0,0.88)",
       display: "flex",
-      alignItems: "center",
+      alignItems: "flex-start",
       justifyContent: "center",
       zIndex: 100,
       padding: 24,
+      overflowY: "auto",
     }}>
       <div style={{
         background: "#0f2818",
@@ -2061,12 +2062,13 @@ function VictoryModal({
         padding: 32,
         maxWidth: 520,
         width: "100%",
-        maxHeight: "85vh",
-        overflowY: "auto",
         boxSizing: "border-box",
+        margin: "auto",
       }}>
-        <div style={{ fontSize: 36, fontWeight: 800, color: "#86efac", textAlign: "center", marginBottom: 4, fontFamily: DISPLAY_FONT }}>
+        <div style={{ fontSize: 36, fontWeight: 800, color: "#86efac", textAlign: "center", marginBottom: 4, fontFamily: DISPLAY_FONT, display: "flex", alignItems: "center", justifyContent: "center", gap: 10 }}>
+          {title === "VICTORY" && <Icon name="party-flags" size={28} color="#86efac" />}
           {title}
+          {title === "VICTORY" && <Icon name="party-flags" size={28} color="#86efac" />}
         </div>
         {!outcome && <p style={{ ...muted, textAlign: "center" }}>Resolving outcome…</p>}
         {outcome && (
@@ -2085,7 +2087,7 @@ function VictoryModal({
                   background: "#0a2010", borderRadius: 6, padding: "4px 10px",
                   display: "inline-block", width: "100%",
                 }}>
-                  🎉 Party Bonus: +{pct}% XP
+                  <Icon name="party-popper" size={13} color="#86efac" /> Party Bonus: +{pct}% XP
                 </div>
               );
             })()}
@@ -2419,11 +2421,11 @@ function RewardRow({
         </div>
       </div>
       <div style={{ marginTop: 6, display: "flex", flexWrap: "wrap", gap: 10, fontSize: 11 }}>
-        {reward.damage_dealt > 0 && <span style={{ color: "#f87171" }}>⚔ {reward.damage_dealt} dealt</span>}
-        {reward.damage_taken > 0 && <span style={{ color: "#94a3b8" }}>🛡 {reward.damage_taken} taken</span>}
-        {reward.healing_done > 0 && <span style={{ color: "#4ade80" }}>💚 {reward.healing_done} healed</span>}
-        {reward.shielding_done > 0 && <span style={{ color: "#7dd3fc" }}>🔷 {reward.shielding_done} shielded</span>}
-        {reward.kills > 0 && <span style={{ color: "#facc15" }}>🏆 killing blow</span>}
+        {reward.damage_dealt > 0 && <span style={{ color: "#f87171", display: "flex", alignItems: "center", gap: 3 }}><Icon name="health-decrease" size={11} color="#f87171" /> {reward.damage_dealt} dealt</span>}
+        {reward.damage_taken > 0 && <span style={{ color: "#94a3b8", display: "flex", alignItems: "center", gap: 3 }}><Icon name="health-decrease" size={11} color="#94a3b8" /> {reward.damage_taken} taken</span>}
+        {reward.healing_done > 0 && <span style={{ color: "#4ade80", display: "flex", alignItems: "center", gap: 3 }}><Icon name="health-potion" size={11} color="#4ade80" /> {reward.healing_done} healed</span>}
+        {reward.shielding_done > 0 && <span style={{ color: "#7dd3fc", display: "flex", alignItems: "center", gap: 3 }}><Icon name="health-normal" size={11} color="#7dd3fc" /> {reward.shielding_done} shielded</span>}
+        {reward.kills > 0 && <span style={{ color: "#facc15", display: "flex", alignItems: "center", gap: 3 }}><Icon name="death-skull" size={11} color="#facc15" /> killing blow</span>}
       </div>
       {reward.level_up && (
         <div style={{ marginTop: 6, fontSize: 13, color: "#facc15", fontWeight: 600 }}>
