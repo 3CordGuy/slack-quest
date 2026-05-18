@@ -2742,6 +2742,30 @@ export interface RecentQuestSummary {
   total_waves?: number;
   created_at: number;
   completed_at: number | null;
+  party_size: number;
+  duration_ms: number | null;
+}
+
+export interface QuestStats {
+  total: number;
+  wins: number;
+  losses: number;
+  win_rate: number;
+  current_streak: number;
+  best_streak: number;
+  elite_wins: number;
+  by_variant: Record<string, { wins: number; total: number }>;
+}
+
+export interface QuestLeaderboardEntry {
+  slack_user_id: string;
+  name: string;
+  slack_username: string | null;
+  class: string;
+  level: number;
+  wins: number;
+  total_quests: number;
+  elite_wins: number;
 }
 
 export async function getRecentQuestsForCharacter(
@@ -2751,10 +2775,13 @@ export async function getRecentQuestsForCharacter(
 ): Promise<RecentQuestSummary[]> {
   const result = await db
     .prepare(
-      `SELECT q.id, q.status, q.elite, q.scene_json, q.created_at, q.completed_at
+      `SELECT q.id, q.status, q.elite, q.scene_json, q.created_at, q.completed_at,
+              COUNT(qp2.character_id) as party_size
        FROM quests q
        JOIN quest_party qp ON qp.quest_id = q.id
+       LEFT JOIN quest_party qp2 ON qp2.quest_id = q.id
        WHERE qp.character_id = ? AND q.status IN ('completed', 'failed')
+       GROUP BY q.id
        ORDER BY COALESCE(q.completed_at, q.created_at) DESC
        LIMIT ?`,
     )
@@ -2766,6 +2793,7 @@ export async function getRecentQuestsForCharacter(
       scene_json: string;
       created_at: number;
       completed_at: number | null;
+      party_size: number;
     }>();
   return (result.results ?? []).map((r) => {
     const scene = normalizeScene(JSON.parse(r.scene_json) as SceneJson);
@@ -2780,8 +2808,98 @@ export async function getRecentQuestsForCharacter(
       total_waves: scene.total_waves,
       created_at: r.created_at,
       completed_at: r.completed_at,
+      party_size: r.party_size ?? 1,
+      duration_ms: r.completed_at ? r.completed_at - r.created_at : null,
     };
   });
+}
+
+export async function getQuestStatsForCharacter(
+  db: D1Database,
+  userId: string,
+): Promise<QuestStats> {
+  const rows = await db
+    .prepare(
+      `SELECT q.status, q.elite, json_extract(q.scene_json, '$.variant') as variant
+       FROM quests q
+       JOIN quest_party qp ON qp.quest_id = q.id
+       WHERE qp.character_id = ? AND q.status IN ('completed', 'failed')
+       ORDER BY COALESCE(q.completed_at, q.created_at) DESC
+       LIMIT 500`,
+    )
+    .bind(userId)
+    .all<{ status: "completed" | "failed"; elite: number; variant: string | null }>();
+
+  const all = rows.results ?? [];
+  let wins = 0, losses = 0, eliteWins = 0;
+  let currentStreak = 0, bestStreak = 0, runStreak = 0;
+  const byVariant: Record<string, { wins: number; total: number }> = {};
+
+  for (const r of all) {
+    const won = r.status === "completed";
+    won ? wins++ : losses++;
+    if (won && r.elite === 1) eliteWins++;
+    const v = r.variant ?? "standard";
+    if (!byVariant[v]) byVariant[v] = { wins: 0, total: 0 };
+    byVariant[v].total++;
+    if (won) byVariant[v].wins++;
+  }
+
+  // Streak walks from most-recent (index 0) backwards
+  for (let i = 0; i < all.length; i++) {
+    if (all[i].status === "completed") {
+      runStreak++;
+      if (i === 0 || currentStreak === 0) currentStreak = runStreak;
+      bestStreak = Math.max(bestStreak, runStreak);
+    } else {
+      if (i === 0) currentStreak = 0;
+      runStreak = 0;
+    }
+  }
+
+  const total = wins + losses;
+  return {
+    total,
+    wins,
+    losses,
+    win_rate: total > 0 ? Math.round((wins / total) * 100) : 0,
+    current_streak: currentStreak,
+    best_streak: bestStreak,
+    elite_wins: eliteWins,
+    by_variant: byVariant,
+  };
+}
+
+export async function getQuestLeaderboard(
+  db: D1Database,
+  limit = 10,
+): Promise<QuestLeaderboardEntry[]> {
+  const rows = await db
+    .prepare(
+      `SELECT c.slack_user_id, c.name, c.slack_username, c.class, c.level,
+              COUNT(CASE WHEN q.status = 'completed' THEN 1 END) as wins,
+              COUNT(CASE WHEN q.status IN ('completed','failed') THEN 1 END) as total_quests,
+              COUNT(CASE WHEN q.status = 'completed' AND q.elite = 1 THEN 1 END) as elite_wins
+       FROM characters c
+       LEFT JOIN quest_party qp ON qp.character_id = c.slack_user_id
+       LEFT JOIN quests q ON q.id = qp.quest_id AND q.status IN ('completed','failed')
+       GROUP BY c.slack_user_id
+       HAVING total_quests > 0
+       ORDER BY wins DESC, total_quests DESC
+       LIMIT ?`,
+    )
+    .bind(limit)
+    .all<{
+      slack_user_id: string;
+      name: string;
+      slack_username: string | null;
+      class: string;
+      level: number;
+      wins: number;
+      total_quests: number;
+      elite_wins: number;
+    }>();
+  return (rows.results ?? []).map((r) => ({ ...r }));
 }
 
 // ── Achievement helpers ───────────────────────────────────────────────────────

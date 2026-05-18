@@ -337,6 +337,30 @@ interface RecentQuest {
   total_waves?: number;
   created_at: number;
   completed_at: number | null;
+  party_size: number;
+  duration_ms: number | null;
+}
+
+interface QuestStats {
+  total: number;
+  wins: number;
+  losses: number;
+  win_rate: number;
+  current_streak: number;
+  best_streak: number;
+  elite_wins: number;
+  by_variant: Record<string, { wins: number; total: number }>;
+}
+
+interface QuestLeaderboardEntry {
+  slack_user_id: string;
+  name: string;
+  slack_username: string | null;
+  class: string;
+  level: number;
+  wins: number;
+  total_quests: number;
+  elite_wins: number;
 }
 
 interface MeResponse {
@@ -719,6 +743,8 @@ type LoadState =
       inventoryArtUrl: string | null;
       activeQuest: { quest: ActiveQuest; party: Character[] } | null;
       recent: RecentQuest[];
+      questStats: QuestStats | null;
+      leaderboard: QuestLeaderboardEntry[];
       shop: ShopResponse | null;
       joinable: JoinableQuest | null;
       inn: InnResponse | null;
@@ -835,6 +861,8 @@ export function App() {
     let inventoryArtUrl: string | null = null;
     let activeQuest: { quest: ActiveQuest; party: Character[] } | null = null;
     let recent: RecentQuest[] = [];
+    let questStats: QuestStats | null = null;
+    let leaderboard: QuestLeaderboardEntry[] = [];
     let shop: ShopResponse | null = null;
     let joinable: JoinableQuest | null = null;
     let inn: InnResponse | null = null;
@@ -844,10 +872,12 @@ export function App() {
     let townArt: TownArt | null = null;
     let board: BoardResponse | null = null;
     if (me.character) {
-      const [invRes, qRes, recentRes, shopRes, joinableRes, innRes, smithyRes, pubRes, townRes, boardRes, apoRes] = await Promise.all([
+      const [invRes, qRes, recentRes, statsRes, leaderboardRes, shopRes, joinableRes, innRes, smithyRes, pubRes, townRes, boardRes, apoRes] = await Promise.all([
         fetch("/api/inventory", { credentials: "include" }),
         fetch("/api/quest/active", { credentials: "include" }),
         fetch("/api/quests/recent", { credentials: "include" }),
+        fetch("/api/stats", { credentials: "include" }),
+        fetch("/api/leaderboard", { credentials: "include" }),
         fetch("/api/shop", { credentials: "include" }),
         fetch("/api/quest/joinable", { credentials: "include" }),
         fetch("/api/inn", { credentials: "include" }),
@@ -885,6 +915,12 @@ export function App() {
       }
       if (recentRes.ok) {
         recent = ((await recentRes.json()) as RecentQuestsResponse).quests;
+      }
+      if (statsRes.ok) {
+        questStats = (await statsRes.json()) as QuestStats;
+      }
+      if (leaderboardRes.ok) {
+        leaderboard = ((await leaderboardRes.json()) as { entries: QuestLeaderboardEntry[] }).entries;
       }
       if (shopRes.ok) {
         shop = (await shopRes.json()) as ShopResponse;
@@ -943,7 +979,7 @@ export function App() {
         }
       }
     }
-    setState({ kind: "auth", me, inventory, inventoryArtUrl, activeQuest, recent, shop, joinable, inn, smithy, pub, apothecary, townArt, board });
+    setState({ kind: "auth", me, inventory, inventoryArtUrl, activeQuest, recent, questStats, leaderboard, shop, joinable, inn, smithy, pub, apothecary, townArt, board });
   }
 
   async function logout() {
@@ -1470,11 +1506,19 @@ export function App() {
           {state.joinable && (
             <JoinableQuestCard joinable={state.joinable} onJoin={joinQuest} />
           )}
+          {state.questStats && state.questStats.total > 0 && (
+            <QuestStatsCard stats={state.questStats} />
+          )}
           <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 16, alignItems: "start" }}>
             {state.me.character && state.recent.length > 0 && (
               <RecentQuestsCard quests={state.recent} />
             )}
-            <AdventurersCard selfId={state.me.slack_user_id} />
+            <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+              <AdventurersCard selfId={state.me.slack_user_id} />
+              {state.leaderboard.length > 0 && (
+                <QuestLeaderboardCard entries={state.leaderboard} selfId={state.me.slack_user_id} />
+              )}
+            </div>
           </div>
         </>
       );
@@ -6672,6 +6716,126 @@ function drinkBuffLabel(buff: DrinkBuff): string {
   return "next attack/cast/sig crits";
 }
 
+const VARIANT_LABEL: Record<string, string> = {
+  standard: "Standard",
+  boss: "Boss",
+  gauntlet: "Gauntlet",
+  dungeon: "Dungeon",
+};
+
+function QuestStatsCard({ stats }: { stats: QuestStats }) {
+  const variants = Object.entries(stats.by_variant).sort((a, b) => b[1].total - a[1].total);
+  return (
+    <div style={card}>
+      <h2 style={{ ...h2, marginBottom: 16 }}>
+        <Icon name="trophy" size={1} /> Quest Record
+      </h2>
+      {/* W–L summary row */}
+      <div style={{ display: "flex", gap: 16, flexWrap: "wrap", marginBottom: 16 }}>
+        <div style={{ textAlign: "center" }}>
+          <div style={{ fontSize: 26, fontWeight: 700, color: "#86efac", lineHeight: 1 }}>{stats.wins}</div>
+          <div style={{ ...muted, fontSize: 11, marginTop: 2 }}>Wins</div>
+        </div>
+        <div style={{ textAlign: "center" }}>
+          <div style={{ fontSize: 26, fontWeight: 700, color: "#fca5a5", lineHeight: 1 }}>{stats.losses}</div>
+          <div style={{ ...muted, fontSize: 11, marginTop: 2 }}>Losses</div>
+        </div>
+        <div style={{ textAlign: "center" }}>
+          <div style={{ fontSize: 26, fontWeight: 700, color: "#f5f5f5", lineHeight: 1 }}>{stats.win_rate}%</div>
+          <div style={{ ...muted, fontSize: 11, marginTop: 2 }}>Win rate</div>
+        </div>
+        <div style={{ textAlign: "center" }}>
+          <div style={{ fontSize: 26, fontWeight: 700, color: "#fbbf24", lineHeight: 1 }}>{stats.current_streak}</div>
+          <div style={{ ...muted, fontSize: 11, marginTop: 2 }}>Streak</div>
+        </div>
+        {stats.best_streak > 1 && (
+          <div style={{ textAlign: "center" }}>
+            <div style={{ fontSize: 26, fontWeight: 700, color: "#c084fc", lineHeight: 1 }}>{stats.best_streak}</div>
+            <div style={{ ...muted, fontSize: 11, marginTop: 2 }}>Best streak</div>
+          </div>
+        )}
+        {stats.elite_wins > 0 && (
+          <div style={{ textAlign: "center" }}>
+            <div style={{ fontSize: 26, fontWeight: 700, color: "#f97316", lineHeight: 1 }}>{stats.elite_wins}</div>
+            <div style={{ ...muted, fontSize: 11, marginTop: 2 }}>Elite wins</div>
+          </div>
+        )}
+      </div>
+      {/* Per-variant pills */}
+      {variants.length > 1 && (
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          {variants.map(([v, s]) => {
+            const wr = s.total > 0 ? Math.round((s.wins / s.total) * 100) : 0;
+            return (
+              <div
+                key={v}
+                style={{
+                  background: "#1d1f23",
+                  border: "1px solid #2a2d33",
+                  borderRadius: 8,
+                  padding: "6px 10px",
+                  fontSize: 12,
+                }}
+              >
+                <span style={{ color: "#c4c4c4", fontWeight: 600 }}>{VARIANT_LABEL[v] ?? v}</span>
+                <span style={{ ...muted, marginLeft: 6 }}>{s.wins}/{s.total}</span>
+                <span style={{ color: wr >= 50 ? "#86efac" : "#fca5a5", marginLeft: 4, fontWeight: 600 }}>{wr}%</span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function QuestLeaderboardCard({ entries, selfId }: { entries: QuestLeaderboardEntry[]; selfId: string }) {
+  return (
+    <div style={card}>
+      <h2 style={{ ...h2, marginBottom: 12 }}>
+        <Icon name="trophy" size={1} /> Hall of Heroes
+      </h2>
+      <div style={{ overflowX: "auto" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+          <thead>
+            <tr style={{ borderBottom: "1px solid #2a2d33" }}>
+              <th style={{ textAlign: "left", padding: "4px 8px 4px 0", color: "#7a7d83", fontWeight: 500 }}>#</th>
+              <th style={{ textAlign: "left", padding: "4px 8px", color: "#7a7d83", fontWeight: 500 }}>Player</th>
+              <th style={{ textAlign: "right", padding: "4px 8px", color: "#7a7d83", fontWeight: 500, whiteSpace: "nowrap" }}>W</th>
+              <th style={{ textAlign: "right", padding: "4px 8px", color: "#7a7d83", fontWeight: 500, whiteSpace: "nowrap" }}>W%</th>
+              <th style={{ textAlign: "right", padding: "4px 0 4px 8px", color: "#7a7d83", fontWeight: 500, whiteSpace: "nowrap" }}>Elite</th>
+            </tr>
+          </thead>
+          <tbody>
+            {entries.map((e, i) => {
+              const rank = i + 1;
+              const rankColor = rank === 1 ? "#fbbf24" : rank === 2 ? "#d1d5db" : rank === 3 ? "#cd7c2f" : "#7a7d83";
+              const wr = e.total_quests > 0 ? Math.round((e.wins / e.total_quests) * 100) : 0;
+              const isSelf = e.slack_user_id === selfId;
+              return (
+                <tr key={e.slack_user_id} style={{ borderBottom: "1px solid #1e2025", background: isSelf ? "#1d2128" : "transparent" }}>
+                  <td style={{ padding: "6px 8px 6px 0", color: rankColor, fontWeight: rank <= 3 ? 700 : 400 }}>{rank}</td>
+                  <td style={{ padding: "6px 8px" }}>
+                    <div style={{ fontWeight: isSelf ? 700 : 500, color: isSelf ? "#a5b4fc" : "#f5f5f5" }}>
+                      {e.name} {isSelf && <span style={{ ...muted, fontSize: 11, fontWeight: 400 }}>(you)</span>}
+                    </div>
+                    <div style={{ color: "#7a7d83", fontSize: 11 }}>L{e.level} {e.class}</div>
+                  </td>
+                  <td style={{ padding: "6px 8px", textAlign: "right", color: "#86efac", fontWeight: 600 }}>{e.wins}</td>
+                  <td style={{ padding: "6px 8px", textAlign: "right", color: wr >= 50 ? "#86efac" : "#fca5a5" }}>{wr}%</td>
+                  <td style={{ padding: "6px 0 6px 8px", textAlign: "right", color: e.elite_wins > 0 ? "#f97316" : "#7a7d83", fontWeight: e.elite_wins > 0 ? 600 : 400 }}>
+                    {e.elite_wins > 0 ? e.elite_wins : "—"}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 function RecentQuestsCard({ quests }: { quests: RecentQuest[] }) {
   return (
     <div style={card}>
@@ -6725,10 +6889,24 @@ function RecentQuestRow({ q }: { q: RecentQuest }) {
         </div>
         <div style={{ ...muted, fontSize: 12, marginTop: 2 }}>
           {won ? "Won" : "Lost"} · {formatRelative(when)}
+          {q.duration_ms != null && q.duration_ms > 0 && (
+            <> · {formatDuration(q.duration_ms)}</>
+          )}
+          {q.party_size > 1 && (
+            <> · {q.party_size} players</>
+          )}
         </div>
       </div>
     </div>
   );
+}
+
+function formatDuration(ms: number): string {
+  const s = Math.floor(ms / 1000);
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m`;
+  return `${Math.floor(m / 60)}h ${m % 60}m`;
 }
 
 function formatRelative(ts: number): string {

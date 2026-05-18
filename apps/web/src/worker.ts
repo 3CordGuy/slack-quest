@@ -133,6 +133,8 @@ import {
   setDrinkBuff as dbSetDrinkBuff,
   getClaimedNpcPaths,
   getRecentQuestsForCharacter,
+  getQuestStatsForCharacter,
+  getQuestLeaderboard,
   getStaleTownState,
   getWebCombatState,
   getWebCombatSnapshot,
@@ -3587,9 +3589,26 @@ app.get("/api/quests/recent", async (c) => {
   const quests = await getRecentQuestsForCharacter(
     c.env.DB,
     session.slack_user_id,
-    10,
+    15,
   );
   return c.json({ quests });
+});
+
+// Lifetime quest stats for the signed-in character: wins/losses, streaks,
+// elite count, and per-variant breakdown.
+app.get("/api/stats", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const stats = await getQuestStatsForCharacter(c.env.DB, session.slack_user_id);
+  return c.json(stats);
+});
+
+// Global quest leaderboard — top players by total wins.
+app.get("/api/leaderboard", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const entries = await getQuestLeaderboard(c.env.DB, 10);
+  return c.json({ entries });
 });
 
 // Starts (or resumes) web-mode combat for the user's active quest. Snapshots
