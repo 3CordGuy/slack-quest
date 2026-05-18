@@ -3,6 +3,7 @@ import toast from "react-hot-toast";
 import { isMonsterActor } from "@gantt-quest/core";
 
 import { Avatar, Icon } from "./icons";
+import { CombatParticles, CombatParticlesProvider, triggerBurst } from "./CombatParticles";
 import {
   DISPLAY_FONT,
   ensureCombatAnimStyles,
@@ -852,6 +853,13 @@ export function CombatPage({
               setFlashIds((prev) => { const n = new Set(prev); n.add(tgt); return n; });
               setTimeout(() => setFlashIds((prev) => { const n = new Set(prev); n.delete(tgt); return n; }), 600);
             }
+            // Particle bursts.
+            if (evt.type === "elemental_proc" && !evt.resisted) {
+              triggerBurst(evt.element === "fire" ? "fire" : evt.element === "ice" ? "ice" : "lightning");
+            }
+            if (evt.type === "turn_skip") triggerBurst("frozen");
+            if (evt.type === "victory") triggerBurst("victory");
+            if (evt.type === "player_hit") triggerBurst("hit");
           }
           // 950ms ≈ tumble duration (700ms) + brief pause to read the value.
           const delay = hasRolls ? 950 : 0;
@@ -1041,6 +1049,7 @@ export function CombatPage({
   const isMonsterTurn = currentActorId !== null && isMonsterActor(currentActorId);
 
   return (
+    <CombatParticlesProvider>
     <div style={{ position: "fixed", inset: 0, background: "#0a0b0e", display: "flex", flexDirection: "column", overflow: "hidden", fontFamily: "Inter, system-ui, sans-serif" }}>
 
       {/* 40px top bar */}
@@ -1059,6 +1068,7 @@ export function CombatPage({
           <img src={bgArtUrl} alt="" style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover" }} onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
         )}
         <div style={{ position: "absolute", inset: 0, background: "linear-gradient(to bottom, rgba(0,0,0,0.25) 0%, rgba(0,0,0,0.05) 35%, rgba(0,0,0,0.70) 100%)", pointerEvents: "none" }} />
+        <CombatParticles />
 
         {/* Loading state */}
         {!state && (
@@ -1269,6 +1279,7 @@ export function CombatPage({
         <DisconnectedModal onReconnect={() => setReconnectKey((k) => k + 1)} />
       )}
     </div>
+    </CombatParticlesProvider>
   );
 }
 
