@@ -69,7 +69,7 @@ function describeItemEffect(item: {
         return <>{lead("armored-pants")}Pants: contributes floor({p}/4) = {Math.floor(p / 4)} to armor pool{statLine ? `. ${statLine}` : "."}</>;
       }
       // Body armor (default)
-      return <>{lead("chest-armor")}Armor: reduces incoming damage by floor({p}/2) = {Math.floor(p / 2)} (min 1).</>;
+      return <>{lead("chest-armor")}Armor: reduces incoming damage by {Math.max(1, Math.floor(p / 2))}{statLine ? `. ${statLine}` : "."}</>;
     }
     case "consumable":
       return <>{lead("bubbling-potion")}Restores {p} HP on use. Single-use.</>;
