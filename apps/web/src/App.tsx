@@ -29,9 +29,13 @@ function describeItemEffect(item: {
   power: number;
   weapon_range?: "melee" | "ranged" | "focus" | null;
   item_name: string;
+  slot?: string | null;
+  item_subtype?: string | null;
+  stat_bonus?: Record<string, number> | null;
 }): React.ReactNode {
   const p = item.power;
   const lead = (name: string) => <Icon name={name} style={{ marginRight: 6 }} />;
+  const statLine = item.stat_bonus ? statBonusSummary(item.stat_bonus) : "";
   switch (item.item_type) {
     case "weapon":
       if (item.weapon_range === "focus") {
@@ -41,8 +45,32 @@ function describeItemEffect(item: {
         return <>{lead("crossbow")}Ranged weapon: +{p} attack/cast damage. Can attack from back row.</>;
       }
       return <>{lead("sword")}Melee weapon: +{p} attack/cast damage. Front row only for attack.</>;
-    case "armor":
-      return <>{lead("shield")}Armor: reduces incoming damage by floor({p}/2) = {Math.floor(p / 2)} (min 1).</>;
+    case "armor": {
+      const slot = item.slot;
+      // Pure stat accessories — no armor contribution
+      if (slot === "boots" || slot === "ring" || slot === "amulet") {
+        return <>{lead(slot === "boots" ? "boots" : slot === "ring" ? "ring" : "gem-chain")}{statLine || "Passive stat bonus."}</>;
+      }
+      // Gloves — minor armor + stat bonus
+      if (slot === "off_hand" && item.item_subtype === "gloves") {
+        const gloveArmor = Math.floor(p / 3);
+        return <>{lead("gloves")}Gloves: contributes {p > 0 ? `+${gloveArmor} to armor pool` : "no armor"}{statLine ? `. ${statLine}` : "."}</>;
+      }
+      // Shield — full armor contribution + stat bonus
+      if (slot === "off_hand") {
+        return <>{lead("shield")}Shield: adds +{p} to armor pool{statLine ? `. ${statLine}` : "."}</>;
+      }
+      // Helmet — half armor
+      if (slot === "helmet") {
+        return <>{lead("heavy-helm")}Helmet: contributes floor({p}/2) = {Math.floor(p / 2)} to armor pool{statLine ? `. ${statLine}` : "."}</>;
+      }
+      // Pants — quarter armor
+      if (slot === "pants") {
+        return <>{lead("armored-pants")}Pants: contributes floor({p}/4) = {Math.floor(p / 4)} to armor pool{statLine ? `. ${statLine}` : "."}</>;
+      }
+      // Body armor (default)
+      return <>{lead("chest-armor")}Armor: reduces incoming damage by floor({p}/2) = {Math.floor(p / 2)} (min 1).</>;
+    }
     case "consumable":
       return <>{lead("bubbling-potion")}Restores {p} HP on use. Single-use.</>;
     case "magic":
@@ -3147,17 +3175,17 @@ function CharacterInspectDialog({
             label="HP"
             icon={<Icon name="health-increase" color="#86efac" size={36} />}
             value={
-              <span style={{ display: "inline-flex", alignItems: "baseline", gap: 6 }}>
-                {character.hp} / {character.max_hp}
+              <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                <span>{character.hp} / {character.max_hp}</span>
                 {character.shield > 0 && (
                   <span
                     title="Temporary shield buffer (absorbs damage before HP)."
-                    style={{ fontSize: 12, color: "#7dd3fc", fontWeight: 500 }}
+                    style={{ fontSize: 13, color: "#7dd3fc", fontWeight: 500 }}
                   >
                     +{character.shield} <Icon name="shield" size={12} />
                   </span>
                 )}
-              </span>
+              </div>
             }
           />
           <Stat
@@ -3955,16 +3983,14 @@ function CharacterCard({
             c.shield > 0 ? `Shield: +${c.shield} (absorbs hits first)` : "",
           ].filter(Boolean).join("\n")}
           value={
-            <span style={{ display: "inline-flex", alignItems: "baseline", gap: 6 }}>
-              {c.hp} / {c.max_hp}
+            <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+              <span>{c.hp} / {c.max_hp}</span>
               {c.shield > 0 && (
-                <span
-                  style={{ fontSize: 12, color: "#7dd3fc", fontWeight: 500 }}
-                >
+                <span style={{ fontSize: 13, color: "#7dd3fc", fontWeight: 500 }}>
                   +{c.shield} <Icon name="shield" size={12} />
                 </span>
               )}
-            </span>
+            </div>
           }
         />
         <Stat

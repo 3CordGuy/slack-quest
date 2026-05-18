@@ -1254,7 +1254,7 @@ function rollArmorSlot(tier: number): ItemRoll {
   if (r < 0.98) {
     // Gloves (off_hand, non-shield) — small armor; STR or DEX buff.
     const key = Math.random() < 0.5 ? "str" : "dex";
-    return { type: "armor", rarity, power: Math.max(0, Math.floor(rollPower("armor", rarity, tier) / 3)), slot: "off_hand",
+    return { type: "armor", rarity, power: Math.max(1, Math.floor(rollPower("armor", rarity, tier) / 3)), slot: "off_hand",
       item_subtype: "gloves",
       stat_bonus: statBonus(key, bonusAmt) };
   }
@@ -1297,7 +1297,7 @@ export function rollAccessorySlot(tier: number): ItemRoll {
   }
   if (r < 0.93) {
     const key = Math.random() < 0.5 ? "str" : "dex";
-    return { type: "armor", rarity, power: Math.max(0, Math.floor(rollPower("armor", rarity, tier) / 3)), slot: "off_hand",
+    return { type: "armor", rarity, power: Math.max(1, Math.floor(rollPower("armor", rarity, tier) / 3)), slot: "off_hand",
       item_subtype: "gloves", stat_bonus: statBonus(key, bonusAmt) };
   }
   return { type: "armor", rarity, power: rollPower("armor", rarity, tier), slot: "off_hand",
