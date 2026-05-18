@@ -460,6 +460,7 @@ interface ToolDispatchResult {
   effect: ItemEffect;
   fighters?: CombatState["fighters"];
   monster?: Partial<CombatState["monster"]>;
+  targetMonId?: string;
   error?: string;
 }
 
@@ -480,6 +481,7 @@ function applyToolOrScroll(
   state: CombatState,
   actor: CombatState["fighters"][number],
   item: { id: number; item_name: string; item_type: string; power: number },
+  targetMonsterId?: string | null,
 ): ToolDispatchResult {
   const entry = findCatalogEntry(item.item_name);
   if (!entry) {
@@ -489,12 +491,19 @@ function applyToolOrScroll(
     };
   }
 
+  // Resolve the targeted monster: prefer explicit target (if alive), fall back
+  // to first live monster, finally fall back to monsters[0] as last resort.
+  const resolveTarget = () =>
+    (targetMonsterId && state.monsters.find((m) => m.id === targetMonsterId && m.hp > 0)) ||
+    state.monsters.find((m) => m.hp > 0) ||
+    state.monsters[0];
+
   switch (entry.name) {
     case "Caffeine Bomb":
     case "Hotfix Grenade": {
       // Damage tools ignore armor and never kill (Slack convention v1).
       const requested = item.power;
-      const m = state.monsters[0];
+      const m = resolveTarget();
       const damage = Math.max(1, Math.min(requested, m.hp - 1));
       return {
         effect: {
@@ -503,6 +512,7 @@ function applyToolOrScroll(
           ...(damage < requested ? { capped_from: requested } : {}),
         },
         monster: { hp: m.hp - damage },
+        targetMonId: m.id,
       };
     }
     case "Espresso Shot": {
@@ -530,7 +540,8 @@ function applyToolOrScroll(
       };
     }
     case "Poison Vial": {
-      if (state.monsters[0].hp <= 0) {
+      const m = resolveTarget();
+      if (m.hp <= 0) {
         return {
           effect: { kind: "heal", target: actor.id, amount: 0, rolled: 0 },
           error: "no live foe to poison",
@@ -549,7 +560,8 @@ function applyToolOrScroll(
           magnitude: item.power,
           remaining: 4,
         },
-        monster: { effects: mergeEffect(state.monsters[0].effects, eff) },
+        monster: { effects: mergeEffect(m.effects, eff) },
+        targetMonId: m.id,
       };
     }
     case "Rebase Scroll": {
@@ -571,7 +583,7 @@ function applyToolOrScroll(
     case "Production Outage": {
       // Non-boss: instant kill. Boss: drops 30% of max_hp (capped at hp-1 so
       // it never delivers the killing blow on a boss). Mirrors slack semantics.
-      const m = state.monsters[0];
+      const m = resolveTarget();
       if (m.hp <= 0) {
         return {
           effect: { kind: "heal", target: actor.id, amount: 0, rolled: 0 },
@@ -588,6 +600,7 @@ function applyToolOrScroll(
             ...(damage < requested ? { capped_from: requested } : {}),
           },
           monster: { hp: m.hp - damage },
+          targetMonId: m.id,
         };
       }
       // Non-boss instakill — drops monster_hp to 0. handleUseItem detects this
@@ -595,16 +608,19 @@ function applyToolOrScroll(
       return {
         effect: { kind: "monster_damage", amount: m.hp },
         monster: { hp: 0 },
+        targetMonId: m.id,
       };
     }
     case "Venom Vial": {
-      if (state.monsters[0].hp <= 0) {
+      const m = resolveTarget();
+      if (m.hp <= 0) {
         return { effect: { kind: "heal", target: actor.id, amount: 0, rolled: 0 }, error: "no live foe to poison" };
       }
       const eff = { type: "poisoned" as const, magnitude: item.power, remaining: 4, source: actor.id };
       return {
         effect: { kind: "monster_effect", effect: "poisoned", magnitude: item.power, remaining: 4 },
-        monster: { effects: mergeEffect(state.monsters[0].effects, eff) },
+        monster: { effects: mergeEffect(m.effects, eff) },
+        targetMonId: m.id,
       };
     }
     case "Regen Draft": {
@@ -6265,6 +6281,7 @@ export class QuestRoom extends DurableObject<Env> {
     let updatedFighters = state.fighters;
     let effect: ItemEffect | null = null;
     const monsterPatch: Partial<CombatMonster> = {};
+    let targetMonId: string | undefined;
 
     switch (item.item_type) {
       case "consumable": {
@@ -6313,18 +6330,16 @@ export class QuestRoom extends DurableObject<Env> {
       }
       case "tool":
       case "scroll": {
-        const dispatch = applyToolOrScroll(state, actor, item);
+        const dispatch = applyToolOrScroll(state, actor, item, action.target_id);
         if (dispatch.error) {
           this.sendOne(ws, { type: "error", message: dispatch.error });
           return;
         }
         if (dispatch.fighters) updatedFighters = dispatch.fighters;
-        if (dispatch.monster) {
-          // Apply via separate object copy below so we keep both in sync.
-        }
         effect = dispatch.effect;
-        // Stash monster patch for the state assembly below.
         Object.assign(monsterPatch, dispatch.monster ?? {});
+        // Remember which monster we patched so we can check it for kill below.
+        if (dispatch.targetMonId) targetMonId = dispatch.targetMonId;
         break;
       }
       default:
@@ -6343,13 +6358,16 @@ export class QuestRoom extends DurableObject<Env> {
     const withEffect: CombatState = {
       ...state,
       fighters: updatedFighters,
-      monsters: state.monsters.map((m, i) => i === 0 ? { ...m, ...monsterPatch } : m),
+      monsters: state.monsters.map((m) =>
+        targetMonId && m.id === targetMonId ? { ...m, ...monsterPatch } : m,
+      ),
     };
 
     let resultState: CombatState;
     let resultEvents: CombatEvent[];
-    if (withEffect.monsters[0].hp <= 0) {
-      const killed = resolveMonsterKill(withEffect, withEffect.monsters[0].id, action.actor, []);
+    const patchedMonster = targetMonId ? withEffect.monsters.find((m) => m.id === targetMonId) : undefined;
+    if (patchedMonster && patchedMonster.hp <= 0) {
+      const killed = resolveMonsterKill(withEffect, patchedMonster.id, action.actor, []);
       resultState = killed.state;
       resultEvents = killed.events;
     } else {

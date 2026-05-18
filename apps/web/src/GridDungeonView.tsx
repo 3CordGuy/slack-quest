@@ -1625,6 +1625,7 @@ export function GridDungeonView({
             myTurn={myTurn}
             isMonsterTurn={isMonsterTurn}
             items={items}
+            onRefreshItems={loadItems}
             characterClass={character.class}
             targetMonsterId={effectiveTarget}
           />
@@ -2047,6 +2048,7 @@ interface UsableItem {
   item_type: string;
   power: number;
   equipped: boolean;
+  level_req?: number;
   rarity?: string;
   flavor?: string | null;
   slot?: string | null;
@@ -2055,12 +2057,13 @@ interface UsableItem {
   item_subtype?: string | null;
 }
 
-function CombatPanel({ state, selfId, onSend, autoResolve, setAutoResolve, myTurn, isMonsterTurn, items, characterClass, targetMonsterId }: {
+function CombatPanel({ state, selfId, onSend, autoResolve, setAutoResolve, myTurn, isMonsterTurn, items, onRefreshItems, characterClass, targetMonsterId }: {
   state: CombatState; selfId: string;
   onSend: (a: TurnAction) => boolean;
   autoResolve: boolean; setAutoResolve: (b: boolean) => void;
   myTurn: boolean; isMonsterTurn: boolean;
   items: UsableItem[];
+  onRefreshItems: () => void;
   characterClass: string;
   // Currently-picked enemy. Parent manages this via MonsterStrip click-
   // to-target; we just use it as the target_id for attack/cast/sig.
@@ -2077,8 +2080,10 @@ function CombatPanel({ state, selfId, onSend, autoResolve, setAutoResolve, myTur
     : (liveMonsters[0]?.id ?? null);
   const [picking, setPicking] = useState<"heal" | "shield" | null>(null);
   const [itemOpen, setItemOpen] = useState(false);
-  // Give flow: select item → select ally. itemId stays set across the two-step picker.
+  // Give flow: select item → select ally. Both steps use PickerModal.
   const [givePicker, setGivePicker] = useState<"closed" | "selectItem" | { itemId: number }>("closed");
+  // Monster target flow: set when a monster-targeting tool is picked with 2+ live enemies.
+  const [pendingToolItem, setPendingToolItem] = useState<UsableItem | null>(null);
   const usable = items.filter((it) => !it.equipped && ["consumable", "magic", "revive", "tool"].includes(it.item_type));
   const giveable = items.filter((it) => !it.equipped);
   const otherFighters = state.fighters.filter((f) => f.id !== selfId && f.hp > 0);
@@ -2091,6 +2096,7 @@ function CombatPanel({ state, selfId, onSend, autoResolve, setAutoResolve, myTur
       body: JSON.stringify({ to_user_id: toUserId }),
     });
     setGivePicker("closed");
+    onRefreshItems();
   }
 
   // Disabled state for the action row when it isn't the player's turn.
@@ -2139,39 +2145,90 @@ function CombatPanel({ state, selfId, onSend, autoResolve, setAutoResolve, myTur
         </PickerModal>
       )}
       {typeof givePicker === "object" && "itemId" in givePicker && myTurn && (
-        <div style={{ padding: "6px 12px 4px", display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", borderBottom: "1px solid #1a1c21" }}>
-          <span style={{ fontSize: 11, color: "#9aa0a6" }}>Give to whom?</span>
-          {otherFighters.length === 0 && <span style={{ fontSize: 11, color: "#4a5568" }}>No allies in combat</span>}
-          {otherFighters.map((f) => (
-            <button key={f.id}
-              onClick={() => void fireGive(givePicker.itemId, f.id)}
-              style={{ padding: "3px 10px", background: "#1a2e1a", border: "1px solid #166534", borderRadius: 5, color: "#86efac", fontSize: 11, cursor: "pointer" }}>
-              {f.name.split(" ")[0]}
-            </button>
-          ))}
-          <button onClick={() => setGivePicker("selectItem")} style={{ padding: "3px 8px", background: "none", border: "1px solid #2a2d33", borderRadius: 5, color: "#9aa0a6", fontSize: 11, cursor: "pointer" }}>← back</button>
-        </div>
+        <PickerModal title="Give to whom?" onClose={() => setGivePicker("closed")}>
+          {otherFighters.length === 0 ? (
+            <p style={{ fontSize: 13, color: "#6b7280", margin: 0 }}>No allies in combat.</p>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {otherFighters.map((f) => (
+                <button key={f.id}
+                  onClick={() => void fireGive(givePicker.itemId, f.id)}
+                  style={{
+                    display: "flex", alignItems: "center", justifyContent: "space-between",
+                    padding: "10px 16px", background: "#1a1c21", border: "1px solid #2a2d33",
+                    borderRadius: 8, color: "#f5f5f5", cursor: "pointer", fontSize: 13,
+                    transition: "border-color 0.15s",
+                  }}
+                  onMouseEnter={(e) => (e.currentTarget.style.borderColor = "#166534")}
+                  onMouseLeave={(e) => (e.currentTarget.style.borderColor = "#2a2d33")}
+                >
+                  <span style={{ fontWeight: 600 }}>{f.name}</span>
+                  <span style={{ fontSize: 12, color: "#86efac" }}>{f.hp}/{f.max_hp} HP</span>
+                </button>
+              ))}
+            </div>
+          )}
+          <button onClick={() => setGivePicker("selectItem")} style={{ marginTop: 12, padding: "4px 12px", background: "none", border: "1px solid #2a2d33", borderRadius: 6, color: "#9aa0a6", fontSize: 12, cursor: "pointer" }}>← Back to items</button>
+        </PickerModal>
       )}
 
-      {/* Item picker — modal so the cards have room to breathe */}
+      {/* Item picker — full modal via portal */}
       {itemOpen && myTurn && (
         <PickerModal title="Use item" onClose={() => setItemOpen(false)}>
           {usable.length === 0 ? (
             <p style={{ fontSize: 13, color: "#6b7280", margin: 0 }}>No usable items in your pack.</p>
           ) : (
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 8 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", gap: 8 }}>
               {usable.map((it) => (
-                <LootOptionTile
+                <UseItemTile
                   key={it.id}
-                  opt={itemToLootOpt(it)}
+                  item={it}
                   onClick={() => {
-                    onSend({ kind: "use_item", actor: selfId, item_id: it.id });
                     setItemOpen(false);
+                    if (MONSTER_TARGET_TOOLS.has(it.item_name) && liveMonsters.length > 1) {
+                      setPendingToolItem(it);
+                    } else {
+                      onSend({ kind: "use_item", actor: selfId, item_id: it.id, target_id: target ?? undefined });
+                    }
                   }}
                 />
               ))}
             </div>
           )}
+        </PickerModal>
+      )}
+
+      {/* Monster target picker — appears after selecting a monster-targeting tool with 2+ enemies */}
+      {pendingToolItem && myTurn && (
+        <PickerModal
+          title={`${pendingToolItem.item_name} — choose a target`}
+          onClose={() => setPendingToolItem(null)}
+        >
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {liveMonsters.map((m) => (
+              <button
+                key={m.id}
+                onClick={() => {
+                  onSend({ kind: "use_item", actor: selfId, item_id: pendingToolItem.id, target_id: m.id ?? undefined });
+                  setPendingToolItem(null);
+                }}
+                style={{
+                  display: "flex", alignItems: "center", justifyContent: "space-between",
+                  padding: "10px 16px", background: "#1a1c21", border: "1px solid #2a2d33",
+                  borderRadius: 8, color: "#f5f5f5", cursor: "pointer", fontSize: 13,
+                  transition: "border-color 0.15s",
+                }}
+                onMouseEnter={(e) => (e.currentTarget.style.borderColor = "#ef4444")}
+                onMouseLeave={(e) => (e.currentTarget.style.borderColor = "#2a2d33")}
+              >
+                <span style={{ fontWeight: 600 }}>{m.name}</span>
+                <span style={{ fontSize: 12, color: "#ef4444" }}>
+                  {m.hp} / {m.max_hp} HP
+                  {m.effects?.some((e) => e.type === "poisoned") && " ☠"}
+                </span>
+              </button>
+            ))}
+          </div>
         </PickerModal>
       )}
 
@@ -2281,6 +2338,11 @@ const lootBtn: React.CSSProperties = {
 
 // Rarity → border + name color. Kept inline so this module doesn't depend
 // on the dashboard's RARITY_COLOR export.
+// Tools whose effect lands on a specific monster — need a target picker when 2+ are alive.
+const MONSTER_TARGET_TOOLS = new Set([
+  "Poison Vial", "Venom Vial", "Caffeine Bomb", "Hotfix Grenade", "Production Outage",
+]);
+
 const RARITY_TINT: Record<string, string> = {
   common: "#8a8f98",
   uncommon: "#16a34a",
@@ -2427,6 +2489,70 @@ function itemToLootOpt(it: UsableItem): LootOption {
     weapon_range: it.weapon_range ?? null,
     item_subtype: it.item_subtype ?? null,
   };
+}
+
+// Returns a one-line plain-English description of what the item does in combat.
+function describeCombatEffect(item: UsableItem): string {
+  const p = item.power;
+  switch (item.item_type) {
+    case "consumable": return `Heals ${p} HP`;
+    case "magic":      return `+${p} max mana`;
+    case "revive":     return `Revives a downed ally at ${p}% HP`;
+    case "tool":
+    case "scroll": {
+      switch (item.item_name) {
+        case "Caffeine Bomb":
+        case "Hotfix Grenade":    return `Deals ${p} damage to target (non-lethal)`;
+        case "Espresso Shot":     return `Regen ${p} HP/turn for 5 turns (self)`;
+        case "Poison Vial":       return `Poisons target: ${p} dmg/turn × 4 turns`;
+        case "Venom Vial":        return `Poisons target: ${p} dmg/turn × 4 turns`;
+        case "Production Outage": return `Instakills non-boss · 30% max HP vs boss`;
+        case "Rebase Scroll":     return `Restores entire party mana to full`;
+        case "Regen Draft":       return `Regen ${p} HP/turn for 3 turns (self)`;
+        case "Battle Elixir":     return `+25% damage for 3 turns (self)`;
+        default:                  return `Power ${p}`;
+      }
+    }
+    default: return `Power ${p}`;
+  }
+}
+
+// Tile used specifically in the combat Use Item picker. Shows effect description
+// and level requirement alongside the standard name + rarity + flavor.
+function UseItemTile({ item, onClick }: { item: UsableItem; onClick: () => void }) {
+  const tint = RARITY_TINT[item.rarity ?? "common"] ?? "#2a2d33";
+  const icon = lootIcon({ item_type: item.item_type, slot: item.slot, weapon_range: item.weapon_range, item_subtype: item.item_subtype });
+  const effectDesc = describeCombatEffect(item);
+  const levelReq = item.level_req ?? 1;
+
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        padding: "10px 12px", background: "#131519",
+        border: `1px solid ${tint}55`, borderLeft: `3px solid ${tint}`,
+        borderRadius: 8, color: "#d1d5db", textAlign: "left", fontSize: 12,
+        cursor: "pointer", display: "flex", flexDirection: "column", gap: 5, width: "100%",
+      }}>
+      {/* Name row */}
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <Icon name={icon} size={18} color={tint} />
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontWeight: 700, color: tint, fontSize: 13, lineHeight: 1.2 }}>{item.item_name}</div>
+          <div style={{ fontSize: 10, color: "#6b7280", textTransform: "uppercase", letterSpacing: 0.5 }}>
+            {item.rarity ?? "common"}
+            {levelReq > 1 && <span style={{ color: "#f59e0b", marginLeft: 6 }}>Req L{levelReq}</span>}
+          </div>
+        </div>
+      </div>
+      {/* Effect */}
+      <div style={{ fontSize: 11, color: "#93c5fd", fontWeight: 600 }}>{effectDesc}</div>
+      {/* Flavor */}
+      {item.flavor && (
+        <div style={{ fontSize: 11, color: "#9aa0a6", fontStyle: "italic", lineHeight: 1.35 }}>{item.flavor}</div>
+      )}
+    </button>
+  );
 }
 
 // Centered modal used by in-combat pickers (Use Item, Give Item) so card
