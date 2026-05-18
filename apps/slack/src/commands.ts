@@ -2021,6 +2021,12 @@ async function handleQuest(
         await addPendingInvitee(env.DB, questId, inv.slack_user_id);
       }
 
+      // Solo quest with no invitees — skip the lobby and start immediately.
+      if (validInvitees.length === 0) {
+        await startQuestFromLobby(questId, payload.channel_id, post.ts, null, env);
+        return;
+      }
+
       // Build and post the full lobby block kit message as a thread reply.
       // This is the interactive card players use to accept/ready up.
       const initialParty = await getLobbyParty(env.DB, questId);
@@ -2052,7 +2058,7 @@ async function handleQuest(
     }
   })());
 
-  return ephemeral("⏳ Quest lobby created — accept the invite and ready up!");
+  return ephemeral("⏳ Quest lobby created — invites sent, ready up to begin!");
 }
 
 // ─── Lobby system ─────────────────────────────────────────────────────────────
@@ -4192,6 +4198,24 @@ async function handleCombatViaEngine(
   // fled) so the final state stays visible without a stale button row.
   if (result.state.status === "active") {
     await upsertBattlefield(env, quest, result.state);
+  }
+
+  // Hand off to the appropriate resolution path when combat ends.
+  if (result.state.status === "victory") {
+    const party = await getQuestParty(env.DB, quest.id);
+    const fighters = party.filter(isFighter);
+    return resolveVictory(payload, env, ctx, character, quest, fighters, []);
+  }
+
+  if (result.state.status === "defeat") {
+    // All fighters downed — apply soft death to the current actor and fail the quest.
+    const party = await getQuestParty(env.DB, quest.id);
+    const fighters = party.filter(isFighter);
+    return resolveDeath(payload, env, ctx, character, quest, fighters, []);
+  }
+
+  if (result.state.status === "fled") {
+    return ephemeral("🏃 The party fled.");
   }
 
   return ephemeral("✅ Action resolved.");
