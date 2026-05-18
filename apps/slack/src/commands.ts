@@ -9785,6 +9785,7 @@ async function handleInnStay(
     await refillMana(env.DB, payload.user_id);
     manaAdded = character.max_mana - character.mana;
   }
+  await initArmorPool(env.DB, payload.user_id);
 
   const deltas: string[] = [];
   if (healed > 0) deltas.push(`*+${healed} HP*`);
@@ -11253,6 +11254,7 @@ async function handleRest(
       );
     }
     await applyLongRest(env.DB, payload.user_id);
+    await initArmorPool(env.DB, payload.user_id);
     return ephemeral(
       `🛌 You take a long rest. HP fully restored to *${character.max_hp}/${character.max_hp}*. Next long rest available in 24h.`,
     );
@@ -11272,6 +11274,7 @@ async function handleRest(
   const healed = Math.max(1, Math.floor(missing * SHORT_REST_HEAL_RATIO));
   const newHp = Math.min(character.max_hp, character.hp + healed);
   await applyShortRest(env.DB, payload.user_id, newHp);
+  await initArmorPool(env.DB, payload.user_id);
   return ephemeral(
     `🛏️ You take a short rest. Recovered *${healed}* HP (${newHp}/${character.max_hp}). For a full heal, try \`${payload.command} rest long\` (1× per 24h).`,
   );
