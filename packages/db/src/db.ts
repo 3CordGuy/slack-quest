@@ -708,24 +708,29 @@ export async function createQuest(
     thread_ts: string;
     elite: boolean;
     scene: SceneJson;
-  mode: QuestMode;
+    mode: QuestMode;
     created_by: string;
+    lobby?: boolean;
+    lobby_expires_at?: number;
   },
 ): Promise<number> {
   const now = Date.now();
+  const status = args.lobby ? "lobby" : "active";
   const result = await db
     .prepare(
-      `INSERT INTO quests (channel_id, thread_ts, status, elite, scene_json, mode, created_by, created_at)
-       VALUES (?, ?, 'active', ?, ?, ?, ?, ?)`,
+      `INSERT INTO quests (channel_id, thread_ts, status, elite, scene_json, mode, created_by, created_at, lobby_expires_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .bind(
       args.channel_id,
       args.thread_ts,
+      status,
       args.elite ? 1 : 0,
       JSON.stringify(args.scene),
       args.mode,
       args.created_by,
       now,
+      args.lobby_expires_at ?? null,
     )
     .run();
   const questId = result.meta.last_row_id;
@@ -3028,6 +3033,187 @@ export async function getDownedCharacters(db: D1Database): Promise<DownedCharact
     .all<DownedCharacter>();
   return rows.results ?? [];
 }
+
+// ─── Lobby system ────────────────────────────────────────────────────────────
+
+export interface LobbyQuest {
+  id: number;
+  channel_id: string;
+  thread_ts: string;
+  elite: boolean;
+  scene: SceneJson;
+  mode: QuestMode;
+  created_by: string;
+  lobby_expires_at: number | null;
+  lobby_ts: string | null;
+}
+
+export interface LobbyPartyMember {
+  slack_user_id: string;
+  name: string;
+  invite_status: "pending" | "accepted" | "declined";
+  ready: boolean;
+}
+
+interface LobbyQuestRow {
+  id: number;
+  channel_id: string;
+  thread_ts: string;
+  elite: number;
+  scene_json: string;
+  mode: string;
+  created_by: string;
+  lobby_expires_at: number | null;
+  lobby_ts: string | null;
+}
+
+function rowToLobbyQuest(row: LobbyQuestRow): LobbyQuest {
+  return {
+    id: row.id,
+    channel_id: row.channel_id,
+    thread_ts: row.thread_ts,
+    elite: row.elite === 1,
+    scene: normalizeScene(JSON.parse(row.scene_json) as SceneJson),
+    mode: row.mode === "web" ? "web" : "slack",
+    created_by: row.created_by,
+    lobby_expires_at: row.lobby_expires_at,
+    lobby_ts: row.lobby_ts,
+  };
+}
+
+// Returns the lobby quest the user has accepted (or created). Used to
+// block starting a second quest while in a pending lobby.
+export async function getLobbyQuestForCharacter(
+  db: D1Database,
+  userId: string,
+): Promise<LobbyQuest | null> {
+  const row = await db
+    .prepare(
+      `SELECT q.id, q.channel_id, q.thread_ts, q.elite, q.scene_json, q.mode,
+              q.created_by, q.lobby_expires_at, q.lobby_ts
+       FROM quests q
+       JOIN quest_party qp ON qp.quest_id = q.id
+       WHERE qp.character_id = ? AND q.status = 'lobby'
+         AND qp.invite_status = 'accepted'
+       LIMIT 1`,
+    )
+    .bind(userId)
+    .first<LobbyQuestRow>();
+  return row ? rowToLobbyQuest(row) : null;
+}
+
+export async function getLobbyQuestById(
+  db: D1Database,
+  questId: number,
+): Promise<LobbyQuest | null> {
+  const row = await db
+    .prepare(
+      `SELECT id, channel_id, thread_ts, elite, scene_json, mode,
+              created_by, lobby_expires_at, lobby_ts
+       FROM quests
+       WHERE id = ? AND status = 'lobby'
+       LIMIT 1`,
+    )
+    .bind(questId)
+    .first<LobbyQuestRow>();
+  return row ? rowToLobbyQuest(row) : null;
+}
+
+export async function getLobbyParty(
+  db: D1Database,
+  questId: number,
+): Promise<LobbyPartyMember[]> {
+  const result = await db
+    .prepare(
+      `SELECT c.slack_user_id, c.name, qp.invite_status, qp.ready
+       FROM characters c
+       JOIN quest_party qp ON qp.character_id = c.slack_user_id
+       WHERE qp.quest_id = ?
+       ORDER BY qp.joined_at ASC`,
+    )
+    .bind(questId)
+    .all<{ slack_user_id: string; name: string; invite_status: string; ready: number }>();
+  return (result.results ?? []).map((r) => ({
+    slack_user_id: r.slack_user_id,
+    name: r.name,
+    invite_status: (r.invite_status ?? "accepted") as LobbyPartyMember["invite_status"],
+    ready: r.ready === 1,
+  }));
+}
+
+export async function addPendingInvitee(
+  db: D1Database,
+  questId: number,
+  userId: string,
+): Promise<void> {
+  const now = Date.now();
+  await db
+    .prepare(
+      `INSERT OR IGNORE INTO quest_party (quest_id, character_id, joined_at, invite_status, ready)
+       VALUES (?, ?, ?, 'pending', 0)`,
+    )
+    .bind(questId, userId, now)
+    .run();
+}
+
+export async function updateInviteStatus(
+  db: D1Database,
+  questId: number,
+  userId: string,
+  status: "accepted" | "declined",
+): Promise<void> {
+  await db
+    .prepare(
+      `UPDATE quest_party SET invite_status = ? WHERE quest_id = ? AND character_id = ?`,
+    )
+    .bind(status, questId, userId)
+    .run();
+}
+
+export async function updateReadyStatus(
+  db: D1Database,
+  questId: number,
+  userId: string,
+  ready: boolean,
+): Promise<void> {
+  await db
+    .prepare(`UPDATE quest_party SET ready = ? WHERE quest_id = ? AND character_id = ?`)
+    .bind(ready ? 1 : 0, questId, userId)
+    .run();
+}
+
+export async function removePendingInvitees(
+  db: D1Database,
+  questId: number,
+): Promise<void> {
+  await db
+    .prepare(`DELETE FROM quest_party WHERE quest_id = ? AND invite_status = 'pending'`)
+    .bind(questId)
+    .run();
+}
+
+export async function activateQuest(
+  db: D1Database,
+  questId: number,
+): Promise<void> {
+  await db
+    .prepare(`UPDATE quests SET status = 'active' WHERE id = ?`)
+    .bind(questId)
+    .run();
+}
+
+export async function setLobbyTs(
+  db: D1Database,
+  questId: number,
+  ts: string,
+): Promise<void> {
+  await db
+    .prepare(`UPDATE quests SET lobby_ts = ? WHERE id = ?`)
+    .bind(ts, questId)
+    .run();
+}
+
+// ─── End lobby system ─────────────────────────────────────────────────────────
 
 // Atomically spends 1 unspent_point on the chosen primary stat. The WHERE
 // guard prevents spending when points = 0. Returns the updated character, or

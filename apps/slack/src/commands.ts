@@ -2,7 +2,7 @@
 // Long-running work (AI calls, chat.postMessage) goes through ctx.waitUntil.
 
 import type { Env, QuestRoomStub } from "./index";
-import { questRoomId } from "./index";
+import { cancelLobbyAlarm, questRoomId, scheduleLobbyAlarm } from "./index";
 import { renderBattlefieldBlocks, renderTurnToThread } from "./render_combat";
 
 // Public-facing display name. Defaults to "Slack Quest"; operators override per
@@ -121,12 +121,17 @@ import {
   countCharacters,
   countPurchasesInCycle,
   createCharacter,
+  activateQuest,
+  addPendingInvitee,
   createQuest,
   deleteCharacter,
   equipItem,
   unequipItem,
   getActiveQuestForCharacter,
   getActiveQuestInChannel,
+  getLobbyParty,
+  getLobbyQuestById,
+  getLobbyQuestForCharacter,
   getActiveShopStock,
   getCharacter,
   getEquipped,
@@ -149,6 +154,7 @@ import {
   refillMana,
   initArmorPool,
   releaseShopClaim,
+  removePendingInvitees,
   removeItem,
   resetCooldownsFor,
   reviveCharacter,
@@ -159,6 +165,7 @@ import {
   setNotificationPref,
   setBattlefieldTs,
   setJoinableTs,
+  setLobbyTs,
   setCharacterHpAndShield,
   setPosition,
   sharpenItem,
@@ -169,11 +176,15 @@ import {
   tryDeductMana,
   trySetHaggleOutcome,
   tryUpdateScene,
+  updateInviteStatus,
+  updateReadyStatus,
   grantAchievement,
   consumePendingAchievements,
   upsertSlackUsername,
   getAllEquippedSlots,
   type ActiveQuest,
+  type LobbyPartyMember,
+  type LobbyQuest,
   type BattlePosition,
   type CharGender,
   type Character,
@@ -1126,6 +1137,29 @@ export async function handleInteraction(
     return handleLiarsDecide(slash, env, roundId, choice);
   }
 
+  // Lobby system buttons: accept/decline invite, ready up, force start.
+  // action_id suffix encodes questId so each button is unique within the block.
+  if (action.action_id.startsWith("accept_invite_")) {
+    const questId = parseInt(action.action_id.slice("accept_invite_".length), 10);
+    if (!Number.isFinite(questId)) return ephemeral("Invalid lobby.");
+    return handleAcceptInvite(questId, payload, env);
+  }
+  if (action.action_id.startsWith("decline_invite_")) {
+    const questId = parseInt(action.action_id.slice("decline_invite_".length), 10);
+    if (!Number.isFinite(questId)) return ephemeral("Invalid lobby.");
+    return handleDeclineInvite(questId, payload, env);
+  }
+  if (action.action_id.startsWith("ready_up_")) {
+    const questId = parseInt(action.action_id.slice("ready_up_".length), 10);
+    if (!Number.isFinite(questId)) return ephemeral("Invalid lobby.");
+    return handleReadyUp(questId, payload, env);
+  }
+  if (action.action_id.startsWith("force_start_")) {
+    const questId = parseInt(action.action_id.slice("force_start_".length), 10);
+    if (!Number.isFinite(questId)) return ephemeral("Invalid lobby.");
+    return handleForceStart(questId, payload, env);
+  }
+
   return ephemeral(`Unknown action \`${action.action_id}\`.`);
 }
 
@@ -1852,6 +1886,12 @@ async function handleQuest(
       `You're already on a quest in <#${active.channel_id}>. Finish it (or die trying) before starting another.`,
     );
   }
+  const inLobby = await getLobbyQuestForCharacter(env.DB, payload.user_id);
+  if (inLobby) {
+    return ephemeral(
+      `You're already in a quest lobby. Ready up or wait for it to start.`,
+    );
+  }
 
   const lower = args.map((a) => a.toLowerCase());
   const elite = lower.includes("elite");
@@ -1879,25 +1919,17 @@ async function handleQuest(
 
   ctx.waitUntil((async () => {
     try {
-      // Recent foes in this channel — passed as an avoid-list to the AI so we
-      // don't see "the Schemaless Shrieker" twice in a row. Now that the
-      // function extracts every monster per quest (including dungeon middle
-      // rooms and gauntlet waves, not just the top-level), 5 quests scanned
-      // ≈ 20-30 names — plenty of coverage for the prompt's 25-name avoid
-      // slice without bloating the query.
       const recentNames = await getRecentMonsterNames(env.DB, payload.channel_id, 5);
-      // Seed the scene with the Job Board posting's title (when accepted
-      // from the board). Forces standard/boss monsters to BE the posted
-      // foe; dungeon variants still run their normal sub-boss flow.
       const baseScene = await buildQuestScene(
         env, character, elite, variant, recentNames,
         fromJobBoard ? { name: fromJobBoard.seedName } : undefined,
       );
 
-      // Validate each invitee. Bucket into joiners (will succeed) and rejects (with
-      // reasons surfaced in the opening post so the inviter knows why).
+      // Validate each invitee: must have a character, not be downed, and not
+      // already on another active quest or lobby. Rejections surface in the
+      // lobby post so the creator sees why an invite bounced.
       type Reject = { id: string; name: string; reason: string };
-      const joiners: Character[] = [];
+      const validInvitees: Character[] = [];
       const rejects: Reject[] = [];
       for (const id of invitedIds) {
         const c = await getCharacter(env.DB, id);
@@ -1909,98 +1941,49 @@ async function handleQuest(
           rejects.push({ id, name: c.name, reason: "downed" });
           continue;
         }
-        const existing = await getActiveQuestForCharacter(env.DB, id);
-        if (existing) {
+        const existingActive = await getActiveQuestForCharacter(env.DB, id);
+        if (existingActive) {
           rejects.push({ id, name: c.name, reason: "already on a quest" });
           continue;
         }
-        joiners.push(c);
+        const existingLobby = await getLobbyQuestForCharacter(env.DB, id);
+        if (existingLobby) {
+          rejects.push({ id, name: c.name, reason: "already in a lobby" });
+          continue;
+        }
+        validInvitees.push(c);
       }
 
-      // Pre-scale the monster HP based on how many will join. Saved scene already
-      // reflects the bumped HP; no follow-up scaleMonsterForJoin DB writes needed.
-      // Also tag the scene as Job-Board-derived so resolveVictory applies the
-      // reward bonus when the quest completes.
-      const scaled = preScaleForJoiners(baseScene, joiners.length, JOIN_HP_RATIO);
-      const sceneBase: SceneJson = fromJobBoard ? { ...scaled, from_job_board: true } : scaled;
-      const scene = joiners.length > 0 ? addPackMonstersForParty(sceneBase, 1 + joiners.length) : sceneBase;
-      const eliteBanner = elite ? "⚠️ *ELITE — perma-death enabled* ⚠️\n" : "";
-      const variantBanner =
-        variant === "boss"
-          ? "👑 *BOSS QUEST*\n"
-          : variant === "gauntlet"
-          ? `⚔️ *GAUNTLET — ${GAUNTLET_WAVES} waves, no flee*\n`
-          : variant === "dungeon"
-          ? `🗺️ *DUNGEON — ${dungeonRoomTotal(scene.expedition?.middle_count ?? 4)} rooms, treasure at the end*\n`
-          : "";
+      // Store the scene as-is; HP scaling happens at lobby start once the
+      // final party is known. Tag job-board origin now so startQuestFromLobby
+      // can honour the reward multiplier later.
+      const scene: SceneJson = fromJobBoard ? { ...baseScene, from_job_board: true } : baseScene;
 
-      // Expedition: render the first room (could be combat/trap/lockbox/npc).
-      // Other variants: standard opening scene + foe HP.
-      const isExpedition = variant === "dungeon" && scene.expedition;
-      const body = isExpedition
-        ? [
-            `*Theme:* ${scene.expedition!.theme}`,
-            ``,
-            renderDungeonRoom(scene.expedition!.nodes[0], scene.expedition!, payload.command),
-          ].join("\n")
-        : [
-            `_${scene.scene}_`,
-            ``,
-            `Foe: *${scene.monster_name}* — HP ${scene.monster_hp}${variant === "gauntlet" ? ` (wave 1/${GAUNTLET_WAVES})` : ""}`,
-          ].join("\n");
-
-      // Party line + invite-rejection notes, both visible in the opening channel post.
-      // Each name carries its position emoji so spectators see the front/back split
-      // before combat starts.
-      const partyMembers = [
-        `${positionEmoji(character.position)} <@${payload.user_id}>`,
-        ...joiners.map((j) => `${positionEmoji(j.position)} <@${j.slack_user_id}>`),
-      ];
-      const partyLine = joiners.length > 0
-        ? `\n👥 *Party:* ${partyMembers.join(", ")}`
-        : "";
-      const rejectLine = rejects.length > 0
-        ? `\n⚠️ Couldn't invite: ${rejects.map((r) => `*${r.name}* (${r.reason})`).join(", ")}`
-        : "";
-
-      const text = [
-        `${eliteBanner}${variantBanner}*A new quest begins.* <@${payload.user_id}> as *${character.name}* the ${character.class} (L${character.level}).${partyLine}${rejectLine}`,
-        ``,
-        body,
-      ].join("\n");
-
-      // Build optional Block Kit version of the opening — image first when we
-      // have a portrait, then header text + scene/foe body. Slack falls back
-      // to `text` for clients/contexts that don't render blocks. We only attach
-      // blocks when a portrait exists; without one, the plain-text path looks
-      // identical to the previous behavior.
-      const openingBlocks: unknown[] = [];
-      if (scene.monster_art_url) {
-        openingBlocks.push({
-          type: "image",
-          image_url: scene.monster_art_url,
-          alt_text: scene.monster_name,
-        });
-      }
-      openingBlocks.push({
-        type: "section",
-        text: { type: "mrkdwn", text },
-      });
+      // Post the lobby anchor message in the channel. The thread_ts from
+      // this message becomes the quest's home thread.
+      const lobbyExpiresAt = Date.now() + 5 * 60 * 1000;
+      const variantLabel =
+        variant === "boss" ? "👑 Boss Quest"
+        : variant === "gauntlet" ? "⚔️ Gauntlet"
+        : variant === "dungeon" ? "🗺️ Dungeon"
+        : "⚔️ Quest";
+      const elitePrefix = elite ? "⚠️ *ELITE* — " : "";
+      const lobbyText = `${elitePrefix}${variantLabel} lobby started by <@${payload.user_id}>.`;
 
       const post = await postMessage(env.SLACK_BOT_TOKEN, {
         channel: payload.channel_id,
-        text,
-        blocks: openingBlocks.length > 1 ? openingBlocks : undefined,
+        text: lobbyText,
       });
 
       if (!post.ok || !post.ts) {
         await respondToCommand(payload.response_url, {
           response_type: "ephemeral",
-          text: `Failed to start the quest: ${post.error ?? "unknown Slack error"}`,
+          text: `Failed to start the lobby: ${post.error ?? "unknown Slack error"}`,
         });
         return;
       }
 
+      // Create quest in lobby status. HP scaling deferred to startQuestFromLobby.
       const questId = await createQuest(env.DB, {
         channel_id: payload.channel_id,
         thread_ts: post.ts,
@@ -2008,48 +1991,38 @@ async function handleQuest(
         scene,
         mode: "slack",
         created_by: payload.user_id,
+        lobby: true,
+        lobby_expires_at: lobbyExpiresAt,
       });
-      // Mana refills to max, armor pool initializes to floor(armor_power/2) at quest start.
-      // Anyone who joins later via /sq join also gets both.
-      await refillMana(env.DB, payload.user_id);
-      await initArmorPool(env.DB, payload.user_id);
 
-      // Auto-join validated invitees. Each one also gets a mana refill so they
-      // start the quest fresh, same as the inviter.
-      for (const j of joiners) {
-        await joinQuest(env.DB, questId, j.slack_user_id);
-        await refillMana(env.DB, j.slack_user_id);
-        await initArmorPool(env.DB, j.slack_user_id);
-        await appendLog(env.DB, questId, j.slack_user_id, "join", "invited at quest start");
+      // Add valid invitees as pending party members.
+      for (const inv of validInvitees) {
+        await addPendingInvitee(env.DB, questId, inv.slack_user_id);
       }
 
-      // Recruitment card — proactively invites the channel to drop into the
-      // quest with a single Join button. Skip for elite (perma-death is
-      // opt-in via direct invite, not channel drive-bys). Fresh quests are
-      // always at wave 1 / room 1, but we keep the mid-flow checks for the
-      // hypothetical future "rebroadcast" path. Job-board quests still
-      // broadcast — joiners get the bonus too.
-      const isMidGauntlet =
-        scene.variant === "gauntlet" && (scene.wave ?? 1) > 1;
-      const isMidDungeon =
-        scene.variant === "dungeon" &&
-        (((scene.expedition?.visited_count ?? 1) > 1) ||
-          ((scene.expedition?.pending_doors?.length ?? 0) > 0));
-      if (!elite && !isMidGauntlet && !isMidDungeon) {
-        const joinCard = await postJoinableQuest(env.SLACK_BOT_TOKEN, {
-          channel: payload.channel_id,
-          questId,
-          variant: scene.variant ?? "standard",
-          monsterName: scene.monster_name,
-          monsterMaxHp: scene.monster_max_hp,
-          createdByUserId: payload.user_id,
-          partySize: 1 + joiners.length,
-          webBaseUrl: env.WEB_BASE_URL,
-        });
-        if (joinCard.ok && joinCard.ts) {
-          await setJoinableTs(env.DB, questId, joinCard.ts);
-        }
+      // Build and post the full lobby block kit message as a thread reply.
+      // This is the interactive card players use to accept/ready up.
+      const initialParty = await getLobbyParty(env.DB, questId);
+      const rejectLine = rejects.length > 0
+        ? `\n⚠️ Couldn't invite: ${rejects.map((r) => `*${r.name}* (${r.reason})`).join(", ")}`
+        : "";
+      const { text: lobbyBodyText, blocks: lobbyBodyBlocks } = buildLobbyContent(
+        questId, scene, initialParty, payload.user_id, rejectLine, lobbyExpiresAt, payload.command,
+      );
+      const lobbyPost = await postMessage(env.SLACK_BOT_TOKEN, {
+        channel: payload.channel_id,
+        thread_ts: post.ts,
+        text: lobbyBodyText,
+        blocks: lobbyBodyBlocks,
+      });
+      if (lobbyPost.ok && lobbyPost.ts) {
+        await setLobbyTs(env.DB, questId, lobbyPost.ts);
       }
+
+      // Schedule the 5-minute auto-start alarm via the LobbyManager DO.
+      await scheduleLobbyAlarm(
+        env, questId, lobbyExpiresAt, payload.channel_id, post.ts, lobbyPost.ts ?? null,
+      );
     } catch (err) {
       await respondToCommand(payload.response_url, {
         response_type: "ephemeral",
@@ -2058,8 +2031,352 @@ async function handleQuest(
     }
   })());
 
-  return ephemeral("🎲 Rolling for initiative...");
+  return ephemeral("⏳ Quest lobby created — accept the invite and ready up!");
 }
+
+// ─── Lobby system ─────────────────────────────────────────────────────────────
+
+const LOBBY_TIMEOUT_MS = 5 * 60 * 1000;
+
+function lobbyStatusEmoji(member: LobbyPartyMember): string {
+  if (member.invite_status === "pending") return "✉️";
+  if (member.invite_status === "declined") return "❌";
+  return member.ready ? "🟢" : "⏳";
+}
+
+function lobbyStatusLabel(member: LobbyPartyMember): string {
+  if (member.invite_status === "pending") return "Invite pending";
+  if (member.invite_status === "declined") return "Declined";
+  return member.ready ? "Ready" : "Not ready";
+}
+
+// Builds the lobby card text + blocks for a quest. Called on creation and
+// after every lobby state change (accept/decline/ready/force-start).
+function buildLobbyContent(
+  questId: number,
+  scene: SceneJson,
+  party: LobbyPartyMember[],
+  creatorId: string,
+  rejectLine: string,
+  expiresAt: number,
+  cmd: string,
+): { text: string; blocks: unknown[] } {
+  const variantLabel =
+    scene.variant === "boss" ? "👑 Boss Quest"
+    : scene.variant === "gauntlet" ? "⚔️ Gauntlet"
+    : scene.variant === "dungeon" ? "🗺️ Dungeon"
+    : "⚔️ Quest";
+
+  const rosterLines = party.map(
+    (m) => `• <@${m.slack_user_id}>  ${lobbyStatusEmoji(m)}  _${lobbyStatusLabel(m)}_`,
+  );
+  const minutesLeft = Math.max(0, Math.ceil((expiresAt - Date.now()) / 60_000));
+  const footerNote = `Quest content will be revealed once everyone readies up. Auto-starts in ~${minutesLeft} minute${minutesLeft === 1 ? "" : "s"}.`;
+
+  const text = [
+    `*${variantLabel} Lobby*`,
+    ``,
+    ...rosterLines,
+    ``,
+    footerNote,
+    rejectLine,
+  ].filter(Boolean).join("\n");
+
+  const blocks: unknown[] = [
+    {
+      type: "section",
+      text: { type: "mrkdwn", text },
+    },
+    { type: "divider" },
+    {
+      type: "actions",
+      elements: [
+        {
+          type: "button",
+          text: { type: "plain_text", text: "Accept Invite", emoji: true },
+          action_id: `accept_invite_${questId}`,
+          style: "primary",
+        },
+        {
+          type: "button",
+          text: { type: "plain_text", text: "Decline", emoji: true },
+          action_id: `decline_invite_${questId}`,
+          style: "danger",
+        },
+        {
+          type: "button",
+          text: { type: "plain_text", text: "✅ Ready Up", emoji: true },
+          action_id: `ready_up_${questId}`,
+        },
+        {
+          type: "button",
+          text: { type: "plain_text", text: "▶ Force Start", emoji: true },
+          action_id: `force_start_${questId}`,
+        },
+      ],
+    },
+  ];
+
+  return { text, blocks };
+}
+
+// Posts the full opening content once a lobby transitions to active.
+// Mirrors the body of the old synchronous quest-start, but reads the
+// already-generated scene from D1 and scales HP for the final party.
+export async function startQuestFromLobby(
+  questId: number,
+  channelId: string,
+  threadTs: string,
+  lobbyTs: string | null,
+  env: Env,
+): Promise<void> {
+  const quest = await getLobbyQuestById(env.DB, questId);
+  if (!quest) return; // already started or doesn't exist
+
+  const party = await getLobbyParty(env.DB, questId);
+  const accepted = party.filter((m) => m.invite_status === "accepted");
+
+  // Drop pending invitees and activate. Declined members were never full
+  // party members so their quest_party row was never used for HP scaling.
+  await removePendingInvitees(env.DB, questId);
+  await activateQuest(env.DB, questId);
+
+  // HP scaling: pre-scale for accepted joiners beyond the creator.
+  const joinerCount = Math.max(0, accepted.length - 1);
+  const scene = preScaleForJoiners(quest.scene, joinerCount, JOIN_HP_RATIO);
+  const finalScene = joinerCount > 0 ? addPackMonstersForParty(scene, accepted.length) : scene;
+  await saveScene(env.DB, questId, finalScene);
+
+  // Mana refill + armor pool init + log for every accepted member.
+  for (const m of accepted) {
+    await refillMana(env.DB, m.slack_user_id);
+    await initArmorPool(env.DB, m.slack_user_id);
+    await appendLog(env.DB, questId, m.slack_user_id, "join", "lobby started");
+  }
+
+  // Cancel the LobbyManager alarm (no-op if already fired).
+  await cancelLobbyAlarm(env, questId);
+
+  // Update the lobby card to show "Quest started!" and remove buttons.
+  if (lobbyTs && env.SLACK_BOT_TOKEN) {
+    await updateMessage(env.SLACK_BOT_TOKEN, {
+      channel: channelId,
+      ts: lobbyTs,
+      text: "✅ *Quest started!* Everyone is in.",
+      blocks: [
+        {
+          type: "section",
+          text: { type: "mrkdwn", text: "✅ *Quest started!* Everyone is in." },
+        },
+      ],
+    });
+  }
+
+  // Post the actual quest opening in the thread.
+  const eliteBanner = quest.elite ? "⚠️ *ELITE — perma-death enabled* ⚠️\n" : "";
+  const variantBanner =
+    finalScene.variant === "boss"
+      ? "👑 *BOSS QUEST*\n"
+      : finalScene.variant === "gauntlet"
+      ? `⚔️ *GAUNTLET — ${GAUNTLET_WAVES} waves, no flee*\n`
+      : finalScene.variant === "dungeon"
+      ? `🗺️ *DUNGEON — ${dungeonRoomTotal(finalScene.expedition?.middle_count ?? 4)} rooms, treasure at the end*\n`
+      : "";
+
+  const partyMentions = accepted.map((m) => `<@${m.slack_user_id}>`).join(", ");
+  const partyLine = accepted.length > 1 ? `\n👥 *Party:* ${partyMentions}` : "";
+
+  const isExpedition = finalScene.variant === "dungeon" && finalScene.expedition;
+  const body = isExpedition
+    ? [
+        `*Theme:* ${finalScene.expedition!.theme}`,
+        ``,
+        renderDungeonRoom(finalScene.expedition!.nodes[0], finalScene.expedition!, "/sq"),
+      ].join("\n")
+    : [
+        `_${finalScene.scene}_`,
+        ``,
+        `Foe: *${finalScene.monster_name}* — HP ${finalScene.monster_hp}${finalScene.variant === "gauntlet" ? ` (wave 1/${GAUNTLET_WAVES})` : ""}`,
+      ].join("\n");
+
+  const openingText = [
+    `${eliteBanner}${variantBanner}*The quest begins.* ${partyMentions}.${partyLine}`,
+    ``,
+    body,
+  ].join("\n");
+
+  const openingBlocks: unknown[] = [];
+  if (finalScene.monster_art_url) {
+    openingBlocks.push({
+      type: "image",
+      image_url: finalScene.monster_art_url,
+      alt_text: finalScene.monster_name,
+    });
+  }
+  openingBlocks.push({
+    type: "section",
+    text: { type: "mrkdwn", text: openingText },
+  });
+
+  if (env.SLACK_BOT_TOKEN) {
+    await postMessage(env.SLACK_BOT_TOKEN, {
+      channel: channelId,
+      thread_ts: threadTs,
+      text: openingText,
+      blocks: openingBlocks.length > 1 ? openingBlocks : undefined,
+    });
+  }
+
+  // Post a public recruitment card for non-elite quests so latecomers can join.
+  if (!quest.elite) {
+    const joinCard = await postJoinableQuest(env.SLACK_BOT_TOKEN, {
+      channel: channelId,
+      questId,
+      variant: finalScene.variant ?? "standard",
+      monsterName: finalScene.monster_name,
+      monsterMaxHp: finalScene.monster_max_hp,
+      createdByUserId: quest.created_by,
+      partySize: accepted.length,
+      webBaseUrl: env.WEB_BASE_URL,
+    });
+    if (joinCard.ok && joinCard.ts) {
+      await setJoinableTs(env.DB, questId, joinCard.ts);
+    }
+  }
+}
+
+// Updates the lobby card in-place after any state change.
+async function refreshLobbyCard(
+  questId: number,
+  channelId: string,
+  quest: LobbyQuest,
+  creatorId: string,
+  env: Env,
+): Promise<void> {
+  if (!quest.lobby_ts || !env.SLACK_BOT_TOKEN) return;
+  const party = await getLobbyParty(env.DB, questId);
+  const { text, blocks } = buildLobbyContent(
+    questId, quest.scene, party, creatorId, "", quest.lobby_expires_at ?? Date.now() + LOBBY_TIMEOUT_MS, "/sq",
+  );
+  await updateMessage(env.SLACK_BOT_TOKEN, { channel: channelId, ts: quest.lobby_ts, text, blocks });
+}
+
+// Checks whether all accepted members are ready; if so, starts the quest.
+async function maybeAutoStart(
+  questId: number,
+  channelId: string,
+  threadTs: string,
+  lobbyTs: string | null,
+  env: Env,
+): Promise<boolean> {
+  const party = await getLobbyParty(env.DB, questId);
+  const accepted = party.filter((m) => m.invite_status === "accepted");
+  if (accepted.length > 0 && accepted.every((m) => m.ready)) {
+    await startQuestFromLobby(questId, channelId, threadTs, lobbyTs, env);
+    return true;
+  }
+  return false;
+}
+
+async function handleAcceptInvite(
+  questId: number,
+  payload: InteractivePayload,
+  env: Env,
+): Promise<CommandResponse> {
+  const userId = payload.user.id;
+  const quest = await getLobbyQuestById(env.DB, questId);
+  if (!quest) return ephemeral("This lobby is no longer active.");
+
+  const party = await getLobbyParty(env.DB, questId);
+  const member = party.find((m) => m.slack_user_id === userId);
+  if (!member) return ephemeral("You weren't invited to this lobby.");
+  if (member.invite_status !== "pending") {
+    return ephemeral(`You already ${member.invite_status === "accepted" ? "accepted" : "declined"} this invite.`);
+  }
+
+  await updateInviteStatus(env.DB, questId, userId, "accepted");
+  await refreshLobbyCard(questId, quest.channel_id, quest, quest.created_by, env);
+
+  const started = await maybeAutoStart(
+    questId, quest.channel_id, quest.thread_ts, quest.lobby_ts, env,
+  );
+  if (started) return { response_type: "ephemeral", text: "✅ Quest started!", _deleteOriginal: false };
+  return ephemeral("✅ You joined the lobby! Click *Ready Up* when you're set.");
+}
+
+async function handleDeclineInvite(
+  questId: number,
+  payload: InteractivePayload,
+  env: Env,
+): Promise<CommandResponse> {
+  const userId = payload.user.id;
+  const quest = await getLobbyQuestById(env.DB, questId);
+  if (!quest) return ephemeral("This lobby is no longer active.");
+
+  const party = await getLobbyParty(env.DB, questId);
+  const member = party.find((m) => m.slack_user_id === userId);
+  if (!member || member.invite_status !== "pending") {
+    return ephemeral("Nothing to decline.");
+  }
+
+  await updateInviteStatus(env.DB, questId, userId, "declined");
+  await refreshLobbyCard(questId, quest.channel_id, quest, quest.created_by, env);
+  return ephemeral("Invite declined.");
+}
+
+async function handleReadyUp(
+  questId: number,
+  payload: InteractivePayload,
+  env: Env,
+): Promise<CommandResponse> {
+  const userId = payload.user.id;
+  const quest = await getLobbyQuestById(env.DB, questId);
+  if (!quest) return ephemeral("This lobby is no longer active.");
+
+  const party = await getLobbyParty(env.DB, questId);
+  const member = party.find((m) => m.slack_user_id === userId);
+  if (!member) {
+    return ephemeral("You're not in this lobby. Accept the invite first.");
+  }
+  if (member.invite_status !== "accepted") {
+    return ephemeral("Accept the invite before readying up.");
+  }
+  if (member.ready) return ephemeral("You're already marked as ready.");
+
+  await updateReadyStatus(env.DB, questId, userId, true);
+  await refreshLobbyCard(questId, quest.channel_id, quest, quest.created_by, env);
+
+  const started = await maybeAutoStart(
+    questId, quest.channel_id, quest.thread_ts, quest.lobby_ts, env,
+  );
+  if (started) return { response_type: "ephemeral", text: "🚀 Everyone's ready — quest started!", _deleteOriginal: false };
+  return ephemeral("🟢 You're ready! Waiting for others…");
+}
+
+async function handleForceStart(
+  questId: number,
+  payload: InteractivePayload,
+  env: Env,
+): Promise<CommandResponse> {
+  const userId = payload.user.id;
+  const quest = await getLobbyQuestById(env.DB, questId);
+  if (!quest) return ephemeral("This lobby is no longer active.");
+  if (quest.created_by !== userId) {
+    return ephemeral("Only the quest creator can force start.");
+  }
+  await startQuestFromLobby(questId, quest.channel_id, quest.thread_ts, quest.lobby_ts, env);
+  return { response_type: "ephemeral", text: "▶ Quest force-started!", _deleteOriginal: false };
+}
+
+// Returns an ephemeral "quest hasn't started" message if the user is an
+// accepted member of a lobby quest, or null if they are not.
+async function lobbyGuard(db: D1Database, userId: string): Promise<CommandResponse | null> {
+  const lobby = await getLobbyQuestForCharacter(db, userId);
+  if (!lobby) return null;
+  return ephemeral("⏳ Your quest hasn't started yet — waiting for the lobby to ready up.");
+}
+
+// ─── End lobby system ─────────────────────────────────────────────────────────
 
 // Builds the SceneJson for a new quest, with variant-specific shape:
 //   standard   → existing behavior
@@ -3747,7 +4064,7 @@ async function handleCombatViaEngine(
   }
 
   let quest = await getActiveQuestForCharacter(env.DB, payload.user_id);
-  if (!quest) return ephemeral(`You're not on an active quest. Try \`${payload.command} quest\` or \`${payload.command} join\`.`);
+  if (!quest) return (await lobbyGuard(env.DB, payload.user_id)) ?? ephemeral(`You're not on an active quest. Try \`${payload.command} quest\` or \`${payload.command} join\`.`);
   if (quest.channel_id !== payload.channel_id) {
     return ephemeral(`Your active quest is in <#${quest.channel_id}>.`);
   }
@@ -3875,7 +4192,7 @@ async function handleCombat(
   }
 
   const quest = await getActiveQuestForCharacter(env.DB, payload.user_id);
-  if (!quest) return ephemeral(`You're not on an active quest. Try \`${payload.command} quest\` or \`${payload.command} join\`.`);
+  if (!quest) return (await lobbyGuard(env.DB, payload.user_id)) ?? ephemeral(`You're not on an active quest. Try \`${payload.command} quest\` or \`${payload.command} join\`.`);
 
   const cooldown = await cooldownRemaining(env.DB, quest.id, payload.user_id, await actionCooldownMs(env.DB, quest.id));
   if (cooldown > 0) {
@@ -5388,7 +5705,7 @@ async function handleChoose(
   if (!isFighter(character)) return ephemeral("You're downed and can't act.");
 
   const quest = await getActiveQuestForCharacter(env.DB, payload.user_id);
-  if (!quest) return ephemeral("You're not on an active quest.");
+  if (!quest) return (await lobbyGuard(env.DB, payload.user_id)) ?? ephemeral("You're not on an active quest.");
   if (quest.scene.variant !== "dungeon" || !quest.scene.expedition) {
     return ephemeral(`No room choice to make — try \`${payload.command} attack\` or similar.`);
   }
@@ -5730,7 +6047,7 @@ async function handleTake(
   if (!character) return ephemeral(`You need to \`${payload.command} roll\` a character first.`);
 
   const quest = await getActiveQuestForCharacter(env.DB, payload.user_id);
-  if (!quest) return ephemeral("You're not on an active quest.");
+  if (!quest) return (await lobbyGuard(env.DB, payload.user_id)) ?? ephemeral("You're not on an active quest.");
 
   if (quest.scene.graph) return handleGraphTake(payload, args, env, quest);
 
