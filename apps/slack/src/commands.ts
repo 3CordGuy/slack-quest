@@ -4045,7 +4045,7 @@ async function dispatchTurnNotification(
   if (actorChar?.notification_pref === "dm") {
     await sendDM(env.SLACK_BOT_TOKEN, turnStart.actor, `⚔️ It's your turn in the quest!`);
   } else {
-    await postToThread(env, quest, `<@${turnStart.actor}> it's your turn!`, { broadcast: true });
+    await postToThread(env, quest, `<@${turnStart.actor}> it's your turn!`);
   }
 }
 
@@ -11203,13 +11203,13 @@ async function handleNotifyPref(
   const pref = args[0]?.toLowerCase();
   if (pref !== "dm" && pref !== "thread") {
     return ephemeral(
-      `Usage: \`${payload.command} notify dm\` or \`${payload.command} notify thread\`\nDefault is \`thread\` — your turn posts a broadcast in the quest channel. Switch to \`dm\` to receive a direct message instead.`,
+      `Usage: \`${payload.command} notify dm\` or \`${payload.command} notify thread\`\nDefault is \`thread\` — your turn posts a reply in the quest thread. Switch to \`dm\` to receive a direct message instead.`,
     );
   }
   const character = await getCharacter(env.DB, payload.user_id);
   if (!character) return ephemeral(`You need to \`${payload.command} roll\` a character first.`);
   await setNotificationPref(env.DB, payload.user_id, pref);
-  const label = pref === "dm" ? "direct messages" : "channel broadcasts";
+  const label = pref === "dm" ? "direct messages" : "quest thread replies";
   return ephemeral(`✅ Turn notifications set to *${label}*.`);
 }
 

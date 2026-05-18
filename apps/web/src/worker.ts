@@ -186,6 +186,16 @@ import {
   type MonsterSpec,
   type SceneJson,
   type TrapChoice,
+  getLobbyQuestForCharacter,
+  getLobbyQuestById,
+  getLobbyParty,
+  updateInviteStatus,
+  updateReadyStatus,
+  removePendingInvitees,
+  activateQuest,
+  appendLog,
+  type LobbyQuest,
+  type LobbyPartyMember,
 } from "@gantt-quest/db";
 
 // =============================================================================
@@ -1151,6 +1161,15 @@ function addPackMonstersForParty(scene: SceneJson, partySize: number): SceneJson
     ] as MonsterSpec[],
   };
 }
+function preScaleForJoiners(scene: SceneJson, joinerCount: number, ratio: number): SceneJson {
+  let s = scene;
+  for (let i = 0; i < joinerCount; i++) {
+    const bump = Math.max(1, Math.floor(s.monster_max_hp * ratio));
+    s = { ...s, monster_hp: s.monster_hp + bump, monster_max_hp: s.monster_max_hp + bump };
+  }
+  return s;
+}
+
 const BOSS_LEVEL_REQUIRED = 3;
 const GAUNTLET_LEVEL_REQUIRED = 5;
 const GAUNTLET_WAVES = 3;
@@ -3795,6 +3814,96 @@ app.get("/api/quest/active", async (c) => {
   const terminalStates = new Set(["victory", "defeat", "fled"]);
   const hasWebCombat = !!existingCombat && !terminalStates.has(existingCombat.status as string);
   return c.json({ quest, party, has_web_combat: hasWebCombat });
+});
+
+async function webStartQuestFromLobby(
+  questId: number,
+  env: Env,
+): Promise<void> {
+  const quest = await getLobbyQuestById(env.DB, questId);
+  if (!quest) return;
+  const party = await getLobbyParty(env.DB, questId);
+  const accepted = party.filter((m) => m.invite_status === "accepted");
+
+  await removePendingInvitees(env.DB, questId);
+  await activateQuest(env.DB, questId);
+
+  const joinerCount = Math.max(0, accepted.length - 1);
+  const scene = preScaleForJoiners(quest.scene, joinerCount, JOIN_HP_RATIO);
+  const finalScene = joinerCount > 0 ? addPackMonstersForParty(scene, accepted.length) : scene;
+  await saveScene(env.DB, questId, finalScene);
+
+  for (const m of accepted) {
+    await refillMana(env.DB, m.slack_user_id);
+    await appendLog(env.DB, questId, m.slack_user_id, "join", "lobby started via web");
+  }
+
+  if (env.SLACK_BOT_TOKEN && quest.lobby_ts) {
+    await postSlackMessage(env.SLACK_BOT_TOKEN, {
+      channel: quest.channel_id,
+      text: "✅ *Quest started!* Everyone is in.",
+    });
+  }
+}
+
+// Returns the current user's lobby quest + party if they have a pending invite or are in a lobby.
+app.get("/api/quest/lobby", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const quest = await getLobbyQuestForCharacter(c.env.DB, session.slack_user_id);
+  if (!quest) return c.json({ quest: null });
+  const party = await getLobbyParty(c.env.DB, quest.id);
+  return c.json({ quest, party });
+});
+
+app.post("/api/quest/:id/lobby/accept", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const questId = Number(c.req.param("id"));
+  const party = await getLobbyParty(c.env.DB, questId);
+  const me = party.find((m) => m.slack_user_id === session.slack_user_id);
+  if (!me || me.invite_status !== "pending") return c.json({ error: "not_pending" }, 400);
+  await updateInviteStatus(c.env.DB, questId, session.slack_user_id, "accepted");
+  return c.json({ ok: true });
+});
+
+app.post("/api/quest/:id/lobby/decline", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const questId = Number(c.req.param("id"));
+  const party = await getLobbyParty(c.env.DB, questId);
+  const me = party.find((m) => m.slack_user_id === session.slack_user_id);
+  if (!me || me.invite_status !== "pending") return c.json({ error: "not_pending" }, 400);
+  await updateInviteStatus(c.env.DB, questId, session.slack_user_id, "declined");
+  return c.json({ ok: true });
+});
+
+app.post("/api/quest/:id/lobby/ready", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const questId = Number(c.req.param("id"));
+  const party = await getLobbyParty(c.env.DB, questId);
+  const me = party.find((m) => m.slack_user_id === session.slack_user_id);
+  if (!me || me.invite_status !== "accepted") return c.json({ error: "not_accepted" }, 400);
+  await updateReadyStatus(c.env.DB, questId, session.slack_user_id, true);
+
+  // Re-fetch to check if all accepted are now ready
+  const updated = await getLobbyParty(c.env.DB, questId);
+  const accepted = updated.filter((m) => m.invite_status === "accepted");
+  const allReady = accepted.length > 0 && accepted.every((m) => m.ready);
+  if (allReady) await webStartQuestFromLobby(questId, c.env);
+  return c.json({ ok: true, started: allReady });
+});
+
+app.post("/api/quest/:id/lobby/force_start", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const questId = Number(c.req.param("id"));
+  const quest = await getLobbyQuestById(c.env.DB, questId);
+  if (!quest) return c.json({ error: "not_found" }, 404);
+  if (quest.created_by !== session.slack_user_id) return c.json({ error: "not_creator" }, 403);
+  await webStartQuestFromLobby(questId, c.env);
+  return c.json({ ok: true, started: true });
 });
 
 // Most-recent completed/failed quests for the signed-in user. Used to render
