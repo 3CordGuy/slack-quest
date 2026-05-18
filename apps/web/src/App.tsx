@@ -1477,11 +1477,13 @@ export function App() {
   }
 
   if (activeCombat) {
+    const chr = state.me.character;
     return (
       <CombatErrorBoundary onReset={() => { setActiveCombat(null); setCombatDismissed(true); void refresh(); }}>
         <CombatPage
           questId={activeCombat.questId}
           selfId={state.me.slack_user_id}
+          onOpenInventory={chr ? () => setInventoryOpen(true) : undefined}
           onExit={() => {
             setActiveCombat(null);
             setCombatDismissed(true);
@@ -1492,6 +1494,21 @@ export function App() {
             void refresh();
           }}
         />
+        {inventoryOpen && chr && (
+          <InventoryFullScreen
+            items={state.inventory}
+            inQuest={true}
+            selfId={state.me.slack_user_id}
+            characterLevel={chr.level}
+            character={chr}
+            onEquip={equipItem}
+            onUnequip={unequipItem}
+            onSell={sellItem}
+            onUse={useItem}
+            onGive={giveItem}
+            onClose={() => setInventoryOpen(false)}
+          />
+        )}
       </CombatErrorBoundary>
     );
   }

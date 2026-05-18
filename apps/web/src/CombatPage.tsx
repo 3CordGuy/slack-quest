@@ -730,10 +730,12 @@ export function CombatPage({
   questId,
   selfId,
   onExit,
+  onOpenInventory,
 }: {
   questId: number;
   selfId: string;
   onExit: () => void;
+  onOpenInventory?: () => void;
 }) {
   const [ui, dispatch] = useReducer(reducer, {
     connection: "connecting",
@@ -1158,7 +1160,7 @@ export function CombatPage({
       {/* Party chips row */}
       {state && (
         <div style={{ background: "rgba(10,11,14,0.92)", borderTop: "1px solid #1e2028", padding: "6px 10px", flexShrink: 0, zIndex: 8 }}>
-          <PartyChips fighters={state.fighters} selfId={selfId} flashIds={flashIds} onClickSelf={() => setItemPicker("open")} />
+          <PartyChips fighters={state.fighters} selfId={selfId} flashIds={flashIds} onClickSelf={onOpenInventory} />
         </div>
       )}
 
