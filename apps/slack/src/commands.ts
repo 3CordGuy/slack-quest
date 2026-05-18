@@ -1276,9 +1276,6 @@ export async function handleCommand(
       // navigation; plain-text fallback included for clients that strip
       // blocks).
       return rulesResponse(payload.command, botName(env), args[0]);
-    case "web-login":
-    case "weblogin":
-      return handleWebLogin(payload, env);
     default:
       return ephemeral(`Unknown command: \`${sub}\`. Try \`${payload.command} help\`.`);
   }
