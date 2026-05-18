@@ -193,6 +193,7 @@ import {
   updateReadyStatus,
   removePendingInvitees,
   activateQuest,
+  addPendingInvitee,
   appendLog,
   type LobbyQuest,
   type LobbyPartyMember,
@@ -3904,6 +3905,25 @@ app.post("/api/quest/:id/lobby/force_start", async (c) => {
   if (quest.created_by !== session.slack_user_id) return c.json({ error: "not_creator" }, 403);
   await webStartQuestFromLobby(questId, c.env);
   return c.json({ ok: true, started: true });
+});
+
+app.post("/api/quest/:id/lobby/invite", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const questId = Number(c.req.param("id"));
+  const quest = await getLobbyQuestById(c.env.DB, questId);
+  if (!quest) return c.json({ error: "not_found" }, 404);
+  if (quest.created_by !== session.slack_user_id) return c.json({ error: "not_creator" }, 403);
+  const body = await c.req.json<{ target_user_id: string }>();
+  if (!body?.target_user_id) return c.json({ error: "missing_target" }, 400);
+  // Verify the target exists on the same team
+  const target = await c.env.DB
+    .prepare(`SELECT slack_user_id FROM characters WHERE slack_user_id = ? AND slack_team_id = ?`)
+    .bind(body.target_user_id, session.slack_team_id)
+    .first<{ slack_user_id: string }>();
+  if (!target) return c.json({ error: "not_found" }, 404);
+  await addPendingInvitee(c.env.DB, questId, body.target_user_id);
+  return c.json({ ok: true });
 });
 
 // Most-recent completed/failed quests for the signed-in user. Used to render

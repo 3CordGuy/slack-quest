@@ -17,6 +17,15 @@ interface LobbyQuestData {
   lobby_expires_at: number | null;
 }
 
+interface TeamMember {
+  slack_user_id: string;
+  name: string;
+  class: string;
+  level: number;
+  hp: number;
+  max_hp: number;
+}
+
 export function LobbyView({
   selfId,
   onQuestStarted,
@@ -28,13 +37,15 @@ export function LobbyView({
   const [party, setParty] = useState<LobbyMember[]>([]);
   const [loading, setLoading] = useState(true);
   const [acting, setActing] = useState(false);
+  const [showInvite, setShowInvite] = useState(false);
+  const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
+  const [inviting, setInviting] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     const res = await fetch("/api/quest/lobby", { credentials: "include" });
     if (!res.ok) return;
     const body = (await res.json()) as { quest: LobbyQuestData | null; party?: LobbyMember[] };
     if (!body.quest) {
-      // Quest transitioned to active — notify parent
       onQuestStarted();
       return;
     }
@@ -48,6 +59,34 @@ export function LobbyView({
     const t = setInterval(() => void refresh(), 4000);
     return () => clearInterval(t);
   }, [refresh]);
+
+  async function loadTeamMembers() {
+    const res = await fetch("/api/characters", { credentials: "include" });
+    if (!res.ok) return;
+    const body = (await res.json()) as { characters?: TeamMember[] };
+    setTeamMembers(body.characters ?? []);
+  }
+
+  async function openInvite() {
+    await loadTeamMembers();
+    setShowInvite(true);
+  }
+
+  async function invite(targetUserId: string) {
+    if (!quest || inviting) return;
+    setInviting(targetUserId);
+    try {
+      await fetch(`/api/quest/${quest.id}/lobby/invite`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ target_user_id: targetUserId }),
+      });
+      await refresh();
+    } finally {
+      setInviting(null);
+    }
+  }
 
   async function act(endpoint: string) {
     if (!quest || acting) return;
@@ -90,6 +129,10 @@ export function LobbyView({
       : quest?.scene.variant === "gauntlet"
         ? `Gauntlet — ${quest?.scene.monster_name ?? "?"}`
         : (quest?.scene.monster_name ?? "Quest");
+
+  // Which team members are not already in the party
+  const partyIds = new Set(party.map((m) => m.slack_user_id));
+  const inviteable = teamMembers.filter((m) => !partyIds.has(m.slack_user_id));
 
   if (loading) {
     return (
@@ -200,6 +243,94 @@ export function LobbyView({
         })}
       </div>
 
+      {/* Invite player picker — creator only */}
+      {isCreator && showInvite && (
+        <div
+          style={{
+            background: "#13161c",
+            border: "1px solid #1f2937",
+            borderRadius: 10,
+            padding: 14,
+            marginBottom: 16,
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              marginBottom: 10,
+            }}
+          >
+            <span style={{ fontSize: 13, fontWeight: 600, color: "#9ca3af" }}>
+              Invite a player
+            </span>
+            <button
+              onClick={() => setShowInvite(false)}
+              style={{
+                background: "none",
+                border: "none",
+                color: "#6b7280",
+                cursor: "pointer",
+                fontSize: 16,
+                lineHeight: 1,
+                padding: "0 4px",
+              }}
+            >
+              ×
+            </button>
+          </div>
+          {inviteable.length === 0 ? (
+            <div style={{ fontSize: 13, color: "#6b7280" }}>
+              All available players are already in the lobby.
+            </div>
+          ) : (
+            <div style={{ display: "grid", gap: 6 }}>
+              {inviteable.map((tm) => (
+                <div
+                  key={tm.slack_user_id}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    padding: "7px 10px",
+                    background: "#0e1117",
+                    borderRadius: 7,
+                    border: "1px solid #1f2937",
+                  }}
+                >
+                  <div>
+                    <span style={{ fontSize: 13, fontWeight: 600, color: "#f5f5f5" }}>
+                      {tm.name}
+                    </span>
+                    <span style={{ fontSize: 11, color: "#6b7280", marginLeft: 8 }}>
+                      Lv{tm.level} {tm.class}
+                    </span>
+                  </div>
+                  <button
+                    disabled={inviting === tm.slack_user_id}
+                    onClick={() => void invite(tm.slack_user_id)}
+                    style={{
+                      padding: "5px 12px",
+                      borderRadius: 6,
+                      border: "none",
+                      background: "#1d4ed8",
+                      color: "#fff",
+                      fontSize: 12,
+                      fontWeight: 600,
+                      cursor: inviting === tm.slack_user_id ? "not-allowed" : "pointer",
+                      opacity: inviting === tm.slack_user_id ? 0.6 : 1,
+                    }}
+                  >
+                    {inviting === tm.slack_user_id ? "…" : "Invite"}
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Action buttons */}
       <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
         {me?.invite_status === "pending" && (
@@ -246,6 +377,19 @@ export function LobbyView({
           >
             <Icon name="trophy" size={13} color="#22c55e" /> You're ready — waiting for others…
           </div>
+        )}
+        {isCreator && !showInvite && (
+          <button
+            onClick={() => void openInvite()}
+            style={{
+              ...btnBase,
+              background: "#1f2937",
+              color: "#9ca3af",
+              border: "1px solid #374151",
+            }}
+          >
+            + Invite Player
+          </button>
         )}
         {isCreator && (
           <button
