@@ -1126,6 +1126,11 @@ export function CombatPage({
               })}
             </div>
 
+            {/* Left column — dice rolls, below the initiative strip */}
+            <div style={{ position: "absolute", top: 60, left: 12, zIndex: 6, maxWidth: "min(200px, 16vw)" }}>
+              <DiceRollDisplay rolls={diceRolls} align="left" />
+            </div>
+
             {/* Right rail — combat log */}
             <div style={{ position: "absolute", top: 12, right: 12, bottom: 12, width: "min(280px, 22vw)", display: "flex", flexDirection: "column", zIndex: 6 }}>
               <EventLog log={ui.log} scrollRef={logScrollRef} railMode />
@@ -1260,8 +1265,6 @@ export function CombatPage({
           </label>
         </div>
       )}
-
-      <DiceRollDisplay rolls={diceRolls} />
 
       {/* Victory modal — delayed until dice settle */}
       {ended && state?.status === "victory" && victoryModalReady && (
@@ -2847,7 +2850,7 @@ const D6_PIPS: Record<number, [number, number][]> = {
   6: [[0,0],[2,0],[0,1],[2,1],[0,2],[2,2]],
 };
 
-function DiceRollDisplay({ rolls }: { rolls: DiceRollEntry[] }) {
+function DiceRollDisplay({ rolls, align = "center" }: { rolls: DiceRollEntry[]; align?: "center" | "left" }) {
   useEffect(() => { injectDiceStyles(); }, []);
   if (rolls.length === 0) return null;
   const enemyRolls = rolls.filter((r) => isMonsterActor(r.actor));
@@ -2856,7 +2859,7 @@ function DiceRollDisplay({ rolls }: { rolls: DiceRollEntry[] }) {
     display: "flex",
     gap: 14,
     flexWrap: "wrap",
-    justifyContent: "center",
+    justifyContent: align === "left" ? "flex-start" : "center",
     alignItems: "flex-start",
   };
   const pillStyle = (color: string, ring: string): React.CSSProperties => ({
@@ -2874,18 +2877,13 @@ function DiceRollDisplay({ rolls }: { rolls: DiceRollEntry[] }) {
   });
   return (
     <div style={{
-      position: "fixed",
-      bottom: 40,
-      left: "50%",
-      transform: "translateX(-50%)",
       display: "flex",
       flexDirection: "column",
-      gap: 28,
-      zIndex: 200,
+      gap: 16,
       pointerEvents: "none",
     }}>
       {enemyRolls.length > 0 && (
-        <div style={{ textAlign: "center" }}>
+        <div style={{ textAlign: align }}>
           <div style={pillStyle("#fca5a5", "#7f1d1d")}>Enemy</div>
           <div style={rowStyle}>
             {enemyRolls.map((r) => <DiceFace key={r.id} roll={r} />)}
@@ -2893,7 +2891,7 @@ function DiceRollDisplay({ rolls }: { rolls: DiceRollEntry[] }) {
         </div>
       )}
       {partyRolls.length > 0 && (
-        <div style={{ textAlign: "center" }}>
+        <div style={{ textAlign: align }}>
           <div style={pillStyle("#86efac", "#166534")}>Party</div>
           <div style={rowStyle}>
             {partyRolls.map((r) => <DiceFace key={r.id} roll={r} />)}
