@@ -1135,6 +1135,17 @@ export async function handleInteraction(
     return handleLiarsDecide(slash, env, roundId, choice);
   }
 
+  // Inspect sheet "Invite to Quest" button. action_id suffix is the target userId.
+  if (action.action_id.startsWith("invite_to_quest_")) {
+    const targetId = action.action_id.slice("invite_to_quest_".length);
+    return handleQuest(
+      { ...slash, text: `<@${targetId}>` },
+      [`<@${targetId}>`],
+      env,
+      ctx,
+    );
+  }
+
   // Lobby system buttons: accept/decline invite, ready up, force start.
   // action_id suffix encodes questId so each button is unique within the block.
   if (action.action_id.startsWith("accept_invite_")) {
@@ -1646,9 +1657,8 @@ async function handleInspect(
   // and the class-singleton fallback renders immediately.
   const charArt = await characterArt(env, ctx, target);
   const text = `Inspecting <@${targetId}>:\n${formatSheet(target, weapon, armor)}`;
-  // Reuse buildSheetBlocks but strip the trailing actions block (no [Inventory]
-  // button on someone else's sheet) and prepend a header noting who you're
-  // looking at.
+  // Reuse buildSheetBlocks but replace the trailing actions block with one
+  // that has an "Invite to Quest" button instead of [Inventory].
   const sheetBlocks = buildSheetBlocks(target, weapon, armor, charArt).filter(
     (b) => (b as { type?: string }).type !== "actions",
   );
@@ -1658,6 +1668,17 @@ async function handleInspect(
       elements: [{ type: "mrkdwn", text: `_Inspecting <@${targetId}>'s public sheet._` }],
     },
     ...sheetBlocks,
+    {
+      type: "actions",
+      elements: [
+        {
+          type: "button",
+          text: { type: "plain_text", text: "⚔️ Invite to Quest", emoji: true },
+          action_id: `invite_to_quest_${targetId}`,
+          style: "primary",
+        },
+      ],
+    },
   ];
   return { text, response_type: "ephemeral", blocks };
 }
