@@ -4187,6 +4187,24 @@ async function handleCombatViaEngine(
     await upsertBattlefield(env, quest, result.state);
   }
 
+  // Hand off to the appropriate resolution path when combat ends.
+  if (result.state.status === "victory") {
+    const party = await getQuestParty(env.DB, quest.id);
+    const fighters = party.filter(isFighter);
+    return resolveVictory(payload, env, ctx, character, quest, fighters, []);
+  }
+
+  if (result.state.status === "defeat") {
+    // All fighters downed — apply soft death to the current actor and fail the quest.
+    const party = await getQuestParty(env.DB, quest.id);
+    const fighters = party.filter(isFighter);
+    return resolveDeath(payload, env, ctx, character, quest, fighters, []);
+  }
+
+  if (result.state.status === "fled") {
+    return ephemeral("🏃 The party fled.");
+  }
+
   return ephemeral("✅ Action resolved.");
 }
 
