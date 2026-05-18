@@ -274,7 +274,7 @@ export const VIEW_ART_PROMPTS = {
   // heading into the wilds. No interior — the subject is the transitional
   // liminal space between safety and adventure.
   outskirts:
-    "A rough adventurers' encampment just outside a fantasy village. Canvas tents pitched on muddy ground, a crackling cook fire at the center with a pot hanging over it. Weapon racks with spare swords and shields, a folding table with hand-drawn maps weighed down by a dagger. A few armored silhouettes in the middle distance — one sharpening a blade, one studying a map — but no close-up faces. Low wooden fencing marks the village boundary behind; dark rolling hills and the first trees of a forest loom ahead. Dusk light, smoke in the air, sense of imminent departure.",
+    "The dark edge of an ancient forest at dusk, viewed from a dirt path leading into it. Massive twisted trees form a cathedral arch overhead, their roots tangled with glowing fiber-optic cables and half-buried server components. A few runic warning signs nailed to tree trunks — hand-carved wood but with blinking LED indicators. Fireflies and faint bioluminescent mushrooms light the path. Deep shadows between the trees hint at unseen creatures. The village lantern light fades behind; the path ahead plunges into mystery. Wide establishing shot, no characters.",
 } as const;
 
 // Builds the full R2 key + the composed prompt for a given view-art short
