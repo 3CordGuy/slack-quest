@@ -404,7 +404,7 @@ function PartyBar({ fighters, selfId, party, onClickSelf, flashIds }: {
           <div style={{ fontSize: 13, fontWeight: 600, color: "#e2e8f0", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", paddingRight: 30 }}>{f.name}</div>
           <HpBar current={f.hp} max={f.max_hp} height={7} />
           <div style={{ fontSize: 11, color: "#9aa0a6", marginTop: 2 }}>
-            {f.hp}/{f.max_hp} HP{f.shield > 0 && <span style={{ color: "#60a5fa", marginLeft: 4 }}>+{f.shield}<Icon name="shield" size={10} /></span>}
+            {f.hp}/{f.max_hp} HP
           </div>
           <div style={{ display: "flex", gap: 4, marginTop: 4 }}>
             {Array.from({ length: f.max_mana }, (_, mi) => (

@@ -3257,19 +3257,7 @@ function CharacterInspectDialog({
           <Stat
             label="HP"
             icon={<Icon name="health-increase" color="#86efac" size={36} />}
-            value={
-              <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-                <span>{character.hp} / {character.max_hp}</span>
-                {character.shield > 0 && (
-                  <span
-                    title="Temporary shield buffer (absorbs damage before HP)."
-                    style={{ fontSize: 13, color: "#7dd3fc", fontWeight: 500 }}
-                  >
-                    +{character.shield} <Icon name="shield" size={12} />
-                  </span>
-                )}
-              </div>
-            }
+            value={`${character.hp} / ${character.max_hp}`}
           />
           <Stat
             label="Mana"
@@ -5092,9 +5080,6 @@ function InventoryFullScreen({
                 <span style={{ color: "#86efac" }} title="HP"><Icon name="heart" size={11} /> {character.hp}/{character.max_hp}</span>
                 {character.max_mana > 0 && (
                   <span style={{ color: "#a78bfa" }} title="Mana"><Icon name="crystal-ball" size={11} /> {character.mana}/{character.max_mana}</span>
-                )}
-                {character.shield > 0 && (
-                  <span style={{ color: "#60a5fa" }} title="Shield"><Icon name="round-shield" size={11} /> {character.shield}</span>
                 )}
                 <span style={{ color: "#fbbf24" }} title="Gold"><Icon name="gold-bar" size={11} /> {character.gold}g</span>
                 {(character.keys_bronze + character.keys_silver + character.keys_gold) > 0 && (

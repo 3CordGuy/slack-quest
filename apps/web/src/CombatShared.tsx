@@ -740,7 +740,6 @@ export function TargetPicker({ kind, fighters, onPick, onCancel }: {
             <span>{f.name} <span style={{ fontSize: 12, color: "#9aa0a6" }}>· {f.class}</span></span>
             <span style={{ fontSize: 12, color: "#9aa0a6", fontVariantNumeric: "tabular-nums" }}>
               {f.hp}/{f.max_hp}
-              {(f.shield ?? 0) > 0 && <span style={{ color: "#7c83ff" }}> +{f.shield}</span>}
             </span>
           </button>
         ))}

@@ -2501,7 +2501,7 @@ function PartyChips({ fighters, selfId, flashIds, onClickSelf }: {
             <div style={{ width: `${pct * 100}%`, height: "100%", background: hpCol, transition: "width 0.3s ease" }} />
           </div>
           <div style={{ fontSize: 10, color: "#9aa0a6", marginTop: 2 }}>
-            {f.hp}/{f.max_hp} HP{f.shield > 0 && <span style={{ color: "#60a5fa", marginLeft: 4 }}>+{f.shield}🛡</span>}
+            {f.hp}/{f.max_hp} HP
           </div>
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: 2, alignItems: "center" }}>

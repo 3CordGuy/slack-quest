@@ -463,7 +463,6 @@ function PartyBar({ fighters, selfId, party }: {
               <HpBar current={f.hp} max={f.max_hp} height={5} />
               <div style={{ fontSize: 10, color: "#9aa0a6", marginTop: 1 }}>
                 {f.hp}/{f.max_hp} HP
-                {f.shield > 0 && <span style={{ color: "#60a5fa", marginLeft: 4 }}>+{f.shield}<Icon name="shield" size={9} /></span>}
               </div>
               <div style={{ display: "flex", gap: 3, marginTop: 2 }}>
                 {Array.from({ length: f.max_mana }, (_, mi) => (
