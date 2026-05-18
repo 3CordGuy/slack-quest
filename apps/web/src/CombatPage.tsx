@@ -238,6 +238,17 @@ type CombatEvent =
       force_crit: boolean;
       remaining: number;
     }
+  | { type: "turn_skip"; actor: string; reason: "frozen" }
+  | {
+      type: "elemental_proc";
+      actor: string;
+      target: string;
+      element: "fire" | "ice" | "lightning";
+      effect: "burning" | "frozen" | "shocked";
+      magnitude: number;
+      duration: number;
+      resisted: boolean;
+    }
   | { type: "victory" }
   | { type: "defeat" }
   | { type: "rejected"; reason: string }
@@ -502,9 +513,10 @@ function formatEvent(e: CombatEvent, state: CombatState | null): LogEntry[] {
     case "effect_tick": {
       const icon =
         e.effect === "regen" ? "aura"
-        : e.effect === "poisoned" ? "monster-skull"
+        : e.effect === "poisoned" ? "poison-cloud"
         : e.effect === "burning" ? "fire"
-        : "bleeding-hearts";
+        : e.effect === "bleeding" ? "bleeding-wound"
+        : "bleeding-wound";
       const sign = e.hp_delta >= 0 ? `+${e.hp_delta}` : `${e.hp_delta}`;
       const src = e.source ? ` (${e.source})` : "";
       return row(icon, <>{nameOf(e.actor)} {e.effect}{src}: {sign} HP</>, e.hp_delta >= 0 ? "good" : "bad");
@@ -644,7 +656,7 @@ function formatEvent(e: CombatEvent, state: CombatState | null): LogEntry[] {
     case "passive_warlock_bleed":
       return [{
         id: nextLogId++,
-        content: <><Icon name="death-skull" /> Cursed Strike: <Icon name="bleeding-hearts" color="#dc2626" /> bleed {e.magnitude}/turn × {e.duration} on monster.</>,
+        content: <><Icon name="death-skull" /> Cursed Strike: <Icon name="bleeding-wound" color="#dc2626" /> bleed {e.magnitude}/turn × {e.duration} on monster.</>,
         tone: "good",
       }];
     case "passive_paladin_auto_heal":
@@ -658,6 +670,17 @@ function formatEvent(e: CombatEvent, state: CombatState | null): LogEntry[] {
         <>{nameOf(e.actor)} drink buff: +{e.bonus} {e.kind === "buff_attack" ? "attack" : "magic"}{e.remaining === 0 ? " — wears off" : ` (${e.remaining} left)`}.</>,
         "good",
       );
+    case "turn_skip":
+      return [{ id: nextLogId++, content: <><Icon name="ice-bolt" size={11} color="#93c5fd" /> {nameOf(e.actor)} is frozen — turn skipped!</>, tone: "bad" }];
+    case "elemental_proc": {
+      const elemIcon = e.element === "fire" ? "fire" : e.element === "ice" ? "ice-bolt" : "electric";
+      const elemColor = e.element === "fire" ? "#fb923c" : e.element === "ice" ? "#93c5fd" : "#fbbf24";
+      if (e.resisted) {
+        return [{ id: nextLogId++, content: <><Icon name={elemIcon} size={11} color={elemColor} /> {nameOf(e.target)} resists {e.element}!</>, tone: "muted" }];
+      }
+      const effectLabel = e.effect === "burning" ? "burning" : e.effect === "frozen" ? "frozen" : "shocked";
+      return [{ id: nextLogId++, content: <><Icon name={elemIcon} size={11} color={elemColor} /> {nameOf(e.actor)} procs {effectLabel} on {nameOf(e.target)}! ×{e.magnitude} for {e.duration}t</>, tone: "bad" }];
+    }
     case "victory":
       return [{ id: nextLogId++, content: <strong>VICTORY</strong>, tone: "good" }];
     case "defeat":
@@ -1403,10 +1426,15 @@ function MonsterCard({
         {monster.effects && monster.effects.length > 0 && !isDead && (
           <div style={{ display: "flex", gap: 4, marginTop: 4, flexWrap: "wrap" }}>
             {monster.effects.map((e, i) => {
-              const [col] = e.type === "regen" ? ["#4ade80"] : e.type === "bleeding" ? ["#f87171"] : e.type === "burning" ? ["#fb923c"] : e.type === "frozen" ? ["#93c5fd"] : e.type === "shocked" ? ["#fbbf24"] : ["#c084fc"];
+              const [col, icon] = e.type === "regen" ? ["#4ade80", "regeneration"]
+                : e.type === "bleeding" ? ["#f87171", "bleeding-wound"]
+                : e.type === "burning" ? ["#fb923c", "fire"]
+                : e.type === "frozen" ? ["#93c5fd", "ice-bolt"]
+                : e.type === "shocked" ? ["#fbbf24", "electric"]
+                : ["#c084fc", "poison-cloud"];
               return (
-                <span key={i} style={{ fontSize: 10, background: col + "22", border: `1px solid ${col}44`, color: col, borderRadius: 4, padding: "1px 5px" }}>
-                  {e.type} {e.magnitude > 0 ? `×${e.magnitude}` : ""}
+                <span key={i} style={{ display: "inline-flex", alignItems: "center", gap: 3, fontSize: 10, background: col + "22", border: `1px solid ${col}44`, color: col, borderRadius: 4, padding: "1px 5px" }}>
+                  <Icon name={icon} size={9} /> {e.type} {e.magnitude > 0 ? `×${e.magnitude}` : ""}
                 </span>
               );
             })}
@@ -1624,8 +1652,10 @@ function FighterRow({ fighter, self, current }: { fighter: Fighter; self: boolea
           <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginBottom: 4, marginTop: 2 }}>
             {fighter.effects.map((e, i) => {
               const [color, icon] = e.type === "regen" ? ["#4ade80", "regeneration"]
-                : e.type === "bleeding" ? ["#f87171", "bleeding-hearts"]
+                : e.type === "bleeding" ? ["#f87171", "bleeding-wound"]
                 : e.type === "burning" ? ["#fb923c", "fire"]
+                : e.type === "frozen" ? ["#93c5fd", "ice-bolt"]
+                : e.type === "shocked" ? ["#fbbf24", "electric"]
                 : ["#c084fc", "poison-cloud"];
               return (
                 <span

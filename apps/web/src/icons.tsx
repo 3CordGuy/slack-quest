@@ -30,6 +30,8 @@ const SVG_ICONS = new Set([
   "sword-brandish", "wizard-staff", "target-poster", "coffee-cup", "dodge", "dodging",
   // Action-button icons
   "run",
+  // Status effect icons
+  "ice-bolt", "electric", "bleeding-wound", "poison-cloud",
 ]);
 
 interface IconProps {
