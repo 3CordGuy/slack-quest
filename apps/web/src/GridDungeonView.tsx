@@ -4,129 +4,20 @@
 // keys/pick/bash, and room content overlays.
 
 import { useEffect, useReducer, useRef, useState } from "react";
-import { createPortal } from "react-dom";
 import toast from "react-hot-toast";
 import { isMonsterActor } from "@gantt-quest/core";
 import { Avatar, Icon } from "./icons";
-
-const DISPLAY_FONT = "'Metamorphous', serif";
+import {
+  DISPLAY_FONT, ensureCombatAnimStyles, useIsMobile,
+  slugifyName, charPortraitUrl, classPortraitUrl,
+  CBtn, DiceRollEntry, DiceRollDisplay, PickerModal,
+  UseItemTile, MONSTER_TARGET_TOOLS, RARITY_TINT, lootIcon,
+  InitStrip, CombatLog, LogEntry, CombatItem,
+} from "./CombatShared";
+ensureCombatAnimStyles();
 
 // Minimap and combat log share a fixed width on the right side of the room
 // view (~1/8 of viewport on desktop). On mobile they move to the bottom.
-function useIsMobile(breakpoint = 700): boolean {
-  const [isMobile, setIsMobile] = useState(() => typeof window !== "undefined" && window.innerWidth < breakpoint);
-  useEffect(() => {
-    const handler = () => setIsMobile(window.innerWidth < breakpoint);
-    window.addEventListener("resize", handler);
-    return () => window.removeEventListener("resize", handler);
-  }, [breakpoint]);
-  return isMobile;
-}
-
-// Inject hit-flash keyframes once. The animation lasts ~550ms; cards get a
-// "hit-flash" class for that long when their target is hit by an attack.
-const HIT_FLASH_CSS = `
-@keyframes gq-hit-shake {
-  0%   { transform: translate(0, 0); }
-  10%  { transform: translate(-5px, -2px); }
-  20%  { transform: translate(5px, 2px); }
-  30%  { transform: translate(-4px, 1px); }
-  40%  { transform: translate(4px, -1px); }
-  55%  { transform: translate(-2px, 0); }
-  70%  { transform: translate(2px, 0); }
-  100% { transform: translate(0, 0); }
-}
-@keyframes gq-hit-tint {
-  0%   { box-shadow: inset 0 0 0 0 rgba(239,68,68,0); }
-  20%  { box-shadow: inset 0 0 0 9999px rgba(239,68,68,0.45); }
-  60%  { box-shadow: inset 0 0 0 9999px rgba(239,68,68,0.28); }
-  100% { box-shadow: inset 0 0 0 0 rgba(239,68,68,0); }
-}
-.gq-hit-flash {
-  animation: gq-hit-shake 550ms ease-in-out, gq-hit-tint 550ms ease-out;
-}
-/* Monster lunge — when the enemy attacks, its card pushes downward
-   (toward the player) and snaps back. Communicates the swing. The
-   *-card variant operates in the card's own space (translate Y only)
-   so it works inside MonsterStrip's flex layout without depending on
-   the old absolute -50%/-65% centering. */
-@keyframes gq-monster-lunge-card {
-  0%   { transform: translateY(0); }
-  35%  { transform: translateY(20px) scale(1.04); }
-  60%  { transform: translateY(10px) scale(1.02); }
-  100% { transform: translateY(0); }
-}
-.gq-monster-lunge-card {
-  animation: gq-monster-lunge-card 520ms cubic-bezier(0.22, 1.4, 0.36, 1) both;
-}
-/* Slash effect when a player lands a hit on the enemy. A diagonal white
-   streak sweeps across the monster card; lasts ~420ms then fades. The
-   streak element re-keys per hit so each shot fires a fresh animation. */
-@keyframes gq-slash-sweep {
-  0%   { opacity: 0; transform: translate(-110%, -50%) rotate(-22deg) scaleX(0.6); }
-  18%  { opacity: 1; }
-  60%  { opacity: 0.9; transform: translate(110%, -50%) rotate(-22deg) scaleX(1.4); }
-  100% { opacity: 0; transform: translate(130%, -50%) rotate(-22deg) scaleX(1.4); }
-}
-.gq-slash-streak {
-  position: absolute;
-  top: 50%; left: 0;
-  width: 70%;
-  height: 6px;
-  background: linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.9) 30%, rgba(254,202,202,1) 50%, rgba(255,255,255,0.9) 70%, transparent 100%);
-  filter: drop-shadow(0 0 8px rgba(252,165,165,0.9)) drop-shadow(0 0 14px rgba(239,68,68,0.55));
-  pointer-events: none;
-  transform-origin: 50% 50%;
-  animation: gq-slash-sweep 420ms ease-out forwards;
-  border-radius: 6px;
-}
-/* Monster defeat — fall backwards, fade out, shrink. Triggered when HP
-   reaches 0 so the card lingers for ~1.1s before unmounting. The
-   *-card variant uses card-local transforms (no absolute centering)
-   so each MonsterCard in a strip falls independently. */
-@keyframes gq-monster-defeated-card {
-  0%   { transform: rotateX(0deg) scale(1) translateY(0); opacity: 1; filter: brightness(1) saturate(1); }
-  25%  { transform: rotateX(-12deg) scale(1.03) translateY(0); opacity: 1; filter: brightness(1.35) saturate(1.4); }
-  70%  { transform: rotateX(-65deg) scale(0.92) translateY(40px); opacity: 0.55; filter: brightness(0.6) saturate(0.4); }
-  100% { transform: rotateX(-85deg) scale(0.78) translateY(55px); opacity: 0; filter: brightness(0.2) saturate(0); }
-}
-.gq-monster-defeated-card {
-  animation: gq-monster-defeated-card 1100ms cubic-bezier(0.45, 0, 0.65, 1) forwards;
-  transform-style: preserve-3d;
-  perspective: 600px;
-}
-/* Targeted-card pulse — subtle gold inner glow on the picked enemy.
-   Pairs with the gold border so the active target is obvious even
-   while another monster is animating. */
-@keyframes gq-target-pulse {
-  0%, 100% { box-shadow: 0 0 16px rgba(251,191,36,0.4), inset 0 0 0 0 rgba(251,191,36,0); }
-  50%      { box-shadow: 0 0 22px rgba(251,191,36,0.55), inset 0 0 12px 0 rgba(251,191,36,0.15); }
-}
-.gq-monster-targeted {
-  animation: gq-target-pulse 1800ms ease-in-out infinite;
-}
-/* Victory / defeat overlay enters with a staged fade so it doesn't just
-   appear on top of the monster animation. Tint fades up first, then the
-   banner pops; the whole thing reads as a beat rather than a cut. */
-@keyframes gq-outcome-tint {
-  0%   { opacity: 0; backdrop-filter: blur(0); }
-  100% { opacity: 1; backdrop-filter: blur(4px); }
-}
-@keyframes gq-outcome-banner {
-  0%   { opacity: 0; transform: scale(0.7) translateY(20px); letter-spacing: 0; }
-  60%  { opacity: 1; transform: scale(1.12) translateY(0); letter-spacing: 6px; }
-  100% { opacity: 1; transform: scale(1) translateY(0); letter-spacing: 3px; }
-}
-.gq-outcome-tint { animation: gq-outcome-tint 700ms ease-out both; animation-delay: 600ms; }
-.gq-outcome-banner { animation: gq-outcome-banner 900ms cubic-bezier(0.22, 1.4, 0.36, 1) both; animation-delay: 900ms; }
-`;
-
-if (typeof document !== "undefined" && !document.getElementById("gq-hit-flash-style")) {
-  const s = document.createElement("style");
-  s.id = "gq-hit-flash-style";
-  s.textContent = HIT_FLASH_CSS;
-  document.head.appendChild(s);
-}
 
 // ─── Types mirrored from db (the web app doesn't import db directly) ─────────
 
@@ -293,23 +184,6 @@ interface OutcomeSummary {
   monster_name: string;
 }
 
-interface LogEntry {
-  id: number;
-  text: string;
-  tone: "info" | "good" | "bad" | "muted";
-  // Optional sub-line shown only when the user toggles "Details" — the
-  // d20 roll, formula, AC, etc. Hidden by default for a cleaner log.
-  detail?: string;
-  // Visual band. "party" = green left-rule + faint tint, "enemy" = red,
-  // "divider" = horizontal rule (turn change), null = inline neutral
-  // (begin / victory / wave headers, etc.).
-  side?: "party" | "enemy" | "divider" | null;
-  // For divider rows: which side acts next ("party" / "enemy"), so the
-  // following block of events gets a matching accent before any per-entry
-  // side classification.
-  divider_side?: "party" | "enemy" | null;
-}
-
 interface WsUiState {
   connection: "connecting" | "open" | "closed";
   state: CombatState | null;
@@ -322,22 +196,6 @@ let nextLogId = 1;
 function hpColor(c: number, m: number): string {
   const p = m > 0 ? c / m : 0;
   return p > 0.5 ? "#22c55e" : p > 0.25 ? "#f59e0b" : "#ef4444";
-}
-
-function slugifyName(n: string): string {
-  return n.toLowerCase().normalize("NFKD").replace(/[̀-ͯ]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60) || "unnamed";
-}
-function charPortraitUrl(name: string): string { return `/img/art/v3/character/${slugifyName(name)}.png`; }
-
-const CLASS_PORTRAIT_BASE = "/img/art/views/v6";
-const CLASS_ID_BY_NAME: Record<string, string> = {
-  "DevOps Mage": "devops_mage", "QA Paladin": "qa_paladin", "Backend Druid": "backend_druid",
-  "Frontend Bard": "frontend_bard", "Staff Sage": "staff_sage", "Refactor Rogue": "refactor_rogue",
-  "SRE Warden": "sre_warden", "Data Wizard": "data_warlock", "Data Warlock": "data_warlock",
-};
-function classPortraitUrl(name: string): string | null {
-  const id = CLASS_ID_BY_NAME[name];
-  return id ? `${CLASS_PORTRAIT_BASE}/class_${id}.png` : null;
 }
 
 // Room background URL composition. The prompts in ai.ts use these key shapes:
@@ -413,7 +271,7 @@ function wsReducer(s: WsUiState, a: WsAction): WsUiState {
 }
 
 function formatCombatEvent(e: { type: string; [k: string]: unknown }, nameOf: (id: string) => string): LogEntry | null {
-  const row = (text: string, tone: LogEntry["tone"], detail?: string, side?: LogEntry["side"]): LogEntry => ({ id: nextLogId++, text, tone, detail, side: side ?? null });
+  const row = (content: React.ReactNode, tone: LogEntry["tone"], detail?: string, side?: LogEntry["side"]): LogEntry => ({ id: nextLogId++, content, tone, detail, side: side ?? null });
   const sign = (n: number) => (n >= 0 ? `+${n}` : `${n}`);
   switch (e.type) {
     case "begin": return row("Combat begins — rolling initiative…", "info");
@@ -422,7 +280,7 @@ function formatCombatEvent(e: { type: string; [k: string]: unknown }, nameOf: (i
       const dividerSide: "party" | "enemy" = isMonsterActor(actorId) ? "enemy" : "party";
       return {
         id: nextLogId++,
-        text: `${nameOf(actorId)} — round ${e.round}`,
+        content: `${nameOf(actorId)} — round ${e.round}`,
         tone: "muted",
         side: "divider",
         divider_side: dividerSide,
@@ -793,37 +651,6 @@ function MonsterStrip({ monsters, flashIds, lastSlash, lastLunge, markedMonsterI
   );
 }
 
-function InitStrip({ state, selfId }: { state: CombatState; selfId: string }) {
-  const currentIdx = state.turn_index % state.turn_order.length;
-  return (
-    <div style={{
-      background: "rgba(10,11,14,0.55)",
-      border: "1px solid rgba(255,255,255,0.08)",
-      borderRadius: 999,
-      backdropFilter: "blur(10px)",
-      WebkitBackdropFilter: "blur(10px)",
-      boxShadow: "0 6px 24px rgba(0,0,0,0.4)",
-      padding: "6px 14px",
-      display: "flex", gap: 8, alignItems: "center", maxWidth: "min(720px, 92vw)", overflowX: "auto",
-    }}>
-      <span style={{ fontSize: 10, color: "#9aa0a6", textTransform: "uppercase", letterSpacing: 1, marginRight: 4, whiteSpace: "nowrap" }}>Turn order</span>
-      {state.turn_order.map((id, i) => {
-        const isCurrent = i === currentIdx;
-        const isMonster = isMonsterActor(id);
-        const fighter = state.fighters.find((f) => f.id === id);
-        const monster = isMonster ? state.monsters.find((m) => m.id === id) ?? state.monsters[0] : null;
-        const label = isMonster ? (monster?.name?.split(" ")[0] ?? "Enemy") : (fighter?.name?.split(" ")[0] ?? id);
-        const isSelf = id === selfId;
-        const isDead = fighter ? fighter.hp <= 0 : monster ? monster.hp <= 0 : false;
-        return (
-          <div key={i} style={{ fontSize: 11, padding: "2px 8px", borderRadius: 4, border: isCurrent ? "1px solid #f5f5dc" : "1px solid transparent", background: isCurrent ? "rgba(245,245,220,0.12)" : "transparent", color: isDead ? "#4a5568" : isMonster ? "#fca5a5" : isSelf ? "#f5f5dc" : "#d1d5db", fontWeight: isCurrent ? 700 : 400, whiteSpace: "nowrap", opacity: isDead ? 0.5 : 1, textDecoration: isDead ? "line-through" : "none" }}>{label}</div>
-        );
-      })}
-      <span style={{ fontSize: 10, color: "#4a5568", marginLeft: 4, whiteSpace: "nowrap" }}>round {state.round}</span>
-    </div>
-  );
-}
-
 // ─── Grid Minimap (true 2D) ──────────────────────────────────────────────────
 // Renders the actual room grid. Each cell shows the room's shape as small
 // line-art so the player can visually parse the dungeon layout.
@@ -1074,12 +901,6 @@ export function GridDungeonView({
   // Player's currently-picked target. Auto-falls back to the lowest-HP
   // live monster when null. Cleared between fights via the reset action.
   const [targetMonsterId, setTargetMonsterId] = useState<string | null>(null);
-  // Combat log details toggle — when true, log entries show the dice / formula
-  // sub-line under their summary. Persisted across remounts for the session.
-  const [logDetails, setLogDetails] = useState<boolean>(() => typeof window !== "undefined" && localStorage.getItem("gq_log_details") === "1");
-  useEffect(() => {
-    if (typeof window !== "undefined") localStorage.setItem("gq_log_details", logDetails ? "1" : "0");
-  }, [logDetails]);
   // Floating animated dice — incoming `roll` events spawn dice that tumble
   // and settle to the rolled value, then fade after ~10s.
   const [diceRolls, setDiceRolls] = useState<DiceRollEntry[]>([]);
@@ -1401,7 +1222,7 @@ export function GridDungeonView({
         {/* Floating initiative strip (combat only) — top center overlay */}
         {combatActive && combatState && (
           <div style={{ position: "absolute", top: 12, left: "50%", transform: "translateX(-50%)", zIndex: 8 }}>
-            <InitStrip state={combatState} selfId={selfId} />
+            <InitStrip turnOrder={combatState.turn_order} turnIndex={combatState.turn_index} round={combatState.round} selfId={selfId} fighters={combatState.fighters} monsters={combatState.monsters} />
           </div>
         )}
 
@@ -1474,75 +1295,7 @@ export function GridDungeonView({
             </div>
             {combatActive && ws.log.length > 0 && (
               <div style={{ padding: "6px 10px 8px", flex: isMobile ? 1 : "1 1 auto", minWidth: 0, minHeight: 0, display: "flex", flexDirection: "column" }}>
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4, flexShrink: 0 }}>
-                  <div style={{ fontSize: 10, color: "#6b7280", textTransform: "uppercase", letterSpacing: 1.5, fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" }}>Combat log</div>
-                  <button
-                    onClick={() => setLogDetails((v) => !v)}
-                    title={logDetails ? "Hide dice / formulas" : "Show dice / formulas"}
-                    style={{ background: "none", border: "1px solid #2a2d33", color: logDetails ? "#fcd34d" : "#6b7280", fontSize: 9, padding: "1px 6px", borderRadius: 3, cursor: "pointer", letterSpacing: 0.5, fontFamily: "ui-monospace, monospace" }}>
-                    DETAILS
-                  </button>
-                </div>
-                {/* Legacy combat log: inset dark panel, monospace, 13px, generous
-                    line-height; events flow like a console scrollback. */}
-                <div ref={logScrollRef} style={{
-                  maxHeight: isMobile ? 100 : undefined,
-                  flex: isMobile ? undefined : "1 1 auto",
-                  minHeight: 0,
-                  overflowY: "auto",
-                  background: "#0e0f12",
-                  borderRadius: 6,
-                  padding: "8px 10px",
-                  fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
-                  fontSize: 12,
-                  lineHeight: 1.45,
-                  display: "flex", flexDirection: "column", gap: 3,
-                }}>
-                  {ws.log.slice(-20).map((e) => {
-                    const toneColor = e.tone === "good" ? "#86efac" : e.tone === "bad" ? "#fca5a5" : e.tone === "info" ? "#93c5fd" : "#9aa0a6";
-                    if (e.side === "divider") {
-                      // Turn-change divider: thin rule + actor name on a
-                      // tinted slab so the eye can find "where am I in the
-                      // round" at a glance.
-                      const accent = e.divider_side === "enemy" ? "#7f1d1d" : "#166534";
-                      const label = e.divider_side === "enemy" ? "#fca5a5" : "#86efac";
-                      return (
-                        <div key={e.id} style={{
-                          display: "flex", alignItems: "center", gap: 6,
-                          margin: "2px -10px 1px",
-                          padding: "1px 10px",
-                          background: `linear-gradient(90deg, ${accent}33 0%, transparent 100%)`,
-                          borderTop: `1px solid ${accent}55`,
-                          borderBottom: `1px solid ${accent}22`,
-                          fontSize: 10, letterSpacing: 1, textTransform: "uppercase",
-                          color: label, fontWeight: 700,
-                        }}>
-                          <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{e.text}</span>
-                        </div>
-                      );
-                    }
-                    // Side-colored left rule + subtle bg tint so eye can
-                    // scan party-vs-enemy bursts without reading text.
-                    const sideAccent = e.side === "party" ? "#16a34a" : e.side === "enemy" ? "#dc2626" : "transparent";
-                    return (
-                      <div key={e.id} style={{
-                        color: toneColor,
-                        wordBreak: "break-word",
-                        paddingLeft: e.side ? 7 : 0,
-                        borderLeft: e.side ? `2px solid ${sideAccent}88` : "none",
-                        background: e.side ? `${sideAccent}11` : "transparent",
-                        borderRadius: 2,
-                      }}>
-                        <div>{e.text}</div>
-                        {logDetails && e.detail && (
-                          <div style={{ fontSize: 11, color: "#6b7280", paddingLeft: 10 }}>
-                            ↳ {e.detail}
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
+                <CombatLog log={ws.log} scrollRef={logScrollRef} />
               </div>
             )}
           </div>
@@ -1652,7 +1405,9 @@ export function GridDungeonView({
       {/* (Party bar is now a floating overlay inside the room view above.) */}
 
       {/* Animated dice rolls — float in mid-screen above everything */}
-      <DiceRollDisplay rolls={diceRolls} />
+      <div style={{ position: "fixed", bottom: 280, left: "50%", transform: "translateX(-50%)", zIndex: 200, pointerEvents: "none" }}>
+        <DiceRollDisplay rolls={diceRolls} />
+      </div>
     </div>
   );
 }
@@ -2190,7 +1945,7 @@ function CombatPanel({ state, selfId, onSend, autoResolve, setAutoResolve, myTur
               {usable.map((it) => (
                 <UseItemTile
                   key={it.id}
-                  item={it}
+                  item={it as unknown as CombatItem}
                   onClick={() => {
                     setItemOpen(false);
                     if (MONSTER_TARGET_TOOLS.has(it.item_name) && liveMonsters.length > 1) {
@@ -2280,56 +2035,6 @@ function CombatPanel({ state, selfId, onSend, autoResolve, setAutoResolve, myTur
   );
 }
 
-function CBtn({ label, icon, color, disabled, manaCost, onClick }: {
-  label: string;
-  icon?: string;
-  color: string;
-  disabled?: boolean;
-  manaCost?: number;
-  onClick: () => void;
-}) {
-  // Classic dungeon-crawler skill-button: icon prominent on top, label below,
-  // mana cost as small numeric info beneath. Square-ish so a row of them
-  // reads as a control panel rather than a chip row.
-  return (
-    <button
-      onClick={onClick}
-      disabled={disabled}
-      title={manaCost ? `${label} (costs ${manaCost} mana)` : label}
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "center",
-        justifyContent: "center",
-        gap: 3,
-        padding: "8px 6px",
-        width: 78,
-        height: 78,
-        background: disabled ? "#1a1c21" : color,
-        border: `2px solid ${disabled ? "#2a2d33" : color}`,
-        borderRadius: 8,
-        color: disabled ? "#4a5568" : "#0e0f12",
-        cursor: disabled ? "not-allowed" : "pointer",
-        opacity: disabled ? 0.55 : 1,
-        transition: "opacity 0.15s, transform 0.08s, filter 0.1s",
-        flexShrink: 0,
-      }}
-      onMouseDown={(e) => { if (!disabled) e.currentTarget.style.transform = "translateY(1px)"; }}
-      onMouseUp={(e) => { e.currentTarget.style.transform = ""; }}
-      onMouseLeave={(e) => { e.currentTarget.style.transform = ""; }}
-    >
-      {icon && <Icon name={icon} size={26} />}
-      <span style={{ fontSize: 12, fontWeight: 700, lineHeight: 1, letterSpacing: 0.3 }}>{label}</span>
-      <span style={{
-        fontSize: 10, fontWeight: 700, lineHeight: 1, minHeight: 10,
-        color: disabled ? "#4a5568" : "rgba(0,0,0,0.7)",
-      }}>
-        {manaCost ? `−${manaCost} mana` : ""}
-      </span>
-    </button>
-  );
-}
-
 function OverlayPanel({ title, children }: { title: React.ReactNode; children: React.ReactNode }) {
   return (
     <div style={{ background: "rgba(10,11,14,0.97)", borderTop: "1px solid #1e2028", padding: "10px 14px", flexShrink: 0, maxHeight: "38vh", overflowY: "auto" }}>
@@ -2346,48 +2051,6 @@ const lootBtn: React.CSSProperties = {
 
 // Rarity → border + name color. Kept inline so this module doesn't depend
 // on the dashboard's RARITY_COLOR export.
-// Tools whose effect lands on a specific monster — need a target picker when 2+ are alive.
-const MONSTER_TARGET_TOOLS = new Set([
-  "Poison Vial", "Venom Vial", "Caffeine Bomb", "Hotfix Grenade", "Production Outage",
-]);
-
-const RARITY_TINT: Record<string, string> = {
-  common: "#8a8f98",
-  uncommon: "#16a34a",
-  rare: "#3b82f6",
-  epic: "#a855f7",
-  legendary: "#f59e0b",
-};
-
-// Pick a sensible icon for a LootOption. Slot wins for non-weapons; weapons
-// fall back to weapon_range or generic sword. Mirrors apps/web/src/App.tsx
-// itemIcon() but trimmed to the fields LootOption carries.
-function lootIcon(opt: { item_type: string; slot?: string | null; weapon_range?: "melee" | "ranged" | "focus" | null; item_subtype?: string | null }): string {
-  if (opt.slot && opt.slot !== "main_hand") {
-    switch (opt.slot) {
-      case "off_hand":  return opt.item_subtype === "gloves" ? "gloves" : "round-shield";
-      case "body":      return "chest-armor";
-      case "helmet":    return "heavy-helm";
-      case "pants":     return "armored-pants";
-      case "boots":     return "boots";
-      case "ring":      return "ring";
-      case "amulet":    return "gem-chain";
-    }
-  }
-  if (opt.item_type === "weapon") {
-    if (opt.weapon_range === "focus") return "crystal-wand";
-    if (opt.weapon_range === "ranged") return "crossbow";
-    return "sword";
-  }
-  if (opt.item_type === "armor")     return "chest-armor";
-  if (opt.item_type === "consumable") return "bubbling-potion";
-  if (opt.item_type === "magic")     return "crystal-ball";
-  if (opt.item_type === "revive")    return "crowned-heart";
-  if (opt.item_type === "tool")      return "anvil";
-  if (opt.item_type === "scroll")    return "scroll-unfurled";
-  return "anvil";
-}
-
 // Human-readable secondary line for a loot tile: slot · range · stat bonuses.
 function lootSubLabel(opt: LootOption): string {
   const parts: string[] = [];
@@ -2499,110 +2162,6 @@ function itemToLootOpt(it: UsableItem): LootOption {
   };
 }
 
-// Returns a one-line plain-English description of what the item does in combat.
-function describeCombatEffect(item: UsableItem): string {
-  const p = item.power;
-  switch (item.item_type) {
-    case "consumable": return `Heals ${p} HP`;
-    case "magic":      return `+${p} max mana`;
-    case "revive":     return `Revives a downed ally at ${p}% HP`;
-    case "tool":
-    case "scroll": {
-      switch (item.item_name) {
-        case "Caffeine Bomb":
-        case "Hotfix Grenade":    return `Deals ${p} damage to target (non-lethal)`;
-        case "Espresso Shot":     return `Regen ${p} HP/turn for 5 turns (self)`;
-        case "Poison Vial":       return `Poisons target: ${p} dmg/turn × 4 turns`;
-        case "Venom Vial":        return `Poisons target: ${p} dmg/turn × 4 turns`;
-        case "Production Outage": return `Instakills non-boss · 30% max HP vs boss`;
-        case "Rebase Scroll":     return `Restores entire party mana to full`;
-        case "Regen Draft":       return `Regen ${p} HP/turn for 3 turns (self)`;
-        case "Battle Elixir":     return `+25% damage for 3 turns (self)`;
-        default:                  return `Power ${p}`;
-      }
-    }
-    default: return `Power ${p}`;
-  }
-}
-
-// Tile used specifically in the combat Use Item picker. Shows effect description
-// and level requirement alongside the standard name + rarity + flavor.
-function UseItemTile({ item, onClick }: { item: UsableItem; onClick: () => void }) {
-  const tint = RARITY_TINT[item.rarity ?? "common"] ?? "#2a2d33";
-  const icon = lootIcon({ item_type: item.item_type, slot: item.slot, weapon_range: item.weapon_range, item_subtype: item.item_subtype });
-  const effectDesc = describeCombatEffect(item);
-  const levelReq = item.level_req ?? 1;
-
-  return (
-    <button
-      onClick={onClick}
-      style={{
-        padding: "10px 12px", background: "#131519",
-        border: `1px solid ${tint}55`, borderLeft: `3px solid ${tint}`,
-        borderRadius: 8, color: "#d1d5db", textAlign: "left", fontSize: 12,
-        cursor: "pointer", display: "flex", flexDirection: "column", gap: 5, width: "100%",
-      }}>
-      {/* Name row */}
-      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-        <Icon name={icon} size={18} color={tint} />
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontWeight: 700, color: tint, fontSize: 13, lineHeight: 1.2 }}>{item.item_name}</div>
-          <div style={{ fontSize: 10, color: "#6b7280", textTransform: "uppercase", letterSpacing: 0.5 }}>
-            {item.rarity ?? "common"}
-            {levelReq > 1 && <span style={{ color: "#f59e0b", marginLeft: 6 }}>Req L{levelReq}</span>}
-          </div>
-        </div>
-      </div>
-      {/* Effect */}
-      <div style={{ fontSize: 11, color: "#93c5fd", fontWeight: 600 }}>{effectDesc}</div>
-      {/* Flavor */}
-      {item.flavor && (
-        <div style={{ fontSize: 11, color: "#9aa0a6", fontStyle: "italic", lineHeight: 1.35 }}>{item.flavor}</div>
-      )}
-    </button>
-  );
-}
-
-// Centered modal used by in-combat pickers (Use Item, Give Item) so card
-// grids have real estate. Click-outside or ✕ closes; Esc handled at the
-// component level. Rendered via a portal to document.body so it escapes
-// the CombatPanel's `backdrop-filter` containing block (which otherwise
-// scopes `position: fixed` to the panel and clips the modal).
-function PickerModal({ title, onClose, children }: {
-  title: React.ReactNode;
-  onClose: () => void;
-  children: React.ReactNode;
-}) {
-  useEffect(() => {
-    const h = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
-    window.addEventListener("keydown", h);
-    return () => window.removeEventListener("keydown", h);
-  }, [onClose]);
-  if (typeof document === "undefined") return null;
-  return createPortal(
-    <div
-      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
-      style={{
-        position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)",
-        display: "flex", alignItems: "center", justifyContent: "center",
-        zIndex: 1000, padding: 16, backdropFilter: "blur(4px)",
-      }}>
-      <div style={{
-        background: "#12141a", border: "1px solid #2a2d33", borderRadius: 12,
-        width: "min(700px, 100%)", maxHeight: "85vh", display: "flex",
-        flexDirection: "column", boxShadow: "0 24px 64px rgba(0,0,0,0.8)",
-      }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 16px", borderBottom: "1px solid #2a2d33", flexShrink: 0 }}>
-          <div style={{ fontSize: 14, fontWeight: 700, color: "#f5f5f5", fontFamily: DISPLAY_FONT }}>{title}</div>
-          <button onClick={onClose} style={{ background: "none", border: "1px solid #3a3d44", borderRadius: 6, color: "#9ca3af", cursor: "pointer", padding: "3px 10px", fontSize: 13 }}>✕</button>
-        </div>
-        <div style={{ padding: 16, overflowY: "auto", flex: 1 }}>{children}</div>
-      </div>
-    </div>,
-    document.body,
-  );
-}
-
 // Rarity-based fallback price for grid dungeons where we don't have a
 // type-aware priceFor handy. Mirrors core's SHOP_PRICE for weapons/armor,
 // scaled slightly for consumables/magic. Used only for display in the
@@ -2618,203 +2177,3 @@ function priceForDisplay(type: string, rarity: string): number {
 // Inventory modal lives in App.tsx (uses the dashboard's InventoryFullScreen
 // with full drag-and-drop, paper-doll, give/use/equip). The party-bar click
 // calls onOpenInventory which App.tsx routes to that modal.
-
-// ─── Animated dice rolls (ported from CombatPage) ─────────────────────────────
-// On every `roll` WS event we push an entry into diceRolls; DiceRollDisplay
-// renders each one as a tumbling polygon that settles to the rolled value,
-// then fades after ~10s. Self-cleans after 14s via setTimeout.
-
-interface DiceRollEntry {
-  id: number;
-  die: string;
-  value: number;
-  actor: string;
-  purpose: string;
-}
-
-let _diceStylesInjected = false;
-function injectDiceStyles() {
-  if (_diceStylesInjected || typeof document === "undefined") return;
-  _diceStylesInjected = true;
-  const s = document.createElement("style");
-  s.textContent = `
-    @keyframes dice-roll-in {
-      0%   { transform: rotate(0deg)   scale(0)    translateY(-40px); opacity: 0; }
-      55%  { transform: rotate(630deg) scale(1.14) translateY(0);     opacity: 1; }
-      75%  { transform: rotate(705deg) scale(0.93); }
-      88%  { transform: rotate(716deg) scale(1.06); }
-      100% { transform: rotate(720deg) scale(1); }
-    }
-    @keyframes dice-fade-out {
-      0%   { opacity: 1; transform: scale(1)   translateY(0);   }
-      100% { opacity: 0; transform: scale(0.7) translateY(18px); }
-    }
-  `;
-  document.head.appendChild(s);
-}
-
-const DIE_SHAPE: Record<string, { points: string; textY: number }> = {
-  d4:  { points: "50,6 96,90 4,90",                                textY: 70 },
-  d6:  { points: "8,8 92,8 92,92 8,92",                            textY: 56 },
-  d8:  { points: "50,4 96,50 50,96 4,50",                          textY: 56 },
-  d10: { points: "50,4 93,34 76,90 24,90 7,34",                    textY: 58 },
-  d12: { points: "50,4 91,27 98,70 70,96 30,96 2,70 9,27",         textY: 58 },
-  d20: { points: "50,4 91,28 91,72 50,96 9,72 9,28",               textY: 56 },
-};
-const DEFAULT_SHAPE = DIE_SHAPE.d20;
-
-const D6_PIPS: Record<number, [number, number][]> = {
-  1: [[1,1]],
-  2: [[0,0],[2,2]],
-  3: [[0,0],[1,1],[2,2]],
-  4: [[0,0],[2,0],[0,2],[2,2]],
-  5: [[0,0],[2,0],[1,1],[0,2],[2,2]],
-  6: [[0,0],[2,0],[0,1],[2,1],[0,2],[2,2]],
-};
-
-const PURPOSE_LABEL: Record<string, string> = {
-  hit_check:      "To Hit",
-  damage_attack:  "Damage",
-  damage_cast:    "Spell Dmg",
-  damage_monster: "Monster Dmg",
-  signature:      "Signature",
-  heal:           "Healing",
-  shield:         "Shield",
-  flee_check:     "Escape",
-  initiative:     "Initiative",
-};
-
-function DiceRollDisplay({ rolls }: { rolls: DiceRollEntry[] }) {
-  useEffect(() => { injectDiceStyles(); }, []);
-  if (rolls.length === 0) return null;
-  const enemyRolls = rolls.filter((r) => isMonsterActor(r.actor));
-  const partyRolls = rolls.filter((r) => !isMonsterActor(r.actor));
-  const rowStyle: React.CSSProperties = { display: "flex", gap: 14, flexWrap: "wrap", justifyContent: "center", alignItems: "flex-start" };
-  // Pill labels: solid dark bg + colored ring + drop-shadow. Readable on
-  // any room background — the previous flat text vanished against busy
-  // art (monster portraits especially).
-  const pillStyle = (color: string, ring: string): React.CSSProperties => ({
-    fontSize: 10, fontWeight: 800, color,
-    textTransform: "uppercase", letterSpacing: 2,
-    fontFamily: "ui-monospace, monospace",
-    background: "rgba(10,11,14,0.92)",
-    border: `1px solid ${ring}`,
-    padding: "3px 12px",
-    borderRadius: 999,
-    marginBottom: 8,
-    display: "inline-block",
-    boxShadow: "0 2px 12px rgba(0,0,0,0.6)",
-    textShadow: "0 0 6px rgba(0,0,0,0.8)",
-  });
-  return (
-    <div style={{
-      position: "fixed",
-      bottom: 280,
-      left: "50%",
-      transform: "translateX(-50%)",
-      display: "flex",
-      flexDirection: "column",
-      gap: 28,
-      zIndex: 200,
-      pointerEvents: "none",
-    }}>
-      {enemyRolls.length > 0 && (
-        <div style={{ textAlign: "center" }}>
-          <div style={pillStyle("#fca5a5", "#7f1d1d")}>Enemy</div>
-          <div style={rowStyle}>
-            {enemyRolls.map((r) => <DiceFace key={r.id} roll={r} />)}
-          </div>
-        </div>
-      )}
-      {partyRolls.length > 0 && (
-        <div style={{ textAlign: "center" }}>
-          <div style={pillStyle("#86efac", "#166534")}>Party</div>
-          <div style={rowStyle}>
-            {partyRolls.map((r) => <DiceFace key={r.id} roll={r} />)}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function DiceFace({ roll }: { roll: DiceRollEntry }) {
-  const maxFace = parseInt(roll.die.replace("d", ""), 10) || 20;
-  const shape = DIE_SHAPE[roll.die] ?? DEFAULT_SHAPE;
-  const isD6 = roll.die === "d6";
-
-  const [display, setDisplay] = useState<number>(() => Math.ceil(Math.random() * maxFace));
-  const [settled, setSettled] = useState(false);
-  const [fading, setFading] = useState(false);
-
-  useEffect(() => {
-    let count = 0;
-    const total = 13;
-    const iv = setInterval(() => {
-      count++;
-      if (count >= total) {
-        clearInterval(iv);
-        setDisplay(roll.value);
-        setSettled(true);
-      } else {
-        setDisplay(Math.ceil(Math.random() * maxFace));
-      }
-    }, 50);
-    const fadeTimer = setTimeout(() => setFading(true), 3500);
-    return () => { clearInterval(iv); clearTimeout(fadeTimer); };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [roll.id]);
-
-  const isCrit = roll.die === "d20" && roll.value === maxFace;
-  const isFumble = roll.die === "d20" && roll.value === 1;
-  const strokeColor = settled ? (isCrit ? "#22c55e" : isFumble ? "#ef4444" : "#7dd3fc") : "#4a5568";
-  const fillColor = settled ? (isCrit ? "#052e12" : isFumble ? "#2e0505" : "#0d1b2e") : "#111827";
-  const numColor = settled ? (isCrit ? "#86efac" : isFumble ? "#fca5a5" : "#f5f5f5") : "#6b7280";
-  const SIZE = 80;
-
-  return (
-    <div style={{
-      width: SIZE, height: SIZE, position: "relative",
-      filter: settled ? `drop-shadow(0 0 8px ${strokeColor}60)` : "none",
-      animationName: fading ? "dice-fade-out" : "dice-roll-in",
-      animationDuration: fading ? "350ms" : "700ms",
-      animationTimingFunction: fading ? "ease-in" : "cubic-bezier(0.22,1,0.36,1)",
-      animationFillMode: "forwards",
-      transition: "filter 200ms",
-    }}>
-      <svg width={SIZE} height={SIZE} viewBox="0 0 100 100" style={{ position: "absolute", top: 0, left: 0 }}>
-        <polygon points={shape.points} fill={fillColor} stroke={strokeColor} strokeWidth={settled ? 3.5 : 2.5} strokeLinejoin="round" style={{ transition: "fill 150ms, stroke 150ms" }} />
-        <text x="50" y="16" textAnchor="middle" fontSize="9" fill="#6b7280" fontFamily="ui-monospace, monospace" letterSpacing="1" style={{ textTransform: "uppercase" }}>
-          {roll.die.toUpperCase()}
-        </text>
-      </svg>
-      <div style={{ position: "absolute", top: 0, left: 0, width: SIZE, height: SIZE, display: "flex", alignItems: "center", justifyContent: "center" }}>
-        {isD6 && settled ? (
-          <D6Pips value={display} color={numColor} />
-        ) : (
-          <span style={{ fontSize: roll.die === "d4" ? 18 : 24, fontWeight: 900, color: numColor, fontVariantNumeric: "tabular-nums", lineHeight: 1, transition: "color 200ms", fontFamily: "ui-monospace, monospace" }}>
-            {display}
-          </span>
-        )}
-      </div>
-      {settled && roll.purpose && (
-        <div style={{ position: "absolute", bottom: -16, left: "50%", transform: "translateX(-50%)", fontSize: 9, color: "#9ca3af", whiteSpace: "nowrap", letterSpacing: 0.3, fontWeight: 500 }}>
-          {PURPOSE_LABEL[roll.purpose] ?? roll.purpose}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function D6Pips({ value, color }: { value: number; color: string }) {
-  const pips = D6_PIPS[Math.min(6, Math.max(1, value))] ?? [];
-  const cells: [number, number][] = [[0,0],[1,0],[2,0],[0,1],[1,1],[2,1],[0,2],[1,2],[2,2]];
-  return (
-    <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 10px)", gap: 4 }}>
-      {cells.map(([c, r], i) => {
-        const active = pips.some(([pc, pr]) => pc === c && pr === r);
-        return <div key={i} style={{ width: 10, height: 10, borderRadius: "50%", background: active ? color : "transparent" }} />;
-      })}
-    </div>
-  );
-}

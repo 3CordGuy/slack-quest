@@ -3754,6 +3754,7 @@ function TrophyShelf({ earned, allDefs, isOwn }: { earned: EarnedAchievement[]; 
 function AdventurerSheet({ character, isOwn = false, onClose }: { character: KnownCharacter; isOwn?: boolean; onClose: () => void }) {
   const [sheetEarned, setSheetEarned] = useState<EarnedAchievement[]>(character.achievements ?? []);
   const [sheetDefs, setSheetDefs] = useState<Achievement[]>([]);
+  const [sheetEquipped, setSheetEquipped] = useState<Item[]>([]);
 
   useEffect(() => {
     const url = isOwn ? "/api/achievements" : `/api/achievements/${character.slack_user_id}`;
@@ -3767,6 +3768,13 @@ function AdventurerSheet({ character, isOwn = false, onClose }: { character: Kno
       })
       .catch(() => {});
   }, [character.slack_user_id, isOwn]);
+
+  useEffect(() => {
+    fetch(`/api/character/${encodeURIComponent(character.slack_user_id)}/equipped`, { credentials: "include" })
+      .then((r) => r.json() as Promise<{ items?: Item[] }>)
+      .then((d) => { if (d.items) setSheetEquipped(d.items); })
+      .catch(() => {});
+  }, [character.slack_user_id]);
 
   const msAgo = Date.now() - (character.last_active ?? 0);
   const secsAgo = Math.floor(msAgo / 1000);
@@ -3873,6 +3881,13 @@ function AdventurerSheet({ character, isOwn = false, onClose }: { character: Kno
             </div>
           );
         })()}
+
+        {sheetEquipped.length > 0 && (
+          <div style={{ padding: "10px 12px", background: "#1d1f23", borderRadius: 8, border: "1px solid #2a2d33" }}>
+            <div style={{ fontSize: 10, color: "#6b7280", textTransform: "uppercase", letterSpacing: 1, marginBottom: 8, fontFamily: DISPLAY_FONT }}>Equipment</div>
+            <ReadOnlyDoll items={sheetEquipped} />
+          </div>
+        )}
 
         {character.scars && character.scars.length > 0 && (
           <div style={{ padding: "10px 12px", background: "#1d1f23", borderRadius: 8, border: "1px solid #2a2d33" }}>
