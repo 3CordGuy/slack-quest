@@ -228,7 +228,7 @@ const DRINKS: DrinkSpec[] = [
   { id: "ale",     emoji: "🍺", name: "Tavern Ale",        price: 8,  effect: { kind: "buff_attack",   magnitude: 1, duration: 3 }, blurb: "Cheap, foamy, gives you the courage to swing harder. +1 attack for the whole fight." },
   { id: "mead",    emoji: "🍷", name: "Spiced Mead",       price: 8,  effect: { kind: "buff_magic",    magnitude: 1, duration: 3 }, blurb: "Cinnamon, clove, and a tingle in the fingertips. +1 magic for the whole fight." },
   { id: "brew",    emoji: "🥃", name: "Iron Brew",         price: 8,  effect: { kind: "instant_shield", amount: 5 },                blurb: "Tastes like ore. Lines your gut with grit. +5 shield, instant." },
-  { id: "tea",     emoji: "🍵", name: "Bitter Tea",        price: 12, effect: { kind: "instant_mana",  amount: 2 },                blurb: "Clarifies the mind, reignites the channel. +2 mana, instant." },
+  { id: "tea",     emoji: "🍵", name: "Bitter Tea",        price: 12, effect: { kind: "instant_mana",  amount: 3 },                blurb: "Clarifies the mind, reignites the channel. +3 mana, instant." },
   { id: "milk",    emoji: "🥛", name: "Frothy Milk",       price: 10, effect: { kind: "instant_hp",    amount: 8 },                blurb: "Comfort in a glass. The bartender knows. +8 HP, instant." },
   { id: "lucky",   emoji: "💧", name: "Lucky Sip",         price: 15, effect: { kind: "buff_next_crit" },                          blurb: "A shimmer of fate. Your next attack/cast/signature is a guaranteed crit." },
   { id: "whiskey", emoji: "🍶", name: "Aged Whiskey",      price: 25, effect: { kind: "buff_attack",   magnitude: 2, duration: 3 }, blurb: "Smoke, leather, twenty harvests of patience. +2 attack for the whole fight." },

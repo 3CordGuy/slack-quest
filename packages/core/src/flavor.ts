@@ -607,7 +607,7 @@ export const STAPLES: StapleSpec[] = [
     emoji: "✨",
     effect: "restore_mana",
     power: 1,
-    price: 30,
+    price: 7,
     blurb: "Restores 1 mana. Always in stock.",
   },
   {
@@ -615,9 +615,9 @@ export const STAPLES: StapleSpec[] = [
     name: "Mana Flask",
     emoji: "✨",
     effect: "restore_mana",
-    power: 2,
-    price: 60,
-    blurb: "Restores 2 mana. Always in stock.",
+    power: 3,
+    price: 20,
+    blurb: "Restores 3 mana. Always in stock.",
   },
 ];
 
