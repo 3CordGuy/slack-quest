@@ -2816,7 +2816,7 @@ app.post("/api/inventory/:itemId/use", async (c) => {
     return c.json({ ok: true, kind: "heal", healed });
   }
   if (item.item_type === "magic") {
-    const result = await bumpMaxMana(c.env.DB, character, item.power, 5 /* MAX_MANA_CAP */);
+    const result = await bumpMaxMana(c.env.DB, character, item.power);
     await removeItem(c.env.DB, item.id);
     return c.json({
       ok: true,
@@ -4062,7 +4062,6 @@ app.post("/api/quest/:id/dungeon/treasure_take", async (c) => {
       goldEach,
       () => rollDice(6),
       xpForLevel,
-      MAX_MANA_CAP,
     );
     if (result.levelsGained > 0) {
       levelUps.push({ user_id: f.slack_user_id, new_level: result.newLevel });
@@ -5265,7 +5264,6 @@ async function applyWebCombatOutcome(
         goldAwarded,
         () => rollDice(6),
         xpForLevel,
-        MAX_MANA_CAP,
       );
       levelUp = result.levelsGained > 0;
       newLevel = result.newLevel;

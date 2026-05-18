@@ -508,8 +508,8 @@ function rulesSections(): RulesSection[] {
       body: (cmd) => [
         `• Roll with \`${cmd} roll\`. 8 engineering-themed classes, randomly assigned (HP / atk_mod / mag_mod vary by class).`,
         `• *Reroll:* free until your first XP, then \`level × 50g\`. Confirm with \`${cmd} roll confirm\` — deletes everything (gold, gear, scars).`,
-        `• *Level up* (auto on XP threshold): max HP +1d6, HP refills, mana refills, max mana +1 every 5 levels (cap 5).`,
-        `• *Mana:* characters start at 2/2 max. Refills between quests, on join, and on level-up.`,
+        `• *Level up* (auto on XP threshold): max HP +1d6, HP refills, mana recalculates and refills.`,
+        `• *Mana:* scales with INT and level — 2 + floor((INT−4)/2) + floor(level/6). Refills between quests, on join, and on level-up.`,
         `• See \`${cmd} rules classes\` for the per-class signature / passive / active breakdown.`,
       ],
     },
@@ -4731,7 +4731,6 @@ async function resolveVictory(
       goldEach,
       () => rollDice(6),
       xpForLevel,
-      MAX_MANA_CAP,
     );
     if (result.levelsGained > 0) {
       const manaPart = result.newMaxMana > fighter.max_mana ? `, max mana ${result.newMaxMana}` : "";
@@ -5018,7 +5017,7 @@ async function resolveExpeditionVictory(
 
   const levelUpLines: string[] = [];
   for (const fighter of fighters) {
-    const result = await awardSpoils(env.DB, fighter, xpEach, goldEach, () => rollDice(6), xpForLevel, MAX_MANA_CAP);
+    const result = await awardSpoils(env.DB, fighter, xpEach, goldEach, () => rollDice(6), xpForLevel);
     if (result.levelsGained > 0) {
       const manaPart = result.newMaxMana > fighter.max_mana ? `, max mana ${result.newMaxMana}` : "";
       levelUpLines.push(
@@ -6379,7 +6378,7 @@ async function handleUse(
     if (character.max_mana >= MAX_MANA_CAP) {
       return ephemeral(`Already at the max-mana cap (${MAX_MANA_CAP}). Sell it instead with \`${payload.command} sell ${item.id}\`.`);
     }
-    const result = await bumpMaxMana(env.DB, character, item.power, MAX_MANA_CAP);
+    const result = await bumpMaxMana(env.DB, character, item.power);
     await removeItem(env.DB, item.id);
     const wasted = item.power - result.added;
     const wastedNote = wasted > 0 ? ` (${wasted} over the cap, lost)` : "";
