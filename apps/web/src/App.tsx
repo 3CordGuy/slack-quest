@@ -6757,7 +6757,7 @@ function QuestStatsCard({ stats }: { stats: QuestStats }) {
   return (
     <div style={card}>
       <h2 style={{ ...h2, marginBottom: 16 }}>
-        <Icon name="trophy" size={1} /> Quest Record
+        <Icon name="trophy" size={18} /> Quest Record
       </h2>
       {/* W–L summary row */}
       <div style={{ display: "flex", gap: 16, flexWrap: "wrap", marginBottom: 16 }}>
