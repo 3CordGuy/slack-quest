@@ -8584,7 +8584,7 @@ function itemIcon(item: {
       if (/\b(bandage|salve|poultice|balm|ointment)\b/.test(n))         return "medical-pack";
       if (/\b(elixir|essence|tincture|draught|brew)\b/.test(n))         return "heart-bottle";
       if (/\b(poison|venom|toxin)\b/.test(n))                           return "poison-bottle";
-      if (/\b(mana|arcane)\b/.test(n))                                   return "crystal-ball";
+      if (/\b(mana|arcane|flask)\b/.test(n))                             return "potion-ball";
       return "bubbling-potion";
     }
 
