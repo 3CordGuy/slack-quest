@@ -3270,7 +3270,7 @@ function CharacterInspectDialog({
         <Stats>
           <Stat
             label="HP"
-            icon={<Icon name="health-increase" color="#86efac" size={36} />}
+            icon={<Icon name="health-normal" color="#86efac" size={36} />}
             value={
               <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
                 <span>{character.hp} / {character.max_hp}</span>
@@ -3287,7 +3287,7 @@ function CharacterInspectDialog({
           />
           <Stat
             label="Mana"
-            icon={<Icon name="crystal-ball" color="#a78bfa" size={36} />}
+            icon={<Icon name="wizard-staff" color="#a78bfa" size={36} />}
             value={`${character.mana} / ${character.max_mana}`}
           />
           <Stat
@@ -3860,7 +3860,7 @@ function AdventurerSheet({ character, isOwn = false, onClose }: { character: Kno
             <span style={{ color: "#9ca3af" }}><Icon name="player" size={10} /> Level {character.level}</span>
           </div>
           <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "#9ca3af", marginBottom: 4 }}>
-            <span><Icon name="heart" size={10} /> HP</span>
+            <span><Icon name="health-normal" size={10} /> HP</span>
             <span style={{ color: hpPct < 0.25 ? "#fca5a5" : "#f5f5f5" }}>{character.hp} / {character.max_hp}</span>
           </div>
           <div style={{ height: 6, background: "#1d1f23", borderRadius: 3, overflow: "hidden", marginBottom: 12 }}>
@@ -4165,7 +4165,7 @@ function CharacterCard({
       <Stats>
         <Stat
           label="HP"
-          icon={<Icon name="health-increase" color="#86efac" size={36} />}
+          icon={<Icon name="health-normal" color="#86efac" size={36} />}
           tooltip={[
             `VIT ${primaryStats.vit}  ·  Level ${c.level}`,
             `16 + 2×${primaryStats.vit} + 2×${c.level} = ${c.max_hp} max HP`,
@@ -4184,7 +4184,7 @@ function CharacterCard({
         />
         <Stat
           label="Mana"
-          icon={<Icon name="crystal-ball" color="#a78bfa" size={36} />}
+          icon={<Icon name="wizard-staff" color="#a78bfa" size={36} />}
           tooltip={`INT ${primaryStats.int_stat}\n2 + floor((INT − 4) / 2) + floor(level / 6) = ${c.max_mana} max mana\nSpent to cast signature abilities`}
           value={`${c.mana} / ${c.max_mana}`}
         />
@@ -5103,9 +5103,9 @@ function InventoryFullScreen({
                 <span style={{ color: "#f5f5f5", fontWeight: 600, fontFamily: DISPLAY_FONT }}>{character.name}</span>
                 <span style={{ color: "#c084fc" }}>{character.class}</span>
                 <span title="Level">Lv {character.level}</span>
-                <span style={{ color: "#86efac" }} title="HP"><Icon name="heart" size={11} /> {character.hp}/{character.max_hp}</span>
+                <span style={{ color: "#86efac" }} title="HP"><Icon name="health-normal" size={11} /> {character.hp}/{character.max_hp}</span>
                 {character.max_mana > 0 && (
-                  <span style={{ color: "#a78bfa" }} title="Mana"><Icon name="crystal-ball" size={11} /> {character.mana}/{character.max_mana}</span>
+                  <span style={{ color: "#a78bfa" }} title="Mana"><Icon name="wizard-staff" size={11} /> {character.mana}/{character.max_mana}</span>
                 )}
                 {character.shield > 0 && (
                   <span style={{ color: "#60a5fa" }} title="Shield"><Icon name="round-shield" size={11} /> {character.shield}</span>
