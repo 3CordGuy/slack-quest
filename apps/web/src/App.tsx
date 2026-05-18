@@ -89,6 +89,15 @@ function describeItemEffect(item: {
   }
 }
 
+// Maps catalog item names to the status effect they apply and who it targets.
+const CATALOG_EFFECT: Record<string, { effect: EffectType; target: "self" | "monster" }> = {
+  "Espresso Shot": { effect: "regen",     target: "self"    },
+  "Regen Draft":   { effect: "regen",     target: "self"    },
+  "Poison Vial":   { effect: "poisoned",  target: "monster" },
+  "Venom Vial":    { effect: "poisoned",  target: "monster" },
+  "Battle Elixir": { effect: "empowered", target: "self"    },
+};
+
 // User-friendly text for error codes returned by the worker. Anything not
 // listed here falls back to the raw `error` string from the response body.
 const ERROR_LABELS: Record<string, string> = {
@@ -230,7 +239,7 @@ interface Item {
 }
 
 type QuestVariant = "standard" | "boss" | "gauntlet" | "dungeon" | "bounty_pack";
-type EffectType = "regen" | "bleeding" | "burning" | "poisoned" | "frozen" | "shocked";
+type EffectType = "regen" | "bleeding" | "burning" | "poisoned" | "empowered" | "frozen" | "shocked";
 
 interface StatusEffect {
   type: EffectType;
@@ -5653,11 +5662,29 @@ function ItemDetailPopover({
           fontSize: 12,
           color: "#cbd5e1",
           lineHeight: 1.5,
-          marginBottom: 12,
+          marginBottom: item.item_type === "tool" || item.item_type === "scroll" ? 6 : 12,
         }}
       >
         {describeItemEffect(item)}
       </div>
+      {/* Status effect chip for items that apply effects */}
+      {(() => {
+        const entry = findCatalogEntry(item.item_name);
+        const applies = entry ? CATALOG_EFFECT[entry.name] : undefined;
+        if (!applies) return null;
+        const col = EFFECT_COLOR[applies.effect];
+        const icon = EFFECT_ICON[applies.effect];
+        const targetLabel = applies.target === "self" ? "self" : "monster";
+        return (
+          <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 12 }}>
+            <span style={{ fontSize: 10, color: "#6b7280" }}>Applies:</span>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, fontWeight: 600, background: col + "22", border: `1px solid ${col}55`, color: col, borderRadius: 4, padding: "2px 7px" }}>
+              <Icon name={icon} size={10} color={col} /> {applies.effect}
+            </span>
+            <span style={{ fontSize: 10, color: "#6b7280" }}>→ {targetLabel}</span>
+          </div>
+        );
+      })()}
 
       {/* Level requirement badge */}
       {item.slot !== null && !item.equipped && !meetsLevel && (
@@ -8635,18 +8662,20 @@ const EFFECT_COLOR: Record<EffectType, string> = {
   bleeding: "#dc2626",
   burning: "#f97316",
   poisoned: "#a855f7",
+  empowered: "#fbbf24",
   frozen: "#93c5fd",
-  shocked: "#fbbf24",
+  shocked: "#fef08a",
 };
 
 // ra-* icon names per status effect. Rendered via <Icon> with EFFECT_COLOR.
 const EFFECT_ICON: Record<EffectType, string> = {
   regen: "aura",
-  bleeding: "bleeding-hearts",
+  bleeding: "bleeding-wound",
   burning: "fire",
-  poisoned: "monster-skull",
-  frozen: "ice-cube",
-  shocked: "lightning-bolt",
+  poisoned: "poison-cloud",
+  empowered: "electric",
+  frozen: "ice-bolt",
+  shocked: "electric",
 };
 
 function groupByType(items: Item[]): Partial<Record<ItemType, Item[]>> {
