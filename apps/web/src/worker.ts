@@ -1038,6 +1038,15 @@ app.get("/api/inventory", async (c) => {
   return c.json({ items, art_url });
 });
 
+// Read-only equipped items for any party member — used by the inspect dialog.
+app.get("/api/character/:userId/equipped", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const userId = c.req.param("userId");
+  const all = await getInventory(c.env.DB, userId);
+  return c.json({ items: all.filter((i) => i.equipped) });
+});
+
 // Equip an inventory item. Mirrors /sq equip: consumables can't equip,
 // already-equipped is a no-op, otherwise equip + unequip any other item
 // of the same type.

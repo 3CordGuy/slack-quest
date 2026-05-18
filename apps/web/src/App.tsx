@@ -3086,6 +3086,55 @@ function PartyMember({ fighter, self, onInspect }: { fighter: Character; self: b
   );
 }
 
+const DOLL_LAYOUT: (EquipSlot | null)[] = [
+  null, "helmet", null,
+  "main_hand", "body", "off_hand",
+  "amulet", "pants", "ring",
+  null, "boots", null,
+];
+
+function ReadOnlyDoll({ items }: { items: Item[] }) {
+  const bySlot = (slot: EquipSlot) => items.find((i) => i.slot === slot);
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 52px)", gap: 4, justifyContent: "center" }}>
+      {DOLL_LAYOUT.map((slot, i) => {
+        if (!slot) return <div key={i} />;
+        const item = bySlot(slot);
+        const rc = item ? RARITY_COLOR[item.rarity as Rarity] : null;
+        return (
+          <div
+            key={slot}
+            title={item ? `${item.item_name} (+${item.power})` : SLOT_LABELS[slot]}
+            style={{
+              width: 52, height: 52,
+              border: `1px solid ${rc ? `${rc}66` : "#2a2d33"}`,
+              borderRadius: 8,
+              background: item ? `${rc}11` : "#0e0f12",
+              display: "flex", flexDirection: "column",
+              alignItems: "center", justifyContent: "center",
+              gap: 2, position: "relative", overflow: "hidden",
+            }}
+          >
+            {item ? (
+              <>
+                <Icon name={SLOT_ICON[slot]} size={22} color={rc ?? "#6b7280"} />
+                <span style={{ fontSize: 9, color: rc ?? "#6b7280", fontWeight: 700, lineHeight: 1 }}>+{item.power}</span>
+                {item.sharpens_count > 0 && (
+                  <div style={{ position: "absolute", top: 2, right: 2, fontSize: 7, color: "#fb923c", fontWeight: 700 }}>
+                    ×{item.sharpens_count}
+                  </div>
+                )}
+              </>
+            ) : (
+              <Icon name={SLOT_ICON[slot]} size={18} color="#2a2d33" />
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function CharacterInspectDialog({
   character,
   onClose,
@@ -3099,6 +3148,13 @@ function CharacterInspectDialog({
   const cxpIntoLevel = Math.max(0, character.xp - cxpAtLevel);
   const cxpSpan = cxpAtNext - cxpAtLevel;
   const cxpPct = cxpSpan > 0 ? Math.min(1, cxpIntoLevel / cxpSpan) : 1;
+  const [equippedItems, setEquippedItems] = useState<Item[]>([]);
+  useEffect(() => {
+    fetch(`/api/character/${encodeURIComponent(character.slack_user_id)}/equipped`, { credentials: "include" })
+      .then((r) => r.json())
+      .then((d: { items?: Item[] }) => { if (d.items) setEquippedItems(d.items); })
+      .catch(() => {});
+  }, [character.slack_user_id]);
   return (
     <div
       style={{
@@ -3229,6 +3285,14 @@ function CharacterInspectDialog({
             value={isDowned ? "Downed" : "Ready"}
           />
         </Stats>
+        {equippedItems.length > 0 && (
+          <div style={{ marginTop: 20, borderTop: "1px solid #1e2028", paddingTop: 16 }}>
+            <div style={{ fontSize: 11, color: "#6b7280", fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 10 }}>
+              Equipped
+            </div>
+            <ReadOnlyDoll items={equippedItems} />
+          </div>
+        )}
       </div>
     </div>
   );
