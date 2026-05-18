@@ -1263,7 +1263,7 @@ export function CombatPage({
           )}
           <CBtn label="Heal" icon="health-increase" color="#22c55e" manaCost={1} disabled={!myTurn || myMana < 1} onClick={() => { if (state.fighters.length === 1) send({ kind: "heal", actor: selfId, target: selfId }); else setPicking("heal"); }} />
           <CBtn label="Shield" icon="shield" color="#60a5fa" manaCost={1} disabled={!myTurn || myMana < 1} onClick={() => { if (state.fighters.length === 1) send({ kind: "shield", actor: selfId, target: selfId }); else setPicking("shield"); }} />
-          <CBtn label={otherPosition === "front" ? "Front" : "Back"} icon={otherPosition === "front" ? "muscle-up" : "fall-down"} color="#6b7280" disabled={!myTurn} onClick={() => send({ kind: "position", actor: selfId, to: otherPosition })} />
+          {state.fighters.length > 1 && <CBtn label={otherPosition === "front" ? "Front" : "Back"} icon={otherPosition === "front" ? "muscle-up" : "fall-down"} color="#6b7280" disabled={!myTurn} onClick={() => send({ kind: "position", actor: selfId, to: otherPosition })} />}
           <CBtn label="Item" icon="ammo-bag" color="#c084fc" disabled={!myTurn || !items.some((i) => isCombatUsable(i.item_type))} onClick={() => setItemPicker("open")} />
           {items.some((i) => !i.equipped) && state.fighters.filter((f) => f.hp > 0 && f.id !== selfId).length > 0 && (
             <CBtn label="Give" icon="conversation" color="#fcd34d" disabled={!myTurn} onClick={() => setGivePicker("selectItem")} />

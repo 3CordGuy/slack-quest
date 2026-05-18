@@ -827,23 +827,20 @@ export async function applyShortRest(
   newHp: number,
 ): Promise<void> {
   const now = Date.now();
-  // Short rest also drips +1 mana (capped at max_mana). The 10-min cooldown
-  // gates spamming, so this just makes the rest decision more meaningful when
-  // you're low on both HP and mana mid-dungeon.
   await db
     .prepare(
-      "UPDATE characters SET hp = ?, mana = MIN(max_mana, mana + 1), last_rest_at = ?, last_active = ? WHERE slack_user_id = ?",
+      "UPDATE characters SET hp = ?, last_rest_at = ?, last_active = ? WHERE slack_user_id = ?",
     )
     .bind(newHp, now, now, userId)
     .run();
 }
 
-// Long rest: full HP restore + bumps last_long_rest_at. Once per 24 hours.
+// Long rest: full HP + full mana restore + bumps last_long_rest_at. Once per 24 hours.
 // Doesn't touch last_rest_at — the two cooldowns are independent.
 export async function applyLongRest(db: D1Database, userId: string): Promise<void> {
   const now = Date.now();
   await db
-    .prepare("UPDATE characters SET hp = max_hp, last_long_rest_at = ?, last_active = ? WHERE slack_user_id = ?")
+    .prepare("UPDATE characters SET hp = max_hp, mana = max_mana, last_long_rest_at = ?, last_active = ? WHERE slack_user_id = ?")
     .bind(now, now, userId)
     .run();
 }

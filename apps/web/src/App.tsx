@@ -3457,6 +3457,7 @@ function AdventurersCard({ selfId }: { selfId: string }) {
             const portraitSrc = adventurerCharPortrait(ch.name);
             const fallbackPortrait = adventurerClassPortrait(ch.class);
 
+            const isDowned = ch.downed_until !== null && ch.downed_until > nowMs;
             return (
               <button
                 key={ch.slack_user_id}
@@ -3464,15 +3465,24 @@ function AdventurersCard({ selfId }: { selfId: string }) {
                 style={{
                   display: "flex", alignItems: "center", gap: 8,
                   padding: "6px 8px", borderRadius: 6, background: "#16181c",
-                  border: "1px solid transparent", cursor: "pointer", width: "100%",
+                  border: `1px solid ${isDowned ? "#7f1d1d44" : "transparent"}`, cursor: "pointer", width: "100%",
                   textAlign: "left", fontFamily: "inherit",
                 }}
-                onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.borderColor = "#2a2d33"; }}
-                onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.borderColor = "transparent"; }}
+                onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.borderColor = isDowned ? "#7f1d1d88" : "#2a2d33"; }}
+                onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.borderColor = isDowned ? "#7f1d1d44" : "transparent"; }}
               >
                 <div style={{ position: "relative", flexShrink: 0 }}>
-                  <Avatar src={portraitSrc} fallbackSrc={fallbackPortrait} alt={ch.name} size={32} radius={4} fallbackIcon="player" fallbackColor="#4a5568" />
-                  {isOnline && (
+                  <Avatar src={portraitSrc} fallbackSrc={fallbackPortrait} alt={ch.name} size={32} radius={4} fallbackIcon="player" fallbackColor="#4a5568" style={{ opacity: isDowned ? 0.5 : 1 }} />
+                  {isDowned ? (
+                    <span style={{
+                      position: "absolute", bottom: -1, right: -1,
+                      width: 12, height: 12, borderRadius: "50%",
+                      background: "#7f1d1d", border: "1.5px solid #16181c",
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                    }}>
+                      <Icon name="death-skull" size={7} color="#f87171" />
+                    </span>
+                  ) : isOnline && (
                     <span style={{
                       position: "absolute", bottom: -1, right: -1,
                       width: 8, height: 8, borderRadius: "50%",
