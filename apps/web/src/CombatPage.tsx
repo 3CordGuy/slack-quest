@@ -600,7 +600,7 @@ function formatEvent(e: CombatEvent, state: CombatState | null): LogEntry[] {
               : pct >= 0.33
               ? <span style={{ color: "#d97706" }}>◆</span>
               : <Icon name="death-skull" color="#dc2626" />;
-            return <span key={f.id} style={{ marginRight: 8 }}>{dot} {nameOf(f.id)} {f.hp}/{f.max_hp}{f.shield > 0 ? <> +{f.shield}<Icon name="shield" /></> : ""}</span>;
+            return <span key={f.id} style={{ marginRight: 8 }}>{dot} {nameOf(f.id)} {f.hp}/{f.max_hp}</span>;
           })}</>, "info")
         : [];
       const active = e.active;
@@ -1593,17 +1593,26 @@ function PartySection({
   );
 }
 
-function FighterHpRow({ hp, maxHp, shield }: { hp: number; maxHp: number; shield: number }) {
+function FighterHpRow({ hp, maxHp, shield, armorPower }: { hp: number; maxHp: number; shield: number; armorPower: number }) {
   const pct = maxHp > 0 ? Math.max(0, Math.min(1, hp / maxHp)) : 0;
   const color = pct < 0.25 ? "#dc2626" : pct < 0.5 ? "#d97706" : "#16a34a";
+  const armorMax = Math.floor(armorPower / 2);
+  const armorPct = armorMax > 0 ? Math.max(0, Math.min(1, shield / armorMax)) : 0;
   return (
     <div style={{ marginTop: 6, display: "flex", alignItems: "center", gap: 8 }}>
-      <div style={{ flex: 1, height: 8, background: "#0e0f12", borderRadius: 4, overflow: "hidden" }}>
-        <div style={{ width: `${pct * 100}%`, height: "100%", background: color, transition: "width 0.3s ease" }} />
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 3 }}>
+        <div style={{ height: 8, background: "#0e0f12", borderRadius: 4, overflow: "hidden" }}>
+          <div style={{ width: `${pct * 100}%`, height: "100%", background: color, transition: "width 0.3s ease" }} />
+        </div>
+        {armorMax > 0 && (
+          <div style={{ height: 4, background: "#0e0f12", borderRadius: 2, overflow: "hidden" }} title={`Armor: ${shield}/${armorMax}`}>
+            <div style={{ width: `${armorPct * 100}%`, height: "100%", background: "#6b7280", transition: "width 0.3s ease" }} />
+          </div>
+        )}
       </div>
       <div style={{ ...muted, fontSize: 11, minWidth: 48, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
         {hp}/{maxHp}
-        {shield > 0 && <span style={{ color: "#7c83ff", marginLeft: 4 }}>+{shield}</span>}
+        {armorMax > 0 && <div style={{ fontSize: 10, color: "#6b7280" }}>{shield}/{armorMax} 🛡</div>}
       </div>
     </div>
   );
@@ -1686,7 +1695,7 @@ function FighterRow({ fighter, self, current }: { fighter: Fighter; self: boolea
           </div>
         )}
         {/* HP bar row — matches mana bar layout so numbers stay column-aligned */}
-        <FighterHpRow hp={fighter.hp} maxHp={fighter.max_hp} shield={fighter.shield} />
+        <FighterHpRow hp={fighter.hp} maxHp={fighter.max_hp} shield={fighter.shield} armorPower={fighter.armor_power} />
         {fighter.max_mana > 0 && (
           <div style={{ marginTop: 6, display: "flex", alignItems: "center", gap: 8 }}>
             <div
