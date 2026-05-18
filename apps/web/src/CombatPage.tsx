@@ -65,6 +65,16 @@ if (typeof document !== "undefined" && !document.getElementById("gq-combat-anim-
   document.head.appendChild(s);
 }
 
+function useIsMobile() {
+  const [v, setV] = useState(() => window.innerWidth < 540);
+  useEffect(() => {
+    const h = () => setV(window.innerWidth < 540);
+    window.addEventListener("resize", h);
+    return () => window.removeEventListener("resize", h);
+  }, []);
+  return v;
+}
+
 // Live web-mode combat. Connects to the QuestRoom Durable Object via WS,
 // renders the current state, animates incoming events through a scrolling
 // log, and lets the active player submit actions.
@@ -756,6 +766,7 @@ export function CombatPage({
   // Tracks the last turn_index for which we fired an auto-resolve so we don't double-fire.
   const autoResolvedTurnRef = useRef<number>(-1);
   const [reconnectKey, setReconnectKey] = useState(0);
+  const isMobile = useIsMobile();
   const wsRef = useRef<WebSocket | null>(null);
   const logScrollRef = useRef<HTMLDivElement | null>(null);
   const [diceRolls, setDiceRolls] = useState<DiceRollEntry[]>([]);
@@ -1129,14 +1140,16 @@ export function CombatPage({
             </div>
 
             {/* Left column — dice rolls, below the initiative strip */}
-            <div style={{ position: "absolute", top: 60, left: 12, zIndex: 6, maxWidth: "min(200px, 16vw)" }}>
+            <div style={{ position: "absolute", top: 60, left: 12, zIndex: 6, maxWidth: isMobile ? 90 : "min(200px, 16vw)" }}>
               <DiceRollDisplay rolls={diceRolls} align="left" />
             </div>
 
-            {/* Right rail — combat log */}
-            <div style={{ position: "absolute", top: 12, right: 12, bottom: 12, width: "min(280px, 22vw)", display: "flex", flexDirection: "column", zIndex: 6 }}>
-              <EventLog log={ui.log} scrollRef={logScrollRef} railMode />
-            </div>
+            {/* Right rail — combat log (hidden on mobile; too narrow to be useful) */}
+            {!isMobile && (
+              <div style={{ position: "absolute", top: 12, right: 12, bottom: 12, width: "min(280px, 22vw)", display: "flex", flexDirection: "column", zIndex: 6 }}>
+                <EventLog log={ui.log} scrollRef={logScrollRef} railMode />
+              </div>
+            )}
 
             {/* Pick-a-target prompt */}
             {myTurn && liveMonsters.length > 1 && targetMonsterId === null && !isPickerOpen && (
@@ -1228,7 +1241,7 @@ export function CombatPage({
 
       {/* Action bar — CBtn row */}
       {state?.status === "active" && !isPickerOpen && (
-        <div style={{ background: "rgba(10,11,14,0.92)", borderTop: "1px solid #1e2028", padding: "8px 10px 10px", flexShrink: 0, display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", justifyContent: "center" }}>
+        <div style={{ background: "rgba(10,11,14,0.92)", borderTop: "1px solid #1e2028", padding: isMobile ? "4px 6px 6px" : "8px 10px 10px", flexShrink: 0, display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", justifyContent: "center" }}>
           {/* Turn status hint */}
           {!myTurn && (
             <div style={{ width: "100%", textAlign: "center", fontSize: 11, color: "#9aa0a6", fontStyle: "italic", paddingBottom: 2 }}>
@@ -1391,7 +1404,7 @@ function MonsterCard({
     <div
       key={`mc-${monster.id ?? ""}-${isDead ? "dead" : lungeSeq}`}
       className={classes}
-      style={{ ...card, borderColor, boxShadow: isTargeted && !isDead ? "0 0 0 2px #fbbf24" : undefined, display: "flex", gap: 16, alignItems: "flex-start", position: "relative", cursor: onClick && !isDead ? "pointer" : undefined, transition: "border-color 0.15s, box-shadow 0.15s" }}
+      style={{ ...card, padding: 12, borderColor, boxShadow: isTargeted && !isDead ? "0 0 0 2px #fbbf24" : undefined, display: "flex", gap: 10, alignItems: "flex-start", position: "relative", cursor: onClick && !isDead ? "pointer" : undefined, transition: "border-color 0.15s, box-shadow 0.15s" }}
       onClick={!isDead && onClick ? onClick : undefined}
     >
       {/* Slash streak re-mounts when slashSeq bumps */}
@@ -1408,8 +1421,8 @@ function MonsterCard({
       <Avatar
         src={monster.art_url}
         alt={monster.name}
-        size={96}
-        radius={10}
+        size={72}
+        radius={8}
         fallbackIcon="dragon-head"
         fallbackColor={isMarked ? "#f59e0b" : "#7c2020"}
         border={`1px solid ${borderColor}`}
@@ -3238,6 +3251,8 @@ function CBtn({ label, icon, color, disabled, manaCost, onClick }: {
   label: string; icon?: string; color: string;
   disabled?: boolean; manaCost?: number; onClick: () => void;
 }) {
+  const compact = window.innerWidth < 540;
+  const sz = compact ? 60 : 78;
   return (
     <button
       onClick={onClick}
@@ -3245,7 +3260,7 @@ function CBtn({ label, icon, color, disabled, manaCost, onClick }: {
       title={manaCost ? `${label} (costs ${manaCost} mana)` : label}
       style={{
         display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
-        gap: 3, padding: "8px 6px", width: 78, height: 78,
+        gap: compact ? 2 : 3, padding: compact ? "6px 4px" : "8px 6px", width: sz, height: sz,
         background: disabled ? "#1a1c21" : color,
         border: `2px solid ${disabled ? "#2a2d33" : color}`,
         borderRadius: 8,
@@ -3260,9 +3275,9 @@ function CBtn({ label, icon, color, disabled, manaCost, onClick }: {
       onMouseUp={(e) => { e.currentTarget.style.transform = ""; }}
       onMouseLeave={(e) => { e.currentTarget.style.transform = ""; }}
     >
-      {icon && <Icon name={icon} size={26} />}
-      <span style={{ fontSize: 11, fontWeight: 700, lineHeight: 1, letterSpacing: 0.3, textAlign: "center" }}>{label}</span>
-      {manaCost !== undefined && <span style={{ fontSize: 9, opacity: 0.75 }}>{manaCost}✦</span>}
+      {icon && <Icon name={icon} size={compact ? 20 : 26} />}
+      <span style={{ fontSize: compact ? 9 : 11, fontWeight: 700, lineHeight: 1, letterSpacing: 0.3, textAlign: "center" }}>{label}</span>
+      {manaCost !== undefined && <span style={{ fontSize: compact ? 8 : 9, opacity: 0.75 }}>{manaCost}✦</span>}
     </button>
   );
 }
@@ -3291,7 +3306,7 @@ function PartyChips({ fighters, selfId, flashIds, onClickSelf }: {
           border: isSelf ? "1px solid rgba(245,245,220,0.22)" : "1px solid rgba(255,255,255,0.07)",
           borderRadius: 8, padding: "5px 10px",
           opacity: f.hp <= 0 ? 0.45 : 1, flexShrink: 0,
-          minWidth: 160,
+          minWidth: 130,
           cursor: clickable ? "pointer" : "default",
         }}
       >
