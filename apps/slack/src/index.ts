@@ -3,7 +3,7 @@ import { Hono } from "hono";
 import type { CombatEvent, CombatState, TurnAction } from "@gantt-quest/core";
 
 import { pregenAllViewArt } from "./ai";
-import { handleCommand, handleInteraction, rebuildTownState } from "./commands";
+import { handleCommand, handleInteraction, rebuildTownState, startQuestFromLobby } from "./commands";
 import {
   parseInteractivePayload,
   parseSlashCommand,
@@ -58,6 +58,10 @@ export interface Env {
   // dungeon (Phase 4). Legacy expedition dungeons stay active for in-flight
   // quests; new /gq quest dungeon starts use graph navigation.
   DUNGEON_GRAPH?: string;
+  // Singleton DO that manages lobby timeout alarms. One instance handles all
+  // active lobbies; per-lobby entries keyed by questId in DO storage.
+  // Optional: when unset, lobby auto-start is disabled (manual only).
+  LOBBY_MANAGER?: DurableObjectNamespace;
 }
 
 // Structural stub for the cross-bound QuestRoom DO. We don't import the
@@ -242,6 +246,134 @@ app.post("/slack/interactive", async (c) => {
   );
   return c.text("", 200);
 });
+
+// ─── LobbyManager DO ─────────────────────────────────────────────────────────
+// Singleton Durable Object that manages lobby timeout alarms for all active
+// quest lobbies. Entries are stored as `lobby:<questId>` in DO storage.
+// When a lobby's expiry time arrives, `startQuestFromLobby` is called to
+// transition the quest from `lobby` → `active` and post the opening content.
+
+interface LobbyEntry {
+  questId: number;
+  channelId: string;
+  threadTs: string;
+  lobbyTs: string | null;
+  expiresAt: number;
+}
+
+export class LobbyManager {
+  state: DurableObjectState;
+  env: Env;
+
+  constructor(state: DurableObjectState, env: Env) {
+    this.state = state;
+    this.env = env;
+  }
+
+  // RPC-over-fetch: POST body is JSON { method, ...args }
+  async fetch(req: Request): Promise<Response> {
+    const { method, ...args } = (await req.json()) as Record<string, unknown>;
+    if (method === "schedule") {
+      const { questId, expiresAt, channelId, threadTs, lobbyTs } = args as unknown as LobbyEntry;
+      await this.scheduleLobbyTimeout(questId, expiresAt, channelId, threadTs, lobbyTs);
+      return new Response(JSON.stringify({ ok: true }), { headers: { "content-type": "application/json" } });
+    }
+    if (method === "cancel") {
+      const { questId } = args as { questId: number };
+      await this.cancelLobbyTimeout(questId);
+      return new Response(JSON.stringify({ ok: true }), { headers: { "content-type": "application/json" } });
+    }
+    return new Response(JSON.stringify({ ok: false, error: "unknown method" }), { status: 400, headers: { "content-type": "application/json" } });
+  }
+
+  async scheduleLobbyTimeout(
+    questId: number,
+    expiresAt: number,
+    channelId: string,
+    threadTs: string,
+    lobbyTs: string | null,
+  ): Promise<void> {
+    await this.state.storage.put<LobbyEntry>(`lobby:${questId}`, {
+      questId, expiresAt, channelId, threadTs, lobbyTs,
+    });
+    const current = await this.state.storage.getAlarm();
+    if (current === null || expiresAt < current) {
+      await this.state.storage.setAlarm(expiresAt);
+    }
+  }
+
+  async cancelLobbyTimeout(questId: number): Promise<void> {
+    await this.state.storage.delete(`lobby:${questId}`);
+    const entries = await this.state.storage.list<LobbyEntry>({ prefix: "lobby:" });
+    if (entries.size === 0) {
+      await this.state.storage.deleteAlarm();
+    } else {
+      let min = Infinity;
+      for (const [, entry] of entries) {
+        if (entry.expiresAt < min) min = entry.expiresAt;
+      }
+      await this.state.storage.setAlarm(min);
+    }
+  }
+
+  async alarm(): Promise<void> {
+    const now = Date.now();
+    const entries = await this.state.storage.list<LobbyEntry>({ prefix: "lobby:" });
+    let nextAlarm: number | null = null;
+    for (const [key, entry] of entries) {
+      if (entry.expiresAt <= now) {
+        try {
+          await startQuestFromLobby(
+            entry.questId, entry.channelId, entry.threadTs, entry.lobbyTs, this.env,
+          );
+        } catch (err) {
+          console.error("LobbyManager.alarm: startQuestFromLobby failed", {
+            questId: entry.questId, err: String(err),
+          });
+        }
+        await this.state.storage.delete(key);
+      } else if (nextAlarm === null || entry.expiresAt < nextAlarm) {
+        nextAlarm = entry.expiresAt;
+      }
+    }
+    if (nextAlarm !== null) {
+      await this.state.storage.setAlarm(nextAlarm);
+    }
+  }
+}
+
+// Call the singleton LobbyManager DO to schedule an auto-start alarm.
+export async function scheduleLobbyAlarm(
+  env: Env,
+  questId: number,
+  expiresAt: number,
+  channelId: string,
+  threadTs: string,
+  lobbyTs: string | null,
+): Promise<void> {
+  if (!env.LOBBY_MANAGER) return;
+  const id = env.LOBBY_MANAGER.idFromName("singleton");
+  const stub = env.LOBBY_MANAGER.get(id);
+  await stub.fetch("http://do/", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ method: "schedule", questId, expiresAt, channelId, threadTs, lobbyTs }),
+  });
+}
+
+// Call the singleton LobbyManager DO to cancel a pending alarm.
+export async function cancelLobbyAlarm(env: Env, questId: number): Promise<void> {
+  if (!env.LOBBY_MANAGER) return;
+  const id = env.LOBBY_MANAGER.idFromName("singleton");
+  const stub = env.LOBBY_MANAGER.get(id);
+  await stub.fetch("http://do/", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ method: "cancel", questId }),
+  });
+}
+
+// ─── End LobbyManager DO ──────────────────────────────────────────────────────
 
 // Daily cron: rebuild town state (job board, NPCs, shop) for every channel
 // that has an existing town_state row. Runs early morning so the board is

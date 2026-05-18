@@ -29,9 +29,19 @@
         "name": "QUEST_ROOM",
         "class_name": "QuestRoom",
         "script_name": "gantt-quest-web"
+      },
+      {
+        "name": "LOBBY_MANAGER",
+        "class_name": "LobbyManager"
       }
     ]
   },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_classes": ["LobbyManager"]
+    }
+  ],
   "vars": {
     "BOT_NAME": "Gantt Quest",
     "IMAGE_BASE_URL": "https://gantt-quest.3cordguy.workers.dev"
