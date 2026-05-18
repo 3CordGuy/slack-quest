@@ -633,10 +633,13 @@ function MonsterCard({ monster, isBoss, isHit, lungeTick, slashTick, isMarked, i
   const cardWidth = isPrimary ? undefined : 200;
   const artHeight = isPrimary ? 140 : 100;
   const nameFontSize = isPrimary ? 15 : 13;
+  // Only put hit-flash and lunge on the outer card. The targeted pulse goes
+  // on a separate inner overlay so its `animation` declaration can never
+  // override the lunge animation (both would be single-class rules competing
+  // on the same element — last rule in the stylesheet wins).
   const classes = [
     isHit && !isDead ? "gq-hit-flash" : null,
     !isDead ? "gq-monster-lunge-card" : "gq-monster-defeated-card",
-    isTargeted ? "gq-monster-targeted" : null,
   ].filter(Boolean).join(" ");
   const borderColor = isDead ? "#2a2d33" : isTargeted ? "#fbbf24" : isBoss ? "#fca5a5" : "#2a2d33";
   return (
@@ -656,12 +659,17 @@ function MonsterCard({ monster, isBoss, isHit, lungeTick, slashTick, isMarked, i
         maxWidth: isPrimary ? 300 : cardWidth,
         width: cardWidth,
         backdropFilter: "blur(8px)",
-        boxShadow: isBoss && !isDead ? "0 0 32px rgba(239,68,68,0.3)" : isTargeted ? "0 0 16px rgba(251,191,36,0.4)" : "0 4px 24px rgba(0,0,0,0.6)",
+        boxShadow: isBoss && !isDead ? "0 0 32px rgba(239,68,68,0.3)" : "0 4px 24px rgba(0,0,0,0.6)",
         cursor: onClick && !isDead ? "pointer" : "default",
-        transition: "border-color 0.15s, box-shadow 0.15s",
+        transition: "border-color 0.15s",
         flexShrink: 0,
       }}
     >
+      {/* Target-pulse overlay — lives on its own element so its animation
+          never clashes with the card-level lunge/hit-flash animations. */}
+      {isTargeted && !isDead && (
+        <div className="gq-monster-targeted" style={{ position: "absolute", inset: 0, borderRadius: 11, pointerEvents: "none" }} />
+      )}
       {monster.art_url && (
         <img src={monster.art_url} alt={monster.name} style={{ width: "100%", height: artHeight, objectFit: "cover", borderRadius: 8, marginBottom: 8, display: "block" }} />
       )}

@@ -1394,7 +1394,6 @@ function MonsterCard({
 
   const classes = [
     !isDead ? "gq-monster-lunge-card" : "gq-monster-defeated-card",
-    isTargeted && !isDead ? "gq-monster-targeted" : null,
   ].filter(Boolean).join(" ");
 
   const sageLo = 1 + monster.tier;
@@ -1404,9 +1403,13 @@ function MonsterCard({
     <div
       key={`mc-${monster.id ?? ""}-${isDead ? "dead" : lungeSeq}`}
       className={classes}
-      style={{ ...card, padding: 12, borderColor, boxShadow: isTargeted && !isDead ? "0 0 0 2px #fbbf24" : undefined, display: "flex", gap: 10, alignItems: "flex-start", position: "relative", cursor: onClick && !isDead ? "pointer" : undefined, transition: "border-color 0.15s, box-shadow 0.15s" }}
+      style={{ ...card, padding: 12, borderColor, display: "flex", gap: 10, alignItems: "flex-start", position: "relative", cursor: onClick && !isDead ? "pointer" : undefined, transition: "border-color 0.15s" }}
       onClick={!isDead && onClick ? onClick : undefined}
     >
+      {/* Target pulse on its own overlay so it never fights the lunge animation */}
+      {isTargeted && !isDead && (
+        <div className="gq-monster-targeted" style={{ position: "absolute", inset: 0, borderRadius: 8, pointerEvents: "none" }} />
+      )}
       {/* Slash streak re-mounts when slashSeq bumps */}
       {slashSeq > 0 && !isDead && (
         <div aria-hidden style={{ position: "absolute", inset: 0, overflow: "hidden", borderRadius: 8, pointerEvents: "none" }}>
