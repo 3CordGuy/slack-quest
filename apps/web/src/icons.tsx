@@ -32,6 +32,8 @@ const SVG_ICONS = new Set([
   "run",
   // Status effect icons
   "ice-bolt", "electric", "bleeding-wound", "poison-cloud",
+  // Victory modal icons
+  "health-normal", "health-decrease", "health-potion", "death-skull", "party-popper", "party-flags",
 ]);
 
 interface IconProps {
