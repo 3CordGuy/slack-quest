@@ -2,7 +2,7 @@
 // Long-running work (AI calls, chat.postMessage) goes through ctx.waitUntil.
 
 import type { Env, QuestRoomStub } from "./index";
-import { cancelLobbyAlarm, questRoomId, scheduleLobbyAlarm } from "./index";
+import { cancelLobbyAlarm, cancelTurnNotifAlarm, questRoomId, scheduleLobbyAlarm, scheduleTurnNotifAlarm } from "./index";
 import { renderBattlefieldBlocks, renderTurnToThread } from "./render_combat";
 
 // Public-facing display name. Defaults to "Slack Quest"; operators override per
@@ -4033,9 +4033,10 @@ async function upsertBattlefield(
 }
 
 // Sends a turn notification to the next human actor after a turn advances.
-// Reads the actor's notification_pref from DB: "thread" broadcasts an @mention
-// to the quest thread (reply_broadcast: true = shows in channel), "dm" sends a
-// direct message instead. Skips monster actors and terminal combat states.
+// "dm" pref fires immediately as a DM. "thread" pref schedules a delayed
+// Slack thread reply via LobbyManager alarm — if the player acts within
+// the window (default 2 min) the alarm is overwritten by the next turn and
+// never fires, keeping the channel quiet for active web users.
 async function dispatchTurnNotification(
   env: Env,
   quest: ActiveQuest,
@@ -4052,7 +4053,7 @@ async function dispatchTurnNotification(
   if (actorChar?.notification_pref === "dm") {
     await sendDM(env.SLACK_BOT_TOKEN, turnStart.actor, `⚔️ It's your turn in the quest!`);
   } else {
-    await postToThread(env, quest, `<@${turnStart.actor}> it's your turn!`, { broadcast: true });
+    await scheduleTurnNotifAlarm(env, quest.id, turnStart.actor, quest.channel_id, quest.thread_ts);
   }
 }
 
@@ -11198,13 +11199,13 @@ async function handleNotifyPref(
   const pref = args[0]?.toLowerCase();
   if (pref !== "dm" && pref !== "thread") {
     return ephemeral(
-      `Usage: \`${payload.command} notify dm\` or \`${payload.command} notify thread\`\nDefault is \`thread\` — your turn posts a broadcast in the quest channel. Switch to \`dm\` to receive a direct message instead.`,
+      `Usage: \`${payload.command} notify dm\` or \`${payload.command} notify thread\`\nDefault is \`thread\` — your turn posts a reply in the quest thread. Switch to \`dm\` to receive a direct message instead.`,
     );
   }
   const character = await getCharacter(env.DB, payload.user_id);
   if (!character) return ephemeral(`You need to \`${payload.command} roll\` a character first.`);
   await setNotificationPref(env.DB, payload.user_id, pref);
-  const label = pref === "dm" ? "direct messages" : "channel broadcasts";
+  const label = pref === "dm" ? "direct messages" : "quest thread replies";
   return ephemeral(`✅ Turn notifications set to *${label}*.`);
 }
 

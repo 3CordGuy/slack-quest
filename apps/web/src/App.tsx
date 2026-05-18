@@ -19,6 +19,7 @@ import { classByName, deriveAll, findCatalogEntry, priceFor, sellPriceFor, xpFor
 import { CombatPage } from "./CombatPage";
 import { DungeonView } from "./DungeonView";
 import { GridDungeonView } from "./GridDungeonView";
+import { LobbyView } from "./LobbyView";
 import { Avatar, EmojiIcon, Icon, KeyIcon } from "./icons";
 
 // One-liner describing the in-game effect of an item, in plain mechanics
@@ -786,6 +787,7 @@ type LoadState =
       inventory: Item[];
       inventoryArtUrl: string | null;
       activeQuest: { quest: ActiveQuest; party: Character[] } | null;
+      lobbyQuest: { quest: { id: number; created_by: string; scene: Record<string, unknown>; lobby_expires_at: number | null; mode: string }; party: { slack_user_id: string; name: string; invite_status: string; ready: boolean }[] } | null;
       recent: RecentQuest[];
       questStats: QuestStats | null;
       leaderboard: QuestLeaderboardEntry[];
@@ -904,6 +906,7 @@ export function App() {
     let inventory: Item[] = [];
     let inventoryArtUrl: string | null = null;
     let activeQuest: { quest: ActiveQuest; party: Character[] } | null = null;
+    let lobbyQuest: { quest: { id: number; created_by: string; scene: Record<string, unknown>; lobby_expires_at: number | null; mode: string }; party: { slack_user_id: string; name: string; invite_status: string; ready: boolean }[] } | null = null;
     let recent: RecentQuest[] = [];
     let questStats: QuestStats | null = null;
     let leaderboard: QuestLeaderboardEntry[] = [];
@@ -916,9 +919,10 @@ export function App() {
     let townArt: TownArt | null = null;
     let board: BoardResponse | null = null;
     if (me.character) {
-      const [invRes, qRes, recentRes, statsRes, leaderboardRes, shopRes, joinableRes, innRes, smithyRes, pubRes, townRes, boardRes, apoRes] = await Promise.all([
+      const [invRes, qRes, lobbyRes, recentRes, statsRes, leaderboardRes, shopRes, joinableRes, innRes, smithyRes, pubRes, townRes, boardRes, apoRes] = await Promise.all([
         fetch("/api/inventory", { credentials: "include" }),
         fetch("/api/quest/active", { credentials: "include" }),
+        fetch("/api/quest/lobby", { credentials: "include" }),
         fetch("/api/quests/recent", { credentials: "include" }),
         fetch("/api/stats", { credentials: "include" }),
         fetch("/api/leaderboard", { credentials: "include" }),
@@ -956,6 +960,10 @@ export function App() {
           setHasWebCombat(false);
           setCombatDismissed(false);
         }
+      }
+      if (lobbyRes.ok) {
+        const body = (await lobbyRes.json()) as { quest: { id: number; created_by: string; scene: Record<string, unknown>; lobby_expires_at: number | null; mode: string } | null; party?: { slack_user_id: string; name: string; invite_status: string; ready: boolean }[] };
+        if (body.quest) lobbyQuest = { quest: body.quest, party: body.party ?? [] };
       }
       if (recentRes.ok) {
         recent = ((await recentRes.json()) as RecentQuestsResponse).quests;
@@ -1023,7 +1031,7 @@ export function App() {
         }
       }
     }
-    setState({ kind: "auth", me, inventory, inventoryArtUrl, activeQuest, recent, questStats, leaderboard, shop, joinable, inn, smithy, pub, apothecary, townArt, board });
+    setState({ kind: "auth", me, inventory, inventoryArtUrl, activeQuest, lobbyQuest, recent, questStats, leaderboard, shop, joinable, inn, smithy, pub, apothecary, townArt, board });
   }
 
   async function logout() {
@@ -1680,6 +1688,12 @@ export function App() {
       <DashboardLayout
         main={
           <>
+            {!state.activeQuest && state.lobbyQuest && (
+              <LobbyView
+                selfId={state.me.slack_user_id}
+                onQuestStarted={() => void refresh()}
+              />
+            )}
             {state.activeQuest && (
               <ActiveQuestCard
                 quest={state.activeQuest.quest}
@@ -3256,12 +3270,12 @@ function CharacterInspectDialog({
         <Stats>
           <Stat
             label="HP"
-            icon={<Icon name="health-increase" color="#86efac" size={36} />}
+            icon={<Icon name="health-normal" color="#86efac" size={36} />}
             value={`${character.hp} / ${character.max_hp}`}
           />
           <Stat
             label="Mana"
-            icon={<Icon name="crystal-ball" color="#a78bfa" size={36} />}
+            icon={<Icon name="wizard-staff" color="#a78bfa" size={36} />}
             value={`${character.mana} / ${character.max_mana}`}
           />
           <Stat
@@ -3834,7 +3848,7 @@ function AdventurerSheet({ character, isOwn = false, onClose }: { character: Kno
             <span style={{ color: "#9ca3af" }}><Icon name="player" size={10} /> Level {character.level}</span>
           </div>
           <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "#9ca3af", marginBottom: 4 }}>
-            <span><Icon name="heart" size={10} /> HP</span>
+            <span><Icon name="health-normal" size={10} /> HP</span>
             <span style={{ color: hpPct < 0.25 ? "#fca5a5" : "#f5f5f5" }}>{character.hp} / {character.max_hp}</span>
           </div>
           <div style={{ height: 6, background: "#1d1f23", borderRadius: 3, overflow: "hidden", marginBottom: 12 }}>
@@ -4139,7 +4153,7 @@ function CharacterCard({
       <Stats>
         <Stat
           label="HP"
-          icon={<Icon name="health-increase" color="#86efac" size={36} />}
+          icon={<Icon name="health-normal" color="#86efac" size={36} />}
           tooltip={[
             `VIT ${primaryStats.vit}  ·  Level ${c.level}`,
             `16 + 2×${primaryStats.vit} + 2×${c.level} = ${c.max_hp} max HP`,
@@ -4158,7 +4172,7 @@ function CharacterCard({
         />
         <Stat
           label="Mana"
-          icon={<Icon name="crystal-ball" color="#a78bfa" size={36} />}
+          icon={<Icon name="wizard-staff" color="#a78bfa" size={36} />}
           tooltip={`INT ${primaryStats.int_stat}\n2 + floor((INT − 4) / 2) + floor(level / 6) = ${c.max_mana} max mana\nSpent to cast signature abilities`}
           value={`${c.mana} / ${c.max_mana}`}
         />
@@ -5077,9 +5091,9 @@ function InventoryFullScreen({
                 <span style={{ color: "#f5f5f5", fontWeight: 600, fontFamily: DISPLAY_FONT }}>{character.name}</span>
                 <span style={{ color: "#c084fc" }}>{character.class}</span>
                 <span title="Level">Lv {character.level}</span>
-                <span style={{ color: "#86efac" }} title="HP"><Icon name="heart" size={11} /> {character.hp}/{character.max_hp}</span>
+                <span style={{ color: "#86efac" }} title="HP"><Icon name="health-normal" size={11} /> {character.hp}/{character.max_hp}</span>
                 {character.max_mana > 0 && (
-                  <span style={{ color: "#a78bfa" }} title="Mana"><Icon name="crystal-ball" size={11} /> {character.mana}/{character.max_mana}</span>
+                  <span style={{ color: "#a78bfa" }} title="Mana"><Icon name="wizard-staff" size={11} /> {character.mana}/{character.max_mana}</span>
                 )}
                 <span style={{ color: "#fbbf24" }} title="Gold"><Icon name="gold-bar" size={11} /> {character.gold}g</span>
                 {(character.keys_bronze + character.keys_silver + character.keys_gold) > 0 && (

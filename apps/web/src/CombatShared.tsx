@@ -730,7 +730,7 @@ export function TargetPicker({ kind, fighters, onPick, onCancel }: {
   const targets = fighters.filter((f) => f.hp > 0);
   return (
     <PickerModal
-      title={kind === "heal" ? <><Icon name="health-increase" /> Heal who?</> : <><Icon name="shield" /> Shield who?</>}
+      title={kind === "heal" ? <><Icon name="health-potion" /> Heal who?</> : <><Icon name="shield" /> Shield who?</>}
       onClose={onCancel}
     >
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>

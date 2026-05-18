@@ -1796,7 +1796,7 @@ function ActionBar({
           onClick={() => onAct("ability")}
         />
       )}
-      <ActionBtn label={<><Icon name="health-increase" /> Heal</>} hint="1d6+mag · pick target" disabled={disabled} onClick={() => onAct("heal")} />
+      <ActionBtn label={<><Icon name="health-potion" /> Heal</>} hint="1d6+mag · pick target" disabled={disabled} onClick={() => onAct("heal")} />
       <ActionBtn label={<><Icon name="shield" /> Shield</>} hint="1d6+mag · pick target" disabled={disabled} onClick={() => onAct("shield")} />
       <ActionBtn
         label={<><Icon name="ammo-bag" /> Item</>}
