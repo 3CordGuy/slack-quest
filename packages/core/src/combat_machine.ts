@@ -29,11 +29,15 @@ import {
 } from "./combat";
 import {
   ABILITIES,
+  ELEMENT_META,
+  ELEMENT_PROC_RATE,
   SHIELD_CAP_MULTIPLIER,
   classByName,
   type AbilityId,
   type DrinkBuff,
   type EffectType,
+  type ElementType,
+  type Rarity,
   type WeaponRange,
 } from "./flavor";
 import { deriveArmorBonus, deriveCritBonus, deriveDodgeChance, deriveInitiativeBonus, type Stats } from "./stats";
@@ -84,6 +88,10 @@ export interface CombatFighter {
   // Primary stats (Phase 1 / STATS_V2). Present when the flag is on; absent
   // on legacy combats so older persisted states deserialise without a schema bump.
   stats?: Stats;
+  // Elemental weapon affinity. undefined = no element or focus weapon.
+  element?: ElementType;
+  // Rarity of the equipped main-hand weapon. Used to gate proc rates.
+  weapon_rarity?: "rare" | "epic" | "legendary";
 }
 
 export interface GauntletWaveSpec {
@@ -113,6 +121,10 @@ export interface CombatMonster {
   // Optional flux-1-schnell portrait URL from the scene. Surfaced to the UI
   // so the combat page can render the same image as the active-quest card.
   art_url?: string;
+  // Elemental affinities — assigned at combat init by rollMonsterElementAffinity.
+  // weakness: proc magnitude/duration boosted; resistance: 50% chance to block proc.
+  element_weakness?: ElementType;
+  element_resistance?: ElementType;
 }
 
 export type CombatStatus = "pending" | "active" | "victory" | "defeat" | "fled";
@@ -437,7 +449,18 @@ export type CombatEvent =
     }
   | { type: "victory" }
   | { type: "defeat" }
-  | { type: "rejected"; reason: string };
+  | { type: "rejected"; reason: string }
+  | { type: "turn_skip"; actor: ActorId; reason: "frozen" }
+  | {
+      type: "elemental_proc";
+      actor: ActorId;
+      target: ActorId;
+      element: ElementType;
+      effect: EffectType;
+      magnitude: number;
+      duration: number;
+      resisted: boolean;
+    };
 
 // AC formulas — defense thresholds the attacker must equal or exceed on a
 // d20 + relevant modifier. Tuned so low-tier monsters are easy to hit and
@@ -777,7 +800,10 @@ function handlePlayerHit(
     && (!mark.monster_id || mark.monster_id === action.target_id);
   const markBonus = markActive ? MARK_BONUS : 0;
 
-  const finalDamage = damage + aura.bonus + markBonus;
+  // Shocked amplifier: monster takes +30% (magnitude 1) or +45% (magnitude 2) from all hits.
+  const shockedEffect = monster.effects.find((e) => e.type === "shocked");
+  const shockMult = shockedEffect ? (shockedEffect.magnitude >= 2 ? 1.45 : 1.30) : 1.0;
+  const finalDamage = Math.round((damage + aura.bonus + markBonus) * shockMult);
 
   const oldHp = monster.hp;
   const newHp = Math.max(0, oldHp - finalDamage);
@@ -862,6 +888,13 @@ function handlePlayerHit(
     const bleed = applyWarlockBleed(nextState, tickedFighter, monster.id, true);
     nextState = bleed.state;
     events.push(...bleed.events);
+  }
+
+  // Elemental weapon proc — applies status (burning/frozen/shocked) to target.
+  if (!monsterKilled) {
+    const proc = applyElementalProc(nextState, tickedFighter, monster.id, roll);
+    nextState = proc.state;
+    events.push(...proc.events);
   }
 
   if (phaseTransition) {
@@ -1077,7 +1110,9 @@ function handleMonsterAct(state: CombatState, roll: RollFn): StepResult {
     const splashTargets = aliveFighters.filter((f) => (vanished[f.id] ?? 0) <= 0);
     const splashHits = splashTargets.map((f) => {
       const hit = resolveMonsterHit(monster.tier, aliveFighters.length, f.armor_power, bossPhase2, roll);
-      const posAdj = positionDamageMod(f.position, hit.final);
+      const splashShocked = f.effects.find((e) => e.type === "shocked");
+      const splashShockMult = splashShocked ? (splashShocked.magnitude >= 2 ? 1.45 : 1.30) : 1.0;
+      const posAdj = positionDamageMod(f.position, Math.round(hit.final * splashShockMult));
       const dmg = applyDamageWithShield(posAdj, f.shield, f.hp);
       return { fighter: f, hit, posAdj, dmg };
     });
@@ -1190,7 +1225,9 @@ function handleMonsterAct(state: CombatState, roll: RollFn): StepResult {
     bossPhase2,
     roll,
   );
-  const positionAdjusted = positionDamageMod(target.position, hit.final);
+  const targetShocked = target.effects.find((e) => e.type === "shocked");
+  const targetShockMult = targetShocked ? (targetShocked.magnitude >= 2 ? 1.45 : 1.30) : 1.0;
+  const positionAdjusted = positionDamageMod(target.position, Math.round(hit.final * targetShockMult));
   const { newShield, newHp, shieldAbsorbed, hpDamage } = applyDamageWithShield(
     positionAdjusted,
     target.shield,
@@ -1446,7 +1483,10 @@ function handleSignature(
   // When rogueBackstab already doubled the damage, buff_next_crit is gated
   // out by the isCrit=true arg — no redundant doubling.
   const drinkResult = applyDrinkBuff(s, action.actor, "signature", damageAfterBackstab, rogueBackstab);
-  const finalSigDamage = drinkResult.damage;
+  // Shocked amplifier on signatures too.
+  const sigShockedEffect = monster.effects.find((e) => e.type === "shocked");
+  const sigShockMult = sigShockedEffect ? (sigShockedEffect.magnitude >= 2 ? 1.45 : 1.30) : 1.0;
+  const finalSigDamage = Math.round(drinkResult.damage * sigShockMult);
 
   const oldHp = monster.hp;
   const newHp = Math.max(0, oldHp - finalSigDamage);
@@ -1514,6 +1554,14 @@ function handleSignature(
   if (phaseTransition) {
     events.push({ type: "boss_phase_transition", new_phase: 2 });
   }
+
+  // Elemental proc on signatures.
+  if (!monsterKilled) {
+    const proc = applyElementalProc(nextState, tickedActor, monster.id, roll);
+    nextState = proc.state;
+    events.push(...proc.events);
+  }
+
   if (monsterKilled) {
     return resolveMonsterKill(nextState, monster.id, action.actor, events);
   }
@@ -2121,10 +2169,11 @@ function tickEffects(
   const newEffects: MachineStatusEffect[] = [];
   const events: CombatEvent[] = [];
   for (const eff of effects) {
-    if (eff.type === "empowered") {
-      // Passive — no HP delta. Silently count down; the damage boost is applied
-      // inline in the attack/cast handlers via the fighter's effects array.
+    if (eff.type === "empowered" || eff.type === "frozen" || eff.type === "shocked") {
+      // Passive — no HP delta. Silently count down; the effect is applied
+      // inline in the attack/turn handlers via the actor's effects array.
       if (eff.remaining > 1) newEffects.push({ ...eff, remaining: eff.remaining - 1 });
+      events.push({ type: "effect_tick", actor: actorId, effect: eff.type, magnitude: 0, hp_delta: 0 });
       continue;
     }
     const delta = eff.type === "regen" ? eff.magnitude : -eff.magnitude;
@@ -2166,6 +2215,18 @@ function tickAtTurnStart(state: CombatState, actorId: ActorId): TickGate {
         m.id === actorId ? { ...m, hp: tick.newHp, effects: tick.newEffects } : m,
       ),
     };
+    // Frozen: the monster's turn is skipped when the frozen effect expires this tick.
+    const wasMonsterFrozen = monster.effects.some((e) => e.type === "frozen");
+    const stillMonsterFrozen = tick.newEffects.some((e) => e.type === "frozen");
+    if (wasMonsterFrozen && !stillMonsterFrozen && tick.newHp > 0) {
+      const skipEvent: CombatEvent = { type: "turn_skip", actor: actorId, reason: "frozen" };
+      const advanced = advanceTurn(newState);
+      return {
+        state: newState,
+        events: [...tick.events, skipEvent],
+        earlyReturn: { state: advanced, events: [...tick.events, skipEvent, ...turnStartEvent(advanced)] },
+      };
+    }
     if (tick.newHp <= 0 && monster.hp > 0) {
       // Credit the kill to whoever applied the longest-running tick source,
       // falling back to the first alive fighter. Pure best-effort — used
@@ -2212,6 +2273,19 @@ function tickAtTurnStart(state: CombatState, actorId: ActorId): TickGate {
     newState = pre.state;
     passiveEvents = pre.events;
     void tickedFighter;
+  }
+
+  // Frozen: the fighter's turn is skipped when the frozen effect expires this tick.
+  const wasFighterFrozen = fighter.effects.some((e) => e.type === "frozen");
+  const stillFighterFrozen = tick.newEffects.some((e) => e.type === "frozen");
+  if (wasFighterFrozen && !stillFighterFrozen && tick.newHp > 0) {
+    const skipEvent: CombatEvent = { type: "turn_skip", actor: actorId, reason: "frozen" };
+    const advanced = advanceTurn(newState);
+    return {
+      state: newState,
+      events: [...tick.events, skipEvent],
+      earlyReturn: { state: advanced, events: [...tick.events, skipEvent, ...turnStartEvent(advanced)] },
+    };
   }
 
   if (tick.newHp <= 0 && fighter.hp > 0) {
@@ -2390,6 +2464,65 @@ function applyWarlockBleed(
   };
 }
 
+// Elemental weapon proc. On a hit, the attacker's equipped weapon element
+// (if any) has a rarity-gated chance to apply a status to the target monster.
+// Resistance: 50% chance to block the proc entirely. Weakness: boosted magnitude/duration.
+function applyElementalProc(
+  state: CombatState,
+  fighter: CombatFighter,
+  targetMonsterId: ActorId,
+  roll: RollFn,
+): { state: CombatState; events: CombatEvent[] } {
+  if (!fighter.element || !fighter.weapon_rarity) return { state, events: [] };
+  const procRate = ELEMENT_PROC_RATE[fighter.weapon_rarity];
+  if (roll(100) > Math.round(procRate * 100)) return { state, events: [] };
+
+  const targetMonster = state.monsters.find((m) => m.id === targetMonsterId && m.hp > 0);
+  if (!targetMonster) return { state, events: [] };
+
+  const effect = ELEMENT_META[fighter.element].effect;
+  const hasWeakness = targetMonster.element_weakness === fighter.element;
+  const hasResistance = targetMonster.element_resistance === fighter.element;
+
+  // Resistance: 50% chance to block entirely.
+  if (hasResistance && roll(2) === 1) {
+    return {
+      state,
+      events: [{
+        type: "elemental_proc", actor: fighter.id, target: targetMonsterId,
+        element: fighter.element, effect, magnitude: 0, duration: 0, resisted: true,
+      }],
+    };
+  }
+
+  let magnitude: number;
+  let duration: number;
+  if (fighter.element === "fire") {
+    magnitude = 1 + Math.floor(fighter.weapon_power / 5);
+    if (hasWeakness) magnitude = Math.round(magnitude * 1.5);
+    duration = 3;
+  } else if (fighter.element === "ice") {
+    magnitude = 1;
+    duration = hasWeakness ? 2 : 1;
+  } else {
+    // lightning → shocked: magnitude encodes amplification (1 = 30%, 2 = 45%)
+    magnitude = hasWeakness ? 2 : 1;
+    duration = 2;
+  }
+
+  const newEffect: MachineStatusEffect = { type: effect, magnitude, remaining: duration, source: fighter.id };
+  const updatedMonsters = state.monsters.map((m) =>
+    m.id === targetMonsterId ? { ...m, effects: mergeEffect(m.effects, newEffect) } : m,
+  );
+  return {
+    state: { ...state, monsters: updatedMonsters },
+    events: [{
+      type: "elemental_proc", actor: fighter.id, target: targetMonsterId,
+      element: fighter.element, effect, magnitude, duration, resisted: false,
+    }],
+  };
+}
+
 // Status-effect stacking policy. Without this, applying the same effect
 // twice produced two parallel timers that each ticked independently —
 // correct under "independent dots" semantics but visually noisy in the UI
@@ -2407,6 +2540,8 @@ const EFFECT_STACK_POLICY: Record<EffectType, { mode: "stack" | "refresh"; maxMa
   burning:   { mode: "stack",   maxMagnitude: 6 },
   poisoned:  { mode: "stack",   maxMagnitude: 6 },
   empowered: { mode: "refresh", maxMagnitude: 50 },
+  frozen:    { mode: "refresh", maxMagnitude: 2 },
+  shocked:   { mode: "refresh", maxMagnitude: 2 },
 };
 
 // Merge `incoming` into the existing effect list. If an effect of the

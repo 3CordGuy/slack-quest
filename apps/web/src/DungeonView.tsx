@@ -15,7 +15,7 @@ const DISPLAY_FONT = "'Metamorphous', serif";
 // ─── Types (mirrors CombatPage; duplicated to keep DungeonView self-contained) ──
 
 interface StatusEffect {
-  type: "regen" | "bleeding" | "burning" | "poisoned";
+  type: "regen" | "bleeding" | "burning" | "poisoned" | "frozen" | "shocked";
   magnitude: number;
   remaining: number;
 }

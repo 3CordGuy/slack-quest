@@ -260,6 +260,13 @@ function renderEvent(state: CombatState, e: CombatEvent): string {
       // these for live dice animation; Slack thread doesn't need them.
       return "";
 
+    case "turn_skip":
+      return `_${e.actor} is frozen and loses their turn._`;
+
+    case "elemental_proc":
+      if (e.resisted) return `_${e.target} resisted the ${e.element} proc._`;
+      return `_${e.element === "fire" ? "🔥" : e.element === "ice" ? "❄️" : "🌩️"} ${e.target} is ${e.effect}!_`;
+
     default: {
       // Exhaustiveness check: if a new CombatEvent member is added without
       // a case here, TypeScript flags this assignment. Falls through to a

@@ -1122,9 +1122,10 @@ export interface CreateItemInput {
   item_subtype?: string | null;
   // Phase 3 — defaults to ceil(power/3), minimum 1.
   level_req?: number;
+  element?: ElementType | null;
 }
 
-const ITEM_COLS = "id, character_id, item_name, item_type, power, rarity, flavor, equipped, weapon_range, sharpens_count, slot, stat_bonus, item_subtype, level_req";
+const ITEM_COLS = "id, character_id, item_name, item_type, power, rarity, flavor, equipped, weapon_range, sharpens_count, slot, stat_bonus, item_subtype, level_req, element";
 
 export async function addItem(db: D1Database, input: CreateItemInput): Promise<Item> {
   // Infer slot from item_type for legacy callers (shop purchases, etc.) that
@@ -1137,8 +1138,8 @@ export async function addItem(db: D1Database, input: CreateItemInput): Promise<I
   const levelReq = input.level_req ?? Math.max(1, Math.ceil(input.power / 3));
   const result = await db
     .prepare(
-      `INSERT INTO inventory (character_id, item_name, item_type, power, rarity, flavor, qty, equipped, weapon_range, slot, stat_bonus, item_subtype, level_req)
-       VALUES (?, ?, ?, ?, ?, ?, 1, 0, ?, ?, ?, ?, ?)`,
+      `INSERT INTO inventory (character_id, item_name, item_type, power, rarity, flavor, qty, equipped, weapon_range, slot, stat_bonus, item_subtype, level_req, element)
+       VALUES (?, ?, ?, ?, ?, ?, 1, 0, ?, ?, ?, ?, ?, ?)`,
     )
     .bind(
       input.character_id, input.item_name, input.item_type, input.power, input.rarity, input.flavor,
@@ -1147,6 +1148,7 @@ export async function addItem(db: D1Database, input: CreateItemInput): Promise<I
       input.stat_bonus ? JSON.stringify(input.stat_bonus) : null,
       input.item_subtype ?? null,
       levelReq,
+      input.element ?? null,
     )
     .run();
   const id = result.meta.last_row_id;

@@ -70,12 +70,14 @@ import {
   mergeEffect,
   MONSTER_ID,
   isMonsterActor,
+  MONSTER_ELEMENT_AFFINITY_CHANCE,
   type CombatEvent,
   type CombatFighter,
   type CombatMonster,
   type StatKey,
   type CombatInit,
   type CombatState,
+  type ElementType,
   type DialogNode,
   type DialogOption,
   type DialogPayload,
@@ -679,7 +681,7 @@ async function nameLootViaAi(
     roll.type === "revive"
   ) {
     return flavorLootDrop(
-      env.AI, monsterName, roll.type, roll.rarity, roll.power, roll.weapon_range,
+      env.AI, monsterName, roll.type, roll.rarity, roll.power, roll.weapon_range, undefined, roll.element,
     );
   }
   // Unknown / future type — fall back to the deterministic name.
@@ -1198,6 +1200,7 @@ async function buildDungeonScene(
       ...(roll.slot ? { slot: roll.slot } : {}),
       ...(roll.stat_bonus ? { stat_bonus: roll.stat_bonus as Record<string, number> } : {}),
       ...(roll.item_subtype ? { item_subtype: roll.item_subtype } : {}),
+      ...(roll.element ? { element: roll.element } : {}),
     };
   }
 
@@ -1218,6 +1221,7 @@ async function buildDungeonScene(
       roll.power,
       roll.weapon_range,
       roll.slot ?? undefined,
+      roll.element,
     );
   }
 
@@ -1399,6 +1403,7 @@ async function buildGridDungeonScene(
       ...(r.slot ? { slot: r.slot } : {}),
       ...(r.stat_bonus ? { stat_bonus: r.stat_bonus as Record<string, number> } : {}),
       ...(r.item_subtype ? { item_subtype: r.item_subtype } : {}),
+      ...(r.element ? { element: r.element } : {}),
     };
   }
 
@@ -5620,6 +5625,20 @@ interface WsAttachment {
 
 const productionRoll: RollFn = (sides) => Math.floor(Math.random() * sides) + 1;
 
+const ELEMENT_TYPES: ElementType[] = ["fire", "ice", "lightning"];
+
+function rollMonsterElementAffinity(): { element_weakness?: ElementType; element_resistance?: ElementType } {
+  if (Math.random() >= MONSTER_ELEMENT_AFFINITY_CHANCE) return {};
+  const weakness = ELEMENT_TYPES[Math.floor(Math.random() * ELEMENT_TYPES.length)];
+  // Resistance is a different element 50% of the time
+  if (Math.random() < 0.5) {
+    const others = ELEMENT_TYPES.filter((e) => e !== weakness);
+    const resistance = others[Math.floor(Math.random() * others.length)];
+    return { element_weakness: weakness, element_resistance: resistance };
+  }
+  return { element_weakness: weakness };
+}
+
 // Shared loader used by both the HTTP `/api/quest/:id/start_web_combat`
 // route and the DO's `bootstrapFromSlack` RPC. Reads the party from D1,
 // builds CombatInit, runs createCombatState, then seeds the resulting
@@ -5731,6 +5750,10 @@ async function buildInitialCombatState(
       armor_power: armorPower,
       scars: member.scars,
       stats: statsV2Enabled ? snap.stats : undefined,
+      element: isFocus ? undefined : (weapon?.element ?? undefined),
+      weapon_rarity: isFocus ? undefined
+        : (weapon?.rarity === "rare" || weapon?.rarity === "epic" || weapon?.rarity === "legendary"
+          ? weapon.rarity : undefined),
     });
   }
 
@@ -5769,6 +5792,7 @@ async function buildInitialCombatState(
           tier: m.tier,
           is_boss: isGridBoss && i === 0,
           art_url: m.art_url ?? undefined,
+          ...rollMonsterElementAffinity(),
         })),
       }
     : scenePackMonsters
@@ -5781,6 +5805,7 @@ async function buildInitialCombatState(
           tier: m.tier,
           is_boss: false,
           art_url: m.art_url ?? undefined,
+          ...rollMonsterElementAffinity(),
         })),
       }
     : {
@@ -5799,6 +5824,7 @@ async function buildInitialCombatState(
             max_hp: w.max_hp,
           })),
           art_url: quest.scene.monster_art_url,
+          ...rollMonsterElementAffinity(),
         },
       };
   const initial = createCombatState(init);
@@ -6225,6 +6251,10 @@ export class QuestRoom extends DurableObject<Env> {
       armor_power: armorPower,
       scars: character.scars,
       stats: statsV2Enabled ? snap.stats : undefined,
+      element: isFocus ? undefined : (weapon?.element ?? undefined),
+      weapon_rarity: isFocus ? undefined
+        : (weapon?.rarity === "rare" || weapon?.rarity === "epic" || weapon?.rarity === "legendary"
+          ? weapon.rarity : undefined),
       effects: character.effects ?? [],
       initiative: 0,
     };

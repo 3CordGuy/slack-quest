@@ -38,7 +38,7 @@ ensureCombatAnimStyles();
 // log, and lets the active player submit actions.
 
 interface StatusEffect {
-  type: "regen" | "bleeding" | "burning" | "poisoned";
+  type: "regen" | "bleeding" | "burning" | "poisoned" | "frozen" | "shocked";
   magnitude: number;
   remaining: number;
   source?: string;
@@ -78,6 +78,8 @@ interface Monster {
   wave?: number;
   total_waves?: number;
   art_url?: string;
+  element_weakness?: "fire" | "ice" | "lightning";
+  element_resistance?: "fire" | "ice" | "lightning";
 }
 
 interface CombatState {
@@ -1377,6 +1379,20 @@ function MonsterCard({
               {monster.wave && monster.total_waves && ` · Wave ${monster.wave}/${monster.total_waves}`}
               {` · Round ${round}`}
             </div>
+            {(monster.element_weakness || monster.element_resistance) && !isDead && (
+              <div style={{ display: "flex", gap: 6, marginTop: 3, flexWrap: "wrap" }}>
+                {monster.element_weakness && (
+                  <span style={{ fontSize: 10, background: "#7f1d1d22", border: "1px solid #f8717144", color: "#fca5a5", borderRadius: 4, padding: "1px 5px" }}>
+                    {monster.element_weakness === "fire" ? "🔥" : monster.element_weakness === "ice" ? "❄️" : "⚡"} weak
+                  </span>
+                )}
+                {monster.element_resistance && (
+                  <span style={{ fontSize: 10, background: "#1e3a5f22", border: "1px solid #60a5fa44", color: "#93c5fd", borderRadius: 4, padding: "1px 5px" }}>
+                    {monster.element_resistance === "fire" ? "🔥" : monster.element_resistance === "ice" ? "❄️" : "⚡"} resist
+                  </span>
+                )}
+              </div>
+            )}
           </div>
           <div style={{ ...muted, fontVariantNumeric: "tabular-nums" }}>
             {Math.max(0, monster.hp)} / {monster.max_hp}
@@ -1387,7 +1403,7 @@ function MonsterCard({
         {monster.effects && monster.effects.length > 0 && !isDead && (
           <div style={{ display: "flex", gap: 4, marginTop: 4, flexWrap: "wrap" }}>
             {monster.effects.map((e, i) => {
-              const [col] = e.type === "regen" ? ["#4ade80"] : e.type === "bleeding" ? ["#f87171"] : e.type === "burning" ? ["#fb923c"] : ["#c084fc"];
+              const [col] = e.type === "regen" ? ["#4ade80"] : e.type === "bleeding" ? ["#f87171"] : e.type === "burning" ? ["#fb923c"] : e.type === "frozen" ? ["#93c5fd"] : e.type === "shocked" ? ["#fbbf24"] : ["#c084fc"];
               return (
                 <span key={i} style={{ fontSize: 10, background: col + "22", border: `1px solid ${col}44`, color: col, borderRadius: 4, padding: "1px 5px" }}>
                   {e.type} {e.magnitude > 0 ? `×${e.magnitude}` : ""}

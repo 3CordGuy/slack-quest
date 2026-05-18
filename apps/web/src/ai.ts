@@ -2,7 +2,7 @@
 // opening-scene helpers from apps/slack/src/ai.ts; if a third surface
 // needs them we'll factor into a shared package.
 
-import { fallbackMonsterName, fallbackSceneText } from "@gantt-quest/core";
+import { fallbackMonsterName, fallbackSceneText, type ElementType } from "@gantt-quest/core";
 import type { Character, SceneJson } from "@gantt-quest/db";
 
 const MODEL = "@cf/meta/llama-3.1-8b-instruct";
@@ -352,6 +352,7 @@ export async function flavorLootDrop(
   power: number,
   weaponRange?: "melee" | "ranged" | "focus" | null,
   slot?: string,
+  element?: ElementType,
 ): Promise<{ name: string; flavor: string }> {
   const weaponHint =
     type === "weapon"
@@ -387,10 +388,18 @@ export async function flavorLootDrop(
         : type === "revive"
           ? `It revives a downed party member to ${power}% of their max HP.`
           : `It grants a +${power} bonus when equipped.`;
+  const elementHint = element === "fire"
+    ? "It has a fiery, burning quality — reflect this subtly in the name."
+    : element === "ice"
+      ? "It has a freezing, icy quality — reflect this subtly in the name."
+      : element === "lightning"
+        ? "It crackles with lightning — reflect this subtly in the name."
+        : null;
 
   const user = [
     `Generate loot dropped by ${monsterName} for a comedic engineering-themed dungeon crawl.`,
     `It is ${typeHint}. ${rarityHint} ${powerHint}`,
+    ...(elementHint ? [elementHint] : []),
     "Output exactly two lines, no markdown, no quotes:",
     "NAME: <a 2-5 word punchy themed name>",
     "FLAVOR: <one short sentence, ~15 words, dryly funny, software-industry winks ok>",

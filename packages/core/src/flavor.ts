@@ -226,7 +226,7 @@ export type EquipSlot =
 // Status effects — applied to player characters or monsters and tick on the
 // affected actor's own combat action / monster turn. v1 set is HP-based; future
 // effects could touch cooldown, damage modifiers, etc.
-export type EffectType = "regen" | "bleeding" | "burning" | "poisoned" | "empowered";
+export type EffectType = "regen" | "bleeding" | "burning" | "poisoned" | "empowered" | "frozen" | "shocked";
 
 // Elemental damage type carried by rare+ weapons and assigned to monsters.
 export type ElementType = "fire" | "ice" | "lightning";
@@ -248,7 +248,26 @@ export const EFFECT_META: Record<EffectType, EffectMeta> = {
   burning:   { emoji: "🔥", name: "Burning",   kind: "debuff",  ignoresArmor: true,  blurb: "Loses HP each action; ignores armor." },
   poisoned:  { emoji: "☠️", name: "Poisoned",  kind: "debuff",  ignoresArmor: true,  blurb: "Loses HP each turn." },
   empowered: { emoji: "⚡", name: "Empowered", kind: "passive", ignoresArmor: false, blurb: "+25% damage dealt for N turns." },
+  frozen:    { emoji: "❄️", name: "Frozen",    kind: "passive", ignoresArmor: false, blurb: "Skips next action." },
+  shocked:   { emoji: "🌩️", name: "Shocked",   kind: "passive", ignoresArmor: false, blurb: "Takes +30% damage from all sources." },
 };
+
+export const ELEMENT_META: Record<ElementType, { emoji: string; name: string; effect: EffectType }> = {
+  fire:      { emoji: "🔥", name: "Fire",      effect: "burning" },
+  ice:       { emoji: "❄️", name: "Ice",       effect: "frozen"  },
+  lightning: { emoji: "🌩️", name: "Lightning", effect: "shocked" },
+};
+
+// Proc rate per hit by weapon rarity (only rare+ weapons can have elements).
+export const ELEMENT_PROC_RATE: Record<"rare" | "epic" | "legendary", number> = {
+  rare: 0.20, epic: 0.30, legendary: 0.40,
+};
+
+// Probability a rare+ non-focus weapon receives an element at drop time.
+export const ELEMENT_WEAPON_ROLL_CHANCE = 0.35;
+
+// Probability a monster has any elemental affinity (weakness/resistance).
+export const MONSTER_ELEMENT_AFFINITY_CHANCE = 0.30;
 
 // "focus" weapons are the caster/support tier: wands, staves, codices.
 // They don't add to attack/cast/sig damage (the bot zeroes weaponMod
@@ -449,6 +468,8 @@ export interface ItemRoll {
   slot?: EquipSlot;
   stat_bonus?: Partial<Record<string, number>>; // e.g. { int_stat: 2 }
   item_subtype?: string;                        // "shield" for off_hand items
+  // Elemental affinity — only on rare+ melee/ranged weapons (~35% of eligible drops).
+  element?: ElementType;
 }
 
 // Tool & scroll catalog. Names are fixed (no AI naming) so handleUse can dispatch
@@ -1313,6 +1334,19 @@ export function rollAccessorySlot(tier: number): ItemRoll {
     item_subtype: "shield", stat_bonus: statBonus("vit", bonusAmt) };
 }
 
+const ELEMENTS: ElementType[] = ["fire", "ice", "lightning"];
+
+function rollWeaponElement(
+  type: ItemType,
+  weaponRange: WeaponRange | undefined,
+  rarity: Rarity,
+): ElementType | undefined {
+  if (type !== "weapon" || weaponRange === "focus") return undefined;
+  if (rarity !== "rare" && rarity !== "epic" && rarity !== "legendary") return undefined;
+  if (Math.random() >= ELEMENT_WEAPON_ROLL_CHANCE) return undefined;
+  return ELEMENTS[Math.floor(Math.random() * ELEMENTS.length)];
+}
+
 export function rollItem(tier: number, forShop = false): ItemRoll {
   const type = rollItemType();
   if (type === "tool" || type === "scroll") {
@@ -1337,7 +1371,8 @@ export function rollItem(tier: number, forShop = false): ItemRoll {
   const power = type === "weapon" && weapon_range === "focus"
     ? rollFocusPower(rarity, tier)
     : rollPower(type, rarity, tier);
-  return { type, rarity, power, weapon_range, slot: type === "weapon" ? "main_hand" : undefined };
+  const element = rollWeaponElement(type, weapon_range, rarity);
+  return { type, rarity, power, weapon_range, slot: type === "weapon" ? "main_hand" : undefined, element };
 }
 
 // Merchant slot weights — practical-for-this-fight stock only. Excludes magic
@@ -1372,7 +1407,8 @@ export function rollMerchantItem(tier: number): ItemRoll {
   const power = type === "weapon" && weapon_range === "focus"
     ? rollFocusPower(rarity, tier)
     : rollPower(type, rarity, tier);
-  return { type, rarity, power, weapon_range };
+  const element = rollWeaponElement(type, weapon_range, rarity);
+  return { type, rarity, power, weapon_range, element };
 }
 
 // Per-fighter drop chance after a kill. 35% baseline, +5% per tier.

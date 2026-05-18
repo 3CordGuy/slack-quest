@@ -226,10 +226,11 @@ interface Item {
   stat_bonus: Record<string, number> | null;
   item_subtype: string | null;
   level_req: number;
+  element: "fire" | "ice" | "lightning" | null;
 }
 
 type QuestVariant = "standard" | "boss" | "gauntlet" | "dungeon" | "bounty_pack";
-type EffectType = "regen" | "bleeding" | "burning" | "poisoned";
+type EffectType = "regen" | "bleeding" | "burning" | "poisoned" | "frozen" | "shocked";
 
 interface StatusEffect {
   type: EffectType;
@@ -4911,6 +4912,11 @@ function DraggablePackItem({
         {(item.level_req ?? 1) > 1 && (
           <span style={{ fontSize: 10, color: "#6b7280", flexShrink: 0 }}>L{item.level_req}</span>
         )}
+        {item.element && (
+          <span style={{ fontSize: 12, flexShrink: 0 }} title={item.element}>
+            {item.element === "fire" ? "🔥" : item.element === "ice" ? "❄️" : "⚡"}
+          </span>
+        )}
         <span style={{ ...smallBadge, borderColor: `${rc}55`, color: rc, background: `${rc}15`, flexShrink: 0 }}>{item.rarity}</span>
         <span style={{ fontSize: 11, color: rc, fontWeight: 600, flexShrink: 0, minWidth: 30, textAlign: "right" }}>+{item.power}</span>
         <span style={{ fontSize: 11, color: "#fbbf24", flexShrink: 0, minWidth: 28, textAlign: "right" }}>{sellPrice}g</span>
@@ -5405,6 +5411,7 @@ const ItemCell = forwardRef<
     : isMatch ? "#c084fc"
     : `${rc}99`;
   const iconSize = mode === "detailed" ? 40 : mode === "compact" ? 38 : 28;
+  const elementEmoji = item.element === "fire" ? "🔥" : item.element === "ice" ? "❄️" : item.element === "lightning" ? "⚡" : null;
   const powerValue = item.power > 0
     ? item.power
     : (item.stat_bonus ? Object.values(item.stat_bonus).reduce((a: number, b: number) => a + b, 0) : 0);
@@ -5456,6 +5463,11 @@ const ItemCell = forwardRef<
           +{powerValue}
         </div>
       )}
+      {elementEmoji && mode === "icon" && (
+        <div style={{ position: "absolute", bottom: 3, left: 3, fontSize: 9, lineHeight: 1 }} title={item.element ?? undefined}>
+          {elementEmoji}
+        </div>
+      )}
       {mode === "compact" && (
         <div style={{ fontSize: 10, color: "#9ca3af", lineHeight: 1.1, maxWidth: size - 10, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", padding: "0 4px" }}>
           {item.item_name}
@@ -5468,6 +5480,9 @@ const ItemCell = forwardRef<
           <div style={{ fontSize: 9, color: "#6b7280" }}>{slotLabel(item)}</div>
           {item.stat_bonus && statBonusSummary(item.stat_bonus) && (
             <div style={{ fontSize: 8, color: "#86efac" }}>{statBonusSummary(item.stat_bonus)}</div>
+          )}
+          {elementEmoji && (
+            <div style={{ fontSize: 9, color: "#9ca3af" }}>{elementEmoji} {item.element}</div>
           )}
           {showSellPrice && sellPrice !== null && (
             <div style={{ fontSize: 9, color: "#fbbf24" }}>{sellPrice}g</div>
@@ -8620,6 +8635,8 @@ const EFFECT_COLOR: Record<EffectType, string> = {
   bleeding: "#dc2626",
   burning: "#f97316",
   poisoned: "#a855f7",
+  frozen: "#93c5fd",
+  shocked: "#fbbf24",
 };
 
 // ra-* icon names per status effect. Rendered via <Icon> with EFFECT_COLOR.
@@ -8628,6 +8645,8 @@ const EFFECT_ICON: Record<EffectType, string> = {
   bleeding: "bleeding-hearts",
   burning: "fire",
   poisoned: "monster-skull",
+  frozen: "ice-cube",
+  shocked: "lightning-bolt",
 };
 
 function groupByType(items: Item[]): Partial<Record<ItemType, Item[]>> {

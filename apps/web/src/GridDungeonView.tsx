@@ -117,7 +117,7 @@ interface Character {
 
 // ─── Combat WS types (subset, mirrors CombatPage) ───────────────────────────
 
-interface StatusEffect { type: "regen" | "bleeding" | "burning" | "poisoned"; magnitude: number; remaining: number }
+interface StatusEffect { type: "regen" | "bleeding" | "burning" | "poisoned" | "frozen" | "shocked"; magnitude: number; remaining: number }
 
 interface Fighter {
   id: string; name: string; class: string; level: number;
