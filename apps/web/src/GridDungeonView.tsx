@@ -1090,14 +1090,14 @@ export function GridDungeonView({
   useEffect(() => { void loadItems(); }, []);
 
   useEffect(() => { autoResolveRef.current = autoResolve; }, [autoResolve]);
+  // Mirror combatActive into a ref so onmessage can read the latest value
+  // without a stale closure when the WS is long-lived across combat transitions.
+  const combatActiveRef = useRef(combatActive);
+  useEffect(() => { combatActiveRef.current = combatActive; }, [combatActive]);
 
-  // Combat WS
+  // Quest WS — stays open for the full dungeon session (not just combat).
+  // Handles both combat messages and dungeon_move room-sync notifications.
   useEffect(() => {
-    if (!combatActive) {
-      wsRef.current?.close();
-      wsRef.current = null;
-      return;
-    }
     dispatch({ kind: "connection", value: "connecting" });
     const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
     const url = `${proto}//${window.location.host}/api/ws/quest/${questId}`;
@@ -1106,7 +1106,7 @@ export function GridDungeonView({
     const heartbeat = setInterval(() => { if (sock.readyState === WebSocket.OPEN) sock.send(JSON.stringify({ type: "ping" })); }, 45_000);
     sock.onopen = () => dispatch({ kind: "connection", value: "open" });
     sock.onclose = () => dispatch({ kind: "connection", value: "closed" });
-    sock.onerror = () => toast.error("Combat connection lost");
+    sock.onerror = () => { if (combatActiveRef.current) toast.error("Combat connection lost"); };
     sock.onmessage = (ev) => {
       try {
         const msg = JSON.parse(ev.data) as { type: string; state?: CombatState & { monster?: Monster }; events?: Array<{ type: string; [k: string]: unknown }>; outcome?: OutcomeSummary };
@@ -1127,13 +1127,14 @@ export function GridDungeonView({
               flashHit(id);
               setLastSlash({ id, seq: ++animSeqRef.current });
             }
-            // monster_attack: monster hits a fighter. Flash the fighter
-            // (already wired below) AND lunge the specific attacking
-            // monster's card. evt.actor is the monster id.
+            // monster_attack: monster hits a fighter. Always lunge the
+            // attacking monster's card (the swing happened regardless of
+            // damage). Flash the fighter only when hp_damage > 0.
+            if (evt.type === "monster_attack" && typeof evt.actor === "string") {
+              setLastLunge({ id: evt.actor, seq: ++animSeqRef.current });
+            }
             if (evt.type === "monster_attack" && typeof evt.target === "string" && (evt.hp_damage as number) > 0) {
               flashHit(evt.target as string);
-              const actorId = typeof evt.actor === "string" ? evt.actor : null;
-              if (actorId) setLastLunge({ id: actorId, seq: ++animSeqRef.current });
             }
             // roll: dice events become floating animated polygons. When the
             // PLAYER rolls (not a monster) and no player rolls are currently
@@ -1164,11 +1165,14 @@ export function GridDungeonView({
           }
         } else if (msg.type === "outcome" && msg.outcome) {
           dispatch({ kind: "outcome", value: msg.outcome });
+        } else if (msg.type === "dungeon_move") {
+          // Another party member moved rooms — refresh the quest scene.
+          onRefresh();
         }
       } catch { /* ignore bad frames */ }
     };
     return () => { clearInterval(heartbeat); sock.close(); wsRef.current = null; };
-  }, [questId, combatActive]);
+  }, [questId]);
 
   // Auto-resolve monster turns
   const stateForAuto = ws.state;
@@ -2075,7 +2079,7 @@ function CombatPanel({ state, selfId, onSend, autoResolve, setAutoResolve, myTur
   const [itemOpen, setItemOpen] = useState(false);
   // Give flow: select item → select ally. itemId stays set across the two-step picker.
   const [givePicker, setGivePicker] = useState<"closed" | "selectItem" | { itemId: number }>("closed");
-  const usable = items.filter((it) => !it.equipped && ["consumable", "magic", "revive"].includes(it.item_type));
+  const usable = items.filter((it) => !it.equipped && ["consumable", "magic", "revive", "tool"].includes(it.item_type));
   const giveable = items.filter((it) => !it.equipped);
   const otherFighters = state.fighters.filter((f) => f.id !== selfId && f.hp > 0);
   const ability = ABILITY_BY_CLASS[characterClass] ?? null;

@@ -4437,6 +4437,13 @@ app.post("/api/quest/:id/dungeon/graph/move", async (c) => {
     updatedScene = { ...updatedScene, monster_name: "—", monster_hp: 0, monster_max_hp: 0, monster_effects: [] };
   }
   await saveScene(c.env.DB, quest.id, updatedScene);
+  // Notify all connected party members via the DO's WS broadcast so they
+  // see the new room immediately instead of waiting for the 15s poll.
+  const doId = c.env.QUEST_ROOM.idFromName(`quest:${quest.id}`);
+  const doStub = c.env.QUEST_ROOM.get(doId);
+  (doStub as unknown as { notifyDungeonMove(q: number): Promise<void> })
+    .notifyDungeonMove(quest.id)
+    .catch((err) => console.warn("notifyDungeonMove failed", err));
   return c.json({
     ok: true,
     current_node: updatedTarget,
@@ -6201,6 +6208,13 @@ export class QuestRoom extends DurableObject<Env> {
     await saveWebCombatState(this.env.DB, questId, updatedState, newLog);
     this.cacheState = updatedState;
     this.broadcast({ type: "state", state: updatedState });
+  }
+
+  // Notifies all connected WS clients that a dungeon room has changed so
+  // they re-fetch the quest scene without waiting for the 15s poll cycle.
+  // Called by the Worker's dungeon-move handlers after saving to D1.
+  async notifyDungeonMove(questId: number): Promise<void> {
+    this.broadcast({ type: "dungeon_move", quest_id: questId });
   }
 
   // Inventory-driven combat action. Validates the item belongs to the
