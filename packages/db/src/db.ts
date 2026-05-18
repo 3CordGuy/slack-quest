@@ -106,6 +106,7 @@ export interface Character {
   revives_given: number;
   created_at: number;
   last_active: number;
+  notification_pref: "thread" | "dm";
 }
 
 interface CharacterRow extends Omit<Character, "scars" | "effects" | "drink_buff" | "achievements" | "pending_achievements"> {
@@ -133,6 +134,17 @@ export async function getCharacter(db: D1Database, userId: string): Promise<Char
     .bind(userId)
     .first<CharacterRow>();
   return row ? rowToCharacter(row) : null;
+}
+
+export async function setNotificationPref(
+  db: D1Database,
+  userId: string,
+  pref: "thread" | "dm",
+): Promise<void> {
+  await db
+    .prepare("UPDATE characters SET notification_pref = ?, last_active = ? WHERE slack_user_id = ?")
+    .bind(pref, Date.now(), userId)
+    .run();
 }
 
 export interface CreateCharacterInput {

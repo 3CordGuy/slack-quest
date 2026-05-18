@@ -69,6 +69,7 @@ import {
   upgradeCombatState,
   mergeEffect,
   MONSTER_ID,
+  isMonsterActor,
   type CombatEvent,
   type CombatFighter,
   type CombatMonster,
@@ -156,6 +157,7 @@ import {
   saveWebCombatState,
   spendStatPoint,
   setCharacterHpAndShield,
+  setNotificationPref,
   setQuestMode,
   setQuestThreadTs,
   trySaveExpeditionAdvance,
@@ -959,6 +961,17 @@ app.post("/api/character/spend", async (c) => {
     return c.json({ error: "no_unspent_points" }, 400);
   }
   return c.json({ ok: true, character: updated });
+});
+
+app.post("/api/settings/notify", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const body = await c.req.json<{ pref?: string }>().catch((): { pref?: string } => ({}));
+  if (body.pref !== "thread" && body.pref !== "dm") {
+    return c.json({ error: "invalid_pref", valid: ["thread", "dm"] }, 400);
+  }
+  await setNotificationPref(c.env.DB, session.slack_user_id, body.pref);
+  return c.json({ ok: true });
 });
 
 // Returns the authenticated user's character (or null if they haven't created
@@ -5122,11 +5135,12 @@ export interface OutcomeSummary {
 }
 
 interface ServerToClient {
-  type: "state" | "events" | "error" | "outcome" | "flavor" | "log_replay";
+  type: "state" | "events" | "error" | "outcome" | "flavor" | "log_replay" | "dungeon_move";
   state?: CombatState;
   events?: unknown[];
   message?: string;
   outcome?: OutcomeSummary;
+  quest_id?: number;
   // Flavor messages reference the originating event via the corresponding
   // actor (so the client can render alongside the right combat moment).
   flavor?: {
@@ -6011,6 +6025,11 @@ export class QuestRoom extends DurableObject<Env> {
     // the actor came from.
     if (stateChanged) {
       this.fireMilestoneBroadcasts(questId, prevState, result);
+      this.ctx.waitUntil(
+        this.sendTurnNotification(questId, result.events, result.state.status).catch((err) =>
+          console.warn("turn notification failed", err),
+        ),
+      );
     }
 
     const becameTerminal =
@@ -6719,6 +6738,52 @@ export class QuestRoom extends DurableObject<Env> {
         }
       })(),
     );
+  }
+
+  // Sends a turn-ping to the next human actor after a turn advances.
+  // Reads notification_pref from D1: "dm" opens a direct message channel,
+  // "thread" (default) posts a broadcast reply in the quest thread.
+  // Skips silently when SLACK_BOT_TOKEN is absent (web-only sessions) or
+  // when the quest has no Slack thread (thread_ts is a web-local sentinel).
+  private async sendTurnNotification(
+    questId: number,
+    events: CombatEvent[],
+    status: string,
+  ): Promise<void> {
+    if (status !== "active") return;
+    if (!this.env.SLACK_BOT_TOKEN) return;
+    const turnStart = events.find(
+      (e): e is Extract<CombatEvent, { type: "turn_start" }> =>
+        e.type === "turn_start" && !isMonsterActor(e.actor),
+    );
+    if (!turnStart) return;
+    const token = this.env.SLACK_BOT_TOKEN;
+    const actorChar = await getCharacter(this.env.DB, turnStart.actor);
+    if (actorChar?.notification_pref === "dm") {
+      const openRes = await fetch("https://slack.com/api/conversations.open", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json; charset=utf-8",
+        },
+        body: JSON.stringify({ users: turnStart.actor }),
+      });
+      const openData = (await openRes.json()) as { ok: boolean; channel?: { id: string } };
+      if (!openData.ok || !openData.channel?.id) return;
+      await postSlackMessage(token, {
+        channel: openData.channel.id,
+        text: `⚔️ It's your turn in the quest!`,
+      });
+    } else {
+      const meta = await this.ensureQuestMeta(questId);
+      if (!meta || meta.thread_ts.startsWith("web-")) return;
+      await postSlackMessage(token, {
+        channel: meta.channel_id,
+        thread_ts: meta.thread_ts,
+        reply_broadcast: true,
+        text: `<@${turnStart.actor}> it's your turn!`,
+      });
+    }
   }
 
   // Scan engine events for moments worth narrating, fire off AI flavor

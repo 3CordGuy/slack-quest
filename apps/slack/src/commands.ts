@@ -155,6 +155,7 @@ import {
   scaleMonsterForJoin,
   setCharacterEffects,
   setCharacterHp,
+  setNotificationPref,
   setBattlefieldTs,
   setJoinableTs,
   setCharacterHpAndShield,
@@ -260,6 +261,8 @@ import {
   SHIELD_CAP_MULTIPLIER,
   SKILL_META,
   type TurnAction,
+  type CombatEvent,
+  isMonsterActor,
   checkCombatAchievements,
   checkDeathAchievements,
   checkLiarsAchievements,
@@ -271,7 +274,7 @@ import {
   type Stats,
   statSnapshot,
 } from "@gantt-quest/core";
-import { deleteMessage, postJoinableQuest, postMessage, respondToCommand, updateMessage, type InteractivePayload, type SlashCommandPayload } from "./slack";
+import { deleteMessage, openDMChannel, postJoinableQuest, postMessage, respondToCommand, sendDM, updateMessage, type InteractivePayload, type SlashCommandPayload } from "./slack";
 
 export interface CommandResponse {
   text: string;
@@ -1178,6 +1181,8 @@ export async function handleCommand(
       return handleRevive(payload, args, env, ctx);
     case "rest":
       return handleRest(payload, args, env);
+    case "notify":
+      return handleNotifyPref(payload, args, env);
     case "position":
     case "pos":
       return handlePosition(payload, args, env, ctx);
@@ -3681,6 +3686,30 @@ async function upsertBattlefield(
   }
 }
 
+// Sends a turn notification to the next human actor after a turn advances.
+// Reads the actor's notification_pref from DB: "thread" broadcasts an @mention
+// to the quest thread (reply_broadcast: true = shows in channel), "dm" sends a
+// direct message instead. Skips monster actors and terminal combat states.
+async function dispatchTurnNotification(
+  env: Env,
+  quest: ActiveQuest,
+  status: string,
+  events: CombatEvent[],
+): Promise<void> {
+  if (status !== "active") return;
+  const turnStart = events.find(
+    (e): e is Extract<CombatEvent, { type: "turn_start" }> =>
+      e.type === "turn_start" && !isMonsterActor(e.actor),
+  );
+  if (!turnStart) return;
+  const actorChar = await getCharacter(env.DB, turnStart.actor);
+  if (actorChar?.notification_pref === "dm") {
+    await sendDM(env.SLACK_BOT_TOKEN, turnStart.actor, `⚔️ It's your turn in the quest!`);
+  } else {
+    await postToThread(env, quest, `<@${turnStart.actor}> it's your turn!`, { broadcast: true });
+  }
+}
+
 // Engine-driven combat dispatcher. Translates a Slack `(payload, action)`
 // pair into a TurnAction, calls QuestRoom.serverAction over RPC, posts
 // the resulting CombatEvent[] as a thread reply via renderTurnToThread,
@@ -3703,7 +3732,7 @@ async function upsertBattlefield(
 async function handleCombatViaEngine(
   payload: SlashCommandPayload,
   env: Env,
-  _ctx: ExecutionContext,
+  ctx: ExecutionContext,
   action: CombatAction,
   targetArg?: string,
 ): Promise<CommandResponse> {
@@ -3758,6 +3787,7 @@ async function handleCombatViaEngine(
     if (beginText) {
       await postToThread(env, quest, beginText);
     }
+    ctx.waitUntil(dispatchTurnNotification(env, quest, boot.state.status, boot.events).catch(console.warn));
     // Drop the pinned battlefield into the thread on first action. From
     // here on it's chat.update'd in place per turn.
     await upsertBattlefield(env, quest, boot.state);
@@ -3807,6 +3837,7 @@ async function handleCombatViaEngine(
   if (turnText) {
     await postToThread(env, quest, turnText);
   }
+  ctx.waitUntil(dispatchTurnNotification(env, quest, result.state.status, result.events).catch(console.warn));
 
   // Update the pinned battlefield with the post-turn state. chat.update is
   // ~1/sec per channel — well under that since each Slack turn is gated on
@@ -10826,6 +10857,24 @@ function formatCooldown(ms: number): string {
 }
 
 // Between-quest HP restore. Two flavors:
+async function handleNotifyPref(
+  payload: SlashCommandPayload,
+  args: string[],
+  env: Env,
+): Promise<CommandResponse> {
+  const pref = args[0]?.toLowerCase();
+  if (pref !== "dm" && pref !== "thread") {
+    return ephemeral(
+      `Usage: \`${payload.command} notify dm\` or \`${payload.command} notify thread\`\nDefault is \`thread\` — your turn posts a broadcast in the quest channel. Switch to \`dm\` to receive a direct message instead.`,
+    );
+  }
+  const character = await getCharacter(env.DB, payload.user_id);
+  if (!character) return ephemeral(`You need to \`${payload.command} roll\` a character first.`);
+  await setNotificationPref(env.DB, payload.user_id, pref);
+  const label = pref === "dm" ? "direct messages" : "channel broadcasts";
+  return ephemeral(`✅ Turn notifications set to *${label}*.`);
+}
+
 //   short (default) — heals 50% of missing HP, 10-minute cooldown
 //   long             — full HP restore, once per 24 hours
 async function handleRest(

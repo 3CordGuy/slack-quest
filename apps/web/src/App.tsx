@@ -195,6 +195,7 @@ interface Character {
   agi?: number;
   dex?: number;
   unspent_points?: number;
+  notification_pref?: "thread" | "dm";
 }
 
 type ItemType =
@@ -671,6 +672,7 @@ interface KnownCharacter {
   agi?: number;
   dex?: number;
   unspent_points?: number;
+  downed_until?: number | null;
 }
 
 interface AchievementsResponse {
@@ -1098,6 +1100,18 @@ export function App() {
       return;
     }
     toast.success(`${stat === "int_stat" ? "INT" : stat.toUpperCase()} increased!`);
+    void refreshMe();
+  }
+
+  async function saveNotifyPref(pref: "thread" | "dm") {
+    const res = await fetch("/api/settings/notify", {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ pref }),
+    });
+    if (!res.ok) { toast.error("Could not save preference."); return; }
+    toast.success(`Turn notifications set to ${pref === "dm" ? "direct messages" : "channel broadcasts"}.`);
     void refreshMe();
   }
 
@@ -1694,6 +1708,7 @@ export function App() {
               onLogout={logout}
               onReroll={rerollCharacter}
               onSpend={spendStatPoint}
+              onSaveNotifyPref={saveNotifyPref}
             />
             {state.me.character && (
               <InventoryCard
@@ -3153,8 +3168,8 @@ function CharacterInspectDialog({
   const [equippedItems, setEquippedItems] = useState<Item[]>([]);
   useEffect(() => {
     fetch(`/api/character/${encodeURIComponent(character.slack_user_id)}/equipped`, { credentials: "include" })
-      .then((r) => r.json())
-      .then((d: { items?: Item[] }) => { if (d.items) setEquippedItems(d.items); })
+      .then((r) => r.json() as Promise<{ items?: Item[] }>)
+      .then((d) => { if (d.items) setEquippedItems(d.items); })
       .catch(() => {});
   }, [character.slack_user_id]);
   return (
@@ -3459,7 +3474,7 @@ function AdventurersCard({ selfId }: { selfId: string }) {
             const portraitSrc = adventurerCharPortrait(ch.name);
             const fallbackPortrait = adventurerClassPortrait(ch.class);
 
-            const isDowned = ch.downed_until !== null && ch.downed_until > nowMs;
+            const isDowned = ch.downed_until != null && ch.downed_until > nowMs;
             return (
               <button
                 key={ch.slack_user_id}
@@ -3880,6 +3895,63 @@ function AdventurerSheet({ character, isOwn = false, onClose }: { character: Kno
   );
 }
 
+const PRIMARY_STAT_META: Record<string, { color: string; label: string; tooltip: (v: number, level: number) => string }> = {
+  str:      { color: "#f87171", label: "STR", tooltip: (v) => `Attack modifier\nfloor((${v} − 5) / 2) = ${Math.floor((v - 5) / 2) >= 0 ? "+" : ""}${Math.floor((v - 5) / 2)}\nAdded to weapon damage rolls` },
+  int_stat: { color: "#7dd3fc", label: "INT", tooltip: (v) => `Magic modifier\nfloor((${v} − 5) / 2) = ${Math.floor((v - 5) / 2) >= 0 ? "+" : ""}${Math.floor((v - 5) / 2)}\nAdded to spell & heal rolls\n\nStarting mana\n1 + floor(${v} / 4) = ${1 + Math.floor(v / 4)}` },
+  vit:      { color: "#86efac", label: "VIT", tooltip: (v, level) => `Max HP\n16 + 2×${v} + 2×${level} = ${16 + 2 * v + 2 * level}\n\nArmor bonus\nfloor(max(0, ${v} − 5) / 4) = +${Math.floor(Math.max(0, v - 5) / 4)}\nPassive armor above 5 VIT` },
+  agi:      { color: "#34d399", label: "AGI", tooltip: (v) => `Dodge chance\nmin(15%, (${v} − 5) × 1%) = ${Math.round(Math.min(0.15, Math.max(0, v - 5) * 0.01) * 100)}%\nFully negates a hit when dodged\n\nInitiative bonus\nfloor((${v} − 5) / 2) = ${Math.floor((v - 5) / 2) >= 0 ? "+" : ""}${Math.floor((v - 5) / 2)}\nAdded to d6 initiative roll` },
+  dex:      { color: "#fbbf24", label: "DEX", tooltip: (v) => `Crit bonus\nmax(0, (${v} − 5) × 1%) = +${Math.round(Math.min(0.10, Math.max(0, v - 5) * 0.01) * 100)}%\nBonus crit chance (cap 10%)` },
+};
+
+function PrimaryStatCard({
+  statKey, value, bonus, level,
+}: {
+  statKey: string; value: number; bonus: number; level: number;
+}) {
+  const [hovered, setHovered] = useState(false);
+  const meta = PRIMARY_STAT_META[statKey];
+  if (!meta) return null;
+  return (
+    <div
+      style={{ position: "relative" }}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+    >
+      <div style={{
+        textAlign: "center", borderRadius: 6, padding: "6px 4px",
+        background: hovered ? "#22252c" : "#1d1f23",
+        border: `1px solid ${hovered ? meta.color + "66" : "transparent"}`,
+        cursor: "default", transition: "background 0.12s, border-color 0.12s",
+      }}>
+        <div style={{ fontSize: 9, color: "#6b7280", textTransform: "uppercase", letterSpacing: 0.8, fontFamily: DISPLAY_FONT }}>
+          {meta.label}
+        </div>
+        <div style={{ fontSize: 15, fontWeight: 700, color: hovered ? meta.color : "#f5f5f5", lineHeight: 1.2, fontFamily: DISPLAY_FONT, transition: "color 0.12s" }}>
+          {value}
+        </div>
+        {bonus > 0 && (
+          <div style={{ fontSize: 8, color: "#86efac", lineHeight: 1.3 }}>+{bonus} gear</div>
+        )}
+      </div>
+      {hovered && (
+        <div style={{
+          position: "absolute", bottom: "calc(100% + 6px)", left: "50%",
+          transform: "translateX(-50%)",
+          background: "#0e1014", border: `1px solid ${meta.color}44`,
+          borderRadius: 7, padding: "7px 10px", zIndex: 50,
+          minWidth: 170, maxWidth: 230,
+          boxShadow: `0 4px 16px rgba(0,0,0,0.7), 0 0 0 1px ${meta.color}22`,
+          pointerEvents: "none",
+          whiteSpace: "pre-line",
+        }}>
+          <div style={{ fontSize: 10, color: "#6b7280", textTransform: "uppercase", letterSpacing: 0.8, marginBottom: 4, fontFamily: DISPLAY_FONT }}>{meta.label}</div>
+          <div style={{ fontSize: 11, color: "#c9cdd4", lineHeight: 1.55, fontFamily: "monospace" }}>{meta.tooltip(value, level)}</div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function DerivedStatCard({
   icon, label, value, color, formula,
 }: {
@@ -3932,6 +4004,7 @@ function CharacterCard({
   onLogout,
   onReroll,
   onSpend,
+  onSaveNotifyPref,
 }: {
   me: MeResponse;
   inventory: Item[];
@@ -3942,6 +4015,7 @@ function CharacterCard({
   onLogout: () => void;
   onReroll: () => Promise<void>;
   onSpend?: (stat: StatKey) => void;
+  onSaveNotifyPref?: (pref: "thread" | "dm") => Promise<void>;
 }) {
   const [trophyDefs, setTrophyDefs] = useState<Achievement[]>([]);
   const [trophyEarned, setTrophyEarned] = useState<EarnedAchievement[]>([]);
@@ -4009,7 +4083,7 @@ function CharacterCard({
   const statHasData = c.str !== undefined;
   return (
     <div style={{ ...card, position: "relative" }}>
-      <AccountPopover onLogout={onLogout} onReroll={onReroll} character={c} />
+      <AccountPopover onLogout={onLogout} onReroll={onReroll} character={c} onSaveNotifyPref={onSaveNotifyPref} />
       <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 4 }}>
         <Avatar
           src={portrait}
@@ -4118,20 +4192,15 @@ function CharacterCard({
         <div style={{ marginTop: 12, padding: "10px 12px", background: "#16181c", borderRadius: 8, border: "1px solid #2a2d33" }}>
           <div style={{ fontSize: 11, color: "#6b7280", textTransform: "uppercase", letterSpacing: 1.2, marginBottom: 8, fontFamily: DISPLAY_FONT }}>Primary Stats</div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 5, marginBottom: 8 }}>
-            {(["str", "int_stat", "vit", "agi", "dex"] as StatKey[]).map((key) => {
-              const bonus = equipBonuses[key] ?? 0;
-              return (
-                <div key={key} style={{ textAlign: "center", background: "#1d1f23", borderRadius: 6, padding: "6px 4px" }}>
-                  <div style={{ fontSize: 9, color: "#6b7280", textTransform: "uppercase", letterSpacing: 0.8, fontFamily: DISPLAY_FONT }}>
-                    {key === "int_stat" ? "INT" : key.toUpperCase()}
-                  </div>
-                  <div style={{ fontSize: 15, fontWeight: 700, color: "#f5f5f5", lineHeight: 1.2, fontFamily: DISPLAY_FONT }}>{primaryStats[key]}</div>
-                  {bonus > 0 && (
-                    <div style={{ fontSize: 8, color: "#86efac", lineHeight: 1.3 }}>+{bonus} gear</div>
-                  )}
-                </div>
-              );
-            })}
+            {(["str", "int_stat", "vit", "agi", "dex"] as StatKey[]).map((key) => (
+              <PrimaryStatCard
+                key={key}
+                statKey={key}
+                value={primaryStats[key]}
+                bonus={equipBonuses[key] ?? 0}
+                level={c.level}
+              />
+            ))}
           </div>
           {(() => {
             const { str, int_stat: int, vit, agi, dex } = primaryStats;
@@ -7083,14 +7152,17 @@ function AccountPopover({
   onLogout,
   onReroll,
   character,
+  onSaveNotifyPref,
 }: {
   onLogout: () => void;
   onReroll: () => Promise<void>;
-  character: { name: string } | null;
+  character: { name: string; notification_pref?: "thread" | "dm" } | null;
+  onSaveNotifyPref?: (pref: "thread" | "dm") => Promise<void>;
 }) {
   const [open, setOpen] = useState(false);
   const [rerollStep, setRerollStep] = useState<"idle" | "confirm">("idle");
   const [rerolling, setRerolling] = useState(false);
+  const [showNotifyModal, setShowNotifyModal] = useState(false);
 
   const { refs, floatingStyles, context } = useFloating({
     open,
@@ -7140,6 +7212,16 @@ function AccountPopover({
                 <Icon name="player" size={13} /> Sign out
               </button>
 
+              {/* Notifications */}
+              {onSaveNotifyPref && (
+                <button
+                  onClick={() => { setOpen(false); setShowNotifyModal(true); }}
+                  style={{ ...smallActionBtn("#1a1c20", "#93c5fd"), textAlign: "left" }}
+                >
+                  <Icon name="bell" size={13} /> Notifications
+                </button>
+              )}
+
               {/* Reroll */}
               <div style={{ borderTop: "1px solid #2a2d33", paddingTop: 8, marginTop: 2 }}>
                 {rerollStep === "idle" ? (
@@ -7174,7 +7256,85 @@ function AccountPopover({
           </div>
         </FloatingPortal>
       )}
+      {showNotifyModal && onSaveNotifyPref && (
+        <NotifyPrefModal
+          current={character?.notification_pref ?? "thread"}
+          onSave={async (pref) => { await onSaveNotifyPref(pref); setShowNotifyModal(false); }}
+          onClose={() => setShowNotifyModal(false)}
+        />
+      )}
     </>
+  );
+}
+
+function NotifyPrefModal({
+  current,
+  onSave,
+  onClose,
+}: {
+  current: "thread" | "dm";
+  onSave: (pref: "thread" | "dm") => Promise<void>;
+  onClose: () => void;
+}) {
+  const [selected, setSelected] = useState<"thread" | "dm">(current);
+  const [saving, setSaving] = useState(false);
+
+  async function handleSave() {
+    setSaving(true);
+    await onSave(selected);
+    setSaving(false);
+  }
+
+  const opts: { value: "thread" | "dm"; label: string; desc: string }[] = [
+    { value: "thread", label: "Channel broadcast", desc: "Posts your turn in the quest thread and @mentions you in the channel." },
+    { value: "dm",     label: "Direct message",    desc: "Sends you a private DM when it's your turn." },
+  ];
+
+  return (
+    <ModalBackdrop onCancel={onClose}>
+      <div style={{ fontSize: 18, fontWeight: 700, color: "#f5f5f5", marginBottom: 4 }}>Turn notifications</div>
+      <div style={{ fontSize: 13, color: "#9ca3af", marginBottom: 20 }}>How would you like to be pinged when it's your turn in combat?</div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        {opts.map((opt) => {
+          const active = selected === opt.value;
+          return (
+            <button
+              key={opt.value}
+              type="button"
+              onClick={() => setSelected(opt.value)}
+              style={{
+                background: active ? "#1f2d3d" : "#1a1c20",
+                border: `1px solid ${active ? "#3b82f6" : "#2a2d33"}`,
+                borderRadius: 8,
+                padding: "12px 14px",
+                textAlign: "left",
+                cursor: "pointer",
+                display: "flex",
+                flexDirection: "column",
+                gap: 4,
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <div style={{
+                  width: 14, height: 14, borderRadius: "50%",
+                  border: `2px solid ${active ? "#3b82f6" : "#4a5060"}`,
+                  background: active ? "#3b82f6" : "transparent",
+                  flexShrink: 0,
+                }} />
+                <span style={{ fontWeight: 600, fontSize: 13, color: active ? "#93c5fd" : "#e6e6e6" }}>{opt.label}</span>
+              </div>
+              <div style={{ fontSize: 12, color: "#6b7280", paddingLeft: 22, lineHeight: 1.4 }}>{opt.desc}</div>
+            </button>
+          );
+        })}
+      </div>
+      <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 20 }}>
+        <button type="button" onClick={onClose} style={{ ...button, background: "#33363d" }}>Cancel</button>
+        <button type="button" onClick={handleSave} disabled={saving} style={button}>
+          {saving ? "Saving…" : "Save"}
+        </button>
+      </div>
+    </ModalBackdrop>
   );
 }
 
