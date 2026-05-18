@@ -506,6 +506,7 @@ interface DrinkItem {
   actual_price: number;
   is_daily_special: boolean;
   blurb: string;
+  fight_duration?: true;
 }
 
 interface DrinkBuff {
@@ -513,6 +514,7 @@ interface DrinkBuff {
   magnitude: number;
   remaining: number;
   drink_id: string;
+  fight_duration?: true;
 }
 
 // Stone-Parchment-Dagger
@@ -6354,6 +6356,11 @@ function PubCard({
                   {d.is_daily_special && (
                     <span style={{ fontSize: 10, background: "#b89b3a22", color: "#fbbf24", border: "1px solid #b89b3a55", borderRadius: 4, padding: "1px 5px", fontWeight: 700 }}>
                       SPECIAL
+                    </span>
+                  )}
+                  {d.fight_duration && (
+                    <span style={{ fontSize: 10, background: "#1a2a3a", color: "#7dd3fc", border: "1px solid #1e4a6a", borderRadius: 4, padding: "1px 5px", fontWeight: 700 }}>
+                      FULL FIGHT
                     </span>
                   )}
                 </div>
