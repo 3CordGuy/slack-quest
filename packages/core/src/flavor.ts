@@ -228,6 +228,9 @@ export type EquipSlot =
 // effects could touch cooldown, damage modifiers, etc.
 export type EffectType = "regen" | "bleeding" | "burning" | "poisoned" | "empowered";
 
+// Elemental damage type carried by rare+ weapons and assigned to monsters.
+export type ElementType = "fire" | "ice" | "lightning";
+
 export interface EffectMeta {
   emoji: string;
   name: string;

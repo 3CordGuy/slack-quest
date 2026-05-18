@@ -26,6 +26,7 @@ export interface DerivedStats {
   attack_mod: number;
   magic_mod: number;
   max_hp: number;       // requires level
+  max_mana: number;     // requires level; INT-driven scaling
   armor_bonus: number;  // VIT-derived; added on top of equipped armor
   dodge_chance: number; // 0..0.15
   crit_bonus: number;   // 0..0.10
@@ -133,7 +134,14 @@ export function deriveInitiativeBonus(stats: Stats): number {
   return Math.floor((stats.agi - 5) / 2);
 }
 
-// Mana at character creation. Above-average INT carries an extra point.
+// Max mana — scales with INT and level like HP scales with VIT and level.
+// 2 + floor(max(0, int_stat - 4) / 2) + floor(level / 6)
+// L1 spread: Sage/Warlock (INT 10) → 5, Mage/Bard (INT 9) → 4, Druid (INT 7) → 3, Paladin/Rogue/Warden (INT 4) → 2
+export function deriveMaxMana(intStat: number, level: number): number {
+  return 2 + Math.max(0, Math.floor((intStat - 4) / 2)) + Math.floor(level / 6);
+}
+
+// Mana at character creation. Kept for legacy read paths; use deriveMaxMana for new code.
 export function deriveStartingMana(stats: Stats): number {
   return 1 + Math.floor(stats.int_stat / 4);
 }
@@ -144,6 +152,7 @@ export function deriveAll(stats: Stats, level: number): DerivedStats {
     attack_mod: deriveAttackMod(stats),
     magic_mod: deriveMagicMod(stats),
     max_hp: deriveMaxHp(stats, level),
+    max_mana: deriveMaxMana(stats.int_stat, level),
     armor_bonus: deriveArmorBonus(stats),
     dodge_chance: deriveDodgeChance(stats),
     crit_bonus: deriveCritBonus(stats),

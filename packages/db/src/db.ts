@@ -1,7 +1,7 @@
 // D1 query helpers. Raw prepared statements — no ORM.
 
-import type { DrinkBuff, EffectType, EarnedAchievement, EquipSlot, ItemType, Rarity, StatKey, Stats, TownState, WeaponRange } from "@gantt-quest/core";
-import { startingStatsForClass } from "@gantt-quest/core";
+import type { DrinkBuff, EffectType, ElementType, EarnedAchievement, EquipSlot, ItemType, Rarity, StatKey, Stats, TownState, WeaponRange } from "@gantt-quest/core";
+import { deriveMaxMana, startingStatsForClass } from "@gantt-quest/core";
 
 // Active status effect on a character or monster. Ticks on the affected actor's
 // own combat action / monster turn. Cleared at quest end.
@@ -33,6 +33,9 @@ export interface Item {
   item_subtype: string | null;               // "shield" for off_hand shields
   // Phase 3 — minimum character level to equip. Defaults to 1 on legacy rows.
   level_req: number;
+  // Elemental affinity rolled at drop time. null for non-weapons, focus weapons,
+  // and common/uncommon weapons. Only rare+ melee/ranged weapons can have an element.
+  element: ElementType | null;
 }
 
 interface ItemRow extends Omit<Item, "equipped" | "stat_bonus"> {
@@ -106,6 +109,7 @@ export interface Character {
   revives_given: number;
   created_at: number;
   last_active: number;
+  notification_pref: "thread" | "dm";
 }
 
 interface CharacterRow extends Omit<Character, "scars" | "effects" | "drink_buff" | "achievements" | "pending_achievements"> {
@@ -133,6 +137,17 @@ export async function getCharacter(db: D1Database, userId: string): Promise<Char
     .bind(userId)
     .first<CharacterRow>();
   return row ? rowToCharacter(row) : null;
+}
+
+export async function setNotificationPref(
+  db: D1Database,
+  userId: string,
+  pref: "thread" | "dm",
+): Promise<void> {
+  await db
+    .prepare("UPDATE characters SET notification_pref = ?, last_active = ? WHERE slack_user_id = ?")
+    .bind(pref, Date.now(), userId)
+    .run();
 }
 
 export interface CreateCharacterInput {
@@ -168,7 +183,7 @@ export async function createCharacter(
       `INSERT INTO characters
        (slack_user_id, slack_team_id, name, class, gender, level, xp, hp, max_hp, mana, max_mana, gold, scars, created_at, last_active,
         str, int_stat, vit, agi, dex, unspent_points)
-       VALUES (?, ?, ?, ?, ?, 1, 0, ?, ?, 2, 2, 10, '[]', ?, ?, ?, ?, ?, ?, ?, 0)`,
+       VALUES (?, ?, ?, ?, ?, 1, 0, ?, ?, ?, ?, 10, '[]', ?, ?, ?, ?, ?, ?, ?, 0)`,
     )
     .bind(
       input.slack_user_id,
@@ -178,6 +193,8 @@ export async function createCharacter(
       input.gender,
       input.hp,
       input.max_hp,
+      deriveMaxMana(stats.int_stat, 1),
+      deriveMaxMana(stats.int_stat, 1),
       now,
       now,
       stats.str,
@@ -239,6 +256,7 @@ export interface LootOption {
   item_subtype?: string | null;
   // Phase 3 — caller-supplied level gate; defaults to ceil(power/3) in addItem.
   level_req?: number;
+  element?: ElementType | null;
 }
 
 export interface TrapChoice {
@@ -326,6 +344,8 @@ export interface MonsterSpec {
   // AI-generated scene text introducing the foe ("Standing amid coiled cables,
   // the API Abandoner sneers…"). Shown in the engage banner pre-combat.
   flavor?: string | null;
+  element_weakness?: ElementType;
+  element_resistance?: ElementType;
 }
 
 export type DungeonObjectEffect =
@@ -937,8 +957,8 @@ export async function patchMonsterArtUrl(
 }
 
 // Awards XP and gold; applies any level-ups and returns the deltas.
-// Level-up effects: max_hp += 1d6, hp restored to new max, mana refilled to max,
-// and every 5 levels max_mana grows by 1 (capped at maxManaCap).
+// Level-up effects: max_hp += 1d6 per level, hp restored to new max, mana
+// recalculated via deriveMaxMana(int_stat, newLevel) and refilled to new max.
 export async function awardSpoils(
   db: D1Database,
   character: Character,
@@ -946,7 +966,6 @@ export async function awardSpoils(
   gold: number,
   hpRollPerLevel: () => number,
   xpForLevel: (level: number) => number,
-  maxManaCap: number,
 ): Promise<{
   levelsGained: number;
   newLevel: number;
@@ -957,20 +976,17 @@ export async function awardSpoils(
 }> {
   let level = character.level;
   let maxHp = character.max_hp;
-  let maxMana = character.max_mana;
   const totalXp = character.xp + xp;
   let levelsGained = 0;
   while (totalXp >= xpForLevel(level + 1)) {
     level += 1;
     levelsGained += 1;
     maxHp += hpRollPerLevel();
-    if (level % 5 === 0 && maxMana < maxManaCap) {
-      maxMana += 1;
-    }
   }
   const newHp = levelsGained > 0 ? maxHp : character.hp;
-  // Mana refills to max on any level-up (parallel to HP refill).
-  const newMana = levelsGained > 0 ? maxMana : character.mana;
+  // Mana scales with INT and level; recalculate at the new level and refill on level-up.
+  const maxMana = deriveMaxMana(character.int_stat ?? 5, level);
+  const newMana = levelsGained > 0 ? maxMana : Math.min(character.mana, maxMana);
   await db
     .prepare(
       `UPDATE characters
@@ -1030,16 +1046,15 @@ export async function tryDeductMana(
   return (result.meta.changes ?? 0) > 0;
 }
 
-// Increases max_mana by `amount`, clamped to cap. Also bumps current mana by the
-// same delta. Used when a magic-type item is consumed.
+// Increases max_mana by `amount`. Also bumps current mana by the same delta.
+// Used when a magic-type item is consumed. No hard cap — mana scales freely.
 export async function bumpMaxMana(
   db: D1Database,
   character: Character,
   amount: number,
-  cap: number,
 ): Promise<{ added: number; newMaxMana: number; newMana: number }> {
-  const newMaxMana = Math.min(cap, character.max_mana + amount);
-  const added = newMaxMana - character.max_mana;
+  const newMaxMana = character.max_mana + amount;
+  const added = amount;
   const newMana = Math.min(newMaxMana, character.mana + added);
   await db
     .prepare(

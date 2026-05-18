@@ -122,6 +122,36 @@ export async function postMessage(
   return (await res.json()) as { ok: boolean; ts?: string; error?: string };
 }
 
+export async function openDMChannel(
+  botToken: string,
+  userId: string,
+): Promise<string | null> {
+  const res = await fetch("https://slack.com/api/conversations.open", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${botToken}`,
+      "Content-Type": "application/json; charset=utf-8",
+    },
+    body: JSON.stringify({ users: userId }),
+  });
+  const data = (await res.json()) as { ok: boolean; channel?: { id: string }; error?: string };
+  if (!data.ok) {
+    console.warn("conversations.open failed", data.error);
+    return null;
+  }
+  return data.channel?.id ?? null;
+}
+
+export async function sendDM(
+  botToken: string,
+  userId: string,
+  text: string,
+): Promise<void> {
+  const channelId = await openDMChannel(botToken, userId);
+  if (!channelId) return;
+  await postMessage(botToken, { channel: channelId, text });
+}
+
 // Edits an existing channel message. Used to retire stale interactive
 // buttons after a multi-player game resolves (the original "Accept /
 // Bet" buttons would otherwise stay live and return errors on click).
