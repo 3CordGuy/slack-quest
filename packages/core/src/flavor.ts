@@ -1221,8 +1221,13 @@ function rollArmorSlot(tier: number): ItemRoll {
   const bonusAmt = (rarity === "legendary" ? 6 : rarity === "epic" ? 5 : rarity === "rare" ? 3 : rarity === "uncommon" ? 2 : 1) + tierStatBoost;
 
   if (r < 0.50) {
-    // Body armor — standard slot, existing power formula.
-    return { type: "armor", rarity, power: rollPower("armor", rarity, tier), slot: "body" };
+    // Body armor — power-based armor reduction + stat bonus at epic/legendary.
+    const bodyStatBonus =
+      rarity === "legendary" ? { vit: bonusAmt, ...(Math.random() < 0.5 ? { str: Math.ceil(bonusAmt / 2) } : { int_stat: Math.ceil(bonusAmt / 2) }) }
+      : rarity === "epic" ? { vit: Math.ceil(bonusAmt * 0.6) }
+      : null;
+    return { type: "armor", rarity, power: rollPower("armor", rarity, tier), slot: "body",
+      ...(bodyStatBonus ? { stat_bonus: bodyStatBonus } : {}) };
   }
   if (r < 0.65) {
     // Helmet — half-armor contribution (floor(power/2) in buildInitialCombatState).
