@@ -268,6 +268,13 @@ export const VIEW_ART_PROMPTS = {
   // "warm safe space between quests" idea.
   inn_interior:
     "Interior of a cozy fantasy inn's main room. Two simple straw cots against one wall, a curtained private bed-alcove against the other. A small stone hearth in the corner with a kettle hanging over the fire. Wooden ceiling beams, a few hung lanterns casting warm orange light, a small rug on the plank floor. Quiet, restful, safe. No specific people in close-up — the room is the subject.",
+
+  // Outskirts — the /sq town Outskirts district banner. Staging-ground
+  // encampment just past the village boundary where parties gear up before
+  // heading into the wilds. No interior — the subject is the transitional
+  // liminal space between safety and adventure.
+  outskirts:
+    "A rough adventurers' encampment just outside a fantasy village. Canvas tents pitched on muddy ground, a crackling cook fire at the center with a pot hanging over it. Weapon racks with spare swords and shields, a folding table with hand-drawn maps weighed down by a dagger. A few armored silhouettes in the middle distance — one sharpening a blade, one studying a map — but no close-up faces. Low wooden fencing marks the village boundary behind; dark rolling hills and the first trees of a forest loom ahead. Dusk light, smoke in the air, sense of imminent departure.",
 } as const;
 
 // Builds the full R2 key + the composed prompt for a given view-art short

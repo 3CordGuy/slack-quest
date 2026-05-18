@@ -662,6 +662,7 @@ interface TownArt {
   inn_art_url: string | null;
   smithy_art_url: string | null;
   apothecary_art_url: string | null;
+  outskirts_art_url: string | null;
 }
 
 interface ApothecaryDownedChar {
@@ -7304,7 +7305,7 @@ const DISTRICT_CONFIG: {
   { key: "inn",       label: "Inn",       icon: "bed",             color: "#1a3a2a", artKey: "inn_art_url" },
   { key: "smithy",      label: "Smithy",      icon: "anvil",          color: "#2a1a1a", artKey: "smithy_art_url" },
   { key: "apothecary", label: "Apothecary",  icon: "poison-bottle",  color: "#1a2d1a", artKey: "apothecary_art_url" },
-  { key: "hunt",       label: "Outskirts",   icon: "sword",          color: "#1a1a2e", artKey: "overview_art_url" },
+  { key: "hunt",       label: "Outskirts",   icon: "sword",          color: "#1a1a2e", artKey: "outskirts_art_url" },
 ];
 
 // Persistent top navigation shown whenever a town section is active.
