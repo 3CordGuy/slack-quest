@@ -23,7 +23,6 @@ import {
   resolveHeal,
   resolveMonsterHit,
   resolvePlayerHit,
-  resolveShield,
   resolveSignature,
   type BattlePosition,
 } from "./combat";
@@ -34,6 +33,7 @@ import {
   SHIELD_CAP_MULTIPLIER,
   classByName,
   type AbilityId,
+  type DamageType,
   type DrinkBuff,
   type EffectType,
   type ElementType,
@@ -92,6 +92,9 @@ export interface CombatFighter {
   element?: ElementType;
   // Rarity of the equipped main-hand weapon. Used to gate proc rates.
   weapon_rarity?: "rare" | "epic" | "legendary";
+  // Summed gear resistance by damage type. Capped to 0–75 at combat init.
+  // Absent keys = 0% resistance. physical is included but not used (armor handles it).
+  resistances?: Partial<Record<DamageType, number>>;
 }
 
 export interface GauntletWaveSpec {
@@ -104,6 +107,9 @@ export interface CombatMonster {
   name: string;
   hp: number;
   max_hp: number;
+  // Depletable armor pool. Physical player attacks deplete it before hitting HP;
+  // cast/signature/magic attacks bypass it entirely. Starts at `tier` by default.
+  shield: number;
   tier: number;
   initiative: number;      // rolled at begin
   effects: MachineStatusEffect[];
@@ -125,6 +131,14 @@ export interface CombatMonster {
   // weakness: proc magnitude/duration boosted; resistance: 50% chance to block proc.
   element_weakness?: ElementType;
   element_resistance?: ElementType;
+  // Damage-type routing for this monster's attacks. undefined defaults to "physical".
+  // Determines whether armor or gear resistance applies when the monster hits a fighter.
+  attack_damage_type?: DamageType;
+  // Player damage type weaknesses/resistances (separate from elemental proc affinities).
+  // weakness: player deals +30% to this monster with matching type.
+  // resistance: player deals −30% with matching type.
+  damage_weakness?: DamageType;
+  damage_resistance?: DamageType;
 }
 
 export type CombatStatus = "pending" | "active" | "victory" | "defeat" | "fled";
@@ -234,10 +248,10 @@ export type TurnAction =
   | { kind: "attack"; actor: ActorId; target_id?: ActorId }
   | { kind: "cast"; actor: ActorId; target_id?: ActorId }
   | { kind: "heal"; actor: ActorId; target: ActorId }
-  | { kind: "shield"; actor: ActorId; target: ActorId }
   | { kind: "signature"; actor: ActorId; target_id?: ActorId }
   | { kind: "flee"; actor: ActorId }
   | { kind: "position"; actor: ActorId; to: BattlePosition }
+  | { kind: "shield"; actor: ActorId }
   | { kind: "wait"; actor: ActorId }
   | { kind: "mark"; actor: ActorId; target_id?: string | null }
   | {
@@ -258,7 +272,6 @@ export type RollPurpose =
   | "damage_cast"
   | "damage_monster"
   | "heal"
-  | "shield"
   | "signature"
   | "flee_check";
 
@@ -286,6 +299,7 @@ export type CombatEvent =
       actor: ActorId;
       target: ActorId;       // always MONSTER_ID for now
       damage: number;
+      armor_absorbed: number; // monster armor absorbed before HP damage; 0 for magic/cast
       crit: boolean;
       formula: string;
     }
@@ -293,18 +307,24 @@ export type CombatEvent =
       type: "monster_attack";
       actor: ActorId;
       target: ActorId;
+      damage_type: DamageType;
       raw_damage: number;
       damage_after_position: number;
-      damage_after_armor: number;
+      // For physical hits this is damage after armor reduction.
+      // For magic/elemental hits this is damage after resistance reduction.
+      damage_after_mitigation: number;
+      armor_reduction: number;
+      resistance_reduction: number;
       shield_absorbed: number;
       hp_damage: number;
     }
   | {
       type: "monster_splash";
+      damage_type: DamageType;
       targets: Array<{
         target: ActorId;
         raw_damage: number;
-        damage_after_armor: number;
+        damage_after_mitigation: number;
         shield_absorbed: number;
         hp_damage: number;
       }>;
@@ -328,13 +348,6 @@ export type CombatEvent =
       target: ActorId;
       amount: number;        // actual HP restored (clamped to max_hp)
       rolled: number;        // amount before clamp
-    }
-  | {
-      type: "shield_applied";
-      actor: ActorId;
-      target: ActorId;
-      amount: number;        // actual shield added (clamped to cap)
-      rolled: number;        // shield rolled before clamp
     }
   | {
       type: "signature_used";
@@ -425,6 +438,7 @@ export type CombatEvent =
   | { type: "battle_hymn_consumed"; actor: ActorId; bonus: number; remaining: number }
   | { type: "mark_applied"; actor: ActorId; expires_after_round: number; bonus: number }
   | { type: "mark_bonus"; actor: ActorId; bonus: number }
+  | { type: "shield_applied"; actor: ActorId; restored: number; new_armor: number }
   | { type: "passive_warden_shield"; actor: ActorId; amount: number }
   | { type: "passive_mage_free_sig"; actor: ActorId }
   | { type: "passive_druid_regen"; actor: ActorId; amount: number }
@@ -486,9 +500,10 @@ export type RollFn = (sides: number) => number;
 // step({ kind: "begin" }) to roll initiative and enter the active phase.
 // Wave fields on monster are opt-in: omit them for standard/boss combats.
 // Use `monsters` for multi-enemy; `monster` for single-enemy (backward compat).
-type MonsterInitSpec = Omit<CombatMonster, "initiative" | "effects" | "boss_phase" | "id"> & {
+type MonsterInitSpec = Omit<CombatMonster, "initiative" | "effects" | "boss_phase" | "id" | "shield"> & {
   id?: ActorId;    // auto-generated if omitted
   boss_phase?: 1 | 2;
+  shield?: number; // defaults to tier when omitted
 };
 export interface CombatInit {
   // focus_power and weapon_range default to 0 and "melee" when omitted — keeps
@@ -523,6 +538,7 @@ export function createCombatState(init: CombatInit): CombatState {
       initiative: 0,
       effects: [],
       boss_phase: m.boss_phase ?? 1,
+      shield: m.shield ?? m.tier,   // armor pool defaults to tier
     })),
     turn_order: [],
     turn_index: 0,
@@ -557,7 +573,7 @@ export function step(state: CombatState, action: TurnAction, roll: RollFn): Step
     case "heal":
       return handleHeal(state, action, roll);
     case "shield":
-      return handleShield(state, action, roll);
+      return handleShield(state, action);
     case "signature":
       return handleSignature(state, action, roll);
     case "flee":
@@ -803,10 +819,28 @@ function handlePlayerHit(
   // Shocked amplifier: monster takes +30% (magnitude 1) or +45% (magnitude 2) from all hits.
   const shockedEffect = monster.effects.find((e) => e.type === "shocked");
   const shockMult = shockedEffect ? (shockedEffect.magnitude >= 2 ? 1.45 : 1.30) : 1.0;
-  const finalDamage = Math.round((damage + aura.bonus + markBonus) * shockMult);
+
+  // Damage type weakness/resistance: +30% on weakness, −30% on resistance.
+  // Player attack type: "physical" for melee, element or "magic" for cast.
+  const playerAttackType: DamageType =
+    action.kind === "attack"
+      ? "physical"
+      : (tickedFighter.element as DamageType | undefined) ?? "magic";
+  const weaknessMult = monster.damage_weakness === playerAttackType ? 1.3 : 1.0;
+  const resistMult = monster.damage_resistance === playerAttackType ? 0.7 : 1.0;
+
+  const finalDamage = Math.max(1, Math.round((damage + aura.bonus + markBonus) * shockMult * weaknessMult * resistMult));
+
+  // Physical attacks (attack action) deplete the monster's armor pool first.
+  // Cast and signatures bypass armor and go straight to HP.
+  const monsterArmorAbsorbed = playerAttackType === "physical"
+    ? Math.min(monster.shield, finalDamage)
+    : 0;
+  const newMonsterShield = monster.shield - monsterArmorAbsorbed;
+  const hpDamage = finalDamage - monsterArmorAbsorbed;
 
   const oldHp = monster.hp;
-  const newHp = Math.max(0, oldHp - finalDamage);
+  const newHp = Math.max(0, oldHp - hpDamage);
   const monsterKilled = newHp <= 0;
   const phaseTransition =
     monster.is_boss &&
@@ -839,6 +873,7 @@ function handlePlayerHit(
     actor: action.actor,
     target: monster.id,
     damage: finalDamage,
+    armor_absorbed: monsterArmorAbsorbed,
     crit: isCrit,
     formula: `${hit.roll}+${hit.totalMod}${isCrit ? " ×2" : ""}${drinkBonusForFormula}${hasEmpowered ? " ⚡" : ""}${aura.bonus > 0 ? ` +${aura.bonus} aura` : ""}${markBonus > 0 ? ` +${markBonus} mark` : ""}`,
   });
@@ -855,7 +890,13 @@ function handlePlayerHit(
     ...s,
     monsters: s.monsters.map((m) =>
       m.id === monster.id
-        ? { ...m, hp: newHp, ...(phaseTransition ? { boss_phase: 2 as const } : {}) }
+        ? {
+            ...m,
+            hp: newHp,
+            shield: newMonsterShield,
+            // Boss phase 2 transition: armor refills (boss hardens).
+            ...(phaseTransition ? { boss_phase: 2 as const, shield: m.tier } : {}),
+          }
         : m,
     ),
     contribution: (() => {
@@ -1107,22 +1148,30 @@ function handleMonsterAct(state: CombatState, roll: RollFn): StepResult {
   const doSplash = monster.is_boss && aliveFighters.length > 1 && roll(5) <= splashChance;
 
   if (doSplash) {
+    const splashDamageType = monster.attack_damage_type ?? "physical";
     const splashTargets = aliveFighters.filter((f) => (vanished[f.id] ?? 0) <= 0);
     const splashHits = splashTargets.map((f) => {
-      const hit = resolveMonsterHit(monster.tier, aliveFighters.length, f.armor_power, bossPhase2, roll);
+      const resistPct = splashDamageType !== "physical" ? (f.resistances?.[splashDamageType] ?? 0) : 0;
+      const hit = resolveMonsterHit(monster.tier, aliveFighters.length, 0, bossPhase2, roll, splashDamageType, resistPct);
       const splashShocked = f.effects.find((e) => e.type === "shocked");
       const splashShockMult = splashShocked ? (splashShocked.magnitude >= 2 ? 1.45 : 1.30) : 1.0;
       const posAdj = positionDamageMod(f.position, Math.round(hit.final * splashShockMult));
-      const dmg = applyDamageWithShield(posAdj, f.shield, f.hp);
+      // Physical depletes armor pool; non-physical bypasses it.
+      const splashArmorPool = splashDamageType === "physical" ? f.shield : 0;
+      const rawSplash = applyDamageWithShield(posAdj, splashArmorPool, f.hp);
+      const dmg = splashDamageType === "physical"
+        ? rawSplash
+        : { newShield: f.shield, newHp: rawSplash.newHp, shieldAbsorbed: 0, hpDamage: rawSplash.hpDamage };
       return { fighter: f, hit, posAdj, dmg };
     });
 
     const splashEvent: CombatEvent = {
       type: "monster_splash",
+      damage_type: splashDamageType,
       targets: splashHits.map(({ fighter, hit, dmg }) => ({
         target: fighter.id,
         raw_damage: hit.raw,
-        damage_after_armor: hit.final,
+        damage_after_mitigation: hit.final,
         shield_absorbed: dmg.shieldAbsorbed,
         hp_damage: dmg.hpDamage,
       })),
@@ -1217,22 +1266,30 @@ function handleMonsterAct(state: CombatState, roll: RollFn): StepResult {
   }
 
   // ── damage roll on hit ──
-  const totalArmor = target.armor_power + (target.stats ? deriveArmorBonus(target.stats) : 0);
+  const attackDamageType = monster.attack_damage_type ?? "physical";
+  const targetResistPct = attackDamageType !== "physical"
+    ? (target.resistances?.[attackDamageType] ?? 0)
+    : 0;
   const hit = resolveMonsterHit(
     monster.tier,
     aliveFighters.length,
-    totalArmor,
+    0,
     bossPhase2,
     roll,
+    attackDamageType,
+    targetResistPct,
   );
   const targetShocked = target.effects.find((e) => e.type === "shocked");
   const targetShockMult = targetShocked ? (targetShocked.magnitude >= 2 ? 1.45 : 1.30) : 1.0;
   const positionAdjusted = positionDamageMod(target.position, Math.round(hit.final * targetShockMult));
-  const { newShield, newHp, shieldAbsorbed, hpDamage } = applyDamageWithShield(
-    positionAdjusted,
-    target.shield,
-    target.hp,
-  );
+  // Physical attacks route through the armor pool first (shield = depletable armor).
+  // Non-physical bypasses armor entirely and hits HP directly.
+  const armorForHit = attackDamageType === "physical" ? target.shield : 0;
+  const rawResult = applyDamageWithShield(positionAdjusted, armorForHit, target.hp);
+  const newShield = attackDamageType === "physical" ? rawResult.newShield : target.shield;
+  const newHp = rawResult.newHp;
+  const shieldAbsorbed = rawResult.shieldAbsorbed;
+  const hpDamage = rawResult.hpDamage;
 
   events.push({
     type: "roll",
@@ -1245,9 +1302,12 @@ function handleMonsterAct(state: CombatState, roll: RollFn): StepResult {
     type: "monster_attack",
     actor: actorId,
     target: target.id,
+    damage_type: attackDamageType,
     raw_damage: hit.raw,
     damage_after_position: positionAdjusted,
-    damage_after_armor: hit.final,
+    damage_after_mitigation: hit.final,
+    armor_reduction: hit.armorReduction,
+    resistance_reduction: hit.resistanceReduction,
     shield_absorbed: shieldAbsorbed,
     hp_damage: hpDamage,
   });
@@ -1353,63 +1413,25 @@ function handleHeal(
 }
 
 function handleShield(
-  state: CombatState,
-  action: { kind: "shield"; actor: ActorId; target: ActorId },
-  roll: RollFn,
+  s: CombatState,
+  action: { kind: "shield"; actor: ActorId },
 ): StepResult {
-  const actor = state.fighters.find((f) => f.id === action.actor);
-  if (!actor) return reject(state, `unknown actor: ${action.actor}`);
-  if (currentActor(state) !== action.actor) {
-    return reject(state, `not ${action.actor}'s turn`);
-  }
-  if (actor.hp <= 0) return reject(state, `${action.actor} is downed`);
-  if (actor.mana < 1) return reject(state, `${action.actor} has no mana to shield`);
+  const events: CombatEvent[] = [];
+  const actor = s.fighters.find((f) => f.id === action.actor);
+  if (!actor) return reject(s, `shield: actor ${action.actor} not found`);
+  if (actor.hp <= 0) return reject(s, "shield: actor is down");
 
-  const tick = tickAtTurnStart(state, action.actor);
-  if (tick.earlyReturn) return tick.earlyReturn;
-  // Shield costs 1 mana — deduct on the post-tick state.
-  const s = {
-    ...tick.state,
-    fighters: tick.state.fighters.map((f) =>
-      f.id === action.actor ? { ...f, mana: Math.max(0, f.mana - 1) } : f,
-    ),
-  };
-  const tickedActor = s.fighters.find((f) => f.id === action.actor)!;
-  const target = s.fighters.find((f) => f.id === action.target);
-  if (!target) return reject(s, `unknown shield target: ${action.target}`);
-  if (target.hp <= 0) return reject(s, `cannot shield a downed target`);
+  // Replenish the depletable armor pool to its max (floor(armor_power / 2)).
+  const armorMax = Math.floor(actor.armor_power / 2);
+  const restored = Math.max(0, armorMax - actor.shield);
+  const newArmor = armorMax;
 
-  const { amount: baseRolled, roll: rollValue } = resolveShield(tickedActor.magic_mod, roll);
-  const rolled = baseRolled + tickedActor.focus_power;
-  const cap = target.max_hp * SHIELD_CAP_MULTIPLIER;
-  const newShield = Math.min(cap, target.shield + rolled);
-  const applied = newShield - target.shield;
+  events.push({ type: "shield_applied", actor: action.actor, restored, new_armor: newArmor });
 
-  const events: CombatEvent[] = [
-    ...tick.events,
-    { type: "roll", actor: action.actor, die: "d6", value: rollValue, purpose: "shield" },
-    {
-      type: "shield_applied",
-      actor: action.actor,
-      target: action.target,
-      amount: applied,
-      rolled,
-    },
-  ];
-
-  const next = advanceTurn({
-    ...s,
-    fighters: s.fighters.map((f) =>
-      f.id === action.target ? { ...f, shield: newShield } : f,
-    ),
-    stats: {
-      ...s.stats,
-      [action.actor]: {
-        ...(s.stats[action.actor] ?? { damage_taken: 0, healing_done: 0, shielding_done: 0, kills: 0 }),
-        shielding_done: (s.stats[action.actor]?.shielding_done ?? 0) + applied,
-      },
-    },
-  });
+  const updatedFighters = s.fighters.map((f) =>
+    f.id === action.actor ? { ...f, shield: newArmor } : f,
+  );
+  const next = advanceTurn({ ...s, fighters: updatedFighters });
   return { state: next, events: [...events, ...turnStartEvent(next)] };
 }
 
@@ -1536,7 +1558,12 @@ function handleSignature(
     ),
     monsters: s.monsters.map((m) =>
       m.id === monster.id
-        ? { ...m, hp: newHp, ...(phaseTransition ? { boss_phase: 2 as const } : {}) }
+        ? {
+            ...m,
+            hp: newHp,
+            // Signatures bypass monster armor. Boss phase 2 refills armor.
+            ...(phaseTransition ? { boss_phase: 2 as const, shield: m.tier } : {}),
+          }
         : m,
     ),
     contribution: {
@@ -1608,11 +1635,10 @@ function handleFlee(
   }
 
   // Failed flee: free hit from the monster. No d20 to hit (you're exposed),
-  // no armor mitigation (back turned). Damage = resolveMonsterHit's normal
-  // damage roll, applied through shield/HP.
+  // no armor mitigation (back turned) — treat as physical with 0 armor.
   const alive = s.fighters.filter((f) => f.hp > 0);
   const bossPhase2 = (fleeMonster?.is_boss && fleeMonster?.boss_phase === 2) ?? false;
-  const hit = resolveMonsterHit(fleeMonster?.tier ?? 1, alive.length, 0, bossPhase2, roll);
+  const hit = resolveMonsterHit(fleeMonster?.tier ?? 1, alive.length, 0, bossPhase2, roll, "physical", 0);
   const positionAdjusted = positionDamageMod(tickedActor.position, hit.final);
   const { newShield, newHp, shieldAbsorbed, hpDamage } = applyDamageWithShield(
     positionAdjusted,
@@ -1624,9 +1650,12 @@ function handleFlee(
     type: "monster_attack",
     actor: fleeMonster?.id ?? MONSTER_ID,
     target: action.actor,
+    damage_type: "physical",
     raw_damage: hit.raw,
     damage_after_position: positionAdjusted,
-    damage_after_armor: hit.final,
+    damage_after_mitigation: hit.final,
+    armor_reduction: hit.armorReduction,
+    resistance_reduction: 0,
     shield_absorbed: shieldAbsorbed,
     hp_damage: hpDamage,
   });
@@ -2107,6 +2136,7 @@ export function resolveMonsterKill(
       name: next.name,
       hp: next.max_hp,
       max_hp: next.max_hp,
+      shield: deadMonster!.tier,
       tier: deadMonster!.tier,
       initiative: deadMonster!.initiative,
       effects: [],

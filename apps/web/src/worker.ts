@@ -77,6 +77,7 @@ import {
   type StatKey,
   type CombatInit,
   type CombatState,
+  type DamageType,
   type ElementType,
   type DialogNode,
   type DialogOption,
@@ -5639,6 +5640,46 @@ function rollMonsterElementAffinity(): { element_weakness?: ElementType; element
   return { element_weakness: weakness };
 }
 
+const ALL_DAMAGE_TYPES: DamageType[] = ["magic", "fire", "ice", "lightning"];
+
+function rollMonsterAttackAndDamageTypes(
+  tier: number,
+  element_weakness?: ElementType,
+): {
+  attack_damage_type?: DamageType;
+  damage_weakness?: DamageType;
+  damage_resistance?: DamageType;
+} {
+  // Attack type: low-tier monsters are mostly physical; higher tiers diversify.
+  const typedChance = tier >= 3 ? 0.30 : 0.15;
+  let attack_damage_type: DamageType | undefined;
+  if (Math.random() < typedChance) {
+    if (element_weakness && Math.random() < 0.5) {
+      attack_damage_type = element_weakness;
+    } else {
+      const r = Math.random();
+      attack_damage_type = r < 0.35 ? "magic" : r < 0.55 ? "fire" : r < 0.75 ? "ice" : "lightning";
+    }
+  }
+
+  // Damage type weakness/resistance on the monster (for player attacks).
+  const damage_weakness: DamageType | undefined =
+    Math.random() < 0.20
+      ? ALL_DAMAGE_TYPES[Math.floor(Math.random() * ALL_DAMAGE_TYPES.length)]
+      : undefined;
+
+  const damage_resistance: DamageType | undefined =
+    Math.random() < 0.15
+      ? ALL_DAMAGE_TYPES[Math.floor(Math.random() * ALL_DAMAGE_TYPES.length)]
+      : undefined;
+
+  return {
+    ...(attack_damage_type ? { attack_damage_type } : {}),
+    ...(damage_weakness ? { damage_weakness } : {}),
+    ...(damage_resistance ? { damage_resistance } : {}),
+  };
+}
+
 // Shared loader used by both the HTTP `/api/quest/:id/start_web_combat`
 // route and the DO's `bootstrapFromSlack` RPC. Reads the party from D1,
 // builds CombatInit, runs createCombatState, then seeds the resulting
@@ -5704,13 +5745,27 @@ async function buildInitialCombatState(
       Math.floor((slots.pants?.power ?? 0) / 4) +
       (slots.off_hand?.item_subtype === "shield" ? (slots.off_hand?.power ?? 0) : 0);
 
-    // Sum stat_bonus from all equipped items for STATS_V2 path.
+    // Sum stat_bonus and resist_* keys from all equipped items.
     const equipBonuses: Partial<Stats> = {};
+    const rawResistances: Partial<Record<DamageType, number>> = {};
     for (const item of Object.values(slots)) {
       if (!item?.stat_bonus) continue;
       for (const [key, val] of Object.entries(item.stat_bonus)) {
-        (equipBonuses as Record<string, number>)[key] = ((equipBonuses as Record<string, number>)[key] ?? 0) + val;
+        if (key.startsWith("resist_")) {
+          const dtype = key.slice("resist_".length) as DamageType;
+          rawResistances[dtype] = (rawResistances[dtype] ?? 0) + val;
+        } else {
+          (equipBonuses as Record<string, number>)[key] = ((equipBonuses as Record<string, number>)[key] ?? 0) + val;
+        }
       }
+    }
+    // Cap each resistance at 75% and apply focus weapon passive (+10% magic).
+    const resistances: Partial<Record<DamageType, number>> = {};
+    for (const [dtype, pct] of Object.entries(rawResistances) as [DamageType, number][]) {
+      resistances[dtype] = Math.min(75, pct);
+    }
+    if (isFocus) {
+      resistances.magic = Math.min(75, (resistances.magic ?? 0) + 10);
     }
 
     const memberStats: Stats = {
@@ -5739,7 +5794,8 @@ async function buildInitialCombatState(
       max_hp: member.max_hp,
       mana: member.mana,
       max_mana: member.max_mana,
-      shield: member.shield,
+      // Armor pool starts at floor(armorPower / 2) at combat start.
+      shield: Math.floor(armorPower / 2),
       position: member.position,
       attack_mod: snap.derived.attack_mod + levelBonus,
       magic_mod: snap.derived.magic_mod + levelBonus,
@@ -5754,6 +5810,7 @@ async function buildInitialCombatState(
       weapon_rarity: isFocus ? undefined
         : (weapon?.rarity === "rare" || weapon?.rarity === "epic" || weapon?.rarity === "legendary"
           ? weapon.rarity : undefined),
+      resistances: Object.keys(resistances).length > 0 ? resistances : undefined,
     });
   }
 
@@ -5785,28 +5842,36 @@ async function buildInitialCombatState(
   const init: CombatInit = (gridContentMonsters && gridContentMonsters.length > 0)
     ? {
         fighters,
-        monsters: gridContentMonsters.map((m, i) => ({
-          name: m.name,
-          hp: m.hp,
-          max_hp: m.max_hp,
-          tier: m.tier,
-          is_boss: isGridBoss && i === 0,
-          art_url: m.art_url ?? undefined,
-          ...rollMonsterElementAffinity(),
-        })),
+        monsters: gridContentMonsters.map((m, i) => {
+          const affinity = rollMonsterElementAffinity();
+          return {
+            name: m.name,
+            hp: m.hp,
+            max_hp: m.max_hp,
+            tier: m.tier,
+            is_boss: isGridBoss && i === 0,
+            art_url: m.art_url ?? undefined,
+            ...affinity,
+            ...rollMonsterAttackAndDamageTypes(m.tier, affinity.element_weakness),
+          };
+        }),
       }
     : scenePackMonsters
     ? {
         fighters,
-        monsters: scenePackMonsters.map((m) => ({
-          name: m.name,
-          hp: m.hp,
-          max_hp: m.max_hp,
-          tier: m.tier,
-          is_boss: false,
-          art_url: m.art_url ?? undefined,
-          ...rollMonsterElementAffinity(),
-        })),
+        monsters: scenePackMonsters.map((m) => {
+          const affinity = rollMonsterElementAffinity();
+          return {
+            name: m.name,
+            hp: m.hp,
+            max_hp: m.max_hp,
+            tier: m.tier,
+            is_boss: false,
+            art_url: m.art_url ?? undefined,
+            ...affinity,
+            ...rollMonsterAttackAndDamageTypes(m.tier, affinity.element_weakness),
+          };
+        }),
       }
     : {
         fighters,
@@ -5824,7 +5889,10 @@ async function buildInitialCombatState(
             max_hp: w.max_hp,
           })),
           art_url: quest.scene.monster_art_url,
-          ...rollMonsterElementAffinity(),
+          ...(() => {
+            const affinity = rollMonsterElementAffinity();
+            return { ...affinity, ...rollMonsterAttackAndDamageTypes(quest.scene.tier, affinity.element_weakness) };
+          })(),
         },
       };
   const initial = createCombatState(init);
@@ -6206,13 +6274,26 @@ export class QuestRoom extends DurableObject<Env> {
       Math.floor((slots.pants?.power ?? 0) / 4) +
       (slots.off_hand?.item_subtype === "shield" ? (slots.off_hand?.power ?? 0) : 0);
 
-    const equipBonuses: Partial<Stats> = {};
+    const equipBonuses2: Partial<Stats> = {};
+    const rawResistances2: Partial<Record<DamageType, number>> = {};
     for (const item of Object.values(slots)) {
       if (!item?.stat_bonus) continue;
       for (const [key, val] of Object.entries(item.stat_bonus)) {
-        (equipBonuses as Record<string, number>)[key] =
-          ((equipBonuses as Record<string, number>)[key] ?? 0) + (val as number);
+        if (key.startsWith("resist_")) {
+          const dtype = key.slice("resist_".length) as DamageType;
+          rawResistances2[dtype] = (rawResistances2[dtype] ?? 0) + (val as number);
+        } else {
+          (equipBonuses2 as Record<string, number>)[key] =
+            ((equipBonuses2 as Record<string, number>)[key] ?? 0) + (val as number);
+        }
       }
+    }
+    const resistances2: Partial<Record<DamageType, number>> = {};
+    for (const [dtype, pct] of Object.entries(rawResistances2) as [DamageType, number][]) {
+      resistances2[dtype] = Math.min(75, pct);
+    }
+    if (isFocus) {
+      resistances2.magic = Math.min(75, (resistances2.magic ?? 0) + 10);
     }
 
     const memberStats: Stats = {
@@ -6227,7 +6308,7 @@ export class QuestRoom extends DurableObject<Env> {
       level: character.level,
       stats: memberStats,
       v2Enabled: statsV2Enabled,
-      equipBonuses: statsV2Enabled ? equipBonuses : undefined,
+      equipBonuses: statsV2Enabled ? equipBonuses2 : undefined,
     });
     const levelBonus = statsV2Enabled ? 0 : Math.floor(character.level / 4);
 
@@ -6240,7 +6321,7 @@ export class QuestRoom extends DurableObject<Env> {
       max_hp: character.max_hp,
       mana: character.mana,
       max_mana: character.max_mana,
-      shield: character.shield,
+      shield: Math.floor(armorPower / 2),
       position: character.position,
       attack_mod: snap.derived.attack_mod + levelBonus,
       magic_mod: snap.derived.magic_mod + levelBonus,
@@ -6255,6 +6336,7 @@ export class QuestRoom extends DurableObject<Env> {
       weapon_rarity: isFocus ? undefined
         : (weapon?.rarity === "rare" || weapon?.rarity === "epic" || weapon?.rarity === "legendary"
           ? weapon.rarity : undefined),
+      resistances: Object.keys(resistances2).length > 0 ? resistances2 : undefined,
       effects: character.effects ?? [],
       initiative: 0,
     };

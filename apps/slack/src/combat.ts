@@ -1,5 +1,7 @@
 // Pure combat math. Lives outside commands.ts so tests can exercise it without a DB.
 
+import type { DamageType } from "@gantt-quest/core";
+
 export type CombatAction = "attack" | "cast" | "flee";
 
 export type BattlePosition = "front" | "back";
@@ -60,25 +62,41 @@ export interface MonsterHit {
   raw: number;
   final: number;
   armorReduction: number;
+  resistanceReduction: number;
+  damageType: DamageType;
 }
 
 // Resolves the monster's counter-attack against a single fighter.
 //   damage = 1d4 + tier + floor((alive_party - 1) / 2) [+ tier if boss phase 2]
-//   then reduced by floor(armorPower / 2), with a minimum of 1 dmg dealt so armor
-//   is never total immunity.
+//   Physical: reduced by floor(armorPower / 2), min 1.
+//   Magic/elemental: armor ignored, resistance % applied (capped 75), min 1.
 export function resolveMonsterHit(
   tier: number,
   fightersAlive: number,
   armorPower: number,
   bossPhase2: boolean,
   rollFn: (sides: number) => number,
+  damageType: DamageType = "physical",
+  resistancePct: number = 0,
 ): MonsterHit {
   const partyBonus = Math.floor((Math.max(1, fightersAlive) - 1) / 2);
   const bossBonus = bossPhase2 ? tier : 0;
   const raw = rollFn(4) + tier + partyBonus + bossBonus;
-  const armorReduction = Math.floor(Math.max(0, armorPower) / 2);
-  const final = Math.max(1, raw - armorReduction);
-  return { raw, final, armorReduction };
+
+  let armorReduction = 0;
+  let resistanceReduction = 0;
+  let final: number;
+
+  if (damageType === "physical") {
+    // Armor is a depletable pool managed by the caller via applyDamageWithShield.
+    final = raw;
+  } else {
+    const cappedPct = Math.min(75, Math.max(0, resistancePct));
+    resistanceReduction = Math.floor(raw * cappedPct / 100);
+    final = Math.max(1, raw - resistanceReduction);
+  }
+
+  return { raw, final, armorReduction, resistanceReduction, damageType };
 }
 
 // True iff this attack drops the monster from at-or-above 50% HP to below 50% — the
@@ -95,17 +113,6 @@ export function isBossPhaseTransition(
 // Heal: 2d6 + magic_mod HP restored. 2d6 gives a tighter bell-curve than 1d6
 // so healing is reliable enough to be meaningful without being a free win.
 export function resolveHeal(
-  magicMod: number,
-  rollFn: (sides: number) => number,
-): { amount: number; roll: number } {
-  const roll = rollFn(6) + rollFn(6);
-  const amount = Math.max(1, roll + magicMod);
-  return { amount, roll };
-}
-
-// Shield: 2d6 + magic_mod absorbing HP. Matches the heal formula — same
-// caster classes are good at both, intentional.
-export function resolveShield(
   magicMod: number,
   rollFn: (sides: number) => number,
 ): { amount: number; roll: number } {

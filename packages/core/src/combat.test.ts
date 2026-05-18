@@ -7,7 +7,6 @@ import {
   resolveHeal,
   resolveMonsterHit,
   resolvePlayerHit,
-  resolveShield,
   resolveSignature,
 } from "./combat";
 
@@ -47,10 +46,10 @@ describe("resolvePlayerHit", () => {
 });
 
 describe("resolveMonsterHit", () => {
-  it("solo party = no party bonus", () => {
+  it("solo party = no party bonus (physical)", () => {
     const r = resolveMonsterHit(2, 1, 0, false, constantRoll(3));
-    // 1d4=3 + tier 2 + party 0 = 5
-    expect(r).toEqual({ raw: 5, final: 5, armorReduction: 0 });
+    // 1d4=3 + tier 2 + party 0 = 5; physical: armor handled by caller, final = raw
+    expect(r).toEqual({ raw: 5, final: 5, armorReduction: 0, resistanceReduction: 0, damageType: "physical" });
   });
 
   it("party scaling adds floor((alive - 1) / 2)", () => {
@@ -59,16 +58,13 @@ describe("resolveMonsterHit", () => {
     expect(resolveMonsterHit(1, 5, 0, false, constantRoll(2)).raw).toBe(5); // 2 + 1 + 2
   });
 
-  it("armor reduces final damage by floor(power / 2)", () => {
+  it("physical: resolveMonsterHit returns raw damage (caller depletes armor pool)", () => {
     const r = resolveMonsterHit(2, 1, 5, false, constantRoll(4));
-    // raw = 4 + 2 = 6, armor = floor(5/2) = 2, final = 6 - 2 = 4
-    expect(r).toEqual({ raw: 6, final: 4, armorReduction: 2 });
-  });
-
-  it("never deals less than 1 damage even with overwhelming armor", () => {
-    const r = resolveMonsterHit(1, 1, 100, false, constantRoll(1));
-    // raw = 1 + 1 = 2, armor = 50, would be -48, clamped to 1
-    expect(r.final).toBe(1);
+    // raw = 4 + 2 = 6; no flat reduction — armor pool handled via applyDamageWithShield
+    expect(r.raw).toBe(6);
+    expect(r.final).toBe(6);
+    expect(r.armorReduction).toBe(0);
+    expect(r.damageType).toBe("physical");
   });
 
   it("boss phase 2 adds tier on top", () => {
@@ -83,10 +79,26 @@ describe("resolveMonsterHit", () => {
     expect(r.raw).toBe(3);
   });
 
-  it("treats negative armor as 0", () => {
-    const r = resolveMonsterHit(1, 1, -5, false, constantRoll(2));
+  it("magic damage: armor is ignored, resistance % applies", () => {
+    // raw = 1d4(3) + tier(2) = 5, 20% resist → floor(5*0.2)=1 reduction, final=4
+    const r = resolveMonsterHit(2, 1, 10, false, constantRoll(3), "magic", 20);
+    expect(r.damageType).toBe("magic");
     expect(r.armorReduction).toBe(0);
-    expect(r.final).toBe(3);
+    expect(r.resistanceReduction).toBe(1); // floor(5 * 0.20) = 1
+    expect(r.final).toBe(4);
+  });
+
+  it("elemental damage: resistance pct capped at 75", () => {
+    // raw = 1d4(4) + tier(1) = 5, 90% resist clamped to 75 → floor(5*0.75)=3, final=2
+    const r = resolveMonsterHit(1, 1, 0, false, constantRoll(4), "fire", 90);
+    expect(r.resistanceReduction).toBe(3);
+    expect(r.final).toBe(2);
+  });
+
+  it("non-physical damage still enforces minimum 1", () => {
+    const r = resolveMonsterHit(1, 1, 0, false, constantRoll(1), "ice", 75);
+    // raw = 1d4(1) + tier(1) = 2, 75% resist → floor(2*0.75)=1, final=max(1, 2-1)=1
+    expect(r.final).toBe(1);
   });
 });
 
@@ -164,18 +176,6 @@ describe("resolveHeal", () => {
 
   it("never heals less than 2 (floor prevents perma-zero healing)", () => {
     expect(resolveHeal(-10, r(1)).amount).toBe(2); // max(2, 1+1-10)=2
-  });
-});
-
-describe("resolveShield", () => {
-  const r = (val: number) => () => val;
-
-  it("base shield is 2d6 + magic_mod", () => {
-    expect(resolveShield(2, r(5)).amount).toBe(12); // 5+5+2=12
-  });
-
-  it("never grants less than 2", () => {
-    expect(resolveShield(-99, r(1)).amount).toBe(2); // max(2, 1+1-99)=2
   });
 });
 

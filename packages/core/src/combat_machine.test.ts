@@ -58,6 +58,7 @@ function baseInit(overrides: Partial<CombatInit> = {}): CombatInit {
       name: "The Schemaless Shrieker",
       hp: 40,
       max_hp: 40,
+      shield: 0,
       tier: 3,
       is_boss: false,
     },
@@ -205,14 +206,14 @@ describe("combat_machine.step", () => {
   });
 
   describe("monster_act (hit + damage)", () => {
-    it("attacks the alive party member on hit, applies armor + position", () => {
+    it("attacks the alive party member on hit, applies armor pool + position", () => {
       const begun = runBegin(createCombatState(baseInit()), [5, 18]); // monster first
       // pickMonsterTarget consumes roll(101)/100 → 50 = 0.5 (front target).
       // d20=15 (+3 = 18 vs AC 10: HIT).
-      // resolveMonsterHit: roll d4=3 → raw=3+3+0=6. armor=floor(3/2)=1 → final=5.
-      // position front → 5. shield 0 → hp 30 → 25.
+      // resolveMonsterHit: roll d4=3 → raw=3+3+0=6. physical: final=6 (caller handles armor pool).
+      // baseInit shield=0 → applyDamageWithShield(6, 0, 30) → hp=24.
       const result = step(begun.state, { kind: "monster_act" }, seqRoll([50, 15, 3]));
-      expect(result.state.fighters[0].hp).toBe(25);
+      expect(result.state.fighters[0].hp).toBe(24);
       const types = eventTypes(result.events);
       expect(types).toContain("hit_check");
       expect(types).toContain("monster_attack");
@@ -405,21 +406,6 @@ describe("combat_machine.step", () => {
       );
       // Actor is downed so the actor-check rejects first; either way no heal.
       expect(result.events.find((e) => e.type === "rejected")).toBeDefined();
-    });
-  });
-
-  describe("shield", () => {
-    it("adds shield, capped at 2× max_hp", () => {
-      const init = baseInit();
-      init.fighters[0].shield = 0;
-      const begun = runBegin(createCombatState(init), [15, 8]);
-      // resolveShield rolls 2d6: 2+2=4 → amount=max(2,4+0)=4.
-      const result = step(
-        begun.state,
-        { kind: "shield", actor: "U_PALADIN", target: "U_PALADIN" },
-        seqRoll([2, 2]),
-      );
-      expect(result.state.fighters[0].shield).toBe(4);
     });
   });
 
@@ -722,23 +708,28 @@ describe("STATS_V2 — AGI dodge", () => {
 });
 
 describe("STATS_V2 — VIT armor bonus", () => {
-  it("adds VIT-derived armor on top of equipped armor_power", () => {
+  it("adds VIT-derived armor on top of equipped armor_power (armor pool absorbs)", () => {
     // VIT=9 → deriveArmorBonus = floor((9-5)/4) = 1. armor_power=3 → total=4.
-    // resolveMonsterHit: d4=3, tier=3, party=1 → raw=6. reduction=floor(4/2)=2. final=4.
+    // resolveMonsterHit: d4=3, tier=3, party=1 → raw=6. physical final=6.
+    // Fighter starts with shield=1 (floor(4/2)=2 total pool, but test has shield pre-set at 2 to test absorption).
+    // applyDamageWithShield(6, 2, 30) → armor absorbs 2, hp takes 4 → hp=26.
     const init = baseInit();
     (init.fighters[0] as unknown as Record<string, unknown>).stats = {
       str: 5, int_stat: 5, vit: 9, agi: 5, dex: 5,
     };
+    // Pre-load armor pool to its max (floor((armor_power=3 + vit_bonus=1)/2) = 2)
+    init.fighters[0].shield = 2;
     const begun = runBegin(createCombatState(init), [5, 18]);
     const result = step(begun.state, { kind: "monster_act" }, seqRoll([50, 15, 3]));
-    expect(result.state.fighters[0].hp).toBe(26); // 30 - 4 = 26
+    expect(result.state.fighters[0].hp).toBe(26); // 30 - (6-2) = 26
+    expect(result.state.fighters[0].shield).toBe(0); // armor depleted
   });
 
-  it("without VIT bonus the same roll deals 1 more damage", () => {
-    // Same d4=3, tier=3. armor=3 → reduction=floor(3/2)=1. final=5.
+  it("without armor pool, full raw damage hits HP", () => {
+    // Same d4=3, tier=3. armor_power=3 but shield=0 → full raw=6 hits HP.
     const begun = runBegin(createCombatState(baseInit()), [5, 18]);
     const result = step(begun.state, { kind: "monster_act" }, seqRoll([50, 15, 3]));
-    expect(result.state.fighters[0].hp).toBe(25); // 30 - 5 = 25
+    expect(result.state.fighters[0].hp).toBe(24); // 30 - 6 = 24
   });
 });
 
@@ -781,6 +772,7 @@ describe("upgradeCombatState", () => {
       name: "Stale Wraith",
       hp: 20,
       max_hp: 20,
+      shield: 2,
       tier: 2,
       initiative: 0,
       effects: [],

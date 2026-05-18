@@ -1,6 +1,6 @@
 // D1 query helpers. Raw prepared statements — no ORM.
 
-import type { DrinkBuff, EffectType, ElementType, EarnedAchievement, EquipSlot, ItemType, Rarity, StatKey, Stats, TownState, WeaponRange } from "@gantt-quest/core";
+import type { DamageType, DrinkBuff, EffectType, ElementType, EarnedAchievement, EquipSlot, ItemType, Rarity, StatKey, Stats, TownState, WeaponRange } from "@gantt-quest/core";
 import { deriveMaxMana, startingStatsForClass } from "@gantt-quest/core";
 
 // Active status effect on a character or monster. Ticks on the affected actor's
@@ -346,6 +346,15 @@ export interface MonsterSpec {
   flavor?: string | null;
   element_weakness?: ElementType;
   element_resistance?: ElementType;
+  // Attack damage type: determines armor vs. resistance routing when this monster hits.
+  // undefined → "physical" (backward-compat with persisted scene_json).
+  attack_damage_type?: DamageType;
+  // Player damage type weakness/resistance — separate from elemental proc affinities.
+  damage_weakness?: DamageType;
+  damage_resistance?: DamageType;
+  // Current armor pool. Physical player attacks deplete it before HP; cast bypasses.
+  // undefined → defaults to tier at combat init. Updated in scene_json between turns.
+  armor?: number;
 }
 
 export type DungeonObjectEffect =
@@ -535,6 +544,16 @@ export interface SceneJson {
   // Multi-monster pack for standard/hunt quests. When present, buildInitialCombatState
   // uses this instead of synthesising a single monster from the root fields.
   monsters?: MonsterSpec[];
+  // Attack damage type for the primary (single) monster. undefined → "physical".
+  // For pack quests, each MonsterSpec carries its own attack_damage_type instead.
+  monster_attack_type?: DamageType;
+  // Damage type weakness/resistance on the primary monster.
+  monster_damage_weakness?: DamageType;
+  monster_damage_resistance?: DamageType;
+  // Current armor pool for the primary monster. Physical player attacks deplete it.
+  // undefined → tier (full) on the first hit of a new fight. For pack quests,
+  // each MonsterSpec.armor carries the per-monster pool.
+  monster_armor?: number;
 }
 
 export type QuestMode = "slack" | "web";
@@ -1006,6 +1025,28 @@ export async function awardSpoils(
 export async function refillMana(db: D1Database, userId: string): Promise<void> {
   await db
     .prepare("UPDATE characters SET mana = max_mana, last_active = ? WHERE slack_user_id = ?")
+    .bind(Date.now(), userId)
+    .run();
+}
+
+// Sets character shield to floor(equipped armor power / 2) at quest start and
+// on /sq shield. Uses a correlated sub-select so no extra round-trip is needed.
+export async function initArmorPool(db: D1Database, userId: string): Promise<void> {
+  await db
+    .prepare(`
+      UPDATE characters
+      SET shield = COALESCE(
+        (SELECT CAST(i.power / 2 AS INTEGER)
+         FROM inventory i
+         WHERE i.owner_id = characters.id
+           AND i.item_type = 'armor'
+           AND i.equipped = 1
+         LIMIT 1),
+        0
+      ),
+      last_active = ?
+      WHERE slack_user_id = ?
+    `)
     .bind(Date.now(), userId)
     .run();
 }

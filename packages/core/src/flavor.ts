@@ -258,6 +258,18 @@ export const ELEMENT_META: Record<ElementType, { emoji: string; name: string; ef
   lightning: { emoji: "🌩️", name: "Lightning", effect: "shocked" },
 };
 
+// Governs how a monster's attack is routed through player defenses.
+// physical → flat armor reduction; all others → % gear resistance, armor ignored.
+export type DamageType = "physical" | "magic" | "fire" | "ice" | "lightning";
+
+export const DAMAGE_TYPE_EMOJI: Record<DamageType, string> = {
+  physical:  "⚔️",
+  magic:     "✨",
+  fire:      "🔥",
+  ice:       "❄️",
+  lightning: "🌩️",
+};
+
 // Proc rate per hit by weapon rarity (only rare+ weapons can have elements).
 export const ELEMENT_PROC_RATE: Record<"rare" | "epic" | "legendary", number> = {
   rare: 0.20, epic: 0.30, legendary: 0.40,
@@ -268,6 +280,34 @@ export const ELEMENT_WEAPON_ROLL_CHANCE = 0.35;
 
 // Probability a monster has any elemental affinity (weakness/resistance).
 export const MONSTER_ELEMENT_AFFINITY_CHANCE = 0.30;
+
+// Gear resistance rolling. Rings and amulets eligible at rare+;
+// armor slots (body/helmet/pants/off_hand shield) eligible at epic+ only.
+// Physical is excluded — flat armor reduction handles that.
+const RESISTANCE_ELIGIBLE_TYPES: DamageType[] = ["magic", "fire", "ice", "lightning"];
+
+const RESISTANCE_PCT_BY_RARITY: Record<"rare" | "epic" | "legendary", { min: number; max: number }> = {
+  rare:      { min: 5,  max: 15 },
+  epic:      { min: 10, max: 25 },
+  legendary: { min: 20, max: 35 },
+};
+
+function rollResistance(slot: EquipSlot, rarity: Rarity, subtype?: string): { type: DamageType; pct: number } | undefined {
+  const isAccessory = slot === "ring" || slot === "amulet";
+  const isArmorPiece = (slot === "body" || slot === "helmet" || slot === "pants")
+    || (slot === "off_hand" && subtype === "shield");
+
+  if (!isAccessory && !isArmorPiece) return undefined;
+  if (isAccessory && rarity !== "rare" && rarity !== "epic" && rarity !== "legendary") return undefined;
+  if (isArmorPiece && rarity !== "epic" && rarity !== "legendary") return undefined;
+
+  const range = RESISTANCE_PCT_BY_RARITY[rarity as "rare" | "epic" | "legendary"];
+  if (!range) return undefined;
+
+  const pct = range.min + Math.floor(Math.random() * (range.max - range.min + 1));
+  const type = RESISTANCE_ELIGIBLE_TYPES[Math.floor(Math.random() * RESISTANCE_ELIGIBLE_TYPES.length)];
+  return { type, pct };
+}
 
 // "focus" weapons are the caster/support tier: wands, staves, codices.
 // They don't add to attack/cast/sig damage (the bot zeroes weaponMod
@@ -470,6 +510,9 @@ export interface ItemRoll {
   item_subtype?: string;                        // "shield" for off_hand items
   // Elemental affinity — only on rare+ melee/ranged weapons (~35% of eligible drops).
   element?: ElementType;
+  // Gear resistance — only on ring/amulet (rare+) or armor slots (epic+).
+  // Stored as resist_<type> key inside stat_bonus JSON column; no schema change needed.
+  resistance?: { type: DamageType; pct: number };
 }
 
 // Tool & scroll catalog. Names are fixed (no AI naming) so handleUse can dispatch
@@ -1244,27 +1287,35 @@ function rollArmorSlot(tier: number): ItemRoll {
   const tierStatBoost = Math.floor((Math.max(1, tier) - 1) / 2);
   const bonusAmt = (rarity === "legendary" ? 6 : rarity === "epic" ? 5 : rarity === "rare" ? 3 : rarity === "uncommon" ? 2 : 1) + tierStatBoost;
 
+  // Inline helper: merges resistance into stat_bonus (no DB schema change needed).
+  const withResist = (base: ItemRoll, slot: EquipSlot, subtype?: string): ItemRoll => {
+    const res = rollResistance(slot, rarity, subtype);
+    if (!res) return base;
+    const resistKey = `resist_${res.type}`;
+    return { ...base, stat_bonus: { ...(base.stat_bonus ?? {}), [resistKey]: res.pct } };
+  };
+
   if (r < 0.50) {
     // Body armor — power-based armor reduction + stat bonus at epic/legendary.
     const bodyStatBonus =
       rarity === "legendary" ? { vit: bonusAmt, ...(Math.random() < 0.5 ? { str: Math.ceil(bonusAmt / 2) } : { int_stat: Math.ceil(bonusAmt / 2) }) }
       : rarity === "epic" ? { vit: Math.ceil(bonusAmt * 0.6) }
       : null;
-    return { type: "armor", rarity, power: rollPower("armor", rarity, tier), slot: "body",
-      ...(bodyStatBonus ? { stat_bonus: bodyStatBonus } : {}) };
+    return withResist({ type: "armor", rarity, power: rollPower("armor", rarity, tier), slot: "body",
+      ...(bodyStatBonus ? { stat_bonus: bodyStatBonus } : {}) }, "body");
   }
   if (r < 0.65) {
     // Helmet — half-armor contribution (floor(power/2) in buildInitialCombatState).
-    return { type: "armor", rarity, power: rollPower("armor", rarity, tier), slot: "helmet",
-      stat_bonus: statBonus(Math.random() < 0.5 ? "int_stat" : "vit", bonusAmt) };
+    return withResist({ type: "armor", rarity, power: rollPower("armor", rarity, tier), slot: "helmet",
+      stat_bonus: statBonus(Math.random() < 0.5 ? "int_stat" : "vit", bonusAmt) }, "helmet");
   }
   if (r < 0.77) {
     // Pants — quarter-armor contribution.
-    return { type: "armor", rarity, power: rollPower("armor", rarity, tier), slot: "pants",
-      stat_bonus: statBonus("agi", bonusAmt) };
+    return withResist({ type: "armor", rarity, power: rollPower("armor", rarity, tier), slot: "pants",
+      stat_bonus: statBonus("agi", bonusAmt) }, "pants");
   }
   if (r < 0.87) {
-    // Boots — no armor; pure AGI buff.
+    // Boots — no armor; pure AGI buff. No resistance eligible.
     return { type: "armor", rarity, power: 0, slot: "boots",
       stat_bonus: statBonus("agi", bonusAmt) };
   }
@@ -1272,26 +1323,26 @@ function rollArmorSlot(tier: number): ItemRoll {
     // Ring — no armor; STR/INT/DEX buff depending on roll.
     const statKeys = ["str", "int_stat", "dex"] as const;
     const key = statKeys[Math.floor(Math.random() * statKeys.length)];
-    return { type: "armor", rarity, power: 0, slot: "ring",
-      stat_bonus: statBonus(key, bonusAmt) };
+    return withResist({ type: "armor", rarity, power: 0, slot: "ring",
+      stat_bonus: statBonus(key, bonusAmt) }, "ring");
   }
   if (r < 0.95) {
     // Amulet — no armor; INT/VIT buff.
     const key = Math.random() < 0.5 ? "int_stat" : "vit";
-    return { type: "armor", rarity, power: 0, slot: "amulet",
-      stat_bonus: statBonus(key, bonusAmt) };
+    return withResist({ type: "armor", rarity, power: 0, slot: "amulet",
+      stat_bonus: statBonus(key, bonusAmt) }, "amulet");
   }
   if (r < 0.98) {
-    // Gloves (off_hand, non-shield) — small armor; STR or DEX buff.
+    // Gloves (off_hand, non-shield) — small armor; STR or DEX buff. No resistance.
     const key = Math.random() < 0.5 ? "str" : "dex";
     return { type: "armor", rarity, power: Math.max(1, Math.floor(rollPower("armor", rarity, tier) / 3)), slot: "off_hand",
       item_subtype: "gloves",
       stat_bonus: statBonus(key, bonusAmt) };
   }
   // Shield (off_hand) — adds power to armor_power; small +VIT stat bonus.
-  return { type: "armor", rarity, power: rollPower("armor", rarity, tier), slot: "off_hand",
+  return withResist({ type: "armor", rarity, power: rollPower("armor", rarity, tier), slot: "off_hand",
     item_subtype: "shield",
-    stat_bonus: statBonus("vit", bonusAmt) };
+    stat_bonus: statBonus("vit", bonusAmt) }, "off_hand", "shield");
 }
 
 // Rolls an armor item that is guaranteed NOT to be body armor. Used by shop
@@ -1303,35 +1354,45 @@ export function rollAccessorySlot(tier: number): ItemRoll {
   const statBonus = (key: string, v: number) => ({ [key]: v });
   const tierStatBoost = Math.floor((Math.max(1, tier) - 1) / 2);
   const bonusAmt = (rarity === "legendary" ? 6 : rarity === "epic" ? 5 : rarity === "rare" ? 3 : rarity === "uncommon" ? 2 : 1) + tierStatBoost;
+
+  const withResist = (base: ItemRoll, slot: EquipSlot, subtype?: string): ItemRoll => {
+    const res = rollResistance(slot, rarity, subtype);
+    if (!res) return base;
+    const resistKey = `resist_${res.type}`;
+    return { ...base, stat_bonus: { ...(base.stat_bonus ?? {}), [resistKey]: res.pct } };
+  };
+
   // Equal-ish weights across the 6 non-body slots so variety is visible.
   if (r < 0.22) {
-    return { type: "armor", rarity, power: rollPower("armor", rarity, tier), slot: "helmet",
-      stat_bonus: statBonus(Math.random() < 0.5 ? "int_stat" : "vit", bonusAmt) };
+    return withResist({ type: "armor", rarity, power: rollPower("armor", rarity, tier), slot: "helmet",
+      stat_bonus: statBonus(Math.random() < 0.5 ? "int_stat" : "vit", bonusAmt) }, "helmet");
   }
   if (r < 0.44) {
-    return { type: "armor", rarity, power: rollPower("armor", rarity, tier), slot: "pants",
-      stat_bonus: statBonus("agi", bonusAmt) };
+    return withResist({ type: "armor", rarity, power: rollPower("armor", rarity, tier), slot: "pants",
+      stat_bonus: statBonus("agi", bonusAmt) }, "pants");
   }
   if (r < 0.61) {
+    // Boots — no resistance eligible.
     return { type: "armor", rarity, power: 0, slot: "boots",
       stat_bonus: statBonus("agi", bonusAmt) };
   }
   if (r < 0.75) {
     const statKeys = ["str", "int_stat", "dex"] as const;
-    return { type: "armor", rarity, power: 0, slot: "ring",
-      stat_bonus: statBonus(statKeys[Math.floor(Math.random() * statKeys.length)], bonusAmt) };
+    return withResist({ type: "armor", rarity, power: 0, slot: "ring",
+      stat_bonus: statBonus(statKeys[Math.floor(Math.random() * statKeys.length)], bonusAmt) }, "ring");
   }
   if (r < 0.85) {
-    return { type: "armor", rarity, power: 0, slot: "amulet",
-      stat_bonus: statBonus(Math.random() < 0.5 ? "int_stat" : "vit", bonusAmt) };
+    return withResist({ type: "armor", rarity, power: 0, slot: "amulet",
+      stat_bonus: statBonus(Math.random() < 0.5 ? "int_stat" : "vit", bonusAmt) }, "amulet");
   }
   if (r < 0.93) {
+    // Gloves — no resistance eligible.
     const key = Math.random() < 0.5 ? "str" : "dex";
     return { type: "armor", rarity, power: Math.max(1, Math.floor(rollPower("armor", rarity, tier) / 3)), slot: "off_hand",
       item_subtype: "gloves", stat_bonus: statBonus(key, bonusAmt) };
   }
-  return { type: "armor", rarity, power: rollPower("armor", rarity, tier), slot: "off_hand",
-    item_subtype: "shield", stat_bonus: statBonus("vit", bonusAmt) };
+  return withResist({ type: "armor", rarity, power: rollPower("armor", rarity, tier), slot: "off_hand",
+    item_subtype: "shield", stat_bonus: statBonus("vit", bonusAmt) }, "off_hand", "shield");
 }
 
 const ELEMENTS: ElementType[] = ["fire", "ice", "lightning"];

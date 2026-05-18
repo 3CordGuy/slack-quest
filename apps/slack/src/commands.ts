@@ -147,6 +147,7 @@ import {
   markQuestStatus,
   clearPartyEffects,
   refillMana,
+  initArmorPool,
   releaseShopClaim,
   removeItem,
   resetCooldownsFor,
@@ -202,7 +203,6 @@ import {
   resolveHeal,
   resolveMonsterHit,
   resolvePlayerHit,
-  resolveShield,
   resolveSignature,
 } from "./combat";
 import {
@@ -269,6 +269,8 @@ import {
   checkSpdAchievements,
   checkProgressionAchievements,
   deriveAll,
+  DAMAGE_TYPE_EMOJI,
+  type DamageType,
   type EquipSlot,
   type StatKey,
   type Stats,
@@ -450,7 +452,6 @@ function helpText(cmd: string, name: string): string {
     `• \`${cmd} ability\` (alias \`active\`) — your class's active ability (costs mana, 45s cooldown — see \`${cmd} me\`)`,
     `• \`${cmd} mark\` (alias \`focus\`) — call focus on the current foe; partymates get *+${FOCUS_FIRE_BONUS}* damage for ${Math.round(FOCUS_FIRE_DURATION_MS / 1000)}s (free action, no cooldown)`,
     `• \`${cmd} heal [@user]\` — restore \`1d6 + magic_mod\` HP on a party member (costs 1 mana, default self)`,
-    `• \`${cmd} shield [@user]\` — buff \`1d6 + magic_mod\` absorbing HP on a party member (costs 1 mana, default self)`,
     `• \`${cmd} revive <id> @user\` — bring a downed party member back, consuming a revive item`,
     `• \`${cmd} rest\` — short rest: heals 50% of missing HP (10-min cooldown)`,
     `• \`${cmd} rest long\` — long rest: full HP restore, once per 24 hours`,
@@ -583,9 +584,9 @@ function rulesSections(): RulesSection[] {
         `• \`${cmd} flee\` — \`1d2\`. 1 = escape (party fights on); 2 = trip + free monster hit. Blocked in gauntlet/dungeon.`,
         `• *Mana regen:* basic \`attack\`/\`cast\` refunds +1 mana on the monster's retaliation (no regen on mana-spending actions). In dungeons, the party also gets +1 mana between rooms.`,
         `• \`${cmd} heal [@user]\` — \`1d6 + mag_mod\` HP to a partymate, costs 1 mana, burns the 45s combat cooldown (no monster counter — it's a support action)`,
-        `• \`${cmd} shield [@user]\` — \`1d6 + mag_mod\` absorbing HP, costs 1 mana, caps at 2× max HP, burns the 45s combat cooldown (no monster counter)`,
+        `• \`${cmd} shield\` — replenish your depletable armor pool back to max (\`floor(armor_power/2)\`), no mana cost. Physical hits chip armor before HP; magic/elemental bypass it entirely.`,
         `• \`${cmd} revive <id> @user\` — bring downed partymate back, consumes a revive item (no mana cost)`,
-        `• Monster damage: \`1d4 + tier + party_bonus\`, mitigated by armor (\`floor(power/2)\`, min 1) and back-row position (×0.6, min 1). Boss phase 2 adds +tier.`,
+        `• Monster damage: \`1d4 + tier + party_bonus\`. *Physical* attacks deplete your armor pool first, overflow → HP. *Magic/elemental* attacks bypass armor — mitigated only by gear resistances (%). Back-row reduces all damage ×0.6, min 1. Boss phase 2 adds +tier.`,
         `• *Targeting:* monster picks a victim weighted 3:1 front:back from alive fighters — front-line tanks soak hits for back-line casters.`,
       ],
     },
@@ -597,8 +598,9 @@ function rulesSections(): RulesSection[] {
       body: (cmd) => [
         `• ⚔️ *Melee weapons* — front-row only for \`attack\`; \`+N\` to attack/cast/sig damage`,
         `• 🏹 *Ranged weapons* — usable from any row for \`attack\`; same damage bonus`,
-        `• 🔮 *Focus weapons* (caster/support) — usable any row, NO damage bonus, *+N to \`heal\` AND \`shield\`* amounts, *+1 max mana while equipped*. The healer build.`,
-        `• 🛡️ *Armor* — reduces incoming damage by \`floor(power/2)\``,
+        `• 🔮 *Focus weapons* (caster/support) — usable any row, NO damage bonus, *+N to \`heal\`* amounts, *+1 max mana while equipped*, *+10% magic resistance* passively. The healer/support build.`,
+        `• 🛡️ *Armor* — reduces *physical* incoming damage by \`floor(power/2)\`. Has no effect on magic/elemental attacks.`,
+        `• 💎 *Gear resistances* — rings, amulets, and high-rarity armor can roll fire/ice/lightning/magic resistance (%). Stack across slots, capped at 75% per type.`,
         `• 🧪 *Consumables* — \`${cmd} use <id>\` heals N HP. Free action, no cooldown.`,
         `• 🔮 *Magic items* — \`${cmd} use <id>\` grants permanent +N max mana (cap 5)`,
         `• 🌱 *Revive items* — bring downed teammate back at N% HP (rarity-tiered 50/75/100%)`,
@@ -1176,7 +1178,7 @@ export async function handleCommand(
     case "heal":
       return handleHeal(payload, args, env, ctx);
     case "shield":
-      return handleShield(payload, args, env, ctx);
+      return handleShield(payload, env, ctx);
     case "revive":
       return handleRevive(payload, args, env, ctx);
     case "rest":
@@ -2007,15 +2009,17 @@ async function handleQuest(
         mode: "slack",
         created_by: payload.user_id,
       });
-      // Mana refills to max for the questing character at quest start. Anyone who
-      // joins later via /sq join also gets a refill.
+      // Mana refills to max, armor pool initializes to floor(armor_power/2) at quest start.
+      // Anyone who joins later via /sq join also gets both.
       await refillMana(env.DB, payload.user_id);
+      await initArmorPool(env.DB, payload.user_id);
 
       // Auto-join validated invitees. Each one also gets a mana refill so they
       // start the quest fresh, same as the inviter.
       for (const j of joiners) {
         await joinQuest(env.DB, questId, j.slack_user_id);
         await refillMana(env.DB, j.slack_user_id);
+        await initArmorPool(env.DB, j.slack_user_id);
         await appendLog(env.DB, questId, j.slack_user_id, "join", "invited at quest start");
       }
 
@@ -4150,8 +4154,22 @@ async function handleCombat(
     const sign = meta.kind === "buff" ? "+" : "-";
     return `${meta.emoji} ${quest.scene.monster_name} ${meta.name.toLowerCase()} ticks ${sign}${e.magnitude} HP.`;
   });
-  const newMonsterHp = quest.scene.monster_hp - damage + monsterTick.hpDelta;
+  // Physical attacks (attack) deplete the monster's armor pool before HP.
+  // Cast and signatures bypass armor entirely.
+  const monsterArmorMax = quest.scene.tier;
+  const monsterArmorCurrent = quest.scene.monster_armor ?? monsterArmorMax;
+  const isPhysicalHit = action === "attack";
+  const monsterArmorAbsorbed = isPhysicalHit ? Math.min(monsterArmorCurrent, damage) : 0;
+  const monsterArmorAfter = monsterArmorCurrent - monsterArmorAbsorbed;
+  const hpDamageFromPlayer = damage - monsterArmorAbsorbed;
+
+  const newMonsterHp = quest.scene.monster_hp - hpDamageFromPlayer + monsterTick.hpDelta;
   const willKill = newMonsterHp <= 0;
+
+  if (monsterArmorAbsorbed > 0) {
+    const remaining = monsterArmorAfter > 0 ? ` (${monsterArmorAfter} armor left)` : " — *armor broken!*";
+    playerLine += ` 🛡 *${monsterArmorAbsorbed}* blocked by armor${remaining}.`;
+  }
 
   // 💀 Data Warlock passive: every crit attack/cast applies a 2-turn bleed
   // on the monster. Always-on (no per-fight state). Stacks with other status
@@ -4175,6 +4193,7 @@ async function handleCombat(
   let updatedScene: SceneJson = {
     ...quest.scene,
     monster_hp: Math.max(0, newMonsterHp),
+    monster_armor: monsterArmorAfter,
     monster_effects: monsterEffectsAfterTurn,
   };
   // Fold any passive triggers from this turn into the scene write so the
@@ -4201,6 +4220,7 @@ async function handleCombat(
   ) {
     bossPhaseTransition = true;
     updatedScene.boss_phase = 2;
+    updatedScene.monster_armor = quest.scene.tier; // boss hardens: armor refills in phase 2
   }
 
   // Atomic write: only proceed if monster_hp hasn't moved since we read it. Two
@@ -4619,19 +4639,30 @@ async function resolveFlee(
   }
 
   // Failed flee → free monster hit. Static narration (low-stakes comic beat).
+  const fleeAttackType: DamageType =
+    quest.scene.monsters?.[0]?.attack_damage_type
+    ?? quest.scene.monster_attack_type
+    ?? "physical";
   const monster = resolveMonsterHit(
     quest.scene.tier,
     fighters.length,
-    equippedArmor?.power ?? 0,
+    0,
     quest.scene.variant === "boss" && quest.scene.boss_phase === 2,
     rollDice,
+    fleeAttackType,
   );
-  const dmg = applyDamageWithShield(monster.final, character.shield, character.hp);
+  const fleeDmgRaw = applyDamageWithShield(
+    monster.final,
+    fleeAttackType === "physical" ? character.shield : 0,
+    character.hp,
+  );
+  const dmg = fleeAttackType === "physical"
+    ? fleeDmgRaw
+    : { newShield: character.shield, newHp: fleeDmgRaw.newHp, shieldAbsorbed: 0, hpDamage: fleeDmgRaw.hpDamage };
   const playerHpAfter = dmg.newHp;
-  const shieldPart = dmg.shieldAbsorbed > 0
-    ? ` \`${dmg.shieldAbsorbed} absorbed by shield\``
-    : "";
-  const intro = `🪤 <@${payload.user_id}> trips on the way out. *${quest.scene.monster_name}* lands a free hit for *${monster.final}*${shieldPart}.`;
+  const typeEmoji = fleeAttackType !== "physical" ? ` ${DAMAGE_TYPE_EMOJI[fleeAttackType]}` : "";
+  const armorNote = dmg.shieldAbsorbed > 0 ? ` \`${dmg.shieldAbsorbed} armor absorbed\`` : "";
+  const intro = `🪤 <@${payload.user_id}> trips on the way out. *${quest.scene.monster_name}*${typeEmoji} lands a free hit for *${monster.final}*${armorNote}.`;
 
   if (playerHpAfter <= 0) {
     return resolveDeath(payload, env, ctx, character, quest, fighters, [intro]);
@@ -4885,6 +4916,7 @@ async function resolveGauntletAdvance(
     // New wave's monster starts fresh — clear any effects (poison etc.) that were
     // on the previous wave's foe.
     monster_effects: [],
+    monster_armor: undefined, // new wave: armor resets to default (tier) on first hit
     // Mark and telegraph are per-monster — clear on wave advance so calls
     // on the previous wave don't silently affect attacks on the next.
     marked_by: undefined,
@@ -5904,8 +5936,9 @@ async function handleJoin(
   const inserted = await joinQuest(env.DB, quest.id, payload.user_id);
   if (!inserted) return ephemeral("You're already on this quest.");
 
-  // Joiners also get a mana refill — same effect as starting the quest yourself.
+  // Joiners get mana refill + armor pool init — same effect as starting the quest.
   await refillMana(env.DB, payload.user_id);
+  await initArmorPool(env.DB, payload.user_id);
 
   const scaled = await scaleMonsterForJoin(env.DB, quest.id, quest.scene, JOIN_HP_RATIO);
   await appendLog(env.DB, quest.id, payload.user_id, "join", `monster +${scaled.monster_max_hp - quest.scene.monster_max_hp} HP`);
@@ -6126,7 +6159,7 @@ async function handleInventory(
       if (ei) {
         const powerStr = powerLabel(ei.item_type, ei.power, ei.item_name);
         const statLine = ei.stat_bonus
-          ? ` · ${Object.entries(ei.stat_bonus).map(([k, v]) => `+${v} ${k === "int_stat" ? "INT" : k.toUpperCase()}`).join(", ")}`
+          ? ` · ${Object.entries(ei.stat_bonus).map(([k, v]) => formatStatBonusEntry(k, v)).join(", ")}`
           : "";
         slotLines.push(`${SLOT_EMOJI_MAP[s]} *${SLOT_NAME_MAP[s]}:* ${ei.item_name} — ${powerStr}${statLine}`);
       } else {
@@ -6304,7 +6337,7 @@ async function handleEquip(
 
   const slotLabel = item.slot ?? item.item_type;
   const statLine = item.stat_bonus
-    ? ` · ${Object.entries(item.stat_bonus).map(([k, v]) => `+${v} ${k === "int_stat" ? "INT" : k.toUpperCase()}`).join(", ")}`
+    ? ` · ${Object.entries(item.stat_bonus).map(([k, v]) => formatStatBonusEntry(k, v)).join(", ")}`
     : "";
   await equipItem(env.DB, item);
   return ephemeral(
@@ -10602,6 +10635,43 @@ async function useMigrate(
   return ephemeral(headline);
 }
 
+async function handleShield(
+  payload: SlashCommandPayload,
+  env: Env,
+  ctx: ExecutionContext,
+): Promise<CommandResponse> {
+  const character = await getCharacter(env.DB, payload.user_id);
+  if (!character) return ephemeral(`You need to \`${payload.command} roll\` a character first.`);
+  if (!isFighter(character)) return ephemeral("You're downed and can't act.");
+
+  const quest = await getActiveQuestForCharacter(env.DB, payload.user_id);
+  if (!quest) return ephemeral("You're not on an active quest.");
+
+  const cooldown = await cooldownRemaining(env.DB, quest.id, payload.user_id, await actionCooldownMs(env.DB, quest.id));
+  if (cooldown > 0) {
+    return ephemeral(`⏳ Catching your breath — try again in ${Math.ceil(cooldown / 1000)}s.`);
+  }
+
+  // Compute armor pool max from equipped armor.
+  const slots = await getAllEquippedSlots(env.DB, payload.user_id);
+  const equippedArmor = slots.body ?? slots.off_hand;
+  const armorMax = Math.floor((equippedArmor?.power ?? 0) / 2);
+
+  if (armorMax === 0) {
+    return ephemeral("You have no armor equipped — nothing to replenish. Equip armor to use this action.");
+  }
+  if (character.shield >= armorMax) {
+    return ephemeral(`🛡️ Your armor is already at full (${character.shield}/${armorMax}).`);
+  }
+
+  await initArmorPool(env.DB, payload.user_id);
+  await appendLog(env.DB, quest.id, payload.user_id, "shield", `armor → ${armorMax}`);
+
+  const text = `🛡️ *${character.name}* braces and fortifies their armor — restored to *${armorMax}* (physical attacks only). Magic bypasses it.`;
+  ctx.waitUntil(postToThread(env, quest, blockQuote(text)));
+  return ephemeral(text);
+}
+
 async function handleHeal(
   payload: SlashCommandPayload,
   args: string[],
@@ -10691,90 +10761,6 @@ async function handleHeal(
   const lines = [healLine, ...tickLines, healStat];
   ctx.waitUntil(postToThread(env, quest, [blockQuote(healLine), "", ...tickLines, healStat].join("\n")));
   return ephemeral(lines.join("\n"));
-}
-
-async function handleShield(
-  payload: SlashCommandPayload,
-  args: string[],
-  env: Env,
-  ctx: ExecutionContext,
-): Promise<CommandResponse> {
-  const character = await getCharacter(env.DB, payload.user_id);
-  if (!character) return ephemeral(`You need to \`${payload.command} roll\` a character first.`);
-  if (!isFighter(character)) return ephemeral("You're downed and can't act.");
-
-  const quest = await getActiveQuestForCharacter(env.DB, payload.user_id);
-  if (!quest) return ephemeral("You're not on an active quest.");
-
-  const cooldown = await cooldownRemaining(env.DB, quest.id, payload.user_id, await actionCooldownMs(env.DB, quest.id));
-  if (cooldown > 0) {
-    return ephemeral(`⏳ Catching your breath — try again in ${Math.ceil(cooldown / 1000)}s.`);
-  }
-  if (character.mana < 1) {
-    return ephemeral(`Out of mana. Mana refills between quests. (${character.mana}/${character.max_mana})`);
-  }
-
-  const resolved = await resolveSupportTarget(env, character, quest, args);
-  if ("error" in resolved) return ephemeral(resolved.error);
-  const { target } = resolved;
-  if (!isFighter(target)) {
-    return ephemeral(`*${target.name}* is downed — can't shield a downed character.`);
-  }
-
-  const cls = classByName(character.class);
-  const shieldSlots = await getAllEquippedSlots(env.DB, payload.user_id);
-  const shieldEquipBonuses: Partial<Record<string, number>> = {};
-  if (env.STATS_V2 === "1") {
-    for (const item of Object.values(shieldSlots)) {
-      if (!item?.stat_bonus) continue;
-      for (const [key, val] of Object.entries(item.stat_bonus)) {
-        shieldEquipBonuses[key] = (shieldEquipBonuses[key] ?? 0) + val;
-      }
-    }
-  }
-  const shieldSnap = statSnapshot({
-    className: character.class,
-    level: character.level,
-    stats: { str: character.str, int_stat: character.int_stat, vit: character.vit, agi: character.agi, dex: character.dex },
-    v2Enabled: env.STATS_V2 === "1",
-    equipBonuses: env.STATS_V2 === "1" ? (shieldEquipBonuses as Partial<Stats>) : undefined,
-  });
-  const shieldMagicMod = shieldSnap.derived.magic_mod + (env.STATS_V2 === "1" ? 0 : Math.floor(character.level / 4));
-  const shield = resolveShield(shieldMagicMod, rollDice);
-  // 🔮 Focus weapons add their power flat to shield amount too — same
-  // pattern as the heal bonus. The flat bonus applies before the cap
-  // check, so an over-cap shield with focus still wastes the surplus.
-  const focusWeapon = shieldSlots.main_hand;
-  const focusBonus = (focusWeapon?.weapon_range === "focus") ? focusWeapon.power : 0;
-  const finalShieldAmount = shield.amount + focusBonus;
-  const cap = target.max_hp * SHIELD_CAP_MULTIPLIER;
-  const added = await addShield(env.DB, target, finalShieldAmount, cap);
-  await tryDeductMana(env.DB, payload.user_id, 1);
-  await appendLog(env.DB, quest.id, payload.user_id, "shield", `+${added} sh → ${target.name}`);
-
-  const targetTag = target.slack_user_id === payload.user_id
-    ? `themselves`
-    : `<@${target.slack_user_id}>`;
-  const wasted = finalShieldAmount - added;
-  const wastedNote = wasted > 0 ? ` (${wasted} over the cap)` : "";
-  const focusBreakdown = focusBonus > 0 ? ` + ${focusBonus}🔮` : "";
-  const shieldLine = `🛡️ <@${payload.user_id}> shields ${targetTag} for *${added}*${wastedNote} \`${shield.roll} + ${shieldMagicMod}m${focusBreakdown}\`.`;
-
-  // Tick the caster's status effects — shield is a combat-tier action.
-  const casterTick = await applyPlayerTick(env, payload.user_id, character);
-  const tickLines = casterTick.tickLines;
-  if (casterTick.postTickHp <= 0) {
-    const fighters = (await getQuestParty(env.DB, quest.id)).filter(isFighter);
-    return resolveDeath(payload, env, ctx, character, quest, fighters, [shieldLine, ...tickLines]);
-  }
-
-  // Shield is a support action — same model as /sq heal and /sq revive: pay
-  // mana + burn cooldown + skip your offensive turn, but the monster does NOT
-  // counter-attack. Earlier behavior had retaliation on mana use, which made
-  // shield a wash against an equally-hitting monster.
-  const shieldStat = `*${target.name}*: 🛡${target.shield + added}/${cap}`;
-  ctx.waitUntil(postToThread(env, quest, [blockQuote(shieldLine), "", ...tickLines, shieldStat].join("\n")));
-  return ephemeral([shieldLine, ...tickLines, shieldStat].join("\n"));
 }
 
 async function handleRevive(
@@ -11040,6 +11026,17 @@ async function postToThread(
 // (tool/scroll) have varying effect kinds — Caffeine Bomb deals damage,
 // Espresso Shot heals via regen, Poison Vial applies a status — so a flat
 // "X dmg" label was actively misleading. We pass the item NAME through to
+// Formats a stat_bonus entry for display. Handles resist_* keys specially.
+function formatStatBonusEntry(key: string, val: number): string {
+  if (key.startsWith("resist_")) {
+    const dtype = key.slice("resist_".length);
+    const emoji = DAMAGE_TYPE_EMOJI[dtype as DamageType] ?? "";
+    const name = dtype.charAt(0).toUpperCase() + dtype.slice(1);
+    return `${emoji} ${name} Res ${val}%`;
+  }
+  return `+${val} ${key === "int_stat" ? "INT" : key.toUpperCase()}`;
+}
+
 // pick the right unit per catalog entry. Non-catalog tools/scrolls fall back
 // to a generic "power N" label.
 function powerLabel(itemType: Item["item_type"], power: number, itemName?: string): string {
@@ -11489,22 +11486,43 @@ async function performMonsterTurn(
   const doSplash = isBossVariant && targetPool.length > 1 && splashRoll <= (isBossPhase2 ? 2 : 1);
 
   if (doSplash) {
+    const splashAttackType: DamageType =
+      quest.scene.monsters?.[0]?.attack_damage_type
+      ?? quest.scene.monster_attack_type
+      ?? "physical";
+    const splashTypeEmoji = splashAttackType !== "physical" ? ` ${DAMAGE_TYPE_EMOJI[splashAttackType]}` : "";
     const splashResults: NonNullable<MonsterTurnOutcome["splashTargets"]> = [];
     for (const f of targetPool) {
-      const fArmor = f.slack_user_id === actor.slack_user_id
-        ? actorArmor
-        : await getEquipped(env.DB, f.slack_user_id, "armor");
+      let fResistPct = 0;
+      if (splashAttackType !== "physical") {
+        const fSlots = await getAllEquippedSlots(env.DB, f.slack_user_id);
+        const resistKey = `resist_${splashAttackType}`;
+        for (const item of Object.values(fSlots)) {
+          fResistPct += item?.stat_bonus?.[resistKey] ?? 0;
+        }
+        fResistPct = Math.min(75, fResistPct);
+      }
       const hit = resolveMonsterHit(
         quest.scene.tier,
         fighters.length,
-        fArmor?.power ?? 0,
+        0,
         isBossPhase2,
         rollDice,
+        splashAttackType,
+        fResistPct,
       );
       const posAdj = fighters.length > 1
         ? positionDamageMod(f.position, hit.final)
         : hit.final;
-      const dmg = applyDamageWithShield(posAdj, f.shield, f.hp);
+      // Physical depletes armor pool; non-physical bypasses it.
+      const rawSplash = applyDamageWithShield(
+        posAdj,
+        splashAttackType === "physical" ? f.shield : 0,
+        f.hp,
+      );
+      const dmg = splashAttackType === "physical"
+        ? rawSplash
+        : { newShield: f.shield, newHp: rawSplash.newHp, shieldAbsorbed: 0, hpDamage: rawSplash.hpDamage };
       splashResults.push({ fighter: f, dmg, positionAdjusted: posAdj, willKill: dmg.newHp <= 0 });
     }
 
@@ -11525,7 +11543,7 @@ async function performMonsterTurn(
     const firstKilled = splashResults.find((r) => r.willKill);
     const representative = firstKilled?.fighter ?? actor;
     const monsterLines: string[] = [
-      `💥 *${quest.scene.monster_name}* unleashes a devastating slam — the whole party takes the hit!`,
+      `💥 *${quest.scene.monster_name}*${splashTypeEmoji} unleashes a devastating slam — the whole party takes the hit!`,
     ];
     for (const r of splashResults) {
       const armorPart = r.fighter.slack_user_id === actor.slack_user_id
@@ -11582,29 +11600,59 @@ async function performMonsterTurn(
     ? actorArmor
     : await getEquipped(env.DB, target.slack_user_id, "armor");
 
+  // Determine monster attack type and target's resistance.
+  const monsterAttackType: DamageType =
+    quest.scene.monsters?.[0]?.attack_damage_type
+    ?? quest.scene.monster_attack_type
+    ?? "physical";
+
+  let targetResistPct = 0;
+  if (monsterAttackType !== "physical") {
+    // Sum resist_<type> from all equipped items for the target.
+    const targetSlots = await getAllEquippedSlots(env.DB, target.slack_user_id);
+    for (const item of Object.values(targetSlots)) {
+      if (!item?.stat_bonus) continue;
+      const resistKey = `resist_${monsterAttackType}`;
+      targetResistPct += (item.stat_bonus[resistKey] ?? 0);
+    }
+    targetResistPct = Math.min(75, targetResistPct);
+  }
+
   const monster = resolveMonsterHit(
     quest.scene.tier,
     fighters.length,
-    targetArmor?.power ?? 0,
+    0,
     quest.scene.variant === "boss" && quest.scene.boss_phase === 2,
     rollDice,
+    monsterAttackType,
+    targetResistPct,
   );
 
   const positionAdjusted = fighters.length > 1
     ? positionDamageMod(target.position, monster.final)
     : monster.final;
 
-  const dmg = applyDamageWithShield(positionAdjusted, target.shield, target.hp);
+  // Physical attacks route through the depletable armor pool (target.shield).
+  // Non-physical bypasses armor entirely and hits HP directly.
+  const dmgRaw = applyDamageWithShield(
+    positionAdjusted,
+    monsterAttackType === "physical" ? target.shield : 0,
+    target.hp,
+  );
+  const dmg = monsterAttackType === "physical"
+    ? dmgRaw
+    : { newShield: target.shield, newHp: dmgRaw.newHp, shieldAbsorbed: 0, hpDamage: dmgRaw.hpDamage };
 
-  const armorPart = monster.armorReduction > 0
-    ? ` \`${monster.raw} − ${monster.armorReduction} armor\``
-    : "";
+  const typeEmoji = monsterAttackType !== "physical" ? ` ${DAMAGE_TYPE_EMOJI[monsterAttackType]}` : "";
+  const armorPart = dmg.shieldAbsorbed > 0
+    ? ` \`${monster.raw} − ${dmg.shieldAbsorbed} armor\``
+    : monster.resistanceReduction > 0
+      ? ` \`${monster.raw} − ${monster.resistanceReduction} resist\``
+      : "";
   const positionPart = fighters.length > 1 && target.position === "back" && positionAdjusted < monster.final
     ? ` (${target.position}-row: ${positionAdjusted})`
     : "";
-  const shieldPart = dmg.shieldAbsorbed > 0
-    ? ` — *${dmg.shieldAbsorbed}* absorbed by shield, *${dmg.hpDamage}* to HP`
-    : "";
+  const shieldPart = "";
   // When the monster picks a different party member than the actor, tag them
   // with a Slack <@user_id> mention so the message reads clearly in a multi-
   // person quest ("the Stale PR hits @fenus for 6"). For the actor themselves
@@ -11612,7 +11660,7 @@ async function performMonsterTurn(
   const targetTag = victimWasActor
     ? "back"
     : `<@${target.slack_user_id}>`;
-  const monsterLine = `*${quest.scene.monster_name}* hits ${targetTag} for *${positionAdjusted}*${armorPart}${positionPart}${shieldPart}.`;
+  const monsterLine = `*${quest.scene.monster_name}*${typeEmoji} hits ${targetTag} for *${positionAdjusted}*${armorPart}${positionPart}${shieldPart}.`;
 
   // Decrement consumed ability_state. Taunt counter ticks down only when a
   // taunt-redirected swing actually landed; vanished counters tick for every

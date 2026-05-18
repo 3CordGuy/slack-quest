@@ -9,6 +9,7 @@
 // event>" line that would confuse a thread reader.
 
 import type { CombatEvent, CombatState } from "@gantt-quest/core";
+import { DAMAGE_TYPE_EMOJI } from "@gantt-quest/core";
 
 // Resolves an ActorId to user-facing markup. Fighter IDs are slack_user_ids
 // → render as Slack mentions (Slack expands to a colored username chip).
@@ -87,25 +88,30 @@ function renderEvent(state: CombatState, e: CombatEvent): string {
     case "player_hit":
       return `${e.crit ? "💥 *CRIT!* " : ""}${nameOf(state, e.actor)} hits ${nameOf(state, e.target)} for *${e.damage}* \`${e.formula}\`.`;
 
-    case "monster_attack":
-      // Show absorbed-by-shield separately when meaningful — matches the
-      // legacy "shield absorbed N, you took M" cadence so a player whose
-      // shield held knows the buff is working.
+    case "monster_attack": {
+      const typeEmoji = e.damage_type !== "physical" ? ` ${DAMAGE_TYPE_EMOJI[e.damage_type]}` : "";
+      const mitigationNote = e.shield_absorbed > 0
+        ? ` \`${e.raw_damage}−${e.shield_absorbed} armor\``
+        : e.resistance_reduction > 0
+          ? ` \`${e.raw_damage}−${e.resistance_reduction} resist\``
+          : "";
       if (e.shield_absorbed > 0 && e.hp_damage === 0) {
-        return `🛡 *${activeMonsterName(state)}* hits ${nameOf(state, e.target)} for *${e.damage_after_armor}* — shield absorbs all ${e.shield_absorbed}.`;
+        return `🛡 *${activeMonsterName(state)}* hits${typeEmoji} ${nameOf(state, e.target)} for *${e.damage_after_mitigation}*${mitigationNote} — armor absorbs all.`;
       }
       if (e.shield_absorbed > 0) {
-        return `🩸 *${activeMonsterName(state)}* hits ${nameOf(state, e.target)} for *${e.hp_damage}* HP (shield absorbed ${e.shield_absorbed}).`;
+        return `🩸 *${activeMonsterName(state)}* hits${typeEmoji} ${nameOf(state, e.target)} for *${e.hp_damage}* HP (armor absorbed ${e.shield_absorbed})${mitigationNote}.`;
       }
-      return `🩸 *${activeMonsterName(state)}* hits ${nameOf(state, e.target)} for *${e.hp_damage}* HP.`;
+      return `🩸 *${activeMonsterName(state)}* hits${typeEmoji} ${nameOf(state, e.target)} for *${e.hp_damage}* HP${mitigationNote}.`;
+    }
 
     case "monster_splash": {
+      const splashEmoji = e.damage_type !== "physical" ? ` ${DAMAGE_TYPE_EMOJI[e.damage_type]}` : "";
       const parts = e.targets.map((t) =>
         t.shield_absorbed > 0
           ? `${nameOf(state, t.target)} *${t.hp_damage}* HP (shield −${t.shield_absorbed})`
           : `${nameOf(state, t.target)} *${t.hp_damage}* HP`
       );
-      return `💥 *${activeMonsterName(state)}* splashes everyone — ${parts.join(", ")}.`;
+      return `💥 *${activeMonsterName(state)}* splashes${splashEmoji} everyone — ${parts.join(", ")}.`;
     }
 
     case "monster_dodged":
@@ -136,7 +142,9 @@ function renderEvent(state: CombatState, e: CombatEvent): string {
       return `💚 ${nameOf(state, e.actor)} heals ${nameOf(state, e.target)} for *${e.amount}* HP \`${e.rolled}\`.`;
 
     case "shield_applied":
-      return `🛡 ${nameOf(state, e.actor)} grants ${nameOf(state, e.target)} *${e.amount}* shield \`${e.rolled}\`.`;
+      return e.restored > 0
+        ? `🛡️ ${nameOf(state, e.actor)} fortifies — armor restored to *${e.new_armor}* (+${e.restored}). Physical attacks blocked; magic bypasses.`
+        : `🛡️ ${nameOf(state, e.actor)} braces — armor already at full (${e.new_armor}).`;
 
     case "signature_used":
       // The signature damage line is already covered by the player_hit event
