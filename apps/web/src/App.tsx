@@ -1582,7 +1582,7 @@ export function App() {
         sectionContent = (
           <HuntSection
             characterLevel={state.me.character.level}
-            overviewArt={state.townArt?.overview_art_url ?? null}
+            overviewArt={state.townArt?.outskirts_art_url ?? null}
             navOverlay={townNav}
             onStartHunt={startHunt}
           />
