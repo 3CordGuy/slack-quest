@@ -4290,7 +4290,7 @@ async function handleCombat(
   // damage is computed so it stacks with any incoming retaliation this
   // same turn. Only fires once per scene per Warden.
   if (cls.id === "sre_warden" && !isPassiveUsed(quest.scene, payload.user_id, PASSIVE_WARDEN_SHIELD)) {
-    const cap = character.max_hp * SHIELD_CAP_MULTIPLIER;
+    const cap = Math.floor((equippedArmor?.power ?? 0) / 2);
     const added = await addShield(env.DB, character, WARDEN_STARTING_SHIELD, cap);
     if (added > 0) {
       character = { ...character, shield: character.shield + added };

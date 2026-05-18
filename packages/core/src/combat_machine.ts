@@ -1422,9 +1422,10 @@ function handleShield(
   if (actor.hp <= 0) return reject(s, "shield: actor is down");
 
   // Replenish the depletable armor pool to its max (floor(armor_power / 2)).
+  // Never reduce: if bonus shield (e.g. trap reward) pushed it above armorMax, preserve it.
   const armorMax = Math.floor(actor.armor_power / 2);
-  const restored = Math.max(0, armorMax - actor.shield);
-  const newArmor = armorMax;
+  const newArmor = Math.max(actor.shield, armorMax);
+  const restored = newArmor - actor.shield;
 
   events.push({ type: "shield_applied", actor: action.actor, restored, new_armor: newArmor });
 
@@ -2384,7 +2385,7 @@ function applyWardenStartingShield(
   const wardenShield = actor.stats
     ? Math.floor(actor.stats.vit / 2)
     : WARDEN_STARTING_SHIELD + Math.floor(actor.level / 6);
-  const cap = actor.max_hp * SHIELD_CAP_MULTIPLIER;
+  const cap = Math.floor(actor.armor_power / 2);
   const newShield = Math.min(cap, actor.shield + wardenShield);
   const added = newShield - actor.shield;
   const updated = state.fighters.map((f) =>
