@@ -698,6 +698,8 @@ export const VIEW_ART_PROMPTS = {
     "Interior of a cozy fantasy inn's main room. Two simple straw cots against one wall, a curtained private bed-alcove against the other. A small stone hearth in the corner with a kettle hanging over the fire. Wooden ceiling beams, a few hung lanterns casting warm orange light, a small rug on the plank floor. Quiet, restful, safe. No specific people in close-up — the room is the subject.",
   apothecary:
     "Interior of a dim fantasy apothecary shop. Shelves lined with labeled glass vials, stoppered bottles in amber and green and blue, bundles of dried herbs hanging from the ceiling, small clay pots of unguents and powders. A heavy wooden counter with a set of brass scales, mortar and pestle, and a few open recipe books. Candlelight, earthy tones, a faint haze of incense. The room is the subject — no specific figure in close-up.",
+  outskirts:
+    "A rough adventurers' encampment just outside a fantasy village. Canvas tents pitched on muddy ground, a crackling cook fire at the center with a pot hanging over it. Weapon racks with spare swords and shields, a folding table with hand-drawn maps weighed down by a dagger. A few armored silhouettes in the middle distance — one sharpening a blade, one studying a map — but no close-up faces. Low wooden fencing marks the village boundary behind; dark rolling hills and the first trees of a forest loom ahead. Dusk light, smoke in the air, sense of imminent departure.",
 
   // ── Dungeon room backgrounds (first-person POV, empty of characters) ──────
   // Combat rooms — stone corridors and chambers with signs of impending battle.
