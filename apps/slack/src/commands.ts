@@ -2144,7 +2144,11 @@ export async function startQuestFromLobby(
   // HP scaling: pre-scale for accepted joiners beyond the creator.
   const joinerCount = Math.max(0, accepted.length - 1);
   const scene = preScaleForJoiners(quest.scene, joinerCount, JOIN_HP_RATIO);
-  const finalScene = joinerCount > 0 ? addPackMonstersForParty(scene, accepted.length) : scene;
+  const packedScene = joinerCount > 0 ? addPackMonstersForParty(scene, accepted.length) : scene;
+  // Roll whether the primary monster starts with armor (legacy Slack path).
+  // Engine path rolls this in buildInitialCombatState; storing it here keeps
+  // the two paths consistent across the same quest.
+  const finalScene = { ...packedScene, monster_armor: rollMonsterShield(packedScene.tier) };
   await saveScene(env.DB, questId, finalScene);
 
   // Mana refill + armor pool init + log for every accepted member.
@@ -10407,6 +10411,11 @@ function preScaleForJoiners(scene: SceneJson, joinerCount: number, ratio: number
 }
 
 // For parties of 2+ on standard/gauntlet quests: guarantee extra monsters so
+// Exponential decay: 70% at tier 1, ~1% at tier 15. Returns 0 (no armor) or tier.
+function rollMonsterShield(tier: number): number {
+  return Math.random() < 0.7 * Math.pow(0.75, tier - 1) ? 0 : tier;
+}
+
 // multi-player fights are always multi-monster. Minions are the same creature
 // type at tier-1, 65% of the (post-scaled) main HP — weaker but real threats.
 // Boss and dungeon variants are excluded: boss has phases, dungeon handles its

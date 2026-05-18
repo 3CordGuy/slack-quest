@@ -5628,6 +5628,11 @@ const productionRoll: RollFn = (sides) => Math.floor(Math.random() * sides) + 1;
 
 const ELEMENT_TYPES: ElementType[] = ["fire", "ice", "lightning"];
 
+// Exponential decay: 70% chance at tier 1, ~1% at tier 15.
+function rollMonsterShield(tier: number): number {
+  return Math.random() < 0.7 * Math.pow(0.75, tier - 1) ? 0 : tier;
+}
+
 function rollMonsterElementAffinity(): { element_weakness?: ElementType; element_resistance?: ElementType } {
   if (Math.random() >= MONSTER_ELEMENT_AFFINITY_CHANCE) return {};
   const weakness = ELEMENT_TYPES[Math.floor(Math.random() * ELEMENT_TYPES.length)];
@@ -5848,6 +5853,7 @@ async function buildInitialCombatState(
             name: m.name,
             hp: m.hp,
             max_hp: m.max_hp,
+            shield: rollMonsterShield(m.tier),
             tier: m.tier,
             is_boss: isGridBoss && i === 0,
             art_url: m.art_url ?? undefined,
@@ -5865,6 +5871,7 @@ async function buildInitialCombatState(
             name: m.name,
             hp: m.hp,
             max_hp: m.max_hp,
+            shield: rollMonsterShield(m.tier),
             tier: m.tier,
             is_boss: false,
             art_url: m.art_url ?? undefined,
@@ -5879,6 +5886,7 @@ async function buildInitialCombatState(
           name: quest.scene.monster_name,
           hp: quest.scene.monster_hp,
           max_hp: quest.scene.monster_max_hp,
+          shield: rollMonsterShield(quest.scene.tier),
           tier: quest.scene.tier,
           is_boss: variant === "boss" || isGridBoss,
           boss_phase: quest.scene.boss_phase,
