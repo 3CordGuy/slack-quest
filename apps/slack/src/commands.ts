@@ -7537,15 +7537,15 @@ async function handlePubDrink(
   let summary = "";
   switch (eff.kind) {
     case "buff_attack": {
-      const buff: DrinkBuff = { kind: "buff_attack", magnitude: eff.magnitude, remaining: eff.duration, drink_id: drink.id };
+      const buff: DrinkBuff = { kind: "buff_attack", magnitude: eff.magnitude, remaining: eff.duration, drink_id: drink.id, fight_duration: true };
       await setDrinkBuff(env.DB, payload.user_id, buff);
-      summary = `+${eff.magnitude} attack for ${eff.duration} actions`;
+      summary = `+${eff.magnitude} attack for this fight`;
       break;
     }
     case "buff_magic": {
-      const buff: DrinkBuff = { kind: "buff_magic", magnitude: eff.magnitude, remaining: eff.duration, drink_id: drink.id };
+      const buff: DrinkBuff = { kind: "buff_magic", magnitude: eff.magnitude, remaining: eff.duration, drink_id: drink.id, fight_duration: true };
       await setDrinkBuff(env.DB, payload.user_id, buff);
-      summary = `+${eff.magnitude} magic for ${eff.duration} actions`;
+      summary = `+${eff.magnitude} magic for this fight`;
       break;
     }
     case "buff_next_crit": {

@@ -3164,15 +3164,15 @@ app.post("/api/pub/drink/:drinkId", async (c) => {
 
   switch (eff.kind) {
     case "buff_attack": {
-      newBuff = { kind: "buff_attack", magnitude: eff.magnitude, remaining: eff.duration, drink_id: drink.id };
+      newBuff = { kind: "buff_attack", magnitude: eff.magnitude, remaining: eff.duration, drink_id: drink.id, fight_duration: true };
       await setDrinkBuff(c.env.DB, session.slack_user_id, newBuff);
-      summary = `+${eff.magnitude} attack for ${eff.duration} actions`;
+      summary = `+${eff.magnitude} attack for this fight`;
       break;
     }
     case "buff_magic": {
-      newBuff = { kind: "buff_magic", magnitude: eff.magnitude, remaining: eff.duration, drink_id: drink.id };
+      newBuff = { kind: "buff_magic", magnitude: eff.magnitude, remaining: eff.duration, drink_id: drink.id, fight_duration: true };
       await setDrinkBuff(c.env.DB, session.slack_user_id, newBuff);
-      summary = `+${eff.magnitude} magic for ${eff.duration} actions`;
+      summary = `+${eff.magnitude} magic for this fight`;
       break;
     }
     case "buff_next_crit": {
@@ -5812,13 +5812,13 @@ async function writebackDrinkBuffs(
   const finalBuffs = state.drink_buffs ?? {};
   for (const fighter of state.fighters) {
     const inState = finalBuffs[fighter.id];
-    if (inState) {
+    if (inState && !inState.fight_duration) {
       // Overwrite even when remaining is unchanged — cheap, and keeps D1
       // converging on the engine view of the buff.
       await dbSetDrinkBuff(db, fighter.id, inState);
     } else {
-      // Engine cleared this fighter's buff (consumed to expiry) — clear in
-      // D1 too. Safe to call even when D1 already had it null.
+      // fight_duration buffs are consumed for the fight and not carried over;
+      // turn-based buffs consumed to 0 (not in inState) are also cleared.
       await dbClearDrinkBuff(db, fighter.id);
     }
   }

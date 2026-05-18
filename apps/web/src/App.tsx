@@ -5285,6 +5285,11 @@ const ItemCell = forwardRef<
       {(item.level_req ?? 1) > 1 && (
         <div style={{ position: "absolute", top: 4, [item.equipped ? "right" : "left"]: 4, background: "#1d1f23", border: "1px solid #4b5563", borderRadius: 3, fontSize: 8, fontWeight: 700, padding: "1px 3px", lineHeight: 1, color: "#9ca3af" }}>L{item.level_req}</div>
       )}
+      {item.sharpens_count > 0 && mode !== "detailed" && (
+        <div style={{ position: "absolute", top: 4, right: 4, background: "#1d1f23", border: "1px solid #b45309", borderRadius: 3, fontSize: 8, fontWeight: 700, padding: "1px 3px", lineHeight: 1, color: "#fb923c", display: "flex", alignItems: "center", gap: 2 }}>
+          <Icon name="anvil" size={8} color="#fb923c" />{"×"}{item.sharpens_count}
+        </div>
+      )}
       <Icon name={itemIcon(item)} size={iconSize} color={itemIconColor(item) ?? rc} />
       {(mode === "icon" || (mode === "compact" && powerValue > 0)) && (
         <div style={{ position: "absolute", bottom: 3, right: 3, minWidth: 18, height: 18, background: "#0a0b0e", border: `1px solid ${rc}55`, borderRadius: "50%", fontSize: 9, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", color: rc, lineHeight: 1, padding: "0 2px" }}>
@@ -5430,11 +5435,17 @@ function ItemDetailPopover({
       </div>
 
       {/* Type line */}
-      <div style={{ ...muted, fontSize: 11, textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>
+      <div style={{ ...muted, fontSize: 11, textTransform: "uppercase", letterSpacing: 1, marginBottom: item.sharpens_count > 0 ? 4 : 8 }}>
         {slotLabel(item)}
         {item.item_type === "weapon" && item.weapon_range && ` · ${item.weapon_range}`}
         {item.power > 0 && <>{" · "}+{item.power} power</>}
       </div>
+      {item.sharpens_count > 0 && (
+        <div style={{ fontSize: 11, color: "#fb923c", marginBottom: 8, display: "flex", alignItems: "center", gap: 4 }}>
+          <Icon name="anvil" size={11} color="#fb923c" />
+          {item.sharpens_count === 3 ? "Fully upgraded" : `Upgraded ${item.sharpens_count}×`} · base power was +{item.power - item.sharpens_count}
+        </div>
+      )}
       {item.stat_bonus && statBonusSummary(item.stat_bonus) && (
         <div style={{ fontSize: 11, color: "#86efac", marginBottom: 8, fontWeight: 600 }}>
           {statBonusSummary(item.stat_bonus)}
@@ -6236,7 +6247,7 @@ function PubCard({
             color: "#86efac",
           }}
         >
-          Active buff: <strong>{drinkBuffLabel(pub.drink_buff)}</strong> · {pub.drink_buff.remaining} action{pub.drink_buff.remaining === 1 ? "" : "s"} remaining
+          Active buff: <strong>{drinkBuffLabel(pub.drink_buff)}</strong> · {pub.drink_buff.fight_duration ? "lasts this fight" : `${pub.drink_buff.remaining} action${pub.drink_buff.remaining === 1 ? "" : "s"} remaining`}
         </div>
       )}
 

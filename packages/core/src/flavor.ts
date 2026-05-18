@@ -763,8 +763,9 @@ export interface DrinkBuff {
   // off this to apply the right modifier.
   kind: "buff_attack" | "buff_magic" | "buff_next_crit";
   magnitude: number;        // stat bonus; 1 for next_crit (charges)
-  remaining: number;        // actions remaining (1 for next_crit)
+  remaining: number;        // actions remaining (1 for next_crit); ignored when fight_duration=true
   drink_id: string;         // for display: emoji + name from the catalog
+  fight_duration?: true;    // if set, buff lasts entire fight and is cleared (not written back) at fight end
 }
 
 // 8 drinks, two tiers. Starter tier (8-15g) is everyday support; premium tier

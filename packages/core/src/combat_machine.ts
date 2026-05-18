@@ -2578,13 +2578,20 @@ function applyDrinkBuff(
     return { damage: baseDamage, forceCrit: false, event: null, nextDrinkBuffs: buffs };
   }
 
-  const newRemaining = Math.max(0, buff.remaining - 1);
-  const expired = newRemaining === 0;
+  // fight_duration buffs apply every action for the whole fight — no countdown.
+  // writebackDrinkBuffs clears them after the fight instead of persisting them.
   const nextDrinkBuffs: Record<ActorId, DrinkBuff> = { ...buffs };
-  if (expired) {
-    delete nextDrinkBuffs[actor];
+  let newRemaining: number;
+  if (buff.fight_duration) {
+    newRemaining = buff.remaining; // unchanged
+    nextDrinkBuffs[actor] = buff;
   } else {
-    nextDrinkBuffs[actor] = { ...buff, remaining: newRemaining };
+    newRemaining = Math.max(0, buff.remaining - 1);
+    if (newRemaining === 0) {
+      delete nextDrinkBuffs[actor];
+    } else {
+      nextDrinkBuffs[actor] = { ...buff, remaining: newRemaining };
+    }
   }
 
   const event: CombatEvent = {
