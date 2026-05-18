@@ -4454,7 +4454,7 @@ function InventoryCard({
           {isHighlighted && (
             <div style={{ position: "absolute", inset: 0, borderRadius: 9, border: "2px solid #c084fc", zIndex: 2, pointerEvents: "none" }} />
           )}
-          <ItemSlot item={item} selected={selectedId === item.id} onSelect={(el) => { toggleSelect(item.id, el); setHighlightSlot(null); }} />
+          <ItemSlot item={item} selected={selectedId === item.id} characterLevel={characterLevel} onSelect={(el) => { toggleSelect(item.id, el); setHighlightSlot(null); }} />
         </div>
       );
     }
@@ -4569,7 +4569,7 @@ function InventoryCard({
                 {highlightSlot !== null && item.slot === highlightSlot && (
                   <div style={{ position: "absolute", inset: 0, borderRadius: 9, border: "2px solid #c084fc", zIndex: 2, pointerEvents: "none" }} />
                 )}
-                <ItemSlot item={item} selected={selectedId === item.id} onSelect={(el) => toggleSelect(item.id, el)} />
+                <ItemSlot item={item} selected={selectedId === item.id} characterLevel={characterLevel} onSelect={(el) => toggleSelect(item.id, el)} />
               </div>
             ))}
           </div>
@@ -4607,12 +4607,13 @@ function InventoryCard({
 // ── dnd-kit sub-components for InventoryFullScreen ──────────────────────────
 
 function DollSlotCell({
-  slot, item, isHighlighted, isSelected, onSlotClick, onItemClick,
+  slot, item, isHighlighted, isSelected, onSlotClick, onItemClick, characterLevel,
 }: {
   slot: EquipSlot; item: Item | undefined;
   isHighlighted: boolean; isSelected: boolean;
   onSlotClick: (slot: EquipSlot) => void;
   onItemClick: (itemId: number) => void;
+  characterLevel?: number;
 }) {
   const { setNodeRef: setDropRef, isOver } = useDroppable({ id: `drop-slot-${slot}`, data: { slot } });
   const { attributes, listeners, setNodeRef: setDragRef, isDragging } = useDraggable({
@@ -4633,6 +4634,7 @@ function DollSlotCell({
         selected={isSelected}
         isOver={isOver}
         isDragging={isDragging}
+        characterLevel={characterLevel}
         cursor="grab"
         onClick={() => onItemClick(item.id)}
         {...(listeners as React.HTMLAttributes<HTMLDivElement>)}
@@ -4672,10 +4674,10 @@ function DroppablePackPanel({ children }: { children: React.ReactNode }) {
 }
 
 function DraggablePackItem({
-  item, isSelected, isMatch, viewMode, onSelect,
+  item, isSelected, isMatch, viewMode, onSelect, characterLevel,
 }: {
   item: Item; isSelected: boolean; isMatch: boolean;
-  viewMode: "grid" | "list"; onSelect: () => void;
+  viewMode: "grid" | "list"; onSelect: () => void; characterLevel?: number;
 }) {
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: `pack-item-${item.id}`,
@@ -4683,6 +4685,7 @@ function DraggablePackItem({
   });
   const rc = RARITY_COLOR[item.rarity];
   const sellPrice = sellPriceFor(item.item_type, item.rarity, { power: item.power, sharpens_count: item.sharpens_count });
+  const isLevelLocked = (characterLevel ?? Infinity) < (item.level_req ?? 1);
   if (viewMode === "list") {
     return (
       <div ref={setNodeRef} {...listeners} {...attributes} onClick={onSelect}
@@ -4690,7 +4693,7 @@ function DraggablePackItem({
           display: "flex", alignItems: "center", gap: 10, padding: "8px 10px",
           borderRadius: 8, background: isSelected ? "#1e1c2e" : "#1d1f23",
           border: `1px solid ${isSelected ? "#fff" : isMatch ? "#c084fc" : "#2a2d33"}`,
-          cursor: isDragging ? "grabbing" : "grab", opacity: isDragging ? 0.35 : 1,
+          cursor: isDragging ? "grabbing" : "grab", opacity: isDragging ? 0.35 : isLevelLocked ? 0.45 : 1,
           transition: "background 0.1s", boxShadow: isMatch ? "0 0 6px #c084fc33" : undefined,
           touchAction: "none",
         }}
@@ -4720,6 +4723,7 @@ function DraggablePackItem({
       isDragging={isDragging}
       isMatch={isMatch}
       showSellPrice
+      characterLevel={characterLevel}
       cursor={isDragging ? "grabbing" : "grab"}
       onClick={onSelect}
       {...(listeners as React.HTMLAttributes<HTMLDivElement>)}
@@ -4953,6 +4957,7 @@ function InventoryFullScreen({
                               size={72}
                               mode="compact"
                               selected={isSelected}
+                              characterLevel={characterLevel}
                               onClick={() => setSelectedId(isSelected ? null : item.id)}
                             />
                           );
@@ -5067,6 +5072,7 @@ function InventoryFullScreen({
                             isHighlighted={highlightSlot === s} isSelected={selectedId === (equippedForSlot(s)?.id ?? -1)}
                             onSlotClick={(sl) => setHighlightSlot(highlightSlot === sl ? null : sl)}
                             onItemClick={(id) => setSelectedId(selectedId === id ? null : id)}
+                            characterLevel={characterLevel}
                           />
                         : <div key={i} style={{ width: 96, height: 96 }} />
                     )}
@@ -5113,6 +5119,7 @@ function InventoryFullScreen({
                         isSelected={selectedId === item.id}
                         isMatch={highlightSlot !== null && item.slot === highlightSlot}
                         viewMode="grid"
+                        characterLevel={characterLevel}
                         onSelect={() => setSelectedId(selectedId === item.id ? null : item.id)}
                       />
                     ))}
@@ -5124,6 +5131,7 @@ function InventoryFullScreen({
                         isSelected={selectedId === item.id}
                         isMatch={highlightSlot !== null && item.slot === highlightSlot}
                         viewMode="list"
+                        characterLevel={characterLevel}
                         onSelect={() => setSelectedId(selectedId === item.id ? null : item.id)}
                       />
                     ))}
@@ -5178,12 +5186,13 @@ const ItemCell = forwardRef<
     isDragging?: boolean;
     isMatch?: boolean;
     showSellPrice?: boolean;
+    characterLevel?: number;
     cursor?: CSSProperties["cursor"];
     onClick?: React.MouseEventHandler<HTMLDivElement>;
   } & Omit<React.HTMLAttributes<HTMLDivElement>, "onClick">
 >(function ItemCell(
   { item, size = 72, mode = "icon", selected, isOver, isDragging, isMatch,
-    showSellPrice, cursor, onClick, style: extraStyle, ...rest },
+    showSellPrice, characterLevel, cursor, onClick, style: extraStyle, ...rest },
   ref,
 ) {
   const rc = RARITY_COLOR[item.rarity];
@@ -5196,6 +5205,7 @@ const ItemCell = forwardRef<
   const powerValue = item.power > 0
     ? item.power
     : (item.stat_bonus ? Object.values(item.stat_bonus).reduce((a: number, b: number) => a + b, 0) : 0);
+  const isLevelLocked = !item.equipped && (characterLevel ?? Infinity) < (item.level_req ?? 1);
   const sellPrice = showSellPrice
     ? sellPriceFor(item.item_type, item.rarity, { power: item.power, sharpens_count: item.sharpens_count })
     : null;
@@ -5219,7 +5229,7 @@ const ItemCell = forwardRef<
         alignItems: "center",
         justifyContent: mode !== "detailed" ? "center" : undefined,
         gap: mode !== "icon" ? 2 : undefined,
-        opacity: isDragging ? 0.35 : 1,
+        opacity: isDragging ? 0.35 : isLevelLocked ? 0.45 : 1,
         boxShadow: isMatch ? "0 0 8px #c084fc44" : selected ? `0 0 0 1px ${rc}66` : undefined,
         transition: "border-color 0.1s, background 0.1s",
         touchAction: "none",
@@ -5229,14 +5239,11 @@ const ItemCell = forwardRef<
       }}
       {...rest}
     >
-      {item.equipped && (
-        <div style={{ position: "absolute", top: 4, left: 4, background: "#b89b3a", color: "#000", borderRadius: 3, fontSize: 8, fontWeight: 800, padding: "1px 3px", lineHeight: 1 }}>E</div>
-      )}
       {(item.level_req ?? 1) > 1 && (
         <div style={{ position: "absolute", top: 4, [item.equipped ? "right" : "left"]: 4, background: "#1d1f23", border: "1px solid #4b5563", borderRadius: 3, fontSize: 8, fontWeight: 700, padding: "1px 3px", lineHeight: 1, color: "#9ca3af" }}>L{item.level_req}</div>
       )}
       <Icon name={itemIcon(item)} size={iconSize} color={itemIconColor(item) ?? rc} />
-      {mode === "icon" && (
+      {(mode === "icon" || (mode === "compact" && powerValue > 0)) && (
         <div style={{ position: "absolute", bottom: 3, right: 3, minWidth: 18, height: 18, background: "#0a0b0e", border: `1px solid ${rc}55`, borderRadius: "50%", fontSize: 9, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", color: rc, lineHeight: 1, padding: "0 2px" }}>
           +{powerValue}
         </div>
@@ -5263,13 +5270,14 @@ const ItemCell = forwardRef<
   );
 });
 
-function ItemSlot({ item, selected, onSelect }: { item: Item; selected: boolean; onSelect: (el: HTMLElement) => void }) {
+function ItemSlot({ item, selected, onSelect, characterLevel }: { item: Item; selected: boolean; onSelect: (el: HTMLElement) => void; characterLevel?: number }) {
   return (
     <ItemCell
       item={item}
       size={72}
       mode="icon"
       selected={selected}
+      characterLevel={characterLevel}
       onClick={(e) => onSelect(e.currentTarget)}
     />
   );
@@ -5382,7 +5390,7 @@ function ItemDetailPopover({
       <div style={{ ...muted, fontSize: 11, textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>
         {slotLabel(item)}
         {item.item_type === "weapon" && item.weapon_range && ` · ${item.weapon_range}`}
-        {" · "}+{item.power} power
+        {item.power > 0 && <>{" · "}+{item.power} power</>}
       </div>
       {item.stat_bonus && statBonusSummary(item.stat_bonus) && (
         <div style={{ fontSize: 11, color: "#86efac", marginBottom: 8, fontWeight: 600 }}>
