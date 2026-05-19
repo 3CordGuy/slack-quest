@@ -3979,7 +3979,11 @@ app.get("/api/quest/active", async (c) => {
   const existingCombat = await getWebCombatState(c.env.DB, quest.id);
   const terminalStates = new Set(["victory", "defeat", "fled"]);
   const hasWebCombat = !!existingCombat && !terminalStates.has(existingCombat.status as string);
-  return c.json({ quest, party, has_web_combat: hasWebCombat });
+  const partyWithArmor = await Promise.all(party.map(async (m) => {
+    const slots = await getAllEquippedSlots(c.env.DB, m.slack_user_id);
+    return { ...m, armor_power: computeArmorPowerFromSlots(slots) };
+  }));
+  return c.json({ quest, party: partyWithArmor, has_web_combat: hasWebCombat });
 });
 
 async function webStartQuestFromLobby(
@@ -6889,14 +6893,28 @@ export class QuestRoom extends DurableObject<Env> {
     if (this.cacheState && this.cacheQuestId === questId) return this.cacheState;
     const snap = await getWebCombatSnapshot(this.env.DB, questId);
     if (snap) {
-      this.cacheState = upgradeCombatState(snap.state);
+      let state = upgradeCombatState(snap.state);
+      // Backfill armor_power on fighters that predate the typed-damage system.
+      // Computes from equipped gear so the UI's armor bar has a max to render against.
+      const needsBackfill = state.fighters.some((f) => typeof f.armor_power !== "number");
+      if (needsBackfill) {
+        const patched = await Promise.all(state.fighters.map(async (f) => {
+          if (typeof f.armor_power === "number") return f;
+          const slots = await getAllEquippedSlots(this.env.DB, f.id);
+          return { ...f, armor_power: computeArmorPowerFromSlots(slots) };
+        }));
+        state = { ...state, fighters: patched };
+        await saveWebCombatState(this.env.DB, questId, state, snap.log);
+      }
+      this.cacheState = state;
       this.cacheQuestId = questId;
       this.cacheLog = snap.log;
       // Reset quest meta on quest-id change — populated lazily by
       // ensureQuestMeta when the flavor fanout needs it.
       this.cacheQuestMeta = null;
+      return state;
     }
-    return snap?.state ?? null;
+    return null;
   }
 
   // Lazily fetch the quest's channel_id + thread_ts so the AI flavor
