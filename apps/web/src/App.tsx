@@ -889,6 +889,55 @@ export function App() {
     void refresh();
   }, []);
 
+  // Pending notifications (gifts, etc.) — fetched on initial mount and
+  // whenever the tab becomes visible. The endpoint is read-and-clear so
+  // a given toast fires exactly once per delivery, never duplicates
+  // across tabs/devices (first fetch wins).
+  useEffect(() => {
+    if (state.kind !== "auth") return;
+    async function fetchPending() {
+      try {
+        const res = await fetch("/api/notifications/pending", { credentials: "include" });
+        if (!res.ok) return;
+        const body = (await res.json()) as {
+          notifications?: Array<{
+            id: number;
+            kind: string;
+            payload: Record<string, unknown>;
+            created_at: number;
+          }>;
+        };
+        for (const n of body.notifications ?? []) {
+          if (n.kind === "item_received") {
+            const p = n.payload as {
+              from_name?: string;
+              item_name?: string;
+              item_type?: string;
+              rarity?: string;
+            };
+            const rarityIcon =
+              p.rarity === "legendary" ? "✨" :
+              p.rarity === "epic" ? "💜" :
+              p.rarity === "rare" ? "🔷" :
+              p.rarity === "uncommon" ? "🟢" : "🎁";
+            toast(
+              `${rarityIcon} ${p.from_name ?? "Someone"} gave you ${p.item_name ?? "an item"}!`,
+              { duration: 6000 },
+            );
+          }
+        }
+      } catch {
+        // Silent — notification fetch is best-effort.
+      }
+    }
+    void fetchPending();
+    const onVisibility = () => {
+      if (!document.hidden) void fetchPending();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => document.removeEventListener("visibilitychange", onVisibility);
+  }, [state.kind]);
+
   // Toast once when a joinable quest first appears
   const prevJoinableIdRef = useRef<number | null>(null);
   useEffect(() => {

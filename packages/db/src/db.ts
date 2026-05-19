@@ -1492,12 +1492,16 @@ export async function tryDeductGold(
 }
 
 // ───── Smithy stock ────────────────────────────────────────────────────────
-// Per-character rotating armor stock. Mirrors shop_stock but keyed on
-// character_id (slack_user_id) since the smithy is a personal-feel building.
+// Per-channel rotating armor stock. Mirrors shop_stock — everyone in the
+// channel sees the same forged-and-ready listing, and a buy stamps it
+// SOLD for the rest of the channel. (Was per-character pre-migration
+// 0045; character_id is preserved on legacy rows for audit and on new
+// rows as "who triggered the restock".)
 
 export interface SmithyStockItem {
   id: number;
   character_id: string;
+  channel_id: string | null;
   generated_at: number;
   item_name: string;
   item_type: ItemType;
@@ -1512,7 +1516,10 @@ export interface SmithyStockItem {
 }
 
 export interface SmithyStockInput {
+  // Player who triggered the restock. Stored for audit only — read paths
+  // filter on channel_id.
   character_id: string;
+  channel_id: string;
   generated_at: number;
   item_name: string;
   item_type: ItemType;
@@ -1527,18 +1534,18 @@ export interface SmithyStockInput {
 
 export async function getActiveSmithyStock(
   db: D1Database,
-  characterId: string,
+  channelId: string,
   windowMs: number,
 ): Promise<SmithyStockItem[] | null> {
   const cutoff = Date.now() - windowMs;
   const result = await db
     .prepare(
-      `SELECT id, character_id, generated_at, item_name, item_type, power, rarity, flavor, price, slot, stat_bonus, item_subtype, bought_by
+      `SELECT id, character_id, channel_id, generated_at, item_name, item_type, power, rarity, flavor, price, slot, stat_bonus, item_subtype, bought_by
        FROM smithy_stock
-       WHERE character_id = ? AND generated_at > ?
+       WHERE channel_id = ? AND generated_at > ?
        ORDER BY id ASC`,
     )
-    .bind(characterId, cutoff)
+    .bind(channelId, cutoff)
     .all<SmithyStockItem & { stat_bonus: string | null }>();
   const rows = result.results ?? [];
   if (rows.length === 0) return null;
@@ -1555,10 +1562,10 @@ export async function insertSmithyStock(
   if (items.length === 0) return;
   const stmts = items.map((it) =>
     db.prepare(
-      `INSERT INTO smithy_stock (character_id, generated_at, item_name, item_type, power, rarity, flavor, price, slot, stat_bonus, item_subtype)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO smithy_stock (character_id, channel_id, generated_at, item_name, item_type, power, rarity, flavor, price, slot, stat_bonus, item_subtype)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).bind(
-      it.character_id, it.generated_at, it.item_name, it.item_type, it.power, it.rarity, it.flavor, it.price,
+      it.character_id, it.channel_id, it.generated_at, it.item_name, it.item_type, it.power, it.rarity, it.flavor, it.price,
       it.slot ?? null,
       it.stat_bonus ? JSON.stringify(it.stat_bonus) : null,
       it.item_subtype ?? null,
@@ -1567,17 +1574,19 @@ export async function insertSmithyStock(
   await db.batch(stmts);
 }
 
+// Fetch one stock row by id, scoped to a channel (server-enforced
+// membership — callers pass the requesting user's resolved channel).
 export async function getSmithyStockItem(
   db: D1Database,
   itemId: number,
-  characterId: string,
+  channelId: string,
 ): Promise<SmithyStockItem | null> {
   const row = await db
     .prepare(
-      `SELECT id, character_id, generated_at, item_name, item_type, power, rarity, flavor, price, slot, stat_bonus, item_subtype, bought_by
-       FROM smithy_stock WHERE id = ? AND character_id = ?`,
+      `SELECT id, character_id, channel_id, generated_at, item_name, item_type, power, rarity, flavor, price, slot, stat_bonus, item_subtype, bought_by
+       FROM smithy_stock WHERE id = ? AND channel_id = ?`,
     )
-    .bind(itemId, characterId)
+    .bind(itemId, channelId)
     .first<SmithyStockItem & { stat_bonus: string | null }>();
   if (!row) return null;
   return {
@@ -1686,6 +1695,69 @@ export async function transferItem(
     .prepare("UPDATE inventory SET character_id = ?, equipped = 0 WHERE id = ?")
     .bind(newOwnerId, itemId)
     .run();
+}
+
+// ───── Notifications ───────────────────────────────────────────────────────
+// Generic per-user message queue. Kind-discriminated payload; client renders
+// based on `kind`. Read-and-clear semantics — listNotifications + delete
+// usually run as a pair.
+
+export type NotificationKind = "item_received";
+
+export interface NotificationRow {
+  id: number;
+  user_id: string;
+  kind: NotificationKind;
+  payload: unknown;       // JSON-decoded shape varies per kind
+  created_at: number;
+}
+
+export async function insertNotification(
+  db: D1Database,
+  userId: string,
+  kind: NotificationKind,
+  payload: unknown,
+): Promise<void> {
+  await db
+    .prepare(`INSERT INTO notifications (user_id, kind, payload, created_at) VALUES (?, ?, ?, ?)`)
+    .bind(userId, kind, JSON.stringify(payload), Date.now())
+    .run();
+}
+
+// Fetch all pending notifications for a user and delete them in one batch.
+// Not strictly atomic in D1 (no transaction across statements), but the
+// race window is tiny and the worst case is "user sees a toast twice" or
+// "user misses a toast that arrived between SELECT and DELETE" — both
+// acceptable. The DELETE bound to the SELECTed ids prevents losing
+// brand-new rows that landed after the SELECT.
+export async function fetchAndClearNotifications(
+  db: D1Database,
+  userId: string,
+  limit = 25,
+): Promise<NotificationRow[]> {
+  const rows = await db
+    .prepare(
+      `SELECT id, user_id, kind, payload, created_at
+       FROM notifications WHERE user_id = ?
+       ORDER BY created_at ASC LIMIT ?`,
+    )
+    .bind(userId, limit)
+    .all<{ id: number; user_id: string; kind: string; payload: string; created_at: number }>();
+  const results = rows.results ?? [];
+  if (results.length === 0) return [];
+  const ids = results.map((r) => r.id);
+  const placeholders = ids.map(() => "?").join(",");
+  await db
+    .prepare(`DELETE FROM notifications WHERE id IN (${placeholders})`)
+    .bind(...ids)
+    .run();
+  return results.map((r) => ({
+    id: r.id,
+    user_id: r.user_id,
+    kind: r.kind as NotificationKind,
+    payload: JSON.parse(r.payload),
+    created_at: r.created_at,
+  }));
 }
 
 // Average level across all characters — used to scale shop stock to the active community.

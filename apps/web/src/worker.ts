@@ -125,6 +125,8 @@ import {
   scaleMonsterForJoin,
   getQuestPartySize,
   transferItem,
+  insertNotification,
+  fetchAndClearNotifications,
   tryDeductGold,
   trySetHaggleOutcome,
   awardSpoils,
@@ -2918,8 +2920,16 @@ function smithyStockPrice(itemType: ItemType, rarity: Rarity): number {
   return Math.ceil(priceFor(itemType, rarity) * 1.5);
 }
 
-async function ensureSmithyStock(env: Env, characterId: string, level: number): Promise<void> {
-  const existing = await getActiveSmithyStock(env.DB, characterId, SMITHY_RESTOCK_MS);
+// Channel-scoped stock: one generation per channel per RESTOCK window,
+// shared across everyone in that channel. `characterId` is recorded for
+// audit (who triggered the restock) and `level` seeds the tier range.
+async function ensureSmithyStock(
+  env: Env,
+  channelId: string,
+  characterId: string,
+  level: number,
+): Promise<void> {
+  const existing = await getActiveSmithyStock(env.DB, channelId, SMITHY_RESTOCK_MS);
   if (existing && existing.length > 0) return;
   const tierLo = Math.max(1, Math.min(level, 6));
   const tierHi = Math.max(tierLo, Math.min(level + 1, 9));
@@ -2930,6 +2940,7 @@ async function ensureSmithyStock(env: Env, characterId: string, level: number): 
     const { name, flavor } = await flavorLootDrop(env.AI, "the smith's rack", "armor", roll.rarity, roll.power, undefined, roll.slot ?? undefined);
     return {
       character_id: characterId,
+      channel_id: channelId,
       generated_at: generatedAt,
       item_name: name,
       item_type: roll.type,
@@ -2953,12 +2964,16 @@ app.get("/api/smithy", async (c) => {
   if (await getActiveQuestForCharacter(c.env.DB, session.slack_user_id)) {
     return c.json({ error: "mid_quest" }, 400);
   }
-  await ensureSmithyStock(c.env, session.slack_user_id, character.level);
+  // Channel resolution mirrors /api/shop: last channel the user did a /sq
+  // command in. Required for channel-scoped stock to make sense.
+  const channelId = await recentChannelForUser(c.env.DB, session.slack_user_id);
+  if (!channelId) return c.json({ error: "no_channel" }, 404);
+  await ensureSmithyStock(c.env, channelId, session.slack_user_id, character.level);
   const [weapon, armor, allSlots, stock] = await Promise.all([
     getEquipped(c.env.DB, session.slack_user_id, "weapon"),
     getEquipped(c.env.DB, session.slack_user_id, "armor"),
     getAllEquippedSlots(c.env.DB, session.slack_user_id),
-    getActiveSmithyStock(c.env.DB, session.slack_user_id, SMITHY_RESTOCK_MS),
+    getActiveSmithyStock(c.env.DB, channelId, SMITHY_RESTOCK_MS),
   ]);
   const items = [weapon, armor]
     .filter((i): i is NonNullable<typeof i> => !!i)
@@ -3010,7 +3025,11 @@ app.post("/api/smithy/buy/:stockId", async (c) => {
   if (await getActiveQuestForCharacter(c.env.DB, session.slack_user_id)) {
     return c.json({ error: "mid_quest" }, 400);
   }
-  const stockItem = await getSmithyStockItem(c.env.DB, stockId, session.slack_user_id);
+  // Buyer must be in the same channel that the stock was generated for —
+  // prevents cross-channel sniping after the migration.
+  const channelId = await recentChannelForUser(c.env.DB, session.slack_user_id);
+  if (!channelId) return c.json({ error: "no_channel" }, 404);
+  const stockItem = await getSmithyStockItem(c.env.DB, stockId, channelId);
   if (!stockItem) return c.json({ error: "not_found" }, 404);
   if (stockItem.bought_by) return c.json({ error: "already_sold" }, 400);
   if (Date.now() - stockItem.generated_at > SMITHY_RESTOCK_MS) return c.json({ error: "expired" }, 400);
@@ -3223,7 +3242,32 @@ app.post("/api/inventory/:itemId/give", async (c) => {
   const recipient = await getCharacter(c.env.DB, toUserId);
   if (!recipient) return c.json({ error: "recipient_no_character" }, 404);
   await transferItem(c.env.DB, item.id, toUserId);
+  // Drop a notification so the recipient sees a toast next time their
+  // browser tab is focused (or on their next refresh). Best-effort —
+  // a failure here doesn't undo the transfer; the user can always see
+  // the item in their inventory regardless.
+  const giver = await getCharacter(c.env.DB, session.slack_user_id);
+  c.executionCtx.waitUntil(
+    insertNotification(c.env.DB, toUserId, "item_received", {
+      from_user_id: session.slack_user_id,
+      from_name: giver?.name ?? session.slack_user_id,
+      item_id: item.id,
+      item_name: item.item_name,
+      item_type: item.item_type,
+      rarity: item.rarity,
+    }).catch((err) => console.warn("notification insert failed", err)),
+  );
   return c.json({ ok: true, item_name: item.item_name, to_name: recipient.name });
+});
+
+// Pending notifications for the current user — read-and-clear. Client
+// polls on tab focus + initial load. Returns the rows in order; client
+// renders one toast per entry.
+app.get("/api/notifications/pending", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const items = await fetchAndClearNotifications(c.env.DB, session.slack_user_id);
+  return c.json({ notifications: items });
 });
 
 // List team characters — used by the "Give" picker and the Adventurers panel.
