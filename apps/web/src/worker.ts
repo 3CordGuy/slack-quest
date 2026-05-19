@@ -1130,6 +1130,26 @@ app.post("/api/inventory/:itemId/equip", async (c) => {
     }
   }
   await equipItem(c.env.DB, item);
+
+  // If there's a pending or active web combat state for this character's quest,
+  // patch the fighter's armor_power so the equip is reflected without a restart.
+  const activeQuest = await getActiveQuestForCharacter(c.env.DB, session.slack_user_id);
+  if (activeQuest) {
+    const combatState = await getWebCombatState(c.env.DB, activeQuest.id);
+    const terminalStates = new Set(["victory", "defeat", "fled"]);
+    if (combatState && !terminalStates.has(combatState.status as string)) {
+      const allSlots = await getAllEquippedSlots(c.env.DB, session.slack_user_id);
+      const newArmorPower = computeArmorPowerFromSlots(allSlots);
+      const patched = {
+        ...combatState,
+        fighters: (combatState.fighters as Array<Record<string, unknown>>).map((f) =>
+          f.id === session.slack_user_id ? { ...f, armor_power: newArmorPower } : f,
+        ),
+      };
+      await saveWebCombatState(c.env.DB, activeQuest.id, patched as unknown as CombatState);
+    }
+  }
+
   return c.json({ ok: true, mana_delta: manaDelta });
 });
 
