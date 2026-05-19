@@ -3191,9 +3191,6 @@ function PartyMember({ fighter, self, onInspect }: { fighter: Character; self: b
         </div>
         <div style={{ ...muted, fontVariantNumeric: "tabular-nums" }}>
           {fighter.hp}/{fighter.max_hp}
-          {fighter.shield > 0 && (
-            <span style={{ color: "#7c83ff", marginLeft: 8 }}>+{fighter.shield} sh</span>
-          )}
         </div>
       </div>
       <HpBar current={fighter.hp} max={fighter.max_hp} flavor="player" />
