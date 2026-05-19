@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback } from "react";
+import { createPortal } from "react-dom";
 import { Icon } from "./icons";
 
 // Types matching what the API returns
@@ -33,6 +34,7 @@ export function LobbyView({
   selfId: string;
   onQuestStarted: () => void;
 }) {
+  const [open, setOpen] = useState(true);
   const [quest, setQuest] = useState<LobbyQuestData | null>(null);
   const [party, setParty] = useState<LobbyMember[]>([]);
   const [loading, setLoading] = useState(true);
@@ -110,7 +112,8 @@ export function LobbyView({
   const me = party.find((m) => m.slack_user_id === selfId);
   const isCreator = quest?.created_by === selfId;
   const accepted = party.filter((m) => m.invite_status === "accepted");
-  const allReady = accepted.length > 0 && accepted.every((m) => m.ready);
+  const hasPending = party.some((m) => m.invite_status === "pending");
+  const allReady = !hasPending && accepted.length > 0 && accepted.every((m) => m.ready);
 
   const expiresIn = quest?.lobby_expires_at
     ? Math.max(0, Math.ceil((quest.lobby_expires_at - Date.now()) / 1000))
@@ -134,12 +137,53 @@ export function LobbyView({
   const partyIds = new Set(party.map((m) => m.slack_user_id));
   const inviteable = teamMembers.filter((m) => !partyIds.has(m.slack_user_id));
 
+  const pendingCount = party.filter((m) => m.invite_status === "pending").length;
+
+  // Floating tab always visible so user can reopen the drawer
+  const tab = (
+    <button
+      onClick={() => setOpen((o) => !o)}
+      style={{
+        position: "fixed",
+        right: open ? 380 : 0,
+        top: "50%",
+        transform: "translateY(-50%)",
+        zIndex: 1001,
+        background: "#2563eb",
+        color: "#fff",
+        border: "none",
+        borderRadius: open ? "6px 0 0 6px" : "6px 0 0 6px",
+        padding: "12px 8px",
+        cursor: "pointer",
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        gap: 6,
+        fontSize: 11,
+        fontWeight: 700,
+        letterSpacing: 0.5,
+        boxShadow: "-2px 0 12px rgba(0,0,0,0.4)",
+        transition: "right 0.25s ease",
+      }}
+    >
+      <Icon name="conversation" size={16} color="#fff" />
+      <span style={{ writingMode: "vertical-rl", textOrientation: "mixed", transform: "rotate(180deg)" }}>
+        LOBBY
+      </span>
+      {pendingCount > 0 && (
+        <span style={{
+          background: "#f59e0b", color: "#000", borderRadius: "50%",
+          width: 16, height: 16, fontSize: 10, fontWeight: 700,
+          display: "flex", alignItems: "center", justifyContent: "center",
+        }}>
+          {pendingCount}
+        </span>
+      )}
+    </button>
+  );
+
   if (loading) {
-    return (
-      <div style={{ padding: 24, color: "#9ca3af", textAlign: "center" }}>
-        Loading lobby…
-      </div>
-    );
+    return typeof document !== "undefined" ? createPortal(tab, document.body) : null;
   }
   if (!quest) return null;
 
@@ -154,14 +198,45 @@ export function LobbyView({
     transition: "opacity 0.15s",
   };
 
-  return (
+  const drawerContent = (
+    <>
+      {tab}
+      {/* Backdrop — closes drawer when clicking outside */}
+      {open && (
+        <div
+          onClick={() => setOpen(false)}
+          style={{
+            position: "fixed", inset: 0, zIndex: 999,
+            background: "rgba(0,0,0,0.35)",
+          }}
+        />
+      )}
+      {/* Drawer panel */}
+      <div
+        style={{
+          position: "fixed",
+          top: 0,
+          right: open ? 0 : -400,
+          width: 380,
+          height: "100vh",
+          zIndex: 1000,
+          background: "#0e1117",
+          borderLeft: "2px solid #2563eb",
+          boxShadow: "-4px 0 32px rgba(0,0,0,0.6)",
+          transition: "right 0.25s ease",
+          display: "flex",
+          flexDirection: "column",
+          overflowY: "auto",
+        }}
+      >
+        <div style={{ padding: 20, flex: 1 }}>
     <div
       style={{
-        background: "#0e1117",
-        border: "2px solid #2563eb",
-        borderRadius: 14,
-        padding: 24,
-        maxWidth: 480,
+        background: "transparent",
+        border: "none",
+        borderRadius: 0,
+        padding: 0,
+        maxWidth: "100%",
         width: "100%",
       }}
     >
@@ -369,13 +444,16 @@ export function LobbyView({
           <div
             style={{
               fontSize: 13,
-              color: "#22c55e",
+              color: hasPending ? "#f59e0b" : "#22c55e",
               display: "flex",
               alignItems: "center",
               gap: 6,
             }}
           >
-            <Icon name="trophy" size={13} color="#22c55e" /> You're ready — waiting for others…
+            {hasPending
+              ? <><Icon name="conversation" size={13} color="#f59e0b" /> Waiting for pending invites — or Force Start to skip them</>
+              : <><Icon name="trophy" size={13} color="#22c55e" /> You're ready — waiting for others…</>
+            }
           </div>
         )}
         {isCreator && !showInvite && (
@@ -400,7 +478,12 @@ export function LobbyView({
             Force Start
           </button>
         )}
-      </div>
-    </div>
+      </div>{/* action buttons */}
+    </div>{/* inner content div */}
+        </div>{/* padding wrapper */}
+      </div>{/* drawer panel */}
+    </>
   );
+
+  return typeof document !== "undefined" ? createPortal(drawerContent, document.body) : null;
 }

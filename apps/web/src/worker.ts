@@ -2423,13 +2423,16 @@ app.post("/api/hunt", async (c) => {
   if (await getActiveQuestForCharacter(c.env.DB, session.slack_user_id)) {
     return c.json({ error: "already_on_quest" }, 400);
   }
-  const body = await c.req.json().catch(() => null) as { tier?: number; monster_count?: number } | null;
+  const body = await c.req.json().catch(() => null) as { tier?: number; monster_count?: number; invitees?: unknown } | null;
   const requestedTier = body?.tier;
   if (typeof requestedTier !== "number" || !Number.isInteger(requestedTier) || requestedTier < 1) {
     return c.json({ error: "invalid_tier" }, 400);
   }
   const tier = Math.min(requestedTier, character.level);
   const monsterCount = Math.max(1, Math.min(3, Number.isInteger(body?.monster_count) ? (body!.monster_count as number) : 1));
+  const invitees = Array.isArray(body?.invitees)
+    ? (body!.invitees as unknown[]).filter((x): x is string => typeof x === "string").slice(0, 5)
+    : [];
 
   const channelId = await recentChannelForUser(c.env.DB, session.slack_user_id);
   if (!channelId) return c.json({ error: "no_channel" }, 400);
@@ -2463,20 +2466,53 @@ app.post("/api/hunt", async (c) => {
     ] as typeof leaderScene.monsters;
   }
 
+  const now = Date.now();
+  const LOBBY_TTL = 5 * 60 * 1000;
   const questId = await createQuest(c.env.DB, {
     channel_id: channelId,
-    thread_ts: `web-${Date.now()}-${session.slack_user_id}`,
+    thread_ts: `web-${now}-${session.slack_user_id}`,
     elite: false,
     scene: leaderScene,
     mode: "web",
     created_by: session.slack_user_id,
+    lobby: invitees.length > 0,
+    lobby_expires_at: invitees.length > 0 ? now + LOBBY_TTL : undefined,
   });
+
+  if (invitees.length > 0) {
+    await Promise.all(invitees.map((uid) => addPendingInvitee(c.env.DB, questId, uid)));
+    const token = c.env.SLACK_BOT_TOKEN;
+    if (token) {
+      c.executionCtx.waitUntil((async () => {
+        const rows = await c.env.DB
+          .prepare(`SELECT slack_user_id, slack_username FROM characters WHERE slack_user_id IN (${invitees.map(() => "?").join(",")})`)
+          .bind(...invitees)
+          .all<{ slack_user_id: string; slack_username: string | null }>();
+        const slackUsers = new Map((rows.results ?? []).filter((r) => r.slack_username).map((r) => [r.slack_user_id, r]));
+        await Promise.all(invitees.filter((uid) => slackUsers.has(uid)).map(async (uid) => {
+          const openRes = await fetch("https://slack.com/api/conversations.open", {
+            method: "POST",
+            headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json; charset=utf-8" },
+            body: JSON.stringify({ users: uid }),
+          });
+          const openData = (await openRes.json()) as { ok: boolean; channel?: { id: string } };
+          if (!openData.ok || !openData.channel?.id) return;
+          await postSlackMessage(token, {
+            channel: openData.channel.id,
+            text: `⚔️ *${character.name}* invited you to join an outskirts hunt! Open the web app to accept or decline: ${WEB_PUBLIC_BASE}`,
+          });
+        }));
+      })());
+    }
+    return c.json({ ok: true, quest_id: questId, lobby: true });
+  }
+
   await refillMana(c.env.DB, session.slack_user_id);
 
   // Hunt quests are rapid solo grind — skip the Slack announcement so the
   // channel isn't spammed every time someone grinds outskirts mobs.
 
-  return c.json({ ok: true, quest_id: questId });
+  return c.json({ ok: true, quest_id: questId, lobby: false });
 });
 
 // Mirrors /sq buy: claim row + deduct gold atomically; release on either
@@ -4159,10 +4195,11 @@ app.post("/api/quest/:id/lobby/ready", async (c) => {
   if (!me || me.invite_status !== "accepted") return c.json({ error: "not_accepted" }, 400);
   await updateReadyStatus(c.env.DB, questId, session.slack_user_id, true);
 
-  // Re-fetch to check if all accepted are now ready
+  // Re-fetch to check if all accepted are ready and no invites are still pending
   const updated = await getLobbyParty(c.env.DB, questId);
   const accepted = updated.filter((m) => m.invite_status === "accepted");
-  const allReady = accepted.length > 0 && accepted.every((m) => m.ready);
+  const hasPending = updated.some((m) => m.invite_status === "pending");
+  const allReady = !hasPending && accepted.length > 0 && accepted.every((m) => m.ready);
   if (allReady) await webStartQuestFromLobby(questId, c.env);
   return c.json({ ok: true, started: allReady });
 });
