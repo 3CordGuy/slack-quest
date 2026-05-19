@@ -1485,6 +1485,121 @@ export async function tryDeductGold(
   return (result.meta.changes ?? 0) > 0;
 }
 
+// ───── Smithy stock ────────────────────────────────────────────────────────
+// Per-character rotating armor stock. Mirrors shop_stock but keyed on
+// character_id (slack_user_id) since the smithy is a personal-feel building.
+
+export interface SmithyStockItem {
+  id: number;
+  character_id: string;
+  generated_at: number;
+  item_name: string;
+  item_type: ItemType;
+  power: number;
+  rarity: Rarity;
+  flavor: string | null;
+  price: number;
+  slot: EquipSlot | null;
+  stat_bonus: Record<string, number> | null;
+  item_subtype: string | null;
+  bought_by: string | null;
+}
+
+export interface SmithyStockInput {
+  character_id: string;
+  generated_at: number;
+  item_name: string;
+  item_type: ItemType;
+  power: number;
+  rarity: Rarity;
+  flavor: string;
+  price: number;
+  slot?: EquipSlot | null;
+  stat_bonus?: Record<string, number> | null;
+  item_subtype?: string | null;
+}
+
+export async function getActiveSmithyStock(
+  db: D1Database,
+  characterId: string,
+  windowMs: number,
+): Promise<SmithyStockItem[] | null> {
+  const cutoff = Date.now() - windowMs;
+  const result = await db
+    .prepare(
+      `SELECT id, character_id, generated_at, item_name, item_type, power, rarity, flavor, price, slot, stat_bonus, item_subtype, bought_by
+       FROM smithy_stock
+       WHERE character_id = ? AND generated_at > ?
+       ORDER BY id ASC`,
+    )
+    .bind(characterId, cutoff)
+    .all<SmithyStockItem & { stat_bonus: string | null }>();
+  const rows = result.results ?? [];
+  if (rows.length === 0) return null;
+  return rows.map((row) => ({
+    ...row,
+    stat_bonus: row.stat_bonus ? JSON.parse(row.stat_bonus) as Record<string, number> : null,
+  })) as SmithyStockItem[];
+}
+
+export async function insertSmithyStock(
+  db: D1Database,
+  items: SmithyStockInput[],
+): Promise<void> {
+  if (items.length === 0) return;
+  const stmts = items.map((it) =>
+    db.prepare(
+      `INSERT INTO smithy_stock (character_id, generated_at, item_name, item_type, power, rarity, flavor, price, slot, stat_bonus, item_subtype)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).bind(
+      it.character_id, it.generated_at, it.item_name, it.item_type, it.power, it.rarity, it.flavor, it.price,
+      it.slot ?? null,
+      it.stat_bonus ? JSON.stringify(it.stat_bonus) : null,
+      it.item_subtype ?? null,
+    ),
+  );
+  await db.batch(stmts);
+}
+
+export async function getSmithyStockItem(
+  db: D1Database,
+  itemId: number,
+  characterId: string,
+): Promise<SmithyStockItem | null> {
+  const row = await db
+    .prepare(
+      `SELECT id, character_id, generated_at, item_name, item_type, power, rarity, flavor, price, slot, stat_bonus, item_subtype, bought_by
+       FROM smithy_stock WHERE id = ? AND character_id = ?`,
+    )
+    .bind(itemId, characterId)
+    .first<SmithyStockItem & { stat_bonus: string | null }>();
+  if (!row) return null;
+  return {
+    ...row,
+    stat_bonus: row.stat_bonus ? JSON.parse(row.stat_bonus) as Record<string, number> : null,
+  } as SmithyStockItem;
+}
+
+// Atomically claim a smithy stock row. Returns true if we won the race.
+export async function claimSmithyItem(
+  db: D1Database,
+  itemId: number,
+  buyerId: string,
+): Promise<boolean> {
+  const result = await db
+    .prepare("UPDATE smithy_stock SET bought_by = ? WHERE id = ? AND bought_by IS NULL")
+    .bind(buyerId, itemId)
+    .run();
+  return (result.meta.changes ?? 0) > 0;
+}
+
+export async function releaseSmithyClaim(db: D1Database, itemId: number): Promise<void> {
+  await db
+    .prepare("UPDATE smithy_stock SET bought_by = NULL WHERE id = ?")
+    .bind(itemId)
+    .run();
+}
+
 // Reverses a successful claimShopItem. Used to refund a stock claim when the gold
 // deduction fails after the claim succeeded.
 export async function releaseShopClaim(db: D1Database, itemId: number): Promise<void> {

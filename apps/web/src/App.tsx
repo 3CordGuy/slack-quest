@@ -146,6 +146,7 @@ const ERROR_LABELS: Record<string, string> = {
 async function postJson(
   url: string,
   init: RequestInit = {},
+  opts: { skipErrorToast?: boolean } = {},
 ): Promise<{ ok: boolean; body: Record<string, unknown> | null }> {
   let res: Response;
   try {
@@ -161,6 +162,7 @@ async function postJson(
     body = null;
   }
   if (!res.ok) {
+    if (opts.skipErrorToast) return { ok: false, body };
     const code = typeof body?.error === "string" ? body.error : `http_${res.status}`;
     const message = ERROR_LABELS[code] ?? code;
     // Friendly addendum for cooldown timers — show minutes remaining.
@@ -503,10 +505,26 @@ interface SmithyItem {
   verb: { verb: string; past: string; noun: string; iconName: string; stat: string };
 }
 
+interface SmithyStockListing {
+  id: number;
+  item_name: string;
+  item_type: string;
+  power: number;
+  rarity: string;
+  flavor: string | null;
+  price: number;
+  slot: string | null;
+  item_subtype: string | null;
+  stat_bonus: Record<string, number> | null;
+  level_req: number;
+}
+
 interface SmithyResponse {
   items: SmithyItem[];
   gold: number;
   armorRepair?: { current: number; max: number; cost: number } | null;
+  stock?: SmithyStockListing[];
+  stockExpiresAt?: number | null;
   art_url?: string | null;
   error?: string;
 }
@@ -1333,8 +1351,23 @@ export function App() {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ kind }),
-    });
-    if (!ok) return;
+    }, { skipErrorToast: true });
+    if (!ok) {
+      if (body?.error === "cooldown" && typeof body.ready_in_ms === "number") {
+        const ms = body.ready_in_ms;
+        const hrs = Math.floor(ms / (60 * 60 * 1000));
+        const mins = Math.max(1, Math.ceil((ms % (60 * 60 * 1000)) / 60_000));
+        const eta = hrs > 0 ? `${hrs}h ${mins}m` : `${mins}m`;
+        const flavor = kind === "long"
+          ? "Gathering more firewood"
+          : "Bandages still drying";
+        toast.error(`${flavor} (cooldown resets in ${eta})`);
+      } else {
+        const code = typeof body?.error === "string" ? body.error : "unknown";
+        toast.error(ERROR_LABELS[code] ?? code);
+      }
+      return;
+    }
     if (body && typeof body.healed === "number") {
       toast.success(`Short rest: +${body.healed} HP.`);
     } else if (body && body.kind === "long") {
@@ -1383,6 +1416,22 @@ export function App() {
         if (body && body.item && typeof body.item === "object") {
           const item = body.item as { new_power: number; old_power: number };
           toast.success(`${verb}d to +${item.new_power} (was +${item.old_power}).`);
+        }
+        void refresh();
+      },
+    });
+  }
+
+  async function smithyBuy(stockId: number, itemName: string, price: number) {
+    setConfirm({
+      title: `Buy ${itemName}?`,
+      message: `Pay ${price}g for ${itemName}. It'll land in your inventory unequipped.`,
+      confirmLabel: "Buy",
+      onConfirm: async () => {
+        const { ok, body } = await postJson(`/api/smithy/buy/${stockId}`, { method: "POST" });
+        if (!ok) return;
+        if (body && body.item && typeof body.item === "object") {
+          toast.success(`Bought ${itemName}.`);
         }
         void refresh();
       },
@@ -1682,7 +1731,7 @@ export function App() {
         );
       } else if (townSection === "smithy" && state.me.character && state.smithy) {
         sectionContent = (
-          <SmithyCard smithy={state.smithy} navOverlay={townNav} onSharpen={smithySharpen} onRepair={smithyRepair} />
+          <SmithyCard smithy={state.smithy} navOverlay={townNav} characterLevel={state.me.character.level} onSharpen={smithySharpen} onRepair={smithyRepair} onBuy={smithyBuy} />
         );
       } else if (townSection === "hunt" && state.me.character) {
         sectionContent = (
@@ -6255,13 +6304,17 @@ function InnCard({
 function SmithyCard({
   smithy,
   navOverlay,
+  characterLevel,
   onSharpen,
   onRepair,
+  onBuy,
 }: {
   smithy: SmithyResponse;
   navOverlay?: React.ReactNode;
+  characterLevel: number;
   onSharpen: (itemId: number, itemName: string, cost: number, verb: string) => void;
   onRepair: (cost: number) => void;
+  onBuy: (stockId: number, itemName: string, price: number) => void;
 }) {
   const hero = navOverlay
     ? <LocationHero src={smithy.art_url} label="The Smithy" nav={navOverlay} />
@@ -6318,6 +6371,62 @@ function SmithyCard({
           </div>
         );
       })()}
+      {smithy.stock && smithy.stock.length > 0 && (
+        <div style={{ marginTop: 16 }}>
+          <div style={{ ...muted, fontSize: 11, textTransform: "uppercase", letterSpacing: 1.5, marginBottom: 8, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <span><Icon name="anvil" size={11} /> Forged & Ready</span>
+            {smithy.stockExpiresAt && (
+              <span style={{ fontSize: 10, color: "#6b7280" }}>
+                Restocks in {formatDuration(Math.max(0, smithy.stockExpiresAt - Date.now()))}
+              </span>
+            )}
+          </div>
+          <div style={{ display: "grid", gap: 8 }}>
+            {smithy.stock.map((s) => {
+              const canAfford = smithy.gold >= s.price;
+              const meetsLevel = characterLevel >= s.level_req;
+              const purchasable = canAfford && meetsLevel;
+              const rarityColor = s.rarity === "legendary" ? "#fbbf24"
+                : s.rarity === "epic" ? "#a855f7"
+                : s.rarity === "rare" ? "#3b82f6"
+                : s.rarity === "uncommon" ? "#22c55e"
+                : "#9ca3af";
+              const slotLabel = s.item_subtype === "shield" ? "shield"
+                : s.slot === "off_hand" ? "off-hand"
+                : s.slot ?? "armor";
+              const label = !meetsLevel ? `Lv ${s.level_req}`
+                : !canAfford ? `Need ${s.price}g`
+                : `Buy — ${s.price}g`;
+              return (
+                <div key={s.id} style={{ padding: 12, background: "#1d1f23", borderRadius: 8, display: "flex", alignItems: "center", gap: 12 }}>
+                  <Icon name="shield" size={22} color={rarityColor} />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontWeight: 600, color: "#f5f5f5", fontSize: 14, fontFamily: DISPLAY_FONT, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                      {s.item_name} <span style={{ color: rarityColor, fontSize: 11, fontWeight: 500 }}>+{s.power}</span>
+                    </div>
+                    <div style={{ ...muted, fontSize: 11, marginTop: 2, textTransform: "capitalize" }}>
+                      {s.rarity} · {slotLabel}
+                      {s.stat_bonus && Object.entries(s.stat_bonus).filter(([k]) => !k.startsWith("resist_")).map(([k, v]) => ` · +${v} ${k === "int_stat" ? "INT" : k.toUpperCase()}`).join("")}
+                      {s.stat_bonus && Object.entries(s.stat_bonus).filter(([k]) => k.startsWith("resist_")).map(([k, v]) => ` · ${v}% ${k.replace("resist_", "")} resist`).join("")}
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => onBuy(s.id, s.item_name, s.price)}
+                    disabled={!purchasable}
+                    style={{
+                      ...smallActionBtn(purchasable ? "#1f3a1f" : "#222428", purchasable ? "#86efac" : "#7a7d83"),
+                      opacity: purchasable ? 1 : 0.6,
+                      cursor: purchasable ? "pointer" : "not-allowed",
+                    }}
+                  >
+                    {label}
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
       {smithy.items.length === 0 ? (
         <p style={muted}>
           Nothing equipped to work on. Equip a weapon or armor first, then come back.
