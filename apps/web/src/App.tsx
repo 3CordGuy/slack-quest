@@ -3194,6 +3194,11 @@ function PartyMember({ fighter, self, onInspect }: { fighter: Character; self: b
         </div>
       </div>
       <HpBar current={fighter.hp} max={fighter.max_hp} flavor="player" />
+      {(fighter.armor_power ?? 0) > 0 && (
+        <div style={{ marginTop: 6 }}>
+          <ArmorBar current={fighter.shield} max={Math.floor((fighter.armor_power ?? 0) / 2)} />
+        </div>
+      )}
       {fighter.max_mana > 0 && (
         <div style={{ marginTop: 6 }}>
           <ManaBar current={fighter.mana} max={fighter.max_mana} />
@@ -3457,6 +3462,20 @@ function HpBar({
           transition: "width 200ms ease",
         }}
       />
+    </div>
+  );
+}
+
+function ArmorBar({ current, max }: { current: number; max: number }) {
+  const pct = max > 0 ? Math.max(0, Math.min(1, current / max)) : 0;
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+      <div style={{ ...muted, fontSize: 11, minWidth: 36, color: current === 0 ? "#ef4444" : "#9ca3af" }}>
+        {current}/{max} 🛡
+      </div>
+      <div style={{ flex: 1, height: 6, background: "#0e0f12", borderRadius: 3, overflow: "hidden" }}>
+        <div style={{ width: `${pct * 100}%`, height: "100%", background: current === 0 ? "#374151" : "#64748b", transition: "width 200ms ease" }} />
+      </div>
     </div>
   );
 }
