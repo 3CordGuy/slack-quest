@@ -3176,6 +3176,13 @@ export interface LobbyQuest {
 export interface LobbyPartyMember {
   slack_user_id: string;
   name: string;
+  // Slack handle (without the @). Null for synthetic characters with no
+  // real Slack presence. Used by the web UI to show "@josh" next to a
+  // character display name so you can disambiguate identical names.
+  slack_username: string | null;
+  // Character level. Surfaced in the lobby roster so party leaders can
+  // see "level 10 + level 1" mismatches at a glance.
+  level: number;
   invite_status: "pending" | "accepted" | "declined";
   ready: boolean;
 }
@@ -3262,17 +3269,27 @@ export async function getLobbyParty(
 ): Promise<LobbyPartyMember[]> {
   const result = await db
     .prepare(
-      `SELECT c.slack_user_id, c.name, qp.invite_status, qp.ready
+      `SELECT c.slack_user_id, c.name, c.slack_username, c.level,
+              qp.invite_status, qp.ready
        FROM characters c
        JOIN quest_party qp ON qp.character_id = c.slack_user_id
        WHERE qp.quest_id = ?
        ORDER BY qp.joined_at ASC`,
     )
     .bind(questId)
-    .all<{ slack_user_id: string; name: string; invite_status: string; ready: number }>();
+    .all<{
+      slack_user_id: string;
+      name: string;
+      slack_username: string | null;
+      level: number;
+      invite_status: string;
+      ready: number;
+    }>();
   return (result.results ?? []).map((r) => ({
     slack_user_id: r.slack_user_id,
     name: r.name,
+    slack_username: r.slack_username,
+    level: r.level,
     invite_status: (r.invite_status ?? "accepted") as LobbyPartyMember["invite_status"],
     ready: r.ready === 1,
   }));

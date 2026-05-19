@@ -14,6 +14,8 @@ interface ChatMessage {
 interface LobbyMember {
   slack_user_id: string;
   name: string;
+  slack_username: string | null;
+  level: number;
   invite_status: "pending" | "accepted" | "declined";
   ready: boolean;
 }
@@ -51,6 +53,7 @@ interface LobbyQuestData {
 interface TeamMember {
   slack_user_id: string;
   name: string;
+  slack_username: string | null;
   class: string;
   level: number;
   hp: number;
@@ -608,10 +611,18 @@ export function LobbyView({
                 border: isSelf ? "1px solid #2563eb" : "1px solid #1f2937",
               }}
             >
-              <span style={{ fontWeight: isSelf ? 700 : 400, color: "#f5f5f5", fontSize: 14 }}>
-                {m.name}
-                {isSelf && (
-                  <span style={{ color: "#60a5fa", fontSize: 12, marginLeft: 6 }}>(you)</span>
+              <span style={{ display: "flex", flexDirection: "column", minWidth: 0, gap: 1 }}>
+                <span style={{ fontWeight: isSelf ? 700 : 400, color: "#f5f5f5", fontSize: 14 }}>
+                  {m.name}
+                  <span style={{ color: "#fbbf24", fontSize: 11, marginLeft: 6, fontWeight: 600 }}>L{m.level}</span>
+                  {isSelf && (
+                    <span style={{ color: "#60a5fa", fontSize: 12, marginLeft: 6 }}>(you)</span>
+                  )}
+                </span>
+                {m.slack_username && (
+                  <span style={{ color: "#6b7280", fontSize: 11, fontFamily: "ui-monospace, SFMono-Regular, monospace" }}>
+                    @{m.slack_username}
+                  </span>
                 )}
               </span>
               <span
@@ -686,13 +697,21 @@ export function LobbyView({
                     border: "1px solid #1f2937",
                   }}
                 >
-                  <div>
+                  <div style={{ display: "flex", flexDirection: "column", minWidth: 0, gap: 1 }}>
                     <span style={{ fontSize: 13, fontWeight: 600, color: "#f5f5f5" }}>
                       {tm.name}
+                      <span style={{ fontSize: 11, color: "#fbbf24", marginLeft: 8, fontWeight: 600 }}>
+                        L{tm.level}
+                      </span>
+                      <span style={{ fontSize: 11, color: "#6b7280", marginLeft: 6 }}>
+                        {tm.class}
+                      </span>
                     </span>
-                    <span style={{ fontSize: 11, color: "#6b7280", marginLeft: 8 }}>
-                      Lv{tm.level} {tm.class}
-                    </span>
+                    {tm.slack_username && (
+                      <span style={{ fontSize: 11, color: "#6b7280", fontFamily: "ui-monospace, SFMono-Regular, monospace" }}>
+                        @{tm.slack_username}
+                      </span>
+                    )}
                   </div>
                   <button
                     disabled={inviting === tm.slack_user_id}
