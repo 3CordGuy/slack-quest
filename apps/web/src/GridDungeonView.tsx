@@ -7,6 +7,7 @@ import { useEffect, useReducer, useRef, useState } from "react";
 import toast from "react-hot-toast";
 import { isMonsterActor } from "@gantt-quest/core";
 import { Avatar, Icon } from "./icons";
+import { CombatParticles, triggerBurst } from "./CombatParticles";
 import {
   DISPLAY_FONT, ensureCombatAnimStyles, useIsMobile,
   slugifyName, charPortraitUrl, classPortraitUrl,
@@ -1007,6 +1008,7 @@ export function GridDungeonView({
               const id = evt.target;
               flashHit(id);
               setLastSlash({ id, seq: ++animSeqRef.current });
+              triggerBurst("hit");
             }
             // monster_attack: monster hits a fighter. Always lunge the
             // attacking monster's card (the swing happened regardless of
@@ -1016,7 +1018,21 @@ export function GridDungeonView({
             }
             if (evt.type === "monster_attack" && typeof evt.target === "string" && (evt.hp_damage as number) > 0) {
               flashHit(evt.target as string);
+              triggerBurst("hit");
             }
+            // Elemental procs: player → monster (elemental_proc) and
+            // monster → fighter (monster_elemental_proc). Burst the
+            // matching element so the player sees the spell land.
+            if (evt.type === "elemental_proc" && !evt.resisted) {
+              const el = String(evt.element);
+              if (el === "fire" || el === "ice" || el === "lightning") triggerBurst(el);
+            }
+            if (evt.type === "monster_elemental_proc") {
+              const el = String(evt.element);
+              if (el === "fire" || el === "ice" || el === "lightning") triggerBurst(el);
+            }
+            if (evt.type === "turn_skip") triggerBurst("frozen");
+            if (evt.type === "victory") triggerBurst("victory");
             // roll: dice events become floating animated polygons. When the
             // PLAYER rolls (not a monster) and no player rolls are currently
             // on screen, clear any lingering enemy dice so the new attack
@@ -1461,6 +1477,13 @@ export function GridDungeonView({
       {/* Animated dice rolls — float in mid-screen above everything */}
       <div style={{ position: "fixed", bottom: 280, left: "50%", transform: "translateX(-50%)", zIndex: 200, pointerEvents: "none" }}>
         <DiceRollDisplay rolls={diceRolls} />
+      </div>
+
+      {/* Particle bursts — fire/ice/lightning/hit/frozen/victory. Fixed
+          overlay so bursts can appear regardless of which inner view
+          (combat, dungeon nav) is mounted. */}
+      <div style={{ position: "fixed", inset: 0, zIndex: 150, pointerEvents: "none" }}>
+        <CombatParticles />
       </div>
     </div>
   );
