@@ -357,13 +357,13 @@ function PartyBar({ fighters, selfId, party, onClickSelf, flashIds }: {
   flashIds?: Set<string>;
 }) {
   const seen = new Set<string>();
-  type Member = { key: string; name: string; cls: string; level: number; position: "front" | "back"; hp: number; max_hp: number; mana: number; max_mana: number; shield: number; isSelf: boolean; isDead: boolean };
+  type Member = { key: string; name: string; cls: string; level: number; position: "front" | "back"; hp: number; max_hp: number; mana: number; max_mana: number; shield: number; armor_power: number; isSelf: boolean; isDead: boolean };
   const members: Member[] = fighters
-    ? fighters.map((f) => ({ key: f.id, name: f.name, cls: f.class, level: f.level, position: f.position, hp: f.hp, max_hp: f.max_hp, mana: f.mana, max_mana: f.max_mana, shield: f.shield, isSelf: f.id === selfId, isDead: f.hp <= 0 }))
+    ? fighters.map((f) => ({ key: f.id, name: f.name, cls: f.class, level: f.level, position: f.position, hp: f.hp, max_hp: f.max_hp, mana: f.mana, max_mana: f.max_mana, shield: f.shield, armor_power: f.armor_power, isSelf: f.id === selfId, isDead: f.hp <= 0 }))
     : party.flatMap((c) => {
         if (seen.has(c.slack_user_id)) return [];
         seen.add(c.slack_user_id);
-        return [{ key: c.slack_user_id, name: c.name, cls: c.class, level: c.level, position: c.position, hp: c.hp, max_hp: c.max_hp, mana: c.mana, max_mana: c.max_mana, shield: c.shield, isSelf: c.slack_user_id === selfId, isDead: c.hp <= 0 }];
+        return [{ key: c.slack_user_id, name: c.name, cls: c.class, level: c.level, position: c.position, hp: c.hp, max_hp: c.max_hp, mana: c.mana, max_mana: c.max_mana, shield: c.shield, armor_power: 0, isSelf: c.slack_user_id === selfId, isDead: c.hp <= 0 }];
       });
 
   const backRow = members.filter((m) => m.position === "back");
@@ -403,6 +403,7 @@ function PartyBar({ fighters, selfId, party, onClickSelf, flashIds }: {
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: 13, fontWeight: 600, color: "#e2e8f0", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", paddingRight: 30 }}>{f.name}</div>
           <HpBar current={f.hp} max={f.max_hp} height={7} />
+          {(() => { const armorMax = Math.floor(f.armor_power / 2); return armorMax > 0 ? <div style={{ height: 4, background: f.shield === 0 ? "#3b1515" : "#0e0f12", borderRadius: 2, overflow: "hidden", marginTop: 2 }} title={f.shield === 0 ? "Armor depleted" : `Armor: ${f.shield}/${armorMax}`}><div style={{ width: `${Math.min(1, f.shield / armorMax) * 100}%`, height: "100%", background: "#6b7280", transition: "width 0.3s ease" }} /></div> : null; })()}
           <div style={{ fontSize: 11, color: "#9aa0a6", marginTop: 2 }}>
             {f.hp}/{f.max_hp} HP
           </div>

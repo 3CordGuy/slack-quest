@@ -386,7 +386,7 @@ function PartyBar({ fighters, selfId, party }: {
   // Normalise to a unified shape regardless of combat vs exploration state.
   // Dedup characters by slack_user_id so a solo player doesn't appear twice.
   const seen = new Set<string>();
-  type Member = { key: string; name: string; cls: string; hp: number; max_hp: number; mana: number; max_mana: number; shield: number; isSelf: boolean; isDead: boolean };
+  type Member = { key: string; name: string; cls: string; hp: number; max_hp: number; mana: number; max_mana: number; shield: number; armor_power: number; isSelf: boolean; isDead: boolean };
   const members: Member[] = fighters
     ? fighters.map((f) => ({
         key: f.id,
@@ -397,6 +397,7 @@ function PartyBar({ fighters, selfId, party }: {
         mana: f.mana,
         max_mana: f.max_mana,
         shield: f.shield,
+        armor_power: f.armor_power,
         isSelf: f.id === selfId,
         isDead: f.hp <= 0,
       }))
@@ -412,6 +413,7 @@ function PartyBar({ fighters, selfId, party }: {
           mana: c.mana,
           max_mana: c.max_mana,
           shield: c.shield,
+          armor_power: 0,
           isSelf: c.slack_user_id === selfId,
           isDead: c.hp <= 0,
         }];
@@ -461,6 +463,7 @@ function PartyBar({ fighters, selfId, party }: {
                 {f.name}
               </div>
               <HpBar current={f.hp} max={f.max_hp} height={5} />
+              {(() => { const armorMax = Math.floor(f.armor_power / 2); return armorMax > 0 ? <div style={{ height: 4, background: f.shield === 0 ? "#3b1515" : "#0e0f12", borderRadius: 2, overflow: "hidden", marginTop: 2 }} title={f.shield === 0 ? "Armor depleted" : `Armor: ${f.shield}/${armorMax}`}><div style={{ width: `${Math.min(1, f.shield / armorMax) * 100}%`, height: "100%", background: "#6b7280", transition: "width 0.3s ease" }} /></div> : null; })()}
               <div style={{ fontSize: 10, color: "#9aa0a6", marginTop: 1 }}>
                 {f.hp}/{f.max_hp} HP
               </div>

@@ -505,6 +505,7 @@ interface SmithyItem {
 interface SmithyResponse {
   items: SmithyItem[];
   gold: number;
+  armorRepair?: { current: number; max: number; cost: number } | null;
   art_url?: string | null;
   error?: string;
 }
@@ -1387,6 +1388,22 @@ export function App() {
     });
   }
 
+  async function smithyRepair(cost: number) {
+    setConfirm({
+      title: "Repair Armor?",
+      message: `Pay ${cost}g to restore your armor to full.`,
+      confirmLabel: "Repair",
+      onConfirm: async () => {
+        const { ok, body } = await postJson("/api/smithy/repair", { method: "POST" });
+        if (!ok) return;
+        if (body && typeof body.armor_restored === "number") {
+          toast.success(`Armor repaired (+${body.armor_restored} restored).`);
+        }
+        void refresh();
+      },
+    });
+  }
+
   async function buyDrink(drinkId: string) {
     const { ok, body } = await postJson(`/api/pub/drink/${drinkId}`, { method: "POST" });
     if (!ok) return;
@@ -1655,7 +1672,7 @@ export function App() {
         );
       } else if (townSection === "smithy" && state.me.character && state.smithy) {
         sectionContent = (
-          <SmithyCard smithy={state.smithy} navOverlay={townNav} onSharpen={smithySharpen} />
+          <SmithyCard smithy={state.smithy} navOverlay={townNav} onSharpen={smithySharpen} onRepair={smithyRepair} />
         );
       } else if (townSection === "hunt" && state.me.character) {
         sectionContent = (
@@ -6171,10 +6188,12 @@ function SmithyCard({
   smithy,
   navOverlay,
   onSharpen,
+  onRepair,
 }: {
   smithy: SmithyResponse;
   navOverlay?: React.ReactNode;
   onSharpen: (itemId: number, itemName: string, cost: number, verb: string) => void;
+  onRepair: (cost: number) => void;
 }) {
   const hero = navOverlay
     ? <LocationHero src={smithy.art_url} label="The Smithy" nav={navOverlay} />
@@ -6199,6 +6218,38 @@ function SmithyCard({
         <span style={{ color: "#fbbf24", fontWeight: 600 }}>{smithy.gold}g</span>{" "}
         · each upgrade adds <strong>+1</strong>; capped at <strong>3</strong> per item.
       </p>
+      {smithy.armorRepair && smithy.armorRepair.current < smithy.armorRepair.max && (() => {
+        const r = smithy.armorRepair!;
+        const pct = r.current / r.max;
+        const canAfford = smithy.gold >= r.cost;
+        return (
+          <div style={{ marginTop: 12, padding: 12, background: "#1d1f23", borderRadius: 8, border: "1px solid #3b1515" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <Icon name="shield" size={22} color="#ef4444" />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontWeight: 600, color: "#f5f5f5", fontSize: 15, fontFamily: DISPLAY_FONT }}>Repair Armor</div>
+                <div style={{ ...muted, fontSize: 12, marginTop: 2 }}>
+                  {r.current}/{r.max} armor remaining
+                </div>
+                <div style={{ height: 4, background: "#0e0f12", borderRadius: 2, overflow: "hidden", marginTop: 4 }}>
+                  <div style={{ width: `${pct * 100}%`, height: "100%", background: "#6b7280", transition: "width 0.3s ease" }} />
+                </div>
+              </div>
+              <button
+                onClick={() => onRepair(r.cost)}
+                disabled={!canAfford}
+                style={{
+                  ...smallActionBtn(canAfford ? "#3a1a1a" : "#222428", canAfford ? "#f87171" : "#7a7d83"),
+                  opacity: canAfford ? 1 : 0.6,
+                  cursor: canAfford ? "pointer" : "not-allowed",
+                }}
+              >
+                {canAfford ? `Repair — ${r.cost}g` : `Need ${r.cost}g`}
+              </button>
+            </div>
+          </div>
+        );
+      })()}
       {smithy.items.length === 0 ? (
         <p style={muted}>
           Nothing equipped to work on. Equip a weapon or armor first, then come back.

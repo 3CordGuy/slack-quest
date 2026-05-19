@@ -112,6 +112,7 @@ import {
   healCharacter,
   joinQuest,
   refillMana,
+  initArmorPool,
   releaseShopClaim,
   scaleMonsterForJoin,
   getQuestPartySize,
@@ -2675,6 +2676,19 @@ app.get("/api/inn", async (c) => {
 // =============================================================================
 // SMITHY — sharpen / tune / reinforce equipped gear. +1 power per upgrade,
 // capped at SMITHY_SHARPEN_CAP (3). Cost = (power + 1) × 20g.
+const SMITHY_REPAIR_PRICE_PER_POINT = 12; // gold per missing armor point
+
+function smithyRepairCost(missing: number): number {
+  return missing * SMITHY_REPAIR_PRICE_PER_POINT;
+}
+
+function computeArmorPowerFromSlots(slots: Record<string, { power: number; item_subtype?: string | null } | null>): number {
+  return (slots.body?.power ?? 0) +
+    Math.floor((slots.helmet?.power ?? 0) / 2) +
+    Math.floor((slots.pants?.power ?? 0) / 4) +
+    (slots.off_hand?.item_subtype === "shield" ? (slots.off_hand?.power ?? 0) : 0);
+}
+
 // =============================================================================
 const SMITHY_SHARPEN_CAP = 3;
 const SMITHY_SHARPEN_PRICE_PER_LEVEL = 20;
@@ -2712,9 +2726,10 @@ app.get("/api/smithy", async (c) => {
   if (await getActiveQuestForCharacter(c.env.DB, session.slack_user_id)) {
     return c.json({ error: "mid_quest" }, 400);
   }
-  const [weapon, armor] = await Promise.all([
+  const [weapon, armor, allSlots] = await Promise.all([
     getEquipped(c.env.DB, session.slack_user_id, "weapon"),
     getEquipped(c.env.DB, session.slack_user_id, "armor"),
+    getAllEquippedSlots(c.env.DB, session.slack_user_id),
   ]);
   const items = [weapon, armor]
     .filter((i): i is NonNullable<typeof i> => !!i)
@@ -2729,8 +2744,14 @@ app.get("/api/smithy", async (c) => {
       cost: it.sharpens_count >= SMITHY_SHARPEN_CAP ? 0 : smithySharpenCost(it.power),
       verb: smithVerbFor(it),
     }));
+  const armorPower = computeArmorPowerFromSlots(allSlots);
+  const armorMax = Math.floor(armorPower / 2);
+  const armorMissing = Math.max(0, armorMax - character.shield);
+  const armorRepair = armorMax > 0
+    ? { current: character.shield, max: armorMax, cost: smithyRepairCost(armorMissing) }
+    : null;
   const art_url = await getOrScheduleViewArt(c.env.AI, artTarget(c.env), c.executionCtx, "smithy_interior", undefined, TOWN_WEEKLY_MS);
-  return c.json({ items, gold: character.gold, art_url });
+  return c.json({ items, gold: character.gold, armorRepair, art_url });
 });
 
 app.post("/api/smithy/:itemId/sharpen", async (c) => {
@@ -2777,6 +2798,28 @@ app.post("/api/smithy/:itemId/sharpen", async (c) => {
     },
     verb: smithVerbFor(updated),
   });
+});
+
+app.post("/api/smithy/repair", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const character = await getCharacter(c.env.DB, session.slack_user_id);
+  if (!character) return c.json({ error: "no_character" }, 404);
+  if (await getActiveQuestForCharacter(c.env.DB, session.slack_user_id)) {
+    return c.json({ error: "mid_quest" }, 400);
+  }
+  const slots = await getAllEquippedSlots(c.env.DB, session.slack_user_id);
+  const armorPower = computeArmorPowerFromSlots(slots);
+  const armorMax = Math.floor(armorPower / 2);
+  if (armorMax <= 0) return c.json({ error: "no_armor" }, 400);
+  const armorMissing = Math.max(0, armorMax - character.shield);
+  if (armorMissing === 0) return c.json({ error: "not_needed" }, 400);
+  const cost = smithyRepairCost(armorMissing);
+  if (character.gold < cost) return c.json({ error: "insufficient_gold", price: cost, gold: character.gold }, 400);
+  const paid = await tryDeductGold(c.env.DB, session.slack_user_id, cost);
+  if (!paid) return c.json({ error: "insufficient_gold_race" }, 400);
+  await initArmorPool(c.env.DB, session.slack_user_id);
+  return c.json({ ok: true, paid: cost, gold_remaining: character.gold - cost, armor_restored: armorMissing, armor_max: armorMax });
 });
 
 app.post("/api/inn/:roomId/stay", async (c) => {

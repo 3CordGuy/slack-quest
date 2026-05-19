@@ -1605,14 +1605,14 @@ function FighterHpRow({ hp, maxHp, shield, armorPower }: { hp: number; maxHp: nu
           <div style={{ width: `${pct * 100}%`, height: "100%", background: color, transition: "width 0.3s ease" }} />
         </div>
         {armorMax > 0 && (
-          <div style={{ height: 4, background: "#0e0f12", borderRadius: 2, overflow: "hidden" }} title={`Armor: ${shield}/${armorMax}`}>
+          <div style={{ height: 4, background: shield === 0 ? "#3b1515" : "#0e0f12", borderRadius: 2, overflow: "hidden" }} title={shield === 0 ? "Armor depleted" : `Armor: ${shield}/${armorMax}`}>
             <div style={{ width: `${armorPct * 100}%`, height: "100%", background: "#6b7280", transition: "width 0.3s ease" }} />
           </div>
         )}
       </div>
       <div style={{ ...muted, fontSize: 11, minWidth: 48, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
         {hp}/{maxHp}
-        {armorMax > 0 && <div style={{ fontSize: 10, color: "#6b7280" }}>{shield}/{armorMax} 🛡</div>}
+        {armorMax > 0 && <div style={{ fontSize: 10, color: shield === 0 ? "#ef4444" : "#6b7280" }}>{shield}/{armorMax} 🛡</div>}
       </div>
     </div>
   );
