@@ -416,7 +416,24 @@ export type GridRoomContent =
   | { kind: "loot"; items: LootOption[]; taken: boolean }
   | { kind: "key_pickup"; tier: KeyTier; taken: boolean }
   | { kind: "trap"; choices: TrapChoice[]; resolved: boolean }
-  | { kind: "lockbox"; lock_tier: KeyTier; options: LootOption[]; resolved: boolean }
+  | {
+      kind: "lockbox";
+      lock_tier: KeyTier;
+      options: LootOption[];
+      resolved: boolean;
+      // New two-step flow (added 2026-05): the chest stays closed until a
+      // party member spends a key to open it. Then items become claimable
+      // by ANY party member (including different items by different
+      // members, or one player taking everything). Resolves when someone
+      // hits Close or every item is claimed.
+      //   - Legacy lockboxes (saved before this field existed) have
+      //     `opened === undefined` and use the original single-pick flow
+      //     via the old /lockbox endpoint.
+      //   - New lockboxes are emitted with `opened: false, claims: {}`.
+      opened?: boolean;
+      // Map from option-index (stringified) → claimer slack_user_id.
+      claims?: Record<string, string>;
+    }
   | { kind: "npc"; greeting: string; offer: LootOption; resolved: boolean; art_url?: string | null }
   | { kind: "merchant"; greeting: string; stock: LootOption[]; resolved: boolean; art_url?: string | null };
 

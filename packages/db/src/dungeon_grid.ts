@@ -243,6 +243,10 @@ export function generateGridDungeon(inputs: GridGenInputs): DungeonGraph {
       lock_tier: tier,
       options: inputs.rollLoot(inputs.tier + 1, "loot"),
       resolved: false,
+      // Two-step open: chest sits closed until a key is spent. After
+      // opening, every party member can claim any unclaimed option.
+      opened: false,
+      claims: {},
     });
   }
   if (quota.npc > 0) {

@@ -5480,6 +5480,98 @@ app.post("/api/quest/:id/dungeon/grid/trap", async (c) => {
 });
 
 // Lockbox: consume a key + grab one loot option. Body: `{ pick: number }`.
+// Two-step lockbox flow (new):
+//   1. POST /lockbox/open → consume a key, mark opened=true
+//   2. POST /lockbox/claim {pick} → claim one option from the open chest
+//   3. POST /lockbox/close → manually close the chest (resolved=true)
+// Auto-closes when every option is claimed. Legacy lockboxes (no `opened`
+// field) keep using the original single-pick /lockbox endpoint below.
+
+app.post("/api/quest/:id/dungeon/grid/lockbox/open", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const questId = parseInt(c.req.param("id"), 10);
+  if (!Number.isFinite(questId)) return c.json({ error: "bad_quest_id" }, 400);
+  const quest = await getActiveQuestForCharacter(c.env.DB, session.slack_user_id);
+  if (!quest || quest.id !== questId) return c.json({ error: "quest_not_active" }, 404);
+  const graph = quest.scene.graph;
+  if (!graph) return c.json({ error: "not_a_graph_dungeon" }, 400);
+  const node = graph.nodes[graph.current];
+  const content = node?.content;
+  if (!content || content.kind !== "lockbox") return c.json({ error: "not_a_lockbox" }, 400);
+  if (content.resolved) return c.json({ error: "already_resolved" }, 400);
+  if (content.opened) return c.json({ ok: true, already_open: true });
+  const character = await getCharacter(c.env.DB, session.slack_user_id);
+  if (!character) return c.json({ error: "no_character" }, 404);
+  const keyToSpend = pickKeyForLock(character, content.lock_tier);
+  if (!keyToSpend) return c.json({ error: "no_key", tier: content.lock_tier }, 400);
+  const keyField = keyToSpend === "bronze" ? "keys_bronze" : keyToSpend === "silver" ? "keys_silver" : "keys_gold";
+  const dec = await c.env.DB.prepare(`UPDATE characters SET ${keyField} = ${keyField} - 1 WHERE slack_user_id = ? AND ${keyField} > 0`)
+    .bind(session.slack_user_id).run();
+  if (!dec.meta?.changes || dec.meta.changes === 0) {
+    return c.json({ error: "no_key", tier: content.lock_tier }, 400);
+  }
+  const updatedContent: GridRoomContent = { ...content, opened: true, claims: content.claims ?? {} };
+  const updatedNode = { ...node, content: updatedContent };
+  const updatedGraph: DungeonGraph = { ...graph, nodes: { ...graph.nodes, [node.id]: updatedNode } };
+  await saveScene(c.env.DB, questId, { ...quest.scene, graph: updatedGraph });
+  return c.json({ ok: true, key_spent: keyToSpend });
+});
+
+app.post("/api/quest/:id/dungeon/grid/lockbox/claim", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const questId = parseInt(c.req.param("id"), 10);
+  if (!Number.isFinite(questId)) return c.json({ error: "bad_quest_id" }, 400);
+  const quest = await getActiveQuestForCharacter(c.env.DB, session.slack_user_id);
+  if (!quest || quest.id !== questId) return c.json({ error: "quest_not_active" }, 404);
+  const graph = quest.scene.graph;
+  if (!graph) return c.json({ error: "not_a_graph_dungeon" }, 400);
+  const node = graph.nodes[graph.current];
+  const content = node?.content;
+  if (!content || content.kind !== "lockbox") return c.json({ error: "not_a_lockbox" }, 400);
+  if (content.resolved) return c.json({ error: "already_resolved" }, 400);
+  if (!content.opened) return c.json({ error: "not_open" }, 400);
+  const body = (await c.req.json().catch(() => ({}))) as { pick?: number };
+  const idx = typeof body.pick === "number" ? body.pick - 1 : -1;
+  const choice = content.options[idx];
+  if (!choice) return c.json({ error: "bad_pick" }, 400);
+  const claims = { ...(content.claims ?? {}) };
+  if (claims[String(idx)]) return c.json({ error: "already_claimed" }, 400);
+  claims[String(idx)] = session.slack_user_id;
+  const item = await addLootToInventory(c.env.DB, session.slack_user_id, choice);
+  // Auto-resolve if every option has been claimed.
+  const fullyClaimed = content.options.every((_, i) => claims[String(i)]);
+  const updatedContent: GridRoomContent = {
+    ...content, claims, resolved: fullyClaimed,
+  };
+  const updatedNode = { ...node, content: updatedContent };
+  const updatedGraph: DungeonGraph = { ...graph, nodes: { ...graph.nodes, [node.id]: updatedNode } };
+  await saveScene(c.env.DB, questId, { ...quest.scene, graph: updatedGraph });
+  return c.json({ ok: true, item: { id: item.id, name: item.item_name }, fully_claimed: fullyClaimed });
+});
+
+app.post("/api/quest/:id/dungeon/grid/lockbox/close", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const questId = parseInt(c.req.param("id"), 10);
+  if (!Number.isFinite(questId)) return c.json({ error: "bad_quest_id" }, 400);
+  const quest = await getActiveQuestForCharacter(c.env.DB, session.slack_user_id);
+  if (!quest || quest.id !== questId) return c.json({ error: "quest_not_active" }, 404);
+  const graph = quest.scene.graph;
+  if (!graph) return c.json({ error: "not_a_graph_dungeon" }, 400);
+  const node = graph.nodes[graph.current];
+  const content = node?.content;
+  if (!content || content.kind !== "lockbox") return c.json({ error: "not_a_lockbox" }, 400);
+  if (content.resolved) return c.json({ ok: true, already_resolved: true });
+  if (!content.opened) return c.json({ error: "not_open" }, 400);
+  const updatedContent: GridRoomContent = { ...content, resolved: true };
+  const updatedNode = { ...node, content: updatedContent };
+  const updatedGraph: DungeonGraph = { ...graph, nodes: { ...graph.nodes, [node.id]: updatedNode } };
+  await saveScene(c.env.DB, questId, { ...quest.scene, graph: updatedGraph });
+  return c.json({ ok: true });
+});
+
 app.post("/api/quest/:id/dungeon/grid/lockbox", async (c) => {
   const session = await currentSession(c.env.DB, c.req.header("cookie"));
   if (!session) return c.json({ error: "unauthenticated" }, 401);

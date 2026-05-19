@@ -1411,6 +1411,8 @@ export function GridDungeonView({
           onTakeKey={takeKey}
           onRefresh={onRefresh}
           questId={questId}
+          selfId={selfId}
+          characterClass={character.class}
         />
       )}
 
@@ -1671,10 +1673,15 @@ function DoorInteractionModal({ dir, door, character, onUseKey, onPick, onBash, 
   );
 }
 
-function ContentOverlay({ node, content, onEnterCombat, onTakeLoot, onTakeKey, onRefresh, questId }: {
+function ContentOverlay({ node, content, onEnterCombat, onTakeLoot, onTakeKey, onRefresh, questId, selfId, characterClass }: {
   node: GridNode; content: GridRoomContent | undefined;
   onEnterCombat: () => void; onTakeLoot: (idx: number) => void; onTakeKey: () => void;
   onRefresh: () => void; questId: number;
+  selfId: string;
+  // Used to gate the Sage's Foresee preview on the closed-chest panel.
+  // Only the sage class id ("staff_sage") sees chest contents before
+  // the key is spent.
+  characterClass: string;
 }) {
   // Legacy AI-graph fallback: synthesise an encounter content from the
   // node.encounter field so legacy quests still see the Engage panel.
@@ -1769,27 +1776,142 @@ function ContentOverlay({ node, content, onEnterCombat, onTakeLoot, onTakeKey, o
   if (c.kind === "lockbox" && !c.resolved) {
     const tier = c.lock_tier;
     const tierColor = tier === "gold" ? "#fbbf24" : tier === "silver" ? "#d1d5db" : "#b45309";
+    // Legacy lockboxes from before two-step flow (no `opened` field) keep
+    // using the original single-pick UI for backwards compat.
+    const isLegacy = c.opened === undefined;
+    const claims = c.claims ?? {};
+    const isSage = characterClass === "staff_sage";
+
+    if (isLegacy) {
+      return (
+        <OverlayPanel title={
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+            <Icon name="key" color={tierColor} size={14} /> Locked chest — needs {tier} key
+          </span>
+        }>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 8 }}>
+            {c.options.map((opt, i) => (
+              <LootOptionTile
+                key={i}
+                opt={opt}
+                onClick={async () => {
+                  const res = await fetch(`/api/quest/${questId}/dungeon/grid/lockbox`, {
+                    method: "POST", credentials: "include", headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ pick: i + 1 }),
+                  });
+                  if (res.ok) { toast.success("Chest opened"); onRefresh(); }
+                  else { const b = await res.json().catch(() => ({})) as { error?: string }; toast.error(b.error === "no_key" ? `No ${tier} key` : "Could not open"); }
+                }}
+              />
+            ))}
+          </div>
+        </OverlayPanel>
+      );
+    }
+
+    // CLOSED chest — show locked panel + Open button. Sage gets a foresee
+    // preview; everyone else sees just a count of mystery slots.
+    if (!c.opened) {
+      return (
+        <OverlayPanel title={
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+            <Icon name="key" color={tierColor} size={14} /> Locked chest — needs {tier} key
+          </span>
+        }>
+          <p style={{ fontSize: 13, color: "#9aa0a6", margin: "0 0 12px", fontStyle: "italic" }}>
+            A chest sits sealed. {c.options.length} item{c.options.length === 1 ? "" : "s"} await within. Spend a {tier} key to open — your whole party can claim from the contents.
+          </p>
+          <button
+            onClick={async () => {
+              const res = await fetch(`/api/quest/${questId}/dungeon/grid/lockbox/open`, {
+                method: "POST", credentials: "include",
+              });
+              if (res.ok) { toast.success("Chest opened"); onRefresh(); }
+              else { const b = await res.json().catch(() => ({})) as { error?: string }; toast.error(b.error === "no_key" ? `No ${tier} key` : "Could not open"); }
+            }}
+            style={{ padding: "10px 18px", background: tierColor + "22", border: `1.5px solid ${tierColor}`, borderRadius: 8, color: tierColor, cursor: "pointer", fontSize: 13, fontWeight: 700, display: "inline-flex", alignItems: "center", gap: 8 }}>
+            <Icon name="key" color={tierColor} size={14} /> Open with {tier} key
+          </button>
+          {isSage && (
+            <div style={{ marginTop: 14, padding: "10px 12px", background: "#1c1c2a", borderRadius: 8, border: "1px dashed #6366f1" }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: "#a5b4fc", textTransform: "uppercase", letterSpacing: 1, marginBottom: 6, display: "flex", alignItems: "center", gap: 6 }}>
+                <Icon name="crystal-ball" size={12} color="#a5b4fc" /> Sage's Foresee
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: 6 }}>
+                {c.options.map((opt, i) => (
+                  <LootOptionTile key={i} opt={opt} disabled onClick={() => {}} />
+                ))}
+              </div>
+              <div style={{ fontSize: 11, color: "#6b7280", fontStyle: "italic", marginTop: 6 }}>
+                Your sight pierces the lid. Only you see this.
+              </div>
+            </div>
+          )}
+        </OverlayPanel>
+      );
+    }
+
+    // OPEN chest — items claimable. Each option shows claimed-by badge if
+    // taken. Auto-resolves server-side when all claimed.
+    const remainingCount = c.options.filter((_, i) => !claims[String(i)]).length;
     return (
       <OverlayPanel title={
         <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-          <Icon name="key" color={tierColor} size={14} /> Locked chest — needs {tier} key
+          <Icon name="cubes" color={tierColor} size={14} /> Open chest — claim what you want
         </span>
       }>
+        <p style={{ fontSize: 12, color: "#9aa0a6", margin: "0 0 10px" }}>
+          Anyone in the party can claim. {remainingCount === 0 ? "All taken — close to continue." : `${remainingCount} item${remainingCount === 1 ? "" : "s"} left.`}
+        </p>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 8 }}>
-          {c.options.map((opt, i) => (
-            <LootOptionTile
-              key={i}
-              opt={opt}
-              onClick={async () => {
-                const res = await fetch(`/api/quest/${questId}/dungeon/grid/lockbox`, {
-                  method: "POST", credentials: "include", headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ pick: i + 1 }),
-                });
-                if (res.ok) { toast.success("Chest opened"); onRefresh(); }
-                else { const b = await res.json().catch(() => ({})) as { error?: string }; toast.error(b.error === "no_key" ? `No ${tier} key` : "Could not open"); }
-              }}
-            />
-          ))}
+          {c.options.map((opt, i) => {
+            const claimer = claims[String(i)];
+            const claimedByMe = claimer === selfId;
+            const claimedByOther = !!claimer && !claimedByMe;
+            return (
+              <div key={i} style={{ position: "relative" }}>
+                <LootOptionTile
+                  opt={opt}
+                  disabled={!!claimer}
+                  onClick={async () => {
+                    if (claimer) return;
+                    const res = await fetch(`/api/quest/${questId}/dungeon/grid/lockbox/claim`, {
+                      method: "POST", credentials: "include",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ pick: i + 1 }),
+                    });
+                    if (res.ok) { toast.success(`Claimed ${opt.name}`); onRefresh(); }
+                    else { const b = await res.json().catch(() => ({})) as { error?: string }; toast.error(b.error ?? "Could not claim"); }
+                  }}
+                />
+                {claimer && (
+                  <div style={{
+                    position: "absolute", top: 6, right: 6,
+                    fontSize: 10, fontWeight: 700, letterSpacing: 0.3,
+                    padding: "2px 6px", borderRadius: 4,
+                    background: claimedByMe ? "#16a34a99" : "#37415199",
+                    color: claimedByMe ? "#dcfce7" : "#cbd5e1",
+                    border: `1px solid ${claimedByMe ? "#22c55e" : "#475569"}`,
+                  }}>
+                    {claimedByMe ? "you" : "claimed"}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+        <div style={{ marginTop: 12, display: "flex", justifyContent: "flex-end" }}>
+          <button
+            onClick={async () => {
+              const res = await fetch(`/api/quest/${questId}/dungeon/grid/lockbox/close`, {
+                method: "POST", credentials: "include",
+              });
+              if (res.ok) { onRefresh(); }
+              else { toast.error("Could not close"); }
+            }}
+            style={{ padding: "6px 14px", background: "#1f2937", border: "1px solid #374151", borderRadius: 6, color: "#cbd5e1", cursor: "pointer", fontSize: 12 }}>
+            {remainingCount === 0 ? "Continue" : "Close chest"}
+          </button>
         </div>
       </OverlayPanel>
     );
