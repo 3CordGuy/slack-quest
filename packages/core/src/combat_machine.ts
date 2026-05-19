@@ -251,7 +251,7 @@ export type TurnAction =
   | { kind: "signature"; actor: ActorId; target_id?: ActorId }
   | { kind: "flee"; actor: ActorId }
   | { kind: "position"; actor: ActorId; to: BattlePosition }
-  | { kind: "shield"; actor: ActorId }
+  | { kind: "shield"; actor: ActorId; target?: ActorId }
   | { kind: "wait"; actor: ActorId }
   | { kind: "mark"; actor: ActorId; target_id?: string | null }
   | {
@@ -438,7 +438,7 @@ export type CombatEvent =
   | { type: "battle_hymn_consumed"; actor: ActorId; bonus: number; remaining: number }
   | { type: "mark_applied"; actor: ActorId; expires_after_round: number; bonus: number }
   | { type: "mark_bonus"; actor: ActorId; bonus: number }
-  | { type: "shield_applied"; actor: ActorId; restored: number; new_armor: number }
+  | { type: "shield_applied"; actor: ActorId; target: ActorId; restored: number; new_armor: number }
   | { type: "passive_warden_shield"; actor: ActorId; amount: number }
   | { type: "passive_mage_free_sig"; actor: ActorId }
   | { type: "passive_druid_regen"; actor: ActorId; amount: number }
@@ -1414,25 +1414,53 @@ function handleHeal(
 
 function handleShield(
   s: CombatState,
-  action: { kind: "shield"; actor: ActorId },
+  action: { kind: "shield"; actor: ActorId; target?: ActorId },
 ): StepResult {
-  const events: CombatEvent[] = [];
   const actor = s.fighters.find((f) => f.id === action.actor);
   if (!actor) return reject(s, `shield: actor ${action.actor} not found`);
+  if (currentActor(s) !== action.actor) return reject(s, `not ${action.actor}'s turn`);
   if (actor.hp <= 0) return reject(s, "shield: actor is down");
+  if (actor.mana < 1) return reject(s, `${action.actor} has no mana for shield`);
 
-  // Replenish the depletable armor pool to its max (floor(armor_power / 2)).
-  // Never reduce: if bonus shield (e.g. trap reward) pushed it above armorMax, preserve it.
-  const armorMax = Math.floor(actor.armor_power / 2);
-  const newArmor = Math.max(actor.shield, armorMax);
-  const restored = newArmor - actor.shield;
+  const tick = tickAtTurnStart(s, action.actor);
+  if (tick.earlyReturn) return tick.earlyReturn;
+  // Shield costs 1 mana — deduct on the post-tick state.
+  const state = {
+    ...tick.state,
+    fighters: tick.state.fighters.map((f) =>
+      f.id === action.actor ? { ...f, mana: Math.max(0, f.mana - 1) } : f,
+    ),
+  };
 
-  events.push({ type: "shield_applied", actor: action.actor, restored, new_armor: newArmor });
+  const targetId = action.target ?? action.actor;
+  const target = state.fighters.find((f) => f.id === targetId);
+  if (!target) return reject(state, `shield: target ${targetId} not found`);
+  if (target.hp <= 0) return reject(state, "shield: target is down");
 
-  const updatedFighters = s.fighters.map((f) =>
-    f.id === action.actor ? { ...f, shield: newArmor } : f,
-  );
-  const next = advanceTurn({ ...s, fighters: updatedFighters });
+  // Replenish the target's depletable armor pool to its max (floor(armor_power / 2)).
+  // Never reduce: if bonus shield pushed it above armorMax, preserve it.
+  const armorMax = Math.floor(target.armor_power / 2);
+  const newArmor = Math.max(target.shield, armorMax);
+  const restored = newArmor - target.shield;
+
+  const events: CombatEvent[] = [
+    ...tick.events,
+    { type: "shield_applied", actor: action.actor, target: targetId, restored, new_armor: newArmor },
+  ];
+
+  const next = advanceTurn({
+    ...state,
+    fighters: state.fighters.map((f) =>
+      f.id === targetId ? { ...f, shield: newArmor } : f,
+    ),
+    stats: {
+      ...state.stats,
+      [action.actor]: {
+        ...(state.stats[action.actor] ?? { damage_taken: 0, healing_done: 0, shielding_done: 0, kills: 0 }),
+        shielding_done: (state.stats[action.actor]?.shielding_done ?? 0) + restored,
+      },
+    },
+  });
   return { state: next, events: [...events, ...turnStartEvent(next)] };
 }
 

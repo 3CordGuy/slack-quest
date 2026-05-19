@@ -421,7 +421,7 @@ function partyXpBonus(partySize: number): number {
   if (partySize === 3) return 1.2;
   return 1.25;
 }
-const SUPPORT_BASE_CONTRIBUTION = 1;
+const SUPPORT_BASE_CONTRIBUTION = 5;
 const SHOP_RESTOCK_MS = 6 * 60 * 60 * 1000;
 const SHOP_BUY_CAP_PER_CYCLE = 2;
 const SHOP_STOCK_BASE = 6;
@@ -5704,11 +5704,11 @@ async function applyWebCombatOutcome(
   const totalPoolGold = won ? Math.round(baseRewardGold(tier) * multiplier) : 0;
 
   // Contribution split: damage dealt + support actions (healing counts at
-  // 50%, shielding at 25%) + small baseline so pure-support fighters always
-  // earn a meaningful share even if they dealt no direct damage.
+  // 75%, shielding at 50%) + baseline so pure-support fighters always earn
+  // a meaningful share even if they dealt no direct damage.
   const contributions = state.fighters.map((f) => {
     const fs = state.stats?.[f.id] ?? { damage_taken: 0, healing_done: 0, shielding_done: 0, kills: 0 };
-    const supportCredit = Math.floor(fs.healing_done / 2) + Math.floor(fs.shielding_done / 4);
+    const supportCredit = Math.floor(fs.healing_done * 3 / 4) + Math.floor(fs.shielding_done / 2);
     return {
       id: f.id,
       points: (state.contribution[f.id] ?? 0) + supportCredit + SUPPORT_BASE_CONTRIBUTION,

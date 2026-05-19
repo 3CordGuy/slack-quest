@@ -128,7 +128,7 @@ type CombatEvent =
   | { type: "fighter_down"; target: string }
   | { type: "monster_down"; killed_by: string }
   | { type: "heal_applied"; actor: string; target: string; amount: number; rolled: number }
-  | { type: "shield_applied"; actor: string; target: string; amount: number; rolled: number }
+  | { type: "shield_applied"; actor: string; target: string; restored: number; new_armor: number }
   | { type: "signature_used"; actor: string; damage: number; formula: string; mana_spent: number }
   | {
       type: "flee_check";
@@ -488,7 +488,7 @@ function formatEvent(e: CombatEvent, state: CombatState | null): LogEntry[] {
     case "shield_applied":
       return row(
         "shield",
-        <>{nameOf(e.actor)} → {nameOf(e.target)}: +{e.amount} shield{e.rolled > e.amount ? ` (rolled ${e.rolled}, capped)` : ""}</>,
+        <>{nameOf(e.actor === e.target ? e.actor : e.actor)} 🛡 {e.actor === e.target ? "reinforced" : `→ ${nameOf(e.target)}`}{e.restored > 0 ? `: +${e.restored} armor` : ": already full"} ({e.new_armor} total)</>,
         "good",
       );
     case "signature_used":

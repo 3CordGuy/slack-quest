@@ -6111,6 +6111,7 @@ function StoreItemRow({
   headerRight,
   extraBadges,
   opacity,
+  sold,
   actions,
 }: {
   item: {
