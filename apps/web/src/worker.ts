@@ -1796,6 +1796,38 @@ app.post("/api/quest/start_with_party", async (c) => {
 
   if (invitees.length > 0) {
     await Promise.all(invitees.map((uid) => addPendingInvitee(c.env.DB, questId, uid)));
+
+    // DM each invitee
+    const token = c.env.SLACK_BOT_TOKEN;
+    if (token) {
+      const questLabel =
+        variant === "dungeon" ? "a dungeon expedition"
+        : variant === "boss" ? "a boss fight"
+        : variant === "gauntlet" ? "a gauntlet"
+        : "a quest";
+      c.executionCtx.waitUntil((async () => {
+        // Fetch slack_username for each invitee — only DM users with a real Slack presence
+        const rows = await c.env.DB
+          .prepare(`SELECT slack_user_id, slack_username FROM characters WHERE slack_user_id IN (${invitees.map(() => "?").join(",")})`)
+          .bind(...invitees)
+          .all<{ slack_user_id: string; slack_username: string | null }>();
+        const slackUsers = new Map((rows.results ?? []).filter((r) => r.slack_username).map((r) => [r.slack_user_id, r]));
+        await Promise.all(invitees.filter((uid) => slackUsers.has(uid)).map(async (uid) => {
+          const openRes = await fetch("https://slack.com/api/conversations.open", {
+            method: "POST",
+            headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json; charset=utf-8" },
+            body: JSON.stringify({ users: uid }),
+          });
+          const openData = (await openRes.json()) as { ok: boolean; channel?: { id: string } };
+          if (!openData.ok || !openData.channel?.id) return;
+          await postSlackMessage(token, {
+            channel: openData.channel.id,
+            text: `⚔️ *${character.name}* invited you to join ${questLabel}! Open the web app to accept or decline: ${WEB_PUBLIC_BASE}`,
+          });
+        }));
+      })());
+    }
+
     return c.json({ ok: true, quest_id: questId, lobby: true });
   }
 
@@ -4051,11 +4083,37 @@ app.post("/api/quest/:id/lobby/invite", async (c) => {
   if (!body?.target_user_id) return c.json({ error: "missing_target" }, 400);
   // Verify the target exists on the same team
   const target = await c.env.DB
-    .prepare(`SELECT slack_user_id FROM characters WHERE slack_user_id = ? AND slack_team_id = ?`)
+    .prepare(`SELECT slack_user_id, name, slack_username FROM characters WHERE slack_user_id = ? AND slack_team_id = ?`)
     .bind(body.target_user_id, session.slack_team_id)
-    .first<{ slack_user_id: string }>();
+    .first<{ slack_user_id: string; name: string; slack_username: string | null }>();
   if (!target) return c.json({ error: "not_found" }, 404);
   await addPendingInvitee(c.env.DB, questId, body.target_user_id);
+
+  // Send a Slack DM only if the target has a Slack username (i.e. a real Slack presence)
+  const dmToken = c.env.SLACK_BOT_TOKEN;
+  if (dmToken && target.slack_username) {
+    const inviter = await getCharacter(c.env.DB, session.slack_user_id);
+    const questLabel =
+      (quest.scene as { expedition?: { theme: string } | null; variant?: string; monster_name?: string }).expedition?.theme
+        ? `a dungeon expedition`
+        : (quest.scene as { variant?: string; monster_name?: string }).variant === "boss"
+          ? `a boss fight`
+          : `a quest`;
+    c.executionCtx.waitUntil((async () => {
+      const openRes = await fetch("https://slack.com/api/conversations.open", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${dmToken}`, "Content-Type": "application/json; charset=utf-8" },
+        body: JSON.stringify({ users: body.target_user_id }),
+      });
+      const openData = (await openRes.json()) as { ok: boolean; channel?: { id: string } };
+      if (!openData.ok || !openData.channel?.id) return;
+      await postSlackMessage(dmToken, {
+        channel: openData.channel.id,
+        text: `⚔️ *${inviter?.name ?? "Someone"}* invited you to join ${questLabel}! Open the web app to accept or decline: ${WEB_PUBLIC_BASE}`,
+      });
+    })());
+  }
+
   return c.json({ ok: true });
 });
 
