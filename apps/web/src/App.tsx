@@ -191,6 +191,7 @@ interface Character {
   mana: number;
   max_mana: number;
   shield: number;
+  armor_power?: number;
   gold: number;
   scars: string[];
   keys_bronze: number;

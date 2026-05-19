@@ -155,6 +155,7 @@ interface Character {
   mana: number;
   max_mana: number;
   shield: number;
+  armor_power?: number;
   keys_bronze: number;
   keys_silver: number;
   keys_gold: number;
@@ -413,7 +414,7 @@ function PartyBar({ fighters, selfId, party }: {
           mana: c.mana,
           max_mana: c.max_mana,
           shield: c.shield,
-          armor_power: 0,
+          armor_power: c.armor_power ?? 0,
           isSelf: c.slack_user_id === selfId,
           isDead: c.hp <= 0,
         }];

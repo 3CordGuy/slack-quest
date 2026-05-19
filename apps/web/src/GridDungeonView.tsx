@@ -109,6 +109,7 @@ interface Character {
   mana: number;
   max_mana: number;
   shield: number;
+  armor_power?: number;
   keys_bronze: number;
   keys_silver: number;
   keys_gold: number;
@@ -363,7 +364,7 @@ function PartyBar({ fighters, selfId, party, onClickSelf, flashIds }: {
     : party.flatMap((c) => {
         if (seen.has(c.slack_user_id)) return [];
         seen.add(c.slack_user_id);
-        return [{ key: c.slack_user_id, name: c.name, cls: c.class, level: c.level, position: c.position, hp: c.hp, max_hp: c.max_hp, mana: c.mana, max_mana: c.max_mana, shield: c.shield, armor_power: 0, isSelf: c.slack_user_id === selfId, isDead: c.hp <= 0 }];
+        return [{ key: c.slack_user_id, name: c.name, cls: c.class, level: c.level, position: c.position, hp: c.hp, max_hp: c.max_hp, mana: c.mana, max_mana: c.max_mana, shield: c.shield, armor_power: c.armor_power ?? 0, isSelf: c.slack_user_id === selfId, isDead: c.hp <= 0 }];
       });
 
   const backRow = members.filter((m) => m.position === "back");
