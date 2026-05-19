@@ -81,6 +81,10 @@ interface Monster {
   art_url?: string;
   element_weakness?: "fire" | "ice" | "lightning";
   element_resistance?: "fire" | "ice" | "lightning";
+  // What damage type the monster's attacks deal. Non-physical bypasses
+  // the player armor pool entirely; surfaced on the monster card so
+  // players see it before the swing lands.
+  attack_damage_type?: "physical" | "magic" | "fire" | "ice" | "lightning";
 }
 
 interface CombatState {
@@ -123,6 +127,14 @@ type CombatEvent =
       damage_after_armor: number;
       shield_absorbed: number;
       hp_damage: number;
+      // Engine emits this on every monster_attack. Non-physical types
+      // bypass the depletable armor pool entirely (intentional rule), so
+      // we surface the type clearly in the log to avoid the "why didn't
+      // my shield block this?" confusion.
+      damage_type?: "physical" | "magic" | "fire" | "ice" | "lightning";
+      // Resistance reduction (from the target's stat_bonus.resist_<type>).
+      // Surfaced in the breakdown when present.
+      resistance_reduction?: number;
     }
   | { type: "boss_phase_transition"; new_phase: 2 }
   | { type: "fighter_down"; target: string }
@@ -467,6 +479,8 @@ function formatEvent(e: CombatEvent, state: CombatState | null): LogEntry[] {
             damage_after_position={e.damage_after_position}
             shield_absorbed={e.shield_absorbed}
             hp_damage={e.hp_damage}
+            damage_type={e.damage_type}
+            resistance_reduction={e.resistance_reduction}
           />
         ),
       }];
@@ -1416,8 +1430,25 @@ function MonsterCard({
               {monster.wave && monster.total_waves && ` · Wave ${monster.wave}/${monster.total_waves}`}
               {` · Round ${round}`}
             </div>
-            {(monster.element_weakness || monster.element_resistance) && !isDead && (
+            {((monster.attack_damage_type && monster.attack_damage_type !== "physical") || monster.element_weakness || monster.element_resistance) && !isDead && (
               <div style={{ display: "flex", gap: 6, marginTop: 3, flexWrap: "wrap" }}>
+                {monster.attack_damage_type && monster.attack_damage_type !== "physical" && (() => {
+                  const t = monster.attack_damage_type;
+                  const icon = t === "fire" ? "🔥" : t === "ice" ? "❄️" : t === "lightning" ? "⚡" : "✨";
+                  const color = t === "fire" ? "#fb923c" : t === "ice" ? "#7dd3fc" : t === "lightning" ? "#fde047" : "#c084fc";
+                  return (
+                    <span
+                      title={`Attacks deal ${t} damage — bypasses armor pool`}
+                      style={{
+                        fontSize: 10, fontWeight: 700, background: color + "22",
+                        border: `1px solid ${color}55`, color, borderRadius: 4,
+                        padding: "1px 5px", textTransform: "uppercase", letterSpacing: 0.4,
+                      }}
+                    >
+                      {icon} {t} attacks
+                    </span>
+                  );
+                })()}
                 {monster.element_weakness && (
                   <span style={{ fontSize: 10, background: "#7f1d1d22", border: "1px solid #f8717144", color: "#fca5a5", borderRadius: 4, padding: "1px 5px" }}>
                     {monster.element_weakness === "fire" ? "🔥" : monster.element_weakness === "ice" ? "❄️" : "⚡"} weak
@@ -1906,19 +1937,40 @@ function ActionBtn({
   );
 }
 
-function MonsterHitEntry({ monsterName, targetName, raw_damage, damage_after_armor, damage_after_position, shield_absorbed, hp_damage }: {
+function MonsterHitEntry({
+  monsterName, targetName, raw_damage, damage_after_armor, damage_after_position,
+  shield_absorbed, hp_damage, damage_type, resistance_reduction,
+}: {
   monsterName: string; targetName: string;
   raw_damage: number; damage_after_armor: number;
   damage_after_position: number; shield_absorbed: number; hp_damage: number;
+  damage_type?: "physical" | "magic" | "fire" | "ice" | "lightning";
+  resistance_reduction?: number;
 }) {
   const [open, setOpen] = useState(false);
   const armorReduction = raw_damage - damage_after_armor;
   const positionReduction = damage_after_armor - damage_after_position;
+  const dtype = damage_type ?? "physical";
+
+  // Non-physical attacks bypass the armor pool entirely. Show that up
+  // front so the player knows why shield/armor didn't soak the hit.
+  const nonPhysical = dtype !== "physical";
+  const dtypeIcon =
+    dtype === "fire" ? "🔥" :
+    dtype === "ice" ? "❄️" :
+    dtype === "lightning" ? "⚡" :
+    dtype === "magic" ? "✨" : "⚔";
+  const dtypeColor =
+    dtype === "fire" ? "#f97316" :
+    dtype === "ice" ? "#38bdf8" :
+    dtype === "lightning" ? "#fbbf24" :
+    dtype === "magic" ? "#a855f7" : undefined;
 
   const tags: string[] = [];
   if (armorReduction > 0) tags.push(`−${armorReduction} armor`);
   if (positionReduction > 0) tags.push(`−${positionReduction} back row`);
   if (shield_absorbed > 0) tags.push(`−${shield_absorbed} shield`);
+  if ((resistance_reduction ?? 0) > 0) tags.push(`−${resistance_reduction} resist`);
 
   const badColor = TONE_COLOR["bad"];
   const mutedColor = TONE_COLOR["muted"];
@@ -1928,7 +1980,25 @@ function MonsterHitEntry({ monsterName, targetName, raw_damage, damage_after_arm
       <span>
         <Icon name="fire-symbol" />{" "}
         {monsterName} hits {targetName} for{" "}
-        <strong>{hp_damage} HP</strong>
+        <strong>{hp_damage} HP</strong>{" "}
+        <span
+          title={nonPhysical ? `${dtype} damage — bypasses armor` : "physical damage — soaked by armor first"}
+          style={{
+            fontSize: 11, fontWeight: 700, padding: "1px 6px", borderRadius: 4,
+            background: nonPhysical ? `${dtypeColor}22` : "#1f2937",
+            color: nonPhysical ? dtypeColor : mutedColor,
+            border: `1px solid ${nonPhysical ? dtypeColor + "55" : "#374151"}`,
+            verticalAlign: "middle",
+            textTransform: "uppercase", letterSpacing: 0.5,
+          }}
+        >
+          {dtypeIcon} {dtype}
+        </span>
+        {nonPhysical && (
+          <span style={{ color: mutedColor, fontSize: 11, marginLeft: 6 }}>
+            bypasses armor
+          </span>
+        )}
         {tags.length > 0 && <span style={{ color: mutedColor }}> ({tags.join(", ")})</span>}
         {" "}
         <button
@@ -1950,9 +2020,17 @@ function MonsterHitEntry({ monsterName, targetName, raw_damage, damage_after_arm
           gridTemplateColumns: "max-content 1fr", gap: "3px 12px",
         }}>
           <span>⚔ Raw damage</span><span style={{ color: "#e5e7eb" }}>{raw_damage}</span>
+          <span>{dtypeIcon} Damage type</span>
+          <span style={{ color: dtypeColor ?? "#e5e7eb", textTransform: "capitalize" }}>
+            {dtype}{nonPhysical && <span style={{ color: mutedColor }}> — bypasses armor pool</span>}
+          </span>
           {armorReduction > 0 && <>
             <span>🛡 Armor</span>
             <span>−{armorReduction} → <span style={{ color: "#e5e7eb" }}>{damage_after_armor}</span></span>
+          </>}
+          {(resistance_reduction ?? 0) > 0 && <>
+            <span>🌀 Resist</span>
+            <span>−{resistance_reduction}</span>
           </>}
           {positionReduction > 0 && <>
             <span>↩ Back row</span>
