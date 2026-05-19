@@ -2515,13 +2515,14 @@ function PartyChips({ fighters, selfId, flashIds, onClickSelf }: {
           {f.armor_power > 0 && (() => {
             const armorMax = Math.floor(f.armor_power / 2);
             const armorPct = armorMax > 0 ? Math.max(0, f.shield / armorMax) : 0;
+            const depleted = f.shield === 0;
             return (
               <>
-                <div style={{ height: 3, background: "#0e0f12", borderRadius: 2, overflow: "hidden", marginTop: 3 }}>
-                  <div style={{ width: `${armorPct * 100}%`, height: "100%", background: f.shield === 0 ? "#374151" : "#64748b", transition: "width 0.3s ease" }} />
+                <div style={{ height: 4, background: "#1e2028", borderRadius: 2, overflow: "hidden", marginTop: 3, border: "1px solid #2a2d33" }}>
+                  <div style={{ width: `${armorPct * 100}%`, height: "100%", background: depleted ? "#374151" : "#94a3b8", transition: "width 0.3s ease" }} />
                 </div>
-                <div style={{ fontSize: 9, color: f.shield === 0 ? "#ef4444" : "#6b7280", marginTop: 1 }}>
-                  {f.shield}/{armorMax} 🛡
+                <div style={{ fontSize: 10, color: depleted ? "#f87171" : "#94a3b8", marginTop: 2, fontWeight: depleted ? 700 : 400 }}>
+                  {f.shield}/{armorMax} 🛡{depleted ? " broken" : ""}
                 </div>
               </>
             );
