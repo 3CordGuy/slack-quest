@@ -1715,9 +1715,10 @@ export function App() {
       <DashboardLayout
         main={
           <>
-            {state.lobbyQuest && (
+            {(state.lobbyQuest || state.activeQuest) && (
               <LobbyView
                 selfId={state.me.slack_user_id}
+                activeQuestId={state.activeQuest?.quest.id ?? null}
                 onQuestStarted={async () => {
                   const questId = state.lobbyQuest!.quest.id;
                   const variant = (state.lobbyQuest!.quest.scene as { variant?: string })?.variant ?? "standard";

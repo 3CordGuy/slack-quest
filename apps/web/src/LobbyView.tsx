@@ -1,6 +1,14 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { createPortal } from "react-dom";
 import { Icon } from "./icons";
+
+interface ChatMessage {
+  id: number;
+  user_id: string;
+  user_name: string;
+  message: string;
+  created_at: number;
+}
 
 // Types matching what the API returns
 interface LobbyMember {
@@ -29,9 +37,11 @@ interface TeamMember {
 
 export function LobbyView({
   selfId,
+  activeQuestId,
   onQuestStarted,
 }: {
   selfId: string;
+  activeQuestId?: number | null;
   onQuestStarted: () => void;
 }) {
   const [open, setOpen] = useState(true);
@@ -42,6 +52,14 @@ export function LobbyView({
   const [showInvite, setShowInvite] = useState(false);
   const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
   const [inviting, setInviting] = useState<string | null>(null);
+
+  // Chat state
+  const questId = quest?.id ?? activeQuestId ?? null;
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [chatInput, setChatInput] = useState("");
+  const [sending, setSending] = useState(false);
+  const lastMessageAt = useRef(0);
+  const chatEndRef = useRef<HTMLDivElement | null>(null);
 
   const refresh = useCallback(async () => {
     const res = await fetch("/api/quest/lobby", { credentials: "include" });
@@ -61,6 +79,46 @@ export function LobbyView({
     const t = setInterval(() => void refresh(), 4000);
     return () => clearInterval(t);
   }, [refresh]);
+
+  // Poll for new chat messages every 3 seconds
+  useEffect(() => {
+    if (!questId) return;
+    const pollChat = async () => {
+      const res = await fetch(`/api/quest/${questId}/chat?since=${lastMessageAt.current}`, { credentials: "include" });
+      if (!res.ok) return;
+      const body = (await res.json()) as { messages?: ChatMessage[] };
+      const incoming = body.messages ?? [];
+      if (incoming.length > 0) {
+        lastMessageAt.current = incoming[incoming.length - 1].created_at;
+        setMessages((prev) => [...prev, ...incoming]);
+      }
+    };
+    void pollChat();
+    const t = setInterval(() => void pollChat(), 3000);
+    return () => clearInterval(t);
+  }, [questId]);
+
+  // Auto-scroll to bottom when new messages arrive
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages]);
+
+  async function sendMessage() {
+    if (!questId || !chatInput.trim() || sending) return;
+    setSending(true);
+    const text = chatInput.trim();
+    setChatInput("");
+    try {
+      await fetch(`/api/quest/${questId}/chat`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: text }),
+      });
+    } finally {
+      setSending(false);
+    }
+  }
 
   async function loadTeamMembers() {
     const res = await fetch("/api/characters", { credentials: "include" });
@@ -480,6 +538,89 @@ export function LobbyView({
         )}
       </div>{/* action buttons */}
     </div>{/* inner content div */}
+
+      {/* Party Chat */}
+      {questId && (
+        <div style={{
+          borderTop: "1px solid #1f2937",
+          display: "flex",
+          flexDirection: "column",
+          marginTop: 16,
+          paddingTop: 12,
+        }}>
+          <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: 1, color: "#4b5563", marginBottom: 8, paddingLeft: 2 }}>
+            Party Chat
+          </div>
+          {/* Message list */}
+          <div style={{
+            height: 180,
+            overflowY: "auto",
+            display: "flex",
+            flexDirection: "column",
+            gap: 6,
+            marginBottom: 8,
+            paddingRight: 2,
+          }}>
+            {messages.length === 0 ? (
+              <div style={{ color: "#4b5563", fontSize: 12, fontStyle: "italic", paddingLeft: 2 }}>
+                No messages yet. Say hello!
+              </div>
+            ) : (
+              messages.map((m) => (
+                <div key={m.id} style={{ fontSize: 13, lineHeight: 1.4 }}>
+                  <span style={{
+                    fontWeight: 700,
+                    color: m.user_id === selfId ? "#60a5fa" : "#a78bfa",
+                    marginRight: 6,
+                  }}>
+                    {m.user_id === selfId ? "You" : m.user_name}
+                  </span>
+                  <span style={{ color: "#d1d5db" }}>{m.message}</span>
+                </div>
+              ))
+            )}
+            <div ref={chatEndRef} />
+          </div>
+          {/* Input */}
+          <div style={{ display: "flex", gap: 6 }}>
+            <input
+              type="text"
+              value={chatInput}
+              onChange={(e) => setChatInput(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") void sendMessage(); }}
+              placeholder="Type a message…"
+              maxLength={300}
+              style={{
+                flex: 1,
+                background: "#13161c",
+                border: "1px solid #1f2937",
+                borderRadius: 6,
+                color: "#f5f5f5",
+                fontSize: 13,
+                padding: "7px 10px",
+                outline: "none",
+              }}
+            />
+            <button
+              disabled={sending || !chatInput.trim()}
+              onClick={() => void sendMessage()}
+              style={{
+                padding: "7px 12px",
+                borderRadius: 6,
+                border: "none",
+                background: sending || !chatInput.trim() ? "#1f2937" : "#2563eb",
+                color: sending || !chatInput.trim() ? "#4b5563" : "#fff",
+                fontSize: 13,
+                fontWeight: 600,
+                cursor: sending || !chatInput.trim() ? "not-allowed" : "pointer",
+              }}
+            >
+              Send
+            </button>
+          </div>
+        </div>
+      )}
+
         </div>{/* padding wrapper */}
       </div>{/* drawer panel */}
     </>

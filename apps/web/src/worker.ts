@@ -4158,6 +4158,44 @@ app.post("/api/quest/:id/lobby/invite", async (c) => {
   return c.json({ ok: true });
 });
 
+// Quest party chat — ephemeral, scoped to quest lifetime.
+// Only party members (lobby or active) can read/write.
+app.get("/api/quest/:id/chat", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const questId = Number(c.req.param("id"));
+  const since = Number(c.req.query("since") ?? "0");
+  // Verify membership
+  const member = await c.env.DB
+    .prepare(`SELECT character_id FROM quest_party WHERE quest_id = ? AND character_id = ?`)
+    .bind(questId, session.slack_user_id).first();
+  if (!member) return c.json({ error: "not_in_party" }, 403);
+  const rows = await c.env.DB
+    .prepare(`SELECT id, user_id, user_name, message, created_at FROM quest_chat WHERE quest_id = ? AND created_at > ? ORDER BY created_at ASC LIMIT 100`)
+    .bind(questId, since).all<{ id: number; user_id: string; user_name: string; message: string; created_at: number }>();
+  return c.json({ messages: rows.results ?? [] });
+});
+
+app.post("/api/quest/:id/chat", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const questId = Number(c.req.param("id"));
+  const member = await c.env.DB
+    .prepare(`SELECT character_id FROM quest_party WHERE quest_id = ? AND character_id = ?`)
+    .bind(questId, session.slack_user_id).first();
+  if (!member) return c.json({ error: "not_in_party" }, 403);
+  const body = await c.req.json<{ message: string }>();
+  const message = typeof body?.message === "string" ? body.message.trim().slice(0, 300) : "";
+  if (!message) return c.json({ error: "empty" }, 400);
+  const character = await getCharacter(c.env.DB, session.slack_user_id);
+  const now = Date.now();
+  const result = await c.env.DB
+    .prepare(`INSERT INTO quest_chat (quest_id, user_id, user_name, message, created_at) VALUES (?, ?, ?, ?, ?)`)
+    .bind(questId, session.slack_user_id, character?.name ?? "Unknown", message, now)
+    .run();
+  return c.json({ ok: true, id: result.meta.last_row_id, created_at: now });
+});
+
 // Most-recent completed/failed quests for the signed-in user. Used to render
 // the history card.
 app.get("/api/quests/recent", async (c) => {
