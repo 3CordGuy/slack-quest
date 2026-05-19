@@ -364,13 +364,32 @@ function PartyBar({ fighters, selfId, party, onClickSelf, flashIds }: {
   flashIds?: Set<string>;
 }) {
   const seen = new Set<string>();
-  type Member = { key: string; name: string; cls: string; level: number; position: "front" | "back"; hp: number; max_hp: number; mana: number; max_mana: number; shield: number; armor_power: number; isSelf: boolean; isDead: boolean };
+  type Member = {
+    key: string; name: string; cls: string; level: number;
+    position: "front" | "back";
+    hp: number; max_hp: number; mana: number; max_mana: number;
+    shield: number; armor_power: number;
+    isSelf: boolean; isDead: boolean;
+    effects: StatusEffect[];
+  };
   const members: Member[] = fighters
-    ? fighters.map((f) => ({ key: f.id, name: f.name, cls: f.class, level: f.level, position: f.position, hp: f.hp, max_hp: f.max_hp, mana: f.mana, max_mana: f.max_mana, shield: f.shield, armor_power: f.armor_power, isSelf: f.id === selfId, isDead: f.hp <= 0 }))
+    ? fighters.map((f) => ({
+        key: f.id, name: f.name, cls: f.class, level: f.level, position: f.position,
+        hp: f.hp, max_hp: f.max_hp, mana: f.mana, max_mana: f.max_mana,
+        shield: f.shield, armor_power: f.armor_power,
+        isSelf: f.id === selfId, isDead: f.hp <= 0,
+        effects: f.effects ?? [],
+      }))
     : party.flatMap((c) => {
         if (seen.has(c.slack_user_id)) return [];
         seen.add(c.slack_user_id);
-        return [{ key: c.slack_user_id, name: c.name, cls: c.class, level: c.level, position: c.position, hp: c.hp, max_hp: c.max_hp, mana: c.mana, max_mana: c.max_mana, shield: c.shield, armor_power: c.armor_power ?? 0, isSelf: c.slack_user_id === selfId, isDead: c.hp <= 0 }];
+        return [{
+          key: c.slack_user_id, name: c.name, cls: c.class, level: c.level, position: c.position,
+          hp: c.hp, max_hp: c.max_hp, mana: c.mana, max_mana: c.max_mana,
+          shield: c.shield, armor_power: c.armor_power ?? 0,
+          isSelf: c.slack_user_id === selfId, isDead: c.hp <= 0,
+          effects: [], // REST party data doesn't carry effects — only the WS state does
+        }];
       });
 
   const backRow = members.filter((m) => m.position === "back");
@@ -419,6 +438,39 @@ function PartyBar({ fighters, selfId, party, onClickSelf, flashIds }: {
               <div key={mi} style={{ width: 9, height: 9, borderRadius: "50%", background: mi < f.mana ? "#818cf8" : "#1e2028", border: "1px solid #3a3d43" }} />
             ))}
           </div>
+          {/* Status effect pills — burning / frozen / shocked / poisoned /
+              bleeding / regen. Matches the in-combat MonsterCard styling.
+              Empty for legacy REST party-data fighters since /api/quest/active
+              doesn't expose effects. */}
+          {f.effects.length > 0 && (
+            <div style={{ display: "flex", gap: 4, marginTop: 5, flexWrap: "wrap" }}>
+              {f.effects.map((e, i) => {
+                const [color, icon] = e.type === "regen" ? ["#4ade80", "regeneration"]
+                  : e.type === "bleeding" ? ["#f87171", "bleeding-wound"]
+                  : e.type === "burning" ? ["#fb923c", "fire"]
+                  : e.type === "frozen" ? ["#93c5fd", "ice-bolt"]
+                  : e.type === "shocked" ? ["#fbbf24", "electric"]
+                  : ["#c084fc", "poison-cloud"];
+                return (
+                  <span
+                    key={i}
+                    title={`${e.type} ×${e.magnitude} (${e.remaining} turn${e.remaining === 1 ? "" : "s"})`}
+                    style={{
+                      display: "inline-flex", alignItems: "center", gap: 3,
+                      background: `${color}33`, border: `1px solid ${color}aa`,
+                      borderRadius: 4, padding: "1px 5px",
+                      fontSize: 10, color, fontWeight: 700,
+                      textTransform: "capitalize", letterSpacing: 0.2,
+                    }}
+                  >
+                    <Icon name={icon} size={10} color={color} />
+                    {e.type}{e.magnitude > 1 ? ` ×${e.magnitude}` : ""}
+                    <span style={{ opacity: 0.8, fontWeight: 600 }}>· {e.remaining}t</span>
+                  </span>
+                );
+              })}
+            </div>
+          )}
         </div>
       </div>
     );
