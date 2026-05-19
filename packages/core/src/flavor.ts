@@ -1278,7 +1278,7 @@ function rollFocusPower(rarity: Rarity, tier = 1): number {
 // sub-slots. Body armor keeps ~50% share; the other 50% spreads across new
 // slots. Returns a full ItemRoll with slot + stat_bonus pre-populated so
 // callers can pass the roll straight to addItem without further inspection.
-function rollArmorSlot(tier: number): ItemRoll {
+export function rollArmorSlot(tier: number): ItemRoll {
   const rarity = rollRarity(tier);
   const r = Math.random();
   const statBonus = (key: string, v: number) => ({ [key]: v });
@@ -1343,6 +1343,19 @@ function rollArmorSlot(tier: number): ItemRoll {
   return withResist({ type: "armor", rarity, power: rollPower("armor", rarity, tier), slot: "off_hand",
     item_subtype: "shield",
     stat_bonus: statBonus("vit", bonusAmt) }, "off_hand", "shield");
+}
+
+// Rolls an armor-pool-contributing piece: body / helmet / pants / shield off-hand.
+// Used by the smithy's rotating stock. Re-rolls until rollArmorSlot returns one
+// of the four eligible slots (typical retry count ≈ 1–2).
+export function rollSmithyArmor(tier: number): ItemRoll {
+  for (let i = 0; i < 8; i++) {
+    const roll = rollArmorSlot(tier);
+    if (roll.slot === "body" || roll.slot === "helmet" || roll.slot === "pants") return roll;
+    if (roll.slot === "off_hand" && roll.item_subtype === "shield") return roll;
+  }
+  // Final fallback: force a body roll so callers always get a usable piece.
+  return { type: "armor", rarity: rollRarity(tier), power: rollPower("armor", rollRarity(tier), tier), slot: "body" };
 }
 
 // Rolls an armor item that is guaranteed NOT to be body armor. Used by shop

@@ -60,6 +60,7 @@ import {
   rollDice,
   rollItem,
   rollAccessorySlot,
+  rollSmithyArmor,
   rollMerchantItem,
   sellPriceFor,
   step,
@@ -83,6 +84,8 @@ import {
   type DialogOption,
   type DialogPayload,
   type ItemRoll,
+  type ItemType,
+  type Rarity,
   type NpcSpec,
   type RollFn,
   type Stats,
@@ -113,6 +116,11 @@ import {
   joinQuest,
   refillMana,
   initArmorPool,
+  getActiveSmithyStock,
+  insertSmithyStock,
+  getSmithyStockItem,
+  claimSmithyItem,
+  releaseSmithyClaim,
   releaseShopClaim,
   scaleMonsterForJoin,
   getQuestPartySize,
@@ -2839,6 +2847,42 @@ function smithVerbFor(item: { item_type: string; weapon_range?: string | null })
   return { verb: "Upgrade", past: "upgraded", noun: "upgrades", iconName: "anvil", stat: "power" };
 }
 
+const SMITHY_RESTOCK_MS = 4 * 60 * 60 * 1000; // 4 hours
+const SMITHY_STOCK_SIZE = 4;
+
+// Smithy items cost ~1.5× the equivalent shop item — the player gets to choose
+// the exact piece, so we charge a convenience premium.
+function smithyStockPrice(itemType: ItemType, rarity: Rarity): number {
+  return Math.ceil(priceFor(itemType, rarity) * 1.5);
+}
+
+async function ensureSmithyStock(env: Env, characterId: string, level: number): Promise<void> {
+  const existing = await getActiveSmithyStock(env.DB, characterId, SMITHY_RESTOCK_MS);
+  if (existing && existing.length > 0) return;
+  const tierLo = Math.max(1, Math.min(level, 6));
+  const tierHi = Math.max(tierLo, Math.min(level + 1, 9));
+  const randomTier = () => tierLo + Math.floor(Math.random() * (tierHi - tierLo + 1));
+  const generatedAt = Date.now();
+  const rolls = Array.from({ length: SMITHY_STOCK_SIZE }, () => rollSmithyArmor(randomTier()));
+  const items = await Promise.all(rolls.map(async (roll) => {
+    const { name, flavor } = await flavorLootDrop(env.AI, "the smith's rack", "armor", roll.rarity, roll.power, undefined, roll.slot ?? undefined);
+    return {
+      character_id: characterId,
+      generated_at: generatedAt,
+      item_name: name,
+      item_type: roll.type,
+      power: roll.power,
+      rarity: roll.rarity,
+      flavor,
+      price: smithyStockPrice(roll.type, roll.rarity),
+      slot: roll.slot ?? null,
+      stat_bonus: (roll.stat_bonus ?? null) as Record<string, number> | null,
+      item_subtype: roll.item_subtype ?? null,
+    };
+  }));
+  await insertSmithyStock(env.DB, items);
+}
+
 app.get("/api/smithy", async (c) => {
   const session = await currentSession(c.env.DB, c.req.header("cookie"));
   if (!session) return c.json({ error: "unauthenticated" }, 401);
@@ -2847,10 +2891,12 @@ app.get("/api/smithy", async (c) => {
   if (await getActiveQuestForCharacter(c.env.DB, session.slack_user_id)) {
     return c.json({ error: "mid_quest" }, 400);
   }
-  const [weapon, armor, allSlots] = await Promise.all([
+  await ensureSmithyStock(c.env, session.slack_user_id, character.level);
+  const [weapon, armor, allSlots, stock] = await Promise.all([
     getEquipped(c.env.DB, session.slack_user_id, "weapon"),
     getEquipped(c.env.DB, session.slack_user_id, "armor"),
     getAllEquippedSlots(c.env.DB, session.slack_user_id),
+    getActiveSmithyStock(c.env.DB, session.slack_user_id, SMITHY_RESTOCK_MS),
   ]);
   const items = [weapon, armor]
     .filter((i): i is NonNullable<typeof i> => !!i)
@@ -2872,7 +2918,63 @@ app.get("/api/smithy", async (c) => {
     ? { current: character.shield, max: armorMax, cost: smithyRepairCost(armorMissing) }
     : null;
   const art_url = await getOrScheduleViewArt(c.env.AI, artTarget(c.env), c.executionCtx, "smithy_interior", undefined, TOWN_WEEKLY_MS);
-  return c.json({ items, gold: character.gold, armorRepair, art_url });
+  const stockListing = (stock ?? [])
+    .filter((s) => s.bought_by === null)
+    .map((s) => ({
+      id: s.id,
+      item_name: s.item_name,
+      item_type: s.item_type,
+      power: s.power,
+      rarity: s.rarity,
+      flavor: s.flavor,
+      price: s.price,
+      slot: s.slot,
+      stat_bonus: s.stat_bonus,
+      item_subtype: s.item_subtype,
+      level_req: Math.max(1, Math.ceil(s.power / 3)),
+    }));
+  const stockGeneratedAt = stock && stock.length > 0 ? stock[0].generated_at : null;
+  const stockExpiresAt = stockGeneratedAt ? stockGeneratedAt + SMITHY_RESTOCK_MS : null;
+  return c.json({ items, gold: character.gold, armorRepair, stock: stockListing, stockExpiresAt, art_url });
+});
+
+app.post("/api/smithy/buy/:stockId", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const stockId = parseInt(c.req.param("stockId"), 10);
+  if (!Number.isFinite(stockId)) return c.json({ error: "bad_stock_id" }, 400);
+  const character = await getCharacter(c.env.DB, session.slack_user_id);
+  if (!character) return c.json({ error: "no_character" }, 404);
+  if (await getActiveQuestForCharacter(c.env.DB, session.slack_user_id)) {
+    return c.json({ error: "mid_quest" }, 400);
+  }
+  const stockItem = await getSmithyStockItem(c.env.DB, stockId, session.slack_user_id);
+  if (!stockItem) return c.json({ error: "not_found" }, 404);
+  if (stockItem.bought_by) return c.json({ error: "already_sold" }, 400);
+  if (Date.now() - stockItem.generated_at > SMITHY_RESTOCK_MS) return c.json({ error: "expired" }, 400);
+  if (character.gold < stockItem.price) {
+    return c.json({ error: "insufficient_gold", price: stockItem.price, gold: character.gold }, 400);
+  }
+  const claimed = await claimSmithyItem(c.env.DB, stockId, session.slack_user_id);
+  if (!claimed) return c.json({ error: "already_sold" }, 400);
+  const paid = await tryDeductGold(c.env.DB, session.slack_user_id, stockItem.price);
+  if (!paid) {
+    await releaseSmithyClaim(c.env.DB, stockId);
+    return c.json({ error: "insufficient_gold_race" }, 400);
+  }
+  const item = await addItem(c.env.DB, {
+    character_id: session.slack_user_id,
+    item_name: stockItem.item_name,
+    item_type: stockItem.item_type,
+    power: stockItem.power,
+    rarity: stockItem.rarity,
+    flavor: stockItem.flavor ?? "",
+    weapon_range: null,
+    slot: stockItem.slot,
+    stat_bonus: stockItem.stat_bonus,
+    item_subtype: stockItem.item_subtype,
+  });
+  return c.json({ ok: true, paid: stockItem.price, gold_remaining: character.gold - stockItem.price, item });
 });
 
 app.post("/api/smithy/:itemId/sharpen", async (c) => {
