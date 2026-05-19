@@ -18,11 +18,28 @@ interface LobbyMember {
   ready: boolean;
 }
 
+interface LobbyMonster {
+  name: string;
+  max_hp: number;
+  tier: number;
+  is_boss?: boolean;
+}
+
 interface LobbyQuestData {
   id: number;
   mode: string;
   created_by: string;
-  scene: { monster_name?: string; variant?: string; expedition?: { theme: string } | null };
+  elite: boolean;
+  scene: {
+    monster_name?: string;
+    variant?: string;
+    tier?: number;
+    monster_max_hp?: number;
+    total_waves?: number;
+    monsters?: LobbyMonster[];
+    expedition?: { theme: string } | null;
+    graph?: { nodes?: unknown[] } | null;
+  };
   lobby_expires_at: number | null;
 }
 
@@ -33,6 +50,91 @@ interface TeamMember {
   level: number;
   hp: number;
   max_hp: number;
+}
+
+function EnemyPreview({ quest }: { quest: LobbyQuestData }) {
+  const s = quest.scene;
+  const isDungeon = s.variant === "dungeon" || !!s.expedition || !!s.graph;
+  const isGauntlet = s.variant === "gauntlet";
+  const isBoss = s.variant === "boss";
+  const tier = s.tier ?? 1;
+
+  const tierColor = tier >= 5 ? "#ef4444" : tier >= 3 ? "#f59e0b" : "#6b7280";
+  const eliteLabel = quest.elite ? <span style={{ color: "#f59e0b", fontSize: 11, fontWeight: 700, marginLeft: 6 }}>ELITE</span> : null;
+
+  const rowStyle: React.CSSProperties = {
+    display: "flex", alignItems: "center", justifyContent: "space-between",
+    padding: "6px 10px", background: "#13161c", borderRadius: 6,
+    border: "1px solid #1f2937", marginBottom: 4,
+  };
+  const labelStyle: React.CSSProperties = { fontSize: 13, color: "#d1d5db", fontWeight: 600 };
+  const statStyle: React.CSSProperties = { fontSize: 12, color: "#9ca3af", display: "flex", gap: 10 };
+
+  if (isDungeon) {
+    return (
+      <div style={{ marginBottom: 16 }}>
+        <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: 1, color: "#4b5563", marginBottom: 6 }}>Dungeon</div>
+        <div style={rowStyle}>
+          <span style={labelStyle}>
+            {s.expedition?.theme ?? "Dungeon Expedition"}{eliteLabel}
+          </span>
+          <span style={{ ...statStyle }}>
+            <span style={{ color: tierColor }}>Tier {tier}</span>
+          </span>
+        </div>
+        <div style={{ fontSize: 12, color: "#6b7280", paddingLeft: 2 }}>Multiple rooms — enemies revealed as you explore.</div>
+      </div>
+    );
+  }
+
+  if (isGauntlet) {
+    const waves = s.total_waves ?? 1;
+    const monsters: LobbyMonster[] = s.monsters?.length
+      ? s.monsters
+      : [{ name: s.monster_name ?? "?", max_hp: s.monster_max_hp ?? 0, tier }];
+    return (
+      <div style={{ marginBottom: 16 }}>
+        <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: 1, color: "#4b5563", marginBottom: 6 }}>
+          Gauntlet — {waves} wave{waves !== 1 ? "s" : ""}
+        </div>
+        {monsters.map((m, i) => (
+          <div key={i} style={rowStyle}>
+            <span style={labelStyle}>{m.name}{eliteLabel}</span>
+            <span style={statStyle}>
+              <span style={{ color: tierColor }}>Tier {m.tier}</span>
+              <span>❤ {m.max_hp} HP</span>
+            </span>
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  // Standard / boss / bounty pack
+  const monsters: LobbyMonster[] = s.monsters?.length
+    ? s.monsters
+    : [{ name: s.monster_name ?? "?", max_hp: s.monster_max_hp ?? 0, tier, is_boss: isBoss }];
+
+  return (
+    <div style={{ marginBottom: 16 }}>
+      <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: 1, color: "#4b5563", marginBottom: 6 }}>
+        {monsters.length > 1 ? `${monsters.length} Enemies` : isBoss ? "Boss" : "Enemy"}
+      </div>
+      {monsters.map((m, i) => (
+        <div key={i} style={rowStyle}>
+          <span style={labelStyle}>
+            {m.name}
+            {m.is_boss && <span style={{ color: "#ef4444", fontSize: 11, marginLeft: 6 }}>BOSS</span>}
+            {eliteLabel}
+          </span>
+          <span style={statStyle}>
+            <span style={{ color: tierColor }}>Tier {m.tier}</span>
+            <span>❤ {m.max_hp} HP</span>
+          </span>
+        </div>
+      ))}
+    </div>
+  );
 }
 
 export function LobbyView({
@@ -318,6 +420,9 @@ export function LobbyView({
           </div>
         )}
       </div>
+
+      {/* Enemy preview */}
+      {quest && <EnemyPreview quest={quest} />}
 
       {/* Party roster */}
       <div style={{ display: "grid", gap: 8, marginBottom: 20 }}>
