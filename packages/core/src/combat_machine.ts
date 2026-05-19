@@ -474,6 +474,19 @@ export type CombatEvent =
       magnitude: number;
       duration: number;
       resisted: boolean;
+    }
+  // Monster-to-fighter status proc on an elemental hit. Mirrors the
+  // weapon-side `elemental_proc` (which fires player → monster). Separate
+  // event so log renderers and analytics can distinguish "monster gave me
+  // a status" from "I gave the monster a status."
+  | {
+      type: "monster_elemental_proc";
+      actor: ActorId;          // monster id
+      target: ActorId;         // fighter id
+      element: "fire" | "ice" | "lightning";
+      effect: "burning" | "frozen" | "shocked";
+      magnitude: number;
+      duration: number;
     };
 
 // AC formulas — defense thresholds the attacker must equal or exceed on a
@@ -1333,6 +1346,17 @@ function handleMonsterAct(state: CombatState, roll: RollFn): StepResult {
     },
     round_monster_targets: rmt,
   };
+
+  // Elemental proc — fire/ice/lightning monster attacks can apply
+  // burning / frozen / shocked to the target. 25% base, scaled down by
+  // the target's resist_<type> stat. Skipped if the swing dropped them.
+  if (newHp > 0 && (attackDamageType === "fire" || attackDamageType === "ice" || attackDamageType === "lightning")) {
+    const proc = applyMonsterElementalProc(
+      next, monster, target.id, attackDamageType, targetResistPct, roll,
+    );
+    next = proc.state;
+    events.push(...proc.events);
+  }
 
   // QA Paladin — Lay on Hands. Trigger if the target survived but dropped
   // below the threshold. Skips if target died on the swing.
@@ -2602,6 +2626,74 @@ function applyElementalProc(
     events: [{
       type: "elemental_proc", actor: fighter.id, target: targetMonsterId,
       element: fighter.element, effect, magnitude, duration, resisted: false,
+    }],
+  };
+}
+
+// Monster → fighter elemental status proc. Mirrors `applyElementalProc`
+// for the inverse direction. Fires only on non-physical, non-magic hits
+// (fire/ice/lightning); magic damage is "pure" by design — bypasses
+// armor but doesn't proc.
+//
+// Resistance lowers proc chance proportionally — a fighter with 100% resist
+// is immune; 50% resist halves the chance. Tier scales the burn magnitude
+// modestly so high-tier monsters chip harder, but ice/lightning stay flat
+// (their effect is the lock-out / damage amp, not the magnitude).
+const MONSTER_ELEMENT_PROC_RATE = 0.25;
+
+function applyMonsterElementalProc(
+  state: CombatState,
+  monster: CombatMonster,
+  targetFighterId: ActorId,
+  damageType: DamageType,
+  targetResistPct: number,
+  roll: RollFn,
+): { state: CombatState; events: CombatEvent[] } {
+  if (damageType !== "fire" && damageType !== "ice" && damageType !== "lightning") {
+    return { state, events: [] };
+  }
+  const fighter = state.fighters.find((f) => f.id === targetFighterId && f.hp > 0);
+  if (!fighter) return { state, events: [] };
+
+  const adjustedRate = MONSTER_ELEMENT_PROC_RATE * Math.max(0, 1 - targetResistPct / 100);
+  if (adjustedRate <= 0) return { state, events: [] };
+  if (roll(100) > Math.round(adjustedRate * 100)) return { state, events: [] };
+
+  let effect: "burning" | "frozen" | "shocked";
+  let magnitude: number;
+  let duration: number;
+  if (damageType === "fire") {
+    effect = "burning";
+    magnitude = 1 + Math.floor(monster.tier / 4);
+    duration = 3;
+  } else if (damageType === "ice") {
+    effect = "frozen";
+    magnitude = 1;
+    duration = 1;
+  } else {
+    // lightning → shocked: magnitude encodes amplification (1 = 30%, 2 = 45%);
+    // monsters only inflict tier-1 unless they're elite (tier >= 6).
+    effect = "shocked";
+    magnitude = monster.tier >= 6 ? 2 : 1;
+    duration = 2;
+  }
+
+  const newEffect: MachineStatusEffect = {
+    type: effect, magnitude, remaining: duration, source: monster.id,
+  };
+  const updatedFighters = state.fighters.map((f) =>
+    f.id === targetFighterId ? { ...f, effects: mergeEffect(f.effects, newEffect) } : f,
+  );
+  return {
+    state: { ...state, fighters: updatedFighters },
+    events: [{
+      type: "monster_elemental_proc",
+      actor: monster.id,
+      target: targetFighterId,
+      element: damageType,
+      effect,
+      magnitude,
+      duration,
     }],
   };
 }

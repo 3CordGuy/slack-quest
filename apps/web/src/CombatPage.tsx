@@ -262,6 +262,15 @@ type CombatEvent =
       duration: number;
       resisted: boolean;
     }
+  | {
+      type: "monster_elemental_proc";
+      actor: string;          // monster id
+      target: string;          // fighter id
+      element: "fire" | "ice" | "lightning";
+      effect: "burning" | "frozen" | "shocked";
+      magnitude: number;
+      duration: number;
+    }
   | { type: "victory" }
   | { type: "defeat" }
   | { type: "rejected"; reason: string }
@@ -699,6 +708,16 @@ function formatEvent(e: CombatEvent, state: CombatState | null): LogEntry[] {
       const effectLabel = e.effect === "burning" ? "burning" : e.effect === "frozen" ? "frozen" : "shocked";
       return [{ id: nextLogId++, content: <><Icon name={elemIcon} size={11} color={elemColor} /> {nameOf(e.actor)} procs {effectLabel} on {nameOf(e.target)}! ×{e.magnitude} for {e.duration}t</>, tone: "bad" }];
     }
+    case "monster_elemental_proc": {
+      const elemIcon = e.element === "fire" ? "fire" : e.element === "ice" ? "ice-bolt" : "electric";
+      const elemColor = e.element === "fire" ? "#fb923c" : e.element === "ice" ? "#93c5fd" : "#fbbf24";
+      const effectLabel = e.effect === "burning" ? "burning" : e.effect === "frozen" ? "frozen" : "shocked";
+      return [{
+        id: nextLogId++,
+        content: <><Icon name={elemIcon} size={11} color={elemColor} /> {nameOf(e.target)} is now <strong style={{ color: elemColor }}>{effectLabel}</strong>! ×{e.magnitude} for {e.duration}t</>,
+        tone: "bad",
+      }];
+    }
     case "victory":
       return [{ id: nextLogId++, content: <strong>VICTORY</strong>, tone: "good" }];
     case "defeat":
@@ -873,6 +892,16 @@ export function CombatPage({
             // Particle bursts.
             if (evt.type === "elemental_proc" && !evt.resisted) {
               triggerBurst(evt.element === "fire" ? "fire" : evt.element === "ice" ? "ice" : "lightning");
+            }
+            // Monster procs a status on a fighter — burst on element type +
+            // a toast if it landed on the local player (otherwise the
+            // status pill in their roster row may go unnoticed).
+            if (evt.type === "monster_elemental_proc") {
+              triggerBurst(evt.element === "fire" ? "fire" : evt.element === "ice" ? "ice" : "lightning");
+              if (evt.target === selfId) {
+                const elemIcon = evt.element === "fire" ? "🔥" : evt.element === "ice" ? "❄️" : "⚡";
+                toast(`${elemIcon} You're now ${evt.effect}! (${evt.duration}t)`, { duration: 3500 });
+              }
             }
             if (evt.type === "turn_skip") triggerBurst("frozen");
             if (evt.type === "victory") triggerBurst("victory");
