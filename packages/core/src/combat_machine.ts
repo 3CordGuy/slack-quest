@@ -1356,6 +1356,25 @@ function handleMonsterAct(state: CombatState, roll: RollFn): StepResult {
     );
     next = proc.state;
     events.push(...proc.events);
+
+    // Lightning chain — arc to same-row allies. Each ally rolls an
+    // independent proc with their own resist. Damage doesn't spread,
+    // only the shocked status. Skips downed allies and the primary
+    // target (already rolled above).
+    if (attackDamageType === "lightning") {
+      const targetRow = target.position;
+      const chainTargets = next.fighters.filter((f) =>
+        f.id !== target.id && f.hp > 0 && f.position === targetRow,
+      );
+      for (const ally of chainTargets) {
+        const allyResist = ally.resistances?.lightning ?? 0;
+        const chain = applyMonsterElementalProc(
+          next, monster, ally.id, "lightning", allyResist, roll,
+        );
+        next = chain.state;
+        events.push(...chain.events);
+      }
+    }
   }
 
   // QA Paladin — Lay on Hands. Trigger if the target survived but dropped
