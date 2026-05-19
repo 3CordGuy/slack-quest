@@ -171,14 +171,35 @@ export function LobbyView({
   const lastMessageAt = useRef(0);
   const chatEndRef = useRef<HTMLDivElement | null>(null);
 
+  // Track whether we ever loaded a lobby. If we DID and then the endpoint
+  // starts returning null, that's a "lobby just ended" signal (quest
+  // started, was cancelled, etc.) and we bubble up via onQuestStarted.
+  // If we NEVER loaded one, null is just "no lobby for you right now" —
+  // we render nothing and stay quiet (LobbyView may be mounted because
+  // the active quest exists but has no recruitment open).
+  const hadQuestRef = useRef(false);
   const refresh = useCallback(async () => {
     const res = await fetch("/api/quest/lobby", { credentials: "include" });
-    if (!res.ok) return;
-    const body = (await res.json()) as { quest: LobbyQuestData | null; party?: LobbyMember[] };
-    if (!body.quest) {
-      onQuestStarted();
+    if (!res.ok) {
+      setLoading(false);
       return;
     }
+    const body = (await res.json()) as { quest: LobbyQuestData | null; party?: LobbyMember[] };
+    if (!body.quest) {
+      if (hadQuestRef.current) {
+        // Lobby just ended (started, cancelled, declined). Fire once;
+        // reset the flag so subsequent null fetches don't re-trigger.
+        hadQuestRef.current = false;
+        setQuest(null);
+        setParty([]);
+        onQuestStarted();
+      }
+      // Either way, stop loading. Subsequent renders see quest=null and
+      // bail at `if (!quest) return null`.
+      setLoading(false);
+      return;
+    }
+    hadQuestRef.current = true;
     setQuest(body.quest);
     setParty(body.party ?? []);
     setLoading(false);

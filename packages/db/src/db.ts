@@ -3292,8 +3292,12 @@ function rowToLobbyQuest(row: LobbyQuestRow): LobbyQuest {
 // Returns a lobby relevant to the user. Two cases:
 //   1. Pre-combat (status='lobby'): user is an invitee (pending/accepted) or
 //      the creator.
-//   2. Reinforcement (status='active'): user has invite_status='pending' on
-//      an active quest — they were invited mid-fight to come help.
+//   2. Reinforcement (status='active'): EITHER the user is a pending
+//      invitee being recruited, OR the user is already an accepted party
+//      member on an active quest that has at least one pending invitee —
+//      so original members can see/manage the recruitment lobby their
+//      creator opened.
+// Decline keeps the lobby hidden (users who decline shouldn't be nagged).
 // `getLobbyQuestById` returns lobby data for any status; callers decide
 // whether to treat status=active as a reinforcement lobby.
 export async function getLobbyQuestForCharacter(
@@ -3307,9 +3311,18 @@ export async function getLobbyQuestForCharacter(
        FROM quests q
        JOIN quest_party qp ON qp.quest_id = q.id
        WHERE qp.character_id = ?
+         AND qp.invite_status != 'declined'
          AND (
-           (q.status = 'lobby' AND qp.invite_status IN ('pending', 'accepted'))
-           OR (q.status = 'active' AND qp.invite_status = 'pending')
+           q.status = 'lobby'
+           OR (
+             q.status = 'active' AND (
+               qp.invite_status = 'pending'
+               OR EXISTS (
+                 SELECT 1 FROM quest_party qp2
+                 WHERE qp2.quest_id = q.id AND qp2.invite_status = 'pending'
+               )
+             )
+           )
          )
        LIMIT 1`,
     )

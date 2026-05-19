@@ -1864,12 +1864,16 @@ export function App() {
                 selfId={state.me.slack_user_id}
                 activeQuestId={state.activeQuest?.quest.id ?? null}
                 onQuestStarted={async () => {
-                  const questId = state.lobbyQuest!.quest.id;
-                  const variant = (state.lobbyQuest!.quest.scene as { variant?: string })?.variant ?? "standard";
+                  // Capture before the refresh — lobbyQuest may be null in
+                  // reinforcement scenarios where LobbyView is mounted on
+                  // state.activeQuest. Bail safely if we never had a lobby.
+                  const lobbyQuest = state.lobbyQuest;
                   await refresh();
+                  if (!lobbyQuest) return;
+                  const variant = (lobbyQuest.quest.scene as { variant?: string })?.variant ?? "standard";
                   // For non-dungeon quests jump straight into combat — skip the "Open Combat" step
                   if (variant !== "dungeon") {
-                    void startCombat(questId);
+                    void startCombat(lobbyQuest.quest.id);
                   }
                 }}
               />

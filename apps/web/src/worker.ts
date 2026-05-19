@@ -4255,13 +4255,13 @@ app.get("/api/quest/:id/lobby/ws", async (c) => {
   }
   const id = c.env.LOBBY_ROOM.idFromName(`lobby:${questId}`);
   const stub = c.env.LOBBY_ROOM.get(id);
-  // Pass quest + user via querystring; the DO's fetch() parses them.
+  // Forward the original Request so the WS handshake headers
+  // (Sec-WebSocket-Key, Connection: Upgrade, etc.) reach the DO intact.
+  // Just rewrite the URL params so the DO can pick out quest/user.
   const url = new URL(c.req.url);
   url.searchParams.set("quest", String(questId));
   url.searchParams.set("user", session.slack_user_id);
-  return stub.fetch(url.toString(), {
-    headers: { Upgrade: "websocket" },
-  });
+  return stub.fetch(new Request(url.toString(), c.req.raw));
 });
 
 app.post("/api/quest/:id/lobby/accept", async (c) => {
