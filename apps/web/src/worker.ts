@@ -1804,7 +1804,13 @@ app.post("/api/quest/start_with_party", async (c) => {
         : variant === "gauntlet" ? "a gauntlet"
         : "a quest";
       c.executionCtx.waitUntil((async () => {
-        await Promise.all(invitees.map(async (uid) => {
+        // Fetch slack_username for each invitee — only DM users with a real Slack presence
+        const rows = await c.env.DB
+          .prepare(`SELECT slack_user_id, slack_username FROM characters WHERE slack_user_id IN (${invitees.map(() => "?").join(",")})`)
+          .bind(...invitees)
+          .all<{ slack_user_id: string; slack_username: string | null }>();
+        const slackUsers = new Map((rows.results ?? []).filter((r) => r.slack_username).map((r) => [r.slack_user_id, r]));
+        await Promise.all(invitees.filter((uid) => slackUsers.has(uid)).map(async (uid) => {
           const openRes = await fetch("https://slack.com/api/conversations.open", {
             method: "POST",
             headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json; charset=utf-8" },
@@ -4030,15 +4036,15 @@ app.post("/api/quest/:id/lobby/invite", async (c) => {
   if (!body?.target_user_id) return c.json({ error: "missing_target" }, 400);
   // Verify the target exists on the same team
   const target = await c.env.DB
-    .prepare(`SELECT slack_user_id, name FROM characters WHERE slack_user_id = ? AND slack_team_id = ?`)
+    .prepare(`SELECT slack_user_id, name, slack_username FROM characters WHERE slack_user_id = ? AND slack_team_id = ?`)
     .bind(body.target_user_id, session.slack_team_id)
-    .first<{ slack_user_id: string; name: string }>();
+    .first<{ slack_user_id: string; name: string; slack_username: string | null }>();
   if (!target) return c.json({ error: "not_found" }, 404);
   await addPendingInvitee(c.env.DB, questId, body.target_user_id);
 
-  // Send a Slack DM to the invited player if we have a bot token
+  // Send a Slack DM only if the target has a Slack username (i.e. a real Slack presence)
   const dmToken = c.env.SLACK_BOT_TOKEN;
-  if (dmToken) {
+  if (dmToken && target.slack_username) {
     const inviter = await getCharacter(c.env.DB, session.slack_user_id);
     const questLabel =
       (quest.scene as { expedition?: { theme: string } | null; variant?: string; monster_name?: string }).expedition?.theme
