@@ -2899,6 +2899,11 @@ function LockboxPicker({
           >
             <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
               <span style={{ fontWeight: 600 }}>{opt.name}</span>
+              {(opt.level_req ?? 1) > 1 && (
+                <span style={{ fontSize: 11, color: "#f59e0b", fontWeight: 600 }}>
+                  Req L{opt.level_req}
+                </span>
+              )}
               <span style={{ ...muted, fontSize: 11 }}>
                 · {opt.rarity} {opt.slot ? SLOT_LABELS[opt.slot] : opt.item_type} +{opt.power}{opt.stat_bonus && statBonusSummary(opt.stat_bonus) ? ` · ${statBonusSummary(opt.stat_bonus)}` : ""}
               </span>
@@ -2967,6 +2972,11 @@ function TreasurePicker({
           >
             <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
               <span style={{ fontWeight: 600 }}>{opt.name}</span>
+              {(opt.level_req ?? 1) > 1 && (
+                <span style={{ fontSize: 11, color: "#f59e0b", fontWeight: 600 }}>
+                  Req L{opt.level_req}
+                </span>
+              )}
               <span style={{ ...muted, fontSize: 11 }}>
                 · {opt.rarity} {opt.slot ? SLOT_LABELS[opt.slot] : opt.item_type} +{opt.power}{opt.stat_bonus && statBonusSummary(opt.stat_bonus) ? ` · ${statBonusSummary(opt.stat_bonus)}` : ""}
               </span>

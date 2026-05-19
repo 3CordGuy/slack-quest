@@ -870,9 +870,26 @@ export function CombatPage({
               toast(`💛 Lay on Hands — +${(evt as { amount: number }).amount} HP`, { duration: 3000 });
             }
           }
-          // Refresh inventory after any item use so the picker reflects the new state.
-          if (msg.events.some((evt: { type?: string }) => evt.type === "item_used")) {
+          // Refresh inventory after any item use so the picker reflects the
+          // new state. Also surface a toast when I'm the one who used the
+          // item — gives immediate confirmation that the activation landed
+          // (without it, scroll items like Production Outage / Rebase Scroll
+          // looked like they did nothing).
+          for (const evt of msg.events) {
+            if (evt.type !== "item_used") continue;
             void loadItems();
+            const ev = evt as ItemUsedEvent;
+            if (ev.actor !== selfId) continue;
+            const eff = ev.effect;
+            let summary = "";
+            if (eff.kind === "heal") summary = `+${eff.amount} HP`;
+            else if (eff.kind === "mana_bump") summary = `+${eff.added} max mana`;
+            else if (eff.kind === "revive") summary = `revived`;
+            else if (eff.kind === "monster_damage") summary = `${eff.amount} dmg${eff.capped_from ? ` (capped from ${eff.capped_from})` : ""}`;
+            else if (eff.kind === "self_effect") summary = `+regen ${eff.magnitude}×${eff.remaining}t`;
+            else if (eff.kind === "monster_effect") summary = `${eff.effect} ${eff.magnitude}×${eff.remaining}t`;
+            else if (eff.kind === "party_mana_refill") summary = `party mana refilled`;
+            toast(`✨ ${ev.item_name}: ${summary}`, { duration: 4000 });
           }
           // Fire per-card animations immediately (before the state-update delay).
           for (const evt of msg.events) {
@@ -1050,9 +1067,11 @@ export function CombatPage({
       return;
     }
     send({ kind: "use_item", actor: selfId, item_id: itemId, target_id: targetId });
-    // Optimistically remove from local list; loadItems() confirms the real state
-    // once the server broadcasts the item_used event.
-    setItems((prev) => prev.filter((i) => i.id !== itemId));
+    // Don't optimistically remove — if the server rejects (e.g. catalog
+    // mismatch, no live foe), the optimistic remove silently loses the
+    // item from the picker until a full refresh. The item_used broadcast
+    // triggers loadItems() which syncs within ~200ms anyway, and a server
+    // error frame produces a toast so the user knows it didn't fire.
     setItemPicker("closed");
   }
 
@@ -1496,9 +1515,10 @@ function MonsterCard({
           </div>
         </div>
         <BigHpBar current={Math.max(0, monster.hp)} max={monster.max_hp} />
-        {/* Status effects pills */}
+        {/* Status effects pills — sized so they're legible at a glance.
+            Earlier 9px-icon / 10px-text version was unreadable in screenshots. */}
         {monster.effects && monster.effects.length > 0 && !isDead && (
-          <div style={{ display: "flex", gap: 4, marginTop: 4, flexWrap: "wrap" }}>
+          <div style={{ display: "flex", gap: 6, marginTop: 6, flexWrap: "wrap" }}>
             {monster.effects.map((e, i) => {
               const [col, icon] = e.type === "regen" ? ["#4ade80", "regeneration"]
                 : e.type === "bleeding" ? ["#f87171", "bleeding-wound"]
@@ -1507,8 +1527,24 @@ function MonsterCard({
                 : e.type === "shocked" ? ["#fbbf24", "electric"]
                 : ["#c084fc", "poison-cloud"];
               return (
-                <span key={i} style={{ display: "inline-flex", alignItems: "center", gap: 3, fontSize: 10, background: col + "22", border: `1px solid ${col}44`, color: col, borderRadius: 4, padding: "1px 5px" }}>
-                  <Icon name={icon} size={9} /> {e.type} {e.magnitude > 0 ? `×${e.magnitude}` : ""}
+                <span
+                  key={i}
+                  title={`${e.type} ×${e.magnitude} (${e.remaining} turn${e.remaining === 1 ? "" : "s"} remaining)`}
+                  style={{
+                    display: "inline-flex", alignItems: "center", gap: 5,
+                    fontSize: 12, fontWeight: 700,
+                    background: col + "33",
+                    border: `1px solid ${col}88`,
+                    color: col,
+                    borderRadius: 6,
+                    padding: "3px 8px",
+                    textTransform: "capitalize",
+                    letterSpacing: 0.3,
+                  }}
+                >
+                  <Icon name={icon} size={14} color={col} />
+                  {e.type}{e.magnitude > 1 ? ` ×${e.magnitude}` : ""}
+                  <span style={{ opacity: 0.8, fontWeight: 600, fontSize: 11 }}>· {e.remaining}t</span>
                 </span>
               );
             })}
@@ -1732,7 +1768,7 @@ function FighterRow({ fighter, self, current }: { fighter: Fighter; self: boolea
         </div>
         {/* Status effects */}
         {fighter.effects && fighter.effects.length > 0 && (
-          <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginBottom: 4, marginTop: 2 }}>
+          <div style={{ display: "flex", gap: 5, flexWrap: "wrap", marginBottom: 4, marginTop: 4 }}>
             {fighter.effects.map((e, i) => {
               const [color, icon] = e.type === "regen" ? ["#4ade80", "regeneration"]
                 : e.type === "bleeding" ? ["#f87171", "bleeding-wound"]
@@ -1743,15 +1779,18 @@ function FighterRow({ fighter, self, current }: { fighter: Fighter; self: boolea
               return (
                 <span
                   key={i}
-                  title={`${e.type} ×${e.magnitude} (${e.remaining} turns${e.source ? ` — ${e.source}` : ""})`}
+                  title={`${e.type} ×${e.magnitude} (${e.remaining} turn${e.remaining === 1 ? "" : "s"}${e.source ? ` — ${e.source}` : ""})`}
                   style={{
-                    display: "inline-flex", alignItems: "center", gap: 3,
-                    background: `${color}22`, border: `1px solid ${color}55`,
-                    borderRadius: 4, padding: "1px 5px",
-                    fontSize: 10, color, fontWeight: 600,
+                    display: "inline-flex", alignItems: "center", gap: 4,
+                    background: `${color}33`, border: `1px solid ${color}88`,
+                    borderRadius: 5, padding: "2px 7px",
+                    fontSize: 11, color, fontWeight: 700,
+                    textTransform: "capitalize", letterSpacing: 0.2,
                   }}
                 >
-                  <Icon name={icon} size={9} /> {e.magnitude}×{e.remaining}t
+                  <Icon name={icon} size={12} color={color} />
+                  {e.type}{e.magnitude > 1 ? ` ×${e.magnitude}` : ""}
+                  <span style={{ opacity: 0.8, fontWeight: 600 }}>· {e.remaining}t</span>
                 </span>
               );
             })}
