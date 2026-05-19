@@ -146,6 +146,7 @@ const ERROR_LABELS: Record<string, string> = {
 async function postJson(
   url: string,
   init: RequestInit = {},
+  opts: { skipErrorToast?: boolean } = {},
 ): Promise<{ ok: boolean; body: Record<string, unknown> | null }> {
   let res: Response;
   try {
@@ -161,6 +162,7 @@ async function postJson(
     body = null;
   }
   if (!res.ok) {
+    if (opts.skipErrorToast) return { ok: false, body };
     const code = typeof body?.error === "string" ? body.error : `http_${res.status}`;
     const message = ERROR_LABELS[code] ?? code;
     // Friendly addendum for cooldown timers — show minutes remaining.
@@ -1349,8 +1351,23 @@ export function App() {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ kind }),
-    });
-    if (!ok) return;
+    }, { skipErrorToast: true });
+    if (!ok) {
+      if (body?.error === "cooldown" && typeof body.ready_in_ms === "number") {
+        const ms = body.ready_in_ms;
+        const hrs = Math.floor(ms / (60 * 60 * 1000));
+        const mins = Math.max(1, Math.ceil((ms % (60 * 60 * 1000)) / 60_000));
+        const eta = hrs > 0 ? `${hrs}h ${mins}m` : `${mins}m`;
+        const flavor = kind === "long"
+          ? "Gathering more firewood"
+          : "Bandages still drying";
+        toast.error(`${flavor} (cooldown resets in ${eta})`);
+      } else {
+        const code = typeof body?.error === "string" ? body.error : "unknown";
+        toast.error(ERROR_LABELS[code] ?? code);
+      }
+      return;
+    }
     if (body && typeof body.healed === "number") {
       toast.success(`Short rest: +${body.healed} HP.`);
     } else if (body && body.kind === "long") {
