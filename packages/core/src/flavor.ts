@@ -1332,7 +1332,7 @@ function rollArmorSlot(tier: number): ItemRoll {
     return withResist({ type: "armor", rarity, power: 0, slot: "amulet",
       stat_bonus: statBonus(key, bonusAmt) }, "amulet");
   }
-  if (r < 0.98) {
+  if (r < 0.93) {
     // Gloves (off_hand, non-shield) — small armor; STR or DEX buff. No resistance.
     const key = Math.random() < 0.5 ? "str" : "dex";
     return { type: "armor", rarity, power: Math.max(1, Math.floor(rollPower("armor", rarity, tier) / 3)), slot: "off_hand",
