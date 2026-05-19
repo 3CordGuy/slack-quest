@@ -524,3 +524,16 @@ critical hit rules, and the full `step()` reducer for each action kind.
 Engine code is the source of truth — anything mechanical lives there and is
 covered by tests. Network / DO / AI code is intentionally untested; the
 engine surface is small enough that integration bugs are rare and obvious.
+
+---
+
+## Credits
+
+Icons come from **[game-icons.net](https://game-icons.net/)** — a CC BY 3.0
+library of monochrome SVGs by Lorc, Delapouite, and others. They power
+the entire combat UI (weapon icons, status effect pills, slot indicators,
+class portraits' fallback glyphs, dungeon room markers, etc.).
+
+The relevant set is gitignored under `lib/icons/` per project convention;
+to use a new icon, copy the SVG into `apps/web/public/icons/` and register
+the name in `apps/web/src/icons.tsx`.
