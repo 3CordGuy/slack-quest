@@ -6129,13 +6129,38 @@ function StoreItemRow({
   headerRight?: React.ReactNode;
   extraBadges?: React.ReactNode;
   opacity?: number;
+  sold?: boolean;
   actions?: React.ReactNode;
 }) {
   const [showInfo, setShowInfo] = useState(false);
   const levelReq = item.level_req ?? Math.max(1, Math.ceil(item.power / 3));
   const underLevel = playerLevel < levelReq;
   return (
-    <div style={{ padding: 12, background: "#1d1f23", borderRadius: 8, opacity: opacity ?? 1 }}>
+    <div style={{ padding: 12, background: "#1d1f23", borderRadius: 8, opacity: opacity ?? 1, position: "relative", overflow: "hidden" }}>
+      {sold && (
+        <div style={{
+          position: "absolute", inset: 0,
+          display: "flex", alignItems: "center", justifyContent: "center",
+          pointerEvents: "none", zIndex: 2,
+        }}>
+          <span style={{
+            transform: "rotate(-20deg)",
+            fontSize: 42,
+            fontWeight: 900,
+            fontFamily: DISPLAY_FONT,
+            color: "#ef444466",
+            border: "4px solid #ef444455",
+            borderRadius: 6,
+            padding: "2px 14px",
+            letterSpacing: 6,
+            textTransform: "uppercase",
+            userSelect: "none",
+            lineHeight: 1.1,
+          }}>
+            SOLD
+          </span>
+        </div>
+      )}
       <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
         <Icon name={itemIcon(item as Parameters<typeof itemIcon>[0])} size={24} color={itemIconColor(item as Parameters<typeof itemIconColor>[0]) ?? "#cbd5e1"} />
         <div style={{ flex: 1, minWidth: 0 }}>
@@ -6207,6 +6232,7 @@ function ShopRow({
       item={item}
       playerLevel={playerLevel}
       opacity={sold ? 0.5 : 1}
+      sold={sold}
       headerRight={
         <div style={{ fontVariantNumeric: "tabular-nums", color: canAfford ? "#fbbf24" : "#c0392b", fontWeight: 600, fontSize: 13 }}>
           +{item.power} · {item.price}g
