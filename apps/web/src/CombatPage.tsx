@@ -2665,6 +2665,7 @@ function PartyChips({ fighters, selfId, flashIds, onClickSelf }: {
         onClick={clickable ? onClickSelf : undefined}
         title={clickable ? "Open inventory" : undefined}
         style={{
+          position: "relative",
           display: "flex", alignItems: "center", gap: 8,
           background: isSelf ? "rgba(245,245,220,0.09)" : "rgba(255,255,255,0.04)",
           border: isSelf ? "1px solid rgba(245,245,220,0.22)" : "1px solid rgba(255,255,255,0.07)",
@@ -2704,6 +2705,40 @@ function PartyChips({ fighters, selfId, flashIds, onClickSelf }: {
             <div key={mi} style={{ width: 7, height: 7, borderRadius: "50%", background: mi < f.mana ? "#818cf8" : "#1e2028", border: "1px solid #3a3d43" }} />
           ))}
         </div>
+        {/* Status effect pills — burning / frozen / shocked / poisoned /
+            bleeding / regen. Used by outskirts / boss / gauntlet (any
+            non-dungeon quest). Matches the dungeon PartyBar styling. */}
+        {f.effects && f.effects.length > 0 && (
+          <div style={{ position: "absolute", top: -8, right: -4, display: "flex", flexDirection: "column", gap: 3, alignItems: "flex-end" }}>
+            {f.effects.map((e, i) => {
+              const [color, icon] = e.type === "regen" ? ["#4ade80", "regeneration"]
+                : e.type === "bleeding" ? ["#f87171", "bleeding-wound"]
+                : e.type === "burning" ? ["#fb923c", "fire"]
+                : e.type === "frozen" ? ["#93c5fd", "ice-bolt"]
+                : e.type === "shocked" ? ["#fbbf24", "electric"]
+                : ["#c084fc", "poison-cloud"];
+              return (
+                <span
+                  key={i}
+                  title={`${e.type} ×${e.magnitude} (${e.remaining} turn${e.remaining === 1 ? "" : "s"})`}
+                  style={{
+                    display: "inline-flex", alignItems: "center", gap: 3,
+                    background: `${color}33`,
+                    border: `1px solid ${color}aa`,
+                    borderRadius: 4, padding: "1px 5px",
+                    fontSize: 10, color, fontWeight: 700,
+                    textShadow: "0 1px 2px rgba(0,0,0,0.9)",
+                    textTransform: "capitalize", letterSpacing: 0.2,
+                  }}
+                >
+                  <Icon name={icon} size={10} color={color} />
+                  {e.type}{e.magnitude > 1 ? ` ×${e.magnitude}` : ""}
+                  <span style={{ opacity: 0.85, fontWeight: 600 }}>· {e.remaining}t</span>
+                </span>
+              );
+            })}
+          </div>
+        )}
       </div>
     );
   }
