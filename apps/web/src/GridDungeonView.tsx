@@ -132,6 +132,11 @@ interface Monster {
   id?: string; name: string; hp: number; max_hp: number; tier: number;
   initiative: number; effects: StatusEffect[]; is_boss: boolean;
   boss_phase: 1 | 2; art_url?: string;
+  // Mirrors CombatPage's Monster type so the dungeon's MonsterCard renders
+  // the same damage-type / element pills as the standard quest cards.
+  element_weakness?: "fire" | "ice" | "lightning";
+  element_resistance?: "fire" | "ice" | "lightning";
+  attack_damage_type?: "physical" | "magic" | "fire" | "ice" | "lightning";
 }
 
 interface CombatState {
@@ -537,6 +542,41 @@ function MonsterCard({ monster, isBoss, isHit, lungeTick, slashTick, isMarked, i
         <div style={{ fontFamily: DISPLAY_FONT, fontSize: nameFontSize, fontWeight: 700, color: isBoss ? "#fca5a5" : "#f5f5f5", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{monster.name}</div>
         <div style={{ fontSize: 11, color: "#9aa0a6", fontVariantNumeric: "tabular-nums", flexShrink: 0 }}>{Math.max(0, monster.hp)} / {monster.max_hp}</div>
       </div>
+      {/* Damage-type / element pills — mirror the standard quest MonsterCard
+          so dungeon enemies surface the same threat info (fire attacks
+          bypass armor, etc.) instead of looking visually identical to a
+          plain physical mob. */}
+      {((monster.attack_damage_type && monster.attack_damage_type !== "physical") || monster.element_weakness || monster.element_resistance) && !isDead && (
+        <div style={{ display: "flex", gap: 4, marginTop: 4, flexWrap: "wrap" }}>
+          {monster.attack_damage_type && monster.attack_damage_type !== "physical" && (() => {
+            const t = monster.attack_damage_type;
+            const icon = t === "fire" ? "🔥" : t === "ice" ? "❄️" : t === "lightning" ? "⚡" : "✨";
+            const color = t === "fire" ? "#fb923c" : t === "ice" ? "#7dd3fc" : t === "lightning" ? "#fde047" : "#c084fc";
+            return (
+              <span
+                title={`Attacks deal ${t} damage — bypasses armor pool`}
+                style={{
+                  fontSize: 9, fontWeight: 700, background: color + "33",
+                  border: `1px solid ${color}66`, color, borderRadius: 4,
+                  padding: "1px 5px", textTransform: "uppercase", letterSpacing: 0.4,
+                }}
+              >
+                {icon} {t}
+              </span>
+            );
+          })()}
+          {monster.element_weakness && (
+            <span style={{ fontSize: 9, background: "#7f1d1d33", border: "1px solid #f8717166", color: "#fca5a5", borderRadius: 4, padding: "1px 5px", fontWeight: 700, letterSpacing: 0.3 }}>
+              {monster.element_weakness === "fire" ? "🔥" : monster.element_weakness === "ice" ? "❄️" : "⚡"} weak
+            </span>
+          )}
+          {monster.element_resistance && (
+            <span style={{ fontSize: 9, background: "#1e3a5f33", border: "1px solid #60a5fa66", color: "#93c5fd", borderRadius: 4, padding: "1px 5px", fontWeight: 700, letterSpacing: 0.3 }}>
+              {monster.element_resistance === "fire" ? "🔥" : monster.element_resistance === "ice" ? "❄️" : "⚡"} resist
+            </span>
+          )}
+        </div>
+      )}
       <HpBar current={Math.max(0, monster.hp)} max={monster.max_hp} color={isBoss ? "#ef4444" : undefined} height={6} />
       {/* Slash streak — re-mounts when slashTick bumps. Lives in its
           own overflow-hidden layer so it clips to the card edge without
@@ -568,25 +608,35 @@ function MonsterCard({ monster, isBoss, isHit, lungeTick, slashTick, isMarked, i
         </div>
       )}
       {monster.effects && monster.effects.length > 0 && !isDead && (
-        <div style={{ position: "absolute", top: 6, right: 6, display: "flex", flexDirection: "column", gap: 3, alignItems: "flex-end", zIndex: 9 }}>
+        <div style={{ position: "absolute", top: 6, right: 6, display: "flex", flexDirection: "column", gap: 4, alignItems: "flex-end", zIndex: 9 }}>
           {monster.effects.map((e, i) => {
+            // Same color + icon table as CombatPage's MonsterCard so the
+            // dungeon and standard battlefield show identical status pills.
+            // Includes frozen/shocked (which the old dungeon table omitted)
+            // for monster-applied elemental procs the player can suffer
+            // when fighting fire/ice/lightning packs.
             const [color, icon] = e.type === "regen" ? ["#4ade80", "regeneration"]
-              : e.type === "bleeding" ? ["#f87171", "bleeding-hearts"]
+              : e.type === "bleeding" ? ["#f87171", "bleeding-wound"]
               : e.type === "burning" ? ["#fb923c", "fire"]
+              : e.type === "frozen" ? ["#93c5fd", "ice-bolt"]
+              : e.type === "shocked" ? ["#fbbf24", "electric"]
               : ["#c084fc", "poison-cloud"];
             return (
               <span
                 key={i}
-                title={`${e.type} ×${e.magnitude} (${e.remaining} turns)`}
+                title={`${e.type} ×${e.magnitude} (${e.remaining} turn${e.remaining === 1 ? "" : "s"} remaining)`}
                 style={{
-                  display: "inline-flex", alignItems: "center", gap: 3,
+                  display: "inline-flex", alignItems: "center", gap: 4,
                   background: `${color}33`, border: `1px solid ${color}88`,
-                  borderRadius: 4, padding: "1px 5px",
-                  fontSize: 10, color, fontWeight: 700,
+                  borderRadius: 5, padding: "2px 7px",
+                  fontSize: 11, color, fontWeight: 700,
                   textShadow: "0 1px 2px rgba(0,0,0,0.8)",
+                  textTransform: "capitalize", letterSpacing: 0.2,
                 }}
               >
-                <Icon name={icon} size={9} /> {e.magnitude}×{e.remaining}t
+                <Icon name={icon} size={12} color={color} />
+                {e.type}{e.magnitude > 1 ? ` ×${e.magnitude}` : ""}
+                <span style={{ opacity: 0.8, fontWeight: 600 }}>· {e.remaining}t</span>
               </span>
             );
           })}
