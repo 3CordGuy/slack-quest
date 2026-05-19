@@ -6102,40 +6102,42 @@ function StaplesSection({
   );
 }
 
-function ShopRow({
+// Shared item row used by both the shop and smithy stock.
+// Handles icon, name, rarity/level/type badges, flavor text, and the Info panel.
+// Pass shop-specific or smithy-specific action buttons via `actions`.
+function StoreItemRow({
   item,
-  playerGold,
   playerLevel,
-  atCap,
-  onBuy,
-  onHaggle,
+  headerRight,
+  extraBadges,
+  opacity,
+  actions,
 }: {
-  item: ShopItem;
-  playerGold: number;
+  item: {
+    item_name: string;
+    item_type: string;
+    item_subtype?: string | null;
+    weapon_range?: WeaponRange | null;
+    slot?: string | null;
+    power: number;
+    rarity: string;
+    flavor?: string | null;
+    level_req?: number | null;
+    stat_bonus?: Record<string, number> | null;
+  };
   playerLevel: number;
-  atCap: boolean;
-  onBuy: (id: number, name: string) => void;
-  onHaggle: (id: number) => void;
+  headerRight?: React.ReactNode;
+  extraBadges?: React.ReactNode;
+  opacity?: number;
+  actions?: React.ReactNode;
 }) {
   const [showInfo, setShowInfo] = useState(false);
-  const [pressing, setPressing] = useState(false);
-  const sold = !!item.bought_by;
-  const canAfford = playerGold >= item.price;
-  const canBuy = !sold && canAfford && !atCap;
-  const canHaggle = !sold && !item.haggled;
   const levelReq = item.level_req ?? Math.max(1, Math.ceil(item.power / 3));
   const underLevel = playerLevel < levelReq;
   return (
-    <div
-      style={{
-        padding: 12,
-        background: "#1d1f23",
-        borderRadius: 8,
-        opacity: sold ? 0.5 : 1,
-      }}
-    >
+    <div style={{ padding: 12, background: "#1d1f23", borderRadius: 8, opacity: opacity ?? 1 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-        <Icon name={itemIcon(item)} size={24} color={itemIconColor(item) ?? "#cbd5e1"} />
+        <Icon name={itemIcon(item as Parameters<typeof itemIcon>[0])} size={24} color={itemIconColor(item as Parameters<typeof itemIconColor>[0]) ?? "#cbd5e1"} />
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
             <span style={{ fontWeight: 600, color: "#f5f5f5", fontSize: 15, fontFamily: DISPLAY_FONT }}>{item.item_name}</span>
@@ -6153,15 +6155,9 @@ function ShopRow({
                 L{levelReq}{underLevel ? " ⚠" : ""}
               </span>
             )}
-            {item.item_type === "weapon" && item.weapon_range === "ranged" && (
-              <SmallBadge>ranged</SmallBadge>
-            )}
-            {item.item_type === "weapon" && item.weapon_range === "focus" && (
-              <SmallBadge>focus</SmallBadge>
-            )}
-            {item.haggled && (
-              <SmallBadge>{HAGGLE_LABEL[item.haggled]}</SmallBadge>
-            )}
+            {item.item_type === "weapon" && item.weapon_range === "ranged" && <SmallBadge>ranged</SmallBadge>}
+            {item.item_type === "weapon" && item.weapon_range === "focus" && <SmallBadge>focus</SmallBadge>}
+            {extraBadges}
           </div>
           {item.flavor && (
             <div style={{ ...muted, fontSize: 12, fontStyle: "italic", marginTop: 2 }}>
@@ -6169,66 +6165,81 @@ function ShopRow({
             </div>
           )}
         </div>
-        <div
-          style={{
-            fontVariantNumeric: "tabular-nums",
-            color: canAfford ? "#fbbf24" : "#c0392b",
-            fontWeight: 600,
-            fontSize: 13,
-          }}
-        >
-          +{item.power} · {item.price}g
-        </div>
+        {headerRight}
       </div>
       {showInfo && (
-        <div
-          style={{
-            marginTop: 8,
-            padding: "8px 10px",
-            background: "#0e0f12",
-            borderRadius: 6,
-            border: "1px solid #2a2d33",
-            color: "#cbd5e1",
-            fontSize: 12,
-          }}
-        >
+        <div style={{ marginTop: 8, padding: "8px 10px", background: "#0e0f12", borderRadius: 6, border: "1px solid #2a2d33", color: "#cbd5e1", fontSize: 12 }}>
           {describeItemEffect(item)}
         </div>
       )}
       <div style={{ display: "flex", gap: 6, marginTop: 8, justifyContent: "flex-end" }}>
-        <button
-          onClick={() => setShowInfo((v) => !v)}
-          style={smallActionBtn("#222428", "#cbd5e1")}
-          aria-expanded={showInfo}
-        >
+        <button onClick={() => setShowInfo((v) => !v)} style={smallActionBtn("#222428", "#cbd5e1")} aria-expanded={showInfo}>
           {showInfo ? "Hide" : "Info"}
         </button>
-        {!sold && canHaggle && (
-          <button onClick={() => onHaggle(item.id)} style={smallActionBtn("#33363d", "#e6e6e6")}>
-            Haggle
-          </button>
-        )}
-        {!sold && (
-          <button
-            onClick={() => onBuy(item.id, item.item_name)}
-            onPointerDown={() => canBuy && setPressing(true)}
-            onPointerUp={() => setPressing(false)}
-            onPointerLeave={() => setPressing(false)}
-            disabled={!canBuy}
-            style={{
-              ...smallActionBtn(canBuy ? "#1f3a1f" : "#2a2d33", canBuy ? "#86efac" : "#6a7080"),
-              transform: pressing ? "scale(0.92)" : "scale(1)",
-              transition: "transform 0.08s",
-            }}
-          >
-            {atCap ? "Cap reached" : !canAfford ? "Need more gold" : "Buy"}
-          </button>
-        )}
-        {sold && (
-          <span style={{ ...muted, fontSize: 11, alignSelf: "center" }}>Sold.</span>
-        )}
+        {actions}
       </div>
     </div>
+  );
+}
+
+function ShopRow({
+  item,
+  playerGold,
+  playerLevel,
+  atCap,
+  onBuy,
+  onHaggle,
+}: {
+  item: ShopItem;
+  playerGold: number;
+  playerLevel: number;
+  atCap: boolean;
+  onBuy: (id: number, name: string) => void;
+  onHaggle: (id: number) => void;
+}) {
+  const [pressing, setPressing] = useState(false);
+  const sold = !!item.bought_by;
+  const canAfford = playerGold >= item.price;
+  const canBuy = !sold && canAfford && !atCap;
+  const canHaggle = !sold && !item.haggled;
+  return (
+    <StoreItemRow
+      item={item}
+      playerLevel={playerLevel}
+      opacity={sold ? 0.5 : 1}
+      headerRight={
+        <div style={{ fontVariantNumeric: "tabular-nums", color: canAfford ? "#fbbf24" : "#c0392b", fontWeight: 600, fontSize: 13 }}>
+          +{item.power} · {item.price}g
+        </div>
+      }
+      extraBadges={item.haggled ? <SmallBadge>{HAGGLE_LABEL[item.haggled]}</SmallBadge> : undefined}
+      actions={
+        <>
+          {!sold && canHaggle && (
+            <button onClick={() => onHaggle(item.id)} style={smallActionBtn("#33363d", "#e6e6e6")}>
+              Haggle
+            </button>
+          )}
+          {!sold && (
+            <button
+              onClick={() => onBuy(item.id, item.item_name)}
+              onPointerDown={() => canBuy && setPressing(true)}
+              onPointerUp={() => setPressing(false)}
+              onPointerLeave={() => setPressing(false)}
+              disabled={!canBuy}
+              style={{
+                ...smallActionBtn(canBuy ? "#1f3a1f" : "#2a2d33", canBuy ? "#86efac" : "#6a7080"),
+                transform: pressing ? "scale(0.92)" : "scale(1)",
+                transition: "transform 0.08s",
+              }}
+            >
+              {atCap ? "Cap reached" : !canAfford ? "Need more gold" : "Buy"}
+            </button>
+          )}
+          {sold && <span style={{ ...muted, fontSize: 11, alignSelf: "center" }}>Sold.</span>}
+        </>
+      }
+    />
   );
 }
 
@@ -6387,10 +6398,11 @@ function SmithyCard({
           </div>
         );
       })()}
+      {/* Forged & Ready — rotating armor stock */}
       {smithy.stock && smithy.stock.length > 0 && (
         <div style={{ marginTop: 16 }}>
           <div style={{ ...muted, fontSize: 11, textTransform: "uppercase", letterSpacing: 1.5, marginBottom: 8, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-            <span><Icon name="anvil" size={11} /> Forged & Ready</span>
+            <span><Icon name="anvil" size={11} /> Forged &amp; Ready</span>
             {smithy.stockExpiresAt && (
               <span style={{ fontSize: 10, color: "#6b7280" }}>
                 Restocks in {formatDuration(Math.max(0, smithy.stockExpiresAt - Date.now()))}
@@ -6402,37 +6414,85 @@ function SmithyCard({
               const canAfford = smithy.gold >= s.price;
               const meetsLevel = characterLevel >= s.level_req;
               const purchasable = canAfford && meetsLevel;
-              const rarityColor = s.rarity === "legendary" ? "#fbbf24"
-                : s.rarity === "epic" ? "#a855f7"
-                : s.rarity === "rare" ? "#3b82f6"
-                : s.rarity === "uncommon" ? "#22c55e"
-                : "#9ca3af";
-              const slotLabel = s.item_subtype === "shield" ? "shield"
-                : s.slot === "off_hand" ? "off-hand"
-                : s.slot ?? "armor";
-              const label = !meetsLevel ? `Lv ${s.level_req}`
+              const label = !meetsLevel ? `Lv ${s.level_req} required`
                 : !canAfford ? `Need ${s.price}g`
                 : `Buy — ${s.price}g`;
               return (
-                <div key={s.id} style={{ padding: 12, background: "#1d1f23", borderRadius: 8, display: "flex", alignItems: "center", gap: 12 }}>
-                  <Icon name="shield" size={22} color={rarityColor} />
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontWeight: 600, color: "#f5f5f5", fontSize: 14, fontFamily: DISPLAY_FONT, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                      {s.item_name} <span style={{ color: rarityColor, fontSize: 11, fontWeight: 500 }}>+{s.power}</span>
+                <StoreItemRow
+                  key={s.id}
+                  item={s}
+                  playerLevel={characterLevel}
+                  headerRight={
+                    <div style={{ fontVariantNumeric: "tabular-nums", color: canAfford ? "#fbbf24" : "#c0392b", fontWeight: 600, fontSize: 13 }}>
+                      +{s.power} · {s.price}g
                     </div>
-                    <div style={{ ...muted, fontSize: 11, marginTop: 2, textTransform: "capitalize" }}>
-                      {s.rarity} · {slotLabel}
-                      {s.stat_bonus && Object.entries(s.stat_bonus).filter(([k]) => !k.startsWith("resist_")).map(([k, v]) => ` · +${v} ${k === "int_stat" ? "INT" : k.toUpperCase()}`).join("")}
-                      {s.stat_bonus && Object.entries(s.stat_bonus).filter(([k]) => k.startsWith("resist_")).map(([k, v]) => ` · ${v}% ${k.replace("resist_", "")} resist`).join("")}
+                  }
+                  actions={
+                    <button
+                      onClick={() => onBuy(s.id, s.item_name, s.price)}
+                      disabled={!purchasable}
+                      style={{
+                        ...smallActionBtn(purchasable ? "#1f3a1f" : "#222428", purchasable ? "#86efac" : "#7a7d83"),
+                        opacity: purchasable ? 1 : 0.6,
+                        cursor: purchasable ? "pointer" : "not-allowed",
+                      }}
+                    >
+                      {label}
+                    </button>
+                  }
+                />
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* The Anvil — upgrade/tune equipped items */}
+      <div style={{ marginTop: 20, borderTop: "1px solid #2a2d33", paddingTop: 16 }}>
+        <div style={{ ...muted, fontSize: 11, textTransform: "uppercase", letterSpacing: 1.5, marginBottom: 8 }}>
+          <Icon name="anvil" size={11} /> The Anvil
+        </div>
+        {smithy.items.length === 0 ? (
+          <p style={muted}>
+            Nothing equipped to work on. Equip a weapon or armor first, then come back.
+          </p>
+        ) : (
+          <div style={{ display: "grid", gap: 8 }}>
+            {smithy.items.map((it) => {
+              const atCap = it.sharpens_count >= it.cap;
+              const canAfford = smithy.gold >= it.cost;
+              const remaining = it.cap - it.sharpens_count;
+              const label = atCap
+                ? `Maxed`
+                : canAfford
+                  ? `${it.verb.verb} +1 — ${it.cost}g`
+                  : `Need ${it.cost}g`;
+              const meter = "●".repeat(it.sharpens_count) + "○".repeat(remaining);
+              return (
+                <div
+                  key={it.id}
+                  style={{ padding: 12, background: "#1d1f23", borderRadius: 8, display: "flex", alignItems: "center", gap: 12 }}
+                >
+                  <Icon name={it.verb.iconName} size={22} color="#cbd5e1" />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontWeight: 600, color: "#f5f5f5", fontSize: 15, fontFamily: DISPLAY_FONT }}>
+                      {it.item_name} <span style={{ color: "#fbbf24", fontWeight: 500 }}>+{it.power}</span>{" "}
+                      <span style={{ ...muted, fontSize: 11 }}>{it.verb.stat}</span>
+                    </div>
+                    <div style={{ ...muted, fontSize: 12, marginTop: 2, fontVariantNumeric: "tabular-nums" }}>
+                      {meter} ({it.sharpens_count}/{it.cap} {it.verb.noun})
                     </div>
                   </div>
                   <button
-                    onClick={() => onBuy(s.id, s.item_name, s.price)}
-                    disabled={!purchasable}
+                    onClick={() => onSharpen(it.id, it.item_name, it.cost, it.verb.verb)}
+                    disabled={atCap || !canAfford}
                     style={{
-                      ...smallActionBtn(purchasable ? "#1f3a1f" : "#222428", purchasable ? "#86efac" : "#7a7d83"),
-                      opacity: purchasable ? 1 : 0.6,
-                      cursor: purchasable ? "pointer" : "not-allowed",
+                      ...smallActionBtn(
+                        !atCap && canAfford ? "#1f3a1f" : "#222428",
+                        !atCap && canAfford ? "#86efac" : "#7a7d83",
+                      ),
+                      opacity: !atCap && canAfford ? 1 : 0.6,
+                      cursor: !atCap && canAfford ? "pointer" : "not-allowed",
                     }}
                   >
                     {label}
@@ -6441,65 +6501,8 @@ function SmithyCard({
               );
             })}
           </div>
-        </div>
-      )}
-      {smithy.items.length === 0 ? (
-        <p style={muted}>
-          Nothing equipped to work on. Equip a weapon or armor first, then come back.
-        </p>
-      ) : (
-        <div style={{ display: "grid", gap: 8, marginTop: 12 }}>
-          {smithy.items.map((it) => {
-            const atCap = it.sharpens_count >= it.cap;
-            const canAfford = smithy.gold >= it.cost;
-            const remaining = it.cap - it.sharpens_count;
-            const label = atCap
-              ? `Maxed`
-              : canAfford
-                ? `${it.verb.verb} +1 — ${it.cost}g`
-                : `Need ${it.cost}g`;
-            const meter = "●".repeat(it.sharpens_count) + "○".repeat(remaining);
-            return (
-              <div
-                key={it.id}
-                style={{
-                  padding: 12,
-                  background: "#1d1f23",
-                  borderRadius: 8,
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 12,
-                }}
-              >
-                <Icon name={it.verb.iconName} size={22} color="#cbd5e1" />
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontWeight: 600, color: "#f5f5f5", fontSize: 15, fontFamily: DISPLAY_FONT }}>
-                    {it.item_name} <span style={{ color: "#fbbf24", fontWeight: 500 }}>+{it.power}</span>{" "}
-                    <span style={{ ...muted, fontSize: 11 }}>{it.verb.stat}</span>
-                  </div>
-                  <div style={{ ...muted, fontSize: 12, marginTop: 2, fontVariantNumeric: "tabular-nums" }}>
-                    {meter} ({it.sharpens_count}/{it.cap} {it.verb.noun})
-                  </div>
-                </div>
-                <button
-                  onClick={() => onSharpen(it.id, it.item_name, it.cost, it.verb.verb)}
-                  disabled={atCap || !canAfford}
-                  style={{
-                    ...smallActionBtn(
-                      !atCap && canAfford ? "#1f3a1f" : "#222428",
-                      !atCap && canAfford ? "#86efac" : "#7a7d83",
-                    ),
-                    opacity: !atCap && canAfford ? 1 : 0.6,
-                    cursor: !atCap && canAfford ? "pointer" : "not-allowed",
-                  }}
-                >
-                  {label}
-                </button>
-              </div>
-            );
-          })}
-        </div>
-      )}
+        )}
+      </div>
     </div>
   );
 }
