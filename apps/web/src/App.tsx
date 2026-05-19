@@ -4165,7 +4165,7 @@ function CharacterCard({
   const bodyArmor = equippedBySlot("body");
   const helmetArmor = equippedBySlot("helmet");
   const pantsArmor = equippedBySlot("pants");
-  const shieldArmor = inventory.find((i) => i.equipped && (i.slot === "off_hand" || i.item_subtype === "shield"));
+  const shieldArmor = inventory.find((i) => i.equipped && i.slot === "off_hand" && i.item_subtype === "shield");
   const armorPower = (bodyArmor?.power ?? 0) + Math.floor((helmetArmor?.power ?? 0) / 2) + Math.floor((pantsArmor?.power ?? 0) / 4) + (shieldArmor?.power ?? 0);
   const restDisabled = inQuest || downed || fullyRecovered;
   const portrait = me.char_art_url ?? me.class_art_url;
@@ -4253,8 +4253,8 @@ function CharacterCard({
           label="Armor"
           icon={<Icon name="shield" color="#9ca3af" size={36} />}
           tooltip={armorPower > 0
-            ? `Armor pool: ${c.shield} / ${Math.floor(armorPower / 2)}\nPhysical hits deplete armor before HP\nRestored on rest or at the smithy${derivedStats.armor_bonus > 0 ? `\n+${derivedStats.armor_bonus} bonus from VIT ${primaryStats.vit}` : ""}`
-            : `No armor equipped\nEquip body armor, helmet, pants,\nor a shield to reduce physical damage`}
+            ? `Armor pool: ${c.shield} / ${Math.floor(armorPower / 2)}\nPhysical hits deplete armor before HP\nRestored on rest or at the smithy\n\nFormula:\n  body (${bodyArmor?.power ?? 0})\n  + helmet/2 (${Math.floor((helmetArmor?.power ?? 0) / 2)})\n  + pants/4 (${Math.floor((pantsArmor?.power ?? 0) / 4)})\n  + shield (${shieldArmor?.power ?? 0})\n  = ${armorPower} armor power\n  ÷ 2 = ${Math.floor(armorPower / 2)} max pool${derivedStats.armor_bonus > 0 ? `\n\n+${derivedStats.armor_bonus} bonus from VIT ${primaryStats.vit}` : ""}`
+            : `No armor equipped\nEquip body armor, helmet, pants,\nor a shield to reduce physical damage\n\nFormula:\n  body + helmet/2 + pants/4 + shield\n  = armor power ÷ 2 = max pool`}
           value={armorPower > 0
             ? <span style={{ color: c.shield === 0 ? "#ef4444" : undefined }}>{c.shield} / {Math.floor(armorPower / 2)}</span>
             : <span style={muted}>—</span>}

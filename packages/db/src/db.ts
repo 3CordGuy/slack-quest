@@ -1037,22 +1037,16 @@ export async function refillMana(db: D1Database, userId: string): Promise<void> 
 // Sets character shield to floor(equipped armor power / 2) at quest start and
 // on /sq shield. Uses a correlated sub-select so no extra round-trip is needed.
 export async function initArmorPool(db: D1Database, userId: string): Promise<void> {
+  const slots = await getAllEquippedSlots(db, userId);
+  const armorPower =
+    (slots.body?.power ?? 0) +
+    Math.floor((slots.helmet?.power ?? 0) / 2) +
+    Math.floor((slots.pants?.power ?? 0) / 4) +
+    (slots.off_hand?.item_subtype === "shield" ? (slots.off_hand?.power ?? 0) : 0);
+  const armorMax = Math.floor(armorPower / 2);
   await db
-    .prepare(`
-      UPDATE characters
-      SET shield = COALESCE(
-        (SELECT CAST(i.power / 2 AS INTEGER)
-         FROM inventory i
-         WHERE i.character_id = characters.slack_user_id
-           AND i.item_type = 'armor'
-           AND i.equipped = 1
-         LIMIT 1),
-        0
-      ),
-      last_active = ?
-      WHERE slack_user_id = ?
-    `)
-    .bind(Date.now(), userId)
+    .prepare("UPDATE characters SET shield = ?, last_active = ? WHERE slack_user_id = ?")
+    .bind(armorMax, Date.now(), userId)
     .run();
 }
 
