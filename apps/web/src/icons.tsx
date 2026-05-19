@@ -36,6 +36,8 @@ const SVG_ICONS = new Set([
   "health-normal", "health-decrease", "health-potion", "death-skull", "party-popper", "party-flags",
   // Consumable icons
   "potion-ball",
+  // Weapon icons
+  "hammer-drop",
 ]);
 
 interface IconProps {

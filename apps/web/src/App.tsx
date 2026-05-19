@@ -8656,7 +8656,8 @@ function itemIcon(item: {
       if (/\bdaggers\b/.test(n))                                          return "daggers";
       if (/\b(axe|hatchet|cleaver|tomahawk)\b/.test(n))                  return "battle-axe";
       if (/\b(dagger|knife|dirk|shiv|stiletto|shank)\b/.test(n))         return "plain-dagger";
-      if (/\b(hammer|maul|mace|club)\b/.test(n))                         return "hammer";
+      if (/\b(hammer|sledge)\b/.test(n))                                 return "hammer-drop";
+      if (/\b(maul|mace|club)\b/.test(n))                                return "hammer";
       if (/\b(staff|stave|wand|rod|scepter|sceptre)\b/.test(n))          return "crystal-wand";
       if (/\b(spear|lance|pike|javelin|halberd|polearm)\b/.test(n))      return "barbed-spear";
       if (/\bcrossbow\b/.test(n))                                         return "crossbow";

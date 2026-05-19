@@ -1043,7 +1043,7 @@ export async function initArmorPool(db: D1Database, userId: string): Promise<voi
       SET shield = COALESCE(
         (SELECT CAST(i.power / 2 AS INTEGER)
          FROM inventory i
-         WHERE i.owner_id = characters.id
+         WHERE i.character_id = characters.slack_user_id
            AND i.item_type = 'armor'
            AND i.equipped = 1
          LIMIT 1),
