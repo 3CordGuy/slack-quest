@@ -4636,6 +4636,17 @@ app.post("/api/quest/:id/start_web_combat", async (c) => {
   // life of this quest (no automatic unlock on web combat end — the quest
   // is over either way).
   await setQuestMode(c.env.DB, questId, "web");
+  // Wake the QuestRoom DO and have it broadcast the fresh state to any
+  // WS clients that connected before combat started (the dungeon view
+  // keeps its WS open across the whole expedition). Without this nudge
+  // the client hangs on "Connecting to combat…" until a manual refresh.
+  const doId = c.env.QUEST_ROOM.idFromName(`quest:${questId}`);
+  const doStub = c.env.QUEST_ROOM.get(doId);
+  c.executionCtx.waitUntil(
+    (doStub as unknown as { notifyCombatStarted(q: number): Promise<void> })
+      .notifyCombatStarted(questId)
+      .catch((err) => console.warn("notifyCombatStarted failed", err)),
+  );
   return c.json({ quest_id: questId, state: begun.state });
 });
 
@@ -7158,6 +7169,18 @@ export class QuestRoom extends DurableObject<Env> {
   // Called by the Worker's dungeon-move handlers after saving to D1.
   async notifyDungeonMove(questId: number): Promise<void> {
     this.broadcast({ type: "dungeon_move", quest_id: questId });
+  }
+
+  // Called by /api/quest/:id/start_web_combat after it builds + saves the
+  // initial combat state directly. Without this, WS clients that were
+  // connected before combat started never receive a state frame and the
+  // CombatPanel hangs on "Connecting to combat…" until a manual refresh.
+  // Re-reads from D1 (source of truth) and broadcasts to every connected
+  // socket. Idempotent — safe to call again if state already exists.
+  async notifyCombatStarted(questId: number): Promise<void> {
+    const state = await this.loadState(questId);
+    if (!state) return;
+    this.broadcast({ type: "state", state });
   }
 
   // Inventory-driven combat action. Validates the item belongs to the

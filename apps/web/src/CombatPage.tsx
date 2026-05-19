@@ -28,6 +28,7 @@ import {
   TargetPicker,
   PickerModal,
   isCombatUsable,
+  lootIcon,
   CombatFighter,
   CombatItem,
 } from "./CombatShared";
@@ -2491,7 +2492,16 @@ function displayLootName(item: { item_name: string; item_type: string }): string
 
 function LootCard({ item, index }: { item: LootDrop; index: number }) {
   const color = RARITY_COLOR[item.rarity] ?? "#9aa0a6";
-  const icon  = LOOT_ICON[item.item_type] ?? "chest";
+  // Prefer the smart icon resolver (name + flavor + slot aware) so weapons
+  // whose flavor mentions "gun" pick up the blunderbuss icon, etc. Falls
+  // back to the simple type-based LOOT_ICON for items the resolver can't
+  // categorize.
+  const icon = lootIcon({
+    item_type: item.item_type,
+    weapon_range: item.weapon_range,
+    item_name: item.item_name,
+    flavor: item.flavor,
+  }) || LOOT_ICON[item.item_type] || "chest";
   const displayName = displayLootName(item);
   return (
     <div

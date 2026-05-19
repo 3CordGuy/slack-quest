@@ -146,6 +146,8 @@ export function lootIcon(opt: {
   slot?: string | null;
   weapon_range?: string | null;
   item_subtype?: string | null;
+  item_name?: string | null;
+  flavor?: string | null;
 }): string {
   if (opt.slot && opt.slot !== "main_hand") {
     switch (opt.slot) {
@@ -159,6 +161,11 @@ export function lootIcon(opt: {
     }
   }
   if (opt.item_type === "weapon") {
+    // "gun" anywhere in flavor → blunderbuss (per-request override).
+    // Keeps loot tiles consistent with the inventory itemIcon rules.
+    const f = (opt.flavor ?? "").toLowerCase();
+    const n = (opt.item_name ?? "").toLowerCase();
+    if (/\bgun\b/.test(f) || /\bblunderbuss\b/.test(n) || /\bblunderbuss\b/.test(f)) return "blunderbuss";
     if (opt.weapon_range === "focus")  return "crystal-wand";
     if (opt.weapon_range === "ranged") return "crossbow";
     return "sword";
@@ -546,7 +553,14 @@ export function describeCombatEffect(item: CombatItem): string {
 
 export function UseItemTile({ item, onClick }: { item: CombatItem; onClick: () => void }) {
   const tint = RARITY_TINT[item.rarity ?? "common"] ?? "#2a2d33";
-  const icon = lootIcon({ item_type: item.item_type, slot: item.slot, weapon_range: item.weapon_range, item_subtype: item.item_subtype });
+  const icon = lootIcon({
+    item_type: item.item_type,
+    slot: item.slot,
+    weapon_range: item.weapon_range,
+    item_subtype: item.item_subtype,
+    item_name: item.item_name,
+    flavor: item.flavor,
+  });
   const effectDesc = describeCombatEffect(item);
   const levelReq = item.level_req ?? 1;
   return (

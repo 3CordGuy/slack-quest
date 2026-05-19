@@ -2127,7 +2127,7 @@ function LootOptionTile({ opt, price, disabled, onClick }: {
         display: "flex", flexDirection: "column", gap: 4,
       }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-        <Icon name={lootIcon(opt)} size={18} color={tint} />
+        <Icon name={lootIcon({ ...opt, item_name: opt.name })} size={18} color={tint} />
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontWeight: 700, color: tint, fontSize: 13, lineHeight: 1.2 }}>{name}</div>
           <div style={{ fontSize: 10, color: "#6b7280", textTransform: "uppercase", letterSpacing: 0.5 }}>

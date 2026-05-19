@@ -8985,8 +8985,15 @@ function itemIcon(item: {
   item_name: string;
   slot?: EquipSlot | null;
   item_subtype?: string | null;
+  flavor?: string | null;
 }): string {
   const n = item.item_name.toLowerCase();
+  // Some AI-flavored loot ends up with a thematic name (e.g. "Pipeline
+  // Piercer") whose actual visual hint lives in the flavor blurb. We
+  // pattern-match both name + flavor so we don't fall through to the
+  // generic "sword" icon when "gun" or "blunderbuss" appears only in
+  // the description.
+  const f = (item.flavor ?? "").toLowerCase();
 
   // Slot-based fast path — matches the doll ghost icon for every non-weapon slot.
   // main_hand falls through so weapons keep their keyword-matched variety.
@@ -9005,6 +9012,10 @@ function itemIcon(item: {
   switch (item.item_type) {
     case "weapon": {
       if (item.weapon_range === "focus") return "crystal-wand";
+      // Per-request: "gun" anywhere in flavor → blunderbuss. Goes first so
+      // flavor-only hints (name doesn't mention any firearm) still hit.
+      if (/\bgun\b/.test(f))                                              return "blunderbuss";
+      if (/\bblunderbuss\b/.test(n) || /\bblunderbuss\b/.test(f))         return "blunderbuss";
       if (/\bdaggers\b/.test(n))                                          return "daggers";
       if (/\b(axe|hatchet|cleaver|tomahawk)\b/.test(n))                  return "battle-axe";
       if (/\b(dagger|knife|dirk|shiv|stiletto|shank)\b/.test(n))         return "plain-dagger";
@@ -9014,7 +9025,6 @@ function itemIcon(item: {
       if (/\b(spear|lance|pike|javelin|halberd|polearm)\b/.test(n))      return "barbed-spear";
       if (/\bcrossbow\b/.test(n))                                         return "crossbow";
       if (/\b(bow|longbow|shortbow|recurve)\b/.test(n))                  return "crossbow";
-      if (/\bblunderbuss\b/.test(n))                                      return "blunderbuss";
       if (/\b(gun|pistol|revolver|musket|rifle)\b/.test(n))              return "revolver";
       if (/\b(scythe|sickle)\b/.test(n))                                 return "scythe";
       if (/\btrident\b/.test(n))                                         return "trident";
