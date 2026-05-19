@@ -2478,9 +2478,21 @@ const RARITY_COLOR: Record<string, string> = {
   rare: "#a855f7",
 };
 
+// Strip the boring "Weapon (power N)" / "Armor (power N)" / "Item (power N)"
+// placeholders that grid-dungeon loot used when AI flavor hadn't been applied.
+// Pre-deploy quests still have these in their treasure arrays; render a typed
+// label instead so the victory screen doesn't show "Item (power 2)".
+function displayLootName(item: { item_name: string; item_type: string }): string {
+  if (/^(Weapon|Armor|Item) \(power \d+\)$/.test(item.item_name)) {
+    return item.item_type.charAt(0).toUpperCase() + item.item_type.slice(1);
+  }
+  return item.item_name;
+}
+
 function LootCard({ item, index }: { item: LootDrop; index: number }) {
   const color = RARITY_COLOR[item.rarity] ?? "#9aa0a6";
   const icon  = LOOT_ICON[item.item_type] ?? "chest";
+  const displayName = displayLootName(item);
   return (
     <div
       style={{
@@ -2518,7 +2530,7 @@ function LootCard({ item, index }: { item: LootDrop; index: number }) {
       </div>
       <div style={{ minWidth: 0 }}>
         <div style={{ fontWeight: 700, fontSize: 15, color: "#f5f5f5", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-          {item.item_name}
+          {displayName}
         </div>
         <div style={{ fontSize: 11, color, textTransform: "capitalize", marginTop: 2 }}>
           {item.rarity} {item.item_type}
