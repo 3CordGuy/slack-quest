@@ -14,6 +14,7 @@ import {
   CBtn, DiceRollEntry, DiceRollDisplay, PickerModal,
   UseItemTile, MONSTER_TARGET_TOOLS, RARITY_TINT, lootIcon,
   InitStrip, CombatLog, LogEntry, CombatItem,
+  HitDust,
 } from "./CombatShared";
 ensureCombatAnimStyles();
 
@@ -358,10 +359,13 @@ function HpBar({ current, max, color, height = 6 }: { current: number; max: numb
   );
 }
 
-function PartyBar({ fighters, selfId, party, onClickSelf, flashIds }: {
+function PartyBar({ fighters, selfId, party, onClickSelf, flashIds, hitDustSeq }: {
   fighters: Fighter[] | null; selfId: string; party: Character[];
   onClickSelf?: () => void;
   flashIds?: Set<string>;
+  // Monotonic hit-counter map. Bump on monster_attack → HitDust re-keys
+  // its WAAPI animation so a fresh dust puff fires on each landed swing.
+  hitDustSeq?: Record<string, number>;
 }) {
   const seen = new Set<string>();
   type Member = {
@@ -425,6 +429,7 @@ function PartyBar({ fighters, selfId, party, onClickSelf, flashIds }: {
         }}>
           LV {f.level}
         </div>
+        <HitDust seq={hitDustSeq?.[f.key] ?? 0} />
         <Avatar src={charPortraitUrl(f.name)} fallbackSrc={classPortraitUrl(f.cls)} alt={f.name} size={56} radius={6} fallbackIcon="player" fallbackColor="#4a5568" border="1px solid #2a2d33" />
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: 13, fontWeight: 600, color: "#e2e8f0", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", paddingRight: 30 }}>{f.name}</div>
@@ -1010,11 +1015,17 @@ export function GridDungeonView({
   // and settle to the rolled value, then fade after ~10s.
   const [diceRolls, setDiceRolls] = useState<DiceRollEntry[]>([]);
   const diceRollCounterRef = useRef(0);
+  // Per-fighter dust counter. Bumped from flashHit so every flash also
+  // spawns a fresh dust puff on the affected card. Monsters get flashed
+  // too but the dust is purely a player-side affordance (the strip is
+  // already busy with slash streaks + lunge animations).
+  const [hitDustSeq, setHitDustSeq] = useState<Record<string, number>>({});
   function flashHit(id: string) {
     setFlashIds((prev) => { const n = new Set(prev); n.add(id); return n; });
     setTimeout(() => {
       setFlashIds((prev) => { const n = new Set(prev); n.delete(id); return n; });
     }, 600);
+    setHitDustSeq((prev) => ({ ...prev, [id]: (prev[id] ?? 0) + 1 }));
   }
 
   async function loadItems() {
@@ -1491,6 +1502,7 @@ export function GridDungeonView({
         party={party.length > 0 ? party : [character]}
         onClickSelf={onOpenInventory}
         flashIds={flashIds}
+        hitDustSeq={hitDustSeq}
       />
 
       {/* Action buttons row (RED area) — own row at the very bottom. Always

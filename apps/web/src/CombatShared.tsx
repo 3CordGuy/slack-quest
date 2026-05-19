@@ -121,6 +121,97 @@ export function hpColor(current: number, max: number): string {
   return pct < 0.25 ? "#ef4444" : pct < 0.5 ? "#f59e0b" : "#22c55e";
 }
 
+// ─── HitDust ─────────────────────────────────────────────────────────────────
+// Tiny cartoony dust-puff burst that fires at the center of its parent
+// every time `seq` changes. Mount it inside any `position: relative`
+// container (typically a fighter card) and bump `seq` on the WS-side
+// monster_attack handler. 12 particles fly outward + drift up, slight
+// size jitter, ~750ms.
+//
+// Using the Web Animations API instead of CSS keyframes so we don't have
+// to thread CSS-variable-in-transform interpolation quirks (which bit
+// the main particle system pre-rewrite).
+//
+// Parent must be `position: relative` for the inset:0 overlay to sit
+// inside the card.
+
+const DUST_COUNT = 14;
+
+export function HitDust({ seq }: { seq: number }) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    // Skip seq=0 so the initial mount doesn't fire a phantom puff before
+    // the first hit ever lands.
+    if (seq <= 0) return;
+    const root = ref.current;
+    if (!root) return;
+    const els = Array.from(root.querySelectorAll<HTMLSpanElement>("[data-gq-dust]"));
+    for (const el of els) {
+      const angleDeg = Math.random() * 360;
+      const distance = 22 + Math.random() * 38;
+      const rad = (angleDeg * Math.PI) / 180;
+      const x = Math.cos(rad) * distance;
+      // Bias upward so the puff drifts like settling dust.
+      const y = Math.sin(rad) * distance - 18;
+      const finalScale = 1.4 + Math.random() * 0.8;
+      el.animate(
+        [
+          { transform: "translate(-50%, -50%) scale(0)", opacity: 0 },
+          { transform: "translate(-50%, -50%) scale(1)", opacity: 0.85, offset: 0.12 },
+          { transform: `translate(-50%, -50%) translate(${x}px, ${y}px) scale(${finalScale})`, opacity: 0 },
+        ],
+        {
+          duration: 650 + Math.random() * 250,
+          delay: Math.random() * 70,
+          easing: "cubic-bezier(0.22, 1, 0.36, 1)",
+          fill: "forwards",
+        },
+      );
+    }
+  }, [seq]);
+
+  return (
+    <div
+      ref={ref}
+      aria-hidden="true"
+      style={{
+        position: "absolute",
+        inset: 0,
+        pointerEvents: "none",
+        overflow: "visible",
+        zIndex: 3,
+      }}
+    >
+      {Array.from({ length: DUST_COUNT }, (_, i) => {
+        // Two slightly-different dust tones so the cloud looks textured
+        // rather than a uniform blob. Alternating to keep it deterministic
+        // across re-renders.
+        const isLight = i % 2 === 0;
+        const color = isLight ? "#d4c8b0" : "#b3a487";
+        return (
+          <span
+            key={i}
+            data-gq-dust
+            style={{
+              position: "absolute",
+              left: "50%",
+              top: "50%",
+              width: 7,
+              height: 7,
+              borderRadius: "50%",
+              background: color,
+              boxShadow: `0 0 5px ${color}aa, 0 0 10px ${color}55`,
+              transform: "translate(-50%, -50%) scale(0)",
+              opacity: 0,
+              willChange: "transform, opacity",
+            }}
+          />
+        );
+      })}
+    </div>
+  );
+}
+
 export const TONE_COLOR: Record<string, string> = {
   info:   "#e6e6e6",
   good:   "#86efac",
