@@ -4240,21 +4240,8 @@ function CharacterCard({
         <Stat
           label="HP"
           icon={<Icon name="health-normal" color="#86efac" size={36} />}
-          tooltip={[
-            `VIT ${primaryStats.vit}  ·  Level ${c.level}`,
-            `16 + 2×${primaryStats.vit} + 2×${c.level} = ${c.max_hp} max HP`,
-            c.shield > 0 ? `Shield: +${c.shield} (absorbs hits first)` : "",
-          ].filter(Boolean).join("\n")}
-          value={
-            <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-              <span>{c.hp} / {c.max_hp}</span>
-              {c.shield > 0 && (
-                <span style={{ fontSize: 13, color: "#7dd3fc", fontWeight: 500 }}>
-                  +{c.shield} <Icon name="shield" size={12} />
-                </span>
-              )}
-            </div>
-          }
+          tooltip={`VIT ${primaryStats.vit}  ·  Level ${c.level}\n16 + 2×${primaryStats.vit} + 2×${c.level} = ${c.max_hp} max HP`}
+          value={`${c.hp} / ${c.max_hp}`}
         />
         <Stat
           label="Mana"
@@ -4266,9 +4253,11 @@ function CharacterCard({
           label="Armor"
           icon={<Icon name="shield" color="#9ca3af" size={36} />}
           tooltip={armorPower > 0
-            ? `Armor power ${armorPower}\nReduces incoming damage by floor(${armorPower}/2) = ${Math.floor(armorPower / 2)}${derivedStats.armor_bonus > 0 ? `\n+${derivedStats.armor_bonus} bonus from VIT ${primaryStats.vit}` : ""}`
-            : `No armor equipped\nEquip body armor, helmet, pants,\nor a shield to reduce damage`}
-          value={armorPower > 0 ? `+${armorPower}` : <span style={muted}>—</span>}
+            ? `Armor pool: ${c.shield} / ${Math.floor(armorPower / 2)}\nPhysical hits deplete armor before HP\nRestored on rest or at the smithy${derivedStats.armor_bonus > 0 ? `\n+${derivedStats.armor_bonus} bonus from VIT ${primaryStats.vit}` : ""}`
+            : `No armor equipped\nEquip body armor, helmet, pants,\nor a shield to reduce physical damage`}
+          value={armorPower > 0
+            ? <span style={{ color: c.shield === 0 ? "#ef4444" : undefined }}>{c.shield} / {Math.floor(armorPower / 2)}</span>
+            : <span style={muted}>—</span>}
         />
         <Stat
           label="Gold"

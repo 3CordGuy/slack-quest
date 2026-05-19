@@ -2617,6 +2617,7 @@ app.post("/api/character/rest", async (c) => {
       return c.json({ error: "cooldown", ready_in_ms: LONG_REST_COOLDOWN_MS - since }, 400);
     }
     await applyLongRest(c.env.DB, session.slack_user_id);
+    await initArmorPool(c.env.DB, session.slack_user_id);
     return c.json({ ok: true, kind: "long", new_hp: character.max_hp });
   }
 
@@ -2630,6 +2631,7 @@ app.post("/api/character/rest", async (c) => {
   const healed = Math.max(1, Math.floor(missing * SHORT_REST_HEAL_RATIO));
   const newHp = Math.min(character.max_hp, character.hp + healed);
   await applyShortRest(c.env.DB, session.slack_user_id, newHp);
+  await initArmorPool(c.env.DB, session.slack_user_id);
   return c.json({ ok: true, kind: "short", healed, new_hp: newHp });
 });
 
@@ -2931,6 +2933,7 @@ app.post("/api/inn/:roomId/stay", async (c) => {
   const paid = await tryDeductGold(c.env.DB, session.slack_user_id, room.price);
   if (!paid) return c.json({ error: "insufficient_gold_race" }, 400);
   await applyInnRest(c.env.DB, session.slack_user_id, room.refills);
+  await initArmorPool(c.env.DB, session.slack_user_id);
   return c.json({
     ok: true,
     paid: room.price,
