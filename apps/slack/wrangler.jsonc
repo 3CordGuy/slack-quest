@@ -31,6 +31,11 @@
         "script_name": "gantt-quest-web"
       },
       {
+        "name": "LOBBY_ROOM",
+        "class_name": "LobbyRoom",
+        "script_name": "gantt-quest-web"
+      },
+      {
         "name": "LOBBY_MANAGER",
         "class_name": "LobbyManager"
       }

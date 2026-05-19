@@ -63,6 +63,11 @@ export interface Env {
   // active lobbies; per-lobby entries keyed by questId in DO storage.
   // Optional: when unset, lobby auto-start is disabled (manual only).
   LOBBY_MANAGER?: DurableObjectNamespace;
+  // Cross-worker DO binding for LobbyRoom (lives in apps/web). Used to push
+  // lobby state changes to connected web clients when a Slack interaction
+  // mutates the lobby (accept/decline/ready/force_start/lock/cancel).
+  // Optional: when unset, web clients fall back to polling.
+  LOBBY_ROOM?: DurableObjectNamespace;
 }
 
 // Structural stub for the cross-bound QuestRoom DO. We don't import the
@@ -448,6 +453,49 @@ export async function cancelLobbyAlarm(env: Env, questId: number): Promise<void>
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ method: "cancel", questId }),
   });
+}
+
+// Stub for the cross-bound LobbyRoom DO in the web worker. Only declares
+// the RPC methods we call so this build doesn't have to depend on apps/web.
+interface LobbyRoomStub {
+  notifyStateChanged(questId: number): Promise<void>;
+  notifyStarted(questId: number): Promise<void>;
+  notifyLockChanged(locked: boolean): Promise<void>;
+  notifyCancelled(): Promise<void>;
+}
+
+// Notify the per-quest LobbyRoom DO in the web worker that the D1 lobby
+// state changed. Connected web clients receive a fresh state push within
+// ~100ms. Safe no-op if LOBBY_ROOM isn't bound (local dev / unrolled deploy).
+export async function notifyLobbyStateChanged(
+  env: Pick<Env, "LOBBY_ROOM">,
+  questId: number,
+): Promise<void> {
+  if (!env.LOBBY_ROOM) return;
+  try {
+    const id = env.LOBBY_ROOM.idFromName(`lobby:${questId}`);
+    const stub = env.LOBBY_ROOM.get(id) as unknown as LobbyRoomStub;
+    await stub.notifyStateChanged(questId);
+  } catch (err) {
+    console.warn("slack→LobbyRoom notifyStateChanged failed", err);
+  }
+}
+
+// Notify the LobbyRoom DO that the lobby has transitioned to combat. The
+// DO broadcasts `{ type: 'started' }` and closes connections; web clients
+// then re-fetch /api/quest/active to enter combat mode.
+export async function notifyLobbyStarted(
+  env: Pick<Env, "LOBBY_ROOM">,
+  questId: number,
+): Promise<void> {
+  if (!env.LOBBY_ROOM) return;
+  try {
+    const id = env.LOBBY_ROOM.idFromName(`lobby:${questId}`);
+    const stub = env.LOBBY_ROOM.get(id) as unknown as LobbyRoomStub;
+    await stub.notifyStarted(questId);
+  } catch (err) {
+    console.warn("slack→LobbyRoom notifyStarted failed", err);
+  }
 }
 
 // Schedule a delayed turn notification. Replaces any previous pending notif for

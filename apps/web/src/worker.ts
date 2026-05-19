@@ -205,6 +205,9 @@ import {
   activateQuest,
   addPendingInvitee,
   appendLog,
+  setQuestLocked,
+  deleteQuestCascade,
+  hasPendingInvitees,
   type LobbyQuest,
   type LobbyPartyMember,
 } from "@gantt-quest/db";
@@ -715,6 +718,10 @@ interface Env {
   DB: D1Database;
   ASSETS: Fetcher;
   QUEST_ROOM: DurableObjectNamespace<QuestRoom>;
+  // LobbyRoom: WS-attached DO holding live lobby state + ephemeral chat.
+  // One instance per quest (`idFromName('lobby:' + questId)`). Optional so
+  // local dev without the binding still boots (web falls back to polling).
+  LOBBY_ROOM?: DurableObjectNamespace<LobbyRoom>;
   AI: Ai;
   // R2 bucket for AI-generated art (monster portraits + static view banners).
   // Shared with the slack worker; both apps point at the same gantt-quest-assets
@@ -4184,6 +4191,36 @@ app.get("/api/quest/lobby", async (c) => {
   return c.json({ quest, party });
 });
 
+// WebSocket upgrade for live lobby state + ephemeral chat. Falls back to
+// the existing 4s polling on the client if the upgrade fails or LOBBY_ROOM
+// isn't bound.
+app.get("/api/quest/:id/lobby/ws", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return new Response("unauthenticated", { status: 401 });
+  const questId = Number(c.req.param("id"));
+  if (!Number.isFinite(questId)) return new Response("bad questId", { status: 400 });
+  if (!c.env.LOBBY_ROOM) return new Response("lobby ws not enabled", { status: 503 });
+
+  // Authorize: caller must be a party member (pending OR accepted) on this
+  // quest. Otherwise anyone could subscribe to anyone else's lobby chat.
+  const party = await getLobbyParty(c.env.DB, questId);
+  const me = party.find((m) => m.slack_user_id === session.slack_user_id);
+  if (!me) return new Response("not_in_party", { status: 403 });
+
+  if (c.req.header("Upgrade") !== "websocket") {
+    return new Response("expected websocket", { status: 426 });
+  }
+  const id = c.env.LOBBY_ROOM.idFromName(`lobby:${questId}`);
+  const stub = c.env.LOBBY_ROOM.get(id);
+  // Pass quest + user via querystring; the DO's fetch() parses them.
+  const url = new URL(c.req.url);
+  url.searchParams.set("quest", String(questId));
+  url.searchParams.set("user", session.slack_user_id);
+  return stub.fetch(url.toString(), {
+    headers: { Upgrade: "websocket" },
+  });
+});
+
 app.post("/api/quest/:id/lobby/accept", async (c) => {
   const session = await currentSession(c.env.DB, c.req.header("cookie"));
   if (!session) return c.json({ error: "unauthenticated" }, 401);
@@ -4192,6 +4229,7 @@ app.post("/api/quest/:id/lobby/accept", async (c) => {
   const me = party.find((m) => m.slack_user_id === session.slack_user_id);
   if (!me || me.invite_status !== "pending") return c.json({ error: "not_pending" }, 400);
   await updateInviteStatus(c.env.DB, questId, session.slack_user_id, "accepted");
+  c.executionCtx.waitUntil(notifyLobbyStateChanged(c.env, questId));
   return c.json({ ok: true });
 });
 
@@ -4203,6 +4241,7 @@ app.post("/api/quest/:id/lobby/decline", async (c) => {
   const me = party.find((m) => m.slack_user_id === session.slack_user_id);
   if (!me || me.invite_status !== "pending") return c.json({ error: "not_pending" }, 400);
   await updateInviteStatus(c.env.DB, questId, session.slack_user_id, "declined");
+  c.executionCtx.waitUntil(notifyLobbyStateChanged(c.env, questId));
   return c.json({ ok: true });
 });
 
@@ -4210,8 +4249,38 @@ app.post("/api/quest/:id/lobby/ready", async (c) => {
   const session = await currentSession(c.env.DB, c.req.header("cookie"));
   if (!session) return c.json({ error: "unauthenticated" }, 401);
   const questId = Number(c.req.param("id"));
+  const quest = await getLobbyQuestById(c.env.DB, questId);
+  if (!quest) return c.json({ error: "not_found" }, 404);
   const party = await getLobbyParty(c.env.DB, questId);
   const me = party.find((m) => m.slack_user_id === session.slack_user_id);
+
+  // Two flows depending on quest status:
+  //   * status=lobby (pre-combat): standard ready toggle, fire allReady check
+  //   * status=active (reinforcement): a pending invitee readying up means
+  //     "yes, pull me into the fight". We auto-accept + join combat in one shot.
+  if (quest.status === "active") {
+    // Reinforcement: invitee must be pending. We flip them straight to
+    // accepted+ready, then pull them in via QuestRoom.notifyFighterJoined.
+    if (!me || me.invite_status !== "pending") {
+      return c.json({ error: "not_pending" }, 400);
+    }
+    await updateInviteStatus(c.env.DB, questId, session.slack_user_id, "accepted");
+    await updateReadyStatus(c.env.DB, questId, session.slack_user_id, true);
+    // Refill mana + scale monster HP, mirroring the /api/quest/join path.
+    await refillMana(c.env.DB, session.slack_user_id);
+    const scaled = await scaleMonsterForJoin(c.env.DB, quest.id, quest.scene, JOIN_HP_RATIO);
+    const doId = c.env.QUEST_ROOM.idFromName(`quest:${quest.id}`);
+    const doStub = c.env.QUEST_ROOM.get(doId);
+    c.executionCtx.waitUntil(
+      (doStub as unknown as { notifyFighterJoined(q: number, u: string, hp: number): Promise<void> })
+        .notifyFighterJoined(quest.id, session.slack_user_id, scaled.monster_max_hp)
+        .catch((err) => console.warn("notifyFighterJoined (reinforcement) failed", err)),
+    );
+    c.executionCtx.waitUntil(notifyLobbyStateChanged(c.env, questId));
+    return c.json({ ok: true, joined: true });
+  }
+
+  // Pre-combat lobby — original behavior.
   if (!me || me.invite_status !== "accepted") return c.json({ error: "not_accepted" }, 400);
   await updateReadyStatus(c.env.DB, questId, session.slack_user_id, true);
 
@@ -4220,7 +4289,12 @@ app.post("/api/quest/:id/lobby/ready", async (c) => {
   const accepted = updated.filter((m) => m.invite_status === "accepted");
   const hasPending = updated.some((m) => m.invite_status === "pending");
   const allReady = !hasPending && accepted.length > 0 && accepted.every((m) => m.ready);
-  if (allReady) await webStartQuestFromLobby(questId, c.env);
+  if (allReady) {
+    await webStartQuestFromLobby(questId, c.env);
+    c.executionCtx.waitUntil(notifyLobbyStarted(c.env, questId));
+  } else {
+    c.executionCtx.waitUntil(notifyLobbyStateChanged(c.env, questId));
+  }
   return c.json({ ok: true, started: allReady });
 });
 
@@ -4231,8 +4305,71 @@ app.post("/api/quest/:id/lobby/force_start", async (c) => {
   const quest = await getLobbyQuestById(c.env.DB, questId);
   if (!quest) return c.json({ error: "not_found" }, 404);
   if (quest.created_by !== session.slack_user_id) return c.json({ error: "not_creator" }, 403);
+  if (quest.status !== "lobby") return c.json({ error: "not_in_lobby" }, 400);
   await webStartQuestFromLobby(questId, c.env);
+  c.executionCtx.waitUntil(notifyLobbyStarted(c.env, questId));
   return c.json({ ok: true, started: true });
+});
+
+// Toggle creator-only join lock. Locked lobbies reject new invites; existing
+// pending invitees can still accept/decline. Body: { locked: boolean }.
+app.post("/api/quest/:id/lobby/lock", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const questId = Number(c.req.param("id"));
+  const quest = await getLobbyQuestById(c.env.DB, questId);
+  if (!quest) return c.json({ error: "not_found" }, 404);
+  if (quest.created_by !== session.slack_user_id) return c.json({ error: "not_creator" }, 403);
+  const body = await c.req.json<{ locked: boolean }>().catch(() => ({ locked: !quest.locked }));
+  const newLocked = !!body?.locked;
+  await setQuestLocked(c.env.DB, questId, newLocked);
+  c.executionCtx.waitUntil(notifyLobbyLockChanged(c.env, questId, newLocked));
+  c.executionCtx.waitUntil(notifyLobbyStateChanged(c.env, questId));
+  return c.json({ ok: true, locked: newLocked });
+});
+
+// Cancel a lobby. Pre-combat: delete the quest entirely (no XP/gold/loot
+// ever materialized, so this is a clean undo). Mid-combat reinforcement:
+// drop the pending invitees, leave the active fight running.
+app.post("/api/quest/:id/lobby/cancel", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const questId = Number(c.req.param("id"));
+  const quest = await getLobbyQuestById(c.env.DB, questId);
+  if (!quest) return c.json({ error: "not_found" }, 404);
+  if (quest.created_by !== session.slack_user_id) return c.json({ error: "not_creator" }, 403);
+
+  if (quest.status === "lobby") {
+    await deleteQuestCascade(c.env.DB, questId);
+    c.executionCtx.waitUntil(notifyLobbyCancelled(c.env, questId));
+    return c.json({ ok: true, deleted: true });
+  }
+  if (quest.status === "active") {
+    await removePendingInvitees(c.env.DB, questId);
+    c.executionCtx.waitUntil(notifyLobbyCancelled(c.env, questId));
+    return c.json({ ok: true, deleted: false });
+  }
+  return c.json({ error: "not_cancellable" }, 400);
+});
+
+// Open a reinforcement recruitment lobby on a quest that's already active.
+// Doesn't modify the quest status — it just enables the LobbyView surface
+// for the creator to start inviting. Reinforcement invitees use the normal
+// /lobby/invite endpoint after this. No-op safe (idempotent).
+app.post("/api/quest/:id/recruit", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const questId = Number(c.req.param("id"));
+  const quest = await getLobbyQuestById(c.env.DB, questId);
+  if (!quest) return c.json({ error: "not_found" }, 404);
+  if (quest.created_by !== session.slack_user_id) return c.json({ error: "not_creator" }, 403);
+  if (quest.status !== "active") return c.json({ error: "not_active" }, 400);
+  // Just notify — the recruitment lobby becomes visible to the creator
+  // immediately because /api/quest/lobby returns active quests with the
+  // creator as a member (status=active, creator's invite_status='accepted').
+  // The frontend can show the invite UI right away.
+  c.executionCtx.waitUntil(notifyLobbyStateChanged(c.env, questId));
+  return c.json({ ok: true });
 });
 
 app.post("/api/quest/:id/lobby/invite", async (c) => {
@@ -4242,6 +4379,7 @@ app.post("/api/quest/:id/lobby/invite", async (c) => {
   const quest = await getLobbyQuestById(c.env.DB, questId);
   if (!quest) return c.json({ error: "not_found" }, 404);
   if (quest.created_by !== session.slack_user_id) return c.json({ error: "not_creator" }, 403);
+  if (quest.locked) return c.json({ error: "locked" }, 423);
   const body = await c.req.json<{ target_user_id: string }>();
   if (!body?.target_user_id) return c.json({ error: "missing_target" }, 400);
   // Verify the target exists on the same team
@@ -4251,6 +4389,7 @@ app.post("/api/quest/:id/lobby/invite", async (c) => {
     .first<{ slack_user_id: string; name: string; slack_username: string | null }>();
   if (!target) return c.json({ error: "not_found" }, 404);
   await addPendingInvitee(c.env.DB, questId, body.target_user_id);
+  c.executionCtx.waitUntil(notifyLobbyStateChanged(c.env, questId));
 
   // Send a Slack DM only if the target has a Slack username (i.e. a real Slack presence)
   const dmToken = c.env.SLACK_BOT_TOKEN;
@@ -7520,5 +7659,282 @@ export class QuestRoom extends DurableObject<Env> {
         // Closed socket; runtime cleans up.
       }
     }
+  }
+}
+
+// ─── LobbyRoom DO ─────────────────────────────────────────────────────────────
+// One DO instance per quest (`idFromName('lobby:' + questId)`). Holds:
+//   - mirrored party state (refreshed from D1 on notifyStateChanged)
+//   - ephemeral chat ring buffer (in-memory only — explicitly drops on
+//     hibernate; that's fine, chat doesn't persist past combat anyway)
+//   - WS connections from web dashboard clients
+//
+// Lifecycle:
+//   - Created lazily on first WS upgrade
+//   - Hibernates between events when no message traffic
+//   - Notified by both the web worker (HTTP endpoints) and the Slack worker
+//     (cross-bound) when D1 state changes, so it pushes to all clients
+//   - When the lobby starts combat or is cancelled, broadcasts the
+//     terminal event and lets clients disconnect; the DO storage is
+//     trivially empty (everything's in-memory or in D1)
+// ────────────────────────────────────────────────────────────────────────────
+
+interface LobbyWsAttachment {
+  quest_id: number;
+  user_id: string;
+}
+
+interface LobbyChatMessage {
+  id: number;
+  user_id: string;
+  user_name: string;
+  message: string;
+  created_at: number;
+}
+
+type LobbyServerMsg =
+  | { type: "state"; quest: LobbyQuest; party: LobbyPartyMember[] }
+  | { type: "chat"; message: LobbyChatMessage }
+  | { type: "chat_history"; messages: LobbyChatMessage[] }
+  | { type: "lock_changed"; locked: boolean }
+  | { type: "cancelled" }
+  | { type: "started"; quest_id: number }
+  | { type: "error"; message: string };
+
+type LobbyClientMsg =
+  | { type: "ping" }
+  | { type: "chat"; message: string };
+
+const LOBBY_CHAT_MAX = 50;
+
+export class LobbyRoom extends DurableObject<Env> {
+  // In-memory chat ring buffer. Cleared on hibernate (we re-issue empty
+  // history to fresh connections — chat is explicitly ephemeral).
+  private chat: LobbyChatMessage[] = [];
+  private chatNextId = 1;
+
+  async fetch(request: Request): Promise<Response> {
+    const url = new URL(request.url);
+    const questId = parseInt(url.searchParams.get("quest") ?? "", 10);
+    const userId = url.searchParams.get("user") ?? "";
+    if (!Number.isFinite(questId) || !userId) {
+      return new Response("bad params", { status: 400 });
+    }
+    if (request.headers.get("Upgrade") !== "websocket") {
+      return new Response("expected websocket", { status: 426 });
+    }
+
+    const pair = new WebSocketPair();
+    const [client, server] = Object.values(pair);
+
+    this.ctx.acceptWebSocket(server);
+    const attach: LobbyWsAttachment = { quest_id: questId, user_id: userId };
+    server.serializeAttachment(attach);
+
+    // Send initial snapshot immediately so the client doesn't need to also
+    // poll the REST endpoint after connecting.
+    const snap = await this.loadState(questId);
+    if (snap) {
+      this.sendOne(server, { type: "state", quest: snap.quest, party: snap.party });
+    }
+    if (this.chat.length > 0) {
+      this.sendOne(server, { type: "chat_history", messages: this.chat });
+    }
+
+    return new Response(null, { status: 101, webSocket: client });
+  }
+
+  async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): Promise<void> {
+    const attach = ws.deserializeAttachment() as LobbyWsAttachment | null;
+    if (!attach) {
+      ws.close(1008, "missing attachment");
+      return;
+    }
+    let parsed: LobbyClientMsg | null = null;
+    try {
+      const text = typeof message === "string" ? message : new TextDecoder().decode(message);
+      parsed = JSON.parse(text) as LobbyClientMsg;
+    } catch {
+      this.sendOne(ws, { type: "error", message: "invalid json" });
+      return;
+    }
+    if (!parsed) return;
+    if (parsed.type === "ping") return; // heartbeat
+    if (parsed.type === "chat") {
+      const trimmed = parsed.message.trim();
+      if (!trimmed) return;
+      // Cap at 500 chars to keep ring buffer bounded.
+      const clipped = trimmed.length > 500 ? trimmed.slice(0, 500) : trimmed;
+
+      // Resolve display name from D1. Cheap one-shot read, cached implicitly
+      // by D1's own read cache.
+      const character = await getCharacter(this.env.DB, attach.user_id);
+      const userName = character?.name ?? attach.user_id;
+
+      const msg: LobbyChatMessage = {
+        id: this.chatNextId++,
+        user_id: attach.user_id,
+        user_name: userName,
+        message: clipped,
+        created_at: Date.now(),
+      };
+      this.chat.push(msg);
+      if (this.chat.length > LOBBY_CHAT_MAX) {
+        this.chat = this.chat.slice(-LOBBY_CHAT_MAX);
+      }
+      this.broadcast({ type: "chat", message: msg });
+      return;
+    }
+  }
+
+  async webSocketClose(_ws: WebSocket, _code: number, _reason: string, _wasClean: boolean): Promise<void> {
+    // Nothing to do — the runtime removes the socket from getWebSockets()
+    // automatically. We don't track per-connection state beyond the
+    // attachment, so close is a no-op.
+  }
+
+  // RPC-callable from outside the DO. Re-reads lobby + party from D1 and
+  // broadcasts a fresh `state` frame to all connected sockets. Idempotent.
+  async notifyStateChanged(questId: number): Promise<void> {
+    const snap = await this.loadState(questId);
+    if (!snap) {
+      // Lobby vanished (cancelled or completed). Tell clients and close.
+      this.broadcast({ type: "cancelled" });
+      this.closeAll(1000, "lobby gone");
+      return;
+    }
+    this.broadcast({ type: "state", quest: snap.quest, party: snap.party });
+  }
+
+  // Called when the lobby transitions to combat (force start, ready-all,
+  // or auto-start alarm). Broadcasts `started` so clients can switch to
+  // CombatPage, then closes connections.
+  async notifyStarted(questId: number): Promise<void> {
+    this.broadcast({ type: "started", quest_id: questId });
+    this.closeAll(1000, "lobby started");
+    // Clear ephemeral chat — combat starts fresh.
+    this.chat = [];
+    this.chatNextId = 1;
+  }
+
+  // Called when the lobby's locked flag flipped.
+  async notifyLockChanged(locked: boolean): Promise<void> {
+    this.broadcast({ type: "lock_changed", locked });
+  }
+
+  // Called when the lobby is cancelled. Broadcasts and closes.
+  async notifyCancelled(): Promise<void> {
+    this.broadcast({ type: "cancelled" });
+    this.closeAll(1000, "lobby cancelled");
+    this.chat = [];
+    this.chatNextId = 1;
+  }
+
+  private async loadState(
+    questId: number,
+  ): Promise<{ quest: LobbyQuest; party: LobbyPartyMember[] } | null> {
+    const quest = await getLobbyQuestById(this.env.DB, questId);
+    if (!quest) return null;
+    // Show the lobby for both pre-combat (status=lobby) and reinforcement
+    // (status=active with pending invitees). Anything else is gone.
+    if (quest.status !== "lobby" && quest.status !== "active") return null;
+    const party = await getLobbyParty(this.env.DB, questId);
+    if (quest.status === "active") {
+      // Reinforcement: only show if there's at least one pending invitee.
+      // Otherwise the "lobby" is just the historical roster of the running
+      // fight — no UI value.
+      const anyPending = party.some((m) => m.invite_status === "pending");
+      if (!anyPending) return null;
+    }
+    return { quest, party };
+  }
+
+  private sendOne(ws: WebSocket, msg: LobbyServerMsg): void {
+    try {
+      ws.send(JSON.stringify(msg));
+    } catch {
+      /* closed */
+    }
+  }
+
+  private broadcast(msg: LobbyServerMsg): void {
+    const text = JSON.stringify(msg);
+    for (const ws of this.ctx.getWebSockets()) {
+      try {
+        ws.send(text);
+      } catch {
+        /* closed */
+      }
+    }
+  }
+
+  private closeAll(code: number, reason: string): void {
+    for (const ws of this.ctx.getWebSockets()) {
+      try {
+        ws.close(code, reason);
+      } catch {
+        /* already closed */
+      }
+    }
+  }
+}
+
+// Helper used by HTTP routes + Slack cross-binding to notify the LobbyRoom
+// DO of a state change. Safe no-op if the binding isn't present (local dev
+// without LOBBY_ROOM still works via polling fallback).
+async function notifyLobbyStateChanged(
+  env: Pick<Env, "LOBBY_ROOM">,
+  questId: number,
+): Promise<void> {
+  if (!env.LOBBY_ROOM) return;
+  try {
+    const id = env.LOBBY_ROOM.idFromName(`lobby:${questId}`);
+    const stub = env.LOBBY_ROOM.get(id);
+    await (stub as unknown as { notifyStateChanged(q: number): Promise<void> }).notifyStateChanged(questId);
+  } catch (err) {
+    console.warn("notifyLobbyStateChanged failed", err);
+  }
+}
+
+async function notifyLobbyStarted(
+  env: Pick<Env, "LOBBY_ROOM">,
+  questId: number,
+): Promise<void> {
+  if (!env.LOBBY_ROOM) return;
+  try {
+    const id = env.LOBBY_ROOM.idFromName(`lobby:${questId}`);
+    const stub = env.LOBBY_ROOM.get(id);
+    await (stub as unknown as { notifyStarted(q: number): Promise<void> }).notifyStarted(questId);
+  } catch (err) {
+    console.warn("notifyLobbyStarted failed", err);
+  }
+}
+
+async function notifyLobbyLockChanged(
+  env: Pick<Env, "LOBBY_ROOM">,
+  questId: number,
+  locked: boolean,
+): Promise<void> {
+  if (!env.LOBBY_ROOM) return;
+  try {
+    const id = env.LOBBY_ROOM.idFromName(`lobby:${questId}`);
+    const stub = env.LOBBY_ROOM.get(id);
+    await (stub as unknown as { notifyLockChanged(l: boolean): Promise<void> }).notifyLockChanged(locked);
+  } catch (err) {
+    console.warn("notifyLobbyLockChanged failed", err);
+  }
+}
+
+async function notifyLobbyCancelled(
+  env: Pick<Env, "LOBBY_ROOM">,
+  questId: number,
+): Promise<void> {
+  if (!env.LOBBY_ROOM) return;
+  try {
+    const id = env.LOBBY_ROOM.idFromName(`lobby:${questId}`);
+    const stub = env.LOBBY_ROOM.get(id);
+    await (stub as unknown as { notifyCancelled(): Promise<void> }).notifyCancelled();
+  } catch (err) {
+    console.warn("notifyLobbyCancelled failed", err);
   }
 }

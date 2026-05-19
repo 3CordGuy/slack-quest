@@ -41,6 +41,11 @@ interface LobbyQuestData {
     graph?: { nodes?: unknown[] } | null;
   };
   lobby_expires_at: number | null;
+  locked?: boolean;
+  // Distinguishes pre-combat (status='lobby') from mid-combat reinforcement
+  // (status='active'). Reinforcement skips the auto-start countdown and the
+  // ready-up flow is "I'm joining the fight right now".
+  status?: "lobby" | "active" | "completed" | "failed";
 }
 
 interface TeamMember {
@@ -176,29 +181,103 @@ export function LobbyView({
     setLoading(false);
   }, [onQuestStarted]);
 
+  // WebSocket connection: live state + chat. Falls back to polling if the
+  // upgrade fails (LOBBY_ROOM unbound in local dev, network block, etc.).
+  // `wsConnected` flips poll cadence — polls stop when WS is alive.
+  const [wsConnected, setWsConnected] = useState(false);
+  const wsRef = useRef<WebSocket | null>(null);
+
+  // Initial HTTP load (gives us the quest id we need for the WS upgrade) +
+  // a slower poll-as-fallback that's only active when WS isn't connected.
   useEffect(() => {
     void refresh();
-    const t = setInterval(() => void refresh(), 4000);
+    const t = setInterval(() => {
+      if (!wsConnected) void refresh();
+    }, 8000);
     return () => clearInterval(t);
-  }, [refresh]);
+  }, [refresh, wsConnected]);
 
-  // Poll for new chat messages every 3 seconds
+  // Establish WS once we know the questId. Reconnects if the underlying
+  // connection drops (manual exponential-ish backoff).
   useEffect(() => {
     if (!questId) return;
-    const pollChat = async () => {
-      const res = await fetch(`/api/quest/${questId}/chat?since=${lastMessageAt.current}`, { credentials: "include" });
-      if (!res.ok) return;
-      const body = (await res.json()) as { messages?: ChatMessage[] };
-      const incoming = body.messages ?? [];
-      if (incoming.length > 0) {
-        lastMessageAt.current = incoming[incoming.length - 1].created_at;
-        setMessages((prev) => [...prev, ...incoming]);
-      }
+    let closed = false;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+    let retryDelay = 1000;
+
+    const connect = () => {
+      const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
+      const ws = new WebSocket(`${proto}//${window.location.host}/api/quest/${questId}/lobby/ws`);
+      wsRef.current = ws;
+
+      ws.onopen = () => {
+        setWsConnected(true);
+        retryDelay = 1000;
+      };
+      ws.onmessage = (ev) => {
+        let msg: { type: string; [k: string]: unknown };
+        try {
+          msg = JSON.parse(ev.data as string);
+        } catch {
+          return;
+        }
+        if (msg.type === "state") {
+          const q = msg.quest as LobbyQuestData;
+          const p = msg.party as LobbyMember[];
+          setQuest(q);
+          setParty(p);
+          setLoading(false);
+        } else if (msg.type === "chat") {
+          const m = msg.message as ChatMessage;
+          lastMessageAt.current = m.created_at;
+          setMessages((prev) => (prev.some((x) => x.id === m.id) ? prev : [...prev, m]));
+        } else if (msg.type === "chat_history") {
+          const list = (msg.messages as ChatMessage[]) ?? [];
+          if (list.length > 0) {
+            lastMessageAt.current = list[list.length - 1].created_at;
+            setMessages(list);
+          }
+        } else if (msg.type === "lock_changed") {
+          setQuest((q) => (q ? { ...q, locked: !!msg.locked } : q));
+        } else if (msg.type === "started") {
+          onQuestStarted();
+        } else if (msg.type === "cancelled") {
+          onQuestStarted(); // bubbles up to App.tsx refresh; lobby will vanish
+        }
+      };
+      ws.onclose = () => {
+        setWsConnected(false);
+        wsRef.current = null;
+        if (closed) return;
+        // Reconnect with light backoff. Capped at 8s.
+        retryDelay = Math.min(retryDelay * 1.5, 8000);
+        retryTimer = setTimeout(connect, retryDelay);
+      };
+      ws.onerror = () => {
+        // ws.onclose will fire after the error; let it handle reconnect.
+      };
     };
-    void pollChat();
-    const t = setInterval(() => void pollChat(), 3000);
+
+    connect();
+    return () => {
+      closed = true;
+      if (retryTimer) clearTimeout(retryTimer);
+      try { wsRef.current?.close(1000, "unmount"); } catch { /* noop */ }
+      wsRef.current = null;
+    };
+  }, [questId, onQuestStarted]);
+
+  // Heartbeat to keep the WS alive (ignored by server, but keeps proxies
+  // from culling the connection).
+  useEffect(() => {
+    if (!wsConnected) return;
+    const t = setInterval(() => {
+      try {
+        wsRef.current?.send(JSON.stringify({ type: "ping" }));
+      } catch { /* socket closed; ignore */ }
+    }, 25000);
     return () => clearInterval(t);
-  }, [questId]);
+  }, [wsConnected]);
 
   // Auto-scroll to bottom when new messages arrive
   useEffect(() => {
@@ -211,14 +290,56 @@ export function LobbyView({
     const text = chatInput.trim();
     setChatInput("");
     try {
-      await fetch(`/api/quest/${questId}/chat`, {
+      // Prefer WS — instant fan-out to all listeners; no D1 write.
+      // Falls back to the REST endpoint if the socket is closed.
+      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+        wsRef.current.send(JSON.stringify({ type: "chat", message: text }));
+      } else {
+        await fetch(`/api/quest/${questId}/chat`, {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ message: text }),
+        });
+      }
+    } finally {
+      setSending(false);
+    }
+  }
+
+  // Creator-only lobby control: toggle join lock or cancel entirely.
+  async function toggleLock() {
+    if (!quest || acting) return;
+    setActing(true);
+    try {
+      await fetch(`/api/quest/${quest.id}/lobby/lock`, {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: text }),
+        body: JSON.stringify({ locked: !quest.locked }),
       });
+      // WS state push will reflect the change; no manual refresh needed.
     } finally {
-      setSending(false);
+      setActing(false);
+    }
+  }
+
+  async function cancelLobby() {
+    if (!quest || acting) return;
+    if (!confirm(
+      quest.status === "active"
+        ? "Cancel reinforcement recruitment? (Active fight continues.)"
+        : "Cancel this lobby? The quest will be deleted entirely.",
+    )) return;
+    setActing(true);
+    try {
+      await fetch(`/api/quest/${quest.id}/lobby/cancel`, {
+        method: "POST",
+        credentials: "include",
+      });
+      onQuestStarted(); // re-fetch dashboard; lobby disappears
+    } finally {
+      setActing(false);
     }
   }
 
@@ -299,6 +420,14 @@ export function LobbyView({
 
   const pendingCount = party.filter((m) => m.invite_status === "pending").length;
 
+  // Pulse the floating tab when I personally have an outstanding action:
+  //   - I'm pending (need to accept/decline)
+  //   - I'm accepted but not ready (need to ready up)
+  // Pulse stops when I've done my part — even if others haven't yet.
+  const needsMyAction =
+    me?.invite_status === "pending" ||
+    (me?.invite_status === "accepted" && !me.ready);
+
   // Floating tab always visible so user can reopen the drawer
   const tab = (
     <button
@@ -309,8 +438,8 @@ export function LobbyView({
         top: "50%",
         transform: "translateY(-50%)",
         zIndex: 1001,
-        background: "#2563eb",
-        color: "#fff",
+        background: needsMyAction ? "#f59e0b" : "#2563eb",
+        color: needsMyAction ? "#000" : "#fff",
         border: "none",
         borderRadius: open ? "6px 0 0 6px" : "6px 0 0 6px",
         padding: "12px 8px",
@@ -322,23 +451,34 @@ export function LobbyView({
         fontSize: 11,
         fontWeight: 700,
         letterSpacing: 0.5,
-        boxShadow: "-2px 0 12px rgba(0,0,0,0.4)",
-        transition: "right 0.25s ease",
+        boxShadow: needsMyAction
+          ? "-2px 0 18px rgba(245, 158, 11, 0.7)"
+          : "-2px 0 12px rgba(0,0,0,0.4)",
+        transition: "right 0.25s ease, background 0.25s ease, box-shadow 0.25s ease",
+        animation: needsMyAction && !open ? "lobbyTabPulse 1.4s ease-in-out infinite" : "none",
       }}
     >
-      <Icon name="conversation" size={16} color="#fff" />
+      <Icon name="conversation" size={16} color={needsMyAction ? "#000" : "#fff"} />
       <span style={{ writingMode: "vertical-rl", textOrientation: "mixed", transform: "rotate(180deg)" }}>
         LOBBY
       </span>
       {pendingCount > 0 && (
         <span style={{
-          background: "#f59e0b", color: "#000", borderRadius: "50%",
+          background: needsMyAction ? "#000" : "#f59e0b",
+          color: needsMyAction ? "#f59e0b" : "#000",
+          borderRadius: "50%",
           width: 16, height: 16, fontSize: 10, fontWeight: 700,
           display: "flex", alignItems: "center", justifyContent: "center",
         }}>
           {pendingCount}
         </span>
       )}
+      <style>{`
+        @keyframes lobbyTabPulse {
+          0%, 100% { box-shadow: -2px 0 18px rgba(245, 158, 11, 0.7); }
+          50% { box-shadow: -2px 0 28px rgba(245, 158, 11, 1.0), 0 0 0 4px rgba(245, 158, 11, 0.35); }
+        }
+      `}</style>
     </button>
   );
 
@@ -407,16 +547,25 @@ export function LobbyView({
             fontSize: 11,
             textTransform: "uppercase",
             letterSpacing: 1,
-            color: "#60a5fa",
+            color: quest?.status === "active" ? "#dc2626" : "#60a5fa",
             marginBottom: 4,
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
           }}
         >
-          Quest Lobby
+          {quest?.status === "active" ? "🆘 Reinforcement Lobby" : "Quest Lobby"}
+          {quest?.locked && <span style={{ color: "#fbbf24" }}>🔒 Locked</span>}
         </div>
         <div style={{ fontSize: 20, fontWeight: 700, color: "#f5f5f5" }}>{questLabel}</div>
-        {expiresLabel && (
+        {expiresLabel && quest?.status !== "active" && (
           <div style={{ fontSize: 12, color: "#6b7280", marginTop: 4 }}>
             Auto-starts in {expiresLabel}
+          </div>
+        )}
+        {quest?.status === "active" && (
+          <div style={{ fontSize: 12, color: "#9ca3af", marginTop: 4 }}>
+            Fight in progress. Accepting joins you straight into combat.
           </div>
         )}
       </div>
@@ -571,7 +720,34 @@ export function LobbyView({
 
       {/* Action buttons */}
       <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
-        {me?.invite_status === "pending" && (
+        {/* Reinforcement mode: pending invitee on an active quest. One-click
+            "Join the Fight!" pulls them straight into combat (server handles
+            accept+ready+notifyFighterJoined atomically). */}
+        {me?.invite_status === "pending" && quest?.status === "active" && (
+          <>
+            <button
+              disabled={acting}
+              onClick={() => void act("ready")}
+              style={{ ...btnBase, background: "#dc2626", color: "#fff" }}
+            >
+              ⚔ Join the Fight!
+            </button>
+            <button
+              disabled={acting}
+              onClick={() => void act("decline")}
+              style={{
+                ...btnBase,
+                background: "#1f2937",
+                color: "#9ca3af",
+                border: "1px solid #374151",
+              }}
+            >
+              Decline
+            </button>
+          </>
+        )}
+        {/* Pre-combat lobby: standard accept/decline */}
+        {me?.invite_status === "pending" && quest?.status !== "active" && (
           <>
             <button
               disabled={acting}
@@ -603,7 +779,7 @@ export function LobbyView({
             Ready Up
           </button>
         )}
-        {me?.invite_status === "accepted" && me.ready && (
+        {me?.invite_status === "accepted" && me.ready && quest?.status !== "active" && (
           <div
             style={{
               fontSize: 13,
@@ -619,7 +795,12 @@ export function LobbyView({
             }
           </div>
         )}
-        {isCreator && !showInvite && (
+        {me?.invite_status === "accepted" && me.ready && quest?.status === "active" && isCreator && (
+          <div style={{ fontSize: 13, color: "#9ca3af", display: "flex", alignItems: "center", gap: 6 }}>
+            <Icon name="conversation" size={13} color="#9ca3af" /> Reinforcements pending — they'll join the fight as they ready up
+          </div>
+        )}
+        {isCreator && !showInvite && !quest?.locked && (
           <button
             onClick={() => void openInvite()}
             style={{
@@ -632,11 +813,61 @@ export function LobbyView({
             + Invite Player
           </button>
         )}
+        {isCreator && quest?.locked && (
+          <div style={{
+            fontSize: 12,
+            color: "#fbbf24",
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            padding: "9px 12px",
+            background: "#1c1408",
+            border: "1px solid #92400e",
+            borderRadius: 8,
+          }}>
+            <Icon name="locked-fortress" size={13} color="#fbbf24" /> Locked — no new invites
+          </div>
+        )}
+        {/* Creator-only: lock toggle + cancel */}
         {isCreator && (
           <button
             disabled={acting}
+            onClick={() => void toggleLock()}
+            title={quest?.locked ? "Unlock — re-allow invites" : "Lock — block new invites"}
+            style={{
+              ...btnBase,
+              background: quest?.locked ? "#92400e" : "#1f2937",
+              color: quest?.locked ? "#fff" : "#9ca3af",
+              border: quest?.locked ? "none" : "1px solid #374151",
+              marginLeft: "auto",
+            }}
+          >
+            {quest?.locked ? "🔓 Unlock" : "🔒 Lock"}
+          </button>
+        )}
+        {isCreator && (
+          <button
+            disabled={acting}
+            onClick={() => void cancelLobby()}
+            title={quest?.status === "active"
+              ? "Close recruitment — active fight continues"
+              : "Cancel & delete the lobby entirely"}
+            style={{
+              ...btnBase,
+              background: "#1f1414",
+              color: "#fca5a5",
+              border: "1px solid #7f1d1d",
+            }}
+          >
+            🗑 {quest?.status === "active" ? "Close Recruit" : "Cancel"}
+          </button>
+        )}
+        {/* Force start only meaningful pre-combat */}
+        {isCreator && quest?.status !== "active" && (
+          <button
+            disabled={acting}
             onClick={() => void act("force_start")}
-            style={{ ...btnBase, background: "#7c3aed", color: "#fff", marginLeft: "auto" }}
+            style={{ ...btnBase, background: "#7c3aed", color: "#fff" }}
           >
             Force Start
           </button>

@@ -2,7 +2,15 @@
 // Long-running work (AI calls, chat.postMessage) goes through ctx.waitUntil.
 
 import type { Env, QuestRoomStub } from "./index";
-import { cancelLobbyAlarm, cancelTurnNotifAlarm, questRoomId, scheduleLobbyAlarm, scheduleTurnNotifAlarm } from "./index";
+import {
+  cancelLobbyAlarm,
+  cancelTurnNotifAlarm,
+  notifyLobbyStarted,
+  notifyLobbyStateChanged,
+  questRoomId,
+  scheduleLobbyAlarm,
+  scheduleTurnNotifAlarm,
+} from "./index";
 import { renderBattlefieldBlocks, renderTurnToThread } from "./render_combat";
 
 // Public-facing display name. Defaults to "Slack Quest"; operators override per
@@ -2331,7 +2339,11 @@ async function handleAcceptInvite(
   const started = await maybeAutoStart(
     questId, quest.channel_id, quest.thread_ts, quest.lobby_ts, env,
   );
-  if (started) return { response_type: "ephemeral", text: "✅ Quest started!", _deleteOriginal: false };
+  if (started) {
+    await notifyLobbyStarted(env, questId);
+    return { response_type: "ephemeral", text: "✅ Quest started!", _deleteOriginal: false };
+  }
+  await notifyLobbyStateChanged(env, questId);
   return ephemeral("✅ You joined the lobby! Click *Ready Up* when you're set.");
 }
 
@@ -2352,6 +2364,7 @@ async function handleDeclineInvite(
 
   await updateInviteStatus(env.DB, questId, userId, "declined");
   await refreshLobbyCard(questId, quest.channel_id, quest, quest.created_by, env);
+  await notifyLobbyStateChanged(env, questId);
   return ephemeral("Invite declined.");
 }
 
@@ -2380,7 +2393,11 @@ async function handleReadyUp(
   const started = await maybeAutoStart(
     questId, quest.channel_id, quest.thread_ts, quest.lobby_ts, env,
   );
-  if (started) return { response_type: "ephemeral", text: "🚀 Everyone's ready — quest started!", _deleteOriginal: false };
+  if (started) {
+    await notifyLobbyStarted(env, questId);
+    return { response_type: "ephemeral", text: "🚀 Everyone's ready — quest started!", _deleteOriginal: false };
+  }
+  await notifyLobbyStateChanged(env, questId);
   return ephemeral("🟢 You're ready! Waiting for others…");
 }
 
@@ -2396,6 +2413,7 @@ async function handleForceStart(
     return ephemeral("Only the quest creator can force start.");
   }
   await startQuestFromLobby(questId, quest.channel_id, quest.thread_ts, quest.lobby_ts, env);
+  await notifyLobbyStarted(env, questId);
   return { response_type: "ephemeral", text: "▶ Quest force-started!", _deleteOriginal: false };
 }
 

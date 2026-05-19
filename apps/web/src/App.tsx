@@ -367,6 +367,9 @@ interface ActiveQuest {
   id: number;
   elite: boolean;
   scene: SceneJson;
+  // Quest creator's slack_user_id — used to gate creator-only affordances
+  // like "Open Reinforcement Lobby" on the active quest card.
+  created_by: string;
 }
 
 interface RecentQuest {
@@ -898,12 +901,43 @@ export function App() {
     prevJoinableIdRef.current = jId;
   }, [state.kind === "auth" ? state.joinable?.quest_id : null]);
 
+  // Toast once when a lobby invite first appears for me. Fires for both
+  // brand-new lobbies and for transitions where my row changed to pending
+  // on a still-open lobby. Dedup'd on questId so we don't re-toast each poll.
+  const prevLobbyToastRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (state.kind !== "auth") return;
+    const lobby = state.lobbyQuest;
+    if (!lobby) {
+      prevLobbyToastRef.current = null;
+      return;
+    }
+    const me = lobby.party.find((m) => m.slack_user_id === state.me.slack_user_id);
+    const myStatus = me?.invite_status ?? null;
+    const qId = lobby.quest.id;
+    if (qId !== prevLobbyToastRef.current && myStatus === "pending") {
+      toast(`🛡 You've been invited to a quest lobby! Open the LOBBY tab →`, { duration: 7000 });
+      prevLobbyToastRef.current = qId;
+    } else if (qId === prevLobbyToastRef.current && myStatus !== "pending") {
+      // Reset so a later re-invite (rare but possible) re-toasts.
+      // No-op: keep dedup until lobby goes away entirely.
+    }
+  }, [
+    state.kind === "auth" ? state.lobbyQuest?.quest.id : null,
+    state.kind === "auth"
+      ? state.lobbyQuest?.party.find((m) => m.slack_user_id === state.me.slack_user_id)?.invite_status
+      : null,
+  ]);
+
   // Background poll — keep the dashboard in sync with partymate activity
   // (joins, shop buys, slack-driven combat). Paused when CombatPage is open
   // (the WS keeps that screen live) and when the tab is hidden to save battery.
   useEffect(() => {
     if (activeCombat) return;
-    const POLL_MS = 15_000;
+    // 5s on the dashboard so lobby invites surface fast; the longer 15s
+    // baseline was leaving teammates oblivious to fresh invites while
+    // browsing town. All in free tier; see cost analysis discussion.
+    const POLL_MS = 5_000;
     let timer: ReturnType<typeof setTimeout> | null = null;
     const tick = () => {
       if (!document.hidden) void refresh();
@@ -1185,6 +1219,18 @@ export function App() {
     if (!ok) return;
     setCombatDismissed(false);
     setActiveCombat({ questId });
+  }
+
+  // Open a reinforcement lobby on an active quest. Server-side is a no-op
+  // beyond returning the lobby snapshot — but we refresh so the lobby drawer
+  // mounts immediately for the creator (with the invite UI ready). The
+  // creator's row is already in quest_party with invite_status='accepted'
+  // from the original lobby flow.
+  async function openRecruitment(questId: number) {
+    const { ok } = await postJson(`/api/quest/${questId}/recruit`, { method: "POST" });
+    if (!ok) return;
+    toast("🆘 Reinforcement lobby open — invite players from the LOBBY tab.", { duration: 5000 });
+    void refresh();
   }
 
   async function chooseDoor(questId: number, pick: number) {
@@ -1786,6 +1832,7 @@ export function App() {
                 selfId={state.me.slack_user_id}
                 combatInProgress={hasWebCombat}
                 onStartCombat={() => startCombat(state.activeQuest!.quest.id)}
+                onOpenRecruitment={() => openRecruitment(state.activeQuest!.quest.id)}
                 onChooseDoor={(pick) => chooseDoor(state.activeQuest!.quest.id, pick)}
                 onTrapChoose={(pick) => trapChoose(state.activeQuest!.quest.id, pick)}
                 onLockboxChoose={(pick) => lockboxChoose(state.activeQuest!.quest.id, pick)}
@@ -2408,6 +2455,7 @@ function ActiveQuestCard({
   selfId,
   combatInProgress,
   onStartCombat,
+  onOpenRecruitment,
   onChooseDoor,
   onTrapChoose,
   onLockboxChoose,
@@ -2424,6 +2472,7 @@ function ActiveQuestCard({
   selfId: string;
   combatInProgress: boolean;
   onStartCombat: () => void;
+  onOpenRecruitment: () => void;
   onChooseDoor: (pick: number) => void;
   onTrapChoose: (pick: number) => void;
   onLockboxChoose: (pick: number) => void;
@@ -2651,13 +2700,30 @@ function ActiveQuestCard({
           variant === "gauntlet" ||
           (variant === "dungeon" && currentNode?.type === "combat" && s.monster_hp > 0);
         if (combatAvailable) {
+          const isCreator = quest.created_by === selfId;
           return (
-            <button
-              onClick={onStartCombat}
-              style={{ ...button, marginTop: 20, background: "#b89b3a", color: "#0e0f12" }}
-            >
-              <Icon name="sword" /> {combatInProgress ? "Resume Combat" : "Open Combat"}
-            </button>
+            <div style={{ display: "flex", gap: 10, marginTop: 20, flexWrap: "wrap" }}>
+              <button
+                onClick={onStartCombat}
+                style={{ ...button, flex: 1, minWidth: 200, background: "#b89b3a", color: "#0e0f12" }}
+              >
+                <Icon name="sword" /> {combatInProgress ? "Resume Combat" : "Open Combat"}
+              </button>
+              {isCreator && (
+                <button
+                  onClick={onOpenRecruitment}
+                  title="Open a reinforcement lobby. Invitees who accept will join the fight in progress."
+                  style={{
+                    ...button,
+                    background: "#1f2937",
+                    color: "#fca5a5",
+                    border: "1px solid #7f1d1d",
+                  }}
+                >
+                  🆘 Call Reinforcements
+                </button>
+              )}
+            </div>
           );
         }
         return null;

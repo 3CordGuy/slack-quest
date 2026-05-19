@@ -574,6 +574,9 @@ export interface ActiveQuest {
   // Set when the "Join here / Join on web" card is posted. Cleared
   // (message deleted) when the quest is no longer joinable.
   joinable_ts: string | null;
+  // Quest creator's slack_user_id. Exposed so the web UI can gate
+  // creator-only affordances (open reinforcement, cancel, lock).
+  created_by: string;
 }
 
 interface QuestRow {
@@ -585,6 +588,7 @@ interface QuestRow {
   mode: string;
   battlefield_ts: string | null;
   joinable_ts: string | null;
+  created_by: string;
 }
 
 // Returns the active quest for a character, with scene data loaded.
@@ -594,7 +598,7 @@ export async function getActiveQuestForCharacter(
 ): Promise<ActiveQuest | null> {
   const row = await db
     .prepare(
-      `SELECT q.id, q.thread_ts, q.channel_id, q.elite, q.scene_json, q.mode, q.battlefield_ts, q.joinable_ts
+      `SELECT q.id, q.thread_ts, q.channel_id, q.elite, q.scene_json, q.mode, q.battlefield_ts, q.joinable_ts, q.created_by
        FROM quests q
        JOIN quest_party qp ON qp.quest_id = q.id
        WHERE qp.character_id = ? AND q.status = 'active'
@@ -612,6 +616,7 @@ export async function getActiveQuestForCharacter(
     mode: row.mode === "web" ? "web" : "slack",
     battlefield_ts: row.battlefield_ts,
     joinable_ts: row.joinable_ts,
+    created_by: row.created_by,
   };
 }
 
@@ -625,7 +630,7 @@ export async function getQuestById(
 ): Promise<ActiveQuest | null> {
   const row = await db
     .prepare(
-      `SELECT id, channel_id, thread_ts, elite, scene_json, mode, battlefield_ts, joinable_ts
+      `SELECT id, channel_id, thread_ts, elite, scene_json, mode, battlefield_ts, joinable_ts, created_by
        FROM quests
        WHERE id = ? AND status = 'active'
        LIMIT 1`,
@@ -642,6 +647,7 @@ export async function getQuestById(
     mode: row.mode === "web" ? "web" : "slack",
     battlefield_ts: row.battlefield_ts,
     joinable_ts: row.joinable_ts,
+    created_by: row.created_by,
   };
 }
 
@@ -2020,7 +2026,7 @@ export async function getActiveQuestInChannel(
 ): Promise<ActiveQuest | null> {
   const row = await db
     .prepare(
-      `SELECT id, channel_id, thread_ts, elite, scene_json, mode, battlefield_ts, joinable_ts
+      `SELECT id, channel_id, thread_ts, elite, scene_json, mode, battlefield_ts, joinable_ts, created_by
        FROM quests
        WHERE channel_id = ? AND status = 'active'
        ORDER BY created_at DESC LIMIT 1`,
@@ -2037,6 +2043,7 @@ export async function getActiveQuestInChannel(
     mode: row.mode === "web" ? "web" : "slack",
     battlefield_ts: row.battlefield_ts,
     joinable_ts: row.joinable_ts,
+    created_by: row.created_by,
   };
 }
 
@@ -3153,8 +3160,17 @@ export interface LobbyQuest {
   scene: SceneJson;
   mode: QuestMode;
   created_by: string;
+  // For reinforcement lobbies (status=active with pending invitees) this is
+  // null — only pre-combat lobbies have an auto-start alarm.
   lobby_expires_at: number | null;
   lobby_ts: string | null;
+  // Creator-toggled join lock. When true, new invites/joins are rejected
+  // (existing pending invitees can still accept/decline). Independent of
+  // status — a locked lobby can still ready up + start.
+  locked: boolean;
+  // The underlying quest status so LobbyView can distinguish pre-combat
+  // (status=lobby) from reinforcement (status=active) flows.
+  status: "lobby" | "active" | "completed" | "failed";
 }
 
 export interface LobbyPartyMember {
@@ -3174,6 +3190,8 @@ interface LobbyQuestRow {
   created_by: string;
   lobby_expires_at: number | null;
   lobby_ts: string | null;
+  locked: number;
+  status: string;
 }
 
 function rowToLobbyQuest(row: LobbyQuestRow): LobbyQuest {
@@ -3187,11 +3205,18 @@ function rowToLobbyQuest(row: LobbyQuestRow): LobbyQuest {
     created_by: row.created_by,
     lobby_expires_at: row.lobby_expires_at,
     lobby_ts: row.lobby_ts,
+    locked: row.locked === 1,
+    status: (row.status as LobbyQuest["status"]) ?? "lobby",
   };
 }
 
-// Returns the lobby quest the user has accepted (or created). Used to
-// block starting a second quest while in a pending lobby.
+// Returns a lobby relevant to the user. Two cases:
+//   1. Pre-combat (status='lobby'): user is an invitee (pending/accepted) or
+//      the creator.
+//   2. Reinforcement (status='active'): user has invite_status='pending' on
+//      an active quest — they were invited mid-fight to come help.
+// `getLobbyQuestById` returns lobby data for any status; callers decide
+// whether to treat status=active as a reinforcement lobby.
 export async function getLobbyQuestForCharacter(
   db: D1Database,
   userId: string,
@@ -3199,11 +3224,14 @@ export async function getLobbyQuestForCharacter(
   const row = await db
     .prepare(
       `SELECT q.id, q.channel_id, q.thread_ts, q.elite, q.scene_json, q.mode,
-              q.created_by, q.lobby_expires_at, q.lobby_ts
+              q.created_by, q.lobby_expires_at, q.lobby_ts, q.locked, q.status
        FROM quests q
        JOIN quest_party qp ON qp.quest_id = q.id
-       WHERE qp.character_id = ? AND q.status = 'lobby'
-         AND qp.invite_status = 'accepted'
+       WHERE qp.character_id = ?
+         AND (
+           (q.status = 'lobby' AND qp.invite_status IN ('pending', 'accepted'))
+           OR (q.status = 'active' AND qp.invite_status = 'pending')
+         )
        LIMIT 1`,
     )
     .bind(userId)
@@ -3218,9 +3246,9 @@ export async function getLobbyQuestById(
   const row = await db
     .prepare(
       `SELECT id, channel_id, thread_ts, elite, scene_json, mode,
-              created_by, lobby_expires_at, lobby_ts
+              created_by, lobby_expires_at, lobby_ts, locked, status
        FROM quests
-       WHERE id = ? AND status = 'lobby'
+       WHERE id = ?
        LIMIT 1`,
     )
     .bind(questId)
@@ -3320,6 +3348,55 @@ export async function setLobbyTs(
     .prepare(`UPDATE quests SET lobby_ts = ? WHERE id = ?`)
     .bind(ts, questId)
     .run();
+}
+
+// Creator-toggleable join lock. Independent of status — a locked lobby can
+// still complete normally (ready up, force start). Invite endpoints check
+// this flag and reject new invites when locked.
+export async function setQuestLocked(
+  db: D1Database,
+  questId: number,
+  locked: boolean,
+): Promise<void> {
+  await db
+    .prepare(`UPDATE quests SET locked = ? WHERE id = ?`)
+    .bind(locked ? 1 : 0, questId)
+    .run();
+}
+
+// Pre-combat lobby cancel: nuke the quest row and its quest_party rows.
+// Caller is responsible for guarding (creator-only, status='lobby').
+// Mid-combat reinforcement cancel just drops pending invitees — use
+// `removePendingInvitees` for that.
+export async function deleteQuestCascade(
+  db: D1Database,
+  questId: number,
+): Promise<void> {
+  // No FK cascade defined on quest_party in our schema, so delete explicitly.
+  // Order matters only for FKs but doing children-first keeps it tidy.
+  await db.batch([
+    db.prepare(`DELETE FROM quest_party WHERE quest_id = ?`).bind(questId),
+    db.prepare(`DELETE FROM quest_log WHERE quest_id = ?`).bind(questId),
+    db.prepare(`DELETE FROM quest_chat WHERE quest_id = ?`).bind(questId),
+    db.prepare(`DELETE FROM quests WHERE id = ?`).bind(questId),
+  ]);
+}
+
+// True iff there's at least one pending invitee. Used to gate the
+// reinforcement-lobby UI on the active quest card.
+export async function hasPendingInvitees(
+  db: D1Database,
+  questId: number,
+): Promise<boolean> {
+  const row = await db
+    .prepare(
+      `SELECT 1 AS one FROM quest_party
+       WHERE quest_id = ? AND invite_status = 'pending'
+       LIMIT 1`,
+    )
+    .bind(questId)
+    .first<{ one: number }>();
+  return !!row;
 }
 
 // ─── End lobby system ─────────────────────────────────────────────────────────

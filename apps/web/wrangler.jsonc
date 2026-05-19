@@ -27,10 +27,12 @@
   ],
   "durable_objects": {
     "bindings": [
-      { "name": "QUEST_ROOM", "class_name": "QuestRoom" }
+      { "name": "QUEST_ROOM", "class_name": "QuestRoom" },
+      { "name": "LOBBY_ROOM", "class_name": "LobbyRoom" }
     ]
   },
   "migrations": [
-    { "tag": "v1", "new_sqlite_classes": ["QuestRoom"] }
+    { "tag": "v1", "new_sqlite_classes": ["QuestRoom"] },
+    { "tag": "v2", "new_sqlite_classes": ["LobbyRoom"] }
   ]
 }
