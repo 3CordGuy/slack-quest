@@ -438,7 +438,7 @@ export type CombatEvent =
   | { type: "battle_hymn_consumed"; actor: ActorId; bonus: number; remaining: number }
   | { type: "mark_applied"; actor: ActorId; expires_after_round: number; bonus: number }
   | { type: "mark_bonus"; actor: ActorId; bonus: number }
-  | { type: "shield_applied"; actor: ActorId; target: ActorId; restored: number; new_armor: number }
+  | { type: "shield_applied"; actor: ActorId; target: ActorId; restored: number; new_armor: number; bonus_barrier?: boolean }
   | { type: "passive_warden_shield"; actor: ActorId; amount: number }
   | { type: "passive_mage_free_sig"; actor: ActorId }
   | { type: "passive_druid_regen"; actor: ActorId; amount: number }
@@ -1437,15 +1437,39 @@ function handleShield(
   if (!target) return reject(state, `shield: target ${targetId} not found`);
   if (target.hp <= 0) return reject(state, "shield: target is down");
 
-  // Replenish the target's depletable armor pool to its max (floor(armor_power / 2)).
-  // Never reduce: if bonus shield pushed it above armorMax, preserve it.
+  // Two modes:
+  //   1. Target has armor equipped → replenish their depletable armor pool to
+  //      floor(armor_power / 2). Same as the original self-shield behavior.
+  //   2. Target has no armor → grant a flat "bonus barrier" capped by the
+  //      MIN of actor.level and target.level so a high-level caster can't
+  //      over-shield a low-level ally. Floor at 5, climbs slowly with level,
+  //      hard cap at 15.
+  // In both modes, never reduce existing shield — preserve overflow from
+  // traps / passives.
+  const tickedActor = state.fighters.find((f) => f.id === action.actor)!;
   const armorMax = Math.floor(target.armor_power / 2);
-  const newArmor = Math.max(target.shield, armorMax);
+  let newArmor: number;
+  let bonusBarrier = false;
+  if (armorMax > 0) {
+    newArmor = Math.max(target.shield, armorMax);
+  } else {
+    const minLevel = Math.min(tickedActor.level, target.level);
+    const bonusShield = Math.min(15, 5 + Math.floor(minLevel / 2));
+    newArmor = Math.max(target.shield, bonusShield);
+    bonusBarrier = true;
+  }
   const restored = newArmor - target.shield;
 
   const events: CombatEvent[] = [
     ...tick.events,
-    { type: "shield_applied", actor: action.actor, target: targetId, restored, new_armor: newArmor },
+    {
+      type: "shield_applied",
+      actor: action.actor,
+      target: targetId,
+      restored,
+      new_armor: newArmor,
+      bonus_barrier: bonusBarrier,
+    },
   ];
 
   const next = advanceTurn({
