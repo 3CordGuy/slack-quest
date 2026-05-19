@@ -1483,11 +1483,11 @@ export function App() {
     if (ok) void refresh();
   }
 
-  async function startHunt(tier: number, monsterCount: number) {
+  async function startHunt(tier: number, monsterCount: number, invitees: string[] = []) {
     const { ok } = await postJson("/api/hunt", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ tier, monster_count: monsterCount }),
+      body: JSON.stringify({ tier, monster_count: monsterCount, invitees }),
     });
     if (ok) void refresh();
   }
@@ -1715,10 +1715,18 @@ export function App() {
       <DashboardLayout
         main={
           <>
-            {!state.activeQuest && state.lobbyQuest && (
+            {state.lobbyQuest && (
               <LobbyView
                 selfId={state.me.slack_user_id}
-                onQuestStarted={() => void refresh()}
+                onQuestStarted={async () => {
+                  const questId = state.lobbyQuest!.quest.id;
+                  const variant = (state.lobbyQuest!.quest.scene as { variant?: string })?.variant ?? "standard";
+                  await refresh();
+                  // For non-dungeon quests jump straight into combat — skip the "Open Combat" step
+                  if (variant !== "dungeon") {
+                    void startCombat(questId);
+                  }
+                }}
               />
             )}
             {state.activeQuest && (
@@ -8163,12 +8171,32 @@ function HuntSection({
   characterLevel: number;
   overviewArt: string | null;
   navOverlay: React.ReactNode;
-  onStartHunt: (tier: number, monsterCount: number) => void;
+  onStartHunt: (tier: number, monsterCount: number, invitees: string[]) => void;
 }) {
   const [tier, setTier] = useState(characterLevel);
   const [monsterCount, setMonsterCount] = useState(1);
   const [busy, setBusy] = useState(false);
+  const [teamMembers, setTeamMembers] = useState<{ slack_user_id: string; name: string; class: string; level: number }[]>([]);
+  const [invitees, setInvitees] = useState<Set<string>>(new Set());
   const clampedTier = Math.max(1, Math.min(tier, characterLevel));
+
+  useEffect(() => {
+    fetch("/api/characters", { credentials: "include" })
+      .then((r) => r.json())
+      .then((b) => {
+        const body = b as { characters?: { slack_user_id: string; name: string; class: string; level: number }[] };
+        setTeamMembers(body.characters ?? []);
+      })
+      .catch(() => {});
+  }, []);
+
+  function toggleInvitee(uid: string) {
+    setInvitees((prev) => {
+      const next = new Set(prev);
+      if (next.has(uid)) next.delete(uid); else next.add(uid);
+      return next;
+    });
+  }
 
   const packMultiplier = monsterCount === 3 ? 2.2 : monsterCount === 2 ? 1.5 : 1;
   const xpEstimate = Math.round(15 * Math.pow(clampedTier, 1.2) * packMultiplier);
@@ -8189,7 +8217,7 @@ function HuntSection({
 
   async function handle() {
     setBusy(true);
-    try { await onStartHunt(clampedTier, monsterCount); } finally { setBusy(false); }
+    try { await onStartHunt(clampedTier, monsterCount, [...invitees]); } finally { setBusy(false); }
   }
 
   return (
@@ -8241,6 +8269,41 @@ function HuntSection({
           </div>
         </div>
 
+        {/* Party invite picker */}
+        {teamMembers.length > 0 && (
+          <div style={{ marginBottom: 16 }}>
+            <div style={{ fontSize: 11, color: "#6b7280", textTransform: "uppercase", letterSpacing: 1, marginBottom: 6, fontWeight: 600 }}>
+              Invite players (optional)
+            </div>
+            <div style={{ display: "grid", gap: 5 }}>
+              {teamMembers.map((tm) => {
+                const checked = invitees.has(tm.slack_user_id);
+                return (
+                  <label
+                    key={tm.slack_user_id}
+                    style={{
+                      display: "flex", alignItems: "center", gap: 10,
+                      padding: "7px 10px",
+                      background: checked ? "#1a0f2e" : "#0e1014",
+                      border: `1px solid ${checked ? "#7c3aed" : "#2a2d33"}`,
+                      borderRadius: 7, cursor: "pointer", fontSize: 13,
+                    }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() => toggleInvitee(tm.slack_user_id)}
+                      style={{ accentColor: "#7c3aed", flexShrink: 0 }}
+                    />
+                    <span style={{ fontWeight: 600, color: "#f5f5f5" }}>{tm.name}</span>
+                    <span style={{ color: "#6b7280", marginLeft: "auto" }}>Lv{tm.level} {tm.class}</span>
+                  </label>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
         <button
           onClick={handle}
           disabled={busy}
@@ -8251,7 +8314,10 @@ function HuntSection({
             fontSize: 15, fontWeight: 600, cursor: busy ? "not-allowed" : "pointer",
           }}
         >
-          {busy ? "Scouting…" : `Hunt Tier ${clampedTier}${monsterCount > 1 ? ` · ${HUNT_PACK_LABEL[monsterCount]}` : ""}`}
+          {busy ? "Scouting…"
+            : invitees.size > 0
+              ? `Start Lobby · Tier ${clampedTier} (${invitees.size + 1} players)`
+              : `Hunt Tier ${clampedTier}${monsterCount > 1 ? ` · ${HUNT_PACK_LABEL[monsterCount]}` : ""}`}
         </button>
       </div>
     </div>
