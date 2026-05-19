@@ -1719,6 +1719,92 @@ app.post("/api/quest/start", async (c) => {
   });
 });
 
+// Create a quest with a lobby and optional invitees. Returns lobby:true so
+// the web client can skip straight to the LobbyView rather than a combat card.
+app.post("/api/quest/start_with_party", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const character = await getCharacter(c.env.DB, session.slack_user_id);
+  if (!character) return c.json({ error: "no_character" }, 404);
+  if (character.downed_until && character.downed_until > Date.now()) {
+    return c.json({ error: "downed" }, 400);
+  }
+  if (await getActiveQuestForCharacter(c.env.DB, session.slack_user_id)) {
+    return c.json({ error: "already_on_quest" }, 400);
+  }
+  const body = (await c.req.json().catch(() => null)) as
+    | { variant?: unknown; elite?: unknown; invitees?: unknown }
+    | null;
+  const variant = body?.variant;
+  const elite = body?.elite === true;
+  const invitees = Array.isArray(body?.invitees)
+    ? (body!.invitees as unknown[]).filter((x): x is string => typeof x === "string").slice(0, 5)
+    : [];
+  if (variant !== "standard" && variant !== "boss" && variant !== "gauntlet" && variant !== "dungeon") {
+    return c.json({ error: "unsupported_variant" }, 400);
+  }
+  if (variant === "boss" && character.level < BOSS_LEVEL_REQUIRED) {
+    return c.json({ error: "boss_level_gate", required: BOSS_LEVEL_REQUIRED }, 400);
+  }
+  if (variant === "gauntlet" && character.level < GAUNTLET_LEVEL_REQUIRED) {
+    return c.json({ error: "gauntlet_level_gate", required: GAUNTLET_LEVEL_REQUIRED }, 400);
+  }
+  if (variant === "dungeon" && character.level < DUNGEON_LEVEL_REQUIRED) {
+    return c.json({ error: "dungeon_level_gate", required: DUNGEON_LEVEL_REQUIRED }, 400);
+  }
+
+  const channelId = await recentChannelForUser(c.env.DB, session.slack_user_id);
+  const effectiveChannel = channelId ?? `web:${session.slack_user_id}`;
+  const avoidNames = channelId ? await getRecentMonsterNames(c.env.DB, channelId, 6) : [];
+
+  let scene: SceneJson;
+  if (variant === "gauntlet") {
+    const gen = await generateGauntletWaves(c.env.AI, character, elite, GAUNTLET_WAVES, avoidNames, artTarget(c.env));
+    scene = {
+      ...gen.scene,
+      variant: "gauntlet",
+      wave: 1,
+      total_waves: GAUNTLET_WAVES,
+      upcoming_waves: gen.upcoming_waves.map((w) => ({ name: w.name, max_hp: w.max_hp, scene: "" })),
+    };
+  } else if (variant === "dungeon") {
+    scene = await buildGridDungeonScene(c.env, character, elite, avoidNames);
+  } else {
+    scene = await generateOpeningScene(
+      c.env.AI, character, elite,
+      variant === "boss" ? "boss" : "standard",
+      undefined, avoidNames, artTarget(c.env),
+    );
+    if (variant === "boss") scene.boss_phase = 1;
+    scene.variant = variant;
+  }
+
+  const now = Date.now();
+  const LOBBY_TTL = 5 * 60 * 1000;
+  const questId = await createQuest(c.env.DB, {
+    channel_id: effectiveChannel,
+    thread_ts: `web-${now}-${session.slack_user_id}`,
+    elite,
+    scene,
+    mode: "web",
+    created_by: session.slack_user_id,
+    lobby: invitees.length > 0,
+    lobby_expires_at: invitees.length > 0 ? now + LOBBY_TTL : undefined,
+  });
+
+  if (invitees.length > 0) {
+    await Promise.all(invitees.map((uid) => addPendingInvitee(c.env.DB, questId, uid)));
+    return c.json({ ok: true, quest_id: questId, lobby: true });
+  }
+
+  // No invitees — behave like solo start: refill mana, activate immediately
+  await refillMana(c.env.DB, session.slack_user_id);
+  await c.env.DB
+    .prepare("UPDATE characters SET drinks_since_last_quest = 0 WHERE slack_user_id = ?")
+    .bind(session.slack_user_id).run();
+  return c.json({ ok: true, quest_id: questId, lobby: false });
+});
+
 // Returns the joinable quest in the player's recent channel (if any).
 // Used by the dashboard to render a "Join Quest" affordance when the
 // player isn't already on a quest.

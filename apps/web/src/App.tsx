@@ -1438,13 +1438,22 @@ export function App() {
     if (ok) void refresh();
   }
 
-  async function startQuest(variant: QuestVariant, elite: boolean, monsterCount?: number) {
-    const { ok } = await postJson(`/api/quest/start`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ variant, elite, ...(monsterCount && monsterCount > 1 ? { monster_count: monsterCount } : {}) }),
-    });
-    if (ok) void refresh();
+  async function startQuest(variant: QuestVariant, elite: boolean, invitees: string[] = []) {
+    if (invitees.length > 0) {
+      const { ok } = await postJson(`/api/quest/start_with_party`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ variant, elite, invitees }),
+      });
+      if (ok) void refresh();
+    } else {
+      const { ok } = await postJson(`/api/quest/start`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ variant, elite }),
+      });
+      if (ok) void refresh();
+    }
   }
 
   async function takeJob(jobId: string) {
@@ -2100,18 +2109,39 @@ function StartQuestCard({
   onStart,
 }: {
   characterLevel: number;
-  onStart: (variant: QuestVariant, elite: boolean) => void;
+  onStart: (variant: QuestVariant, elite: boolean, invitees: string[]) => void;
 }) {
   const [elite, setElite] = useState(false);
   const [selected, setSelected] = useState<QuestVariant | null>(null);
   const [pending, setPending] = useState<QuestVariant | null>(null);
+  const [teamMembers, setTeamMembers] = useState<{ slack_user_id: string; name: string; class: string; level: number }[]>([]);
+  const [invitees, setInvitees] = useState<Set<string>>(new Set());
 
   const selectedOption = QUEST_OPTIONS.find((o) => o.id === selected) ?? null;
+
+  useEffect(() => {
+    if (!selected) return;
+    fetch("/api/characters", { credentials: "include" })
+      .then((r) => r.json())
+      .then((b) => {
+        const body = b as { characters?: { slack_user_id: string; name: string; class: string; level: number }[] };
+        setTeamMembers(body.characters ?? []);
+      })
+      .catch(() => {});
+  }, [selected]);
+
+  function toggleInvitee(uid: string) {
+    setInvitees((prev) => {
+      const next = new Set(prev);
+      if (next.has(uid)) next.delete(uid); else next.add(uid);
+      return next;
+    });
+  }
 
   function go() {
     if (!selected || pending) return;
     setPending(selected);
-    onStart(selected, elite);
+    onStart(selected, elite, [...invitees]);
   }
 
   return (
@@ -2182,6 +2212,43 @@ function StartQuestCard({
             <Icon name="gold-bar" size={11} color="#fbbf24" /> {selectedOption.rewards}
           </div>
 
+          {/* Party picker */}
+          {teamMembers.length > 0 && (
+            <div style={{ marginTop: 14 }}>
+              <div style={{ fontSize: 12, color: "#9ca3af", marginBottom: 6, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5 }}>
+                Invite players (optional)
+              </div>
+              <div style={{ display: "grid", gap: 5 }}>
+                {teamMembers.map((tm) => {
+                  const checked = invitees.has(tm.slack_user_id);
+                  return (
+                    <label
+                      key={tm.slack_user_id}
+                      style={{
+                        display: "flex", alignItems: "center", gap: 10,
+                        padding: "7px 10px",
+                        background: checked ? "#0f1f3d" : "#0e1117",
+                        border: `1px solid ${checked ? "#2563eb" : "#1f2937"}`,
+                        borderRadius: 7,
+                        cursor: "pointer",
+                        fontSize: 13,
+                      }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() => toggleInvitee(tm.slack_user_id)}
+                        style={{ accentColor: "#2563eb", flexShrink: 0 }}
+                      />
+                      <span style={{ fontWeight: 600, color: "#f5f5f5" }}>{tm.name}</span>
+                      <span style={{ color: "#6b7280", marginLeft: "auto" }}>Lv{tm.level} {tm.class}</span>
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
           {/* Elite toggle + begin button */}
           <label style={{
             display: "flex", alignItems: "center", gap: 8,
@@ -2215,7 +2282,9 @@ function StartQuestCard({
           >
             {pending
               ? selectedOption.pendingLabel
-              : <><Icon name={selectedOption.icon} /> {selectedOption.beginLabel}</>}
+              : invitees.size > 0
+                ? <><Icon name="conversation" /> Start Lobby ({invitees.size + 1} players)</>
+                : <><Icon name={selectedOption.icon} /> {selectedOption.beginLabel}</>}
           </button>
           {pending === "dungeon" && <DungeonLoadingBar />}
         </div>
@@ -8181,7 +8250,7 @@ function JobBoardSection({
   joinable: JoinableQuest | null;
   navOverlay: React.ReactNode;
   onTakeJob: (jobId: string) => void;
-  onStartQuest: (variant: QuestVariant, elite: boolean) => void;
+  onStartQuest: (variant: QuestVariant, elite: boolean, invitees: string[]) => void;
   onJoin: () => void;
 }) {
   return (
