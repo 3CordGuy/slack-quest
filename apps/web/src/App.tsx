@@ -2599,6 +2599,102 @@ function ActiveQuestCard({
           </div>
         </div>
         <HpBar current={s.monster_hp} max={s.monster_max_hp} flavor="monster" />
+        {/* Threat profile pills — same color/icon language as the in-combat
+            MonsterCard. Shown pre-Engage so players can plan loadouts /
+            resist gear / approach order before clicking "Open Combat".
+            Reads from the primary monster (pack[0]) or the top-level scene
+            fields for solo quests. */}
+        {(() => {
+          const m0 = s.monsters?.[0];
+          const attackType: "physical" | "magic" | "fire" | "ice" | "lightning" =
+            (m0?.attack_damage_type ?? s.monster_attack_type ?? "physical") as
+              "physical" | "magic" | "fire" | "ice" | "lightning";
+          const elementWeak = m0?.element_weakness;
+          const elementResist = m0?.element_resistance;
+          const damageWeak = m0?.damage_weakness ?? s.monster_damage_weakness;
+          const damageResist = m0?.damage_resistance ?? s.monster_damage_resistance;
+          const showAttack = attackType !== "physical";
+          if (!showAttack && !elementWeak && !elementResist && !damageWeak && !damageResist) {
+            return null;
+          }
+          const dtypeIcon = (t: string) =>
+            t === "fire" ? "🔥" : t === "ice" ? "❄️" : t === "lightning" ? "⚡" : t === "magic" ? "✨" : "⚔";
+          const dtypeColor = (t: string) =>
+            t === "fire" ? "#fb923c" :
+            t === "ice" ? "#7dd3fc" :
+            t === "lightning" ? "#fde047" :
+            t === "magic" ? "#c084fc" : "#9aa0a6";
+          return (
+            <div style={{ display: "flex", gap: 6, marginTop: 8, flexWrap: "wrap" }}>
+              {showAttack && (
+                <span
+                  title={`Attacks deal ${attackType} damage — bypasses your armor pool`}
+                  style={{
+                    fontSize: 10, fontWeight: 700,
+                    background: dtypeColor(attackType) + "22",
+                    border: `1px solid ${dtypeColor(attackType)}55`,
+                    color: dtypeColor(attackType), borderRadius: 4,
+                    padding: "2px 6px", textTransform: "uppercase", letterSpacing: 0.4,
+                  }}
+                >
+                  {dtypeIcon(attackType)} {attackType} attacks
+                </span>
+              )}
+              {elementWeak && (
+                <span
+                  title={`Vulnerable to ${elementWeak} element procs — fire/ice/lightning weapons stack effects faster`}
+                  style={{
+                    fontSize: 10, fontWeight: 700,
+                    background: "#7f1d1d22", border: "1px solid #f8717144",
+                    color: "#fca5a5", borderRadius: 4, padding: "2px 6px",
+                    textTransform: "uppercase", letterSpacing: 0.4,
+                  }}
+                >
+                  {dtypeIcon(elementWeak)} {elementWeak} weak
+                </span>
+              )}
+              {elementResist && (
+                <span
+                  title={`Resists ${elementResist} element procs`}
+                  style={{
+                    fontSize: 10, fontWeight: 700,
+                    background: "#1e3a5f22", border: "1px solid #60a5fa44",
+                    color: "#93c5fd", borderRadius: 4, padding: "2px 6px",
+                    textTransform: "uppercase", letterSpacing: 0.4,
+                  }}
+                >
+                  {dtypeIcon(elementResist)} {elementResist} resist
+                </span>
+              )}
+              {damageWeak && damageWeak !== elementWeak && (
+                <span
+                  title={`Takes extra damage from ${damageWeak} attacks`}
+                  style={{
+                    fontSize: 10, fontWeight: 700,
+                    background: "#7f1d1d22", border: "1px solid #f8717144",
+                    color: "#fca5a5", borderRadius: 4, padding: "2px 6px",
+                    textTransform: "uppercase", letterSpacing: 0.4,
+                  }}
+                >
+                  {dtypeIcon(damageWeak)} {damageWeak} vuln
+                </span>
+              )}
+              {damageResist && damageResist !== elementResist && (
+                <span
+                  title={`Takes reduced damage from ${damageResist} attacks`}
+                  style={{
+                    fontSize: 10, fontWeight: 700,
+                    background: "#1e3a5f22", border: "1px solid #60a5fa44",
+                    color: "#93c5fd", borderRadius: 4, padding: "2px 6px",
+                    textTransform: "uppercase", letterSpacing: 0.4,
+                  }}
+                >
+                  {dtypeIcon(damageResist)} {damageResist} tough
+                </span>
+              )}
+            </div>
+          );
+        })()}
         {s.monster_effects && s.monster_effects.length > 0 && (
           <EffectChips effects={s.monster_effects} />
         )}
