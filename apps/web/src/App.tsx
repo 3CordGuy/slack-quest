@@ -2683,7 +2683,7 @@ function ActiveQuestCard({
             width: "100%", aspectRatio: "4/3", borderRadius: 8, marginBottom: 12,
             background: "#1a0808", display: "flex", alignItems: "center", justifyContent: "center",
           }}>
-            <i className="ra ra-dragon-head" style={{ fontSize: 52, color: "#7c2020", opacity: 0.35 }} />
+            <i className="ra ra-dragon-head" style={{ fontSize: 52, color: "#7c2020", opacity: 0.35, lineHeight: 1, display: "block" }} />
           </div>
         )}
         <div
@@ -4942,10 +4942,15 @@ const ART_PLACEHOLDERS: Record<string, { bg: string; icon: string; color: string
   "Apothecary": { bg: "#140f22", icon: "potion-ball",           color: "#9a6fcd" },
   "Inventory":  { bg: "#0f1620", icon: "cubes",                 color: "#5c9bd6" },
   "Outskirts":  { bg: "#0d1a10", icon: "run",                   color: "#5da85a" },
+  "Job Board":  { bg: "#101820", icon: "scroll-unfurled",       color: "#5a8ab5" },
 };
 const DEFAULT_ART_PLACEHOLDER = { bg: "#111318", icon: "perspective-dice-six", color: "#555b6a" };
 function artPlaceholder(key: string) {
-  return ART_PLACEHOLDERS[key] ?? DEFAULT_ART_PLACEHOLDER;
+  if (ART_PLACEHOLDERS[key]) return ART_PLACEHOLDERS[key];
+  for (const [k, v] of Object.entries(ART_PLACEHOLDERS)) {
+    if (key.includes(k)) return v;
+  }
+  return DEFAULT_ART_PLACEHOLDER;
 }
 
 function LocationHero({
@@ -4972,7 +4977,7 @@ function LocationHero({
       overflow: "hidden",
       position: "relative",
       background: src ? "#0d0d10" : ph.bg,
-      ...(src ? { aspectRatio: "16/7" } : { minHeight: 160, display: "flex", alignItems: "center", justifyContent: "center" }),
+      ...(src ? { aspectRatio: "16/7" } : { minHeight: 160, display: "flex", alignItems: "center", justifyContent: "center", paddingTop: 44 }),
     }}>
       {src && (
         <img
