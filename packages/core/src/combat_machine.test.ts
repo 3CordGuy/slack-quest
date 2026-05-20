@@ -409,7 +409,7 @@ describe("combat_machine.step", () => {
     });
   });
 
-  describe("signature", () => {
+  describe("smite ability (QA Paladin)", () => {
     it("spends 1 mana, damages monster via class-specific dice", () => {
       const init = baseInit();
       init.fighters[0].class = "QA Paladin"; // Smite: 2d6 + atk×2 + weapon
@@ -418,22 +418,25 @@ describe("combat_machine.step", () => {
       // 2d6 → 4 + 3 = 7. atk_mod 2 × 2 = 4. weapon 4. damage = 7 + 4 + 4 = 15.
       const result = step(
         begun.state,
-        { kind: "signature", actor: "U_PALADIN" },
+        { kind: "ability", actor: "U_PALADIN", ability_id: "smite" },
         seqRoll([4, 3]),
       );
       expect(result.state.fighters[0].mana).toBe(1);
       expect(result.state.monsters[0].hp).toBe(40 - 15);
-      const sig = result.events.find((e) => e.type === "signature_used");
-      expect(sig).toMatchObject({ damage: 15, mana_spent: 1 });
+      const hit = result.events.find((e) => e.type === "player_hit");
+      expect(hit).toMatchObject({ damage: 15 });
+      const used = result.events.find((e) => e.type === "ability_used");
+      expect(used).toMatchObject({ ability_id: "smite", mana_spent: 1 });
     });
 
     it("rejects when mana is 0", () => {
       const init = baseInit();
+      init.fighters[0].class = "QA Paladin";
       init.fighters[0].mana = 0;
       const begun = runBegin(createCombatState(init), [15, 8]);
       const result = step(
         begun.state,
-        { kind: "signature", actor: "U_PALADIN" },
+        { kind: "ability", actor: "U_PALADIN", ability_id: "smite" },
         seqRoll([4, 3]),
       );
       expect(result.events.find((e) => e.type === "rejected")).toBeDefined();

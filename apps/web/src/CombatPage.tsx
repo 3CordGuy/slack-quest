@@ -1,6 +1,6 @@
 import { useEffect, useReducer, useRef, useState } from "react";
 import toast from "react-hot-toast";
-import { isMonsterActor, isMercActor } from "@gantt-quest/core";
+import { isMonsterActor, classByName, activeAbilities, type ActiveAbilityDef, isMercActor } from "@gantt-quest/core";
 
 import { Avatar, Icon } from "./icons";
 import { CombatParticles, CombatParticlesProvider, triggerBurst } from "./CombatParticles";
@@ -286,7 +286,6 @@ type TurnAction =
   | { kind: "cast"; actor: string; target_id?: string | null }
   | { kind: "heal"; actor: string; target: string }
   | { kind: "shield"; actor: string; target: string }
-  | { kind: "signature"; actor: string; target_id?: string | null }
   | { kind: "flee"; actor: string }
   | { kind: "position"; actor: string; to: "front" | "back" }
   | { kind: "wait"; actor: string }
@@ -295,7 +294,8 @@ type TurnAction =
       kind: "ability";
       actor: string;
       ability_id: string;
-      target?: string;
+      target_id?: string;   // monster target (single_enemy abilities)
+      target?: string;      // fighter target (migrate)
       position?: "front" | "back";
     }
   | { kind: "monster_act" }
@@ -1081,7 +1081,7 @@ export function CombatPage({
 
   const me = state?.fighters.find((f) => f.id === selfId);
   const myMana = me?.mana ?? 0;
-  const myAbility = me ? ABILITY_BY_CLASS[me.class] ?? null : null;
+  const myActiveAbilities = me ? activeAbilities(classByName(me.class).abilities) : [];
   const liveMonsters = state?.monsters.filter((m) => m.hp > 0) ?? [];
   const [targetMonsterId, setTargetMonsterId] = useState<string | null>(null);
   // Auto-select the only live monster; clear stale target when that monster dies.
@@ -1115,24 +1115,21 @@ export function CombatPage({
     setItemPicker("closed");
   }
 
-  function fireAbility() {
-    if (!myAbility) return;
-    if (myAbility.needs_migrate_picker) {
+  function fireAbility(ability: ActiveAbilityDef) {
+    if (ability.needs_position_picker) {
       setMigratePicker(true);
       return;
     }
-    send({ kind: "ability", actor: selfId, ability_id: myAbility.id });
-  }
-
-  function fireMigrate(targetId: string, position: "front" | "back") {
-    if (!myAbility) return;
     send({
       kind: "ability",
       actor: selfId,
-      ability_id: myAbility.id,
-      target: targetId,
-      position,
+      ability_id: ability.id,
+      target_id: ability.target === "single_enemy" ? (effectiveTarget ?? undefined) : undefined,
     });
+  }
+
+  function fireMigrate(targetId: string, position: "front" | "back") {
+    send({ kind: "ability", actor: selfId, ability_id: "migrate", target: targetId, position });
     setMigratePicker(false);
   }
 
@@ -1367,17 +1364,21 @@ export function CombatPage({
           )}
           <CBtn label="Attack" icon="sword" color="#b89b3a" disabled={!myTurn || (liveMonsters.length > 1 && targetMonsterId === null)} onClick={() => send({ kind: "attack", actor: selfId, target_id: effectiveTarget })} />
           <CBtn label="Cast" icon="arcing-bolt" color="#818cf8" manaCost={1} disabled={!myTurn || myMana < 1 || (liveMonsters.length > 1 && targetMonsterId === null)} onClick={() => send({ kind: "cast", actor: selfId, target_id: effectiveTarget })} />
-          <CBtn label="Sig" icon="wax-seal" color="#a78bfa" manaCost={1} disabled={!myTurn || myMana < 1 || (liveMonsters.length > 1 && targetMonsterId === null)} onClick={() => send({ kind: "signature", actor: selfId, target_id: effectiveTarget })} />
-          {myAbility && (
-            <CBtn
-              label={myAbility.name}
-              icon={myAbility.iconName}
-              color="#d946ef"
-              manaCost={myAbility.mana_cost}
-              disabled={!myTurn || myMana < myAbility.mana_cost}
-              onClick={fireAbility}
-            />
-          )}
+          {myActiveAbilities.map((ability) => {
+            const needsTarget = ability.target === "single_enemy";
+            const targetMissing = needsTarget && liveMonsters.length > 1 && targetMonsterId === null;
+            return (
+              <CBtn
+                key={ability.id}
+                label={ability.name}
+                icon={ability.icon}
+                color="#d946ef"
+                manaCost={ability.mana_cost}
+                disabled={!myTurn || myMana < ability.mana_cost || targetMissing}
+                onClick={() => fireAbility(ability)}
+              />
+            );
+          })}
           <CBtn label="Heal" icon="health-increase" color="#22c55e" manaCost={1} disabled={!myTurn || myMana < 1} onClick={() => { if (state.fighters.length === 1) send({ kind: "heal", actor: selfId, target: selfId }); else setPicking("heal"); }} />
           <CBtn label="Shield" icon="shield" color="#60a5fa" manaCost={1} disabled={!myTurn || myMana < 1} onClick={() => { if (state.fighters.length === 1) send({ kind: "shield", actor: selfId, target: selfId }); else setPicking("shield"); }} />
           {/* Position swap — available even in solo. Was previously
@@ -1918,97 +1919,6 @@ function FighterRow({ fighter, self, current }: { fighter: Fighter; self: boolea
           </div>
         )}
       </div>
-    </div>
-  );
-}
-
-type ActionKind =
-  | "attack"
-  | "cast"
-  | "heal"
-  | "shield"
-  | "signature"
-  | "flee"
-  | "wait"
-  | "use_item"
-  | "swap_position"
-  | "mark"
-  | "ability";
-
-// Class → active ability spec. Mirrors packages/core/src/flavor.ts ABILITIES.
-// Kept inline here to avoid coupling the page to the core barrel.
-interface AbilityUiSpec {
-  id: string;
-  name: string;
-  iconName: string;            // rpg-awesome ra-* class
-  mana_cost: number;
-  blurb: string;
-  // migrate is the only ability that needs a target+position picker.
-  needs_migrate_picker?: boolean;
-}
-
-const ABILITY_BY_CLASS: Record<string, AbilityUiSpec> = {
-  "SRE Warden":      { id: "taunt",              name: "Taunt",             iconName: "shield",           mana_cost: 2, blurb: "Monster targets you for 2 swings" },
-  "DevOps Mage":     { id: "containerize",       name: "Containerize",      iconName: "cubes",            mana_cost: 2, blurb: "Monster skips next swing" },
-  "QA Paladin":      { id: "regression_shield",  name: "Regression Shield", iconName: "fairy-wand",       mana_cost: 2, blurb: "+3 shield to all party" },
-  "Refactor Rogue":  { id: "vanish",             name: "Vanish",            iconName: "player-dodge",     mana_cost: 2, blurb: "Untargetable for 2 swings" },
-  "Data Warlock":    { id: "soul_drain",         name: "Soul Drain",        iconName: "death-skull",      mana_cost: 2, blurb: "1d6+mag dmg, heal 50%" },
-  "Frontend Bard":   { id: "battle_hymn",        name: "Battle Hymn",       iconName: "aura",             mana_cost: 2, blurb: `+${BARD_HYMN_BONUS} dmg on next N party attacks (N scales with level)` },
-  "Staff Sage":      { id: "foresee",            name: "Foresee",           iconName: "scroll-unfurled",  mana_cost: 1, blurb: "Full battle intel: next target, net damage, party triage, targeting odds. Persists 2 turns." },
-  "Backend Druid":   { id: "migrate",            name: "Migrate",           iconName: "grass",            mana_cost: 1, blurb: "Move a partymate to front/back", needs_migrate_picker: true },
-};
-
-function ActionBar({
-  disabled,
-  mana,
-  hasItems,
-  selfPosition,
-  ability,
-  onAct,
-}: {
-  disabled: boolean;
-  mana: number;
-  hasItems: boolean;
-  selfPosition: "front" | "back";
-  ability: AbilityUiSpec | null;
-  onAct: (kind: ActionKind) => void;
-}) {
-  const otherRow = selfPosition === "front" ? "back" : "front";
-  return (
-    <div style={{ ...card, display: "flex", gap: 8, flexWrap: "wrap" }}>
-      <ActionBtn label={<><Icon name="sword" /> Attack</>} hint="d20+atk vs AC · 1d6 dmg" disabled={disabled} onClick={() => onAct("attack")} />
-      <ActionBtn label={<><Icon name="arcing-bolt" /> Cast</>} hint="d20+mag vs AC · 1d8 dmg" disabled={disabled} onClick={() => onAct("cast")} />
-      <ActionBtn
-        label={<><Icon name="wax-seal" /> Sig</>}
-        hint={mana > 0 ? "Class signature · 1 mana" : "No mana"}
-        disabled={disabled || mana < 1}
-        onClick={() => onAct("signature")}
-      />
-      {ability && (
-        <ActionBtn
-          label={<><Icon name={ability.iconName} /> {ability.name}</>}
-          hint={mana >= ability.mana_cost ? `${ability.blurb} · ${ability.mana_cost} mana` : "Not enough mana"}
-          disabled={disabled || mana < ability.mana_cost}
-          onClick={() => onAct("ability")}
-        />
-      )}
-      <ActionBtn label={<><Icon name="health-potion" /> Heal</>} hint="1d6+mag · pick target" disabled={disabled} onClick={() => onAct("heal")} />
-      <ActionBtn label={<><Icon name="shield" /> Shield</>} hint="1d6+mag · pick target" disabled={disabled} onClick={() => onAct("shield")} />
-      <ActionBtn
-        label={<><Icon name="ammo-bag" /> Item</>}
-        hint={hasItems ? "Consumable / magic / revive / tool / scroll" : "Nothing usable"}
-        disabled={disabled || !hasItems}
-        onClick={() => onAct("use_item")}
-      />
-      <ActionBtn
-        label={<><Icon name={otherRow === "front" ? "muscle-up" : "fall-down"} /> {otherRow === "front" ? "To front" : "To back"}</>}
-        hint={otherRow === "front" ? "Soak hits · full damage" : "Less hit risk · 60% dmg taken"}
-        disabled={disabled}
-        onClick={() => onAct("swap_position")}
-      />
-      <ActionBtn label={<><Icon name="targeted" /> Mark</>} hint="Party gets +2 dmg on monster for 2 rounds" disabled={disabled} onClick={() => onAct("mark")} />
-      <ActionBtn label={<><Icon name="footprint" /> Flee</>} hint="d20+mod vs DC 10+tier" disabled={disabled} onClick={() => onAct("flee")} />
-      <ActionBtn label={<><Icon name="hourglass" /> Wait</>} hint="Skip your turn" disabled={disabled} onClick={() => onAct("wait")} />
     </div>
   );
 }

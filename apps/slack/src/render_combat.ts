@@ -275,6 +275,9 @@ function renderEvent(state: CombatState, e: CombatEvent): string {
       if (e.resisted) return `_${e.target} resisted the ${e.element} proc._`;
       return `_${e.element === "fire" ? "🔥" : e.element === "ice" ? "❄️" : "🌩️"} ${e.target} is ${e.effect}!_`;
 
+    case "monster_elemental_proc":
+      return `_${e.element === "fire" ? "🔥" : e.element === "ice" ? "❄️" : "🌩️"} Monster proc: ${e.target} is ${e.effect}!_`;
+
     default: {
       // Exhaustiveness check: if a new CombatEvent member is added without
       // a case here, TypeScript flags this assignment. Falls through to a

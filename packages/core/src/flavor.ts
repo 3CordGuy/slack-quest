@@ -1,5 +1,17 @@
 // Engineering-themed classes, NPC name generation, dice.
 
+import type { AbilityDef } from "./abilities";
+import {
+  mageAbilities,
+  paladinAbilities,
+  druidAbilities,
+  bardAbilities,
+  sageAbilities,
+  rogueAbilities,
+  wardenAbilities,
+  warlockAbilities,
+} from "./abilities/index";
+
 // Skill leans determine which trap-room option auto-passes for a class. Non-experts
 // can still attempt — they roll 1d6 and need 4+ — so every class is *capable* but
 // classes built for the moment shine.
@@ -13,6 +25,7 @@ export interface CharClass {
   magic_mod: number;
   skills: SkillType[];   // expert types — 1-2 per class
   blurb: string;
+  abilities: AbilityDef[];
 }
 
 export const CLASSES: CharClass[] = [
@@ -337,152 +350,25 @@ export type Rarity = "common" | "uncommon" | "rare" | "epic" | "legendary";
 
 export const MAX_MANA_CAP = 5;
 
-// Class signature abilities. Each costs 1 mana, shares the 45s combat cooldown,
-// and resolves to a damage value via a class-specific formula in combat.ts.
-export interface SignatureSpec {
-  id: string;
-  name: string;
-  blurb: string;
-}
-
-export const SIGNATURES: Record<string, SignatureSpec> = {
-  devops_mage: { id: "detonate", name: "Detonate", blurb: "Drops a payload that bursts on impact." },
-  qa_paladin: { id: "smite", name: "Smite", blurb: "Strikes with the weight of a thousand failed builds." },
-  backend_druid: { id: "wildgrowth", name: "Wildgrowth", blurb: "Vines of legacy code constrict the foe." },
-  frontend_bard: { id: "crescendo", name: "Crescendo", blurb: "A rising chorus the whole party joins." },
-  staff_sage: { id: "manifest", name: "Manifest", blurb: "Pure intent shaped into pure damage." },
-  refactor_rogue: { id: "backstab", name: "Backstab", blurb: "Slips through the diff and finds the soft spot." },
-  sre_warden: { id: "bulwark_strike", name: "Bulwark Strike", blurb: "Turns armor into a weapon." },
-  data_warlock: { id: "hex", name: "Hex", blurb: "Curses the foe with a slow query that bleeds them out." },
-};
-
-export function signatureFor(className: string): SignatureSpec | null {
-  const cls = CLASSES.find((c) => c.name === className);
-  if (!cls) return null;
-  return SIGNATURES[cls.id] ?? null;
-}
-
-// Class passive abilities. Always-on or once-per-fight triggers that fire
-// automatically based on combat conditions — no command to invoke them. The
-// actual mechanics live in commands.ts (handleCombat, applyPlayerTick,
-// buildCombatBlocks). This map is the player-facing description shown on
-// /sq sheet so players know what their class quietly does.
-export interface PassiveSpec {
-  name: string;
-  blurb: string;
-}
-
-export const PASSIVES: Record<string, PassiveSpec> = {
-  devops_mage: {
-    name: "Mana Catalyst",
-    blurb: "First signature each fight costs 0 mana.",
-  },
-  qa_paladin: {
-    name: "Lay on Hands",
-    blurb: "Once per fight, when an ally drops below 30% HP after a hit, auto-heal them.",
-  },
-  backend_druid: {
-    name: "Database-Tree Communion",
-    blurb: "Regen +1 HP on every own action (always-on).",
-  },
-  frontend_bard: {
-    name: "Bardic Aura",
-    blurb: "While you're alive, other party members' attacks deal +1 damage.",
-  },
-  staff_sage: {
-    name: "Sage's Reading",
-    blurb: "When viewing combat, see the monster's next-swing damage range.",
-  },
-  refactor_rogue: {
-    name: "First Strike",
-    blurb: "Your first basic attack each fight is a guaranteed crit.",
-  },
-  sre_warden: {
-    name: "Harden Up",
-    blurb: "Gain a small starting shield on your first action each fight.",
-  },
-  data_warlock: {
-    name: "Cursed Strike",
-    blurb: "Critical attacks/casts inflict a 2-turn 🩸 bleed on the monster.",
-  },
-};
-
-export function passiveFor(className: string): PassiveSpec | null {
-  const cls = CLASSES.find((c) => c.name === className);
-  if (!cls) return null;
-  return PASSIVES[cls.id] ?? null;
-}
-
-// Class active abilities — each class gets one tactical move invoked via
-// /sq ability. Distinct from signatures (which are damage); actives are
-// utility/control/support. All cost mana, share the 45s combat cooldown.
-// The mechanics live in commands.ts (handleAbility); this map is the
-// player-facing description shown on /sq sheet and in help text.
-export type AbilityId = "taunt" | "containerize" | "regression_shield" | "vanish" | "soul_drain" | "battle_hymn" | "foresee" | "migrate";
-
-export interface AbilitySpec {
-  id: AbilityId;
-  name: string;
-  mana_cost: number;
-  blurb: string;
-}
-
-export const ABILITIES: Record<string, AbilitySpec> = {
-  devops_mage: {
-    id: "containerize",
-    name: "Containerize",
-    mana_cost: 2,
-    blurb: "Locks the monster in a stasis container. It skips its next swing entirely.",
-  },
-  qa_paladin: {
-    id: "regression_shield",
-    name: "Regression Shield",
-    mana_cost: 2,
-    blurb: "Grants 🛡 +3 shield to every alive partymate.",
-  },
-  backend_druid: {
-    id: "migrate",
-    name: "Migrate",
-    mana_cost: 1,
-    blurb: "Move any partymate to front or back without consuming their turn.",
-  },
-  frontend_bard: {
-    id: "battle_hymn",
-    name: "Battle Hymn",
-    mana_cost: 2,
-    blurb: "Bardic aura jumps from +1 to +3 damage for the next 2 partymate attacks.",
-  },
-  staff_sage: {
-    id: "foresee",
-    name: "Foresee",
-    mana_cost: 1,
-    blurb: "Full battle read: next swing target with net damage range + survivability verdict, targeting odds for every fighter, full party HP triage, and active ability state.",
-  },
-  refactor_rogue: {
-    id: "vanish",
-    name: "Vanish",
-    mana_cost: 2,
-    blurb: "Disappear into the shadows — the monster can't target you for its next 2 swings.",
-  },
-  sre_warden: {
-    id: "taunt",
-    name: "Taunt",
-    mana_cost: 2,
-    blurb: "Force the monster to target you for its next 2 swings, overriding the telegraph.",
-  },
-  data_warlock: {
-    id: "soul_drain",
-    name: "Soul Drain",
-    mana_cost: 2,
-    blurb: "Deal 1d6 + magic_mod damage and heal yourself for 50% of damage dealt.",
-  },
-};
-
-export function abilityFor(className: string): AbilitySpec | null {
-  const cls = CLASSES.find((c) => c.name === className);
-  if (!cls) return null;
-  return ABILITIES[cls.id] ?? null;
-}
+// AbilityId covers every active ability id used in TurnAction and event types.
+// Extend this union when adding new abilities.
+export type AbilityId =
+  // Mage
+  | "detonate" | "containerize"
+  // Paladin
+  | "smite" | "regression_shield"
+  // Druid
+  | "wildgrowth" | "migrate"
+  // Bard
+  | "crescendo" | "battle_hymn"
+  // Sage
+  | "manifest" | "foresee"
+  // Rogue
+  | "backstab" | "vanish"
+  // Warden
+  | "bulwark_strike" | "taunt"
+  // Warlock
+  | "hex" | "soul_drain";
 
 export interface ItemRoll {
   type: ItemType;

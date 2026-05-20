@@ -244,8 +244,8 @@ import {
   generateNpcName,
   haggleMod,
   npcTrustMod,
-  abilityFor,
-  passiveFor,
+  activeAbilities,
+  passiveAbilities,
   pickArchetype,
   pickHaggleLine,
   pickNpcTrustLine,
@@ -257,7 +257,6 @@ import {
   rollAccessorySlot,
   rollMerchantItem,
   sellPriceFor,
-  signatureFor,
   xpForLevel,
   type DialogNode,
   type DialogOption,
@@ -285,6 +284,7 @@ import {
   SKILL_META,
   type TurnAction,
   type CombatEvent,
+  type AbilityId,
   isMonsterActor,
   isMercActor,
   checkCombatAchievements,
@@ -567,13 +567,14 @@ function rulesSections(): RulesSection[] {
           ``,
         ];
         for (const cls of CLASSES) {
-          const sig = signatureFor(cls.name);
-          const passive = passiveFor(cls.name);
-          const ability = abilityFor(cls.name);
+          const clsActives = activeAbilities(cls.abilities);
+          const sig = clsActives[0];
+          const passive = passiveAbilities(cls.abilities)[0];
+          const ability = clsActives[1];
           const skillTags = cls.skills.map((s) => `${SKILL_META[s].emoji} ${SKILL_META[s].label}`).join(" · ");
           const e = emoji[cls.id] ?? "•";
           lines.push(`*${e} ${cls.name}* — _HP ${cls.base_hp} • atk +${cls.attack_mod} • mag +${cls.magic_mod} • ${skillTags}_`);
-          if (sig) lines.push(`   ✨ *Signature — ${sig.name}* _(1m)_: ${sig.blurb}`);
+          if (sig) lines.push(`   ✨ *Signature — ${sig.name}* _(${sig.mana_cost}m)_: ${sig.blurb}`);
           if (passive) lines.push(`   🌟 *Passive — ${passive.name}*: ${passive.blurb}`);
           if (ability) lines.push(`   ⚡ *Ability — ${ability.name}* _(${ability.mana_cost}m)_: ${ability.blurb}`);
           lines.push(``);
@@ -1769,21 +1770,22 @@ function buildSheetBlocks(
   }
   blocks.push({ type: "section", text: { type: "mrkdwn", text: equipLines.join("\n") } });
 
-  // 4. Signature
-  const sig = signatureFor(c.class);
+  // 4. Signature (first active ability) + passive + second active
+  const profileActives = activeAbilities(classByName(c.class).abilities);
+  const sig = profileActives[0];
   if (sig) {
     blocks.push({ type: "divider" });
     blocks.push({
       type: "section",
       text: {
         type: "mrkdwn",
-        text: `*✨ Signature — ${sig.name}*\n_${sig.blurb}_`,
+        text: `*✨ Signature — ${sig.name}* _(${sig.mana_cost}m)_\n_${sig.blurb}_`,
       },
     });
   }
 
   // 4b. Class passive
-  const passive = passiveFor(c.class);
+  const passive = passiveAbilities(classByName(c.class).abilities)[0];
   if (passive) {
     blocks.push({
       type: "section",
@@ -1796,7 +1798,7 @@ function buildSheetBlocks(
 
   // 4c. Class active ability — mana-costed lever players invoke with
   // `/sq ability`. Shows mana cost so the player can plan around their pool.
-  const ability = abilityFor(c.class);
+  const ability = profileActives[1];
   if (ability) {
     blocks.push({
       type: "section",
@@ -1867,14 +1869,15 @@ function formatSheet(c: Character, weapon: Item | null, armor: Item | null): str
     ? `\n💀 _Downed until <!date^${Math.floor(c.downed_until / 1000)}^{date_short_pretty} {time}|soon>_`
     : "";
   const scarLine = c.scars.length ? `\nScars: ${c.scars.join(", ")}` : "";
-  const sig = signatureFor(c.class);
+  const sheetActives = activeAbilities(classByName(c.class).abilities);
+  const sig = sheetActives[0];
   const sigLine = sig ? `\nSignature: *${sig.name}* — _${sig.blurb}_` : "";
-  const passive = passiveFor(c.class);
+  const passive = passiveAbilities(classByName(c.class).abilities)[0];
   const passiveLine = passive ? `\nPassive: *${passive.name}* — _${passive.blurb}_` : "";
   // Active ability — separate from the damage signature. Costs mana, 45s
   // cooldown shared with combat actions. Listed alongside the other class
   // levers so /sq sheet shows the full kit at a glance.
-  const ability = abilityFor(c.class);
+  const ability = sheetActives[1];
   const abilityLine = ability ? `\nAbility: *${ability.name}* (${ability.mana_cost}m) — _${ability.blurb}_` : "";
 
   // Equipment line. Shows whichever slots are filled; blank if neither.
@@ -4197,10 +4200,13 @@ async function handleCombatViaEngine(
     }
   }
 
+  // Map "signature" to the class's first active ability (the damage ability).
+  const sigAbilityId = activeAbilities(classByName(character.class).abilities)[0]?.id as AbilityId | undefined;
+
   const turnAction: TurnAction =
     action === "attack" ? { kind: "attack", actor: payload.user_id, target_id: targetId }
     : action === "cast" ? { kind: "cast", actor: payload.user_id, target_id: targetId }
-    : action === "signature" ? { kind: "signature", actor: payload.user_id, target_id: targetId }
+    : action === "signature" && sigAbilityId ? { kind: "ability", actor: payload.user_id, ability_id: sigAbilityId, target_id: targetId }
     : { kind: "flee", actor: payload.user_id };
 
   const result = await stub.serverAction(quest.id, turnAction);
@@ -4380,7 +4386,7 @@ async function handleCombat(
   }
 
   if (action === "signature") {
-    const sig = signatureFor(character.class);
+    const sig = activeAbilities(cls.abilities)[0];
     if (!sig) return ephemeral("Your class has no signature ability.");
     if (character.mana < 1) {
       return ephemeral(
@@ -10692,7 +10698,7 @@ async function handleAbility(
   if (!quest) return ephemeral(`You're not on an active quest. Try \`${payload.command} quest\`.`);
 
   const cls = classByName(character.class);
-  const ability = abilityFor(character.class);
+  const ability = activeAbilities(cls.abilities)[1];
   if (!ability) return ephemeral("Your class has no active ability.");
 
   const cooldown = await cooldownRemaining(env.DB, quest.id, payload.user_id, await actionCooldownMs(env.DB, quest.id));

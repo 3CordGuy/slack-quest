@@ -23,11 +23,9 @@ import {
   resolveHeal,
   resolveMonsterHit,
   resolvePlayerHit,
-  resolveSignature,
   type BattlePosition,
 } from "./combat";
 import {
-  ABILITIES,
   ELEMENT_META,
   ELEMENT_PROC_RATE,
   SHIELD_CAP_MULTIPLIER,
@@ -40,6 +38,7 @@ import {
   type Rarity,
   type WeaponRange,
 } from "./flavor";
+import { type AbilityContext, type AbilityEffect, type ActiveAbilityDef } from "./abilities";
 import { deriveArmorBonus, deriveCritBonus, deriveDodgeChance, deriveInitiativeBonus, type Stats } from "./stats";
 
 export type ActorId = string;
@@ -251,7 +250,6 @@ export type TurnAction =
   | { kind: "attack"; actor: ActorId; target_id?: ActorId }
   | { kind: "cast"; actor: ActorId; target_id?: ActorId }
   | { kind: "heal"; actor: ActorId; target: ActorId }
-  | { kind: "signature"; actor: ActorId; target_id?: ActorId }
   | { kind: "flee"; actor: ActorId }
   | { kind: "position"; actor: ActorId; to: BattlePosition }
   | { kind: "shield"; actor: ActorId; target?: ActorId }
@@ -261,8 +259,9 @@ export type TurnAction =
       kind: "ability";
       actor: ActorId;
       ability_id: AbilityId;
-      target_id?: ActorId;   // monster target for damage abilities (soul_drain)
-      // Used by migrate (target+position) and would be ignored otherwise.
+      // For single_enemy and soul_drain: the monster to target.
+      target_id?: ActorId;
+      // Used by migrate (target fighter + new position).
       target?: ActorId;
       position?: BattlePosition;
     }
@@ -387,7 +386,7 @@ export type CombatEvent =
   | {
       type: "ability_used";
       actor: ActorId;
-      ability_id: AbilityId;
+      ability_id: string;
       name: string;
       mana_spent: number;
     }
@@ -591,8 +590,6 @@ export function step(state: CombatState, action: TurnAction, roll: RollFn): Step
       return handleHeal(state, action, roll);
     case "shield":
       return handleShield(state, action);
-    case "signature":
-      return handleSignature(state, action, roll);
     case "flee":
       return handleFlee(state, action, roll);
     case "position":
@@ -737,7 +734,7 @@ function handlePlayerHit(
   const rogueAutoLand =
     !baseLanded
     && action.kind === "attack"
-    && classIdOf(tickedFighter) === "refactor_rogue"
+    && classHasPassive(tickedFighter.class, "first_strike")
     && !isPassiveUsed(s, action.actor, PASSIVE_ROGUE_FIRST_CRIT);
   const landed = baseLanded || rogueAutoLand;
   events.push({
@@ -781,7 +778,7 @@ function handlePlayerHit(
   let rogueFirstCritFired = false;
   if (
     action.kind === "attack"
-    && classIdOf(tickedFighter) === "refactor_rogue"
+    && classHasPassive(tickedFighter.class, "first_strike")
     && !isCrit
     && !isPassiveUsed(s, action.actor, PASSIVE_ROGUE_FIRST_CRIT)
   ) {
@@ -1629,163 +1626,107 @@ function handleShield(
   return { state: next, events: [...events, ...turnStartEvent(next)] };
 }
 
-function handleSignature(
+// ── Damage ability IDs (old "signatures") ──────────────────────────────────
+// These active abilities deal direct damage and go through handleDamageAbility
+// rather than the utility routing.
+const DAMAGE_ABILITY_IDS = new Set([
+  "detonate", "smite", "wildgrowth", "crescendo", "manifest",
+  "backstab", "bulwark_strike", "hex",
+]);
+
+// Executes a damage-dealing active ability. Mirrors the old handleSignature
+// logic: calls ability.execute(ctx) for the damage formula, then applies
+// drink buffs, shocked amplifier, boss phase, elemental proc, and kill
+// resolution — all identical to the old signature pathway.
+function handleDamageAbility(
   state: CombatState,
-  action: { kind: "signature"; actor: ActorId; target_id?: ActorId },
+  actorId: ActorId,
+  tickedActor: CombatFighter,
+  ability: ActiveAbilityDef,
+  ctx: AbilityContext,
+  monster: CombatMonster,
+  preEvents: CombatEvent[],
   roll: RollFn,
 ): StepResult {
-  const actor = state.fighters.find((f) => f.id === action.actor);
-  if (!actor) return reject(state, `unknown actor: ${action.actor}`);
-  if (currentActor(state) !== action.actor) {
-    return reject(state, `not ${action.actor}'s turn`);
-  }
-  if (actor.hp <= 0) return reject(state, `${action.actor} is downed`);
-  // DevOps Mage — Mana Catalyst. First signature each fight is free (0 mana).
-  // We check this BEFORE tickAtTurnStart so the mana gate accepts a Mage with
-  // 0 mana on their first signature.
-  const mageFreeSig =
-    classByName(actor.class).id === "devops_mage"
-    && !isPassiveUsed(state, action.actor, PASSIVE_MAGE_FREE_SIG);
-  if (!mageFreeSig && actor.mana < 1) return reject(state, `${action.actor} has no mana for signature`);
-
-  const targetMonster = action.target_id
-    ? state.monsters.find((m) => m.id === action.target_id && m.hp > 0)
-    : state.monsters.find((m) => m.hp > 0);
-  if (!targetMonster) return reject(state, "no valid target");
-
-  const tick = tickAtTurnStart(state, action.actor);
-  if (tick.earlyReturn) return tick.earlyReturn;
-  const s = tick.state;
-  const tickedActor = s.fighters.find((f) => f.id === action.actor)!;
-  const monster = s.monsters.find((m) => m.id === targetMonster.id && m.hp > 0);
-  if (!monster) return reject(s, "target died before action resolved");
-
-  const cls = classByName(tickedActor.class);
-  const partySize = s.fighters.filter((f) => f.hp > 0).length;
-  const sigRolls: { sides: number; value: number }[] = [];
-  const trackRoll = (sides: number) => {
-    const v = roll(sides);
-    sigRolls.push({ sides, value: v });
-    return v;
-  };
-  const sig = resolveSignature(
-    cls.id,
-    tickedActor.attack_mod,
-    tickedActor.magic_mod,
-    tickedActor.weapon_power,
-    monster.tier,
-    partySize,
-    monster.max_hp,
-    trackRoll,
+  const effects = ability.execute(ctx);
+  const dmgEffect = effects.find(
+    (e): e is Extract<AbilityEffect, { kind: "deal_damage" }> => e.kind === "deal_damage",
   );
+  if (!dmgEffect) return reject(state, `${ability.id} produced no damage effect`);
 
-  // Refactor Rogue — Backstab auto-crit. The signature deals 2× damage when
-  // the monster is at or below 50% HP. resolveSignature in packages/core/
-  // src/combat.ts intentionally returns the raw damage and leaves this
-  // doubling to the engine (it needs monster.hp and monster.max_hp,
-  // which resolveSignature isn't passed by design).
-  //
-  // Applied BEFORE drink-buff so a Lucky Sip on a Rogue backstab won't
-  // redundantly double an already-doubled hit (applyDrinkBuff gates
-  // buff_next_crit on !isCrit; we pass rogueBackstab as the isCrit arg).
-  const rogueBackstab =
-    cls.id === "refactor_rogue" && monster.hp <= monster.max_hp / 2;
-  const damageAfterBackstab = rogueBackstab ? sig.damage * 2 : sig.damage;
+  let amount = dmgEffect.amount;
+  let isCrit = dmgEffect.is_crit ?? false;
+  const formula = dmgEffect.formula;
 
-  // Pub drink-buff. Only buff_next_crit fires on signatures (per legacy
-  // design: attack/magic buffs don't compound class powerhouses, but Lucky
-  // Sip's guaranteed crit can land on a signature for the killing-blow play).
-  // applyDrinkBuff gates buff_attack/buff_magic out via the context arg.
-  // When rogueBackstab already doubled the damage, buff_next_crit is gated
-  // out by the isCrit=true arg — no redundant doubling.
-  const drinkResult = applyDrinkBuff(s, action.actor, "signature", damageAfterBackstab, rogueBackstab);
-  // Shocked amplifier on signatures too.
+  // Drink buff — only buff_next_crit applies to ability damage (same rule as old signatures).
+  const drinkResult = dmgEffect.drink_buff_context === "signature"
+    ? applyDrinkBuff(state, actorId, "signature", amount, isCrit)
+    : { damage: amount, forceCrit: false, event: null as CombatEvent | null, nextDrinkBuffs: state.drink_buffs };
+  amount = drinkResult.damage;
+  if (drinkResult.forceCrit) isCrit = true;
+
+  // Shocked amplifier.
   const sigShockedEffect = monster.effects.find((e) => e.type === "shocked");
   const sigShockMult = sigShockedEffect ? (sigShockedEffect.magnitude >= 2 ? 1.45 : 1.30) : 1.0;
-  const finalSigDamage = Math.round(drinkResult.damage * sigShockMult);
+  const finalDamage = Math.round(amount * sigShockMult);
 
   const oldHp = monster.hp;
-  const newHp = Math.max(0, oldHp - finalSigDamage);
+  const newHp = Math.max(0, oldHp - finalDamage);
   const monsterKilled = newHp <= 0;
   const phaseTransition =
     monster.is_boss &&
     monster.boss_phase === 1 &&
     isBossPhaseTransition(monster.max_hp, oldHp, newHp);
 
-  const manaSpent = mageFreeSig ? 0 : 1;
   const events: CombatEvent[] = [
-    ...tick.events,
-    ...sigRolls.map((r) => ({
-      type: "roll" as const,
-      actor: action.actor,
-      die: `d${r.sides}`,
-      value: r.value,
-      purpose: "signature" as const,
-    })),
+    ...preEvents,
     {
-      type: "signature_used",
-      actor: action.actor,
-      damage: finalSigDamage,
-      // Annotate the formula with whichever doubler fired. rogueBackstab
-      // takes precedence (it's the class-defining mechanic); Lucky Sip
-      // appears only when no backstab. The two are mutually exclusive
-      // via the applyDrinkBuff isCrit gate above.
-      formula: rogueBackstab
-        ? `${sig.formula} ×2 (backstab)`
-        : drinkResult.event
-        ? `${sig.formula} ×2 (lucky sip)`
-        : sig.formula,
-      mana_spent: manaSpent,
+      type: "player_hit",
+      actor: actorId,
+      target: monster.id,
+      damage: finalDamage,
+      armor_absorbed: 0, // ability damage bypasses monster armor
+      crit: isCrit,
+      formula: drinkResult.event ? `${formula} ×2 (lucky sip)` : formula,
     },
   ];
-  if (mageFreeSig) {
-    events.push({ type: "passive_mage_free_sig", actor: action.actor });
-  }
-  if (drinkResult.event) {
-    events.push(drinkResult.event);
-  }
+  if (drinkResult.event) events.push(drinkResult.event);
 
   let nextState: CombatState = {
-    ...s,
-    fighters: s.fighters.map((f) =>
-      f.id === action.actor ? { ...f, mana: Math.max(0, f.mana - manaSpent) } : f,
-    ),
-    monsters: s.monsters.map((m) =>
+    ...state,
+    monsters: state.monsters.map((m) =>
       m.id === monster.id
         ? {
             ...m,
             hp: newHp,
-            // Signatures bypass monster armor. Boss phase 2 refills armor.
             ...(phaseTransition ? { boss_phase: 2 as const, shield: m.tier } : {}),
           }
         : m,
     ),
     contribution: {
-      ...s.contribution,
-      [action.actor]: (s.contribution[action.actor] ?? 0) + finalSigDamage,
+      ...state.contribution,
+      [actorId]: (state.contribution[actorId] ?? 0) + finalDamage,
     },
-    // Same gate as handlePlayerHit: only overwrite drink_buffs when this
-    // turn actually consumed one.
     ...(drinkResult.event ? { drink_buffs: drinkResult.nextDrinkBuffs } : {}),
   };
-  if (mageFreeSig) {
-    nextState = markPassiveUsed(nextState, action.actor, PASSIVE_MAGE_FREE_SIG);
+
+  if (phaseTransition) events.push({ type: "boss_phase_transition", new_phase: 2 });
+
+  // Warlock Cursed Strike: crits apply bleed.
+  if (isCrit && !monsterKilled) {
+    const bleed = applyWarlockBleed(nextState, tickedActor, monster.id, true);
+    nextState = bleed.state;
+    events.push(...bleed.events);
   }
 
-  if (phaseTransition) {
-    events.push({ type: "boss_phase_transition", new_phase: 2 });
-  }
-
-  // Elemental proc on signatures.
+  // Elemental weapon proc.
   if (!monsterKilled) {
     const proc = applyElementalProc(nextState, tickedActor, monster.id, roll);
     nextState = proc.state;
     events.push(...proc.events);
   }
 
-  if (monsterKilled) {
-    return resolveMonsterKill(nextState, monster.id, action.actor, events);
-  }
+  if (monsterKilled) return resolveMonsterKill(nextState, monster.id, actorId, events);
   nextState = advanceTurn(nextState);
   return { state: nextState, events: [...events, ...turnStartEvent(nextState)] };
 }
@@ -1882,9 +1823,9 @@ function handleFlee(
 
 // ── Class abilities ───────────────────────────────────────────────────────
 //
-// Single entry point: routes by ability_id to the per-class handler. Caller
-// MUST send the correct ability_id for the actor's class — handlers don't
-// re-validate class membership (the worker layer maps class → ability_id).
+// Single entry point. Looks up the ActiveAbilityDef from the actor's class
+// abilities array, validates mana, then routes damage abilities through
+// handleDamageAbility and utility abilities through per-ability sub-handlers.
 
 function handleAbility(
   state: CombatState,
@@ -1906,13 +1847,19 @@ function handleAbility(
   if (fighter.hp <= 0) return reject(state, `${action.actor} is downed`);
 
   const cls = classByName(fighter.class);
-  const spec = ABILITIES[cls.id];
-  if (!spec) return reject(state, `${fighter.class} has no active ability`);
-  if (spec.id !== action.ability_id) {
-    return reject(state, `${fighter.class}'s ability is ${spec.id}, not ${action.ability_id}`);
+  const ability = cls.abilities.find(
+    (a): a is ActiveAbilityDef => a.kind === "active" && a.id === action.ability_id,
+  );
+  if (!ability) {
+    return reject(state, `${fighter.class} has no active ability with id ${action.ability_id}`);
   }
-  if (fighter.mana < spec.mana_cost) {
-    return reject(state, `not enough mana (need ${spec.mana_cost})`);
+
+  // Mana Catalyst: the first use of a mana_free_first_use ability is free.
+  const freeCast =
+    (ability.mana_free_first_use ?? false) &&
+    !isPassiveUsed(state, action.actor, PASSIVE_MAGE_FREE_SIG);
+  if (!freeCast && fighter.mana < ability.mana_cost) {
+    return reject(state, `not enough mana (need ${ability.mana_cost})`);
   }
 
   const tick = tickAtTurnStart(state, action.actor);
@@ -1920,24 +1867,47 @@ function handleAbility(
   const s = tick.state;
   const tickedActor = s.fighters.find((f) => f.id === action.actor)!;
 
-  // Deduct mana up front; every sub-handler returns end-of-turn.
-  const sPostMana: CombatState = {
+  const manaSpent = freeCast ? 0 : ability.mana_cost;
+  let sPostMana: CombatState = {
     ...s,
     fighters: s.fighters.map((f) =>
-      f.id === action.actor ? { ...f, mana: Math.max(0, f.mana - spec.mana_cost) } : f,
+      f.id === action.actor ? { ...f, mana: Math.max(0, f.mana - manaSpent) } : f,
     ),
   };
 
   const usedEvent: CombatEvent = {
     type: "ability_used",
     actor: action.actor,
-    ability_id: spec.id,
-    name: spec.name,
-    mana_spent: spec.mana_cost,
+    ability_id: ability.id,
+    name: ability.name,
+    mana_spent: manaSpent,
   };
-  const preEvents: CombatEvent[] = [...tick.events, usedEvent];
+  let preEvents: CombatEvent[] = [...tick.events, usedEvent];
 
-  switch (spec.id) {
+  if (freeCast) {
+    sPostMana = markPassiveUsed(sPostMana, action.actor, PASSIVE_MAGE_FREE_SIG);
+    preEvents.push({ type: "passive_mage_free_sig", actor: action.actor });
+  }
+
+  // ── Damage abilities ──
+  if (DAMAGE_ABILITY_IDS.has(ability.id)) {
+    const targetMonster = action.target_id
+      ? sPostMana.monsters.find((m) => m.id === action.target_id && m.hp > 0)
+      : sPostMana.monsters.find((m) => m.hp > 0);
+    if (!targetMonster) return reject(sPostMana, "no valid target");
+
+    const ctx: AbilityContext = {
+      caster: tickedActor,
+      party: sPostMana.fighters.filter((f) => f.hp > 0),
+      monsters: sPostMana.monsters.filter((m) => m.hp > 0),
+      target: targetMonster,
+      roll,
+    };
+    return handleDamageAbility(sPostMana, action.actor, tickedActor, ability, ctx, targetMonster, preEvents, roll);
+  }
+
+  // ── Utility abilities ──
+  switch (ability.id) {
     case "taunt":
       return abilityTaunt(sPostMana, action.actor, preEvents);
     case "containerize":
@@ -1959,6 +1929,8 @@ function handleAbility(
       return abilityForesee(sPostMana, action.actor, preEvents, roll);
     case "migrate":
       return abilityMigrate(sPostMana, action, preEvents);
+    default:
+      return reject(sPostMana, `unknown ability: ${ability.id}`);
   }
 }
 
@@ -2234,7 +2206,7 @@ function abilityForesee(
 function withForeseeForNextActor(result: StepResult, roll: RollFn): StepResult {
   const actorId = currentActor(result.state);
   if (!actorId || isMonsterActor(actorId)) return result;
-  const sage = result.state.fighters.find((f) => f.id === actorId && f.class === "Staff Sage");
+  const sage = result.state.fighters.find((f) => f.id === actorId && classHasPassive(f.class, "sages_reading"));
   if (!sage) return result;
   const turns = result.state.ability_state?.foresee_turns ?? 0;
   if (turns <= 0) return result;
@@ -2549,6 +2521,14 @@ function classIdOf(fighter: CombatFighter): string {
   return classByName(fighter.class).id;
 }
 
+// Returns true if the named class has a passive ability with the given id.
+// Used to gate passive mechanics without hardcoding class ID strings.
+function classHasPassive(className: string, passiveId: string): boolean {
+  return classByName(className).abilities.some(
+    (a) => a.kind === "passive" && a.id === passiveId,
+  );
+}
+
 function isPassiveUsed(state: CombatState, actorId: ActorId, key: string): boolean {
   return state.passives_used?.[actorId]?.includes(key) ?? false;
 }
@@ -2572,7 +2552,7 @@ function applyWardenStartingShield(
   state: CombatState,
   actor: CombatFighter,
 ): { state: CombatState; events: CombatEvent[] } {
-  if (classIdOf(actor) !== "sre_warden") return { state, events: [] };
+  if (!classHasPassive(actor.class, "harden_up")) return { state, events: [] };
   if (isPassiveUsed(state, actor.id, PASSIVE_WARDEN_SHIELD)) return { state, events: [] };
   // VIT-based when STATS_V2 stats are present; level fallback for legacy states.
   const wardenShield = actor.stats
@@ -2597,7 +2577,7 @@ function applyDruidRegen(
   state: CombatState,
   actor: CombatFighter,
 ): { state: CombatState; events: CombatEvent[] } {
-  if (classIdOf(actor) !== "backend_druid") return { state, events: [] };
+  if (!classHasPassive(actor.class, "db_tree_communion")) return { state, events: [] };
   if (actor.hp <= 0) return { state, events: [] };
   const regenAmount = DRUID_PASSIVE_REGEN + Math.floor(actor.level / 6);
   const newHp = Math.min(actor.max_hp, actor.hp + regenAmount);
@@ -2640,9 +2620,9 @@ function computeBardAuraBonus(
   state: CombatState,
   attacker: CombatFighter,
 ): { bonus: number; hymn_consumed: boolean } {
-  if (classIdOf(attacker) === "frontend_bard") return { bonus: 0, hymn_consumed: false };
+  if (classHasPassive(attacker.class, "bardic_aura")) return { bonus: 0, hymn_consumed: false };
   const bardAlive = state.fighters.some(
-    (f) => f.hp > 0 && classIdOf(f) === "frontend_bard",
+    (f) => f.hp > 0 && classHasPassive(f.class, "bardic_aura"),
   );
   if (!bardAlive) return { bonus: 0, hymn_consumed: false };
   const hymnCharges = state.ability_state?.battle_hymn ?? 0;
@@ -2660,7 +2640,7 @@ function applyWarlockBleed(
   targetMonsterId: ActorId,
   isCrit: boolean,
 ): { state: CombatState; events: CombatEvent[] } {
-  if (!isCrit || classIdOf(actor) !== "data_warlock") return { state, events: [] };
+  if (!isCrit || !classHasPassive(actor.class, "cursed_strike")) return { state, events: [] };
   const targetMonster = state.monsters.find((m) => m.id === targetMonsterId && m.hp > 0);
   if (!targetMonster) return { state, events: [] };
   const newEffect: MachineStatusEffect = {
@@ -2885,7 +2865,7 @@ function applyPaladinAutoHeal(
   if (target.hp >= target.max_hp * PALADIN_AUTO_HEAL_THRESHOLD) return { state, events: [] };
   const paladin = state.fighters.find(
     (f) =>
-      classIdOf(f) === "qa_paladin"
+      classHasPassive(f.class, "lay_on_hands")
       && f.hp > 0
       && !isPassiveUsed(state, f.id, PASSIVE_PALADIN_AUTO_HEAL),
   );
