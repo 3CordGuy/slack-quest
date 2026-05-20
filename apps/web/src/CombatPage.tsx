@@ -1167,7 +1167,7 @@ export function CombatPage({
       </div>
 
       {/* Room view — flex: 1, background art + floating overlays */}
-      <div style={{ flex: 1, position: "relative", overflow: "hidden", minHeight: 0, background: bgArtUrl ? undefined : "#253050" }}>
+      <div style={{ flex: 1, position: "relative", overflow: "hidden", minHeight: 0, background: bgArtUrl ? undefined : "#1c1f2e" }}>
         {bgArtUrl && (
           <img src={bgArtUrl} alt="" style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover" }} onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
         )}
