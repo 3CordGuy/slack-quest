@@ -72,8 +72,11 @@ function describeItemEffect(item: {
       // Body armor (default)
       return <>{lead("chest-armor")}Armor: reduces incoming damage by {Math.max(1, Math.floor(p / 2))}{statLine ? `. ${statLine}` : "."}</>;
     }
-    case "consumable":
+    case "consumable": {
+      const cEntry = findCatalogEntry(item.item_name);
+      if (cEntry?.effect === "restore_mana") return <>{lead("potion-ball")}Restores {p} mana on use. Single-use.</>;
       return <>{lead("bubbling-potion")}Restores {p} HP on use. Single-use.</>;
+    }
     case "magic":
       return <>{lead("crystal-ball")}Permanently grants +{p} max mana on use (capped at 5).</>;
     case "revive":
