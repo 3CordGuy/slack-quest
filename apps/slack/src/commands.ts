@@ -3609,7 +3609,7 @@ function renderDungeonRoom(node: ExpeditionNode, exp: ExpeditionState, cmd: stri
     const stock = node.loot_options ?? [];
     const stockLines = stock.map((l, i) => {
       const power = powerLabel(l.item_type, l.power, l.name);
-      const price = merchantPrice(l.item_type, l.rarity);
+      const price = merchantPrice(l.item_type, l.rarity, l.tier);
       const effect = catalogEffectLine(l.name);
       const head = `\`${i + 1}\` ${RARITY_BADGE[l.rarity]} *${l.name}* — ${l.item_type}, ${power} • *${price}g*`;
       return effect ? `${head}\n   ${effect}` : head;
@@ -3863,7 +3863,7 @@ async function buildDungeonRoomBlocks(
     // answerable at a glance.
     const stockLines = stock.flatMap((l, i) => {
       const power = powerLabel(l.item_type, l.power, l.name);
-      const price = merchantPrice(l.item_type, l.rarity);
+      const price = merchantPrice(l.item_type, l.rarity, l.tier);
       const head = `\`${i + 1}\` ${RARITY_BADGE[l.rarity]} *${l.name}* — ${l.item_type}, ${power} • *${price}g*`;
       const effect = catalogEffectLine(l.name);
       return effect ? [head, `   ${effect}`] : [head];
@@ -3880,7 +3880,7 @@ async function buildDungeonRoomBlocks(
       type: "button",
       action_id: `dungeon_choose_${i + 1}`,
       value: String(i + 1),
-      text: { type: "plain_text", text: truncateForButton(`💰 ${merchantPrice(l.item_type, l.rarity)}g — ${l.name}`) },
+      text: { type: "plain_text", text: truncateForButton(`💰 ${merchantPrice(l.item_type, l.rarity, l.tier)}g — ${l.name}`) },
       style: "primary",
     }));
     elements.push({
@@ -6067,7 +6067,7 @@ async function resolveMerchantChoice(
   }
 
   const choice = stock[idx - 1];
-  const price = merchantPrice(choice.item_type, choice.rarity);
+  const price = merchantPrice(choice.item_type, choice.rarity, choice.tier);
   if (character.gold < price) {
     return ephemeral(
       `🛒 *${choice.name}* costs ${price}g — you have ${character.gold}g. \`${payload.command} choose ${skipIdx}\` to walk past.`,
@@ -10009,7 +10009,7 @@ async function restockShop(env: Env, channelId: string): Promise<void> {
       power: roll.power,
       rarity: roll.rarity,
       flavor: named.flavor,
-      price: priceFor(roll.type, roll.rarity),
+      price: priceFor(roll.type, roll.rarity, roll.tier),
       weapon_range: roll.weapon_range ?? null,
       slot: roll.slot ?? null,
       stat_bonus: (roll.stat_bonus ?? null) as Record<string, number> | null,
@@ -11568,8 +11568,8 @@ function catalogPowerUnit(itemName: string): string | null {
 
 // Merchants charge the same flat shop price as the channel-shared shop. No
 // markup — they're convenient, but not predatory.
-function merchantPrice(type: Parameters<typeof priceFor>[0], rarity: Parameters<typeof priceFor>[1]): number {
-  return priceFor(type, rarity);
+function merchantPrice(type: Parameters<typeof priceFor>[0], rarity: Parameters<typeof priceFor>[1], tier?: number): number {
+  return priceFor(type, rarity, tier);
 }
 
 // For catalog items (tool / scroll), returns a short *Effect:* line describing

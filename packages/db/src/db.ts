@@ -260,6 +260,7 @@ export interface LootOption {
   // Phase 3 — caller-supplied level gate; defaults to ceil(power/3) in addItem.
   level_req?: number;
   element?: ElementType | null;
+  tier?: number;
 }
 
 export interface TrapChoice {

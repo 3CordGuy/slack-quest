@@ -1267,6 +1267,7 @@ async function buildDungeonScene(
       ...(roll.stat_bonus ? { stat_bonus: roll.stat_bonus as Record<string, number> } : {}),
       ...(roll.item_subtype ? { item_subtype: roll.item_subtype } : {}),
       ...(roll.element ? { element: roll.element } : {}),
+      ...(roll.tier != null ? { tier: roll.tier } : {}),
     };
   }
 
@@ -2488,7 +2489,7 @@ app.post("/api/shop/restock", async (c) => {
       power: roll.power,
       rarity: roll.rarity,
       flavor,
-      price: priceFor(roll.type, roll.rarity),
+      price: priceFor(roll.type, roll.rarity, roll.tier),
       weapon_range: roll.weapon_range ?? null,
       slot: roll.slot ?? null,
       stat_bonus: (roll.stat_bonus ?? null) as Record<string, number> | null,
@@ -3002,8 +3003,8 @@ const SMITHY_STOCK_SIZE = 4;
 
 // Smithy items cost ~1.5× the equivalent shop item — the player gets to choose
 // the exact piece, so we charge a convenience premium.
-function smithyStockPrice(itemType: ItemType, rarity: Rarity): number {
-  return Math.ceil(priceFor(itemType, rarity) * 1.5);
+function smithyStockPrice(itemType: ItemType, rarity: Rarity, tier?: number): number {
+  return Math.ceil(priceFor(itemType, rarity, tier) * 1.5);
 }
 
 // Channel-scoped stock: one generation per channel per RESTOCK window,
@@ -3033,7 +3034,7 @@ async function ensureSmithyStock(
       power: roll.power,
       rarity: roll.rarity,
       flavor,
-      price: smithyStockPrice(roll.type, roll.rarity),
+      price: smithyStockPrice(roll.type, roll.rarity, roll.tier),
       slot: roll.slot ?? null,
       stat_bonus: (roll.stat_bonus ?? null) as Record<string, number> | null,
       item_subtype: roll.item_subtype ?? null,
@@ -5104,7 +5105,7 @@ app.post("/api/quest/:id/dungeon/merchant_choose", async (c) => {
   const choice = stock[pick - 1];
   if (!choice) return c.json({ error: "bad_pick" }, 400);
 
-  const price = priceFor(choice.item_type, choice.rarity);
+  const price = priceFor(choice.item_type, choice.rarity, choice.tier);
   if (character.gold < price) {
     return c.json({ error: "insufficient_gold", price, gold: character.gold }, 400);
   }
@@ -5733,7 +5734,7 @@ app.post("/api/quest/:id/dungeon/grid/merchant", async (c) => {
   if (!choice) return c.json({ error: "bad_pick" }, 400);
   const character = await getCharacter(c.env.DB, session.slack_user_id);
   if (!character) return c.json({ error: "no_character" }, 404);
-  const price = priceFor(choice.item_type, choice.rarity);
+  const price = priceFor(choice.item_type, choice.rarity, choice.tier);
   if (character.gold < price) return c.json({ error: "insufficient_gold", price, gold: character.gold }, 400);
   const paid = await tryDeductGold(c.env.DB, session.slack_user_id, price);
   if (!paid) return c.json({ error: "insufficient_gold", price }, 400);

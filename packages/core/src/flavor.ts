@@ -488,6 +488,7 @@ export interface ItemRoll {
   type: ItemType;
   rarity: Rarity;
   power: number;
+  tier?: number;               // monster tier the item was rolled at — drives price scaling
   weapon_range?: WeaponRange; // only set when type === "weapon"
   catalog_name?: string;       // set for type === "tool"|"scroll" — fixed name from CATALOG
   // Phase 2 additions — present on new armor-subtype rolls (helmet/pants/boots/ring/amulet/shield).
@@ -1359,7 +1360,7 @@ function rollFocusPower(rarity: Rarity, tier = 1): number {
 // sub-slots. Body armor keeps ~50% share; the other 50% spreads across new
 // slots. Returns a full ItemRoll with slot + stat_bonus pre-populated so
 // callers can pass the roll straight to addItem without further inspection.
-export function rollArmorSlot(tier: number): ItemRoll {
+function _rollArmorSlotInner(tier: number): ItemRoll {
   const rarity = rollRarity(tier);
   const r = Math.random();
   const statBonus = (key: string, v: number) => ({ [key]: v });
@@ -1426,6 +1427,10 @@ export function rollArmorSlot(tier: number): ItemRoll {
     stat_bonus: statBonus("vit", bonusAmt) }, "off_hand", "shield");
 }
 
+export function rollArmorSlot(tier: number): ItemRoll {
+  return { ..._rollArmorSlotInner(tier), tier };
+}
+
 // Rolls an armor-pool-contributing piece: body / helmet / pants / shield off-hand.
 // Used by the smithy's rotating stock. Re-rolls until rollArmorSlot returns one
 // of the four eligible slots (typical retry count ≈ 1–2).
@@ -1436,57 +1441,57 @@ export function rollSmithyArmor(tier: number): ItemRoll {
     if (roll.slot === "off_hand" && roll.item_subtype === "shield") return roll;
   }
   // Final fallback: force a body roll so callers always get a usable piece.
-  return { type: "armor", rarity: rollRarity(tier), power: rollPower("armor", rollRarity(tier), tier), slot: "body" };
+  return { type: "armor", rarity: rollRarity(tier), power: rollPower("armor", rollRarity(tier), tier), slot: "body", tier };
 }
 
 // Rolls an armor item that is guaranteed NOT to be body armor. Used by shop
 // restock to ensure at least 2 accessory items appear per cycle regardless
 // of the overall armor-type probability.
 export function rollAccessorySlot(tier: number): ItemRoll {
-  const rarity = rollRarity(tier);
-  const r = Math.random();
-  const statBonus = (key: string, v: number) => ({ [key]: v });
-  const tierStatBoost = Math.floor((Math.max(1, tier) - 1) / 2);
-  const bonusAmt = (rarity === "legendary" ? 6 : rarity === "epic" ? 5 : rarity === "rare" ? 3 : rarity === "uncommon" ? 2 : 1) + tierStatBoost;
+  const inner = ((): ItemRoll => {
+    const rarity = rollRarity(tier);
+    const r = Math.random();
+    const statBonus = (key: string, v: number) => ({ [key]: v });
+    const tierStatBoost = Math.floor((Math.max(1, tier) - 1) / 2);
+    const bonusAmt = (rarity === "legendary" ? 6 : rarity === "epic" ? 5 : rarity === "rare" ? 3 : rarity === "uncommon" ? 2 : 1) + tierStatBoost;
 
-  const withResist = (base: ItemRoll, slot: EquipSlot, subtype?: string): ItemRoll => {
-    const res = rollResistance(slot, rarity, subtype);
-    if (!res) return base;
-    const resistKey = `resist_${res.type}`;
-    return { ...base, stat_bonus: { ...(base.stat_bonus ?? {}), [resistKey]: res.pct } };
-  };
+    const withResist = (base: ItemRoll, slot: EquipSlot, subtype?: string): ItemRoll => {
+      const res = rollResistance(slot, rarity, subtype);
+      if (!res) return base;
+      const resistKey = `resist_${res.type}`;
+      return { ...base, stat_bonus: { ...(base.stat_bonus ?? {}), [resistKey]: res.pct } };
+    };
 
-  // Equal-ish weights across the 6 non-body slots so variety is visible.
-  if (r < 0.22) {
-    return withResist({ type: "armor", rarity, power: rollPower("armor", rarity, tier), slot: "helmet",
-      stat_bonus: statBonus(Math.random() < 0.5 ? "int_stat" : "vit", bonusAmt) }, "helmet");
-  }
-  if (r < 0.44) {
-    return withResist({ type: "armor", rarity, power: rollPower("armor", rarity, tier), slot: "pants",
-      stat_bonus: statBonus("agi", bonusAmt) }, "pants");
-  }
-  if (r < 0.61) {
-    // Boots — no resistance eligible.
-    return { type: "armor", rarity, power: 0, slot: "boots",
-      stat_bonus: statBonus("agi", bonusAmt) };
-  }
-  if (r < 0.75) {
-    const statKeys = ["str", "int_stat", "dex"] as const;
-    return withResist({ type: "armor", rarity, power: 0, slot: "ring",
-      stat_bonus: statBonus(statKeys[Math.floor(Math.random() * statKeys.length)], bonusAmt) }, "ring");
-  }
-  if (r < 0.85) {
-    return withResist({ type: "armor", rarity, power: 0, slot: "amulet",
-      stat_bonus: statBonus(Math.random() < 0.5 ? "int_stat" : "vit", bonusAmt) }, "amulet");
-  }
-  if (r < 0.93) {
-    // Gloves — no resistance eligible.
-    const key = Math.random() < 0.5 ? "str" : "dex";
-    return { type: "armor", rarity, power: Math.max(1, Math.floor(rollPower("armor", rarity, tier) / 3)), slot: "off_hand",
-      item_subtype: "gloves", stat_bonus: statBonus(key, bonusAmt) };
-  }
-  return withResist({ type: "armor", rarity, power: rollPower("armor", rarity, tier), slot: "off_hand",
-    item_subtype: "shield", stat_bonus: statBonus("vit", bonusAmt) }, "off_hand", "shield");
+    if (r < 0.22) {
+      return withResist({ type: "armor", rarity, power: rollPower("armor", rarity, tier), slot: "helmet",
+        stat_bonus: statBonus(Math.random() < 0.5 ? "int_stat" : "vit", bonusAmt) }, "helmet");
+    }
+    if (r < 0.44) {
+      return withResist({ type: "armor", rarity, power: rollPower("armor", rarity, tier), slot: "pants",
+        stat_bonus: statBonus("agi", bonusAmt) }, "pants");
+    }
+    if (r < 0.61) {
+      return { type: "armor", rarity, power: 0, slot: "boots",
+        stat_bonus: statBonus("agi", bonusAmt) };
+    }
+    if (r < 0.75) {
+      const statKeys = ["str", "int_stat", "dex"] as const;
+      return withResist({ type: "armor", rarity, power: 0, slot: "ring",
+        stat_bonus: statBonus(statKeys[Math.floor(Math.random() * statKeys.length)], bonusAmt) }, "ring");
+    }
+    if (r < 0.85) {
+      return withResist({ type: "armor", rarity, power: 0, slot: "amulet",
+        stat_bonus: statBonus(Math.random() < 0.5 ? "int_stat" : "vit", bonusAmt) }, "amulet");
+    }
+    if (r < 0.93) {
+      const key = Math.random() < 0.5 ? "str" : "dex";
+      return { type: "armor", rarity, power: Math.max(1, Math.floor(rollPower("armor", rarity, tier) / 3)), slot: "off_hand",
+        item_subtype: "gloves", stat_bonus: statBonus(key, bonusAmt) };
+    }
+    return withResist({ type: "armor", rarity, power: rollPower("armor", rarity, tier), slot: "off_hand",
+      item_subtype: "shield", stat_bonus: statBonus("vit", bonusAmt) }, "off_hand", "shield");
+  })();
+  return { ...inner, tier };
 }
 
 const ELEMENTS: ElementType[] = ["fire", "ice", "lightning"];
@@ -1527,7 +1532,7 @@ export function rollItem(tier: number, forShop = false): ItemRoll {
     ? rollFocusPower(rarity, tier)
     : rollPower(type, rarity, tier);
   const element = rollWeaponElement(type, weapon_range, rarity);
-  return { type, rarity, power, weapon_range, slot: type === "weapon" ? "main_hand" : undefined, element };
+  return { type, rarity, power, weapon_range, slot: type === "weapon" ? "main_hand" : undefined, element, tier };
 }
 
 // Merchant slot weights — practical-for-this-fight stock only. Excludes magic
@@ -1563,7 +1568,7 @@ export function rollMerchantItem(tier: number): ItemRoll {
     ? rollFocusPower(rarity, tier)
     : rollPower(type, rarity, tier);
   const element = rollWeaponElement(type, weapon_range, rarity);
-  return { type, rarity, power, weapon_range, element };
+  return { type, rarity, power, weapon_range, element, tier };
 }
 
 // Per-fighter drop chance after a kill. 35% baseline, +5% per tier.
@@ -1634,12 +1639,14 @@ export const SCROLL_PRICE: Record<Rarity, number> = {
   legendary: 2000,
 };
 
-export function priceFor(type: ItemType, rarity: Rarity): number {
+export function priceFor(type: ItemType, rarity: Rarity, tier = 1): number {
   if (type === "magic") return MAGIC_PRICE[rarity];
   if (type === "revive") return REVIVE_PRICE[rarity];
   if (type === "tool") return TOOL_PRICE[rarity];
   if (type === "scroll") return SCROLL_PRICE[rarity];
-  return SHOP_PRICE[rarity];
+  // Weapons and armor scale +20% per tier above 1.
+  const tierMult = 1 + (Math.max(1, tier) - 1) * 0.2;
+  return Math.round(SHOP_PRICE[rarity] * tierMult);
 }
 
 // Sell price for an inventory item. Returns 30% of the equivalent shop
