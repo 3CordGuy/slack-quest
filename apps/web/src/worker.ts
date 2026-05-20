@@ -42,6 +42,9 @@ import {
   checkProgressionAchievements,
   classByName,
   createCombatState,
+  statsAtLevel,
+  deriveMaxMana,
+  FREE_POINTS_PER_LEVEL,
   dropChance,
   findApothecaryStaple,
   findCatalogEntry,
@@ -5961,6 +5964,143 @@ app.post("/api/admin/pregen_dungeon_rooms", async (c) => {
 // Health check. Anything else falls through to the ASSETS binding via the
 // wrangler `not_found_handling: single-page-application` config.
 app.get("/api/health", (c) => c.json({ ok: true }));
+
+// DEV ONLY — dev tool actions (heal, mana, gold, revive, cooldown reset).
+app.post("/api/dev/heal", async (c) => {
+  if (c.env.ENVIRONMENT !== "local") return c.json({ error: "forbidden" }, 403);
+  const session = await currentSession(c.env.DB, c.req.header("Cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  await c.env.DB.prepare("UPDATE characters SET hp = max_hp WHERE slack_user_id = ?")
+    .bind(session.slack_user_id).run();
+  return c.json({ ok: true });
+});
+
+app.post("/api/dev/mana", async (c) => {
+  if (c.env.ENVIRONMENT !== "local") return c.json({ error: "forbidden" }, 403);
+  const session = await currentSession(c.env.DB, c.req.header("Cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  await c.env.DB.prepare("UPDATE characters SET mana = max_mana WHERE slack_user_id = ?")
+    .bind(session.slack_user_id).run();
+  return c.json({ ok: true });
+});
+
+app.post("/api/dev/gold", async (c) => {
+  if (c.env.ENVIRONMENT !== "local") return c.json({ error: "forbidden" }, 403);
+  const session = await currentSession(c.env.DB, c.req.header("Cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const body = await c.req.json<{ amount?: unknown }>();
+  const amount = Math.floor(Number(body.amount));
+  if (!Number.isFinite(amount) || amount <= 0 || amount > 1_000_000) return c.json({ error: "invalid" }, 400);
+  await c.env.DB.prepare("UPDATE characters SET gold = gold + ? WHERE slack_user_id = ?")
+    .bind(amount, session.slack_user_id).run();
+  return c.json({ ok: true });
+});
+
+app.post("/api/dev/revive", async (c) => {
+  if (c.env.ENVIRONMENT !== "local") return c.json({ error: "forbidden" }, 403);
+  const session = await currentSession(c.env.DB, c.req.header("Cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  await c.env.DB.prepare("UPDATE characters SET downed_until = NULL, hp = max_hp WHERE slack_user_id = ?")
+    .bind(session.slack_user_id).run();
+  return c.json({ ok: true });
+});
+
+app.post("/api/dev/cooldowns", async (c) => {
+  if (c.env.ENVIRONMENT !== "local") return c.json({ error: "forbidden" }, 403);
+  const session = await currentSession(c.env.DB, c.req.header("Cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  await c.env.DB
+    .prepare("UPDATE characters SET last_rest_at = NULL, last_long_rest_at = NULL, drinks_since_last_quest = 0 WHERE slack_user_id = ?")
+    .bind(session.slack_user_id).run();
+  await c.env.DB.prepare("DELETE FROM shop_stock WHERE channel_id = ?").bind("local-dev").run();
+  await c.env.DB.prepare("DELETE FROM smithy_stock WHERE channel_id = ?").bind("local-dev").run();
+  return c.json({ ok: true });
+});
+
+app.post("/api/dev/level", async (c) => {
+  if (c.env.ENVIRONMENT !== "local") return c.json({ error: "forbidden" }, 403);
+  const session = await currentSession(c.env.DB, c.req.header("Cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const body = await c.req.json<{ level?: unknown }>();
+  const targetLevel = Math.floor(Number(body.level));
+  if (!Number.isFinite(targetLevel) || targetLevel < 1 || targetLevel > 99) return c.json({ error: "invalid" }, 400);
+  const character = await getCharacter(c.env.DB, session.slack_user_id);
+  if (!character) return c.json({ error: "no_character" }, 404);
+  const cls = classByName(character.class);
+  // Auto-alloc stats are fully deterministic from class + level. Free-point
+  // spends are not tracked per-level, so we reset to the clean baseline and
+  // restore all free points for the target level.
+  const stats = statsAtLevel(character.class, targetLevel);
+  const maxMana = deriveMaxMana(stats.int_stat, targetLevel);
+  // HP: use class base_hp + 3 per level above 1 (≈ avg d6 rounded down).
+  const maxHp = cls.base_hp + Math.max(0, targetLevel - 1) * 3;
+  const newXp = xpForLevel(targetLevel);
+  const unspentPoints = (targetLevel - 1) * FREE_POINTS_PER_LEVEL;
+  await c.env.DB
+    .prepare(`UPDATE characters
+       SET level = ?, xp = ?,
+           str = ?, int_stat = ?, vit = ?, agi = ?, dex = ?,
+           unspent_points = ?,
+           max_hp = ?, hp = ?,
+           max_mana = ?, mana = ?,
+           last_active = ?
+       WHERE slack_user_id = ?`)
+    .bind(
+      targetLevel, newXp,
+      stats.str, stats.int_stat, stats.vit, stats.agi, stats.dex,
+      unspentPoints,
+      maxHp, maxHp,
+      maxMana, maxMana,
+      Date.now(), session.slack_user_id,
+    ).run();
+  return c.json({ ok: true });
+});
+
+// DEV ONLY — heal/mana restore that also patches the in-flight combat state
+// so the DO re-broadcasts the corrected HP/mana on the next WebSocket connect.
+async function devPatchCombatState(
+  db: D1Database,
+  userId: string,
+  questId: number,
+  field: "hp" | "mana",
+): Promise<void> {
+  const snap = await getWebCombatSnapshot(db, questId);
+  if (!snap) return;
+  const state = snap.state;
+  const idx = state.fighters.findIndex((f) => f.id === userId);
+  if (idx === -1) return;
+  const fighter = state.fighters[idx];
+  const patched = { ...fighter, [field]: field === "hp" ? fighter.max_hp : fighter.max_mana };
+  const newFighters = [...state.fighters];
+  newFighters[idx] = patched;
+  await saveWebCombatState(db, questId, { ...state, fighters: newFighters });
+}
+
+app.post("/api/dev/combat-heal", async (c) => {
+  if (c.env.ENVIRONMENT !== "local") return c.json({ error: "forbidden" }, 403);
+  const session = await currentSession(c.env.DB, c.req.header("Cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const body = await c.req.json<{ questId?: unknown }>();
+  const questId = Number(body.questId);
+  if (!Number.isFinite(questId)) return c.json({ error: "invalid" }, 400);
+  await c.env.DB.prepare("UPDATE characters SET hp = max_hp WHERE slack_user_id = ?")
+    .bind(session.slack_user_id).run();
+  await devPatchCombatState(c.env.DB, session.slack_user_id, questId, "hp");
+  return c.json({ ok: true });
+});
+
+app.post("/api/dev/combat-mana", async (c) => {
+  if (c.env.ENVIRONMENT !== "local") return c.json({ error: "forbidden" }, 403);
+  const session = await currentSession(c.env.DB, c.req.header("Cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const body = await c.req.json<{ questId?: unknown }>();
+  const questId = Number(body.questId);
+  if (!Number.isFinite(questId)) return c.json({ error: "invalid" }, 400);
+  await c.env.DB.prepare("UPDATE characters SET mana = max_mana WHERE slack_user_id = ?")
+    .bind(session.slack_user_id).run();
+  await devPatchCombatState(c.env.DB, session.slack_user_id, questId, "mana");
+  return c.json({ ok: true });
+});
 
 // DEV ONLY — bypasses Slack login by creating/reusing a local dev character.
 app.post("/api/dev/login", async (c) => {

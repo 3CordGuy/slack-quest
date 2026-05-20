@@ -771,6 +771,7 @@ export function CombatPage({
   // Tracks the last turn_index for which we fired an auto-resolve so we don't double-fire.
   const autoResolvedTurnRef = useRef<number>(-1);
   const [reconnectKey, setReconnectKey] = useState(0);
+  const [devOpen, setDevOpen] = useState(false);
   const isMobile = useIsMobile();
   const wsRef = useRef<WebSocket | null>(null);
   const logScrollRef = useRef<HTMLDivElement | null>(null);
@@ -1161,10 +1162,27 @@ export function CombatPage({
         <button onClick={exit} style={{ background: "none", border: "none", color: "#9aa0a6", cursor: "pointer", fontSize: 13, padding: "4px 8px", borderRadius: 6, display: "flex", alignItems: "center", gap: 6, fontFamily: "inherit" }}>
           <Icon name="footprint" size={13} /> Dashboard
         </button>
-        <span style={{ fontSize: 11, color: ui.connection === "open" ? "#39ff14" : ui.connection === "connecting" ? "#9aa0a6" : "#fca5a5" }}>
-          {ui.connection === "open" ? "● live" : ui.connection === "connecting" ? "○ …" : "× disconnected"}
-        </span>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          {import.meta.env.DEV && (
+            <button
+              onClick={() => setDevOpen(true)}
+              style={{ background: "none", border: "1px solid #2a2d44", color: "#a78bfa", cursor: "pointer", fontSize: 11, padding: "2px 7px", borderRadius: 5, display: "flex", alignItems: "center", gap: 4, fontFamily: "inherit" }}
+            >
+              <Icon name="cog" size={11} /> dev
+            </button>
+          )}
+          <span style={{ fontSize: 11, color: ui.connection === "open" ? "#39ff14" : ui.connection === "connecting" ? "#9aa0a6" : "#fca5a5" }}>
+            {ui.connection === "open" ? "● live" : ui.connection === "connecting" ? "○ …" : "× disconnected"}
+          </span>
+        </div>
       </div>
+      {devOpen && import.meta.env.DEV && (
+        <CombatDevModal
+          questId={questId}
+          onClose={() => setDevOpen(false)}
+          onDone={() => { setDevOpen(false); setReconnectKey((k) => k + 1); }}
+        />
+      )}
 
       {/* Room view — flex: 1, background art + floating overlays */}
       <div style={{ flex: 1, position: "relative", overflow: "hidden", minHeight: 0, background: bgArtUrl ? undefined : "#1c1f2e" }}>
@@ -2905,3 +2923,69 @@ const exitBtn: React.CSSProperties = {
   fontSize: 13,
   cursor: "pointer",
 };
+
+function CombatDevModal({
+  questId,
+  onClose,
+  onDone,
+}: {
+  questId: number;
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const [busy, setBusy] = useState<string | null>(null);
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [onClose]);
+
+  async function act(endpoint: string) {
+    setBusy(endpoint);
+    try {
+      await fetch(endpoint, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ questId }),
+      });
+    } finally {
+      setBusy(null);
+      onDone();
+    }
+  }
+
+  const btn = (bg: string, fg: string): React.CSSProperties => ({
+    background: bg, color: fg,
+    border: "1px solid #2a2d33", borderRadius: 6,
+    padding: "6px 14px", fontSize: 13, fontWeight: 600,
+    cursor: busy ? "default" : "pointer", opacity: busy ? 0.5 : 1,
+    fontFamily: "inherit", display: "flex", alignItems: "center", gap: 5,
+  });
+
+  return (
+    <div
+      onClick={onClose}
+      style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 500 }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{ background: "#13151a", border: "1px solid #2a2d33", borderRadius: 10, padding: 20, display: "flex", flexDirection: "column", gap: 10, minWidth: 220, boxShadow: "0 8px 32px rgba(0,0,0,0.7)" }}
+      >
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 2 }}>
+          <span style={{ fontSize: 13, fontWeight: 700, color: "#a78bfa", display: "flex", alignItems: "center", gap: 6 }}>
+            <Icon name="cog" size={13} /> Dev Tools
+          </span>
+          <button onClick={onClose} style={{ background: "none", border: "none", color: "#6b7280", cursor: "pointer", fontSize: 14, lineHeight: 1, padding: "0 2px" }}>✕</button>
+        </div>
+        <button disabled={!!busy} onClick={() => void act("/api/dev/combat-heal")} style={btn("#1f3a1f", "#86efac")}>
+          <Icon name="health" size={13} /> {busy === "/api/dev/combat-heal" ? "…" : "Heal to full"}
+        </button>
+        <button disabled={!!busy} onClick={() => void act("/api/dev/combat-mana")} style={btn("#1a2a3a", "#60a5fa")}>
+          <Icon name="crystals" size={13} /> {busy === "/api/dev/combat-mana" ? "…" : "Restore mana"}
+        </button>
+      </div>
+    </div>
+  );
+}
