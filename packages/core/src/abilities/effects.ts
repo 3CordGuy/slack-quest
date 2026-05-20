@@ -7,12 +7,12 @@ import type { AbilityEffect } from "../abilities";
 
 export const fx = {
   // Deal damage to a monster (bypasses armor). Pass drink_buff_context:
-  // "signature" for old-style damage abilities that interact with drink buffs.
+  // "ability" to allow Lucky Sip crit buffs to apply.
   damage(
     targetId: string,
     amount: number,
     formula: string,
-    opts?: { isCrit?: boolean; drinkBuff?: "signature" },
+    opts?: { isCrit?: boolean; drinkBuff?: "ability" },
   ): AbilityEffect {
     return {
       kind: "deal_damage",

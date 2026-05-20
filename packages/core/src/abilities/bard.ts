@@ -16,7 +16,7 @@ export const bardAbilities: AbilityDef[] = [
       const party = Math.max(1, ctx.party.length);
       const r = rollSum(ctx.roll, 1, 6);
       const amount = r + ctx.caster.magic_mod + party * 2 + wpn;
-      return [fx.damage(monster.id, amount, `1d6 + ${ctx.caster.magic_mod}m + ${party}p×2 + ${wpn}w`, { drinkBuff: "signature" })];
+      return [fx.damage(monster.id, amount, `1d6 + ${ctx.caster.magic_mod}m + ${party}p×2 + ${wpn}w`, { drinkBuff: "ability" })];
     },
   },
   {

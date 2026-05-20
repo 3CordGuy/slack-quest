@@ -19,7 +19,7 @@ export const paladinAbilities: AbilityDef[] = [
       const wpn = Math.max(0, ctx.caster.weapon_power);
       const r = rollSum(ctx.roll, 2, 6);
       const amount = r + ctx.caster.attack_mod * 2 + wpn;
-      return [fx.damage(monster.id, amount, `2d6 + ${ctx.caster.attack_mod}a×2 + ${wpn}w`, { drinkBuff: "signature" })];
+      return [fx.damage(monster.id, amount, `2d6 + ${ctx.caster.attack_mod}a×2 + ${wpn}w`, { drinkBuff: "ability" })];
     },
   },
   {

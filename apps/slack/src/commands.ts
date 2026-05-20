@@ -30,7 +30,7 @@ import {
   flavorJoin,
   flavorCatalogItem,
   flavorLootDrop,
-  flavorSignature,
+  flavorAbility,
   flavorVictory,
   generateEncounterArt,
   generateExpeditionTheme,
@@ -459,7 +459,7 @@ function helpText(cmd: string, name: string): string {
     `*${name} commands*`,
     `• \`${cmd} roll\` — roll a new character (or reroll: free until your first XP, then \`level × 50g\`; confirm with \`${cmd} roll confirm\`)`,
     `• \`${cmd} me\` — show your character sheet`,
-    `• \`${cmd} inspect @user\` — view another player's public sheet (level, gear, signature)`,
+    `• \`${cmd} inspect @user\` — view another player's public sheet (level, gear, abilities)`,
     `• \`${cmd} quest [variant] [@user1 @user2…]\` — start a quest, optionally inviting party members`,
     `• \`${cmd} quest boss\` — single tougher monster, 2 phases (L3+, 2× rewards)`,
     `• \`${cmd} quest gauntlet\` — 3 monsters back-to-back, no flee (L5+, 3× rewards, guaranteed drop)`,
@@ -472,7 +472,7 @@ function helpText(cmd: string, name: string): string {
     `• \`${cmd} cast\` — channel magic: \`1d8 + mag_mod + weapon\` (crit on nat 8, any row)`,
     `• \`${cmd} flee\` — try to escape (\`1d2\`; on fail you take a free hit)`,
     `• \`${cmd} position front|back\` — set battle position. Free outside a quest; mid-quest costs the 45s combat cooldown.`,
-    `• \`${cmd} signature\` (alias \`sig\`) — your class's signature ability (costs 1 mana, refills between quests)`,
+    `• \`${cmd} signature\` (alias \`sig\`) — your class's damage ability (costs 1 mana, refills between quests)`,
     `• \`${cmd} ability\` (alias \`active\`) — your class's active ability (costs mana, 45s cooldown — see \`${cmd} me\`)`,
     `• \`${cmd} mark\` (alias \`focus\`) — call focus on the current foe; partymates get *+${FOCUS_FIRE_BONUS}* damage for ${Math.round(FOCUS_FIRE_DURATION_MS / 1000)}s (free action, no cooldown)`,
     `• \`${cmd} heal [@user]\` — restore \`1d6 + magic_mod\` HP on a party member (costs 1 mana, default self)`,
@@ -535,7 +535,7 @@ function rulesSections(): RulesSection[] {
         `• *Reroll:* free until your first XP, then \`level × 50g\`. Confirm with \`${cmd} roll confirm\` — deletes everything (gold, gear, scars).`,
         `• *Level up* (auto on XP threshold): max HP +1d6, HP refills, mana recalculates and refills.`,
         `• *Mana:* scales with INT and level — 2 + floor((INT−4)/2) + floor(level/6). Refills between quests, on join, and on level-up.`,
-        `• See \`${cmd} rules classes\` for the per-class signature / passive / active breakdown.`,
+        `• See \`${cmd} rules classes\` for the per-class ability / passive breakdown.`,
       ],
     },
     {
@@ -563,7 +563,7 @@ function rulesSections(): RulesSection[] {
           data_warlock: "💀",
         };
         const lines: string[] = [
-          `_8 classes, randomly assigned on \`${cmd} roll\`. Each has a signature (damage), a passive (always-on or auto-trigger), and an active (tactical, costs mana, 45s cooldown)._`,
+          `_8 classes, randomly assigned on \`${cmd} roll\`. Each has a damage ability (\`sig\`), a passive (always-on or auto-trigger), and a tactical ability (costs mana, 45s cooldown)._`,
           ``,
         ];
         for (const cls of CLASSES) {
@@ -574,7 +574,7 @@ function rulesSections(): RulesSection[] {
           const skillTags = cls.skills.map((s) => `${SKILL_META[s].emoji} ${SKILL_META[s].label}`).join(" · ");
           const e = emoji[cls.id] ?? "•";
           lines.push(`*${e} ${cls.name}* — _HP ${cls.base_hp} • atk +${cls.attack_mod} • mag +${cls.magic_mod} • ${skillTags}_`);
-          if (sig) lines.push(`   ✨ *Signature — ${sig.name}* _(${sig.mana_cost}m)_: ${sig.blurb}`);
+          if (sig) lines.push(`   ✨ *${sig.name}* _(${sig.mana_cost}m, \`sig\`)_: ${sig.blurb}`);
           if (passive) lines.push(`   🌟 *Passive — ${passive.name}*: ${passive.blurb}`);
           if (ability) lines.push(`   ⚡ *Ability — ${ability.name}* _(${ability.mana_cost}m)_: ${ability.blurb}`);
           lines.push(``);
@@ -604,8 +604,8 @@ function rulesSections(): RulesSection[] {
         `_All actions share one cooldown — *45s* in a party (so teammates have time to react), *15s* solo (no teammates to wait on). Switches automatically as players join/leave._`,
         `• \`${cmd} attack\` — \`1d6 + atk_mod + weapon\`, crit on nat 6 (×2 damage)`,
         `• \`${cmd} cast\` — \`1d8 + mag_mod + weapon\`, crit on nat 8`,
-        `• \`${cmd} signature\` (\`sig\`) — class-specific big move, costs 1 mana`,
-        `• \`${cmd} ability\` (\`active\`) — class-specific active. Costs mana (1-2), 45s cooldown. \`${cmd} me\` shows yours.`,
+        `• \`${cmd} signature\` (\`sig\`) — class damage ability, costs 1 mana`,
+        `• \`${cmd} ability\` (\`active\`) — class tactical ability. Costs mana (1-2), 45s cooldown. \`${cmd} me\` shows yours.`,
         `• \`${cmd} flee\` — \`1d2\`. 1 = escape (party fights on); 2 = trip + free monster hit. Blocked in gauntlet/dungeon.`,
         `• *Mana regen:* basic \`attack\`/\`cast\` refunds +1 mana on the monster's retaliation (no regen on mana-spending actions). In dungeons, the party also gets +1 mana between rooms.`,
         `• \`${cmd} heal [@user]\` — \`1d6 + mag_mod\` HP to a partymate, costs 1 mana, burns the 45s combat cooldown (no monster counter — it's a support action)`,
@@ -970,6 +970,7 @@ export async function handleInteraction(
   if (action.action_id.startsWith("turn_attack_")) return handleCombatViaEngine(slash, env, ctx, "attack");
   if (action.action_id.startsWith("turn_cast_")) return handleCombatViaEngine(slash, env, ctx, "cast");
   if (action.action_id.startsWith("turn_signature_")) return handleCombatViaEngine(slash, env, ctx, "signature");
+  if (action.action_id.startsWith("turn_ability_")) return handleCombatViaEngine(slash, env, ctx, "signature");
   if (action.action_id.startsWith("turn_flee_")) return handleCombatViaEngine(slash, env, ctx, "flee");
   if (action.action_id === "equip") return handleEquip(slash, args, env);
   if (action.action_id === "unequip") return handleUnequip(slash, args, env);
@@ -1442,7 +1443,7 @@ async function handleRoll(
     }
     return ephemeral(
       `You already have *${existing.name}* the ${existing.class} (L${existing.level}, ${existing.gold}g).\n` +
-      `Reroll cost: *${cost}g* (level × 50). Rerolling *deletes* them — gear, gold, scars, signature, all of it.\n` +
+      `Reroll cost: *${cost}g* (level × 50). Rerolling *deletes* them — gear, gold, scars, all of it.\n` +
       (existing.gold < cost
         ? `You're short ${cost - existing.gold}g. Earn more, then \`${payload.command} roll confirm\`.`
         : `Confirm with \`${payload.command} roll confirm\` to proceed.`),
@@ -1779,7 +1780,7 @@ function buildSheetBlocks(
       type: "section",
       text: {
         type: "mrkdwn",
-        text: `*✨ Signature — ${sig.name}* _(${sig.mana_cost}m)_\n_${sig.blurb}_`,
+        text: `*✨ ${sig.name}* _(${sig.mana_cost}m, \`sig\`)_\n_${sig.blurb}_`,
       },
     });
   }
@@ -3564,7 +3565,7 @@ function renderDungeonRoom(node: ExpeditionNode, exp: ExpeditionState, cmd: stri
       "",
       `Foe: *${node.monster_name}* — HP ${liveHp}/${node.monster_max_hp}`,
       "",
-      `Combat: \`${cmd} attack\` • \`${cmd} cast\` • \`${cmd} signature\`.`,
+      `Combat: \`${cmd} attack\` • \`${cmd} cast\` • \`${cmd} sig\`.`,
     ].join("\n");
   }
   if (node.type === "trap") {
@@ -3713,7 +3714,7 @@ async function buildDungeonRoomBlocks(
     const liveHp = currentMonsterHp ?? node.monster_max_hp;
     blocks.push({
       type: "section",
-      text: { type: "mrkdwn", text: `Foe: *${node.monster_name}* — HP ${liveHp}/${node.monster_max_hp}\n\nCombat: \`${cmd} attack\` • \`${cmd} cast\` • \`${cmd} signature\`.` },
+      text: { type: "mrkdwn", text: `Foe: *${node.monster_name}* — HP ${liveHp}/${node.monster_max_hp}\n\nCombat: \`${cmd} attack\` • \`${cmd} cast\` • \`${cmd} sig\`.` },
     });
     return blocks;
   }
@@ -4344,7 +4345,7 @@ async function handleCombat(
     const canShootFromBack = range === "ranged" || range === "focus";
     if (!canShootFromBack) {
       return ephemeral(
-        `🏹 Back row can't melee — equip a *ranged* or *focus* weapon to attack from here, or \`${payload.command} cast\` / \`${payload.command} signature\`, or \`${payload.command} position front\`.`,
+        `🏹 Back row can't melee — equip a *ranged* or *focus* weapon to attack from here, or \`${payload.command} cast\` / \`${payload.command} sig\`, or \`${payload.command} position front\`.`,
       );
     }
   }
@@ -4355,7 +4356,7 @@ async function handleCombat(
   let damage: number;
   let isCrit: boolean;
   let playerLine: string;
-  let signatureName: string | null = null;
+  let abilityName: string | null = null;
   let manaCost = 0;
 
   // Class-passive tracking. Each passive that fires this turn records itself
@@ -4387,10 +4388,10 @@ async function handleCombat(
 
   if (action === "signature") {
     const sig = activeAbilities(cls.abilities)[0];
-    if (!sig) return ephemeral("Your class has no signature ability.");
+    if (!sig) return ephemeral("Your class has no active ability.");
     if (character.mana < 1) {
       return ephemeral(
-        `Out of mana — \`${payload.command} signature\` refills between quests. (${character.mana}/${character.max_mana})`,
+        `Out of mana — mana refills between quests. (${character.mana}/${character.max_mana})`,
       );
     }
 
@@ -4417,7 +4418,7 @@ async function handleCombat(
 
     damage = sigResult.damage;
     isCrit = false;
-    signatureName = sig.name;
+    abilityName = sig.name;
     manaCost = 1;
 
     // Backstab auto-crits when the monster is already weakened. Doubles damage.
@@ -4426,13 +4427,11 @@ async function handleCombat(
       isCrit = true;
     }
 
-    // 🧙 DevOps Mage passive: first signature each fight is free (0 mana).
-    // Lets a Mage open a fight with a sig without burning their tiny mana
-    // pool, leaving the rest available for cast/heal/shield/follow-up sigs.
+    // 🧙 DevOps Mage passive: first active ability each fight is free (0 mana).
     if (cls.id === "devops_mage" && !isPassiveUsed(quest.scene, payload.user_id, PASSIVE_MAGE_FREE_SIG)) {
       manaCost = 0;
       passiveTriggers.push({ userId: payload.user_id, key: PASSIVE_MAGE_FREE_SIG });
-      passiveLines.push(`🧙 *DevOps Mage* passive: first signature free.`);
+      passiveLines.push(`🧙 *DevOps Mage* passive: first ability free.`);
     }
 
     playerLine = isCrit
@@ -4934,10 +4933,10 @@ async function handleCombat(
   const weaponName = equippedWeapon?.item_name;
   const armorName = equippedArmor?.item_name;
   ctx.waitUntil((async () => {
-    const flavor = signatureName
-      ? await flavorSignature(env.AI, character, quest.scene.monster_name, signatureName, isCrit, weaponName, armorName)
+    const flavor = abilityName
+      ? await flavorAbility(env.AI, character, quest.scene.monster_name, abilityName, isCrit, weaponName, armorName)
       : await flavorHit(env.AI, character, quest.scene.monster_name, isMagic ? "cast" : "attack", isCrit, weaponName, armorName);
-    const marker = signatureName ? "✨ " : isCrit ? "💥 " : "";
+    const marker = abilityName ? "✨ " : isCrit ? "💥 " : "";
     const phaseLine = bossPhaseTransition
       ? `\n\n👑 *Phase 2!* ${await flavorBossPhase(env.AI, quest.scene.monster_name)}`
       : "";

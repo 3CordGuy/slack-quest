@@ -68,7 +68,6 @@ type TurnAction =
   | { kind: "cast"; actor: string; target_id?: string | null }
   | { kind: "heal"; actor: string; target: string }
   | { kind: "shield"; actor: string; target: string }
-  | { kind: "signature"; actor: string; target_id?: string | null }
   | { kind: "flee"; actor: string }
   | { kind: "position"; actor: string; to: "front" | "back" }
   | { kind: "wait"; actor: string }
@@ -213,7 +212,6 @@ function formatCombatEvent(e: { type: string; [k: string]: unknown }, nameOf: (i
     case "monster_down": return row(`${nameOf(e.killed_by as string)} lands the killing blow!`, "good");
     case "heal_applied": return row(`${nameOf(e.actor as string)}: +${e.amount} HP healed`, "good");
     case "shield_applied": return row(`${nameOf(e.actor as string)}: +${e.amount} shield`, "good");
-    case "signature_used": return row(`${nameOf(e.actor as string)} signature: ${e.damage} dmg`, "good");
     case "victory": return row("Victory!", "good");
     case "defeat": return row("The party falls…", "bad");
     case "fled": return row("The party escapes!", "muted");
@@ -1121,9 +1119,6 @@ export function DungeonView({
                       <CombatBtn label="Cast" icon="crystal-wand" color="#818cf8"
                         disabled={mana < 1 || needsTarget}
                         onClick={() => send({ kind: "cast", actor: selfId, target_id: effectiveTarget })} />
-                      <CombatBtn label="Signature" icon="wax-seal" color="#a78bfa"
-                        disabled={mana < 2 || needsTarget}
-                        onClick={() => send({ kind: "signature", actor: selfId, target_id: effectiveTarget })} />
                       {/* Support row */}
                       <CombatBtn label="Heal" icon="health-increase" color="#22c55e"
                         disabled={mana < 1}

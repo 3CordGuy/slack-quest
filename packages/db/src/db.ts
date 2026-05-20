@@ -1895,7 +1895,7 @@ export async function getLifetimeStats(
     .prepare(
       `SELECT action, outcome FROM quest_log
        WHERE actor = ?
-         AND action IN ('attack','cast','signature','tool','scroll','heal','shield','revive','death')`,
+         AND action IN ('attack','cast','signature','ability','tool','scroll','heal','shield','revive','death')`,
     )
     .bind(userId)
     .all<{ action: string; outcome: string | null }>();
@@ -1953,7 +1953,7 @@ export async function getQuestDamageStats(
     .prepare(
       `SELECT actor, action, outcome FROM quest_log
        WHERE quest_id = ?
-         AND action IN ('attack', 'cast', 'signature', 'tool', 'scroll', 'heal', 'shield')`,
+         AND action IN ('attack', 'cast', 'signature', 'ability', 'tool', 'scroll', 'heal', 'shield')`,
     )
     .bind(questId)
     .all<{ actor: string; action: string; outcome: string | null }>();

@@ -586,7 +586,7 @@ export const PURPOSE_LABEL: Record<string, string> = {
   damage_attack:  "Damage",
   damage_cast:    "Spell Dmg",
   damage_monster: "Monster Dmg",
-  signature:      "Signature",
+  ability:        "Ability",
   heal:           "Healing",
   shield:         "Shield",
   flee_check:     "Escape",

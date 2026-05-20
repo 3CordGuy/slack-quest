@@ -67,7 +67,7 @@ export type AbilityEffect =
       amount: number;
       formula: string;
       is_crit?: boolean;
-      drink_buff_context?: "signature";
+      drink_buff_context?: "ability";
     }
   // Restore HP to a fighter.
   | { kind: "heal"; target_id: string; amount: number }

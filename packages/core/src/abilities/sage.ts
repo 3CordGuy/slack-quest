@@ -17,7 +17,7 @@ export const sageAbilities: AbilityDef[] = [
       const wpn = Math.max(0, ctx.caster.weapon_power);
       const r = rollSum(ctx.roll, 2, 8);
       const amount = r + wpn;
-      return [fx.damage(monster.id, amount, `2d8 + ${wpn}w`, { drinkBuff: "signature" })];
+      return [fx.damage(monster.id, amount, `2d8 + ${wpn}w`, { drinkBuff: "ability" })];
     },
   },
   {

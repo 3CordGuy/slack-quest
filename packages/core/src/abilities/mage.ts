@@ -16,7 +16,7 @@ export const mageAbilities: AbilityDef[] = [
       const wpn = Math.max(0, ctx.caster.weapon_power);
       const r = rollSum(ctx.roll, 2, 6);
       const amount = r + ctx.caster.magic_mod + wpn;
-      return [fx.damage(monster.id, amount, `2d6 + ${ctx.caster.magic_mod}m + ${wpn}w`, { drinkBuff: "signature" })];
+      return [fx.damage(monster.id, amount, `2d6 + ${ctx.caster.magic_mod}m + ${wpn}w`, { drinkBuff: "ability" })];
     },
   },
   {
@@ -35,7 +35,7 @@ export const mageAbilities: AbilityDef[] = [
     kind: "passive",
     id: "mana_catalyst",
     name: "Mana Catalyst",
-    blurb: "First signature each fight costs 0 mana.",
+    blurb: "First active ability each fight costs 0 mana.",
     trigger: "always_on",
     once_per_fight: true,
     execute: () => [],

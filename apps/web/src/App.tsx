@@ -4653,7 +4653,7 @@ function CharacterCard({
         <Stat
           label="Mana"
           icon={<Icon name="wizard-staff" color="#a78bfa" size={36} />}
-          tooltip={`INT ${primaryStats.int_stat}\n2 + floor((INT − 4) / 2) + floor(level / 6) = ${c.max_mana} max mana\nSpent to cast signature abilities`}
+          tooltip={`INT ${primaryStats.int_stat}\n2 + floor((INT − 4) / 2) + floor(level / 6) = ${c.max_mana} max mana\nSpent to cast active abilities`}
           value={`${c.mana} / ${c.max_mana}`}
         />
         <Stat

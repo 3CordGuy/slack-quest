@@ -20,7 +20,7 @@ export const wardenAbilities: AbilityDef[] = [
       const armorPower = ctx.caster.weapon_power;
       const r = ctx.roll(10);
       const amount = r + ctx.caster.attack_mod + armorPower;
-      return [fx.damage(monster.id, amount, `1d10 + ${ctx.caster.attack_mod}a + ${armorPower}`, { drinkBuff: "signature" })];
+      return [fx.damage(monster.id, amount, `1d10 + ${ctx.caster.attack_mod}a + ${armorPower}`, { drinkBuff: "ability" })];
     },
   },
   {

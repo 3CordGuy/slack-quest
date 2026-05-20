@@ -1282,11 +1282,11 @@ export async function flavorForkOutcome(
   return generateFlavor(ai, user, fallback, 80);
 }
 
-export async function flavorSignature(
+export async function flavorAbility(
   ai: Ai,
   character: FighterRef,
   monsterName: string,
-  signatureName: string,
+  abilityName: string,
   isCrit: boolean,
   equippedWeapon?: string,
   equippedArmor?: string,
@@ -1295,10 +1295,10 @@ export async function flavorSignature(
   const gearHint = equippedWeapon || equippedArmor
     ? ` Work the gear into the moment: ${[equippedWeapon && `weapon "${equippedWeapon}"`, equippedArmor && `armor "${equippedArmor}"`].filter(Boolean).join(", ")}.`
     : "";
-  const user = `${character.name}, a Level ${character.level} ${character.class}, just unleashes their signature ability *${signatureName}* on ${monsterName}. ${intensity} Narrate the moment with extra weight — this is a class-defining move.${gearHint}${pronounHint(character.gender)}`;
+  const user = `${character.name}, a Level ${character.level} ${character.class}, just unleashes *${abilityName}* on ${monsterName}. ${intensity} Narrate the moment with extra weight — this is a class-defining move.${gearHint}${pronounHint(character.gender)}`;
   const fallback = isCrit
-    ? `${character.name}'s ${signatureName}${equippedWeapon ? `, channeled through their ${equippedWeapon},` : ""} crashes into ${monsterName} like a falling stack trace.`
-    : `${character.name} channels ${signatureName}${equippedWeapon ? ` through their ${equippedWeapon}` : ""} at ${monsterName}.`;
+    ? `${character.name}'s ${abilityName}${equippedWeapon ? `, channeled through their ${equippedWeapon},` : ""} crashes into ${monsterName} like a falling stack trace.`
+    : `${character.name} channels ${abilityName}${equippedWeapon ? ` through their ${equippedWeapon}` : ""} at ${monsterName}.`;
   return generateFlavor(ai, user, fallback, 110);
 }
 

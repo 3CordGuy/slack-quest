@@ -20,7 +20,7 @@ export const rogueAbilities: AbilityDef[] = [
       const amount = isCrit ? raw * 2 : raw;
       const formulaBase = `3d4 + ${ctx.caster.attack_mod}a + ${wpn}w`;
       const formula = isCrit ? `${formulaBase} ×2 (backstab)` : formulaBase;
-      return [fx.damage(monster.id, amount, formula, { isCrit, drinkBuff: "signature" })];
+      return [fx.damage(monster.id, amount, formula, { isCrit, drinkBuff: "ability" })];
     },
   },
   {

@@ -19,7 +19,7 @@ export const druidAbilities: AbilityDef[] = [
       const best = Math.max(ctx.caster.attack_mod, ctx.caster.magic_mod);
       const r = ctx.roll(8);
       const amount = r + best + t + wpn;
-      return [fx.damage(monster.id, amount, `1d8 + ${best} + ${t}t + ${wpn}w`, { drinkBuff: "signature" })];
+      return [fx.damage(monster.id, amount, `1d8 + ${best} + ${t}t + ${wpn}w`, { drinkBuff: "ability" })];
     },
   },
   {

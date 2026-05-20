@@ -16,7 +16,7 @@ export const warlockAbilities: AbilityDef[] = [
       const slowQuery = Math.floor(Math.max(0, monster.max_hp) * 0.05);
       const r = ctx.roll(6);
       const amount = r + ctx.caster.magic_mod + slowQuery + wpn;
-      return [fx.damage(monster.id, amount, `1d6 + ${ctx.caster.magic_mod}m + ${slowQuery}% + ${wpn}w`, { drinkBuff: "signature" })];
+      return [fx.damage(monster.id, amount, `1d6 + ${ctx.caster.magic_mod}m + ${slowQuery}% + ${wpn}w`, { drinkBuff: "ability" })];
     },
   },
   {

@@ -271,7 +271,7 @@ const DRINKS: DrinkSpec[] = [
   { id: "brew",    emoji: "🥃", name: "Iron Brew",         price: 8,  effect: { kind: "instant_shield", amount: 5 },                blurb: "Tastes like ore. Lines your gut with grit. +5 shield, instant." },
   { id: "tea",     emoji: "🍵", name: "Bitter Tea",        price: 12, effect: { kind: "instant_mana",  amount: 3 },                blurb: "Clarifies the mind, reignites the channel. +3 mana, instant." },
   { id: "milk",    emoji: "🥛", name: "Frothy Milk",       price: 10, effect: { kind: "instant_hp",    amount: 8 },                blurb: "Comfort in a glass. The bartender knows. +8 HP, instant." },
-  { id: "lucky",   emoji: "💧", name: "Lucky Sip",         price: 15, effect: { kind: "buff_next_crit" },                          blurb: "A shimmer of fate. Your next attack/cast/signature is a guaranteed crit." },
+  { id: "lucky",   emoji: "💧", name: "Lucky Sip",         price: 15, effect: { kind: "buff_next_crit" },                          blurb: "A shimmer of fate. Your next attack/cast/ability is a guaranteed crit." },
   { id: "whiskey", emoji: "🍶", name: "Aged Whiskey",      price: 25, effect: { kind: "buff_attack",   magnitude: 2, duration: 3 }, blurb: "Smoke, leather, twenty harvests of patience. +2 attack for the whole fight." },
   { id: "reset",   emoji: "🍹", name: "Engineer's Reset",  price: 30, effect: { kind: "instant_combo", hp: 4, mana: 4 },           blurb: "Mystery cocktail. Tastes like everything went green. +4 HP and +4 mana, instant." },
 ];
@@ -3742,7 +3742,7 @@ app.post("/api/pub/drink/:drinkId", async (c) => {
     case "buff_next_crit": {
       newBuff = { kind: "buff_next_crit", magnitude: 1, remaining: 1, drink_id: drink.id };
       await setDrinkBuff(c.env.DB, session.slack_user_id, newBuff);
-      summary = "next attack/cast/signature is a guaranteed crit";
+      summary = "next attack/cast/ability is a guaranteed crit";
       break;
     }
     case "instant_shield": {

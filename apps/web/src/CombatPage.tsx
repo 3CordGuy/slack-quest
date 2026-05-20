@@ -146,7 +146,6 @@ type CombatEvent =
   | { type: "monster_down"; killed_by: string }
   | { type: "heal_applied"; actor: string; target: string; amount: number; rolled: number }
   | { type: "shield_applied"; actor: string; target: string; restored: number; new_armor: number; bonus_barrier?: boolean }
-  | { type: "signature_used"; actor: string; damage: number; formula: string; mana_spent: number }
   | {
       type: "flee_check";
       actor: string;
@@ -522,8 +521,6 @@ function formatEvent(e: CombatEvent, state: CombatState | null): LogEntry[] {
         "good",
       );
     }
-    case "signature_used":
-      return row("wax-seal", <>{nameOf(e.actor)} signature: {e.damage} dmg  [{e.formula}]  −{e.mana_spent} mana</>, "good");
     case "flee_check":
       return row(
         "footprint",
@@ -678,7 +675,7 @@ function formatEvent(e: CombatEvent, state: CombatState | null): LogEntry[] {
     case "passive_warden_shield":
       return row("shield", <>{nameOf(e.actor)} hardens up — +{e.amount} shield (passive).</>, "good");
     case "passive_mage_free_sig":
-      return row("wax-seal", <>{nameOf(e.actor)}'s first signature is free.</>, "good");
+      return row("wax-seal", <>{nameOf(e.actor)}'s first ability is free.</>, "good");
     case "passive_druid_regen":
       return row("grass", <>{nameOf(e.actor)} regen +{e.amount} HP (passive).</>, "good");
     case "passive_rogue_first_crit":
@@ -877,7 +874,7 @@ export function CombatPage({
             } else if (evt.type === "passive_warden_shield") {
               toast(`🛡 Hardened Up — +${(evt as { amount: number }).amount} shield`, { duration: 3000 });
             } else if (evt.type === "passive_mage_free_sig") {
-              toast("✨ First signature is free!", { duration: 3000 });
+              toast("✨ First ability is free!", { duration: 3000 });
             } else if (evt.type === "passive_paladin_auto_heal") {
               toast(`💛 Lay on Hands — +${(evt as { amount: number }).amount} HP`, { duration: 3000 });
             }

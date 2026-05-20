@@ -753,7 +753,7 @@ export const DRINKS: DrinkSpec[] = [
   {
     id: "lucky", emoji: "💧", name: "Lucky Sip", price: 15,
     effect: { kind: "buff_next_crit" },
-    blurb: "A shimmer of fate. Your *next attack/cast/signature is a guaranteed crit*.",
+    blurb: "A shimmer of fate. Your *next attack/cast/ability is a guaranteed crit*.",
   },
   {
     id: "whiskey", emoji: "🍶", name: "Aged Whiskey", price: 25,

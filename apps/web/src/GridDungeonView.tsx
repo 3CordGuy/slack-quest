@@ -161,7 +161,6 @@ type TurnAction =
   | { kind: "cast"; actor: string; target_id?: string | null }
   | { kind: "heal"; actor: string; target: string }
   | { kind: "shield"; actor: string; target: string }
-  | { kind: "signature"; actor: string; target_id?: string | null }
   | { kind: "flee"; actor: string }
   | { kind: "position"; actor: string; to: "front" | "back" }
   | { kind: "wait"; actor: string }
@@ -326,12 +325,6 @@ function formatCombatEvent(e: { type: string; [k: string]: unknown }, nameOf: (i
       `${nameOf(e.actor as string)}: +${e.amount} shield`,
       "good",
       (e.rolled as number) > (e.amount as number) ? `rolled ${e.rolled}, clamped to ${e.amount}` : undefined,
-      "party",
-    );
-    case "signature_used": return row(
-      `${nameOf(e.actor as string)} signature: ${e.damage} dmg`,
-      "good",
-      `${e.formula ?? ""} · −${e.mana_spent ?? 0} mana`,
       "party",
     );
     case "flee_check": return row(
@@ -2324,7 +2317,6 @@ function CombatPanel({ state, selfId, onSend, autoResolve, setAutoResolve, myTur
       <div style={{ padding: "8px 10px 10px", display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", justifyContent: "center" }}>
         <CBtn label="Attack" icon="sword" color="#b89b3a" disabled={!myTurn || !target} onClick={() => onSend({ kind: "attack", actor: selfId, target_id: target })} />
         <CBtn label="Cast" icon="crystal-wand" color="#818cf8" manaCost={1} disabled={!myTurn || mana < 1 || !target} onClick={() => onSend({ kind: "cast", actor: selfId, target_id: target })} />
-        <CBtn label="Signature" icon="wax-seal" color="#a78bfa" manaCost={1} disabled={!myTurn || mana < 1 || !target} onClick={() => onSend({ kind: "signature", actor: selfId, target_id: target })} />
         {ability && (
           <CBtn
             label={ability.name}

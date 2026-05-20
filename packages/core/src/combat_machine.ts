@@ -183,7 +183,7 @@ export interface CombatState {
   // Pub drink buffs carried into this combat, keyed by fighter id. Seeded
   // by the DO bootstrap step from characters.drink_buff_json so a buff
   // bought in the pub before /sq quest survives into the engine-driven
-  // fight. Engine consumes per-fighter on attack/cast/signature; absent
+  // fight. Engine consumes per-fighter on attack/cast/ability; absent
   // means no buff. Cleared (written back to D1) on combat exit. Optional
   // for backward compatibility with quests created before the unified
   // engine landed — older saved states deserialize cleanly without it.
@@ -275,7 +275,7 @@ export type RollPurpose =
   | "damage_cast"
   | "damage_monster"
   | "heal"
-  | "signature"
+  | "ability"
   | "flee_check";
 
 // Stream of events emitted by step(). The UI animates each in sequence.
@@ -351,13 +351,6 @@ export type CombatEvent =
       target: ActorId;
       amount: number;        // actual HP restored (clamped to max_hp)
       rolled: number;        // amount before clamp
-    }
-  | {
-      type: "signature_used";
-      actor: ActorId;
-      damage: number;
-      formula: string;
-      mana_spent: number;
     }
   | {
       type: "flee_check";
@@ -1626,7 +1619,7 @@ function handleShield(
   return { state: next, events: [...events, ...turnStartEvent(next)] };
 }
 
-// ── Damage ability IDs (old "signatures") ──────────────────────────────────
+// ── Damage ability IDs ──────────────────────────────────────────────────────
 // These active abilities deal direct damage and go through handleDamageAbility
 // rather than the utility routing.
 const DAMAGE_ABILITY_IDS = new Set([
@@ -1634,10 +1627,9 @@ const DAMAGE_ABILITY_IDS = new Set([
   "backstab", "bulwark_strike", "hex",
 ]);
 
-// Executes a damage-dealing active ability. Mirrors the old handleSignature
-// logic: calls ability.execute(ctx) for the damage formula, then applies
-// drink buffs, shocked amplifier, boss phase, elemental proc, and kill
-// resolution — all identical to the old signature pathway.
+// Executes a damage-dealing active ability: calls ability.execute(ctx) for the
+// damage formula, then applies drink buffs, shocked amplifier, boss phase,
+// elemental proc, and kill resolution.
 function handleDamageAbility(
   state: CombatState,
   actorId: ActorId,
@@ -1658,9 +1650,9 @@ function handleDamageAbility(
   let isCrit = dmgEffect.is_crit ?? false;
   const formula = dmgEffect.formula;
 
-  // Drink buff — only buff_next_crit applies to ability damage (same rule as old signatures).
-  const drinkResult = dmgEffect.drink_buff_context === "signature"
-    ? applyDrinkBuff(state, actorId, "signature", amount, isCrit)
+  // Drink buff — only buff_next_crit applies to ability damage.
+  const drinkResult = dmgEffect.drink_buff_context === "ability"
+    ? applyDrinkBuff(state, actorId, "ability", amount, isCrit)
     : { damage: amount, forceCrit: false, event: null as CombatEvent | null, nextDrinkBuffs: state.drink_buffs };
   amount = drinkResult.damage;
   if (drinkResult.forceCrit) isCrit = true;
@@ -2940,7 +2932,7 @@ function tickAbilityCountersAfterSwing(
 // Application rules mirror the legacy slack handler:
 //   buff_attack — only on attack actions; adds +magnitude flat damage
 //   buff_magic  — only on cast actions; adds +magnitude flat damage
-//   buff_next_crit — any of attack/cast/signature; force-crits when the
+//   buff_next_crit — any of attack/cast/ability; force-crits when the
 //     hit wasn't already a crit, doubling the (post-mod) damage. Skipped
 //     when the hit was already a crit so we don't waste the single charge
 //     on a redundant doubling.
@@ -2948,7 +2940,7 @@ function tickAbilityCountersAfterSwing(
 function applyDrinkBuff(
   state: CombatState,
   actor: ActorId,
-  context: "attack" | "cast" | "signature",
+  context: "attack" | "cast" | "ability",
   baseDamage: number,
   isCrit: boolean,
 ): {

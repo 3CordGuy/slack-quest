@@ -142,9 +142,8 @@ export interface SignatureResult {
   formula: string; // human-readable for the ephemeral / log
 }
 
-// Resolves a class signature ability. Costs 1 mana (caller deducts). Each class has
-// a distinct formula so the eight feel mechanically different even though they share
-// the same /sq signature command.
+// Legacy: resolves the damage ability formula for the Slack-side combat path.
+// The engine-driven path uses the ability system in packages/core instead.
 export function resolveSignature(
   classId: string,
   attackMod: number,

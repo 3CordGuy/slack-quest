@@ -9,7 +9,7 @@
 // event>" line that would confuse a thread reader.
 
 import type { CombatEvent, CombatState } from "@gantt-quest/core";
-import { DAMAGE_TYPE_EMOJI } from "@gantt-quest/core";
+import { DAMAGE_TYPE_EMOJI, activeAbilities, classByName } from "@gantt-quest/core";
 
 // Resolves an ActorId to user-facing markup. Fighter IDs are slack_user_ids
 // → render as Slack mentions (Slack expands to a colored username chip).
@@ -146,12 +146,6 @@ function renderEvent(state: CombatState, e: CombatEvent): string {
         ? `🛡️ ${nameOf(state, e.actor)} fortifies — armor restored to *${e.new_armor}* (+${e.restored}). Physical attacks blocked; magic bypasses.`
         : `🛡️ ${nameOf(state, e.actor)} braces — armor already at full (${e.new_armor}).`;
 
-    case "signature_used":
-      // The signature damage line is already covered by the player_hit event
-      // that follows — emit a brief "uses signature" header so the thread
-      // reader knows the formula isn't a normal attack.
-      return `✨ ${nameOf(state, e.actor)} channels their *signature* (cost: ${e.mana_spent} mana).`;
-
     case "flee_check":
       return e.success
         ? `🏃 ${nameOf(state, e.actor)} cracks the line (rolled ${e.total} vs DC ${e.dc}).`
@@ -216,7 +210,7 @@ function renderEvent(state: CombatState, e: CombatEvent): string {
       return `🛡 *SRE Warden* passive: ${nameOf(state, e.actor)} hardens up — +${e.amount} shield.`;
 
     case "passive_mage_free_sig":
-      return `🧙 *DevOps Mage* passive: ${nameOf(state, e.actor)} signature is free.`;
+      return `🧙 *DevOps Mage* passive: ${nameOf(state, e.actor)}'s first ability is free.`;
 
     case "passive_druid_regen":
       return `🌿 *Druid* passive: ${nameOf(state, e.actor)} regenerates +${e.amount} HP.`;
@@ -365,11 +359,12 @@ export function renderBattlefieldBlocks(
         value: String(questId),
       },
     ];
-    if (currentFighter.mana > 0) {
+    const sigAbility = activeAbilities(classByName(currentFighter.class).abilities)[0];
+    if (currentFighter.mana > 0 && sigAbility) {
       elements.push({
         type: "button",
-        text: { type: "plain_text", text: "💫 Signature" },
-        action_id: `turn_signature_${questId}_${currentActor}`,
+        text: { type: "plain_text", text: `💫 ${sigAbility.name}` },
+        action_id: `turn_ability_${questId}_${currentActor}`,
         value: String(questId),
       });
     }
