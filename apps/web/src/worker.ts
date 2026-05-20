@@ -2494,6 +2494,7 @@ app.post("/api/shop/restock", async (c) => {
       slot: roll.slot ?? null,
       stat_bonus: (roll.stat_bonus ?? null) as Record<string, number> | null,
       item_subtype: roll.item_subtype ?? null,
+      element: roll.element ?? null,
     });
   }
   await insertShopStock(c.env.DB, items);
@@ -2651,6 +2652,7 @@ app.post("/api/shop/:itemId/buy", async (c) => {
     slot: stock.slot ?? undefined,
     stat_bonus: stock.stat_bonus ?? undefined,
     item_subtype: stock.item_subtype ?? undefined,
+    element: stock.element ?? undefined,
   });
   await grantAchievement(c.env.DB, session.slack_user_id, "first_purchase");
   return c.json({
@@ -4880,6 +4882,7 @@ app.post("/api/quest/:id/dungeon/treasure_take", async (c) => {
     stat_bonus: choice.stat_bonus ?? null,
     item_subtype: choice.item_subtype ?? null,
     level_req: choice.level_req,
+    element: choice.element ?? null,
   });
 
   // Full dungeon spoils — dungeon variant rewardMultiplier = 2.5.
@@ -4982,6 +4985,7 @@ app.post("/api/quest/:id/dungeon/lockbox_choose", async (c) => {
     slot: (choice as { slot?: string }).slot as import("@gantt-quest/core").EquipSlot | undefined,
     stat_bonus: (choice as { stat_bonus?: Record<string, number> }).stat_bonus,
     item_subtype: (choice as { item_subtype?: string }).item_subtype,
+    element: (choice as { element?: string }).element ?? null,
   });
   const advance = await advanceDungeon(c.env.DB, questId, exp as ExpState, quest.scene as never, null);
   return c.json({
@@ -5049,6 +5053,7 @@ app.post("/api/quest/:id/dungeon/npc_choose", async (c) => {
     slot: (offer as { slot?: string }).slot as import("@gantt-quest/core").EquipSlot | undefined,
     stat_bonus: (offer as { stat_bonus?: Record<string, number> }).stat_bonus,
     item_subtype: (offer as { item_subtype?: string }).item_subtype,
+    element: (offer as { element?: string }).element ?? null,
   });
   if (bucket === "tainted") {
     const bleed = { type: "bleeding" as const, magnitude: 2, remaining: 3, source: "tainted gift from a stranger" };
@@ -5134,6 +5139,7 @@ app.post("/api/quest/:id/dungeon/merchant_choose", async (c) => {
     slot: (choice as { slot?: string }).slot as import("@gantt-quest/core").EquipSlot | undefined,
     stat_bonus: (choice as { stat_bonus?: Record<string, number> }).stat_bonus,
     item_subtype: (choice as { item_subtype?: string }).item_subtype,
+    element: (choice as { element?: string }).element ?? null,
   });
 
   return c.json({
@@ -5453,6 +5459,7 @@ async function addLootToInventory(
     slot: (opt as { slot?: string }).slot as import("@gantt-quest/core").EquipSlot | undefined,
     stat_bonus: (opt as { stat_bonus?: Record<string, number> }).stat_bonus,
     item_subtype: (opt as { item_subtype?: string }).item_subtype,
+    element: opt.element ?? null,
   });
 }
 
