@@ -127,6 +127,7 @@ import {
   transferItem,
   insertNotification,
   fetchAndClearNotifications,
+  setPosition,
   tryDeductGold,
   trySetHaggleOutcome,
   awardSpoils,
@@ -2748,6 +2749,29 @@ app.post("/api/shop/:itemId/haggle", async (c) => {
 const SHORT_REST_COOLDOWN_MS = 10 * 60 * 1000;
 const LONG_REST_COOLDOWN_MS = 24 * 60 * 60 * 1000;
 const SHORT_REST_HEAL_RATIO = 0.5;
+
+// Set the character's persisted battle position. Free action — no
+// cost, no cooldown. Used by the lobby's position toggle so players
+// can pick a row before combat starts; mid-combat positioning goes
+// through the engine's `position` action instead (consumes a turn).
+// Server enforces only the value enum; the character may not have an
+// active quest (lobby flow runs before status=active).
+app.post("/api/character/position", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const body = await c.req.json<{ position?: unknown }>().catch(() => ({}));
+  const pos = body?.position === "back" ? "back" : body?.position === "front" ? "front" : null;
+  if (!pos) return c.json({ error: "bad_position" }, 400);
+  await setPosition(c.env.DB, session.slack_user_id, pos);
+  // If this user is in a lobby, push a state refresh so the LobbyView
+  // for every connected member sees their new position pill instantly
+  // instead of waiting for the next 4s/8s poll.
+  const lobby = await getLobbyQuestForCharacter(c.env.DB, session.slack_user_id);
+  if (lobby) {
+    c.executionCtx.waitUntil(notifyLobbyStateChanged(c.env, lobby.id));
+  }
+  return c.json({ ok: true, position: pos });
+});
 
 app.post("/api/character/rest", async (c) => {
   const session = await currentSession(c.env.DB, c.req.header("cookie"));

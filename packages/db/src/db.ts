@@ -3272,6 +3272,10 @@ export interface LobbyPartyMember {
   // Character level. Surfaced in the lobby roster so party leaders can
   // see "level 10 + level 1" mismatches at a glance.
   level: number;
+  // Persisted battle position (front/back). Players can flip this in the
+  // lobby before combat starts — it carries straight into the fight's
+  // initial fighter state.
+  position: "front" | "back";
   invite_status: "pending" | "accepted" | "declined";
   ready: boolean;
 }
@@ -3371,7 +3375,7 @@ export async function getLobbyParty(
 ): Promise<LobbyPartyMember[]> {
   const result = await db
     .prepare(
-      `SELECT c.slack_user_id, c.name, c.slack_username, c.level,
+      `SELECT c.slack_user_id, c.name, c.slack_username, c.level, c.position,
               qp.invite_status, qp.ready
        FROM characters c
        JOIN quest_party qp ON qp.character_id = c.slack_user_id
@@ -3384,6 +3388,7 @@ export async function getLobbyParty(
       name: string;
       slack_username: string | null;
       level: number;
+      position: string;
       invite_status: string;
       ready: number;
     }>();
@@ -3392,6 +3397,7 @@ export async function getLobbyParty(
     name: r.name,
     slack_username: r.slack_username,
     level: r.level,
+    position: (r.position === "back" ? "back" : "front") as "front" | "back",
     invite_status: (r.invite_status ?? "accepted") as LobbyPartyMember["invite_status"],
     ready: r.ready === 1,
   }));

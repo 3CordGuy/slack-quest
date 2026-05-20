@@ -16,6 +16,7 @@ interface LobbyMember {
   name: string;
   slack_username: string | null;
   level: number;
+  position: "front" | "back";
   invite_status: "pending" | "accepted" | "declined";
   ready: boolean;
 }
@@ -348,6 +349,26 @@ export function LobbyView({
     }
   }
 
+  // Pick the local player's starting battle row. Saved to the character
+  // row immediately so it survives reloads + carries into the fight's
+  // initial fighter state. Server pushes a lobby state refresh so other
+  // party members see the updated pill without polling.
+  async function togglePosition() {
+    if (!me || acting) return;
+    const next = me.position === "front" ? "back" : "front";
+    setActing(true);
+    try {
+      await fetch("/api/character/position", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ position: next }),
+      });
+    } finally {
+      setActing(false);
+    }
+  }
+
   async function cancelLobby() {
     if (!quest || acting) return;
     if (!confirm(
@@ -636,6 +657,24 @@ export function LobbyView({
                 <span style={{ fontWeight: isSelf ? 700 : 400, color: "#f5f5f5", fontSize: 14 }}>
                   {m.name}
                   <span style={{ color: "#fbbf24", fontSize: 11, marginLeft: 6, fontWeight: 600 }}>L{m.level}</span>
+                  {/* Position pill so the whole party can see who's
+                      front vs back before combat starts. Self can flip
+                      via the toggle button in the action row. */}
+                  {m.invite_status === "accepted" && (
+                    <span
+                      title={`${m.position === "front" ? "Front" : "Back"} row`}
+                      style={{
+                        fontSize: 10, fontWeight: 700, marginLeft: 6,
+                        padding: "1px 5px", borderRadius: 4,
+                        background: m.position === "front" ? "#2a1f3a" : "#1a2a1a",
+                        color: m.position === "front" ? "#c084fc" : "#86efac",
+                        border: `1px solid ${m.position === "front" ? "#4a2f6a" : "#2a5a2a"}`,
+                        textTransform: "uppercase", letterSpacing: 0.4,
+                      }}
+                    >
+                      {m.position === "front" ? "Front" : "Back"}
+                    </span>
+                  )}
                   {isSelf && (
                     <span style={{ color: "#60a5fa", fontSize: 12, marginLeft: 6 }}>(you)</span>
                   )}
@@ -809,6 +848,29 @@ export function LobbyView({
               Decline
             </button>
           </>
+        )}
+        {/* Position picker — available to any accepted member (and the
+            creator, who's auto-accepted) before they ready up. Once
+            ready or after combat starts, position changes via the
+            in-combat /position action instead. */}
+        {me?.invite_status === "accepted" && !me.ready && (
+          <button
+            disabled={acting}
+            onClick={() => void togglePosition()}
+            title={me.position === "front"
+              ? "Currently FRONT — eats hits first. Click to drop to BACK row."
+              : "Currently BACK — reduced melee damage taken. Click to step up to FRONT row."}
+            style={{
+              ...btnBase,
+              background: me.position === "front" ? "#2a1f3a" : "#1a2a1a",
+              color: me.position === "front" ? "#c084fc" : "#86efac",
+              border: `1px solid ${me.position === "front" ? "#4a2f6a" : "#2a5a2a"}`,
+              display: "inline-flex", alignItems: "center", gap: 6,
+            }}
+          >
+            <Icon name={me.position === "front" ? "muscle-up" : "fall-down"} size={13} color={me.position === "front" ? "#c084fc" : "#86efac"} />
+            {me.position === "front" ? "Front row" : "Back row"}
+          </button>
         )}
         {me?.invite_status === "accepted" && !me.ready && (
           <button
