@@ -21,6 +21,21 @@ export const mageAbilities: AbilityDef[] = [
   },
   {
     kind: "active",
+    id: "fireball",
+    name: "Fireball",
+    blurb: "Rains fire on every enemy at once.",
+    icon: "fire",
+    mana_cost: 2,
+    target: "all_enemies",
+    execute(ctx) {
+      const r = rollSum(ctx.roll, 2, 6);
+      const amount = r + ctx.caster.magic_mod;
+      const formula = `2d6 + ${ctx.caster.magic_mod}m`;
+      return ctx.monsters.map((m) => fx.damage(m.id, amount, formula));
+    },
+  },
+  {
+    kind: "active",
     id: "containerize",
     name: "Containerize",
     blurb: "Locks the monster in a stasis container. It skips its next swing entirely.",

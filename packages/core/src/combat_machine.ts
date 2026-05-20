@@ -1625,6 +1625,7 @@ function handleShield(
 const DAMAGE_ABILITY_IDS = new Set([
   "detonate", "smite", "wildgrowth", "crescendo", "manifest",
   "backstab", "bulwark_strike", "hex",
+  "fireball",
 ]);
 
 // Executes a damage-dealing active ability: calls ability.execute(ctx) for the
@@ -1721,6 +1722,88 @@ function handleDamageAbility(
   if (monsterKilled) return resolveMonsterKill(nextState, monster.id, actorId, events);
   nextState = advanceTurn(nextState);
   return { state: nextState, events: [...events, ...turnStartEvent(nextState)] };
+}
+
+// AoE variant: execute() is called once and returns one deal_damage per live
+// monster. Applies all hits, then resolves kills (victory if all dead, otherwise
+// advance turn). No drink-buff or shocked-amp logic — AoE trades per-target
+// modifiers for reach.
+function handleAoeDamageAbility(
+  state: CombatState,
+  actorId: ActorId,
+  tickedActor: CombatFighter,
+  ability: ActiveAbilityDef,
+  preEvents: CombatEvent[],
+  roll: RollFn,
+): StepResult {
+  const liveMonsters = state.monsters.filter((m) => m.hp > 0);
+  const ctx: AbilityContext = {
+    caster: tickedActor,
+    party: state.fighters.filter((f) => f.hp > 0),
+    monsters: liveMonsters,
+    roll,
+  };
+
+  const effects = ability.execute(ctx);
+  const dmgEffects = effects.filter(
+    (e): e is Extract<AbilityEffect, { kind: "deal_damage" }> => e.kind === "deal_damage",
+  );
+  if (dmgEffects.length === 0) return reject(state, `${ability.id} produced no AoE damage effects`);
+
+  const events: CombatEvent[] = [...preEvents];
+  let nextState: CombatState = state;
+
+  for (const dmgEffect of dmgEffects) {
+    const monster = nextState.monsters.find((m) => m.id === dmgEffect.target_id && m.hp > 0);
+    if (!monster) continue; // already killed earlier in this loop
+
+    const finalDamage = dmgEffect.amount;
+    const newHp = Math.max(0, monster.hp - finalDamage);
+
+    events.push({
+      type: "player_hit",
+      actor: actorId,
+      target: monster.id,
+      damage: finalDamage,
+      armor_absorbed: 0,
+      crit: dmgEffect.is_crit ?? false,
+      formula: dmgEffect.formula,
+    });
+
+    nextState = {
+      ...nextState,
+      monsters: nextState.monsters.map((m) => m.id === monster.id ? { ...m, hp: newHp } : m),
+      contribution: {
+        ...nextState.contribution,
+        [actorId]: (nextState.contribution[actorId] ?? 0) + finalDamage,
+      },
+    };
+  }
+
+  // Check kills after all damage is applied.
+  const killedIds = nextState.monsters.filter((m) => m.hp <= 0).map((m) => m.id);
+
+  if (killedIds.length === 0) {
+    nextState = advanceTurn(nextState);
+    return { state: nextState, events: [...events, ...turnStartEvent(nextState)] };
+  }
+
+  // At least one monster killed — run resolveMonsterKill once for the last
+  // one (it checks all monsters to decide victory vs. continue).
+  for (let i = 0; i < killedIds.length - 1; i++) {
+    events.push({ type: "monster_down", killed_by: actorId });
+    nextState = {
+      ...nextState,
+      stats: {
+        ...nextState.stats,
+        [actorId]: {
+          ...(nextState.stats[actorId] ?? { damage_taken: 0, healing_done: 0, shielding_done: 0, kills: 0 }),
+          kills: (nextState.stats[actorId]?.kills ?? 0) + 1,
+        },
+      },
+    };
+  }
+  return resolveMonsterKill(nextState, killedIds[killedIds.length - 1], actorId, events);
 }
 
 function handleFlee(
@@ -1883,6 +1966,12 @@ function handleAbility(
 
   // ── Damage abilities ──
   if (DAMAGE_ABILITY_IDS.has(ability.id)) {
+    if (ability.target === "all_enemies") {
+      const liveMonsters = sPostMana.monsters.filter((m) => m.hp > 0);
+      if (liveMonsters.length === 0) return reject(sPostMana, "no valid targets");
+      return handleAoeDamageAbility(sPostMana, action.actor, tickedActor, ability, preEvents, roll);
+    }
+
     const targetMonster = action.target_id
       ? sPostMana.monsters.find((m) => m.id === action.target_id && m.hp > 0)
       : sPostMana.monsters.find((m) => m.hp > 0);

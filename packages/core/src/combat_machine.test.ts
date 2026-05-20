@@ -444,6 +444,83 @@ describe("combat_machine.step", () => {
     });
   });
 
+  describe("fireball ability (DevOps Mage, AoE)", () => {
+    function mageInit(overrides: Partial<CombatInit> = {}): CombatInit {
+      const init = baseInit(overrides);
+      init.fighters[0].class = "DevOps Mage";
+      init.fighters[0].mana = 3;
+      init.fighters[0].magic_mod = 1;
+      return init;
+    }
+
+    it("hits the single monster and spends 2 mana", () => {
+      const init = mageInit();
+      const begun = runBegin(createCombatState(init), [15, 8]);
+      // Fireball: 2d6 + magic_mod(1). Rolls: 4 + 3 = 7 + 1 = 8 damage.
+      const result = step(
+        begun.state,
+        { kind: "ability", actor: "U_PALADIN", ability_id: "fireball" },
+        seqRoll([4, 3]),
+      );
+      expect(result.state.fighters[0].mana).toBe(1); // 3 - 2 = 1
+      const hit = result.events.find((e) => e.type === "player_hit");
+      expect(hit).toMatchObject({ damage: 8 });
+      const used = result.events.find((e) => e.type === "ability_used");
+      expect(used).toMatchObject({ ability_id: "fireball", mana_spent: 2 });
+    });
+
+    it("damages ALL monsters with the same roll", () => {
+      // Two goblins: 10 HP each.
+      const init = mageInit({
+        monsters: [
+          { name: "Goblin A", hp: 10, max_hp: 10, tier: 1, is_boss: false },
+          { name: "Goblin B", hp: 10, max_hp: 10, tier: 1, is_boss: false },
+        ],
+      });
+      const begun = runBegin(createCombatState(init), [15, 10, 5]);
+      // 2d6 + 1 → rolls 3 + 2 = 5 + 1 = 6 damage to each.
+      const result = step(
+        begun.state,
+        { kind: "ability", actor: "U_PALADIN", ability_id: "fireball" },
+        seqRoll([3, 2]),
+      );
+      expect(result.state.monsters[0].hp).toBe(4); // 10 - 6
+      expect(result.state.monsters[1].hp).toBe(4);
+      const hits = result.events.filter((e) => e.type === "player_hit");
+      expect(hits).toHaveLength(2);
+    });
+
+    it("emits victory when fireball kills all monsters", () => {
+      const init = mageInit({
+        monsters: [
+          { name: "Goblin A", hp: 3, max_hp: 3, tier: 1, is_boss: false },
+          { name: "Goblin B", hp: 3, max_hp: 3, tier: 1, is_boss: false },
+        ],
+      });
+      const begun = runBegin(createCombatState(init), [15, 10, 5]);
+      // 2d6 + 1 → 4 + 4 = 8 + 1 = 9 damage. Both die.
+      const result = step(
+        begun.state,
+        { kind: "ability", actor: "U_PALADIN", ability_id: "fireball" },
+        seqRoll([4, 4]),
+      );
+      expect(result.state.status).toBe("victory");
+      expect(result.events.find((e) => e.type === "victory")).toBeDefined();
+    });
+
+    it("rejects when mana < 2", () => {
+      const init = mageInit();
+      init.fighters[0].mana = 1;
+      const begun = runBegin(createCombatState(init), [15, 8]);
+      const result = step(
+        begun.state,
+        { kind: "ability", actor: "U_PALADIN", ability_id: "fireball" },
+        seqRoll([4, 3]),
+      );
+      expect(result.events.find((e) => e.type === "rejected")).toBeDefined();
+    });
+  });
+
   describe("gauntlet waves", () => {
     it("transitions to the next wave on monster kill instead of ending combat", () => {
       const init = baseInit();
