@@ -483,22 +483,49 @@ tries to bind them.
 
 ### 6. Local dev environment vars
 
-Both workers read `ENVIRONMENT` to gate dev-only behaviour (e.g. the
-`/api/dev/login` bypass on the web worker, which also powers the "Dev login"
-button on the login screen). Create a `.dev.vars` file in each app directory:
+Two files control local dev behaviour. Both are gitignored — create them by
+hand after cloning.
+
+**`apps/web/.dev.vars`** — injected into the web worker runtime by Wrangler /
+`@cloudflare/vite-plugin`. Also parsed by `vite.config.ts` at startup for
+build-time flags.
 
 ```bash
 # apps/web/.dev.vars
+
+# Gates all dev-only features in the web worker. When set to "local":
+#   - POST /api/dev/login is enabled (powers the "Dev login" button)
+#   - POST /api/dev/* tool endpoints (heal, mana, gold, revive, level,
+#     cooldowns, combat-heal, combat-mana) are enabled
+#   - Workers AI art generation is disabled (avoids "must run remotely" errors)
+#   - hunt/shop/smithy fall back to a synthetic "local-dev" channel so they
+#     work without a real Slack channel in the DB
+# Set to "production" (or omit the file) to match deployed behaviour.
 ENVIRONMENT=local
 
+# Controls whether the Cloudflare Vite plugin uses remote CF bindings (AI,
+# R2, etc.) or local Miniflare stubs. Read by vite.config.ts at Vite startup;
+# has no effect on the worker runtime itself.
+#   false — use local Miniflare stubs (default for local dev; AI won't work)
+#   true  — call real Cloudflare services (requires auth; lets you test AI art)
+# Set to "true" if you want to test AI art generation locally.
+REMOTE_BINDINGS=false
+```
+
+**`apps/slack/.dev.vars`** — injected into the Slack worker runtime only.
+
+```bash
 # apps/slack/.dev.vars
+
+# Same ENVIRONMENT flag as the web worker. When "local", no behaviour is
+# currently gated in the Slack worker, but the flag is wired up for future
+# use and keeps the two workers consistent.
 ENVIRONMENT=local
 ```
 
-`.dev.vars` is gitignored. Wrangler injects these values automatically when
-running `wrangler dev` or `vite dev` (via `@cloudflare/vite-plugin`). In
-production the `wrangler.jsonc` `vars` block sets `ENVIRONMENT=production`,
-so the dev endpoints remain unreachable.
+Production values live in the `vars` block of each `wrangler.jsonc`
+(`ENVIRONMENT=production`), so dev endpoints are always unreachable in
+deployed builds regardless of what `.dev.vars` says.
 
 ### 7. Run / deploy
 
