@@ -517,7 +517,7 @@ function PartyBar({ fighters, selfId, party, onClickSelf, flashIds, hitDustSeq }
 // Card-local state manages its own defeat animation lifecycle so each
 // monster falls back independently when it dies (in a multi-monster
 // fight, killing one shouldn't restart the other's animation).
-function MonsterCard({ monster, isBoss, isHit, lungeTick, slashTick, isMarked, isTargeted, size, onClick }: {
+function MonsterCard({ monster, isBoss, isHit, lungeTick, slashTick, dustSeq, isMarked, isTargeted, size, onClick }: {
   monster: Monster;
   isBoss: boolean;
   isHit: boolean;
@@ -525,6 +525,8 @@ function MonsterCard({ monster, isBoss, isHit, lungeTick, slashTick, isMarked, i
   lungeTick: number;
   // Re-mounts the slash streak on bump (when this card was the hit target).
   slashTick: number;
+  // Per-card dust burst counter. Bumps trigger a HitDust puff.
+  dustSeq: number;
   isMarked: boolean;
   isTargeted: boolean;
   // "primary" = single-monster centered look, "strip" = smaller card
@@ -646,6 +648,9 @@ function MonsterCard({ monster, isBoss, isHit, lungeTick, slashTick, isMarked, i
           <span key={`slash-${slashTick}`} className="gq-slash-streak" />
         </div>
       )}
+      {/* Cartoony dust puff on landed hits. Shares the HitDust component
+          with the fighter cards so monsters and players get matching VFX. */}
+      <HitDust seq={dustSeq} />
       {isMarked && !isDead && (
         <div
           title="Marked target — party gets bonus damage"
@@ -707,7 +712,7 @@ function MonsterCard({ monster, isBoss, isHit, lungeTick, slashTick, isMarked, i
 // card (matches the old single-monster overlay look). Two or more →
 // horizontal row of smaller cards centered above the party. Click-to-
 // target sets targetMonsterId; the targeted card gets a gold border.
-function MonsterStrip({ monsters, flashIds, lastSlash, lastLunge, markedMonsterId, targetMonsterId, onTarget }: {
+function MonsterStrip({ monsters, flashIds, lastSlash, lastLunge, markedMonsterId, targetMonsterId, hitDustSeq, onTarget }: {
   monsters: Monster[];
   flashIds: Set<string>;
   // Most-recent slash event — id of the hit monster + a monotonic seq.
@@ -717,6 +722,9 @@ function MonsterStrip({ monsters, flashIds, lastSlash, lastLunge, markedMonsterI
   lastLunge: { id: string; seq: number } | null;
   markedMonsterId: string | null;
   targetMonsterId: string | null;
+  // Per-id dust counter shared with PartyBar. Bumped from flashHit() so
+  // monsters and fighters both get cartoony puffs on hit.
+  hitDustSeq?: Record<string, number>;
   onTarget: (id: string) => void;
 }) {
   if (monsters.length === 0) return null;
@@ -749,6 +757,7 @@ function MonsterStrip({ monsters, flashIds, lastSlash, lastLunge, markedMonsterI
             isHit={flashIds.has(id)}
             lungeTick={lastLunge?.id === id ? lastLunge.seq : 0}
             slashTick={lastSlash?.id === id ? lastSlash.seq : 0}
+            dustSeq={hitDustSeq?.[id] ?? 0}
             isMarked={markedMonsterId === id}
             isTargeted={showTargeting && targetMonsterId === id}
             size={isSingle ? "primary" : "strip"}
@@ -1375,6 +1384,7 @@ export function GridDungeonView({
               lastLunge={lastLunge}
               markedMonsterId={markedId}
               targetMonsterId={effectiveTarget}
+              hitDustSeq={hitDustSeq}
               onTarget={setTargetMonsterId}
             />
           );

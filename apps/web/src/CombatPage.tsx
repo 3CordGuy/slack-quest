@@ -902,6 +902,10 @@ export function CombatPage({
             if (evt.type === "player_hit" && (evt as { target?: string }).target) {
               const tgt = (evt as { target: string }).target;
               setLastSlash({ id: tgt, seq: ++animSeqRef.current });
+              // Player hits a monster → puff on the monster card too.
+              // Same hitDustSeq map is keyed by monster id (which never
+              // collides with fighter slack_user_ids).
+              setHitDustSeq((prev) => ({ ...prev, [tgt]: (prev[tgt] ?? 0) + 1 }));
             }
             if (evt.type === "monster_attack" && isMonsterActor(evt.actor)) {
               setLastLunge({ id: evt.actor, seq: ++animSeqRef.current });
@@ -1189,6 +1193,7 @@ export function CombatPage({
                     isTargeted={effectiveTarget !== null && (m.id ?? null) === effectiveTarget}
                     slashSeq={lastSlash?.id === mid ? lastSlash.seq : 0}
                     lungeSeq={lastLunge?.id === mid ? lastLunge.seq : 0}
+                    dustSeq={hitDustSeq[mid] ?? 0}
                     onClick={liveMonsters.length > 1 && m.hp > 0 ? () => setTargetMonsterId(m.id ?? null) : undefined}
                   />
                 );
@@ -1415,6 +1420,7 @@ function MonsterCard({
   isTargeted = false,
   slashSeq = 0,
   lungeSeq = 0,
+  dustSeq = 0,
   onClick,
 }: {
   monster: Monster;
@@ -1424,6 +1430,7 @@ function MonsterCard({
   isTargeted?: boolean;
   slashSeq?: number;
   lungeSeq?: number;
+  dustSeq?: number;
   onClick?: () => void;
 }) {
   const isDead = monster.hp <= 0;
@@ -1464,6 +1471,9 @@ function MonsterCard({
           <span key={`slash-${slashSeq}`} className="gq-slash-streak" />
         </div>
       )}
+      {/* Dust puff on every landed hit. Same component as the fighter
+          cards — re-keys its WAAPI animations whenever dustSeq bumps. */}
+      <HitDust seq={dustSeq} />
       {isMarked && !isDead && (
         <div style={{ position: "absolute", top: -10, right: -10, width: 36, height: 36, borderRadius: "50%", background: "#78350f", border: "2px solid #f59e0b", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 10, boxShadow: "0 0 12px #f59e0b80" }}>
           <Icon name="targeted" size={20} color="#fbbf24" />
