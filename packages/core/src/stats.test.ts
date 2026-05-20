@@ -13,7 +13,6 @@ import {
   deriveMaxHp,
   deriveStartingMana,
   derivedSkills,
-  legacyParity,
   startingStatsForClass,
   statSnapshot,
   statsAtLevel,
@@ -171,12 +170,11 @@ describe("startingStatsForClass", () => {
 });
 
 describe("statSnapshot", () => {
-  it("v2 path: uses provided stats + derives correctly", () => {
+  it("uses provided stats + derives correctly", () => {
     const snap = statSnapshot({
       className: "QA Paladin",
       level: 1,
       stats: STARTING_STATS["qa_paladin"],
-      v2Enabled: true,
     });
     expect(snap.stats).toEqual(STARTING_STATS["qa_paladin"]);
     // QA Paladin: STR 9 → attack_mod = floor((9-5)/2) = 2
@@ -185,18 +183,16 @@ describe("statSnapshot", () => {
     expect(snap.derived.max_hp).toBe(36);
   });
 
-  it("v2 path: sums equip bonuses into base stats before derivation", () => {
+  it("sums equip bonuses into base stats before derivation", () => {
     const base = statSnapshot({
       className: "DevOps Mage",
       level: 1,
       stats: STARTING_STATS["devops_mage"],
-      v2Enabled: true,
     });
     const withRing = statSnapshot({
       className: "DevOps Mage",
       level: 1,
       stats: STARTING_STATS["devops_mage"],
-      v2Enabled: true,
       equipBonuses: { int_stat: 2 },
     });
     // +2 INT should add 1 to magic_mod (floor((11-5)/2)=3 vs floor((9-5)/2)=2)
@@ -204,40 +200,9 @@ describe("statSnapshot", () => {
     expect(withRing.stats.int_stat).toBe(STARTING_STATS["devops_mage"].int_stat + 2);
   });
 
-  it("v2 path: falls back to statsAtLevel when stats not provided", () => {
-    const snap = statSnapshot({ className: "QA Paladin", level: 1, v2Enabled: true });
+  it("falls back to statsAtLevel when stats not provided", () => {
+    const snap = statSnapshot({ className: "QA Paladin", level: 1 });
     expect(snap.stats).toEqual(statsAtLevel("QA Paladin", 1));
   });
-
-  it("legacy path: reproduces class-fixed attack_mod/magic_mod exactly", () => {
-    // QA Paladin has attack_mod=2, magic_mod=0 in the legacy system
-    const snap = statSnapshot({ className: "QA Paladin", level: 1, v2Enabled: false });
-    expect(snap.derived.attack_mod).toBe(2);
-    expect(snap.derived.magic_mod).toBe(0);
-  });
-
-  it("legacy path: ignores equipBonuses", () => {
-    const without = statSnapshot({ className: "QA Paladin", level: 1, v2Enabled: false });
-    const with_ = statSnapshot({
-      className: "QA Paladin",
-      level: 1,
-      v2Enabled: false,
-      equipBonuses: { int_stat: 5 },
-    });
-    expect(with_.derived.magic_mod).toBe(without.derived.magic_mod);
-  });
 });
 
-describe("legacyParity", () => {
-  it("7 of 8 classes are within ±1; DevOps Mage has a known atk delta of -2", () => {
-    // DevOps Mage starts at STR 4 → derived attack_mod = floor((4-5)/2) = -1,
-    // but legacy attack_mod = 1 → delta = -2. This is intentional: the class is
-    // magic-primary and the STR allocation reflects that. The other 7 classes all
-    // fall within ±1, satisfying the migration compatibility goal.
-    const results = legacyParity();
-    const failing = results.filter((r) => !r.ok);
-    expect(failing).toHaveLength(1);
-    expect(failing[0].className).toBe("DevOps Mage");
-    expect(failing[0].delta.atk).toBe(-2);
-  });
-});

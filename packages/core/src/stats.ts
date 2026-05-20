@@ -1,16 +1,15 @@
-// Primary stats — STR/INT/VIT/AGI/DEX. Phase 1 of the gameplay overhaul.
+// Primary stats — STR/INT/VIT/AGI/DEX.
 //
 // These five numbers are the source of truth for combat math. `attack_mod`,
 // `magic_mod`, `max_hp`, dodge, crit, and initiative are all derived from
-// them. Class only contributes a starting allocation and a per-level
-// auto-allocation bonus — flat class-fixed attack_mod/magic_mod is gone.
+// them. Class contributes a starting allocation and a per-level auto-alloc
+// bonus; players spend one free point per level via `/sq spend <stat>`.
 //
-// `statSnapshot(character, equipment)` is the cross-phase boundary: every
-// later phase (slot inventory, multi-enemy, dungeon graph) calls it instead
-// of touching DB rows. Phase 2 will extend it to sum stat_bonus from
-// equipped slot items.
+// `statSnapshot` is the cross-phase boundary called by all combat init paths.
+// It sums equipped slot stat_bonus values on top of the character's base stats
+// before deriving combat numbers.
 
-import { CLASSES, classByName, type SkillType } from "./flavor";
+import { classByName, type SkillType } from "./flavor";
 
 export type StatKey = "str" | "int_stat" | "vit" | "agi" | "dex";
 
@@ -38,9 +37,7 @@ export interface DerivedStats {
 // character row pre-dates migration 0032.
 export const DEFAULT_STATS: Stats = { str: 5, int_stat: 5, vit: 5, agi: 5, dex: 5 };
 
-// Class starting allocations. Sum = 30 across 5 stats. Chosen so a level-1
-// stock character of each class matches the legacy class-fixed attack_mod /
-// magic_mod / base_hp within ±1.
+// Class starting allocations. Sum = 30 across 5 stats.
 export const STARTING_STATS: Record<string, Stats> = {
   devops_mage:    { str: 4, int_stat: 9,  vit: 5,  agi: 6, dex: 6 },
   qa_paladin:     { str: 9, int_stat: 4,  vit: 9,  agi: 4, dex: 4 },
@@ -171,40 +168,23 @@ export function derivedSkills(stats: Stats): SkillType[] {
   return out;
 }
 
-// Bridge for the legacy class.skills array. statSnapshot uses derivedSkills
-// when STATS_V2 is on; falls back to the class-fixed array otherwise.
 export function skillsForCharacter(
-  className: string,
+  _className: string,
   stats: Stats,
-  v2Enabled: boolean,
 ): SkillType[] {
-  if (v2Enabled) return derivedSkills(stats);
-  const cls = classByName(className);
-  return cls.skills;
+  return derivedSkills(stats);
 }
-
-// Sentinel feature flag. Wired through env at the worker boundary; pure
-// functions in this module take a boolean. Off = legacy class-fixed mods;
-// on = stats-derived mods.
-export const STATS_V2_FLAG = "STATS_V2";
 
 // statSnapshot — the cross-phase boundary called by every later phase.
 //
-// Input: a character (post-migration; carries stats columns) and optionally
-//        equipment (Phase 2 will add slot stat_bonus summing).
-// Output: the Stats record + the derived combat numbers + the legacy
-//         attack_mod/magic_mod values for back-compat readers.
-//
-// Phase 1 ignores equipment.stat_bonus (it doesn't exist yet); Phase 2 will
-// sum it before derivation. The boundary stays stable across phases so
-// callers don't need to change when slots land.
+// Input: a character (carries stats columns) and optionally equipment
+//        stat_bonus summed from all equipped slot items.
+// Output: the Stats record + all derived combat numbers.
 export interface StatSnapshotInput {
   className: string;
   level: number;
   stats?: Stats; // optional — falls back to statsAtLevel(className, level)
-  v2Enabled: boolean;
-  // Phase 2: summed stat_bonus from all equipped slot items. Added on top of
-  // the character's base stats before derivation when v2Enabled is true.
+  // Summed stat_bonus from all equipped slot items; added on top of base stats.
   equipBonuses?: Partial<Stats>;
 }
 
@@ -215,25 +195,6 @@ export interface StatSnapshot {
 
 export function statSnapshot(input: StatSnapshotInput): StatSnapshot {
   const base = input.stats ?? statsAtLevel(input.className, input.level);
-  if (!input.v2Enabled) {
-    // Legacy path: produce stats that exactly reproduce the class-fixed
-    // attack_mod/magic_mod values, so downstream combat math is unchanged.
-    // We synthesize them by inverting the derivation: STR = 5 + 2*attack_mod,
-    // INT = 5 + 2*magic_mod. VIT/AGI/DEX use defaults.
-    const cls = classByName(input.className);
-    const legacy: Stats = {
-      str: 5 + 2 * cls.attack_mod,
-      int_stat: 5 + 2 * cls.magic_mod,
-      vit: base.vit, // preserve real VIT so HP scaling stays consistent
-      agi: 5,
-      dex: 5,
-    };
-    return {
-      stats: legacy,
-      derived: deriveAll(legacy, input.level),
-    };
-  }
-  // Phase 2: sum equip bonuses from slot items into base stats.
   const eq = input.equipBonuses;
   const stats: Stats = eq ? {
     str: base.str + (eq.str ?? 0),
@@ -248,19 +209,3 @@ export function statSnapshot(input: StatSnapshotInput): StatSnapshot {
   };
 }
 
-// Sanity check used by tests + the migration smoke script. Returns true when
-// the derived attack_mod / magic_mod for a stock level-1 character match the
-// legacy class-fixed values within ±1.
-export function legacyParity(): { className: string; ok: boolean; delta: { atk: number; mag: number } }[] {
-  return CLASSES.map((cls) => {
-    const stats = STARTING_STATS[cls.id] ?? DEFAULT_STATS;
-    const derived = deriveAll(stats, 1);
-    const atkDelta = derived.attack_mod - cls.attack_mod;
-    const magDelta = derived.magic_mod - cls.magic_mod;
-    return {
-      className: cls.name,
-      ok: Math.abs(atkDelta) <= 1 && Math.abs(magDelta) <= 1,
-      delta: { atk: atkDelta, mag: magDelta },
-    };
-  });
-}

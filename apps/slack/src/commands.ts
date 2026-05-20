@@ -294,6 +294,7 @@ import {
   checkProgressionAchievements,
   deriveAll,
   DAMAGE_TYPE_EMOJI,
+  STARTING_STATS,
   type DamageType,
   type EquipSlot,
   type StatKey,
@@ -573,7 +574,9 @@ function rulesSections(): RulesSection[] {
           const ability = clsActives[1];
           const skillTags = cls.skills.map((s) => `${SKILL_META[s].emoji} ${SKILL_META[s].label}`).join(" · ");
           const e = emoji[cls.id] ?? "•";
-          lines.push(`*${e} ${cls.name}* — _HP ${cls.base_hp} • atk +${cls.attack_mod} • mag +${cls.magic_mod} • ${skillTags}_`);
+          const ss = STARTING_STATS[cls.id];
+          const statStr = ss ? `STR ${ss.str} · INT ${ss.int_stat} · VIT ${ss.vit} · AGI ${ss.agi} · DEX ${ss.dex}` : "";
+          lines.push(`*${e} ${cls.name}* — _${statStr} • ${skillTags}_`);
           if (sig) lines.push(`   ✨ *${sig.name}* _(${sig.mana_cost}m, \`sig\`)_: ${sig.blurb}`);
           if (passive) lines.push(`   🌟 *Passive — ${passive.name}*: ${passive.blurb}`);
           if (ability) lines.push(`   ⚡ *Ability — ${ability.name}* _(${ability.mana_cost}m)_: ${ability.blurb}`);
@@ -4294,27 +4297,21 @@ async function handleCombat(
   const equippedWeapon = slots.main_hand;
   const equippedArmor = slots.body;
 
-  // STATS_V2: derive attack/magic mods from primary stats + equip bonuses.
-  const statsV2Enabled = env.STATS_V2 === "1";
   const equipBonuses: Partial<Record<string, number>> = {};
-  if (statsV2Enabled) {
-    for (const item of Object.values(slots)) {
-      if (!item?.stat_bonus) continue;
-      for (const [key, val] of Object.entries(item.stat_bonus)) {
-        equipBonuses[key] = (equipBonuses[key] ?? 0) + val;
-      }
+  for (const item of Object.values(slots)) {
+    if (!item?.stat_bonus) continue;
+    for (const [key, val] of Object.entries(item.stat_bonus)) {
+      equipBonuses[key] = (equipBonuses[key] ?? 0) + val;
     }
   }
   const snap = statSnapshot({
     className: character.class,
     level: character.level,
     stats: { str: character.str, int_stat: character.int_stat, vit: character.vit, agi: character.agi, dex: character.dex },
-    v2Enabled: statsV2Enabled,
-    equipBonuses: statsV2Enabled ? (equipBonuses as Partial<Stats>) : undefined,
+    equipBonuses: equipBonuses as Partial<Stats>,
   });
-  const levelBonus = statsV2Enabled ? 0 : Math.floor(character.level / 4);
-  const attackMod = snap.derived.attack_mod + levelBonus;
-  const magicMod = snap.derived.magic_mod + levelBonus;
+  const attackMod = snap.derived.attack_mod;
+  const magicMod = snap.derived.magic_mod;
 
   if (action === "flee") {
     if (quest.scene.variant === "gauntlet" || quest.scene.variant === "dungeon") {
@@ -10897,9 +10894,8 @@ async function useSoulDrain(
     className: character.class,
     level: character.level,
     stats: { str: character.str, int_stat: character.int_stat, vit: character.vit, agi: character.agi, dex: character.dex },
-    v2Enabled: env.STATS_V2 === "1",
   });
-  const abilityMagicMod = abilitySnap.derived.magic_mod + (env.STATS_V2 === "1" ? 0 : Math.floor(character.level / 4));
+  const abilityMagicMod = abilitySnap.derived.magic_mod;
   // Damage = 1d6 + magic_mod. Capped at monster_hp - 1 so this never delivers
   // the kill blow (matches the damage-tool pattern); follow-up attack closes it.
   const roll = rollDice(6);
@@ -11199,22 +11195,19 @@ async function handleHeal(
   const cls = classByName(character.class);
   const healSlots = await getAllEquippedSlots(env.DB, payload.user_id);
   const healEquipBonuses: Partial<Record<string, number>> = {};
-  if (env.STATS_V2 === "1") {
-    for (const item of Object.values(healSlots)) {
-      if (!item?.stat_bonus) continue;
-      for (const [key, val] of Object.entries(item.stat_bonus)) {
-        healEquipBonuses[key] = (healEquipBonuses[key] ?? 0) + val;
-      }
+  for (const item of Object.values(healSlots)) {
+    if (!item?.stat_bonus) continue;
+    for (const [key, val] of Object.entries(item.stat_bonus)) {
+      healEquipBonuses[key] = (healEquipBonuses[key] ?? 0) + val;
     }
   }
   const healSnap = statSnapshot({
     className: character.class,
     level: character.level,
     stats: { str: character.str, int_stat: character.int_stat, vit: character.vit, agi: character.agi, dex: character.dex },
-    v2Enabled: env.STATS_V2 === "1",
-    equipBonuses: env.STATS_V2 === "1" ? (healEquipBonuses as Partial<Stats>) : undefined,
+    equipBonuses: healEquipBonuses as Partial<Stats>,
   });
-  const healMagicMod = healSnap.derived.magic_mod + (env.STATS_V2 === "1" ? 0 : Math.floor(character.level / 4));
+  const healMagicMod = healSnap.derived.magic_mod;
   const heal = resolveHeal(healMagicMod, rollDice);
   // 🔮 Focus weapons add their power as a flat bonus to heal amount.
   // Caster's existing 1d6 + magic_mod becomes 1d6 + magic_mod + focus.power.

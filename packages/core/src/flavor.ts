@@ -21,22 +21,20 @@ export interface CharClass {
   id: string;
   name: string;
   base_hp: number;
-  attack_mod: number;
-  magic_mod: number;
   skills: SkillType[];   // expert types — 1-2 per class
   blurb: string;
   abilities: AbilityDef[];
 }
 
 export const CLASSES: CharClass[] = [
-  { id: "devops_mage",    name: "DevOps Mage",     base_hp: 22, attack_mod: 1, magic_mod: 1, skills: ["int", "dex"], blurb: "Channels arcane YAML to summon and banish containers.",    abilities: mageAbilities },
-  { id: "qa_paladin",     name: "QA Paladin",      base_hp: 28, attack_mod: 2, magic_mod: 0, skills: ["str"],         blurb: "Smites bugs with the sacred light of regression suites.",  abilities: paladinAbilities },
-  { id: "backend_druid",  name: "Backend Druid",   base_hp: 24, attack_mod: 1, magic_mod: 1, skills: ["int", "str"],  blurb: "Speaks to databases and tames feral microservices.",        abilities: druidAbilities },
-  { id: "frontend_bard",  name: "Frontend Bard",   base_hp: 20, attack_mod: 0, magic_mod: 2, skills: ["int"],         blurb: "Charms users with pixel-perfect ballads of CSS.",           abilities: bardAbilities },
-  { id: "staff_sage",     name: "Staff Sage",      base_hp: 26, attack_mod: 0, magic_mod: 2, skills: ["int"],         blurb: "Dispenses ancient wisdom and the occasional postmortem.",   abilities: sageAbilities },
-  { id: "refactor_rogue", name: "Refactor Rogue",  base_hp: 18, attack_mod: 2, magic_mod: 0, skills: ["dex"],         blurb: "Strikes from the shadows; leaves no dead code behind.",    abilities: rogueAbilities },
-  { id: "sre_warden",     name: "SRE Warden",      base_hp: 30, attack_mod: 2, magic_mod: 0, skills: ["str"],         blurb: "Stands the wall between prod and the howling void.",       abilities: wardenAbilities },
-  { id: "data_warlock",   name: "Data Warlock",    base_hp: 22, attack_mod: 0, magic_mod: 2, skills: ["int"],         blurb: "Bound to a query plan most mortals dare not read.",        abilities: warlockAbilities },
+  { id: "devops_mage",    name: "DevOps Mage",     base_hp: 22, skills: ["int", "dex"], blurb: "Channels arcane YAML to summon and banish containers.",    abilities: mageAbilities },
+  { id: "qa_paladin",     name: "QA Paladin",      base_hp: 28, skills: ["str"],         blurb: "Smites bugs with the sacred light of regression suites.",  abilities: paladinAbilities },
+  { id: "backend_druid",  name: "Backend Druid",   base_hp: 24, skills: ["int", "str"],  blurb: "Speaks to databases and tames feral microservices.",        abilities: druidAbilities },
+  { id: "frontend_bard",  name: "Frontend Bard",   base_hp: 20, skills: ["int"],         blurb: "Charms users with pixel-perfect ballads of CSS.",           abilities: bardAbilities },
+  { id: "staff_sage",     name: "Staff Sage",      base_hp: 26, skills: ["int"],         blurb: "Dispenses ancient wisdom and the occasional postmortem.",   abilities: sageAbilities },
+  { id: "refactor_rogue", name: "Refactor Rogue",  base_hp: 18, skills: ["dex"],         blurb: "Strikes from the shadows; leaves no dead code behind.",    abilities: rogueAbilities },
+  { id: "sre_warden",     name: "SRE Warden",      base_hp: 30, skills: ["str"],         blurb: "Stands the wall between prod and the howling void.",       abilities: wardenAbilities },
+  { id: "data_warlock",   name: "Data Warlock",    base_hp: 22, skills: ["int"],         blurb: "Bound to a query plan most mortals dare not read.",        abilities: warlockAbilities },
 ];
 
 // Skill emojis used in trap choice display so players see at a glance which option
@@ -53,7 +51,7 @@ export function pickRandomClass(): CharClass {
 
 export function classByName(name: string): CharClass {
   return CLASSES.find((c) => c.name === name) ??
-    { id: "unknown", name, base_hp: 20, attack_mod: 1, magic_mod: 1, skills: ["int"], blurb: "", abilities: [] };
+    { id: "unknown", name, base_hp: 20, skills: ["int"], blurb: "", abilities: [] };
 }
 
 // Per-class haggle modifier — added to the 1d6 haggle roll. Charisma classes (Bard)
@@ -354,7 +352,7 @@ export const MAX_MANA_CAP = 5;
 // Extend this union when adding new abilities.
 export type AbilityId =
   // Mage
-  | "detonate" | "containerize"
+  | "detonate" | "fireball" | "containerize"
   // Paladin
   | "smite" | "regression_shield"
   // Druid

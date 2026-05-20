@@ -1156,7 +1156,7 @@ export function App() {
         smithy = (await smithyRes.json()) as SmithyResponse;
       } else {
         const body = (await smithyRes.json().catch(() => ({}))) as SmithyResponse;
-        smithy = body.error ? body : null;
+        smithy = body.error === "mid_quest" ? body : null;
       }
       if (pubRes.ok) {
         pub = (await pubRes.json()) as PubResponse;

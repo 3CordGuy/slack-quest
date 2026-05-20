@@ -231,10 +231,9 @@ describe("classByName", () => {
     expect(classByName("DevOps Mage").id).toBe("devops_mage");
   });
 
-  it("falls back to a balanced default for an unknown name", () => {
+  it("falls back to a default for an unknown name", () => {
     const fallback = classByName("Made-Up Class");
-    expect(fallback.attack_mod).toBe(1);
-    expect(fallback.magic_mod).toBe(1);
+    expect(fallback.id).toBe("unknown");
   });
 
   it("every defined class has a non-empty blurb", () => {

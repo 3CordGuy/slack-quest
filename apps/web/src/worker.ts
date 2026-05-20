@@ -749,8 +749,6 @@ interface Env {
   // local web-only iteration doesn't require the secret; when unset the
   // post calls are skipped silently.
   SLACK_BOT_TOKEN?: string;
-  // Feature flag: "1" enables STATS_V2 primary stat derivations in combat.
-  STATS_V2?: string;
   // Set to "local" via .dev.vars to enable dev-only endpoints (e.g. /api/dev/login).
   ENVIRONMENT?: string;
 }
@@ -4690,7 +4688,7 @@ app.post("/api/quest/:id/start_web_combat", async (c) => {
   // web_combat_state row. start_web_combat is idempotent: if state already
   // exists (e.g. Slack /gq attack already ran bootstrapFromSlack), the
   // earlier check above returned the existing state.
-  const built = await buildInitialCombatState(c.env.DB, quest, c.env.STATS_V2 === "1");
+  const built = await buildInitialCombatState(c.env.DB, quest);
   if (!built.ok) {
     if (built.reason === "non_combat_room") {
       return c.json({ error: "non_combat_room", room_type: built.detail ?? null }, 400);
@@ -6836,7 +6834,6 @@ function rollMonsterAttackAndDamageTypes(
 async function buildInitialCombatState(
   db: D1Database,
   quest: ActiveQuest,
-  statsV2Enabled = false,
 ): Promise<
   | { ok: true; seeded: CombatState }
   | { ok: false; reason: "unsupported_variant" | "non_combat_room"; detail?: string }
@@ -6922,12 +6919,8 @@ async function buildInitialCombatState(
       className: member.class,
       level: member.level,
       stats: memberStats,
-      v2Enabled: statsV2Enabled,
-      equipBonuses: statsV2Enabled ? equipBonuses : undefined,
+      equipBonuses,
     });
-    // Level-scaling bonus on top of the class mod (legacy path only).
-    // STATS_V2 derives scaling from per-level stat growth instead.
-    const levelBonus = statsV2Enabled ? 0 : Math.floor(member.level / 4);
     fighters.push({
       id: member.slack_user_id,
       name: member.name,
@@ -6940,15 +6933,15 @@ async function buildInitialCombatState(
       // Armor pool starts at floor(armorPower / 2) at combat start.
       shield: Math.floor(armorPower / 2),
       position: member.position,
-      attack_mod: snap.derived.attack_mod + levelBonus,
-      magic_mod: snap.derived.magic_mod + levelBonus,
+      attack_mod: snap.derived.attack_mod,
+      magic_mod: snap.derived.magic_mod,
       weapon_power: isFocus ? 0 : (weapon?.power ?? 0),
       focus_power: isFocus ? (weapon?.power ?? 0) : 0,
       weapon_range: weaponRange,
       slack_username: member.slack_username,
       armor_power: armorPower,
       scars: member.scars,
-      stats: statsV2Enabled ? snap.stats : undefined,
+      stats: snap.stats,
       element: isFocus ? undefined : (weapon?.element ?? undefined),
       weapon_rarity: isFocus ? undefined
         : (weapon?.rarity === "rare" || weapon?.rarity === "epic" || weapon?.rarity === "legendary"
@@ -7413,7 +7406,7 @@ export class QuestRoom extends DurableObject<Env> {
       this.cacheQuestId = questId;
     }
 
-    const built = await buildInitialCombatState(this.env.DB, quest, this.env.STATS_V2 === "1");
+    const built = await buildInitialCombatState(this.env.DB, quest);
     if (!built.ok) return { ok: false, reason: built.reason, detail: built.detail };
 
     // Seed drink_buffs from the characters table so a pub buff bought before
@@ -7457,7 +7450,6 @@ export class QuestRoom extends DurableObject<Env> {
     const character = await getCharacter(this.env.DB, userId);
     if (!character) return;
 
-    const statsV2Enabled = this.env.STATS_V2 === "1";
     const slots = await getAllEquippedSlots(this.env.DB, userId);
     const weapon = slots.main_hand;
     const weaponRange = (weapon?.weapon_range as "melee" | "ranged" | "focus" | null | undefined) ?? "melee";
@@ -7502,10 +7494,8 @@ export class QuestRoom extends DurableObject<Env> {
       className: character.class,
       level: character.level,
       stats: memberStats,
-      v2Enabled: statsV2Enabled,
-      equipBonuses: statsV2Enabled ? equipBonuses2 : undefined,
+      equipBonuses: equipBonuses2,
     });
-    const levelBonus = statsV2Enabled ? 0 : Math.floor(character.level / 4);
 
     const newFighter: CombatFighter = {
       id: character.slack_user_id,
@@ -7518,15 +7508,15 @@ export class QuestRoom extends DurableObject<Env> {
       max_mana: character.max_mana,
       shield: Math.floor(armorPower / 2),
       position: character.position,
-      attack_mod: snap.derived.attack_mod + levelBonus,
-      magic_mod: snap.derived.magic_mod + levelBonus,
+      attack_mod: snap.derived.attack_mod,
+      magic_mod: snap.derived.magic_mod,
       weapon_power: isFocus ? 0 : (weapon?.power ?? 0),
       focus_power: isFocus ? (weapon?.power ?? 0) : 0,
       weapon_range: weaponRange,
       slack_username: character.slack_username,
       armor_power: armorPower,
       scars: character.scars,
-      stats: statsV2Enabled ? snap.stats : undefined,
+      stats: snap.stats,
       element: isFocus ? undefined : (weapon?.element ?? undefined),
       weapon_rarity: isFocus ? undefined
         : (weapon?.rarity === "rare" || weapon?.rarity === "epic" || weapon?.rarity === "legendary"

@@ -76,23 +76,24 @@ Two Cloudflare Workers and a small set of Durable Objects share one D1 database:
 
 `/sq roll` creates a character with a random class + AI-generated name. One
 character per Slack user. Classes share five primary stats (STR / INT / VIT
-/ AGI / DEX) under the STATS_V2 system — you spend points at level-up via
-`/sq spend <stat>` (and from the web stat-allocator).
+/ AGI / DEX) — you spend points at level-up via `/sq spend <stat>` (and from
+the web stat-allocator). Attack mod = floor((STR−5)/2); magic mod =
+floor((INT−5)/2).
 
-| Class | HP | atk | mag | Skills | Signature | Class ability |
-|---|---|---|---|---|---|---|
-| DevOps Mage | 22 | 1 | 1 | INT, DEX | **Detonate** | **Containerize** — skip a monster swing |
-| QA Paladin | 28 | 2 | 0 | STR | **Smite** | **Regression Shield** — party-wide shield grant |
-| Backend Druid | 24 | 1 | 1 | INT, STR | **Wildgrowth** | always-on party regen |
-| Frontend Bard | 20 | 0 | 2 | INT | **Crescendo** | **Battle Hymn** — party attack buff stack |
-| Staff Sage | 26 | 0 | 2 | INT | **Manifest** | **Foresee** — preview monster swings + reveal chest contents |
-| Refactor Rogue | 18 | 2 | 0 | DEX | **Backstab** | **Vanish** — untargetable for N swings; first-attack guaranteed crit |
-| SRE Warden | 30 | 2 | 0 | STR | **Bulwark Strike** | **Taunt** — force monster to target you; passive shield bump |
-| Data Wizard | 22 | 0 | 2 | INT | **Soul Drain (Hex)** | crit-bleed passive |
+| Class | STR | INT | VIT | AGI | DEX | Skills | Damage ability (sig) | Passive | Tactical ability |
+|---|---|---|---|---|---|---|---|---|---|
+| DevOps Mage | 4 | 9 | 5 | 6 | 6 | INT, DEX | **Detonate** (1m) | Mana Catalyst — first ability free | **Containerize** (2m) — skip a monster swing |
+| QA Paladin | 9 | 4 | 9 | 4 | 4 | STR | **Smite** (1m) | Sacred Vow — front-row bonus | **Regression Shield** (2m) — party-wide shield |
+| Backend Druid | 6 | 7 | 6 | 5 | 6 | INT, STR | **Wildgrowth** (1m) | Symbiosis — passive party regen | **Migrate** (2m) — reposition an ally |
+| Frontend Bard | 4 | 9 | 5 | 6 | 6 | INT | **Crescendo** (1m) | Aura — party damage aura | **Battle Hymn** (2m) — stacking attack buff |
+| Staff Sage | 4 | 10 | 6 | 5 | 5 | INT | **Manifest** (1m) | Reading — free bonus action | **Foresee** (2m) — preview swings + reveal chests |
+| Refactor Rogue | 7 | 4 | 4 | 7 | 8 | DEX | **Backstab** (1m) | First Strike — guaranteed crit on first attack | **Vanish** (2m) — untargetable for N swings |
+| SRE Warden | 9 | 4 | 10 | 4 | 3 | STR | **Bulwark Strike** (1m) | Iron Skin — passive shield bump | **Taunt** (2m) — force monster focus |
+| Data Warlock | 4 | 10 | 5 | 5 | 6 | INT | **Hex** (1m) | Shadow Bleed — crit bleed passive | **Soul Drain** (2m) — damage + self-heal |
 
-Signatures cost 1 mana, share the combat cooldown, and have class-specific
-formulas. Mana refills between quests and at level-up. Magic-type drop items
-grant +1/+2/+3 max mana when consumed (capped at 5).
+Active abilities cost mana (`sig` is the 1-mana damage ability for each class).
+Mana refills between quests and at level-up. Magic-type drop items grant
++1/+2/+3 max mana when consumed (capped at 5).
 
 ---
 
