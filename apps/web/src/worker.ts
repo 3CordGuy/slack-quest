@@ -946,7 +946,8 @@ app.post("/api/character/reroll", async (c) => {
 
   await deleteCharacter(c.env.DB, session.slack_user_id);
 
-  const cls = pickRandomClass();
+  const body = await c.req.json<{ class?: string }>().catch((): { class?: string } => ({}));
+  const cls = body.class ? classByName(body.class) : pickRandomClass();
   const hp = cls.base_hp + rollDice(4);
   const gender: CharGender = rollDice(2) === 1 ? "m" : "f";
   const newChar = await createCharacter(c.env.DB, {
