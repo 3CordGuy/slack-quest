@@ -31,6 +31,7 @@ import {
   lootIcon,
   HitDust,
   HealBurst,
+  ShieldGlow,
   CombatFighter,
   CombatItem,
 } from "./CombatShared";
@@ -1726,64 +1727,6 @@ function PartySection({
 }
 
 // Inject shield-particle keyframes once per page load.
-let shieldStylesInjected = false;
-function ensureShieldStyles() {
-  if (shieldStylesInjected) return;
-  shieldStylesInjected = true;
-  const s = document.createElement("style");
-  s.textContent = `
-    @keyframes gq-shield-float {
-      0%   { transform: translate(-50%, -50%) translateY(0px)   scale(1);   opacity: 0.85; }
-      50%  { transform: translate(-50%, -50%) translateY(-6px)  scale(1.2); opacity: 1;    }
-      100% { transform: translate(-50%, -50%) translateY(0px)   scale(1);   opacity: 0.85; }
-    }
-    @keyframes gq-shield-pulse {
-      0%, 100% { box-shadow: 0 0 0 1px rgba(96,165,250,0.25), 0 0 8px rgba(96,165,250,0.12); }
-      50%       { box-shadow: 0 0 0 2px rgba(96,165,250,0.55), 0 0 18px rgba(96,165,250,0.28); }
-    }
-  `;
-  document.head.appendChild(s);
-}
-
-// Particle positions: 8 dots distributed around the card perimeter.
-const SHIELD_PARTICLES: Array<{ top: string; left: string; delay: string }> = [
-  { top: "10%",  left: "-4px",  delay: "0s"    },
-  { top: "50%",  left: "-4px",  delay: "0.3s"  },
-  { top: "90%",  left: "8%",    delay: "0.6s"  },
-  { top: "100%", left: "35%",   delay: "0.9s"  },
-  { top: "100%", left: "65%",   delay: "1.2s"  },
-  { top: "90%",  left: "92%",   delay: "1.5s"  },
-  { top: "50%",  left: "100%",  delay: "1.8s"  },
-  { top: "10%",  left: "88%",   delay: "2.1s"  },
-];
-
-function ShieldGlow() {
-  useEffect(() => { ensureShieldStyles(); }, []);
-  return (
-    <>
-      {SHIELD_PARTICLES.map((p, i) => (
-        <span
-          key={i}
-          aria-hidden="true"
-          style={{
-            position: "absolute",
-            top: p.top,
-            left: p.left,
-            width: 6,
-            height: 6,
-            borderRadius: "50%",
-            background: "#93c5fd",
-            boxShadow: "0 0 6px 2px rgba(147,197,253,0.9), 0 0 12px rgba(96,165,250,0.6)",
-            pointerEvents: "none",
-            animation: `gq-shield-float 2.4s ease-in-out ${p.delay} infinite`,
-            zIndex: 2,
-          }}
-        />
-      ))}
-    </>
-  );
-}
-
 function FighterHpRow({ hp, maxHp, shield, armorPower }: { hp: number; maxHp: number; shield: number; armorPower: number }) {
   const pct = maxHp > 0 ? Math.max(0, Math.min(1, hp / maxHp)) : 0;
   const color = pct < 0.25 ? "#dc2626" : pct < 0.5 ? "#d97706" : "#16a34a";
@@ -2764,7 +2707,8 @@ function PartyChips({ fighters, selfId, flashIds, hitDustSeq, healBurstSeq, onCl
           position: "relative",
           display: "flex", alignItems: "center", gap: 8,
           background: isSelf ? "rgba(245,245,220,0.09)" : "rgba(255,255,255,0.04)",
-          border: isSelf ? "1px solid rgba(245,245,220,0.22)" : "1px solid rgba(255,255,255,0.07)",
+          border: isSelf ? "1px solid rgba(245,245,220,0.22)" : f.shield > 0 && f.hp > 0 ? "1px solid rgba(96,165,250,0.4)" : "1px solid rgba(255,255,255,0.07)",
+          animation: f.shield > 0 && f.hp > 0 ? "gq-shield-pulse 2.5s ease-in-out infinite" : undefined,
           borderRadius: 8, padding: "5px 10px",
           opacity: f.hp <= 0 ? 0.45 : 1, flexShrink: 0,
           minWidth: 130,
@@ -2773,6 +2717,7 @@ function PartyChips({ fighters, selfId, flashIds, hitDustSeq, healBurstSeq, onCl
       >
         <HitDust seq={hitDustSeq[f.id] ?? 0} />
         <HealBurst seq={healBurstSeq[f.id] ?? 0} />
+        {f.shield > 0 && f.hp > 0 && <ShieldGlow />}
         <Avatar src={charPortraitUrl(f.name)} fallbackSrc={classPortraitUrl(f.class)} alt={f.name} size={40} radius={5} fallbackIcon="player" fallbackColor="#4a5568" border="1px solid #2a2d33" />
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: 12, fontWeight: 600, color: "#e2e8f0", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{f.name}</div>
@@ -2782,9 +2727,9 @@ function PartyChips({ fighters, selfId, flashIds, hitDustSeq, healBurstSeq, onCl
           <div style={{ fontSize: 10, color: "#9aa0a6", marginTop: 2 }}>
             {f.hp}/{f.max_hp} HP
           </div>
-          {f.armor_power > 0 && (() => {
-            const armorMax = Math.floor(f.armor_power / 2);
-            const armorPct = armorMax > 0 ? Math.max(0, f.shield / armorMax) : 0;
+          {(f.armor_power > 0 || f.shield > 0) && (() => {
+            const armorMax = f.armor_power > 0 ? Math.floor(f.armor_power / 2) : f.shield;
+            const armorPct = armorMax > 0 ? Math.max(0, f.shield / armorMax) : 1;
             const depleted = f.shield === 0;
             return (
               <>

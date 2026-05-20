@@ -16,6 +16,7 @@ import {
   InitStrip, CombatLog, LogEntry, CombatItem,
   HitDust,
   HealBurst,
+  ShieldGlow,
 } from "./CombatShared";
 ensureCombatAnimStyles();
 
@@ -430,11 +431,12 @@ function PartyBar({ fighters, selfId, party, onClickSelf, flashIds, hitDustSeq, 
         </div>
         <HitDust seq={hitDustSeq?.[f.key] ?? 0} />
         <HealBurst seq={healBurstSeq?.[f.key] ?? 0} />
+        {f.shield > 0 && !f.isDead && <ShieldGlow />}
         <Avatar src={charPortraitUrl(f.name)} fallbackSrc={classPortraitUrl(f.cls)} alt={f.name} size={56} radius={6} fallbackIcon="player" fallbackColor="#4a5568" border="1px solid #2a2d33" />
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: 13, fontWeight: 600, color: "#e2e8f0", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", paddingRight: 30 }}>{f.name}</div>
           <HpBar current={f.hp} max={f.max_hp} height={7} />
-          {(() => { const armorMax = Math.floor(f.armor_power / 2); return armorMax > 0 ? <div style={{ height: 4, background: f.shield === 0 ? "#3b1515" : "#0e0f12", borderRadius: 2, overflow: "hidden", marginTop: 2 }} title={f.shield === 0 ? "Armor depleted" : `Armor: ${f.shield}/${armorMax}`}><div style={{ width: `${Math.min(1, f.shield / armorMax) * 100}%`, height: "100%", background: "#6b7280", transition: "width 0.3s ease" }} /></div> : null; })()}
+          {(() => { const armorMax = f.armor_power > 0 ? Math.floor(f.armor_power / 2) : f.shield; return (armorMax > 0 || f.shield > 0) ? <div style={{ height: 4, background: f.shield === 0 ? "#3b1515" : "#0e0f12", borderRadius: 2, overflow: "hidden", marginTop: 2 }} title={f.shield === 0 ? "Armor depleted" : `Armor: ${f.shield}/${armorMax}`}><div style={{ width: `${armorMax > 0 ? Math.min(1, f.shield / armorMax) * 100 : 100}%`, height: "100%", background: "#6b7280", transition: "width 0.3s ease" }} /></div> : null; })()}
           <div style={{ fontSize: 11, color: "#9aa0a6", marginTop: 2 }}>
             {f.hp}/{f.max_hp} HP
           </div>

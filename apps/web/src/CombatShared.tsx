@@ -20,6 +20,15 @@ export function ensureCombatAnimStyles(): void {
   const s = document.createElement("style");
   s.id = STYLE_ID;
   s.textContent = `
+@keyframes gq-shield-float {
+  0%   { transform: translate(-50%, -50%) translateY(0px)   scale(1);   opacity: 0.85; }
+  50%  { transform: translate(-50%, -50%) translateY(-6px)  scale(1.2); opacity: 1;    }
+  100% { transform: translate(-50%, -50%) translateY(0px)   scale(1);   opacity: 0.85; }
+}
+@keyframes gq-shield-pulse {
+  0%, 100% { box-shadow: 0 0 0 1px rgba(96,165,250,0.25), 0 0 8px rgba(96,165,250,0.12); }
+  50%       { box-shadow: 0 0 0 2px rgba(96,165,250,0.55), 0 0 18px rgba(96,165,250,0.28); }
+}
 @keyframes gq-hit-shake {
   0%   { transform: translate(0, 0); }
   10%  { transform: translate(-5px, -2px); }
@@ -208,6 +217,47 @@ export function HitDust({ seq }: { seq: number }) {
         );
       })}
     </div>
+  );
+}
+
+// ─── ShieldGlow ──────────────────────────────────────────────────────────────
+// 8 blue orbiting dots rendered around the perimeter of a fighter card
+// whenever shield > 0. Mount inside a `position: relative` container.
+
+const SHIELD_PARTICLES: Array<{ top: string; left: string; delay: string }> = [
+  { top: "10%",  left: "-4px",  delay: "0s"   },
+  { top: "50%",  left: "-4px",  delay: "0.3s" },
+  { top: "90%",  left: "8%",    delay: "0.6s" },
+  { top: "100%", left: "35%",   delay: "0.9s" },
+  { top: "100%", left: "65%",   delay: "1.2s" },
+  { top: "90%",  left: "92%",   delay: "1.5s" },
+  { top: "50%",  left: "100%",  delay: "1.8s" },
+  { top: "10%",  left: "88%",   delay: "2.1s" },
+];
+
+export function ShieldGlow() {
+  return (
+    <>
+      {SHIELD_PARTICLES.map((p, i) => (
+        <span
+          key={i}
+          aria-hidden="true"
+          style={{
+            position: "absolute",
+            top: p.top,
+            left: p.left,
+            width: 6,
+            height: 6,
+            borderRadius: "50%",
+            background: "#93c5fd",
+            boxShadow: "0 0 6px 2px rgba(147,197,253,0.9), 0 0 12px rgba(96,165,250,0.6)",
+            pointerEvents: "none",
+            animation: `gq-shield-float 2.4s ease-in-out ${p.delay} infinite`,
+            zIndex: 2,
+          }}
+        />
+      ))}
+    </>
   );
 }
 
