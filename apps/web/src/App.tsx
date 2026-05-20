@@ -938,14 +938,49 @@ export function App() {
     return () => document.removeEventListener("visibilitychange", onVisibility);
   }, [state.kind]);
 
-  // Toast once when a joinable quest first appears
+  // Toast once when a joinable quest first appears. JSX form so we can
+  // include an inline "Join fight" button — saves the player a trip up
+  // to the quest card. Click dismisses the toast and fires the same
+  // joinQuest() that the card's Join button uses; on success the
+  // dashboard refreshes and the active quest card replaces the join
+  // card. On failure (already on a quest, downed, etc.) the join
+  // endpoint silently no-ops; the toast just disappears.
   const prevJoinableIdRef = useRef<number | null>(null);
   useEffect(() => {
     if (state.kind !== "auth") return;
     const jId = state.joinable?.quest_id ?? null;
     if (jId !== null && jId !== prevJoinableIdRef.current) {
       const j = state.joinable!;
-      toast(`⚔ ${j.monster_name} stirs — a ${j.variant} quest is open!`, { duration: 7000 });
+      toast(
+        (t) => (
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <span style={{ flex: 1, minWidth: 0 }}>
+              ⚔ <strong>{j.monster_name}</strong> stirs — a {j.variant} quest is open!
+            </span>
+            <button
+              onClick={() => {
+                void joinQuest();
+                toast.dismiss(t.id);
+              }}
+              style={{
+                padding: "5px 12px",
+                background: "#7f1d1d",
+                border: "1px solid #b91c1c",
+                borderRadius: 6,
+                color: "#fecaca",
+                fontWeight: 700,
+                fontSize: 12,
+                cursor: "pointer",
+                letterSpacing: 0.3,
+                whiteSpace: "nowrap",
+              }}
+            >
+              ⚔ Join fight
+            </button>
+          </div>
+        ),
+        { duration: 10000 },
+      );
     }
     prevJoinableIdRef.current = jId;
   }, [state.kind === "auth" ? state.joinable?.quest_id : null]);
