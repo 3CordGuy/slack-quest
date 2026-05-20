@@ -4972,8 +4972,7 @@ function LocationHero({
       overflow: "hidden",
       position: "relative",
       background: src ? "#0d0d10" : ph.bg,
-      aspectRatio: "16/7",
-      display: "flex", alignItems: "center", justifyContent: "center",
+      ...(src ? { aspectRatio: "16/7" } : { minHeight: 160, display: "flex", alignItems: "center", justifyContent: "center" }),
     }}>
       {src && (
         <img
