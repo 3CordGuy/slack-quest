@@ -5,7 +5,7 @@
 
 import { useEffect, useReducer, useRef, useState } from "react";
 import toast from "react-hot-toast";
-import { isMonsterActor } from "@gantt-quest/core";
+import { isMonsterActor, isMercActor } from "@gantt-quest/core";
 import { Avatar, Icon } from "./icons";
 import { CombatParticles, triggerBurst } from "./CombatParticles";
 import {
@@ -15,6 +15,9 @@ import {
   UseItemTile, MONSTER_TARGET_TOOLS, RARITY_TINT, lootIcon,
   InitStrip, CombatLog, LogEntry, CombatItem,
   HitDust,
+  HealBurst,
+  ShieldBurst,
+  ShieldGlow,
 } from "./CombatShared";
 ensureCombatAnimStyles();
 
@@ -358,13 +361,13 @@ function HpBar({ current, max, color, height = 6 }: { current: number; max: numb
   );
 }
 
-function PartyBar({ fighters, selfId, party, onClickSelf, flashIds, hitDustSeq }: {
+function PartyBar({ fighters, selfId, party, onClickSelf, flashIds, hitDustSeq, healBurstSeq, shieldBurstSeq }: {
   fighters: Fighter[] | null; selfId: string; party: Character[];
   onClickSelf?: () => void;
   flashIds?: Set<string>;
-  // Monotonic hit-counter map. Bump on monster_attack → HitDust re-keys
-  // its WAAPI animation so a fresh dust puff fires on each landed swing.
   hitDustSeq?: Record<string, number>;
+  healBurstSeq?: Record<string, number>;
+  shieldBurstSeq?: Record<string, number>;
 }) {
   const seen = new Set<string>();
   type Member = {
@@ -429,11 +432,14 @@ function PartyBar({ fighters, selfId, party, onClickSelf, flashIds, hitDustSeq }
           LV {f.level}
         </div>
         <HitDust seq={hitDustSeq?.[f.key] ?? 0} />
+        <HealBurst seq={healBurstSeq?.[f.key] ?? 0} />
+        <ShieldBurst seq={shieldBurstSeq?.[f.key] ?? 0} />
+        {f.shield > Math.floor(f.armor_power / 2) && !f.isDead && <ShieldGlow />}
         <Avatar src={charPortraitUrl(f.name)} fallbackSrc={classPortraitUrl(f.cls)} alt={f.name} size={56} radius={6} fallbackIcon="player" fallbackColor="#4a5568" border="1px solid #2a2d33" />
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: 13, fontWeight: 600, color: "#e2e8f0", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", paddingRight: 30 }}>{f.name}</div>
           <HpBar current={f.hp} max={f.max_hp} height={7} />
-          {(() => { const armorMax = Math.floor(f.armor_power / 2); return armorMax > 0 ? <div style={{ height: 4, background: f.shield === 0 ? "#3b1515" : "#0e0f12", borderRadius: 2, overflow: "hidden", marginTop: 2 }} title={f.shield === 0 ? "Armor depleted" : `Armor: ${f.shield}/${armorMax}`}><div style={{ width: `${Math.min(1, f.shield / armorMax) * 100}%`, height: "100%", background: "#6b7280", transition: "width 0.3s ease" }} /></div> : null; })()}
+          {(() => { const armorMax = f.armor_power > 0 ? Math.floor(f.armor_power / 2) : f.shield; return (armorMax > 0 || f.shield > 0) ? <div style={{ height: 4, background: f.shield === 0 ? "#3b1515" : "#0e0f12", borderRadius: 2, overflow: "hidden", marginTop: 2 }} title={f.shield === 0 ? "Armor depleted" : `Armor: ${f.shield}/${armorMax}`}><div style={{ width: `${armorMax > 0 ? Math.min(1, f.shield / armorMax) * 100 : 100}%`, height: "100%", background: "#6b7280", transition: "width 0.3s ease" }} /></div> : null; })()}
           <div style={{ fontSize: 11, color: "#9aa0a6", marginTop: 2 }}>
             {f.hp}/{f.max_hp} HP
           </div>
@@ -1028,6 +1034,8 @@ export function GridDungeonView({
   // too but the dust is purely a player-side affordance (the strip is
   // already busy with slash streaks + lunge animations).
   const [hitDustSeq, setHitDustSeq] = useState<Record<string, number>>({});
+  const [healBurstSeq, setHealBurstSeq] = useState<Record<string, number>>({});
+  const [shieldBurstSeq, setShieldBurstSeq] = useState<Record<string, number>>({});
   function flashHit(id: string) {
     setFlashIds((prev) => { const n = new Set(prev); n.add(id); return n; });
     setTimeout(() => {
@@ -1101,6 +1109,14 @@ export function GridDungeonView({
             if (evt.type === "monster_elemental_proc") {
               const el = String(evt.element);
               if (el === "fire" || el === "ice" || el === "lightning") triggerBurst(el);
+            }
+            if (evt.type === "heal_applied" && typeof (evt as { target?: string }).target === "string") {
+              const tgt = (evt as { target: string }).target;
+              setHealBurstSeq((prev) => ({ ...prev, [tgt]: (prev[tgt] ?? 0) + 1 }));
+            }
+            if (evt.type === "shield_applied" && typeof (evt as { target?: string }).target === "string") {
+              const tgt = (evt as { target: string }).target;
+              setShieldBurstSeq((prev) => ({ ...prev, [tgt]: (prev[tgt] ?? 0) + 1 }));
             }
             if (evt.type === "turn_skip") triggerBurst("frozen");
             if (evt.type === "victory") triggerBurst("victory");
@@ -1512,6 +1528,8 @@ export function GridDungeonView({
         onClickSelf={onOpenInventory}
         flashIds={flashIds}
         hitDustSeq={hitDustSeq}
+        healBurstSeq={healBurstSeq}
+        shieldBurstSeq={shieldBurstSeq}
       />
 
       {/* Action buttons row (RED area) — own row at the very bottom. Always
@@ -2133,9 +2151,19 @@ function CombatPanel({ state, selfId, onSend, autoResolve, setAutoResolve, myTur
   }
 
   // Disabled state for the action row when it isn't the player's turn.
+  const currentActorId = state.turn_order[state.turn_index % state.turn_order.length] ?? null;
+  const isInactivePlayerTurn = !myTurn && currentActorId !== null && !isMonsterActor(currentActorId) && !isMercActor(currentActorId);
+
+  const [skipReady, setSkipReady] = useState(false);
+  useEffect(() => {
+    if (!isInactivePlayerTurn) { setSkipReady(false); return; }
+    const t = setTimeout(() => setSkipReady(true), 8000);
+    return () => clearTimeout(t);
+  }, [isInactivePlayerTurn, currentActorId]);
+
   // Buttons stay visible so the bottom row doesn't disappear; they grey out
   // and the user gets a turn-status hint instead of an empty bar.
-  const otherActor = state.fighters.find((f) => f.id === state.turn_order[state.turn_index % state.turn_order.length]);
+  const otherActor = state.fighters.find((f) => f.id === currentActorId);
   const turnStatus = myTurn
     ? null
     : isMonsterTurn
@@ -2265,9 +2293,31 @@ function CombatPanel({ state, selfId, onSend, autoResolve, setAutoResolve, myTur
         </PickerModal>
       )}
 
-      {/* Turn status hint (when not the player's turn) */}
-      {turnStatus && (
-        <div style={{ padding: "2px 12px 0", fontSize: 11, color: "#9aa0a6", fontStyle: "italic" }}>{turnStatus}</div>
+      {/* Turn status hint + skip button (when not the player's turn) */}
+      {(turnStatus || isInactivePlayerTurn) && (
+        <div style={{ padding: "2px 12px 0", fontSize: 11, color: "#9aa0a6", fontStyle: "italic", display: "flex", alignItems: "center", gap: 10 }}>
+          {turnStatus && <span>{turnStatus}</span>}
+          {isInactivePlayerTurn && (
+            <button
+              onClick={() => currentActorId && onSend({ kind: "wait", actor: currentActorId })}
+              disabled={!skipReady}
+              title={skipReady ? "Skip this player's turn" : "Available after 8 seconds"}
+              style={{
+                background: skipReady ? "#292d36" : "#1a1d23",
+                border: `1px solid ${skipReady ? "#4a5568" : "#2a2d33"}`,
+                borderRadius: 6,
+                color: skipReady ? "#cbd5e1" : "#4a5568",
+                fontSize: 11,
+                fontFamily: "inherit",
+                padding: "3px 10px",
+                cursor: skipReady ? "pointer" : "not-allowed",
+                transition: "all 0.3s ease",
+              }}
+            >
+              Skip turn
+            </button>
+          )}
+        </div>
       )}
 
       {/* Action buttons — vertical-style (icon top, label, mana below) */}

@@ -20,6 +20,15 @@ export function ensureCombatAnimStyles(): void {
   const s = document.createElement("style");
   s.id = STYLE_ID;
   s.textContent = `
+@keyframes gq-shield-float {
+  0%   { transform: translate(-50%, -50%) translateY(0px)   scale(1);   opacity: 0.85; }
+  50%  { transform: translate(-50%, -50%) translateY(-6px)  scale(1.2); opacity: 1;    }
+  100% { transform: translate(-50%, -50%) translateY(0px)   scale(1);   opacity: 0.85; }
+}
+@keyframes gq-shield-pulse {
+  0%, 100% { box-shadow: 0 0 0 1px rgba(96,165,250,0.25), 0 0 8px rgba(96,165,250,0.12); }
+  50%       { box-shadow: 0 0 0 2px rgba(96,165,250,0.55), 0 0 18px rgba(96,165,250,0.28); }
+}
 @keyframes gq-hit-shake {
   0%   { transform: translate(0, 0); }
   10%  { transform: translate(-5px, -2px); }
@@ -205,6 +214,190 @@ export function HitDust({ seq }: { seq: number }) {
               willChange: "transform, opacity",
             }}
           />
+        );
+      })}
+    </div>
+  );
+}
+
+// ─── ShieldGlow ──────────────────────────────────────────────────────────────
+// 8 blue orbiting dots rendered around the perimeter of a fighter card
+// whenever shield > 0. Mount inside a `position: relative` container.
+
+const SHIELD_PARTICLES: Array<{ top: string; left: string; delay: string }> = [
+  { top: "10%",  left: "-4px",  delay: "0s"   },
+  { top: "50%",  left: "-4px",  delay: "0.3s" },
+  { top: "90%",  left: "8%",    delay: "0.6s" },
+  { top: "100%", left: "35%",   delay: "0.9s" },
+  { top: "100%", left: "65%",   delay: "1.2s" },
+  { top: "90%",  left: "92%",   delay: "1.5s" },
+  { top: "50%",  left: "100%",  delay: "1.8s" },
+  { top: "10%",  left: "88%",   delay: "2.1s" },
+];
+
+export function ShieldGlow() {
+  return (
+    <>
+      {SHIELD_PARTICLES.map((p, i) => (
+        <span
+          key={i}
+          aria-hidden="true"
+          style={{
+            position: "absolute",
+            top: p.top,
+            left: p.left,
+            width: 6,
+            height: 6,
+            borderRadius: "50%",
+            background: "#93c5fd",
+            boxShadow: "0 0 6px 2px rgba(147,197,253,0.9), 0 0 12px rgba(96,165,250,0.6)",
+            pointerEvents: "none",
+            animation: `gq-shield-float 2.4s ease-in-out ${p.delay} infinite`,
+            zIndex: 2,
+          }}
+        />
+      ))}
+    </>
+  );
+}
+
+// ─── ShieldBurst ─────────────────────────────────────────────────────────────
+// Brief blue spark burst that fires when a shield_applied event lands.
+// Same WAAPI pattern as HealBurst — mount inside `position: relative`,
+// bump `seq` from the shield_applied handler.
+
+const SHIELD_BURST_COUNT = 10;
+const SHIELD_BURST_COLORS = ["#93c5fd", "#bfdbfe", "#60a5fa", "#ffffff", "#dbeafe"];
+
+export function ShieldBurst({ seq }: { seq: number }) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (seq <= 0) return;
+    const root = ref.current;
+    if (!root) return;
+    const els = Array.from(root.querySelectorAll<HTMLSpanElement>("[data-gq-shield-burst]"));
+    for (const el of els) {
+      const angleDeg = Math.random() * 360;
+      const distance = 28 + Math.random() * 36;
+      const rad = (angleDeg * Math.PI) / 180;
+      const x = Math.cos(rad) * distance;
+      const y = Math.sin(rad) * distance - 10;
+      el.animate(
+        [
+          { transform: "translate(-50%, -50%) scale(0)", opacity: 0 },
+          { transform: "translate(-50%, -50%) scale(1.4)", opacity: 1, offset: 0.15 },
+          { transform: `translate(-50%, -50%) translate(${x}px, ${y}px) scale(0.4)`, opacity: 0 },
+        ],
+        {
+          duration: 550 + Math.random() * 200,
+          delay: Math.random() * 60,
+          easing: "cubic-bezier(0.22, 1, 0.36, 1)",
+          fill: "forwards",
+        },
+      );
+    }
+  }, [seq]);
+
+  return (
+    <div
+      ref={ref}
+      aria-hidden="true"
+      style={{ position: "absolute", inset: 0, pointerEvents: "none", overflow: "visible", zIndex: 3 }}
+    >
+      {Array.from({ length: SHIELD_BURST_COUNT }, (_, i) => (
+        <span
+          key={i}
+          data-gq-shield-burst
+          style={{
+            position: "absolute",
+            left: "50%",
+            top: "50%",
+            width: 6,
+            height: 6,
+            borderRadius: "50%",
+            background: SHIELD_BURST_COLORS[i % SHIELD_BURST_COLORS.length],
+            boxShadow: `0 0 5px ${SHIELD_BURST_COLORS[i % SHIELD_BURST_COLORS.length]}cc`,
+            transform: "translate(-50%, -50%) scale(0)",
+            opacity: 0,
+            willChange: "transform, opacity",
+          }}
+        />
+      ))}
+    </div>
+  );
+}
+
+// ─── HealBurst ───────────────────────────────────────────────────────────────
+// Heart particles that float upward from a fighter card on heal events.
+// Same WAAPI pattern as HitDust — mount inside a `position: relative`
+// container and bump `seq` from the heal_applied WS event handler.
+
+const HEAL_COUNT = 8;
+// ♥ as a text particle — rendered via a span with fontSize so it scales
+// the same across DPRs without needing SVG or canvas.
+const HEART_COLORS = ["#f472b6", "#fb7185", "#f9a8d4", "#4ade80", "#86efac"];
+
+export function HealBurst({ seq }: { seq: number }) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (seq <= 0) return;
+    const root = ref.current;
+    if (!root) return;
+    const els = Array.from(root.querySelectorAll<HTMLSpanElement>("[data-gq-heal]"));
+    for (const el of els) {
+      // Hearts fan upward with a slight horizontal scatter.
+      const xJitter = (Math.random() - 0.5) * 50;
+      const yTravel = -(45 + Math.random() * 40);
+      el.animate(
+        [
+          { transform: `translate(-50%, -50%) translate(${xJitter * 0.2}px, 0px) scale(0)`, opacity: 0 },
+          { transform: `translate(-50%, -50%) translate(${xJitter * 0.6}px, ${yTravel * 0.5}px) scale(1.3)`, opacity: 1, offset: 0.25 },
+          { transform: `translate(-50%, -50%) translate(${xJitter}px, ${yTravel}px) scale(0.8)`, opacity: 0 },
+        ],
+        {
+          duration: 700 + Math.random() * 300,
+          delay: Math.random() * 120,
+          easing: "cubic-bezier(0.22, 1, 0.36, 1)",
+          fill: "forwards",
+        },
+      );
+    }
+  }, [seq]);
+
+  return (
+    <div
+      ref={ref}
+      aria-hidden="true"
+      style={{
+        position: "absolute",
+        inset: 0,
+        pointerEvents: "none",
+        overflow: "visible",
+        zIndex: 3,
+      }}
+    >
+      {Array.from({ length: HEAL_COUNT }, (_, i) => {
+        const color = HEART_COLORS[i % HEART_COLORS.length];
+        return (
+          <span
+            key={i}
+            data-gq-heal
+            style={{
+              position: "absolute",
+              left: `${20 + (i / HEAL_COUNT) * 60}%`,
+              top: "50%",
+              fontSize: 13 + (i % 3) * 3,
+              lineHeight: 1,
+              color,
+              textShadow: `0 0 6px ${color}cc`,
+              transform: "translate(-50%, -50%) scale(0)",
+              opacity: 0,
+              willChange: "transform, opacity",
+              userSelect: "none",
+            }}
+          >
+            ♥
+          </span>
         );
       })}
     </div>

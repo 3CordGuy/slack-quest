@@ -1267,6 +1267,7 @@ async function buildDungeonScene(
       ...(roll.stat_bonus ? { stat_bonus: roll.stat_bonus as Record<string, number> } : {}),
       ...(roll.item_subtype ? { item_subtype: roll.item_subtype } : {}),
       ...(roll.element ? { element: roll.element } : {}),
+      ...(roll.tier != null ? { tier: roll.tier } : {}),
     };
   }
 
@@ -2488,7 +2489,7 @@ app.post("/api/shop/restock", async (c) => {
       power: roll.power,
       rarity: roll.rarity,
       flavor,
-      price: priceFor(roll.type, roll.rarity),
+      price: priceFor(roll.type, roll.rarity, roll.tier),
       weapon_range: roll.weapon_range ?? null,
       slot: roll.slot ?? null,
       stat_bonus: (roll.stat_bonus ?? null) as Record<string, number> | null,
@@ -3002,8 +3003,8 @@ const SMITHY_STOCK_SIZE = 4;
 
 // Smithy items cost ~1.5× the equivalent shop item — the player gets to choose
 // the exact piece, so we charge a convenience premium.
-function smithyStockPrice(itemType: ItemType, rarity: Rarity): number {
-  return Math.ceil(priceFor(itemType, rarity) * 1.5);
+function smithyStockPrice(itemType: ItemType, rarity: Rarity, tier?: number): number {
+  return Math.ceil(priceFor(itemType, rarity, tier) * 1.5);
 }
 
 // Channel-scoped stock: one generation per channel per RESTOCK window,
@@ -3033,7 +3034,7 @@ async function ensureSmithyStock(
       power: roll.power,
       rarity: roll.rarity,
       flavor,
-      price: smithyStockPrice(roll.type, roll.rarity),
+      price: smithyStockPrice(roll.type, roll.rarity, roll.tier),
       slot: roll.slot ?? null,
       stat_bonus: (roll.stat_bonus ?? null) as Record<string, number> | null,
       item_subtype: roll.item_subtype ?? null,
@@ -3643,7 +3644,37 @@ app.get("/api/pub", async (c) => {
   }
 
   const art_url = await getOrScheduleViewArt(c.env.AI, artTarget(c.env), c.executionCtx, "pub_interior", undefined, TOWN_WEEKLY_MS);
-  return c.json({ drinks: drinksWithPrice, drink_buff: drinkBuff, gold: character.gold, spd: spdData, art_url, drinks_remaining: drinksRemaining, npcs, leaderboard });
+  const hired_merc = character.hired_merc_id ? (findMerc(character.hired_merc_id) ?? null) : null;
+  return c.json({ drinks: drinksWithPrice, drink_buff: drinkBuff, gold: character.gold, spd: spdData, art_url, drinks_remaining: drinksRemaining, npcs, leaderboard, mercs: MERCS, hired_merc });
+});
+
+// POST /api/pub/hire/:mercId — hire a mercenary from the pub.
+app.post("/api/pub/hire/:mercId", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const character = await getCharacter(c.env.DB, session.slack_user_id);
+  if (!character) return c.json({ error: "no_character" }, 404);
+  const activeQuest = await getActiveQuestForCharacter(c.env.DB, session.slack_user_id);
+  if (activeQuest) return c.json({ error: "mid_quest" }, 400);
+  if (character.hired_merc_id) return c.json({ error: "already_hired" }, 400);
+
+  const mercId = c.req.param("mercId");
+  const spec = findMerc(mercId);
+  if (!spec) return c.json({ error: "unknown_merc" }, 404);
+
+  const paid = await tryDeductGold(c.env.DB, session.slack_user_id, spec.cost);
+  if (!paid) return c.json({ error: "insufficient_gold" }, 400);
+
+  await setHiredMerc(c.env.DB, session.slack_user_id, mercId);
+  return c.json({ ok: true });
+});
+
+// POST /api/pub/dismiss-merc — dismiss your hired mercenary (no refund).
+app.post("/api/pub/dismiss-merc", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  await clearHiredMerc(c.env.DB, session.slack_user_id);
+  return c.json({ ok: true });
 });
 
 // POST /api/pub/drink/:drinkId — order a drink. Deducts gold, applies the
@@ -5074,7 +5105,7 @@ app.post("/api/quest/:id/dungeon/merchant_choose", async (c) => {
   const choice = stock[pick - 1];
   if (!choice) return c.json({ error: "bad_pick" }, 400);
 
-  const price = priceFor(choice.item_type, choice.rarity);
+  const price = priceFor(choice.item_type, choice.rarity, choice.tier);
   if (character.gold < price) {
     return c.json({ error: "insufficient_gold", price, gold: character.gold }, 400);
   }
@@ -5703,7 +5734,7 @@ app.post("/api/quest/:id/dungeon/grid/merchant", async (c) => {
   if (!choice) return c.json({ error: "bad_pick" }, 400);
   const character = await getCharacter(c.env.DB, session.slack_user_id);
   if (!character) return c.json({ error: "no_character" }, 404);
-  const price = priceFor(choice.item_type, choice.rarity);
+  const price = priceFor(choice.item_type, choice.rarity, choice.tier);
   if (character.gold < price) return c.json({ error: "insufficient_gold", price, gold: character.gold }, 400);
   const paid = await tryDeductGold(c.env.DB, session.slack_user_id, price);
   if (!paid) return c.json({ error: "insufficient_gold", price }, 400);
@@ -6757,24 +6788,30 @@ async function buildInitialCombatState(
 
     // Inject hired merc as an additional CombatFighter for this member.
     // Merc ID is __merc_<user_id>__ so multiple party members can each bring
-    // a different merc without ID collisions.
+    // a different merc without ID collisions. Stats scale to member's level
+    // so the merc stays useful instead of being one-shot at higher tiers.
     if (member.hired_merc_id) {
       const spec = findMerc(member.hired_merc_id);
       if (spec) {
+        const lvl = member.level;
+        const levelDelta = Math.max(0, lvl - spec.level);
+        const scaledHp = Math.round(spec.hp * (lvl / spec.level));
+        const scaledAtk = spec.attack_mod + Math.floor(levelDelta / 3);
+        const scaledWep = spec.weapon_power + Math.floor(levelDelta / 4);
         fighters.push({
           id: `__merc_${member.slack_user_id}__`,
           name: spec.name,
           class: spec.class_label,
-          level: spec.level,
-          hp: spec.hp,
-          max_hp: spec.max_hp,
+          level: lvl,
+          hp: scaledHp,
+          max_hp: scaledHp,
           mana: 0,
           max_mana: 0,
           shield: 0,
           position: spec.position,
-          attack_mod: spec.attack_mod,
+          attack_mod: scaledAtk,
           magic_mod: 0,
-          weapon_power: spec.weapon_power,
+          weapon_power: scaledWep,
           focus_power: 0,
           weapon_range: spec.weapon_range,
           slack_username: null,
@@ -7148,9 +7185,18 @@ export class QuestRoom extends DurableObject<Env> {
     | { ok: true; state: CombatState; events: CombatEvent[]; outcome?: OutcomeSummary }
     | { ok: false; reason: string }
   > {
-    const state = await this.loadState(questId);
+    let state = await this.loadState(questId);
     if (!state) return { ok: false, reason: "no_combat" };
     if (state.status !== "active") return { ok: false, reason: "combat_ended" };
+
+    // If the persisted state already has a merc as the current actor (e.g. from
+    // a save before client-side auto-resolve was deployed), drain those first.
+    const currentActor = state.turn_order[state.turn_index % state.turn_order.length];
+    if (currentActor && isMercActor(currentActor)) {
+      const drained = drainMercTurns({ state, events: [] });
+      state = drained.state;
+      if (state.status !== "active") return { ok: false, reason: "combat_ended" };
+    }
 
     const raw = step(state, action, productionRoll);
     const combined = drainMercTurns(raw);

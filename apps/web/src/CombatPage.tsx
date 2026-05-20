@@ -1,6 +1,6 @@
 import { useEffect, useReducer, useRef, useState } from "react";
 import toast from "react-hot-toast";
-import { isMonsterActor } from "@gantt-quest/core";
+import { isMonsterActor, isMercActor } from "@gantt-quest/core";
 
 import { Avatar, Icon } from "./icons";
 import { CombatParticles, CombatParticlesProvider, triggerBurst } from "./CombatParticles";
@@ -30,6 +30,9 @@ import {
   isCombatUsable,
   lootIcon,
   HitDust,
+  HealBurst,
+  ShieldBurst,
+  ShieldGlow,
   CombatFighter,
   CombatItem,
 } from "./CombatShared";
@@ -784,6 +787,8 @@ export function CombatPage({
   // target id; the chip's HitDust component re-keys its WAAPI animation
   // on every change so consecutive hits each spawn a fresh puff cloud.
   const [hitDustSeq, setHitDustSeq] = useState<Record<string, number>>({});
+  const [healBurstSeq, setHealBurstSeq] = useState<Record<string, number>>({});
+  const [shieldBurstSeq, setShieldBurstSeq] = useState<Record<string, number>>({});
   // Delay victory modal until after dice settle so player sees the killing blow.
   const [victoryModalReady, setVictoryModalReady] = useState(false);
   const [defeatModalReady, setDefeatModalReady] = useState(false);
@@ -935,6 +940,14 @@ export function CombatPage({
                 toast(`${elemIcon} You're now ${evt.effect}! (${evt.duration}t)`, { duration: 3500 });
               }
             }
+            if (evt.type === "heal_applied" && typeof (evt as { target?: string }).target === "string") {
+              const tgt = (evt as { target: string }).target;
+              setHealBurstSeq((prev) => ({ ...prev, [tgt]: (prev[tgt] ?? 0) + 1 }));
+            }
+            if (evt.type === "shield_applied" && typeof (evt as { target?: string }).target === "string") {
+              const tgt = (evt as { target: string }).target;
+              setShieldBurstSeq((prev) => ({ ...prev, [tgt]: (prev[tgt] ?? 0) + 1 }));
+            }
             if (evt.type === "turn_skip") triggerBurst("frozen");
             if (evt.type === "victory") triggerBurst("victory");
             if (evt.type === "player_hit") triggerBurst("hit");
@@ -1001,23 +1014,24 @@ export function CombatPage({
     localStorage.setItem("combat_auto_resolve", String(autoResolve));
   }, [autoResolve]);
 
-  // Auto-resolve monster turn: fires monster_act ~800ms after the monster's turn
-  // becomes active, so the player still sees the turn transition before it resolves.
+  // Auto-resolve monster and merc turns: fires ~800ms after the turn becomes
+  // active so the player still sees the transition before it resolves.
   const { state: stateForAuto } = ui;
   useEffect(() => {
-    if (!autoResolveRef.current) return;
     if (!stateForAuto || stateForAuto.status !== "active") return;
     const actorId = stateForAuto.turn_order[stateForAuto.turn_index % stateForAuto.turn_order.length];
-    if (!isMonsterActor(actorId)) return;
+    const isNonPlayer = isMonsterActor(actorId) || isMercActor(actorId);
+    if (!isNonPlayer) return;
+    // Mercs always auto-resolve; monsters respect the autoResolve toggle.
+    if (isMonsterActor(actorId) && !autoResolveRef.current) return;
     if (autoResolvedTurnRef.current === stateForAuto.turn_index) return;
     const timer = setTimeout(() => {
-      if (!autoResolveRef.current) return;
-      const fired = send({ kind: "monster_act" });
+      if (isMonsterActor(actorId) && !autoResolveRef.current) return;
+      const action = isMercActor(actorId) ? { kind: "merc_act" as const } : { kind: "monster_act" as const };
+      const fired = send(action);
       if (fired) autoResolvedTurnRef.current = stateForAuto.turn_index;
     }, 800);
     return () => clearTimeout(timer);
-    // autoResolve is in deps so flipping the checkbox on while a monster turn
-    // is already active re-evaluates the effect and schedules a resolve.
   }, [stateForAuto?.turn_index, stateForAuto?.status, autoResolve]);
 
   function exit() {
@@ -1033,6 +1047,16 @@ export function CombatPage({
       ? state.turn_order[state.turn_index % state.turn_order.length]
       : null;
   const myTurn = currentActorId === selfId;
+  const isInactivePlayerTurn = !myTurn && currentActorId !== null && !isMonsterActor(currentActorId) && !isMercActor(currentActorId);
+
+  // Skip-turn button becomes active after 8 s of waiting on another player.
+  const [skipReady, setSkipReady] = useState(false);
+  useEffect(() => {
+    if (!isInactivePlayerTurn) { setSkipReady(false); return; }
+    const t = setTimeout(() => setSkipReady(true), 8000);
+    return () => clearTimeout(t);
+  }, [isInactivePlayerTurn, currentActorId]);
+
   const ended =
     state?.status === "victory" || state?.status === "defeat" || state?.status === "fled";
 
@@ -1239,7 +1263,7 @@ export function CombatPage({
       {/* Party chips row */}
       {state && (
         <div style={{ background: "rgba(10,11,14,0.92)", borderTop: "1px solid #1e2028", padding: "6px 10px", flexShrink: 0, zIndex: 8 }}>
-          <PartyChips fighters={state.fighters} selfId={selfId} flashIds={flashIds} hitDustSeq={hitDustSeq} onClickSelf={onOpenInventory} />
+          <PartyChips fighters={state.fighters} selfId={selfId} flashIds={flashIds} hitDustSeq={hitDustSeq} healBurstSeq={healBurstSeq} shieldBurstSeq={shieldBurstSeq} onClickSelf={onOpenInventory} />
         </div>
       )}
 
@@ -1296,8 +1320,28 @@ export function CombatPage({
         <div style={{ background: "rgba(10,11,14,0.92)", borderTop: "1px solid #1e2028", padding: isMobile ? "4px 6px 6px" : "8px 10px 10px", flexShrink: 0, display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", justifyContent: "center" }}>
           {/* Turn status hint */}
           {!myTurn && (
-            <div style={{ width: "100%", textAlign: "center", fontSize: 11, color: "#9aa0a6", fontStyle: "italic", paddingBottom: 2 }}>
-              {isMonsterTurn && !autoResolve ? "Enemy turn" : isMonsterTurn ? "Enemy turn — auto-resolving…" : `Waiting for ${state.fighters.find((f) => f.id === currentActorId)?.name ?? "another player"}…`}
+            <div style={{ width: "100%", textAlign: "center", fontSize: 11, color: "#9aa0a6", fontStyle: "italic", paddingBottom: 2, display: "flex", alignItems: "center", justifyContent: "center", gap: 10 }}>
+              <span>{isMonsterTurn && !autoResolve ? "Enemy turn" : isMonsterTurn ? "Enemy turn — auto-resolving…" : `Waiting for ${state.fighters.find((f) => f.id === currentActorId)?.name ?? "another player"}…`}</span>
+              {isInactivePlayerTurn && (
+                <button
+                  onClick={() => currentActorId && send({ kind: "wait", actor: currentActorId })}
+                  disabled={!skipReady}
+                  title={skipReady ? "Skip this player's turn" : "Available after 8 seconds"}
+                  style={{
+                    background: skipReady ? "#292d36" : "#1a1d23",
+                    border: `1px solid ${skipReady ? "#4a5568" : "#2a2d33"}`,
+                    borderRadius: 6,
+                    color: skipReady ? "#cbd5e1" : "#4a5568",
+                    fontSize: 11,
+                    fontFamily: "inherit",
+                    padding: "3px 10px",
+                    cursor: skipReady ? "pointer" : "not-allowed",
+                    transition: "all 0.3s ease",
+                  }}
+                >
+                  Skip turn
+                </button>
+              )}
             </div>
           )}
           <CBtn label="Attack" icon="sword" color="#b89b3a" disabled={!myTurn || (liveMonsters.length > 1 && targetMonsterId === null)} onClick={() => send({ kind: "attack", actor: selfId, target_id: effectiveTarget })} />
@@ -1718,6 +1762,7 @@ function PartySection({
   );
 }
 
+// Inject shield-particle keyframes once per page load.
 function FighterHpRow({ hp, maxHp, shield, armorPower }: { hp: number; maxHp: number; shield: number; armorPower: number }) {
   const pct = maxHp > 0 ? Math.max(0, Math.min(1, hp / maxHp)) : 0;
   const color = pct < 0.25 ? "#dc2626" : pct < 0.5 ? "#d97706" : "#16a34a";
@@ -1749,16 +1794,19 @@ function FighterRow({ fighter, self, current }: { fighter: Fighter; self: boolea
   return (
     <div
       style={{
+        position: "relative",
         padding: 12,
         background: "#1d1f23",
         borderRadius: 8,
-        border: current ? "1px solid #b89b3a" : self ? "1px solid #3a7bd5" : "1px solid transparent",
+        border: current ? "1px solid #b89b3a" : self ? "1px solid #3a7bd5" : fighter.shield > 0 ? "1px solid rgba(96,165,250,0.4)" : "1px solid transparent",
         opacity: down ? 0.5 : 1,
         display: "flex",
         gap: 12,
         alignItems: "stretch",
+        animation: fighter.shield > 0 && !down ? "gq-shield-pulse 2.5s ease-in-out infinite" : undefined,
       }}
     >
+      {fighter.shield > 0 && !down && <ShieldGlow />}
       <Avatar
         src={portrait}
         fallbackSrc={classPortraitUrl(fighter.class)}
@@ -2671,9 +2719,11 @@ function badge(bg: string, fg: string, border: string): React.CSSProperties {
 }
 
 // Compact party HP chips row below the room view.
-function PartyChips({ fighters, selfId, flashIds, hitDustSeq, onClickSelf }: {
+function PartyChips({ fighters, selfId, flashIds, hitDustSeq, healBurstSeq, shieldBurstSeq, onClickSelf }: {
   fighters: Fighter[]; selfId: string; flashIds: Set<string>;
   hitDustSeq: Record<string, number>;
+  healBurstSeq: Record<string, number>;
+  shieldBurstSeq: Record<string, number>;
   onClickSelf?: () => void;
 }) {
   const front = fighters.filter((f) => f.position === "front");
@@ -2694,16 +2744,18 @@ function PartyChips({ fighters, selfId, flashIds, hitDustSeq, onClickSelf }: {
           position: "relative",
           display: "flex", alignItems: "center", gap: 8,
           background: isSelf ? "rgba(245,245,220,0.09)" : "rgba(255,255,255,0.04)",
-          border: isSelf ? "1px solid rgba(245,245,220,0.22)" : "1px solid rgba(255,255,255,0.07)",
+          border: isSelf ? "1px solid rgba(245,245,220,0.22)" : f.shield > Math.floor(f.armor_power / 2) && f.hp > 0 ? "1px solid rgba(96,165,250,0.4)" : "1px solid rgba(255,255,255,0.07)",
+          animation: f.shield > Math.floor(f.armor_power / 2) && f.hp > 0 ? "gq-shield-pulse 2.5s ease-in-out infinite" : undefined,
           borderRadius: 8, padding: "5px 10px",
           opacity: f.hp <= 0 ? 0.45 : 1, flexShrink: 0,
           minWidth: 130,
           cursor: clickable ? "pointer" : "default",
         }}
       >
-        {/* Dust puff overlay — fires whenever this fighter's hit counter
-            bumps. Wile-E-Coyote dust cloud, drifts up + out, ~750ms. */}
         <HitDust seq={hitDustSeq[f.id] ?? 0} />
+        <HealBurst seq={healBurstSeq[f.id] ?? 0} />
+        <ShieldBurst seq={shieldBurstSeq[f.id] ?? 0} />
+        {f.shield > Math.floor(f.armor_power / 2) && f.hp > 0 && <ShieldGlow />}
         <Avatar src={charPortraitUrl(f.name)} fallbackSrc={classPortraitUrl(f.class)} alt={f.name} size={40} radius={5} fallbackIcon="player" fallbackColor="#4a5568" border="1px solid #2a2d33" />
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: 12, fontWeight: 600, color: "#e2e8f0", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{f.name}</div>
@@ -2713,9 +2765,9 @@ function PartyChips({ fighters, selfId, flashIds, hitDustSeq, onClickSelf }: {
           <div style={{ fontSize: 10, color: "#9aa0a6", marginTop: 2 }}>
             {f.hp}/{f.max_hp} HP
           </div>
-          {f.armor_power > 0 && (() => {
-            const armorMax = Math.floor(f.armor_power / 2);
-            const armorPct = armorMax > 0 ? Math.max(0, f.shield / armorMax) : 0;
+          {(f.armor_power > 0 || f.shield > 0) && (() => {
+            const armorMax = f.armor_power > 0 ? Math.floor(f.armor_power / 2) : f.shield;
+            const armorPct = armorMax > 0 ? Math.max(0, f.shield / armorMax) : 1;
             const depleted = f.shield === 0;
             return (
               <>
