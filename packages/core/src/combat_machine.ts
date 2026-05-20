@@ -45,6 +45,9 @@ import { deriveArmorBonus, deriveCritBonus, deriveDodgeChance, deriveInitiativeB
 export type ActorId = string;
 export const MONSTER_ID: ActorId = "__monster__";
 export const isMonsterActor = (id: ActorId): boolean => id === MONSTER_ID || id.startsWith("__monster_");
+// Merc IDs are "__merc_<hiring_user_id>__". Auto-resolved by the server; never
+// sent by web clients directly.
+export const isMercActor = (id: ActorId): boolean => id.startsWith("__merc_");
 
 export interface MachineStatusEffect {
   type: EffectType;
@@ -263,7 +266,8 @@ export type TurnAction =
       target?: ActorId;
       position?: BattlePosition;
     }
-  | { kind: "monster_act" };
+  | { kind: "monster_act" }
+  | { kind: "merc_act" };
 
 export type RollPurpose =
   | "initiative"
@@ -604,6 +608,8 @@ export function step(state: CombatState, action: TurnAction, roll: RollFn): Step
       // active, inject the intel refresh right before the turn_start divider so
       // the Sage sees fresh info at the top of their incoming turn.
       return withForeseeForNextActor(handleMonsterAct(state, roll), roll);
+    case "merc_act":
+      return handleMercAct(state, roll);
   }
 }
 
@@ -959,6 +965,98 @@ function handlePlayerHit(
     return resolveMonsterKill(nextState, monster.id, action.actor, events);
   }
 
+  return { state: advanceTurn(nextState), events: [...events, ...turnStartEvent(nextState)] };
+}
+
+// Auto-resolved merc turn: simple d20 to-hit then d6 damage swing at the
+// lowest-HP live monster. No class abilities, no crits, no mana. Server
+// fires this in a loop after each player/monster action whenever the next
+// actor is a merc, so the web client never sees a "pending merc turn".
+function handleMercAct(state: CombatState, roll: RollFn): StepResult {
+  const actorId = currentActor(state);
+  if (!actorId || !isMercActor(actorId)) {
+    return reject(state, "not a merc's turn");
+  }
+  const merc = state.fighters.find((f) => f.id === actorId);
+  if (!merc || merc.hp <= 0) {
+    const next = advanceTurn(state);
+    return { state: next, events: [...turnStartEvent(next)] };
+  }
+
+  const tick = tickAtTurnStart(state, actorId);
+  if (tick.earlyReturn) return tick.earlyReturn;
+  const s = tick.state;
+  const mercAfterTick = s.fighters.find((f) => f.id === actorId);
+  if (!mercAfterTick || mercAfterTick.hp <= 0) {
+    return tick.earlyReturn ?? { state: s, events: tick.events };
+  }
+
+  const events: CombatEvent[] = [...tick.events];
+
+  const monster = s.monsters.reduce<CombatMonster | null>((best, m) => {
+    if (m.hp <= 0) return best;
+    if (!best || m.hp < best.hp) return m;
+    return best;
+  }, null);
+
+  if (!monster) {
+    const next = advanceTurn(s);
+    return { state: next, events: [...events, ...turnStartEvent(next)] };
+  }
+
+  const ac = monsterAc(monster.tier);
+  const d20 = roll(20);
+  const total = d20 + mercAfterTick.attack_mod;
+  const landed = total >= ac;
+
+  events.push({ type: "roll", actor: actorId, die: "d20", value: d20, purpose: "hit_check" });
+  events.push({
+    type: "hit_check",
+    actor: actorId,
+    target: monster.id,
+    roll: d20,
+    modifier: mercAfterTick.attack_mod,
+    total,
+    ac,
+    hit: landed,
+  });
+
+  if (!landed) {
+    const next = advanceTurn(s);
+    return { state: next, events: [...events, ...turnStartEvent(next)] };
+  }
+
+  const hit = resolvePlayerHit("attack", mercAfterTick.attack_mod, mercAfterTick.weapon_power, roll);
+  events.push({ type: "roll", actor: actorId, die: "d6", value: hit.roll, purpose: "damage_attack" });
+
+  const { newShield: newMonsterShield, newHp, hpDamage: finalDamage } =
+    applyDamageWithShield(hit.damage, monster.shield, monster.hp);
+
+  events.push({
+    type: "player_hit",
+    actor: actorId,
+    target: monster.id,
+    damage: finalDamage,
+    armor_absorbed: monster.shield - newMonsterShield,
+    crit: hit.isCrit,
+    formula: `d6+${mercAfterTick.attack_mod}a+${mercAfterTick.weapon_power}w`,
+  });
+
+  const monsterKilled = newHp <= 0;
+  const nextState: CombatState = {
+    ...s,
+    monsters: s.monsters.map((m) =>
+      m.id === monster.id ? { ...m, hp: Math.max(0, newHp), shield: newMonsterShield } : m,
+    ),
+    contribution: {
+      ...s.contribution,
+      [actorId]: (s.contribution[actorId] ?? 0) + finalDamage,
+    },
+  };
+
+  if (monsterKilled) {
+    return resolveMonsterKill(nextState, monster.id, actorId, events);
+  }
   return { state: advanceTurn(nextState), events: [...events, ...turnStartEvent(nextState)] };
 }
 

@@ -110,6 +110,9 @@ export interface Character {
   created_at: number;
   last_active: number;
   notification_pref: "thread" | "dm";
+  // Pub merc slot — id from the MERCS catalog. Null when nobody is hired.
+  // Cleared when the active quest ends.
+  hired_merc_id: string | null;
 }
 
 interface CharacterRow extends Omit<Character, "scars" | "effects" | "drink_buff" | "achievements" | "pending_achievements"> {
@@ -3547,4 +3550,38 @@ export async function spendStatPoint(
     .run();
   if (result.meta.changes === 0) return null;
   return getCharacter(db, userId);
+}
+
+export async function setHiredMerc(
+  db: D1Database,
+  userId: string,
+  mercId: string,
+): Promise<void> {
+  await db
+    .prepare("UPDATE characters SET hired_merc_id = ? WHERE slack_user_id = ?")
+    .bind(mercId, userId)
+    .run();
+}
+
+export async function clearHiredMerc(
+  db: D1Database,
+  userId: string,
+): Promise<void> {
+  await db
+    .prepare("UPDATE characters SET hired_merc_id = NULL WHERE slack_user_id = ?")
+    .bind(userId)
+    .run();
+}
+
+export async function clearHiredMercForParty(
+  db: D1Database,
+  questId: number,
+): Promise<void> {
+  await db
+    .prepare(
+      `UPDATE characters SET hired_merc_id = NULL
+         WHERE slack_user_id IN (SELECT character_id FROM quest_party WHERE quest_id = ?)`,
+    )
+    .bind(questId)
+    .run();
 }

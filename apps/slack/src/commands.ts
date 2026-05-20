@@ -177,6 +177,8 @@ import {
   setCharacterHpAndShield,
   setPosition,
   sharpenItem,
+  setHiredMerc,
+  clearHiredMerc,
   spendStatPoint,
   transferItem,
   trySaveExpeditionAdvance,
@@ -228,6 +230,8 @@ import {
   BARTENDER_ARCHETYPES,
   CLASSES,
   DRINKS,
+  MERCS,
+  findMerc,
   EFFECT_META,
   FOCUS_MAX_MANA_BONUS,
   REGULAR_ARCHETYPES,
@@ -282,6 +286,7 @@ import {
   type TurnAction,
   type CombatEvent,
   isMonsterActor,
+  isMercActor,
   checkCombatAchievements,
   checkDeathAchievements,
   checkLiarsAchievements,
@@ -1043,6 +1048,13 @@ export async function handleInteraction(
     const drinkId = action.action_id.slice("pub_drink_".length);
     return handlePubDrink(slash, env, ctx, drinkId);
   }
+  // Merc hire buttons. action_id format: pub_hire_<merc_id>.
+  if (action.action_id.startsWith("pub_hire_")) {
+    const mercId = action.action_id.slice("pub_hire_".length);
+    return handlePubHireMerc(slash, env, mercId);
+  }
+  // Merc dismiss button.
+  if (action.action_id === "pub_dismiss_merc") return handlePubDismissMerc(slash, env);
   // NPC dialog buttons. Two formats:
   //   pub_talk_<npc_id>                       → root of the tree
   //   pub_talk_<npc_id>__<path_idx_underscored> → walk to that branch
@@ -4070,7 +4082,7 @@ async function dispatchTurnNotification(
   if (status !== "active") return;
   const turnStart = events.find(
     (e): e is Extract<CombatEvent, { type: "turn_start" }> =>
-      e.type === "turn_start" && !isMonsterActor(e.actor),
+      e.type === "turn_start" && !isMonsterActor(e.actor) && !isMercActor(e.actor),
   );
   if (!turnStart) return;
   const actorChar = await getCharacter(env.DB, turnStart.actor);
@@ -5202,6 +5214,10 @@ async function resolveVictory(
   clearJoinableCard(env, quest);
   await markQuestStatus(env.DB, quest.id, "completed");
   await clearPartyEffects(env.DB, quest.id);
+  // Release hired mercs — per-quest only.
+  for (const f of fighters) {
+    if (f.hired_merc_id) await clearHiredMerc(env.DB, f.slack_user_id);
+  }
   await appendLog(env.DB, quest.id, payload.user_id, "victory", `+${xpEach}xp/+${goldEach}g × ${fighters.length}, ${lootRolls.length} drops`);
 
   const bonusTag = bonus > 0 ? " _(📋 +12% job board bonus)_" : "";
@@ -6230,6 +6246,10 @@ async function resolveDeath(
     clearJoinableCard(env, quest);
     await markQuestStatus(env.DB, quest.id, "failed");
     await clearPartyEffects(env.DB, quest.id);
+    // Release hired mercs — per-quest only.
+    for (const f of fightersBefore) {
+      if (f.hired_merc_id) await clearHiredMerc(env.DB, f.slack_user_id);
+    }
     ephemeralLines.push(`☠️ The party is broken. Quest fails.`);
   } else {
     ephemeralLines.push(
@@ -7757,6 +7777,37 @@ async function handlePub(
     ],
   });
 
+  // Mercs for hire section
+  blocks.push({ type: "divider" });
+  blocks.push({ type: "section", text: { type: "mrkdwn", text: `*⚔️ Looking for Work*\n_Hire a merc to fight alongside you. One at a time. Gone when the quest ends._` } });
+
+  if (character.hired_merc_id) {
+    const hired = findMerc(character.hired_merc_id);
+    const hiredLine = hired
+      ? `_You've got *${hired.name}* under contract (${hired.cost}g paid). They'll join your next fight._`
+      : `_You have a merc under contract._`;
+    blocks.push({ type: "section", text: { type: "mrkdwn", text: hiredLine } });
+    blocks.push({
+      type: "actions",
+      elements: [
+        { type: "button", action_id: "pub_dismiss_merc", value: "dismiss", text: { type: "plain_text", text: "🚪 Dismiss merc", emoji: true }, style: "danger" },
+      ],
+    });
+  } else {
+    for (const m of MERCS) {
+      blocks.push({
+        type: "section",
+        text: { type: "mrkdwn", text: `⚔️ *${m.name}* _(${m.class_label}, Lv${m.level})_ — ${m.blurb}\n${m.hp}HP · +${m.attack_mod} atk · ${m.weapon_power}wp · ${m.position} row` },
+        accessory: {
+          type: "button",
+          action_id: `pub_hire_${m.id}`,
+          value: m.id,
+          text: { type: "plain_text", text: `Hire — ${m.cost}g`, emoji: true },
+        },
+      });
+    }
+  }
+
   blocks.push({ type: "divider" });
   blocks.push({
     type: "actions",
@@ -8455,6 +8506,52 @@ async function handleLiarsDecide(
 // =============================================================================
 //
 // `/sq pub lb` or pub-view button. Channel-scoped ranking by net gold
+async function handlePubHireMerc(
+  payload: SlashCommandPayload,
+  env: Env,
+  mercId: string,
+): Promise<CommandResponse> {
+  const character = await getCharacter(env.DB, payload.user_id);
+  if (!character) return ephemeral("You need to roll a character first.");
+
+  const activeQuest = await getActiveQuestForCharacter(env.DB, payload.user_id);
+  if (activeQuest) return ephemeral("You can't hire while on a quest. Finish the fight first.");
+
+  const spec = findMerc(mercId);
+  if (!spec) return ephemeral("That merc doesn't seem to be around anymore.");
+
+  if (character.hired_merc_id) {
+    const current = findMerc(character.hired_merc_id);
+    return ephemeral(`You already have *${current?.name ?? "a merc"}* under contract. Dismiss them first.`);
+  }
+
+  if (character.gold < spec.cost) {
+    return ephemeral(`Not enough gold. *${spec.name}* wants *${spec.cost}g* and you have ${character.gold}g.`);
+  }
+
+  await tryDeductGold(env.DB, payload.user_id, spec.cost);
+  await setHiredMerc(env.DB, payload.user_id, spec.id);
+
+  return ephemeral(
+    `⚔️ *${spec.name}* takes your coin with a nod. They'll fight alongside you on your next quest.\n_${spec.blurb}_`,
+  );
+}
+
+async function handlePubDismissMerc(
+  payload: SlashCommandPayload,
+  env: Env,
+): Promise<CommandResponse> {
+  const character = await getCharacter(env.DB, payload.user_id);
+  if (!character) return ephemeral("You need to roll a character first.");
+
+  if (!character.hired_merc_id) return ephemeral("You don't have anyone under contract.");
+
+  const spec = findMerc(character.hired_merc_id);
+  await clearHiredMerc(env.DB, payload.user_id);
+
+  return ephemeral(`🚪 ${spec ? `*${spec.name}* tips their head and walks out.` : "Your merc has been dismissed."} No refund.`);
+}
+
 // across all Liars' Roll + SPD matches + SPD side bets. Top 10 by net
 // P/L, with a highlighted biggest-single-win and biggest-single-loss
 // callout below to give the rest of the channel some bragging-and-

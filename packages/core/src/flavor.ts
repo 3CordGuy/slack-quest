@@ -889,6 +889,100 @@ export function findDrink(query: string): DrinkSpec | undefined {
   );
 }
 
+// Mercenaries for hire at the pub. Always available — they never "run out".
+// Per-quest: cleared from the character when the quest ends.
+export interface MercSpec {
+  id: string;
+  name: string;
+  blurb: string;           // one-liner shown on the pub hire card
+  cost: number;            // gold to hire
+  class_label: string;     // display-only class name (not a real CharClass)
+  level: number;
+  hp: number;
+  max_hp: number;
+  attack_mod: number;
+  weapon_power: number;
+  position: "front" | "back";
+  weapon_range: "melee" | "ranged";
+}
+
+export const MERCS: MercSpec[] = [
+  {
+    id: "sellsword",
+    name: "Dan A.",
+    blurb: "Reduces complexity to zero damage. Very approachable.",
+    cost: 20,
+    class_label: "State Manager",
+    level: 3,
+    hp: 18,
+    max_hp: 18,
+    attack_mod: 2,
+    weapon_power: 3,
+    position: "front",
+    weapon_range: "melee",
+  },
+  {
+    id: "bowyer",
+    name: "Rich H.",
+    blurb: "No virtual DOM, no mercy. Compiles down to raw hits.",
+    cost: 40,
+    class_label: "Compiler",
+    level: 5,
+    hp: 15,
+    max_hp: 15,
+    attack_mod: 3,
+    weapon_power: 4,
+    position: "back",
+    weapon_range: "ranged",
+  },
+  {
+    id: "heavy",
+    name: "DHH",
+    blurb: "Convention over consultation. You'll take it.",
+    cost: 40,
+    class_label: "Framework Opinionator",
+    level: 5,
+    hp: 30,
+    max_hp: 30,
+    attack_mod: 2,
+    weapon_power: 4,
+    position: "front",
+    weapon_range: "melee",
+  },
+  {
+    id: "blade",
+    name: "Brendan E.",
+    blurb: "Shipped a language in 10 days. Probably fine.",
+    cost: 80,
+    class_label: "Language Architect",
+    level: 8,
+    hp: 22,
+    max_hp: 22,
+    attack_mod: 5,
+    weapon_power: 6,
+    position: "front",
+    weapon_range: "melee",
+  },
+  {
+    id: "uncle_bob",
+    name: "Uncle Bob",
+    blurb: "SOLID principles. Five of them. He will use all five.",
+    cost: 60,
+    class_label: "Clean Coder",
+    level: 7,
+    hp: 20,
+    max_hp: 20,
+    attack_mod: 4,
+    weapon_power: 5,
+    position: "back",
+    weapon_range: "ranged",
+  },
+];
+
+export function findMerc(id: string): MercSpec | undefined {
+  return MERCS.find((m) => m.id === id);
+}
+
 // Pre-baked NPC dialog tree. AI generates the whole tree at town refresh
 // time (one call per NPC), then players navigate it via button clicks.
 // Three levels deep is the default: opening + 3 options × (reply + 2-3

@@ -71,6 +71,9 @@ import {
   mergeEffect,
   MONSTER_ID,
   isMonsterActor,
+  isMercActor,
+  MERCS,
+  findMerc,
   MONSTER_ELEMENT_AFFINITY_CHANCE,
   type CombatEvent,
   type CombatFighter,
@@ -173,6 +176,9 @@ import {
   spendStatPoint,
   setCharacterHpAndShield,
   setNotificationPref,
+  setHiredMerc,
+  clearHiredMerc,
+  clearHiredMercForParty,
   setQuestMode,
   setQuestThreadTs,
   trySaveExpeditionAdvance,
@@ -4655,7 +4661,8 @@ app.post("/api/quest/:id/start_web_combat", async (c) => {
   // the DO's bootstrapFromSlack path so both surfaces seed identically.
   const seededWithBuffs = await seedDrinkBuffs(c.env.DB, built.seeded);
   const begun = step(seededWithBuffs, { kind: "begin" }, productionRoll);
-  await saveWebCombatState(c.env.DB, questId, begun.state);
+  const afterMercs = drainMercTurns(begun);
+  await saveWebCombatState(c.env.DB, questId, afterMercs.state);
   // Lock the quest into web mode so Slack combat handlers refuse further
   // /sq attack actions on it. Once flipped to 'web' it stays there for the
   // life of this quest (no automatic unlock on web combat end — the quest
@@ -4672,7 +4679,7 @@ app.post("/api/quest/:id/start_web_combat", async (c) => {
       .notifyCombatStarted(questId)
       .catch((err) => console.warn("notifyCombatStarted failed", err)),
   );
-  return c.json({ quest_id: questId, state: begun.state });
+  return c.json({ quest_id: questId, state: afterMercs.state });
 });
 
 // Mirrors slack's pickNextRoom — picks where the party heads after the
@@ -6081,7 +6088,10 @@ async function applyWebCombatOutcome(
   // a fight's pool while damage dealers got ~70%. With 40/60 the spread
   // tightens to roughly 22–27% support vs 50–55% top dealer.
   const PARTICIPATION_POOL_PCT = 0.4;
-  const contributions = state.fighters.map((f) => {
+  // Mercs are excluded from reward calculations — they deal damage but earn
+  // nothing and don't count toward the party-size pool.
+  const humanFighters = state.fighters.filter((f) => !isMercActor(f.id));
+  const contributions = humanFighters.map((f) => {
     const fs = state.stats?.[f.id] ?? { damage_taken: 0, healing_done: 0, shielding_done: 0, kills: 0 };
     const supportCredit = Math.floor(fs.healing_done * 3 / 4) + Math.floor(fs.shielding_done / 2);
     return {
@@ -6096,7 +6106,7 @@ async function applyWebCombatOutcome(
   const xpShares: Record<string, number> = {};
   const goldShares: Record<string, number> = {};
   if (won) {
-    const partySize = state.fighters.length || 1;
+    const partySize = humanFighters.length || 1;
     const participationXp = Math.floor(totalPoolXp * PARTICIPATION_POOL_PCT);
     const participationGold = Math.floor(totalPoolGold * PARTICIPATION_POOL_PCT);
     const contributionXp = totalPoolXp - participationXp;
@@ -6125,7 +6135,7 @@ async function applyWebCombatOutcome(
 
   const rewards: FighterReward[] = [];
 
-  for (const fighter of state.fighters) {
+  for (const fighter of humanFighters) {
     const dmg = state.contribution[fighter.id] ?? 0;
     let xpAwarded = 0;
     let goldAwarded = 0;
@@ -6345,8 +6355,8 @@ async function applyWebCombatOutcome(
       const bossNode = parsedScene.graph.nodes[parsedScene.graph.current];
       const bossContent = bossNode?.content;
       if (bossContent?.kind === "boss" && bossContent.treasure?.length) {
-        const survivors = state.fighters.filter((f) => f.hp > 0);
-        if (survivors.length === 0) survivors.push(state.fighters[0]); // edge: pyrrhic — give to first fighter
+        const survivors = humanFighters.filter((f) => f.hp > 0);
+        if (survivors.length === 0 && humanFighters.length > 0) survivors.push(humanFighters[0]); // edge: pyrrhic
         for (let i = 0; i < bossContent.treasure.length; i++) {
           const item = bossContent.treasure[i];
           const recipient = survivors[i % survivors.length];
@@ -6378,6 +6388,7 @@ async function applyWebCombatOutcome(
         }
       }
       await markQuestStatus(env.DB, questId, "completed");
+      await clearHiredMercForParty(env.DB, questId);
       // Skip advanceExpeditionAfterWebCombat — grid dungeons don't use it.
       return {
         status: state.status as "victory" | "defeat",
@@ -6409,6 +6420,7 @@ async function applyWebCombatOutcome(
     }
   } else {
     await markQuestStatus(env.DB, questId, won ? "completed" : "failed");
+    await clearHiredMercForParty(env.DB, questId);
   }
 
   return {
@@ -6532,6 +6544,24 @@ interface WsAttachment {
 }
 
 const productionRoll: RollFn = (sides) => Math.floor(Math.random() * sides) + 1;
+
+// Consumes any consecutive merc turns at the head of the queue so the
+// resulting state always presents a player or monster as the current actor.
+// Called after `begin` (high-initiative merc) and inside `serverAction`
+// (merc slot immediately follows the acted fighter).
+function drainMercTurns(
+  result: { state: CombatState; events: CombatEvent[] },
+): { state: CombatState; events: CombatEvent[] } {
+  let cur = result;
+  let safety = 0;
+  while (cur.state.status === "active" && safety++ < 10) {
+    const actor = cur.state.turn_order[cur.state.turn_index % cur.state.turn_order.length];
+    if (!actor || !isMercActor(actor)) break;
+    const next = step(cur.state, { kind: "merc_act" }, productionRoll);
+    cur = { state: next.state, events: [...cur.events, ...next.events] };
+  }
+  return cur;
+}
 
 const ELEMENT_TYPES: ElementType[] = ["fire", "ice", "lightning"];
 
@@ -6724,6 +6754,35 @@ async function buildInitialCombatState(
           ? weapon.rarity : undefined),
       resistances: Object.keys(resistances).length > 0 ? resistances : undefined,
     });
+
+    // Inject hired merc as an additional CombatFighter for this member.
+    // Merc ID is __merc_<user_id>__ so multiple party members can each bring
+    // a different merc without ID collisions.
+    if (member.hired_merc_id) {
+      const spec = findMerc(member.hired_merc_id);
+      if (spec) {
+        fighters.push({
+          id: `__merc_${member.slack_user_id}__`,
+          name: spec.name,
+          class: spec.class_label,
+          level: spec.level,
+          hp: spec.hp,
+          max_hp: spec.max_hp,
+          mana: 0,
+          max_mana: 0,
+          shield: 0,
+          position: spec.position,
+          attack_mod: spec.attack_mod,
+          magic_mod: 0,
+          weapon_power: spec.weapon_power,
+          focus_power: 0,
+          weapon_range: spec.weapon_range,
+          slack_username: null,
+          armor_power: 0,
+          scars: [],
+        });
+      }
+    }
   }
 
   // Grid dungeon: read the full monster array from the current node's
@@ -7093,13 +7152,15 @@ export class QuestRoom extends DurableObject<Env> {
     if (!state) return { ok: false, reason: "no_combat" };
     if (state.status !== "active") return { ok: false, reason: "combat_ended" };
 
-    const result = step(state, action, productionRoll);
+    const raw = step(state, action, productionRoll);
+    const combined = drainMercTurns(raw);
+    const allEvents = combined.events;
     try {
-      const outcome = await this.handleStepResult(questId, state, result);
+      const outcome = await this.handleStepResult(questId, state, combined);
       return {
         ok: true,
-        state: result.state,
-        events: result.events,
+        state: combined.state,
+        events: allEvents,
         outcome: outcome ?? undefined,
       };
     } catch (err) {
@@ -7146,18 +7207,21 @@ export class QuestRoom extends DurableObject<Env> {
     const seededWithBuffs = await seedDrinkBuffs(this.env.DB, built.seeded);
 
     const begun = step(seededWithBuffs, { kind: "begin" }, productionRoll);
-    const newLog = this.appendLog(begun.events);
-    await saveWebCombatState(this.env.DB, questId, begun.state, newLog);
-    this.cacheState = begun.state;
+    // If the merc rolled highest initiative, auto-process their opening turn(s)
+    // so the state always starts with a player or monster as the current actor.
+    const afterMercs = drainMercTurns({ state: begun.state, events: begun.events });
+    const newLog = this.appendLog(afterMercs.events);
+    await saveWebCombatState(this.env.DB, questId, afterMercs.state, newLog);
+    this.cacheState = afterMercs.state;
     this.cacheQuestId = questId;
 
     // Broadcast to any web clients that may already be connected (e.g. a
     // user who opened the web app expecting to start combat but a Slack
     // user got there first).
-    this.broadcast({ type: "state", state: begun.state });
-    this.broadcast({ type: "events", events: begun.events });
+    this.broadcast({ type: "state", state: afterMercs.state });
+    this.broadcast({ type: "events", events: afterMercs.events });
 
-    return { ok: true, state: begun.state, events: begun.events, created: true };
+    return { ok: true, state: afterMercs.state, events: afterMercs.events, created: true };
   }
 
   // Patches the in-memory CombatState when a new fighter joins a quest that
@@ -7805,7 +7869,7 @@ export class QuestRoom extends DurableObject<Env> {
     if (!this.env.SLACK_BOT_TOKEN) return;
     const turnStart = events.find(
       (e): e is Extract<CombatEvent, { type: "turn_start" }> =>
-        e.type === "turn_start" && !isMonsterActor(e.actor),
+        e.type === "turn_start" && !isMonsterActor(e.actor) && !isMercActor(e.actor),
     );
     if (!turnStart) return;
     const token = this.env.SLACK_BOT_TOKEN;
