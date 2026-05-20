@@ -3643,7 +3643,37 @@ app.get("/api/pub", async (c) => {
   }
 
   const art_url = await getOrScheduleViewArt(c.env.AI, artTarget(c.env), c.executionCtx, "pub_interior", undefined, TOWN_WEEKLY_MS);
-  return c.json({ drinks: drinksWithPrice, drink_buff: drinkBuff, gold: character.gold, spd: spdData, art_url, drinks_remaining: drinksRemaining, npcs, leaderboard });
+  const hired_merc = character.hired_merc_id ? (findMerc(character.hired_merc_id) ?? null) : null;
+  return c.json({ drinks: drinksWithPrice, drink_buff: drinkBuff, gold: character.gold, spd: spdData, art_url, drinks_remaining: drinksRemaining, npcs, leaderboard, mercs: MERCS, hired_merc });
+});
+
+// POST /api/pub/hire/:mercId — hire a mercenary from the pub.
+app.post("/api/pub/hire/:mercId", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const character = await getCharacter(c.env.DB, session.slack_user_id);
+  if (!character) return c.json({ error: "no_character" }, 404);
+  const activeQuest = await getActiveQuestForCharacter(c.env.DB, session.slack_user_id);
+  if (activeQuest) return c.json({ error: "mid_quest" }, 400);
+  if (character.hired_merc_id) return c.json({ error: "already_hired" }, 400);
+
+  const mercId = c.req.param("mercId");
+  const spec = findMerc(mercId);
+  if (!spec) return c.json({ error: "unknown_merc" }, 404);
+
+  const paid = await tryDeductGold(c.env.DB, session.slack_user_id, spec.cost);
+  if (!paid) return c.json({ error: "insufficient_gold" }, 400);
+
+  await setHiredMerc(c.env.DB, session.slack_user_id, mercId);
+  return c.json({ ok: true });
+});
+
+// POST /api/pub/dismiss-merc — dismiss your hired mercenary (no refund).
+app.post("/api/pub/dismiss-merc", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  await clearHiredMerc(c.env.DB, session.slack_user_id);
+  return c.json({ ok: true });
 });
 
 // POST /api/pub/drink/:drinkId — order a drink. Deducts gold, applies the

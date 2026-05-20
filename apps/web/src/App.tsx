@@ -624,6 +624,21 @@ interface PubLeaderboardEntry {
   net: number;
 }
 
+interface MercSpec {
+  id: string;
+  name: string;
+  blurb: string;
+  cost: number;
+  class_label: string;
+  level: number;
+  hp: number;
+  max_hp: number;
+  attack_mod: number;
+  weapon_power: number;
+  position: "front" | "back";
+  weapon_range: "melee" | "ranged";
+}
+
 interface PubResponse {
   drinks: DrinkItem[];
   drink_buff: DrinkBuff | null;
@@ -634,6 +649,8 @@ interface PubResponse {
   error?: string;
   npcs?: { bartender: PubNpc | null; regulars: PubNpc[] };
   leaderboard?: PubLeaderboardEntry[];
+  mercs?: MercSpec[];
+  hired_merc?: MercSpec | null;
 }
 
 // Liars' Roll pending state (after start, before decide)
@@ -1598,6 +1615,24 @@ export function App() {
     void refresh();
   }
 
+  async function hireMerc(mercId: string) {
+    const { ok, body } = await postJson(`/api/pub/hire/${mercId}`, { method: "POST" });
+    if (!ok) {
+      if (body?.error === "insufficient_gold") toast.error("Not enough gold.");
+      else if (body?.error === "already_hired") toast.error("You already have a merc.");
+      return;
+    }
+    toast.success("Merc hired! They'll fight with you next quest.");
+    void refreshPub();
+  }
+
+  async function dismissMerc() {
+    const { ok } = await postJson("/api/pub/dismiss-merc", { method: "POST" });
+    if (!ok) return;
+    toast.success("Merc dismissed.");
+    void refreshPub();
+  }
+
   async function shopBuyStaple(stapleId: string) {
     const { ok, body } = await postJson(`/api/shop/staple/${stapleId}/buy`, { method: "POST" });
     if (!ok) return;
@@ -1839,6 +1874,8 @@ export function App() {
               pub={state.pub}
               navOverlay={townNav}
               onBuyDrink={buyDrink}
+              onHireMerc={hireMerc}
+              onDismissMerc={dismissMerc}
               onRefresh={refreshPub}
             />
             <LiarsRollCard gold={state.pub.gold} onRefresh={refreshPub} />
@@ -6954,11 +6991,15 @@ function PubCard({
   pub,
   navOverlay,
   onBuyDrink,
+  onHireMerc,
+  onDismissMerc,
   onRefresh,
 }: {
   pub: PubResponse;
   navOverlay?: React.ReactNode;
   onBuyDrink: (drinkId: string) => void;
+  onHireMerc: (mercId: string) => void;
+  onDismissMerc: () => void;
   onRefresh: () => Promise<void>;
 }) {
   return (
@@ -7053,6 +7094,88 @@ function PubCard({
           ))}
         </div>
       </div>
+
+      {/* Mercs for hire */}
+      {pub.mercs && pub.mercs.length > 0 && (
+        <div style={{ marginTop: 20 }}>
+          <div style={{ ...muted, fontSize: 11, textTransform: "uppercase", letterSpacing: 1.5, marginBottom: 10 }}>
+            ⚔️ Looking for Work
+          </div>
+          {pub.hired_merc ? (
+            <div style={{
+              padding: "12px 14px",
+              background: "#1a2212",
+              border: "1px solid #3a5a22",
+              borderRadius: 8,
+              display: "flex",
+              alignItems: "center",
+              gap: 12,
+            }}>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontWeight: 700, color: "#a3e635", fontSize: 14, fontFamily: DISPLAY_FONT }}>
+                  {pub.hired_merc.name}
+                  <span style={{ marginLeft: 8, fontWeight: 400, fontSize: 11, color: "#86efac" }}>
+                    Lv.{pub.hired_merc.level} {pub.hired_merc.class_label}
+                  </span>
+                </div>
+                <div style={{ ...muted, fontSize: 12, marginTop: 2 }}>{pub.hired_merc.blurb}</div>
+                <div style={{ fontSize: 11, color: "#86efac", marginTop: 4 }}>
+                  Hired · fights with you next quest
+                </div>
+              </div>
+              <button
+                onClick={onDismissMerc}
+                style={{ ...smallActionBtn("#2a1212", "#fca5a5"), flexShrink: 0 }}
+              >
+                Dismiss
+              </button>
+            </div>
+          ) : (
+            <div style={{ display: "grid", gap: 8 }}>
+              {pub.mercs.map((m) => (
+                <div
+                  key={m.id}
+                  style={{
+                    padding: "10px 12px",
+                    background: "#1d1f23",
+                    borderRadius: 8,
+                    border: "1px solid transparent",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 10,
+                  }}
+                >
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontWeight: 600, color: "#f5f5f5", fontSize: 14, fontFamily: DISPLAY_FONT, display: "flex", alignItems: "center", gap: 6 }}>
+                      {m.name}
+                      <span style={{ fontSize: 11, color: "#94a3b8", fontWeight: 400 }}>
+                        Lv.{m.level} {m.class_label} · {m.position} · {m.weapon_range}
+                      </span>
+                    </div>
+                    <div style={{ ...muted, fontSize: 12, marginTop: 2 }}>{m.blurb}</div>
+                  </div>
+                  <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4, flexShrink: 0 }}>
+                    <div style={{ fontVariantNumeric: "tabular-nums", fontWeight: 600, color: "#fbbf24", fontSize: 14 }}>
+                      {m.cost}g
+                    </div>
+                    <button
+                      onClick={() => onHireMerc(m.id)}
+                      disabled={pub.gold < m.cost}
+                      style={{
+                        ...smallActionBtn(pub.gold >= m.cost ? "#1f2a3a" : "#222428", pub.gold >= m.cost ? "#7dd3fc" : "#7a7d83"),
+                        opacity: pub.gold >= m.cost ? 1 : 0.6,
+                        cursor: pub.gold >= m.cost ? "pointer" : "not-allowed",
+                      }}
+                    >
+                      Hire
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* At the Bar — NPC conversations */}
       {pub.npcs && (pub.npcs.bartender || pub.npcs.regulars.length > 0) && (
