@@ -1086,7 +1086,12 @@ async function generateAndCacheArt(
     console.log("art:done", { label, key, size: bytes.byteLength });
     return publicUrl;
   } catch (err) {
-    console.error("art:error", { label, key, err: err instanceof Error ? err.message : String(err) });
+    const msg = err instanceof Error ? err.message : String(err);
+    if (msg.toLowerCase().includes("remotely")) {
+      console.log("art:skipped (AI binding requires remote)", { label });
+    } else {
+      console.error("art:error", { label, key, err: msg });
+    }
     return null;
   }
 }

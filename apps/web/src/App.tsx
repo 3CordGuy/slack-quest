@@ -4927,6 +4927,20 @@ function KeyActionsPanel({
 // Full-bleed hero image with a nav ribbon overlaid at the top.
 // Used by full-screen town sections (pub, shop, inn, smithy).
 // card padding is 32px, so we bleed -32px on each edge.
+const ART_PLACEHOLDERS: Record<string, { bg: string; icon: string; color: string }> = {
+  "Shop":       { bg: "#1e1a0d", icon: "gold-bar",              color: "#c9a227" },
+  "The Inn":    { bg: "#1a1510", icon: "bed",                   color: "#c4956a" },
+  "The Smithy": { bg: "#1e1208", icon: "anvil",                 color: "#e07840" },
+  "The Pub":    { bg: "#1a1608", icon: "beer-stein",            color: "#d4a53a" },
+  "Apothecary": { bg: "#140f22", icon: "potion-ball",           color: "#9a6fcd" },
+  "Inventory":  { bg: "#0f1620", icon: "cubes",                 color: "#5c9bd6" },
+  "Outskirts":  { bg: "#0d1a10", icon: "run",                   color: "#5da85a" },
+};
+const DEFAULT_ART_PLACEHOLDER = { bg: "#111318", icon: "perspective-dice-six", color: "#555b6a" };
+function artPlaceholder(key: string) {
+  return ART_PLACEHOLDERS[key] ?? DEFAULT_ART_PLACEHOLDER;
+}
+
 function LocationHero({
   src,
   label,
@@ -4938,6 +4952,7 @@ function LocationHero({
   nav: React.ReactNode;
   flush?: boolean;
 }) {
+  const ph = artPlaceholder(label);
   return (
     <div style={{
       ...(flush
@@ -4949,8 +4964,10 @@ function LocationHero({
           }),
       overflow: "hidden",
       position: "relative",
-      background: "#0d0d10",
-      ...(src ? { aspectRatio: "16/7" } : { minHeight: 56 }),
+      background: src ? "#0d0d10" : ph.bg,
+      ...(src
+        ? { aspectRatio: "16/7" }
+        : { minHeight: 120, display: "flex", alignItems: "center", justifyContent: "center" }),
     }}>
       {src && (
         <img
@@ -4960,6 +4977,7 @@ function LocationHero({
           onError={(e) => { e.currentTarget.style.display = "none"; }}
         />
       )}
+      {!src && <Icon name={ph.icon} size={40} color={ph.color} style={{ opacity: 0.3, marginTop: 24 }} />}
       <div style={{
         position: "absolute", top: 0, left: 0, right: 0,
         background: "rgba(10,11,14,0.6)",
@@ -4987,7 +5005,23 @@ function LocationHero({
 function Banner({ src, alt }: { src: string | null | undefined; alt: string }) {
   const [open, setOpen] = useState(false);
   const [hovered, setHovered] = useState(false);
-  if (!src) return null;
+  if (!src) {
+    const ph = artPlaceholder(alt);
+    return (
+      <div style={{
+        width: "calc(100% + 32px)",
+        margin: "-16px -16px 12px",
+        aspectRatio: "3 / 2",
+        borderRadius: "8px 8px 0 0",
+        background: ph.bg,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+      }}>
+        <Icon name={ph.icon} size={52} color={ph.color} style={{ opacity: 0.3 }} />
+      </div>
+    );
+  }
   return (
     <>
       <div
