@@ -211,6 +211,83 @@ export function HitDust({ seq }: { seq: number }) {
   );
 }
 
+// ─── HealBurst ───────────────────────────────────────────────────────────────
+// Heart particles that float upward from a fighter card on heal events.
+// Same WAAPI pattern as HitDust — mount inside a `position: relative`
+// container and bump `seq` from the heal_applied WS event handler.
+
+const HEAL_COUNT = 8;
+// ♥ as a text particle — rendered via a span with fontSize so it scales
+// the same across DPRs without needing SVG or canvas.
+const HEART_COLORS = ["#f472b6", "#fb7185", "#f9a8d4", "#4ade80", "#86efac"];
+
+export function HealBurst({ seq }: { seq: number }) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (seq <= 0) return;
+    const root = ref.current;
+    if (!root) return;
+    const els = Array.from(root.querySelectorAll<HTMLSpanElement>("[data-gq-heal]"));
+    for (const el of els) {
+      // Hearts fan upward with a slight horizontal scatter.
+      const xJitter = (Math.random() - 0.5) * 50;
+      const yTravel = -(45 + Math.random() * 40);
+      el.animate(
+        [
+          { transform: `translate(-50%, -50%) translate(${xJitter * 0.2}px, 0px) scale(0)`, opacity: 0 },
+          { transform: `translate(-50%, -50%) translate(${xJitter * 0.6}px, ${yTravel * 0.5}px) scale(1.3)`, opacity: 1, offset: 0.25 },
+          { transform: `translate(-50%, -50%) translate(${xJitter}px, ${yTravel}px) scale(0.8)`, opacity: 0 },
+        ],
+        {
+          duration: 700 + Math.random() * 300,
+          delay: Math.random() * 120,
+          easing: "cubic-bezier(0.22, 1, 0.36, 1)",
+          fill: "forwards",
+        },
+      );
+    }
+  }, [seq]);
+
+  return (
+    <div
+      ref={ref}
+      aria-hidden="true"
+      style={{
+        position: "absolute",
+        inset: 0,
+        pointerEvents: "none",
+        overflow: "visible",
+        zIndex: 3,
+      }}
+    >
+      {Array.from({ length: HEAL_COUNT }, (_, i) => {
+        const color = HEART_COLORS[i % HEART_COLORS.length];
+        return (
+          <span
+            key={i}
+            data-gq-heal
+            style={{
+              position: "absolute",
+              left: `${20 + (i / HEAL_COUNT) * 60}%`,
+              top: "50%",
+              fontSize: 13 + (i % 3) * 3,
+              lineHeight: 1,
+              color,
+              textShadow: `0 0 6px ${color}cc`,
+              transform: "translate(-50%, -50%) scale(0)",
+              opacity: 0,
+              willChange: "transform, opacity",
+              userSelect: "none",
+            }}
+          >
+            ♥
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
 export const TONE_COLOR: Record<string, string> = {
   info:   "#e6e6e6",
   good:   "#86efac",

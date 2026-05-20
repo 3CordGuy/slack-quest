@@ -30,6 +30,7 @@ import {
   isCombatUsable,
   lootIcon,
   HitDust,
+  HealBurst,
   CombatFighter,
   CombatItem,
 } from "./CombatShared";
@@ -784,6 +785,7 @@ export function CombatPage({
   // target id; the chip's HitDust component re-keys its WAAPI animation
   // on every change so consecutive hits each spawn a fresh puff cloud.
   const [hitDustSeq, setHitDustSeq] = useState<Record<string, number>>({});
+  const [healBurstSeq, setHealBurstSeq] = useState<Record<string, number>>({});
   // Delay victory modal until after dice settle so player sees the killing blow.
   const [victoryModalReady, setVictoryModalReady] = useState(false);
   const [defeatModalReady, setDefeatModalReady] = useState(false);
@@ -934,6 +936,10 @@ export function CombatPage({
                 const elemIcon = evt.element === "fire" ? "🔥" : evt.element === "ice" ? "❄️" : "⚡";
                 toast(`${elemIcon} You're now ${evt.effect}! (${evt.duration}t)`, { duration: 3500 });
               }
+            }
+            if (evt.type === "heal_applied" && typeof (evt as { target?: string }).target === "string") {
+              const tgt = (evt as { target: string }).target;
+              setHealBurstSeq((prev) => ({ ...prev, [tgt]: (prev[tgt] ?? 0) + 1 }));
             }
             if (evt.type === "turn_skip") triggerBurst("frozen");
             if (evt.type === "victory") triggerBurst("victory");
@@ -1240,7 +1246,7 @@ export function CombatPage({
       {/* Party chips row */}
       {state && (
         <div style={{ background: "rgba(10,11,14,0.92)", borderTop: "1px solid #1e2028", padding: "6px 10px", flexShrink: 0, zIndex: 8 }}>
-          <PartyChips fighters={state.fighters} selfId={selfId} flashIds={flashIds} hitDustSeq={hitDustSeq} onClickSelf={onOpenInventory} />
+          <PartyChips fighters={state.fighters} selfId={selfId} flashIds={flashIds} hitDustSeq={hitDustSeq} healBurstSeq={healBurstSeq} onClickSelf={onOpenInventory} />
         </div>
       )}
 
@@ -2734,9 +2740,10 @@ function badge(bg: string, fg: string, border: string): React.CSSProperties {
 }
 
 // Compact party HP chips row below the room view.
-function PartyChips({ fighters, selfId, flashIds, hitDustSeq, onClickSelf }: {
+function PartyChips({ fighters, selfId, flashIds, hitDustSeq, healBurstSeq, onClickSelf }: {
   fighters: Fighter[]; selfId: string; flashIds: Set<string>;
   hitDustSeq: Record<string, number>;
+  healBurstSeq: Record<string, number>;
   onClickSelf?: () => void;
 }) {
   const front = fighters.filter((f) => f.position === "front");
@@ -2764,9 +2771,8 @@ function PartyChips({ fighters, selfId, flashIds, hitDustSeq, onClickSelf }: {
           cursor: clickable ? "pointer" : "default",
         }}
       >
-        {/* Dust puff overlay — fires whenever this fighter's hit counter
-            bumps. Wile-E-Coyote dust cloud, drifts up + out, ~750ms. */}
         <HitDust seq={hitDustSeq[f.id] ?? 0} />
+        <HealBurst seq={healBurstSeq[f.id] ?? 0} />
         <Avatar src={charPortraitUrl(f.name)} fallbackSrc={classPortraitUrl(f.class)} alt={f.name} size={40} radius={5} fallbackIcon="player" fallbackColor="#4a5568" border="1px solid #2a2d33" />
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: 12, fontWeight: 600, color: "#e2e8f0", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{f.name}</div>
