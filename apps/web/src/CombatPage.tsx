@@ -1041,6 +1041,16 @@ export function CombatPage({
       ? state.turn_order[state.turn_index % state.turn_order.length]
       : null;
   const myTurn = currentActorId === selfId;
+  const isInactivePlayerTurn = !myTurn && currentActorId !== null && !isMonsterActor(currentActorId) && !isMercActor(currentActorId);
+
+  // Skip-turn button becomes active after 8 s of waiting on another player.
+  const [skipReady, setSkipReady] = useState(false);
+  useEffect(() => {
+    if (!isInactivePlayerTurn) { setSkipReady(false); return; }
+    const t = setTimeout(() => setSkipReady(true), 8000);
+    return () => clearTimeout(t);
+  }, [isInactivePlayerTurn, currentActorId]);
+
   const ended =
     state?.status === "victory" || state?.status === "defeat" || state?.status === "fled";
 
@@ -1304,8 +1314,28 @@ export function CombatPage({
         <div style={{ background: "rgba(10,11,14,0.92)", borderTop: "1px solid #1e2028", padding: isMobile ? "4px 6px 6px" : "8px 10px 10px", flexShrink: 0, display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", justifyContent: "center" }}>
           {/* Turn status hint */}
           {!myTurn && (
-            <div style={{ width: "100%", textAlign: "center", fontSize: 11, color: "#9aa0a6", fontStyle: "italic", paddingBottom: 2 }}>
-              {isMonsterTurn && !autoResolve ? "Enemy turn" : isMonsterTurn ? "Enemy turn — auto-resolving…" : `Waiting for ${state.fighters.find((f) => f.id === currentActorId)?.name ?? "another player"}…`}
+            <div style={{ width: "100%", textAlign: "center", fontSize: 11, color: "#9aa0a6", fontStyle: "italic", paddingBottom: 2, display: "flex", alignItems: "center", justifyContent: "center", gap: 10 }}>
+              <span>{isMonsterTurn && !autoResolve ? "Enemy turn" : isMonsterTurn ? "Enemy turn — auto-resolving…" : `Waiting for ${state.fighters.find((f) => f.id === currentActorId)?.name ?? "another player"}…`}</span>
+              {isInactivePlayerTurn && (
+                <button
+                  onClick={() => currentActorId && send({ kind: "wait", actor: currentActorId })}
+                  disabled={!skipReady}
+                  title={skipReady ? "Skip this player's turn" : "Available after 8 seconds"}
+                  style={{
+                    background: skipReady ? "#292d36" : "#1a1d23",
+                    border: `1px solid ${skipReady ? "#4a5568" : "#2a2d33"}`,
+                    borderRadius: 6,
+                    color: skipReady ? "#cbd5e1" : "#4a5568",
+                    fontSize: 11,
+                    fontFamily: "inherit",
+                    padding: "3px 10px",
+                    cursor: skipReady ? "pointer" : "not-allowed",
+                    transition: "all 0.3s ease",
+                  }}
+                >
+                  Skip turn
+                </button>
+              )}
             </div>
           )}
           <CBtn label="Attack" icon="sword" color="#b89b3a" disabled={!myTurn || (liveMonsters.length > 1 && targetMonsterId === null)} onClick={() => send({ kind: "attack", actor: selfId, target_id: effectiveTarget })} />

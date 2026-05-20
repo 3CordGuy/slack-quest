@@ -5,7 +5,7 @@
 
 import { useEffect, useReducer, useRef, useState } from "react";
 import toast from "react-hot-toast";
-import { isMonsterActor } from "@gantt-quest/core";
+import { isMonsterActor, isMercActor } from "@gantt-quest/core";
 import { Avatar, Icon } from "./icons";
 import { CombatParticles, triggerBurst } from "./CombatParticles";
 import {
@@ -2142,9 +2142,19 @@ function CombatPanel({ state, selfId, onSend, autoResolve, setAutoResolve, myTur
   }
 
   // Disabled state for the action row when it isn't the player's turn.
+  const currentActorId = state.turn_order[state.turn_index % state.turn_order.length] ?? null;
+  const isInactivePlayerTurn = !myTurn && currentActorId !== null && !isMonsterActor(currentActorId) && !isMercActor(currentActorId);
+
+  const [skipReady, setSkipReady] = useState(false);
+  useEffect(() => {
+    if (!isInactivePlayerTurn) { setSkipReady(false); return; }
+    const t = setTimeout(() => setSkipReady(true), 8000);
+    return () => clearTimeout(t);
+  }, [isInactivePlayerTurn, currentActorId]);
+
   // Buttons stay visible so the bottom row doesn't disappear; they grey out
   // and the user gets a turn-status hint instead of an empty bar.
-  const otherActor = state.fighters.find((f) => f.id === state.turn_order[state.turn_index % state.turn_order.length]);
+  const otherActor = state.fighters.find((f) => f.id === currentActorId);
   const turnStatus = myTurn
     ? null
     : isMonsterTurn
@@ -2274,9 +2284,31 @@ function CombatPanel({ state, selfId, onSend, autoResolve, setAutoResolve, myTur
         </PickerModal>
       )}
 
-      {/* Turn status hint (when not the player's turn) */}
-      {turnStatus && (
-        <div style={{ padding: "2px 12px 0", fontSize: 11, color: "#9aa0a6", fontStyle: "italic" }}>{turnStatus}</div>
+      {/* Turn status hint + skip button (when not the player's turn) */}
+      {(turnStatus || isInactivePlayerTurn) && (
+        <div style={{ padding: "2px 12px 0", fontSize: 11, color: "#9aa0a6", fontStyle: "italic", display: "flex", alignItems: "center", gap: 10 }}>
+          {turnStatus && <span>{turnStatus}</span>}
+          {isInactivePlayerTurn && (
+            <button
+              onClick={() => currentActorId && onSend({ kind: "wait", actor: currentActorId })}
+              disabled={!skipReady}
+              title={skipReady ? "Skip this player's turn" : "Available after 8 seconds"}
+              style={{
+                background: skipReady ? "#292d36" : "#1a1d23",
+                border: `1px solid ${skipReady ? "#4a5568" : "#2a2d33"}`,
+                borderRadius: 6,
+                color: skipReady ? "#cbd5e1" : "#4a5568",
+                fontSize: 11,
+                fontFamily: "inherit",
+                padding: "3px 10px",
+                cursor: skipReady ? "pointer" : "not-allowed",
+                transition: "all 0.3s ease",
+              }}
+            >
+              Skip turn
+            </button>
+          )}
+        </div>
       )}
 
       {/* Action buttons — vertical-style (icon top, label, mana below) */}
