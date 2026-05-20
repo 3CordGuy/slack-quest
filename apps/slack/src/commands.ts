@@ -4567,10 +4567,10 @@ async function handleCombat(
       type: "bleeding",
       magnitude: WARLOCK_BLEED_MAGNITUDE,
       remaining: WARLOCK_BLEED_DURATION,
-      source: "Data Wizard crit",
+      source: "Data Warlock crit",
     };
     monsterEffectsAfterTurn = withEffectApplied(monsterEffectsAfterTurn, bleed);
-    passiveLines.push(`💀 *Data Wizard* passive: critical strike inflicts 🩸 *Bleeding* (${WARLOCK_BLEED_MAGNITUDE}/turn × ${WARLOCK_BLEED_DURATION}).`);
+    passiveLines.push(`💀 *Data Warlock* passive: critical strike inflicts 🩸 *Bleeding* (${WARLOCK_BLEED_MAGNITUDE}/turn × ${WARLOCK_BLEED_DURATION}).`);
   }
 
   // Boss phase 1 → 2 transition: crossing the 50% HP threshold powers it up.

@@ -97,7 +97,6 @@ const CLASS_ID_BY_NAME: Record<string, string> = {
   "Staff Sage":     "staff_sage",
   "Refactor Rogue": "refactor_rogue",
   "SRE Warden":     "sre_warden",
-  "Data Wizard":    "data_warlock",
   "Data Warlock":   "data_warlock",
 };
 

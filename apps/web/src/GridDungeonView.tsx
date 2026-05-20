@@ -179,7 +179,6 @@ const ABILITY_BY_CLASS: Record<string, AbilityUiSpec> = {
   "DevOps Mage":    { id: "containerize",      name: "Container",  iconName: "cubes",           mana_cost: 2, blurb: "Monster skips next swing" },
   "QA Paladin":     { id: "regression_shield", name: "Regress",    iconName: "fairy-wand",      mana_cost: 2, blurb: "+3 shield to all party" },
   "Refactor Rogue": { id: "vanish",            name: "Vanish",     iconName: "hood",            mana_cost: 2, blurb: "Untargetable for 2 swings" },
-  "Data Wizard":    { id: "soul_drain",        name: "Soul Drain", iconName: "death-skull",     mana_cost: 2, blurb: "1d6+mag dmg, heal 50%" },
   "Data Warlock":   { id: "soul_drain",        name: "Soul Drain", iconName: "death-skull",     mana_cost: 2, blurb: "1d6+mag dmg, heal 50%" },
   "Frontend Bard":  { id: "battle_hymn",       name: "Hymn",       iconName: "aura",            mana_cost: 2, blurb: "+dmg buff on next party attacks" },
   "Staff Sage":     { id: "foresee",           name: "Foresee",    iconName: "scroll-unfurled", mana_cost: 1, blurb: "Full battle intel for 2 turns" },
