@@ -1167,7 +1167,7 @@ export function CombatPage({
       </div>
 
       {/* Room view — flex: 1, background art + floating overlays */}
-      <div style={{ flex: 1, position: "relative", overflow: "hidden", minHeight: 0 }}>
+      <div style={{ flex: 1, position: "relative", overflow: "hidden", minHeight: 0, background: bgArtUrl ? undefined : "#1c1f2e" }}>
         {bgArtUrl && (
           <img src={bgArtUrl} alt="" style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover" }} onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
         )}
@@ -1373,7 +1373,7 @@ export function CombatPage({
           <CBtn label="Wait" icon="hourglass" color="#475569" disabled={!myTurn} onClick={() => send({ kind: "wait", actor: selfId })} />
           <CBtn label="Flee" icon="footprint" color="#9aa0a6" disabled={!myTurn} onClick={() => send({ kind: "flee", actor: selfId })} />
           {isMonsterTurn && !autoResolve && (
-            <CBtn label="Resolve" icon="dragon-head" color="#5c1f1f" onClick={() => send({ kind: "monster_act" })} />
+            <CBtn label="Resolve" icon="dragon" color="#5c1f1f" onClick={() => send({ kind: "monster_act" })} />
           )}
           <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, color: "#4a5568", cursor: "pointer", marginLeft: 6 }}>
             <input type="checkbox" checked={autoResolve} onChange={(e) => setAutoResolve(e.target.checked)} style={{ accentColor: "#5c1f1f" }} />
@@ -1533,7 +1533,7 @@ function MonsterCard({
         alt={monster.name}
         size={72}
         radius={8}
-        fallbackIcon="dragon-head"
+        fallbackIcon="dragon"
         fallbackColor={isMarked ? "#f59e0b" : "#7c2020"}
         border={`1px solid ${borderColor}`}
         style={{ flexShrink: 0 }}
@@ -1684,7 +1684,7 @@ function InitiativeTrack({
                   alt={name}
                   size={AVATAR}
                   radius={RADIUS}
-                  fallbackIcon={isMon ? "dragon-head" : "player"}
+                  fallbackIcon={isMon ? "dragon" : "player"}
                   fallbackColor={isMon ? (isCurrent ? "#ef4444" : "#7a3030") : "#4a5568"}
                   style={{
                     background: isMon ? (isCurrent ? "#3a0a0a" : "#1a0808") : "#1d1f23",

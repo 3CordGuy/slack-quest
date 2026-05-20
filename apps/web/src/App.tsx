@@ -8682,7 +8682,7 @@ const VARIANT_STYLE: Record<string, { icon: string; color: string; bg: string; l
   boss:         { icon: "crown",         color: "#fca5a5", bg: "#1f0a0a", label: "BOSS" },
   dungeon:      { icon: "tower",         color: "#7dd3fc", bg: "#0a121f", label: "DUNGEON" },
   gauntlet:     { icon: "crossed-swords",color: "#c4b5fd", bg: "#130a1f", label: "GAUNTLET" },
-  bounty_pack:  { icon: "dragon-head",   color: "#fb923c", bg: "#1f0e00", label: "BOUNTY PACK" },
+  bounty_pack:  { icon: "dragon",   color: "#fb923c", bg: "#1f0e00", label: "BOUNTY PACK" },
 };
 
 function JobPostingCard({

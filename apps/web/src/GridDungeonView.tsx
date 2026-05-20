@@ -1633,12 +1633,12 @@ function ContentFigureOverlay({ content }: { content: GridRoomContent }) {
         )}
         {!m.art_url && (
           <div style={{ display: "flex", justifyContent: "center", padding: "20px 0" }}>
-            <Icon name="dragon-head" size={64} color={borderColor} />
+            <Icon name="dragon" size={64} color={borderColor} />
           </div>
         )}
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8 }}>
           <div style={{ fontFamily: DISPLAY_FONT, fontSize: 15, fontWeight: 700, color: isBoss ? "#fca5a5" : "#f5f5f5" }}>
-            {isBoss && <Icon name="dragon-head" size={13} color="#fca5a5" />} {m.name}
+            {isBoss && <Icon name="dragon" size={13} color="#fca5a5" />} {m.name}
           </div>
           <div style={{ fontSize: 12, color: "#9aa0a6", fontVariantNumeric: "tabular-nums" }}>
             {m.hp}/{m.max_hp}
@@ -1815,7 +1815,7 @@ function ContentOverlay({ node, content, onEnterCombat, onTakeLoot, onTakeKey, o
       <div style={{ background: isBoss ? "rgba(80,10,10,0.95)" : "rgba(10,11,14,0.95)", borderTop: `1px solid ${isBoss ? "#7f1d1d" : "#1e2028"}`, padding: "12px 16px", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 14 }}>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: 14, fontWeight: 600, color: isBoss ? "#fca5a5" : "#f5f5f5", fontFamily: DISPLAY_FONT }}>
-            {isBoss && <Icon name="dragon-head" size={14} color="#fca5a5" />} {m.name}
+            {isBoss && <Icon name="dragon" size={14} color="#fca5a5" />} {m.name}
           </div>
           {m.flavor && (
             <div style={{ fontSize: 12, color: "#d1d5db", fontStyle: "italic", marginTop: 4, marginBottom: 6, lineHeight: 1.4, maxWidth: 560 }}>
@@ -2346,7 +2346,7 @@ function CombatPanel({ state, selfId, onSend, autoResolve, setAutoResolve, myTur
         <CBtn label="Wait" icon="hourglass" color="#475569" disabled={!myTurn} onClick={() => onSend({ kind: "wait", actor: selfId })} />
         <CBtn label="Flee" icon="run" color="#9aa0a6" disabled={!myTurn} onClick={() => onSend({ kind: "flee", actor: selfId })} />
         {!myTurn && isMonsterTurn && !autoResolve && (
-          <CBtn label="Resolve" icon="dragon-head" color="#5c1f1f" onClick={() => onSend({ kind: "monster_act" })} />
+          <CBtn label="Resolve" icon="dragon" color="#5c1f1f" onClick={() => onSend({ kind: "monster_act" })} />
         )}
         <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, color: "#4a5568", cursor: "pointer", marginLeft: 6 }}>
           <input type="checkbox" checked={autoResolve} onChange={(e) => setAutoResolve(e.target.checked)} style={{ accentColor: "#5c1f1f" }} />
