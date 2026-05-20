@@ -902,7 +902,7 @@ async function announceWebQuestToSlack(
 const WEB_PUBLIC_BASE = "https://quest.heylets.party";
 
 function artTarget(env: Env): import("./ai").ArtTarget {
-  return { bucket: env.ART, baseUrl: WEB_PUBLIC_BASE };
+  return { bucket: env.ART, baseUrl: WEB_PUBLIC_BASE, disabled: env.ENVIRONMENT === "local" };
 }
 
 const SESSION_COOKIE = "sq_session";
