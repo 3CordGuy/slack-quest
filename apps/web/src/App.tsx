@@ -14,7 +14,7 @@ import {
   useInteractions,
 } from "@floating-ui/react";
 
-import { classByName, deriveAll, findCatalogEntry, priceFor, sellPriceFor, xpForLevel, type Achievement, type EarnedAchievement, type StatKey, type Stats } from "@gantt-quest/core";
+import { CLASSES, classByName, deriveAll, findCatalogEntry, priceFor, sellPriceFor, xpForLevel, type Achievement, type EarnedAchievement, type StatKey, type Stats } from "@gantt-quest/core";
 
 import { CombatPage } from "./CombatPage";
 import { DungeonView } from "./DungeonView";
@@ -1236,8 +1236,13 @@ export function App() {
     void refreshMe();
   }
 
-  async function rerollCharacter() {
-    const res = await fetch("/api/character/reroll", { method: "POST", credentials: "include" });
+  async function rerollCharacter(className?: string) {
+    const res = await fetch("/api/character/reroll", {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(className ? { class: className } : {}),
+    });
     if (!res.ok) {
       const body = await res.json().catch(() => ({})) as { error?: string };
       if (body.error === "mid_quest") { toast.error("Finish your quest before rerolling."); return; }
@@ -4426,7 +4431,7 @@ function CharacterCard({
   onSellKey: (tier: "bronze" | "silver" | "gold") => void;
   onTransmuteKey: (fromTier: "bronze" | "silver") => void;
   onLogout: () => void;
-  onReroll: () => Promise<void>;
+  onReroll: (className?: string) => Promise<void>;
   onSpend?: (stat: StatKey) => void;
   onSaveNotifyPref?: (pref: "thread" | "dm") => Promise<void>;
 }) {
@@ -7710,37 +7715,48 @@ function AccountPopover({
   onSaveNotifyPref,
 }: {
   onLogout: () => void;
-  onReroll: () => Promise<void>;
+  onReroll: (className?: string) => Promise<void>;
   character: { name: string; notification_pref?: "thread" | "dm" } | null;
   onSaveNotifyPref?: (pref: "thread" | "dm") => Promise<void>;
 }) {
   const [open, setOpen] = useState(false);
-  const [rerollStep, setRerollStep] = useState<"idle" | "confirm">("idle");
+  const [rerollStep, setRerollStep] = useState<"idle" | "pick-class" | "confirm">("idle");
+  const [selectedClasses, setSelectedClasses] = useState<Set<string>>(new Set());
+  const [selectedClass, setSelectedClass] = useState<string | null>(null);
   const [rerolling, setRerolling] = useState(false);
   const [showNotifyModal, setShowNotifyModal] = useState(false);
 
   const { refs, floatingStyles, context } = useFloating({
     open,
-    onOpenChange: (v) => { setOpen(v); if (!v) setRerollStep("idle"); },
+    onOpenChange: (v) => { setOpen(v); if (!v) { setRerollStep("idle"); setSelectedClasses(new Set()); setSelectedClass(null); } },
     middleware: [offset(8), flip({ padding: 8 }), shift({ padding: 8 })],
     placement: "top-start",
     whileElementsMounted: autoUpdate,
   });
   const { getFloatingProps } = useInteractions([useDismiss(context)]);
 
+  function rollFromSelection() {
+    const pool = Array.from(selectedClasses);
+    const picked = pool[Math.floor(Math.random() * pool.length)];
+    setSelectedClass(picked);
+    setRerollStep("confirm");
+  }
+
   async function confirmReroll() {
     setRerolling(true);
-    await onReroll();
+    await onReroll(selectedClass ?? undefined);
     setRerolling(false);
     setOpen(false);
     setRerollStep("idle");
+    setSelectedClasses(new Set());
+    setSelectedClass(null);
   }
 
   return (
     <>
       <button
         ref={refs.setReference}
-        onClick={() => { setOpen((v) => !v); setRerollStep("idle"); }}
+        onClick={() => { setOpen((v) => !v); setRerollStep("idle"); setSelectedClasses(new Set()); setSelectedClass(null); }}
         title="Account"
         style={{
           position: "absolute", top: 8, right: 8,
@@ -7781,14 +7797,61 @@ function AccountPopover({
               <div style={{ borderTop: "1px solid #2a2d33", paddingTop: 8, marginTop: 2 }}>
                 {rerollStep === "idle" ? (
                   <button
-                    onClick={() => setRerollStep("confirm")}
+                    onClick={() => setRerollStep("pick-class")}
                     style={{ ...smallActionBtn("#1a1c20", "#fde68a"), width: "100%", textAlign: "left" }}
                   >
                     <Icon name="dice-six-faces-random" size={13} /> Reroll character
                   </button>
+                ) : rerollStep === "pick-class" ? (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                      <div style={{ fontSize: 12, color: "#f5f5f5", fontWeight: 600 }}>Pick classes to roll from</div>
+                      <button
+                        onClick={() => setSelectedClasses(selectedClasses.size === CLASSES.length ? new Set() : new Set(CLASSES.map((c) => c.name)))}
+                        style={{ ...smallActionBtn("#1a1c20", "#a78bfa"), fontSize: 10, padding: "2px 6px" }}
+                      >
+                        {selectedClasses.size === CLASSES.length ? "None" : "All"}
+                      </button>
+                    </div>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 4 }}>
+                      {CLASSES.map((cls) => {
+                        const on = selectedClasses.has(cls.name);
+                        return (
+                          <button
+                            key={cls.id}
+                            onClick={() => {
+                              const next = new Set(selectedClasses);
+                              on ? next.delete(cls.name) : next.add(cls.name);
+                              setSelectedClasses(next);
+                            }}
+                            title={cls.blurb}
+                            style={{
+                              ...smallActionBtn(on ? "#2a2410" : "#1a1c20", on ? "#fde68a" : "#6b7280"),
+                              fontSize: 11, padding: "4px 6px", textAlign: "left",
+                              outline: on ? "1px solid #fde68a44" : "none",
+                            }}
+                          >
+                            {cls.name}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <div style={{ display: "flex", gap: 6, marginTop: 2 }}>
+                      <button
+                        onClick={rollFromSelection}
+                        disabled={selectedClasses.size === 0}
+                        style={{ ...smallActionBtn("#1a2a10", "#86efac"), flex: 1 }}
+                      >
+                        <Icon name="dice-six-faces-random" size={13} /> Roll{selectedClasses.size > 1 ? ` (${selectedClasses.size})` : ""}
+                      </button>
+                      <button onClick={() => setRerollStep("idle")} style={smallActionBtn("#222428", "#6b7280")}>
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
                 ) : (
                   <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                    <div style={{ fontSize: 12, color: "#f5f5f5", fontWeight: 600 }}>Reroll {character?.name ?? "your character"}?</div>
+                    <div style={{ fontSize: 12, color: "#f5f5f5", fontWeight: 600 }}>Reroll as {selectedClass}?</div>
                     <div style={{ fontSize: 11, color: "#9ca3af", lineHeight: 1.4 }}>
                       All gear, gold, and levels will be lost. Free to do — the forfeit is the cost.
                     </div>
@@ -7800,8 +7863,8 @@ function AccountPopover({
                       >
                         {rerolling ? "Rolling…" : "Confirm reroll"}
                       </button>
-                      <button onClick={() => setRerollStep("idle")} style={smallActionBtn("#222428", "#6b7280")}>
-                        Cancel
+                      <button onClick={() => { setSelectedClass(null); setRerollStep("pick-class"); }} style={smallActionBtn("#222428", "#6b7280")}>
+                        Back
                       </button>
                     </div>
                   </div>
