@@ -52,6 +52,8 @@ export interface Env {
   // in-flight legacy combat scenes can't migrate retroactively without
   // re-rolling initiative. See the PR-3 drain plan for the production
   // rollout.
+  // Set to "local" via .dev.vars to enable dev-only behaviour.
+  ENVIRONMENT?: string;
   LEGACY_SLACK_COMBAT?: string;
   // Feature flag: "1" enables STATS_V2 primary stat derivations in combat.
   STATS_V2?: string;

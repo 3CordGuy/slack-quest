@@ -49,6 +49,7 @@
   ],
   "vars": {
     "BOT_NAME": "Gantt Quest",
-    "IMAGE_BASE_URL": "https://gantt-quest.3cordguy.workers.dev"
+    "IMAGE_BASE_URL": "https://gantt-quest.3cordguy.workers.dev",
+    "ENVIRONMENT": "production"
   }
 }

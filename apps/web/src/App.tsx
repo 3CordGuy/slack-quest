@@ -21,6 +21,7 @@ import { DungeonView } from "./DungeonView";
 import { GridDungeonView } from "./GridDungeonView";
 import { LobbyView } from "./LobbyView";
 import { Avatar, EmojiIcon, Icon, KeyIcon } from "./icons";
+import { issueWebLoginCode } from "@gantt-quest/db";
 
 // One-liner describing the in-game effect of an item, in plain mechanics
 // (not flavor). Used by the inventory's Info toggle so players can see
@@ -2089,6 +2090,12 @@ function Login({ onSuccess }: { onSuccess: () => void }) {
     );
   }
 
+  async function dummyDevAuth() {
+    const res = await fetch("/api/dev/login", { method: "POST" });
+    const { code } = (await res.json()) as { code: string };
+    setCode(code);
+  }
+
   return (
     <Centered>
       <div style={card}>
@@ -2111,6 +2118,15 @@ function Login({ onSuccess }: { onSuccess: () => void }) {
           <button type="submit" disabled={pending} style={button}>
             {pending ? "Verifying…" : "Sign in"}
           </button>
+          {import.meta.env.DEV && (
+            <button
+              type="button"
+              onClick={dummyDevAuth}
+              style={{ ...button, background: "#1f2a3a", color: "#7dd3fc", border: "1px solid #2a3d55" }}
+            >
+              Dev login
+            </button>
+          )}
         </form>
         {error && <p style={{ ...muted, color: "#c0392b" }}>{error}</p>}
       </div>

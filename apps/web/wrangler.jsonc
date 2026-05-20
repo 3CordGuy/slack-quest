@@ -34,5 +34,8 @@
   "migrations": [
     { "tag": "v1", "new_sqlite_classes": ["QuestRoom"] },
     { "tag": "v2", "new_sqlite_classes": ["LobbyRoom"] }
-  ]
+  ],
+  "vars": {
+    "ENVIRONMENT": "production"
+  }
 }

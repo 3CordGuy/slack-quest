@@ -134,6 +134,7 @@ import {
   tryDeductGold,
   trySetHaggleOutcome,
   awardSpoils,
+  issueWebLoginCode,
   consumeWebLoginCode,
   createWebSession,
   deleteWebCombatState,
@@ -744,6 +745,8 @@ interface Env {
   SLACK_BOT_TOKEN?: string;
   // Feature flag: "1" enables STATS_V2 primary stat derivations in combat.
   STATS_V2?: string;
+  // Set to "local" via .dev.vars to enable dev-only endpoints (e.g. /api/dev/login).
+  ENVIRONMENT?: string;
 }
 
 // Minimal chat.postMessage wrapper duplicated from apps/slack/src/slack.ts.
@@ -5955,6 +5958,30 @@ app.post("/api/admin/pregen_dungeon_rooms", async (c) => {
 // Health check. Anything else falls through to the ASSETS binding via the
 // wrangler `not_found_handling: single-page-application` config.
 app.get("/api/health", (c) => c.json({ ok: true }));
+
+// DEV ONLY — bypasses Slack login by creating/reusing a local dev character.
+app.post("/api/dev/login", async (c) => {
+  if (c.env.ENVIRONMENT !== "local") return c.json({ error: "forbidden" }, 403);
+  const DEV_USER = "dev-user";
+  const DEV_TEAM = "dev-team";
+  const existing = await getCharacter(c.env.DB, DEV_USER);
+  if (!existing) {
+    const cls = pickRandomClass();
+    const hp = cls.base_hp + rollDice(4);
+    const gender: CharGender = rollDice(2) === 1 ? "m" : "f";
+    await createCharacter(c.env.DB, {
+      slack_user_id: DEV_USER,
+      slack_team_id: DEV_TEAM,
+      name: "Dev Hero",
+      class: cls.name,
+      hp,
+      max_hp: hp,
+      gender,
+    });
+  }
+  const { code } = await issueWebLoginCode(c.env.DB, DEV_USER, DEV_TEAM);
+  return c.json({ code });
+});
 
 async function currentSession(db: D1Database, cookieHeader: string | undefined) {
   if (!cookieHeader) return null;

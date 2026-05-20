@@ -481,11 +481,34 @@ Both `wrangler.jsonc` files need their DO bindings configured:
 Deploy the web worker first so the DO classes exist before the Slack worker
 tries to bind them.
 
-### 6. Run / deploy
+### 6. Local dev environment vars
+
+Both workers read `ENVIRONMENT` to gate dev-only behaviour (e.g. the
+`/api/dev/login` bypass on the web worker, which also powers the "Dev login"
+button on the login screen). Create a `.dev.vars` file in each app directory:
 
 ```bash
-pnpm dev                   # Slack worker dev server (most common iteration loop)
-pnpm --filter web dev      # web worker dev server (Vite + Wrangler)
+# apps/web/.dev.vars
+ENVIRONMENT=local
+
+# apps/slack/.dev.vars
+ENVIRONMENT=local
+```
+
+`.dev.vars` is gitignored. Wrangler injects these values automatically when
+running `wrangler dev` or `vite dev` (via `@cloudflare/vite-plugin`). In
+production the `wrangler.jsonc` `vars` block sets `ENVIRONMENT=production`,
+so the dev endpoints remain unreachable.
+
+### 7. Run / deploy
+
+Both workers must run simultaneously for cross-worker Durable Object bindings
+(`QUEST_ROOM`, `LOBBY_ROOM`) to connect. Wrangler's local dev registry wires
+them together automatically when both processes are up.
+
+```bash
+pnpm dev                   # Slack worker dev server
+pnpm --filter web dev      # web worker dev server (Vite + Wrangler) — run alongside pnpm dev
 ```
 
 For prod:
