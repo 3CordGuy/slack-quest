@@ -2669,7 +2669,7 @@ function ActiveQuestCard({
       )}
 
       <div style={{ marginTop: 16 }}>
-        {s.monster_art_url && (
+        {s.monster_art_url ? (
           <ClickablePortrait
             src={s.monster_art_url}
             alt={s.monster_name}
@@ -2678,6 +2678,13 @@ function ActiveQuestCard({
             borderRadius={8}
             style={{ maxHeight: 280, objectFit: "cover", marginBottom: 12 }}
           />
+        ) : (
+          <div style={{
+            width: "100%", aspectRatio: "4/3", borderRadius: 8, marginBottom: 12,
+            background: "#1a0808", display: "flex", alignItems: "center", justifyContent: "center",
+          }}>
+            <i className="ra ra-dragon-head" style={{ fontSize: 52, color: "#7c2020", opacity: 0.35 }} />
+          </div>
         )}
         <div
           style={{
@@ -4965,9 +4972,8 @@ function LocationHero({
       overflow: "hidden",
       position: "relative",
       background: src ? "#0d0d10" : ph.bg,
-      ...(src
-        ? { aspectRatio: "16/7" }
-        : { minHeight: 120, display: "flex", alignItems: "center", justifyContent: "center" }),
+      aspectRatio: "16/7",
+      display: "flex", alignItems: "center", justifyContent: "center",
     }}>
       {src && (
         <img
@@ -4977,7 +4983,7 @@ function LocationHero({
           onError={(e) => { e.currentTarget.style.display = "none"; }}
         />
       )}
-      {!src && <Icon name={ph.icon} size={40} color={ph.color} style={{ opacity: 0.3, marginTop: 24 }} />}
+      {!src && <Icon name={ph.icon} size={48} color={ph.color} style={{ opacity: 0.3 }} />}
       <div style={{
         position: "absolute", top: 0, left: 0, right: 0,
         background: "rgba(10,11,14,0.6)",
@@ -9151,8 +9157,8 @@ function TownMap({
             style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
           />
         ) : (
-          <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}>
-            <span style={{ color: "#4b5563", fontSize: 13 }}>Generating town map…</span>
+          <div style={{ width: "100%", height: "100%", background: "#111318", display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <Icon name="perspective-dice-six" size={52} color="#555b6a" style={{ opacity: 0.35 }} />
           </div>
         )}
         <div style={{
