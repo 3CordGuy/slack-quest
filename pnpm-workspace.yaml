@@ -1,3 +1,9 @@
 packages:
   - "apps/*"
   - "packages/*"
+allowBuilds:
+  '@3d-dice/dice-box': true
+  '@tsparticles/engine': true
+  esbuild: true
+  sharp: true
+  workerd: true
