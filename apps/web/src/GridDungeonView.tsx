@@ -1158,15 +1158,21 @@ export function GridDungeonView({
     return () => { clearInterval(heartbeat); sock.close(); wsRef.current = null; };
   }, [questId]);
 
-  // Auto-resolve monster turns
+  // Auto-resolve monster and merc turns
   const stateForAuto = ws.state;
   useEffect(() => {
-    if (!autoResolveRef.current) return;
     if (!stateForAuto || stateForAuto.status !== "active") return;
     const actorId = stateForAuto.turn_order[stateForAuto.turn_index % stateForAuto.turn_order.length];
-    if (!isMonsterActor(actorId)) return;
+    const isNonPlayer = isMonsterActor(actorId) || isMercActor(actorId);
+    if (!isNonPlayer) return;
+    if (isMonsterActor(actorId) && !autoResolveRef.current) return;
     if (autoResolvedTurnRef.current === stateForAuto.turn_index) return;
-    const t = setTimeout(() => { if (!autoResolveRef.current) return; const fired = send({ kind: "monster_act" }); if (fired) autoResolvedTurnRef.current = stateForAuto.turn_index; }, 800);
+    const action = isMercActor(actorId) ? { kind: "merc_act" as const } : { kind: "monster_act" as const };
+    const t = setTimeout(() => {
+      if (isMonsterActor(actorId) && !autoResolveRef.current) return;
+      const fired = send(action);
+      if (fired) autoResolvedTurnRef.current = stateForAuto.turn_index;
+    }, 800);
     return () => clearTimeout(t);
   }, [stateForAuto?.turn_index, stateForAuto?.status, autoResolve]);
 
