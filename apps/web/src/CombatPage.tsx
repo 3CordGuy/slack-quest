@@ -1,6 +1,6 @@
 import { useEffect, useReducer, useRef, useState } from "react";
 import toast from "react-hot-toast";
-import { isMonsterActor } from "@gantt-quest/core";
+import { isMonsterActor, isMercActor } from "@gantt-quest/core";
 
 import { Avatar, Icon } from "./icons";
 import { CombatParticles, CombatParticlesProvider, triggerBurst } from "./CombatParticles";
@@ -1001,23 +1001,24 @@ export function CombatPage({
     localStorage.setItem("combat_auto_resolve", String(autoResolve));
   }, [autoResolve]);
 
-  // Auto-resolve monster turn: fires monster_act ~800ms after the monster's turn
-  // becomes active, so the player still sees the turn transition before it resolves.
+  // Auto-resolve monster and merc turns: fires ~800ms after the turn becomes
+  // active so the player still sees the transition before it resolves.
   const { state: stateForAuto } = ui;
   useEffect(() => {
-    if (!autoResolveRef.current) return;
     if (!stateForAuto || stateForAuto.status !== "active") return;
     const actorId = stateForAuto.turn_order[stateForAuto.turn_index % stateForAuto.turn_order.length];
-    if (!isMonsterActor(actorId)) return;
+    const isNonPlayer = isMonsterActor(actorId) || isMercActor(actorId);
+    if (!isNonPlayer) return;
+    // Mercs always auto-resolve; monsters respect the autoResolve toggle.
+    if (isMonsterActor(actorId) && !autoResolveRef.current) return;
     if (autoResolvedTurnRef.current === stateForAuto.turn_index) return;
     const timer = setTimeout(() => {
-      if (!autoResolveRef.current) return;
-      const fired = send({ kind: "monster_act" });
+      if (isMonsterActor(actorId) && !autoResolveRef.current) return;
+      const action = isMercActor(actorId) ? { kind: "merc_act" as const } : { kind: "monster_act" as const };
+      const fired = send(action);
       if (fired) autoResolvedTurnRef.current = stateForAuto.turn_index;
     }, 800);
     return () => clearTimeout(timer);
-    // autoResolve is in deps so flipping the checkbox on while a monster turn
-    // is already active re-evaluates the effect and schedules a resolve.
   }, [stateForAuto?.turn_index, stateForAuto?.status, autoResolve]);
 
   function exit() {

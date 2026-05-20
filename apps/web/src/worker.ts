@@ -6787,24 +6787,30 @@ async function buildInitialCombatState(
 
     // Inject hired merc as an additional CombatFighter for this member.
     // Merc ID is __merc_<user_id>__ so multiple party members can each bring
-    // a different merc without ID collisions.
+    // a different merc without ID collisions. Stats scale to member's level
+    // so the merc stays useful instead of being one-shot at higher tiers.
     if (member.hired_merc_id) {
       const spec = findMerc(member.hired_merc_id);
       if (spec) {
+        const lvl = member.level;
+        const levelDelta = Math.max(0, lvl - spec.level);
+        const scaledHp = Math.round(spec.hp * (lvl / spec.level));
+        const scaledAtk = spec.attack_mod + Math.floor(levelDelta / 3);
+        const scaledWep = spec.weapon_power + Math.floor(levelDelta / 4);
         fighters.push({
           id: `__merc_${member.slack_user_id}__`,
           name: spec.name,
           class: spec.class_label,
-          level: spec.level,
-          hp: spec.hp,
-          max_hp: spec.max_hp,
+          level: lvl,
+          hp: scaledHp,
+          max_hp: scaledHp,
           mana: 0,
           max_mana: 0,
           shield: 0,
           position: spec.position,
-          attack_mod: spec.attack_mod,
+          attack_mod: scaledAtk,
           magic_mod: 0,
-          weapon_power: spec.weapon_power,
+          weapon_power: scaledWep,
           focus_power: 0,
           weapon_range: spec.weapon_range,
           slack_username: null,
@@ -7178,9 +7184,18 @@ export class QuestRoom extends DurableObject<Env> {
     | { ok: true; state: CombatState; events: CombatEvent[]; outcome?: OutcomeSummary }
     | { ok: false; reason: string }
   > {
-    const state = await this.loadState(questId);
+    let state = await this.loadState(questId);
     if (!state) return { ok: false, reason: "no_combat" };
     if (state.status !== "active") return { ok: false, reason: "combat_ended" };
+
+    // If the persisted state already has a merc as the current actor (e.g. from
+    // a save before client-side auto-resolve was deployed), drain those first.
+    const currentActor = state.turn_order[state.turn_index % state.turn_order.length];
+    if (currentActor && isMercActor(currentActor)) {
+      const drained = drainMercTurns({ state, events: [] });
+      state = drained.state;
+      if (state.status !== "active") return { ok: false, reason: "combat_ended" };
+    }
 
     const raw = step(state, action, productionRoll);
     const combined = drainMercTurns(raw);
