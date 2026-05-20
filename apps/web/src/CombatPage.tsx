@@ -2724,7 +2724,19 @@ function PartyChips({ fighters, selfId, flashIds, hitDustSeq, onClickSelf }: {
             );
           })()}
         </div>
-        <div style={{ display: "flex", flexDirection: "column", gap: 2, alignItems: "center" }}>
+        {/* Mana orbs — grid with capped row count so a 4–6-mana fighter
+            wraps into a 2nd column instead of growing the chip taller
+            than the avatar. 3 rows × auto columns: 1–3 mana = single
+            column, 4–6 mana = two columns. */}
+        <div style={{
+          display: "grid",
+          gridAutoFlow: "column",
+          gridTemplateRows: "repeat(3, 7px)",
+          columnGap: 3,
+          rowGap: 2,
+          alignItems: "center",
+          justifyItems: "center",
+        }}>
           {Array.from({ length: f.max_mana }, (_, mi) => (
             <div key={mi} style={{ width: 7, height: 7, borderRadius: "50%", background: mi < f.mana ? "#818cf8" : "#1e2028", border: "1px solid #3a3d43" }} />
           ))}
