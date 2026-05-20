@@ -1167,11 +1167,14 @@ export function CombatPage({
       </div>
 
       {/* Room view — flex: 1, background art + floating overlays */}
-      <div style={{ flex: 1, position: "relative", overflow: "hidden", minHeight: 0, background: bgArtUrl ? undefined : "#1c1f2e" }}>
+      <div style={{ flex: 1, position: "relative", overflow: "hidden", minHeight: 0, background: bgArtUrl ? undefined : "#253050" }}>
         {bgArtUrl && (
           <img src={bgArtUrl} alt="" style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover" }} onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
         )}
-        <div style={{ position: "absolute", inset: 0, background: "linear-gradient(to bottom, rgba(0,0,0,0.25) 0%, rgba(0,0,0,0.05) 35%, rgba(0,0,0,0.70) 100%)", pointerEvents: "none" }} />
+        <div style={{ position: "absolute", inset: 0, background: bgArtUrl
+          ? "linear-gradient(to bottom, rgba(0,0,0,0.25) 0%, rgba(0,0,0,0.05) 35%, rgba(0,0,0,0.70) 100%)"
+          : "linear-gradient(to bottom, rgba(0,0,0,0.10) 0%, rgba(0,0,0,0.00) 40%, rgba(0,0,0,0.40) 100%)",
+          pointerEvents: "none" }} />
         <CombatParticles />
 
         {/* Loading state */}
