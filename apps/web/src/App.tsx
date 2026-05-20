@@ -2669,7 +2669,7 @@ function ActiveQuestCard({
       )}
 
       <div style={{ marginTop: 16 }}>
-        {s.monster_art_url ? (
+        {s.monster_art_url && (
           <ClickablePortrait
             src={s.monster_art_url}
             alt={s.monster_name}
@@ -2678,13 +2678,6 @@ function ActiveQuestCard({
             borderRadius={8}
             style={{ maxHeight: 280, objectFit: "cover", marginBottom: 12 }}
           />
-        ) : (
-          <div style={{
-            width: "100%", aspectRatio: "4/3", borderRadius: 8, marginBottom: 12,
-            background: "#1a0808", display: "flex", alignItems: "center", justifyContent: "center",
-          }}>
-            <i className="ra ra-dragon-head" style={{ fontSize: 52, color: "#7c2020", opacity: 0.35, lineHeight: 1, display: "block" }} />
-          </div>
         )}
         <div
           style={{
