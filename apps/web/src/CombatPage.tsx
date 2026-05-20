@@ -31,6 +31,7 @@ import {
   lootIcon,
   HitDust,
   HealBurst,
+  ShieldBurst,
   ShieldGlow,
   CombatFighter,
   CombatItem,
@@ -787,6 +788,7 @@ export function CombatPage({
   // on every change so consecutive hits each spawn a fresh puff cloud.
   const [hitDustSeq, setHitDustSeq] = useState<Record<string, number>>({});
   const [healBurstSeq, setHealBurstSeq] = useState<Record<string, number>>({});
+  const [shieldBurstSeq, setShieldBurstSeq] = useState<Record<string, number>>({});
   // Delay victory modal until after dice settle so player sees the killing blow.
   const [victoryModalReady, setVictoryModalReady] = useState(false);
   const [defeatModalReady, setDefeatModalReady] = useState(false);
@@ -941,6 +943,10 @@ export function CombatPage({
             if (evt.type === "heal_applied" && typeof (evt as { target?: string }).target === "string") {
               const tgt = (evt as { target: string }).target;
               setHealBurstSeq((prev) => ({ ...prev, [tgt]: (prev[tgt] ?? 0) + 1 }));
+            }
+            if (evt.type === "shield_applied" && typeof (evt as { target?: string }).target === "string") {
+              const tgt = (evt as { target: string }).target;
+              setShieldBurstSeq((prev) => ({ ...prev, [tgt]: (prev[tgt] ?? 0) + 1 }));
             }
             if (evt.type === "turn_skip") triggerBurst("frozen");
             if (evt.type === "victory") triggerBurst("victory");
@@ -1257,7 +1263,7 @@ export function CombatPage({
       {/* Party chips row */}
       {state && (
         <div style={{ background: "rgba(10,11,14,0.92)", borderTop: "1px solid #1e2028", padding: "6px 10px", flexShrink: 0, zIndex: 8 }}>
-          <PartyChips fighters={state.fighters} selfId={selfId} flashIds={flashIds} hitDustSeq={hitDustSeq} healBurstSeq={healBurstSeq} onClickSelf={onOpenInventory} />
+          <PartyChips fighters={state.fighters} selfId={selfId} flashIds={flashIds} hitDustSeq={hitDustSeq} healBurstSeq={healBurstSeq} shieldBurstSeq={shieldBurstSeq} onClickSelf={onOpenInventory} />
         </div>
       )}
 
@@ -2713,10 +2719,11 @@ function badge(bg: string, fg: string, border: string): React.CSSProperties {
 }
 
 // Compact party HP chips row below the room view.
-function PartyChips({ fighters, selfId, flashIds, hitDustSeq, healBurstSeq, onClickSelf }: {
+function PartyChips({ fighters, selfId, flashIds, hitDustSeq, healBurstSeq, shieldBurstSeq, onClickSelf }: {
   fighters: Fighter[]; selfId: string; flashIds: Set<string>;
   hitDustSeq: Record<string, number>;
   healBurstSeq: Record<string, number>;
+  shieldBurstSeq: Record<string, number>;
   onClickSelf?: () => void;
 }) {
   const front = fighters.filter((f) => f.position === "front");
@@ -2737,8 +2744,8 @@ function PartyChips({ fighters, selfId, flashIds, hitDustSeq, healBurstSeq, onCl
           position: "relative",
           display: "flex", alignItems: "center", gap: 8,
           background: isSelf ? "rgba(245,245,220,0.09)" : "rgba(255,255,255,0.04)",
-          border: isSelf ? "1px solid rgba(245,245,220,0.22)" : f.shield > 0 && f.hp > 0 ? "1px solid rgba(96,165,250,0.4)" : "1px solid rgba(255,255,255,0.07)",
-          animation: f.shield > 0 && f.hp > 0 ? "gq-shield-pulse 2.5s ease-in-out infinite" : undefined,
+          border: isSelf ? "1px solid rgba(245,245,220,0.22)" : f.shield > Math.floor(f.armor_power / 2) && f.hp > 0 ? "1px solid rgba(96,165,250,0.4)" : "1px solid rgba(255,255,255,0.07)",
+          animation: f.shield > Math.floor(f.armor_power / 2) && f.hp > 0 ? "gq-shield-pulse 2.5s ease-in-out infinite" : undefined,
           borderRadius: 8, padding: "5px 10px",
           opacity: f.hp <= 0 ? 0.45 : 1, flexShrink: 0,
           minWidth: 130,
@@ -2747,7 +2754,8 @@ function PartyChips({ fighters, selfId, flashIds, hitDustSeq, healBurstSeq, onCl
       >
         <HitDust seq={hitDustSeq[f.id] ?? 0} />
         <HealBurst seq={healBurstSeq[f.id] ?? 0} />
-        {f.shield > 0 && f.hp > 0 && <ShieldGlow />}
+        <ShieldBurst seq={shieldBurstSeq[f.id] ?? 0} />
+        {f.shield > Math.floor(f.armor_power / 2) && f.hp > 0 && <ShieldGlow />}
         <Avatar src={charPortraitUrl(f.name)} fallbackSrc={classPortraitUrl(f.class)} alt={f.name} size={40} radius={5} fallbackIcon="player" fallbackColor="#4a5568" border="1px solid #2a2d33" />
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: 12, fontWeight: 600, color: "#e2e8f0", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{f.name}</div>

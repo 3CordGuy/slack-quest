@@ -16,6 +16,7 @@ import {
   InitStrip, CombatLog, LogEntry, CombatItem,
   HitDust,
   HealBurst,
+  ShieldBurst,
   ShieldGlow,
 } from "./CombatShared";
 ensureCombatAnimStyles();
@@ -360,12 +361,13 @@ function HpBar({ current, max, color, height = 6 }: { current: number; max: numb
   );
 }
 
-function PartyBar({ fighters, selfId, party, onClickSelf, flashIds, hitDustSeq, healBurstSeq }: {
+function PartyBar({ fighters, selfId, party, onClickSelf, flashIds, hitDustSeq, healBurstSeq, shieldBurstSeq }: {
   fighters: Fighter[] | null; selfId: string; party: Character[];
   onClickSelf?: () => void;
   flashIds?: Set<string>;
   hitDustSeq?: Record<string, number>;
   healBurstSeq?: Record<string, number>;
+  shieldBurstSeq?: Record<string, number>;
 }) {
   const seen = new Set<string>();
   type Member = {
@@ -431,7 +433,8 @@ function PartyBar({ fighters, selfId, party, onClickSelf, flashIds, hitDustSeq, 
         </div>
         <HitDust seq={hitDustSeq?.[f.key] ?? 0} />
         <HealBurst seq={healBurstSeq?.[f.key] ?? 0} />
-        {f.shield > 0 && !f.isDead && <ShieldGlow />}
+        <ShieldBurst seq={shieldBurstSeq?.[f.key] ?? 0} />
+        {f.shield > Math.floor(f.armor_power / 2) && !f.isDead && <ShieldGlow />}
         <Avatar src={charPortraitUrl(f.name)} fallbackSrc={classPortraitUrl(f.cls)} alt={f.name} size={56} radius={6} fallbackIcon="player" fallbackColor="#4a5568" border="1px solid #2a2d33" />
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: 13, fontWeight: 600, color: "#e2e8f0", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", paddingRight: 30 }}>{f.name}</div>
@@ -1032,6 +1035,7 @@ export function GridDungeonView({
   // already busy with slash streaks + lunge animations).
   const [hitDustSeq, setHitDustSeq] = useState<Record<string, number>>({});
   const [healBurstSeq, setHealBurstSeq] = useState<Record<string, number>>({});
+  const [shieldBurstSeq, setShieldBurstSeq] = useState<Record<string, number>>({});
   function flashHit(id: string) {
     setFlashIds((prev) => { const n = new Set(prev); n.add(id); return n; });
     setTimeout(() => {
@@ -1109,6 +1113,10 @@ export function GridDungeonView({
             if (evt.type === "heal_applied" && typeof (evt as { target?: string }).target === "string") {
               const tgt = (evt as { target: string }).target;
               setHealBurstSeq((prev) => ({ ...prev, [tgt]: (prev[tgt] ?? 0) + 1 }));
+            }
+            if (evt.type === "shield_applied" && typeof (evt as { target?: string }).target === "string") {
+              const tgt = (evt as { target: string }).target;
+              setShieldBurstSeq((prev) => ({ ...prev, [tgt]: (prev[tgt] ?? 0) + 1 }));
             }
             if (evt.type === "turn_skip") triggerBurst("frozen");
             if (evt.type === "victory") triggerBurst("victory");
@@ -1521,6 +1529,7 @@ export function GridDungeonView({
         flashIds={flashIds}
         hitDustSeq={hitDustSeq}
         healBurstSeq={healBurstSeq}
+        shieldBurstSeq={shieldBurstSeq}
       />
 
       {/* Action buttons row (RED area) — own row at the very bottom. Always

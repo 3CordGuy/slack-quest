@@ -261,6 +261,72 @@ export function ShieldGlow() {
   );
 }
 
+// ─── ShieldBurst ─────────────────────────────────────────────────────────────
+// Brief blue spark burst that fires when a shield_applied event lands.
+// Same WAAPI pattern as HealBurst — mount inside `position: relative`,
+// bump `seq` from the shield_applied handler.
+
+const SHIELD_BURST_COUNT = 10;
+const SHIELD_BURST_COLORS = ["#93c5fd", "#bfdbfe", "#60a5fa", "#ffffff", "#dbeafe"];
+
+export function ShieldBurst({ seq }: { seq: number }) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (seq <= 0) return;
+    const root = ref.current;
+    if (!root) return;
+    const els = Array.from(root.querySelectorAll<HTMLSpanElement>("[data-gq-shield-burst]"));
+    for (const el of els) {
+      const angleDeg = Math.random() * 360;
+      const distance = 28 + Math.random() * 36;
+      const rad = (angleDeg * Math.PI) / 180;
+      const x = Math.cos(rad) * distance;
+      const y = Math.sin(rad) * distance - 10;
+      el.animate(
+        [
+          { transform: "translate(-50%, -50%) scale(0)", opacity: 0 },
+          { transform: "translate(-50%, -50%) scale(1.4)", opacity: 1, offset: 0.15 },
+          { transform: `translate(-50%, -50%) translate(${x}px, ${y}px) scale(0.4)`, opacity: 0 },
+        ],
+        {
+          duration: 550 + Math.random() * 200,
+          delay: Math.random() * 60,
+          easing: "cubic-bezier(0.22, 1, 0.36, 1)",
+          fill: "forwards",
+        },
+      );
+    }
+  }, [seq]);
+
+  return (
+    <div
+      ref={ref}
+      aria-hidden="true"
+      style={{ position: "absolute", inset: 0, pointerEvents: "none", overflow: "visible", zIndex: 3 }}
+    >
+      {Array.from({ length: SHIELD_BURST_COUNT }, (_, i) => (
+        <span
+          key={i}
+          data-gq-shield-burst
+          style={{
+            position: "absolute",
+            left: "50%",
+            top: "50%",
+            width: 6,
+            height: 6,
+            borderRadius: "50%",
+            background: SHIELD_BURST_COLORS[i % SHIELD_BURST_COLORS.length],
+            boxShadow: `0 0 5px ${SHIELD_BURST_COLORS[i % SHIELD_BURST_COLORS.length]}cc`,
+            transform: "translate(-50%, -50%) scale(0)",
+            opacity: 0,
+            willChange: "transform, opacity",
+          }}
+        />
+      ))}
+    </div>
+  );
+}
+
 // ─── HealBurst ───────────────────────────────────────────────────────────────
 // Heart particles that float upward from a fighter card on heal events.
 // Same WAAPI pattern as HitDust — mount inside a `position: relative`
