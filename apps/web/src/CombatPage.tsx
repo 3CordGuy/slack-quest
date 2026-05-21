@@ -2897,6 +2897,9 @@ function CombatDevModal({
         <button disabled={!!busy} onClick={() => void act("/api/dev/combat-mana")} style={btn("#1a2a3a", "#60a5fa")}>
           <Icon name="crystals" size={13} /> {busy === "/api/dev/combat-mana" ? "…" : "Restore mana"}
         </button>
+        <button disabled={!!busy} onClick={() => void act("/api/dev/combat-kill-enemies")} style={btn("#3a1a1a", "#f87171")}>
+          <Icon name="death-skull" size={13} /> {busy === "/api/dev/combat-kill-enemies" ? "…" : "Kill all enemies"}
+        </button>
       </div>
     </div>
   );

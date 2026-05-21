@@ -6100,6 +6100,19 @@ app.post("/api/dev/combat-mana", async (c) => {
   return c.json({ ok: true });
 });
 
+app.post("/api/dev/combat-kill-enemies", async (c) => {
+  if (c.env.ENVIRONMENT !== "local") return c.json({ error: "forbidden" }, 403);
+  const session = await currentSession(c.env.DB, c.req.header("Cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const body = await c.req.json<{ questId?: unknown }>();
+  const questId = Number(body.questId);
+  if (!Number.isFinite(questId)) return c.json({ error: "invalid" }, 400);
+  const doId = c.env.QUEST_ROOM.idFromName(`quest:${questId}`);
+  const doStub = c.env.QUEST_ROOM.get(doId);
+  await (doStub as unknown as { devKillEnemies(q: number): Promise<{ ok: boolean }> }).devKillEnemies(questId);
+  return c.json({ ok: true });
+});
+
 // DEV ONLY — bypasses Slack login by creating/reusing a local dev character.
 app.post("/api/dev/login", async (c) => {
   if (c.env.ENVIRONMENT !== "local") return c.json({ error: "forbidden" }, 403);
@@ -7378,6 +7391,16 @@ export class QuestRoom extends DurableObject<Env> {
         reason: `outcome_failed: ${err instanceof Error ? err.message : String(err)}`,
       };
     }
+  }
+
+  async devKillEnemies(questId: number): Promise<{ ok: boolean; reason?: string }> {
+    const prevState = await this.loadState(questId);
+    if (!prevState) return { ok: false, reason: "no_combat" };
+    if (prevState.status !== "active") return { ok: false, reason: "combat_ended" };
+    const newMonsters = prevState.monsters.map((m) => ({ ...m, hp: 0 }));
+    const newState: CombatState = { ...prevState, monsters: newMonsters, status: "victory" };
+    await this.handleStepResult(questId, prevState, { state: newState, events: [{ type: "victory" }] });
+    return { ok: true };
   }
 
   async bootstrapFromSlack(
