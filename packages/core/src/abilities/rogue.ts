@@ -29,7 +29,7 @@ export const rogueAbilities: AbilityDef[] = [
     id: "vanish",
     name: "Vanish",
     blurb: "Disappear into the shadows — the monster can't target you for its next 2 swings.",
-    icon: "player-dodge",
+    icon: "abstract-006",
     mana_cost: 2,
     routing: "utility",
     target: "self",

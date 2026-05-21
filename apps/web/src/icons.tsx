@@ -40,6 +40,11 @@ const SVG_ICONS = new Set([
   "hammer-drop",
   // Bard ability icons
   "music-spell", "morbid-humour",
+  // Class ability icons (registered as SVG for crisp rendering)
+  "aura", "axe-swing", "crystal-ball", "fire", "grass", "linked-rings",
+  "scroll-unfurled", "shield-reflect",
+  // Abstract fallback icons (used when no specific icon exists)
+  "abstract-006",
 ]);
 
 interface IconProps {
