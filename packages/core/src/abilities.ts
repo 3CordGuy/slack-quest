@@ -7,6 +7,7 @@ export type TargetKind =
   | "self"
   | "single_enemy"
   | "single_ally"
+  | "any"           // fighter or monster — execute sees ctx.target as either type
   | "all_allies"
   | "all_enemies";
 
@@ -138,6 +139,9 @@ export interface ActiveAbilityDef {
   // rpg-awesome ra-* icon name (no prefix).
   icon: string;
   mana_cost: number;
+  // If set, the ability has no mana cost but goes on cooldown for this many
+  // of the caster's own turns after use. mana_cost should be 0 when set.
+  cooldown_turns?: number;
   target: TargetKind;
   // How the engine routes this ability:
   //   "damage"     — single-target damage (drink buffs, shocked amp, elemental proc, bleed apply)

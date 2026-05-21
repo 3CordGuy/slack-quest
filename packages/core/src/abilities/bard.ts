@@ -4,16 +4,39 @@ import { fx } from "./effects";
 export const bardAbilities: AbilityDef[] = [
   {
     kind: "active",
-    id: "mock",
-    name: "Mock",
-    blurb: "A cutting jeer rattles the enemy — disadvantage on their next 2 to-hit rolls.",
-    icon: "morbid-humour",
+    id: "crescendo",
+    name: "Crescendo",
+    blurb: "A rising melody that crescendos into a strike — deals 1d6 + magic + party×2 + weapon damage.",
+    icon: "music-spell",
     mana_cost: 1,
-    routing: "utility",
+    routing: "damage",
     target: "single_enemy",
     execute(ctx) {
       const monster = ctx.target as { id: string };
-      return [fx.discourage(monster.id, 2)];
+      const wpn = Math.max(0, ctx.caster.weapon_power);
+      const party = Math.max(1, ctx.party.length);
+      const r = ctx.roll(6);
+      const amount = r + ctx.caster.magic_mod + party * 2 + wpn;
+      return [fx.damage(monster.id, amount, `1d6 + ${ctx.caster.magic_mod}m + ${party}p×2 + ${wpn}w`, { drinkBuff: "ability" })];
+    },
+  },
+  {
+    kind: "active",
+    id: "verse",
+    name: "Verse",
+    blurb: "Pick a target: mock an enemy (disadvantage on their next 2 rolls) or encourage an ally (advantage on their next 2 rolls). Free but 2-turn cooldown.",
+    icon: "morbid-humour",
+    mana_cost: 0,
+    cooldown_turns: 2,
+    routing: "utility",
+    target: "any",
+    execute(ctx) {
+      const target = ctx.target as { id: string; hp?: number; max_hp?: number } | undefined;
+      if (!target) return [];
+      // Fighters have max_hp; monsters do not always — distinguish by checking the
+      // party array so we don't rely on a fragile field heuristic.
+      const isAlly = (ctx.party as Array<{ id: string }>).some((f) => f.id === target.id);
+      return isAlly ? [fx.encourage(target.id, 2)] : [fx.discourage(target.id, 2)];
     },
   },
   {
@@ -50,21 +73,6 @@ export const bardAbilities: AbilityDef[] = [
       const healAmt = ctx.roll(6) + ctx.roll(6) + ctx.caster.magic_mod;
       const shieldAmt = 2 + Math.floor(ctx.caster.level / 5);
       return [fx.heal(lowest.id, healAmt), fx.shield(lowest.id, shieldAmt)];
-    },
-  },
-  {
-    kind: "active",
-    id: "encourage",
-    name: "Encourage",
-    blurb: "A rallying word fills an ally with confidence — advantage on their next 2 to-hit rolls.",
-    icon: "conversation",
-    mana_cost: 1,
-    routing: "utility",
-    target: "single_ally",
-    execute(ctx) {
-      const target = ctx.target as { id: string } | undefined;
-      const targetId = target?.id ?? ctx.caster.id;
-      return [fx.encourage(targetId, 2)];
     },
   },
   {
