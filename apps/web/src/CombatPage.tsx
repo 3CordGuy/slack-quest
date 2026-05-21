@@ -44,7 +44,7 @@ ensureCombatAnimStyles();
 // log, and lets the active player submit actions.
 
 interface StatusEffect {
-  type: "regen" | "bleeding" | "burning" | "poisoned" | "frozen" | "shocked";
+  type: "regen" | "bleeding" | "burning" | "poisoned" | "frozen" | "shocked" | "stunned";
   magnitude: number;
   remaining: number;
   source?: string;
@@ -1614,16 +1614,21 @@ function MonsterCard({
         {monster.effects && monster.effects.length > 0 && !isDead && (
           <div style={{ display: "flex", gap: 6, marginTop: 6, flexWrap: "wrap" }}>
             {monster.effects.map((e, i) => {
+              const isStunned = e.type === "stunned";
               const [col, icon] = e.type === "regen" ? ["#4ade80", "regeneration"]
                 : e.type === "bleeding" ? ["#f87171", "bleeding-wound"]
                 : e.type === "burning" ? ["#fb923c", "fire"]
                 : e.type === "frozen" ? ["#93c5fd", "ice-bolt"]
                 : e.type === "shocked" ? ["#fbbf24", "electric"]
+                : isStunned ? ["#a78bfa", "fluffy-swirl"]
                 : ["#c084fc", "poison-cloud"];
+              const breakPct = isStunned ? Math.min(100, (5 - e.remaining) * 30) : null;
               return (
                 <span
                   key={i}
-                  title={`${e.type} ×${e.magnitude} (${e.remaining} turn${e.remaining === 1 ? "" : "s"} remaining)`}
+                  title={isStunned
+                    ? `stunned (${breakPct}% break chance this turn)`
+                    : `${e.type} ×${e.magnitude} (${e.remaining} turn${e.remaining === 1 ? "" : "s"} remaining)`}
                   style={{
                     display: "inline-flex", alignItems: "center", gap: 5,
                     fontSize: 12, fontWeight: 700,
@@ -1638,7 +1643,9 @@ function MonsterCard({
                 >
                   <Icon name={icon} size={14} color={col} />
                   {e.type}{e.magnitude > 1 ? ` ×${e.magnitude}` : ""}
-                  <span style={{ opacity: 0.8, fontWeight: 600, fontSize: 11 }}>· {e.remaining}t</span>
+                  <span style={{ opacity: 0.8, fontWeight: 600, fontSize: 11 }}>
+                    {isStunned ? `· ${breakPct}% break` : `· ${e.remaining}t`}
+                  </span>
                 </span>
               );
             })}

@@ -5,7 +5,7 @@
 
 import { useEffect, useReducer, useRef, useState } from "react";
 import toast from "react-hot-toast";
-import { isMonsterActor, isMercActor } from "@gantt-quest/core";
+import { isMonsterActor, isMercActor, classByName, activeAbilities } from "@gantt-quest/core";
 import { Avatar, Icon } from "./icons";
 import { CombatParticles, triggerBurst } from "./CombatParticles";
 import {
@@ -169,23 +169,9 @@ type TurnAction =
   | { kind: "monster_act" }
   | { kind: "use_item"; actor: string; item_id: number; target_id?: string };
 
-// Class → active ability spec (mirrors CombatPage.ABILITY_BY_CLASS).
-interface AbilityUiSpec {
-  id: string; name: string; iconName: string; mana_cost: number; blurb: string;
-  // migrate needs a partymate + position picker; not supported in grid view
-  // for v1 — we just disable the button with a note.
-  needs_picker?: boolean;
+function utilityAbilityForClass(className: string) {
+  return activeAbilities(classByName(className).abilities).find((a) => a.routing === "utility") ?? null;
 }
-const ABILITY_BY_CLASS: Record<string, AbilityUiSpec> = {
-  "SRE Warden":     { id: "taunt",             name: "Taunt",      iconName: "shield",          mana_cost: 2, blurb: "Monster targets you for 2 swings" },
-  "DevOps Mage":    { id: "containerize",      name: "Container",  iconName: "cubes",           mana_cost: 2, blurb: "Stun monster; 30%/turn break chance" },
-  "QA Paladin":     { id: "regression_shield", name: "Regress",    iconName: "fairy-wand",      mana_cost: 2, blurb: "+3 shield to all party" },
-  "Refactor Rogue": { id: "vanish",            name: "Vanish",     iconName: "hood",            mana_cost: 2, blurb: "Untargetable for 2 swings" },
-  "Data Warlock":   { id: "soul_drain",        name: "Soul Drain", iconName: "death-skull",     mana_cost: 2, blurb: "1d6+mag dmg, heal 50%" },
-  "Frontend Bard":  { id: "battle_hymn",       name: "Hymn",       iconName: "aura",            mana_cost: 2, blurb: "+dmg buff on next party attacks" },
-  "Staff Sage":     { id: "foresee",           name: "Foresee",    iconName: "scroll-unfurled", mana_cost: 1, blurb: "Full battle intel for 2 turns" },
-  "Backend Druid":  { id: "migrate",           name: "Migrate",    iconName: "leaf",            mana_cost: 1, blurb: "Move a partymate to front/back", needs_picker: true },
-};
 
 interface OutcomeSummary {
   status: "victory" | "defeat";
@@ -2131,7 +2117,7 @@ function CombatPanel({ state, selfId, onSend, autoResolve, setAutoResolve, myTur
   const usable = items.filter((it) => !it.equipped && ["consumable", "magic", "revive", "tool"].includes(it.item_type));
   const giveable = items.filter((it) => !it.equipped);
   const otherFighters = state.fighters.filter((f) => f.id !== selfId && f.hp > 0);
-  const ability = ABILITY_BY_CLASS[characterClass] ?? null;
+  const ability = utilityAbilityForClass(characterClass);
 
   async function fireGive(itemId: number, toUserId: string) {
     await fetch(`/api/inventory/${itemId}/give`, {
@@ -2320,10 +2306,10 @@ function CombatPanel({ state, selfId, onSend, autoResolve, setAutoResolve, myTur
         {ability && (
           <CBtn
             label={ability.name}
-            icon={ability.iconName}
+            icon={ability.icon}
             color="#d946ef"
             manaCost={ability.mana_cost}
-            disabled={!myTurn || mana < ability.mana_cost || !!ability.needs_picker}
+            disabled={!myTurn || mana < ability.mana_cost || !!ability.needs_position_picker}
             onClick={() => onSend({ kind: "ability", actor: selfId, ability_id: ability.id })}
           />
         )}
