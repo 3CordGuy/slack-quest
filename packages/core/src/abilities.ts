@@ -78,9 +78,11 @@ export type AbilityEffect =
   | { kind: "grant_shield"; target_id: string; amount: number }
   // Grant shield to every alive party member (regression shield).
   | { kind: "grant_shield_all"; amount: number }
-  // Apply a stun to the targeted monster. Break chance accumulates 30% per
-  // elapsed monster turn; guaranteed on the 4th turn.
-  | { kind: "stun_monster"; target_id: string }
+  // Apply a stun to the targeted monster. Break chance accumulates
+  // break_pct_per_turn per elapsed monster turn; guaranteed on the turn where
+  // the cumulative chance reaches 100%. Boss targets use boss_break_pct_per_turn
+  // if provided, falling back to break_pct_per_turn.
+  | { kind: "stun_monster"; target_id: string; break_pct_per_turn: number; boss_break_pct_per_turn?: number }
   // Restore mana to a specific fighter (Mana Font passive).
   | { kind: "restore_mana"; target_id: string; amount: number }
   // Lock monster targeting onto actor_id for N swings (taunt).

@@ -30,7 +30,7 @@ export const mageAbilities: AbilityDef[] = [
     execute(ctx) {
       const target = ctx.target as { id: string } | undefined;
       if (!target) return [];
-      return [fx.stunMonster(target.id)];
+      return [fx.stunMonster(target.id, 30, 10)];
     },
   },
   {

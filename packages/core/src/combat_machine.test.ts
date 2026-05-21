@@ -1028,7 +1028,7 @@ describe("containerize ability (DevOps Mage)", () => {
       ...begun.state,
       monsters: begun.state.monsters.map((m) => ({
         ...m,
-        effects: [{ type: "stunned" as const, magnitude: 0, remaining: 5, source: "U_PALADIN" }],
+        effects: [{ type: "stunned" as const, magnitude: 30, remaining: 5, source: "U_PALADIN" }],
       })),
     };
     // tickEffects: remaining 5→4. turnsElapsed=1, breakChance=0.30.
@@ -1049,7 +1049,7 @@ describe("containerize ability (DevOps Mage)", () => {
       ...begun.state,
       monsters: begun.state.monsters.map((m) => ({
         ...m,
-        effects: [{ type: "stunned" as const, magnitude: 0, remaining: 2, source: "U_PALADIN" }],
+        effects: [{ type: "stunned" as const, magnitude: 30, remaining: 2, source: "U_PALADIN" }],
       })),
     };
     const result = step(stunnedState, { kind: "monster_act" }, seqRoll([1]));

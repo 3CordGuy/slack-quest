@@ -53,6 +53,9 @@ export interface MachineStatusEffect {
   magnitude: number;
   remaining: number;
   source?: string;
+  // Display string rendered verbatim in the status pill suffix (e.g. "30% break").
+  // Only set for effects that need custom pill text; others fall back to "${remaining}t".
+  pill_suffix?: string;
 }
 
 // Snapshot of a party member at combat start. Loaded from D1 once when the
@@ -1168,19 +1171,25 @@ function handleMonsterAct(state: CombatState, roll: RollFn): StepResult {
   // (remaining=1 → turnsElapsed=4 → 120% clamped to 100%).
   const stunnedEffect = s.monsters.find((m) => m.id === actorId)?.effects.find((e) => e.type === "stunned");
   if (stunnedEffect) {
+    const bpt = stunnedEffect.magnitude;
     const turnsElapsed = 5 - stunnedEffect.remaining;
-    const breakChance = Math.min(1.0, turnsElapsed * 0.30);
+    const breakChance = Math.min(1.0, turnsElapsed * (bpt / 100));
     const breaks = (roll(100) / 100) < breakChance;
     const breakEvents: CombatEvent[] = breaks
       ? [{ type: "monster_stun_broken", turns_active: turnsElapsed }]
       : [];
+    const nextBreakPct = Math.min(100, (6 - stunnedEffect.remaining) * bpt);
     const updatedMonsters = breaks
       ? s.monsters.map((m) =>
           m.id === actorId
             ? { ...m, effects: m.effects.filter((e) => e.type !== "stunned") }
             : m,
         )
-      : s.monsters;
+      : s.monsters.map((m) =>
+          m.id === actorId
+            ? { ...m, effects: m.effects.map((e) => e.type === "stunned" ? { ...e, pill_suffix: `${nextBreakPct}% break` } : e) }
+            : m,
+        );
     const skippedState: CombatState = { ...s, monsters: updatedMonsters };
     const next = advanceTurn(skippedState);
     return {
@@ -2080,7 +2089,17 @@ function applyUtilityAbilityEffects(
       case "stun_monster": {
         const targetMonster = s.monsters.find((m) => m.id === effect.target_id && m.hp > 0);
         if (!targetMonster) continue;
-        const stunnedEffect: MachineStatusEffect = { type: "stunned", magnitude: 0, remaining: 5, source: actor };
+        const isBoss = targetMonster.is_boss;
+        const bpt = (isBoss && effect.boss_break_pct_per_turn != null)
+          ? effect.boss_break_pct_per_turn
+          : effect.break_pct_per_turn;
+        const stunnedEffect: MachineStatusEffect = {
+          type: "stunned",
+          magnitude: bpt,
+          remaining: 5,
+          source: actor,
+          pill_suffix: `${Math.min(100, bpt)}% break`,
+        };
         s = {
           ...s,
           monsters: s.monsters.map((m) =>
