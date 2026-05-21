@@ -3259,7 +3259,10 @@ function tickEffects(effects: StatusEffect[]): { next: StatusEffect[]; hpDelta: 
       continue;
     }
     if (meta.kind === "passive") {
-      // Passive effects (e.g. empowered) have no HP delta — just count down silently.
+      // "stunned" is only decremented on the monster's own turn (performMonsterTurn),
+      // not on player attacks, so that turnsElapsed stays tied to monster turns not
+      // party size. All other passives (empowered, frozen, shocked) count down normally.
+      if (e.type === "stunned") { next.push(e); continue; }
       const remaining = e.remaining - 1;
       if (remaining > 0) next.push({ ...e, remaining });
       continue;
@@ -11940,12 +11943,17 @@ async function performMonsterTurn(
   const stunnedEff = quest.scene.monster_effects?.find((e) => e.type === "stunned");
   if (stunnedEff) {
     const dummy = fighters.find((f) => f.slack_user_id === actor.slack_user_id) ?? fighters[0];
-    const turnsElapsed = 5 - stunnedEff.remaining;
+    // Decrement remaining here (not in tickEffects) so turnsElapsed counts monster turns,
+    // not player attacks. turnsElapsed = 5 - newRemaining, matching the engine path.
+    const newRemaining = stunnedEff.remaining - 1;
+    const turnsElapsed = 5 - newRemaining;
     const breakChance = Math.min(1.0, turnsElapsed * 0.30);
     const breaks = rollDice(100) / 100 < breakChance;
-    if (breaks) {
-      const clearedEffects = (quest.scene.monster_effects ?? []).filter((e) => e.type !== "stunned");
-      await saveScene(env.DB, quest.id, { ...quest.scene, monster_effects: clearedEffects });
+    const otherEffects = (quest.scene.monster_effects ?? []).filter((e) => e.type !== "stunned");
+    if (breaks || newRemaining <= 0) {
+      await saveScene(env.DB, quest.id, { ...quest.scene, monster_effects: otherEffects });
+    } else {
+      await saveScene(env.DB, quest.id, { ...quest.scene, monster_effects: [...otherEffects, { ...stunnedEff, remaining: newRemaining }] });
     }
     return {
       target: dummy,

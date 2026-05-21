@@ -980,8 +980,8 @@ describe("multi-monster combat", () => {
 });
 
 describe("containerize ability (DevOps Mage)", () => {
-  function mageInit(): CombatInit {
-    const init = baseInit();
+  function mageInit(overrides: Partial<CombatInit> = {}): CombatInit {
+    const init = baseInit(overrides);
     init.fighters[0].class = "DevOps Mage";
     init.fighters[0].mana = 3;
     init.fighters[0].magic_mod = 1;
@@ -1001,6 +1001,24 @@ describe("containerize ability (DevOps Mage)", () => {
     expect(stunned).toBeDefined();
     expect(stunned?.remaining).toBe(5);
     expect(result.events.find((e) => e.type === "ability_containerize")).toBeDefined();
+  });
+
+  it("respects target_id when multiple monsters are present", () => {
+    const init = mageInit({
+      monsters: [
+        { name: "Goblin A", hp: 10, max_hp: 10, tier: 1, is_boss: false },
+        { name: "Goblin B", hp: 10, max_hp: 10, tier: 1, is_boss: false },
+      ],
+    });
+    const begun = runBegin(createCombatState(init), [15, 10, 5]);
+    // Target Goblin B (__monster_1__) specifically.
+    const result = step(
+      begun.state,
+      { kind: "ability", actor: "U_PALADIN", ability_id: "containerize", target_id: "__monster_1__" },
+      seqRoll([]),
+    );
+    expect(result.state.monsters[0].effects.find((e) => e.type === "stunned")).toBeUndefined();
+    expect(result.state.monsters[1].effects.find((e) => e.type === "stunned")).toBeDefined();
   });
 
   it("stunned monster skips its swing; remaining decremented; no break at 30% threshold miss", () => {

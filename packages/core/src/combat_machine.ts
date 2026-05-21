@@ -1996,7 +1996,7 @@ function handleAbility(
     case "taunt":
       return abilityTaunt(sPostMana, action.actor, preEvents);
     case "containerize":
-      return abilityContainerize(sPostMana, action.actor, preEvents);
+      return abilityContainerize(sPostMana, action.actor, action.target_id ?? null, preEvents);
     case "regression_shield":
       return abilityRegressionShield(sPostMana, action.actor, preEvents);
     case "vanish":
@@ -2032,11 +2032,13 @@ function abilityTaunt(state: CombatState, actor: ActorId, events: CombatEvent[])
   };
 }
 
-function abilityContainerize(state: CombatState, actor: ActorId, events: CombatEvent[]): StepResult {
-  // Apply "stunned" status effect to the current live monster. `remaining=5`
-  // gives tickEffects four decrements before the safety-net expiry, matching
+function abilityContainerize(state: CombatState, actor: ActorId, targetId: string | null, events: CombatEvent[]): StepResult {
+  // Apply "stunned" status effect to the targeted monster (or first live one as fallback).
+  // `remaining=5` gives tickEffects four decrements before the safety-net expiry, matching
   // the 4-turn max stun duration (turnsElapsed = 5 - remaining after each tick).
-  const targetMonster = state.monsters.find((m) => m.hp > 0);
+  const targetMonster = targetId
+    ? state.monsters.find((m) => m.id === targetId && m.hp > 0)
+    : state.monsters.find((m) => m.hp > 0);
   if (!targetMonster) return reject(state, "no live monster to containerize");
   const stunnedEffect: MachineStatusEffect = {
     type: "stunned",
