@@ -454,6 +454,7 @@ cd apps/slack
 npx wrangler secret put SLACK_SIGNING_SECRET
 npx wrangler secret put SLACK_BOT_TOKEN
 npx wrangler secret put ALLOWED_CHANNEL_ID   # optional channel allowlist
+npx wrangler secret put IMAGE_BASE_URL       # public URL of the deployed web worker
 ```
 
 For the web worker:
@@ -481,11 +482,66 @@ Both `wrangler.jsonc` files need their DO bindings configured:
 Deploy the web worker first so the DO classes exist before the Slack worker
 tries to bind them.
 
-### 6. Run / deploy
+### 6. Local dev environment vars
+
+Two files control local dev behaviour. Both are gitignored — create them by
+hand after cloning.
+
+**`apps/web/.dev.vars`** — injected into the web worker runtime by Wrangler /
+`@cloudflare/vite-plugin`. Also parsed by `vite.config.ts` at startup for
+build-time flags.
 
 ```bash
-pnpm dev                   # Slack worker dev server (most common iteration loop)
-pnpm --filter web dev      # web worker dev server (Vite + Wrangler)
+# apps/web/.dev.vars
+
+# Gates all dev-only features in the web worker. When set to "local":
+#   - POST /api/dev/login is enabled (powers the "Dev login" button)
+#   - POST /api/dev/* tool endpoints (heal, mana, gold, revive, level,
+#     cooldowns, combat-heal, combat-mana) are enabled
+#   - Workers AI art generation is disabled (avoids "must run remotely" errors)
+#   - hunt/shop/smithy fall back to a synthetic "local-dev" channel so they
+#     work without a real Slack channel in the DB
+# Set to "production" (or omit the file) to match deployed behaviour.
+ENVIRONMENT=local
+
+# Controls whether the Cloudflare Vite plugin uses remote CF bindings (AI,
+# R2, etc.) or local Miniflare stubs. Read by vite.config.ts at Vite startup;
+# has no effect on the worker runtime itself.
+#   false — use local Miniflare stubs (default for local dev; AI won't work)
+#   true  — call real Cloudflare services (requires auth; lets you test AI art)
+# Set to "true" if you want to test AI art generation locally.
+REMOTE_BINDINGS=false
+```
+
+**`apps/slack/.dev.vars`** — injected into the Slack worker runtime only.
+
+```bash
+# apps/slack/.dev.vars
+
+# Same ENVIRONMENT flag as the web worker. When "local", no behaviour is
+# currently gated in the Slack worker, but the flag is wired up for future
+# use and keeps the two workers consistent.
+ENVIRONMENT=local
+
+# Public base URL where Slack fetches images (banners, monster art). Overrides
+# the production URL hardcoded in wrangler.jsonc. Point at the local Vite dev
+# server so image routes resolve during local development.
+IMAGE_BASE_URL=http://localhost:5173
+```
+
+Production values live in the `vars` block of each `wrangler.jsonc`
+(`ENVIRONMENT=production`), so dev endpoints are always unreachable in
+deployed builds regardless of what `.dev.vars` says.
+
+### 7. Run / deploy
+
+Both workers must run simultaneously for cross-worker Durable Object bindings
+(`QUEST_ROOM`, `LOBBY_ROOM`) to connect. Wrangler's local dev registry wires
+them together automatically when both processes are up.
+
+```bash
+pnpm dev                   # Slack worker dev server
+pnpm --filter web dev      # web worker dev server (Vite + Wrangler) — run alongside pnpm dev
 ```
 
 For prod:

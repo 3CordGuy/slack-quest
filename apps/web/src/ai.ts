@@ -643,6 +643,7 @@ const MONSTER_ART_VERSION = "v8";
 export interface ArtTarget {
   bucket: R2Bucket;
   baseUrl: string;
+  disabled?: boolean;
 }
 
 const STYLE_ANCHOR =
@@ -938,6 +939,7 @@ export async function getOrScheduleViewArt(
   prompt?: string,
   ttlMs?: number,
 ): Promise<string | null> {
+  if (art.disabled) return null;
   const raw = prompt ?? VIEW_ART_PROMPTS[shortKey];
   const { key, fullPrompt } = viewArtKeyAndPrompt(shortKey, raw);
   const publicUrl = `${art.baseUrl}/img/${key}`;
@@ -1030,6 +1032,7 @@ export async function generateMonsterArt(
   variant: SceneVariant,
   tier = 1,
 ): Promise<string | null> {
+  if (art.disabled) return null;
   const slug = slugifyMonsterName(monsterName);
   const key = `art/${MONSTER_ART_VERSION}/${slug}.png`;
   const sizeHint = monsterSizeHint(tier);
@@ -1061,6 +1064,7 @@ async function generateAndCacheArt(
   prompt: string,
   label: string,
 ): Promise<string | null> {
+  if (art.disabled) return null;
   const publicUrl = `${art.baseUrl}/img/${key}`;
   try {
     const existing = await art.bucket.head(key);
@@ -1196,6 +1200,7 @@ export async function generateCharacterArtNow(
   character: { name: string; class: string; gender?: "m" | "f" | null },
   classId: string,
 ): Promise<string | null> {
+  if (art.disabled) return null;
   const { key, url } = characterArtKey(art, character.name);
   const prompt = buildCharacterArtPrompt(character, classId);
   return generateAndCacheArt(ai, art, key, prompt, `character:${character.name}`).then(
@@ -1214,6 +1219,7 @@ export async function getOrScheduleCharacterArt(
   character: { name: string; class: string; gender?: "m" | "f" | null },
   classId: string,
 ): Promise<string | null> {
+  if (art.disabled) return null;
   const { key, url } = characterArtKey(art, character.name);
   try {
     const existing = await art.bucket.head(key);

@@ -42,6 +42,9 @@ import {
   checkProgressionAchievements,
   classByName,
   createCombatState,
+  statsAtLevel,
+  deriveMaxMana,
+  FREE_POINTS_PER_LEVEL,
   dropChance,
   findApothecaryStaple,
   findCatalogEntry,
@@ -134,6 +137,7 @@ import {
   tryDeductGold,
   trySetHaggleOutcome,
   awardSpoils,
+  issueWebLoginCode,
   consumeWebLoginCode,
   createWebSession,
   deleteWebCombatState,
@@ -449,7 +453,7 @@ const TOWN_DAILY_MS = 24 * 60 * 60 * 1000;
 // the most recently active channel in the whole DB — covers new players who
 // haven't started a Slack quest yet but the team is already playing in a known
 // channel.
-async function recentChannelForUser(db: D1Database, userId: string): Promise<string | null> {
+async function recentChannelForUser(db: D1Database, userId: string, env?: { ENVIRONMENT?: string }): Promise<string | null> {
   const row = await db
     .prepare(
       `SELECT q.channel_id FROM quests q
@@ -470,7 +474,10 @@ async function recentChannelForUser(db: D1Database, userId: string): Promise<str
   const townFallback = await db
     .prepare(`SELECT channel_id FROM town_state ORDER BY refreshed_at DESC LIMIT 1`)
     .first<{ channel_id: string }>();
-  return townFallback?.channel_id ?? null;
+  if (townFallback) return townFallback.channel_id;
+  // Fallback 3: local dev — no Slack channel needed
+  if (env?.ENVIRONMENT === "local") return "local-dev";
+  return null;
 }
 
 // Slack uses Workers AI to flavor non-catalog drops; web v1 names them
@@ -744,6 +751,8 @@ interface Env {
   SLACK_BOT_TOKEN?: string;
   // Feature flag: "1" enables STATS_V2 primary stat derivations in combat.
   STATS_V2?: string;
+  // Set to "local" via .dev.vars to enable dev-only endpoints (e.g. /api/dev/login).
+  ENVIRONMENT?: string;
 }
 
 // Minimal chat.postMessage wrapper duplicated from apps/slack/src/slack.ts.
@@ -896,7 +905,7 @@ async function announceWebQuestToSlack(
 const WEB_PUBLIC_BASE = "https://quest.heylets.party";
 
 function artTarget(env: Env): import("./ai").ArtTarget {
-  return { bucket: env.ART, baseUrl: WEB_PUBLIC_BASE };
+  return { bucket: env.ART, baseUrl: WEB_PUBLIC_BASE, disabled: env.ENVIRONMENT === "local" };
 }
 
 const SESSION_COOKIE = "sq_session";
@@ -1716,7 +1725,7 @@ app.post("/api/quest/start", async (c) => {
   if (variant === "dungeon" && character.level < DUNGEON_LEVEL_REQUIRED) {
     return c.json({ error: "dungeon_level_gate", required: DUNGEON_LEVEL_REQUIRED }, 400);
   }
-  const channelId = await recentChannelForUser(c.env.DB, session.slack_user_id);
+  const channelId = await recentChannelForUser(c.env.DB, session.slack_user_id, c.env);
   const effectiveChannel = channelId ?? `web:${session.slack_user_id}`;
   const avoidNames = channelId ? await getRecentMonsterNames(c.env.DB, channelId, 6) : [];
 
@@ -1855,7 +1864,7 @@ app.post("/api/quest/start_with_party", async (c) => {
     return c.json({ error: "dungeon_level_gate", required: DUNGEON_LEVEL_REQUIRED }, 400);
   }
 
-  const channelId = await recentChannelForUser(c.env.DB, session.slack_user_id);
+  const channelId = await recentChannelForUser(c.env.DB, session.slack_user_id, c.env);
   const effectiveChannel = channelId ?? `web:${session.slack_user_id}`;
   const avoidNames = channelId ? await getRecentMonsterNames(c.env.DB, channelId, 6) : [];
 
@@ -1948,7 +1957,7 @@ app.get("/api/quest/joinable", async (c) => {
   if (await getActiveQuestForCharacter(c.env.DB, session.slack_user_id)) {
     return c.json({ joinable: null });
   }
-  const channelId = await recentChannelForUser(c.env.DB, session.slack_user_id);
+  const channelId = await recentChannelForUser(c.env.DB, session.slack_user_id, c.env);
   if (!channelId) return c.json({ joinable: null });
   const quest = await getActiveQuestInChannel(c.env.DB, channelId);
   if (!quest) return c.json({ joinable: null });
@@ -1990,7 +1999,7 @@ app.post("/api/quest/join", async (c) => {
   if (await getActiveQuestForCharacter(c.env.DB, session.slack_user_id)) {
     return c.json({ error: "already_on_quest" }, 400);
   }
-  const channelId = await recentChannelForUser(c.env.DB, session.slack_user_id);
+  const channelId = await recentChannelForUser(c.env.DB, session.slack_user_id, c.env);
   if (!channelId) return c.json({ error: "no_channel" }, 404);
   const quest = await getActiveQuestInChannel(c.env.DB, channelId);
   if (!quest) return c.json({ error: "no_quest" }, 404);
@@ -2202,7 +2211,7 @@ app.get("/api/board", async (c) => {
   if (!session) return c.json({ error: "unauthenticated" }, 401);
   const character = await getCharacter(c.env.DB, session.slack_user_id);
   if (!character) return c.json({ error: "no_character" }, 404);
-  const channelId = await recentChannelForUser(c.env.DB, session.slack_user_id);
+  const channelId = await recentChannelForUser(c.env.DB, session.slack_user_id, c.env);
   if (!channelId) return c.json({ town_name: "Heylets", jobs: [], claims: {}, character_level: character.level });
 
   // Refresh stale jobs/name in the background — serve current state immediately.
@@ -2263,7 +2272,7 @@ app.post("/api/board/take", async (c) => {
   const jobId = body?.job_id;
   if (!jobId) return c.json({ error: "missing_job_id" }, 400);
 
-  const channelId = await recentChannelForUser(c.env.DB, session.slack_user_id);
+  const channelId = await recentChannelForUser(c.env.DB, session.slack_user_id, c.env);
   if (!channelId) return c.json({ error: "no_channel" }, 400);
 
   const townRow = await c.env.DB
@@ -2397,7 +2406,7 @@ app.get("/api/shop", async (c) => {
   if (!character) return c.json({ error: "no_character" }, 404);
   const activeQuest = await getActiveQuestForCharacter(c.env.DB, session.slack_user_id);
   if (activeQuest) return c.json({ error: "mid_quest" }, 400);
-  const channelId = await recentChannelForUser(c.env.DB, session.slack_user_id);
+  const channelId = await recentChannelForUser(c.env.DB, session.slack_user_id, c.env);
   if (!channelId) return c.json({ error: "no_channel" }, 404);
   const stock = await getActiveShopStock(c.env.DB, channelId, SHOP_RESTOCK_MS);
   const art_url = await getOrScheduleViewArt(c.env.AI, artTarget(c.env), c.executionCtx, "channel_shop", undefined, TOWN_WEEKLY_MS);
@@ -2442,7 +2451,7 @@ app.get("/api/shop", async (c) => {
 app.post("/api/shop/restock", async (c) => {
   const session = await currentSession(c.env.DB, c.req.header("cookie"));
   if (!session) return c.json({ error: "unauthenticated" }, 401);
-  const channelId = await recentChannelForUser(c.env.DB, session.slack_user_id);
+  const channelId = await recentChannelForUser(c.env.DB, session.slack_user_id, c.env);
   if (!channelId) return c.json({ error: "no_channel" }, 404);
 
   const recent = await c.env.DB
@@ -2527,7 +2536,7 @@ app.post("/api/hunt", async (c) => {
     ? (body!.invitees as unknown[]).filter((x): x is string => typeof x === "string").slice(0, 5)
     : [];
 
-  const channelId = await recentChannelForUser(c.env.DB, session.slack_user_id);
+  const channelId = await recentChannelForUser(c.env.DB, session.slack_user_id, c.env);
   if (!channelId) return c.json({ error: "no_channel" }, 400);
 
   const avoidNames = await getRecentMonsterNames(c.env.DB, channelId, 6);
@@ -2620,7 +2629,7 @@ app.post("/api/shop/:itemId/buy", async (c) => {
   if (await getActiveQuestForCharacter(c.env.DB, session.slack_user_id)) {
     return c.json({ error: "mid_quest" }, 400);
   }
-  const channelId = await recentChannelForUser(c.env.DB, session.slack_user_id);
+  const channelId = await recentChannelForUser(c.env.DB, session.slack_user_id, c.env);
   if (!channelId) return c.json({ error: "no_channel" }, 404);
   const stock = await getShopItem(c.env.DB, itemId, channelId);
   if (!stock) return c.json({ error: "not_in_shop" }, 404);
@@ -2712,7 +2721,7 @@ app.post("/api/shop/:itemId/haggle", async (c) => {
   if (await getActiveQuestForCharacter(c.env.DB, session.slack_user_id)) {
     return c.json({ error: "mid_quest" }, 400);
   }
-  const channelId = await recentChannelForUser(c.env.DB, session.slack_user_id);
+  const channelId = await recentChannelForUser(c.env.DB, session.slack_user_id, c.env);
   if (!channelId) return c.json({ error: "no_channel" }, 404);
   const stock = await getShopItem(c.env.DB, itemId, channelId);
   if (!stock) return c.json({ error: "not_in_shop" }, 404);
@@ -3055,7 +3064,7 @@ app.get("/api/smithy", async (c) => {
   }
   // Channel resolution mirrors /api/shop: last channel the user did a /sq
   // command in. Required for channel-scoped stock to make sense.
-  const channelId = await recentChannelForUser(c.env.DB, session.slack_user_id);
+  const channelId = await recentChannelForUser(c.env.DB, session.slack_user_id, c.env);
   if (!channelId) return c.json({ error: "no_channel" }, 404);
   await ensureSmithyStock(c.env, channelId, session.slack_user_id, character.level);
   const [weapon, armor, allSlots, stock] = await Promise.all([
@@ -3116,7 +3125,7 @@ app.post("/api/smithy/buy/:stockId", async (c) => {
   }
   // Buyer must be in the same channel that the stock was generated for —
   // prevents cross-channel sniping after the migration.
-  const channelId = await recentChannelForUser(c.env.DB, session.slack_user_id);
+  const channelId = await recentChannelForUser(c.env.DB, session.slack_user_id, c.env);
   if (!channelId) return c.json({ error: "no_channel" }, 404);
   const stockItem = await getSmithyStockItem(c.env.DB, stockId, channelId);
   if (!stockItem) return c.json({ error: "not_found" }, 404);
@@ -3527,7 +3536,7 @@ app.get("/api/pub", async (c) => {
   const activeQuest = await getActiveQuestForCharacter(c.env.DB, session.slack_user_id);
   if (activeQuest) return c.json({ error: "mid_quest" }, 400);
 
-  const channelId = await recentChannelForUser(c.env.DB, session.slack_user_id);
+  const channelId = await recentChannelForUser(c.env.DB, session.slack_user_id, c.env);
 
   // Daily special from town_state (optional — null means no special today).
   let dailySpecialId: string | null = null;
@@ -3703,7 +3712,7 @@ app.post("/api/pub/drink/:drinkId", async (c) => {
   }
 
   // Daily special pricing.
-  const channelId = await recentChannelForUser(c.env.DB, session.slack_user_id);
+  const channelId = await recentChannelForUser(c.env.DB, session.slack_user_id, c.env);
   let price = drink.price;
   if (channelId) {
     const specialId = await getDailySpecialId(c.env.DB, channelId);
@@ -3782,7 +3791,7 @@ app.post("/api/pub/talk/:npcId", async (c) => {
   if (activeQuest) return c.json({ error: "mid_quest" }, 400);
 
   const npcId = c.req.param("npcId");
-  const channelId = await recentChannelForUser(c.env.DB, session.slack_user_id);
+  const channelId = await recentChannelForUser(c.env.DB, session.slack_user_id, c.env);
   if (!channelId) return c.json({ error: "no_channel" }, 400);
 
   const townState = await getStaleTownState(c.env.DB, channelId);
@@ -3920,7 +3929,7 @@ app.post("/api/pub/liars/start", async (c) => {
     claim = others[Math.floor(Math.random() * others.length)];
   }
 
-  const channelId = (await recentChannelForUser(c.env.DB, session.slack_user_id)) ?? "web";
+  const channelId = (await recentChannelForUser(c.env.DB, session.slack_user_id, c.env)) ?? "web";
   const roundId = await createLiarsRound(c.env.DB, {
     user_id: session.slack_user_id,
     channel_id: channelId,
@@ -4031,7 +4040,7 @@ app.post("/api/pub/spd/start", async (c) => {
     return c.json({ error: "invalid_throw" }, 400);
   }
 
-  const channelId = await recentChannelForUser(c.env.DB, session.slack_user_id);
+  const channelId = await recentChannelForUser(c.env.DB, session.slack_user_id, c.env);
   if (!channelId) return c.json({ error: "no_channel" }, 400);
 
   // Sweep expired matches
@@ -5962,6 +5971,167 @@ app.post("/api/admin/pregen_dungeon_rooms", async (c) => {
 // Health check. Anything else falls through to the ASSETS binding via the
 // wrangler `not_found_handling: single-page-application` config.
 app.get("/api/health", (c) => c.json({ ok: true }));
+
+// DEV ONLY — dev tool actions (heal, mana, gold, revive, cooldown reset).
+app.post("/api/dev/heal", async (c) => {
+  if (c.env.ENVIRONMENT !== "local") return c.json({ error: "forbidden" }, 403);
+  const session = await currentSession(c.env.DB, c.req.header("Cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  await c.env.DB.prepare("UPDATE characters SET hp = max_hp WHERE slack_user_id = ?")
+    .bind(session.slack_user_id).run();
+  return c.json({ ok: true });
+});
+
+app.post("/api/dev/mana", async (c) => {
+  if (c.env.ENVIRONMENT !== "local") return c.json({ error: "forbidden" }, 403);
+  const session = await currentSession(c.env.DB, c.req.header("Cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  await c.env.DB.prepare("UPDATE characters SET mana = max_mana WHERE slack_user_id = ?")
+    .bind(session.slack_user_id).run();
+  return c.json({ ok: true });
+});
+
+app.post("/api/dev/gold", async (c) => {
+  if (c.env.ENVIRONMENT !== "local") return c.json({ error: "forbidden" }, 403);
+  const session = await currentSession(c.env.DB, c.req.header("Cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const body = await c.req.json<{ amount?: unknown }>();
+  const amount = Math.floor(Number(body.amount));
+  if (!Number.isFinite(amount) || amount <= 0 || amount > 1_000_000) return c.json({ error: "invalid" }, 400);
+  await c.env.DB.prepare("UPDATE characters SET gold = gold + ? WHERE slack_user_id = ?")
+    .bind(amount, session.slack_user_id).run();
+  return c.json({ ok: true });
+});
+
+app.post("/api/dev/revive", async (c) => {
+  if (c.env.ENVIRONMENT !== "local") return c.json({ error: "forbidden" }, 403);
+  const session = await currentSession(c.env.DB, c.req.header("Cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  await c.env.DB.prepare("UPDATE characters SET downed_until = NULL, hp = max_hp WHERE slack_user_id = ?")
+    .bind(session.slack_user_id).run();
+  return c.json({ ok: true });
+});
+
+app.post("/api/dev/cooldowns", async (c) => {
+  if (c.env.ENVIRONMENT !== "local") return c.json({ error: "forbidden" }, 403);
+  const session = await currentSession(c.env.DB, c.req.header("Cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  await c.env.DB
+    .prepare("UPDATE characters SET last_rest_at = NULL, last_long_rest_at = NULL, drinks_since_last_quest = 0 WHERE slack_user_id = ?")
+    .bind(session.slack_user_id).run();
+  await c.env.DB.prepare("DELETE FROM shop_stock WHERE channel_id = ?").bind("local-dev").run();
+  await c.env.DB.prepare("DELETE FROM smithy_stock WHERE channel_id = ?").bind("local-dev").run();
+  return c.json({ ok: true });
+});
+
+app.post("/api/dev/level", async (c) => {
+  if (c.env.ENVIRONMENT !== "local") return c.json({ error: "forbidden" }, 403);
+  const session = await currentSession(c.env.DB, c.req.header("Cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const body = await c.req.json<{ level?: unknown }>();
+  const targetLevel = Math.floor(Number(body.level));
+  if (!Number.isFinite(targetLevel) || targetLevel < 1 || targetLevel > 99) return c.json({ error: "invalid" }, 400);
+  const character = await getCharacter(c.env.DB, session.slack_user_id);
+  if (!character) return c.json({ error: "no_character" }, 404);
+  const cls = classByName(character.class);
+  // Auto-alloc stats are fully deterministic from class + level. Free-point
+  // spends are not tracked per-level, so we reset to the clean baseline and
+  // restore all free points for the target level.
+  const stats = statsAtLevel(character.class, targetLevel);
+  const maxMana = deriveMaxMana(stats.int_stat, targetLevel);
+  // HP: use class base_hp + 3 per level above 1 (≈ avg d6 rounded down).
+  const maxHp = cls.base_hp + Math.max(0, targetLevel - 1) * 3;
+  const newXp = xpForLevel(targetLevel);
+  const unspentPoints = (targetLevel - 1) * FREE_POINTS_PER_LEVEL;
+  await c.env.DB
+    .prepare(`UPDATE characters
+       SET level = ?, xp = ?,
+           str = ?, int_stat = ?, vit = ?, agi = ?, dex = ?,
+           unspent_points = ?,
+           max_hp = ?, hp = ?,
+           max_mana = ?, mana = ?,
+           last_active = ?
+       WHERE slack_user_id = ?`)
+    .bind(
+      targetLevel, newXp,
+      stats.str, stats.int_stat, stats.vit, stats.agi, stats.dex,
+      unspentPoints,
+      maxHp, maxHp,
+      maxMana, maxMana,
+      Date.now(), session.slack_user_id,
+    ).run();
+  return c.json({ ok: true });
+});
+
+// DEV ONLY — heal/mana restore that also patches the in-flight combat state
+// so the DO re-broadcasts the corrected HP/mana on the next WebSocket connect.
+async function devPatchCombatState(
+  db: D1Database,
+  userId: string,
+  questId: number,
+  field: "hp" | "mana",
+): Promise<void> {
+  const snap = await getWebCombatSnapshot(db, questId);
+  if (!snap) return;
+  const state = snap.state;
+  const idx = state.fighters.findIndex((f) => f.id === userId);
+  if (idx === -1) return;
+  const fighter = state.fighters[idx];
+  const patched = { ...fighter, [field]: field === "hp" ? fighter.max_hp : fighter.max_mana };
+  const newFighters = [...state.fighters];
+  newFighters[idx] = patched;
+  await saveWebCombatState(db, questId, { ...state, fighters: newFighters });
+}
+
+app.post("/api/dev/combat-heal", async (c) => {
+  if (c.env.ENVIRONMENT !== "local") return c.json({ error: "forbidden" }, 403);
+  const session = await currentSession(c.env.DB, c.req.header("Cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const body = await c.req.json<{ questId?: unknown }>();
+  const questId = Number(body.questId);
+  if (!Number.isFinite(questId)) return c.json({ error: "invalid" }, 400);
+  await c.env.DB.prepare("UPDATE characters SET hp = max_hp WHERE slack_user_id = ?")
+    .bind(session.slack_user_id).run();
+  await devPatchCombatState(c.env.DB, session.slack_user_id, questId, "hp");
+  return c.json({ ok: true });
+});
+
+app.post("/api/dev/combat-mana", async (c) => {
+  if (c.env.ENVIRONMENT !== "local") return c.json({ error: "forbidden" }, 403);
+  const session = await currentSession(c.env.DB, c.req.header("Cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const body = await c.req.json<{ questId?: unknown }>();
+  const questId = Number(body.questId);
+  if (!Number.isFinite(questId)) return c.json({ error: "invalid" }, 400);
+  await c.env.DB.prepare("UPDATE characters SET mana = max_mana WHERE slack_user_id = ?")
+    .bind(session.slack_user_id).run();
+  await devPatchCombatState(c.env.DB, session.slack_user_id, questId, "mana");
+  return c.json({ ok: true });
+});
+
+// DEV ONLY — bypasses Slack login by creating/reusing a local dev character.
+app.post("/api/dev/login", async (c) => {
+  if (c.env.ENVIRONMENT !== "local") return c.json({ error: "forbidden" }, 403);
+  const DEV_USER = "dev-user";
+  const DEV_TEAM = "dev-team";
+  const existing = await getCharacter(c.env.DB, DEV_USER);
+  if (!existing) {
+    const cls = pickRandomClass();
+    const hp = cls.base_hp + rollDice(4);
+    const gender: CharGender = rollDice(2) === 1 ? "m" : "f";
+    await createCharacter(c.env.DB, {
+      slack_user_id: DEV_USER,
+      slack_team_id: DEV_TEAM,
+      name: "Dev Hero",
+      class: cls.name,
+      hp,
+      max_hp: hp,
+      gender,
+    });
+  }
+  const { code } = await issueWebLoginCode(c.env.DB, DEV_USER, DEV_TEAM);
+  return c.json({ code });
+});
 
 async function currentSession(db: D1Database, cookieHeader: string | undefined) {
   if (!cookieHeader) return null;

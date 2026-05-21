@@ -21,6 +21,7 @@ import { DungeonView } from "./DungeonView";
 import { GridDungeonView } from "./GridDungeonView";
 import { LobbyView } from "./LobbyView";
 import { Avatar, EmojiIcon, Icon, KeyIcon } from "./icons";
+import { issueWebLoginCode } from "@gantt-quest/db";
 
 // One-liner describing the in-game effect of an item, in plain mechanics
 // (not flavor). Used by the inventory's Info toggle so players can see
@@ -903,6 +904,7 @@ export function App() {
   const [confirm, setConfirm] = useState<ConfirmRequest | null>(null);
   const [townSection, setTownSection] = useState<TownSection | null>(null);
   const [inventoryOpen, setInventoryOpen] = useState(false);
+  const [devToolsOpen, setDevToolsOpen] = useState(false);
   const isMobile = useMobileViewport();
 
   useEffect(() => {
@@ -1998,6 +2000,7 @@ export function App() {
               onReroll={rerollCharacter}
               onSpend={spendStatPoint}
               onSaveNotifyPref={saveNotifyPref}
+              onOpenDevTools={import.meta.env.DEV ? () => setDevToolsOpen(true) : undefined}
             />
             {state.me.character && (
               <InventoryCard
@@ -2023,6 +2026,13 @@ export function App() {
       )}
       {confirm && (
         <ConfirmDialog request={confirm} onClose={() => setConfirm(null)} />
+      )}
+      {devToolsOpen && import.meta.env.DEV && state.kind === "auth" && state.me.character && (
+        <DevToolsModal
+          character={state.me.character}
+          onClose={() => setDevToolsOpen(false)}
+          onRefresh={refreshMe}
+        />
       )}
       <AchievementToastStack
         queue={toastQueue}
@@ -2089,6 +2099,12 @@ function Login({ onSuccess }: { onSuccess: () => void }) {
     );
   }
 
+  async function dummyDevAuth() {
+    const res = await fetch("/api/dev/login", { method: "POST" });
+    const { code } = (await res.json()) as { code: string };
+    setCode(code);
+  }
+
   return (
     <Centered>
       <div style={card}>
@@ -2111,6 +2127,15 @@ function Login({ onSuccess }: { onSuccess: () => void }) {
           <button type="submit" disabled={pending} style={button}>
             {pending ? "Verifying…" : "Sign in"}
           </button>
+          {import.meta.env.DEV && (
+            <button
+              type="button"
+              onClick={dummyDevAuth}
+              style={{ ...button, background: "#1f2a3a", color: "#7dd3fc", border: "1px solid #2a3d55" }}
+            >
+              Dev login
+            </button>
+          )}
         </form>
         {error && <p style={{ ...muted, color: "#c0392b" }}>{error}</p>}
       </div>
@@ -4498,6 +4523,7 @@ function CharacterCard({
   onReroll,
   onSpend,
   onSaveNotifyPref,
+  onOpenDevTools,
 }: {
   me: MeResponse;
   inventory: Item[];
@@ -4509,6 +4535,7 @@ function CharacterCard({
   onReroll: (className?: string) => Promise<void>;
   onSpend?: (stat: StatKey) => void;
   onSaveNotifyPref?: (pref: "thread" | "dm") => Promise<void>;
+  onOpenDevTools?: () => void;
 }) {
   const [trophyDefs, setTrophyDefs] = useState<Achievement[]>([]);
   const [trophyEarned, setTrophyEarned] = useState<EarnedAchievement[]>([]);
@@ -4576,7 +4603,7 @@ function CharacterCard({
   const statHasData = c.str !== undefined;
   return (
     <div style={{ ...card, position: "relative" }}>
-      <AccountPopover onLogout={onLogout} onReroll={onReroll} character={c} onSaveNotifyPref={onSaveNotifyPref} />
+      <AccountPopover onLogout={onLogout} onReroll={onReroll} character={c} onSaveNotifyPref={onSaveNotifyPref} onOpenDevTools={onOpenDevTools} />
       <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 4 }}>
         <Avatar
           src={portrait}
@@ -4911,6 +4938,25 @@ function KeyActionsPanel({
 // Full-bleed hero image with a nav ribbon overlaid at the top.
 // Used by full-screen town sections (pub, shop, inn, smithy).
 // card padding is 32px, so we bleed -32px on each edge.
+const ART_PLACEHOLDERS: Record<string, { bg: string; icon: string; color: string }> = {
+  "Shop":       { bg: "#1e1a0d", icon: "gold-bar",              color: "#c9a227" },
+  "The Inn":    { bg: "#1a1510", icon: "bed",                   color: "#c4956a" },
+  "The Smithy": { bg: "#1e1208", icon: "anvil",                 color: "#e07840" },
+  "The Pub":    { bg: "#1a1608", icon: "beer-stein",            color: "#d4a53a" },
+  "Apothecary": { bg: "#140f22", icon: "potion-ball",           color: "#9a6fcd" },
+  "Inventory":  { bg: "#0f1620", icon: "cubes",                 color: "#5c9bd6" },
+  "Outskirts":  { bg: "#0d1a10", icon: "run",                   color: "#5da85a" },
+  "Job Board":  { bg: "#101820", icon: "scroll-unfurled",       color: "#5a8ab5" },
+};
+const DEFAULT_ART_PLACEHOLDER = { bg: "#111318", icon: "perspective-dice-six", color: "#555b6a" };
+function artPlaceholder(key: string) {
+  if (ART_PLACEHOLDERS[key]) return ART_PLACEHOLDERS[key];
+  for (const [k, v] of Object.entries(ART_PLACEHOLDERS)) {
+    if (key.includes(k)) return v;
+  }
+  return DEFAULT_ART_PLACEHOLDER;
+}
+
 function LocationHero({
   src,
   label,
@@ -4922,6 +4968,7 @@ function LocationHero({
   nav: React.ReactNode;
   flush?: boolean;
 }) {
+  const ph = artPlaceholder(label);
   return (
     <div style={{
       ...(flush
@@ -4933,8 +4980,8 @@ function LocationHero({
           }),
       overflow: "hidden",
       position: "relative",
-      background: "#0d0d10",
-      ...(src ? { aspectRatio: "16/7" } : { minHeight: 56 }),
+      background: src ? "#0d0d10" : ph.bg,
+      ...(src ? { aspectRatio: "16/7" } : { minHeight: 160, display: "flex", alignItems: "center", justifyContent: "center", paddingTop: 44 }),
     }}>
       {src && (
         <img
@@ -4944,6 +4991,7 @@ function LocationHero({
           onError={(e) => { e.currentTarget.style.display = "none"; }}
         />
       )}
+      {!src && <Icon name={ph.icon} size={48} color={ph.color} style={{ opacity: 0.3 }} />}
       <div style={{
         position: "absolute", top: 0, left: 0, right: 0,
         background: "rgba(10,11,14,0.6)",
@@ -4971,7 +5019,23 @@ function LocationHero({
 function Banner({ src, alt }: { src: string | null | undefined; alt: string }) {
   const [open, setOpen] = useState(false);
   const [hovered, setHovered] = useState(false);
-  if (!src) return null;
+  if (!src) {
+    const ph = artPlaceholder(alt);
+    return (
+      <div style={{
+        width: "calc(100% + 32px)",
+        margin: "-16px -16px 12px",
+        aspectRatio: "3 / 2",
+        borderRadius: "8px 8px 0 0",
+        background: ph.bg,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+      }}>
+        <Icon name={ph.icon} size={52} color={ph.color} style={{ opacity: 0.3 }} />
+      </div>
+    );
+  }
   return (
     <>
       <div
@@ -7874,11 +7938,13 @@ function AccountPopover({
   onReroll,
   character,
   onSaveNotifyPref,
+  onOpenDevTools,
 }: {
   onLogout: () => void;
   onReroll: (className?: string) => Promise<void>;
   character: { name: string; notification_pref?: "thread" | "dm" } | null;
   onSaveNotifyPref?: (pref: "thread" | "dm") => Promise<void>;
+  onOpenDevTools?: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const [rerollStep, setRerollStep] = useState<"idle" | "pick-class" | "confirm">("idle");
@@ -7951,6 +8017,16 @@ function AccountPopover({
                   style={{ ...smallActionBtn("#1a1c20", "#93c5fd"), textAlign: "left" }}
                 >
                   <Icon name="bell" size={13} /> Notifications
+                </button>
+              )}
+
+              {/* Dev tools — local env only */}
+              {import.meta.env.DEV && onOpenDevTools && (
+                <button
+                  onClick={() => { setOpen(false); onOpenDevTools(); }}
+                  style={{ ...smallActionBtn("#1a1c20", "#a78bfa"), textAlign: "left" }}
+                >
+                  <Icon name="cog" size={13} /> Dev tools
                 </button>
               )}
 
@@ -8629,7 +8705,7 @@ const VARIANT_STYLE: Record<string, { icon: string; color: string; bg: string; l
   boss:         { icon: "crown",         color: "#fca5a5", bg: "#1f0a0a", label: "BOSS" },
   dungeon:      { icon: "tower",         color: "#7dd3fc", bg: "#0a121f", label: "DUNGEON" },
   gauntlet:     { icon: "crossed-swords",color: "#c4b5fd", bg: "#130a1f", label: "GAUNTLET" },
-  bounty_pack:  { icon: "dragon-head",   color: "#fb923c", bg: "#1f0e00", label: "BOUNTY PACK" },
+  bounty_pack:  { icon: "dragon",   color: "#fb923c", bg: "#1f0e00", label: "BOUNTY PACK" },
 };
 
 function JobPostingCard({
@@ -9101,8 +9177,8 @@ function TownMap({
             style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
           />
         ) : (
-          <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}>
-            <span style={{ color: "#4b5563", fontSize: 13 }}>Generating town map…</span>
+          <div style={{ width: "100%", height: "100%", background: "#111318", display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <Icon name="perspective-dice-six" size={52} color="#555b6a" style={{ opacity: 0.35 }} />
           </div>
         )}
         <div style={{
@@ -9587,3 +9663,195 @@ const smallBadge: React.CSSProperties = {
   border: "1px solid",
   fontWeight: 600,
 };
+
+// DEV ONLY — shown from AccountPopover in local env (import.meta.env.DEV).
+function DevToolsModal({
+  character,
+  onClose,
+  onRefresh,
+}: {
+  character: Character;
+  onClose: () => void;
+  onRefresh: () => Promise<void>;
+}) {
+  const [goldAmount, setGoldAmount] = useState("100");
+  const [levelAmount, setLevelAmount] = useState(String(character.level));
+  const [busy, setBusy] = useState<string | null>(null);
+  const [lastAction, setLastAction] = useState<string | null>(null);
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [onClose]);
+
+  async function devAction(endpoint: string, body?: object) {
+    setBusy(endpoint);
+    setLastAction(null);
+    try {
+      const res = await fetch(endpoint, {
+        method: "POST",
+        credentials: "include",
+        headers: body ? { "Content-Type": "application/json" } : undefined,
+        body: body ? JSON.stringify(body) : undefined,
+      });
+      if (res.ok) {
+        await onRefresh();
+        setLastAction("Done!");
+      } else {
+        const err = await res.json().catch(() => ({})) as { error?: string };
+        setLastAction(`Error: ${err.error ?? res.status}`);
+      }
+    } catch {
+      setLastAction("Network error");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  const isDowned = character.downed_until != null && character.downed_until > Date.now();
+  const isFullHp = character.hp >= character.max_hp;
+  const isFullMana = character.mana >= character.max_mana;
+  const targetLevel = Math.floor(Number(levelAmount));
+  const levelValid = Number.isFinite(targetLevel) && targetLevel >= 1 && targetLevel <= 99 && targetLevel !== character.level;
+
+  const devBtn = (bg: string, fg: string, disabled = false): React.CSSProperties => ({
+    ...smallActionBtn(disabled ? "#1a1c20" : bg, disabled ? "#4b5563" : fg),
+    padding: "6px 14px",
+    fontSize: 13,
+    opacity: disabled ? 0.5 : 1,
+    cursor: disabled ? "default" : "pointer",
+  });
+  const inputStyle: React.CSSProperties = {
+    background: "#1a1c20", border: "1px solid #2a2d33", borderRadius: 6,
+    color: "#e5e7eb", padding: "5px 10px", fontSize: 13, width: 90,
+    fontFamily: "inherit",
+  };
+
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)",
+        display: "flex", alignItems: "center", justifyContent: "center",
+        zIndex: 1000, padding: 16,
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          background: "#13151a",
+          border: "1px solid #2a2d33",
+          borderRadius: 12,
+          padding: 24,
+          width: "100%",
+          maxWidth: 520,
+          boxShadow: "0 10px 40px rgba(0,0,0,0.7)",
+          display: "flex",
+          flexDirection: "column",
+          gap: 16,
+        }}
+      >
+        {/* Header */}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <Icon name="cog" size={16} color="#a78bfa" />
+            <span style={{ fontSize: 16, fontWeight: 700, color: "#a78bfa" }}>Dev Tools</span>
+          </div>
+          <button onClick={onClose} style={{ ...smallActionBtn("#1a1c20", "#6b7280"), padding: "2px 8px" }}>✕</button>
+        </div>
+
+        {/* Status */}
+        <div style={{ background: "#1a1c20", borderRadius: 8, padding: "10px 14px", display: "flex", gap: 20, fontSize: 13 }}>
+          <span><span style={{ color: "#6b7280" }}>Lv </span><span style={{ color: "#e5e7eb", fontWeight: 600 }}>{character.level}</span></span>
+          <span><span style={{ color: "#6b7280" }}>HP </span><span style={{ color: "#f87171", fontWeight: 600 }}>{character.hp}/{character.max_hp}</span></span>
+          <span><span style={{ color: "#6b7280" }}>MP </span><span style={{ color: "#60a5fa", fontWeight: 600 }}>{character.mana}/{character.max_mana}</span></span>
+          <span><span style={{ color: "#6b7280" }}>Gold </span><span style={{ color: "#fbbf24", fontWeight: 600 }}>{character.gold}g</span></span>
+          {isDowned && <span style={{ color: "#fca5a5", fontWeight: 600 }}>DOWNED</span>}
+        </div>
+
+        {/* Restore row */}
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <button
+            disabled={!!busy || isFullHp}
+            onClick={() => void devAction("/api/dev/heal")}
+            style={devBtn("#1f3a1f", "#86efac", isFullHp)}
+          >
+            {busy === "/api/dev/heal" ? "…" : <><Icon name="health" size={13} /> Heal to full</>}
+          </button>
+          <button
+            disabled={!!busy || isFullMana}
+            onClick={() => void devAction("/api/dev/mana")}
+            style={devBtn("#1a2a3a", "#60a5fa", isFullMana)}
+          >
+            {busy === "/api/dev/mana" ? "…" : <><Icon name="crystals" size={13} /> Restore mana</>}
+          </button>
+          <button
+            disabled={!!busy || !isDowned}
+            onClick={() => void devAction("/api/dev/revive")}
+            style={devBtn("#2a0a0a", "#fca5a5", !isDowned)}
+          >
+            {busy === "/api/dev/revive" ? "…" : <><Icon name="aura" size={13} /> Revive</>}
+          </button>
+        </div>
+
+        {/* Gold row */}
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <input
+            type="number"
+            min={1}
+            max={1000000}
+            value={goldAmount}
+            onChange={(e) => setGoldAmount(e.target.value)}
+            style={{ ...inputStyle, color: "#fbbf24" }}
+          />
+          <button
+            disabled={!!busy || !Number.isFinite(Number(goldAmount)) || Number(goldAmount) <= 0}
+            onClick={() => void devAction("/api/dev/gold", { amount: Number(goldAmount) })}
+            style={devBtn("#2a1f0a", "#fbbf24")}
+          >
+            {busy === "/api/dev/gold" ? "…" : <><Icon name="gold-bar" size={13} /> Give gold</>}
+          </button>
+        </div>
+
+        {/* Level row */}
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <input
+            type="number"
+            min={1}
+            max={99}
+            value={levelAmount}
+            onChange={(e) => setLevelAmount(e.target.value)}
+            style={inputStyle}
+          />
+          <button
+            disabled={!!busy || !levelValid}
+            onClick={() => void devAction("/api/dev/level", { level: targetLevel })}
+            style={devBtn("#1a1a2e", "#a78bfa", !levelValid)}
+            title={targetLevel < character.level ? "Down-leveling resets stat allocation to the class baseline and restores all free points for that level" : undefined}
+          >
+            {busy === "/api/dev/level" ? "…" : <><Icon name="level-three-advanced" size={13} /> Set level</>}
+          </button>
+        </div>
+
+        {/* Cooldowns */}
+        <div style={{ display: "flex", gap: 8 }}>
+          <button
+            disabled={!!busy}
+            onClick={() => void devAction("/api/dev/cooldowns")}
+            style={devBtn("#1a1a2a", "#c4b5fd")}
+            title="Resets all time-based cooldowns in the app (e.g. shop, rests)"
+          >
+            {busy === "/api/dev/cooldowns" ? "…" : <><Icon name="clockwork" size={13} /> Reset cooldowns</>}
+          </button>
+        </div>
+
+        {lastAction && (
+          <div style={{ fontSize: 12, color: lastAction.startsWith("Error") ? "#fca5a5" : "#86efac", textAlign: "center" }}>
+            {lastAction}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}

@@ -24,7 +24,7 @@ export interface Env {
   // message). Set via wrangler.jsonc `vars` to override per-workspace branding.
   // Defaults to "Slack Quest" when unset. Helper: `botName(env)` in commands.ts.
   BOT_NAME?: string;
-  // Public base URL of this worker (e.g. https://gantt-quest.3cordguy.workers.dev).
+  // Public base URL of the web worker (e.g. https://your-worker.workers.dev).
   // Used to build absolute image URLs that Slack can fetch for image blocks.
   // Optional — when unset, image blocks are simply omitted.
   IMAGE_BASE_URL?: string;
@@ -52,6 +52,8 @@ export interface Env {
   // in-flight legacy combat scenes can't migrate retroactively without
   // re-rolling initiative. See the PR-3 drain plan for the production
   // rollout.
+  // Set to "local" via .dev.vars to enable dev-only behaviour.
+  ENVIRONMENT?: string;
   LEGACY_SLACK_COMBAT?: string;
   // Feature flag: "1" enables STATS_V2 primary stat derivations in combat.
   STATS_V2?: string;

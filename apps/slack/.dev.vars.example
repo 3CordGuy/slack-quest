@@ -2,3 +2,6 @@ SLACK_SIGNING_SECRET=replace_me
 SLACK_BOT_TOKEN=xoxb-replace-me
 # Optional: restrict slash commands to one channel. Leave blank in dev to allow any channel.
 ALLOWED_CHANNEL_ID=
+# Public base URL where Slack fetches images. Defaults to the production worker URL
+# in wrangler.jsonc; override here to point at the local Vite dev server.
+IMAGE_BASE_URL=http://localhost:5173
