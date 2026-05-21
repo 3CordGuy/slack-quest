@@ -55,8 +55,6 @@ export interface Env {
   // Set to "local" via .dev.vars to enable dev-only behaviour.
   ENVIRONMENT?: string;
   LEGACY_SLACK_COMBAT?: string;
-  // Feature flag: "1" enables STATS_V2 primary stat derivations in combat.
-  STATS_V2?: string;
   // Feature flag: "1" routes new dungeon quests through the AI-generated graph
   // dungeon (Phase 4). Legacy expedition dungeons stay active for in-flight
   // quests; new /gq quest dungeon starts use graph navigation.

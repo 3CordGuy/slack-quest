@@ -545,17 +545,19 @@ export interface SceneJson {
   // ongoing effect:
   //   • taunt: forces monster to target this user for N more swings (Warden)
   //   • vanished: { user_id → swings_remaining } map (Rogue Vanish)
-  //   • skip_swings: monster skips this many swings (Mage Containerize)
   //   • battle_hymn: party attacks get +bonus for this many more uses (Bard)
+  //   • action_counters: per-user action count, used by periodic passives
+  //     such as Mana Font (1 mana every 3 turns).
   // Cleared on scene transitions like passives_used.
   ability_state?: {
     taunt?: { user_id: string; swings_remaining: number };
     vanished?: Record<string, number>;
-    skip_swings?: number;
     battle_hymn?: number;
     // Staff Sage Foresee — re-appends the intel readout to the Sage's
     // ephemeral for this many more of their own combat turns.
     foresee_turns?: number;
+    // Per-user action counters for periodic passives.
+    action_counters?: Record<string, number>;
   };
   // Set true when the quest was accepted from the Job Board (vs. started
   // directly via /sq quest <variant>). Drives a reward bonus at victory
@@ -1898,7 +1900,7 @@ export async function getLifetimeStats(
     .prepare(
       `SELECT action, outcome FROM quest_log
        WHERE actor = ?
-         AND action IN ('attack','cast','signature','tool','scroll','heal','shield','revive','death')`,
+         AND action IN ('attack','cast','signature','ability','tool','scroll','heal','shield','revive','death')`,
     )
     .bind(userId)
     .all<{ action: string; outcome: string | null }>();
@@ -1956,7 +1958,7 @@ export async function getQuestDamageStats(
     .prepare(
       `SELECT actor, action, outcome FROM quest_log
        WHERE quest_id = ?
-         AND action IN ('attack', 'cast', 'signature', 'tool', 'scroll', 'heal', 'shield')`,
+         AND action IN ('attack', 'cast', 'signature', 'ability', 'tool', 'scroll', 'heal', 'shield')`,
     )
     .bind(questId)
     .all<{ actor: string; action: string; outcome: string | null }>();

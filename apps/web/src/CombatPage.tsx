@@ -1,6 +1,6 @@
 import { useEffect, useReducer, useRef, useState } from "react";
 import toast from "react-hot-toast";
-import { isMonsterActor, isMercActor } from "@gantt-quest/core";
+import { isMonsterActor, classByName, activeAbilities, type ActiveAbilityDef, isMercActor } from "@gantt-quest/core";
 
 import { Avatar, Icon } from "./icons";
 import { CombatParticles, CombatParticlesProvider, triggerBurst } from "./CombatParticles";
@@ -35,6 +35,11 @@ import {
   ShieldGlow,
   CombatFighter,
   CombatItem,
+  CombatDevModal,
+  StatusEffect,
+  PillSize,
+  StatusPill,
+  EFFECT_PILLS,
 } from "./CombatShared";
 
 ensureCombatAnimStyles();
@@ -42,13 +47,6 @@ ensureCombatAnimStyles();
 // Live web-mode combat. Connects to the QuestRoom Durable Object via WS,
 // renders the current state, animates incoming events through a scrolling
 // log, and lets the active player submit actions.
-
-interface StatusEffect {
-  type: "regen" | "bleeding" | "burning" | "poisoned" | "frozen" | "shocked";
-  magnitude: number;
-  remaining: number;
-  source?: string;
-}
 
 interface Fighter {
   id: string;
@@ -146,7 +144,6 @@ type CombatEvent =
   | { type: "monster_down"; killed_by: string }
   | { type: "heal_applied"; actor: string; target: string; amount: number; rolled: number }
   | { type: "shield_applied"; actor: string; target: string; restored: number; new_armor: number; bonus_barrier?: boolean }
-  | { type: "signature_used"; actor: string; damage: number; formula: string; mana_spent: number }
   | {
       type: "flee_check";
       actor: string;
@@ -187,7 +184,7 @@ type CombatEvent =
       mana_spent: number;
     }
   | { type: "ability_taunt"; actor: string; swings: number }
-  | { type: "ability_containerize"; swings: number }
+  | { type: "ability_containerize" }
   | {
       type: "ability_regression_shield";
       actor: string;
@@ -214,7 +211,7 @@ type CombatEvent =
       verdict: "safe" | "at_risk" | "lethal";
       probabilities: Array<{ id: string; position: "front" | "back"; pct: number }>;
       triage: Array<{ id: string; hp: number; max_hp: number; shield: number; position: "front" | "back" }>;
-      active: { containerize: number; taunt_actor: string | null; taunt_swings: number; vanished: string[] };
+      active: { stunned: number; taunt_actor: string | null; taunt_swings: number; vanished: string[] };
       turns_remaining: number;
     }
   | {
@@ -225,6 +222,7 @@ type CombatEvent =
       to: "front" | "back";
     }
   | { type: "monster_swing_skipped"; reason: string }
+  | { type: "monster_stun_broken"; turns_active: number }
   | { type: "monster_target_redirected"; from: string; to: string; reason: string }
   | { type: "monster_target_blocked"; reason: string }
   | {
@@ -241,7 +239,7 @@ type CombatEvent =
   | { type: "mark_applied"; actor: string; expires_after_round: number; bonus: number }
   | { type: "mark_bonus"; actor: string; bonus: number }
   | { type: "passive_warden_shield"; actor: string; amount: number }
-  | { type: "passive_mage_free_sig"; actor: string }
+  | { type: "passive_mage_mana_font"; actor: string; amount: number }
   | { type: "passive_druid_regen"; actor: string; amount: number }
   | { type: "passive_rogue_first_crit"; actor: string }
   | { type: "passive_bard_aura"; actor: string; source: string; bonus: number }
@@ -286,7 +284,6 @@ type TurnAction =
   | { kind: "cast"; actor: string; target_id?: string | null }
   | { kind: "heal"; actor: string; target: string }
   | { kind: "shield"; actor: string; target: string }
-  | { kind: "signature"; actor: string; target_id?: string | null }
   | { kind: "flee"; actor: string }
   | { kind: "position"; actor: string; to: "front" | "back" }
   | { kind: "wait"; actor: string }
@@ -295,10 +292,12 @@ type TurnAction =
       kind: "ability";
       actor: string;
       ability_id: string;
-      target?: string;
+      target_id?: string;   // monster target (single_enemy abilities)
+      target?: string;      // fighter target (migrate)
       position?: "front" | "back";
     }
   | { kind: "monster_act" }
+  | { kind: "merc_act" }
   | { kind: "use_item"; actor: string; item_id: number; target_id?: string };
 
 type ItemEffect =
@@ -340,6 +339,7 @@ interface LootDrop {
   power: number;
   rarity: string;
   flavor: string;
+  weapon_range?: "melee" | "ranged" | "focus" | null;
   level_req?: number;
 }
 
@@ -522,8 +522,6 @@ function formatEvent(e: CombatEvent, state: CombatState | null): LogEntry[] {
         "good",
       );
     }
-    case "signature_used":
-      return row("wax-seal", <>{nameOf(e.actor)} signature: {e.damage} dmg  [{e.formula}]  −{e.mana_spent} mana</>, "good");
     case "flee_check":
       return row(
         "footprint",
@@ -589,7 +587,7 @@ function formatEvent(e: CombatEvent, state: CombatState | null): LogEntry[] {
     case "ability_taunt":
       return row("shield", <>{nameOf(e.actor)} bellows — monster locked on for {e.swings} swings.</>, "good");
     case "ability_containerize":
-      return row("cubes", <>Stasis container — monster will skip {e.swings} swing.</>, "good");
+      return row("cubes", <>Stasis container — monster is stunned (30%/turn escalating break chance).</>, "good");
     case "ability_regression_shield": {
       const grants = e.grants ?? [];
       const summary = grants.length === 0
@@ -636,7 +634,7 @@ function formatEvent(e: CombatEvent, state: CombatState | null): LogEntry[] {
         : [];
       const active = e.active;
       const effectNotes = active ? [
-        (active.containerize ?? 0) > 0 && `Containerize ×${active.containerize}`,
+        (active.stunned ?? 0) > 0 && `Stunned`,
         active.taunt_actor && `Taunt→${nameOf(active.taunt_actor)} (${active.taunt_swings})`,
         (active.vanished ?? []).length > 0 && `Vanished: ${active.vanished.map(nameOf).join(", ")}`,
       ].filter(Boolean) : [];
@@ -654,7 +652,9 @@ function formatEvent(e: CombatEvent, state: CombatState | null): LogEntry[] {
     case "ability_migrate":
       return row("grass", <>{nameOf(e.actor)} shifts {nameOf(e.target)} to the {e.to} row.</>, "info");
     case "monster_swing_skipped":
-      return row("cubes", "The monster's swing fizzles — containerized.", "good");
+      return row("cubes", "The monster is stunned — its swing fizzles.", "good");
+    case "monster_stun_broken":
+      return row("cubes", <>The monster breaks free after {e.turns_active} stunned turn{e.turns_active === 1 ? "" : "s"}!</>, "info");
     case "monster_target_redirected":
       return row(
         e.reason === "taunt" ? "shield" : "player-dodge",
@@ -677,8 +677,8 @@ function formatEvent(e: CombatEvent, state: CombatState | null): LogEntry[] {
       return row("targeted", <>Focus-fire: +{e.bonus} dmg from {nameOf(e.actor)}.</>, "good");
     case "passive_warden_shield":
       return row("shield", <>{nameOf(e.actor)} hardens up — +{e.amount} shield (passive).</>, "good");
-    case "passive_mage_free_sig":
-      return row("wax-seal", <>{nameOf(e.actor)}'s first signature is free.</>, "good");
+    case "passive_mage_mana_font":
+      return row("wax-seal", <>Mana Font: {nameOf(e.actor)} regenerates +{e.amount} mana.</>, "good");
     case "passive_druid_regen":
       return row("grass", <>{nameOf(e.actor)} regen +{e.amount} HP (passive).</>, "good");
     case "passive_rogue_first_crit":
@@ -771,6 +771,7 @@ export function CombatPage({
   // Tracks the last turn_index for which we fired an auto-resolve so we don't double-fire.
   const autoResolvedTurnRef = useRef<number>(-1);
   const [reconnectKey, setReconnectKey] = useState(0);
+  const [devOpen, setDevOpen] = useState(false);
   const [devOpen, setDevOpen] = useState(false);
   const isMobile = useIsMobile();
   const wsRef = useRef<WebSocket | null>(null);
@@ -876,8 +877,8 @@ export function CombatPage({
               toast("🗡 First Strike — guaranteed crit!", { icon: "⚡", duration: 4000 });
             } else if (evt.type === "passive_warden_shield") {
               toast(`🛡 Hardened Up — +${(evt as { amount: number }).amount} shield`, { duration: 3000 });
-            } else if (evt.type === "passive_mage_free_sig") {
-              toast("✨ First signature is free!", { duration: 3000 });
+            } else if (evt.type === "passive_mage_mana_font") {
+              toast(`🧙 Mana Font — +${(evt as { amount: number }).amount} mana`, { duration: 3000 });
             } else if (evt.type === "passive_paladin_auto_heal") {
               toast(`💛 Lay on Hands — +${(evt as { amount: number }).amount} HP`, { duration: 3000 });
             }
@@ -1081,7 +1082,7 @@ export function CombatPage({
 
   const me = state?.fighters.find((f) => f.id === selfId);
   const myMana = me?.mana ?? 0;
-  const myAbility = me ? ABILITY_BY_CLASS[me.class] ?? null : null;
+  const myActiveAbilities = me ? activeAbilities(classByName(me.class).abilities) : [];
   const liveMonsters = state?.monsters.filter((m) => m.hp > 0) ?? [];
   const [targetMonsterId, setTargetMonsterId] = useState<string | null>(null);
   // Auto-select the only live monster; clear stale target when that monster dies.
@@ -1115,24 +1116,21 @@ export function CombatPage({
     setItemPicker("closed");
   }
 
-  function fireAbility() {
-    if (!myAbility) return;
-    if (myAbility.needs_migrate_picker) {
+  function fireAbility(ability: ActiveAbilityDef) {
+    if (ability.needs_position_picker) {
       setMigratePicker(true);
       return;
     }
-    send({ kind: "ability", actor: selfId, ability_id: myAbility.id });
-  }
-
-  function fireMigrate(targetId: string, position: "front" | "back") {
-    if (!myAbility) return;
     send({
       kind: "ability",
       actor: selfId,
-      ability_id: myAbility.id,
-      target: targetId,
-      position,
+      ability_id: ability.id,
+      target_id: ability.target === "single_enemy" ? (effectiveTarget ?? undefined) : undefined,
     });
+  }
+
+  function fireMigrate(targetId: string, position: "front" | "back") {
+    send({ kind: "ability", actor: selfId, ability_id: "migrate", target: targetId, position });
     setMigratePicker(false);
   }
 
@@ -1183,12 +1181,38 @@ export function CombatPage({
           onDone={() => { setDevOpen(false); setReconnectKey((k) => k + 1); }}
         />
       )}
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          {import.meta.env.DEV && (
+            <button
+              onClick={() => setDevOpen(true)}
+              style={{ background: "none", border: "1px solid #2a2d44", color: "#a78bfa", cursor: "pointer", fontSize: 11, padding: "2px 7px", borderRadius: 5, display: "flex", alignItems: "center", gap: 4, fontFamily: "inherit" }}
+            >
+              <Icon name="cog" size={11} /> dev
+            </button>
+          )}
+          <span style={{ fontSize: 11, color: ui.connection === "open" ? "#39ff14" : ui.connection === "connecting" ? "#9aa0a6" : "#fca5a5" }}>
+            {ui.connection === "open" ? "● live" : ui.connection === "connecting" ? "○ …" : "× disconnected"}
+          </span>
+        </div>
+      </div>
+      {devOpen && import.meta.env.DEV && (
+        <CombatDevModal
+          questId={questId}
+          onClose={() => setDevOpen(false)}
+          onDone={() => { setDevOpen(false); setReconnectKey((k) => k + 1); }}
+        />
+      )}
 
       {/* Room view — flex: 1, background art + floating overlays */}
+      <div style={{ flex: 1, position: "relative", overflow: "hidden", minHeight: 0, background: bgArtUrl ? undefined : "#1c1f2e" }}>
       <div style={{ flex: 1, position: "relative", overflow: "hidden", minHeight: 0, background: bgArtUrl ? undefined : "#1c1f2e" }}>
         {bgArtUrl && (
           <img src={bgArtUrl} alt="" style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover" }} onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
         )}
+        <div style={{ position: "absolute", inset: 0, background: bgArtUrl
+          ? "linear-gradient(to bottom, rgba(0,0,0,0.25) 0%, rgba(0,0,0,0.05) 35%, rgba(0,0,0,0.70) 100%)"
+          : "linear-gradient(to bottom, rgba(0,0,0,0.10) 0%, rgba(0,0,0,0.00) 40%, rgba(0,0,0,0.40) 100%)",
+          pointerEvents: "none" }} />
         <div style={{ position: "absolute", inset: 0, background: bgArtUrl
           ? "linear-gradient(to bottom, rgba(0,0,0,0.25) 0%, rgba(0,0,0,0.05) 35%, rgba(0,0,0,0.70) 100%)"
           : "linear-gradient(to bottom, rgba(0,0,0,0.10) 0%, rgba(0,0,0,0.00) 40%, rgba(0,0,0,0.40) 100%)",
@@ -1367,17 +1391,21 @@ export function CombatPage({
           )}
           <CBtn label="Attack" icon="sword" color="#b89b3a" disabled={!myTurn || (liveMonsters.length > 1 && targetMonsterId === null)} onClick={() => send({ kind: "attack", actor: selfId, target_id: effectiveTarget })} />
           <CBtn label="Cast" icon="arcing-bolt" color="#818cf8" manaCost={1} disabled={!myTurn || myMana < 1 || (liveMonsters.length > 1 && targetMonsterId === null)} onClick={() => send({ kind: "cast", actor: selfId, target_id: effectiveTarget })} />
-          <CBtn label="Sig" icon="wax-seal" color="#a78bfa" manaCost={1} disabled={!myTurn || myMana < 1 || (liveMonsters.length > 1 && targetMonsterId === null)} onClick={() => send({ kind: "signature", actor: selfId, target_id: effectiveTarget })} />
-          {myAbility && (
-            <CBtn
-              label={myAbility.name}
-              icon={myAbility.iconName}
-              color="#d946ef"
-              manaCost={myAbility.mana_cost}
-              disabled={!myTurn || myMana < myAbility.mana_cost}
-              onClick={fireAbility}
-            />
-          )}
+          {myActiveAbilities.map((ability) => {
+            const needsTarget = ability.target === "single_enemy";
+            const targetMissing = needsTarget && liveMonsters.length > 1 && targetMonsterId === null;
+            return (
+              <CBtn
+                key={ability.id}
+                label={ability.name}
+                icon={ability.icon}
+                color="#d946ef"
+                manaCost={ability.mana_cost}
+                disabled={!myTurn || myMana < ability.mana_cost || targetMissing}
+                onClick={() => fireAbility(ability)}
+              />
+            );
+          })}
           <CBtn label="Heal" icon="health-increase" color="#22c55e" manaCost={1} disabled={!myTurn || myMana < 1} onClick={() => { if (state.fighters.length === 1) send({ kind: "heal", actor: selfId, target: selfId }); else setPicking("heal"); }} />
           <CBtn label="Shield" icon="shield" color="#60a5fa" manaCost={1} disabled={!myTurn || myMana < 1} onClick={() => { if (state.fighters.length === 1) send({ kind: "shield", actor: selfId, target: selfId }); else setPicking("shield"); }} />
           {/* Position swap — available even in solo. Was previously
@@ -1394,6 +1422,7 @@ export function CombatPage({
           <CBtn label="Wait" icon="hourglass" color="#475569" disabled={!myTurn} onClick={() => send({ kind: "wait", actor: selfId })} />
           <CBtn label="Flee" icon="footprint" color="#9aa0a6" disabled={!myTurn} onClick={() => send({ kind: "flee", actor: selfId })} />
           {isMonsterTurn && !autoResolve && (
+            <CBtn label="Resolve" icon="dragon" color="#5c1f1f" onClick={() => send({ kind: "monster_act" })} />
             <CBtn label="Resolve" icon="dragon" color="#5c1f1f" onClick={() => send({ kind: "monster_act" })} />
           )}
           <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, color: "#4a5568", cursor: "pointer", marginLeft: 6 }}>
@@ -1555,6 +1584,7 @@ function MonsterCard({
         size={72}
         radius={8}
         fallbackIcon="dragon"
+        fallbackIcon="dragon"
         fallbackColor={isMarked ? "#f59e0b" : "#7c2020"}
         border={`1px solid ${borderColor}`}
         style={{ flexShrink: 0 }}
@@ -1606,38 +1636,11 @@ function MonsterCard({
           </div>
         </div>
         <BigHpBar current={Math.max(0, monster.hp)} max={monster.max_hp} />
-        {/* Status effects pills — sized so they're legible at a glance.
-            Earlier 9px-icon / 10px-text version was unreadable in screenshots. */}
         {monster.effects && monster.effects.length > 0 && !isDead && (
           <div style={{ display: "flex", gap: 6, marginTop: 6, flexWrap: "wrap" }}>
             {monster.effects.map((e, i) => {
-              const [col, icon] = e.type === "regen" ? ["#4ade80", "regeneration"]
-                : e.type === "bleeding" ? ["#f87171", "bleeding-wound"]
-                : e.type === "burning" ? ["#fb923c", "fire"]
-                : e.type === "frozen" ? ["#93c5fd", "ice-bolt"]
-                : e.type === "shocked" ? ["#fbbf24", "electric"]
-                : ["#c084fc", "poison-cloud"];
-              return (
-                <span
-                  key={i}
-                  title={`${e.type} ×${e.magnitude} (${e.remaining} turn${e.remaining === 1 ? "" : "s"} remaining)`}
-                  style={{
-                    display: "inline-flex", alignItems: "center", gap: 5,
-                    fontSize: 12, fontWeight: 700,
-                    background: col + "33",
-                    border: `1px solid ${col}88`,
-                    color: col,
-                    borderRadius: 6,
-                    padding: "3px 8px",
-                    textTransform: "capitalize",
-                    letterSpacing: 0.3,
-                  }}
-                >
-                  <Icon name={icon} size={14} color={col} />
-                  {e.type}{e.magnitude > 1 ? ` ×${e.magnitude}` : ""}
-                  <span style={{ opacity: 0.8, fontWeight: 600, fontSize: 11 }}>· {e.remaining}t</span>
-                </span>
-              );
+              const def = EFFECT_PILLS[e.type];
+              return def ? <def.pill key={i} effect={e} size="lg" /> : null;
             })}
           </div>
         )}
@@ -1705,6 +1708,7 @@ function InitiativeTrack({
                   alt={name}
                   size={AVATAR}
                   radius={RADIUS}
+                  fallbackIcon={isMon ? "dragon" : "player"}
                   fallbackIcon={isMon ? "dragon" : "player"}
                   fallbackColor={isMon ? (isCurrent ? "#ef4444" : "#7a3030") : "#4a5568"}
                   style={{
@@ -1861,33 +1865,11 @@ function FighterRow({ fighter, self, current }: { fighter: Fighter; self: boolea
             <span style={badge("#3a1f1f", "#ff7676", "#5a2a2a")}>downed</span>
           )}
         </div>
-        {/* Status effects */}
         {fighter.effects && fighter.effects.length > 0 && (
           <div style={{ display: "flex", gap: 5, flexWrap: "wrap", marginBottom: 4, marginTop: 4 }}>
             {fighter.effects.map((e, i) => {
-              const [color, icon] = e.type === "regen" ? ["#4ade80", "regeneration"]
-                : e.type === "bleeding" ? ["#f87171", "bleeding-wound"]
-                : e.type === "burning" ? ["#fb923c", "fire"]
-                : e.type === "frozen" ? ["#93c5fd", "ice-bolt"]
-                : e.type === "shocked" ? ["#fbbf24", "electric"]
-                : ["#c084fc", "poison-cloud"];
-              return (
-                <span
-                  key={i}
-                  title={`${e.type} ×${e.magnitude} (${e.remaining} turn${e.remaining === 1 ? "" : "s"}${e.source ? ` — ${e.source}` : ""})`}
-                  style={{
-                    display: "inline-flex", alignItems: "center", gap: 4,
-                    background: `${color}33`, border: `1px solid ${color}88`,
-                    borderRadius: 5, padding: "2px 7px",
-                    fontSize: 11, color, fontWeight: 700,
-                    textTransform: "capitalize", letterSpacing: 0.2,
-                  }}
-                >
-                  <Icon name={icon} size={12} color={color} />
-                  {e.type}{e.magnitude > 1 ? ` ×${e.magnitude}` : ""}
-                  <span style={{ opacity: 0.8, fontWeight: 600 }}>· {e.remaining}t</span>
-                </span>
-              );
+              const def = EFFECT_PILLS[e.type];
+              return def ? <def.pill key={i} effect={e} size="md" /> : null;
             })}
           </div>
         )}
@@ -1918,97 +1900,6 @@ function FighterRow({ fighter, self, current }: { fighter: Fighter; self: boolea
           </div>
         )}
       </div>
-    </div>
-  );
-}
-
-type ActionKind =
-  | "attack"
-  | "cast"
-  | "heal"
-  | "shield"
-  | "signature"
-  | "flee"
-  | "wait"
-  | "use_item"
-  | "swap_position"
-  | "mark"
-  | "ability";
-
-// Class → active ability spec. Mirrors packages/core/src/flavor.ts ABILITIES.
-// Kept inline here to avoid coupling the page to the core barrel.
-interface AbilityUiSpec {
-  id: string;
-  name: string;
-  iconName: string;            // rpg-awesome ra-* class
-  mana_cost: number;
-  blurb: string;
-  // migrate is the only ability that needs a target+position picker.
-  needs_migrate_picker?: boolean;
-}
-
-const ABILITY_BY_CLASS: Record<string, AbilityUiSpec> = {
-  "SRE Warden":      { id: "taunt",              name: "Taunt",             iconName: "shield",           mana_cost: 2, blurb: "Monster targets you for 2 swings" },
-  "DevOps Mage":     { id: "containerize",       name: "Containerize",      iconName: "cubes",            mana_cost: 2, blurb: "Monster skips next swing" },
-  "QA Paladin":      { id: "regression_shield",  name: "Regression Shield", iconName: "fairy-wand",       mana_cost: 2, blurb: "+3 shield to all party" },
-  "Refactor Rogue":  { id: "vanish",             name: "Vanish",            iconName: "player-dodge",     mana_cost: 2, blurb: "Untargetable for 2 swings" },
-  "Data Warlock":    { id: "soul_drain",         name: "Soul Drain",        iconName: "death-skull",      mana_cost: 2, blurb: "1d6+mag dmg, heal 50%" },
-  "Frontend Bard":   { id: "battle_hymn",        name: "Battle Hymn",       iconName: "aura",             mana_cost: 2, blurb: `+${BARD_HYMN_BONUS} dmg on next N party attacks (N scales with level)` },
-  "Staff Sage":      { id: "foresee",            name: "Foresee",           iconName: "scroll-unfurled",  mana_cost: 1, blurb: "Full battle intel: next target, net damage, party triage, targeting odds. Persists 2 turns." },
-  "Backend Druid":   { id: "migrate",            name: "Migrate",           iconName: "grass",            mana_cost: 1, blurb: "Move a partymate to front/back", needs_migrate_picker: true },
-};
-
-function ActionBar({
-  disabled,
-  mana,
-  hasItems,
-  selfPosition,
-  ability,
-  onAct,
-}: {
-  disabled: boolean;
-  mana: number;
-  hasItems: boolean;
-  selfPosition: "front" | "back";
-  ability: AbilityUiSpec | null;
-  onAct: (kind: ActionKind) => void;
-}) {
-  const otherRow = selfPosition === "front" ? "back" : "front";
-  return (
-    <div style={{ ...card, display: "flex", gap: 8, flexWrap: "wrap" }}>
-      <ActionBtn label={<><Icon name="sword" /> Attack</>} hint="d20+atk vs AC · 1d6 dmg" disabled={disabled} onClick={() => onAct("attack")} />
-      <ActionBtn label={<><Icon name="arcing-bolt" /> Cast</>} hint="d20+mag vs AC · 1d8 dmg" disabled={disabled} onClick={() => onAct("cast")} />
-      <ActionBtn
-        label={<><Icon name="wax-seal" /> Sig</>}
-        hint={mana > 0 ? "Class signature · 1 mana" : "No mana"}
-        disabled={disabled || mana < 1}
-        onClick={() => onAct("signature")}
-      />
-      {ability && (
-        <ActionBtn
-          label={<><Icon name={ability.iconName} /> {ability.name}</>}
-          hint={mana >= ability.mana_cost ? `${ability.blurb} · ${ability.mana_cost} mana` : "Not enough mana"}
-          disabled={disabled || mana < ability.mana_cost}
-          onClick={() => onAct("ability")}
-        />
-      )}
-      <ActionBtn label={<><Icon name="health-potion" /> Heal</>} hint="1d6+mag · pick target" disabled={disabled} onClick={() => onAct("heal")} />
-      <ActionBtn label={<><Icon name="shield" /> Shield</>} hint="1d6+mag · pick target" disabled={disabled} onClick={() => onAct("shield")} />
-      <ActionBtn
-        label={<><Icon name="ammo-bag" /> Item</>}
-        hint={hasItems ? "Consumable / magic / revive / tool / scroll" : "Nothing usable"}
-        disabled={disabled || !hasItems}
-        onClick={() => onAct("use_item")}
-      />
-      <ActionBtn
-        label={<><Icon name={otherRow === "front" ? "muscle-up" : "fall-down"} /> {otherRow === "front" ? "To front" : "To back"}</>}
-        hint={otherRow === "front" ? "Soak hits · full damage" : "Less hit risk · 60% dmg taken"}
-        disabled={disabled}
-        onClick={() => onAct("swap_position")}
-      />
-      <ActionBtn label={<><Icon name="targeted" /> Mark</>} hint="Party gets +2 dmg on monster for 2 rounds" disabled={disabled} onClick={() => onAct("mark")} />
-      <ActionBtn label={<><Icon name="footprint" /> Flee</>} hint="d20+mod vs DC 10+tier" disabled={disabled} onClick={() => onAct("flee")} />
-      <ActionBtn label={<><Icon name="hourglass" /> Wait</>} hint="Skip your turn" disabled={disabled} onClick={() => onAct("wait")} />
     </div>
   );
 }
@@ -2819,37 +2710,11 @@ function PartyChips({ fighters, selfId, flashIds, hitDustSeq, healBurstSeq, shie
             <div key={mi} style={{ width: 7, height: 7, borderRadius: "50%", background: mi < f.mana ? "#818cf8" : "#1e2028", border: "1px solid #3a3d43" }} />
           ))}
         </div>
-        {/* Status effect pills — burning / frozen / shocked / poisoned /
-            bleeding / regen. Used by outskirts / boss / gauntlet (any
-            non-dungeon quest). Matches the dungeon PartyBar styling. */}
         {f.effects && f.effects.length > 0 && (
           <div style={{ position: "absolute", top: -8, right: -4, display: "flex", flexDirection: "column", gap: 3, alignItems: "flex-end" }}>
             {f.effects.map((e, i) => {
-              const [color, icon] = e.type === "regen" ? ["#4ade80", "regeneration"]
-                : e.type === "bleeding" ? ["#f87171", "bleeding-wound"]
-                : e.type === "burning" ? ["#fb923c", "fire"]
-                : e.type === "frozen" ? ["#93c5fd", "ice-bolt"]
-                : e.type === "shocked" ? ["#fbbf24", "electric"]
-                : ["#c084fc", "poison-cloud"];
-              return (
-                <span
-                  key={i}
-                  title={`${e.type} ×${e.magnitude} (${e.remaining} turn${e.remaining === 1 ? "" : "s"})`}
-                  style={{
-                    display: "inline-flex", alignItems: "center", gap: 3,
-                    background: `${color}33`,
-                    border: `1px solid ${color}aa`,
-                    borderRadius: 4, padding: "1px 5px",
-                    fontSize: 10, color, fontWeight: 700,
-                    textShadow: "0 1px 2px rgba(0,0,0,0.9)",
-                    textTransform: "capitalize", letterSpacing: 0.2,
-                  }}
-                >
-                  <Icon name={icon} size={10} color={color} />
-                  {e.type}{e.magnitude > 1 ? ` ×${e.magnitude}` : ""}
-                  <span style={{ opacity: 0.85, fontWeight: 600 }}>· {e.remaining}t</span>
-                </span>
-              );
+              const def = EFFECT_PILLS[e.type];
+              return def ? <def.pill key={i} effect={e} size="sm" /> : null;
             })}
           </div>
         )}
@@ -2924,68 +2789,3 @@ const exitBtn: React.CSSProperties = {
   cursor: "pointer",
 };
 
-function CombatDevModal({
-  questId,
-  onClose,
-  onDone,
-}: {
-  questId: number;
-  onClose: () => void;
-  onDone: () => void;
-}) {
-  const [busy, setBusy] = useState<string | null>(null);
-
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, [onClose]);
-
-  async function act(endpoint: string) {
-    setBusy(endpoint);
-    try {
-      await fetch(endpoint, {
-        method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ questId }),
-      });
-    } finally {
-      setBusy(null);
-      onDone();
-    }
-  }
-
-  const btn = (bg: string, fg: string): React.CSSProperties => ({
-    background: bg, color: fg,
-    border: "1px solid #2a2d33", borderRadius: 6,
-    padding: "6px 14px", fontSize: 13, fontWeight: 600,
-    cursor: busy ? "default" : "pointer", opacity: busy ? 0.5 : 1,
-    fontFamily: "inherit", display: "flex", alignItems: "center", gap: 5,
-  });
-
-  return (
-    <div
-      onClick={onClose}
-      style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 500 }}
-    >
-      <div
-        onClick={(e) => e.stopPropagation()}
-        style={{ background: "#13151a", border: "1px solid #2a2d33", borderRadius: 10, padding: 20, display: "flex", flexDirection: "column", gap: 10, minWidth: 220, boxShadow: "0 8px 32px rgba(0,0,0,0.7)" }}
-      >
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 2 }}>
-          <span style={{ fontSize: 13, fontWeight: 700, color: "#a78bfa", display: "flex", alignItems: "center", gap: 6 }}>
-            <Icon name="cog" size={13} /> Dev Tools
-          </span>
-          <button onClick={onClose} style={{ background: "none", border: "none", color: "#6b7280", cursor: "pointer", fontSize: 14, lineHeight: 1, padding: "0 2px" }}>✕</button>
-        </div>
-        <button disabled={!!busy} onClick={() => void act("/api/dev/combat-heal")} style={btn("#1f3a1f", "#86efac")}>
-          <Icon name="health" size={13} /> {busy === "/api/dev/combat-heal" ? "…" : "Heal to full"}
-        </button>
-        <button disabled={!!busy} onClick={() => void act("/api/dev/combat-mana")} style={btn("#1a2a3a", "#60a5fa")}>
-          <Icon name="crystals" size={13} /> {busy === "/api/dev/combat-mana" ? "…" : "Restore mana"}
-        </button>
-      </div>
-    </div>
-  );
-}

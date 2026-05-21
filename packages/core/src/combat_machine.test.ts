@@ -409,7 +409,7 @@ describe("combat_machine.step", () => {
     });
   });
 
-  describe("signature", () => {
+  describe("smite ability (QA Paladin)", () => {
     it("spends 1 mana, damages monster via class-specific dice", () => {
       const init = baseInit();
       init.fighters[0].class = "QA Paladin"; // Smite: 2d6 + atk×2 + weapon
@@ -418,26 +418,106 @@ describe("combat_machine.step", () => {
       // 2d6 → 4 + 3 = 7. atk_mod 2 × 2 = 4. weapon 4. damage = 7 + 4 + 4 = 15.
       const result = step(
         begun.state,
-        { kind: "signature", actor: "U_PALADIN" },
+        { kind: "ability", actor: "U_PALADIN", ability_id: "smite" },
         seqRoll([4, 3]),
       );
       expect(result.state.fighters[0].mana).toBe(1);
       expect(result.state.monsters[0].hp).toBe(40 - 15);
-      const sig = result.events.find((e) => e.type === "signature_used");
-      expect(sig).toMatchObject({ damage: 15, mana_spent: 1 });
+      const hit = result.events.find((e) => e.type === "player_hit");
+      expect(hit).toMatchObject({ damage: 15 });
+      const used = result.events.find((e) => e.type === "ability_used");
+      expect(used).toMatchObject({ ability_id: "smite", mana_spent: 1 });
     });
 
     it("rejects when mana is 0", () => {
       const init = baseInit();
+      init.fighters[0].class = "QA Paladin";
       init.fighters[0].mana = 0;
       const begun = runBegin(createCombatState(init), [15, 8]);
       const result = step(
         begun.state,
-        { kind: "signature", actor: "U_PALADIN" },
+        { kind: "ability", actor: "U_PALADIN", ability_id: "smite" },
         seqRoll([4, 3]),
       );
       expect(result.events.find((e) => e.type === "rejected")).toBeDefined();
       expect(result.state.monsters[0].hp).toBe(40);
+    });
+  });
+
+  describe("fireball ability (DevOps Mage, AoE)", () => {
+    function mageInit(overrides: Partial<CombatInit> = {}): CombatInit {
+      const init = baseInit(overrides);
+      init.fighters[0].class = "DevOps Mage";
+      init.fighters[0].mana = 3;
+      init.fighters[0].magic_mod = 1;
+      return init;
+    }
+
+    it("hits the single monster and spends 2 mana", () => {
+      const init = mageInit();
+      const begun = runBegin(createCombatState(init), [15, 8]);
+      // Fireball: 2d6 + magic_mod(1). Rolls: 4 + 3 = 7 + 1 = 8 damage.
+      const result = step(
+        begun.state,
+        { kind: "ability", actor: "U_PALADIN", ability_id: "fireball" },
+        seqRoll([4, 3]),
+      );
+      expect(result.state.fighters[0].mana).toBe(1); // 3 - 2 = 1
+      const hit = result.events.find((e) => e.type === "player_hit");
+      expect(hit).toMatchObject({ damage: 8 });
+      const used = result.events.find((e) => e.type === "ability_used");
+      expect(used).toMatchObject({ ability_id: "fireball", mana_spent: 2 });
+    });
+
+    it("damages ALL monsters with the same roll", () => {
+      // Two goblins: 10 HP each.
+      const init = mageInit({
+        monsters: [
+          { name: "Goblin A", hp: 10, max_hp: 10, tier: 1, is_boss: false },
+          { name: "Goblin B", hp: 10, max_hp: 10, tier: 1, is_boss: false },
+        ],
+      });
+      const begun = runBegin(createCombatState(init), [15, 10, 5]);
+      // 2d6 + 1 → rolls 3 + 2 = 5 + 1 = 6 damage to each.
+      const result = step(
+        begun.state,
+        { kind: "ability", actor: "U_PALADIN", ability_id: "fireball" },
+        seqRoll([3, 2]),
+      );
+      expect(result.state.monsters[0].hp).toBe(4); // 10 - 6
+      expect(result.state.monsters[1].hp).toBe(4);
+      const hits = result.events.filter((e) => e.type === "player_hit");
+      expect(hits).toHaveLength(2);
+    });
+
+    it("emits victory when fireball kills all monsters", () => {
+      const init = mageInit({
+        monsters: [
+          { name: "Goblin A", hp: 3, max_hp: 3, tier: 1, is_boss: false },
+          { name: "Goblin B", hp: 3, max_hp: 3, tier: 1, is_boss: false },
+        ],
+      });
+      const begun = runBegin(createCombatState(init), [15, 10, 5]);
+      // 2d6 + 1 → 4 + 4 = 8 + 1 = 9 damage. Both die.
+      const result = step(
+        begun.state,
+        { kind: "ability", actor: "U_PALADIN", ability_id: "fireball" },
+        seqRoll([4, 4]),
+      );
+      expect(result.state.status).toBe("victory");
+      expect(result.events.find((e) => e.type === "victory")).toBeDefined();
+    });
+
+    it("rejects when mana < 2", () => {
+      const init = mageInit();
+      init.fighters[0].mana = 1;
+      const begun = runBegin(createCombatState(init), [15, 8]);
+      const result = step(
+        begun.state,
+        { kind: "ability", actor: "U_PALADIN", ability_id: "fireball" },
+        seqRoll([4, 3]),
+      );
+      expect(result.events.find((e) => e.type === "rejected")).toBeDefined();
     });
   });
 
@@ -896,6 +976,125 @@ describe("multi-monster combat", () => {
     );
     expect(after2.state.status).toBe("victory");
     expect(eventTypes(after2.events)).toContain("victory");
+  });
+});
+
+describe("containerize ability (DevOps Mage)", () => {
+  function mageInit(overrides: Partial<CombatInit> = {}): CombatInit {
+    const init = baseInit(overrides);
+    init.fighters[0].class = "DevOps Mage";
+    init.fighters[0].mana = 3;
+    init.fighters[0].magic_mod = 1;
+    return init;
+  }
+
+  it("applies stunned effect to the monster with remaining=5", () => {
+    const begun = runBegin(createCombatState(mageInit()), [15, 8]);
+    // Containerize costs 2 mana, no dice needed.
+    const result = step(
+      begun.state,
+      { kind: "ability", actor: "U_PALADIN", ability_id: "containerize" },
+      seqRoll([]),
+    );
+    expect(result.state.fighters[0].mana).toBe(1); // 3 - 2
+    const stunned = result.state.monsters[0].effects.find((e) => e.type === "stunned");
+    expect(stunned).toBeDefined();
+    expect(stunned?.remaining).toBe(5);
+    expect(result.events.find((e) => e.type === "ability_containerize")).toBeDefined();
+  });
+
+  it("respects target_id when multiple monsters are present", () => {
+    const init = mageInit({
+      monsters: [
+        { name: "Goblin A", hp: 10, max_hp: 10, tier: 1, is_boss: false },
+        { name: "Goblin B", hp: 10, max_hp: 10, tier: 1, is_boss: false },
+      ],
+    });
+    const begun = runBegin(createCombatState(init), [15, 10, 5]);
+    // Target Goblin B (__monster_1__) specifically.
+    const result = step(
+      begun.state,
+      { kind: "ability", actor: "U_PALADIN", ability_id: "containerize", target_id: "__monster_1__" },
+      seqRoll([]),
+    );
+    expect(result.state.monsters[0].effects.find((e) => e.type === "stunned")).toBeUndefined();
+    expect(result.state.monsters[1].effects.find((e) => e.type === "stunned")).toBeDefined();
+  });
+
+  it("stunned monster skips its swing; remaining decremented; no break at 30% threshold miss", () => {
+    // Monster goes first. Inject stun with remaining=5 onto the monster.
+    const begun = runBegin(createCombatState(mageInit()), [5, 18]);
+    const stunnedState = {
+      ...begun.state,
+      monsters: begun.state.monsters.map((m) => ({
+        ...m,
+        effects: [{ type: "stunned" as const, magnitude: 30, remaining: 5, source: "U_PALADIN" }],
+      })),
+    };
+    // tickEffects: remaining 5→4. turnsElapsed=1, breakChance=0.30.
+    // roll(100)=100 → 1.0, NOT < 0.30 → stun holds.
+    const result = step(stunnedState, { kind: "monster_act" }, seqRoll([100]));
+    expect(result.state.fighters[0].hp).toBe(30); // fighter untouched
+    expect(result.events.find((e) => e.type === "monster_swing_skipped")).toBeDefined();
+    expect(result.events.find((e) => e.type === "monster_stun_broken")).toBeUndefined();
+    // remaining decremented by tick
+    const after = result.state.monsters[0].effects.find((e) => e.type === "stunned");
+    expect(after?.remaining).toBe(4);
+  });
+
+  it("stun breaks on 4th stunned turn (breakChance=100%, any roll triggers)", () => {
+    // Inject stun with remaining=2. After tick: remaining=1, turnsElapsed=4, breakChance=1.0.
+    const begun = runBegin(createCombatState(mageInit()), [5, 18]);
+    const stunnedState = {
+      ...begun.state,
+      monsters: begun.state.monsters.map((m) => ({
+        ...m,
+        effects: [{ type: "stunned" as const, magnitude: 30, remaining: 2, source: "U_PALADIN" }],
+      })),
+    };
+    const result = step(stunnedState, { kind: "monster_act" }, seqRoll([1]));
+    expect(result.events.find((e) => e.type === "monster_stun_broken")).toBeDefined();
+    expect(result.events.find((e) => e.type === "monster_swing_skipped")).toBeDefined();
+    // Stun removed from monster's effects.
+    expect(result.state.monsters[0].effects.find((e) => e.type === "stunned")).toBeUndefined();
+  });
+});
+
+describe("Mana Font passive (DevOps Mage)", () => {
+  function mageInit(mana = 1): CombatInit {
+    const init = baseInit();
+    init.fighters[0].class = "DevOps Mage";
+    init.fighters[0].mana = mana;
+    init.fighters[0].max_mana = 3;
+    init.fighters[0].magic_mod = 1;
+    return init;
+  }
+
+  it("restores 1 mana on every 3rd action and emits passive_mage_mana_font", () => {
+    const begun = runBegin(createCombatState(mageInit(1)), [15, 8]);
+    // Pre-seed counter to 2 so the next turn is the 3rd action → fires.
+    const withCounter = { ...begun.state, action_counters: { U_PALADIN: 2 } };
+    const result = step(withCounter, { kind: "wait", actor: "U_PALADIN" }, seqRoll([]));
+    expect(result.state.fighters[0].mana).toBe(2); // 1 + 1
+    const evt = result.events.find((e) => e.type === "passive_mage_mana_font");
+    expect(evt).toBeDefined();
+    expect(evt).toMatchObject({ actor: "U_PALADIN", amount: 1 });
+  });
+
+  it("does not fire on non-3rd-multiple turns", () => {
+    const begun = runBegin(createCombatState(mageInit(1)), [15, 8]);
+    // Counter starts at 0 → first turn is action 1, no fire.
+    const result = step(begun.state, { kind: "wait", actor: "U_PALADIN" }, seqRoll([]));
+    expect(result.events.find((e) => e.type === "passive_mage_mana_font")).toBeUndefined();
+    expect(result.state.fighters[0].mana).toBe(1); // unchanged
+  });
+
+  it("does not restore mana when already at max_mana", () => {
+    const begun = runBegin(createCombatState(mageInit(3)), [15, 8]); // mana=3=max
+    const withCounter = { ...begun.state, action_counters: { U_PALADIN: 2 } };
+    const result = step(withCounter, { kind: "wait", actor: "U_PALADIN" }, seqRoll([]));
+    expect(result.events.find((e) => e.type === "passive_mage_mana_font")).toBeUndefined();
+    expect(result.state.fighters[0].mana).toBe(3); // unchanged
   });
 });
 

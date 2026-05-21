@@ -1,5 +1,17 @@
 // Engineering-themed classes, NPC name generation, dice.
 
+import type { AbilityDef } from "./abilities";
+import {
+  mageAbilities,
+  paladinAbilities,
+  druidAbilities,
+  bardAbilities,
+  sageAbilities,
+  rogueAbilities,
+  wardenAbilities,
+  warlockAbilities,
+} from "./abilities/index";
+
 // Skill leans determine which trap-room option auto-passes for a class. Non-experts
 // can still attempt — they roll 1d6 and need 4+ — so every class is *capable* but
 // classes built for the moment shine.
@@ -9,21 +21,20 @@ export interface CharClass {
   id: string;
   name: string;
   base_hp: number;
-  attack_mod: number;
-  magic_mod: number;
   skills: SkillType[];   // expert types — 1-2 per class
   blurb: string;
+  abilities: AbilityDef[];
 }
 
 export const CLASSES: CharClass[] = [
-  { id: "devops_mage",       name: "DevOps Mage",        base_hp: 22, attack_mod: 1, magic_mod: 1, skills: ["int", "dex"], blurb: "Channels arcane YAML to summon and banish containers." },
-  { id: "qa_paladin",        name: "QA Paladin",         base_hp: 28, attack_mod: 2, magic_mod: 0, skills: ["str"],         blurb: "Smites bugs with the sacred light of regression suites." },
-  { id: "backend_druid",     name: "Backend Druid",      base_hp: 24, attack_mod: 1, magic_mod: 1, skills: ["int", "str"],  blurb: "Speaks to databases and tames feral microservices." },
-  { id: "frontend_bard",     name: "Frontend Bard",      base_hp: 20, attack_mod: 0, magic_mod: 2, skills: ["int"],         blurb: "Charms users with pixel-perfect ballads of CSS." },
-  { id: "staff_sage",        name: "Staff Sage",         base_hp: 26, attack_mod: 0, magic_mod: 2, skills: ["int"],         blurb: "Dispenses ancient wisdom and the occasional postmortem." },
-  { id: "refactor_rogue",    name: "Refactor Rogue",     base_hp: 18, attack_mod: 2, magic_mod: 0, skills: ["dex"],         blurb: "Strikes from the shadows; leaves no dead code behind." },
-  { id: "sre_warden",        name: "SRE Warden",         base_hp: 30, attack_mod: 2, magic_mod: 0, skills: ["str"],         blurb: "Stands the wall between prod and the howling void." },
-  { id: "data_warlock",      name: "Data Warlock",       base_hp: 22, attack_mod: 0, magic_mod: 2, skills: ["int"],         blurb: "Bound to a query plan most mortals dare not read." },
+  { id: "devops_mage",    name: "DevOps Mage",     base_hp: 22, skills: ["int", "dex"], blurb: "Channels arcane YAML to summon and banish containers.",    abilities: mageAbilities },
+  { id: "qa_paladin",     name: "QA Paladin",      base_hp: 28, skills: ["str"],         blurb: "Smites bugs with the sacred light of regression suites.",  abilities: paladinAbilities },
+  { id: "backend_druid",  name: "Backend Druid",   base_hp: 24, skills: ["int", "str"],  blurb: "Speaks to databases and tames feral microservices.",        abilities: druidAbilities },
+  { id: "frontend_bard",  name: "Frontend Bard",   base_hp: 20, skills: ["int"],         blurb: "Charms users with pixel-perfect ballads of CSS.",           abilities: bardAbilities },
+  { id: "staff_sage",     name: "Staff Sage",      base_hp: 26, skills: ["int"],         blurb: "Dispenses ancient wisdom and the occasional postmortem.",   abilities: sageAbilities },
+  { id: "refactor_rogue", name: "Refactor Rogue",  base_hp: 18, skills: ["dex"],         blurb: "Strikes from the shadows; leaves no dead code behind.",    abilities: rogueAbilities },
+  { id: "sre_warden",     name: "SRE Warden",      base_hp: 30, skills: ["str"],         blurb: "Stands the wall between prod and the howling void.",       abilities: wardenAbilities },
+  { id: "data_warlock",   name: "Data Warlock",    base_hp: 22, skills: ["int"],         blurb: "Bound to a query plan most mortals dare not read.",        abilities: warlockAbilities },
 ];
 
 // Skill emojis used in trap choice display so players see at a glance which option
@@ -40,7 +51,7 @@ export function pickRandomClass(): CharClass {
 
 export function classByName(name: string): CharClass {
   return CLASSES.find((c) => c.name === name) ??
-    { id: "unknown", name, base_hp: 20, attack_mod: 1, magic_mod: 1, skills: ["int"], blurb: "" };
+    { id: "unknown", name, base_hp: 20, skills: ["int"], blurb: "", abilities: [] };
 }
 
 // Per-class haggle modifier — added to the 1d6 haggle roll. Charisma classes (Bard)
@@ -213,7 +224,7 @@ export type EquipSlot =
 // Status effects — applied to player characters or monsters and tick on the
 // affected actor's own combat action / monster turn. v1 set is HP-based; future
 // effects could touch cooldown, damage modifiers, etc.
-export type EffectType = "regen" | "bleeding" | "burning" | "poisoned" | "empowered" | "frozen" | "shocked";
+export type EffectType = "regen" | "bleeding" | "burning" | "poisoned" | "empowered" | "frozen" | "shocked" | "stunned";
 
 // Elemental damage type carried by rare+ weapons and assigned to monsters.
 export type ElementType = "fire" | "ice" | "lightning";
@@ -237,6 +248,7 @@ export const EFFECT_META: Record<EffectType, EffectMeta> = {
   empowered: { emoji: "⚡", name: "Empowered", kind: "passive", ignoresArmor: false, blurb: "+25% damage dealt for N turns." },
   frozen:    { emoji: "❄️", name: "Frozen",    kind: "passive", ignoresArmor: false, blurb: "Skips next action." },
   shocked:   { emoji: "🌩️", name: "Shocked",   kind: "passive", ignoresArmor: false, blurb: "Takes +30% damage from all sources." },
+  stunned:   { emoji: "📦", name: "Stunned",   kind: "passive", ignoresArmor: false, blurb: "Containerized — skips swings with escalating 30%/turn break chance." },
 };
 
 export const ELEMENT_META: Record<ElementType, { emoji: string; name: string; effect: EffectType }> = {
@@ -337,152 +349,9 @@ export type Rarity = "common" | "uncommon" | "rare" | "epic" | "legendary";
 
 export const MAX_MANA_CAP = 5;
 
-// Class signature abilities. Each costs 1 mana, shares the 45s combat cooldown,
-// and resolves to a damage value via a class-specific formula in combat.ts.
-export interface SignatureSpec {
-  id: string;
-  name: string;
-  blurb: string;
-}
-
-export const SIGNATURES: Record<string, SignatureSpec> = {
-  devops_mage: { id: "detonate", name: "Detonate", blurb: "Drops a payload that bursts on impact." },
-  qa_paladin: { id: "smite", name: "Smite", blurb: "Strikes with the weight of a thousand failed builds." },
-  backend_druid: { id: "wildgrowth", name: "Wildgrowth", blurb: "Vines of legacy code constrict the foe." },
-  frontend_bard: { id: "crescendo", name: "Crescendo", blurb: "A rising chorus the whole party joins." },
-  staff_sage: { id: "manifest", name: "Manifest", blurb: "Pure intent shaped into pure damage." },
-  refactor_rogue: { id: "backstab", name: "Backstab", blurb: "Slips through the diff and finds the soft spot." },
-  sre_warden: { id: "bulwark_strike", name: "Bulwark Strike", blurb: "Turns armor into a weapon." },
-  data_warlock: { id: "hex", name: "Hex", blurb: "Curses the foe with a slow query that bleeds them out." },
-};
-
-export function signatureFor(className: string): SignatureSpec | null {
-  const cls = CLASSES.find((c) => c.name === className);
-  if (!cls) return null;
-  return SIGNATURES[cls.id] ?? null;
-}
-
-// Class passive abilities. Always-on or once-per-fight triggers that fire
-// automatically based on combat conditions — no command to invoke them. The
-// actual mechanics live in commands.ts (handleCombat, applyPlayerTick,
-// buildCombatBlocks). This map is the player-facing description shown on
-// /sq sheet so players know what their class quietly does.
-export interface PassiveSpec {
-  name: string;
-  blurb: string;
-}
-
-export const PASSIVES: Record<string, PassiveSpec> = {
-  devops_mage: {
-    name: "Mana Catalyst",
-    blurb: "First signature each fight costs 0 mana.",
-  },
-  qa_paladin: {
-    name: "Lay on Hands",
-    blurb: "Once per fight, when an ally drops below 30% HP after a hit, auto-heal them.",
-  },
-  backend_druid: {
-    name: "Database-Tree Communion",
-    blurb: "Regen +1 HP on every own action (always-on).",
-  },
-  frontend_bard: {
-    name: "Bardic Aura",
-    blurb: "While you're alive, other party members' attacks deal +1 damage.",
-  },
-  staff_sage: {
-    name: "Sage's Reading",
-    blurb: "When viewing combat, see the monster's next-swing damage range.",
-  },
-  refactor_rogue: {
-    name: "First Strike",
-    blurb: "Your first basic attack each fight is a guaranteed crit.",
-  },
-  sre_warden: {
-    name: "Harden Up",
-    blurb: "Gain a small starting shield on your first action each fight.",
-  },
-  data_warlock: {
-    name: "Cursed Strike",
-    blurb: "Critical attacks/casts inflict a 2-turn 🩸 bleed on the monster.",
-  },
-};
-
-export function passiveFor(className: string): PassiveSpec | null {
-  const cls = CLASSES.find((c) => c.name === className);
-  if (!cls) return null;
-  return PASSIVES[cls.id] ?? null;
-}
-
-// Class active abilities — each class gets one tactical move invoked via
-// /sq ability. Distinct from signatures (which are damage); actives are
-// utility/control/support. All cost mana, share the 45s combat cooldown.
-// The mechanics live in commands.ts (handleAbility); this map is the
-// player-facing description shown on /sq sheet and in help text.
-export type AbilityId = "taunt" | "containerize" | "regression_shield" | "vanish" | "soul_drain" | "battle_hymn" | "foresee" | "migrate";
-
-export interface AbilitySpec {
-  id: AbilityId;
-  name: string;
-  mana_cost: number;
-  blurb: string;
-}
-
-export const ABILITIES: Record<string, AbilitySpec> = {
-  devops_mage: {
-    id: "containerize",
-    name: "Containerize",
-    mana_cost: 2,
-    blurb: "Locks the monster in a stasis container. It skips its next swing entirely.",
-  },
-  qa_paladin: {
-    id: "regression_shield",
-    name: "Regression Shield",
-    mana_cost: 2,
-    blurb: "Grants 🛡 +3 shield to every alive partymate.",
-  },
-  backend_druid: {
-    id: "migrate",
-    name: "Migrate",
-    mana_cost: 1,
-    blurb: "Move any partymate to front or back without consuming their turn.",
-  },
-  frontend_bard: {
-    id: "battle_hymn",
-    name: "Battle Hymn",
-    mana_cost: 2,
-    blurb: "Bardic aura jumps from +1 to +3 damage for the next 2 partymate attacks.",
-  },
-  staff_sage: {
-    id: "foresee",
-    name: "Foresee",
-    mana_cost: 1,
-    blurb: "Full battle read: next swing target with net damage range + survivability verdict, targeting odds for every fighter, full party HP triage, and active ability state.",
-  },
-  refactor_rogue: {
-    id: "vanish",
-    name: "Vanish",
-    mana_cost: 2,
-    blurb: "Disappear into the shadows — the monster can't target you for its next 2 swings.",
-  },
-  sre_warden: {
-    id: "taunt",
-    name: "Taunt",
-    mana_cost: 2,
-    blurb: "Force the monster to target you for its next 2 swings, overriding the telegraph.",
-  },
-  data_warlock: {
-    id: "soul_drain",
-    name: "Soul Drain",
-    mana_cost: 2,
-    blurb: "Deal 1d6 + magic_mod damage and heal yourself for 50% of damage dealt.",
-  },
-};
-
-export function abilityFor(className: string): AbilitySpec | null {
-  const cls = CLASSES.find((c) => c.name === className);
-  if (!cls) return null;
-  return ABILITIES[cls.id] ?? null;
-}
+// AbilityId is the string id of any active ability. No longer a closed union —
+// adding a new ability only requires updating the ability file itself.
+export type AbilityId = string;
 
 export interface ItemRoll {
   type: ItemType;
@@ -518,6 +387,8 @@ export interface CatalogEntry {
   // time — a Caffeine Bomb bought at L1 stays L1-tier forever. Sell or use.
   computePower: (tier: number) => number;
   blurb: string;
+  // Optional effect tag for entries that restore a specific resource rather than dealing damage.
+  effect?: "restore_mana" | "heal_hp";
   // True for items sold at the Apothecary — excluded from shop/merchant rolling
   // so they're apothecary-exclusive purchases (but can still drop as monster loot).
   shopExcluded?: boolean;
@@ -867,7 +738,7 @@ export const DRINKS: DrinkSpec[] = [
   {
     id: "lucky", emoji: "💧", name: "Lucky Sip", price: 15,
     effect: { kind: "buff_next_crit" },
-    blurb: "A shimmer of fate. Your *next attack/cast/signature is a guaranteed crit*.",
+    blurb: "A shimmer of fate. Your *next attack/cast/ability is a guaranteed crit*.",
   },
   {
     id: "whiskey", emoji: "🍶", name: "Aged Whiskey", price: 25,

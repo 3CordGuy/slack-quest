@@ -5,7 +5,7 @@
 
 import { useEffect, useReducer, useRef, useState } from "react";
 import toast from "react-hot-toast";
-import { isMonsterActor, isMercActor } from "@gantt-quest/core";
+import { isMonsterActor } from "@gantt-quest/core";
 import { Avatar, Icon } from "./icons";
 import { CombatParticles, triggerBurst } from "./CombatParticles";
 import {
@@ -18,6 +18,12 @@ import {
   HealBurst,
   ShieldBurst,
   ShieldGlow,
+  CombatDevModal,
+  StatusEffect,
+  EFFECT_PILLS,
+  CombatPanel,
+  type PanelCombatState,
+  type PanelTurnAction,
 } from "./CombatShared";
 ensureCombatAnimStyles();
 
@@ -64,7 +70,7 @@ type GridRoomContent =
   | { kind: "loot"; items: LootOption[]; taken: boolean }
   | { kind: "key_pickup"; tier: KeyTier; taken: boolean }
   | { kind: "trap"; choices: TrapChoice[]; resolved: boolean }
-  | { kind: "lockbox"; lock_tier: KeyTier; options: LootOption[]; resolved: boolean }
+  | { kind: "lockbox"; lock_tier: KeyTier; options: LootOption[]; resolved: boolean; opened?: boolean; claims?: Record<string, string> }
   | { kind: "npc"; greeting: string; offer: LootOption; resolved: boolean; art_url?: string | null }
   | { kind: "merchant"; greeting: string; stock: LootOption[]; resolved: boolean; art_url?: string | null };
 
@@ -123,8 +129,6 @@ interface Character {
 
 // ─── Combat WS types (subset, mirrors CombatPage) ───────────────────────────
 
-interface StatusEffect { type: "regen" | "bleeding" | "burning" | "poisoned" | "frozen" | "shocked"; magnitude: number; remaining: number }
-
 interface Fighter {
   id: string; name: string; class: string; level: number;
   hp: number; max_hp: number; mana: number; max_mana: number; shield: number;
@@ -161,32 +165,14 @@ type TurnAction =
   | { kind: "cast"; actor: string; target_id?: string | null }
   | { kind: "heal"; actor: string; target: string }
   | { kind: "shield"; actor: string; target: string }
-  | { kind: "signature"; actor: string; target_id?: string | null }
   | { kind: "flee"; actor: string }
   | { kind: "position"; actor: string; to: "front" | "back" }
   | { kind: "wait"; actor: string }
   | { kind: "mark"; actor: string }
-  | { kind: "ability"; actor: string; ability_id: string; target?: string; position?: "front" | "back" }
+  | { kind: "ability"; actor: string; ability_id: string; target_id?: string; target?: string; position?: "front" | "back" }
   | { kind: "monster_act" }
   | { kind: "use_item"; actor: string; item_id: number; target_id?: string };
 
-// Class → active ability spec (mirrors CombatPage.ABILITY_BY_CLASS).
-interface AbilityUiSpec {
-  id: string; name: string; iconName: string; mana_cost: number; blurb: string;
-  // migrate needs a partymate + position picker; not supported in grid view
-  // for v1 — we just disable the button with a note.
-  needs_picker?: boolean;
-}
-const ABILITY_BY_CLASS: Record<string, AbilityUiSpec> = {
-  "SRE Warden":     { id: "taunt",             name: "Taunt",      iconName: "shield",          mana_cost: 2, blurb: "Monster targets you for 2 swings" },
-  "DevOps Mage":    { id: "containerize",      name: "Container",  iconName: "cubes",           mana_cost: 2, blurb: "Monster skips next swing" },
-  "QA Paladin":     { id: "regression_shield", name: "Regress",    iconName: "fairy-wand",      mana_cost: 2, blurb: "+3 shield to all party" },
-  "Refactor Rogue": { id: "vanish",            name: "Vanish",     iconName: "hood",            mana_cost: 2, blurb: "Untargetable for 2 swings" },
-  "Data Warlock":   { id: "soul_drain",        name: "Soul Drain", iconName: "death-skull",     mana_cost: 2, blurb: "1d6+mag dmg, heal 50%" },
-  "Frontend Bard":  { id: "battle_hymn",       name: "Hymn",       iconName: "aura",            mana_cost: 2, blurb: "+dmg buff on next party attacks" },
-  "Staff Sage":     { id: "foresee",           name: "Foresee",    iconName: "scroll-unfurled", mana_cost: 1, blurb: "Full battle intel for 2 turns" },
-  "Backend Druid":  { id: "migrate",           name: "Migrate",    iconName: "leaf",            mana_cost: 1, blurb: "Move a partymate to front/back", needs_picker: true },
-};
 
 interface OutcomeSummary {
   status: "victory" | "defeat";
@@ -328,12 +314,6 @@ function formatCombatEvent(e: { type: string; [k: string]: unknown }, nameOf: (i
       (e.rolled as number) > (e.amount as number) ? `rolled ${e.rolled}, clamped to ${e.amount}` : undefined,
       "party",
     );
-    case "signature_used": return row(
-      `${nameOf(e.actor as string)} signature: ${e.damage} dmg`,
-      "good",
-      `${e.formula ?? ""} · −${e.mana_spent ?? 0} mana`,
-      "party",
-    );
     case "flee_check": return row(
       e.success ? `${nameOf(e.actor as string)} escapes!` : `${nameOf(e.actor as string)} fails to escape`,
       e.success ? "good" : "bad",
@@ -448,36 +428,14 @@ function PartyBar({ fighters, selfId, party, onClickSelf, flashIds, hitDustSeq, 
               <div key={mi} style={{ width: 9, height: 9, borderRadius: "50%", background: mi < f.mana ? "#818cf8" : "#1e2028", border: "1px solid #3a3d43" }} />
             ))}
           </div>
-          {/* Status effect pills — burning / frozen / shocked / poisoned /
-              bleeding / regen. Matches the in-combat MonsterCard styling.
+          {/* Status effect pills — shared EFFECT_PILLS from CombatShared.
               Empty for legacy REST party-data fighters since /api/quest/active
               doesn't expose effects. */}
           {f.effects.length > 0 && (
             <div style={{ display: "flex", gap: 4, marginTop: 5, flexWrap: "wrap" }}>
               {f.effects.map((e, i) => {
-                const [color, icon] = e.type === "regen" ? ["#4ade80", "regeneration"]
-                  : e.type === "bleeding" ? ["#f87171", "bleeding-wound"]
-                  : e.type === "burning" ? ["#fb923c", "fire"]
-                  : e.type === "frozen" ? ["#93c5fd", "ice-bolt"]
-                  : e.type === "shocked" ? ["#fbbf24", "electric"]
-                  : ["#c084fc", "poison-cloud"];
-                return (
-                  <span
-                    key={i}
-                    title={`${e.type} ×${e.magnitude} (${e.remaining} turn${e.remaining === 1 ? "" : "s"})`}
-                    style={{
-                      display: "inline-flex", alignItems: "center", gap: 3,
-                      background: `${color}33`, border: `1px solid ${color}aa`,
-                      borderRadius: 4, padding: "1px 5px",
-                      fontSize: 10, color, fontWeight: 700,
-                      textTransform: "capitalize", letterSpacing: 0.2,
-                    }}
-                  >
-                    <Icon name={icon} size={10} color={color} />
-                    {e.type}{e.magnitude > 1 ? ` ×${e.magnitude}` : ""}
-                    <span style={{ opacity: 0.8, fontWeight: 600 }}>· {e.remaining}t</span>
-                  </span>
-                );
+                const def = EFFECT_PILLS[e.type];
+                return def ? <def.pill key={i} effect={e} size="sm" /> : null;
               })}
             </div>
           )}
@@ -600,9 +558,14 @@ function MonsterCard({ monster, isBoss, isHit, lungeTick, slashTick, dustSeq, is
       {isTargeted && !isDead && (
         <div className="gq-monster-targeted" style={{ position: "absolute", inset: 0, borderRadius: 11, pointerEvents: "none" }} />
       )}
-      {monster.art_url && (
-        <img src={monster.art_url} alt={monster.name} style={{ width: "100%", height: artHeight, objectFit: "cover", borderRadius: 8, marginBottom: 8, display: "block" }} />
-      )}
+      {monster.art_url
+        ? <img src={monster.art_url} alt={monster.name} style={{ width: "100%", height: artHeight, objectFit: "cover", borderRadius: 8, marginBottom: 8, display: "block" }} onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
+        : (
+          <div style={{ display: "flex", justifyContent: "center", alignItems: "center", height: artHeight, marginBottom: 8 }}>
+            <Icon name="dragon" size={isPrimary ? 72 : 52} color={isBoss ? "#fca5a5" : "#7c2020"} />
+          </div>
+        )
+      }
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8 }}>
         <div style={{ fontFamily: DISPLAY_FONT, fontSize: nameFontSize, fontWeight: 700, color: isBoss ? "#fca5a5" : "#f5f5f5", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{monster.name}</div>
         <div style={{ fontSize: 11, color: "#9aa0a6", fontVariantNumeric: "tabular-nums", flexShrink: 0 }}>{Math.max(0, monster.hp)} / {monster.max_hp}</div>
@@ -678,35 +641,8 @@ function MonsterCard({ monster, isBoss, isHit, lungeTick, slashTick, dustSeq, is
       {monster.effects && monster.effects.length > 0 && !isDead && (
         <div style={{ position: "absolute", top: 6, right: 6, display: "flex", flexDirection: "column", gap: 4, alignItems: "flex-end", zIndex: 9 }}>
           {monster.effects.map((e, i) => {
-            // Same color + icon table as CombatPage's MonsterCard so the
-            // dungeon and standard battlefield show identical status pills.
-            // Includes frozen/shocked (which the old dungeon table omitted)
-            // for monster-applied elemental procs the player can suffer
-            // when fighting fire/ice/lightning packs.
-            const [color, icon] = e.type === "regen" ? ["#4ade80", "regeneration"]
-              : e.type === "bleeding" ? ["#f87171", "bleeding-wound"]
-              : e.type === "burning" ? ["#fb923c", "fire"]
-              : e.type === "frozen" ? ["#93c5fd", "ice-bolt"]
-              : e.type === "shocked" ? ["#fbbf24", "electric"]
-              : ["#c084fc", "poison-cloud"];
-            return (
-              <span
-                key={i}
-                title={`${e.type} ×${e.magnitude} (${e.remaining} turn${e.remaining === 1 ? "" : "s"} remaining)`}
-                style={{
-                  display: "inline-flex", alignItems: "center", gap: 4,
-                  background: `${color}33`, border: `1px solid ${color}88`,
-                  borderRadius: 5, padding: "2px 7px",
-                  fontSize: 11, color, fontWeight: 700,
-                  textShadow: "0 1px 2px rgba(0,0,0,0.8)",
-                  textTransform: "capitalize", letterSpacing: 0.2,
-                }}
-              >
-                <Icon name={icon} size={12} color={color} />
-                {e.type}{e.magnitude > 1 ? ` ×${e.magnitude}` : ""}
-                <span style={{ opacity: 0.8, fontWeight: 600 }}>· {e.remaining}t</span>
-              </span>
-            );
+            const def = EFFECT_PILLS[e.type];
+            return def ? <def.pill key={i} effect={e} size="md" /> : null;
           })}
         </div>
       )}
@@ -992,6 +928,8 @@ export function GridDungeonView({
   const monsterAlive = isCombatRoom && (legacyEncounter ? true : !(content as { cleared: boolean }).cleared);
 
   const [combatActive, setCombatActive] = useState(hasWebCombat && monsterAlive);
+  const [devOpen, setDevOpen] = useState(false);
+  const [wsReconnectKey, setWsReconnectKey] = useState(0);
   const [ws, dispatch] = useReducer(wsReducer, { connection: "connecting" as const, state: null, log: [], outcome: null });
   const wsRef = useRef<WebSocket | null>(null);
   const [autoResolve, setAutoResolve] = useState(true);
@@ -1111,11 +1049,11 @@ export function GridDungeonView({
               if (el === "fire" || el === "ice" || el === "lightning") triggerBurst(el);
             }
             if (evt.type === "heal_applied" && typeof (evt as { target?: string }).target === "string") {
-              const tgt = (evt as { target: string }).target;
+              const tgt = (evt as unknown as { target: string }).target;
               setHealBurstSeq((prev) => ({ ...prev, [tgt]: (prev[tgt] ?? 0) + 1 }));
             }
             if (evt.type === "shield_applied" && typeof (evt as { target?: string }).target === "string") {
-              const tgt = (evt as { target: string }).target;
+              const tgt = (evt as unknown as { target: string }).target;
               setShieldBurstSeq((prev) => ({ ...prev, [tgt]: (prev[tgt] ?? 0) + 1 }));
             }
             if (evt.type === "turn_skip") triggerBurst("frozen");
@@ -1156,7 +1094,7 @@ export function GridDungeonView({
       } catch { /* ignore bad frames */ }
     };
     return () => { clearInterval(heartbeat); sock.close(); wsRef.current = null; };
-  }, [questId]);
+  }, [questId, wsReconnectKey]);
 
   // Auto-resolve monster and merc turns
   const stateForAuto = ws.state;
@@ -1366,6 +1304,14 @@ export function GridDungeonView({
           <Icon name="footprint" size={13} /> Exit
         </button>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          {import.meta.env.DEV && (
+            <button
+              onClick={() => setDevOpen(true)}
+              style={{ background: "none", border: "1px solid #2a2d44", color: "#a78bfa", cursor: "pointer", fontSize: 11, padding: "2px 7px", borderRadius: 5, display: "flex", alignItems: "center", gap: 4, fontFamily: "inherit" }}
+            >
+              <Icon name="cog" size={11} /> dev
+            </button>
+          )}
           {combatActive && <span style={{ fontSize: 11, color: ws.connection === "open" ? "#39ff14" : "#9aa0a6" }}>{ws.connection === "open" ? "● live" : "○ …"}</span>}
           <span style={{ fontSize: 11, color: "#9aa0a6" }}>
             <Icon name="key" size={10} color="#b45309" /> {character.keys_bronze}
@@ -1375,8 +1321,16 @@ export function GridDungeonView({
         </div>
       </div>
 
+      {devOpen && import.meta.env.DEV && (
+        <CombatDevModal
+          questId={questId}
+          onClose={() => setDevOpen(false)}
+          onDone={() => { setDevOpen(false); setWsReconnectKey((k) => k + 1); }}
+        />
+      )}
+
       {/* Room view */}
-      <div style={{ flex: 1, position: "relative", overflow: "hidden", minHeight: 0 }}>
+      <div style={{ flex: 1, position: "relative", overflow: "hidden", minHeight: 0, background: "#1c1f2e" }}>
         <img src={bgUrl} alt="" style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover" }} onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
         <div style={{ position: "absolute", inset: 0, background: "linear-gradient(to bottom, rgba(0,0,0,0.15) 0%, rgba(0,0,0,0.05) 40%, rgba(0,0,0,0.55) 100%)", pointerEvents: "none" }} />
 
@@ -1545,14 +1499,14 @@ export function GridDungeonView({
       {combatActive && !combatEnded && (
         combatState ? (
           <CombatPanel
-            state={combatState}
+            state={combatState as unknown as PanelCombatState}
             selfId={selfId}
-            onSend={send}
+            onSend={send as (a: PanelTurnAction) => boolean}
             autoResolve={autoResolve}
             setAutoResolve={setAutoResolve}
             myTurn={myTurn}
             isMonsterTurn={isMonsterTurn}
-            items={items}
+            items={items as unknown as CombatItem[]}
             onRefreshItems={loadItems}
             characterClass={character.class}
             targetMonsterId={effectiveTarget}
@@ -1640,10 +1594,12 @@ function ContentFigureOverlay({ content }: { content: GridRoomContent }) {
         {!m.art_url && (
           <div style={{ display: "flex", justifyContent: "center", padding: "20px 0" }}>
             <Icon name="dragon" size={64} color={borderColor} />
+            <Icon name="dragon" size={64} color={borderColor} />
           </div>
         )}
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8 }}>
           <div style={{ fontFamily: DISPLAY_FONT, fontSize: 15, fontWeight: 700, color: isBoss ? "#fca5a5" : "#f5f5f5" }}>
+            {isBoss && <Icon name="dragon" size={13} color="#fca5a5" />} {m.name}
             {isBoss && <Icon name="dragon" size={13} color="#fca5a5" />} {m.name}
           </div>
           <div style={{ fontSize: 12, color: "#9aa0a6", fontVariantNumeric: "tabular-nums" }}>
@@ -1821,6 +1777,7 @@ function ContentOverlay({ node, content, onEnterCombat, onTakeLoot, onTakeKey, o
       <div style={{ background: isBoss ? "rgba(80,10,10,0.95)" : "rgba(10,11,14,0.95)", borderTop: `1px solid ${isBoss ? "#7f1d1d" : "#1e2028"}`, padding: "12px 16px", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 14 }}>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: 14, fontWeight: 600, color: isBoss ? "#fca5a5" : "#f5f5f5", fontFamily: DISPLAY_FONT }}>
+            {isBoss && <Icon name="dragon" size={14} color="#fca5a5" />} {m.name}
             {isBoss && <Icon name="dragon" size={14} color="#fca5a5" />} {m.name}
           </div>
           {m.flavor && (
@@ -2112,255 +2069,6 @@ interface UsableItem {
   stat_bonus?: Record<string, number> | null;
   weapon_range?: "melee" | "ranged" | "focus" | null;
   item_subtype?: string | null;
-}
-
-function CombatPanel({ state, selfId, onSend, autoResolve, setAutoResolve, myTurn, isMonsterTurn, items, onRefreshItems, characterClass, targetMonsterId }: {
-  state: CombatState; selfId: string;
-  onSend: (a: TurnAction) => boolean;
-  autoResolve: boolean; setAutoResolve: (b: boolean) => void;
-  myTurn: boolean; isMonsterTurn: boolean;
-  items: UsableItem[];
-  onRefreshItems: () => void;
-  characterClass: string;
-  // Currently-picked enemy. Parent manages this via MonsterStrip click-
-  // to-target; we just use it as the target_id for attack/cast/sig.
-  targetMonsterId: string | null;
-}) {
-  const me = state.fighters.find((f) => f.id === selfId);
-  const mana = me?.mana ?? 0;
-  const myPos = me?.position ?? "front";
-  const liveMonsters = state.monsters.filter((m) => m.hp > 0);
-  // Use the parent-managed target; fall back to first live monster if
-  // unset (e.g. mid-state-transition).
-  const target = targetMonsterId && liveMonsters.some((m) => m.id === targetMonsterId)
-    ? targetMonsterId
-    : (liveMonsters[0]?.id ?? null);
-  const [picking, setPicking] = useState<"heal" | "shield" | null>(null);
-  const [itemOpen, setItemOpen] = useState(false);
-  // Give flow: select item → select ally. Both steps use PickerModal.
-  const [givePicker, setGivePicker] = useState<"closed" | "selectItem" | { itemId: number }>("closed");
-  // Monster target flow: set when a monster-targeting tool is picked with 2+ live enemies.
-  const [pendingToolItem, setPendingToolItem] = useState<UsableItem | null>(null);
-  const usable = items.filter((it) => !it.equipped && ["consumable", "magic", "revive", "tool"].includes(it.item_type));
-  const giveable = items.filter((it) => !it.equipped);
-  const otherFighters = state.fighters.filter((f) => f.id !== selfId && f.hp > 0);
-  const ability = ABILITY_BY_CLASS[characterClass] ?? null;
-
-  async function fireGive(itemId: number, toUserId: string) {
-    await fetch(`/api/inventory/${itemId}/give`, {
-      method: "POST", credentials: "include",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ to_user_id: toUserId }),
-    });
-    setGivePicker("closed");
-    onRefreshItems();
-  }
-
-  // Disabled state for the action row when it isn't the player's turn.
-  const currentActorId = state.turn_order[state.turn_index % state.turn_order.length] ?? null;
-  const isInactivePlayerTurn = !myTurn && currentActorId !== null && !isMonsterActor(currentActorId) && !isMercActor(currentActorId);
-
-  const [skipReady, setSkipReady] = useState(false);
-  useEffect(() => {
-    if (!isInactivePlayerTurn) { setSkipReady(false); return; }
-    const t = setTimeout(() => setSkipReady(true), 8000);
-    return () => clearTimeout(t);
-  }, [isInactivePlayerTurn, currentActorId]);
-
-  // Buttons stay visible so the bottom row doesn't disappear; they grey out
-  // and the user gets a turn-status hint instead of an empty bar.
-  const otherActor = state.fighters.find((f) => f.id === currentActorId);
-  const turnStatus = myTurn
-    ? null
-    : isMonsterTurn
-      ? (autoResolve ? "Enemy turn — auto-resolving…" : null)
-      : `Waiting for ${otherActor?.name ?? "another player"}…`;
-
-  return (
-    <div style={{ background: "rgba(10,11,14,0.92)", borderTop: "1px solid #1e2028", flexShrink: 0, overflow: "hidden", backdropFilter: "blur(6px)" }}>
-      {/* Inline target picker for heal/shield (slides in above the buttons) */}
-      {picking && myTurn && (
-        <div style={{ padding: "6px 12px 4px", display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", borderBottom: "1px solid #1a1c21" }}>
-          <span style={{ fontSize: 11, color: "#9aa0a6" }}>{picking === "heal" ? "Heal who?" : "Shield who?"}</span>
-          {state.fighters.filter((f) => f.hp > 0).map((f) => (
-            <button key={f.id}
-              onClick={() => { onSend({ kind: picking, actor: selfId, target: f.id }); setPicking(null); }}
-              style={{ padding: "3px 10px", background: "#1a2e1a", border: "1px solid #166534", borderRadius: 5, color: "#86efac", fontSize: 11, cursor: "pointer" }}>
-              {f.name.split(" ")[0]} {f.hp}/{f.max_hp}
-            </button>
-          ))}
-          <button onClick={() => setPicking(null)} style={{ padding: "3px 8px", background: "none", border: "1px solid #2a2d33", borderRadius: 5, color: "#9aa0a6", fontSize: 11, cursor: "pointer" }}>✕</button>
-        </div>
-      )}
-
-      {/* Give-item: step 1 (item) as a modal, step 2 (ally) stays inline. */}
-      {givePicker === "selectItem" && myTurn && (
-        <PickerModal title="Give which item?" onClose={() => setGivePicker("closed")}>
-          {giveable.length === 0 ? (
-            <p style={{ fontSize: 13, color: "#6b7280", margin: 0 }}>No items to give.</p>
-          ) : (
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 8 }}>
-              {giveable.map((it) => (
-                <LootOptionTile
-                  key={it.id}
-                  opt={itemToLootOpt(it)}
-                  onClick={() => setGivePicker({ itemId: it.id })}
-                />
-              ))}
-            </div>
-          )}
-        </PickerModal>
-      )}
-      {typeof givePicker === "object" && "itemId" in givePicker && myTurn && (
-        <PickerModal title="Give to whom?" onClose={() => setGivePicker("closed")}>
-          {otherFighters.length === 0 ? (
-            <p style={{ fontSize: 13, color: "#6b7280", margin: 0 }}>No allies in combat.</p>
-          ) : (
-            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              {otherFighters.map((f) => (
-                <button key={f.id}
-                  onClick={() => void fireGive(givePicker.itemId, f.id)}
-                  style={{
-                    display: "flex", alignItems: "center", justifyContent: "space-between",
-                    padding: "10px 16px", background: "#1a1c21", border: "1px solid #2a2d33",
-                    borderRadius: 8, color: "#f5f5f5", cursor: "pointer", fontSize: 13,
-                    transition: "border-color 0.15s",
-                  }}
-                  onMouseEnter={(e) => (e.currentTarget.style.borderColor = "#166534")}
-                  onMouseLeave={(e) => (e.currentTarget.style.borderColor = "#2a2d33")}
-                >
-                  <span style={{ fontWeight: 600 }}>{f.name}</span>
-                  <span style={{ fontSize: 12, color: "#86efac" }}>{f.hp}/{f.max_hp} HP</span>
-                </button>
-              ))}
-            </div>
-          )}
-          <button onClick={() => setGivePicker("selectItem")} style={{ marginTop: 12, padding: "4px 12px", background: "none", border: "1px solid #2a2d33", borderRadius: 6, color: "#9aa0a6", fontSize: 12, cursor: "pointer" }}>← Back to items</button>
-        </PickerModal>
-      )}
-
-      {/* Item picker — full modal via portal */}
-      {itemOpen && myTurn && (
-        <PickerModal title="Use item" onClose={() => setItemOpen(false)}>
-          {usable.length === 0 ? (
-            <p style={{ fontSize: 13, color: "#6b7280", margin: 0 }}>No usable items in your pack.</p>
-          ) : (
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", gap: 8 }}>
-              {usable.map((it) => (
-                <UseItemTile
-                  key={it.id}
-                  item={it as unknown as CombatItem}
-                  onClick={() => {
-                    setItemOpen(false);
-                    if (MONSTER_TARGET_TOOLS.has(it.item_name) && liveMonsters.length > 1) {
-                      setPendingToolItem(it);
-                    } else {
-                      onSend({ kind: "use_item", actor: selfId, item_id: it.id, target_id: target ?? undefined });
-                    }
-                  }}
-                />
-              ))}
-            </div>
-          )}
-        </PickerModal>
-      )}
-
-      {/* Monster target picker — appears after selecting a monster-targeting tool with 2+ enemies */}
-      {pendingToolItem && myTurn && (
-        <PickerModal
-          title={`${pendingToolItem.item_name} — choose a target`}
-          onClose={() => setPendingToolItem(null)}
-        >
-          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {liveMonsters.map((m) => (
-              <button
-                key={m.id}
-                onClick={() => {
-                  onSend({ kind: "use_item", actor: selfId, item_id: pendingToolItem.id, target_id: m.id ?? undefined });
-                  setPendingToolItem(null);
-                }}
-                style={{
-                  display: "flex", alignItems: "center", justifyContent: "space-between",
-                  padding: "10px 16px", background: "#1a1c21", border: "1px solid #2a2d33",
-                  borderRadius: 8, color: "#f5f5f5", cursor: "pointer", fontSize: 13,
-                  transition: "border-color 0.15s",
-                }}
-                onMouseEnter={(e) => (e.currentTarget.style.borderColor = "#ef4444")}
-                onMouseLeave={(e) => (e.currentTarget.style.borderColor = "#2a2d33")}
-              >
-                <span style={{ fontWeight: 600 }}>{m.name}</span>
-                <span style={{ fontSize: 12, color: "#ef4444" }}>
-                  {m.hp} / {m.max_hp} HP
-                  {m.effects?.some((e) => e.type === "poisoned") && " ☠"}
-                </span>
-              </button>
-            ))}
-          </div>
-        </PickerModal>
-      )}
-
-      {/* Turn status hint + skip button (when not the player's turn) */}
-      {(turnStatus || isInactivePlayerTurn) && (
-        <div style={{ padding: "2px 12px 0", fontSize: 11, color: "#9aa0a6", fontStyle: "italic", display: "flex", alignItems: "center", gap: 10 }}>
-          {turnStatus && <span>{turnStatus}</span>}
-          {isInactivePlayerTurn && (
-            <button
-              onClick={() => currentActorId && onSend({ kind: "wait", actor: currentActorId })}
-              disabled={!skipReady}
-              title={skipReady ? "Skip this player's turn" : "Available after 8 seconds"}
-              style={{
-                background: skipReady ? "#292d36" : "#1a1d23",
-                border: `1px solid ${skipReady ? "#4a5568" : "#2a2d33"}`,
-                borderRadius: 6,
-                color: skipReady ? "#cbd5e1" : "#4a5568",
-                fontSize: 11,
-                fontFamily: "inherit",
-                padding: "3px 10px",
-                cursor: skipReady ? "pointer" : "not-allowed",
-                transition: "all 0.3s ease",
-              }}
-            >
-              Skip turn
-            </button>
-          )}
-        </div>
-      )}
-
-      {/* Action buttons — vertical-style (icon top, label, mana below) */}
-      <div style={{ padding: "8px 10px 10px", display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", justifyContent: "center" }}>
-        <CBtn label="Attack" icon="sword" color="#b89b3a" disabled={!myTurn || !target} onClick={() => onSend({ kind: "attack", actor: selfId, target_id: target })} />
-        <CBtn label="Cast" icon="crystal-wand" color="#818cf8" manaCost={1} disabled={!myTurn || mana < 1 || !target} onClick={() => onSend({ kind: "cast", actor: selfId, target_id: target })} />
-        <CBtn label="Signature" icon="wax-seal" color="#a78bfa" manaCost={1} disabled={!myTurn || mana < 1 || !target} onClick={() => onSend({ kind: "signature", actor: selfId, target_id: target })} />
-        {ability && (
-          <CBtn
-            label={ability.name}
-            icon={ability.iconName}
-            color="#d946ef"
-            manaCost={ability.mana_cost}
-            disabled={!myTurn || mana < ability.mana_cost || !!ability.needs_picker}
-            onClick={() => onSend({ kind: "ability", actor: selfId, ability_id: ability.id })}
-          />
-        )}
-        <CBtn label="Heal" icon="health-increase" color="#22c55e" manaCost={1} disabled={!myTurn || mana < 1} onClick={() => { setPicking("heal"); setItemOpen(false); }} />
-        <CBtn label="Shield" icon="shield" color="#60a5fa" manaCost={1} disabled={!myTurn || mana < 1} onClick={() => { setPicking("shield"); setItemOpen(false); }} />
-        {/* Position swap stays available in solo too — back row reduces
-            melee damage even from a single monster. */}
-        <CBtn label={myPos === "front" ? "Back row" : "Front row"} icon={myPos === "front" ? "perspective-dice-two" : "perspective-dice-one"} color="#6b7280" disabled={!myTurn} onClick={() => onSend({ kind: "position", actor: selfId, to: myPos === "front" ? "back" : "front" })} />
-        <CBtn label="Item" icon="ammo-bag" color="#c084fc" disabled={!myTurn || usable.length === 0} onClick={() => { setItemOpen((o) => !o); setPicking(null); setGivePicker("closed"); }} />
-        <CBtn label="Give" icon="conversation" color="#fcd34d" disabled={!myTurn || giveable.length === 0 || otherFighters.length === 0} onClick={() => { setGivePicker("selectItem"); setItemOpen(false); setPicking(null); }} />
-        <CBtn label="Mark" icon="target-poster" color="#f97316" disabled={!myTurn || !target} onClick={() => onSend({ kind: "mark", actor: selfId })} />
-        <CBtn label="Wait" icon="hourglass" color="#475569" disabled={!myTurn} onClick={() => onSend({ kind: "wait", actor: selfId })} />
-        <CBtn label="Flee" icon="run" color="#9aa0a6" disabled={!myTurn} onClick={() => onSend({ kind: "flee", actor: selfId })} />
-        {!myTurn && isMonsterTurn && !autoResolve && (
-          <CBtn label="Resolve" icon="dragon" color="#5c1f1f" onClick={() => onSend({ kind: "monster_act" })} />
-        )}
-        <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, color: "#4a5568", cursor: "pointer", marginLeft: 6 }}>
-          <input type="checkbox" checked={autoResolve} onChange={(e) => setAutoResolve(e.target.checked)} style={{ accentColor: "#5c1f1f" }} />
-          Auto
-        </label>
-      </div>
-    </div>
-  );
 }
 
 function OverlayPanel({ title, children }: { title: React.ReactNode; children: React.ReactNode }) {

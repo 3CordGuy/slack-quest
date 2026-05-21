@@ -45,6 +45,9 @@ import {
   statsAtLevel,
   deriveMaxMana,
   FREE_POINTS_PER_LEVEL,
+  statsAtLevel,
+  deriveMaxMana,
+  FREE_POINTS_PER_LEVEL,
   dropChance,
   findApothecaryStaple,
   findCatalogEntry,
@@ -137,6 +140,7 @@ import {
   tryDeductGold,
   trySetHaggleOutcome,
   awardSpoils,
+  issueWebLoginCode,
   issueWebLoginCode,
   consumeWebLoginCode,
   createWebSession,
@@ -271,7 +275,7 @@ const DRINKS: DrinkSpec[] = [
   { id: "brew",    emoji: "🥃", name: "Iron Brew",         price: 8,  effect: { kind: "instant_shield", amount: 5 },                blurb: "Tastes like ore. Lines your gut with grit. +5 shield, instant." },
   { id: "tea",     emoji: "🍵", name: "Bitter Tea",        price: 12, effect: { kind: "instant_mana",  amount: 3 },                blurb: "Clarifies the mind, reignites the channel. +3 mana, instant." },
   { id: "milk",    emoji: "🥛", name: "Frothy Milk",       price: 10, effect: { kind: "instant_hp",    amount: 8 },                blurb: "Comfort in a glass. The bartender knows. +8 HP, instant." },
-  { id: "lucky",   emoji: "💧", name: "Lucky Sip",         price: 15, effect: { kind: "buff_next_crit" },                          blurb: "A shimmer of fate. Your next attack/cast/signature is a guaranteed crit." },
+  { id: "lucky",   emoji: "💧", name: "Lucky Sip",         price: 15, effect: { kind: "buff_next_crit" },                          blurb: "A shimmer of fate. Your next attack/cast/ability is a guaranteed crit." },
   { id: "whiskey", emoji: "🍶", name: "Aged Whiskey",      price: 25, effect: { kind: "buff_attack",   magnitude: 2, duration: 3 }, blurb: "Smoke, leather, twenty harvests of patience. +2 attack for the whole fight." },
   { id: "reset",   emoji: "🍹", name: "Engineer's Reset",  price: 30, effect: { kind: "instant_combo", hp: 4, mana: 4 },           blurb: "Mystery cocktail. Tastes like everything went green. +4 HP and +4 mana, instant." },
 ];
@@ -454,6 +458,7 @@ const TOWN_DAILY_MS = 24 * 60 * 60 * 1000;
 // haven't started a Slack quest yet but the team is already playing in a known
 // channel.
 async function recentChannelForUser(db: D1Database, userId: string, env?: { ENVIRONMENT?: string }): Promise<string | null> {
+async function recentChannelForUser(db: D1Database, userId: string, env?: { ENVIRONMENT?: string }): Promise<string | null> {
   const row = await db
     .prepare(
       `SELECT q.channel_id FROM quests q
@@ -474,6 +479,10 @@ async function recentChannelForUser(db: D1Database, userId: string, env?: { ENVI
   const townFallback = await db
     .prepare(`SELECT channel_id FROM town_state ORDER BY refreshed_at DESC LIMIT 1`)
     .first<{ channel_id: string }>();
+  if (townFallback) return townFallback.channel_id;
+  // Fallback 3: local dev — no Slack channel needed
+  if (env?.ENVIRONMENT === "local") return "local-dev";
+  return null;
   if (townFallback) return townFallback.channel_id;
   // Fallback 3: local dev — no Slack channel needed
   if (env?.ENVIRONMENT === "local") return "local-dev";
@@ -749,8 +758,6 @@ interface Env {
   // local web-only iteration doesn't require the secret; when unset the
   // post calls are skipped silently.
   SLACK_BOT_TOKEN?: string;
-  // Feature flag: "1" enables STATS_V2 primary stat derivations in combat.
-  STATS_V2?: string;
   // Set to "local" via .dev.vars to enable dev-only endpoints (e.g. /api/dev/login).
   ENVIRONMENT?: string;
 }
@@ -905,6 +912,7 @@ async function announceWebQuestToSlack(
 const WEB_PUBLIC_BASE = "https://quest.heylets.party";
 
 function artTarget(env: Env): import("./ai").ArtTarget {
+  return { bucket: env.ART, baseUrl: WEB_PUBLIC_BASE, disabled: env.ENVIRONMENT === "local" };
   return { bucket: env.ART, baseUrl: WEB_PUBLIC_BASE, disabled: env.ENVIRONMENT === "local" };
 }
 
@@ -1167,7 +1175,7 @@ app.post("/api/inventory/:itemId/equip", async (c) => {
       const newArmorPower = computeArmorPowerFromSlots(allSlots);
       const patched = {
         ...combatState,
-        fighters: (combatState.fighters as Array<Record<string, unknown>>).map((f) =>
+        fighters: (combatState.fighters as unknown as Array<Record<string, unknown>>).map((f) =>
           f.id === session.slack_user_id ? { ...f, armor_power: newArmorPower } : f,
         ),
       };
@@ -1726,6 +1734,7 @@ app.post("/api/quest/start", async (c) => {
     return c.json({ error: "dungeon_level_gate", required: DUNGEON_LEVEL_REQUIRED }, 400);
   }
   const channelId = await recentChannelForUser(c.env.DB, session.slack_user_id, c.env);
+  const channelId = await recentChannelForUser(c.env.DB, session.slack_user_id, c.env);
   const effectiveChannel = channelId ?? `web:${session.slack_user_id}`;
   const avoidNames = channelId ? await getRecentMonsterNames(c.env.DB, channelId, 6) : [];
 
@@ -1865,6 +1874,7 @@ app.post("/api/quest/start_with_party", async (c) => {
   }
 
   const channelId = await recentChannelForUser(c.env.DB, session.slack_user_id, c.env);
+  const channelId = await recentChannelForUser(c.env.DB, session.slack_user_id, c.env);
   const effectiveChannel = channelId ?? `web:${session.slack_user_id}`;
   const avoidNames = channelId ? await getRecentMonsterNames(c.env.DB, channelId, 6) : [];
 
@@ -1958,6 +1968,7 @@ app.get("/api/quest/joinable", async (c) => {
     return c.json({ joinable: null });
   }
   const channelId = await recentChannelForUser(c.env.DB, session.slack_user_id, c.env);
+  const channelId = await recentChannelForUser(c.env.DB, session.slack_user_id, c.env);
   if (!channelId) return c.json({ joinable: null });
   const quest = await getActiveQuestInChannel(c.env.DB, channelId);
   if (!quest) return c.json({ joinable: null });
@@ -1999,6 +2010,7 @@ app.post("/api/quest/join", async (c) => {
   if (await getActiveQuestForCharacter(c.env.DB, session.slack_user_id)) {
     return c.json({ error: "already_on_quest" }, 400);
   }
+  const channelId = await recentChannelForUser(c.env.DB, session.slack_user_id, c.env);
   const channelId = await recentChannelForUser(c.env.DB, session.slack_user_id, c.env);
   if (!channelId) return c.json({ error: "no_channel" }, 404);
   const quest = await getActiveQuestInChannel(c.env.DB, channelId);
@@ -2212,6 +2224,7 @@ app.get("/api/board", async (c) => {
   const character = await getCharacter(c.env.DB, session.slack_user_id);
   if (!character) return c.json({ error: "no_character" }, 404);
   const channelId = await recentChannelForUser(c.env.DB, session.slack_user_id, c.env);
+  const channelId = await recentChannelForUser(c.env.DB, session.slack_user_id, c.env);
   if (!channelId) return c.json({ town_name: "Heylets", jobs: [], claims: {}, character_level: character.level });
 
   // Refresh stale jobs/name in the background — serve current state immediately.
@@ -2272,6 +2285,7 @@ app.post("/api/board/take", async (c) => {
   const jobId = body?.job_id;
   if (!jobId) return c.json({ error: "missing_job_id" }, 400);
 
+  const channelId = await recentChannelForUser(c.env.DB, session.slack_user_id, c.env);
   const channelId = await recentChannelForUser(c.env.DB, session.slack_user_id, c.env);
   if (!channelId) return c.json({ error: "no_channel" }, 400);
 
@@ -2407,6 +2421,7 @@ app.get("/api/shop", async (c) => {
   const activeQuest = await getActiveQuestForCharacter(c.env.DB, session.slack_user_id);
   if (activeQuest) return c.json({ error: "mid_quest" }, 400);
   const channelId = await recentChannelForUser(c.env.DB, session.slack_user_id, c.env);
+  const channelId = await recentChannelForUser(c.env.DB, session.slack_user_id, c.env);
   if (!channelId) return c.json({ error: "no_channel" }, 404);
   const stock = await getActiveShopStock(c.env.DB, channelId, SHOP_RESTOCK_MS);
   const art_url = await getOrScheduleViewArt(c.env.AI, artTarget(c.env), c.executionCtx, "channel_shop", undefined, TOWN_WEEKLY_MS);
@@ -2451,6 +2466,7 @@ app.get("/api/shop", async (c) => {
 app.post("/api/shop/restock", async (c) => {
   const session = await currentSession(c.env.DB, c.req.header("cookie"));
   if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const channelId = await recentChannelForUser(c.env.DB, session.slack_user_id, c.env);
   const channelId = await recentChannelForUser(c.env.DB, session.slack_user_id, c.env);
   if (!channelId) return c.json({ error: "no_channel" }, 404);
 
@@ -2536,6 +2552,7 @@ app.post("/api/hunt", async (c) => {
     ? (body!.invitees as unknown[]).filter((x): x is string => typeof x === "string").slice(0, 5)
     : [];
 
+  const channelId = await recentChannelForUser(c.env.DB, session.slack_user_id, c.env);
   const channelId = await recentChannelForUser(c.env.DB, session.slack_user_id, c.env);
   if (!channelId) return c.json({ error: "no_channel" }, 400);
 
@@ -2630,6 +2647,7 @@ app.post("/api/shop/:itemId/buy", async (c) => {
     return c.json({ error: "mid_quest" }, 400);
   }
   const channelId = await recentChannelForUser(c.env.DB, session.slack_user_id, c.env);
+  const channelId = await recentChannelForUser(c.env.DB, session.slack_user_id, c.env);
   if (!channelId) return c.json({ error: "no_channel" }, 404);
   const stock = await getShopItem(c.env.DB, itemId, channelId);
   if (!stock) return c.json({ error: "not_in_shop" }, 404);
@@ -2722,6 +2740,7 @@ app.post("/api/shop/:itemId/haggle", async (c) => {
     return c.json({ error: "mid_quest" }, 400);
   }
   const channelId = await recentChannelForUser(c.env.DB, session.slack_user_id, c.env);
+  const channelId = await recentChannelForUser(c.env.DB, session.slack_user_id, c.env);
   if (!channelId) return c.json({ error: "no_channel" }, 404);
   const stock = await getShopItem(c.env.DB, itemId, channelId);
   if (!stock) return c.json({ error: "not_in_shop" }, 404);
@@ -2777,7 +2796,7 @@ const SHORT_REST_HEAL_RATIO = 0.5;
 app.post("/api/character/position", async (c) => {
   const session = await currentSession(c.env.DB, c.req.header("cookie"));
   if (!session) return c.json({ error: "unauthenticated" }, 401);
-  const body = await c.req.json<{ position?: unknown }>().catch(() => ({}));
+  const body = await c.req.json<{ position?: unknown }>().catch(() => ({} as { position?: unknown }));
   const pos = body?.position === "back" ? "back" : body?.position === "front" ? "front" : null;
   if (!pos) return c.json({ error: "bad_position" }, 400);
   await setPosition(c.env.DB, session.slack_user_id, pos);
@@ -3065,6 +3084,7 @@ app.get("/api/smithy", async (c) => {
   // Channel resolution mirrors /api/shop: last channel the user did a /sq
   // command in. Required for channel-scoped stock to make sense.
   const channelId = await recentChannelForUser(c.env.DB, session.slack_user_id, c.env);
+  const channelId = await recentChannelForUser(c.env.DB, session.slack_user_id, c.env);
   if (!channelId) return c.json({ error: "no_channel" }, 404);
   await ensureSmithyStock(c.env, channelId, session.slack_user_id, character.level);
   const [weapon, armor, allSlots, stock] = await Promise.all([
@@ -3125,6 +3145,7 @@ app.post("/api/smithy/buy/:stockId", async (c) => {
   }
   // Buyer must be in the same channel that the stock was generated for —
   // prevents cross-channel sniping after the migration.
+  const channelId = await recentChannelForUser(c.env.DB, session.slack_user_id, c.env);
   const channelId = await recentChannelForUser(c.env.DB, session.slack_user_id, c.env);
   if (!channelId) return c.json({ error: "no_channel" }, 404);
   const stockItem = await getSmithyStockItem(c.env.DB, stockId, channelId);
@@ -3537,6 +3558,7 @@ app.get("/api/pub", async (c) => {
   if (activeQuest) return c.json({ error: "mid_quest" }, 400);
 
   const channelId = await recentChannelForUser(c.env.DB, session.slack_user_id, c.env);
+  const channelId = await recentChannelForUser(c.env.DB, session.slack_user_id, c.env);
 
   // Daily special from town_state (optional — null means no special today).
   let dailySpecialId: string | null = null;
@@ -3713,6 +3735,7 @@ app.post("/api/pub/drink/:drinkId", async (c) => {
 
   // Daily special pricing.
   const channelId = await recentChannelForUser(c.env.DB, session.slack_user_id, c.env);
+  const channelId = await recentChannelForUser(c.env.DB, session.slack_user_id, c.env);
   let price = drink.price;
   if (channelId) {
     const specialId = await getDailySpecialId(c.env.DB, channelId);
@@ -3744,7 +3767,7 @@ app.post("/api/pub/drink/:drinkId", async (c) => {
     case "buff_next_crit": {
       newBuff = { kind: "buff_next_crit", magnitude: 1, remaining: 1, drink_id: drink.id };
       await setDrinkBuff(c.env.DB, session.slack_user_id, newBuff);
-      summary = "next attack/cast/signature is a guaranteed crit";
+      summary = "next attack/cast/ability is a guaranteed crit";
       break;
     }
     case "instant_shield": {
@@ -3791,6 +3814,7 @@ app.post("/api/pub/talk/:npcId", async (c) => {
   if (activeQuest) return c.json({ error: "mid_quest" }, 400);
 
   const npcId = c.req.param("npcId");
+  const channelId = await recentChannelForUser(c.env.DB, session.slack_user_id, c.env);
   const channelId = await recentChannelForUser(c.env.DB, session.slack_user_id, c.env);
   if (!channelId) return c.json({ error: "no_channel" }, 400);
 
@@ -3930,6 +3954,7 @@ app.post("/api/pub/liars/start", async (c) => {
   }
 
   const channelId = (await recentChannelForUser(c.env.DB, session.slack_user_id, c.env)) ?? "web";
+  const channelId = (await recentChannelForUser(c.env.DB, session.slack_user_id, c.env)) ?? "web";
   const roundId = await createLiarsRound(c.env.DB, {
     user_id: session.slack_user_id,
     channel_id: channelId,
@@ -4040,6 +4065,7 @@ app.post("/api/pub/spd/start", async (c) => {
     return c.json({ error: "invalid_throw" }, 400);
   }
 
+  const channelId = await recentChannelForUser(c.env.DB, session.slack_user_id, c.env);
   const channelId = await recentChannelForUser(c.env.DB, session.slack_user_id, c.env);
   if (!channelId) return c.json({ error: "no_channel" }, 400);
 
@@ -4692,7 +4718,7 @@ app.post("/api/quest/:id/start_web_combat", async (c) => {
   // web_combat_state row. start_web_combat is idempotent: if state already
   // exists (e.g. Slack /gq attack already ran bootstrapFromSlack), the
   // earlier check above returned the existing state.
-  const built = await buildInitialCombatState(c.env.DB, quest, c.env.STATS_V2 === "1");
+  const built = await buildInitialCombatState(c.env.DB, quest);
   if (!built.ok) {
     if (built.reason === "non_combat_room") {
       return c.json({ error: "non_combat_room", room_type: built.detail ?? null }, 400);
@@ -6109,6 +6135,19 @@ app.post("/api/dev/combat-mana", async (c) => {
   return c.json({ ok: true });
 });
 
+app.post("/api/dev/combat-kill-enemies", async (c) => {
+  if (c.env.ENVIRONMENT !== "local") return c.json({ error: "forbidden" }, 403);
+  const session = await currentSession(c.env.DB, c.req.header("Cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const body = await c.req.json<{ questId?: unknown }>();
+  const questId = Number(body.questId);
+  if (!Number.isFinite(questId)) return c.json({ error: "invalid" }, 400);
+  const doId = c.env.QUEST_ROOM.idFromName(`quest:${questId}`);
+  const doStub = c.env.QUEST_ROOM.get(doId);
+  await (doStub as unknown as { devKillEnemies(q: number): Promise<{ ok: boolean }> }).devKillEnemies(questId);
+  return c.json({ ok: true });
+});
+
 // DEV ONLY — bypasses Slack login by creating/reusing a local dev character.
 app.post("/api/dev/login", async (c) => {
   if (c.env.ENVIRONMENT !== "local") return c.json({ error: "forbidden" }, 403);
@@ -6843,7 +6882,6 @@ function rollMonsterAttackAndDamageTypes(
 async function buildInitialCombatState(
   db: D1Database,
   quest: ActiveQuest,
-  statsV2Enabled = false,
 ): Promise<
   | { ok: true; seeded: CombatState }
   | { ok: false; reason: "unsupported_variant" | "non_combat_room"; detail?: string }
@@ -6929,12 +6967,8 @@ async function buildInitialCombatState(
       className: member.class,
       level: member.level,
       stats: memberStats,
-      v2Enabled: statsV2Enabled,
-      equipBonuses: statsV2Enabled ? equipBonuses : undefined,
+      equipBonuses,
     });
-    // Level-scaling bonus on top of the class mod (legacy path only).
-    // STATS_V2 derives scaling from per-level stat growth instead.
-    const levelBonus = statsV2Enabled ? 0 : Math.floor(member.level / 4);
     fighters.push({
       id: member.slack_user_id,
       name: member.name,
@@ -6947,15 +6981,15 @@ async function buildInitialCombatState(
       // Armor pool starts at floor(armorPower / 2) at combat start.
       shield: Math.floor(armorPower / 2),
       position: member.position,
-      attack_mod: snap.derived.attack_mod + levelBonus,
-      magic_mod: snap.derived.magic_mod + levelBonus,
+      attack_mod: snap.derived.attack_mod,
+      magic_mod: snap.derived.magic_mod,
       weapon_power: isFocus ? 0 : (weapon?.power ?? 0),
       focus_power: isFocus ? (weapon?.power ?? 0) : 0,
       weapon_range: weaponRange,
       slack_username: member.slack_username,
       armor_power: armorPower,
       scars: member.scars,
-      stats: statsV2Enabled ? snap.stats : undefined,
+      stats: snap.stats,
       element: isFocus ? undefined : (weapon?.element ?? undefined),
       weapon_rarity: isFocus ? undefined
         : (weapon?.rarity === "rare" || weapon?.rarity === "epic" || weapon?.rarity === "legendary"
@@ -7394,6 +7428,16 @@ export class QuestRoom extends DurableObject<Env> {
     }
   }
 
+  async devKillEnemies(questId: number): Promise<{ ok: boolean; reason?: string }> {
+    const prevState = await this.loadState(questId);
+    if (!prevState) return { ok: false, reason: "no_combat" };
+    if (prevState.status !== "active") return { ok: false, reason: "combat_ended" };
+    const newMonsters = prevState.monsters.map((m) => ({ ...m, hp: 0 }));
+    const newState: CombatState = { ...prevState, monsters: newMonsters, status: "victory" };
+    await this.handleStepResult(questId, prevState, { state: newState, events: [{ type: "victory" }] });
+    return { ok: true };
+  }
+
   async bootstrapFromSlack(
     questId: number,
   ): Promise<
@@ -7420,7 +7464,7 @@ export class QuestRoom extends DurableObject<Env> {
       this.cacheQuestId = questId;
     }
 
-    const built = await buildInitialCombatState(this.env.DB, quest, this.env.STATS_V2 === "1");
+    const built = await buildInitialCombatState(this.env.DB, quest);
     if (!built.ok) return { ok: false, reason: built.reason, detail: built.detail };
 
     // Seed drink_buffs from the characters table so a pub buff bought before
@@ -7464,7 +7508,6 @@ export class QuestRoom extends DurableObject<Env> {
     const character = await getCharacter(this.env.DB, userId);
     if (!character) return;
 
-    const statsV2Enabled = this.env.STATS_V2 === "1";
     const slots = await getAllEquippedSlots(this.env.DB, userId);
     const weapon = slots.main_hand;
     const weaponRange = (weapon?.weapon_range as "melee" | "ranged" | "focus" | null | undefined) ?? "melee";
@@ -7509,10 +7552,8 @@ export class QuestRoom extends DurableObject<Env> {
       className: character.class,
       level: character.level,
       stats: memberStats,
-      v2Enabled: statsV2Enabled,
-      equipBonuses: statsV2Enabled ? equipBonuses2 : undefined,
+      equipBonuses: equipBonuses2,
     });
-    const levelBonus = statsV2Enabled ? 0 : Math.floor(character.level / 4);
 
     const newFighter: CombatFighter = {
       id: character.slack_user_id,
@@ -7525,15 +7566,15 @@ export class QuestRoom extends DurableObject<Env> {
       max_mana: character.max_mana,
       shield: Math.floor(armorPower / 2),
       position: character.position,
-      attack_mod: snap.derived.attack_mod + levelBonus,
-      magic_mod: snap.derived.magic_mod + levelBonus,
+      attack_mod: snap.derived.attack_mod,
+      magic_mod: snap.derived.magic_mod,
       weapon_power: isFocus ? 0 : (weapon?.power ?? 0),
       focus_power: isFocus ? (weapon?.power ?? 0) : 0,
       weapon_range: weaponRange,
       slack_username: character.slack_username,
       armor_power: armorPower,
       scars: character.scars,
-      stats: statsV2Enabled ? snap.stats : undefined,
+      stats: snap.stats,
       element: isFocus ? undefined : (weapon?.element ?? undefined),
       weapon_rarity: isFocus ? undefined
         : (weapon?.rarity === "rare" || weapon?.rarity === "epic" || weapon?.rarity === "legendary"

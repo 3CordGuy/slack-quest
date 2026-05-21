@@ -23,11 +23,9 @@ import {
   resolveHeal,
   resolveMonsterHit,
   resolvePlayerHit,
-  resolveSignature,
   type BattlePosition,
 } from "./combat";
 import {
-  ABILITIES,
   ELEMENT_META,
   ELEMENT_PROC_RATE,
   SHIELD_CAP_MULTIPLIER,
@@ -40,6 +38,7 @@ import {
   type Rarity,
   type WeaponRange,
 } from "./flavor";
+import { type AbilityContext, type AbilityEffect, type ActiveAbilityDef } from "./abilities";
 import { deriveArmorBonus, deriveCritBonus, deriveDodgeChance, deriveInitiativeBonus, type Stats } from "./stats";
 
 export type ActorId = string;
@@ -54,6 +53,9 @@ export interface MachineStatusEffect {
   magnitude: number;
   remaining: number;
   source?: string;
+  // Display string rendered verbatim in the status pill suffix (e.g. "30% break").
+  // Only set for effects that need custom pill text; others fall back to "${remaining}t".
+  pill_suffix?: string;
 }
 
 // Snapshot of a party member at combat start. Loaded from D1 once when the
@@ -181,10 +183,13 @@ export interface CombatState {
   // Always-on passives (Bard aura, Druid regen, Warlock crit-bleed, Sage info)
   // don't appear here — they don't burn out.
   passives_used?: Record<ActorId, string[]>;
+  // Per-fighter action count for the current fight. Used by periodic passives
+  // like Mana Font (1 mana every 3 actions). Resets at combat start.
+  action_counters?: Record<ActorId, number>;
   // Pub drink buffs carried into this combat, keyed by fighter id. Seeded
   // by the DO bootstrap step from characters.drink_buff_json so a buff
   // bought in the pub before /sq quest survives into the engine-driven
-  // fight. Engine consumes per-fighter on attack/cast/signature; absent
+  // fight. Engine consumes per-fighter on attack/cast/ability; absent
   // means no buff. Cleared (written back to D1) on combat exit. Optional
   // for backward compatibility with quests created before the unified
   // engine landed — older saved states deserialize cleanly without it.
@@ -213,15 +218,12 @@ const PALADIN_AUTO_HEAL_THRESHOLD = 0.3;
 
 // Keys for once-per-fight passives.
 const PASSIVE_WARDEN_SHIELD = "warden_shield";
-const PASSIVE_MAGE_FREE_SIG = "mage_free_sig";
 const PASSIVE_ROGUE_FIRST_CRIT = "rogue_first_crit";
 const PASSIVE_PALADIN_AUTO_HEAL = "paladin_auto_heal";
 
 export interface AbilityRuntimeState {
   // SRE Warden — monster's next N swings forced to target actor_id.
   taunt?: { actor_id: ActorId; swings_remaining: number };
-  // DevOps Mage — monster skips its next N swings entirely.
-  skip_swings?: number;
   // Refactor Rogue — these fighters cannot be targeted; map of actor → swings left.
   vanished?: Record<ActorId, number>;
   // Frontend Bard — next N partymate attacks deal +2 damage.
@@ -251,7 +253,6 @@ export type TurnAction =
   | { kind: "attack"; actor: ActorId; target_id?: ActorId }
   | { kind: "cast"; actor: ActorId; target_id?: ActorId }
   | { kind: "heal"; actor: ActorId; target: ActorId }
-  | { kind: "signature"; actor: ActorId; target_id?: ActorId }
   | { kind: "flee"; actor: ActorId }
   | { kind: "position"; actor: ActorId; to: BattlePosition }
   | { kind: "shield"; actor: ActorId; target?: ActorId }
@@ -261,8 +262,9 @@ export type TurnAction =
       kind: "ability";
       actor: ActorId;
       ability_id: AbilityId;
-      target_id?: ActorId;   // monster target for damage abilities (soul_drain)
-      // Used by migrate (target+position) and would be ignored otherwise.
+      // For single_enemy and soul_drain: the monster to target.
+      target_id?: ActorId;
+      // Used by migrate (target fighter + new position).
       target?: ActorId;
       position?: BattlePosition;
     }
@@ -276,7 +278,7 @@ export type RollPurpose =
   | "damage_cast"
   | "damage_monster"
   | "heal"
-  | "signature"
+  | "ability"
   | "flee_check";
 
 // Stream of events emitted by step(). The UI animates each in sequence.
@@ -354,13 +356,6 @@ export type CombatEvent =
       rolled: number;        // amount before clamp
     }
   | {
-      type: "signature_used";
-      actor: ActorId;
-      damage: number;
-      formula: string;
-      mana_spent: number;
-    }
-  | {
       type: "flee_check";
       actor: ActorId;
       roll: number;
@@ -387,12 +382,12 @@ export type CombatEvent =
   | {
       type: "ability_used";
       actor: ActorId;
-      ability_id: AbilityId;
+      ability_id: string;
       name: string;
       mana_spent: number;
     }
   | { type: "ability_taunt"; actor: ActorId; swings: number }
-  | { type: "ability_containerize"; swings: number }
+  | { type: "ability_containerize" }
   | {
       type: "ability_regression_shield";
       actor: ActorId;
@@ -426,7 +421,7 @@ export type CombatEvent =
       // Party HP snapshot for triage.
       triage: Array<{ id: ActorId; hp: number; max_hp: number; shield: number; position: BattlePosition }>;
       // Active ability effects summary.
-      active: { containerize: number; taunt_actor: ActorId | null; taunt_swings: number; vanished: ActorId[] };
+      active: { stunned: number; taunt_actor: ActorId | null; taunt_swings: number; vanished: ActorId[] };
       // How many more turns this readout will re-appear (counts down after cast).
       turns_remaining: number;
     }
@@ -437,14 +432,15 @@ export type CombatEvent =
       from: BattlePosition;
       to: BattlePosition;
     }
-  | { type: "monster_swing_skipped"; reason: "containerize" }
+  | { type: "monster_swing_skipped"; reason: "stunned" }
+  | { type: "monster_stun_broken"; turns_active: number }
   | { type: "monster_target_redirected"; from: ActorId; to: ActorId; reason: "taunt" | "vanish" }
   | { type: "battle_hymn_consumed"; actor: ActorId; bonus: number; remaining: number }
   | { type: "mark_applied"; actor: ActorId; expires_after_round: number; bonus: number }
   | { type: "mark_bonus"; actor: ActorId; bonus: number }
   | { type: "shield_applied"; actor: ActorId; target: ActorId; restored: number; new_armor: number; bonus_barrier?: boolean }
   | { type: "passive_warden_shield"; actor: ActorId; amount: number }
-  | { type: "passive_mage_free_sig"; actor: ActorId }
+  | { type: "passive_mage_mana_font"; actor: ActorId; amount: number }
   | { type: "passive_druid_regen"; actor: ActorId; amount: number }
   | { type: "passive_rogue_first_crit"; actor: ActorId }
   | { type: "passive_bard_aura"; actor: ActorId; source: ActorId; bonus: number }
@@ -591,8 +587,6 @@ export function step(state: CombatState, action: TurnAction, roll: RollFn): Step
       return handleHeal(state, action, roll);
     case "shield":
       return handleShield(state, action);
-    case "signature":
-      return handleSignature(state, action, roll);
     case "flee":
       return handleFlee(state, action, roll);
     case "position":
@@ -737,7 +731,7 @@ function handlePlayerHit(
   const rogueAutoLand =
     !baseLanded
     && action.kind === "attack"
-    && classIdOf(tickedFighter) === "refactor_rogue"
+    && classHasPassive(tickedFighter.class, "first_strike")
     && !isPassiveUsed(s, action.actor, PASSIVE_ROGUE_FIRST_CRIT);
   const landed = baseLanded || rogueAutoLand;
   events.push({
@@ -781,7 +775,7 @@ function handlePlayerHit(
   let rogueFirstCritFired = false;
   if (
     action.kind === "attack"
-    && classIdOf(tickedFighter) === "refactor_rogue"
+    && classHasPassive(tickedFighter.class, "first_strike")
     && !isCrit
     && !isPassiveUsed(s, action.actor, PASSIVE_ROGUE_FIRST_CRIT)
   ) {
@@ -1170,21 +1164,40 @@ function handleMonsterAct(state: CombatState, roll: RollFn): StepResult {
 
   const events: CombatEvent[] = [...tick.events];
 
-  // Containerize: monster skips this swing entirely. Consume one charge,
-  // emit the skip event, advance turn. No to-hit roll, no damage.
-  const skips = s.ability_state?.skip_swings ?? 0;
-  if (skips > 0) {
-    const remaining = skips - 1;
-    const ability_state = remaining > 0
-      ? { ...s.ability_state, skip_swings: remaining }
-      : stripField(s.ability_state, "skip_swings");
-    const skippedState: CombatState = { ...s, ability_state };
+  // Containerize stun: monster is stunned — skip this swing. At the end of
+  // each stunned turn, roll to break: chance = min(100%, turnsElapsed * 30%).
+  // `remaining` starts at 5 and is decremented by tickEffects each turn start,
+  // so turnsElapsed = 5 - remaining after the tick. Guaranteed break on turn 4
+  // (remaining=1 → turnsElapsed=4 → 120% clamped to 100%).
+  const stunnedEffect = s.monsters.find((m) => m.id === actorId)?.effects.find((e) => e.type === "stunned");
+  if (stunnedEffect) {
+    const bpt = stunnedEffect.magnitude;
+    const turnsElapsed = 5 - stunnedEffect.remaining;
+    const breakChance = Math.min(1.0, turnsElapsed * (bpt / 100));
+    const breaks = (roll(100) / 100) < breakChance;
+    const breakEvents: CombatEvent[] = breaks
+      ? [{ type: "monster_stun_broken", turns_active: turnsElapsed }]
+      : [];
+    const nextBreakPct = Math.min(100, (6 - stunnedEffect.remaining) * bpt);
+    const updatedMonsters = breaks
+      ? s.monsters.map((m) =>
+          m.id === actorId
+            ? { ...m, effects: m.effects.filter((e) => e.type !== "stunned") }
+            : m,
+        )
+      : s.monsters.map((m) =>
+          m.id === actorId
+            ? { ...m, effects: m.effects.map((e) => e.type === "stunned" ? { ...e, pill_suffix: `${nextBreakPct}% break` } : e) }
+            : m,
+        );
+    const skippedState: CombatState = { ...s, monsters: updatedMonsters };
     const next = advanceTurn(skippedState);
     return {
       state: next,
       events: [
         ...events,
-        { type: "monster_swing_skipped", reason: "containerize" },
+        { type: "monster_swing_skipped", reason: "stunned" },
+        ...breakEvents,
         ...turnStartEvent(next),
       ],
     };
@@ -1629,165 +1642,182 @@ function handleShield(
   return { state: next, events: [...events, ...turnStartEvent(next)] };
 }
 
-function handleSignature(
+// Executes a damage-dealing active ability: calls ability.execute(ctx) for the
+// damage formula, then applies drink buffs, shocked amplifier, boss phase,
+// elemental proc, and kill resolution.
+function handleDamageAbility(
   state: CombatState,
-  action: { kind: "signature"; actor: ActorId; target_id?: ActorId },
+  actorId: ActorId,
+  tickedActor: CombatFighter,
+  ability: ActiveAbilityDef,
+  ctx: AbilityContext,
+  monster: CombatMonster,
+  preEvents: CombatEvent[],
   roll: RollFn,
 ): StepResult {
-  const actor = state.fighters.find((f) => f.id === action.actor);
-  if (!actor) return reject(state, `unknown actor: ${action.actor}`);
-  if (currentActor(state) !== action.actor) {
-    return reject(state, `not ${action.actor}'s turn`);
-  }
-  if (actor.hp <= 0) return reject(state, `${action.actor} is downed`);
-  // DevOps Mage — Mana Catalyst. First signature each fight is free (0 mana).
-  // We check this BEFORE tickAtTurnStart so the mana gate accepts a Mage with
-  // 0 mana on their first signature.
-  const mageFreeSig =
-    classByName(actor.class).id === "devops_mage"
-    && !isPassiveUsed(state, action.actor, PASSIVE_MAGE_FREE_SIG);
-  if (!mageFreeSig && actor.mana < 1) return reject(state, `${action.actor} has no mana for signature`);
-
-  const targetMonster = action.target_id
-    ? state.monsters.find((m) => m.id === action.target_id && m.hp > 0)
-    : state.monsters.find((m) => m.hp > 0);
-  if (!targetMonster) return reject(state, "no valid target");
-
-  const tick = tickAtTurnStart(state, action.actor);
-  if (tick.earlyReturn) return tick.earlyReturn;
-  const s = tick.state;
-  const tickedActor = s.fighters.find((f) => f.id === action.actor)!;
-  const monster = s.monsters.find((m) => m.id === targetMonster.id && m.hp > 0);
-  if (!monster) return reject(s, "target died before action resolved");
-
-  const cls = classByName(tickedActor.class);
-  const partySize = s.fighters.filter((f) => f.hp > 0).length;
-  const sigRolls: { sides: number; value: number }[] = [];
-  const trackRoll = (sides: number) => {
-    const v = roll(sides);
-    sigRolls.push({ sides, value: v });
-    return v;
-  };
-  const sig = resolveSignature(
-    cls.id,
-    tickedActor.attack_mod,
-    tickedActor.magic_mod,
-    tickedActor.weapon_power,
-    monster.tier,
-    partySize,
-    monster.max_hp,
-    trackRoll,
+  const effects = ability.execute(ctx);
+  const dmgEffect = effects.find(
+    (e): e is Extract<AbilityEffect, { kind: "deal_damage" }> => e.kind === "deal_damage",
   );
+  if (!dmgEffect) return reject(state, `${ability.id} produced no damage effect`);
 
-  // Refactor Rogue — Backstab auto-crit. The signature deals 2× damage when
-  // the monster is at or below 50% HP. resolveSignature in packages/core/
-  // src/combat.ts intentionally returns the raw damage and leaves this
-  // doubling to the engine (it needs monster.hp and monster.max_hp,
-  // which resolveSignature isn't passed by design).
-  //
-  // Applied BEFORE drink-buff so a Lucky Sip on a Rogue backstab won't
-  // redundantly double an already-doubled hit (applyDrinkBuff gates
-  // buff_next_crit on !isCrit; we pass rogueBackstab as the isCrit arg).
-  const rogueBackstab =
-    cls.id === "refactor_rogue" && monster.hp <= monster.max_hp / 2;
-  const damageAfterBackstab = rogueBackstab ? sig.damage * 2 : sig.damage;
+  let amount = dmgEffect.amount;
+  let isCrit = dmgEffect.is_crit ?? false;
+  const formula = dmgEffect.formula;
 
-  // Pub drink-buff. Only buff_next_crit fires on signatures (per legacy
-  // design: attack/magic buffs don't compound class powerhouses, but Lucky
-  // Sip's guaranteed crit can land on a signature for the killing-blow play).
-  // applyDrinkBuff gates buff_attack/buff_magic out via the context arg.
-  // When rogueBackstab already doubled the damage, buff_next_crit is gated
-  // out by the isCrit=true arg — no redundant doubling.
-  const drinkResult = applyDrinkBuff(s, action.actor, "signature", damageAfterBackstab, rogueBackstab);
-  // Shocked amplifier on signatures too.
+  // Drink buff — only buff_next_crit applies to ability damage.
+  const drinkResult = dmgEffect.drink_buff_context === "ability"
+    ? applyDrinkBuff(state, actorId, "ability", amount, isCrit)
+    : { damage: amount, forceCrit: false, event: null as CombatEvent | null, nextDrinkBuffs: state.drink_buffs };
+  amount = drinkResult.damage;
+  if (drinkResult.forceCrit) isCrit = true;
+
+  // Shocked amplifier.
   const sigShockedEffect = monster.effects.find((e) => e.type === "shocked");
   const sigShockMult = sigShockedEffect ? (sigShockedEffect.magnitude >= 2 ? 1.45 : 1.30) : 1.0;
-  const finalSigDamage = Math.round(drinkResult.damage * sigShockMult);
+  const finalDamage = Math.round(amount * sigShockMult);
 
   const oldHp = monster.hp;
-  const newHp = Math.max(0, oldHp - finalSigDamage);
+  const newHp = Math.max(0, oldHp - finalDamage);
   const monsterKilled = newHp <= 0;
   const phaseTransition =
     monster.is_boss &&
     monster.boss_phase === 1 &&
     isBossPhaseTransition(monster.max_hp, oldHp, newHp);
 
-  const manaSpent = mageFreeSig ? 0 : 1;
   const events: CombatEvent[] = [
-    ...tick.events,
-    ...sigRolls.map((r) => ({
-      type: "roll" as const,
-      actor: action.actor,
-      die: `d${r.sides}`,
-      value: r.value,
-      purpose: "signature" as const,
-    })),
+    ...preEvents,
     {
-      type: "signature_used",
-      actor: action.actor,
-      damage: finalSigDamage,
-      // Annotate the formula with whichever doubler fired. rogueBackstab
-      // takes precedence (it's the class-defining mechanic); Lucky Sip
-      // appears only when no backstab. The two are mutually exclusive
-      // via the applyDrinkBuff isCrit gate above.
-      formula: rogueBackstab
-        ? `${sig.formula} ×2 (backstab)`
-        : drinkResult.event
-        ? `${sig.formula} ×2 (lucky sip)`
-        : sig.formula,
-      mana_spent: manaSpent,
+      type: "player_hit",
+      actor: actorId,
+      target: monster.id,
+      damage: finalDamage,
+      armor_absorbed: 0, // ability damage bypasses monster armor
+      crit: isCrit,
+      formula: drinkResult.event ? `${formula} ×2 (lucky sip)` : formula,
     },
   ];
-  if (mageFreeSig) {
-    events.push({ type: "passive_mage_free_sig", actor: action.actor });
-  }
-  if (drinkResult.event) {
-    events.push(drinkResult.event);
-  }
+  if (drinkResult.event) events.push(drinkResult.event);
 
   let nextState: CombatState = {
-    ...s,
-    fighters: s.fighters.map((f) =>
-      f.id === action.actor ? { ...f, mana: Math.max(0, f.mana - manaSpent) } : f,
-    ),
-    monsters: s.monsters.map((m) =>
+    ...state,
+    monsters: state.monsters.map((m) =>
       m.id === monster.id
         ? {
             ...m,
             hp: newHp,
-            // Signatures bypass monster armor. Boss phase 2 refills armor.
             ...(phaseTransition ? { boss_phase: 2 as const, shield: m.tier } : {}),
           }
         : m,
     ),
     contribution: {
-      ...s.contribution,
-      [action.actor]: (s.contribution[action.actor] ?? 0) + finalSigDamage,
+      ...state.contribution,
+      [actorId]: (state.contribution[actorId] ?? 0) + finalDamage,
     },
-    // Same gate as handlePlayerHit: only overwrite drink_buffs when this
-    // turn actually consumed one.
     ...(drinkResult.event ? { drink_buffs: drinkResult.nextDrinkBuffs } : {}),
   };
-  if (mageFreeSig) {
-    nextState = markPassiveUsed(nextState, action.actor, PASSIVE_MAGE_FREE_SIG);
+
+  if (phaseTransition) events.push({ type: "boss_phase_transition", new_phase: 2 });
+
+  // Warlock Cursed Strike: crits apply bleed.
+  if (isCrit && !monsterKilled) {
+    const bleed = applyWarlockBleed(nextState, tickedActor, monster.id, true);
+    nextState = bleed.state;
+    events.push(...bleed.events);
   }
 
-  if (phaseTransition) {
-    events.push({ type: "boss_phase_transition", new_phase: 2 });
-  }
-
-  // Elemental proc on signatures.
+  // Elemental weapon proc.
   if (!monsterKilled) {
     const proc = applyElementalProc(nextState, tickedActor, monster.id, roll);
     nextState = proc.state;
     events.push(...proc.events);
   }
 
-  if (monsterKilled) {
-    return resolveMonsterKill(nextState, monster.id, action.actor, events);
-  }
+  if (monsterKilled) return resolveMonsterKill(nextState, monster.id, actorId, events);
   nextState = advanceTurn(nextState);
   return { state: nextState, events: [...events, ...turnStartEvent(nextState)] };
+}
+
+// AoE variant: execute() is called once and returns one deal_damage per live
+// monster. Applies all hits, then resolves kills (victory if all dead, otherwise
+// advance turn). No drink-buff or shocked-amp logic — AoE trades per-target
+// modifiers for reach.
+function handleAoeDamageAbility(
+  state: CombatState,
+  actorId: ActorId,
+  tickedActor: CombatFighter,
+  ability: ActiveAbilityDef,
+  preEvents: CombatEvent[],
+  roll: RollFn,
+): StepResult {
+  const liveMonsters = state.monsters.filter((m) => m.hp > 0);
+  const ctx: AbilityContext = {
+    caster: tickedActor,
+    party: state.fighters.filter((f) => f.hp > 0),
+    monsters: liveMonsters,
+    roll,
+  };
+
+  const effects = ability.execute(ctx);
+  const dmgEffects = effects.filter(
+    (e): e is Extract<AbilityEffect, { kind: "deal_damage" }> => e.kind === "deal_damage",
+  );
+  if (dmgEffects.length === 0) return reject(state, `${ability.id} produced no AoE damage effects`);
+
+  const events: CombatEvent[] = [...preEvents];
+  let nextState: CombatState = state;
+
+  for (const dmgEffect of dmgEffects) {
+    const monster = nextState.monsters.find((m) => m.id === dmgEffect.target_id && m.hp > 0);
+    if (!monster) continue; // already killed earlier in this loop
+
+    const finalDamage = dmgEffect.amount;
+    const newHp = Math.max(0, monster.hp - finalDamage);
+
+    events.push({
+      type: "player_hit",
+      actor: actorId,
+      target: monster.id,
+      damage: finalDamage,
+      armor_absorbed: 0,
+      crit: dmgEffect.is_crit ?? false,
+      formula: dmgEffect.formula,
+    });
+
+    nextState = {
+      ...nextState,
+      monsters: nextState.monsters.map((m) => m.id === monster.id ? { ...m, hp: newHp } : m),
+      contribution: {
+        ...nextState.contribution,
+        [actorId]: (nextState.contribution[actorId] ?? 0) + finalDamage,
+      },
+    };
+  }
+
+  // Check kills after all damage is applied.
+  const killedIds = nextState.monsters.filter((m) => m.hp <= 0).map((m) => m.id);
+
+  if (killedIds.length === 0) {
+    nextState = advanceTurn(nextState);
+    return { state: nextState, events: [...events, ...turnStartEvent(nextState)] };
+  }
+
+  // At least one monster killed — run resolveMonsterKill once for the last
+  // one (it checks all monsters to decide victory vs. continue).
+  for (let i = 0; i < killedIds.length - 1; i++) {
+    events.push({ type: "monster_down", killed_by: actorId });
+    nextState = {
+      ...nextState,
+      stats: {
+        ...nextState.stats,
+        [actorId]: {
+          ...(nextState.stats[actorId] ?? { damage_taken: 0, healing_done: 0, shielding_done: 0, kills: 0 }),
+          kills: (nextState.stats[actorId]?.kills ?? 0) + 1,
+        },
+      },
+    };
+  }
+  return resolveMonsterKill(nextState, killedIds[killedIds.length - 1], actorId, events);
 }
 
 function handleFlee(
@@ -1882,9 +1912,11 @@ function handleFlee(
 
 // ── Class abilities ───────────────────────────────────────────────────────
 //
-// Single entry point: routes by ability_id to the per-class handler. Caller
-// MUST send the correct ability_id for the actor's class — handlers don't
-// re-validate class membership (the worker layer maps class → ability_id).
+// Single entry point. Looks up the ActiveAbilityDef from the actor's class,
+// validates mana, then routes based on ability.routing:
+//   "aoe_damage"  — AoE path (no per-target modifiers)
+//   "damage"      — single-target damage (drink buffs, shocked amp, bleed, etc.)
+//   "utility"     — generic effect applicator driven by execute() output
 
 function handleAbility(
   state: CombatState,
@@ -1906,13 +1938,15 @@ function handleAbility(
   if (fighter.hp <= 0) return reject(state, `${action.actor} is downed`);
 
   const cls = classByName(fighter.class);
-  const spec = ABILITIES[cls.id];
-  if (!spec) return reject(state, `${fighter.class} has no active ability`);
-  if (spec.id !== action.ability_id) {
-    return reject(state, `${fighter.class}'s ability is ${spec.id}, not ${action.ability_id}`);
+  const ability = cls.abilities.find(
+    (a): a is ActiveAbilityDef => a.kind === "active" && a.id === action.ability_id,
+  );
+  if (!ability) {
+    return reject(state, `${fighter.class} has no active ability with id ${action.ability_id}`);
   }
-  if (fighter.mana < spec.mana_cost) {
-    return reject(state, `not enough mana (need ${spec.mana_cost})`);
+
+  if (fighter.mana < ability.mana_cost) {
+    return reject(state, `not enough mana (need ${ability.mana_cost})`);
   }
 
   const tick = tickAtTurnStart(state, action.actor);
@@ -1920,193 +1954,226 @@ function handleAbility(
   const s = tick.state;
   const tickedActor = s.fighters.find((f) => f.id === action.actor)!;
 
-  // Deduct mana up front; every sub-handler returns end-of-turn.
   const sPostMana: CombatState = {
     ...s,
     fighters: s.fighters.map((f) =>
-      f.id === action.actor ? { ...f, mana: Math.max(0, f.mana - spec.mana_cost) } : f,
+      f.id === action.actor ? { ...f, mana: Math.max(0, f.mana - ability.mana_cost) } : f,
     ),
   };
 
   const usedEvent: CombatEvent = {
     type: "ability_used",
     actor: action.actor,
-    ability_id: spec.id,
-    name: spec.name,
-    mana_spent: spec.mana_cost,
+    ability_id: ability.id,
+    name: ability.name,
+    mana_spent: ability.mana_cost,
   };
   const preEvents: CombatEvent[] = [...tick.events, usedEvent];
 
-  switch (spec.id) {
-    case "taunt":
-      return abilityTaunt(sPostMana, action.actor, preEvents);
-    case "containerize":
-      return abilityContainerize(sPostMana, action.actor, preEvents);
-    case "regression_shield":
-      return abilityRegressionShield(sPostMana, action.actor, preEvents);
-    case "vanish":
-      return abilityVanish(sPostMana, action.actor, preEvents);
-    case "soul_drain": {
-      const drainTarget = action.target_id
-        ? sPostMana.monsters.find((m) => m.id === action.target_id && m.hp > 0)
-        : sPostMana.monsters.find((m) => m.hp > 0);
-      if (!drainTarget) return reject(sPostMana, "no valid target for soul drain");
-      return abilitySoulDrain(sPostMana, action.actor, tickedActor, drainTarget.id, preEvents, roll);
-    }
-    case "battle_hymn":
-      return abilityBattleHymn(sPostMana, action.actor, preEvents);
-    case "foresee":
-      return abilityForesee(sPostMana, action.actor, preEvents, roll);
-    case "migrate":
-      return abilityMigrate(sPostMana, action, preEvents);
+  // ── AoE damage ──
+  if (ability.routing === "aoe_damage") {
+    if (sPostMana.monsters.filter((m) => m.hp > 0).length === 0) return reject(sPostMana, "no valid targets");
+    return handleAoeDamageAbility(sPostMana, action.actor, tickedActor, ability, preEvents, roll);
   }
-}
 
-function abilityTaunt(state: CombatState, actor: ActorId, events: CombatEvent[]): StepResult {
-  const SWINGS = 2;
-  const ability_state: AbilityRuntimeState = {
-    ...(state.ability_state ?? {}),
-    taunt: { actor_id: actor, swings_remaining: SWINGS },
-  };
-  const next = advanceTurn({ ...state, ability_state });
-  return {
-    state: next,
-    events: [...events, { type: "ability_taunt", actor, swings: SWINGS }, ...turnStartEvent(next)],
-  };
-}
-
-function abilityContainerize(state: CombatState, _actor: ActorId, events: CombatEvent[]): StepResult {
-  const prev = state.ability_state?.skip_swings ?? 0;
-  const ability_state: AbilityRuntimeState = {
-    ...(state.ability_state ?? {}),
-    skip_swings: prev + 1,
-  };
-  const next = advanceTurn({ ...state, ability_state });
-  return {
-    state: next,
-    events: [...events, { type: "ability_containerize", swings: 1 }, ...turnStartEvent(next)],
-  };
-}
-
-function abilityRegressionShield(
-  state: CombatState,
-  actor: ActorId,
-  events: CombatEvent[],
-): StepResult {
-  const paladin = state.fighters.find((f) => f.id === actor);
-  const SHIELD_AMOUNT = 3 + Math.floor((paladin?.level ?? 1) / 4);
-  const grants: { target: ActorId; amount: number }[] = [];
-  const updatedFighters = state.fighters.map((f) => {
-    if (f.hp <= 0) return f;
-    const cap = f.max_hp * SHIELD_CAP_MULTIPLIER;
-    const newShield = Math.min(cap, f.shield + SHIELD_AMOUNT);
-    const added = newShield - f.shield;
-    if (added > 0) grants.push({ target: f.id, amount: added });
-    return { ...f, shield: newShield };
-  });
-  const next = advanceTurn({ ...state, fighters: updatedFighters });
-  return {
-    state: next,
-    events: [
-      ...events,
-      { type: "ability_regression_shield", actor, grants },
-      ...turnStartEvent(next),
-    ],
-  };
-}
-
-function abilityVanish(state: CombatState, actor: ActorId, events: CombatEvent[]): StepResult {
-  const SWINGS = 2;
-  const prev = state.ability_state?.vanished ?? {};
-  const ability_state: AbilityRuntimeState = {
-    ...(state.ability_state ?? {}),
-    vanished: { ...prev, [actor]: SWINGS },
-  };
-  // If a taunt is currently locking the monster onto this fighter, the
-  // vanish supersedes it — clear the taunt so the next swing re-picks.
-  if (ability_state.taunt?.actor_id === actor) {
-    delete ability_state.taunt;
+  // ── Single-target damage ──
+  if (ability.routing === "damage") {
+    const targetMonster = action.target_id
+      ? sPostMana.monsters.find((m) => m.id === action.target_id && m.hp > 0)
+      : sPostMana.monsters.find((m) => m.hp > 0);
+    if (!targetMonster) return reject(sPostMana, "no valid target");
+    const ctx: AbilityContext = {
+      caster: tickedActor,
+      party: sPostMana.fighters.filter((f) => f.hp > 0),
+      monsters: sPostMana.monsters.filter((m) => m.hp > 0),
+      target: targetMonster,
+      roll,
+    };
+    return handleDamageAbility(sPostMana, action.actor, tickedActor, ability, ctx, targetMonster, preEvents, roll);
   }
-  const next = advanceTurn({ ...state, ability_state });
-  return {
-    state: next,
-    events: [...events, { type: "ability_vanish", actor, swings: SWINGS }, ...turnStartEvent(next)],
+
+  // ── Utility ──
+  // Resolve the target for execute() based on ability.target kind.
+  let ctxTarget: CombatFighter | CombatMonster | undefined;
+  if (ability.target === "single_enemy") {
+    ctxTarget = action.target_id
+      ? sPostMana.monsters.find((m) => m.id === action.target_id && m.hp > 0)
+      : sPostMana.monsters.find((m) => m.hp > 0);
+  } else if (ability.target === "single_ally") {
+    ctxTarget = sPostMana.fighters.find((f) => f.id === (action.target ?? action.actor) && f.hp > 0);
+  } else if (ability.target === "self") {
+    ctxTarget = tickedActor;
+  }
+  const ctx: AbilityContext = {
+    caster: tickedActor,
+    party: sPostMana.fighters.filter((f) => f.hp > 0),
+    monsters: sPostMana.monsters.filter((m) => m.hp > 0),
+    target: ctxTarget,
+    roll,
+    position: action.position,
   };
+  return applyUtilityAbilityEffects(sPostMana, ability.execute(ctx), action.actor, preEvents, roll);
 }
 
-function abilitySoulDrain(
+// Generic applicator for utility ability effects. Iterates AbilityEffect[] from
+// execute() and applies each one to state, collecting events. A deal_damage that
+// kills a monster immediately fires resolveMonsterKill; remaining effects are skipped.
+function applyUtilityAbilityEffects(
   state: CombatState,
+  effects: AbilityEffect[],
   actor: ActorId,
-  tickedActor: CombatFighter,
-  targetMonsterId: ActorId,
-  events: CombatEvent[],
+  preEvents: CombatEvent[],
   roll: RollFn,
 ): StepResult {
-  const targetMonster = state.monsters.find((m) => m.id === targetMonsterId && m.hp > 0);
-  if (!targetMonster) return reject(state, "no valid target for soul drain");
-  const d6 = roll(6);
-  const rawDamage = d6 + tickedActor.magic_mod;
-  // Cap at monster_hp - 1 so soul_drain never delivers the kill blow (matches
-  // slack's pattern — keeps the engine's killed_by logic working off attacks).
-  const damage = Math.min(rawDamage, Math.max(1, targetMonster.hp - 1));
-  const heal = Math.floor(damage / 2);
-  const newMonsterHp = Math.max(0, targetMonster.hp - damage);
-  const oldHp = tickedActor.hp;
-  const newHp = Math.min(tickedActor.max_hp, oldHp + heal);
-  const applied = newHp - oldHp;
+  let s = state;
+  const events: CombatEvent[] = [...preEvents];
 
-  const updatedFighters = state.fighters.map((f) =>
-    f.id === actor ? { ...f, hp: newHp } : f,
-  );
+  for (const effect of effects) {
+    switch (effect.kind) {
+      case "deal_damage": {
+        const monster = s.monsters.find((m) => m.id === effect.target_id && m.hp > 0);
+        if (!monster) continue;
+        const newHp = Math.max(0, monster.hp - effect.amount);
+        events.push({
+          type: "player_hit",
+          actor,
+          target: monster.id,
+          damage: effect.amount,
+          armor_absorbed: 0,
+          crit: effect.is_crit ?? false,
+          formula: effect.formula,
+        });
+        s = {
+          ...s,
+          monsters: s.monsters.map((m) => m.id === monster.id ? { ...m, hp: newHp } : m),
+          contribution: { ...s.contribution, [actor]: (s.contribution[actor] ?? 0) + effect.amount },
+        };
+        if (newHp <= 0) return resolveMonsterKill(s, monster.id, actor, events);
+        break;
+      }
+      case "heal": {
+        const target = s.fighters.find((f) => f.id === effect.target_id);
+        if (!target || target.hp <= 0) continue;
+        const newHp = Math.min(target.max_hp, target.hp + effect.amount);
+        const applied = newHp - target.hp;
+        if (applied > 0) {
+          events.push({ type: "heal_applied", actor, target: effect.target_id, amount: applied, rolled: effect.amount });
+          s = { ...s, fighters: s.fighters.map((f) => f.id === effect.target_id ? { ...f, hp: newHp } : f) };
+        }
+        break;
+      }
+      case "grant_shield": {
+        const target = s.fighters.find((f) => f.id === effect.target_id);
+        if (!target || target.hp <= 0) continue;
+        const newShield = Math.min(target.max_hp * SHIELD_CAP_MULTIPLIER, target.shield + effect.amount);
+        if (newShield > target.shield) {
+          s = { ...s, fighters: s.fighters.map((f) => f.id === effect.target_id ? { ...f, shield: newShield } : f) };
+        }
+        break;
+      }
+      case "grant_shield_all": {
+        const grants: { target: ActorId; amount: number }[] = [];
+        s = {
+          ...s,
+          fighters: s.fighters.map((f) => {
+            if (f.hp <= 0) return f;
+            const newShield = Math.min(f.max_hp * SHIELD_CAP_MULTIPLIER, f.shield + effect.amount);
+            const added = newShield - f.shield;
+            if (added > 0) grants.push({ target: f.id, amount: added });
+            return added > 0 ? { ...f, shield: newShield } : f;
+          }),
+        };
+        events.push({ type: "ability_regression_shield", actor, grants });
+        break;
+      }
+      case "stun_monster": {
+        const targetMonster = s.monsters.find((m) => m.id === effect.target_id && m.hp > 0);
+        if (!targetMonster) continue;
+        const isBoss = targetMonster.is_boss;
+        const bpt = (isBoss && effect.boss_break_pct_per_turn != null)
+          ? effect.boss_break_pct_per_turn
+          : effect.break_pct_per_turn;
+        const stunnedEffect: MachineStatusEffect = {
+          type: "stunned",
+          magnitude: bpt,
+          remaining: 5,
+          source: actor,
+          pill_suffix: `${Math.min(100, bpt)}% break`,
+        };
+        s = {
+          ...s,
+          monsters: s.monsters.map((m) =>
+            m.id === targetMonster.id
+              ? { ...m, effects: [...m.effects.filter((e) => e.type !== "stunned"), stunnedEffect] }
+              : m,
+          ),
+        };
+        events.push({ type: "ability_containerize" });
+        break;
+      }
+      case "restore_mana": {
+        const target = s.fighters.find((f) => f.id === effect.target_id);
+        if (!target) continue;
+        const newMana = Math.min(target.max_mana, target.mana + effect.amount);
+        if (newMana > target.mana) {
+          s = { ...s, fighters: s.fighters.map((f) => f.id === effect.target_id ? { ...f, mana: newMana } : f) };
+        }
+        break;
+      }
+      case "set_taunt": {
+        const ability_state: AbilityRuntimeState = {
+          ...(s.ability_state ?? {}),
+          taunt: { actor_id: effect.actor_id, swings_remaining: effect.swings },
+        };
+        s = { ...s, ability_state };
+        events.push({ type: "ability_taunt", actor: effect.actor_id, swings: effect.swings });
+        break;
+      }
+      case "set_vanish": {
+        const prev = s.ability_state?.vanished ?? {};
+        let ability_state: AbilityRuntimeState = {
+          ...(s.ability_state ?? {}),
+          vanished: { ...prev, [effect.actor_id]: effect.swings },
+        };
+        if (ability_state.taunt?.actor_id === effect.actor_id) {
+          ability_state = stripField(ability_state, "taunt") ?? {};
+        }
+        s = { ...s, ability_state };
+        events.push({ type: "ability_vanish", actor: effect.actor_id, swings: effect.swings });
+        break;
+      }
+      case "add_battle_hymn": {
+        const prev = s.ability_state?.battle_hymn ?? 0;
+        const ability_state: AbilityRuntimeState = {
+          ...(s.ability_state ?? {}),
+          battle_hymn: prev + effect.charges,
+        };
+        s = { ...s, ability_state };
+        events.push({ type: "ability_battle_hymn", actor, charges_added: effect.charges });
+        break;
+      }
+      case "set_foresee_turns": {
+        const ability_state: AbilityRuntimeState = {
+          ...(s.ability_state ?? {}),
+          foresee_turns: effect.turns,
+        };
+        s = { ...s, ability_state };
+        events.push(buildForeseeEvent(s, actor, roll, effect.turns));
+        break;
+      }
+      case "move_fighter": {
+        const target = s.fighters.find((f) => f.id === effect.target_id);
+        if (!target || target.hp <= 0) continue;
+        const from = target.position;
+        s = { ...s, fighters: s.fighters.map((f) => f.id === effect.target_id ? { ...f, position: effect.to } : f) };
+        events.push({ type: "ability_migrate", actor, target: effect.target_id, from, to: effect.to });
+        break;
+      }
+    }
+  }
 
-  const next = advanceTurn({
-    ...state,
-    fighters: updatedFighters,
-    monsters: state.monsters.map((m) => m.id === targetMonsterId ? { ...m, hp: newMonsterHp } : m),
-    contribution: {
-      ...state.contribution,
-      [actor]: (state.contribution[actor] ?? 0) + damage,
-    },
-  });
-
-  return {
-    state: next,
-    events: [
-      ...events,
-      { type: "roll", actor, die: "d6", value: d6, purpose: "damage_cast" },
-      {
-        type: "ability_soul_drain",
-        actor,
-        damage,
-        healed: applied,
-        roll: d6,
-        formula: `${d6}+${tickedActor.magic_mod}m, half drained`,
-      },
-      ...turnStartEvent(next),
-    ],
-  };
-}
-
-function abilityBattleHymn(state: CombatState, actor: ActorId, events: CombatEvent[]): StepResult {
-  // Charges scale with Bard level: +1 every 5 levels beyond 1.
-  // L1→2, L5→3, L10→4, L15→5, L20→6. Caps naturally — durational buff only,
-  // no per-hit damage change, so high-level Bards sustain more turns of aura.
-  const bard = state.fighters.find((f) => f.id === actor);
-  const CHARGES = 2 + Math.floor((bard?.level ?? 1) / 5);
-  const prev = state.ability_state?.battle_hymn ?? 0;
-  const ability_state: AbilityRuntimeState = {
-    ...(state.ability_state ?? {}),
-    battle_hymn: prev + CHARGES,
-  };
-  const next = advanceTurn({ ...state, ability_state });
-  return {
-    state: next,
-    events: [
-      ...events,
-      { type: "ability_battle_hymn", actor, charges_added: CHARGES },
-      ...turnStartEvent(next),
-    ],
-  };
+  const next = advanceTurn(s);
+  return { state: next, events: [...events, ...turnStartEvent(next)] };
 }
 
 // Builds the full Foresee intel payload from current state. Shared between
@@ -2181,8 +2248,9 @@ function buildForeseeEvent(
   const vanishedIds = Object.entries(vanishedMap)
     .filter(([, v]) => v > 0)
     .map(([id]) => id);
+  const liveMonster = state.monsters.find((m) => m.hp > 0);
   const active = {
-    containerize: abilityState.skip_swings ?? 0,
+    stunned: liveMonster?.effects.some((e) => e.type === "stunned") ? 1 : 0,
     taunt_actor: taunted && taunted.swings_remaining > 0 ? taunted.actor_id : null,
     taunt_swings: taunted?.swings_remaining ?? 0,
     vanished: vanishedIds,
@@ -2204,28 +2272,6 @@ function buildForeseeEvent(
   };
 }
 
-function abilityForesee(
-  state: CombatState,
-  actor: ActorId,
-  events: CombatEvent[],
-  roll: RollFn,
-): StepResult {
-  const FORESEE_TURNS = 2;
-  const ability_state: AbilityRuntimeState = {
-    ...(state.ability_state ?? {}),
-    foresee_turns: FORESEE_TURNS,
-  };
-  const next = advanceTurn({ ...state, ability_state });
-  return {
-    state: next,
-    events: [
-      ...events,
-      buildForeseeEvent({ ...state, ability_state }, actor, roll, FORESEE_TURNS),
-      ...turnStartEvent(next),
-    ],
-  };
-}
-
 // After the monster acts, checks if the next actor is a Staff Sage with
 // foresee_turns > 0. If so, inserts the intel refresh event immediately
 // BEFORE the final turn_start divider so the Sage sees fresh info at the
@@ -2234,7 +2280,7 @@ function abilityForesee(
 function withForeseeForNextActor(result: StepResult, roll: RollFn): StepResult {
   const actorId = currentActor(result.state);
   if (!actorId || isMonsterActor(actorId)) return result;
-  const sage = result.state.fighters.find((f) => f.id === actorId && f.class === "Staff Sage");
+  const sage = result.state.fighters.find((f) => f.id === actorId && classHasPassive(f.class, "sages_reading"));
   if (!sage) return result;
   const turns = result.state.ability_state?.foresee_turns ?? 0;
   if (turns <= 0) return result;
@@ -2255,39 +2301,6 @@ function withForeseeForNextActor(result: StepResult, roll: RollFn): StepResult {
   }
   events.splice(insertAt, 0, refreshEvent);
   return { state: newState, events };
-}
-
-function abilityMigrate(
-  state: CombatState,
-  action: { kind: "ability"; actor: ActorId; target?: ActorId; position?: BattlePosition },
-  events: CombatEvent[],
-): StepResult {
-  const targetId = action.target ?? action.actor;
-  const target = state.fighters.find((f) => f.id === targetId);
-  if (!target) return reject(state, `unknown migrate target: ${targetId}`);
-  if (target.hp <= 0) return reject(state, `cannot migrate a downed partymate`);
-  if (!action.position) return reject(state, `migrate requires a position`);
-  if (target.position === action.position) {
-    return reject(state, `${targetId} is already in the ${action.position} row`);
-  }
-  const updatedFighters = state.fighters.map((f) =>
-    f.id === targetId ? { ...f, position: action.position! } : f,
-  );
-  const next = advanceTurn({ ...state, fighters: updatedFighters });
-  return {
-    state: next,
-    events: [
-      ...events,
-      {
-        type: "ability_migrate",
-        actor: action.actor,
-        target: targetId,
-        from: target.position,
-        to: action.position,
-      },
-      ...turnStartEvent(next),
-    ],
-  };
 }
 
 // ── Monster-kill resolution ───────────────────────────────────────────────
@@ -2393,9 +2406,11 @@ function tickEffects(
   const newEffects: MachineStatusEffect[] = [];
   const events: CombatEvent[] = [];
   for (const eff of effects) {
-    if (eff.type === "empowered" || eff.type === "frozen" || eff.type === "shocked") {
+    if (eff.type === "empowered" || eff.type === "frozen" || eff.type === "shocked" || eff.type === "stunned") {
       // Passive — no HP delta. Silently count down; the effect is applied
       // inline in the attack/turn handlers via the actor's effects array.
+      // "stunned" uses remaining as a max-duration safety net (break logic
+      // lives in handleMonsterAct via the probabilistic roll).
       if (eff.remaining > 1) newEffects.push({ ...eff, remaining: eff.remaining - 1 });
       events.push({ type: "effect_tick", actor: actorId, effect: eff.type, magnitude: 0, hp_delta: 0 });
       continue;
@@ -2549,6 +2564,14 @@ function classIdOf(fighter: CombatFighter): string {
   return classByName(fighter.class).id;
 }
 
+// Returns true if the named class has a passive ability with the given id.
+// Used to gate passive mechanics without hardcoding class ID strings.
+function classHasPassive(className: string, passiveId: string): boolean {
+  return classByName(className).abilities.some(
+    (a) => a.kind === "passive" && a.id === passiveId,
+  );
+}
+
 function isPassiveUsed(state: CombatState, actorId: ActorId, key: string): boolean {
   return state.passives_used?.[actorId]?.includes(key) ?? false;
 }
@@ -2572,7 +2595,7 @@ function applyWardenStartingShield(
   state: CombatState,
   actor: CombatFighter,
 ): { state: CombatState; events: CombatEvent[] } {
-  if (classIdOf(actor) !== "sre_warden") return { state, events: [] };
+  if (!classHasPassive(actor.class, "harden_up")) return { state, events: [] };
   if (isPassiveUsed(state, actor.id, PASSIVE_WARDEN_SHIELD)) return { state, events: [] };
   // VIT-based when STATS_V2 stats are present; level fallback for legacy states.
   const wardenShield = actor.stats
@@ -2591,13 +2614,43 @@ function applyWardenStartingShield(
   };
 }
 
+// DevOps Mage — Mana Font. Restores 1 mana every 3 actions (always-on). Uses
+// CombatState.action_counters to track per-fighter action count across the fight.
+const MANA_FONT_INTERVAL = 3;
+const MANA_FONT_AMOUNT = 1;
+
+function applyManaFont(
+  state: CombatState,
+  actor: CombatFighter,
+): { state: CombatState; events: CombatEvent[] } {
+  if (!classHasPassive(actor.class, "mana_font")) return { state, events: [] };
+  if (actor.mana >= actor.max_mana) return { state, events: [] };
+  const counters = state.action_counters ?? {};
+  const prev = counters[actor.id] ?? 0;
+  const next = prev + 1;
+  const updatedCounters = { ...counters, [actor.id]: next };
+  const fires = next % MANA_FONT_INTERVAL === 0;
+  if (!fires) {
+    return { state: { ...state, action_counters: updatedCounters }, events: [] };
+  }
+  const newMana = Math.min(actor.max_mana, actor.mana + MANA_FONT_AMOUNT);
+  const added = newMana - actor.mana;
+  const updated = state.fighters.map((f) =>
+    f.id === actor.id ? { ...f, mana: newMana } : f,
+  );
+  return {
+    state: { ...state, fighters: updated, action_counters: updatedCounters },
+    events: [{ type: "passive_mage_mana_font", actor: actor.id, amount: added }],
+  };
+}
+
 // Backend Druid — Database-Tree Communion. +1 HP at the start of every Druid
 // action (always-on). Clamped to max_hp; emits nothing if already at full HP.
 function applyDruidRegen(
   state: CombatState,
   actor: CombatFighter,
 ): { state: CombatState; events: CombatEvent[] } {
-  if (classIdOf(actor) !== "backend_druid") return { state, events: [] };
+  if (!classHasPassive(actor.class, "db_tree_communion")) return { state, events: [] };
   if (actor.hp <= 0) return { state, events: [] };
   const regenAmount = DRUID_PASSIVE_REGEN + Math.floor(actor.level / 6);
   const newHp = Math.min(actor.max_hp, actor.hp + regenAmount);
@@ -2624,11 +2677,13 @@ function applyPreActionPassives(
   const warden = applyWardenStartingShield(state, fighter);
   const wardenFighter = warden.state.fighters.find((f) => f.id === actorId) ?? fighter;
   const druid = applyDruidRegen(warden.state, wardenFighter);
-  const finalFighter = druid.state.fighters.find((f) => f.id === actorId) ?? wardenFighter;
+  const druidFighter = druid.state.fighters.find((f) => f.id === actorId) ?? wardenFighter;
+  const mana = applyManaFont(druid.state, druidFighter);
+  const finalFighter = mana.state.fighters.find((f) => f.id === actorId) ?? druidFighter;
   return {
-    state: druid.state,
+    state: mana.state,
     fighter: finalFighter,
-    events: [...warden.events, ...druid.events],
+    events: [...warden.events, ...druid.events, ...mana.events],
   };
 }
 
@@ -2640,9 +2695,9 @@ function computeBardAuraBonus(
   state: CombatState,
   attacker: CombatFighter,
 ): { bonus: number; hymn_consumed: boolean } {
-  if (classIdOf(attacker) === "frontend_bard") return { bonus: 0, hymn_consumed: false };
+  if (classHasPassive(attacker.class, "bardic_aura")) return { bonus: 0, hymn_consumed: false };
   const bardAlive = state.fighters.some(
-    (f) => f.hp > 0 && classIdOf(f) === "frontend_bard",
+    (f) => f.hp > 0 && classHasPassive(f.class, "bardic_aura"),
   );
   if (!bardAlive) return { bonus: 0, hymn_consumed: false };
   const hymnCharges = state.ability_state?.battle_hymn ?? 0;
@@ -2660,7 +2715,7 @@ function applyWarlockBleed(
   targetMonsterId: ActorId,
   isCrit: boolean,
 ): { state: CombatState; events: CombatEvent[] } {
-  if (!isCrit || classIdOf(actor) !== "data_warlock") return { state, events: [] };
+  if (!isCrit || !classHasPassive(actor.class, "cursed_strike")) return { state, events: [] };
   const targetMonster = state.monsters.find((m) => m.id === targetMonsterId && m.hp > 0);
   if (!targetMonster) return { state, events: [] };
   const newEffect: MachineStatusEffect = {
@@ -2834,6 +2889,7 @@ const EFFECT_STACK_POLICY: Record<EffectType, { mode: "stack" | "refresh"; maxMa
   empowered: { mode: "refresh", maxMagnitude: 50 },
   frozen:    { mode: "refresh", maxMagnitude: 2 },
   shocked:   { mode: "refresh", maxMagnitude: 2 },
+  stunned:   { mode: "refresh", maxMagnitude: 1 },
 };
 
 // Merge `incoming` into the existing effect list. If an effect of the
@@ -2885,7 +2941,7 @@ function applyPaladinAutoHeal(
   if (target.hp >= target.max_hp * PALADIN_AUTO_HEAL_THRESHOLD) return { state, events: [] };
   const paladin = state.fighters.find(
     (f) =>
-      classIdOf(f) === "qa_paladin"
+      classHasPassive(f.class, "lay_on_hands")
       && f.hp > 0
       && !isPassiveUsed(state, f.id, PASSIVE_PALADIN_AUTO_HEAL),
   );
@@ -2960,7 +3016,7 @@ function tickAbilityCountersAfterSwing(
 // Application rules mirror the legacy slack handler:
 //   buff_attack — only on attack actions; adds +magnitude flat damage
 //   buff_magic  — only on cast actions; adds +magnitude flat damage
-//   buff_next_crit — any of attack/cast/signature; force-crits when the
+//   buff_next_crit — any of attack/cast/ability; force-crits when the
 //     hit wasn't already a crit, doubling the (post-mod) damage. Skipped
 //     when the hit was already a crit so we don't waste the single charge
 //     on a redundant doubling.
@@ -2968,7 +3024,7 @@ function tickAbilityCountersAfterSwing(
 function applyDrinkBuff(
   state: CombatState,
   actor: ActorId,
-  context: "attack" | "cast" | "signature",
+  context: "attack" | "cast" | "ability",
   baseDamage: number,
   isCrit: boolean,
 ): {

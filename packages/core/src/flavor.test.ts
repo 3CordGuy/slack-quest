@@ -5,7 +5,6 @@ import {
   MAX_MANA_CAP,
   RARITY_BADGE,
   SHOP_PRICE,
-  SIGNATURES,
   classByName,
   dropChance,
   generateScar,
@@ -13,9 +12,9 @@ import {
   rollDice,
   rollItem,
   sellPriceFor,
-  signatureFor,
   xpForLevel,
 } from "./flavor";
+import { activeAbilities } from "./abilities";
 
 describe("rollDice", () => {
   it("single die rolls within [1, sides]", () => {
@@ -203,20 +202,20 @@ describe("shop pricing", () => {
   });
 });
 
-describe("signatures", () => {
-  it("every class has a signature spec", () => {
+describe("class abilities", () => {
+  it("every class has at least one active ability", () => {
     for (const cls of CLASSES) {
-      expect(SIGNATURES[cls.id]).toBeDefined();
+      expect(activeAbilities(cls.abilities).length).toBeGreaterThan(0);
     }
   });
 
-  it("signatureFor resolves by class name", () => {
-    expect(signatureFor("DevOps Mage")?.id).toBe("detonate");
-    expect(signatureFor("QA Paladin")?.id).toBe("smite");
+  it("classByName resolves active abilities for known classes", () => {
+    expect(activeAbilities(classByName("DevOps Mage").abilities).map((a) => a.id)).toContain("fireball");
+    expect(activeAbilities(classByName("QA Paladin").abilities).map((a) => a.id)).toContain("smite");
   });
 
-  it("signatureFor returns null for unknown class", () => {
-    expect(signatureFor("Made-Up Class")).toBeNull();
+  it("classByName returns empty abilities for unknown class", () => {
+    expect(classByName("Made-Up Class").abilities).toHaveLength(0);
   });
 });
 
@@ -232,10 +231,9 @@ describe("classByName", () => {
     expect(classByName("DevOps Mage").id).toBe("devops_mage");
   });
 
-  it("falls back to a balanced default for an unknown name", () => {
+  it("falls back to a default for an unknown name", () => {
     const fallback = classByName("Made-Up Class");
-    expect(fallback.attack_mod).toBe(1);
-    expect(fallback.magic_mod).toBe(1);
+    expect(fallback.id).toBe("unknown");
   });
 
   it("every defined class has a non-empty blurb", () => {

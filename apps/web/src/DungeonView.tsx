@@ -8,17 +8,10 @@
 import { useEffect, useReducer, useRef, useState } from "react";
 import toast from "react-hot-toast";
 import { isMonsterActor } from "@gantt-quest/core";
+import { CombatDevModal, StatusEffect, EFFECT_PILLS, CombatPanel, CombatItem, type PanelCombatState, type PanelTurnAction } from "./CombatShared";
 import { Avatar, Icon } from "./icons";
 
 const DISPLAY_FONT = "'Metamorphous', serif";
-
-// ─── Types (mirrors CombatPage; duplicated to keep DungeonView self-contained) ──
-
-interface StatusEffect {
-  type: "regen" | "bleeding" | "burning" | "poisoned" | "frozen" | "shocked";
-  magnitude: number;
-  remaining: number;
-}
 
 interface Fighter {
   id: string;
@@ -68,10 +61,10 @@ type TurnAction =
   | { kind: "cast"; actor: string; target_id?: string | null }
   | { kind: "heal"; actor: string; target: string }
   | { kind: "shield"; actor: string; target: string }
-  | { kind: "signature"; actor: string; target_id?: string | null }
   | { kind: "flee"; actor: string }
   | { kind: "position"; actor: string; to: "front" | "back" }
   | { kind: "wait"; actor: string }
+  | { kind: "ability"; actor: string; ability_id: string; target_id?: string }
   | { kind: "monster_act" }
   | { kind: "use_item"; actor: string; item_id: number; target_id?: string };
 
@@ -213,7 +206,6 @@ function formatCombatEvent(e: { type: string; [k: string]: unknown }, nameOf: (i
     case "monster_down": return row(`${nameOf(e.killed_by as string)} lands the killing blow!`, "good");
     case "heal_applied": return row(`${nameOf(e.actor as string)}: +${e.amount} HP healed`, "good");
     case "shield_applied": return row(`${nameOf(e.actor as string)}: +${e.amount} shield`, "good");
-    case "signature_used": return row(`${nameOf(e.actor as string)} signature: ${e.damage} dmg`, "good");
     case "victory": return row("Victory!", "good");
     case "defeat": return row("The party falls…", "bad");
     case "fled": return row("The party escapes!", "muted");
@@ -510,16 +502,14 @@ function MonsterOverlay({ monster, scene, isBoss }: { monster: Monster | null; s
       backdropFilter: "blur(8px)",
       boxShadow: isBoss ? "0 0 32px rgba(239,68,68,0.3)" : "0 4px 24px rgba(0,0,0,0.6)",
     }}>
-      {artUrl && (
-        <img src={artUrl} alt={name} style={{
-          width: "100%",
-          height: 140,
-          objectFit: "cover",
-          borderRadius: 8,
-          marginBottom: 8,
-          display: "block",
-        }} />
-      )}
+      {artUrl
+        ? <img src={artUrl} alt={name} style={{ width: "100%", height: 140, objectFit: "cover", borderRadius: 8, marginBottom: 8, display: "block" }} onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
+        : (
+          <div style={{ display: "flex", justifyContent: "center", alignItems: "center", height: 140, marginBottom: 8 }}>
+            <Icon name="dragon" size={72} color={isBoss ? "#fca5a5" : "#7c2020"} />
+          </div>
+        )
+      }
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8 }}>
         <div style={{ fontFamily: DISPLAY_FONT, fontSize: 15, fontWeight: 700, color: isBoss ? "#fca5a5" : "#f5f5f5" }}>
           {name}
@@ -536,11 +526,10 @@ function MonsterOverlay({ monster, scene, isBoss }: { monster: Monster | null; s
       <HpBar current={hp} max={maxHp} color={isBoss ? "#ef4444" : undefined} height={6} />
       {effects.length > 0 && (
         <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 6 }}>
-          {effects.map((eff, i) => (
-            <span key={i} style={{ fontSize: 10, background: "#1a1c21", border: "1px solid #3a3d43", borderRadius: 4, padding: "1px 5px", color: "#9aa0a6" }}>
-              {eff.type} ×{eff.remaining}
-            </span>
-          ))}
+          {effects.map((eff, i) => {
+            const def = EFFECT_PILLS[eff.type];
+            return def ? <def.pill key={i} effect={eff} size="md" /> : null;
+          })}
         </div>
       )}
     </div>
@@ -641,6 +630,7 @@ export function DungeonView({
   const [combatActive, setCombatActive] = useState(
     hasWebCombat && nodeType === "combat",
   );
+  const [devOpen, setDevOpen] = useState(false);
   const [reconnectKey, setReconnectKey] = useState(0);
   const [ws, dispatch] = useReducer(wsReducer, {
     connection: "connecting" as const,
@@ -653,9 +643,7 @@ export function DungeonView({
   const logScrollRef = useRef<HTMLDivElement | null>(null);
   const [targeting, setTargeting] = useState<string | null>(null); // monster id to target
   const [autoResolve, setAutoResolve] = useState(true);
-  const [pickingSupport, setPickingSupport] = useState<"heal" | "shield" | null>(null);
-  const [itemPickerOpen, setItemPickerOpen] = useState(false);
-  const [items, setItems] = useState<Array<{ id: number; item_name: string; item_type: string; power: number; equipped: boolean }>>([]);
+  const [items, setItems] = useState<CombatItem[]>([]);
   const autoResolvedTurnRef = useRef(-1);
 
   // Connect WS when combat is active
@@ -752,7 +740,7 @@ export function DungeonView({
 
   async function loadItems() {
     const res = await fetch("/api/inventory", { credentials: "include" });
-    if (res.ok) setItems(((await res.json()) as { items: typeof items }).items);
+    if (res.ok) setItems(((await res.json()) as { items: CombatItem[] }).items);
   }
   useEffect(() => { void loadItems(); }, []);
 
@@ -823,6 +811,14 @@ export function DungeonView({
           {expedition.theme}
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          {import.meta.env.DEV && (
+            <button
+              onClick={() => setDevOpen(true)}
+              style={{ background: "none", border: "1px solid #2a2d44", color: "#a78bfa", cursor: "pointer", fontSize: 11, padding: "2px 7px", borderRadius: 5, display: "flex", alignItems: "center", gap: 4 }}
+            >
+              <Icon name="cog" size={11} /> dev
+            </button>
+          )}
           {combatActive && (
             <span style={{ fontSize: 11, color: ws.connection === "open" ? "#39ff14" : "#9aa0a6" }}>
               {ws.connection === "open" ? "● live" : "○ …"}
@@ -839,12 +835,21 @@ export function DungeonView({
         <InitStrip state={combatState} selfId={selfId} />
       )}
 
+      {devOpen && import.meta.env.DEV && (
+        <CombatDevModal
+          questId={questId}
+          onClose={() => setDevOpen(false)}
+          onDone={() => { setDevOpen(false); setReconnectKey((k) => k + 1); }}
+        />
+      )}
+
       {/* ── Room view (flex-grow) ── */}
       <div style={{
         flex: 1,
         position: "relative",
         overflow: "hidden",
         minHeight: 0,
+        background: "#1c1f2e",
       }}>
         {/* Room background */}
         <img
@@ -1025,149 +1030,56 @@ export function DungeonView({
 
       {/* ── Combat panel (sliding in above party bar) ── */}
       {combatActive && !combatEnded && combatState && (
-        <div style={{
-          background: "rgba(10,11,14,0.97)",
-          borderTop: "1px solid #1e2028",
-          flexShrink: 0,
-          overflow: "hidden",
-        }}>
-          {/* Log — last 3 entries */}
-          <div
-            ref={logScrollRef}
-            style={{
-              padding: "6px 12px 4px",
-              display: "flex",
-              flexDirection: "column",
-              gap: 2,
-              maxHeight: 72,
-              overflowY: "auto",
-            }}
-          >
-            {ws.log.slice(-4).map((entry) => (
-              <div key={entry.id} style={{
-                fontSize: 12,
-                color: entry.tone === "good" ? "#86efac"
-                  : entry.tone === "bad" ? "#fca5a5"
-                  : entry.tone === "info" ? "#93c5fd"
-                  : "#9aa0a6",
-                lineHeight: 1.4,
-              }}>
-                {entry.text}
-              </div>
-            ))}
-            {ws.log.length === 0 && (
-              <div style={{ fontSize: 12, color: "#4a5568" }}>Waiting for combat to begin…</div>
-            )}
-          </div>
-
-          {/* Action panel */}
-          {(() => {
-            const me = combatState.fighters.find((f) => f.id === selfId);
-            const mana = me?.mana ?? 0;
-            const myPos = me?.position ?? "front";
-            const needsTarget = liveMonsters.length > 1 && !effectiveTarget;
-            const usableItems = items.filter((it) => !it.equipped && ["consumable", "magic", "revive"].includes(it.item_type));
-
-            return (
-              <div style={{ borderTop: "1px solid #1a1c21" }}>
-                {/* Inline target picker for heal/shield */}
-                {pickingSupport && myTurn && (
-                  <div style={{ padding: "6px 10px 4px", display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
-                    <span style={{ fontSize: 11, color: "#9aa0a6" }}>
-                      {pickingSupport === "heal" ? "Heal who?" : "Shield who?"}
-                    </span>
-                    {combatState.fighters.filter((f) => f.hp > 0).map((f) => (
-                      <button
-                        key={f.id}
-                        onClick={() => {
-                          send({ kind: pickingSupport, actor: selfId, target: f.id });
-                          setPickingSupport(null);
-                        }}
-                        style={{ padding: "3px 10px", background: "#1a2e1a", border: "1px solid #166534", borderRadius: 5, color: "#86efac", fontSize: 11, cursor: "pointer" }}
-                      >
-                        {f.name.split(" ")[0]} {f.hp}/{f.max_hp}
-                      </button>
-                    ))}
-                    <button onClick={() => setPickingSupport(null)} style={{ padding: "3px 8px", background: "none", border: "1px solid #2a2d33", borderRadius: 5, color: "#9aa0a6", fontSize: 11, cursor: "pointer" }}>✕</button>
-                  </div>
-                )}
-                {/* Inline item picker */}
-                {itemPickerOpen && myTurn && (
-                  <div style={{ padding: "6px 10px 4px", display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
-                    <span style={{ fontSize: 11, color: "#9aa0a6" }}>Use item:</span>
-                    {usableItems.length === 0 && <span style={{ fontSize: 11, color: "#4a5568" }}>No usable items</span>}
-                    {usableItems.map((it) => (
-                      <button
-                        key={it.id}
-                        onClick={() => {
-                          send({ kind: "use_item", actor: selfId, item_id: it.id });
-                          setItemPickerOpen(false);
-                        }}
-                        style={{ padding: "3px 10px", background: "#1a1529", border: "1px solid #4c1d95", borderRadius: 5, color: "#c4b5fd", fontSize: 11, cursor: "pointer" }}
-                      >
-                        {it.item_name}
-                      </button>
-                    ))}
-                    <button onClick={() => setItemPickerOpen(false)} style={{ padding: "3px 8px", background: "none", border: "1px solid #2a2d33", borderRadius: 5, color: "#9aa0a6", fontSize: 11, cursor: "pointer" }}>✕</button>
-                  </div>
-                )}
-                <div style={{ padding: "6px 10px 8px", display: "flex", gap: 5, flexWrap: "wrap" }}>
-                  {myTurn && (
-                    <>
-                      {/* Offensive row */}
-                      <CombatBtn label="Attack" icon="sword" color="#b89b3a"
-                        disabled={needsTarget}
-                        onClick={() => send({ kind: "attack", actor: selfId, target_id: effectiveTarget })} />
-                      <CombatBtn label="Cast" icon="crystal-wand" color="#818cf8"
-                        disabled={mana < 1 || needsTarget}
-                        onClick={() => send({ kind: "cast", actor: selfId, target_id: effectiveTarget })} />
-                      <CombatBtn label="Signature" icon="wax-seal" color="#a78bfa"
-                        disabled={mana < 2 || needsTarget}
-                        onClick={() => send({ kind: "signature", actor: selfId, target_id: effectiveTarget })} />
-                      {/* Support row */}
-                      <CombatBtn label="Heal" icon="health-increase" color="#22c55e"
-                        disabled={mana < 1}
-                        onClick={() => { setPickingSupport("heal"); setItemPickerOpen(false); }} />
-                      <CombatBtn label="Shield" icon="shield" color="#60a5fa"
-                        disabled={mana < 1}
-                        onClick={() => { setPickingSupport("shield"); setItemPickerOpen(false); }} />
-                      <CombatBtn
-                        label={myPos === "front" ? "→ Back" : "→ Front"}
-                        icon={myPos === "front" ? "perspective-dice-two" : "perspective-dice-one"}
-                        color="#6b7280"
-                        onClick={() => send({ kind: "position", actor: selfId, to: myPos === "front" ? "back" : "front" })} />
-                      <CombatBtn label="Item" icon="ammo-bag" color="#c084fc"
-                        disabled={usableItems.length === 0}
-                        onClick={() => { setItemPickerOpen((o) => !o); setPickingSupport(null); }} />
-                      <CombatBtn label="Flee" icon="footprint" color="#4b5563"
-                        onClick={() => send({ kind: "flee", actor: selfId })} />
-                    </>
-                  )}
-                  {!myTurn && isMonsterTurn && !autoResolve && (
-                    <CombatBtn label="Resolve enemy" icon="dragon" color="#5c1f1f"
-                      onClick={() => send({ kind: "monster_act" })} />
-                  )}
-                  {!myTurn && !isMonsterTurn && currentActorId && (
-                    <span style={{ fontSize: 12, color: "#4a5568", padding: "4px 8px", alignSelf: "center" }}>
-                      {combatState.fighters.find((f) => f.id === currentActorId)?.name ?? "Other player"}'s turn…
-                    </span>
-                  )}
-                  <div style={{ marginLeft: "auto", display: "flex", alignItems: "center" }}>
-                    <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, color: "#4a5568", cursor: "pointer" }}>
-                      <input type="checkbox" checked={autoResolve} onChange={(e) => setAutoResolve(e.target.checked)} style={{ accentColor: "#5c1f1f" }} />
-                      Auto
-                    </label>
-                  </div>
+        <>
+          <div style={{
+            background: "rgba(10,11,14,0.97)",
+            borderTop: "1px solid #1e2028",
+            flexShrink: 0,
+            overflow: "hidden",
+          }}>
+            {/* Log — last 3 entries */}
+            <div
+              ref={logScrollRef}
+              style={{
+                padding: "6px 12px 4px",
+                display: "flex",
+                flexDirection: "column",
+                gap: 2,
+                maxHeight: 72,
+                overflowY: "auto",
+              }}
+            >
+              {ws.log.slice(-4).map((entry) => (
+                <div key={entry.id} style={{
+                  fontSize: 12,
+                  color: entry.tone === "good" ? "#86efac"
+                    : entry.tone === "bad" ? "#fca5a5"
+                    : entry.tone === "info" ? "#93c5fd"
+                    : "#9aa0a6",
+                  lineHeight: 1.4,
+                }}>
+                  {entry.text}
                 </div>
-                {needsTarget && myTurn && (
-                  <div style={{ padding: "0 12px 6px", fontSize: 11, color: "#c084fc" }}>
-                    ↑ Click a monster to target it first
-                  </div>
-                )}
-              </div>
-            );
-          })()}
-        </div>
+              ))}
+              {ws.log.length === 0 && (
+                <div style={{ fontSize: 12, color: "#4a5568" }}>Waiting for combat to begin…</div>
+              )}
+            </div>
+          </div>
+          <CombatPanel
+            state={combatState as unknown as PanelCombatState}
+            selfId={selfId}
+            onSend={send as (a: PanelTurnAction) => boolean}
+            autoResolve={autoResolve}
+            setAutoResolve={setAutoResolve}
+            myTurn={myTurn}
+            isMonsterTurn={isMonsterTurn}
+            items={items}
+            onRefreshItems={loadItems}
+            characterClass={character.class}
+            targetMonsterId={effectiveTarget}
+          />
+        </>
       )}
 
       {/* ── Party bar ── */}
@@ -1177,37 +1089,6 @@ export function DungeonView({
         party={party.length > 0 ? party : [character]}
       />
     </div>
-  );
-}
-
-// ─── Combat button ─────────────────────────────────────────────────────────────
-
-function CombatBtn({ label, icon, color, disabled, onClick }: {
-  label: string; icon: string; color: string; disabled?: boolean; onClick: () => void;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      disabled={disabled}
-      style={{
-        display: "flex",
-        alignItems: "center",
-        gap: 5,
-        padding: "5px 12px",
-        background: disabled ? "#1a1c21" : color,
-        border: `1px solid ${disabled ? "#2a2d33" : color}`,
-        borderRadius: 6,
-        color: disabled ? "#4a5568" : "#0e0f12",
-        fontSize: 12,
-        fontWeight: 600,
-        cursor: disabled ? "not-allowed" : "pointer",
-        opacity: disabled ? 0.5 : 1,
-        transition: "opacity 0.15s",
-      }}
-    >
-      <Icon name={icon} size={13} />
-      {label}
-    </button>
   );
 }
 
@@ -1459,6 +1340,7 @@ function EnterCombatBanner({ monsterName, monsterHp, monsterMaxHp, isBoss, onEnt
     }}>
       <div>
         <div style={{ fontSize: 13, fontWeight: 600, color: isBoss ? "#fca5a5" : "#f5f5f5", fontFamily: DISPLAY_FONT }}>
+          {isBoss && <Icon name="dragon" size={14} color="#fca5a5" />} {monsterName}
           {isBoss && <Icon name="dragon" size={14} color="#fca5a5" />} {monsterName}
         </div>
         <HpBar current={monsterHp} max={monsterMaxHp} color={isBoss ? "#ef4444" : undefined} height={5} />
