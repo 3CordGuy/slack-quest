@@ -35,6 +35,11 @@ import {
   ShieldGlow,
   CombatFighter,
   CombatItem,
+  CombatDevModal,
+  StatusEffect,
+  PillSize,
+  StatusPill,
+  EFFECT_PILLS,
 } from "./CombatShared";
 
 ensureCombatAnimStyles();
@@ -42,14 +47,6 @@ ensureCombatAnimStyles();
 // Live web-mode combat. Connects to the QuestRoom Durable Object via WS,
 // renders the current state, animates incoming events through a scrolling
 // log, and lets the active player submit actions.
-
-interface StatusEffect {
-  type: "regen" | "bleeding" | "burning" | "poisoned" | "frozen" | "shocked" | "stunned";
-  magnitude: number;
-  remaining: number;
-  source?: string;
-  pill_suffix?: string;
-}
 
 interface Fighter {
   id: string;
@@ -1486,75 +1483,6 @@ function DisconnectedModal({ onReconnect }: { onReconnect: () => void }): JSX.El
   );
 }
 
-type PillSize = "sm" | "md" | "lg";
-
-function StatusPill({ color, icon, label, suffix, title, size = "md" }: {
-  color: string; icon: string; label: string; suffix: string;
-  title?: string; size?: PillSize;
-}) {
-  const s = size === "lg"
-    ? { fontSize: 12, padding: "3px 8px", gap: 5, borderRadius: 6, iconSize: 14, borderOp: "88", letterSpacing: 0.3, suffixFs: 11 as number | undefined }
-    : size === "sm"
-    ? { fontSize: 10, padding: "1px 5px", gap: 3, borderRadius: 4, iconSize: 10, borderOp: "aa", letterSpacing: 0.2, suffixFs: undefined, textShadow: "0 1px 2px rgba(0,0,0,0.9)" }
-    : { fontSize: 11, padding: "2px 7px", gap: 4, borderRadius: 5, iconSize: 12, borderOp: "88", letterSpacing: 0.2, suffixFs: undefined };
-  return (
-    <span
-      title={title}
-      style={{
-        display: "inline-flex", alignItems: "center", gap: s.gap,
-        fontSize: s.fontSize, fontWeight: 700,
-        background: color + "33",
-        border: `1px solid ${color}${"textShadow" in s ? "aa" : "88"}`,
-        color, borderRadius: s.borderRadius, padding: s.padding,
-        textTransform: "capitalize", letterSpacing: s.letterSpacing,
-        textShadow: "textShadow" in s ? (s as { textShadow: string }).textShadow : undefined,
-      }}
-    >
-      <Icon name={icon} size={s.iconSize} color={color} />
-      {label}
-      <span style={{ opacity: 0.8, fontWeight: 600, fontSize: s.suffixFs }}>· {suffix}</span>
-    </span>
-  );
-}
-
-type EffectPillProps = { effect: StatusEffect; size: PillSize };
-
-const EFFECT_PILLS: Partial<Record<string, { pill: React.FC<EffectPillProps> }>> = {
-  regen: {
-    pill: ({ effect: e, size }) => <StatusPill size={size} color="#4ade80" icon="regeneration" label="regen"
-      suffix={`${e.remaining}t`} title={`regen ×${e.magnitude} (${e.remaining} turn${e.remaining === 1 ? "" : "s"} remaining)`} />,
-  },
-  bleeding: {
-    pill: ({ effect: e, size }) => <StatusPill size={size} color="#f87171" icon="bleeding-wound"
-      label={`bleeding${e.magnitude > 1 ? ` ×${e.magnitude}` : ""}`}
-      suffix={`${e.remaining}t`} title={`bleeding ×${e.magnitude} (${e.remaining} turn${e.remaining === 1 ? "" : "s"} remaining)`} />,
-  },
-  burning: {
-    pill: ({ effect: e, size }) => <StatusPill size={size} color="#fb923c" icon="fire"
-      label={`burning${e.magnitude > 1 ? ` ×${e.magnitude}` : ""}`}
-      suffix={`${e.remaining}t`} title={`burning ×${e.magnitude} (${e.remaining} turn${e.remaining === 1 ? "" : "s"} remaining)`} />,
-  },
-  frozen: {
-    pill: ({ effect: e, size }) => <StatusPill size={size} color="#93c5fd" icon="ice-bolt" label="frozen"
-      suffix={`${e.remaining}t`} title={`frozen (${e.remaining} turn${e.remaining === 1 ? "" : "s"} remaining)`} />,
-  },
-  shocked: {
-    pill: ({ effect: e, size }) => <StatusPill size={size} color="#fbbf24" icon="electric"
-      label={`shocked${e.magnitude > 1 ? ` ×${e.magnitude}` : ""}`}
-      suffix={`${e.remaining}t`} title={`shocked ×${e.magnitude} (${e.remaining} turn${e.remaining === 1 ? "" : "s"} remaining)`} />,
-  },
-  stunned: {
-    pill: ({ effect: e, size }) => <StatusPill size={size} color="#a78bfa" icon="fluffy-swirl" label="stunned"
-      suffix={e.pill_suffix ?? `${e.remaining}t`}
-      title={`stunned (${e.pill_suffix ?? `${e.remaining}t`} this turn)`} />,
-  },
-  poisoned: {
-    pill: ({ effect: e, size }) => <StatusPill size={size} color="#c084fc" icon="poison-cloud"
-      label={`poisoned${e.magnitude > 1 ? ` ×${e.magnitude}` : ""}`}
-      suffix={`${e.remaining}t`} title={`poisoned ×${e.magnitude} (${e.remaining} turn${e.remaining === 1 ? "" : "s"} remaining)`} />,
-  },
-};
-
 function MonsterCard({
   monster,
   round,
@@ -2831,71 +2759,3 @@ const exitBtn: React.CSSProperties = {
   cursor: "pointer",
 };
 
-function CombatDevModal({
-  questId,
-  onClose,
-  onDone,
-}: {
-  questId: number;
-  onClose: () => void;
-  onDone: () => void;
-}) {
-  const [busy, setBusy] = useState<string | null>(null);
-
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, [onClose]);
-
-  async function act(endpoint: string) {
-    setBusy(endpoint);
-    try {
-      await fetch(endpoint, {
-        method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ questId }),
-      });
-    } finally {
-      setBusy(null);
-      onDone();
-    }
-  }
-
-  const btn = (bg: string, fg: string): React.CSSProperties => ({
-    background: bg, color: fg,
-    border: "1px solid #2a2d33", borderRadius: 6,
-    padding: "6px 14px", fontSize: 13, fontWeight: 600,
-    cursor: busy ? "default" : "pointer", opacity: busy ? 0.5 : 1,
-    fontFamily: "inherit", display: "flex", alignItems: "center", gap: 5,
-  });
-
-  return (
-    <div
-      onClick={onClose}
-      style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 500 }}
-    >
-      <div
-        onClick={(e) => e.stopPropagation()}
-        style={{ background: "#13151a", border: "1px solid #2a2d33", borderRadius: 10, padding: 20, display: "flex", flexDirection: "column", gap: 10, minWidth: 220, boxShadow: "0 8px 32px rgba(0,0,0,0.7)" }}
-      >
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 2 }}>
-          <span style={{ fontSize: 13, fontWeight: 700, color: "#a78bfa", display: "flex", alignItems: "center", gap: 6 }}>
-            <Icon name="cog" size={13} /> Dev Tools
-          </span>
-          <button onClick={onClose} style={{ background: "none", border: "none", color: "#6b7280", cursor: "pointer", fontSize: 14, lineHeight: 1, padding: "0 2px" }}>✕</button>
-        </div>
-        <button disabled={!!busy} onClick={() => void act("/api/dev/combat-heal")} style={btn("#1f3a1f", "#86efac")}>
-          <Icon name="health" size={13} /> {busy === "/api/dev/combat-heal" ? "…" : "Heal to full"}
-        </button>
-        <button disabled={!!busy} onClick={() => void act("/api/dev/combat-mana")} style={btn("#1a2a3a", "#60a5fa")}>
-          <Icon name="crystals" size={13} /> {busy === "/api/dev/combat-mana" ? "…" : "Restore mana"}
-        </button>
-        <button disabled={!!busy} onClick={() => void act("/api/dev/combat-kill-enemies")} style={btn("#3a1a1a", "#f87171")}>
-          <Icon name="death-skull" size={13} /> {busy === "/api/dev/combat-kill-enemies" ? "…" : "Kill all enemies"}
-        </button>
-      </div>
-    </div>
-  );
-}

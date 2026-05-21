@@ -5,7 +5,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { isMonsterActor } from "@gantt-quest/core";
+import { isMonsterActor, isMercActor, classByName, activeAbilities, type ActiveAbilityDef } from "@gantt-quest/core";
 import { Icon } from "./icons";
 
 export const DISPLAY_FONT = "'Metamorphous', serif";
@@ -1100,6 +1100,413 @@ export interface LogEntry {
   side?: "party" | "enemy" | "divider" | null;
   divider_side?: "party" | "enemy";
   detail?: string;
+}
+
+// ─── Status Effects & Pills ───────────────────────────────────────────────────
+// Shared across CombatPage, GridDungeonView, and DungeonView so every view
+// renders the same pill styles and supports the same effect types.
+
+export interface StatusEffect {
+  type: string;
+  magnitude: number;
+  remaining: number;
+  source?: string;
+  pill_suffix?: string;
+}
+
+export type PillSize = "sm" | "md" | "lg";
+
+export function StatusPill({ color, icon, label, suffix, title, size = "md" }: {
+  color: string; icon: string; label: string; suffix: string;
+  title?: string; size?: PillSize;
+}) {
+  const s = size === "lg"
+    ? { fontSize: 12, padding: "3px 8px", gap: 5, borderRadius: 6, iconSize: 14, letterSpacing: 0.3, suffixFs: 11 as number | undefined }
+    : size === "sm"
+    ? { fontSize: 10, padding: "1px 5px", gap: 3, borderRadius: 4, iconSize: 10, letterSpacing: 0.2, suffixFs: undefined, textShadow: "0 1px 2px rgba(0,0,0,0.9)" }
+    : { fontSize: 11, padding: "2px 7px", gap: 4, borderRadius: 5, iconSize: 12, letterSpacing: 0.2, suffixFs: undefined };
+  return (
+    <span
+      title={title}
+      style={{
+        display: "inline-flex", alignItems: "center", gap: s.gap,
+        fontSize: s.fontSize, fontWeight: 700,
+        background: color + "33",
+        border: `1px solid ${color}${"textShadow" in s ? "aa" : "88"}`,
+        color, borderRadius: s.borderRadius, padding: s.padding,
+        textTransform: "capitalize", letterSpacing: s.letterSpacing,
+        textShadow: "textShadow" in s ? (s as { textShadow: string }).textShadow : undefined,
+      }}
+    >
+      <Icon name={icon} size={s.iconSize} color={color} />
+      {label}
+      <span style={{ opacity: 0.8, fontWeight: 600, fontSize: s.suffixFs }}>· {suffix}</span>
+    </span>
+  );
+}
+
+type EffectPillProps = { effect: StatusEffect; size: PillSize };
+
+export const EFFECT_PILLS: Partial<Record<string, { pill: React.FC<EffectPillProps> }>> = {
+  regen: {
+    pill: ({ effect: e, size }) => <StatusPill size={size} color="#4ade80" icon="regeneration" label="regen"
+      suffix={`${e.remaining}t`} title={`regen ×${e.magnitude} (${e.remaining} turn${e.remaining === 1 ? "" : "s"} remaining)`} />,
+  },
+  bleeding: {
+    pill: ({ effect: e, size }) => <StatusPill size={size} color="#f87171" icon="bleeding-wound"
+      label={`bleeding${e.magnitude > 1 ? ` ×${e.magnitude}` : ""}`}
+      suffix={`${e.remaining}t`} title={`bleeding ×${e.magnitude} (${e.remaining} turn${e.remaining === 1 ? "" : "s"} remaining)`} />,
+  },
+  burning: {
+    pill: ({ effect: e, size }) => <StatusPill size={size} color="#fb923c" icon="fire"
+      label={`burning${e.magnitude > 1 ? ` ×${e.magnitude}` : ""}`}
+      suffix={`${e.remaining}t`} title={`burning ×${e.magnitude} (${e.remaining} turn${e.remaining === 1 ? "" : "s"} remaining)`} />,
+  },
+  frozen: {
+    pill: ({ effect: e, size }) => <StatusPill size={size} color="#93c5fd" icon="ice-bolt" label="frozen"
+      suffix={`${e.remaining}t`} title={`frozen (${e.remaining} turn${e.remaining === 1 ? "" : "s"} remaining)`} />,
+  },
+  shocked: {
+    pill: ({ effect: e, size }) => <StatusPill size={size} color="#fbbf24" icon="electric"
+      label={`shocked${e.magnitude > 1 ? ` ×${e.magnitude}` : ""}`}
+      suffix={`${e.remaining}t`} title={`shocked ×${e.magnitude} (${e.remaining} turn${e.remaining === 1 ? "" : "s"} remaining)`} />,
+  },
+  stunned: {
+    pill: ({ effect: e, size }) => <StatusPill size={size} color="#a78bfa" icon="fluffy-swirl" label="stunned"
+      suffix={e.pill_suffix ?? `${e.remaining}t`}
+      title={`stunned (${e.pill_suffix ?? `${e.remaining}t`} this turn)`} />,
+  },
+  poisoned: {
+    pill: ({ effect: e, size }) => <StatusPill size={size} color="#c084fc" icon="poison-cloud"
+      label={`poisoned${e.magnitude > 1 ? ` ×${e.magnitude}` : ""}`}
+      suffix={`${e.remaining}t`} title={`poisoned ×${e.magnitude} (${e.remaining} turn${e.remaining === 1 ? "" : "s"} remaining)`} />,
+  },
+};
+
+// ─── Shared combat action bar ─────────────────────────────────────────────────
+// Used by GridDungeonView and DungeonView so both dungeon combat views share
+// the same buttons, pickers, and turn-management logic.
+
+export type PanelTurnAction =
+  | { kind: "attack"; actor: string; target_id?: string | null }
+  | { kind: "cast"; actor: string; target_id?: string | null }
+  | { kind: "heal"; actor: string; target: string }
+  | { kind: "shield"; actor: string; target: string }
+  | { kind: "flee"; actor: string }
+  | { kind: "position"; actor: string; to: "front" | "back" }
+  | { kind: "wait"; actor: string }
+  | { kind: "mark"; actor: string }
+  | { kind: "ability"; actor: string; ability_id: string; target_id?: string; target?: string; position?: "front" | "back" }
+  | { kind: "monster_act" }
+  | { kind: "use_item"; actor: string; item_id: number; target_id?: string };
+
+export interface PanelCombatFighter {
+  id: string; name: string; class?: string;
+  hp: number; max_hp: number; mana: number; max_mana: number;
+  position: "front" | "back";
+}
+
+export interface PanelCombatMonster {
+  id?: string; name: string; hp: number; max_hp: number;
+  effects?: Array<{ type: string }>;
+}
+
+export interface PanelCombatState {
+  fighters: PanelCombatFighter[];
+  monsters: PanelCombatMonster[];
+  turn_order: string[];
+  turn_index: number;
+}
+
+export function CombatPanel({
+  state, selfId, onSend, autoResolve, setAutoResolve,
+  myTurn, isMonsterTurn, items, onRefreshItems, characterClass, targetMonsterId,
+}: {
+  state: PanelCombatState;
+  selfId: string;
+  onSend: (a: PanelTurnAction) => boolean;
+  autoResolve: boolean;
+  setAutoResolve: (b: boolean) => void;
+  myTurn: boolean;
+  isMonsterTurn: boolean;
+  items: CombatItem[];
+  onRefreshItems: () => void;
+  characterClass: string;
+  targetMonsterId: string | null;
+}) {
+  const me = state.fighters.find((f) => f.id === selfId);
+  const mana = me?.mana ?? 0;
+  const myPos = me?.position ?? "front";
+  const liveMonsters = state.monsters.filter((m) => m.hp > 0);
+  const target = targetMonsterId && liveMonsters.some((m) => m.id === targetMonsterId)
+    ? targetMonsterId
+    : (liveMonsters[0]?.id ?? null);
+  const [picking, setPicking] = useState<"heal" | "shield" | null>(null);
+  const [itemOpen, setItemOpen] = useState(false);
+  const [givePicker, setGivePicker] = useState<"closed" | "selectItem" | { itemId: number }>("closed");
+  const [pendingToolItem, setPendingToolItem] = useState<CombatItem | null>(null);
+  const usable = items.filter((it) => !it.equipped && isCombatUsable(it.item_type));
+  const giveable = items.filter((it) => !it.equipped);
+  const otherFighters = state.fighters.filter((f) => f.id !== selfId && f.hp > 0);
+  const myAbilities: ActiveAbilityDef[] = activeAbilities(classByName(characterClass).abilities);
+
+  async function fireGive(itemId: number, toUserId: string) {
+    await fetch(`/api/inventory/${itemId}/give`, {
+      method: "POST", credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ to_user_id: toUserId }),
+    });
+    setGivePicker("closed");
+    onRefreshItems();
+  }
+
+  const currentActorId = state.turn_order[state.turn_index % state.turn_order.length] ?? null;
+  const isInactivePlayerTurn = !myTurn && currentActorId !== null
+    && !isMonsterActor(currentActorId) && !isMercActor(currentActorId);
+
+  const [skipReady, setSkipReady] = useState(false);
+  useEffect(() => {
+    if (!isInactivePlayerTurn) { setSkipReady(false); return; }
+    const t = setTimeout(() => setSkipReady(true), 8000);
+    return () => clearTimeout(t);
+  }, [isInactivePlayerTurn, currentActorId]);
+
+  const otherActor = state.fighters.find((f) => f.id === currentActorId);
+  const turnStatus = myTurn
+    ? null
+    : isMonsterTurn
+      ? (autoResolve ? "Enemy turn — auto-resolving…" : null)
+      : `Waiting for ${otherActor?.name ?? "another player"}…`;
+
+  return (
+    <div style={{ background: "rgba(10,11,14,0.92)", borderTop: "1px solid #1e2028", flexShrink: 0, overflow: "hidden", backdropFilter: "blur(6px)" }}>
+      {/* Inline target picker for heal/shield */}
+      {picking && myTurn && (
+        <div style={{ padding: "6px 12px 4px", display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", borderBottom: "1px solid #1a1c21" }}>
+          <span style={{ fontSize: 11, color: "#9aa0a6" }}>{picking === "heal" ? "Heal who?" : "Shield who?"}</span>
+          {state.fighters.filter((f) => f.hp > 0).map((f) => (
+            <button key={f.id}
+              onClick={() => { onSend({ kind: picking, actor: selfId, target: f.id }); setPicking(null); }}
+              style={{ padding: "3px 10px", background: "#1a2e1a", border: "1px solid #166534", borderRadius: 5, color: "#86efac", fontSize: 11, cursor: "pointer" }}>
+              {f.name.split(" ")[0]} {f.hp}/{f.max_hp}
+            </button>
+          ))}
+          <button onClick={() => setPicking(null)} style={{ padding: "3px 8px", background: "none", border: "1px solid #2a2d33", borderRadius: 5, color: "#9aa0a6", fontSize: 11, cursor: "pointer" }}>✕</button>
+        </div>
+      )}
+
+      {/* Give item: step 1 — pick item */}
+      {givePicker === "selectItem" && myTurn && (
+        <GiveItemPicker
+          items={giveable}
+          onPickItem={(id) => setGivePicker({ itemId: id })}
+          onCancel={() => setGivePicker("closed")}
+        />
+      )}
+      {/* Give item: step 2 — pick ally */}
+      {typeof givePicker === "object" && "itemId" in givePicker && myTurn && (
+        <GiveTargetPicker
+          fighters={state.fighters as unknown as CombatFighter[]}
+          selfId={selfId}
+          onPick={(id) => void fireGive((givePicker as { itemId: number }).itemId, id)}
+          onCancel={() => setGivePicker("selectItem")}
+        />
+      )}
+
+      {/* Use item picker */}
+      {itemOpen && myTurn && (
+        <PickerModal title="Use item" onClose={() => setItemOpen(false)}>
+          {usable.length === 0 ? (
+            <p style={{ fontSize: 13, color: "#6b7280", margin: 0 }}>No usable items in your pack.</p>
+          ) : (
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", gap: 8 }}>
+              {usable.map((it) => (
+                <UseItemTile
+                  key={it.id}
+                  item={it}
+                  onClick={() => {
+                    setItemOpen(false);
+                    if (MONSTER_TARGET_TOOLS.has(it.item_name) && liveMonsters.length > 1) {
+                      setPendingToolItem(it);
+                    } else {
+                      onSend({ kind: "use_item", actor: selfId, item_id: it.id, target_id: target ?? undefined });
+                    }
+                  }}
+                />
+              ))}
+            </div>
+          )}
+        </PickerModal>
+      )}
+
+      {/* Monster target picker for tool items with 2+ enemies */}
+      {pendingToolItem && myTurn && (
+        <PickerModal
+          title={`${pendingToolItem.item_name} — choose a target`}
+          onClose={() => setPendingToolItem(null)}
+        >
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {liveMonsters.map((m) => (
+              <button
+                key={m.id}
+                onClick={() => {
+                  onSend({ kind: "use_item", actor: selfId, item_id: pendingToolItem.id, target_id: m.id ?? undefined });
+                  setPendingToolItem(null);
+                }}
+                style={{
+                  display: "flex", alignItems: "center", justifyContent: "space-between",
+                  padding: "10px 16px", background: "#1a1c21", border: "1px solid #2a2d33",
+                  borderRadius: 8, color: "#f5f5f5", cursor: "pointer", fontSize: 13,
+                  transition: "border-color 0.15s",
+                }}
+                onMouseEnter={(e) => (e.currentTarget.style.borderColor = "#ef4444")}
+                onMouseLeave={(e) => (e.currentTarget.style.borderColor = "#2a2d33")}
+              >
+                <span style={{ fontWeight: 600 }}>{m.name}</span>
+                <span style={{ fontSize: 12, color: "#ef4444" }}>
+                  {m.hp} / {m.max_hp} HP
+                  {m.effects?.some((e) => e.type === "poisoned") && " ☠"}
+                </span>
+              </button>
+            ))}
+          </div>
+        </PickerModal>
+      )}
+
+      {/* Turn status + skip button */}
+      {(turnStatus || isInactivePlayerTurn) && (
+        <div style={{ padding: "2px 12px 0", fontSize: 11, color: "#9aa0a6", fontStyle: "italic", display: "flex", alignItems: "center", gap: 10 }}>
+          {turnStatus && <span>{turnStatus}</span>}
+          {isInactivePlayerTurn && (
+            <button
+              onClick={() => currentActorId && onSend({ kind: "wait", actor: currentActorId })}
+              disabled={!skipReady}
+              title={skipReady ? "Skip this player's turn" : "Available after 8 seconds"}
+              style={{
+                background: skipReady ? "#292d36" : "#1a1d23",
+                border: `1px solid ${skipReady ? "#4a5568" : "#2a2d33"}`,
+                borderRadius: 6, color: skipReady ? "#cbd5e1" : "#4a5568",
+                fontSize: 11, fontFamily: "inherit", padding: "3px 10px",
+                cursor: skipReady ? "pointer" : "not-allowed", transition: "all 0.3s ease",
+              }}
+            >
+              Skip turn
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* Action buttons */}
+      <div style={{ padding: "8px 10px 10px", display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", justifyContent: "center" }}>
+        <CBtn label="Attack" icon="sword" color="#b89b3a" disabled={!myTurn || !target} onClick={() => onSend({ kind: "attack", actor: selfId, target_id: target })} />
+        <CBtn label="Cast" icon="crystal-wand" color="#818cf8" manaCost={1} disabled={!myTurn || mana < 1 || !target} onClick={() => onSend({ kind: "cast", actor: selfId, target_id: target })} />
+        {myAbilities.map((ab) => {
+          const needsTarget = ab.target === "single_enemy";
+          const targetMissing = needsTarget && !target;
+          return (
+            <CBtn
+              key={ab.id}
+              label={ab.name}
+              icon={ab.icon}
+              color="#d946ef"
+              manaCost={ab.mana_cost}
+              disabled={!myTurn || mana < ab.mana_cost || targetMissing || !!ab.needs_position_picker}
+              onClick={() => {
+                if (ab.needs_position_picker) return;
+                onSend({ kind: "ability", actor: selfId, ability_id: ab.id, target_id: needsTarget ? (target ?? undefined) : undefined });
+              }}
+            />
+          );
+        })}
+        <CBtn label="Heal" icon="health-increase" color="#22c55e" manaCost={1} disabled={!myTurn || mana < 1} onClick={() => { setPicking("heal"); setItemOpen(false); }} />
+        <CBtn label="Shield" icon="shield" color="#60a5fa" manaCost={1} disabled={!myTurn || mana < 1} onClick={() => { setPicking("shield"); setItemOpen(false); }} />
+        <CBtn label={myPos === "front" ? "Back row" : "Front row"} icon={myPos === "front" ? "perspective-dice-two" : "perspective-dice-one"} color="#6b7280" disabled={!myTurn} onClick={() => onSend({ kind: "position", actor: selfId, to: myPos === "front" ? "back" : "front" })} />
+        <CBtn label="Item" icon="ammo-bag" color="#c084fc" disabled={!myTurn || usable.length === 0} onClick={() => { setItemOpen((o) => !o); setPicking(null); setGivePicker("closed"); }} />
+        {giveable.length > 0 && otherFighters.length > 0 && (
+          <CBtn label="Give" icon="conversation" color="#fcd34d" disabled={!myTurn} onClick={() => { setGivePicker("selectItem"); setItemOpen(false); setPicking(null); }} />
+        )}
+        <CBtn label="Mark" icon="target-poster" color="#f97316" disabled={!myTurn || !target} onClick={() => onSend({ kind: "mark", actor: selfId })} />
+        <CBtn label="Wait" icon="hourglass" color="#475569" disabled={!myTurn} onClick={() => onSend({ kind: "wait", actor: selfId })} />
+        <CBtn label="Flee" icon="run" color="#9aa0a6" disabled={!myTurn} onClick={() => onSend({ kind: "flee", actor: selfId })} />
+        {!myTurn && isMonsterTurn && !autoResolve && (
+          <CBtn label="Resolve" icon="dragon" color="#5c1f1f" onClick={() => onSend({ kind: "monster_act" })} />
+        )}
+        <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, color: "#4a5568", cursor: "pointer", marginLeft: 6 }}>
+          <input type="checkbox" checked={autoResolve} onChange={(e) => setAutoResolve(e.target.checked)} style={{ accentColor: "#5c1f1f" }} />
+          Auto
+        </label>
+      </div>
+    </div>
+  );
+}
+
+export function CombatDevModal({
+  questId,
+  onClose,
+  onDone,
+}: {
+  questId: number;
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const [busy, setBusy] = useState<string | null>(null);
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [onClose]);
+
+  async function act(endpoint: string) {
+    setBusy(endpoint);
+    try {
+      await fetch(endpoint, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ questId }),
+      });
+    } finally {
+      setBusy(null);
+      onDone();
+    }
+  }
+
+  const btn = (bg: string, fg: string): React.CSSProperties => ({
+    background: bg, color: fg,
+    border: "1px solid #2a2d33", borderRadius: 6,
+    padding: "6px 14px", fontSize: 13, fontWeight: 600,
+    cursor: busy ? "default" : "pointer", opacity: busy ? 0.5 : 1,
+    fontFamily: "inherit", display: "flex", alignItems: "center", gap: 5,
+  });
+
+  return (
+    <div
+      onClick={onClose}
+      style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 500 }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{ background: "#13151a", border: "1px solid #2a2d33", borderRadius: 10, padding: 20, display: "flex", flexDirection: "column", gap: 10, minWidth: 220, boxShadow: "0 8px 32px rgba(0,0,0,0.7)" }}
+      >
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 2 }}>
+          <span style={{ fontSize: 13, fontWeight: 700, color: "#a78bfa", display: "flex", alignItems: "center", gap: 6 }}>
+            <Icon name="cog" size={13} /> Dev Tools
+          </span>
+          <button onClick={onClose} style={{ background: "none", border: "none", color: "#6b7280", cursor: "pointer", fontSize: 14, lineHeight: 1, padding: "0 2px" }}>✕</button>
+        </div>
+        <button disabled={!!busy} onClick={() => void act("/api/dev/combat-heal")} style={btn("#1f3a1f", "#86efac")}>
+          <Icon name="health" size={13} /> {busy === "/api/dev/combat-heal" ? "…" : "Heal to full"}
+        </button>
+        <button disabled={!!busy} onClick={() => void act("/api/dev/combat-mana")} style={btn("#1a2a3a", "#60a5fa")}>
+          <Icon name="crystals" size={13} /> {busy === "/api/dev/combat-mana" ? "…" : "Restore mana"}
+        </button>
+        <button disabled={!!busy} onClick={() => void act("/api/dev/combat-kill-enemies")} style={btn("#3a1a1a", "#f87171")}>
+          <Icon name="death-skull" size={13} /> {busy === "/api/dev/combat-kill-enemies" ? "…" : "Kill all enemies"}
+        </button>
+      </div>
+    </div>
+  );
 }
 
 export function CombatLog({ log, scrollRef }: {
