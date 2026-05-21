@@ -275,6 +275,15 @@ function renderEvent(state: CombatState, e: CombatEvent): string {
     case "monster_elemental_proc":
       return `_${e.element === "fire" ? "🔥" : e.element === "ice" ? "❄️" : "🌩️"} Monster proc: ${e.target} is ${e.effect}!_`;
 
+    case "ability_encourage":
+      return `🎶 _${e.actor} encourages ${e.target} — advantage on next ${e.charges} attack${e.charges === 1 ? "" : "s"}!_`;
+    case "ability_mock":
+      return `🎶 _${e.actor} mocks the enemy — disadvantage on next ${e.charges} swing${e.charges === 1 ? "" : "s"}!_`;
+    case "advantage_used":
+      return `_${e.actor} rolls with advantage (d20: ${e.d20_a} & ${e.d20_b}) → took ${e.took}._`;
+    case "disadvantage_used":
+      return `_Enemy rolls with disadvantage (d20: ${e.d20_a} & ${e.d20_b}) → took ${e.took}._`;
+
     default: {
       // Exhaustiveness check: if a new CombatEvent member is added without
       // a case here, TypeScript flags this assignment. Falls through to a

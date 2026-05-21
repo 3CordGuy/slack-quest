@@ -199,6 +199,10 @@ type CombatEvent =
       formula: string;
     }
   | { type: "ability_battle_hymn"; actor: string; charges_added: number }
+  | { type: "ability_encourage"; actor: string; target: string; charges: number }
+  | { type: "ability_mock"; actor: string; target: string; charges: number }
+  | { type: "advantage_used"; actor: string; d20_a: number; d20_b: number; took: number }
+  | { type: "disadvantage_used"; actor: string; d20_a: number; d20_b: number; took: number }
   | {
       type: "ability_foresee";
       actor: string;
@@ -597,6 +601,14 @@ function formatEvent(e: CombatEvent, state: CombatState | null): LogEntry[] {
       return row("death-skull", <>Soul Drain: {e.damage} dmg, +{e.healed} HP  [{e.formula}]</>, "good");
     case "ability_battle_hymn":
       return row("aura", <>Battle Hymn — next {e.charges_added} party attacks get bardic aura boost.</>, "good");
+    case "ability_encourage":
+      return row("conversation", <>{nameOf(e.actor)} encourages {nameOf(e.target)} — advantage on next {e.charges} attack{e.charges === 1 ? "" : "s"}!</>, "good");
+    case "ability_mock":
+      return row("screaming", <>{nameOf(e.actor)} mocks the enemy — disadvantage on next {e.charges} swing{e.charges === 1 ? "" : "s"}!</>, "bad");
+    case "advantage_used":
+      return row("conversation", <>{nameOf(e.actor)} rolls with advantage (d20: {e.d20_a} & {e.d20_b}) → took {e.took}.</>, "good");
+    case "disadvantage_used":
+      return row("screaming", <>{nameOf(e.actor)} rolls with disadvantage (d20: {e.d20_a} & {e.d20_b}) → took {e.took}.</>, "bad");
     case "ability_foresee": {
       const target = e.predicted_target ? nameOf(e.predicted_target) : null;
       const verdictEl = e.verdict === "safe"
@@ -757,6 +769,7 @@ export function CombatPage({
   });
   const [itemPicker, setItemPicker] = useState<"closed" | "open" | { reviveItemId: number }>("closed");
   const [migratePicker, setMigratePicker] = useState<boolean>(false);
+  const [allyPickerAbility, setAllyPickerAbility] = useState<ActiveAbilityDef | null>(null);
   const [givePicker, setGivePicker] = useState<"closed" | "selectItem" | { itemId: number }>("closed");
   const [items, setItems] = useState<InventoryItem[]>([]);
   const [autoResolve, setAutoResolve] = useState<boolean>(
@@ -1109,12 +1122,23 @@ export function CombatPage({
       setMigratePicker(true);
       return;
     }
+    const aliveFighters = state?.fighters.filter((f) => f.hp > 0) ?? [];
+    if (ability.target === "single_ally" && aliveFighters.length > 1) {
+      setAllyPickerAbility(ability);
+      return;
+    }
     send({
       kind: "ability",
       actor: selfId,
       ability_id: ability.id,
       target_id: ability.target === "single_enemy" ? (effectiveTarget ?? undefined) : undefined,
     });
+  }
+
+  function fireAllyAbility(targetId: string) {
+    if (!allyPickerAbility) return;
+    send({ kind: "ability", actor: selfId, ability_id: allyPickerAbility.id, target: targetId });
+    setAllyPickerAbility(null);
   }
 
   function fireMigrate(targetId: string, position: "front" | "back") {
@@ -1135,7 +1159,7 @@ export function CombatPage({
 
   // Background art: first live monster's portrait, or first monster fallback.
   const bgArtUrl = state?.monsters.find((m) => m.hp > 0)?.art_url ?? state?.monsters[0]?.art_url ?? null;
-  const isPickerOpen = itemPicker !== "closed" || migratePicker || givePicker !== "closed";
+  const isPickerOpen = itemPicker !== "closed" || migratePicker || allyPickerAbility !== null || givePicker !== "closed";
   const otherPosition = me?.position === "front" ? "back" : "front";
   const isMonsterTurn = currentActorId !== null && isMonsterActor(currentActorId);
 
@@ -1322,6 +1346,14 @@ export function CombatPage({
           selfId={selfId}
           onPick={fireMigrate}
           onCancel={() => setMigratePicker(false)}
+        />
+      )}
+      {state?.status === "active" && allyPickerAbility && (
+        <AllyPicker
+          fighters={state.fighters}
+          ability={allyPickerAbility}
+          onPick={fireAllyAbility}
+          onCancel={() => setAllyPickerAbility(null)}
         />
       )}
       {state?.status === "active" && givePicker === "selectItem" && (
@@ -1927,6 +1959,36 @@ function MigratePicker({
         </button>
         <button onClick={onCancel} style={{ ...btnBase }}>Cancel</button>
       </div>
+    </PickerModal>
+  );
+}
+
+function AllyPicker({
+  fighters,
+  ability,
+  onPick,
+  onCancel,
+}: {
+  fighters: Fighter[];
+  ability: ActiveAbilityDef;
+  onPick: (targetId: string) => void;
+  onCancel: () => void;
+}) {
+  const btnBase: React.CSSProperties = {
+    padding: "8px 14px", background: "#1a1c21", border: "1px solid #2a2d33",
+    borderRadius: 6, color: "#f5f5f5", cursor: "pointer", fontSize: 13, fontFamily: "inherit",
+  };
+  const alive = fighters.filter((f) => f.hp > 0);
+  return (
+    <PickerModal title={<><Icon name={ability.icon} /> {ability.name} — pick an ally</>} onClose={onCancel}>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 12 }}>
+        {alive.map((f) => (
+          <button key={f.id} onClick={() => onPick(f.id)} style={{ ...btnBase, borderColor: "#a855f7" }}>
+            {f.name} · {f.hp}/{f.max_hp} HP
+          </button>
+        ))}
+      </div>
+      <button onClick={onCancel} style={{ ...btnBase }}>Cancel</button>
     </PickerModal>
   );
 }

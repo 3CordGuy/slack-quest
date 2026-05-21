@@ -553,6 +553,10 @@ export interface SceneJson {
     taunt?: { user_id: string; swings_remaining: number };
     vanished?: Record<string, number>;
     battle_hymn?: number;
+    // Frontend Bard — Encourage: fighter's next N to-hit rolls use advantage.
+    encourage?: Record<string, number>;
+    // Frontend Bard — Mock: monster's next N to-hit rolls use disadvantage.
+    discourage?: Record<string, number>;
     // Staff Sage Foresee — re-appends the intel readout to the Sage's
     // ephemeral for this many more of their own combat turns.
     foresee_turns?: number;

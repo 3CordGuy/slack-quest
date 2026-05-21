@@ -63,6 +63,14 @@ export const fx = {
   moveFighter(targetId: string, to: "front" | "back"): AbilityEffect {
     return { kind: "move_fighter", target_id: targetId, to };
   },
+
+  encourage(targetId: string, charges: number): AbilityEffect {
+    return { kind: "grant_encourage", target_id: targetId, charges };
+  },
+
+  discourage(targetId: string, charges: number): AbilityEffect {
+    return { kind: "apply_discourage", target_id: targetId, charges };
+  },
 };
 
 // Roll count dice of `sides` and return the sum.

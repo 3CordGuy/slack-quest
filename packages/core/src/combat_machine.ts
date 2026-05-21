@@ -227,6 +227,10 @@ export interface AbilityRuntimeState {
   vanished?: Record<ActorId, number>;
   // Frontend Bard — next N partymate attacks deal +2 damage.
   battle_hymn?: number;
+  // Frontend Bard — Encourage: fighter's next N to-hit d20 rolls twice, take higher.
+  encourage?: Record<ActorId, number>;
+  // Frontend Bard — Mock: monster's next N to-hit d20 rolls twice, take lower.
+  discourage?: Record<ActorId, number>;
   // Mark / focus-fire — partymates other than the marker get +MARK_BONUS
   // damage on attack/cast until `expires_after_round` is exceeded. Cleared
   // when the monster falls or a wave transition fires.
@@ -397,6 +401,10 @@ export type CombatEvent =
       formula: string;
     }
   | { type: "ability_battle_hymn"; actor: ActorId; charges_added: number }
+  | { type: "ability_encourage"; actor: ActorId; target: ActorId; charges: number }
+  | { type: "ability_mock"; actor: ActorId; target: ActorId; charges: number }
+  | { type: "advantage_used"; actor: ActorId; d20_a: number; d20_b: number; took: number }
+  | { type: "disadvantage_used"; actor: ActorId; d20_a: number; d20_b: number; took: number }
   | {
       type: "ability_foresee";
       actor: ActorId;
@@ -684,7 +692,7 @@ function handlePlayerHit(
 
   const tick = tickAtTurnStart(state, action.actor);
   if (tick.earlyReturn) return tick.earlyReturn;
-  const s = tick.state;
+  let s = tick.state;
   const tickedFighter = s.fighters.find((f) => f.id === action.actor)!;
   // Re-resolve target from updated state (tick may have killed the monster).
   const monster = s.monsters.find((m) => m.id === targetMonster.id && m.hp > 0);
@@ -694,7 +702,16 @@ function handlePlayerHit(
   const classMod = tickedFighter.attack_mod;
 
   // ── d20 to-hit ──
-  const d20 = roll(20);
+  let d20 = roll(20);
+  // Bard Encourage — advantage: roll the d20 twice, take higher, consume one charge.
+  const encourageCharges = s.ability_state?.encourage?.[action.actor] ?? 0;
+  if (encourageCharges > 0) {
+    const d20b = roll(20);
+    const took = Math.max(d20, d20b);
+    events.push({ type: "advantage_used", actor: action.actor, d20_a: d20, d20_b: d20b, took });
+    d20 = took;
+    s = { ...s, ability_state: consumeEncourageCharge(s.ability_state, action.actor) };
+  }
   const ac = monsterAc(monster.tier);
   const hitTotal = d20 + classMod;
   const baseLanded = hitTotal >= ac;
@@ -1128,7 +1145,7 @@ function handleMonsterAct(state: CombatState, roll: RollFn): StepResult {
 
   const tick = tickAtTurnStart(state, actorId);
   if (tick.earlyReturn) return tick.earlyReturn;
-  const s = tick.state;
+  let s = tick.state;
   // Re-resolve monster after tick (tick may have applied DoT to it).
   const monster = s.monsters.find((m) => m.id === actorId);
   if (!monster || monster.hp <= 0) {
@@ -1316,7 +1333,16 @@ function handleMonsterAct(state: CombatState, roll: RollFn): StepResult {
   // ── d20 to-hit ──
   // Modifier grows at half-tier + 4 so it never auto-hits even at high tiers.
   // Fighter AC = 10 + floor(level/2) so the miss window stays meaningful.
-  const d20 = roll(20);
+  let d20 = roll(20);
+  // Bard Mock — disadvantage: roll the d20 twice, take lower, consume one charge.
+  const discourageCharges = s.ability_state?.discourage?.[actorId] ?? 0;
+  if (discourageCharges > 0) {
+    const d20b = roll(20);
+    const took = Math.min(d20, d20b);
+    events.push({ type: "disadvantage_used", actor: actorId, d20_a: d20, d20_b: d20b, took });
+    d20 = took;
+    s = { ...s, ability_state: consumeDiscourageCharge(s.ability_state, actorId) };
+  }
   const modifier = Math.floor(monster.tier / 2) + 4;
   const hitTotal = d20 + modifier;
   const targetAc = fighterAc(target.level);
@@ -2007,6 +2033,28 @@ function applyUtilityAbilityEffects(
         const from = target.position;
         s = { ...s, fighters: s.fighters.map((f) => f.id === effect.target_id ? { ...f, position: effect.to } : f) };
         events.push({ type: "ability_migrate", actor, target: effect.target_id, from, to: effect.to });
+        break;
+      }
+      case "grant_encourage": {
+        const prev = s.ability_state?.encourage ?? {};
+        const prevCharges = prev[effect.target_id] ?? 0;
+        const ability_state: AbilityRuntimeState = {
+          ...(s.ability_state ?? {}),
+          encourage: { ...prev, [effect.target_id]: prevCharges + effect.charges },
+        };
+        s = { ...s, ability_state };
+        events.push({ type: "ability_encourage", actor, target: effect.target_id, charges: effect.charges });
+        break;
+      }
+      case "apply_discourage": {
+        const prev = s.ability_state?.discourage ?? {};
+        const prevCharges = prev[effect.target_id] ?? 0;
+        const ability_state: AbilityRuntimeState = {
+          ...(s.ability_state ?? {}),
+          discourage: { ...prev, [effect.target_id]: prevCharges + effect.charges },
+        };
+        s = { ...s, ability_state };
+        events.push({ type: "ability_mock", actor, target: effect.target_id, charges: effect.charges });
         break;
       }
     }
@@ -2817,6 +2865,36 @@ function stripField<K extends keyof AbilityRuntimeState>(
   const next: AbilityRuntimeState = { ...state };
   delete next[key];
   return Object.keys(next).length > 0 ? next : undefined;
+}
+
+function consumeEncourageCharge(
+  state: AbilityRuntimeState | undefined,
+  actorId: ActorId,
+): AbilityRuntimeState | undefined {
+  const charges = state?.encourage?.[actorId] ?? 0;
+  if (!state || charges <= 0) return state;
+  const newCharges = charges - 1;
+  if (newCharges <= 0) {
+    const enc = { ...state.encourage };
+    delete enc[actorId];
+    return Object.keys(enc).length > 0 ? { ...state, encourage: enc } : stripField(state, "encourage");
+  }
+  return { ...state, encourage: { ...state.encourage, [actorId]: newCharges } };
+}
+
+function consumeDiscourageCharge(
+  state: AbilityRuntimeState | undefined,
+  monsterId: ActorId,
+): AbilityRuntimeState | undefined {
+  const charges = state?.discourage?.[monsterId] ?? 0;
+  if (!state || charges <= 0) return state;
+  const newCharges = charges - 1;
+  if (newCharges <= 0) {
+    const disc = { ...state.discourage };
+    delete disc[monsterId];
+    return Object.keys(disc).length > 0 ? { ...state, discourage: disc } : stripField(state, "discourage");
+  }
+  return { ...state, discourage: { ...state.discourage, [monsterId]: newCharges } };
 }
 
 // Tick down per-swing counters (taunt swings, vanish counts) after a monster

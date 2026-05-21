@@ -1,23 +1,19 @@
 import type { AbilityDef } from "../abilities";
-import { fx, rollSum } from "./effects";
+import { fx } from "./effects";
 
 export const bardAbilities: AbilityDef[] = [
   {
     kind: "active",
-    id: "crescendo",
-    name: "Crescendo",
-    blurb: "A rising chorus the whole party joins.",
-    icon: "musical-notes",
+    id: "mock",
+    name: "Mock",
+    blurb: "A cutting jeer rattles the enemy — disadvantage on their next 2 to-hit rolls.",
+    icon: "screaming",
     mana_cost: 1,
-    routing: "damage",
+    routing: "utility",
     target: "single_enemy",
     execute(ctx) {
       const monster = ctx.target as { id: string };
-      const wpn = Math.max(0, ctx.caster.weapon_power);
-      const party = Math.max(1, ctx.party.length);
-      const r = rollSum(ctx.roll, 1, 6);
-      const amount = r + ctx.caster.magic_mod + party * 2 + wpn;
-      return [fx.damage(monster.id, amount, `1d6 + ${ctx.caster.magic_mod}m + ${party}p×2 + ${wpn}w`, { drinkBuff: "ability" })];
+      return [fx.discourage(monster.id, 2)];
     },
   },
   {
@@ -51,25 +47,24 @@ export const bardAbilities: AbilityDef[] = [
       const lowest = ctx.party.reduce((a, b) =>
         a.hp / a.max_hp <= b.hp / b.max_hp ? a : b,
       );
-      const healAmt = rollSum(ctx.roll, 2, 6) + ctx.caster.magic_mod;
+      const healAmt = ctx.roll(6) + ctx.roll(6) + ctx.caster.magic_mod;
       const shieldAmt = 2 + Math.floor(ctx.caster.level / 5);
       return [fx.heal(lowest.id, healAmt), fx.shield(lowest.id, shieldAmt)];
     },
   },
   {
     kind: "active",
-    id: "discord",
-    name: "Discord",
-    blurb: "A wall of dissonant noise that damages all enemies.",
-    icon: "sonic-shout",
-    mana_cost: 3,
-    routing: "aoe_damage",
-    target: "all_enemies",
+    id: "encourage",
+    name: "Encourage",
+    blurb: "A rallying word fills an ally with confidence — advantage on their next 2 to-hit rolls.",
+    icon: "conversation",
+    mana_cost: 1,
+    routing: "utility",
+    target: "single_ally",
     execute(ctx) {
-      const amount = rollSum(ctx.roll, 1, 4) + ctx.caster.magic_mod;
-      return ctx.monsters.map((m) =>
-        fx.damage(m.id, amount, `1d4 + ${ctx.caster.magic_mod}m`),
-      );
+      const target = ctx.target as { id: string } | undefined;
+      const targetId = target?.id ?? ctx.caster.id;
+      return [fx.encourage(targetId, 2)];
     },
   },
   {

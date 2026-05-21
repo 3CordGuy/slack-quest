@@ -10743,9 +10743,15 @@ async function patchAbilityState(
     ...(scene.ability_state ?? {}),
     ...partial,
   };
-  // Merge vanished maps (we want union, not replace).
+  // Merge map fields (we want union, not replace).
   if (partial.vanished && scene.ability_state?.vanished) {
     merged.vanished = { ...scene.ability_state.vanished, ...partial.vanished };
+  }
+  if (partial.encourage && scene.ability_state?.encourage) {
+    merged.encourage = { ...scene.ability_state.encourage, ...partial.encourage };
+  }
+  if (partial.discourage && scene.ability_state?.discourage) {
+    merged.discourage = { ...scene.ability_state.discourage, ...partial.discourage };
   }
   scene.ability_state = merged;
   await db
@@ -10914,8 +10920,8 @@ async function useSoulDrain(
   return ephemeral(headline);
 }
 
-// 🎵 Frontend Bard — Battle Hymn. The bardic aura jumps from +1 to +3
-// damage for the next 2 partymate attacks.
+// 🎵 Frontend Bard — Battle Hymn. Charges up the bardic aura for the next
+// few party attacks AND restores 1 mana to every alive party member.
 async function useBattleHymn(
   payload: SlashCommandPayload,
   env: Env,
@@ -10924,13 +10930,15 @@ async function useBattleHymn(
   quest: ActiveQuest,
   ability: { name: string; mana_cost: number },
 ): Promise<CommandResponse> {
-  const HYMN_USES = 2;
+  const hymnUses = 2 + Math.floor(character.level / 5);
+  const manaRestore = 1 + Math.floor(character.level / 8);
   const ok = await tryDeductMana(env.DB, payload.user_id, ability.mana_cost);
   if (!ok) return ephemeral("Couldn't deduct mana — try again.");
   const current = quest.scene.ability_state?.battle_hymn ?? 0;
-  await patchAbilityState(env.DB, quest.id, { battle_hymn: current + HYMN_USES });
-  await appendLog(env.DB, quest.id, payload.user_id, "ability", `Battle Hymn → +${HYMN_USES} hymn-charged attacks`);
-  const headline = `🎵 *${ability.name}!* <@${payload.user_id}> strikes a heroic chord — the next *${HYMN_USES}* partymate attacks deal *+3* damage instead of +1.`;
+  await patchAbilityState(env.DB, quest.id, { battle_hymn: current + hymnUses });
+  await regenPartyMana(env.DB, quest.id, manaRestore);
+  await appendLog(env.DB, quest.id, payload.user_id, "ability", `Battle Hymn → +${hymnUses} hymn-charged attacks, +${manaRestore} mana/ally`);
+  const headline = `🎵 *${ability.name}!* <@${payload.user_id}> strikes a heroic chord — next *${hymnUses}* partymate attacks get bardic aura boost. Everyone restores *+${manaRestore}* mana.`;
   ctx.waitUntil(postToThread(env, quest, blockQuote(headline)));
   return ephemeral(headline);
 }
