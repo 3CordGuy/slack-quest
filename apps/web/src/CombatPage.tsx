@@ -1486,6 +1486,59 @@ function DisconnectedModal({ onReconnect }: { onReconnect: () => void }): JSX.El
   );
 }
 
+type PillSize = "sm" | "md" | "lg";
+
+function StatusPill({ color, icon, label, suffix, title, size = "md" }: {
+  color: string; icon: string; label: string; suffix: string;
+  title?: string; size?: PillSize;
+}) {
+  const s = size === "lg"
+    ? { fontSize: 12, padding: "3px 8px", gap: 5, borderRadius: 6, iconSize: 14, borderOp: "88", letterSpacing: 0.3, suffixFs: 11 as number | undefined }
+    : size === "sm"
+    ? { fontSize: 10, padding: "1px 5px", gap: 3, borderRadius: 4, iconSize: 10, borderOp: "aa", letterSpacing: 0.2, suffixFs: undefined, textShadow: "0 1px 2px rgba(0,0,0,0.9)" }
+    : { fontSize: 11, padding: "2px 7px", gap: 4, borderRadius: 5, iconSize: 12, borderOp: "88", letterSpacing: 0.2, suffixFs: undefined };
+  return (
+    <span
+      title={title}
+      style={{
+        display: "inline-flex", alignItems: "center", gap: s.gap,
+        fontSize: s.fontSize, fontWeight: 700,
+        background: color + "33",
+        border: `1px solid ${color}${"textShadow" in s ? "aa" : "88"}`,
+        color, borderRadius: s.borderRadius, padding: s.padding,
+        textTransform: "capitalize", letterSpacing: s.letterSpacing,
+        textShadow: "textShadow" in s ? (s as { textShadow: string }).textShadow : undefined,
+      }}
+    >
+      <Icon name={icon} size={s.iconSize} color={color} />
+      {label}
+      <span style={{ opacity: 0.8, fontWeight: 600, fontSize: s.suffixFs }}>· {suffix}</span>
+    </span>
+  );
+}
+
+const EFFECT_PILLS: Partial<Record<string, (e: StatusEffect, size: PillSize) => JSX.Element>> = {
+  regen:    (e, sz) => <StatusPill size={sz} color="#4ade80" icon="regeneration" label="regen"
+    suffix={`${e.remaining}t`} title={`regen ×${e.magnitude} (${e.remaining} turn${e.remaining === 1 ? "" : "s"} remaining)`} />,
+  bleeding: (e, sz) => <StatusPill size={sz} color="#f87171" icon="bleeding-wound"
+    label={`bleeding${e.magnitude > 1 ? ` ×${e.magnitude}` : ""}`}
+    suffix={`${e.remaining}t`} title={`bleeding ×${e.magnitude} (${e.remaining} turn${e.remaining === 1 ? "" : "s"} remaining)`} />,
+  burning:  (e, sz) => <StatusPill size={sz} color="#fb923c" icon="fire"
+    label={`burning${e.magnitude > 1 ? ` ×${e.magnitude}` : ""}`}
+    suffix={`${e.remaining}t`} title={`burning ×${e.magnitude} (${e.remaining} turn${e.remaining === 1 ? "" : "s"} remaining)`} />,
+  frozen:   (e, sz) => <StatusPill size={sz} color="#93c5fd" icon="ice-bolt" label="frozen"
+    suffix={`${e.remaining}t`} title={`frozen (${e.remaining} turn${e.remaining === 1 ? "" : "s"} remaining)`} />,
+  shocked:  (e, sz) => <StatusPill size={sz} color="#fbbf24" icon="electric"
+    label={`shocked${e.magnitude > 1 ? ` ×${e.magnitude}` : ""}`}
+    suffix={`${e.remaining}t`} title={`shocked ×${e.magnitude} (${e.remaining} turn${e.remaining === 1 ? "" : "s"} remaining)`} />,
+  stunned:  (e, sz) => <StatusPill size={sz} color="#a78bfa" icon="fluffy-swirl" label="stunned"
+    suffix={e.pill_suffix ?? `${e.remaining}t`}
+    title={`stunned (${e.pill_suffix ?? `${e.remaining}t`} this turn)`} />,
+  poisoned: (e, sz) => <StatusPill size={sz} color="#c084fc" icon="poison-cloud"
+    label={`poisoned${e.magnitude > 1 ? ` ×${e.magnitude}` : ""}`}
+    suffix={`${e.remaining}t`} title={`poisoned ×${e.magnitude} (${e.remaining} turn${e.remaining === 1 ? "" : "s"} remaining)`} />,
+};
+
 function MonsterCard({
   monster,
   round,
@@ -1610,42 +1663,11 @@ function MonsterCard({
           </div>
         </div>
         <BigHpBar current={Math.max(0, monster.hp)} max={monster.max_hp} />
-        {/* Status effects pills — sized so they're legible at a glance.
-            Earlier 9px-icon / 10px-text version was unreadable in screenshots. */}
         {monster.effects && monster.effects.length > 0 && !isDead && (
           <div style={{ display: "flex", gap: 6, marginTop: 6, flexWrap: "wrap" }}>
             {monster.effects.map((e, i) => {
-              const [col, icon] = e.type === "regen" ? ["#4ade80", "regeneration"]
-                : e.type === "bleeding" ? ["#f87171", "bleeding-wound"]
-                : e.type === "burning" ? ["#fb923c", "fire"]
-                : e.type === "frozen" ? ["#93c5fd", "ice-bolt"]
-                : e.type === "shocked" ? ["#fbbf24", "electric"]
-                : e.type === "stunned" ? ["#a78bfa", "fluffy-swirl"]
-                : ["#c084fc", "poison-cloud"];
-              const pillSuffix = e.pill_suffix ?? `${e.remaining}t`;
-              return (
-                <span
-                  key={i}
-                  title={e.pill_suffix
-                    ? `${e.type} (${e.pill_suffix} this turn)`
-                    : `${e.type} ×${e.magnitude} (${e.remaining} turn${e.remaining === 1 ? "" : "s"} remaining)`}
-                  style={{
-                    display: "inline-flex", alignItems: "center", gap: 5,
-                    fontSize: 12, fontWeight: 700,
-                    background: col + "33",
-                    border: `1px solid ${col}88`,
-                    color: col,
-                    borderRadius: 6,
-                    padding: "3px 8px",
-                    textTransform: "capitalize",
-                    letterSpacing: 0.3,
-                  }}
-                >
-                  <Icon name={icon} size={14} color={col} />
-                  {e.type}{!e.pill_suffix && e.magnitude > 1 ? ` ×${e.magnitude}` : ""}
-                  <span style={{ opacity: 0.8, fontWeight: 600, fontSize: 11 }}>· {pillSuffix}</span>
-                </span>
-              );
+              const render = EFFECT_PILLS[e.type];
+              return render ? <span key={i}>{render(e, "lg")}</span> : null;
             })}
           </div>
         )}
@@ -1869,33 +1891,11 @@ function FighterRow({ fighter, self, current }: { fighter: Fighter; self: boolea
             <span style={badge("#3a1f1f", "#ff7676", "#5a2a2a")}>downed</span>
           )}
         </div>
-        {/* Status effects */}
         {fighter.effects && fighter.effects.length > 0 && (
           <div style={{ display: "flex", gap: 5, flexWrap: "wrap", marginBottom: 4, marginTop: 4 }}>
             {fighter.effects.map((e, i) => {
-              const [color, icon] = e.type === "regen" ? ["#4ade80", "regeneration"]
-                : e.type === "bleeding" ? ["#f87171", "bleeding-wound"]
-                : e.type === "burning" ? ["#fb923c", "fire"]
-                : e.type === "frozen" ? ["#93c5fd", "ice-bolt"]
-                : e.type === "shocked" ? ["#fbbf24", "electric"]
-                : ["#c084fc", "poison-cloud"];
-              return (
-                <span
-                  key={i}
-                  title={`${e.type} ×${e.magnitude} (${e.remaining} turn${e.remaining === 1 ? "" : "s"}${e.source ? ` — ${e.source}` : ""})`}
-                  style={{
-                    display: "inline-flex", alignItems: "center", gap: 4,
-                    background: `${color}33`, border: `1px solid ${color}88`,
-                    borderRadius: 5, padding: "2px 7px",
-                    fontSize: 11, color, fontWeight: 700,
-                    textTransform: "capitalize", letterSpacing: 0.2,
-                  }}
-                >
-                  <Icon name={icon} size={12} color={color} />
-                  {e.type}{e.magnitude > 1 ? ` ×${e.magnitude}` : ""}
-                  <span style={{ opacity: 0.8, fontWeight: 600 }}>· {e.remaining}t</span>
-                </span>
-              );
+              const render = EFFECT_PILLS[e.type];
+              return render ? <span key={i}>{render(e, "md")}</span> : null;
             })}
           </div>
         )}
@@ -2736,37 +2736,11 @@ function PartyChips({ fighters, selfId, flashIds, hitDustSeq, healBurstSeq, shie
             <div key={mi} style={{ width: 7, height: 7, borderRadius: "50%", background: mi < f.mana ? "#818cf8" : "#1e2028", border: "1px solid #3a3d43" }} />
           ))}
         </div>
-        {/* Status effect pills — burning / frozen / shocked / poisoned /
-            bleeding / regen. Used by outskirts / boss / gauntlet (any
-            non-dungeon quest). Matches the dungeon PartyBar styling. */}
         {f.effects && f.effects.length > 0 && (
           <div style={{ position: "absolute", top: -8, right: -4, display: "flex", flexDirection: "column", gap: 3, alignItems: "flex-end" }}>
             {f.effects.map((e, i) => {
-              const [color, icon] = e.type === "regen" ? ["#4ade80", "regeneration"]
-                : e.type === "bleeding" ? ["#f87171", "bleeding-wound"]
-                : e.type === "burning" ? ["#fb923c", "fire"]
-                : e.type === "frozen" ? ["#93c5fd", "ice-bolt"]
-                : e.type === "shocked" ? ["#fbbf24", "electric"]
-                : ["#c084fc", "poison-cloud"];
-              return (
-                <span
-                  key={i}
-                  title={`${e.type} ×${e.magnitude} (${e.remaining} turn${e.remaining === 1 ? "" : "s"})`}
-                  style={{
-                    display: "inline-flex", alignItems: "center", gap: 3,
-                    background: `${color}33`,
-                    border: `1px solid ${color}aa`,
-                    borderRadius: 4, padding: "1px 5px",
-                    fontSize: 10, color, fontWeight: 700,
-                    textShadow: "0 1px 2px rgba(0,0,0,0.9)",
-                    textTransform: "capitalize", letterSpacing: 0.2,
-                  }}
-                >
-                  <Icon name={icon} size={10} color={color} />
-                  {e.type}{e.magnitude > 1 ? ` ×${e.magnitude}` : ""}
-                  <span style={{ opacity: 0.85, fontWeight: 600 }}>· {e.remaining}t</span>
-                </span>
-              );
+              const render = EFFECT_PILLS[e.type];
+              return render ? <span key={i}>{render(e, "sm")}</span> : null;
             })}
           </div>
         )}
