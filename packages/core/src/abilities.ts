@@ -94,7 +94,11 @@ export type AbilityEffect =
   // Show full battle intel for N of the sage's own turns (foresee).
   | { kind: "set_foresee_turns"; turns: number }
   // Move a fighter to a different row.
-  | { kind: "move_fighter"; target_id: string; to: "front" | "back" };
+  | { kind: "move_fighter"; target_id: string; to: "front" | "back" }
+  // Grant advantage charges to a fighter: next N to-hit d20 rolls twice, take higher.
+  | { kind: "grant_encourage"; target_id: string; charges: number }
+  // Apply disadvantage charges to a monster: next N to-hit d20 rolls twice, take lower.
+  | { kind: "apply_discourage"; target_id: string; charges: number };
 
 export interface ActiveAbilityDef {
   kind: "active";
