@@ -38,6 +38,8 @@ const SVG_ICONS = new Set([
   "potion-ball",
   // Weapon icons
   "hammer-drop",
+  // Bard ability icons
+  "music-spell", "morbid-humour",
 ]);
 
 interface IconProps {

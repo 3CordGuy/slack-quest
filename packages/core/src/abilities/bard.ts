@@ -7,7 +7,7 @@ export const bardAbilities: AbilityDef[] = [
     id: "mock",
     name: "Mock",
     blurb: "A cutting jeer rattles the enemy — disadvantage on their next 2 to-hit rolls.",
-    icon: "screaming",
+    icon: "morbid-humour",
     mana_cost: 1,
     routing: "utility",
     target: "single_enemy",
