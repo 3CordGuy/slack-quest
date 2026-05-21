@@ -1147,6 +1147,8 @@ export async function flavorLootDrop(
     type === "revive" ? `It revives a downed party member to ${power}% of their max HP.` :
     type === "weapon" && weaponRange === "focus"
       ? `It grants +${power} to heal AND shield amounts (no damage bonus). Also +1 max mana while equipped.`
+    : power === 0
+      ? `It grants a stat bonus when equipped (no armor value — name it by its feel/theme, not a number).`
       : `It grants a +${power} bonus when equipped.`;
 
   const user = [

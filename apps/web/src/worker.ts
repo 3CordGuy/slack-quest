@@ -720,7 +720,7 @@ async function nameLootViaAi(
     roll.type === "revive"
   ) {
     return flavorLootDrop(
-      env.AI, monsterName, roll.type, roll.rarity, roll.power, roll.weapon_range, undefined, roll.element,
+      env.AI, monsterName, roll.type, roll.rarity, roll.power, roll.weapon_range, roll.slot ?? undefined, roll.item_subtype ?? undefined,
     );
   }
   // Unknown / future type — fall back to the deterministic name.
@@ -1297,7 +1297,7 @@ async function buildDungeonScene(
       roll.power,
       roll.weapon_range,
       roll.slot ?? undefined,
-      roll.element,
+      roll.item_subtype ?? undefined,
     );
   }
 
@@ -2485,10 +2485,10 @@ app.post("/api/shop/restock", async (c) => {
         flavor = await flavorCatalogItem(c.env.AI, entry.name, entry.blurb, "the shopkeep's chest");
         name = `${entry.emoji} ${entry.name}`;
       } else {
-        ({ name, flavor } = await flavorLootDrop(c.env.AI, "the shopkeep's chest", roll.type as "weapon" | "armor" | "consumable" | "magic" | "revive", roll.rarity, roll.power, roll.weapon_range, roll.slot ?? undefined));
+        ({ name, flavor } = await flavorLootDrop(c.env.AI, "the shopkeep's chest", roll.type as "weapon" | "armor" | "consumable" | "magic" | "revive", roll.rarity, roll.power, roll.weapon_range, roll.slot ?? undefined, roll.item_subtype ?? undefined));
       }
     } else {
-      ({ name, flavor } = await flavorLootDrop(c.env.AI, "the shopkeep's chest", roll.type as "weapon" | "armor" | "consumable" | "magic" | "revive", roll.rarity, roll.power, roll.weapon_range, roll.slot ?? undefined));
+      ({ name, flavor } = await flavorLootDrop(c.env.AI, "the shopkeep's chest", roll.type as "weapon" | "armor" | "consumable" | "magic" | "revive", roll.rarity, roll.power, roll.weapon_range, roll.slot ?? undefined, roll.item_subtype ?? undefined));
     }
     items.push({
       channel_id: channelId,
