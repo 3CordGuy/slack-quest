@@ -1517,26 +1517,42 @@ function StatusPill({ color, icon, label, suffix, title, size = "md" }: {
   );
 }
 
-const EFFECT_PILLS: Partial<Record<string, (e: StatusEffect, size: PillSize) => JSX.Element>> = {
-  regen:    (e, sz) => <StatusPill size={sz} color="#4ade80" icon="regeneration" label="regen"
-    suffix={`${e.remaining}t`} title={`regen ×${e.magnitude} (${e.remaining} turn${e.remaining === 1 ? "" : "s"} remaining)`} />,
-  bleeding: (e, sz) => <StatusPill size={sz} color="#f87171" icon="bleeding-wound"
-    label={`bleeding${e.magnitude > 1 ? ` ×${e.magnitude}` : ""}`}
-    suffix={`${e.remaining}t`} title={`bleeding ×${e.magnitude} (${e.remaining} turn${e.remaining === 1 ? "" : "s"} remaining)`} />,
-  burning:  (e, sz) => <StatusPill size={sz} color="#fb923c" icon="fire"
-    label={`burning${e.magnitude > 1 ? ` ×${e.magnitude}` : ""}`}
-    suffix={`${e.remaining}t`} title={`burning ×${e.magnitude} (${e.remaining} turn${e.remaining === 1 ? "" : "s"} remaining)`} />,
-  frozen:   (e, sz) => <StatusPill size={sz} color="#93c5fd" icon="ice-bolt" label="frozen"
-    suffix={`${e.remaining}t`} title={`frozen (${e.remaining} turn${e.remaining === 1 ? "" : "s"} remaining)`} />,
-  shocked:  (e, sz) => <StatusPill size={sz} color="#fbbf24" icon="electric"
-    label={`shocked${e.magnitude > 1 ? ` ×${e.magnitude}` : ""}`}
-    suffix={`${e.remaining}t`} title={`shocked ×${e.magnitude} (${e.remaining} turn${e.remaining === 1 ? "" : "s"} remaining)`} />,
-  stunned:  (e, sz) => <StatusPill size={sz} color="#a78bfa" icon="fluffy-swirl" label="stunned"
-    suffix={e.pill_suffix ?? `${e.remaining}t`}
-    title={`stunned (${e.pill_suffix ?? `${e.remaining}t`} this turn)`} />,
-  poisoned: (e, sz) => <StatusPill size={sz} color="#c084fc" icon="poison-cloud"
-    label={`poisoned${e.magnitude > 1 ? ` ×${e.magnitude}` : ""}`}
-    suffix={`${e.remaining}t`} title={`poisoned ×${e.magnitude} (${e.remaining} turn${e.remaining === 1 ? "" : "s"} remaining)`} />,
+type EffectPillProps = { effect: StatusEffect; size: PillSize };
+
+const EFFECT_PILLS: Partial<Record<string, { pill: React.FC<EffectPillProps> }>> = {
+  regen: {
+    pill: ({ effect: e, size }) => <StatusPill size={size} color="#4ade80" icon="regeneration" label="regen"
+      suffix={`${e.remaining}t`} title={`regen ×${e.magnitude} (${e.remaining} turn${e.remaining === 1 ? "" : "s"} remaining)`} />,
+  },
+  bleeding: {
+    pill: ({ effect: e, size }) => <StatusPill size={size} color="#f87171" icon="bleeding-wound"
+      label={`bleeding${e.magnitude > 1 ? ` ×${e.magnitude}` : ""}`}
+      suffix={`${e.remaining}t`} title={`bleeding ×${e.magnitude} (${e.remaining} turn${e.remaining === 1 ? "" : "s"} remaining)`} />,
+  },
+  burning: {
+    pill: ({ effect: e, size }) => <StatusPill size={size} color="#fb923c" icon="fire"
+      label={`burning${e.magnitude > 1 ? ` ×${e.magnitude}` : ""}`}
+      suffix={`${e.remaining}t`} title={`burning ×${e.magnitude} (${e.remaining} turn${e.remaining === 1 ? "" : "s"} remaining)`} />,
+  },
+  frozen: {
+    pill: ({ effect: e, size }) => <StatusPill size={size} color="#93c5fd" icon="ice-bolt" label="frozen"
+      suffix={`${e.remaining}t`} title={`frozen (${e.remaining} turn${e.remaining === 1 ? "" : "s"} remaining)`} />,
+  },
+  shocked: {
+    pill: ({ effect: e, size }) => <StatusPill size={size} color="#fbbf24" icon="electric"
+      label={`shocked${e.magnitude > 1 ? ` ×${e.magnitude}` : ""}`}
+      suffix={`${e.remaining}t`} title={`shocked ×${e.magnitude} (${e.remaining} turn${e.remaining === 1 ? "" : "s"} remaining)`} />,
+  },
+  stunned: {
+    pill: ({ effect: e, size }) => <StatusPill size={size} color="#a78bfa" icon="fluffy-swirl" label="stunned"
+      suffix={e.pill_suffix ?? `${e.remaining}t`}
+      title={`stunned (${e.pill_suffix ?? `${e.remaining}t`} this turn)`} />,
+  },
+  poisoned: {
+    pill: ({ effect: e, size }) => <StatusPill size={size} color="#c084fc" icon="poison-cloud"
+      label={`poisoned${e.magnitude > 1 ? ` ×${e.magnitude}` : ""}`}
+      suffix={`${e.remaining}t`} title={`poisoned ×${e.magnitude} (${e.remaining} turn${e.remaining === 1 ? "" : "s"} remaining)`} />,
+  },
 };
 
 function MonsterCard({
@@ -1666,8 +1682,8 @@ function MonsterCard({
         {monster.effects && monster.effects.length > 0 && !isDead && (
           <div style={{ display: "flex", gap: 6, marginTop: 6, flexWrap: "wrap" }}>
             {monster.effects.map((e, i) => {
-              const render = EFFECT_PILLS[e.type];
-              return render ? <span key={i}>{render(e, "lg")}</span> : null;
+              const def = EFFECT_PILLS[e.type];
+              return def ? <def.pill key={i} effect={e} size="lg" /> : null;
             })}
           </div>
         )}
@@ -1894,8 +1910,8 @@ function FighterRow({ fighter, self, current }: { fighter: Fighter; self: boolea
         {fighter.effects && fighter.effects.length > 0 && (
           <div style={{ display: "flex", gap: 5, flexWrap: "wrap", marginBottom: 4, marginTop: 4 }}>
             {fighter.effects.map((e, i) => {
-              const render = EFFECT_PILLS[e.type];
-              return render ? <span key={i}>{render(e, "md")}</span> : null;
+              const def = EFFECT_PILLS[e.type];
+              return def ? <def.pill key={i} effect={e} size="md" /> : null;
             })}
           </div>
         )}
@@ -2739,8 +2755,8 @@ function PartyChips({ fighters, selfId, flashIds, hitDustSeq, healBurstSeq, shie
         {f.effects && f.effects.length > 0 && (
           <div style={{ position: "absolute", top: -8, right: -4, display: "flex", flexDirection: "column", gap: 3, alignItems: "flex-end" }}>
             {f.effects.map((e, i) => {
-              const render = EFFECT_PILLS[e.type];
-              return render ? <span key={i}>{render(e, "sm")}</span> : null;
+              const def = EFFECT_PILLS[e.type];
+              return def ? <def.pill key={i} effect={e} size="sm" /> : null;
             })}
           </div>
         )}
