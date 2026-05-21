@@ -453,7 +453,10 @@ export type CombatEvent =
   | { type: "passive_druid_regen"; actor: ActorId; amount: number }
   | { type: "passive_rogue_first_crit"; actor: ActorId }
   | { type: "passive_bard_aura"; actor: ActorId; source: ActorId; bonus: number }
-  | { type: "passive_warlock_bleed"; actor: ActorId; magnitude: number; duration: number }
+  | { type: "passive_sinister_queries"; actor: ActorId; target: ActorId; magnitude: number }
+  | { type: "ability_hex"; actor: ActorId; target: ActorId; duration: number }
+  | { type: "hex_bleed_proc"; target: ActorId; stacks: number }
+  | { type: "ability_forbidden_sql"; actor: ActorId; target: ActorId; stacks_consumed: number; damage: number }
   | { type: "passive_paladin_auto_heal"; paladin: ActorId; target: ActorId; amount: number }
   | {
       type: "drink_buff_consumed";
@@ -936,11 +939,14 @@ function handlePlayerHit(
     nextState = markPassiveUsed(nextState, action.actor, PASSIVE_ROGUE_FIRST_CRIT);
   }
 
-  // Data Warlock — Cursed Strike. Applies bleed on a crit attack/cast. Always-on.
-  if (isCrit && !monsterKilled) {
-    const bleed = applyWarlockBleed(nextState, tickedFighter, monster.id, true);
-    nextState = bleed.state;
-    events.push(...bleed.events);
+  // Sinister Queries passive — applies bleed on any hit.
+  if (!monsterKilled) {
+    const sq = applySinisterQueries(nextState, tickedFighter, monster.id);
+    nextState = sq.state;
+    events.push(...sq.events);
+    const hexProc = applyHexBleedProc(nextState, monster.id);
+    nextState = hexProc.state;
+    events.push(...hexProc.events);
   }
 
   // Elemental weapon proc — applies status (burning/frozen/shocked) to target.
@@ -1274,12 +1280,13 @@ function handleMonsterAct(state: CombatState, roll: RollFn): StepResult {
   if (doSplash) {
     const splashDamageType = monster.attack_damage_type ?? "physical";
     const splashTargets = aliveFighters.filter((f) => (vanished[f.id] ?? 0) <= 0);
+    const splashHexMult = monster.effects.some((e) => e.type === "hexed") ? 0.75 : 1.0;
     const splashHits = splashTargets.map((f) => {
       const resistPct = splashDamageType !== "physical" ? (f.resistances?.[splashDamageType] ?? 0) : 0;
       const hit = resolveMonsterHit(monster.tier, aliveFighters.length, 0, bossPhase2, roll, splashDamageType, resistPct);
       const splashShocked = f.effects.find((e) => e.type === "shocked");
       const splashShockMult = splashShocked ? (splashShocked.magnitude >= 2 ? 1.45 : 1.30) : 1.0;
-      const posAdj = positionDamageMod(f.position, Math.round(hit.final * splashShockMult));
+      const posAdj = positionDamageMod(f.position, Math.round(hit.final * splashShockMult * splashHexMult));
       // Physical depletes armor pool; non-physical bypasses it.
       const splashArmorPool = splashDamageType === "physical" ? f.shield : 0;
       const rawSplash = applyDamageWithShield(posAdj, splashArmorPool, f.hp);
@@ -1414,7 +1421,8 @@ function handleMonsterAct(state: CombatState, roll: RollFn): StepResult {
   );
   const targetShocked = target.effects.find((e) => e.type === "shocked");
   const targetShockMult = targetShocked ? (targetShocked.magnitude >= 2 ? 1.45 : 1.30) : 1.0;
-  const positionAdjusted = positionDamageMod(target.position, Math.round(hit.final * targetShockMult));
+  const hexMult = monster.effects.some((e) => e.type === "hexed") ? 0.75 : 1.0;
+  const positionAdjusted = positionDamageMod(target.position, Math.round(hit.final * targetShockMult * hexMult));
   // Physical attacks route through the armor pool first (shield = depletable armor).
   // Non-physical bypasses armor entirely and hits HP directly.
   const armorForHit = attackDamageType === "physical" ? target.shield : 0;
@@ -1592,11 +1600,14 @@ function handleDamageAbility(
 
   if (phaseTransition) events.push({ type: "boss_phase_transition", new_phase: 2 });
 
-  // Warlock Cursed Strike: crits apply bleed.
-  if (isCrit && !monsterKilled) {
-    const bleed = applyWarlockBleed(nextState, tickedActor, monster.id, true);
-    nextState = bleed.state;
-    events.push(...bleed.events);
+  // Sinister Queries passive — applies bleed on any ability damage hit.
+  if (!monsterKilled) {
+    const sq = applySinisterQueries(nextState, tickedActor, monster.id);
+    nextState = sq.state;
+    events.push(...sq.events);
+    const hexProc = applyHexBleedProc(nextState, monster.id);
+    nextState = hexProc.state;
+    events.push(...hexProc.events);
   }
 
   // Elemental weapon proc.
@@ -1922,6 +1933,16 @@ function applyUtilityAbilityEffects(
           contribution: { ...s.contribution, [actor]: (s.contribution[actor] ?? 0) + effect.amount },
         };
         if (newHp <= 0) return resolveMonsterKill(s, monster.id, actor, events);
+        // Sinister Queries passive and hex bleed proc fire on any damage hit.
+        const casterFighter = s.fighters.find((f) => f.id === actor);
+        if (casterFighter) {
+          const sq = applySinisterQueries(s, casterFighter, monster.id);
+          s = sq.state;
+          events.push(...sq.events);
+        }
+        const hexProc = applyHexBleedProc(s, monster.id);
+        s = hexProc.state;
+        events.push(...hexProc.events);
         break;
       }
       case "heal": {
@@ -2044,6 +2065,35 @@ function applyUtilityAbilityEffects(
         events.push({ type: "ability_migrate", actor, target: effect.target_id, from, to: effect.to });
         break;
       }
+      case "hex_monster": {
+        const target = s.monsters.find((m) => m.id === effect.target_id && m.hp > 0);
+        if (!target) break;
+        const hexEffect: MachineStatusEffect = {
+          type: "hexed",
+          magnitude: 1,
+          remaining: effect.duration,
+          source: actor,
+        };
+        s = {
+          ...s,
+          monsters: s.monsters.map((m) =>
+            m.id === target.id ? { ...m, effects: mergeEffect(m.effects, hexEffect) } : m,
+          ),
+        };
+        events.push({ type: "ability_hex", actor, target: target.id, duration: effect.duration });
+        break;
+      }
+      case "consume_monster_bleed": {
+        const target = s.monsters.find((m) => m.id === effect.target_id && m.hp > 0);
+        if (!target) break;
+        s = {
+          ...s,
+          monsters: s.monsters.map((m) =>
+            m.id === target.id ? { ...m, effects: m.effects.filter((e) => e.type !== "bleeding") } : m,
+          ),
+        };
+        break;
+      }
       case "grant_encourage": {
         const prev = s.ability_state?.encourage ?? {};
         const prevCharges = prev[effect.target_id] ?? 0;
@@ -2068,9 +2118,9 @@ function applyUtilityAbilityEffects(
       }
       case "summon_ally_npc": {
         const { spec, id_suffix } = effect;
-        const npcId: ActorId = `__ally_${id_suffix}_${actor}__`;
-        // Don't double-summon if the NPC is already alive in this fight.
-        if (s.fighters.some((f) => f.id === npcId && f.hp > 0)) break;
+        const idPrefix = `__ally_${id_suffix}_${actor}_`;
+        const count = s.fighters.filter((f) => f.id.startsWith(idPrefix)).length;
+        const npcId: ActorId = `${idPrefix}${count}__`;
         const npc: CombatFighter = {
           id: npcId,
           name: spec.name,
@@ -2340,7 +2390,7 @@ function tickEffects(
   const newEffects: MachineStatusEffect[] = [];
   const events: CombatEvent[] = [];
   for (const eff of effects) {
-    if (eff.type === "empowered" || eff.type === "frozen" || eff.type === "shocked" || eff.type === "stunned") {
+    if (eff.type === "empowered" || eff.type === "frozen" || eff.type === "shocked" || eff.type === "stunned" || eff.type === "hexed") {
       // Passive — no HP delta. Silently count down; the effect is applied
       // inline in the attack/turn handlers via the actor's effects array.
       // "stunned" uses remaining as a max-duration safety net (break logic
@@ -2643,38 +2693,46 @@ function computeBardAuraBonus(
 }
 
 // Data Warlock — Cursed Strike. On a critical attack/cast, apply a 2-turn
-// bleed to the target monster. Always-on (no usage tracking).
-function applyWarlockBleed(
+// Sinister Queries passive: fires on any hit (attack, cast, or ability damage).
+// Applies 1 + floor(level/5) bleed stacks to the target monster.
+function applySinisterQueries(
   state: CombatState,
   actor: CombatFighter,
   targetMonsterId: ActorId,
-  isCrit: boolean,
 ): { state: CombatState; events: CombatEvent[] } {
-  if (!isCrit || !classHasPassive(actor.class, "cursed_strike")) return { state, events: [] };
+  if (!classHasPassive(actor.class, "sinister_queries")) return { state, events: [] };
   const targetMonster = state.monsters.find((m) => m.id === targetMonsterId && m.hp > 0);
   if (!targetMonster) return { state, events: [] };
-  const newEffect: MachineStatusEffect = {
-    type: "bleeding",
-    magnitude: WARLOCK_BLEED_MAGNITUDE,
-    remaining: WARLOCK_BLEED_DURATION,
-    source: actor.id,
-  };
-  const updated: CombatState = {
-    ...state,
-    monsters: state.monsters.map((m) =>
-      m.id === targetMonsterId ? { ...m, effects: mergeEffect(m.effects, newEffect) } : m,
-    ),
-  };
+  const magnitude = 1 + Math.floor(actor.level / 5);
+  const newEffect: MachineStatusEffect = { type: "bleeding", magnitude, remaining: 3, source: actor.id };
   return {
-    state: updated,
-    events: [
-      {
-        type: "passive_warlock_bleed",
-        actor: actor.id,
-        magnitude: WARLOCK_BLEED_MAGNITUDE,
-        duration: WARLOCK_BLEED_DURATION,
-      },
-    ],
+    state: {
+      ...state,
+      monsters: state.monsters.map((m) =>
+        m.id === targetMonsterId ? { ...m, effects: mergeEffect(m.effects, newEffect) } : m,
+      ),
+    },
+    events: [{ type: "passive_sinister_queries", actor: actor.id, target: targetMonsterId, magnitude }],
+  };
+}
+
+// Hex bleed proc: whenever a hexed monster takes damage, apply 3 bleed stacks.
+function applyHexBleedProc(
+  state: CombatState,
+  targetMonsterId: ActorId,
+): { state: CombatState; events: CombatEvent[] } {
+  const targetMonster = state.monsters.find((m) => m.id === targetMonsterId && m.hp > 0);
+  if (!targetMonster || !targetMonster.effects.some((e) => e.type === "hexed")) return { state, events: [] };
+  const stacks = 3;
+  const newEffect: MachineStatusEffect = { type: "bleeding", magnitude: stacks, remaining: 3, source: "hex" };
+  return {
+    state: {
+      ...state,
+      monsters: state.monsters.map((m) =>
+        m.id === targetMonsterId ? { ...m, effects: mergeEffect(m.effects, newEffect) } : m,
+      ),
+    },
+    events: [{ type: "hex_bleed_proc", target: targetMonsterId, stacks }],
   };
 }
 
@@ -2825,6 +2883,7 @@ const EFFECT_STACK_POLICY: Record<EffectType, { mode: "stack" | "refresh"; maxMa
   frozen:    { mode: "refresh", maxMagnitude: 2 },
   shocked:   { mode: "refresh", maxMagnitude: 2 },
   stunned:   { mode: "refresh", maxMagnitude: 1 },
+  hexed:     { mode: "refresh", maxMagnitude: 1 },
 };
 
 // Merge `incoming` into the existing effect list. If an effect of the

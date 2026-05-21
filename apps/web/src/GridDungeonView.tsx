@@ -171,6 +171,7 @@ type TurnAction =
   | { kind: "mark"; actor: string }
   | { kind: "ability"; actor: string; ability_id: string; target_id?: string; target?: string; position?: "front" | "back" }
   | { kind: "monster_act" }
+  | { kind: "ally_npc_act" }
   | { kind: "use_item"; actor: string; item_id: number; target_id?: string };
 
 

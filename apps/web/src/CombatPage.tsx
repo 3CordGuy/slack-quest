@@ -246,7 +246,10 @@ type CombatEvent =
   | { type: "passive_druid_regen"; actor: string; amount: number }
   | { type: "passive_rogue_first_crit"; actor: string }
   | { type: "passive_bard_aura"; actor: string; source: string; bonus: number }
-  | { type: "passive_warlock_bleed"; actor: string; magnitude: number; duration: number }
+  | { type: "passive_sinister_queries"; actor: string; target: string; magnitude: number }
+  | { type: "ability_hex"; actor: string; target: string; duration: number }
+  | { type: "hex_bleed_proc"; target: string; stacks: number }
+  | { type: "ability_forbidden_sql"; actor: string; target: string; stacks_consumed: number; damage: number }
   | { type: "passive_paladin_auto_heal"; paladin: string; target: string; amount: number }
   | {
       type: "drink_buff_consumed";
@@ -693,12 +696,14 @@ function formatEvent(e: CombatEvent, state: CombatState | null): LogEntry[] {
       return row("plain-dagger", <>{nameOf(e.actor)}'s first strike — guaranteed crit!</>, "good");
     case "passive_bard_aura":
       return row("aura", <>Bardic Aura: +{e.bonus} dmg from {nameOf(e.source)}'s song.</>, "good");
-    case "passive_warlock_bleed":
-      return [{
-        id: nextLogId++,
-        content: <><Icon name="death-skull" /> Cursed Strike: <Icon name="bleeding-wound" color="#dc2626" /> bleed {e.magnitude}/turn × {e.duration} on monster.</>,
-        tone: "good",
-      }];
+    case "passive_sinister_queries":
+      return row("bleeding-wound", <>Sinister Queries: {nameOf(e.actor)} applies {e.magnitude} <Icon name="bleeding-wound" color="#dc2626" /> bleed.</>, "good");
+    case "ability_hex":
+      return row("death-skull", <>{nameOf(e.actor)} hexes the monster — -25% dmg, bleeds on hit ({e.duration}t).</>, "good");
+    case "hex_bleed_proc":
+      return row("bleeding-wound", <>Hex: <Icon name="bleeding-wound" color="#dc2626" /> +{e.stacks} bleed stacks from damage taken.</>, "muted");
+    case "ability_forbidden_sql":
+      return row("death-skull", <>Forbidden SQL: consumed {e.stacks_consumed} bleed stacks → {e.damage} damage.</>, "good");
     case "passive_paladin_auto_heal":
       return row("fairy-wand", <>Lay on Hands: {nameOf(e.paladin)} → {nameOf(e.target)} +{e.amount} HP.</>, "good");
     case "drink_buff_consumed":

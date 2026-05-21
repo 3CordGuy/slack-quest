@@ -1181,6 +1181,10 @@ export const EFFECT_PILLS: Partial<Record<string, { pill: React.FC<EffectPillPro
       label={`poisoned${e.magnitude > 1 ? ` ×${e.magnitude}` : ""}`}
       suffix={`${e.remaining}t`} title={`poisoned ×${e.magnitude} (${e.remaining} turn${e.remaining === 1 ? "" : "s"} remaining)`} />,
   },
+  hexed: {
+    pill: ({ effect: e, size }) => <StatusPill size={size} color="#a855f7" icon="death-skull" label="hexed"
+      suffix={`${e.remaining}t`} title={`hexed — -25% damage, bleeds on hit (${e.remaining} turn${e.remaining === 1 ? "" : "s"} remaining)`} />,
+  },
 };
 
 // ─── Shared combat action bar ─────────────────────────────────────────────────

@@ -3,7 +3,7 @@
 //
 // Usage: return [fx.damage(monster.id, amount, formula), fx.heal(caster.id, 5)]
 
-import type { AbilityEffect } from "../abilities";
+import type { AbilityEffect, AllyNpcSpec } from "../abilities";
 
 export const fx = {
   // Deal damage to a monster (bypasses armor). Pass drink_buff_context:
@@ -70,6 +70,18 @@ export const fx = {
 
   discourage(targetId: string, charges: number): AbilityEffect {
     return { kind: "apply_discourage", target_id: targetId, charges };
+  },
+
+  summonAllyNpc(spec: AllyNpcSpec, idSuffix: string): AbilityEffect {
+    return { kind: "summon_ally_npc", spec, id_suffix: idSuffix };
+  },
+
+  hexMonster(targetId: string, duration: number): AbilityEffect {
+    return { kind: "hex_monster", target_id: targetId, duration };
+  },
+
+  consumeMonsterBleed(targetId: string): AbilityEffect {
+    return { kind: "consume_monster_bleed", target_id: targetId };
   },
 };
 

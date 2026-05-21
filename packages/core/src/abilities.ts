@@ -44,6 +44,9 @@ export interface MonsterSnapshot {
   max_hp: number;
   tier: number;
   shield: number;
+  // Active status effects. Structurally compatible with MachineStatusEffect[]
+  // so the machine can pass CombatMonster.effects directly without mapping.
+  effects?: ReadonlyArray<{ type: string; magnitude: number; remaining: number }>;
 }
 
 export interface AbilityContext {
@@ -118,7 +121,14 @@ export type AbilityEffect =
   // Grant advantage charges to a fighter: next N to-hit d20 rolls twice, take higher.
   | { kind: "grant_encourage"; target_id: string; charges: number }
   // Apply disadvantage charges to a monster: next N to-hit d20 rolls twice, take lower.
-  | { kind: "apply_discourage"; target_id: string; charges: number };
+  | { kind: "apply_discourage"; target_id: string; charges: number }
+  // Apply the hexed debuff to a monster for `duration` of the monster's own
+  // turns. While hexed: -25% damage output; takes 3 bleed stacks whenever it
+  // takes damage from any source.
+  | { kind: "hex_monster"; target_id: string; duration: number }
+  // Remove all bleed stacks from the target monster (e.g. Forbidden SQL).
+  // Return a separate deal_damage effect to deal damage based on consumed stacks.
+  | { kind: "consume_monster_bleed"; target_id: string };
 
 export interface ActiveAbilityDef {
   kind: "active";
