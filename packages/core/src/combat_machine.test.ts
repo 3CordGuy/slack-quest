@@ -362,53 +362,6 @@ describe("combat_machine.step", () => {
     });
   });
 
-  describe("heal", () => {
-    it("restores HP up to max, emits heal_applied", () => {
-      const init = baseInit();
-      init.fighters[0].hp = 10;
-      init.fighters[0].magic_mod = 1; // re-purpose paladin's magic mod for the test
-      const begun = runBegin(createCombatState(init), [15, 8]);
-      // resolveHeal rolls 2d6: 3+1=4 → amount=max(2,4+1)=5. hp 10→15.
-      const result = step(
-        begun.state,
-        { kind: "heal", actor: "U_PALADIN", target: "U_PALADIN" },
-        seqRoll([3, 1]),
-      );
-      expect(result.state.fighters[0].hp).toBe(15);
-      const heal = result.events.find((e) => e.type === "heal_applied");
-      expect(heal).toMatchObject({ amount: 5, rolled: 5 });
-    });
-
-    it("clamps to max_hp; reports actual applied vs rolled", () => {
-      const init = baseInit();
-      init.fighters[0].hp = 28; // max 30
-      const begun = runBegin(createCombatState(init), [15, 8]);
-      // resolveHeal rolls 2d6: 3+3=6 → amount=max(2,6+0)=6. hp would be 34, clamped to 30. applied=2.
-      const result = step(
-        begun.state,
-        { kind: "heal", actor: "U_PALADIN", target: "U_PALADIN" },
-        seqRoll([3, 3]),
-      );
-      const heal = result.events.find((e) => e.type === "heal_applied");
-      // Paladin magic_mod=0 → rolled=6, applied=2.
-      expect(heal).toMatchObject({ amount: 2, rolled: 6 });
-      expect(result.state.fighters[0].hp).toBe(30);
-    });
-
-    it("rejects healing a downed target", () => {
-      const init = baseInit();
-      init.fighters[0].hp = 0;
-      const begun = runBegin(createCombatState(init), [15, 8]);
-      const result = step(
-        begun.state,
-        { kind: "heal", actor: "U_PALADIN", target: "U_PALADIN" },
-        seqRoll([4]),
-      );
-      // Actor is downed so the actor-check rejects first; either way no heal.
-      expect(result.events.find((e) => e.type === "rejected")).toBeDefined();
-    });
-  });
-
   describe("smite ability (QA Paladin)", () => {
     it("spends 1 mana, damages monster via class-specific dice", () => {
       const init = baseInit();

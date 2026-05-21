@@ -104,7 +104,6 @@ interface CombatState {
 }
 
 // Mirrors BARD_AURA_HYMN_DAMAGE in combat_machine.ts — keep in sync.
-const BARD_HYMN_BONUS = 3;
 
 type CombatEvent =
   | { type: "begin"; turn_order: string[]; initiatives: Record<string, number> }
@@ -281,9 +280,6 @@ type CombatEvent =
 
 type TurnAction =
   | { kind: "attack"; actor: string; target_id?: string | null }
-  | { kind: "cast"; actor: string; target_id?: string | null }
-  | { kind: "heal"; actor: string; target: string }
-  | { kind: "shield"; actor: string; target: string }
   | { kind: "flee"; actor: string }
   | { kind: "position"; actor: string; to: "front" | "back" }
   | { kind: "wait"; actor: string }
@@ -600,7 +596,7 @@ function formatEvent(e: CombatEvent, state: CombatState | null): LogEntry[] {
     case "ability_soul_drain":
       return row("death-skull", <>Soul Drain: {e.damage} dmg, +{e.healed} HP  [{e.formula}]</>, "good");
     case "ability_battle_hymn":
-      return row("aura", <>Battle Hymn — next {e.charges_added} party attacks deal +{BARD_HYMN_BONUS} dmg.</>, "good");
+      return row("aura", <>Battle Hymn — next {e.charges_added} party attacks get bardic aura boost.</>, "good");
     case "ability_foresee": {
       const target = e.predicted_target ? nameOf(e.predicted_target) : null;
       const verdictEl = e.verdict === "safe"
@@ -759,7 +755,6 @@ export function CombatPage({
     error: null,
     outcome: null,
   });
-  const [picking, setPicking] = useState<"heal" | "shield" | null>(null);
   const [itemPicker, setItemPicker] = useState<"closed" | "open" | { reviveItemId: number }>("closed");
   const [migratePicker, setMigratePicker] = useState<boolean>(false);
   const [givePicker, setGivePicker] = useState<"closed" | "selectItem" | { itemId: number }>("closed");
@@ -771,7 +766,6 @@ export function CombatPage({
   // Tracks the last turn_index for which we fired an auto-resolve so we don't double-fire.
   const autoResolvedTurnRef = useRef<number>(-1);
   const [reconnectKey, setReconnectKey] = useState(0);
-  const [devOpen, setDevOpen] = useState(false);
   const [devOpen, setDevOpen] = useState(false);
   const isMobile = useIsMobile();
   const wsRef = useRef<WebSocket | null>(null);
@@ -1095,12 +1089,6 @@ export function CombatPage({
   }, [liveMonsters.map((m) => `${m.id}:${m.hp}`).join(",")]);
   const effectiveTarget = liveMonsters.length === 1 ? (liveMonsters[0].id ?? null) : targetMonsterId;
 
-  function fireOnTarget(targetId: string) {
-    if (!picking) return;
-    send({ kind: picking, actor: selfId, target: targetId } as TurnAction);
-    setPicking(null);
-  }
-
   function fireUseItem(itemId: number, targetId?: string) {
     const ws = wsRef.current;
     if (!ws || ws.readyState !== WebSocket.OPEN) {
@@ -1147,7 +1135,7 @@ export function CombatPage({
 
   // Background art: first live monster's portrait, or first monster fallback.
   const bgArtUrl = state?.monsters.find((m) => m.hp > 0)?.art_url ?? state?.monsters[0]?.art_url ?? null;
-  const isPickerOpen = picking !== null || itemPicker !== "closed" || migratePicker || givePicker !== "closed";
+  const isPickerOpen = itemPicker !== "closed" || migratePicker || givePicker !== "closed";
   const otherPosition = me?.position === "front" ? "back" : "front";
   const isMonsterTurn = currentActorId !== null && isMonsterActor(currentActorId);
 
@@ -1313,14 +1301,6 @@ export function CombatPage({
       )}
 
       {/* Pickers — all portal-based modals */}
-      {state?.status === "active" && picking && (
-        <TargetPicker
-          kind={picking}
-          fighters={state.fighters as unknown as CombatFighter[]}
-          onPick={fireOnTarget}
-          onCancel={() => setPicking(null)}
-        />
-      )}
       {state?.status === "active" && itemPicker === "open" && (
         <ItemPicker
           items={items as unknown as CombatItem[]}
@@ -1390,7 +1370,6 @@ export function CombatPage({
             </div>
           )}
           <CBtn label="Attack" icon="sword" color="#b89b3a" disabled={!myTurn || (liveMonsters.length > 1 && targetMonsterId === null)} onClick={() => send({ kind: "attack", actor: selfId, target_id: effectiveTarget })} />
-          <CBtn label="Cast" icon="arcing-bolt" color="#818cf8" manaCost={1} disabled={!myTurn || myMana < 1 || (liveMonsters.length > 1 && targetMonsterId === null)} onClick={() => send({ kind: "cast", actor: selfId, target_id: effectiveTarget })} />
           {myActiveAbilities.map((ability) => {
             const needsTarget = ability.target === "single_enemy";
             const targetMissing = needsTarget && liveMonsters.length > 1 && targetMonsterId === null;
@@ -1406,8 +1385,6 @@ export function CombatPage({
               />
             );
           })}
-          <CBtn label="Heal" icon="health-increase" color="#22c55e" manaCost={1} disabled={!myTurn || myMana < 1} onClick={() => { if (state.fighters.length === 1) send({ kind: "heal", actor: selfId, target: selfId }); else setPicking("heal"); }} />
-          <CBtn label="Shield" icon="shield" color="#60a5fa" manaCost={1} disabled={!myTurn || myMana < 1} onClick={() => { if (state.fighters.length === 1) send({ kind: "shield", actor: selfId, target: selfId }); else setPicking("shield"); }} />
           {/* Position swap — available even in solo. Was previously
               gated on multi-fighter parties, which left solo players
               stuck if their persisted position was "back" with no way
@@ -1422,7 +1399,6 @@ export function CombatPage({
           <CBtn label="Wait" icon="hourglass" color="#475569" disabled={!myTurn} onClick={() => send({ kind: "wait", actor: selfId })} />
           <CBtn label="Flee" icon="footprint" color="#9aa0a6" disabled={!myTurn} onClick={() => send({ kind: "flee", actor: selfId })} />
           {isMonsterTurn && !autoResolve && (
-            <CBtn label="Resolve" icon="dragon" color="#5c1f1f" onClick={() => send({ kind: "monster_act" })} />
             <CBtn label="Resolve" icon="dragon" color="#5c1f1f" onClick={() => send({ kind: "monster_act" })} />
           )}
           <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, color: "#4a5568", cursor: "pointer", marginLeft: 6 }}>
@@ -1584,7 +1560,6 @@ function MonsterCard({
         size={72}
         radius={8}
         fallbackIcon="dragon"
-        fallbackIcon="dragon"
         fallbackColor={isMarked ? "#f59e0b" : "#7c2020"}
         border={`1px solid ${borderColor}`}
         style={{ flexShrink: 0 }}
@@ -1708,7 +1683,6 @@ function InitiativeTrack({
                   alt={name}
                   size={AVATAR}
                   radius={RADIUS}
-                  fallbackIcon={isMon ? "dragon" : "player"}
                   fallbackIcon={isMon ? "dragon" : "player"}
                   fallbackColor={isMon ? (isCurrent ? "#ef4444" : "#7a3030") : "#4a5568"}
                   style={{

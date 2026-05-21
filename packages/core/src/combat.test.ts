@@ -20,23 +20,11 @@ describe("resolvePlayerHit", () => {
     expect(r).toEqual({ roll: 4, damage: 9, isCrit: false, sides: 6, totalMod: 5 });
   });
 
-  it("cast uses 1d8 + class_mod + weapon_mod", () => {
-    const r = resolvePlayerHit("cast", 1, 0, constantRoll(5));
-    // roll 5 (not crit, max for 8 is 8) + 1 = 6
-    expect(r).toEqual({ roll: 5, damage: 6, isCrit: false, sides: 8, totalMod: 1 });
-  });
-
   it("crit on natural max doubles the post-modifier total", () => {
     const r = resolvePlayerHit("attack", 2, 1, constantRoll(6));
     // crit: (6 + 3) * 2 = 18
     expect(r.isCrit).toBe(true);
     expect(r.damage).toBe(18);
-  });
-
-  it("cast crits on a natural 8", () => {
-    const r = resolvePlayerHit("cast", 0, 0, constantRoll(8));
-    expect(r.isCrit).toBe(true);
-    expect(r.damage).toBe(16);
   });
 
   it("no weapon mod still rolls correctly", () => {

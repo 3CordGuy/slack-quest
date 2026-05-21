@@ -209,8 +209,7 @@ export interface CombatState {
 // Passive tuning knobs. Mirror src/commands.ts constants in main.
 const WARDEN_STARTING_SHIELD = 5;
 const DRUID_PASSIVE_REGEN = 2;
-const BARD_AURA_DAMAGE = 1;
-const BARD_AURA_HYMN_DAMAGE = 3;
+const BARD_AURA_HYMN_BONUS = 2;
 const WARLOCK_BLEED_MAGNITUDE = 3;
 const WARLOCK_BLEED_DURATION = 3;
 const PALADIN_AUTO_HEAL_AMOUNT = 8;
@@ -251,11 +250,8 @@ const MARK_ROUNDS = 2;
 export type TurnAction =
   | { kind: "begin" }
   | { kind: "attack"; actor: ActorId; target_id?: ActorId }
-  | { kind: "cast"; actor: ActorId; target_id?: ActorId }
-  | { kind: "heal"; actor: ActorId; target: ActorId }
   | { kind: "flee"; actor: ActorId }
   | { kind: "position"; actor: ActorId; to: BattlePosition }
-  | { kind: "shield"; actor: ActorId; target?: ActorId }
   | { kind: "wait"; actor: ActorId }
   | { kind: "mark"; actor: ActorId; target_id?: string | null }
   | {
@@ -275,9 +271,7 @@ export type RollPurpose =
   | "initiative"
   | "hit_check"
   | "damage_attack"
-  | "damage_cast"
   | "damage_monster"
-  | "heal"
   | "ability"
   | "flee_check";
 
@@ -581,12 +575,7 @@ export function step(state: CombatState, action: TurnAction, roll: RollFn): Step
     case "begin":
       return handleBegin(state, roll);
     case "attack":
-    case "cast":
       return handlePlayerHit(state, action, roll);
-    case "heal":
-      return handleHeal(state, action, roll);
-    case "shield":
-      return handleShield(state, action);
     case "flee":
       return handleFlee(state, action, roll);
     case "position":
@@ -666,7 +655,7 @@ function handleBegin(state: CombatState, roll: RollFn): StepResult {
 
 function handlePlayerHit(
   state: CombatState,
-  action: { kind: "attack" | "cast"; actor: ActorId; target_id?: ActorId },
+  action: { kind: "attack"; actor: ActorId; target_id?: ActorId },
   roll: RollFn,
 ): StepResult {
   const fighter = state.fighters.find((f) => f.id === action.actor);
@@ -675,21 +664,16 @@ function handlePlayerHit(
     return reject(state, `not ${action.actor}'s turn (current: ${currentActor(state)})`);
   }
   if (fighter.hp <= 0) return reject(state, `${action.actor} is downed`);
-  // Cast costs 1 mana. Gate before tick so the rejection message is clean.
-  if (action.kind === "cast" && fighter.mana < 1) {
-    return reject(state, `${action.actor} has no mana to cast`);
-  }
   // Back-row melee restriction only applies in a party — solo fights have
   // no positioning concept. Only ranged or focus weapons can attack from
   // the back row; melee weapons demand front-row engagement.
   if (
-    action.kind === "attack"
-    && fighter.position === "back"
+    fighter.position === "back"
     && state.fighters.length > 1
     && fighter.weapon_range !== "ranged"
     && fighter.weapon_range !== "focus"
   ) {
-    return reject(state, "back-row melee blocked — equip a ranged or focus weapon, cast, or move to front");
+    return reject(state, "back-row melee blocked — equip a ranged or focus weapon or move to front");
   }
 
   // Target selection: use explicit target_id if provided, else pick first alive monster.
@@ -700,24 +684,14 @@ function handlePlayerHit(
 
   const tick = tickAtTurnStart(state, action.actor);
   if (tick.earlyReturn) return tick.earlyReturn;
-  // Deduct cast mana on the post-tick state so subsequent reads see the
-  // updated value. Hit/miss both consume — mana pays for the attempt.
-  const manaCost = action.kind === "cast" ? 1 : 0;
-  const s = manaCost > 0
-    ? {
-        ...tick.state,
-        fighters: tick.state.fighters.map((f) =>
-          f.id === action.actor ? { ...f, mana: Math.max(0, f.mana - manaCost) } : f,
-        ),
-      }
-    : tick.state;
+  const s = tick.state;
   const tickedFighter = s.fighters.find((f) => f.id === action.actor)!;
   // Re-resolve target from updated state (tick may have killed the monster).
   const monster = s.monsters.find((m) => m.id === targetMonster.id && m.hp > 0);
   if (!monster) return reject(s, "target died before action resolved");
 
   const events: CombatEvent[] = [...tick.events];
-  const classMod = action.kind === "cast" ? tickedFighter.magic_mod : tickedFighter.attack_mod;
+  const classMod = tickedFighter.attack_mod;
 
   // ── d20 to-hit ──
   const d20 = roll(20);
@@ -762,9 +736,9 @@ function handlePlayerHit(
   events.push({
     type: "roll",
     actor: action.actor,
-    die: action.kind === "cast" ? "d8" : "d6",
+    die: "d6",
     value: hit.roll,
-    purpose: action.kind === "cast" ? "damage_cast" : "damage_attack",
+    purpose: "damage_attack",
   });
 
   // Refactor Rogue — First Strike. First `attack` of the fight is a guaranteed
@@ -1505,142 +1479,6 @@ function handleMonsterAct(state: CombatState, roll: RollFn): StepResult {
   return { state: next, events: [...events, ...turnStartEvent(next)] };
 }
 
-function handleHeal(
-  state: CombatState,
-  action: { kind: "heal"; actor: ActorId; target: ActorId },
-  roll: RollFn,
-): StepResult {
-  const actor = state.fighters.find((f) => f.id === action.actor);
-  if (!actor) return reject(state, `unknown actor: ${action.actor}`);
-  if (currentActor(state) !== action.actor) {
-    return reject(state, `not ${action.actor}'s turn`);
-  }
-  if (actor.hp <= 0) return reject(state, `${action.actor} is downed`);
-  if (actor.mana < 1) return reject(state, `${action.actor} has no mana to heal`);
-
-  const tick = tickAtTurnStart(state, action.actor);
-  if (tick.earlyReturn) return tick.earlyReturn;
-  // Heal costs 1 mana — deduct on the post-tick state.
-  const s = {
-    ...tick.state,
-    fighters: tick.state.fighters.map((f) =>
-      f.id === action.actor ? { ...f, mana: Math.max(0, f.mana - 1) } : f,
-    ),
-  };
-  const tickedActor = s.fighters.find((f) => f.id === action.actor)!;
-  const target = s.fighters.find((f) => f.id === action.target);
-  if (!target) return reject(s, `unknown heal target: ${action.target}`);
-  if (target.hp <= 0) return reject(s, `cannot heal a downed target`);
-
-  const { amount: baseRolled, roll: rollValue } = resolveHeal(tickedActor.magic_mod, roll);
-  // Focus weapons boost heal output by their power (flat add).
-  const rolled = baseRolled + tickedActor.focus_power;
-  const newHp = Math.min(target.max_hp, target.hp + rolled);
-  const applied = newHp - target.hp;
-
-  const events: CombatEvent[] = [
-    ...tick.events,
-    { type: "roll", actor: action.actor, die: "d6", value: rollValue, purpose: "heal" },
-    {
-      type: "heal_applied",
-      actor: action.actor,
-      target: action.target,
-      amount: applied,
-      rolled,
-    },
-  ];
-
-  const next = advanceTurn({
-    ...s,
-    fighters: s.fighters.map((f) =>
-      f.id === action.target ? { ...f, hp: newHp } : f,
-    ),
-    stats: {
-      ...s.stats,
-      [action.actor]: {
-        ...(s.stats[action.actor] ?? { damage_taken: 0, healing_done: 0, shielding_done: 0, kills: 0 }),
-        healing_done: (s.stats[action.actor]?.healing_done ?? 0) + applied,
-      },
-    },
-  });
-  return { state: next, events: [...events, ...turnStartEvent(next)] };
-}
-
-function handleShield(
-  s: CombatState,
-  action: { kind: "shield"; actor: ActorId; target?: ActorId },
-): StepResult {
-  const actor = s.fighters.find((f) => f.id === action.actor);
-  if (!actor) return reject(s, `shield: actor ${action.actor} not found`);
-  if (currentActor(s) !== action.actor) return reject(s, `not ${action.actor}'s turn`);
-  if (actor.hp <= 0) return reject(s, "shield: actor is down");
-  if (actor.mana < 1) return reject(s, `${action.actor} has no mana for shield`);
-
-  const tick = tickAtTurnStart(s, action.actor);
-  if (tick.earlyReturn) return tick.earlyReturn;
-  // Shield costs 1 mana — deduct on the post-tick state.
-  const state = {
-    ...tick.state,
-    fighters: tick.state.fighters.map((f) =>
-      f.id === action.actor ? { ...f, mana: Math.max(0, f.mana - 1) } : f,
-    ),
-  };
-
-  const targetId = action.target ?? action.actor;
-  const target = state.fighters.find((f) => f.id === targetId);
-  if (!target) return reject(state, `shield: target ${targetId} not found`);
-  if (target.hp <= 0) return reject(state, "shield: target is down");
-
-  // Two modes:
-  //   1. Target has armor equipped → replenish their depletable armor pool to
-  //      floor(armor_power / 2). Same as the original self-shield behavior.
-  //   2. Target has no armor → grant a flat "bonus barrier" capped by the
-  //      MIN of actor.level and target.level so a high-level caster can't
-  //      over-shield a low-level ally. Floor at 5, climbs slowly with level,
-  //      hard cap at 15.
-  // In both modes, never reduce existing shield — preserve overflow from
-  // traps / passives.
-  const tickedActor = state.fighters.find((f) => f.id === action.actor)!;
-  const armorMax = Math.floor(target.armor_power / 2);
-  let newArmor: number;
-  let bonusBarrier = false;
-  if (armorMax > 0) {
-    newArmor = Math.max(target.shield, armorMax);
-  } else {
-    const minLevel = Math.min(tickedActor.level, target.level);
-    const bonusShield = Math.min(15, 5 + Math.floor(minLevel / 2));
-    newArmor = Math.max(target.shield, bonusShield);
-    bonusBarrier = true;
-  }
-  const restored = newArmor - target.shield;
-
-  const events: CombatEvent[] = [
-    ...tick.events,
-    {
-      type: "shield_applied",
-      actor: action.actor,
-      target: targetId,
-      restored,
-      new_armor: newArmor,
-      bonus_barrier: bonusBarrier,
-    },
-  ];
-
-  const next = advanceTurn({
-    ...state,
-    fighters: state.fighters.map((f) =>
-      f.id === targetId ? { ...f, shield: newArmor } : f,
-    ),
-    stats: {
-      ...state.stats,
-      [action.actor]: {
-        ...(state.stats[action.actor] ?? { damage_taken: 0, healing_done: 0, shielding_done: 0, kills: 0 }),
-        shielding_done: (state.stats[action.actor]?.shielding_done ?? 0) + restored,
-      },
-    },
-  });
-  return { state: next, events: [...events, ...turnStartEvent(next)] };
-}
 
 // Executes a damage-dealing active ability: calls ability.execute(ctx) for the
 // damage formula, then applies drink buffs, shocked amplifier, boss phase,
@@ -2066,7 +1904,9 @@ function applyUtilityAbilityEffects(
         const target = s.fighters.find((f) => f.id === effect.target_id);
         if (!target || target.hp <= 0) continue;
         const newShield = Math.min(target.max_hp * SHIELD_CAP_MULTIPLIER, target.shield + effect.amount);
-        if (newShield > target.shield) {
+        const restored = newShield - target.shield;
+        if (restored > 0) {
+          events.push({ type: "shield_applied", actor, target: effect.target_id, restored, new_armor: newShield, bonus_barrier: false });
           s = { ...s, fighters: s.fighters.map((f) => f.id === effect.target_id ? { ...f, shield: newShield } : f) };
         }
         break;
@@ -2688,23 +2528,24 @@ function applyPreActionPassives(
 }
 
 // Frontend Bard — Bardic Aura. While any Bard is alive, every non-Bard
-// partymate attack/cast deals +1 damage. Battle Hymn temporarily boosts the
-// aura to +3 for HYMN_USES attacks (each landed swing consumes one charge).
-// Returns the bonus and whether a hymn charge was consumed.
+// partymate attack deals +(1 + floor(bard.level/5)) damage. Battle Hymn
+// temporarily adds BARD_AURA_HYMN_BONUS on top (each landed swing consumes
+// one charge). Returns the bonus and whether a hymn charge was consumed.
 function computeBardAuraBonus(
   state: CombatState,
   attacker: CombatFighter,
 ): { bonus: number; hymn_consumed: boolean } {
   if (classHasPassive(attacker.class, "bardic_aura")) return { bonus: 0, hymn_consumed: false };
-  const bardAlive = state.fighters.some(
+  const bard = state.fighters.find(
     (f) => f.hp > 0 && classHasPassive(f.class, "bardic_aura"),
   );
-  if (!bardAlive) return { bonus: 0, hymn_consumed: false };
+  if (!bard) return { bonus: 0, hymn_consumed: false };
+  const base = 1 + Math.floor(bard.level / 5);
   const hymnCharges = state.ability_state?.battle_hymn ?? 0;
   if (hymnCharges > 0) {
-    return { bonus: BARD_AURA_HYMN_DAMAGE, hymn_consumed: true };
+    return { bonus: base + BARD_AURA_HYMN_BONUS, hymn_consumed: true };
   }
-  return { bonus: BARD_AURA_DAMAGE, hymn_consumed: false };
+  return { bonus: base, hymn_consumed: false };
 }
 
 // Data Warlock — Cursed Strike. On a critical attack/cast, apply a 2-turn
@@ -3024,7 +2865,7 @@ function tickAbilityCountersAfterSwing(
 function applyDrinkBuff(
   state: CombatState,
   actor: ActorId,
-  context: "attack" | "cast" | "ability",
+  context: "attack" | "ability",
   baseDamage: number,
   isCrit: boolean,
 ): {
@@ -3046,9 +2887,6 @@ function applyDrinkBuff(
   let damage = baseDamage;
   let forceCrit = false;
   if (buff.kind === "buff_attack" && context === "attack") {
-    damage = baseDamage + buff.magnitude;
-    applies = true;
-  } else if (buff.kind === "buff_magic" && context === "cast") {
     damage = baseDamage + buff.magnitude;
     applies = true;
   } else if (buff.kind === "buff_next_crit" && !isCrit) {

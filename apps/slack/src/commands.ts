@@ -468,13 +468,11 @@ function helpText(cmd: string, name: string): string {
     `• \`${cmd} take <n>\` — claim an item from a dungeon's final treasure room`,
     `• \`${cmd} join\` — join the active quest in this channel`,
     `• \`${cmd} attack\` — strike with weapon: \`1d6 + atk_mod + weapon\` (crit on nat 6, *front-row only*)`,
-    `• \`${cmd} cast\` — channel magic: \`1d8 + mag_mod + weapon\` (crit on nat 8, any row)`,
     `• \`${cmd} flee\` — try to escape (\`1d2\`; on fail you take a free hit)`,
     `• \`${cmd} position front|back\` — set battle position. Free outside a quest; mid-quest costs the 45s combat cooldown.`,
     `• \`${cmd} signature\` (alias \`sig\`) — your class's damage ability (costs 1 mana, refills between quests)`,
     `• \`${cmd} ability\` (alias \`active\`) — your class's active ability (costs mana, 45s cooldown — see \`${cmd} me\`)`,
     `• \`${cmd} mark\` (alias \`focus\`) — call focus on the current foe; partymates get *+${FOCUS_FIRE_BONUS}* damage for ${Math.round(FOCUS_FIRE_DURATION_MS / 1000)}s (free action, no cooldown)`,
-    `• \`${cmd} heal [@user]\` — restore \`1d6 + magic_mod\` HP on a party member (costs 1 mana, default self)`,
     `• \`${cmd} revive <id> @user\` — bring a downed party member back, consuming a revive item`,
     `• \`${cmd} rest\` — short rest: heals 50% of missing HP (10-min cooldown)`,
     `• \`${cmd} rest long\` — long rest: full HP restore, once per 24 hours`,
@@ -600,18 +598,16 @@ function rulesSections(): RulesSection[] {
       id: "combat",
       emoji: "⚔️",
       title: "Combat",
-      aliases: ["fight", "attack", "cast", "signature", "sig", "abilities", "ability", "active"],
+      aliases: ["fight", "attack", "signature", "sig", "abilities", "ability", "active"],
       body: (cmd) => [
         `_All actions share one cooldown — *45s* in a party (so teammates have time to react), *15s* solo (no teammates to wait on). Switches automatically as players join/leave._`,
         `• \`${cmd} attack\` — \`1d6 + atk_mod + weapon\`, crit on nat 6 (×2 damage)`,
-        `• \`${cmd} cast\` — \`1d8 + mag_mod + weapon\`, crit on nat 8`,
         `• \`${cmd} signature\` (\`sig\`) — class damage ability, costs 1 mana`,
         `• \`${cmd} ability\` (\`active\`) — class tactical ability. Costs mana (1-2), 45s cooldown. \`${cmd} me\` shows yours.`,
         `• \`${cmd} flee\` — \`1d2\`. 1 = escape (party fights on); 2 = trip + free monster hit. Blocked in gauntlet/dungeon.`,
-        `• *Mana regen:* basic \`attack\`/\`cast\` refunds +1 mana on the monster's retaliation (no regen on mana-spending actions). In dungeons, the party also gets +1 mana between rooms.`,
-        `• \`${cmd} heal [@user]\` — \`1d6 + mag_mod\` HP to a partymate, costs 1 mana, burns the 45s combat cooldown (no monster counter — it's a support action)`,
-        `• \`${cmd} shield\` — replenish your depletable armor pool back to max (\`floor(armor_power/2)\`), no mana cost. Physical hits chip armor before HP; magic/elemental bypass it entirely.`,
+        `• *Mana regen:* basic \`attack\` refunds +1 mana on the monster's retaliation (no regen on mana-spending actions). In dungeons, the party also gets +1 mana between rooms.`,
         `• \`${cmd} revive <id> @user\` — bring downed partymate back, consumes a revive item (no mana cost)`,
+        `• *Healing & shielding* come from class abilities (Bard's Serenade, Paladin's passives, Warden's Regression Shield) and consumable items — not universal actions.`,
         `• Monster damage: \`1d4 + tier + party_bonus\`. *Physical* attacks deplete your armor pool first, overflow → HP. *Magic/elemental* attacks bypass armor — mitigated only by gear resistances (%). Back-row reduces all damage ×0.6, min 1. Boss phase 2 adds +tier.`,
         `• *Targeting:* monster picks a victim weighted 3:1 front:back from alive fighters — front-line tanks soak hits for back-line casters.`,
       ],
@@ -622,9 +618,9 @@ function rulesSections(): RulesSection[] {
       title: "Items & Equipment",
       aliases: ["item", "equipment", "gear", "weapon", "weapons", "armor", "consumable", "consumables", "scroll", "scrolls", "tool", "tools"],
       body: (cmd) => [
-        `• ⚔️ *Melee weapons* — front-row only for \`attack\`; \`+N\` to attack/cast/sig damage`,
+        `• ⚔️ *Melee weapons* — front-row only for \`attack\`; \`+N\` to attack/sig damage`,
         `• 🏹 *Ranged weapons* — usable from any row for \`attack\`; same damage bonus`,
-        `• 🔮 *Focus weapons* (caster/support) — usable any row, NO damage bonus, *+N to \`heal\`* amounts, *+1 max mana while equipped*, *+10% magic resistance* passively. The healer/support build.`,
+        `• 🔮 *Focus weapons* (caster/support) — usable any row, NO damage bonus, *+1 max mana while equipped*, *+10% magic resistance* passively. Good for mana-heavy class builds.`,
         `• 🛡️ *Armor* — reduces *physical* incoming damage by \`floor(power/2)\`. Has no effect on magic/elemental attacks.`,
         `• 💎 *Gear resistances* — rings, amulets, and high-rarity armor can roll fire/ice/lightning/magic resistance (%). Stack across slots, capped at 75% per type.`,
         `• 🧪 *Consumables* — \`${cmd} use <id>\` heals N HP. Free action, no cooldown.`,
@@ -969,7 +965,6 @@ export async function handleInteraction(
   // button-driven turns we always go via the engine path (the legacy
   // cooldown loop has no equivalent battlefield buttons).
   if (action.action_id.startsWith("turn_attack_")) return handleCombatViaEngine(slash, env, ctx, "attack");
-  if (action.action_id.startsWith("turn_cast_")) return handleCombatViaEngine(slash, env, ctx, "cast");
   if (action.action_id.startsWith("turn_signature_")) return handleCombatViaEngine(slash, env, ctx, "signature");
   if (action.action_id.startsWith("turn_ability_")) return handleCombatViaEngine(slash, env, ctx, "signature");
   if (action.action_id.startsWith("turn_flee_")) return handleCombatViaEngine(slash, env, ctx, "flee");
@@ -1228,7 +1223,6 @@ export async function handleCommand(
     case "quest":
       return handleQuest(payload, args, env, ctx);
     case "attack":
-    case "cast":
     case "flee":
     case "signature":
     case "sig": {
@@ -1243,10 +1237,6 @@ export async function handleCommand(
     case "mark":
     case "focus":
       return handleMark(payload, env, ctx);
-    case "heal":
-      return handleHeal(payload, args, env, ctx);
-    case "shield":
-      return handleShield(payload, env, ctx);
     case "revive":
       return handleRevive(payload, args, env, ctx);
     case "rest":
@@ -3571,7 +3561,7 @@ function renderDungeonRoom(node: ExpeditionNode, exp: ExpeditionState, cmd: stri
       "",
       `Foe: *${node.monster_name}* — HP ${liveHp}/${node.monster_max_hp}`,
       "",
-      `Combat: \`${cmd} attack\` • \`${cmd} cast\` • \`${cmd} sig\`.`,
+      `Combat: \`${cmd} attack\` • \`${cmd} sig\` • \`${cmd} ability\`.`,
     ].join("\n");
   }
   if (node.type === "trap") {
@@ -3720,7 +3710,7 @@ async function buildDungeonRoomBlocks(
     const liveHp = currentMonsterHp ?? node.monster_max_hp;
     blocks.push({
       type: "section",
-      text: { type: "mrkdwn", text: `Foe: *${node.monster_name}* — HP ${liveHp}/${node.monster_max_hp}\n\nCombat: \`${cmd} attack\` • \`${cmd} cast\` • \`${cmd} sig\`.` },
+      text: { type: "mrkdwn", text: `Foe: *${node.monster_name}* — HP ${liveHp}/${node.monster_max_hp}\n\nCombat: \`${cmd} attack\` • \`${cmd} sig\` • \`${cmd} ability\`.` },
     });
     return blocks;
   }
@@ -4021,7 +4011,7 @@ function buildDoorPromptBlocks(exp: ExpeditionState, cmd: string): unknown[] {
   return blocks;
 }
 
-type CombatAction = "attack" | "cast" | "flee" | "signature";
+type CombatAction = "attack" | "flee" | "signature";
 
 // Upserts the pinned-battlefield message in the quest thread. First call
 // (no battlefield_ts yet) does chat.postMessage and persists the new ts
@@ -4191,7 +4181,7 @@ async function handleCombatViaEngine(
   // monster at 1-based index; without an arg, auto-pick the lowest-HP live
   // monster (consistent with the engine's existing pickMonsterTarget).
   let targetId: string | undefined;
-  if (action === "attack" || action === "cast" || action === "signature") {
+  if (action === "attack" || action === "signature") {
     const monsters = boot.state.monsters ?? [];
     const live = monsters.filter((m) => m.hp > 0);
     if (live.length > 1) {
@@ -4208,7 +4198,6 @@ async function handleCombatViaEngine(
 
   const turnAction: TurnAction =
     action === "attack" ? { kind: "attack", actor: payload.user_id, target_id: targetId }
-    : action === "cast" ? { kind: "cast", actor: payload.user_id, target_id: targetId }
     : action === "signature" && sigAbilityId ? { kind: "ability", actor: payload.user_id, ability_id: sigAbilityId, target_id: targetId }
     : { kind: "flee", actor: payload.user_id };
 
@@ -4341,7 +4330,7 @@ async function handleCombat(
     const canShootFromBack = range === "ranged" || range === "focus";
     if (!canShootFromBack) {
       return ephemeral(
-        `🏹 Back row can't melee — equip a *ranged* or *focus* weapon to attack from here, or \`${payload.command} cast\` / \`${payload.command} sig\`, or \`${payload.command} position front\`.`,
+        `🏹 Back row can't melee — equip a *ranged* or *focus* weapon to attack from here, use \`${payload.command} sig\` / an ability, or \`${payload.command} position front\`.`,
       );
     }
   }
@@ -4440,16 +4429,10 @@ async function handleCombat(
       ? `💥 *${sig.name} CRIT!* <@${payload.user_id}> hits for *${damage}* \`${sigResult.formula} ×2\`.`
       : `✨ *${sig.name}* — <@${payload.user_id}> hits for *${damage}* \`${sigResult.formula}\`.`;
   } else {
-    const isMagic = action === "cast";
-    const classMod = isMagic ? magicMod : attackMod;
-    // Focus weapons add zero to attack + cast damage (their power is a
-    // /sq heal + /sq shield bonus instead — applied in those handlers).
-    // Regular weapons add their power as usual.
     const isFocus = (equippedWeapon?.weapon_range ?? "melee") === "focus";
     const weaponMod = isFocus ? 0 : (equippedWeapon?.power ?? 0);
-    const verb = isMagic ? "casts" : "attacks";
 
-    const hit = resolvePlayerHit(action, classMod, weaponMod, rollDice);
+    const hit = resolvePlayerHit("attack", attackMod, weaponMod, rollDice);
     damage = hit.damage;
     isCrit = hit.isCrit;
 
@@ -4459,11 +4442,9 @@ async function handleCombat(
     }
 
     // 🗡 Refactor Rogue passive: first attack each fight is a guaranteed crit
-    // (doubles the (roll + mods) total). Only fires for `attack`, not `cast`
-    // — the Rogue's identity is the dagger-strike opener. If the natural
-    // roll was already a crit we don't burn the passive on a redundant
-    // upgrade.
-    if (cls.id === "refactor_rogue" && action === "attack" && !isCrit
+    // (doubles the (roll + mods) total). If the natural roll was already a
+    // crit we don't burn the passive on a redundant upgrade.
+    if (cls.id === "refactor_rogue" && !isCrit
         && !isPassiveUsed(quest.scene, payload.user_id, PASSIVE_ROGUE_FIRST_CRIT)) {
       isCrit = true;
       damage = damage * 2;
@@ -4471,13 +4452,10 @@ async function handleCombat(
       passiveLines.push(`🗡 *Refactor Rogue* passive: first-strike crit.`);
     }
 
-    const modBreakdown = weaponMod > 0 ? `${classMod}+${weaponMod}` : `${hit.totalMod}`;
-    // Crit doubles the WHOLE total: (roll + mods) × 2. The display reflects the
-    // formula's actual associativity — wrapping the sum in parens — so the math
-    // is reproducible from the breakdown.
+    const modBreakdown = weaponMod > 0 ? `${attackMod}+${weaponMod}` : `${hit.totalMod}`;
     playerLine = isCrit
-      ? `💥 *CRIT!* <@${payload.user_id}> ${verb} for *${damage}* \`(${hit.roll} + ${modBreakdown})×2\`.`
-      : `<@${payload.user_id}> ${verb} for *${damage}* \`${hit.roll} + ${modBreakdown}\`.`;
+      ? `💥 *CRIT!* <@${payload.user_id}> attacks for *${damage}* \`(${hit.roll} + ${modBreakdown})×2\`.`
+      : `<@${payload.user_id}> attacks for *${damage}* \`${hit.roll} + ${modBreakdown}\`.`;
   }
 
   // Focus-fire bonus. When another partymate has marked the current monster,
@@ -4511,10 +4489,6 @@ async function handleCombat(
     if (buff.kind === "buff_attack" && action === "attack") {
       damage += buff.magnitude;
       playerLine += ` ${drink?.emoji ?? "🍺"} *+${buff.magnitude}* ${drinkLabel}.`;
-      drinkBuffConsumed = true;
-    } else if (buff.kind === "buff_magic" && action === "cast") {
-      damage += buff.magnitude;
-      playerLine += ` ${drink?.emoji ?? "🍷"} *+${buff.magnitude}* ${drinkLabel}.`;
       drinkBuffConsumed = true;
     } else if (buff.kind === "buff_next_crit" && !isCrit) {
       isCrit = true;
@@ -4773,7 +4747,6 @@ async function handleCombat(
   }
 
   // Monster turn — see performMonsterTurn for targeting + damage logic.
-  const isMagic = action === "cast";
   const turn = await performMonsterTurn(env, quest, fighters, character, equippedArmor);
 
   if (turn.isSplash && turn.splashTargets) {
@@ -4952,7 +4925,7 @@ async function handleCombat(
   ctx.waitUntil((async () => {
     const flavor = abilityName
       ? await flavorAbility(env.AI, character, quest.scene.monster_name, abilityName, isCrit, weaponName, armorName)
-      : await flavorHit(env.AI, character, quest.scene.monster_name, isMagic ? "cast" : "attack", isCrit, weaponName, armorName);
+      : await flavorHit(env.AI, character, quest.scene.monster_name, "attack", isCrit, weaponName, armorName);
     const marker = abilityName ? "✨ " : isCrit ? "💥 " : "";
     const phaseLine = bossPhaseTransition
       ? `\n\n👑 *Phase 2!* ${await flavorBossPhase(env.AI, quest.scene.monster_name)}`
@@ -8077,7 +8050,7 @@ async function handlePubDrink(
     case "buff_next_crit": {
       const buff: DrinkBuff = { kind: "buff_next_crit", magnitude: 1, remaining: 1, drink_id: drink.id };
       await setDrinkBuff(env.DB, payload.user_id, buff);
-      summary = "next attack/cast/sig is a guaranteed crit";
+      summary = "next attack/sig/ability is a guaranteed crit";
       break;
     }
     case "instant_shield": {
@@ -8253,7 +8226,7 @@ async function applyDialogPayload(
       case "buff_next_crit": {
         const buff: DrinkBuff = { kind: "buff_next_crit", magnitude: 1, remaining: 1, drink_id: drink.id };
         await setDrinkBuff(env.DB, character.slack_user_id, buff);
-        appliedText = "next attack/cast/sig guaranteed crit";
+        appliedText = "next attack/sig/ability guaranteed crit";
         break;
       }
     }
@@ -11146,130 +11119,6 @@ async function useMigrate(
   return ephemeral(headline);
 }
 
-async function handleShield(
-  payload: SlashCommandPayload,
-  env: Env,
-  ctx: ExecutionContext,
-): Promise<CommandResponse> {
-  const character = await getCharacter(env.DB, payload.user_id);
-  if (!character) return ephemeral(`You need to \`${payload.command} roll\` a character first.`);
-  if (!isFighter(character)) return ephemeral("You're downed and can't act.");
-
-  const quest = await getActiveQuestForCharacter(env.DB, payload.user_id);
-  if (!quest) return ephemeral("You're not on an active quest.");
-
-  const cooldown = await cooldownRemaining(env.DB, quest.id, payload.user_id, await actionCooldownMs(env.DB, quest.id));
-  if (cooldown > 0) {
-    return ephemeral(`⏳ Catching your breath — try again in ${Math.ceil(cooldown / 1000)}s.`);
-  }
-
-  // Compute armor pool max from equipped armor.
-  const slots = await getAllEquippedSlots(env.DB, payload.user_id);
-  const equippedArmor = slots.body ?? slots.off_hand;
-  const armorMax = Math.floor((equippedArmor?.power ?? 0) / 2);
-
-  if (armorMax === 0) {
-    return ephemeral("You have no armor equipped — nothing to replenish. Equip armor to use this action.");
-  }
-  if (character.shield >= armorMax) {
-    return ephemeral(`🛡️ Your armor is already at full (${character.shield}/${armorMax}).`);
-  }
-
-  await initArmorPool(env.DB, payload.user_id);
-  await appendLog(env.DB, quest.id, payload.user_id, "shield", `armor → ${armorMax}`);
-
-  const text = `🛡️ *${character.name}* braces and fortifies their armor — restored to *${armorMax}* (physical attacks only). Magic bypasses it.`;
-  ctx.waitUntil(postToThread(env, quest, blockQuote(text)));
-  return ephemeral(text);
-}
-
-async function handleHeal(
-  payload: SlashCommandPayload,
-  args: string[],
-  env: Env,
-  ctx: ExecutionContext,
-): Promise<CommandResponse> {
-  const character = await getCharacter(env.DB, payload.user_id);
-  if (!character) return ephemeral(`You need to \`${payload.command} roll\` a character first.`);
-  if (!isFighter(character)) return ephemeral("You're downed and can't act.");
-
-  const quest = await getActiveQuestForCharacter(env.DB, payload.user_id);
-  if (!quest) return ephemeral("You're not on an active quest.");
-
-  const cooldown = await cooldownRemaining(env.DB, quest.id, payload.user_id, await actionCooldownMs(env.DB, quest.id));
-  if (cooldown > 0) {
-    return ephemeral(`⏳ Catching your breath — try again in ${Math.ceil(cooldown / 1000)}s.`);
-  }
-  if (character.mana < 1) {
-    return ephemeral(`Out of mana. Mana refills between quests. (${character.mana}/${character.max_mana})`);
-  }
-
-  const resolved = await resolveSupportTarget(env, character, quest, args);
-  if ("error" in resolved) return ephemeral(resolved.error);
-  const { target } = resolved;
-  if (!isFighter(target)) {
-    return ephemeral(`*${target.name}* is downed — needs \`${payload.command} revive <id> @${target.name}\` (with a revive item) instead.`);
-  }
-  if (target.hp >= target.max_hp) {
-    return ephemeral(`*${target.name}* is already at full HP.`);
-  }
-
-  const cls = classByName(character.class);
-  const healSlots = await getAllEquippedSlots(env.DB, payload.user_id);
-  const healEquipBonuses: Partial<Record<string, number>> = {};
-  for (const item of Object.values(healSlots)) {
-    if (!item?.stat_bonus) continue;
-    for (const [key, val] of Object.entries(item.stat_bonus)) {
-      healEquipBonuses[key] = (healEquipBonuses[key] ?? 0) + val;
-    }
-  }
-  const healSnap = statSnapshot({
-    className: character.class,
-    level: character.level,
-    stats: { str: character.str, int_stat: character.int_stat, vit: character.vit, agi: character.agi, dex: character.dex },
-    equipBonuses: healEquipBonuses as Partial<Stats>,
-  });
-  const healMagicMod = healSnap.derived.magic_mod;
-  const heal = resolveHeal(healMagicMod, rollDice);
-  // 🔮 Focus weapons add their power as a flat bonus to heal amount.
-  // Caster's existing 1d6 + magic_mod becomes 1d6 + magic_mod + focus.power.
-  const focusWeapon = healSlots.main_hand;
-  const focusBonus = (focusWeapon?.weapon_range === "focus") ? focusWeapon.power : 0;
-  const finalHealAmount = heal.amount + focusBonus;
-  const healed = await healCharacter(env.DB, target, finalHealAmount);
-  await tryDeductMana(env.DB, payload.user_id, 1);
-  await appendLog(env.DB, quest.id, payload.user_id, "heal", `+${healed} HP → ${target.name}`);
-
-  const targetTag = target.slack_user_id === payload.user_id
-    ? `themselves`
-    : `<@${target.slack_user_id}>`;
-  // Display includes the focus bonus in the math breakdown so players see
-  // where the extra HP came from. Without focus, the line reads the same
-  // as before.
-  const focusBreakdown = focusBonus > 0 ? ` + ${focusBonus}🔮` : "";
-  const healLine = `💚 <@${payload.user_id}> heals ${targetTag} for *${healed}* HP \`${heal.roll} + ${healMagicMod}m${focusBreakdown}\`.`;
-
-  // Tick the caster's status effects — heal is a combat-tier action so it should
-  // tick effects just like attack/cast. The actor's tick (regen/bleed/burn) fires
-  // on their own action.
-  const casterTick = await applyPlayerTick(env, payload.user_id, character);
-  const tickLines = casterTick.tickLines;
-  if (casterTick.postTickHp <= 0) {
-    const fighters = (await getQuestParty(env.DB, quest.id)).filter(isFighter);
-    return resolveDeath(payload, env, ctx, character, quest, fighters, [healLine, ...tickLines]);
-  }
-
-  // Heal is a support action — consistent with /sq revive, it does NOT trigger
-  // a monster counter-attack. The costs (1 mana, 45s combat cooldown, your
-  // offensive turn skipped) are sufficient. Earlier behavior had the monster
-  // retaliate, which made heal a net wash: heal 5 HP → take 5 HP back. Players
-  // correctly identified this as a waste of mana. Now heal is a true safety
-  // net: pay the mana, give up your offensive turn, restore HP cleanly.
-  const healStat = `*${target.name}*: ${target.hp + healed}/${target.max_hp}`;
-  const lines = [healLine, ...tickLines, healStat];
-  ctx.waitUntil(postToThread(env, quest, [blockQuote(healLine), "", ...tickLines, healStat].join("\n")));
-  return ephemeral(lines.join("\n"));
-}
 
 async function handleRevive(
   payload: SlashCommandPayload,
@@ -11755,7 +11604,7 @@ function buildCombatBlocks(opts: {
   // just the target. Modeled as "reading the monster's tells."
   if (opts.monsterHp > 0 && opts.scene.monster_telegraph?.target_user_id) {
     const viewerIsSage = classByName(opts.actor.class).id === "staff_sage";
-    const baseText = `🎯 *${opts.scene.monster_name}* is winding up — locked on <@${opts.scene.monster_telegraph.target_user_id}> next round. _Heal or shield them before they swing._`;
+    const baseText = `🎯 *${opts.scene.monster_name}* is winding up — locked on <@${opts.scene.monster_telegraph.target_user_id}> next round. _Use an ability or item to protect them before they swing._`;
     let text = baseText;
     if (viewerIsSage) {
       // Estimate the incoming hit's range. Same formula performMonsterTurn

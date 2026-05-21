@@ -2,7 +2,7 @@
 
 import type { DamageType } from "./flavor";
 
-export type CombatAction = "attack" | "cast" | "flee";
+export type CombatAction = "attack" | "flee";
 
 export type BattlePosition = "front" | "back";
 
@@ -48,23 +48,20 @@ export interface PlayerHit {
   totalMod: number;
 }
 
-// Resolves a player's attack/cast against the monster.
-//   action="attack" → 1d6, crit on natural 6
-//   action="cast"   → 1d8, crit on natural 8
-// Crits double the post-modifier total. `rollFn(sides)` is injected so tests can be
-// deterministic; production passes flavor.ts's `rollDice`.
+// Resolves a player's attack against the monster: 1d6, crit on natural 6.
+// Crits double the post-modifier total. `rollFn(sides)` is injected so tests
+// can be deterministic; production passes flavor.ts's `rollDice`.
 export function resolvePlayerHit(
-  action: "attack" | "cast",
+  action: "attack",
   classMod: number,
   weaponMod: number,
   rollFn: (sides: number) => number,
 ): PlayerHit {
-  const sides = action === "cast" ? 8 : 6;
-  const roll = rollFn(sides);
-  const isCrit = roll === sides;
+  const roll = rollFn(6);
+  const isCrit = roll === 6;
   const totalMod = classMod + weaponMod;
   const damage = (roll + totalMod) * (isCrit ? 2 : 1);
-  return { roll, damage, isCrit, sides, totalMod };
+  return { roll, damage, isCrit, sides: 6, totalMod };
 }
 
 export interface MonsterHit {
