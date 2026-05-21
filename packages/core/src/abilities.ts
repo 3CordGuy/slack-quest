@@ -7,6 +7,7 @@ export type TargetKind =
   | "self"
   | "single_enemy"
   | "single_ally"
+  | "any"           // fighter or monster — execute sees ctx.target as either type
   | "all_allies"
   | "all_enemies";
 

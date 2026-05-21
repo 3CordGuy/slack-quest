@@ -1865,6 +1865,11 @@ function handleAbility(
       : sPostMana.monsters.find((m) => m.hp > 0);
   } else if (ability.target === "single_ally") {
     ctxTarget = sPostMana.fighters.find((f) => f.id === (action.target ?? action.actor) && f.hp > 0);
+  } else if (ability.target === "any") {
+    // target_id = monster pick; target = fighter pick
+    ctxTarget = action.target_id
+      ? sPostMana.monsters.find((m) => m.id === action.target_id && m.hp > 0)
+      : sPostMana.fighters.find((f) => f.id === action.target && f.hp > 0);
   } else if (ability.target === "self") {
     ctxTarget = tickedActor;
   }

@@ -770,6 +770,7 @@ export function CombatPage({
   const [itemPicker, setItemPicker] = useState<"closed" | "open" | { reviveItemId: number }>("closed");
   const [migratePicker, setMigratePicker] = useState<boolean>(false);
   const [allyPickerAbility, setAllyPickerAbility] = useState<ActiveAbilityDef | null>(null);
+  const [anyPickerAbility, setAnyPickerAbility] = useState<ActiveAbilityDef | null>(null);
   const [givePicker, setGivePicker] = useState<"closed" | "selectItem" | { itemId: number }>("closed");
   const [items, setItems] = useState<InventoryItem[]>([]);
   const [autoResolve, setAutoResolve] = useState<boolean>(
@@ -1127,6 +1128,10 @@ export function CombatPage({
       setAllyPickerAbility(ability);
       return;
     }
+    if (ability.target === "any") {
+      setAnyPickerAbility(ability);
+      return;
+    }
     send({
       kind: "ability",
       actor: selfId,
@@ -1139,6 +1144,16 @@ export function CombatPage({
     if (!allyPickerAbility) return;
     send({ kind: "ability", actor: selfId, ability_id: allyPickerAbility.id, target: targetId });
     setAllyPickerAbility(null);
+  }
+
+  function fireAnyAbility(pick: { kind: "monster"; id: string } | { kind: "fighter"; id: string }) {
+    if (!anyPickerAbility) return;
+    if (pick.kind === "monster") {
+      send({ kind: "ability", actor: selfId, ability_id: anyPickerAbility.id, target_id: pick.id });
+    } else {
+      send({ kind: "ability", actor: selfId, ability_id: anyPickerAbility.id, target: pick.id });
+    }
+    setAnyPickerAbility(null);
   }
 
   function fireMigrate(targetId: string, position: "front" | "back") {
@@ -1159,7 +1174,7 @@ export function CombatPage({
 
   // Background art: first live monster's portrait, or first monster fallback.
   const bgArtUrl = state?.monsters.find((m) => m.hp > 0)?.art_url ?? state?.monsters[0]?.art_url ?? null;
-  const isPickerOpen = itemPicker !== "closed" || migratePicker || allyPickerAbility !== null || givePicker !== "closed";
+  const isPickerOpen = itemPicker !== "closed" || migratePicker || allyPickerAbility !== null || anyPickerAbility !== null || givePicker !== "closed";
   const otherPosition = me?.position === "front" ? "back" : "front";
   const isMonsterTurn = currentActorId !== null && isMonsterActor(currentActorId);
 
@@ -1328,6 +1343,15 @@ export function CombatPage({
           ability={allyPickerAbility}
           onPick={fireAllyAbility}
           onCancel={() => setAllyPickerAbility(null)}
+        />
+      )}
+      {state?.status === "active" && anyPickerAbility && (
+        <AnyTargetPicker
+          fighters={state.fighters}
+          monsters={state.monsters}
+          ability={anyPickerAbility}
+          onPick={fireAnyAbility}
+          onCancel={() => setAnyPickerAbility(null)}
         />
       )}
       {state?.status === "active" && givePicker === "selectItem" && (
@@ -1963,6 +1987,58 @@ function AllyPicker({
           </button>
         ))}
       </div>
+      <button onClick={onCancel} style={{ ...btnBase }}>Cancel</button>
+    </PickerModal>
+  );
+}
+
+function AnyTargetPicker({
+  fighters,
+  monsters,
+  ability,
+  onPick,
+  onCancel,
+}: {
+  fighters: Fighter[];
+  monsters: Monster[];
+  ability: ActiveAbilityDef;
+  onPick: (pick: { kind: "monster"; id: string } | { kind: "fighter"; id: string }) => void;
+  onCancel: () => void;
+}) {
+  const btnBase: React.CSSProperties = {
+    padding: "8px 14px", background: "#1a1c21", border: "1px solid #2a2d33",
+    borderRadius: 6, color: "#f5f5f5", cursor: "pointer", fontSize: 13, fontFamily: "inherit",
+  };
+  const aliveFighters = fighters.filter((f) => f.hp > 0);
+  const aliveMonsters = monsters.filter((m) => m.hp > 0);
+  return (
+    <PickerModal title={<><Icon name={ability.icon} /> {ability.name} — pick a target</>} onClose={onCancel}>
+      {aliveFighters.length > 0 && (
+        <>
+          <div style={{ fontSize: 11, color: "#a78bfa", fontWeight: 600, marginBottom: 6, textTransform: "uppercase", letterSpacing: 0.5 }}>Allies</div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 12 }}>
+            {aliveFighters.map((f) => (
+              <button key={f.id} onClick={() => onPick({ kind: "fighter", id: f.id })}
+                style={{ ...btnBase, borderColor: "#a855f7" }}>
+                {f.name} · {f.hp}/{f.max_hp} HP
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+      {aliveMonsters.length > 0 && (
+        <>
+          <div style={{ fontSize: 11, color: "#f87171", fontWeight: 600, marginBottom: 6, textTransform: "uppercase", letterSpacing: 0.5 }}>Enemies</div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 12 }}>
+            {aliveMonsters.map((m) => (
+              <button key={m.id} onClick={() => onPick({ kind: "monster", id: m.id ?? "" })}
+                style={{ ...btnBase, borderColor: "#f87171" }}>
+                {m.name} · {m.hp}/{m.max_hp} HP
+              </button>
+            ))}
+          </div>
+        </>
+      )}
       <button onClick={onCancel} style={{ ...btnBase }}>Cancel</button>
     </PickerModal>
   );
