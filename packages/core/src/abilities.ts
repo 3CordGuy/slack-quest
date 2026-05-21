@@ -60,6 +60,20 @@ export interface AbilityContext {
   position?: "front" | "back";
 }
 
+// Minimal spec for an ally NPC summoned into combat via summon_ally_npc.
+// The machine creates a full CombatFighter from this; no class abilities,
+// no mana. Stats are caller-supplied (typically derived from the caster's level).
+export interface AllyNpcSpec {
+  name: string;
+  class_label: string;
+  level: number;
+  hp: number;
+  attack_mod: number;
+  weapon_power: number;
+  position: "front" | "back";
+  weapon_range: "melee" | "ranged";
+}
+
 // Effects returned by execute(). The machine applies each one in sequence.
 export type AbilityEffect =
   // Deal damage to a specific monster (bypasses armor, like the old signatures).
@@ -94,7 +108,12 @@ export type AbilityEffect =
   // Show full battle intel for N of the sage's own turns (foresee).
   | { kind: "set_foresee_turns"; turns: number }
   // Move a fighter to a different row.
-  | { kind: "move_fighter"; target_id: string; to: "front" | "back" };
+  | { kind: "move_fighter"; target_id: string; to: "front" | "back" }
+  // Summon an ally NPC into the fight. The machine generates a unique ID from
+  // id_suffix + caster id, adds the NPC to fighters and turn_order, and emits
+  // an ally_npc_summoned event. The NPC acts as an auto-resolved fighter each
+  // turn (same as a merc): d20 to-hit, d6 damage, targets lowest-HP monster.
+  | { kind: "summon_ally_npc"; spec: AllyNpcSpec; id_suffix: string };
 
 export interface ActiveAbilityDef {
   kind: "active";

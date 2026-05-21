@@ -5,7 +5,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { isMonsterActor, isMercActor, classByName, activeAbilities, type ActiveAbilityDef } from "@gantt-quest/core";
+import { isMonsterActor, isAllyNpcActor, classByName, activeAbilities, type ActiveAbilityDef } from "@gantt-quest/core";
 import { Icon } from "./icons";
 
 export const DISPLAY_FONT = "'Metamorphous', serif";
@@ -1262,7 +1262,7 @@ export function CombatPanel({
 
   const currentActorId = state.turn_order[state.turn_index % state.turn_order.length] ?? null;
   const isInactivePlayerTurn = !myTurn && currentActorId !== null
-    && !isMonsterActor(currentActorId) && !isMercActor(currentActorId);
+    && !isMonsterActor(currentActorId) && !isAllyNpcActor(currentActorId);
 
   const [skipReady, setSkipReady] = useState(false);
   useEffect(() => {

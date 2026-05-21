@@ -1,6 +1,6 @@
 import { useEffect, useReducer, useRef, useState } from "react";
 import toast from "react-hot-toast";
-import { isMonsterActor, classByName, activeAbilities, type ActiveAbilityDef, isMercActor } from "@gantt-quest/core";
+import { isMonsterActor, classByName, activeAbilities, type ActiveAbilityDef, isAllyNpcActor } from "@gantt-quest/core";
 
 import { Avatar, Icon } from "./icons";
 import { CombatParticles, CombatParticlesProvider, triggerBurst } from "./CombatParticles";
@@ -297,7 +297,7 @@ type TurnAction =
       position?: "front" | "back";
     }
   | { kind: "monster_act" }
-  | { kind: "merc_act" }
+  | { kind: "ally_npc_act" }
   | { kind: "use_item"; actor: string; item_id: number; target_id?: string };
 
 type ItemEffect =
@@ -1022,14 +1022,14 @@ export function CombatPage({
   useEffect(() => {
     if (!stateForAuto || stateForAuto.status !== "active") return;
     const actorId = stateForAuto.turn_order[stateForAuto.turn_index % stateForAuto.turn_order.length];
-    const isNonPlayer = isMonsterActor(actorId) || isMercActor(actorId);
+    const isNonPlayer = isMonsterActor(actorId) || isAllyNpcActor(actorId);
     if (!isNonPlayer) return;
-    // Mercs always auto-resolve; monsters respect the autoResolve toggle.
+    // Ally NPCs always auto-resolve; monsters respect the autoResolve toggle.
     if (isMonsterActor(actorId) && !autoResolveRef.current) return;
     if (autoResolvedTurnRef.current === stateForAuto.turn_index) return;
     const timer = setTimeout(() => {
       if (isMonsterActor(actorId) && !autoResolveRef.current) return;
-      const action = isMercActor(actorId) ? { kind: "merc_act" as const } : { kind: "monster_act" as const };
+      const action = isAllyNpcActor(actorId) ? { kind: "ally_npc_act" as const } : { kind: "monster_act" as const };
       const fired = send(action);
       if (fired) autoResolvedTurnRef.current = stateForAuto.turn_index;
     }, 800);
@@ -1049,7 +1049,7 @@ export function CombatPage({
       ? state.turn_order[state.turn_index % state.turn_order.length]
       : null;
   const myTurn = currentActorId === selfId;
-  const isInactivePlayerTurn = !myTurn && currentActorId !== null && !isMonsterActor(currentActorId) && !isMercActor(currentActorId);
+  const isInactivePlayerTurn = !myTurn && currentActorId !== null && !isMonsterActor(currentActorId) && !isAllyNpcActor(currentActorId);
 
   // Skip-turn button becomes active after 8 s of waiting on another player.
   const [skipReady, setSkipReady] = useState(false);

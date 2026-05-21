@@ -38,7 +38,7 @@ import {
   type Rarity,
   type WeaponRange,
 } from "./flavor";
-import { type AbilityContext, type AbilityEffect, type ActiveAbilityDef } from "./abilities";
+import { type AbilityContext, type AbilityEffect, type ActiveAbilityDef, type AllyNpcSpec } from "./abilities";
 import { deriveArmorBonus, deriveCritBonus, deriveDodgeChance, deriveInitiativeBonus, type Stats } from "./stats";
 
 export type ActorId = string;
@@ -47,6 +47,10 @@ export const isMonsterActor = (id: ActorId): boolean => id === MONSTER_ID || id.
 // Merc IDs are "__merc_<hiring_user_id>__". Auto-resolved by the server; never
 // sent by web clients directly.
 export const isMercActor = (id: ActorId): boolean => id.startsWith("__merc_");
+// Ally NPC IDs: "__merc_*" (hired mercs) or "__ally_*" (ability-summoned NPCs).
+// Use isAllyNpcActor for all combat turn dispatch; use isMercActor only for
+// merc-specific logic (hire/dismiss, reward filtering).
+export const isAllyNpcActor = (id: ActorId): boolean => id.startsWith("__merc_") || id.startsWith("__ally_");
 
 export interface MachineStatusEffect {
   type: EffectType;
@@ -269,7 +273,10 @@ export type TurnAction =
       position?: BattlePosition;
     }
   | { kind: "monster_act" }
-  | { kind: "merc_act" };
+  // ally_npc_act covers both hired mercs (__merc_*) and ability-summoned NPCs
+  // (__ally_*). The DO/client dispatches this whenever isAllyNpcActor() is true
+  // for the current actor; the engine auto-resolves the turn.
+  | { kind: "ally_npc_act" };
 
 export type RollPurpose =
   | "initiative"
@@ -461,6 +468,7 @@ export type CombatEvent =
       // expired and was cleared from state.drink_buffs.
       remaining: number;
     }
+  | { type: "ally_npc_summoned"; actor: ActorId; npc_id: ActorId; name: string }
   | { type: "victory" }
   | { type: "defeat" }
   | { type: "rejected"; reason: string }
@@ -602,8 +610,8 @@ export function step(state: CombatState, action: TurnAction, roll: RollFn): Step
       // active, inject the intel refresh right before the turn_start divider so
       // the Sage sees fresh info at the top of their incoming turn.
       return withForeseeForNextActor(handleMonsterAct(state, roll), roll);
-    case "merc_act":
-      return handleMercAct(state, roll);
+    case "ally_npc_act":
+      return handleAllyNpcAct(state, roll);
   }
 }
 
@@ -962,14 +970,15 @@ function handlePlayerHit(
   return { state: advanceTurn(nextState), events: [...events, ...turnStartEvent(nextState)] };
 }
 
-// Auto-resolved merc turn: simple d20 to-hit then d6 damage swing at the
-// lowest-HP live monster. No class abilities, no crits, no mana. Server
-// fires this in a loop after each player/monster action whenever the next
-// actor is a merc, so the web client never sees a "pending merc turn".
-function handleMercAct(state: CombatState, roll: RollFn): StepResult {
+// Auto-resolved ally NPC turn (hired mercs and ability-summoned NPCs): simple
+// d20 to-hit then d6 damage swing at the lowest-HP live monster. No class
+// abilities, no crits, no mana. Server fires this in a loop after each
+// player/monster action whenever the next actor is an ally NPC, so the web
+// client never sees a "pending NPC turn".
+function handleAllyNpcAct(state: CombatState, roll: RollFn): StepResult {
   const actorId = currentActor(state);
-  if (!actorId || !isMercActor(actorId)) {
-    return reject(state, "not a merc's turn");
+  if (!actorId || !isAllyNpcActor(actorId)) {
+    return reject(state, "not an ally NPC's turn");
   }
   const merc = state.fighters.find((f) => f.id === actorId);
   if (!merc || merc.hp <= 0) {
@@ -2167,6 +2176,43 @@ function applyUtilityAbilityEffects(
         const from = target.position;
         s = { ...s, fighters: s.fighters.map((f) => f.id === effect.target_id ? { ...f, position: effect.to } : f) };
         events.push({ type: "ability_migrate", actor, target: effect.target_id, from, to: effect.to });
+        break;
+      }
+      case "summon_ally_npc": {
+        const { spec, id_suffix } = effect;
+        const npcId: ActorId = `__ally_${id_suffix}_${actor}__`;
+        // Don't double-summon if the NPC is already alive in this fight.
+        if (s.fighters.some((f) => f.id === npcId && f.hp > 0)) break;
+        const npc: CombatFighter = {
+          id: npcId,
+          name: spec.name,
+          class: spec.class_label,
+          level: spec.level,
+          hp: spec.hp,
+          max_hp: spec.hp,
+          mana: 0,
+          max_mana: 0,
+          shield: 0,
+          position: spec.position,
+          attack_mod: spec.attack_mod,
+          magic_mod: 0,
+          weapon_power: spec.weapon_power,
+          focus_power: 0,
+          weapon_range: spec.weapon_range,
+          slack_username: null,
+          armor_power: 0,
+          initiative: 0,
+          effects: [],
+          scars: [],
+        };
+        s = {
+          ...s,
+          fighters: [...s.fighters, npc],
+          // Append to end of turn_order so the NPC joins next cycle without
+          // disrupting the current round's index tracking.
+          turn_order: [...s.turn_order, npcId],
+        };
+        events.push({ type: "ally_npc_summoned", actor, npc_id: npcId, name: spec.name });
         break;
       }
     }

@@ -77,7 +77,7 @@ import {
   mergeEffect,
   MONSTER_ID,
   isMonsterActor,
-  isMercActor,
+  isAllyNpcActor,
   MERCS,
   findMerc,
   MONSTER_ELEMENT_AFFINITY_CHANCE,
@@ -4729,7 +4729,7 @@ app.post("/api/quest/:id/start_web_combat", async (c) => {
   // the DO's bootstrapFromSlack path so both surfaces seed identically.
   const seededWithBuffs = await seedDrinkBuffs(c.env.DB, built.seeded);
   const begun = step(seededWithBuffs, { kind: "begin" }, productionRoll);
-  const afterMercs = drainMercTurns(begun);
+  const afterMercs = drainAllyNpcTurns(begun);
   await saveWebCombatState(c.env.DB, questId, afterMercs.state);
   // Lock the quest into web mode so Slack combat handlers refuse further
   // /sq attack actions on it. Once flipped to 'web' it stays there for the
@@ -6335,9 +6335,9 @@ async function applyWebCombatOutcome(
   // a fight's pool while damage dealers got ~70%. With 40/60 the spread
   // tightens to roughly 22–27% support vs 50–55% top dealer.
   const PARTICIPATION_POOL_PCT = 0.4;
-  // Mercs are excluded from reward calculations — they deal damage but earn
-  // nothing and don't count toward the party-size pool.
-  const humanFighters = state.fighters.filter((f) => !isMercActor(f.id));
+  // Ally NPCs (mercs, summoned) are excluded from reward calculations — they
+  // deal damage but earn nothing and don't count toward the party-size pool.
+  const humanFighters = state.fighters.filter((f) => !isAllyNpcActor(f.id));
   const contributions = humanFighters.map((f) => {
     const fs = state.stats?.[f.id] ?? { damage_taken: 0, healing_done: 0, shielding_done: 0, kills: 0 };
     const supportCredit = Math.floor(fs.healing_done * 3 / 4) + Math.floor(fs.shielding_done / 2);
@@ -6792,19 +6792,19 @@ interface WsAttachment {
 
 const productionRoll: RollFn = (sides) => Math.floor(Math.random() * sides) + 1;
 
-// Consumes any consecutive merc turns at the head of the queue so the
+// Consumes any consecutive ally NPC turns at the head of the queue so the
 // resulting state always presents a player or monster as the current actor.
-// Called after `begin` (high-initiative merc) and inside `serverAction`
-// (merc slot immediately follows the acted fighter).
-function drainMercTurns(
+// Called after `begin` (high-initiative NPC) and inside `serverAction`
+// (NPC slot immediately follows the acted fighter).
+function drainAllyNpcTurns(
   result: { state: CombatState; events: CombatEvent[] },
 ): { state: CombatState; events: CombatEvent[] } {
   let cur = result;
   let safety = 0;
-  while (cur.state.status === "active" && safety++ < 10) {
+  while (cur.state.status === "active" && safety++ < 20) {
     const actor = cur.state.turn_order[cur.state.turn_index % cur.state.turn_order.length];
-    if (!actor || !isMercActor(actor)) break;
-    const next = step(cur.state, { kind: "merc_act" }, productionRoll);
+    if (!actor || !isAllyNpcActor(actor)) break;
+    const next = step(cur.state, { kind: "ally_npc_act" }, productionRoll);
     cur = { state: next.state, events: [...cur.events, ...next.events] };
   }
   return cur;
@@ -7400,17 +7400,17 @@ export class QuestRoom extends DurableObject<Env> {
     if (!state) return { ok: false, reason: "no_combat" };
     if (state.status !== "active") return { ok: false, reason: "combat_ended" };
 
-    // If the persisted state already has a merc as the current actor (e.g. from
-    // a save before client-side auto-resolve was deployed), drain those first.
+    // If the persisted state already has an ally NPC as the current actor (e.g.
+    // from a save before client-side auto-resolve was deployed), drain those first.
     const currentActor = state.turn_order[state.turn_index % state.turn_order.length];
-    if (currentActor && isMercActor(currentActor)) {
-      const drained = drainMercTurns({ state, events: [] });
+    if (currentActor && isAllyNpcActor(currentActor)) {
+      const drained = drainAllyNpcTurns({ state, events: [] });
       state = drained.state;
       if (state.status !== "active") return { ok: false, reason: "combat_ended" };
     }
 
     const raw = step(state, action, productionRoll);
-    const combined = drainMercTurns(raw);
+    const combined = drainAllyNpcTurns(raw);
     const allEvents = combined.events;
     try {
       const outcome = await this.handleStepResult(questId, state, combined);
@@ -7476,7 +7476,7 @@ export class QuestRoom extends DurableObject<Env> {
     const begun = step(seededWithBuffs, { kind: "begin" }, productionRoll);
     // If the merc rolled highest initiative, auto-process their opening turn(s)
     // so the state always starts with a player or monster as the current actor.
-    const afterMercs = drainMercTurns({ state: begun.state, events: begun.events });
+    const afterMercs = drainAllyNpcTurns({ state: begun.state, events: begun.events });
     const newLog = this.appendLog(afterMercs.events);
     await saveWebCombatState(this.env.DB, questId, afterMercs.state, newLog);
     this.cacheState = afterMercs.state;
@@ -8133,7 +8133,7 @@ export class QuestRoom extends DurableObject<Env> {
     if (!this.env.SLACK_BOT_TOKEN) return;
     const turnStart = events.find(
       (e): e is Extract<CombatEvent, { type: "turn_start" }> =>
-        e.type === "turn_start" && !isMonsterActor(e.actor) && !isMercActor(e.actor),
+        e.type === "turn_start" && !isMonsterActor(e.actor) && !isAllyNpcActor(e.actor),
     );
     if (!turnStart) return;
     const token = this.env.SLACK_BOT_TOKEN;
