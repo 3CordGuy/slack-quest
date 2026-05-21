@@ -113,7 +113,12 @@ export type AbilityEffect =
   // id_suffix + caster id, adds the NPC to fighters and turn_order, and emits
   // an ally_npc_summoned event. The NPC acts as an auto-resolved fighter each
   // turn (same as a merc): d20 to-hit, d6 damage, targets lowest-HP monster.
-  | { kind: "summon_ally_npc"; spec: AllyNpcSpec; id_suffix: string };
+  | { kind: "summon_ally_npc"; spec: AllyNpcSpec; id_suffix: string }
+  | { kind: "move_fighter"; target_id: string; to: "front" | "back" }
+  // Grant advantage charges to a fighter: next N to-hit d20 rolls twice, take higher.
+  | { kind: "grant_encourage"; target_id: string; charges: number }
+  // Apply disadvantage charges to a monster: next N to-hit d20 rolls twice, take lower.
+  | { kind: "apply_discourage"; target_id: string; charges: number };
 
 export interface ActiveAbilityDef {
   kind: "active";
