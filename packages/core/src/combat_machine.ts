@@ -418,7 +418,7 @@ export type CombatEvent =
       // Party HP snapshot for triage.
       triage: Array<{ id: ActorId; hp: number; max_hp: number; shield: number; position: BattlePosition }>;
       // Active ability effects summary.
-      active: { containerize: number; taunt_actor: ActorId | null; taunt_swings: number; vanished: ActorId[] };
+      active: { stunned: number; taunt_actor: ActorId | null; taunt_swings: number; vanished: ActorId[] };
       // How many more turns this readout will re-appear (counts down after cast).
       turns_remaining: number;
     }
@@ -429,8 +429,8 @@ export type CombatEvent =
       from: BattlePosition;
       to: BattlePosition;
     }
-  | { type: "monster_swing_skipped"; reason: "containerize" }
-  | { type: "containerize_stun_broken"; turns_active: number }
+  | { type: "monster_swing_skipped"; reason: "stunned" }
+  | { type: "monster_stun_broken"; turns_active: number }
   | { type: "monster_target_redirected"; from: ActorId; to: ActorId; reason: "taunt" | "vanish" }
   | { type: "battle_hymn_consumed"; actor: ActorId; bonus: number; remaining: number }
   | { type: "mark_applied"; actor: ActorId; expires_after_round: number; bonus: number }
@@ -1172,7 +1172,7 @@ function handleMonsterAct(state: CombatState, roll: RollFn): StepResult {
     const breakChance = Math.min(1.0, turnsElapsed * 0.30);
     const breaks = (roll(100) / 100) < breakChance;
     const breakEvents: CombatEvent[] = breaks
-      ? [{ type: "containerize_stun_broken", turns_active: turnsElapsed }]
+      ? [{ type: "monster_stun_broken", turns_active: turnsElapsed }]
       : [];
     const updatedMonsters = breaks
       ? s.monsters.map((m) =>
@@ -1187,7 +1187,7 @@ function handleMonsterAct(state: CombatState, roll: RollFn): StepResult {
       state: next,
       events: [
         ...events,
-        { type: "monster_swing_skipped", reason: "containerize" },
+        { type: "monster_swing_skipped", reason: "stunned" },
         ...breakEvents,
         ...turnStartEvent(next),
       ],
@@ -2231,7 +2231,7 @@ function buildForeseeEvent(
     .map(([id]) => id);
   const liveMonster = state.monsters.find((m) => m.hp > 0);
   const active = {
-    containerize: liveMonster?.effects.some((e) => e.type === "stunned") ? 1 : 0,
+    stunned: liveMonster?.effects.some((e) => e.type === "stunned") ? 1 : 0,
     taunt_actor: taunted && taunted.swings_remaining > 0 ? taunted.actor_id : null,
     taunt_swings: taunted?.swings_remaining ?? 0,
     vanished: vanishedIds,

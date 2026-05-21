@@ -78,8 +78,8 @@ export type AbilityEffect =
   | { kind: "grant_shield"; target_id: string; amount: number }
   // Grant shield to every alive party member (regression shield).
   | { kind: "grant_shield_all"; amount: number }
-  // Apply a stun to the targeted monster (containerize). Break chance
-  // accumulates 30% per elapsed monster turn; guaranteed on the 4th turn.
+  // Apply a stun to the targeted monster. Break chance accumulates 30% per
+  // elapsed monster turn; guaranteed on the 4th turn.
   | { kind: "stun_monster"; target_id: string }
   // Restore mana to a specific fighter (Mana Font passive).
   | { kind: "restore_mana"; target_id: string; amount: number }

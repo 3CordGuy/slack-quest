@@ -177,7 +177,7 @@ function renderEvent(state: CombatState, e: CombatEvent): string {
     case "ability_containerize":
       return `📦 *Containerize* — *${activeMonsterName(state)}* is locked in a stasis container.`;
 
-    case "containerize_stun_broken":
+    case "monster_stun_broken":
       return `💥 *${activeMonsterName(state)}* breaks free from the stasis container after ${e.turns_active} stunned turn${e.turns_active === 1 ? "" : "s"}!`;
 
     case "ability_regression_shield":

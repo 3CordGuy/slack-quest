@@ -213,7 +213,7 @@ type CombatEvent =
       verdict: "safe" | "at_risk" | "lethal";
       probabilities: Array<{ id: string; position: "front" | "back"; pct: number }>;
       triage: Array<{ id: string; hp: number; max_hp: number; shield: number; position: "front" | "back" }>;
-      active: { containerize: number; taunt_actor: string | null; taunt_swings: number; vanished: string[] };
+      active: { stunned: number; taunt_actor: string | null; taunt_swings: number; vanished: string[] };
       turns_remaining: number;
     }
   | {
@@ -224,7 +224,7 @@ type CombatEvent =
       to: "front" | "back";
     }
   | { type: "monster_swing_skipped"; reason: string }
-  | { type: "containerize_stun_broken"; turns_active: number }
+  | { type: "monster_stun_broken"; turns_active: number }
   | { type: "monster_target_redirected"; from: string; to: string; reason: string }
   | { type: "monster_target_blocked"; reason: string }
   | {
@@ -636,7 +636,7 @@ function formatEvent(e: CombatEvent, state: CombatState | null): LogEntry[] {
         : [];
       const active = e.active;
       const effectNotes = active ? [
-        (active.containerize ?? 0) > 0 && `Containerize ×${active.containerize}`,
+        (active.stunned ?? 0) > 0 && `Stunned`,
         active.taunt_actor && `Taunt→${nameOf(active.taunt_actor)} (${active.taunt_swings})`,
         (active.vanished ?? []).length > 0 && `Vanished: ${active.vanished.map(nameOf).join(", ")}`,
       ].filter(Boolean) : [];
@@ -655,7 +655,7 @@ function formatEvent(e: CombatEvent, state: CombatState | null): LogEntry[] {
       return row("grass", <>{nameOf(e.actor)} shifts {nameOf(e.target)} to the {e.to} row.</>, "info");
     case "monster_swing_skipped":
       return row("cubes", "The monster is stunned — its swing fizzles.", "good");
-    case "containerize_stun_broken":
+    case "monster_stun_broken":
       return row("cubes", <>The monster breaks free after {e.turns_active} stunned turn{e.turns_active === 1 ? "" : "s"}!</>, "info");
     case "monster_target_redirected":
       return row(

@@ -1036,7 +1036,7 @@ describe("containerize ability (DevOps Mage)", () => {
     const result = step(stunnedState, { kind: "monster_act" }, seqRoll([100]));
     expect(result.state.fighters[0].hp).toBe(30); // fighter untouched
     expect(result.events.find((e) => e.type === "monster_swing_skipped")).toBeDefined();
-    expect(result.events.find((e) => e.type === "containerize_stun_broken")).toBeUndefined();
+    expect(result.events.find((e) => e.type === "monster_stun_broken")).toBeUndefined();
     // remaining decremented by tick
     const after = result.state.monsters[0].effects.find((e) => e.type === "stunned");
     expect(after?.remaining).toBe(4);
@@ -1053,7 +1053,7 @@ describe("containerize ability (DevOps Mage)", () => {
       })),
     };
     const result = step(stunnedState, { kind: "monster_act" }, seqRoll([1]));
-    expect(result.events.find((e) => e.type === "containerize_stun_broken")).toBeDefined();
+    expect(result.events.find((e) => e.type === "monster_stun_broken")).toBeDefined();
     expect(result.events.find((e) => e.type === "monster_swing_skipped")).toBeDefined();
     // Stun removed from monster's effects.
     expect(result.state.monsters[0].effects.find((e) => e.type === "stunned")).toBeUndefined();
