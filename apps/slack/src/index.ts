@@ -24,7 +24,7 @@ export interface Env {
   // message). Set via wrangler.jsonc `vars` to override per-workspace branding.
   // Defaults to "Slack Quest" when unset. Helper: `botName(env)` in commands.ts.
   BOT_NAME?: string;
-  // Public base URL of this worker (e.g. https://gantt-quest.3cordguy.workers.dev).
+  // Public base URL of the web worker (e.g. https://your-worker.workers.dev).
   // Used to build absolute image URLs that Slack can fetch for image blocks.
   // Optional — when unset, image blocks are simply omitted.
   IMAGE_BASE_URL?: string;
