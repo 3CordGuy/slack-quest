@@ -815,6 +815,13 @@ export function describeCombatEffect(item: CombatItem): string {
     case "consumable": return `Heals ${p} HP`;
     case "magic":      return `+${p} max mana`;
     case "revive":     return `Revives a downed ally at ${p}% HP`;
+    case "weapon": {
+      const parts = [`${p} weapon power`];
+      if (item.weapon_range) parts.push(item.weapon_range);
+      if (item.item_subtype && item.item_subtype !== "physical") parts.push(item.item_subtype);
+      return parts.join(" · ");
+    }
+    case "armor": return `${p} armor power`;
     case "tool":
     case "scroll": {
       switch (item.item_name) {
@@ -834,7 +841,7 @@ export function describeCombatEffect(item: CombatItem): string {
   }
 }
 
-export function UseItemTile({ item, onClick }: { item: CombatItem; onClick: () => void }) {
+export function UseItemTile({ item, onClick, readOnly }: { item: CombatItem; onClick: () => void; readOnly?: boolean }) {
   const tint = RARITY_TINT[item.rarity ?? "common"] ?? "#2a2d33";
   const icon = lootIcon({
     item_type: item.item_type,
@@ -847,18 +854,20 @@ export function UseItemTile({ item, onClick }: { item: CombatItem; onClick: () =
   const effectDesc = describeCombatEffect(item);
   const levelReq = item.level_req ?? 1;
   return (
-    <button onClick={onClick} style={{
+    <button onClick={readOnly ? undefined : onClick} style={{
       padding: "10px 12px", background: "#131519",
       border: `1px solid ${tint}55`, borderLeft: `3px solid ${tint}`,
       borderRadius: 8, color: "#d1d5db", textAlign: "left", fontSize: 12,
-      cursor: "pointer", display: "flex", flexDirection: "column", gap: 5, width: "100%",
+      cursor: readOnly ? "default" : "pointer",
+      display: "flex", flexDirection: "column", gap: 5, width: "100%",
+      opacity: readOnly ? 0.65 : 1,
     }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
         <Icon name={icon} size={18} color={tint} />
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontWeight: 700, color: tint, fontSize: 13, lineHeight: 1.2 }}>{item.item_name}</div>
           <div style={{ fontSize: 10, color: "#6b7280", textTransform: "uppercase", letterSpacing: 0.5 }}>
-            {item.rarity ?? "common"}
+            {item.equipped ? "equipped · " : ""}{item.rarity ?? "common"}
             {levelReq > 1 && <span style={{ color: "#f59e0b", marginLeft: 6 }}>Req L{levelReq}</span>}
           </div>
         </div>
@@ -887,19 +896,34 @@ export function ItemPicker({ items, onPickNoTarget, onPickRevive, onCancel }: {
   onCancel: () => void;
 }) {
   const usable = items.filter((i) => isCombatUsable(i.item_type));
+  const readOnly = items.filter((i) => !isCombatUsable(i.item_type));
   return (
     <PickerModal title={<><Icon name="ammo-bag" /> Use Item</>} onClose={onCancel}>
-      {usable.length === 0
-        ? <p style={{ fontSize: 13, color: "#6b7280", margin: 0 }}>No usable items in your pack.</p>
+      {usable.length === 0 && readOnly.length === 0
+        ? <p style={{ fontSize: 13, color: "#6b7280", margin: 0 }}>No items in your pack.</p>
         : (
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", gap: 8 }}>
-            {usable.map((it) => (
-              <UseItemTile
-                key={it.id}
-                item={it}
-                onClick={() => it.item_type === "revive" ? onPickRevive(it.id) : onPickNoTarget(it.id)}
-              />
-            ))}
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            {usable.length > 0 && (
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", gap: 8 }}>
+                {usable.map((it) => (
+                  <UseItemTile
+                    key={it.id}
+                    item={it}
+                    onClick={() => it.item_type === "revive" ? onPickRevive(it.id) : onPickNoTarget(it.id)}
+                  />
+                ))}
+              </div>
+            )}
+            {readOnly.length > 0 && (
+              <>
+                {usable.length > 0 && <div style={{ fontSize: 11, color: "#6b7280", textTransform: "uppercase", letterSpacing: 0.5 }}>Equipped (reference)</div>}
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", gap: 8 }}>
+                  {readOnly.map((it) => (
+                    <UseItemTile key={it.id} item={it} onClick={() => {}} readOnly />
+                  ))}
+                </div>
+              </>
+            )}
           </div>
         )
       }
@@ -973,13 +997,9 @@ export function GiveItemPicker({ items, onPickItem, onCancel }: {
       {giveable.length === 0
         ? <p style={{ fontSize: 13, color: "#6b7280", margin: 0 }}>No items to give.</p>
         : (
-          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", gap: 8 }}>
             {giveable.map((it) => (
-              <button key={it.id} onClick={() => onPickItem(it.id)}
-                style={PICKER_BTN_STYLE} onMouseEnter={hoverGreen} onMouseLeave={hoverOut}>
-                <span style={{ fontWeight: 600 }}>{it.item_name}</span>
-                <span style={{ fontSize: 12, color: "#9aa0a6" }}>pwr {it.power} · {it.rarity ?? "common"}</span>
-              </button>
+              <UseItemTile key={it.id} item={it} onClick={() => onPickItem(it.id)} />
             ))}
           </div>
         )

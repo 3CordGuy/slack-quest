@@ -5,7 +5,7 @@
 
 import { useEffect, useReducer, useRef, useState } from "react";
 import toast from "react-hot-toast";
-import { isMonsterActor } from "@gantt-quest/core";
+import { isMonsterActor, isMercActor } from "@gantt-quest/core";
 import { Avatar, Icon } from "./icons";
 import { CombatParticles, triggerBurst } from "./CombatParticles";
 import {
@@ -171,6 +171,7 @@ type TurnAction =
   | { kind: "mark"; actor: string }
   | { kind: "ability"; actor: string; ability_id: string; target_id?: string; target?: string; position?: "front" | "back" }
   | { kind: "monster_act" }
+  | { kind: "merc_act" }
   | { kind: "use_item"; actor: string; item_id: number; target_id?: string };
 
 
