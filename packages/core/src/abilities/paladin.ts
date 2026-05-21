@@ -13,6 +13,7 @@ export const paladinAbilities: AbilityDef[] = [
     blurb: "Strikes with the weight of a thousand failed builds.",
     icon: "axe-swing",
     mana_cost: 1,
+    routing: "damage",
     target: "single_enemy",
     execute(ctx) {
       const monster = ctx.target as { id: string };
@@ -29,6 +30,7 @@ export const paladinAbilities: AbilityDef[] = [
     blurb: "Grants 🛡 +3 shield to every alive partymate.",
     icon: "fairy-wand",
     mana_cost: 2,
+    routing: "utility",
     target: "all_allies",
     execute(ctx) {
       const perLevel = Math.floor(ctx.caster.level / 4);

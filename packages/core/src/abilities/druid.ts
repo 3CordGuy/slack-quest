@@ -11,6 +11,7 @@ export const druidAbilities: AbilityDef[] = [
     blurb: "Vines of legacy code constrict the foe.",
     icon: "grass",
     mana_cost: 1,
+    routing: "damage",
     target: "single_enemy",
     execute(ctx) {
       const monster = ctx.target as { id: string; tier: number };
@@ -29,17 +30,14 @@ export const druidAbilities: AbilityDef[] = [
     blurb: "Move any partymate to front or back without consuming their turn.",
     icon: "linked-rings",
     mana_cost: 1,
+    routing: "utility",
     target: "single_ally",
     needs_position_picker: true,
     execute(ctx) {
-      const target = ctx.target as { id: string; position: "front" | "back" };
-      // Position is injected by the machine from the action payload; the
-      // execute function can only see the current position from the snapshot.
-      // Return an empty array here — the machine's handleAbility special-cases
-      // migrate to call abilityMigrate directly (as before). This execute
-      // function exists for completeness; it is not called for migrate.
-      void target;
-      return [];
+      const target = ctx.target as { id: string; position: "front" | "back" } | undefined;
+      const to = ctx.position;
+      if (!target || !to || target.position === to) return [];
+      return [fx.moveFighter(target.id, to)];
     },
   },
   {

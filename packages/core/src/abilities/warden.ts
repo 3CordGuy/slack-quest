@@ -11,6 +11,7 @@ export const wardenAbilities: AbilityDef[] = [
     blurb: "Turns armor into a weapon.",
     icon: "shield",
     mana_cost: 1,
+    routing: "damage",
     target: "single_enemy",
     execute(ctx) {
       const monster = ctx.target as { id: string };
@@ -30,6 +31,7 @@ export const wardenAbilities: AbilityDef[] = [
     blurb: "Force the monster to target you for its next 2 swings, overriding the telegraph.",
     icon: "shield-reflect",
     mana_cost: 2,
+    routing: "utility",
     target: "self",
     execute(ctx) {
       return [fx.taunt(ctx.caster.id, 2)];

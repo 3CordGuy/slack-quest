@@ -9,6 +9,7 @@ export const warlockAbilities: AbilityDef[] = [
     blurb: "Curses the foe with a slow query that bleeds them out.",
     icon: "death-skull",
     mana_cost: 1,
+    routing: "damage",
     target: "single_enemy",
     execute(ctx) {
       const monster = ctx.target as { id: string; max_hp: number };
@@ -26,6 +27,7 @@ export const warlockAbilities: AbilityDef[] = [
     blurb: "Deal 1d6 + magic_mod damage and heal yourself for 50% of damage dealt.",
     icon: "death-skull",
     mana_cost: 2,
+    routing: "utility",
     target: "single_enemy",
     execute(ctx) {
       const monster = ctx.target as { id: string; hp: number };

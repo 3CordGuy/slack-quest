@@ -1633,15 +1633,6 @@ function handleShield(
   return { state: next, events: [...events, ...turnStartEvent(next)] };
 }
 
-// ── Damage ability IDs ──────────────────────────────────────────────────────
-// These active abilities deal direct damage and go through handleDamageAbility
-// rather than the utility routing.
-const DAMAGE_ABILITY_IDS = new Set([
-  "smite", "wildgrowth", "crescendo", "manifest",
-  "backstab", "bulwark_strike", "hex",
-  "fireball",
-]);
-
 // Executes a damage-dealing active ability: calls ability.execute(ctx) for the
 // damage formula, then applies drink buffs, shocked amplifier, boss phase,
 // elemental proc, and kill resolution.
@@ -1912,9 +1903,11 @@ function handleFlee(
 
 // ── Class abilities ───────────────────────────────────────────────────────
 //
-// Single entry point. Looks up the ActiveAbilityDef from the actor's class
-// abilities array, validates mana, then routes damage abilities through
-// handleDamageAbility and utility abilities through per-ability sub-handlers.
+// Single entry point. Looks up the ActiveAbilityDef from the actor's class,
+// validates mana, then routes based on ability.routing:
+//   "aoe_damage"  — AoE path (no per-target modifiers)
+//   "damage"      — single-target damage (drink buffs, shocked amp, bleed, etc.)
+//   "utility"     — generic effect applicator driven by execute() output
 
 function handleAbility(
   state: CombatState,
@@ -1952,7 +1945,7 @@ function handleAbility(
   const s = tick.state;
   const tickedActor = s.fighters.find((f) => f.id === action.actor)!;
 
-  let sPostMana: CombatState = {
+  const sPostMana: CombatState = {
     ...s,
     fighters: s.fighters.map((f) =>
       f.id === action.actor ? { ...f, mana: Math.max(0, f.mana - ability.mana_cost) } : f,
@@ -1968,19 +1961,18 @@ function handleAbility(
   };
   const preEvents: CombatEvent[] = [...tick.events, usedEvent];
 
-  // ── Damage abilities ──
-  if (DAMAGE_ABILITY_IDS.has(ability.id)) {
-    if (ability.target === "all_enemies") {
-      const liveMonsters = sPostMana.monsters.filter((m) => m.hp > 0);
-      if (liveMonsters.length === 0) return reject(sPostMana, "no valid targets");
-      return handleAoeDamageAbility(sPostMana, action.actor, tickedActor, ability, preEvents, roll);
-    }
+  // ── AoE damage ──
+  if (ability.routing === "aoe_damage") {
+    if (sPostMana.monsters.filter((m) => m.hp > 0).length === 0) return reject(sPostMana, "no valid targets");
+    return handleAoeDamageAbility(sPostMana, action.actor, tickedActor, ability, preEvents, roll);
+  }
 
+  // ── Single-target damage ──
+  if (ability.routing === "damage") {
     const targetMonster = action.target_id
       ? sPostMana.monsters.find((m) => m.id === action.target_id && m.hp > 0)
       : sPostMana.monsters.find((m) => m.hp > 0);
     if (!targetMonster) return reject(sPostMana, "no valid target");
-
     const ctx: AbilityContext = {
       caster: tickedActor,
       party: sPostMana.fighters.filter((f) => f.hp > 0),
@@ -1991,192 +1983,178 @@ function handleAbility(
     return handleDamageAbility(sPostMana, action.actor, tickedActor, ability, ctx, targetMonster, preEvents, roll);
   }
 
-  // ── Utility abilities ──
-  switch (ability.id) {
-    case "taunt":
-      return abilityTaunt(sPostMana, action.actor, preEvents);
-    case "containerize":
-      return abilityContainerize(sPostMana, action.actor, action.target_id ?? null, preEvents);
-    case "regression_shield":
-      return abilityRegressionShield(sPostMana, action.actor, preEvents);
-    case "vanish":
-      return abilityVanish(sPostMana, action.actor, preEvents);
-    case "soul_drain": {
-      const drainTarget = action.target_id
-        ? sPostMana.monsters.find((m) => m.id === action.target_id && m.hp > 0)
-        : sPostMana.monsters.find((m) => m.hp > 0);
-      if (!drainTarget) return reject(sPostMana, "no valid target for soul drain");
-      return abilitySoulDrain(sPostMana, action.actor, tickedActor, drainTarget.id, preEvents, roll);
-    }
-    case "battle_hymn":
-      return abilityBattleHymn(sPostMana, action.actor, preEvents);
-    case "foresee":
-      return abilityForesee(sPostMana, action.actor, preEvents, roll);
-    case "migrate":
-      return abilityMigrate(sPostMana, action, preEvents);
-    default:
-      return reject(sPostMana, `unknown ability: ${ability.id}`);
+  // ── Utility ──
+  // Resolve the target for execute() based on ability.target kind.
+  let ctxTarget: CombatFighter | CombatMonster | undefined;
+  if (ability.target === "single_enemy") {
+    ctxTarget = action.target_id
+      ? sPostMana.monsters.find((m) => m.id === action.target_id && m.hp > 0)
+      : sPostMana.monsters.find((m) => m.hp > 0);
+  } else if (ability.target === "single_ally") {
+    ctxTarget = sPostMana.fighters.find((f) => f.id === (action.target ?? action.actor) && f.hp > 0);
+  } else if (ability.target === "self") {
+    ctxTarget = tickedActor;
   }
+  const ctx: AbilityContext = {
+    caster: tickedActor,
+    party: sPostMana.fighters.filter((f) => f.hp > 0),
+    monsters: sPostMana.monsters.filter((m) => m.hp > 0),
+    target: ctxTarget,
+    roll,
+    position: action.position,
+  };
+  return applyUtilityAbilityEffects(sPostMana, ability.execute(ctx), action.actor, preEvents, roll);
 }
 
-function abilityTaunt(state: CombatState, actor: ActorId, events: CombatEvent[]): StepResult {
-  const SWINGS = 2;
-  const ability_state: AbilityRuntimeState = {
-    ...(state.ability_state ?? {}),
-    taunt: { actor_id: actor, swings_remaining: SWINGS },
-  };
-  const next = advanceTurn({ ...state, ability_state });
-  return {
-    state: next,
-    events: [...events, { type: "ability_taunt", actor, swings: SWINGS }, ...turnStartEvent(next)],
-  };
-}
-
-function abilityContainerize(state: CombatState, actor: ActorId, targetId: string | null, events: CombatEvent[]): StepResult {
-  // Apply "stunned" status effect to the targeted monster (or first live one as fallback).
-  // `remaining=5` gives tickEffects four decrements before the safety-net expiry, matching
-  // the 4-turn max stun duration (turnsElapsed = 5 - remaining after each tick).
-  const targetMonster = targetId
-    ? state.monsters.find((m) => m.id === targetId && m.hp > 0)
-    : state.monsters.find((m) => m.hp > 0);
-  if (!targetMonster) return reject(state, "no live monster to containerize");
-  const stunnedEffect: MachineStatusEffect = {
-    type: "stunned",
-    magnitude: 0,
-    remaining: 5,
-    source: actor,
-  };
-  const updatedMonsters = state.monsters.map((m) =>
-    m.id === targetMonster.id
-      ? { ...m, effects: [...m.effects.filter((e) => e.type !== "stunned"), stunnedEffect] }
-      : m,
-  );
-  const next = advanceTurn({ ...state, monsters: updatedMonsters });
-  return {
-    state: next,
-    events: [...events, { type: "ability_containerize" }, ...turnStartEvent(next)],
-  };
-}
-
-function abilityRegressionShield(
+// Generic applicator for utility ability effects. Iterates AbilityEffect[] from
+// execute() and applies each one to state, collecting events. A deal_damage that
+// kills a monster immediately fires resolveMonsterKill; remaining effects are skipped.
+function applyUtilityAbilityEffects(
   state: CombatState,
+  effects: AbilityEffect[],
   actor: ActorId,
-  events: CombatEvent[],
-): StepResult {
-  const paladin = state.fighters.find((f) => f.id === actor);
-  const SHIELD_AMOUNT = 3 + Math.floor((paladin?.level ?? 1) / 4);
-  const grants: { target: ActorId; amount: number }[] = [];
-  const updatedFighters = state.fighters.map((f) => {
-    if (f.hp <= 0) return f;
-    const cap = f.max_hp * SHIELD_CAP_MULTIPLIER;
-    const newShield = Math.min(cap, f.shield + SHIELD_AMOUNT);
-    const added = newShield - f.shield;
-    if (added > 0) grants.push({ target: f.id, amount: added });
-    return { ...f, shield: newShield };
-  });
-  const next = advanceTurn({ ...state, fighters: updatedFighters });
-  return {
-    state: next,
-    events: [
-      ...events,
-      { type: "ability_regression_shield", actor, grants },
-      ...turnStartEvent(next),
-    ],
-  };
-}
-
-function abilityVanish(state: CombatState, actor: ActorId, events: CombatEvent[]): StepResult {
-  const SWINGS = 2;
-  const prev = state.ability_state?.vanished ?? {};
-  const ability_state: AbilityRuntimeState = {
-    ...(state.ability_state ?? {}),
-    vanished: { ...prev, [actor]: SWINGS },
-  };
-  // If a taunt is currently locking the monster onto this fighter, the
-  // vanish supersedes it — clear the taunt so the next swing re-picks.
-  if (ability_state.taunt?.actor_id === actor) {
-    delete ability_state.taunt;
-  }
-  const next = advanceTurn({ ...state, ability_state });
-  return {
-    state: next,
-    events: [...events, { type: "ability_vanish", actor, swings: SWINGS }, ...turnStartEvent(next)],
-  };
-}
-
-function abilitySoulDrain(
-  state: CombatState,
-  actor: ActorId,
-  tickedActor: CombatFighter,
-  targetMonsterId: ActorId,
-  events: CombatEvent[],
+  preEvents: CombatEvent[],
   roll: RollFn,
 ): StepResult {
-  const targetMonster = state.monsters.find((m) => m.id === targetMonsterId && m.hp > 0);
-  if (!targetMonster) return reject(state, "no valid target for soul drain");
-  const d6 = roll(6);
-  const rawDamage = d6 + tickedActor.magic_mod;
-  // Cap at monster_hp - 1 so soul_drain never delivers the kill blow (matches
-  // slack's pattern — keeps the engine's killed_by logic working off attacks).
-  const damage = Math.min(rawDamage, Math.max(1, targetMonster.hp - 1));
-  const heal = Math.floor(damage / 2);
-  const newMonsterHp = Math.max(0, targetMonster.hp - damage);
-  const oldHp = tickedActor.hp;
-  const newHp = Math.min(tickedActor.max_hp, oldHp + heal);
-  const applied = newHp - oldHp;
+  let s = state;
+  const events: CombatEvent[] = [...preEvents];
 
-  const updatedFighters = state.fighters.map((f) =>
-    f.id === actor ? { ...f, hp: newHp } : f,
-  );
+  for (const effect of effects) {
+    switch (effect.kind) {
+      case "deal_damage": {
+        const monster = s.monsters.find((m) => m.id === effect.target_id && m.hp > 0);
+        if (!monster) continue;
+        const newHp = Math.max(0, monster.hp - effect.amount);
+        events.push({
+          type: "player_hit",
+          actor,
+          target: monster.id,
+          damage: effect.amount,
+          armor_absorbed: 0,
+          crit: effect.is_crit ?? false,
+          formula: effect.formula,
+        });
+        s = {
+          ...s,
+          monsters: s.monsters.map((m) => m.id === monster.id ? { ...m, hp: newHp } : m),
+          contribution: { ...s.contribution, [actor]: (s.contribution[actor] ?? 0) + effect.amount },
+        };
+        if (newHp <= 0) return resolveMonsterKill(s, monster.id, actor, events);
+        break;
+      }
+      case "heal": {
+        const target = s.fighters.find((f) => f.id === effect.target_id);
+        if (!target || target.hp <= 0) continue;
+        const newHp = Math.min(target.max_hp, target.hp + effect.amount);
+        const applied = newHp - target.hp;
+        if (applied > 0) {
+          events.push({ type: "heal_applied", actor, target: effect.target_id, amount: applied, rolled: effect.amount });
+          s = { ...s, fighters: s.fighters.map((f) => f.id === effect.target_id ? { ...f, hp: newHp } : f) };
+        }
+        break;
+      }
+      case "grant_shield": {
+        const target = s.fighters.find((f) => f.id === effect.target_id);
+        if (!target || target.hp <= 0) continue;
+        const newShield = Math.min(target.max_hp * SHIELD_CAP_MULTIPLIER, target.shield + effect.amount);
+        if (newShield > target.shield) {
+          s = { ...s, fighters: s.fighters.map((f) => f.id === effect.target_id ? { ...f, shield: newShield } : f) };
+        }
+        break;
+      }
+      case "grant_shield_all": {
+        const grants: { target: ActorId; amount: number }[] = [];
+        s = {
+          ...s,
+          fighters: s.fighters.map((f) => {
+            if (f.hp <= 0) return f;
+            const newShield = Math.min(f.max_hp * SHIELD_CAP_MULTIPLIER, f.shield + effect.amount);
+            const added = newShield - f.shield;
+            if (added > 0) grants.push({ target: f.id, amount: added });
+            return added > 0 ? { ...f, shield: newShield } : f;
+          }),
+        };
+        events.push({ type: "ability_regression_shield", actor, grants });
+        break;
+      }
+      case "stun_monster": {
+        const targetMonster = s.monsters.find((m) => m.id === effect.target_id && m.hp > 0);
+        if (!targetMonster) continue;
+        const stunnedEffect: MachineStatusEffect = { type: "stunned", magnitude: 0, remaining: 5, source: actor };
+        s = {
+          ...s,
+          monsters: s.monsters.map((m) =>
+            m.id === targetMonster.id
+              ? { ...m, effects: [...m.effects.filter((e) => e.type !== "stunned"), stunnedEffect] }
+              : m,
+          ),
+        };
+        events.push({ type: "ability_containerize" });
+        break;
+      }
+      case "restore_mana": {
+        const target = s.fighters.find((f) => f.id === effect.target_id);
+        if (!target) continue;
+        const newMana = Math.min(target.max_mana, target.mana + effect.amount);
+        if (newMana > target.mana) {
+          s = { ...s, fighters: s.fighters.map((f) => f.id === effect.target_id ? { ...f, mana: newMana } : f) };
+        }
+        break;
+      }
+      case "set_taunt": {
+        const ability_state: AbilityRuntimeState = {
+          ...(s.ability_state ?? {}),
+          taunt: { actor_id: effect.actor_id, swings_remaining: effect.swings },
+        };
+        s = { ...s, ability_state };
+        events.push({ type: "ability_taunt", actor: effect.actor_id, swings: effect.swings });
+        break;
+      }
+      case "set_vanish": {
+        const prev = s.ability_state?.vanished ?? {};
+        let ability_state: AbilityRuntimeState = {
+          ...(s.ability_state ?? {}),
+          vanished: { ...prev, [effect.actor_id]: effect.swings },
+        };
+        if (ability_state.taunt?.actor_id === effect.actor_id) {
+          ability_state = stripField(ability_state, "taunt") ?? {};
+        }
+        s = { ...s, ability_state };
+        events.push({ type: "ability_vanish", actor: effect.actor_id, swings: effect.swings });
+        break;
+      }
+      case "add_battle_hymn": {
+        const prev = s.ability_state?.battle_hymn ?? 0;
+        const ability_state: AbilityRuntimeState = {
+          ...(s.ability_state ?? {}),
+          battle_hymn: prev + effect.charges,
+        };
+        s = { ...s, ability_state };
+        events.push({ type: "ability_battle_hymn", actor, charges_added: effect.charges });
+        break;
+      }
+      case "set_foresee_turns": {
+        const ability_state: AbilityRuntimeState = {
+          ...(s.ability_state ?? {}),
+          foresee_turns: effect.turns,
+        };
+        s = { ...s, ability_state };
+        events.push(buildForeseeEvent(s, actor, roll, effect.turns));
+        break;
+      }
+      case "move_fighter": {
+        const target = s.fighters.find((f) => f.id === effect.target_id);
+        if (!target || target.hp <= 0) continue;
+        const from = target.position;
+        s = { ...s, fighters: s.fighters.map((f) => f.id === effect.target_id ? { ...f, position: effect.to } : f) };
+        events.push({ type: "ability_migrate", actor, target: effect.target_id, from, to: effect.to });
+        break;
+      }
+    }
+  }
 
-  const next = advanceTurn({
-    ...state,
-    fighters: updatedFighters,
-    monsters: state.monsters.map((m) => m.id === targetMonsterId ? { ...m, hp: newMonsterHp } : m),
-    contribution: {
-      ...state.contribution,
-      [actor]: (state.contribution[actor] ?? 0) + damage,
-    },
-  });
-
-  return {
-    state: next,
-    events: [
-      ...events,
-      { type: "roll", actor, die: "d6", value: d6, purpose: "damage_cast" },
-      {
-        type: "ability_soul_drain",
-        actor,
-        damage,
-        healed: applied,
-        roll: d6,
-        formula: `${d6}+${tickedActor.magic_mod}m, half drained`,
-      },
-      ...turnStartEvent(next),
-    ],
-  };
-}
-
-function abilityBattleHymn(state: CombatState, actor: ActorId, events: CombatEvent[]): StepResult {
-  // Charges scale with Bard level: +1 every 5 levels beyond 1.
-  // L1→2, L5→3, L10→4, L15→5, L20→6. Caps naturally — durational buff only,
-  // no per-hit damage change, so high-level Bards sustain more turns of aura.
-  const bard = state.fighters.find((f) => f.id === actor);
-  const CHARGES = 2 + Math.floor((bard?.level ?? 1) / 5);
-  const prev = state.ability_state?.battle_hymn ?? 0;
-  const ability_state: AbilityRuntimeState = {
-    ...(state.ability_state ?? {}),
-    battle_hymn: prev + CHARGES,
-  };
-  const next = advanceTurn({ ...state, ability_state });
-  return {
-    state: next,
-    events: [
-      ...events,
-      { type: "ability_battle_hymn", actor, charges_added: CHARGES },
-      ...turnStartEvent(next),
-    ],
-  };
+  const next = advanceTurn(s);
+  return { state: next, events: [...events, ...turnStartEvent(next)] };
 }
 
 // Builds the full Foresee intel payload from current state. Shared between
@@ -2275,28 +2253,6 @@ function buildForeseeEvent(
   };
 }
 
-function abilityForesee(
-  state: CombatState,
-  actor: ActorId,
-  events: CombatEvent[],
-  roll: RollFn,
-): StepResult {
-  const FORESEE_TURNS = 2;
-  const ability_state: AbilityRuntimeState = {
-    ...(state.ability_state ?? {}),
-    foresee_turns: FORESEE_TURNS,
-  };
-  const next = advanceTurn({ ...state, ability_state });
-  return {
-    state: next,
-    events: [
-      ...events,
-      buildForeseeEvent({ ...state, ability_state }, actor, roll, FORESEE_TURNS),
-      ...turnStartEvent(next),
-    ],
-  };
-}
-
 // After the monster acts, checks if the next actor is a Staff Sage with
 // foresee_turns > 0. If so, inserts the intel refresh event immediately
 // BEFORE the final turn_start divider so the Sage sees fresh info at the
@@ -2326,39 +2282,6 @@ function withForeseeForNextActor(result: StepResult, roll: RollFn): StepResult {
   }
   events.splice(insertAt, 0, refreshEvent);
   return { state: newState, events };
-}
-
-function abilityMigrate(
-  state: CombatState,
-  action: { kind: "ability"; actor: ActorId; target?: ActorId; position?: BattlePosition },
-  events: CombatEvent[],
-): StepResult {
-  const targetId = action.target ?? action.actor;
-  const target = state.fighters.find((f) => f.id === targetId);
-  if (!target) return reject(state, `unknown migrate target: ${targetId}`);
-  if (target.hp <= 0) return reject(state, `cannot migrate a downed partymate`);
-  if (!action.position) return reject(state, `migrate requires a position`);
-  if (target.position === action.position) {
-    return reject(state, `${targetId} is already in the ${action.position} row`);
-  }
-  const updatedFighters = state.fighters.map((f) =>
-    f.id === targetId ? { ...f, position: action.position! } : f,
-  );
-  const next = advanceTurn({ ...state, fighters: updatedFighters });
-  return {
-    state: next,
-    events: [
-      ...events,
-      {
-        type: "ability_migrate",
-        actor: action.actor,
-        target: targetId,
-        from: target.position,
-        to: action.position,
-      },
-      ...turnStartEvent(next),
-    ],
-  };
 }
 
 // ── Monster-kill resolution ───────────────────────────────────────────────

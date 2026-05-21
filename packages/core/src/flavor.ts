@@ -349,25 +349,9 @@ export type Rarity = "common" | "uncommon" | "rare" | "epic" | "legendary";
 
 export const MAX_MANA_CAP = 5;
 
-// AbilityId covers every active ability id used in TurnAction and event types.
-// Extend this union when adding new abilities.
-export type AbilityId =
-  // Mage
-  | "fireball" | "containerize"
-  // Paladin
-  | "smite" | "regression_shield"
-  // Druid
-  | "wildgrowth" | "migrate"
-  // Bard
-  | "crescendo" | "battle_hymn"
-  // Sage
-  | "manifest" | "foresee"
-  // Rogue
-  | "backstab" | "vanish"
-  // Warden
-  | "bulwark_strike" | "taunt"
-  // Warlock
-  | "hex" | "soul_drain";
+// AbilityId is the string id of any active ability. No longer a closed union —
+// adding a new ability only requires updating the ability file itself.
+export type AbilityId = string;
 
 export interface ItemRoll {
   type: ItemType;

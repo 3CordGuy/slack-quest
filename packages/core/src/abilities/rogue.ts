@@ -9,6 +9,7 @@ export const rogueAbilities: AbilityDef[] = [
     blurb: "Slips through the diff and finds the soft spot.",
     icon: "daggers",
     mana_cost: 1,
+    routing: "damage",
     target: "single_enemy",
     execute(ctx) {
       const monster = ctx.target as { id: string; hp: number; max_hp: number };
@@ -30,6 +31,7 @@ export const rogueAbilities: AbilityDef[] = [
     blurb: "Disappear into the shadows — the monster can't target you for its next 2 swings.",
     icon: "player-dodge",
     mana_cost: 2,
+    routing: "utility",
     target: "self",
     execute(ctx) {
       return [fx.vanish(ctx.caster.id, 2)];

@@ -9,6 +9,7 @@ export const mageAbilities: AbilityDef[] = [
     blurb: "Rains fire on every enemy at once.",
     icon: "fire",
     mana_cost: 2,
+    routing: "aoe_damage",
     target: "all_enemies",
     execute(ctx) {
       const r = rollSum(ctx.roll, 2, 6);
@@ -24,9 +25,12 @@ export const mageAbilities: AbilityDef[] = [
     blurb: "Locks the monster in a stasis container. Each stunned turn it has a 30% cumulative chance to break free (capped at 100% on the fourth turn).",
     icon: "cubes",
     mana_cost: 2,
+    routing: "utility",
     target: "single_enemy",
-    execute(_ctx) {
-      return [fx.stunMonster()];
+    execute(ctx) {
+      const target = ctx.target as { id: string } | undefined;
+      if (!target) return [];
+      return [fx.stunMonster(target.id)];
     },
   },
   {

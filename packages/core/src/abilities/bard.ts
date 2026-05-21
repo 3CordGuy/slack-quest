@@ -9,6 +9,7 @@ export const bardAbilities: AbilityDef[] = [
     blurb: "A rising chorus the whole party joins.",
     icon: "musical-notes",
     mana_cost: 1,
+    routing: "damage",
     target: "single_enemy",
     execute(ctx) {
       const monster = ctx.target as { id: string };
@@ -26,6 +27,7 @@ export const bardAbilities: AbilityDef[] = [
     blurb: "Bardic aura jumps from +1 to +3 damage for the next 2 partymate attacks.",
     icon: "aura",
     mana_cost: 2,
+    routing: "utility",
     target: "self",
     execute(ctx) {
       // Charges scale with Bard level: +1 every 5 levels beyond 1.

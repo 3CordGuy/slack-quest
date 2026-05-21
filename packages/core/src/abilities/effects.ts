@@ -36,8 +36,8 @@ export const fx = {
     return { kind: "grant_shield_all", amount };
   },
 
-  stunMonster(): AbilityEffect {
-    return { kind: "stun_monster" };
+  stunMonster(targetId: string): AbilityEffect {
+    return { kind: "stun_monster", target_id: targetId };
   },
 
   restoreMana(targetId: string, amount: number): AbilityEffect {

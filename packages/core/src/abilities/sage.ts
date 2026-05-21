@@ -11,6 +11,7 @@ export const sageAbilities: AbilityDef[] = [
     blurb: "Pure intent shaped into pure damage.",
     icon: "crystal-ball",
     mana_cost: 1,
+    routing: "damage",
     target: "single_enemy",
     execute(ctx) {
       const monster = ctx.target as { id: string };
@@ -27,6 +28,7 @@ export const sageAbilities: AbilityDef[] = [
     blurb: "Full battle read: next swing target with net damage range, targeting odds, party triage. Persists 2 turns.",
     icon: "scroll-unfurled",
     mana_cost: 1,
+    routing: "utility",
     target: "self",
     execute(_ctx) {
       return [fx.foreseeTurns(FORESEE_TURNS)];

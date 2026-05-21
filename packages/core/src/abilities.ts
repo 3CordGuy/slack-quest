@@ -55,6 +55,9 @@ export interface AbilityContext {
   // For single-target abilities: the chosen target. Undefined for self/AoE.
   target?: FighterSnapshot | MonsterSnapshot;
   roll: (sides: number) => number;
+  // For position-changing abilities (migrate): the requested destination row.
+  // Injected from the action payload by the engine.
+  position?: "front" | "back";
 }
 
 // Effects returned by execute(). The machine applies each one in sequence.
@@ -75,9 +78,9 @@ export type AbilityEffect =
   | { kind: "grant_shield"; target_id: string; amount: number }
   // Grant shield to every alive party member (regression shield).
   | { kind: "grant_shield_all"; amount: number }
-  // Apply a stun to the current monster (containerize). Break chance
+  // Apply a stun to the targeted monster (containerize). Break chance
   // accumulates 30% per elapsed monster turn; guaranteed on the 4th turn.
-  | { kind: "stun_monster" }
+  | { kind: "stun_monster"; target_id: string }
   // Restore mana to a specific fighter (Mana Font passive).
   | { kind: "restore_mana"; target_id: string; amount: number }
   // Lock monster targeting onto actor_id for N swings (taunt).
@@ -100,6 +103,11 @@ export interface ActiveAbilityDef {
   icon: string;
   mana_cost: number;
   target: TargetKind;
+  // How the engine routes this ability:
+  //   "damage"     — single-target damage (drink buffs, shocked amp, elemental proc, bleed apply)
+  //   "aoe_damage" — hits all live monsters at once (no per-target modifiers)
+  //   "utility"    — effects are applied generically from execute()'s AbilityEffect[]
+  routing: "damage" | "aoe_damage" | "utility";
   // Whether this ability needs a migrate-style position picker in addition to
   // a target picker. Currently only Druid's Migrate needs this.
   needs_position_picker?: boolean;
