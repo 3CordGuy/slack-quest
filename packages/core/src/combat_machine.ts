@@ -186,6 +186,9 @@ export interface CombatState {
   // Per-fighter action count for the current fight. Used by periodic passives
   // like Mana Font (1 mana every 3 actions). Resets at combat start.
   action_counters?: Record<ActorId, number>;
+  // Cooldown tracking: cooldowns[fighterId][abilityId] = turns remaining.
+  // Decremented when that fighter's next turn arrives; removed when it hits 0.
+  cooldowns?: Record<ActorId, Record<AbilityId, number>>;
   // Pub drink buffs carried into this combat, keyed by fighter id. Seeded
   // by the DO bootstrap step from characters.drink_buff_json so a buff
   // bought in the pub before /sq quest survives into the engine-driven
@@ -1812,6 +1815,10 @@ function handleAbility(
   if (fighter.mana < ability.mana_cost) {
     return reject(state, `not enough mana (need ${ability.mana_cost})`);
   }
+  const remainingCooldown = state.cooldowns?.[action.actor]?.[ability.id] ?? 0;
+  if (remainingCooldown > 0) {
+    return reject(state, `${ability.name} is on cooldown (${remainingCooldown} turn${remainingCooldown !== 1 ? "s" : ""} remaining)`);
+  }
 
   const tick = tickAtTurnStart(state, action.actor);
   if (tick.earlyReturn) return tick.earlyReturn;
@@ -1823,6 +1830,15 @@ function handleAbility(
     fighters: s.fighters.map((f) =>
       f.id === action.actor ? { ...f, mana: Math.max(0, f.mana - ability.mana_cost) } : f,
     ),
+    ...(ability.cooldown_turns ? {
+      cooldowns: {
+        ...(s.cooldowns ?? {}),
+        [action.actor]: {
+          ...(s.cooldowns?.[action.actor] ?? {}),
+          [ability.id]: ability.cooldown_turns,
+        },
+      },
+    } : {}),
   };
 
   const usedEvent: CombatEvent = {
@@ -3037,6 +3053,22 @@ function computeTurnOrder(state: CombatState): ActorId[] {
 
 // Advances turn_index past any downed fighters or dead monsters so the next
 // live actor takes the turn. Increments round when wrapping.
+function tickActorCooldowns(state: CombatState, actorId: ActorId): CombatState {
+  const actorCooldowns = state.cooldowns?.[actorId];
+  if (!actorCooldowns || Object.keys(actorCooldowns).length === 0) return state;
+  const updated: Record<string, number> = {};
+  for (const [abilityId, remaining] of Object.entries(actorCooldowns)) {
+    if (remaining > 1) updated[abilityId] = remaining - 1;
+    // remaining === 1: cooldown expires this turn — omit from updated
+  }
+  const allCooldowns = { ...(state.cooldowns ?? {}), [actorId]: updated };
+  if (Object.keys(updated).length === 0) {
+    const { [actorId]: _removed, ...rest } = allCooldowns;
+    return { ...state, cooldowns: Object.keys(rest).length > 0 ? rest : undefined };
+  }
+  return { ...state, cooldowns: allCooldowns };
+}
+
 function advanceTurn(state: CombatState): CombatState {
   if (state.turn_order.length === 0) return state;
   const total = state.turn_order.length;
@@ -3054,7 +3086,8 @@ function advanceTurn(state: CombatState): CombatState {
     }
     const f = state.fighters.find((x) => x.id === id);
     if (f && f.hp > 0) {
-      return { ...state, turn_index: candidate, round: state.round + roundBump };
+      const next = { ...state, turn_index: candidate, round: state.round + roundBump };
+      return tickActorCooldowns(next, id);
     }
   }
   // Shouldn't reach here unless the whole party is down — defeat is detected

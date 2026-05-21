@@ -24,9 +24,10 @@ export const bardAbilities: AbilityDef[] = [
     kind: "active",
     id: "verse",
     name: "Verse",
-    blurb: "Pick a target: mock an enemy (disadvantage on their next 2 rolls) or encourage an ally (advantage on their next 2 rolls).",
+    blurb: "Pick a target: mock an enemy (disadvantage on their next 2 rolls) or encourage an ally (advantage on their next 2 rolls). Free but 2-turn cooldown.",
     icon: "morbid-humour",
-    mana_cost: 1,
+    mana_cost: 0,
+    cooldown_turns: 2,
     routing: "utility",
     target: "any",
     execute(ctx) {

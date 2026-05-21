@@ -101,6 +101,7 @@ interface CombatState {
     mark?: { marked_by: string; expires_after_round: number; monster_id?: string };
     [key: string]: unknown;
   };
+  cooldowns?: Record<string, Record<string, number>>;
 }
 
 // Mirrors BARD_AURA_HYMN_DAMAGE in combat_machine.ts — keep in sync.
@@ -1403,14 +1404,16 @@ export function CombatPage({
           {myActiveAbilities.map((ability) => {
             const needsTarget = ability.target === "single_enemy";
             const targetMissing = needsTarget && liveMonsters.length > 1 && targetMonsterId === null;
+            const cooldown = state?.cooldowns?.[selfId]?.[ability.id] ?? 0;
             return (
               <CBtn
                 key={ability.id}
                 label={ability.name}
                 icon={ability.icon}
                 color="#d946ef"
-                manaCost={ability.mana_cost}
+                manaCost={ability.mana_cost > 0 ? ability.mana_cost : undefined}
                 tooltip={ability.blurb}
+                cooldown={cooldown}
                 disabled={!myTurn || myMana < ability.mana_cost || targetMissing}
                 onClick={() => fireAbility(ability)}
               />
