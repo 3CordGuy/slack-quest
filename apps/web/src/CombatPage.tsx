@@ -1198,38 +1198,12 @@ export function CombatPage({
           onDone={() => { setDevOpen(false); setReconnectKey((k) => k + 1); }}
         />
       )}
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          {import.meta.env.DEV && (
-            <button
-              onClick={() => setDevOpen(true)}
-              style={{ background: "none", border: "1px solid #2a2d44", color: "#a78bfa", cursor: "pointer", fontSize: 11, padding: "2px 7px", borderRadius: 5, display: "flex", alignItems: "center", gap: 4, fontFamily: "inherit" }}
-            >
-              <Icon name="cog" size={11} /> dev
-            </button>
-          )}
-          <span style={{ fontSize: 11, color: ui.connection === "open" ? "#39ff14" : ui.connection === "connecting" ? "#9aa0a6" : "#fca5a5" }}>
-            {ui.connection === "open" ? "● live" : ui.connection === "connecting" ? "○ …" : "× disconnected"}
-          </span>
-        </div>
-      </div>
-      {devOpen && import.meta.env.DEV && (
-        <CombatDevModal
-          questId={questId}
-          onClose={() => setDevOpen(false)}
-          onDone={() => { setDevOpen(false); setReconnectKey((k) => k + 1); }}
-        />
-      )}
 
       {/* Room view — flex: 1, background art + floating overlays */}
-      <div style={{ flex: 1, position: "relative", overflow: "hidden", minHeight: 0, background: bgArtUrl ? undefined : "#1c1f2e" }}>
       <div style={{ flex: 1, position: "relative", overflow: "hidden", minHeight: 0, background: bgArtUrl ? undefined : "#1c1f2e" }}>
         {bgArtUrl && (
           <img src={bgArtUrl} alt="" style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover" }} onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
         )}
-        <div style={{ position: "absolute", inset: 0, background: bgArtUrl
-          ? "linear-gradient(to bottom, rgba(0,0,0,0.25) 0%, rgba(0,0,0,0.05) 35%, rgba(0,0,0,0.70) 100%)"
-          : "linear-gradient(to bottom, rgba(0,0,0,0.10) 0%, rgba(0,0,0,0.00) 40%, rgba(0,0,0,0.40) 100%)",
-          pointerEvents: "none" }} />
         <div style={{ position: "absolute", inset: 0, background: bgArtUrl
           ? "linear-gradient(to bottom, rgba(0,0,0,0.25) 0%, rgba(0,0,0,0.05) 35%, rgba(0,0,0,0.70) 100%)"
           : "linear-gradient(to bottom, rgba(0,0,0,0.10) 0%, rgba(0,0,0,0.00) 40%, rgba(0,0,0,0.40) 100%)",
