@@ -464,42 +464,64 @@ export function lootIcon(opt: {
 
 // ─── CBtn ─────────────────────────────────────────────────────────────────────
 
-export function CBtn({ label, icon, color, disabled, manaCost, onClick }: {
+export function CBtn({ label, icon, color, disabled, manaCost, tooltip, onClick }: {
   label: string;
   icon?: string;
   color: string;
   disabled?: boolean;
   manaCost?: number;
+  tooltip?: string;
   onClick: () => void;
 }) {
+  const [hovered, setHovered] = useState(false);
   const compact = typeof window !== "undefined" && window.innerWidth < 540;
   const sz = compact ? 60 : 78;
   return (
-    <button
-      onClick={onClick}
-      disabled={disabled}
-      title={manaCost ? `${label} (costs ${manaCost} mana)` : label}
-      style={{
-        display: "flex", flexDirection: "column", alignItems: "center",
-        justifyContent: "center", gap: compact ? 2 : 3,
-        padding: compact ? "6px 4px" : "8px 6px", width: sz, height: sz,
-        background: disabled ? "#1a1c21" : color,
-        border: `2px solid ${disabled ? "#2a2d33" : color}`,
-        borderRadius: 8,
-        color: disabled ? "#4a5568" : "#0e0f12",
-        cursor: disabled ? "not-allowed" : "pointer",
-        opacity: disabled ? 0.55 : 1,
-        transition: "opacity 0.15s, transform 0.08s",
-        flexShrink: 0, fontFamily: "inherit",
-      }}
-      onMouseDown={(e) => { if (!disabled) e.currentTarget.style.transform = "translateY(1px)"; }}
-      onMouseUp={(e)   => { e.currentTarget.style.transform = ""; }}
-      onMouseLeave={(e) => { e.currentTarget.style.transform = ""; }}
+    <div
+      style={{ position: "relative", flexShrink: 0 }}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
     >
-      {icon && <Icon name={icon} size={compact ? 20 : 26} />}
-      <span style={{ fontSize: compact ? 9 : 11, fontWeight: 700, lineHeight: 1, letterSpacing: 0.3, textAlign: "center" }}>{label}</span>
-      {manaCost !== undefined && <span style={{ fontSize: compact ? 8 : 9, opacity: 0.75 }}>{manaCost}✦</span>}
-    </button>
+      {hovered && tooltip && (
+        <div style={{
+          position: "absolute", bottom: "calc(100% + 8px)", left: "50%", transform: "translateX(-50%)",
+          background: "#1a1c2e", border: "1px solid #3a3d54", borderRadius: 8,
+          padding: "8px 12px", color: "#e2e8f0", fontSize: 12, lineHeight: 1.5,
+          whiteSpace: "normal", width: 200, textAlign: "center", zIndex: 100,
+          boxShadow: "0 6px 20px rgba(0,0,0,0.6)", pointerEvents: "none",
+        }}>
+          <div style={{ fontWeight: 600, color, marginBottom: manaCost !== undefined ? 4 : 0 }}>{label}</div>
+          <div style={{ opacity: 0.85 }}>{tooltip}</div>
+          {manaCost !== undefined && (
+            <div style={{ marginTop: 6, color: "#a78bfa", fontSize: 11, fontWeight: 600 }}>{manaCost}✦ mana</div>
+          )}
+        </div>
+      )}
+      <button
+        onClick={onClick}
+        disabled={disabled}
+        style={{
+          display: "flex", flexDirection: "column", alignItems: "center",
+          justifyContent: "center", gap: compact ? 2 : 3,
+          padding: compact ? "6px 4px" : "8px 6px", width: sz, height: sz,
+          background: disabled ? "#1a1c21" : color,
+          border: `2px solid ${disabled ? "#2a2d33" : color}`,
+          borderRadius: 8,
+          color: disabled ? "#4a5568" : "#0e0f12",
+          cursor: disabled ? "not-allowed" : "pointer",
+          opacity: disabled ? 0.55 : 1,
+          transition: "opacity 0.15s, transform 0.08s",
+          flexShrink: 0, fontFamily: "inherit",
+        }}
+        onMouseDown={(e) => { if (!disabled) e.currentTarget.style.transform = "translateY(1px)"; }}
+        onMouseUp={(e)   => { e.currentTarget.style.transform = ""; }}
+        onMouseLeave={(e) => { e.currentTarget.style.transform = ""; }}
+      >
+        {icon && <Icon name={icon} size={compact ? 20 : 26} />}
+        <span style={{ fontSize: compact ? 9 : 11, fontWeight: 700, lineHeight: 1, letterSpacing: 0.3, textAlign: "center" }}>{label}</span>
+        {manaCost !== undefined && <span style={{ fontSize: compact ? 8 : 9, opacity: 0.75 }}>{manaCost}✦</span>}
+      </button>
+    </div>
   );
 }
 

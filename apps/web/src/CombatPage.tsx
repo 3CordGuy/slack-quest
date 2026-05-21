@@ -1386,6 +1386,7 @@ export function CombatPage({
                 icon={ability.icon}
                 color="#d946ef"
                 manaCost={ability.mana_cost}
+                tooltip={ability.blurb}
                 disabled={!myTurn || myMana < ability.mana_cost || targetMissing}
                 onClick={() => fireAbility(ability)}
               />

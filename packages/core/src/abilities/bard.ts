@@ -4,6 +4,24 @@ import { fx } from "./effects";
 export const bardAbilities: AbilityDef[] = [
   {
     kind: "active",
+    id: "crescendo",
+    name: "Crescendo",
+    blurb: "A rising melody that crescendos into a strike — deals 1d6 + magic + party×2 + weapon damage.",
+    icon: "music-spell",
+    mana_cost: 1,
+    routing: "damage",
+    target: "single_enemy",
+    execute(ctx) {
+      const monster = ctx.target as { id: string };
+      const wpn = Math.max(0, ctx.caster.weapon_power);
+      const party = Math.max(1, ctx.party.length);
+      const r = ctx.roll(6);
+      const amount = r + ctx.caster.magic_mod + party * 2 + wpn;
+      return [fx.damage(monster.id, amount, `1d6 + ${ctx.caster.magic_mod}m + ${party}p×2 + ${wpn}w`, { drinkBuff: "ability" })];
+    },
+  },
+  {
+    kind: "active",
     id: "mock",
     name: "Mock",
     blurb: "A cutting jeer rattles the enemy — disadvantage on their next 2 to-hit rolls.",
