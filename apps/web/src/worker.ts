@@ -1165,7 +1165,7 @@ app.post("/api/inventory/:itemId/equip", async (c) => {
       const newArmorPower = computeArmorPowerFromSlots(allSlots);
       const patched = {
         ...combatState,
-        fighters: (combatState.fighters as Array<Record<string, unknown>>).map((f) =>
+        fighters: (combatState.fighters as unknown as Array<Record<string, unknown>>).map((f) =>
           f.id === session.slack_user_id ? { ...f, armor_power: newArmorPower } : f,
         ),
       };
@@ -2773,7 +2773,7 @@ const SHORT_REST_HEAL_RATIO = 0.5;
 app.post("/api/character/position", async (c) => {
   const session = await currentSession(c.env.DB, c.req.header("cookie"));
   if (!session) return c.json({ error: "unauthenticated" }, 401);
-  const body = await c.req.json<{ position?: unknown }>().catch(() => ({}));
+  const body = await c.req.json<{ position?: unknown }>().catch(() => ({} as { position?: unknown }));
   const pos = body?.position === "back" ? "back" : body?.position === "front" ? "front" : null;
   if (!pos) return c.json({ error: "bad_position" }, 400);
   await setPosition(c.env.DB, session.slack_user_id, pos);

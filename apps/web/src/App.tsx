@@ -278,6 +278,7 @@ interface LootOption {
   slot?: EquipSlot;
   stat_bonus?: Record<string, number>;
   item_subtype?: string;
+  level_req?: number;
 }
 
 interface NpcOffer {
@@ -318,6 +319,11 @@ interface MonsterSpec {
   tier: number;
   is_boss?: boolean;
   art_url?: string | null;
+  attack_damage_type?: string;
+  element_weakness?: string;
+  element_resistance?: string;
+  damage_weakness?: string;
+  damage_resistance?: string;
 }
 
 type DungeonObjectEffect =
@@ -365,6 +371,10 @@ interface SceneJson {
   expedition?: ExpeditionState;
   graph?: DungeonGraph;
   monster_art_url?: string | null;
+  monsters?: MonsterSpec[];
+  monster_attack_type?: string;
+  monster_damage_weakness?: string;
+  monster_damage_resistance?: string;
 }
 
 interface ActiveQuest {
@@ -6536,7 +6546,7 @@ function StoreItemRow({
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
             <span style={{ fontWeight: 600, color: "#f5f5f5", fontSize: 15, fontFamily: DISPLAY_FONT }}>{item.item_name}</span>
-            <RarityBadge rarity={item.rarity} />
+            <RarityBadge rarity={item.rarity as Rarity} />
             {levelReq > 1 && (
               <span
                 title={underLevel ? `Requires level ${levelReq} to equip — you're level ${playerLevel}` : `Requires level ${levelReq} to equip`}

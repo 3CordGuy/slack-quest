@@ -403,6 +403,8 @@ export interface CatalogEntry {
   // time — a Caffeine Bomb bought at L1 stays L1-tier forever. Sell or use.
   computePower: (tier: number) => number;
   blurb: string;
+  // Optional effect tag for entries that restore a specific resource rather than dealing damage.
+  effect?: "restore_mana" | "heal_hp";
   // True for items sold at the Apothecary — excluded from shop/merchant rolling
   // so they're apothecary-exclusive purchases (but can still drop as monster loot).
   shopExcluded?: boolean;

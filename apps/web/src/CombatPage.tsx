@@ -299,6 +299,7 @@ type TurnAction =
       position?: "front" | "back";
     }
   | { kind: "monster_act" }
+  | { kind: "merc_act" }
   | { kind: "use_item"; actor: string; item_id: number; target_id?: string };
 
 type ItemEffect =
@@ -340,6 +341,7 @@ interface LootDrop {
   power: number;
   rarity: string;
   flavor: string;
+  weapon_range?: "melee" | "ranged" | "focus" | null;
   level_req?: number;
 }
 

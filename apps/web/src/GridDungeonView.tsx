@@ -64,7 +64,7 @@ type GridRoomContent =
   | { kind: "loot"; items: LootOption[]; taken: boolean }
   | { kind: "key_pickup"; tier: KeyTier; taken: boolean }
   | { kind: "trap"; choices: TrapChoice[]; resolved: boolean }
-  | { kind: "lockbox"; lock_tier: KeyTier; options: LootOption[]; resolved: boolean }
+  | { kind: "lockbox"; lock_tier: KeyTier; options: LootOption[]; resolved: boolean; opened?: boolean; claims?: Record<string, string> }
   | { kind: "npc"; greeting: string; offer: LootOption; resolved: boolean; art_url?: string | null }
   | { kind: "merchant"; greeting: string; stock: LootOption[]; resolved: boolean; art_url?: string | null };
 
@@ -1104,11 +1104,11 @@ export function GridDungeonView({
               if (el === "fire" || el === "ice" || el === "lightning") triggerBurst(el);
             }
             if (evt.type === "heal_applied" && typeof (evt as { target?: string }).target === "string") {
-              const tgt = (evt as { target: string }).target;
+              const tgt = (evt as unknown as { target: string }).target;
               setHealBurstSeq((prev) => ({ ...prev, [tgt]: (prev[tgt] ?? 0) + 1 }));
             }
             if (evt.type === "shield_applied" && typeof (evt as { target?: string }).target === "string") {
-              const tgt = (evt as { target: string }).target;
+              const tgt = (evt as unknown as { target: string }).target;
               setShieldBurstSeq((prev) => ({ ...prev, [tgt]: (prev[tgt] ?? 0) + 1 }));
             }
             if (evt.type === "turn_skip") triggerBurst("frozen");
