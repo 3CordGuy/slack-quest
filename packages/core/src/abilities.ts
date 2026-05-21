@@ -16,7 +16,7 @@ export type PassiveTrigger =
   | "on_action"     // at the start of this fighter's own turn (druid regen, warden shield)
   | "on_ally_hit"   // after any ally takes damage from a monster swing
   | "on_crit"       // after this fighter scores a critical hit
-  | "always_on";    // continuous modifier managed inline by the machine (bard aura, sage reading, mana catalyst, rogue first strike)
+  | "always_on";    // continuous modifier managed inline by the machine (bard aura, sage reading, mana font, rogue first strike)
 
 // Minimal fighter/monster views injected into execute functions. Structurally
 // compatible with CombatFighter / CombatMonster so the machine can pass them
@@ -75,8 +75,11 @@ export type AbilityEffect =
   | { kind: "grant_shield"; target_id: string; amount: number }
   // Grant shield to every alive party member (regression shield).
   | { kind: "grant_shield_all"; amount: number }
-  // Add N charges to skip_swings (containerize).
-  | { kind: "skip_swings"; add: number }
+  // Apply a stun to the current monster (containerize). Break chance
+  // accumulates 30% per elapsed monster turn; guaranteed on the 4th turn.
+  | { kind: "stun_monster" }
+  // Restore mana to a specific fighter (Mana Font passive).
+  | { kind: "restore_mana"; target_id: string; amount: number }
   // Lock monster targeting onto actor_id for N swings (taunt).
   | { kind: "set_taunt"; actor_id: string; swings: number }
   // Make actor untargetable for N swings (vanish).
@@ -97,9 +100,6 @@ export interface ActiveAbilityDef {
   icon: string;
   mana_cost: number;
   target: TargetKind;
-  // When true the machine checks whether this ability has been exhausted for a
-  // free first-use (Mage's Mana Catalyst). Waives the mana cost on first use.
-  mana_free_first_use?: boolean;
   // Whether this ability needs a migrate-style position picker in addition to
   // a target picker. Currently only Druid's Migrate needs this.
   needs_position_picker?: boolean;

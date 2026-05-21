@@ -107,9 +107,9 @@ describe("resolveSignature", () => {
   // constant rollFn lets us pin damage exactly.
   const r = (val: number) => () => val;
 
-  it("DevOps Mage Detonate: 2d6 + magic_mod + weapon", () => {
-    // 2d6=4+4=8, mag=1, wpn=2 → 11
-    expect(resolveSignature("devops_mage", 1, 1, 2, 1, 1, 30, r(4)).damage).toBe(11);
+  it("DevOps Mage Fireball: 2d6 + magic_mod (weapon ignored)", () => {
+    // 2d6=4+4=8, mag=1, wpn=99 (ignored) → 9
+    expect(resolveSignature("devops_mage", 0, 1, 99, 1, 1, 30, r(4)).damage).toBe(9);
   });
 
   it("QA Paladin Smite: doubles attack_mod", () => {

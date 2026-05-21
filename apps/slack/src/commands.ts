@@ -382,15 +382,13 @@ function getActiveMark(scene: SceneJson): { marked_by: string; marked_until: num
 
 // Class-passive keys. One entry per passive that's tracked per-fight (i.e.
 // "once per fight" passives). Always-on passives — Druid regen, Bard aura,
-// Warlock crit-bleed, Sage richer telegraph — don't need a key because they
-// don't burn out.
+// Mana Font, Warlock crit-bleed, Sage richer telegraph — don't need a key
+// because they don't burn out.
 const PASSIVE_ROGUE_FIRST_CRIT = "rogue_first_crit";
-// Mage's free-signature, not free-cast — /sq cast is already 0-mana for
-// everyone, so a "free cast" passive would be a no-op. The signature is the
-// 1-mana action this can meaningfully discount.
-const PASSIVE_MAGE_FREE_SIG = "mage_free_sig";
 const PASSIVE_WARDEN_SHIELD = "warden_shield";
 const PASSIVE_PALADIN_AUTO_HEAL = "paladin_auto_heal";
+// Mana Font fires every 3 mage actions, not once per fight.
+const MANA_FONT_INTERVAL = 3;
 
 // Has a specific user already triggered this passive in the current fight?
 // Reads from the per-scene passives_used map. Tolerant of legacy scenes
@@ -4355,6 +4353,9 @@ async function handleCombat(
   let playerLine: string;
   let abilityName: string | null = null;
   let manaCost = 0;
+  // Mana Font counter state: set when a DevOps Mage acts so the post-turn
+  // write can persist the incremented action count (and restore mana if it fires).
+  let manaFontCounter: { prev: number; next: number; fires: boolean } | null = null;
 
   // Class-passive tracking. Each passive that fires this turn records itself
   // here so the post-turn scene write can mark all triggers in one atomic
@@ -4424,11 +4425,14 @@ async function handleCombat(
       isCrit = true;
     }
 
-    // 🧙 DevOps Mage passive: first active ability each fight is free (0 mana).
-    if (cls.id === "devops_mage" && !isPassiveUsed(quest.scene, payload.user_id, PASSIVE_MAGE_FREE_SIG)) {
-      manaCost = 0;
-      passiveTriggers.push({ userId: payload.user_id, key: PASSIVE_MAGE_FREE_SIG });
-      passiveLines.push(`🧙 *DevOps Mage* passive: first ability free.`);
+    // 🧙 DevOps Mage passive (Mana Font): restore 1 mana every 3 actions.
+    if (cls.id === "devops_mage") {
+      const counters = quest.scene.ability_state?.action_counters ?? {};
+      const prev = counters[payload.user_id] ?? 0;
+      const next = prev + 1;
+      // Write the incremented counter; the mana restore (if it fires) is
+      // applied below after manaCost is deducted.
+      manaFontCounter = { prev, next, fires: next % MANA_FONT_INTERVAL === 0 };
     }
 
     playerLine = isCrit
@@ -4659,6 +4663,21 @@ async function handleCombat(
     // by failing the WHERE clause; the scene update has already landed for them which
     // means the damage applied — small inconsistency, accepted for v1.
     await tryDeductMana(env.DB, payload.user_id, manaCost);
+  }
+  // 🧙 DevOps Mage — Mana Font. Persist action counter and restore 1 mana
+  // every 3 actions. Counter and restore happen after the action cost so the
+  // restored mana is available on the NEXT turn, not the current one.
+  if (manaFontCounter) {
+    const prevState = quest.scene.ability_state ?? {};
+    const prevCounters = prevState.action_counters ?? {};
+    await writeAbilityState(env.DB, quest.id, {
+      ...prevState,
+      action_counters: { ...prevCounters, [payload.user_id]: manaFontCounter.next },
+    });
+    if (manaFontCounter.fires) {
+      await addMana(env.DB, character, 1);
+      passiveLines.push(`🧙 *Mana Font*: +1 mana restored (every ${MANA_FONT_INTERVAL} actions).`);
+    }
   }
   await appendLog(env.DB, quest.id, payload.user_id, action, `${damage} dmg${willKill ? " (kill)" : ""}`);
 
@@ -5329,7 +5348,7 @@ async function resolveGauntletAdvance(
     // gets fresh once-per-fight triggers (Rogue crit, Mage free cast, etc.)
     passives_used: undefined,
     // Active-ability buffs/debuffs are per-fight too — taunt expires,
-    // vanish wears off, containerize doesn't carry to the next monster.
+    // vanish and stun (containerize) clear on scene transitions — each monster starts fresh.
     ability_state: undefined,
   };
 
@@ -5664,7 +5683,7 @@ async function advanceDungeonRoom(
     // gets fresh once-per-fight triggers (Rogue crit, Mage free cast, etc.)
     passives_used: undefined,
     // Active-ability buffs/debuffs are per-fight too — taunt expires,
-    // vanish wears off, containerize doesn't carry to the next monster.
+    // vanish and stun (containerize) clear on scene transitions — each monster starts fresh.
     ability_state: undefined,
   };
 
@@ -5747,7 +5766,7 @@ async function resolveDoorChoice(
     // gets fresh once-per-fight triggers (Rogue crit, Mage free cast, etc.)
     passives_used: undefined,
     // Active-ability buffs/debuffs are per-fight too — taunt expires,
-    // vanish wears off, containerize doesn't carry to the next monster.
+    // vanish and stun (containerize) clear on scene transitions — each monster starts fresh.
     ability_state: undefined,
   };
 
@@ -10794,8 +10813,8 @@ async function useTaunt(
   return ephemeral(headline);
 }
 
-// 🧙 DevOps Mage — Containerize. Locks the monster in stasis; it skips its
-// next swing entirely.
+// 🧙 DevOps Mage — Containerize. Stuns the monster with a stasis container.
+// Break chance escalates 30%/turn (guaranteed on turn 4).
 async function useContainerize(
   payload: SlashCommandPayload,
   env: Env,
@@ -10806,10 +10825,16 @@ async function useContainerize(
 ): Promise<CommandResponse> {
   const ok = await tryDeductMana(env.DB, payload.user_id, ability.mana_cost);
   if (!ok) return ephemeral("Couldn't deduct mana — try again.");
-  const current = quest.scene.ability_state?.skip_swings ?? 0;
-  await patchAbilityState(env.DB, quest.id, { skip_swings: current + 1 });
-  await appendLog(env.DB, quest.id, payload.user_id, "ability", "Containerize → +1 skip");
-  const headline = `🧙 *${ability.name}!* <@${payload.user_id}> wraps *${quest.scene.monster_name}* in a stasis container — it'll skip its next swing.`;
+  // Apply "stunned" to monster_effects. remaining=5 so turnsElapsed = 5 - remaining
+  // after each tick; break chance = min(100%, turnsElapsed * 30%).
+  const existing = (quest.scene.monster_effects ?? []).filter((e) => e.type !== "stunned");
+  const stunnedEffect = { type: "stunned" as const, magnitude: 0, remaining: 5, source: payload.user_id };
+  await saveScene(env.DB, quest.id, {
+    ...quest.scene,
+    monster_effects: [...existing, stunnedEffect],
+  });
+  await appendLog(env.DB, quest.id, payload.user_id, "ability", "Containerize → stun");
+  const headline = `📦 *${ability.name}!* <@${payload.user_id}> traps *${quest.scene.monster_name}* in a stasis container — stunned with a 30%/turn escalating break chance.`;
   ctx.waitUntil(postToThread(env, quest, blockQuote(headline)));
   return ephemeral(headline);
 }
@@ -11018,8 +11043,8 @@ async function buildForeseeText(
   }
 
   const stateNotes: string[] = [];
-  const skipSwings = abilityState.skip_swings ?? 0;
-  if (skipSwings > 0) stateNotes.push(`⏸ Containerize: ${skipSwings} swing(s) remaining`);
+  const isStunned = quest.scene.monster_effects?.some((e) => e.type === "stunned") ?? false;
+  if (isStunned) stateNotes.push(`📦 Containerize: stunned`);
   const taunt = abilityState.taunt;
   if (taunt && (taunt.swings_remaining ?? 0) > 0) stateNotes.push(`🛡 Taunt: <@${taunt.user_id}> drawing fire (${taunt.swings_remaining} left)`);
   if (stateNotes.length > 0) lines.push(`\n⚙️ *Active effects:* ${stateNotes.join("  ·  ")}`);
@@ -11905,24 +11930,29 @@ async function performMonsterTurn(
   // player using an ability mid-swing could be clobbered), but ability use
   // is rare enough that occasional under-counting is acceptable.
   const abilityState = quest.scene.ability_state ?? {};
-  const skipSwings = abilityState.skip_swings ?? 0;
   const vanishedMap = abilityState.vanished ?? {};
   const taunt = abilityState.taunt;
 
-  // 🧙 DevOps Mage Containerize — the monster's next swing fizzles. Decrement
-  // the skip counter and return a no-op outcome. Picks a representative target
-  // (the actor) just to satisfy the shape; no DB write follows because
-  // skipped=true tells callers to bypass setCharacterHpAndShield.
-  if (skipSwings > 0) {
+  // 🧙 DevOps Mage Containerize stun — monster skips its swing while stunned.
+  // `remaining` starts at 5 and ticks down in the attack handler's effect
+  // processing; turnsElapsed = 5 - remaining. Break chance = min(100%,
+  // turnsElapsed * 30%). When the stun breaks, it's cleared from monster_effects.
+  const stunnedEff = quest.scene.monster_effects?.find((e) => e.type === "stunned");
+  if (stunnedEff) {
     const dummy = fighters.find((f) => f.slack_user_id === actor.slack_user_id) ?? fighters[0];
-    await writeAbilityState(env.DB, quest.id, {
-      ...abilityState,
-      skip_swings: skipSwings - 1 > 0 ? skipSwings - 1 : undefined,
-    });
+    const turnsElapsed = 5 - stunnedEff.remaining;
+    const breakChance = Math.min(1.0, turnsElapsed * 0.30);
+    const breaks = rollDice(100) / 100 < breakChance;
+    if (breaks) {
+      const clearedEffects = (quest.scene.monster_effects ?? []).filter((e) => e.type !== "stunned");
+      await saveScene(env.DB, quest.id, { ...quest.scene, monster_effects: clearedEffects });
+    }
     return {
       target: dummy,
       victimWasActor: dummy.slack_user_id === actor.slack_user_id,
-      monsterLine: `💨 *${quest.scene.monster_name}* is suspended in stasis — its swing fizzles.`,
+      monsterLine: breaks
+        ? `💨 *${quest.scene.monster_name}* shakes off the stasis container — it's free!`
+        : `📦 *${quest.scene.monster_name}* is containerized — its swing fizzles.`,
       dmg: { newShield: dummy.shield, newHp: dummy.hp, shieldAbsorbed: 0, hpDamage: 0 },
       positionAdjusted: 0,
       willKillTarget: false,
@@ -12189,7 +12219,7 @@ async function performMonsterTurn(
 
 // Replaces scene.ability_state entirely. Fields set to `undefined` are pruned
 // so we don't accumulate dead keys forever in the scene blob. Used by
-// performMonsterTurn (consuming taunt/vanished/skip_swings) and handleCombat
+// performMonsterTurn (consuming taunt/vanished) and handleCombat
 // (consuming battle_hymn). Read-modify-write is racy under truly concurrent
 // ability use, but action cadence + 45s cooldowns make this very rare.
 async function writeAbilityState(

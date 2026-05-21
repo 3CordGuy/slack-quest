@@ -174,9 +174,9 @@ export function resolveSignature(
 
   switch (classId) {
     case "devops_mage": {
-      // Detonate: 2d6 + magic_mod + weapon
+      // Fireball: 2d6 + magic_mod (pure magic — weapon adds no bonus)
       const r = rollFn(6) + rollFn(6);
-      return { damage: r + magicMod + wpn, formula: `2d6 + ${magicMod}m + ${wpn}w` };
+      return { damage: r + magicMod, formula: `2d6 + ${magicMod}m` };
     }
     case "qa_paladin": {
       // Smite: 2d6 + attack_mod * 2 + weapon

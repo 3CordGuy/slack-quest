@@ -124,7 +124,7 @@ function renderEvent(state: CombatState, e: CombatEvent): string {
       return `🎯 ${nameOf(state, e.from)} draws the swing onto themself (${e.reason}).`;
 
     case "monster_swing_skipped":
-      return `🚧 *${activeMonsterName(state)}* loses the turn — containerized.`;
+      return `📦 *${activeMonsterName(state)}* is stunned — its swing fizzles.`;
 
     case "boss_phase_transition":
       return `👑 *${activeMonsterName(state)}* shifts — *phase ${e.new_phase}*!`;
@@ -175,7 +175,10 @@ function renderEvent(state: CombatState, e: CombatEvent): string {
       return `🛡 ${nameOf(state, e.actor)} taunts — next ${e.swings} swings forced.`;
 
     case "ability_containerize":
-      return `📦 *Containerize* — *${activeMonsterName(state)}* loses its next ${e.swings} swings.`;
+      return `📦 *Containerize* — *${activeMonsterName(state)}* is locked in a stasis container.`;
+
+    case "containerize_stun_broken":
+      return `💥 *${activeMonsterName(state)}* breaks free from the stasis container after ${e.turns_active} stunned turn${e.turns_active === 1 ? "" : "s"}!`;
 
     case "ability_regression_shield":
       return `🛡 ${nameOf(state, e.actor)} ripples regression shields: ${e.grants.map((g) => `${nameOf(state, g.target)} +${g.amount}`).join(", ")}.`;
@@ -209,8 +212,8 @@ function renderEvent(state: CombatState, e: CombatEvent): string {
     case "passive_warden_shield":
       return `🛡 *SRE Warden* passive: ${nameOf(state, e.actor)} hardens up — +${e.amount} shield.`;
 
-    case "passive_mage_free_sig":
-      return `🧙 *DevOps Mage* passive: ${nameOf(state, e.actor)}'s first ability is free.`;
+    case "passive_mage_mana_font":
+      return `🧙 *Mana Font*: ${nameOf(state, e.actor)} regenerates +${e.amount} mana (every 3 turns).`;
 
     case "passive_druid_regen":
       return `🌿 *Druid* passive: ${nameOf(state, e.actor)} regenerates +${e.amount} HP.`;

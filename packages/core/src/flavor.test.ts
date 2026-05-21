@@ -210,7 +210,7 @@ describe("class abilities", () => {
   });
 
   it("classByName resolves active abilities for known classes", () => {
-    expect(activeAbilities(classByName("DevOps Mage").abilities).map((a) => a.id)).toContain("detonate");
+    expect(activeAbilities(classByName("DevOps Mage").abilities).map((a) => a.id)).toContain("fireball");
     expect(activeAbilities(classByName("QA Paladin").abilities).map((a) => a.id)).toContain("smite");
   });
 

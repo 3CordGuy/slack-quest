@@ -224,7 +224,7 @@ export type EquipSlot =
 // Status effects — applied to player characters or monsters and tick on the
 // affected actor's own combat action / monster turn. v1 set is HP-based; future
 // effects could touch cooldown, damage modifiers, etc.
-export type EffectType = "regen" | "bleeding" | "burning" | "poisoned" | "empowered" | "frozen" | "shocked";
+export type EffectType = "regen" | "bleeding" | "burning" | "poisoned" | "empowered" | "frozen" | "shocked" | "stunned";
 
 // Elemental damage type carried by rare+ weapons and assigned to monsters.
 export type ElementType = "fire" | "ice" | "lightning";
@@ -248,6 +248,7 @@ export const EFFECT_META: Record<EffectType, EffectMeta> = {
   empowered: { emoji: "⚡", name: "Empowered", kind: "passive", ignoresArmor: false, blurb: "+25% damage dealt for N turns." },
   frozen:    { emoji: "❄️", name: "Frozen",    kind: "passive", ignoresArmor: false, blurb: "Skips next action." },
   shocked:   { emoji: "🌩️", name: "Shocked",   kind: "passive", ignoresArmor: false, blurb: "Takes +30% damage from all sources." },
+  stunned:   { emoji: "📦", name: "Stunned",   kind: "passive", ignoresArmor: false, blurb: "Containerized — skips swings with escalating 30%/turn break chance." },
 };
 
 export const ELEMENT_META: Record<ElementType, { emoji: string; name: string; effect: EffectType }> = {
@@ -352,7 +353,7 @@ export const MAX_MANA_CAP = 5;
 // Extend this union when adding new abilities.
 export type AbilityId =
   // Mage
-  | "detonate" | "fireball" | "containerize"
+  | "fireball" | "containerize"
   // Paladin
   | "smite" | "regression_shield"
   // Druid

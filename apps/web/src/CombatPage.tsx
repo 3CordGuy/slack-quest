@@ -186,7 +186,7 @@ type CombatEvent =
       mana_spent: number;
     }
   | { type: "ability_taunt"; actor: string; swings: number }
-  | { type: "ability_containerize"; swings: number }
+  | { type: "ability_containerize" }
   | {
       type: "ability_regression_shield";
       actor: string;
@@ -224,6 +224,7 @@ type CombatEvent =
       to: "front" | "back";
     }
   | { type: "monster_swing_skipped"; reason: string }
+  | { type: "containerize_stun_broken"; turns_active: number }
   | { type: "monster_target_redirected"; from: string; to: string; reason: string }
   | { type: "monster_target_blocked"; reason: string }
   | {
@@ -240,7 +241,7 @@ type CombatEvent =
   | { type: "mark_applied"; actor: string; expires_after_round: number; bonus: number }
   | { type: "mark_bonus"; actor: string; bonus: number }
   | { type: "passive_warden_shield"; actor: string; amount: number }
-  | { type: "passive_mage_free_sig"; actor: string }
+  | { type: "passive_mage_mana_font"; actor: string; amount: number }
   | { type: "passive_druid_regen"; actor: string; amount: number }
   | { type: "passive_rogue_first_crit"; actor: string }
   | { type: "passive_bard_aura"; actor: string; source: string; bonus: number }
@@ -586,7 +587,7 @@ function formatEvent(e: CombatEvent, state: CombatState | null): LogEntry[] {
     case "ability_taunt":
       return row("shield", <>{nameOf(e.actor)} bellows — monster locked on for {e.swings} swings.</>, "good");
     case "ability_containerize":
-      return row("cubes", <>Stasis container — monster will skip {e.swings} swing.</>, "good");
+      return row("cubes", <>Stasis container — monster is stunned (30%/turn escalating break chance).</>, "good");
     case "ability_regression_shield": {
       const grants = e.grants ?? [];
       const summary = grants.length === 0
@@ -651,7 +652,9 @@ function formatEvent(e: CombatEvent, state: CombatState | null): LogEntry[] {
     case "ability_migrate":
       return row("grass", <>{nameOf(e.actor)} shifts {nameOf(e.target)} to the {e.to} row.</>, "info");
     case "monster_swing_skipped":
-      return row("cubes", "The monster's swing fizzles — containerized.", "good");
+      return row("cubes", "The monster is stunned — its swing fizzles.", "good");
+    case "containerize_stun_broken":
+      return row("cubes", <>The monster breaks free after {e.turns_active} stunned turn{e.turns_active === 1 ? "" : "s"}!</>, "info");
     case "monster_target_redirected":
       return row(
         e.reason === "taunt" ? "shield" : "player-dodge",
@@ -674,8 +677,8 @@ function formatEvent(e: CombatEvent, state: CombatState | null): LogEntry[] {
       return row("targeted", <>Focus-fire: +{e.bonus} dmg from {nameOf(e.actor)}.</>, "good");
     case "passive_warden_shield":
       return row("shield", <>{nameOf(e.actor)} hardens up — +{e.amount} shield (passive).</>, "good");
-    case "passive_mage_free_sig":
-      return row("wax-seal", <>{nameOf(e.actor)}'s first ability is free.</>, "good");
+    case "passive_mage_mana_font":
+      return row("wax-seal", <>Mana Font: {nameOf(e.actor)} regenerates +{e.amount} mana.</>, "good");
     case "passive_druid_regen":
       return row("grass", <>{nameOf(e.actor)} regen +{e.amount} HP (passive).</>, "good");
     case "passive_rogue_first_crit":
@@ -873,8 +876,8 @@ export function CombatPage({
               toast("🗡 First Strike — guaranteed crit!", { icon: "⚡", duration: 4000 });
             } else if (evt.type === "passive_warden_shield") {
               toast(`🛡 Hardened Up — +${(evt as { amount: number }).amount} shield`, { duration: 3000 });
-            } else if (evt.type === "passive_mage_free_sig") {
-              toast("✨ First ability is free!", { duration: 3000 });
+            } else if (evt.type === "passive_mage_mana_font") {
+              toast(`🧙 Mana Font — +${(evt as { amount: number }).amount} mana`, { duration: 3000 });
             } else if (evt.type === "passive_paladin_auto_heal") {
               toast(`💛 Lay on Hands — +${(evt as { amount: number }).amount} HP`, { duration: 3000 });
             }

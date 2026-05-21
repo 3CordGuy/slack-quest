@@ -4,23 +4,6 @@ import { fx, rollSum } from "./effects";
 export const mageAbilities: AbilityDef[] = [
   {
     kind: "active",
-    id: "detonate",
-    name: "Detonate",
-    blurb: "Drops a payload that bursts on impact.",
-    icon: "fire-bomb",
-    mana_cost: 1,
-    target: "single_enemy",
-    mana_free_first_use: true, // Mana Catalyst passive
-    execute(ctx) {
-      const monster = ctx.target as { id: string };
-      const wpn = Math.max(0, ctx.caster.weapon_power);
-      const r = rollSum(ctx.roll, 2, 6);
-      const amount = r + ctx.caster.magic_mod + wpn;
-      return [fx.damage(monster.id, amount, `2d6 + ${ctx.caster.magic_mod}m + ${wpn}w`, { drinkBuff: "ability" })];
-    },
-  },
-  {
-    kind: "active",
     id: "fireball",
     name: "Fireball",
     blurb: "Rains fire on every enemy at once.",
@@ -38,21 +21,21 @@ export const mageAbilities: AbilityDef[] = [
     kind: "active",
     id: "containerize",
     name: "Containerize",
-    blurb: "Locks the monster in a stasis container. It skips its next swing entirely.",
+    blurb: "Locks the monster in a stasis container. Each stunned turn it has a 30% cumulative chance to break free (capped at 100% on the fourth turn).",
     icon: "cubes",
     mana_cost: 2,
     target: "single_enemy",
     execute(_ctx) {
-      return [fx.skipSwings(1)];
+      return [fx.stunMonster()];
     },
   },
   {
     kind: "passive",
-    id: "mana_catalyst",
-    name: "Mana Catalyst",
-    blurb: "First active ability each fight costs 0 mana.",
+    id: "mana_font",
+    name: "Mana Font",
+    blurb: "Tap into an endless reservoir — regain 1 mana every 3 turns.",
     trigger: "always_on",
-    once_per_fight: true,
+    once_per_fight: false,
     execute: () => [],
   },
 ];

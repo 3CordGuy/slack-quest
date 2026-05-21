@@ -178,7 +178,7 @@ interface AbilityUiSpec {
 }
 const ABILITY_BY_CLASS: Record<string, AbilityUiSpec> = {
   "SRE Warden":     { id: "taunt",             name: "Taunt",      iconName: "shield",          mana_cost: 2, blurb: "Monster targets you for 2 swings" },
-  "DevOps Mage":    { id: "containerize",      name: "Container",  iconName: "cubes",           mana_cost: 2, blurb: "Monster skips next swing" },
+  "DevOps Mage":    { id: "containerize",      name: "Container",  iconName: "cubes",           mana_cost: 2, blurb: "Stun monster; 30%/turn break chance" },
   "QA Paladin":     { id: "regression_shield", name: "Regress",    iconName: "fairy-wand",      mana_cost: 2, blurb: "+3 shield to all party" },
   "Refactor Rogue": { id: "vanish",            name: "Vanish",     iconName: "hood",            mana_cost: 2, blurb: "Untargetable for 2 swings" },
   "Data Warlock":   { id: "soul_drain",        name: "Soul Drain", iconName: "death-skull",     mana_cost: 2, blurb: "1d6+mag dmg, heal 50%" },

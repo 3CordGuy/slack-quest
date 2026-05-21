@@ -36,8 +36,12 @@ export const fx = {
     return { kind: "grant_shield_all", amount };
   },
 
-  skipSwings(add: number): AbilityEffect {
-    return { kind: "skip_swings", add };
+  stunMonster(): AbilityEffect {
+    return { kind: "stun_monster" };
+  },
+
+  restoreMana(targetId: string, amount: number): AbilityEffect {
+    return { kind: "restore_mana", target_id: targetId, amount };
   },
 
   taunt(actorId: string, swings: number): AbilityEffect {
