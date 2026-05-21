@@ -1369,6 +1369,7 @@ export interface ShopItem {
   // Haggle state. NULL = not attempted. "failed" = rolled and failed (no further
   // attempts). "15"/"25"/"30" = succeeded at that % off (price already discounted).
   haggled: string | null;
+  element: ElementType | null;
 }
 
 // Returns active shop stock (generated within the cutoff window, available items only),
@@ -1381,7 +1382,7 @@ export async function getActiveShopStock(
   const cutoff = Date.now() - windowMs;
   const result = await db
     .prepare(
-      `SELECT id, channel_id, generated_at, item_name, item_type, power, rarity, flavor, price, bought_by, weapon_range, slot, stat_bonus, item_subtype, haggled
+      `SELECT id, channel_id, generated_at, item_name, item_type, power, rarity, flavor, price, bought_by, weapon_range, slot, stat_bonus, item_subtype, haggled, element
        FROM shop_stock
        WHERE channel_id = ? AND generated_at > ?
        ORDER BY id ASC`,
@@ -1409,6 +1410,7 @@ export interface ShopStockInput {
   slot?: EquipSlot | null;
   stat_bonus?: Record<string, number> | null;
   item_subtype?: string | null;
+  element?: ElementType | null;
 }
 
 export async function insertShopStock(
@@ -1418,14 +1420,15 @@ export async function insertShopStock(
   if (items.length === 0) return;
   const stmts = items.map((it) =>
     db.prepare(
-      `INSERT INTO shop_stock (channel_id, generated_at, item_name, item_type, power, rarity, flavor, price, weapon_range, slot, stat_bonus, item_subtype)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO shop_stock (channel_id, generated_at, item_name, item_type, power, rarity, flavor, price, weapon_range, slot, stat_bonus, item_subtype, element)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).bind(
       it.channel_id, it.generated_at, it.item_name, it.item_type, it.power, it.rarity, it.flavor, it.price,
       it.weapon_range ?? null,
       it.slot ?? null,
       it.stat_bonus ? JSON.stringify(it.stat_bonus) : null,
       it.item_subtype ?? null,
+      it.element ?? null,
     ),
   );
   await db.batch(stmts);
@@ -1438,7 +1441,7 @@ export async function getShopItem(
 ): Promise<ShopItem | null> {
   return db
     .prepare(
-      `SELECT id, channel_id, generated_at, item_name, item_type, power, rarity, flavor, price, bought_by, weapon_range, slot, stat_bonus, item_subtype, haggled
+      `SELECT id, channel_id, generated_at, item_name, item_type, power, rarity, flavor, price, bought_by, weapon_range, slot, stat_bonus, item_subtype, haggled, element
        FROM shop_stock WHERE id = ? AND channel_id = ?`,
     )
     .bind(itemId, channelId)

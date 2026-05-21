@@ -455,6 +455,7 @@ cd apps/slack
 npx wrangler secret put SLACK_SIGNING_SECRET
 npx wrangler secret put SLACK_BOT_TOKEN
 npx wrangler secret put ALLOWED_CHANNEL_ID   # optional channel allowlist
+npx wrangler secret put IMAGE_BASE_URL       # public URL of the deployed web worker
 ```
 
 For the web worker:
@@ -522,6 +523,11 @@ REMOTE_BINDINGS=false
 # currently gated in the Slack worker, but the flag is wired up for future
 # use and keeps the two workers consistent.
 ENVIRONMENT=local
+
+# Public base URL where Slack fetches images (banners, monster art). Overrides
+# the production URL hardcoded in wrangler.jsonc. Point at the local Vite dev
+# server so image routes resolve during local development.
+IMAGE_BASE_URL=http://localhost:5173
 ```
 
 Production values live in the `vars` block of each `wrangler.jsonc`

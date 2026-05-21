@@ -1096,15 +1096,21 @@ export function GridDungeonView({
     return () => { clearInterval(heartbeat); sock.close(); wsRef.current = null; };
   }, [questId, wsReconnectKey]);
 
-  // Auto-resolve monster turns
+  // Auto-resolve monster and merc turns
   const stateForAuto = ws.state;
   useEffect(() => {
-    if (!autoResolveRef.current) return;
     if (!stateForAuto || stateForAuto.status !== "active") return;
     const actorId = stateForAuto.turn_order[stateForAuto.turn_index % stateForAuto.turn_order.length];
-    if (!isMonsterActor(actorId)) return;
+    const isNonPlayer = isMonsterActor(actorId) || isMercActor(actorId);
+    if (!isNonPlayer) return;
+    if (isMonsterActor(actorId) && !autoResolveRef.current) return;
     if (autoResolvedTurnRef.current === stateForAuto.turn_index) return;
-    const t = setTimeout(() => { if (!autoResolveRef.current) return; const fired = send({ kind: "monster_act" }); if (fired) autoResolvedTurnRef.current = stateForAuto.turn_index; }, 800);
+    const action = isMercActor(actorId) ? { kind: "merc_act" as const } : { kind: "monster_act" as const };
+    const t = setTimeout(() => {
+      if (isMonsterActor(actorId) && !autoResolveRef.current) return;
+      const fired = send(action);
+      if (fired) autoResolvedTurnRef.current = stateForAuto.turn_index;
+    }, 800);
     return () => clearTimeout(t);
   }, [stateForAuto?.turn_index, stateForAuto?.status, autoResolve]);
 
@@ -1588,10 +1594,12 @@ function ContentFigureOverlay({ content }: { content: GridRoomContent }) {
         {!m.art_url && (
           <div style={{ display: "flex", justifyContent: "center", padding: "20px 0" }}>
             <Icon name="dragon" size={64} color={borderColor} />
+            <Icon name="dragon" size={64} color={borderColor} />
           </div>
         )}
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8 }}>
           <div style={{ fontFamily: DISPLAY_FONT, fontSize: 15, fontWeight: 700, color: isBoss ? "#fca5a5" : "#f5f5f5" }}>
+            {isBoss && <Icon name="dragon" size={13} color="#fca5a5" />} {m.name}
             {isBoss && <Icon name="dragon" size={13} color="#fca5a5" />} {m.name}
           </div>
           <div style={{ fontSize: 12, color: "#9aa0a6", fontVariantNumeric: "tabular-nums" }}>
@@ -1769,6 +1777,7 @@ function ContentOverlay({ node, content, onEnterCombat, onTakeLoot, onTakeKey, o
       <div style={{ background: isBoss ? "rgba(80,10,10,0.95)" : "rgba(10,11,14,0.95)", borderTop: `1px solid ${isBoss ? "#7f1d1d" : "#1e2028"}`, padding: "12px 16px", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 14 }}>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: 14, fontWeight: 600, color: isBoss ? "#fca5a5" : "#f5f5f5", fontFamily: DISPLAY_FONT }}>
+            {isBoss && <Icon name="dragon" size={14} color="#fca5a5" />} {m.name}
             {isBoss && <Icon name="dragon" size={14} color="#fca5a5" />} {m.name}
           </div>
           {m.flavor && (

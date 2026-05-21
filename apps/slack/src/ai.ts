@@ -24,7 +24,7 @@ export type SceneVariant = "standard" | "boss" | "gauntlet-wave";
 // shape on purpose — keeps ai.ts free of the index.ts type cycle.
 export interface ArtTarget {
   bucket: R2Bucket;
-  baseUrl: string; // e.g. "https://gantt-quest.3cordguy.workers.dev"
+  baseUrl: string; // e.g. "https://your-worker.workers.dev"
 }
 
 // Two-step opening-scene generation:

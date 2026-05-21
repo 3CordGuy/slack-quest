@@ -1341,6 +1341,7 @@ function EnterCombatBanner({ monsterName, monsterHp, monsterMaxHp, isBoss, onEnt
       <div>
         <div style={{ fontSize: 13, fontWeight: 600, color: isBoss ? "#fca5a5" : "#f5f5f5", fontFamily: DISPLAY_FONT }}>
           {isBoss && <Icon name="dragon" size={14} color="#fca5a5" />} {monsterName}
+          {isBoss && <Icon name="dragon" size={14} color="#fca5a5" />} {monsterName}
         </div>
         <HpBar current={monsterHp} max={monsterMaxHp} color={isBoss ? "#ef4444" : undefined} height={5} />
         <div style={{ fontSize: 11, color: "#9aa0a6", marginTop: 2 }}>

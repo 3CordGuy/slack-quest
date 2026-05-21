@@ -772,6 +772,7 @@ export function CombatPage({
   const autoResolvedTurnRef = useRef<number>(-1);
   const [reconnectKey, setReconnectKey] = useState(0);
   const [devOpen, setDevOpen] = useState(false);
+  const [devOpen, setDevOpen] = useState(false);
   const isMobile = useIsMobile();
   const wsRef = useRef<WebSocket | null>(null);
   const logScrollRef = useRef<HTMLDivElement | null>(null);
@@ -1180,12 +1181,38 @@ export function CombatPage({
           onDone={() => { setDevOpen(false); setReconnectKey((k) => k + 1); }}
         />
       )}
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          {import.meta.env.DEV && (
+            <button
+              onClick={() => setDevOpen(true)}
+              style={{ background: "none", border: "1px solid #2a2d44", color: "#a78bfa", cursor: "pointer", fontSize: 11, padding: "2px 7px", borderRadius: 5, display: "flex", alignItems: "center", gap: 4, fontFamily: "inherit" }}
+            >
+              <Icon name="cog" size={11} /> dev
+            </button>
+          )}
+          <span style={{ fontSize: 11, color: ui.connection === "open" ? "#39ff14" : ui.connection === "connecting" ? "#9aa0a6" : "#fca5a5" }}>
+            {ui.connection === "open" ? "● live" : ui.connection === "connecting" ? "○ …" : "× disconnected"}
+          </span>
+        </div>
+      </div>
+      {devOpen && import.meta.env.DEV && (
+        <CombatDevModal
+          questId={questId}
+          onClose={() => setDevOpen(false)}
+          onDone={() => { setDevOpen(false); setReconnectKey((k) => k + 1); }}
+        />
+      )}
 
       {/* Room view — flex: 1, background art + floating overlays */}
+      <div style={{ flex: 1, position: "relative", overflow: "hidden", minHeight: 0, background: bgArtUrl ? undefined : "#1c1f2e" }}>
       <div style={{ flex: 1, position: "relative", overflow: "hidden", minHeight: 0, background: bgArtUrl ? undefined : "#1c1f2e" }}>
         {bgArtUrl && (
           <img src={bgArtUrl} alt="" style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover" }} onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
         )}
+        <div style={{ position: "absolute", inset: 0, background: bgArtUrl
+          ? "linear-gradient(to bottom, rgba(0,0,0,0.25) 0%, rgba(0,0,0,0.05) 35%, rgba(0,0,0,0.70) 100%)"
+          : "linear-gradient(to bottom, rgba(0,0,0,0.10) 0%, rgba(0,0,0,0.00) 40%, rgba(0,0,0,0.40) 100%)",
+          pointerEvents: "none" }} />
         <div style={{ position: "absolute", inset: 0, background: bgArtUrl
           ? "linear-gradient(to bottom, rgba(0,0,0,0.25) 0%, rgba(0,0,0,0.05) 35%, rgba(0,0,0,0.70) 100%)"
           : "linear-gradient(to bottom, rgba(0,0,0,0.10) 0%, rgba(0,0,0,0.00) 40%, rgba(0,0,0,0.40) 100%)",
@@ -1396,6 +1423,7 @@ export function CombatPage({
           <CBtn label="Flee" icon="footprint" color="#9aa0a6" disabled={!myTurn} onClick={() => send({ kind: "flee", actor: selfId })} />
           {isMonsterTurn && !autoResolve && (
             <CBtn label="Resolve" icon="dragon" color="#5c1f1f" onClick={() => send({ kind: "monster_act" })} />
+            <CBtn label="Resolve" icon="dragon" color="#5c1f1f" onClick={() => send({ kind: "monster_act" })} />
           )}
           <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, color: "#4a5568", cursor: "pointer", marginLeft: 6 }}>
             <input type="checkbox" checked={autoResolve} onChange={(e) => setAutoResolve(e.target.checked)} style={{ accentColor: "#5c1f1f" }} />
@@ -1556,6 +1584,7 @@ function MonsterCard({
         size={72}
         radius={8}
         fallbackIcon="dragon"
+        fallbackIcon="dragon"
         fallbackColor={isMarked ? "#f59e0b" : "#7c2020"}
         border={`1px solid ${borderColor}`}
         style={{ flexShrink: 0 }}
@@ -1679,6 +1708,7 @@ function InitiativeTrack({
                   alt={name}
                   size={AVATAR}
                   radius={RADIUS}
+                  fallbackIcon={isMon ? "dragon" : "player"}
                   fallbackIcon={isMon ? "dragon" : "player"}
                   fallbackColor={isMon ? (isCurrent ? "#ef4444" : "#7a3030") : "#4a5568"}
                   style={{

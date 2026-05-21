@@ -3131,6 +3131,7 @@ async function handleGraphUseObject(
       slot: loot.slot ?? null,
       stat_bonus: loot.stat_bonus ?? null,
       item_subtype: loot.item_subtype ?? null,
+      element: loot.element ?? null,
     });
     const updatedObjects = markUsed(obj);
     const updatedNode: DungeonNode = { ...node, objects: updatedObjects };
@@ -3216,6 +3217,7 @@ function rollToLootOption(roll: ItemRoll, named: { name: string; flavor: string 
     ...(roll.slot ? { slot: roll.slot } : {}),
     ...(roll.stat_bonus ? { stat_bonus: roll.stat_bonus as Record<string, number> } : {}),
     ...(roll.item_subtype ? { item_subtype: roll.item_subtype } : {}),
+    ...(roll.element ? { element: roll.element } : {}),
   };
 }
 
@@ -5280,6 +5282,7 @@ async function resolveVictory(
         slot: opt.slot,
         stat_bonus: opt.stat_bonus,
         item_subtype: opt.item_subtype,
+        element: opt.element ?? null,
       });
       const powerStr = powerLabel(roll.type, roll.power, item.item_name);
       const rangeNote = roll.weapon_range
@@ -5962,6 +5965,7 @@ async function resolveLockboxChoice(
     slot: choice.slot,
     stat_bonus: choice.stat_bonus,
     item_subtype: choice.item_subtype,
+    element: choice.element ?? null,
   });
   await appendLog(env.DB, quest.id, payload.user_id, "lockbox", `unlocked ${lockTier} → ${item.item_name}`);
 
@@ -6040,6 +6044,7 @@ async function resolveNpcChoice(
     slot: offer.slot,
     stat_bonus: offer.stat_bonus,
     item_subtype: offer.item_subtype,
+    element: offer.element ?? null,
   });
 
   if (bucket === "tainted") {
@@ -6126,6 +6131,7 @@ async function resolveMerchantChoice(
     slot: choice.slot,
     stat_bonus: choice.stat_bonus,
     item_subtype: choice.item_subtype,
+    element: choice.element ?? null,
   });
   await appendLog(env.DB, quest.id, payload.user_id, "merchant", `bought ${item.item_name} for ${price}g`);
 
@@ -6200,6 +6206,7 @@ async function handleTake(
     slot: choice.slot,
     stat_bonus: choice.stat_bonus,
     item_subtype: choice.item_subtype,
+    element: choice.element ?? null,
   });
 
   await resolveExpeditionVictory(payload, env, ctx, character, item, quest);
@@ -10038,6 +10045,7 @@ async function restockShop(env: Env, channelId: string): Promise<void> {
       slot: roll.slot ?? null,
       stat_bonus: (roll.stat_bonus ?? null) as Record<string, number> | null,
       item_subtype: roll.item_subtype ?? null,
+      element: roll.element ?? null,
     });
   }
   await insertShopStock(env.DB, items);
@@ -10259,6 +10267,7 @@ async function handleBuy(
     slot: stock.slot ?? undefined,
     stat_bonus: stock.stat_bonus ?? undefined,
     item_subtype: stock.item_subtype ?? undefined,
+    element: stock.element ?? undefined,
   });
   const text = `🛍️ Bought ${RARITY_BADGE[stock.rarity]} *${stock.item_name}* for ${stock.price}g (now ${character.gold - stock.price}g). Inventory id \`${item.id}\`.`;
   return {
