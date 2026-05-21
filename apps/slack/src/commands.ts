@@ -4088,11 +4088,7 @@ async function dispatchTurnNotification(
   );
   if (!turnStart) return;
   const actorChar = await getCharacter(env.DB, turnStart.actor);
-  if (actorChar?.notification_pref === "dm") {
-    await sendDM(env.SLACK_BOT_TOKEN, turnStart.actor, `⚔️ It's your turn in the quest!`);
-  } else {
-    await scheduleTurnNotifAlarm(env, quest.id, turnStart.actor, quest.channel_id, quest.thread_ts);
-  }
+  await sendDM(env.SLACK_BOT_TOKEN, turnStart.actor, `⚔️ It's your turn in the quest!`);
 }
 
 // Engine-driven combat dispatcher. Translates a Slack `(payload, action)`
@@ -5027,7 +5023,7 @@ async function resolveFlee(
           body: [`The quest closes — no fighters remain.`],
         });
         const fallback = `🏃 QUEST ABANDONED\n${blockQuote(flavor)}`;
-        await postToThread(env, quest, fallback, { broadcast: true, blocks });
+        await postToThread(env, quest, fallback, { blocks });
         return;
       }
       const tail = `<@${payload.user_id}> retreats. ${others.map((s) => `*${s.name}*`).join(", ")} fight on.`;
@@ -5283,7 +5279,7 @@ async function resolveVictory(
       body,
     });
     const fallback = `🏆 QUEST COMPLETE\n${blockQuote(flavor)}\n${body.join("\n")}`;
-    await postToThread(env, quest, fallback, { broadcast: true, blocks });
+    await postToThread(env, quest, fallback, { blocks });
   })());
 
   return ephemeral(ephemeralLines.join("\n"));
@@ -5486,7 +5482,7 @@ async function resolveExpeditionVictory(
       body,
     });
     const fallback = `🏆 EXPEDITION COMPLETE\n${blockQuote(flavor)}\n${body.join("\n")}`;
-    await postToThread(env, quest, fallback, { broadcast: true, blocks });
+    await postToThread(env, quest, fallback, { blocks });
   })());
 }
 
@@ -6289,7 +6285,7 @@ async function resolveDeath(
       });
       const fallback = `☠️ QUEST FAILED\n${blockQuote(`${marker}${flavor}`)}\n${resultTail}\n${survivorsTail}`;
       // Always broadcast a quest-failure ending — same logic as victories.
-      await postToThread(env, quest, fallback, { broadcast: true, blocks });
+      await postToThread(env, quest, fallback, { blocks });
       return;
     }
 
@@ -9229,7 +9225,7 @@ async function handleSpdCancel(
 
   ctx.waitUntil(postSpdThreadUpdate(env, match,
     `🚪 *Match cancelled.* <@${match.initiator_user_id}> pulled the contract — all stakes and side bets refunded.`,
-    { broadcast: true },
+    {},
   ));
   ctx.waitUntil(retireSpdOpenMessage(env, match, `🚪 <@${match.initiator_user_id}> cancelled the match.`));
 
@@ -9359,7 +9355,7 @@ async function resolveSpdMatch(env: Env, matchId: number): Promise<void> {
       matchupLine,
       `🤝 *Tie!* Both threw ${SPD_THROW_META[a].emoji} *${SPD_THROW_META[a].name}*. Stakes refunded; ${bets.length > 0 ? `all ${bets.length} side bet${bets.length === 1 ? "" : "s"} refunded.` : "no bets to refund."}`,
     ].filter(Boolean).join("\n");
-    await postSpdThreadUpdate(env, match, text, { broadcast: true });
+    await postSpdThreadUpdate(env, match, text, {});
     await retireSpdOpenMessage(env, match, "🤝 Tie — match closed.");
     return;
   }
@@ -9441,7 +9437,7 @@ async function resolveSpdMatch(env: Env, matchId: number): Promise<void> {
   if (losingBetCount > 0) {
     lines.push(`_${losingBetCount} losing bet${losingBetCount === 1 ? "" : "s"} kept by the house._`);
   }
-  await postSpdThreadUpdate(env, match, lines.join("\n"), { broadcast: true });
+  await postSpdThreadUpdate(env, match, lines.join("\n"), {});
   await retireSpdOpenMessage(env, match, `🏆 <@${winnerId}> won — match closed.`);
 }
 
@@ -10355,17 +10351,6 @@ async function handleHaggle(
     : `🪙 <@${payload.user_id}> haggles *${stock.item_name}* — *-${pct}%* \`1d6 + ${modBreakdown} = ${total}\`. New price: *${newPrice}g* (was ${stock.price}g).`;
 
   const text = `${headline}\n_${flavor}_`;
-
-  // Post the haggle result to the channel publicly — everyone sees the win/fail
-  // (and can react). Top-level message (no thread_ts) since shopping happens
-  // between quests. The haggler still gets an ephemeral copy with a [Shop]
-  // button for quick navigation.
-  ctx.waitUntil(
-    postMessage(env.SLACK_BOT_TOKEN, {
-      channel: payload.channel_id,
-      text,
-    }),
-  );
 
   return {
     text,
@@ -11492,7 +11477,7 @@ async function handleLeaderboard(payload: SlashCommandPayload, env: Env): Promis
   return inChannel(lines.join("\n"));
 }
 
-// Posts a message into the quest thread. With { broadcast: true }, Slack also surfaces
+// Posts a message into the quest thread. With {}, Slack also surfaces
 // the message at the channel top-level so spectators see it without clicking into the
 // thread. Use broadcast for "big beats" only — joins, phase transitions, perma-death,
 // gauntlet wave changes, victories — to keep the channel from drowning in combat lines.

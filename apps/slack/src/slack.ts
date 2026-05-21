@@ -148,8 +148,14 @@ export async function sendDM(
   text: string,
 ): Promise<void> {
   const channelId = await openDMChannel(botToken, userId);
-  if (!channelId) return;
-  await postMessage(botToken, { channel: channelId, text });
+  if (!channelId) {
+    console.error("sendDM: openDMChannel returned null for userId", userId);
+    return;
+  }
+  const result = await postMessage(botToken, { channel: channelId, text });
+  if (!result.ok) {
+    console.error("sendDM: postMessage failed", result.error, { userId, channelId });
+  }
 }
 
 // Edits an existing channel message. Used to retire stale interactive

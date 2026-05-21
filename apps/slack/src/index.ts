@@ -400,8 +400,7 @@ export class LobbyManager {
     for (const [key, entry] of turnEntries) {
       if (entry.fireAt <= now) {
         try {
-          const quest = await getQuestById(this.env.DB, entry.questId);
-          if (quest && this.env.SLACK_BOT_TOKEN) {
+          if (this.env.SLACK_BOT_TOKEN) {
             await fetch("https://slack.com/api/chat.postMessage", {
               method: "POST",
               headers: {
@@ -409,9 +408,8 @@ export class LobbyManager {
                 "authorization": `Bearer ${this.env.SLACK_BOT_TOKEN}`,
               },
               body: JSON.stringify({
-                channel: entry.channelId,
-                thread_ts: entry.threadTs,
-                text: `<@${entry.userId}> it's your turn!`,
+                channel: entry.userId,
+                text: `⚔️ It's your turn in the quest!`,
               }),
             });
           }
