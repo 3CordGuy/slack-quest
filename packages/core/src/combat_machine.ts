@@ -1057,7 +1057,11 @@ function handleAllyNpcAct(state: CombatState, roll: RollFn): StepResult {
   if (monsterKilled) {
     return resolveMonsterKill(nextState, monster.id, actorId, events);
   }
-  return { state: advanceTurn(nextState), events: [...events, ...turnStartEvent(nextState)] };
+
+  const hexProc = applyHexBleedProc(nextState, monster.id);
+  events.push(...hexProc.events);
+
+  return { state: advanceTurn(hexProc.state), events: [...events, ...turnStartEvent(hexProc.state)] };
 }
 
 function handlePosition(
