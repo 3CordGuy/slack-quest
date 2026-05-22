@@ -3,7 +3,8 @@
 //
 // Usage: return [fx.damage(monster.id, amount, formula), fx.heal(caster.id, 5)]
 
-import type { AbilityEffect } from "../abilities";
+import type { AbilityEffect, AllyNpcSpec } from "../abilities";
+import type { DamageType } from "../flavor";
 
 export const fx = {
   // Deal damage to a monster (bypasses armor). Pass drink_buff_context:
@@ -12,7 +13,7 @@ export const fx = {
     targetId: string,
     amount: number,
     formula: string,
-    opts?: { isCrit?: boolean; drinkBuff?: "ability" },
+    opts?: { isCrit?: boolean; drinkBuff?: "ability"; damageType?: DamageType },
   ): AbilityEffect {
     return {
       kind: "deal_damage",
@@ -21,6 +22,7 @@ export const fx = {
       formula,
       is_crit: opts?.isCrit,
       drink_buff_context: opts?.drinkBuff,
+      damage_type: opts?.damageType,
     };
   },
 
@@ -70,6 +72,42 @@ export const fx = {
 
   discourage(targetId: string, charges: number): AbilityEffect {
     return { kind: "apply_discourage", target_id: targetId, charges };
+  },
+
+  summonAllyNpc(spec: AllyNpcSpec, idSuffix: string): AbilityEffect {
+    return { kind: "summon_ally_npc", spec, id_suffix: idSuffix };
+  },
+
+  hexMonster(targetId: string, duration: number): AbilityEffect {
+    return { kind: "hex_monster", target_id: targetId, duration };
+  },
+
+  consumeMonsterBleed(targetId: string): AbilityEffect {
+    return { kind: "consume_monster_bleed", target_id: targetId };
+  },
+
+  attackRollDamage(targetId: string, hitMod: number, amount: number, formula: string, damageType?: DamageType): AbilityEffect {
+    return { kind: "attack_roll_damage", target_id: targetId, hit_mod: hitMod, amount, formula, damage_type: damageType };
+  },
+
+  damageReduction(targetId: string, pct: number, turns: number): AbilityEffect {
+    return { kind: "set_damage_reduction", target_id: targetId, pct, turns };
+  },
+
+  fighterRegen(targetId: string, magnitude: number, duration: number): AbilityEffect {
+    return { kind: "apply_fighter_regen", target_id: targetId, magnitude, duration };
+  },
+
+  animalForm(targetId: string, strBonus: number, vitBonus: number, agiBonus: number, dexBonus: number, turns: number): AbilityEffect {
+    return { kind: "apply_animal_form", target_id: targetId, str_bonus: strBonus, vit_bonus: vitBonus, agi_bonus: agiBonus, dex_bonus: dexBonus, turns };
+  },
+
+  barkskin(targetId: string, bonus: number, turns: number): AbilityEffect {
+    return { kind: "apply_barkskin", target_id: targetId, bonus, turns };
+  },
+
+  entangleMonster(targetId: string, duration: number): AbilityEffect {
+    return { kind: "entangle_monster", target_id: targetId, duration };
   },
 };
 

@@ -17,7 +17,7 @@ describe("resolvePlayerHit", () => {
   it("attack uses 1d6 + class_mod + weapon_mod", () => {
     const r = resolvePlayerHit("attack", 2, 3, constantRoll(4));
     // roll 4 (not crit since not 6) + (2 + 3) = 9
-    expect(r).toEqual({ roll: 4, damage: 9, isCrit: false, sides: 6, totalMod: 5 });
+    expect(r).toEqual({ roll: 4, damage: 9, isCrit: false, formula: "1d6", totalMod: 5 });
   });
 
   it("crit on natural max doubles the post-modifier total", () => {

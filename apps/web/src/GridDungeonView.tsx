@@ -5,7 +5,7 @@
 
 import { useEffect, useReducer, useRef, useState } from "react";
 import toast from "react-hot-toast";
-import { isMonsterActor, isMercActor } from "@gantt-quest/core";
+import { isMonsterActor, isAllyNpcActor } from "@gantt-quest/core";
 import { Avatar, Icon } from "./icons";
 import { CombatParticles, triggerBurst } from "./CombatParticles";
 import {
@@ -171,7 +171,7 @@ type TurnAction =
   | { kind: "mark"; actor: string }
   | { kind: "ability"; actor: string; ability_id: string; target_id?: string; target?: string; position?: "front" | "back" }
   | { kind: "monster_act" }
-  | { kind: "merc_act" }
+  | { kind: "ally_npc_act" }
   | { kind: "use_item"; actor: string; item_id: number; target_id?: string };
 
 
@@ -1102,11 +1102,11 @@ export function GridDungeonView({
   useEffect(() => {
     if (!stateForAuto || stateForAuto.status !== "active") return;
     const actorId = stateForAuto.turn_order[stateForAuto.turn_index % stateForAuto.turn_order.length];
-    const isNonPlayer = isMonsterActor(actorId) || isMercActor(actorId);
+    const isNonPlayer = isMonsterActor(actorId) || isAllyNpcActor(actorId);
     if (!isNonPlayer) return;
     if (isMonsterActor(actorId) && !autoResolveRef.current) return;
     if (autoResolvedTurnRef.current === stateForAuto.turn_index) return;
-    const action = isMercActor(actorId) ? { kind: "merc_act" as const } : { kind: "monster_act" as const };
+    const action = isAllyNpcActor(actorId) ? { kind: "ally_npc_act" as const } : { kind: "monster_act" as const };
     const t = setTimeout(() => {
       if (isMonsterActor(actorId) && !autoResolveRef.current) return;
       const fired = send(action);

@@ -1,56 +1,104 @@
-import type { AbilityDef } from "../abilities";
-import { fx } from "./effects";
+import type { AbilityDef, MonsterSnapshot } from "../abilities";
+import { fx, rollSum } from "./effects";
 
 export const warlockAbilities: AbilityDef[] = [
   {
-    kind: "active",
-    id: "hex",
-    name: "Hex",
-    blurb: "Curses the foe with a slow query that bleeds them out.",
-    icon: "death-skull",
-    mana_cost: 1,
-    routing: "damage",
-    target: "single_enemy",
-    execute(ctx) {
-      const monster = ctx.target as { id: string; max_hp: number };
-      const wpn = Math.max(0, ctx.caster.weapon_power);
-      const slowQuery = Math.floor(Math.max(0, monster.max_hp) * 0.05);
-      const r = ctx.roll(6);
-      const amount = r + ctx.caster.magic_mod + slowQuery + wpn;
-      return [fx.damage(monster.id, amount, `1d6 + ${ctx.caster.magic_mod}m + ${slowQuery}% + ${wpn}w`, { drinkBuff: "ability" })];
-    },
+    kind: "passive",
+    id: "sinister_queries",
+    name: "Sinister Queries",
+    blurb: "Dealing damage applies 1 + floor(level/5) bleed stacks to the target.",
+    trigger: "always_on",
+    once_per_fight: false,
+    execute: () => [],
+    // Bleed is applied inline by the machine via applySinisterQueries; this
+    // definition exists for display and classHasPassive() lookups.
   },
   {
     kind: "active",
-    id: "soul_drain",
-    name: "Soul Drain",
-    blurb: "Deal 1d6 + magic_mod damage and heal yourself for 50% of damage dealt.",
+    id: "leech_life",
+    name: "Leech Life",
+    blurb: "Deal 2d6 + magic damage to an enemy and heal for half the damage dealt.",
     icon: "death-skull",
-    mana_cost: 2,
+    mana_cost: 1,
     routing: "utility",
     target: "single_enemy",
     execute(ctx) {
-      const monster = ctx.target as { id: string; hp: number };
-      const d6 = ctx.roll(6);
-      const rawDamage = d6 + ctx.caster.magic_mod;
-      // Cap at monster_hp - 1 so soul_drain never delivers the killing blow.
-      const damage = Math.min(rawDamage, Math.max(1, monster.hp - 1));
+      const monster = ctx.target as MonsterSnapshot;
+      const roll1 = ctx.roll(6);
+      const roll2 = ctx.roll(6);
+      const damage = roll1 + roll2 + ctx.caster.magic_mod;
       const heal = Math.floor(damage / 2);
       return [
-        fx.damage(monster.id, damage, `${d6}+${ctx.caster.magic_mod}m, half drained`),
+        fx.damage(monster.id, damage, `2d6(${roll1}+${roll2})+${ctx.caster.magic_mod}m`),
         fx.heal(ctx.caster.id, heal),
       ];
     },
   },
   {
-    kind: "passive",
-    id: "cursed_strike",
-    name: "Cursed Strike",
-    blurb: "Critical attacks/casts inflict a 2-turn 🩸 bleed on the monster.",
-    trigger: "on_crit",
-    once_per_fight: false,
-    execute: () => [],
-    // Bleed is applied inline by the machine via applyWarlockBleed; this
-    // definition exists for display and class-passive lookups.
+    kind: "active",
+    id: "hex",
+    name: "Hex",
+    blurb: "Reduce a monster's damage by 25%. While hexed, it takes 3 bleed stacks whenever it takes damage.",
+    icon: "wax-seal",
+    mana_cost: 1,
+    routing: "utility",
+    target: "single_enemy",
+    execute(ctx) {
+      const monster = ctx.target as MonsterSnapshot;
+      return [fx.hexMonster(monster.id, 10)];
+    },
+  },
+  {
+    kind: "active",
+    id: "summon_imp",
+    name: "Summon Imp",
+    blurb: "Summon an imp into battle. Its attacks deal damage equal to your magic modifier.",
+    icon: "aura",
+    mana_cost: 2,
+    cooldown_turns: 2,
+    routing: "utility",
+    target: "self",
+    execute(ctx) {
+      const mag = ctx.caster.magic_mod;
+      const hp = 5 + ctx.caster.level + mag;
+      return [
+        fx.summonAllyNpc(
+          {
+            name: "Imp",
+            class_label: "Imp",
+            level: ctx.caster.level,
+            hp,
+            attack_mod: mag, 
+            weapon_power: mag,
+            position: "front",
+            weapon_range: "melee",
+            damage_roll: '0'
+          },
+          "imp",
+        ),
+      ];
+    },
+  },
+  {
+    kind: "active",
+    id: "forbidden_sql",
+    name: "Forbidden SQL",
+    blurb: "Consume all bleed stacks on a target to deal (2 + floor(magic/4)) damage per stack.",
+    icon: "scroll-unfurled",
+    mana_cost: 2,
+    routing: "utility",
+    target: "single_enemy",
+    execute(ctx) {
+      const monster = ctx.target as MonsterSnapshot;
+      const bleedEffect = monster.effects?.find((e) => e.type === "bleeding");
+      const stacks = bleedEffect?.magnitude ?? 0;
+      if (stacks === 0) return [];
+      const dmgPerStack = 2 + Math.floor(ctx.caster.magic_mod / 4);
+      const total = stacks * dmgPerStack;
+      return [
+        fx.consumeMonsterBleed(monster.id),
+        fx.damage(monster.id, total, `${stacks}×${dmgPerStack}(3+${Math.floor(ctx.caster.magic_mod / 4)})`),
+      ];
+    },
   },
 ];

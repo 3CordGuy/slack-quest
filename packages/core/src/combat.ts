@@ -40,15 +40,23 @@ export function pickMonsterTarget<T extends { id: string; position: BattlePositi
   return fighters[fighters.length - 1];
 }
 
+// Parses "NdM" dice notation into { count, sides }. "0" means no dice (flat mods only).
+// Falls back to 1d6 on unrecognized input.
+export function parseDiceNotation(formula: string): { count: number; sides: number } {
+  if (formula === "0") return { count: 0, sides: 0 };
+  const m = /^(\d+)d(\d+)$/i.exec(formula);
+  return m ? { count: parseInt(m[1], 10), sides: parseInt(m[2], 10) } : { count: 1, sides: 6 };
+}
+
 export interface PlayerHit {
   roll: number;
   damage: number;
   isCrit: boolean;
-  sides: number;
+  formula: string;
   totalMod: number;
 }
 
-// Resolves a player's attack against the monster: 1d6, crit on natural 6.
+// Resolves a player's attack: rolls the given damage formula, crits on max total.
 // Crits double the post-modifier total. `rollFn(sides)` is injected so tests
 // can be deterministic; production passes flavor.ts's `rollDice`.
 export function resolvePlayerHit(
@@ -56,12 +64,15 @@ export function resolvePlayerHit(
   classMod: number,
   weaponMod: number,
   rollFn: (sides: number) => number,
+  damageRoll = "1d6",
 ): PlayerHit {
-  const roll = rollFn(6);
-  const isCrit = roll === 6;
+  const { count, sides } = parseDiceNotation(damageRoll);
+  let roll = 0;
+  for (let i = 0; i < count; i++) roll += rollFn(sides);
+  const isCrit = count > 0 && roll === count * sides;
   const totalMod = classMod + weaponMod;
   const damage = (roll + totalMod) * (isCrit ? 2 : 1);
-  return { roll, damage, isCrit, sides: 6, totalMod };
+  return { roll, damage, isCrit, formula: damageRoll, totalMod };
 }
 
 export interface MonsterHit {
@@ -73,7 +84,7 @@ export interface MonsterHit {
 }
 
 // Resolves the monster's counter-attack against a single fighter.
-//   damage = 1d4 + tier + floor((alive_party - 1) / 2) [+ tier if boss phase 2]
+//   damage = <damageRoll> + tier + floor((alive_party - 1) / 2) [+ tier if boss phase 2]
 //
 // Physical attacks: reduced by floor(armorPower / 2), minimum 1.
 // Magic/elemental attacks: armor is ignored; a percentage reduction from gear
@@ -86,10 +97,14 @@ export function resolveMonsterHit(
   rollFn: (sides: number) => number,
   damageType: DamageType = "physical",
   resistancePct: number = 0,
+  damageRoll = "1d4",
 ): MonsterHit {
+  const { count, sides } = parseDiceNotation(damageRoll);
   const partyBonus = Math.floor((Math.max(1, fightersAlive) - 1) / 2);
   const bossBonus = bossPhase2 ? tier : 0;
-  const raw = rollFn(4) + tier + partyBonus + bossBonus;
+  let diceTotal = 0;
+  for (let i = 0; i < count; i++) diceTotal += rollFn(sides);
+  const raw = diceTotal + tier + partyBonus + bossBonus;
 
   let armorReduction = 0;
   let resistanceReduction = 0;
