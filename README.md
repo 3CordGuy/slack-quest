@@ -83,11 +83,11 @@ floor((INT−5)/2).
 | Class | STR | INT | VIT | AGI | DEX | Skills | Damage ability (sig) | Passive | Tactical ability |
 |---|---|---|---|---|---|---|---|---|---|
 | DevOps Mage | 4 | 9 | 5 | 6 | 6 | INT, DEX | **Detonate** (1m) | Mana Catalyst — first ability free | **Containerize** (2m) — skip a monster swing |
-| QA Paladin | 9 | 4 | 9 | 4 | 4 | STR | **Smite** (1m) | Sacred Vow — front-row bonus | **Regression Shield** (2m) — party-wide shield |
+| QA Paladin | 9 | 4 | 9 | 4 | 4 | STR | **Smite** (1m, cd1) — normal + 2d8; enemy −50% next swing | Holy Rage — party damage taken stacks +10% attack bonus | **Shield of Faith** (2m) — party +5 AC for 3r; **Lay on Hands** (1m) — heal ally (heals self too if protected ally); **Protect** (0m, cd2) — ally takes half damage you absorb the rest, or self-shield 2d6+vit |
 | Backend Druid | 6 | 7 | 6 | 5 | 6 | INT, STR | **Wildgrowth** (1m) | Symbiosis — passive party regen | **Migrate** (2m) — reposition an ally |
 | Frontend Bard | 4 | 9 | 5 | 6 | 6 | INT | **Crescendo** (1m) | Aura — party damage aura | **Battle Hymn** (2m) — stacking attack buff |
 | Staff Sage | 4 | 10 | 6 | 5 | 5 | INT | **Manifest** (1m) | Reading — free bonus action | **Foresee** (2m) — preview swings + reveal chests |
-| Refactor Rogue | 7 | 4 | 4 | 7 | 8 | DEX | **Backstab** (1m) | First Strike — guaranteed crit on first attack | **Vanish** (2m) — untargetable for N swings |
+| Refactor Rogue | 7 | 4 | 4 | 7 | 8 | DEX | **Backstab** (0m, cd2) — attack with advantage; crits on nat 6, doubled damage | Lethal Strikes — crits apply bleed (2+lev/2 stacks) | **Vanish** (2m) — untargetable 2r, attacks from stealth auto-crit; **Envenom Weapon** (1m) — next 2 hits apply poison; **Debilitate** (1m, cd3) — stun + 20% vuln 2r |
 | SRE Warden | 9 | 4 | 10 | 4 | 3 | STR | **Bulwark Strike** (1m) | Iron Skin — passive shield bump | **Taunt** (2m) — force monster focus |
 | Data Warlock | 4 | 10 | 5 | 5 | 6 | INT | **Hex** (1m) | Shadow Bleed — crit bleed passive | **Soul Drain** (2m) — damage + self-heal |
 
