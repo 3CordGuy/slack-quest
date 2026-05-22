@@ -6062,6 +6062,45 @@ app.post("/api/dev/level", async (c) => {
   return c.json({ ok: true });
 });
 
+const DEV_ITEM_TYPES = ["weapon", "armor", "consumable", "magic", "revive", "tool", "scroll"] as const;
+const DEV_RARITIES = ["common", "uncommon", "rare", "epic", "legendary"] as const;
+const DEV_WEAPON_RANGES = ["melee", "ranged", "focus"] as const;
+const DEV_EQUIP_SLOTS = ["main_hand", "off_hand", "body", "helmet", "pants", "boots", "ring", "amulet"] as const;
+const DEV_ELEMENTS = ["fire", "ice", "lightning"] as const;
+
+app.post("/api/dev/item", async (c) => {
+  if (c.env.ENVIRONMENT !== "local") return c.json({ error: "forbidden" }, 403);
+  const session = await currentSession(c.env.DB, c.req.header("Cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const body = await c.req.json<Record<string, unknown>>();
+  const type = body.type as string;
+  const name = body.name;
+  const power = Math.floor(Number(body.power));
+  const rarity = body.rarity as string;
+  const weaponRange = body.weapon_range as string | undefined;
+  const slot = body.slot as string | undefined;
+  const element = body.element as string | undefined;
+  if (!(DEV_ITEM_TYPES as readonly string[]).includes(type)) return c.json({ error: "invalid type" }, 400);
+  if (typeof name !== "string" || !name.trim()) return c.json({ error: "invalid name" }, 400);
+  if (!Number.isFinite(power) || power < 0 || power > 999) return c.json({ error: "invalid power" }, 400);
+  if (!(DEV_RARITIES as readonly string[]).includes(rarity)) return c.json({ error: "invalid rarity" }, 400);
+  if (type === "weapon" && !(DEV_WEAPON_RANGES as readonly string[]).includes(weaponRange ?? "")) return c.json({ error: "invalid weapon_range" }, 400);
+  if (slot && !(DEV_EQUIP_SLOTS as readonly string[]).includes(slot)) return c.json({ error: "invalid slot" }, 400);
+  if (element && !(DEV_ELEMENTS as readonly string[]).includes(element)) return c.json({ error: "invalid element" }, 400);
+  await addItem(c.env.DB, {
+    character_id: session.slack_user_id,
+    item_name: name.trim(),
+    item_type: type as ItemType,
+    power,
+    rarity: rarity as Rarity,
+    flavor: "A dev-spawned item.",
+    weapon_range: (weaponRange as import("@gantt-quest/core").WeaponRange) ?? null,
+    slot: (slot as import("@gantt-quest/core").EquipSlot) ?? null,
+    element: (element as ElementType) ?? null,
+  });
+  return c.json({ ok: true });
+});
+
 // DEV ONLY — heal/mana restore that also patches the in-flight combat state
 // so the DO re-broadcasts the corrected HP/mana on the next WebSocket connect.
 async function devPatchCombatState(
