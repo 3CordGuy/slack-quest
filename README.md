@@ -82,14 +82,14 @@ floor((INT−5)/2).
 
 | Class | STR | INT | VIT | AGI | DEX | Skills | Damage ability (sig) | Passive | Tactical ability |
 |---|---|---|---|---|---|---|---|---|---|
-| DevOps Mage | 4 | 9 | 5 | 6 | 6 | INT, DEX | **Detonate** (1m) | Mana Catalyst — first ability free | **Containerize** (2m) — skip a monster swing |
+| DevOps Mage | 4 | 9 | 5 | 6 | 6 | INT, DEX | **Lightning Bolt** (1m) | Mana Font — regain 1 mana every 3 turns | **Mage Armor** (1m) — shield ally; **Fireball** (2m) — AOE fire; **Containerize** (2m) — stun |
 | QA Paladin | 9 | 4 | 9 | 4 | 4 | STR | **Smite** (1m, cd1) — normal + 2d8; enemy −50% next swing | Holy Rage — party damage taken stacks +10% attack bonus | **Shield of Faith** (2m) — party +5 AC for 3r; **Lay on Hands** (1m) — heal ally (heals self too if protected ally); **Protect** (0m, cd2) — ally takes half damage you absorb the rest, or self-shield 2d6+vit |
-| Backend Druid | 6 | 7 | 6 | 5 | 6 | INT, STR | **Wildgrowth** (1m) | Symbiosis — passive party regen | **Migrate** (2m) — reposition an ally |
+| Backend Druid | 6 | 7 | 6 | 5 | 6 | INT, STR | **Regeneration** (1m) — mag HoT on ally; **Wildgrowth** (2m, 2cd) — AoE dmg + entangle | Primal Strikes — mag adds to attack to-hit/dmg; heals on hit | **Animal Form** (2m) — mag + 25% stat boost 4 rounds; **Barkskin** (1m) — +5 AC on ally |
 | Frontend Bard | 4 | 9 | 5 | 6 | 6 | INT | **Crescendo** (1m) | Aura — party damage aura | **Battle Hymn** (2m) — stacking attack buff |
 | Staff Sage | 4 | 10 | 6 | 5 | 5 | INT | **Manifest** (1m) | Reading — free bonus action | **Foresee** (2m) — preview swings + reveal chests |
 | Refactor Rogue | 7 | 4 | 4 | 7 | 8 | DEX | **Backstab** (0m, cd2) — attack with advantage; crits on nat 6, doubled damage | Lethal Strikes — crits apply bleed (2+lev/2 stacks) | **Vanish** (2m) — untargetable 2r, attacks from stealth auto-crit; **Envenom Weapon** (1m) — next 2 hits apply poison; **Debilitate** (1m, cd3) — stun + 20% vuln 2r |
-| SRE Warden | 9 | 4 | 10 | 4 | 3 | STR | **Bulwark Strike** (1m) | Iron Skin — passive shield bump | **Taunt** (2m) — force monster focus |
-| Data Warlock | 4 | 10 | 5 | 5 | 6 | INT | **Hex** (1m) | Shadow Bleed — crit bleed passive | **Soul Drain** (2m) — damage + self-heal |
+| SRE Warden | 9 | 4 | 10 | 4 | 3 | VIT, STR | **Bulwark Strike** (1m) | Thorns — reflect 25% armor when hit; Armor Up — regen shield each turn | **Taunt** (2m) — force monster focus; **Brace** (free) — shield + dmg reduction |
+| Data Warlock | 4 | 10 | 5 | 5 | 6 | INT, VIT | **Leech Life** (1m) | Sinister Queries — dealing damage applies bleed stacks | **Hex** (1m) — debuff + bleed-on-hit; **Forbidden SQL** (2m) — consume bleed stacks; **Summon Imp** (2m) |
 
 Active abilities cost mana (`sig` is the 1-mana damage ability for each class).
 Mana refills between quests and at level-up. Magic-type drop items grant

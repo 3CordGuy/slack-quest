@@ -50,6 +50,9 @@ export interface MonsterSnapshot {
   max_hp: number;
   tier: number;
   shield: number;
+  // Active status effects. Structurally compatible with MachineStatusEffect[]
+  // so the machine can pass CombatMonster.effects directly without mapping.
+  effects?: ReadonlyArray<{ type: string; magnitude: number; remaining: number }>;
 }
 
 export interface AbilityContext {
@@ -69,6 +72,21 @@ export interface AbilityContext {
   protected_ally_id?: string;
 }
 
+// Minimal spec for an ally NPC summoned into combat via summon_ally_npc.
+// The machine creates a full CombatFighter from this; no class abilities,
+// no mana. Stats are caller-supplied (typically derived from the caster's level).
+export interface AllyNpcSpec {
+  name: string;
+  class_label: string;
+  level: number;
+  hp: number;
+  attack_mod: number;
+  weapon_power: number;
+  position: "front" | "back";
+  weapon_range: "melee" | "ranged";
+  damage_roll?: string;
+}
+
 // Effects returned by execute(). The machine applies each one in sequence.
 export type AbilityEffect =
   // Deal damage to a specific monster (bypasses armor, like the old signatures).
@@ -80,6 +98,7 @@ export type AbilityEffect =
       formula: string;
       is_crit?: boolean;
       drink_buff_context?: "ability";
+      damage_type?: DamageType;
     }
   // Restore HP to a fighter.
   | { kind: "heal"; target_id: string; amount: number }
@@ -104,6 +123,12 @@ export type AbilityEffect =
   | { kind: "set_foresee_turns"; turns: number }
   // Move a fighter to a different row.
   | { kind: "move_fighter"; target_id: string; to: "front" | "back" }
+  // Summon an ally NPC into the fight. The machine generates a unique ID from
+  // id_suffix + caster id, adds the NPC to fighters and turn_order, and emits
+  // an ally_npc_summoned event. The NPC acts as an auto-resolved fighter each
+  // turn (same as a merc): d20 to-hit, d6 damage, targets lowest-HP monster.
+  | { kind: "summon_ally_npc"; spec: AllyNpcSpec; id_suffix: string }
+  | { kind: "move_fighter"; target_id: string; to: "front" | "back" }
   // Grant advantage charges to a fighter: next N to-hit d20 rolls twice, take higher.
   | { kind: "grant_encourage"; target_id: string; charges: number }
   // Apply disadvantage charges to a monster: next N to-hit d20 rolls twice, take lower.
@@ -124,7 +149,26 @@ export type AbilityEffect =
   // Rogue Envenom Weapon — mark the caster's weapon as envenomed; next hit applies poison.
   | { kind: "apply_envenom_weapon"; stacks: number }
   // Rogue Debilitate — target monster takes +magnitude% damage for N rounds.
-  | { kind: "apply_vulnerability"; target_id: string; magnitude: number; rounds: number };
+  | { kind: "apply_vulnerability"; target_id: string; magnitude: number; rounds: number }
+  // Apply the hexed debuff to a monster for `duration` of the monster's own
+  // turns. While hexed: -25% damage output; takes 3 bleed stacks whenever it
+  // takes damage from any source.
+  | { kind: "hex_monster"; target_id: string; duration: number }
+  // Remove all bleed stacks from the target monster (e.g. Forbidden SQL).
+  // Return a separate deal_damage effect to deal damage based on consumed stacks.
+  | { kind: "consume_monster_bleed"; target_id: string }
+  // Reduce incoming damage for the target fighter by pct% for the next N of
+  // their own turns. pct is an integer (e.g. 20 = 20%).
+  | { kind: "set_damage_reduction"; target_id: string; pct: number; turns: number }
+  // Apply a regen (HoT) status effect to a fighter for `duration` of their own turns.
+  | { kind: "apply_fighter_regen"; target_id: string; magnitude: number; duration: number }
+  // Apply Animal Form stat bonuses to a fighter for `turns` of their own turns.
+  // Also stores derived attack_mod delta and max_hp delta for reversion on expiry.
+  | { kind: "apply_animal_form"; target_id: string; str_bonus: number; vit_bonus: number; agi_bonus: number; dex_bonus: number; turns: number }
+  // Buff the target fighter's AC by `bonus` for `turns` of their own turns.
+  | { kind: "apply_barkskin"; target_id: string; bonus: number; turns: number }
+  // Apply the "entangled" debuff to a monster (-4 to-hit) for `duration` monster turns.
+  | { kind: "entangle_monster"; target_id: string; duration: number };
 
 export interface ActiveAbilityDef {
   kind: "active";
@@ -134,8 +178,8 @@ export interface ActiveAbilityDef {
   // rpg-awesome ra-* icon name (no prefix).
   icon: string;
   mana_cost: number;
-  // If set, the ability has no mana cost but goes on cooldown for this many
-  // of the caster's own turns after use. mana_cost should be 0 when set.
+  // If set, the ability goes on cooldown for this many of the caster's own
+  // turns after use, preventing reuse until the cooldown expires.
   cooldown_turns?: number;
   target: TargetKind;
   // How the engine routes this ability:
