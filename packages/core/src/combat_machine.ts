@@ -247,6 +247,11 @@ export interface AbilityRuntimeState {
   foresee_turns?: number;
   // SRE Warden — Brace: incoming damage reduced by pct% for N of the fighter's own turns.
   brace?: Record<ActorId, { pct: number; turns_remaining: number }>;
+  // Backend Druid — Barkskin: +bonus AC for N of the buffed fighter's own turns.
+  barkskin?: Record<ActorId, { bonus: number; turns_remaining: number }>;
+  // Backend Druid — Animal Form: buffed stat deltas for N of the caster's own turns.
+  // Stored so they can be cleanly reverted on expiry.
+  animal_form?: Record<ActorId, { str_bonus: number; vit_bonus: number; agi_bonus: number; dex_bonus: number; atk_delta: number; hp_delta: number; turns_remaining: number }>;
 }
 
 // +damage to non-marker partymate attacks while a mark is active. Tuned to
@@ -460,6 +465,11 @@ export type CombatEvent =
   | { type: "ability_brace"; actor: ActorId; turns: number }
   | { type: "passive_mage_mana_font"; actor: ActorId; amount: number }
   | { type: "passive_druid_regen"; actor: ActorId; amount: number }
+  | { type: "passive_primal_strikes_heal"; actor: ActorId; amount: number }
+  | { type: "ability_regeneration"; actor: ActorId; target: ActorId; magnitude: number; duration: number }
+  | { type: "ability_animal_form"; actor: ActorId; str_bonus: number; vit_bonus: number; agi_bonus: number; dex_bonus: number; turns: number }
+  | { type: "ability_barkskin"; actor: ActorId; target: ActorId; bonus: number; turns: number }
+  | { type: "ability_wildgrowth_entangle"; actor: ActorId; target: ActorId; duration: number }
   | { type: "passive_rogue_first_crit"; actor: ActorId }
   | { type: "passive_bard_aura"; actor: ActorId; source: ActorId; bonus: number }
   | { type: "passive_sinister_queries"; actor: ActorId; target: ActorId; magnitude: number }
@@ -719,7 +729,9 @@ function handlePlayerHit(
   if (!monster) return reject(s, "target died before action resolved");
 
   const events: CombatEvent[] = [...tick.events];
-  const classMod = tickedFighter.attack_mod;
+  // Primal Strikes (Druid passive): add magic_mod to both to-hit and damage.
+  const primalBonus = classHasPassive(tickedFighter.class, "primal_strikes") ? tickedFighter.magic_mod : 0;
+  const classMod = tickedFighter.attack_mod + primalBonus;
 
   // ── d20 to-hit ──
   let d20 = roll(20);
@@ -972,6 +984,21 @@ function handlePlayerHit(
 
   if (monsterKilled) {
     return resolveMonsterKill(nextState, monster.id, action.actor, events);
+  }
+
+  // Primal Strikes — heal on landing an attack.
+  if (primalBonus > 0) {
+    const healAmount = 2 * tickedFighter.magic_mod + tickedFighter.attack_mod;
+    const primalFighter = nextState.fighters.find((f) => f.id === action.actor)!;
+    const newHp = Math.min(primalFighter.max_hp, primalFighter.hp + healAmount);
+    const healed = newHp - primalFighter.hp;
+    if (healed > 0) {
+      nextState = {
+        ...nextState,
+        fighters: nextState.fighters.map((f) => f.id === action.actor ? { ...f, hp: newHp } : f),
+      };
+      events.push({ type: "passive_primal_strikes_heal", actor: action.actor, amount: healed });
+    }
   }
 
   return { state: advanceTurn(nextState), events: [...events, ...turnStartEvent(nextState)] };
@@ -1364,6 +1391,9 @@ function handleMonsterAct(state: CombatState, roll: RollFn): StepResult {
   // ── d20 to-hit ──
   // Modifier grows at half-tier + 4 so it never auto-hits even at high tiers.
   // Fighter AC = 10 + floor(level/2) so the miss window stays meaningful.
+  // Entangled: monster suffers -4 to all attack rolls.
+  const entangledEffect = monster.effects.find((e) => e.type === "entangled");
+  const entanglePenalty = entangledEffect ? 4 : 0;
   let d20 = roll(20);
   // Bard Mock — disadvantage: roll the d20 twice, take lower, consume one charge.
   const discourageCharges = s.ability_state?.discourage?.[actorId] ?? 0;
@@ -1374,9 +1404,12 @@ function handleMonsterAct(state: CombatState, roll: RollFn): StepResult {
     d20 = took;
     s = { ...s, ability_state: consumeDiscourageCharge(s.ability_state, actorId) };
   }
-  const modifier = Math.floor(monster.tier / 2) + 4;
+  const modifier = Math.floor(monster.tier / 2) + 4 - entanglePenalty;
   const hitTotal = d20 + modifier;
-  const targetAc = fighterAc(target.level);
+  // Barkskin (Druid): target fighter's AC is buffed for N of their own turns.
+  const barkskinEntry = s.ability_state?.barkskin?.[target.id];
+  const barkskinBonus = (barkskinEntry?.turns_remaining ?? 0) > 0 ? (barkskinEntry?.bonus ?? 0) : 0;
+  const targetAc = fighterAc(target.level) + barkskinBonus;
   const landed = hitTotal >= targetAc;
   events.push({
     type: "roll",
@@ -2216,6 +2249,81 @@ function applyUtilityAbilityEffects(
         events.push({ type: "ability_brace", actor, turns: effect.turns });
         break;
       }
+      case "apply_fighter_regen": {
+        const target = s.fighters.find((f) => f.id === effect.target_id);
+        if (!target || target.hp <= 0) continue;
+        const regenEffect = { type: "regen" as const, magnitude: effect.magnitude, remaining: effect.duration, source: actor };
+        s = { ...s, fighters: s.fighters.map((f) => f.id === effect.target_id ? { ...f, effects: mergeEffect(f.effects, regenEffect) } : f) };
+        events.push({ type: "ability_regeneration", actor, target: effect.target_id, magnitude: effect.magnitude, duration: effect.duration });
+        break;
+      }
+      case "apply_animal_form": {
+        const target = s.fighters.find((f) => f.id === effect.target_id);
+        if (!target) continue;
+        const atkDelta = target.stats
+          ? Math.floor((target.stats.str + effect.str_bonus - 5) / 2) - Math.floor((target.stats.str - 5) / 2)
+          : Math.floor(effect.str_bonus / 2);
+        const hpDelta = 2 * effect.vit_bonus;
+        const newMaxHp = target.max_hp + hpDelta;
+        const newHp = Math.min(newMaxHp, target.hp + hpDelta);
+        const buffedFighter = {
+          ...target,
+          attack_mod: target.attack_mod + atkDelta,
+          max_hp: newMaxHp,
+          hp: newHp,
+          ...(target.stats ? {
+            stats: {
+              ...target.stats,
+              str: target.stats.str + effect.str_bonus,
+              vit: target.stats.vit + effect.vit_bonus,
+              agi: target.stats.agi + effect.agi_bonus,
+              dex: target.stats.dex + effect.dex_bonus,
+            },
+          } : {}),
+        };
+        s = { ...s, fighters: s.fighters.map((f) => f.id === effect.target_id ? buffedFighter : f) };
+        s = {
+          ...s,
+          ability_state: {
+            ...(s.ability_state ?? {}),
+            animal_form: {
+              ...(s.ability_state?.animal_form ?? {}),
+              [effect.target_id]: {
+                str_bonus: effect.str_bonus, vit_bonus: effect.vit_bonus,
+                agi_bonus: effect.agi_bonus, dex_bonus: effect.dex_bonus,
+                atk_delta: atkDelta, hp_delta: hpDelta,
+                turns_remaining: effect.turns,
+              },
+            },
+          },
+        };
+        events.push({ type: "ability_animal_form", actor, str_bonus: effect.str_bonus, vit_bonus: effect.vit_bonus, agi_bonus: effect.agi_bonus, dex_bonus: effect.dex_bonus, turns: effect.turns });
+        break;
+      }
+      case "apply_barkskin": {
+        const target = s.fighters.find((f) => f.id === effect.target_id);
+        if (!target || target.hp <= 0) continue;
+        s = {
+          ...s,
+          ability_state: {
+            ...(s.ability_state ?? {}),
+            barkskin: {
+              ...(s.ability_state?.barkskin ?? {}),
+              [effect.target_id]: { bonus: effect.bonus, turns_remaining: effect.turns },
+            },
+          },
+        };
+        events.push({ type: "ability_barkskin", actor, target: effect.target_id, bonus: effect.bonus, turns: effect.turns });
+        break;
+      }
+      case "entangle_monster": {
+        const target = s.monsters.find((m) => m.id === effect.target_id && m.hp > 0);
+        if (!target) continue;
+        const entangleEff = { type: "entangled" as const, magnitude: 1, remaining: effect.duration, source: actor };
+        s = { ...s, monsters: s.monsters.map((m) => m.id === effect.target_id ? { ...m, effects: mergeEffect(m.effects, entangleEff) } : m) };
+        events.push({ type: "ability_wildgrowth_entangle", actor, target: effect.target_id, duration: effect.duration });
+        break;
+      }
       case "summon_ally_npc": {
         const { spec, id_suffix } = effect;
         const idPrefix = `__ally_${id_suffix}_${actor}_`;
@@ -2498,7 +2606,7 @@ function tickEffects(
   const newEffects: MachineStatusEffect[] = [];
   const events: CombatEvent[] = [];
   for (const eff of effects) {
-    if (eff.type === "empowered" || eff.type === "frozen" || eff.type === "shocked" || eff.type === "stunned" || eff.type === "hexed") {
+    if (eff.type === "empowered" || eff.type === "frozen" || eff.type === "shocked" || eff.type === "stunned" || eff.type === "hexed" || eff.type === "entangled") {
       // Passive — no HP delta. Silently count down; the effect is applied
       // inline in the attack/turn handlers via the actor's effects array.
       // "stunned" uses remaining as a max-duration safety net (break logic
@@ -2796,6 +2904,50 @@ function applyPreActionPassives(
       };
     }
   }
+  // Tick down Barkskin for this fighter.
+  const barkskinEntry2 = s.ability_state?.barkskin?.[actorId];
+  if (barkskinEntry2) {
+    const remaining = barkskinEntry2.turns_remaining - 1;
+    if (remaining <= 0) {
+      const updated = { ...(s.ability_state?.barkskin ?? {}) };
+      delete updated[actorId];
+      s = { ...s, ability_state: Object.keys(updated).length > 0 ? { ...s.ability_state, barkskin: updated } : (stripField(s.ability_state, "barkskin") ?? {}) };
+    } else {
+      s = { ...s, ability_state: { ...s.ability_state, barkskin: { ...s.ability_state!.barkskin, [actorId]: { ...barkskinEntry2, turns_remaining: remaining } } } };
+    }
+  }
+
+  // Tick down Animal Form and revert stat bonuses on expiry.
+  const animalFormEntry = s.ability_state?.animal_form?.[actorId];
+  if (animalFormEntry) {
+    const remaining = animalFormEntry.turns_remaining - 1;
+    if (remaining <= 0) {
+      const af = s.fighters.find((f) => f.id === actorId)!;
+      const newMaxHp = af.max_hp - animalFormEntry.hp_delta;
+      const revertedFighter: typeof af = {
+        ...af,
+        attack_mod: af.attack_mod - animalFormEntry.atk_delta,
+        max_hp: newMaxHp,
+        hp: Math.min(af.hp, newMaxHp),
+        ...(af.stats ? {
+          stats: {
+            ...af.stats,
+            str: af.stats.str - animalFormEntry.str_bonus,
+            vit: af.stats.vit - animalFormEntry.vit_bonus,
+            agi: af.stats.agi - animalFormEntry.agi_bonus,
+            dex: af.stats.dex - animalFormEntry.dex_bonus,
+          },
+        } : {}),
+      };
+      s = { ...s, fighters: s.fighters.map((f) => f.id === actorId ? revertedFighter : f) };
+      const afMap = { ...(s.ability_state?.animal_form ?? {}) };
+      delete afMap[actorId];
+      s = { ...s, ability_state: Object.keys(afMap).length > 0 ? { ...s.ability_state, animal_form: afMap } : (stripField(s.ability_state, "animal_form") ?? {}) };
+    } else {
+      s = { ...s, ability_state: { ...s.ability_state, animal_form: { ...s.ability_state!.animal_form, [actorId]: { ...animalFormEntry, turns_remaining: remaining } } } };
+    }
+  }
+
   const currentFighter = s.fighters.find((f) => f.id === actorId) ?? fighter;
   const armorUp = applyWardenArmorUp(s, currentFighter);
   const armorUpFighter = armorUp.state.fighters.find((f) => f.id === actorId) ?? currentFighter;
@@ -3023,6 +3175,7 @@ const EFFECT_STACK_POLICY: Record<EffectType, { mode: "stack" | "refresh"; maxMa
   shocked:   { mode: "refresh", maxMagnitude: 2 },
   stunned:   { mode: "refresh", maxMagnitude: 1 },
   hexed:     { mode: "refresh", maxMagnitude: 1 },
+  entangled: { mode: "refresh", maxMagnitude: 1 },
 };
 
 // Merge `incoming` into the existing effect list. If an effect of the

@@ -140,7 +140,16 @@ export type AbilityEffect =
   | { kind: "attack_roll_damage"; target_id: string; hit_mod: number; amount: number; formula: string; damage_type?: DamageType }
   // Reduce incoming damage for the target fighter by pct% for the next N of
   // their own turns. pct is an integer (e.g. 20 = 20%).
-  | { kind: "set_damage_reduction"; target_id: string; pct: number; turns: number };
+  | { kind: "set_damage_reduction"; target_id: string; pct: number; turns: number }
+  // Apply a regen (HoT) status effect to a fighter for `duration` of their own turns.
+  | { kind: "apply_fighter_regen"; target_id: string; magnitude: number; duration: number }
+  // Apply Animal Form stat bonuses to a fighter for `turns` of their own turns.
+  // Also stores derived attack_mod delta and max_hp delta for reversion on expiry.
+  | { kind: "apply_animal_form"; target_id: string; str_bonus: number; vit_bonus: number; agi_bonus: number; dex_bonus: number; turns: number }
+  // Buff the target fighter's AC by `bonus` for `turns` of their own turns.
+  | { kind: "apply_barkskin"; target_id: string; bonus: number; turns: number }
+  // Apply the "entangled" debuff to a monster (-4 to-hit) for `duration` monster turns.
+  | { kind: "entangle_monster"; target_id: string; duration: number };
 
 export interface ActiveAbilityDef {
   kind: "active";

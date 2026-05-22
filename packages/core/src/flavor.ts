@@ -224,7 +224,7 @@ export type EquipSlot =
 // Status effects — applied to player characters or monsters and tick on the
 // affected actor's own combat action / monster turn. v1 set is HP-based; future
 // effects could touch cooldown, damage modifiers, etc.
-export type EffectType = "regen" | "bleeding" | "burning" | "poisoned" | "empowered" | "frozen" | "shocked" | "stunned" | "hexed";
+export type EffectType = "regen" | "bleeding" | "burning" | "poisoned" | "empowered" | "frozen" | "shocked" | "stunned" | "hexed" | "entangled";
 
 // Elemental damage type carried by rare+ weapons and assigned to monsters.
 export type ElementType = "fire" | "ice" | "lightning";
@@ -250,6 +250,7 @@ export const EFFECT_META: Record<EffectType, EffectMeta> = {
   shocked:   { emoji: "🌩️", name: "Shocked",   kind: "passive", ignoresArmor: false, blurb: "Takes +30% damage from all sources." },
   stunned:   { emoji: "📦", name: "Stunned",   kind: "passive", ignoresArmor: false, blurb: "Containerized — skips swings with escalating 30%/turn break chance." },
   hexed:     { emoji: "🔮", name: "Hexed",     kind: "passive", ignoresArmor: false, blurb: "Deals -25% damage. Takes 3 bleed stacks whenever it takes damage." },
+  entangled: { emoji: "🌿", name: "Entangled", kind: "debuff",  ignoresArmor: false, blurb: "-4 to attack rolls." },
 };
 
 export const ELEMENT_META: Record<ElementType, { emoji: string; name: string; effect: EffectType }> = {

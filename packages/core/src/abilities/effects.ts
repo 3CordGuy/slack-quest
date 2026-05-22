@@ -93,6 +93,22 @@ export const fx = {
   damageReduction(targetId: string, pct: number, turns: number): AbilityEffect {
     return { kind: "set_damage_reduction", target_id: targetId, pct, turns };
   },
+
+  fighterRegen(targetId: string, magnitude: number, duration: number): AbilityEffect {
+    return { kind: "apply_fighter_regen", target_id: targetId, magnitude, duration };
+  },
+
+  animalForm(targetId: string, strBonus: number, vitBonus: number, agiBonus: number, dexBonus: number, turns: number): AbilityEffect {
+    return { kind: "apply_animal_form", target_id: targetId, str_bonus: strBonus, vit_bonus: vitBonus, agi_bonus: agiBonus, dex_bonus: dexBonus, turns };
+  },
+
+  barkskin(targetId: string, bonus: number, turns: number): AbilityEffect {
+    return { kind: "apply_barkskin", target_id: targetId, bonus, turns };
+  },
+
+  entangleMonster(targetId: string, duration: number): AbilityEffect {
+    return { kind: "entangle_monster", target_id: targetId, duration };
+  },
 };
 
 // Roll count dice of `sides` and return the sum.

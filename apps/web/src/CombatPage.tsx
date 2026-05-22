@@ -248,6 +248,11 @@ type CombatEvent =
   | { type: "ability_brace"; actor: string; turns: number }
   | { type: "passive_mage_mana_font"; actor: string; amount: number }
   | { type: "passive_druid_regen"; actor: string; amount: number }
+  | { type: "passive_primal_strikes_heal"; actor: string; amount: number }
+  | { type: "ability_regeneration"; actor: string; target: string; magnitude: number; duration: number }
+  | { type: "ability_animal_form"; actor: string; str_bonus: number; vit_bonus: number; agi_bonus: number; dex_bonus: number; turns: number }
+  | { type: "ability_barkskin"; actor: string; target: string; bonus: number; turns: number }
+  | { type: "ability_wildgrowth_entangle"; actor: string; target: string; duration: number }
   | { type: "passive_rogue_first_crit"; actor: string }
   | { type: "passive_bard_aura"; actor: string; source: string; bonus: number }
   | { type: "passive_sinister_queries"; actor: string; target: string; magnitude: number }
@@ -702,6 +707,16 @@ function formatEvent(e: CombatEvent, state: CombatState | null): LogEntry[] {
       return row("wax-seal", <>Mana Font: {nameOf(e.actor)} regenerates +{e.amount} mana.</>, "good");
     case "passive_druid_regen":
       return row("grass", <>{nameOf(e.actor)} regen +{e.amount} HP (passive).</>, "good");
+    case "passive_primal_strikes_heal":
+      return row("grass", <>Primal Strikes: {nameOf(e.actor)} heals +{e.amount} HP.</>, "good");
+    case "ability_regeneration":
+      return row("regeneration", <>{nameOf(e.actor)} → {nameOf(e.target)}: Regeneration +{e.magnitude} HP/turn for {e.duration} rounds.</>, "good");
+    case "ability_animal_form":
+      return row("wolf-head", <>{nameOf(e.actor)} takes Animal Form — STR+{e.str_bonus} VIT+{e.vit_bonus} AGI+{e.agi_bonus} DEX+{e.dex_bonus} for {e.turns} turns.</>, "good");
+    case "ability_barkskin":
+      return row("oak-leaf", <>{nameOf(e.actor)} → {nameOf(e.target)}: Barkskin +{e.bonus} AC for {e.turns} rounds.</>, "good");
+    case "ability_wildgrowth_entangle":
+      return row("grass", <>Wildgrowth: target entangled — −4 to-hit for {e.duration} rounds.</>, "good");
     case "passive_rogue_first_crit":
       return row("plain-dagger", <>{nameOf(e.actor)}'s first strike — guaranteed crit!</>, "good");
     case "passive_bard_aura":
