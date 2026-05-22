@@ -6080,6 +6080,7 @@ app.post("/api/dev/item", async (c) => {
   const weaponRange = body.weapon_range as string | undefined;
   const slot = body.slot as string | undefined;
   const element = body.element as string | undefined;
+  const statBonus = body.stat_bonus as Record<string, number> | undefined;
   if (!(DEV_ITEM_TYPES as readonly string[]).includes(type)) return c.json({ error: "invalid type" }, 400);
   if (typeof name !== "string" || !name.trim()) return c.json({ error: "invalid name" }, 400);
   if (!Number.isFinite(power) || power < 0 || power > 999) return c.json({ error: "invalid power" }, 400);
@@ -6097,6 +6098,7 @@ app.post("/api/dev/item", async (c) => {
     weapon_range: (weaponRange as import("@gantt-quest/core").WeaponRange) ?? null,
     slot: (slot as import("@gantt-quest/core").EquipSlot) ?? null,
     element: (element as ElementType) ?? null,
+    stat_bonus: statBonus ?? null,
     level_req: 0,
   });
   return c.json({ ok: true });

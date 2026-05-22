@@ -9695,6 +9695,7 @@ function DevToolsModal({
   const [itemRange, setItemRange] = useState("melee");
   const [itemSlot, setItemSlot] = useState("main_hand");
   const [itemElement, setItemElement] = useState("");
+  const [statBonuses, setStatBonuses] = useState({ str: "", int_stat: "", vit: "", agi: "", dex: "" });
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
@@ -9949,18 +9950,47 @@ function DevToolsModal({
               </select>
             )}
           </div>
+          {itemType === "armor" && (
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+              <span style={{ fontSize: 11, color: "#6b7280", minWidth: 60 }}>Stat bonus</span>
+              {(["str", "int_stat", "vit", "agi", "dex"] as const).map((stat) => (
+                <label key={stat} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
+                  <span style={{ fontSize: 10, color: "#9ca3af" }}>{stat === "int_stat" ? "int" : stat}</span>
+                  <input
+                    type="number"
+                    min={0}
+                    max={20}
+                    value={statBonuses[stat]}
+                    onChange={(e) => setStatBonuses((prev) => ({ ...prev, [stat]: e.target.value }))}
+                    style={{ ...inputStyle, width: 44, padding: "4px 6px", textAlign: "center" }}
+                    placeholder="0"
+                  />
+                </label>
+              ))}
+            </div>
+          )}
           <div>
             <button
               disabled={!!busy || !itemName.trim() || !Number.isFinite(Number(itemPower)) || Number(itemPower) < 0}
-              onClick={() => void devAction("/api/dev/item", {
-                type: itemType,
-                name: itemName.trim(),
-                power: Math.floor(Number(itemPower)),
-                rarity: itemRarity,
-                weapon_range: itemType === "weapon" ? itemRange : undefined,
-                slot: (itemType === "weapon" || itemType === "armor") ? itemSlot : undefined,
-                element: itemElement || undefined,
-              })}
+              onClick={() => {
+                const bonuses: Record<string, number> = {};
+                if (itemType === "armor") {
+                  for (const [k, v] of Object.entries(statBonuses)) {
+                    const n = Math.floor(Number(v));
+                    if (Number.isFinite(n) && n > 0) bonuses[k] = n;
+                  }
+                }
+                void devAction("/api/dev/item", {
+                  type: itemType,
+                  name: itemName.trim(),
+                  power: Math.floor(Number(itemPower)),
+                  rarity: itemRarity,
+                  weapon_range: itemType === "weapon" ? itemRange : undefined,
+                  slot: (itemType === "weapon" || itemType === "armor") ? itemSlot : undefined,
+                  element: itemElement || undefined,
+                  stat_bonus: Object.keys(bonuses).length > 0 ? bonuses : undefined,
+                });
+              }}
               style={devBtn("#0f1e2e", "#7dd3fc")}
             >
               {busy === "/api/dev/item" ? "…" : <><Icon name="chest" size={13} /> Give item</>}
