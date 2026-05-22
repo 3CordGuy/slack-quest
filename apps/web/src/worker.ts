@@ -6097,6 +6097,7 @@ app.post("/api/dev/item", async (c) => {
     weapon_range: (weaponRange as import("@gantt-quest/core").WeaponRange) ?? null,
     slot: (slot as import("@gantt-quest/core").EquipSlot) ?? null,
     element: (element as ElementType) ?? null,
+    level_req: 0,
   });
   return c.json({ ok: true });
 });
