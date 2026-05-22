@@ -5,7 +5,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { isMonsterActor, isMercActor, classByName, activeAbilities, type ActiveAbilityDef } from "@gantt-quest/core";
+import { isMonsterActor, isAllyNpcActor, classByName, activeAbilities, type ActiveAbilityDef, EFFECT_META, type EffectType } from "@gantt-quest/core";
 import { Icon } from "./icons";
 
 export const DISPLAY_FONT = "'Metamorphous', serif";
@@ -498,7 +498,7 @@ export function CBtn({ label, icon, color, disabled, manaCost, tooltip, cooldown
           {onCooldown && (
             <div style={{ marginTop: 6, color: "#fb923c", fontSize: 11, fontWeight: 600 }}>⏳ {cooldown} turn{cooldown !== 1 ? "s" : ""} cooldown</div>
           )}
-          {!onCooldown && manaCost !== undefined && (
+          {manaCost !== undefined && (
             <div style={{ marginTop: 6, color: "#a78bfa", fontSize: 11, fontWeight: 600 }}>{manaCost}✦ mana</div>
           )}
         </div>
@@ -525,7 +525,7 @@ export function CBtn({ label, icon, color, disabled, manaCost, tooltip, cooldown
       >
         {icon && <Icon name={icon} size={compact ? 20 : 26} />}
         <span style={{ fontSize: compact ? 9 : 11, fontWeight: 700, lineHeight: 1, letterSpacing: 0.3, textAlign: "center" }}>{label}</span>
-        {!onCooldown && manaCost !== undefined && <span style={{ fontSize: compact ? 8 : 9, opacity: 0.75 }}>{manaCost}✦</span>}
+        {manaCost !== undefined && <span style={{ fontSize: compact ? 8 : 9, opacity: 0.75 }}>{manaCost}✦</span>}
       </button>
       {onCooldown && (
         <div style={{
@@ -1207,41 +1207,29 @@ export function StatusPill({ color, icon, label, suffix, title, size = "md" }: {
 
 type EffectPillProps = { effect: StatusEffect; size: PillSize };
 
-export const EFFECT_PILLS: Partial<Record<string, { pill: React.FC<EffectPillProps> }>> = {
-  regen: {
-    pill: ({ effect: e, size }) => <StatusPill size={size} color="#4ade80" icon="regeneration" label="regen"
-      suffix={`${e.remaining}t`} title={`regen ×${e.magnitude} (${e.remaining} turn${e.remaining === 1 ? "" : "s"} remaining)`} />,
-  },
-  bleeding: {
-    pill: ({ effect: e, size }) => <StatusPill size={size} color="#f87171" icon="bleeding-wound"
-      label={`bleeding${e.magnitude > 1 ? ` ×${e.magnitude}` : ""}`}
-      suffix={`${e.remaining}t`} title={`bleeding ×${e.magnitude} (${e.remaining} turn${e.remaining === 1 ? "" : "s"} remaining)`} />,
-  },
-  burning: {
-    pill: ({ effect: e, size }) => <StatusPill size={size} color="#fb923c" icon="fire"
-      label={`burning${e.magnitude > 1 ? ` ×${e.magnitude}` : ""}`}
-      suffix={`${e.remaining}t`} title={`burning ×${e.magnitude} (${e.remaining} turn${e.remaining === 1 ? "" : "s"} remaining)`} />,
-  },
-  frozen: {
-    pill: ({ effect: e, size }) => <StatusPill size={size} color="#93c5fd" icon="ice-bolt" label="frozen"
-      suffix={`${e.remaining}t`} title={`frozen (${e.remaining} turn${e.remaining === 1 ? "" : "s"} remaining)`} />,
-  },
-  shocked: {
-    pill: ({ effect: e, size }) => <StatusPill size={size} color="#fbbf24" icon="electric"
-      label={`shocked${e.magnitude > 1 ? ` ×${e.magnitude}` : ""}`}
-      suffix={`${e.remaining}t`} title={`shocked ×${e.magnitude} (${e.remaining} turn${e.remaining === 1 ? "" : "s"} remaining)`} />,
-  },
-  stunned: {
-    pill: ({ effect: e, size }) => <StatusPill size={size} color="#a78bfa" icon="fluffy-swirl" label="stunned"
-      suffix={e.pill_suffix ?? `${e.remaining}t`}
-      title={`stunned (${e.pill_suffix ?? `${e.remaining}t`} this turn)`} />,
-  },
-  poisoned: {
-    pill: ({ effect: e, size }) => <StatusPill size={size} color="#c084fc" icon="poison-cloud"
-      label={`poisoned${e.magnitude > 1 ? ` ×${e.magnitude}` : ""}`}
-      suffix={`${e.remaining}t`} title={`poisoned ×${e.magnitude} (${e.remaining} turn${e.remaining === 1 ? "" : "s"} remaining)`} />,
-  },
-};
+function makeEffectPill(type: EffectType): { pill: React.FC<EffectPillProps> } {
+  const meta = EFFECT_META[type];
+  return {
+    pill: ({ effect: e, size }) => {
+      const label = meta.name.toLowerCase() + (e.magnitude > 1 ? ` ×${e.magnitude}` : "");
+      const suffix = e.pill_suffix ?? `${e.remaining}t`;
+      const turns = e.remaining === 1 ? "1 turn" : `${e.remaining} turns`;
+      return (
+        <StatusPill
+          size={size}
+          color={meta.color}
+          icon={meta.icon}
+          label={label}
+          suffix={suffix}
+          title={`${label} — ${meta.blurb} (${turns} remaining)`}
+        />
+      );
+    },
+  };
+}
+
+export const EFFECT_PILLS: Partial<Record<string, { pill: React.FC<EffectPillProps> }>> =
+  Object.fromEntries((Object.keys(EFFECT_META) as EffectType[]).map((t) => [t, makeEffectPill(t)]));
 
 // ─── Shared combat action bar ─────────────────────────────────────────────────
 // Used by GridDungeonView and DungeonView so both dungeon combat views share
@@ -1322,7 +1310,7 @@ export function CombatPanel({
 
   const currentActorId = state.turn_order[state.turn_index % state.turn_order.length] ?? null;
   const isInactivePlayerTurn = !myTurn && currentActorId !== null
-    && !isMonsterActor(currentActorId) && !isMercActor(currentActorId);
+    && !isMonsterActor(currentActorId) && !isAllyNpcActor(currentActorId);
 
   const [skipReady, setSkipReady] = useState(false);
   useEffect(() => {

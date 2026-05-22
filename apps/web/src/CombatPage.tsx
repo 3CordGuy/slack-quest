@@ -1,6 +1,6 @@
 import { useEffect, useReducer, useRef, useState } from "react";
 import toast from "react-hot-toast";
-import { isMonsterActor, classByName, activeAbilities, type ActiveAbilityDef, isMercActor } from "@gantt-quest/core";
+import { isMonsterActor, classByName, activeAbilities, type ActiveAbilityDef, isAllyNpcActor } from "@gantt-quest/core";
 
 import { Avatar, Icon } from "./icons";
 import { CombatParticles, CombatParticlesProvider, triggerBurst } from "./CombatParticles";
@@ -242,6 +242,9 @@ type CombatEvent =
   | { type: "battle_hymn_consumed"; actor: string; bonus: number; remaining: number }
   | { type: "mark_applied"; actor: string; expires_after_round: number }
   | { type: "passive_warden_shield"; actor: string; amount: number }
+  | { type: "passive_warden_thorns"; actor: string; target: string; amount: number }
+  | { type: "passive_warden_armor_up"; actor: string; amount: number }
+  | { type: "ability_brace"; actor: string; turns: number }
   | { type: "passive_mage_mana_font"; actor: string; amount: number }
   | { type: "passive_druid_regen"; actor: string; amount: number }
   | { type: "passive_rogue_lethal_strike"; actor: string; magnitude: number; duration: number }
@@ -253,6 +256,17 @@ type CombatEvent =
   | { type: "ability_protect"; actor: string; target: string }
   | { type: "ability_smite_debuff"; actor: string; target: string }
   | { type: "protect_triggered"; paladin: string; target: string; target_damage: number; paladin_damage: number }
+  | { type: "passive_primal_strikes_heal"; actor: string; amount: number }
+  | { type: "ability_regeneration"; actor: string; target: string; magnitude: number; duration: number }
+  | { type: "ability_animal_form"; actor: string; str_bonus: number; vit_bonus: number; agi_bonus: number; dex_bonus: number; turns: number }
+  | { type: "ability_barkskin"; actor: string; target: string; bonus: number; turns: number }
+  | { type: "ability_wildgrowth_entangle"; actor: string; target: string; duration: number }
+  | { type: "passive_rogue_first_crit"; actor: string }
+  | { type: "passive_sinister_queries"; actor: string; target: string; magnitude: number }
+  | { type: "ability_hex"; actor: string; target: string; duration: number }
+  | { type: "hex_bleed_proc"; target: string; stacks: number }
+  | { type: "ability_forbidden_sql"; actor: string; target: string; stacks_consumed: number; damage: number }
+  | { type: "passive_paladin_auto_heal"; paladin: string; target: string; amount: number }
   | {
       type: "drink_buff_consumed";
       actor: string;
@@ -302,7 +316,7 @@ type TurnAction =
       position?: "front" | "back";
     }
   | { kind: "monster_act" }
-  | { kind: "merc_act" }
+  | { kind: "ally_npc_act" }
   | { kind: "use_item"; actor: string; item_id: number; target_id?: string };
 
 type ItemEffect =
@@ -688,6 +702,12 @@ function formatEvent(e: CombatEvent, state: CombatState | null): LogEntry[] {
       return row("targeted", <>{nameOf(e.actor)} marks the target — focus fire!</>, "good");
     case "passive_warden_shield":
       return row("shield", <>{nameOf(e.actor)} hardens up — +{e.amount} shield (passive).</>, "good");
+    case "passive_warden_armor_up":
+      return row("shield", <>{nameOf(e.actor)} Armor Up — +{e.amount} shield.</>, "good");
+    case "passive_warden_thorns":
+      return row("thorns", <>{nameOf(e.actor)} Thorns — {e.amount} damage reflected.</>, "good");
+    case "ability_brace":
+      return row("aura", <>{nameOf(e.actor)} braces — 20% damage reduction for {e.turns} turns.</>, "good");
     case "passive_mage_mana_font":
       return row("wax-seal", <>Mana Font: {nameOf(e.actor)} regenerates +{e.amount} mana.</>, "good");
     case "passive_druid_regen":
@@ -714,6 +734,28 @@ function formatEvent(e: CombatEvent, state: CombatState | null): LogEntry[] {
       return row("axe-swing", <>Smite — {nameOf(e.target)} weakened, deals 50% damage next swing.</>, "good");
     case "protect_triggered":
       return row("crowned-heart", <>Protect: {nameOf(e.target)} takes {e.target_damage}, {nameOf(e.paladin)} absorbs {e.paladin_damage}.</>, "muted");
+    case "passive_primal_strikes_heal":
+      return row("grass", <>Primal Strikes: {nameOf(e.actor)} heals +{e.amount} HP.</>, "good");
+    case "ability_regeneration":
+      return row("regeneration", <>{nameOf(e.actor)} → {nameOf(e.target)}: Regeneration +{e.magnitude} HP/turn for {e.duration} rounds.</>, "good");
+    case "ability_animal_form":
+      return row("wolf-head", <>{nameOf(e.actor)} takes Animal Form — STR+{e.str_bonus} VIT+{e.vit_bonus} AGI+{e.agi_bonus} DEX+{e.dex_bonus} for {e.turns} turns.</>, "good");
+    case "ability_barkskin":
+      return row("oak-leaf", <>{nameOf(e.actor)} → {nameOf(e.target)}: Barkskin +{e.bonus} AC for {e.turns} rounds.</>, "good");
+    case "ability_wildgrowth_entangle":
+      return row("grass", <>Wildgrowth: target entangled — −4 to-hit for {e.duration} rounds.</>, "good");
+    case "passive_rogue_first_crit":
+      return row("plain-dagger", <>{nameOf(e.actor)}'s first strike — guaranteed crit!</>, "good");
+    case "passive_sinister_queries":
+      return row("bleeding-wound", <>Sinister Queries: {nameOf(e.actor)} applies {e.magnitude} <Icon name="bleeding-wound" color="#dc2626" /> bleed.</>, "good");
+    case "ability_hex":
+      return row("death-skull", <>{nameOf(e.actor)} hexes the monster — -25% dmg, bleeds on hit ({e.duration}t).</>, "good");
+    case "hex_bleed_proc":
+      return row("bleeding-wound", <>Hex: <Icon name="bleeding-wound" color="#dc2626" /> +{e.stacks} bleed stacks from damage taken.</>, "muted");
+    case "ability_forbidden_sql":
+      return row("death-skull", <>Forbidden SQL: consumed {e.stacks_consumed} bleed stacks → {e.damage} damage.</>, "good");
+    case "passive_paladin_auto_heal":
+      return row("fairy-wand", <>Lay on Hands: {nameOf(e.paladin)} → {nameOf(e.target)} +{e.amount} HP.</>, "good");
     case "drink_buff_consumed":
       if (e.kind === "buff_next_crit") {
         return row("lucky-fish", <>Lucky Sip — guaranteed crit, +{e.bonus} damage.{e.remaining === 0 ? " Buff wears off." : ""}</>, "good");
@@ -899,6 +941,12 @@ export function CombatPage({
               toast(`🗡 Lethal Strikes — bleed ${(evt as { magnitude: number }).magnitude}/turn`, { icon: "🩸", duration: 4000 });
             } else if (evt.type === "passive_warden_shield") {
               toast(`🛡 Hardened Up — +${(evt as { amount: number }).amount} shield`, { duration: 3000 });
+            } else if (evt.type === "passive_warden_armor_up") {
+              toast(`🛡 Armor Up — +${(evt as { amount: number }).amount} shield`, { duration: 2500 });
+            } else if (evt.type === "passive_warden_thorns") {
+              toast(`🌵 Thorns — ${(evt as { amount: number }).amount} reflected`, { duration: 2500 });
+            } else if (evt.type === "ability_brace") {
+              toast(`🔰 Brace — 20% damage reduction active`, { duration: 3000 });
             } else if (evt.type === "passive_mage_mana_font") {
               toast(`🧙 Mana Font — +${(evt as { amount: number }).amount} mana`, { duration: 3000 });
             } else if (evt.type === "passive_holy_rage") {
@@ -1044,14 +1092,14 @@ export function CombatPage({
   useEffect(() => {
     if (!stateForAuto || stateForAuto.status !== "active") return;
     const actorId = stateForAuto.turn_order[stateForAuto.turn_index % stateForAuto.turn_order.length];
-    const isNonPlayer = isMonsterActor(actorId) || isMercActor(actorId);
+    const isNonPlayer = isMonsterActor(actorId) || isAllyNpcActor(actorId);
     if (!isNonPlayer) return;
-    // Mercs always auto-resolve; monsters respect the autoResolve toggle.
+    // Ally NPCs always auto-resolve; monsters respect the autoResolve toggle.
     if (isMonsterActor(actorId) && !autoResolveRef.current) return;
     if (autoResolvedTurnRef.current === stateForAuto.turn_index) return;
     const timer = setTimeout(() => {
       if (isMonsterActor(actorId) && !autoResolveRef.current) return;
-      const action = isMercActor(actorId) ? { kind: "merc_act" as const } : { kind: "monster_act" as const };
+      const action = isAllyNpcActor(actorId) ? { kind: "ally_npc_act" as const } : { kind: "monster_act" as const };
       const fired = send(action);
       if (fired) autoResolvedTurnRef.current = stateForAuto.turn_index;
     }, 800);
@@ -1071,7 +1119,7 @@ export function CombatPage({
       ? state.turn_order[state.turn_index % state.turn_order.length]
       : null;
   const myTurn = currentActorId === selfId;
-  const isInactivePlayerTurn = !myTurn && currentActorId !== null && !isMonsterActor(currentActorId) && !isMercActor(currentActorId);
+  const isInactivePlayerTurn = !myTurn && currentActorId !== null && !isMonsterActor(currentActorId) && !isAllyNpcActor(currentActorId);
 
   // Skip-turn button becomes active after 8 s of waiting on another player.
   const [skipReady, setSkipReady] = useState(false);

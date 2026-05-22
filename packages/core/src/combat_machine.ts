@@ -38,7 +38,7 @@ import {
   type Rarity,
   type WeaponRange,
 } from "./flavor";
-import { type AbilityContext, type AbilityEffect, type ActiveAbilityDef } from "./abilities";
+import { type AbilityContext, type AbilityEffect, type ActiveAbilityDef, type AllyNpcSpec } from "./abilities";
 import { deriveArmorBonus, deriveCritBonus, deriveDodgeChance, deriveInitiativeBonus, type Stats } from "./stats";
 
 export type ActorId = string;
@@ -47,6 +47,10 @@ export const isMonsterActor = (id: ActorId): boolean => id === MONSTER_ID || id.
 // Merc IDs are "__merc_<hiring_user_id>__". Auto-resolved by the server; never
 // sent by web clients directly.
 export const isMercActor = (id: ActorId): boolean => id.startsWith("__merc_");
+// Ally NPC IDs: "__merc_*" (hired mercs) or "__ally_*" (ability-summoned NPCs).
+// Use isAllyNpcActor for all combat turn dispatch; use isMercActor only for
+// merc-specific logic (hire/dismiss, reward filtering).
+export const isAllyNpcActor = (id: ActorId): boolean => id.startsWith("__merc_") || id.startsWith("__ally_");
 
 export interface MachineStatusEffect {
   type: EffectType;
@@ -87,6 +91,7 @@ export interface CombatFighter {
   // can melee from the back row in a party fight).
   weapon_range: WeaponRange;
   armor_power: number;
+  damage_roll?: string;
   initiative: number;      // rolled at begin
   effects: MachineStatusEffect[];
   scars: string[];         // battle scars from defeats
@@ -139,6 +144,7 @@ export interface CombatMonster {
   // Damage-type routing for this monster's attacks. undefined defaults to "physical".
   // Determines whether armor or gear resistance applies when the monster hits a fighter.
   attack_damage_type?: DamageType;
+  damage_roll?: string;
   // Player damage type weaknesses/resistances (separate from elemental proc affinities).
   // weakness: player deals +30% to this monster with matching type.
   // resistance: player deals −30% with matching type.
@@ -210,7 +216,6 @@ export interface CombatState {
 }
 
 // Passive tuning knobs. Mirror src/commands.ts constants in main.
-const WARDEN_STARTING_SHIELD = 5;
 const DRUID_PASSIVE_REGEN = 2;
 const BARD_AURA_HYMN_BONUS = 2;
 const WARLOCK_BLEED_MAGNITUDE = 3;
@@ -218,6 +223,8 @@ const WARLOCK_BLEED_DURATION = 3;
 
 // Keys for once-per-fight passives.
 const PASSIVE_WARDEN_SHIELD = "warden_shield";
+const PASSIVE_ROGUE_FIRST_CRIT = "rogue_first_crit";
+const PASSIVE_PALADIN_AUTO_HEAL = "paladin_auto_heal";
 
 export interface AbilityRuntimeState {
   // SRE Warden — monster's next N swings forced to target actor_id.
@@ -253,6 +260,11 @@ export interface AbilityRuntimeState {
   good_fortune?: { caster_id: ActorId; target_id: ActorId; amount: number };
   // Staff Sage — Ill Omen: per-monster damage tracker + remaining monster turns until burst.
   ill_omen?: Record<ActorId, { caster_id: ActorId; accumulated: number; monster_turns_remaining: number }>;
+  // SRE Warden — Brace: incoming damage reduced by pct% for N of the fighter's own turns.
+  brace?: Record<ActorId, { pct: number; turns_remaining: number }>;
+  // Backend Druid — Animal Form: buffed stat deltas for N of the caster's own turns.
+  // Stored so they can be cleanly reverted on expiry.
+  animal_form?: Record<ActorId, { str_bonus: number; vit_bonus: number; agi_bonus: number; dex_bonus: number; atk_delta: number; hp_delta: number; turns_remaining: number }>;
 }
 
 // How many rounds a mark stays active. Roughly mirrors slack's 90s timer
@@ -281,7 +293,10 @@ export type TurnAction =
       position?: BattlePosition;
     }
   | { kind: "monster_act" }
-  | { kind: "merc_act" };
+  // ally_npc_act covers both hired mercs (__merc_*) and ability-summoned NPCs
+  // (__ally_*). The DO/client dispatches this whenever isAllyNpcActor() is true
+  // for the current actor; the engine auto-resolves the turn.
+  | { kind: "ally_npc_act" };
 
 export type RollPurpose =
   | "initiative"
@@ -318,6 +333,7 @@ export type CombatEvent =
       armor_absorbed: number; // monster armor absorbed before HP damage; 0 for magic/cast
       crit: boolean;
       formula: string;
+      damage_type?: DamageType;
     }
   | {
       type: "monster_attack";
@@ -453,6 +469,9 @@ export type CombatEvent =
   | { type: "mark_applied"; actor: ActorId; expires_after_round: number }
   | { type: "shield_applied"; actor: ActorId; target: ActorId; restored: number; new_armor: number; bonus_barrier?: boolean }
   | { type: "passive_warden_shield"; actor: ActorId; amount: number }
+  | { type: "passive_warden_thorns"; actor: ActorId; target: ActorId; amount: number }
+  | { type: "passive_warden_armor_up"; actor: ActorId; amount: number }
+  | { type: "ability_brace"; actor: ActorId; turns: number }
   | { type: "passive_mage_mana_font"; actor: ActorId; amount: number }
   | { type: "passive_druid_regen"; actor: ActorId; amount: number }
   | { type: "passive_rogue_lethal_strike"; actor: ActorId; magnitude: number; duration: number }
@@ -464,6 +483,17 @@ export type CombatEvent =
   | { type: "ability_protect"; actor: ActorId; target: ActorId }
   | { type: "ability_smite_debuff"; actor: ActorId; target: ActorId }
   | { type: "protect_triggered"; paladin: ActorId; target: ActorId; target_damage: number; paladin_damage: number }
+  | { type: "passive_primal_strikes_heal"; actor: ActorId; amount: number }
+  | { type: "ability_regeneration"; actor: ActorId; target: ActorId; magnitude: number; duration: number }
+  | { type: "ability_animal_form"; actor: ActorId; str_bonus: number; vit_bonus: number; agi_bonus: number; dex_bonus: number; turns: number }
+  | { type: "ability_barkskin"; actor: ActorId; target: ActorId; bonus: number; turns: number }
+  | { type: "ability_wildgrowth_entangle"; actor: ActorId; target: ActorId; duration: number }
+  | { type: "passive_rogue_first_crit"; actor: ActorId }
+  | { type: "passive_sinister_queries"; actor: ActorId; target: ActorId; magnitude: number }
+  | { type: "ability_hex"; actor: ActorId; target: ActorId; duration: number }
+  | { type: "hex_bleed_proc"; target: ActorId; stacks: number }
+  | { type: "ability_forbidden_sql"; actor: ActorId; target: ActorId; stacks_consumed: number; damage: number }
+  | { type: "passive_paladin_auto_heal"; paladin: ActorId; target: ActorId; amount: number }
   | {
       type: "drink_buff_consumed";
       actor: ActorId;
@@ -479,6 +509,7 @@ export type CombatEvent =
       // expired and was cleared from state.drink_buffs.
       remaining: number;
     }
+  | { type: "ally_npc_summoned"; actor: ActorId; npc_id: ActorId; name: string }
   | { type: "victory" }
   | { type: "defeat" }
   | { type: "rejected"; reason: string }
@@ -620,8 +651,8 @@ export function step(state: CombatState, action: TurnAction, roll: RollFn): Step
       // active, inject the intel refresh right before the turn_start divider so
       // the Sage sees fresh info at the top of their incoming turn.
       return withForeseeForNextActor(handleMonsterAct(state, roll), roll);
-    case "merc_act":
-      return handleMercAct(state, roll);
+    case "ally_npc_act":
+      return handleAllyNpcAct(state, roll);
   }
 }
 
@@ -720,7 +751,9 @@ function handlePlayerHit(
   if (!monster) return reject(s, "target died before action resolved");
 
   const events: CombatEvent[] = [...tick.events];
-  const classMod = tickedFighter.attack_mod;
+  // Primal Strikes (Druid passive): add magic_mod to both to-hit and damage.
+  const primalBonus = classHasPassive(tickedFighter.class, "primal_strikes") ? tickedFighter.magic_mod : 0;
+  const classMod = tickedFighter.attack_mod + primalBonus;
 
   // ── d20 to-hit ──
   let d20 = roll(20);
@@ -766,11 +799,12 @@ function handlePlayerHit(
   }
 
   // ── damage roll on hit ──
-  const hit = resolvePlayerHit(action.kind, classMod, tickedFighter.weapon_power, roll);
+  const damageRoll = tickedFighter.damage_roll ?? "1d6";
+  const hit = resolvePlayerHit(action.kind, classMod, tickedFighter.weapon_power, roll, damageRoll);
   events.push({
     type: "roll",
     actor: action.actor,
-    die: "d6",
+    die: damageRoll,
     value: hit.roll,
     purpose: "damage_attack",
   });
@@ -928,11 +962,14 @@ function handlePlayerHit(
     ...(drinkResult.event ? { drink_buffs: drinkResult.nextDrinkBuffs } : {}),
   };
 
-  // Data Warlock — Cursed Strike. Applies bleed on a crit attack/cast. Always-on.
-  if (isCrit && !monsterKilled) {
-    const bleed = applyWarlockBleed(nextState, tickedFighter, monster.id, true);
-    nextState = bleed.state;
-    events.push(...bleed.events);
+  // Sinister Queries passive — applies bleed on any hit.
+  if (!monsterKilled) {
+    const sq = applySinisterQueries(nextState, tickedFighter, monster.id);
+    nextState = sq.state;
+    events.push(...sq.events);
+    const hexProc = applyHexBleedProc(nextState, monster.id);
+    nextState = hexProc.state;
+    events.push(...hexProc.events);
   }
 
   // Rogue — Lethal Strikes: crits apply bleed.
@@ -981,17 +1018,33 @@ function handlePlayerHit(
     events.push(...killResult.events);
   }
 
+  // Primal Strikes — heal on landing an attack.
+  if (primalBonus > 0) {
+    const healAmount = 2 * tickedFighter.magic_mod + tickedFighter.attack_mod;
+    const primalFighter = nextState.fighters.find((f) => f.id === action.actor)!;
+    const newHp = Math.min(primalFighter.max_hp, primalFighter.hp + healAmount);
+    const healed = newHp - primalFighter.hp;
+    if (healed > 0) {
+      nextState = {
+        ...nextState,
+        fighters: nextState.fighters.map((f) => f.id === action.actor ? { ...f, hp: newHp } : f),
+      };
+      events.push({ type: "passive_primal_strikes_heal", actor: action.actor, amount: healed });
+    }
+  }
+
   return { state: advanceTurn(nextState), events: [...events, ...turnStartEvent(nextState)] };
 }
 
-// Auto-resolved merc turn: simple d20 to-hit then d6 damage swing at the
-// lowest-HP live monster. No class abilities, no crits, no mana. Server
-// fires this in a loop after each player/monster action whenever the next
-// actor is a merc, so the web client never sees a "pending merc turn".
-function handleMercAct(state: CombatState, roll: RollFn): StepResult {
+// Auto-resolved ally NPC turn (hired mercs and ability-summoned NPCs): simple
+// d20 to-hit then d6 damage swing at the lowest-HP live monster. No class
+// abilities, no crits, no mana. Server fires this in a loop after each
+// player/monster action whenever the next actor is an ally NPC, so the web
+// client never sees a "pending NPC turn".
+function handleAllyNpcAct(state: CombatState, roll: RollFn): StepResult {
   const actorId = currentActor(state);
-  if (!actorId || !isMercActor(actorId)) {
-    return reject(state, "not a merc's turn");
+  if (!actorId || !isAllyNpcActor(actorId)) {
+    return reject(state, "not an ally NPC's turn");
   }
   const merc = state.fighters.find((f) => f.id === actorId);
   if (!merc || merc.hp <= 0) {
@@ -1042,8 +1095,9 @@ function handleMercAct(state: CombatState, roll: RollFn): StepResult {
     return { state: next, events: [...events, ...turnStartEvent(next)] };
   }
 
-  const hit = resolvePlayerHit("attack", mercAfterTick.attack_mod, mercAfterTick.weapon_power, roll);
-  events.push({ type: "roll", actor: actorId, die: "d6", value: hit.roll, purpose: "damage_attack" });
+  const npcDamageRoll = mercAfterTick.damage_roll ?? "1d6";
+  const hit = resolvePlayerHit("attack", mercAfterTick.attack_mod, mercAfterTick.weapon_power, roll, npcDamageRoll);
+  events.push({ type: "roll", actor: actorId, die: npcDamageRoll, value: hit.roll, purpose: "damage_attack" });
 
   const { newShield: newMonsterShield, newHp, hpDamage: finalDamage } =
     applyDamageWithShield(hit.damage, monster.shield, monster.hp);
@@ -1055,7 +1109,7 @@ function handleMercAct(state: CombatState, roll: RollFn): StepResult {
     damage: finalDamage,
     armor_absorbed: monster.shield - newMonsterShield,
     crit: hit.isCrit,
-    formula: `d6+${mercAfterTick.attack_mod}a+${mercAfterTick.weapon_power}w`,
+    formula: `${npcDamageRoll}+${mercAfterTick.attack_mod}a+${mercAfterTick.weapon_power}w`,
   });
 
   const monsterKilled = newHp <= 0;
@@ -1073,7 +1127,11 @@ function handleMercAct(state: CombatState, roll: RollFn): StepResult {
   if (monsterKilled) {
     return resolveMonsterKill(nextState, monster.id, actorId, events);
   }
-  return { state: advanceTurn(nextState), events: [...events, ...turnStartEvent(nextState)] };
+
+  const hexProc = applyHexBleedProc(nextState, monster.id);
+  events.push(...hexProc.events);
+
+  return { state: advanceTurn(hexProc.state), events: [...events, ...turnStartEvent(hexProc.state)] };
 }
 
 function handlePosition(
@@ -1316,12 +1374,13 @@ function handleMonsterAct(state: CombatState, roll: RollFn): StepResult {
   if (doSplash) {
     const splashDamageType = monster.attack_damage_type ?? "physical";
     const splashTargets = aliveFighters.filter((f) => (vanished[f.id] ?? 0) <= 0);
+    const splashHexMult = monster.effects.some((e) => e.type === "hexed") ? 0.75 : 1.0;
     const splashHits = splashTargets.map((f) => {
       const resistPct = splashDamageType !== "physical" ? (f.resistances?.[splashDamageType] ?? 0) : 0;
-      const hit = resolveMonsterHit(monster.tier, aliveFighters.length, 0, bossPhase2, roll, splashDamageType, resistPct);
+      const hit = resolveMonsterHit(monster.tier, aliveFighters.length, 0, bossPhase2, roll, splashDamageType, resistPct, monster.damage_roll ?? "1d4");
       const splashShocked = f.effects.find((e) => e.type === "shocked");
       const splashShockMult = splashShocked ? (splashShocked.magnitude >= 2 ? 1.45 : 1.30) : 1.0;
-      const posAdj = positionDamageMod(f.position, Math.round(hit.final * splashShockMult));
+      const posAdj = positionDamageMod(f.position, Math.round(hit.final * splashShockMult * splashHexMult));
       // Physical depletes armor pool; non-physical bypasses it.
       const splashArmorPool = splashDamageType === "physical" ? f.shield : 0;
       const rawSplash = applyDamageWithShield(posAdj, splashArmorPool, f.hp);
@@ -1384,6 +1443,9 @@ function handleMonsterAct(state: CombatState, roll: RollFn): StepResult {
   // ── d20 to-hit ──
   // Modifier grows at half-tier + 4 so it never auto-hits even at high tiers.
   // Fighter AC = 10 + floor(level/2) so the miss window stays meaningful.
+  // Entangled: monster suffers -4 to all attack rolls.
+  const entangledEffect = monster.effects.find((e) => e.type === "entangled");
+  const entanglePenalty = entangledEffect ? 4 : 0;
   let d20 = roll(20);
   // Bard Mock — disadvantage: roll the d20 twice, take lower, consume one charge.
   const discourageCharges = s.ability_state?.discourage?.[actorId] ?? 0;
@@ -1394,11 +1456,13 @@ function handleMonsterAct(state: CombatState, roll: RollFn): StepResult {
     d20 = took;
     s = { ...s, ability_state: consumeDiscourageCharge(s.ability_state, actorId) };
   }
-  const modifier = Math.floor(monster.tier / 2) + 4;
+  const modifier = Math.floor(monster.tier / 2) + 4 - entanglePenalty;
   const hitTotal = d20 + modifier;
   const sof = s.ability_state?.shield_of_faith;
   const shieldOfFaithBonus = sof && s.round <= sof.expires_after_round ? 5 : 0;
-  const targetAc = fighterAc(target.level) + shieldOfFaithBonus;
+  // Barkskin (Druid): target fighter's AC is buffed for N of their own turns.
+  const barkskinEff = target.effects.find((e) => e.type === "barkskin");
+  const targetAc = fighterAc(target.level) + shieldOfFaithBonus + (barkskinEff?.magnitude ?? 0);
   const landed = hitTotal >= targetAc;
   events.push({
     type: "roll",
@@ -1447,6 +1511,7 @@ function handleMonsterAct(state: CombatState, roll: RollFn): StepResult {
   const targetResistPct = attackDamageType !== "physical"
     ? (target.resistances?.[attackDamageType] ?? 0)
     : 0;
+  const monsterDamageRoll = monster.damage_roll ?? "1d4";
   const hit = resolveMonsterHit(
     monster.tier,
     aliveFighters.length,
@@ -1455,19 +1520,25 @@ function handleMonsterAct(state: CombatState, roll: RollFn): StepResult {
     roll,
     attackDamageType,
     targetResistPct,
+    monsterDamageRoll,
   );
   const targetShocked = target.effects.find((e) => e.type === "shocked");
   const targetShockMult = targetShocked ? (targetShocked.magnitude >= 2 ? 1.45 : 1.30) : 1.0;
-  const positionAdjusted = positionDamageMod(target.position, Math.round(hit.final * targetShockMult));
+  const hexMult = monster.effects.some((e) => e.type === "hexed") ? 0.75 : 1.0;
+  const positionAdjusted = positionDamageMod(target.position, Math.round(hit.final * targetShockMult * hexMult));
   // QA Paladin — Smite debuff: 50% reduced damage on this swing.
   const smiteDebuffSwings = s.ability_state?.paladin_smite_debuff?.[actorId] ?? 0;
   const smiteAdjusted = smiteDebuffSwings > 0
     ? Math.max(1, Math.round(positionAdjusted * 0.5))
     : positionAdjusted;
+  const brace = s.ability_state?.brace?.[target.id];
+  const effectiveDamage = brace && brace.turns_remaining > 0
+    ? Math.max(1, Math.round(smiteAdjusted * (1 - brace.pct / 100)))
+    : smiteAdjusted;
   // Physical attacks route through the armor pool first (shield = depletable armor).
   // Non-physical bypasses armor entirely and hits HP directly.
   const armorForHit = attackDamageType === "physical" ? target.shield : 0;
-  const rawResult = applyDamageWithShield(smiteAdjusted, armorForHit, target.hp);
+  const rawResult = applyDamageWithShield(effectiveDamage, armorForHit, target.hp);
   const newShield = attackDamageType === "physical" ? rawResult.newShield : target.shield;
   const newHp = rawResult.newHp;
   const shieldAbsorbed = rawResult.shieldAbsorbed;
@@ -1476,7 +1547,7 @@ function handleMonsterAct(state: CombatState, roll: RollFn): StepResult {
   events.push({
     type: "roll",
     actor: actorId,
-    die: "d4",
+    die: monsterDamageRoll,
     value: hit.raw - monster.tier - Math.floor((aliveFighters.length - 1) / 2) - (bossPhase2 ? monster.tier : 0),
     purpose: "damage_monster",
   });
@@ -1486,7 +1557,7 @@ function handleMonsterAct(state: CombatState, roll: RollFn): StepResult {
     target: target.id,
     damage_type: attackDamageType,
     raw_damage: hit.raw,
-    damage_after_position: positionAdjusted,
+    damage_after_position: effectiveDamage,
     damage_after_mitigation: hit.final,
     armor_reduction: hit.armorReduction,
     resistance_reduction: hit.resistanceReduction,
@@ -1580,6 +1651,28 @@ function handleMonsterAct(state: CombatState, roll: RollFn): StepResult {
       }
     }
   }
+
+  // QA Paladin — Lay on Hands. Trigger if the target survived but dropped
+  // below the threshold. Skips if target died on the swing.
+  if (newHp > 0) {
+    const heal = applyPaladinAutoHeal(next, target.id, roll);
+    next = heal.state;
+    events.push(...heal.events);
+  }
+
+  // SRE Warden — Thorns. Deal 25% armor_power back to the attacker if target survived.
+  if (newHp > 0) {
+    const thorns = applyWardenThorns(next, target.id, actorId);
+    next = thorns.state;
+    events.push(...thorns.events);
+    if (thorns.events.length > 0) {
+      const thornedMonster = next.monsters.find((m) => m.id === actorId);
+      if (thornedMonster && thornedMonster.hp <= 0) {
+        return resolveMonsterKill(next, actorId, target.id, events);
+      }
+    }
+  }
+
 
   const allDown = next.fighters.every((f) => f.hp <= 0);
   if (allDown) {
@@ -1692,6 +1785,16 @@ function handleDamageAbility(
         events.push({ type: "ability_smite_debuff", actor: actorId, target: effect.target_id });
       }
     }
+  }
+
+  // Sinister Queries passive — applies bleed on any ability damage hit.
+  if (!monsterKilled) {
+    const sq = applySinisterQueries(nextState, tickedActor, monster.id);
+    nextState = sq.state;
+    events.push(...sq.events);
+    const hexProc = applyHexBleedProc(nextState, monster.id);
+    nextState = hexProc.state;
+    events.push(...hexProc.events);
   }
 
   // Warlock Cursed Strike: crits apply bleed.
@@ -1851,7 +1954,7 @@ function handleFlee(
   // no armor mitigation (back turned) — treat as physical with 0 armor.
   const alive = s.fighters.filter((f) => f.hp > 0);
   const bossPhase2 = (fleeMonster?.is_boss && fleeMonster?.boss_phase === 2) ?? false;
-  const hit = resolveMonsterHit(fleeMonster?.tier ?? 1, alive.length, 0, bossPhase2, roll, "physical", 0);
+  const hit = resolveMonsterHit(fleeMonster?.tier ?? 1, alive.length, 0, bossPhase2, roll, "physical", 0, fleeMonster?.damage_roll ?? "1d4");
   const positionAdjusted = positionDamageMod(tickedActor.position, hit.final);
   const { newShield, newHp, shieldAbsorbed, hpDamage } = applyDamageWithShield(
     positionAdjusted,
@@ -1957,7 +2060,7 @@ function handleAbility(
         ...(s.cooldowns ?? {}),
         [action.actor]: {
           ...(s.cooldowns?.[action.actor] ?? {}),
-          [ability.id]: ability.cooldown_turns,
+          [ability.id]: ability.cooldown_turns + 1,
         },
       },
     } : {}),
@@ -2042,23 +2145,84 @@ function applyUtilityAbilityEffects(
       case "deal_damage": {
         const monster = s.monsters.find((m) => m.id === effect.target_id && m.hp > 0);
         if (!monster) continue;
-        const newHp = Math.max(0, monster.hp - effect.amount);
+        const ddWeakness = effect.damage_type && monster.damage_weakness === effect.damage_type ? 1.3 : 1.0;
+        const ddResist = effect.damage_type && monster.damage_resistance === effect.damage_type ? 0.7 : 1.0;
+        const ddAmount = Math.max(1, Math.round(effect.amount * ddWeakness * ddResist));
+        const newHp = Math.max(0, monster.hp - ddAmount);
         events.push({
           type: "player_hit",
           actor,
           target: monster.id,
-          damage: effect.amount,
+          damage: ddAmount,
           armor_absorbed: 0,
           crit: effect.is_crit ?? false,
           formula: effect.formula,
+          damage_type: effect.damage_type,
         });
         s = {
           ...s,
           monsters: s.monsters.map((m) => m.id === monster.id ? { ...m, hp: newHp } : m),
-          contribution: { ...s.contribution, [actor]: (s.contribution[actor] ?? 0) + effect.amount },
+          contribution: { ...s.contribution, [actor]: (s.contribution[actor] ?? 0) + ddAmount },
         };
         s = accumulateIllOmenDamage(s, monster.id, monster.hp - newHp);
         if (newHp <= 0) return resolveMonsterKill(s, monster.id, actor, events);
+        // Sinister Queries passive and hex bleed proc fire on any damage hit.
+        const casterFighter = s.fighters.find((f) => f.id === actor);
+        if (casterFighter) {
+          const sq = applySinisterQueries(s, casterFighter, monster.id);
+          s = sq.state;
+          events.push(...sq.events);
+        }
+        const hexProc = applyHexBleedProc(s, monster.id);
+        s = hexProc.state;
+        events.push(...hexProc.events);
+        break;
+      }
+      case "attack_roll_damage": {
+        const monster = s.monsters.find((m) => m.id === effect.target_id && m.hp > 0);
+        if (!monster) continue;
+        const ac = monsterAc(monster.tier);
+        let d20 = roll(20);
+        const encourageChargesArd = s.ability_state?.encourage?.[actor] ?? 0;
+        if (encourageChargesArd > 0 || effect.advantage) {
+          const d20b = roll(20);
+          const took = Math.max(d20, d20b);
+          events.push({ type: "advantage_used", actor, d20_a: d20, d20_b: d20b, took });
+          d20 = took;
+          if (encourageChargesArd > 0) {
+            s = { ...s, ability_state: consumeEncourageCharge(s.ability_state, actor) };
+          }
+        }
+        const total = d20 + effect.hit_mod;
+        const landed = total >= ac;
+        events.push({ type: "roll", actor, die: "d20", value: d20, purpose: "hit_check" });
+        events.push({ type: "hit_check", actor, target: monster.id, roll: d20, modifier: effect.hit_mod, total, ac, hit: landed });
+        if (!landed) break;
+        const ardWeakness = effect.damage_type && monster.damage_weakness === effect.damage_type ? 1.3 : 1.0;
+        const ardResist = effect.damage_type && monster.damage_resistance === effect.damage_type ? 0.7 : 1.0;
+        const ardAmount = Math.max(1, Math.round(effect.amount * ardWeakness * ardResist));
+        const newHp = Math.max(0, monster.hp - ardAmount);
+        const ardIsCrit = effect.is_crit ?? false;
+        events.push({ type: "player_hit", actor, target: monster.id, damage: ardAmount, armor_absorbed: 0, crit: ardIsCrit, formula: effect.formula, damage_type: effect.damage_type });
+        s = {
+          ...s,
+          monsters: s.monsters.map((m) => m.id === monster.id ? { ...m, hp: newHp } : m),
+          contribution: { ...s.contribution, [actor]: (s.contribution[actor] ?? 0) + ardAmount },
+        };
+        if (newHp <= 0) return resolveMonsterKill(s, monster.id, actor, events);
+        const attackCaster = s.fighters.find((f) => f.id === actor);
+        if (attackCaster) {
+          if (ardIsCrit) {
+            const lsUtility = applyRogueLethalStrike(s, attackCaster, monster.id);
+            s = lsUtility.state; events.push(...lsUtility.events);
+          }
+          const sq = applySinisterQueries(s, attackCaster, monster.id);
+          s = sq.state;
+          events.push(...sq.events);
+        }
+        const hexProc2 = applyHexBleedProc(s, monster.id);
+        s = hexProc2.state;
+        events.push(...hexProc2.events);
         break;
       }
       case "heal": {
@@ -2170,6 +2334,35 @@ function applyUtilityAbilityEffects(
         const from = target.position;
         s = { ...s, fighters: s.fighters.map((f) => f.id === effect.target_id ? { ...f, position: effect.to } : f) };
         events.push({ type: "ability_migrate", actor, target: effect.target_id, from, to: effect.to });
+        break;
+      }
+      case "hex_monster": {
+        const target = s.monsters.find((m) => m.id === effect.target_id && m.hp > 0);
+        if (!target) break;
+        const hexEffect: MachineStatusEffect = {
+          type: "hexed",
+          magnitude: 1,
+          remaining: effect.duration,
+          source: actor,
+        };
+        s = {
+          ...s,
+          monsters: s.monsters.map((m) =>
+            m.id === target.id ? { ...m, effects: mergeEffect(m.effects, hexEffect) } : m,
+          ),
+        };
+        events.push({ type: "ability_hex", actor, target: target.id, duration: effect.duration });
+        break;
+      }
+      case "consume_monster_bleed": {
+        const target = s.monsters.find((m) => m.id === effect.target_id && m.hp > 0);
+        if (!target) break;
+        s = {
+          ...s,
+          monsters: s.monsters.map((m) =>
+            m.id === target.id ? { ...m, effects: m.effects.filter((e) => e.type !== "bleeding") } : m,
+          ),
+        };
         break;
       }
       case "grant_encourage": {
@@ -2312,6 +2505,131 @@ function applyUtilityAbilityEffects(
           },
         };
         s = { ...s, ability_state };
+        break;
+      }
+      case "set_damage_reduction": {
+        const ability_state: AbilityRuntimeState = {
+          ...(s.ability_state ?? {}),
+          brace: {
+            ...(s.ability_state?.brace ?? {}),
+            [effect.target_id]: { pct: effect.pct, turns_remaining: effect.turns },
+          },
+        };
+        s = { ...s, ability_state };
+        events.push({ type: "ability_brace", actor, turns: effect.turns });
+        break;
+      }
+      case "apply_fighter_regen": {
+        const target = s.fighters.find((f) => f.id === effect.target_id);
+        if (!target || target.hp <= 0) continue;
+        const regenEffect = { type: "regen" as const, magnitude: effect.magnitude, remaining: effect.duration, source: actor };
+        s = { ...s, fighters: s.fighters.map((f) => f.id === effect.target_id ? { ...f, effects: mergeEffect(f.effects, regenEffect) } : f) };
+        events.push({ type: "ability_regeneration", actor, target: effect.target_id, magnitude: effect.magnitude, duration: effect.duration });
+        break;
+      }
+      case "apply_animal_form": {
+        const target = s.fighters.find((f) => f.id === effect.target_id);
+        if (!target) continue;
+        const atkDelta = target.stats
+          ? Math.floor((target.stats.str + effect.str_bonus - 5) / 2) - Math.floor((target.stats.str - 5) / 2)
+          : Math.floor(effect.str_bonus / 2);
+        const hpDelta = 2 * effect.vit_bonus;
+        const newMaxHp = target.max_hp + hpDelta;
+        const newHp = Math.min(newMaxHp, target.hp + hpDelta);
+        const buffedFighter = {
+          ...target,
+          attack_mod: target.attack_mod + atkDelta,
+          max_hp: newMaxHp,
+          hp: newHp,
+          ...(target.stats ? {
+            stats: {
+              ...target.stats,
+              str: target.stats.str + effect.str_bonus,
+              vit: target.stats.vit + effect.vit_bonus,
+              agi: target.stats.agi + effect.agi_bonus,
+              dex: target.stats.dex + effect.dex_bonus,
+            },
+          } : {}),
+        };
+        const animalFormEff = { type: "animal_form" as const, magnitude: 1, remaining: effect.turns, source: actor };
+        s = { ...s, fighters: s.fighters.map((f) => f.id === effect.target_id ? { ...buffedFighter, effects: mergeEffect(buffedFighter.effects, animalFormEff) } : f) };
+        s = {
+          ...s,
+          ability_state: {
+            ...(s.ability_state ?? {}),
+            animal_form: {
+              ...(s.ability_state?.animal_form ?? {}),
+              [effect.target_id]: {
+                str_bonus: effect.str_bonus, vit_bonus: effect.vit_bonus,
+                agi_bonus: effect.agi_bonus, dex_bonus: effect.dex_bonus,
+                atk_delta: atkDelta, hp_delta: hpDelta,
+                turns_remaining: effect.turns,
+              },
+            },
+          },
+        };
+        events.push({ type: "ability_animal_form", actor, str_bonus: effect.str_bonus, vit_bonus: effect.vit_bonus, agi_bonus: effect.agi_bonus, dex_bonus: effect.dex_bonus, turns: effect.turns });
+        break;
+      }
+      case "apply_barkskin": {
+        const target = s.fighters.find((f) => f.id === effect.target_id);
+        if (!target || target.hp <= 0) continue;
+        const barkskinEff = { type: "barkskin" as const, magnitude: effect.bonus, remaining: effect.turns, source: actor };
+        s = { ...s, fighters: s.fighters.map((f) => f.id === effect.target_id ? { ...f, effects: mergeEffect(f.effects, barkskinEff) } : f) };
+        events.push({ type: "ability_barkskin", actor, target: effect.target_id, bonus: effect.bonus, turns: effect.turns });
+        break;
+      }
+      case "entangle_monster": {
+        const target = s.monsters.find((m) => m.id === effect.target_id && m.hp > 0);
+        if (!target) continue;
+        const entangleEff = { type: "entangled" as const, magnitude: 1, remaining: effect.duration, source: actor };
+        s = { ...s, monsters: s.monsters.map((m) => m.id === effect.target_id ? { ...m, effects: mergeEffect(m.effects, entangleEff) } : m) };
+        events.push({ type: "ability_wildgrowth_entangle", actor, target: effect.target_id, duration: effect.duration });
+        break;
+      }
+      case "summon_ally_npc": {
+        const { spec, id_suffix } = effect;
+        const idPrefix = `__ally_${id_suffix}_${actor}_`;
+        const count = s.fighters.filter((f) => f.id.startsWith(idPrefix)).length;
+        const npcId: ActorId = `${idPrefix}${count}__`;
+        const npc: CombatFighter = {
+          id: npcId,
+          name: spec.name,
+          class: spec.class_label,
+          level: spec.level,
+          hp: spec.hp,
+          max_hp: spec.hp,
+          mana: 0,
+          max_mana: 0,
+          shield: 0,
+          position: spec.position,
+          attack_mod: spec.attack_mod,
+          magic_mod: 0,
+          weapon_power: spec.weapon_power,
+          focus_power: 0,
+          weapon_range: spec.weapon_range,
+          damage_roll: spec.damage_roll,
+          slack_username: null,
+          armor_power: 0,
+          initiative: 0,
+          effects: [],
+          scars: [],
+        };
+        // Insert the NPC at the current actor's array position and adjust
+        // turn_index so it still resolves to the same actor. This places the
+        // NPC "behind" the current position in the circular order, meaning it
+        // won't act until the next cycle — summoning costs the caster's turn.
+        const oldLen = s.turn_order.length;
+        const pos = s.turn_index % oldLen;
+        const newTurnOrder = [...s.turn_order.slice(0, pos), npcId, ...s.turn_order.slice(pos)];
+        const newTurnIndex = (pos + 1) + Math.floor(s.turn_index / oldLen) * (oldLen + 1);
+        s = {
+          ...s,
+          fighters: [...s.fighters, npc],
+          turn_order: newTurnOrder,
+          turn_index: newTurnIndex,
+        };
+        events.push({ type: "ally_npc_summoned", actor, npc_id: npcId, name: spec.name });
         break;
       }
       case "apply_blizzard": {
@@ -2585,7 +2903,7 @@ function tickEffects(
   const newEffects: MachineStatusEffect[] = [];
   const events: CombatEvent[] = [];
   for (const eff of effects) {
-    if (eff.type === "empowered" || eff.type === "frozen" || eff.type === "shocked" || eff.type === "stunned") {
+    if (eff.type === "empowered" || eff.type === "frozen" || eff.type === "shocked" || eff.type === "stunned" || eff.type === "hexed" || eff.type === "entangled" || eff.type === "barkskin" || eff.type === "animal_form") {
       // Passive — no HP delta. Silently count down; the effect is applied
       // inline in the attack/turn handlers via the actor's effects array.
       // "stunned" uses remaining as a max-duration safety net (break logic
@@ -2776,28 +3094,79 @@ function markPassiveUsed(state: CombatState, actorId: ActorId, key: string): Com
   };
 }
 
-// SRE Warden — Harden Up. First action of the fight grants WARDEN_STARTING_SHIELD
-// shield (clamped to cap). Once per fight.
-function applyWardenStartingShield(
+// SRE Warden — Armor Up. Regenerate 2 + floor(level/4) shield at the start of each turn.
+function applyWardenArmorUp(
   state: CombatState,
   actor: CombatFighter,
 ): { state: CombatState; events: CombatEvent[] } {
-  if (!classHasPassive(actor.class, "harden_up")) return { state, events: [] };
-  if (isPassiveUsed(state, actor.id, PASSIVE_WARDEN_SHIELD)) return { state, events: [] };
-  // VIT-based when STATS_V2 stats are present; level fallback for legacy states.
-  const wardenShield = actor.stats
-    ? Math.floor(actor.stats.vit / 2)
-    : WARDEN_STARTING_SHIELD + Math.floor(actor.level / 6);
-  const cap = Math.floor(actor.armor_power / 2);
-  const newShield = Math.min(cap, actor.shield + wardenShield);
+  if (!classHasPassive(actor.class, "armor_up")) return { state, events: [] };
+  const amount = 2 + Math.floor(actor.level / 4);
+  const cap = actor.max_hp * SHIELD_CAP_MULTIPLIER;
+  const newShield = Math.min(cap, actor.shield + amount);
   const added = newShield - actor.shield;
+  if (added <= 0) return { state, events: [] };
   const updated = state.fighters.map((f) =>
     f.id === actor.id ? { ...f, shield: newShield } : f,
   );
-  const marked = markPassiveUsed({ ...state, fighters: updated }, actor.id, PASSIVE_WARDEN_SHIELD);
   return {
-    state: marked,
-    events: [{ type: "passive_warden_shield", actor: actor.id, amount: added }],
+    state: { ...state, fighters: updated },
+    events: [{ type: "passive_warden_armor_up", actor: actor.id, amount: added }],
+  };
+}
+
+// QA Paladin — Lay on Hands auto-trigger. Fires after a monster swing when the
+// target survived but has fallen to ≤ 30% of max_hp. The first alive Paladin in
+// the party who hasn't already triggered this once-per-fight heals the fighter
+// for 1d6 + floor(mag/2) + floor(vit/2).
+function applyPaladinAutoHeal(
+  state: CombatState,
+  targetId: ActorId,
+  roll: RollFn,
+): { state: CombatState; events: CombatEvent[] } {
+  const target = state.fighters.find((f) => f.id === targetId);
+  if (!target || target.hp <= 0) return { state, events: [] };
+  if (target.hp > Math.floor(target.max_hp * 0.3)) return { state, events: [] };
+
+  const paladin = state.fighters.find(
+    (f) => f.hp > 0 && classHasPassive(f.class, "holy_rage") && !isPassiveUsed(state, f.id, PASSIVE_PALADIN_AUTO_HEAL),
+  );
+  if (!paladin) return { state, events: [] };
+
+  const vit = paladin.stats?.vit ?? 5;
+  const rolled = roll(6) + Math.floor(paladin.magic_mod / 2) + Math.floor(vit / 2);
+  const newHp = Math.min(target.max_hp, target.hp + rolled);
+  const actualAmount = newHp - target.hp;
+  if (actualAmount <= 0) return { state, events: [] };
+
+  let next: CombatState = {
+    ...state,
+    fighters: state.fighters.map((f) =>
+      f.id === targetId ? { ...f, hp: newHp } : f,
+    ),
+  };
+  next = markPassiveUsed(next, paladin.id, PASSIVE_PALADIN_AUTO_HEAL);
+
+  return {
+    state: next,
+    events: [{ type: "passive_paladin_auto_heal", paladin: paladin.id, target: targetId, amount: actualAmount }],
+  };
+}
+
+// SRE Warden — Thorns. When hit, deal 25% of armor_power back to the attacker.
+function applyWardenThorns(
+  state: CombatState,
+  targetFighterId: ActorId,
+  monsterId: ActorId,
+): { state: CombatState; events: CombatEvent[] } {
+  const fighter = state.fighters.find((f) => f.id === targetFighterId);
+  if (!fighter || !classHasPassive(fighter.class, "thorns")) return { state, events: [] };
+  const amount = Math.max(1, Math.floor(fighter.armor_power * 0.25));
+  const monster = state.monsters.find((m) => m.id === monsterId && m.hp > 0);
+  if (!monster) return { state, events: [] };
+  const newHp = Math.max(0, monster.hp - amount);
+  return {
+    state: { ...state, monsters: state.monsters.map((m) => m.id === monsterId ? { ...m, hp: newHp } : m) },
+    events: [{ type: "passive_warden_thorns", actor: targetFighterId, target: monsterId, amount }],
   };
 }
 
@@ -2861,16 +3230,65 @@ function applyPreActionPassives(
 ): { state: CombatState; fighter: CombatFighter; events: CombatEvent[] } {
   const fighter = state.fighters.find((f) => f.id === actorId);
   if (!fighter) return { state, fighter: fighter as unknown as CombatFighter, events: [] };
-  const warden = applyWardenStartingShield(state, fighter);
-  const wardenFighter = warden.state.fighters.find((f) => f.id === actorId) ?? fighter;
-  const druid = applyDruidRegen(warden.state, wardenFighter);
-  const druidFighter = druid.state.fighters.find((f) => f.id === actorId) ?? wardenFighter;
+  // Tick down Brace turns for this actor before other passives fire.
+  const braceEntry = state.ability_state?.brace?.[actorId];
+  let s = state;
+  if (braceEntry) {
+    const remaining = braceEntry.turns_remaining - 1;
+    if (remaining <= 0) {
+      s = { ...s, ability_state: stripField(s.ability_state, "brace") ?? {} };
+    } else {
+      s = {
+        ...s,
+        ability_state: {
+          ...(s.ability_state ?? {}),
+          brace: { ...s.ability_state!.brace, [actorId]: { ...braceEntry, turns_remaining: remaining } },
+        },
+      };
+    }
+  }
+  // Tick down Animal Form and revert stat bonuses on expiry.
+  const animalFormEntry = s.ability_state?.animal_form?.[actorId];
+  if (animalFormEntry) {
+    const remaining = animalFormEntry.turns_remaining - 1;
+    if (remaining <= 0) {
+      const af = s.fighters.find((f) => f.id === actorId)!;
+      const newMaxHp = af.max_hp - animalFormEntry.hp_delta;
+      const revertedFighter: typeof af = {
+        ...af,
+        attack_mod: af.attack_mod - animalFormEntry.atk_delta,
+        max_hp: newMaxHp,
+        hp: Math.min(af.hp, newMaxHp),
+        ...(af.stats ? {
+          stats: {
+            ...af.stats,
+            str: af.stats.str - animalFormEntry.str_bonus,
+            vit: af.stats.vit - animalFormEntry.vit_bonus,
+            agi: af.stats.agi - animalFormEntry.agi_bonus,
+            dex: af.stats.dex - animalFormEntry.dex_bonus,
+          },
+        } : {}),
+      };
+      s = { ...s, fighters: s.fighters.map((f) => f.id === actorId ? revertedFighter : f) };
+      const afMap = { ...(s.ability_state?.animal_form ?? {}) };
+      delete afMap[actorId];
+      s = { ...s, ability_state: Object.keys(afMap).length > 0 ? { ...s.ability_state, animal_form: afMap } : (stripField(s.ability_state, "animal_form") ?? {}) };
+    } else {
+      s = { ...s, ability_state: { ...s.ability_state, animal_form: { ...s.ability_state!.animal_form, [actorId]: { ...animalFormEntry, turns_remaining: remaining } } } };
+    }
+  }
+
+  const currentFighter = s.fighters.find((f) => f.id === actorId) ?? fighter;
+  const armorUp = applyWardenArmorUp(s, currentFighter);
+  const armorUpFighter = armorUp.state.fighters.find((f) => f.id === actorId) ?? currentFighter;
+  const druid = applyDruidRegen(armorUp.state, armorUpFighter);
+  const druidFighter = druid.state.fighters.find((f) => f.id === actorId) ?? armorUpFighter;
   const mana = applyManaFont(druid.state, druidFighter);
   const finalFighter = mana.state.fighters.find((f) => f.id === actorId) ?? druidFighter;
   return {
     state: mana.state,
     fighter: finalFighter,
-    events: [...warden.events, ...druid.events, ...mana.events],
+    events: [...armorUp.events, ...druid.events, ...mana.events],
   };
 }
 
@@ -2896,38 +3314,46 @@ function computeBardAuraBonus(
 }
 
 // Data Warlock — Cursed Strike. On a critical attack/cast, apply a 2-turn
-// bleed to the target monster. Always-on (no usage tracking).
-function applyWarlockBleed(
+// Sinister Queries passive: fires on any hit (attack, cast, or ability damage).
+// Applies 1 + floor(level/5) bleed stacks to the target monster.
+function applySinisterQueries(
   state: CombatState,
   actor: CombatFighter,
   targetMonsterId: ActorId,
-  isCrit: boolean,
 ): { state: CombatState; events: CombatEvent[] } {
-  if (!isCrit || !classHasPassive(actor.class, "cursed_strike")) return { state, events: [] };
+  if (!classHasPassive(actor.class, "sinister_queries")) return { state, events: [] };
   const targetMonster = state.monsters.find((m) => m.id === targetMonsterId && m.hp > 0);
   if (!targetMonster) return { state, events: [] };
-  const newEffect: MachineStatusEffect = {
-    type: "bleeding",
-    magnitude: WARLOCK_BLEED_MAGNITUDE,
-    remaining: WARLOCK_BLEED_DURATION,
-    source: actor.id,
-  };
-  const updated: CombatState = {
-    ...state,
-    monsters: state.monsters.map((m) =>
-      m.id === targetMonsterId ? { ...m, effects: mergeEffect(m.effects, newEffect) } : m,
-    ),
-  };
+  const magnitude = 1 + Math.floor(actor.level / 5);
+  const newEffect: MachineStatusEffect = { type: "bleeding", magnitude, remaining: 3, source: actor.id };
   return {
-    state: updated,
-    events: [
-      {
-        type: "passive_warlock_bleed",
-        actor: actor.id,
-        magnitude: WARLOCK_BLEED_MAGNITUDE,
-        duration: WARLOCK_BLEED_DURATION,
-      },
-    ],
+    state: {
+      ...state,
+      monsters: state.monsters.map((m) =>
+        m.id === targetMonsterId ? { ...m, effects: mergeEffect(m.effects, newEffect) } : m,
+      ),
+    },
+    events: [{ type: "passive_sinister_queries", actor: actor.id, target: targetMonsterId, magnitude }],
+  };
+}
+
+// Hex bleed proc: whenever a hexed monster takes damage, apply 3 bleed stacks.
+function applyHexBleedProc(
+  state: CombatState,
+  targetMonsterId: ActorId,
+): { state: CombatState; events: CombatEvent[] } {
+  const targetMonster = state.monsters.find((m) => m.id === targetMonsterId && m.hp > 0);
+  if (!targetMonster || !targetMonster.effects.some((e) => e.type === "hexed")) return { state, events: [] };
+  const stacks = 3;
+  const newEffect: MachineStatusEffect = { type: "bleeding", magnitude: stacks, remaining: 3, source: "hex" };
+  return {
+    state: {
+      ...state,
+      monsters: state.monsters.map((m) =>
+        m.id === targetMonsterId ? { ...m, effects: mergeEffect(m.effects, newEffect) } : m,
+      ),
+    },
+    events: [{ type: "hex_bleed_proc", target: targetMonsterId, stacks }],
   };
 }
 
@@ -3078,6 +3504,10 @@ const EFFECT_STACK_POLICY: Record<EffectType, { mode: "stack" | "refresh"; maxMa
   frozen:    { mode: "refresh", maxMagnitude: 2 },
   shocked:   { mode: "refresh", maxMagnitude: 2 },
   stunned:   { mode: "refresh", maxMagnitude: 1 },
+  hexed:     { mode: "refresh", maxMagnitude: 1 },
+  entangled: { mode: "refresh", maxMagnitude: 1 },
+  barkskin:    { mode: "refresh", maxMagnitude: 1 },
+  animal_form: { mode: "refresh", maxMagnitude: 1 },
 };
 
 // Merge `incoming` into the existing effect list. If an effect of the
