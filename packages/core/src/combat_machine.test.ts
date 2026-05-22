@@ -1509,3 +1509,119 @@ describe("Refactor Rogue — Debilitate", () => {
     expect(hitEvt).toMatchObject({ damage: 12 });
   });
 });
+
+// ── Mark (free-action communication) ─────────────────────────────────────────
+
+describe("mark", () => {
+  // Two-fighter party so we can mark out-of-turn.
+  function markInit(): import("./combat_machine").CombatInit {
+    return {
+      fighters: [
+        {
+          id: "U_A",
+          name: "Alice",
+          class: "QA Paladin",
+          level: 5,
+          hp: 30,
+          max_hp: 30,
+          mana: 3,
+          max_mana: 3,
+          shield: 0,
+          position: "front" as const,
+          attack_mod: 2,
+          magic_mod: 0,
+          weapon_power: 4,
+          armor_power: 3,
+          scars: [],
+        },
+        {
+          id: "U_B",
+          name: "Bob",
+          class: "Frontend Bard",
+          level: 4,
+          hp: 20,
+          max_hp: 20,
+          mana: 2,
+          max_mana: 2,
+          shield: 0,
+          position: "back" as const,
+          attack_mod: 0,
+          magic_mod: 2,
+          weapon_power: 2,
+          armor_power: 1,
+          scars: [],
+        },
+      ],
+      monster: baseInit().monster!,
+    };
+  }
+
+  it("applies mark state with correct marked_by and expiry", () => {
+    // Alice goes first (higher initiative roll).
+    const begun = runBegin(createCombatState(markInit()), [20, 5, 1]);
+    const result = step(begun.state, { kind: "mark", actor: "U_A" }, seqRoll([]));
+    expect(result.state.ability_state?.mark).toMatchObject({
+      marked_by: "U_A",
+      expires_after_round: begun.state.round + 2,
+    });
+  });
+
+  it("does not consume the actor's turn", () => {
+    const begun = runBegin(createCombatState(markInit()), [20, 5, 1]);
+    const before = begun.state.turn_index;
+    const result = step(begun.state, { kind: "mark", actor: "U_A" }, seqRoll([]));
+    expect(result.state.turn_index).toBe(before);
+  });
+
+  it("can be applied by a fighter who is not the current actor (free action)", () => {
+    // Alice wins initiative and goes first.
+    const begun = runBegin(createCombatState(markInit()), [20, 5, 1]);
+    const currentActorId = begun.state.turn_order[begun.state.turn_index % begun.state.turn_order.length];
+    expect(currentActorId).toBe("U_A"); // sanity: Alice is up
+
+    // Bob marks even though it's Alice's turn.
+    const result = step(begun.state, { kind: "mark", actor: "U_B" }, seqRoll([]));
+    expect(result.state.ability_state?.mark?.marked_by).toBe("U_B");
+    // Alice's turn is still active.
+    const actorAfter = result.state.turn_order[result.state.turn_index % result.state.turn_order.length];
+    expect(actorAfter).toBe("U_A");
+  });
+
+  it("emits mark_applied event with no bonus", () => {
+    const begun = runBegin(createCombatState(markInit()), [20, 5, 1]);
+    const result = step(begun.state, { kind: "mark", actor: "U_A" }, seqRoll([]));
+    const evt = result.events.find((e) => e.type === "mark_applied");
+    expect(evt).toBeDefined();
+    expect(evt).not.toHaveProperty("bonus");
+  });
+
+  it("re-marking resets the expiry round", () => {
+    const begun = runBegin(createCombatState(markInit()), [20, 5, 1]);
+    const first = step(begun.state, { kind: "mark", actor: "U_A" }, seqRoll([]));
+    // Bump round manually then re-mark.
+    const laterState: CombatState = { ...first.state, round: first.state.round + 1 };
+    const second = step(laterState, { kind: "mark", actor: "U_B" }, seqRoll([]));
+    expect(second.state.ability_state?.mark?.expires_after_round).toBe(laterState.round + 2);
+    expect(second.state.ability_state?.mark?.marked_by).toBe("U_B");
+  });
+
+  it("attack damage is not affected by an active mark", () => {
+    // Alice (U_A) marks, then Bob (U_B) attacks — no bonus should appear.
+    // d20=10 → hit (attack_mod 0, tier 3 AC=9 → need ≥ 9), d6=2 → dmg = 2+0+2(wp)=4.
+    // If the old mark bonus (+2) were still applied this would be 6.
+    const begun = runBegin(createCombatState(markInit()), [20, 5, 1]);
+    const marked: CombatState = {
+      ...begun.state,
+      ability_state: { mark: { marked_by: "U_A", expires_after_round: 99, monster_id: MONSTER_ID } },
+      // Force Bob to front row so melee attack isn't blocked.
+      fighters: begun.state.fighters.map((f) => f.id === "U_B" ? { ...f, position: "front" as const } : f),
+      // Force it to be Bob's turn.
+      turn_order: ["U_B", MONSTER_ID, "U_A"],
+      turn_index: 0,
+    };
+    const result = step(marked, { kind: "attack", actor: "U_B" }, seqRoll([10, 2]));
+    const hitEvt = result.events.find((e) => e.type === "player_hit");
+    expect(hitEvt).toMatchObject({ damage: 4 });
+    expect(result.events.find((e) => e.type === "mark_bonus")).toBeUndefined();
+  });
+});

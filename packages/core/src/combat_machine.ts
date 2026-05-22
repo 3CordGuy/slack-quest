@@ -252,9 +252,6 @@ export interface AbilityRuntimeState {
   vulnerable?: Record<ActorId, { expires_after_round: number; magnitude: number }>;
 }
 
-// +damage to non-marker partymate attacks while a mark is active. Tuned to
-// match slack's FOCUS_FIRE_BONUS exactly.
-const MARK_BONUS = 2;
 // How many rounds a mark stays active. Roughly mirrors slack's 90s timer
 // (which is ~2 cooldown cycles).
 const MARK_ROUNDS = 2;
@@ -450,8 +447,7 @@ export type CombatEvent =
   | { type: "monster_stun_broken"; turns_active: number }
   | { type: "monster_target_redirected"; from: ActorId; to: ActorId; reason: "taunt" | "vanish" }
   | { type: "battle_hymn_consumed"; actor: ActorId; bonus: number; remaining: number }
-  | { type: "mark_applied"; actor: ActorId; expires_after_round: number; bonus: number }
-  | { type: "mark_bonus"; actor: ActorId; bonus: number }
+  | { type: "mark_applied"; actor: ActorId; expires_after_round: number }
   | { type: "shield_applied"; actor: ActorId; target: ActorId; restored: number; new_armor: number; bonus_barrier?: boolean }
   | { type: "passive_warden_shield"; actor: ActorId; amount: number }
   | { type: "passive_mage_mana_font"; actor: ActorId; amount: number }
@@ -823,15 +819,6 @@ function handlePlayerHit(
         : stripField(s.ability_state, "battle_hymn"))
     : s.ability_state;
 
-  // Mark / focus-fire — partymates (not the marker) get +MARK_BONUS damage
-  // while the mark is active. Expires after MARK_ROUNDS rounds.
-  const mark = s.ability_state?.mark;
-  const markActive =
-    mark
-    && mark.marked_by !== action.actor
-    && s.round <= mark.expires_after_round
-    && (!mark.monster_id || mark.monster_id === action.target_id);
-  const markBonus = markActive ? MARK_BONUS : 0;
 
   // Shocked amplifier: monster takes +30% (magnitude 1) or +45% (magnitude 2) from all hits.
   const shockedEffect = monster.effects.find((e) => e.type === "shocked");
@@ -847,7 +834,7 @@ function handlePlayerHit(
   const resistMult = monster.damage_resistance === playerAttackType ? 0.7 : 1.0;
 
   const vulnMult = vulnerabilityMult(s, monster.id, s.round);
-  const finalDamage = Math.max(1, Math.round((damage + aura.bonus + markBonus) * shockMult * weaknessMult * resistMult * vulnMult));
+  const finalDamage = Math.max(1, Math.round((damage + aura.bonus) * shockMult * weaknessMult * resistMult * vulnMult));
 
   // Physical attacks (attack action) deplete the monster's armor pool first.
   // Cast and signatures bypass armor and go straight to HP.
@@ -876,9 +863,6 @@ function handlePlayerHit(
       bonus: aura.bonus,
     });
   }
-  if (markBonus > 0) {
-    events.push({ type: "mark_bonus", actor: action.actor, bonus: markBonus });
-  }
   const drinkBonusForFormula =
     drinkResult.event && drinkResult.event.type === "drink_buff_consumed" && !drinkResult.forceCrit
       ? ` +${drinkResult.event.bonus} drink`
@@ -890,7 +874,7 @@ function handlePlayerHit(
     damage: finalDamage,
     armor_absorbed: monsterArmorAbsorbed,
     crit: isCrit,
-    formula: `${hit.roll}+${hit.totalMod}${isCrit ? " ×2" : ""}${drinkBonusForFormula}${hasEmpowered ? " ⚡" : ""}${aura.bonus > 0 ? ` +${aura.bonus} aura` : ""}${markBonus > 0 ? ` +${markBonus} mark` : ""}`,
+    formula: `${hit.roll}+${hit.totalMod}${isCrit ? " ×2" : ""}${drinkBonusForFormula}${hasEmpowered ? " ⚡" : ""}${aura.bonus > 0 ? ` +${aura.bonus} aura` : ""}`,
   });
   if (aura.hymn_consumed) {
     events.push({
@@ -1111,45 +1095,31 @@ function handleWait(
   return { state: next, events: [...tick.events, ...turnStartEvent(next)] };
 }
 
-// Mark / focus-fire. Caller designates the monster as the focus target; all
-// partymate attacks/casts (except the marker's) get +MARK_BONUS damage until
-// MARK_ROUNDS rounds have elapsed. Consumes the actor's turn — different from
-// slack's free-action model, but cleaner under strict turn order. Re-marking
-// resets the expiry.
+// Mark — free action, does not consume the actor's turn. Any living fighter
+// can mark at any time to call out a focus target for their allies. Re-marking
+// overrides the previous mark and resets the expiry.
 function handleMark(
   state: CombatState,
   action: { kind: "mark"; actor: ActorId; target_id?: string | null },
 ): StepResult {
   const fighter = state.fighters.find((f) => f.id === action.actor);
   if (!fighter) return reject(state, `unknown actor: ${action.actor}`);
-  if (currentActor(state) !== action.actor) {
-    return reject(state, `not ${action.actor}'s turn`);
-  }
   if (fighter.hp <= 0) return reject(state, `${action.actor} is downed`);
   if (state.monsters.every((m) => m.hp <= 0)) return reject(state, `no live foe to mark`);
-
-  const tick = tickAtTurnStart(state, action.actor);
-  if (tick.earlyReturn) return tick.earlyReturn;
-  const s = tick.state;
 
   // Resolve which monster is being marked. Explicit target_id wins; falls
   // back to the first live monster (single-monster fights, Slack path).
   const monster_id = action.target_id
-    ?? s.monsters.find((m) => m.hp > 0)?.id;
+    ?? state.monsters.find((m) => m.hp > 0)?.id;
 
-  const expires_after_round = s.round + MARK_ROUNDS;
+  const expires_after_round = state.round + MARK_ROUNDS;
   const ability_state: AbilityRuntimeState = {
-    ...(s.ability_state ?? {}),
+    ...(state.ability_state ?? {}),
     mark: { marked_by: action.actor, expires_after_round, monster_id },
   };
-  const next = advanceTurn({ ...s, ability_state });
   return {
-    state: next,
-    events: [
-      ...tick.events,
-      { type: "mark_applied", actor: action.actor, expires_after_round, bonus: MARK_BONUS },
-      ...turnStartEvent(next),
-    ],
+    state: { ...state, ability_state },
+    events: [{ type: "mark_applied", actor: action.actor, expires_after_round }],
   };
 }
 

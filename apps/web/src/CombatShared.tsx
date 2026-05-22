@@ -1485,7 +1485,7 @@ export function CombatPanel({
         {giveable.length > 0 && otherFighters.length > 0 && (
           <CBtn label="Give" icon="conversation" color="#fcd34d" disabled={!myTurn} onClick={() => { setGivePicker("selectItem"); setItemOpen(false); setPicking(null); }} />
         )}
-        <CBtn label="Mark" icon="target-poster" color="#f97316" disabled={!myTurn || !target} onClick={() => onSend({ kind: "mark", actor: selfId })} />
+        <CBtn label="Mark" icon="target-poster" color="#f97316" disabled={!target} onClick={() => onSend({ kind: "mark", actor: selfId })} />
         <CBtn label="Wait" icon="hourglass" color="#475569" disabled={!myTurn} onClick={() => onSend({ kind: "wait", actor: selfId })} />
         <CBtn label="Flee" icon="run" color="#9aa0a6" disabled={!myTurn} onClick={() => onSend({ kind: "flee", actor: selfId })} />
         {!myTurn && isMonsterTurn && !autoResolve && (

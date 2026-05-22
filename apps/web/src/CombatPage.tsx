@@ -240,8 +240,7 @@ type CombatEvent =
       }>;
     }
   | { type: "battle_hymn_consumed"; actor: string; bonus: number; remaining: number }
-  | { type: "mark_applied"; actor: string; expires_after_round: number; bonus: number }
-  | { type: "mark_bonus"; actor: string; bonus: number }
+  | { type: "mark_applied"; actor: string; expires_after_round: number }
   | { type: "passive_warden_shield"; actor: string; amount: number }
   | { type: "passive_mage_mana_font"; actor: string; amount: number }
   | { type: "passive_druid_regen"; actor: string; amount: number }
@@ -686,9 +685,7 @@ function formatEvent(e: CombatEvent, state: CombatState | null): LogEntry[] {
     case "battle_hymn_consumed":
       return row("aura", <>Hymn boosts {nameOf(e.actor)} by +{e.bonus} ({e.remaining} left).</>, "good");
     case "mark_applied":
-      return row("targeted", <>{nameOf(e.actor)} marks the monster — party +{e.bonus} dmg until end of round {e.expires_after_round}.</>, "good");
-    case "mark_bonus":
-      return row("targeted", <>Focus-fire: +{e.bonus} dmg from {nameOf(e.actor)}.</>, "good");
+      return row("targeted", <>{nameOf(e.actor)} marks the target — focus fire!</>, "good");
     case "passive_warden_shield":
       return row("shield", <>{nameOf(e.actor)} hardens up — +{e.amount} shield (passive).</>, "good");
     case "passive_mage_mana_font":
@@ -1290,7 +1287,13 @@ export function CombatPage({
                     monster={m}
                     round={state.round}
                     showSageReading={me?.class === "Staff Sage"}
-                    isMarked={!!(state.ability_state?.mark && state.round <= state.ability_state.mark.expires_after_round && (!state.ability_state.mark.monster_id || state.ability_state.mark.monster_id === (m.id ?? String(i))))}
+                    markedBy={
+                      state.ability_state?.mark &&
+                      state.round <= state.ability_state.mark.expires_after_round &&
+                      (!state.ability_state.mark.monster_id || state.ability_state.mark.monster_id === (m.id ?? String(i)))
+                        ? (state.fighters.find((f) => f.id === state.ability_state!.mark!.marked_by)?.name ?? state.ability_state.mark.marked_by)
+                        : undefined
+                    }
                     isTargeted={effectiveTarget !== null && (m.id ?? null) === effectiveTarget}
                     smiteDebuffed={!!((state.ability_state as { paladin_smite_debuff?: Record<string, number> } | undefined)?.paladin_smite_debuff?.[mid])}
                     vulnerable={(state.ability_state as { vulnerable?: Record<string, { expires_after_round: number; magnitude: number }> } | undefined)?.vulnerable?.[mid]}
@@ -1487,7 +1490,7 @@ export function CombatPage({
           {items.some((i) => !i.equipped) && state.fighters.filter((f) => f.hp > 0 && f.id !== selfId).length > 0 && (
             <CBtn label="Give" icon="conversation" color="#fcd34d" disabled={!myTurn} onClick={() => setGivePicker("selectItem")} />
           )}
-          <CBtn label="Mark" icon="targeted" color="#f97316" disabled={!myTurn || (liveMonsters.length > 1 && targetMonsterId === null)} onClick={() => send({ kind: "mark", actor: selfId, target_id: effectiveTarget })} />
+          <CBtn label="Mark" icon="targeted" color="#f97316" disabled={liveMonsters.length > 1 && targetMonsterId === null} onClick={() => send({ kind: "mark", actor: selfId, target_id: effectiveTarget })} />
           <CBtn label="Wait" icon="hourglass" color="#475569" disabled={!myTurn} onClick={() => send({ kind: "wait", actor: selfId })} />
           <CBtn label="Flee" icon="footprint" color="#9aa0a6" disabled={!myTurn} onClick={() => send({ kind: "flee", actor: selfId })} />
           {isMonsterTurn && !autoResolve && (
@@ -1583,7 +1586,7 @@ function MonsterCard({
   monster,
   round,
   showSageReading,
-  isMarked = false,
+  markedBy,
   isTargeted = false,
   smiteDebuffed = false,
   vulnerable,
@@ -1595,7 +1598,7 @@ function MonsterCard({
   monster: Monster;
   round: number;
   showSageReading: boolean;
-  isMarked?: boolean;
+  markedBy?: string;
   isTargeted?: boolean;
   smiteDebuffed?: boolean;
   vulnerable?: { expires_after_round: number; magnitude: number };
@@ -1624,7 +1627,7 @@ function MonsterCard({
 
   const sageLo = 1 + monster.tier;
   const sageHi = 6 + monster.tier + (monster.is_boss && monster.boss_phase === 2 ? monster.tier : 0);
-  const borderColor = isDead ? "#2a2d33" : isTargeted ? "#fbbf24" : isMarked ? "#f59e0b" : "#7c2020";
+  const borderColor = isDead ? "#2a2d33" : isTargeted ? "#fbbf24" : markedBy ? "#f59e0b" : "#7c2020";
   return (
     <div
       key={`mc-${monster.id ?? ""}-${isDead ? "dead" : lungeSeq}`}
@@ -1645,9 +1648,10 @@ function MonsterCard({
       {/* Dust puff on every landed hit. Same component as the fighter
           cards — re-keys its WAAPI animations whenever dustSeq bumps. */}
       <HitDust seq={dustSeq} />
-      {isMarked && !isDead && (
-        <div style={{ position: "absolute", top: -10, right: -10, width: 36, height: 36, borderRadius: "50%", background: "#78350f", border: "2px solid #f59e0b", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 10, boxShadow: "0 0 12px #f59e0b80" }}>
-          <Icon name="targeted" size={20} color="#fbbf24" />
+      {markedBy && !isDead && (
+        <div style={{ position: "absolute", top: -12, right: -8, display: "flex", alignItems: "center", gap: 4, background: "#78350f", border: "2px solid #f59e0b", borderRadius: 12, padding: "2px 8px", zIndex: 10, boxShadow: "0 0 12px #f59e0b80" }}>
+          <Icon name="targeted" size={14} color="#fbbf24" />
+          <span style={{ fontSize: 11, fontWeight: 700, color: "#fbbf24", whiteSpace: "nowrap" }}>{markedBy}</span>
         </div>
       )}
       <Avatar
@@ -1656,7 +1660,7 @@ function MonsterCard({
         size={72}
         radius={8}
         fallbackIcon="dragon"
-        fallbackColor={isMarked ? "#f59e0b" : "#7c2020"}
+        fallbackColor={markedBy ? "#f59e0b" : "#7c2020"}
         border={`1px solid ${borderColor}`}
         style={{ flexShrink: 0 }}
       />
