@@ -51,6 +51,7 @@ export const paladinAbilities: AbilityDef[] = [
     blurb: "Strike for normal + {1+floor(str/10)}d8 extra damage. Enemy deals 50% less damage on their next swing.",
     icon: "axe-swing",
     mana_cost: 1,
+    cooldown_turns: 2,
     routing: "damage",
     target: "single_enemy",
     execute(ctx) {
