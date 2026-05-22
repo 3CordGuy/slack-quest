@@ -74,38 +74,6 @@ export const fx = {
     return { kind: "apply_discourage", target_id: targetId, charges };
   },
 
-  shieldOfFaith(rounds: number): AbilityEffect {
-    return { kind: "apply_shield_of_faith", rounds };
-  },
-
-  protect(targetId: string): AbilityEffect {
-    return { kind: "apply_protect", target_id: targetId };
-  },
-
-  smiteDebuff(targetId: string): AbilityEffect {
-    return { kind: "apply_smite_debuff", target_id: targetId };
-  },
-
-  attackRollDamage(targetId: string, hitMod: number, amount: number, formula: string, damageType?: DamageType, advantage?: boolean, isCrit?: boolean): AbilityEffect {
-    return { kind: "attack_roll_damage", target_id: targetId, hit_mod: hitMod, amount, formula, damage_type: damageType, advantage, is_crit: isCrit };
-  },
-
-  bleed(targetId: string, stacks: number, duration = 2): AbilityEffect {
-    return { kind: "apply_bleed", target_id: targetId, stacks, duration };
-  },
-
-  poison(targetId: string, stacks: number, duration = 2): AbilityEffect {
-    return { kind: "apply_poison", target_id: targetId, stacks, duration };
-  },
-
-  envenomWeapon(stacks: number): AbilityEffect {
-    return { kind: "apply_envenom_weapon", stacks };
-  },
-
-  vulnerability(targetId: string, magnitude: number, rounds: number): AbilityEffect {
-    return { kind: "apply_vulnerability", target_id: targetId, magnitude, rounds };
-  },
-
   summonAllyNpc(spec: AllyNpcSpec, idSuffix: string): AbilityEffect {
     return { kind: "summon_ally_npc", spec, id_suffix: idSuffix };
   },
@@ -116,6 +84,10 @@ export const fx = {
 
   consumeMonsterBleed(targetId: string): AbilityEffect {
     return { kind: "consume_monster_bleed", target_id: targetId };
+  },
+
+  attackRollDamage(targetId: string, hitMod: number, amount: number, formula: string, damageType?: DamageType): AbilityEffect {
+    return { kind: "attack_roll_damage", target_id: targetId, hit_mod: hitMod, amount, formula, damage_type: damageType };
   },
 
   damageReduction(targetId: string, pct: number, turns: number): AbilityEffect {

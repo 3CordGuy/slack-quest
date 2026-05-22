@@ -218,10 +218,8 @@ function renderEvent(state: CombatState, e: CombatEvent): string {
     case "passive_druid_regen":
       return `🌿 *Druid* passive: ${nameOf(state, e.actor)} regenerates +${e.amount} HP.`;
 
-    case "passive_rogue_lethal_strike":
-      return `🗡 *Lethal Strikes*: ${nameOf(state, e.actor)} — 🩸 Bleed ${e.magnitude}/turn × ${e.duration}.`;
-    case "ability_envenom_proc":
-      return `☠️ *Envenom*: ${nameOf(state, e.actor)} — 🤢 Poison ${e.stacks}/turn × 2 applied.`;
+    case "passive_rogue_first_crit":
+      return `🗡 *Refactor Rogue* passive: ${nameOf(state, e.actor)} first-strike crit.`;
 
     case "passive_bard_aura":
       return `🎵 *Bard aura*: ${nameOf(state, e.actor)} +${e.bonus} damage (from ${nameOf(state, e.source)}).`;

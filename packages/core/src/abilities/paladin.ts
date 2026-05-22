@@ -1,89 +1,58 @@
 import type { AbilityDef } from "../abilities";
 import { fx, rollSum } from "./effects";
 
+const PALADIN_AUTO_HEAL_AMOUNT = 8;
+const PALADIN_AUTO_HEAL_THRESHOLD = 0.3;
+const SHIELD_AMOUNT_BASE = 3;
+
 export const paladinAbilities: AbilityDef[] = [
-  {
-    kind: "passive",
-    id: "holy_rage",
-    name: "Holy Rage",
-    blurb: "Whenever you or an ally takes damage, your next attack deals +10% of that damage (stacks).",
-    trigger: "on_ally_hit",
-    once_per_fight: false,
-    execute: () => [],
-  },
-  {
-    kind: "active",
-    id: "shield_of_faith",
-    name: "Shield of Faith",
-    blurb: "Increase the AC of all allies by 5 for 3 rounds.",
-    icon: "round-shield",
-    mana_cost: 2,
-    routing: "utility",
-    target: "all_allies",
-    execute() {
-      return [fx.shieldOfFaith(3)];
-    },
-  },
-  {
-    kind: "active",
-    id: "lay_on_hands",
-    name: "Lay on Hands",
-    blurb: "Heal an ally for 1d6 + mag/2 + vit/2. If the target is your protected ally, also heal yourself for the same amount.",
-    icon: "hand",
-    mana_cost: 1,
-    routing: "utility",
-    target: "single_ally",
-    execute(ctx) {
-      const target = ctx.target as { id: string };
-      const vit = ctx.caster.stats?.vit ?? 5;
-      const healAmt = ctx.roll(6) + Math.floor(ctx.caster.magic_mod / 2) + Math.floor(vit / 2);
-      const effects = [fx.heal(target.id, healAmt)];
-      if (ctx.protected_ally_id === target.id) {
-        effects.push(fx.heal(ctx.caster.id, healAmt));
-      }
-      return effects;
-    },
-  },
   {
     kind: "active",
     id: "smite",
     name: "Smite",
-    blurb: "Strike for normal + 2d8 extra damage. Enemy deals 50% less damage on their next swing.",
+    blurb: "Strikes with the weight of a thousand failed builds.",
     icon: "axe-swing",
     mana_cost: 1,
-    cooldown_turns: 1,
     routing: "damage",
     target: "single_enemy",
     execute(ctx) {
       const monster = ctx.target as { id: string };
       const wpn = Math.max(0, ctx.caster.weapon_power);
-      const baseDmg = ctx.roll(6) + ctx.caster.attack_mod + wpn;
-      const extraDmg = rollSum(ctx.roll, 2, 8);
-      const formula = `1d6 + ${ctx.caster.attack_mod}a + ${wpn}w + 2d8`;
-      return [
-        fx.damage(monster.id, baseDmg + extraDmg, formula, { drinkBuff: "ability" }),
-        fx.smiteDebuff(monster.id),
-      ];
+      const r = rollSum(ctx.roll, 2, 6);
+      const amount = r + ctx.caster.attack_mod * 2 + wpn;
+      return [fx.damage(monster.id, amount, `2d6 + ${ctx.caster.attack_mod}a×2 + ${wpn}w`, { drinkBuff: "ability" })];
     },
   },
   {
     kind: "active",
-    id: "protect",
-    name: "Protect",
-    blurb: "Target an ally: they take half damage, you absorb the other half. Target yourself instead to gain 2d6 + mag/2 + vit/2 shield. 2-turn cooldown.",
-    icon: "crowned-heart",
-    mana_cost: 0,
-    cooldown_turns: 2,
+    id: "regression_shield",
+    name: "Regression Shield",
+    blurb: "Grants 🛡 +3 shield to every alive partymate.",
+    icon: "fairy-wand",
+    mana_cost: 2,
     routing: "utility",
-    target: "single_ally",
+    target: "all_allies",
     execute(ctx) {
-      const target = ctx.target as { id: string };
-      if (target.id === ctx.caster.id) {
-        const vit = ctx.caster.stats?.vit ?? 5;
-        const shieldAmt = rollSum(ctx.roll, 2, 6) + Math.floor(ctx.caster.magic_mod / 2) + Math.floor(vit / 2);
-        return [fx.shield(ctx.caster.id, shieldAmt)];
-      }
-      return [fx.protect(target.id)];
+      const perLevel = Math.floor(ctx.caster.level / 4);
+      return [fx.shieldAll(SHIELD_AMOUNT_BASE + perLevel)];
+    },
+  },
+  {
+    kind: "passive",
+    id: "lay_on_hands",
+    name: "Lay on Hands",
+    blurb: "Once per fight, when an ally drops below 30% HP after a hit, auto-heal them.",
+    trigger: "on_ally_hit",
+    once_per_fight: true,
+    condition(ctx) {
+      const target = ctx.target as { hp: number; max_hp: number } | undefined;
+      if (!target) return false;
+      return target.hp > 0 && target.hp < target.max_hp * PALADIN_AUTO_HEAL_THRESHOLD;
+    },
+    execute(ctx) {
+      const target = ctx.target as { id: string; max_hp: number };
+      const healAmount = PALADIN_AUTO_HEAL_AMOUNT + Math.floor((ctx.caster.level ?? 1) / 4);
+      return [fx.heal(target.id, healAmount)];
     },
   },
 ];

@@ -240,28 +240,21 @@ type CombatEvent =
       }>;
     }
   | { type: "battle_hymn_consumed"; actor: string; bonus: number; remaining: number }
-  | { type: "mark_applied"; actor: string; expires_after_round: number }
+  | { type: "mark_applied"; actor: string; expires_after_round: number; bonus: number }
+  | { type: "mark_bonus"; actor: string; bonus: number }
   | { type: "passive_warden_shield"; actor: string; amount: number }
   | { type: "passive_warden_thorns"; actor: string; target: string; amount: number }
   | { type: "passive_warden_armor_up"; actor: string; amount: number }
   | { type: "ability_brace"; actor: string; turns: number }
   | { type: "passive_mage_mana_font"; actor: string; amount: number }
   | { type: "passive_druid_regen"; actor: string; amount: number }
-  | { type: "passive_rogue_lethal_strike"; actor: string; magnitude: number; duration: number }
-  | { type: "ability_envenom_proc"; actor: string; target: string; stacks: number }
-  | { type: "passive_bard_aura"; actor: string; source: string; bonus: number }
-  | { type: "passive_warlock_bleed"; actor: string; magnitude: number; duration: number }
-  | { type: "passive_holy_rage"; paladin: string; bonus: number }
-  | { type: "ability_shield_of_faith"; actor: string; expires_after_round: number }
-  | { type: "ability_protect"; actor: string; target: string }
-  | { type: "ability_smite_debuff"; actor: string; target: string }
-  | { type: "protect_triggered"; paladin: string; target: string; target_damage: number; paladin_damage: number }
   | { type: "passive_primal_strikes_heal"; actor: string; amount: number }
   | { type: "ability_regeneration"; actor: string; target: string; magnitude: number; duration: number }
   | { type: "ability_animal_form"; actor: string; str_bonus: number; vit_bonus: number; agi_bonus: number; dex_bonus: number; turns: number }
   | { type: "ability_barkskin"; actor: string; target: string; bonus: number; turns: number }
   | { type: "ability_wildgrowth_entangle"; actor: string; target: string; duration: number }
   | { type: "passive_rogue_first_crit"; actor: string }
+  | { type: "passive_bard_aura"; actor: string; source: string; bonus: number }
   | { type: "passive_sinister_queries"; actor: string; target: string; magnitude: number }
   | { type: "ability_hex"; actor: string; target: string; duration: number }
   | { type: "hex_bleed_proc"; target: string; stacks: number }
@@ -699,7 +692,9 @@ function formatEvent(e: CombatEvent, state: CombatState | null): LogEntry[] {
     case "battle_hymn_consumed":
       return row("aura", <>Hymn boosts {nameOf(e.actor)} by +{e.bonus} ({e.remaining} left).</>, "good");
     case "mark_applied":
-      return row("targeted", <>{nameOf(e.actor)} marks the target — focus fire!</>, "good");
+      return row("targeted", <>{nameOf(e.actor)} marks the monster — party +{e.bonus} dmg until end of round {e.expires_after_round}.</>, "good");
+    case "mark_bonus":
+      return row("targeted", <>Focus-fire: +{e.bonus} dmg from {nameOf(e.actor)}.</>, "good");
     case "passive_warden_shield":
       return row("shield", <>{nameOf(e.actor)} hardens up — +{e.amount} shield (passive).</>, "good");
     case "passive_warden_armor_up":
@@ -712,28 +707,6 @@ function formatEvent(e: CombatEvent, state: CombatState | null): LogEntry[] {
       return row("wax-seal", <>Mana Font: {nameOf(e.actor)} regenerates +{e.amount} mana.</>, "good");
     case "passive_druid_regen":
       return row("grass", <>{nameOf(e.actor)} regen +{e.amount} HP (passive).</>, "good");
-    case "passive_rogue_lethal_strike":
-      return row("plain-dagger", <>{nameOf(e.actor)} Lethal Strikes — bleed {e.magnitude}/turn × {e.duration}.</>, "good");
-    case "ability_envenom_proc":
-      return row("poison", <>{nameOf(e.actor)} Envenom procs — poison {e.stacks}/turn × 2.</>, "good");
-    case "passive_bard_aura":
-      return row("aura", <>Bardic Aura: +{e.bonus} dmg from {nameOf(e.source)}'s song.</>, "good");
-    case "passive_warlock_bleed":
-      return [{
-        id: nextLogId++,
-        content: <><Icon name="death-skull" /> Cursed Strike: <Icon name="bleeding-wound" color="#dc2626" /> bleed {e.magnitude}/turn × {e.duration} on monster.</>,
-        tone: "good",
-      }];
-    case "passive_holy_rage":
-      return row("axe-swing", <>{nameOf(e.paladin)} Holy Rage +{e.bonus} damage!</>, "good");
-    case "ability_shield_of_faith":
-      return row("round-shield", <>Shield of Faith — all allies gain +5 AC until round {e.expires_after_round}.</>, "good");
-    case "ability_protect":
-      return row("crowned-heart", <>{nameOf(e.actor)} shields {nameOf(e.target)} — will absorb half their incoming damage.</>, "good");
-    case "ability_smite_debuff":
-      return row("axe-swing", <>Smite — {nameOf(e.target)} weakened, deals 50% damage next swing.</>, "good");
-    case "protect_triggered":
-      return row("crowned-heart", <>Protect: {nameOf(e.target)} takes {e.target_damage}, {nameOf(e.paladin)} absorbs {e.paladin_damage}.</>, "muted");
     case "passive_primal_strikes_heal":
       return row("grass", <>Primal Strikes: {nameOf(e.actor)} heals +{e.amount} HP.</>, "good");
     case "ability_regeneration":
@@ -746,6 +719,8 @@ function formatEvent(e: CombatEvent, state: CombatState | null): LogEntry[] {
       return row("grass", <>Wildgrowth: target entangled — −4 to-hit for {e.duration} rounds.</>, "good");
     case "passive_rogue_first_crit":
       return row("plain-dagger", <>{nameOf(e.actor)}'s first strike — guaranteed crit!</>, "good");
+    case "passive_bard_aura":
+      return row("aura", <>Bardic Aura: +{e.bonus} dmg from {nameOf(e.source)}'s song.</>, "good");
     case "passive_sinister_queries":
       return row("bleeding-wound", <>Sinister Queries: {nameOf(e.actor)} applies {e.magnitude} <Icon name="bleeding-wound" color="#dc2626" /> bleed.</>, "good");
     case "ability_hex":
@@ -826,7 +801,6 @@ export function CombatPage({
   const [migratePicker, setMigratePicker] = useState<boolean>(false);
   const [allyPickerAbility, setAllyPickerAbility] = useState<ActiveAbilityDef | null>(null);
   const [anyPickerAbility, setAnyPickerAbility] = useState<ActiveAbilityDef | null>(null);
-  const [protectConfirm, setProtectConfirm] = useState<{ pendingTargetId: string } | null>(null);
   const [givePicker, setGivePicker] = useState<"closed" | "selectItem" | { itemId: number }>("closed");
   const [items, setItems] = useState<InventoryItem[]>([]);
   const [autoResolve, setAutoResolve] = useState<boolean>(
@@ -937,8 +911,8 @@ export function CombatPage({
               setTimeout(() => setDiceRolls((prev) => prev.filter((r) => r.id !== id)), 5000);
             }
             // Fire passive toasts immediately so they appear while dice are visible.
-            if (evt.type === "passive_rogue_lethal_strike") {
-              toast(`🗡 Lethal Strikes — bleed ${(evt as { magnitude: number }).magnitude}/turn`, { icon: "🩸", duration: 4000 });
+            if (evt.type === "passive_rogue_first_crit") {
+              toast("🗡 First Strike — guaranteed crit!", { icon: "⚡", duration: 4000 });
             } else if (evt.type === "passive_warden_shield") {
               toast(`🛡 Hardened Up — +${(evt as { amount: number }).amount} shield`, { duration: 3000 });
             } else if (evt.type === "passive_warden_armor_up") {
@@ -949,8 +923,8 @@ export function CombatPage({
               toast(`🔰 Brace — 20% damage reduction active`, { duration: 3000 });
             } else if (evt.type === "passive_mage_mana_font") {
               toast(`🧙 Mana Font — +${(evt as { amount: number }).amount} mana`, { duration: 3000 });
-            } else if (evt.type === "passive_holy_rage") {
-              toast(`⚔️ Holy Rage — +${(evt as { bonus: number }).bonus} bonus damage`, { duration: 3000 });
+            } else if (evt.type === "passive_paladin_auto_heal") {
+              toast(`💛 Lay on Hands — +${(evt as { amount: number }).amount} HP`, { duration: 3000 });
             }
           }
           // Refresh inventory after any item use so the picker reflects the
@@ -1204,22 +1178,8 @@ export function CombatPage({
 
   function fireAllyAbility(targetId: string) {
     if (!allyPickerAbility) return;
-    if (allyPickerAbility.id === "protect" && targetId !== selfId) {
-      const existingProtect = (state?.ability_state as { paladin_protect?: { paladin_id: string; target_id: string } } | undefined)?.paladin_protect;
-      if (existingProtect?.paladin_id === selfId && existingProtect.target_id !== targetId) {
-        setAllyPickerAbility(null);
-        setProtectConfirm({ pendingTargetId: targetId });
-        return;
-      }
-    }
     send({ kind: "ability", actor: selfId, ability_id: allyPickerAbility.id, target: targetId });
     setAllyPickerAbility(null);
-  }
-
-  function confirmProtect() {
-    if (!protectConfirm) return;
-    send({ kind: "ability", actor: selfId, ability_id: "protect", target: protectConfirm.pendingTargetId });
-    setProtectConfirm(null);
   }
 
   function fireAnyAbility(pick: { kind: "monster"; id: string } | { kind: "fighter"; id: string }) {
@@ -1250,7 +1210,7 @@ export function CombatPage({
 
   // Background art: first live monster's portrait, or first monster fallback.
   const bgArtUrl = state?.monsters.find((m) => m.hp > 0)?.art_url ?? state?.monsters[0]?.art_url ?? null;
-  const isPickerOpen = itemPicker !== "closed" || migratePicker || allyPickerAbility !== null || anyPickerAbility !== null || givePicker !== "closed" || protectConfirm !== null;
+  const isPickerOpen = itemPicker !== "closed" || migratePicker || allyPickerAbility !== null || anyPickerAbility !== null || givePicker !== "closed";
   const otherPosition = me?.position === "front" ? "back" : "front";
   const isMonsterTurn = currentActorId !== null && isMonsterActor(currentActorId);
 
@@ -1335,16 +1295,8 @@ export function CombatPage({
                     monster={m}
                     round={state.round}
                     showSageReading={me?.class === "Staff Sage"}
-                    markedBy={
-                      state.ability_state?.mark &&
-                      state.round <= state.ability_state.mark.expires_after_round &&
-                      (!state.ability_state.mark.monster_id || state.ability_state.mark.monster_id === (m.id ?? String(i)))
-                        ? (state.fighters.find((f) => f.id === state.ability_state!.mark!.marked_by)?.name ?? state.ability_state.mark.marked_by)
-                        : undefined
-                    }
+                    isMarked={!!(state.ability_state?.mark && state.round <= state.ability_state.mark.expires_after_round && (!state.ability_state.mark.monster_id || state.ability_state.mark.monster_id === (m.id ?? String(i))))}
                     isTargeted={effectiveTarget !== null && (m.id ?? null) === effectiveTarget}
-                    smiteDebuffed={!!((state.ability_state as { paladin_smite_debuff?: Record<string, number> } | undefined)?.paladin_smite_debuff?.[mid])}
-                    vulnerable={(state.ability_state as { vulnerable?: Record<string, { expires_after_round: number; magnitude: number }> } | undefined)?.vulnerable?.[mid]}
                     slashSeq={lastSlash?.id === mid ? lastSlash.seq : 0}
                     lungeSeq={lastLunge?.id === mid ? lastLunge.seq : 0}
                     dustSeq={hitDustSeq[mid] ?? 0}
@@ -1393,7 +1345,7 @@ export function CombatPage({
       {/* Party chips row */}
       {state && (
         <div style={{ background: "rgba(10,11,14,0.92)", borderTop: "1px solid #1e2028", padding: "6px 10px", flexShrink: 0, zIndex: 8 }}>
-          <PartyChips fighters={state.fighters} selfId={selfId} flashIds={flashIds} hitDustSeq={hitDustSeq} healBurstSeq={healBurstSeq} shieldBurstSeq={shieldBurstSeq} onClickSelf={onOpenInventory} abilityState={state.ability_state} round={state.round} />
+          <PartyChips fighters={state.fighters} selfId={selfId} flashIds={flashIds} hitDustSeq={hitDustSeq} healBurstSeq={healBurstSeq} shieldBurstSeq={shieldBurstSeq} onClickSelf={onOpenInventory} />
         </div>
       )}
 
@@ -1438,32 +1390,6 @@ export function CombatPage({
           onCancel={() => setAnyPickerAbility(null)}
         />
       )}
-      {state?.status === "active" && protectConfirm && (() => {
-        const existingProtect = (state.ability_state as { paladin_protect?: { paladin_id: string; target_id: string } } | undefined)?.paladin_protect;
-        const existingName = state.fighters.find((f) => f.id === existingProtect?.target_id)?.name ?? "an ally";
-        const pendingName = state.fighters.find((f) => f.id === protectConfirm.pendingTargetId)?.name ?? "an ally";
-        return (
-          <PickerModal title={<><Icon name="crowned-heart" /> Replace protection?</>} onClose={() => setProtectConfirm(null)}>
-            <p style={{ margin: "0 0 16px", color: "#d1d5db", fontSize: 14 }}>
-              {existingName} is currently under your protection. Replace with {pendingName}?
-            </p>
-            <div style={{ display: "flex", gap: 8 }}>
-              <button
-                onClick={confirmProtect}
-                style={{ flex: 1, background: "#7c2020", border: "1px solid #a33030", color: "#f5f5f5", borderRadius: 6, padding: "8px 0", fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}
-              >
-                Replace
-              </button>
-              <button
-                onClick={() => setProtectConfirm(null)}
-                style={{ flex: 1, background: "#1e2028", border: "1px solid #2a2d44", color: "#9aa0a6", borderRadius: 6, padding: "8px 0", fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}
-              >
-                Cancel
-              </button>
-            </div>
-          </PickerModal>
-        );
-      })()}
       {state?.status === "active" && givePicker === "selectItem" && (
         <GiveItemPicker
           items={items as unknown as CombatItem[]}
@@ -1538,7 +1464,7 @@ export function CombatPage({
           {items.some((i) => !i.equipped) && state.fighters.filter((f) => f.hp > 0 && f.id !== selfId).length > 0 && (
             <CBtn label="Give" icon="conversation" color="#fcd34d" disabled={!myTurn} onClick={() => setGivePicker("selectItem")} />
           )}
-          <CBtn label="Mark" icon="targeted" color="#f97316" disabled={liveMonsters.length > 1 && targetMonsterId === null} onClick={() => send({ kind: "mark", actor: selfId, target_id: effectiveTarget })} />
+          <CBtn label="Mark" icon="targeted" color="#f97316" disabled={!myTurn || (liveMonsters.length > 1 && targetMonsterId === null)} onClick={() => send({ kind: "mark", actor: selfId, target_id: effectiveTarget })} />
           <CBtn label="Wait" icon="hourglass" color="#475569" disabled={!myTurn} onClick={() => send({ kind: "wait", actor: selfId })} />
           <CBtn label="Flee" icon="footprint" color="#9aa0a6" disabled={!myTurn} onClick={() => send({ kind: "flee", actor: selfId })} />
           {isMonsterTurn && !autoResolve && (
@@ -1634,10 +1560,8 @@ function MonsterCard({
   monster,
   round,
   showSageReading,
-  markedBy,
+  isMarked = false,
   isTargeted = false,
-  smiteDebuffed = false,
-  vulnerable,
   slashSeq = 0,
   lungeSeq = 0,
   dustSeq = 0,
@@ -1646,10 +1570,8 @@ function MonsterCard({
   monster: Monster;
   round: number;
   showSageReading: boolean;
-  markedBy?: string;
+  isMarked?: boolean;
   isTargeted?: boolean;
-  smiteDebuffed?: boolean;
-  vulnerable?: { expires_after_round: number; magnitude: number };
   slashSeq?: number;
   lungeSeq?: number;
   dustSeq?: number;
@@ -1675,7 +1597,7 @@ function MonsterCard({
 
   const sageLo = 1 + monster.tier;
   const sageHi = 6 + monster.tier + (monster.is_boss && monster.boss_phase === 2 ? monster.tier : 0);
-  const borderColor = isDead ? "#2a2d33" : isTargeted ? "#fbbf24" : markedBy ? "#f59e0b" : "#7c2020";
+  const borderColor = isDead ? "#2a2d33" : isTargeted ? "#fbbf24" : isMarked ? "#f59e0b" : "#7c2020";
   return (
     <div
       key={`mc-${monster.id ?? ""}-${isDead ? "dead" : lungeSeq}`}
@@ -1696,10 +1618,9 @@ function MonsterCard({
       {/* Dust puff on every landed hit. Same component as the fighter
           cards — re-keys its WAAPI animations whenever dustSeq bumps. */}
       <HitDust seq={dustSeq} />
-      {markedBy && !isDead && (
-        <div style={{ position: "absolute", top: -12, right: -8, display: "flex", alignItems: "center", gap: 4, background: "#78350f", border: "2px solid #f59e0b", borderRadius: 12, padding: "2px 8px", zIndex: 10, boxShadow: "0 0 12px #f59e0b80" }}>
-          <Icon name="targeted" size={14} color="#fbbf24" />
-          <span style={{ fontSize: 11, fontWeight: 700, color: "#fbbf24", whiteSpace: "nowrap" }}>{markedBy}</span>
+      {isMarked && !isDead && (
+        <div style={{ position: "absolute", top: -10, right: -10, width: 36, height: 36, borderRadius: "50%", background: "#78350f", border: "2px solid #f59e0b", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 10, boxShadow: "0 0 12px #f59e0b80" }}>
+          <Icon name="targeted" size={20} color="#fbbf24" />
         </div>
       )}
       <Avatar
@@ -1708,7 +1629,7 @@ function MonsterCard({
         size={72}
         radius={8}
         fallbackIcon="dragon"
-        fallbackColor={markedBy ? "#f59e0b" : "#7c2020"}
+        fallbackColor={isMarked ? "#f59e0b" : "#7c2020"}
         border={`1px solid ${borderColor}`}
         style={{ flexShrink: 0 }}
       />
@@ -1759,18 +1680,12 @@ function MonsterCard({
           </div>
         </div>
         <BigHpBar current={Math.max(0, monster.hp)} max={monster.max_hp} />
-        {((monster.effects && monster.effects.length > 0) || smiteDebuffed || (vulnerable && round <= vulnerable.expires_after_round)) && !isDead && (
+        {monster.effects && monster.effects.length > 0 && !isDead && (
           <div style={{ display: "flex", gap: 6, marginTop: 6, flexWrap: "wrap" }}>
-            {monster.effects?.map((e, i) => {
+            {monster.effects.map((e, i) => {
               const def = EFFECT_PILLS[e.type];
               return def ? <def.pill key={i} effect={e} size="lg" /> : null;
             })}
-            {smiteDebuffed && (
-              <StatusPill size="lg" color="#f87171" icon="axe-swing" label="smited" suffix="½ dmg" title="Smite: this monster deals 50% less damage on its next swing" />
-            )}
-            {vulnerable && round <= vulnerable.expires_after_round && (
-              <StatusPill size="lg" color="#fb923c" icon="crossed-swords" label="vulnerable" suffix={`+${vulnerable.magnitude}%`} title={`Vulnerable: takes ${vulnerable.magnitude}% more damage (${vulnerable.expires_after_round - round + 1} round${vulnerable.expires_after_round - round + 1 === 1 ? "" : "s"} left)`} />
-            )}
           </div>
         )}
         {showSageReading && !isDead && (
@@ -2841,25 +2756,15 @@ function badge(bg: string, fg: string, border: string): React.CSSProperties {
 }
 
 // Compact party HP chips row below the room view.
-function PartyChips({ fighters, selfId, flashIds, hitDustSeq, healBurstSeq, shieldBurstSeq, onClickSelf, abilityState, round }: {
+function PartyChips({ fighters, selfId, flashIds, hitDustSeq, healBurstSeq, shieldBurstSeq, onClickSelf }: {
   fighters: Fighter[]; selfId: string; flashIds: Set<string>;
   hitDustSeq: Record<string, number>;
   healBurstSeq: Record<string, number>;
   shieldBurstSeq: Record<string, number>;
   onClickSelf?: () => void;
-  abilityState?: { [key: string]: unknown };
-  round?: number;
 }) {
   const front = fighters.filter((f) => f.position === "front");
   const back = fighters.filter((f) => f.position === "back");
-  const sofState = abilityState?.shield_of_faith as { expires_after_round: number } | undefined;
-  const sofRoundsLeft = sofState != null ? sofState.expires_after_round - (round ?? 0) + 1 : 0;
-  const sofActive = sofRoundsLeft > 0;
-  const protectState = abilityState?.paladin_protect as { paladin_id: string; target_id: string } | undefined;
-  const holyRageMap = abilityState?.holy_rage as Record<string, number> | undefined;
-  const vanishedMap = abilityState?.vanished as Record<string, number> | undefined;
-  const envenomMap = abilityState?.envenomed_weapon as Record<string, { stacks: number; charges: number }> | undefined;
-
   function renderChip(f: Fighter) {
     const pct = f.max_hp > 0 ? Math.max(0, f.hp / f.max_hp) : 0;
     const hpCol = pct > 0.5 ? "#22c55e" : pct > 0.25 ? "#f59e0b" : "#ef4444";
@@ -2930,28 +2835,14 @@ function PartyChips({ fighters, selfId, flashIds, hitDustSeq, healBurstSeq, shie
             <div key={mi} style={{ width: 7, height: 7, borderRadius: "50%", background: mi < f.mana ? "#818cf8" : "#1e2028", border: "1px solid #3a3d43" }} />
           ))}
         </div>
-        {(() => {
-          const isProtected = protectState?.target_id === f.id;
-          const holyRageTotal = holyRageMap?.[f.id] ?? 0;
-          const holyRageBonus = Math.floor(holyRageTotal * 0.1);
-          const vanishSwings = vanishedMap?.[f.id] ?? 0;
-          const envenomEntry = envenomMap?.[f.id];
-          const hasExtra = sofActive || isProtected || holyRageTotal > 0 || vanishSwings > 0 || !!envenomEntry;
-          if (!f.effects?.length && !hasExtra) return null;
-          return (
-            <div style={{ position: "absolute", top: -8, right: -4, display: "flex", flexDirection: "column", gap: 3, alignItems: "flex-end" }}>
-              {f.effects?.map((e, i) => {
-                const def = EFFECT_PILLS[e.type];
-                return def ? <def.pill key={i} effect={e} size="sm" /> : null;
-              })}
-              {vanishSwings > 0 && <StatusPill size="sm" color="#818cf8" icon="player-dodge" label="vanish" suffix={`${vanishSwings}sw`} title={`Vanished: untargetable for ${vanishSwings} swing${vanishSwings === 1 ? "" : "s"}; next hit auto-crits`} />}
-              {envenomEntry && <StatusPill size="sm" color="#4ade80" icon="vial" label="envenomed" suffix={`×${envenomEntry.stacks} ×${envenomEntry.charges}`} title={`Envenomed weapon: next ${envenomEntry.charges} hit${envenomEntry.charges === 1 ? "" : "s"} apply ${envenomEntry.stacks} stacks of poison`} />}
-              {sofActive && <StatusPill size="sm" color="#60a5fa" icon="round-shield" label="SoF" suffix={`${sofRoundsLeft}r`} title={`Shield of Faith: +5 AC (${sofRoundsLeft} round${sofRoundsLeft === 1 ? "" : "s"} left)`} />}
-              {isProtected && <StatusPill size="sm" color="#a78bfa" icon="crowned-heart" label="protected" suffix="½ dmg" title="Protected: taking half damage, absorbed by the paladin" />}
-              {holyRageTotal > 0 && <StatusPill size="sm" color="#f97316" icon="fire" label="holy rage" suffix={`+${holyRageBonus}`} title={`Holy Rage: next attack deals +${holyRageBonus} bonus damage`} />}
-            </div>
-          );
-        })()}
+        {f.effects && f.effects.length > 0 && (
+          <div style={{ position: "absolute", top: -8, right: -4, display: "flex", flexDirection: "column", gap: 3, alignItems: "flex-end" }}>
+            {f.effects.map((e, i) => {
+              const def = EFFECT_PILLS[e.type];
+              return def ? <def.pill key={i} effect={e} size="sm" /> : null;
+            })}
+          </div>
+        )}
       </div>
     );
   }
