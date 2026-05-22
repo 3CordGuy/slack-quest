@@ -1797,12 +1797,6 @@ function handleDamageAbility(
     events.push(...hexProc.events);
   }
 
-  // Warlock Cursed Strike: crits apply bleed.
-  if (isCrit && !monsterKilled) {
-    const bleed = applyWarlockBleed(nextState, tickedActor, monster.id, true);
-    nextState = bleed.state;
-    events.push(...bleed.events);
-  }
 
   // Rogue — Lethal Strikes: crits apply bleed.
   if (isCrit && !monsterKilled) {
