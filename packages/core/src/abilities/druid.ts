@@ -15,22 +15,21 @@ export const druidAbilities: AbilityDef[] = [
     kind: "active",
     id: "regeneration",
     name: "Regeneration",
-    blurb: "Target ally regenerates 3×mag HP per turn for 4 rounds.",
+    blurb: "Target ally regenerates mag HP per turn for 4 rounds.",
     icon: "regeneration",
     mana_cost: 1,
     routing: "utility",
     target: "single_ally",
     execute(ctx) {
       const target = ctx.target as FighterSnapshot;
-      const magnitude = 3 * ctx.caster.magic_mod;
-      return [fx.fighterRegen(target.id, magnitude, 4)];
+      return [fx.fighterRegen(target.id, ctx.caster.magic_mod, 4)];
     },
   },
   {
     kind: "active",
     id: "animal_form",
     name: "Animal Form",
-    blurb: "Transform — Might, Vit, Agi, and Dex each increase by 2 + mag + 25% of their current value for 4 rounds.",
+    blurb: "Transform — Might, Vit, Agi, and Dex each increase by mag + 25% of their current value for 4 rounds.",
     icon: "wolf-head",
     mana_cost: 2,
     routing: "utility",
@@ -38,11 +37,11 @@ export const druidAbilities: AbilityDef[] = [
     execute(ctx) {
       const mag = ctx.caster.magic_mod;
       const stats = (ctx.caster as FighterSnapshot & { stats?: { str: number; vit: number; agi: number; dex: number } }).stats;
-      const base = (key: number) => Math.floor(2 + mag + key * 0.25);
-      const strBonus = stats ? base(stats.str) : Math.max(1, 2 + mag);
-      const vitBonus = stats ? base(stats.vit) : Math.max(1, 2 + mag);
-      const agiBonus = stats ? base(stats.agi) : Math.max(1, 2 + mag);
-      const dexBonus = stats ? base(stats.dex) : Math.max(1, 2 + mag);
+      const base = (key: number) => Math.floor(mag + key * 0.25);
+      const strBonus = stats ? base(stats.str) : Math.max(1, mag);
+      const vitBonus = stats ? base(stats.vit) : Math.max(1, mag);
+      const agiBonus = stats ? base(stats.agi) : Math.max(1, mag);
+      const dexBonus = stats ? base(stats.dex) : Math.max(1, mag);
       return [fx.animalForm(ctx.caster.id, strBonus, vitBonus, agiBonus, dexBonus, 4)];
     },
   },
