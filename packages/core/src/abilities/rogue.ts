@@ -30,7 +30,7 @@ export const rogueAbilities: AbilityDef[] = [
     id: "envenom_weapon",
     name: "Envenom Weapon",
     blurb: "Apply venom to your weapon — your next hit applies 2 + floor(lev/2) stacks of poison.",
-    icon: "poison",
+    icon: "vial",
     mana_cost: 1,
     routing: "utility",
     target: "self",
