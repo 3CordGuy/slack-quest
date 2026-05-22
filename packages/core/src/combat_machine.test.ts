@@ -1305,11 +1305,11 @@ describe("QA Paladin — holy_rage passive", () => {
     return init;
   }
 
-  it("accumulates floor(10%) of HP damage when the paladin themselves takes damage", () => {
-    // d4=4 → raw=4+3(tier)+3(boss)=10, hpDamage=10. Math.floor(1.0)=1.
+  it("accumulates raw HP damage when the paladin themselves takes damage", () => {
+    // d4=4 → raw=4+3(tier)+3(boss)=10, hpDamage=10. Stored as raw 10; bonus=floor(10*0.1)=1.
     const begun = runBegin(createCombatState(holyRageInit()), [5, 18]);
     const result = step(begun.state, { kind: "monster_act" }, seqRoll([50, 15, 4]));
-    expect(result.state.ability_state?.holy_rage?.["U_PALADIN"]).toBe(1);
+    expect(result.state.ability_state?.holy_rage?.["U_PALADIN"]).toBe(10);
   });
 
   it("adds the accumulated bonus to the next attack and then clears it", () => {

@@ -238,8 +238,8 @@ export interface AbilityRuntimeState {
   // Staff Sage Foresee — re-appends full intel readout for this many more
   // of the Sage's own combat turns after the initial cast.
   foresee_turns?: number;
-  // QA Paladin — Holy Rage: accumulated damage bonus per fighter id.
-  // Consumed on the paladin's next attack/ability action.
+  // QA Paladin — Holy Rage: accumulated raw HP damage received per fighter id.
+  // Bonus on next attack = floor(total * 0.1). Reset to 0 on consume.
   holy_rage?: Record<ActorId, number>;
   // QA Paladin — Shield of Faith: all allies get +5 AC until this round passes.
   shield_of_faith?: { expires_after_round: number };
@@ -809,7 +809,8 @@ function handlePlayerHit(
   }
 
   // QA Paladin — Holy Rage: consume accumulated bonus from damage taken.
-  const holyRageBonus = s.ability_state?.holy_rage?.[action.actor] ?? 0;
+  const holyRageTotal = s.ability_state?.holy_rage?.[action.actor] ?? 0;
+  const holyRageBonus = Math.floor(holyRageTotal * 0.1);
   if (holyRageBonus > 0) {
     damage += holyRageBonus;
     s = { ...s, ability_state: clearHolyRage(s.ability_state, action.actor) };
@@ -1585,8 +1586,9 @@ function handleDamageAbility(
   const formula = dmgEffect.formula;
 
   // QA Paladin — Holy Rage: consume accumulated bonus.
-  const holyRageBonusAbility = state.ability_state?.holy_rage?.[actorId] ?? 0;
-  const abilityStateAfterAnger = holyRageBonusAbility > 0
+  const holyRageTotal = state.ability_state?.holy_rage?.[actorId] ?? 0;
+  const holyRageBonusAbility = Math.floor(holyRageTotal * 0.1);
+  const abilityStateAfterAnger = holyRageTotal > 0
     ? clearHolyRage(state.ability_state, actorId)
     : state.ability_state;
   amount += holyRageBonusAbility;
@@ -2947,17 +2949,17 @@ export function mergeEffect(
 
 // QA Paladin — Holy Rage helpers.
 
-// Accumulate 10% of hpDamage into holy_rage for every alive paladin in party.
+// Accumulate raw hpDamage into holy_rage for every alive paladin in party.
 // Fires when any party member (including the paladin themselves) takes damage.
+// The 10% bonus is applied at consume time (floor(total * 0.1)), so small hits
+// stack without being discarded by per-hit rounding.
 function accumulateHolyRage(state: CombatState, hpDamage: number): CombatState {
-  const bonus = Math.floor(hpDamage * 0.1);
-  if (bonus <= 0) return state;
   const paladins = state.fighters.filter((f) => f.hp > 0 && classHasPassive(f.class, "holy_rage"));
   if (paladins.length === 0) return state;
   const prev = state.ability_state?.holy_rage ?? {};
   const updated: Record<ActorId, number> = { ...prev };
   for (const p of paladins) {
-    updated[p.id] = (updated[p.id] ?? 0) + bonus;
+    updated[p.id] = (updated[p.id] ?? 0) + hpDamage;
   }
   return { ...state, ability_state: { ...(state.ability_state ?? {}), holy_rage: updated } };
 }
