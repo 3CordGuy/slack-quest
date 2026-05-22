@@ -498,7 +498,7 @@ export function CBtn({ label, icon, color, disabled, manaCost, tooltip, cooldown
           {onCooldown && (
             <div style={{ marginTop: 6, color: "#fb923c", fontSize: 11, fontWeight: 600 }}>⏳ {cooldown} turn{cooldown !== 1 ? "s" : ""} cooldown</div>
           )}
-          {!onCooldown && manaCost !== undefined && (
+          {manaCost !== undefined && (
             <div style={{ marginTop: 6, color: "#a78bfa", fontSize: 11, fontWeight: 600 }}>{manaCost}✦ mana</div>
           )}
         </div>
@@ -525,7 +525,7 @@ export function CBtn({ label, icon, color, disabled, manaCost, tooltip, cooldown
       >
         {icon && <Icon name={icon} size={compact ? 20 : 26} />}
         <span style={{ fontSize: compact ? 9 : 11, fontWeight: 700, lineHeight: 1, letterSpacing: 0.3, textAlign: "center" }}>{label}</span>
-        {!onCooldown && manaCost !== undefined && <span style={{ fontSize: compact ? 8 : 9, opacity: 0.75 }}>{manaCost}✦</span>}
+        {manaCost !== undefined && <span style={{ fontSize: compact ? 8 : 9, opacity: 0.75 }}>{manaCost}✦</span>}
       </button>
       {onCooldown && (
         <div style={{
