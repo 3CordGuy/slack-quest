@@ -2278,7 +2278,8 @@ function applyUtilityAbilityEffects(
             },
           } : {}),
         };
-        s = { ...s, fighters: s.fighters.map((f) => f.id === effect.target_id ? buffedFighter : f) };
+        const animalFormEff = { type: "animal_form" as const, magnitude: 1, remaining: effect.turns, source: actor };
+        s = { ...s, fighters: s.fighters.map((f) => f.id === effect.target_id ? { ...buffedFighter, effects: mergeEffect(buffedFighter.effects, animalFormEff) } : f) };
         s = {
           ...s,
           ability_state: {
@@ -2595,7 +2596,7 @@ function tickEffects(
   const newEffects: MachineStatusEffect[] = [];
   const events: CombatEvent[] = [];
   for (const eff of effects) {
-    if (eff.type === "empowered" || eff.type === "frozen" || eff.type === "shocked" || eff.type === "stunned" || eff.type === "hexed" || eff.type === "entangled" || eff.type === "barkskin") {
+    if (eff.type === "empowered" || eff.type === "frozen" || eff.type === "shocked" || eff.type === "stunned" || eff.type === "hexed" || eff.type === "entangled" || eff.type === "barkskin" || eff.type === "animal_form") {
       // Passive — no HP delta. Silently count down; the effect is applied
       // inline in the attack/turn handlers via the actor's effects array.
       // "stunned" uses remaining as a max-duration safety net (break logic
@@ -3152,7 +3153,8 @@ const EFFECT_STACK_POLICY: Record<EffectType, { mode: "stack" | "refresh"; maxMa
   stunned:   { mode: "refresh", maxMagnitude: 1 },
   hexed:     { mode: "refresh", maxMagnitude: 1 },
   entangled: { mode: "refresh", maxMagnitude: 1 },
-  barkskin:  { mode: "refresh", maxMagnitude: 1 },
+  barkskin:    { mode: "refresh", maxMagnitude: 1 },
+  animal_form: { mode: "refresh", maxMagnitude: 1 },
 };
 
 // Merge `incoming` into the existing effect list. If an effect of the

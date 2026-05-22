@@ -224,7 +224,7 @@ export type EquipSlot =
 // Status effects — applied to player characters or monsters and tick on the
 // affected actor's own combat action / monster turn. v1 set is HP-based; future
 // effects could touch cooldown, damage modifiers, etc.
-export type EffectType = "regen" | "bleeding" | "burning" | "poisoned" | "empowered" | "frozen" | "shocked" | "stunned" | "hexed" | "entangled" | "barkskin";
+export type EffectType = "regen" | "bleeding" | "burning" | "poisoned" | "empowered" | "frozen" | "shocked" | "stunned" | "hexed" | "entangled" | "barkskin" | "animal_form";
 
 // Elemental damage type carried by rare+ weapons and assigned to monsters.
 export type ElementType = "fire" | "ice" | "lightning";
@@ -254,7 +254,8 @@ export const EFFECT_META: Record<EffectType, EffectMeta> = {
   stunned:   { emoji: "📦", name: "Stunned",   kind: "passive", ignoresArmor: false, blurb: "Containerized — skips swings with escalating 30%/turn break chance.",    icon: "fluffy-swirl",   color: "#a78bfa" },
   hexed:     { emoji: "🔮", name: "Hexed",     kind: "passive", ignoresArmor: false, blurb: "Deals -25% damage. Takes 3 bleed stacks whenever it takes damage.",      icon: "death-skull",    color: "#a855f7" },
   entangled: { emoji: "🌿", name: "Entangled", kind: "debuff",  ignoresArmor: false, blurb: "-4 to attack rolls.",                                                     icon: "vine-whip",      color: "#86efac" },
-  barkskin:  { emoji: "🍃", name: "Barkskin",  kind: "passive", ignoresArmor: false, blurb: "Hardened skin — bonus AC for N turns.",                                   icon: "leaf",           color: "#a3e635" },
+  barkskin:    { emoji: "🍃", name: "Barkskin",    kind: "passive", ignoresArmor: false, blurb: "Hardened skin — bonus AC for N turns.",              icon: "leaf",      color: "#a3e635" },
+  animal_form: { emoji: "🐺", name: "Animal Form", kind: "buff",    ignoresArmor: false, blurb: "Transformed — mag + 25% stat boost active.",          icon: "wolf-head", color: "#f97316" },
 };
 
 export const ELEMENT_META: Record<ElementType, { emoji: string; name: string; effect: EffectType }> = {
