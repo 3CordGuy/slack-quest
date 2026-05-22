@@ -71,6 +71,18 @@ export const fx = {
   discourage(targetId: string, charges: number): AbilityEffect {
     return { kind: "apply_discourage", target_id: targetId, charges };
   },
+
+  shieldOfFaith(rounds: number): AbilityEffect {
+    return { kind: "apply_shield_of_faith", rounds };
+  },
+
+  protect(targetId: string): AbilityEffect {
+    return { kind: "apply_protect", target_id: targetId };
+  },
+
+  smiteDebuff(targetId: string): AbilityEffect {
+    return { kind: "apply_smite_debuff", target_id: targetId };
+  },
 };
 
 // Roll count dice of `sides` and return the sum.

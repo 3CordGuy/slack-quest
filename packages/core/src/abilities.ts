@@ -3,6 +3,8 @@
 // (auto-fires on a trigger). Replaces the legacy SIGNATURES / PASSIVES /
 // ABILITIES maps in flavor.ts.
 
+import type { Stats } from "./stats";
+
 export type TargetKind =
   | "self"
   | "single_enemy"
@@ -37,6 +39,8 @@ export interface FighterSnapshot {
   magic_mod: number;
   level: number;
   position: "front" | "back";
+  // Primary stats — present on STATS_V2 fighters; absent on legacy combats.
+  stats?: Stats;
 }
 
 export interface MonsterSnapshot {
@@ -59,6 +63,9 @@ export interface AbilityContext {
   // For position-changing abilities (migrate): the requested destination row.
   // Injected from the action payload by the engine.
   position?: "front" | "back";
+  // Injected for Paladin Lay on Hands: the ID of the ally currently under Protect,
+  // if the caster is the active protector. Undefined otherwise.
+  protected_ally_id?: string;
 }
 
 // Effects returned by execute(). The machine applies each one in sequence.
@@ -99,7 +106,13 @@ export type AbilityEffect =
   // Grant advantage charges to a fighter: next N to-hit d20 rolls twice, take higher.
   | { kind: "grant_encourage"; target_id: string; charges: number }
   // Apply disadvantage charges to a monster: next N to-hit d20 rolls twice, take lower.
-  | { kind: "apply_discourage"; target_id: string; charges: number };
+  | { kind: "apply_discourage"; target_id: string; charges: number }
+  // QA Paladin — Shield of Faith: all allies gain +5 AC for N rounds.
+  | { kind: "apply_shield_of_faith"; rounds: number }
+  // QA Paladin — Protect: caster will absorb half of target's incoming HP damage.
+  | { kind: "apply_protect"; target_id: string }
+  // QA Paladin — Smite debuff: target monster deals 50% damage on its next swing.
+  | { kind: "apply_smite_debuff"; target_id: string };
 
 export interface ActiveAbilityDef {
   kind: "active";

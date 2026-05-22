@@ -215,13 +215,10 @@ const DRUID_PASSIVE_REGEN = 2;
 const BARD_AURA_HYMN_BONUS = 2;
 const WARLOCK_BLEED_MAGNITUDE = 3;
 const WARLOCK_BLEED_DURATION = 3;
-const PALADIN_AUTO_HEAL_AMOUNT = 8;
-const PALADIN_AUTO_HEAL_THRESHOLD = 0.3;
 
 // Keys for once-per-fight passives.
 const PASSIVE_WARDEN_SHIELD = "warden_shield";
 const PASSIVE_ROGUE_FIRST_CRIT = "rogue_first_crit";
-const PASSIVE_PALADIN_AUTO_HEAL = "paladin_auto_heal";
 
 export interface AbilityRuntimeState {
   // SRE Warden — monster's next N swings forced to target actor_id.
@@ -241,6 +238,15 @@ export interface AbilityRuntimeState {
   // Staff Sage Foresee — re-appends full intel readout for this many more
   // of the Sage's own combat turns after the initial cast.
   foresee_turns?: number;
+  // QA Paladin — Holy Anger: accumulated damage bonus per fighter id.
+  // Consumed on the paladin's next attack/ability action.
+  holy_anger?: Record<ActorId, number>;
+  // QA Paladin — Shield of Faith: all allies get +5 AC until this round passes.
+  shield_of_faith?: { expires_after_round: number };
+  // QA Paladin — Protect: the paladin absorbs half of the protected ally's HP damage.
+  paladin_protect?: { paladin_id: ActorId; target_id: ActorId };
+  // QA Paladin — Smite debuff: monster → swings remaining at 50% reduced damage.
+  paladin_smite_debuff?: Record<ActorId, number>;
 }
 
 // +damage to non-marker partymate attacks while a mark is active. Tuned to
@@ -450,7 +456,11 @@ export type CombatEvent =
   | { type: "passive_rogue_first_crit"; actor: ActorId }
   | { type: "passive_bard_aura"; actor: ActorId; source: ActorId; bonus: number }
   | { type: "passive_warlock_bleed"; actor: ActorId; magnitude: number; duration: number }
-  | { type: "passive_paladin_auto_heal"; paladin: ActorId; target: ActorId; amount: number }
+  | { type: "passive_holy_anger"; paladin: ActorId; bonus: number }
+  | { type: "ability_shield_of_faith"; actor: ActorId; expires_after_round: number }
+  | { type: "ability_protect"; actor: ActorId; target: ActorId }
+  | { type: "ability_smite_debuff"; actor: ActorId; target: ActorId }
+  | { type: "protect_triggered"; paladin: ActorId; target: ActorId; target_damage: number; paladin_damage: number }
   | {
       type: "drink_buff_consumed";
       actor: ActorId;
@@ -796,6 +806,14 @@ function handlePlayerHit(
   damage = drinkResult.damage;
   if (drinkResult.forceCrit) {
     isCrit = true;
+  }
+
+  // QA Paladin — Holy Anger: consume accumulated bonus from ally damage.
+  const holyAngerBonus = s.ability_state?.holy_anger?.[action.actor] ?? 0;
+  if (holyAngerBonus > 0) {
+    damage += holyAngerBonus;
+    s = { ...s, ability_state: clearHolyAnger(s.ability_state, action.actor) };
+    events.push({ type: "passive_holy_anger", paladin: action.actor, bonus: holyAngerBonus });
   }
 
   // Battle Elixir — Empowered: +25% damage for N turns.
@@ -1348,7 +1366,9 @@ function handleMonsterAct(state: CombatState, roll: RollFn): StepResult {
   }
   const modifier = Math.floor(monster.tier / 2) + 4;
   const hitTotal = d20 + modifier;
-  const targetAc = fighterAc(target.level);
+  const sof = s.ability_state?.shield_of_faith;
+  const shieldOfFaithBonus = sof && s.round <= sof.expires_after_round ? 5 : 0;
+  const targetAc = fighterAc(target.level) + shieldOfFaithBonus;
   const landed = hitTotal >= targetAc;
   events.push({
     type: "roll",
@@ -1369,8 +1389,8 @@ function handleMonsterAct(state: CombatState, roll: RollFn): StepResult {
   });
 
   if (!landed) {
-    // Even a miss consumes one tick of taunt / vanish — the swing happened.
-    const decremented: CombatState = { ...s, ability_state: tickAbilityCountersAfterSwing(s.ability_state), round_monster_targets: rmt };
+    // Even a miss consumes one tick of taunt / vanish / smite debuff — the swing happened.
+    const decremented: CombatState = { ...s, ability_state: consumeSmiteDebuff(tickAbilityCountersAfterSwing(s.ability_state), actorId), round_monster_targets: rmt };
     const next = advanceTurn(decremented);
     return { state: next, events: [...events, ...turnStartEvent(next)] };
   }
@@ -1384,7 +1404,7 @@ function handleMonsterAct(state: CombatState, roll: RollFn): StepResult {
       events.push({ type: "monster_dodged", target: target.id });
       const decremented: CombatState = {
         ...s,
-        ability_state: tickAbilityCountersAfterSwing(s.ability_state),
+        ability_state: consumeSmiteDebuff(tickAbilityCountersAfterSwing(s.ability_state), actorId),
         round_monster_targets: rmt,
       };
       const next = advanceTurn(decremented);
@@ -1409,10 +1429,15 @@ function handleMonsterAct(state: CombatState, roll: RollFn): StepResult {
   const targetShocked = target.effects.find((e) => e.type === "shocked");
   const targetShockMult = targetShocked ? (targetShocked.magnitude >= 2 ? 1.45 : 1.30) : 1.0;
   const positionAdjusted = positionDamageMod(target.position, Math.round(hit.final * targetShockMult));
+  // QA Paladin — Smite debuff: 50% reduced damage on this swing.
+  const smiteDebuffSwings = s.ability_state?.paladin_smite_debuff?.[actorId] ?? 0;
+  const smiteAdjusted = smiteDebuffSwings > 0
+    ? Math.max(1, Math.round(positionAdjusted * 0.5))
+    : positionAdjusted;
   // Physical attacks route through the armor pool first (shield = depletable armor).
   // Non-physical bypasses armor entirely and hits HP directly.
   const armorForHit = attackDamageType === "physical" ? target.shield : 0;
-  const rawResult = applyDamageWithShield(positionAdjusted, armorForHit, target.hp);
+  const rawResult = applyDamageWithShield(smiteAdjusted, armorForHit, target.hp);
   const newShield = attackDamageType === "physical" ? rawResult.newShield : target.shield;
   const newHp = rawResult.newHp;
   const shieldAbsorbed = rawResult.shieldAbsorbed;
@@ -1439,32 +1464,67 @@ function handleMonsterAct(state: CombatState, roll: RollFn): StepResult {
     hp_damage: hpDamage,
   });
 
-  const updatedFighters = s.fighters.map((f) =>
-    f.id === target.id ? { ...f, shield: newShield, hp: Math.max(0, newHp) } : f,
-  );
-  const targetDowned = newHp <= 0 && target.hp > 0;
+  // QA Paladin — Protect: split HP damage between the protected ally and the paladin.
+  const protectState = s.ability_state?.paladin_protect;
+  const protectPaladin = protectState?.target_id === target.id
+    ? s.fighters.find((f) => f.id === protectState!.paladin_id && f.hp > 0 && f.id !== target.id)
+    : null;
+  const targetHpDamage = protectPaladin ? Math.floor(hpDamage / 2) : hpDamage;
+  const paladinProtectDamage = hpDamage - targetHpDamage;
+  const targetNewHp = Math.max(0, target.hp - targetHpDamage);
+  const paladinProtectNewHp = protectPaladin ? Math.max(0, protectPaladin.hp - paladinProtectDamage) : null;
+
+  if (protectPaladin) {
+    events.push({ type: "protect_triggered", paladin: protectPaladin.id, target: target.id, target_damage: targetHpDamage, paladin_damage: paladinProtectDamage });
+  }
+
+  const updatedFighters = s.fighters.map((f) => {
+    if (f.id === target.id) return { ...f, shield: newShield, hp: targetNewHp };
+    if (protectPaladin && f.id === protectPaladin.id) return { ...f, hp: paladinProtectNewHp! };
+    return f;
+  });
+  const targetDowned = targetNewHp <= 0 && target.hp > 0;
   if (targetDowned) {
     events.push({ type: "fighter_down", target: target.id });
   }
+  if (protectPaladin && paladinProtectNewHp! <= 0 && protectPaladin.hp > 0) {
+    events.push({ type: "fighter_down", target: protectPaladin.id });
+  }
+
+  // Consume smite debuff for this monster's swing (hit or miss handled elsewhere for miss).
+  const abilityStateAfterSmite = consumeSmiteDebuff(
+    tickAbilityCountersAfterSwing(s.ability_state), actorId,
+  );
 
   let next: CombatState = {
     ...s,
     fighters: updatedFighters,
-    ability_state: tickAbilityCountersAfterSwing(s.ability_state),
+    ability_state: abilityStateAfterSmite,
     stats: {
       ...s.stats,
       [target.id]: {
         ...(s.stats[target.id] ?? { damage_taken: 0, healing_done: 0, shielding_done: 0, kills: 0 }),
-        damage_taken: (s.stats[target.id]?.damage_taken ?? 0) + hpDamage,
+        damage_taken: (s.stats[target.id]?.damage_taken ?? 0) + targetHpDamage,
       },
+      ...(protectPaladin ? {
+        [protectPaladin.id]: {
+          ...(s.stats[protectPaladin.id] ?? { damage_taken: 0, healing_done: 0, shielding_done: 0, kills: 0 }),
+          damage_taken: (s.stats[protectPaladin.id]?.damage_taken ?? 0) + paladinProtectDamage,
+        },
+      } : {}),
     },
     round_monster_targets: rmt,
   };
 
+  // QA Paladin — Holy Anger: accumulate bonus damage for all alive Paladins.
+  if (hpDamage > 0) {
+    next = accumulateHolyAnger(next, hpDamage);
+  }
+
   // Elemental proc — fire/ice/lightning monster attacks can apply
   // burning / frozen / shocked to the target. 25% base, scaled down by
   // the target's resist_<type> stat. Skipped if the swing dropped them.
-  if (newHp > 0 && (attackDamageType === "fire" || attackDamageType === "ice" || attackDamageType === "lightning")) {
+  if (targetNewHp > 0 && (attackDamageType === "fire" || attackDamageType === "ice" || attackDamageType === "lightning")) {
     const proc = applyMonsterElementalProc(
       next, monster, target.id, attackDamageType, targetResistPct, roll,
     );
@@ -1489,14 +1549,6 @@ function handleMonsterAct(state: CombatState, roll: RollFn): StepResult {
         events.push(...chain.events);
       }
     }
-  }
-
-  // QA Paladin — Lay on Hands. Trigger if the target survived but dropped
-  // below the threshold. Skips if target died on the swing.
-  if (newHp > 0) {
-    const heal = applyPaladinAutoHeal(next, target.id);
-    next = heal.state;
-    events.push(...heal.events);
   }
 
   const allDown = next.fighters.every((f) => f.hp <= 0);
@@ -1532,6 +1584,13 @@ function handleDamageAbility(
   let isCrit = dmgEffect.is_crit ?? false;
   const formula = dmgEffect.formula;
 
+  // QA Paladin — Holy Anger: consume accumulated bonus.
+  const holyAngerBonusAbility = state.ability_state?.holy_anger?.[actorId] ?? 0;
+  const abilityStateAfterAnger = holyAngerBonusAbility > 0
+    ? clearHolyAnger(state.ability_state, actorId)
+    : state.ability_state;
+  amount += holyAngerBonusAbility;
+
   // Drink buff — only buff_next_crit applies to ability damage.
   const drinkResult = dmgEffect.drink_buff_context === "ability"
     ? applyDrinkBuff(state, actorId, "ability", amount, isCrit)
@@ -1565,6 +1624,7 @@ function handleDamageAbility(
     },
   ];
   if (drinkResult.event) events.push(drinkResult.event);
+  if (holyAngerBonusAbility > 0) events.push({ type: "passive_holy_anger", paladin: actorId, bonus: holyAngerBonusAbility });
 
   let nextState: CombatState = {
     ...state,
@@ -1582,9 +1642,25 @@ function handleDamageAbility(
       [actorId]: (state.contribution[actorId] ?? 0) + finalDamage,
     },
     ...(drinkResult.event ? { drink_buffs: drinkResult.nextDrinkBuffs } : {}),
+    ...(abilityStateAfterAnger !== state.ability_state ? { ability_state: abilityStateAfterAnger } : {}),
   };
 
   if (phaseTransition) events.push({ type: "boss_phase_transition", new_phase: 2 });
+
+  // Apply any non-damage effects returned by execute() (e.g. Smite debuff).
+  if (!monsterKilled) {
+    for (const effect of effects) {
+      if (effect.kind === "apply_smite_debuff") {
+        const prev = nextState.ability_state?.paladin_smite_debuff ?? {};
+        const ability_state: AbilityRuntimeState = {
+          ...(nextState.ability_state ?? {}),
+          paladin_smite_debuff: { ...prev, [effect.target_id]: 1 },
+        };
+        nextState = { ...nextState, ability_state };
+        events.push({ type: "ability_smite_debuff", actor: actorId, target: effect.target_id });
+      }
+    }
+  }
 
   // Warlock Cursed Strike: crits apply bleed.
   if (isCrit && !monsterKilled) {
@@ -1889,6 +1965,7 @@ function handleAbility(
   } else if (ability.target === "self") {
     ctxTarget = tickedActor;
   }
+  const protectForCtx = sPostMana.ability_state?.paladin_protect;
   const ctx: AbilityContext = {
     caster: tickedActor,
     party: sPostMana.fighters.filter((f) => f.hp > 0),
@@ -1896,6 +1973,7 @@ function handleAbility(
     target: ctxTarget,
     roll,
     position: action.position,
+    protected_ally_id: protectForCtx?.paladin_id === action.actor ? protectForCtx?.target_id : undefined,
   };
   return applyUtilityAbilityEffects(sPostMana, ability.execute(ctx), action.actor, preEvents, roll);
 }
@@ -2076,6 +2154,35 @@ function applyUtilityAbilityEffects(
         };
         s = { ...s, ability_state };
         events.push({ type: "ability_mock", actor, target: effect.target_id, charges: effect.charges });
+        break;
+      }
+      case "apply_shield_of_faith": {
+        const expiresAfterRound = s.round + effect.rounds - 1;
+        const ability_state: AbilityRuntimeState = {
+          ...(s.ability_state ?? {}),
+          shield_of_faith: { expires_after_round: expiresAfterRound },
+        };
+        s = { ...s, ability_state };
+        events.push({ type: "ability_shield_of_faith", actor, expires_after_round: expiresAfterRound });
+        break;
+      }
+      case "apply_protect": {
+        const ability_state: AbilityRuntimeState = {
+          ...(s.ability_state ?? {}),
+          paladin_protect: { paladin_id: actor, target_id: effect.target_id },
+        };
+        s = { ...s, ability_state };
+        events.push({ type: "ability_protect", actor, target: effect.target_id });
+        break;
+      }
+      case "apply_smite_debuff": {
+        const prev = s.ability_state?.paladin_smite_debuff ?? {};
+        const ability_state: AbilityRuntimeState = {
+          ...(s.ability_state ?? {}),
+          paladin_smite_debuff: { ...prev, [effect.target_id]: 1 },
+        };
+        s = { ...s, ability_state };
+        events.push({ type: "ability_smite_debuff", actor, target: effect.target_id });
         break;
       }
     }
@@ -2838,42 +2945,50 @@ export function mergeEffect(
   return next;
 }
 
-// QA Paladin — Lay on Hands. After a monster swing lands, if any alive
-// fighter ended below PALADIN_AUTO_HEAL_THRESHOLD of max HP, the first
-// unused Paladin in the party auto-heals them for PALADIN_AUTO_HEAL_AMOUNT.
-// Once per fight per Paladin.
-function applyPaladinAutoHeal(
-  state: CombatState,
-  hitTargetId: ActorId,
-): { state: CombatState; events: CombatEvent[] } {
-  const target = state.fighters.find((f) => f.id === hitTargetId);
-  if (!target || target.hp <= 0) return { state, events: [] };
-  if (target.hp >= target.max_hp * PALADIN_AUTO_HEAL_THRESHOLD) return { state, events: [] };
-  const paladin = state.fighters.find(
-    (f) =>
-      classHasPassive(f.class, "lay_on_hands")
-      && f.hp > 0
-      && !isPassiveUsed(state, f.id, PASSIVE_PALADIN_AUTO_HEAL),
-  );
-  if (!paladin) return { state, events: [] };
-  const healAmount = PALADIN_AUTO_HEAL_AMOUNT + Math.floor((paladin.level ?? 1) / 4);
-  const newHp = Math.min(target.max_hp, target.hp + healAmount);
-  const added = newHp - target.hp;
-  const healed = state.fighters.map((f) =>
-    f.id === target.id ? { ...f, hp: newHp } : f,
-  );
-  const marked = markPassiveUsed({ ...state, fighters: healed }, paladin.id, PASSIVE_PALADIN_AUTO_HEAL);
-  return {
-    state: marked,
-    events: [
-      {
-        type: "passive_paladin_auto_heal",
-        paladin: paladin.id,
-        target: target.id,
-        amount: added,
-      },
-    ],
-  };
+// QA Paladin — Holy Anger helpers.
+
+// Accumulate 10% of hpDamage into holy_anger for every alive paladin in party.
+function accumulateHolyAnger(state: CombatState, hpDamage: number): CombatState {
+  const bonus = Math.floor(hpDamage * 0.1);
+  if (bonus <= 0) return state;
+  const paladins = state.fighters.filter((f) => f.hp > 0 && classHasPassive(f.class, "holy_anger"));
+  if (paladins.length === 0) return state;
+  const prev = state.ability_state?.holy_anger ?? {};
+  const updated: Record<ActorId, number> = { ...prev };
+  for (const p of paladins) {
+    updated[p.id] = (updated[p.id] ?? 0) + bonus;
+  }
+  return { ...state, ability_state: { ...(state.ability_state ?? {}), holy_anger: updated } };
+}
+
+// Clear the holy_anger entry for a specific fighter (consume on attack).
+function clearHolyAnger(
+  abilityState: AbilityRuntimeState | undefined,
+  actorId: ActorId,
+): AbilityRuntimeState | undefined {
+  const prev = abilityState?.holy_anger;
+  if (!prev || !prev[actorId]) return abilityState;
+  const updated = { ...prev };
+  delete updated[actorId];
+  return Object.keys(updated).length > 0
+    ? { ...(abilityState ?? {}), holy_anger: updated }
+    : stripField(abilityState, "holy_anger");
+}
+
+// QA Paladin — Smite debuff: decrement (or clear) the debuff for a monster after its swing.
+function consumeSmiteDebuff(
+  state: AbilityRuntimeState | undefined,
+  monsterId: ActorId,
+): AbilityRuntimeState | undefined {
+  const prev = state?.paladin_smite_debuff;
+  if (!prev || !(monsterId in prev)) return state;
+  const newCount = (prev[monsterId] ?? 1) - 1;
+  const updated = { ...prev };
+  if (newCount <= 0) delete updated[monsterId];
+  else updated[monsterId] = newCount;
+  return Object.keys(updated).length > 0
+    ? { ...(state ?? {}), paladin_smite_debuff: updated }
+    : stripField(state, "paladin_smite_debuff");
 }
 
 // Remove a key from ability_state without mutating. Returns undefined if the

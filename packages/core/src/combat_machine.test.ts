@@ -363,16 +363,16 @@ describe("combat_machine.step", () => {
   });
 
   describe("smite ability (QA Paladin)", () => {
-    it("spends 1 mana, damages monster via class-specific dice", () => {
+    it("spends 1 mana, deals 1d6+atk+wpn+2d8, applies smite debuff", () => {
       const init = baseInit();
-      init.fighters[0].class = "QA Paladin"; // Smite: 2d6 + atk×2 + weapon
+      // str defaults to 5 (no stats field) → extraDice = 1+floor(5/4) = 2
       init.fighters[0].mana = 2;
       const begun = runBegin(createCombatState(init), [15, 8]);
-      // 2d6 → 4 + 3 = 7. atk_mod 2 × 2 = 4. weapon 4. damage = 7 + 4 + 4 = 15.
+      // 1d6=2 + atk_mod 2 + weapon 4 = 8. 2d8 → 3 + 4 = 7. damage = 8 + 7 = 15.
       const result = step(
         begun.state,
         { kind: "ability", actor: "U_PALADIN", ability_id: "smite" },
-        seqRoll([4, 3]),
+        seqRoll([2, 3, 4]),
       );
       expect(result.state.fighters[0].mana).toBe(1);
       expect(result.state.monsters[0].hp).toBe(40 - 15);
@@ -380,6 +380,8 @@ describe("combat_machine.step", () => {
       expect(hit).toMatchObject({ damage: 15 });
       const used = result.events.find((e) => e.type === "ability_used");
       expect(used).toMatchObject({ ability_id: "smite", mana_spent: 1 });
+      // Smite debuff should be stored in ability_state
+      expect(result.state.ability_state?.paladin_smite_debuff?.[MONSTER_ID]).toBe(1);
     });
 
     it("rejects when mana is 0", () => {
@@ -1105,3 +1107,224 @@ describe("mergeEffect — status stacking policy", () => {
   });
 });
 void _unused;
+
+// ── QA Paladin abilities ──────────────────────────────────────────────────────
+
+// Two-fighter party: paladin (back) + a second fighter (front).
+// Used by protect damage-split and lay_on_hands double-heal tests.
+function twoFighterInit(
+  overrides: { paladinHp?: number; paladinMana?: number; fighterHp?: number } = {},
+): import("./combat_machine").CombatInit {
+  return {
+    fighters: [
+      {
+        ...baseInit().fighters[0],
+        hp: overrides.paladinHp ?? 30,
+        mana: overrides.paladinMana ?? 3,
+        position: "back" as const,
+      },
+      {
+        id: "U_FIGHTER2",
+        name: "Corinna",
+        class: "Frontend Bard",
+        level: 4,
+        hp: overrides.fighterHp ?? 20,
+        max_hp: 20,
+        mana: 2,
+        max_mana: 2,
+        shield: 0,
+        position: "front" as const,
+        attack_mod: 0,
+        magic_mod: 2,
+        weapon_power: 1,
+        armor_power: 1,
+        scars: [],
+      },
+    ],
+    monster: baseInit().monster!,
+  };
+}
+
+describe("QA Paladin — shield_of_faith", () => {
+  it("spends 2 mana and stores shield_of_faith expiring after round + 2", () => {
+    const begun = runBegin(createCombatState(baseInit()), [15, 8]); // paladin first, round=1
+    const result = step(
+      begun.state,
+      { kind: "ability", actor: "U_PALADIN", ability_id: "shield_of_faith" },
+      seqRoll([]),
+    );
+    expect(result.state.fighters[0].mana).toBe(1); // 3 - 2
+    expect(result.state.ability_state?.shield_of_faith).toEqual({ expires_after_round: 3 });
+    const evt = result.events.find((e) => e.type === "ability_shield_of_faith");
+    expect(evt).toMatchObject({ expires_after_round: 3 });
+  });
+
+  it("raises fighter AC by 5 so the monster misses a d20 that would otherwise hit", () => {
+    // Tier-3 modifier=5, base AC=12. d20=10 → 15 ≥ 12 → hit without SoF,
+    // but 15 < 17 → miss with SoF active.
+    const begun = runBegin(createCombatState(baseInit()), [15, 8]);
+    const afterSof = step(
+      begun.state,
+      { kind: "ability", actor: "U_PALADIN", ability_id: "shield_of_faith" },
+      seqRoll([]),
+    );
+    // Monster's turn — d20=10 should miss with SoF.
+    const result = step(afterSof.state, { kind: "monster_act" }, seqRoll([50, 10]));
+    expect(result.state.fighters[0].hp).toBe(30); // no damage
+    const check = result.events.find((e) => e.type === "hit_check");
+    expect(check).toMatchObject({ hit: false, total: 15, ac: 17 });
+  });
+
+  it("rejects when mana < 2", () => {
+    const init = baseInit();
+    init.fighters[0].mana = 1;
+    const begun = runBegin(createCombatState(init), [15, 8]);
+    const result = step(
+      begun.state,
+      { kind: "ability", actor: "U_PALADIN", ability_id: "shield_of_faith" },
+      seqRoll([]),
+    );
+    expect(result.events.find((e) => e.type === "rejected")).toBeDefined();
+  });
+});
+
+describe("QA Paladin — lay_on_hands", () => {
+  it("heals target for 1d6 + floor(mag_mod/2) + floor(vit/2) and spends 1 mana", () => {
+    // magic_mod=0, no stats field → vit defaults to 5 → floor(5/2)=2.
+    // roll(6)=4 → healAmt = 4+0+2 = 6.
+    const init = baseInit();
+    init.fighters[0].hp = 24;
+    init.fighters[0].mana = 2;
+    const begun = runBegin(createCombatState(init), [15, 8]);
+    const result = step(
+      begun.state,
+      { kind: "ability", actor: "U_PALADIN", ability_id: "lay_on_hands" },
+      seqRoll([4]),
+    );
+    expect(result.state.fighters[0].hp).toBe(30); // 24 + 6
+    expect(result.state.fighters[0].mana).toBe(1);
+    const healEvt = result.events.find((e) => e.type === "heal_applied");
+    expect(healEvt).toMatchObject({ amount: 6 });
+  });
+
+  it("also heals the caster when the target is the protected ally", () => {
+    // paladin at 22 HP, U_FIGHTER2 at 12 HP (max 20), protect links paladin → U_FIGHTER2.
+    // roll(6)=3 → healAmt=3+0+2=5; 12+5=17 ≤ 20 so no cap. Both fighters gain 5 HP.
+    const begun = runBegin(
+      createCombatState(twoFighterInit({ paladinHp: 22, paladinMana: 2, fighterHp: 12 })),
+      [15, 8, 6],
+    );
+    const withProtect = {
+      ...begun.state,
+      ability_state: { paladin_protect: { paladin_id: "U_PALADIN", target_id: "U_FIGHTER2" } },
+    };
+    const result = step(
+      withProtect,
+      { kind: "ability", actor: "U_PALADIN", ability_id: "lay_on_hands", target: "U_FIGHTER2" },
+      seqRoll([3]),
+    );
+    expect(result.state.fighters.find((f) => f.id === "U_FIGHTER2")?.hp).toBe(17); // 12 + 5
+    expect(result.state.fighters.find((f) => f.id === "U_PALADIN")?.hp).toBe(27); // 22 + 5
+    expect(result.events.filter((e) => e.type === "heal_applied")).toHaveLength(2);
+  });
+});
+
+describe("QA Paladin — protect", () => {
+  it("targeting an ally sets paladin_protect state and emits ability_protect", () => {
+    const begun = runBegin(createCombatState(twoFighterInit()), [15, 8, 6]);
+    const result = step(
+      begun.state,
+      { kind: "ability", actor: "U_PALADIN", ability_id: "protect", target: "U_FIGHTER2" },
+      seqRoll([]),
+    );
+    expect(result.state.ability_state?.paladin_protect).toEqual({
+      paladin_id: "U_PALADIN",
+      target_id: "U_FIGHTER2",
+    });
+    expect(result.events.find((e) => e.type === "ability_protect")).toMatchObject({
+      actor: "U_PALADIN",
+      target: "U_FIGHTER2",
+    });
+  });
+
+  it("targeting self grants 2d6 + floor(mag_mod/2) + floor(vit/2) shield and sets no protect state", () => {
+    // roll(6)=3, roll(6)=4 → 3+4+0+2 = 9 shield.
+    const begun = runBegin(createCombatState(baseInit()), [15, 8]);
+    const result = step(
+      begun.state,
+      { kind: "ability", actor: "U_PALADIN", ability_id: "protect" },
+      seqRoll([3, 4]),
+    );
+    expect(result.state.fighters[0].shield).toBe(9);
+    expect(result.state.ability_state?.paladin_protect).toBeUndefined();
+    expect(result.events.find((e) => e.type === "shield_applied")).toMatchObject({ restored: 9 });
+  });
+
+  it("splits incoming HP damage: protected target takes floor(dmg/2), paladin absorbs the rest", () => {
+    // Paladin (back, weight=1) + U_FIGHTER2 (front, weight=3).
+    // roll(101)=50 → picks front fighter (U_FIGHTER2).
+    // d20=15 → 15+5=20 ≥ AC 12 → HIT.
+    // d4=4 → raw=4+3+0=7, hpDamage=7 (no armor pool).
+    // U_FIGHTER2 takes floor(7/2)=3; paladin takes 7−3=4.
+    const init = twoFighterInit();
+    const begun = runBegin(createCombatState(init), [5, 3, 18]); // monster first
+    const withProtect = {
+      ...begun.state,
+      ability_state: { paladin_protect: { paladin_id: "U_PALADIN", target_id: "U_FIGHTER2" } },
+    };
+    const result = step(withProtect, { kind: "monster_act" }, seqRoll([50, 15, 4]));
+    expect(result.state.fighters.find((f) => f.id === "U_FIGHTER2")?.hp).toBe(17); // 20 − 3
+    expect(result.state.fighters.find((f) => f.id === "U_PALADIN")?.hp).toBe(26); // 30 − 4
+    expect(result.events.find((e) => e.type === "protect_triggered")).toMatchObject({
+      paladin: "U_PALADIN",
+      target: "U_FIGHTER2",
+      target_damage: 3,
+      paladin_damage: 4,
+    });
+  });
+
+  it("rejects when on cooldown", () => {
+    const begun = runBegin(createCombatState(baseInit()), [15, 8]);
+    const withCooldown = { ...begun.state, cooldowns: { U_PALADIN: { protect: 1 } } };
+    const result = step(
+      withCooldown,
+      { kind: "ability", actor: "U_PALADIN", ability_id: "protect" },
+      seqRoll([]),
+    );
+    expect(result.events.find((e) => e.type === "rejected")).toBeDefined();
+  });
+});
+
+describe("QA Paladin — holy_anger passive", () => {
+  // accumulateHolyAnger uses Math.floor, so damage must be ≥ 10 for bonus ≥ 1.
+  // Use a boss phase-2 monster (adds tier bonus = 3): d4=4 → raw=4+3+3=10, bonus=1.
+  function holyAngerInit(): import("./combat_machine").CombatInit {
+    const init = baseInit();
+    init.monster!.is_boss = true;
+    init.monster!.boss_phase = 2;
+    return init;
+  }
+
+  it("accumulates floor(10%) of HP damage after a monster hit", () => {
+    // d4=4 → raw=4+3(tier)+3(boss)=10, hpDamage=10. Math.floor(1.0)=1.
+    const begun = runBegin(createCombatState(holyAngerInit()), [5, 18]);
+    const result = step(begun.state, { kind: "monster_act" }, seqRoll([50, 15, 4]));
+    expect(result.state.ability_state?.holy_anger?.["U_PALADIN"]).toBe(1);
+  });
+
+  it("adds the accumulated bonus to the next attack and then clears it", () => {
+    // Monster hits for 10 HP → holy_anger[U_PALADIN]=1.
+    // Paladin attacks: d20=15 hit, d6=4 → base=4+2+4=10 + bonus=1 = 11 damage.
+    const begun = runBegin(createCombatState(holyAngerInit()), [5, 18]);
+    const afterMonster = step(begun.state, { kind: "monster_act" }, seqRoll([50, 15, 4]));
+    const result = step(
+      afterMonster.state,
+      { kind: "attack", actor: "U_PALADIN" },
+      seqRoll([15, 4]),
+    );
+    const hit = result.events.find((e) => e.type === "player_hit");
+    expect(hit).toMatchObject({ damage: 11 });
+    expect(result.events.find((e) => e.type === "passive_holy_anger")).toMatchObject({ bonus: 1 });
+    expect(result.state.ability_state?.holy_anger?.["U_PALADIN"]).toBeUndefined();
+  });
+});
