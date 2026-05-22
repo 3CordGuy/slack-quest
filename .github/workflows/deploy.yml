@@ -48,7 +48,7 @@ jobs:
         run: echo "$WRANGLER_WEB_CONFIG" > apps/web/wrangler.jsonc
 
       - name: Deploy
-        run: pnpm --filter @gantt-quest/web deploy
+        run: pnpm --filter @gantt-quest/web run deploy
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -77,7 +77,7 @@ jobs:
         run: echo "$WRANGLER_SLACK_CONFIG" > apps/slack/wrangler.jsonc
 
       - name: Deploy
-        run: pnpm --filter @gantt-quest/slack deploy
+        run: pnpm --filter @gantt-quest/slack run deploy
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
