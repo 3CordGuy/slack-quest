@@ -10,7 +10,7 @@ export const wardenAbilities: AbilityDef[] = [
     icon: "shield",
     mana_cost: 0,
     cooldown_turns: 2,
-    routing: "damage",
+    routing: "utility",
     target: "single_enemy",
     execute(ctx) {
       const monster = ctx.target as { id: string };

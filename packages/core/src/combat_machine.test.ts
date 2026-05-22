@@ -1433,6 +1433,55 @@ describe("Refactor Rogue — Envenom Weapon", () => {
   });
 });
 
+describe("SRE Warden — Bulwark Strike", () => {
+  function wardenInit(): CombatInit {
+    const init = baseInit();
+    init.fighters[0].class = "SRE Warden";
+    init.fighters[0].attack_mod = 2;
+    init.fighters[0].armor_power = 3; // armorBonus = floor(3*0.5) = 1
+    init.fighters[0].mana = 3;
+    return init;
+  }
+
+  it("on a hit, performs an attack roll and deals 1d10 + attack + 50% armor", () => {
+    // execute(): d10=5 → amount = 5 + 2(atk) + 1(floor(3*0.5)) = 8
+    // Machine rolls d20=15 → 15+2=17 ≥ 9 (tier 3 AC) → hit; damage=8
+    const begun = runBegin(createCombatState(wardenInit()), [15, 5]);
+    const result = step(
+      begun.state,
+      { kind: "ability", actor: "U_PALADIN", ability_id: "bulwark_strike", target_id: MONSTER_ID },
+      seqRoll([5, 15]),
+    );
+    expect(result.events.find((e) => e.type === "hit_check")).toMatchObject({ hit: true });
+    const hitEvt = result.events.find((e) => e.type === "player_hit");
+    expect(hitEvt).toMatchObject({ damage: 8, actor: "U_PALADIN" });
+    expect(result.state.monsters[0].hp).toBe(40 - 8);
+  });
+
+  it("on a miss, produces no player_hit and advances the turn", () => {
+    // execute(): d10=5. Machine rolls d20=1 → 1+2=3 < 9 (tier 3 AC) → miss.
+    const begun = runBegin(createCombatState(wardenInit()), [15, 5]);
+    const result = step(
+      begun.state,
+      { kind: "ability", actor: "U_PALADIN", ability_id: "bulwark_strike", target_id: MONSTER_ID },
+      seqRoll([5, 1]),
+    );
+    expect(result.events.find((e) => e.type === "hit_check")).toMatchObject({ hit: false });
+    expect(result.events.find((e) => e.type === "player_hit")).toBeUndefined();
+    expect(result.state.monsters[0].hp).toBe(40);
+  });
+
+  it("goes on cooldown after use and rejects a second cast", () => {
+    const begun = runBegin(createCombatState(wardenInit()), [15, 5]);
+    const used = step(
+      begun.state,
+      { kind: "ability", actor: "U_PALADIN", ability_id: "bulwark_strike", target_id: MONSTER_ID },
+      seqRoll([5, 15]),
+    );
+    expect(used.state.cooldowns?.["U_PALADIN"]?.["bulwark_strike"]).toBeGreaterThan(0);
+  });
+});
+
 describe("Refactor Rogue — Backstab", () => {
   it("on a hit with advantage, emits player_hit with the pre-rolled max(r1, r2) damage", () => {
     // execute() rolls raw d6s: raw1=4, raw2=3, bestRaw=4, isCrit=false.
