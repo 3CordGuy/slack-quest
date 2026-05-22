@@ -1631,7 +1631,8 @@ describe("mark", () => {
 // Monster modifier = floor(tier(3)/2) + 4 = 5. d20 ≥ 7 hits, ≤ 6 misses.
 // Tier 3 damage: d4 + tier(3) + partyBonus(0, solo) = d4+3.
 // Ray of Frost: monsterAc(3) = 9; hit_mod = magic_mod = 2 → d20 ≥ 7 hits.
-// monster_act seqRoll (sage next, hits, d4=3): [d101=50, d20=10, d4=3, d101=50 (foresee)].
+// monster_act seqRoll (sage next, first swing, hits, d4=3): [d101=50 (target pick), d20=10, d4=3, d101=50 (foresee pre-roll)].
+// Subsequent monster_acts after foresee fires skip the leading d101 (foretold_target already stored in state).
 
 function sageInit(): CombatInit {
   return {
@@ -1675,6 +1676,60 @@ describe("Staff Sage — Foretell (passive)", () => {
     const waited = step(begun.state, { kind: "wait", actor: "U_SAGE" }, seqRoll([]));
     const result = step(waited.state, { kind: "monster_act" }, seqRoll([50, 10, 3, 50]));
     expect(result.state.fighters[0].mana).toBe(4);
+  });
+
+  it("emits ability_foresee at begin when monster wins initiative (acts before sage)", () => {
+    // Monster wins initiative (20 > 5), so it acts first. Foresee should fire
+    // during begin so the Sage has a prediction before the first swing.
+    // begin seqRoll: d20=5 (sage), d20=20 (monster), d101=50 (foresee pre-roll).
+    const begun = runBegin(createCombatState(sageInit()), [5, 20, 50]);
+    const foresee = begun.events.find((e) => e.type === "ability_foresee");
+    expect(foresee).toBeDefined();
+    expect(foresee).toMatchObject({ actor: "U_SAGE", predicted_target: "U_SAGE" });
+    expect(begun.state.ability_state?.foretold_targets?.[MONSTER_ID]).toBe("U_SAGE");
+  });
+
+  it("does not emit foresee at begin when sage wins initiative", () => {
+    // Sage wins (20 > 5); no begin-time foresee needed since sage acts first
+    // and will get foresee normally after the monster swings.
+    const begun = runBegin(createCombatState(sageInit()), [20, 5]);
+    expect(begun.events.find((e) => e.type === "ability_foresee")).toBeUndefined();
+  });
+
+  it("predicted_target matches actual attack target (deterministic)", () => {
+    // Monster wins initiative; foresee pre-rolls target=U_SAGE at begin.
+    // Monster then attacks; should hit U_SAGE (no d101 needed for target pick).
+    const begun = runBegin(createCombatState(sageInit()), [5, 20, 50]);
+    const monsterStep = step(begun.state, { kind: "monster_act" }, seqRoll([10, 3, 50]));
+    const attack = monsterStep.events.find((e) => e.type === "monster_attack");
+    expect(attack).toMatchObject({ target: "U_SAGE" });
+  });
+
+  it("pre-rolls targets for all monsters in a multi-monster round", () => {
+    // Two monsters both act before sage. Begin pre-rolls a target for each.
+    const twoMonsterSageInit: CombatInit = {
+      fighters: sageInit().fighters,
+      monsters: [
+        { name: "Mob A", hp: 10, max_hp: 10, tier: 1, is_boss: false },
+        { name: "Mob B", hp: 10, max_hp: 10, tier: 1, is_boss: false },
+      ],
+    };
+    // begin: sage=1 (loses to both), mob A=10, mob B=8; d101=50×2 for foresee pre-rolls.
+    const begun = runBegin(createCombatState(twoMonsterSageInit), [1, 10, 8, 50, 50]);
+    expect(begun.state.ability_state?.foretold_targets?.["__monster_0__"]).toBeDefined();
+    expect(begun.state.ability_state?.foretold_targets?.["__monster_1__"]).toBeDefined();
+    // Mob A acts: uses its foretold target (no d101 for target pick).
+    // seqRoll: d20=10 hit, d4=1 damage (Mob B is still next, no foresee fires here).
+    const m0Step = step(begun.state, { kind: "monster_act" }, seqRoll([10, 1]));
+    // Mob A's entry is consumed; Mob B's remains for its upcoming turn.
+    expect(m0Step.state.ability_state?.foretold_targets?.["__monster_0__"]).toBeUndefined();
+    expect(m0Step.state.ability_state?.foretold_targets?.["__monster_1__"]).toBeDefined();
+    // Mob B acts: uses its foretold target (no d101). Sage is next so foresee fires,
+    // pre-rolling fresh targets for round 2 (two more d101 values consumed).
+    const m1Step = step(m0Step.state, { kind: "monster_act" }, seqRoll([10, 1, 50, 50]));
+    // Foresee re-populated foretold_targets for the next round.
+    expect(m1Step.state.ability_state?.foretold_targets?.["__monster_0__"]).toBeDefined();
+    expect(m1Step.state.ability_state?.foretold_targets?.["__monster_1__"]).toBeDefined();
   });
 });
 
@@ -1743,7 +1798,8 @@ describe("Staff Sage — Blizzard", () => {
     const s3 = step(s2.state, { kind: "wait", actor: "U_SAGE" }, seqRoll([4, 50]));
     expect(s3.state.ability_state?.blizzard?.charges).toBe(1);
 
-    const s4 = step(s3.state, { kind: "monster_act" }, seqRoll([50, 10, 3, 50]));
+    // foretold_target was stored by s2's foresee, so no d101 needed for target pick here.
+    const s4 = step(s3.state, { kind: "monster_act" }, seqRoll([10, 3, 50]));
     const s5 = step(s4.state, { kind: "wait", actor: "U_SAGE" }, seqRoll([2, 50]));
     expect(s5.state.ability_state?.blizzard).toBeUndefined();
   });
@@ -1851,8 +1907,8 @@ describe("Staff Sage — Ill Omen", () => {
     expect(m1.events.find((e) => e.type === "ability_ill_omen_burst")).toBeUndefined();
 
     const afterM1: CombatState = { ...m1.state, turn_order: [MONSTER_ID, "U_SAGE"], turn_index: 0 };
-    // monster_act 2: 2 → 1.
-    const m2 = step(afterM1, { kind: "monster_act" }, seqRoll([50, 10, 3, 50]));
+    // monster_act 2: 2 → 1. foretold_target was stored by m1's foresee, so no d101 for target pick.
+    const m2 = step(afterM1, { kind: "monster_act" }, seqRoll([10, 3, 50]));
     expect(m2.state.ability_state?.ill_omen?.[MONSTER_ID]?.monster_turns_remaining).toBe(1);
     expect(m2.events.find((e) => e.type === "ability_ill_omen_burst")).toBeUndefined();
   });

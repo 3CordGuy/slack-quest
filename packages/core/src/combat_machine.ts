@@ -260,6 +260,8 @@ export interface AbilityRuntimeState {
   good_fortune?: { caster_id: ActorId; target_id: ActorId; amount: number };
   // Staff Sage — Ill Omen: per-monster damage tracker + remaining monster turns until burst.
   ill_omen?: Record<ActorId, { caster_id: ActorId; accumulated: number; monster_turns_remaining: number }>;
+  // Staff Sage — Foretell: per-monster pre-rolled fighter targets so each prediction is guaranteed correct.
+  foretold_targets?: Record<ActorId, ActorId>;
   // SRE Warden — Brace: incoming damage reduced by pct% for N of the fighter's own turns.
   brace?: Record<ActorId, { pct: number; turns_remaining: number }>;
   // Backend Druid — Animal Form: buffed stat deltas for N of the caster's own turns.
@@ -632,8 +634,20 @@ export function step(state: CombatState, action: TurnAction, roll: RollFn): Step
   }
 
   switch (action.kind) {
-    case "begin":
-      return handleBegin(state, roll);
+    case "begin": {
+      const beginResult = handleBegin(state, roll);
+      // Fire an initial foresee so the Sage has predictions before the first
+      // monster attack — but only when monsters act before the sage in round 1.
+      // If the sage goes first they'll get foresee after the monster attacks.
+      const sage = beginResult.state.fighters.find(
+        (f) => f.hp > 0 && classHasPassive(f.class, "foretell"),
+      );
+      if (!sage) return beginResult;
+      const order = beginResult.state.turn_order;
+      const sageIdx = order.indexOf(sage.id);
+      if (sageIdx <= 0 || !order.slice(0, sageIdx).some(isMonsterActor)) return beginResult;
+      return withForeseeForSage(beginResult, sage.id, 0, roll);
+    }
     case "attack":
       return handlePlayerHit(state, action, roll);
     case "flee":
@@ -652,7 +666,7 @@ export function step(state: CombatState, action: TurnAction, roll: RollFn): Step
       // the Sage sees fresh info at the top of their incoming turn.
       return withForeseeForNextActor(handleMonsterAct(state, roll), roll);
     case "ally_npc_act":
-      return handleAllyNpcAct(state, roll);
+      return withForeseeForNextActor(handleAllyNpcAct(state, roll), roll);
   }
 }
 
@@ -1316,7 +1330,21 @@ function handleMonsterAct(state: CombatState, roll: RollFn): StepResult {
     prevRmt && prevRmt.round === s.round ? { ...prevRmt.counts } : {};
 
   // Target selection honors taunt (override) and vanish (filter out).
-  const initialTarget = pickMonsterTarget(aliveFighters, () => roll(101) / 100, rmtCounts);
+  // If Foretell pre-rolled this monster's target, use it so the Sage's
+  // prediction is guaranteed correct. Falls back to a fresh roll if the
+  // pre-rolled fighter died before the monster swings.
+  const foretoldId = s.ability_state?.foretold_targets?.[actorId];
+  const foretoldFighter = foretoldId ? aliveFighters.find((f) => f.id === foretoldId) : null;
+  const initialTarget = foretoldFighter ?? pickMonsterTarget(aliveFighters, () => roll(101) / 100, rmtCounts);
+  // Clear this monster's entry; leave other monsters' entries untouched.
+  const ftRemaining = { ...(s.ability_state?.foretold_targets ?? {}) };
+  delete ftRemaining[actorId];
+  s = {
+    ...s,
+    ability_state: Object.keys(ftRemaining).length > 0
+      ? { ...(s.ability_state ?? {}), foretold_targets: ftRemaining }
+      : stripField(s.ability_state, "foretold_targets"),
+  };
   const vanished = s.ability_state?.vanished ?? {};
   const taunted = s.ability_state?.taunt;
   let target: CombatFighter | null = initialTarget;
@@ -2639,6 +2667,7 @@ function buildForeseeEvent(
   actor: ActorId,
   roll: RollFn,
   turnsRemaining: number,
+  precomputedTarget?: ActorId | null,
 ): Extract<CombatEvent, { type: "ability_foresee" }> {
   const aliveFighters = state.fighters.filter((f) => f.hp > 0);
   const abilityState = state.ability_state ?? {};
@@ -2652,18 +2681,27 @@ function buildForeseeEvent(
   const rawLo = 1 + tier + partyBonus + bossBonus;
   const rawHi = 4 + tier + partyBonus + bossBonus;
 
-  // Determine confirmed/predicted target (honors taunt and vanish).
-  let predicted: ActorId | null = null;
   const taunted = abilityState.taunt;
-  if (taunted && taunted.swings_remaining > 0) {
-    const tauntTarget = aliveFighters.find((f) => f.id === taunted.actor_id);
-    if (tauntTarget) predicted = tauntTarget.id;
-  }
-  if (!predicted && aliveFighters.length > 0) {
-    const eligible = aliveFighters.filter((f) => (vanishedMap[f.id] ?? 0) <= 0);
-    const pool = eligible.length > 0 ? eligible : aliveFighters;
-    const pick = pickMonsterTarget(pool, () => roll(101) / 100);
-    predicted = pick.id;
+
+  // Determine confirmed/predicted target.
+  // When a precomputedTarget is explicitly provided (even null), use it directly
+  // — it was pre-rolled by withForeseeForSage and is guaranteed to match the
+  // actual attack. Only do the fallback probabilistic roll when the parameter
+  // was not provided at all (undefined).
+  let predicted: ActorId | null;
+  if (precomputedTarget !== undefined) {
+    predicted = precomputedTarget;
+  } else {
+    predicted = null;
+    if (taunted && taunted.swings_remaining > 0) {
+      const tauntTarget = aliveFighters.find((f) => f.id === taunted.actor_id);
+      if (tauntTarget) predicted = tauntTarget.id;
+    }
+    if (!predicted && aliveFighters.length > 0) {
+      const eligible = aliveFighters.filter((f) => (vanishedMap[f.id] ?? 0) <= 0);
+      const pool = eligible.length > 0 ? eligible : aliveFighters;
+      predicted = pickMonsterTarget(pool, () => roll(101) / 100).id;
+    }
   }
 
   // Net damage range for the predicted target.
@@ -2728,27 +2766,96 @@ function buildForeseeEvent(
   };
 }
 
-// After the monster acts, checks if the next actor is a Staff Sage with the
-// Foretell passive. If so, inserts the intel refresh event immediately BEFORE
-// the final turn_start divider so the Sage sees fresh info at the top of their
-// own turn — after the monster's swing settled, before they pick their action.
-function withForeseeForNextActor(result: StepResult, roll: RollFn): StepResult {
-  const actorId = currentActor(result.state);
-  if (!actorId || isMonsterActor(actorId)) return result;
-  const sage = result.state.fighters.find((f) => f.id === actorId && classHasPassive(f.class, "foretell"));
-  if (!sage) return result;
+// Pre-rolls fighter targets for every alive monster that will act between
+// `fromIndex` (inclusive, in turn_order) and the sage's next turn (exclusive).
+// Stores each result in ability_state.foretold_targets keyed by monster ID so
+// handleMonsterAct can use the exact same value — making every prediction correct.
+// Returns the updated state and the target for the first upcoming monster (used
+// as the displayed prediction in the foresee event).
+function prerollMonsterTargets(
+  state: CombatState,
+  fromIndex: number,
+  roll: RollFn,
+): { state: CombatState; primaryTarget: ActorId | null } {
+  const order = state.turn_order;
+  const n = order.length;
+  if (n === 0) return { state, primaryTarget: null };
 
-  const refreshEvent = buildForeseeEvent(result.state, actorId, roll, 99);
+  // Find how many steps forward until the sage (stops at sage's position).
+  let sageSteps = -1;
+  for (let i = 0; i < n; i++) {
+    const id = order[(fromIndex + i) % n];
+    const f = state.fighters.find((f) => f.id === id && f.hp > 0 && classHasPassive(f.class, "foretell"));
+    if (f) { sageSteps = i; break; }
+  }
+  if (sageSteps <= 0) return { state, primaryTarget: null };
 
-  // Insert before the last turn_start event so the readout appears inside
-  // the Sage's upcoming turn block rather than at the tail of the monster's.
+  const abilityState = state.ability_state ?? {};
+  const vanishedMap = abilityState.vanished ?? {};
+  const taunted = abilityState.taunt;
+  const aliveFighters = state.fighters.filter((f) => f.hp > 0);
+  const foretoldTargets: Record<ActorId, ActorId> = { ...(abilityState.foretold_targets ?? {}) };
+  let primaryTarget: ActorId | null = null;
+
+  for (let i = 0; i < sageSteps; i++) {
+    const monsterId = order[(fromIndex + i) % n];
+    if (!isMonsterActor(monsterId)) continue;
+    if (!state.monsters.find((m) => m.id === monsterId && m.hp > 0)) continue;
+
+    let target: ActorId | null = null;
+    if (taunted && taunted.swings_remaining > 0) {
+      const tauntFighter = aliveFighters.find((f) => f.id === taunted.actor_id);
+      if (tauntFighter) target = tauntFighter.id;
+    }
+    if (!target) {
+      const eligible = aliveFighters.filter((f) => (vanishedMap[f.id] ?? 0) <= 0);
+      const pool = eligible.length > 0 ? eligible : aliveFighters;
+      if (pool.length > 0) target = pickMonsterTarget(pool, () => roll(101) / 100).id;
+    }
+    if (target) {
+      foretoldTargets[monsterId] = target;
+      if (primaryTarget === null) primaryTarget = target;
+    }
+  }
+
+  const newAbilityState = Object.keys(foretoldTargets).length > 0
+    ? { ...abilityState, foretold_targets: foretoldTargets }
+    : abilityState;
+  return { state: { ...state, ability_state: newAbilityState }, primaryTarget };
+}
+
+// Core: builds and injects the foresee event into result, using sageId as the
+// event actor. Pre-rolls targets for all monsters between fromIndex and the sage.
+function withForeseeForSage(
+  result: StepResult,
+  sageId: ActorId,
+  fromIndex: number,
+  roll: RollFn,
+): StepResult {
+  const { state: stateWithTargets, primaryTarget } = prerollMonsterTargets(result.state, fromIndex, roll);
+  const refreshEvent = buildForeseeEvent(stateWithTargets, sageId, roll, 99, primaryTarget);
+
+  // Insert before the last turn_start so the readout appears at the top of the
+  // next relevant turn block rather than at the tail of the preceding action.
   const events = [...result.events];
   let insertAt = events.length;
   for (let i = events.length - 1; i >= 0; i--) {
     if (events[i].type === "turn_start") { insertAt = i; break; }
   }
   events.splice(insertAt, 0, refreshEvent);
-  return { state: result.state, events };
+  return { state: stateWithTargets, events };
+}
+
+// After the monster (or ally NPC) acts, checks if the next actor is a Staff
+// Sage with the Foretell passive and, if so, fires foresee so the Sage sees
+// fresh intel at the top of their upcoming turn.
+function withForeseeForNextActor(result: StepResult, roll: RollFn): StepResult {
+  const actorId = currentActor(result.state);
+  if (!actorId || isMonsterActor(actorId)) return result;
+  if (!result.state.fighters.find((f) => f.id === actorId && classHasPassive(f.class, "foretell"))) return result;
+  // Monsters after sage's current position (fromIndex = turn_index + 1) will act
+  // before the sage's next turn — pre-roll a target for each of them.
+  return withForeseeForSage(result, actorId, result.state.turn_index + 1, roll);
 }
 
 // ── Monster-kill resolution ───────────────────────────────────────────────

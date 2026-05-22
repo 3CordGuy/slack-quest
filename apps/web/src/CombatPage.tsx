@@ -846,6 +846,7 @@ export function CombatPage({
   // Bumping seq re-mounts the animation element so the keyframe re-fires.
   const [lastSlash, setLastSlash] = useState<{ id: string; seq: number } | null>(null);
   const [lastLunge, setLastLunge] = useState<{ id: string; seq: number } | null>(null);
+  const [lastForesee, setLastForesee] = useState<{ predicted_target: string | null } | null>(null);
   const animSeqRef = useRef(0);
   // Fighter hit-flash: tracks which fighter ids are currently flashing red.
   const [flashIds, setFlashIds] = useState<Set<string>>(new Set());
@@ -976,6 +977,9 @@ export function CombatPage({
           }
           // Fire per-card animations immediately (before the state-update delay).
           for (const evt of msg.events) {
+            if (evt.type === "ability_foresee") {
+              setLastForesee({ predicted_target: (evt as { predicted_target: string | null }).predicted_target });
+            }
             if (evt.type === "player_hit" && (evt as { target?: string }).target) {
               const tgt = (evt as { target: string }).target;
               setLastSlash({ id: tgt, seq: ++animSeqRef.current });
@@ -1335,6 +1339,7 @@ export function CombatPage({
                     monster={m}
                     round={state.round}
                     showSageReading={me?.class === "Staff Sage"}
+                    sageTarget={me?.class === "Staff Sage" && lastForesee?.predicted_target ? (state.fighters.find((f) => f.id === lastForesee.predicted_target)?.name ?? lastForesee.predicted_target) : null}
                     markedBy={
                       state.ability_state?.mark &&
                       state.round <= state.ability_state.mark.expires_after_round &&
@@ -1635,6 +1640,7 @@ function MonsterCard({
   monster,
   round,
   showSageReading,
+  sageTarget,
   markedBy,
   isTargeted = false,
   smiteDebuffed = false,
@@ -1648,6 +1654,7 @@ function MonsterCard({
   monster: Monster;
   round: number;
   showSageReading: boolean;
+  sageTarget?: string | null;
   markedBy?: string;
   isTargeted?: boolean;
   smiteDebuffed?: boolean;
@@ -1781,7 +1788,7 @@ function MonsterCard({
         )}
         {showSageReading && !isDead && (
           <div style={{ ...muted, fontSize: 11, marginTop: 6 }}>
-            <Icon name="scroll-unfurled" /> Sage's Reading: next swing ~{sageLo}–{sageHi} HP
+            <Icon name="scroll-unfurled" /> Sage's Reading: next swing ~{sageLo}–{sageHi} HP{sageTarget ? <> → <span style={{ color: "#e2e8f0" }}>{sageTarget}</span></> : ""}
           </div>
         )}
       </div>
