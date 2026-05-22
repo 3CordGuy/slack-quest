@@ -3,6 +3,8 @@
 // (auto-fires on a trigger). Replaces the legacy SIGNATURES / PASSIVES /
 // ABILITIES maps in flavor.ts.
 
+import type { DamageType } from "./flavor";
+
 export type TargetKind =
   | "self"
   | "single_enemy"
@@ -90,6 +92,7 @@ export type AbilityEffect =
       formula: string;
       is_crit?: boolean;
       drink_buff_context?: "ability";
+      damage_type?: DamageType;
     }
   // Restore HP to a fighter.
   | { kind: "heal"; target_id: string; amount: number }
@@ -130,7 +133,11 @@ export type AbilityEffect =
   | { kind: "hex_monster"; target_id: string; duration: number }
   // Remove all bleed stacks from the target monster (e.g. Forbidden SQL).
   // Return a separate deal_damage effect to deal damage based on consumed stacks.
-  | { kind: "consume_monster_bleed"; target_id: string };
+  | { kind: "consume_monster_bleed"; target_id: string }
+  // Attack-roll-gated damage: rolls d20 + hit_mod vs monster AC before applying
+  // pre-rolled damage. On miss, the damage is skipped. Triggers Sinister Queries
+  // and hex bleed proc on hit, just like deal_damage.
+  | { kind: "attack_roll_damage"; target_id: string; hit_mod: number; amount: number; formula: string; damage_type?: DamageType };
 
 export interface ActiveAbilityDef {
   kind: "active";

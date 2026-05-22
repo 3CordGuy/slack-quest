@@ -318,6 +318,7 @@ export type CombatEvent =
       armor_absorbed: number; // monster armor absorbed before HP damage; 0 for magic/cast
       crit: boolean;
       formula: string;
+      damage_type?: DamageType;
     }
   | {
       type: "monster_attack";
@@ -1948,20 +1949,24 @@ function applyUtilityAbilityEffects(
       case "deal_damage": {
         const monster = s.monsters.find((m) => m.id === effect.target_id && m.hp > 0);
         if (!monster) continue;
-        const newHp = Math.max(0, monster.hp - effect.amount);
+        const ddWeakness = effect.damage_type && monster.damage_weakness === effect.damage_type ? 1.3 : 1.0;
+        const ddResist = effect.damage_type && monster.damage_resistance === effect.damage_type ? 0.7 : 1.0;
+        const ddAmount = Math.max(1, Math.round(effect.amount * ddWeakness * ddResist));
+        const newHp = Math.max(0, monster.hp - ddAmount);
         events.push({
           type: "player_hit",
           actor,
           target: monster.id,
-          damage: effect.amount,
+          damage: ddAmount,
           armor_absorbed: 0,
           crit: effect.is_crit ?? false,
           formula: effect.formula,
+          damage_type: effect.damage_type,
         });
         s = {
           ...s,
           monsters: s.monsters.map((m) => m.id === monster.id ? { ...m, hp: newHp } : m),
-          contribution: { ...s.contribution, [actor]: (s.contribution[actor] ?? 0) + effect.amount },
+          contribution: { ...s.contribution, [actor]: (s.contribution[actor] ?? 0) + ddAmount },
         };
         if (newHp <= 0) return resolveMonsterKill(s, monster.id, actor, events);
         // Sinister Queries passive and hex bleed proc fire on any damage hit.
@@ -1974,6 +1979,38 @@ function applyUtilityAbilityEffects(
         const hexProc = applyHexBleedProc(s, monster.id);
         s = hexProc.state;
         events.push(...hexProc.events);
+        break;
+      }
+      case "attack_roll_damage": {
+        const monster = s.monsters.find((m) => m.id === effect.target_id && m.hp > 0);
+        if (!monster) continue;
+        const ac = monsterAc(monster.tier);
+        const d20 = roll(20);
+        const total = d20 + effect.hit_mod;
+        const landed = total >= ac;
+        events.push({ type: "roll", actor, die: "d20", value: d20, purpose: "hit_check" });
+        events.push({ type: "hit_check", actor, target: monster.id, roll: d20, modifier: effect.hit_mod, total, ac, hit: landed });
+        if (!landed) break;
+        const ardWeakness = effect.damage_type && monster.damage_weakness === effect.damage_type ? 1.3 : 1.0;
+        const ardResist = effect.damage_type && monster.damage_resistance === effect.damage_type ? 0.7 : 1.0;
+        const ardAmount = Math.max(1, Math.round(effect.amount * ardWeakness * ardResist));
+        const newHp = Math.max(0, monster.hp - ardAmount);
+        events.push({ type: "player_hit", actor, target: monster.id, damage: ardAmount, armor_absorbed: 0, crit: false, formula: effect.formula, damage_type: effect.damage_type });
+        s = {
+          ...s,
+          monsters: s.monsters.map((m) => m.id === monster.id ? { ...m, hp: newHp } : m),
+          contribution: { ...s.contribution, [actor]: (s.contribution[actor] ?? 0) + ardAmount },
+        };
+        if (newHp <= 0) return resolveMonsterKill(s, monster.id, actor, events);
+        const attackCaster = s.fighters.find((f) => f.id === actor);
+        if (attackCaster) {
+          const sq = applySinisterQueries(s, attackCaster, monster.id);
+          s = sq.state;
+          events.push(...sq.events);
+        }
+        const hexProc2 = applyHexBleedProc(s, monster.id);
+        s = hexProc2.state;
+        events.push(...hexProc2.events);
         break;
       }
       case "heal": {

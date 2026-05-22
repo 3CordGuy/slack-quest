@@ -1,4 +1,4 @@
-import type { AbilityDef } from "../abilities";
+import type { AbilityDef, FighterSnapshot, MonsterSnapshot } from "../abilities";
 import { fx, rollSum } from "./effects";
 
 export const mageAbilities: AbilityDef[] = [
@@ -12,10 +12,11 @@ export const mageAbilities: AbilityDef[] = [
     routing: "aoe_damage",
     target: "all_enemies",
     execute(ctx) {
-      const r = rollSum(ctx.roll, 2, 6);
-      const amount = r + ctx.caster.magic_mod;
-      const formula = `2d6 + ${ctx.caster.magic_mod}m`;
-      return ctx.monsters.map((m) => fx.damage(m.id, amount, formula));
+      const mag = ctx.caster.magic_mod;
+      const r = rollSum(ctx.roll, Math.max(1, mag), 6);
+      const amount = r;
+      const formula = `${Math.max(1, mag)}d6`;
+      return ctx.monsters.map((m) => fx.damage(m.id, amount, formula, { damageType: "fire" }));
     },
   },
   {
@@ -31,6 +32,37 @@ export const mageAbilities: AbilityDef[] = [
       const target = ctx.target as { id: string } | undefined;
       if (!target) return [];
       return [fx.stunMonster(target.id, 30, 50)];
+    },
+  },
+  {
+    kind: "active",
+    id: "lightning_bolt",
+    name: "Lightning Bolt",
+    blurb: "Hurl a bolt of lightning. Rolls d20 + magic to hit; deals magic × d8 damage on hit.",
+    icon: "electric",
+    mana_cost: 1,
+    routing: "utility",
+    target: "single_enemy",
+    execute(ctx) {
+      const monster = ctx.target as MonsterSnapshot;
+      const mag = ctx.caster.magic_mod;
+      const amount = rollSum(ctx.roll, Math.max(1, mag), 8);
+      return [fx.attackRollDamage(monster.id, mag, amount, `${Math.max(1, mag)}d8`, "lightning")];
+    },
+  },
+  {
+    kind: "active",
+    id: "mage_armor",
+    name: "Mage Armor",
+    blurb: "Conjures a magical barrier. Grants 3d6 + magic shield to a target ally.",
+    icon: "bolt-shield",
+    mana_cost: 1,
+    routing: "utility",
+    target: "single_ally",
+    execute(ctx) {
+      const target = ctx.target as FighterSnapshot;
+      const amount = rollSum(ctx.roll, 3, 6) + ctx.caster.magic_mod;
+      return [fx.shield(target.id, amount)];
     },
   },
   {

@@ -4,6 +4,7 @@
 // Usage: return [fx.damage(monster.id, amount, formula), fx.heal(caster.id, 5)]
 
 import type { AbilityEffect, AllyNpcSpec } from "../abilities";
+import type { DamageType } from "../flavor";
 
 export const fx = {
   // Deal damage to a monster (bypasses armor). Pass drink_buff_context:
@@ -12,7 +13,7 @@ export const fx = {
     targetId: string,
     amount: number,
     formula: string,
-    opts?: { isCrit?: boolean; drinkBuff?: "ability" },
+    opts?: { isCrit?: boolean; drinkBuff?: "ability"; damageType?: DamageType },
   ): AbilityEffect {
     return {
       kind: "deal_damage",
@@ -21,6 +22,7 @@ export const fx = {
       formula,
       is_crit: opts?.isCrit,
       drink_buff_context: opts?.drinkBuff,
+      damage_type: opts?.damageType,
     };
   },
 
@@ -82,6 +84,10 @@ export const fx = {
 
   consumeMonsterBleed(targetId: string): AbilityEffect {
     return { kind: "consume_monster_bleed", target_id: targetId };
+  },
+
+  attackRollDamage(targetId: string, hitMod: number, amount: number, formula: string, damageType?: DamageType): AbilityEffect {
+    return { kind: "attack_roll_damage", target_id: targetId, hit_mod: hitMod, amount, formula, damage_type: damageType };
   },
 };
 
