@@ -76,6 +76,7 @@ export interface AllyNpcSpec {
   weapon_power: number;
   position: "front" | "back";
   weapon_range: "melee" | "ranged";
+  damage_roll?: string;
 }
 
 // Effects returned by execute(). The machine applies each one in sequence.

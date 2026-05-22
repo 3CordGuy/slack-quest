@@ -91,6 +91,7 @@ export interface CombatFighter {
   // can melee from the back row in a party fight).
   weapon_range: WeaponRange;
   armor_power: number;
+  damage_roll?: string;
   initiative: number;      // rolled at begin
   effects: MachineStatusEffect[];
   scars: string[];         // battle scars from defeats
@@ -143,6 +144,7 @@ export interface CombatMonster {
   // Damage-type routing for this monster's attacks. undefined defaults to "physical".
   // Determines whether armor or gear resistance applies when the monster hits a fighter.
   attack_damage_type?: DamageType;
+  damage_roll?: string;
   // Player damage type weaknesses/resistances (separate from elemental proc affinities).
   // weakness: player deals +30% to this monster with matching type.
   // resistance: player deals −30% with matching type.
@@ -763,11 +765,12 @@ function handlePlayerHit(
   }
 
   // ── damage roll on hit ──
-  const hit = resolvePlayerHit(action.kind, classMod, tickedFighter.weapon_power, roll);
+  const damageRoll = tickedFighter.damage_roll ?? "1d6";
+  const hit = resolvePlayerHit(action.kind, classMod, tickedFighter.weapon_power, roll, damageRoll);
   events.push({
     type: "roll",
     actor: action.actor,
-    die: "d6",
+    die: damageRoll,
     value: hit.roll,
     purpose: "damage_attack",
   });
@@ -1029,8 +1032,9 @@ function handleAllyNpcAct(state: CombatState, roll: RollFn): StepResult {
     return { state: next, events: [...events, ...turnStartEvent(next)] };
   }
 
-  const hit = resolvePlayerHit("attack", mercAfterTick.attack_mod, mercAfterTick.weapon_power, roll);
-  events.push({ type: "roll", actor: actorId, die: "d6", value: hit.roll, purpose: "damage_attack" });
+  const npcDamageRoll = mercAfterTick.damage_roll ?? "1d6";
+  const hit = resolvePlayerHit("attack", mercAfterTick.attack_mod, mercAfterTick.weapon_power, roll, npcDamageRoll);
+  events.push({ type: "roll", actor: actorId, die: npcDamageRoll, value: hit.roll, purpose: "damage_attack" });
 
   const { newShield: newMonsterShield, newHp, hpDamage: finalDamage } =
     applyDamageWithShield(hit.damage, monster.shield, monster.hp);
@@ -1042,7 +1046,7 @@ function handleAllyNpcAct(state: CombatState, roll: RollFn): StepResult {
     damage: finalDamage,
     armor_absorbed: monster.shield - newMonsterShield,
     crit: hit.isCrit,
-    formula: `d6+${mercAfterTick.attack_mod}a+${mercAfterTick.weapon_power}w`,
+    formula: `${npcDamageRoll}+${mercAfterTick.attack_mod}a+${mercAfterTick.weapon_power}w`,
   });
 
   const monsterKilled = newHp <= 0;
@@ -1290,7 +1294,7 @@ function handleMonsterAct(state: CombatState, roll: RollFn): StepResult {
     const splashHexMult = monster.effects.some((e) => e.type === "hexed") ? 0.75 : 1.0;
     const splashHits = splashTargets.map((f) => {
       const resistPct = splashDamageType !== "physical" ? (f.resistances?.[splashDamageType] ?? 0) : 0;
-      const hit = resolveMonsterHit(monster.tier, aliveFighters.length, 0, bossPhase2, roll, splashDamageType, resistPct);
+      const hit = resolveMonsterHit(monster.tier, aliveFighters.length, 0, bossPhase2, roll, splashDamageType, resistPct, monster.damage_roll ?? "1d4");
       const splashShocked = f.effects.find((e) => e.type === "shocked");
       const splashShockMult = splashShocked ? (splashShocked.magnitude >= 2 ? 1.45 : 1.30) : 1.0;
       const posAdj = positionDamageMod(f.position, Math.round(hit.final * splashShockMult * splashHexMult));
@@ -1417,6 +1421,7 @@ function handleMonsterAct(state: CombatState, roll: RollFn): StepResult {
   const targetResistPct = attackDamageType !== "physical"
     ? (target.resistances?.[attackDamageType] ?? 0)
     : 0;
+  const monsterDamageRoll = monster.damage_roll ?? "1d4";
   const hit = resolveMonsterHit(
     monster.tier,
     aliveFighters.length,
@@ -1425,6 +1430,7 @@ function handleMonsterAct(state: CombatState, roll: RollFn): StepResult {
     roll,
     attackDamageType,
     targetResistPct,
+    monsterDamageRoll,
   );
   const targetShocked = target.effects.find((e) => e.type === "shocked");
   const targetShockMult = targetShocked ? (targetShocked.magnitude >= 2 ? 1.45 : 1.30) : 1.0;
@@ -1442,7 +1448,7 @@ function handleMonsterAct(state: CombatState, roll: RollFn): StepResult {
   events.push({
     type: "roll",
     actor: actorId,
-    die: "d4",
+    die: monsterDamageRoll,
     value: hit.raw - monster.tier - Math.floor((aliveFighters.length - 1) / 2) - (bossPhase2 ? monster.tier : 0),
     purpose: "damage_monster",
   });
@@ -1753,7 +1759,7 @@ function handleFlee(
   // no armor mitigation (back turned) — treat as physical with 0 armor.
   const alive = s.fighters.filter((f) => f.hp > 0);
   const bossPhase2 = (fleeMonster?.is_boss && fleeMonster?.boss_phase === 2) ?? false;
-  const hit = resolveMonsterHit(fleeMonster?.tier ?? 1, alive.length, 0, bossPhase2, roll, "physical", 0);
+  const hit = resolveMonsterHit(fleeMonster?.tier ?? 1, alive.length, 0, bossPhase2, roll, "physical", 0, fleeMonster?.damage_roll ?? "1d4");
   const positionAdjusted = positionDamageMod(tickedActor.position, hit.final);
   const { newShield, newHp, shieldAbsorbed, hpDamage } = applyDamageWithShield(
     positionAdjusted,
@@ -2162,6 +2168,7 @@ function applyUtilityAbilityEffects(
           weapon_power: spec.weapon_power,
           focus_power: 0,
           weapon_range: spec.weapon_range,
+          damage_roll: spec.damage_roll,
           slack_username: null,
           armor_power: 0,
           initiative: 0,
