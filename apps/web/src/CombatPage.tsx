@@ -248,7 +248,7 @@ type CombatEvent =
   | { type: "passive_rogue_first_crit"; actor: string }
   | { type: "passive_bard_aura"; actor: string; source: string; bonus: number }
   | { type: "passive_warlock_bleed"; actor: string; magnitude: number; duration: number }
-  | { type: "passive_holy_anger"; paladin: string; bonus: number }
+  | { type: "passive_holy_rage"; paladin: string; bonus: number }
   | { type: "ability_shield_of_faith"; actor: string; expires_after_round: number }
   | { type: "ability_protect"; actor: string; target: string }
   | { type: "ability_smite_debuff"; actor: string; target: string }
@@ -704,8 +704,8 @@ function formatEvent(e: CombatEvent, state: CombatState | null): LogEntry[] {
         content: <><Icon name="death-skull" /> Cursed Strike: <Icon name="bleeding-wound" color="#dc2626" /> bleed {e.magnitude}/turn × {e.duration} on monster.</>,
         tone: "good",
       }];
-    case "passive_holy_anger":
-      return row("axe-swing", <>{nameOf(e.paladin)} Holy Anger +{e.bonus} damage!</>, "good");
+    case "passive_holy_rage":
+      return row("axe-swing", <>{nameOf(e.paladin)} Holy Rage +{e.bonus} damage!</>, "good");
     case "ability_shield_of_faith":
       return row("round-shield", <>Shield of Faith — all allies gain +5 AC until round {e.expires_after_round}.</>, "good");
     case "ability_protect":
@@ -901,8 +901,8 @@ export function CombatPage({
               toast(`🛡 Hardened Up — +${(evt as { amount: number }).amount} shield`, { duration: 3000 });
             } else if (evt.type === "passive_mage_mana_font") {
               toast(`🧙 Mana Font — +${(evt as { amount: number }).amount} mana`, { duration: 3000 });
-            } else if (evt.type === "passive_holy_anger") {
-              toast(`⚔️ Holy Anger — +${(evt as { bonus: number }).bonus} bonus damage`, { duration: 3000 });
+            } else if (evt.type === "passive_holy_rage") {
+              toast(`⚔️ Holy Rage — +${(evt as { bonus: number }).bonus} bonus damage`, { duration: 3000 });
             }
           }
           // Refresh inventory after any item use so the picker reflects the

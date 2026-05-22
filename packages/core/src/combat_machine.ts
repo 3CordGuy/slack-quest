@@ -238,9 +238,9 @@ export interface AbilityRuntimeState {
   // Staff Sage Foresee — re-appends full intel readout for this many more
   // of the Sage's own combat turns after the initial cast.
   foresee_turns?: number;
-  // QA Paladin — Holy Anger: accumulated damage bonus per fighter id.
+  // QA Paladin — Holy Rage: accumulated damage bonus per fighter id.
   // Consumed on the paladin's next attack/ability action.
-  holy_anger?: Record<ActorId, number>;
+  holy_rage?: Record<ActorId, number>;
   // QA Paladin — Shield of Faith: all allies get +5 AC until this round passes.
   shield_of_faith?: { expires_after_round: number };
   // QA Paladin — Protect: the paladin absorbs half of the protected ally's HP damage.
@@ -456,7 +456,7 @@ export type CombatEvent =
   | { type: "passive_rogue_first_crit"; actor: ActorId }
   | { type: "passive_bard_aura"; actor: ActorId; source: ActorId; bonus: number }
   | { type: "passive_warlock_bleed"; actor: ActorId; magnitude: number; duration: number }
-  | { type: "passive_holy_anger"; paladin: ActorId; bonus: number }
+  | { type: "passive_holy_rage"; paladin: ActorId; bonus: number }
   | { type: "ability_shield_of_faith"; actor: ActorId; expires_after_round: number }
   | { type: "ability_protect"; actor: ActorId; target: ActorId }
   | { type: "ability_smite_debuff"; actor: ActorId; target: ActorId }
@@ -808,12 +808,12 @@ function handlePlayerHit(
     isCrit = true;
   }
 
-  // QA Paladin — Holy Anger: consume accumulated bonus from ally damage.
-  const holyAngerBonus = s.ability_state?.holy_anger?.[action.actor] ?? 0;
-  if (holyAngerBonus > 0) {
-    damage += holyAngerBonus;
-    s = { ...s, ability_state: clearHolyAnger(s.ability_state, action.actor) };
-    events.push({ type: "passive_holy_anger", paladin: action.actor, bonus: holyAngerBonus });
+  // QA Paladin — Holy Rage: consume accumulated bonus from damage taken.
+  const holyRageBonus = s.ability_state?.holy_rage?.[action.actor] ?? 0;
+  if (holyRageBonus > 0) {
+    damage += holyRageBonus;
+    s = { ...s, ability_state: clearHolyRage(s.ability_state, action.actor) };
+    events.push({ type: "passive_holy_rage", paladin: action.actor, bonus: holyRageBonus });
   }
 
   // Battle Elixir — Empowered: +25% damage for N turns.
@@ -1516,9 +1516,9 @@ function handleMonsterAct(state: CombatState, roll: RollFn): StepResult {
     round_monster_targets: rmt,
   };
 
-  // QA Paladin — Holy Anger: accumulate bonus damage for all alive Paladins.
+  // QA Paladin — Holy Rage: accumulate bonus damage for all alive Paladins.
   if (hpDamage > 0) {
-    next = accumulateHolyAnger(next, hpDamage);
+    next = accumulateHolyRage(next, hpDamage);
   }
 
   // Elemental proc — fire/ice/lightning monster attacks can apply
@@ -1584,12 +1584,12 @@ function handleDamageAbility(
   let isCrit = dmgEffect.is_crit ?? false;
   const formula = dmgEffect.formula;
 
-  // QA Paladin — Holy Anger: consume accumulated bonus.
-  const holyAngerBonusAbility = state.ability_state?.holy_anger?.[actorId] ?? 0;
-  const abilityStateAfterAnger = holyAngerBonusAbility > 0
-    ? clearHolyAnger(state.ability_state, actorId)
+  // QA Paladin — Holy Rage: consume accumulated bonus.
+  const holyRageBonusAbility = state.ability_state?.holy_rage?.[actorId] ?? 0;
+  const abilityStateAfterAnger = holyRageBonusAbility > 0
+    ? clearHolyRage(state.ability_state, actorId)
     : state.ability_state;
-  amount += holyAngerBonusAbility;
+  amount += holyRageBonusAbility;
 
   // Drink buff — only buff_next_crit applies to ability damage.
   const drinkResult = dmgEffect.drink_buff_context === "ability"
@@ -1624,7 +1624,7 @@ function handleDamageAbility(
     },
   ];
   if (drinkResult.event) events.push(drinkResult.event);
-  if (holyAngerBonusAbility > 0) events.push({ type: "passive_holy_anger", paladin: actorId, bonus: holyAngerBonusAbility });
+  if (holyRageBonusAbility > 0) events.push({ type: "passive_holy_rage", paladin: actorId, bonus: holyRageBonusAbility });
 
   let nextState: CombatState = {
     ...state,
@@ -2945,34 +2945,35 @@ export function mergeEffect(
   return next;
 }
 
-// QA Paladin — Holy Anger helpers.
+// QA Paladin — Holy Rage helpers.
 
-// Accumulate 10% of hpDamage into holy_anger for every alive paladin in party.
-function accumulateHolyAnger(state: CombatState, hpDamage: number): CombatState {
+// Accumulate 10% of hpDamage into holy_rage for every alive paladin in party.
+// Fires when any party member (including the paladin themselves) takes damage.
+function accumulateHolyRage(state: CombatState, hpDamage: number): CombatState {
   const bonus = Math.floor(hpDamage * 0.1);
   if (bonus <= 0) return state;
-  const paladins = state.fighters.filter((f) => f.hp > 0 && classHasPassive(f.class, "holy_anger"));
+  const paladins = state.fighters.filter((f) => f.hp > 0 && classHasPassive(f.class, "holy_rage"));
   if (paladins.length === 0) return state;
-  const prev = state.ability_state?.holy_anger ?? {};
+  const prev = state.ability_state?.holy_rage ?? {};
   const updated: Record<ActorId, number> = { ...prev };
   for (const p of paladins) {
     updated[p.id] = (updated[p.id] ?? 0) + bonus;
   }
-  return { ...state, ability_state: { ...(state.ability_state ?? {}), holy_anger: updated } };
+  return { ...state, ability_state: { ...(state.ability_state ?? {}), holy_rage: updated } };
 }
 
-// Clear the holy_anger entry for a specific fighter (consume on attack).
-function clearHolyAnger(
+// Clear the holy_rage entry for a specific fighter (consume on attack).
+function clearHolyRage(
   abilityState: AbilityRuntimeState | undefined,
   actorId: ActorId,
 ): AbilityRuntimeState | undefined {
-  const prev = abilityState?.holy_anger;
+  const prev = abilityState?.holy_rage;
   if (!prev || !prev[actorId]) return abilityState;
   const updated = { ...prev };
   delete updated[actorId];
   return Object.keys(updated).length > 0
-    ? { ...(abilityState ?? {}), holy_anger: updated }
-    : stripField(abilityState, "holy_anger");
+    ? { ...(abilityState ?? {}), holy_rage: updated }
+    : stripField(abilityState, "holy_rage");
 }
 
 // QA Paladin — Smite debuff: decrement (or clear) the debuff for a monster after its swing.

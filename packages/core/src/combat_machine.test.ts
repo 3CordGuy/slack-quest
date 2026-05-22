@@ -363,21 +363,21 @@ describe("combat_machine.step", () => {
   });
 
   describe("smite ability (QA Paladin)", () => {
-    it("spends 1 mana, deals 1d6+atk+wpn+2d8, applies smite debuff", () => {
+    it("spends 1 mana, deals 1d6+atk+wpn+1d8, applies smite debuff", () => {
       const init = baseInit();
-      // str defaults to 5 (no stats field) → extraDice = 1+floor(5/4) = 2
+      // str defaults to 5 (no stats field) → extraDice = 1+floor(5/10) = 1
       init.fighters[0].mana = 2;
       const begun = runBegin(createCombatState(init), [15, 8]);
-      // 1d6=2 + atk_mod 2 + weapon 4 = 8. 2d8 → 3 + 4 = 7. damage = 8 + 7 = 15.
+      // 1d6=2 + atk_mod 2 + weapon 4 = 8. 1d8=3. damage = 8 + 3 = 11.
       const result = step(
         begun.state,
         { kind: "ability", actor: "U_PALADIN", ability_id: "smite" },
-        seqRoll([2, 3, 4]),
+        seqRoll([2, 3]),
       );
       expect(result.state.fighters[0].mana).toBe(1);
-      expect(result.state.monsters[0].hp).toBe(40 - 15);
+      expect(result.state.monsters[0].hp).toBe(40 - 11);
       const hit = result.events.find((e) => e.type === "player_hit");
-      expect(hit).toMatchObject({ damage: 15 });
+      expect(hit).toMatchObject({ damage: 11 });
       const used = result.events.find((e) => e.type === "ability_used");
       expect(used).toMatchObject({ ability_id: "smite", mana_spent: 1 });
       // Smite debuff should be stored in ability_state
@@ -1295,27 +1295,27 @@ describe("QA Paladin — protect", () => {
   });
 });
 
-describe("QA Paladin — holy_anger passive", () => {
-  // accumulateHolyAnger uses Math.floor, so damage must be ≥ 10 for bonus ≥ 1.
+describe("QA Paladin — holy_rage passive", () => {
+  // accumulateHolyRage uses Math.floor, so damage must be ≥ 10 for bonus ≥ 1.
   // Use a boss phase-2 monster (adds tier bonus = 3): d4=4 → raw=4+3+3=10, bonus=1.
-  function holyAngerInit(): import("./combat_machine").CombatInit {
+  function holyRageInit(): import("./combat_machine").CombatInit {
     const init = baseInit();
     init.monster!.is_boss = true;
     init.monster!.boss_phase = 2;
     return init;
   }
 
-  it("accumulates floor(10%) of HP damage after a monster hit", () => {
+  it("accumulates floor(10%) of HP damage when the paladin themselves takes damage", () => {
     // d4=4 → raw=4+3(tier)+3(boss)=10, hpDamage=10. Math.floor(1.0)=1.
-    const begun = runBegin(createCombatState(holyAngerInit()), [5, 18]);
+    const begun = runBegin(createCombatState(holyRageInit()), [5, 18]);
     const result = step(begun.state, { kind: "monster_act" }, seqRoll([50, 15, 4]));
-    expect(result.state.ability_state?.holy_anger?.["U_PALADIN"]).toBe(1);
+    expect(result.state.ability_state?.holy_rage?.["U_PALADIN"]).toBe(1);
   });
 
   it("adds the accumulated bonus to the next attack and then clears it", () => {
-    // Monster hits for 10 HP → holy_anger[U_PALADIN]=1.
+    // Monster hits paladin for 10 HP → holy_rage[U_PALADIN]=1.
     // Paladin attacks: d20=15 hit, d6=4 → base=4+2+4=10 + bonus=1 = 11 damage.
-    const begun = runBegin(createCombatState(holyAngerInit()), [5, 18]);
+    const begun = runBegin(createCombatState(holyRageInit()), [5, 18]);
     const afterMonster = step(begun.state, { kind: "monster_act" }, seqRoll([50, 15, 4]));
     const result = step(
       afterMonster.state,
@@ -1324,7 +1324,7 @@ describe("QA Paladin — holy_anger passive", () => {
     );
     const hit = result.events.find((e) => e.type === "player_hit");
     expect(hit).toMatchObject({ damage: 11 });
-    expect(result.events.find((e) => e.type === "passive_holy_anger")).toMatchObject({ bonus: 1 });
-    expect(result.state.ability_state?.holy_anger?.["U_PALADIN"]).toBeUndefined();
+    expect(result.events.find((e) => e.type === "passive_holy_rage")).toMatchObject({ bonus: 1 });
+    expect(result.state.ability_state?.holy_rage?.["U_PALADIN"]).toBeUndefined();
   });
 });
