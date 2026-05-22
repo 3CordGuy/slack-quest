@@ -165,7 +165,7 @@ export function resolveSignature(
   monsterMaxHp: number,
   rollFn: (sides: number) => number,
 ): SignatureResult {
-  const wpn = Math.max(0, weaponPower);
+  const wpn = Math.max(0, Math.floor(weaponPower / 2));
   const t = Math.max(1, tier);
   const party = Math.max(1, partySize);
 
