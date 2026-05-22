@@ -100,8 +100,6 @@ export type AbilityEffect =
   | { kind: "set_vanish"; actor_id: string; swings: number }
   // Add N charged attacks to the bard's battle hymn counter.
   | { kind: "add_battle_hymn"; charges: number }
-  // Show full battle intel for N of the sage's own turns (foresee).
-  | { kind: "set_foresee_turns"; turns: number }
   // Move a fighter to a different row.
   | { kind: "move_fighter"; target_id: string; to: "front" | "back" }
   // Grant advantage charges to a fighter: next N to-hit d20 rolls twice, take higher.
@@ -116,7 +114,8 @@ export type AbilityEffect =
   | { kind: "apply_smite_debuff"; target_id: string }
   // Weapon attack with machine-side d20 hit check; emits roll + hit_check events.
   // If advantage is true, the d20 is rolled twice and the higher value is used.
-  | { kind: "attack_roll_damage"; target_id: string; hit_mod: number; amount: number; formula: string; damage_type?: DamageType; advantage?: boolean; is_crit?: boolean }
+  // freeze_chance: if set and the attack hits, machine rolls d100 — if ≤ freeze_chance, applies frozen.
+  | { kind: "attack_roll_damage"; target_id: string; hit_mod: number; amount: number; formula: string; damage_type?: DamageType; advantage?: boolean; is_crit?: boolean; freeze_chance?: number }
   // Rogue Lethal Strikes — apply bleeding to a monster.
   | { kind: "apply_bleed"; target_id: string; stacks: number; duration: number }
   // Rogue Envenom Weapon — apply poison to a monster.
@@ -124,7 +123,13 @@ export type AbilityEffect =
   // Rogue Envenom Weapon — mark the caster's weapon as envenomed; next hit applies poison.
   | { kind: "apply_envenom_weapon"; stacks: number }
   // Rogue Debilitate — target monster takes +magnitude% damage for N rounds.
-  | { kind: "apply_vulnerability"; target_id: string; magnitude: number; rounds: number };
+  | { kind: "apply_vulnerability"; target_id: string; magnitude: number; rounds: number }
+  // Staff Sage — Blizzard: store AoE storm state; damage fires end-of-caster-turn for 3 turns.
+  | { kind: "apply_blizzard"; caster_id: string; mag: number }
+  // Staff Sage — Good Fortune: store a delayed double-heal for the caster's next turn.
+  | { kind: "apply_good_fortune"; caster_id: string; target_id: string; delayed_amount: number }
+  // Staff Sage — Ill Omen: mark a monster for damage tracking; burst fires on monster's 3rd turn.
+  | { kind: "apply_ill_omen"; caster_id: string; target_id: string };
 
 export interface ActiveAbilityDef {
   kind: "active";

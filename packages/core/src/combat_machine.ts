@@ -234,9 +234,6 @@ export interface AbilityRuntimeState {
   // damage on attack/cast until `expires_after_round` is exceeded. Cleared
   // when the monster falls or a wave transition fires.
   mark?: { marked_by: ActorId; expires_after_round: number; monster_id?: string };
-  // Staff Sage Foresee — re-appends full intel readout for this many more
-  // of the Sage's own combat turns after the initial cast.
-  foresee_turns?: number;
   // QA Paladin — Holy Rage: accumulated raw HP damage received per fighter id.
   // Bonus on next attack = floor(total * 0.1). Reset to 0 on consume.
   holy_rage?: Record<ActorId, number>;
@@ -250,6 +247,12 @@ export interface AbilityRuntimeState {
   envenomed_weapon?: Record<ActorId, { stacks: number; charges: number }>;
   // Refactor Rogue — Debilitate: monster → vulnerability until this round passes.
   vulnerable?: Record<ActorId, { expires_after_round: number; magnitude: number }>;
+  // Staff Sage — Blizzard: remaining end-of-caster-turn AoE damage charges.
+  blizzard?: { caster_id: ActorId; mag: number; charges: number };
+  // Staff Sage — Good Fortune: pending delayed double-heal for caster's next turn.
+  good_fortune?: { caster_id: ActorId; target_id: ActorId; amount: number };
+  // Staff Sage — Ill Omen: per-monster damage tracker + remaining monster turns until burst.
+  ill_omen?: Record<ActorId, { caster_id: ActorId; accumulated: number; monster_turns_remaining: number }>;
 }
 
 // How many rounds a mark stays active. Roughly mirrors slack's 90s timer
@@ -480,6 +483,11 @@ export type CombatEvent =
   | { type: "defeat" }
   | { type: "rejected"; reason: string }
   | { type: "turn_skip"; actor: ActorId; reason: "frozen" }
+  | { type: "ability_freeze_applied"; actor: ActorId; target: ActorId }
+  | { type: "ability_blizzard_tick"; actor: ActorId; charges_remaining: number; hits: Array<{ target: ActorId; damage: number }> }
+  | { type: "ability_good_fortune_delayed"; actor: ActorId; target: ActorId; amount: number }
+  | { type: "ability_ill_omen_applied"; actor: ActorId; target: ActorId }
+  | { type: "ability_ill_omen_burst"; actor: ActorId; target: ActorId; accumulated: number; burst: number }
   | {
       type: "elemental_proc";
       actor: ActorId;
@@ -600,9 +608,9 @@ export function step(state: CombatState, action: TurnAction, roll: RollFn): Step
     case "flee":
       return handleFlee(state, action, roll);
     case "position":
-      return handlePosition(state, action);
+      return handlePosition(state, action, roll);
     case "wait":
-      return handleWait(state, action);
+      return handleWait(state, action, roll);
     case "mark":
       return handleMark(state, action);
     case "ability":
@@ -952,8 +960,25 @@ function handlePlayerHit(
     events.push({ type: "boss_phase_transition", new_phase: 2 });
   }
 
+  // Staff Sage — Ill Omen: track HP damage dealt to omen-marked monster.
+  if (hpDamage > 0) {
+    nextState = accumulateIllOmenDamage(nextState, monster.id, hpDamage);
+  }
+
   if (monsterKilled) {
     return resolveMonsterKill(nextState, monster.id, action.actor, events);
+  }
+
+  // Staff Sage — Blizzard: fire end-of-turn AoE tick after any player attack.
+  const blizzTick = applyBlizzardTick(nextState, action.actor, roll);
+  nextState = blizzTick.state;
+  events.push(...blizzTick.events);
+  for (const killedId of blizzTick.killed) {
+    const killResult = resolveMonsterKill(nextState, killedId, action.actor, events);
+    if (killResult.state.status !== "active") return killResult;
+    nextState = killResult.state;
+    events.length = 0;
+    events.push(...killResult.events);
   }
 
   return { state: advanceTurn(nextState), events: [...events, ...turnStartEvent(nextState)] };
@@ -1054,6 +1079,7 @@ function handleMercAct(state: CombatState, roll: RollFn): StepResult {
 function handlePosition(
   state: CombatState,
   action: { kind: "position"; actor: ActorId; to: BattlePosition },
+  roll: RollFn,
 ): StepResult {
   const fighter = state.fighters.find((f) => f.id === action.actor);
   if (!fighter) return reject(state, `unknown actor: ${action.actor}`);
@@ -1067,32 +1093,57 @@ function handlePosition(
 
   const tick = tickAtTurnStart(state, action.actor);
   if (tick.earlyReturn) return tick.earlyReturn;
-  const s = tick.state;
+  let s = tick.state;
 
   const events: CombatEvent[] = [
     ...tick.events,
     { type: "position_changed", actor: action.actor, from: fighter.position, to: action.to },
   ];
-  const next = advanceTurn({
-    ...s,
-    fighters: s.fighters.map((f) =>
-      f.id === action.actor ? { ...f, position: action.to } : f,
-    ),
-  });
+  s = { ...s, fighters: s.fighters.map((f) => f.id === action.actor ? { ...f, position: action.to } : f) };
+
+  // Staff Sage — Blizzard: fire end-of-turn AoE tick.
+  const blizzTick = applyBlizzardTick(s, action.actor, roll);
+  s = blizzTick.state;
+  events.push(...blizzTick.events);
+  for (const killedId of blizzTick.killed) {
+    const killResult = resolveMonsterKill(s, killedId, action.actor, events);
+    if (killResult.state.status !== "active") return killResult;
+    s = killResult.state;
+    events.length = 0;
+    events.push(...killResult.events);
+  }
+
+  const next = advanceTurn(s);
   return { state: next, events: [...events, ...turnStartEvent(next)] };
 }
 
 function handleWait(
   state: CombatState,
   action: { kind: "wait"; actor: ActorId },
+  roll: RollFn,
 ): StepResult {
   if (currentActor(state) !== action.actor) {
     return reject(state, `not ${action.actor}'s turn`);
   }
   const tick = tickAtTurnStart(state, action.actor);
   if (tick.earlyReturn) return tick.earlyReturn;
-  const next = advanceTurn(tick.state);
-  return { state: next, events: [...tick.events, ...turnStartEvent(next)] };
+  let s = tick.state;
+  const events: CombatEvent[] = [...tick.events];
+
+  // Staff Sage — Blizzard: fire end-of-turn AoE tick.
+  const blizzTick = applyBlizzardTick(s, action.actor, roll);
+  s = blizzTick.state;
+  events.push(...blizzTick.events);
+  for (const killedId of blizzTick.killed) {
+    const killResult = resolveMonsterKill(s, killedId, action.actor, events);
+    if (killResult.state.status !== "active") return killResult;
+    s = killResult.state;
+    events.length = 0;
+    events.push(...killResult.events);
+  }
+
+  const next = advanceTurn(s);
+  return { state: next, events: [...events, ...turnStartEvent(next)] };
 }
 
 // Mark — free action, does not consume the actor's turn. Any living fighter
@@ -1184,6 +1235,14 @@ function handleMonsterAct(state: CombatState, roll: RollFn): StepResult {
         ...turnStartEvent(next),
       ],
     };
+  }
+
+  // Staff Sage — Ill Omen: tick monster turn counter; burst fires on 3rd monster turn.
+  const illOmen = tickIllOmenAtMonsterAct(s, actorId);
+  s = illOmen.state;
+  events.push(...illOmen.events);
+  if (illOmen.killed && illOmen.caster_id) {
+    return resolveMonsterKill(s, actorId, illOmen.caster_id, events);
   }
 
   const aliveFighters = s.fighters.filter((f) => f.hp > 0);
@@ -1998,6 +2057,7 @@ function applyUtilityAbilityEffects(
           monsters: s.monsters.map((m) => m.id === monster.id ? { ...m, hp: newHp } : m),
           contribution: { ...s.contribution, [actor]: (s.contribution[actor] ?? 0) + effect.amount },
         };
+        s = accumulateIllOmenDamage(s, monster.id, monster.hp - newHp);
         if (newHp <= 0) return resolveMonsterKill(s, monster.id, actor, events);
         break;
       }
@@ -2104,15 +2164,6 @@ function applyUtilityAbilityEffects(
         events.push({ type: "ability_battle_hymn", actor, charges_added: effect.charges });
         break;
       }
-      case "set_foresee_turns": {
-        const ability_state: AbilityRuntimeState = {
-          ...(s.ability_state ?? {}),
-          foresee_turns: effect.turns,
-        };
-        s = { ...s, ability_state };
-        events.push(buildForeseeEvent(s, actor, roll, effect.turns));
-        break;
-      }
       case "move_fighter": {
         const target = s.fighters.find((f) => f.id === effect.target_id);
         if (!target || target.hp <= 0) continue;
@@ -2210,7 +2261,15 @@ function applyUtilityAbilityEffects(
           monsters: s.monsters.map((m) => m.id === targetMonster.id ? { ...m, hp: newHp } : m),
           contribution: { ...s.contribution, [actor]: (s.contribution[actor] ?? 0) + atkDamage },
         };
+        s = accumulateIllOmenDamage(s, targetMonster.id, atkDamage);
         if (newHp <= 0) return resolveMonsterKill(s, targetMonster.id, actor, events);
+
+        // Staff Sage — Ray of Frost: 25% chance to freeze on hit.
+        if (effect.freeze_chance && roll(100) <= effect.freeze_chance) {
+          const frozenEff: MachineStatusEffect = { type: "frozen", magnitude: 1, remaining: 1, source: actor };
+          s = { ...s, monsters: s.monsters.map((m) => m.id === targetMonster.id ? { ...m, effects: mergeEffect(m.effects, frozenEff) } : m) };
+          events.push({ type: "ability_freeze_applied", actor, target: targetMonster.id });
+        }
 
         if (isCrit) {
           const lsAfterAtk = applyRogueLethalStrike(s, fighter, targetMonster.id);
@@ -2255,7 +2314,49 @@ function applyUtilityAbilityEffects(
         s = { ...s, ability_state };
         break;
       }
+      case "apply_blizzard": {
+        const ability_state: AbilityRuntimeState = {
+          ...(s.ability_state ?? {}),
+          blizzard: { caster_id: effect.caster_id, mag: effect.mag, charges: 3 },
+        };
+        s = { ...s, ability_state };
+        break;
+      }
+      case "apply_good_fortune": {
+        const ability_state: AbilityRuntimeState = {
+          ...(s.ability_state ?? {}),
+          good_fortune: { caster_id: effect.caster_id, target_id: effect.target_id, amount: effect.delayed_amount },
+        };
+        s = { ...s, ability_state };
+        break;
+      }
+      case "apply_ill_omen": {
+        const omenTarget = s.monsters.find((m) => m.id === effect.target_id && m.hp > 0);
+        if (!omenTarget) continue;
+        const ability_state: AbilityRuntimeState = {
+          ...(s.ability_state ?? {}),
+          ill_omen: {
+            ...(s.ability_state?.ill_omen ?? {}),
+            [effect.target_id]: { caster_id: effect.caster_id, accumulated: 0, monster_turns_remaining: 3 },
+          },
+        };
+        s = { ...s, ability_state };
+        events.push({ type: "ability_ill_omen_applied", actor, target: effect.target_id });
+        break;
+      }
     }
+  }
+
+  // Staff Sage — Blizzard: fire end-of-turn AoE tick.
+  const blizzTick = applyBlizzardTick(s, actor, roll);
+  s = blizzTick.state;
+  events.push(...blizzTick.events);
+  for (const killedId of blizzTick.killed) {
+    const killResult = resolveMonsterKill(s, killedId, actor, events);
+    if (killResult.state.status !== "active") return killResult;
+    s = killResult.state;
+    events.length = 0;
+    events.push(...killResult.events);
   }
 
   const next = advanceTurn(s);
@@ -2358,25 +2459,17 @@ function buildForeseeEvent(
   };
 }
 
-// After the monster acts, checks if the next actor is a Staff Sage with
-// foresee_turns > 0. If so, inserts the intel refresh event immediately
-// BEFORE the final turn_start divider so the Sage sees fresh info at the
-// top of their own turn — after the monster's swing settled, before they
-// pick their action.
+// After the monster acts, checks if the next actor is a Staff Sage with the
+// Foretell passive. If so, inserts the intel refresh event immediately BEFORE
+// the final turn_start divider so the Sage sees fresh info at the top of their
+// own turn — after the monster's swing settled, before they pick their action.
 function withForeseeForNextActor(result: StepResult, roll: RollFn): StepResult {
   const actorId = currentActor(result.state);
   if (!actorId || isMonsterActor(actorId)) return result;
-  const sage = result.state.fighters.find((f) => f.id === actorId && classHasPassive(f.class, "sages_reading"));
+  const sage = result.state.fighters.find((f) => f.id === actorId && classHasPassive(f.class, "foretell"));
   if (!sage) return result;
-  const turns = result.state.ability_state?.foresee_turns ?? 0;
-  if (turns <= 0) return result;
 
-  const remaining = turns - 1;
-  const ability_state: AbilityRuntimeState = remaining > 0
-    ? { ...(result.state.ability_state ?? {}), foresee_turns: remaining }
-    : (stripField(result.state.ability_state, "foresee_turns") ?? {});
-  const newState = { ...result.state, ability_state };
-  const refreshEvent = buildForeseeEvent(newState, actorId, roll, remaining);
+  const refreshEvent = buildForeseeEvent(result.state, actorId, roll, 99);
 
   // Insert before the last turn_start event so the readout appears inside
   // the Sage's upcoming turn block rather than at the tail of the monster's.
@@ -2386,7 +2479,7 @@ function withForeseeForNextActor(result: StepResult, roll: RollFn): StepResult {
     if (events[i].type === "turn_start") { insertAt = i; break; }
   }
   events.splice(insertAt, 0, refreshEvent);
-  return { state: newState, events };
+  return { state: result.state, events };
 }
 
 // ── Monster-kill resolution ───────────────────────────────────────────────
@@ -2534,12 +2627,15 @@ function tickAtTurnStart(state: CombatState, actorId: ActorId): TickGate {
     const monster = state.monsters.find((m) => m.id === actorId);
     if (!monster) return { state, events: [], earlyReturn: null };
     const tick = tickEffects(monster.hp, monster.max_hp, monster.effects, actorId);
-    const newState: CombatState = {
+    let newState: CombatState = {
       ...state,
       monsters: state.monsters.map((m) =>
         m.id === actorId ? { ...m, hp: tick.newHp, effects: tick.newEffects } : m,
       ),
     };
+    // Staff Sage — Ill Omen: accumulate DoT damage dealt to an omen-marked monster.
+    const monsterDotDamage = Math.max(0, monster.hp - tick.newHp);
+    if (monsterDotDamage > 0) newState = accumulateIllOmenDamage(newState, actorId, monsterDotDamage);
     // Frozen: the monster's turn is skipped when the frozen effect expires this tick.
     const wasMonsterFrozen = monster.effects.some((e) => e.type === "frozen");
     const stillMonsterFrozen = tick.newEffects.some((e) => e.type === "frozen");
@@ -2598,6 +2694,11 @@ function tickAtTurnStart(state: CombatState, actorId: ActorId): TickGate {
     newState = pre.state;
     passiveEvents = pre.events;
     void tickedFighter;
+
+    // Staff Sage — Good Fortune: fire delayed double-heal at start of caster's next turn.
+    const gf = applyGoodFortuneDelayed(newState, actorId);
+    newState = gf.state;
+    passiveEvents = [...passiveEvents, ...gf.events];
   }
 
   // Frozen: the fighter's turn is skipped when the frozen effect expires this tick.
@@ -3060,6 +3161,139 @@ function consumeSmiteDebuff(
   return Object.keys(updated).length > 0
     ? { ...(state ?? {}), paladin_smite_debuff: updated }
     : stripField(state, "paladin_smite_debuff");
+}
+
+// ── Staff Sage helpers ────────────────────────────────────────────────────
+
+// Blizzard: fire AoE damage + freeze proc at the end of the caster's turn.
+// Rolls fresh 2d6 + mag damage against each alive monster, decrements charges.
+// Returns killed monster IDs for the caller to resolve via resolveMonsterKill.
+function applyBlizzardTick(
+  state: CombatState,
+  casterActor: ActorId,
+  roll: RollFn,
+): { state: CombatState; events: CombatEvent[]; killed: ActorId[] } {
+  const blizzard = state.ability_state?.blizzard;
+  if (!blizzard || blizzard.caster_id !== casterActor || blizzard.charges <= 0) {
+    return { state, events: [], killed: [] };
+  }
+  const liveMonsters = state.monsters.filter((m) => m.hp > 0);
+  if (liveMonsters.length === 0) return { state, events: [], killed: [] };
+
+  const hits: Array<{ target: ActorId; damage: number }> = [];
+  const killed: ActorId[] = [];
+  let s = state;
+
+  for (const m of liveMonsters) {
+    const dmg = roll(6) + roll(6) + blizzard.mag;
+    const newHp = Math.max(0, m.hp - dmg);
+    hits.push({ target: m.id, damage: dmg });
+    s = {
+      ...s,
+      monsters: s.monsters.map((mon) => mon.id === m.id ? { ...mon, hp: newHp } : mon),
+      contribution: { ...s.contribution, [casterActor]: (s.contribution[casterActor] ?? 0) + dmg },
+    };
+    if (newHp <= 0) {
+      killed.push(m.id);
+    } else {
+      // 10% freeze chance per surviving target.
+      if (roll(100) <= 10) {
+        const frozenEff: MachineStatusEffect = { type: "frozen", magnitude: 1, remaining: 1, source: casterActor };
+        s = { ...s, monsters: s.monsters.map((mon) => mon.id === m.id ? { ...mon, effects: mergeEffect(mon.effects, frozenEff) } : mon) };
+      }
+    }
+  }
+
+  const newCharges = blizzard.charges - 1;
+  const ability_state: AbilityRuntimeState | undefined = newCharges > 0
+    ? { ...(s.ability_state ?? {}), blizzard: { ...blizzard, charges: newCharges } }
+    : stripField(s.ability_state, "blizzard");
+  s = { ...s, ability_state };
+
+  const tickEvent: CombatEvent = { type: "ability_blizzard_tick", actor: casterActor, charges_remaining: newCharges, hits };
+  return { state: s, events: [tickEvent], killed };
+}
+
+// Good Fortune: fire the stored delayed heal at the start of the caster's next turn.
+function applyGoodFortuneDelayed(
+  state: CombatState,
+  casterActor: ActorId,
+): { state: CombatState; events: CombatEvent[] } {
+  const gf = state.ability_state?.good_fortune;
+  if (!gf || gf.caster_id !== casterActor) return { state, events: [] };
+
+  const ability_state = stripField(state.ability_state, "good_fortune");
+  let s: CombatState = { ...state, ability_state };
+
+  const target = s.fighters.find((f) => f.id === gf.target_id && f.hp > 0);
+  if (!target) return { state: s, events: [] };
+
+  const newHp = Math.min(target.max_hp, target.hp + gf.amount);
+  const applied = newHp - target.hp;
+  if (applied <= 0) return { state: s, events: [] };
+
+  s = { ...s, fighters: s.fighters.map((f) => f.id === gf.target_id ? { ...f, hp: newHp } : f) };
+  return { state: s, events: [{ type: "ability_good_fortune_delayed", actor: casterActor, target: gf.target_id, amount: applied }] };
+}
+
+// Ill Omen: accumulate HP damage dealt to an omen-marked monster.
+// No-op if there is no active Ill Omen on the monster or damage is 0.
+function accumulateIllOmenDamage(state: CombatState, monsterId: ActorId, hpDamage: number): CombatState {
+  const entry = state.ability_state?.ill_omen?.[monsterId];
+  if (!entry || hpDamage <= 0) return state;
+  const ability_state: AbilityRuntimeState = {
+    ...(state.ability_state ?? {}),
+    ill_omen: {
+      ...(state.ability_state?.ill_omen ?? {}),
+      [monsterId]: { ...entry, accumulated: entry.accumulated + hpDamage },
+    },
+  };
+  return { ...state, ability_state };
+}
+
+// Ill Omen: decrement the turn counter for a monster. On the 3rd monster act,
+// burst 50% of accumulated damage and clear the omen. Returns `killed: true`
+// if the burst reduces the monster to 0 HP (caller resolves the kill).
+function tickIllOmenAtMonsterAct(
+  state: CombatState,
+  monsterId: ActorId,
+): { state: CombatState; events: CombatEvent[]; killed: boolean; caster_id: ActorId | null } {
+  const entry = state.ability_state?.ill_omen?.[monsterId];
+  if (!entry) return { state, events: [], killed: false, caster_id: null };
+
+  const newTurns = entry.monster_turns_remaining - 1;
+
+  if (newTurns > 0) {
+    const ability_state: AbilityRuntimeState = {
+      ...(state.ability_state ?? {}),
+      ill_omen: { ...(state.ability_state?.ill_omen ?? {}), [monsterId]: { ...entry, monster_turns_remaining: newTurns } },
+    };
+    return { state: { ...state, ability_state }, events: [], killed: false, caster_id: null };
+  }
+
+  // 3rd monster turn — burst fires; clear the entry.
+  const burst = Math.floor(entry.accumulated * 0.5);
+  const omUpdated = { ...(state.ability_state?.ill_omen ?? {}) };
+  delete omUpdated[monsterId];
+  const ability_state: AbilityRuntimeState | undefined = Object.keys(omUpdated).length > 0
+    ? { ...(state.ability_state ?? {}), ill_omen: omUpdated }
+    : stripField(state.ability_state, "ill_omen");
+  let s: CombatState = { ...state, ability_state };
+
+  const burstEvent: CombatEvent = { type: "ability_ill_omen_burst", actor: entry.caster_id, target: monsterId, accumulated: entry.accumulated, burst };
+
+  if (burst <= 0) return { state: s, events: [burstEvent], killed: false, caster_id: entry.caster_id };
+
+  const monster = s.monsters.find((m) => m.id === monsterId && m.hp > 0);
+  if (!monster) return { state: s, events: [burstEvent], killed: false, caster_id: entry.caster_id };
+
+  const newHp = Math.max(0, monster.hp - burst);
+  s = {
+    ...s,
+    monsters: s.monsters.map((m) => m.id === monsterId ? { ...m, hp: newHp } : m),
+    contribution: { ...s.contribution, [entry.caster_id]: (s.contribution[entry.caster_id] ?? 0) + burst },
+  };
+  return { state: s, events: [burstEvent], killed: newHp <= 0, caster_id: entry.caster_id };
 }
 
 // Remove a key from ability_state without mutating. Returns undefined if the
