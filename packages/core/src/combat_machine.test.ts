@@ -1723,28 +1723,28 @@ describe("Staff Sage — Ray of Frost", () => {
 
 describe("Staff Sage — Blizzard", () => {
   it("spends 2 mana, stores charges=3, fires first tick immediately (charges → 2)", () => {
-    // execute() rolls nothing; applyBlizzardTick fires on cast: d6=3, d6=2 → 7+mag(2)=7. d100=50 no freeze.
+    // execute() rolls nothing; applyBlizzardTick fires on cast: d6=3 → 3+mag(2)=5. d100=50 no freeze.
     const begun = runBegin(createCombatState(sageInit()), [20, 5]);
-    const result = step(begun.state, { kind: "ability", actor: "U_SAGE", ability_id: "blizzard" }, seqRoll([3, 2, 50]));
+    const result = step(begun.state, { kind: "ability", actor: "U_SAGE", ability_id: "blizzard" }, seqRoll([3, 50]));
     expect(result.state.fighters[0].mana).toBe(2); // 4 - 2
     expect(result.state.ability_state?.blizzard?.charges).toBe(2);
-    expect(result.state.monsters[0].hp).toBe(33); // 40 - 7
+    expect(result.state.monsters[0].hp).toBe(35); // 40 - 5
     const tickEvt = result.events.find((e) => e.type === "ability_blizzard_tick");
-    expect(tickEvt).toMatchObject({ actor: "U_SAGE", charges_remaining: 2, hits: [{ target: MONSTER_ID, damage: 7 }] });
+    expect(tickEvt).toMatchObject({ actor: "U_SAGE", charges_remaining: 2, hits: [{ target: MONSTER_ID, damage: 5 }] });
   });
 
   it("fires a tick on each subsequent sage action and clears after 3 total ticks", () => {
     // cast (tick 1 → charges 2), monster acts, wait (tick 2 → charges 1), monster acts, wait (tick 3 → clears).
     const begun = runBegin(createCombatState(sageInit()), [20, 5]);
-    const s1 = step(begun.state, { kind: "ability", actor: "U_SAGE", ability_id: "blizzard" }, seqRoll([3, 2, 50]));
+    const s1 = step(begun.state, { kind: "ability", actor: "U_SAGE", ability_id: "blizzard" }, seqRoll([3, 50]));
     expect(s1.state.ability_state?.blizzard?.charges).toBe(2);
 
     const s2 = step(s1.state, { kind: "monster_act" }, seqRoll([50, 10, 3, 50]));
-    const s3 = step(s2.state, { kind: "wait", actor: "U_SAGE" }, seqRoll([4, 1, 50]));
+    const s3 = step(s2.state, { kind: "wait", actor: "U_SAGE" }, seqRoll([4, 50]));
     expect(s3.state.ability_state?.blizzard?.charges).toBe(1);
 
     const s4 = step(s3.state, { kind: "monster_act" }, seqRoll([50, 10, 3, 50]));
-    const s5 = step(s4.state, { kind: "wait", actor: "U_SAGE" }, seqRoll([2, 5, 50]));
+    const s5 = step(s4.state, { kind: "wait", actor: "U_SAGE" }, seqRoll([2, 50]));
     expect(s5.state.ability_state?.blizzard).toBeUndefined();
   });
 
@@ -1756,24 +1756,24 @@ describe("Staff Sage — Blizzard", () => {
         { name: "Mob B", hp: 20, max_hp: 20, tier: 1, is_boss: false },
       ],
     };
-    // Sage wins; cast blizzard. Tick hits both mobs: [d6=2,d6=3,d100=50, d6=1,d6=4,d100=50]
-    // Mob A: 2+3+2=7; Mob B: 1+4+2=7.
+    // Sage wins; cast blizzard. Tick hits both mobs: [d6=2,d100=50, d6=1,d100=50]
+    // Mob A: 2+2=4; Mob B: 1+2=3.
     const begun = runBegin(createCombatState(init), [20, 5, 1]);
-    const result = step(begun.state, { kind: "ability", actor: "U_SAGE", ability_id: "blizzard" }, seqRoll([2, 3, 50, 1, 4, 50]));
-    expect(result.state.monsters[0].hp).toBe(13); // 20 - 7
-    expect(result.state.monsters[1].hp).toBe(13); // 20 - 7
+    const result = step(begun.state, { kind: "ability", actor: "U_SAGE", ability_id: "blizzard" }, seqRoll([2, 50, 1, 50]));
+    expect(result.state.monsters[0].hp).toBe(16); // 20 - 4
+    expect(result.state.monsters[1].hp).toBe(17); // 20 - 3
   });
 
   it("applies frozen to a surviving monster when freeze roll ≤ 10", () => {
-    // d6=1, d6=1, d100=5 ≤ 10 → frozen effect applied (blizzard tick does not emit ability_freeze_applied).
+    // d6=1, d100=5 ≤ 10 → frozen effect applied (blizzard tick does not emit ability_freeze_applied).
     const begun = runBegin(createCombatState(sageInit()), [20, 5]);
-    const result = step(begun.state, { kind: "ability", actor: "U_SAGE", ability_id: "blizzard" }, seqRoll([1, 1, 5]));
+    const result = step(begun.state, { kind: "ability", actor: "U_SAGE", ability_id: "blizzard" }, seqRoll([1, 5]));
     expect(result.state.monsters[0].effects.some((e) => e.type === "frozen")).toBe(true);
   });
 
   it("does not apply frozen when freeze roll > 10", () => {
     const begun = runBegin(createCombatState(sageInit()), [20, 5]);
-    const result = step(begun.state, { kind: "ability", actor: "U_SAGE", ability_id: "blizzard" }, seqRoll([1, 1, 11]));
+    const result = step(begun.state, { kind: "ability", actor: "U_SAGE", ability_id: "blizzard" }, seqRoll([1, 11]));
     expect(result.state.monsters[0].effects.some((e) => e.type === "frozen")).toBe(false);
   });
 });

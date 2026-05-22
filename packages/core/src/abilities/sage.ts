@@ -32,7 +32,7 @@ export const sageAbilities: AbilityDef[] = [
     kind: "active",
     id: "blizzard",
     name: "Blizzard",
-    blurb: "Start a blizzard dealing 2d6 + mag frost damage to all enemies at the end of each of your turns (10% freeze chance). Lasts 3 turns.",
+    blurb: "Start a blizzard dealing 1d6 + mag frost damage to all enemies at the end of each of your turns (10% freeze chance). Lasts 3 turns.",
     icon: "snowflake",
     mana_cost: 2,
     cooldown_turns: 3,

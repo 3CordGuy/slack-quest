@@ -3547,7 +3547,7 @@ function consumeSmiteDebuff(
 // ── Staff Sage helpers ────────────────────────────────────────────────────
 
 // Blizzard: fire AoE damage + freeze proc at the end of the caster's turn.
-// Rolls fresh 2d6 + mag damage against each alive monster, decrements charges.
+// Rolls fresh 1d6 + mag damage against each alive monster, decrements charges.
 // Returns killed monster IDs for the caller to resolve via resolveMonsterKill.
 function applyBlizzardTick(
   state: CombatState,
@@ -3566,7 +3566,7 @@ function applyBlizzardTick(
   let s = state;
 
   for (const m of liveMonsters) {
-    const dmg = roll(6) + roll(6) + blizzard.mag;
+    const dmg = roll(6) + blizzard.mag;
     const newHp = Math.max(0, m.hp - dmg);
     hits.push({ target: m.id, damage: dmg });
     s = {
