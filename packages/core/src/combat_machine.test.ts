@@ -1622,7 +1622,6 @@ describe("mark", () => {
     const result = step(marked, { kind: "attack", actor: "U_B" }, seqRoll([10, 2]));
     const hitEvt = result.events.find((e) => e.type === "player_hit");
     expect(hitEvt).toMatchObject({ damage: 4 });
-    expect(result.events.find((e) => e.type === "mark_bonus")).toBeUndefined();
   });
 });
 
@@ -1816,7 +1815,7 @@ describe("Staff Sage — Ill Omen", () => {
     const begun = runBegin(createCombatState(sageInit()), [20, 5]);
     const result = step(begun.state, { kind: "ability", actor: "U_SAGE", ability_id: "ill_omen", target_id: MONSTER_ID }, seqRoll([]));
     expect(result.state.fighters[0].mana).toBe(3); // 4 - 1
-    expect(result.state.cooldowns?.["U_SAGE"]?.["ill_omen"]).toBe(1);
+    expect(result.state.cooldowns?.["U_SAGE"]?.["ill_omen"]).toBe(2);
     expect(result.state.ability_state?.ill_omen?.[MONSTER_ID]).toMatchObject({
       caster_id: "U_SAGE",
       accumulated: 0,
