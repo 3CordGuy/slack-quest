@@ -2795,7 +2795,7 @@ function PartyChips({ fighters, selfId, flashIds, hitDustSeq, healBurstSeq, shie
   const sofRoundsLeft = sofState != null ? sofState.expires_after_round - (round ?? 0) + 1 : 0;
   const sofActive = sofRoundsLeft > 0;
   const protectState = abilityState?.paladin_protect as { paladin_id: string; target_id: string } | undefined;
-  const holyAngerMap = abilityState?.holy_anger as Record<string, number> | undefined;
+  const holyRageMap = abilityState?.holy_rage as Record<string, number> | undefined;
 
   function renderChip(f: Fighter) {
     const pct = f.max_hp > 0 ? Math.max(0, f.hp / f.max_hp) : 0;
@@ -2869,8 +2869,9 @@ function PartyChips({ fighters, selfId, flashIds, hitDustSeq, healBurstSeq, shie
         </div>
         {(() => {
           const isProtected = protectState?.target_id === f.id;
-          const holyAnger = holyAngerMap?.[f.id] ?? 0;
-          const hasExtra = sofActive || isProtected || holyAnger > 0;
+          const holyRageTotal = holyRageMap?.[f.id] ?? 0;
+          const holyRageBonus = Math.floor(holyRageTotal * 0.1);
+          const hasExtra = sofActive || isProtected || holyRageTotal > 0;
           if (!f.effects?.length && !hasExtra) return null;
           return (
             <div style={{ position: "absolute", top: -8, right: -4, display: "flex", flexDirection: "column", gap: 3, alignItems: "flex-end" }}>
@@ -2880,7 +2881,7 @@ function PartyChips({ fighters, selfId, flashIds, hitDustSeq, healBurstSeq, shie
               })}
               {sofActive && <StatusPill size="sm" color="#60a5fa" icon="round-shield" label="SoF" suffix={`${sofRoundsLeft}r`} title={`Shield of Faith: +5 AC (${sofRoundsLeft} round${sofRoundsLeft === 1 ? "" : "s"} left)`} />}
               {isProtected && <StatusPill size="sm" color="#a78bfa" icon="crowned-heart" label="protected" suffix="½ dmg" title="Protected: taking half damage, absorbed by the paladin" />}
-              {holyAnger > 0 && <StatusPill size="sm" color="#f97316" icon="fire" label="holy anger" suffix={`+${holyAnger}`} title={`Holy Anger: next attack deals +${holyAnger} bonus damage`} />}
+              {holyRageTotal > 0 && <StatusPill size="sm" color="#f97316" icon="fire" label="holy rage" suffix={`+${holyRageBonus}`} title={`Holy Rage: next attack deals +${holyRageBonus} bonus damage`} />}
             </div>
           );
         })()}
