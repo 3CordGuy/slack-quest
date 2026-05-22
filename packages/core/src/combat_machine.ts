@@ -1916,7 +1916,7 @@ function handleAbility(
         ...(s.cooldowns ?? {}),
         [action.actor]: {
           ...(s.cooldowns?.[action.actor] ?? {}),
-          [ability.id]: ability.cooldown_turns,
+          [ability.id]: ability.cooldown_turns + 1,
         },
       },
     } : {}),

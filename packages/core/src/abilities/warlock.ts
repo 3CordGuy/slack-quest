@@ -55,6 +55,7 @@ export const warlockAbilities: AbilityDef[] = [
     blurb: "Summon an imp into battle. Its attacks deal damage equal to your magic modifier.",
     icon: "aura",
     mana_cost: 2,
+    cooldown_turns: 2,
     routing: "utility",
     target: "self",
     execute(ctx) {
