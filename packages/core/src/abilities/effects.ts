@@ -4,6 +4,7 @@
 // Usage: return [fx.damage(monster.id, amount, formula), fx.heal(caster.id, 5)]
 
 import type { AbilityEffect } from "../abilities";
+import type { DamageType } from "../flavor";
 
 export const fx = {
   // Deal damage to a monster (bypasses armor). Pass drink_buff_context:
@@ -82,6 +83,26 @@ export const fx = {
 
   smiteDebuff(targetId: string): AbilityEffect {
     return { kind: "apply_smite_debuff", target_id: targetId };
+  },
+
+  attackRollDamage(targetId: string, hitMod: number, amount: number, formula: string, damageType?: DamageType, advantage?: boolean): AbilityEffect {
+    return { kind: "attack_roll_damage", target_id: targetId, hit_mod: hitMod, amount, formula, damage_type: damageType, advantage };
+  },
+
+  bleed(targetId: string, stacks: number, duration = 2): AbilityEffect {
+    return { kind: "apply_bleed", target_id: targetId, stacks, duration };
+  },
+
+  poison(targetId: string, stacks: number, duration = 2): AbilityEffect {
+    return { kind: "apply_poison", target_id: targetId, stacks, duration };
+  },
+
+  envenomWeapon(stacks: number): AbilityEffect {
+    return { kind: "apply_envenom_weapon", stacks };
+  },
+
+  vulnerability(targetId: string, magnitude: number, rounds: number): AbilityEffect {
+    return { kind: "apply_vulnerability", target_id: targetId, magnitude, rounds };
   },
 };
 

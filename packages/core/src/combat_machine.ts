@@ -218,7 +218,6 @@ const WARLOCK_BLEED_DURATION = 3;
 
 // Keys for once-per-fight passives.
 const PASSIVE_WARDEN_SHIELD = "warden_shield";
-const PASSIVE_ROGUE_FIRST_CRIT = "rogue_first_crit";
 
 export interface AbilityRuntimeState {
   // SRE Warden — monster's next N swings forced to target actor_id.
@@ -247,6 +246,10 @@ export interface AbilityRuntimeState {
   paladin_protect?: { paladin_id: ActorId; target_id: ActorId };
   // QA Paladin — Smite debuff: monster → swings remaining at 50% reduced damage.
   paladin_smite_debuff?: Record<ActorId, number>;
+  // Refactor Rogue — Envenom Weapon: fighter → poison stacks to apply on next hit.
+  envenomed_weapon?: Record<ActorId, number>;
+  // Refactor Rogue — Debilitate: monster → vulnerability until this round passes.
+  vulnerable?: Record<ActorId, { expires_after_round: number; magnitude: number }>;
 }
 
 // +damage to non-marker partymate attacks while a mark is active. Tuned to
@@ -453,7 +456,8 @@ export type CombatEvent =
   | { type: "passive_warden_shield"; actor: ActorId; amount: number }
   | { type: "passive_mage_mana_font"; actor: ActorId; amount: number }
   | { type: "passive_druid_regen"; actor: ActorId; amount: number }
-  | { type: "passive_rogue_first_crit"; actor: ActorId }
+  | { type: "passive_rogue_lethal_strike"; actor: ActorId; magnitude: number; duration: number }
+  | { type: "ability_envenom_proc"; actor: ActorId; target: ActorId; stacks: number }
   | { type: "passive_bard_aura"; actor: ActorId; source: ActorId; bonus: number }
   | { type: "passive_warlock_bleed"; actor: ActorId; magnitude: number; duration: number }
   | { type: "passive_holy_rage"; paladin: ActorId; bonus: number }
@@ -727,17 +731,7 @@ function handlePlayerHit(
   }
   const ac = monsterAc(monster.tier);
   const hitTotal = d20 + classMod;
-  const baseLanded = hitTotal >= ac;
-  // Refactor Rogue — First Strike. The first `attack` of the fight is a
-  // guaranteed crit. We force the to-hit to land too so an unlucky d20 can't
-  // cancel a passive that the slack version (which has no to-hit) considers
-  // unconditional.
-  const rogueAutoLand =
-    !baseLanded
-    && action.kind === "attack"
-    && classHasPassive(tickedFighter.class, "first_strike")
-    && !isPassiveUsed(s, action.actor, PASSIVE_ROGUE_FIRST_CRIT);
-  const landed = baseLanded || rogueAutoLand;
+  const landed = hitTotal >= ac;
   events.push({
     type: "roll",
     actor: action.actor,
@@ -761,6 +755,12 @@ function handlePlayerHit(
     return { state: next, events: [...events, ...turnStartEvent(next)] };
   }
 
+  // Vanish auto-crit: reveal from stealth on any attack; force crit if attack lands.
+  const wasVanished = (s.ability_state?.vanished?.[action.actor] ?? 0) > 0;
+  if (wasVanished) {
+    s = { ...s, ability_state: removeVanishForFighter(s.ability_state, action.actor) };
+  }
+
   // ── damage roll on hit ──
   const hit = resolvePlayerHit(action.kind, classMod, tickedFighter.weapon_power, roll);
   events.push({
@@ -771,25 +771,16 @@ function handlePlayerHit(
     purpose: "damage_attack",
   });
 
-  // Refactor Rogue — First Strike. First `attack` of the fight is a guaranteed
-  // crit. Skipped if the roll was already a crit (no double-trigger) or this is
-  // a cast (the dagger-strike identity). Doubles the post-mod total.
   let damage = hit.damage;
   let isCrit = hit.isCrit;
-  let rogueFirstCritFired = false;
-  if (
-    action.kind === "attack"
-    && classHasPassive(tickedFighter.class, "first_strike")
-    && !isCrit
-    && !isPassiveUsed(s, action.actor, PASSIVE_ROGUE_FIRST_CRIT)
-  ) {
+
+  // Vanish auto-crit: attacking while obscured guarantees a crit on hit.
+  if (wasVanished && !isCrit) {
     isCrit = true;
-    damage = damage * 2;
-    rogueFirstCritFired = true;
+    damage *= 2;
   }
 
   // DEX crit bonus — secondary crit chance for DEX > 5 (STATS_V2 only).
-  // Only fires when not already a nat-crit or rogue first-crit.
   if (!isCrit && tickedFighter.stats) {
     const threshold = Math.round(deriveCritBonus(tickedFighter.stats) * 100);
     if (threshold > 0 && roll(100) <= threshold) {
@@ -855,7 +846,8 @@ function handlePlayerHit(
   const weaknessMult = monster.damage_weakness === playerAttackType ? 1.3 : 1.0;
   const resistMult = monster.damage_resistance === playerAttackType ? 0.7 : 1.0;
 
-  const finalDamage = Math.max(1, Math.round((damage + aura.bonus + markBonus) * shockMult * weaknessMult * resistMult));
+  const vulnMult = vulnerabilityMult(s, monster.id, s.round);
+  const finalDamage = Math.max(1, Math.round((damage + aura.bonus + markBonus) * shockMult * weaknessMult * resistMult * vulnMult));
 
   // Physical attacks (attack action) deplete the monster's armor pool first.
   // Cast and signatures bypass armor and go straight to HP.
@@ -873,9 +865,6 @@ function handlePlayerHit(
     monster.boss_phase === 1 &&
     isBossPhaseTransition(monster.max_hp, oldHp, newHp);
 
-  if (rogueFirstCritFired) {
-    events.push({ type: "passive_rogue_first_crit", actor: action.actor });
-  }
   if (drinkResult.event) {
     events.push(drinkResult.event);
   }
@@ -946,15 +935,26 @@ function handlePlayerHit(
     // doesn't get coerced to undefined for unrelated turns.
     ...(drinkResult.event ? { drink_buffs: drinkResult.nextDrinkBuffs } : {}),
   };
-  if (rogueFirstCritFired) {
-    nextState = markPassiveUsed(nextState, action.actor, PASSIVE_ROGUE_FIRST_CRIT);
-  }
 
   // Data Warlock — Cursed Strike. Applies bleed on a crit attack/cast. Always-on.
   if (isCrit && !monsterKilled) {
     const bleed = applyWarlockBleed(nextState, tickedFighter, monster.id, true);
     nextState = bleed.state;
     events.push(...bleed.events);
+  }
+
+  // Rogue — Lethal Strikes: crits apply bleed.
+  if (isCrit && !monsterKilled) {
+    const ls = applyRogueLethalStrike(nextState, tickedFighter, monster.id);
+    nextState = ls.state;
+    events.push(...ls.events);
+  }
+
+  // Rogue — Envenom Weapon: next hit after ability applies poison.
+  if (!monsterKilled) {
+    const env = applyEnvenomProc(nextState, tickedFighter, monster.id);
+    nextState = env.state;
+    events.push(...env.events);
   }
 
   // Elemental weapon proc — applies status (burning/frozen/shocked) to target.
@@ -1603,7 +1603,8 @@ function handleDamageAbility(
   // Shocked amplifier.
   const sigShockedEffect = monster.effects.find((e) => e.type === "shocked");
   const sigShockMult = sigShockedEffect ? (sigShockedEffect.magnitude >= 2 ? 1.45 : 1.30) : 1.0;
-  const finalDamage = Math.round(amount * sigShockMult);
+  const sigVulnMult = vulnerabilityMult(state, monster.id, state.round);
+  const finalDamage = Math.round(amount * sigShockMult * sigVulnMult);
 
   const oldHp = monster.hp;
   const newHp = Math.max(0, oldHp - finalDamage);
@@ -1669,6 +1670,20 @@ function handleDamageAbility(
     const bleed = applyWarlockBleed(nextState, tickedActor, monster.id, true);
     nextState = bleed.state;
     events.push(...bleed.events);
+  }
+
+  // Rogue — Lethal Strikes: crits apply bleed.
+  if (isCrit && !monsterKilled) {
+    const ls = applyRogueLethalStrike(nextState, tickedActor, monster.id);
+    nextState = ls.state;
+    events.push(...ls.events);
+  }
+
+  // Rogue — Envenom Weapon: next hit after ability applies poison.
+  if (!monsterKilled) {
+    const env = applyEnvenomProc(nextState, tickedActor, monster.id);
+    nextState = env.state;
+    events.push(...env.events);
   }
 
   // Elemental weapon proc.
@@ -2185,6 +2200,88 @@ function applyUtilityAbilityEffects(
         };
         s = { ...s, ability_state };
         events.push({ type: "ability_smite_debuff", actor, target: effect.target_id });
+        break;
+      }
+      case "attack_roll_damage": {
+        // Machine-side d20 hit check with optional advantage. Calls the same
+        // encourage/advantage logic as handleAttack; on a miss the loop continues
+        // to the next effect (turn will advance after all effects are processed).
+        const targetMonster = s.monsters.find((m) => m.id === effect.target_id && m.hp > 0);
+        if (!targetMonster) continue;
+        const fighter = s.fighters.find((f) => f.id === actor);
+        if (!fighter) continue;
+
+        let d20 = roll(20);
+        const encourageCharges = s.ability_state?.encourage?.[actor] ?? 0;
+        if (encourageCharges > 0 || effect.advantage) {
+          const d20b = roll(20);
+          const took = Math.max(d20, d20b);
+          events.push({ type: "advantage_used", actor, d20_a: d20, d20_b: d20b, took });
+          d20 = took;
+          if (encourageCharges > 0) {
+            s = { ...s, ability_state: consumeEncourageCharge(s.ability_state, actor) };
+          }
+        }
+        const atkAc = monsterAc(targetMonster.tier);
+        const hitTotal = d20 + effect.hit_mod;
+        const landed = hitTotal >= atkAc;
+        events.push({ type: "roll", actor, die: "d20", value: d20, purpose: "hit_check" });
+        events.push({ type: "hit_check", actor, target: targetMonster.id, roll: d20, modifier: effect.hit_mod, total: hitTotal, ac: atkAc, hit: landed });
+
+        if (!landed) break;
+
+        const atkVulnMult = vulnerabilityMult(s, targetMonster.id, s.round);
+        const atkDamage = Math.max(1, Math.round(effect.amount * atkVulnMult));
+        events.push({ type: "player_hit", actor, target: targetMonster.id, damage: atkDamage, armor_absorbed: 0, crit: false, formula: effect.formula });
+        const newHp = Math.max(0, targetMonster.hp - atkDamage);
+        s = {
+          ...s,
+          monsters: s.monsters.map((m) => m.id === targetMonster.id ? { ...m, hp: newHp } : m),
+          contribution: { ...s.contribution, [actor]: (s.contribution[actor] ?? 0) + atkDamage },
+        };
+        if (newHp <= 0) return resolveMonsterKill(s, targetMonster.id, actor, events);
+
+        // Lethal Strikes on Backstab hit (no crit — damage was pre-rolled with advantage).
+        // Envenom proc on hit.
+        const lsAfterAtk = applyRogueLethalStrike(s, fighter, targetMonster.id);
+        s = lsAfterAtk.state; events.push(...lsAfterAtk.events);
+        const envAfterAtk = applyEnvenomProc(s, fighter, targetMonster.id);
+        s = envAfterAtk.state; events.push(...envAfterAtk.events);
+        break;
+      }
+      case "apply_bleed": {
+        const targetMonster = s.monsters.find((m) => m.id === effect.target_id && m.hp > 0);
+        if (!targetMonster) continue;
+        const bleedEffect: MachineStatusEffect = { type: "bleeding", magnitude: effect.stacks, remaining: effect.duration, source: actor };
+        s = { ...s, monsters: s.monsters.map((m) => m.id === targetMonster.id ? { ...m, effects: mergeEffect(m.effects, bleedEffect) } : m) };
+        events.push({ type: "passive_rogue_lethal_strike", actor, magnitude: effect.stacks, duration: effect.duration });
+        break;
+      }
+      case "apply_poison": {
+        const targetMonster = s.monsters.find((m) => m.id === effect.target_id && m.hp > 0);
+        if (!targetMonster) continue;
+        const poisonEffect: MachineStatusEffect = { type: "poisoned", magnitude: effect.stacks, remaining: effect.duration, source: actor };
+        s = { ...s, monsters: s.monsters.map((m) => m.id === targetMonster.id ? { ...m, effects: mergeEffect(m.effects, poisonEffect) } : m) };
+        events.push({ type: "ability_envenom_proc", actor, target: targetMonster.id, stacks: effect.stacks });
+        break;
+      }
+      case "apply_envenom_weapon": {
+        const ability_state: AbilityRuntimeState = {
+          ...(s.ability_state ?? {}),
+          envenomed_weapon: { ...(s.ability_state?.envenomed_weapon ?? {}), [actor]: effect.stacks },
+        };
+        s = { ...s, ability_state };
+        break;
+      }
+      case "apply_vulnerability": {
+        const ability_state: AbilityRuntimeState = {
+          ...(s.ability_state ?? {}),
+          vulnerable: {
+            ...(s.ability_state?.vulnerable ?? {}),
+            [effect.target_id]: { expires_after_round: s.round + effect.rounds - 1, magnitude: effect.magnitude },
+          },
+        };
+        s = { ...s, ability_state };
         break;
       }
     }
@@ -3152,6 +3249,75 @@ function applyDrinkBuff(
 
 function reject(state: CombatState, reason: string): StepResult {
   return { state, events: [{ type: "rejected", reason }] };
+}
+
+function removeVanishForFighter(
+  state: AbilityRuntimeState | undefined,
+  actorId: ActorId,
+): AbilityRuntimeState | undefined {
+  if (!state?.vanished) return state;
+  const updated = { ...state.vanished };
+  delete updated[actorId];
+  return Object.keys(updated).length > 0
+    ? { ...state, vanished: updated }
+    : stripField(state, "vanished");
+}
+
+function vulnerabilityMult(state: CombatState, monsterId: ActorId, round: number): number {
+  const entry = state.ability_state?.vulnerable?.[monsterId];
+  if (!entry || round > entry.expires_after_round) return 1.0;
+  return 1 + entry.magnitude / 100;
+}
+
+function applyRogueLethalStrike(
+  state: CombatState,
+  actor: CombatFighter,
+  targetMonsterId: ActorId,
+): { state: CombatState; events: CombatEvent[] } {
+  if (!classHasPassive(actor.class, "lethal_strikes")) return { state, events: [] };
+  const targetMonster = state.monsters.find((m) => m.id === targetMonsterId && m.hp > 0);
+  if (!targetMonster) return { state, events: [] };
+  const stacks = 2 + Math.floor(actor.level / 2);
+  const duration = 2;
+  const bleedEffect: MachineStatusEffect = { type: "bleeding", magnitude: stacks, remaining: duration, source: actor.id };
+  const updated: CombatState = {
+    ...state,
+    monsters: state.monsters.map((m) =>
+      m.id === targetMonsterId ? { ...m, effects: mergeEffect(m.effects, bleedEffect) } : m,
+    ),
+  };
+  return {
+    state: updated,
+    events: [{ type: "passive_rogue_lethal_strike", actor: actor.id, magnitude: stacks, duration }],
+  };
+}
+
+function applyEnvenomProc(
+  state: CombatState,
+  actor: CombatFighter,
+  targetMonsterId: ActorId,
+): { state: CombatState; events: CombatEvent[] } {
+  const stacks = state.ability_state?.envenomed_weapon?.[actor.id] ?? 0;
+  if (stacks <= 0) return { state, events: [] };
+  const targetMonster = state.monsters.find((m) => m.id === targetMonsterId && m.hp > 0);
+  if (!targetMonster) return { state, events: [] };
+  const poisonEffect: MachineStatusEffect = { type: "poisoned", magnitude: stacks, remaining: 2, source: actor.id };
+  const updatedWeapon = { ...(state.ability_state?.envenomed_weapon ?? {}) };
+  delete updatedWeapon[actor.id];
+  const ability_state: AbilityRuntimeState | undefined = Object.keys(updatedWeapon).length > 0
+    ? { ...(state.ability_state ?? {}), envenomed_weapon: updatedWeapon }
+    : stripField(state.ability_state ?? {}, "envenomed_weapon");
+  const updated: CombatState = {
+    ...state,
+    monsters: state.monsters.map((m) =>
+      m.id === targetMonsterId ? { ...m, effects: mergeEffect(m.effects, poisonEffect) } : m,
+    ),
+    ability_state,
+  };
+  return {
+    state: updated,
+    events: [{ type: "ability_envenom_proc", actor: actor.id, target: targetMonsterId, stacks }],
+  };
 }
 
 function currentActor(state: CombatState): ActorId | undefined {

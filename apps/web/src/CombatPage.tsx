@@ -245,7 +245,8 @@ type CombatEvent =
   | { type: "passive_warden_shield"; actor: string; amount: number }
   | { type: "passive_mage_mana_font"; actor: string; amount: number }
   | { type: "passive_druid_regen"; actor: string; amount: number }
-  | { type: "passive_rogue_first_crit"; actor: string }
+  | { type: "passive_rogue_lethal_strike"; actor: string; magnitude: number; duration: number }
+  | { type: "ability_envenom_proc"; actor: string; target: string; stacks: number }
   | { type: "passive_bard_aura"; actor: string; source: string; bonus: number }
   | { type: "passive_warlock_bleed"; actor: string; magnitude: number; duration: number }
   | { type: "passive_holy_rage"; paladin: string; bonus: number }
@@ -694,8 +695,10 @@ function formatEvent(e: CombatEvent, state: CombatState | null): LogEntry[] {
       return row("wax-seal", <>Mana Font: {nameOf(e.actor)} regenerates +{e.amount} mana.</>, "good");
     case "passive_druid_regen":
       return row("grass", <>{nameOf(e.actor)} regen +{e.amount} HP (passive).</>, "good");
-    case "passive_rogue_first_crit":
-      return row("plain-dagger", <>{nameOf(e.actor)}'s first strike — guaranteed crit!</>, "good");
+    case "passive_rogue_lethal_strike":
+      return row("plain-dagger", <>{nameOf(e.actor)} Lethal Strikes — bleed {e.magnitude}/turn × {e.duration}.</>, "good");
+    case "ability_envenom_proc":
+      return row("poison", <>{nameOf(e.actor)} Envenom procs — poison {e.stacks}/turn × 2.</>, "good");
     case "passive_bard_aura":
       return row("aura", <>Bardic Aura: +{e.bonus} dmg from {nameOf(e.source)}'s song.</>, "good");
     case "passive_warlock_bleed":
@@ -895,8 +898,8 @@ export function CombatPage({
               setTimeout(() => setDiceRolls((prev) => prev.filter((r) => r.id !== id)), 5000);
             }
             // Fire passive toasts immediately so they appear while dice are visible.
-            if (evt.type === "passive_rogue_first_crit") {
-              toast("🗡 First Strike — guaranteed crit!", { icon: "⚡", duration: 4000 });
+            if (evt.type === "passive_rogue_lethal_strike") {
+              toast(`🗡 Lethal Strikes — bleed ${(evt as { magnitude: number }).magnitude}/turn`, { icon: "🩸", duration: 4000 });
             } else if (evt.type === "passive_warden_shield") {
               toast(`🛡 Hardened Up — +${(evt as { amount: number }).amount} shield`, { duration: 3000 });
             } else if (evt.type === "passive_mage_mana_font") {

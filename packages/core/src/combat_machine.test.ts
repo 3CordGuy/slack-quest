@@ -1327,3 +1327,164 @@ describe("QA Paladin — holy_rage passive", () => {
     expect(result.state.ability_state?.holy_rage?.["U_PALADIN"]).toBeUndefined();
   });
 });
+
+// Rogue fixtures.
+// Monster tier 3 → monsterAc = 8 + floor(3/2) = 9.
+// Rogue attack_mod = 3 → hit on d20 ≥ 6.
+// Rogue level 4 → lethal_strikes stacks = 2 + floor(4/2) = 4.
+function rogueInit(rogueOverrides: Partial<CombatInit["fighters"][0]> = {}): CombatInit {
+  return {
+    fighters: [
+      {
+        id: "U_ROGUE",
+        name: "Kira",
+        class: "Refactor Rogue",
+        level: 4,
+        hp: 25,
+        max_hp: 25,
+        mana: 4,
+        max_mana: 4,
+        shield: 0,
+        position: "front",
+        attack_mod: 3,
+        magic_mod: 0,
+        weapon_power: 2,
+        armor_power: 1,
+        scars: [],
+        ...rogueOverrides,
+      },
+    ],
+    monster: { name: "Test Monster", hp: 40, max_hp: 40, shield: 0, tier: 3, is_boss: false },
+  };
+}
+
+describe("Refactor Rogue — Lethal Strikes (passive)", () => {
+  it("critting with a normal attack applies bleed equal to 2+floor(lev/2) stacks", () => {
+    // Crit = d6 roll of 6. seqRoll: d20=10 (hit), d6=6 (crit).
+    const begun = runBegin(createCombatState(rogueInit()), [15, 5]);
+    const result = step(begun.state, { kind: "attack", actor: "U_ROGUE" }, seqRoll([10, 6]));
+    const ls = result.events.find((e) => e.type === "passive_rogue_lethal_strike");
+    expect(ls).toBeDefined();
+    expect(ls).toMatchObject({ actor: "U_ROGUE", magnitude: 4, duration: 2 });
+    expect(result.state.monsters[0].effects.some((e) => e.type === "bleeding" && e.magnitude === 4)).toBe(true);
+  });
+
+  it("does not fire on a non-crit attack", () => {
+    // d20=8 → total 11 ≥ 9 → hit; not a nat-20 so no crit.
+    const begun = runBegin(createCombatState(rogueInit()), [15, 5]);
+    const result = step(begun.state, { kind: "attack", actor: "U_ROGUE" }, seqRoll([8, 3]));
+    expect(result.events.find((e) => e.type === "passive_rogue_lethal_strike")).toBeUndefined();
+    expect(result.state.monsters[0].effects.some((e) => e.type === "bleeding")).toBe(false);
+  });
+});
+
+describe("Refactor Rogue — Vanish", () => {
+  it("sets vanished[actorId]=2 and spends 2 mana", () => {
+    const begun = runBegin(createCombatState(rogueInit()), [15, 5]);
+    const result = step(begun.state, { kind: "ability", actor: "U_ROGUE", ability_id: "vanish" }, seqRoll([]));
+    expect(result.state.ability_state?.vanished?.["U_ROGUE"]).toBe(2);
+    expect(result.state.fighters[0].mana).toBe(2); // 4 - 2
+  });
+
+  it("attacking while vanished forces a crit on hit and removes vanish", () => {
+    // d20=10 → 10+3=13 ≥ 9 → hit; d6=4 → raw=4+3+2=9; vanish forces crit → damage doubled.
+    const begun = runBegin(createCombatState(rogueInit()), [15, 5]);
+    const vanishedState: CombatState = {
+      ...begun.state,
+      ability_state: { vanished: { U_ROGUE: 2 } },
+    };
+    const result = step(vanishedState, { kind: "attack", actor: "U_ROGUE" }, seqRoll([10, 4]));
+    const hitEvt = result.events.find((e) => e.type === "player_hit");
+    expect(hitEvt).toMatchObject({ crit: true });
+    expect(result.state.ability_state?.vanished?.["U_ROGUE"] ?? 0).toBe(0);
+  });
+});
+
+describe("Refactor Rogue — Envenom Weapon", () => {
+  it("sets envenomed_weapon[actor]=stacks in ability_state and spends 1 mana", () => {
+    // level 4 → stacks = 2 + floor(4/2) = 4
+    const begun = runBegin(createCombatState(rogueInit()), [15, 5]);
+    const result = step(begun.state, { kind: "ability", actor: "U_ROGUE", ability_id: "envenom_weapon" }, seqRoll([]));
+    expect(result.state.ability_state?.envenomed_weapon?.["U_ROGUE"]).toBe(4);
+    expect(result.state.fighters[0].mana).toBe(3); // 4 - 1
+  });
+
+  it("a subsequent hit applies poison to the monster and clears envenomed_weapon", () => {
+    // d20=10 → hit, d6=3 → not a nat-20 so no crit.
+    const begun = runBegin(createCombatState(rogueInit()), [15, 5]);
+    const envenomed: CombatState = {
+      ...begun.state,
+      ability_state: { envenomed_weapon: { U_ROGUE: 4 } },
+    };
+    const result = step(envenomed, { kind: "attack", actor: "U_ROGUE" }, seqRoll([10, 3]));
+    expect(result.events.find((e) => e.type === "ability_envenom_proc")).toMatchObject({
+      actor: "U_ROGUE", stacks: 4,
+    });
+    expect(result.state.monsters[0].effects.some((e) => e.type === "poisoned" && e.magnitude === 4)).toBe(true);
+    expect(result.state.ability_state?.envenomed_weapon?.["U_ROGUE"]).toBeUndefined();
+  });
+});
+
+describe("Refactor Rogue — Backstab", () => {
+  it("on a hit with advantage, emits player_hit with the pre-rolled max(r1, r2) damage", () => {
+    // execute() calls ctx.roll(6) twice: r1=4→4+3+2=9, r2=3→3+3+2=8, amount=max=9.
+    // Machine then rolls d20 twice for advantage: d20_a=15, d20_b=10 → takes 15.
+    // 15+3=18 ≥ 9 (monsterAc tier 3) → hit; player_hit.damage = 9.
+    const begun = runBegin(createCombatState(rogueInit()), [15, 5]);
+    const result = step(
+      begun.state,
+      { kind: "ability", actor: "U_ROGUE", ability_id: "backstab", target: MONSTER_ID },
+      seqRoll([4, 3, 15, 10]),
+    );
+    expect(result.events.find((e) => e.type === "advantage_used")).toBeDefined();
+    const hitEvt = result.events.find((e) => e.type === "player_hit");
+    expect(hitEvt).toMatchObject({ damage: 9, actor: "U_ROGUE" });
+  });
+
+  it("on a miss, produces no player_hit and advances the turn", () => {
+    // execute() rolls r1=4, r2=3 first; machine rolls d20_a=1, d20_b=2 → takes 2 → 2+3=5 < 9 → miss.
+    const begun = runBegin(createCombatState(rogueInit()), [15, 5]);
+    const result = step(
+      begun.state,
+      { kind: "ability", actor: "U_ROGUE", ability_id: "backstab", target: MONSTER_ID },
+      seqRoll([4, 3, 1, 2]),
+    );
+    expect(result.events.find((e) => e.type === "player_hit")).toBeUndefined();
+    expect(result.events.find((e) => e.type === "hit_check")).toMatchObject({ hit: false });
+    expect(result.state.monsters[0].hp).toBe(40);
+  });
+});
+
+describe("Refactor Rogue — Debilitate", () => {
+  it("stuns the monster and sets vulnerable with 20% magnitude for 2 rounds", () => {
+    // 1-mana, 3-turn cooldown utility ability.
+    const begun = runBegin(createCombatState(rogueInit()), [15, 5]);
+    const result = step(
+      begun.state,
+      { kind: "ability", actor: "U_ROGUE", ability_id: "debilitate", target: MONSTER_ID },
+      seqRoll([]),
+    );
+    expect(result.state.fighters[0].mana).toBe(3); // 4 - 1
+    expect(result.events.find((e) => e.type === "ability_containerize")).toBeDefined();
+    expect(result.state.monsters[0].effects.some((e) => e.type === "stunned" && e.magnitude === 100)).toBe(true);
+    // round=1, rounds=2 → expires_after_round = 1 + 2 - 1 = 2
+    expect(result.state.ability_state?.vulnerable?.[MONSTER_ID]).toMatchObject({
+      magnitude: 20,
+      expires_after_round: 2,
+    });
+  });
+
+  it("vulnerable monster takes 20% more damage on next attack", () => {
+    // d20=10 → hit; d6=5 → raw=5+3+2=10, vulnMult=1.2 → final=round(10*1.2)=12.
+    const begun = runBegin(createCombatState(rogueInit()), [15, 5]);
+    const withVuln: CombatState = {
+      ...begun.state,
+      ability_state: {
+        vulnerable: { [MONSTER_ID]: { expires_after_round: 3, magnitude: 20 } },
+      },
+    };
+    const result = step(withVuln, { kind: "attack", actor: "U_ROGUE" }, seqRoll([10, 5]));
+    const hitEvt = result.events.find((e) => e.type === "player_hit");
+    expect(hitEvt).toMatchObject({ damage: 12 });
+  });
+});

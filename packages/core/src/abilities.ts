@@ -3,6 +3,7 @@
 // (auto-fires on a trigger). Replaces the legacy SIGNATURES / PASSIVES /
 // ABILITIES maps in flavor.ts.
 
+import type { DamageType } from "./flavor";
 import type { Stats } from "./stats";
 
 export type TargetKind =
@@ -112,7 +113,18 @@ export type AbilityEffect =
   // QA Paladin — Protect: caster will absorb half of target's incoming HP damage.
   | { kind: "apply_protect"; target_id: string }
   // QA Paladin — Smite debuff: target monster deals 50% damage on its next swing.
-  | { kind: "apply_smite_debuff"; target_id: string };
+  | { kind: "apply_smite_debuff"; target_id: string }
+  // Weapon attack with machine-side d20 hit check; emits roll + hit_check events.
+  // If advantage is true, the d20 is rolled twice and the higher value is used.
+  | { kind: "attack_roll_damage"; target_id: string; hit_mod: number; amount: number; formula: string; damage_type?: DamageType; advantage?: boolean }
+  // Rogue Lethal Strikes — apply bleeding to a monster.
+  | { kind: "apply_bleed"; target_id: string; stacks: number; duration: number }
+  // Rogue Envenom Weapon — apply poison to a monster.
+  | { kind: "apply_poison"; target_id: string; stacks: number; duration: number }
+  // Rogue Envenom Weapon — mark the caster's weapon as envenomed; next hit applies poison.
+  | { kind: "apply_envenom_weapon"; stacks: number }
+  // Rogue Debilitate — target monster takes +magnitude% damage for N rounds.
+  | { kind: "apply_vulnerability"; target_id: string; magnitude: number; rounds: number };
 
 export interface ActiveAbilityDef {
   kind: "active";
