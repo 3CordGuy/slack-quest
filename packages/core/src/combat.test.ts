@@ -118,8 +118,8 @@ describe("resolveSignature", () => {
   });
 
   it("Staff Sage Manifest: pure 2d8 + weapon, no class mod", () => {
-    // 2d8=8+8=16, wpn=3 → 19. attack_mod and magic_mod are ignored.
-    expect(resolveSignature("staff_sage", 99, 99, 3, 1, 1, 30, r(8)).damage).toBe(19);
+    // 2d8=8+8=16, wpn=3 → floor(3/2)=1 → 17. attack_mod and magic_mod are ignored.
+    expect(resolveSignature("staff_sage", 99, 99, 3, 1, 1, 30, r(8)).damage).toBe(17);
   });
 
   it("Refactor Rogue Backstab: 3d4 + atk + weapon (caller applies the auto-crit)", () => {
@@ -129,8 +129,8 @@ describe("resolveSignature", () => {
   });
 
   it("SRE Warden Bulwark Strike: caller folds armor into weapon slot", () => {
-    // Caller passes wpn+armor as weaponPower. 1d10=7, atk=2, "wpn"=5 (3w+2a) → 14
-    expect(resolveSignature("sre_warden", 2, 0, 5, 1, 1, 30, r(7)).damage).toBe(14);
+    // Caller passes wpn+armor as weaponPower. 1d10=7, atk=2, "wpn"=5 → floor(5/2)=2 → 11
+    expect(resolveSignature("sre_warden", 2, 0, 5, 1, 1, 30, r(7)).damage).toBe(11);
   });
 
   it("Data Warlock Hex: damage scales with monster max HP", () => {

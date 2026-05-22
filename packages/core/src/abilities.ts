@@ -4,6 +4,7 @@
 // ABILITIES maps in flavor.ts.
 
 import type { DamageType } from "./flavor";
+import type { Stats } from "./stats";
 
 export type TargetKind =
   | "self"
@@ -39,6 +40,8 @@ export interface FighterSnapshot {
   magic_mod: number;
   level: number;
   position: "front" | "back";
+  // Primary stats — present on STATS_V2 fighters; absent on legacy combats.
+  stats?: Stats;
 }
 
 export interface MonsterSnapshot {
@@ -64,6 +67,9 @@ export interface AbilityContext {
   // For position-changing abilities (migrate): the requested destination row.
   // Injected from the action payload by the engine.
   position?: "front" | "back";
+  // Injected for Paladin Lay on Hands: the ID of the ally currently under Protect,
+  // if the caster is the active protector. Undefined otherwise.
+  protected_ally_id?: string;
 }
 
 // Minimal spec for an ally NPC summoned into combat via summon_ally_npc.
@@ -127,6 +133,23 @@ export type AbilityEffect =
   | { kind: "grant_encourage"; target_id: string; charges: number }
   // Apply disadvantage charges to a monster: next N to-hit d20 rolls twice, take lower.
   | { kind: "apply_discourage"; target_id: string; charges: number }
+  // QA Paladin — Shield of Faith: all allies gain +5 AC for N rounds.
+  | { kind: "apply_shield_of_faith"; rounds: number }
+  // QA Paladin — Protect: caster will absorb half of target's incoming HP damage.
+  | { kind: "apply_protect"; target_id: string }
+  // QA Paladin — Smite debuff: target monster deals 50% damage on its next swing.
+  | { kind: "apply_smite_debuff"; target_id: string }
+  // Weapon attack with machine-side d20 hit check; emits roll + hit_check events.
+  // If advantage is true, the d20 is rolled twice and the higher value is used.
+  | { kind: "attack_roll_damage"; target_id: string; hit_mod: number; amount: number; formula: string; damage_type?: DamageType; advantage?: boolean; is_crit?: boolean }
+  // Rogue Lethal Strikes — apply bleeding to a monster.
+  | { kind: "apply_bleed"; target_id: string; stacks: number; duration: number }
+  // Rogue Envenom Weapon — apply poison to a monster.
+  | { kind: "apply_poison"; target_id: string; stacks: number; duration: number }
+  // Rogue Envenom Weapon — mark the caster's weapon as envenomed; next hit applies poison.
+  | { kind: "apply_envenom_weapon"; stacks: number }
+  // Rogue Debilitate — target monster takes +magnitude% damage for N rounds.
+  | { kind: "apply_vulnerability"; target_id: string; magnitude: number; rounds: number }
   // Apply the hexed debuff to a monster for `duration` of the monster's own
   // turns. While hexed: -25% damage output; takes 3 bleed stacks whenever it
   // takes damage from any source.
@@ -134,10 +157,6 @@ export type AbilityEffect =
   // Remove all bleed stacks from the target monster (e.g. Forbidden SQL).
   // Return a separate deal_damage effect to deal damage based on consumed stacks.
   | { kind: "consume_monster_bleed"; target_id: string }
-  // Attack-roll-gated damage: rolls d20 + hit_mod vs monster AC before applying
-  // pre-rolled damage. On miss, the damage is skipped. Triggers Sinister Queries
-  // and hex bleed proc on hit, just like deal_damage.
-  | { kind: "attack_roll_damage"; target_id: string; hit_mod: number; amount: number; formula: string; damage_type?: DamageType }
   // Reduce incoming damage for the target fighter by pct% for the next N of
   // their own turns. pct is an integer (e.g. 20 = 20%).
   | { kind: "set_damage_reduction"; target_id: string; pct: number; turns: number }

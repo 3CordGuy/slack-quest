@@ -1,34 +1,22 @@
 import type { AbilityDef } from "../abilities";
-import { fx, rollSum } from "./effects";
+import type { MonsterSnapshot } from "../abilities";
+import { fx } from "./effects";
 
 export const rogueAbilities: AbilityDef[] = [
   {
-    kind: "active",
-    id: "backstab",
-    name: "Backstab",
-    blurb: "Slips through the diff and finds the soft spot.",
-    icon: "daggers",
-    mana_cost: 1,
-    routing: "damage",
-    target: "single_enemy",
-    execute(ctx) {
-      const monster = ctx.target as { id: string; hp: number; max_hp: number };
-      const wpn = Math.max(0, ctx.caster.weapon_power);
-      const r = rollSum(ctx.roll, 3, 4);
-      const raw = r + ctx.caster.attack_mod + wpn;
-      // Auto-crit when monster is at or below 50% HP.
-      const isCrit = monster.hp <= monster.max_hp / 2;
-      const amount = isCrit ? raw * 2 : raw;
-      const formulaBase = `3d4 + ${ctx.caster.attack_mod}a + ${wpn}w`;
-      const formula = isCrit ? `${formulaBase} ×2 (backstab)` : formulaBase;
-      return [fx.damage(monster.id, amount, formula, { isCrit, drinkBuff: "ability" })];
-    },
+    kind: "passive",
+    id: "lethal_strikes",
+    name: "Lethal Strikes",
+    blurb: "Critical hits apply 2 + floor(lev/2) stacks of bleed.",
+    trigger: "always_on",
+    once_per_fight: false,
+    execute: () => [],
   },
   {
     kind: "active",
     id: "vanish",
     name: "Vanish",
-    blurb: "Disappear into the shadows — the monster can't target you for its next 2 swings.",
+    blurb: "Become untargetable for 2 rounds. Attacking while obscured auto-crits on hit.",
     icon: "abstract-006",
     mana_cost: 2,
     routing: "utility",
@@ -38,12 +26,57 @@ export const rogueAbilities: AbilityDef[] = [
     },
   },
   {
-    kind: "passive",
-    id: "first_strike",
-    name: "First Strike",
-    blurb: "Your first basic attack each fight is a guaranteed crit.",
-    trigger: "always_on",
-    once_per_fight: true,
-    execute: () => [],
+    kind: "active",
+    id: "envenom_weapon",
+    name: "Envenom Weapon",
+    blurb: "Apply venom to your weapon — your next 2 hits each apply 2 + lev stacks of poison.",
+    icon: "vial",
+    mana_cost: 1,
+    routing: "utility",
+    target: "self",
+    execute(ctx) {
+      const stacks = 2 + ctx.caster.level;
+      return [fx.envenomWeapon(stacks)];
+    },
+  },
+  {
+    kind: "active",
+    id: "backstab",
+    name: "Backstab",
+    blurb: "Attack with advantage; if it hits, roll damage twice and take the higher roll.",
+    icon: "daggers",
+    mana_cost: 0,
+    cooldown_turns: 2,
+    routing: "utility",
+    target: "single_enemy",
+    execute(ctx) {
+      const monster = ctx.target as MonsterSnapshot;
+      const totalMod = ctx.caster.attack_mod + Math.max(0, ctx.caster.weapon_power);
+      const raw1 = ctx.roll(6);
+      const raw2 = ctx.roll(6);
+      const bestRaw = Math.max(raw1, raw2);
+      const isCrit = bestRaw === 6;
+      const amount = (bestRaw + totalMod) * (isCrit ? 2 : 1);
+      const formula = `max(${raw1},${raw2})+${totalMod}${isCrit ? " ×2" : ""}`;
+      return [fx.attackRollDamage(monster.id, ctx.caster.attack_mod, amount, formula, undefined, true, isCrit)];
+    },
+  },
+  {
+    kind: "active",
+    id: "debilitate",
+    name: "Debilitate",
+    blurb: "Stun the target for 1 round and make it take 20% increased damage for 2 rounds.",
+    icon: "crossed-swords",
+    mana_cost: 1,
+    cooldown_turns: 3,
+    routing: "utility",
+    target: "single_enemy",
+    execute(ctx) {
+      const monster = ctx.target as MonsterSnapshot;
+      return [
+        fx.stunMonster(monster.id, 100),
+        fx.vulnerability(monster.id, 20, 2),
+      ];
+    },
   },
 ];

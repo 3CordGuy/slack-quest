@@ -9684,7 +9684,7 @@ function DevToolsModal({
   onClose: () => void;
   onRefresh: () => Promise<void>;
 }) {
-  const [goldAmount, setGoldAmount] = useState("100");
+  const [goldAmount, setGoldAmount] = useState("1000");
   const [levelAmount, setLevelAmount] = useState(String(character.level));
   const [busy, setBusy] = useState<string | null>(null);
   const [lastAction, setLastAction] = useState<string | null>(null);
