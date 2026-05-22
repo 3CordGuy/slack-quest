@@ -84,7 +84,7 @@ floor((INT−5)/2).
 |---|---|---|---|---|---|---|---|---|---|
 | DevOps Mage | 4 | 9 | 5 | 6 | 6 | INT, DEX | **Lightning Bolt** (1m) | Mana Font — regain 1 mana every 3 turns | **Mage Armor** (1m) — shield ally; **Fireball** (2m) — AOE fire; **Containerize** (2m) — stun |
 | QA Paladin | 9 | 4 | 9 | 4 | 4 | STR | **Smite** (1m) | Sacred Vow — front-row bonus | **Regression Shield** (2m) — party-wide shield |
-| Backend Druid | 6 | 7 | 6 | 5 | 6 | INT, STR | **Wildgrowth** (1m) | Symbiosis — passive party regen | **Migrate** (2m) — reposition an ally |
+| Backend Druid | 6 | 7 | 6 | 5 | 6 | INT, STR | **Regeneration** (1m) — HoT on ally; **Wildgrowth** (2m, 2cd) — AoE dmg + entangle | Primal Strikes — mag adds to attack to-hit/dmg; heals on hit | **Animal Form** (2m) — stat boost 4 rounds; **Barkskin** (1m) — +5 AC on ally |
 | Frontend Bard | 4 | 9 | 5 | 6 | 6 | INT | **Crescendo** (1m) | Aura — party damage aura | **Battle Hymn** (2m) — stacking attack buff |
 | Staff Sage | 4 | 10 | 6 | 5 | 5 | INT | **Manifest** (1m) | Reading — free bonus action | **Foresee** (2m) — preview swings + reveal chests |
 | Refactor Rogue | 7 | 4 | 4 | 7 | 8 | DEX | **Backstab** (1m) | First Strike — guaranteed crit on first attack | **Vanish** (2m) — untargetable for N swings |
