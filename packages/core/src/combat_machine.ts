@@ -2035,7 +2035,15 @@ function applyUtilityAbilityEffects(
         const monster = s.monsters.find((m) => m.id === effect.target_id && m.hp > 0);
         if (!monster) continue;
         const ac = monsterAc(monster.tier);
-        const d20 = roll(20);
+        let d20 = roll(20);
+        const encourageChargesArd = s.ability_state?.encourage?.[actor] ?? 0;
+        if (encourageChargesArd > 0) {
+          const d20b = roll(20);
+          const took = Math.max(d20, d20b);
+          events.push({ type: "advantage_used", actor, d20_a: d20, d20_b: d20b, took });
+          d20 = took;
+          s = { ...s, ability_state: consumeEncourageCharge(s.ability_state, actor) };
+        }
         const total = d20 + effect.hit_mod;
         const landed = total >= ac;
         events.push({ type: "roll", actor, die: "d20", value: d20, purpose: "hit_check" });
