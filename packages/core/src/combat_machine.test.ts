@@ -409,15 +409,15 @@ describe("combat_machine.step", () => {
     it("hits the single monster and spends 2 mana", () => {
       const init = mageInit();
       const begun = runBegin(createCombatState(init), [15, 8]);
-      // Fireball: 2d6 + magic_mod(1). Rolls: 4 + 3 = 7 + 1 = 8 damage.
+      // Fireball: magic_mod(1) d6. Roll: 4. Damage: 4.
       const result = step(
         begun.state,
         { kind: "ability", actor: "U_PALADIN", ability_id: "fireball" },
-        seqRoll([4, 3]),
+        seqRoll([4]),
       );
       expect(result.state.fighters[0].mana).toBe(1); // 3 - 2 = 1
       const hit = result.events.find((e) => e.type === "player_hit");
-      expect(hit).toMatchObject({ damage: 8 });
+      expect(hit).toMatchObject({ damage: 4 });
       const used = result.events.find((e) => e.type === "ability_used");
       expect(used).toMatchObject({ ability_id: "fireball", mana_spent: 2 });
     });
@@ -431,14 +431,14 @@ describe("combat_machine.step", () => {
         ],
       });
       const begun = runBegin(createCombatState(init), [15, 10, 5]);
-      // 2d6 + 1 → rolls 3 + 2 = 5 + 1 = 6 damage to each.
+      // magic_mod(1) d6 → roll 3. Damage: 3 each.
       const result = step(
         begun.state,
         { kind: "ability", actor: "U_PALADIN", ability_id: "fireball" },
-        seqRoll([3, 2]),
+        seqRoll([3]),
       );
-      expect(result.state.monsters[0].hp).toBe(4); // 10 - 6
-      expect(result.state.monsters[1].hp).toBe(4);
+      expect(result.state.monsters[0].hp).toBe(7); // 10 - 3
+      expect(result.state.monsters[1].hp).toBe(7);
       const hits = result.events.filter((e) => e.type === "player_hit");
       expect(hits).toHaveLength(2);
     });
