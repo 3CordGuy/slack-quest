@@ -17,7 +17,7 @@ export const sageAbilities: AbilityDef[] = [
     id: "ray_of_frost",
     name: "Ray of Frost",
     blurb: "Spell attack (+mag to hit) dealing {mag}d4 frost damage, with a 25% chance to freeze.",
-    icon: "ice-spear",
+    icon: "ice-bolt",
     mana_cost: 1,
     routing: "utility",
     target: "single_enemy",
