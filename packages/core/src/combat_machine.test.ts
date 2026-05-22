@@ -1780,32 +1780,33 @@ describe("Staff Sage — Blizzard", () => {
 
 describe("Staff Sage — Good Fortune", () => {
   it("spends 1 mana, heals immediately, and stores delayed amount = 2× immediate", () => {
-    // Sage at 5 HP. d4=3, d4=2 → amount = 5 + mag(2) = 7; delayed = 14.
+    // Sage at 5 HP. d4=3 → amount = 3 + mag(2) = 5; delayed = 10.
     const begun = runBegin(createCombatState(sageInit()), [20, 5]);
     const wounded: CombatState = {
       ...begun.state,
       fighters: begun.state.fighters.map((f) => f.id === "U_SAGE" ? { ...f, hp: 5 } : f),
     };
-    const result = step(wounded, { kind: "ability", actor: "U_SAGE", ability_id: "good_fortune", target: "U_SAGE" }, seqRoll([3, 2]));
-    expect(result.state.fighters[0].hp).toBe(12); // 5 + 7
+    const result = step(wounded, { kind: "ability", actor: "U_SAGE", ability_id: "good_fortune", target: "U_SAGE" }, seqRoll([3]));
+    expect(result.state.fighters[0].hp).toBe(10); // 5 + 5
     expect(result.state.fighters[0].mana).toBe(3); // 4 - 1
-    expect(result.events.find((e) => e.type === "heal_applied")).toMatchObject({ actor: "U_SAGE", target: "U_SAGE", amount: 7 });
-    expect(result.state.ability_state?.good_fortune).toMatchObject({ caster_id: "U_SAGE", target_id: "U_SAGE", amount: 14 });
+    expect(result.state.cooldowns?.["U_SAGE"]?.["good_fortune"]).toBe(2); // cooldown_turns(1) + 1
+    expect(result.events.find((e) => e.type === "heal_applied")).toMatchObject({ actor: "U_SAGE", target: "U_SAGE", amount: 5 });
+    expect(result.state.ability_state?.good_fortune).toMatchObject({ caster_id: "U_SAGE", target_id: "U_SAGE", amount: 10 });
   });
 
   it("delayed heal fires at the start of the caster's next action", () => {
-    // Sage at 5 HP → immediate +7 → hp=12. Monster hits for 6 → hp=6. Delayed +14 → hp=20 (capped).
+    // Sage at 5 HP → immediate +5 → hp=10. Monster hits for 6 → hp=4. Delayed +10 → hp=14.
     const begun = runBegin(createCombatState(sageInit()), [20, 5]);
     const wounded: CombatState = {
       ...begun.state,
       fighters: begun.state.fighters.map((f) => f.id === "U_SAGE" ? { ...f, hp: 5 } : f),
     };
-    const cast = step(wounded, { kind: "ability", actor: "U_SAGE", ability_id: "good_fortune", target: "U_SAGE" }, seqRoll([3, 2]));
+    const cast = step(wounded, { kind: "ability", actor: "U_SAGE", ability_id: "good_fortune", target: "U_SAGE" }, seqRoll([3]));
     const monsterStep = step(cast.state, { kind: "monster_act" }, seqRoll([50, 10, 3, 50]));
-    // Sage hp after monster swing: 12 - (3+3) = 6
+    // Sage hp after monster swing: 10 - (3+3) = 4
     const waitStep = step(monsterStep.state, { kind: "wait", actor: "U_SAGE" }, seqRoll([]));
-    expect(waitStep.state.fighters[0].hp).toBe(20); // min(20, 6+14)
-    expect(waitStep.events.find((e) => e.type === "ability_good_fortune_delayed")).toMatchObject({ actor: "U_SAGE", target: "U_SAGE", amount: 14 });
+    expect(waitStep.state.fighters[0].hp).toBe(14); // 4 + 10
+    expect(waitStep.events.find((e) => e.type === "ability_good_fortune_delayed")).toMatchObject({ actor: "U_SAGE", target: "U_SAGE", amount: 10 });
     expect(waitStep.state.ability_state?.good_fortune).toBeUndefined();
   });
 });

@@ -46,15 +46,16 @@ export const sageAbilities: AbilityDef[] = [
     kind: "active",
     id: "good_fortune",
     name: "Good Fortune",
-    blurb: "Heal an ally for 2d4 + mag. A Delayed Heal for double that amount activates on your next turn.",
+    blurb: "Heal an ally for 1d4 + mag. A Delayed Heal for double that amount activates on your next turn.",
     icon: "crystal-ball",
     mana_cost: 1,
+    cooldown_turns: 1,
     routing: "utility",
     target: "single_ally",
     execute(ctx) {
       const target = ctx.target as FighterSnapshot;
       const mag = ctx.caster.magic_mod;
-      const amount = rollSum(ctx.roll, 2, 4) + mag;
+      const amount = rollSum(ctx.roll, 1, 4) + mag;
       return [
         fx.heal(target.id, amount),
         fx.goodFortune(ctx.caster.id, target.id, amount * 2),
