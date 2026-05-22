@@ -6,18 +6,17 @@ export const wardenAbilities: AbilityDef[] = [
     kind: "active",
     id: "bulwark_strike",
     name: "Bulwark Strike",
-    blurb: "Deals attack damage + 50% of your armor value.",
+    blurb: "Rolls d20 + attack to hit; deals 1d10 + attack + 50% armor on hit.",
     icon: "shield",
-    mana_cost: 1,
+    mana_cost: 0,
     cooldown_turns: 2,
     routing: "damage",
     target: "single_enemy",
     execute(ctx) {
       const monster = ctx.target as { id: string };
       const armorBonus = Math.floor(ctx.caster.armor_power * 0.5);
-      const r = ctx.roll(10);
-      const amount = r + ctx.caster.attack_mod + armorBonus;
-      return [fx.damage(monster.id, amount, `1d10 + ${ctx.caster.attack_mod}a + ${armorBonus}`, { drinkBuff: "ability" })];
+      const amount = ctx.roll(10) + ctx.caster.attack_mod + armorBonus;
+      return [fx.attackRollDamage(monster.id, ctx.caster.attack_mod, amount, `1d10 + ${ctx.caster.attack_mod}a + ${armorBonus}`)];
     },
   },
   {
