@@ -89,6 +89,10 @@ export const fx = {
   attackRollDamage(targetId: string, hitMod: number, amount: number, formula: string, damageType?: DamageType): AbilityEffect {
     return { kind: "attack_roll_damage", target_id: targetId, hit_mod: hitMod, amount, formula, damage_type: damageType };
   },
+
+  damageReduction(targetId: string, pct: number, turns: number): AbilityEffect {
+    return { kind: "set_damage_reduction", target_id: targetId, pct, turns };
+  },
 };
 
 // Roll count dice of `sides` and return the sum.

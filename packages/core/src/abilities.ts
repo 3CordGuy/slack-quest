@@ -137,7 +137,10 @@ export type AbilityEffect =
   // Attack-roll-gated damage: rolls d20 + hit_mod vs monster AC before applying
   // pre-rolled damage. On miss, the damage is skipped. Triggers Sinister Queries
   // and hex bleed proc on hit, just like deal_damage.
-  | { kind: "attack_roll_damage"; target_id: string; hit_mod: number; amount: number; formula: string; damage_type?: DamageType };
+  | { kind: "attack_roll_damage"; target_id: string; hit_mod: number; amount: number; formula: string; damage_type?: DamageType }
+  // Reduce incoming damage for the target fighter by pct% for the next N of
+  // their own turns. pct is an integer (e.g. 20 = 20%).
+  | { kind: "set_damage_reduction"; target_id: string; pct: number; turns: number };
 
 export interface ActiveAbilityDef {
   kind: "active";

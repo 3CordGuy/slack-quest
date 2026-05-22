@@ -216,7 +216,6 @@ export interface CombatState {
 }
 
 // Passive tuning knobs. Mirror src/commands.ts constants in main.
-const WARDEN_STARTING_SHIELD = 5;
 const DRUID_PASSIVE_REGEN = 2;
 const BARD_AURA_HYMN_BONUS = 2;
 const WARLOCK_BLEED_MAGNITUDE = 3;
@@ -225,7 +224,6 @@ const PALADIN_AUTO_HEAL_AMOUNT = 8;
 const PALADIN_AUTO_HEAL_THRESHOLD = 0.3;
 
 // Keys for once-per-fight passives.
-const PASSIVE_WARDEN_SHIELD = "warden_shield";
 const PASSIVE_ROGUE_FIRST_CRIT = "rogue_first_crit";
 const PASSIVE_PALADIN_AUTO_HEAL = "paladin_auto_heal";
 
@@ -247,6 +245,8 @@ export interface AbilityRuntimeState {
   // Staff Sage Foresee — re-appends full intel readout for this many more
   // of the Sage's own combat turns after the initial cast.
   foresee_turns?: number;
+  // SRE Warden — Brace: incoming damage reduced by pct% for N of the fighter's own turns.
+  brace?: Record<ActorId, { pct: number; turns_remaining: number }>;
 }
 
 // +damage to non-marker partymate attacks while a mark is active. Tuned to
@@ -455,6 +455,9 @@ export type CombatEvent =
   | { type: "mark_bonus"; actor: ActorId; bonus: number }
   | { type: "shield_applied"; actor: ActorId; target: ActorId; restored: number; new_armor: number; bonus_barrier?: boolean }
   | { type: "passive_warden_shield"; actor: ActorId; amount: number }
+  | { type: "passive_warden_thorns"; actor: ActorId; target: ActorId; amount: number }
+  | { type: "passive_warden_armor_up"; actor: ActorId; amount: number }
+  | { type: "ability_brace"; actor: ActorId; turns: number }
   | { type: "passive_mage_mana_font"; actor: ActorId; amount: number }
   | { type: "passive_druid_regen"; actor: ActorId; amount: number }
   | { type: "passive_rogue_first_crit"; actor: ActorId }
@@ -1437,10 +1440,14 @@ function handleMonsterAct(state: CombatState, roll: RollFn): StepResult {
   const targetShockMult = targetShocked ? (targetShocked.magnitude >= 2 ? 1.45 : 1.30) : 1.0;
   const hexMult = monster.effects.some((e) => e.type === "hexed") ? 0.75 : 1.0;
   const positionAdjusted = positionDamageMod(target.position, Math.round(hit.final * targetShockMult * hexMult));
+  const brace = s.ability_state?.brace?.[target.id];
+  const effectiveDamage = brace && brace.turns_remaining > 0
+    ? Math.max(1, Math.round(positionAdjusted * (1 - brace.pct / 100)))
+    : positionAdjusted;
   // Physical attacks route through the armor pool first (shield = depletable armor).
   // Non-physical bypasses armor entirely and hits HP directly.
   const armorForHit = attackDamageType === "physical" ? target.shield : 0;
-  const rawResult = applyDamageWithShield(positionAdjusted, armorForHit, target.hp);
+  const rawResult = applyDamageWithShield(effectiveDamage, armorForHit, target.hp);
   const newShield = attackDamageType === "physical" ? rawResult.newShield : target.shield;
   const newHp = rawResult.newHp;
   const shieldAbsorbed = rawResult.shieldAbsorbed;
@@ -1459,7 +1466,7 @@ function handleMonsterAct(state: CombatState, roll: RollFn): StepResult {
     target: target.id,
     damage_type: attackDamageType,
     raw_damage: hit.raw,
-    damage_after_position: positionAdjusted,
+    damage_after_position: effectiveDamage,
     damage_after_mitigation: hit.final,
     armor_reduction: hit.armorReduction,
     resistance_reduction: hit.resistanceReduction,
@@ -1525,6 +1532,19 @@ function handleMonsterAct(state: CombatState, roll: RollFn): StepResult {
     const heal = applyPaladinAutoHeal(next, target.id);
     next = heal.state;
     events.push(...heal.events);
+  }
+
+  // SRE Warden — Thorns. Deal 25% armor_power back to the attacker if target survived.
+  if (newHp > 0) {
+    const thorns = applyWardenThorns(next, target.id, actorId);
+    next = thorns.state;
+    events.push(...thorns.events);
+    if (thorns.events.length > 0) {
+      const thornedMonster = next.monsters.find((m) => m.id === actorId);
+      if (thornedMonster && thornedMonster.hp <= 0) {
+        return resolveMonsterKill(next, actorId, target.id, events);
+      }
+    }
   }
 
   const allDown = next.fighters.every((f) => f.hp <= 0);
@@ -2184,6 +2204,18 @@ function applyUtilityAbilityEffects(
         events.push({ type: "ability_mock", actor, target: effect.target_id, charges: effect.charges });
         break;
       }
+      case "set_damage_reduction": {
+        const ability_state: AbilityRuntimeState = {
+          ...(s.ability_state ?? {}),
+          brace: {
+            ...(s.ability_state?.brace ?? {}),
+            [effect.target_id]: { pct: effect.pct, turns_remaining: effect.turns },
+          },
+        };
+        s = { ...s, ability_state };
+        events.push({ type: "ability_brace", actor, turns: effect.turns });
+        break;
+      }
       case "summon_ally_npc": {
         const { spec, id_suffix } = effect;
         const idPrefix = `__ally_${id_suffix}_${actor}_`;
@@ -2649,28 +2681,41 @@ function markPassiveUsed(state: CombatState, actorId: ActorId, key: string): Com
   };
 }
 
-// SRE Warden — Harden Up. First action of the fight grants WARDEN_STARTING_SHIELD
-// shield (clamped to cap). Once per fight.
-function applyWardenStartingShield(
+// SRE Warden — Armor Up. Regenerate 2 + floor(level/4) shield at the start of each turn.
+function applyWardenArmorUp(
   state: CombatState,
   actor: CombatFighter,
 ): { state: CombatState; events: CombatEvent[] } {
-  if (!classHasPassive(actor.class, "harden_up")) return { state, events: [] };
-  if (isPassiveUsed(state, actor.id, PASSIVE_WARDEN_SHIELD)) return { state, events: [] };
-  // VIT-based when STATS_V2 stats are present; level fallback for legacy states.
-  const wardenShield = actor.stats
-    ? Math.floor(actor.stats.vit / 2)
-    : WARDEN_STARTING_SHIELD + Math.floor(actor.level / 6);
-  const cap = Math.floor(actor.armor_power / 2);
-  const newShield = Math.min(cap, actor.shield + wardenShield);
+  if (!classHasPassive(actor.class, "armor_up")) return { state, events: [] };
+  const amount = 2 + Math.floor(actor.level / 4);
+  const cap = actor.max_hp * SHIELD_CAP_MULTIPLIER;
+  const newShield = Math.min(cap, actor.shield + amount);
   const added = newShield - actor.shield;
+  if (added <= 0) return { state, events: [] };
   const updated = state.fighters.map((f) =>
     f.id === actor.id ? { ...f, shield: newShield } : f,
   );
-  const marked = markPassiveUsed({ ...state, fighters: updated }, actor.id, PASSIVE_WARDEN_SHIELD);
   return {
-    state: marked,
-    events: [{ type: "passive_warden_shield", actor: actor.id, amount: added }],
+    state: { ...state, fighters: updated },
+    events: [{ type: "passive_warden_armor_up", actor: actor.id, amount: added }],
+  };
+}
+
+// SRE Warden — Thorns. When hit, deal 25% of armor_power back to the attacker.
+function applyWardenThorns(
+  state: CombatState,
+  targetFighterId: ActorId,
+  monsterId: ActorId,
+): { state: CombatState; events: CombatEvent[] } {
+  const fighter = state.fighters.find((f) => f.id === targetFighterId);
+  if (!fighter || !classHasPassive(fighter.class, "thorns")) return { state, events: [] };
+  const amount = Math.max(1, Math.floor(fighter.armor_power * 0.25));
+  const monster = state.monsters.find((m) => m.id === monsterId && m.hp > 0);
+  if (!monster) return { state, events: [] };
+  const newHp = Math.max(0, monster.hp - amount);
+  return {
+    state: { ...state, monsters: state.monsters.map((m) => m.id === monsterId ? { ...m, hp: newHp } : m) },
+    events: [{ type: "passive_warden_thorns", actor: targetFighterId, target: monsterId, amount }],
   };
 }
 
@@ -2734,16 +2779,34 @@ function applyPreActionPassives(
 ): { state: CombatState; fighter: CombatFighter; events: CombatEvent[] } {
   const fighter = state.fighters.find((f) => f.id === actorId);
   if (!fighter) return { state, fighter: fighter as unknown as CombatFighter, events: [] };
-  const warden = applyWardenStartingShield(state, fighter);
-  const wardenFighter = warden.state.fighters.find((f) => f.id === actorId) ?? fighter;
-  const druid = applyDruidRegen(warden.state, wardenFighter);
-  const druidFighter = druid.state.fighters.find((f) => f.id === actorId) ?? wardenFighter;
+  // Tick down Brace turns for this actor before other passives fire.
+  const braceEntry = state.ability_state?.brace?.[actorId];
+  let s = state;
+  if (braceEntry) {
+    const remaining = braceEntry.turns_remaining - 1;
+    if (remaining <= 0) {
+      s = { ...s, ability_state: stripField(s.ability_state, "brace") ?? {} };
+    } else {
+      s = {
+        ...s,
+        ability_state: {
+          ...(s.ability_state ?? {}),
+          brace: { ...s.ability_state!.brace, [actorId]: { ...braceEntry, turns_remaining: remaining } },
+        },
+      };
+    }
+  }
+  const currentFighter = s.fighters.find((f) => f.id === actorId) ?? fighter;
+  const armorUp = applyWardenArmorUp(s, currentFighter);
+  const armorUpFighter = armorUp.state.fighters.find((f) => f.id === actorId) ?? currentFighter;
+  const druid = applyDruidRegen(armorUp.state, armorUpFighter);
+  const druidFighter = druid.state.fighters.find((f) => f.id === actorId) ?? armorUpFighter;
   const mana = applyManaFont(druid.state, druidFighter);
   const finalFighter = mana.state.fighters.find((f) => f.id === actorId) ?? druidFighter;
   return {
     state: mana.state,
     fighter: finalFighter,
-    events: [...warden.events, ...druid.events, ...mana.events],
+    events: [...armorUp.events, ...druid.events, ...mana.events],
   };
 }
 

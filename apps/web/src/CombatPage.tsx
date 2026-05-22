@@ -243,6 +243,9 @@ type CombatEvent =
   | { type: "mark_applied"; actor: string; expires_after_round: number; bonus: number }
   | { type: "mark_bonus"; actor: string; bonus: number }
   | { type: "passive_warden_shield"; actor: string; amount: number }
+  | { type: "passive_warden_thorns"; actor: string; target: string; amount: number }
+  | { type: "passive_warden_armor_up"; actor: string; amount: number }
+  | { type: "ability_brace"; actor: string; turns: number }
   | { type: "passive_mage_mana_font"; actor: string; amount: number }
   | { type: "passive_druid_regen"; actor: string; amount: number }
   | { type: "passive_rogue_first_crit"; actor: string }
@@ -689,6 +692,12 @@ function formatEvent(e: CombatEvent, state: CombatState | null): LogEntry[] {
       return row("targeted", <>Focus-fire: +{e.bonus} dmg from {nameOf(e.actor)}.</>, "good");
     case "passive_warden_shield":
       return row("shield", <>{nameOf(e.actor)} hardens up — +{e.amount} shield (passive).</>, "good");
+    case "passive_warden_armor_up":
+      return row("shield", <>{nameOf(e.actor)} Armor Up — +{e.amount} shield.</>, "good");
+    case "passive_warden_thorns":
+      return row("thorns", <>{nameOf(e.actor)} Thorns — {e.amount} damage reflected.</>, "good");
+    case "ability_brace":
+      return row("aura", <>{nameOf(e.actor)} braces — 20% damage reduction for {e.turns} turns.</>, "good");
     case "passive_mage_mana_font":
       return row("wax-seal", <>Mana Font: {nameOf(e.actor)} regenerates +{e.amount} mana.</>, "good");
     case "passive_druid_regen":
@@ -891,6 +900,12 @@ export function CombatPage({
               toast("🗡 First Strike — guaranteed crit!", { icon: "⚡", duration: 4000 });
             } else if (evt.type === "passive_warden_shield") {
               toast(`🛡 Hardened Up — +${(evt as { amount: number }).amount} shield`, { duration: 3000 });
+            } else if (evt.type === "passive_warden_armor_up") {
+              toast(`🛡 Armor Up — +${(evt as { amount: number }).amount} shield`, { duration: 2500 });
+            } else if (evt.type === "passive_warden_thorns") {
+              toast(`🌵 Thorns — ${(evt as { amount: number }).amount} reflected`, { duration: 2500 });
+            } else if (evt.type === "ability_brace") {
+              toast(`🔰 Brace — 20% damage reduction active`, { duration: 3000 });
             } else if (evt.type === "passive_mage_mana_font") {
               toast(`🧙 Mana Font — +${(evt as { amount: number }).amount} mana`, { duration: 3000 });
             } else if (evt.type === "passive_paladin_auto_heal") {
