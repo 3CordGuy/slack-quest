@@ -39,7 +39,7 @@ export const warlockAbilities: AbilityDef[] = [
     id: "hex",
     name: "Hex",
     blurb: "Reduce a monster's damage by 25%. While hexed, it takes 3 bleed stacks whenever it takes damage.",
-    icon: "death-skull",
+    icon: "wax-seal",
     mana_cost: 1,
     routing: "utility",
     target: "single_enemy",
@@ -53,7 +53,7 @@ export const warlockAbilities: AbilityDef[] = [
     id: "summon_imp",
     name: "Summon Imp",
     blurb: "Summon an imp into battle. Its attacks deal damage equal to your magic modifier.",
-    icon: "imp",
+    icon: "aura",
     mana_cost: 2,
     routing: "utility",
     target: "self",
@@ -67,7 +67,7 @@ export const warlockAbilities: AbilityDef[] = [
             class_label: "Imp",
             level: ctx.caster.level,
             hp,
-            attack_mod: Math.floor(mag / 2),
+            attack_mod: mag, 
             weapon_power: mag,
             position: "front",
             weapon_range: "melee",
@@ -82,8 +82,8 @@ export const warlockAbilities: AbilityDef[] = [
     kind: "active",
     id: "forbidden_sql",
     name: "Forbidden SQL",
-    blurb: "Consume all bleed stacks on a target to deal (3 + floor(magic/4)) damage per stack.",
-    icon: "death-skull",
+    blurb: "Consume all bleed stacks on a target to deal (2 + floor(magic/4)) damage per stack.",
+    icon: "scroll-unfurled",
     mana_cost: 2,
     routing: "utility",
     target: "single_enemy",
@@ -92,7 +92,7 @@ export const warlockAbilities: AbilityDef[] = [
       const bleedEffect = monster.effects?.find((e) => e.type === "bleeding");
       const stacks = bleedEffect?.magnitude ?? 0;
       if (stacks === 0) return [];
-      const dmgPerStack = 3 + Math.floor(ctx.caster.magic_mod / 4);
+      const dmgPerStack = 2 + Math.floor(ctx.caster.magic_mod / 4);
       const total = stacks * dmgPerStack;
       return [
         fx.consumeMonsterBleed(monster.id),

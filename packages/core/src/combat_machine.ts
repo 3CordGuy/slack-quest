@@ -2175,12 +2175,19 @@ function applyUtilityAbilityEffects(
           effects: [],
           scars: [],
         };
+        // Insert the NPC at the current actor's array position and adjust
+        // turn_index so it still resolves to the same actor. This places the
+        // NPC "behind" the current position in the circular order, meaning it
+        // won't act until the next cycle — summoning costs the caster's turn.
+        const oldLen = s.turn_order.length;
+        const pos = s.turn_index % oldLen;
+        const newTurnOrder = [...s.turn_order.slice(0, pos), npcId, ...s.turn_order.slice(pos)];
+        const newTurnIndex = (pos + 1) + Math.floor(s.turn_index / oldLen) * (oldLen + 1);
         s = {
           ...s,
           fighters: [...s.fighters, npc],
-          // Append to end of turn_order so the NPC joins next cycle without
-          // disrupting the current round's index tracking.
-          turn_order: [...s.turn_order, npcId],
+          turn_order: newTurnOrder,
+          turn_index: newTurnIndex,
         };
         events.push({ type: "ally_npc_summoned", actor, npc_id: npcId, name: spec.name });
         break;
