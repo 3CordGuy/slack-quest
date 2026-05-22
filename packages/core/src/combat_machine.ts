@@ -1596,7 +1596,7 @@ function handleMonsterAct(state: CombatState, roll: RollFn): StepResult {
   // QA Paladin — Lay on Hands. Trigger if the target survived but dropped
   // below the threshold. Skips if target died on the swing.
   if (newHp > 0) {
-    const heal = applyPaladinAutoHeal(next, target.id);
+    const heal = applyPaladinAutoHeal(next, target.id, roll);
     next = heal.state;
     events.push(...heal.events);
   }
@@ -2124,12 +2124,14 @@ function applyUtilityAbilityEffects(
         const ac = monsterAc(monster.tier);
         let d20 = roll(20);
         const encourageChargesArd = s.ability_state?.encourage?.[actor] ?? 0;
-        if (encourageChargesArd > 0) {
+        if (encourageChargesArd > 0 || effect.advantage) {
           const d20b = roll(20);
           const took = Math.max(d20, d20b);
           events.push({ type: "advantage_used", actor, d20_a: d20, d20_b: d20b, took });
           d20 = took;
-          s = { ...s, ability_state: consumeEncourageCharge(s.ability_state, actor) };
+          if (encourageChargesArd > 0) {
+            s = { ...s, ability_state: consumeEncourageCharge(s.ability_state, actor) };
+          }
         }
         const total = d20 + effect.hit_mod;
         const landed = total >= ac;
@@ -2140,7 +2142,8 @@ function applyUtilityAbilityEffects(
         const ardResist = effect.damage_type && monster.damage_resistance === effect.damage_type ? 0.7 : 1.0;
         const ardAmount = Math.max(1, Math.round(effect.amount * ardWeakness * ardResist));
         const newHp = Math.max(0, monster.hp - ardAmount);
-        events.push({ type: "player_hit", actor, target: monster.id, damage: ardAmount, armor_absorbed: 0, crit: false, formula: effect.formula, damage_type: effect.damage_type });
+        const ardIsCrit = effect.is_crit ?? false;
+        events.push({ type: "player_hit", actor, target: monster.id, damage: ardAmount, armor_absorbed: 0, crit: ardIsCrit, formula: effect.formula, damage_type: effect.damage_type });
         s = {
           ...s,
           monsters: s.monsters.map((m) => m.id === monster.id ? { ...m, hp: newHp } : m),
@@ -2149,6 +2152,10 @@ function applyUtilityAbilityEffects(
         if (newHp <= 0) return resolveMonsterKill(s, monster.id, actor, events);
         const attackCaster = s.fighters.find((f) => f.id === actor);
         if (attackCaster) {
+          if (ardIsCrit) {
+            const lsUtility = applyRogueLethalStrike(s, attackCaster, monster.id);
+            s = lsUtility.state; events.push(...lsUtility.events);
+          }
           const sq = applySinisterQueries(s, attackCaster, monster.id);
           s = sq.state;
           events.push(...sq.events);
@@ -3003,6 +3010,44 @@ function applyWardenArmorUp(
   return {
     state: { ...state, fighters: updated },
     events: [{ type: "passive_warden_armor_up", actor: actor.id, amount: added }],
+  };
+}
+
+// QA Paladin — Lay on Hands auto-trigger. Fires after a monster swing when the
+// target survived but has fallen to ≤ 30% of max_hp. The first alive Paladin in
+// the party who hasn't already triggered this once-per-fight heals the fighter
+// for 1d6 + floor(mag/2) + floor(vit/2).
+function applyPaladinAutoHeal(
+  state: CombatState,
+  targetId: ActorId,
+  roll: RollFn,
+): { state: CombatState; events: CombatEvent[] } {
+  const target = state.fighters.find((f) => f.id === targetId);
+  if (!target || target.hp <= 0) return { state, events: [] };
+  if (target.hp > Math.floor(target.max_hp * 0.3)) return { state, events: [] };
+
+  const paladin = state.fighters.find(
+    (f) => f.hp > 0 && classHasPassive(f.class, "holy_rage") && !isPassiveUsed(state, f.id, PASSIVE_PALADIN_AUTO_HEAL),
+  );
+  if (!paladin) return { state, events: [] };
+
+  const vit = paladin.stats?.vit ?? 5;
+  const rolled = roll(6) + Math.floor(paladin.magic_mod / 2) + Math.floor(vit / 2);
+  const newHp = Math.min(target.max_hp, target.hp + rolled);
+  const actualAmount = newHp - target.hp;
+  if (actualAmount <= 0) return { state, events: [] };
+
+  let next: CombatState = {
+    ...state,
+    fighters: state.fighters.map((f) =>
+      f.id === targetId ? { ...f, hp: newHp } : f,
+    ),
+  };
+  next = markPassiveUsed(next, paladin.id, PASSIVE_PALADIN_AUTO_HEAL);
+
+  return {
+    state: next,
+    events: [{ type: "passive_paladin_auto_heal", paladin: paladin.id, target: targetId, amount: actualAmount }],
   };
 }
 
