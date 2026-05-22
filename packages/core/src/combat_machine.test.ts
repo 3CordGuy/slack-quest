@@ -70,8 +70,8 @@ function runBegin(state: CombatState, initiatives: number[]) {
   return step(state, { kind: "begin" }, seqRoll(initiatives));
 }
 
-// AC reference (tier 3): monster AC = 9 (8 + floor(3/2)), fighter AC = 10.
-// Paladin attack_mod = 2 → needs d20 ≥ 7 to hit. Monster tier 3 → needs ≥ 7.
+// AC reference (tier 3): monster AC = 5 (4 + floor(3/2)), fighter AC = 10.
+// Paladin attack_mod = 2 → needs d20 ≥ 3 to hit. Monster tier 3 → needs ≥ 3.
 
 describe("combat_machine.step", () => {
   describe("begin", () => {
@@ -122,7 +122,7 @@ describe("combat_machine.step", () => {
   describe("attack (hit + damage)", () => {
     it("damages the monster on hit, emits hit_check + roll + player_hit", () => {
       const begun = runBegin(createCombatState(baseInit()), [15, 8]);
-      // d20=15 (+2 = 17 vs AC 9: HIT). d6=4 → damage = (4+2+4) = 10.
+      // d20=15 (+2 = 17 vs AC 5: HIT). d6=4 → damage = (4+2+4) = 10.
       const result = step(
         begun.state,
         { kind: "attack", actor: "U_PALADIN" },
@@ -137,18 +137,18 @@ describe("combat_machine.step", () => {
         "turn_start",
       ]);
       const check = result.events.find((e) => e.type === "hit_check");
-      expect(check).toMatchObject({ hit: true, total: 17, ac: 9 });
+      expect(check).toMatchObject({ hit: true, total: 17, ac: 5 });
       const hit = result.events.find((e) => e.type === "player_hit");
       expect(hit).toMatchObject({ damage: 10, crit: false });
     });
 
     it("misses on a low d20, emits hit_check with hit:false, no damage", () => {
       const begun = runBegin(createCombatState(baseInit()), [15, 8]);
-      // d20=5 (+2 = 7 vs AC 9: MISS). No damage roll consumed.
+      // d20=2 (+2 = 4 vs AC 5: MISS). No damage roll consumed.
       const result = step(
         begun.state,
         { kind: "attack", actor: "U_PALADIN" },
-        seqRoll([5]),
+        seqRoll([2]),
       );
       expect(result.state.monsters[0].hp).toBe(40);
       expect(eventTypes(result.events)).toEqual([
@@ -157,7 +157,7 @@ describe("combat_machine.step", () => {
         "turn_start",
       ]);
       const check = result.events.find((e) => e.type === "hit_check");
-      expect(check).toMatchObject({ hit: false, total: 7, ac: 9 });
+      expect(check).toMatchObject({ hit: false, total: 4, ac: 5 });
       expect(result.events.find((e) => e.type === "player_hit")).toBeUndefined();
     });
 
@@ -666,7 +666,7 @@ describe("STATS_V2 — DEX crit bonus", () => {
       str: 5, int_stat: 5, vit: 5, agi: 5, dex: 8,
     };
     const begun = runBegin(createCombatState(init), [15, 8]);
-    // Roll order: d20=15 (hit, 15+2=17 vs mAC=9), d6=4 (no nat-crit),
+    // Roll order: d20=15 (hit, 15+2=17 vs mAC=5), d6=4 (no nat-crit),
     // roll(100)=2 (≤ 3 threshold → DEX crit).
     const result = step(begun.state, { kind: "attack", actor: "U_PALADIN" }, seqRoll([15, 4, 2]));
     const hit = result.events.find((e) => e.type === "player_hit");
@@ -1329,8 +1329,8 @@ describe("QA Paladin — holy_rage passive", () => {
 });
 
 // Rogue fixtures.
-// Monster tier 3 → monsterAc = 8 + floor(3/2) = 9.
-// Rogue attack_mod = 3 → hit on d20 ≥ 6.
+// Monster tier 3 → monsterAc = 4 + floor(3/2) = 5.
+// Rogue attack_mod = 3 → hit on d20 ≥ 2.
 // Rogue level 4 → lethal_strikes stacks = 2 + floor(4/2) = 4.
 function rogueInit(rogueOverrides: Partial<CombatInit["fighters"][0]> = {}): CombatInit {
   return {
@@ -1370,7 +1370,7 @@ describe("Refactor Rogue — Lethal Strikes (passive)", () => {
   });
 
   it("does not fire on a non-crit attack", () => {
-    // d20=8 → total 11 ≥ 9 → hit; not a nat-20 so no crit.
+    // d20=8 → total 11 ≥ 5 → hit; not a nat-20 so no crit.
     const begun = runBegin(createCombatState(rogueInit()), [15, 5]);
     const result = step(begun.state, { kind: "attack", actor: "U_ROGUE" }, seqRoll([8, 3]));
     expect(result.events.find((e) => e.type === "passive_rogue_lethal_strike")).toBeUndefined();
@@ -1387,7 +1387,7 @@ describe("Refactor Rogue — Vanish", () => {
   });
 
   it("attacking while vanished forces a crit on hit and removes vanish", () => {
-    // d20=10 → 10+3=13 ≥ 9 → hit; d6=4 → raw=4+3+2=9; vanish forces crit → damage doubled.
+    // d20=10 → 10+3=13 ≥ 5 → hit; d6=4 → raw=4+3+2=9; vanish forces crit → damage doubled.
     const begun = runBegin(createCombatState(rogueInit()), [15, 5]);
     const vanishedState: CombatState = {
       ...begun.state,
@@ -1445,7 +1445,7 @@ describe("SRE Warden — Bulwark Strike", () => {
 
   it("on a hit, performs an attack roll and deals 1d10 + attack + 50% armor", () => {
     // execute(): d10=5 → amount = 5 + 2(atk) + 1(floor(3*0.5)) = 8
-    // Machine rolls d20=15 → 15+2=17 ≥ 9 (tier 3 AC) → hit; damage=8
+    // Machine rolls d20=15 → 15+2=17 ≥ 5 (tier 3 AC) → hit; damage=8
     const begun = runBegin(createCombatState(wardenInit()), [15, 5]);
     const result = step(
       begun.state,
@@ -1486,7 +1486,7 @@ describe("Refactor Rogue — Backstab", () => {
   it("on a hit with advantage, emits player_hit with the pre-rolled max(r1, r2) damage", () => {
     // execute() rolls raw d6s: raw1=4, raw2=3, bestRaw=4, isCrit=false.
     // amount = (4+3+2)*1 = 9. Machine rolls d20 twice: 15,10 → takes 15.
-    // 15+3=18 ≥ 9 (monsterAc tier 3) → hit; player_hit.damage=9, crit=false.
+    // 15+3=18 ≥ 5 (monsterAc tier 3) → hit; player_hit.damage=9, crit=false.
     const begun = runBegin(createCombatState(rogueInit()), [15, 5]);
     const result = step(
       begun.state,
@@ -1500,7 +1500,7 @@ describe("Refactor Rogue — Backstab", () => {
 
   it("on a natural-6 roll, emits player_hit with crit=true and doubled damage", () => {
     // raw1=6 → bestRaw=6, isCrit=true. amount = (6+3+2)*2 = 22.
-    // d20: 15,10 → 15; 15+3=18 ≥ 9 → hit.
+    // d20: 15,10 → 15; 15+3=18 ≥ 5 → hit.
     const begun = runBegin(createCombatState(rogueInit()), [15, 5]);
     const result = step(
       begun.state,
@@ -1512,12 +1512,12 @@ describe("Refactor Rogue — Backstab", () => {
   });
 
   it("on a miss, produces no player_hit and advances the turn", () => {
-    // execute() rolls r1=4, r2=3 first; machine rolls d20_a=1, d20_b=2 → takes 2 → 2+3=5 < 9 → miss.
+    // execute() rolls r1=4, r2=3 first; machine rolls d20_a=1, d20_b=1 → takes 1 → 1+3=4 < 5 → miss.
     const begun = runBegin(createCombatState(rogueInit()), [15, 5]);
     const result = step(
       begun.state,
       { kind: "ability", actor: "U_ROGUE", ability_id: "backstab", target: MONSTER_ID },
-      seqRoll([4, 3, 1, 2]),
+      seqRoll([4, 3, 1, 1]),
     );
     expect(result.events.find((e) => e.type === "player_hit")).toBeUndefined();
     expect(result.events.find((e) => e.type === "hit_check")).toMatchObject({ hit: false });
@@ -1656,7 +1656,7 @@ describe("mark", () => {
 
   it("attack damage is not affected by an active mark", () => {
     // Alice (U_A) marks, then Bob (U_B) attacks — no bonus should appear.
-    // d20=10 → hit (attack_mod 0, tier 3 AC=9 → need ≥ 9), d6=2 → dmg = 2+0+2(wp)=4.
+    // d20=10 → hit (attack_mod 0, tier 3 AC=5 → need ≥ 5), d6=2 → dmg = 2+0+2(wp)=4.
     // If the old mark bonus (+2) were still applied this would be 6.
     const begun = runBegin(createCombatState(markInit()), [20, 5, 1]);
     const marked: CombatState = {
