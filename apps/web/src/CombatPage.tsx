@@ -1293,6 +1293,7 @@ export function CombatPage({
                     isMarked={!!(state.ability_state?.mark && state.round <= state.ability_state.mark.expires_after_round && (!state.ability_state.mark.monster_id || state.ability_state.mark.monster_id === (m.id ?? String(i))))}
                     isTargeted={effectiveTarget !== null && (m.id ?? null) === effectiveTarget}
                     smiteDebuffed={!!((state.ability_state as { paladin_smite_debuff?: Record<string, number> } | undefined)?.paladin_smite_debuff?.[mid])}
+                    vulnerable={(state.ability_state as { vulnerable?: Record<string, { expires_after_round: number; magnitude: number }> } | undefined)?.vulnerable?.[mid]}
                     slashSeq={lastSlash?.id === mid ? lastSlash.seq : 0}
                     lungeSeq={lastLunge?.id === mid ? lastLunge.seq : 0}
                     dustSeq={hitDustSeq[mid] ?? 0}
@@ -1585,6 +1586,7 @@ function MonsterCard({
   isMarked = false,
   isTargeted = false,
   smiteDebuffed = false,
+  vulnerable,
   slashSeq = 0,
   lungeSeq = 0,
   dustSeq = 0,
@@ -1596,6 +1598,7 @@ function MonsterCard({
   isMarked?: boolean;
   isTargeted?: boolean;
   smiteDebuffed?: boolean;
+  vulnerable?: { expires_after_round: number; magnitude: number };
   slashSeq?: number;
   lungeSeq?: number;
   dustSeq?: number;
@@ -1704,7 +1707,7 @@ function MonsterCard({
           </div>
         </div>
         <BigHpBar current={Math.max(0, monster.hp)} max={monster.max_hp} />
-        {((monster.effects && monster.effects.length > 0) || smiteDebuffed) && !isDead && (
+        {((monster.effects && monster.effects.length > 0) || smiteDebuffed || (vulnerable && round <= vulnerable.expires_after_round)) && !isDead && (
           <div style={{ display: "flex", gap: 6, marginTop: 6, flexWrap: "wrap" }}>
             {monster.effects?.map((e, i) => {
               const def = EFFECT_PILLS[e.type];
@@ -1712,6 +1715,9 @@ function MonsterCard({
             })}
             {smiteDebuffed && (
               <StatusPill size="lg" color="#f87171" icon="axe-swing" label="smited" suffix="½ dmg" title="Smite: this monster deals 50% less damage on its next swing" />
+            )}
+            {vulnerable && round <= vulnerable.expires_after_round && (
+              <StatusPill size="lg" color="#fb923c" icon="crossed-swords" label="vulnerable" suffix={`+${vulnerable.magnitude}%`} title={`Vulnerable: takes ${vulnerable.magnitude}% more damage (${vulnerable.expires_after_round - round + 1} round${vulnerable.expires_after_round - round + 1 === 1 ? "" : "s"} left)`} />
             )}
           </div>
         )}
@@ -2799,6 +2805,8 @@ function PartyChips({ fighters, selfId, flashIds, hitDustSeq, healBurstSeq, shie
   const sofActive = sofRoundsLeft > 0;
   const protectState = abilityState?.paladin_protect as { paladin_id: string; target_id: string } | undefined;
   const holyRageMap = abilityState?.holy_rage as Record<string, number> | undefined;
+  const vanishedMap = abilityState?.vanished as Record<string, number> | undefined;
+  const envenomMap = abilityState?.envenomed_weapon as Record<string, { stacks: number; charges: number }> | undefined;
 
   function renderChip(f: Fighter) {
     const pct = f.max_hp > 0 ? Math.max(0, f.hp / f.max_hp) : 0;
@@ -2874,7 +2882,9 @@ function PartyChips({ fighters, selfId, flashIds, hitDustSeq, healBurstSeq, shie
           const isProtected = protectState?.target_id === f.id;
           const holyRageTotal = holyRageMap?.[f.id] ?? 0;
           const holyRageBonus = Math.floor(holyRageTotal * 0.1);
-          const hasExtra = sofActive || isProtected || holyRageTotal > 0;
+          const vanishSwings = vanishedMap?.[f.id] ?? 0;
+          const envenomEntry = envenomMap?.[f.id];
+          const hasExtra = sofActive || isProtected || holyRageTotal > 0 || vanishSwings > 0 || !!envenomEntry;
           if (!f.effects?.length && !hasExtra) return null;
           return (
             <div style={{ position: "absolute", top: -8, right: -4, display: "flex", flexDirection: "column", gap: 3, alignItems: "flex-end" }}>
@@ -2882,6 +2892,8 @@ function PartyChips({ fighters, selfId, flashIds, hitDustSeq, healBurstSeq, shie
                 const def = EFFECT_PILLS[e.type];
                 return def ? <def.pill key={i} effect={e} size="sm" /> : null;
               })}
+              {vanishSwings > 0 && <StatusPill size="sm" color="#818cf8" icon="player-dodge" label="vanish" suffix={`${vanishSwings}sw`} title={`Vanished: untargetable for ${vanishSwings} swing${vanishSwings === 1 ? "" : "s"}; next hit auto-crits`} />}
+              {envenomEntry && <StatusPill size="sm" color="#4ade80" icon="vial" label="envenomed" suffix={`×${envenomEntry.stacks} ×${envenomEntry.charges}`} title={`Envenomed weapon: next ${envenomEntry.charges} hit${envenomEntry.charges === 1 ? "" : "s"} apply ${envenomEntry.stacks} stacks of poison`} />}
               {sofActive && <StatusPill size="sm" color="#60a5fa" icon="round-shield" label="SoF" suffix={`${sofRoundsLeft}r`} title={`Shield of Faith: +5 AC (${sofRoundsLeft} round${sofRoundsLeft === 1 ? "" : "s"} left)`} />}
               {isProtected && <StatusPill size="sm" color="#a78bfa" icon="crowned-heart" label="protected" suffix="½ dmg" title="Protected: taking half damage, absorbed by the paladin" />}
               {holyRageTotal > 0 && <StatusPill size="sm" color="#f97316" icon="fire" label="holy rage" suffix={`+${holyRageBonus}`} title={`Holy Rage: next attack deals +${holyRageBonus} bonus damage`} />}

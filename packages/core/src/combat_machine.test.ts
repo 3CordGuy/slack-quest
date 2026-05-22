@@ -1401,26 +1401,34 @@ describe("Refactor Rogue — Vanish", () => {
 });
 
 describe("Refactor Rogue — Envenom Weapon", () => {
-  it("sets envenomed_weapon[actor]=stacks in ability_state and spends 1 mana", () => {
-    // level 4 → stacks = 2 + floor(4/2) = 4
+  it("sets envenomed_weapon[actor] with stacks=6 and charges=2, spends 1 mana", () => {
+    // level 4 → stacks = 2 + 4 = 6; machine defaults to 2 charges
     const begun = runBegin(createCombatState(rogueInit()), [15, 5]);
     const result = step(begun.state, { kind: "ability", actor: "U_ROGUE", ability_id: "envenom_weapon" }, seqRoll([]));
-    expect(result.state.ability_state?.envenomed_weapon?.["U_ROGUE"]).toBe(4);
+    expect(result.state.ability_state?.envenomed_weapon?.["U_ROGUE"]).toMatchObject({ stacks: 6, charges: 2 });
     expect(result.state.fighters[0].mana).toBe(3); // 4 - 1
   });
 
-  it("a subsequent hit applies poison to the monster and clears envenomed_weapon", () => {
-    // d20=10 → hit, d6=3 → not a nat-20 so no crit.
+  it("first hit applies poison and decrements charges to 1", () => {
     const begun = runBegin(createCombatState(rogueInit()), [15, 5]);
     const envenomed: CombatState = {
       ...begun.state,
-      ability_state: { envenomed_weapon: { U_ROGUE: 4 } },
+      ability_state: { envenomed_weapon: { U_ROGUE: { stacks: 6, charges: 2 } } },
     };
     const result = step(envenomed, { kind: "attack", actor: "U_ROGUE" }, seqRoll([10, 3]));
-    expect(result.events.find((e) => e.type === "ability_envenom_proc")).toMatchObject({
-      actor: "U_ROGUE", stacks: 4,
-    });
-    expect(result.state.monsters[0].effects.some((e) => e.type === "poisoned" && e.magnitude === 4)).toBe(true);
+    expect(result.events.find((e) => e.type === "ability_envenom_proc")).toMatchObject({ actor: "U_ROGUE", stacks: 6 });
+    expect(result.state.monsters[0].effects.some((e) => e.type === "poisoned" && e.magnitude === 6)).toBe(true);
+    expect(result.state.ability_state?.envenomed_weapon?.["U_ROGUE"]).toMatchObject({ stacks: 6, charges: 1 });
+  });
+
+  it("second hit applies poison again and clears envenomed_weapon", () => {
+    const begun = runBegin(createCombatState(rogueInit()), [15, 5]);
+    const envenomed: CombatState = {
+      ...begun.state,
+      ability_state: { envenomed_weapon: { U_ROGUE: { stacks: 6, charges: 1 } } },
+    };
+    const result = step(envenomed, { kind: "attack", actor: "U_ROGUE" }, seqRoll([10, 3]));
+    expect(result.events.find((e) => e.type === "ability_envenom_proc")).toMatchObject({ actor: "U_ROGUE", stacks: 6 });
     expect(result.state.ability_state?.envenomed_weapon?.["U_ROGUE"]).toBeUndefined();
   });
 });

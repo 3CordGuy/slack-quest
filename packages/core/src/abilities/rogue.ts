@@ -29,13 +29,13 @@ export const rogueAbilities: AbilityDef[] = [
     kind: "active",
     id: "envenom_weapon",
     name: "Envenom Weapon",
-    blurb: "Apply venom to your weapon — your next hit applies 2 + floor(lev/2) stacks of poison.",
+    blurb: "Apply venom to your weapon — your next 2 hits each apply 2 + lev stacks of poison.",
     icon: "vial",
     mana_cost: 1,
     routing: "utility",
     target: "self",
     execute(ctx) {
-      const stacks = 2 + Math.floor(ctx.caster.level / 2);
+      const stacks = 2 + ctx.caster.level;
       return [fx.envenomWeapon(stacks)];
     },
   },

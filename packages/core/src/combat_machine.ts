@@ -246,8 +246,8 @@ export interface AbilityRuntimeState {
   paladin_protect?: { paladin_id: ActorId; target_id: ActorId };
   // QA Paladin — Smite debuff: monster → swings remaining at 50% reduced damage.
   paladin_smite_debuff?: Record<ActorId, number>;
-  // Refactor Rogue — Envenom Weapon: fighter → poison stacks to apply on next hit.
-  envenomed_weapon?: Record<ActorId, number>;
+  // Refactor Rogue — Envenom Weapon: fighter → stacks + remaining charges.
+  envenomed_weapon?: Record<ActorId, { stacks: number; charges: number }>;
   // Refactor Rogue — Debilitate: monster → vulnerability until this round passes.
   vulnerable?: Record<ActorId, { expires_after_round: number; magnitude: number }>;
 }
@@ -2268,7 +2268,7 @@ function applyUtilityAbilityEffects(
       case "apply_envenom_weapon": {
         const ability_state: AbilityRuntimeState = {
           ...(s.ability_state ?? {}),
-          envenomed_weapon: { ...(s.ability_state?.envenomed_weapon ?? {}), [actor]: effect.stacks },
+          envenomed_weapon: { ...(s.ability_state?.envenomed_weapon ?? {}), [actor]: { stacks: effect.stacks, charges: 2 } },
         };
         s = { ...s, ability_state };
         break;
@@ -3297,13 +3297,18 @@ function applyEnvenomProc(
   actor: CombatFighter,
   targetMonsterId: ActorId,
 ): { state: CombatState; events: CombatEvent[] } {
-  const stacks = state.ability_state?.envenomed_weapon?.[actor.id] ?? 0;
-  if (stacks <= 0) return { state, events: [] };
+  const entry = state.ability_state?.envenomed_weapon?.[actor.id];
+  if (!entry || entry.charges <= 0) return { state, events: [] };
   const targetMonster = state.monsters.find((m) => m.id === targetMonsterId && m.hp > 0);
   if (!targetMonster) return { state, events: [] };
+  const { stacks, charges } = entry;
   const poisonEffect: MachineStatusEffect = { type: "poisoned", magnitude: stacks, remaining: 2, source: actor.id };
   const updatedWeapon = { ...(state.ability_state?.envenomed_weapon ?? {}) };
-  delete updatedWeapon[actor.id];
+  if (charges - 1 <= 0) {
+    delete updatedWeapon[actor.id];
+  } else {
+    updatedWeapon[actor.id] = { stacks, charges: charges - 1 };
+  }
   const ability_state: AbilityRuntimeState | undefined = Object.keys(updatedWeapon).length > 0
     ? { ...(state.ability_state ?? {}), envenomed_weapon: updatedWeapon }
     : stripField(state.ability_state ?? {}, "envenomed_weapon");
