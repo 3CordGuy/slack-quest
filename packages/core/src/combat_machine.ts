@@ -438,8 +438,11 @@ export type CombatEvent =
   | {
       type: "ability_foresee";
       actor: ActorId;
-      // Committed telegraph target (null = no target yet).
+      // Committed telegraph target for the primary (first upcoming) monster.
       predicted_target: ActorId | null;
+      // Per-monster committed targets. Keyed by monster ID; populated for every
+      // monster that will act before the sage's next turn.
+      predicted_targets: Record<ActorId, ActorId>;
       // Raw damage range (pre-armor/position).
       damage_lo: number;
       damage_hi: number;
@@ -2754,6 +2757,7 @@ function buildForeseeEvent(
     type: "ability_foresee",
     actor,
     predicted_target: predicted,
+    predicted_targets: { ...(state.ability_state?.foretold_targets ?? {}) },
     damage_lo: rawLo,
     damage_hi: rawHi,
     net_lo: netLo,

@@ -208,6 +208,7 @@ type CombatEvent =
       type: "ability_foresee";
       actor: string;
       predicted_target: string | null;
+      predicted_targets: Record<string, string>;
       damage_lo: number;
       damage_hi: number;
       net_lo: number;
@@ -846,7 +847,7 @@ export function CombatPage({
   // Bumping seq re-mounts the animation element so the keyframe re-fires.
   const [lastSlash, setLastSlash] = useState<{ id: string; seq: number } | null>(null);
   const [lastLunge, setLastLunge] = useState<{ id: string; seq: number } | null>(null);
-  const [lastForesee, setLastForesee] = useState<{ predicted_target: string | null } | null>(null);
+  const [lastForesee, setLastForesee] = useState<{ predicted_target: string | null; predicted_targets: Record<string, string> } | null>(null);
   const animSeqRef = useRef(0);
   // Fighter hit-flash: tracks which fighter ids are currently flashing red.
   const [flashIds, setFlashIds] = useState<Set<string>>(new Set());
@@ -978,7 +979,7 @@ export function CombatPage({
           // Fire per-card animations immediately (before the state-update delay).
           for (const evt of msg.events) {
             if (evt.type === "ability_foresee") {
-              setLastForesee({ predicted_target: (evt as { predicted_target: string | null }).predicted_target });
+              setLastForesee({ predicted_target: evt.predicted_target, predicted_targets: evt.predicted_targets ?? {} });
             }
             if (evt.type === "player_hit" && (evt as { target?: string }).target) {
               const tgt = (evt as { target: string }).target;
@@ -1339,7 +1340,7 @@ export function CombatPage({
                     monster={m}
                     round={state.round}
                     showSageReading={me?.class === "Staff Sage"}
-                    sageTarget={me?.class === "Staff Sage" && lastForesee?.predicted_target ? (state.fighters.find((f) => f.id === lastForesee.predicted_target)?.name ?? lastForesee.predicted_target) : null}
+                    sageTarget={me?.class === "Staff Sage" && lastForesee ? (() => { const tid = lastForesee.predicted_targets?.[mid] ?? lastForesee.predicted_target; return tid ? (state.fighters.find((f) => f.id === tid)?.name ?? tid) : null; })() : null}
                     markedBy={
                       state.ability_state?.mark &&
                       state.round <= state.ability_state.mark.expires_after_round &&
