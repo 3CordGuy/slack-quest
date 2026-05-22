@@ -363,21 +363,20 @@ describe("combat_machine.step", () => {
   });
 
   describe("smite ability (QA Paladin)", () => {
-    it("spends 1 mana, deals 1d6+atk+wpn+1d8, applies smite debuff", () => {
+    it("spends 1 mana, deals 1d6+atk+wpn+2d8, applies smite debuff", () => {
       const init = baseInit();
-      // str defaults to 5 (no stats field) → extraDice = 1+floor(5/10) = 1
       init.fighters[0].mana = 2;
       const begun = runBegin(createCombatState(init), [15, 8]);
-      // 1d6=2 + atk_mod 2 + weapon 4 = 8. 1d8=3. damage = 8 + 3 = 11.
+      // 1d6=2 + atk_mod 2 + weapon 4 = 8. 2d8 → 3 + 4 = 7. damage = 8 + 7 = 15.
       const result = step(
         begun.state,
         { kind: "ability", actor: "U_PALADIN", ability_id: "smite" },
-        seqRoll([2, 3]),
+        seqRoll([2, 3, 4]),
       );
       expect(result.state.fighters[0].mana).toBe(1);
-      expect(result.state.monsters[0].hp).toBe(40 - 11);
+      expect(result.state.monsters[0].hp).toBe(40 - 15);
       const hit = result.events.find((e) => e.type === "player_hit");
-      expect(hit).toMatchObject({ damage: 11 });
+      expect(hit).toMatchObject({ damage: 15 });
       const used = result.events.find((e) => e.type === "ability_used");
       expect(used).toMatchObject({ ability_id: "smite", mana_spent: 1 });
       // Smite debuff should be stored in ability_state

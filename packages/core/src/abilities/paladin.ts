@@ -48,20 +48,17 @@ export const paladinAbilities: AbilityDef[] = [
     kind: "active",
     id: "smite",
     name: "Smite",
-    blurb: "Strike for normal + {1+floor(str/10)}d8 extra damage. Enemy deals 50% less damage on their next swing.",
+    blurb: "Strike for normal + 2d8 extra damage. Enemy deals 50% less damage on their next swing.",
     icon: "axe-swing",
     mana_cost: 1,
-    cooldown_turns: 2,
     routing: "damage",
     target: "single_enemy",
     execute(ctx) {
       const monster = ctx.target as { id: string };
-      const str = ctx.caster.stats?.str ?? 5;
       const wpn = Math.max(0, ctx.caster.weapon_power);
       const baseDmg = ctx.roll(6) + ctx.caster.attack_mod + wpn;
-      const extraDice = 1 + Math.floor(str / 10);
-      const extraDmg = rollSum(ctx.roll, extraDice, 8);
-      const formula = `1d6 + ${ctx.caster.attack_mod}a + ${wpn}w + ${extraDice}d8`;
+      const extraDmg = rollSum(ctx.roll, 2, 8);
+      const formula = `1d6 + ${ctx.caster.attack_mod}a + ${wpn}w + 2d8`;
       return [
         fx.damage(monster.id, baseDmg + extraDmg, formula, { drinkBuff: "ability" }),
         fx.smiteDebuff(monster.id),
