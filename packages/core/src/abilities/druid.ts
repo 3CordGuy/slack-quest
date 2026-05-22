@@ -72,7 +72,7 @@ export const druidAbilities: AbilityDef[] = [
     id: "barkskin",
     name: "Barkskin",
     blurb: "Target ally's skin hardens — +5 AC for 2 rounds.",
-    icon: "oak-leaf",
+    icon: "leaf",
     mana_cost: 1,
     routing: "utility",
     target: "single_ally",

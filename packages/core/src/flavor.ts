@@ -224,7 +224,7 @@ export type EquipSlot =
 // Status effects — applied to player characters or monsters and tick on the
 // affected actor's own combat action / monster turn. v1 set is HP-based; future
 // effects could touch cooldown, damage modifiers, etc.
-export type EffectType = "regen" | "bleeding" | "burning" | "poisoned" | "empowered" | "frozen" | "shocked" | "stunned" | "hexed" | "entangled";
+export type EffectType = "regen" | "bleeding" | "burning" | "poisoned" | "empowered" | "frozen" | "shocked" | "stunned" | "hexed" | "entangled" | "barkskin";
 
 // Elemental damage type carried by rare+ weapons and assigned to monsters.
 export type ElementType = "fire" | "ice" | "lightning";
@@ -238,19 +238,23 @@ export interface EffectMeta {
   // ticks apply directly to HP without the armor reduction in performMonsterTurn).
   ignoresArmor: boolean;
   blurb: string;
+  // UI pill display (rpg-awesome icon name without ra- prefix, CSS color hex).
+  icon: string;
+  color: string;
 }
 
 export const EFFECT_META: Record<EffectType, EffectMeta> = {
-  regen:     { emoji: "🟢", name: "Regen",     kind: "buff",    ignoresArmor: true,  blurb: "Restores HP each action." },
-  bleeding:  { emoji: "🔴", name: "Bleeding",  kind: "debuff",  ignoresArmor: false, blurb: "Loses HP each action." },
-  burning:   { emoji: "🔥", name: "Burning",   kind: "debuff",  ignoresArmor: true,  blurb: "Loses HP each action; ignores armor." },
-  poisoned:  { emoji: "☠️", name: "Poisoned",  kind: "debuff",  ignoresArmor: true,  blurb: "Loses HP each turn." },
-  empowered: { emoji: "⚡", name: "Empowered", kind: "passive", ignoresArmor: false, blurb: "+25% damage dealt for N turns." },
-  frozen:    { emoji: "❄️", name: "Frozen",    kind: "passive", ignoresArmor: false, blurb: "Skips next action." },
-  shocked:   { emoji: "🌩️", name: "Shocked",   kind: "passive", ignoresArmor: false, blurb: "Takes +30% damage from all sources." },
-  stunned:   { emoji: "📦", name: "Stunned",   kind: "passive", ignoresArmor: false, blurb: "Containerized — skips swings with escalating 30%/turn break chance." },
-  hexed:     { emoji: "🔮", name: "Hexed",     kind: "passive", ignoresArmor: false, blurb: "Deals -25% damage. Takes 3 bleed stacks whenever it takes damage." },
-  entangled: { emoji: "🌿", name: "Entangled", kind: "debuff",  ignoresArmor: false, blurb: "-4 to attack rolls." },
+  regen:     { emoji: "🟢", name: "Regen",     kind: "buff",    ignoresArmor: true,  blurb: "Restores HP each action.",                                                icon: "regeneration",   color: "#4ade80" },
+  bleeding:  { emoji: "🔴", name: "Bleeding",  kind: "debuff",  ignoresArmor: false, blurb: "Loses HP each action.",                                                   icon: "bleeding-wound", color: "#f87171" },
+  burning:   { emoji: "🔥", name: "Burning",   kind: "debuff",  ignoresArmor: true,  blurb: "Loses HP each action; ignores armor.",                                    icon: "fire",           color: "#fb923c" },
+  poisoned:  { emoji: "☠️", name: "Poisoned",  kind: "debuff",  ignoresArmor: true,  blurb: "Loses HP each turn.",                                                     icon: "poison-cloud",   color: "#c084fc" },
+  empowered: { emoji: "⚡", name: "Empowered", kind: "passive", ignoresArmor: false, blurb: "+25% damage dealt for N turns.",                                          icon: "aura",           color: "#f59e0b" },
+  frozen:    { emoji: "❄️", name: "Frozen",    kind: "passive", ignoresArmor: false, blurb: "Skips next action.",                                                      icon: "ice-bolt",       color: "#93c5fd" },
+  shocked:   { emoji: "🌩️", name: "Shocked",   kind: "passive", ignoresArmor: false, blurb: "Takes +30% damage from all sources.",                                    icon: "electric",       color: "#fbbf24" },
+  stunned:   { emoji: "📦", name: "Stunned",   kind: "passive", ignoresArmor: false, blurb: "Containerized — skips swings with escalating 30%/turn break chance.",    icon: "fluffy-swirl",   color: "#a78bfa" },
+  hexed:     { emoji: "🔮", name: "Hexed",     kind: "passive", ignoresArmor: false, blurb: "Deals -25% damage. Takes 3 bleed stacks whenever it takes damage.",      icon: "death-skull",    color: "#a855f7" },
+  entangled: { emoji: "🌿", name: "Entangled", kind: "debuff",  ignoresArmor: false, blurb: "-4 to attack rolls.",                                                     icon: "vine-whip",      color: "#86efac" },
+  barkskin:  { emoji: "🍃", name: "Barkskin",  kind: "passive", ignoresArmor: false, blurb: "Hardened skin — bonus AC for N turns.",                                   icon: "leaf",           color: "#a3e635" },
 };
 
 export const ELEMENT_META: Record<ElementType, { emoji: string; name: string; effect: EffectType }> = {

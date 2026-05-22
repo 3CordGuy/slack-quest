@@ -247,8 +247,6 @@ export interface AbilityRuntimeState {
   foresee_turns?: number;
   // SRE Warden — Brace: incoming damage reduced by pct% for N of the fighter's own turns.
   brace?: Record<ActorId, { pct: number; turns_remaining: number }>;
-  // Backend Druid — Barkskin: +bonus AC for N of the buffed fighter's own turns.
-  barkskin?: Record<ActorId, { bonus: number; turns_remaining: number }>;
   // Backend Druid — Animal Form: buffed stat deltas for N of the caster's own turns.
   // Stored so they can be cleanly reverted on expiry.
   animal_form?: Record<ActorId, { str_bonus: number; vit_bonus: number; agi_bonus: number; dex_bonus: number; atk_delta: number; hp_delta: number; turns_remaining: number }>;
@@ -1407,9 +1405,8 @@ function handleMonsterAct(state: CombatState, roll: RollFn): StepResult {
   const modifier = Math.floor(monster.tier / 2) + 4 - entanglePenalty;
   const hitTotal = d20 + modifier;
   // Barkskin (Druid): target fighter's AC is buffed for N of their own turns.
-  const barkskinEntry = s.ability_state?.barkskin?.[target.id];
-  const barkskinBonus = (barkskinEntry?.turns_remaining ?? 0) > 0 ? (barkskinEntry?.bonus ?? 0) : 0;
-  const targetAc = fighterAc(target.level) + barkskinBonus;
+  const barkskinEff = target.effects.find((e) => e.type === "barkskin");
+  const targetAc = fighterAc(target.level) + (barkskinEff?.magnitude ?? 0);
   const landed = hitTotal >= targetAc;
   events.push({
     type: "roll",
@@ -2303,16 +2300,8 @@ function applyUtilityAbilityEffects(
       case "apply_barkskin": {
         const target = s.fighters.find((f) => f.id === effect.target_id);
         if (!target || target.hp <= 0) continue;
-        s = {
-          ...s,
-          ability_state: {
-            ...(s.ability_state ?? {}),
-            barkskin: {
-              ...(s.ability_state?.barkskin ?? {}),
-              [effect.target_id]: { bonus: effect.bonus, turns_remaining: effect.turns },
-            },
-          },
-        };
+        const barkskinEff = { type: "barkskin" as const, magnitude: effect.bonus, remaining: effect.turns, source: actor };
+        s = { ...s, fighters: s.fighters.map((f) => f.id === effect.target_id ? { ...f, effects: mergeEffect(f.effects, barkskinEff) } : f) };
         events.push({ type: "ability_barkskin", actor, target: effect.target_id, bonus: effect.bonus, turns: effect.turns });
         break;
       }
@@ -2606,7 +2595,7 @@ function tickEffects(
   const newEffects: MachineStatusEffect[] = [];
   const events: CombatEvent[] = [];
   for (const eff of effects) {
-    if (eff.type === "empowered" || eff.type === "frozen" || eff.type === "shocked" || eff.type === "stunned" || eff.type === "hexed" || eff.type === "entangled") {
+    if (eff.type === "empowered" || eff.type === "frozen" || eff.type === "shocked" || eff.type === "stunned" || eff.type === "hexed" || eff.type === "entangled" || eff.type === "barkskin") {
       // Passive — no HP delta. Silently count down; the effect is applied
       // inline in the attack/turn handlers via the actor's effects array.
       // "stunned" uses remaining as a max-duration safety net (break logic
@@ -2904,19 +2893,6 @@ function applyPreActionPassives(
       };
     }
   }
-  // Tick down Barkskin for this fighter.
-  const barkskinEntry2 = s.ability_state?.barkskin?.[actorId];
-  if (barkskinEntry2) {
-    const remaining = barkskinEntry2.turns_remaining - 1;
-    if (remaining <= 0) {
-      const updated = { ...(s.ability_state?.barkskin ?? {}) };
-      delete updated[actorId];
-      s = { ...s, ability_state: Object.keys(updated).length > 0 ? { ...s.ability_state, barkskin: updated } : (stripField(s.ability_state, "barkskin") ?? {}) };
-    } else {
-      s = { ...s, ability_state: { ...s.ability_state, barkskin: { ...s.ability_state!.barkskin, [actorId]: { ...barkskinEntry2, turns_remaining: remaining } } } };
-    }
-  }
-
   // Tick down Animal Form and revert stat bonuses on expiry.
   const animalFormEntry = s.ability_state?.animal_form?.[actorId];
   if (animalFormEntry) {
@@ -3176,6 +3152,7 @@ const EFFECT_STACK_POLICY: Record<EffectType, { mode: "stack" | "refresh"; maxMa
   stunned:   { mode: "refresh", maxMagnitude: 1 },
   hexed:     { mode: "refresh", maxMagnitude: 1 },
   entangled: { mode: "refresh", maxMagnitude: 1 },
+  barkskin:  { mode: "refresh", maxMagnitude: 1 },
 };
 
 // Merge `incoming` into the existing effect list. If an effect of the
