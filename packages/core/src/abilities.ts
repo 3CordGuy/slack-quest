@@ -116,7 +116,7 @@ export type AbilityEffect =
   | { kind: "apply_smite_debuff"; target_id: string }
   // Weapon attack with machine-side d20 hit check; emits roll + hit_check events.
   // If advantage is true, the d20 is rolled twice and the higher value is used.
-  | { kind: "attack_roll_damage"; target_id: string; hit_mod: number; amount: number; formula: string; damage_type?: DamageType; advantage?: boolean }
+  | { kind: "attack_roll_damage"; target_id: string; hit_mod: number; amount: number; formula: string; damage_type?: DamageType; advantage?: boolean; is_crit?: boolean }
   // Rogue Lethal Strikes — apply bleeding to a monster.
   | { kind: "apply_bleed"; target_id: string; stacks: number; duration: number }
   // Rogue Envenom Weapon — apply poison to a monster.

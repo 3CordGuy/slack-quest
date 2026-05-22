@@ -1435,9 +1435,9 @@ describe("Refactor Rogue — Envenom Weapon", () => {
 
 describe("Refactor Rogue — Backstab", () => {
   it("on a hit with advantage, emits player_hit with the pre-rolled max(r1, r2) damage", () => {
-    // execute() calls ctx.roll(6) twice: r1=4→4+3+2=9, r2=3→3+3+2=8, amount=max=9.
-    // Machine then rolls d20 twice for advantage: d20_a=15, d20_b=10 → takes 15.
-    // 15+3=18 ≥ 9 (monsterAc tier 3) → hit; player_hit.damage = 9.
+    // execute() rolls raw d6s: raw1=4, raw2=3, bestRaw=4, isCrit=false.
+    // amount = (4+3+2)*1 = 9. Machine rolls d20 twice: 15,10 → takes 15.
+    // 15+3=18 ≥ 9 (monsterAc tier 3) → hit; player_hit.damage=9, crit=false.
     const begun = runBegin(createCombatState(rogueInit()), [15, 5]);
     const result = step(
       begun.state,
@@ -1446,7 +1446,20 @@ describe("Refactor Rogue — Backstab", () => {
     );
     expect(result.events.find((e) => e.type === "advantage_used")).toBeDefined();
     const hitEvt = result.events.find((e) => e.type === "player_hit");
-    expect(hitEvt).toMatchObject({ damage: 9, actor: "U_ROGUE" });
+    expect(hitEvt).toMatchObject({ damage: 9, actor: "U_ROGUE", crit: false });
+  });
+
+  it("on a natural-6 roll, emits player_hit with crit=true and doubled damage", () => {
+    // raw1=6 → bestRaw=6, isCrit=true. amount = (6+3+2)*2 = 22.
+    // d20: 15,10 → 15; 15+3=18 ≥ 9 → hit.
+    const begun = runBegin(createCombatState(rogueInit()), [15, 5]);
+    const result = step(
+      begun.state,
+      { kind: "ability", actor: "U_ROGUE", ability_id: "backstab", target: MONSTER_ID },
+      seqRoll([6, 3, 15, 10]),
+    );
+    const hitEvt = result.events.find((e) => e.type === "player_hit");
+    expect(hitEvt).toMatchObject({ damage: 22, actor: "U_ROGUE", crit: true });
   });
 
   it("on a miss, produces no player_hit and advances the turn", () => {

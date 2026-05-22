@@ -51,12 +51,14 @@ export const rogueAbilities: AbilityDef[] = [
     target: "single_enemy",
     execute(ctx) {
       const monster = ctx.target as MonsterSnapshot;
-      const wpn = Math.max(0, ctx.caster.weapon_power);
-      // Roll damage twice up front; the machine resolves the hit check.
-      const r1 = ctx.roll(6) + ctx.caster.attack_mod + wpn;
-      const r2 = ctx.roll(6) + ctx.caster.attack_mod + wpn;
-      const amount = Math.max(r1, r2);
-      return [fx.attackRollDamage(monster.id, ctx.caster.attack_mod, amount, `max(${r1}, ${r2})`, undefined, true)];
+      const totalMod = ctx.caster.attack_mod + Math.max(0, ctx.caster.weapon_power);
+      const raw1 = ctx.roll(6);
+      const raw2 = ctx.roll(6);
+      const bestRaw = Math.max(raw1, raw2);
+      const isCrit = bestRaw === 6;
+      const amount = (bestRaw + totalMod) * (isCrit ? 2 : 1);
+      const formula = `max(${raw1},${raw2})+${totalMod}${isCrit ? " ×2" : ""}`;
+      return [fx.attackRollDamage(monster.id, ctx.caster.attack_mod, amount, formula, undefined, true, isCrit)];
     },
   },
   {

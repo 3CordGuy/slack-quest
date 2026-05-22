@@ -2230,9 +2230,10 @@ function applyUtilityAbilityEffects(
 
         if (!landed) break;
 
+        const isCrit = effect.is_crit ?? false;
         const atkVulnMult = vulnerabilityMult(s, targetMonster.id, s.round);
         const atkDamage = Math.max(1, Math.round(effect.amount * atkVulnMult));
-        events.push({ type: "player_hit", actor, target: targetMonster.id, damage: atkDamage, armor_absorbed: 0, crit: false, formula: effect.formula });
+        events.push({ type: "player_hit", actor, target: targetMonster.id, damage: atkDamage, armor_absorbed: 0, crit: isCrit, formula: effect.formula });
         const newHp = Math.max(0, targetMonster.hp - atkDamage);
         s = {
           ...s,
@@ -2241,10 +2242,10 @@ function applyUtilityAbilityEffects(
         };
         if (newHp <= 0) return resolveMonsterKill(s, targetMonster.id, actor, events);
 
-        // Lethal Strikes on Backstab hit (no crit — damage was pre-rolled with advantage).
-        // Envenom proc on hit.
-        const lsAfterAtk = applyRogueLethalStrike(s, fighter, targetMonster.id);
-        s = lsAfterAtk.state; events.push(...lsAfterAtk.events);
+        if (isCrit) {
+          const lsAfterAtk = applyRogueLethalStrike(s, fighter, targetMonster.id);
+          s = lsAfterAtk.state; events.push(...lsAfterAtk.events);
+        }
         const envAfterAtk = applyEnvenomProc(s, fighter, targetMonster.id);
         s = envAfterAtk.state; events.push(...envAfterAtk.events);
         break;
