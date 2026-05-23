@@ -199,7 +199,7 @@ type CombatEvent =
       roll: number;
       formula: string;
     }
-  | { type: "ability_battle_hymn"; actor: string; charges_added: number }
+  | { type: "ability_battle_hymn"; actor: string; expires_after_round: number }
   | { type: "ability_encourage"; actor: string; target: string; charges: number }
   | { type: "ability_mock"; actor: string; target: string; charges: number }
   | { type: "advantage_used"; actor: string; d20_a: number; d20_b: number; took: number }
@@ -240,7 +240,7 @@ type CombatEvent =
         hp_damage: number;
       }>;
     }
-  | { type: "battle_hymn_consumed"; actor: string; bonus: number; remaining: number }
+  | { type: "battle_hymn_expired"; actor: string }
   | { type: "mark_applied"; actor: string; expires_after_round: number }
   | { type: "passive_warden_shield"; actor: string; amount: number }
   | { type: "passive_warden_thorns"; actor: string; target: string; amount: number }
@@ -379,7 +379,7 @@ interface FighterReward {
 }
 
 interface OutcomeSummary {
-  status: "victory" | "defeat";
+  status: "victory" | "defeat" | "fled";
   rewards: FighterReward[];
   monster_name: string;
   monster_tier: number;
@@ -620,7 +620,7 @@ function formatEvent(e: CombatEvent, state: CombatState | null): LogEntry[] {
     case "ability_soul_drain":
       return row("death-skull", <>Soul Drain: {e.damage} dmg, +{e.healed} HP  [{e.formula}]</>, "good");
     case "ability_battle_hymn":
-      return row("aura", <>Battle Hymn — next {e.charges_added} party attacks get bardic aura boost.</>, "good");
+      return row("aura", <>Battle Hymn — bardic aura surges for 3 rounds (until round {e.expires_after_round}).</>, "good");
     case "ability_encourage":
       return row("conversation", <>{nameOf(e.actor)} encourages {nameOf(e.target)} — advantage on next {e.charges} attack{e.charges === 1 ? "" : "s"}!</>, "good");
     case "ability_mock":
@@ -697,8 +697,8 @@ function formatEvent(e: CombatEvent, state: CombatState | null): LogEntry[] {
         <>Vanish blocks the attack — the monster can't find a target.</>,
         "good",
       );
-    case "battle_hymn_consumed":
-      return row("aura", <>Hymn boosts {nameOf(e.actor)} by +{e.bonus} ({e.remaining} left).</>, "good");
+    case "battle_hymn_expired":
+      return row("aura", <>Battle Hymn fades for {nameOf(e.actor)}.</>, "muted");
     case "mark_applied":
       return row("targeted", <>{nameOf(e.actor)} marks the target — focus fire!</>, "good");
     case "passive_warden_shield":
@@ -1350,7 +1350,9 @@ export function CombatPage({
                     }
                     isTargeted={effectiveTarget !== null && (m.id ?? null) === effectiveTarget}
                     smiteDebuffed={!!((state.ability_state as { paladin_smite_debuff?: Record<string, number> } | undefined)?.paladin_smite_debuff?.[mid])}
+                    discouraged={(state.ability_state as { discourage?: Record<string, number> } | undefined)?.discourage?.[mid] ?? 0}
                     vulnerable={(state.ability_state as { vulnerable?: Record<string, { expires_after_round: number; magnitude: number }> } | undefined)?.vulnerable?.[mid]}
+                    taunt={(() => { const t = (state.ability_state as { taunt?: { actor_id: string; swings_remaining: number } } | undefined)?.taunt; return t && t.swings_remaining > 0 ? { actor_name: state.fighters.find((f) => f.id === t.actor_id)?.name ?? t.actor_id, swings: t.swings_remaining } : undefined; })()}
                     illOmen={(state.ability_state as { ill_omen?: Record<string, { accumulated: number; monster_turns_remaining: number }> } | undefined)?.ill_omen?.[mid]}
                     slashSeq={lastSlash?.id === mid ? lastSlash.seq : 0}
                     lungeSeq={lastLunge?.id === mid ? lastLunge.seq : 0}
@@ -1645,7 +1647,9 @@ function MonsterCard({
   markedBy,
   isTargeted = false,
   smiteDebuffed = false,
+  discouraged = 0,
   vulnerable,
+  taunt,
   illOmen,
   slashSeq = 0,
   lungeSeq = 0,
@@ -1659,7 +1663,9 @@ function MonsterCard({
   markedBy?: string;
   isTargeted?: boolean;
   smiteDebuffed?: boolean;
+  discouraged?: number;
   vulnerable?: { expires_after_round: number; magnitude: number };
+  taunt?: { actor_name: string; swings: number };
   illOmen?: { accumulated: number; monster_turns_remaining: number };
   slashSeq?: number;
   lungeSeq?: number;
@@ -1770,14 +1776,20 @@ function MonsterCard({
           </div>
         </div>
         <BigHpBar current={Math.max(0, monster.hp)} max={monster.max_hp} />
-        {((monster.effects && monster.effects.length > 0) || smiteDebuffed || (vulnerable && round <= vulnerable.expires_after_round) || (illOmen && illOmen.monster_turns_remaining > 0)) && !isDead && (
+        {((monster.effects && monster.effects.length > 0) || smiteDebuffed || discouraged > 0 || (vulnerable && round <= vulnerable.expires_after_round) || (illOmen && illOmen.monster_turns_remaining > 0) || !!taunt) && !isDead && (
           <div style={{ display: "flex", gap: 6, marginTop: 6, flexWrap: "wrap" }}>
             {monster.effects?.map((e, i) => {
               const def = EFFECT_PILLS[e.type];
               return def ? <def.pill key={i} effect={e} size="lg" /> : null;
             })}
+            {taunt && (
+              <StatusPill size="lg" color="#f59e0b" icon="shield-reflect" label="taunted" suffix={`${taunt.swings}sw`} title={`Taunted: forced to attack ${taunt.actor_name} for ${taunt.swings} more swing${taunt.swings === 1 ? "" : "s"}`} />
+            )}
             {smiteDebuffed && (
               <StatusPill size="lg" color="#f87171" icon="axe-swing" label="smited" suffix="½ dmg" title="Smite: this monster deals 50% less damage on its next swing" />
+            )}
+            {discouraged > 0 && (
+              <StatusPill size="lg" color="#f87171" icon="morbid-humour" label="mocked" suffix={`${discouraged}c`} title={`Mocked: disadvantage on next ${discouraged} roll${discouraged === 1 ? "" : "s"}`} />
             )}
             {vulnerable && round <= vulnerable.expires_after_round && (
               <StatusPill size="lg" color="#fb923c" icon="crossed-swords" label="vulnerable" suffix={`+${vulnerable.magnitude}%`} title={`Vulnerable: takes ${vulnerable.magnitude}% more damage (${vulnerable.expires_after_round - round + 1} round${vulnerable.expires_after_round - round + 1 === 1 ? "" : "s"} left)`} />
@@ -2873,6 +2885,16 @@ function PartyChips({ fighters, selfId, flashIds, hitDustSeq, healBurstSeq, shie
   const holyRageMap = abilityState?.holy_rage as Record<string, number> | undefined;
   const vanishedMap = abilityState?.vanished as Record<string, number> | undefined;
   const envenomMap = abilityState?.envenomed_weapon as Record<string, { stacks: number; charges: number }> | undefined;
+  const encourageMap = abilityState?.encourage as Record<string, number> | undefined;
+  const hymnState = abilityState?.battle_hymn as { expires_after_round: number } | undefined;
+  const hymnActive = hymnState != null && (round ?? 0) <= hymnState.expires_after_round;
+  const tauntFortifyMap = abilityState?.taunt_fortify as Record<string, { turns_remaining: number }> | undefined;
+  const resilientMap = abilityState?.resilient as Record<string, number[]> | undefined;
+  const braceMap = abilityState?.brace as Record<string, { pct: number; turns_remaining: number }> | undefined;
+  const aliveBard = fighters.find((f) => f.hp > 0 && f.class === "Frontend Bard");
+  const bardAuraBonus = aliveBard
+    ? 1 + Math.floor(aliveBard.level / 5) + (hymnActive ? 2 + aliveBard.magic_mod : 0)
+    : 0;
   const goodFortune = abilityState?.good_fortune as { caster_id: string; target_id: string; amount: number } | undefined;
   const blizzardState = abilityState?.blizzard as { caster_id: string; charges: number } | undefined;
 
@@ -2954,7 +2976,13 @@ function PartyChips({ fighters, selfId, flashIds, hitDustSeq, healBurstSeq, shie
           const envenomEntry = envenomMap?.[f.id];
           const hasFortune = goodFortune?.target_id === f.id;
           const blizzardCharges = blizzardState?.caster_id === f.id ? blizzardState.charges : 0;
-          const hasExtra = sofActive || isProtected || holyRageTotal > 0 || vanishSwings > 0 || !!envenomEntry || hasFortune || blizzardCharges > 0;
+          const encourageCharges = encourageMap?.[f.id] ?? 0;
+          const showAura = bardAuraBonus > 0;
+          const fortifyTurns = (tauntFortifyMap?.[f.id]?.turns_remaining ?? 0) > 0 ? tauntFortifyMap![f.id].turns_remaining : 0;
+          const resilientStacks = (resilientMap?.[f.id] ?? []).filter((exp) => exp >= (round ?? 1)).length;
+          const braceEntry = braceMap?.[f.id];
+          const braceTurns = (braceEntry?.turns_remaining ?? 0) > 0 ? braceEntry!.turns_remaining : 0;
+          const hasExtra = sofActive || isProtected || holyRageTotal > 0 || vanishSwings > 0 || !!envenomEntry || hasFortune || blizzardCharges > 0 || encourageCharges > 0 || showAura || fortifyTurns > 0 || resilientStacks > 0 || braceTurns > 0;
           if (!f.effects?.length && !hasExtra) return null;
           return (
             <div style={{ position: "absolute", top: -8, right: -4, display: "flex", flexDirection: "column", gap: 3, alignItems: "flex-end" }}>
@@ -2967,6 +2995,11 @@ function PartyChips({ fighters, selfId, flashIds, hitDustSeq, healBurstSeq, shie
               {sofActive && <StatusPill size="sm" color="#60a5fa" icon="round-shield" label="SoF" suffix={`${sofRoundsLeft}r`} title={`Shield of Faith: +5 AC (${sofRoundsLeft} round${sofRoundsLeft === 1 ? "" : "s"} left)`} />}
               {isProtected && <StatusPill size="sm" color="#a78bfa" icon="crowned-heart" label="protected" suffix="½ dmg" title="Protected: taking half damage, absorbed by the paladin" />}
               {holyRageTotal > 0 && <StatusPill size="sm" color="#f97316" icon="fire" label="holy rage" suffix={`+${holyRageBonus}`} title={`Holy Rage: next attack deals +${holyRageBonus} bonus damage`} />}
+              {encourageCharges > 0 && <StatusPill size="sm" color="#4ade80" icon="conversation" label="adv" suffix={`${encourageCharges}c`} title={`Encouraged: advantage on next ${encourageCharges} roll${encourageCharges === 1 ? "" : "s"}`} />}
+              {showAura && <StatusPill size="sm" color="#f59e0b" icon="aura" label="bard aura" suffix={`+${bardAuraBonus}`} title={`Bardic Aura: +${bardAuraBonus} bonus damage${hymnActive ? ` (Battle Hymn active until round ${hymnState!.expires_after_round})` : ""}`} />}
+              {braceTurns > 0 && <StatusPill size="sm" color="#38bdf8" icon="aura" label="brace" suffix={`-${braceEntry!.pct}% ${braceTurns}t`} title={`Brace: -${braceEntry!.pct}% incoming damage for ${braceTurns} more turn${braceTurns === 1 ? "" : "s"}`} />}
+              {fortifyTurns > 0 && <StatusPill size="sm" color="#94a3b8" icon="shield-reflect" label="fortify" suffix={`${fortifyTurns}t`} title={`Taunt Fortify: all incoming damage routes through armor for ${fortifyTurns} more turn${fortifyTurns === 1 ? "" : "s"}`} />}
+              {resilientStacks > 0 && <StatusPill size="sm" color="#f59e0b" icon="bolt-shield" label="resilient" suffix={`×${resilientStacks}`} title={`Resilient: ${resilientStacks} active stack${resilientStacks === 1 ? "" : "s"} — raises shield cap and effective armor by ${resilientStacks * 2}+ per stack`} />}
               {hasFortune && <StatusPill size="sm" color="#fbbf24" icon="crystal-ball" label="fortune" suffix={`+${goodFortune!.amount}hp`} title={`Good Fortune: delayed heal for ${goodFortune!.amount} HP activates next turn`} />}
               {blizzardCharges > 0 && <StatusPill size="sm" color="#93c5fd" icon="snowflake" label="blizzard" suffix={`${blizzardCharges}t`} title={`Blizzard active: deals AoE frost damage at end of each turn (${blizzardCharges} turn${blizzardCharges === 1 ? "" : "s"} left)`} />}
             </div>

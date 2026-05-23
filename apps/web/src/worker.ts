@@ -35,6 +35,7 @@ import {
   ACHIEVEMENTS,
   APOTHECARY_STAPLES,
   FOCUS_MAX_MANA_BONUS,
+  focusManaBonus,
   MAX_MANA_CAP,
   checkApothecaryAchievements,
   checkCombatAchievements,
@@ -1141,13 +1142,13 @@ app.post("/api/inventory/:itemId/equip", async (c) => {
     return c.json({ error: "level_requirement", required: item.level_req }, 400);
   }
   // Focus weapon swap bookkeeping. Swapping to/from a focus weapon shifts
-  // max_mana by FOCUS_MAX_MANA_BONUS in either direction. Armor swaps don't
+  // max_mana by focusManaBonus(power) in either direction. Armor swaps don't
   // touch mana — only the weapon slot carries this dynamic.
   let manaDelta = 0;
   if (item.item_type === "weapon") {
     const prev = await getEquipped(c.env.DB, session.slack_user_id, "weapon");
-    const prevBonus = prev?.weapon_range === "focus" ? FOCUS_MAX_MANA_BONUS : 0;
-    const newBonus = item.weapon_range === "focus" ? FOCUS_MAX_MANA_BONUS : 0;
+    const prevBonus = prev?.weapon_range === "focus" ? focusManaBonus(prev.power) : 0;
+    const newBonus = item.weapon_range === "focus" ? focusManaBonus(item.power) : 0;
     manaDelta = newBonus - prevBonus;
     if (manaDelta !== 0) {
       await applyFocusManaShift(c.env.DB, session.slack_user_id, manaDelta);
@@ -1186,7 +1187,7 @@ app.post("/api/inventory/:itemId/unequip", async (c) => {
   if (!item) return c.json({ error: "not_yours" }, 404);
   if (!item.equipped) return c.json({ error: "not_equipped" }, 400);
   if (item.item_type === "weapon" && item.weapon_range === "focus") {
-    await applyFocusManaShift(c.env.DB, session.slack_user_id, -FOCUS_MAX_MANA_BONUS);
+    await applyFocusManaShift(c.env.DB, session.slack_user_id, -focusManaBonus(item.power));
   }
   await c.env.DB.prepare("UPDATE inventory SET equipped = 0 WHERE id = ?").bind(itemId).run();
   return c.json({ ok: true });
@@ -6277,7 +6278,7 @@ export interface FighterReward {
 }
 
 export interface OutcomeSummary {
-  status: "victory" | "defeat";
+  status: "victory" | "defeat" | "fled";
   rewards: FighterReward[];
   monster_name: string;
   monster_tier: number;
@@ -6653,7 +6654,7 @@ async function applyWebCombatOutcome(
       await clearHiredMercForParty(env.DB, questId);
       // Skip advanceExpeditionAfterWebCombat — grid dungeons don't use it.
       return {
-        status: state.status as "victory" | "defeat",
+        status: state.status as "victory" | "defeat" | "fled",
         rewards,
         monster_name: primaryMonster.name,
         monster_tier: tier,
@@ -6668,7 +6669,7 @@ async function applyWebCombatOutcome(
     const dungeonDoors = await advanceExpeditionAfterWebCombat(env, questId);
     if (dungeonDoors) {
       return {
-        status: state.status as "victory" | "defeat",
+        status: state.status as "victory" | "defeat" | "fled",
         rewards,
         monster_name: primaryMonster.name,
         monster_tier: tier,
@@ -6998,7 +6999,7 @@ async function buildInitialCombatState(
       position: member.position,
       attack_mod: snap.derived.attack_mod,
       magic_mod: snap.derived.magic_mod,
-      weapon_power: isFocus ? 0 : (weapon?.power ?? 0),
+      weapon_power: isFocus ? Math.floor((weapon?.power ?? 0) / 4) : (weapon?.power ?? 0),
       focus_power: isFocus ? (weapon?.power ?? 0) : 0,
       weapon_range: weaponRange,
       slack_username: member.slack_username,
@@ -7364,7 +7365,7 @@ export class QuestRoom extends DurableObject<Env> {
     const becameTerminal =
       stateChanged &&
       prevState.status === "active" &&
-      (result.state.status === "victory" || result.state.status === "defeat");
+      (result.state.status === "victory" || result.state.status === "defeat" || result.state.status === "fled");
     if (becameTerminal) {
       // Write residual drink buffs back to D1 BEFORE applyWebCombatOutcome
       // — the latter may call clearPartyEffects which already nulls
@@ -7583,7 +7584,7 @@ export class QuestRoom extends DurableObject<Env> {
       position: character.position,
       attack_mod: snap.derived.attack_mod,
       magic_mod: snap.derived.magic_mod,
-      weapon_power: isFocus ? 0 : (weapon?.power ?? 0),
+      weapon_power: isFocus ? Math.floor((weapon?.power ?? 0) / 4) : (weapon?.power ?? 0),
       focus_power: isFocus ? (weapon?.power ?? 0) : 0,
       weapon_range: weaponRange,
       slack_username: character.slack_username,
