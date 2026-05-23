@@ -43,16 +43,15 @@ export const bardAbilities: AbilityDef[] = [
     kind: "active",
     id: "battle_hymn",
     name: "Battle Hymn",
-    blurb: "Bardic aura charges up (+3 damage for next few party attacks) and restores mana to all allies.",
+    blurb: "Bardic aura surges for 3 rounds (+2 bonus damage on top of the base aura) and restores mana to all allies.",
     icon: "aura",
     mana_cost: 2,
     routing: "utility",
     target: "all_allies",
     execute(ctx) {
-      const charges = 2 + Math.floor(ctx.caster.level / 5);
       const manaRestore = 1 + Math.floor(ctx.caster.level / 8);
       return [
-        fx.battleHymn(charges),
+        fx.battleHymn(3),
         ...ctx.party.map((m) => fx.restoreMana(m.id, manaRestore)),
       ];
     },

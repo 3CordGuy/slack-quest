@@ -229,8 +229,8 @@ export interface AbilityRuntimeState {
   taunt?: { actor_id: ActorId; swings_remaining: number };
   // Refactor Rogue — these fighters cannot be targeted; map of actor → swings left.
   vanished?: Record<ActorId, number>;
-  // Frontend Bard — next N partymate attacks deal +2 damage.
-  battle_hymn?: number;
+  // Frontend Bard — Battle Hymn: aura boost active until this round.
+  battle_hymn?: { expires_after_round: number };
   // Frontend Bard — Encourage: fighter's next N to-hit d20 rolls twice, take higher.
   encourage?: Record<ActorId, number>;
   // Frontend Bard — Mock: monster's next N to-hit d20 rolls twice, take lower.
@@ -260,6 +260,10 @@ export interface AbilityRuntimeState {
   // Backend Druid — Animal Form: buffed stat deltas for N of the caster's own turns.
   // Stored so they can be cleanly reverted on expiry.
   animal_form?: Record<ActorId, { str_bonus: number; vit_bonus: number; agi_bonus: number; dex_bonus: number; atk_delta: number; hp_delta: number; turns_remaining: number }>;
+  // SRE Warden — Taunt Fortify: all incoming damage routes through armor for N of the warden's own turns.
+  taunt_fortify?: Record<ActorId, { turns_remaining: number }>;
+  // SRE Warden — Resilient stacks: each element is the expires_after_round value for one stack.
+  resilient?: Record<ActorId, number[]>;
 }
 
 // How many rounds a mark stays active. Roughly mirrors slack's 90s timer
@@ -423,7 +427,7 @@ export type CombatEvent =
       roll: number;
       formula: string;
     }
-  | { type: "ability_battle_hymn"; actor: ActorId; charges_added: number }
+  | { type: "ability_battle_hymn"; actor: ActorId; expires_after_round: number }
   | { type: "ability_encourage"; actor: ActorId; target: ActorId; charges: number }
   | { type: "ability_mock"; actor: ActorId; target: ActorId; charges: number }
   | { type: "advantage_used"; actor: ActorId; d20_a: number; d20_b: number; took: number }
@@ -460,12 +464,14 @@ export type CombatEvent =
   | { type: "monster_swing_skipped"; reason: "stunned" }
   | { type: "monster_stun_broken"; turns_active: number }
   | { type: "monster_target_redirected"; from: ActorId; to: ActorId; reason: "taunt" | "vanish" }
-  | { type: "battle_hymn_consumed"; actor: ActorId; bonus: number; remaining: number }
+  | { type: "battle_hymn_expired"; actor: ActorId }
   | { type: "mark_applied"; actor: ActorId; expires_after_round: number }
   | { type: "shield_applied"; actor: ActorId; target: ActorId; restored: number; new_armor: number; bonus_barrier?: boolean }
   | { type: "passive_warden_shield"; actor: ActorId; amount: number }
   | { type: "passive_warden_thorns"; actor: ActorId; target: ActorId; amount: number }
   | { type: "passive_warden_armor_up"; actor: ActorId; amount: number }
+  | { type: "ability_taunt_fortify"; actor: ActorId; turns: number }
+  | { type: "passive_warden_resilient"; actor: ActorId; stacks: number }
   | { type: "ability_brace"; actor: ActorId; turns: number }
   | { type: "passive_mage_mana_font"; actor: ActorId; amount: number }
   | { type: "passive_druid_regen"; actor: ActorId; amount: number }
@@ -842,16 +848,9 @@ function handlePlayerHit(
   const hasEmpowered = tickedFighter.effects.some((e) => e.type === "empowered");
   if (hasEmpowered) damage = Math.round(damage * 1.25);
 
-  // Bard Aura — non-Bard attackers gain +1 dmg while a Bard is alive; Battle
-  // Hymn boosts the aura to +3 for HYMN_USES landed swings.
-  const aura = computeBardAuraBonus(s, tickedFighter);
-  const hymnCharges = s.ability_state?.battle_hymn ?? 0;
-  const hymnRemaining = aura.hymn_consumed ? Math.max(0, hymnCharges - 1) : hymnCharges;
-  const abilityStateAfterHymn = aura.hymn_consumed
-    ? (hymnRemaining > 0
-        ? { ...s.ability_state, battle_hymn: hymnRemaining }
-        : stripField(s.ability_state, "battle_hymn"))
-    : s.ability_state;
+  // Bard Aura — whole party gains +bonus dmg while a Bard is alive; Battle
+  // Hymn boosts the aura by +2 for its round duration.
+  const aura = computeBardAuraBonus(s);
 
 
   // Shocked amplifier: monster takes +30% (magnitude 1) or +45% (magnitude 2) from all hits.
@@ -910,14 +909,6 @@ function handlePlayerHit(
     crit: isCrit,
     formula: `${hit.roll}+${hit.totalMod}${isCrit ? " ×2" : ""}${drinkBonusForFormula}${hasEmpowered ? " ⚡" : ""}${aura.bonus > 0 ? ` +${aura.bonus} aura` : ""}`,
   });
-  if (aura.hymn_consumed) {
-    events.push({
-      type: "battle_hymn_consumed",
-      actor: action.actor,
-      bonus: aura.bonus,
-      remaining: hymnRemaining,
-    });
-  }
 
   let nextState: CombatState = {
     ...s,
@@ -932,22 +923,10 @@ function handlePlayerHit(
           }
         : m,
     ),
-    contribution: (() => {
-      const base = {
-        ...s.contribution,
-        [action.actor]: (s.contribution[action.actor] ?? 0) + finalDamage,
-      };
-      // When a Battle Hymn charge is consumed by someone other than the Bard,
-      // credit the Bard for the aura bonus they provided.
-      if (aura.hymn_consumed) {
-        const bard = s.fighters.find(
-          (f) => classIdOf(f) === "frontend_bard" && f.id !== action.actor,
-        );
-        if (bard) base[bard.id] = (base[bard.id] ?? 0) + aura.bonus;
-      }
-      return base;
-    })(),
-    ability_state: abilityStateAfterHymn,
+    contribution: {
+      ...s.contribution,
+      [action.actor]: (s.contribution[action.actor] ?? 0) + finalDamage,
+    },
     // Only overwrite drink_buffs when this turn actually consumed one —
     // otherwise leave the existing map untouched so the optional field
     // doesn't get coerced to undefined for unrelated turns.
@@ -983,6 +962,13 @@ function handlePlayerHit(
     const proc = applyElementalProc(nextState, tickedFighter, monster.id, roll);
     nextState = proc.state;
     events.push(...proc.events);
+  }
+
+  // Warden — Resilient: gain a stack on every successful hit.
+  if (!monsterKilled) {
+    const rr = applyWardenResilient(nextState, tickedFighter);
+    nextState = rr.state;
+    events.push(...rr.events);
   }
 
   if (phaseTransition) {
@@ -1074,13 +1060,7 @@ function handleAllyNpcAct(state: CombatState, roll: RollFn): StepResult {
   const hit = resolvePlayerHit("attack", mercAfterTick.attack_mod, mercAfterTick.weapon_power, roll, npcDamageRoll);
   events.push({ type: "roll", actor: actorId, die: npcDamageRoll, value: hit.roll, purpose: "damage_attack" });
 
-  const aura = computeBardAuraBonus(s, mercAfterTick);
-  const hymnCharges = s.ability_state?.battle_hymn ?? 0;
-  const hymnRemaining = aura.hymn_consumed ? Math.max(0, hymnCharges - 1) : hymnCharges;
-  const abilityStateAfterHymn = aura.hymn_consumed
-    ? (hymnRemaining > 0 ? { ...s.ability_state, battle_hymn: hymnRemaining } : stripField(s.ability_state, "battle_hymn"))
-    : s.ability_state;
-
+  const aura = computeBardAuraBonus(s);
   const rawDamage = hit.damage + aura.bonus;
   const { newShield: newMonsterShield, newHp, hpDamage: finalDamage } =
     applyDamageWithShield(rawDamage, monster.shield, monster.hp);
@@ -1102,14 +1082,9 @@ function handleAllyNpcAct(state: CombatState, roll: RollFn): StepResult {
     crit: hit.isCrit,
     formula: `${npcDamageRoll}+${mercAfterTick.attack_mod}a+${mercAfterTick.weapon_power}w${aura.bonus > 0 ? ` +${aura.bonus} aura` : ""}`,
   });
-  if (aura.hymn_consumed) {
-    events.push({ type: "battle_hymn_consumed", actor: actorId, bonus: aura.bonus, remaining: hymnRemaining });
-  }
-
   const monsterKilled = newHp <= 0;
   const nextState: CombatState = {
     ...s,
-    ability_state: abilityStateAfterHymn,
     monsters: s.monsters.map((m) =>
       m.id === monster.id ? { ...m, hp: Math.max(0, newHp), shield: newMonsterShield } : m,
     ),
@@ -1497,10 +1472,12 @@ function handleMonsterAct(state: CombatState, roll: RollFn): StepResult {
     ? Math.max(1, Math.round(smiteAdjusted * (1 - brace.pct / 100)))
     : smiteAdjusted;
   // Physical attacks route through the armor pool first (shield = depletable armor).
-  // Non-physical bypasses armor entirely and hits HP directly.
-  const armorForHit = attackDamageType === "physical" ? target.shield : 0;
+  // Non-physical bypasses armor entirely — unless Taunt Fortify is active, in which case
+  // all damage routes through armor.
+  const hasTauntFortify = (s.ability_state?.taunt_fortify?.[target.id]?.turns_remaining ?? 0) > 0;
+  const armorForHit = (attackDamageType === "physical" || hasTauntFortify) ? target.shield : 0;
   const rawResult = applyDamageWithShield(effectiveDamage, armorForHit, target.hp);
-  const newShield = attackDamageType === "physical" ? rawResult.newShield : target.shield;
+  const newShield = (attackDamageType === "physical" || hasTauntFortify) ? rawResult.newShield : target.shield;
   const newHp = rawResult.newHp;
   const shieldAbsorbed = rawResult.shieldAbsorbed;
   const hpDamage = rawResult.hpDamage;
@@ -2172,6 +2149,9 @@ function applyUtilityAbilityEffects(
           const sq = applySinisterQueries(s, attackCaster, monster.id);
           s = sq.state;
           events.push(...sq.events);
+          const rr = applyWardenResilient(s, attackCaster);
+          s = rr.state;
+          events.push(...rr.events);
         }
         const hexProc2 = applyHexBleedProc(s, monster.id);
         s = hexProc2.state;
@@ -2192,7 +2172,8 @@ function applyUtilityAbilityEffects(
       case "grant_shield": {
         const target = s.fighters.find((f) => f.id === effect.target_id);
         if (!target || target.hp <= 0) continue;
-        const newShield = Math.min(target.max_hp * SHIELD_CAP_MULTIPLIER, target.shield + effect.amount);
+        const shieldCap = target.max_hp * SHIELD_CAP_MULTIPLIER + resilientBonus(target, s.ability_state, s.round);
+        const newShield = Math.min(shieldCap, target.shield + effect.amount);
         const restored = newShield - target.shield;
         if (restored > 0) {
           events.push({ type: "shield_applied", actor, target: effect.target_id, restored, new_armor: newShield, bonus_barrier: false });
@@ -2206,13 +2187,27 @@ function applyUtilityAbilityEffects(
           ...s,
           fighters: s.fighters.map((f) => {
             if (f.hp <= 0) return f;
-            const newShield = Math.min(f.max_hp * SHIELD_CAP_MULTIPLIER, f.shield + effect.amount);
+            const cap = f.max_hp * SHIELD_CAP_MULTIPLIER + resilientBonus(f, s.ability_state, s.round);
+            const newShield = Math.min(cap, f.shield + effect.amount);
             const added = newShield - f.shield;
             if (added > 0) grants.push({ target: f.id, amount: added });
             return added > 0 ? { ...f, shield: newShield } : f;
           }),
         };
         events.push({ type: "ability_regression_shield", actor, grants });
+        break;
+      }
+      case "grant_shield_from_armor": {
+        const target = s.fighters.find((f) => f.id === effect.target_id);
+        if (!target || target.hp <= 0) continue;
+        const effectiveArmor = target.armor_power + resilientBonus(target, s.ability_state, s.round);
+        const shieldCap = target.max_hp * SHIELD_CAP_MULTIPLIER + resilientBonus(target, s.ability_state, s.round);
+        const newShield = Math.min(shieldCap, target.shield + Math.floor(effectiveArmor * effect.fraction));
+        const restored = newShield - target.shield;
+        if (restored > 0) {
+          events.push({ type: "shield_applied", actor, target: effect.target_id, restored, new_armor: newShield, bonus_barrier: false });
+          s = { ...s, fighters: s.fighters.map((f) => f.id === effect.target_id ? { ...f, shield: newShield } : f) };
+        }
         break;
       }
       case "stun_monster": {
@@ -2272,13 +2267,13 @@ function applyUtilityAbilityEffects(
         break;
       }
       case "add_battle_hymn": {
-        const prev = s.ability_state?.battle_hymn ?? 0;
+        const expiresAfterRound = s.round + effect.rounds - 1;
         const ability_state: AbilityRuntimeState = {
           ...(s.ability_state ?? {}),
-          battle_hymn: prev + effect.charges,
+          battle_hymn: { expires_after_round: expiresAfterRound },
         };
         s = { ...s, ability_state };
-        events.push({ type: "ability_battle_hymn", actor, charges_added: effect.charges });
+        events.push({ type: "ability_battle_hymn", actor, expires_after_round: expiresAfterRound });
         break;
       }
       case "set_foresee_turns": {
@@ -2539,6 +2534,20 @@ function applyUtilityAbilityEffects(
         const entangleEff = { type: "entangled" as const, magnitude: 1, remaining: effect.duration, source: actor };
         s = { ...s, monsters: s.monsters.map((m) => m.id === effect.target_id ? { ...m, effects: mergeEffect(m.effects, entangleEff) } : m) };
         events.push({ type: "ability_wildgrowth_entangle", actor, target: effect.target_id, duration: effect.duration });
+        break;
+      }
+      case "apply_taunt_fortify": {
+        s = {
+          ...s,
+          ability_state: {
+            ...(s.ability_state ?? {}),
+            taunt_fortify: {
+              ...(s.ability_state?.taunt_fortify ?? {}),
+              [effect.target_id]: { turns_remaining: effect.turns },
+            },
+          },
+        };
+        events.push({ type: "ability_taunt_fortify", actor, turns: effect.turns });
         break;
       }
       case "summon_ally_npc": {
@@ -3013,7 +3022,7 @@ function applyWardenArmorUp(
 ): { state: CombatState; events: CombatEvent[] } {
   if (!classHasPassive(actor.class, "armor_up")) return { state, events: [] };
   const amount = 2 + Math.floor(actor.level / 4);
-  const cap = actor.max_hp * SHIELD_CAP_MULTIPLIER;
+  const cap = actor.max_hp * SHIELD_CAP_MULTIPLIER + resilientBonus(actor, state.ability_state, state.round);
   const newShield = Math.min(cap, actor.shield + amount);
   const added = newShield - actor.shield;
   if (added <= 0) return { state, events: [] };
@@ -3064,6 +3073,46 @@ function applyPaladinAutoHeal(
   };
 }
 
+// SRE Warden — Resilient. Returns the flat bonus from active stacks:
+// stacks * (2 + floor(vit/4)). Used for shield cap and Thorns/Brace scaling.
+function resilientBonus(
+  fighter: CombatFighter,
+  abilityState: AbilityRuntimeState | undefined,
+  currentRound: number,
+): number {
+  const stacks = (abilityState?.resilient?.[fighter.id] ?? []).filter(
+    (exp) => exp >= currentRound,
+  );
+  if (stacks.length === 0) return 0;
+  const vit = fighter.stats?.vit ?? 0;
+  return stacks.length * (2 + Math.floor(vit / 4));
+}
+
+// SRE Warden — Resilient. Called after any successful hit by the warden to
+// add a stack (expires_after_round = round + 4). No shield is directly granted;
+// the raised cap takes effect when shield is next applied.
+function applyWardenResilient(
+  state: CombatState,
+  fighter: CombatFighter,
+): { state: CombatState; events: CombatEvent[] } {
+  if (!classHasPassive(fighter.class, "resilient")) return { state, events: [] };
+  const existing = state.ability_state?.resilient?.[fighter.id] ?? [];
+  const newStacks = [...existing, state.round + 4];
+  return {
+    state: {
+      ...state,
+      ability_state: {
+        ...(state.ability_state ?? {}),
+        resilient: {
+          ...(state.ability_state?.resilient ?? {}),
+          [fighter.id]: newStacks,
+        },
+      },
+    },
+    events: [{ type: "passive_warden_resilient", actor: fighter.id, stacks: newStacks.length }],
+  };
+}
+
 // SRE Warden — Thorns. When hit, deal 25% of armor_power back to the attacker.
 function applyWardenThorns(
   state: CombatState,
@@ -3072,7 +3121,8 @@ function applyWardenThorns(
 ): { state: CombatState; events: CombatEvent[] } {
   const fighter = state.fighters.find((f) => f.id === targetFighterId);
   if (!fighter || !classHasPassive(fighter.class, "thorns")) return { state, events: [] };
-  const amount = Math.max(1, Math.floor(fighter.armor_power * 0.25));
+  const effectiveArmor = fighter.armor_power + resilientBonus(fighter, state.ability_state, state.round);
+  const amount = Math.max(1, Math.floor(effectiveArmor * 0.25));
   const monster = state.monsters.find((m) => m.id === monsterId && m.hp > 0);
   if (!monster) return { state, events: [] };
   const newHp = Math.max(0, monster.hp - amount);
@@ -3159,6 +3209,68 @@ function applyPreActionPassives(
       };
     }
   }
+  // Tick down Taunt Fortify turns for this actor.
+  const fortifyEntry = s.ability_state?.taunt_fortify?.[actorId];
+  if (fortifyEntry) {
+    const remaining = fortifyEntry.turns_remaining - 1;
+    if (remaining <= 0) {
+      const { [actorId]: _dropped, ...restFortify } = s.ability_state?.taunt_fortify ?? {};
+      s = {
+        ...s,
+        ability_state: Object.keys(restFortify).length > 0
+          ? { ...(s.ability_state ?? {}), taunt_fortify: restFortify }
+          : (stripField(s.ability_state, "taunt_fortify") ?? {}),
+      };
+    } else {
+      s = {
+        ...s,
+        ability_state: {
+          ...(s.ability_state ?? {}),
+          taunt_fortify: { ...s.ability_state!.taunt_fortify, [actorId]: { turns_remaining: remaining } },
+        },
+      };
+    }
+  }
+  // Clean up expired Resilient stacks for this actor.
+  const resilientStacks = s.ability_state?.resilient?.[actorId];
+  if (resilientStacks) {
+    const activeStacks = resilientStacks.filter((exp) => exp >= s.round);
+    if (activeStacks.length < resilientStacks.length) {
+      if (activeStacks.length === 0) {
+        const { [actorId]: _dropped, ...restResilient } = s.ability_state?.resilient ?? {};
+        s = {
+          ...s,
+          ability_state: Object.keys(restResilient).length > 0
+            ? { ...(s.ability_state ?? {}), resilient: restResilient }
+            : (stripField(s.ability_state, "resilient") ?? {}),
+        };
+        // Clamp shield to new (lower) cap if it now exceeds it.
+        const currentFighterForClamp = s.fighters.find((f) => f.id === actorId);
+        if (currentFighterForClamp) {
+          const newCap = currentFighterForClamp.max_hp * SHIELD_CAP_MULTIPLIER;
+          if (currentFighterForClamp.shield > newCap) {
+            s = { ...s, fighters: s.fighters.map((f) => f.id === actorId ? { ...f, shield: newCap } : f) };
+          }
+        }
+      } else {
+        s = {
+          ...s,
+          ability_state: {
+            ...(s.ability_state ?? {}),
+            resilient: { ...s.ability_state!.resilient, [actorId]: activeStacks },
+          },
+        };
+        // Clamp shield to the new (reduced) cap.
+        const currentFighterForClamp = s.fighters.find((f) => f.id === actorId);
+        if (currentFighterForClamp) {
+          const newCap = currentFighterForClamp.max_hp * SHIELD_CAP_MULTIPLIER + resilientBonus(currentFighterForClamp, s.ability_state, s.round);
+          if (currentFighterForClamp.shield > newCap) {
+            s = { ...s, fighters: s.fighters.map((f) => f.id === actorId ? { ...f, shield: newCap } : f) };
+          }
+        }
+      }
+    }
+  }
   // Tick down Animal Form and revert stat bonuses on expiry.
   const animalFormEntry = s.ability_state?.animal_form?.[actorId];
   if (animalFormEntry) {
@@ -3206,22 +3318,19 @@ function applyPreActionPassives(
 
 // Frontend Bard — Bardic Aura. While any Bard is alive, every non-Bard
 // partymate attack deals +(1 + floor(bard.level/5)) damage. Battle Hymn
-// temporarily adds BARD_AURA_HYMN_BONUS on top (each landed swing consumes
-// one charge). Returns the bonus and whether a hymn charge was consumed.
+// temporarily adds BARD_AURA_HYMN_BONUS on top for Battle Hymn's duration.
 function computeBardAuraBonus(
   state: CombatState,
-  attacker: CombatFighter,
-): { bonus: number; hymn_consumed: boolean } {
+): { bonus: number } {
   const bard = state.fighters.find(
     (f) => f.hp > 0 && classHasPassive(f.class, "bardic_aura"),
   );
-  if (!bard) return { bonus: 0, hymn_consumed: false };
+  if (!bard) return { bonus: 0 };
   const base = 1 + Math.floor(bard.level / 5);
-  const hymnCharges = state.ability_state?.battle_hymn ?? 0;
-  if (hymnCharges > 0) {
-    return { bonus: base + BARD_AURA_HYMN_BONUS, hymn_consumed: true };
-  }
-  return { bonus: base, hymn_consumed: false };
+  const hymnActive =
+    state.ability_state?.battle_hymn != null &&
+    state.round <= state.ability_state.battle_hymn.expires_after_round;
+  return { bonus: hymnActive ? base + BARD_AURA_HYMN_BONUS : base };
 }
 
 // Data Warlock — Sinister Queries passive: fires on any hit (attack, cast, or ability damage).

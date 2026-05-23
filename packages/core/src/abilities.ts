@@ -117,8 +117,8 @@ export type AbilityEffect =
   | { kind: "set_taunt"; actor_id: string; swings: number }
   // Make actor untargetable for N swings (vanish).
   | { kind: "set_vanish"; actor_id: string; swings: number }
-  // Add N charged attacks to the bard's battle hymn counter.
-  | { kind: "add_battle_hymn"; charges: number }
+  // Activate the bard's battle hymn for N rounds.
+  | { kind: "add_battle_hymn"; rounds: number }
   // Show full battle intel for N of the sage's own turns (foresee).
   | { kind: "set_foresee_turns"; turns: number }
   // Move a fighter to a different row.
@@ -168,7 +168,12 @@ export type AbilityEffect =
   // Buff the target fighter's AC by `bonus` for `turns` of their own turns.
   | { kind: "apply_barkskin"; target_id: string; bonus: number; turns: number }
   // Apply the "entangled" debuff to a monster (-4 to-hit) for `duration` monster turns.
-  | { kind: "entangle_monster"; target_id: string; duration: number };
+  | { kind: "entangle_monster"; target_id: string; duration: number }
+  // SRE Warden — Taunt Fortify: all incoming damage routes through armor for N of the warden's turns.
+  | { kind: "apply_taunt_fortify"; target_id: string; turns: number }
+  // SRE Warden — grant shield equal to floor((armor_power + resilient_bonus) * fraction).
+  // Machine resolves the live effective armor at application time.
+  | { kind: "grant_shield_from_armor"; target_id: string; fraction: number };
 
 export interface ActiveAbilityDef {
   kind: "active";

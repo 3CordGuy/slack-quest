@@ -199,7 +199,7 @@ type CombatEvent =
       roll: number;
       formula: string;
     }
-  | { type: "ability_battle_hymn"; actor: string; charges_added: number }
+  | { type: "ability_battle_hymn"; actor: string; expires_after_round: number }
   | { type: "ability_encourage"; actor: string; target: string; charges: number }
   | { type: "ability_mock"; actor: string; target: string; charges: number }
   | { type: "advantage_used"; actor: string; d20_a: number; d20_b: number; took: number }
@@ -239,7 +239,7 @@ type CombatEvent =
         hp_damage: number;
       }>;
     }
-  | { type: "battle_hymn_consumed"; actor: string; bonus: number; remaining: number }
+  | { type: "battle_hymn_expired"; actor: string }
   | { type: "mark_applied"; actor: string; expires_after_round: number }
   | { type: "passive_warden_shield"; actor: string; amount: number }
   | { type: "passive_warden_thorns"; actor: string; target: string; amount: number }
@@ -619,7 +619,7 @@ function formatEvent(e: CombatEvent, state: CombatState | null): LogEntry[] {
     case "ability_soul_drain":
       return row("death-skull", <>Soul Drain: {e.damage} dmg, +{e.healed} HP  [{e.formula}]</>, "good");
     case "ability_battle_hymn":
-      return row("aura", <>Battle Hymn — next {e.charges_added} party attacks get bardic aura boost.</>, "good");
+      return row("aura", <>Battle Hymn — bardic aura surges for 3 rounds (until round {e.expires_after_round}).</>, "good");
     case "ability_encourage":
       return row("conversation", <>{nameOf(e.actor)} encourages {nameOf(e.target)} — advantage on next {e.charges} attack{e.charges === 1 ? "" : "s"}!</>, "good");
     case "ability_mock":
@@ -696,8 +696,8 @@ function formatEvent(e: CombatEvent, state: CombatState | null): LogEntry[] {
         <>Vanish blocks the attack — the monster can't find a target.</>,
         "good",
       );
-    case "battle_hymn_consumed":
-      return row("aura", <>Hymn boosts {nameOf(e.actor)} by +{e.bonus} ({e.remaining} left).</>, "good");
+    case "battle_hymn_expired":
+      return row("aura", <>Battle Hymn fades for {nameOf(e.actor)}.</>, "muted");
     case "mark_applied":
       return row("targeted", <>{nameOf(e.actor)} marks the target — focus fire!</>, "good");
     case "passive_warden_shield":
@@ -2866,10 +2866,11 @@ function PartyChips({ fighters, selfId, flashIds, hitDustSeq, healBurstSeq, shie
   const vanishedMap = abilityState?.vanished as Record<string, number> | undefined;
   const envenomMap = abilityState?.envenomed_weapon as Record<string, { stacks: number; charges: number }> | undefined;
   const encourageMap = abilityState?.encourage as Record<string, number> | undefined;
-  const hymnCharges = (abilityState?.battle_hymn as number | undefined) ?? 0;
+  const hymnState = abilityState?.battle_hymn as { expires_after_round: number } | undefined;
+  const hymnActive = hymnState != null && (round ?? 0) <= hymnState.expires_after_round;
   const aliveBard = fighters.find((f) => f.hp > 0 && f.class === "Frontend Bard");
   const bardAuraBonus = aliveBard
-    ? 1 + Math.floor(aliveBard.level / 5) + (hymnCharges > 0 ? 2 : 0)
+    ? 1 + Math.floor(aliveBard.level / 5) + (hymnActive ? 2 : 0)
     : 0;
 
   function renderChip(f: Fighter) {
@@ -2964,7 +2965,7 @@ function PartyChips({ fighters, selfId, flashIds, hitDustSeq, healBurstSeq, shie
               {isProtected && <StatusPill size="sm" color="#a78bfa" icon="crowned-heart" label="protected" suffix="½ dmg" title="Protected: taking half damage, absorbed by the paladin" />}
               {holyRageTotal > 0 && <StatusPill size="sm" color="#f97316" icon="fire" label="holy rage" suffix={`+${holyRageBonus}`} title={`Holy Rage: next attack deals +${holyRageBonus} bonus damage`} />}
               {encourageCharges > 0 && <StatusPill size="sm" color="#4ade80" icon="conversation" label="adv" suffix={`${encourageCharges}c`} title={`Encouraged: advantage on next ${encourageCharges} roll${encourageCharges === 1 ? "" : "s"}`} />}
-              {showAura && <StatusPill size="sm" color="#f59e0b" icon="aura" label="bard aura" suffix={`+${bardAuraBonus}`} title={`Bardic Aura: +${bardAuraBonus} bonus damage${hymnCharges > 0 ? ` (Battle Hymn active: ${hymnCharges} charges)` : ""}`} />}
+              {showAura && <StatusPill size="sm" color="#f59e0b" icon="aura" label="bard aura" suffix={`+${bardAuraBonus}`} title={`Bardic Aura: +${bardAuraBonus} bonus damage${hymnActive ? ` (Battle Hymn active until round ${hymnState!.expires_after_round})` : ""}`} />}
             </div>
           );
         })()}
