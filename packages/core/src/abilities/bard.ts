@@ -43,7 +43,7 @@ export const bardAbilities: AbilityDef[] = [
     kind: "active",
     id: "battle_hymn",
     name: "Battle Hymn",
-    blurb: "Bardic aura surges for 3 rounds (+2 bonus damage on top of the base aura) and restores mana to all allies.",
+    blurb: "Bardic aura surges for 3 rounds (+2 + magic bonus damage on top of the base aura) and restores mana to all allies.",
     icon: "aura",
     mana_cost: 2,
     routing: "utility",

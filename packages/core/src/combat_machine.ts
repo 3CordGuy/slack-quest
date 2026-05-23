@@ -3330,7 +3330,7 @@ function computeBardAuraBonus(
   const hymnActive =
     state.ability_state?.battle_hymn != null &&
     state.round <= state.ability_state.battle_hymn.expires_after_round;
-  return { bonus: hymnActive ? base + BARD_AURA_HYMN_BONUS : base };
+  return { bonus: hymnActive ? base + BARD_AURA_HYMN_BONUS + bard.magic_mod : base };
 }
 
 // Data Warlock — Sinister Queries passive: fires on any hit (attack, cast, or ability damage).
