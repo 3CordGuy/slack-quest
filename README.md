@@ -114,9 +114,11 @@ floor((INT−5)/2).
 
 **Staff Sage** — 26 HP | Skills: INT
 
-- Passive - Sage's Reading - Always see the monster's next-swing damage range
-- Active - Manifest - 1 mana. `2d8+wpn` damage (no stat mod)
-- Active - Foresee - 1 mana. Full battle intel for 2 turns: next-swing target, damage range, targeting odds, and party triage
+- Passive - Foretell - Always see monster damage rolls and next intended targets
+- Active - Ray of Frost - 1 mana. Spell attack (+mag to hit), `mag`d4 frost damage with a 25% chance to freeze
+- Active - Blizzard - 2 mana, 3 turn cooldown. AoE frost dealing `1d6+mag` to all enemies at the end of each of your turns for 3 turns (10% freeze chance per hit)
+- Active - Good Fortune - 1 mana, 1 turn cooldown. Heal an ally for `1d4+mag`; a delayed heal for double that amount triggers on your next turn
+- Active - Ill Omen - 1 mana, 1 turn cooldown. Curse an enemy; tracks all damage it takes and deals 50% of the total back to it after 3 of its turns
 
 **Refactor Rogue** — 18 HP | Skills: DEX
 
