@@ -2870,7 +2870,7 @@ function PartyChips({ fighters, selfId, flashIds, hitDustSeq, healBurstSeq, shie
   const hymnActive = hymnState != null && (round ?? 0) <= hymnState.expires_after_round;
   const aliveBard = fighters.find((f) => f.hp > 0 && f.class === "Frontend Bard");
   const bardAuraBonus = aliveBard
-    ? 1 + Math.floor(aliveBard.level / 5) + (hymnActive ? 2 : 0)
+    ? 1 + Math.floor(aliveBard.level / 5) + (hymnActive ? 2 + aliveBard.magic_mod : 0)
     : 0;
 
   function renderChip(f: Fighter) {
