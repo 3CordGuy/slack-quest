@@ -1650,6 +1650,7 @@ function MonsterCard({
   discouraged = 0,
   vulnerable,
   taunt,
+  illOmen,
   slashSeq = 0,
   lungeSeq = 0,
   dustSeq = 0,
