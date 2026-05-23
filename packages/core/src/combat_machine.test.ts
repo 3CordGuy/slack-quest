@@ -70,7 +70,7 @@ function runBegin(state: CombatState, initiatives: number[]) {
   return step(state, { kind: "begin" }, seqRoll(initiatives));
 }
 
-// AC reference (tier 3): monster AC = 5 (4 + floor(3/2)), fighter AC = 10.
+// AC reference (tier 3): monster AC = 7 (6 + floor(3/2)), fighter AC = 10.
 // Paladin attack_mod = 2 → needs d20 ≥ 3 to hit. Monster tier 3 → needs ≥ 3.
 
 describe("combat_machine.step", () => {
@@ -122,7 +122,7 @@ describe("combat_machine.step", () => {
   describe("attack (hit + damage)", () => {
     it("damages the monster on hit, emits hit_check + roll + player_hit", () => {
       const begun = runBegin(createCombatState(baseInit()), [15, 8]);
-      // d20=15 (+2 = 17 vs AC 5: HIT). d6=4 → damage = (4+2+4) = 10.
+      // d20=15 (+2 = 17 vs AC 7: HIT). d6=4 → damage = (4+2+4) = 10.
       const result = step(
         begun.state,
         { kind: "attack", actor: "U_PALADIN" },
@@ -137,14 +137,14 @@ describe("combat_machine.step", () => {
         "turn_start",
       ]);
       const check = result.events.find((e) => e.type === "hit_check");
-      expect(check).toMatchObject({ hit: true, total: 17, ac: 5 });
+      expect(check).toMatchObject({ hit: true, total: 17, ac: 7 });
       const hit = result.events.find((e) => e.type === "player_hit");
       expect(hit).toMatchObject({ damage: 10, crit: false });
     });
 
     it("misses on a low d20, emits hit_check with hit:false, no damage", () => {
       const begun = runBegin(createCombatState(baseInit()), [15, 8]);
-      // d20=2 (+2 = 4 vs AC 5: MISS). No damage roll consumed.
+      // d20=2 (+2 = 4 vs AC 7: MISS). No damage roll consumed.
       const result = step(
         begun.state,
         { kind: "attack", actor: "U_PALADIN" },
@@ -157,7 +157,7 @@ describe("combat_machine.step", () => {
         "turn_start",
       ]);
       const check = result.events.find((e) => e.type === "hit_check");
-      expect(check).toMatchObject({ hit: false, total: 4, ac: 5 });
+      expect(check).toMatchObject({ hit: false, total: 4, ac: 7 });
       expect(result.events.find((e) => e.type === "player_hit")).toBeUndefined();
     });
 
@@ -221,7 +221,7 @@ describe("combat_machine.step", () => {
 
     it("misses on a low d20, no damage applied", () => {
       const begun = runBegin(createCombatState(baseInit()), [5, 18]);
-      // Monster tier=3 → modifier = floor(3/2)+4=5. Fighter level=5 → AC=12.
+      // Monster tier=3 → modifier = floor(3/2)+6=7. Fighter level=5 → AC=12.
       // d20=3 → total=8 < AC 12: MISS.
       const result = step(begun.state, { kind: "monster_act" }, seqRoll([50, 3]));
       expect(result.state.fighters[0].hp).toBe(30);
@@ -1344,7 +1344,7 @@ describe("QA Paladin — holy_rage passive", () => {
 });
 
 // Rogue fixtures.
-// Monster tier 3 → monsterAc = 4 + floor(3/2) = 5.
+// Monster tier 3 → monsterAc = 6 + floor(3/2) = 7.
 // Rogue attack_mod = 3 → hit on d20 ≥ 2.
 // Rogue level 4 → lethal_strikes stacks = 2 + floor(4/2) = 4.
 function rogueInit(rogueOverrides: Partial<CombatInit["fighters"][0]> = {}): CombatInit {
@@ -1720,7 +1720,7 @@ describe("Refactor Rogue — Backstab", () => {
   it("on a hit with advantage, emits player_hit with the pre-rolled max(r1, r2) damage", () => {
     // execute() rolls raw d6s: raw1=4, raw2=3, bestRaw=4, isCrit=false.
     // amount = (4+3+2)*1 = 9. Machine rolls d20 twice: 15,10 → takes 15.
-    // 15+3=18 ≥ 5 (monsterAc tier 3) → hit; player_hit.damage=9, crit=false.
+    // 15+3=18 ≥ 7 (monsterAc tier 3) → hit; player_hit.damage=9, crit=false.
     const begun = runBegin(createCombatState(rogueInit()), [15, 5]);
     const result = step(
       begun.state,
@@ -2065,15 +2065,15 @@ describe("focus weapon — magic_mod to hit, reduced weapon_power", () => {
 
   it("uses magic_mod (not attack_mod) for the to-hit modifier", () => {
     const begun = runBegin(createCombatState(focusInit()), [15, 8]);
-    // d20=2 + magic_mod(3) = 5 ≥ AC 5 → HIT. attack_mod=0 would miss (2+0=2 < 5).
-    const result = step(begun.state, { kind: "attack", actor: "U_MAGE" }, seqRoll([2, 3]));
+    // d20=4 + magic_mod(3) = 7 ≥ AC 7 → HIT. attack_mod=0 would miss (4+0=4 < 7).
+    const result = step(begun.state, { kind: "attack", actor: "U_MAGE" }, seqRoll([4, 3]));
     const check = result.events.find((e) => e.type === "hit_check");
-    expect(check).toMatchObject({ hit: true, total: 5, modifier: 3 });
+    expect(check).toMatchObject({ hit: true, total: 7, modifier: 3 });
   });
 
   it("misses when d20 + magic_mod falls below AC", () => {
     const begun = runBegin(createCombatState(focusInit()), [15, 8]);
-    // d20=1 + magic_mod(3) = 4 < AC 5 → MISS.
+    // d20=1 + magic_mod(3) = 4 < AC 7 → MISS.
     const result = step(begun.state, { kind: "attack", actor: "U_MAGE" }, seqRoll([1, 3]));
     const check = result.events.find((e) => e.type === "hit_check");
     expect(check).toMatchObject({ hit: false, total: 4, modifier: 3 });

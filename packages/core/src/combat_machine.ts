@@ -542,7 +542,7 @@ export type CombatEvent =
 // d20 + relevant modifier. Tuned so low-tier monsters are easy to hit and
 // boss-tier (tier 5+) take real swings to land. Armor still mitigates
 // landed damage in resolveMonsterHit — it doesn't double-up here as AC.
-const MONSTER_BASE_AC = 4;
+const MONSTER_BASE_AC = 6;
 // Fighter AC scales with level so high-tier monsters can't auto-hit, capped at 20
 // so monsters never become literally unable to land hits at high levels.
 // level 1→10, level 10→15, level 20+→20 (hard cap).
