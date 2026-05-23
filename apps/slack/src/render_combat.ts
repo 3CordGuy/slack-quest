@@ -204,10 +204,7 @@ function renderEvent(state: CombatState, e: CombatEvent): string {
       return `🎵 Hymn-charged aura fires — ${nameOf(state, e.actor)} hits +${e.bonus} (${e.remaining} charges left).`;
 
     case "mark_applied":
-      return `🎯 ${nameOf(state, e.actor)} *marks* the monster — partymates deal +${e.bonus} until round ${e.expires_after_round}.`;
-
-    case "mark_bonus":
-      return `🎯 Focus-fire +${e.bonus} (mark).`;
+      return `🎯 ${nameOf(state, e.actor)} *marks* the monster until round ${e.expires_after_round}.`;
 
     case "passive_warden_shield":
       return `🛡 *SRE Warden* passive: ${nameOf(state, e.actor)} hardens up — +${e.amount} shield.`;
@@ -285,6 +282,32 @@ function renderEvent(state: CombatState, e: CombatEvent): string {
       return `_${e.actor} rolls with advantage (d20: ${e.d20_a} & ${e.d20_b}) → took ${e.took}._`;
     case "disadvantage_used":
       return `_Enemy rolls with disadvantage (d20: ${e.d20_a} & ${e.d20_b}) → took ${e.took}._`;
+
+    case "passive_warden_thorns":
+    case "passive_warden_armor_up":
+    case "ability_brace":
+    case "passive_rogue_first_crit":
+    case "passive_sinister_queries":
+    case "ability_hex":
+    case "ability_forbidden_sql":
+    case "passive_holy_rage":
+    case "ability_shield_of_faith":
+    case "ability_protect":
+    case "ability_smite_debuff":
+    case "passive_primal_strikes_heal":
+    case "ability_regeneration":
+    case "ability_animal_form":
+    case "ability_barkskin":
+    case "ability_wildgrowth_entangle":
+    case "ally_npc_summoned":
+    case "hex_bleed_proc":
+    case "protect_triggered":
+    case "ability_freeze_applied":
+    case "ability_blizzard_tick":
+    case "ability_good_fortune_delayed":
+    case "ability_ill_omen_applied":
+    case "ability_ill_omen_burst":
+      return "";
 
     default: {
       // Exhaustiveness check: if a new CombatEvent member is added without

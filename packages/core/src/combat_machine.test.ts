@@ -1622,6 +1622,329 @@ describe("mark", () => {
     const result = step(marked, { kind: "attack", actor: "U_B" }, seqRoll([10, 2]));
     const hitEvt = result.events.find((e) => e.type === "player_hit");
     expect(hitEvt).toMatchObject({ damage: 4 });
-    expect(result.events.find((e) => e.type === "mark_bonus")).toBeUndefined();
+  });
+});
+
+// ─── Staff Sage ─────────────────────────────────────────────────────────────
+//
+// Sage AC = fighterAc(4) = 10 + floor(4/2) = 12.
+// Monster modifier = floor(tier(3)/2) + 4 = 5. d20 ≥ 7 hits, ≤ 6 misses.
+// Tier 3 damage: d4 + tier(3) + partyBonus(0, solo) = d4+3.
+// Ray of Frost: monsterAc(3) = 9; hit_mod = magic_mod = 2 → d20 ≥ 7 hits.
+// monster_act seqRoll (sage next, first swing, hits, d4=3): [d101=50 (target pick), d20=10, d4=3, d101=50 (foresee pre-roll)].
+// Subsequent monster_acts after foresee fires skip the leading d101 (foretold_target already stored in state).
+
+function sageInit(): CombatInit {
+  return {
+    fighters: [
+      {
+        id: "U_SAGE",
+        name: "Aria",
+        class: "Staff Sage",
+        level: 4,
+        hp: 20,
+        max_hp: 20,
+        mana: 4,
+        max_mana: 4,
+        shield: 0,
+        position: "front",
+        attack_mod: 0,
+        magic_mod: 2,
+        weapon_power: 0,
+        armor_power: 0,
+        scars: [],
+      },
+    ],
+    monster: { name: "Test Monster", hp: 40, max_hp: 40, shield: 0, tier: 3, is_boss: false },
+  };
+}
+
+describe("Staff Sage — Foretell (passive)", () => {
+  it("emits ability_foresee after monster_act when Sage is next actor", () => {
+    // Sage wins initiative, waits. Monster acts and swings (d20=10 hit, d4=3 dmg).
+    // Foretell fires via withForeseeForNextActor; consumes roll(101) for target pick.
+    const begun = runBegin(createCombatState(sageInit()), [20, 5]);
+    const waited = step(begun.state, { kind: "wait", actor: "U_SAGE" }, seqRoll([]));
+    const result = step(waited.state, { kind: "monster_act" }, seqRoll([50, 10, 3, 50]));
+    const foresee = result.events.find((e) => e.type === "ability_foresee");
+    expect(foresee).toBeDefined();
+    expect(foresee).toMatchObject({ actor: "U_SAGE", turns_remaining: 99 });
+  });
+
+  it("does not cost mana", () => {
+    const begun = runBegin(createCombatState(sageInit()), [20, 5]);
+    const waited = step(begun.state, { kind: "wait", actor: "U_SAGE" }, seqRoll([]));
+    const result = step(waited.state, { kind: "monster_act" }, seqRoll([50, 10, 3, 50]));
+    expect(result.state.fighters[0].mana).toBe(4);
+  });
+
+  it("emits ability_foresee at begin when monster wins initiative (acts before sage)", () => {
+    // Monster wins initiative (20 > 5), so it acts first. Foresee should fire
+    // during begin so the Sage has a prediction before the first swing.
+    // begin seqRoll: d20=5 (sage), d20=20 (monster), d101=50 (foresee pre-roll).
+    const begun = runBegin(createCombatState(sageInit()), [5, 20, 50]);
+    const foresee = begun.events.find((e) => e.type === "ability_foresee");
+    expect(foresee).toBeDefined();
+    expect(foresee).toMatchObject({ actor: "U_SAGE", predicted_target: "U_SAGE" });
+    expect(begun.state.ability_state?.foretold_targets?.[MONSTER_ID]).toBe("U_SAGE");
+  });
+
+  it("does not emit foresee at begin when sage wins initiative", () => {
+    // Sage wins (20 > 5); no begin-time foresee needed since sage acts first
+    // and will get foresee normally after the monster swings.
+    const begun = runBegin(createCombatState(sageInit()), [20, 5]);
+    expect(begun.events.find((e) => e.type === "ability_foresee")).toBeUndefined();
+  });
+
+  it("predicted_target matches actual attack target (deterministic)", () => {
+    // Monster wins initiative; foresee pre-rolls target=U_SAGE at begin.
+    // Monster then attacks; should hit U_SAGE (no d101 needed for target pick).
+    const begun = runBegin(createCombatState(sageInit()), [5, 20, 50]);
+    const monsterStep = step(begun.state, { kind: "monster_act" }, seqRoll([10, 3, 50]));
+    const attack = monsterStep.events.find((e) => e.type === "monster_attack");
+    expect(attack).toMatchObject({ target: "U_SAGE" });
+  });
+
+  it("pre-rolls targets for all monsters in a multi-monster round", () => {
+    // Two monsters both act before sage. Begin pre-rolls a target for each.
+    const twoMonsterSageInit: CombatInit = {
+      fighters: sageInit().fighters,
+      monsters: [
+        { name: "Mob A", hp: 10, max_hp: 10, tier: 1, is_boss: false },
+        { name: "Mob B", hp: 10, max_hp: 10, tier: 1, is_boss: false },
+      ],
+    };
+    // begin: sage=1 (loses to both), mob A=10, mob B=8; d101=50×2 for foresee pre-rolls.
+    const begun = runBegin(createCombatState(twoMonsterSageInit), [1, 10, 8, 50, 50]);
+    expect(begun.state.ability_state?.foretold_targets?.["__monster_0__"]).toBeDefined();
+    expect(begun.state.ability_state?.foretold_targets?.["__monster_1__"]).toBeDefined();
+    // Mob A acts: uses its foretold target (no d101 for target pick).
+    // seqRoll: d20=10 hit, d4=1 damage (Mob B is still next, no foresee fires here).
+    const m0Step = step(begun.state, { kind: "monster_act" }, seqRoll([10, 1]));
+    // Mob A's entry is consumed; Mob B's remains for its upcoming turn.
+    expect(m0Step.state.ability_state?.foretold_targets?.["__monster_0__"]).toBeUndefined();
+    expect(m0Step.state.ability_state?.foretold_targets?.["__monster_1__"]).toBeDefined();
+    // Mob B acts: uses its foretold target (no d101). Sage is next so foresee fires,
+    // pre-rolling fresh targets for round 2 (two more d101 values consumed).
+    const m1Step = step(m0Step.state, { kind: "monster_act" }, seqRoll([10, 1, 50, 50]));
+    // Foresee re-populated foretold_targets for the next round.
+    expect(m1Step.state.ability_state?.foretold_targets?.["__monster_0__"]).toBeDefined();
+    expect(m1Step.state.ability_state?.foretold_targets?.["__monster_1__"]).toBeDefined();
+  });
+});
+
+describe("Staff Sage — Ray of Frost", () => {
+  it("spends 1 mana and deals magic_mod×d4 damage on hit", () => {
+    // execute(): d4=3, d4=2 → amount = 5; d20=10 → 10+2=12 ≥ 9 hit; d100=50 no freeze.
+    const begun = runBegin(createCombatState(sageInit()), [20, 5]);
+    const result = step(begun.state, { kind: "ability", actor: "U_SAGE", ability_id: "ray_of_frost", target_id: MONSTER_ID }, seqRoll([3, 2, 10, 50]));
+    const hitEvt = result.events.find((e) => e.type === "player_hit");
+    expect(hitEvt).toMatchObject({ actor: "U_SAGE", target: MONSTER_ID, damage: 5 });
+    expect(result.state.fighters[0].mana).toBe(3); // 4 - 1
+    expect(result.state.monsters[0].hp).toBe(35); // 40 - 5
+  });
+
+  it("emits no player_hit on a miss", () => {
+    // d20=6 → 6+2=8 < 9 miss. No damage die or freeze roll consumed.
+    const begun = runBegin(createCombatState(sageInit()), [20, 5]);
+    const result = step(begun.state, { kind: "ability", actor: "U_SAGE", ability_id: "ray_of_frost", target_id: MONSTER_ID }, seqRoll([3, 2, 6]));
+    expect(result.events.find((e) => e.type === "player_hit")).toBeUndefined();
+    expect(result.state.monsters[0].hp).toBe(40);
+  });
+
+  it("applies frozen when freeze roll ≤ 25", () => {
+    // d4=3, d4=2, d20=10 hit, d100=25 ≤ 25 → freeze.
+    const begun = runBegin(createCombatState(sageInit()), [20, 5]);
+    const result = step(begun.state, { kind: "ability", actor: "U_SAGE", ability_id: "ray_of_frost", target_id: MONSTER_ID }, seqRoll([3, 2, 10, 25]));
+    expect(result.state.monsters[0].effects.some((e) => e.type === "frozen")).toBe(true);
+    expect(result.events.find((e) => e.type === "ability_freeze_applied")).toMatchObject({ actor: "U_SAGE", target: MONSTER_ID });
+  });
+
+  it("does not apply frozen when freeze roll > 25", () => {
+    // d100=26 > 25 → no freeze.
+    const begun = runBegin(createCombatState(sageInit()), [20, 5]);
+    const result = step(begun.state, { kind: "ability", actor: "U_SAGE", ability_id: "ray_of_frost", target_id: MONSTER_ID }, seqRoll([3, 2, 10, 26]));
+    expect(result.state.monsters[0].effects.some((e) => e.type === "frozen")).toBe(false);
+    expect(result.events.find((e) => e.type === "ability_freeze_applied")).toBeUndefined();
+  });
+
+  it("does not apply frozen on a miss", () => {
+    // d20=6 miss → no freeze roll consumed.
+    const begun = runBegin(createCombatState(sageInit()), [20, 5]);
+    const result = step(begun.state, { kind: "ability", actor: "U_SAGE", ability_id: "ray_of_frost", target_id: MONSTER_ID }, seqRoll([3, 2, 6]));
+    expect(result.state.monsters[0].effects.some((e) => e.type === "frozen")).toBe(false);
+  });
+});
+
+describe("Staff Sage — Blizzard", () => {
+  it("spends 2 mana, stores charges=3, fires first tick immediately (charges → 2)", () => {
+    // execute() rolls nothing; applyBlizzardTick fires on cast: d6=3 → 3+mag(2)=5. d100=50 no freeze.
+    const begun = runBegin(createCombatState(sageInit()), [20, 5]);
+    const result = step(begun.state, { kind: "ability", actor: "U_SAGE", ability_id: "blizzard" }, seqRoll([3, 50]));
+    expect(result.state.fighters[0].mana).toBe(2); // 4 - 2
+    expect(result.state.ability_state?.blizzard?.charges).toBe(2);
+    expect(result.state.monsters[0].hp).toBe(35); // 40 - 5
+    const tickEvt = result.events.find((e) => e.type === "ability_blizzard_tick");
+    expect(tickEvt).toMatchObject({ actor: "U_SAGE", charges_remaining: 2, hits: [{ target: MONSTER_ID, damage: 5 }] });
+  });
+
+  it("fires a tick on each subsequent sage action and clears after 3 total ticks", () => {
+    // cast (tick 1 → charges 2), monster acts, wait (tick 2 → charges 1), monster acts, wait (tick 3 → clears).
+    const begun = runBegin(createCombatState(sageInit()), [20, 5]);
+    const s1 = step(begun.state, { kind: "ability", actor: "U_SAGE", ability_id: "blizzard" }, seqRoll([3, 50]));
+    expect(s1.state.ability_state?.blizzard?.charges).toBe(2);
+
+    const s2 = step(s1.state, { kind: "monster_act" }, seqRoll([50, 10, 3, 50]));
+    const s3 = step(s2.state, { kind: "wait", actor: "U_SAGE" }, seqRoll([4, 50]));
+    expect(s3.state.ability_state?.blizzard?.charges).toBe(1);
+
+    // foretold_target was stored by s2's foresee, so no d101 needed for target pick here.
+    const s4 = step(s3.state, { kind: "monster_act" }, seqRoll([10, 3, 50]));
+    const s5 = step(s4.state, { kind: "wait", actor: "U_SAGE" }, seqRoll([2, 50]));
+    expect(s5.state.ability_state?.blizzard).toBeUndefined();
+  });
+
+  it("tick damages all alive monsters", () => {
+    const init: CombatInit = {
+      fighters: sageInit().fighters,
+      monsters: [
+        { name: "Mob A", hp: 20, max_hp: 20, tier: 1, is_boss: false },
+        { name: "Mob B", hp: 20, max_hp: 20, tier: 1, is_boss: false },
+      ],
+    };
+    // Sage wins; cast blizzard. Tick hits both mobs: [d6=2,d100=50, d6=1,d100=50]
+    // Mob A: 2+2=4; Mob B: 1+2=3.
+    const begun = runBegin(createCombatState(init), [20, 5, 1]);
+    const result = step(begun.state, { kind: "ability", actor: "U_SAGE", ability_id: "blizzard" }, seqRoll([2, 50, 1, 50]));
+    expect(result.state.monsters[0].hp).toBe(16); // 20 - 4
+    expect(result.state.monsters[1].hp).toBe(17); // 20 - 3
+  });
+
+  it("applies frozen to a surviving monster when freeze roll ≤ 10", () => {
+    // d6=1, d100=5 ≤ 10 → frozen effect applied (blizzard tick does not emit ability_freeze_applied).
+    const begun = runBegin(createCombatState(sageInit()), [20, 5]);
+    const result = step(begun.state, { kind: "ability", actor: "U_SAGE", ability_id: "blizzard" }, seqRoll([1, 5]));
+    expect(result.state.monsters[0].effects.some((e) => e.type === "frozen")).toBe(true);
+  });
+
+  it("does not apply frozen when freeze roll > 10", () => {
+    const begun = runBegin(createCombatState(sageInit()), [20, 5]);
+    const result = step(begun.state, { kind: "ability", actor: "U_SAGE", ability_id: "blizzard" }, seqRoll([1, 11]));
+    expect(result.state.monsters[0].effects.some((e) => e.type === "frozen")).toBe(false);
+  });
+});
+
+describe("Staff Sage — Good Fortune", () => {
+  it("spends 1 mana, heals immediately, and stores delayed amount = 2× immediate", () => {
+    // Sage at 5 HP. d4=3 → amount = 3 + mag(2) = 5; delayed = 10.
+    const begun = runBegin(createCombatState(sageInit()), [20, 5]);
+    const wounded: CombatState = {
+      ...begun.state,
+      fighters: begun.state.fighters.map((f) => f.id === "U_SAGE" ? { ...f, hp: 5 } : f),
+    };
+    const result = step(wounded, { kind: "ability", actor: "U_SAGE", ability_id: "good_fortune", target: "U_SAGE" }, seqRoll([3]));
+    expect(result.state.fighters[0].hp).toBe(10); // 5 + 5
+    expect(result.state.fighters[0].mana).toBe(3); // 4 - 1
+    expect(result.state.cooldowns?.["U_SAGE"]?.["good_fortune"]).toBe(2); // cooldown_turns(1) + 1
+    expect(result.events.find((e) => e.type === "heal_applied")).toMatchObject({ actor: "U_SAGE", target: "U_SAGE", amount: 5 });
+    expect(result.state.ability_state?.good_fortune).toMatchObject({ caster_id: "U_SAGE", target_id: "U_SAGE", amount: 10 });
+  });
+
+  it("delayed heal fires at the start of the caster's next action", () => {
+    // Sage at 5 HP → immediate +5 → hp=10. Monster hits for 6 → hp=4. Delayed +10 → hp=14.
+    const begun = runBegin(createCombatState(sageInit()), [20, 5]);
+    const wounded: CombatState = {
+      ...begun.state,
+      fighters: begun.state.fighters.map((f) => f.id === "U_SAGE" ? { ...f, hp: 5 } : f),
+    };
+    const cast = step(wounded, { kind: "ability", actor: "U_SAGE", ability_id: "good_fortune", target: "U_SAGE" }, seqRoll([3]));
+    const monsterStep = step(cast.state, { kind: "monster_act" }, seqRoll([50, 10, 3, 50]));
+    // Sage hp after monster swing: 10 - (3+3) = 4
+    const waitStep = step(monsterStep.state, { kind: "wait", actor: "U_SAGE" }, seqRoll([]));
+    expect(waitStep.state.fighters[0].hp).toBe(14); // 4 + 10
+    expect(waitStep.events.find((e) => e.type === "ability_good_fortune_delayed")).toMatchObject({ actor: "U_SAGE", target: "U_SAGE", amount: 10 });
+    expect(waitStep.state.ability_state?.good_fortune).toBeUndefined();
+  });
+});
+
+describe("Staff Sage — Ill Omen", () => {
+  it("spends 1 mana, goes on 1-turn cooldown, sets ill_omen with monster_turns_remaining=3", () => {
+    const begun = runBegin(createCombatState(sageInit()), [20, 5]);
+    const result = step(begun.state, { kind: "ability", actor: "U_SAGE", ability_id: "ill_omen", target_id: MONSTER_ID }, seqRoll([]));
+    expect(result.state.fighters[0].mana).toBe(3); // 4 - 1
+    expect(result.state.cooldowns?.["U_SAGE"]?.["ill_omen"]).toBe(2);
+    expect(result.state.ability_state?.ill_omen?.[MONSTER_ID]).toMatchObject({
+      caster_id: "U_SAGE",
+      accumulated: 0,
+      monster_turns_remaining: 3,
+    });
+    expect(result.events.find((e) => e.type === "ability_ill_omen_applied")).toMatchObject({ actor: "U_SAGE", target: MONSTER_ID });
+  });
+
+  it("accumulates ability damage dealt to the marked monster", () => {
+    // Inject ill_omen state; cast Ray of Frost: d4=3, d4=2 → 5 dmg, d20=10 hit, d100=50 no freeze.
+    const begun = runBegin(createCombatState(sageInit()), [20, 5]);
+    const withOmen: CombatState = {
+      ...begun.state,
+      ability_state: { ill_omen: { [MONSTER_ID]: { caster_id: "U_SAGE", accumulated: 0, monster_turns_remaining: 3 } } },
+    };
+    const result = step(withOmen, { kind: "ability", actor: "U_SAGE", ability_id: "ray_of_frost", target_id: MONSTER_ID }, seqRoll([3, 2, 10, 50]));
+    expect(result.state.ability_state?.ill_omen?.[MONSTER_ID]?.accumulated).toBe(5);
+  });
+
+  it("decrements monster_turns_remaining on each monster act without bursting early", () => {
+    // Inject with monster acting first: 3 → 2 → 1 over two monster acts.
+    const begun = runBegin(createCombatState(sageInit()), [20, 5]);
+    const withOmen3: CombatState = {
+      ...begun.state,
+      ability_state: { ill_omen: { [MONSTER_ID]: { caster_id: "U_SAGE", accumulated: 10, monster_turns_remaining: 3 } } },
+      turn_order: [MONSTER_ID, "U_SAGE"],
+      turn_index: 0,
+    };
+    // monster_act 1: 3 → 2. seqRoll: [d101, d20, d4, d101(foresee)]
+    const m1 = step(withOmen3, { kind: "monster_act" }, seqRoll([50, 10, 3, 50]));
+    expect(m1.state.ability_state?.ill_omen?.[MONSTER_ID]?.monster_turns_remaining).toBe(2);
+    expect(m1.events.find((e) => e.type === "ability_ill_omen_burst")).toBeUndefined();
+
+    const afterM1: CombatState = { ...m1.state, turn_order: [MONSTER_ID, "U_SAGE"], turn_index: 0 };
+    // monster_act 2: 2 → 1. foretold_target was stored by m1's foresee, so no d101 for target pick.
+    const m2 = step(afterM1, { kind: "monster_act" }, seqRoll([10, 3, 50]));
+    expect(m2.state.ability_state?.ill_omen?.[MONSTER_ID]?.monster_turns_remaining).toBe(1);
+    expect(m2.events.find((e) => e.type === "ability_ill_omen_burst")).toBeUndefined();
+  });
+
+  it("burst fires on 3rd monster turn for 50% of accumulated damage", () => {
+    // Inject with monster_turns_remaining=1 and accumulated=20. Burst = floor(20*0.5) = 10.
+    // Monster survives (40-10=30); monster still swings, then Foretell fires.
+    const begun = runBegin(createCombatState(sageInit()), [20, 5]);
+    const readyToBurst: CombatState = {
+      ...begun.state,
+      ability_state: { ill_omen: { [MONSTER_ID]: { caster_id: "U_SAGE", accumulated: 20, monster_turns_remaining: 1 } } },
+      turn_order: [MONSTER_ID, "U_SAGE"],
+      turn_index: 0,
+    };
+    // seqRoll: [d101=50, d20=10 hit, d4=3, d101=50 foresee]
+    const result = step(readyToBurst, { kind: "monster_act" }, seqRoll([50, 10, 3, 50]));
+    const burstEvt = result.events.find((e) => e.type === "ability_ill_omen_burst");
+    expect(burstEvt).toMatchObject({ actor: "U_SAGE", target: MONSTER_ID, accumulated: 20, burst: 10 });
+    // Monster hp: 40 - 10 (burst) = 30. The swing hits the Sage (not the monster).
+    expect(result.state.monsters[0].hp).toBe(30);
+    expect(result.state.ability_state?.ill_omen).toBeUndefined();
+  });
+
+  it("burst kill resolves victory without monster swinging", () => {
+    // Monster at 10 HP; accumulated=30 → burst=15 > 10 → kill. No swing, no foresee.
+    const begun = runBegin(createCombatState(sageInit()), [20, 5]);
+    const readyToBurst: CombatState = {
+      ...begun.state,
+      monsters: begun.state.monsters.map((m) => m.id === MONSTER_ID ? { ...m, hp: 10 } : m),
+      ability_state: { ill_omen: { [MONSTER_ID]: { caster_id: "U_SAGE", accumulated: 30, monster_turns_remaining: 1 } } },
+      turn_order: [MONSTER_ID, "U_SAGE"],
+      turn_index: 0,
+    };
+    const result = step(readyToBurst, { kind: "monster_act" }, seqRoll([]));
+    expect(result.state.status).toBe("victory");
+    expect(result.events.find((e) => e.type === "ability_ill_omen_burst")).toMatchObject({ accumulated: 30, burst: 15 });
+    expect(result.events.find((e) => e.type === "victory")).toBeDefined();
   });
 });

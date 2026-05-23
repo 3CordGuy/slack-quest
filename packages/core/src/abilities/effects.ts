@@ -58,10 +58,6 @@ export const fx = {
     return { kind: "add_battle_hymn", charges };
   },
 
-  foreseeTurns(turns: number): AbilityEffect {
-    return { kind: "set_foresee_turns", turns };
-  },
-
   moveFighter(targetId: string, to: "front" | "back"): AbilityEffect {
     return { kind: "move_fighter", target_id: targetId, to };
   },
@@ -86,8 +82,8 @@ export const fx = {
     return { kind: "apply_smite_debuff", target_id: targetId };
   },
 
-  attackRollDamage(targetId: string, hitMod: number, amount: number, formula: string, damageType?: DamageType, advantage?: boolean, isCrit?: boolean): AbilityEffect {
-    return { kind: "attack_roll_damage", target_id: targetId, hit_mod: hitMod, amount, formula, damage_type: damageType, advantage, is_crit: isCrit };
+  attackRollDamage(targetId: string, hitMod: number, amount: number, formula: string, damageType?: DamageType, advantage?: boolean, isCrit?: boolean, freezeChance?: number): AbilityEffect {
+    return { kind: "attack_roll_damage", target_id: targetId, hit_mod: hitMod, amount, formula, damage_type: damageType, advantage, is_crit: isCrit, freeze_chance: freezeChance };
   },
 
   bleed(targetId: string, stacks: number, duration = 2): AbilityEffect {
@@ -104,6 +100,18 @@ export const fx = {
 
   vulnerability(targetId: string, magnitude: number, rounds: number): AbilityEffect {
     return { kind: "apply_vulnerability", target_id: targetId, magnitude, rounds };
+  },
+
+  blizzard(casterId: string, mag: number): AbilityEffect {
+    return { kind: "apply_blizzard", caster_id: casterId, mag };
+  },
+
+  goodFortune(casterId: string, targetId: string, delayedAmount: number): AbilityEffect {
+    return { kind: "apply_good_fortune", caster_id: casterId, target_id: targetId, delayed_amount: delayedAmount };
+  },
+
+  illOmen(casterId: string, targetId: string): AbilityEffect {
+    return { kind: "apply_ill_omen", caster_id: casterId, target_id: targetId };
   },
 
   summonAllyNpc(spec: AllyNpcSpec, idSuffix: string): AbilityEffect {

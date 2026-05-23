@@ -20,6 +20,7 @@ import {
   ShieldGlow,
   CombatDevModal,
   StatusEffect,
+  StatusPill,
   EFFECT_PILLS,
   CombatPanel,
   type PanelCombatState,
@@ -342,14 +343,17 @@ function HpBar({ current, max, color, height = 6 }: { current: number; max: numb
   );
 }
 
-function PartyBar({ fighters, selfId, party, onClickSelf, flashIds, hitDustSeq, healBurstSeq, shieldBurstSeq }: {
+function PartyBar({ fighters, selfId, party, onClickSelf, flashIds, hitDustSeq, healBurstSeq, shieldBurstSeq, abilityState }: {
   fighters: Fighter[] | null; selfId: string; party: Character[];
   onClickSelf?: () => void;
   flashIds?: Set<string>;
   hitDustSeq?: Record<string, number>;
   healBurstSeq?: Record<string, number>;
   shieldBurstSeq?: Record<string, number>;
+  abilityState?: { [key: string]: unknown };
 }) {
+  const goodFortune = abilityState?.good_fortune as { caster_id: string; target_id: string; amount: number } | undefined;
+  const blizzardState = abilityState?.blizzard as { caster_id: string; charges: number } | undefined;
   const seen = new Set<string>();
   type Member = {
     key: string; name: string; cls: string; level: number;
@@ -432,14 +436,21 @@ function PartyBar({ fighters, selfId, party, onClickSelf, flashIds, hitDustSeq, 
           {/* Status effect pills — shared EFFECT_PILLS from CombatShared.
               Empty for legacy REST party-data fighters since /api/quest/active
               doesn't expose effects. */}
-          {f.effects.length > 0 && (
-            <div style={{ display: "flex", gap: 4, marginTop: 5, flexWrap: "wrap" }}>
-              {f.effects.map((e, i) => {
-                const def = EFFECT_PILLS[e.type];
-                return def ? <def.pill key={i} effect={e} size="sm" /> : null;
-              })}
-            </div>
-          )}
+          {(() => {
+            const hasFortune = goodFortune?.target_id === f.key;
+            const blizzardCharges = blizzardState?.caster_id === f.key ? blizzardState.charges : 0;
+            if (!f.effects.length && !hasFortune && !blizzardCharges) return null;
+            return (
+              <div style={{ display: "flex", gap: 4, marginTop: 5, flexWrap: "wrap" }}>
+                {f.effects.map((e, i) => {
+                  const def = EFFECT_PILLS[e.type];
+                  return def ? <def.pill key={i} effect={e} size="sm" /> : null;
+                })}
+                {hasFortune && <StatusPill size="sm" color="#fbbf24" icon="crystal-ball" label="fortune" suffix={`+${goodFortune!.amount}hp`} title={`Good Fortune: delayed heal for ${goodFortune!.amount} HP activates next turn`} />}
+                {blizzardCharges > 0 && <StatusPill size="sm" color="#93c5fd" icon="snowflake" label="blizzard" suffix={`${blizzardCharges}t`} title={`Blizzard active: deals AoE frost damage at end of each turn (${blizzardCharges} turn${blizzardCharges === 1 ? "" : "s"} left)`} />}
+              </div>
+            );
+          })()}
         </div>
       </div>
     );
@@ -482,7 +493,7 @@ function PartyBar({ fighters, selfId, party, onClickSelf, flashIds, hitDustSeq, 
 // Card-local state manages its own defeat animation lifecycle so each
 // monster falls back independently when it dies (in a multi-monster
 // fight, killing one shouldn't restart the other's animation).
-function MonsterCard({ monster, isBoss, isHit, lungeTick, slashTick, dustSeq, isMarked, isTargeted, size, onClick }: {
+function MonsterCard({ monster, isBoss, isHit, lungeTick, slashTick, dustSeq, isMarked, isTargeted, size, illOmen, onClick }: {
   monster: Monster;
   isBoss: boolean;
   isHit: boolean;
@@ -497,6 +508,7 @@ function MonsterCard({ monster, isBoss, isHit, lungeTick, slashTick, dustSeq, is
   // "primary" = single-monster centered look, "strip" = smaller card
   // in a row of monsters. Drives art height + card width.
   size: "primary" | "strip";
+  illOmen?: { accumulated: number; monster_turns_remaining: number };
   onClick?: () => void;
 }) {
   const isDead = monster.hp <= 0;
@@ -639,12 +651,15 @@ function MonsterCard({ monster, isBoss, isHit, lungeTick, slashTick, dustSeq, is
           <Icon name="targeted" size={16} color="#fbbf24" />
         </div>
       )}
-      {monster.effects && monster.effects.length > 0 && !isDead && (
+      {((monster.effects && monster.effects.length > 0) || (illOmen && illOmen.monster_turns_remaining > 0)) && !isDead && (
         <div style={{ position: "absolute", top: 6, right: 6, display: "flex", flexDirection: "column", gap: 4, alignItems: "flex-end", zIndex: 9 }}>
           {monster.effects.map((e, i) => {
             const def = EFFECT_PILLS[e.type];
             return def ? <def.pill key={i} effect={e} size="md" /> : null;
           })}
+          {illOmen && illOmen.monster_turns_remaining > 0 && (
+            <StatusPill size="md" color="#c084fc" icon="death-skull" label="ill omen" suffix={`${illOmen.monster_turns_remaining}t`} title={`Ill Omen: ${illOmen.accumulated} damage accumulated — bursts in ${illOmen.monster_turns_remaining} monster turn${illOmen.monster_turns_remaining === 1 ? "" : "s"}`} />
+          )}
         </div>
       )}
     </div>
@@ -655,7 +670,7 @@ function MonsterCard({ monster, isBoss, isHit, lungeTick, slashTick, dustSeq, is
 // card (matches the old single-monster overlay look). Two or more →
 // horizontal row of smaller cards centered above the party. Click-to-
 // target sets targetMonsterId; the targeted card gets a gold border.
-function MonsterStrip({ monsters, flashIds, lastSlash, lastLunge, markedMonsterId, targetMonsterId, hitDustSeq, onTarget }: {
+function MonsterStrip({ monsters, flashIds, lastSlash, lastLunge, markedMonsterId, targetMonsterId, hitDustSeq, illOmenState, onTarget }: {
   monsters: Monster[];
   flashIds: Set<string>;
   // Most-recent slash event — id of the hit monster + a monotonic seq.
@@ -668,6 +683,7 @@ function MonsterStrip({ monsters, flashIds, lastSlash, lastLunge, markedMonsterI
   // Per-id dust counter shared with PartyBar. Bumped from flashHit() so
   // monsters and fighters both get cartoony puffs on hit.
   hitDustSeq?: Record<string, number>;
+  illOmenState?: Record<string, { accumulated: number; monster_turns_remaining: number }>;
   onTarget: (id: string) => void;
 }) {
   if (monsters.length === 0) return null;
@@ -704,6 +720,7 @@ function MonsterStrip({ monsters, flashIds, lastSlash, lastLunge, markedMonsterI
             isMarked={markedMonsterId === id}
             isTargeted={showTargeting && targetMonsterId === id}
             size={isSingle ? "primary" : "strip"}
+            illOmen={illOmenState?.[id]}
             onClick={showTargeting && m.hp > 0 ? () => onTarget(id) : undefined}
           />
         );
@@ -1362,6 +1379,7 @@ export function GridDungeonView({
               markedMonsterId={markedId}
               targetMonsterId={effectiveTarget}
               hitDustSeq={hitDustSeq}
+              illOmenState={(combatState?.ability_state as { ill_omen?: Record<string, { accumulated: number; monster_turns_remaining: number }> } | undefined)?.ill_omen}
               onTarget={setTargetMonsterId}
             />
           );
@@ -1491,6 +1509,7 @@ export function GridDungeonView({
         hitDustSeq={hitDustSeq}
         healBurstSeq={healBurstSeq}
         shieldBurstSeq={shieldBurstSeq}
+        abilityState={combatState?.ability_state}
       />
 
       {/* Action buttons row (RED area) — own row at the very bottom. Always
