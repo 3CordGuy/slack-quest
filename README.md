@@ -109,7 +109,7 @@ floor((INT−5)/2).
 - Passive - Bardic Aura - Party deals `+(1+⌊lv/5⌋)` bonus damage while you're alive
 - Active - Crescendo - 1 mana. `1d6+mag+party×2+wpn` damage
 - Active - Verse - 0 mana, 2 turn cooldown. Mock an enemy (disadvantage) or encourage an ally (advantage) on their next 2 rolls
-- Active - Battle Hymn - 2 mana. Aura bonus +3 and refills all party mana
+- Active - Battle Hymn - 2 mana. Bardic aura surges for 3 rounds (+2+magic bonus damage on top of the base aura) and restores mana to all allies
 - Active - Serenade - 2 mana. `2d6+mag` heal + shield on the lowest-HP% ally
 
 **Staff Sage** — 26 HP | Skills: INT
