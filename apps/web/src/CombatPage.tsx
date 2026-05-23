@@ -1346,6 +1346,7 @@ export function CombatPage({
                     smiteDebuffed={!!((state.ability_state as { paladin_smite_debuff?: Record<string, number> } | undefined)?.paladin_smite_debuff?.[mid])}
                     discouraged={(state.ability_state as { discourage?: Record<string, number> } | undefined)?.discourage?.[mid] ?? 0}
                     vulnerable={(state.ability_state as { vulnerable?: Record<string, { expires_after_round: number; magnitude: number }> } | undefined)?.vulnerable?.[mid]}
+                    taunt={(() => { const t = (state.ability_state as { taunt?: { actor_id: string; swings_remaining: number } } | undefined)?.taunt; return t && t.swings_remaining > 0 ? { actor_name: state.fighters.find((f) => f.id === t.actor_id)?.name ?? t.actor_id, swings: t.swings_remaining } : undefined; })()}
                     slashSeq={lastSlash?.id === mid ? lastSlash.seq : 0}
                     lungeSeq={lastLunge?.id === mid ? lastLunge.seq : 0}
                     dustSeq={hitDustSeq[mid] ?? 0}
@@ -1640,6 +1641,7 @@ function MonsterCard({
   smiteDebuffed = false,
   discouraged = 0,
   vulnerable,
+  taunt,
   slashSeq = 0,
   lungeSeq = 0,
   dustSeq = 0,
@@ -1653,6 +1655,7 @@ function MonsterCard({
   smiteDebuffed?: boolean;
   discouraged?: number;
   vulnerable?: { expires_after_round: number; magnitude: number };
+  taunt?: { actor_name: string; swings: number };
   slashSeq?: number;
   lungeSeq?: number;
   dustSeq?: number;
@@ -1762,12 +1765,15 @@ function MonsterCard({
           </div>
         </div>
         <BigHpBar current={Math.max(0, monster.hp)} max={monster.max_hp} />
-        {((monster.effects && monster.effects.length > 0) || smiteDebuffed || discouraged > 0 || (vulnerable && round <= vulnerable.expires_after_round)) && !isDead && (
+        {((monster.effects && monster.effects.length > 0) || smiteDebuffed || discouraged > 0 || (vulnerable && round <= vulnerable.expires_after_round) || !!taunt) && !isDead && (
           <div style={{ display: "flex", gap: 6, marginTop: 6, flexWrap: "wrap" }}>
             {monster.effects?.map((e, i) => {
               const def = EFFECT_PILLS[e.type];
               return def ? <def.pill key={i} effect={e} size="lg" /> : null;
             })}
+            {taunt && (
+              <StatusPill size="lg" color="#f59e0b" icon="shield-reflect" label="taunted" suffix={`${taunt.swings}sw`} title={`Taunted: forced to attack ${taunt.actor_name} for ${taunt.swings} more swing${taunt.swings === 1 ? "" : "s"}`} />
+            )}
             {smiteDebuffed && (
               <StatusPill size="lg" color="#f87171" icon="axe-swing" label="smited" suffix="½ dmg" title="Smite: this monster deals 50% less damage on its next swing" />
             )}
@@ -2868,6 +2874,9 @@ function PartyChips({ fighters, selfId, flashIds, hitDustSeq, healBurstSeq, shie
   const encourageMap = abilityState?.encourage as Record<string, number> | undefined;
   const hymnState = abilityState?.battle_hymn as { expires_after_round: number } | undefined;
   const hymnActive = hymnState != null && (round ?? 0) <= hymnState.expires_after_round;
+  const tauntFortifyMap = abilityState?.taunt_fortify as Record<string, { turns_remaining: number }> | undefined;
+  const resilientMap = abilityState?.resilient as Record<string, number[]> | undefined;
+  const braceMap = abilityState?.brace as Record<string, { pct: number; turns_remaining: number }> | undefined;
   const aliveBard = fighters.find((f) => f.hp > 0 && f.class === "Frontend Bard");
   const bardAuraBonus = aliveBard
     ? 1 + Math.floor(aliveBard.level / 5) + (hymnActive ? 2 + aliveBard.magic_mod : 0)
@@ -2951,7 +2960,11 @@ function PartyChips({ fighters, selfId, flashIds, hitDustSeq, healBurstSeq, shie
           const envenomEntry = envenomMap?.[f.id];
           const encourageCharges = encourageMap?.[f.id] ?? 0;
           const showAura = bardAuraBonus > 0;
-          const hasExtra = sofActive || isProtected || holyRageTotal > 0 || vanishSwings > 0 || !!envenomEntry || encourageCharges > 0 || showAura;
+          const fortifyTurns = (tauntFortifyMap?.[f.id]?.turns_remaining ?? 0) > 0 ? tauntFortifyMap![f.id].turns_remaining : 0;
+          const resilientStacks = (resilientMap?.[f.id] ?? []).filter((exp) => exp >= (round ?? 1)).length;
+          const braceEntry = braceMap?.[f.id];
+          const braceTurns = (braceEntry?.turns_remaining ?? 0) > 0 ? braceEntry!.turns_remaining : 0;
+          const hasExtra = sofActive || isProtected || holyRageTotal > 0 || vanishSwings > 0 || !!envenomEntry || encourageCharges > 0 || showAura || fortifyTurns > 0 || resilientStacks > 0 || braceTurns > 0;
           if (!f.effects?.length && !hasExtra) return null;
           return (
             <div style={{ position: "absolute", top: -8, right: -4, display: "flex", flexDirection: "column", gap: 3, alignItems: "flex-end" }}>
@@ -2966,6 +2979,9 @@ function PartyChips({ fighters, selfId, flashIds, hitDustSeq, healBurstSeq, shie
               {holyRageTotal > 0 && <StatusPill size="sm" color="#f97316" icon="fire" label="holy rage" suffix={`+${holyRageBonus}`} title={`Holy Rage: next attack deals +${holyRageBonus} bonus damage`} />}
               {encourageCharges > 0 && <StatusPill size="sm" color="#4ade80" icon="conversation" label="adv" suffix={`${encourageCharges}c`} title={`Encouraged: advantage on next ${encourageCharges} roll${encourageCharges === 1 ? "" : "s"}`} />}
               {showAura && <StatusPill size="sm" color="#f59e0b" icon="aura" label="bard aura" suffix={`+${bardAuraBonus}`} title={`Bardic Aura: +${bardAuraBonus} bonus damage${hymnActive ? ` (Battle Hymn active until round ${hymnState!.expires_after_round})` : ""}`} />}
+              {braceTurns > 0 && <StatusPill size="sm" color="#38bdf8" icon="aura" label="brace" suffix={`-${braceEntry!.pct}% ${braceTurns}t`} title={`Brace: -${braceEntry!.pct}% incoming damage for ${braceTurns} more turn${braceTurns === 1 ? "" : "s"}`} />}
+              {fortifyTurns > 0 && <StatusPill size="sm" color="#94a3b8" icon="shield-reflect" label="fortify" suffix={`${fortifyTurns}t`} title={`Taunt Fortify: all incoming damage routes through armor for ${fortifyTurns} more turn${fortifyTurns === 1 ? "" : "s"}`} />}
+              {resilientStacks > 0 && <StatusPill size="sm" color="#f59e0b" icon="bolt-shield" label="resilient" suffix={`×${resilientStacks}`} title={`Resilient: ${resilientStacks} active stack${resilientStacks === 1 ? "" : "s"} — raises shield cap and effective armor by ${resilientStacks * 2}+ per stack`} />}
             </div>
           );
         })()}

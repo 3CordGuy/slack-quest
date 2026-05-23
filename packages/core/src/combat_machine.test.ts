@@ -1453,14 +1453,16 @@ describe("SRE Warden — Bulwark Strike", () => {
     const init = baseInit();
     init.fighters[0].class = "SRE Warden";
     init.fighters[0].attack_mod = 2;
-    init.fighters[0].armor_power = 3; // armorBonus = floor(3*0.5) = 1
+    init.fighters[0].armor_power = 3;
+    init.fighters[0].shield = 2; // Armor Up grants +3 at turn start → shield=5 at execute
     init.fighters[0].mana = 3;
     return init;
   }
 
-  it("on a hit, performs an attack roll and deals 1d10 + attack + 50% armor", () => {
-    // execute(): d10=5 → amount = 5 + 2(atk) + 1(floor(3*0.5)) = 8
-    // Machine rolls d20=15 → 15+2=17 ≥ 5 (tier 3 AC) → hit; damage=8
+  it("on a hit, performs an attack roll and deals 1d10 + attack + 50% current shield", () => {
+    // Armor Up fires at turn start: 2 + floor(5/4) = 3 → shield = 2+3 = 5.
+    // execute(): d10=5 → shieldBonus=floor(5*0.5)=2; amount = 5 + 2(atk) + 2(sh) = 9.
+    // Machine rolls d20=15 → 15+2=17 ≥ 5 (tier 3 AC) → hit; damage=9.
     const begun = runBegin(createCombatState(wardenInit()), [15, 5]);
     const result = step(
       begun.state,
@@ -1469,8 +1471,8 @@ describe("SRE Warden — Bulwark Strike", () => {
     );
     expect(result.events.find((e) => e.type === "hit_check")).toMatchObject({ hit: true });
     const hitEvt = result.events.find((e) => e.type === "player_hit");
-    expect(hitEvt).toMatchObject({ damage: 8, actor: "U_PALADIN" });
-    expect(result.state.monsters[0].hp).toBe(40 - 8);
+    expect(hitEvt).toMatchObject({ damage: 9, actor: "U_PALADIN" });
+    expect(result.state.monsters[0].hp).toBe(40 - 9);
   });
 
   it("on a miss, produces no player_hit and advances the turn", () => {
@@ -1494,6 +1496,223 @@ describe("SRE Warden — Bulwark Strike", () => {
       seqRoll([5, 15]),
     );
     expect(used.state.cooldowns?.["U_PALADIN"]?.["bulwark_strike"]).toBeGreaterThan(0);
+  });
+});
+
+describe("SRE Warden — Taunt (reworked)", () => {
+  function wardenFullInit(overrides: Partial<CombatInit> = {}): CombatInit {
+    return {
+      fighters: [
+        {
+          id: "U_WARDEN",
+          name: "Garrett",
+          class: "SRE Warden",
+          level: 5,
+          hp: 30,
+          max_hp: 30,
+          mana: 3,
+          max_mana: 3,
+          shield: 0,
+          position: "front",
+          attack_mod: 2,
+          magic_mod: 0,
+          weapon_power: 4,
+          armor_power: 5,
+          scars: [],
+          stats: { str: 9, int_stat: 4, vit: 10, agi: 4, dex: 3 },
+        },
+      ],
+      monster: baseInit().monster,
+      ...overrides,
+    };
+  }
+
+  // str=9, vit=10 → floor((9+10)/8) = 2 (not doubled, party > 1).
+  // Armor Up also fires at turn start: 2 + floor(5/4) = 3. Total shield = 5.
+  it("grants floor((vit+str)/8) shield and sets taunt_fortify for 2 turns", () => {
+    const twoFighterInit = wardenFullInit({
+      fighters: [
+        ...wardenFullInit().fighters,
+        {
+          id: "U_ALLY",
+          name: "Ally",
+          class: "Frontend Bard",
+          level: 1,
+          hp: 10,
+          max_hp: 10,
+          mana: 1,
+          max_mana: 1,
+          shield: 0,
+          position: "back" as const,
+          attack_mod: 0,
+          magic_mod: 0,
+          weapon_power: 1,
+          armor_power: 0,
+          scars: [],
+        },
+      ],
+    });
+    const begun = runBegin(createCombatState(twoFighterInit), [15, 8, 5]);
+    const result = step(
+      begun.state,
+      { kind: "ability", actor: "U_WARDEN", ability_id: "taunt" },
+      seqRoll([1]),
+    );
+    // Armor Up (3) + Taunt (2) = 5
+    expect(result.state.fighters.find((f) => f.id === "U_WARDEN")!.shield).toBe(5);
+    expect(result.state.ability_state?.taunt_fortify?.["U_WARDEN"]).toMatchObject({ turns_remaining: 2 });
+  });
+
+  it("doubles shield when warden is the only living party member", () => {
+    const begun = runBegin(createCombatState(wardenFullInit()), [15, 8]);
+    const result = step(
+      begun.state,
+      { kind: "ability", actor: "U_WARDEN", ability_id: "taunt" },
+      seqRoll([1]),
+    );
+    // solo party → Taunt doubled = 4; Armor Up = 3. Total = 7.
+    expect(result.state.fighters.find((f) => f.id === "U_WARDEN")!.shield).toBe(7);
+  });
+
+  it("magic damage depletes shield when taunt_fortify is active", () => {
+    // Monster uses lightning so damage would normally bypass shield.
+    const init = wardenFullInit({
+      monster: { name: "The Lightning Shrieker", hp: 40, max_hp: 40, shield: 0, tier: 3, is_boss: false, attack_damage_type: "lightning" },
+    });
+    // Monster goes first (warden=8, monster=15).
+    const begun = runBegin(createCombatState(init), [8, 15]);
+    const withFortify: CombatState = {
+      ...begun.state,
+      fighters: begun.state.fighters.map((f) => f.id === "U_WARDEN" ? { ...f, shield: 5 } : f),
+      ability_state: { taunt_fortify: { U_WARDEN: { turns_remaining: 2 } } },
+    };
+    // Monster acts: target pick=50, d20=15 (hits AC 12), d4=3 → raw=3+3(tier)=6.
+    // With fortify: shield absorbs min(5,6)=5, HP takes 1.
+    // 90 = d100 elemental proc check (> 25 threshold → no proc).
+    const result = step(withFortify, { kind: "monster_act", actor: MONSTER_ID }, seqRoll([50, 15, 3, 90]));
+    const warden = result.state.fighters.find((f) => f.id === "U_WARDEN")!;
+    expect(warden.shield).toBe(0);
+    expect(warden.hp).toBe(29);
+  });
+
+  it("magic damage bypasses shield when taunt_fortify is not active", () => {
+    const init = wardenFullInit({
+      monster: { name: "The Lightning Shrieker", hp: 40, max_hp: 40, shield: 0, tier: 3, is_boss: false, attack_damage_type: "lightning" },
+    });
+    const begun = runBegin(createCombatState(init), [8, 15]);
+    const withShield: CombatState = {
+      ...begun.state,
+      fighters: begun.state.fighters.map((f) => f.id === "U_WARDEN" ? { ...f, shield: 5 } : f),
+    };
+    // No fortify — lightning bypasses shield; all 6 damage goes to HP.
+    // 90 = d100 elemental proc check (> 25 threshold → no proc).
+    const result = step(withShield, { kind: "monster_act", actor: MONSTER_ID }, seqRoll([50, 15, 3, 90]));
+    const warden = result.state.fighters.find((f) => f.id === "U_WARDEN")!;
+    expect(warden.shield).toBe(5); // untouched
+    expect(warden.hp).toBe(24);    // 30 - 6
+  });
+});
+
+describe("SRE Warden — Resilient (passive)", () => {
+  function wardenFullInit(): CombatInit {
+    return {
+      fighters: [
+        {
+          id: "U_WARDEN",
+          name: "Garrett",
+          class: "SRE Warden",
+          level: 5,
+          hp: 30,
+          max_hp: 30,
+          mana: 3,
+          max_mana: 3,
+          shield: 0,
+          position: "front",
+          attack_mod: 2,
+          magic_mod: 0,
+          weapon_power: 4,
+          armor_power: 5,
+          scars: [],
+          stats: { str: 9, int_stat: 4, vit: 10, agi: 4, dex: 3 },
+        },
+      ],
+      monster: baseInit().monster,
+    };
+  }
+
+  // tier 3 → AC = 12 (10 + floor(5/2)). Monster modifier = floor(3/2)+4 = 5.
+  // For player attacks, there's no d101 target pick — target defaults to first alive monster.
+  // Roll order for attack: d20 (hit check), d6 (damage).
+
+  it("successful attack adds a Resilient stack to ability_state", () => {
+    const begun = runBegin(createCombatState(wardenFullInit()), [15, 8]);
+    // d20=15 (15+2=17 ≥ 12: hit), d6=4
+    const result = step(begun.state, { kind: "attack", actor: "U_WARDEN" }, seqRoll([15, 4]));
+    const stacks = result.state.ability_state?.resilient?.["U_WARDEN"] ?? [];
+    expect(stacks.length).toBe(1);
+    // Stack expires at round 1 + 4 = 5.
+    expect(stacks[0]).toBe(5);
+    expect(result.events.find((e) => e.type === "passive_warden_resilient")).toMatchObject({ actor: "U_WARDEN", stacks: 1 });
+  });
+
+  it("attack_roll_damage hit also adds a Resilient stack", () => {
+    const begun = runBegin(createCombatState(wardenFullInit()), [15, 8]);
+    // bulwark_strike: d10 (execute), then d20 (hit check) in machine.
+    // d10=5, d20=15 → 15+2=17 ≥ AC 5 → hit.
+    const result = step(
+      begun.state,
+      { kind: "ability", actor: "U_WARDEN", ability_id: "bulwark_strike" },
+      seqRoll([5, 15]),
+    );
+    const stacks = result.state.ability_state?.resilient?.["U_WARDEN"] ?? [];
+    expect(stacks.length).toBe(1);
+  });
+
+  it("attack_roll_damage miss does NOT add a Resilient stack", () => {
+    const begun = runBegin(createCombatState(wardenFullInit()), [15, 8]);
+    // d10=5, d20=1 → 1+2=3 < AC 5 → miss.
+    const result = step(
+      begun.state,
+      { kind: "ability", actor: "U_WARDEN", ability_id: "bulwark_strike" },
+      seqRoll([5, 1]),
+    );
+    expect(result.state.ability_state?.resilient?.["U_WARDEN"]).toBeUndefined();
+  });
+
+  it("Resilient stacks raise the shield cap for subsequent shield grants", () => {
+    // max_hp=30, base cap=60. With 2 stacks (vit=10 → 4/stack = +8): cap=68.
+    // Pre-inject 2 Resilient stacks and shield near the base cap.
+    const begun = runBegin(createCombatState(wardenFullInit()), [15, 8]);
+    const withStacks: CombatState = {
+      ...begun.state,
+      fighters: begun.state.fighters.map((f) => f.id === "U_WARDEN" ? { ...f, shield: 58 } : f),
+      ability_state: { resilient: { U_WARDEN: [99, 99] } }, // 2 stacks, far future expiry
+    };
+    // Use grant_shield via brace (grant_shield_from_armor with armor=5, +2 stacks bonus=8, effective=13, 50%=6)
+    // Actually use taunt's fx.shield directly — but we can't easily trigger a grant_shield
+    // without an ability. Instead, directly verify the cap via Armor Up passive.
+    // Armor Up grants 2 + floor(5/4)=3 shield per turn. Cap without Resilient: 60, with 2 stacks: 68.
+    // Shield is 58; grant 3 → min(68, 61) = 61. Without stacks it would still be 61 (< base cap 60? no, 61>60).
+    // Better: start at shield=59, grant anything → base cap clamps at 60, but Resilient cap allows 68.
+    // With shield=62 (above base cap) already set, verify Armor Up still grants (because cap is 68).
+    const atHighShield: CombatState = {
+      ...begun.state,
+      fighters: begun.state.fighters.map((f) => f.id === "U_WARDEN" ? { ...f, shield: 62 } : f),
+      ability_state: { resilient: { U_WARDEN: [99, 99] } },
+    };
+    // Trigger Armor Up by doing warden's turn (wait action fires applyPreActionPassives).
+    // But wait action doesn't fire Armor Up... let me use "attack" which calls applyPreActionPassives.
+    // Actually: attack calls applyPreActionPassives which calls applyWardenArmorUp.
+    // d20=15 (15+2=17 ≥ 12: hit), d6=4 for the attack.
+    const result = step(atHighShield, { kind: "attack", actor: "U_WARDEN" }, seqRoll([15, 4]));
+    const warden = result.state.fighters.find((f) => f.id === "U_WARDEN")!;
+    // Armor Up grants 2 + floor(5/4)=3 shield. cap = 30*2 + 2*(2+floor(10/4)) = 60 + 2*4 = 68.
+    // shield = min(68, 62+3) = 65. (Without stacks: min(60, 62+3)=60, clamped to 60.)
+    // But wait: the attack itself also adds a Resilient stack. So after Armor Up and the attack:
+    // stacks = 3 (2 pre-existing + 1 from the hit), cap = 60 + 3*4 = 72.
+    // Pre-attack: Armor Up fires first. At that point stacks=2, cap=68. shield=min(68,65)=65.
+    // After attack: stack added (stacks=3), cap=72. Shield stays at 65 (no grant).
+    expect(warden.shield).toBe(65);
   });
 });
 
