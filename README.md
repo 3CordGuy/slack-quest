@@ -133,7 +133,7 @@ floor((INT−5)/2).
 - Passive - Thorns - Reflect 25% of your armor value back to any attacker that hits you
 - Passive - Armor Up - Regenerate `2+⌊lv/4⌋` shield at the start of each of your turns
 - Passive - Resilient - Each successful attack hit grants a Resilient stack (lasts 4 rounds). Each active stack raises your effective armor and shield cap by `2+⌊vit/4⌋`, boosting Thorns, Brace, and the maximum shield you can hold
-- Active - Bulwark Strike - 0 mana, 2 turn cooldown. d20+atk to hit; `1d10+atk+50% armor` damage
+- Active - Bulwark Strike - 0 mana, 2 turn cooldown. d20+atk to hit; `1d10+atk+50% current shield` damage
 - Active - Taunt - 2 mana. Force all monsters to target you for 2 swings; all incoming damage routes through your armor for 2 turns
 - Active - Brace - 0 mana, 4 turn cooldown. Restore 50% of your effective armor as shield + −20% incoming damage for 2 turns
 
