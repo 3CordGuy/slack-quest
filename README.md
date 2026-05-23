@@ -80,16 +80,68 @@ character per Slack user. Classes share five primary stats (STR / INT / VIT
 the web stat-allocator). Attack mod = floor((STR−5)/2); magic mod =
 floor((INT−5)/2).
 
-| Class | HP | Skills | Passive(s) | Damage ability | Utility abilities |
-|---|---|---|---|---|---|
-| DevOps Mage | 22 | INT, DEX | **Mana Font** — +1 mana every 3 turns | **Fireball** (2m, 1cd) — `magic×d6` fire AoE to all enemies | **Lightning Bolt** (1m) — d20+mag hit, `magic×d8` lightning; **Mage Armor** (1m) — `3d6+mag` shield to ally; **Containerize** (2m, 1cd) — stun w/ escalating break chance |
-| QA Paladin | 28 | STR | **Holy Rage** — stack 10% of party's incoming damage as next-attack bonus | **Smite** (1m, 1cd) — `1d6+atk+wpn+2d8`; enemy deals −50% next swing | **Shield of Faith** (2m) — +5 AC party-wide for 3 rounds; **Lay on Hands** (1m) — `1d6+mag/2+vit/2` heal (also auto-triggers once per fight at ≤30% HP); **Protect** (free, 2cd) — split damage with an ally, or self-shield `2d6+mag/2+vit/2` |
-| Backend Druid | 24 | INT, STR | **Primal Strikes** — magic mod boosts attack to-hit/damage; heal self on every attack hit | **Wildgrowth** (2m, 2cd) — `3d6+mag+atk` AoE + entangle (−4 to-hit) for 2 rounds | **Regeneration** (1m) — `mag` HP/turn HoT on ally for 4 rounds; **Barkskin** (1m) — +5 AC on ally; **Animal Form** (2m) — transform for 4 turns (all stats scale up) |
-| Frontend Bard | 20 | INT | **Bardic Aura** — party deals `+(1+⌊lv/5⌋)` bonus damage while you're alive | **Crescendo** (1m) — `1d6+mag+party×2+wpn` | **Verse** (free, 2cd) — mock enemy (disadvantage) or encourage ally (advantage) on next 2 rolls; **Battle Hymn** (2m) — aura +3 + refill all party mana; **Serenade** (2m) — `2d6+mag` heal + shield on lowest-HP% ally |
-| Staff Sage | 26 | INT | **Sage's Reading** — always see the monster's next-swing damage range | **Manifest** (1m) — `2d8+wpn` (no stat mod) | **Foresee** (1m) — full battle intel for 2 turns: next-swing target, damage range, targeting odds, party triage |
-| Refactor Rogue | 18 | DEX | **Lethal Strikes** — crits apply `2+⌊lv/2⌋` bleed stacks | **Backstab** (free, 2cd) — roll d20 with advantage; best-of-2d6 damage; auto-crits if monster ≤50% HP | **Vanish** (2m) — untargetable 2 rounds; attacks from Vanish auto-crit; **Envenom Weapon** (1m) — next 2 hits each apply `2+lv` poison stacks; **Debilitate** (1m, 3cd) — stun 1 round + 20% vulnerability for 2 rounds |
-| SRE Warden | 30 | STR | **Thorns** — reflect 25% armor value back to attacker on each hit; **Armor Up** — regen `2+⌊lv/4⌋` shield at start of each own turn | **Bulwark Strike** (free, 2cd) — d20+atk to hit; `1d10+atk+50%armor` damage | **Taunt** (2m) — force all monsters to target you for 2 swings; **Brace** (free, 4cd) — restore 50% max armor as shield + −20% incoming damage for 2 turns |
-| Data Warlock | 22 | INT | **Sinister Queries** — dealing any damage applies `1+⌊lv/5⌋` bleed stacks to the target | **Hex** (1m) — −25% monster damage; hexed target gains 3 bleed stacks on each damage received | **Leech Life** (1m) — `2d6+mag` + heal 50% dealt; **Forbidden SQL** (2m) — consume all bleeds for `(2+⌊mag/4⌋)×stacks` damage; **Summon Imp** (2m, 2cd) — summon a pet ally |
+**DevOps Mage** — 22 HP | Skills: INT, DEX
+
+- Passive - Mana Font - +1 mana every 3 turns
+- Active - Fireball - 2 mana, 1 turn cooldown. `magic×d6` fire AoE to all enemies
+- Active - Lightning Bolt - 1 mana. d20+mag to hit, `magic×d8` lightning damage
+- Active - Mage Armor - 1 mana. `3d6+mag` shield to an ally
+- Active - Containerize - 2 mana, 1 turn cooldown. Stun with escalating break chance
+
+**QA Paladin** — 28 HP | Skills: STR
+
+- Passive - Holy Rage - Stack 10% of the party's incoming damage as a next-attack bonus
+- Active - Smite - 1 mana, 1 turn cooldown. `1d6+atk+wpn+2d8` damage; enemy deals −50% on their next swing
+- Active - Shield of Faith - 2 mana. +5 AC party-wide for 3 rounds
+- Active - Lay on Hands - 1 mana. `1d6+mag/2+vit/2` heal (also auto-triggers once per fight at ≤30% HP)
+- Active - Protect - 0 mana, 2 turn cooldown. Split incoming damage with an ally, or self-shield `2d6+mag/2+vit/2`
+
+**Backend Druid** — 24 HP | Skills: INT, STR
+
+- Passive - Primal Strikes - Magic mod boosts attack to-hit and damage; heal self on every attack hit
+- Active - Wildgrowth - 2 mana, 2 turn cooldown. `3d6+mag+atk` AoE + entangle (−4 to-hit) for 2 rounds
+- Active - Regeneration - 1 mana. `mag` HP/turn heal-over-time on an ally for 4 rounds
+- Active - Barkskin - 1 mana. +5 AC on an ally
+- Active - Animal Form - 2 mana. Transform for 4 turns (all stats scale up)
+
+**Frontend Bard** — 20 HP | Skills: INT
+
+- Passive - Bardic Aura - Party deals `+(1+⌊lv/5⌋)` bonus damage while you're alive
+- Active - Crescendo - 1 mana. `1d6+mag+party×2+wpn` damage
+- Active - Verse - 0 mana, 2 turn cooldown. Mock an enemy (disadvantage) or encourage an ally (advantage) on their next 2 rolls
+- Active - Battle Hymn - 2 mana. Aura bonus +3 and refills all party mana
+- Active - Serenade - 2 mana. `2d6+mag` heal + shield on the lowest-HP% ally
+
+**Staff Sage** — 26 HP | Skills: INT
+
+- Passive - Sage's Reading - Always see the monster's next-swing damage range
+- Active - Manifest - 1 mana. `2d8+wpn` damage (no stat mod)
+- Active - Foresee - 1 mana. Full battle intel for 2 turns: next-swing target, damage range, targeting odds, and party triage
+
+**Refactor Rogue** — 18 HP | Skills: DEX
+
+- Passive - Lethal Strikes - Crits apply `2+⌊lv/2⌋` bleed stacks
+- Active - Backstab - 0 mana, 2 turn cooldown. Roll d20 with advantage; best-of-2d6 damage; auto-crits if monster is ≤50% HP
+- Active - Vanish - 2 mana. Untargetable for 2 rounds; attacks from Vanish auto-crit
+- Active - Envenom Weapon - 1 mana. Next 2 hits each apply `2+lv` poison stacks
+- Active - Debilitate - 1 mana, 3 turn cooldown. Stun for 1 round + 20% vulnerability for 2 rounds
+
+**SRE Warden** — 30 HP | Skills: STR
+
+- Passive - Thorns - Reflect 25% of your armor value back to any attacker that hits you
+- Passive - Armor Up - Regenerate `2+⌊lv/4⌋` shield at the start of each of your turns
+- Passive - Resilient - Each successful attack hit grants a Resilient stack (lasts 4 rounds). Each active stack raises your effective armor and shield cap by `2+⌊vit/4⌋`, boosting Thorns, Brace, and the maximum shield you can hold
+- Active - Bulwark Strike - 0 mana, 2 turn cooldown. d20+atk to hit; `1d10+atk+50% armor` damage
+- Active - Taunt - 2 mana. Force all monsters to target you for 2 swings
+- Active - Brace - 0 mana, 4 turn cooldown. Restore 50% of max armor as shield + −20% incoming damage for 2 turns
+
+**Data Warlock** — 22 HP | Skills: INT
+
+- Passive - Sinister Queries - Dealing any damage applies `1+⌊lv/5⌋` bleed stacks to the target
+- Active - Hex - 1 mana. −25% monster damage; hexed target gains 3 bleed stacks on each damage received
+- Active - Leech Life - 1 mana. `2d6+mag` damage + heal 50% of damage dealt
+- Active - Forbidden SQL - 2 mana. Consume all bleeds for `(2+⌊mag/4⌋)×stacks` damage
+- Active - Summon Imp - 2 mana, 2 turn cooldown. Summon a pet ally
 
 `(Xm)` = mana cost; `(Xcd)` = cooldown in turns after use. Active abilities cost mana.
 Mana refills between quests and at level-up. Magic-type drop items grant
