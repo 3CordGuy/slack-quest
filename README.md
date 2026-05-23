@@ -123,7 +123,7 @@ floor((INT−5)/2).
 **Refactor Rogue** — 18 HP | Skills: DEX
 
 - Passive - Lethal Strikes - Crits apply `2+⌊lv/2⌋` bleed stacks
-- Active - Backstab - 0 mana, 2 turn cooldown. Roll d20 with advantage; best-of-2d6 damage; auto-crits if monster is ≤50% HP
+- Active - Backstab - 0 mana, 2 turn cooldown. Roll d20 with advantage; best-of-2d6 damage
 - Active - Vanish - 2 mana. Untargetable for 2 rounds; attacks from Vanish auto-crit
 - Active - Envenom Weapon - 1 mana. Next 2 hits each apply `2+lv` poison stacks
 - Active - Debilitate - 1 mana, 3 turn cooldown. Stun for 1 round + 20% vulnerability for 2 rounds
