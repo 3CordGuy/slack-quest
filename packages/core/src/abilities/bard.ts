@@ -63,7 +63,7 @@ export const bardAbilities: AbilityDef[] = [
     name: "Serenade",
     blurb: "A soothing melody that heals and shields a chosen ally for 2d6 + magic HP and a small shield.",
     icon: "music-spell",
-    mana_cost: 2,
+    mana_cost: 1,
     routing: "utility",
     target: "single_ally",
     execute(ctx) {
@@ -77,7 +77,7 @@ export const bardAbilities: AbilityDef[] = [
     kind: "passive",
     id: "bardic_aura",
     name: "Bardic Aura",
-    blurb: "While you're alive, partymates deal +(1 + floor(level/5)) bonus damage. Battle Hymn boosts it by +2 more.",
+    blurb: "The whole party (including yourself and ally NPCs) deals +(1 + floor(level/5)) bonus damage. Battle Hymn boosts it by +2 more.",
     trigger: "always_on",
     once_per_fight: false,
     execute: () => [],

@@ -1691,7 +1691,7 @@ describe("Frontend Bard — Serenade", () => {
     const paladin = result.state.fighters.find((f) => f.id === "U_PALADIN")!;
     expect(paladin.hp).toBe(19);    // 10 + 9
     expect(paladin.shield).toBe(2);
-    expect(result.state.fighters.find((f) => f.id === "U_BARD")!.mana).toBe(1);
+    expect(result.state.fighters.find((f) => f.id === "U_BARD")!.mana).toBe(2); // mana_cost=1
   });
 });
 
@@ -1789,9 +1789,9 @@ describe("mark", () => {
   });
 
   it("attack damage is not affected by an active mark", () => {
-    // Alice (U_A) marks, then Bob (U_B) attacks — no bonus should appear.
-    // d20=10 → hit (attack_mod 0, tier 3 AC=5 → need ≥ 5), d6=2 → dmg = 2+0+2(wp)=4.
-    // If the old mark bonus (+2) were still applied this would be 6.
+    // Alice (U_A) marks, then Bob (U_B, the Frontend Bard) attacks — no mark bonus.
+    // d20=10 → hit (attack_mod 0, tier 3 AC=5 → need ≥ 5), d6=2 → dmg = 2+0+2(wp)+1(bard aura)=5.
+    // If the old mark bonus (+2) were still applied this would be 7.
     const begun = runBegin(createCombatState(markInit()), [20, 5, 1]);
     const marked: CombatState = {
       ...begun.state,
@@ -1804,7 +1804,7 @@ describe("mark", () => {
     };
     const result = step(marked, { kind: "attack", actor: "U_B" }, seqRoll([10, 2]));
     const hitEvt = result.events.find((e) => e.type === "player_hit");
-    expect(hitEvt).toMatchObject({ damage: 4 });
+    expect(hitEvt).toMatchObject({ damage: 5 }); // +1 bard self-aura (level 4 → floor(4/5)=0, base=1)
   });
 });
 

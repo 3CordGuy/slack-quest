@@ -2949,7 +2949,7 @@ function PartyChips({ fighters, selfId, flashIds, hitDustSeq, healBurstSeq, shie
           const vanishSwings = vanishedMap?.[f.id] ?? 0;
           const envenomEntry = envenomMap?.[f.id];
           const encourageCharges = encourageMap?.[f.id] ?? 0;
-          const showAura = bardAuraBonus > 0 && f.class !== "Frontend Bard";
+          const showAura = bardAuraBonus > 0;
           const hasExtra = sofActive || isProtected || holyRageTotal > 0 || vanishSwings > 0 || !!envenomEntry || encourageCharges > 0 || showAura;
           if (!f.effects?.length && !hasExtra) return null;
           return (

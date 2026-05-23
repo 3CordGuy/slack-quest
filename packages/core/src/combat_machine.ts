@@ -1074,9 +1074,25 @@ function handleAllyNpcAct(state: CombatState, roll: RollFn): StepResult {
   const hit = resolvePlayerHit("attack", mercAfterTick.attack_mod, mercAfterTick.weapon_power, roll, npcDamageRoll);
   events.push({ type: "roll", actor: actorId, die: npcDamageRoll, value: hit.roll, purpose: "damage_attack" });
 
-  const { newShield: newMonsterShield, newHp, hpDamage: finalDamage } =
-    applyDamageWithShield(hit.damage, monster.shield, monster.hp);
+  const aura = computeBardAuraBonus(s, mercAfterTick);
+  const hymnCharges = s.ability_state?.battle_hymn ?? 0;
+  const hymnRemaining = aura.hymn_consumed ? Math.max(0, hymnCharges - 1) : hymnCharges;
+  const abilityStateAfterHymn = aura.hymn_consumed
+    ? (hymnRemaining > 0 ? { ...s.ability_state, battle_hymn: hymnRemaining } : stripField(s.ability_state, "battle_hymn"))
+    : s.ability_state;
 
+  const rawDamage = hit.damage + aura.bonus;
+  const { newShield: newMonsterShield, newHp, hpDamage: finalDamage } =
+    applyDamageWithShield(rawDamage, monster.shield, monster.hp);
+
+  if (aura.bonus > 0) {
+    events.push({
+      type: "passive_bard_aura",
+      actor: actorId,
+      source: s.fighters.find((f) => f.hp > 0 && classHasPassive(f.class, "bardic_aura"))?.id ?? actorId,
+      bonus: aura.bonus,
+    });
+  }
   events.push({
     type: "player_hit",
     actor: actorId,
@@ -1084,12 +1100,16 @@ function handleAllyNpcAct(state: CombatState, roll: RollFn): StepResult {
     damage: finalDamage,
     armor_absorbed: monster.shield - newMonsterShield,
     crit: hit.isCrit,
-    formula: `${npcDamageRoll}+${mercAfterTick.attack_mod}a+${mercAfterTick.weapon_power}w`,
+    formula: `${npcDamageRoll}+${mercAfterTick.attack_mod}a+${mercAfterTick.weapon_power}w${aura.bonus > 0 ? ` +${aura.bonus} aura` : ""}`,
   });
+  if (aura.hymn_consumed) {
+    events.push({ type: "battle_hymn_consumed", actor: actorId, bonus: aura.bonus, remaining: hymnRemaining });
+  }
 
   const monsterKilled = newHp <= 0;
   const nextState: CombatState = {
     ...s,
+    ability_state: abilityStateAfterHymn,
     monsters: s.monsters.map((m) =>
       m.id === monster.id ? { ...m, hp: Math.max(0, newHp), shield: newMonsterShield } : m,
     ),
@@ -3192,7 +3212,6 @@ function computeBardAuraBonus(
   state: CombatState,
   attacker: CombatFighter,
 ): { bonus: number; hymn_consumed: boolean } {
-  if (classHasPassive(attacker.class, "bardic_aura")) return { bonus: 0, hymn_consumed: false };
   const bard = state.fighters.find(
     (f) => f.hp > 0 && classHasPassive(f.class, "bardic_aura"),
   );
