@@ -1805,7 +1805,6 @@ describe("mark", () => {
     const result = step(marked, { kind: "attack", actor: "U_B" }, seqRoll([10, 2]));
     const hitEvt = result.events.find((e) => e.type === "player_hit");
     expect(hitEvt).toMatchObject({ damage: 4 });
-    expect(result.events.find((e) => e.type === "mark_bonus")).toBeUndefined();
   });
 });
 

@@ -218,8 +218,6 @@ export interface CombatState {
 // Passive tuning knobs. Mirror src/commands.ts constants in main.
 const DRUID_PASSIVE_REGEN = 2;
 const BARD_AURA_HYMN_BONUS = 2;
-const WARLOCK_BLEED_MAGNITUDE = 3;
-const WARLOCK_BLEED_DURATION = 3;
 
 // Keys for once-per-fight passives.
 const PASSIVE_WARDEN_SHIELD = "warden_shield";
@@ -474,8 +472,7 @@ export type CombatEvent =
   | { type: "passive_rogue_lethal_strike"; actor: ActorId; magnitude: number; duration: number }
   | { type: "ability_envenom_proc"; actor: ActorId; target: ActorId; stacks: number }
   | { type: "passive_bard_aura"; actor: ActorId; source: ActorId; bonus: number }
-  | { type: "passive_warlock_bleed"; actor: ActorId; magnitude: number; duration: number }
-  | { type: "passive_holy_rage"; paladin: ActorId; bonus: number }
+| { type: "passive_holy_rage"; paladin: ActorId; bonus: number }
   | { type: "ability_shield_of_faith"; actor: ActorId; expires_after_round: number }
   | { type: "ability_protect"; actor: ActorId; target: ActorId }
   | { type: "ability_smite_debuff"; actor: ActorId; target: ActorId }
@@ -1739,13 +1736,6 @@ function handleDamageAbility(
     const hexProc = applyHexBleedProc(nextState, monster.id);
     nextState = hexProc.state;
     events.push(...hexProc.events);
-  }
-
-  // Warlock Cursed Strike: crits apply bleed.
-  if (isCrit && !monsterKilled) {
-    const bleed = applyWarlockBleed(nextState, tickedActor, monster.id, true);
-    nextState = bleed.state;
-    events.push(...bleed.events);
   }
 
   // Rogue — Lethal Strikes: crits apply bleed.
@@ -3215,8 +3205,7 @@ function computeBardAuraBonus(
   return { bonus: base, hymn_consumed: false };
 }
 
-// Data Warlock — Cursed Strike. On a critical attack/cast, apply a 2-turn
-// Sinister Queries passive: fires on any hit (attack, cast, or ability damage).
+// Data Warlock — Sinister Queries passive: fires on any hit (attack, cast, or ability damage).
 // Applies 1 + floor(level/5) bleed stacks to the target monster.
 function applySinisterQueries(
   state: CombatState,
