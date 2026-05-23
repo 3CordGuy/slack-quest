@@ -2086,7 +2086,6 @@ describe("focus weapon — magic_mod to hit, reduced weapon_power", () => {
     const hit = result.events.find((e) => e.type === "player_hit");
     expect(hit).toMatchObject({ damage: 8 });
     expect(result.state.monsters[0].hp).toBe(32);
-    expect(hitEvt).toMatchObject({ damage: 4 });
   });
 });
 
@@ -2210,9 +2209,9 @@ describe("Staff Sage — Ray of Frost", () => {
   });
 
   it("emits no player_hit on a miss", () => {
-    // d20=6 → 6+2=8 < 9 miss. No damage die or freeze roll consumed.
+    // d20=2 → 2+2=4 < 7 miss. No damage die or freeze roll consumed.
     const begun = runBegin(createCombatState(sageInit()), [20, 5]);
-    const result = step(begun.state, { kind: "ability", actor: "U_SAGE", ability_id: "ray_of_frost", target_id: MONSTER_ID }, seqRoll([3, 2, 6]));
+    const result = step(begun.state, { kind: "ability", actor: "U_SAGE", ability_id: "ray_of_frost", target_id: MONSTER_ID }, seqRoll([3, 2, 2]));
     expect(result.events.find((e) => e.type === "player_hit")).toBeUndefined();
     expect(result.state.monsters[0].hp).toBe(40);
   });
@@ -2234,9 +2233,9 @@ describe("Staff Sage — Ray of Frost", () => {
   });
 
   it("does not apply frozen on a miss", () => {
-    // d20=6 miss → no freeze roll consumed.
+    // d20=2 miss → no freeze roll consumed.
     const begun = runBegin(createCombatState(sageInit()), [20, 5]);
-    const result = step(begun.state, { kind: "ability", actor: "U_SAGE", ability_id: "ray_of_frost", target_id: MONSTER_ID }, seqRoll([3, 2, 6]));
+    const result = step(begun.state, { kind: "ability", actor: "U_SAGE", ability_id: "ray_of_frost", target_id: MONSTER_ID }, seqRoll([3, 2, 2]));
     expect(result.state.monsters[0].effects.some((e) => e.type === "frozen")).toBe(false);
   });
 });
