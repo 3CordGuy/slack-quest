@@ -378,7 +378,7 @@ interface FighterReward {
 }
 
 interface OutcomeSummary {
-  status: "victory" | "defeat";
+  status: "victory" | "defeat" | "fled";
   rewards: FighterReward[];
   monster_name: string;
   monster_tier: number;

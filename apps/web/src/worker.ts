@@ -6277,7 +6277,7 @@ export interface FighterReward {
 }
 
 export interface OutcomeSummary {
-  status: "victory" | "defeat";
+  status: "victory" | "defeat" | "fled";
   rewards: FighterReward[];
   monster_name: string;
   monster_tier: number;
@@ -6653,7 +6653,7 @@ async function applyWebCombatOutcome(
       await clearHiredMercForParty(env.DB, questId);
       // Skip advanceExpeditionAfterWebCombat — grid dungeons don't use it.
       return {
-        status: state.status as "victory" | "defeat",
+        status: state.status as "victory" | "defeat" | "fled",
         rewards,
         monster_name: primaryMonster.name,
         monster_tier: tier,
@@ -6668,7 +6668,7 @@ async function applyWebCombatOutcome(
     const dungeonDoors = await advanceExpeditionAfterWebCombat(env, questId);
     if (dungeonDoors) {
       return {
-        status: state.status as "victory" | "defeat",
+        status: state.status as "victory" | "defeat" | "fled",
         rewards,
         monster_name: primaryMonster.name,
         monster_tier: tier,
@@ -7364,7 +7364,7 @@ export class QuestRoom extends DurableObject<Env> {
     const becameTerminal =
       stateChanged &&
       prevState.status === "active" &&
-      (result.state.status === "victory" || result.state.status === "defeat");
+      (result.state.status === "victory" || result.state.status === "defeat" || result.state.status === "fled");
     if (becameTerminal) {
       // Write residual drink buffs back to D1 BEFORE applyWebCombatOutcome
       // — the latter may call clearPartyEffects which already nulls

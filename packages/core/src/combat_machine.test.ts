@@ -653,6 +653,21 @@ describe("combat_machine.step", () => {
       expect(fc).toMatchObject({ success: false });
       expect(result.events.find((e) => e.type === "monster_attack")).toBeDefined();
     });
+
+    it("emits a 'fled' event on success (signals terminal transition to orchestration layer)", () => {
+      const begun = runBegin(createCombatState(baseInit()), [15, 8]);
+      const result = step(begun.state, { kind: "flee", actor: "U_PALADIN" }, seqRoll([15]));
+      expect(result.events.find((e) => e.type === "fled")).toBeDefined();
+    });
+
+    it("rejects further actions after a successful flee (fled is terminal)", () => {
+      const begun = runBegin(createCombatState(baseInit()), [15, 8]);
+      const fled = step(begun.state, { kind: "flee", actor: "U_PALADIN" }, seqRoll([15]));
+      expect(fled.state.status).toBe("fled");
+      const after = step(fled.state, { kind: "attack", actor: "U_PALADIN" }, seqRoll([15, 4]));
+      // State must be unchanged and the action rejected.
+      expect(after.state).toBe(fled.state);
+    });
   });
 });
 
