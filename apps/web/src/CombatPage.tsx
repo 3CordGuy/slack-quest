@@ -2867,6 +2867,10 @@ function PartyChips({ fighters, selfId, flashIds, hitDustSeq, healBurstSeq, shie
   const envenomMap = abilityState?.envenomed_weapon as Record<string, { stacks: number; charges: number }> | undefined;
   const encourageMap = abilityState?.encourage as Record<string, number> | undefined;
   const hymnCharges = (abilityState?.battle_hymn as number | undefined) ?? 0;
+  const aliveBard = fighters.find((f) => f.hp > 0 && f.class === "Frontend Bard");
+  const bardAuraBonus = aliveBard
+    ? 1 + Math.floor(aliveBard.level / 5) + (hymnCharges > 0 ? 2 : 0)
+    : 0;
 
   function renderChip(f: Fighter) {
     const pct = f.max_hp > 0 ? Math.max(0, f.hp / f.max_hp) : 0;
@@ -2945,7 +2949,8 @@ function PartyChips({ fighters, selfId, flashIds, hitDustSeq, healBurstSeq, shie
           const vanishSwings = vanishedMap?.[f.id] ?? 0;
           const envenomEntry = envenomMap?.[f.id];
           const encourageCharges = encourageMap?.[f.id] ?? 0;
-          const hasExtra = sofActive || isProtected || holyRageTotal > 0 || vanishSwings > 0 || !!envenomEntry || encourageCharges > 0 || hymnCharges > 0;
+          const showAura = bardAuraBonus > 0 && f.class !== "Frontend Bard";
+          const hasExtra = sofActive || isProtected || holyRageTotal > 0 || vanishSwings > 0 || !!envenomEntry || encourageCharges > 0 || showAura;
           if (!f.effects?.length && !hasExtra) return null;
           return (
             <div style={{ position: "absolute", top: -8, right: -4, display: "flex", flexDirection: "column", gap: 3, alignItems: "flex-end" }}>
@@ -2959,7 +2964,7 @@ function PartyChips({ fighters, selfId, flashIds, hitDustSeq, healBurstSeq, shie
               {isProtected && <StatusPill size="sm" color="#a78bfa" icon="crowned-heart" label="protected" suffix="½ dmg" title="Protected: taking half damage, absorbed by the paladin" />}
               {holyRageTotal > 0 && <StatusPill size="sm" color="#f97316" icon="fire" label="holy rage" suffix={`+${holyRageBonus}`} title={`Holy Rage: next attack deals +${holyRageBonus} bonus damage`} />}
               {encourageCharges > 0 && <StatusPill size="sm" color="#4ade80" icon="conversation" label="adv" suffix={`${encourageCharges}c`} title={`Encouraged: advantage on next ${encourageCharges} roll${encourageCharges === 1 ? "" : "s"}`} />}
-              {hymnCharges > 0 && <StatusPill size="sm" color="#f59e0b" icon="aura" label="hymn" suffix={`${hymnCharges}c`} title={`Battle Hymn: next ${hymnCharges} attack${hymnCharges === 1 ? "" : "s"} gain bardic aura boost`} />}
+              {showAura && <StatusPill size="sm" color="#f59e0b" icon="aura" label="bard aura" suffix={`+${bardAuraBonus}`} title={`Bardic Aura: +${bardAuraBonus} bonus damage${hymnCharges > 0 ? ` (Battle Hymn active: ${hymnCharges} charges)` : ""}`} />}
             </div>
           );
         })()}
