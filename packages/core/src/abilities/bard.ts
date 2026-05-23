@@ -6,10 +6,10 @@ export const bardAbilities: AbilityDef[] = [
     kind: "active",
     id: "crescendo",
     name: "Crescendo",
-    blurb: "A rising melody that crescendos into a strike — deals 1d6 + magic + party×2 + weapon damage.",
+    blurb: "A rising melody that crescendos into a strike — rolls d20 + magic to hit; deals 1d6 + magic + party×2 + weapon on hit.",
     icon: "music-spell",
     mana_cost: 1,
-    routing: "damage",
+    routing: "utility",
     target: "single_enemy",
     execute(ctx) {
       const monster = ctx.target as { id: string };
@@ -17,7 +17,7 @@ export const bardAbilities: AbilityDef[] = [
       const party = Math.max(1, ctx.party.length);
       const r = ctx.roll(6);
       const amount = r + ctx.caster.magic_mod + party * 2 + wpn;
-      return [fx.damage(monster.id, amount, `1d6 + ${ctx.caster.magic_mod}m + ${party}p×2 + ${wpn}w`, { drinkBuff: "ability" })];
+      return [fx.attackRollDamage(monster.id, ctx.caster.magic_mod, amount, `1d6 + ${ctx.caster.magic_mod}m + ${party}p×2 + ${wpn}w`)];
     },
   },
   {
@@ -61,18 +61,16 @@ export const bardAbilities: AbilityDef[] = [
     kind: "active",
     id: "serenade",
     name: "Serenade",
-    blurb: "A soothing melody that heals and shields the most wounded ally (auto-targets lowest HP%).",
+    blurb: "A soothing melody that heals and shields a chosen ally for 2d6 + magic HP and a small shield.",
     icon: "music-spell",
     mana_cost: 2,
     routing: "utility",
-    target: "self",
+    target: "single_ally",
     execute(ctx) {
-      const lowest = ctx.party.reduce((a, b) =>
-        a.hp / a.max_hp <= b.hp / b.max_hp ? a : b,
-      );
+      const target = ctx.target as { id: string };
       const healAmt = ctx.roll(6) + ctx.roll(6) + ctx.caster.magic_mod;
       const shieldAmt = 2 + Math.floor(ctx.caster.level / 5);
-      return [fx.heal(lowest.id, healAmt), fx.shield(lowest.id, shieldAmt)];
+      return [fx.heal(target.id, healAmt), fx.shield(target.id, shieldAmt)];
     },
   },
   {

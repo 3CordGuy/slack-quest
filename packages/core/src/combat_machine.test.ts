@@ -1576,6 +1576,125 @@ describe("Refactor Rogue — Debilitate", () => {
 
 // ── Mark (free-action communication) ─────────────────────────────────────────
 
+describe("Frontend Bard — Crescendo", () => {
+  function bardInit(): CombatInit {
+    return {
+      fighters: [
+        {
+          id: "U_BARD",
+          name: "Lyric",
+          class: "Frontend Bard",
+          level: 4,
+          hp: 20,
+          max_hp: 20,
+          mana: 3,
+          max_mana: 3,
+          shield: 0,
+          position: "front",
+          attack_mod: 0,
+          magic_mod: 2,
+          weapon_power: 2,
+          armor_power: 0,
+          scars: [],
+        },
+      ],
+      monster: {
+        name: "The Schemaless Shrieker",
+        hp: 40,
+        max_hp: 40,
+        shield: 0,
+        tier: 3,
+        is_boss: false,
+      },
+    };
+  }
+
+  // tier 3 → AC = 5 (4 + floor(3/2)). magic_mod = 2 → need d20 ≥ 3 to hit.
+  // Roll order for the ability action: d6 (damage in execute), d20 (hit check).
+
+  it("hit: spends 1 mana and deals 1d6 + magic + party×2 + weapon on a successful roll", () => {
+    const begun = runBegin(createCombatState(bardInit()), [15, 8]);
+    // d6=3, d20=15 → 15+2=17 ≥ AC 5 → hits. amount = 3+2+2+2 = 9.
+    const result = step(
+      begun.state,
+      { kind: "ability", actor: "U_BARD", ability_id: "crescendo" },
+      seqRoll([3, 15]),
+    );
+    expect(result.state.fighters[0].mana).toBe(2);
+    expect(result.state.monsters[0].hp).toBe(31);
+    const hit = result.events.find((e) => e.type === "player_hit");
+    expect(hit).toMatchObject({ damage: 9 });
+  });
+
+  it("miss: no damage when d20 + magic fails to reach AC", () => {
+    const begun = runBegin(createCombatState(bardInit()), [15, 8]);
+    // d6=3, d20=1 → 1+2=3 < AC 5 → miss. Monster hp unchanged.
+    const result = step(
+      begun.state,
+      { kind: "ability", actor: "U_BARD", ability_id: "crescendo" },
+      seqRoll([3, 1]),
+    );
+    expect(result.state.monsters[0].hp).toBe(40);
+    expect(result.events.find((e) => e.type === "player_hit")).toBeUndefined();
+  });
+});
+
+describe("Frontend Bard — Serenade", () => {
+  it("heals and shields the explicitly chosen ally", () => {
+    const init: CombatInit = {
+      fighters: [
+        {
+          id: "U_BARD",
+          name: "Lyric",
+          class: "Frontend Bard",
+          level: 4,
+          hp: 20,
+          max_hp: 20,
+          mana: 3,
+          max_mana: 3,
+          shield: 0,
+          position: "back",
+          attack_mod: 0,
+          magic_mod: 2,
+          weapon_power: 0,
+          armor_power: 0,
+          scars: [],
+        },
+        {
+          id: "U_PALADIN",
+          name: "Edmund",
+          class: "QA Paladin",
+          level: 5,
+          hp: 10,
+          max_hp: 30,
+          mana: 3,
+          max_mana: 3,
+          shield: 0,
+          position: "front",
+          attack_mod: 2,
+          magic_mod: 0,
+          weapon_power: 4,
+          armor_power: 3,
+          scars: [],
+        },
+      ],
+      monster: baseInit().monster,
+    };
+    // initiative: bard=15, paladin=10, monster=8 → bard goes first.
+    const begun = runBegin(createCombatState(init), [15, 10, 8]);
+    // Roll order in execute: d6=4, d6=3. heal = 4+3+2(magic)=9. shield = 2+floor(4/5)=2.
+    const result = step(
+      begun.state,
+      { kind: "ability", actor: "U_BARD", ability_id: "serenade", target: "U_PALADIN" },
+      seqRoll([4, 3]),
+    );
+    const paladin = result.state.fighters.find((f) => f.id === "U_PALADIN")!;
+    expect(paladin.hp).toBe(19);    // 10 + 9
+    expect(paladin.shield).toBe(2);
+    expect(result.state.fighters.find((f) => f.id === "U_BARD")!.mana).toBe(1);
+  });
+});
+
 describe("mark", () => {
   // Two-fighter party so we can mark out-of-turn.
   function markInit(): import("./combat_machine").CombatInit {
