@@ -1808,3 +1808,65 @@ describe("mark", () => {
     expect(result.events.find((e) => e.type === "mark_bonus")).toBeUndefined();
   });
 });
+
+describe("focus weapon — magic_mod to hit, reduced weapon_power", () => {
+  // tier 3 → AC = 5 (4 + floor(3/2)). magic_mod=3 → need d20 ≥ 2 to hit.
+  // weapon_power=4 represents floor(item_power/4) pre-computed at combat init.
+  function focusInit(): CombatInit {
+    return {
+      fighters: [
+        {
+          id: "U_MAGE",
+          name: "Ariel",
+          class: "DevOps Mage",
+          level: 3,
+          hp: 20,
+          max_hp: 20,
+          mana: 3,
+          max_mana: 3,
+          shield: 0,
+          position: "front",
+          attack_mod: 0,
+          magic_mod: 3,
+          weapon_power: 4,
+          weapon_range: "focus",
+          armor_power: 0,
+          scars: [],
+        },
+      ],
+      monster: {
+        name: "Test Monster",
+        hp: 40,
+        max_hp: 40,
+        shield: 0,
+        tier: 3,
+        is_boss: false,
+      },
+    };
+  }
+
+  it("uses magic_mod (not attack_mod) for the to-hit modifier", () => {
+    const begun = runBegin(createCombatState(focusInit()), [15, 8]);
+    // d20=2 + magic_mod(3) = 5 ≥ AC 5 → HIT. attack_mod=0 would miss (2+0=2 < 5).
+    const result = step(begun.state, { kind: "attack", actor: "U_MAGE" }, seqRoll([2, 3]));
+    const check = result.events.find((e) => e.type === "hit_check");
+    expect(check).toMatchObject({ hit: true, total: 5, modifier: 3 });
+  });
+
+  it("misses when d20 + magic_mod falls below AC", () => {
+    const begun = runBegin(createCombatState(focusInit()), [15, 8]);
+    // d20=1 + magic_mod(3) = 4 < AC 5 → MISS.
+    const result = step(begun.state, { kind: "attack", actor: "U_MAGE" }, seqRoll([1, 3]));
+    const check = result.events.find((e) => e.type === "hit_check");
+    expect(check).toMatchObject({ hit: false, total: 4, modifier: 3 });
+  });
+
+  it("applies weapon_power (item_power/4) to damage on hit", () => {
+    const begun = runBegin(createCombatState(focusInit()), [15, 8]);
+    // d20=15 hit. d6=4. damage = 4 + classMod(3) + weapon_power(4) = 11.
+    const result = step(begun.state, { kind: "attack", actor: "U_MAGE" }, seqRoll([15, 4]));
+    const hit = result.events.find((e) => e.type === "player_hit");
+    expect(hit).toMatchObject({ damage: 11 });
+    expect(result.state.monsters[0].hp).toBe(29);
+  });
+});

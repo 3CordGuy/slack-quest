@@ -328,11 +328,15 @@ function rollResistance(slot: EquipSlot, rarity: Rarity, subtype?: string): { ty
 // the case where it matters).
 export type WeaponRange = "melee" | "ranged" | "focus";
 
-// Constant mana ceiling lift while a focus weapon is equipped. Single
-// flat bump regardless of rarity — keeps the bookkeeping simple (one
-// integer to add/subtract on equip swaps). Caps still enforced via
-// MAX_MANA_CAP at higher level paths.
+// Legacy flat mana bonus kept for the Slack app (legacy code, not scaled).
 export const FOCUS_MAX_MANA_BONUS = 1;
+
+// Scaling mana ceiling lift for an equipped focus weapon: 1 + floor(power / 10).
+// Base of 1 ensures even a power-0 focus still grants one extra mana; higher-tier
+// focuses reward casters proportionally.
+export function focusManaBonus(power: number): number {
+  return 1 + Math.floor(power / 10);
+}
 
 // Per-rarity heal/shield bonus when a focus weapon is equipped. Scales
 // the same way weapon power scales for melee/ranged, just applied to

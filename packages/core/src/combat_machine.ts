@@ -82,9 +82,9 @@ export interface CombatFighter {
   position: BattlePosition;
   attack_mod: number;
   magic_mod: number;
-  // weapon_power contributes to attack/cast/sig damage for melee/ranged.
-  // For focus weapons we set this to 0 at the boundary and instead populate
-  // focus_power, which boosts heal/shield. Keeps the engine math branch-free.
+  // weapon_power contributes to attack/cast/sig damage. For melee/ranged this is
+  // the full item power; for focus weapons it is floor(item_power/4) — enough to
+  // make attacks functional without competing with melee/ranged damage output.
   weapon_power: number;
   focus_power: number;
   // Equipped weapon range. Used to gate back-row attack (only ranged/focus
@@ -745,7 +745,10 @@ function handlePlayerHit(
   const events: CombatEvent[] = [...tick.events];
   // Primal Strikes (Druid passive): add magic_mod to both to-hit and damage.
   const primalBonus = classHasPassive(tickedFighter.class, "primal_strikes") ? tickedFighter.magic_mod : 0;
-  const classMod = tickedFighter.attack_mod + primalBonus;
+  // Focus weapons key off magic_mod for to-hit and damage mod instead of attack_mod,
+  // letting casters who don't spec attack still land attacks reliably.
+  const baseMod = tickedFighter.weapon_range === "focus" ? tickedFighter.magic_mod : tickedFighter.attack_mod;
+  const classMod = baseMod + primalBonus;
 
   // ── d20 to-hit ──
   let d20 = roll(20);
