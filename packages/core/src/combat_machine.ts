@@ -748,10 +748,11 @@ function handlePlayerHit(
   const events: CombatEvent[] = [...tick.events];
   // Primal Strikes (Druid passive): add magic_mod to both to-hit and damage.
   const primalBonus = classHasPassive(tickedFighter.class, "primal_strikes") ? tickedFighter.magic_mod : 0;
-  // Focus weapons key off magic_mod for to-hit and damage mod instead of attack_mod,
-  // letting casters who don't spec attack still land attacks reliably.
-  const baseMod = tickedFighter.weapon_range === "focus" ? tickedFighter.magic_mod : tickedFighter.attack_mod;
-  const classMod = baseMod + primalBonus;
+  // Focus weapons use magic_mod for to-hit so casters can land attacks without speccing attack,
+  // but damage still uses attack_mod (focus damage comes from weapon_power, not magic).
+  const hitMod =
+    (tickedFighter.weapon_range === "focus" ? tickedFighter.magic_mod : tickedFighter.attack_mod) + primalBonus;
+  const damageMod = tickedFighter.attack_mod + primalBonus;
 
   // ── d20 to-hit ──
   let d20 = roll(20);
@@ -765,7 +766,7 @@ function handlePlayerHit(
     s = { ...s, ability_state: consumeEncourageCharge(s.ability_state, action.actor) };
   }
   const ac = monsterAc(monster.tier);
-  const hitTotal = d20 + classMod;
+  const hitTotal = d20 + hitMod;
   const landed = hitTotal >= ac;
   events.push({
     type: "roll",
@@ -779,7 +780,7 @@ function handlePlayerHit(
     actor: action.actor,
     target: monster.id,
     roll: d20,
-    modifier: classMod,
+    modifier: hitMod,
     total: hitTotal,
     ac,
     hit: landed,
@@ -798,7 +799,7 @@ function handlePlayerHit(
 
   // ── damage roll on hit ──
   const damageRoll = tickedFighter.damage_roll ?? "1d6";
-  const hit = resolvePlayerHit(action.kind, classMod, tickedFighter.weapon_power, roll, damageRoll);
+  const hit = resolvePlayerHit(action.kind, damageMod, tickedFighter.weapon_power, roll, damageRoll);
   events.push({
     type: "roll",
     actor: action.actor,

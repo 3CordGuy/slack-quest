@@ -2081,10 +2081,10 @@ describe("focus weapon — magic_mod to hit, reduced weapon_power", () => {
 
   it("applies weapon_power (item_power/4) to damage on hit", () => {
     const begun = runBegin(createCombatState(focusInit()), [15, 8]);
-    // d20=15 hit. d6=4. damage = 4 + classMod(3) + weapon_power(4) = 11.
+    // d20=15 hit. d6=4. damage = 4 + attack_mod(0) + weapon_power(4) = 8. magic_mod not added to damage.
     const result = step(begun.state, { kind: "attack", actor: "U_MAGE" }, seqRoll([15, 4]));
     const hit = result.events.find((e) => e.type === "player_hit");
-    expect(hit).toMatchObject({ damage: 11 });
-    expect(result.state.monsters[0].hp).toBe(29);
+    expect(hit).toMatchObject({ damage: 8 });
+    expect(result.state.monsters[0].hp).toBe(32);
   });
 });
