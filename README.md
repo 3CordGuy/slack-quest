@@ -93,7 +93,7 @@ floor((INT−5)/2).
 - Passive - Holy Rage - Stack 10% of the party's incoming damage as a next-attack bonus
 - Active - Smite - 1 mana, 1 turn cooldown. `1d6+atk+wpn+2d8` damage; enemy deals −50% on their next swing
 - Active - Shield of Faith - 2 mana. +5 AC party-wide for 3 rounds
-- Active - Lay on Hands - 1 mana. `1d6+mag/2+vit/2` heal (also auto-triggers once per fight at ≤30% HP)
+- Active - Lay on Hands - 1 mana. `1d6+mag/2+vit/2` heal to an ally; if the target is your protected ally, also heal yourself for the same amount
 - Active - Protect - 0 mana, 2 turn cooldown. Split incoming damage with an ally, or self-shield `2d6+mag/2+vit/2`
 
 **Backend Druid** — 24 HP | Skills: INT, STR
