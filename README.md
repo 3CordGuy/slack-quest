@@ -80,39 +80,39 @@ character per Slack user. Classes share five primary stats (STR / INT / VIT
 the web stat-allocator). Attack mod = floor((STR−5)/2); magic mod =
 floor((INT−5)/2).
 
-**DevOps Mage** — 22 HP | Skills: INT, DEX
+**DevOps Mage** — 22 HP | STR 4, INT 9, VIT 5, AGI 6, DEX 6
 
 - Passive - Mana Font - +1 mana every 3 turns
 - Active - Fireball - 2 mana, 1 turn cooldown. `magic×d6` fire AoE to all enemies
 - Active - Lightning Bolt - 1 mana. d20+mag to hit, `magic×d8` lightning damage
 - Active - Mage Armor - 1 mana. `3d6+mag` shield to an ally
-- Active - Containerize - 2 mana, 1 turn cooldown. Stun with escalating break chance
+- Active - Containerize - 2 mana, 1 turn cooldown. Stun the monster; each stunned turn it has a 30% cumulative chance to break free (guaranteed on the fourth turn)
 
-**QA Paladin** — 28 HP | Skills: STR
+**QA Paladin** — 28 HP | STR 9, INT 4, VIT 9, AGI 4, DEX 4
 
-- Passive - Holy Rage - Stack 10% of the party's incoming damage as a next-attack bonus
+- Passive - Holy Rage - Whenever you or an ally takes damage, your next attack deals +10% of that damage (stacks)
 - Active - Smite - 1 mana, 1 turn cooldown. `1d6+atk+wpn+2d8` damage; enemy deals −50% on their next swing
 - Active - Shield of Faith - 2 mana. +5 AC party-wide for 3 rounds
 - Active - Lay on Hands - 1 mana. `1d6+mag/2+vit/2` heal to an ally; if the target is your protected ally, also heal yourself for the same amount
-- Active - Protect - 0 mana, 2 turn cooldown. Split incoming damage with an ally, or self-shield `2d6+mag/2+vit/2`
+- Active - Protect - 0 mana, 2 turn cooldown. Target an ally: they take half damage, you absorb the other half. Target yourself instead to gain `2d6+mag/2+vit/2` shield
 
-**Backend Druid** — 24 HP | Skills: INT, STR
+**Backend Druid** — 24 HP | STR 6, INT 7, VIT 6, AGI 5, DEX 6
 
-- Passive - Primal Strikes - Magic mod boosts attack to-hit and damage; heal self on every attack hit
+- Passive - Primal Strikes - Magic mod boosts attack to-hit and damage; dealing attack damage heals you for `2×mag+attack`
 - Active - Wildgrowth - 2 mana, 2 turn cooldown. `3d6+mag+atk` AoE + entangle (−4 to-hit) for 2 rounds
 - Active - Regeneration - 1 mana. `mag` HP/turn heal-over-time on an ally for 4 rounds
-- Active - Barkskin - 1 mana. +5 AC on an ally
-- Active - Animal Form - 2 mana. Transform for 4 turns (all stats scale up)
+- Active - Barkskin - 1 mana. +5 AC on an ally for 2 rounds
+- Active - Animal Form - 2 mana. Transform for 4 rounds — STR, VIT, AGI, and DEX each increase by `mag + 25%` of their current value
 
-**Frontend Bard** — 20 HP | Skills: INT
+**Frontend Bard** — 20 HP | STR 4, INT 9, VIT 5, AGI 6, DEX 6
 
 - Passive - Bardic Aura - Party deals `+(1+⌊lv/5⌋)` bonus damage while you're alive
-- Active - Crescendo - 1 mana. `1d6+mag+party×2+wpn` damage
+- Active - Crescendo - 1 mana. d20+mag to hit; `1d6+mag+party×2+wpn` damage on hit
 - Active - Verse - 0 mana, 2 turn cooldown. Mock an enemy (disadvantage) or encourage an ally (advantage) on their next 2 rolls
 - Active - Battle Hymn - 2 mana. Bardic aura surges for 3 rounds (+2+magic bonus damage on top of the base aura) and restores mana to all allies
-- Active - Serenade - 2 mana. `2d6+mag` heal + shield on the lowest-HP% ally
+- Active - Serenade - 2 mana. `2d6+mag` heal + small shield on a chosen ally
 
-**Staff Sage** — 26 HP | Skills: INT
+**Staff Sage** — 26 HP | STR 4, INT 10, VIT 6, AGI 5, DEX 5
 
 - Passive - Foretell - Always see monster damage rolls and next intended targets
 - Active - Ray of Frost - 1 mana. Spell attack (+mag to hit), `mag`d4 frost damage with a 25% chance to freeze
@@ -120,30 +120,30 @@ floor((INT−5)/2).
 - Active - Good Fortune - 1 mana, 1 turn cooldown. Heal an ally for `1d4+mag`; a delayed heal for double that amount triggers on your next turn
 - Active - Ill Omen - 1 mana, 1 turn cooldown. Curse an enemy; tracks all damage it takes and deals 50% of the total back to it after 3 of its turns
 
-**Refactor Rogue** — 18 HP | Skills: DEX
+**Refactor Rogue** — 18 HP | STR 7, INT 4, VIT 4, AGI 7, DEX 8
 
 - Passive - Lethal Strikes - Crits apply `2+⌊lv/2⌋` bleed stacks
-- Active - Backstab - 0 mana, 2 turn cooldown. Roll d20 with advantage; best-of-2d6 damage
-- Active - Vanish - 2 mana. Untargetable for 2 rounds; attacks from Vanish auto-crit
+- Active - Backstab - 0 mana, 2 turn cooldown. Attack with advantage; roll damage twice and take the higher roll
+- Active - Vanish - 2 mana. Untargetable for 2 rounds; attacks from Vanish auto-crit on hit
 - Active - Envenom Weapon - 1 mana. Next 2 hits each apply `2+lv` poison stacks
 - Active - Debilitate - 1 mana, 3 turn cooldown. Stun for 1 round + 20% vulnerability for 2 rounds
 
-**SRE Warden** — 30 HP | Skills: STR
+**SRE Warden** — 30 HP | STR 9, INT 4, VIT 10, AGI 4, DEX 3
 
 - Passive - Thorns - Reflect 25% of your armor value back to any attacker that hits you
 - Passive - Armor Up - Regenerate `2+⌊lv/4⌋` shield at the start of each of your turns
 - Passive - Resilient - Each successful attack hit grants a Resilient stack (lasts 4 rounds). Each active stack raises your effective armor and shield cap by `2+⌊vit/4⌋`, boosting Thorns, Brace, and the maximum shield you can hold
 - Active - Bulwark Strike - 0 mana, 2 turn cooldown. d20+atk to hit; `1d10+atk+50% armor` damage
-- Active - Taunt - 2 mana. Force all monsters to target you for 2 swings
-- Active - Brace - 0 mana, 4 turn cooldown. Restore 50% of max armor as shield + −20% incoming damage for 2 turns
+- Active - Taunt - 2 mana. Force all monsters to target you for 2 swings; all incoming damage routes through your armor for 2 turns
+- Active - Brace - 0 mana, 4 turn cooldown. Restore 50% of your effective armor as shield + −20% incoming damage for 2 turns
 
-**Data Warlock** — 22 HP | Skills: INT
+**Data Warlock** — 22 HP | STR 4, INT 10, VIT 5, AGI 5, DEX 6
 
 - Passive - Sinister Queries - Dealing any damage applies `1+⌊lv/5⌋` bleed stacks to the target
 - Active - Hex - 1 mana. −25% monster damage; hexed target gains 3 bleed stacks on each damage received
 - Active - Leech Life - 1 mana. `2d6+mag` damage + heal 50% of damage dealt
 - Active - Forbidden SQL - 2 mana. Consume all bleeds for `(2+⌊mag/4⌋)×stacks` damage
-- Active - Summon Imp - 2 mana, 2 turn cooldown. Summon a pet ally
+- Active - Summon Imp - 2 mana, 2 turn cooldown. Summon an imp whose attacks deal damage equal to your magic modifier
 
 `(Xm)` = mana cost; `(Xcd)` = cooldown in turns after use. Active abilities cost mana.
 Mana refills between quests and at level-up. Magic-type drop items grant
