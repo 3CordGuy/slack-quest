@@ -17,7 +17,7 @@
 
 import { useEffect, useRef, useState } from "react";
 
-export type BurstKind = "fire" | "ice" | "lightning" | "frozen" | "victory" | "hit";
+export type BurstKind = "fire" | "ice" | "lightning" | "frozen" | "victory" | "hit" | "poison" | "bleed" | "shield" | "heal" | "curse" | "deploy";
 
 // ─── Per-kind visual config ──────────────────────────────────────────────────
 
@@ -72,6 +72,48 @@ const BURST: Record<BurstKind, BurstConfig> = {
     colors: ["#ef4444", "#fca5a5", "#f87171", "#ffffff"],
     glow: "rgba(252,165,165,1)",
     scatter: 28,
+  },
+  poison: {
+    count: 18, distance: 85, duration: 1200, size: 9,
+    colors: ["#84cc16", "#a3e635", "#65a30d", "#d9f99d"],
+    glow: "rgba(132,204,22,0.85)",
+    gravity: 50,
+    scatter: 20,
+  },
+  bleed: {
+    count: 14, distance: 70, duration: 900, size: 8,
+    colors: ["#ef4444", "#dc2626", "#b91c1c", "#fca5a5"],
+    glow: "rgba(220,38,38,0.9)",
+    gravity: 80,
+    scatter: 12,
+  },
+  shield: {
+    count: 18, distance: 90, duration: 1300, size: 7,
+    colors: ["#60a5fa", "#93c5fd", "#bfdbfe", "#e0f2fe", "#ffffff"],
+    glow: "rgba(96,165,250,0.8)",
+    gravity: -10,
+    scatter: 10,
+  },
+  heal: {
+    count: 20, distance: 80, duration: 1100, size: 8,
+    colors: ["#86efac", "#4ade80", "#fde68a", "#fcd34d", "#ffffff"],
+    glow: "rgba(74,222,128,0.85)",
+    gravity: -35,
+    scatter: 16,
+  },
+  curse: {
+    count: 22, distance: 110, duration: 1400, size: 7,
+    colors: ["#a855f7", "#7c3aed", "#6d28d9", "#ddd6fe", "#1e1b4b"],
+    glow: "rgba(168,85,247,0.9)",
+    gravity: 20,
+    scatter: 45,
+  },
+  deploy: {
+    count: 24, distance: 120, duration: 850, size: 9,
+    colors: ["#f59e0b", "#fbbf24", "#fde68a", "#f97316", "#ffffff"],
+    glow: "rgba(245,158,11,0.95)",
+    gravity: -60,
+    scatter: 18,
   },
 };
 

@@ -1028,6 +1028,12 @@ export function CombatPage({
             if (evt.type === "turn_skip") triggerBurst("frozen");
             if (evt.type === "victory") triggerBurst("victory");
             if (evt.type === "player_hit") triggerBurst("hit");
+            if (evt.type === "ability_envenom_proc") triggerBurst("poison");
+            if (evt.type === "passive_lethal_strike" || evt.type === "passive_sinister_queries" || evt.type === "hex_bleed_proc") triggerBurst("bleed");
+            if (evt.type === "ability_shield_of_faith" || evt.type === "ability_mage_armor" || evt.type === "ability_barkskin" || evt.type === "ability_brace") triggerBurst("shield");
+            if (evt.type === "passive_paladin_auto_heal" || evt.type === "ability_good_fortune") triggerBurst("heal");
+            if (evt.type === "ability_ill_omen" || evt.type === "ability_hex") triggerBurst("curse");
+            if (evt.type === "ability_animal_form") triggerBurst("deploy");
           }
           // 950ms ≈ tumble duration (700ms) + brief pause to read the value.
           const delay = hasRolls ? 950 : 0;
