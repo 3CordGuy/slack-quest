@@ -57,7 +57,7 @@ export const mageAbilities: AbilityDef[] = [
     id: "mage_armor",
     name: "Encapsulate",
     blurb: "Wrap an ally in a protective abstraction layer — grants 3d6 + magic shield.",
-    icon: "energy-shield",
+    icon: "aura",
     mana_cost: 1,
     routing: "utility",
     target: "single_ally",

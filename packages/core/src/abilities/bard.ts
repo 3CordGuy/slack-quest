@@ -25,7 +25,7 @@ export const bardAbilities: AbilityDef[] = [
     id: "verse",
     name: "Verse",
     blurb: "Drop a pointed PR comment — mock an enemy (disadvantage on their next 2 rolls) or leave glowing feedback for an ally (advantage on their next 2 rolls). 2-turn cooldown.",
-    icon: "quill-ink",
+    icon: "scroll-quill",
     mana_cost: 0,
     cooldown_turns: 2,
     routing: "utility",

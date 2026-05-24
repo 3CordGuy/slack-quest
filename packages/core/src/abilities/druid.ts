@@ -30,7 +30,7 @@ export const druidAbilities: AbilityDef[] = [
     id: "animal_form",
     name: "Scale Up",
     blurb: "Provision more compute — all core stats surge by mag + 25% of their current value for 4 rounds.",
-    icon: "cloud-upload",
+    icon: "muscle-up",
     mana_cost: 2,
     routing: "utility",
     target: "self",
