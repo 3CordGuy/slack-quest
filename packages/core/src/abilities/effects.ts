@@ -54,8 +54,8 @@ export const fx = {
     return { kind: "set_vanish", actor_id: actorId, swings };
   },
 
-  battleHymn(charges: number): AbilityEffect {
-    return { kind: "add_battle_hymn", charges };
+  battleHymn(rounds: number): AbilityEffect {
+    return { kind: "add_battle_hymn", rounds };
   },
 
   moveFighter(targetId: string, to: "front" | "back"): AbilityEffect {
@@ -144,6 +144,14 @@ export const fx = {
 
   entangleMonster(targetId: string, duration: number): AbilityEffect {
     return { kind: "entangle_monster", target_id: targetId, duration };
+  },
+
+  tauntFortify(targetId: string, turns: number): AbilityEffect {
+    return { kind: "apply_taunt_fortify", target_id: targetId, turns };
+  },
+
+  shieldFromArmor(targetId: string, fraction: number): AbilityEffect {
+    return { kind: "grant_shield_from_armor", target_id: targetId, fraction };
   },
 };
 

@@ -70,8 +70,8 @@ function runBegin(state: CombatState, initiatives: number[]) {
   return step(state, { kind: "begin" }, seqRoll(initiatives));
 }
 
-// AC reference (tier 3): monster AC = 9 (8 + floor(3/2)), fighter AC = 10.
-// Paladin attack_mod = 2 → needs d20 ≥ 7 to hit. Monster tier 3 → needs ≥ 7.
+// AC reference (tier 3): monster AC = 7 (6 + floor(3/2)), fighter AC = 10.
+// Paladin attack_mod = 2 → needs d20 ≥ 3 to hit. Monster tier 3 → needs ≥ 3.
 
 describe("combat_machine.step", () => {
   describe("begin", () => {
@@ -122,7 +122,7 @@ describe("combat_machine.step", () => {
   describe("attack (hit + damage)", () => {
     it("damages the monster on hit, emits hit_check + roll + player_hit", () => {
       const begun = runBegin(createCombatState(baseInit()), [15, 8]);
-      // d20=15 (+2 = 17 vs AC 9: HIT). d6=4 → damage = (4+2+4) = 10.
+      // d20=15 (+2 = 17 vs AC 7: HIT). d6=4 → damage = (4+2+4) = 10.
       const result = step(
         begun.state,
         { kind: "attack", actor: "U_PALADIN" },
@@ -137,18 +137,18 @@ describe("combat_machine.step", () => {
         "turn_start",
       ]);
       const check = result.events.find((e) => e.type === "hit_check");
-      expect(check).toMatchObject({ hit: true, total: 17, ac: 9 });
+      expect(check).toMatchObject({ hit: true, total: 17, ac: 7 });
       const hit = result.events.find((e) => e.type === "player_hit");
       expect(hit).toMatchObject({ damage: 10, crit: false });
     });
 
     it("misses on a low d20, emits hit_check with hit:false, no damage", () => {
       const begun = runBegin(createCombatState(baseInit()), [15, 8]);
-      // d20=5 (+2 = 7 vs AC 9: MISS). No damage roll consumed.
+      // d20=2 (+2 = 4 vs AC 7: MISS). No damage roll consumed.
       const result = step(
         begun.state,
         { kind: "attack", actor: "U_PALADIN" },
-        seqRoll([5]),
+        seqRoll([2]),
       );
       expect(result.state.monsters[0].hp).toBe(40);
       expect(eventTypes(result.events)).toEqual([
@@ -157,7 +157,7 @@ describe("combat_machine.step", () => {
         "turn_start",
       ]);
       const check = result.events.find((e) => e.type === "hit_check");
-      expect(check).toMatchObject({ hit: false, total: 7, ac: 9 });
+      expect(check).toMatchObject({ hit: false, total: 4, ac: 7 });
       expect(result.events.find((e) => e.type === "player_hit")).toBeUndefined();
     });
 
@@ -221,7 +221,7 @@ describe("combat_machine.step", () => {
 
     it("misses on a low d20, no damage applied", () => {
       const begun = runBegin(createCombatState(baseInit()), [5, 18]);
-      // Monster tier=3 → modifier = floor(3/2)+4=5. Fighter level=5 → AC=12.
+      // Monster tier=3 → modifier = floor(3/2)+6=7. Fighter level=5 → AC=12.
       // d20=3 → total=8 < AC 12: MISS.
       const result = step(begun.state, { kind: "monster_act" }, seqRoll([50, 3]));
       expect(result.state.fighters[0].hp).toBe(30);
@@ -653,6 +653,21 @@ describe("combat_machine.step", () => {
       expect(fc).toMatchObject({ success: false });
       expect(result.events.find((e) => e.type === "monster_attack")).toBeDefined();
     });
+
+    it("emits a 'fled' event on success (signals terminal transition to orchestration layer)", () => {
+      const begun = runBegin(createCombatState(baseInit()), [15, 8]);
+      const result = step(begun.state, { kind: "flee", actor: "U_PALADIN" }, seqRoll([15]));
+      expect(result.events.find((e) => e.type === "fled")).toBeDefined();
+    });
+
+    it("rejects further actions after a successful flee (fled is terminal)", () => {
+      const begun = runBegin(createCombatState(baseInit()), [15, 8]);
+      const fled = step(begun.state, { kind: "flee", actor: "U_PALADIN" }, seqRoll([15]));
+      expect(fled.state.status).toBe("fled");
+      const after = step(fled.state, { kind: "attack", actor: "U_PALADIN" }, seqRoll([15, 4]));
+      // State must be unchanged and the action rejected.
+      expect(after.state).toBe(fled.state);
+    });
   });
 });
 
@@ -666,7 +681,7 @@ describe("STATS_V2 — DEX crit bonus", () => {
       str: 5, int_stat: 5, vit: 5, agi: 5, dex: 8,
     };
     const begun = runBegin(createCombatState(init), [15, 8]);
-    // Roll order: d20=15 (hit, 15+2=17 vs mAC=9), d6=4 (no nat-crit),
+    // Roll order: d20=15 (hit, 15+2=17 vs mAC=5), d6=4 (no nat-crit),
     // roll(100)=2 (≤ 3 threshold → DEX crit).
     const result = step(begun.state, { kind: "attack", actor: "U_PALADIN" }, seqRoll([15, 4, 2]));
     const hit = result.events.find((e) => e.type === "player_hit");
@@ -1329,8 +1344,8 @@ describe("QA Paladin — holy_rage passive", () => {
 });
 
 // Rogue fixtures.
-// Monster tier 3 → monsterAc = 8 + floor(3/2) = 9.
-// Rogue attack_mod = 3 → hit on d20 ≥ 6.
+// Monster tier 3 → monsterAc = 6 + floor(3/2) = 7.
+// Rogue attack_mod = 3 → hit on d20 ≥ 2.
 // Rogue level 4 → lethal_strikes stacks = 2 + floor(4/2) = 4.
 function rogueInit(rogueOverrides: Partial<CombatInit["fighters"][0]> = {}): CombatInit {
   return {
@@ -1370,7 +1385,7 @@ describe("Refactor Rogue — Lethal Strikes (passive)", () => {
   });
 
   it("does not fire on a non-crit attack", () => {
-    // d20=8 → total 11 ≥ 9 → hit; not a nat-20 so no crit.
+    // d20=8 → total 11 ≥ 5 → hit; not a nat-20 so no crit.
     const begun = runBegin(createCombatState(rogueInit()), [15, 5]);
     const result = step(begun.state, { kind: "attack", actor: "U_ROGUE" }, seqRoll([8, 3]));
     expect(result.events.find((e) => e.type === "passive_rogue_lethal_strike")).toBeUndefined();
@@ -1387,7 +1402,7 @@ describe("Refactor Rogue — Vanish", () => {
   });
 
   it("attacking while vanished forces a crit on hit and removes vanish", () => {
-    // d20=10 → 10+3=13 ≥ 9 → hit; d6=4 → raw=4+3+2=9; vanish forces crit → damage doubled.
+    // d20=10 → 10+3=13 ≥ 5 → hit; d6=4 → raw=4+3+2=9; vanish forces crit → damage doubled.
     const begun = runBegin(createCombatState(rogueInit()), [15, 5]);
     const vanishedState: CombatState = {
       ...begun.state,
@@ -1433,11 +1448,279 @@ describe("Refactor Rogue — Envenom Weapon", () => {
   });
 });
 
+describe("SRE Warden — Bulwark Strike", () => {
+  function wardenInit(): CombatInit {
+    const init = baseInit();
+    init.fighters[0].class = "SRE Warden";
+    init.fighters[0].attack_mod = 2;
+    init.fighters[0].armor_power = 3;
+    init.fighters[0].shield = 2; // Armor Up grants +3 at turn start → shield=5 at execute
+    init.fighters[0].mana = 3;
+    return init;
+  }
+
+  it("on a hit, performs an attack roll and deals 1d10 + attack + 50% current shield", () => {
+    // Armor Up fires at turn start: 2 + floor(5/4) = 3 → shield = 2+3 = 5.
+    // execute(): d10=5 → shieldBonus=floor(5*0.5)=2; amount = 5 + 2(atk) + 2(sh) = 9.
+    // Machine rolls d20=15 → 15+2=17 ≥ 5 (tier 3 AC) → hit; damage=9.
+    const begun = runBegin(createCombatState(wardenInit()), [15, 5]);
+    const result = step(
+      begun.state,
+      { kind: "ability", actor: "U_PALADIN", ability_id: "bulwark_strike", target_id: MONSTER_ID },
+      seqRoll([5, 15]),
+    );
+    expect(result.events.find((e) => e.type === "hit_check")).toMatchObject({ hit: true });
+    const hitEvt = result.events.find((e) => e.type === "player_hit");
+    expect(hitEvt).toMatchObject({ damage: 9, actor: "U_PALADIN" });
+    expect(result.state.monsters[0].hp).toBe(40 - 9);
+  });
+
+  it("on a miss, produces no player_hit and advances the turn", () => {
+    // execute(): d10=5. Machine rolls d20=1 → 1+2=3 < 9 (tier 3 AC) → miss.
+    const begun = runBegin(createCombatState(wardenInit()), [15, 5]);
+    const result = step(
+      begun.state,
+      { kind: "ability", actor: "U_PALADIN", ability_id: "bulwark_strike", target_id: MONSTER_ID },
+      seqRoll([5, 1]),
+    );
+    expect(result.events.find((e) => e.type === "hit_check")).toMatchObject({ hit: false });
+    expect(result.events.find((e) => e.type === "player_hit")).toBeUndefined();
+    expect(result.state.monsters[0].hp).toBe(40);
+  });
+
+  it("goes on cooldown after use and rejects a second cast", () => {
+    const begun = runBegin(createCombatState(wardenInit()), [15, 5]);
+    const used = step(
+      begun.state,
+      { kind: "ability", actor: "U_PALADIN", ability_id: "bulwark_strike", target_id: MONSTER_ID },
+      seqRoll([5, 15]),
+    );
+    expect(used.state.cooldowns?.["U_PALADIN"]?.["bulwark_strike"]).toBeGreaterThan(0);
+  });
+});
+
+describe("SRE Warden — Taunt (reworked)", () => {
+  function wardenFullInit(overrides: Partial<CombatInit> = {}): CombatInit {
+    return {
+      fighters: [
+        {
+          id: "U_WARDEN",
+          name: "Garrett",
+          class: "SRE Warden",
+          level: 5,
+          hp: 30,
+          max_hp: 30,
+          mana: 3,
+          max_mana: 3,
+          shield: 0,
+          position: "front",
+          attack_mod: 2,
+          magic_mod: 0,
+          weapon_power: 4,
+          armor_power: 5,
+          scars: [],
+          stats: { str: 9, int_stat: 4, vit: 10, agi: 4, dex: 3 },
+        },
+      ],
+      monster: baseInit().monster,
+      ...overrides,
+    };
+  }
+
+  // str=9, vit=10 → floor((9+10)/8) = 2 (not doubled, party > 1).
+  // Armor Up also fires at turn start: 2 + floor(5/4) = 3. Total shield = 5.
+  it("grants floor((vit+str)/8) shield and sets taunt_fortify for 2 turns", () => {
+    const twoFighterInit = wardenFullInit({
+      fighters: [
+        ...wardenFullInit().fighters,
+        {
+          id: "U_ALLY",
+          name: "Ally",
+          class: "Frontend Bard",
+          level: 1,
+          hp: 10,
+          max_hp: 10,
+          mana: 1,
+          max_mana: 1,
+          shield: 0,
+          position: "back" as const,
+          attack_mod: 0,
+          magic_mod: 0,
+          weapon_power: 1,
+          armor_power: 0,
+          scars: [],
+        },
+      ],
+    });
+    const begun = runBegin(createCombatState(twoFighterInit), [15, 8, 5]);
+    const result = step(
+      begun.state,
+      { kind: "ability", actor: "U_WARDEN", ability_id: "taunt" },
+      seqRoll([1]),
+    );
+    // Armor Up (3) + Taunt (2) = 5
+    expect(result.state.fighters.find((f) => f.id === "U_WARDEN")!.shield).toBe(5);
+    expect(result.state.ability_state?.taunt_fortify?.["U_WARDEN"]).toMatchObject({ turns_remaining: 2 });
+  });
+
+  it("doubles shield when warden is the only living party member", () => {
+    const begun = runBegin(createCombatState(wardenFullInit()), [15, 8]);
+    const result = step(
+      begun.state,
+      { kind: "ability", actor: "U_WARDEN", ability_id: "taunt" },
+      seqRoll([1]),
+    );
+    // solo party → Taunt doubled = 4; Armor Up = 3. Total = 7.
+    expect(result.state.fighters.find((f) => f.id === "U_WARDEN")!.shield).toBe(7);
+  });
+
+  it("magic damage depletes shield when taunt_fortify is active", () => {
+    // Monster uses lightning so damage would normally bypass shield.
+    const init = wardenFullInit({
+      monster: { name: "The Lightning Shrieker", hp: 40, max_hp: 40, shield: 0, tier: 3, is_boss: false, attack_damage_type: "lightning" },
+    });
+    // Monster goes first (warden=8, monster=15).
+    const begun = runBegin(createCombatState(init), [8, 15]);
+    const withFortify: CombatState = {
+      ...begun.state,
+      fighters: begun.state.fighters.map((f) => f.id === "U_WARDEN" ? { ...f, shield: 5 } : f),
+      ability_state: { taunt_fortify: { U_WARDEN: { turns_remaining: 2 } } },
+    };
+    // Monster acts: target pick=50, d20=15 (hits AC 12), d4=3 → raw=3+3(tier)=6.
+    // With fortify: shield absorbs min(5,6)=5, HP takes 1.
+    // 90 = d100 elemental proc check (> 25 threshold → no proc).
+    const result = step(withFortify, { kind: "monster_act", actor: MONSTER_ID }, seqRoll([50, 15, 3, 90]));
+    const warden = result.state.fighters.find((f) => f.id === "U_WARDEN")!;
+    expect(warden.shield).toBe(0);
+    expect(warden.hp).toBe(29);
+  });
+
+  it("magic damage bypasses shield when taunt_fortify is not active", () => {
+    const init = wardenFullInit({
+      monster: { name: "The Lightning Shrieker", hp: 40, max_hp: 40, shield: 0, tier: 3, is_boss: false, attack_damage_type: "lightning" },
+    });
+    const begun = runBegin(createCombatState(init), [8, 15]);
+    const withShield: CombatState = {
+      ...begun.state,
+      fighters: begun.state.fighters.map((f) => f.id === "U_WARDEN" ? { ...f, shield: 5 } : f),
+    };
+    // No fortify — lightning bypasses shield; all 6 damage goes to HP.
+    // 90 = d100 elemental proc check (> 25 threshold → no proc).
+    const result = step(withShield, { kind: "monster_act", actor: MONSTER_ID }, seqRoll([50, 15, 3, 90]));
+    const warden = result.state.fighters.find((f) => f.id === "U_WARDEN")!;
+    expect(warden.shield).toBe(5); // untouched
+    expect(warden.hp).toBe(24);    // 30 - 6
+  });
+});
+
+describe("SRE Warden — Resilient (passive)", () => {
+  function wardenFullInit(): CombatInit {
+    return {
+      fighters: [
+        {
+          id: "U_WARDEN",
+          name: "Garrett",
+          class: "SRE Warden",
+          level: 5,
+          hp: 30,
+          max_hp: 30,
+          mana: 3,
+          max_mana: 3,
+          shield: 0,
+          position: "front",
+          attack_mod: 2,
+          magic_mod: 0,
+          weapon_power: 4,
+          armor_power: 5,
+          scars: [],
+          stats: { str: 9, int_stat: 4, vit: 10, agi: 4, dex: 3 },
+        },
+      ],
+      monster: baseInit().monster,
+    };
+  }
+
+  // tier 3 → AC = 12 (10 + floor(5/2)). Monster modifier = floor(3/2)+4 = 5.
+  // For player attacks, there's no d101 target pick — target defaults to first alive monster.
+  // Roll order for attack: d20 (hit check), d6 (damage).
+
+  it("successful attack adds a Resilient stack to ability_state", () => {
+    const begun = runBegin(createCombatState(wardenFullInit()), [15, 8]);
+    // d20=15 (15+2=17 ≥ 12: hit), d6=4
+    const result = step(begun.state, { kind: "attack", actor: "U_WARDEN" }, seqRoll([15, 4]));
+    const stacks = result.state.ability_state?.resilient?.["U_WARDEN"] ?? [];
+    expect(stacks.length).toBe(1);
+    // Stack expires at round 1 + 4 = 5.
+    expect(stacks[0]).toBe(5);
+    expect(result.events.find((e) => e.type === "passive_warden_resilient")).toMatchObject({ actor: "U_WARDEN", stacks: 1 });
+  });
+
+  it("attack_roll_damage hit also adds a Resilient stack", () => {
+    const begun = runBegin(createCombatState(wardenFullInit()), [15, 8]);
+    // bulwark_strike: d10 (execute), then d20 (hit check) in machine.
+    // d10=5, d20=15 → 15+2=17 ≥ AC 5 → hit.
+    const result = step(
+      begun.state,
+      { kind: "ability", actor: "U_WARDEN", ability_id: "bulwark_strike" },
+      seqRoll([5, 15]),
+    );
+    const stacks = result.state.ability_state?.resilient?.["U_WARDEN"] ?? [];
+    expect(stacks.length).toBe(1);
+  });
+
+  it("attack_roll_damage miss does NOT add a Resilient stack", () => {
+    const begun = runBegin(createCombatState(wardenFullInit()), [15, 8]);
+    // d10=5, d20=1 → 1+2=3 < AC 5 → miss.
+    const result = step(
+      begun.state,
+      { kind: "ability", actor: "U_WARDEN", ability_id: "bulwark_strike" },
+      seqRoll([5, 1]),
+    );
+    expect(result.state.ability_state?.resilient?.["U_WARDEN"]).toBeUndefined();
+  });
+
+  it("Resilient stacks raise the shield cap for subsequent shield grants", () => {
+    // max_hp=30, base cap=60. With 2 stacks (vit=10 → 4/stack = +8): cap=68.
+    // Pre-inject 2 Resilient stacks and shield near the base cap.
+    const begun = runBegin(createCombatState(wardenFullInit()), [15, 8]);
+    const withStacks: CombatState = {
+      ...begun.state,
+      fighters: begun.state.fighters.map((f) => f.id === "U_WARDEN" ? { ...f, shield: 58 } : f),
+      ability_state: { resilient: { U_WARDEN: [99, 99] } }, // 2 stacks, far future expiry
+    };
+    // Use grant_shield via brace (grant_shield_from_armor with armor=5, +2 stacks bonus=8, effective=13, 50%=6)
+    // Actually use taunt's fx.shield directly — but we can't easily trigger a grant_shield
+    // without an ability. Instead, directly verify the cap via Armor Up passive.
+    // Armor Up grants 2 + floor(5/4)=3 shield per turn. Cap without Resilient: 60, with 2 stacks: 68.
+    // Shield is 58; grant 3 → min(68, 61) = 61. Without stacks it would still be 61 (< base cap 60? no, 61>60).
+    // Better: start at shield=59, grant anything → base cap clamps at 60, but Resilient cap allows 68.
+    // With shield=62 (above base cap) already set, verify Armor Up still grants (because cap is 68).
+    const atHighShield: CombatState = {
+      ...begun.state,
+      fighters: begun.state.fighters.map((f) => f.id === "U_WARDEN" ? { ...f, shield: 62 } : f),
+      ability_state: { resilient: { U_WARDEN: [99, 99] } },
+    };
+    // Trigger Armor Up by doing warden's turn (wait action fires applyPreActionPassives).
+    // But wait action doesn't fire Armor Up... let me use "attack" which calls applyPreActionPassives.
+    // Actually: attack calls applyPreActionPassives which calls applyWardenArmorUp.
+    // d20=15 (15+2=17 ≥ 12: hit), d6=4 for the attack.
+    const result = step(atHighShield, { kind: "attack", actor: "U_WARDEN" }, seqRoll([15, 4]));
+    const warden = result.state.fighters.find((f) => f.id === "U_WARDEN")!;
+    // Armor Up grants 2 + floor(5/4)=3 shield. cap = 30*2 + 2*(2+floor(10/4)) = 60 + 2*4 = 68.
+    // shield = min(68, 62+3) = 65. (Without stacks: min(60, 62+3)=60, clamped to 60.)
+    // But wait: the attack itself also adds a Resilient stack. So after Armor Up and the attack:
+    // stacks = 3 (2 pre-existing + 1 from the hit), cap = 60 + 3*4 = 72.
+    // Pre-attack: Armor Up fires first. At that point stacks=2, cap=68. shield=min(68,65)=65.
+    // After attack: stack added (stacks=3), cap=72. Shield stays at 65 (no grant).
+    expect(warden.shield).toBe(65);
+  });
+});
+
 describe("Refactor Rogue — Backstab", () => {
   it("on a hit with advantage, emits player_hit with the pre-rolled max(r1, r2) damage", () => {
     // execute() rolls raw d6s: raw1=4, raw2=3, bestRaw=4, isCrit=false.
     // amount = (4+3+2)*1 = 9. Machine rolls d20 twice: 15,10 → takes 15.
-    // 15+3=18 ≥ 9 (monsterAc tier 3) → hit; player_hit.damage=9, crit=false.
+    // 15+3=18 ≥ 7 (monsterAc tier 3) → hit; player_hit.damage=9, crit=false.
     const begun = runBegin(createCombatState(rogueInit()), [15, 5]);
     const result = step(
       begun.state,
@@ -1451,7 +1734,7 @@ describe("Refactor Rogue — Backstab", () => {
 
   it("on a natural-6 roll, emits player_hit with crit=true and doubled damage", () => {
     // raw1=6 → bestRaw=6, isCrit=true. amount = (6+3+2)*2 = 22.
-    // d20: 15,10 → 15; 15+3=18 ≥ 9 → hit.
+    // d20: 15,10 → 15; 15+3=18 ≥ 5 → hit.
     const begun = runBegin(createCombatState(rogueInit()), [15, 5]);
     const result = step(
       begun.state,
@@ -1463,12 +1746,12 @@ describe("Refactor Rogue — Backstab", () => {
   });
 
   it("on a miss, produces no player_hit and advances the turn", () => {
-    // execute() rolls r1=4, r2=3 first; machine rolls d20_a=1, d20_b=2 → takes 2 → 2+3=5 < 9 → miss.
+    // execute() rolls r1=4, r2=3 first; machine rolls d20_a=1, d20_b=1 → takes 1 → 1+3=4 < 5 → miss.
     const begun = runBegin(createCombatState(rogueInit()), [15, 5]);
     const result = step(
       begun.state,
       { kind: "ability", actor: "U_ROGUE", ability_id: "backstab", target: MONSTER_ID },
-      seqRoll([4, 3, 1, 2]),
+      seqRoll([4, 3, 1, 1]),
     );
     expect(result.events.find((e) => e.type === "player_hit")).toBeUndefined();
     expect(result.events.find((e) => e.type === "hit_check")).toMatchObject({ hit: false });
@@ -1511,6 +1794,125 @@ describe("Refactor Rogue — Debilitate", () => {
 });
 
 // ── Mark (free-action communication) ─────────────────────────────────────────
+
+describe("Frontend Bard — Crescendo", () => {
+  function bardInit(): CombatInit {
+    return {
+      fighters: [
+        {
+          id: "U_BARD",
+          name: "Lyric",
+          class: "Frontend Bard",
+          level: 4,
+          hp: 20,
+          max_hp: 20,
+          mana: 3,
+          max_mana: 3,
+          shield: 0,
+          position: "front",
+          attack_mod: 0,
+          magic_mod: 2,
+          weapon_power: 2,
+          armor_power: 0,
+          scars: [],
+        },
+      ],
+      monster: {
+        name: "The Schemaless Shrieker",
+        hp: 40,
+        max_hp: 40,
+        shield: 0,
+        tier: 3,
+        is_boss: false,
+      },
+    };
+  }
+
+  // tier 3 → AC = 5 (4 + floor(3/2)). magic_mod = 2 → need d20 ≥ 3 to hit.
+  // Roll order for the ability action: d6 (damage in execute), d20 (hit check).
+
+  it("hit: spends 1 mana and deals 1d6 + magic + party×2 + weapon on a successful roll", () => {
+    const begun = runBegin(createCombatState(bardInit()), [15, 8]);
+    // d6=3, d20=15 → 15+2=17 ≥ AC 5 → hits. amount = 3+2+2+2 = 9.
+    const result = step(
+      begun.state,
+      { kind: "ability", actor: "U_BARD", ability_id: "crescendo" },
+      seqRoll([3, 15]),
+    );
+    expect(result.state.fighters[0].mana).toBe(2);
+    expect(result.state.monsters[0].hp).toBe(31);
+    const hit = result.events.find((e) => e.type === "player_hit");
+    expect(hit).toMatchObject({ damage: 9 });
+  });
+
+  it("miss: no damage when d20 + magic fails to reach AC", () => {
+    const begun = runBegin(createCombatState(bardInit()), [15, 8]);
+    // d6=3, d20=1 → 1+2=3 < AC 5 → miss. Monster hp unchanged.
+    const result = step(
+      begun.state,
+      { kind: "ability", actor: "U_BARD", ability_id: "crescendo" },
+      seqRoll([3, 1]),
+    );
+    expect(result.state.monsters[0].hp).toBe(40);
+    expect(result.events.find((e) => e.type === "player_hit")).toBeUndefined();
+  });
+});
+
+describe("Frontend Bard — Serenade", () => {
+  it("heals and shields the explicitly chosen ally", () => {
+    const init: CombatInit = {
+      fighters: [
+        {
+          id: "U_BARD",
+          name: "Lyric",
+          class: "Frontend Bard",
+          level: 4,
+          hp: 20,
+          max_hp: 20,
+          mana: 3,
+          max_mana: 3,
+          shield: 0,
+          position: "back",
+          attack_mod: 0,
+          magic_mod: 2,
+          weapon_power: 0,
+          armor_power: 0,
+          scars: [],
+        },
+        {
+          id: "U_PALADIN",
+          name: "Edmund",
+          class: "QA Paladin",
+          level: 5,
+          hp: 10,
+          max_hp: 30,
+          mana: 3,
+          max_mana: 3,
+          shield: 0,
+          position: "front",
+          attack_mod: 2,
+          magic_mod: 0,
+          weapon_power: 4,
+          armor_power: 3,
+          scars: [],
+        },
+      ],
+      monster: baseInit().monster,
+    };
+    // initiative: bard=15, paladin=10, monster=8 → bard goes first.
+    const begun = runBegin(createCombatState(init), [15, 10, 8]);
+    // Roll order in execute: d6=4, d6=3. heal = 4+3+2(magic)=9. shield = 2+floor(4/5)=2.
+    const result = step(
+      begun.state,
+      { kind: "ability", actor: "U_BARD", ability_id: "serenade", target: "U_PALADIN" },
+      seqRoll([4, 3]),
+    );
+    const paladin = result.state.fighters.find((f) => f.id === "U_PALADIN")!;
+    expect(paladin.hp).toBe(19);    // 10 + 9
+    expect(paladin.shield).toBe(2);
+    expect(result.state.fighters.find((f) => f.id === "U_BARD")!.mana).toBe(2); // mana_cost=1
+  });
+});
 
 describe("mark", () => {
   // Two-fighter party so we can mark out-of-turn.
@@ -1606,9 +2008,9 @@ describe("mark", () => {
   });
 
   it("attack damage is not affected by an active mark", () => {
-    // Alice (U_A) marks, then Bob (U_B) attacks — no bonus should appear.
-    // d20=10 → hit (attack_mod 0, tier 3 AC=9 → need ≥ 9), d6=2 → dmg = 2+0+2(wp)=4.
-    // If the old mark bonus (+2) were still applied this would be 6.
+    // Alice (U_A) marks, then Bob (U_B, the Frontend Bard) attacks — no mark bonus.
+    // d20=10 → hit (attack_mod 0, tier 3 AC=5 → need ≥ 5), d6=2 → dmg = 2+0+2(wp)+1(bard aura)=5.
+    // If the old mark bonus (+2) were still applied this would be 7.
     const begun = runBegin(createCombatState(markInit()), [20, 5, 1]);
     const marked: CombatState = {
       ...begun.state,
@@ -1621,7 +2023,69 @@ describe("mark", () => {
     };
     const result = step(marked, { kind: "attack", actor: "U_B" }, seqRoll([10, 2]));
     const hitEvt = result.events.find((e) => e.type === "player_hit");
-    expect(hitEvt).toMatchObject({ damage: 4 });
+    expect(hitEvt).toMatchObject({ damage: 5 }); // +1 bard self-aura (level 4 → floor(4/5)=0, base=1)
+  });
+});
+
+describe("focus weapon — magic_mod to hit, reduced weapon_power", () => {
+  // tier 3 → AC = 5 (4 + floor(3/2)). magic_mod=3 → need d20 ≥ 2 to hit.
+  // weapon_power=4 represents floor(item_power/4) pre-computed at combat init.
+  function focusInit(): CombatInit {
+    return {
+      fighters: [
+        {
+          id: "U_MAGE",
+          name: "Ariel",
+          class: "DevOps Mage",
+          level: 3,
+          hp: 20,
+          max_hp: 20,
+          mana: 3,
+          max_mana: 3,
+          shield: 0,
+          position: "front",
+          attack_mod: 0,
+          magic_mod: 3,
+          weapon_power: 4,
+          weapon_range: "focus",
+          armor_power: 0,
+          scars: [],
+        },
+      ],
+      monster: {
+        name: "Test Monster",
+        hp: 40,
+        max_hp: 40,
+        shield: 0,
+        tier: 3,
+        is_boss: false,
+      },
+    };
+  }
+
+  it("uses magic_mod (not attack_mod) for the to-hit modifier", () => {
+    const begun = runBegin(createCombatState(focusInit()), [15, 8]);
+    // d20=4 + magic_mod(3) = 7 ≥ AC 7 → HIT. attack_mod=0 would miss (4+0=4 < 7).
+    const result = step(begun.state, { kind: "attack", actor: "U_MAGE" }, seqRoll([4, 3]));
+    const check = result.events.find((e) => e.type === "hit_check");
+    expect(check).toMatchObject({ hit: true, total: 7, modifier: 3 });
+  });
+
+  it("misses when d20 + magic_mod falls below AC", () => {
+    const begun = runBegin(createCombatState(focusInit()), [15, 8]);
+    // d20=1 + magic_mod(3) = 4 < AC 7 → MISS.
+    const result = step(begun.state, { kind: "attack", actor: "U_MAGE" }, seqRoll([1, 3]));
+    const check = result.events.find((e) => e.type === "hit_check");
+    expect(check).toMatchObject({ hit: false, total: 4, modifier: 3 });
+  });
+
+  it("applies weapon_power (item_power/4) to damage on hit", () => {
+    const begun = runBegin(createCombatState(focusInit()), [15, 8]);
+    // d20=15 hit. d6=4. damage = 4 + attack_mod(0) + weapon_power(4) = 8. magic_mod not added to damage.
+    const result = step(begun.state, { kind: "attack", actor: "U_MAGE" }, seqRoll([15, 4]));
+    const hit = result.events.find((e) => e.type === "player_hit");
+    expect(hit).toMatchObject({ damage: 8 });
+    expect(result.state.monsters[0].hp).toBe(32);
   });
 });
 
@@ -1745,9 +2209,9 @@ describe("Staff Sage — Ray of Frost", () => {
   });
 
   it("emits no player_hit on a miss", () => {
-    // d20=6 → 6+2=8 < 9 miss. No damage die or freeze roll consumed.
+    // d20=2 → 2+2=4 < 7 miss. No damage die or freeze roll consumed.
     const begun = runBegin(createCombatState(sageInit()), [20, 5]);
-    const result = step(begun.state, { kind: "ability", actor: "U_SAGE", ability_id: "ray_of_frost", target_id: MONSTER_ID }, seqRoll([3, 2, 6]));
+    const result = step(begun.state, { kind: "ability", actor: "U_SAGE", ability_id: "ray_of_frost", target_id: MONSTER_ID }, seqRoll([3, 2, 2]));
     expect(result.events.find((e) => e.type === "player_hit")).toBeUndefined();
     expect(result.state.monsters[0].hp).toBe(40);
   });
@@ -1769,9 +2233,9 @@ describe("Staff Sage — Ray of Frost", () => {
   });
 
   it("does not apply frozen on a miss", () => {
-    // d20=6 miss → no freeze roll consumed.
+    // d20=2 miss → no freeze roll consumed.
     const begun = runBegin(createCombatState(sageInit()), [20, 5]);
-    const result = step(begun.state, { kind: "ability", actor: "U_SAGE", ability_id: "ray_of_frost", target_id: MONSTER_ID }, seqRoll([3, 2, 6]));
+    const result = step(begun.state, { kind: "ability", actor: "U_SAGE", ability_id: "ray_of_frost", target_id: MONSTER_ID }, seqRoll([3, 2, 2]));
     expect(result.state.monsters[0].effects.some((e) => e.type === "frozen")).toBe(false);
   });
 });
