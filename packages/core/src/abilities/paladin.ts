@@ -49,7 +49,7 @@ export const paladinAbilities: AbilityDef[] = [
     id: "smite",
     name: "Breakpoint",
     blurb: "Halt execution mid-swing — strike for normal + 2d8 damage; the target's next attack runs at 50% output.",
-    icon: "axe-swing",
+    icon: "convergence-target",
     mana_cost: 1,
     cooldown_turns: 1,
     routing: "damage",

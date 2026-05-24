@@ -67,7 +67,7 @@ export const sageAbilities: AbilityDef[] = [
     id: "ill_omen",
     name: "Stack Overflow",
     blurb: "Let the call stack grow unchecked — curse an enemy; damage accumulates over 3 of its turns, then crashes back for 50% of the total.",
-    icon: "death-skull",
+    icon: "stack",
     mana_cost: 1,
     cooldown_turns: 1,
     routing: "utility",
