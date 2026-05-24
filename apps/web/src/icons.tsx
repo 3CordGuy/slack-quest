@@ -46,6 +46,7 @@ const SVG_ICONS = new Set([
   // Engineering-themed ability icons
   "cloud-upload", "crossed-chains", "firewall", "cloak-dagger", "spawn-node",
   "stack", "convergence-target", "database", "virus", "cpu-shot", "energy-shield",
+  "brute",
   // Abstract fallback icons (used when no specific icon exists)
   "abstract-006",
 ]);

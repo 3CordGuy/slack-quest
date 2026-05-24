@@ -53,7 +53,7 @@ export const warlockAbilities: AbilityDef[] = [
     id: "summon_imp",
     name: "Spawn Worker",
     blurb: "Fork a new process into combat — the worker attacks independently, dealing damage equal to your magic modifier.",
-    icon: "spawn-node",
+    icon: "brute",
     mana_cost: 2,
     cooldown_turns: 2,
     routing: "utility",
