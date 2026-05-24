@@ -43,7 +43,7 @@ export const bardAbilities: AbilityDef[] = [
     kind: "active",
     id: "battle_hymn",
     name: "Battle Hymn",
-    blurb: "Bardic aura charges up (+3 damage for next few party attacks) and restores mana to all allies.",
+    blurb: "Morale Boost charges up (+3 damage for next few party attacks) and restores mana to all allies.",
     icon: "aura",
     mana_cost: 2,
     routing: "utility",
@@ -78,7 +78,7 @@ export const bardAbilities: AbilityDef[] = [
   {
     kind: "passive",
     id: "bardic_aura",
-    name: "Bardic Aura",
+    name: "Morale Boost",
     blurb: "While you're alive, partymates deal +(1 + floor(level/5)) bonus damage. Battle Hymn boosts it by +2 more.",
     trigger: "always_on",
     once_per_fight: false,

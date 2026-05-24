@@ -5,7 +5,7 @@ export const mageAbilities: AbilityDef[] = [
   {
     kind: "active",
     id: "fireball",
-    name: "Fireball",
+    name: "Prod Fire",
     blurb: "Rains fire on every enemy at once.",
     icon: "fire",
     mana_cost: 2,
@@ -39,7 +39,7 @@ export const mageAbilities: AbilityDef[] = [
   {
     kind: "active",
     id: "lightning_bolt",
-    name: "Lightning Bolt",
+    name: "Zero-Day Strike",
     blurb: "Hurl a bolt of lightning. Rolls d20 + magic to hit; deals magic × d8 damage on hit.",
     icon: "electric",
     mana_cost: 1,
@@ -55,7 +55,7 @@ export const mageAbilities: AbilityDef[] = [
   {
     kind: "active",
     id: "mage_armor",
-    name: "Mage Armor",
+    name: "Circuit Breaker",
     blurb: "Conjures a magical barrier. Grants 3d6 + magic shield to a target ally.",
     icon: "bolt-shield",
     mana_cost: 1,

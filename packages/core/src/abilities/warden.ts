@@ -5,7 +5,7 @@ export const wardenAbilities: AbilityDef[] = [
   {
     kind: "active",
     id: "bulwark_strike",
-    name: "Bulwark Strike",
+    name: "Stress Test",
     blurb: "Rolls d20 + attack to hit; deals 1d10 + attack + 50% armor on hit.",
     icon: "shield",
     mana_cost: 0,
@@ -53,7 +53,7 @@ export const wardenAbilities: AbilityDef[] = [
   {
     kind: "passive",
     id: "thorns",
-    name: "Thorns",
+    name: "Backpressure",
     blurb: "When hit, deal 25% of your armor value back to the attacker.",
     trigger: "always_on",
     once_per_fight: false,

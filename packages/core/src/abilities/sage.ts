@@ -15,7 +15,7 @@ export const sageAbilities: AbilityDef[] = [
   {
     kind: "active",
     id: "ray_of_frost",
-    name: "Ray of Frost",
+    name: "Cold Start",
     blurb: "Spell attack (+mag to hit) dealing {mag}d4 frost damage, with a 25% chance to freeze.",
     icon: "ice-bolt",
     mana_cost: 1,
@@ -65,7 +65,7 @@ export const sageAbilities: AbilityDef[] = [
   {
     kind: "active",
     id: "ill_omen",
-    name: "Ill Omen",
+    name: "Stack Overflow",
     blurb: "Curse an enemy. Tracks all damage it takes; after 3 of its turns, deals 50% of the total back to it.",
     icon: "death-skull",
     mana_cost: 1,

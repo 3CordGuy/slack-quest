@@ -5,7 +5,7 @@ export const paladinAbilities: AbilityDef[] = [
   {
     kind: "passive",
     id: "holy_rage",
-    name: "Holy Rage",
+    name: "Regression Rage",
     blurb: "Whenever you or an ally takes damage, your next attack deals +10% of that damage (stacks).",
     trigger: "on_ally_hit",
     once_per_fight: false,
@@ -14,7 +14,7 @@ export const paladinAbilities: AbilityDef[] = [
   {
     kind: "active",
     id: "shield_of_faith",
-    name: "Shield of Faith",
+    name: "Test Coverage",
     blurb: "Increase the AC of all allies by 5 for 3 rounds.",
     icon: "round-shield",
     mana_cost: 2,
@@ -27,7 +27,7 @@ export const paladinAbilities: AbilityDef[] = [
   {
     kind: "active",
     id: "lay_on_hands",
-    name: "Lay on Hands",
+    name: "Hotfix",
     blurb: "Heal an ally for 1d6 + mag/2 + vit/2. If the target is your protected ally, also heal yourself for the same amount.",
     icon: "hand",
     mana_cost: 1,
@@ -47,7 +47,7 @@ export const paladinAbilities: AbilityDef[] = [
   {
     kind: "active",
     id: "smite",
-    name: "Smite",
+    name: "Breakpoint",
     blurb: "Strike for normal + 2d8 extra damage. Enemy deals 50% less damage on their next swing.",
     icon: "axe-swing",
     mana_cost: 1,
