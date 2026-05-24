@@ -7,7 +7,7 @@ export const bardAbilities: AbilityDef[] = [
     id: "crescendo",
     name: "Crescendo",
     blurb: "A rising build that crescendos into a deploy strike — rolls d20 + magic to hit; deals 1d6 + magic + party×2 + weapon on hit.",
-    icon: "horn-call",
+    icon: "sound-on",
     mana_cost: 1,
     routing: "utility",
     target: "single_enemy",

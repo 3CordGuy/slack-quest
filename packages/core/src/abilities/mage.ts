@@ -41,7 +41,7 @@ export const mageAbilities: AbilityDef[] = [
     id: "lightning_bolt",
     name: "Zero-Day Strike",
     blurb: "A precision strike through an unpatched vulnerability — rolls d20 + magic to hit; deals magic × d8 damage on hit.",
-    icon: "cpu-shot",
+    icon: "lightning-branches",
     mana_cost: 1,
     routing: "utility",
     target: "single_enemy",

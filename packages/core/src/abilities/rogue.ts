@@ -66,7 +66,7 @@ export const rogueAbilities: AbilityDef[] = [
     id: "debilitate",
     name: "Debilitate",
     blurb: "SIGSTOP the process — stun the target for 1 round and expose a vulnerability (+20% damage taken for 2 rounds).",
-    icon: "crossed-swords",
+    icon: "knocked-out-stars",
     mana_cost: 1,
     cooldown_turns: 3,
     routing: "utility",

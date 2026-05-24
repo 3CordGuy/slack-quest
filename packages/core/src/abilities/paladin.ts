@@ -29,7 +29,7 @@ export const paladinAbilities: AbilityDef[] = [
     id: "lay_on_hands",
     name: "Hotfix",
     blurb: "Deploy an emergency patch directly to an ally — heals 1d6 + mag/2 + vit/2. If they're your protected target, the fix propagates back to you too.",
-    icon: "hand",
+    icon: "first-aid-kit",
     mana_cost: 1,
     routing: "utility",
     target: "single_ally",

@@ -16,7 +16,7 @@ export const druidAbilities: AbilityDef[] = [
     id: "regeneration",
     name: "Regeneration",
     blurb: "Set a recurring health check — target ally regenerates mag HP per turn for 4 rounds.",
-    icon: "regeneration",
+    icon: "health-increase",
     mana_cost: 1,
     routing: "utility",
     target: "single_ally",

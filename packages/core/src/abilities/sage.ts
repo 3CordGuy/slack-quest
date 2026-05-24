@@ -33,7 +33,7 @@ export const sageAbilities: AbilityDef[] = [
     id: "blizzard",
     name: "Blizzard",
     blurb: "Spin up a sustained traffic spike — deals 1d6 + mag frost damage to all enemies at the end of each of your turns (10% freeze chance) for 3 turns.",
-    icon: "snowflake",
+    icon: "icicles-fence",
     mana_cost: 2,
     cooldown_turns: 3,
     routing: "utility",
