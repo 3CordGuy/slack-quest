@@ -706,7 +706,7 @@ function formatEvent(e: CombatEvent, state: CombatState | null): LogEntry[] {
     case "passive_warden_armor_up":
       return row("shield", <>{nameOf(e.actor)} Armor Up — +{e.amount} shield.</>, "good");
     case "passive_warden_thorns":
-      return row("thorns", <>{nameOf(e.actor)} Thorns — {e.amount} damage reflected.</>, "good");
+      return row("thorns", <>{nameOf(e.actor)} Backpressure — {e.amount} damage reflected.</>, "good");
     case "ability_brace":
       return row("aura", <>{nameOf(e.actor)} braces — 20% damage reduction for {e.turns} turns.</>, "good");
     case "passive_mage_mana_font":
@@ -716,9 +716,9 @@ function formatEvent(e: CombatEvent, state: CombatState | null): LogEntry[] {
     case "passive_rogue_lethal_strike":
       return row("plain-dagger", <>{nameOf(e.actor)} Lethal Strikes — bleed {e.magnitude}/turn × {e.duration}.</>, "good");
     case "ability_envenom_proc":
-      return row("poison", <>{nameOf(e.actor)} Envenom procs — poison {e.stacks}/turn × 2.</>, "good");
+      return row("poison", <>{nameOf(e.actor)} Malicious Payload procs — poison {e.stacks}/turn × 2.</>, "good");
     case "passive_bard_aura":
-      return row("aura", <>Bardic Aura: +{e.bonus} dmg from {nameOf(e.source)}'s song.</>, "good");
+      return row("aura", <>Morale Boost: +{e.bonus} dmg from {nameOf(e.source)}'s song.</>, "good");
     case "passive_warlock_bleed":
       return [{
         id: nextLogId++,
@@ -726,13 +726,13 @@ function formatEvent(e: CombatEvent, state: CombatState | null): LogEntry[] {
         tone: "good",
       }];
     case "passive_holy_rage":
-      return row("axe-swing", <>{nameOf(e.paladin)} Holy Rage +{e.bonus} damage!</>, "good");
+      return row("axe-swing", <>{nameOf(e.paladin)} Regression Rage +{e.bonus} damage!</>, "good");
     case "ability_shield_of_faith":
-      return row("round-shield", <>Shield of Faith — all allies gain +5 AC until round {e.expires_after_round}.</>, "good");
+      return row("round-shield", <>Test Coverage — all allies gain +5 AC until round {e.expires_after_round}.</>, "good");
     case "ability_protect":
       return row("crowned-heart", <>{nameOf(e.actor)} shields {nameOf(e.target)} — will absorb half their incoming damage.</>, "good");
     case "ability_smite_debuff":
-      return row("axe-swing", <>Smite — {nameOf(e.target)} weakened, deals 50% damage next swing.</>, "good");
+      return row("axe-swing", <>Breakpoint — {nameOf(e.target)} weakened, deals 50% damage next swing.</>, "good");
     case "protect_triggered":
       return row("crowned-heart", <>Protect: {nameOf(e.target)} takes {e.target_damage}, {nameOf(e.paladin)} absorbs {e.paladin_damage}.</>, "muted");
     case "passive_primal_strikes_heal":
@@ -740,23 +740,23 @@ function formatEvent(e: CombatEvent, state: CombatState | null): LogEntry[] {
     case "ability_regeneration":
       return row("regeneration", <>{nameOf(e.actor)} → {nameOf(e.target)}: Regeneration +{e.magnitude} HP/turn for {e.duration} rounds.</>, "good");
     case "ability_animal_form":
-      return row("wolf-head", <>{nameOf(e.actor)} takes Animal Form — STR+{e.str_bonus} VIT+{e.vit_bonus} AGI+{e.agi_bonus} DEX+{e.dex_bonus} for {e.turns} turns.</>, "good");
+      return row("wolf-head", <>{nameOf(e.actor)} scales up — STR+{e.str_bonus} VIT+{e.vit_bonus} AGI+{e.agi_bonus} DEX+{e.dex_bonus} for {e.turns} turns.</>, "good");
     case "ability_barkskin":
-      return row("oak-leaf", <>{nameOf(e.actor)} → {nameOf(e.target)}: Barkskin +{e.bonus} AC for {e.turns} rounds.</>, "good");
+      return row("oak-leaf", <>{nameOf(e.actor)} → {nameOf(e.target)}: Firewall +{e.bonus} AC for {e.turns} rounds.</>, "good");
     case "ability_wildgrowth_entangle":
-      return row("grass", <>Wildgrowth: target entangled — −4 to-hit for {e.duration} rounds.</>, "good");
+      return row("grass", <>Deadlock: target entangled — −4 to-hit for {e.duration} rounds.</>, "good");
     case "passive_rogue_first_crit":
       return row("plain-dagger", <>{nameOf(e.actor)}'s first strike — guaranteed crit!</>, "good");
     case "passive_sinister_queries":
       return row("bleeding-wound", <>Sinister Queries: {nameOf(e.actor)} applies {e.magnitude} <Icon name="bleeding-wound" color="#dc2626" /> bleed.</>, "good");
     case "ability_hex":
-      return row("death-skull", <>{nameOf(e.actor)} hexes the monster — -25% dmg, bleeds on hit ({e.duration}t).</>, "good");
+      return row("death-skull", <>{nameOf(e.actor)} corrupts the index — -25% dmg, bleeds on hit ({e.duration}t).</>, "good");
     case "hex_bleed_proc":
-      return row("bleeding-wound", <>Hex: <Icon name="bleeding-wound" color="#dc2626" /> +{e.stacks} bleed stacks from damage taken.</>, "muted");
+      return row("bleeding-wound", <>Corrupt Index: <Icon name="bleeding-wound" color="#dc2626" /> +{e.stacks} bleed stacks from damage taken.</>, "muted");
     case "ability_forbidden_sql":
       return row("death-skull", <>Forbidden SQL: consumed {e.stacks_consumed} bleed stacks → {e.damage} damage.</>, "good");
     case "passive_paladin_auto_heal":
-      return row("fairy-wand", <>Lay on Hands: {nameOf(e.paladin)} → {nameOf(e.target)} +{e.amount} HP.</>, "good");
+      return row("fairy-wand", <>Hotfix: {nameOf(e.paladin)} → {nameOf(e.target)} +{e.amount} HP.</>, "good");
     case "drink_buff_consumed":
       if (e.kind === "buff_next_crit") {
         return row("lucky-fish", <>Lucky Sip — guaranteed crit, +{e.bonus} damage.{e.remaining === 0 ? " Buff wears off." : ""}</>, "good");
@@ -946,13 +946,13 @@ export function CombatPage({
             } else if (evt.type === "passive_warden_armor_up") {
               toast(`🛡 Armor Up — +${(evt as { amount: number }).amount} shield`, { duration: 2500 });
             } else if (evt.type === "passive_warden_thorns") {
-              toast(`🌵 Thorns — ${(evt as { amount: number }).amount} reflected`, { duration: 2500 });
+              toast(`🌵 Backpressure — ${(evt as { amount: number }).amount} reflected`, { duration: 2500 });
             } else if (evt.type === "ability_brace") {
               toast(`🔰 Brace — 20% damage reduction active`, { duration: 3000 });
             } else if (evt.type === "passive_mage_mana_font") {
               toast(`🧙 Mana Font — +${(evt as { amount: number }).amount} mana`, { duration: 3000 });
             } else if (evt.type === "passive_holy_rage") {
-              toast(`⚔️ Holy Rage — +${(evt as { bonus: number }).bonus} bonus damage`, { duration: 3000 });
+              toast(`⚔️ Regression Rage — +${(evt as { bonus: number }).bonus} bonus damage`, { duration: 3000 });
             }
           }
           // Refresh inventory after any item use so the picker reflects the
@@ -1786,7 +1786,7 @@ function MonsterCard({
               <StatusPill size="lg" color="#f59e0b" icon="shield-reflect" label="taunted" suffix={`${taunt.swings}sw`} title={`Taunted: forced to attack ${taunt.actor_name} for ${taunt.swings} more swing${taunt.swings === 1 ? "" : "s"}`} />
             )}
             {smiteDebuffed && (
-              <StatusPill size="lg" color="#f87171" icon="axe-swing" label="smited" suffix="½ dmg" title="Smite: this monster deals 50% less damage on its next swing" />
+              <StatusPill size="lg" color="#f87171" icon="axe-swing" label="breakpoint" suffix="½ dmg" title="Breakpoint: this monster deals 50% less damage on its next swing" />
             )}
             {discouraged > 0 && (
               <StatusPill size="lg" color="#f87171" icon="morbid-humour" label="mocked" suffix={`${discouraged}c`} title={`Mocked: disadvantage on next ${discouraged} roll${discouraged === 1 ? "" : "s"}`} />
@@ -1795,7 +1795,7 @@ function MonsterCard({
               <StatusPill size="lg" color="#fb923c" icon="crossed-swords" label="vulnerable" suffix={`+${vulnerable.magnitude}%`} title={`Vulnerable: takes ${vulnerable.magnitude}% more damage (${vulnerable.expires_after_round - round + 1} round${vulnerable.expires_after_round - round + 1 === 1 ? "" : "s"} left)`} />
             )}
             {illOmen && illOmen.monster_turns_remaining > 0 && (
-              <StatusPill size="lg" color="#c084fc" icon="death-skull" label="ill omen" suffix={`${illOmen.monster_turns_remaining}t`} title={`Ill Omen: ${illOmen.accumulated} damage accumulated — bursts in ${illOmen.monster_turns_remaining} monster turn${illOmen.monster_turns_remaining === 1 ? "" : "s"}`} />
+              <StatusPill size="lg" color="#c084fc" icon="death-skull" label="stack overflow" suffix={`${illOmen.monster_turns_remaining}t`} title={`Stack Overflow: ${illOmen.accumulated} damage accumulated — bursts in ${illOmen.monster_turns_remaining} monster turn${illOmen.monster_turns_remaining === 1 ? "" : "s"}`} />
             )}
           </div>
         )}
@@ -2991,12 +2991,12 @@ function PartyChips({ fighters, selfId, flashIds, hitDustSeq, healBurstSeq, shie
                 return def ? <def.pill key={i} effect={e} size="sm" /> : null;
               })}
               {vanishSwings > 0 && <StatusPill size="sm" color="#818cf8" icon="player-dodge" label="vanish" suffix={`${vanishSwings}sw`} title={`Vanished: untargetable for ${vanishSwings} swing${vanishSwings === 1 ? "" : "s"}; next hit auto-crits`} />}
-              {envenomEntry && <StatusPill size="sm" color="#4ade80" icon="vial" label="envenomed" suffix={`×${envenomEntry.stacks} ×${envenomEntry.charges}`} title={`Envenomed weapon: next ${envenomEntry.charges} hit${envenomEntry.charges === 1 ? "" : "s"} apply ${envenomEntry.stacks} stacks of poison`} />}
-              {sofActive && <StatusPill size="sm" color="#60a5fa" icon="round-shield" label="SoF" suffix={`${sofRoundsLeft}r`} title={`Shield of Faith: +5 AC (${sofRoundsLeft} round${sofRoundsLeft === 1 ? "" : "s"} left)`} />}
+              {envenomEntry && <StatusPill size="sm" color="#4ade80" icon="vial" label="payload" suffix={`×${envenomEntry.stacks} ×${envenomEntry.charges}`} title={`Malicious Payload: next ${envenomEntry.charges} hit${envenomEntry.charges === 1 ? "" : "s"} apply ${envenomEntry.stacks} stacks of poison`} />}
+              {sofActive && <StatusPill size="sm" color="#60a5fa" icon="round-shield" label="coverage" suffix={`${sofRoundsLeft}r`} title={`Test Coverage: +5 AC (${sofRoundsLeft} round${sofRoundsLeft === 1 ? "" : "s"} left)`} />}
               {isProtected && <StatusPill size="sm" color="#a78bfa" icon="crowned-heart" label="protected" suffix="½ dmg" title="Protected: taking half damage, absorbed by the paladin" />}
-              {holyRageTotal > 0 && <StatusPill size="sm" color="#f97316" icon="fire" label="holy rage" suffix={`+${holyRageBonus}`} title={`Holy Rage: next attack deals +${holyRageBonus} bonus damage`} />}
+              {holyRageTotal > 0 && <StatusPill size="sm" color="#f97316" icon="fire" label="regr. rage" suffix={`+${holyRageBonus}`} title={`Regression Rage: next attack deals +${holyRageBonus} bonus damage`} />}
               {encourageCharges > 0 && <StatusPill size="sm" color="#4ade80" icon="conversation" label="adv" suffix={`${encourageCharges}c`} title={`Encouraged: advantage on next ${encourageCharges} roll${encourageCharges === 1 ? "" : "s"}`} />}
-              {showAura && <StatusPill size="sm" color="#f59e0b" icon="aura" label="bard aura" suffix={`+${bardAuraBonus}`} title={`Bardic Aura: +${bardAuraBonus} bonus damage${hymnActive ? ` (Battle Hymn active until round ${hymnState!.expires_after_round})` : ""}`} />}
+              {showAura && <StatusPill size="sm" color="#f59e0b" icon="aura" label="morale boost" suffix={`+${bardAuraBonus}`} title={`Morale Boost: +${bardAuraBonus} bonus damage${hymnActive ? ` (Battle Hymn active until round ${hymnState!.expires_after_round})` : ""}`} />}
               {braceTurns > 0 && <StatusPill size="sm" color="#38bdf8" icon="aura" label="brace" suffix={`-${braceEntry!.pct}% ${braceTurns}t`} title={`Brace: -${braceEntry!.pct}% incoming damage for ${braceTurns} more turn${braceTurns === 1 ? "" : "s"}`} />}
               {fortifyTurns > 0 && <StatusPill size="sm" color="#94a3b8" icon="shield-reflect" label="fortify" suffix={`${fortifyTurns}t`} title={`Taunt Fortify: all incoming damage routes through armor for ${fortifyTurns} more turn${fortifyTurns === 1 ? "" : "s"}`} />}
               {resilientStacks > 0 && <StatusPill size="sm" color="#f59e0b" icon="bolt-shield" label="resilient" suffix={`×${resilientStacks}`} title={`Resilient: ${resilientStacks} active stack${resilientStacks === 1 ? "" : "s"} — raises shield cap and effective armor by ${resilientStacks * 2}+ per stack`} />}

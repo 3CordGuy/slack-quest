@@ -28,7 +28,7 @@ export const druidAbilities: AbilityDef[] = [
   {
     kind: "active",
     id: "animal_form",
-    name: "Animal Form",
+    name: "Scale Up",
     blurb: "Transform — Might, Vit, Agi, and Dex each increase by mag + 25% of their current value for 4 rounds.",
     icon: "wolf-head",
     mana_cost: 2,
@@ -48,7 +48,7 @@ export const druidAbilities: AbilityDef[] = [
   {
     kind: "active",
     id: "wildgrowth",
-    name: "Wildgrowth",
+    name: "Deadlock",
     blurb: "Vines lash every enemy for 3d6 + mag + attack damage and entangle them (−4 to-hit) for 2 rounds.",
     icon: "grass",
     mana_cost: 2,
@@ -69,7 +69,7 @@ export const druidAbilities: AbilityDef[] = [
   {
     kind: "active",
     id: "barkskin",
-    name: "Barkskin",
+    name: "Firewall",
     blurb: "Target ally's skin hardens — +5 AC for 2 rounds.",
     icon: "leaf",
     mana_cost: 1,

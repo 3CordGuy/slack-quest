@@ -16,7 +16,7 @@ export const warlockAbilities: AbilityDef[] = [
   {
     kind: "active",
     id: "leech_life",
-    name: "Leech Life",
+    name: "Data Siphon",
     blurb: "Deal 2d6 + magic damage to an enemy and heal for half the damage dealt.",
     icon: "death-skull",
     mana_cost: 1,
@@ -37,7 +37,7 @@ export const warlockAbilities: AbilityDef[] = [
   {
     kind: "active",
     id: "hex",
-    name: "Hex",
+    name: "Corrupt Index",
     blurb: "Reduce a monster's damage by 25%. While hexed, it takes 3 bleed stacks whenever it takes damage.",
     icon: "wax-seal",
     mana_cost: 1,
@@ -51,7 +51,7 @@ export const warlockAbilities: AbilityDef[] = [
   {
     kind: "active",
     id: "summon_imp",
-    name: "Summon Imp",
+    name: "Spawn Worker",
     blurb: "Summon an imp into battle. Its attacks deal damage equal to your magic modifier.",
     icon: "aura",
     mana_cost: 2,
