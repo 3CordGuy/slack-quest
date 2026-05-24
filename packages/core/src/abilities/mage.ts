@@ -55,7 +55,7 @@ export const mageAbilities: AbilityDef[] = [
   {
     kind: "active",
     id: "mage_armor",
-    name: "Circuit Breaker",
+    name: "Encapsulate",
     blurb: "Conjures a magical barrier. Grants 3d6 + magic shield to a target ally.",
     icon: "bolt-shield",
     mana_cost: 1,
