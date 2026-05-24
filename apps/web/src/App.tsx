@@ -4549,6 +4549,7 @@ function CharacterCard({
 }) {
   const [trophyDefs, setTrophyDefs] = useState<Achievement[]>([]);
   const [trophyEarned, setTrophyEarned] = useState<EarnedAchievement[]>([]);
+  const [abilitiesOpen, setAbilitiesOpen] = useState(false);
   useEffect(() => {
     fetch("/api/achievements")
       .then((r) => r.ok ? r.json() as Promise<AchievementsResponse> : null)
@@ -4786,6 +4787,71 @@ function CharacterCard({
           )}
         </div>
       )}
+      {/* Abilities section */}
+      {(() => {
+        const abilities = classByName(c.class)?.abilities ?? [];
+        if (abilities.length === 0) return null;
+        return (
+          <div style={{ marginTop: 12, padding: "10px 12px", background: "#16181c", borderRadius: 8, border: "1px solid #2a2d33" }}>
+            <button
+              onClick={() => setAbilitiesOpen(o => !o)}
+              style={{ display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%", background: "none", border: "none", cursor: "pointer", padding: 0 }}
+            >
+              <span style={{ fontSize: 11, color: "#6b7280", textTransform: "uppercase", letterSpacing: 1.2, fontFamily: DISPLAY_FONT }}>
+                Abilities
+              </span>
+              <span style={{ fontSize: 10, color: "#4a5060", display: "inline-block", transform: abilitiesOpen ? "rotate(180deg)" : "rotate(0deg)", transition: "transform 0.15s ease" }}>▼</span>
+            </button>
+            {abilitiesOpen && (
+              <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 6 }}>
+                {abilities.map((ab) => (
+                  <div key={ab.id} style={{ display: "flex", gap: 8, padding: "7px 8px", background: "#1a1d24", borderRadius: 6, border: "1px solid #2a2d33", alignItems: "flex-start" }}>
+                    <div style={{ flexShrink: 0, width: 32, height: 32, background: "#0e0f12", borderRadius: 5, display: "flex", alignItems: "center", justifyContent: "center", marginTop: 1 }}>
+                      {ab.kind === "active"
+                        ? <Icon name={ab.icon} size={18} color="#a0aec0" />
+                        : <Icon name="abstract-006" size={16} color="#4a5060" />
+                      }
+                    </div>
+                    <div style={{ minWidth: 0, flex: 1 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 4, flexWrap: "wrap", marginBottom: 3 }}>
+                        <span style={{ fontSize: 12, fontWeight: 600, color: "#e2e8f0", fontFamily: DISPLAY_FONT, lineHeight: 1 }}>{ab.name}</span>
+                        <span style={{
+                          fontSize: 9, padding: "1px 4px", borderRadius: 3, fontWeight: 700, letterSpacing: 0.4, textTransform: "uppercase", lineHeight: 1.4,
+                          background: ab.kind === "active" ? "#1e3a5f" : "#1a2a1a",
+                          color: ab.kind === "active" ? "#7dd3fc" : "#86efac",
+                        }}>
+                          {ab.kind}
+                        </span>
+                        {ab.kind === "active" && ab.mana_cost > 0 && (
+                          <span style={{ fontSize: 9, padding: "1px 4px", borderRadius: 3, background: "#2d1b4e", color: "#c4b5fd", fontWeight: 700, lineHeight: 1.4 }}>
+                            {ab.mana_cost} mana
+                          </span>
+                        )}
+                        {ab.kind === "active" && ab.mana_cost === 0 && (
+                          <span style={{ fontSize: 9, padding: "1px 4px", borderRadius: 3, background: "#1a2a1a", color: "#4ade80", fontWeight: 700, lineHeight: 1.4 }}>
+                            free
+                          </span>
+                        )}
+                        {ab.kind === "active" && (ab.cooldown_turns ?? 0) > 0 && (
+                          <span style={{ fontSize: 9, padding: "1px 4px", borderRadius: 3, background: "#2a2010", color: "#fbbf24", fontWeight: 700, lineHeight: 1.4 }}>
+                            {ab.cooldown_turns}t CD
+                          </span>
+                        )}
+                        {ab.kind === "passive" && (
+                          <span style={{ fontSize: 9, padding: "1px 4px", borderRadius: 3, background: "#1a1a2e", color: "#818cf8", fontWeight: 700, lineHeight: 1.4 }}>
+                            {ab.trigger.replace(/_/g, " ")}
+                          </span>
+                        )}
+                      </div>
+                      <p style={{ margin: 0, fontSize: 10, color: "#718096", lineHeight: 1.4 }}>{ab.blurb}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      })()}
       {/* Camp section */}
       <div style={{ marginTop: 16, padding: "10px 12px", background: "#16181c", borderRadius: 8, border: "1px solid #2a2d33" }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
