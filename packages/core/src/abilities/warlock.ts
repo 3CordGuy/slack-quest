@@ -64,17 +64,17 @@ export const warlockAbilities: AbilityDef[] = [
       return [
         fx.summonAllyNpc(
           {
-            name: "Imp",
-            class_label: "Imp",
+            name: "Service Worker",
+            class_label: "Service Worker",
             level: ctx.caster.level,
             hp,
-            attack_mod: mag, 
+            attack_mod: mag,
             weapon_power: mag,
             position: "front",
             weapon_range: "melee",
             damage_roll: '0'
           },
-          "imp",
+          "spawn-node",
         ),
       ];
     },
