@@ -1104,6 +1104,7 @@ function slotTypeHint(slot: string, itemSubtype?: string): string | null {
     case "boots":    return "footwear (e.g. runtime sandals, debug boots, null-pointer treads, stack-overflow cleats)";
     case "helmet":   return "head armor (e.g. crash helmet, null-guard visor, incident commander's helm, merge-conflict cap)";
     case "pants":    return "leg armor or trousers (e.g. cargo pants, quantum leggings, debug denims, load-balanced greaves)";
+    case "body":     return "chest/torso armor (e.g. vest, robe, cuirass, breastplate, plate carrier, server-rack vest, hoodie of holding) — NOT pants, leggings, helmet, gloves, boots, or accessories";
     case "off_hand": return itemSubtype === "gloves"
       ? "hand armor or gloves (e.g. debugging gauntlets, git-blame mittens, null-pointer gloves, merge-conflict bracers, hotfix mitts)"
       : "a shield (e.g. firewall buckler, rate-limiting shield, null-check barrier, abstraction layer)";

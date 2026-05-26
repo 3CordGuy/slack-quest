@@ -444,11 +444,17 @@ export function lootIcon(opt: {
     }
   }
   if (opt.item_type === "weapon") {
-    // "gun" anywhere in flavor → blunderbuss (per-request override).
-    // Keeps loot tiles consistent with the inventory itemIcon rules.
+    // Specific firearm name matches win over the generic "gun" flavor rule
+    // so loot tiles stay consistent with the inventory itemIcon rules.
     const f = (opt.flavor ?? "").toLowerCase();
     const n = (opt.item_name ?? "").toLowerCase();
-    if (/\bgun\b/.test(f) || /\bblunderbuss\b/.test(n) || /\bblunderbuss\b/.test(f)) return "blunderbuss";
+    if (/\bcannon(ball|shot)?\b/.test(n)) return /\b(shot|ball)\b/.test(n) ? "cannon-shot" : "cannon";
+    if (/\b(sawed-?off|shotgun)\b/.test(n)) return "shotgun";
+    if (/\bblunderbuss\b/.test(n) || /\bblunderbuss\b/.test(f)) return "blunderbuss";
+    if (/\bmusket\b/.test(n)) return "musket";
+    if (/\brifle\b/.test(n)) return "rifle";
+    if (/\b(pistol|revolver|sidearm|six-?shooter)\b/.test(n)) return "pistol-gun";
+    if (/\bgun\b/.test(f) || /\bgun\b/.test(n)) return "blunderbuss";
     if (opt.weapon_range === "focus")  return "crystal-wand";
     if (opt.weapon_range === "ranged") return "crossbow";
     return "sword";
