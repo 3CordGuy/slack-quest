@@ -339,6 +339,7 @@ function slotTypeHint(slot: string): string | null {
     case "boots":    return "footwear (e.g. runtime sandals, debug boots, null-pointer treads, stack-overflow cleats)";
     case "helmet":   return "head armor (e.g. crash helmet, null-guard visor, incident commander's helm, merge-conflict cap)";
     case "pants":    return "leg armor or trousers (e.g. cargo pants, quantum leggings, debug denims, load-balanced greaves)";
+    case "body":     return "chest/torso armor (e.g. vest, robe, cuirass, breastplate, plate carrier, server-rack vest, hoodie of holding) — NOT pants, leggings, helmet, gloves, boots, or accessories";
     case "off_hand": return "a shield (e.g. firewall buckler, rate-limiting shield, null-check barrier, abstraction layer)";
     default:         return null;
   }
@@ -358,7 +359,9 @@ export async function flavorLootDrop(
     type === "weapon"
       ? weaponRange === "ranged"
         ? "a RANGED weapon (e.g. crossbow, bow, sling, throwing dart, scroll-launcher, blunderbuss)"
-        : "a MELEE weapon (e.g. sword, hammer, dagger, staff, gauntlet, mace, axe)"
+        : weaponRange === "focus"
+          ? "a FOCUS / caster implement — a magical channel, NOT a sword or blade (e.g. wand, staff, druidic bough, codex, tome, sigil-rod, healer's chime, focusing crystal, spell-quill, orb). It boosts healing and shielding rather than dealing physical damage. Do NOT call it a sword, blade, axe, hammer, or any melee weapon."
+          : "a MELEE weapon (e.g. sword, hammer, dagger, staff, gauntlet, mace, axe)"
       : null;
   const typeHint =
     weaponHint ??

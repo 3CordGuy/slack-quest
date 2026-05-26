@@ -9484,24 +9484,36 @@ function itemIcon(item: {
   switch (item.item_type) {
     case "weapon": {
       if (item.weapon_range === "focus") return "crystal-wand";
-      // Per-request: "gun" anywhere in flavor → blunderbuss. Goes first so
-      // flavor-only hints (name doesn't mention any firearm) still hit.
-      if (/\bgun\b/.test(f))                                              return "blunderbuss";
+      // Specific firearm matches first — name wins over generic "gun" rule
+      // so "Cannon" gets cannon.svg, not blunderbuss.
+      if (/\bcannon(ball|shot)?\b/.test(n))                              return /\b(shot|ball)\b/.test(n) ? "cannon-shot" : "cannon";
+      if (/\b(sawed-?off|shotgun)\b/.test(n))                            return "shotgun";
       if (/\bblunderbuss\b/.test(n) || /\bblunderbuss\b/.test(f))         return "blunderbuss";
+      if (/\bmusket\b/.test(n))                                          return "musket";
+      if (/\brifle\b/.test(n))                                           return "rifle";
+      if (/\b(pistol|revolver|sidearm|six-?shooter)\b/.test(n))          return "pistol-gun";
+      // Flavor fallback: "gun" anywhere in flavor → blunderbuss. Runs after
+      // the specific name patterns so a "Cannon" whose flavor mentions
+      // "smoke-belching gun" still gets the cannon icon.
+      if (/\bgun\b/.test(f))                                              return "blunderbuss";
       if (/\bdaggers\b/.test(n))                                          return "daggers";
       if (/\b(axe|hatchet|cleaver|tomahawk)\b/.test(n))                  return "battle-axe";
       if (/\b(dagger|knife|dirk|shiv|stiletto|shank)\b/.test(n))         return "plain-dagger";
       if (/\b(hammer|sledge)\b/.test(n))                                 return "hammer-drop";
+      if (/\b(flail|morning-?star|nunchaku|chain-?whip)\b/.test(n))      return "flail";
       if (/\b(maul|mace|club)\b/.test(n))                                return "hammer";
       if (/\b(staff|stave|wand|rod|scepter|sceptre)\b/.test(n))          return "crystal-wand";
       if (/\b(spear|lance|pike|javelin|halberd|polearm)\b/.test(n))      return "barbed-spear";
       if (/\bcrossbow\b/.test(n))                                         return "crossbow";
       if (/\b(bow|longbow|shortbow|recurve)\b/.test(n))                  return "crossbow";
-      if (/\b(gun|pistol|revolver|musket|rifle)\b/.test(n))              return "revolver";
+      if (/\bgun\b/.test(n))                                              return "blunderbuss";
       if (/\b(scythe|sickle)\b/.test(n))                                 return "scythe";
       if (/\btrident\b/.test(n))                                         return "trident";
-      if (/\b(saber|sabre|rapier|foil|estoc)\b/.test(n))                return "spinning-sword";
-      if (/\b(broadsword|greatsword|longsword|claymore)\b/.test(n))     return "broadsword";
+      if (/\bkatana\b/.test(n))                                          return "katana";
+      if (/\bmachete\b/.test(n))                                         return "machete";
+      if (/\bgladius\b/.test(n))                                         return "gladius";
+      if (/\b(saber|sabre|rapier|foil|estoc|scimitar|cutlass|falchion)\b/.test(n)) return "spinning-sword";
+      if (/\b(broadsword|greatsword|longsword|claymore|zweihander|bastard-?sword)\b/.test(n)) return "broadsword";
       if (item.weapon_range === "ranged")                                 return "crossbow";
       return "sword";
     }

@@ -37,7 +37,8 @@ const SVG_ICONS = new Set([
   // Consumable icons
   "potion-ball",
   // Weapon icons
-  "hammer-drop",
+  "hammer-drop", "cannon", "cannon-shot", "shotgun", "musket", "rifle", "pistol-gun", "flail",
+  "katana", "machete", "gladius",
   // Bard ability icons
   "music-spell", "morbid-humour",
   // Class ability icons (registered as SVG for crisp rendering)
