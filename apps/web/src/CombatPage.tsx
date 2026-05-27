@@ -389,6 +389,10 @@ interface OutcomeSummary {
   is_boss: boolean;
   dungeon_room_cleared?: boolean;
   dungeon_doors?: Array<{ type: string; monster_name: string | null; scene: string | null }>;
+  tower_floor_cleared?: boolean;
+  tower_next_floor_kind?: "combat" | "rest" | "boss";
+  tower_awaiting_choice?: boolean;
+  tower_cycle_complete?: boolean;
 }
 
 // LogEntry is imported from CombatShared — flat interface with side/content/tone.
@@ -2410,7 +2414,15 @@ function VictoryModal({
   const dungeonRoom = outcome?.dungeon_room_cleared;
   const dungeonDoors = outcome?.dungeon_doors;
   const hasDoorChoice = dungeonRoom && dungeonDoors && dungeonDoors.length > 0;
-  const title = dungeonRoom ? "ROOM CLEARED" : "VICTORY";
+  const towerFloor = outcome?.tower_floor_cleared;
+  const towerAwaitingChoice = outcome?.tower_awaiting_choice;
+  const title = towerAwaitingChoice
+    ? "CYCLE CLEARED"
+    : towerFloor
+    ? "FLOOR CLEARED"
+    : dungeonRoom
+    ? "ROOM CLEARED"
+    : "VICTORY";
 
   async function pickDoor(pick: number) {
     if (choosingDoor) return;
