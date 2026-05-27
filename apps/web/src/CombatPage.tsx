@@ -81,6 +81,8 @@ interface Monster {
   boss_phase: 1 | 2;
   wave?: number;
   total_waves?: number;
+  tower_floor?: number;
+  tower_cycle?: number;
   art_url?: string;
   element_weakness?: "fire" | "ice" | "lightning";
   element_resistance?: "fire" | "ice" | "lightning";
@@ -1743,11 +1745,21 @@ function MonsterCard({
         <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
           <div>
             <div style={{ fontSize: 20, fontWeight: 700, color: "#f5f5f5", fontFamily: DISPLAY_FONT }}>{monster.name}</div>
-            <div style={{ ...muted, fontSize: 12 }}>
-              Tier {monster.tier}
-              {monster.is_boss && ` · Boss (phase ${monster.boss_phase})`}
-              {monster.wave && monster.total_waves && ` · Wave ${monster.wave}/${monster.total_waves}`}
-              {` · Round ${round}`}
+            <div style={{ ...muted, fontSize: 12, display: "flex", alignItems: "center", gap: 4, flexWrap: "wrap" }}>
+              {monster.tower_floor !== undefined && (
+                <>
+                  <Icon name="tower-flag" size={12} color="#fbbf24" />
+                  <span style={{ color: "#fbbf24", fontWeight: 600 }}>
+                    Floor {monster.tower_floor}
+                    {monster.tower_cycle ? ` · Cycle ${monster.tower_cycle}` : ""}
+                  </span>
+                  <span>·</span>
+                </>
+              )}
+              <span>Tier {monster.tier}</span>
+              {monster.is_boss && <span>· Boss (phase {monster.boss_phase})</span>}
+              {monster.wave && monster.total_waves && <span>· Wave {monster.wave}/{monster.total_waves}</span>}
+              <span>· Round {round}</span>
             </div>
             {((monster.attack_damage_type && monster.attack_damage_type !== "physical") || monster.element_weakness || monster.element_resistance) && !isDead && (
               <div style={{ display: "flex", gap: 6, marginTop: 3, flexWrap: "wrap" }}>

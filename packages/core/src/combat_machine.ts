@@ -134,6 +134,12 @@ export interface CombatMonster {
   wave?: number;
   total_waves?: number;
   upcoming_waves?: GauntletWaveSpec[];
+  // Tower-only display value (absolute floor 1, 2, … 11, 12, …). Set when
+  // the quest variant is "tower" so the combat header can render
+  // "Floor N · Cycle M". The engine doesn't use it for any mechanics; it's
+  // pure pass-through to the UI.
+  tower_floor?: number;
+  tower_cycle?: number;
   // Optional flux-1-schnell portrait URL from the scene. Surfaced to the UI
   // so the combat page can render the same image as the active-quest card.
   art_url?: string;

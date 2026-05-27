@@ -2538,8 +2538,11 @@ async function buildQuestScene(
 const TOWER_FLOORS_PER_CYCLE = 10;
 const TOWER_REST_FLOOR_OFFSET = 5;
 
-function towerFloorTierSlack(characterLevel: number, absoluteFloor: number): number {
-  return Math.max(1, characterLevel + Math.floor((absoluteFloor - 1) / 2));
+// Tower scaling is floor-driven, not level-driven — mirrors the web side
+// (see buildTowerSegment in apps/web/src/worker.ts). Floor 1 → tier 1, floor
+// N → tier N, regardless of character level.
+function towerFloorTierSlack(_characterLevel: number, absoluteFloor: number): number {
+  return Math.max(1, absoluteFloor);
 }
 
 function towerFloorKindSlack(absoluteFloor: number): "combat" | "rest" | "boss" {
