@@ -1561,7 +1561,11 @@ export function CombatPage({
           )}
           <CBtn label="Mark" icon="targeted" color="#f97316" disabled={liveMonsters.length > 1 && targetMonsterId === null} onClick={() => send({ kind: "mark", actor: selfId, target_id: effectiveTarget })} />
           <CBtn label="Wait" icon="hourglass" color="#475569" disabled={!myTurn} onClick={() => send({ kind: "wait", actor: selfId })} />
-          <CBtn label="Flee" icon="footprint" color="#9aa0a6" disabled={!myTurn} onClick={() => send({ kind: "flee", actor: selfId })} />
+          {/* No flee inside the Tower — commit through each cycle. The exit
+              valve is the post-boss "Call it a day" prompt. */}
+          {liveMonsters[0]?.tower_floor === undefined && (
+            <CBtn label="Flee" icon="footprint" color="#9aa0a6" disabled={!myTurn} onClick={() => send({ kind: "flee", actor: selfId })} />
+          )}
           {isMonsterTurn && !autoResolve && (
             <CBtn label="Resolve" icon="dragon" color="#5c1f1f" onClick={() => send({ kind: "monster_act" })} />
           )}

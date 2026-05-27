@@ -2754,12 +2754,12 @@ async function resolveTowerAdvance(
           type: "actions",
           elements: [
             { type: "button", action_id: "tower_continue", value: String(quest.id), text: { type: "plain_text", text: "🗼 Press on", emoji: true }, style: "primary" },
-            { type: "button", action_id: "tower_exit", value: String(quest.id), text: { type: "plain_text", text: "🏦 Bank & exit", emoji: true } },
+            { type: "button", action_id: "tower_exit", value: String(quest.id), text: { type: "plain_text", text: "🛌 Call it a day", emoji: true } },
           ],
         },
       ],
     }));
-    return ephemeral(`Cycle ${currentCycle} cleared! Use the buttons above (or \`${payload.command} tower continue\` / \`${payload.command} tower exit\`).`);
+    return ephemeral(`Cycle ${currentCycle} cleared! Use the buttons above (or \`${payload.command} tower continue\` / \`${payload.command} tower call it a day\`).`);
   }
 
   // Combat floor: pop the next plan. If next is a rest, pause and post the
@@ -2830,11 +2830,14 @@ async function handleTowerSubcommand(
     await saveScene(env.DB, quest.id, newScene);
     return ephemeral(`🗼 Cycle ${cycle} begins on floor ${startFloor}. Engage with \`${payload.command} attack\`.`);
   }
-  if (sub === "exit" || sub === "bank" || sub === "leave") {
+  // "call it a day" is the canonical post-boss exit phrase; exit/bank/leave
+  // remain accepted aliases. The user's "call it a day" parses as
+  // args = ["call", "it", "a", "day"] — sub === "call" matches.
+  if (sub === "exit" || sub === "bank" || sub === "leave" || sub === "call") {
     if (!quest.scene.tower_awaiting_choice) return ephemeral(`No choice pending right now.`);
     await markQuestStatus(env.DB, quest.id, "completed");
     await clearHiredMercForParty(env.DB, quest.id);
-    return ephemeral(`🏦 You bank your spoils and descend. Floors climbed: *${quest.scene.tower_floor ?? 0}*.`);
+    return ephemeral(`🛌 You call it a day and descend. Floors climbed: *${quest.scene.tower_floor ?? 0}*.`);
   }
   if (sub === "pick") {
     if (quest.scene.tower_floor_kind !== "rest") return ephemeral(`No rest stop available right now.`);
@@ -2872,7 +2875,7 @@ async function handleTowerSubcommand(
     await saveScene(env.DB, quest.id, nextScene);
     return ephemeral(`You wave the trader off. Floor ${next.floor} — engage with \`${payload.command} attack\`.`);
   }
-  return ephemeral(`Usage: \`${payload.command} tower continue|exit|pick <n>|skip\``);
+  return ephemeral(`Usage: \`${payload.command} tower continue | call it a day | pick <n> | skip\``);
 }
 
 // Generates a fresh dungeon. Layout:
@@ -4680,6 +4683,9 @@ async function handleCombat(
   if (action === "flee") {
     if (quest.scene.variant === "gauntlet" || quest.scene.variant === "dungeon") {
       return ephemeral("🚪 No exit on this quest type — kill or be killed.");
+    }
+    if (quest.scene.variant === "tower") {
+      return ephemeral("🗼 No fleeing the Tower — finish the cycle, then `call it a day` after the boss.");
     }
     return resolveFlee(payload, env, ctx, character, quest, fighters, equippedArmor);
   }

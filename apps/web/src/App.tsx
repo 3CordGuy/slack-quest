@@ -2764,7 +2764,7 @@ function TowerInterlude({
               disabled={busy}
               onClick={() => void call("/tower/exit")}
             >
-              🏦 Bank &amp; exit
+              🛌 Call it a day
             </button>
           </div>
         </div>
