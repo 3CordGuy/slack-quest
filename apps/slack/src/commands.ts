@@ -215,6 +215,9 @@ import {
   type ShopItem,
   type StatusEffect,
   issueWebLoginCode,
+  incrementTowerStats,
+  clearHiredMercForParty,
+  type TowerFloorPlan,
 } from "@gantt-quest/db";
 import {
   applyDamageWithShield,
@@ -438,6 +441,7 @@ const SHOP_BUY_CAP_PER_CYCLE = 2;
 const BOSS_LEVEL_REQUIRED = 3;
 const GAUNTLET_LEVEL_REQUIRED = 5;
 const GAUNTLET_WAVES = 3;
+const TOWER_LEVEL_REQUIRED = 3;
 // Expeditions are the dungeon-crawl variant — accessible from L1 so new players see
 // the bot's depth right away. The L4 gate was holding back the most fun content.
 const EXPEDITION_LEVEL_REQUIRED = 1;
@@ -1135,6 +1139,17 @@ export async function handleInteraction(
   // Pub games leaderboard — channel-scoped net P/L across all bar games.
   if (action.action_id === "pub_leaderboard") return handlePubLeaderboard(slash, env, ctx);
 
+  // Tower: post-boss choice + rest stop pickers. action_id is unique;
+  // the quest id sits in the button value.
+  if (action.action_id === "tower_continue") return handleTowerSubcommand(slash, ["continue"], env, ctx);
+  if (action.action_id === "tower_exit") return handleTowerSubcommand(slash, ["exit"], env, ctx);
+  if (action.action_id.startsWith("tower_pick_")) {
+    const idx = parseInt(action.action_id.slice("tower_pick_".length), 10);
+    if (!Number.isFinite(idx)) return ephemeral("Invalid pick.");
+    return handleTowerSubcommand(slash, ["pick", String(idx)], env, ctx);
+  }
+  if (action.action_id === "tower_skip") return handleTowerSubcommand(slash, ["skip"], env, ctx);
+
   // Liars' Roll bluff mini-game routing.
   if (action.action_id === "pub_liars") return handleLiarsStart(slash, env);
   if (action.action_id.startsWith("liars_stake_")) {
@@ -1222,6 +1237,11 @@ export async function handleCommand(
       return handleStats(payload, env);
     case "quest":
       return handleQuest(payload, args, env, ctx);
+    case "tower":
+      // No sub-arg → start a fresh tower (same as `${cmd} quest tower`).
+      // Otherwise route to the post-boss / rest-stop helpers.
+      if (args.length === 0) return handleQuest(payload, ["tower"], env, ctx);
+      return handleTowerSubcommand(payload, args, env, ctx);
     case "attack":
     case "flee":
     case "signature":
@@ -1937,6 +1957,8 @@ async function handleQuest(
     ? "gauntlet"
     : lower.includes("dungeon") || lower.includes("expedition")
     ? "dungeon"
+    : lower.includes("tower")
+    ? "tower"
     : "standard";
 
   if (variant === "boss" && character.level < BOSS_LEVEL_REQUIRED) {
@@ -1947,6 +1969,12 @@ async function handleQuest(
   }
   if (variant === "dungeon" && character.level < EXPEDITION_LEVEL_REQUIRED) {
     return ephemeral(`Dungeons require Level ${EXPEDITION_LEVEL_REQUIRED}+. You're L${character.level}.`);
+  }
+  if (variant === "tower" && character.level < TOWER_LEVEL_REQUIRED) {
+    return ephemeral(`Climbing the Tower requires Level ${TOWER_LEVEL_REQUIRED}+. You're L${character.level}.`);
+  }
+  if (variant === "tower" && elite) {
+    return ephemeral(`Tower runs are already high-stakes — \`elite\` isn't combinable with \`tower\`.`);
   }
 
   // Optional invitees: any @ mentions in the slash text auto-join at quest start.
@@ -2496,7 +2524,352 @@ async function buildQuestScene(
     return buildDungeonScene(env, character, elite, variant, recentNames);
   }
 
+  if (variant === "tower") {
+    return buildTowerSceneSlack(env, character, 1, 1, 0, recentNames);
+  }
+
   return { ...(await generateOpeningScene(env.AI, character, elite, "standard", undefined, recentNames, art, seed?.name)), variant };
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Climb the Tower — Slack helpers
+// ──────────────────────────────────────────────────────────────────────────
+
+const TOWER_FLOORS_PER_CYCLE = 10;
+const TOWER_REST_FLOOR_OFFSET = 5;
+
+function towerFloorTierSlack(characterLevel: number, absoluteFloor: number): number {
+  return Math.max(1, characterLevel + Math.floor((absoluteFloor - 1) / 2));
+}
+
+function towerFloorKindSlack(absoluteFloor: number): "combat" | "rest" | "boss" {
+  const mod = ((absoluteFloor - 1) % TOWER_FLOORS_PER_CYCLE) + 1;
+  if (mod === TOWER_REST_FLOOR_OFFSET) return "rest";
+  if (mod === TOWER_FLOORS_PER_CYCLE) return "boss";
+  return "combat";
+}
+
+// Build a fresh 10-floor segment's scene + queue, starting at `startFloor`.
+// Slack uses the same shape as the web flow (TowerFloorPlan queue stored on
+// scene.tower_queue); both surfaces share the underlying scene_json.
+async function buildTowerSceneSlack(
+  env: Env,
+  character: Character,
+  startFloor: number,
+  cycle: number,
+  killsRun: number,
+  recentNames: string[] = [],
+): Promise<SceneJson> {
+  const art = artTargetFromEnv(env);
+  const slots: { floor: number; kind: "combat" | "rest" | "boss"; tier: number }[] = [];
+  for (let i = 0; i < TOWER_FLOORS_PER_CYCLE; i++) {
+    const floor = startFloor + i;
+    slots.push({ floor, kind: towerFloorKindSlack(floor), tier: towerFloorTierSlack(character.level, floor) });
+  }
+  const monsterPromises = slots.map((s) => {
+    if (s.kind === "rest") return Promise.resolve<SceneJson | null>(null);
+    const syntheticLevel = s.kind === "boss" ? Math.max(1, s.tier - 1) : s.tier;
+    const synth = { name: character.name, class: character.class, level: syntheticLevel };
+    return generateOpeningScene(
+      env.AI,
+      synth,
+      false,
+      s.kind === "boss" ? "boss" : "gauntlet-wave",
+      { wave: s.floor, total: s.floor },
+      recentNames,
+      art,
+    );
+  });
+
+  function mkLoot(rollTier: number): LootOption {
+    const r = rollItem(rollTier);
+    return {
+      name: `${r.type === "weapon" ? "Weapon" : r.type === "armor" ? "Armor" : "Item"} (power ${r.power})`,
+      item_type: r.type,
+      power: r.power,
+      rarity: r.rarity,
+      flavor: "",
+      weapon_range: r.weapon_range ?? null,
+      ...(r.slot ? { slot: r.slot } : {}),
+      ...(r.stat_bonus ? { stat_bonus: r.stat_bonus as Record<string, number> } : {}),
+      ...(r.item_subtype ? { item_subtype: r.item_subtype } : {}),
+      ...(r.element ? { element: r.element } : {}),
+    };
+  }
+
+  const monsterScenes = await Promise.all(monsterPromises);
+  const floors: TowerFloorPlan[] = slots.map((s, i) => {
+    if (s.kind === "rest") {
+      return { floor: s.floor, kind: "rest", rest_stock: [mkLoot(s.tier), mkLoot(s.tier), mkLoot(s.tier)] };
+    }
+    const scene = monsterScenes[i]!;
+    const monster: MonsterSpec = {
+      name: scene.monster_name,
+      hp: scene.monster_max_hp,
+      max_hp: scene.monster_max_hp,
+      tier: s.tier,
+      is_boss: s.kind === "boss",
+      art_url: scene.monster_art_url ?? null,
+      flavor: scene.scene,
+    };
+    if (s.kind === "boss") {
+      return { floor: s.floor, kind: "boss", monster, boss_treasure: [mkLoot(s.tier), mkLoot(s.tier), mkLoot(s.tier)] };
+    }
+    return { floor: s.floor, kind: "combat", monster };
+  });
+
+  const [first, ...rest] = floors;
+  return towerScenePlanToScene(first, rest, cycle, killsRun);
+}
+
+function towerScenePlanToScene(plan: TowerFloorPlan, queue: TowerFloorPlan[], cycle: number, killsRun: number): SceneJson {
+  if (plan.kind === "rest") {
+    return {
+      monster_name: "—",
+      monster_hp: 0,
+      monster_max_hp: 0,
+      tier: queue[0]?.monster?.tier ?? 1,
+      scene: "A quiet landing — a hooded trader has set up shop. Take a breath, restock if you like, then keep climbing.",
+      variant: "tower",
+      tower_floor: plan.floor,
+      tower_cycle: cycle,
+      tower_floor_kind: "rest",
+      tower_queue: queue,
+      tower_rest_stock: plan.rest_stock,
+      tower_kills_run: killsRun,
+    };
+  }
+  const m = plan.monster!;
+  return {
+    monster_name: m.name,
+    monster_hp: m.max_hp,
+    monster_max_hp: m.max_hp,
+    tier: m.tier,
+    scene: m.flavor ?? "",
+    variant: "tower",
+    monster_art_url: m.art_url ?? undefined,
+    tower_floor: plan.floor,
+    tower_cycle: cycle,
+    tower_floor_kind: plan.kind,
+    tower_queue: queue,
+    tower_kills_run: killsRun,
+  };
+}
+
+// Tower kill: same shape as resolveGauntletAdvance but the queue is
+// TowerFloorPlan-shaped (combat/rest/boss). Boss floor: stop on
+// awaiting_choice and surface continue/exit buttons. Rest floor: heal the
+// party and surface the rest-stop picker. Combat floor: swap in the next
+// monster like a gauntlet wave.
+async function resolveTowerAdvance(
+  payload: SlashCommandPayload,
+  env: Env,
+  ctx: ExecutionContext,
+  character: Character,
+  quest: ActiveQuest,
+  fighters: Character[],
+  preamble: string[],
+): Promise<CommandResponse> {
+  const scene = quest.scene;
+  const currentFloor = scene.tower_floor ?? 1;
+  const currentCycle = scene.tower_cycle ?? 1;
+  const currentKind = scene.tower_floor_kind ?? "combat";
+  const queue = scene.tower_queue ?? [];
+  const killsRun = (scene.tower_kills_run ?? 0) + 1;
+
+  // Lifetime stats: every surviving fighter gets +1 kill and +1 floor climbed.
+  const survivors = fighters.filter((f) => f.hp > 0);
+  await Promise.all(
+    survivors.map((f) =>
+      incrementTowerStats(env.DB, f.slack_user_id, { kills: 1, floorsClimbed: 1 }).catch(() => {})
+    ),
+  );
+
+  // Boss kill: grant hoard to the party, pause for continue/exit, post buttons.
+  if (currentKind === "boss") {
+    const bossTreasure = (() => {
+      const rolled: LootOption[] = [];
+      for (let i = 0; i < 3; i++) {
+        const r = rollItem(scene.tier);
+        rolled.push({
+          name: `${r.type === "weapon" ? "Weapon" : r.type === "armor" ? "Armor" : "Item"} (power ${r.power})`,
+          item_type: r.type,
+          power: r.power,
+          rarity: r.rarity,
+          flavor: "",
+          weapon_range: r.weapon_range ?? null,
+          ...(r.slot ? { slot: r.slot } : {}),
+          ...(r.stat_bonus ? { stat_bonus: r.stat_bonus as Record<string, number> } : {}),
+          ...(r.item_subtype ? { item_subtype: r.item_subtype } : {}),
+          ...(r.element ? { element: r.element } : {}),
+        });
+      }
+      return rolled;
+    })();
+    const recipients = survivors.length > 0 ? survivors : fighters;
+    const lootLines: string[] = [];
+    for (let i = 0; i < bossTreasure.length; i++) {
+      const item = bossTreasure[i];
+      const recipient = recipients[i % recipients.length];
+      if (!recipient) break;
+      const added = await addItem(env.DB, {
+        character_id: recipient.slack_user_id,
+        item_name: item.name,
+        item_type: item.item_type,
+        power: item.power,
+        rarity: item.rarity,
+        flavor: item.flavor,
+        weapon_range: item.weapon_range ?? null,
+        slot: item.slot ?? undefined,
+        stat_bonus: item.stat_bonus ?? undefined,
+        item_subtype: item.item_subtype ?? undefined,
+      });
+      lootLines.push(`🎁 *${recipient.name}* claims *${added.item_name}* (${added.item_type}, power ${added.power}).`);
+    }
+    for (const f of fighters) {
+      await incrementTowerStats(env.DB, f.slack_user_id, { bestFloor: currentFloor }).catch(() => {});
+    }
+    const updatedScene: SceneJson = {
+      ...scene,
+      monster_hp: 0,
+      tower_awaiting_choice: true,
+      tower_kills_run: killsRun,
+    };
+    await saveScene(env.DB, quest.id, updatedScene);
+    const body = [
+      ...preamble,
+      "",
+      `🗼 *Cycle ${currentCycle} cleared — Floor ${currentFloor} boss down.*`,
+      ...lootLines,
+      "",
+      `Press on or bank the spoils?`,
+    ].join("\n");
+    ctx.waitUntil(postToThread(env, quest, body, {
+      blocks: [
+        { type: "section", text: { type: "mrkdwn", text: body } },
+        {
+          type: "actions",
+          elements: [
+            { type: "button", action_id: "tower_continue", value: String(quest.id), text: { type: "plain_text", text: "🗼 Press on", emoji: true }, style: "primary" },
+            { type: "button", action_id: "tower_exit", value: String(quest.id), text: { type: "plain_text", text: "🏦 Bank & exit", emoji: true } },
+          ],
+        },
+      ],
+    }));
+    return ephemeral(`Cycle ${currentCycle} cleared! Use the buttons above (or \`${payload.command} tower continue\` / \`${payload.command} tower exit\`).`);
+  }
+
+  // Combat floor: pop the next plan. If next is a rest, pause and post the
+  // picker; otherwise swap monster in-place like a wave transition.
+  const [next, ...remaining] = queue;
+  if (!next) {
+    // Defensive: should never happen mid-cycle on a non-boss floor.
+    return ephemeral("⚠️ Tower queue empty — please report this.");
+  }
+  if (next.kind === "rest") {
+    // Heal everyone in the party.
+    for (const f of fighters) {
+      await applyLongRest(env.DB, f.slack_user_id);
+    }
+    const restScene = towerScenePlanToScene(next, remaining, currentCycle, killsRun);
+    await saveScene(env.DB, quest.id, restScene);
+    const stock = restScene.tower_rest_stock ?? [];
+    const lines = stock.map((s, idx) => `${idx + 1}. *${s.name}* (${s.item_type}, power ${s.power}, ${s.rarity})`);
+    const body = [
+      ...preamble,
+      "",
+      `🛌 *Floor ${next.floor} — Rest Stop.* Party is fully healed.`,
+      "",
+      `A trader offers three items:`,
+      ...lines,
+      "",
+      `Pick one with \`${payload.command} tower pick <1|2|3>\` or \`${payload.command} tower skip\`.`,
+    ].join("\n");
+    ctx.waitUntil(postToThread(env, quest, body));
+    return ephemeral(`Rest stop! Run \`${payload.command} tower pick <n>\` to claim an item, or \`${payload.command} tower skip\`.`);
+  }
+  // Plain combat floor: swap monster.
+  const nextScene = towerScenePlanToScene(next, remaining, currentCycle, killsRun);
+  await saveScene(env.DB, quest.id, nextScene);
+  const body = [
+    ...preamble,
+    "",
+    `🗼 *Floor ${next.floor}/${currentCycle * TOWER_FLOORS_PER_CYCLE} — ${next.kind === "boss" ? "Boss Chamber" : "Combat"}.*`,
+    `Foe: *${nextScene.monster_name}* — HP ${nextScene.monster_max_hp}`,
+    nextScene.scene ? `_${nextScene.scene}_` : "",
+  ].filter(Boolean).join("\n");
+  ctx.waitUntil(postToThread(env, quest, body));
+  return ephemeral(`Floor ${next.floor} — engage with \`${payload.command} attack\`.`);
+}
+
+// /gq tower pick <n> — claim an item at a rest stop. /gq tower skip — move on.
+// /gq tower continue / exit — post-boss choices.
+async function handleTowerSubcommand(
+  payload: SlashCommandPayload,
+  args: string[],
+  env: Env,
+  ctx: ExecutionContext,
+): Promise<CommandResponse> {
+  const sub = (args[0] ?? "").toLowerCase();
+  const quest = await getActiveQuestForCharacter(env.DB, payload.user_id);
+  if (!quest || quest.scene.variant !== "tower") {
+    return ephemeral(`You're not in an active tower run.`);
+  }
+
+  if (sub === "continue" || sub === "press" || sub === "next") {
+    if (!quest.scene.tower_awaiting_choice) return ephemeral(`No choice pending right now.`);
+    const character = await getCharacter(env.DB, payload.user_id);
+    if (!character) return ephemeral(`Character missing.`);
+    const startFloor = (quest.scene.tower_floor ?? 0) + 1;
+    const cycle = (quest.scene.tower_cycle ?? 1) + 1;
+    const recentNames = await getRecentMonsterNames(env.DB, payload.channel_id, 5);
+    const newScene = await buildTowerSceneSlack(env, character, startFloor, cycle, quest.scene.tower_kills_run ?? 0, recentNames);
+    await saveScene(env.DB, quest.id, newScene);
+    return ephemeral(`🗼 Cycle ${cycle} begins on floor ${startFloor}. Engage with \`${payload.command} attack\`.`);
+  }
+  if (sub === "exit" || sub === "bank" || sub === "leave") {
+    if (!quest.scene.tower_awaiting_choice) return ephemeral(`No choice pending right now.`);
+    await markQuestStatus(env.DB, quest.id, "completed");
+    await clearHiredMercForParty(env.DB, quest.id);
+    return ephemeral(`🏦 You bank your spoils and descend. Floors climbed: *${quest.scene.tower_floor ?? 0}*.`);
+  }
+  if (sub === "pick") {
+    if (quest.scene.tower_floor_kind !== "rest") return ephemeral(`No rest stop available right now.`);
+    const idx = parseInt(args[1] ?? "", 10);
+    const stock = quest.scene.tower_rest_stock ?? [];
+    if (!Number.isFinite(idx) || idx < 1 || idx > stock.length) {
+      return ephemeral(`Pick a number between 1 and ${stock.length}.`);
+    }
+    const picked = stock[idx - 1];
+    await addItem(env.DB, {
+      character_id: payload.user_id,
+      item_name: picked.name,
+      item_type: picked.item_type,
+      power: picked.power,
+      rarity: picked.rarity,
+      flavor: picked.flavor,
+      weapon_range: picked.weapon_range ?? null,
+      slot: picked.slot ?? undefined,
+      stat_bonus: picked.stat_bonus ?? undefined,
+      item_subtype: picked.item_subtype ?? undefined,
+    });
+    const queue = quest.scene.tower_queue ?? [];
+    const [next, ...remaining] = queue;
+    if (!next) return ephemeral(`⚠️ Tower queue empty — please report this.`);
+    const nextScene = towerScenePlanToScene(next, remaining, quest.scene.tower_cycle ?? 1, quest.scene.tower_kills_run ?? 0);
+    await saveScene(env.DB, quest.id, nextScene);
+    return ephemeral(`🎁 You claim *${picked.name}*. Floor ${next.floor} — engage with \`${payload.command} attack\`.`);
+  }
+  if (sub === "skip") {
+    if (quest.scene.tower_floor_kind !== "rest") return ephemeral(`No rest stop available right now.`);
+    const queue = quest.scene.tower_queue ?? [];
+    const [next, ...remaining] = queue;
+    if (!next) return ephemeral(`⚠️ Tower queue empty — please report this.`);
+    const nextScene = towerScenePlanToScene(next, remaining, quest.scene.tower_cycle ?? 1, quest.scene.tower_kills_run ?? 0);
+    await saveScene(env.DB, quest.id, nextScene);
+    return ephemeral(`You wave the trader off. Floor ${next.floor} — engage with \`${payload.command} attack\`.`);
+  }
+  return ephemeral(`Usage: \`${payload.command} tower continue|exit|pick <n>|skip\``);
 }
 
 // Generates a fresh dungeon. Layout:
@@ -4710,6 +5083,15 @@ async function handleCombat(
     // Gauntlet: advance to next wave instead of triggering victory.
     if (quest.scene.variant === "gauntlet" && quest.scene.upcoming_waves && quest.scene.upcoming_waves.length > 0) {
       return resolveGauntletAdvance(payload, env, ctx, quest, [...passiveLines, playerLine, ...monsterEffectLines, ...playerTickLines, ...newEffectLines, `🏆 *${quest.scene.monster_name}* falls.`]);
+    }
+    // Tower: pop the next floor (combat → next monster; combat→rest pauses for
+    // the rest pick; combat→boss queues boss as the next foe; boss kill stops
+    // for continue/exit prompt).
+    if (quest.scene.variant === "tower") {
+      return resolveTowerAdvance(payload, env, ctx, character, quest, fighters, [
+        ...passiveLines, playerLine, ...monsterEffectLines, ...playerTickLines, ...newEffectLines,
+        `🏆 *${quest.scene.monster_name}* falls.`,
+      ]);
     }
     // Graph dungeon: mark encounter cleared; boss kill → victory; other rooms → stay + look.
     if (quest.scene.variant === "dungeon" && quest.scene.graph) {

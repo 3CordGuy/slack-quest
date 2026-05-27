@@ -224,6 +224,9 @@ import {
   hasPendingInvitees,
   type LobbyQuest,
   type LobbyPartyMember,
+  type TowerFloorPlan,
+  incrementTowerStats,
+  getTowerLeaderboard,
 } from "@gantt-quest/db";
 
 // =============================================================================
@@ -809,7 +812,7 @@ interface WebQuestAnnounceArgs {
   characterClass: string;
   characterLevel: number;
   elite: boolean;
-  variant: "standard" | "boss" | "gauntlet" | "dungeon";
+  variant: "standard" | "boss" | "gauntlet" | "dungeon" | "tower";
   monsterName: string;
   monsterMaxHp: number;
   sceneText: string;
@@ -828,12 +831,14 @@ async function announceWebQuestToSlack(
     args.variant === "boss" ? "👑 *BOSS QUEST*\n"
     : args.variant === "gauntlet" ? `⚔️ *GAUNTLET — ${args.totalWaves ?? "?"} waves, no flee*\n`
     : args.variant === "dungeon" ? "🗺️ *DUNGEON*\n"
+    : args.variant === "tower" ? "🗼 *CLIMB THE TOWER — open-ended, no flee*\n"
     : "";
 
   const variantBadge =
     args.variant === "boss" ? "👑 Boss"
     : args.variant === "gauntlet" ? "⚔️ Gauntlet"
     : args.variant === "dungeon" ? "🗺️ Dungeon"
+    : args.variant === "tower" ? "🗼 Tower"
     : "⚔️ Quest";
 
   const openingText = [
@@ -1695,7 +1700,178 @@ async function buildGridDungeonScene(
   };
 }
 
-// Start a fresh quest. Supports standard / boss / gauntlet / dungeon variants.
+// Tower constants.
+const TOWER_LEVEL_REQUIRED = 3;
+const TOWER_FLOORS_PER_CYCLE = 10;
+// Rest stop on the middle floor of every cycle (5, 15, 25, …).
+const TOWER_REST_FLOOR_OFFSET = 5;
+
+function towerFloorTier(characterLevel: number, absoluteFloor: number): number {
+  return Math.max(1, characterLevel + Math.floor((absoluteFloor - 1) / 2));
+}
+
+function towerFloorKind(absoluteFloor: number): "combat" | "rest" | "boss" {
+  const mod = ((absoluteFloor - 1) % TOWER_FLOORS_PER_CYCLE) + 1;
+  if (mod === TOWER_REST_FLOOR_OFFSET) return "rest";
+  if (mod === TOWER_FLOORS_PER_CYCLE) return "boss";
+  return "combat";
+}
+
+// Pre-roll one full cycle (10 floors) starting at `startFloor`. Monster
+// generation runs in parallel; rest-floor stock + boss treasure are rolled
+// synchronously and flavored in a parallel post-pass. Returns the floor 1
+// plan plus the remaining 9 floors as a TowerFloorPlan[] queue.
+async function buildTowerSegment(
+  env: Env,
+  character: Pick<Character, "name" | "class" | "level">,
+  startFloor: number,
+  avoidNames: string[] = [],
+): Promise<{ floors: TowerFloorPlan[] }> {
+  const art = artTarget(env);
+
+  // Build per-floor character stubs so generateOpeningScene's
+  // baseTier = level + (elite ? 1 : 0) yields the desired floor tier.
+  // For boss floors, generateOpeningScene adds +1 to tier internally, so we
+  // pre-decrement the synthetic level by one to land on floorTier.
+  const slots: { floor: number; kind: "combat" | "rest" | "boss"; tier: number }[] = [];
+  for (let i = 0; i < TOWER_FLOORS_PER_CYCLE; i++) {
+    const floor = startFloor + i;
+    slots.push({ floor, kind: towerFloorKind(floor), tier: towerFloorTier(character.level, floor) });
+  }
+
+  // Combat + boss floors: full opening scene with monster art.
+  const monsterPromises = slots.map((s) => {
+    if (s.kind === "rest") return Promise.resolve<SceneJson | null>(null);
+    const syntheticLevel = s.kind === "boss" ? Math.max(1, s.tier - 1) : s.tier;
+    const synthChar = { name: character.name, class: character.class, level: syntheticLevel };
+    return generateOpeningScene(
+      env.AI,
+      synthChar,
+      false,
+      s.kind === "boss" ? "boss" : "gauntlet-wave",
+      { wave: s.floor, total: s.floor },
+      avoidNames,
+      art,
+    );
+  });
+
+  function mkLoot(rollTier: number): LootOption {
+    const r = rollItem(rollTier);
+    return {
+      name: `${r.type === "weapon" ? "Weapon" : r.type === "armor" ? "Armor" : "Item"} (power ${r.power})`,
+      item_type: r.type,
+      power: r.power,
+      rarity: r.rarity,
+      flavor: "",
+      weapon_range: r.weapon_range ?? null,
+      ...(r.slot ? { slot: r.slot } : {}),
+      ...(r.stat_bonus ? { stat_bonus: r.stat_bonus as Record<string, number> } : {}),
+      ...(r.item_subtype ? { item_subtype: r.item_subtype } : {}),
+      ...(r.element ? { element: r.element } : {}),
+    };
+  }
+  function isPlaceholderLootName(name: string): boolean {
+    return /^(Weapon|Armor|Item) \(power \d+\)$/.test(name);
+  }
+  async function flavorOne(loc: string, opt: LootOption): Promise<void> {
+    if (!isPlaceholderLootName(opt.name)) return;
+    try {
+      const { name, flavor } = await flavorLootDrop(
+        env.AI,
+        loc,
+        opt.item_type as "weapon" | "armor" | "consumable" | "magic" | "revive",
+        opt.rarity,
+        opt.power,
+        opt.weapon_range ?? undefined,
+        opt.slot ?? undefined,
+        opt.element ?? undefined,
+      );
+      if (name) opt.name = name;
+      if (flavor) opt.flavor = flavor;
+    } catch {
+      // placeholder name remains; displayLootName fallback covers it.
+    }
+  }
+
+  const monsterScenes = await Promise.all(monsterPromises);
+
+  const floors: TowerFloorPlan[] = slots.map((s, i) => {
+    if (s.kind === "rest") {
+      const stock = [mkLoot(s.tier), mkLoot(s.tier), mkLoot(s.tier)];
+      return { floor: s.floor, kind: "rest", rest_stock: stock };
+    }
+    const scene = monsterScenes[i]!;
+    const monster: MonsterSpec = {
+      name: scene.monster_name,
+      hp: scene.monster_max_hp,
+      max_hp: scene.monster_max_hp,
+      tier: s.tier,
+      is_boss: s.kind === "boss",
+      art_url: scene.monster_art_url ?? null,
+      flavor: scene.scene,
+    };
+    if (s.kind === "boss") {
+      const treasure = [mkLoot(s.tier), mkLoot(s.tier), mkLoot(s.tier)];
+      return { floor: s.floor, kind: "boss", monster, boss_treasure: treasure };
+    }
+    return { floor: s.floor, kind: "combat", monster };
+  });
+
+  // Parallel loot-flavor pass.
+  const flavorTasks: Promise<void>[] = [];
+  for (const f of floors) {
+    if (f.kind === "rest" && f.rest_stock) {
+      for (const it of f.rest_stock) flavorTasks.push(flavorOne("the rest-stop trader's pack", it));
+    } else if (f.kind === "boss" && f.boss_treasure) {
+      for (const it of f.boss_treasure) flavorTasks.push(flavorOne("the boss's hoard", it));
+    }
+  }
+  await Promise.all(flavorTasks);
+
+  return { floors };
+}
+
+// Convert the first floor of a tower segment into a fresh SceneJson. Combat
+// and boss floors put a monster in the scene; rest floors leave monster_hp at
+// 0 and surface rest_stock for the merchant card.
+function towerSceneFromPlan(plan: TowerFloorPlan, queue: TowerFloorPlan[], cycle: number, killsRun: number): SceneJson {
+  const baseTier = plan.kind === "rest"
+    ? Math.max(1, (queue[0]?.monster?.tier ?? 1))
+    : plan.monster!.tier;
+  if (plan.kind === "rest") {
+    return {
+      monster_name: "—",
+      monster_hp: 0,
+      monster_max_hp: 0,
+      tier: baseTier,
+      scene: "A quiet landing — a hooded trader has set up shop. Take a breath, restock if you like, then keep climbing.",
+      variant: "tower",
+      tower_floor: plan.floor,
+      tower_cycle: cycle,
+      tower_floor_kind: "rest",
+      tower_queue: queue,
+      tower_rest_stock: plan.rest_stock,
+      tower_kills_run: killsRun,
+    };
+  }
+  const m = plan.monster!;
+  return {
+    monster_name: m.name,
+    monster_hp: m.max_hp,
+    monster_max_hp: m.max_hp,
+    tier: m.tier,
+    scene: m.flavor ?? "",
+    variant: "tower",
+    monster_art_url: m.art_url ?? undefined,
+    tower_floor: plan.floor,
+    tower_cycle: cycle,
+    tower_floor_kind: plan.kind,
+    tower_queue: queue,
+    tower_kills_run: killsRun,
+  };
+}
+
+// Start a fresh quest. Supports standard / boss / gauntlet / dungeon / tower variants.
 app.post("/api/quest/start", async (c) => {
   const session = await currentSession(c.env.DB, c.req.header("cookie"));
   if (!session) return c.json({ error: "unauthenticated" }, 401);
@@ -1713,7 +1889,7 @@ app.post("/api/quest/start", async (c) => {
   const variant = body?.variant;
   const elite = body?.elite === true;
   const jobMonsterCount = typeof body?.monster_count === "number" ? Math.max(1, Math.min(3, body.monster_count as number)) : 1;
-  if (variant !== "standard" && variant !== "boss" && variant !== "gauntlet" && variant !== "dungeon" && variant !== "bounty_pack") {
+  if (variant !== "standard" && variant !== "boss" && variant !== "gauntlet" && variant !== "dungeon" && variant !== "bounty_pack" && variant !== "tower") {
     return c.json({ error: "unsupported_variant", variant }, 400);
   }
   if (variant === "boss" && character.level < BOSS_LEVEL_REQUIRED) {
@@ -1724,6 +1900,9 @@ app.post("/api/quest/start", async (c) => {
   }
   if (variant === "dungeon" && character.level < DUNGEON_LEVEL_REQUIRED) {
     return c.json({ error: "dungeon_level_gate", required: DUNGEON_LEVEL_REQUIRED }, 400);
+  }
+  if (variant === "tower" && character.level < TOWER_LEVEL_REQUIRED) {
+    return c.json({ error: "tower_level_gate", required: TOWER_LEVEL_REQUIRED }, 400);
   }
   const channelId = await recentChannelForUser(c.env.DB, session.slack_user_id, c.env);
   const effectiveChannel = channelId ?? `web:${session.slack_user_id}`;
@@ -1741,6 +1920,10 @@ app.post("/api/quest/start", async (c) => {
     };
   } else if (variant === "dungeon") {
     scene = await buildGridDungeonScene(c.env, character, elite, avoidNames);
+  } else if (variant === "tower") {
+    const { floors } = await buildTowerSegment(c.env, character, 1, avoidNames);
+    const [first, ...rest] = floors;
+    scene = towerSceneFromPlan(first, rest, 1, 0);
   } else if (variant === "bounty_pack") {
     const art = artTarget(c.env);
     const packScenes = await Promise.all(
@@ -1806,7 +1989,7 @@ app.post("/api/quest/start", async (c) => {
         characterClass: character.class,
         characterLevel: character.level,
         elite,
-        variant: variant as "standard" | "boss" | "gauntlet" | "dungeon",
+        variant: variant as "standard" | "boss" | "gauntlet" | "dungeon" | "tower",
         monsterName: scene.monster_name,
         monsterMaxHp: scene.monster_max_hp,
         sceneText: scene.scene,
@@ -1851,7 +2034,7 @@ app.post("/api/quest/start_with_party", async (c) => {
   const invitees = Array.isArray(body?.invitees)
     ? (body!.invitees as unknown[]).filter((x): x is string => typeof x === "string").slice(0, 5)
     : [];
-  if (variant !== "standard" && variant !== "boss" && variant !== "gauntlet" && variant !== "dungeon") {
+  if (variant !== "standard" && variant !== "boss" && variant !== "gauntlet" && variant !== "dungeon" && variant !== "tower") {
     return c.json({ error: "unsupported_variant" }, 400);
   }
   if (variant === "boss" && character.level < BOSS_LEVEL_REQUIRED) {
@@ -1862,6 +2045,9 @@ app.post("/api/quest/start_with_party", async (c) => {
   }
   if (variant === "dungeon" && character.level < DUNGEON_LEVEL_REQUIRED) {
     return c.json({ error: "dungeon_level_gate", required: DUNGEON_LEVEL_REQUIRED }, 400);
+  }
+  if (variant === "tower" && character.level < TOWER_LEVEL_REQUIRED) {
+    return c.json({ error: "tower_level_gate", required: TOWER_LEVEL_REQUIRED }, 400);
   }
 
   const channelId = await recentChannelForUser(c.env.DB, session.slack_user_id, c.env);
@@ -1880,6 +2066,10 @@ app.post("/api/quest/start_with_party", async (c) => {
     };
   } else if (variant === "dungeon") {
     scene = await buildGridDungeonScene(c.env, character, elite, avoidNames);
+  } else if (variant === "tower") {
+    const { floors } = await buildTowerSegment(c.env, character, 1, avoidNames);
+    const [first, ...rest] = floors;
+    scene = towerSceneFromPlan(first, rest, 1, 0);
   } else {
     scene = await generateOpeningScene(
       c.env.AI, character, elite,
@@ -1973,6 +2163,9 @@ app.get("/api/quest/joinable", async (c) => {
     const advanced = (exp?.visited_count ?? 1) > 1 || (exp?.pending_doors?.length ?? 0) > 0;
     if (advanced) return c.json({ joinable: null, reason: "dungeon_advanced" });
   }
+  if (quest.scene.variant === "tower" && (quest.scene.tower_floor ?? 1) > 1) {
+    return c.json({ joinable: null, reason: "tower_advanced" });
+  }
   return c.json({
     joinable: {
       quest_id: quest.id,
@@ -2013,6 +2206,9 @@ app.post("/api/quest/join", async (c) => {
     const exp = quest.scene.expedition;
     const advanced = (exp?.visited_count ?? 1) > 1 || (exp?.pending_doors?.length ?? 0) > 0;
     if (advanced) return c.json({ error: "dungeon_advanced" }, 400);
+  }
+  if (quest.scene.variant === "tower" && (quest.scene.tower_floor ?? 1) > 1) {
+    return c.json({ error: "tower_advanced" }, 400);
   }
   const inserted = await joinQuest(c.env.DB, quest.id, session.slack_user_id);
   if (!inserted) return c.json({ error: "already_in_party" }, 400);
@@ -2381,7 +2577,7 @@ app.post("/api/board/take", async (c) => {
         characterClass: character.class,
         characterLevel: character.level,
         elite: false,
-        variant: variant as "standard" | "boss" | "gauntlet" | "dungeon",
+        variant: variant as "standard" | "boss" | "gauntlet" | "dungeon" | "tower",
         monsterName: scene.monster_name,
         monsterMaxHp: scene.monster_max_hp,
         sceneText: scene.scene,
@@ -4658,6 +4854,118 @@ app.get("/api/leaderboard", async (c) => {
   return c.json({ entries });
 });
 
+// Top climbers, ordered by deepest floor reached. Public-ish: same session
+// check as the quest leaderboard so the page only renders for signed-in users.
+app.get("/api/leaderboard/tower", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const entries = await getTowerLeaderboard(c.env.DB, 10);
+  return c.json({ entries });
+});
+
+// Tower: bank the cycle's spoils and exit gracefully. Only valid while the
+// scene is parked at tower_awaiting_choice (set on boss kill). The boss
+// hoard was already granted by advanceTowerAfterCombat; this just closes
+// the quest so the player can return to town.
+app.post("/api/quest/:id/tower/exit", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const questId = parseInt(c.req.param("id"), 10);
+  if (!Number.isFinite(questId)) return c.json({ error: "bad_quest_id" }, 400);
+  const quest = await getQuestById(c.env.DB, questId);
+  if (!quest) return c.json({ error: "no_quest" }, 404);
+  if (quest.scene.variant !== "tower") return c.json({ error: "not_tower" }, 400);
+  if (!quest.scene.tower_awaiting_choice) return c.json({ error: "not_awaiting_choice" }, 400);
+  await markQuestStatus(c.env.DB, questId, "completed");
+  await clearHiredMercForParty(c.env.DB, questId);
+  return c.json({ ok: true, floors_climbed: quest.scene.tower_floor ?? 0 });
+});
+
+// Tower: press on into the next 10-floor cycle. Builds a fresh segment
+// starting at floor (current + 1), clears awaiting_choice, and stages the
+// first floor as the new active scene.
+app.post("/api/quest/:id/tower/continue", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const questId = parseInt(c.req.param("id"), 10);
+  if (!Number.isFinite(questId)) return c.json({ error: "bad_quest_id" }, 400);
+  const quest = await getQuestById(c.env.DB, questId);
+  if (!quest) return c.json({ error: "no_quest" }, 404);
+  if (quest.scene.variant !== "tower") return c.json({ error: "not_tower" }, 400);
+  if (!quest.scene.tower_awaiting_choice) return c.json({ error: "not_awaiting_choice" }, 400);
+  const character = await getCharacter(c.env.DB, session.slack_user_id);
+  if (!character) return c.json({ error: "no_character" }, 404);
+
+  const startFloor = (quest.scene.tower_floor ?? 0) + 1;
+  const cycle = (quest.scene.tower_cycle ?? 1) + 1;
+  const channelId = await recentChannelForUser(c.env.DB, session.slack_user_id, c.env);
+  const avoidNames = channelId ? await getRecentMonsterNames(c.env.DB, channelId, 6) : [];
+  const { floors } = await buildTowerSegment(c.env, character, startFloor, avoidNames);
+  const [first, ...rest] = floors;
+  const newScene = towerSceneFromPlan(first, rest, cycle, quest.scene.tower_kills_run ?? 0);
+  await saveScene(c.env.DB, questId, newScene);
+  await setQuestMode(c.env.DB, questId, "web");
+  return c.json({ ok: true, scene: { floor: newScene.tower_floor, cycle: newScene.tower_cycle, kind: newScene.tower_floor_kind } });
+});
+
+// Tower rest stop: grants the chosen item (index 0..2) or skips. Both
+// branches restore HP/mana for every party member and advance the scene
+// onto the next floor (always combat for a 10-floor layout where rest sits
+// on floor 5).
+app.post("/api/quest/:id/tower/rest_pick", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const questId = parseInt(c.req.param("id"), 10);
+  if (!Number.isFinite(questId)) return c.json({ error: "bad_quest_id" }, 400);
+  const quest = await getQuestById(c.env.DB, questId);
+  if (!quest) return c.json({ error: "no_quest" }, 404);
+  if (quest.scene.variant !== "tower") return c.json({ error: "not_tower" }, 400);
+  if (quest.scene.tower_floor_kind !== "rest") return c.json({ error: "not_rest_floor" }, 400);
+  const body = await c.req.json().catch(() => null) as { index?: unknown } | null;
+  const idxRaw = body?.index;
+  const idx = typeof idxRaw === "number" ? idxRaw : null;
+  const stock = quest.scene.tower_rest_stock ?? [];
+  const picked = idx !== null && idx >= 0 && idx < stock.length ? stock[idx] : null;
+
+  // Heal every party member.
+  const party = await getQuestParty(c.env.DB, questId);
+  for (const member of party) {
+    await applyLongRest(c.env.DB, member.slack_user_id);
+  }
+
+  // Award the picked item to the caller.
+  if (picked) {
+    await addItem(c.env.DB, {
+      character_id: session.slack_user_id,
+      item_name: picked.name,
+      item_type: picked.item_type,
+      power: picked.power,
+      rarity: picked.rarity,
+      flavor: picked.flavor,
+      weapon_range: picked.weapon_range ?? null,
+      slot: picked.slot ?? undefined,
+      stat_bonus: picked.stat_bonus ?? undefined,
+      item_subtype: picked.item_subtype ?? undefined,
+    });
+  }
+
+  // Pop the next floor from the queue.
+  const queue = quest.scene.tower_queue ?? [];
+  const [next, ...remaining] = queue;
+  if (!next) {
+    // Shouldn't happen — rest floors always have at least one combat after.
+    return c.json({ error: "empty_queue" }, 500);
+  }
+  const newScene = towerSceneFromPlan(next, remaining, quest.scene.tower_cycle ?? 1, quest.scene.tower_kills_run ?? 0);
+  await saveScene(c.env.DB, questId, newScene);
+  await setQuestMode(c.env.DB, questId, "web");
+  return c.json({
+    ok: true,
+    picked: picked ? { name: picked.name, rarity: picked.rarity, power: picked.power } : null,
+    next: { floor: newScene.tower_floor, kind: newScene.tower_floor_kind },
+  });
+});
+
 // Starts (or resumes) web-mode combat for the user's active quest. Snapshots
 // the party + monster from D1 into a CombatState, rolls initiative, and saves
 // to web_combat_state. Idempotent: if a state already exists for this quest,
@@ -6292,6 +6600,14 @@ export interface OutcomeSummary {
   // When dungeon_room_cleared and the expedition produced two door choices,
   // these are the node stubs the client shows in the VictoryModal door picker.
   dungeon_doors?: Array<{ type: string; monster_name: string | null; scene: string | null }>;
+  // Tower-only: true when the cleared combat was a tower floor that flipped
+  // the scene into the next floor (combat / rest) or post-boss
+  // awaiting-choice state. Quest stays active; web client re-fetches the
+  // scene to render the next floor card.
+  tower_floor_cleared?: boolean;
+  tower_next_floor_kind?: "combat" | "rest" | "boss";
+  tower_awaiting_choice?: boolean;
+  tower_cycle_complete?: boolean;
 }
 
 interface ServerToClient {
@@ -6560,6 +6876,17 @@ async function applyWebCombatOutcome(
     });
   }
 
+  // Tower advance: each engine combat is exactly one floor. On win, pop the
+  // next floor from scene.tower_queue (rest or combat or boss). On a boss
+  // kill, grant the hoard but DON'T mark the quest completed — flip
+  // tower_awaiting_choice so the player picks continue / bank-and-exit. On a
+  // wipe, just close out with the normal failure path; lifetime best_floor +
+  // floors_climbed get bumped here too so a partial climb still scores.
+  const towerOutcome = await advanceTowerAfterCombat(env, questId, state, humanFighters, rewards, won);
+  if (towerOutcome) {
+    return towerOutcome;
+  }
+
   // Dungeon victory only clears the current combat room — the rest of the
   // expedition continues from the dashboard (or Slack). Advance the
   // expedition the same way the Slack-side advanceDungeonRoom does, so
@@ -6696,6 +7023,199 @@ async function applyWebCombatOutcome(
     elite,
     is_boss: isBoss,
     dungeon_room_cleared: !!isDungeon,
+  };
+}
+
+// Tower outcome side-effect: increments lifetime + run kill stats, advances
+// scene to the next floor, and writes back. Returns an OutcomeSummary when
+// the quest is a tower run (so applyWebCombatOutcome can short-circuit
+// before the dungeon path), or null when this isn't a tower or when the
+// fight wasn't relevant (no kills, etc.). The dungeon / standard close-out
+// continues to handle the run-ending wipe/quit cases.
+async function advanceTowerAfterCombat(
+  env: Env,
+  questId: number,
+  state: CombatState,
+  humanFighters: CombatFighter[],
+  rewards: FighterReward[],
+  won: boolean,
+): Promise<OutcomeSummary | null> {
+  const sceneRow = await env.DB
+    .prepare(`SELECT scene_json, elite FROM quests WHERE id = ?`)
+    .bind(questId)
+    .first<{ scene_json: string; elite: number }>();
+  if (!sceneRow) return null;
+  const scene = JSON.parse(sceneRow.scene_json) as SceneJson;
+  if (scene.variant !== "tower") return null;
+  const elite = sceneRow.elite === 1;
+
+  const primaryMonster = state.monsters[0];
+  const tier = primaryMonster?.tier ?? scene.tier;
+  const currentFloor = scene.tower_floor ?? 1;
+  const currentCycle = scene.tower_cycle ?? 1;
+  const currentKind = scene.tower_floor_kind ?? "combat";
+  const queue = scene.tower_queue ?? [];
+
+  // Kill credit for survivors — every fighter still standing at end of fight
+  // gets +1 to lifetime tower_kills per monster slain this combat.
+  if (won) {
+    const survivors = humanFighters.filter((f) => f.hp > 0);
+    const monstersKilled = state.monsters.filter((m) => m.hp <= 0).length;
+    if (monstersKilled > 0 && survivors.length > 0) {
+      await Promise.all(
+        survivors.map((f) =>
+          incrementTowerStats(env.DB, f.id, {
+            kills: monstersKilled,
+            floorsClimbed: 1,
+          })
+        ),
+      );
+    }
+  }
+
+  // Wipe: mark the run failed; bump best_floor (current floor reached) for
+  // any humans on the party even if they died — climbing this far still
+  // counts as your high-water mark.
+  if (!won) {
+    for (const f of humanFighters) {
+      await incrementTowerStats(env.DB, f.id, { bestFloor: currentFloor });
+    }
+    await markQuestStatus(env.DB, questId, "failed");
+    await clearHiredMercForParty(env.DB, questId);
+    return {
+      status: state.status as "victory" | "defeat" | "fled",
+      rewards,
+      monster_name: primaryMonster?.name ?? scene.monster_name,
+      monster_tier: tier,
+      total_pool_xp: 0,
+      total_pool_gold: 0,
+      elite,
+      is_boss: currentKind === "boss",
+      tower_floor_cleared: false,
+    };
+  }
+
+  const killsRun = (scene.tower_kills_run ?? 0) + state.monsters.filter((m) => m.hp <= 0).length;
+
+  // Boss kill: grant hoard, set awaiting_choice, update best_floor lifetime,
+  // do NOT advance the queue (queue is empty at this point anyway). Player
+  // hits /tower/continue or /tower/exit to resolve.
+  if (currentKind === "boss") {
+    const treasure = (() => {
+      // Boss treasure was queued at gen time on the boss floor's TowerFloorPlan.
+      // We don't have direct access to it here (queue is post-boss only), so
+      // reroll a fresh hoard at the boss tier — matches scale, same effect.
+      const rolled: LootOption[] = [];
+      for (let i = 0; i < 3; i++) {
+        const r = rollItem(tier);
+        rolled.push({
+          name: `${r.type === "weapon" ? "Weapon" : r.type === "armor" ? "Armor" : "Item"} (power ${r.power})`,
+          item_type: r.type,
+          power: r.power,
+          rarity: r.rarity,
+          flavor: "",
+          weapon_range: r.weapon_range ?? null,
+          ...(r.slot ? { slot: r.slot } : {}),
+          ...(r.stat_bonus ? { stat_bonus: r.stat_bonus as Record<string, number> } : {}),
+          ...(r.item_subtype ? { item_subtype: r.item_subtype } : {}),
+          ...(r.element ? { element: r.element } : {}),
+        });
+      }
+      return rolled;
+    })();
+    const survivors = humanFighters.filter((f) => f.hp > 0);
+    for (let i = 0; i < treasure.length; i++) {
+      const item = treasure[i];
+      const recipient = survivors[i % Math.max(1, survivors.length)] ?? humanFighters[0];
+      if (!recipient) break;
+      const added = await addItem(env.DB, {
+        character_id: recipient.id,
+        item_name: item.name,
+        item_type: item.item_type,
+        power: item.power,
+        rarity: item.rarity,
+        flavor: item.flavor,
+        weapon_range: item.weapon_range ?? null,
+        slot: item.slot ?? undefined,
+        stat_bonus: item.stat_bonus ?? undefined,
+        item_subtype: item.item_subtype ?? undefined,
+      });
+      const r = rewards.find((rr) => rr.user_id === recipient.id);
+      if (r) {
+        r.loot.push({
+          item_name: added.item_name,
+          item_type: added.item_type,
+          power: added.power,
+          rarity: added.rarity,
+          flavor: added.flavor ?? "",
+          weapon_range: added.weapon_range,
+          level_req: added.level_req,
+        });
+      }
+    }
+
+    // Lifetime best-floor bump for everyone in the party.
+    for (const f of humanFighters) {
+      await incrementTowerStats(env.DB, f.id, { bestFloor: currentFloor });
+    }
+
+    const updatedScene: SceneJson = {
+      ...scene,
+      monster_hp: 0,
+      tower_awaiting_choice: true,
+      tower_kills_run: killsRun,
+    };
+    await saveScene(env.DB, questId, updatedScene);
+    await setQuestMode(env.DB, questId, "slack");
+    return {
+      status: "victory",
+      rewards,
+      monster_name: primaryMonster.name,
+      monster_tier: tier,
+      total_pool_xp: 0,
+      total_pool_gold: 0,
+      elite,
+      is_boss: true,
+      tower_floor_cleared: true,
+      tower_awaiting_choice: true,
+      tower_cycle_complete: true,
+    };
+  }
+
+  // Combat floor: pop the next floor off the queue and stage it.
+  const [next, ...remaining] = queue;
+  if (!next) {
+    // Shouldn't happen — a non-boss floor should always have a next entry —
+    // but bail safely if the queue is empty: treat this as a wipe-style end.
+    await markQuestStatus(env.DB, questId, "completed");
+    await clearHiredMercForParty(env.DB, questId);
+    return {
+      status: "victory",
+      rewards,
+      monster_name: primaryMonster.name,
+      monster_tier: tier,
+      total_pool_xp: 0,
+      total_pool_gold: 0,
+      elite,
+      is_boss: false,
+      tower_floor_cleared: true,
+    };
+  }
+
+  const nextScene = towerSceneFromPlan(next, remaining, currentCycle, killsRun);
+  await saveScene(env.DB, questId, nextScene);
+  await setQuestMode(env.DB, questId, "slack");
+  return {
+    status: "victory",
+    rewards,
+    monster_name: primaryMonster.name,
+    monster_tier: tier,
+    total_pool_xp: 0,
+    total_pool_gold: 0,
+    elite,
+    is_boss: false,
+    tower_floor_cleared: true,
+    tower_next_floor_kind: next.kind,
   };
 }
 
@@ -6903,8 +7423,17 @@ async function buildInitialCombatState(
   | { ok: false; reason: "unsupported_variant" | "non_combat_room"; detail?: string }
 > {
   const variant = quest.scene.variant ?? "standard";
-  if (variant !== "standard" && variant !== "boss" && variant !== "gauntlet" && variant !== "dungeon") {
+  if (variant !== "standard" && variant !== "boss" && variant !== "gauntlet" && variant !== "dungeon" && variant !== "tower") {
     return { ok: false, reason: "unsupported_variant", detail: variant };
+  }
+  if (variant === "tower") {
+    // Rest floors and post-boss awaiting-choice state aren't fightable.
+    if (quest.scene.tower_floor_kind === "rest") {
+      return { ok: false, reason: "non_combat_room", detail: "tower_rest" };
+    }
+    if (quest.scene.tower_awaiting_choice) {
+      return { ok: false, reason: "non_combat_room", detail: "tower_awaiting_choice" };
+    }
   }
   if (variant === "dungeon") {
     // Grid dungeons: check the current graph node's content.kind.
@@ -7118,7 +7647,7 @@ async function buildInitialCombatState(
           max_hp: quest.scene.monster_max_hp,
           shield: rollMonsterShield(quest.scene.tier),
           tier: quest.scene.tier,
-          is_boss: variant === "boss" || isGridBoss,
+          is_boss: variant === "boss" || isGridBoss || quest.scene.tower_floor_kind === "boss",
           boss_phase: quest.scene.boss_phase,
           wave: quest.scene.wave,
           total_waves: quest.scene.total_waves,

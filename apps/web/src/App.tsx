@@ -246,7 +246,7 @@ interface Item {
   element: "fire" | "ice" | "lightning" | null;
 }
 
-type QuestVariant = "standard" | "boss" | "gauntlet" | "dungeon" | "bounty_pack";
+type QuestVariant = "standard" | "boss" | "gauntlet" | "dungeon" | "bounty_pack" | "tower";
 type EffectType = "regen" | "bleeding" | "burning" | "poisoned" | "empowered" | "frozen" | "shocked";
 
 interface StatusEffect {
@@ -357,6 +357,14 @@ interface DungeonGraph {
   visited: string[];
 }
 
+interface TowerRestStockItem {
+  name: string;
+  item_type: string;
+  power: number;
+  rarity: string;
+  flavor?: string;
+}
+
 interface SceneJson {
   monster_name: string;
   monster_hp: number;
@@ -375,6 +383,12 @@ interface SceneJson {
   monster_attack_type?: string;
   monster_damage_weakness?: string;
   monster_damage_resistance?: string;
+  tower_floor?: number;
+  tower_cycle?: number;
+  tower_floor_kind?: "combat" | "rest" | "boss";
+  tower_awaiting_choice?: boolean;
+  tower_kills_run?: number;
+  tower_rest_stock?: TowerRestStockItem[];
 }
 
 interface ActiveQuest {
@@ -421,6 +435,16 @@ interface QuestLeaderboardEntry {
   wins: number;
   total_quests: number;
   elite_wins: number;
+}
+
+interface TowerLeaderboardEntry {
+  slack_user_id: string;
+  name: string;
+  class: string;
+  slack_username: string | null;
+  tower_best_floor: number;
+  tower_kills: number;
+  tower_floors_climbed: number;
 }
 
 interface MeResponse {
@@ -845,6 +869,7 @@ type LoadState =
       recent: RecentQuest[];
       questStats: QuestStats | null;
       leaderboard: QuestLeaderboardEntry[];
+      towerLeaderboard: TowerLeaderboardEntry[];
       shop: ShopResponse | null;
       joinable: JoinableQuest | null;
       inn: InnResponse | null;
@@ -1080,6 +1105,7 @@ export function App() {
     let recent: RecentQuest[] = [];
     let questStats: QuestStats | null = null;
     let leaderboard: QuestLeaderboardEntry[] = [];
+    let towerLeaderboard: TowerLeaderboardEntry[] = [];
     let shop: ShopResponse | null = null;
     let joinable: JoinableQuest | null = null;
     let inn: InnResponse | null = null;
@@ -1089,13 +1115,14 @@ export function App() {
     let townArt: TownArt | null = null;
     let board: BoardResponse | null = null;
     if (me.character) {
-      const [invRes, qRes, lobbyRes, recentRes, statsRes, leaderboardRes, shopRes, joinableRes, innRes, smithyRes, pubRes, townRes, boardRes, apoRes] = await Promise.all([
+      const [invRes, qRes, lobbyRes, recentRes, statsRes, leaderboardRes, towerLbRes, shopRes, joinableRes, innRes, smithyRes, pubRes, townRes, boardRes, apoRes] = await Promise.all([
         fetch("/api/inventory", { credentials: "include" }),
         fetch("/api/quest/active", { credentials: "include" }),
         fetch("/api/quest/lobby", { credentials: "include" }),
         fetch("/api/quests/recent", { credentials: "include" }),
         fetch("/api/stats", { credentials: "include" }),
         fetch("/api/leaderboard", { credentials: "include" }),
+        fetch("/api/leaderboard/tower", { credentials: "include" }),
         fetch("/api/shop", { credentials: "include" }),
         fetch("/api/quest/joinable", { credentials: "include" }),
         fetch("/api/inn", { credentials: "include" }),
@@ -1143,6 +1170,9 @@ export function App() {
       }
       if (leaderboardRes.ok) {
         leaderboard = ((await leaderboardRes.json()) as { entries: QuestLeaderboardEntry[] }).entries;
+      }
+      if (towerLbRes.ok) {
+        towerLeaderboard = ((await towerLbRes.json()) as { entries: TowerLeaderboardEntry[] }).entries;
       }
       if (shopRes.ok) {
         shop = (await shopRes.json()) as ShopResponse;
@@ -1201,7 +1231,7 @@ export function App() {
         }
       }
     }
-    setState({ kind: "auth", me, inventory, inventoryArtUrl, activeQuest, lobbyQuest, recent, questStats, leaderboard, shop, joinable, inn, smithy, pub, apothecary, townArt, board });
+    setState({ kind: "auth", me, inventory, inventoryArtUrl, activeQuest, lobbyQuest, recent, questStats, leaderboard, towerLeaderboard, shop, joinable, inn, smithy, pub, apothecary, townArt, board });
   }
 
   async function logout() {
@@ -1799,6 +1829,25 @@ export function App() {
     );
   }
 
+  // Tower: pause for non-combat floor states (rest stop / post-boss choice).
+  // Combat + boss floors fall through to the normal combat flow.
+  if (
+    state.kind === "auth" &&
+    state.activeQuest?.quest.scene.variant === "tower" &&
+    state.me.character &&
+    (state.activeQuest.quest.scene.tower_floor_kind === "rest" ||
+      state.activeQuest.quest.scene.tower_awaiting_choice)
+  ) {
+    const aq = state.activeQuest;
+    return (
+      <TowerInterlude
+        questId={aq.quest.id}
+        scene={aq.quest.scene}
+        onAdvance={() => void refresh()}
+      />
+    );
+  }
+
   if (activeCombat) {
     const chr = state.me.character;
     return (
@@ -1861,6 +1910,9 @@ export function App() {
               <AdventurersCard selfId={state.me.slack_user_id} />
               {state.leaderboard.length > 0 && (
                 <QuestLeaderboardCard entries={state.leaderboard} selfId={state.me.slack_user_id} />
+              )}
+              {state.towerLeaderboard.length > 0 && (
+                <TowerLeaderboardCard entries={state.towerLeaderboard} selfId={state.me.slack_user_id} />
               )}
             </div>
           </div>
@@ -2393,6 +2445,22 @@ const QUEST_OPTIONS: QuestOption[] = [
     pendingLabel: "Generating dungeon…",
     minLevel: 1,
   },
+  {
+    id: "tower",
+    label: "Climb the Tower",
+    icon: "tower-flag",
+    accentColor: "#fbbf24",
+    bg: "#2e2515",
+    border: "#854d0e",
+    lockedBorder: "#2a2d33",
+    tag: "10-floor cycles, no flee",
+    description:
+      "Climb an open-ended tower. Each floor scales harder. Rest stop on floor 5 of every cycle, boss on floor 10. After every boss, bank your spoils or press on into a steeper cycle. Death ends the run.",
+    rewards: "XP per floor · loot at rest stops + boss hoards",
+    beginLabel: "Climb the Tower",
+    pendingLabel: "Pre-rolling floors…",
+    minLevel: 3,
+  },
 ];
 
 function StartQuestCard({
@@ -2613,6 +2681,135 @@ function JoinableQuestCard({
       <p style={{ ...muted, fontSize: 11, marginTop: 8 }}>
         Monster max HP scales by 40% for the joiner. Your mana refills on join.
       </p>
+    </div>
+  );
+}
+
+// Full-screen interlude for non-combat tower floors (rest stop + post-boss
+// choice). Renders the merchant picker or the press-on/bank prompt; on
+// resolution it calls onAdvance which triggers an App-level refresh and
+// drops the user back into the next floor's combat flow.
+function TowerInterlude({
+  questId,
+  scene,
+  onAdvance,
+}: {
+  questId: number;
+  scene: SceneJson;
+  onAdvance: () => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const floor = scene.tower_floor ?? 0;
+  const cycle = scene.tower_cycle ?? 1;
+  const kills = scene.tower_kills_run ?? 0;
+
+  async function call(path: string, body?: Record<string, unknown>) {
+    if (busy) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      const res = await fetch(`/api/quest/${questId}${path}`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: body ? JSON.stringify(body) : "{}",
+      });
+      const data = (await res.json()) as { ok?: boolean; error?: string };
+      if (!data.ok) throw new Error(data.error ?? "request_failed");
+      onAdvance();
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const wrapper: React.CSSProperties = { padding: "32px 16px", maxWidth: 540, margin: "0 auto" };
+  const pickerBtn: React.CSSProperties = {
+    width: "100%",
+    padding: "12px 14px",
+    fontSize: 15,
+    borderRadius: 8,
+    border: "1px solid #2a2d33",
+    background: "#1a1c20",
+    color: "#f5f5f5",
+    cursor: "pointer",
+    textAlign: "left",
+  };
+
+  if (scene.tower_awaiting_choice) {
+    return (
+      <div style={wrapper}>
+        <div style={{ ...card, borderColor: "#854d0e" }}>
+          <div style={{ fontSize: 12, color: "#fbbf24", textTransform: "uppercase", letterSpacing: 1.5, display: "flex", alignItems: "center", gap: 6 }}>
+            <Icon name="tower-flag" size={14} color="#fbbf24" /> Cycle {cycle} cleared
+          </div>
+          <h2 style={{ ...h2, marginTop: 4 }}>You stand atop floor {floor}.</h2>
+          <p style={muted}>
+            The boss lies broken. Tower kills this run: <strong>{kills}</strong>. Press on into
+            cycle {cycle + 1} for steeper rewards, or bank your spoils and descend.
+          </p>
+          {err && <div style={{ color: "#fca5a5", marginTop: 12 }}>Error: {err}</div>}
+          <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
+            <button
+              style={{ ...button, background: "#854d0e", color: "#fef3c7", marginTop: 0, flex: 1, display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6 }}
+              disabled={busy}
+              onClick={() => void call("/tower/continue")}
+            >
+              <Icon name="tower-flag" size={16} color="#fef3c7" /> Press on (Floor {floor + 1})
+            </button>
+            <button
+              style={{ ...pickerBtn, fontWeight: 600, textAlign: "center", flex: 1 }}
+              disabled={busy}
+              onClick={() => void call("/tower/exit")}
+            >
+              🏦 Bank &amp; exit
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Rest stop floor
+  const stock = scene.tower_rest_stock ?? [];
+  return (
+    <div style={wrapper}>
+      <div style={{ ...card, borderColor: "#854d0e" }}>
+        <div style={{ fontSize: 12, color: "#fbbf24", textTransform: "uppercase", letterSpacing: 1.5 }}>
+          🛌 Floor {floor} · Cycle {cycle}
+        </div>
+        <h2 style={{ ...h2, marginTop: 4 }}>Rest stop</h2>
+        <p style={muted}>
+          The party is fully healed. A hooded trader has set out three trinkets — pick one, or wave
+          them off and press on.
+        </p>
+        {err && <div style={{ color: "#fca5a5", marginTop: 12 }}>Error: {err}</div>}
+        <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 16 }}>
+          {stock.map((it, idx) => (
+            <button
+              key={idx}
+              style={pickerBtn}
+              disabled={busy}
+              onClick={() => void call("/tower/rest_pick", { index: idx })}
+            >
+              <strong>{it.name}</strong>{" "}
+              <span style={muted}>
+                ({it.item_type}, power {it.power}, {it.rarity})
+              </span>
+              {it.flavor && <div style={{ ...muted, fontSize: 12, marginTop: 4 }}>{it.flavor}</div>}
+            </button>
+          ))}
+          <button
+            style={{ ...pickerBtn, textAlign: "center", marginTop: 4 }}
+            disabled={busy}
+            onClick={() => void call("/tower/rest_pick", { index: null })}
+          >
+            ⏭️ Skip — keep climbing
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -7903,6 +8100,53 @@ function QuestLeaderboardCard({ entries, selfId }: { entries: QuestLeaderboardEn
                   <td style={{ padding: "6px 0 6px 8px", textAlign: "right", color: e.elite_wins > 0 ? "#f97316" : "#7a7d83", fontWeight: e.elite_wins > 0 ? 600 : 400 }}>
                     {e.elite_wins > 0 ? e.elite_wins : "—"}
                   </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function TowerLeaderboardCard({ entries, selfId }: { entries: TowerLeaderboardEntry[]; selfId: string }) {
+  return (
+    <div style={{ ...card, borderColor: "#854d0e" }}>
+      <h2 style={{ ...h2, marginBottom: 12, display: "flex", alignItems: "center", gap: 8 }}>
+        <Icon name="tower-flag" size={22} color="#fbbf24" /> Tower of Ascension
+      </h2>
+      <p style={{ ...muted, fontSize: 11, marginTop: -4, marginBottom: 10 }}>
+        Highest floor reached · ties broken by total tower kills.
+      </p>
+      <div style={{ overflowX: "auto" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+          <thead>
+            <tr style={{ borderBottom: "1px solid #2a2d33" }}>
+              <th style={{ textAlign: "left", padding: "4px 8px 4px 0", color: "#7a7d83", fontWeight: 500 }}>#</th>
+              <th style={{ textAlign: "left", padding: "4px 8px", color: "#7a7d83", fontWeight: 500 }}>Player</th>
+              <th style={{ textAlign: "right", padding: "4px 8px", color: "#7a7d83", fontWeight: 500, whiteSpace: "nowrap" }}>Best</th>
+              <th style={{ textAlign: "right", padding: "4px 8px", color: "#7a7d83", fontWeight: 500, whiteSpace: "nowrap" }}>Kills</th>
+              <th style={{ textAlign: "right", padding: "4px 0 4px 8px", color: "#7a7d83", fontWeight: 500, whiteSpace: "nowrap" }}>Climbed</th>
+            </tr>
+          </thead>
+          <tbody>
+            {entries.map((e, i) => {
+              const rank = i + 1;
+              const rankColor = rank === 1 ? "#fbbf24" : rank === 2 ? "#d1d5db" : rank === 3 ? "#cd7c2f" : "#7a7d83";
+              const isSelf = e.slack_user_id === selfId;
+              return (
+                <tr key={e.slack_user_id} style={{ borderBottom: "1px solid #1e2025", background: isSelf ? "#1d2128" : "transparent" }}>
+                  <td style={{ padding: "6px 8px 6px 0", color: rankColor, fontWeight: rank <= 3 ? 700 : 400 }}>{rank}</td>
+                  <td style={{ padding: "6px 8px" }}>
+                    <div style={{ fontWeight: isSelf ? 700 : 500, color: isSelf ? "#fbbf24" : "#f5f5f5" }}>
+                      {e.name} {isSelf && <span style={{ ...muted, fontSize: 11, fontWeight: 400 }}>(you)</span>}
+                    </div>
+                    <div style={{ color: "#7a7d83", fontSize: 11 }}>{e.class}</div>
+                  </td>
+                  <td style={{ padding: "6px 8px", textAlign: "right", color: "#fbbf24", fontWeight: 700 }}>Floor {e.tower_best_floor}</td>
+                  <td style={{ padding: "6px 8px", textAlign: "right", color: "#fca5a5", fontWeight: 600 }}>{e.tower_kills}</td>
+                  <td style={{ padding: "6px 0 6px 8px", textAlign: "right", color: "#9aa0a6" }}>{e.tower_floors_climbed}</td>
                 </tr>
               );
             })}

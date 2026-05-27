@@ -113,6 +113,13 @@ export interface Character {
   // Pub merc slot — id from the MERCS catalog. Null when nobody is hired.
   // Cleared when the active quest ends.
   hired_merc_id: string | null;
+  // Climb-the-Tower lifetime stats. Incremented per-kill / per-cycle by the
+  // tower flow. tower_best_floor is monotonic; tower_floors_climbed sums across
+  // every cycle including incomplete ones; tower_kills counts enemies slain
+  // inside any tower run.
+  tower_floors_climbed: number;
+  tower_kills: number;
+  tower_best_floor: number;
 }
 
 interface CharacterRow extends Omit<Character, "scars" | "effects" | "drink_buff" | "achievements" | "pending_achievements"> {
@@ -213,7 +220,23 @@ export async function createCharacter(
 }
 
 
-export type QuestVariant = "standard" | "boss" | "gauntlet" | "dungeon";
+export type QuestVariant = "standard" | "boss" | "gauntlet" | "dungeon" | "tower";
+
+// One floor of a tower run. Stored on SceneJson.upcoming_waves[] as the
+// pre-rolled queue. `kind` flags whether the engine should fight, the player
+// should pick from a merchant stock, or it's the cycle boss; `rest_stock` is
+// only present on rest floors; `boss_treasure` is only present on boss floors.
+export interface TowerFloorPlan {
+  // Absolute floor number (1, 2, … 11, 12, …). Persists across cycles.
+  floor: number;
+  kind: "combat" | "rest" | "boss";
+  // combat/boss monster (omitted on rest)
+  monster?: MonsterSpec;
+  // rest stop merchant offering (omitted on combat/boss)
+  rest_stock?: LootOption[];
+  // boss hoard granted on kill (omitted on combat/rest)
+  boss_treasure?: LootOption[];
+}
 
 // Read-time scene migration. The "expedition" variant was renamed to "dungeon" once
 // the room/keys/traps overhaul made the original name misleading. Any pre-rename
@@ -581,6 +604,26 @@ export interface SceneJson {
   // undefined → tier (full) on the first hit of a new fight. For pack quests,
   // each MonsterSpec.armor carries the per-monster pool.
   monster_armor?: number;
+  // Tower-only — absolute floor number (1, 2, … 11, 12, …) of the monster
+  // currently in the scene.
+  tower_floor?: number;
+  // Tower-only — current cycle (1 = floors 1-10, 2 = floors 11-20, etc.).
+  tower_cycle?: number;
+  // Tower-only — kind of the current floor. Drives UI: "combat" engages the
+  // monster, "rest" shows the merchant card, "boss" engages and on win flips
+  // to the awaiting-choice screen.
+  tower_floor_kind?: "combat" | "rest" | "boss";
+  // Tower-only — pre-rolled remaining floors in this cycle. Drained by the
+  // floor-advance helper; replenished on cycle continue.
+  tower_queue?: TowerFloorPlan[];
+  // Tower-only — pre-rolled merchant stock for the current rest floor.
+  // Cleared once the player picks (or skips) on /tower/rest_pick.
+  tower_rest_stock?: LootOption[];
+  // Tower-only — cumulative enemies slain across this run.
+  tower_kills_run?: number;
+  // Tower-only — true between a boss kill and the player picking
+  // continue / exit. Blocks any further combat or movement.
+  tower_awaiting_choice?: boolean;
 }
 
 export type QuestMode = "slack" | "web";
@@ -937,6 +980,60 @@ export async function applyInnRest(
     .prepare(`UPDATE characters SET ${sets.join(", ")} WHERE slack_user_id = ?`)
     .bind(Date.now(), userId)
     .run();
+}
+
+// Tower lifetime-stat bump. Kills + floors-climbed accumulate; best_floor is
+// monotonic (only overwritten when the supplied value beats the stored one).
+export async function incrementTowerStats(
+  db: D1Database,
+  userId: string,
+  delta: { kills?: number; floorsClimbed?: number; bestFloor?: number },
+): Promise<void> {
+  const kills = Math.max(0, delta.kills ?? 0);
+  const floorsClimbed = Math.max(0, delta.floorsClimbed ?? 0);
+  const bestFloor = Math.max(0, delta.bestFloor ?? 0);
+  await db
+    .prepare(
+      `UPDATE characters
+         SET tower_kills = tower_kills + ?,
+             tower_floors_climbed = tower_floors_climbed + ?,
+             tower_best_floor = MAX(tower_best_floor, ?),
+             last_active = ?
+       WHERE slack_user_id = ?`,
+    )
+    .bind(kills, floorsClimbed, bestFloor, Date.now(), userId)
+    .run();
+}
+
+export interface TowerLeaderboardRow {
+  slack_user_id: string;
+  name: string;
+  class: string;
+  slack_username: string | null;
+  tower_best_floor: number;
+  tower_kills: number;
+  tower_floors_climbed: number;
+}
+
+// Top climbers ordered by deepest floor reached, ties broken by total kills.
+// Rows with zero progress are filtered out so the board reads as actual
+// participation rather than every character that has ever existed.
+export async function getTowerLeaderboard(
+  db: D1Database,
+  limit = 10,
+): Promise<TowerLeaderboardRow[]> {
+  const res = await db
+    .prepare(
+      `SELECT slack_user_id, name, class, slack_username,
+              tower_best_floor, tower_kills, tower_floors_climbed
+         FROM characters
+        WHERE tower_best_floor > 0 OR tower_kills > 0
+        ORDER BY tower_best_floor DESC, tower_kills DESC, tower_floors_climbed DESC
+        LIMIT ?`,
+    )
+    .bind(Math.max(1, Math.min(100, limit)))
+    .all<TowerLeaderboardRow>();
+  return res.results ?? [];
 }
 
 export async function upsertSlackUsername(
@@ -1853,7 +1950,7 @@ export interface LifetimeStats {
   revives: number;          // count of /sq revive uses
   deaths_soft: number;      // soft-death actions (12h cooldown)
   deaths_perma: number;     // perma-death actions (elite quests)
-  by_variant: { standard: number; boss: number; gauntlet: number; dungeon: number };
+  by_variant: { standard: number; boss: number; gauntlet: number; dungeon: number; tower: number };
 }
 
 export async function getLifetimeStats(
@@ -1872,7 +1969,7 @@ export async function getLifetimeStats(
     revives: 0,
     deaths_soft: 0,
     deaths_perma: 0,
-    by_variant: { standard: 0, boss: 0, gauntlet: 0, dungeon: 0 },
+    by_variant: { standard: 0, boss: 0, gauntlet: 0, dungeon: 0, tower: 0 },
   };
 
   // 1. Quest counts by status + by variant. quest_party.character_id stores
@@ -1891,7 +1988,7 @@ export async function getLifetimeStats(
     else if (row.status === "failed") result.quests_failed += 1;
     else if (row.status === "active") result.quests_active += 1;
     const v = row.variant ?? "standard";
-    if (v === "standard" || v === "boss" || v === "gauntlet" || v === "dungeon") {
+    if (v === "standard" || v === "boss" || v === "gauntlet" || v === "dungeon" || v === "tower") {
       result.by_variant[v] += 1;
     } else {
       result.by_variant.standard += 1;

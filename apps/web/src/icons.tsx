@@ -49,6 +49,8 @@ const SVG_ICONS = new Set([
   "stack", "convergence-target", "database", "virus", "cpu-shot", "energy-shield",
   "brute", "vintage-robot", "muscle-up", "scroll-quill", "health-increase", "knocked-out-stars", "flame-spin", "first-aid-kit",
   "icicles-fence", "sound-on", "cracked-disc", "screaming", "blood", "heart-drop", "lightning-branches", "shieldcomb",
+  // Climb the Tower
+  "tower-flag",
   // Abstract fallback icons (used when no specific icon exists)
   "abstract-006",
 ]);
