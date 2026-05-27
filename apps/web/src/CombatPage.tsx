@@ -2568,11 +2568,20 @@ function VictoryModal({
                 Room cleared. Check the dashboard for the next room.
               </p>
             )}
+            {towerFloor && !towerAwaitingChoice && (
+              <p style={{ ...muted, fontSize: 12, textAlign: "center", marginBottom: 12 }}>
+                {outcome?.tower_next_floor_kind === "rest"
+                  ? "Floor cleared. A rest stop is next — check the dashboard."
+                  : outcome?.tower_next_floor_kind === "boss"
+                  ? "Floor cleared. The boss waits above — engage when ready."
+                  : "Floor cleared. The next floor awaits."}
+              </p>
+            )}
           </>
         )}
         {!hasDoorChoice && (
           <button onClick={onBack} style={{ ...button, marginTop: 8, background: "#16a34a" }}>
-            Back to town
+            {towerFloor && !towerAwaitingChoice ? "🗼 Continue climbing" : "Back to town"}
           </button>
         )}
       </div>
