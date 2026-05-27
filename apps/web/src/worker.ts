@@ -1706,8 +1706,11 @@ const TOWER_FLOORS_PER_CYCLE = 10;
 // Rest stop on the middle floor of every cycle (5, 15, 25, …).
 const TOWER_REST_FLOOR_OFFSET = 5;
 
-function towerFloorTier(characterLevel: number, absoluteFloor: number): number {
-  return Math.max(1, characterLevel + Math.floor((absoluteFloor - 1) / 2));
+// Tower scaling is floor-driven, not level-driven — every climber faces the
+// same difficulty curve regardless of where they started. Pure linear: floor
+// 1 = tier 1, floor 10 boss = tier 10, floor 20 boss = tier 20, …
+function towerFloorTier(_characterLevel: number, absoluteFloor: number): number {
+  return Math.max(1, absoluteFloor);
 }
 
 function towerFloorKind(absoluteFloor: number): "combat" | "rest" | "boss" {
@@ -7655,6 +7658,9 @@ async function buildInitialCombatState(
             name: w.name,
             max_hp: w.max_hp,
           })),
+          // Tower-only pass-through for the combat header "Floor N · Cycle M" chip.
+          tower_floor: quest.scene.tower_floor,
+          tower_cycle: quest.scene.tower_cycle,
           art_url: quest.scene.monster_art_url,
           ...(() => {
             const affinity = rollMonsterElementAffinity();
