@@ -1906,16 +1906,18 @@ export function App() {
             <QuestStatsCard stats={state.questStats} />
           )}
           <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 16, alignItems: "start" }}>
-            {state.me.character && state.recent.length > 0 && (
-              <RecentQuestsCard quests={state.recent} />
-            )}
+            <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+              {state.towerLeaderboard.length > 0 && (
+                <TowerLeaderboardCard entries={state.towerLeaderboard} selfId={state.me.slack_user_id} />
+              )}
+              {state.me.character && state.recent.length > 0 && (
+                <RecentQuestsCard quests={state.recent} />
+              )}
+            </div>
             <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
               <AdventurersCard selfId={state.me.slack_user_id} />
               {state.leaderboard.length > 0 && (
                 <QuestLeaderboardCard entries={state.leaderboard} selfId={state.me.slack_user_id} />
-              )}
-              {state.towerLeaderboard.length > 0 && (
-                <TowerLeaderboardCard entries={state.towerLeaderboard} selfId={state.me.slack_user_id} />
               )}
             </div>
           </div>
