@@ -389,6 +389,7 @@ interface SceneJson {
   tower_awaiting_choice?: boolean;
   tower_kills_run?: number;
   tower_rest_stock?: TowerRestStockItem[];
+  tower_rest_claims?: Record<string, string>;
 }
 
 interface ActiveQuest {
@@ -1843,6 +1844,8 @@ export function App() {
       <TowerInterlude
         questId={aq.quest.id}
         scene={aq.quest.scene}
+        party={aq.party}
+        selfId={state.me.slack_user_id}
         onAdvance={() => void refresh()}
       />
     );
@@ -2692,10 +2695,14 @@ function JoinableQuestCard({
 function TowerInterlude({
   questId,
   scene,
+  party,
+  selfId,
   onAdvance,
 }: {
   questId: number;
   scene: SceneJson;
+  party: Character[];
+  selfId: string;
   onAdvance: () => void;
 }) {
   const [busy, setBusy] = useState(false);
@@ -2704,6 +2711,9 @@ function TowerInterlude({
   const cycle = scene.tower_cycle ?? 1;
   const kills = scene.tower_kills_run ?? 0;
 
+  // Generic post helper that triggers App-level refresh on success.
+  // Used for /tower/continue, /tower/exit, and /tower/rest_advance — each
+  // of those mutates scene_json and the next render shows the new state.
   async function call(path: string, body?: Record<string, unknown>) {
     if (busy) return;
     setBusy(true);
@@ -2722,6 +2732,33 @@ function TowerInterlude({
       setErr((e as Error).message);
     } finally {
       setBusy(false);
+    }
+  }
+
+  // Pick-an-item helper. Refreshes activeQuest after each successful
+  // claim so the claim badge appears immediately. Uses a separate
+  // pendingIdx so we can show a per-button spinner without disabling the
+  // whole card.
+  const [pendingIdx, setPendingIdx] = useState<number | null>(null);
+  async function pickItem(idx: number) {
+    if (pendingIdx !== null || busy) return;
+    setPendingIdx(idx);
+    setErr(null);
+    try {
+      const res = await fetch(`/api/quest/${questId}/tower/rest_pick`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ index: idx }),
+      });
+      const data = (await res.json()) as { ok?: boolean; error?: string };
+      if (!data.ok) throw new Error(data.error ?? "request_failed");
+      // Refresh activeQuest so the new claim is reflected in scene.tower_rest_claims.
+      onAdvance();
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setPendingIdx(null);
     }
   }
 
@@ -2772,8 +2809,13 @@ function TowerInterlude({
     );
   }
 
-  // Rest stop floor
+  // Rest stop floor — claim up to one item each, then "Press on" together.
   const stock = scene.tower_rest_stock ?? [];
+  const claims = scene.tower_rest_claims ?? {};
+  const partyById = new Map(party.map((p) => [p.slack_user_id, p]));
+  const myClaimedIdx = Object.entries(claims).find(([, uid]) => uid === selfId)?.[0];
+  const iHaveClaimed = myClaimedIdx !== undefined;
+
   return (
     <div style={wrapper}>
       <div style={{ ...card, borderColor: "#854d0e" }}>
@@ -2782,31 +2824,84 @@ function TowerInterlude({
         </div>
         <h2 style={{ ...h2, marginTop: 4 }}>Rest stop</h2>
         <p style={muted}>
-          The party is fully healed. A hooded trader has set out three trinkets — pick one, or wave
-          them off and press on.
+          The party is fully healed. A hooded trader has set out three trinkets — each party member
+          can take at most one. When you're ready, press on into the next floor.
         </p>
         {err && <div style={{ color: "#fca5a5", marginTop: 12 }}>Error: {err}</div>}
         <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 16 }}>
-          {stock.map((it, idx) => (
-            <button
-              key={idx}
-              style={pickerBtn}
-              disabled={busy}
-              onClick={() => void call("/tower/rest_pick", { index: idx })}
-            >
-              <strong>{it.name}</strong>{" "}
-              <span style={muted}>
-                ({it.item_type}, power {it.power}, {it.rarity})
-              </span>
-              {it.flavor && <div style={{ ...muted, fontSize: 12, marginTop: 4 }}>{it.flavor}</div>}
-            </button>
-          ))}
+          {stock.map((it, idx) => {
+            const claimedBy = claims[String(idx)];
+            const claimedByMe = claimedBy === selfId;
+            const claimer = claimedBy ? partyById.get(claimedBy) : null;
+            const canTake = !claimedBy && !iHaveClaimed;
+            const isPending = pendingIdx === idx;
+            return (
+              <div
+                key={idx}
+                style={{
+                  ...pickerBtn,
+                  cursor: canTake ? "pointer" : "default",
+                  opacity: claimedBy && !claimedByMe ? 0.55 : 1,
+                  borderColor: claimedByMe ? "#fbbf24" : "#2a2d33",
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                  <strong>{it.name}</strong>
+                  <span style={{ ...muted, fontSize: 12 }}>
+                    ({it.item_type}, power {it.power}, {it.rarity})
+                  </span>
+                  {claimedBy && (
+                    <span style={{
+                      marginLeft: "auto",
+                      fontSize: 11,
+                      fontWeight: 600,
+                      color: claimedByMe ? "#fbbf24" : "#9aa0a6",
+                      padding: "2px 8px",
+                      borderRadius: 4,
+                      background: claimedByMe ? "#2d2410" : "#1a1c20",
+                    }}>
+                      {claimedByMe ? "you took this" : `taken by ${claimer?.name ?? claimedBy}`}
+                    </span>
+                  )}
+                </div>
+                {it.flavor && <div style={{ ...muted, fontSize: 12, marginTop: 4 }}>{it.flavor}</div>}
+                {canTake && (
+                  <button
+                    style={{
+                      marginTop: 8,
+                      padding: "6px 12px",
+                      borderRadius: 6,
+                      border: "1px solid #b89b3a",
+                      background: "#2d2410",
+                      color: "#fbbf24",
+                      fontSize: 13,
+                      fontWeight: 600,
+                      cursor: "pointer",
+                    }}
+                    disabled={isPending}
+                    onClick={() => void pickItem(idx)}
+                  >
+                    {isPending ? "Taking…" : "Take"}
+                  </button>
+                )}
+              </div>
+            );
+          })}
           <button
-            style={{ ...pickerBtn, textAlign: "center", marginTop: 4 }}
-            disabled={busy}
-            onClick={() => void call("/tower/rest_pick", { index: null })}
+            style={{
+              ...button,
+              background: "#854d0e",
+              color: "#fef3c7",
+              marginTop: 12,
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 6,
+            }}
+            disabled={busy || pendingIdx !== null}
+            onClick={() => void call("/tower/rest_advance")}
           >
-            ⏭️ Skip — keep climbing
+            <Icon name="tower-flag" size={16} color="#fef3c7" /> Press on (Floor {floor + 1})
           </button>
         </div>
       </div>
