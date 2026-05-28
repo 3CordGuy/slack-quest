@@ -444,16 +444,6 @@ export const ACHIEVEMENTS: Achievement[] = [
     gradient: ["#1e3a5f", "#818cf8"],
     category: "economy",
   },
-  {
-    id: "key_all_types",
-    title: "Keymaster",
-    flavor: "Bronze, silver, gold. You've held them all.",
-    description: "Own at least one key of each tier simultaneously.",
-    icon: "key",
-    gradient: ["#78350f", "#fbbf24"],
-    category: "economy",
-  },
-
   // ── Pub Games ─────────────────────────────────────────────────────────────
   {
     id: "liars_first_win",
@@ -577,15 +567,6 @@ export const ACHIEVEMENTS: Achievement[] = [
     category: "quest",
   },
   {
-    id: "dungeon_first",
-    title: "Dungeon Delver",
-    flavor: "Darkness below. You went anyway.",
-    description: "Complete your first dungeon quest.",
-    icon: "bear-trap",
-    gradient: ["#1c1917", "#78716c"],
-    category: "quest",
-  },
-  {
     id: "elite_no_death",
     title: "Elite Survivor",
     flavor: "Permadeath on the table. You left it there.",
@@ -601,15 +582,6 @@ export const ACHIEVEMENTS: Achievement[] = [
     description: "Complete 5 job board quests.",
     icon: "rune-stone",
     gradient: ["#1e3a5f", "#93c5fd"],
-    category: "quest",
-  },
-  {
-    id: "dungeon_3",
-    title: "Dungeon Master",
-    flavor: "Three dungeons cleared. The dark no longer surprises you.",
-    description: "Complete 3 dungeon quests.",
-    icon: "bear-trap",
-    gradient: ["#292524", "#a8a29e"],
     category: "quest",
   },
   {
@@ -676,7 +648,6 @@ export interface CombatAchievementOpts {
   scarsCount: number;
   softDeathsTotal: number;
   isJobBoard: boolean;
-  isDungeon: boolean;
   isElite: boolean;
   isNoDeathRun: boolean; // nobody downed during this quest
   initialMonsterCount: number; // total monsters at start of encounter (1 for single, 2-3 for pack)
@@ -697,7 +668,6 @@ export function checkCombatAchievements(opts: CombatAchievementOpts): string[] {
     landedKillingBlow,
     scarsCount,
     isJobBoard,
-    isDungeon,
     isElite,
     isNoDeathRun,
     initialMonsterCount,
@@ -815,7 +785,6 @@ export function checkCombatAchievements(opts: CombatAchievementOpts): string[] {
     }
   }
   award(ids, ex,
-    isDungeon && !has(ex, "dungeon_first") && "dungeon_first",
     isElite && isNoDeathRun && !has(ex, "elite_no_death") && "elite_no_death",
   );
 
@@ -922,13 +891,10 @@ export interface ProgressionAchievementOpts {
   existingAchievements: EarnedAchievement[];
   level: number;
   gold: number;
-  keysBronze: number;
-  keysSilver: number;
-  keysGold: number;
 }
 
 export function checkProgressionAchievements(opts: ProgressionAchievementOpts): string[] {
-  const { existingAchievements: ex, level, gold, keysBronze, keysSilver, keysGold } = opts;
+  const { existingAchievements: ex, level, gold } = opts;
   const ids: string[] = [];
   award(ids, ex,
     level >= 5 && !has(ex, "level_5") && "level_5",
@@ -936,7 +902,6 @@ export function checkProgressionAchievements(opts: ProgressionAchievementOpts): 
     gold >= 100 && !has(ex, "gold_100") && "gold_100",
     gold >= 500 && !has(ex, "gold_500") && "gold_500",
     gold >= 1000 && !has(ex, "gold_1000") && "gold_1000",
-    keysBronze >= 1 && keysSilver >= 1 && keysGold >= 1 && !has(ex, "key_all_types") && "key_all_types",
   );
   return ids;
 }

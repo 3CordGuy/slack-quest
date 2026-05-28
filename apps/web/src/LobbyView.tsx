@@ -40,8 +40,6 @@ interface LobbyQuestData {
     monster_max_hp?: number;
     total_waves?: number;
     monsters?: LobbyMonster[];
-    expedition?: { theme: string } | null;
-    graph?: { nodes?: unknown[] } | null;
   };
   lobby_expires_at: number | null;
   locked?: boolean;
@@ -63,7 +61,6 @@ interface TeamMember {
 
 function EnemyPreview({ quest }: { quest: LobbyQuestData }) {
   const s = quest.scene;
-  const isDungeon = s.variant === "dungeon" || !!s.expedition || !!s.graph;
   const isGauntlet = s.variant === "gauntlet";
   const isBoss = s.variant === "boss";
   const tier = s.tier ?? 1;
@@ -78,23 +75,6 @@ function EnemyPreview({ quest }: { quest: LobbyQuestData }) {
   };
   const labelStyle: React.CSSProperties = { fontSize: 13, color: "#d1d5db", fontWeight: 600 };
   const statStyle: React.CSSProperties = { fontSize: 12, color: "#9ca3af", display: "flex", gap: 10 };
-
-  if (isDungeon) {
-    return (
-      <div style={{ marginBottom: 16 }}>
-        <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: 1, color: "#4b5563", marginBottom: 6 }}>Dungeon</div>
-        <div style={rowStyle}>
-          <span style={labelStyle}>
-            {s.expedition?.theme ?? "Dungeon Expedition"}{eliteLabel}
-          </span>
-          <span style={{ ...statStyle }}>
-            <span style={{ color: tierColor }}>Tier {tier}</span>
-          </span>
-        </div>
-        <div style={{ fontSize: 12, color: "#6b7280", paddingLeft: 2 }}>Multiple rooms — enemies revealed as you explore.</div>
-      </div>
-    );
-  }
 
   if (isGauntlet) {
     const waves = s.total_waves ?? 1;
@@ -451,13 +431,11 @@ export function LobbyView({
         : `${expiresIn}s`
       : null;
 
-  const questLabel = quest?.scene.expedition?.theme
-    ? `Dungeon — ${quest.scene.expedition.theme}`
-    : quest?.scene.variant === "boss"
-      ? `Boss — ${quest?.scene.monster_name ?? "?"}`
-      : quest?.scene.variant === "gauntlet"
-        ? `Gauntlet — ${quest?.scene.monster_name ?? "?"}`
-        : (quest?.scene.monster_name ?? "Quest");
+  const questLabel = quest?.scene.variant === "boss"
+    ? `Boss — ${quest?.scene.monster_name ?? "?"}`
+    : quest?.scene.variant === "gauntlet"
+      ? `Gauntlet — ${quest?.scene.monster_name ?? "?"}`
+      : (quest?.scene.monster_name ?? "Quest");
 
   // Which team members are not already in the party
   const partyIds = new Set(party.map((m) => m.slack_user_id));

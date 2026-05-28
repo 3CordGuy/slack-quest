@@ -1,6 +1,6 @@
 // Workers AI helpers. Uses Llama 3.1 8B Instruct — cheap, plenty good for flavor text.
 
-import type { Character, DungeonGraph, DungeonNode, DungeonObject, LootOption, MonsterSpec, SceneJson } from "@gantt-quest/db";
+import type { Character, LootOption, MonsterSpec, SceneJson } from "@gantt-quest/db";
 import { fallbackMonsterName, fallbackSceneText, generateNpcName, rollItem } from "@gantt-quest/core";
 
 const MODEL = "@cf/meta/llama-3.1-8b-instruct";
@@ -201,24 +201,6 @@ export const VIEW_ART_PROMPTS = {
   // global ART_VERSION (which would re-gen every other banner too).
   channel_shop:
     "Interior of a bustling fantasy curio shop. A friendly shopkeeper smiling behind a polished wooden COUNTER with a brass ring-up bell, ready to serve customers. Shelves behind the counter stocked with neatly labeled corked potion bottles bearing handwritten price tags, weapons hung on display racks, scrolls in cubby holes, jewelry under a glass case. Hanging sign with a coin-and-key logo over the door. Warm lantern light, dust motes in the air. This is a SHOP for buying goods — not a workshop, not a forge, not a workbench. The mood is welcoming commerce.",
-
-  // Mid-dungeon treasure chamber (final-room reward, no monster).
-  treasure:
-    "A heavy ornate chest sits open in the middle of a dim stone chamber, golden light spilling out from inside. Old coins and folded fabric visible. Flagstone floor, faint cobwebs in corners. Single dramatic chest as the focal point.",
-
-  // The dungeon merchant — singleton image used until per-encounter art lands.
-  merchant:
-    "A hooded fantasy merchant standing behind a portable wooden stall in a dim dungeon corridor. Goods displayed: vials, a coiled rope, two weapons, a small wooden box. Single lantern hanging above. Mysterious mood, face partially shadowed.",
-
-  // Lockbox tier variants — three separate keys, three separate images.
-  // Same chest archetype but the chrome scales with tier (rougher iron for
-  // bronze, ornate brass for silver, gilded gold-leaf for gold).
-  lockbox_bronze:
-    "A small iron-banded wooden chest with a heavy bronze padlock, sitting in a dim stone alcove. Plain rivets and worn iron straps. Dust and cobwebs around the edges. Single chest, focal-point composition.",
-  lockbox_silver:
-    "An ornate dark-wood chest reinforced with engraved silver bands and a heavy filigreed silver padlock, sitting in a dim stone alcove. Detailed metalwork, slight tarnish. Single chest, focal-point composition.",
-  lockbox_gold:
-    "A lavishly ornate chest covered in gold-leaf engraving with a massive jeweled gold padlock, sitting on a stone pedestal in a dim chamber. Faint glow from cracks in the lid, polished gilt highlights. Single chest, focal-point composition.",
 
   // Per-class character portraits — rendered on /sq sheet. Each prompt
   // captures the class's engineering-themed identity literally (yaml runes
@@ -455,37 +437,11 @@ export async function generateMonsterArtPhase2(
   return generateAndCacheArt(ai, art, key, prompt, `monster-p2:${monsterName}`);
 }
 
-const ROOM_ART_VERSION = "v1";
-
-// Generates a dungeon room illustration for the graph dungeon. Cached per
-// room slug so the same room always shows the same picture after its first
-// visit. Room art is intentionally lazier than monster art — we don't need
-// the full monster-subject breakdown, just a scene impression.
-//
-// Key is stable: room-slug + dungeon-theme-slug, versioned by ROOM_ART_VERSION.
-// Returns null on any failure; caller skips the image block.
-export async function generateRoomArt(
-  ai: Ai,
-  art: ArtTarget,
-  roomId: string,
-  roomName: string,
-  roomDescription: string,
-): Promise<string | null> {
-  const slug = slugifyMonsterName(`${roomId}-${roomName}`);
-  const key = `art/rooms/${ROOM_ART_VERSION}/${slug}.png`;
-
-  const subject =
-    `ILLUSTRATION SUBJECT: a dungeon room called "${roomName}". Scene: ${roomDescription.slice(0, 200)}.` +
-    ` Wide establishing shot, no characters, environment only.`;
-
-  const prompt = `${subject} ${MONSTER_STYLE_ANCHOR} ${NEGATIVES}`;
-  return generateAndCacheArt(ai, art, key, prompt, `room:${roomName}`);
-}
-
 // Personality traits injected into the character portrait prompt to push
 // flux toward a unique emotional/postural read per roll. One is picked
-// randomly so two characters of the same class look distinct — different
-// expression, stance, or aura even when the class descriptor is identical.
+// based on a hash of the name so two characters of the same class look
+// distinct — different expression, stance, or aura even when the class
+// descriptor is identical.
 const CHARACTER_TRAITS = [
   "battle-worn and world-weary, thousand-yard stare",
   "bright-eyed and eager, barely containing nervous energy",
@@ -523,12 +479,6 @@ const CLASS_DESCRIPTOR: Record<string, string> = {
     "Warlock in dark scholarly robes hunched over a glowing grimoire whose pages writhe with SQL incantations and data-pipeline diagrams, eyes lit with arcane insight. Background: a bright analytics den — multiple monitors showing dashboards and query results, whiteboards covered in funnel diagrams, a stack of printed reports. Warm desk-lamp light.",
 };
 
-// Per-character portrait. Cached in R2 keyed by the character-name slug, so
-// every roll gets a unique image — even two players who roll the same class
-// see different portraits. Names with epithets ("Fenel the Deprecated",
-// "Brudor the Halflinter") feed the same literal-name interpretation we use
-// for monsters: flux reads the words as visual cues.
-//
 // Builds the Flux prompt for a character portrait. Gender is the FIRST word
 // so Flux-1-schnell anchors subject sex before reading class/name descriptors.
 function buildCharacterArtPrompt(
@@ -547,10 +497,12 @@ function buildCharacterArtPrompt(
   return `${subject} ${CHARACTER_STYLE_ANCHOR} ${NEGATIVES}`;
 }
 
-// Generation is lazy. On cache miss we schedule the gen via ctx.waitUntil
-// and return the class-singleton banner as a placeholder so the first view
-// of /sq sheet shows *something* while the unique portrait renders. The
-// next view picks up the cached unique image.
+// Per-character portrait. Cached in R2 keyed by the character-name slug, so
+// every roll gets a unique image — even two players who roll the same class
+// see different portraits. Generation is lazy: on cache miss we schedule
+// the gen via ctx.waitUntil and return the class-singleton banner as a
+// placeholder so the first view shows *something* while the unique
+// portrait renders. The next view picks up the cached unique image.
 //
 // Returns null when neither the per-character nor the class-fallback art
 // exists (e.g. IMAGE_BASE_URL unset, or class doesn't have a descriptor).
@@ -589,69 +541,6 @@ export async function getOrScheduleCharacterArt(
   return null;
 }
 
-// Per-trap-room art. Each trap has a unique AI-generated scene description
-// ("a mangled mess of wires and code", "a pit of stale config files", etc.),
-// and we cache by a slug derived from the first ~80 chars of that scene so
-// the cache key is stable across renders of the same trap.
-//
-// Subject is the scene itself — we feed flux the description verbatim and
-// ask it to paint the literal contents. Same Elmore/Easley anchor for
-// stylistic unity. Returns null on failure; caller skips the image block.
-export async function generateTrapArt(
-  ai: Ai,
-  art: ArtTarget,
-  scene: string,
-): Promise<string | null> {
-  // Slug from the leading scene words — stable for the same trap, varies
-  // across traps. Capped to 60 chars by slugifyMonsterName.
-  const slug = slugifyMonsterName(scene.slice(0, 80));
-  const key = `art/${ART_VERSION}/trap/${slug}.png`;
-
-  const subject =
-    `ILLUSTRATION SUBJECT: a fantasy dungeon trap scene, depicting LITERALLY the following description: "${scene}"` +
-    ` Render exactly what's described — show the trap's machinery, hazards, and tension visually. No people in the foreground, focus on the dangerous device or environmental hazard.` +
-    ` Single-scene composition, dim claustrophobic dungeon corridor, dramatic shadows, sense of imminent danger.`;
-
-  const prompt = `${subject} ${STYLE_ANCHOR} ${NEGATIVES}`;
-  return generateAndCacheArt(ai, art, key, prompt, `trap:${slug}`);
-}
-
-// Per-encounter character portraits for dungeon NPCs and merchants. Both have
-// AI-generated names (generateNpcName / generateMerchantName), and we cache
-// by name slug — a "Brudor the Halflinter" encountered in two different
-// dungeons will render the same portrait both times. The cached art also
-// makes the same merchant name ringback consistently if avoid-list rotation
-// repeats it.
-//
-// Style anchor + literal-name interpretation are the same as monster art —
-// the epithet portion of the name ("the Patient", "Stack-Cleaver") is the
-// part flux can lean into for character flavor. Different from monsters
-// only in the framing (single-character portrait vs creature) and the
-// scene context (dungeon corridor, merchant stall).
-//
-// Returns null on any failure; callers must skip the image block on null.
-export async function generateEncounterArt(
-  ai: Ai,
-  art: ArtTarget,
-  kind: "npc" | "merchant",
-  name: string,
-): Promise<string | null> {
-  const slug = slugifyMonsterName(name);
-  const key = `art/${ART_VERSION}/${kind}/${slug}.png`;
-
-  const subject =
-    kind === "npc"
-      ? `ILLUSTRATION SUBJECT: a single-figure character portrait of "${name}" — a wandering adventurer encountered in a dim dungeon corridor.` +
-        ` Treat the name (especially any epithet like "the Patient" or "Stack-Cleaver") LITERALLY — interpret what the words suggest about the character's appearance, posture, gear, or aura.` +
-        ` Examples: "the Patient" = serene composed expression; "Halflinter" = scruffy half-lit by torchlight; "Stack-Cleaver" = wielding an oversized weapon.` +
-        ` Three-quarter portrait, single character against a moody background, dramatic lighting.`
-      : `ILLUSTRATION SUBJECT: a single fantasy merchant figure named "${name}", standing behind a small portable wooden stall in a dim dungeon corridor.` +
-        ` Treat the name and any epithet LITERALLY for personality cues — interpret what the words suggest about the merchant's look or gear.` +
-        ` Stall displays a few wares: vials, scrolls, a small weapon. Single hooded or robed figure beside the stall, lantern light, mysterious mood.`;
-
-  const prompt = `${subject} ${STYLE_ANCHOR} ${NEGATIVES}`;
-  return generateAndCacheArt(ai, art, key, prompt, `${kind}:${name}`);
-}
 
 // Core image-generation primitive used by every art helper in this file.
 // Checks R2 for the cached object first, generates via flux-1-schnell on
@@ -1216,268 +1105,6 @@ export async function flavorCatalogItem(
   }
 }
 
-// Generates the per-node content of an expedition. The model picks a coherent
-// theme + 5 scenes; we rely on field markers to parse rather than JSON output
-// (llama-3.1-8b is unreliable with strict JSON, very reliable with line markers).
-export interface GeneratedExpeditionScene {
-  scene: string;
-  choices: string[];
-}
-
-export async function generateExpeditionForkScene(
-  ai: Ai,
-  theme: string,
-  pathTaken: string[],
-  sceneIndex: number,
-  totalForks: number,
-): Promise<GeneratedExpeditionScene> {
-  const history = pathTaken.length > 0
-    ? `Choices made so far: ${pathTaken.map((p, i) => `(${i + 1}) ${p}`).join("; ")}.`
-    : "This is the opening scene.";
-
-  const user = [
-    `You are running an expedition quest with the theme: "${theme}".`,
-    `This is fork ${sceneIndex} of ${totalForks}.`,
-    history,
-    "Generate the next scene + 2 choices. Output exactly:",
-    "SCENE: <2 sentences, ~40 words, set the situation>",
-    "CHOICE_1: <a short imperative phrase, ~6 words>",
-    "CHOICE_2: <a short imperative phrase, ~6 words, meaningfully different from choice 1>",
-  ].join("\n");
-
-  const fallback: GeneratedExpeditionScene = {
-    scene: "A junction looms. Two paths diverge through the gloom of long-deprecated documentation.",
-    choices: ["Take the lit path", "Take the dark path"],
-  };
-
-  try {
-    const result = (await ai.run(MODEL, {
-      messages: [
-        { role: "system", content: COMBAT_SYSTEM },
-        { role: "user", content: user },
-      ],
-      max_tokens: 200,
-    })) as AiRunResponse;
-    const text = (result.response ?? "").trim();
-    const scene = /SCENE:\s*(.+)/i.exec(text)?.[1]?.trim();
-    const c1 = /CHOICE_1:\s*(.+)/i.exec(text)?.[1]?.trim().replace(/^["'`]|["'`]$/g, "");
-    const c2 = /CHOICE_2:\s*(.+)/i.exec(text)?.[1]?.trim().replace(/^["'`]|["'`]$/g, "");
-    if (!scene || !c1 || !c2) return fallback;
-    return { scene, choices: [c1, c2] };
-  } catch {
-    return fallback;
-  }
-}
-
-export async function generateExpeditionTheme(ai: Ai): Promise<string> {
-  const user = "Generate a single short evocative theme for an expedition into a hostile codebase. 4-7 words. No quotes. Examples: 'the cursed monorepo merge', 'haunted staging environment', 'forgotten sprint of 2019'.";
-  const fallback = "the abandoned staging environment";
-  return generateFlavor(ai, user, fallback, 30);
-}
-
-export async function flavorForkOutcome(
-  ai: Ai,
-  theme: string,
-  choice: string,
-): Promise<string> {
-  const user = `Expedition theme: "${theme}". The party just chose: "${choice}". Narrate the immediate consequence in one short line.`;
-  const fallback = `The party commits to the path.`;
-  return generateFlavor(ai, user, fallback, 80);
-}
-
-export async function flavorAbility(
-  ai: Ai,
-  character: FighterRef,
-  monsterName: string,
-  abilityName: string,
-  isCrit: boolean,
-  equippedWeapon?: string,
-  equippedArmor?: string,
-): Promise<string> {
-  const intensity = isCrit ? "It lands as a CRITICAL strike — devastating." : "It lands true.";
-  const gearHint = equippedWeapon || equippedArmor
-    ? ` Work the gear into the moment: ${[equippedWeapon && `weapon "${equippedWeapon}"`, equippedArmor && `armor "${equippedArmor}"`].filter(Boolean).join(", ")}.`
-    : "";
-  const user = `${character.name}, a Level ${character.level} ${character.class}, just unleashes *${abilityName}* on ${monsterName}. ${intensity} Narrate the moment with extra weight — this is a class-defining move.${gearHint}${pronounHint(character.gender)}`;
-  const fallback = isCrit
-    ? `${character.name}'s ${abilityName}${equippedWeapon ? `, channeled through their ${equippedWeapon},` : ""} crashes into ${monsterName} like a falling stack trace.`
-    : `${character.name} channels ${abilityName}${equippedWeapon ? ` through their ${equippedWeapon}` : ""} at ${monsterName}.`;
-  return generateFlavor(ai, user, fallback, 110);
-}
-
-// Generates a trap room: scene description + 3 disarm-option texts. The skill type
-// for each option is fixed by caller (one str, one dex, one int) — the AI just
-// fills in what those skills look like in this scenario.
-export interface GeneratedTrap {
-  scene: string;
-  options: { str: string; dex: string; int: string };
-}
-
-export async function generateTrapRoom(
-  ai: Ai,
-  theme: string,
-  roomNumber: number,
-  totalRooms: number,
-): Promise<GeneratedTrap> {
-  const user = [
-    `You are running room ${roomNumber}/${totalRooms} of a dungeon themed: "${theme}".`,
-    "This room contains a TRAP. Generate scene + 3 disarm options matching three approaches:",
-    "  STR — brute force (smash, charge, bend, lift)",
-    "  DEX — finesse (disarm, slip past, defuse, sneak)",
-    "  INT — wits (decode, riddle, calculate, identify)",
-    "Output exactly:",
-    "SCENE: <2 sentences, ~35 words, set the trap with menace>",
-    "STR: <imperative phrase, 4-6 words>",
-    "DEX: <imperative phrase, 4-6 words>",
-    "INT: <imperative phrase, 4-6 words>",
-  ].join("\n");
-
-  const fallback: GeneratedTrap = {
-    scene: "A pressure plate clicks under your boot. The room hisses — definitely a trap.",
-    options: {
-      str: "Smash through the wall",
-      dex: "Disarm the trigger gently",
-      int: "Decode the warding glyphs",
-    },
-  };
-
-  try {
-    const result = (await ai.run(MODEL, {
-      messages: [
-        { role: "system", content: COMBAT_SYSTEM },
-        { role: "user", content: user },
-      ],
-      max_tokens: 200,
-    })) as AiRunResponse;
-    const text = (result.response ?? "").trim();
-    const scene = /SCENE:\s*(.+)/i.exec(text)?.[1]?.trim();
-    const str = /STR:\s*(.+)/i.exec(text)?.[1]?.trim().replace(/^["'`]|["'`]$/g, "");
-    const dex = /DEX:\s*(.+)/i.exec(text)?.[1]?.trim().replace(/^["'`]|["'`]$/g, "");
-    const int = /INT:\s*(.+)/i.exec(text)?.[1]?.trim().replace(/^["'`]|["'`]$/g, "");
-    if (!scene || !str || !dex || !int) return fallback;
-    return { scene, options: { str, dex, int } };
-  } catch {
-    return fallback;
-  }
-}
-
-export async function generateLockboxScene(
-  ai: Ai,
-  theme: string,
-  roomNumber: number,
-  totalRooms: number,
-): Promise<string> {
-  const user = `Room ${roomNumber}/${totalRooms} of a dungeon themed: "${theme}". This room has a *locked* chest. Narrate the discovery in 2 sentences (~35 words). Hint that without a key, players can only walk past empty-handed.`;
-  const fallback = "A chest sits at the room's center, bound in three iron locks and humming with promise. You'd need a key — or your conscience to leave it.";
-  return generateFlavor(ai, user, fallback, 110);
-}
-
-export interface GeneratedNpc {
-  scene: string;
-  greeting: string;
-}
-
-export async function generateNpcRoom(
-  ai: Ai,
-  theme: string,
-  roomNumber: number,
-  totalRooms: number,
-  npcName: string,
-  // The actual item the NPC is offering (post-loot-roll). Forced into the
-  // prompt as an explicit input so the greeting names what's on offer instead
-  // of inventing generic "wares" — same fix pattern we used for the monster
-  // name/scene mismatch class of bug.
-  offerItemName: string,
-): Promise<GeneratedNpc> {
-  const user = [
-    `Room ${roomNumber}/${totalRooms} of a dungeon themed: "${theme}".`,
-    `An NPC named "${npcName}" is here, offering a specific item to the party: "${offerItemName}".`,
-    `In their GREETING, they MUST name or directly describe "${offerItemName}" — they're trying to give it away or sell it. Don't invent a different item.`,
-    "Output exactly:",
-    "SCENE: <2 sentences setting the encounter — what they look like, what they're doing>",
-    `GREETING: <1-2 sentences of what they say, naming or describing "${offerItemName}" specifically>`,
-  ].join("\n");
-
-  const fallback: GeneratedNpc = {
-    scene: "A figure in patched robes warms hands by a battered terminal. They look up and grin.",
-    greeting: `"Trade you for this *${offerItemName}*? I came across it three sprints back and have no use for it."`,
-  };
-
-  try {
-    const result = (await ai.run(MODEL, {
-      messages: [
-        { role: "system", content: COMBAT_SYSTEM },
-        { role: "user", content: user },
-      ],
-      max_tokens: 200,
-    })) as AiRunResponse;
-    const text = (result.response ?? "").trim();
-    const scene = /SCENE:\s*(.+)/i.exec(text)?.[1]?.trim();
-    const greeting = /GREETING:\s*([\s\S]+)/i.exec(text)?.[1]?.trim().replace(/^["'`]|["'`]$/g, "");
-    if (!scene || !greeting) return fallback;
-    return { scene, greeting };
-  } catch {
-    return fallback;
-  }
-}
-
-// Generates a merchant room scene + greeting. Merchant is a guaranteed slot
-// that always lands as the last middle room (right before the sub-boss),
-// giving the party a "last chance to gear up" beat.
-export interface GeneratedMerchant {
-  scene: string;
-  greeting: string;
-}
-
-export async function generateMerchantRoom(
-  ai: Ai,
-  theme: string,
-  roomNumber: number,
-  totalRooms: number,
-  merchantName: string,
-  // Real stock items the merchant is selling — feeds into the greeting so
-  // they hawk specific wares by name rather than inventing generic ones.
-  // Same fix pattern as monster name/scene mismatch.
-  stockItemNames: string[],
-): Promise<GeneratedMerchant> {
-  const stockList = stockItemNames.length > 0
-    ? stockItemNames.map((n) => `  • "${n}"`).join("\n")
-    : "  • (no stock listed)";
-  const user = [
-    `Room ${roomNumber}/${totalRooms} of a dungeon themed: "${theme}".`,
-    `A traveling merchant named "${merchantName}" has set up a tiny shop here, mid-dungeon.`,
-    `Their stall has these specific items today:`,
-    stockList,
-    `In their GREETING, they MUST name or directly hawk at least ONE of the items above by name. Don't invent generic wares — they're selling these exact things. Mentioning two of the items is even better.`,
-    "Output exactly:",
-    "SCENE: <2 sentences setting the encounter — what their stall looks like, where they came from>",
-    `GREETING: <1-2 sentences of what they say to the party, naming at least one of the listed items>`,
-  ].join("\n");
-
-  const firstItem = stockItemNames[0] ?? "trouble preparation";
-  const fallback: GeneratedMerchant = {
-    scene: `${merchantName} has improvised a shopfront from overturned standing-desks and a fluttering Gantt chart.`,
-    greeting: `"Adventurers! Step right up. You'll want a *${firstItem}* — trust me, you'll want a *${firstItem}*."`,
-  };
-
-  try {
-    const result = (await ai.run(MODEL, {
-      messages: [
-        { role: "system", content: COMBAT_SYSTEM },
-        { role: "user", content: user },
-      ],
-      max_tokens: 220,
-    })) as AiRunResponse;
-    const text = (result.response ?? "").trim();
-    const scene = /SCENE:\s*(.+)/i.exec(text)?.[1]?.trim();
-    const greeting = /GREETING:\s*([\s\S]+)/i.exec(text)?.[1]?.trim().replace(/^["'`]|["'`]$/g, "");
-    if (!scene || !greeting) return fallback;
-    return { scene, greeting };
-  } catch {
-    return fallback;
-  }
-}
-
 export async function flavorBossPhase(
   ai: Ai,
   monsterName: string,
@@ -1507,6 +1134,26 @@ export async function flavorVictory(
   const partyText = partySize === 1 ? "fighting solo" : `fighting alongside ${partySize - 1} other heroes`;
   const user = `${character.name}, a Level ${character.level} ${character.class} ${partyText}, just landed the killing blow on ${monsterName}. Narrate the triumph.${pronounHint(character.gender)}`;
   const fallback = `${character.name} delivers the killing blow. ${monsterName} is no more.`;
+  return generateFlavor(ai, user, fallback, 110);
+}
+
+export async function flavorAbility(
+  ai: Ai,
+  character: FighterRef,
+  monsterName: string,
+  abilityName: string,
+  isCrit: boolean,
+  equippedWeapon?: string,
+  equippedArmor?: string,
+): Promise<string> {
+  const intensity = isCrit ? "It lands as a CRITICAL strike — devastating." : "It lands true.";
+  const gearHint = equippedWeapon || equippedArmor
+    ? ` Work the gear into the moment: ${[equippedWeapon && `weapon "${equippedWeapon}"`, equippedArmor && `armor "${equippedArmor}"`].filter(Boolean).join(", ")}.`
+    : "";
+  const user = `${character.name}, a Level ${character.level} ${character.class}, just unleashes *${abilityName}* on ${monsterName}. ${intensity} Narrate the moment with extra weight — this is a class-defining move.${gearHint}${pronounHint(character.gender)}`;
+  const fallback = isCrit
+    ? `${character.name}'s ${abilityName}${equippedWeapon ? `, channeled through their ${equippedWeapon},` : ""} crashes into ${monsterName} like a falling stack trace.`
+    : `${character.name} channels ${abilityName}${equippedWeapon ? ` through their ${equippedWeapon}` : ""} at ${monsterName}.`;
   return generateFlavor(ai, user, fallback, 110);
 }
 
@@ -1755,14 +1402,13 @@ export interface JobListingFlavor {
 }
 export async function generateJobListing(
   ai: Ai,
-  variant: "standard" | "boss" | "dungeon" | "gauntlet" | "bounty_pack",
+  variant: "standard" | "boss" | "gauntlet" | "bounty_pack",
   townName: string,
 ): Promise<JobListingFlavor> {
   const variantHint = (() => {
     switch (variant) {
       case "standard": return "A single foe somewhere outside town. Modest difficulty.";
       case "boss": return "A named, beefy foe with two phases. Group recommended.";
-      case "dungeon": return "A 5-7 room expedition with traps, lockboxes, NPC encounters, sub-boss + treasure.";
       case "gauntlet": return "Three monsters back-to-back with no rest between waves. No fleeing.";
       case "bounty_pack": return "Take out a small pack of 2-3 enemies at once — more dangerous but the contract pays extra. First group to engage gets dibs.";
     }
@@ -1786,7 +1432,6 @@ export async function generateJobListing(
     switch (variant) {
       case "standard": return { title: "Goblin Trouble in the Outskirts", blurb: "Something's been ransacking the kanban field. Bring it down." };
       case "boss": return { title: "The Underlying Bug", blurb: "Old and stubborn, holed up in the temple ruins. Two phases by the rumors." };
-      case "dungeon": return { title: "Sprint Crypts", blurb: "Five rooms, locks, traps. Bring keys and friends." };
       case "gauntlet": return { title: "The On-Call Rotation", blurb: "Three pages, three monsters, no rest between. Light a candle." };
       case "bounty_pack": return { title: "Pack Sighting Near the Pipeline", blurb: "Two or three of them, running together. Double bounty. First squad gets credit." };
     }
@@ -1889,175 +1534,3 @@ function fallbackDialogTree(input: NpcDialogInput): AiDialogNode {
   };
 }
 
-// ── Phase 4: Graph Dungeon Generation ────────────────────────────────────────
-
-// Programmatic topology for a graph dungeon with 7 rooms:
-//
-//   entrance ──[n]──► room_1 ──[n]──► junction
-//                                        │
-//                         [n] room_3    [e] room_2b  (optional branch)
-//                              │              │
-//                         boss_ante ◄──────────┘
-//                              │
-//                         boss_room
-//
-// Players use /gq move n/e/s/w to navigate. One optional branch room gives
-// a choice moment. Boss kill triggers resolveVictory.
-const GRAPH_TOPOLOGY: Array<{
-  id: string;
-  exits: Record<string, string>;
-  role: "entrance" | "combat" | "safe" | "branch" | "boss_ante" | "boss";
-}> = [
-  { id: "entrance",  exits: { n: "room_1" },                          role: "entrance" },
-  { id: "room_1",    exits: { s: "entrance", n: "junction" },         role: "combat" },
-  { id: "junction",  exits: { s: "room_1", n: "room_3", e: "room_2b" }, role: "safe" },
-  { id: "room_2b",   exits: { w: "junction" },                        role: "branch" },
-  { id: "room_3",    exits: { s: "junction", n: "boss_ante" },        role: "combat" },
-  { id: "boss_ante", exits: { s: "room_3", n: "boss_room" },          role: "boss_ante" },
-  { id: "boss_room", exits: { s: "boss_ante" },                       role: "boss" },
-];
-
-export async function generateDungeonGraph(
-  ai: Ai,
-  theme: string,
-  level: number,
-  recentNames: string[] = [],
-  art?: ArtTarget,
-): Promise<DungeonGraph> {
-  const descriptions = await generateGraphRoomDescriptions(ai, theme, level);
-  const baseTier = Math.max(1, Math.ceil(level / 2));
-  const encounterSlots = GRAPH_TOPOLOGY.filter(r => r.role === "combat" || r.role === "branch" || r.role === "boss");
-
-  const monsterEntries = await Promise.all(
-    encounterSlots.map(async (slot) => {
-      const isBoss = slot.role === "boss";
-      const tier = isBoss ? baseTier + 1 : baseTier;
-      const hpFloor = isBoss ? 28 + level * 3 : 12 + level * 2;
-      const hpCeil  = isBoss ? 40 + level * 5 : 22 + level * 3;
-      const identity = await generateMonsterIdentity(ai, isBoss ? "boss" : "gauntlet-wave", hpFloor, hpCeil, recentNames);
-      const artUrl = isBoss && art ? await generateMonsterArt(ai, art, identity.name, "boss", tier) : null;
-      const spec: MonsterSpec = {
-        name: identity.name,
-        hp: identity.hp,
-        max_hp: identity.hp,
-        tier,
-        is_boss: isBoss || undefined,
-        art_url: artUrl,
-      };
-      return [slot.id, spec] as const;
-    }),
-  );
-  const monsterByRoom = new Map(monsterEntries);
-
-  // Pre-roll loot specs for the two loot-bearing rooms. Names/flavor are
-  // placeholders — the take command calls flavorLootDrop at pickup time so
-  // each player sees freshly-generated text rather than frozen graph text.
-  const rollToLootSpec = (tier: number): LootOption => {
-    const r = rollItem(tier);
-    return {
-      name: "Dungeon Find",
-      item_type: r.type,
-      power: r.power,
-      rarity: r.rarity,
-      flavor: "Found in the depths.",
-      weapon_range: r.weapon_range ?? null,
-      slot: r.slot ?? null,
-      stat_bonus: (r.stat_bonus ?? null) as Record<string, number> | null,
-      item_subtype: r.item_subtype ?? null,
-    };
-  };
-  // junction gets an uncommon-biased roll (safe rest-stop feel);
-  // room_2b (optional branch) gets a tier+1 roll as the risk/reward payoff.
-  const junctionLoot = rollToLootSpec(baseTier);
-  const branchLoot   = rollToLootSpec(Math.min(baseTier + 1, 5));
-
-  const nodes: Record<string, DungeonNode> = {};
-  for (const slot of GRAPH_TOPOLOGY) {
-    const desc = descriptions[slot.id] ?? { name: slot.id, text: "A room in the dungeon." };
-    let objects: DungeonObject[] = [];
-    if (slot.id === "junction") {
-      objects = [
-        { id: "sign", name: "Faded Directory Sign", takeable: false, used: false,
-          on_use: { effect: "flavor", text: "The sign reads: 'All paths lead to the same deadline.'" } },
-        { id: "locker", name: "Maintenance Locker", takeable: true, used: false,
-          on_use: { effect: "spawn_item", item: junctionLoot } },
-      ];
-    } else if (slot.id === "room_2b") {
-      objects = [
-        { id: "cache", name: "Abandoned Cache", takeable: true, used: false,
-          on_use: { effect: "spawn_item", item: branchLoot } },
-      ];
-    }
-    const monster = monsterByRoom.get(slot.id);
-    nodes[slot.id] = {
-      id: slot.id,
-      name: desc.name,
-      description: desc.text,
-      exits: slot.exits as DungeonNode["exits"],
-      objects,
-      encounter: monster ? { monsters: [monster], cleared: false } : undefined,
-      visited: slot.id === "entrance",
-    };
-  }
-
-  return { nodes, current: "entrance", visited: ["entrance"] };
-}
-
-const GRAPH_ROLE_HINTS: Record<string, string> = {
-  entrance:  "Entrance — no enemies, just atmosphere. Foreboding.",
-  room_1:    "First combat room — tension. Something lurks here.",
-  junction:  "Junction / crossroads — brief rest. Two paths diverge.",
-  room_2b:   "Optional branch — dangerous, potentially rewarding.",
-  room_3:    "Deep room — darker tone, battle ahead.",
-  boss_ante: "Anteroom before the boss — dread, pre-battle quiet.",
-  boss_room: "Boss chamber — final confrontation, dramatic and imposing.",
-};
-
-async function generateGraphRoomDescriptions(
-  ai: Ai,
-  theme: string,
-  level: number,
-): Promise<Record<string, { name: string; text: string }>> {
-  const fallback: Record<string, { name: string; text: string }> = {
-    entrance:  { name: "Server Lobby",      text: "Emergency lighting casts red shadows across overturned chairs. The air smells of burnt circuits." },
-    room_1:    { name: "North Corridor",    text: "The overhead fluorescents flicker in a sickly rhythm. Something breathes in the dark." },
-    junction:  { name: "Crossroads Hub",   text: "Two corridors diverge here. A faded directory sign offers no useful guidance." },
-    room_2b:   { name: "Side Lab",          text: "Dust coats every surface like static. Old equipment hums as if still waiting for commands." },
-    room_3:    { name: "Deep Server Bay",   text: "Banks of ancient servers blink status lights in no discernible pattern. Heat rolls off them in waves." },
-    boss_ante: { name: "Ops Center",        text: "The door ahead is heavier than the others. The hum behind it is not mechanical." },
-    boss_room: { name: "The Core",          text: "A pulsing node of compressed technical debt fills the room. It has been waiting for you." },
-  };
-
-  const user = [
-    `Design a dungeon for a comedic engineering RPG. Theme: "${theme}". Player level: ${level}.`,
-    `For each room below, output exactly: ID | Short Room Name (2-4 words) | Two atmospheric sentences (~40 words).`,
-    `Use office/software imagery. Output only lines, no commentary.`,
-    ``,
-    ...GRAPH_TOPOLOGY.map(r => `${r.id}: ${GRAPH_ROLE_HINTS[r.id] ?? "Exploration room."}`),
-  ].join("\n");
-
-  try {
-    const res = (await ai.run(MODEL, {
-      messages: [
-        { role: "system", content: "You write concise dungeon room descriptions. Follow the format exactly." },
-        { role: "user", content: user },
-      ],
-      max_tokens: 700,
-    })) as AiRunResponse;
-    const text = (res.response ?? "").trim();
-    const result: Record<string, { name: string; text: string }> = { ...fallback };
-    for (const line of text.split("\n")) {
-      const parts = line.split("|").map(s => s.trim());
-      if (parts.length < 3) continue;
-      const [rawId, rawName, ...rest] = parts;
-      const id = rawId.toLowerCase().replace(/\s+/g, "_");
-      const desc = rest.join(" ").trim();
-      if (id && rawName && desc && id in fallback) {
-        result[id] = { name: rawName, text: desc };
-      }
-    }
-    return result;
-  } catch {
-    return fallback;
-  }
-}
