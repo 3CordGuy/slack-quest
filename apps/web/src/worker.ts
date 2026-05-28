@@ -3655,14 +3655,23 @@ app.post("/api/inventory/:itemId/use", async (c) => {
     // any non-staple consumable fall through to consumeItem (HP heal).
     const staple = findStaple(item.item_name);
     if (staple?.effect === "restore_mana") {
+      if (character.mana >= character.max_mana) {
+        return c.json({ error: "at_full_mana" }, 400);
+      }
       const restored = await addMana(c.env.DB, character, item.power);
       await removeItem(c.env.DB, item.id);
       return c.json({ ok: true, kind: "mana", restored, requested: item.power });
+    }
+    if (character.hp >= character.max_hp) {
+      return c.json({ error: "at_full_hp" }, 400);
     }
     const healed = await consumeItem(c.env.DB, character, item);
     return c.json({ ok: true, kind: "heal", healed });
   }
   if (item.item_type === "magic") {
+    if (character.max_mana >= 5) {
+      return c.json({ error: "at_max_mana_cap" }, 400);
+    }
     const result = await bumpMaxMana(c.env.DB, character, item.power);
     await removeItem(c.env.DB, item.id);
     return c.json({
@@ -8543,6 +8552,10 @@ export class QuestRoom extends DurableObject<Env> {
 
     switch (item.item_type) {
       case "consumable": {
+        if (actor.hp >= actor.max_hp) {
+          this.sendOne(ws, { type: "error", message: "Already at full HP — save it for when you need it." });
+          return;
+        }
         const before = actor.hp;
         const after = Math.min(actor.max_hp, before + item.power);
         const amount = after - before;
@@ -8553,6 +8566,10 @@ export class QuestRoom extends DurableObject<Env> {
         break;
       }
       case "magic": {
+        if (actor.max_mana >= 5) {
+          this.sendOne(ws, { type: "error", message: "Already at max mana cap — save it for another character." });
+          return;
+        }
         const newMax = Math.min(5 /* MAX_MANA_CAP */, actor.max_mana + item.power);
         const added = newMax - actor.max_mana;
         updatedFighters = state.fighters.map((f) =>

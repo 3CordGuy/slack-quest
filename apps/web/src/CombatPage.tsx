@@ -1223,6 +1223,52 @@ export function CombatPage({
     setReconnectKey((k) => k + 1);
   }
 
+  // Tower post-boss: advance into the next cycle in place. Calls /tower/continue
+  // to clear awaiting_choice and stage the next cycle's first floor, then
+  // start_web_combat to spin up the fight. Same UI reset as continueClimbing.
+  async function pressOnAfterBoss() {
+    try {
+      const res = await fetch(`/api/quest/${questId}/tower/continue`, {
+        method: "POST",
+        credentials: "include",
+      });
+      const data = (await res.json()) as { ok?: boolean; error?: string };
+      if (!data.ok) {
+        toast.error(`Couldn't press on: ${data.error ?? "unknown"}`);
+        return;
+      }
+      await fetch(`/api/quest/${questId}/start_web_combat`, {
+        method: "POST",
+        credentials: "include",
+      });
+    } catch (err) {
+      toast.error(`Couldn't press on: ${(err as Error).message}`);
+      return;
+    }
+    dispatch({ kind: "reset" });
+    setVictoryModalReady(false);
+    setDiceRolls([]);
+    setLastSlash(null);
+    setLastLunge(null);
+    setLastForesee(null);
+    autoResolvedTurnRef.current = -1;
+    setReconnectKey((k) => k + 1);
+  }
+
+  // Tower post-boss: bank the cycle's spoils and return to town.
+  async function bankAndExit() {
+    try {
+      await fetch(`/api/quest/${questId}/tower/exit`, {
+        method: "POST",
+        credentials: "include",
+      });
+    } catch (err) {
+      toast.error(`Couldn't bank spoils: ${(err as Error).message}`);
+      return;
+    }
+    exit();
+  }
+
   const state = ui.state;
   const currentActorId =
     state && state.status === "active"
@@ -1684,6 +1730,8 @@ export function CombatPage({
           questId={questId}
           onBack={exit}
           onContinueClimbing={continueClimbing}
+          onPressOnAfterBoss={pressOnAfterBoss}
+          onBankAndExit={bankAndExit}
         />
       )}
 
@@ -2526,6 +2574,8 @@ function VictoryModal({
   questId,
   onBack,
   onContinueClimbing,
+  onPressOnAfterBoss,
+  onBankAndExit,
 }: {
   outcome: OutcomeSummary | null;
   selfId: string;
@@ -2536,6 +2586,10 @@ function VictoryModal({
   // floor-to-floor transition (no dashboard bounce). Optional so the modal
   // still works in non-tower contexts where the prop isn't supplied.
   onContinueClimbing?: () => void;
+  // Tower post-boss (cycle cleared): "Press on" advances into the next
+  // cycle in-place; "Bank spoils" calls /tower/exit and heads home.
+  onPressOnAfterBoss?: () => void;
+  onBankAndExit?: () => void;
 }) {
   const [choosingDoor, setChoosingDoor] = useState(false);
   const dungeonRoom = outcome?.dungeon_room_cleared;
@@ -2691,6 +2745,26 @@ function VictoryModal({
           </>
         )}
         {!hasDoorChoice && (() => {
+          // Tower post-boss: surface Press on / Bank spoils inline so the
+          // player doesn't have to dashboard-bounce to make the choice.
+          if (towerAwaitingChoice && onPressOnAfterBoss && onBankAndExit) {
+            return (
+              <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                <button
+                  onClick={onPressOnAfterBoss}
+                  style={{ ...button, marginTop: 0, background: "#854d0e", color: "#fef3c7", flex: 1 }}
+                >
+                  🗼 Press on (next cycle)
+                </button>
+                <button
+                  onClick={onBankAndExit}
+                  style={{ ...button, marginTop: 0, background: "#16a34a", flex: 1 }}
+                >
+                  🛌 Bank spoils
+                </button>
+              </div>
+            );
+          }
           // Rest floor next: start_web_combat would 400 (non_combat_room).
           // Route back through onBack so refresh() loads the rest-stop UI
           // instead of leaving CombatPage stuck on "Loading combat…".

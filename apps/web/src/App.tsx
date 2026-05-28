@@ -108,6 +108,9 @@ const CATALOG_EFFECT: Record<string, { effect: EffectType; target: "self" | "mon
 const ERROR_LABELS: Record<string, string> = {
   cooldown: "Catching your breath — try again later.",
   already_full: "Already at full HP/mana — no rest needed.",
+  at_full_hp: "Already at full HP — save it for when you need it.",
+  at_full_mana: "Already at full mana — save it for when you need it.",
+  at_max_mana_cap: "Already at max mana cap (5) — save it for another character.",
   no_rest_mid_quest: "Can't rest mid-quest. Finish the fight first.",
   no_long_rest_mid_quest: "Long rest blocked mid-quest. Wrap up first.",
   downed: "You're downed — wait for the cooldown.",
@@ -1908,6 +1911,9 @@ export function App() {
             onGive={giveItem}
             onClose={() => setInventoryOpen(false)}
           />
+        )}
+        {confirm && (
+          <ConfirmDialog request={confirm} onClose={() => setConfirm(null)} />
         )}
       </CombatErrorBoundary>
     );
