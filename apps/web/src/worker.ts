@@ -3212,7 +3212,27 @@ app.get("/api/apothecary", async (c) => {
 
   const art_url = await getOrScheduleViewArt(c.env.AI, artTarget(c.env), c.executionCtx, "apothecary", undefined, TOWN_WEEKLY_MS);
 
-  return c.json({ downed, staples, gold: character.gold, revive_count: reviveCount, art_url });
+  // Self-revive offer: only present when the caller is currently downed.
+  // Cost is 50% of current gold + 50% of XP-into-current-level (matches the
+  // in-combat self-revive on DefeatModal). Paying clears `downed_until` so
+  // the player can start new quests immediately — soft-death's scar and the
+  // already-paid 25% gold/item drop stay on the character.
+  const isDowned = !!character.downed_until && character.downed_until > Date.now();
+  const self_revive = isDowned
+    ? (() => {
+        const xpInLevel = Math.max(0, character.xp - xpForLevel(character.level));
+        return {
+          gold_cost: Math.floor(character.gold * 0.5),
+          xp_cost: Math.floor(xpInLevel * 0.5),
+          available_gold: character.gold,
+          available_xp_in_level: xpInLevel,
+          level: character.level,
+          downed_until: character.downed_until,
+        };
+      })()
+    : null;
+
+  return c.json({ downed, staples, gold: character.gold, revive_count: reviveCount, art_url, self_revive });
 });
 
 app.post("/api/apothecary/staple/:stapleId/buy", async (c) => {
@@ -3245,6 +3265,30 @@ app.post("/api/apothecary/staple/:stapleId/buy", async (c) => {
   });
   for (const id of apoAchIds) await grantAchievement(c.env.DB, session.slack_user_id, id);
   return c.json({ ok: true, paid: price, gold_remaining: character.gold - price, item });
+});
+
+// Self-revive at the apothecary: clears `downed_until` so the player can
+// start a new quest without the 12hr soft-death cooldown. Cost is 50% of
+// current gold + 50% of XP-into-current-level. Soft-death's scar and the
+// 25% gold + item drop already happened on the wipe — this is a paid
+// shortcut past the cooldown only.
+app.post("/api/apothecary/self_revive", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const character = await getCharacter(c.env.DB, session.slack_user_id);
+  if (!character) return c.json({ error: "no_character" }, 404);
+  if (!character.downed_until || character.downed_until <= Date.now()) {
+    return c.json({ error: "not_downed" }, 400);
+  }
+  const goldCost = Math.floor(character.gold * 0.5);
+  const xpInLevel = Math.max(0, character.xp - xpForLevel(character.level));
+  const xpCost = Math.floor(xpInLevel * 0.5);
+  await c.env.DB.prepare(
+    `UPDATE characters
+     SET gold = gold - ?, xp = xp - ?, hp = max_hp, downed_until = NULL, last_active = ?
+     WHERE slack_user_id = ?`,
+  ).bind(goldCost, xpCost, Date.now(), session.slack_user_id).run();
+  return c.json({ ok: true, cost: { gold: goldCost, xp: xpCost } });
 });
 
 app.post("/api/apothecary/revive/:targetUserId", async (c) => {
