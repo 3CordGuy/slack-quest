@@ -974,6 +974,12 @@ app.post("/api/character/reroll", async (c) => {
   const activeQuest = await getActiveQuestForCharacter(c.env.DB, session.slack_user_id);
   if (activeQuest) return c.json({ error: "mid_quest" }, 400);
 
+  // Preserve which slot this character occupies so the new character lands in
+  // the same slot. createCharacter always inserts with DEFAULT 1, and without
+  // this the rerolled character would silently claim slot 1, clobbering the
+  // real slot-1 snapshot on the next activate.
+  const priorSlot = existing.active_slot ?? 1;
+
   await deleteCharacter(c.env.DB, session.slack_user_id);
 
   const body = await c.req.json<{ class?: string }>().catch((): { class?: string } => ({}));
@@ -994,6 +1000,8 @@ app.post("/api/character/reroll", async (c) => {
     max_hp: hp,
     gender,
   });
+  // Restore slot identity — createCharacter defaults to 1.
+  if (priorSlot !== 1) await setActiveSlot(c.env.DB, session.slack_user_id, priorSlot);
 
   // Block on art generation so the response includes the URL and the UI can
   // display the portrait immediately without a second round-trip.
