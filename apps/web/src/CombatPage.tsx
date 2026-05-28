@@ -413,7 +413,11 @@ type UiAction =
   | { kind: "events"; value: CombatEvent[] }
   | { kind: "error"; value: string }
   | { kind: "outcome"; value: OutcomeSummary }
-  | { kind: "flavor"; value: { kind: "hit" | "victory" | "death" | "flee"; actor: string; text: string } };
+  | { kind: "flavor"; value: { kind: "hit" | "victory" | "death" | "flee"; actor: string; text: string } }
+  // Tower floor transition — wipe outcome + log + state so the next floor's
+  // WS frames render against a clean slate (no piled-up log entries from the
+  // previous floor's fight).
+  | { kind: "reset" };
 
 let nextLogId = 1;
 
@@ -452,6 +456,8 @@ function reducer(s: UiState, a: UiAction): UiState {
       return { ...s, error: a.value };
     case "outcome":
       return { ...s, outcome: a.value };
+    case "reset":
+      return { connection: "connecting", state: null, log: [], error: null, outcome: null };
   }
 }
 
@@ -1130,6 +1136,30 @@ export function CombatPage({
     onExit();
   }
 
+  // Tower mid-cycle transition. POSTs start_web_combat to clear the
+  // just-cleared floor's state and spin up the next floor's fight, then
+  // resets local UI and reopens the WS so the new state frames replace the
+  // victory modal in-place — no dashboard bounce.
+  async function continueClimbing() {
+    try {
+      await fetch(`/api/quest/${questId}/start_web_combat`, {
+        method: "POST",
+        credentials: "include",
+      });
+    } catch (err) {
+      toast.error(`Couldn't start next floor: ${(err as Error).message}`);
+      return;
+    }
+    dispatch({ kind: "reset" });
+    setVictoryModalReady(false);
+    setDiceRolls([]);
+    setLastSlash(null);
+    setLastLunge(null);
+    setLastForesee(null);
+    autoResolvedTurnRef.current = -1;
+    setReconnectKey((k) => k + 1);
+  }
+
   const state = ui.state;
   const currentActorId =
     state && state.status === "active"
@@ -1584,6 +1614,7 @@ export function CombatPage({
           fighters={state.fighters}
           questId={questId}
           onBack={exit}
+          onContinueClimbing={continueClimbing}
         />
       )}
 
@@ -2419,12 +2450,17 @@ function VictoryModal({
   fighters,
   questId,
   onBack,
+  onContinueClimbing,
 }: {
   outcome: OutcomeSummary | null;
   selfId: string;
   fighters: Fighter[];
   questId: number;
   onBack: () => void;
+  // Tower mid-cycle: clicking "Continue climbing" triggers an in-place
+  // floor-to-floor transition (no dashboard bounce). Optional so the modal
+  // still works in non-tower contexts where the prop isn't supplied.
+  onContinueClimbing?: () => void;
 }) {
   const [choosingDoor, setChoosingDoor] = useState(false);
   const dungeonRoom = outcome?.dungeon_room_cleared;
@@ -2580,7 +2616,10 @@ function VictoryModal({
           </>
         )}
         {!hasDoorChoice && (
-          <button onClick={onBack} style={{ ...button, marginTop: 8, background: "#16a34a" }}>
+          <button
+            onClick={towerFloor && !towerAwaitingChoice && onContinueClimbing ? onContinueClimbing : onBack}
+            style={{ ...button, marginTop: 8, background: "#16a34a" }}
+          >
             {towerFloor && !towerAwaitingChoice ? "🗼 Continue climbing" : "Back to town"}
           </button>
         )}

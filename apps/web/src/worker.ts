@@ -824,6 +824,10 @@ async function announceWebQuestToSlack(
   args: WebQuestAnnounceArgs,
 ): Promise<string | null> {
   if (!env.SLACK_BOT_TOKEN) return null;
+  // Tower climbs are private — no quest-start announcement and no
+  // recruitment card. The user explicitly asked to stay quiet in Slack
+  // for this variant.
+  if (args.variant === "tower") return null;
   const token = env.SLACK_BOT_TOKEN;
 
   const eliteBanner = args.elite ? "⚠️ *ELITE — perma-death enabled* ⚠️\n" : "";
@@ -831,14 +835,12 @@ async function announceWebQuestToSlack(
     args.variant === "boss" ? "👑 *BOSS QUEST*\n"
     : args.variant === "gauntlet" ? `⚔️ *GAUNTLET — ${args.totalWaves ?? "?"} waves, no flee*\n`
     : args.variant === "dungeon" ? "🗺️ *DUNGEON*\n"
-    : args.variant === "tower" ? "🗼 *CLIMB THE TOWER — open-ended, no flee*\n"
     : "";
 
   const variantBadge =
     args.variant === "boss" ? "👑 Boss"
     : args.variant === "gauntlet" ? "⚔️ Gauntlet"
     : args.variant === "dungeon" ? "🗺️ Dungeon"
-    : args.variant === "tower" ? "🗼 Tower"
     : "⚔️ Quest";
 
   const openingText = [
@@ -8483,6 +8485,11 @@ export class QuestRoom extends DurableObject<Env> {
   // Fire-and-forget via ctx.waitUntil.
   private postVictoryWrapup(questId: number, outcome: OutcomeSummary): void {
     if (!this.env.SLACK_BOT_TOKEN) return;
+    // Tower runs are a quiet, private climb — every floor clear would
+    // otherwise spam the channel with "<monster> defeated" lines. Skip
+    // Slack wrapups entirely for tower outcomes (both mid-cycle floor
+    // clears and post-boss cycle completions).
+    if (outcome.tower_floor_cleared || outcome.tower_awaiting_choice) return;
     const token = this.env.SLACK_BOT_TOKEN;
     this.ctx.waitUntil(
       (async () => {
@@ -8562,6 +8569,12 @@ export class QuestRoom extends DurableObject<Env> {
     result: { state: CombatState; events: CombatEvent[] },
   ): void {
     if (!this.env.SLACK_BOT_TOKEN) return;
+    // Tower runs stay quiet — no boss-reveal / fighter-down / phase-2 /
+    // victory beats broadcast to the channel. The climb is its own
+    // self-contained experience. Detected via the tower_floor pass-through
+    // field on the active monster (set when the engine init is built from
+    // a tower scene).
+    if (result.state.monsters[0]?.tower_floor !== undefined) return;
     const token = this.env.SLACK_BOT_TOKEN;
 
     const alreadyPosted = new Set(result.state.milestones_posted ?? []);
