@@ -44,6 +44,7 @@ import {
   generateOpeningScene,
   generateRoomArt,
   generateTownName,
+  generateCharacterName,
   generateTrapArt,
   generateTrapRoom,
   getOrScheduleCharacterArt,
@@ -217,6 +218,7 @@ import {
   issueWebLoginCode,
   incrementTowerStats,
   clearHiredMercForParty,
+  getRecentCharacterNames,
   type TowerFloorPlan,
 } from "@gantt-quest/db";
 import {
@@ -1381,17 +1383,21 @@ async function rollNewCharacter(
   preamble?: string,
 ): Promise<CommandResponse> {
   const cls = pickRandomClass();
-  const npcName = generateNpcName();
   const hp = cls.base_hp + rollDice(4); // small variance
   // 50/50 m/f at roll time. Drives pronoun consistency in AI flavor and the
   // gender anchor of the per-character portrait. Players don't pick it —
   // reroll for a different outcome.
   const gender: CharGender = rollDice(2) === 1 ? "m" : "f";
 
+  // AI-generated name; avoid-list of recent names prevents repeats; falls
+  // back to pool on failure so rollNewCharacter never throws.
+  const recentCharNames = await getRecentCharacterNames(env.DB, 20);
+  const heroName = await generateCharacterName(env.AI, gender, cls.name, recentCharNames);
+
   const character = await createCharacter(env.DB, {
     slack_user_id: payload.user_id,
     slack_team_id: payload.team_id,
-    name: npcName,
+    name: heroName,
     class: cls.name,
     hp,
     max_hp: hp,
