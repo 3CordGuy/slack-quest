@@ -1849,13 +1849,14 @@ function towerSceneFromPlan(plan: TowerFloorPlan, queue: TowerFloorPlan[], cycle
       monster_hp: 0,
       monster_max_hp: 0,
       tier: baseTier,
-      scene: "A quiet landing — a hooded trader has set up shop. Take a breath, restock if you like, then keep climbing.",
+      scene: "A quiet landing — a hooded trader has set up shop. Take a breath, restock if you like, then press on.",
       variant: "tower",
       tower_floor: plan.floor,
       tower_cycle: cycle,
       tower_floor_kind: "rest",
       tower_queue: queue,
       tower_rest_stock: plan.rest_stock,
+      tower_rest_claims: {},
       tower_kills_run: killsRun,
     };
   }
@@ -4913,10 +4914,11 @@ app.post("/api/quest/:id/tower/continue", async (c) => {
   return c.json({ ok: true, scene: { floor: newScene.tower_floor, cycle: newScene.tower_cycle, kind: newScene.tower_floor_kind } });
 });
 
-// Tower rest stop: grants the chosen item (index 0..2) or skips. Both
-// branches restore HP/mana for every party member and advance the scene
-// onto the next floor (always combat for a 10-floor layout where rest sits
-// on floor 5).
+// Tower rest stop — claim one item from the merchant. Each party member can
+// claim at most one item per rest stop; each item can only be claimed by
+// one player. Healing happened at floor entry (in advanceTowerAfterCombat),
+// so this endpoint is purely about loot distribution. The floor does NOT
+// advance on a pick — players hit /tower/rest_advance when they're done.
 app.post("/api/quest/:id/tower/rest_pick", async (c) => {
   const session = await currentSession(c.env.DB, c.req.header("cookie"));
   if (!session) return c.json({ error: "unauthenticated" }, 401);
@@ -4930,35 +4932,57 @@ app.post("/api/quest/:id/tower/rest_pick", async (c) => {
   const idxRaw = body?.index;
   const idx = typeof idxRaw === "number" ? idxRaw : null;
   const stock = quest.scene.tower_rest_stock ?? [];
-  const picked = idx !== null && idx >= 0 && idx < stock.length ? stock[idx] : null;
-
-  // Heal every party member.
-  const party = await getQuestParty(c.env.DB, questId);
-  for (const member of party) {
-    await applyLongRest(c.env.DB, member.slack_user_id);
+  if (idx === null || idx < 0 || idx >= stock.length) {
+    return c.json({ error: "bad_index" }, 400);
   }
-
-  // Award the picked item to the caller.
-  if (picked) {
-    await addItem(c.env.DB, {
-      character_id: session.slack_user_id,
-      item_name: picked.name,
-      item_type: picked.item_type,
-      power: picked.power,
-      rarity: picked.rarity,
-      flavor: picked.flavor,
-      weapon_range: picked.weapon_range ?? null,
-      slot: picked.slot ?? undefined,
-      stat_bonus: picked.stat_bonus ?? undefined,
-      item_subtype: picked.item_subtype ?? undefined,
-    });
+  const claims = { ...(quest.scene.tower_rest_claims ?? {}) };
+  if (claims[String(idx)]) {
+    return c.json({ error: "already_claimed", claimed_by: claims[String(idx)] }, 409);
   }
+  if (Object.values(claims).includes(session.slack_user_id)) {
+    return c.json({ error: "already_claimed_other_item" }, 409);
+  }
+  const picked = stock[idx];
 
-  // Pop the next floor from the queue.
+  await addItem(c.env.DB, {
+    character_id: session.slack_user_id,
+    item_name: picked.name,
+    item_type: picked.item_type,
+    power: picked.power,
+    rarity: picked.rarity,
+    flavor: picked.flavor,
+    weapon_range: picked.weapon_range ?? null,
+    slot: picked.slot ?? undefined,
+    stat_bonus: picked.stat_bonus ?? undefined,
+    item_subtype: picked.item_subtype ?? undefined,
+  });
+
+  claims[String(idx)] = session.slack_user_id;
+  const updatedScene: SceneJson = { ...quest.scene, tower_rest_claims: claims };
+  await saveScene(c.env.DB, questId, updatedScene);
+
+  return c.json({
+    ok: true,
+    picked: { name: picked.name, rarity: picked.rarity, power: picked.power },
+    claims,
+  });
+});
+
+// Tower rest stop — leave the merchant and engage the next combat floor.
+// Pops the next plan off tower_queue, builds the new scene, flips mode back
+// to web so the client can start_web_combat into the next fight.
+app.post("/api/quest/:id/tower/rest_advance", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const questId = parseInt(c.req.param("id"), 10);
+  if (!Number.isFinite(questId)) return c.json({ error: "bad_quest_id" }, 400);
+  const quest = await getQuestById(c.env.DB, questId);
+  if (!quest) return c.json({ error: "no_quest" }, 404);
+  if (quest.scene.variant !== "tower") return c.json({ error: "not_tower" }, 400);
+  if (quest.scene.tower_floor_kind !== "rest") return c.json({ error: "not_rest_floor" }, 400);
   const queue = quest.scene.tower_queue ?? [];
   const [next, ...remaining] = queue;
   if (!next) {
-    // Shouldn't happen — rest floors always have at least one combat after.
     return c.json({ error: "empty_queue" }, 500);
   }
   const newScene = towerSceneFromPlan(next, remaining, quest.scene.tower_cycle ?? 1, quest.scene.tower_kills_run ?? 0);
@@ -4966,8 +4990,7 @@ app.post("/api/quest/:id/tower/rest_pick", async (c) => {
   await setQuestMode(c.env.DB, questId, "web");
   return c.json({
     ok: true,
-    picked: picked ? { name: picked.name, rarity: picked.rarity, power: picked.power } : null,
-    next: { floor: newScene.tower_floor, kind: newScene.tower_floor_kind },
+    next: { floor: newScene.tower_floor, kind: newScene.tower_floor_kind, monster: newScene.monster_name },
   });
 });
 
@@ -6781,7 +6804,12 @@ async function applyWebCombatOutcome(
       // get AI flavor for the description only. Other types get full AI
       // name + flavor via flavorLootDrop. Both helpers fall back to
       // deterministic strings if the AI call fails.
-      if (Math.random() < dropChance(tier)) {
+      //
+      // Tower runs explicitly opt out — the only loot inside the Tower
+      // comes from rest-stop merchant picks and the boss-floor hoard.
+      // Combat floors give XP/gold only.
+      const isTowerFloor = primaryMonster.tower_floor !== undefined;
+      if (!isTowerFloor && Math.random() < dropChance(tier)) {
         const roll = rollItem(tier);
         const named = await nameLootViaAi(env, roll, primaryMonster.name);
         const created = await addItem(env.DB, {
@@ -7209,6 +7237,14 @@ async function advanceTowerAfterCombat(
 
   const nextScene = towerSceneFromPlan(next, remaining, currentCycle, killsRun);
   await saveScene(env.DB, questId, nextScene);
+  // Rest floors heal the whole party on entry — not on each pick. This way
+  // a player who skips the merchant still gets the recovery, and the
+  // multi-claim picker isn't tangled up in heal logic.
+  if (next.kind === "rest") {
+    for (const f of humanFighters) {
+      await applyLongRest(env.DB, f.id);
+    }
+  }
   await setQuestMode(env.DB, questId, "slack");
   return {
     status: "victory",

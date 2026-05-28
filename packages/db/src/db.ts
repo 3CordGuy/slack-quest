@@ -617,8 +617,13 @@ export interface SceneJson {
   // floor-advance helper; replenished on cycle continue.
   tower_queue?: TowerFloorPlan[];
   // Tower-only — pre-rolled merchant stock for the current rest floor.
-  // Cleared once the player picks (or skips) on /tower/rest_pick.
+  // Cleared once the party leaves the floor via /tower/rest_advance.
   tower_rest_stock?: LootOption[];
+  // Tower-only — claim map for the current rest floor. Keys are stringified
+  // item indices ("0".."2"); values are the claimer's slack_user_id. Each
+  // party member can claim at most one item per rest stop. Cleared on
+  // rest_advance.
+  tower_rest_claims?: Record<string, string>;
   // Tower-only — cumulative enemies slain across this run.
   tower_kills_run?: number;
   // Tower-only — true between a boss kill and the player picking
