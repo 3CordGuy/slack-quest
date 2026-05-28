@@ -1749,7 +1749,6 @@ export function CombatPage({
           outcome={ui.outcome}
           selfId={selfId}
           fighters={state.fighters}
-          questId={questId}
           onBack={exit}
         />
       )}
@@ -2726,71 +2725,20 @@ function VictoryModal({
   );
 }
 
-interface SelfReviveQuote {
-  gold_cost: number;
-  xp_cost: number;
-  available_gold: number;
-  available_xp_in_level: number;
-  level: number;
-}
-
 function DefeatModal({
   status,
   outcome,
   selfId,
   fighters,
-  questId,
   onBack,
 }: {
   status: "defeat" | "fled";
   outcome: OutcomeSummary | null;
   selfId: string;
   fighters: Fighter[];
-  questId: number;
   onBack: () => void;
 }) {
   const fled = status === "fled";
-  // Self-revive: only fetch on actual defeat (fled doesn't offer this).
-  // The quote endpoint returns 400 if combat isn't in defeat — we just
-  // silently hide the button in that case.
-  const [quote, setQuote] = useState<SelfReviveQuote | null>(null);
-  const [reviving, setReviving] = useState(false);
-  const [reviveErr, setReviveErr] = useState<string | null>(null);
-  useEffect(() => {
-    if (fled) return;
-    let cancelled = false;
-    (async () => {
-      try {
-        const res = await fetch(`/api/quest/${questId}/self_revive_quote`, { credentials: "include" });
-        if (!res.ok) return;
-        const data = (await res.json()) as SelfReviveQuote & { ok?: boolean };
-        if (!cancelled) setQuote(data);
-      } catch {
-        // Silently skip the option on failure — back-to-town still works.
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [fled, questId]);
-
-  async function selfRevive() {
-    if (reviving) return;
-    setReviving(true);
-    setReviveErr(null);
-    try {
-      const res = await fetch(`/api/quest/${questId}/self_revive`, {
-        method: "POST",
-        credentials: "include",
-      });
-      const data = (await res.json()) as { ok?: boolean; error?: string };
-      if (!data.ok) throw new Error(data.error ?? "revive_failed");
-      // WS broadcast will deliver the active-status state; the parent's
-      // `ended` flag flips false and this modal unmounts on its own. No
-      // need to onBack — that would navigate away from combat.
-    } catch (e) {
-      setReviveErr((e as Error).message);
-      setReviving(false);
-    }
-  }
 
   return (
     <div style={{
@@ -2862,40 +2810,6 @@ function DefeatModal({
                 </div>
               );
             })}
-          </div>
-        )}
-        {!fled && quote && (
-          <div style={{
-            padding: 14,
-            borderRadius: 10,
-            background: "#0a1f0e",
-            border: "1px solid #166534",
-            marginBottom: 12,
-          }}>
-            <div style={{ fontSize: 12, color: "#86efac", textTransform: "uppercase", letterSpacing: 1.5, marginBottom: 6, display: "flex", alignItems: "center", gap: 6 }}>
-              <Icon name="bleeding-hearts" size={13} color="#86efac" /> Self-revive
-            </div>
-            <p style={{ ...muted, fontSize: 12, margin: "0 0 10px" }}>
-              Spend half your gold and half your level-{quote.level} progress to get back up and resume this fight. Soft-death penalties still apply.
-            </p>
-            <div style={{ display: "flex", gap: 12, fontSize: 13, color: "#e2e8f0", marginBottom: 10 }}>
-              <span><Icon name="gold-bar" size={12} color="#fbbf24" /> <strong style={{ color: "#fbbf24" }}>{quote.gold_cost}g</strong> <span style={muted}>/ {quote.available_gold}</span></span>
-              <span>✨ <strong style={{ color: "#a78bfa" }}>{quote.xp_cost} XP</strong> <span style={muted}>/ {quote.available_xp_in_level}</span></span>
-            </div>
-            {reviveErr && <div style={{ color: "#fca5a5", fontSize: 12, marginBottom: 8 }}>Error: {reviveErr}</div>}
-            <button
-              onClick={() => void selfRevive()}
-              disabled={reviving}
-              style={{
-                ...button,
-                marginTop: 0,
-                background: "#166534",
-                opacity: reviving ? 0.6 : 1,
-                cursor: reviving ? "wait" : "pointer",
-              }}
-            >
-              {reviving ? "Reviving…" : `💎 Self-revive (${quote.gold_cost}g + ${quote.xp_cost} XP)`}
-            </button>
           </div>
         )}
         <button onClick={onBack} style={{ ...button, marginTop: 8, background: fled ? "#78350f" : "#7c2020" }}>
