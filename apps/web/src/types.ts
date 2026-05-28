@@ -529,12 +529,22 @@ export interface ApothecaryStapleItem {
   price: number;
 }
 
+export interface SelfReviveQuote {
+  gold_cost: number;
+  xp_cost: number;
+  available_gold: number;
+  available_xp_in_level: number;
+  level: number;
+  downed_until: number;
+}
+
 export interface ApothecaryResponse {
   downed: ApothecaryDownedChar[];
   staples: ApothecaryStapleItem[];
   gold: number;
   revive_count: number;
   art_url: string | null;
+  self_revive?: SelfReviveQuote | null;
   error?: string;
 }
 
