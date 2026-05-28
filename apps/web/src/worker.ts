@@ -26,6 +26,7 @@ import {
   generateOpeningScene,
   generateTrapRoom,
   generateTownName,
+  generateCharacterName,
   getOrScheduleViewArt,
   generateCharacterArtNow,
   getOrScheduleCharacterArt,
@@ -232,6 +233,7 @@ import {
   reserveSlotForNewCharacter,
   setActiveSlot,
   deleteCharacterSlot,
+  getRecentCharacterNames,
 } from "@gantt-quest/db";
 
 // =============================================================================
@@ -978,10 +980,15 @@ app.post("/api/character/reroll", async (c) => {
   const cls = body.class ? classByName(body.class) : pickRandomClass();
   const hp = cls.base_hp + rollDice(4);
   const gender: CharGender = rollDice(2) === 1 ? "m" : "f";
+
+  // AI-generated name with an avoid-list of recent names; falls back to pool.
+  const recentNames = await getRecentCharacterNames(c.env.DB, 20);
+  const heroName = await generateCharacterName(c.env.AI, gender, cls.name, recentNames);
+
   const newChar = await createCharacter(c.env.DB, {
     slack_user_id: session.slack_user_id,
     slack_team_id: session.slack_team_id,
-    name: generateNpcName(),
+    name: heroName,
     class: cls.name,
     hp,
     max_hp: hp,
@@ -1068,10 +1075,15 @@ app.post("/api/character-slots/new", async (c) => {
   const cls = body.class ? classByName(body.class) : pickRandomClass();
   const hp = cls.base_hp + rollDice(4);
   const gender: CharGender = rollDice(2) === 1 ? "m" : "f";
+
+  // AI-generated name with an avoid-list of recent names; falls back to pool.
+  const recentNamesForSlot = await getRecentCharacterNames(c.env.DB, 20);
+  const slotHeroName = await generateCharacterName(c.env.AI, gender, cls.name, recentNamesForSlot);
+
   const newChar = await createCharacter(c.env.DB, {
     slack_user_id: session.slack_user_id,
     slack_team_id: session.slack_team_id,
-    name: generateNpcName(),
+    name: slotHeroName,
     class: cls.name,
     hp,
     max_hp: hp,

@@ -2,7 +2,7 @@
 // opening-scene helpers from apps/slack/src/ai.ts; if a third surface
 // needs them we'll factor into a shared package.
 
-import { fallbackMonsterName, fallbackSceneText, type ElementType } from "@gantt-quest/core";
+import { fallbackMonsterName, fallbackSceneText, generateNpcName, type ElementType } from "@gantt-quest/core";
 import type { Character, SceneJson } from "@gantt-quest/db";
 
 const MODEL = "@cf/meta/llama-3.1-8b-instruct";
@@ -1275,6 +1275,56 @@ export async function generateTownName(
   } catch {
     return fallback;
   }
+}
+
+// Generates a unique character name for a newly-created hero. The name is a
+// 2-3 word fantasy name consisting of a given name + an epithet or surname,
+// lightly flavored with the game's software-engineering theme (though purely
+// fantasy results are equally valid — the hint is optional).
+//
+// `avoidNames` is the list of recently-active character names so the model
+// can steer away from them. Falls back to generateNpcName() on any failure.
+export async function generateCharacterName(
+  ai: Ai,
+  gender: "m" | "f" | null,
+  cls: string,
+  avoidNames: string[] = [],
+): Promise<string> {
+  const genderHint = gender === "m"
+    ? "masculine-sounding given name"
+    : gender === "f"
+    ? "feminine-sounding given name"
+    : "given name (any gender)";
+  const avoidLine = avoidNames.length > 0
+    ? `\nDo NOT use any of these already-taken names: ${avoidNames.slice(0, 20).join(", ")}.`
+    : "";
+  const user = [
+    `Create a single unique fantasy character name for a ${cls}.`,
+    `Format: a ${genderHint} + an epithet or surname (like "Aldraen the Recursive" or "Vyndor Coldforge" or "Moreth of the Stale Branch").`,
+    "The game has a subtle software-engineering flavor — work-related epithets are welcome but not required.",
+    "Output ONLY the name, nothing else. No quotes, no explanation. 2–4 words total.",
+    avoidLine,
+  ].filter(Boolean).join("\n");
+  try {
+    const result = (await ai.run(FAST_MODEL, {
+      messages: [
+        { role: "system", content: "You are a creative name generator for a software-engineering-themed fantasy RPG." },
+        { role: "user", content: user },
+      ],
+      max_tokens: 20,
+    })) as AiRunResponse;
+    const raw = (result.response ?? "").replace(/^name:\s*/i, "").split("\n")[0].trim();
+    // Accept if it's a plausible 2–4 word name and not one we're avoiding.
+    const wordCount = raw.split(/\s+/).filter(Boolean).length;
+    if (raw.length >= 4 && raw.length <= 60 && wordCount >= 2 && wordCount <= 5
+        && !avoidNames.includes(raw)) {
+      return raw;
+    }
+  } catch {
+    // fall through
+  }
+  // Fallback: pool-generated name (expanded pool in flavor.ts)
+  return generateNpcName();
 }
 
 export interface JobListingFlavor {
