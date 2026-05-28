@@ -1575,12 +1575,37 @@ export function xpForLevel(level: number): number {
 }
 
 // Cheap syllable-based name generator. Two-part: given + epithet.
-const PREFIX = ["Bru", "Ka", "Mor", "Eth", "Vyn", "Tar", "Sel", "Drog", "Lyr", "Quin", "Zar", "Fen", "Aldra", "Wyn"];
-const MID    = ["dor", "an", "vek", "is", "ric", "el", "or", "tha", "ix", "een", "us"];
+const PREFIX = [
+  "Bru", "Ka", "Mor", "Eth", "Vyn", "Tar", "Sel", "Drog", "Lyr", "Quin",
+  "Zar", "Fen", "Aldra", "Wyn", "Tor", "Bel", "Cyr", "Dax", "Eld", "Fae",
+  "Gal", "Hav", "Ira", "Jor", "Kes", "Mal", "Nav", "Orl", "Per", "Ryn",
+  "Siv", "Thae", "Ulv", "Vael", "Wex", "Xar", "Yrd", "Zol",
+];
+const MID = [
+  "dor", "an", "vek", "is", "ric", "el", "or", "tha", "ix", "een", "us",
+  "ara", "eth", "ond", "ael", "yn", "ir", "ash", "en", "os",
+];
 const EPITHET = [
+  // Original set
   "the Patient", "the Untested", "Stack-Cleaver", "the Verbose", "of the Long Build",
   "Halflinter", "the Deprecated", "Rebase-Born", "Two-PRs", "the Hotfixed",
   "Thread-Walker", "of the Stale Branch", "the Overcommitted",
+  // Expanded — dev/work flavored
+  "the Unmerged", "the Well-Documented", "the Off-by-One", "Null-Borne",
+  "the Refactored", "Edge-Caser", "of the Final Commit", "the Async",
+  "the Deadlocked", "Cache-Breaker", "the Legacy", "Branch-Keeper",
+  "the Idempotent", "Scope-Creeper", "the Rollback", "Debug-Walker",
+  "the Throughput", "of the Late Retro", "the Compiled", "Root-Cause",
+  "the Undocumented", "Fail-Fast", "the Hardcoded", "Patch-Born",
+  "the Concurrent", "Log-Watcher", "the Nullable", "Heap-Walker",
+  "the Latent", "of the Pending Review", "the Recursive",
+  "the Shipper", "Flag-Bearer", "the Postmortemed", "of the Frozen Sprint",
+  // Purely fantasy-flavored (no dev puns) for variety
+  "Ironveil", "Duskmantle", "Stonecalled", "the Wandering",
+  "Ashbound", "the Relentless", "Coldforge", "the Unbroken",
+  "Nightwatch", "the Unseen", "Emberborn", "of the Hollow Road",
+  "the Cursed", "Gildstrike", "of the Shattered Keep", "the Forgotten",
+  "the Unyielding", "Thornpact", "the Twice-Fallen", "Voidwalker",
 ];
 
 export function generateNpcName(): string {

@@ -2221,6 +2221,19 @@ export async function consumeItem(
   return healed;
 }
 
+// Returns the N most-recently-active character names. Used to supply an
+// avoid-list when AI generates a new character name so names don't repeat.
+export async function getRecentCharacterNames(
+  db: D1Database,
+  limit: number = 20,
+): Promise<string[]> {
+  const rows = await db
+    .prepare("SELECT name FROM characters ORDER BY last_active DESC LIMIT ?")
+    .bind(limit)
+    .all<{ name: string }>();
+  return (rows.results ?? []).map((r) => r.name);
+}
+
 // Perma-death. quests.created_by uses ON DELETE SET NULL (see 0002 migration), so
 // historical quests survive their creator. Inventory + quest_party cascade as expected.
 export async function deleteCharacter(db: D1Database, userId: string): Promise<void> {

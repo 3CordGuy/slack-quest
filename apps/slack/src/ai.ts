@@ -1,7 +1,7 @@
 // Workers AI helpers. Uses Llama 3.1 8B Instruct — cheap, plenty good for flavor text.
 
 import type { Character, DungeonGraph, DungeonNode, DungeonObject, LootOption, MonsterSpec, SceneJson } from "@gantt-quest/db";
-import { fallbackMonsterName, fallbackSceneText, rollItem } from "@gantt-quest/core";
+import { fallbackMonsterName, fallbackSceneText, generateNpcName, rollItem } from "@gantt-quest/core";
 
 const MODEL = "@cf/meta/llama-3.1-8b-instruct";
 
@@ -1558,6 +1558,51 @@ export async function generateTownName(
   } catch {
     return fallback;
   }
+}
+
+// Generates a unique name for a freshly-created player character. Returns a
+// 2–4 word fantasy name (given name + epithet or surname) with the game's
+// light software-engineering flavor. Gracefully falls back to generateNpcName()
+// from core on any failure so character creation never blocks.
+export async function generateCharacterName(
+  ai: Ai,
+  gender: "m" | "f" | null,
+  cls: string,
+  avoidNames: string[] = [],
+): Promise<string> {
+  const genderHint = gender === "m"
+    ? "masculine-sounding given name"
+    : gender === "f"
+    ? "feminine-sounding given name"
+    : "given name (any gender)";
+  const avoidLine = avoidNames.length > 0
+    ? `\nDo NOT use any of these already-taken names: ${avoidNames.slice(0, 20).join(", ")}.`
+    : "";
+  const user = [
+    `Create a single unique fantasy character name for a ${cls}.`,
+    `Format: a ${genderHint} + an epithet or surname (like "Aldraen the Recursive" or "Vyndor Coldforge" or "Moreth of the Stale Branch").`,
+    "The game has a subtle software-engineering flavor — work-related epithets are welcome but not required.",
+    "Output ONLY the name, nothing else. No quotes, no explanation. 2–4 words total.",
+    avoidLine,
+  ].filter(Boolean).join("\n");
+  try {
+    const result = (await ai.run(FAST_MODEL, {
+      messages: [
+        { role: "system", content: "You are a creative name generator for a software-engineering-themed fantasy RPG." },
+        { role: "user", content: user },
+      ],
+      max_tokens: 20,
+    })) as AiRunResponse;
+    const raw = (result.response ?? "").replace(/^name:\s*/i, "").split("\n")[0].trim();
+    const wordCount = raw.split(/\s+/).filter(Boolean).length;
+    if (raw.length >= 4 && raw.length <= 60 && wordCount >= 2 && wordCount <= 5
+        && !avoidNames.includes(raw)) {
+      return raw;
+    }
+  } catch {
+    // fall through to pool fallback
+  }
+  return generateNpcName();
 }
 
 // Generates a multi-choice dialog tree for an NPC. Returns a JSON tree the
