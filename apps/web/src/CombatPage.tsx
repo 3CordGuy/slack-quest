@@ -400,7 +400,7 @@ interface OutcomeSummary {
 // LogEntry is imported from CombatShared — flat interface with side/content/tone.
 
 interface UiState {
-  connection: "connecting" | "open" | "closed";
+  connection: "connecting" | "open" | "reconnecting" | "closed";
   state: CombatState | null;
   log: LogEntry[];
   error: string | null;
@@ -849,6 +849,8 @@ export function CombatPage({
   // Tracks the last turn_index for which we fired an auto-resolve so we don't double-fire.
   const autoResolvedTurnRef = useRef<number>(-1);
   const [reconnectKey, setReconnectKey] = useState(0);
+  // Auto-reconnect attempt counter; reset on a successful onopen or manual reconnect.
+  const reconnectAttemptsRef = useRef(0);
   const [devOpen, setDevOpen] = useState(false);
   const isMobile = useIsMobile();
   const wsRef = useRef<WebSocket | null>(null);
@@ -886,9 +888,22 @@ export function CombatPage({
 
 
   useEffect(() => {
-    dispatch({ kind: "connection", value: "connecting" });
+    // Prefixed console logs make WS lifecycle filterable in devtools
+    // (filter: "[ws]"). Useful for diagnosing disconnect/reconnect patterns
+    // in production — every open/close/reconnect leaves a breadcrumb with
+    // timestamp, attempt count, and close-code metadata.
+    const log = (msg: string, extra?: Record<string, unknown>) =>
+      console.log(`[ws q=${questId}] ${msg}`, extra ?? "");
+
+    const wasReconnect = reconnectAttemptsRef.current > 0;
+    dispatch({ kind: "connection", value: wasReconnect ? "reconnecting" : "connecting" });
     const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
     const url = `${proto}//${window.location.host}/api/ws/quest/${questId}`;
+    const openedAt = Date.now();
+    log(wasReconnect ? "reconnect attempt" : "connecting", {
+      attempt: reconnectAttemptsRef.current,
+      url,
+    });
     const ws = new WebSocket(url);
     wsRef.current = ws;
 
@@ -899,10 +914,56 @@ export function CombatPage({
       }
     }, 45_000);
 
-    ws.onopen = () => dispatch({ kind: "connection", value: "open" });
-    ws.onclose = () => dispatch({ kind: "connection", value: "closed" });
-    ws.onerror = () => {
-      toast.error("WebSocket error");
+    // Auto-reconnect bookkeeping. `intentionalClose` lets the cleanup
+    // suppress the reconnect that ws.close() would otherwise trigger when
+    // the effect is tearing down (unmount, questId change, manual bump).
+    let intentionalClose = false;
+    let reconnectTimer: number | null = null;
+    const MAX_AUTO_RECONNECTS = 4;
+
+    ws.onopen = () => {
+      const handshakeMs = Date.now() - openedAt;
+      log("open", { handshakeMs, reconnectAttempts: reconnectAttemptsRef.current });
+      reconnectAttemptsRef.current = 0;
+      dispatch({ kind: "connection", value: "open" });
+    };
+    ws.onclose = (ev) => {
+      const aliveMs = Date.now() - openedAt;
+      // Standard close codes that hint at cause:
+      //   1000 normal · 1001 going-away · 1006 abnormal (no close frame —
+      //   typical of network drops / Cloudflare idle eviction) · 1011 server
+      //   error · 1012 service restart · 1013 try-again · 1014 bad gateway.
+      const meta = {
+        code: ev.code,
+        reason: ev.reason || "(none)",
+        wasClean: ev.wasClean,
+        aliveMs,
+        intentional: intentionalClose,
+      };
+      if (intentionalClose) {
+        log("close (intentional)", meta);
+        return;
+      }
+      const attempts = reconnectAttemptsRef.current;
+      if (attempts >= MAX_AUTO_RECONNECTS) {
+        log("close — giving up after max auto-reconnects", { ...meta, attempts });
+        dispatch({ kind: "connection", value: "closed" });
+        return;
+      }
+      reconnectAttemptsRef.current = attempts + 1;
+      // 500ms, 1s, 2s, 4s (capped at 8s).
+      const delay = Math.min(8000, 500 * Math.pow(2, attempts));
+      log("close — scheduling reconnect", { ...meta, nextAttempt: attempts + 1, delayMs: delay });
+      dispatch({ kind: "connection", value: "reconnecting" });
+      reconnectTimer = window.setTimeout(() => {
+        setReconnectKey((k) => k + 1);
+      }, delay);
+    };
+    ws.onerror = (ev) => {
+      // The browser doesn't expose details on `error` for security reasons —
+      // onclose is where the actual code/reason lands. Log the bare event for
+      // ordering context.
+      log("error (no detail; see following close)", { type: (ev as Event).type });
       dispatch({ kind: "error", value: "WebSocket error" });
     };
     ws.onmessage = (ev) => {
@@ -1081,6 +1142,8 @@ export function CombatPage({
     };
 
     return () => {
+      intentionalClose = true;
+      if (reconnectTimer !== null) clearTimeout(reconnectTimer);
       clearInterval(heartbeat);
       ws.close();
       wsRef.current = null;
@@ -1319,8 +1382,14 @@ export function CombatPage({
               <Icon name="cog" size={11} /> dev
             </button>
           )}
-          <span style={{ fontSize: 11, color: ui.connection === "open" ? "#39ff14" : ui.connection === "connecting" ? "#9aa0a6" : "#fca5a5" }}>
-            {ui.connection === "open" ? "● live" : ui.connection === "connecting" ? "○ …" : "× disconnected"}
+          <span style={{ fontSize: 11, color: ui.connection === "open" ? "#39ff14" : ui.connection === "connecting" || ui.connection === "reconnecting" ? "#fbbf24" : "#fca5a5" }}>
+            {ui.connection === "open"
+              ? "● live"
+              : ui.connection === "connecting"
+              ? "○ …"
+              : ui.connection === "reconnecting"
+              ? "↻ reconnecting…"
+              : "× disconnected"}
           </span>
         </div>
       </div>
@@ -1629,9 +1698,14 @@ export function CombatPage({
         />
       )}
 
-      {/* Disconnection warning — only when combat is still live */}
+      {/* Disconnection warning — only when combat is still live AND auto-reconnect
+          has exhausted its attempts. Transient drops surface as "reconnecting…" in
+          the status chip instead of a blocking modal. */}
       {ui.connection === "closed" && !ended && (
-        <DisconnectedModal onReconnect={() => setReconnectKey((k) => k + 1)} />
+        <DisconnectedModal onReconnect={() => {
+          reconnectAttemptsRef.current = 0;
+          setReconnectKey((k) => k + 1);
+        }} />
       )}
     </div>
     </CombatParticlesProvider>
@@ -2615,14 +2689,28 @@ function VictoryModal({
             )}
           </>
         )}
-        {!hasDoorChoice && (
-          <button
-            onClick={towerFloor && !towerAwaitingChoice && onContinueClimbing ? onContinueClimbing : onBack}
-            style={{ ...button, marginTop: 8, background: "#16a34a" }}
-          >
-            {towerFloor && !towerAwaitingChoice ? "🗼 Continue climbing" : "Back to town"}
-          </button>
-        )}
+        {!hasDoorChoice && (() => {
+          // Rest floor next: start_web_combat would 400 (non_combat_room).
+          // Route back through onBack so refresh() loads the rest-stop UI
+          // instead of leaving CombatPage stuck on "Loading combat…".
+          const nextKind = outcome?.tower_next_floor_kind;
+          const inPlaceClimb = towerFloor && !towerAwaitingChoice && nextKind !== "rest";
+          const label = towerFloor && !towerAwaitingChoice
+            ? nextKind === "rest"
+              ? "🛌 To the rest stop"
+              : nextKind === "boss"
+              ? "👑 Engage the boss"
+              : "🗼 Continue climbing"
+            : "Back to town";
+          return (
+            <button
+              onClick={inPlaceClimb && onContinueClimbing ? onContinueClimbing : onBack}
+              style={{ ...button, marginTop: 8, background: "#16a34a" }}
+            >
+              {label}
+            </button>
+          );
+        })()}
       </div>
     </div>
     </>
