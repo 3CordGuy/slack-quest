@@ -464,167 +464,6 @@ export async function flavorCatalogItem(
 }
 
 // =============================================================================
-// DUNGEON GENERATION — AI room generators ported from apps/slack/src/ai.ts.
-// These are used by the web worker when starting a dungeon expedition.
-// =============================================================================
-
-export async function generateExpeditionTheme(ai: Ai): Promise<string> {
-  const user = "Generate a single short evocative theme for an expedition into a hostile codebase. 4-7 words. No quotes. Examples: 'the cursed monorepo merge', 'haunted staging environment', 'forgotten sprint of 2019'.";
-  const fallback = "the abandoned staging environment";
-  return generateFlavor(ai, user, fallback, 30);
-}
-
-export interface GeneratedTrap {
-  scene: string;
-  options: { str: string; dex: string; int: string };
-}
-
-export async function generateTrapRoom(
-  ai: Ai,
-  theme: string,
-  roomNumber: number,
-  totalRooms: number,
-): Promise<GeneratedTrap> {
-  const user = [
-    `You are running room ${roomNumber}/${totalRooms} of a dungeon themed: "${theme}".`,
-    "This room contains a TRAP. Generate scene + 3 disarm options matching three approaches:",
-    "  STR — brute force (smash, charge, bend, lift)",
-    "  DEX — finesse (disarm, slip past, defuse, sneak)",
-    "  INT — wits (decode, riddle, calculate, identify)",
-    "Output exactly:",
-    "SCENE: <2 sentences, ~35 words, set the trap with menace>",
-    "STR: <imperative phrase, 4-6 words>",
-    "DEX: <imperative phrase, 4-6 words>",
-    "INT: <imperative phrase, 4-6 words>",
-  ].join("\n");
-
-  const fallback: GeneratedTrap = {
-    scene: "A pressure plate clicks under your boot. The room hisses — definitely a trap.",
-    options: {
-      str: "Smash through the wall",
-      dex: "Disarm the trigger gently",
-      int: "Decode the warding glyphs",
-    },
-  };
-
-  try {
-    const result = (await ai.run(MODEL, {
-      messages: [
-        { role: "system", content: COMBAT_SYSTEM },
-        { role: "user", content: user },
-      ],
-      max_tokens: 200,
-    })) as AiRunResponse;
-    const text = (result.response ?? "").trim();
-    const scene = /SCENE:\s*(.+)/i.exec(text)?.[1]?.trim();
-    const str = /STR:\s*(.+)/i.exec(text)?.[1]?.trim().replace(/^["'`]|["'`]$/g, "");
-    const dex = /DEX:\s*(.+)/i.exec(text)?.[1]?.trim().replace(/^["'`]|["'`]$/g, "");
-    const int = /INT:\s*(.+)/i.exec(text)?.[1]?.trim().replace(/^["'`]|["'`]$/g, "");
-    if (!scene || !str || !dex || !int) return fallback;
-    return { scene, options: { str, dex, int } };
-  } catch {
-    return fallback;
-  }
-}
-
-export async function generateLockboxScene(
-  ai: Ai,
-  theme: string,
-  roomNumber: number,
-  totalRooms: number,
-): Promise<string> {
-  const user = `Room ${roomNumber}/${totalRooms} of a dungeon themed: "${theme}". This room has a *locked* chest. Narrate the discovery in 2 sentences (~35 words). Hint that without a key, players can only walk past empty-handed.`;
-  const fallback = "A chest sits at the room's center, bound in three iron locks and humming with promise. You'd need a key — or your conscience to leave it.";
-  return generateFlavor(ai, user, fallback, 110);
-}
-
-export interface GeneratedNpc {
-  scene: string;
-  greeting: string;
-}
-
-export async function generateNpcRoom(
-  ai: Ai,
-  theme: string,
-  roomNumber: number,
-  totalRooms: number,
-  npcName: string,
-): Promise<GeneratedNpc> {
-  const user = [
-    `Room ${roomNumber}/${totalRooms} of a dungeon themed: "${theme}".`,
-    `An NPC named "${npcName}" is here, offering an item to the party.`,
-    "Output exactly:",
-    "SCENE: <2 sentences setting the encounter — what they look like, what they're doing>",
-    "GREETING: <1-2 sentences of what they say to the party, offering their wares>",
-  ].join("\n");
-
-  const fallback: GeneratedNpc = {
-    scene: "A figure in patched robes warms hands by a battered terminal. They look up and grin.",
-    greeting: `"You look like trustworthy adventurers. I've got something you might want — for the right offer."`,
-  };
-
-  try {
-    const result = (await ai.run(MODEL, {
-      messages: [
-        { role: "system", content: COMBAT_SYSTEM },
-        { role: "user", content: user },
-      ],
-      max_tokens: 180,
-    })) as AiRunResponse;
-    const text = (result.response ?? "").trim();
-    const scene = /SCENE:\s*(.+)/i.exec(text)?.[1]?.trim();
-    const greeting = /GREETING:\s*([\s\S]+)/i.exec(text)?.[1]?.trim().replace(/^["'`]|["'`]$/g, "");
-    if (!scene || !greeting) return fallback;
-    return { scene, greeting };
-  } catch {
-    return fallback;
-  }
-}
-
-export interface GeneratedMerchant {
-  scene: string;
-  greeting: string;
-}
-
-export async function generateMerchantRoom(
-  ai: Ai,
-  theme: string,
-  roomNumber: number,
-  totalRooms: number,
-  merchantName: string,
-): Promise<GeneratedMerchant> {
-  const user = [
-    `Room ${roomNumber}/${totalRooms} of a dungeon themed: "${theme}".`,
-    `A traveling merchant named "${merchantName}" has set up a tiny shop here, mid-dungeon.`,
-    "Output exactly:",
-    "SCENE: <2 sentences setting the encounter — what their stall looks like, where they came from>",
-    "GREETING: <1-2 sentences of what they say to the party, hawking their wares>",
-  ].join("\n");
-
-  const fallback: GeneratedMerchant = {
-    scene: `${merchantName} has improvised a shopfront from overturned standing-desks and a fluttering Gantt chart.`,
-    greeting: `"You look like trouble waiting to happen. Lucky for you, I sell trouble preparation."`,
-  };
-
-  try {
-    const result = (await ai.run(MODEL, {
-      messages: [
-        { role: "system", content: COMBAT_SYSTEM },
-        { role: "user", content: user },
-      ],
-      max_tokens: 180,
-    })) as AiRunResponse;
-    const text = (result.response ?? "").trim();
-    const scene = /SCENE:\s*(.+)/i.exec(text)?.[1]?.trim();
-    const greeting = /GREETING:\s*([\s\S]+)/i.exec(text)?.[1]?.trim().replace(/^["'`]|["'`]$/g, "");
-    if (!scene || !greeting) return fallback;
-    return { scene, greeting };
-  } catch {
-    return fallback;
-  }
-}
-
-// =============================================================================
 // IMAGE GENERATION — flux-1-schnell + R2 cache. Mirrors slack's apps/slack/ai.ts.
 // =============================================================================
 //
@@ -654,12 +493,6 @@ const STYLE_ANCHOR =
 
 const NEGATIVES =
   "edge-to-edge painted illustration, no card frame, no name plate, no border, no text, no logos, no UI elements";
-
-// Grid-dungeon room backgrounds (room_*) get the same corporate-fantasy
-// office-dungeon setting as monster portraits — replaces STYLE_ANCHOR so
-// the rooms read as a workplace dungeon rather than a generic fantasy keep.
-const ROOM_STYLE_ANCHOR =
-  "Studio Ghibli watercolor style. SETTING: a corporate-fantasy workplace dungeon — stone fortress fused with a software-engineering office. Walls plastered with sticky-notes, gantt charts, kanban cards. Ethernet cables snake along flagstone floors. Glowing monitors in alcoves, server racks with blinking LEDs, ergonomic keyboards on stone ledges, coffee mugs, whiteboards with marker diagrams. Warm bright dreamlike lighting, never gloomy. Busy with corporate-engineering texture.";
 
 // Monster portraits get their own anchor — corporate-fantasy office-dungeon
 // setting + bright daylight, replacing (not layered on) the global style so
@@ -713,219 +546,15 @@ export const VIEW_ART_PROMPTS = {
     "Interior of a dim fantasy apothecary shop. Shelves lined with labeled glass vials, stoppered bottles in amber and green and blue, bundles of dried herbs hanging from the ceiling, small clay pots of unguents and powders. A heavy wooden counter with a set of brass scales, mortar and pestle, and a few open recipe books. Candlelight, earthy tones, a faint haze of incense. The room is the subject — no specific figure in close-up.",
   outskirts:
     "The dark edge of an ancient forest at dusk, viewed from a dirt path leading into it. Massive twisted trees form a cathedral arch overhead, their roots tangled with glowing fiber-optic cables and half-buried server components. A few runic warning signs nailed to tree trunks — hand-carved wood but with blinking LED indicators. Fireflies and faint bioluminescent mushrooms light the path. Deep shadows between the trees hint at unseen creatures. The village lantern light fades behind; the path ahead plunges into mystery. Wide establishing shot, no characters.",
-
-  // ── Dungeon room backgrounds (first-person POV, empty of characters) ──────
-  // Combat rooms — stone corridors and chambers with signs of impending battle.
-  dungeon_combat_1:
-    "First-person view looking down a dim stone corridor. Scattered papers and printed project timelines litter the floor. A broken server rack leans against the wall on the right, ethernet cables trailing into darkness. Wall-mounted torches cast orange shadows. Tension in the air. No people, no creatures — just the empty corridor ahead.",
-  dungeon_combat_2:
-    "First-person view of a circular stone chamber. Glowing project-management runes are etched into the flagstone floor — gantt chart glyphs and sprint-burndown spirals. Cables run along the baseboards. Two overturned office chairs are pushed to the sides. The room is empty but feels watched. Warm torchlight from iron wall sconces.",
-  dungeon_combat_3:
-    "First-person view down a narrow stone hallway. Overhead, old fluorescent tubes flicker and buzz between stone-framed arches. Ancient sword-slash marks scar the walls. An ethernet cable trails along the floor like a vine. Empty. A feeling of something nearby. Stone floor, stone ceiling, stone walls — oppressively close.",
-  dungeon_combat_4:
-    "First-person view of a large stone room divided by rough stone and old-wood cubicle partitions. Broken monitors are stacked in one corner. Smoke stains darken the ceiling above a scorch mark on the floor. Scattered sticky notes cover the walls. Everything is still — but the air smells of ozone and old coffee.",
-
-  // Boss rooms — grand imposing chambers.
-  dungeon_boss_1:
-    "First-person view of a grand vaulted chamber. Massive stone pillars flank the path ahead, wrapped in server-tower vines with blinking LEDs. War banners hanging from rusted chains display corrupted sprint-velocity graphs. A faint ominous purple glow emanates from the far end of the chamber. Monumental, threatening, empty.",
-  dungeon_boss_2:
-    "First-person view of a cavernous boss arena with tiered stone steps leading to a raised central platform. Scorched project timelines and burnt gantt charts are pinned to every wall. Chunks of broken concrete and melted keyboard shards ring the central dais. Dim red emergency lighting.",
-  dungeon_boss_3:
-    "First-person view of a massive underground hall with cathedral-high ceilings. Giant monitor screens mounted on the stone walls display scrolling corrupted red data. Dramatic spotlights from above illuminate the center. The floor is polished black stone. Oppressive silence. The scale makes everything feel small.",
-  dungeon_boss_4:
-    "First-person view of a circular boss chamber. Ritual circles carved deep into the stone floor form concentric rings around the center. Glowing network cables form a web pattern overhead. Four cracked stone thrones sit at the cardinal points. Dark and solemn, lit only by the cold blue glow of the cable-web.",
-
-  // Trap rooms — rooms with visible danger mechanisms.
-  dungeon_trap_1:
-    "First-person view of a stone corridor where the floor is covered in raised pressure plates, each slightly discolored. Small holes line both walls at ankle and knee height — nozzle openings. A hand-written warning note is pinned to the far door. Empty, but obviously dangerous.",
-  dungeon_trap_2:
-    "First-person view of a room with taut tripwires stretched across the path at irregular heights — old ethernet cables rigged as triggers. Some already lie coiled and spent on the floor. Mechanical contraptions are bolted to the walls at the ends of the wires. The room is otherwise empty.",
-  dungeon_trap_3:
-    "First-person view of a stone chamber with a massive pendulum mechanism suspended from the ceiling — a heavy stone blade on a long chain, frozen mid-swing. Gear teeth are visible at the base pivot. Maintenance-manual printouts are scattered across the floor. A warning placard written in marker is nailed to a post.",
-  dungeon_trap_4:
-    "First-person view of a narrow passage with jets set flush into the walls at regular intervals. A large blast-scorch pattern marks the far door and ceiling. A sticky note reading 'deploy to prod' is stuck to the wall beside the first jet. The air smells faintly of smoke.",
-
-  // Treasure rooms — the final reward chamber.
-  dungeon_treasure_1:
-    "First-person view of the dungeon's heart-chamber. A circular room with a low mossy stone pedestal at its center, bathed in a column of warm golden light from a hole in the vaulted ceiling far above. Dust motes drift lazily through the beam. Everything else is dim and still.",
-  dungeon_treasure_2:
-    "First-person view of a wide stone vault. Ancient wooden shelves line the curved walls. Dust motes drift in a wide shaft of golden light from a hole in the ceiling. The floor is swept clean except for a ring of old candlestick holders arranged around the center. Quiet and reverent.",
-  dungeon_treasure_3:
-    "First-person view of a stone treasure vault with elaborate relief carvings on every wall depicting epic sprints and legendary deployments. Aged oak shelves with empty display brackets. A single dramatic spotlight from an ancient crystal lens illuminates the center of the room.",
-  dungeon_treasure_4:
-    "First-person view of a quiet stone alcove at the end of the dungeon. Warm amber light from crystal sconces set into the walls. A velvet-draped stone platform sits at the center. The room has a hushed, ceremonial quality — the end of a long journey.",
-
-  // Lockbox rooms — dim alcoves with locked chests.
-  dungeon_lockbox_1:
-    "First-person view of a stone alcove. A heavy iron-banded wooden chest sits on a stone table in the center, heavy padlock clearly visible. A single lantern hanging from an iron hook above. Dust on the floor, cobwebs in the corners. Quiet and deliberate.",
-  dungeon_lockbox_2:
-    "First-person view of a dim stone corridor ending in a recessed niche. An ornate dark-wood chest with engraved silver fittings rests on a stone ledge. Faint torchlight from the passage behind makes the silver glint. The chest is the only thing in the niche.",
-  dungeon_lockbox_3:
-    "First-person view of a small stone chamber. A lavishly decorated chest sits on a raised stone pedestal at the back of the room. Gold gilt catches the torchlight. Stone walls carved with geometric patterns. The chest radiates quiet importance.",
-  dungeon_lockbox_4:
-    "First-person view of a rough-cut stone room. A weathered wooden chest sits in the far corner, half-hidden in shadow. Thick dust covers the floor and the chest alike, with only a narrow path of disturbed dust leading to it. An old heavy padlock.",
-
-  // NPC rooms — spaces suggesting a recent or imminent presence.
-  dungeon_npc_1:
-    "First-person view of a warm-lit stone alcove furnished with a rough wooden desk. Scattered scrolls and a quill and inkpot. A high-backed chair pulled slightly out, as if someone just stood up. A single candle still burning. Someone was just here.",
-  dungeon_npc_2:
-    "First-person view of a cozy stone nook. A small campfire ring with glowing embers, a bedroll neatly rolled beside it, two cooking pots on a trivet. A traveler's pack leaned against the wall. Warm and human among the cold stone.",
-  dungeon_npc_3:
-    "First-person view of a stone room with a low wooden counter across the middle — an improvised desk or stall. Empty hooks on the wall behind, a stool on the near side. A half-finished cup of tea sits on the counter, still steaming.",
-  dungeon_npc_4:
-    "First-person view of a stone chamber with a scrying mirror on a tall pedestal and two rough stone chairs facing each other. The mirror surface shimmers faintly. A carved stone side table holds a teapot and two cups. A meeting place.",
-
-  // Merchant rooms — impromptu trading posts deep in the dungeon.
-  dungeon_merchant_1:
-    "First-person view of a tiny market stall cut into a wide stone alcove. Wooden shelves hold neatly arranged goods — vials, small crates, rolled scrolls. A brass service bell on the counter. Warm lamplight. Improbably tidy and well-stocked for a dungeon.",
-  dungeon_merchant_2:
-    "First-person view of a wider stone alcove where a portable folding table has been set up as a market counter. Colorful cloth banners hang from stalactites above. Wooden crates form the back wall shelving. Candles in tin holders line the edges.",
-  dungeon_merchant_3:
-    "First-person view of a curved stone chamber repurposed as a trading post. Display cases made from old server casings line the walls. A warm brass desk lamp glows on the central counter. Small handwritten price tags are visible on items.",
-  dungeon_merchant_4:
-    "First-person view of a stone passage booth. Hand-painted price signs hang from the ceiling on strings. Cord lighting wraps around the stall frame. A cozy rug on the stone floor. Impossibly cheerful atmosphere for somewhere this deep underground.",
-
-  // ── Grid dungeon room shapes (v2) ──────────────────────────────────────────
-  // Each key is `room_<shape>` or `room_<shape>_<content>`. The DungeonView
-  // composes the URL from the current room's shape + content kind, falling
-  // back to a shape-only background if the combo is absent.
-  //
-  // These prompts focus on GEOMETRY + CONTENT — the office-fantasy theming
-  // is supplied by ROOM_STYLE_ANCHOR (sticky notes, gantt charts, server
-  // racks, ethernet cables, monitors, ergonomic keyboards, etc.).
-
-  // CORRIDOR — straight passages (compass-agnostic geometry)
-  room_straight_ns:
-    "First-person view down a long straight office-keep corridor. Vanishing point at the far end, flagstone floor between fitted stone walls covered in pinned sticky-notes and gantt charts. Empty, symmetrical, warm daylight.",
-  room_straight_ew:
-    "First-person view down a long straight office-keep corridor. Stone walls plastered with kanban cards and architecture-diagram whiteboards. A wooden double door at the far end. No side passages.",
-  // CORRIDOR — L-shaped corners (no compass direction in the art; minimap
-  // shows which two cardinal directions the openings are in)
-  room_corner_ne:
-    "First-person view of an L-shaped office-keep corridor that bends 90 degrees. Two visible openings on adjacent walls. Stone arches frame the bend; pinned sticky-notes and a gantt chart on the corner wall.",
-  room_corner_nw:
-    "First-person view of an L-shaped office-keep corridor that bends 90 degrees. Two visible openings on adjacent walls. A glowing monitor in a wall alcove displaying scrolling code. Sticky-notes and kanban cards cover the corner wall.",
-  room_corner_se:
-    "First-person view of an L-shaped office-keep corridor that bends 90 degrees. Two visible openings on adjacent walls. A stone standing-desk in the bend with sticky-notes and a coffee mug. Pinned burndown charts on the wall.",
-  room_corner_sw:
-    "First-person view of an L-shaped office-keep corridor that bends 90 degrees. Two visible openings on adjacent walls. A small wall-niche holds a stack of printout-code scrolls and a humming server rack with blinking LEDs. Sticky-notes plaster the corner wall.",
-  // T-junctions — three-way passage (compass-agnostic art)
-  room_t_n:
-    "First-person view of a three-way T-junction in the office-keep. Corridor branches into three passages from a central area. Architecture-diagram whiteboard on the junction wall. Pinned sticky-notes everywhere.",
-  room_t_e:
-    "First-person view of a three-way T-junction in the office-keep. Three passages meet at the central area. Pinned gantt charts and sticky-notes on the junction wall. A hand-painted directional sign hangs overhead.",
-  room_t_s:
-    "First-person view of a three-way T-junction in the office-keep. Three passages diverge from a junction area. A wooden signpost stands at the center, hand-labeled with marker. Burndown charts and a small whiteboard on the walls. Server rack hums in a side alcove.",
-  room_t_w:
-    "First-person view of a three-way T-junction in the office-keep. Three passages branch from the central area. A large blackboard at the junction lists room directions as a hand-drawn map with marker. Sticky-note clusters fan out around it.",
-  // 4-way intersection
-  room_cross:
-    "First-person view of a four-way crossroads in the office-keep. Four corridors meet at a central junction. A circuitry-inlaid compass mosaic on the floor at the center. Stone columns at each corner, sticky-notes on every wall.",
-
-  // DEAD-END SHAPES (corridor terminates in a wall ahead) — content variants
-  // describe what's at the dead-end. The directional suffix (n/e/s/w) keys
-  // visual variety but the art is compass-agnostic: every variant shows a
-  // dead-end with the back wall blocking and a single opening behind/around
-  // the camera. The minimap is authoritative for which cardinal exit applies.
-  room_dead_n_empty:
-    "First-person view of a dead-end office-keep corridor. A flat stone wall at the far end blocks the path. A pinned abandoned sprint-retro whiteboard (mostly erased), a single coffee mug on a stone ledge. Faint dust on the flagstones. Empty, lived-in.",
-  room_dead_e_empty:
-    "First-person view of a dead-end office-keep corridor. A flat stone wall blocks the path. Mossy lower courses, a forgotten kanban-board with curled corners, scattered sticky-notes on the floor. A single ethernet port glowing green on the wall.",
-  room_dead_s_empty:
-    "First-person view of a dead-end office-keep corridor. A flat stone wall blocks the path. A peeling architecture diagram pinned to the wall, a worn-out laptop bag on the floor, an empty take-out cup.",
-  room_dead_w_empty:
-    "First-person view of a dead-end office-keep corridor. A flat stone wall blocks the path. A flickering desk lamp on a stone shelf, an abandoned coffee mug, a single sticky-note marked TODO.",
-  // Dead-end + treasure (chest sits at the end)
-  room_dead_n_treasure:
-    "First-person view of a dead-end office-keep corridor. A heavy ornate chest sits open at the far end, golden light spilling out — gold coins mixed with rolled printout scrolls. Dust motes in a warm light beam from above.",
-  room_dead_e_treasure:
-    "First-person view of a dead-end office-keep corridor. A polished wooden chest with brass fittings is open at the far end, contents glowing gently — credentials, vials, elegantly-rolled printout scrolls. Architecture-diagram whiteboards flank it on the walls.",
-  room_dead_s_treasure:
-    "First-person view of a dead-end office-keep corridor. An ornate chest propped open against the back wall, faint golden glow inside, gold coins and rolled scrolls visible. Two extinguished candles and a forgotten coffee mug on the floor. Sticky-notes above.",
-  room_dead_w_treasure:
-    "First-person view of a dead-end office-keep corridor. A small jeweled chest rests on a stone pedestal at the back of the room, lid open, contents catching warm light. A pinned burndown chart behind it; a humming server rack alcove glowing faintly.",
-  // Dead-end + lockbox (locked chest)
-  room_dead_n_lockbox:
-    "First-person view of a dead-end office-keep corridor. A heavy iron-banded wooden chest with a large padlock sits at the far end, the lock prominently visible. A single hanging desk lamp casts warm light. Sticky-notes and a kanban board nearby. Server rack hums in an alcove.",
-  room_dead_e_lockbox:
-    "First-person view of a dead-end office-keep corridor. An ornate dark-wood chest reinforced with engraved silver bands and a heavy silver padlock sits at the far end. Sticky-notes and a pinned gantt chart on the back wall. Cool monitor glow from a nearby alcove.",
-  room_dead_s_lockbox:
-    "First-person view of a dead-end office-keep corridor. A lavishly ornate chest covered in gold-leaf engraving with a jeweled gold padlock sits at the back of the room. Faint glow leaks from cracks in the lid. Pinned project bulletins around it.",
-  room_dead_w_lockbox:
-    "First-person view of a dead-end office-keep corridor. A weathered chest banded in dull iron, secured with a thick padlock, sits at the dead end. Cobwebs at the corners, a humming server rack alcove glowing blue beside it. Sticky-notes everywhere.",
-  // Dead-end + npc (workspace nook)
-  room_dead_n_npc:
-    "First-person view of a dead-end office-keep corridor with a workspace nook at the far end. A standing desk with a glowing monitor and ergonomic keyboard, a steaming coffee mug, a comfortable rolling chair pushed slightly back. A pinned to-do list. Lived-in.",
-  room_dead_e_npc:
-    "First-person view of a dead-end office-keep corridor with a workspace at the back. A rough wooden desk against the wall, candle still burning beside a glowing laptop, scattered sticky-notes and scrolls of printout code. A high-backed office chair pulled slightly out.",
-  room_dead_s_npc:
-    "First-person view of a dead-end office-keep corridor with a workspace at the back. A low wooden counter improvised as a desk — steaming cup of tea, a quill, an open ledger that resembles a sprint planning notebook. Pinned kanban-board cards on the wall above.",
-  room_dead_w_npc:
-    "First-person view of a dead-end office-keep corridor with a meeting nook at the back. A stone alcove holds an old monitor on a pedestal with a faint blue-glowing screen, and two carved stone chairs facing each other as if for a 1:1. Sticky-notes plastered around.",
-
-  // CHAMBERS — large open rooms (more square than corridor-like)
-  room_chamber_empty:
-    "First-person view of a large open chamber in the office-keep. Vaulted ceiling, stone columns. Walls plastered with gantt charts and sticky-notes. Empty of furniture in the centre, just the volume of the room and its workplace clutter.",
-  room_chamber_combat:
-    "First-person view of a large open chamber in the office-keep prepared for battle. Overturned office chairs and a knocked-over standing desk with a cracked flickering monitor. Sticky-notes peeling off the walls. Tension in the air, empty of figures.",
-  room_chamber_treasure:
-    "First-person view of a large open chamber in the office-keep. A stone pedestal at center, lit by a column of warm light from above. An open ornate chest sits atop it, spilling gold coins and rolled printout scrolls.",
-  room_chamber_npc:
-    "First-person view of a large open chamber in the office-keep, furnished as a meeting room. A long wooden conference table with office chairs, a whiteboard at the back, kanban-board strips on the columns.",
-  room_chamber_merchant:
-    "First-person view of a large open chamber in the office-keep, set up as a vendor area. Wooden vending-kiosk stalls along one side, display shelves of vials and curios, brass service bells on the counters. Warm lamplight.",
-  room_chamber_trap:
-    "First-person view of a large open chamber in the office-keep, wired with traps. Pressure plates on the floor, blade slots in the walls, swinging pendulum chains overhead, ethernet tripwires at ankle height. A WARNING sticky-note on the far wall.",
-  room_chamber_loot:
-    "First-person view of a large open chamber in the office-keep, used as a storeroom. Wooden crates and stacked server boxes along the walls, a long cluttered table with vials, rolled scrolls, weapons.",
-
-  // ── NPC portraits (random pool) ───────────────────────────────────────────
-  // Generator picks one of these at random for each NPC room so dungeons
-  // don't all show the same person. Office-fantasy aesthetic — these are
-  // adventurers + engineers, not generic medieval villagers.
-  npc_portrait_1:
-    "Three-quarter view portrait of a weary senior engineer wearing leather-strapped robes and round spectacles. Holds a steaming ceramic mug of coffee in one hand and an unrolled scroll covered in code snippets in the other. Tied-back grey-streaked hair, kind crow's-feet eyes, scattered sticky notes pinned to the lapels of their coat. Single figure, warm lantern light, faint stone wall behind them. Friendly, knowing expression.",
-  npc_portrait_2:
-    "Three-quarter view portrait of a sharp-eyed project manager wearing fitted dark traveling clothes layered over a polished brigandine. A roll of burndown charts tucked under one arm, a quill behind one ear. Polished brass-rimmed monocle. Confident, slightly impatient smile. Single figure, warm interior light, blurred kanban-board glyphs behind them.",
-  npc_portrait_3:
-    "Three-quarter view portrait of a hooded fantasy consultant in deep blue robes embroidered with arcane terminal-command runes. Hood shadows the upper face; a sly knowing smile is visible. Carries a worn clipboard and a brass-tipped wand. Single figure, dim torchlight, mysterious atmosphere.",
-  npc_portrait_4:
-    "Three-quarter view portrait of an eager junior developer adventurer. Patchwork leather armor with brass buckles, a backpack stuffed with rolled scrolls of printout code, an ethernet-cord wrapped around their waist as a belt. Bright wide-eyed expression, a smudge of ink on their cheek. Single figure, warm daylight, faint stone hallway behind.",
-  npc_portrait_5:
-    "Three-quarter view portrait of a veteran SRE in dented plate armor partially covered by a server-room apron. Carries a heavy iron hammer at the hip and an oil-stained logbook in their hand. A pair of fiber-optic strands glow faintly along their pauldrons. Weathered, calm face. Single figure, dawn light, stoic mood.",
-  npc_portrait_6:
-    "Three-quarter view portrait of a tech-writer archivist in soft grey robes belted with a strap of pens and quills. A small leather satchel of bound books and parchments at their side. Wire-rimmed spectacles pushed up into curly hair. Kind, scholarly expression. Single figure, candlelit study atmosphere, faint shelves behind.",
-
-  // ── Merchant portraits (random pool) ──────────────────────────────────────
-  merchant_portrait_1:
-    "Three-quarter view portrait of a wandering trinket merchant in a colorful patchwork cloak hung with vials, charms, and small mechanical curios that dangle on copper chains. Wide friendly grin. Single figure, warm lantern light, a hint of a wooden stall behind them piled with goods.",
-  merchant_portrait_2:
-    "Three-quarter view portrait of an armor-smith merchant in a thick leather apron with welding goggles pushed up on their forehead. Soot-streaked arms, a heavy hammer at their belt. Stands in front of a small portable forge, sparks visible in the air. Confident, no-nonsense expression. Single figure, warm orange firelight.",
-  merchant_portrait_3:
-    "Three-quarter view portrait of a scroll-and-book merchant in long indigo robes covered in pinned bookmarks and ribboned page markers. A heavy ledger in one arm, a quill behind the ear. Pince-nez glasses, neat goatee. Bookshelves with stacked tomes visible behind. Polite, professorial smile. Single figure, candlelight.",
-  merchant_portrait_4:
-    "Three-quarter view portrait of a relic merchant in a long traveling coat with many pockets. A bandolier of glass vials across the chest, a worn leather satchel at the hip stuffed with curios. One steel-blue eye, one polished brass monocle. Mischievous knowing grin. Single figure, dim torchlit alcove, blurred shelves of curios behind.",
-  merchant_portrait_5:
-    "Three-quarter view portrait of a potion vendor in a stained earth-toned apron over a green tunic. Holds a stoppered glass vial up to the light, examining it. Bundles of dried herbs around the neck, a leather harness of small bottles across the chest. Kindly weathered face, easy smile. Single figure, soft amber light from hanging lanterns.",
-
-  // SPECIALS
-  room_entry:
-    "First-person view of the office-keep entryway. Heavy iron-bound doors open behind the viewer, the corridor ahead. A reception standing-desk on one side with a glowing monitor and a service bell. Pinned welcome sticky-notes. Warm natural daylight.",
-  room_boss:
-    "First-person view of a vast boss chamber inside the office-keep. Massive stone pillars wrapped in towering server racks with blinking red LEDs. War-banners overhead with corrupted sprint-velocity graphs in red. A raised dais at the far end with an enormous executive desk and a single throne. Ominous red emergency lighting.",
 } as const;
+
 
 export type ViewArtKey = keyof typeof VIEW_ART_PROMPTS;
 
 function viewArtKeyAndPrompt(shortKey: string, rawPrompt: string): { key: string; fullPrompt: string } {
-  // Grid-dungeon room backgrounds (room_*) use the office-fantasy room
-  // anchor so the keep reads as a workplace, not generic fantasy. All
-  // other view art (inventory, shop, class portraits, town views, etc.)
-  // keeps the original Ghibli STYLE_ANCHOR.
-  const anchor = shortKey.startsWith("room_") ? ROOM_STYLE_ANCHOR : STYLE_ANCHOR;
   return {
     key: `art/views/${ART_VERSION}/${shortKey}.png`,
-    fullPrompt: `${rawPrompt} ${anchor} ${NEGATIVES}`,
+    fullPrompt: `${rawPrompt} ${STYLE_ANCHOR} ${NEGATIVES}`,
   };
 }
 
@@ -971,7 +600,7 @@ export async function getOrScheduleViewArt(
 export async function pregenAllViewArt(
   ai: Ai,
   art: ArtTarget,
-  opts?: { force?: boolean | "room_only" },
+  opts?: { force?: boolean },
 ): Promise<Array<{ shortKey: string; status: "cached" | "generated" | "failed"; url: string | null }>> {
   const results: Array<{ shortKey: string; status: "cached" | "generated" | "failed"; url: string | null }> = [];
   const force = opts?.force ?? false;
@@ -979,13 +608,7 @@ export async function pregenAllViewArt(
     const prompt = VIEW_ART_PROMPTS[shortKey as ViewArtKey];
     const { key, fullPrompt } = viewArtKeyAndPrompt(shortKey, prompt);
     const publicUrl = `${art.baseUrl}/img/${key}`;
-    // Force regen modes:
-    //   true        → blow away every existing key before regenerating
-    //   "room_only" → only blow away keys with the room_* prefix (the
-    //                 office-themed dungeon backgrounds), leave town /
-    //                 inventory / class portraits cached.
-    const shouldForce = force === true || (force === "room_only" && shortKey.startsWith("room_"));
-    if (shouldForce) {
+    if (force) {
       try { await art.bucket.delete(key); } catch { /* ignore */ }
     } else {
       try {
@@ -1334,14 +957,13 @@ export interface JobListingFlavor {
 
 export async function generateJobListing(
   ai: Ai,
-  variant: "standard" | "boss" | "dungeon" | "gauntlet" | "bounty_pack",
+  variant: "standard" | "boss" | "gauntlet" | "bounty_pack",
   townName: string,
 ): Promise<JobListingFlavor> {
   const variantHint = (() => {
     switch (variant) {
       case "standard": return "A single foe somewhere outside town. Modest difficulty.";
       case "boss": return "A named, beefy foe with two phases. Group recommended.";
-      case "dungeon": return "A 5-7 room expedition with traps, lockboxes, NPC encounters, sub-boss + treasure.";
       case "gauntlet": return "Three monsters back-to-back with no rest between waves. No fleeing.";
       case "bounty_pack": return "Take out a small pack of 2-3 enemies at once — more dangerous but the contract pays extra. First group to engage gets dibs.";
     }
@@ -1365,7 +987,6 @@ export async function generateJobListing(
     switch (variant) {
       case "standard": return { title: "Goblin Trouble in the Outskirts", blurb: "Something's been ransacking the kanban field. Bring it down." };
       case "boss": return { title: "The Underlying Bug", blurb: "Old and stubborn, holed up in the temple ruins. Two phases by the rumors." };
-      case "dungeon": return { title: "Sprint Crypts", blurb: "Five rooms, locks, traps. Bring keys and friends." };
       case "gauntlet": return { title: "The On-Call Rotation", blurb: "Three pages, three monsters, no rest between. Light a candle." };
       case "bounty_pack": return { title: "Pack Sighting Near the Pipeline", blurb: "Two or three of them, running together. Double bounty. First squad gets credit." };
     }

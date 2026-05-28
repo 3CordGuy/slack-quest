@@ -12,8 +12,8 @@
 //       in the critical path. Works the same way in every modern engine.
 //
 // triggerBurst(kind) is the imperative escape hatch called from the WS
-// event loops in CombatPage and GridDungeonView. CombatParticles is the
-// overlay that listens and renders.
+// event loop in CombatPage. CombatParticles is the overlay that listens
+// and renders.
 
 import { useEffect, useRef, useState } from "react";
 

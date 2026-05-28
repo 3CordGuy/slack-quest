@@ -10,21 +10,15 @@ import { getCookie, setCookie, deleteCookie } from "hono/cookie";
 
 import {
   VIEW_ART_PROMPTS,
-  pregenAllViewArt,
   flavorCatalogItem,
   flavorDeath,
   flavorFleeSuccess,
   flavorHit,
   flavorLootDrop,
   flavorVictory,
-  generateExpeditionTheme,
   generateGauntletWaves,
   generateJobListing,
-  generateLockboxScene,
-  generateMerchantRoom,
-  generateNpcRoom,
   generateOpeningScene,
-  generateTrapRoom,
   generateTownName,
   generateCharacterName,
   getOrScheduleViewArt,
@@ -100,7 +94,6 @@ import {
   type TurnAction,
 } from "@gantt-quest/core";
 import {
-  addCharacterKey,
   addGold,
   addItem,
   addMana,
@@ -187,7 +180,6 @@ import {
   clearHiredMercForParty,
   setQuestMode,
   setQuestThreadTs,
-  trySaveExpeditionAdvance,
   getAllEquippedSlots,
   insertShopStock,
   characterLevelRange,
@@ -195,22 +187,9 @@ import {
   type ActiveQuest,
   type Character,
   type CharGender,
-  generateGridDungeon,
-  openDoor,
-  tryMove,
-  type DungeonDirection,
-  type DungeonGraph,
-  type DungeonNode,
-  type ExpeditionNode,
-  type ExpeditionNodeType,
-  type ExpeditionState,
-  type GridDoor,
-  type GridRoomContent,
-  type KeyTier,
   type LootOption,
   type MonsterSpec,
   type SceneJson,
-  type TrapChoice,
   getLobbyQuestForCharacter,
   getLobbyQuestById,
   getLobbyParty,
@@ -529,9 +508,8 @@ interface ToolDispatchResult {
 //   Rebase Scroll — refills mana to max for every alive party member
 //
 // Production Outage (instakill / boss 30%) and Crowbar of Last Resort
-// (dungeon-only lockbox) intentionally return an error here; both need
-// support that doesn't make sense until either monster-kill integration
-// or dungeon support lands.
+// intentionally return an error here; both need support that doesn't make
+// sense until monster-kill integration lands.
 function applyToolOrScroll(
   state: CombatState,
   actor: CombatState["fighters"][number],
@@ -819,7 +797,7 @@ interface WebQuestAnnounceArgs {
   characterClass: string;
   characterLevel: number;
   elite: boolean;
-  variant: "standard" | "boss" | "gauntlet" | "dungeon" | "tower";
+  variant: "standard" | "boss" | "gauntlet" | "tower";
   monsterName: string;
   monsterMaxHp: number;
   sceneText: string;
@@ -841,13 +819,11 @@ async function announceWebQuestToSlack(
   const variantBanner =
     args.variant === "boss" ? "👑 *BOSS QUEST*\n"
     : args.variant === "gauntlet" ? `⚔️ *GAUNTLET — ${args.totalWaves ?? "?"} waves, no flee*\n`
-    : args.variant === "dungeon" ? "🗺️ *DUNGEON*\n"
     : "";
 
   const variantBadge =
     args.variant === "boss" ? "👑 Boss"
     : args.variant === "gauntlet" ? "⚔️ Gauntlet"
-    : args.variant === "dungeon" ? "🗺️ Dungeon"
     : "⚔️ Quest";
 
   const openingText = [
@@ -1334,7 +1310,7 @@ const JOIN_HP_RATIO = 0.4;
 
 function addPackMonstersForParty(scene: SceneJson, partySize: number): SceneJson {
   if (scene.monsters && scene.monsters.length > 1) return scene;
-  if (scene.variant === "boss" || scene.variant === "dungeon") return scene;
+  if (scene.variant === "boss") return scene;
   const count = Math.min(3, Math.max(1, partySize));
   if (count <= 1) return scene;
   const minionHp = Math.max(8, Math.round(scene.monster_max_hp * 0.65));
@@ -1366,471 +1342,6 @@ function preScaleForJoiners(scene: SceneJson, joinerCount: number, ratio: number
 const BOSS_LEVEL_REQUIRED = 3;
 const GAUNTLET_LEVEL_REQUIRED = 5;
 const GAUNTLET_WAVES = 3;
-const DUNGEON_LEVEL_REQUIRED = 1;
-const DUNGEON_MIN_ROOMS = 5;
-const DUNGEON_MAX_ROOMS = 7;
-const EXPEDITION_TREASURE_OPTIONS = 2;
-
-// Builds a fresh dungeon SceneJson. All AI calls run in parallel.
-// Layout mirrors Slack: entry combat → middle pool (door-choice navigation) →
-// guaranteed merchant → sub-boss → treasure.
-async function buildDungeonScene(
-  env: Pick<Env, "AI" | "ART">,
-  character: Pick<Character, "name" | "class" | "level">,
-  elite: boolean,
-  avoidNames: string[] = [],
-): Promise<SceneJson> {
-  const art = { bucket: env.ART, baseUrl: WEB_PUBLIC_BASE };
-  const theme = await generateExpeditionTheme(env.AI);
-  const totalRoomsVisited =
-    DUNGEON_MIN_ROOMS + Math.floor(Math.random() * (DUNGEON_MAX_ROOMS - DUNGEON_MIN_ROOMS + 1));
-  const middleCount = totalRoomsVisited - 2;
-  const poolMiddleCount = middleCount * 2;
-
-  const poolTypes: ExpeditionNodeType[] = [];
-  for (let i = 0; i < poolMiddleCount; i++) {
-    const r = Math.random();
-    if (r < 0.40) poolTypes.push("combat");
-    else if (r < 0.65) poolTypes.push("trap");
-    else if (r < 0.85) poolTypes.push("lockbox");
-    else poolTypes.push("npc");
-  }
-  poolTypes[0] = "combat";
-
-  const failDamage = 4 + Math.max(1, character.level);
-  const baseTier = Math.max(1, character.level + (elite ? 1 : 0));
-
-  // Merges a roll + named result into a LootOption, preserving Phase 2 fields.
-  function mkLootOption(roll: ItemRoll, named: { name: string; flavor: string }) {
-    return {
-      name: named.name,
-      item_type: roll.type,
-      power: roll.power,
-      rarity: roll.rarity,
-      flavor: named.flavor,
-      weapon_range: roll.weapon_range ?? null,
-      ...(roll.slot ? { slot: roll.slot } : {}),
-      ...(roll.stat_bonus ? { stat_bonus: roll.stat_bonus as Record<string, number> } : {}),
-      ...(roll.item_subtype ? { item_subtype: roll.item_subtype } : {}),
-      ...(roll.element ? { element: roll.element } : {}),
-      ...(roll.tier != null ? { tier: roll.tier } : {}),
-    };
-  }
-
-  // Resolves an ItemRoll to a { name, flavor } pair.
-  async function resolveLoot(location: string, roll: ItemRoll): Promise<{ name: string; flavor: string }> {
-    if (roll.catalog_name) {
-      const entry = findCatalogEntry(roll.catalog_name);
-      if (entry) {
-        const flavor = await flavorCatalogItem(env.AI, entry.name, entry.blurb, location);
-        return { name: `${entry.emoji} ${entry.name}`, flavor };
-      }
-    }
-    return flavorLootDrop(
-      env.AI,
-      location,
-      roll.type as "weapon" | "armor" | "consumable" | "magic" | "revive",
-      roll.rarity,
-      roll.power,
-      roll.weapon_range,
-      roll.slot ?? undefined,
-      (roll.element ?? undefined) as ElementType | undefined,
-    );
-  }
-
-  const middleNodePromises: Promise<ExpeditionNode>[] = poolTypes.map(async (type, i) => {
-    const roomNum = i + 1;
-    if (type === "combat") {
-      const monster = await generateOpeningScene(env.AI, character, elite, "gauntlet-wave", { wave: roomNum, total: totalRoomsVisited }, avoidNames, art);
-      return {
-        type: "combat" as const,
-        scene: monster.scene,
-        monster_name: monster.monster_name,
-        monster_max_hp: monster.monster_max_hp,
-        monster_art_url: monster.monster_art_url,
-        tier: monster.tier,
-        drops_key: true,
-        drops_key_tier: "bronze" as KeyTier,
-      };
-    }
-    if (type === "trap") {
-      const trap = await generateTrapRoom(env.AI, theme, roomNum, totalRoomsVisited);
-      return {
-        type: "trap" as const,
-        scene: trap.scene,
-        trap_choices: [
-          { text: trap.options.str, emoji: "💪", skill: "str" as const, fail_damage: failDamage },
-          { text: trap.options.dex, emoji: "🔧", skill: "dex" as const, fail_damage: failDamage },
-          { text: trap.options.int, emoji: "📜", skill: "int" as const, fail_damage: failDamage },
-        ],
-      };
-    }
-    if (type === "lockbox") {
-      const r = Math.random();
-      const lockTier: KeyTier = r < 0.70 ? "bronze" : r < 0.95 ? "silver" : "gold";
-      const tierBump = lockTier === "bronze" ? 1 : lockTier === "silver" ? 2 : 3;
-      const rolls = Array.from({ length: 2 }, () => rollItem(baseTier + tierBump));
-      const [lockboxScene, ...named] = await Promise.all([
-        generateLockboxScene(env.AI, theme, roomNum, totalRoomsVisited),
-        ...rolls.map((roll) => resolveLoot("the locked chest", roll)),
-      ]);
-      const opts = rolls.map((roll, j) => mkLootOption(roll, named[j]));
-      return { type: "lockbox" as const, scene: lockboxScene, loot_options: opts, lock_tier: lockTier };
-    }
-    // npc
-    const npcName = generateNpcName();
-    const offerRoll = rollItem(baseTier);
-    const [npc, offerNamed] = await Promise.all([
-      generateNpcRoom(env.AI, theme, roomNum, totalRoomsVisited, npcName),
-      resolveLoot(`${npcName}'s pack`, offerRoll),
-    ]);
-    return {
-      type: "npc" as const,
-      scene: npc.scene,
-      npc: {
-        greeting: npc.greeting,
-        item: mkLootOption(offerRoll, offerNamed),
-      },
-    };
-  });
-
-  const bossPromise = generateOpeningScene(env.AI, character, elite, "boss", undefined, avoidNames, art);
-  const treasureRolls = Array.from({ length: EXPEDITION_TREASURE_OPTIONS }, () => rollItem(baseTier + 1));
-  const treasureNamedPromises = treasureRolls.map((roll) => resolveLoot("the dungeon's heart-chamber", roll));
-
-  const merchantName = generateMerchantName();
-  const merchantStockRolls = Array.from({ length: 3 }, () => rollMerchantItem(baseTier + 1));
-  const merchantPromise = (async () => {
-    const [info, ...named] = await Promise.all([
-      generateMerchantRoom(env.AI, theme, totalRoomsVisited - 2, totalRoomsVisited, merchantName),
-      ...merchantStockRolls.map((roll) => resolveLoot(`${merchantName}'s stall`, roll)),
-    ]);
-    const stock = merchantStockRolls.map((roll, j) => mkLootOption(roll, named[j]));
-    return { info, stock };
-  })();
-
-  const [middleNodes, merchantData, boss, treasureNamed] = await Promise.all([
-    Promise.all(middleNodePromises),
-    merchantPromise,
-    bossPromise,
-    Promise.all(treasureNamedPromises),
-  ]);
-
-  const nodes: ExpeditionNode[] = [...middleNodes];
-  nodes.push({
-    type: "merchant",
-    scene: merchantData.info.scene,
-    loot_options: merchantData.stock,
-    npc: { greeting: merchantData.info.greeting, item: merchantData.stock[0] },
-  });
-  nodes.push({
-    type: "combat",
-    scene: boss.scene,
-    monster_name: boss.monster_name,
-    monster_max_hp: boss.monster_max_hp,
-    tier: boss.tier,
-    drops_key: true,
-    drops_key_tier: "silver" as KeyTier,
-  });
-  const treasureLoot = treasureRolls.map((roll, i) => mkLootOption(roll, treasureNamed[i]));
-  nodes.push({
-    type: "treasure",
-    scene: "The dungeon opens onto its heart-chamber. A chest awaits.",
-    loot_options: treasureLoot,
-  });
-
-  const pool: number[] = [];
-  for (let i = 1; i < poolMiddleCount; i++) pool.push(i);
-  for (let i = pool.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [pool[i], pool[j]] = [pool[j], pool[i]];
-  }
-
-  const expedition: ExpeditionState = {
-    theme,
-    current: 0,
-    nodes,
-    path_taken: [],
-    keys: 0,
-    pool,
-    middle_count: middleCount,
-    visited_count: 1,
-    visited_indices: [0],
-    sealed_doors: [],
-  };
-
-  const first = nodes[0];
-  if (first.type === "combat") {
-    return {
-      monster_name: first.monster_name!,
-      monster_hp: first.monster_max_hp!,
-      monster_max_hp: first.monster_max_hp!,
-      tier: first.tier!,
-      scene: first.scene,
-      variant: "dungeon",
-      expedition,
-    };
-  }
-  return {
-    monster_name: "—",
-    monster_hp: 0,
-    monster_max_hp: 0,
-    tier: baseTier,
-    scene: first.scene,
-    variant: "dungeon",
-    expedition,
-  };
-}
-
-// ── Grid dungeon scene builder (new system) ─────────────────────────────────
-// Generates a SceneJson with `graph` populated (grid-based dungeon). The grid
-// generator (packages/db/src/dungeon_grid.ts) handles layout + door placement;
-// this function fills in AI-generated theme + monster names + loot flavor.
-//
-// Grid sizing: 4×4 (low tier), 4×5 (mid), 5×5 (high). Target ~10 rooms.
-async function buildGridDungeonScene(
-  env: Pick<Env, "AI" | "ART">,
-  character: Pick<Character, "name" | "class" | "level">,
-  elite: boolean,
-  avoidNames: string[] = [],
-): Promise<SceneJson> {
-  const art = { bucket: env.ART, baseUrl: WEB_PUBLIC_BASE };
-  const baseTier = Math.max(1, character.level + (elite ? 1 : 0));
-  const seed = Math.floor(Math.random() * 0x7fffffff);
-
-  // Grid dims scale with level
-  const width = character.level >= 5 ? 5 : 4;
-  const height = character.level >= 4 ? 5 : 4;
-  const targetRoomCount = Math.min(width * height, character.level >= 5 ? 14 : character.level >= 3 ? 12 : 10);
-
-  // Pre-roll loot pools. We over-provision and pop from these in the callbacks.
-  function mkLoot(rollTier: number): LootOption {
-    const r = rollItem(rollTier);
-    return {
-      name: `${r.type === "weapon" ? "Weapon" : r.type === "armor" ? "Armor" : "Item"} (power ${r.power})`,
-      item_type: r.type,
-      power: r.power,
-      rarity: r.rarity,
-      flavor: "",
-      weapon_range: r.weapon_range ?? null,
-      ...(r.slot ? { slot: r.slot } : {}),
-      ...(r.stat_bonus ? { stat_bonus: r.stat_bonus as Record<string, number> } : {}),
-      ...(r.item_subtype ? { item_subtype: r.item_subtype } : {}),
-      ...(r.element ? { element: r.element } : {}),
-    };
-  }
-
-  // Heuristic to spot the placeholder names mkLoot emits, so we only flavor
-  // grid loot rather than re-naming catalog tools/scrolls that snuck in
-  // (which currently aren't grid-routed but might be later).
-  function isPlaceholderLootName(name: string): boolean {
-    return /^(Weapon|Armor|Item) \(power \d+\)$/.test(name);
-  }
-
-  // Flavor a single LootOption in place. No-op if AI returns a falsy name.
-  async function flavorOne(loc: string, opt: LootOption): Promise<void> {
-    if (!isPlaceholderLootName(opt.name)) return;
-    try {
-      const { name, flavor } = await flavorLootDrop(
-        env.AI,
-        loc,
-        opt.item_type as "weapon" | "armor" | "consumable" | "magic" | "revive",
-        opt.rarity,
-        opt.power,
-        opt.weapon_range ?? undefined,
-        opt.slot ?? undefined,
-        opt.element ?? undefined,
-      );
-      if (name) opt.name = name;
-      if (flavor) opt.flavor = flavor;
-    } catch {
-      // Fall through — the placeholder name remains and the UI's
-      // displayLootName fallback kicks in.
-    }
-  }
-
-  // Roll AI theme + boss + a few monster packs in parallel.
-  // Encounter rooms get one "leader" monster from `encounterScenes`. From
-  // tier 3 onward, some encounters also pull a "minion" from a separate
-  // bonus pool — minions are pre-generated so their names stay flavorful
-  // even when we double up. Minion HP is reduced (~70%) so packs don't
-  // overwhelm pacing relative to the single-monster baseline.
-  const encounterCount = Math.max(3, Math.floor(targetRoomCount * 0.4));
-  const bonusPoolSize = baseTier >= 3 ? Math.max(2, Math.ceil(encounterCount / 2)) : 0;
-  const [theme, ...allScenes] = await Promise.all([
-    generateExpeditionTheme(env.AI),
-    ...Array.from({ length: encounterCount + bonusPoolSize }, () =>
-      generateOpeningScene(env.AI, character, elite, "standard", undefined, avoidNames, art),
-    ),
-  ]);
-  const encounterScenes = allScenes.slice(0, encounterCount);
-  const bonusScenes = allScenes.slice(encounterCount);
-
-  const bossScene = await generateOpeningScene(env.AI, character, elite, "boss", undefined, avoidNames, art);
-
-  const encounterLeaders: MonsterSpec[] = encounterScenes.map((s) => ({
-    name: s.monster_name,
-    hp: s.monster_max_hp,
-    max_hp: s.monster_max_hp,
-    tier: s.tier,
-    art_url: s.monster_art_url ?? null,
-    flavor: s.scene,
-  }));
-  const bonusMinions: MonsterSpec[] = bonusScenes.map((s) => ({
-    name: s.monster_name,
-    // Minions are ~70% HP — keeps the fight from doubling in length.
-    hp: Math.max(8, Math.round(s.monster_max_hp * 0.7)),
-    max_hp: Math.max(8, Math.round(s.monster_max_hp * 0.7)),
-    tier: Math.max(1, s.tier - 1),
-    art_url: s.monster_art_url ?? null,
-    flavor: s.scene,
-  }));
-  const bossPack: MonsterSpec[] = [{
-    name: bossScene.monster_name,
-    hp: bossScene.monster_max_hp,
-    max_hp: bossScene.monster_max_hp,
-    tier: bossScene.tier,
-    is_boss: true,
-    art_url: bossScene.monster_art_url ?? null,
-    flavor: bossScene.scene,
-  }];
-
-  let encounterIdx = 0;
-  let bonusIdx = 0;
-  function rollMonsterPack(isBoss: boolean): MonsterSpec[] {
-    if (isBoss) return bossPack;
-    // Cycle through pre-rolled leaders; if we run out, wrap.
-    const leader = encounterLeaders[encounterIdx % encounterLeaders.length];
-    encounterIdx++;
-    const pack: MonsterSpec[] = [{ ...leader, hp: leader.max_hp }]; // fresh copy
-
-    // Pack-size odds driven by character level (progression gate) + elite
-    // difficulty (hard-mode bump). Low levels stay solo so new players aren't
-    // overwhelmed; mid-game pairs become common; high-level elite quests can
-    // see rare triples.
-    //   Level 1-2 : solo only
-    //   Level 3-4 : 20% pair  /  2% triple
-    //   Level 5-6 : 30% pair  / 10% triple
-    //   Level 7+  : 40% pair  / 18% triple
-    // Elite adds  :+15% pair  /+10% triple on top of the base
-    const lvl = character.level;
-    const basePair   = lvl >= 7 ? 0.40 : lvl >= 5 ? 0.30 : lvl >= 3 ? 0.20 : 0;
-    const baseTriple = lvl >= 7 ? 0.18 : lvl >= 5 ? 0.10 : lvl >= 3 ? 0.02 : 0;
-    const pairChance   = Math.min(0.65, basePair   + (elite ? 0.15 : 0));
-    const tripleChance = Math.min(0.35, baseTriple + (elite ? 0.10 : 0));
-
-    const r = Math.random();
-    const extras = r < tripleChance ? 2 : r < tripleChance + pairChance ? 1 : 0;
-
-    for (let i = 0; i < extras && bonusMinions.length > 0; i++) {
-      const minion = bonusMinions[bonusIdx % bonusMinions.length];
-      bonusIdx++;
-      pack.push({ ...minion, hp: minion.max_hp }); // fresh copy
-    }
-    return pack;
-  }
-
-  function rollLoot(rollTier: number, kind: "loot" | "treasure" | "merchant" | "npc"): LootOption[] {
-    const count = kind === "treasure" ? 3 : kind === "merchant" ? 3 : kind === "loot" ? 2 : 1;
-    return Array.from({ length: count }, () => mkLoot(rollTier));
-  }
-
-  const failDamage = 4 + Math.max(1, character.level);
-  function rollTrap(_tier: number): TrapChoice[] {
-    return [
-      { text: "Force your way through", emoji: "💪", skill: "str", fail_damage: failDamage },
-      { text: "Disarm the mechanism", emoji: "🔧", skill: "dex", fail_damage: failDamage },
-      { text: "Decipher the ward", emoji: "📜", skill: "int", fail_damage: failDamage },
-    ];
-  }
-
-  function npcGreeting(): string {
-    return "A weary traveler nods at you. \"Care to trade?\"";
-  }
-  function merchantGreeting(): string {
-    return "A hooded merchant gestures at their wares.";
-  }
-  // Random portraits from the pre-generated NPC/merchant pools. Each room
-  // picks a different one (deterministic by seed once we read it).
-  const NPC_KEYS = ["npc_portrait_1", "npc_portrait_2", "npc_portrait_3", "npc_portrait_4", "npc_portrait_5", "npc_portrait_6"];
-  const MERCHANT_KEYS = ["merchant_portrait_1", "merchant_portrait_2", "merchant_portrait_3", "merchant_portrait_4", "merchant_portrait_5"];
-  function npcArtUrl(): string {
-    const k = NPC_KEYS[Math.floor(Math.random() * NPC_KEYS.length)];
-    return `${WEB_PUBLIC_BASE}/img/art/views/v6/${k}.png`;
-  }
-  function merchantArtUrl(): string {
-    const k = MERCHANT_KEYS[Math.floor(Math.random() * MERCHANT_KEYS.length)];
-    return `${WEB_PUBLIC_BASE}/img/art/views/v6/${k}.png`;
-  }
-  function describeRoom(kind: GridRoomContent["kind"], _shape: string): string {
-    switch (kind) {
-      case "entry": return "You step into the dungeon. The way forward beckons.";
-      case "empty": return "A quiet stretch of corridor. Dust drifts in shafts of light.";
-      case "encounter": return "A foe lurks ahead.";
-      case "boss": return "The boss-chamber. Something terrible waits within.";
-      case "loot": return "An item glints on the floor.";
-      case "key_pickup": return "A key dangles from a rusted hook.";
-      case "trap": return "Suspicious mechanisms line the walls.";
-      case "lockbox": return "A locked chest sits in the room.";
-      case "npc": return "Someone is here.";
-      case "merchant": return "A merchant's stall has been set up here.";
-    }
-  }
-
-  const graph = generateGridDungeon({
-    seed,
-    tier: baseTier,
-    width,
-    height,
-    targetRoomCount,
-    rollMonsterPack,
-    rollLoot,
-    rollTrap,
-    npcGreeting,
-    merchantGreeting,
-    npcArtUrl,
-    merchantArtUrl,
-    describeRoom,
-  });
-
-  // Post-pass: replace the placeholder "Weapon (power N)" / "Item (power N)"
-  // / "Armor (power N)" names generated by mkLoot with AI-flavored names +
-  // flavor blurbs. The grid generator is pure & synchronous and can't await
-  // AI calls; doing it here in parallel keeps dungeon-start latency
-  // bounded while still giving boss treasure / lockbox / merchant / npc
-  // loot proper names. Failures fall through to placeholder display.
-  {
-    const tasks: Promise<void>[] = [];
-    for (const node of Object.values(graph.nodes)) {
-      const c = node.content;
-      if (!c) continue;
-      if (c.kind === "boss" && c.treasure) {
-        for (const it of c.treasure) tasks.push(flavorOne("the boss's hoard", it));
-      } else if (c.kind === "loot" && c.items) {
-        for (const it of c.items) tasks.push(flavorOne("the room floor", it));
-      } else if (c.kind === "lockbox" && c.options) {
-        for (const it of c.options) tasks.push(flavorOne("the locked chest", it));
-      } else if (c.kind === "npc" && c.offer) {
-        tasks.push(flavorOne("the traveler's pack", c.offer));
-      } else if (c.kind === "merchant" && c.stock) {
-        for (const it of c.stock) tasks.push(flavorOne("the merchant's stall", it));
-      }
-    }
-    await Promise.all(tasks);
-  }
-
-  // Entry node carries the scene's display info.
-  const entry = graph.nodes[graph.current];
-  return {
-    monster_name: "—",
-    monster_hp: 0,
-    monster_max_hp: 0,
-    tier: baseTier,
-    scene: entry.description,
-    variant: "dungeon",
-    graph,
-  };
-}
 
 // Tower constants.
 const TOWER_LEVEL_REQUIRED = 3;
@@ -2007,7 +1518,7 @@ function towerSceneFromPlan(plan: TowerFloorPlan, queue: TowerFloorPlan[], cycle
   };
 }
 
-// Start a fresh quest. Supports standard / boss / gauntlet / dungeon / tower variants.
+// Start a fresh quest. Supports standard / boss / gauntlet / tower variants.
 app.post("/api/quest/start", async (c) => {
   const session = await currentSession(c.env.DB, c.req.header("cookie"));
   if (!session) return c.json({ error: "unauthenticated" }, 401);
@@ -2025,7 +1536,7 @@ app.post("/api/quest/start", async (c) => {
   const variant = body?.variant;
   const elite = body?.elite === true;
   const jobMonsterCount = typeof body?.monster_count === "number" ? Math.max(1, Math.min(3, body.monster_count as number)) : 1;
-  if (variant !== "standard" && variant !== "boss" && variant !== "gauntlet" && variant !== "dungeon" && variant !== "bounty_pack" && variant !== "tower") {
+  if (variant !== "standard" && variant !== "boss" && variant !== "gauntlet" && variant !== "bounty_pack" && variant !== "tower") {
     return c.json({ error: "unsupported_variant", variant }, 400);
   }
   if (variant === "boss" && character.level < BOSS_LEVEL_REQUIRED) {
@@ -2033,9 +1544,6 @@ app.post("/api/quest/start", async (c) => {
   }
   if (variant === "gauntlet" && character.level < GAUNTLET_LEVEL_REQUIRED) {
     return c.json({ error: "gauntlet_level_gate", required: GAUNTLET_LEVEL_REQUIRED }, 400);
-  }
-  if (variant === "dungeon" && character.level < DUNGEON_LEVEL_REQUIRED) {
-    return c.json({ error: "dungeon_level_gate", required: DUNGEON_LEVEL_REQUIRED }, 400);
   }
   if (variant === "tower" && character.level < TOWER_LEVEL_REQUIRED) {
     return c.json({ error: "tower_level_gate", required: TOWER_LEVEL_REQUIRED }, 400);
@@ -2054,8 +1562,6 @@ app.post("/api/quest/start", async (c) => {
       total_waves: GAUNTLET_WAVES,
       upcoming_waves: gen.upcoming_waves.map((w) => ({ name: w.name, max_hp: w.max_hp, scene: "" })),
     };
-  } else if (variant === "dungeon") {
-    scene = await buildGridDungeonScene(c.env, character, elite, avoidNames);
   } else if (variant === "tower") {
     const { floors } = await buildTowerSegment(c.env, character, 1, avoidNames);
     const [first, ...rest] = floors;
@@ -2125,7 +1631,7 @@ app.post("/api/quest/start", async (c) => {
         characterClass: character.class,
         characterLevel: character.level,
         elite,
-        variant: variant as "standard" | "boss" | "gauntlet" | "dungeon" | "tower",
+        variant: variant as "standard" | "boss" | "gauntlet" | "tower",
         monsterName: scene.monster_name,
         monsterMaxHp: scene.monster_max_hp,
         sceneText: scene.scene,
@@ -2170,7 +1676,7 @@ app.post("/api/quest/start_with_party", async (c) => {
   const invitees = Array.isArray(body?.invitees)
     ? (body!.invitees as unknown[]).filter((x): x is string => typeof x === "string").slice(0, 5)
     : [];
-  if (variant !== "standard" && variant !== "boss" && variant !== "gauntlet" && variant !== "dungeon" && variant !== "tower") {
+  if (variant !== "standard" && variant !== "boss" && variant !== "gauntlet" && variant !== "tower") {
     return c.json({ error: "unsupported_variant" }, 400);
   }
   if (variant === "boss" && character.level < BOSS_LEVEL_REQUIRED) {
@@ -2178,9 +1684,6 @@ app.post("/api/quest/start_with_party", async (c) => {
   }
   if (variant === "gauntlet" && character.level < GAUNTLET_LEVEL_REQUIRED) {
     return c.json({ error: "gauntlet_level_gate", required: GAUNTLET_LEVEL_REQUIRED }, 400);
-  }
-  if (variant === "dungeon" && character.level < DUNGEON_LEVEL_REQUIRED) {
-    return c.json({ error: "dungeon_level_gate", required: DUNGEON_LEVEL_REQUIRED }, 400);
   }
   if (variant === "tower" && character.level < TOWER_LEVEL_REQUIRED) {
     return c.json({ error: "tower_level_gate", required: TOWER_LEVEL_REQUIRED }, 400);
@@ -2200,8 +1703,6 @@ app.post("/api/quest/start_with_party", async (c) => {
       total_waves: GAUNTLET_WAVES,
       upcoming_waves: gen.upcoming_waves.map((w) => ({ name: w.name, max_hp: w.max_hp, scene: "" })),
     };
-  } else if (variant === "dungeon") {
-    scene = await buildGridDungeonScene(c.env, character, elite, avoidNames);
   } else if (variant === "tower") {
     const { floors } = await buildTowerSegment(c.env, character, 1, avoidNames);
     const [first, ...rest] = floors;
@@ -2236,8 +1737,7 @@ app.post("/api/quest/start_with_party", async (c) => {
     const token = c.env.SLACK_BOT_TOKEN;
     if (token) {
       const questLabel =
-        variant === "dungeon" ? "a dungeon expedition"
-        : variant === "boss" ? "a boss fight"
+        variant === "boss" ? "a boss fight"
         : variant === "gauntlet" ? "a gauntlet"
         : "a quest";
       c.executionCtx.waitUntil((async () => {
@@ -2289,15 +1789,10 @@ app.get("/api/quest/joinable", async (c) => {
   if (!quest) return c.json({ joinable: null });
   // Mode is informational only — both surfaces drive the same step() engine
   // via QuestRoom RPC when LEGACY_SLACK_COMBAT="0" is set on the slack
-  // worker. Quest-shape locks (gauntlet wave 1+, dungeon past entry room)
-  // still apply because those are about state, not surface ownership.
+  // worker. Quest-shape locks (gauntlet wave 1+) still apply because those
+  // are about state, not surface ownership.
   if (quest.scene.variant === "gauntlet" && (quest.scene.wave ?? 1) > 1) {
     return c.json({ joinable: null, reason: "gauntlet_advanced" });
-  }
-  if (quest.scene.variant === "dungeon") {
-    const exp = quest.scene.expedition;
-    const advanced = (exp?.visited_count ?? 1) > 1 || (exp?.pending_doors?.length ?? 0) > 0;
-    if (advanced) return c.json({ joinable: null, reason: "dungeon_advanced" });
   }
   if (quest.scene.variant === "tower" && (quest.scene.tower_floor ?? 1) > 1) {
     return c.json({ joinable: null, reason: "tower_advanced" });
@@ -2337,11 +1832,6 @@ app.post("/api/quest/join", async (c) => {
   // still apply.
   if (quest.scene.variant === "gauntlet" && (quest.scene.wave ?? 1) > 1) {
     return c.json({ error: "gauntlet_advanced" }, 400);
-  }
-  if (quest.scene.variant === "dungeon") {
-    const exp = quest.scene.expedition;
-    const advanced = (exp?.visited_count ?? 1) > 1 || (exp?.pending_doors?.length ?? 0) > 0;
-    if (advanced) return c.json({ error: "dungeon_advanced" }, 400);
   }
   if (quest.scene.variant === "tower" && (quest.scene.tower_floor ?? 1) > 1) {
     return c.json({ error: "tower_advanced" }, 400);
@@ -2400,59 +1890,6 @@ app.post("/api/quest/join", async (c) => {
   });
 });
 
-// Key economy — sell or transmute dungeon keys between quests.
-// Mirrors /sq sell-key and /sq transmute in Slack.
-const KEY_SELL_PRICE: Record<"bronze" | "silver" | "gold", number> = {
-  bronze: 5,
-  silver: 25,
-  gold: 100,
-};
-const KEY_TRANSMUTE_COST = 3;
-
-app.post("/api/keys/sell", async (c) => {
-  const session = await currentSession(c.env.DB, c.req.header("cookie"));
-  if (!session) return c.json({ error: "unauthenticated" }, 401);
-  const body = (await c.req.json().catch(() => null)) as { tier?: unknown } | null;
-  const tier = body?.tier;
-  if (tier !== "bronze" && tier !== "silver" && tier !== "gold") {
-    return c.json({ error: "bad_tier" }, 400);
-  }
-  if (await getActiveQuestForCharacter(c.env.DB, session.slack_user_id)) {
-    return c.json({ error: "mid_quest" }, 400);
-  }
-  const character = await getCharacter(c.env.DB, session.slack_user_id);
-  if (!character) return c.json({ error: "no_character" }, 404);
-  const have = tier === "bronze" ? character.keys_bronze : tier === "silver" ? character.keys_silver : character.keys_gold;
-  if (have < 1) return c.json({ error: "no_keys", have }, 400);
-  const price = KEY_SELL_PRICE[tier];
-  await addCharacterKey(c.env.DB, session.slack_user_id, tier, -1);
-  await addGold(c.env.DB, session.slack_user_id, price);
-  return c.json({ ok: true, tier, price, new_gold: character.gold + price });
-});
-
-app.post("/api/keys/transmute", async (c) => {
-  const session = await currentSession(c.env.DB, c.req.header("cookie"));
-  if (!session) return c.json({ error: "unauthenticated" }, 401);
-  const body = (await c.req.json().catch(() => null)) as { from_tier?: unknown } | null;
-  const fromTier = body?.from_tier;
-  if (fromTier !== "bronze" && fromTier !== "silver") {
-    return c.json({ error: "bad_tier" }, 400);
-  }
-  if (await getActiveQuestForCharacter(c.env.DB, session.slack_user_id)) {
-    return c.json({ error: "mid_quest" }, 400);
-  }
-  const character = await getCharacter(c.env.DB, session.slack_user_id);
-  if (!character) return c.json({ error: "no_character" }, 404);
-  const toTier = fromTier === "bronze" ? "silver" : "gold";
-  const have = fromTier === "bronze" ? character.keys_bronze : character.keys_silver;
-  if (have < KEY_TRANSMUTE_COST) {
-    return c.json({ error: "not_enough_keys", have, need: KEY_TRANSMUTE_COST }, 400);
-  }
-  await addCharacterKey(c.env.DB, session.slack_user_id, fromTier, -KEY_TRANSMUTE_COST);
-  await addCharacterKey(c.env.DB, session.slack_user_id, toTier, 1);
-  return c.json({ ok: true, from_tier: fromTier, to_tier: toTier, cost: KEY_TRANSMUTE_COST });
-});
-
 // Town overview — returns AI art URLs for the map + each district. Lightweight:
 // no quest/character check required, just session.
 app.get("/api/town", async (c) => {
@@ -2489,7 +1926,7 @@ async function refreshWebTownIfStale(db: D1Database, ai: Ai, channelId: string):
     pub?: unknown;
     jobs?: Array<{
       id: string;
-      variant: "standard" | "boss" | "dungeon" | "gauntlet";
+      variant: "standard" | "boss" | "gauntlet";
       required_level: number;
       title: string;
       blurb: string;
@@ -2511,12 +1948,10 @@ async function refreshWebTownIfStale(db: D1Database, ai: Ai, channelId: string):
   }
 
   const BOSS_LEVEL_REQUIRED_LOCAL = 3;
-  const EXPEDITION_LEVEL_REQUIRED_LOCAL = 1;
 
-  const [jobStd, jobBoss, jobDung, jobPack] = await Promise.all([
+  const [jobStd, jobBoss, jobPack] = await Promise.all([
     generateJobListing(ai, "standard", townName),
     generateJobListing(ai, "boss", townName),
-    generateJobListing(ai, "dungeon", townName),
     generateJobListing(ai, "bounty_pack", townName),
   ]);
 
@@ -2526,7 +1961,6 @@ async function refreshWebTownIfStale(db: D1Database, ai: Ai, channelId: string):
   const jobs = [
     { id: "job_1", variant: "standard" as const, required_level: 1, title: jobStd.title, blurb: jobStd.blurb, reward_summary: "1× rewards · +12% town bonus · single foe." },
     { id: "job_2", variant: "boss" as const, required_level: BOSS_LEVEL_REQUIRED_LOCAL, title: jobBoss.title, blurb: jobBoss.blurb, reward_summary: "2× rewards · +12% town bonus · two phases." },
-    { id: "job_3", variant: "dungeon" as const, required_level: EXPEDITION_LEVEL_REQUIRED_LOCAL, title: jobDung.title, blurb: jobDung.blurb, reward_summary: "2.5× rewards · +12% town bonus · 5-7 rooms, sub-boss, treasure." },
     { id: "job_4", variant: "bounty_pack" as const, required_level: 2, monster_count: packSize, title: jobPack.title, blurb: jobPack.blurb, reward_summary: `1.6× rewards · +12% town bonus · fight ${packSize} enemies at once · first come first served.` },
   ];
 
@@ -2564,7 +1998,7 @@ app.get("/api/board", async (c) => {
     refreshed_at: number;
     jobs?: Array<{
       id: string;
-      variant: "standard" | "boss" | "dungeon" | "gauntlet" | "bounty_pack";
+      variant: "standard" | "boss" | "gauntlet" | "bounty_pack";
       required_level: number;
       monster_count?: number;
       title: string;
@@ -2618,7 +2052,7 @@ app.post("/api/board/take", async (c) => {
     refreshed_at: number;
     jobs?: Array<{
       id: string;
-      variant: "standard" | "boss" | "dungeon" | "gauntlet" | "bounty_pack";
+      variant: "standard" | "boss" | "gauntlet" | "bounty_pack";
       required_level: number;
       monster_count?: number;
       title: string;
@@ -2654,8 +2088,6 @@ app.post("/api/board/take", async (c) => {
       total_waves: GAUNTLET_WAVES,
       upcoming_waves: gen.upcoming_waves.map((w) => ({ name: w.name, max_hp: w.max_hp, scene: "" })),
     };
-  } else if (variant === "dungeon") {
-    scene = await buildGridDungeonScene(c.env, character, false, avoidNames);
   } else if (variant === "bounty_pack") {
     const packSize = Math.max(1, Math.min(3, job.monster_count ?? 2));
     const art = artTarget(c.env);
@@ -2701,8 +2133,7 @@ app.post("/api/board/take", async (c) => {
   await refillMana(c.env.DB, session.slack_user_id);
 
   // Announce the board-claim quest the same way the main /api/quest/start
-  // path does. Job-board quests are always non-elite + non-dungeon-mid-flow
-  // by definition (fresh claim, fresh quest).
+  // path does. Job-board quests are always non-elite (fresh claim, fresh quest).
   if (c.env.SLACK_BOT_TOKEN) {
     c.executionCtx.waitUntil((async () => {
       const ts = await announceWebQuestToSlack(c.env, {
@@ -2713,7 +2144,7 @@ app.post("/api/board/take", async (c) => {
         characterClass: character.class,
         characterLevel: character.level,
         elite: false,
-        variant: variant as "standard" | "boss" | "gauntlet" | "dungeon" | "tower",
+        variant: variant as "standard" | "boss" | "gauntlet" | "tower",
         monsterName: scene.monster_name,
         monsterMaxHp: scene.monster_max_hp,
         sceneText: scene.scene,
@@ -2886,7 +2317,7 @@ app.post("/api/hunt", async (c) => {
   leaderScene.variant = "standard";
 
   // Pack hunts embed extra monsters in scene_json so buildInitialCombatState
-  // picks them up the same way dungeon encounters do.
+  // picks them up the same way multi-monster encounters do.
   if (monsterCount > 1) {
     leaderScene.monsters = [
       { name: leaderScene.monster_name, hp: leaderScene.monster_max_hp, max_hp: leaderScene.monster_max_hp, tier: leaderScene.tier, art_url: leaderScene.monster_art_url ?? null },
@@ -3005,9 +2436,8 @@ app.post("/api/shop/:itemId/buy", async (c) => {
 });
 
 // Buy a staple potion — always in stock, fixed price, no buy cap, no haggle.
-// Allowed mid-quest (unlike rolled stock) because staples are also sold by
-// the in-dungeon merchant in slack; keeping parity here lets the player
-// stock up before/between/inside fights uniformly.
+// Allowed mid-quest (unlike rolled stock) so the player can stock up
+// before/between/inside fights uniformly.
 app.post("/api/shop/staple/:stapleId/buy", async (c) => {
   const session = await currentSession(c.env.DB, c.req.header("cookie"));
   if (!session) return c.json({ error: "unauthenticated" }, 401);
@@ -4693,10 +4123,7 @@ app.get("/api/quest/active", async (c) => {
   // can auto-resume the CombatPage on reload / back navigation. We treat
   // a row whose status is victory/defeat/fled as "no active combat" —
   // it lingers post-fight so the outcome stays replayable for a client
-  // that missed the WS frame, but mounting GridDungeonView with that
-  // row still present caused the previous fight's victory overlay to
-  // flash on every new room entry until the next start_web_combat
-  // cleaned it up.
+  // that missed the WS frame.
   const existingCombat = await getWebCombatState(c.env.DB, quest.id);
   const terminalStates = new Set(["victory", "defeat", "fled"]);
   const hasWebCombat = !!existingCombat && !terminalStates.has(existingCombat.status as string);
@@ -4952,11 +4379,9 @@ app.post("/api/quest/:id/lobby/invite", async (c) => {
   if (dmToken && target.slack_username) {
     const inviter = await getCharacter(c.env.DB, session.slack_user_id);
     const questLabel =
-      (quest.scene as { expedition?: { theme: string } | null; variant?: string; monster_name?: string }).expedition?.theme
-        ? `a dungeon expedition`
-        : (quest.scene as { variant?: string; monster_name?: string }).variant === "boss"
-          ? `a boss fight`
-          : `a quest`;
+      (quest.scene as { variant?: string; monster_name?: string }).variant === "boss"
+        ? `a boss fight`
+        : `a quest`;
     c.executionCtx.waitUntil((async () => {
       const openRes = await fetch("https://slack.com/api/conversations.open", {
         method: "POST",
@@ -5183,7 +4608,7 @@ app.post("/api/quest/:id/tower/rest_advance", async (c) => {
 // the existing one is returned untouched so a refresh in the middle of a
 // fight doesn't reset progress.
 //
-// v1 limits: standard + boss variants only. Gauntlet/dungeon stay on Slack.
+// v1 limits: standard + boss variants only. Gauntlet stays on Slack.
 app.post("/api/quest/:id/start_web_combat", async (c) => {
   const session = await currentSession(c.env.DB, c.req.header("cookie"));
   if (!session) return c.json({ error: "unauthenticated" }, 401);
@@ -5230,8 +4655,7 @@ app.post("/api/quest/:id/start_web_combat", async (c) => {
   // is over either way).
   await setQuestMode(c.env.DB, questId, "web");
   // Wake the QuestRoom DO and have it broadcast the fresh state to any
-  // WS clients that connected before combat started (the dungeon view
-  // keeps its WS open across the whole expedition). Without this nudge
+  // WS clients that connected before combat started. Without this nudge
   // the client hangs on "Connecting to combat…" until a manual refresh.
   const doId = c.env.QUEST_ROOM.idFromName(`quest:${questId}`);
   const doStub = c.env.QUEST_ROOM.get(doId);
@@ -6561,27 +5985,6 @@ app.get("/api/ws/quest/:id", async (c) => {
   return stub.fetch(new Request(url.toString(), c.req.raw));
 });
 
-// One-shot admin endpoint to pre-generate all VIEW_ART_PROMPTS images (including
-// the new dungeon room backgrounds) so they're warm in R2 before the first
-// player visits. No auth required — only callable by admins who know the URL.
-// Sequential to avoid Workers AI rate limits; expect ~2-3 min for 28+ images.
-app.post("/api/admin/pregen_dungeon_rooms", async (c) => {
-  const art = artTarget(c.env);
-  // ?force=1 wipes every cached view-art before regenerating.
-  // ?force=rooms wipes only the room_* keys (grid dungeon backgrounds) and
-  // leaves town / inventory / class portraits untouched.
-  const force = c.req.query("force");
-  const forceMode: boolean | "room_only" | undefined =
-    force === "1" || force === "true" ? true
-    : force === "rooms" || force === "room" ? "room_only"
-    : undefined;
-  const results = await pregenAllViewArt(c.env.AI, art, forceMode ? { force: forceMode } : undefined);
-  const generated = results.filter((r) => r.status === "generated").length;
-  const cached = results.filter((r) => r.status === "cached").length;
-  const failed = results.filter((r) => r.status === "failed").length;
-  return c.json({ ok: true, total: results.length, generated, cached, failed, force: forceMode ?? null, results });
-});
-
 // Health check. Anything else falls through to the ASSETS binding via the
 // wrangler `not_found_handling: single-page-application` config.
 app.get("/api/health", (c) => c.json({ ok: true }));
@@ -6900,12 +6303,6 @@ export interface OutcomeSummary {
   total_pool_gold: number;
   elite: boolean;
   is_boss: boolean;
-  // True when this was a dungeon combat room — quest stays active, player
-  // picks the next door to advance.
-  dungeon_room_cleared?: boolean;
-  // When dungeon_room_cleared and the expedition produced two door choices,
-  // these are the node stubs the client shows in the VictoryModal door picker.
-  dungeon_doors?: Array<{ type: string; monster_name: string | null; scene: string | null }>;
   // Tower-only: true when the cleared combat was a tower floor that flipped
   // the scene into the next floor (combat / rest) or post-boss
   // awaiting-choice state. Quest stays active; web client re-fetches the
@@ -6917,7 +6314,7 @@ export interface OutcomeSummary {
 }
 
 interface ServerToClient {
-  type: "state" | "events" | "error" | "outcome" | "flavor" | "log_replay" | "dungeon_move";
+  type: "state" | "events" | "error" | "outcome" | "flavor" | "log_replay";
   state?: CombatState;
   events?: unknown[];
   message?: string;
@@ -7146,7 +6543,6 @@ async function applyWebCombatOutcome(
         scarsCount: charAfter.scars.length,
         softDeathsTotal: stats.deaths_soft,
         isJobBoard: questVariant === "job_board",
-        isDungeon: questVariant === "dungeon",
         isElite: elite,
         isNoDeathRun: state.fighters.every((f) => f.hp > 0),
         initialMonsterCount: state.monsters.length,
@@ -7155,9 +6551,6 @@ async function applyWebCombatOutcome(
         existingAchievements: charAfter.achievements,
         level: charAfter.level,
         gold: charAfter.gold,
-        keysBronze: charAfter.keys_bronze,
-        keysSilver: charAfter.keys_silver,
-        keysGold: charAfter.keys_gold,
       });
       const deathIds = softDeath
         ? checkDeathAchievements({
@@ -7198,131 +6591,8 @@ async function applyWebCombatOutcome(
     return towerOutcome;
   }
 
-  // Dungeon victory only clears the current combat room — the rest of the
-  // expedition continues from the dashboard (or Slack). Advance the
-  // expedition the same way the Slack-side advanceDungeonRoom does, so
-  // pending_doors / pool / auto-advance to sub-boss are persisted. Without
-  // this, scene_json.expedition stays pinned to the just-cleared combat
-  // room and the dashboard's DoorPicker has nothing to render, while
-  // Slack /gq choose returns "No room choice to make right now." Mode
-  // flips to 'slack' so the quest isn't held in web-combat state — the
-  // next combat room will flip it back when entered.
-  const isDungeon = primaryMonster.upcoming_waves === undefined && won && await isDungeonQuest(env.DB, questId);
-  if (won && isDungeon) {
-    // For graph dungeons, also mark the current room's encounter as cleared.
-    const sceneRow = await env.DB
-      .prepare(`SELECT scene_json FROM quests WHERE id = ?`)
-      .bind(questId)
-      .first<{ scene_json: string }>();
-    const parsedScene = sceneRow ? (JSON.parse(sceneRow.scene_json) as SceneJson) : null;
-    if (parsedScene?.graph) {
-      const graph = parsedScene.graph;
-      const currentNode = graph.nodes[graph.current];
-      if (currentNode) {
-        // Mark the room cleared in BOTH the legacy `encounter` field (used by
-        // pre-grid AI-graph dungeons) and the new `content.cleared` field
-        // (used by grid dungeons). Without the content branch a grid encounter
-        // would reset and let the player engage the same defeated foe again.
-        const updatedNode: typeof currentNode = { ...currentNode };
-        if (currentNode.encounter) {
-          updatedNode.encounter = { ...currentNode.encounter, cleared: true };
-        }
-        if (currentNode.content?.kind === "encounter" || currentNode.content?.kind === "boss") {
-          updatedNode.content = { ...currentNode.content, cleared: true };
-        }
-        const updatedScene: SceneJson = {
-          ...parsedScene,
-          graph: { ...graph, nodes: { ...graph.nodes, [graph.current]: updatedNode } },
-          monster_hp: 0,
-        };
-        await saveScene(env.DB, questId, updatedScene);
-      } else {
-        await env.DB
-          .prepare(`UPDATE quests SET scene_json = json_set(scene_json, '$.monster_hp', 0) WHERE id = ?`)
-          .bind(questId).run();
-      }
-    } else {
-      await env.DB
-        .prepare(`UPDATE quests SET scene_json = json_set(scene_json, '$.monster_hp', 0) WHERE id = ?`)
-        .bind(questId).run();
-    }
-    await setQuestMode(env.DB, questId, "slack");
-
-    // Grid dungeon boss kill: distribute boss treasure to surviving fighters
-    // (round-robin), append to each fighter's loot in the outcome, and mark
-    // the quest completed. Without this the player kills the boss, clears
-    // the room, and is then stuck — no exit, no treasure, no end-state.
-    if (parsedScene?.graph && primaryMonster.is_boss) {
-      const bossNode = parsedScene.graph.nodes[parsedScene.graph.current];
-      const bossContent = bossNode?.content;
-      if (bossContent?.kind === "boss" && bossContent.treasure?.length) {
-        const survivors = humanFighters.filter((f) => f.hp > 0);
-        if (survivors.length === 0 && humanFighters.length > 0) survivors.push(humanFighters[0]); // edge: pyrrhic
-        for (let i = 0; i < bossContent.treasure.length; i++) {
-          const item = bossContent.treasure[i];
-          const recipient = survivors[i % survivors.length];
-          if (!recipient) break;
-          const added = await addItem(env.DB, {
-            character_id: recipient.id,
-            item_name: item.name,
-            item_type: item.item_type,
-            power: item.power,
-            rarity: item.rarity,
-            flavor: item.flavor,
-            weapon_range: item.weapon_range ?? null,
-            slot: item.slot ?? undefined,
-            stat_bonus: item.stat_bonus ?? undefined,
-            item_subtype: item.item_subtype ?? undefined,
-          });
-          const reward = rewards.find((r) => r.user_id === recipient.id);
-          if (reward) {
-            reward.loot.push({
-              item_name: added.item_name,
-              item_type: added.item_type,
-              power: added.power,
-              rarity: added.rarity,
-              flavor: added.flavor ?? "",
-              weapon_range: added.weapon_range,
-              level_req: added.level_req,
-            });
-          }
-        }
-      }
-      await markQuestStatus(env.DB, questId, "completed");
-      await clearHiredMercForParty(env.DB, questId);
-      // Skip advanceExpeditionAfterWebCombat — grid dungeons don't use it.
-      return {
-        status: state.status as "victory" | "defeat" | "fled",
-        rewards,
-        monster_name: primaryMonster.name,
-        monster_tier: tier,
-        total_pool_xp: totalPoolXp,
-        total_pool_gold: totalPoolGold,
-        elite,
-        is_boss: true,
-        dungeon_room_cleared: true,
-      };
-    }
-
-    const dungeonDoors = await advanceExpeditionAfterWebCombat(env, questId);
-    if (dungeonDoors) {
-      return {
-        status: state.status as "victory" | "defeat" | "fled",
-        rewards,
-        monster_name: primaryMonster.name,
-        monster_tier: tier,
-        total_pool_xp: totalPoolXp,
-        total_pool_gold: totalPoolGold,
-        elite,
-        is_boss: isBoss,
-        dungeon_room_cleared: true,
-        dungeon_doors: dungeonDoors,
-      };
-    }
-  } else {
-    await markQuestStatus(env.DB, questId, won ? "completed" : "failed");
-    await clearHiredMercForParty(env.DB, questId);
-  }
+  await markQuestStatus(env.DB, questId, won ? "completed" : "failed");
+  await clearHiredMercForParty(env.DB, questId);
 
   return {
     status: state.status as "victory" | "defeat",
@@ -7333,16 +6603,15 @@ async function applyWebCombatOutcome(
     total_pool_gold: totalPoolGold,
     elite,
     is_boss: isBoss,
-    dungeon_room_cleared: !!isDungeon,
   };
 }
 
 // Tower outcome side-effect: increments lifetime + run kill stats, advances
 // scene to the next floor, and writes back. Returns an OutcomeSummary when
 // the quest is a tower run (so applyWebCombatOutcome can short-circuit
-// before the dungeon path), or null when this isn't a tower or when the
-// fight wasn't relevant (no kills, etc.). The dungeon / standard close-out
-// continues to handle the run-ending wipe/quit cases.
+// before the standard path), or null when this isn't a tower or when the
+// fight wasn't relevant (no kills, etc.). The standard close-out continues
+// to handle the run-ending wipe/quit cases.
 async function advanceTowerAfterCombat(
   env: Env,
   questId: number,
@@ -7538,108 +6807,6 @@ async function advanceTowerAfterCombat(
   };
 }
 
-async function isDungeonQuest(db: D1Database, questId: number): Promise<boolean> {
-  const row = await db
-    .prepare(`SELECT json_extract(scene_json, '$.variant') AS variant FROM quests WHERE id = ?`)
-    .bind(questId)
-    .first<{ variant: string | null }>();
-  return row?.variant === "dungeon";
-}
-
-// Post-web-combat dungeon advance. Mirrors apps/slack/src/commands.ts
-// advanceDungeonRoom: picks the next room via pickNextRoom and either
-// (a) writes pending_doors + remaining pool — the player picks a door
-// next via /sq choose (or the web dashboard), or
-// (b) auto-advances to the next node (only case: sub-boss → treasure).
-// Also leaves a Slack-thread breadcrumb so a player who switches back to
-// Slack sees that the expedition has moved on instead of "no room choice
-// to make right now".
-async function advanceExpeditionAfterWebCombat(
-  env: Env,
-  questId: number,
-): Promise<Array<{ type: string; monster_name: string | null; scene: string | null }> | null> {
-  const quest = await getQuestById(env.DB, questId);
-  const exp = quest?.scene.expedition;
-  if (!quest || !exp) return null;
-
-  const next = pickNextRoom(exp as ExpState);
-
-  if (next.type === "doors") {
-    const updatedExp: ExpeditionState = {
-      ...exp,
-      pool: next.remainingPool,
-      pending_doors: next.pair,
-    };
-    const updatedScene: SceneJson = {
-      ...quest.scene,
-      expedition: updatedExp,
-      monster_hp: 0,
-    };
-    const ok = await trySaveExpeditionAdvance(env.DB, questId, updatedScene, exp.current);
-    if (!ok) return null;
-    const doorNodes = next.pair.map((idx) => {
-      const n = exp.nodes[idx];
-      return { type: n?.type ?? "combat", monster_name: n?.monster_name ?? null, scene: n?.scene ?? null };
-    });
-    if (env.SLACK_BOT_TOKEN && quest.thread_ts) {
-      const single = next.pair.length === 1;
-      const subBossAhead = single && next.pair[0] === exp.nodes.length - 2;
-      const headline = subBossAhead
-        ? "👑 *The way opens to the sub-boss chamber.*"
-        : single
-        ? "🚪 *One path forward — catch your breath.*"
-        : "🚪 *Two paths diverge ahead.*";
-      const advanceHint = single
-        ? "`/gq choose 1` to advance"
-        : "`/gq choose 1` (N) or `/gq choose 2` (E)";
-      const text = `${headline}\nRun \`/gq look\` to see the prompt, or ${advanceHint}.`;
-      await postSlackMessage(env.SLACK_BOT_TOKEN, {
-        channel: quest.channel_id,
-        thread_ts: quest.thread_ts,
-        text,
-      }).catch((err) => console.warn("dungeon door post failed", err));
-    }
-    return doorNodes;
-  }
-
-  // Auto-advance — only fires when current was the sub-boss and the next
-  // node is treasure. Mirrors advanceDungeon's node branch.
-  const nextNode = exp.nodes[next.index];
-  if (!nextNode) return null;
-  const isCombat = nextNode.type === "combat";
-  const updatedExp: ExpeditionState = {
-    ...exp,
-    current: next.index,
-    pool: next.remainingPool,
-    pending_doors: undefined,
-    visited_count: (exp.visited_count ?? 1) + 1,
-    visited_indices: [...(exp.visited_indices ?? [exp.current]), next.index],
-  };
-  const updatedScene: SceneJson = {
-    ...quest.scene,
-    expedition: updatedExp,
-    scene: nextNode.scene,
-    monster_name: isCombat ? nextNode.monster_name ?? "—" : "—",
-    monster_max_hp: isCombat ? nextNode.monster_max_hp ?? 0 : 0,
-    monster_hp: isCombat ? nextNode.monster_max_hp ?? 0 : 0,
-    tier: isCombat ? nextNode.tier ?? quest.scene.tier : quest.scene.tier,
-    monster_effects: [],
-  };
-  const ok = await trySaveExpeditionAdvance(env.DB, questId, updatedScene, exp.current);
-  if (!ok) return null;
-  if (env.SLACK_BOT_TOKEN && quest.thread_ts) {
-    const text = nextNode.type === "treasure"
-      ? "🎁 *Treasure ahead.* Run `/gq look` to see the loot, then `/gq take <n>` to claim."
-      : `🗺️ *Next room: ${nextNode.type}.* Run \`/gq look\` to see what's ahead.`;
-    await postSlackMessage(env.SLACK_BOT_TOKEN, {
-      channel: quest.channel_id,
-      thread_ts: quest.thread_ts,
-      text,
-    }).catch((err) => console.warn("dungeon advance post failed", err));
-  }
-  return null;
-}
-
 interface WsAttachment {
   quest_id: number;
   user_id: string;
@@ -7730,9 +6897,6 @@ function rollMonsterAttackAndDamageTypes(
 // state's effects from scene_json (monster status effects) and each
 // character row (player status effects) so an active poison/burn carries
 // across the boundary.
-//
-// Variant guard: dungeon rooms are only supported for `type === 'combat'`
-// nodes; trap/lockbox/npc/treasure stay in Slack via /sq choose, /sq take.
 // Returns a discriminated union so callers can render specific errors.
 async function buildInitialCombatState(
   db: D1Database,
@@ -7742,7 +6906,7 @@ async function buildInitialCombatState(
   | { ok: false; reason: "unsupported_variant" | "non_combat_room"; detail?: string }
 > {
   const variant = quest.scene.variant ?? "standard";
-  if (variant !== "standard" && variant !== "boss" && variant !== "gauntlet" && variant !== "dungeon" && variant !== "tower") {
+  if (variant !== "standard" && variant !== "boss" && variant !== "gauntlet" && variant !== "tower") {
     return { ok: false, reason: "unsupported_variant", detail: variant };
   }
   if (variant === "tower") {
@@ -7752,32 +6916,6 @@ async function buildInitialCombatState(
     }
     if (quest.scene.tower_awaiting_choice) {
       return { ok: false, reason: "non_combat_room", detail: "tower_awaiting_choice" };
-    }
-  }
-  if (variant === "dungeon") {
-    // Grid dungeons: check the current graph node's content.kind.
-    // Legacy AI-graph dungeons: check the current graph node's encounter field.
-    // Legacy expedition dungeons: check the current expedition node's type.
-    const graph = quest.scene.graph;
-    const exp = quest.scene.expedition;
-    if (graph) {
-      const node = graph.nodes[graph.current];
-      const kind = node?.content?.kind;
-      // The content union narrows differently per kind; cleared only exists
-      // on encounter/boss. Cast through unknown to read it generically.
-      const contentCleared = (node?.content as { cleared?: boolean } | undefined)?.cleared === true;
-      const isUnclearedGridCombat = (kind === "encounter" || kind === "boss") && !contentCleared;
-      const hasLegacyEncounter = !!(node?.encounter && !node.encounter.cleared);
-      if (!isUnclearedGridCombat && !hasLegacyEncounter) {
-        return { ok: false, reason: "non_combat_room", detail: kind ?? "missing" };
-      }
-    } else if (exp) {
-      const node = exp.nodes[exp.current];
-      if (!node || node.type !== "combat") {
-        return { ok: false, reason: "non_combat_room", detail: node?.type ?? "missing" };
-      }
-    } else {
-      return { ok: false, reason: "non_combat_room", detail: "no_dungeon_state" };
     }
   }
 
@@ -7897,50 +7035,12 @@ async function buildInitialCombatState(
     }
   }
 
-  // Grid dungeon: read the full monster array from the current node's
-  // content. The generator now produces multi-monster encounter packs
-  // (tier 3+); reading content.monsters here is how those reach the
-  // engine. Boss rooms stay solo for now (generator returns one boss).
-  // Falls back to the scene-root single-monster mirror for legacy
-  // variants (standard / boss / gauntlet) and AI-graph dungeons.
-  const gridNode = quest.scene.graph
-    ? quest.scene.graph.nodes[quest.scene.graph.current]
-    : null;
-  const gridContentMonsters = (() => {
-    if (!gridNode) return null;
-    const c = gridNode.content;
-    if (!c) return null;
-    if ((c.kind === "encounter" || c.kind === "boss") && !c.cleared) {
-      return c.monsters;
-    }
-    return null;
-  })();
-  const isGridBoss = gridNode?.content?.kind === "boss";
-
   // scene.monsters[] covers pack hunts and job-board pack quests.
   const scenePackMonsters = quest.scene.monsters && quest.scene.monsters.length > 1
     ? quest.scene.monsters
     : null;
 
-  const init: CombatInit = (gridContentMonsters && gridContentMonsters.length > 0)
-    ? {
-        fighters,
-        monsters: gridContentMonsters.map((m, i) => {
-          const affinity = rollMonsterElementAffinity();
-          return {
-            name: m.name,
-            hp: m.hp,
-            max_hp: m.max_hp,
-            shield: rollMonsterShield(m.tier),
-            tier: m.tier,
-            is_boss: isGridBoss && i === 0,
-            art_url: m.art_url ?? undefined,
-            ...affinity,
-            ...rollMonsterAttackAndDamageTypes(m.tier, affinity.element_weakness),
-          };
-        }),
-      }
-    : scenePackMonsters
+  const init: CombatInit = scenePackMonsters
     ? {
         fighters,
         monsters: scenePackMonsters.map((m) => {
@@ -7966,7 +7066,7 @@ async function buildInitialCombatState(
           max_hp: quest.scene.monster_max_hp,
           shield: rollMonsterShield(quest.scene.tier),
           tier: quest.scene.tier,
-          is_boss: variant === "boss" || isGridBoss || quest.scene.tower_floor_kind === "boss",
+          is_boss: variant === "boss" || quest.scene.tower_floor_kind === "boss",
           boss_phase: quest.scene.boss_phase,
           wave: quest.scene.wave,
           total_waves: quest.scene.total_waves,
@@ -8221,8 +7321,8 @@ export class QuestRoom extends DurableObject<Env> {
       // Write residual drink buffs back to D1 BEFORE applyWebCombatOutcome
       // — the latter may call clearPartyEffects which already nulls
       // drink_buff_json on quest-end paths. By writing back first we make
-      // sure mid-quest combats (dungeon room cleared, gauntlet wave
-      // advanced) carry an accurate post-tick buff into the next fight.
+      // sure mid-quest combats (gauntlet wave advanced) carry an accurate
+      // post-tick buff into the next fight.
       // Best-effort: a failure here doesn't block outcome processing —
       // the buff just stays at its pre-combat value.
       const killedBy = result.events.find((e): e is Extract<CombatEvent, { type: "monster_down" }> => e.type === "monster_down")?.killed_by;
@@ -8476,13 +7576,6 @@ export class QuestRoom extends DurableObject<Env> {
     this.broadcast({ type: "state", state: updatedState });
   }
 
-  // Notifies all connected WS clients that a dungeon room has changed so
-  // they re-fetch the quest scene without waiting for the 15s poll cycle.
-  // Called by the Worker's dungeon-move handlers after saving to D1.
-  async notifyDungeonMove(questId: number): Promise<void> {
-    this.broadcast({ type: "dungeon_move", quest_id: questId });
-  }
-
   // Called by /api/quest/:id/start_web_combat after it builds + saves the
   // initial combat state directly. Without this, WS clients that were
   // connected before combat started never receive a state frame and the
@@ -8515,8 +7608,8 @@ export class QuestRoom extends DurableObject<Env> {
   // turn-cycling logic stays in one place.
   //
   // Supported types for v1: consumable (heal user), magic (+max_mana on
-  // user), revive (raise a downed party member). Tools are dungeon-only;
-  // scrolls have named effects (rebase, etc.) we'll plumb in a follow-up.
+  // user), revive (raise a downed party member). Scrolls have named effects
+  // (rebase, etc.) we'll plumb in a follow-up.
   private async handleUseItem(
     ws: WebSocket,
     questId: number,
@@ -8846,7 +7939,6 @@ export class QuestRoom extends DurableObject<Env> {
             outcome.is_boss ? "👑" : "⚔️",
             `*${outcome.monster_name}* defeated`,
             outcome.elite ? " _(elite)_" : "",
-            outcome.dungeon_room_cleared ? " _(dungeon room cleared)_" : "",
           ].join("") + "!";
 
           const partySize = outcome.rewards.length;

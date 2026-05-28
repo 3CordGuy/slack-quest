@@ -1092,7 +1092,7 @@ export function pickArchetype<T>(
 // the daily refresh.
 export interface JobListing {
   id: string;                   // stable within the day, e.g. "job_1"
-  variant: "standard" | "boss" | "dungeon" | "gauntlet";
+  variant: "standard" | "boss" | "gauntlet";
   required_level: number;       // 1 / 3 / 1 / 5 by variant — gates the click
   title: string;                // AI-generated, e.g. "The Stale PR at the Merge Gate"
   blurb: string;                // AI-generated, 1-2 sentence hook

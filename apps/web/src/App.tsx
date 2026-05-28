@@ -17,10 +17,8 @@ import {
 import { CLASSES, classByName, deriveAll, findCatalogEntry, priceFor, sellPriceFor, xpForLevel, type Achievement, type EarnedAchievement, type StatKey, type Stats } from "@gantt-quest/core";
 
 import { CombatPage } from "./CombatPage";
-import { DungeonView } from "./DungeonView";
-import { GridDungeonView } from "./GridDungeonView";
 import { LobbyView } from "./LobbyView";
-import { Avatar, EmojiIcon, Icon, KeyIcon } from "./icons";
+import { Avatar, EmojiIcon, Icon } from "./icons";
 import { issueWebLoginCode } from "@gantt-quest/db";
 
 // One-liner describing the in-game effect of an item, in plain mechanics
@@ -203,9 +201,6 @@ interface Character {
   armor_power?: number;
   gold: number;
   scars: string[];
-  keys_bronze: number;
-  keys_silver: number;
-  keys_gold: number;
   position: "front" | "back";
   downed_until: number | null;
   // Primary stats (Phase 1). Present on characters migrated via 0032.
@@ -250,7 +245,7 @@ interface Item {
   element: "fire" | "ice" | "lightning" | null;
 }
 
-type QuestVariant = "standard" | "boss" | "gauntlet" | "dungeon" | "bounty_pack" | "tower";
+type QuestVariant = "standard" | "boss" | "gauntlet" | "bounty_pack" | "tower";
 type EffectType = "regen" | "bleeding" | "burning" | "poisoned" | "empowered" | "frozen" | "shocked";
 
 interface StatusEffect {
@@ -258,18 +253,6 @@ interface StatusEffect {
   magnitude: number;
   remaining: number;
   source?: string;
-}
-
-type ExpeditionNodeType = "combat" | "trap" | "lockbox" | "npc" | "treasure" | "merchant";
-
-type SkillType = "str" | "dex" | "int";
-type KeyTier = "bronze" | "silver" | "gold";
-
-interface TrapChoice {
-  text: string;
-  emoji: string;
-  skill: SkillType;
-  fail_damage: number;
 }
 
 interface LootOption {
@@ -285,37 +268,6 @@ interface LootOption {
   level_req?: number;
 }
 
-interface NpcOffer {
-  greeting: string;
-  item: LootOption;
-}
-
-interface ExpeditionNode {
-  type: ExpeditionNodeType;
-  scene: string;
-  monster_name?: string;
-  monster_max_hp?: number;
-  tier?: number;
-  trap_choices?: TrapChoice[];
-  loot_options?: LootOption[];
-  lock_tier?: KeyTier;
-  npc?: NpcOffer;
-}
-
-interface ExpeditionState {
-  theme: string;
-  current: number;
-  nodes: ExpeditionNode[];
-  pending_doors?: number[];
-  pool?: number[];
-  middle_count?: number;
-  visited_count?: number;
-  visited_indices?: number[];
-  sealed_doors?: number[];
-}
-
-type DungeonDirection = "n" | "e" | "s" | "w";
-
 interface MonsterSpec {
   name: string;
   hp: number;
@@ -328,37 +280,6 @@ interface MonsterSpec {
   element_resistance?: string;
   damage_weakness?: string;
   damage_resistance?: string;
-}
-
-type DungeonObjectEffect =
-  | { effect: "open_exit"; direction: DungeonDirection; reveals_node: string }
-  | { effect: "spawn_item"; item: LootOption }
-  | { effect: "trigger_encounter"; monsters: MonsterSpec[] }
-  | { effect: "flavor"; text: string };
-
-interface DungeonObject {
-  id: string;
-  name: string;
-  takeable: boolean;
-  used: boolean;
-  on_use?: DungeonObjectEffect;
-}
-
-interface DungeonNode {
-  id: string;
-  name?: string;
-  description: string;
-  art_url?: string;
-  exits: Partial<Record<DungeonDirection, string>>;
-  objects: DungeonObject[];
-  encounter?: { monsters: MonsterSpec[]; cleared: boolean };
-  visited: boolean;
-}
-
-interface DungeonGraph {
-  nodes: Record<string, DungeonNode>;
-  current: string;
-  visited: string[];
 }
 
 interface TowerRestStockItem {
@@ -380,8 +301,6 @@ interface SceneJson {
   wave?: number;
   total_waves?: number;
   monster_effects?: StatusEffect[];
-  expedition?: ExpeditionState;
-  graph?: DungeonGraph;
   monster_art_url?: string | null;
   monsters?: MonsterSpec[];
   monster_attack_type?: string;
@@ -856,7 +775,7 @@ interface ApothecaryResponse {
 
 interface JobListing {
   id: string;
-  variant: "standard" | "boss" | "dungeon" | "gauntlet" | "bounty_pack";
+  variant: "standard" | "boss" | "gauntlet" | "bounty_pack";
   monster_count?: number;
   required_level: number;
   title: string;
@@ -1413,97 +1332,6 @@ export function App() {
     void refresh();
   }
 
-  async function chooseDoor(questId: number, pick: number) {
-    const { ok } = await postJson(`/api/quest/${questId}/dungeon/choose_door`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ pick }),
-    });
-    if (ok) void refresh();
-  }
-
-  async function trapChoose(questId: number, pick: number) {
-    const { ok } = await postJson(`/api/quest/${questId}/dungeon/trap_choose`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ pick }),
-    });
-    if (ok) void refresh();
-  }
-
-  async function lockboxChoose(questId: number, pick: number) {
-    const { ok } = await postJson(`/api/quest/${questId}/dungeon/lockbox_choose`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ pick }),
-    });
-    if (ok) void refresh();
-  }
-
-  async function npcChoose(questId: number, pick: number) {
-    const { ok } = await postJson(`/api/quest/${questId}/dungeon/npc_choose`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ pick }),
-    });
-    if (ok) void refresh();
-  }
-
-  async function merchantChoose(questId: number, pick: number) {
-    const { ok } = await postJson(`/api/quest/${questId}/dungeon/merchant_choose`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ pick }),
-    });
-    if (ok) void refresh();
-  }
-
-  async function graphMove(questId: number, direction: DungeonDirection) {
-    const res = await fetch(`/api/quest/${questId}/dungeon/graph/move`, {
-      method: "POST",
-      credentials: "include",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ direction }),
-    });
-    const body = await res.json() as { ok?: boolean; error?: string; has_encounter?: boolean };
-    if (!res.ok) {
-      if (body.error === "encounter_active") toast.error("Finish the encounter first!");
-      else if (body.error === "no_exit") toast.error("No exit in that direction.");
-      else toast.error("Can't move there.");
-      return;
-    }
-    void refresh();
-  }
-
-  async function graphTakeObject(questId: number, objectId: string) {
-    const res = await fetch(`/api/quest/${questId}/dungeon/graph/take`, {
-      method: "POST",
-      credentials: "include",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ object_id: objectId }),
-    });
-    const body = await res.json() as { ok?: boolean; error?: string; item?: { id: number; name: string } };
-    if (!res.ok) { toast.error("Couldn't take that."); return; }
-    toast.success(`Picked up ${body.item?.name ?? "item"}!`);
-    void refresh();
-  }
-
-  async function graphUseObject(questId: number, objectId: string) {
-    const res = await fetch(`/api/quest/${questId}/dungeon/graph/use`, {
-      method: "POST",
-      credentials: "include",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ object_id: objectId }),
-    });
-    const body = await res.json() as { ok?: boolean; error?: string; effect?: string; text?: string; direction?: string; item?: { name: string; rarity: string } };
-    if (!res.ok) { toast.error("Nothing happens."); return; }
-    if (body.effect === "flavor" && body.text) toast(body.text, { duration: 6000 });
-    else if (body.effect === "open_exit") toast.success(`A passage to the ${body.direction?.toUpperCase()} opens!`);
-    else if (body.effect === "spawn_item") toast.success(`Found: ${body.item?.name ?? "item"}!`);
-    else if (body.effect === "trigger_encounter") toast("⚔ An enemy appears!");
-    void refresh();
-  }
-
   async function equipItem(itemId: number) {
     const { ok } = await postJson(`/api/inventory/${itemId}/equip`, { method: "POST" });
     if (ok) void refresh();
@@ -1716,34 +1544,6 @@ export function App() {
     void refresh();
   }
 
-  function sellKeyConfirmed(tier: "bronze" | "silver" | "gold") {
-    setConfirm({
-      title: `Sell a ${tier} key?`,
-      message: `Trades one ${tier} key for gold.`,
-      confirmLabel: "Sell key",
-      destructive: true,
-      onConfirm: () => { void sellKey(tier); },
-    });
-  }
-
-  async function sellKey(tier: "bronze" | "silver" | "gold") {
-    const { ok } = await postJson(`/api/keys/sell`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ tier }),
-    });
-    if (ok) void refresh();
-  }
-
-  async function transmuteKey(fromTier: "bronze" | "silver") {
-    const { ok } = await postJson(`/api/keys/transmute`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ from_tier: fromTier }),
-    });
-    if (ok) void refresh();
-  }
-
   async function joinQuest() {
     const { ok } = await postJson(`/api/quest/join`, { method: "POST" });
     if (ok) void refresh();
@@ -1785,78 +1585,8 @@ export function App() {
     if (ok) void refresh();
   }
 
-  async function treasureTake(questId: number, pick: number) {
-    const { ok } = await postJson(`/api/quest/${questId}/dungeon/treasure_take`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ pick }),
-    });
-    if (ok) void refresh();
-  }
-
   if (state.kind === "loading") return <Centered>Loading…</Centered>;
   if (state.kind === "anon") return <Login onSuccess={refresh} />;
-
-  // Dungeon quests use the immersive DungeonView full-screen experience.
-  // This check runs before the activeCombat guard so dungeon combat stays
-  // in-room instead of launching the separate CombatPage.
-  // Grid dungeons (scene.graph present) use the new GridDungeonView;
-  // legacy linear expeditions use the original DungeonView.
-  if (state.kind === "auth" && state.activeQuest?.quest.scene.variant === "dungeon" && state.me.character) {
-    const aq = state.activeQuest;
-    const chr = state.me.character;
-    if (aq.quest.scene.graph) {
-      return (
-        <>
-          <GridDungeonView
-            questId={aq.quest.id}
-            selfId={state.me.slack_user_id}
-            scene={aq.quest.scene as unknown as Parameters<typeof GridDungeonView>[0]["scene"]}
-            party={aq.party as unknown as Parameters<typeof GridDungeonView>[0]["party"]}
-            character={chr as unknown as Parameters<typeof GridDungeonView>[0]["character"]}
-            hasWebCombat={hasWebCombat}
-            onOpenInventory={() => setInventoryOpen(true)}
-            onExit={() => void refresh()}
-            onRefresh={() => void refresh()}
-          />
-          {inventoryOpen && (
-            <InventoryFullScreen
-              items={state.inventory}
-              inQuest={true}
-              selfId={state.me.slack_user_id}
-              characterLevel={chr.level}
-              character={chr}
-              onEquip={equipItem}
-              onUnequip={unequipItem}
-              onSell={sellItem}
-              onUse={useItem}
-              onGive={giveItem}
-              onClose={() => setInventoryOpen(false)}
-            />
-          )}
-        </>
-      );
-    }
-    return (
-      <DungeonView
-        questId={aq.quest.id}
-        selfId={state.me.slack_user_id}
-        scene={aq.quest.scene}
-        party={aq.party}
-        character={chr}
-        hasWebCombat={hasWebCombat}
-        myKeys={{ bronze: chr.keys_bronze, silver: chr.keys_silver, gold: chr.keys_gold }}
-        onChooseDoor={(pick) => chooseDoor(aq.quest.id, pick)}
-        onTrapChoose={(pick) => trapChoose(aq.quest.id, pick)}
-        onLockboxChoose={(pick) => lockboxChoose(aq.quest.id, pick)}
-        onNpcChoose={(pick) => npcChoose(aq.quest.id, pick)}
-        onMerchantChoose={(pick) => merchantChoose(aq.quest.id, pick)}
-        onTreasureTake={(pick) => treasureTake(aq.quest.id, pick)}
-        onExit={() => void refresh()}
-        onRefresh={() => void refresh()}
-      />
-    );
-  }
 
   // Tower: pause for non-combat floor states (rest stop / post-boss choice).
   // Combat + boss floors fall through to the normal combat flow.
@@ -2051,11 +1781,7 @@ export function App() {
                   const lobbyQuest = state.lobbyQuest;
                   await refresh();
                   if (!lobbyQuest) return;
-                  const variant = (lobbyQuest.quest.scene as { variant?: string })?.variant ?? "standard";
-                  // For non-dungeon quests jump straight into combat — skip the "Open Combat" step
-                  if (variant !== "dungeon") {
-                    void startCombat(lobbyQuest.quest.id);
-                  }
+                  void startCombat(lobbyQuest.quest.id);
                 }}
               />
             )}
@@ -2067,20 +1793,6 @@ export function App() {
                 combatInProgress={hasWebCombat}
                 onStartCombat={() => startCombat(state.activeQuest!.quest.id)}
                 onOpenRecruitment={() => openRecruitment(state.activeQuest!.quest.id)}
-                onChooseDoor={(pick) => chooseDoor(state.activeQuest!.quest.id, pick)}
-                onTrapChoose={(pick) => trapChoose(state.activeQuest!.quest.id, pick)}
-                onLockboxChoose={(pick) => lockboxChoose(state.activeQuest!.quest.id, pick)}
-                onNpcChoose={(pick) => npcChoose(state.activeQuest!.quest.id, pick)}
-                onTreasureTake={(pick) => treasureTake(state.activeQuest!.quest.id, pick)}
-                onMerchantChoose={(pick) => merchantChoose(state.activeQuest!.quest.id, pick)}
-                onGraphMove={(dir) => graphMove(state.activeQuest!.quest.id, dir)}
-                onGraphTake={(objectId) => graphTakeObject(state.activeQuest!.quest.id, objectId)}
-                onGraphUse={(objectId) => graphUseObject(state.activeQuest!.quest.id, objectId)}
-                myKeys={state.me.character ? {
-                  bronze: state.me.character.keys_bronze,
-                  silver: state.me.character.keys_silver,
-                  gold: state.me.character.keys_gold,
-                } : null}
               />
             )}
             {sectionContent}
@@ -2093,8 +1805,6 @@ export function App() {
               inventory={state.inventory}
               inQuest={!!state.activeQuest}
               onRest={rest}
-              onSellKey={sellKeyConfirmed}
-              onTransmuteKey={transmuteKey}
               onLogout={logout}
               onReroll={rerollCharacter}
               onSpend={spendStatPoint}
@@ -2243,165 +1953,6 @@ function Login({ onSuccess }: { onSuccess: () => void }) {
   );
 }
 
-const DUNGEON_QUIPS = [
-  "Licking envelopes...",
-  "Finding the critical path...",
-  "Arguing with the compiler...",
-  "Reticulating splines...",
-  "Partitioning the dungeon table...",
-  "Rolling for encounter seeds...",
-  "Deploying goblin infrastructure...",
-  "Checking the backlog...",
-  "Migrating the kobold schema...",
-  "Resolving merge conflicts...",
-  "Spinning up monster containers...",
-  "Running goblin unit tests...",
-  "Calculating technical debt...",
-  "Allocating dungeon memory...",
-  "Garbage collecting old traps...",
-  "Compiling boss stats...",
-  "Indexing treasure tables...",
-  "Minifying the dungeon map...",
-  "Transpiling ancient runes...",
-  "Scaffolding the dungeon rooms...",
-  "Installing trap dependencies...",
-  "Debouncing monster spawns...",
-  "Bundling loot drops...",
-  "Optimizing the critical hit path...",
-  "Linting the quest description...",
-  "Running dungeon CI pipeline...",
-  "Seeding the random number generator...",
-  "Normalizing monster HP...",
-  "Patching the dragon's firewall...",
-  "Hydrating the puzzle state...",
-  "Lazy loading the sub-boss...",
-  "Memoizing the treasure map...",
-  "Refactoring the skeleton code...",
-  "Documenting nothing...",
-  "Closing 47 browser tabs...",
-  "Asking the AI nicely...",
-  "Waiting for the AI to think...",
-  "Negotiating with the dungeon master...",
-  "Bribing the RNG...",
-  "Rolling for flavor text...",
-  "Generating procedural excuses...",
-  "Herding the kobolds...",
-  "Waking the sleeping dragon...",
-  "Sharpening the puzzle edges...",
-  "Greasing the trap hinges...",
-  "Counting the treasure coins...",
-  "Drafting the NPC dialogue...",
-  "Stress-testing the dungeon walls...",
-  "Proofreading the evil monologue...",
-  "Tuning the ambient dungeon ambiance...",
-  "Placing the 'secret' button...",
-  "Connecting corridor nodes...",
-  "Balancing the encounter table...",
-  "Generating lore nobody will read...",
-  "Summoning demons from the database...",
-  "Calculating pathfinding for 30 goblins...",
-  "Applying dark mode to the dungeon...",
-  "Finding parking for the dragon...",
-  "Persuading the mimic to behave...",
-  "Filing paperwork for the boss fight...",
-  "Checking if the treasure is load-bearing...",
-  "Ensuring ADA compliance in the dungeon...",
-  "Placing unnecessary torches...",
-  "Polishing the boss's monologue...",
-  "Arguing about room naming conventions...",
-  "Deciding if the chest is a mimic...",
-  "Randomizing the dead ends...",
-  "Triple-checking the exit...",
-  "Hiding the macguffin...",
-  "Scheduling the ambush...",
-  "Overengineering the puzzle...",
-  "Reviewing the monster's PR...",
-  "Approving the goblin's PTO request...",
-  "Sourcing ethically-farmed loot...",
-  "Loading ancient prophecy...",
-  "Annotating the treasure map...",
-  "Translating the rune inscriptions...",
-  "Adjusting monster difficulty sliders...",
-  "Generating 47 locked doors...",
-  "Placing the one key you need...",
-  "Balancing the loot economy...",
-  "Installing the boss's dialogue tree...",
-  "Verifying the dungeon doesn't softlock...",
-  "Nesting callbacks in the trap logic...",
-  "Spinning up the skeleton microservice...",
-  "Querying the Dungeon-as-a-Service API...",
-  "Rate limiting the goblin spawner...",
-  "Provisioning a haunted room...",
-  "Configuring the fog of war...",
-  "Adding last-minute twists...",
-  "Second-guessing everything...",
-  "Clicking 'Generate' one more time...",
-  "Definitely not panicking...",
-  "This is fine. The dungeon is fine.",
-  "Almost there... probably...",
-  "Making sure the boss is scary enough...",
-  "Confirming the dragon ate already...",
-  "Checking if the wizard is available...",
-  "Sourcing authentic cobblestone textures...",
-  "Just one more yield point...",
-  "Warming up the dungeon...",
-  "The servers are thinking very hard...",
-];
-
-function DungeonLoadingBar() {
-  const [progress, setProgress] = useState(0);
-  const [quip, setQuip] = useState(
-    () => DUNGEON_QUIPS[Math.floor(Math.random() * DUNGEON_QUIPS.length)],
-  );
-  const [quipVisible, setQuipVisible] = useState(true);
-
-  useEffect(() => {
-    const totalMs = 15_000;
-    const tickMs = 80;
-    const step = tickMs / totalMs;
-    const t = setInterval(() => setProgress((p) => Math.min(1, p + step)), tickMs);
-    return () => clearInterval(t);
-  }, []);
-
-  useEffect(() => {
-    const t = setInterval(() => {
-      setQuipVisible(false);
-      setTimeout(() => {
-        setQuip(DUNGEON_QUIPS[Math.floor(Math.random() * DUNGEON_QUIPS.length)]);
-        setQuipVisible(true);
-      }, 250);
-    }, 3_000);
-    return () => clearInterval(t);
-  }, []);
-
-  return (
-    <div style={{ marginTop: 10 }}>
-      <div style={{ height: 4, background: "#0e1520", borderRadius: 2, overflow: "hidden" }}>
-        <div
-          style={{
-            height: "100%",
-            background: "linear-gradient(90deg, #1e3a5f, #7dd3fc)",
-            borderRadius: 2,
-            width: `${progress * 100}%`,
-            transition: "width 0.08s linear",
-          }}
-        />
-      </div>
-      <p style={{
-        ...muted,
-        fontSize: 11,
-        marginTop: 7,
-        textAlign: "center",
-        fontStyle: "italic",
-        opacity: quipVisible ? 0.85 : 0,
-        transition: "opacity 0.25s ease",
-      }}>
-        {quip}
-      </p>
-    </div>
-  );
-}
-
 interface QuestOption {
   id: QuestVariant;
   label: string;
@@ -2466,22 +2017,6 @@ const QUEST_OPTIONS: QuestOption[] = [
     beginLabel: "Enter the Gauntlet",
     pendingLabel: "Rolling…",
     minLevel: 5,
-  },
-  {
-    id: "dungeon",
-    label: "Dungeon",
-    icon: "tower",
-    accentColor: "#7dd3fc",
-    bg: "#111e2e",
-    border: "#1e3a5f",
-    lockedBorder: "#2a2d33",
-    tag: "Multi-room crawl",
-    description:
-      "A 5-7 room AI-generated crawl — combat encounters, traps, lockboxes, and NPC events lead through a sub-boss to a treasure vault. Takes ~15s to generate.",
-    rewards: "2.5× rewards + dungeon keys",
-    beginLabel: "Descend into the Dungeon",
-    pendingLabel: "Generating dungeon…",
-    minLevel: 1,
   },
   {
     id: "tower",
@@ -2683,7 +2218,6 @@ function StartQuestCard({
                 ? <><Icon name="conversation" /> Start Lobby ({invitees.size + 1} players)</>
                 : <><Icon name={selectedOption.icon} /> {selectedOption.beginLabel}</>}
           </button>
-          {pending === "dungeon" && <DungeonLoadingBar />}
         </div>
       )}
     </div>
@@ -2951,16 +2485,6 @@ function ActiveQuestCard({
   combatInProgress,
   onStartCombat,
   onOpenRecruitment,
-  onChooseDoor,
-  onTrapChoose,
-  onLockboxChoose,
-  onNpcChoose,
-  onTreasureTake,
-  onMerchantChoose,
-  onGraphMove,
-  onGraphTake,
-  onGraphUse,
-  myKeys,
 }: {
   quest: ActiveQuest;
   party: Character[];
@@ -2968,16 +2492,6 @@ function ActiveQuestCard({
   combatInProgress: boolean;
   onStartCombat: () => void;
   onOpenRecruitment: () => void;
-  onChooseDoor: (pick: number) => void;
-  onTrapChoose: (pick: number) => void;
-  onLockboxChoose: (pick: number) => void;
-  onNpcChoose: (pick: number) => void;
-  onTreasureTake: (pick: number) => void;
-  onMerchantChoose: (pick: number) => void;
-  onGraphMove: (dir: DungeonDirection) => void;
-  onGraphTake: (objectId: string) => void;
-  onGraphUse: (objectId: string) => void;
-  myKeys: { bronze: number; silver: number; gold: number } | null;
 }) {
   const s = quest.scene;
   const variant = s.variant ?? "standard";
@@ -2999,20 +2513,7 @@ function ActiveQuestCard({
             wave {s.wave}/{s.total_waves}
           </SmallBadge>
         )}
-        {variant === "dungeon" && s.expedition && (() => {
-          const exp = s.expedition;
-          const visited = exp.visited_count ?? 1;
-          const middleTotal = (exp.middle_count ?? 0) + 4;
-          return (
-            <SmallBadge>room {visited}/{middleTotal}</SmallBadge>
-          );
-        })()}
       </div>
-      {variant === "dungeon" && s.expedition?.theme && (
-        <div style={{ ...muted, fontSize: 12, marginTop: 4, fontStyle: "italic" }}>
-          🗺️ {s.expedition.theme}
-        </div>
-      )}
 
       <div style={{ marginTop: 16 }}>
         {s.monster_art_url && (
@@ -3210,86 +2711,10 @@ function ActiveQuestCard({
         />
       )}
       {(() => {
-        // Graph dungeon takes priority over legacy expedition.
-        if (s.graph) {
-          const graph = s.graph;
-          const node = graph.nodes[graph.current];
-          const hasEncounter = !!(node?.encounter && !node.encounter.cleared);
-          return (
-            <>
-              <GraphDungeonPanel
-                graph={graph}
-                node={node ?? null}
-                onMove={onGraphMove}
-                onTake={onGraphTake}
-                onUse={onGraphUse}
-              />
-              {hasEncounter && (
-                <button
-                  onClick={onStartCombat}
-                  style={{ ...button, marginTop: 12, background: "#b89b3a", color: "#0e0f12" }}
-                >
-                  <Icon name="sword" /> {combatInProgress ? "Resume Combat" : "Open Combat"}
-                </button>
-              )}
-            </>
-          );
-        }
-        const currentNode = s.expedition?.nodes[s.expedition.current];
-        const pendingDoors = s.expedition?.pending_doors ?? [];
-        if (variant === "dungeon" && pendingDoors.length > 0) {
-          return (
-            <DoorPicker
-              doors={pendingDoors.map((idx) => s.expedition!.nodes[idx])}
-              onPick={onChooseDoor}
-            />
-          );
-        }
-        if (variant === "dungeon" && currentNode?.type === "trap" && currentNode.trap_choices) {
-          return <TrapPicker choices={currentNode.trap_choices} onPick={onTrapChoose} />;
-        }
-        if (
-          variant === "dungeon" &&
-          currentNode?.type === "lockbox" &&
-          currentNode.loot_options &&
-          currentNode.lock_tier
-        ) {
-          return (
-            <LockboxPicker
-              options={currentNode.loot_options}
-              lockTier={currentNode.lock_tier}
-              myKeys={myKeys}
-              onPick={onLockboxChoose}
-            />
-          );
-        }
-        if (variant === "dungeon" && currentNode?.type === "npc" && currentNode.npc) {
-          return <NpcPicker npc={currentNode.npc} onPick={onNpcChoose} />;
-        }
-        if (
-          variant === "dungeon" &&
-          currentNode?.type === "merchant" &&
-          currentNode.loot_options
-        ) {
-          return (
-            <MerchantPicker
-              node={currentNode}
-              onPick={onMerchantChoose}
-            />
-          );
-        }
-        if (
-          variant === "dungeon" &&
-          currentNode?.type === "treasure" &&
-          currentNode.loot_options
-        ) {
-          return <TreasurePicker options={currentNode.loot_options} onPick={onTreasureTake} />;
-        }
         const combatAvailable =
           variant === "standard" ||
           variant === "boss" ||
           variant === "gauntlet" ||
-          (variant === "dungeon" && currentNode?.type === "combat" && s.monster_hp > 0) ||
           // Tower combat + boss floors. Rest floors and the post-boss
           // awaiting-choice state route to TowerInterlude up-stack and
           // never reach the dashboard, but be defensive about both.
@@ -3329,547 +2754,6 @@ function ActiveQuestCard({
   );
 }
 
-const SKILL_LABEL: Record<SkillType, string> = { str: "STR", dex: "DEX", int: "INT" };
-
-function TrapPicker({
-  choices,
-  onPick,
-}: {
-  choices: TrapChoice[];
-  onPick: (pick: number) => void;
-}) {
-  return (
-    <div style={{ marginTop: 20 }}>
-      <div
-        style={{
-          ...muted,
-          fontSize: 11,
-          textTransform: "uppercase",
-          letterSpacing: 1.5,
-          marginBottom: 8,
-        }}
-      >
-        <Icon name="bear-trap" /> Trap — choose your approach
-      </div>
-      <div style={{ display: "grid", gap: 8 }}>
-        {choices.map((c, i) => (
-          <button
-            key={i}
-            onClick={() => onPick(i + 1)}
-            style={{
-              padding: "12px 14px",
-              background: "#1d1f23",
-              border: "1px solid #2a2d33",
-              borderRadius: 8,
-              textAlign: "left",
-              cursor: "pointer",
-              color: "#e6e6e6",
-              fontFamily: "inherit",
-            }}
-          >
-            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-              <span style={{ fontSize: 20 }}>{c.emoji}</span>
-              <span style={{ fontWeight: 600 }}>{c.text}</span>
-              <span style={{ ...muted, fontSize: 11 }}>
-                · {SKILL_LABEL[c.skill]} check · fail = −{c.fail_damage} HP
-              </span>
-            </div>
-          </button>
-        ))}
-      </div>
-      <p style={{ ...muted, fontSize: 11, marginTop: 8 }}>
-        Class experts auto-pass their skill. Others roll d6 — pass on 4+.
-      </p>
-    </div>
-  );
-}
-
-const KEY_RANK: Record<KeyTier, number> = { bronze: 0, silver: 1, gold: 2 };
-const KEY_LABEL: Record<KeyTier, string> = { bronze: "bronze", silver: "silver", gold: "gold" };
-
-function hasMatchingKey(
-  myKeys: { bronze: number; silver: number; gold: number } | null,
-  lock: KeyTier,
-): boolean {
-  if (!myKeys) return false;
-  return (
-    (KEY_RANK.bronze >= KEY_RANK[lock] && myKeys.bronze > 0) ||
-    (KEY_RANK.silver >= KEY_RANK[lock] && myKeys.silver > 0) ||
-    (KEY_RANK.gold >= KEY_RANK[lock] && myKeys.gold > 0)
-  );
-}
-
-function LockboxPicker({
-  options,
-  lockTier,
-  myKeys,
-  onPick,
-}: {
-  options: LootOption[];
-  lockTier: KeyTier;
-  myKeys: { bronze: number; silver: number; gold: number } | null;
-  onPick: (pick: number) => void;
-}) {
-  const canUnlock = hasMatchingKey(myKeys, lockTier);
-  return (
-    <div style={{ marginTop: 20 }}>
-      <div
-        style={{
-          ...muted,
-          fontSize: 11,
-          textTransform: "uppercase",
-          letterSpacing: 1.5,
-          marginBottom: 8,
-        }}
-      >
-        <Icon name="cubes" /> Lockbox — <KeyIcon tier={lockTier} /> {KEY_LABEL[lockTier]} lock {canUnlock ? "(you have a key)" : "(no matching key)"}
-      </div>
-      <div style={{ display: "grid", gap: 8 }}>
-        {options.map((opt, i) => (
-          <button
-            key={i}
-            onClick={() => onPick(i + 1)}
-            disabled={!canUnlock}
-            style={{
-              padding: "12px 14px",
-              background: canUnlock ? "#1d1f23" : "#15171b",
-              border: "1px solid " + (canUnlock ? "#2a2d33" : "#222428"),
-              borderRadius: 8,
-              textAlign: "left",
-              cursor: canUnlock ? "pointer" : "not-allowed",
-              color: canUnlock ? "#e6e6e6" : "#6a7080",
-              fontFamily: "inherit",
-            }}
-          >
-            <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
-              <span style={{ fontWeight: 600 }}>{opt.name}</span>
-              {(opt.level_req ?? 1) > 1 && (
-                <span style={{ fontSize: 11, color: "#f59e0b", fontWeight: 600 }}>
-                  Req L{opt.level_req}
-                </span>
-              )}
-              <span style={{ ...muted, fontSize: 11 }}>
-                · {opt.rarity} {opt.slot ? SLOT_LABELS[opt.slot] : opt.item_type} +{opt.power}{opt.stat_bonus && statBonusSummary(opt.stat_bonus) ? ` · ${statBonusSummary(opt.stat_bonus)}` : ""}
-              </span>
-            </div>
-            {opt.flavor && (
-              <div style={{ ...muted, fontSize: 12, marginTop: 4, fontStyle: "italic" }}>
-                {opt.flavor}
-              </div>
-            )}
-          </button>
-        ))}
-        <button
-          onClick={() => onPick(options.length + 1)}
-          style={{
-            padding: "12px 14px",
-            background: "transparent",
-            border: "1px solid #2a2d33",
-            borderRadius: 8,
-            cursor: "pointer",
-            color: "#9aa0a6",
-            fontFamily: "inherit",
-          }}
-        >
-          Skip (no key spent)
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function TreasurePicker({
-  options,
-  onPick,
-}: {
-  options: LootOption[];
-  onPick: (pick: number) => void;
-}) {
-  return (
-    <div style={{ marginTop: 20 }}>
-      <div
-        style={{
-          ...muted,
-          fontSize: 11,
-          textTransform: "uppercase",
-          letterSpacing: 1.5,
-          marginBottom: 8,
-        }}
-      >
-        <Icon name="gold-bar" /> Treasure — pick one. Sealing the dungeon.
-      </div>
-      <div style={{ display: "grid", gap: 8 }}>
-        {options.map((opt, i) => (
-          <button
-            key={i}
-            onClick={() => onPick(i + 1)}
-            style={{
-              padding: "12px 14px",
-              background: "#1d1f23",
-              border: "1px solid #b89b3a",
-              borderRadius: 8,
-              textAlign: "left",
-              cursor: "pointer",
-              color: "#e6e6e6",
-              fontFamily: "inherit",
-            }}
-          >
-            <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
-              <span style={{ fontWeight: 600 }}>{opt.name}</span>
-              {(opt.level_req ?? 1) > 1 && (
-                <span style={{ fontSize: 11, color: "#f59e0b", fontWeight: 600 }}>
-                  Req L{opt.level_req}
-                </span>
-              )}
-              <span style={{ ...muted, fontSize: 11 }}>
-                · {opt.rarity} {opt.slot ? SLOT_LABELS[opt.slot] : opt.item_type} +{opt.power}{opt.stat_bonus && statBonusSummary(opt.stat_bonus) ? ` · ${statBonusSummary(opt.stat_bonus)}` : ""}
-              </span>
-            </div>
-            {opt.flavor && (
-              <div style={{ ...muted, fontSize: 12, marginTop: 4, fontStyle: "italic" }}>
-                {opt.flavor}
-              </div>
-            )}
-          </button>
-        ))}
-      </div>
-      <p style={{ ...muted, fontSize: 11, marginTop: 8 }}>
-        Other option is left in the chest. Quest completes; spoils awarded to the party.
-      </p>
-    </div>
-  );
-}
-
-const DIR_LABEL: Record<DungeonDirection, string> = { n: "N", e: "E", s: "S", w: "W" };
-const DIR_FULL: Record<DungeonDirection, string> = { n: "North", e: "East", s: "South", w: "West" };
-
-function GraphDungeonPanel({
-  graph,
-  node,
-  onMove,
-  onTake,
-  onUse,
-}: {
-  graph: DungeonGraph;
-  node: DungeonNode | null;
-  onMove: (dir: DungeonDirection) => void;
-  onTake: (objectId: string) => void;
-  onUse: (objectId: string) => void;
-}) {
-  if (!node) return <div style={{ ...muted, marginTop: 16, fontStyle: "italic" }}>Dungeon state corrupted.</div>;
-
-  const allDirs: DungeonDirection[] = ["n", "e", "s", "w"];
-  const activeObjects = node.objects.filter(o => !o.used || o.takeable);
-
-  return (
-    <div style={{ marginTop: 16 }}>
-      {node.name && (
-        <div style={{ fontSize: 13, fontWeight: 600, color: "#b89b3a", marginBottom: 6, fontFamily: DISPLAY_FONT }}>
-          {node.name}
-        </div>
-      )}
-      <div style={{ ...muted, fontStyle: "italic", lineHeight: 1.5, marginBottom: 12 }}>
-        {node.description}
-      </div>
-
-      {node.encounter && !node.encounter.cleared && (
-        <div style={{ background: "#1a0d0d", border: "1px solid #7a3030", borderRadius: 6, padding: "8px 12px", marginBottom: 12 }}>
-          <span style={{ color: "#e06060", fontWeight: 600 }}>
-            ⚔ {node.encounter.monsters[0]?.name ?? "Enemy"} lurks here. Fight before moving!
-          </span>
-        </div>
-      )}
-      {node.encounter?.cleared && (
-        <div style={{ color: "#5a9e5a", fontSize: 12, marginBottom: 10 }}>✓ Encounter cleared</div>
-      )}
-
-      {/* Compass exits */}
-      <div style={{ marginBottom: 12 }}>
-        <div style={{ ...muted, fontSize: 11, textTransform: "uppercase", letterSpacing: 1.5, marginBottom: 6 }}>
-          Exits
-        </div>
-        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-          {allDirs.map((dir) => {
-            const targetId = node.exits[dir];
-            if (!targetId) return null;
-            const targetNode = graph.nodes[targetId];
-            const explored = targetNode?.visited ?? false;
-            const blocked = !!(node.encounter && !node.encounter.cleared);
-            return (
-              <button
-                key={dir}
-                onClick={() => !blocked && onMove(dir)}
-                disabled={blocked}
-                title={`${DIR_FULL[dir]}${explored ? "" : " (unexplored)"}`}
-                style={{
-                  padding: "6px 14px",
-                  background: blocked ? "#1a1c20" : "#1d1f23",
-                  border: `1px solid ${blocked ? "#333" : "#3a3d44"}`,
-                  borderRadius: 6,
-                  color: blocked ? "#555" : (explored ? "#e6e6e6" : "#b89b3a"),
-                  cursor: blocked ? "not-allowed" : "pointer",
-                  fontFamily: "inherit",
-                  fontWeight: 600,
-                  fontSize: 13,
-                  opacity: blocked ? 0.5 : 1,
-                }}
-              >
-                {DIR_LABEL[dir]}{!explored ? " ?" : ""}
-              </button>
-            );
-          })}
-          {allDirs.every(d => !node.exits[d]) && (
-            <span style={{ ...muted, fontSize: 13, fontStyle: "italic" }}>No exits.</span>
-          )}
-        </div>
-      </div>
-
-      {/* Objects */}
-      {activeObjects.length > 0 && (
-        <div>
-          <div style={{ ...muted, fontSize: 11, textTransform: "uppercase", letterSpacing: 1.5, marginBottom: 6 }}>
-            Objects
-          </div>
-          <div style={{ display: "grid", gap: 6 }}>
-            {activeObjects.map((obj) => (
-              <div key={obj.id} style={{ display: "flex", alignItems: "center", gap: 8, background: "#1d1f23", border: "1px solid #2a2d33", borderRadius: 6, padding: "8px 12px" }}>
-                <span style={{ flex: 1, color: "#e6e6e6", fontSize: 13 }}>{obj.name}</span>
-                {obj.takeable && !obj.used && (
-                  <button
-                    onClick={() => onTake(obj.id)}
-                    style={{ padding: "4px 10px", background: "#23351a", border: "1px solid #3a5528", borderRadius: 4, color: "#8bc96e", cursor: "pointer", fontFamily: "inherit", fontSize: 12 }}
-                  >
-                    Take
-                  </button>
-                )}
-                {obj.on_use && !obj.used && (
-                  <button
-                    onClick={() => onUse(obj.id)}
-                    style={{ padding: "4px 10px", background: "#1a2535", border: "1px solid #2a3d5a", borderRadius: 4, color: "#6ea8c9", cursor: "pointer", fontFamily: "inherit", fontSize: 12 }}
-                  >
-                    Use
-                  </button>
-                )}
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-// Merchant room: buy an item from the in-dungeon merchant or walk past.
-// pick 1..N = buy item N; pick N+1 = walk past (stock evaporates once advanced).
-function MerchantPicker({
-  node,
-  onPick,
-}: {
-  node: ExpeditionNode;
-  onPick: (pick: number) => void;
-}) {
-  const stock = node.loot_options ?? [];
-  const greeting = node.npc?.greeting;
-  return (
-    <div style={{ marginTop: 20 }}>
-      <div
-        style={{
-          ...muted,
-          fontSize: 11,
-          textTransform: "uppercase",
-          letterSpacing: 1.5,
-          marginBottom: 8,
-        }}
-      >
-        <Icon name="gem-pendant" /> Merchant
-      </div>
-      {greeting && (
-        <p style={{ ...muted, fontSize: 13, fontStyle: "italic", marginBottom: 8 }}>
-          "{greeting}"
-        </p>
-      )}
-      {stock.length === 0 ? (
-        <p style={{ ...muted, fontSize: 13, marginBottom: 8 }}>
-          The merchant's stall is empty — you bought everything good.
-        </p>
-      ) : (
-        <div style={{ display: "grid", gap: 8 }}>
-          {stock.map((opt, i) => {
-            const price = priceFor(opt.item_type, opt.rarity);
-            return (
-              <button
-                key={i}
-                onClick={() => onPick(i + 1)}
-                style={{
-                  padding: "12px 14px",
-                  background: "#1d1f23",
-                  border: "1px solid #2a2d33",
-                  borderRadius: 8,
-                  textAlign: "left",
-                  cursor: "pointer",
-                  color: "#e6e6e6",
-                  fontFamily: "inherit",
-                }}
-              >
-                <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
-                  <div>
-                    <span style={{ fontWeight: 600 }}>{opt.name}</span>
-                    <span style={{ ...muted, fontSize: 11, marginLeft: 6 }}>
-                      · {opt.rarity} {opt.slot ? SLOT_LABELS[opt.slot] : opt.item_type} +{opt.power}{opt.stat_bonus && statBonusSummary(opt.stat_bonus) ? ` · ${statBonusSummary(opt.stat_bonus)}` : ""}
-                    </span>
-                  </div>
-                  <span style={{ color: "#fbbf24", fontWeight: 600, fontSize: 13 }}>{price}g</span>
-                </div>
-                {opt.flavor && (
-                  <div style={{ ...muted, fontSize: 12, marginTop: 4, fontStyle: "italic" }}>
-                    {opt.flavor}
-                  </div>
-                )}
-              </button>
-            );
-          })}
-        </div>
-      )}
-      <button
-        onClick={() => onPick(stock.length + 1)}
-        style={{
-          marginTop: 8,
-          padding: "10px 14px",
-          background: "transparent",
-          border: "1px solid #2a2d33",
-          borderRadius: 8,
-          cursor: "pointer",
-          color: "#9aa0a6",
-          fontFamily: "inherit",
-          width: "100%",
-        }}
-      >
-        Walk past
-      </button>
-      <p style={{ ...muted, fontSize: 11, marginTop: 8 }}>
-        Stock evaporates once you leave. Prices match the town shop.
-      </p>
-    </div>
-  );
-}
-
-function NpcPicker({ npc, onPick }: { npc: NpcOffer; onPick: (pick: number) => void }) {
-  return (
-    <div style={{ marginTop: 20 }}>
-      <div
-        style={{
-          ...muted,
-          fontSize: 11,
-          textTransform: "uppercase",
-          letterSpacing: 1.5,
-          marginBottom: 8,
-        }}
-      >
-        <Icon name="hood" /> Stranger
-      </div>
-      <p style={{ ...muted, fontSize: 13, fontStyle: "italic", marginBottom: 8 }}>
-        “{npc.greeting}”
-      </p>
-      <p style={{ ...muted, fontSize: 12, marginBottom: 12 }}>
-        Offers: <strong>{npc.item.name}</strong> ({npc.item.rarity} {npc.item.slot ? SLOT_LABELS[npc.item.slot] : npc.item.item_type} +{npc.item.power}{npc.item.stat_bonus && statBonusSummary(npc.item.stat_bonus) ? ` · ${statBonusSummary(npc.item.stat_bonus)}` : ""})
-      </p>
-      <div style={{ display: "grid", gap: 8, gridTemplateColumns: "1fr 1fr" }}>
-        <button
-          onClick={() => onPick(1)}
-          style={{
-            ...button,
-            marginTop: 0,
-            background: "#1f3a1f",
-            color: "#86efac",
-            border: "1px solid #2a5a2a",
-          }}
-        >
-          Trust
-        </button>
-        <button
-          onClick={() => onPick(2)}
-          style={{
-            ...button,
-            marginTop: 0,
-            background: "#33363d",
-            color: "#e6e6e6",
-          }}
-        >
-          Refuse
-        </button>
-      </div>
-      <p style={{ ...muted, fontSize: 11, marginTop: 8 }}>
-        Trust rolls d6 + class trust mod — 1-2 betrayed, 3 tainted (item + bleed),
-        4+ clean.
-      </p>
-    </div>
-  );
-}
-
-// ra-* icon names for dungeon room types, rendered via <Icon name={...}>.
-const ROOM_TYPE_ICON: Record<ExpeditionNodeType, string> = {
-  combat: "sword",
-  trap: "bear-trap",
-  lockbox: "cubes",
-  npc: "crystal-wand",
-  treasure: "gold-bar",
-  merchant: "gem-pendant",
-};
-
-function DoorPicker({
-  doors,
-  onPick,
-}: {
-  doors: ExpeditionNode[];
-  onPick: (pick: number) => void;
-}) {
-  return (
-    <div style={{ marginTop: 20 }}>
-      <div
-        style={{
-          ...muted,
-          fontSize: 11,
-          textTransform: "uppercase",
-          letterSpacing: 1.5,
-          marginBottom: 8,
-        }}
-      >
-        Pick a door
-      </div>
-      <div style={{ display: "grid", gap: 8 }}>
-        {doors.map((node, i) => (
-          <button
-            key={i}
-            onClick={() => onPick(i + 1)}
-            style={{
-              padding: "12px 14px",
-              background: "#1d1f23",
-              border: "1px solid #b89b3a",
-              borderRadius: 8,
-              textAlign: "left",
-              cursor: "pointer",
-              color: "#e6e6e6",
-              fontFamily: "inherit",
-            }}
-          >
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <Icon name={ROOM_TYPE_ICON[node.type]} size={20} color="#cbd5e1" />
-              <span style={{ fontWeight: 600, textTransform: "capitalize" }}>{node.type}</span>
-              {node.type === "combat" && node.monster_name && (
-                <span style={{ ...muted, fontSize: 12 }}>· {node.monster_name}</span>
-              )}
-            </div>
-            {node.scene && (
-              <div style={{ ...muted, fontSize: 12, marginTop: 4, fontStyle: "italic" }}>
-                {node.scene}
-              </div>
-            )}
-          </button>
-        ))}
-      </div>
-    </div>
-  );
-}
 
 function PartyMember({ fighter, self, onInspect }: { fighter: Character; self: boolean; onInspect?: () => void }) {
   const downed =
@@ -4109,17 +2993,6 @@ function CharacterInspectDialog({
             value={
               <span title={character.scars.length > 0 ? character.scars.join(", ") : undefined}>
                 {character.scars.length}
-              </span>
-            }
-          />
-          <Stat
-            label="Keys"
-            icon={<Icon name="key" color="#d1d5db" size={36} />}
-            value={
-              <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-                <KeyIcon tier="bronze" size={16} /> {character.keys_bronze}
-                <KeyIcon tier="silver" size={16} /> {character.keys_silver}
-                <KeyIcon tier="gold" size={16} /> {character.keys_gold}
               </span>
             }
           />
@@ -4860,8 +3733,6 @@ function CharacterCard({
   inventory,
   inQuest,
   onRest,
-  onSellKey,
-  onTransmuteKey,
   onLogout,
   onReroll,
   onSpend,
@@ -4873,8 +3744,6 @@ function CharacterCard({
   inventory: Item[];
   inQuest: boolean;
   onRest: (kind: "short" | "long") => void;
-  onSellKey: (tier: "bronze" | "silver" | "gold") => void;
-  onTransmuteKey: (fromTier: "bronze" | "silver") => void;
   onLogout: () => void;
   onReroll: (className?: string) => Promise<void>;
   onSpend?: (stat: StatKey) => void;
@@ -5027,21 +3896,6 @@ function CharacterCard({
             : "No scars yet\nEarned by dying in combat\n(soft death mode — capped at 3)"}
           value={c.scars.length.toString()}
         />
-        <div style={{ padding: 12, background: "#1d1f23", borderRadius: 8, display: "flex", alignItems: "center", gap: 12, position: "relative" }}>
-          <div style={{ flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", width: 36, height: 36 }}>
-            <Icon name="key" color="#d1d5db" size={36} />
-          </div>
-          <div style={{ minWidth: 0 }}>
-            <div style={{ ...muted, fontSize: 11, textTransform: "uppercase", letterSpacing: 0.8, lineHeight: 1, fontFamily: DISPLAY_FONT }}>Keys</div>
-            <div style={{ fontSize: 18, fontWeight: 600, color: "#f5f5f5", marginTop: 3 }}>
-              <KeysPopover
-                keys={{ bronze: c.keys_bronze, silver: c.keys_silver, gold: c.keys_gold }}
-                onSellKey={onSellKey}
-                onTransmuteKey={onTransmuteKey}
-              />
-            </div>
-          </div>
-        </div>
       </Stats>
       {/* Primary stats block — only shown after migration 0032 */}
       {(statHasData || hasUnspentPoints) && (
@@ -5445,123 +4299,6 @@ function CharacterSlotsModal({
   );
 }
 
-function KeysPopover({
-  keys,
-  onSellKey,
-  onTransmuteKey,
-}: {
-  keys: { bronze: number; silver: number; gold: number };
-  onSellKey: (tier: "bronze" | "silver" | "gold") => void;
-  onTransmuteKey: (fromTier: "bronze" | "silver") => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const { refs, floatingStyles, context } = useFloating({
-    open,
-    onOpenChange: setOpen,
-    middleware: [offset(8), flip({ padding: 8 }), shift({ padding: 8 })],
-    placement: "bottom-end",
-    whileElementsMounted: autoUpdate,
-  });
-  const { getFloatingProps } = useInteractions([useDismiss(context)]);
-  const total = keys.bronze + keys.silver + keys.gold;
-
-  return (
-    <>
-      <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-        <KeyIcon tier="bronze" size={14} /> {keys.bronze}
-        <KeyIcon tier="silver" size={14} /> {keys.silver}
-        <KeyIcon tier="gold" size={14} /> {keys.gold}
-      </span>
-      {total > 0 && (
-        <button
-          ref={refs.setReference}
-          onClick={() => setOpen((v) => !v)}
-          title="Sell or transmute keys"
-          style={{
-            position: "absolute", top: 8, right: 8,
-            background: "none", border: "1px solid #3a3d44", borderRadius: 5,
-            color: "#9ca3af", cursor: "pointer", padding: "2px 5px",
-            lineHeight: 1, fontFamily: "inherit", display: "flex", gap: 2, alignItems: "center",
-          }}
-        >
-          <KeyIcon tier="bronze" size={10} />
-          <KeyIcon tier="silver" size={10} />
-          <KeyIcon tier="gold" size={10} />
-        </button>
-      )}
-      {open && (
-        <FloatingPortal>
-          <div
-            ref={refs.setFloating}
-            style={{ ...floatingStyles, zIndex: 200 }}
-            {...getFloatingProps()}
-          >
-            <KeyActionsPanel keys={keys} onSellKey={(t) => { onSellKey(t); setOpen(false); }} onTransmuteKey={(t) => { onTransmuteKey(t); setOpen(false); }} />
-          </div>
-        </FloatingPortal>
-      )}
-    </>
-  );
-}
-
-function KeyActionsPanel({
-  keys,
-  onSellKey,
-  onTransmuteKey,
-}: {
-  keys: { bronze: number; silver: number; gold: number };
-  onSellKey: (tier: "bronze" | "silver" | "gold") => void;
-  onTransmuteKey: (fromTier: "bronze" | "silver") => void;
-}) {
-  return (
-    <div style={{ padding: 12, background: "#1d1f23", borderRadius: 8, border: "1px solid #2a2d33", boxShadow: "0 8px 24px rgba(0,0,0,0.6)", minWidth: 200 }}>
-      <div
-        style={{
-          ...muted,
-          fontSize: 11,
-          textTransform: "uppercase",
-          letterSpacing: 1.5,
-          marginBottom: 8,
-        }}
-      >
-        Keys
-      </div>
-      <div style={{ display: "grid", gap: 6 }}>
-        {(["bronze", "silver", "gold"] as const).map((tier) => {
-          const count = keys[tier];
-          if (count === 0) return null;
-          const sellPrice = tier === "bronze" ? 5 : tier === "silver" ? 25 : 100;
-          const canTransmute = tier !== "gold" && count >= 3;
-          return (
-            <div
-              key={tier}
-              style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13 }}
-            >
-              <KeyIcon tier={tier} size={16} />
-              <span style={{ fontWeight: 600, color: "#f5f5f5" }}>{count}</span>
-              <span style={{ ...muted, fontSize: 12, flex: 1 }}>{tier}</span>
-              <button onClick={() => onSellKey(tier)} style={smallActionBtn("#33363d", "#e6e6e6")}>
-                Sell · {sellPrice}g
-              </button>
-              {tier !== "gold" && (
-                <button
-                  onClick={() => onTransmuteKey(tier as "bronze" | "silver")}
-                  disabled={!canTransmute}
-                  style={smallActionBtn(
-                    canTransmute ? "#1f2a3a" : "#2a2d33",
-                    canTransmute ? "#7dd3fc" : "#6a7080",
-                  )}
-                >
-                  Transmute · 3→1
-                </button>
-              )}
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
 
 // Lazy AI-generated banner. `src` may be null on first miss (flux gen kicked
 // off via ctx.waitUntil server-side); the next dashboard poll picks up the
@@ -6246,13 +4983,6 @@ function InventoryFullScreen({
                   <span style={{ color: "#a78bfa" }} title="Mana"><Icon name="wizard-staff" size={11} /> {character.mana}/{character.max_mana}</span>
                 )}
                 <span style={{ color: "#fbbf24" }} title="Gold"><Icon name="gold-bar" size={11} /> {character.gold}g</span>
-                {(character.keys_bronze + character.keys_silver + character.keys_gold) > 0 && (
-                  <span style={{ color: "#9aa0a6" }} title="Keys">
-                    {character.keys_bronze > 0 && <><Icon name="key" size={10} color="#b45309" /> {character.keys_bronze} </>}
-                    {character.keys_silver > 0 && <><Icon name="key" size={10} color="#d1d5db" /> {character.keys_silver} </>}
-                    {character.keys_gold > 0 && <><Icon name="key" size={10} color="#fbbf24" /> {character.keys_gold}</>}
-                  </span>
-                )}
               </div>
             )}
           </div>
@@ -8352,7 +7082,6 @@ const VARIANT_LABEL: Record<string, string> = {
   standard: "Standard",
   boss: "Boss",
   gauntlet: "Gauntlet",
-  dungeon: "Dungeon",
 };
 
 function QuestStatsCard({ stats }: { stats: QuestStats }) {
@@ -9425,7 +8154,6 @@ function TownNav({
 const VARIANT_STYLE: Record<string, { icon: string; color: string; bg: string; label: string }> = {
   standard:     { icon: "sword",         color: "#86efac", bg: "#0a1f0a", label: "STANDARD" },
   boss:         { icon: "crown",         color: "#fca5a5", bg: "#1f0a0a", label: "BOSS" },
-  dungeon:      { icon: "tower",         color: "#7dd3fc", bg: "#0a121f", label: "DUNGEON" },
   gauntlet:     { icon: "crossed-swords",color: "#c4b5fd", bg: "#130a1f", label: "GAUNTLET" },
   bounty_pack:  { icon: "dragon",   color: "#fb923c", bg: "#1f0e00", label: "BOUNTY PACK" },
 };

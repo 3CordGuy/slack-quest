@@ -389,8 +389,6 @@ interface OutcomeSummary {
   total_pool_gold: number;
   elite: boolean;
   is_boss: boolean;
-  dungeon_room_cleared?: boolean;
-  dungeon_doors?: Array<{ type: string; monster_name: string | null; scene: string | null }>;
   tower_floor_cleared?: boolean;
   tower_next_floor_kind?: "combat" | "rest" | "boss";
   tower_awaiting_choice?: boolean;
@@ -1843,7 +1841,7 @@ function MonsterCard({
   onClick?: () => void;
 }) {
   const isDead = monster.hp <= 0;
-  // Card-local defeat clock — same pattern as GridDungeonView.
+  // Card-local defeat clock.
   const [defeatedAt, setDefeatedAt] = useState<number | null>(null);
   useEffect(() => {
     if (monster.hp <= 0 && defeatedAt === null) setDefeatedAt(Date.now());
@@ -2591,33 +2589,13 @@ function VictoryModal({
   onPressOnAfterBoss?: () => void;
   onBankAndExit?: () => void;
 }) {
-  const [choosingDoor, setChoosingDoor] = useState(false);
-  const dungeonRoom = outcome?.dungeon_room_cleared;
-  const dungeonDoors = outcome?.dungeon_doors;
-  const hasDoorChoice = dungeonRoom && dungeonDoors && dungeonDoors.length > 0;
   const towerFloor = outcome?.tower_floor_cleared;
   const towerAwaitingChoice = outcome?.tower_awaiting_choice;
   const title = towerAwaitingChoice
     ? "CYCLE CLEARED"
     : towerFloor
     ? "FLOOR CLEARED"
-    : dungeonRoom
-    ? "ROOM CLEARED"
     : "VICTORY";
-
-  async function pickDoor(pick: number) {
-    if (choosingDoor) return;
-    setChoosingDoor(true);
-    try {
-      await fetch(`/api/quest/${questId}/dungeon/choose_door`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ pick }),
-      });
-    } finally {
-      onBack();
-    }
-  }
 
   return (
     <>
@@ -2680,59 +2658,6 @@ function VictoryModal({
                 />
               ))}
             </div>
-            {hasDoorChoice && (
-              <div style={{ marginBottom: 16 }}>
-                <p style={{ ...muted, fontSize: 13, textAlign: "center", marginBottom: 12 }}>
-                  🚪 Two paths diverge ahead. Choose your next room:
-                </p>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-                  {dungeonDoors.map((door, i) => {
-                    const dirs = ["🧭 North", "🧭 East", "🧭 South", "🧭 West"];
-                    const dir = dirs[i] ?? `🧭 Door ${i + 1}`;
-                    const roomLabel = door.type === "combat"
-                      ? `⚔️ ${door.monster_name ?? "Combat"}`
-                      : door.type === "treasure"
-                      ? "🎁 Treasure"
-                      : door.type === "boss"
-                      ? `💀 ${door.monster_name ?? "Boss"}`
-                      : door.type === "npc"
-                      ? "🧙 NPC"
-                      : door.type === "trap"
-                      ? "⚠️ Trap"
-                      : door.type === "lockbox"
-                      ? "🔒 Lockbox"
-                      : "Room";
-                    return (
-                      <button
-                        key={i}
-                        disabled={choosingDoor}
-                        onClick={() => void pickDoor(i + 1)}
-                        style={{
-                          ...button,
-                          background: "#1a3a4a",
-                          border: "1.5px solid #38bdf8",
-                          color: "#e0f2fe",
-                          padding: "14px 10px",
-                          display: "flex",
-                          flexDirection: "column",
-                          alignItems: "center",
-                          gap: 4,
-                          opacity: choosingDoor ? 0.6 : 1,
-                        }}
-                      >
-                        <span style={{ fontSize: 13, fontFamily: DISPLAY_FONT, color: "#7dd3fc" }}>{dir}</span>
-                        <span style={{ fontSize: 12 }}>{roomLabel}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-            {dungeonRoom && !hasDoorChoice && (
-              <p style={{ ...muted, fontSize: 12, textAlign: "center", marginBottom: 12 }}>
-                Room cleared. Check the dashboard for the next room.
-              </p>
-            )}
             {towerFloor && !towerAwaitingChoice && (
               <p style={{ ...muted, fontSize: 12, textAlign: "center", marginBottom: 12 }}>
                 {outcome?.tower_next_floor_kind === "rest"
@@ -3031,7 +2956,7 @@ const RARITY_COLOR: Record<string, string> = {
 };
 
 // Strip the boring "Weapon (power N)" / "Armor (power N)" / "Item (power N)"
-// placeholders that grid-dungeon loot used when AI flavor hadn't been applied.
+// placeholders that loot drops used when AI flavor hadn't been applied.
 // Pre-deploy quests still have these in their treasure arrays; render a typed
 // label instead so the victory screen doesn't show "Item (power 2)".
 function displayLootName(item: { item_name: string; item_type: string }): string {

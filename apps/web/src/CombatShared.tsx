@@ -1,7 +1,5 @@
 // Shared combat UI primitives — single source of truth for animations,
 // HP bars, action buttons, dice, item pickers, combat log, and init strip.
-// Both CombatPage (Outskirts / solo quests) and GridDungeonView (dungeon
-// encounters) import from here so feature changes land in both at once.
 
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -1156,8 +1154,8 @@ export function InitStrip({ turnOrder, turnIndex, round, selfId, fighters, monst
 }
 
 // ─── CombatLog ───────────────────────────────────────────────────────────────
-// Dungeon-style log: colored slab turn-dividers, side-colored left rail for
-// party vs enemy entries, DETAILS toggle for dice/formula sub-lines.
+// Colored slab turn-dividers, side-colored left rail for party vs enemy
+// entries, DETAILS toggle for dice/formula sub-lines.
 
 export interface LogEntry {
   id: number;
@@ -1169,8 +1167,7 @@ export interface LogEntry {
 }
 
 // ─── Status Effects & Pills ───────────────────────────────────────────────────
-// Shared across CombatPage, GridDungeonView, and DungeonView so every view
-// renders the same pill styles and supports the same effect types.
+// Renders pill styles and supports all effect types.
 
 export interface StatusEffect {
   type: string;
@@ -1238,8 +1235,7 @@ export const EFFECT_PILLS: Partial<Record<string, { pill: React.FC<EffectPillPro
   Object.fromEntries((Object.keys(EFFECT_META) as EffectType[]).map((t) => [t, makeEffectPill(t)]));
 
 // ─── Shared combat action bar ─────────────────────────────────────────────────
-// Used by GridDungeonView and DungeonView so both dungeon combat views share
-// the same buttons, pickers, and turn-management logic.
+// Buttons, pickers, and turn-management logic for in-room combat views.
 
 export type PanelTurnAction =
   | { kind: "attack"; actor: string; target_id?: string | null }

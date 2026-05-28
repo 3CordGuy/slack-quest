@@ -53,8 +53,6 @@ function rowToItem(row: ItemRow): Item {
 
 export type BattlePosition = "front" | "back";
 
-export type KeyTier = "bronze" | "silver" | "gold";
-
 // "m" or "f" — null for legacy characters rolled before the field existed.
 // Drives pronoun choice in AI flavor text and gender of the per-character
 // art so regenerations don't swing between presentations.
@@ -90,9 +88,6 @@ export interface Character {
   last_rest_at: number | null;
   last_long_rest_at: number | null;
   position: BattlePosition;
-  keys_bronze: number;
-  keys_silver: number;
-  keys_gold: number;
   // Active status effects (regen, bleeding, etc.). JSON-serialized in DB; cleared
   // at quest end. Empty array when none.
   effects: StatusEffect[];
@@ -180,8 +175,8 @@ export async function createCharacter(
 ): Promise<Character> {
   const now = Date.now();
   // Shield, position, last_rest_at, last_long_rest_at, downed_until,
-  // tiered keys (keys_bronze/silver/gold), and effects (defaulting to '[]')
-  // all rely on the ALTER TABLE DEFAULTs from their respective migrations.
+  // and effects (defaulting to '[]') all rely on the ALTER TABLE DEFAULTs
+  // from their respective migrations.
   //
   // Mana/max_mana are written explicitly at 2/2 (overriding the legacy
   // DEFAULT 1 in migrations/0005_mana.sql). Two is the new floor because
@@ -224,7 +219,7 @@ export async function createCharacter(
 }
 
 
-export type QuestVariant = "standard" | "boss" | "gauntlet" | "dungeon" | "tower";
+export type QuestVariant = "standard" | "boss" | "gauntlet" | "tower";
 
 // One floor of a tower run. Stored on SceneJson.upcoming_waves[] as the
 // pre-rolled queue. `kind` flags whether the engine should fight, the player
@@ -242,13 +237,9 @@ export interface TowerFloorPlan {
   boss_treasure?: LootOption[];
 }
 
-// Read-time scene migration. The "expedition" variant was renamed to "dungeon" once
-// the room/keys/traps overhaul made the original name misleading. Any pre-rename
-// rows in the DB get normalized here so callers don't have to think about it.
+// Read-time scene hook. Kept as a passthrough so call sites have a single
+// place to wire future migrations if/when the scene shape evolves again.
 function normalizeScene(scene: SceneJson): SceneJson {
-  if ((scene.variant as string) === "expedition") {
-    return { ...scene, variant: "dungeon" };
-  }
   return scene;
 }
 
@@ -261,17 +252,6 @@ export interface GauntletWave {
   // activates. Old gauntlets pre-art won't have it; render code skips silently.
   art_url?: string;
 }
-
-// An expedition (dungeon) node is one room players step into. Each type maps to a
-// different player verb:
-//   "combat"   → /sq attack/cast/signature (resolves via existing combat)
-//   "trap"     → /sq choose 1|2|3 — class-gated skill check, fail = HP damage
-//   "lockbox"  → /sq choose 1|2 — use a key for bonus loot, or skip
-//   "npc"      → /sq choose 1|2 — trust (get item) or refuse (free pass)
-//   "treasure" → /sq take 1|2 — final reward, always the dungeon's last room
-export type ExpeditionNodeType = "combat" | "trap" | "lockbox" | "npc" | "treasure" | "merchant";
-
-export type SkillType = "str" | "dex" | "int";
 
 export interface LootOption {
   name: string;
@@ -289,81 +269,6 @@ export interface LootOption {
   element?: ElementType | null;
   tier?: number;
 }
-
-export interface TrapChoice {
-  text: string;       // shown to the player, e.g. "Smash through the wall"
-  emoji: string;      // 💪/🔧/📜 — visual hint of the skill type
-  skill: SkillType;
-  fail_damage: number;
-}
-
-export interface NpcOffer {
-  greeting: string;   // AI-generated NPC line
-  item: LootOption;   // what they offer if trusted
-  // Optional pre-rendered character portrait URL — set during dungeon
-  // construction by generateEncounterArt(kind="npc"|"merchant"). Each NPC
-  // and merchant has a generated name so we cache by name slug, which means
-  // the same name always renders the same portrait. Old expeditions don't
-  // have this; render code falls back to no image when missing.
-  art_url?: string;
-}
-
-export interface ExpeditionNode {
-  type: ExpeditionNodeType;
-  scene: string;
-
-  // combat-only — pre-rolled monster. Sub-boss combats drop silver; standard combats
-  // drop bronze. Treasure room is the final reward and isn't preceded by a key drop.
-  monster_name?: string;
-  monster_max_hp?: number;
-  tier?: number;
-  drops_key?: boolean;
-  drops_key_tier?: KeyTier;
-  // AI-generated portrait URL (R2-cached). Pre-rolled at dungeon-creation time
-  // alongside the room's other content. Copied to scene.monster_art_url when
-  // the room becomes the active scene. Optional — old expeditions don't have it
-  // and image-block render must skip silently when missing.
-  monster_art_url?: string;
-
-  // trap-only
-  trap_choices?: TrapChoice[];
-  // AI-generated illustration of the trap scene. Pre-rolled at dungeon-
-  // creation time alongside the trap text. Optional — old expeditions
-  // (pre-trap-art) don't have it and the image block is skipped silently.
-  trap_art_url?: string;
-
-  // npc-only
-  npc?: NpcOffer;
-
-  // lockbox + treasure share this — pre-rolled and AI-named at expedition start.
-  // Lockboxes also carry a lock_tier (bronze/silver/gold). Higher-tier locks gate
-  // better loot and require a key of matching tier or higher to use the key path.
-  loot_options?: LootOption[];
-  lock_tier?: KeyTier;
-}
-
-export interface ExpeditionState {
-  theme: string;
-  current: number;            // index into nodes (current room)
-  nodes: ExpeditionNode[];    // all rooms — middle pool + sub-boss + treasure (last 2)
-  path_taken: string[];       // labels of choices made (for AI continuity)
-  keys: number;               // 🗝️ — held by party, dropped by combat, spent on lockboxes
-
-  // Door-choice navigation: middle rooms come from a pool ~2× the visited count.
-  // After each room resolves, two unvisited middles are presented as doors; player
-  // picks one with /sq choose, the other is discarded. Last 2 indices in `nodes`
-  // (sub-boss + treasure) aren't in the pool — they're fixed-end.
-  pool?: number[];            // unvisited middle-room indices remaining
-  pending_doors?: number[];   // [idx1, idx2] — set while a door pick is awaited
-  middle_count?: number;      // how many middle rooms the player will visit total
-  visited_count?: number;     // how many middle rooms visited so far
-  sealed_doors?: number[];    // node indices of doors not picked (for completion map)
-  visited_indices?: number[]; // ordered list of node indices walked through
-}
-
-// ── Phase 4: Graph Dungeon ────────────────────────────────────────────────────
-
-export type DungeonDirection = "n" | "e" | "s" | "w";
 
 export interface MonsterSpec {
   name: string;
@@ -388,137 +293,6 @@ export interface MonsterSpec {
   armor?: number;
 }
 
-export type DungeonObjectEffect =
-  | { effect: "open_exit"; direction: DungeonDirection; reveals_node: string }
-  | { effect: "spawn_item"; item: LootOption }
-  | { effect: "trigger_encounter"; monsters: MonsterSpec[] }
-  | { effect: "flavor"; text: string };
-
-export interface DungeonObject {
-  id: string;
-  name: string;
-  takeable: boolean;
-  used: boolean;
-  on_use?: DungeonObjectEffect;
-}
-
-export interface DungeonNode {
-  id: string;
-  name?: string;
-  description: string;
-  art_url?: string;
-  exits: Partial<Record<DungeonDirection, string>>;
-  objects: DungeonObject[];
-  encounter?: { monsters: MonsterSpec[]; cleared: boolean };
-  visited: boolean;
-
-  // ── Grid dungeon enhancements (set when the dungeon was grid-generated).
-  // Legacy AI-graph dungeons leave these undefined and fall back to old rendering.
-  x?: number;                                              // grid column (0-indexed)
-  y?: number;                                              // grid row (0-indexed)
-  doors?: Partial<Record<DungeonDirection, GridDoor>>;     // door state per direction
-  content?: GridRoomContent;                                // first-class room contents
-  shape?: RoomShape;                                        // derived from exit dirs; stored for rendering convenience
-}
-
-// Door between two adjacent grid rooms. The door lives "on" the exit; both
-// adjacent rooms point to logically-equivalent door records but we store the
-// authoritative copy on the room with the lower (x, y).
-export interface GridDoor {
-  state: "open" | "locked" | "barred" | "broken";
-  // For locked doors: the key tier required.
-  lock_tier?: KeyTier;
-  // DC for the appropriate skill check. Picking is DEX, bashing is STR.
-  pick_dc?: number;
-  bash_dc?: number;
-  // True once any party member has bashed through (lets others walk through
-  // without re-rolling).
-  visible?: boolean;
-}
-
-// First-class room contents — replaces the implicit "encounter + objects[]"
-// scheme. A grid-generated room has exactly one content kind (boss rooms have
-// content="boss" which carries the monster + treasure together).
-export type GridRoomContent =
-  | { kind: "empty" }
-  | { kind: "entry" }
-  | { kind: "encounter"; monsters: MonsterSpec[]; cleared: boolean }
-  | { kind: "boss"; monsters: MonsterSpec[]; cleared: boolean; treasure: LootOption[] }
-  | { kind: "loot"; items: LootOption[]; taken: boolean }
-  | { kind: "key_pickup"; tier: KeyTier; taken: boolean }
-  | { kind: "trap"; choices: TrapChoice[]; resolved: boolean }
-  | {
-      kind: "lockbox";
-      lock_tier: KeyTier;
-      options: LootOption[];
-      resolved: boolean;
-      // New two-step flow (added 2026-05): the chest stays closed until a
-      // party member spends a key to open it. Then items become claimable
-      // by ANY party member (including different items by different
-      // members, or one player taking everything). Resolves when someone
-      // hits Close or every item is claimed.
-      //   - Legacy lockboxes (saved before this field existed) have
-      //     `opened === undefined` and use the original single-pick flow
-      //     via the old /lockbox endpoint.
-      //   - New lockboxes are emitted with `opened: false, claims: {}`.
-      opened?: boolean;
-      // Map from option-index (stringified) → claimer slack_user_id.
-      claims?: Record<string, string>;
-    }
-  | { kind: "npc"; greeting: string; offer: LootOption; resolved: boolean; art_url?: string | null }
-  | { kind: "merchant"; greeting: string; stock: LootOption[]; resolved: boolean; art_url?: string | null };
-
-// Room shape codes drive which background art to render. Derived from the
-// exit direction set: e.g. {n, e} → "corner_ne", {n, s} → "straight_ns",
-// {n, e, s, w} → "cross". Empty set → "chamber" (entry/boss rooms tend to be
-// chambers regardless of exits, but exits decide otherwise).
-export type RoomShape =
-  | "dead_n" | "dead_e" | "dead_s" | "dead_w"
-  | "straight_ns" | "straight_ew"
-  | "corner_ne" | "corner_nw" | "corner_se" | "corner_sw"
-  | "t_n" | "t_e" | "t_s" | "t_w"
-  | "cross"
-  | "chamber"
-  | "entry"
-  | "boss";
-
-// Compute a RoomShape from the set of exit directions and optional content type.
-// Special rooms (entry, boss) override the derived shape so their bespoke art
-// renders.
-export function shapeFromExits(exits: ReadonlySet<DungeonDirection>, contentKind?: GridRoomContent["kind"]): RoomShape {
-  if (contentKind === "entry") return "entry";
-  if (contentKind === "boss") return "boss";
-  const has = (d: DungeonDirection) => exits.has(d);
-  const n = has("n"), e = has("e"), s = has("s"), w = has("w");
-  const count = (n ? 1 : 0) + (e ? 1 : 0) + (s ? 1 : 0) + (w ? 1 : 0);
-  if (count === 4) return "cross";
-  if (count === 3) {
-    if (!n) return "t_s"; if (!e) return "t_w"; if (!s) return "t_n"; return "t_e";
-  }
-  if (count === 2) {
-    if (n && s) return "straight_ns";
-    if (e && w) return "straight_ew";
-    if (n && e) return "corner_ne";
-    if (n && w) return "corner_nw";
-    if (s && e) return "corner_se";
-    return "corner_sw";
-  }
-  if (count === 1) {
-    if (n) return "dead_n"; if (e) return "dead_e"; if (s) return "dead_s"; return "dead_w";
-  }
-  return "chamber";
-}
-
-export interface DungeonGraph {
-  nodes: Record<string, DungeonNode>;
-  current: string;
-  visited: string[];
-
-  // Grid dungeons set these so the minimap and traversal know the layout.
-  grid_width?: number;
-  grid_height?: number;
-}
-
 export interface SceneJson {
   monster_name: string;
   monster_hp: number;
@@ -532,10 +306,6 @@ export interface SceneJson {
   wave?: number;
   total_waves?: number;
   upcoming_waves?: GauntletWave[];
-  // Expedition-only (legacy dungeon).
-  expedition?: ExpeditionState;
-  // Graph dungeon (Phase 4). When set, navigation uses /gq move instead of /gq choose.
-  graph?: DungeonGraph;
   // Active monster status effects (poisoned, etc.). Tick on monster turns.
   // Cleared when the monster dies / scene transitions to a new monster.
   monster_effects?: StatusEffect[];
@@ -856,26 +626,6 @@ export async function tryUpdateScene(
          AND CAST(json_extract(scene_json, '$.monster_hp') AS INTEGER) = ?`,
     )
     .bind(JSON.stringify(scene), questId, expectedMonsterHp)
-    .run();
-  return (result.meta.changes ?? 0) > 0;
-}
-
-// Atomic scene write conditional on the expedition's `current` node index matching.
-// Used by /dnd choose and /dnd take so a fast second invoker doesn't overwrite the
-// first vote's advancement.
-export async function trySaveExpeditionAdvance(
-  db: D1Database,
-  questId: number,
-  scene: SceneJson,
-  expectedCurrent: number,
-): Promise<boolean> {
-  const result = await db
-    .prepare(
-      `UPDATE quests SET scene_json = ?
-       WHERE id = ?
-         AND CAST(json_extract(scene_json, '$.expedition.current') AS INTEGER) = ?`,
-    )
-    .bind(JSON.stringify(scene), questId, expectedCurrent)
     .run();
   return (result.meta.changes ?? 0) > 0;
 }
@@ -1786,7 +1536,7 @@ export async function setCharacterEffects(
 }
 
 // Clears all effects from every party member of a quest. Called at quest end
-// (resolveVictory / resolveDeath / resolveExpeditionVictory / resolveFlee-fail).
+// (resolveVictory / resolveDeath / resolveFlee-fail).
 // Also nukes drink buffs in the same write — pub buffs don't persist past
 // the quest they were drunk for, regardless of unspent charges.
 export async function clearPartyEffects(db: D1Database, questId: number): Promise<void> {
@@ -1796,21 +1546,6 @@ export async function clearPartyEffects(db: D1Database, questId: number): Promis
        WHERE slack_user_id IN (SELECT character_id FROM quest_party WHERE quest_id = ?)`,
     )
     .bind(Date.now(), questId)
-    .run();
-}
-
-// Adds (or removes, with negative `amount`) tiered dungeon keys on a character.
-// Caller is responsible for checking the character has enough before spending.
-export async function addCharacterKey(
-  db: D1Database,
-  userId: string,
-  tier: KeyTier,
-  amount: number,
-): Promise<void> {
-  const col = tier === "bronze" ? "keys_bronze" : tier === "silver" ? "keys_silver" : "keys_gold";
-  await db
-    .prepare(`UPDATE characters SET ${col} = MAX(0, ${col} + ?), last_active = ? WHERE slack_user_id = ?`)
-    .bind(amount, Date.now(), userId)
     .run();
 }
 
@@ -1959,7 +1694,7 @@ export interface LifetimeStats {
   revives: number;          // count of /sq revive uses
   deaths_soft: number;      // soft-death actions (12h cooldown)
   deaths_perma: number;     // perma-death actions (elite quests)
-  by_variant: { standard: number; boss: number; gauntlet: number; dungeon: number; tower: number };
+  by_variant: { standard: number; boss: number; gauntlet: number; tower: number };
 }
 
 export async function getLifetimeStats(
@@ -1978,7 +1713,7 @@ export async function getLifetimeStats(
     revives: 0,
     deaths_soft: 0,
     deaths_perma: 0,
-    by_variant: { standard: 0, boss: 0, gauntlet: 0, dungeon: 0, tower: 0 },
+    by_variant: { standard: 0, boss: 0, gauntlet: 0, tower: 0 },
   };
 
   // 1. Quest counts by status + by variant. quest_party.character_id stores
@@ -1997,7 +1732,7 @@ export async function getLifetimeStats(
     else if (row.status === "failed") result.quests_failed += 1;
     else if (row.status === "active") result.quests_active += 1;
     const v = row.variant ?? "standard";
-    if (v === "standard" || v === "boss" || v === "gauntlet" || v === "dungeon" || v === "tower") {
+    if (v === "standard" || v === "boss" || v === "gauntlet" || v === "tower") {
       result.by_variant[v] += 1;
     } else {
       result.by_variant.standard += 1;
@@ -2119,26 +1854,13 @@ export async function getQuestDamageStats(
 // to the AI scene generator as an avoid-list so back-to-back quests don't keep
 // summoning "the Schemaless Shrieker." Uses JSON path extraction for speed.
 //
-// For dungeon and gauntlet quests, monster_name is the FINAL one (the last
-// monster fought / on scene). It misses earlier waves and dungeon rooms. v1
-// acceptable — eliminates the most-visible repetition (entry combat + boss).
-// Recent monster names from this channel's last N quests, for the AI scene
-// generator's avoid-list. Earlier version only read top-level monster_name,
-// which is just the FINAL monster of each quest — a dungeon's sub-boss, a
-// gauntlet's last wave, a standard's only foe. That missed dozens of names
-// hidden in dungeon middle rooms and gauntlet wave queues, so the AI could
-// (and frequently did) re-mint a name that had just been used inside a
-// recent dungeon (e.g. "API Abandoner" appearing as a middle room in two
-// different dungeons because neither saw the other's roster).
-//
-// Now extracts ALL monster names per quest:
-//   • top-level monster_name (always)
-//   • dungeon: every combat node's monster_name from expedition.nodes
+// Extracts:
+//   • top-level monster_name (always — the only-foe / final wave / boss)
 //   • gauntlet: every queued wave's name from upcoming_waves
 //
 // Deduped, ordered most-recent-first. Caller can slice however many they want
-// to feed into the prompt's avoid-list. `questLimit` is now QUESTS scanned,
-// not names returned — a single dungeon yields ~4-6 names.
+// to feed into the prompt's avoid-list. `questLimit` is QUESTS scanned, not
+// names returned — a single gauntlet yields a handful of names.
 export async function getRecentMonsterNames(
   db: D1Database,
   channelId: string,
@@ -2166,13 +1888,6 @@ export async function getRecentMonsterNames(
     try {
       const scene = JSON.parse(r.scene_json) as SceneJson;
       tryAdd(scene.monster_name);
-      // Dungeon: every combat node's monster (middle rooms + sub-boss).
-      // Sub-boss is also the top-level name, but tryAdd dedupes.
-      if (scene.expedition?.nodes) {
-        for (const node of scene.expedition.nodes) {
-          if (node.type === "combat") tryAdd(node.monster_name);
-        }
-      }
       // Gauntlet: each queued wave's name. The active wave's name lives in
       // monster_name (already captured above); upcoming_waves carries the
       // rest.
@@ -2343,13 +2058,15 @@ async function restoreSnapshot(
   activeSlot: number,
 ): Promise<void> {
   await deleteCharacter(db, userId); // cascades inventory
+  // keys_bronze/silver/gold are intentionally omitted from the column list —
+  // the columns still exist (per the live migrations) but the dungeon system
+  // that consumed them was retired, so we let the DB defaults (0) take.
   await db
     .prepare(
       `INSERT INTO characters (
         slack_user_id, slack_team_id, name, class, level, xp, hp, max_hp, mana, max_mana, shield, gold,
         str, int_stat, vit, agi, dex, unspent_points,
         scars, downed_until, last_rest_at, last_long_rest_at, position,
-        keys_bronze, keys_silver, keys_gold,
         effects, gender, drink_buff_json, slack_username,
         achievements, pending_achievements,
         apothecary_purchases, revives_given,
@@ -2361,7 +2078,6 @@ async function restoreSnapshot(
         ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
         ?, ?, ?, ?, ?, ?,
         ?, ?, ?, ?, ?,
-        ?, ?, ?,
         ?, ?, ?, ?,
         ?, ?,
         ?, ?,
@@ -2377,7 +2093,6 @@ async function restoreSnapshot(
       character.str, character.int_stat, character.vit, character.agi, character.dex, character.unspent_points,
       JSON.stringify(character.scars ?? []), character.downed_until ?? null,
       character.last_rest_at ?? null, character.last_long_rest_at ?? null, character.position,
-      character.keys_bronze, character.keys_silver, character.keys_gold,
       JSON.stringify(character.effects ?? []), character.gender,
       character.drink_buff ? JSON.stringify(character.drink_buff) : null, character.slack_username,
       JSON.stringify(character.achievements ?? []), JSON.stringify(character.pending_achievements ?? []),
@@ -3278,7 +2993,7 @@ export function isFighter(c: Character): boolean {
 // Returns ms remaining on the per-character action cooldown for this quest, or 0 if ready.
 // All "combat-tier" player actions reset the cooldown — attack, cast, flee, signature,
 // heal, shield, revive, and position changes (repositioning consumes a turn).
-// Bookkeeping rows (monster turns, victory, death, join, expedition advance) don't.
+// Bookkeeping rows (monster turns, victory, death, join) don't.
 export async function cooldownRemaining(
   db: D1Database,
   questId: number,
