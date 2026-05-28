@@ -3159,7 +3159,13 @@ function ActiveQuestCard({
           variant === "standard" ||
           variant === "boss" ||
           variant === "gauntlet" ||
-          (variant === "dungeon" && currentNode?.type === "combat" && s.monster_hp > 0);
+          (variant === "dungeon" && currentNode?.type === "combat" && s.monster_hp > 0) ||
+          // Tower combat + boss floors. Rest floors and the post-boss
+          // awaiting-choice state route to TowerInterlude up-stack and
+          // never reach the dashboard, but be defensive about both.
+          (variant === "tower" &&
+            (s.tower_floor_kind === "combat" || s.tower_floor_kind === "boss") &&
+            !s.tower_awaiting_choice);
         if (combatAvailable) {
           const isCreator = quest.created_by === selfId;
           return (
