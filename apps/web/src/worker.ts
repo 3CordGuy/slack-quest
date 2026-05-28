@@ -2707,6 +2707,8 @@ app.post("/api/apothecary/self_revive", async (c) => {
   if (!session) return c.json({ error: "unauthenticated" }, 401);
   const character = await getCharacter(c.env.DB, session.slack_user_id);
   if (!character) return c.json({ error: "no_character" }, 404);
+  const activeQuest = await getActiveQuestForCharacter(c.env.DB, session.slack_user_id);
+  if (activeQuest) return c.json({ error: "mid_quest" }, 400);
   if (!character.downed_until || character.downed_until <= Date.now()) {
     return c.json({ error: "not_downed" }, 400);
   }
@@ -4667,101 +4669,6 @@ app.post("/api/quest/:id/start_web_combat", async (c) => {
   return c.json({ quest_id: questId, state: afterMercs.state });
 });
 
-// Self-revive quote: returns the caller's current gold + XP-into-level and
-// the 50/50 cost to revive. Pure read; safe to poll. Returns 400 if the
-// combat isn't in "defeat" state so the client can hide the button when the
-// option isn't available.
-app.get("/api/quest/:id/self_revive_quote", async (c) => {
-  const session = await currentSession(c.env.DB, c.req.header("cookie"));
-  if (!session) return c.json({ error: "unauthenticated" }, 401);
-  const questId = parseInt(c.req.param("id"), 10);
-  if (!Number.isFinite(questId)) return c.json({ error: "bad_quest_id" }, 400);
-  const snap = await getWebCombatSnapshot(c.env.DB, questId);
-  if (!snap) return c.json({ error: "no_combat" }, 404);
-  if (snap.state.status !== "defeat") return c.json({ error: "not_defeated" }, 400);
-  if (!snap.state.fighters.some((f) => f.id === session.slack_user_id)) {
-    return c.json({ error: "not_in_combat" }, 403);
-  }
-  const character = await getCharacter(c.env.DB, session.slack_user_id);
-  if (!character) return c.json({ error: "no_character" }, 404);
-  const xpInLevel = Math.max(0, character.xp - xpForLevel(character.level));
-  return c.json({
-    ok: true,
-    gold_cost: Math.floor(character.gold * 0.5),
-    xp_cost: Math.floor(xpInLevel * 0.5),
-    available_gold: character.gold,
-    available_xp_in_level: xpInLevel,
-    level: character.level,
-  });
-});
-
-// Self-revive: when a party wipe ends combat, the caller can spend 50% of
-// their current gold + 50% of XP-into-current-level to bring themselves
-// back up and resume the fight in place. Soft-death already applied (scar,
-// 25% gold loss, item drop, 12hr cooldown) — this is an additional in-combat
-// second chance, NOT a death-cost bypass. Per-player: only restores the
-// caller's fighter; teammates stay at 0 HP and can self-revive from their
-// own browsers or be ally-revived once someone is standing.
-app.post("/api/quest/:id/self_revive", async (c) => {
-  const session = await currentSession(c.env.DB, c.req.header("cookie"));
-  if (!session) return c.json({ error: "unauthenticated" }, 401);
-  const questId = parseInt(c.req.param("id"), 10);
-  if (!Number.isFinite(questId)) return c.json({ error: "bad_quest_id" }, 400);
-
-  const snap = await getWebCombatSnapshot(c.env.DB, questId);
-  if (!snap) return c.json({ error: "no_combat" }, 404);
-  if (snap.state.status !== "defeat") {
-    return c.json({ error: "not_defeated", status: snap.state.status }, 400);
-  }
-  const fighterIdx = snap.state.fighters.findIndex((f) => f.id === session.slack_user_id);
-  if (fighterIdx === -1) return c.json({ error: "not_in_combat" }, 403);
-
-  const character = await getCharacter(c.env.DB, session.slack_user_id);
-  if (!character) return c.json({ error: "no_character" }, 404);
-
-  const goldCost = Math.floor(character.gold * 0.5);
-  const xpInLevel = Math.max(0, character.xp - xpForLevel(character.level));
-  const xpCost = Math.floor(xpInLevel * 0.5);
-
-  // Deduct cost. xp/gold are clamped at >=0 by the curve above, so the
-  // subtraction is safe — character.gold - goldCost is at minimum 0.
-  await c.env.DB.prepare(
-    `UPDATE characters SET gold = gold - ?, xp = xp - ?, last_active = ? WHERE slack_user_id = ?`,
-  ).bind(goldCost, xpCost, Date.now(), session.slack_user_id).run();
-
-  // Patch combat: restore caller HP to max, flip status back to active. Monsters
-  // keep their pre-wipe HP — the fight resumes from where it ended. Other
-  // fighters stay at 0 HP; they self-revive from their own browsers.
-  const target = snap.state.fighters[fighterIdx];
-  const restoredFighter = { ...target, hp: target.max_hp };
-  const newFighters = [...snap.state.fighters];
-  newFighters[fighterIdx] = restoredFighter;
-  const revivedState: CombatState = {
-    ...snap.state,
-    fighters: newFighters,
-    status: "active",
-  };
-  await saveWebCombatState(c.env.DB, questId, revivedState, snap.log);
-
-  // resolveCombatOutcome marked the quest "failed" + completed_at on the
-  // wipe; reopen it so the dashboard treats it as live again.
-  await c.env.DB.prepare(
-    `UPDATE quests SET status = 'active', completed_at = NULL WHERE id = ?`,
-  ).bind(questId).run();
-
-  // DO RPC: invalidate its cache + broadcast the fresh state to any
-  // connected WS so the DefeatModal closes and the fight UI reappears.
-  const doId = c.env.QUEST_ROOM.idFromName(`quest:${questId}`);
-  const doStub = c.env.QUEST_ROOM.get(doId);
-  c.executionCtx.waitUntil(
-    (doStub as unknown as { notifyStateReset(q: number): Promise<void> })
-      .notifyStateReset(questId)
-      .catch((err) => console.warn("notifyStateReset failed", err)),
-  );
-
-  return c.json({ ok: true, cost: { gold: goldCost, xp: xpCost } });
-});
-
 // Clears the web combat state for a quest. Used when the player exits the
 // combat page. Doesn't touch the underlying quest row — quest outcome
 // resolution (XP/gold/loot) lives in Phase 2d.
@@ -6405,20 +6312,6 @@ export class QuestRoom extends DurableObject<Env> {
   // Re-reads from D1 (source of truth) and broadcasts to every connected
   // socket. Idempotent — safe to call again if state already exists.
   async notifyCombatStarted(questId: number): Promise<void> {
-    const state = await this.loadState(questId);
-    if (!state) return;
-    this.broadcast({ type: "state", state });
-  }
-
-  // Called after an external mutation rewrote web_combat_state (e.g. the
-  // /self_revive endpoint flipped a "defeat" back to "active"). Drops the
-  // in-memory cache so loadState re-reads fresh, then broadcasts the new
-  // state to every connected WS so the DefeatModal closes and the fight UI
-  // reappears without the user having to refresh.
-  async notifyStateReset(questId: number): Promise<void> {
-    this.cacheState = null;
-    this.cacheLog = [];
-    this.cacheQuestId = null;
     const state = await this.loadState(questId);
     if (!state) return;
     this.broadcast({ type: "state", state });
