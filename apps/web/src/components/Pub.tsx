@@ -809,4 +809,4 @@ function PubLeaderboardCard({ entries }: { entries: PubLeaderboardEntry[] }) {
   );
 }
 
-export { PubCard, PubLeaderboardCard };
+export { PubCard, PubLeaderboardCard, LiarsRollCard, SpdCard };
