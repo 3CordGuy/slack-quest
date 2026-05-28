@@ -831,12 +831,23 @@ interface ApothecaryStapleItem {
   price: number;
 }
 
+interface ApothecarySelfRevive {
+  gold_cost: number;
+  xp_cost: number;
+  available_gold: number;
+  available_xp_in_level: number;
+  level: number;
+  downed_until: number;
+}
+
 interface ApothecaryResponse {
   downed: ApothecaryDownedChar[];
   staples: ApothecaryStapleItem[];
   gold: number;
   revive_count: number;
   art_url: string | null;
+  // Present only when the caller is currently downed.
+  self_revive?: ApothecarySelfRevive | null;
   error?: string;
 }
 
@@ -1304,6 +1315,19 @@ export function App() {
     }
     toast.success(`${body.target_name ?? targetName} revived with ${body.hp_restored ?? 50}% HP!`);
     void refreshApothecary();
+  }
+
+  async function apothecarySelfRevive() {
+    const res = await fetch("/api/apothecary/self_revive", { method: "POST", credentials: "include" });
+    const body = await res.json() as { ok?: boolean; error?: string; cost?: { gold: number; xp: number } };
+    if (!res.ok || !body.ok) {
+      if (body.error === "not_downed") toast.error("You're not downed anymore.");
+      else toast.error("Self-revive failed.");
+      return;
+    }
+    const c = body.cost ?? { gold: 0, xp: 0 };
+    toast.success(`Back on your feet. Cost: ${c.gold}g + ${c.xp} XP.`);
+    void Promise.all([refreshMe(), refreshApothecary()]);
   }
 
   async function spendStatPoint(stat: StatKey) {
@@ -1995,6 +2019,7 @@ export function App() {
             selfId={state.me.slack_user_id}
             onBuyStaple={apothecaryBuyStaple}
             onRevive={apothecaryRevive}
+            onSelfRevive={apothecarySelfRevive}
             onRefresh={refreshApothecary}
           />
         );
@@ -9106,6 +9131,7 @@ function ApothecaryCard({
   selfId,
   onBuyStaple,
   onRevive,
+  onSelfRevive,
   onRefresh,
 }: {
   apothecary: ApothecaryResponse | null;
@@ -9113,6 +9139,7 @@ function ApothecaryCard({
   selfId: string;
   onBuyStaple: (stapleId: string) => void;
   onRevive: (targetUserId: string, targetName: string) => void;
+  onSelfRevive: () => Promise<void>;
   onRefresh: () => Promise<void>;
 }) {
   const hero = navOverlay
@@ -9165,19 +9192,49 @@ function ApothecaryCard({
           <div style={{ ...muted, fontSize: 11, textTransform: "uppercase" as const, letterSpacing: 1.5, marginBottom: 8 }}>
             <Icon name="fall-down" /> Maimed Adventurers
           </div>
-          {isSelfDowned && (
-            <div style={{
-              padding: "10px 12px",
-              background: "#1f0a0a",
-              border: "1px solid #7f1d1d44",
-              borderRadius: 8,
-              marginBottom: 8,
-              color: "#fca5a5",
-              fontSize: 13,
-            }}>
-              ☠ You are downed — wait for a companion with a revive item to help you.
-            </div>
-          )}
+          {isSelfDowned && (() => {
+            const sr = apothecary.self_revive ?? null;
+            const timeLeftMs = sr ? sr.downed_until - Date.now() : 0;
+            const hrs = Math.floor(timeLeftMs / 3600000);
+            const mins = Math.floor((timeLeftMs % 3600000) / 60000);
+            const timeStr = hrs > 0 ? `${hrs}h ${mins}m` : `${mins}m`;
+            return (
+              <div style={{
+                padding: 14,
+                background: "#1f0a0a",
+                border: "1px solid #7f1d1d66",
+                borderRadius: 10,
+                marginBottom: 10,
+              }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                  <Icon name="fall-down" size={18} color="#f87171" />
+                  <strong style={{ color: "#fca5a5", fontSize: 14 }}>You are downed</strong>
+                  <span style={{ ...muted, fontSize: 12, marginLeft: "auto" }}>{timeStr} remaining</span>
+                </div>
+                <p style={{ ...muted, fontSize: 12, margin: "0 0 10px" }}>
+                  Wait it out, ask a companion with a revive item, or pay half your gold and half your level-{sr?.level ?? "?"} progress to get back on your feet now.
+                </p>
+                {sr && (
+                  <>
+                    <div style={{ display: "flex", gap: 12, fontSize: 13, color: "#e2e8f0", marginBottom: 10 }}>
+                      <span><Icon name="gold-bar" size={12} color="#fbbf24" /> <strong style={{ color: "#fbbf24" }}>{sr.gold_cost}g</strong> <span style={muted}>/ {sr.available_gold}</span></span>
+                      <span>✨ <strong style={{ color: "#a78bfa" }}>{sr.xp_cost} XP</strong> <span style={muted}>/ {sr.available_xp_in_level}</span></span>
+                    </div>
+                    <button
+                      onClick={() => void onSelfRevive()}
+                      style={{
+                        ...smallActionBtn("#0a2010", "#86efac"),
+                        padding: "8px 14px",
+                        fontSize: 13,
+                      }}
+                    >
+                      💎 Self-revive ({sr.gold_cost}g + {sr.xp_cost} XP)
+                    </button>
+                  </>
+                )}
+              </div>
+            );
+          })()}
           {downed.map((d) => {
             const timeLeftMs = d.downed_until - Date.now();
             const hrs = Math.floor(timeLeftMs / 3600000);
