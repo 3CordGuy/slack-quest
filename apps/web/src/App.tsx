@@ -213,6 +213,7 @@ interface Character {
   dex?: number;
   unspent_points?: number;
   notification_pref?: "thread" | "dm";
+  active_slot?: number;
 }
 
 type ItemType =
@@ -2068,6 +2069,7 @@ export function App() {
               onSpend={spendStatPoint}
               onSaveNotifyPref={saveNotifyPref}
               onOpenDevTools={import.meta.env.DEV ? () => setDevToolsOpen(true) : undefined}
+              onRefresh={async () => { await refresh(); await refreshMe(); }}
             />
             {state.me.character && (
               <InventoryCard
@@ -4834,6 +4836,7 @@ function CharacterCard({
   onSpend,
   onSaveNotifyPref,
   onOpenDevTools,
+  onRefresh,
 }: {
   me: MeResponse;
   inventory: Item[];
@@ -4846,7 +4849,9 @@ function CharacterCard({
   onSpend?: (stat: StatKey) => void;
   onSaveNotifyPref?: (pref: "thread" | "dm") => Promise<void>;
   onOpenDevTools?: () => void;
+  onRefresh?: () => Promise<void>;
 }) {
+  const [slotsOpen, setSlotsOpen] = useState(false);
   const [trophyDefs, setTrophyDefs] = useState<Achievement[]>([]);
   const [trophyEarned, setTrophyEarned] = useState<EarnedAchievement[]>([]);
   const [abilitiesOpen, setAbilitiesOpen] = useState(false);
@@ -4914,7 +4919,7 @@ function CharacterCard({
   const statHasData = c.str !== undefined;
   return (
     <div style={{ ...card, position: "relative" }}>
-      <AccountPopover onLogout={onLogout} onReroll={onReroll} character={c} onSaveNotifyPref={onSaveNotifyPref} onOpenDevTools={onOpenDevTools} />
+      <AccountPopover onLogout={onLogout} onReroll={onReroll} character={c} onSaveNotifyPref={onSaveNotifyPref} onOpenDevTools={onOpenDevTools} onOpenCharacterSlots={() => setSlotsOpen(true)} />
       <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 4 }}>
         <Avatar
           src={portrait}
@@ -5186,7 +5191,226 @@ function CharacterCard({
           <TrophyShelf earned={trophyEarned} allDefs={trophyDefs} isOwn={true} />
         </div>
       )}
+      {slotsOpen && (
+        <CharacterSlotsModal
+          activeCharacter={c}
+          inQuest={inQuest}
+          onClose={() => setSlotsOpen(false)}
+          onChanged={async () => { if (onRefresh) await onRefresh(); }}
+        />
+      )}
     </div>
+  );
+}
+
+interface SlotsListResponse {
+  active_slot: number | null;
+  saved: { slot: number; name: string; class: string; level: number; gender: "m" | "f" | null; saved_at: number }[];
+}
+
+function CharacterSlotsModal({
+  activeCharacter,
+  inQuest,
+  onClose,
+  onChanged,
+}: {
+  activeCharacter: { name: string; class: string; level: number; active_slot?: number };
+  inQuest: boolean;
+  onClose: () => void;
+  onChanged: () => Promise<void>;
+}) {
+  const [view, setView] = useState<SlotsListResponse | null>(null);
+  const [busy, setBusy] = useState<number | null>(null);
+  const [pickClassFor, setPickClassFor] = useState<number | null>(null);
+  const [selectedClass, setSelectedClass] = useState<string | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<number | null>(null);
+
+  async function reload() {
+    const res = await fetch("/api/character-slots", { credentials: "include" });
+    if (!res.ok) return;
+    setView(await res.json() as SlotsListResponse);
+  }
+  useEffect(() => { void reload(); }, []);
+
+  async function activate(slot: number) {
+    setBusy(slot);
+    const res = await fetch(`/api/character-slots/${slot}/activate`, { method: "POST", credentials: "include" });
+    setBusy(null);
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({})) as { error?: string };
+      if (body.error === "mid_quest") toast.error("Finish your quest before switching.");
+      else toast.error("Switch failed.");
+      return;
+    }
+    toast.success("Character switched.");
+    await onChanged();
+    onClose();
+  }
+
+  async function createInSlot(slot: number, cls: string | null) {
+    setBusy(slot);
+    const res = await fetch("/api/character-slots/new", {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(cls ? { slot, class: cls } : { slot }),
+    });
+    setBusy(null);
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({})) as { error?: string };
+      if (body.error === "mid_quest") toast.error("Finish your quest before creating a new character.");
+      else toast.error("Create failed.");
+      return;
+    }
+    toast.success("New hero rolled!");
+    await onChanged();
+    onClose();
+  }
+
+  async function deleteSlot(slot: number) {
+    setBusy(slot);
+    const res = await fetch(`/api/character-slots/${slot}`, { method: "DELETE", credentials: "include" });
+    setBusy(null);
+    setConfirmDelete(null);
+    if (!res.ok) { toast.error("Delete failed."); return; }
+    toast.success("Slot cleared.");
+    await reload();
+  }
+
+  // Render 3 slots in order 1..3. For each: active / saved / empty.
+  const activeSlot = view?.active_slot ?? activeCharacter.active_slot ?? 1;
+  const savedBySlot = new Map<number, SlotsListResponse["saved"][number]>();
+  for (const s of view?.saved ?? []) savedBySlot.set(s.slot, s);
+
+  return (
+    <ModalBackdrop onCancel={onClose}>
+      <div style={{ fontSize: 18, fontWeight: 700, color: "#f5f5f5", marginBottom: 4 }}>Character slots</div>
+      <div style={{ fontSize: 12, color: "#9ca3af", marginBottom: 16 }}>
+        Keep up to three builds. Switching snapshots your active character into its slot.
+      </div>
+      {inQuest && (
+        <div style={{ fontSize: 12, color: "#fca5a5", marginBottom: 12, padding: "6px 10px", background: "#2a1010", borderRadius: 6, border: "1px solid #4a2020" }}>
+          You're in a quest — finish or abandon it before switching or creating a character.
+        </div>
+      )}
+      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        {[1, 2, 3].map((slot) => {
+          const isActive = slot === activeSlot;
+          const saved = savedBySlot.get(slot);
+          const slotBusy = busy === slot;
+          return (
+            <div
+              key={slot}
+              style={{
+                padding: "10px 12px",
+                background: isActive ? "#1a2a1a" : "#16181c",
+                borderRadius: 8,
+                border: `1px solid ${isActive ? "#3a5a3a" : "#2a2d33"}`,
+                display: "flex",
+                alignItems: "center",
+                gap: 12,
+              }}
+            >
+              <div style={{ fontSize: 11, color: "#6b7280", width: 38, fontWeight: 600 }}>Slot {slot}</div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                {isActive ? (
+                  <>
+                    <div style={{ fontSize: 13, color: "#f5f5f5", fontWeight: 600 }}>{activeCharacter.name}</div>
+                    <div style={{ fontSize: 11, color: "#86efac" }}>Active • {activeCharacter.class} • Lv {activeCharacter.level}</div>
+                  </>
+                ) : saved ? (
+                  <>
+                    <div style={{ fontSize: 13, color: "#f5f5f5", fontWeight: 600 }}>{saved.name}</div>
+                    <div style={{ fontSize: 11, color: "#9ca3af" }}>{saved.class} • Lv {saved.level}</div>
+                  </>
+                ) : (
+                  <div style={{ fontSize: 12, color: "#6b7280", fontStyle: "italic" }}>Empty</div>
+                )}
+              </div>
+              <div style={{ display: "flex", gap: 6 }}>
+                {isActive ? (
+                  <span style={{ fontSize: 11, color: "#86efac", padding: "4px 8px" }}>Active</span>
+                ) : saved ? (
+                  <>
+                    <button
+                      onClick={() => activate(slot)}
+                      disabled={inQuest || slotBusy}
+                      style={smallActionBtn(inQuest ? "#222428" : "#1a2a1a", inQuest ? "#6b7280" : "#86efac")}
+                    >
+                      {slotBusy ? "…" : "Activate"}
+                    </button>
+                    <button
+                      onClick={() => setConfirmDelete(slot)}
+                      disabled={slotBusy}
+                      style={smallActionBtn("#2a0f0f", "#fca5a5")}
+                    >
+                      Delete
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    onClick={() => { setPickClassFor(slot); setSelectedClass(null); }}
+                    disabled={inQuest || slotBusy}
+                    style={smallActionBtn(inQuest ? "#222428" : "#1a1c2a", inQuest ? "#6b7280" : "#93c5fd")}
+                  >
+                    {slotBusy ? "Rolling…" : "Create"}
+                  </button>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      <div style={{ marginTop: 16, display: "flex", justifyContent: "flex-end" }}>
+        <button onClick={onClose} style={smallActionBtn("#222428", "#9ca3af")}>Close</button>
+      </div>
+      {pickClassFor !== null && (
+        <ModalBackdrop onCancel={() => setPickClassFor(null)}>
+          <div style={{ fontSize: 16, fontWeight: 700, color: "#f5f5f5", marginBottom: 4 }}>Pick a class for slot {pickClassFor}</div>
+          <div style={{ fontSize: 12, color: "#9ca3af", marginBottom: 12 }}>Leave unselected to roll a random class.</div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, marginBottom: 12 }}>
+            {CLASSES.map((cls) => {
+              const on = selectedClass === cls.name;
+              return (
+                <button
+                  key={cls.id}
+                  onClick={() => setSelectedClass(on ? null : cls.name)}
+                  title={cls.blurb}
+                  style={{
+                    ...smallActionBtn(on ? "#2a2410" : "#1a1c20", on ? "#fde68a" : "#9ca3af"),
+                    fontSize: 11, padding: "5px 8px", textAlign: "left",
+                    outline: on ? "1px solid #fde68a44" : "none",
+                  }}
+                >
+                  {cls.name}
+                </button>
+              );
+            })}
+          </div>
+          <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
+            <button onClick={() => setPickClassFor(null)} style={smallActionBtn("#222428", "#9ca3af")}>Cancel</button>
+            <button
+              onClick={() => { const slot = pickClassFor; setPickClassFor(null); void createInSlot(slot, selectedClass); }}
+              style={smallActionBtn("#1a2a1a", "#86efac")}
+            >
+              Roll
+            </button>
+          </div>
+        </ModalBackdrop>
+      )}
+      {confirmDelete !== null && (
+        <ModalBackdrop onCancel={() => setConfirmDelete(null)}>
+          <div style={{ fontSize: 16, fontWeight: 700, color: "#f5f5f5", marginBottom: 4 }}>Delete slot {confirmDelete}?</div>
+          <div style={{ fontSize: 12, color: "#9ca3af", marginBottom: 12 }}>
+            The saved build will be lost permanently. This doesn't touch your active character.
+          </div>
+          <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
+            <button onClick={() => setConfirmDelete(null)} style={smallActionBtn("#222428", "#9ca3af")}>Cancel</button>
+            <button onClick={() => deleteSlot(confirmDelete)} style={smallActionBtn("#2a0f0f", "#fca5a5")}>Delete</button>
+          </div>
+        </ModalBackdrop>
+      )}
+    </ModalBackdrop>
   );
 }
 
@@ -8362,12 +8586,14 @@ function AccountPopover({
   character,
   onSaveNotifyPref,
   onOpenDevTools,
+  onOpenCharacterSlots,
 }: {
   onLogout: () => void;
   onReroll: (className?: string) => Promise<void>;
   character: { name: string; notification_pref?: "thread" | "dm" } | null;
   onSaveNotifyPref?: (pref: "thread" | "dm") => Promise<void>;
   onOpenDevTools?: () => void;
+  onOpenCharacterSlots?: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const [rerollStep, setRerollStep] = useState<"idle" | "pick-class" | "confirm">("idle");
@@ -8440,6 +8666,16 @@ function AccountPopover({
                   style={{ ...smallActionBtn("#1a1c20", "#93c5fd"), textAlign: "left" }}
                 >
                   <Icon name="bell" size={13} /> Notifications
+                </button>
+              )}
+
+              {/* Character slots */}
+              {onOpenCharacterSlots && (
+                <button
+                  onClick={() => { setOpen(false); onOpenCharacterSlots(); }}
+                  style={{ ...smallActionBtn("#1a1c20", "#a7f3d0"), textAlign: "left" }}
+                >
+                  <Icon name="player" size={13} /> Characters
                 </button>
               )}
 
