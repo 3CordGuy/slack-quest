@@ -303,13 +303,14 @@ export function HpBar({
   flavor: "monster" | "player";
 }) {
   const pct = max > 0 ? Math.max(0, Math.min(1, current / max)) : 0;
-  let color = "#16a34a";
-  if (pct < 0.25) color = "#dc2626";
-  else if (pct < 0.5) color = "#d97706";
+  let color = "var(--tone-good-3)";        /* ≥50% */
+  if (pct < 0.25) color = "var(--tone-bad-3)";   /* <25% */
+  else if (pct < 0.5) color = "var(--accent-gold-deep)"; /* <50% */
   if (flavor === "monster") {
-    if (pct < 0.25) color = "#fca5a5";
-    else if (pct < 0.5) color = "#fbbf24";
-    else color = "#ef4444";
+    /* Monster bars use slightly brighter tone so they read well on dark cards */
+    if (pct < 0.25) color = "var(--tone-bad)";
+    else if (pct < 0.5) color = "var(--accent-gold)";
+    else color = "var(--tone-bad-2)";
   }
   return (
     <div
@@ -317,7 +318,7 @@ export function HpBar({
         marginTop: 6,
         width: "100%",
         height: 8,
-        background: "#0e0f12",
+        background: "var(--bg-void)",
         borderRadius: 4,
         overflow: "hidden",
       }}
@@ -338,11 +339,11 @@ export function ArmorBar({ current, max }: { current: number; max: number }) {
   const pct = max > 0 ? Math.max(0, Math.min(1, current / max)) : 0;
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-      <div style={{ ...muted, fontSize: 11, minWidth: 36, color: current === 0 ? "#ef4444" : "#9ca3af" }}>
+      <div style={{ ...muted, fontSize: 11, minWidth: 36, color: current === 0 ? "var(--tone-bad-2)" : "var(--fg-mute-2)" }}>
         {current}/{max} 🛡
       </div>
-      <div style={{ flex: 1, height: 6, background: "#0e0f12", borderRadius: 3, overflow: "hidden" }}>
-        <div style={{ width: `${pct * 100}%`, height: "100%", background: current === 0 ? "#374151" : "#64748b", transition: "width 200ms ease" }} />
+      <div style={{ flex: 1, height: 6, background: "var(--bg-void)", borderRadius: 3, overflow: "hidden" }}>
+        <div style={{ width: `${pct * 100}%`, height: "100%", background: current === 0 ? "var(--border-muted)" : "var(--tone-ice)", transition: "width 200ms ease" }} />
       </div>
     </div>
   );
@@ -365,7 +366,7 @@ export function ManaBar({ current, max }: { current: number; max: number }) {
         style={{
           flex: 1,
           height: 6,
-          background: "#0e0f12",
+          background: "var(--bg-void)",
           borderRadius: 3,
           overflow: "hidden",
         }}
@@ -374,7 +375,7 @@ export function ManaBar({ current, max }: { current: number; max: number }) {
           style={{
             width: `${pct * 100}%`,
             height: "100%",
-            background: "#6366f1",
+            background: "var(--accent-arcane)",
           }}
         />
       </div>
@@ -414,13 +415,14 @@ export function VariantBadge({ variant }: { variant: QuestVariant }) {
 }
 
 export function PositionBadge({ position }: { position: "front" | "back" }) {
+  const front = position === "front";
   return (
     <span
       style={{
         ...smallBadge,
-        background: position === "front" ? "#3a2d1f" : "#1f2a3a",
-        color: position === "front" ? "#fbbf24" : "#7dd3fc",
-        borderColor: position === "front" ? "#5a432a" : "#2a3a5a",
+        background: front ? "var(--accent-arcane-bg)" : "var(--tone-good-bg)",
+        color:      front ? "var(--accent-arcane-2)"  : "var(--tone-good)",
+        borderColor:front ? "#4a2f6a"                 : "var(--tone-good-br)",
       }}
     >
       {position}

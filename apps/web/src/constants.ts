@@ -61,13 +61,13 @@ export const RARITY_COLOR: Record<Rarity, string> = {
 export const RARITY_RANK: Record<Rarity, number> = { common: 0, uncommon: 1, rare: 2, epic: 3, legendary: 4 };
 
 export const EFFECT_COLOR: Record<EffectType, string> = {
-  regen: "#16a34a",
-  bleeding: "#dc2626",
-  burning: "#f97316",
-  poisoned: "#a855f7",
-  empowered: "#fbbf24",
-  frozen: "#93c5fd",
-  shocked: "#fef08a",
+  regen:    "#86efac",  /* --tone-good */
+  bleeding: "#fb7185",  /* --tone-bleed */
+  burning:  "#fb923c",  /* --tone-fire */
+  poisoned: "#4ade80",  /* --tone-poison (green, not purple) */
+  empowered:"#fbbf24",  /* --accent-gold */
+  frozen:   "#93c5fd",  /* --tone-ice */
+  shocked:  "#facc15",  /* --tone-shock (saturated yellow) */
 };
 
 export const EFFECT_ICON: Record<EffectType, string> = {
