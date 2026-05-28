@@ -227,6 +227,11 @@ import {
   type TowerFloorPlan,
   incrementTowerStats,
   getTowerLeaderboard,
+  listCharacterSlots,
+  activateCharacterSlot,
+  reserveSlotForNewCharacter,
+  setActiveSlot,
+  deleteCharacterSlot,
 } from "@gantt-quest/db";
 
 // =============================================================================
@@ -996,6 +1001,111 @@ app.post("/api/character/reroll", async (c) => {
   });
 
   return c.json({ ok: true, character: newChar, art_url });
+});
+
+// === Character slots (web-only multi-character) ===========================
+// Web players can keep up to 3 character builds. The active one lives in the
+// `characters` table; the other two are JSON snapshots in `character_slots`.
+// Switching slots = snapshot current, restore target. Switching/creating is
+// blocked while the active character is in a quest so combat state doesn't
+// reference a character that's about to vanish.
+
+app.get("/api/character-slots", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const view = await listCharacterSlots(c.env.DB, session.slack_user_id);
+  return c.json(view);
+});
+
+app.post("/api/character-slots/:slot/activate", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const slot = parseInt(c.req.param("slot"), 10);
+  if (!Number.isFinite(slot) || slot < 1 || slot > 3) {
+    return c.json({ error: "bad_slot" }, 400);
+  }
+  const activeQuest = await getActiveQuestForCharacter(c.env.DB, session.slack_user_id);
+  if (activeQuest) return c.json({ error: "mid_quest" }, 400);
+  try {
+    await activateCharacterSlot(c.env.DB, session.slack_user_id, slot);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : "unknown";
+    if (msg === "no_active_character" || msg === "slot_empty") {
+      return c.json({ error: msg }, 400);
+    }
+    throw err;
+  }
+  const character = await getCharacter(c.env.DB, session.slack_user_id);
+  return c.json({ ok: true, character });
+});
+
+// Create a fresh character into an empty slot. The current active is
+// snapshotted into its own slot, then the new character takes the requested
+// slot. Body: { slot: 1-3, class?: string }.
+app.post("/api/character-slots/new", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const body = await c.req.json<{ slot?: number; class?: string }>().catch(
+    (): { slot?: number; class?: string } => ({}),
+  );
+  const slot = body.slot;
+  if (!Number.isFinite(slot) || (slot as number) < 1 || (slot as number) > 3) {
+    return c.json({ error: "bad_slot" }, 400);
+  }
+  const activeQuest = await getActiveQuestForCharacter(c.env.DB, session.slack_user_id);
+  if (activeQuest) return c.json({ error: "mid_quest" }, 400);
+
+  try {
+    await reserveSlotForNewCharacter(c.env.DB, session.slack_user_id, slot as number);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : "unknown";
+    if (msg === "no_active_character" || msg === "slot_occupied" || msg === "bad_slot") {
+      return c.json({ error: msg }, 400);
+    }
+    throw err;
+  }
+
+  const cls = body.class ? classByName(body.class) : pickRandomClass();
+  const hp = cls.base_hp + rollDice(4);
+  const gender: CharGender = rollDice(2) === 1 ? "m" : "f";
+  const newChar = await createCharacter(c.env.DB, {
+    slack_user_id: session.slack_user_id,
+    slack_team_id: session.slack_team_id,
+    name: generateNpcName(),
+    class: cls.name,
+    hp,
+    max_hp: hp,
+    gender,
+  });
+  await setActiveSlot(c.env.DB, session.slack_user_id, slot as number);
+
+  const art_url = await generateCharacterArtNow(
+    c.env.AI,
+    artTarget(c.env),
+    { name: newChar.name, class: newChar.class, gender: newChar.gender },
+    cls.id,
+  ).catch((err) => {
+    console.warn("slot-new:char-art-gen-error", { err: err instanceof Error ? err.message : String(err) });
+    return null;
+  });
+
+  return c.json({ ok: true, character: { ...newChar, active_slot: slot }, art_url });
+});
+
+app.delete("/api/character-slots/:slot", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const slot = parseInt(c.req.param("slot"), 10);
+  if (!Number.isFinite(slot) || slot < 1 || slot > 3) {
+    return c.json({ error: "bad_slot" }, 400);
+  }
+  // Active slot is owned by `characters`; reroll is the way to discard it.
+  const character = await getCharacter(c.env.DB, session.slack_user_id);
+  if (character && character.active_slot === slot) {
+    return c.json({ error: "cannot_delete_active" }, 400);
+  }
+  await deleteCharacterSlot(c.env.DB, session.slack_user_id, slot);
+  return c.json({ ok: true });
 });
 
 // POST /api/character/spend — spends 1 unspent_point on the chosen primary stat.

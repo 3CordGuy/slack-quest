@@ -120,6 +120,10 @@ export interface Character {
   tower_floors_climbed: number;
   tower_kills: number;
   tower_best_floor: number;
+  // Which slot (1-3) this active character occupies. Used by the web slot
+  // picker to know which slot to snapshot into when activating another saved
+  // character. Slack does not surface slots; legacy rows default to 1.
+  active_slot: number;
 }
 
 interface CharacterRow extends Omit<Character, "scars" | "effects" | "drink_buff" | "achievements" | "pending_achievements"> {
@@ -2221,6 +2225,253 @@ export async function consumeItem(
 // historical quests survive their creator. Inventory + quest_party cascade as expected.
 export async function deleteCharacter(db: D1Database, userId: string): Promise<void> {
   await db.prepare("DELETE FROM characters WHERE slack_user_id = ?").bind(userId).run();
+}
+
+// === Multi-character slots (web only) =====================================
+// The "active" character lives in the `characters` table as before — one row
+// per slack_user_id. Up to two additional saved builds are stashed as JSON
+// snapshots in `character_slots`. Switching slots = snapshot current active,
+// then restore the target snapshot in its place.
+
+export interface CharacterSlotSummary {
+  slot: number;
+  name: string;
+  class: string;
+  level: number;
+  gender: CharGender | null;
+  saved_at: number;
+}
+
+export interface CharacterSlotsView {
+  // Slot (1-3) currently held by the live `characters` row, if any.
+  active_slot: number | null;
+  // Saved (inactive) builds. At most 2 entries — the active character holds
+  // the third slot.
+  saved: CharacterSlotSummary[];
+}
+
+interface CharacterSlotRow {
+  slot: number;
+  name: string;
+  class: string;
+  level: number;
+  gender: string | null;
+  character_json: string;
+  inventory_json: string;
+  saved_at: number;
+}
+
+export async function listCharacterSlots(
+  db: D1Database,
+  userId: string,
+): Promise<CharacterSlotsView> {
+  const [active, slotsRes] = await Promise.all([
+    db.prepare("SELECT active_slot FROM characters WHERE slack_user_id = ?")
+      .bind(userId)
+      .first<{ active_slot: number }>(),
+    db.prepare(
+      "SELECT slot, name, class, level, gender, saved_at FROM character_slots WHERE slack_user_id = ? ORDER BY slot ASC",
+    )
+      .bind(userId)
+      .all<{ slot: number; name: string; class: string; level: number; gender: string | null; saved_at: number }>(),
+  ]);
+  return {
+    active_slot: active?.active_slot ?? null,
+    saved: (slotsRes.results ?? []).map((r) => ({
+      slot: r.slot,
+      name: r.name,
+      class: r.class,
+      level: r.level,
+      gender: (r.gender as CharGender | null) ?? null,
+      saved_at: r.saved_at,
+    })),
+  };
+}
+
+// Serializes a character + its inventory into a slot. Used right before
+// activating another slot (to preserve the build you're leaving) and when
+// creating a new character into an empty slot (to preserve the current one).
+async function snapshotActiveToSlot(
+  db: D1Database,
+  userId: string,
+  slot: number,
+): Promise<void> {
+  const character = await getCharacter(db, userId);
+  if (!character) throw new Error("snapshotActiveToSlot: no active character");
+  const inventory = await getInventory(db, userId);
+  await db
+    .prepare(
+      `INSERT OR REPLACE INTO character_slots
+       (slack_user_id, slot, name, class, level, gender, character_json, inventory_json, saved_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .bind(
+      userId,
+      slot,
+      character.name,
+      character.class,
+      character.level,
+      character.gender,
+      JSON.stringify(character),
+      JSON.stringify(inventory),
+      Date.now(),
+    )
+    .run();
+}
+
+// Writes a Character + Item[] back into the live tables, replacing whatever
+// was there. Called by activateSlot after the prior active was snapshotted.
+async function restoreSnapshot(
+  db: D1Database,
+  userId: string,
+  slackTeamId: string,
+  character: Character,
+  inventory: Item[],
+  activeSlot: number,
+): Promise<void> {
+  await deleteCharacter(db, userId); // cascades inventory
+  await db
+    .prepare(
+      `INSERT INTO characters (
+        slack_user_id, slack_team_id, name, class, level, xp, hp, max_hp, mana, max_mana, shield, gold,
+        str, int_stat, vit, agi, dex, unspent_points,
+        scars, downed_until, last_rest_at, last_long_rest_at, position,
+        keys_bronze, keys_silver, keys_gold,
+        effects, gender, drink_buff_json, slack_username,
+        achievements, pending_achievements,
+        apothecary_purchases, revives_given,
+        created_at, last_active,
+        notification_pref, hired_merc_id,
+        tower_floors_climbed, tower_kills, tower_best_floor,
+        active_slot
+      ) VALUES (
+        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+        ?, ?, ?, ?, ?, ?,
+        ?, ?, ?, ?, ?,
+        ?, ?, ?,
+        ?, ?, ?, ?,
+        ?, ?,
+        ?, ?,
+        ?, ?,
+        ?, ?,
+        ?, ?, ?,
+        ?
+      )`,
+    )
+    .bind(
+      userId, slackTeamId, character.name, character.class, character.level, character.xp,
+      character.hp, character.max_hp, character.mana, character.max_mana, character.shield, character.gold,
+      character.str, character.int_stat, character.vit, character.agi, character.dex, character.unspent_points,
+      JSON.stringify(character.scars ?? []), character.downed_until ?? null,
+      character.last_rest_at ?? null, character.last_long_rest_at ?? null, character.position,
+      character.keys_bronze, character.keys_silver, character.keys_gold,
+      JSON.stringify(character.effects ?? []), character.gender,
+      character.drink_buff ? JSON.stringify(character.drink_buff) : null, character.slack_username,
+      JSON.stringify(character.achievements ?? []), JSON.stringify(character.pending_achievements ?? []),
+      character.apothecary_purchases, character.revives_given,
+      character.created_at, Date.now(),
+      character.notification_pref, character.hired_merc_id,
+      character.tower_floors_climbed, character.tower_kills, character.tower_best_floor,
+      activeSlot,
+    )
+    .run();
+  // Re-insert inventory with fresh autoincrement ids. character_id is bound to
+  // the owner (slack_user_id) — never trusted from the saved blob.
+  for (const item of inventory) {
+    await db
+      .prepare(
+        `INSERT INTO inventory (
+          character_id, item_name, item_type, power, rarity, flavor, qty, equipped,
+          weapon_range, sharpens_count, slot, stat_bonus, item_subtype, level_req, element
+        ) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .bind(
+        userId, item.item_name, item.item_type, item.power, item.rarity, item.flavor,
+        item.equipped ? 1 : 0, item.weapon_range, item.sharpens_count ?? 0,
+        item.slot, item.stat_bonus ? JSON.stringify(item.stat_bonus) : null,
+        item.item_subtype, item.level_req ?? 1, item.element ?? null,
+      )
+      .run();
+  }
+}
+
+// Snapshot the live character into its current slot, then restore the target
+// slot's snapshot in its place. No-ops if target_slot is already active.
+// Throws if no character is active, or the target slot is empty.
+export async function activateCharacterSlot(
+  db: D1Database,
+  userId: string,
+  targetSlot: number,
+): Promise<void> {
+  const current = await getCharacter(db, userId);
+  if (!current) throw new Error("no_active_character");
+  if (current.active_slot === targetSlot) return;
+  const targetRow = await db
+    .prepare(
+      "SELECT slot, name, class, level, gender, character_json, inventory_json, saved_at FROM character_slots WHERE slack_user_id = ? AND slot = ?",
+    )
+    .bind(userId, targetSlot)
+    .first<CharacterSlotRow>();
+  if (!targetRow) throw new Error("slot_empty");
+  const targetChar = JSON.parse(targetRow.character_json) as Character;
+  const targetInv = JSON.parse(targetRow.inventory_json) as Item[];
+
+  await snapshotActiveToSlot(db, userId, current.active_slot);
+  await db
+    .prepare("DELETE FROM character_slots WHERE slack_user_id = ? AND slot = ?")
+    .bind(userId, targetSlot)
+    .run();
+  await restoreSnapshot(db, userId, current.slack_team_id, targetChar, targetInv, targetSlot);
+}
+
+// Stash the current active into its slot so the caller can then create a fresh
+// character into `targetSlot`. Returns the slot the prior active was saved to.
+// Throws if no active character exists, or targetSlot is already occupied
+// (either by the active character or an existing snapshot).
+export async function reserveSlotForNewCharacter(
+  db: D1Database,
+  userId: string,
+  targetSlot: number,
+): Promise<{ prior_slot: number }> {
+  if (targetSlot < 1 || targetSlot > 3) throw new Error("bad_slot");
+  const current = await getCharacter(db, userId);
+  if (!current) throw new Error("no_active_character");
+  if (current.active_slot === targetSlot) throw new Error("slot_occupied");
+  const existing = await db
+    .prepare("SELECT 1 FROM character_slots WHERE slack_user_id = ? AND slot = ?")
+    .bind(userId, targetSlot)
+    .first<{ "1": number }>();
+  if (existing) throw new Error("slot_occupied");
+  const priorSlot = current.active_slot;
+  await snapshotActiveToSlot(db, userId, priorSlot);
+  await deleteCharacter(db, userId);
+  return { prior_slot: priorSlot };
+}
+
+// Set the active_slot column. Used right after createCharacter so a freshly
+// rolled character into slot N reports its slot identity correctly.
+export async function setActiveSlot(
+  db: D1Database,
+  userId: string,
+  slot: number,
+): Promise<void> {
+  await db
+    .prepare("UPDATE characters SET active_slot = ? WHERE slack_user_id = ?")
+    .bind(slot, userId)
+    .run();
+}
+
+// Permanent delete of a saved (inactive) slot. Cannot remove the active slot —
+// use rerollCharacter for that.
+export async function deleteCharacterSlot(
+  db: D1Database,
+  userId: string,
+  slot: number,
+): Promise<void> {
+  await db
+    .prepare("DELETE FROM character_slots WHERE slack_user_id = ? AND slot = ?")
+    .bind(userId, slot)
+    .run();
 }
 
 // Find the most recent active quest in a channel (used by /dnd join).
