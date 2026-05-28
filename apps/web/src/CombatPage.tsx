@@ -299,6 +299,9 @@ type CombatEvent =
       magnitude: number;
       duration: number;
     }
+  | { type: "ability_good_fortune_delayed"; actor: string; target: string; amount: number }
+  | { type: "ability_ill_omen_applied"; actor: string; target: string }
+  | { type: "ability_ill_omen_burst"; actor: string; target: string; accumulated: number; burst: number }
   | { type: "victory" }
   | { type: "defeat" }
   | { type: "rejected"; reason: string }
@@ -803,6 +806,12 @@ function formatEvent(e: CombatEvent, state: CombatState | null): LogEntry[] {
       return [{ id: nextLogId++, content: <strong>DEFEAT</strong>, tone: "bad" }];
     case "rejected":
       return [{ id: nextLogId++, content: <>⚠ rejected: {e.reason}</>, tone: "bad" }];
+    case "ability_good_fortune_delayed":
+      return [{ id: nextLogId++, content: <>🍀 Good Fortune resolves — {state ? nameOf(e.target) : e.target} heals {e.amount} HP</>, tone: "good" }];
+    case "ability_ill_omen_applied":
+      return [{ id: nextLogId++, content: <>🔮 {state ? nameOf(e.actor) : e.actor} casts Ill Omen on the monster</>, tone: "flavor" }];
+    case "ability_ill_omen_burst":
+      return [{ id: nextLogId++, content: <>💥 Ill Omen bursts for {e.burst} damage ({e.accumulated} accumulated)</>, tone: "bad" }];
     default: {
       const _exhaustive: never = e;
       void _exhaustive;
@@ -1100,10 +1109,10 @@ export function CombatPage({
             if (evt.type === "victory") triggerBurst("victory");
             if (evt.type === "player_hit") triggerBurst("hit");
             if (evt.type === "ability_envenom_proc") triggerBurst("poison");
-            if (evt.type === "passive_lethal_strike" || evt.type === "passive_sinister_queries" || evt.type === "hex_bleed_proc") triggerBurst("bleed");
-            if (evt.type === "ability_shield_of_faith" || evt.type === "ability_mage_armor" || evt.type === "ability_barkskin" || evt.type === "ability_brace") triggerBurst("shield");
-            if (evt.type === "passive_paladin_auto_heal" || evt.type === "ability_good_fortune") triggerBurst("heal");
-            if (evt.type === "ability_ill_omen" || evt.type === "ability_hex") triggerBurst("curse");
+            if (evt.type === "passive_rogue_lethal_strike" || evt.type === "passive_sinister_queries" || evt.type === "hex_bleed_proc") triggerBurst("bleed");
+            if (evt.type === "ability_shield_of_faith" || evt.type === "ability_barkskin" || evt.type === "ability_brace") triggerBurst("shield");
+            if (evt.type === "passive_paladin_auto_heal" || evt.type === "ability_good_fortune_delayed") triggerBurst("heal");
+            if (evt.type === "ability_ill_omen_applied" || evt.type === "ability_hex") triggerBurst("curse");
             if (evt.type === "ability_animal_form") triggerBurst("deploy");
           }
           // 950ms ≈ tumble duration (700ms) + brief pause to read the value.
@@ -2669,7 +2678,7 @@ function VictoryModal({
             )}
           </>
         )}
-        {!hasDoorChoice && (() => {
+        {(() => {
           // Tower post-boss: surface Press on / Bank spoils inline so the
           // player doesn't have to dashboard-bounce to make the choice.
           if (towerAwaitingChoice && onPressOnAfterBoss && onBankAndExit) {

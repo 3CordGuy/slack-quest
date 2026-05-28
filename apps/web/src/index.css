@@ -1,0 +1,283 @@
+/* ============================================================
+   GanttQuest™ — Global Design Tokens
+   ------------------------------------------------------------
+   CSS custom properties for the full design system.
+   Sourced from the GanttQuest design spec (colors_and_type.css
+   + ui_kits/web/tokens.css). Import once from main.tsx.
+   ============================================================ */
+
+@import url("https://fonts.googleapis.com/css2?family=Metamorphous&display=swap");
+
+:root {
+  /* ─── BACKDROPS — deepest to lightest ──────────────────── */
+  --bg-void:     #0e0f12;  /* page background */
+  --bg-deep:     #0e1117;  /* drawers, scrim wells */
+  --bg-panel:    #12141a;  /* modal / dialog surface */
+  --bg-card:     #131519;  /* item tile background */
+  --bg-card-2:   #13161c;  /* hovered / alt-row card */
+  --bg-input:    #1a1c20;  /* input / button face */
+  --bg-input-2:  #1a1c21;  /* button alt */
+
+  /* ─── BORDERS ────────────────────────────────────────────── */
+  --border-faint:  #1f2937;
+  --border-base:   #2a2d33;
+  --border-muted:  #374151;
+  --border-strong: #3a3d44;
+  --border-action: #3a3d54;
+
+  /* ─── INK (foreground / text) ──────────────────────────── */
+  --fg-1:       #f5f5f5;
+  --fg-2:       #e6e6e6;
+  --fg-3:       #d1d5db;
+  --fg-mute:    #9aa0a6;
+  --fg-mute-2:  #9ca3af;
+  --fg-mute-3:  #6b7280;
+  --fg-faint:   #4a5568;
+  --fg-faintest:#4b5563;
+
+  /* ─── BRAND ACCENTS ─────────────────────────────────────── */
+  --accent-gold:        #fbbf24;
+  --accent-gold-warm:   #f59e0b;
+  --accent-gold-deep:   #d97706;
+  --accent-gold-dark:   #b45309;
+  --accent-flavor:      #f5d390;
+
+  --accent-ink-blue:    #60a5fa;
+  --accent-ink-blue-2:  #2563eb;
+  --accent-ink-blue-3:  #1d4ed8;
+  --accent-ink-deep:    #0f1f3d;
+
+  --accent-arcane:      #a78bfa;
+  --accent-arcane-2:    #c084fc;
+  --accent-arcane-3:    #a855f7;
+  --accent-arcane-bg:   #2a1f3a;
+
+  /* ─── SEMANTIC TONES ────────────────────────────────────── */
+  --tone-info:    #e6e6e6;
+  --tone-good:    #86efac;
+  --tone-good-2:  #22c55e;
+  --tone-good-3:  #16a34a;
+  --tone-good-bg: #1a2a1a;
+  --tone-good-br: #2a5a2a;
+
+  --tone-bad:     #fca5a5;
+  --tone-bad-2:   #ef4444;
+  --tone-bad-3:   #dc2626;
+
+  --tone-muted:   #9aa0a6;
+  --tone-flavor:  #f5d390;
+
+  --tone-fire:    #fb923c;
+  --tone-ice:     #93c5fd;
+  --tone-shock:   #facc15;   /* electric yellow — NOT purple */
+  --tone-bleed:   #fb7185;
+  --tone-poison:  #4ade80;
+
+  /* ─── RARITY ─────────────────────────────────────────────── */
+  --rarity-common:    #8a8f98;
+  --rarity-uncommon:  #16a34a;
+  --rarity-rare:      #3b82f6;
+  --rarity-epic:      #a855f7;
+  --rarity-legendary: #f59e0b;
+
+  /* ─── WORLD / DUST ──────────────────────────────────────── */
+  --world-dust-light: #d4c8b0;
+  --world-dust-dark:  #b3a487;
+
+  /* ─── TYPOGRAPHY ─────────────────────────────────────────── */
+  --font-display: "Metamorphous", "Iowan Old Style", "Palatino Linotype", serif;
+  --font-body:    ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+                  "Segoe UI", Roboto, sans-serif;
+  --font-mono:    ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
+                  "Liberation Mono", monospace;
+
+  /* ─── SHAPE ──────────────────────────────────────────────── */
+  --radius-sm:  4px;
+  --radius-md:  6px;
+  --radius-lg:  8px;
+  --radius-xl:  10px;
+  --radius-2xl: 12px;
+
+  /* ─── ELEVATION / GLOW ───────────────────────────────────── */
+  --shadow-pop:    0 6px 20px rgba(0,0,0,0.6);
+  --shadow-modal:  0 16px 48px rgba(0,0,0,0.8);
+  --shadow-deep:   0 24px 64px rgba(0,0,0,0.8);
+  --glow-blue:     0 0 6px 2px rgba(147,197,253,0.9), 0 0 12px rgba(96,165,250,0.6);
+  --glow-target:   0 0 22px rgba(251,191,36,0.55), inset 0 0 12px 0 rgba(251,191,36,0.15);
+  --glow-flame:    0 0 10px rgba(251,146,60,0.55), 0 0 22px rgba(239,68,68,0.4);
+  --glow-poison:   0 0 10px rgba(74,222,128,0.55),  0 0 22px rgba(34,197,94,0.3);
+  --glow-bleed:    0 0 10px rgba(251,113,133,0.55), 0 0 22px rgba(225,29,72,0.3);
+  --glow-shock:    0 0 10px rgba(250,204,21,0.55),  0 0 22px rgba(234,179,8,0.35);
+}
+
+/* ─── BASE ────────────────────────────────────────────────── */
+
+html, body, #root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--bg-void);
+  color: var(--fg-2);
+  font-family: var(--font-body);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+h1, h2, h3, h4 {
+  font-family: var(--font-display);
+  color: var(--fg-1);
+  margin: 0 0 0.4em;
+}
+
+p { margin: 0 0 1em; }
+
+a { color: var(--accent-ink-blue); text-decoration: none; }
+a:hover { color: var(--accent-ink-blue-2); text-decoration: underline; }
+
+hr {
+  border: 0;
+  border-top: 1px solid var(--border-base);
+  margin: 1.5em 0;
+}
+
+code, kbd, samp {
+  font-family: var(--font-mono);
+  color: var(--fg-3);
+}
+
+em, .flavor {
+  color: var(--accent-flavor);
+  font-style: italic;
+}
+
+/* ─── UTILITY CLASSES ─────────────────────────────────────── */
+
+.eyebrow {
+  font-size: 11px;
+  line-height: 1.2;
+  font-family: var(--font-body);
+  color: var(--fg-faintest);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+.caption {
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--fg-mute);
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-input);
+  border: 1px solid var(--border-base);
+  color: var(--fg-3);
+}
+
+.card {
+  background: var(--bg-card-2);
+  border: 1px solid var(--border-faint);
+  border-radius: var(--radius-xl);
+  padding: 14px;
+}
+
+/* ─── ICON HELPER ─────────────────────────────────────────── */
+
+.gq-icon {
+  display: inline-block;
+  background-color: currentColor;
+  -webkit-mask: var(--src) center/contain no-repeat;
+          mask: var(--src) center/contain no-repeat;
+  flex-shrink: 0;
+  vertical-align: middle;
+}
+
+/* ─── COMBAT ANIMATIONS ───────────────────────────────────── */
+
+@keyframes gq-hit-shake {
+  0%   { transform: translate(0, 0); }
+  10%  { transform: translate(-5px, -2px); }
+  20%  { transform: translate(5px, 2px); }
+  30%  { transform: translate(-4px, 1px); }
+  40%  { transform: translate(4px, -1px); }
+  55%  { transform: translate(-2px, 0); }
+  70%  { transform: translate(2px, 0); }
+  100% { transform: translate(0, 0); }
+}
+@keyframes gq-hit-tint {
+  0%   { box-shadow: inset 0 0 0 0 rgba(239,68,68,0); }
+  20%  { box-shadow: inset 0 0 0 9999px rgba(239,68,68,0.45); }
+  60%  { box-shadow: inset 0 0 0 9999px rgba(239,68,68,0.28); }
+  100% { box-shadow: inset 0 0 0 0 rgba(239,68,68,0); }
+}
+.gq-hit-flash { animation: gq-hit-shake 550ms ease-in-out, gq-hit-tint 550ms ease-out; }
+
+@keyframes gq-slash-sweep {
+  0%   { opacity: 0; transform: translate(-110%, -50%) rotate(-22deg) scaleX(0.6); }
+  18%  { opacity: 1; }
+  60%  { opacity: 0.9; transform: translate(110%, -50%) rotate(-22deg) scaleX(1.4); }
+  100% { opacity: 0; transform: translate(130%, -50%) rotate(-22deg) scaleX(1.4); }
+}
+.gq-slash-streak {
+  position: absolute; top: 50%; left: 0; width: 70%; height: 6px;
+  background: linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.9) 30%, rgba(254,202,202,1) 50%, rgba(255,255,255,0.9) 70%, transparent 100%);
+  filter: drop-shadow(0 0 8px rgba(252,165,165,0.9)) drop-shadow(0 0 14px rgba(239,68,68,0.55));
+  pointer-events: none; transform-origin: 50% 50%;
+  animation: gq-slash-sweep 420ms ease-out forwards; border-radius: 6px;
+}
+
+@keyframes gq-monster-defeated-card {
+  0%   { transform: rotateX(0deg) scale(1) translateY(0); opacity: 1; filter: brightness(1) saturate(1); }
+  25%  { transform: rotateX(-12deg) scale(1.03) translateY(0); opacity: 1; filter: brightness(1.35) saturate(1.4); }
+  70%  { transform: rotateX(-65deg) scale(0.92) translateY(40px); opacity: 0.55; filter: brightness(0.6) saturate(0.4); }
+  100% { transform: rotateX(-85deg) scale(0.78) translateY(55px); opacity: 0; filter: brightness(0.2) saturate(0); }
+}
+.gq-monster-defeated-card {
+  animation: gq-monster-defeated-card 1100ms cubic-bezier(0.45, 0, 0.65, 1) forwards;
+  transform-style: preserve-3d; perspective: 600px;
+}
+
+@keyframes gq-target-pulse {
+  0%, 100% { box-shadow: 0 0 16px rgba(251,191,36,0.4), inset 0 0 0 0 rgba(251,191,36,0); }
+  50%       { box-shadow: 0 0 22px rgba(251,191,36,0.55), inset 0 0 12px 0 rgba(251,191,36,0.15); }
+}
+.gq-monster-targeted { animation: gq-target-pulse 1800ms ease-in-out infinite; }
+
+@keyframes gq-monster-lunge-card {
+  0%   { transform: translateY(0); }
+  35%  { transform: translateY(20px) scale(1.04); }
+  60%  { transform: translateY(10px) scale(1.02); }
+  100% { transform: translateY(0); }
+}
+.gq-monster-lunge-card { animation: gq-monster-lunge-card 520ms cubic-bezier(0.22, 1.4, 0.36, 1) both; }
+
+@keyframes gq-shield-float {
+  0%   { transform: translate(-50%, -50%) translateY(0px)   scale(1);   opacity: 0.85; }
+  50%  { transform: translate(-50%, -50%) translateY(-6px)  scale(1.2); opacity: 1;    }
+  100% { transform: translate(-50%, -50%) translateY(0px)   scale(1);   opacity: 0.85; }
+}
+@keyframes gq-shield-pulse {
+  0%, 100% { box-shadow: 0 0 0 1px rgba(96,165,250,0.25), 0 0 8px rgba(96,165,250,0.12); }
+  50%       { box-shadow: 0 0 0 2px rgba(96,165,250,0.55), 0 0 18px rgba(96,165,250,0.28); }
+}
+
+@keyframes gq-toast-in {
+  from { opacity: 0; transform: translate(-50%, -8px); }
+  to   { opacity: 1; transform: translate(-50%, 0); }
+}
+
+@keyframes gq-drawer-in  { from { right: -380px; } to { right: 0; } }
+@keyframes gq-drawer-out { from { right: 0; }      to { right: -380px; } }

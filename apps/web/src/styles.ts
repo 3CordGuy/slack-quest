@@ -1,28 +1,28 @@
 import type { CSSProperties } from "react";
 
-export const DISPLAY_FONT = "'Metamorphous', serif";
+export const DISPLAY_FONT = "var(--font-display)";
 
 export const card: CSSProperties = {
-  background: "#15171b",
+  background: "var(--bg-card)",
   padding: "var(--card-pad, 32px)",
-  borderRadius: 12,
+  borderRadius: "var(--radius-2xl)",
   width: "100%",
-  border: "1px solid #2a2d33",
+  border: "1px solid var(--border-base)",
   boxSizing: "border-box",
 };
 
-export const h1: CSSProperties = { margin: 0, fontSize: 28, color: "#f5f5f5", fontFamily: DISPLAY_FONT };
-export const h2: CSSProperties = { margin: 0, fontSize: 20, color: "#f5f5f5", fontFamily: DISPLAY_FONT };
-export const muted: CSSProperties = { color: "#9aa0a6", fontSize: 14 };
+export const h1: CSSProperties = { margin: 0, fontSize: 28, color: "var(--fg-1)", fontFamily: "var(--font-display)" };
+export const h2: CSSProperties = { margin: 0, fontSize: 20, color: "var(--fg-1)", fontFamily: "var(--font-display)" };
+export const muted: CSSProperties = { color: "var(--fg-mute)", fontSize: 14 };
 
 export const input: CSSProperties = {
   width: "100%",
   fontSize: 24,
   padding: "12px 14px",
-  borderRadius: 8,
-  border: "1px solid #2a2d33",
-  background: "#0e0f12",
-  color: "#f5f5f5",
+  borderRadius: "var(--radius-lg)",
+  border: "1px solid var(--border-base)",
+  background: "var(--bg-void)",
+  color: "var(--fg-1)",
   marginTop: 16,
   letterSpacing: 4,
   textAlign: "center",
@@ -35,25 +35,25 @@ export const button: CSSProperties = {
   padding: "12px 14px",
   fontSize: 16,
   fontWeight: 600,
-  borderRadius: 8,
+  borderRadius: "var(--radius-lg)",
   border: "none",
-  background: "#3a7bd5",
+  background: "var(--accent-ink-blue-2)",
   color: "#fff",
   cursor: "pointer",
 };
 
 export const kbd: CSSProperties = {
-  background: "#222428",
+  background: "var(--bg-input)",
   padding: "2px 6px",
-  borderRadius: 4,
+  borderRadius: "var(--radius-sm)",
   fontSize: 13,
 };
 
 export const refreshBtn: CSSProperties = {
   background: "none",
-  border: "1px solid #2a2d33",
+  border: "1px solid var(--border-base)",
   borderRadius: 5,
-  color: "#9ca3af",
+  color: "var(--fg-mute-2)",
   cursor: "pointer",
   fontSize: 11,
   padding: "3px 8px",
@@ -65,7 +65,7 @@ export const smallBadge: CSSProperties = {
   textTransform: "uppercase",
   letterSpacing: 1,
   padding: "2px 6px",
-  borderRadius: 4,
+  borderRadius: "var(--radius-sm)",
   border: "1px solid",
   fontWeight: 600,
 };
@@ -74,8 +74,8 @@ export function smallActionBtn(bg: string, fg: string): CSSProperties {
   return {
     background: bg,
     color: fg,
-    border: "1px solid #2a2d33",
-    borderRadius: 6,
+    border: "1px solid var(--border-base)",
+    borderRadius: "var(--radius-md)",
     padding: "4px 12px",
     fontSize: 12,
     fontWeight: 600,

@@ -11,76 +11,12 @@ export const DISPLAY_FONT = "'Metamorphous', serif";
 // ─── Combat animation CSS ─────────────────────────────────────────────────────
 // Call once at module init. Both consumers share the same <style> element.
 
+// All combat animation keyframes (.gq-hit-flash, .gq-slash-streak,
+// .gq-monster-defeated-card, .gq-monster-targeted, .gq-monster-lunge-card,
+// gq-shield-float, gq-shield-pulse) are now shipped in index.css.
+// This function is kept as a no-op for call-site compatibility.
 export function ensureCombatAnimStyles(): void {
-  if (typeof document === "undefined") return;
-  const STYLE_ID = "gq-combat-anim-style";
-  if (document.getElementById(STYLE_ID)) return;
-  const s = document.createElement("style");
-  s.id = STYLE_ID;
-  s.textContent = `
-@keyframes gq-shield-float {
-  0%   { transform: translate(-50%, -50%) translateY(0px)   scale(1);   opacity: 0.85; }
-  50%  { transform: translate(-50%, -50%) translateY(-6px)  scale(1.2); opacity: 1;    }
-  100% { transform: translate(-50%, -50%) translateY(0px)   scale(1);   opacity: 0.85; }
-}
-@keyframes gq-shield-pulse {
-  0%, 100% { box-shadow: 0 0 0 1px rgba(96,165,250,0.25), 0 0 8px rgba(96,165,250,0.12); }
-  50%       { box-shadow: 0 0 0 2px rgba(96,165,250,0.55), 0 0 18px rgba(96,165,250,0.28); }
-}
-@keyframes gq-hit-shake {
-  0%   { transform: translate(0, 0); }
-  10%  { transform: translate(-5px, -2px); }
-  20%  { transform: translate(5px, 2px); }
-  30%  { transform: translate(-4px, 1px); }
-  40%  { transform: translate(4px, -1px); }
-  55%  { transform: translate(-2px, 0); }
-  70%  { transform: translate(2px, 0); }
-  100% { transform: translate(0, 0); }
-}
-@keyframes gq-hit-tint {
-  0%   { box-shadow: inset 0 0 0 0 rgba(239,68,68,0); }
-  20%  { box-shadow: inset 0 0 0 9999px rgba(239,68,68,0.45); }
-  60%  { box-shadow: inset 0 0 0 9999px rgba(239,68,68,0.28); }
-  100% { box-shadow: inset 0 0 0 0 rgba(239,68,68,0); }
-}
-.gq-hit-flash { animation: gq-hit-shake 550ms ease-in-out, gq-hit-tint 550ms ease-out; }
-@keyframes gq-monster-lunge-card {
-  0%   { transform: translateY(0); }
-  35%  { transform: translateY(20px) scale(1.04); }
-  60%  { transform: translateY(10px) scale(1.02); }
-  100% { transform: translateY(0); }
-}
-.gq-monster-lunge-card { animation: gq-monster-lunge-card 520ms cubic-bezier(0.22, 1.4, 0.36, 1) both; }
-@keyframes gq-slash-sweep {
-  0%   { opacity: 0; transform: translate(-110%, -50%) rotate(-22deg) scaleX(0.6); }
-  18%  { opacity: 1; }
-  60%  { opacity: 0.9; transform: translate(110%, -50%) rotate(-22deg) scaleX(1.4); }
-  100% { opacity: 0; transform: translate(130%, -50%) rotate(-22deg) scaleX(1.4); }
-}
-.gq-slash-streak {
-  position: absolute; top: 50%; left: 0; width: 70%; height: 6px;
-  background: linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.9) 30%, rgba(254,202,202,1) 50%, rgba(255,255,255,0.9) 70%, transparent 100%);
-  filter: drop-shadow(0 0 8px rgba(252,165,165,0.9)) drop-shadow(0 0 14px rgba(239,68,68,0.55));
-  pointer-events: none; transform-origin: 50% 50%;
-  animation: gq-slash-sweep 420ms ease-out forwards; border-radius: 6px;
-}
-@keyframes gq-monster-defeated-card {
-  0%   { transform: rotateX(0deg) scale(1) translateY(0); opacity: 1; filter: brightness(1) saturate(1); }
-  25%  { transform: rotateX(-12deg) scale(1.03) translateY(0); opacity: 1; filter: brightness(1.35) saturate(1.4); }
-  70%  { transform: rotateX(-65deg) scale(0.92) translateY(40px); opacity: 0.55; filter: brightness(0.6) saturate(0.4); }
-  100% { transform: rotateX(-85deg) scale(0.78) translateY(55px); opacity: 0; filter: brightness(0.2) saturate(0); }
-}
-.gq-monster-defeated-card {
-  animation: gq-monster-defeated-card 1100ms cubic-bezier(0.45, 0, 0.65, 1) forwards;
-  transform-style: preserve-3d; perspective: 600px;
-}
-@keyframes gq-target-pulse {
-  0%, 100% { box-shadow: 0 0 16px rgba(251,191,36,0.4), inset 0 0 0 0 rgba(251,191,36,0); }
-  50%      { box-shadow: 0 0 22px rgba(251,191,36,0.55), inset 0 0 12px 0 rgba(251,191,36,0.15); }
-}
-.gq-monster-targeted { animation: gq-target-pulse 1800ms ease-in-out infinite; }
-`;
-  document.head.appendChild(s);
+  // Animations are declared in src/index.css — nothing to inject.
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -124,7 +60,7 @@ export function charPortraitUrl(name: string): string {
 
 export function hpColor(current: number, max: number): string {
   const pct = max > 0 ? current / max : 1;
-  return pct < 0.25 ? "#ef4444" : pct < 0.5 ? "#f59e0b" : "#22c55e";
+  return pct < 0.25 ? "#dc2626" : pct < 0.5 ? "#d97706" : "#16a34a";
 }
 
 // ─── HitDust ─────────────────────────────────────────────────────────────────
@@ -492,18 +428,18 @@ export function CBtn({ label, icon, color, disabled, manaCost, tooltip, cooldown
       {hovered && tooltip && (
         <div style={{
           position: "absolute", bottom: "calc(100% + 8px)", left: "50%", transform: "translateX(-50%)",
-          background: "#1a1c2e", border: "1px solid #3a3d54", borderRadius: 8,
-          padding: "8px 12px", color: "#e2e8f0", fontSize: 12, lineHeight: 1.5,
+          background: "var(--bg-panel)", border: "1px solid var(--border-action)", borderRadius: "var(--radius-lg)",
+          padding: "8px 12px", color: "var(--fg-2)", fontSize: 12, lineHeight: 1.5,
           whiteSpace: "normal", width: 200, textAlign: "center", zIndex: 100,
-          boxShadow: "0 6px 20px rgba(0,0,0,0.6)", pointerEvents: "none",
+          boxShadow: "var(--shadow-pop)", pointerEvents: "none",
         }}>
           <div style={{ fontWeight: 600, color, marginBottom: 4 }}>{label}</div>
           <div style={{ opacity: 0.85 }}>{tooltip}</div>
           {onCooldown && (
-            <div style={{ marginTop: 6, color: "#fb923c", fontSize: 11, fontWeight: 600 }}>⏳ {cooldown} turn{cooldown !== 1 ? "s" : ""} cooldown</div>
+            <div style={{ marginTop: 6, color: "var(--tone-fire)", fontSize: 11, fontWeight: 600 }}>⏳ {cooldown} turn{cooldown !== 1 ? "s" : ""} cooldown</div>
           )}
           {manaCost !== undefined && (
-            <div style={{ marginTop: 6, color: "#a78bfa", fontSize: 11, fontWeight: 600 }}>{manaCost}✦ mana</div>
+            <div style={{ marginTop: 6, color: "var(--accent-arcane)", fontSize: 11, fontWeight: 600 }}>{manaCost}✦ mana</div>
           )}
         </div>
       )}
@@ -514,10 +450,10 @@ export function CBtn({ label, icon, color, disabled, manaCost, tooltip, cooldown
           display: "flex", flexDirection: "column", alignItems: "center",
           justifyContent: "center", gap: compact ? 2 : 3,
           padding: compact ? "6px 4px" : "8px 6px", width: sz, height: sz,
-          background: isDisabled ? "#1a1c21" : color,
-          border: `2px solid ${isDisabled ? "#2a2d33" : color}`,
-          borderRadius: 8,
-          color: isDisabled ? "#4a5568" : "#0e0f12",
+          background: isDisabled ? "var(--bg-input-2)" : color,
+          border: `2px solid ${isDisabled ? "var(--border-base)" : color}`,
+          borderRadius: "var(--radius-lg)",
+          color: isDisabled ? "var(--fg-faint)" : "#0e0f12",
           cursor: isDisabled ? "not-allowed" : "pointer",
           opacity: isDisabled ? 0.55 : 1,
           transition: "opacity 0.15s, transform 0.08s",
@@ -798,13 +734,13 @@ export function PickerModal({ title, onClose, children }: {
         zIndex: 1000, padding: 16, backdropFilter: "blur(4px)",
       }}>
       <div style={{
-        background: "#12141a", border: "1px solid #2a2d33", borderRadius: 12,
+        background: "var(--bg-panel)", border: "1px solid var(--border-base)", borderRadius: "var(--radius-2xl)",
         width: "min(700px, 100%)", maxHeight: "85vh", display: "flex",
-        flexDirection: "column", boxShadow: "0 24px 64px rgba(0,0,0,0.8)",
+        flexDirection: "column", boxShadow: "var(--shadow-deep)",
       }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 16px", borderBottom: "1px solid #2a2d33", flexShrink: 0 }}>
-          <div style={{ fontSize: 14, fontWeight: 700, color: "#f5f5f5", fontFamily: DISPLAY_FONT }}>{title}</div>
-          <button onClick={onClose} style={{ background: "none", border: "1px solid #3a3d44", borderRadius: 6, color: "#9ca3af", cursor: "pointer", padding: "3px 10px", fontSize: 13 }}>✕</button>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 16px", borderBottom: "1px solid var(--border-base)", flexShrink: 0 }}>
+          <div style={{ fontSize: 14, fontWeight: 700, color: "var(--fg-1)", fontFamily: DISPLAY_FONT }}>{title}</div>
+          <button onClick={onClose} style={{ background: "none", border: "1px solid var(--border-strong)", borderRadius: "var(--radius-md)", color: "var(--fg-mute-2)", cursor: "pointer", padding: "3px 10px", fontSize: 13 }}>✕</button>
         </div>
         <div style={{ padding: 16, overflowY: "auto", flex: 1 }}>{children}</div>
       </div>
