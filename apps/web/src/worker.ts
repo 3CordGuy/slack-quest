@@ -7412,28 +7412,28 @@ async function advanceTowerAfterCombat(
   // do NOT advance the queue (queue is empty at this point anyway). Player
   // hits /tower/continue or /tower/exit to resolve.
   if (currentKind === "boss") {
-    const treasure = (() => {
-      // Boss treasure was queued at gen time on the boss floor's TowerFloorPlan.
-      // We don't have direct access to it here (queue is post-boss only), so
-      // reroll a fresh hoard at the boss tier — matches scale, same effect.
-      const rolled: LootOption[] = [];
-      for (let i = 0; i < 3; i++) {
-        const r = rollItem(tier);
-        rolled.push({
-          name: `${r.type === "weapon" ? "Weapon" : r.type === "armor" ? "Armor" : "Item"} (power ${r.power})`,
-          item_type: r.type,
-          power: r.power,
-          rarity: r.rarity,
-          flavor: "",
-          weapon_range: r.weapon_range ?? null,
-          ...(r.slot ? { slot: r.slot } : {}),
-          ...(r.stat_bonus ? { stat_bonus: r.stat_bonus as Record<string, number> } : {}),
-          ...(r.item_subtype ? { item_subtype: r.item_subtype } : {}),
-          ...(r.element ? { element: r.element } : {}),
-        });
-      }
-      return rolled;
-    })();
+    // Boss treasure was queued at gen time on the boss floor's TowerFloorPlan.
+    // We don't have direct access to it here (queue is post-boss only), so
+    // reroll a fresh hoard at the boss tier — matches scale, same effect.
+    // Name + flavor come from nameLootViaAi (catalog entries get their canonical
+    // name + a fresh blurb; everything else gets full AI naming with a fallback).
+    const treasure: LootOption[] = [];
+    for (let i = 0; i < 3; i++) {
+      const r = rollItem(tier);
+      const named = await nameLootViaAi(env, r, primaryMonster.name);
+      treasure.push({
+        name: named.name,
+        item_type: r.type,
+        power: r.power,
+        rarity: r.rarity,
+        flavor: named.flavor,
+        weapon_range: r.weapon_range ?? null,
+        ...(r.slot ? { slot: r.slot } : {}),
+        ...(r.stat_bonus ? { stat_bonus: r.stat_bonus as Record<string, number> } : {}),
+        ...(r.item_subtype ? { item_subtype: r.item_subtype } : {}),
+        ...(r.element ? { element: r.element } : {}),
+      });
+    }
     const survivors = humanFighters.filter((f) => f.hp > 0);
     for (let i = 0; i < treasure.length; i++) {
       const item = treasure[i];
