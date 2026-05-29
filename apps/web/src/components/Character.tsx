@@ -1883,7 +1883,7 @@ export function AccountPopover({
           lineHeight: 1, fontFamily: "inherit", display: "flex", alignItems: "center",
         }}
       >
-        <Icon name="gears" size={14} />
+        <Icon name="cog" size={14} />
       </button>
       {open && (
         <FloatingPortal>

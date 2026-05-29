@@ -891,7 +891,7 @@ export function ItemPicker({ items, onPickNoTarget, onPickRevive, onCancel }: {
   const usable = items.filter((i) => isCombatUsable(i.item_type));
   const readOnly = items.filter((i) => !isCombatUsable(i.item_type));
   return (
-    <PickerModal title={<><Icon name="ammo-bag" /> Use Item</>} onClose={onCancel}>
+    <PickerModal title={<><Icon name="knapsack" /> Use Item</>} onClose={onCancel}>
       {usable.length === 0 && readOnly.length === 0
         ? <p style={{ fontSize: 13, color: "#6b7280", margin: 0 }}>No items in your pack.</p>
         : (
@@ -986,7 +986,7 @@ export function GiveItemPicker({ items, onPickItem, onCancel }: {
 }) {
   const giveable = items.filter((i) => !i.equipped);
   return (
-    <PickerModal title={<><Icon name="ammo-bag" /> Give which item?</>} onClose={onCancel}>
+    <PickerModal title={<><Icon name="knapsack" /> Give which item?</>} onClose={onCancel}>
       {giveable.length === 0
         ? <p style={{ fontSize: 13, color: "#6b7280", margin: 0 }}>No items to give.</p>
         : (
@@ -1420,7 +1420,7 @@ export function CombatPanel({
         <CBtn label="Heal" icon="health-increase" color="#22c55e" manaCost={1} disabled={!myTurn || mana < 1} onClick={() => { setPicking("heal"); setItemOpen(false); }} />
         <CBtn label="Shield" icon="shield" color="#60a5fa" manaCost={1} disabled={!myTurn || mana < 1} onClick={() => { setPicking("shield"); setItemOpen(false); }} />
         <CBtn label={myPos === "front" ? "Back row" : "Front row"} icon={myPos === "front" ? "perspective-dice-two" : "perspective-dice-one"} color="#6b7280" disabled={!myTurn} onClick={() => onSend({ kind: "position", actor: selfId, to: myPos === "front" ? "back" : "front" })} />
-        <CBtn label="Item" icon="ammo-bag" color="#c084fc" disabled={!myTurn || usable.length === 0} onClick={() => { setItemOpen((o) => !o); setPicking(null); setGivePicker("closed"); }} />
+        <CBtn label="Item" icon="knapsack" color="#c084fc" disabled={!myTurn || usable.length === 0} onClick={() => { setItemOpen((o) => !o); setPicking(null); setGivePicker("closed"); }} />
         {giveable.length > 0 && otherFighters.length > 0 && (
           <CBtn label="Give" icon="conversation" color="#fcd34d" disabled={!myTurn} onClick={() => { setGivePicker("selectItem"); setItemOpen(false); setPicking(null); }} />
         )}

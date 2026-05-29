@@ -586,7 +586,7 @@ function formatEvent(e: CombatEvent, state: CombatState | null): LogEntry[] {
     }
     case "item_used": {
       const eff = e.effect;
-      const head = <><Icon name="ammo-bag" /> {nameOf(e.actor)} used {e.item_name}</>;
+      const head = <><Icon name="knapsack" /> {nameOf(e.actor)} used {e.item_name}</>;
       if (eff.kind === "heal") {
         return [{ id: nextLogId++, content: <>{head}: +{eff.amount} HP</>, tone: "good" }];
       } else if (eff.kind === "mana_bump") {
@@ -1905,7 +1905,7 @@ export function CombatPage({
               to swap. Back row still matters in solo (reduces melee
               damage from front-positioned monsters). */}
           <CBtn variant="dark" label={otherPosition === "front" ? "Front" : "Back"} icon={otherPosition === "front" ? "muscle-up" : "fall-down"} color="#6b7280" disabled={!myTurn} onClick={() => send({ kind: "position", actor: selfId, to: otherPosition })} />
-          <CBtn label="Item" icon="ammo-bag" color="#c084fc" disabled={!myTurn || !items.some((i) => isCombatUsable(i.item_type))} onClick={() => setItemPicker("open")} />
+          <CBtn label="Item" icon="knapsack" color="#c084fc" disabled={!myTurn || !items.some((i) => isCombatUsable(i.item_type))} onClick={() => setItemPicker("open")} />
           {items.some((i) => !i.equipped) && state.fighters.filter((f) => f.hp > 0 && f.id !== selfId).length > 0 && (
             <CBtn label="Give" icon="conversation" color="#fcd34d" disabled={!myTurn} onClick={() => setGivePicker("selectItem")} />
           )}

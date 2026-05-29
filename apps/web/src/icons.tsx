@@ -53,6 +53,10 @@ const SVG_ICONS = new Set([
   "tower-flag",
   // My Camp + pub cooking (gathering nodes, ward tile, fish display)
   "camping-tent", "ore", "grass-mushroom", "fishing-hook", "fish-bucket", "fish-cooked", "eel", "salmon",
+  // Inventory
+  "knapsack",
+  // User menu trigger
+  "cog",
   // Abstract fallback icons (used when no specific icon exists)
   "abstract-006",
 ]);
@@ -148,7 +152,7 @@ const EMOJI_MAP: Record<string, string | null> = {
   "🧪": "bubbling-potion",
   "💚": "health-increase",
   "💖": "crowned-heart",
-  "🎒": "ammo-bag",
+  "🎒": "knapsack",
   "🔧": "anvil",
   "📜": "scroll-unfurled",
   "🪙": "gold-bar",
