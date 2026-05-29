@@ -1195,7 +1195,7 @@ export function InventoryFullScreen({
             /* ── Desktop: 3-panel layout ── */
             <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
               {/* Left — character sheet + paper doll */}
-              <div style={{ width: 360, flexShrink: 0, borderRight: "1px solid #2a2d33", overflowY: "auto", padding: "20px 16px", display: "flex", flexDirection: "column", alignItems: "center", gap: 14 }}>
+              <div style={{ width: 360, flexShrink: 0, borderRight: "1px solid #2a2d33", overflowY: "auto", padding: "20px 8px", display: "flex", flexDirection: "column", alignItems: "stretch", gap: 14 }}>
                 {characterSheet && (
                   <div style={{ alignSelf: "stretch", width: "100%" }}>{characterSheet}</div>
                 )}
@@ -1219,7 +1219,7 @@ export function InventoryFullScreen({
                   const leftSlots: EquipSlot[] = ["helmet", "body", "amulet", "ring"];
                   const rightSlots: EquipSlot[] = ["main_hand", "off_hand", "pants", "boots"];
                   return (
-                    <div style={{ display: "flex", gap, alignItems: "stretch", justifyContent: "center" }}>
+                    <div style={{ display: "flex", alignItems: "stretch", justifyContent: "space-between", width: "100%" }}>
                       <div style={{ display: "grid", gridTemplateRows: `repeat(4, ${slotCellHeight}px)`, gap }}>
                         {leftSlots.map(renderSlot)}
                       </div>
