@@ -15,7 +15,7 @@ import { RESOURCE_CATALOG, findResource, type ResourceSpec } from "@gantt-quest/
 import type {
   ActivePubErrand, Item, PubErrandKind, PubErrandOffer, PubErrandsResponse, PubPatron, PubTrust,
 } from "../types";
-import { card, h2, muted } from "../styles";
+import { h2, muted } from "../styles";
 
 interface PubErrandsProps {
   data: PubErrandsResponse | null;
@@ -63,7 +63,7 @@ export function PubErrands({ data, inventory, onStart, onClaim, onCancel }: PubE
   const refreshIn = formatRefreshIn(data.now);
 
   return (
-    <div style={card}>
+    <div>
       <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 8 }}>
         <h2 style={{ ...h2, display: "flex", alignItems: "center", gap: 10, margin: 0 }}>
           <Icon name="conversation" size={20} /> Errands
@@ -189,6 +189,8 @@ function PatronCard({
   return (
     <div style={{
       padding: 14, borderRadius: "var(--radius-lg)", border: "1px solid var(--border-base)", background: "var(--bg-card-2)",
+      backdropFilter: "blur(10px) saturate(1.05)",
+      WebkitBackdropFilter: "blur(10px) saturate(1.05)",
     }}>
       <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
         <Icon name={patron.icon} size={26} color="var(--fg-1)" />

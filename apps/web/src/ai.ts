@@ -560,7 +560,11 @@ export const VIEW_ART_PROMPTS = {
     "Wide establishing shot of a hidden basement data den, lit by purple and magenta neon strip lights along the ceiling. Walls lined with floor-to-ceiling server racks pulsing with violet and pink status LEDs. Exposed pipes and ducts overhead, concrete floor, a cyberpunk-fantasy hybrid mood. Soft mist drifts across the floor; faint reflection of neon on a polished concrete surface. No characters — the chamber is the subject.",
   combat_deadline_dungeon:
     "Wide establishing shot of a cramped stone dungeon chamber repurposed as a war room. Stone walls covered in pinned Gantt charts, post-it notes, and burndown graphs. Heavy wooden table at center stage strewn with parchment scrolls of code, ergonomic keyboards, mugs of cold coffee, a guttering candle, a sword leaning against the table. Two wall-mounted monitors flicker urgently with red status indicators. Warm orange torchlight competes with the cold red monitor glow. No characters — the room is the subject. Tense, urgent atmosphere.",
-  // Camp gathering node backdrops — wide establishing shots, no characters.
+  // Camp backdrops — wide establishing shots, no characters.
+  camp_overview:
+    "A campsite at dawn seen from just inside an open tent flap. Central fire pit with glowing embers, a wooden supply crate with rope and tools, a pickaxe and fishing rod leaned against a nearby tree, a second canvas worker tent visible to the side. Soft morning mist through the trees, golden hour light filtering through leaves. Establishing wide shot, no characters. Warm, lived-in, peaceful.",
+  camp_build:
+    "A fantasy construction yard at midday. Wooden scaffolding, half-finished stone walls, a craftsman's workbench with blueprints, hammers, chisels, and fresh-cut lumber stacked nearby. A hand-drawn architectural plan pinned to a board. Dust motes in warm afternoon sun, a sense of industrious progress. Wide establishing shot, no characters. Ghibli-influenced light fantasy meets software-engineering aesthetic.",
   camp_mine:
     "Underground mine tunnel carved into dark rock, veins of glowing iron ore running through the walls, wooden support beams with warm lantern light, ore chunks scattered on the cave floor. Wide establishing shot, no characters. Fantasy setting, atmospheric depth.",
   camp_forage:

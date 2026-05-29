@@ -1799,7 +1799,7 @@ app.get("/api/town", async (c) => {
   const session = await currentSession(c.env.DB, c.req.header("cookie"));
   if (!session) return c.json({ error: "unauthenticated" }, 401);
   const art = artTarget(c.env);
-  const [overview, pub, shop, inn, smithy, apothecary, outskirts, mine, forage, fish] = await Promise.all([
+  const [overview, pub, shop, inn, smithy, apothecary, outskirts, mine, forage, fish, campOverview, campBuild] = await Promise.all([
     getOrScheduleViewArt(c.env.AI, art, c.executionCtx, "town_overview", undefined, TOWN_WEEKLY_MS),
     getOrScheduleViewArt(c.env.AI, art, c.executionCtx, "pub_interior", undefined, TOWN_WEEKLY_MS),
     getOrScheduleViewArt(c.env.AI, art, c.executionCtx, "channel_shop", undefined, TOWN_WEEKLY_MS),
@@ -1810,8 +1810,10 @@ app.get("/api/town", async (c) => {
     getOrScheduleViewArt(c.env.AI, art, c.executionCtx, "camp_mine", undefined, TOWN_WEEKLY_MS),
     getOrScheduleViewArt(c.env.AI, art, c.executionCtx, "camp_forage", undefined, TOWN_WEEKLY_MS),
     getOrScheduleViewArt(c.env.AI, art, c.executionCtx, "camp_fish", undefined, TOWN_WEEKLY_MS),
+    getOrScheduleViewArt(c.env.AI, art, c.executionCtx, "camp_overview", undefined, TOWN_WEEKLY_MS),
+    getOrScheduleViewArt(c.env.AI, art, c.executionCtx, "camp_build", undefined, TOWN_WEEKLY_MS),
   ]);
-  return c.json({ overview_art_url: overview, pub_art_url: pub, shop_art_url: shop, inn_art_url: inn, smithy_art_url: smithy, apothecary_art_url: apothecary, outskirts_art_url: outskirts, mine_art_url: mine, forage_art_url: forage, fish_art_url: fish });
+  return c.json({ overview_art_url: overview, pub_art_url: pub, shop_art_url: shop, inn_art_url: inn, smithy_art_url: smithy, apothecary_art_url: apothecary, outskirts_art_url: outskirts, mine_art_url: mine, forage_art_url: forage, fish_art_url: fish, camp_overview_art_url: campOverview, camp_build_art_url: campBuild });
 });
 
 // Regenerates stale town jobs (daily) and/or town name (weekly) for the web

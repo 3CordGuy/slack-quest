@@ -655,6 +655,8 @@ export interface TownArt {
   mine_art_url: string | null;
   forage_art_url: string | null;
   fish_art_url: string | null;
+  camp_overview_art_url: string | null;
+  camp_build_art_url: string | null;
 }
 
 export interface ApothecaryDownedChar {
