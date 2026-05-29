@@ -9,12 +9,12 @@
 // a consumable food item. Food heals HP through the same path as Health
 // Potions on use.
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import toast from "react-hot-toast";
 import type { CSSProperties } from "react";
 
 import { Icon } from "../icons";
-import { COOK_RECIPES, findResource, type CookRecipeSpec } from "@gantt-quest/core";
+import { COOK_RECIPES, RESOURCE_CATALOG, findResource, type CookRecipeSpec, type ResourceSpec } from "@gantt-quest/core";
 import type { Item } from "../types";
 import { h2, muted } from "../styles";
 
@@ -26,8 +26,21 @@ interface PubCookingProps {
 }
 
 export function PubCooking({ characterLevel, gold, inventory, onAfterCook }: PubCookingProps) {
+  const fishStock = useMemo(() => {
+    return RESOURCE_CATALOG
+      .filter((s) => s.node === "fish")
+      .map((spec) => {
+        const fullName = `${spec.emoji} ${spec.name}`;
+        const qty = inventory
+          .filter((it) => it.item_type === "resource" && it.item_name === fullName)
+          .reduce((sum, it) => sum + (it.qty ?? 1), 0);
+        return { spec, qty };
+      });
+  }, [inventory]);
+
   return (
     <div>
+      <StockpileMini label="Fish stockpile" resources={fishStock} />
       <h2 style={{ ...h2, display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
         <Icon name="fish-cooked" size={20} /> Cooking
       </h2>
@@ -102,7 +115,7 @@ function RecipeRow({
         <div style={{ fontSize: 12, color: "var(--fg-mute)" }}>{recipe.output_blurb}</div>
         <div style={{ fontSize: 11, color: "var(--fg-mute)", marginTop: 4 }}>
           <span style={{ color: hasFish ? "inherit" : "var(--accent-no-1, #f87171)" }}>
-            {recipe.input_qty} × {fishSpec?.emoji ?? ""} {fishSpec?.name ?? recipe.input_fish_id}
+            {recipe.input_qty} × <span style={{ display: "inline-flex", alignItems: "center", gap: 3, verticalAlign: "middle" }}><Icon name={rawIcon} size={12} color="var(--fg-mute)" /> {fishSpec?.name ?? recipe.input_fish_id}</span>
             {" "}<span style={{ opacity: 0.6 }}>({onHand} on hand)</span>
           </span>
           <span> · {recipe.gold_cost}g</span>
@@ -144,4 +157,28 @@ function actionBtn(enabled: boolean): CSSProperties {
     fontFamily: "inherit",
     fontWeight: 600,
   };
+}
+
+function StockpileMini({ label, resources }: { label: string; resources: Array<{ spec: ResourceSpec; qty: number }> }) {
+  return (
+    <div style={{ marginBottom: 16, padding: "10px 12px", borderRadius: "var(--radius-md)", border: "1px solid var(--border-faint, rgba(255,255,255,0.06))", background: "var(--bg-card-2)" }}>
+      <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: 1.2, color: "var(--fg-mute)", marginBottom: 8, fontFamily: "var(--font-display)" }}>
+        <Icon name="wooden-crate" size={11} /> {label}
+      </div>
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+        {resources.map((r) => (
+          <div key={r.spec.id} style={{
+            display: "flex", alignItems: "center", gap: 5, padding: "4px 10px",
+            borderRadius: "var(--radius-sm)", border: "1px solid var(--border-base)",
+            background: r.qty > 0 ? "var(--bg-card)" : "transparent",
+            opacity: r.qty === 0 ? 0.45 : 1,
+          }}>
+            <Icon name={r.spec.icon} size={14} color="var(--fg-2)" />
+            <span style={{ fontSize: 12 }}>{r.spec.name}</span>
+            <span style={{ fontWeight: 700, fontSize: 13, color: r.qty > 0 ? "var(--fg-1)" : "var(--fg-mute)", marginLeft: 2 }}>{r.qty}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
 }
