@@ -53,6 +53,12 @@ const SVG_ICONS = new Set([
   "tower-flag",
   // My Camp + pub cooking (gathering nodes, ward tile, fish display)
   "camping-tent", "ore", "grass-mushroom", "fishing-hook", "fish-bucket", "fish-cooked", "eel", "salmon",
+  // Camp stockpile resource icons
+  "coal-pile", "crystal-bars", "crystal-cluster",           // ore tier: iron / silver / mithril
+  "herbs-bundle", "chestnut-leaf", "dandelion-flower",      // herb tier: mossroot / sunleaf / nightbloom
+  "flying-trout",                                           // fish tier: silverfin (eel+salmon already above)
+  // Camp upgrade icons
+  "wood-frame", "wooden-crate",
   // Inventory
   "knapsack",
   // User menu trigger

@@ -20,16 +20,16 @@ import { SmallBadge } from "./ui";
 // Static resource list keyed by node. Mirrors RESOURCE_CATALOG from
 // @gantt-quest/core. Inlined here to keep Camp.tsx free of the workspace
 // core import (mirrors how CAMP_NODE_CONFIG is exported from constants).
-const STOCKPILE_RESOURCES: Array<{ id: string; node: CampNode; name: string; emoji: string; icon?: string }> = [
-  { id: "iron_ore",    node: "mine",   name: "Iron Ore",    emoji: "⛏️" },
-  { id: "silver_ore",  node: "mine",   name: "Silver Ore",  emoji: "🪙" },
-  { id: "mithril_ore", node: "mine",   name: "Mithril Ore", emoji: "💠" },
-  { id: "mossroot",    node: "forage", name: "Mossroot",    emoji: "🌿" },
-  { id: "sunleaf",     node: "forage", name: "Sunleaf",     emoji: "🍀" },
-  { id: "nightbloom",  node: "forage", name: "Nightbloom",  emoji: "🌸" },
-  { id: "river_carp",  node: "fish",   name: "River Carp",  emoji: "🐟" },
-  { id: "silverfin",   node: "fish",   name: "Silverfin",   emoji: "🐠" },
-  { id: "abyss_eel",   node: "fish",   name: "Abyss Eel",   emoji: "", icon: "eel" },
+const STOCKPILE_RESOURCES: Array<{ id: string; node: CampNode; name: string; emoji: string; icon: string }> = [
+  { id: "iron_ore",    node: "mine",   name: "Iron Ore",    emoji: "⛏️", icon: "coal-pile" },
+  { id: "silver_ore",  node: "mine",   name: "Silver Ore",  emoji: "🪙", icon: "crystal-bars" },
+  { id: "mithril_ore", node: "mine",   name: "Mithril Ore", emoji: "💠", icon: "crystal-cluster" },
+  { id: "mossroot",    node: "forage", name: "Mossroot",    emoji: "🌿", icon: "herbs-bundle" },
+  { id: "sunleaf",     node: "forage", name: "Sunleaf",     emoji: "🍀", icon: "chestnut-leaf" },
+  { id: "nightbloom",  node: "forage", name: "Nightbloom",  emoji: "🌸", icon: "dandelion-flower" },
+  { id: "river_carp",  node: "fish",   name: "River Carp",  emoji: "🐟", icon: "salmon" },
+  { id: "silverfin",   node: "fish",   name: "Silverfin",   emoji: "🐠", icon: "flying-trout" },
+  { id: "abyss_eel",   node: "fish",   name: "Abyss Eel",   emoji: "🐉", icon: "eel" },
 ];
 
 interface CampProps {
@@ -108,12 +108,14 @@ function Stockpile({ inventory }: { inventory: Item[] }) {
       background: "var(--bg-card-2)",
     }}>
       <div style={{
+        display: "flex", alignItems: "center", gap: 6,
         font: "11px/1 var(--font-display)",
         textTransform: "uppercase",
         letterSpacing: 1.5,
         color: "var(--fg-mute)",
         marginBottom: 10,
       }}>
+        <Icon name="wooden-crate" size={13} />
         Stockpile
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 14 }}>
@@ -159,10 +161,7 @@ function StockpileColumn({
               color: qty > 0 ? "var(--fg-1)" : "var(--fg-mute)",
             }}>
               <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                {r.icon
-                  ? <Icon name={r.icon} size={13} color={qty > 0 ? "var(--fg-1)" : "var(--fg-mute)"} />
-                  : <span>{r.emoji}</span>
-                }
+                <Icon name={r.icon} size={13} color={qty > 0 ? "var(--fg-1)" : "var(--fg-mute)"} />
                 {r.name}
               </span>
               <span style={{
