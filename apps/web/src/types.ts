@@ -652,6 +652,9 @@ export interface TownArt {
   smithy_art_url: string | null;
   apothecary_art_url: string | null;
   outskirts_art_url: string | null;
+  mine_art_url: string | null;
+  forage_art_url: string | null;
+  fish_art_url: string | null;
 }
 
 export interface ApothecaryDownedChar {

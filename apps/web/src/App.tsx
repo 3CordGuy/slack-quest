@@ -1275,6 +1275,7 @@ export function App() {
           title="The Pub"
           subtitle="Ale · Whiskey · Mercs"
           gold={gold}
+          art={state.townArt?.pub_art_url ?? null}
           onClose={close}
           sections={[
             { id: "drinks",   label: "Drinks",   icon: "beer-stein" },
@@ -1377,6 +1378,7 @@ export function App() {
           title="The Smithy"
           subtitle="Sharpen & repair"
           gold={gold}
+          art={state.townArt?.smithy_art_url ?? null}
           onClose={close}
           sections={[
             { id: "equipment", label: "Equipment", icon: "sword" },
@@ -1416,6 +1418,7 @@ export function App() {
           title="Apothecary"
           subtitle="Potions & vials"
           gold={gold}
+          art={state.townArt?.apothecary_art_url ?? null}
           onClose={close}
           sections={[
             { id: "potions", label: "Potions", icon: "potion" },
@@ -1480,9 +1483,9 @@ export function App() {
           onClose={close}
           sections={[
             { id: "overview", label: "Overview",  icon: "camping-tent" },
-            { id: "mine",     label: "Mine",      icon: "ore" },
-            { id: "forage",   label: "Forage",    icon: "grass-mushroom" },
-            { id: "fish",     label: "Fishing",   icon: "fishing-hook" },
+            { id: "mine",     label: "Mine",      icon: "ore",          art: state.townArt?.mine_art_url ?? null },
+            { id: "forage",   label: "Forage",    icon: "grass-mushroom", art: state.townArt?.forage_art_url ?? null },
+            { id: "fish",     label: "Fishing",   icon: "fishing-hook", art: state.townArt?.fish_art_url ?? null },
             { id: "build",    label: "Build",     icon: "anvil" },
           ]}
           defaultSection="overview"

@@ -655,6 +655,8 @@ export interface LocWideSection {
   id: string;
   label: string;
   icon: string;
+  /** Optional background art URL for this specific section. Overrides the modal-level art. */
+  art?: string | null;
 }
 
 /**
@@ -669,6 +671,7 @@ export function LocationModalWide({
   title,
   subtitle,
   gold,
+  art,
   onClose,
   children,
 }: {
@@ -678,6 +681,8 @@ export function LocationModalWide({
   title: string;
   subtitle?: string;
   gold?: number;
+  /** Fallback background art URL shown behind all sections. Individual sections may override via LocWideSection.art. */
+  art?: string | null;
   onClose: () => void;
   children: (activeSection: string) => ReactNode;
 }) {
@@ -729,7 +734,20 @@ export function LocationModalWide({
             ))}
           </nav>
           <div className="loc-wide-content">
-            {children(active)}
+            {/* Per-section art overrides modal-level art */}
+            {(() => {
+              const activeArt = sections.find((s) => s.id === active)?.art ?? art ?? null;
+              return activeArt ? (
+                <div
+                  className="loc-wide-art-bg"
+                  style={{ backgroundImage: `url(${activeArt})` }}
+                  aria-hidden="true"
+                />
+              ) : null;
+            })()}
+            <div className="loc-wide-content-inner">
+              {children(active)}
+            </div>
           </div>
         </div>
       </div>

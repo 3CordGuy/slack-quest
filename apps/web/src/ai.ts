@@ -560,6 +560,13 @@ export const VIEW_ART_PROMPTS = {
     "Wide establishing shot of a hidden basement data den, lit by purple and magenta neon strip lights along the ceiling. Walls lined with floor-to-ceiling server racks pulsing with violet and pink status LEDs. Exposed pipes and ducts overhead, concrete floor, a cyberpunk-fantasy hybrid mood. Soft mist drifts across the floor; faint reflection of neon on a polished concrete surface. No characters — the chamber is the subject.",
   combat_deadline_dungeon:
     "Wide establishing shot of a cramped stone dungeon chamber repurposed as a war room. Stone walls covered in pinned Gantt charts, post-it notes, and burndown graphs. Heavy wooden table at center stage strewn with parchment scrolls of code, ergonomic keyboards, mugs of cold coffee, a guttering candle, a sword leaning against the table. Two wall-mounted monitors flicker urgently with red status indicators. Warm orange torchlight competes with the cold red monitor glow. No characters — the room is the subject. Tense, urgent atmosphere.",
+  // Camp gathering node backdrops — wide establishing shots, no characters.
+  camp_mine:
+    "Underground mine tunnel carved into dark rock, veins of glowing iron ore running through the walls, wooden support beams with warm lantern light, ore chunks scattered on the cave floor. Wide establishing shot, no characters. Fantasy setting, atmospheric depth.",
+  camp_forage:
+    "A sun-dappled forest clearing with a mossy stone wall, wildflowers and herbs growing in clusters — leafy green mossroot, golden sunleaf catching the light, rare purple nightbloom near the shade. Soft natural light filtering through the canopy. Wide establishing shot, no characters. Peaceful, lush, full of natural color.",
+  camp_fish:
+    "A serene mountain fishing hole, still clear water reflecting the sky and trees, a wooden dock at the water's edge, morning mist rising over the surface. Willows trailing in the water. Wide establishing shot, no characters. Calm, idyllic, fantasy setting.",
 } as const;
 
 
