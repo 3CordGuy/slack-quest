@@ -1283,6 +1283,7 @@ export function App() {
             characterLevel={state.me.character.level}
             overviewArt={state.townArt?.outskirts_art_url ?? null}
             status={campStatus}
+            inventory={state.inventory}
             onStartGather={startGather}
             onClaim={claimGather}
             onBuildUpgrade={buildCampUpgrade}

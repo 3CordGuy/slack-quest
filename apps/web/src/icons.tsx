@@ -52,7 +52,7 @@ const SVG_ICONS = new Set([
   // Climb the Tower
   "tower-flag",
   // My Camp (gathering nodes + ward tile)
-  "camping-tent", "ore", "fishing-hook", "fish-bucket", "fish-cooked", "eel",
+  "camping-tent", "ore", "grass-mushroom", "fishing-hook", "fish-bucket", "fish-cooked", "eel",
   // Abstract fallback icons (used when no specific icon exists)
   "abstract-006",
 ]);
