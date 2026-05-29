@@ -3710,6 +3710,7 @@ export interface GatheringTaskRow {
   expires_at: number;
   yield_json: string | null;
   claimed_at: number | null;
+  modifiers_json: string | null;
 }
 
 export interface ResourceYieldEntry {
@@ -3726,14 +3727,27 @@ export interface GatheringYield {
   gold_strike?: boolean;
 }
 
-export interface GatheringTask extends Omit<GatheringTaskRow, "yield_json"> {
+// Tent perk modifiers snapshot stored on the row at start time. NO_TENT_MODIFIERS
+// when legacy / null. Mirrors TentModifiers from @gantt-quest/core but defined
+// locally to keep the db package import-free from core (no circular dep).
+export interface PersistedTentModifiers {
+  duration_pct: number;
+  yield_bonus: number;
+  rare_bonus_pct: number;
+}
+
+export interface GatheringTask extends Omit<GatheringTaskRow, "yield_json" | "modifiers_json"> {
   yield: GatheringYield | null;
+  modifiers: PersistedTentModifiers | null;
 }
 
 function rowToGatheringTask(row: GatheringTaskRow): GatheringTask {
   return {
     ...row,
     yield: row.yield_json ? (JSON.parse(row.yield_json) as GatheringYield) : null,
+    modifiers: row.modifiers_json
+      ? (JSON.parse(row.modifiers_json) as PersistedTentModifiers)
+      : null,
   };
 }
 
@@ -3773,13 +3787,14 @@ export async function startGatheringTask(
     tier: CampTier;
     worker_slot: number;
     duration_ms: number;
+    modifiers?: PersistedTentModifiers | null;
   },
 ): Promise<GatheringTask> {
   const now = Date.now();
   const result = await db
     .prepare(
-      `INSERT INTO gathering_tasks (character_id, node, tier, worker_slot, started_at, expires_at)
-       VALUES (?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO gathering_tasks (character_id, node, tier, worker_slot, started_at, expires_at, modifiers_json)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
     )
     .bind(
       args.character_id,
@@ -3788,6 +3803,7 @@ export async function startGatheringTask(
       args.worker_slot,
       now,
       now + args.duration_ms,
+      args.modifiers ? JSON.stringify(args.modifiers) : null,
     )
     .run();
   const id = result.meta.last_row_id;

@@ -420,12 +420,43 @@ function BuildPanel({
 }) {
   const built = new Set(status?.upgrades_built ?? []);
   const catalog = status?.upgrades_catalog ?? [];
+
+  // Summarize built perks (non-slot upgrades) so the player can see active
+  // bonuses at a glance. Worker tents are visible via the slot counter in
+  // the header so we skip them here.
+  const activePerks = catalog
+    .filter((u) => built.has(u.key) && u.effect.kind !== "extra_slot")
+    .map((u) => {
+      if (u.effect.kind === "duration_pct") return `-${u.effect.value}% gather time`;
+      if (u.effect.kind === "yield_bonus") return `+${u.effect.value} primary yield`;
+      if (u.effect.kind === "rare_bonus_pct") return `+${u.effect.value}% rare chance`;
+      return null;
+    })
+    .filter((s): s is string => s !== null);
+
   return (
     <div>
-      <div style={{ ...muted, marginBottom: 16 }}>
-        Upgrades hold across all gathering nodes. Worker tents add a parallel slot;
-        future tent upgrades will cut harvest time and bump yields.
+      <div style={{ ...muted, marginBottom: 12 }}>
+        Worker tents add parallel gathering slots; perks compound across every
+        task you start after building them.
       </div>
+      {activePerks.length > 0 && (
+        <div style={{
+          marginBottom: 14,
+          padding: "8px 12px",
+          borderRadius: "var(--radius-md)",
+          border: "1px solid var(--accent-go-1, #4ade80)",
+          background: "var(--bg-card-2)",
+          fontSize: 12,
+          color: "var(--accent-go-1, #4ade80)",
+          display: "flex", flexWrap: "wrap", gap: 12,
+        }}>
+          <strong style={{ textTransform: "uppercase", letterSpacing: 1.2, fontSize: 10 }}>
+            Active perks
+          </strong>
+          <span>{activePerks.join(" · ")}</span>
+        </div>
+      )}
       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
         {catalog.map((u) => (
           <UpgradeRow
