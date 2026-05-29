@@ -1847,10 +1847,10 @@ export function rollGatherYield(
   const tierSpec = CAMP_TIERS[tier];
   const rng = mulberry32(taskId);
   const resources: RolledYield["resources"] = [];
-  const xpScale =
-    levelScaledXpMultiplier(modifiers.character_level ?? 1) *
-    (modifiers.rested ? REST_BONUS_MULT : 1);
-  const goldScale = modifiers.rested ? REST_BONUS_MULT : 1;
+  const levelMult = levelScaledXpMultiplier(modifiers.character_level ?? 1);
+  const restedMult = modifiers.rested ? REST_BONUS_MULT : 1;
+  const xpScale = levelMult * restedMult;
+  const goldScale = levelMult * restedMult;
   let xp = Math.round(tierSpec.base_xp * xpScale);
   let gold = Math.round(tierSpec.base_gold * goldScale);
   let gold_strike = false;
@@ -1931,7 +1931,7 @@ export const RECIPE_CATALOG: RecipeSpec[] = [
   },
   {
     id: "iron_helm", station: "smithy",
-    output_name: "Iron Helm", output_type: "armor", output_power: 4,
+    output_name: "Iron Helm", output_type: "armor", output_power: 5,
     output_slot: "helmet", output_rarity: "common",
     output_blurb: "Dented but functional. Keeps the skull intact.",
     inputs: [{ resource_id: "iron_ore", qty: 2 }],
@@ -1939,7 +1939,7 @@ export const RECIPE_CATALOG: RecipeSpec[] = [
   },
   {
     id: "steel_greaves", station: "smithy",
-    output_name: "Steel Greaves", output_type: "armor", output_power: 6,
+    output_name: "Steel Greaves", output_type: "armor", output_power: 9,
     output_slot: "pants", output_rarity: "uncommon",
     output_blurb: "Layered silver bands. Cold steel runs the seams.",
     inputs: [{ resource_id: "iron_ore", qty: 3 }, { resource_id: "silver_ore", qty: 1 }],
@@ -1947,7 +1947,7 @@ export const RECIPE_CATALOG: RecipeSpec[] = [
   },
   {
     id: "mithril_ring", station: "smithy",
-    output_name: "Mithril Ring", output_type: "armor", output_power: 3,
+    output_name: "Mithril Ring", output_type: "armor", output_power: 10,
     output_slot: "ring", output_rarity: "rare",
     output_blurb: "Light braid. Hums faintly when worn.",
     inputs: [{ resource_id: "mithril_ore", qty: 1 }, { resource_id: "silver_ore", qty: 2 }],
@@ -1958,7 +1958,7 @@ export const RECIPE_CATALOG: RecipeSpec[] = [
   // good Deep streak compounds straight into a power-spike item set.
   {
     id: "mithril_blade", station: "smithy",
-    output_name: "Mithril Blade", output_type: "weapon", output_power: 9,
+    output_name: "Mithril Blade", output_type: "weapon", output_power: 18,
     output_slot: "main_hand", output_rarity: "rare",
     output_blurb: "Holds an edge through the longest fight. Half its weight.",
     inputs: [{ resource_id: "mithril_ore", qty: 2 }, { resource_id: "iron_ore", qty: 3 }],
@@ -1966,7 +1966,7 @@ export const RECIPE_CATALOG: RecipeSpec[] = [
   },
   {
     id: "mithril_aegis", station: "smithy",
-    output_name: "Mithril Aegis", output_type: "armor", output_power: 7,
+    output_name: "Mithril Aegis", output_type: "armor", output_power: 16,
     output_slot: "off_hand", output_subtype: "shield", output_rarity: "rare",
     output_blurb: "A pale shield that turns blows like water.",
     inputs: [{ resource_id: "mithril_ore", qty: 1 }, { resource_id: "silver_ore", qty: 2 }, { resource_id: "iron_ore", qty: 2 }],
@@ -1974,7 +1974,7 @@ export const RECIPE_CATALOG: RecipeSpec[] = [
   },
   {
     id: "mithril_cuirass", station: "smithy",
-    output_name: "Mithril Cuirass", output_type: "armor", output_power: 10,
+    output_name: "Mithril Cuirass", output_type: "armor", output_power: 19,
     output_slot: "body", output_rarity: "rare",
     output_blurb: "Layered mithril over silver. Carries like a tunic, turns like plate.",
     inputs: [{ resource_id: "mithril_ore", qty: 2 }, { resource_id: "silver_ore", qty: 2 }, { resource_id: "iron_ore", qty: 3 }],
@@ -2027,6 +2027,19 @@ export const RECIPE_CATALOG: RecipeSpec[] = [
 
 export function findRecipe(id: string): RecipeSpec | undefined {
   return RECIPE_CATALOG.find((r) => r.id === id);
+}
+
+// Smithy gear scales with the crafter's level so items stay relevant past the
+// unlock tier. +2 power per level above level_req tracks the dungeon drop
+// formula (rare power ≈ 2×tier + 4.5, level ≈ tier).
+// Apothecary consumables are excluded — their output_power is a flat HP/MP value.
+export const SMITHY_SCALE_PER_LEVEL = 2;
+
+export function smithyEffectivePower(recipe: RecipeSpec, characterLevel: number): number {
+  if (recipe.station !== "smithy" || recipe.output_type === "consumable") {
+    return recipe.output_power;
+  }
+  return recipe.output_power + Math.floor(Math.max(0, characterLevel - recipe.level_req) * SMITHY_SCALE_PER_LEVEL);
 }
 
 // Camp upgrade catalog. v1 ships with one buildable upgrade (worker_tent_1).
@@ -2412,11 +2425,11 @@ export function rollPubErrandYield(
   const tierSpec = PUB_ERRAND_TIERS[tier];
   const rng = pubMulberry32(errandId);
   const trustMult = trustScore >= 6 ? PUB_TRUST_HIGH_MULT : 1;
-  // XP scales with character level (see levelScaledXpMultiplier rationale
-  // on the camp roller). Gold stays trust-only so the gold floor doesn't
-  // drift up with progression.
-  const xpScale = trustMult * levelScaledXpMultiplier(characterLevel);
-  let gold = Math.round(tierSpec.base_gold * trustMult);
+  // Both XP and gold scale with character level so the world stays relevant
+  // as the player progresses. Trust is an additional multiplier on top.
+  const levelMult = levelScaledXpMultiplier(characterLevel);
+  const xpScale = trustMult * levelMult;
+  let gold = Math.round(tierSpec.base_gold * trustMult * levelMult);
   let xp = Math.round(tierSpec.base_xp * xpScale);
   const items: PubErrandYield["items"] = [];
 
