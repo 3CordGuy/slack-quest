@@ -125,6 +125,24 @@ export interface Character {
   // picker to know which slot to snapshot into when activating another saved
   // character. Slack does not surface slots; legacy rows default to 1.
   active_slot: number;
+  // Camp + errand activity counters (migration 0054). Power the camp/smithy/
+  // errand achievement set + the rested-gather bonus. Incremented at claim
+  // / craft / errand-complete time; never decremented.
+  camp_ore_mined: number;
+  camp_herbs_foraged: number;
+  camp_fish_caught: number;
+  camp_deep_claimed: number;
+  smithy_crafts: number;
+  errands_completed: number;
+  errands_courier: number;
+  errands_procure: number;
+  errands_investigate: number;
+  errands_mercy: number;
+  errands_long: number;
+  /** Last time the player's *main* (slot 1) claimed a gather. Drives the
+      +50% rested bonus when ≥24h has passed at the next gather start.
+      Null = never gathered. */
+  last_gather_claimed_at: number | null;
 }
 
 interface CharacterRow extends Omit<Character, "scars" | "effects" | "drink_buff" | "achievements" | "pending_achievements"> {
@@ -3846,6 +3864,96 @@ export async function markGatheringTaskClaimed(
     .bind(Date.now(), taskId, characterId)
     .run();
   return (result.meta.changes ?? 0) > 0;
+}
+
+// Post-claim bookkeeping for the camp achievement set + rested bonus.
+// All deltas are applied in one UPDATE so a single claim is atomic.
+// Pass `record_main_claim` true only when the claimed task ran on the
+// player's main (worker_slot === 1) — that's what drives the rested
+// bonus timer; hired-worker claims don't reset it.
+export async function bumpCampClaimStats(
+  db: D1Database,
+  userId: string,
+  deltas: {
+    ore?: number;
+    herbs?: number;
+    fish?: number;
+    deep?: number;
+  },
+  recordMainClaim: boolean,
+): Promise<void> {
+  const ore = Math.max(0, deltas.ore ?? 0);
+  const herbs = Math.max(0, deltas.herbs ?? 0);
+  const fish = Math.max(0, deltas.fish ?? 0);
+  const deep = Math.max(0, deltas.deep ?? 0);
+  const now = Date.now();
+  if (recordMainClaim) {
+    await db
+      .prepare(
+        `UPDATE characters
+            SET camp_ore_mined        = camp_ore_mined        + ?,
+                camp_herbs_foraged    = camp_herbs_foraged    + ?,
+                camp_fish_caught      = camp_fish_caught      + ?,
+                camp_deep_claimed     = camp_deep_claimed     + ?,
+                last_gather_claimed_at = ?
+          WHERE slack_user_id = ?`,
+      )
+      .bind(ore, herbs, fish, deep, now, userId)
+      .run();
+  } else {
+    await db
+      .prepare(
+        `UPDATE characters
+            SET camp_ore_mined        = camp_ore_mined        + ?,
+                camp_herbs_foraged    = camp_herbs_foraged    + ?,
+                camp_fish_caught      = camp_fish_caught      + ?,
+                camp_deep_claimed     = camp_deep_claimed     + ?
+          WHERE slack_user_id = ?`,
+      )
+      .bind(ore, herbs, fish, deep, userId)
+      .run();
+  }
+}
+
+// Atomic increment for the smithy craft counter. Called once per
+// successful runRecipe() with station === "smithy".
+export async function bumpSmithyCrafts(
+  db: D1Database,
+  userId: string,
+): Promise<void> {
+  await db
+    .prepare("UPDATE characters SET smithy_crafts = smithy_crafts + 1 WHERE slack_user_id = ?")
+    .bind(userId)
+    .run();
+}
+
+// Atomic increment for an errand completion. Sets both the overall
+// counter and the per-kind/per-tier counter in one statement so the
+// achievement check sees consistent state.
+export async function bumpErrandStats(
+  db: D1Database,
+  userId: string,
+  kind: "courier" | "procure" | "investigate" | "mercy" | "rare",
+  tier: "short" | "medium" | "long",
+): Promise<void> {
+  const kindCol = {
+    courier: "errands_courier",
+    procure: "errands_procure",
+    investigate: "errands_investigate",
+    mercy: "errands_mercy",
+    rare: null,
+  }[kind];
+  const tierCol = tier === "long" ? "errands_long" : null;
+  // Always bump the total; conditionally bump the kind/tier counter.
+  // Built as a dynamic column list because D1 doesn't support CASE
+  // updates that touch different columns in one statement cleanly.
+  const cols = ["errands_completed = errands_completed + 1"];
+  if (kindCol) cols.push(`${kindCol} = ${kindCol} + 1`);
+  if (tierCol) cols.push(`${tierCol} = ${tierCol} + 1`);
+  await db
+    .prepare(`UPDATE characters SET ${cols.join(", ")} WHERE slack_user_id = ?`)
+    .bind(userId)
+    .run();
 }
 
 // Cancel an unclaimed gathering task. Used when the player wants to free

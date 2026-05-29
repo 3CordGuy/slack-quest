@@ -1546,7 +1546,23 @@ export function priceFor(type: ItemType, rarity: Rarity, tier = 1): number {
 // SHARPEN_PRICE_PER_LEVEL below too.
 const SHARPEN_PRICE_PER_LEVEL = 20;
 const SELL_REBATE_RATIO = 0.3;
+// Resource sell floor — per-rarity gold rates that bypass the normal
+// item-pricing ladder. Resources don't have a "shop price" the way gear
+// does, but players need a way to convert excess stockpile into gold or
+// the gathering loop has nothing to push *to* once recipes are sated.
+// Floors picked so a Standard mine + an uncommon roll = ~25g (matches
+// Standard's base 25g gold reward), and a Deep rare = 100g (about half
+// a tier-6 hunt). Active play still pays way better; this just keeps
+// the resource pile from feeling like wasted time.
+const RESOURCE_SELL_FLOOR: Record<Rarity, number> = {
+  common:    5,
+  uncommon:  25,
+  rare:      100,
+  epic:      250,
+  legendary: 600,
+};
 export function sellPriceFor(type: ItemType, rarity: Rarity, opts?: { power?: number; sharpens_count?: number }): number {
+  if (type === "resource") return RESOURCE_SELL_FLOOR[rarity];
   const base = priceFor(type, rarity);
   const power = opts?.power ?? 0;
   const sharpens = opts?.sharpens_count ?? 0;
@@ -1659,10 +1675,17 @@ export interface CampTierSpec {
 // Tier durations and base XP/gold rewards. Yield counts per node live in
 // CAMP_NODE_CONFIG below — tiers control time + reward floor, nodes control
 // what comes out the other side.
+//
+// Per-hour rates after the rebalance:
+//   Quick    →  24 XP/hr,  20 gold/hr  (low commitment, fast cycles)
+//   Standard →  30 XP/hr,  25 gold/hr  (default loop)
+//   Deep     →  40 XP/hr,  35 gold/hr  (long commit pays better, not worse)
+// The old numbers had Deep losing to Standard on a per-hour basis, which
+// punished the long-form commit instead of rewarding it.
 export const CAMP_TIERS: Record<CampTier, CampTierSpec> = {
-  quick:    { tier: "quick",    label: "Quick",    duration_ms:  15 * 60 * 1000, base_xp:  6,  base_gold:  5 },
-  standard: { tier: "standard", label: "Standard", duration_ms:  60 * 60 * 1000, base_xp: 30,  base_gold: 25 },
-  deep:     { tier: "deep",     label: "Deep",     duration_ms: 240 * 60 * 1000, base_xp: 90,  base_gold: 80 },
+  quick:    { tier: "quick",    label: "Quick",    duration_ms:  15 * 60 * 1000, base_xp:   6, base_gold:   5 },
+  standard: { tier: "standard", label: "Standard", duration_ms:  60 * 60 * 1000, base_xp:  30, base_gold:  25 },
+  deep:     { tier: "deep",     label: "Deep",     duration_ms: 240 * 60 * 1000, base_xp: 160, base_gold: 140 },
 };
 
 // Resource catalog. Each resource is its own inventory item_name (with emoji
@@ -1791,9 +1814,29 @@ export interface RolledYield {
   gold_strike?: boolean;
 }
 
+// XP scaling for time-based tasks. Without this, gather/errand XP rapidly
+// becomes irrelevant past L4 (a single L5→L6 step is 777 XP, while
+// Standard tier pays 30 XP/hr). Scales linearly with character level so
+// idle play keeps pace with the curve without leapfrogging active play.
+// Applied to XP only — gold stays tier-flat so the gold economy doesn't
+// drift up with level. Pass character.level (or 1 for level-agnostic
+// callers; the multiplier becomes 1.0).
+export function levelScaledXpMultiplier(level: number): number {
+  return 1 + 0.15 * Math.max(0, (level | 0) - 3);
+}
+
+// Optional "rested" bonus — when ≥24h has passed since the last claim,
+// the next yield gets a one-time XP/gold bump. Encourages returning
+// players without taxing the active loop. Caller decides whether to
+// pass true; this constant lives near the roll fns so the modifier
+// stack is in one place.
+export const REST_BONUS_MULT = 1.5;
+
 // Roll the gather yield. Deterministic on taskId — two parallel fetches of
 // the same task always produce the same result, so racing a status fetch
-// against a claim is harmless.
+// against a claim is harmless. Level scaling + rested bonus are read off
+// the snapshotted modifiers, so the planned yield can't drift if the
+// player levels up or claims another task before this one expires.
 export function rollGatherYield(
   taskId: number,
   node: CampNode,
@@ -1804,8 +1847,12 @@ export function rollGatherYield(
   const tierSpec = CAMP_TIERS[tier];
   const rng = mulberry32(taskId);
   const resources: RolledYield["resources"] = [];
-  let xp = tierSpec.base_xp;
-  let gold = tierSpec.base_gold;
+  const xpScale =
+    levelScaledXpMultiplier(modifiers.character_level ?? 1) *
+    (modifiers.rested ? REST_BONUS_MULT : 1);
+  const goldScale = modifiers.rested ? REST_BONUS_MULT : 1;
+  let xp = Math.round(tierSpec.base_xp * xpScale);
+  let gold = Math.round(tierSpec.base_gold * goldScale);
   let gold_strike = false;
 
   const pushResource = (id: string, qty: number) => {
@@ -1905,6 +1952,33 @@ export const RECIPE_CATALOG: RecipeSpec[] = [
     output_blurb: "Light braid. Hums faintly when worn.",
     inputs: [{ resource_id: "mithril_ore", qty: 1 }, { resource_id: "silver_ore", qty: 2 }],
     gold_cost: 200, level_req: 5,
+  },
+  // Mid/late-game mithril recipes. These give Deep mining a payoff beyond
+  // gold floors — the rare mithril roll is the gating ingredient, so a
+  // good Deep streak compounds straight into a power-spike item set.
+  {
+    id: "mithril_blade", station: "smithy",
+    output_name: "Mithril Blade", output_type: "weapon", output_power: 9,
+    output_slot: "main_hand", output_rarity: "rare",
+    output_blurb: "Holds an edge through the longest fight. Half its weight.",
+    inputs: [{ resource_id: "mithril_ore", qty: 2 }, { resource_id: "iron_ore", qty: 3 }],
+    gold_cost: 260, level_req: 7,
+  },
+  {
+    id: "mithril_aegis", station: "smithy",
+    output_name: "Mithril Aegis", output_type: "armor", output_power: 7,
+    output_slot: "off_hand", output_subtype: "shield", output_rarity: "rare",
+    output_blurb: "A pale shield that turns blows like water.",
+    inputs: [{ resource_id: "mithril_ore", qty: 1 }, { resource_id: "silver_ore", qty: 2 }, { resource_id: "iron_ore", qty: 2 }],
+    gold_cost: 220, level_req: 7,
+  },
+  {
+    id: "mithril_cuirass", station: "smithy",
+    output_name: "Mithril Cuirass", output_type: "armor", output_power: 10,
+    output_slot: "body", output_rarity: "rare",
+    output_blurb: "Layered mithril over silver. Carries like a tunic, turns like plate.",
+    inputs: [{ resource_id: "mithril_ore", qty: 2 }, { resource_id: "silver_ore", qty: 2 }, { resource_id: "iron_ore", qty: 3 }],
+    gold_cost: 380, level_req: 8,
   },
   // Apothecary Brew — 5 recipes. Names piggyback on existing potion handling
   // where possible (Greater Health Potion etc. flow through existing use-item
@@ -2049,11 +2123,19 @@ export function gatherSlotCount(builtKeys: string[]): number {
 
 // Modifier snapshot stored on each gathering_tasks row at start time so
 // in-flight tasks keep their planned math even if the player builds more
-// perks before the task expires.
+// perks (or levels up) before the task expires. The character_level and
+// rested flags are snapshotted here too so a level-up or claim of another
+// task doesn't retroactively change the planned yield.
 export interface TentModifiers {
   duration_pct: number;     // 0..75 (clamp to leave a floor on every duration)
   yield_bonus: number;      // 0..N — added to primary resource qty
   rare_bonus_pct: number;   // 0..50 — percent points added to rare thresholds
+  /** Character level at task start. Drives levelScaledXpMultiplier.
+      Optional for back-compat with rows written before the rebalance. */
+  character_level?: number;
+  /** True when last_gather_claimed_at was >24h before this task started.
+      Drives the +50% rested bonus on XP+gold. */
+  rested?: boolean;
 }
 
 export const NO_TENT_MODIFIERS: TentModifiers = {
@@ -2117,10 +2199,17 @@ export interface PubErrandTierSpec {
 
 // Tier durations chosen so errands are slower than gathering (camp Quick is
 // 15 min) — these are flavor-heavy commitments, not idle clicks.
+//
+// Per-hour rates after the rebalance:
+//   Short  → 40 XP/hr,  60 gold/hr  (fast turnaround, default loop)
+//   Medium → 40 XP/hr,  70 gold/hr  (mid commit; modest gold bump)
+//   Long   → 53 XP/hr,  70 gold/hr  (overnight commit; meaningful XP gain)
+// Old numbers had Long losing per-hour to Short on both axes — the long
+// commit should be the *best* rate, not the worst.
 export const PUB_ERRAND_TIERS: Record<PubErrandTier, PubErrandTierSpec> = {
   short:  { tier: "short",  duration_ms:  30 * 60 * 1000, base_xp:  20, base_gold:  30 },
-  medium: { tier: "medium", duration_ms: 120 * 60 * 1000, base_xp:  80, base_gold: 100 },
-  long:   { tier: "long",   duration_ms: 360 * 60 * 1000, base_xp: 200, base_gold: 250 },
+  medium: { tier: "medium", duration_ms: 120 * 60 * 1000, base_xp:  80, base_gold: 140 },
+  long:   { tier: "long",   duration_ms: 360 * 60 * 1000, base_xp: 320, base_gold: 420 },
 };
 
 // Trust gates: minimum (character, patron) trust required to receive offers
@@ -2316,14 +2405,19 @@ export function rollPubErrandYield(
   kind: PubErrandKind,
   tier: PubErrandTier,
   trustScore: number,
+  characterLevel = 1,
 ): PubErrandYield {
   const patron = findPubPatron(patronId);
   if (!patron) return { gold: 0, xp: 0, items: [] };
   const tierSpec = PUB_ERRAND_TIERS[tier];
   const rng = pubMulberry32(errandId);
   const trustMult = trustScore >= 6 ? PUB_TRUST_HIGH_MULT : 1;
+  // XP scales with character level (see levelScaledXpMultiplier rationale
+  // on the camp roller). Gold stays trust-only so the gold floor doesn't
+  // drift up with progression.
+  const xpScale = trustMult * levelScaledXpMultiplier(characterLevel);
   let gold = Math.round(tierSpec.base_gold * trustMult);
-  let xp = Math.round(tierSpec.base_xp * trustMult);
+  let xp = Math.round(tierSpec.base_xp * xpScale);
   const items: PubErrandYield["items"] = [];
 
   if (kind === "rare") {
