@@ -1,5 +1,5 @@
 import toast from "react-hot-toast";
-import { findCatalogEntry } from "@gantt-quest/core";
+import { findCatalogEntry, RESOURCE_CATALOG } from "@gantt-quest/core";
 
 import { Icon } from "./icons";
 import { ERROR_LABELS, SLOT_LABELS, RARITY_RANK, ITEM_TYPE_ORDER, ART_PLACEHOLDERS, DEFAULT_ART_PLACEHOLDER } from "./constants";
@@ -181,9 +181,26 @@ export function itemIcon(item: {
       return "anvil";
     }
 
+    case "resource": {
+      // Match the emoji-prefixed item name (e.g. "⛏️ Iron Ore") against the
+      // resource catalog to get the dedicated SVG icon.
+      const res = RESOURCE_CATALOG.find((r) => item.item_name === `${r.emoji} ${r.name}`);
+      return res?.icon ?? "coal-pile";
+    }
+
     default:
       return "scroll-unfurled";
   }
+}
+
+/**
+ * For resource items the DB name has an emoji prefix ("⛏️ Iron Ore").
+ * Strip it so the list row shows a clean name alongside the SVG icon.
+ */
+export function resourceDisplayName(item: { item_type: ItemType; item_name: string }): string {
+  if (item.item_type !== "resource") return item.item_name;
+  const res = RESOURCE_CATALOG.find((r) => item.item_name === `${r.emoji} ${r.name}`);
+  return res?.name ?? item.item_name;
 }
 
 export function itemIconColor(item: {
