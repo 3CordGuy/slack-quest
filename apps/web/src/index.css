@@ -294,6 +294,131 @@ em, .flavor {
   flex-direction: column;
   margin: auto;
 }
+/* ── Wide location modal (sidebar layout) ───────────────────────────────
+   Fills the viewport minus 24px padding on each edge. The header spans
+   the full width; below it the sidebar sits on the left with a scrollable
+   content panel on the right.
+   On mobile (≤ 768px) the sidebar collapses into a horizontal tab strip
+   at the top of the body area.
+   ──────────────────────────────────────────────────────────────────── */
+.loc-wide {
+  display: flex;
+  flex-direction: column;
+  width: min(1400px, calc(100vw - 48px));
+  height: min(920px, calc(100vh - 48px));
+  background: var(--bg-panel);
+  border: 1px solid var(--border-base);
+  border-radius: var(--radius-2xl);
+  box-shadow: var(--shadow-modal);
+  overflow: hidden;
+}
+.loc-wide-head {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border-faint);
+  flex-shrink: 0;
+}
+.loc-wide-body {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+}
+.loc-wide-sidebar {
+  width: 176px;
+  flex-shrink: 0;
+  background: var(--bg-deep);
+  border-right: 1px solid var(--border-base);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  padding: 10px 0;
+  gap: 2px;
+}
+.loc-wide-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+  cursor: pointer;
+  border: none;
+  background: transparent;
+  color: var(--fg-mute);
+  font-family: var(--font-body);
+  font-size: 13px;
+  font-weight: 500;
+  text-align: left;
+  border-left: 3px solid transparent;
+  transition: color 0.12s, background 0.12s;
+  width: 100%;
+}
+.loc-wide-nav-item:hover { background: var(--bg-card); color: var(--fg-2); }
+.loc-wide-nav-item.active {
+  background: var(--bg-card);
+  color: var(--fg-1);
+  border-left-color: var(--accent-gold);
+  font-weight: 600;
+}
+.loc-wide-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 24px 28px;
+}
+/* Mobile: sidebar becomes horizontal tab strip */
+@media (max-width: 768px) {
+  .loc-wide {
+    width: calc(100vw - 24px);
+    height: calc(100vh - 24px);
+    border-radius: var(--radius-lg);
+  }
+  .loc-wide-body { flex-direction: column; }
+  .loc-wide-sidebar {
+    width: 100%;
+    flex-direction: row;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding: 0;
+    gap: 0;
+    border-right: none;
+    border-bottom: 1px solid var(--border-base);
+  }
+  .loc-wide-nav-item {
+    flex-direction: column;
+    gap: 4px;
+    padding: 8px 12px;
+    font-size: 11px;
+    border-left: none;
+    border-bottom: 3px solid transparent;
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+  .loc-wide-nav-item.active {
+    border-left-color: transparent;
+    border-bottom-color: var(--accent-gold);
+  }
+  .loc-wide-content {
+    padding: 16px;
+  }
+}
+/* Drink-menu 2-column grid inside wide content area */
+.drinks-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+}
+@media (max-width: 900px) {
+  .drinks-grid { grid-template-columns: 1fr; }
+}
+/* Merc list 2-column grid */
+.mercs-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+}
+@media (max-width: 900px) {
+  .mercs-grid { grid-template-columns: 1fr; }
+}
 .modal-head {
   display: flex; align-items: center; gap: 14px;
   padding: 18px 20px;

@@ -39,7 +39,7 @@ import {
 import {
   LocationHero, Banner, RarityBadge, SmallBadge,
   RefreshButton, RestockButton, ModalBackdrop, HaggleResultDialog, ConfirmDialog,
-  LocationModal, AppTopBar, CharacterSlideOver,
+  LocationModal, LocationModalWide, AppTopBar, CharacterSlideOver,
 } from "./components/ui";
 import { PubCard, PubLeaderboardCard, LiarsRollCard, SpdCard } from "./components/Pub";
 import { QuestStatsCard, QuestLeaderboardCard, TowerLeaderboardCard, RecentQuestsCard } from "./components/StatsCards";
@@ -1267,46 +1267,68 @@ export function App() {
     const close = () => setTownSection(null);
     const gold = state.me.character.gold;
     if (modalLoc === "pub" && state.pub) {
+      const pub = state.pub;
       return (
-        <LocationModal
+        <LocationModalWide
           icon="beer-stein"
           title="The Pub"
           subtitle="Ale · Whiskey · Mercs"
           gold={gold}
-          art={state.pub.art_url ?? state.townArt?.pub_art_url ?? null}
           onClose={close}
+          sections={[
+            { id: "drinks",   label: "Drinks",   icon: "beer-stein" },
+            { id: "mercs",    label: "Mercs",     icon: "crossed-swords" },
+            { id: "cooking",  label: "Cooking",   icon: "fish-cooked" },
+            { id: "errands",  label: "Errands",   icon: "conversation" },
+            { id: "games",    label: "Games",     icon: "perspective-dice-six" },
+            { id: "scores",   label: "Scores",    icon: "trophy" },
+          ]}
+          defaultSection="drinks"
         >
-          <PubCard
-            pub={state.pub}
-            inModal
-            onBuyDrink={buyDrink}
-            onHireMerc={hireMerc}
-            onDismissMerc={dismissMerc}
-            onRefresh={refreshPub}
-          />
-          <div style={{ marginTop: 16 }}>
-            <PubCooking
-              characterLevel={state.me.character.level}
-              gold={state.me.character.gold}
-              inventory={state.inventory}
-              onAfterCook={async () => { await refresh(); }}
-            />
-          </div>
-          <div style={{ marginTop: 16 }}>
-            <PubErrands
-              data={pubErrands}
-              inventory={state.inventory}
-              onStart={startPubErrand}
-              onClaim={claimPubErrand}
-              onCancel={cancelPubErrand}
-            />
-          </div>
-          <LiarsRollCard gold={state.pub.gold} onRefresh={refreshPub} />
-          <SpdCard pub={state.pub} selfId={state.me.slack_user_id} onRefresh={refreshPub} />
-          {state.pub.leaderboard && state.pub.leaderboard.length > 0 && (
-            <PubLeaderboardCard entries={state.pub.leaderboard} />
+          {(section) => (
+            <>
+              {section === "drinks" && (
+                <PubCard pub={pub} inModal section="drinks"
+                  onBuyDrink={buyDrink} onHireMerc={hireMerc}
+                  onDismissMerc={dismissMerc} onRefresh={refreshPub} />
+              )}
+              {section === "mercs" && (
+                <PubCard pub={pub} inModal section="mercs"
+                  onBuyDrink={buyDrink} onHireMerc={hireMerc}
+                  onDismissMerc={dismissMerc} onRefresh={refreshPub} />
+              )}
+              {section === "cooking" && (
+                <PubCooking
+                  characterLevel={state.me.character!.level}
+                  gold={state.me.character!.gold}
+                  inventory={state.inventory}
+                  onAfterCook={async () => { await refresh(); }}
+                />
+              )}
+              {section === "errands" && (
+                <PubErrands
+                  data={pubErrands}
+                  inventory={state.inventory}
+                  onStart={startPubErrand}
+                  onClaim={claimPubErrand}
+                  onCancel={cancelPubErrand}
+                />
+              )}
+              {section === "games" && (
+                <>
+                  <LiarsRollCard gold={pub.gold} onRefresh={refreshPub} />
+                  <SpdCard pub={pub} selfId={state.me.slack_user_id} onRefresh={refreshPub} />
+                </>
+              )}
+              {section === "scores" && pub.leaderboard && pub.leaderboard.length > 0 && (
+                <PubLeaderboardCard entries={pub.leaderboard} />
+              )}
+              {section === "scores" && (!pub.leaderboard || pub.leaderboard.length === 0) && (
+                <p style={{ color: "var(--fg-mute)", fontStyle: "italic" }}>No scores yet — play some games.</p>
+              )}
+            </>
           )}
-        </LocationModal>
+        </LocationModalWide>
       );
     }
     if (modalLoc === "shop" && state.shop) {
@@ -1318,6 +1340,7 @@ export function App() {
           gold={gold}
           art={state.shop.art_url ?? state.townArt?.shop_art_url ?? null}
           onClose={close}
+          maxWidth={1000}
         >
           <ShopCard
             shop={state.shop}
@@ -1340,6 +1363,7 @@ export function App() {
           gold={gold}
           art={state.inn.art_url ?? state.townArt?.inn_art_url ?? null}
           onClose={close}
+          maxWidth={900}
         >
           <InnCard inn={state.inn} inModal onStay={innStay} />
         </LocationModal>
@@ -1347,61 +1371,81 @@ export function App() {
     }
     if (modalLoc === "smithy" && state.smithy) {
       return (
-        <LocationModal
+        <LocationModalWide
           icon="anvil"
           title="The Smithy"
           subtitle="Sharpen & repair"
           gold={gold}
-          art={state.smithy.art_url ?? state.townArt?.smithy_art_url ?? null}
           onClose={close}
+          sections={[
+            { id: "equipment", label: "Equipment", icon: "sword" },
+            { id: "forge",     label: "Forge",     icon: "forging" },
+          ]}
+          defaultSection="equipment"
         >
-          <SmithyCard
-            smithy={state.smithy}
-            inModal
-            characterLevel={state.me.character.level}
-            onSharpen={smithySharpen}
-            onRepair={smithyRepair}
-            onBuy={smithyBuy}
-          />
-          <div style={{ marginTop: 16 }}>
-            <ForgePanel
-              characterLevel={state.me.character.level}
-              gold={state.me.character.gold}
-              inventory={state.inventory}
-              onAfterAction={async () => { await refresh(); }}
-            />
-          </div>
-        </LocationModal>
+          {(section) => (
+            <>
+              {section === "equipment" && (
+                <SmithyCard
+                  smithy={state.smithy!}
+                  inModal
+                  characterLevel={state.me.character!.level}
+                  onSharpen={smithySharpen}
+                  onRepair={smithyRepair}
+                  onBuy={smithyBuy}
+                />
+              )}
+              {section === "forge" && (
+                <ForgePanel
+                  characterLevel={state.me.character!.level}
+                  gold={state.me.character!.gold}
+                  inventory={state.inventory}
+                  onAfterAction={async () => { await refresh(); }}
+                />
+              )}
+            </>
+          )}
+        </LocationModalWide>
       );
     }
     if (modalLoc === "apothecary") {
       return (
-        <LocationModal
+        <LocationModalWide
           icon="poison-bottle"
           title="Apothecary"
           subtitle="Potions & vials"
           gold={gold}
-          art={state.apothecary?.art_url ?? state.townArt?.apothecary_art_url ?? null}
           onClose={close}
+          sections={[
+            { id: "potions", label: "Potions", icon: "potion" },
+            { id: "brew",    label: "Brew",    icon: "bubbling-potion" },
+          ]}
+          defaultSection="potions"
         >
-          <ApothecaryCard
-            apothecary={state.apothecary}
-            inModal
-            selfId={state.me.slack_user_id}
-            onBuyStaple={apothecaryBuyStaple}
-            onRevive={apothecaryRevive}
-            onSelfRevive={apothecarySelfRevive}
-            onRefresh={refreshApothecary}
-          />
-          <div style={{ marginTop: 16 }}>
-            <BrewPanel
-              characterLevel={state.me.character.level}
-              gold={state.me.character.gold}
-              inventory={state.inventory}
-              onAfterAction={async () => { await refresh(); await refreshApothecary(); }}
-            />
-          </div>
-        </LocationModal>
+          {(section) => (
+            <>
+              {section === "potions" && (
+                <ApothecaryCard
+                  apothecary={state.apothecary}
+                  inModal
+                  selfId={state.me.slack_user_id!}
+                  onBuyStaple={apothecaryBuyStaple}
+                  onRevive={apothecaryRevive}
+                  onSelfRevive={apothecarySelfRevive}
+                  onRefresh={refreshApothecary}
+                />
+              )}
+              {section === "brew" && (
+                <BrewPanel
+                  characterLevel={state.me.character!.level}
+                  gold={state.me.character!.gold}
+                  inventory={state.inventory}
+                  onAfterAction={async () => { await refresh(); await refreshApothecary(); }}
+                />
+              )}
+            </>
+          )}
+        </LocationModalWide>
       );
     }
     if (modalLoc === "hunt") {
@@ -1413,7 +1457,7 @@ export function App() {
           gold={gold}
           art={state.townArt?.outskirts_art_url ?? null}
           onClose={close}
-          maxWidth={760}
+          maxWidth={960}
         >
           <HuntSection
             characterLevel={state.me.character.level}
@@ -1424,27 +1468,37 @@ export function App() {
       );
     }
     if (modalLoc === "camp") {
+      const slotsUsed  = campStatus?.slots.in_use  ?? 0;
+      const slotsTotal = campStatus?.slots.total ?? 1;
       return (
-        <LocationModal
-          icon="tent"
+        <LocationModalWide
+          icon="camping-tent"
           title="My Camp"
-          subtitle="Mine · Forage · Fish · Build"
+          subtitle={`${slotsUsed} of ${slotsTotal} ${slotsTotal === 1 ? "tent" : "tents"} in use`}
           gold={gold}
-          art={state.townArt?.outskirts_art_url ?? null}
           onClose={close}
-          maxWidth={880}
+          sections={[
+            { id: "overview", label: "Overview",  icon: "camping-tent" },
+            { id: "mine",     label: "Mine",      icon: "ore" },
+            { id: "forage",   label: "Forage",    icon: "grass-mushroom" },
+            { id: "fish",     label: "Fishing",   icon: "fishing-hook" },
+            { id: "build",    label: "Build",     icon: "anvil" },
+          ]}
+          defaultSection="overview"
         >
-          <Camp
-            characterLevel={state.me.character.level}
-            overviewArt={state.townArt?.outskirts_art_url ?? null}
-            status={campStatus}
-            inventory={state.inventory}
-            onStartGather={startGather}
-            onClaim={claimGather}
-            onCancel={cancelGather}
-            onBuildUpgrade={buildCampUpgrade}
-          />
-        </LocationModal>
+          {(activeSection) => (
+            <Camp
+              characterLevel={state.me.character!.level}
+              section={activeSection}
+              status={campStatus}
+              inventory={state.inventory}
+              onStartGather={startGather}
+              onClaim={claimGather}
+              onCancel={cancelGather}
+              onBuildUpgrade={buildCampUpgrade}
+            />
+          )}
+        </LocationModalWide>
       );
     }
     return null;

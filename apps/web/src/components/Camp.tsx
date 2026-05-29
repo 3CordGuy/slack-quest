@@ -7,16 +7,15 @@
 // on the same outcome.
 
 import { useEffect, useMemo, useState } from "react";
-import type { CSSProperties, ReactNode } from "react";
 
 import { Icon } from "../icons";
 import type {
-  ActiveGatheringTask, CampNode, CampStatusResponse, CampTab, CampTier,
+  ActiveGatheringTask, CampNode, CampStatusResponse, CampTier,
   CampUpgradeSpec, Item,
 } from "../types";
 import { CAMP_NODE_CONFIG, CAMP_TIERS } from "../constants";
-import { card, h2, muted } from "../styles";
-import { LocationHero, SmallBadge } from "./ui";
+import { muted } from "../styles";
+import { SmallBadge } from "./ui";
 
 // Static resource list keyed by node. Mirrors RESOURCE_CATALOG from
 // @gantt-quest/core. Inlined here to keep Camp.tsx free of the workspace
@@ -35,8 +34,8 @@ const STOCKPILE_RESOURCES: Array<{ id: string; node: CampNode; name: string; emo
 
 interface CampProps {
   characterLevel: number;
-  overviewArt: string | null;
-  navOverlay?: ReactNode;
+  /** Active sidebar section from LocationModalWide render prop */
+  section: string;
   status: CampStatusResponse | null;
   inventory: Item[];
   onStartGather: (node: CampNode, tier: CampTier) => Promise<void>;
@@ -45,54 +44,46 @@ interface CampProps {
   onBuildUpgrade: (upgradeKey: string) => Promise<void>;
 }
 
-const TAB_META: Array<{ tab: CampTab; label: string; icon: string }> = [
-  { tab: "mine",   label: "Mine",    icon: "ore" },
-  { tab: "forage", label: "Forage",  icon: "grass-mushroom" },
-  { tab: "fish",   label: "Fishing", icon: "fishing-hook" },
-  { tab: "build",  label: "Build",   icon: "anvil" },
-];
-
 export function Camp({
-  characterLevel, overviewArt, navOverlay, status, inventory,
+  characterLevel: _characterLevel, section, status, inventory,
   onStartGather, onClaim, onCancel, onBuildUpgrade,
 }: CampProps) {
-  const [tab, setTab] = useState<CampTab>("mine");
   const activeBySlot = useMemo(() => {
     const map = new Map<number, ActiveGatheringTask>();
     for (const t of status?.active ?? []) map.set(t.worker_slot, t);
     return map;
   }, [status]);
 
-  return (
-    <div style={{ ...card, padding: 0 }}>
-      {navOverlay && <LocationHero src={overviewArt} label="My Camp" nav={navOverlay} flush />}
-      <div style={{ padding: "var(--card-pad, 32px)" }}>
-        <CampHeader status={status} />
+  if (section === "overview") {
+    return (
+      <div>
         <ActiveTaskStrip status={status} onClaim={onClaim} onCancel={onCancel} />
         <Stockpile inventory={inventory} />
-
-        <div style={{ display: "flex", gap: 6, marginTop: 24, marginBottom: 20, flexWrap: "wrap" }}>
-          {TAB_META.map((m) => (
-            <TabButton key={m.tab} active={tab === m.tab} onClick={() => setTab(m.tab)} icon={m.icon}>
-              {m.label}
-            </TabButton>
-          ))}
-        </div>
-
-        {(tab === "mine" || tab === "forage" || tab === "fish") && (
-          <GatheringNodePanel
-            node={tab}
-            status={status}
-            onStart={onStartGather}
-            activeBySlot={activeBySlot}
-          />
-        )}
-        {tab === "build" && (
-          <BuildPanel status={status} onBuild={onBuildUpgrade} />
-        )}
       </div>
-    </div>
-  );
+    );
+  }
+  if (section === "mine" || section === "forage" || section === "fish") {
+    return (
+      <div>
+        <ActiveTaskStrip status={status} onClaim={onClaim} onCancel={onCancel} />
+        <GatheringNodePanel
+          node={section as CampNode}
+          status={status}
+          onStart={onStartGather}
+          activeBySlot={activeBySlot}
+        />
+      </div>
+    );
+  }
+  if (section === "build") {
+    return (
+      <div>
+        <ActiveTaskStrip status={status} onClaim={onClaim} onCancel={onCancel} />
+        <BuildPanel status={status} onBuild={onBuildUpgrade} />
+      </div>
+    );
+  }
+  return null;
 }
 
 // Stockpile — at-a-glance qty for every gatherable resource, grouped by node.
@@ -187,18 +178,6 @@ function StockpileColumn({
   );
 }
 
-function CampHeader({ status }: { status: CampStatusResponse | null }) {
-  const slotsTotal = status?.slots.total ?? 1;
-  const slotsUsed  = status?.slots.in_use ?? 0;
-  return (
-    <div style={{ display: "flex", alignItems: "baseline", gap: 16, marginBottom: 4 }}>
-      <h2 style={h2}>My Camp</h2>
-      <span style={muted}>
-        {slotsUsed} of {slotsTotal} {slotsTotal === 1 ? "tent" : "tents"} in use
-      </span>
-    </div>
-  );
-}
 
 function ActiveTaskStrip({
   status,
@@ -602,33 +581,6 @@ function UpgradeRow({
   );
 }
 
-function TabButton({
-  active, onClick, children, icon,
-}: {
-  active: boolean;
-  onClick: () => void;
-  children: ReactNode;
-  icon: string;
-}) {
-  const style: CSSProperties = {
-    padding: "6px 12px",
-    border: "1px solid var(--border-base)",
-    borderRadius: "var(--radius-md)",
-    background: active ? "var(--accent-ink-blue-2)" : "transparent",
-    color: active ? "#fff" : "var(--fg-mute)",
-    cursor: "pointer",
-    fontFamily: "inherit",
-    display: "flex",
-    alignItems: "center",
-    gap: 6,
-  };
-  return (
-    <button type="button" onClick={onClick} style={style}>
-      <Icon name={icon} size={14} />
-      <span>{children}</span>
-    </button>
-  );
-}
 
 function formatDuration(ms: number): string {
   if (ms < 60 * 60 * 1000) return `${Math.round(ms / 60000)} min`;

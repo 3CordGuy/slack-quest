@@ -651,6 +651,92 @@ export function LocationModal({
   );
 }
 
+export interface LocWideSection {
+  id: string;
+  label: string;
+  icon: string;
+}
+
+/**
+ * Full-viewport location modal with a sidebar nav on desktop and a horizontal
+ * tab strip on mobile (≤ 768px). Children is a render prop that receives the
+ * currently-active section id.
+ */
+export function LocationModalWide({
+  sections,
+  defaultSection,
+  icon,
+  title,
+  subtitle,
+  gold,
+  onClose,
+  children,
+}: {
+  sections: LocWideSection[];
+  defaultSection?: string;
+  icon: string;
+  title: string;
+  subtitle?: string;
+  gold?: number;
+  onClose: () => void;
+  children: (activeSection: string) => ReactNode;
+}) {
+  const [active, setActive] = useState(defaultSection ?? sections[0]?.id ?? "");
+
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) { if (e.key === "Escape") onClose(); }
+    window.addEventListener("keydown", onKey);
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => { window.removeEventListener("keydown", onKey); document.body.style.overflow = prev; };
+  }, [onClose]);
+
+  return (
+    <div className="scene" onClick={onClose}>
+      <div className="loc-wide" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-label={title}>
+        {/* ── Header ── */}
+        <div className="loc-wide-head">
+          <div className="m-disc">
+            <Icon name={icon} size={28} color="var(--accent-gold)" />
+          </div>
+          <div className="m-titles" style={{ flex: 1, minWidth: 0 }}>
+            <h2 style={{ font: "22px/1 var(--font-display)", color: "var(--fg-1)", margin: 0 }}>{title}</h2>
+            {subtitle && <div className="m-sub">{subtitle}</div>}
+          </div>
+          {typeof gold === "number" && (
+            <span className="m-gold">
+              <Icon name="gold-bar" size={14} color="var(--accent-gold)" />
+              {gold.toLocaleString()}
+            </span>
+          )}
+          <button type="button" className="m-close" onClick={onClose} aria-label="Close">×</button>
+        </div>
+
+        {/* ── Body: sidebar + content ── */}
+        <div className="loc-wide-body">
+          <nav className="loc-wide-sidebar" aria-label="Sections">
+            {sections.map((s) => (
+              <button
+                key={s.id}
+                type="button"
+                className={`loc-wide-nav-item${active === s.id ? " active" : ""}`}
+                onClick={() => setActive(s.id)}
+                aria-current={active === s.id ? "page" : undefined}
+              >
+                <Icon name={s.icon} size={16} color={active === s.id ? "var(--accent-gold)" : "var(--fg-mute)"} />
+                <span>{s.label}</span>
+              </button>
+            ))}
+          </nav>
+          <div className="loc-wide-content">
+            {children(active)}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Modals ───────────────────────────────────────────────────────────────────
 
 export function ModalBackdrop({ children, onCancel }: { children: React.ReactNode; onCancel: () => void }) {
