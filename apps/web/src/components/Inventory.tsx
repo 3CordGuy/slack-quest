@@ -536,7 +536,13 @@ export function FigureTile({
   return (
     <div
       style={{
-        width: 96,
+        // Flex-grow to fill the gap between the two slot columns. minWidth
+        // preserves the design's 96px floor on tight viewports.
+        flex: 1,
+        minWidth: 96,
+        // A soft ceiling so the figure doesn't bloat on ultra-wide layouts.
+        maxWidth: 240,
+        margin: "0 8px",
         height,
         background: "var(--bg-void)",
         border: "1px solid var(--border-base)",
@@ -717,12 +723,57 @@ export function DraggablePackItem({
   );
 }
 
-export function DragItemPreview({ item }: { item: Item }) {
+export function DragItemPreview({
+  item,
+  size,
+}: {
+  item: Item;
+  /** Optional rect captured from the drag source. Sized to match so the
+      cursor stays anchored exactly where the user grabbed. Falls back to
+      the legacy 80px fixed-size preview when no rect is available. */
+  size?: { width: number; height: number } | null;
+}) {
   const rc = RARITY_COLOR[item.rarity];
+  // Icon scales with the preview; clamped so very wide bag tiles don't
+  // produce a comically huge icon while tiny mobile cells don't shrink it
+  // past readability.
+  const w = size?.width ?? 80;
+  const h = size?.height ?? 96;
+  const iconSize = Math.min(48, Math.max(20, Math.floor(Math.min(w, h) * 0.42)));
   return (
-    <div style={{ width: 80, background: "#1d1f23", border: `2px solid ${rc}`, borderRadius: 10, padding: "8px 6px 6px", textAlign: "center", boxShadow: "0 8px 24px rgba(0,0,0,0.7)", opacity: 0.95 }}>
-      <Icon name={itemIcon(item)} size={32} color={itemIconColor(item) ?? rc} />
-      <div style={{ marginTop: 5, fontSize: 9, fontWeight: 600, color: "#e2e8f0", lineHeight: 1.3, wordBreak: "break-word" }}>{item.item_name}</div>
+    <div
+      style={{
+        width: w,
+        height: h,
+        background: "#1d1f23",
+        border: `2px solid ${rc}`,
+        borderRadius: 10,
+        padding: "8px 6px 6px",
+        textAlign: "center",
+        boxShadow: "0 8px 24px rgba(0,0,0,0.7)",
+        opacity: 0.95,
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: 5,
+        boxSizing: "border-box",
+        pointerEvents: "none",
+      }}
+    >
+      <Icon name={itemIcon(item)} size={iconSize} color={itemIconColor(item) ?? rc} />
+      <div style={{
+        fontSize: 9,
+        fontWeight: 600,
+        color: "#e2e8f0",
+        lineHeight: 1.3,
+        wordBreak: "break-word",
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        maxWidth: "100%",
+      }}>
+        {item.item_name}
+      </div>
     </div>
   );
 }
@@ -924,13 +975,17 @@ export function InventoryFullScreen({
     return i.item_type === "consumable" || i.item_type === "magic"
         || i.item_type === "scroll" || i.item_type === "revive";
   });
-  // Bag capacity comes from the character if exposed; otherwise we just
-  // surface the raw count so the player still gets a "X items" readout.
-  const bagCapacity = 24; // not yet tracked server-side — used only as a soft cap display
+  // No bag cap right now — just surface the raw item count next to the
+  // filter tabs so the player sees how big their pack is.
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const selected = selectedId != null ? items.find((i) => i.id === selectedId) ?? null : null;
   const [highlightSlot, setHighlightSlot] = useState<EquipSlot | null>(null);
   const [activeItemId, setActiveItemId] = useState<number | null>(null);
+  // Source rect captured at drag-start. DragOverlay preserves the cursor's
+  // relative offset from the source's top-left, so if the preview's size
+  // differs from the source the cursor appears to drift. Sizing the preview
+  // to match the source keeps the grab anchor under the cursor.
+  const [dragRect, setDragRect] = useState<{ width: number; height: number } | null>(null);
   const [mobileTab, setMobileTab] = useState<"doll" | "pack">("pack");
   const isMobile = useIsMobile();
   const activeItem = activeItemId != null ? items.find((i) => i.id === activeItemId) ?? null : null;
@@ -950,10 +1005,13 @@ export function InventoryFullScreen({
   function handleDragStart(event: DragStartEvent) {
     const data = event.active.data.current as { itemId: number } | undefined;
     if (data) setActiveItemId(data.itemId);
+    const initial = event.active.rect.current.initial;
+    if (initial) setDragRect({ width: initial.width, height: initial.height });
   }
 
   function handleDragEnd(event: DragEndEvent) {
     setActiveItemId(null);
+    setDragRect(null);
     const { active, over } = event;
     if (!over) return;
     const data = active.data.current as { itemId: number; equipped: boolean } | undefined;
@@ -1128,7 +1186,7 @@ export function InventoryFullScreen({
                         consumable: allPackItems.filter((i) => i.item_type === "consumable" || i.item_type === "magic" || i.item_type === "scroll" || i.item_type === "revive").length,
                       }} />
                       <span style={{ font: "11px/1 var(--font-mono)", color: "var(--fg-mute)" }}>
-                        {allPackItems.length}/{bagCapacity}
+                        {allPackItems.length}
                       </span>
                     </div>
                     <div style={{ display: "flex", gap: 6, marginBottom: 12, flexWrap: "wrap" }}>
@@ -1226,7 +1284,7 @@ export function InventoryFullScreen({
                       {character ? (
                         <FigureTile character={character} height={colHeight} />
                       ) : (
-                        <div style={{ width: 96, height: colHeight }} />
+                        <div style={{ flex: 1, minWidth: 96, height: colHeight }} />
                       )}
                       <div style={{ display: "grid", gridTemplateRows: `repeat(4, ${slotCellHeight}px)`, gap }}>
                         {rightSlots.map(renderSlot)}
@@ -1274,7 +1332,7 @@ export function InventoryFullScreen({
                     consumable: allPackItems.filter((i) => i.item_type === "consumable" || i.item_type === "magic" || i.item_type === "scroll" || i.item_type === "revive").length,
                   }} />
                   <span style={{ font: "11px/1 var(--font-mono)", color: "var(--fg-mute)" }}>
-                    {allPackItems.length} / {bagCapacity} slots
+                    {allPackItems.length} item{allPackItems.length === 1 ? "" : "s"}
                   </span>
                 </div>
                 <div style={{ ...muted, fontSize: 10, textTransform: "uppercase", letterSpacing: 1.5, marginBottom: 12, fontFamily: DISPLAY_FONT }}>
@@ -1334,7 +1392,7 @@ export function InventoryFullScreen({
           )}
 
           <DragOverlay dropAnimation={null}>
-            {activeItem ? <DragItemPreview item={activeItem} /> : null}
+            {activeItem ? <DragItemPreview item={activeItem} size={dragRect} /> : null}
           </DragOverlay>
         </DndContext>
       </div>

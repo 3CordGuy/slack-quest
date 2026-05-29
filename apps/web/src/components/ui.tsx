@@ -1,10 +1,85 @@
-import { useEffect, useState } from "react";
-import type { ReactNode } from "react";
+import { cloneElement, isValidElement, useEffect, useState } from "react";
+import type { CSSProperties, ReactElement, ReactNode } from "react";
+import {
+  FloatingPortal,
+  autoUpdate,
+  flip,
+  offset,
+  shift,
+  useFloating,
+} from "@floating-ui/react";
 import { Icon } from "../icons";
 import { artPlaceholder } from "../utils";
 import { RARITY_COLOR } from "../constants";
 import { muted, DISPLAY_FONT, refreshBtn, smallBadge, button } from "../styles";
 import type { HaggleResult, ConfirmRequest, Rarity, Character } from "../types";
+
+// ─── HoverTooltip ────────────────────────────────────────────────────────────
+// Reusable hover tooltip that renders into a FloatingPortal so it escapes any
+// `overflow: hidden` ancestor (Inventory modal, location modal body, etc.).
+// Pass the trigger element as `children` — we forward `onMouseEnter` /
+// `onMouseLeave` / `ref` onto it via cloneElement. The tooltip content goes
+// in `content`. Provide a `placement` to override the default "top".
+
+export function HoverTooltip({
+  content,
+  placement = "top",
+  children,
+  panelStyle,
+}: {
+  content: ReactNode;
+  placement?: "top" | "bottom" | "left" | "right" | "top-start" | "top-end";
+  children: ReactElement;
+  panelStyle?: CSSProperties;
+}) {
+  const [open, setOpen] = useState(false);
+  const { refs, floatingStyles } = useFloating({
+    open,
+    onOpenChange: setOpen,
+    placement,
+    middleware: [offset(8), flip({ padding: 8 }), shift({ padding: 8 })],
+    whileElementsMounted: autoUpdate,
+  });
+  const child = isValidElement(children) ? children : <span>{children}</span>;
+  // We attach hover handlers and the floating-ui reference ref to the
+  // trigger. If the trigger has its own mouse handlers / ref they'd be
+  // overwritten — none of the current call sites do, so this stays simple.
+  const triggerProps = {
+    ref: refs.setReference,
+    onMouseEnter: () => setOpen(true),
+    onMouseLeave: () => setOpen(false),
+    onFocus: () => setOpen(true),
+    onBlur: () => setOpen(false),
+  };
+  return (
+    <>
+      {cloneElement(child, triggerProps as never)}
+      {open && (
+        <FloatingPortal>
+          <div
+            ref={refs.setFloating}
+            style={{
+              ...floatingStyles,
+              zIndex: 1000,
+              pointerEvents: "none",
+              background: "var(--bg-panel)",
+              border: "1px solid var(--border-base)",
+              borderRadius: "var(--radius-md)",
+              padding: "8px 10px",
+              minWidth: 180,
+              maxWidth: 260,
+              boxShadow: "var(--shadow-pop)",
+              whiteSpace: "pre-line",
+              ...panelStyle,
+            }}
+          >
+            {content}
+          </div>
+        </FloatingPortal>
+      )}
+    </>
+  );
+}
 
 // ─── Location art ─────────────────────────────────────────────────────────────
 

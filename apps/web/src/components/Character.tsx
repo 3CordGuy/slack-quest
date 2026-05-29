@@ -33,7 +33,7 @@ import {
   adventurerCharPortrait, adventurerClassPortrait,
 } from "../utils";
 import {
-  SmallBadge, ModalBackdrop,
+  SmallBadge, ModalBackdrop, HoverTooltip,
 } from "./ui";
 
 export function PartyMember({ fighter, self, onInspect }: { fighter: Character; self: boolean; onInspect?: () => void }) {
@@ -993,21 +993,25 @@ export function PrimaryStatCard({
 }: {
   statKey: string; value: number; bonus: number; level: number;
 }) {
-  const [hovered, setHovered] = useState(false);
   const meta = PRIMARY_STAT_META[statKey];
   if (!meta) return null;
   return (
-    <div
-      style={{ position: "relative" }}
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
+    <HoverTooltip
+      placement="top"
+      panelStyle={{ border: `1px solid ${meta.color}`, minWidth: 170, maxWidth: 230 }}
+      content={
+        <>
+          <div className="eyebrow" style={{ color: meta.color, marginBottom: 4 }}>{meta.label}</div>
+          <div style={{ fontSize: 11, color: "var(--fg-3)", lineHeight: 1.55, fontFamily: "var(--font-mono)" }}>{meta.tooltip(value, level)}</div>
+        </>
+      }
     >
       <div style={{
         textAlign: "center",
         borderRadius: "var(--radius-md)",
         padding: "7px 4px",
         background: "var(--bg-input)",
-        border: `1px solid ${hovered ? meta.color : "var(--border-faint)"}`,
+        border: "1px solid var(--border-faint)",
         cursor: "default",
         transition: "border-color 0.12s, background 0.12s",
       }}>
@@ -1022,7 +1026,7 @@ export function PrimaryStatCard({
         </div>
         <div style={{
           fontSize: 18,
-          color: hovered ? meta.color : "var(--fg-1)",
+          color: "var(--fg-1)",
           lineHeight: 1.1,
           fontFamily: "var(--font-display)",
           transition: "color 0.12s",
@@ -1040,25 +1044,7 @@ export function PrimaryStatCard({
           }}>+{bonus}</div>
         )}
       </div>
-      {hovered && (
-        <div style={{
-          position: "absolute", bottom: "calc(100% + 6px)", left: "50%",
-          transform: "translateX(-50%)",
-          background: "var(--bg-panel)",
-          border: `1px solid ${meta.color}`,
-          borderRadius: "var(--radius-md)",
-          padding: "8px 10px",
-          zIndex: 50,
-          minWidth: 170, maxWidth: 230,
-          boxShadow: "var(--shadow-pop)",
-          pointerEvents: "none",
-          whiteSpace: "pre-line",
-        }}>
-          <div className="eyebrow" style={{ color: meta.color, marginBottom: 4 }}>{meta.label}</div>
-          <div style={{ fontSize: 11, color: "var(--fg-3)", lineHeight: 1.55, fontFamily: "var(--font-mono)" }}>{meta.tooltip(value, level)}</div>
-        </div>
-      )}
-    </div>
+    </HoverTooltip>
   );
 }
 
@@ -2124,8 +2110,7 @@ export function Stats({ children }: { children: ReactNode }) {
 }
 
 export function Stat({ label, value, icon, tooltip }: { label: string; value: ReactNode; icon?: ReactNode; tooltip?: string }) {
-  const [hovered, setHovered] = useState(false);
-  return (
+  const tile = (
     <div
       style={{
         padding: 12,
@@ -2135,11 +2120,8 @@ export function Stat({ label, value, icon, tooltip }: { label: string; value: Re
         display: "flex",
         alignItems: "center",
         gap: 12,
-        position: "relative",
         cursor: tooltip ? "default" : undefined,
       }}
-      onMouseEnter={() => tooltip && setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
     >
       {icon && (
         <div style={{ flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", width: 36, height: 36 }}>
@@ -2158,22 +2140,22 @@ export function Stat({ label, value, icon, tooltip }: { label: string; value: Re
           {value}
         </div>
       </div>
-      {tooltip && hovered && (
-        <div style={{
-          position: "absolute", bottom: "calc(100% + 6px)", left: 0,
-          background: "var(--bg-panel)",
-          border: "1px solid var(--border-base)",
-          borderRadius: "var(--radius-md)",
-          padding: "8px 10px", zIndex: 50,
-          minWidth: 180, maxWidth: 260,
-          boxShadow: "var(--shadow-pop)",
-          pointerEvents: "none", whiteSpace: "pre-line",
-        }}>
+    </div>
+  );
+  if (!tooltip) return tile;
+  return (
+    <HoverTooltip
+      placement="top-start"
+      panelStyle={{ minWidth: 180, maxWidth: 260 }}
+      content={
+        <>
           <div className="eyebrow" style={{ marginBottom: 4 }}>{label}</div>
           <div style={{ fontSize: 11, color: "var(--fg-3)", lineHeight: 1.55, fontFamily: "var(--font-mono)" }}>{tooltip}</div>
-        </div>
-      )}
-    </div>
+        </>
+      }
+    >
+      {tile}
+    </HoverTooltip>
   );
 }
 

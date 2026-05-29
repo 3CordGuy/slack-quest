@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { isMonsterActor, isAllyNpcActor, classByName, activeAbilities, type ActiveAbilityDef, EFFECT_META, type EffectType } from "@gantt-quest/core";
 import { Icon } from "./icons";
+import { HoverTooltip } from "./components/ui";
 
 export const DISPLAY_FONT = "'Metamorphous', serif";
 
@@ -414,35 +415,12 @@ export function CBtn({ label, icon, color, disabled, manaCost, tooltip, cooldown
   cooldown?: number;
   onClick: () => void;
 }) {
-  const [hovered, setHovered] = useState(false);
   const compact = typeof window !== "undefined" && window.innerWidth < 540;
   const sz = compact ? 60 : 78;
   const onCooldown = (cooldown ?? 0) > 0;
   const isDisabled = disabled || onCooldown;
-  return (
-    <div
-      style={{ position: "relative", flexShrink: 0 }}
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
-    >
-      {hovered && tooltip && (
-        <div style={{
-          position: "absolute", bottom: "calc(100% + 8px)", left: "50%", transform: "translateX(-50%)",
-          background: "var(--bg-panel)", border: "1px solid var(--border-action)", borderRadius: "var(--radius-lg)",
-          padding: "8px 12px", color: "var(--fg-2)", fontSize: 12, lineHeight: 1.5,
-          whiteSpace: "normal", width: 200, textAlign: "center", zIndex: 100,
-          boxShadow: "var(--shadow-pop)", pointerEvents: "none",
-        }}>
-          <div style={{ fontWeight: 600, color, marginBottom: 4 }}>{label}</div>
-          <div style={{ opacity: 0.85 }}>{tooltip}</div>
-          {onCooldown && (
-            <div style={{ marginTop: 6, color: "var(--tone-fire)", fontSize: 11, fontWeight: 600 }}>⏳ {cooldown} turn{cooldown !== 1 ? "s" : ""} cooldown</div>
-          )}
-          {manaCost !== undefined && (
-            <div style={{ marginTop: 6, color: "var(--accent-arcane)", fontSize: 11, fontWeight: 600 }}>{manaCost}✦ mana</div>
-          )}
-        </div>
-      )}
+  const trigger = (
+    <div style={{ position: "relative", flexShrink: 0 }}>
       <button
         onClick={onClick}
         disabled={isDisabled}
@@ -480,6 +458,27 @@ export function CBtn({ label, icon, color, disabled, manaCost, tooltip, cooldown
         </div>
       )}
     </div>
+  );
+  if (!tooltip) return trigger;
+  return (
+    <HoverTooltip
+      placement="top"
+      panelStyle={{ width: 200, border: "1px solid var(--border-action)", borderRadius: "var(--radius-lg)", padding: "8px 12px", textAlign: "center", color: "var(--fg-2)", minWidth: undefined, maxWidth: undefined }}
+      content={
+        <>
+          <div style={{ fontWeight: 600, color, marginBottom: 4 }}>{label}</div>
+          <div style={{ opacity: 0.85, fontSize: 12, lineHeight: 1.5 }}>{tooltip}</div>
+          {onCooldown && (
+            <div style={{ marginTop: 6, color: "var(--tone-fire)", fontSize: 11, fontWeight: 600 }}>⏳ {cooldown} turn{cooldown !== 1 ? "s" : ""} cooldown</div>
+          )}
+          {manaCost !== undefined && (
+            <div style={{ marginTop: 6, color: "var(--accent-arcane)", fontSize: 11, fontWeight: 600 }}>{manaCost}✦ mana</div>
+          )}
+        </>
+      }
+    >
+      {trigger}
+    </HoverTooltip>
   );
 }
 
