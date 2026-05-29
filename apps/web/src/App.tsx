@@ -353,7 +353,7 @@ export function App() {
         (t) => (
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
             <span style={{ flex: 1, minWidth: 0 }}>
-              ⚔ <strong>{j.monster_name}</strong> stirs — a {j.variant} quest is open!
+              ⚔ <strong>{j.monster_name}</strong> stirs — {j.starter_name ? <><strong>{j.starter_name}</strong> opened</> : "opened"} a {j.variant} quest!
             </span>
             <button
               onClick={() => {
@@ -398,7 +398,9 @@ export function App() {
     const myStatus = me?.invite_status ?? null;
     const qId = lobby.quest.id;
     if (qId !== prevLobbyToastRef.current && myStatus === "pending") {
-      toast(`🛡 You've been invited to a quest lobby! Open the LOBBY tab →`, { duration: 7000 });
+      const starter = lobby.party.find((m) => m.slack_user_id === lobby.quest.created_by);
+      const who = starter?.name ? `${starter.name} ` : "";
+      toast(`🛡 ${who}invited you to a quest lobby! Open the LOBBY tab →`, { duration: 7000 });
       prevLobbyToastRef.current = qId;
     } else if (qId === prevLobbyToastRef.current && myStatus !== "pending") {
       // Reset so a later re-invite (rare but possible) re-toasts.
@@ -684,6 +686,21 @@ export function App() {
     });
     if (!res.ok) { toast.error("Could not save preference."); return; }
     toast.success(`Turn notifications set to ${pref === "dm" ? "direct messages" : "channel broadcasts"}.`);
+    void refreshMe();
+  }
+
+  async function saveUsername(username: string) {
+    const res = await fetch("/api/settings/username", {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username }),
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({})) as { error?: string; note?: string };
+      throw new Error(body.note ?? body.error ?? "Couldn't save username.");
+    }
+    toast.success(`Display name set to @${username}`);
     void refreshMe();
   }
 
@@ -995,11 +1012,11 @@ export function App() {
     }
   }
 
-  async function startHunt(tier: number, monsterCount: number, invitees: string[] = []) {
+  async function startHunt(tier: number, monsterCount: number, invitees: string[] = [], isPrivate = false) {
     const { ok } = await postJson("/api/hunt", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ tier, monster_count: monsterCount, invitees }),
+      body: JSON.stringify({ tier, monster_count: monsterCount, invitees, is_private: isPrivate }),
     });
     if (ok) {
       // Close My Camp so the new active-quest banner shows on the ward map.
@@ -1021,6 +1038,20 @@ export function App() {
       return;
     }
     toast.success("Gathering started");
+    await refreshCampStatus();
+  }
+
+  async function cancelGather(taskId: number) {
+    const res = await fetch(`/api/camp/cancel/${taskId}`, {
+      method: "POST",
+      credentials: "include",
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({})) as { error?: string };
+      toast.error(`Couldn't cancel: ${body.error ?? res.statusText}`);
+      return;
+    }
+    toast("Worker recalled.");
     await refreshCampStatus();
   }
 
@@ -1105,6 +1136,7 @@ export function App() {
       onReroll={rerollCharacter}
       onSpend={spendStatPoint}
       onSaveNotifyPref={saveNotifyPref}
+      onSaveUsername={saveUsername}
       onOpenDevTools={import.meta.env.DEV ? () => setDevToolsOpen(true) : undefined}
       onRefresh={async () => { await refresh(); await refreshMe(); }}
       hideMenu
@@ -1207,8 +1239,8 @@ export function App() {
           {state.questStats && state.questStats.total > 0 && (
             <QuestStatsCard stats={state.questStats} />
           )}
-          <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 16, alignItems: "start" }}>
-            <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+          <div style={{ display: "grid", gridTemplateColumns: isMobile ? "minmax(0, 1fr)" : "minmax(0, 1fr) minmax(0, 1fr)", gap: 16, alignItems: "start" }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 16, minWidth: 0 }}>
               {state.towerLeaderboard.length > 0 && (
                 <TowerLeaderboardCard entries={state.towerLeaderboard} selfId={state.me.slack_user_id} />
               )}
@@ -1216,7 +1248,7 @@ export function App() {
                 <RecentQuestsCard quests={state.recent} />
               )}
             </div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 16, minWidth: 0 }}>
               <AdventurersCard selfId={state.me.slack_user_id} />
               {state.leaderboard.length > 0 && (
                 <QuestLeaderboardCard entries={state.leaderboard} selfId={state.me.slack_user_id} />
@@ -1409,6 +1441,7 @@ export function App() {
             inventory={state.inventory}
             onStartGather={startGather}
             onClaim={claimGather}
+            onCancel={cancelGather}
             onBuildUpgrade={buildCampUpgrade}
           />
         </LocationModal>
@@ -1424,7 +1457,7 @@ export function App() {
     ? "Town · Job Board"
     : modalLoc
       ? `Town · ${modalLoc === "camp" ? "My Camp" : modalLoc === "hunt" ? "Outskirts" : modalLoc[0].toUpperCase() + modalLoc.slice(1)}`
-      : "Town · The Ward";
+      : "Town · Heylets";
 
   return (
     <>
@@ -1438,6 +1471,7 @@ export function App() {
             onReroll={rerollCharacter}
             character={state.me.character}
             onSaveNotifyPref={saveNotifyPref}
+            onSaveUsername={saveUsername}
             onOpenDevTools={import.meta.env.DEV ? () => setDevToolsOpen(true) : undefined}
             onOpenCharacterSlots={() => setCharacterSlotsOpen(true)}
             placement="bottom-end"

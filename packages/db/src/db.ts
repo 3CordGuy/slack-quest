@@ -573,14 +573,15 @@ export async function createQuest(
     created_by: string;
     lobby?: boolean;
     lobby_expires_at?: number;
+    is_private?: boolean;
   },
 ): Promise<number> {
   const now = Date.now();
   const status = args.lobby ? "lobby" : "active";
   const result = await db
     .prepare(
-      `INSERT INTO quests (channel_id, thread_ts, status, elite, scene_json, mode, created_by, created_at, lobby_expires_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO quests (channel_id, thread_ts, status, elite, scene_json, mode, created_by, created_at, lobby_expires_at, is_private)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .bind(
       args.channel_id,
@@ -592,6 +593,7 @@ export async function createQuest(
       args.created_by,
       now,
       args.lobby_expires_at ?? null,
+      args.is_private ? 1 : 0,
     )
     .run();
   const questId = result.meta.last_row_id;
@@ -2210,7 +2212,9 @@ export async function deleteCharacterSlot(
     .run();
 }
 
-// Find the most recent active quest in a channel (used by /dnd join).
+// Find the most recent *public* active quest in a channel (used by /dnd join
+// and the web dashboard's joinable-quest poll). Private hunts are filtered
+// out so they don't broadcast a "joinable" toast/ping to other players.
 export async function getActiveQuestInChannel(
   db: D1Database,
   channelId: string,
@@ -2219,7 +2223,7 @@ export async function getActiveQuestInChannel(
     .prepare(
       `SELECT id, channel_id, thread_ts, elite, scene_json, mode, battlefield_ts, joinable_ts, created_by
        FROM quests
-       WHERE channel_id = ? AND status = 'active'
+       WHERE channel_id = ? AND status = 'active' AND is_private = 0
        ORDER BY created_at DESC LIMIT 1`,
     )
     .bind(channelId)
@@ -3840,6 +3844,26 @@ export async function markGatheringTaskClaimed(
         WHERE id = ? AND character_id = ? AND claimed_at IS NULL`,
     )
     .bind(Date.now(), taskId, characterId)
+    .run();
+  return (result.meta.changes ?? 0) > 0;
+}
+
+// Cancel an unclaimed gathering task. Used when the player wants to free
+// up their worker slot — e.g. to go on a hunt that's currently blocked
+// because their main character is gathering. No yield is rolled and no
+// resources/XP are awarded; the row is removed so the slot opens.
+// Returns true if a row was actually deleted.
+export async function cancelGatheringTask(
+  db: D1Database,
+  taskId: number,
+  characterId: string,
+): Promise<boolean> {
+  const result = await db
+    .prepare(
+      `DELETE FROM gathering_tasks
+         WHERE id = ? AND character_id = ? AND claimed_at IS NULL`,
+    )
+    .bind(taskId, characterId)
     .run();
   return (result.meta.changes ?? 0) > 0;
 }

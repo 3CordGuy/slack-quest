@@ -1115,6 +1115,7 @@ export function CharacterCard({
   onReroll,
   onSpend,
   onSaveNotifyPref,
+  onSaveUsername,
   onOpenDevTools,
   onRefresh,
   hideMenu,
@@ -1127,6 +1128,7 @@ export function CharacterCard({
   onReroll: (className?: string) => Promise<void>;
   onSpend?: (stat: StatKey) => void;
   onSaveNotifyPref?: (pref: "thread" | "dm") => Promise<void>;
+  onSaveUsername?: (username: string) => Promise<void>;
   onOpenDevTools?: () => void;
   onRefresh?: () => Promise<void>;
   /** When true, the in-card gear/account popover (and its CharacterSlotsModal)
@@ -1210,7 +1212,7 @@ export function CharacterCard({
       boxShadow: "var(--shadow-pop)",
     }}>
       {!hideMenu && (
-        <AccountPopover onLogout={onLogout} onReroll={onReroll} character={c} onSaveNotifyPref={onSaveNotifyPref} onOpenDevTools={onOpenDevTools} onOpenCharacterSlots={() => setSlotsOpen(true)} />
+        <AccountPopover onLogout={onLogout} onReroll={onReroll} character={c} onSaveNotifyPref={onSaveNotifyPref} onSaveUsername={onSaveUsername} onOpenDevTools={onOpenDevTools} onOpenCharacterSlots={() => setSlotsOpen(true)} />
       )}
       <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 4 }}>
         <div style={{
@@ -1819,6 +1821,7 @@ export function AccountPopover({
   onReroll,
   character,
   onSaveNotifyPref,
+  onSaveUsername,
   onOpenDevTools,
   onOpenCharacterSlots,
   placement = "top-start",
@@ -1826,8 +1829,13 @@ export function AccountPopover({
 }: {
   onLogout: () => void;
   onReroll: (className?: string) => Promise<void>;
-  character: { name: string; notification_pref?: "thread" | "dm" } | null;
+  character: { name: string; notification_pref?: "thread" | "dm"; slack_username?: string | null } | null;
   onSaveNotifyPref?: (pref: "thread" | "dm") => Promise<void>;
+  /** Optional handler to set the player's display @handle. When provided,
+      shows a "Set display name" affordance — highlighted in the popover
+      when the player has no slack_username on file so other party members
+      can tell them apart. */
+  onSaveUsername?: (username: string) => Promise<void>;
   onOpenDevTools?: () => void;
   onOpenCharacterSlots?: () => void;
   /** Floating UI placement; defaults to top-start which suits the in-sheet
@@ -1843,6 +1851,8 @@ export function AccountPopover({
   const [selectedClass, setSelectedClass] = useState<string | null>(null);
   const [rerolling, setRerolling] = useState(false);
   const [showNotifyModal, setShowNotifyModal] = useState(false);
+  const [showUsernameModal, setShowUsernameModal] = useState(false);
+  const missingUsername = !character?.slack_username;
 
   const { refs, floatingStyles, context } = useFloating({
     open,
@@ -1908,6 +1918,23 @@ export function AccountPopover({
                   style={{ ...smallActionBtn("#1a1c20", "#93c5fd"), textAlign: "left" }}
                 >
                   <Icon name="bell" size={13} /> Notifications
+                </button>
+              )}
+
+              {/* Display name — highlighted when slack_username is missing
+                  so the player can identify themselves to partymates. */}
+              {onSaveUsername && (
+                <button
+                  onClick={() => { setOpen(false); setShowUsernameModal(true); }}
+                  style={{
+                    ...smallActionBtn("#1a1c20", missingUsername ? "#fde68a" : "#93c5fd"),
+                    textAlign: "left",
+                    outline: missingUsername ? "1px solid #fde68a55" : "none",
+                  }}
+                  title={missingUsername ? "Pick a display @handle — your account isn't linked to Slack" : "Change display @handle"}
+                >
+                  <Icon name="player" size={13} />
+                  {missingUsername ? "Set display name" : `@${character?.slack_username ?? ""}`}
                 </button>
               )}
 
@@ -2019,7 +2046,116 @@ export function AccountPopover({
           onClose={() => setShowNotifyModal(false)}
         />
       )}
+      {showUsernameModal && onSaveUsername && (
+        <UsernameModal
+          current={character?.slack_username ?? ""}
+          onSave={async (u) => { await onSaveUsername(u); setShowUsernameModal(false); }}
+          onClose={() => setShowUsernameModal(false)}
+        />
+      )}
     </>
+  );
+}
+
+function UsernameModal({
+  current,
+  onSave,
+  onClose,
+}: {
+  current: string;
+  onSave: (username: string) => Promise<void>;
+  onClose: () => void;
+}) {
+  const [value, setValue] = useState(current);
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const cleaned = value.trim().replace(/^@+/, "");
+  const valid = /^[A-Za-z0-9._-]{2,32}$/.test(cleaned);
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: "fixed", inset: 0, zIndex: 400,
+        background: "rgba(0,0,0,0.55)",
+        display: "flex", alignItems: "center", justifyContent: "center",
+        padding: 16,
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          background: "var(--bg-panel)",
+          border: "1px solid var(--border-base)",
+          borderRadius: "var(--radius-2xl)",
+          padding: 20,
+          width: "100%",
+          maxWidth: 420,
+          display: "flex", flexDirection: "column", gap: 12,
+        }}
+      >
+        <div>
+          <div style={{
+            font: "10px/1 var(--font-mono)",
+            color: "var(--accent-gold)",
+            textTransform: "uppercase",
+            letterSpacing: 1.4,
+            marginBottom: 6,
+          }}>
+            Display name
+          </div>
+          <h2 style={{ ...h2, fontSize: 18, margin: 0 }}>Pick your @handle</h2>
+        </div>
+        <p style={{ ...muted, margin: 0, fontSize: 13, lineHeight: 1.5 }}>
+          Shown next to your character in party lists, leaderboards, and combat chips.
+          Use this if your account isn't linked to Slack — 2–32 chars, letters, digits, <code>. _ -</code>.
+        </p>
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <span style={{ font: "16px/1 var(--font-mono)", color: "var(--accent-arcane-2)" }}>@</span>
+          <input
+            type="text"
+            value={value}
+            onChange={(e) => { setValue(e.target.value); setErr(null); }}
+            placeholder="your_handle"
+            autoFocus
+            style={{
+              flex: 1,
+              padding: "10px 12px",
+              borderRadius: "var(--radius-md)",
+              background: "var(--bg-input)",
+              border: "1px solid var(--border-base)",
+              color: "var(--fg-1)",
+              font: "14px/1 var(--font-mono)",
+              outline: "none",
+            }}
+          />
+        </div>
+        {err && (
+          <div style={{ color: "var(--tone-bad)", fontSize: 12, fontFamily: "var(--font-mono)" }}>
+            {err}
+          </div>
+        )}
+        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+          <button onClick={onClose} className="btn btn-ghost btn-sm">Cancel</button>
+          <button
+            className="btn btn-gold btn-sm"
+            disabled={!valid || saving}
+            onClick={async () => {
+              if (!valid) return;
+              setSaving(true);
+              try {
+                await onSave(cleaned);
+              } catch (e) {
+                setErr((e as Error).message ?? "Couldn't save.");
+              } finally {
+                setSaving(false);
+              }
+            }}
+          >
+            {saving ? "Saving…" : "Save"}
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 

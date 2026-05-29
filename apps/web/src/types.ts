@@ -495,6 +495,9 @@ export interface JoinableQuest {
   monster_name: string;
   monster_max_hp: number;
   scene: string;
+  /** Display name of the player who started the quest. Null when the
+      starter row has no resolved name (rare; older quests). */
+  starter_name: string | null;
 }
 
 export interface RecentQuestsResponse {
