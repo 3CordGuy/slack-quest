@@ -1,10 +1,10 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 
 import { Icon } from "../icons";
 import type {
   TownSection, TownArt, JobListing, BoardResponse,
-  JoinableQuest, QuestVariant, Character, ActiveQuest,
+  JoinableQuest, QuestVariant, Character, ActiveQuest, ActiveGatheringTask,
 } from "../types";
 import {
   DISTRICT_CONFIG, VARIANT_STYLE, HUNT_PACK_LABEL, QUEST_OPTIONS,
@@ -732,6 +732,8 @@ interface WardNode {
   hot?: boolean;
   pin?: string;
   action: WardNodeKind;
+  /** Active gathering task for the main character (slot 1). Drives the progress bar. */
+  task?: ActiveGatheringTask;
 }
 
 // Central plaza disc — clickable, opens the player's inventory.
@@ -887,6 +889,55 @@ function PlazaButton({
   );
 }
 
+// Zero-rerender progress bar. Uses a DOM ref ticker so only the inner <div>
+// gets updated — the parent WardMapNode and WardMap never re-render per tick.
+function NodeProgressBar({ task }: { task: ActiveGatheringTask }) {
+  const barRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    let timerId: ReturnType<typeof setTimeout>;
+
+    function tick() {
+      const el = barRef.current;
+      if (!el) return;
+      const nowMs  = Date.now();
+      const total  = task.expires_at - task.started_at;
+      const pct    = total > 0 ? Math.min(100, ((nowMs - task.started_at) / total) * 100) : 100;
+      const done   = task.ready || pct >= 100;
+      el.style.width      = `${pct}%`;
+      el.style.background = done ? "var(--accent-go-1, #4ade80)" : "var(--accent-ink-blue-2)";
+      if (!done) timerId = setTimeout(tick, 1000);
+    }
+
+    tick();
+    return () => clearTimeout(timerId);
+  }, [task.id, task.started_at, task.expires_at, task.ready]);
+
+  // Compute synchronous initial values to avoid a flash of empty bar.
+  const initTotal = task.expires_at - task.started_at;
+  const initPct   = initTotal > 0 ? Math.min(100, ((Date.now() - task.started_at) / initTotal) * 100) : 100;
+  const initDone  = task.ready || initPct >= 100;
+
+  return (
+    <div style={{
+      position: "absolute", bottom: 0, left: 0, right: 0,
+      height: 3, overflow: "hidden",
+      borderRadius: "0 0 var(--radius-xl) var(--radius-xl)",
+      background: "var(--bg-void)",
+    }}>
+      <div
+        ref={barRef}
+        style={{
+          height: "100%",
+          width: `${initPct}%`,
+          background: initDone ? "var(--accent-go-1, #4ade80)" : "var(--accent-ink-blue-2)",
+          transition: "width 1s linear",
+        }}
+      />
+    </div>
+  );
+}
+
 function WardMapNode({
   node,
   onClick,
@@ -965,6 +1016,7 @@ function WardMapNode({
       <div style={{ font: "10px/1.35 var(--font-body)", color: "var(--fg-mute)", marginTop: 4 }}>
         {node.desc}
       </div>
+      {node.task && <NodeProgressBar task={node.task} />}
     </div>
   );
 }
@@ -979,6 +1031,8 @@ export interface WardMapProps {
   /** Optional hand-painted world-map artwork (Ghibli/Tolkien-style) shown
       behind the radial graph. Falls back to solid bg-void when null. */
   overviewArtUrl?: string | null;
+  /** Active gathering tasks. Slot-1 task drives the progress bar on the camp node. */
+  activeTasks?: ActiveGatheringTask[];
   onOpenLocation: (loc: Exclude<TownSection, "job_board">) => void;
   onOpenJobBoard: () => void;
   onOpenInventory: () => void;
@@ -1004,11 +1058,14 @@ export function WardMap({
   activeQuest,
   jobsOpen,
   overviewArtUrl,
+  activeTasks = [],
   onOpenLocation,
   onOpenJobBoard,
   onOpenInventory,
   onResumeCombat,
 }: WardMapProps) {
+  // Slot-1 task = main character gathering. Used for the camp node progress bar.
+  const campTask = activeTasks.find((t) => t.worker_slot === 1) ?? null;
   const narrow = useNarrowViewport(720);
   // Coords below come from design layouts/town-b.html. The SVG viewBox is
   // 1232×712 and the nodes are positioned by % so the map can rescale.
@@ -1081,11 +1138,19 @@ export function WardMap({
     {
       id: "camp",
       label: "My Camp",
-      desc: "Mine · Forage · Fish",
+      desc: campTask?.ready
+        ? "Ready to collect!"
+        : campTask
+          ? `${campTask.node[0].toUpperCase()}${campTask.node.slice(1)}ing…`
+          : activeTasks.length > 0
+            ? `${activeTasks.length} task${activeTasks.length > 1 ? "s" : ""} active`
+            : "Mine · Forage · Fish",
       icon: "camping-tent",
       left: "50%",
       top: "86%",
+      hot: campTask?.ready === true,
       action: { kind: "location", loc: "camp" },
+      task: campTask ?? undefined,
     },
   ];
 
@@ -1254,6 +1319,7 @@ export function WardMap({
                   font: "10px/1.3 var(--font-body)",
                   color: "var(--fg-mute)",
                 }}>{node.desc}</div>
+                {node.task && <NodeProgressBar task={node.task} />}
               </button>
             );
           })}
