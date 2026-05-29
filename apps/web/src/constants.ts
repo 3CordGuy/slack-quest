@@ -184,6 +184,7 @@ export const DISTRICT_CONFIG: {
   { key: "inn",       label: "Inn",       icon: "bed",             color: "#1a3a2a", artKey: "inn_art_url" },
   { key: "smithy",    label: "Smithy",    icon: "anvil",           color: "#2a1a1a", artKey: "smithy_art_url" },
   { key: "apothecary", label: "Apothecary", icon: "poison-bottle", color: "#1a2d1a", artKey: "apothecary_art_url" },
+  { key: "hunt",      label: "Outskirts", icon: "sword",           color: "#1a1a2e", artKey: "outskirts_art_url" },
   { key: "camp",      label: "My Camp",   icon: "tent",            color: "#1a2e1a", artKey: "outskirts_art_url" },
 ];
 
