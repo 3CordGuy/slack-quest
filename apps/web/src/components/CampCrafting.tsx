@@ -7,7 +7,7 @@ import { useMemo, useState } from "react";
 import toast from "react-hot-toast";
 import type { CSSProperties } from "react";
 
-import { RECIPE_CATALOG, RESOURCE_CATALOG, findResource, type RecipeSpec, type ResourceSpec } from "@gantt-quest/core";
+import { RECIPE_CATALOG, RESOURCE_CATALOG, findResource, smithyEffectivePower, type RecipeSpec, type ResourceSpec } from "@gantt-quest/core";
 
 import { Icon } from "../icons";
 import type { Item } from "../types";
@@ -188,6 +188,14 @@ function RecipeRow({
           })}
           <span> · {recipe.gold_cost}g</span>
           <span> · lvl {recipe.level_req}+</span>
+          {station === "smithy" && recipe.output_type !== "consumable" && (
+            <span style={{ color: "var(--accent-gold, #f59e0b)" }}>
+              {" · pwr "}{smithyEffectivePower(recipe, characterLevel)}
+              {characterLevel > recipe.level_req && (
+                <span style={{ opacity: 0.6 }}> (scales ↑)</span>
+              )}
+            </span>
+          )}
         </div>
       </div>
       <button
