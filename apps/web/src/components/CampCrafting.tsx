@@ -151,6 +151,10 @@ function RecipeRow({
   const hasInputs = missingInputs.length === 0;
   const canCraft = meetsLevel && affordable && hasInputs;
 
+  const equippedInSlot = station === "smithy" && recipe.output_slot
+    ? inventory.find((it) => it.equipped && it.slot === recipe.output_slot) ?? null
+    : null;
+
   async function handle() {
     const endpoint = station === "smithy"
       ? `/api/smithy/forge/${recipe.id}`
@@ -188,14 +192,31 @@ function RecipeRow({
           })}
           <span> · {recipe.gold_cost}g</span>
           <span> · lvl {recipe.level_req}+</span>
-          {station === "smithy" && recipe.output_type !== "consumable" && (
-            <span style={{ color: "var(--accent-gold, #f59e0b)" }}>
-              {" · pwr "}{smithyEffectivePower(recipe, characterLevel)}
-              {characterLevel > recipe.level_req && (
-                <span style={{ opacity: 0.6 }}> (scales ↑)</span>
-              )}
-            </span>
-          )}
+          {station === "smithy" && recipe.output_type !== "consumable" && (() => {
+            const effectivePwr = smithyEffectivePower(recipe, characterLevel);
+            const delta = equippedInSlot ? effectivePwr - equippedInSlot.power : null;
+            return (
+              <>
+                <span style={{ color: "var(--accent-gold, #f59e0b)" }}>
+                  {" · pwr "}{effectivePwr}
+                  {characterLevel > recipe.level_req && (
+                    <span style={{ opacity: 0.6 }}> (scales ↑)</span>
+                  )}
+                </span>
+                {equippedInSlot && delta !== null && (
+                  <span style={{
+                    color: delta > 0 ? "var(--accent-yes-1, #4ade80)" : delta < 0 ? "var(--accent-no-1, #f87171)" : "var(--fg-mute)",
+                  }}>
+                    {" · "}
+                    {delta > 0 ? `+${delta}` : delta < 0 ? `${delta}` : "="} vs {equippedInSlot.item_name} (pwr {equippedInSlot.power})
+                  </span>
+                )}
+                {!equippedInSlot && recipe.output_slot && (
+                  <span style={{ opacity: 0.5 }}>{" · nothing equipped in slot"}</span>
+                )}
+              </>
+            );
+          })()}
         </div>
       </div>
       <button
