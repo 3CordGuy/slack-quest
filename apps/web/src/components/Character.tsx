@@ -43,9 +43,9 @@ export function PartyMember({ fighter, self, onInspect }: { fighter: Character; 
     <div
       style={{
         padding: 12,
-        background: "#1d1f23",
-        borderRadius: 8,
-        border: self ? "1px solid #3a7bd5" : "1px solid transparent",
+        background: "var(--bg-input)",
+        borderRadius: "var(--radius-lg)",
+        border: self ? "1px solid var(--accent-ink-blue-2)" : "1px solid var(--border-faint)",
         opacity: downed ? 0.6 : 1,
       }}
     >
@@ -59,24 +59,43 @@ export function PartyMember({ fighter, self, onInspect }: { fighter: Character; 
         }}
       >
         <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
-          <span style={{ fontWeight: 600, color: "#f5f5f5", fontSize: 15, fontFamily: DISPLAY_FONT }}>
+          <span style={{
+            color: "var(--fg-1)",
+            fontSize: 15,
+            fontFamily: "var(--font-display)",
+          }}>
             {fighter.name}
           </span>
           {fighter.slack_username && (
-            <span style={{ fontSize: 12, color: "#7dd3fc" }}>@{fighter.slack_username}</span>
+            <span style={{
+              fontFamily: "var(--font-mono)",
+              fontSize: 11,
+              color: "var(--accent-ink-blue)",
+            }}>@{fighter.slack_username}</span>
           )}
-          <span style={{ ...muted, fontSize: 12 }}>
-            {fighter.class} • Lv {fighter.level}
+          <span style={{
+            fontFamily: "var(--font-mono)",
+            fontSize: 11,
+            color: "var(--accent-arcane)",
+            textTransform: "uppercase",
+            letterSpacing: 0.4,
+          }}>
+            {fighter.class} · Lv {fighter.level}
           </span>
           {self && <SmallBadge>you</SmallBadge>}
           {downed && (
-            <span style={{ ...smallBadge, background: "#3a1f1f", color: "#ff7676", borderColor: "#5a2a2a" }}>
+            <span className="tag" style={{ background: "rgba(239,68,68,0.15)", color: "var(--tone-bad)", border: "1px solid rgba(239,68,68,0.4)" }}>
               downed
             </span>
           )}
           <PositionBadge position={fighter.position} />
         </div>
-        <div style={{ ...muted, fontVariantNumeric: "tabular-nums" }}>
+        <div style={{
+          fontFamily: "var(--font-mono)",
+          fontSize: 12,
+          color: "var(--fg-mute)",
+          fontVariantNumeric: "tabular-nums",
+        }}>
           {fighter.hp}/{fighter.max_hp}
         </div>
       </div>
@@ -95,14 +114,8 @@ export function PartyMember({ fighter, self, onInspect }: { fighter: Character; 
         <div style={{ marginTop: 12, display: "flex", justifyContent: "flex-end" }}>
           <button
             onClick={onInspect}
-            style={{
-              ...button,
-              padding: "8px 10px",
-              fontSize: 12,
-              background: "#1f2a3a",
-              color: "#7dd3fc",
-              borderRadius: 6,
-            }}
+            className="btn btn-ghost btn-sm"
+            style={{ color: "var(--accent-ink-blue)" }}
           >
             Inspect
           </button>
@@ -126,9 +139,9 @@ export function ReadOnlyDoll({ items }: { items: Item[] }) {
             title={item ? `${item.item_name} (+${item.power})` : SLOT_LABELS[slot]}
             style={{
               width: 52, height: 52,
-              border: `1px solid ${rc ? `${rc}66` : "#2a2d33"}`,
-              borderRadius: 8,
-              background: item ? `${rc}11` : "#0e0f12",
+              border: `1px solid ${rc ? `${rc}66` : "var(--border-base)"}`,
+              borderRadius: "var(--radius-lg)",
+              background: item ? `${rc}11` : "var(--bg-void)",
               display: "flex", flexDirection: "column",
               alignItems: "center", justifyContent: "center",
               gap: 2, position: "relative", overflow: "hidden",
@@ -136,16 +149,28 @@ export function ReadOnlyDoll({ items }: { items: Item[] }) {
           >
             {item ? (
               <>
-                <Icon name={SLOT_ICON[slot]} size={22} color={rc ?? "#6b7280"} />
-                <span style={{ fontSize: 9, color: rc ?? "#6b7280", fontWeight: 700, lineHeight: 1 }}>+{item.power}</span>
+                <Icon name={SLOT_ICON[slot]} size={22} color={rc ?? "var(--fg-mute-3)"} />
+                <span style={{
+                  fontFamily: "var(--font-mono)",
+                  fontSize: 9,
+                  color: rc ?? "var(--fg-mute-3)",
+                  fontWeight: 700,
+                  lineHeight: 1,
+                }}>+{item.power}</span>
                 {item.sharpens_count > 0 && (
-                  <div style={{ position: "absolute", top: 2, right: 2, fontSize: 7, color: "#fb923c", fontWeight: 700 }}>
+                  <div style={{
+                    position: "absolute", top: 2, right: 2,
+                    fontFamily: "var(--font-mono)",
+                    fontSize: 8,
+                    color: "var(--tone-fire)",
+                    fontWeight: 700,
+                  }}>
                     ×{item.sharpens_count}
                   </div>
                 )}
               </>
             ) : (
-              <Icon name={SLOT_ICON[slot]} size={18} color="#2a2d33" />
+              <Icon name={SLOT_ICON[slot]} size={18} color="var(--border-base)" />
             )}
           </div>
         );
@@ -303,47 +328,41 @@ export function HpBar({
   flavor: "monster" | "player";
 }) {
   const pct = max > 0 ? Math.max(0, Math.min(1, current / max)) : 0;
-  let color = "var(--tone-good-3)";        /* ≥50% */
-  if (pct < 0.25) color = "var(--tone-bad-3)";   /* <25% */
-  else if (pct < 0.5) color = "var(--accent-gold-deep)"; /* <50% */
+  let color = "var(--tone-good-2)";
+  if (pct < 0.25) color = "var(--tone-bad-2)";
+  else if (pct < 0.5) color = "var(--accent-gold-warm)";
   if (flavor === "monster") {
-    /* Monster bars use slightly brighter tone so they read well on dark cards */
     if (pct < 0.25) color = "var(--tone-bad)";
     else if (pct < 0.5) color = "var(--accent-gold)";
     else color = "var(--tone-bad-2)";
   }
   return (
-    <div
-      style={{
-        marginTop: 6,
-        width: "100%",
-        height: 8,
-        background: "var(--bg-void)",
-        borderRadius: 4,
-        overflow: "hidden",
-      }}
-    >
-      <div
-        style={{
-          width: `${pct * 100}%`,
-          height: "100%",
-          background: color,
-          transition: "width 200ms ease",
-        }}
-      />
+    <div className="bar" style={{ marginTop: 6, width: "100%" }}>
+      <i style={{ width: `${pct * 100}%`, right: "auto", background: color, transition: "width 200ms ease" }} />
     </div>
   );
 }
 
 export function ArmorBar({ current, max }: { current: number; max: number }) {
   const pct = max > 0 ? Math.max(0, Math.min(1, current / max)) : 0;
+  const empty = current === 0;
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-      <div style={{ ...muted, fontSize: 11, minWidth: 36, color: current === 0 ? "var(--tone-bad-2)" : "var(--fg-mute-2)" }}>
+      <div style={{
+        fontFamily: "var(--font-mono)",
+        fontSize: 11,
+        minWidth: 36,
+        color: empty ? "var(--tone-bad-2)" : "var(--fg-mute-2)",
+      }}>
         {current}/{max} 🛡
       </div>
-      <div style={{ flex: 1, height: 6, background: "var(--bg-void)", borderRadius: 3, overflow: "hidden" }}>
-        <div style={{ width: `${pct * 100}%`, height: "100%", background: current === 0 ? "var(--border-muted)" : "var(--tone-ice)", transition: "width 200ms ease" }} />
+      <div className="bar" style={{ flex: 1, height: 6 }}>
+        <i style={{
+          width: `${pct * 100}%`,
+          right: "auto",
+          background: empty ? "var(--fg-mute-2)" : "var(--tone-ice)",
+          transition: "width 200ms ease",
+        }} />
       </div>
     </div>
   );
@@ -352,32 +371,22 @@ export function ArmorBar({ current, max }: { current: number; max: number }) {
 export function ManaBar({ current, max }: { current: number; max: number }) {
   const pct = max > 0 ? Math.max(0, Math.min(1, current / max)) : 0;
   return (
-    <div
-      style={{
-        display: "flex",
-        alignItems: "center",
-        gap: 8,
-      }}
-    >
-      <div style={{ ...muted, fontSize: 11, minWidth: 36 }}>
+    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+      <div style={{
+        fontFamily: "var(--font-mono)",
+        fontSize: 11,
+        minWidth: 36,
+        color: "var(--accent-arcane)",
+      }}>
         {current}/{max}
       </div>
-      <div
-        style={{
-          flex: 1,
-          height: 6,
-          background: "var(--bg-void)",
-          borderRadius: 3,
-          overflow: "hidden",
-        }}
-      >
-        <div
-          style={{
-            width: `${pct * 100}%`,
-            height: "100%",
-            background: "var(--accent-arcane)",
-          }}
-        />
+      <div className="bar" style={{ flex: 1, height: 6 }}>
+        <i style={{
+          width: `${pct * 100}%`,
+          right: "auto",
+          background: "var(--accent-arcane)",
+          transition: "width 200ms ease",
+        }} />
       </div>
     </div>
   );
@@ -385,27 +394,23 @@ export function ManaBar({ current, max }: { current: number; max: number }) {
 
 export function EffectChips({ effects }: { effects: StatusEffect[] }) {
   return (
-    <div
-      style={{
-        display: "flex",
-        flexWrap: "wrap",
-        gap: 6,
-        marginTop: 8,
-      }}
-    >
-      {effects.map((eff, i) => (
-        <span
-          key={i}
-          style={{
-            ...smallBadge,
-            background: EFFECT_COLOR[eff.type] + "22",
-            color: EFFECT_COLOR[eff.type],
-            borderColor: EFFECT_COLOR[eff.type] + "55",
-          }}
-        >
-          <Icon name={EFFECT_ICON[eff.type]} color={EFFECT_COLOR[eff.type]} /> {eff.type} {eff.remaining}t
-        </span>
-      ))}
+    <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 8 }}>
+      {effects.map((eff, i) => {
+        const c = EFFECT_COLOR[eff.type];
+        return (
+          <span
+            key={i}
+            className="tag"
+            style={{
+              background: `${c}22`,
+              color: c,
+              border: `1px solid ${c}55`,
+            }}
+          >
+            <Icon name={EFFECT_ICON[eff.type]} color={c} /> {eff.type} {eff.remaining}t
+          </span>
+        );
+      })}
     </div>
   );
 }
@@ -418,11 +423,11 @@ export function PositionBadge({ position }: { position: "front" | "back" }) {
   const front = position === "front";
   return (
     <span
+      className="tag"
       style={{
-        ...smallBadge,
         background: front ? "var(--accent-arcane-bg)" : "var(--tone-good-bg)",
         color:      front ? "var(--accent-arcane-2)"  : "var(--tone-good)",
-        borderColor:front ? "#4a2f6a"                 : "var(--tone-good-br)",
+        border:     `1px solid ${front ? "var(--accent-arcane-3)" : "var(--tone-good-br)"}`,
       }}
     >
       {position}
@@ -448,9 +453,14 @@ export function AdventurersCard({ selfId }: { selfId: string }) {
 
   return (
     <>
-      <div style={card}>
-        <div style={{ ...muted, fontSize: 11, textTransform: "uppercase", letterSpacing: 1.5, marginBottom: 10 }}>
-          <Icon name="player" size={11} /> Adventurers
+      <div style={{
+        background: "var(--bg-panel)",
+        border: "1px solid var(--border-faint)",
+        borderRadius: "var(--radius-2xl)",
+        padding: 14,
+      }}>
+        <div className="eyebrow" style={{ marginBottom: 10, display: "inline-flex", alignItems: "center", gap: 5 }}>
+          <Icon name="player" size={11} color="var(--accent-ink-blue)" /> Adventurers
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
           {characters.slice(0, 8).map((ch) => {
@@ -475,46 +485,86 @@ export function AdventurersCard({ selfId }: { selfId: string }) {
                 onClick={() => setSheet(ch)}
                 style={{
                   display: "flex", alignItems: "center", gap: 8,
-                  padding: "6px 8px", borderRadius: 6, background: "#16181c",
-                  border: `1px solid ${isDowned ? "#7f1d1d44" : "transparent"}`, cursor: "pointer", width: "100%",
+                  padding: "7px 9px",
+                  borderRadius: "var(--radius-md)",
+                  background: "var(--bg-card-2)",
+                  border: `1px solid ${isDowned ? "rgba(127,29,29,0.4)" : "var(--border-faint)"}`,
+                  cursor: "pointer", width: "100%",
                   textAlign: "left", fontFamily: "inherit",
+                  transition: "border-color 0.12s",
                 }}
-                onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.borderColor = isDowned ? "#7f1d1d88" : "#2a2d33"; }}
-                onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.borderColor = isDowned ? "#7f1d1d44" : "transparent"; }}
+                onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.borderColor = isDowned ? "rgba(127,29,29,0.6)" : "var(--border-strong)"; }}
+                onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.borderColor = isDowned ? "rgba(127,29,29,0.4)" : "var(--border-faint)"; }}
               >
                 <div style={{ position: "relative", flexShrink: 0 }}>
-                  <Avatar src={portraitSrc} fallbackSrc={fallbackPortrait} alt={ch.name} size={32} radius={4} fallbackIcon="player" fallbackColor="#4a5568" style={{ opacity: isDowned ? 0.5 : 1 }} />
+                  <Avatar src={portraitSrc} fallbackSrc={fallbackPortrait} alt={ch.name} size={32} radius={4} fallbackIcon="player" fallbackColor="var(--fg-faint)" style={{ opacity: isDowned ? 0.5 : 1 }} />
                   {isDowned ? (
                     <span style={{
                       position: "absolute", bottom: -1, right: -1,
                       width: 12, height: 12, borderRadius: "50%",
-                      background: "#7f1d1d", border: "1.5px solid #16181c",
+                      background: "#7f1d1d", border: "1.5px solid var(--bg-card-2)",
                       display: "flex", alignItems: "center", justifyContent: "center",
                     }}>
-                      <Icon name="death-skull" size={7} color="#f87171" />
+                      <Icon name="death-skull" size={7} color="var(--tone-bad)" />
                     </span>
                   ) : isOnline && (
                     <span style={{
                       position: "absolute", bottom: -1, right: -1,
                       width: 8, height: 8, borderRadius: "50%",
-                      background: "#22c55e", border: "1.5px solid #16181c",
+                      background: "var(--tone-good-2)",
+                      border: "1.5px solid var(--bg-card-2)",
                     }} />
                   )}
                 </div>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
-                    <span style={{ fontWeight: 600, fontSize: 12, color: "#f5f5f5", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{ch.name}</span>
-                    <span style={{ ...muted, fontSize: 11, flexShrink: 0 }}>Lv {ch.level}</span>
+                    <span style={{
+                      fontFamily: "var(--font-display)",
+                      fontSize: 13,
+                      color: "var(--fg-1)",
+                      overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                    }}>{ch.name}</span>
+                    <span style={{
+                      fontFamily: "var(--font-mono)",
+                      fontSize: 10,
+                      color: "var(--accent-arcane)",
+                      flexShrink: 0,
+                      textTransform: "uppercase",
+                      letterSpacing: 0.4,
+                    }}>Lv {ch.level}</span>
                   </div>
                   <div style={{ display: "flex", gap: 4, overflow: "hidden" }}>
-                    <span style={{ ...muted, fontSize: 11, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{ch.class}</span>
-                    {ch.slack_username && <span style={{ fontSize: 11, color: "#7dd3fc", flexShrink: 0 }}>@{ch.slack_username}</span>}
+                    <span style={{
+                      fontFamily: "var(--font-mono)",
+                      fontSize: 10,
+                      color: "var(--fg-mute)",
+                      overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                      textTransform: "uppercase",
+                      letterSpacing: 0.4,
+                    }}>{ch.class}</span>
+                    {ch.slack_username && <span style={{
+                      fontFamily: "var(--font-mono)",
+                      fontSize: 10,
+                      color: "var(--accent-ink-blue)",
+                      flexShrink: 0,
+                    }}>@{ch.slack_username}</span>}
                   </div>
-                  <div style={{ marginTop: 3, height: 3, background: "#0e0f12", borderRadius: 2, overflow: "hidden" }}>
-                    <div style={{ width: `${hpPct * 100}%`, height: "100%", background: hpPct < 0.25 ? "#dc2626" : hpPct < 0.5 ? "#d97706" : "#16a34a" }} />
+                  <div className="bar" style={{ marginTop: 4, height: 3 }}>
+                    <i style={{
+                      width: `${hpPct * 100}%`,
+                      right: "auto",
+                      background: hpPct < 0.25 ? "var(--tone-bad-2)" : hpPct < 0.5 ? "var(--accent-gold-warm)" : "var(--tone-good-2)",
+                    }} />
                   </div>
                 </div>
-                <span style={{ ...muted, fontSize: 10, flexShrink: 0, color: isOnline ? "#22c55e" : isRecent ? "#9ca3af" : "#4a5060" }}>{ago}</span>
+                <span style={{
+                  fontFamily: "var(--font-mono)",
+                  fontSize: 9,
+                  flexShrink: 0,
+                  color: isOnline ? "var(--tone-good-2)" : isRecent ? "var(--fg-mute-2)" : "var(--fg-faint)",
+                  textTransform: "uppercase",
+                  letterSpacing: 0.4,
+                }}>{ago}</span>
               </button>
             );
           })}
@@ -543,9 +593,11 @@ export function AchievementToast({ def, onDismiss }: { def: Achievement; onDismi
       onClick={onDismiss}
       style={{
         display: "flex", alignItems: "center", gap: 12,
-        background: "#13141a", border: "1px solid #2a2d33",
-        borderRadius: 12, padding: "12px 16px",
-        boxShadow: "0 8px 32px rgba(0,0,0,0.6)",
+        background: "var(--bg-panel)",
+        border: "1px solid var(--accent-gold)",
+        borderRadius: "var(--radius-2xl)",
+        padding: "12px 16px",
+        boxShadow: "var(--shadow-pop), var(--glow-target)",
         cursor: "pointer", minWidth: 280, maxWidth: 320,
         animation: "achievement-in 0.3s ease",
       }}
@@ -555,16 +607,30 @@ export function AchievementToast({ def, onDismiss }: { def: Achievement; onDismi
         background: gradient,
         display: "flex", alignItems: "center", justifyContent: "center",
         flexShrink: 0,
-        boxShadow: `0 0 12px 3px ${glowColor}55`,
+        boxShadow: `0 0 12px 3px ${glowColor}55, inset 0 0 0 2px var(--accent-gold)`,
       }}>
-        <i className={`ra ra-${def.icon}`} style={{ fontSize: 18, color: "#fff" }} />
+        <i className={`ra ra-${def.icon}`} style={{ fontSize: 20, color: "#fff" }} />
       </div>
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontSize: 10, color: "#f59e0b", textTransform: "uppercase", letterSpacing: 1, fontWeight: 600, fontFamily: DISPLAY_FONT }}>
-          Achievement Unlocked!
+        <div className="eyebrow" style={{ color: "var(--accent-gold)" }}>
+          Achievement Unlocked
         </div>
-        <div style={{ fontSize: 13, fontWeight: 700, color: "#f5f5f5", marginTop: 2, fontFamily: DISPLAY_FONT }}>{def.title}</div>
-        <div style={{ fontSize: 11, color: "#9ca3af", fontStyle: "italic", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{def.flavor}</div>
+        <div style={{
+          fontSize: 14,
+          color: "var(--fg-1)",
+          marginTop: 3,
+          fontFamily: "var(--font-display)",
+          lineHeight: 1.15,
+        }}>{def.title}</div>
+        <div style={{
+          fontSize: 11,
+          color: "var(--accent-flavor)",
+          fontStyle: "italic",
+          marginTop: 3,
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+        }}>{def.flavor}</div>
       </div>
     </div>
   );
@@ -629,9 +695,11 @@ export function TrophyBadge({ def, earned, isOwn }: { def: Achievement; earned: 
         {isEarned && hovered && (
           <div style={{
             position: "absolute", bottom: "calc(100% + 6px)", left: "50%", transform: "translateX(-50%)",
-            background: "#1d1f23", border: "1px solid #2a2d33", borderRadius: 6,
-            padding: "4px 8px", fontSize: 11, color: "#f5f5f5", whiteSpace: "nowrap",
-            pointerEvents: "none", zIndex: 10,
+            background: "var(--bg-panel)", border: "1px solid var(--border-base)",
+            borderRadius: "var(--radius-md)",
+            padding: "4px 8px", fontSize: 11, color: "var(--fg-1)",
+            fontFamily: "var(--font-display)",
+            whiteSpace: "nowrap", pointerEvents: "none", zIndex: 10,
           }}>
             {def.title}
           </div>
@@ -639,8 +707,9 @@ export function TrophyBadge({ def, earned, isOwn }: { def: Achievement; earned: 
         {!isEarned && isOwn && hovered && (
           <div style={{
             position: "absolute", bottom: "calc(100% + 6px)", left: "50%", transform: "translateX(-50%)",
-            background: "#1d1f23", border: "1px solid #2a2d33", borderRadius: 6,
-            padding: "4px 8px", fontSize: 11, color: "#6b7280", whiteSpace: "nowrap",
+            background: "var(--bg-panel)", border: "1px solid var(--border-base)",
+            borderRadius: "var(--radius-md)",
+            padding: "4px 8px", fontSize: 11, color: "var(--fg-faint)", whiteSpace: "nowrap",
             pointerEvents: "none", zIndex: 10,
           }}>
             ???
@@ -655,13 +724,13 @@ export function TrophyBadge({ def, earned, isOwn }: { def: Achievement; earned: 
               {...getFloatingProps()}
               style={{
                 ...floatingStyles,
-                background: "#13141a",
-                border: "1px solid #2a2d33",
-                borderRadius: 12,
+                background: "var(--bg-panel)",
+                border: "1px solid var(--accent-gold)",
+                borderRadius: "var(--radius-2xl)",
                 padding: 16,
                 width: 240,
                 zIndex: 500,
-                boxShadow: "0 8px 32px rgba(0,0,0,0.6)",
+                boxShadow: "var(--shadow-pop)",
               }}
             >
               <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 10 }}>
@@ -669,26 +738,34 @@ export function TrophyBadge({ def, earned, isOwn }: { def: Achievement; earned: 
                   width: 52, height: 52, borderRadius: "50%",
                   background: gradient,
                   display: "flex", alignItems: "center", justifyContent: "center",
-                  boxShadow: `0 0 14px 3px ${glowColor}55`,
+                  boxShadow: `0 0 14px 3px ${glowColor}55, inset 0 0 0 2px var(--accent-gold)`,
                   flexShrink: 0,
                 }}>
                   <i className={`ra ra-${def.icon}`} style={{ fontSize: 22, color: "#fff" }} />
                 </div>
                 <div>
-                  <div style={{ fontWeight: 700, fontSize: 13, color: "#f5f5f5", fontFamily: DISPLAY_FONT }}>{def.title}</div>
-                  <div style={{ fontSize: 10, color: "#9ca3af", marginTop: 2, textTransform: "uppercase", letterSpacing: 0.5, fontFamily: DISPLAY_FONT }}>{def.category}</div>
+                  <div style={{ fontWeight: 700, fontSize: 14, color: "var(--fg-1)", fontFamily: "var(--font-display)" }}>{def.title}</div>
+                  <div className="eyebrow" style={{ marginTop: 3 }}>{def.category}</div>
                 </div>
               </div>
-              <div style={{ fontSize: 12, color: "#818cf8", fontStyle: "italic", marginBottom: 6, lineHeight: 1.4 }}>{def.flavor}</div>
-              <div style={{ fontSize: 11, color: "#9ca3af", lineHeight: 1.4, marginBottom: 8 }}>{def.description}</div>
+              <div className="flavor-line" style={{ marginBottom: 6 }}>{def.flavor}</div>
+              <div style={{ fontSize: 11, color: "var(--fg-mute)", lineHeight: 1.5, marginBottom: 8 }}>{def.description}</div>
               {earned && (
-                <div style={{ fontSize: 10, color: "#4ade80", borderTop: "1px solid #2a2d33", paddingTop: 6 }}>
+                <div style={{
+                  fontFamily: "var(--font-mono)",
+                  fontSize: 10,
+                  color: "var(--tone-good-2)",
+                  borderTop: "1px solid var(--border-faint)",
+                  paddingTop: 6,
+                  textTransform: "uppercase",
+                  letterSpacing: 0.5,
+                }}>
                   Earned {new Date(earned.unlocked_at).toLocaleDateString()}
                 </div>
               )}
               <button
                 onClick={() => setOpen(false)}
-                style={{ position: "absolute", top: 8, right: 8, background: "none", border: "none", color: "#6b7280", cursor: "pointer", fontSize: 14, padding: 4 }}
+                style={{ position: "absolute", top: 8, right: 8, background: "none", border: "none", color: "var(--fg-mute)", cursor: "pointer", fontSize: 14, padding: 4 }}
               >✕</button>
             </div>
           </FloatingFocusManager>
@@ -714,10 +791,15 @@ export function TrophyShelf({ earned, allDefs, isOwn }: { earned: EarnedAchievem
   const canExpand = allEarnedDefs.length > 5 || (isOwn && allDefs.length > 5);
 
   return (
-    <div style={{ padding: "12px", background: "#1d1f23", borderRadius: 8, border: "1px solid #2a2d33" }}>
+    <div style={{
+      padding: 12,
+      background: "var(--bg-card-2)",
+      borderRadius: "var(--radius-xl)",
+      border: "1px solid var(--border-faint)",
+    }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
-        <div style={{ fontSize: 11, color: "#9ca3af", textTransform: "uppercase", letterSpacing: 1 }}>
-          <Icon name="trophy" size={10} /> Trophies · {label}
+        <div className="eyebrow" style={{ color: "var(--accent-gold)", display: "inline-flex", alignItems: "center", gap: 5 }}>
+          <Icon name="trophy" size={10} color="var(--accent-gold)" /> Trophies · {label}
         </div>
         {canExpand && (
           <button
@@ -725,15 +807,17 @@ export function TrophyShelf({ earned, allDefs, isOwn }: { earned: EarnedAchievem
             title={expanded ? "Collapse" : "Show all"}
             style={{
               background: "none", border: "none", cursor: "pointer", padding: "2px 4px",
-              color: "#6b7280", fontFamily: "inherit", fontSize: 11, display: "flex", alignItems: "center", gap: 3,
+              color: "var(--fg-mute-3)", fontFamily: "var(--font-mono)", fontSize: 10,
+              textTransform: "uppercase", letterSpacing: 0.5,
+              display: "flex", alignItems: "center", gap: 3,
             }}
           >
-            {expanded ? "▼" : "▶"} {expanded ? "Less" : "All"}
+            {expanded ? "▼ Less" : "▶ All"}
           </button>
         )}
       </div>
       {count === 0 && !expanded ? (
-        <p style={{ ...muted, fontSize: 12, margin: 0 }}>No trophies earned yet.</p>
+        <p style={{ color: "var(--fg-mute)", fontSize: 12, margin: 0, fontStyle: "italic" }}>No trophies earned yet.</p>
       ) : (
         <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
           {visibleDefs.map((def) => (
@@ -919,34 +1003,59 @@ export function PrimaryStatCard({
       onMouseLeave={() => setHovered(false)}
     >
       <div style={{
-        textAlign: "center", borderRadius: 6, padding: "6px 4px",
-        background: hovered ? "#22252c" : "#1d1f23",
-        border: `1px solid ${hovered ? meta.color + "66" : "transparent"}`,
-        cursor: "default", transition: "background 0.12s, border-color 0.12s",
+        textAlign: "center",
+        borderRadius: "var(--radius-md)",
+        padding: "7px 4px",
+        background: "var(--bg-input)",
+        border: `1px solid ${hovered ? meta.color : "var(--border-faint)"}`,
+        cursor: "default",
+        transition: "border-color 0.12s, background 0.12s",
       }}>
-        <div style={{ fontSize: 9, color: "#6b7280", textTransform: "uppercase", letterSpacing: 0.8, fontFamily: DISPLAY_FONT }}>
+        <div style={{
+          fontFamily: "var(--font-mono)",
+          fontSize: 9,
+          color: "var(--fg-faintest)",
+          textTransform: "uppercase",
+          letterSpacing: 0.8,
+        }}>
           {meta.label}
         </div>
-        <div style={{ fontSize: 15, fontWeight: 700, color: hovered ? meta.color : "#f5f5f5", lineHeight: 1.2, fontFamily: DISPLAY_FONT, transition: "color 0.12s" }}>
+        <div style={{
+          fontSize: 18,
+          color: hovered ? meta.color : "var(--fg-1)",
+          lineHeight: 1.1,
+          fontFamily: "var(--font-display)",
+          transition: "color 0.12s",
+          marginTop: 2,
+        }}>
           {value}
         </div>
         {bonus > 0 && (
-          <div style={{ fontSize: 8, color: "#86efac", lineHeight: 1.3 }}>+{bonus} gear</div>
+          <div style={{
+            fontFamily: "var(--font-mono)",
+            fontSize: 9,
+            color: "var(--tone-good-2)",
+            lineHeight: 1.3,
+            marginTop: 1,
+          }}>+{bonus}</div>
         )}
       </div>
       {hovered && (
         <div style={{
           position: "absolute", bottom: "calc(100% + 6px)", left: "50%",
           transform: "translateX(-50%)",
-          background: "#0e1014", border: `1px solid ${meta.color}44`,
-          borderRadius: 7, padding: "7px 10px", zIndex: 50,
+          background: "var(--bg-panel)",
+          border: `1px solid ${meta.color}`,
+          borderRadius: "var(--radius-md)",
+          padding: "8px 10px",
+          zIndex: 50,
           minWidth: 170, maxWidth: 230,
-          boxShadow: `0 4px 16px rgba(0,0,0,0.7), 0 0 0 1px ${meta.color}22`,
+          boxShadow: "var(--shadow-pop)",
           pointerEvents: "none",
           whiteSpace: "pre-line",
         }}>
-          <div style={{ fontSize: 10, color: "#6b7280", textTransform: "uppercase", letterSpacing: 0.8, marginBottom: 4, fontFamily: DISPLAY_FONT }}>{meta.label}</div>
-          <div style={{ fontSize: 11, color: "#c9cdd4", lineHeight: 1.55, fontFamily: "monospace" }}>{meta.tooltip(value, level)}</div>
+          <div className="eyebrow" style={{ color: meta.color, marginBottom: 4 }}>{meta.label}</div>
+          <div style={{ fontSize: 11, color: "var(--fg-3)", lineHeight: 1.55, fontFamily: "var(--font-mono)" }}>{meta.tooltip(value, level)}</div>
         </div>
       )}
     </div>
@@ -966,29 +1075,45 @@ export function DerivedStatCard({
       onMouseLeave={() => setHovered(false)}
     >
       <div style={{
-        background: hovered ? "#22252c" : "#1d1f23",
-        borderRadius: 7, padding: "6px 4px 5px",
+        background: "var(--bg-input)",
+        borderRadius: "var(--radius-md)",
+        padding: "7px 4px 6px",
         display: "flex", flexDirection: "column", alignItems: "center", gap: 3,
-        border: `1px solid ${hovered ? color + "66" : color + "22"}`,
-        cursor: "default", transition: "background 0.12s, border-color 0.12s",
+        border: `1px solid ${hovered ? color : "var(--border-faint)"}`,
+        cursor: "default",
+        transition: "border-color 0.12s",
       }}>
         <Icon name={icon} size={18} color={color} />
-        <div style={{ fontSize: 14, fontWeight: 800, color, lineHeight: 1, fontFamily: DISPLAY_FONT }}>{value}</div>
-        <div style={{ fontSize: 8, color: "#6b7280", textTransform: "uppercase", letterSpacing: 0.7, lineHeight: 1, fontFamily: DISPLAY_FONT }}>{label}</div>
+        <div style={{
+          fontSize: 15,
+          color,
+          lineHeight: 1,
+          fontFamily: "var(--font-display)",
+        }}>{value}</div>
+        <div style={{
+          fontFamily: "var(--font-mono)",
+          fontSize: 9,
+          color: "var(--fg-faintest)",
+          textTransform: "uppercase",
+          letterSpacing: 0.7,
+          lineHeight: 1,
+        }}>{label}</div>
       </div>
       {hovered && (
         <div style={{
           position: "absolute", bottom: "calc(100% + 6px)", left: "50%",
           transform: "translateX(-50%)",
-          background: "#0e1014", border: `1px solid ${color}44`,
-          borderRadius: 7, padding: "7px 10px", zIndex: 50,
+          background: "var(--bg-panel)",
+          border: `1px solid ${color}`,
+          borderRadius: "var(--radius-md)",
+          padding: "8px 10px", zIndex: 50,
           minWidth: 160, maxWidth: 220,
-          boxShadow: `0 4px 16px rgba(0,0,0,0.7), 0 0 0 1px ${color}22`,
+          boxShadow: "var(--shadow-pop)",
           pointerEvents: "none",
           whiteSpace: "pre-line",
         }}>
-          <div style={{ fontSize: 10, color: "#6b7280", textTransform: "uppercase", letterSpacing: 0.8, marginBottom: 4, fontFamily: DISPLAY_FONT }}>{label}</div>
-          <div style={{ fontSize: 11, color: "#c9cdd4", lineHeight: 1.55, fontFamily: "monospace" }}>{formula}</div>
+          <div className="eyebrow" style={{ color, marginBottom: 4 }}>{label}</div>
+          <div style={{ fontSize: 11, color: "var(--fg-3)", lineHeight: 1.55, fontFamily: "var(--font-mono)" }}>{formula}</div>
         </div>
       )}
     </div>
@@ -1006,6 +1131,7 @@ export function CharacterCard({
   onSaveNotifyPref,
   onOpenDevTools,
   onRefresh,
+  hideMenu,
 }: {
   me: MeResponse;
   inventory: Item[];
@@ -1017,6 +1143,10 @@ export function CharacterCard({
   onSaveNotifyPref?: (pref: "thread" | "dm") => Promise<void>;
   onOpenDevTools?: () => void;
   onRefresh?: () => Promise<void>;
+  /** When true, the in-card gear/account popover (and its CharacterSlotsModal)
+      are suppressed. Use this when the parent renders the AccountPopover
+      elsewhere — e.g. in the AppTopBar. */
+  hideMenu?: boolean;
 }) {
   const [slotsOpen, setSlotsOpen] = useState(false);
   const [trophyDefs, setTrophyDefs] = useState<Achievement[]>([]);
@@ -1085,41 +1215,84 @@ export function CharacterCard({
   const hasUnspentPoints = (c.unspent_points ?? 0) > 0;
   const statHasData = c.str !== undefined;
   return (
-    <div style={{ ...card, position: "relative" }}>
-      <AccountPopover onLogout={onLogout} onReroll={onReroll} character={c} onSaveNotifyPref={onSaveNotifyPref} onOpenDevTools={onOpenDevTools} onOpenCharacterSlots={() => setSlotsOpen(true)} />
+    <div style={{
+      position: "relative",
+      background: "var(--bg-panel)",
+      border: "1px solid var(--accent-ink-blue-2)",
+      borderRadius: "var(--radius-2xl)",
+      padding: 16,
+      boxShadow: "var(--shadow-pop)",
+    }}>
+      {!hideMenu && (
+        <AccountPopover onLogout={onLogout} onReroll={onReroll} character={c} onSaveNotifyPref={onSaveNotifyPref} onOpenDevTools={onOpenDevTools} onOpenCharacterSlots={() => setSlotsOpen(true)} />
+      )}
       <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 4 }}>
-        <Avatar
-          src={portrait}
-          alt={`${c.class} portrait`}
-          size={72}
-          radius={8}
-          fallbackIcon="player"
-          fallbackColor="#6a7080"
-        />
-        <div style={{ minWidth: 0 }}>
-          <h1 style={{ ...h1, margin: 0 }}>{c.name}</h1>
+        <div style={{
+          width: 76, height: 76, flexShrink: 0,
+          borderRadius: "var(--radius-lg)",
+          background: "var(--bg-void)",
+          border: "1px solid var(--accent-ink-blue-2)",
+          display: "flex", alignItems: "center", justifyContent: "center",
+          overflow: "hidden",
+        }}>
+          <Avatar
+            src={portrait}
+            alt={`${c.class} portrait`}
+            size={72}
+            radius={6}
+            fallbackIcon="player"
+            fallbackColor="var(--accent-ink-blue)"
+          />
+        </div>
+        <div style={{ minWidth: 0, flex: 1 }}>
+          <h1 style={{
+            margin: 0,
+            fontFamily: "var(--font-display)",
+            fontSize: 22,
+            lineHeight: 1.1,
+            color: "var(--fg-1)",
+          }}>{c.name}</h1>
           {c.slack_username && (
-            <p style={{ ...muted, margin: "2px 0 0", fontSize: 12, color: "#7dd3fc" }}>
+            <p style={{
+              margin: "3px 0 0",
+              fontFamily: "var(--font-mono)",
+              fontSize: 11,
+              color: "var(--accent-ink-blue)",
+            }}>
               @{c.slack_username}
             </p>
           )}
-          <p style={{ ...muted, margin: "4px 0 0" }}>
-            {c.class} • Lv {c.level}
+          <p style={{
+            margin: "4px 0 0",
+            fontFamily: "var(--font-mono)",
+            fontSize: 11,
+            color: "var(--accent-arcane)",
+            textTransform: "uppercase",
+            letterSpacing: 0.6,
+          }}>
+            {c.class} · Lv {c.level}
           </p>
-          <p style={{ margin: "4px 0 0", fontSize: 11, color: "#6b7280", fontStyle: "italic", lineHeight: 1.4 }}>
+          <p className="flavor-line" style={{ margin: "5px 0 0", fontSize: 11 }}>
             {classByName(c.class)?.blurb}
           </p>
-          <div style={{ marginTop: 6, minWidth: 160 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: "#6b7280", marginBottom: 3 }}>
-              <span style={{ color: "#d97706", fontWeight: 600 }}>XP</span>
+          <div style={{ marginTop: 8, minWidth: 160 }}>
+            <div style={{
+              display: "flex", justifyContent: "space-between",
+              fontFamily: "var(--font-mono)",
+              fontSize: 10,
+              color: "var(--fg-mute-3)",
+              marginBottom: 3,
+              textTransform: "uppercase",
+              letterSpacing: 0.6,
+            }}>
+              <span style={{ color: "var(--accent-gold)" }}>XP</span>
               <span>{xpIntoLevel} / {xpSpan}</span>
             </div>
-            <div style={{ height: 5, background: "#1a1a1f", borderRadius: 3, overflow: "hidden" }}>
-              <div style={{
+            <div className="bar" style={{ height: 5 }}>
+              <i style={{
                 width: `${xpPct * 100}%`,
-                height: "100%",
-                background: "linear-gradient(90deg, #92400e, #fbbf24)",
-                borderRadius: 3,
+                right: "auto",
+                background: "linear-gradient(90deg, var(--accent-gold-deep), var(--accent-gold))",
                 transition: "width 0.4s ease",
               }} />
             </div>
@@ -1166,8 +1339,14 @@ export function CharacterCard({
       </Stats>
       {/* Primary stats block — only shown after migration 0032 */}
       {(statHasData || hasUnspentPoints) && (
-        <div style={{ marginTop: 12, padding: "10px 12px", background: "#16181c", borderRadius: 8, border: "1px solid #2a2d33" }}>
-          <div style={{ fontSize: 11, color: "#6b7280", textTransform: "uppercase", letterSpacing: 1.2, marginBottom: 8, fontFamily: DISPLAY_FONT }}>Primary Stats</div>
+        <div style={{
+          marginTop: 12,
+          padding: "12px 12px",
+          background: "var(--bg-card-2)",
+          borderRadius: "var(--radius-xl)",
+          border: "1px solid var(--border-faint)",
+        }}>
+          <div className="eyebrow" style={{ marginBottom: 8, color: "var(--fg-mute-3)" }}>Primary Stats</div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 5, marginBottom: 8 }}>
             {(["str", "int_stat", "vit", "agi", "dex"] as StatKey[]).map((key) => (
               <PrimaryStatCard
@@ -1219,8 +1398,19 @@ export function CharacterCard({
             );
           })()}
           {hasUnspentPoints && onSpend && (
-            <div style={{ marginTop: 10, padding: "8px 10px", background: "#0f172a", borderRadius: 6, border: "1px solid #3b82f6" }}>
-              <div style={{ fontSize: 11, color: "#7dd3fc", marginBottom: 7 }}>
+            <div style={{
+              marginTop: 10,
+              padding: "9px 10px",
+              background: "var(--accent-ink-deep)",
+              borderRadius: "var(--radius-md)",
+              border: "1px solid var(--accent-ink-blue-2)",
+            }}>
+              <div style={{
+                fontFamily: "var(--font-mono)",
+                fontSize: 11,
+                color: "var(--accent-ink-blue)",
+                marginBottom: 7,
+              }}>
                 +{c.unspent_points} unspent {c.unspent_points === 1 ? "point" : "points"} — choose a stat:
               </div>
               <div style={{ display: "flex", gap: 5 }}>
@@ -1228,12 +1418,16 @@ export function CharacterCard({
                   <button
                     key={key}
                     onClick={() => onSpend(key)}
+                    className="btn btn-ghost btn-sm"
                     style={{
-                      flex: 1, padding: "5px 0",
-                      background: "#1e3a5f", border: "1px solid #3b82f6",
-                      borderRadius: 5, color: "#93c5fd", fontSize: 10,
-                      fontWeight: 700, cursor: "pointer",
-                      textTransform: "uppercase", letterSpacing: 0.5,
+                      flex: 1,
+                      justifyContent: "center",
+                      padding: "6px 0",
+                      fontFamily: "var(--font-mono)",
+                      fontSize: 10,
+                      letterSpacing: 0.5,
+                      color: "var(--accent-ink-blue)",
+                      borderColor: "var(--accent-ink-blue-3)",
                     }}
                   >
                     {key === "int_stat" ? "INT" : key.toUpperCase()}
@@ -1249,58 +1443,99 @@ export function CharacterCard({
         const abilities = classByName(c.class)?.abilities ?? [];
         if (abilities.length === 0) return null;
         return (
-          <div style={{ marginTop: 12, padding: "10px 12px", background: "#16181c", borderRadius: 8, border: "1px solid #2a2d33" }}>
+          <div style={{
+            marginTop: 12,
+            padding: "10px 12px",
+            background: "var(--bg-card-2)",
+            borderRadius: "var(--radius-xl)",
+            border: "1px solid var(--border-faint)",
+          }}>
             <button
               onClick={() => setAbilitiesOpen(o => !o)}
-              style={{ display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%", background: "none", border: "none", cursor: "pointer", padding: 0 }}
+              style={{
+                display: "flex", alignItems: "center", justifyContent: "space-between",
+                width: "100%", background: "none", border: "none", cursor: "pointer", padding: 0,
+              }}
             >
-              <span style={{ fontSize: 11, color: "#6b7280", textTransform: "uppercase", letterSpacing: 1.2, fontFamily: DISPLAY_FONT }}>
-                Abilities
-              </span>
-              <span style={{ fontSize: 10, color: "#4a5060", display: "inline-block", transform: abilitiesOpen ? "rotate(180deg)" : "rotate(0deg)", transition: "transform 0.15s ease" }}>▼</span>
+              <span className="eyebrow">Abilities</span>
+              <span style={{
+                fontSize: 10,
+                color: "var(--fg-faint)",
+                display: "inline-block",
+                transform: abilitiesOpen ? "rotate(180deg)" : "rotate(0deg)",
+                transition: "transform 0.15s ease",
+              }}>▼</span>
             </button>
             {abilitiesOpen && (
-              <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 6 }}>
+              <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 6 }}>
                 {abilities.map((ab) => (
-                  <div key={ab.id} style={{ display: "flex", gap: 8, padding: "7px 8px", background: "#1a1d24", borderRadius: 6, border: "1px solid #2a2d33", alignItems: "flex-start" }}>
-                    <div style={{ flexShrink: 0, width: 32, height: 32, background: "#0e0f12", borderRadius: 5, display: "flex", alignItems: "center", justifyContent: "center", marginTop: 1 }}>
+                  <div key={ab.id} style={{
+                    display: "flex", gap: 8,
+                    padding: "8px 8px",
+                    background: "var(--bg-input)",
+                    borderRadius: "var(--radius-md)",
+                    border: "1px solid var(--border-faint)",
+                    alignItems: "flex-start",
+                  }}>
+                    <div style={{
+                      flexShrink: 0, width: 32, height: 32,
+                      background: "var(--bg-void)",
+                      borderRadius: "var(--radius-sm)",
+                      border: "1px solid var(--border-base)",
+                      display: "flex", alignItems: "center", justifyContent: "center", marginTop: 1,
+                    }}>
                       {ab.kind === "active"
-                        ? <Icon name={ab.icon} size={18} color="#a0aec0" />
-                        : <Icon name="abstract-006" size={16} color="#4a5060" />
+                        ? <Icon name={ab.icon} size={18} color="var(--fg-mute-2)" />
+                        : <Icon name="abstract-006" size={16} color="var(--fg-faint)" />
                       }
                     </div>
                     <div style={{ minWidth: 0, flex: 1 }}>
                       <div style={{ display: "flex", alignItems: "center", gap: 4, flexWrap: "wrap", marginBottom: 3 }}>
-                        <span style={{ fontSize: 12, fontWeight: 600, color: "#e2e8f0", fontFamily: DISPLAY_FONT, lineHeight: 1 }}>{ab.name}</span>
                         <span style={{
-                          fontSize: 9, padding: "1px 4px", borderRadius: 3, fontWeight: 700, letterSpacing: 0.4, textTransform: "uppercase", lineHeight: 1.4,
-                          background: ab.kind === "active" ? "#1e3a5f" : "#1a2a1a",
-                          color: ab.kind === "active" ? "#7dd3fc" : "#86efac",
+                          fontSize: 13, color: "var(--fg-1)",
+                          fontFamily: "var(--font-display)",
+                          lineHeight: 1,
+                        }}>{ab.name}</span>
+                        <span className="tag" style={{
+                          background: ab.kind === "active" ? "var(--accent-ink-deep)" : "var(--tone-good-bg)",
+                          color: ab.kind === "active" ? "var(--accent-ink-blue)" : "var(--tone-good)",
                         }}>
                           {ab.kind}
                         </span>
                         {ab.kind === "active" && ab.mana_cost > 0 && (
-                          <span style={{ fontSize: 9, padding: "1px 4px", borderRadius: 3, background: "#2d1b4e", color: "#c4b5fd", fontWeight: 700, lineHeight: 1.4 }}>
+                          <span className="tag" style={{
+                            background: "var(--accent-arcane-bg)",
+                            color: "var(--accent-arcane)",
+                          }}>
                             {ab.mana_cost} mana
                           </span>
                         )}
                         {ab.kind === "active" && ab.mana_cost === 0 && (
-                          <span style={{ fontSize: 9, padding: "1px 4px", borderRadius: 3, background: "#1a2a1a", color: "#4ade80", fontWeight: 700, lineHeight: 1.4 }}>
+                          <span className="tag" style={{
+                            background: "var(--tone-good-bg)",
+                            color: "var(--tone-good)",
+                          }}>
                             free
                           </span>
                         )}
                         {ab.kind === "active" && (ab.cooldown_turns ?? 0) > 0 && (
-                          <span style={{ fontSize: 9, padding: "1px 4px", borderRadius: 3, background: "#2a2010", color: "#fbbf24", fontWeight: 700, lineHeight: 1.4 }}>
+                          <span className="tag" style={{
+                            background: "rgba(251,191,36,0.12)",
+                            color: "var(--accent-gold)",
+                          }}>
                             {ab.cooldown_turns}t CD
                           </span>
                         )}
                         {ab.kind === "passive" && (
-                          <span style={{ fontSize: 9, padding: "1px 4px", borderRadius: 3, background: "#1a1a2e", color: "#818cf8", fontWeight: 700, lineHeight: 1.4 }}>
+                          <span className="tag" style={{
+                            background: "rgba(129,140,248,0.12)",
+                            color: "#818cf8",
+                          }}>
                             {ab.trigger.replace(/_/g, " ")}
                           </span>
                         )}
                       </div>
-                      <p style={{ margin: 0, fontSize: 10, color: "#718096", lineHeight: 1.4 }}>{ab.blurb}</p>
+                      <p style={{ margin: 0, fontSize: 11, color: "var(--fg-mute)", lineHeight: 1.45 }}>{ab.blurb}</p>
                     </div>
                   </div>
                 ))}
@@ -1310,14 +1545,26 @@ export function CharacterCard({
         );
       })()}
       {/* Camp section */}
-      <div style={{ marginTop: 16, padding: "10px 12px", background: "#16181c", borderRadius: 8, border: "1px solid #2a2d33" }}>
+      <div style={{
+        marginTop: 16,
+        padding: "10px 12px",
+        background: "var(--bg-card-2)",
+        borderRadius: "var(--radius-xl)",
+        border: "1px solid var(--border-faint)",
+      }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
-          <span style={{ ...muted, fontSize: 11, textTransform: "uppercase", letterSpacing: 1.5, fontFamily: DISPLAY_FONT }}>
-            <Icon name="campfire" size={11} /> Camp
+          <span className="eyebrow" style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+            <Icon name="campfire" size={11} color="var(--accent-gold-warm)" /> Camp
           </span>
           {(downed || (!downed && inQuest)) && (
-            <span style={{ ...muted, fontSize: 11 }}>
-              {downed ? "Downed — wait cooldown" : "Disabled mid-quest"}
+            <span style={{
+              fontFamily: "var(--font-mono)",
+              fontSize: 10,
+              color: downed ? "var(--tone-bad)" : "var(--fg-mute-3)",
+              textTransform: "uppercase",
+              letterSpacing: 0.5,
+            }}>
+              {downed ? "Downed" : "In quest"}
             </span>
           )}
         </div>
@@ -1325,14 +1572,26 @@ export function CharacterCard({
           <button
             onClick={() => onRest("short")}
             disabled={restDisabled}
-            style={{ ...smallActionBtn(restDisabled ? "#2a2d33" : "#1f3a1f", restDisabled ? "#6a7080" : "#86efac"), flex: 1 }}
+            className="btn btn-ghost btn-sm"
+            style={{
+              flex: 1,
+              justifyContent: "center",
+              color: restDisabled ? "var(--fg-mute-3)" : "var(--tone-good)",
+              borderColor: restDisabled ? "var(--border-faint)" : "var(--tone-good-br)",
+            }}
           >
             <Icon name="campfire" /> Short rest
           </button>
           <button
             onClick={() => onRest("long")}
             disabled={restDisabled}
-            style={{ ...smallActionBtn(restDisabled ? "#2a2d33" : "#1f2a3a", restDisabled ? "#6a7080" : "#7dd3fc"), flex: 1 }}
+            className="btn btn-ghost btn-sm"
+            style={{
+              flex: 1,
+              justifyContent: "center",
+              color: restDisabled ? "var(--fg-mute-3)" : "var(--accent-ink-blue)",
+              borderColor: restDisabled ? "var(--border-faint)" : "var(--accent-ink-blue-3)",
+            }}
           >
             <Icon name="moon-sun" /> Long rest
           </button>
@@ -1343,7 +1602,7 @@ export function CharacterCard({
           <TrophyShelf earned={trophyEarned} allDefs={trophyDefs} isOwn={true} />
         </div>
       )}
-      {slotsOpen && (
+      {!hideMenu && slotsOpen && (
         <CharacterSlotsModal
           activeCharacter={c}
           inQuest={inQuest}
@@ -1569,13 +1828,15 @@ function SignOutRow({ onLogout }: { onLogout: () => void }) {
   );
 }
 
-function AccountPopover({
+export function AccountPopover({
   onLogout,
   onReroll,
   character,
   onSaveNotifyPref,
   onOpenDevTools,
   onOpenCharacterSlots,
+  placement = "top-start",
+  buttonStyle,
 }: {
   onLogout: () => void;
   onReroll: (className?: string) => Promise<void>;
@@ -1583,6 +1844,12 @@ function AccountPopover({
   onSaveNotifyPref?: (pref: "thread" | "dm") => Promise<void>;
   onOpenDevTools?: () => void;
   onOpenCharacterSlots?: () => void;
+  /** Floating UI placement; defaults to top-start which suits the in-sheet
+      position. The header instance overrides to bottom-end. */
+  placement?: "top-start" | "bottom-end" | "bottom-start" | "top-end";
+  /** Inline overrides for the trigger button — header usage drops absolute
+      positioning and reskins the button. */
+  buttonStyle?: React.CSSProperties;
 }) {
   const [open, setOpen] = useState(false);
   const [rerollStep, setRerollStep] = useState<"idle" | "pick-class" | "confirm">("idle");
@@ -1595,7 +1862,7 @@ function AccountPopover({
     open,
     onOpenChange: (v) => { setOpen(v); if (!v) { setRerollStep("idle"); setSelectedClasses(new Set()); setSelectedClass(null); } },
     middleware: [offset(8), flip({ padding: 8 }), shift({ padding: 8 })],
-    placement: "top-start",
+    placement,
     whileElementsMounted: autoUpdate,
   });
   const { getFloatingProps } = useInteractions([useDismiss(context)]);
@@ -1623,7 +1890,7 @@ function AccountPopover({
         ref={refs.setReference}
         onClick={() => { setOpen((v) => !v); setRerollStep("idle"); setSelectedClasses(new Set()); setSelectedClass(null); }}
         title="Account"
-        style={{
+        style={buttonStyle ?? {
           position: "absolute", top: 8, right: 8,
           background: "none", border: "1px solid #3a3d44", borderRadius: 5,
           color: "#9ca3af", cursor: "pointer", padding: "3px 7px",
@@ -1860,7 +2127,17 @@ export function Stat({ label, value, icon, tooltip }: { label: string; value: Re
   const [hovered, setHovered] = useState(false);
   return (
     <div
-      style={{ padding: 12, background: "#1d1f23", borderRadius: 8, display: "flex", alignItems: "center", gap: 12, position: "relative", cursor: tooltip ? "default" : undefined }}
+      style={{
+        padding: 12,
+        background: "var(--bg-input)",
+        borderRadius: "var(--radius-lg)",
+        border: "1px solid var(--border-faint)",
+        display: "flex",
+        alignItems: "center",
+        gap: 12,
+        position: "relative",
+        cursor: tooltip ? "default" : undefined,
+      }}
       onMouseEnter={() => tooltip && setHovered(true)}
       onMouseLeave={() => setHovered(false)}
     >
@@ -1870,24 +2147,30 @@ export function Stat({ label, value, icon, tooltip }: { label: string; value: Re
         </div>
       )}
       <div style={{ minWidth: 0 }}>
-        <div style={{ ...muted, fontSize: 11, textTransform: "uppercase", letterSpacing: 0.8, lineHeight: 1, fontFamily: DISPLAY_FONT }}>
-          {label}
-        </div>
-        <div style={{ fontSize: 18, fontWeight: 600, color: "#f5f5f5", marginTop: 3, fontFamily: DISPLAY_FONT }}>
+        <div className="eyebrow">{label}</div>
+        <div style={{
+          fontSize: 18,
+          color: "var(--fg-1)",
+          marginTop: 3,
+          fontFamily: "var(--font-mono)",
+          fontVariantNumeric: "tabular-nums",
+        }}>
           {value}
         </div>
       </div>
       {tooltip && hovered && (
         <div style={{
           position: "absolute", bottom: "calc(100% + 6px)", left: 0,
-          background: "#0e1014", border: "1px solid #2a2d33",
-          borderRadius: 7, padding: "7px 10px", zIndex: 50,
+          background: "var(--bg-panel)",
+          border: "1px solid var(--border-base)",
+          borderRadius: "var(--radius-md)",
+          padding: "8px 10px", zIndex: 50,
           minWidth: 180, maxWidth: 260,
-          boxShadow: "0 4px 16px rgba(0,0,0,0.7)",
+          boxShadow: "var(--shadow-pop)",
           pointerEvents: "none", whiteSpace: "pre-line",
         }}>
-          <div style={{ fontSize: 10, color: "#6b7280", textTransform: "uppercase", letterSpacing: 0.8, marginBottom: 4 }}>{label}</div>
-          <div style={{ fontSize: 11, color: "#c9cdd4", lineHeight: 1.55, fontFamily: "monospace" }}>{tooltip}</div>
+          <div className="eyebrow" style={{ marginBottom: 4 }}>{label}</div>
+          <div style={{ fontSize: 11, color: "var(--fg-3)", lineHeight: 1.55, fontFamily: "var(--font-mono)" }}>{tooltip}</div>
         </div>
       )}
     </div>

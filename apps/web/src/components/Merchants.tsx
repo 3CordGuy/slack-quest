@@ -12,6 +12,7 @@ import { LocationHero, Banner, RefreshButton, RestockButton, RarityBadge, SmallB
 export function ShopCard({
   shop,
   navOverlay,
+  inModal,
   onBuy,
   onHaggle,
   onBuyStaple,
@@ -20,20 +21,24 @@ export function ShopCard({
 }: {
   shop: ShopResponse;
   navOverlay?: ReactNode;
+  inModal?: boolean;
   onBuy: (id: number, name: string) => void;
   onHaggle: (id: number) => void;
   onBuyStaple: (id: string) => void;
   onRefresh: () => Promise<void>;
   onRestock?: () => Promise<void>;
 }) {
-  const hero = navOverlay
-    ? <LocationHero src={shop.art_url} label="Shop" nav={navOverlay} />
-    : <Banner src={shop.art_url ?? null} alt="Shop" />;
+  const showTitle = !navOverlay && !inModal;
+  const hero = inModal
+    ? null
+    : navOverlay
+      ? <LocationHero src={shop.art_url} label="Shop" nav={navOverlay} />
+      : <Banner src={shop.art_url ?? null} alt="Shop" />;
   if (shop.error === "mid_quest") {
     return (
       <div style={card}>
         {hero}
-        {!navOverlay && <h2 style={h2}>Shop</h2>}
+        {showTitle && <h2 style={h2}>Shop</h2>}
         <p style={muted}>The shopkeep is afraid of monsters. Finish the quest first.</p>
       </div>
     );
@@ -43,7 +48,7 @@ export function ShopCard({
       <div style={card}>
         {hero}
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
-          {!navOverlay && <h2 style={{ ...h2, margin: 0 }}>Shop</h2>}
+          {showTitle && <h2 style={{ ...h2, margin: 0 }}>Shop</h2>}
           <RefreshButton onRefresh={onRefresh} />
         </div>
         <p style={muted}>
@@ -57,7 +62,7 @@ export function ShopCard({
       <div style={card}>
         {hero}
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
-          {!navOverlay && <h2 style={{ ...h2, margin: 0 }}>Shop</h2>}
+          {showTitle && <h2 style={{ ...h2, margin: 0 }}>Shop</h2>}
           <RefreshButton onRefresh={onRefresh} />
         </div>
         <p style={muted}>The shopkeep's shelves are bare.</p>
@@ -75,10 +80,10 @@ export function ShopCard({
   const cap = shop.purchase_cap ?? 2;
   const atCap = capUsed >= cap;
   return (
-    <div style={card}>
+    <div style={inModal ? undefined : card}>
       {hero}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
-        <h2 style={{ ...h2, margin: 0 }}>Shop</h2>
+        {showTitle && <h2 style={{ ...h2, margin: 0 }}>Shop</h2>}
         <RefreshButton onRefresh={onRefresh} />
       </div>
       <p style={muted}>
@@ -341,28 +346,33 @@ function ShopRow({
 export function InnCard({
   inn,
   navOverlay,
+  inModal,
   onStay,
 }: {
   inn: InnResponse;
   navOverlay?: ReactNode;
+  inModal?: boolean;
   onStay: (roomId: string) => void;
 }) {
-  const hero = navOverlay
-    ? <LocationHero src={inn.art_url} label="The Inn" nav={navOverlay} />
-    : <Banner src={inn.art_url ?? null} alt="The Inn" />;
+  const showTitle = !navOverlay && !inModal;
+  const hero = inModal
+    ? null
+    : navOverlay
+      ? <LocationHero src={inn.art_url} label="The Inn" nav={navOverlay} />
+      : <Banner src={inn.art_url ?? null} alt="The Inn" />;
   if (inn.error === "mid_quest") {
     return (
-      <div style={card}>
+      <div style={inModal ? undefined : card}>
         {hero}
-        {!navOverlay && <h2 style={h2}>The Inn</h2>}
+        {showTitle && <h2 style={h2}>The Inn</h2>}
         <p style={muted}>The innkeep won't take questing parties. Finish the fight first.</p>
       </div>
     );
   }
   return (
-    <div style={card}>
+    <div style={inModal ? undefined : card}>
       {hero}
-      <h2 style={h2}>The Inn</h2>
+      {showTitle && <h2 style={h2}>The Inn</h2>}
       <p style={muted}>
         A small hearth crackles in the corner. The innkeep looks up. <em>"Room for the night?"</em>
       </p>
@@ -428,6 +438,7 @@ export function InnCard({
 export function SmithyCard({
   smithy,
   navOverlay,
+  inModal,
   characterLevel,
   onSharpen,
   onRepair,
@@ -435,27 +446,31 @@ export function SmithyCard({
 }: {
   smithy: SmithyResponse;
   navOverlay?: ReactNode;
+  inModal?: boolean;
   characterLevel: number;
   onSharpen: (itemId: number, itemName: string, cost: number, verb: string) => void;
   onRepair: (cost: number) => void;
   onBuy: (stockId: number, itemName: string, price: number) => void;
 }) {
-  const hero = navOverlay
-    ? <LocationHero src={smithy.art_url} label="The Smithy" nav={navOverlay} />
-    : <Banner src={smithy.art_url ?? null} alt="The Smithy" />;
+  const showTitle = !navOverlay && !inModal;
+  const hero = inModal
+    ? null
+    : navOverlay
+      ? <LocationHero src={smithy.art_url} label="The Smithy" nav={navOverlay} />
+      : <Banner src={smithy.art_url ?? null} alt="The Smithy" />;
   if (smithy.error === "mid_quest") {
     return (
-      <div style={card}>
+      <div style={inModal ? undefined : card}>
         {hero}
-        {!navOverlay && <h2 style={h2}>The Smithy</h2>}
+        {showTitle && <h2 style={h2}>The Smithy</h2>}
         <p style={muted}>The smith won't take your steel mid-quest — wrap up the fight first.</p>
       </div>
     );
   }
   return (
-    <div style={card}>
+    <div style={inModal ? undefined : card}>
       {hero}
-      <h2 style={h2}>The Smithy</h2>
+      {showTitle && <h2 style={h2}>The Smithy</h2>}
       <p style={muted}>
         <em>"Bring me steel and gold. I'll make it sing."</em>
       </p>
@@ -609,6 +624,7 @@ export function SmithyCard({
 export function ApothecaryCard({
   apothecary,
   navOverlay,
+  inModal,
   selfId,
   onBuyStaple,
   onRevive,
@@ -617,21 +633,25 @@ export function ApothecaryCard({
 }: {
   apothecary: ApothecaryResponse | null;
   navOverlay?: ReactNode;
+  inModal?: boolean;
   selfId: string;
   onBuyStaple: (stapleId: string) => void;
   onRevive: (targetUserId: string, targetName: string) => void;
   onSelfRevive: () => Promise<void>;
   onRefresh: () => Promise<void>;
 }) {
-  const hero = navOverlay
-    ? <LocationHero src={apothecary?.art_url} label="Apothecary" nav={navOverlay} />
-    : <Banner src={apothecary?.art_url ?? null} alt="Apothecary" />;
+  const showTitle = !navOverlay && !inModal;
+  const hero = inModal
+    ? null
+    : navOverlay
+      ? <LocationHero src={apothecary?.art_url} label="Apothecary" nav={navOverlay} />
+      : <Banner src={apothecary?.art_url ?? null} alt="Apothecary" />;
 
   if (!apothecary) {
     return (
-      <div style={card}>
+      <div style={inModal ? undefined : card}>
         {hero}
-        <h2 style={h2}>Apothecary</h2>
+        {showTitle && <h2 style={h2}>Apothecary</h2>}
         <p style={muted}>The apothecary is closed. Finish your quest first.</p>
       </div>
     );
@@ -639,9 +659,9 @@ export function ApothecaryCard({
 
   if (apothecary.error === "mid_quest") {
     return (
-      <div style={card}>
+      <div style={inModal ? undefined : card}>
         {hero}
-        {!navOverlay && <h2 style={h2}>Apothecary</h2>}
+        {showTitle && <h2 style={h2}>Apothecary</h2>}
         <p style={muted}>The apothecary won't deal with you mid-quest. Wrap up the fight first.</p>
       </div>
     );
@@ -651,10 +671,10 @@ export function ApothecaryCard({
   const isSelfDowned = apothecary.downed.some((d) => d.slack_user_id === selfId);
 
   return (
-    <div style={card}>
+    <div style={inModal ? undefined : card}>
       {hero}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
-        <h2 style={{ ...h2, margin: 0 }}>Apothecary</h2>
+        {showTitle && <h2 style={{ ...h2, margin: 0 }}>Apothecary</h2>}
         <RefreshButton onRefresh={onRefresh} />
       </div>
       <p style={muted}>

@@ -5,6 +5,7 @@ import { postJson, drinkBuffLabel, formatRelative } from "../utils";
 import { LIARS_TRUST_MULT_DISPLAY, LIARS_CHALLENGE_MULT_DISPLAY, GAME_LABELS, ERROR_LABELS } from "../constants";
 import { card, h2, muted, DISPLAY_FONT, smallActionBtn } from "../styles";
 import { LocationHero, Banner, RefreshButton } from "./ui";
+import { HallOfRenown, type RenownEntry } from "./StatsCards";
 import type {
   PubResponse, PubNpc, PubTalkResponse, DrinkBuff, SpdData, SpdResult, SpdThrow,
   PubLeaderboardEntry, LiarsRoundPending, LiarsRoundResult,
@@ -160,6 +161,7 @@ function NpcConversation({ npc, onClose }: { npc: PubNpc; onClose: () => void })
 function PubCard({
   pub,
   navOverlay,
+  inModal,
   onBuyDrink,
   onHireMerc,
   onDismissMerc,
@@ -167,18 +169,20 @@ function PubCard({
 }: {
   pub: PubResponse;
   navOverlay?: React.ReactNode;
+  inModal?: boolean;
   onBuyDrink: (drinkId: string) => void;
   onHireMerc: (mercId: string) => void;
   onDismissMerc: () => void;
   onRefresh: () => Promise<void>;
 }) {
+  const showTitle = !navOverlay && !inModal;
   return (
-    <div style={card}>
-      {navOverlay
+    <div style={inModal ? undefined : card}>
+      {!inModal && (navOverlay
         ? <LocationHero src={pub.art_url} label="The Pub" nav={navOverlay} />
-        : pub.art_url ? <Banner src={pub.art_url} alt="The Pub" /> : null}
+        : pub.art_url ? <Banner src={pub.art_url} alt="The Pub" /> : null)}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: navOverlay ? 0 : undefined }}>
-        {!navOverlay && <h2 style={{ ...h2, margin: 0 }}><Icon name="beer-stein" size={18} /> The Pub</h2>}
+        {showTitle && <h2 style={{ ...h2, margin: 0 }}><Icon name="beer-stein" size={18} /> The Pub</h2>}
         <RefreshButton onRefresh={onRefresh} style={{ marginLeft: "auto" }} />
       </div>
       <p style={{ ...muted, marginTop: 4 }}>
@@ -764,48 +768,30 @@ function SpdCard({ pub, selfId, onRefresh }: { pub: PubResponse; selfId: string;
 }
 
 function PubLeaderboardCard({ entries }: { entries: PubLeaderboardEntry[] }) {
+  const renown: RenownEntry[] = entries.map((e) => {
+    const winRate = e.games > 0 ? Math.round((e.wins / e.games) * 100) : 0;
+    const sign = e.net > 0 ? "+" : "";
+    return {
+      id: e.user_id,
+      name: e.name,
+      subtitle: `${e.games} games · ${winRate}% win rate`,
+      metric: (
+        <span style={{ color: e.net > 0 ? "var(--tone-good-2)" : e.net < 0 ? "var(--tone-bad-2)" : "var(--fg-mute)" }}>
+          {sign}{e.net}g
+        </span>
+      ),
+      metricLabel: "Net",
+      iconName: "beer-stein",
+    };
+  });
   return (
-    <div style={card}>
-      <h2 style={{ ...h2, marginBottom: 12 }}>
-        <Icon name="trophy" size={1} /> Pub Leaderboard
-      </h2>
-      <div style={{ overflowX: "auto" }}>
-        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
-          <thead>
-            <tr style={{ borderBottom: "1px solid #2a2d33" }}>
-              <th style={{ textAlign: "left", padding: "4px 8px 4px 0", color: "#7a7d83", fontWeight: 500, whiteSpace: "nowrap" }}>#</th>
-              <th style={{ textAlign: "left", padding: "4px 8px", color: "#7a7d83", fontWeight: 500 }}>Player</th>
-              <th style={{ textAlign: "right", padding: "4px 8px", color: "#7a7d83", fontWeight: 500, whiteSpace: "nowrap" }}>Games</th>
-              <th style={{ textAlign: "right", padding: "4px 8px", color: "#7a7d83", fontWeight: 500, whiteSpace: "nowrap" }}>Wins</th>
-              <th style={{ textAlign: "right", padding: "4px 0 4px 8px", color: "#7a7d83", fontWeight: 500, whiteSpace: "nowrap" }}>Net</th>
-            </tr>
-          </thead>
-          <tbody>
-            {entries.map((e, i) => {
-              const rank = i + 1;
-              const rankColor = rank === 1 ? "#fbbf24" : rank === 2 ? "#d1d5db" : rank === 3 ? "#cd7c2f" : "#7a7d83";
-              const netColor = e.net > 0 ? "#86efac" : e.net < 0 ? "#fca5a5" : "#7a7d83";
-              const winRate = e.games > 0 ? Math.round((e.wins / e.games) * 100) : 0;
-              return (
-                <tr key={e.user_id} style={{ borderBottom: "1px solid #1e2025" }}>
-                  <td style={{ padding: "6px 8px 6px 0", color: rankColor, fontWeight: rank <= 3 ? 700 : 400 }}>{rank}</td>
-                  <td style={{ padding: "6px 8px" }}>
-                    <div style={{ fontWeight: 500, color: "#f5f5f5" }}>{e.name}</div>
-                    {e.slack_username && <div style={{ color: "#7a7d83", fontSize: 11 }}>@{e.slack_username}</div>}
-                  </td>
-                  <td style={{ padding: "6px 8px", textAlign: "right", color: "#cbd5e1" }}>{e.games}</td>
-                  <td style={{ padding: "6px 8px", textAlign: "right", color: "#cbd5e1" }}>{e.wins} <span style={{ color: "#7a7d83", fontSize: 11 }}>({winRate}%)</span></td>
-                  <td style={{ padding: "6px 0 6px 8px", textAlign: "right", color: netColor, fontWeight: 600 }}>
-                    {e.net > 0 ? "+" : ""}{e.net}g
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-      <p style={{ ...muted, fontSize: 11, marginTop: 10 }}>All-time across Liar's Roll, SPD matches, and side bets.</p>
-    </div>
+    <HallOfRenown
+      title="Pub Legends"
+      entries={renown}
+      metricLabel="Net"
+      rowIcon="beer-stein"
+      footerNote="All-time across Liar's Roll, SPD matches, and side bets."
+    />
   );
 }
 

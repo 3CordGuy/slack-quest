@@ -549,6 +549,56 @@ export function DragItemPreview({ item }: { item: Item }) {
   );
 }
 
+function BagFilterTabs({
+  filter,
+  onChange,
+  counts,
+}: {
+  filter: "all" | "weapon" | "armor" | "consumable";
+  onChange: (f: "all" | "weapon" | "armor" | "consumable") => void;
+  counts: { all: number; weapon: number; armor: number; consumable: number };
+}) {
+  const tabs: { id: "all" | "weapon" | "armor" | "consumable"; label: string }[] = [
+    { id: "all", label: "All" },
+    { id: "weapon", label: "Weapons" },
+    { id: "armor", label: "Armor" },
+    { id: "consumable", label: "Consumables" },
+  ];
+  return (
+    <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+      {tabs.map((t) => {
+        const on = filter === t.id;
+        return (
+          <button
+            key={t.id}
+            onClick={() => onChange(t.id)}
+            style={{
+              font: "11px/1 var(--font-body)",
+              padding: "6px 11px",
+              borderRadius: "var(--radius-md)",
+              background: on ? "var(--accent-ink-deep)" : "var(--bg-input)",
+              border: `1px solid ${on ? "var(--accent-ink-blue-2)" : "var(--border-base)"}`,
+              color: on ? "var(--fg-1)" : "var(--fg-mute-2)",
+              cursor: "pointer",
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 5,
+            }}
+          >
+            {t.label}
+            <span style={{
+              font: "10px/1 var(--font-mono)",
+              color: on ? "var(--accent-ink-blue)" : "var(--fg-mute-3)",
+            }}>
+              {counts[t.id]}
+            </span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 function useIsMobile(breakpoint = 700) {
   const [isMobile, setIsMobile] = useState(() => typeof window !== "undefined" && window.innerWidth < breakpoint);
   useEffect(() => {
@@ -565,6 +615,7 @@ export function InventoryFullScreen({
   selfId,
   characterLevel,
   character,
+  characterSheet,
   onEquip,
   onUnequip,
   onSell,
@@ -577,6 +628,10 @@ export function InventoryFullScreen({
   selfId: string;
   characterLevel?: number;
   character?: Character;
+  /** Optional pre-built CharacterCard JSX shown at the top of the left
+      Equipped column — used by App.tsx to fold the character sheet into
+      the inventory now that the right sidebar is gone. */
+  characterSheet?: ReactNode;
   onEquip: (itemId: number) => void;
   onUnequip: (itemId: number) => void;
   onSell: (itemId: number) => void;
@@ -607,7 +662,22 @@ export function InventoryFullScreen({
     }
   }
   const sorted = sortItems(items, sort);
-  const packItems = sorted.filter((i) => !i.equipped);
+  const allPackItems = sorted.filter((i) => !i.equipped);
+  // Bag filter tabs — All / Weapons / Armor / Consumables.
+  // "consumable" covers consumable + magic + scroll + revive in this codebase
+  // (anything used from the bag rather than worn).
+  type BagFilter = "all" | "weapon" | "armor" | "consumable";
+  const [bagFilter, setBagFilter] = useState<BagFilter>("all");
+  const packItems = allPackItems.filter((i) => {
+    if (bagFilter === "all") return true;
+    if (bagFilter === "weapon") return i.item_type === "weapon";
+    if (bagFilter === "armor") return i.item_type === "armor";
+    return i.item_type === "consumable" || i.item_type === "magic"
+        || i.item_type === "scroll" || i.item_type === "revive";
+  });
+  // Bag capacity comes from the character if exposed; otherwise we just
+  // surface the raw count so the player still gets a "X items" readout.
+  const bagCapacity = 24; // not yet tracked server-side — used only as a soft cap display
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const selected = selectedId != null ? items.find((i) => i.id === selectedId) ?? null : null;
   const [highlightSlot, setHighlightSlot] = useState<EquipSlot | null>(null);
@@ -683,18 +753,8 @@ export function InventoryFullScreen({
           <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
             <span style={{ fontSize: 16, fontWeight: 700, color: "#f5f5f5", fontFamily: DISPLAY_FONT }}>Inventory</span>
             <span style={{ ...muted, fontSize: 12 }}>{items.length} item{items.length !== 1 ? "s" : ""}</span>
-            {character && (
-              <div style={{ display: "flex", alignItems: "center", gap: 10, paddingLeft: 12, borderLeft: "1px solid #2a2d33", fontSize: 12, color: "#9aa0a6", flexWrap: "wrap" }}>
-                <span style={{ color: "#f5f5f5", fontWeight: 600, fontFamily: DISPLAY_FONT }}>{character.name}</span>
-                <span style={{ color: "#c084fc" }}>{character.class}</span>
-                <span title="Level">Lv {character.level}</span>
-                <span style={{ color: "#86efac" }} title="HP"><Icon name="health-normal" size={11} /> {character.hp}/{character.max_hp}</span>
-                {character.max_mana > 0 && (
-                  <span style={{ color: "#a78bfa" }} title="Mana"><Icon name="wizard-staff" size={11} /> {character.mana}/{character.max_mana}</span>
-                )}
-                <span style={{ color: "#fbbf24" }} title="Gold"><Icon name="gold-bar" size={11} /> {character.gold}g</span>
-              </div>
-            )}
+            {/* Character name / class / HP etc. now live in the global
+                AppTopBar and inside the embedded CharacterCard. */}
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
             {!isMobile && SORT_LABELS.map(({ key, label }) => (
@@ -749,6 +809,9 @@ export function InventoryFullScreen({
               <div style={{ flex: 1, overflowY: "auto", padding: 14 }}>
                 {mobileTab === "doll" ? (
                   <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 10 }}>
+                    {characterSheet && (
+                      <div style={{ alignSelf: "stretch", width: "100%" }}>{characterSheet}</div>
+                    )}
                     <div style={{ ...muted, fontSize: 10, textTransform: "uppercase", letterSpacing: 1.5, alignSelf: "flex-start" }}>Tap a slot to highlight matchable items</div>
                     <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 72px)", gap: 5 }}>
                       {([null, "helmet", null, "main_hand", "body", "off_hand", "amulet", "pants", "ring", null, "boots", null] as (EquipSlot | null)[]).map((s, i) => {
@@ -808,6 +871,17 @@ export function InventoryFullScreen({
                 ) : (
                   /* Pack tab */
                   <>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6, marginBottom: 10, flexWrap: "wrap" }}>
+                      <BagFilterTabs filter={bagFilter} onChange={setBagFilter} counts={{
+                        all: allPackItems.length,
+                        weapon: allPackItems.filter((i) => i.item_type === "weapon").length,
+                        armor: allPackItems.filter((i) => i.item_type === "armor").length,
+                        consumable: allPackItems.filter((i) => i.item_type === "consumable" || i.item_type === "magic" || i.item_type === "scroll" || i.item_type === "revive").length,
+                      }} />
+                      <span style={{ font: "11px/1 var(--font-mono)", color: "var(--fg-mute)" }}>
+                        {allPackItems.length}/{bagCapacity}
+                      </span>
+                    </div>
                     <div style={{ display: "flex", gap: 6, marginBottom: 12, flexWrap: "wrap" }}>
                       {SORT_LABELS.map(({ key, label }) => (
                         <button key={key} onClick={() => setSort(key)}
@@ -816,7 +890,9 @@ export function InventoryFullScreen({
                       ))}
                     </div>
                     {packItems.length === 0 ? (
-                      <div style={{ color: "#374151", fontSize: 13, textAlign: "center", marginTop: 32 }}>Nothing in your pack</div>
+                      <div style={{ color: "#374151", fontSize: 13, textAlign: "center", marginTop: 32 }}>
+                        {allPackItems.length === 0 ? "Nothing in your pack" : `No ${bagFilter === "all" ? "" : bagFilter + " "}items match`}
+                      </div>
                     ) : (
                       <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                         {packItems.map((item) => {
@@ -868,8 +944,11 @@ export function InventoryFullScreen({
           ) : (
             /* ── Desktop: 3-panel layout ── */
             <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
-              {/* Left — paper doll */}
-              <div style={{ width: 340, flexShrink: 0, borderRight: "1px solid #2a2d33", overflowY: "auto", padding: "20px 16px", display: "flex", flexDirection: "column", alignItems: "center", gap: 12 }}>
+              {/* Left — character sheet + paper doll */}
+              <div style={{ width: 360, flexShrink: 0, borderRight: "1px solid #2a2d33", overflowY: "auto", padding: "20px 16px", display: "flex", flexDirection: "column", alignItems: "center", gap: 14 }}>
+                {characterSheet && (
+                  <div style={{ alignSelf: "stretch", width: "100%" }}>{characterSheet}</div>
+                )}
                 <div style={{ ...muted, fontSize: 10, textTransform: "uppercase", letterSpacing: 1.5, alignSelf: "flex-start", fontFamily: DISPLAY_FONT }}>Equipped — drag items here to equip</div>
                 <div style={{ display: "flex", justifyContent: "center" }}>
                   <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 96px)", gap: 6 }}>
@@ -914,11 +993,24 @@ export function InventoryFullScreen({
 
               {/* Center — pack */}
               <DroppablePackPanel>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10, gap: 8, flexWrap: "wrap" }}>
+                  <BagFilterTabs filter={bagFilter} onChange={setBagFilter} counts={{
+                    all: allPackItems.length,
+                    weapon: allPackItems.filter((i) => i.item_type === "weapon").length,
+                    armor: allPackItems.filter((i) => i.item_type === "armor").length,
+                    consumable: allPackItems.filter((i) => i.item_type === "consumable" || i.item_type === "magic" || i.item_type === "scroll" || i.item_type === "revive").length,
+                  }} />
+                  <span style={{ font: "11px/1 var(--font-mono)", color: "var(--fg-mute)" }}>
+                    {allPackItems.length} / {bagCapacity} slots
+                  </span>
+                </div>
                 <div style={{ ...muted, fontSize: 10, textTransform: "uppercase", letterSpacing: 1.5, marginBottom: 12, fontFamily: DISPLAY_FONT }}>
-                  Pack {packItems.length > 0 ? `(${packItems.length})` : "(empty)"} — drag equipped items here to unequip
+                  Drag equipped items here to unequip
                 </div>
                 {packItems.length === 0 ? (
-                  <div style={{ color: "#374151", fontSize: 13, textAlign: "center", marginTop: 32 }}>Nothing in your pack</div>
+                  <div style={{ color: "#374151", fontSize: 13, textAlign: "center", marginTop: 32 }}>
+                    {allPackItems.length === 0 ? "Nothing in your pack" : `No ${bagFilter === "all" ? "" : bagFilter + " "}items match`}
+                  </div>
                 ) : viewMode === "grid" ? (
                   <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(110px, 1fr))", gap: 10 }}>
                     {packItems.map((item) => (

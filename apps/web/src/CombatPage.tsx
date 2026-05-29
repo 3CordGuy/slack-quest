@@ -1328,6 +1328,27 @@ export function CombatPage({
   }, [liveMonsters.map((m) => `${m.id}:${m.hp}`).join(",")]);
   const effectiveTarget = liveMonsters.length === 1 ? (liveMonsters[0].id ?? null) : targetMonsterId;
 
+  // Spotlight = boss if any, else the current target. Renders huge in the
+  // center column of the 3-col theatre grid; everything else flanks L/R.
+  const spotlightMonster = (() => {
+    if (!state?.monsters || state.monsters.length === 0) return null;
+    const boss = state.monsters.find((m) => m.is_boss && m.hp > 0);
+    if (boss) return boss;
+    if (effectiveTarget !== null) {
+      const t = state.monsters.find((m) => (m.id ?? null) === effectiveTarget);
+      if (t && t.hp > 0) return t;
+    }
+    return liveMonsters[0] ?? state.monsters[0] ?? null;
+  })();
+  const spotlightId = spotlightMonster?.id ?? null;
+  const flankMonsters = state?.monsters.filter((m, i) => {
+    const mid = m.id ?? String(i);
+    return mid !== (spotlightId ?? String(state.monsters.indexOf(m)));
+  }) ?? [];
+  const half = Math.ceil(flankMonsters.length / 2);
+  const leftFlank = flankMonsters.slice(0, half);
+  const rightFlank = flankMonsters.slice(half);
+
   function fireUseItem(itemId: number, targetId?: string) {
     const ws = wsRef.current;
     if (!ws || ws.readyState !== WebSocket.OPEN) {
@@ -1487,44 +1508,125 @@ export function CombatPage({
               />
             </div>
 
-            {/* Monster strip — center of room */}
-            <div style={{
+            {/* Monster theatre — 3-col grid: flank L | spotlight | flank R.
+                Spotlight is the boss-if-present-else-target, ringed in gold/red.
+                Other monsters split across left/right flanks. Right rail
+                reserves 300px so the combat log doesn't overlap flanks.
+                On mobile collapses to a single column: spotlight on top,
+                flanks below as scrollable chip rows. */}
+            <div style={isMobile ? {
               position: "absolute",
-              top: "50%", left: "50%",
-              transform: "translate(-50%, -65%)",
-              display: "flex", gap: 10, flexWrap: "wrap",
-              alignItems: "flex-start", justifyContent: "center",
-              maxWidth: "80vw", zIndex: 4,
+              top: 50, left: 0, right: 0, bottom: 0,
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              gap: 10,
+              padding: "0 10px",
+              zIndex: 4,
+              pointerEvents: "none",
+              overflowY: "auto",
+            } : {
+              position: "absolute",
+              top: 60, left: 0, right: 300, bottom: 0,
+              display: "grid",
+              gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1.5fr) minmax(0, 1fr)",
+              alignItems: "center",
+              gap: 12,
+              padding: "0 16px",
+              zIndex: 4,
+              pointerEvents: "none",
             }}>
-              {state.monsters.map((m, i) => {
-                const mid = m.id ?? String(i);
-                return (
-                  <MonsterCard
-                    key={mid}
-                    monster={m}
-                    round={state.round}
-                    showSageReading={me?.class === "Staff Sage"}
-                    sageTarget={me?.class === "Staff Sage" && lastForesee ? (() => { const tid = lastForesee.predicted_targets?.[mid] ?? lastForesee.predicted_target; return tid ? (state.fighters.find((f) => f.id === tid)?.name ?? tid) : null; })() : null}
-                    markedBy={
-                      state.ability_state?.mark &&
-                      state.round <= state.ability_state.mark.expires_after_round &&
-                      (!state.ability_state.mark.monster_id || state.ability_state.mark.monster_id === (m.id ?? String(i)))
-                        ? (state.fighters.find((f) => f.id === state.ability_state!.mark!.marked_by)?.name ?? state.ability_state.mark.marked_by)
-                        : undefined
-                    }
-                    isTargeted={effectiveTarget !== null && (m.id ?? null) === effectiveTarget}
-                    smiteDebuffed={!!((state.ability_state as { paladin_smite_debuff?: Record<string, number> } | undefined)?.paladin_smite_debuff?.[mid])}
-                    discouraged={(state.ability_state as { discourage?: Record<string, number> } | undefined)?.discourage?.[mid] ?? 0}
-                    vulnerable={(state.ability_state as { vulnerable?: Record<string, { expires_after_round: number; magnitude: number }> } | undefined)?.vulnerable?.[mid]}
-                    taunt={(() => { const t = (state.ability_state as { taunt?: { actor_id: string; swings_remaining: number } } | undefined)?.taunt; return t && t.swings_remaining > 0 ? { actor_name: state.fighters.find((f) => f.id === t.actor_id)?.name ?? t.actor_id, swings: t.swings_remaining } : undefined; })()}
-                    illOmen={(state.ability_state as { ill_omen?: Record<string, { accumulated: number; monster_turns_remaining: number }> } | undefined)?.ill_omen?.[mid]}
-                    slashSeq={lastSlash?.id === mid ? lastSlash.seq : 0}
-                    lungeSeq={lastLunge?.id === mid ? lastLunge.seq : 0}
-                    dustSeq={hitDustSeq[mid] ?? 0}
-                    onClick={liveMonsters.length > 1 && m.hp > 0 ? () => setTargetMonsterId(m.id ?? null) : undefined}
-                  />
+              {(() => {
+                const renderMonsterCard = (m: Monster, i: number) => {
+                  const mid = m.id ?? String(i);
+                  return (
+                    <MonsterCard
+                      key={mid}
+                      monster={m}
+                      round={state.round}
+                      showSageReading={me?.class === "Staff Sage"}
+                      sageTarget={me?.class === "Staff Sage" && lastForesee ? (() => { const tid = lastForesee.predicted_targets?.[mid] ?? lastForesee.predicted_target; return tid ? (state.fighters.find((f) => f.id === tid)?.name ?? tid) : null; })() : null}
+                      markedBy={
+                        state.ability_state?.mark &&
+                        state.round <= state.ability_state.mark.expires_after_round &&
+                        (!state.ability_state.mark.monster_id || state.ability_state.mark.monster_id === (m.id ?? String(i)))
+                          ? (state.fighters.find((f) => f.id === state.ability_state!.mark!.marked_by)?.name ?? state.ability_state.mark.marked_by)
+                          : undefined
+                      }
+                      isTargeted={effectiveTarget !== null && (m.id ?? null) === effectiveTarget}
+                      smiteDebuffed={!!((state.ability_state as { paladin_smite_debuff?: Record<string, number> } | undefined)?.paladin_smite_debuff?.[mid])}
+                      discouraged={(state.ability_state as { discourage?: Record<string, number> } | undefined)?.discourage?.[mid] ?? 0}
+                      vulnerable={(state.ability_state as { vulnerable?: Record<string, { expires_after_round: number; magnitude: number }> } | undefined)?.vulnerable?.[mid]}
+                      taunt={(() => { const t = (state.ability_state as { taunt?: { actor_id: string; swings_remaining: number } } | undefined)?.taunt; return t && t.swings_remaining > 0 ? { actor_name: state.fighters.find((f) => f.id === t.actor_id)?.name ?? t.actor_id, swings: t.swings_remaining } : undefined; })()}
+                      illOmen={(state.ability_state as { ill_omen?: Record<string, { accumulated: number; monster_turns_remaining: number }> } | undefined)?.ill_omen?.[mid]}
+                      slashSeq={lastSlash?.id === mid ? lastSlash.seq : 0}
+                      lungeSeq={lastLunge?.id === mid ? lastLunge.seq : 0}
+                      dustSeq={hitDustSeq[mid] ?? 0}
+                      onClick={liveMonsters.length > 1 && m.hp > 0 ? () => setTargetMonsterId(m.id ?? null) : undefined}
+                    />
+                  );
+                };
+                // Left flank column (desktop) / row of flank chips above
+                // spotlight (mobile).
+                const leftCol = (
+                  <div style={isMobile ? {
+                    display: "flex", flexDirection: "row", gap: 8,
+                    flexWrap: "wrap", justifyContent: "center",
+                    pointerEvents: "auto", width: "100%",
+                  } : {
+                    display: "flex", flexDirection: "column", gap: 10,
+                    alignItems: "stretch", justifyContent: "center",
+                    pointerEvents: "auto", minWidth: 0,
+                  }}>
+                    {leftFlank.map((m) => renderMonsterCard(m, state.monsters.indexOf(m)))}
+                  </div>
                 );
-              })}
+                // Spotlight column — wraps the central MonsterCard with a
+                // rotating dashed gold ring (boss or focused target).
+                const spotlightCol = spotlightMonster ? (
+                  <div style={{
+                    position: "relative",
+                    display: "flex", justifyContent: "center", alignItems: "center",
+                    pointerEvents: "auto",
+                  }}>
+                    {/* Rotating dashed ring overlay (decorative; pointer-events: none) */}
+                    {spotlightMonster.hp > 0 && (
+                      <div
+                        aria-hidden
+                        style={{
+                          position: "absolute",
+                          width: isMobile ? 240 : 280,
+                          height: isMobile ? 240 : 280,
+                          borderRadius: "50%",
+                          border: `1px dashed ${spotlightMonster.is_boss ? "rgba(220,38,38,0.35)" : "rgba(251,191,36,0.32)"}`,
+                          boxShadow: spotlightMonster.is_boss ? "0 0 22px rgba(220,38,38,0.35)" : "var(--glow-target)",
+                          animation: "spin 26s linear infinite",
+                          pointerEvents: "none",
+                        }}
+                      />
+                    )}
+                    <div style={{ zIndex: 1, transform: isMobile ? "scale(1)" : "scale(1.05)" }}>
+                      {renderMonsterCard(spotlightMonster, state.monsters.indexOf(spotlightMonster))}
+                    </div>
+                  </div>
+                ) : <div />;
+                // Right flank column (desktop) / row of flank chips below
+                // spotlight (mobile).
+                const rightCol = (
+                  <div style={isMobile ? {
+                    display: "flex", flexDirection: "row", gap: 8,
+                    flexWrap: "wrap", justifyContent: "center",
+                    pointerEvents: "auto", width: "100%",
+                  } : {
+                    display: "flex", flexDirection: "column", gap: 10,
+                    alignItems: "stretch", justifyContent: "center",
+                    pointerEvents: "auto", minWidth: 0,
+                  }}>
+                    {rightFlank.map((m) => renderMonsterCard(m, state.monsters.indexOf(m)))}
+                  </div>
+                );
+                return <>{leftCol}{spotlightCol}{rightCol}</>;
+              })()}
             </div>
 
             {/* Left column — dice rolls, below the initiative strip */}
@@ -1565,8 +1667,15 @@ export function CombatPage({
 
       {/* Party chips row */}
       {state && (
-        <div style={{ background: "rgba(10,11,14,0.92)", borderTop: "1px solid #1e2028", padding: "6px 10px", flexShrink: 0, zIndex: 8 }}>
-          <PartyChips fighters={state.fighters} selfId={selfId} flashIds={flashIds} hitDustSeq={hitDustSeq} healBurstSeq={healBurstSeq} shieldBurstSeq={shieldBurstSeq} onClickSelf={onOpenInventory} abilityState={state.ability_state} round={state.round} />
+        <div style={{
+          background: "var(--bg-deep)",
+          borderTop: "1px solid var(--border-base)",
+          borderBottom: "1px solid var(--border-faint)",
+          padding: isMobile ? "10px 12px 9px" : "13px 24px 12px",
+          flexShrink: 0,
+          zIndex: 8,
+        }}>
+          <PartyChips fighters={state.fighters} selfId={selfId} flashIds={flashIds} hitDustSeq={hitDustSeq} healBurstSeq={healBurstSeq} shieldBurstSeq={shieldBurstSeq} onClickSelf={onOpenInventory} abilityState={state.ability_state} round={state.round} currentActorId={currentActorId} />
         </div>
       )}
 
@@ -1654,11 +1763,92 @@ export function CombatPage({
       )}
 
       {/* Action bar — CBtn row */}
-      {state?.status === "active" && !isPickerOpen && (
-        <div style={{ background: "rgba(10,11,14,0.92)", borderTop: "1px solid #1e2028", padding: isMobile ? "4px 6px 6px" : "8px 10px 10px", flexShrink: 0, display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", justifyContent: "center" }}>
+      {state?.status === "active" && !isPickerOpen && (() => {
+        const targetMonster = effectiveTarget !== null
+          ? state.monsters.find((m) => (m.id ?? null) === effectiveTarget && m.hp > 0)
+          : null;
+        const noTarget = liveMonsters.length > 1 && !targetMonster;
+        const actorName = me?.name ?? state.fighters.find((f) => f.id === currentActorId)?.name ?? "—";
+        const actorClass = me?.class ?? state.fighters.find((f) => f.id === currentActorId)?.class;
+        const showTurncard = !isMobile;
+        return (
+        <div style={{
+          background: "var(--bg-deep)",
+          borderTop: "1px solid var(--border-faint)",
+          padding: isMobile ? "10px 12px 12px" : "12px 24px 16px",
+          flexShrink: 0,
+          display: "grid",
+          gridTemplateColumns: showTurncard ? "220px 1fr" : "1fr",
+          gap: showTurncard ? 18 : 8,
+          alignItems: "center",
+        }}>
+          {/* Active-turn card (left) */}
+          {showTurncard && (
+            <div style={{
+              background: "var(--bg-card-2)",
+              border: "1px solid var(--accent-gold-warm)",
+              borderRadius: "var(--radius-lg)",
+              padding: "11px 13px",
+              minWidth: 0,
+            }}>
+              <div style={{
+                font: "9px/1 var(--font-mono)",
+                textTransform: "uppercase",
+                letterSpacing: 1,
+                color: "var(--accent-gold-warm)",
+              }}>
+                {myTurn ? "Your turn" : "Active turn"}
+              </div>
+              <div style={{
+                font: "17px/1.1 var(--font-display)",
+                color: "var(--fg-1)",
+                marginTop: 5,
+                display: "flex",
+                alignItems: "center",
+                gap: 7,
+                whiteSpace: "nowrap",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+              }}>
+                {actorName}
+              </div>
+              {actorClass && (
+                <div style={{
+                  font: "10px/1 var(--font-mono)",
+                  color: "var(--accent-arcane-2)",
+                  textTransform: "uppercase",
+                  letterSpacing: 0.4,
+                  marginTop: 4,
+                }}>
+                  {actorClass}
+                </div>
+              )}
+              <div style={{
+                font: "10px/1.3 var(--font-mono)",
+                color: noTarget ? "var(--tone-bad)" : "var(--fg-mute)",
+                marginTop: 7,
+              }}>
+                {noTarget ? (
+                  <>No target — <b style={{ color: "var(--tone-bad-2)" }}>pick an enemy</b></>
+                ) : targetMonster ? (
+                  <>Targeting <b style={{ color: "var(--accent-gold-warm)" }}>{targetMonster.name}</b></>
+                ) : (
+                  <>Ready to act</>
+                )}
+              </div>
+            </div>
+          )}
+          {/* Ability bar (right) */}
+          <div style={{
+            display: "flex",
+            gap: 8,
+            alignItems: "center",
+            flexWrap: "wrap",
+            minWidth: 0,
+          }}>
           {/* Turn status hint */}
           {!myTurn && (
-            <div style={{ width: "100%", textAlign: "center", fontSize: 11, color: "#9aa0a6", fontStyle: "italic", paddingBottom: 2, display: "flex", alignItems: "center", justifyContent: "center", gap: 10 }}>
+            <div style={{ width: "100%", textAlign: "center", fontSize: 11, color: "var(--fg-mute)", fontStyle: "italic", paddingBottom: 2, display: "flex", alignItems: "center", justifyContent: "center", gap: 10 }}>
               <span>{isMonsterTurn && !autoResolve ? "Enemy turn" : isMonsterTurn ? "Enemy turn — auto-resolving…" : `Waiting for ${state.fighters.find((f) => f.id === currentActorId)?.name ?? "another player"}…`}</span>
               {isInactivePlayerTurn && (
                 <button
@@ -1666,10 +1856,10 @@ export function CombatPage({
                   disabled={!skipReady}
                   title={skipReady ? "Skip this player's turn" : "Available after 8 seconds"}
                   style={{
-                    background: skipReady ? "#292d36" : "#1a1d23",
-                    border: `1px solid ${skipReady ? "#4a5568" : "#2a2d33"}`,
-                    borderRadius: 6,
-                    color: skipReady ? "#cbd5e1" : "#4a5568",
+                    background: skipReady ? "var(--bg-input)" : "var(--bg-input-2)",
+                    border: `1px solid ${skipReady ? "var(--border-strong)" : "var(--border-base)"}`,
+                    borderRadius: "var(--radius-md)",
+                    color: skipReady ? "var(--fg-3)" : "var(--fg-faint)",
                     fontSize: 11,
                     fontFamily: "inherit",
                     padding: "3px 10px",
@@ -1721,12 +1911,14 @@ export function CombatPage({
           {isMonsterTurn && !autoResolve && (
             <CBtn label="Resolve" icon="dragon" color="#5c1f1f" onClick={() => send({ kind: "monster_act" })} />
           )}
-          <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, color: "#4a5568", cursor: "pointer", marginLeft: 6 }}>
+          <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, color: "var(--fg-faint)", cursor: "pointer", marginLeft: 6 }}>
             <input type="checkbox" checked={autoResolve} onChange={(e) => setAutoResolve(e.target.checked)} style={{ accentColor: "#5c1f1f" }} />
             Auto
           </label>
+          </div>
         </div>
-      )}
+        );
+      })()}
 
       {/* Victory modal — delayed until dice settle */}
       {ended && state?.status === "victory" && victoryModalReady && (
@@ -2620,25 +2812,33 @@ function VictoryModal({
       overflowY: "auto",
     }}>
       <div style={{
-        background: "#0f2818",
-        border: "2px solid #16a34a",
-        borderRadius: 16,
+        background: "var(--bg-panel)",
+        border: "1px solid var(--tone-good-2)",
+        borderRadius: "var(--radius-2xl)",
+        boxShadow: "var(--shadow-modal)",
         padding: 32,
         maxWidth: 520,
         width: "100%",
         boxSizing: "border-box",
         margin: "auto",
       }}>
-        <div style={{ fontSize: 36, fontWeight: 800, color: "#86efac", textAlign: "center", marginBottom: 4, fontFamily: DISPLAY_FONT, display: "flex", alignItems: "center", justifyContent: "center", gap: 10 }}>
-          {title === "VICTORY" && <Icon name="party-flags" size={28} color="#86efac" />}
+        <div style={{
+          fontSize: 36, fontWeight: 800,
+          color: "var(--accent-gold)",
+          textAlign: "center", marginBottom: 4,
+          fontFamily: "var(--font-display)",
+          letterSpacing: 1,
+          display: "flex", alignItems: "center", justifyContent: "center", gap: 10,
+        }}>
+          {title === "VICTORY" && <Icon name="party-flags" size={28} color="var(--accent-gold)" />}
           {title}
-          {title === "VICTORY" && <Icon name="party-flags" size={28} color="#86efac" />}
+          {title === "VICTORY" && <Icon name="party-flags" size={28} color="var(--accent-gold)" />}
         </div>
         {!outcome && <p style={{ ...muted, textAlign: "center" }}>Resolving outcome…</p>}
         {outcome && (
           <>
             {(outcome.is_boss || outcome.elite) && (
-              <div style={{ ...muted, fontSize: 12, textAlign: "center", marginBottom: 12 }}>
+              <div style={{ ...muted, fontSize: 12, textAlign: "center", marginBottom: 12, color: "var(--fg-mute)" }}>
                 {outcome.is_boss && "Boss "}{outcome.elite && "Elite "} pool: {outcome.total_pool_xp} XP · {outcome.total_pool_gold}g
               </div>
             )}
@@ -2647,11 +2847,15 @@ function VictoryModal({
               return (
                 <div style={{
                   textAlign: "center", fontSize: 12, fontWeight: 600,
-                  color: "#86efac", marginBottom: 10,
-                  background: "#0a2010", borderRadius: 6, padding: "4px 10px",
+                  color: "var(--tone-good)", marginBottom: 10,
+                  background: "rgba(34,197,94,0.08)",
+                  border: "1px solid rgba(34,197,94,0.25)",
+                  borderRadius: "var(--radius-md)",
+                  padding: "4px 10px",
                   display: "inline-block", width: "100%",
+                  boxSizing: "border-box",
                 }}>
-                  <Icon name="party-popper" size={13} color="#86efac" /> Party Bonus: +{pct}% XP
+                  <Icon name="party-popper" size={13} color="var(--tone-good)" /> Party Bonus: +{pct}% XP
                 </div>
               );
             })()}
@@ -2667,7 +2871,7 @@ function VictoryModal({
               ))}
             </div>
             {towerFloor && !towerAwaitingChoice && (
-              <p style={{ ...muted, fontSize: 12, textAlign: "center", marginBottom: 12 }}>
+              <p style={{ ...muted, fontSize: 12, textAlign: "center", marginBottom: 12, color: "var(--fg-mute)" }}>
                 {outcome?.tower_next_floor_kind === "rest"
                   ? "Floor cleared. A rest stop is next — check the dashboard."
                   : outcome?.tower_next_floor_kind === "boss"
@@ -2680,20 +2884,27 @@ function VictoryModal({
         {(() => {
           // Tower post-boss: surface Press on / Bank spoils inline so the
           // player doesn't have to dashboard-bounce to make the choice.
+          const fullWidth: React.CSSProperties = {
+            width: "100%",
+            justifyContent: "center",
+            marginTop: 8,
+          };
           if (towerAwaitingChoice && onPressOnAfterBoss && onBankAndExit) {
             return (
               <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
                 <button
                   onClick={onPressOnAfterBoss}
-                  style={{ ...button, marginTop: 0, background: "#854d0e", color: "#fef3c7", flex: 1 }}
+                  className="btn btn-ghost"
+                  style={{ flex: 1, justifyContent: "center" }}
                 >
-                  🗼 Press on (next cycle)
+                  Press on (next cycle)
                 </button>
                 <button
                   onClick={onBankAndExit}
-                  style={{ ...button, marginTop: 0, background: "#16a34a", flex: 1 }}
+                  className="btn btn-gold"
+                  style={{ flex: 1, justifyContent: "center" }}
                 >
-                  🛌 Bank spoils
+                  Bank spoils
                 </button>
               </div>
             );
@@ -2705,15 +2916,16 @@ function VictoryModal({
           const inPlaceClimb = towerFloor && !towerAwaitingChoice && nextKind !== "rest";
           const label = towerFloor && !towerAwaitingChoice
             ? nextKind === "rest"
-              ? "🛌 To the rest stop"
+              ? "To the rest stop"
               : nextKind === "boss"
-              ? "👑 Engage the boss"
-              : "🗼 Continue climbing"
+              ? "Engage the boss"
+              : "Continue climbing"
             : "Back to town";
           return (
             <button
               onClick={inPlaceClimb && onContinueClimbing ? onContinueClimbing : onBack}
-              style={{ ...button, marginTop: 8, background: "#16a34a" }}
+              className="btn btn-gold"
+              style={fullWidth}
             >
               {label}
             </button>
@@ -2748,22 +2960,30 @@ function DefeatModal({
       zIndex: 100, padding: 24,
     }}>
       <div style={{
-        background: fled ? "#241e0d" : "#1c0a09",
-        border: `2px solid ${fled ? "#b89b3a" : "#7c2020"}`,
-        borderRadius: 16, padding: 32,
+        background: "var(--bg-panel)",
+        border: `1px solid ${fled ? "var(--accent-gold-warm)" : "var(--tone-bad-3)"}`,
+        borderRadius: "var(--radius-2xl)",
+        boxShadow: "var(--shadow-modal)",
+        padding: 32,
         maxWidth: 520, width: "100%", maxHeight: "85vh", overflowY: "auto", boxSizing: "border-box",
       }}>
         <div style={{ textAlign: "center", marginBottom: 20 }}>
-          <Icon name={fled ? "footprint" : "death-skull"} size={48} color={fled ? "#facc15" : "#ef4444"} />
-          <div style={{ fontSize: 36, fontWeight: 800, color: fled ? "#facc15" : "#fca5a5", marginTop: 8, fontFamily: DISPLAY_FONT }}>
+          <Icon name={fled ? "footprint" : "death-skull"} size={48} color={fled ? "var(--accent-gold)" : "var(--tone-bad-2)"} />
+          <div style={{
+            fontSize: 36, fontWeight: 800,
+            color: fled ? "var(--accent-gold)" : "var(--tone-bad)",
+            marginTop: 8,
+            fontFamily: "var(--font-display)",
+            letterSpacing: 1,
+          }}>
             {fled ? "ESCAPED" : "DEFEAT"}
           </div>
           {!fled && (
-            <p style={{ ...muted, fontSize: 13, marginTop: 4 }}>The party has fallen.</p>
+            <p style={{ ...muted, fontSize: 13, marginTop: 4, color: "var(--fg-mute)" }}>The party has fallen.</p>
           )}
         </div>
 
-        {!outcome && <p style={{ ...muted, textAlign: "center" }}>Resolving outcome…</p>}
+        {!outcome && <p style={{ ...muted, textAlign: "center", color: "var(--fg-mute)" }}>Resolving outcome…</p>}
         {outcome && (
           <div style={{ display: "grid", gap: 10, marginBottom: 16 }}>
             {outcome.rewards.map((r) => {
@@ -2772,37 +2992,38 @@ function DefeatModal({
               const sd = r.soft_death;
               return (
                 <div key={r.user_id} style={{
-                  padding: 14, borderRadius: 10,
-                  background: "#0e0f12",
-                  border: `1px solid ${isSelf ? "#7c2020" : "#1e1e1e"}`,
+                  padding: 14,
+                  borderRadius: "var(--radius-lg)",
+                  background: "var(--bg-void)",
+                  border: `1px solid ${isSelf ? "var(--tone-bad-3)" : "var(--border-faint)"}`,
                 }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: sd ? 10 : 0 }}>
-                    <span style={{ fontWeight: 700, color: "#f5f5f5" }}>
+                    <span style={{ fontWeight: 700, color: "var(--fg-1)" }}>
                       {fighter?.name ?? r.user_id}
-                      {isSelf && <span style={{ ...muted, fontSize: 12, marginLeft: 6 }}>(you)</span>}
+                      {isSelf && <span style={{ ...muted, fontSize: 12, marginLeft: 6, color: "var(--fg-mute)" }}>(you)</span>}
                     </span>
-                    {!sd && <span style={{ ...muted, fontSize: 12 }}>survived</span>}
+                    {!sd && <span style={{ ...muted, fontSize: 12, color: "var(--fg-mute)" }}>survived</span>}
                   </div>
                   {sd && (
                     <div style={{ display: "grid", gap: 6 }}>
-                      <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 15, color: "#fbbf24" }}>
-                        <Icon name="death-skull" size={16} color="#ef4444" />
-                        <span style={{ color: "#fca5a5", fontWeight: 600 }}>Downed</span>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 15, color: "var(--accent-gold)" }}>
+                        <Icon name="death-skull" size={16} color="var(--tone-bad-2)" />
+                        <span style={{ color: "var(--tone-bad)", fontWeight: 600 }}>Downed</span>
                       </div>
-                      <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 14, color: "#fbbf24" }}>
-                        <Icon name="gold-bar" size={14} color="#fbbf24" />
-                        <span>Lost <strong style={{ color: "#ef4444" }}>{sd.gold_lost}g</strong></span>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 14, color: "var(--accent-gold)" }}>
+                        <Icon name="gold-bar" size={14} color="var(--accent-gold)" />
+                        <span>Lost <strong style={{ color: "var(--tone-bad-2)" }}>{sd.gold_lost}g</strong></span>
                       </div>
                       {sd.item_lost && (
-                        <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 14, color: "#e2e8f0" }}>
-                          <Icon name="drop-weapon" size={14} color="#f97316" />
-                          <span>Dropped <strong style={{ color: "#f97316" }}>{sd.item_lost}</strong></span>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 14, color: "var(--fg-2)" }}>
+                          <Icon name="drop-weapon" size={14} color="var(--tone-fire)" />
+                          <span>Dropped <strong style={{ color: "var(--tone-fire)" }}>{sd.item_lost}</strong></span>
                         </div>
                       )}
                       {sd.scar && (
-                        <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 14, color: "#d1d5db" }}>
-                          <Icon name="bleeding-hearts" size={14} color="#dc2626" />
-                          <span>Scar: <em style={{ color: "#fca5a5" }}>"{sd.scar}"</em></span>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 14, color: "var(--fg-3)" }}>
+                          <Icon name="bleeding-hearts" size={14} color="var(--tone-bad-3)" />
+                          <span>Scar: <em style={{ color: "var(--tone-bad)" }}>"{sd.scar}"</em></span>
                         </div>
                       )}
                     </div>
@@ -2812,8 +3033,12 @@ function DefeatModal({
             })}
           </div>
         )}
-        <button onClick={onBack} style={{ ...button, marginTop: 8, background: fled ? "#78350f" : "#7c2020" }}>
-          ← Back to town
+        <button
+          onClick={onBack}
+          className={fled ? "btn btn-gold" : "btn btn-ghost"}
+          style={{ marginTop: 8, width: "100%", justifyContent: "center" }}
+        >
+          Back to town
         </button>
       </div>
     </div>
@@ -3046,7 +3271,7 @@ function badge(bg: string, fg: string, border: string): React.CSSProperties {
 }
 
 // Compact party HP chips row below the room view.
-function PartyChips({ fighters, selfId, flashIds, hitDustSeq, healBurstSeq, shieldBurstSeq, onClickSelf, abilityState, round }: {
+function PartyChips({ fighters, selfId, flashIds, hitDustSeq, healBurstSeq, shieldBurstSeq, onClickSelf, abilityState, round, currentActorId }: {
   fighters: Fighter[]; selfId: string; flashIds: Set<string>;
   hitDustSeq: Record<string, number>;
   healBurstSeq: Record<string, number>;
@@ -3054,6 +3279,7 @@ function PartyChips({ fighters, selfId, flashIds, hitDustSeq, healBurstSeq, shie
   onClickSelf?: () => void;
   abilityState?: { [key: string]: unknown };
   round?: number;
+  currentActorId?: string | null;
 }) {
   const front = fighters.filter((f) => f.position === "front");
   const back = fighters.filter((f) => f.position === "back");
@@ -3077,12 +3303,39 @@ function PartyChips({ fighters, selfId, flashIds, hitDustSeq, healBurstSeq, shie
   const goodFortune = abilityState?.good_fortune as { caster_id: string; target_id: string; amount: number } | undefined;
   const blizzardState = abilityState?.blizzard as { caster_id: string; charges: number } | undefined;
 
+  const compactMode = fighters.length >= 5;
+
   function renderChip(f: Fighter) {
     const pct = f.max_hp > 0 ? Math.max(0, f.hp / f.max_hp) : 0;
-    const hpCol = pct > 0.5 ? "#22c55e" : pct > 0.25 ? "#f59e0b" : "#ef4444";
+    const hpCol = f.hp <= 0
+      ? "var(--tone-bad-3)"
+      : pct < 0.25
+        ? "var(--tone-bad-2)"
+        : pct < 0.5
+          ? "var(--accent-gold-warm)"
+          : "var(--tone-good-2)";
     const isFlash = flashIds.has(f.id);
     const isSelf = f.id === selfId;
+    const isActive = !!currentActorId && f.id === currentActorId && f.hp > 0;
     const clickable = isSelf && !!onClickSelf;
+    const down = f.hp <= 0;
+    const hasShield = f.shield > Math.floor(f.armor_power / 2) && f.hp > 0;
+
+    // pcard border resolution: active > self > shielded > default
+    const borderColor = isActive
+      ? "var(--accent-gold-warm)"
+      : isSelf
+        ? "var(--accent-ink-blue-2)"
+        : hasShield
+          ? "rgba(96,165,250,0.45)"
+          : "var(--border-faint)";
+    const boxShadow = isActive ? "0 0 0 1px var(--accent-gold-warm)" : undefined;
+    const background = down ? "#1a0a0a" : "var(--bg-card-2)";
+    const opacity = down ? 0.65 : 1;
+
+    const shieldPct = f.max_hp > 0 ? Math.min(0.9, f.shield / f.max_hp) : 0;
+    const padding = compactMode ? 8 : "9px 10px";
+
     return (
       <div
         key={f.id}
@@ -3091,62 +3344,160 @@ function PartyChips({ fighters, selfId, flashIds, hitDustSeq, healBurstSeq, shie
         title={clickable ? "Open inventory" : undefined}
         style={{
           position: "relative",
-          display: "flex", alignItems: "center", gap: 8,
-          background: isSelf ? "rgba(245,245,220,0.09)" : "rgba(255,255,255,0.04)",
-          border: isSelf ? "1px solid rgba(245,245,220,0.22)" : f.shield > Math.floor(f.armor_power / 2) && f.hp > 0 ? "1px solid rgba(96,165,250,0.4)" : "1px solid rgba(255,255,255,0.07)",
-          animation: f.shield > Math.floor(f.armor_power / 2) && f.hp > 0 ? "gq-shield-pulse 2.5s ease-in-out infinite" : undefined,
-          borderRadius: 8, padding: "5px 10px",
-          opacity: f.hp <= 0 ? 0.45 : 1, flexShrink: 0,
-          minWidth: 130,
+          flex: "1 1 0",
+          minWidth: 0,
+          maxWidth: 230,
+          background,
+          border: `1px solid ${borderColor}`,
+          boxShadow,
+          borderRadius: "var(--radius-lg)",
+          padding,
+          opacity,
           cursor: clickable ? "pointer" : "default",
+          animation: hasShield ? "gq-shield-pulse 2.5s ease-in-out infinite" : undefined,
+          fontFamily: "var(--font-body)",
         }}
       >
         <HitDust seq={hitDustSeq[f.id] ?? 0} />
         <HealBurst seq={healBurstSeq[f.id] ?? 0} />
         <ShieldBurst seq={shieldBurstSeq[f.id] ?? 0} />
-        {f.shield > Math.floor(f.armor_power / 2) && f.hp > 0 && <ShieldGlow />}
-        <Avatar src={charPortraitUrl(f.name)} fallbackSrc={classPortraitUrl(f.class)} alt={f.name} size={40} radius={5} fallbackIcon="player" fallbackColor="#4a5568" border="1px solid #2a2d33" />
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 12, fontWeight: 600, color: "#e2e8f0", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{f.name}</div>
-          <div style={{ height: 5, background: "#0e0f12", borderRadius: 3, overflow: "hidden", marginTop: 3 }}>
-            <div style={{ width: `${pct * 100}%`, height: "100%", background: hpCol, transition: "width 0.3s ease" }} />
+        {hasShield && <ShieldGlow />}
+
+        {/* "Your turn" gold flag chip top-left */}
+        {isActive && (
+          <span style={{
+            position: "absolute", top: -8, left: 10,
+            font: "700 8px/1 var(--font-body)",
+            letterSpacing: 0.5, textTransform: "uppercase",
+            background: "var(--accent-gold-warm)", color: "#1a1300",
+            padding: "3px 7px", borderRadius: 4,
+            whiteSpace: "nowrap",
+          }}>
+            {isSelf ? "Your turn" : "Active"}
+          </span>
+        )}
+
+        {/* Top row: avatar + name/class */}
+        <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+          {!down ? (
+            <Avatar
+              src={charPortraitUrl(f.name)}
+              fallbackSrc={classPortraitUrl(f.class)}
+              alt={f.name}
+              size={30}
+              radius={5}
+              fallbackIcon="player"
+              fallbackColor="var(--fg-faint)"
+              border="1px solid var(--border-base)"
+            />
+          ) : (
+            <div style={{
+              width: 30, height: 30, flexShrink: 0,
+              background: "var(--bg-void)",
+              border: "1px solid var(--border-base)",
+              borderRadius: 5,
+              display: "flex", alignItems: "center", justifyContent: "center",
+            }}>
+              <Icon name="death-skull" size={18} color="var(--tone-bad-2)" />
+            </div>
+          )}
+          <div style={{ minWidth: 0, flex: 1 }}>
+            <div style={{
+              font: "700 12px/1.1 var(--font-body)",
+              color: "var(--fg-1)",
+              whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+            }}>
+              {f.name}
+              {isSelf && (
+                <span style={{ color: "var(--accent-ink-blue)", fontWeight: 500, marginLeft: 4 }}>
+                  (you)
+                </span>
+              )}
+            </div>
+            {!compactMode && (
+              <div style={{
+                font: "8px/1.2 var(--font-mono)",
+                color: "var(--accent-arcane-2)",
+                textTransform: "uppercase",
+                letterSpacing: 0.4,
+                whiteSpace: "nowrap",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                marginTop: 2,
+              }}>
+                {f.class} · L{f.level}
+              </div>
+            )}
           </div>
-          <div style={{ fontSize: 10, color: "#9aa0a6", marginTop: 2 }}>
-            {f.hp}/{f.max_hp} HP
+        </div>
+
+        {/* HP row */}
+        <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 8 }}>
+          <span style={{ font: "8px/1 var(--font-mono)", color: "var(--fg-mute)", width: 18, flexShrink: 0 }}>HP</span>
+          <div
+            className="bar"
+            style={{
+              flex: 1,
+              height: 6,
+              boxShadow: hasShield ? "0 0 5px rgba(96,165,250,.45)" : "none",
+            }}
+          >
+            <i style={{ width: `${pct * 100}%`, background: hpCol }} />
+            {hasShield && shieldPct > 0 && (
+              <i style={{
+                left: `${pct * 100}%`,
+                width: `${shieldPct * 100}%`,
+                background: "repeating-linear-gradient(45deg,#93c5fd,#93c5fd 4px,#60a5fa 4px,#60a5fa 8px)",
+              }} />
+            )}
           </div>
-          {(f.armor_power > 0 || f.shield > 0) && (() => {
-            const armorMax = f.armor_power > 0 ? Math.floor(f.armor_power / 2) : f.shield;
-            const armorPct = armorMax > 0 ? Math.max(0, f.shield / armorMax) : 1;
-            const depleted = f.shield === 0;
-            return (
-              <>
-                <div style={{ height: 4, background: "#1e2028", borderRadius: 2, overflow: "hidden", marginTop: 3, border: "1px solid #2a2d33" }}>
-                  <div style={{ width: `${armorPct * 100}%`, height: "100%", background: depleted ? "#374151" : "#94a3b8", transition: "width 0.3s ease" }} />
-                </div>
-                <div style={{ fontSize: 10, color: depleted ? "#f87171" : "#94a3b8", marginTop: 2, fontWeight: depleted ? 700 : 400 }}>
-                  {f.shield}/{armorMax} 🛡{depleted ? " broken" : ""}
-                </div>
-              </>
-            );
-          })()}
+          <span style={{
+            font: "8px/1 var(--font-mono)",
+            color: down ? "var(--tone-bad-2)" : "var(--fg-3)",
+            flexShrink: 0,
+            whiteSpace: "nowrap",
+          }}>
+            {down ? "DOWN" : `${f.hp}/${f.max_hp}`}
+          </span>
         </div>
-        {/* Mana orbs — grid with capped row count so a 4–6-mana fighter
-            wraps into a 2nd column instead of growing the chip taller
-            than the avatar. 3 rows × auto columns: 1–3 mana = single
-            column, 4–6 mana = two columns. */}
-        <div style={{
-          display: "grid",
-          gridAutoFlow: "column",
-          gridTemplateRows: "repeat(3, 7px)",
-          columnGap: 3,
-          rowGap: 2,
-          alignItems: "center",
-          justifyItems: "center",
-        }}>
-          {Array.from({ length: f.max_mana }, (_, mi) => (
-            <div key={mi} style={{ width: 7, height: 7, borderRadius: "50%", background: mi < f.mana ? "#818cf8" : "#1e2028", border: "1px solid #3a3d43" }} />
-          ))}
-        </div>
+
+        {/* MP row — only show if fighter has mana capacity */}
+        {f.max_mana > 0 && (
+          <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 4 }}>
+            <span style={{ font: "8px/1 var(--font-mono)", color: "var(--fg-mute)", width: 18, flexShrink: 0 }}>MP</span>
+            <div className="bar" style={{ flex: 1, height: 4 }}>
+              <i style={{
+                width: `${(f.max_mana > 0 ? f.mana / f.max_mana : 0) * 100}%`,
+                background: "var(--accent-arcane)",
+              }} />
+            </div>
+            <span style={{
+              font: "8px/1 var(--font-mono)",
+              color: "var(--fg-3)",
+              flexShrink: 0,
+              whiteSpace: "nowrap",
+            }}>
+              {f.mana}/{f.max_mana}
+            </span>
+          </div>
+        )}
+
+        {/* Armor "shield broken" indicator — preserved from old layout */}
+        {(f.armor_power > 0 || f.shield > 0) && (() => {
+          const armorMax = f.armor_power > 0 ? Math.floor(f.armor_power / 2) : f.shield;
+          const depleted = f.shield === 0;
+          if (!depleted || armorMax === 0) return null;
+          return (
+            <div style={{
+              font: "8px/1 var(--font-mono)",
+              color: "var(--tone-bad-2)",
+              fontWeight: 700,
+              marginTop: 3,
+            }}>
+              🛡 broken
+            </div>
+          );
+        })()}
         {(() => {
           const isProtected = protectState?.target_id === f.id;
           const holyRageTotal = holyRageMap?.[f.id] ?? 0;
@@ -3164,7 +3515,7 @@ function PartyChips({ fighters, selfId, flashIds, hitDustSeq, healBurstSeq, shie
           const hasExtra = sofActive || isProtected || holyRageTotal > 0 || vanishSwings > 0 || !!envenomEntry || hasFortune || blizzardCharges > 0 || encourageCharges > 0 || showAura || fortifyTurns > 0 || resilientStacks > 0 || braceTurns > 0;
           if (!f.effects?.length && !hasExtra) return null;
           return (
-            <div style={{ position: "absolute", top: -8, right: -4, display: "flex", flexDirection: "column", gap: 3, alignItems: "flex-end" }}>
+            <div style={{ position: "absolute", top: -6, right: 6, display: "flex", flexDirection: "column", gap: 3, alignItems: "flex-end", zIndex: 2 }}>
               {f.effects?.map((e, i) => {
                 const def = EFFECT_PILLS[e.type];
                 return def ? <def.pill key={i} effect={e} size="sm" /> : null;
@@ -3187,20 +3538,60 @@ function PartyChips({ fighters, selfId, flashIds, hitDustSeq, healBurstSeq, shie
       </div>
     );
   }
+  const standing = fighters.filter((f) => f.hp > 0).length;
+  const downCount = fighters.length - standing;
+  // Render front then back as a single flat flex row. Front/back labels
+  // are emitted as tiny meta chips inside the row when both ranks exist,
+  // so the dispatch is still readable without consuming card width.
+  const showRankBadges = front.length > 0 && back.length > 0;
+
   return (
-    <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "center" }}>
-      {front.length > 0 && (
-        <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-          <span style={{ fontSize: 8, color: "#6b7280", textTransform: "uppercase", letterSpacing: 1.5, writingMode: "vertical-rl", transform: "rotate(180deg)" }}>Front</span>
-          {front.map(renderChip)}
-        </div>
-      )}
-      {back.length > 0 && (
-        <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-          <span style={{ fontSize: 8, color: "#6b7280", textTransform: "uppercase", letterSpacing: 1.5, writingMode: "vertical-rl", transform: "rotate(180deg)" }}>Back</span>
-          {back.map(renderChip)}
-        </div>
-      )}
+    <div>
+      {/* Row header */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 9 }}>
+        <span style={{
+          font: "9px/1 var(--font-mono)",
+          color: "var(--accent-ink-blue)",
+          textTransform: "uppercase",
+          letterSpacing: 1,
+        }}>
+          Your Party · {fighters.length}{downCount > 0 ? ` · ${downCount} down` : ""}
+        </span>
+        <span style={{ font: "10px/1 var(--font-mono)", color: "var(--fg-mute)" }}>
+          {standing} standing
+        </span>
+      </div>
+      {/* Flat party flex; overflows horizontally on narrow viewports */}
+      <div style={{
+        display: "flex",
+        gap: 9,
+        alignItems: "stretch",
+        overflowX: "auto",
+        paddingBottom: 4,
+      }}>
+        {showRankBadges && front.length > 0 && (
+          <span style={{
+            font: "8px/1 var(--font-mono)",
+            color: "var(--fg-mute-3)",
+            textTransform: "uppercase",
+            letterSpacing: 1.5,
+            alignSelf: "center",
+            flexShrink: 0,
+          }}>F</span>
+        )}
+        {front.map(renderChip)}
+        {showRankBadges && back.length > 0 && (
+          <span style={{
+            font: "8px/1 var(--font-mono)",
+            color: "var(--fg-mute-3)",
+            textTransform: "uppercase",
+            letterSpacing: 1.5,
+            alignSelf: "center",
+            flexShrink: 0,
+          }}>B</span>
+        )}
+        {back.map(renderChip)}
+      </div>
     </div>
   );
 }
