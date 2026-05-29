@@ -49,6 +49,7 @@ import {
   slotLabel,
   sortItems,
   statBonusSummary,
+  resourceDisplayName,
 } from "../utils";
 import { Banner, RarityBadge } from "./ui";
 
@@ -167,12 +168,12 @@ export const ItemCell = forwardRef<
       )}
       {mode === "compact" && (
         <div style={{ fontSize: 10, color: "#9ca3af", lineHeight: 1.1, maxWidth: size - 10, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", padding: "0 4px" }}>
-          {item.item_name}
+          {resourceDisplayName(item)}
         </div>
       )}
       {mode === "detailed" && (
         <>
-          <div style={{ marginTop: 2, fontSize: 10, fontWeight: 600, color: "#e2e8f0", lineHeight: 1.3, wordBreak: "break-word" }}>{item.item_name}</div>
+          <div style={{ marginTop: 2, fontSize: 10, fontWeight: 600, color: "#e2e8f0", lineHeight: 1.3, wordBreak: "break-word" }}>{resourceDisplayName(item)}</div>
           <div style={{ fontSize: 10, color: rc, fontWeight: 600 }}>+{powerValue}</div>
           <div style={{ fontSize: 9, color: "#6b7280" }}>{slotLabel(item)}</div>
           {item.stat_bonus && statBonusSummary(item.stat_bonus) && (
@@ -364,7 +365,7 @@ export function ItemDetailPopover({
         </div>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontWeight: 700, color: "#f5f5f5", fontSize: 13, lineHeight: 1.3, wordBreak: "break-word", fontFamily: DISPLAY_FONT }}>
-            {item.item_name}
+            {resourceDisplayName(item)}
           </div>
           <div style={{ display: "flex", gap: 5, marginTop: 4, flexWrap: "wrap" }}>
             <RarityBadge rarity={item.rarity} />
@@ -695,7 +696,7 @@ export function DraggablePackItem({
       >
         <Icon name={itemIcon(item)} size={20} color={itemIconColor(item) ?? rc} />
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 13, fontWeight: 600, color: "#f5f5f5", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{item.item_name}</div>
+          <div style={{ fontSize: 13, fontWeight: 600, color: "#f5f5f5", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{resourceDisplayName(item)}</div>
           <div style={{ fontSize: 10, color: "#6b7280", marginTop: 1 }}>
             {slotLabel(item)}{item.stat_bonus && statBonusSummary(item.stat_bonus) ? ` · ${statBonusSummary(item.stat_bonus)}` : ""}
           </div>
@@ -1245,7 +1246,7 @@ export function InventoryFullScreen({
                             >
                               <Icon name={itemIcon(item)} size={28} color={itemIconColor(item) ?? rc} />
                               <div style={{ flex: 1, minWidth: 0 }}>
-                                <div style={{ fontSize: 14, fontWeight: 600, color: "#f5f5f5", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{item.item_name}</div>
+                                <div style={{ fontSize: 14, fontWeight: 600, color: "#f5f5f5", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{resourceDisplayName(item)}</div>
                                 <div style={{ fontSize: 11, color: "#6b7280", marginTop: 2 }}>
                                   {slotLabel(item)}{item.stat_bonus && statBonusSummary(item.stat_bonus) ? ` · ${statBonusSummary(item.stat_bonus)}` : ""}
                                 </div>
