@@ -21,6 +21,7 @@ import type {
   TownSection, TownArt, ApothecaryDownedChar, ApothecaryStapleItem, ApothecaryResponse,
   JobListing, BoardResponse, LoadState, SlotsListResponse, QuestOption, InventorySort,
   CampStatusResponse, CampNode, CampTier,
+  PubErrandsResponse,
 } from "./types";
 import {
   CATALOG_EFFECT, ERROR_LABELS, RARITY_COLOR, RARITY_RANK, EFFECT_COLOR, EFFECT_ICON,
@@ -60,6 +61,7 @@ import { InventoryCard, InventoryFullScreen, DollSlotCell, DroppablePackPanel, D
 import { StartQuestCard, JoinableQuestCard, TownNav, JobPostingCard, StepPicker, HuntSection, JobBoardSection, DistrictTile, TownMap, WardMap } from "./components/Town";
 import { Camp } from "./components/Camp";
 import { BrewPanel, ForgePanel } from "./components/CampCrafting";
+import { PubErrands } from "./components/PubErrands";
 import { TowerInterlude, ActiveQuestCard, ClickablePortrait } from "./components/Quest";
 import { DevToolsModal } from "./components/DevTools";
 
@@ -135,6 +137,9 @@ export function App() {
   // locally are tracked in a ref so a refresh doesn't re-trigger the toast.
   const [campStatus, setCampStatus] = useState<CampStatusResponse | null>(null);
   const dismissedReadyTasksRef = useRef<Set<number>>(new Set());
+  // Pub errands share the same poll cadence + toast pattern as camp gathering.
+  const [pubErrands, setPubErrands] = useState<PubErrandsResponse | null>(null);
+  const dismissedErrandsRef = useRef<Set<number>>(new Set());
 
   async function refreshCampStatus() {
     try {
@@ -170,12 +175,112 @@ export function App() {
     }
   }
 
+  async function refreshPubErrands() {
+    try {
+      const res = await fetch("/api/pub/errands", { credentials: "include", cache: "no-store" });
+      if (!res.ok) return;
+      const body = await res.json() as PubErrandsResponse;
+      setPubErrands(body);
+      const active = body.active;
+      if (active && active.ready && !dismissedErrandsRef.current.has(active.id)) {
+        const patron = body.patrons.find((p) => p.id === active.patron_id);
+        const name = patron?.name ?? "A patron";
+        const yieldData = active.yield;
+        const summary = yieldData
+          ? [
+              yieldData.gold > 0 ? `+${yieldData.gold} gold` : null,
+              yieldData.xp > 0 ? `+${yieldData.xp} XP` : null,
+              ...yieldData.items.map((it) => it.item_name),
+            ].filter(Boolean).join(", ")
+          : "ready in the pub";
+        toast(
+          (tt) => (
+            <span>
+              <strong>{name}</strong> has your reward — {summary}
+              <button
+                onClick={() => { dismissedErrandsRef.current.add(active.id); toast.dismiss(tt.id); }}
+                style={{ marginLeft: 12, background: "transparent", color: "inherit", border: "none", cursor: "pointer", textDecoration: "underline" }}
+              >dismiss</button>
+            </span>
+          ),
+          { id: `errand-${active.id}`, duration: Infinity },
+        );
+      }
+    } catch {
+      // Polling errors are silent; next tick retries.
+    }
+  }
+
   useEffect(() => {
     if (state.kind !== "auth") return;
     void refreshCampStatus();
-    const id = setInterval(() => { void refreshCampStatus(); }, 30000);
+    void refreshPubErrands();
+    const id = setInterval(() => {
+      void refreshCampStatus();
+      void refreshPubErrands();
+    }, 30000);
     return () => clearInterval(id);
   }, [state.kind]);
+
+  async function startPubErrand(offerId: number, inputResourceId?: string) {
+    const res = await fetch("/api/pub/errands/start", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({ offer_id: offerId, input_resource_id: inputResourceId }),
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({})) as { error?: string };
+      toast.error(`Couldn't accept: ${body.error ?? res.statusText}`);
+      return;
+    }
+    toast.success("Errand accepted");
+    await Promise.all([refreshPubErrands(), refresh()]);
+  }
+
+  async function claimPubErrand(errandId: number) {
+    const res = await fetch(`/api/pub/errands/claim/${errandId}`, {
+      method: "POST",
+      credentials: "include",
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({})) as { error?: string };
+      toast.error(`Couldn't collect: ${body.error ?? res.statusText}`);
+      return;
+    }
+    const body = await res.json() as {
+      yield?: { gold: number; xp: number; items: Array<{ item_name: string }>; lore_fragment?: string };
+    };
+    const yieldData = body.yield;
+    if (yieldData) {
+      const parts = [
+        yieldData.gold > 0 ? `+${yieldData.gold} gold` : null,
+        yieldData.xp > 0 ? `+${yieldData.xp} XP` : null,
+        ...yieldData.items.map((it) => it.item_name),
+      ].filter(Boolean);
+      toast.success(parts.length > 0 ? `Collected — ${parts.join(", ")}` : "Collected");
+      if (yieldData.lore_fragment) {
+        toast(yieldData.lore_fragment, { id: `lore-${errandId}`, duration: 8000 });
+      }
+    }
+    dismissedErrandsRef.current.add(errandId);
+    await Promise.all([refreshPubErrands(), refreshMe(), refresh()]);
+  }
+
+  async function cancelPubErrand(errandId: number) {
+    const res = await fetch(`/api/pub/errands/cancel/${errandId}`, {
+      method: "POST",
+      credentials: "include",
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({})) as { error?: string };
+      toast.error(`Couldn't cancel: ${body.error ?? res.statusText}`);
+      return;
+    }
+    toast.success("Errand cancelled");
+    dismissedErrandsRef.current.add(errandId);
+    await Promise.all([refreshPubErrands(), refresh()]);
+  }
 
   useEffect(() => {
     void refresh();
@@ -1146,6 +1251,15 @@ export function App() {
             onDismissMerc={dismissMerc}
             onRefresh={refreshPub}
           />
+          <div style={{ marginTop: 16 }}>
+            <PubErrands
+              data={pubErrands}
+              inventory={state.inventory}
+              onStart={startPubErrand}
+              onClaim={claimPubErrand}
+              onCancel={cancelPubErrand}
+            />
+          </div>
           <LiarsRollCard gold={state.pub.gold} onRefresh={refreshPub} />
           <SpdCard pub={state.pub} selfId={state.me.slack_user_id} onRefresh={refreshPub} />
           {state.pub.leaderboard && state.pub.leaderboard.length > 0 && (
