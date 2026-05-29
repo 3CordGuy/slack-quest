@@ -534,7 +534,11 @@ export interface CampUpgradeSpec {
   icon: string;
   gold_cost: number;
   level_req: number;
-  effect: { kind: "extra_slot" } | { kind: "future" };
+  effect:
+    | { kind: "extra_slot" }
+    | { kind: "duration_pct"; value: number }
+    | { kind: "yield_bonus"; value: number }
+    | { kind: "rare_bonus_pct"; value: number };
   coming_soon?: boolean;
 }
 

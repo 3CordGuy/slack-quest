@@ -85,7 +85,11 @@ import {
   findResource,
   gatherSlotCount,
   resourceItemName,
+  applyDurationModifier,
+  computeTentModifiers,
   rollGatherYield,
+  NO_TENT_MODIFIERS,
+  type TentModifiers,
   type CampNode,
   type CampTier,
   type RecipeSpec,
@@ -2845,7 +2849,12 @@ async function rollAndPersistExpiredYields(
       refreshed.push(task);
       continue;
     }
-    const rolled = rollGatherYield(task.id, task.node, task.tier);
+    const rolled = rollGatherYield(
+      task.id,
+      task.node,
+      task.tier,
+      (task.modifiers as TentModifiers | null) ?? NO_TENT_MODIFIERS,
+    );
     const yieldData = {
       resources: rolled.resources.map((r) => ({ name: r.name, qty: r.qty })),
       xp: rolled.xp,
@@ -2920,11 +2929,17 @@ app.post("/api/camp/start", async (c) => {
   let workerSlot = 1;
   while (used.has(workerSlot)) workerSlot += 1;
   const tierSpec = CAMP_TIERS[tier];
+  // Snapshot the current perks onto the task. Future perk builds won't
+  // retroactively alter an in-flight gather's math (and the lazy yield-roll
+  // stays deterministic by row).
+  const modifiers = computeTentModifiers(upgrades.map((u) => u.upgrade_key));
+  const durationMs = applyDurationModifier(tierSpec.duration_ms, modifiers);
   const task = await startGatheringTask(c.env.DB, {
     character_id: session.slack_user_id,
     node, tier,
     worker_slot: workerSlot,
-    duration_ms: tierSpec.duration_ms,
+    duration_ms: durationMs,
+    modifiers,
   });
   return c.json({ ok: true, task });
 });

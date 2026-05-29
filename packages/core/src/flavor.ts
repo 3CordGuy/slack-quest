@@ -1794,7 +1794,12 @@ export interface RolledYield {
 // Roll the gather yield. Deterministic on taskId — two parallel fetches of
 // the same task always produce the same result, so racing a status fetch
 // against a claim is harmless.
-export function rollGatherYield(taskId: number, node: CampNode, tier: CampTier): RolledYield {
+export function rollGatherYield(
+  taskId: number,
+  node: CampNode,
+  tier: CampTier,
+  modifiers: TentModifiers = NO_TENT_MODIFIERS,
+): RolledYield {
   const cfg = CAMP_NODE_CONFIG[node];
   const tierSpec = CAMP_TIERS[tier];
   const rng = mulberry32(taskId);
@@ -1809,22 +1814,29 @@ export function rollGatherYield(taskId: number, node: CampNode, tier: CampTier):
     resources.push({ id, name: resourceItemName(id), qty, rarity: spec.rarity });
   };
 
+  // Big Haul perk: extra primary-resource units on every gather.
+  const yieldBonus = Math.max(0, modifiers.yield_bonus | 0);
+  // Keen Eye perk: widens rare-roll windows by N percent points. Applies to
+  // Standard's uncommon roll and Deep's rare/uncommon thresholds, but does
+  // NOT affect the gold-vein chance (that's a dedicated rare-rare).
+  const rareWiden = Math.max(0, modifiers.rare_bonus_pct | 0) / 100;
+
   if (tier === "quick") {
-    pushResource(cfg.primary, 1);
+    pushResource(cfg.primary, 1 + yieldBonus);
   } else if (tier === "standard") {
-    // 70% → 2 commons, 30% → 1 uncommon
-    if (rng() < 0.7) pushResource(cfg.primary, 2);
+    // Base 70% commons / 30% uncommon. Keen Eye shifts toward uncommon.
+    if (rng() < (0.7 - rareWiden)) pushResource(cfg.primary, 2 + yieldBonus);
     else pushResource(cfg.uncommon, 1);
   } else {
-    // Deep: 3 commons always, plus a rare-tier roll.
-    pushResource(cfg.primary, 3);
+    // Deep: 3 commons always (+haul bonus), plus a rare-tier roll.
+    pushResource(cfg.primary, 3 + yieldBonus);
     const rareRoll = rng();
     if (node === "mine" && rareRoll < MINE_GOLD_VEIN_CHANCE) {
       gold_strike = true;
       gold += MINE_GOLD_VEIN_PAYOUT;
-    } else if (rareRoll < 0.20) {
+    } else if (rareRoll < (0.20 + rareWiden)) {
       pushResource(cfg.rare, 1);
-    } else if (rareRoll < 0.55) {
+    } else if (rareRoll < (0.55 + rareWiden)) {
       pushResource(cfg.uncommon, 1);
     }
   }
@@ -1953,9 +1965,14 @@ export interface CampUpgradeSpec {
   icon: string;
   gold_cost: number;
   level_req: number;
-  // What the upgrade unlocks. v1 only honors `extra_slot`; later we add
-  // time_pct, yield_pct, etc.
-  effect: { kind: "extra_slot" } | { kind: "future" };
+  // What the upgrade unlocks. extra_slot adds a parallel gathering slot;
+  // perk-typed upgrades stamp modifiers onto in-flight tasks at start time
+  // (see computeTentModifiers / rollGatherYield).
+  effect:
+    | { kind: "extra_slot" }
+    | { kind: "duration_pct"; value: number }     // percent reduction off base tier duration
+    | { kind: "yield_bonus"; value: number }      // added to primary resource qty
+    | { kind: "rare_bonus_pct"; value: number };  // percent points added to rare-roll thresholds
   coming_soon?: boolean;
 }
 
@@ -1972,22 +1989,47 @@ export const CAMP_UPGRADE_CATALOG: CampUpgradeSpec[] = [
   {
     key: "worker_tent_2",
     label: "Second Worker Tent",
-    blurb: "Three gathering tasks at once. Coming soon.",
+    blurb: "A third hand at the camp — three gathering tasks at once.",
     icon: "tent",
     gold_cost: 800,
     level_req: 6,
-    effect: { kind: "future" },
-    coming_soon: true,
+    effect: { kind: "extra_slot" },
+  },
+  {
+    key: "worker_tent_3",
+    label: "Third Worker Tent",
+    blurb: "Four parallel slots. Full camp.",
+    icon: "tent",
+    gold_cost: 2000,
+    level_req: 9,
+    effect: { kind: "extra_slot" },
   },
   {
     key: "tent_upgrade_quickdry",
     label: "Quickdry Frames",
-    blurb: "Reduces all gather durations by 25%. Coming soon.",
+    blurb: "Cuts every gather's wall-clock time by 25%. Applies to tasks started after build.",
     icon: "fast-forward-button",
     gold_cost: 600,
     level_req: 5,
-    effect: { kind: "future" },
-    coming_soon: true,
+    effect: { kind: "duration_pct", value: 25 },
+  },
+  {
+    key: "tent_upgrade_haul",
+    label: "Big Haul",
+    blurb: "Each task brings back one extra of its primary resource.",
+    icon: "knapsack",
+    gold_cost: 1200,
+    level_req: 7,
+    effect: { kind: "yield_bonus", value: 1 },
+  },
+  {
+    key: "tent_upgrade_keen_eye",
+    label: "Keen Eye",
+    blurb: "+10% chance to roll the rare resource on Standard and Deep tiers.",
+    icon: "eye-target",
+    gold_cost: 1500,
+    level_req: 8,
+    effect: { kind: "rare_bonus_pct", value: 10 },
   },
 ];
 
@@ -1995,15 +2037,58 @@ export function findCampUpgrade(key: string): CampUpgradeSpec | undefined {
   return CAMP_UPGRADE_CATALOG.find((u) => u.key === key);
 }
 
-// Total gather slots available to a character given their built upgrades. v1:
-// 1 (main char) + 1 per built `worker_tent_*` upgrade (only worker_tent_1 is
-// buildable for now; future tents extend this transparently).
+// Total gather slots available given the character's built upgrades.
+// 1 (main char) + 1 per built worker_tent_* upgrade. Cap at 4 (1 + 3 tents).
 export function gatherSlotCount(builtKeys: string[]): number {
   let slots = 1;
   for (const key of builtKeys) {
     if (key.startsWith("worker_tent_")) slots += 1;
   }
-  return slots;
+  return Math.min(4, slots);
+}
+
+// Modifier snapshot stored on each gathering_tasks row at start time so
+// in-flight tasks keep their planned math even if the player builds more
+// perks before the task expires.
+export interface TentModifiers {
+  duration_pct: number;     // 0..75 (clamp to leave a floor on every duration)
+  yield_bonus: number;      // 0..N — added to primary resource qty
+  rare_bonus_pct: number;   // 0..50 — percent points added to rare thresholds
+}
+
+export const NO_TENT_MODIFIERS: TentModifiers = {
+  duration_pct: 0,
+  yield_bonus: 0,
+  rare_bonus_pct: 0,
+};
+
+// Roll up built perks into a single modifier struct. Perks stack additively
+// — two yield_bonus upgrades would each add their value (none today, but
+// the math is ready). duration_pct caps at 75 so a gather can't drop to 0.
+export function computeTentModifiers(builtKeys: string[]): TentModifiers {
+  let duration_pct = 0;
+  let yield_bonus = 0;
+  let rare_bonus_pct = 0;
+  for (const key of builtKeys) {
+    const spec = findCampUpgrade(key);
+    if (!spec) continue;
+    if (spec.effect.kind === "duration_pct") duration_pct += spec.effect.value;
+    else if (spec.effect.kind === "yield_bonus") yield_bonus += spec.effect.value;
+    else if (spec.effect.kind === "rare_bonus_pct") rare_bonus_pct += spec.effect.value;
+  }
+  return {
+    duration_pct: Math.min(75, Math.max(0, duration_pct)),
+    yield_bonus: Math.max(0, yield_bonus),
+    rare_bonus_pct: Math.min(50, Math.max(0, rare_bonus_pct)),
+  };
+}
+
+// Apply duration_pct to a base tier duration. Used by /api/camp/start when
+// stamping expires_at; the modifier struct is then persisted on the task
+// for yield-time accounting.
+export function applyDurationModifier(baseMs: number, modifiers: TentModifiers): number {
+  const cut = Math.max(0, Math.min(75, modifiers.duration_pct));
+  return Math.round(baseMs * (1 - cut / 100));
 }
 
 // =============================================================================
