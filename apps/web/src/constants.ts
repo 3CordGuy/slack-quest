@@ -31,6 +31,7 @@ export const ERROR_LABELS: Record<string, string> = {
   unequip_first: "Unequip the item first before giving or selling.",
   recipient_no_character: "That player hasn't rolled a character yet.",
   mid_quest: "Not available mid-quest.",
+  main_gathering: "Your tent's busy — cancel the camp task or hire a worker first.",
   insufficient_gold: "Not enough gold.",
   unknown_drink: "Unknown drink.",
   drink_cap_reached: "The bartender cuts you off — you've had your fill before the fight.",

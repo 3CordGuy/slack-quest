@@ -41,6 +41,7 @@ interface CampProps {
   inventory: Item[];
   onStartGather: (node: CampNode, tier: CampTier) => Promise<void>;
   onClaim: (taskId: number) => Promise<void>;
+  onCancel: (taskId: number) => Promise<void>;
   onBuildUpgrade: (upgradeKey: string) => Promise<void>;
 }
 
@@ -53,7 +54,7 @@ const TAB_META: Array<{ tab: CampTab; label: string; icon: string }> = [
 
 export function Camp({
   characterLevel, overviewArt, navOverlay, status, inventory,
-  onStartGather, onClaim, onBuildUpgrade,
+  onStartGather, onClaim, onCancel, onBuildUpgrade,
 }: CampProps) {
   const [tab, setTab] = useState<CampTab>("mine");
   const activeBySlot = useMemo(() => {
@@ -67,7 +68,7 @@ export function Camp({
       {navOverlay && <LocationHero src={overviewArt} label="My Camp" nav={navOverlay} flush />}
       <div style={{ padding: "var(--card-pad, 32px)" }}>
         <CampHeader status={status} />
-        <ActiveTaskStrip status={status} onClaim={onClaim} />
+        <ActiveTaskStrip status={status} onClaim={onClaim} onCancel={onCancel} />
         <Stockpile inventory={inventory} />
 
         <div style={{ display: "flex", gap: 6, marginTop: 24, marginBottom: 20, flexWrap: "wrap" }}>
@@ -196,27 +197,30 @@ function CampHeader({ status }: { status: CampStatusResponse | null }) {
 function ActiveTaskStrip({
   status,
   onClaim,
+  onCancel,
 }: {
   status: CampStatusResponse | null;
   onClaim: (taskId: number) => Promise<void>;
+  onCancel: (taskId: number) => Promise<void>;
 }) {
   const active = status?.active ?? [];
   if (active.length === 0) return null;
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 16 }}>
       {active.map((t) => (
-        <ActiveTaskRow key={t.id} task={t} now={status?.now ?? Date.now()} onClaim={onClaim} />
+        <ActiveTaskRow key={t.id} task={t} now={status?.now ?? Date.now()} onClaim={onClaim} onCancel={onCancel} />
       ))}
     </div>
   );
 }
 
 function ActiveTaskRow({
-  task, now, onClaim,
+  task, now, onClaim, onCancel,
 }: {
   task: ActiveGatheringTask;
   now: number;
   onClaim: (taskId: number) => Promise<void>;
+  onCancel: (taskId: number) => Promise<void>;
 }) {
   const [ticker, setTicker] = useState(Date.now());
   useEffect(() => {
@@ -233,10 +237,26 @@ function ActiveTaskRow({
   const nodeSpec = CAMP_NODE_CONFIG[task.node];
   const tierSpec = CAMP_TIERS[task.tier];
   const [busy, setBusy] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
+  // The player's own worker is slot 1 — that's the slot the quest gate
+  // watches. Hired-worker rows can still be cancelled, but the affordance
+  // is most important on the main slot since cancelling it unblocks
+  // hunts/quests.
+  const isMainSlot = task.worker_slot === 1;
 
   async function handleClaim() {
     setBusy(true);
     try { await onClaim(task.id); } finally { setBusy(false); }
+  }
+
+  async function handleCancel() {
+    if (cancelling || busy || ready) return;
+    const ok = typeof window !== "undefined"
+      ? window.confirm(`Cancel ${nodeSpec.label.toLowerCase()} (Tent ${task.worker_slot})? No resources will drop.`)
+      : true;
+    if (!ok) return;
+    setCancelling(true);
+    try { await onCancel(task.id); } finally { setCancelling(false); }
   }
 
   return (
@@ -253,9 +273,24 @@ function ActiveTaskRow({
       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
         <Icon name={nodeSpec.icon} size={20} color={ready ? "#4ade80" : "var(--fg-mute)"} />
         <div>
-          <div style={{ fontWeight: 600 }}>{nodeSpec.label} · {tierSpec.label}</div>
+          <div style={{ fontWeight: 600 }}>
+            {nodeSpec.label} · {tierSpec.label}
+            {isMainSlot && (
+              <span style={{
+                marginLeft: 8,
+                font: "9px/1 var(--font-mono)",
+                color: "var(--accent-gold)",
+                textTransform: "uppercase",
+                letterSpacing: 0.7,
+                padding: "2px 6px",
+                border: "1px solid var(--accent-gold-warm)",
+                borderRadius: "var(--radius-sm)",
+                background: "rgba(251,191,36,0.10)",
+              }}>You</span>
+            )}
+          </div>
           <div style={{ fontSize: 12, color: "var(--fg-mute)" }}>
-            Tent {task.worker_slot}
+            {isMainSlot ? "Your tent" : `Tent ${task.worker_slot}`}
             {ready ? " · Ready to collect" : ` · ${formatRemaining(remainingMs)} left`}
           </div>
         </div>
@@ -271,23 +306,49 @@ function ActiveTaskRow({
           transition: "width 1s linear",
         }} />
       </div>
-      <button
-        type="button"
-        disabled={!ready || busy}
-        onClick={handleClaim}
-        style={{
-          background: ready ? "#4ade80" : "var(--bg-card)",
-          color: ready ? "#0b1410" : "var(--fg-mute)",
-          border: "1px solid var(--border-base)",
-          borderRadius: "var(--radius-md)",
-          padding: "6px 14px",
-          fontFamily: "inherit",
-          fontWeight: 600,
-          cursor: ready && !busy ? "pointer" : "default",
-        }}
-      >
-        {busy ? "…" : ready ? "Collect" : "Working"}
-      </button>
+      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+        {!ready && (
+          <button
+            type="button"
+            disabled={cancelling || busy}
+            onClick={handleCancel}
+            title={
+              isMainSlot
+                ? "Cancel and free your main character to go on a hunt or quest"
+                : "Recall this worker — no resources will drop"
+            }
+            style={{
+              background: "transparent",
+              color: "var(--fg-mute)",
+              border: "1px solid var(--border-base)",
+              borderRadius: "var(--radius-md)",
+              padding: "6px 10px",
+              fontFamily: "inherit",
+              fontSize: 12,
+              cursor: cancelling || busy ? "default" : "pointer",
+            }}
+          >
+            {cancelling ? "…" : "Cancel"}
+          </button>
+        )}
+        <button
+          type="button"
+          disabled={!ready || busy}
+          onClick={handleClaim}
+          style={{
+            background: ready ? "#4ade80" : "var(--bg-card)",
+            color: ready ? "#0b1410" : "var(--fg-mute)",
+            border: "1px solid var(--border-base)",
+            borderRadius: "var(--radius-md)",
+            padding: "6px 14px",
+            fontFamily: "inherit",
+            fontWeight: 600,
+            cursor: ready && !busy ? "pointer" : "default",
+          }}
+        >
+          {busy ? "…" : ready ? "Collect" : "Working"}
+        </button>
+      </div>
     </div>
   );
 }

@@ -3,6 +3,7 @@ import toast from "react-hot-toast";
 import { isMonsterActor, classByName, activeAbilities, type ActiveAbilityDef, isAllyNpcActor } from "@gantt-quest/core";
 
 import { Avatar, Icon } from "./icons";
+import { CombatBackdropLayer, pickScene, viewArtKeyForScene } from "./combatBackgrounds";
 import { CombatParticles, CombatParticlesProvider, triggerBurst } from "./CombatParticles";
 import {
   DISPLAY_FONT,
@@ -1432,8 +1433,29 @@ export function CombatPage({
     setGivePicker("closed");
   }
 
-  // Background art: first live monster's portrait, or first monster fallback.
-  const bgArtUrl = state?.monsters.find((m) => m.hp > 0)?.art_url ?? state?.monsters[0]?.art_url ?? null;
+  // Themed combat backdrop — picks a scenery key off the quest id so the
+  // same fight always opens in the same room. Replaces the old "blow up
+  // the monster portrait" backdrop, which left every fight looking like
+  // an enemy splash screen.
+  const scene = pickScene(questId);
+  // Lazy-fetch the flux-generated scenery image via the existing view-art
+  // endpoint. Null until the first cache hit lands; CombatBackdropLayer
+  // (CSS/SVG scenery) renders underneath the whole time so the room is
+  // never empty. On cache miss the worker schedules generation; a second
+  // mount (or page reload) will land the URL.
+  const [bgArtUrl, setBgArtUrl] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    const key = viewArtKeyForScene(scene);
+    fetch(`/api/art/view/${encodeURIComponent(key)}`, { credentials: "include" })
+      .then((r) => (r.ok ? r.json() as Promise<{ url: string | null }> : null))
+      .then((body) => {
+        if (cancelled || !body) return;
+        setBgArtUrl(body.url);
+      })
+      .catch(() => { /* ignore — fallback already painted */ });
+    return () => { cancelled = true; };
+  }, [scene]);
   const isPickerOpen = itemPicker !== "closed" || migratePicker || allyPickerAbility !== null || anyPickerAbility !== null || givePicker !== "closed" || protectConfirm !== null;
   const otherPosition = me?.position === "front" ? "back" : "front";
   const isMonsterTurn = currentActorId !== null && isMonsterActor(currentActorId);
@@ -1475,22 +1497,118 @@ export function CombatPage({
         />
       )}
 
-      {/* Room view — flex: 1, background art + floating overlays */}
-      <div style={{ flex: 1, position: "relative", overflow: "hidden", minHeight: 0, background: bgArtUrl ? undefined : "#1c1f2e" }}>
+      {/* Room view — flex: 1, themed scenery backdrop + floating overlays.
+          Layer order: CSS/SVG fallback scenery → flux-generated room photo
+          (fade-in when loaded) → atmospheric dim gradient → particles.
+          The SVG keeps painting underneath even after the photo loads so
+          slow networks never flash an empty void. */}
+      <div style={{ flex: 1, position: "relative", overflow: "hidden", minHeight: 0, background: "#0a0b10" }}>
+        <CombatBackdropLayer scene={scene} />
         {bgArtUrl && (
-          <img src={bgArtUrl} alt="" style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover" }} onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
+          <img
+            src={bgArtUrl}
+            alt=""
+            aria-hidden
+            style={{
+              position: "absolute",
+              inset: 0,
+              width: "100%",
+              height: "100%",
+              objectFit: "cover",
+              opacity: 0.78,
+              transition: "opacity 600ms ease",
+              pointerEvents: "none",
+            }}
+            onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
+          />
         )}
-        <div style={{ position: "absolute", inset: 0, background: bgArtUrl
-          ? "linear-gradient(to bottom, rgba(0,0,0,0.25) 0%, rgba(0,0,0,0.05) 35%, rgba(0,0,0,0.70) 100%)"
-          : "linear-gradient(to bottom, rgba(0,0,0,0.10) 0%, rgba(0,0,0,0.00) 40%, rgba(0,0,0,0.40) 100%)",
-          pointerEvents: "none" }} />
+        <div
+          aria-hidden
+          style={{
+            position: "absolute", inset: 0, pointerEvents: "none",
+            background: "linear-gradient(to bottom, rgba(0,0,0,0.30) 0%, rgba(0,0,0,0.05) 38%, rgba(0,0,0,0.78) 100%)",
+          }}
+        />
         <CombatParticles />
 
-        {/* Loading state */}
+        {/* Pre-combat state — shown while the QuestRoom DO boots and the WS
+            handshake completes. Themed to the rest of the combat UI (gold
+            accents, display font) so the transition from quest banner →
+            engagement → live combat reads as one continuous beat. */}
         {!state && (
-          <div style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%,-50%)", color: "#9aa0a6", fontSize: 14, textAlign: "center" }}>
-            <p style={{ margin: 0 }}>Loading combat…</p>
-            {ui.error && <p style={{ margin: "8px 0 0", color: "#c0392b" }}>{ui.error}</p>}
+          <div
+            style={{
+              position: "absolute",
+              top: "50%",
+              left: "50%",
+              transform: "translate(-50%,-50%)",
+              textAlign: "center",
+              padding: "0 24px",
+              maxWidth: 420,
+              width: "100%",
+              boxSizing: "border-box",
+              zIndex: 5,
+            }}
+          >
+            <div
+              aria-hidden
+              style={{
+                width: 64,
+                height: 64,
+                margin: "0 auto 18px",
+                borderRadius: "50%",
+                border: "2px solid rgba(251,191,36,0.18)",
+                borderTopColor: "var(--accent-gold)",
+                animation: "spin 1.1s linear infinite",
+                boxShadow: "0 0 24px rgba(251,191,36,0.25)",
+              }}
+            />
+            <div
+              style={{
+                font: "10px/1 var(--font-mono)",
+                color: "var(--fg-mute)",
+                textTransform: "uppercase",
+                letterSpacing: 1.6,
+                marginBottom: 8,
+              }}
+            >
+              {ui.connection === "reconnecting" ? "Reconnecting" : "Engagement"}
+            </div>
+            <div
+              style={{
+                font: "26px/1.1 var(--font-display)",
+                color: "var(--fg-1)",
+                marginBottom: 10,
+              }}
+            >
+              {ui.connection === "reconnecting"
+                ? "Holding the line…"
+                : "Drawing steel…"}
+            </div>
+            <p
+              style={{
+                margin: 0,
+                color: "var(--fg-mute)",
+                fontSize: 13,
+                lineHeight: 1.5,
+              }}
+            >
+              {ui.connection === "reconnecting"
+                ? "Lost the signal — picking the thread back up."
+                : "Spinning up the battlefield. This should only take a moment."}
+            </p>
+            {ui.error && (
+              <p
+                style={{
+                  margin: "14px 0 0",
+                  color: "var(--tone-bad)",
+                  fontSize: 12,
+                  fontFamily: "var(--font-mono)",
+                }}
+              >
+                {ui.error}
+              </p>
+            )}
           </div>
         )}
 
@@ -1783,11 +1901,16 @@ export function CombatPage({
         <div style={{
           background: "var(--bg-deep)",
           borderTop: "1px solid var(--border-faint)",
-          padding: isMobile ? "10px 12px 12px" : "12px 24px 16px",
+          // Reserve safe-area for iOS home indicator so the bar never sits
+          // under the gesture stripe. The constant `env(safe-area-inset-bottom)`
+          // is 0 on platforms without a notch.
+          padding: isMobile
+            ? "8px 10px calc(10px + env(safe-area-inset-bottom, 0px))"
+            : "12px 24px 16px",
           flexShrink: 0,
           display: "grid",
           gridTemplateColumns: showTurncard ? "220px 1fr" : "1fr",
-          gap: showTurncard ? 18 : 8,
+          gap: showTurncard ? 18 : 6,
           alignItems: "center",
         }}>
           {/* Active-turn card (left) */}
@@ -1846,13 +1969,20 @@ export function CombatPage({
               </div>
             </div>
           )}
-          {/* Ability bar (right) */}
+          {/* Ability bar. On mobile we cap the bar height and let it scroll
+              vertically — the buttons used to wrap into 3–4 rows on short
+              phone viewports, pushing Flee/Auto under the iOS home bar.
+              Capping the height keeps every action reachable. */}
           <div style={{
             display: "flex",
-            gap: 8,
+            gap: isMobile ? 6 : 8,
             alignItems: "center",
             flexWrap: "wrap",
             minWidth: 0,
+            maxHeight: isMobile ? "32vh" : undefined,
+            overflowY: isMobile ? "auto" : "visible",
+            WebkitOverflowScrolling: "touch",
+            paddingBottom: isMobile ? 2 : 0,
           }}>
           {/* Turn status hint */}
           {!myTurn && (

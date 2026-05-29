@@ -248,6 +248,7 @@ import {
   SMITHY_SHARPEN_TOTAL_CAP,
   addResource,
   bumpSharpens,
+  cancelGatheringTask,
   getGatheringTask,
   listActiveGatheringTasks,
   listCampUpgrades,
@@ -812,6 +813,18 @@ function artTarget(env: Env): import("./ai").ArtTarget {
   return { bucket: env.ART, baseUrl: WEB_PUBLIC_BASE, disabled: env.ENVIRONMENT === "local" };
 }
 
+// True when the player's *own* worker (slot 1) is mid-gather. Hired worker
+// slots (slot ≥ 2) don't block the player from questing — the whole point
+// of buying them is to keep gathering going while the main character is
+// out in combat. Used as a guard on every quest/hunt entry point.
+async function isMainCharacterGathering(
+  db: D1Database,
+  userId: string,
+): Promise<boolean> {
+  const tasks = await listActiveGatheringTasks(db, userId);
+  return tasks.some((t) => t.worker_slot === 1);
+}
+
 const SESSION_COOKIE = "sq_session";
 const SESSION_MAX_AGE_SEC = 30 * 24 * 60 * 60;
 
@@ -1047,6 +1060,31 @@ app.post("/api/settings/notify", async (c) => {
   }
   await setNotificationPref(c.env.DB, session.slack_user_id, body.pref);
   return c.json({ ok: true });
+});
+
+// Lets a player set their own display username (the @handle shown next to
+// their character name in party lists, leaderboards, and combat chips).
+// Use case: the player's Slack handle never resolved (slack_username is
+// null), so other players don't know who they're playing with. We reuse
+// the slack_username column rather than introducing a parallel field —
+// downstream display code already falls back to it, and the column has
+// no meaning beyond "the @handle to show".
+app.post("/api/settings/username", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const body = await c.req.json<{ username?: string }>().catch((): { username?: string } => ({}));
+  const raw = typeof body.username === "string" ? body.username.trim() : "";
+  // Strip a leading @ so the player can paste either form. Allow letters,
+  // digits, dot, dash, underscore — typical Slack handle alphabet.
+  const cleaned = raw.replace(/^@+/, "").slice(0, 32);
+  if (!/^[A-Za-z0-9._-]{2,32}$/.test(cleaned)) {
+    return c.json({ error: "invalid_username", note: "2–32 chars: letters, digits, . _ -" }, 400);
+  }
+  await c.env.DB
+    .prepare("UPDATE characters SET slack_username = ? WHERE slack_user_id = ?")
+    .bind(cleaned, session.slack_user_id)
+    .run();
+  return c.json({ ok: true, username: cleaned });
 });
 
 // Returns the authenticated user's character (or null if they haven't created
@@ -1444,6 +1482,9 @@ app.post("/api/quest/start", async (c) => {
   if (await getActiveQuestForCharacter(c.env.DB, session.slack_user_id)) {
     return c.json({ error: "already_on_quest" }, 400);
   }
+  if (await isMainCharacterGathering(c.env.DB, session.slack_user_id)) {
+    return c.json({ error: "main_gathering", note: "Your main character is mid-task at camp. Cancel it, or send a hired worker instead." }, 400);
+  }
   const body = (await c.req.json().catch(() => null)) as
     | { variant?: unknown; elite?: unknown; monster_count?: unknown }
     | null;
@@ -1557,6 +1598,9 @@ app.post("/api/quest/start_with_party", async (c) => {
   if (await getActiveQuestForCharacter(c.env.DB, session.slack_user_id)) {
     return c.json({ error: "already_on_quest" }, 400);
   }
+  if (await isMainCharacterGathering(c.env.DB, session.slack_user_id)) {
+    return c.json({ error: "main_gathering", note: "Your main character is mid-task at camp. Cancel it, or send a hired worker instead." }, 400);
+  }
   const body = (await c.req.json().catch(() => null)) as
     | { variant?: unknown; elite?: unknown; invitees?: unknown }
     | null;
@@ -1656,6 +1700,13 @@ app.get("/api/quest/joinable", async (c) => {
   if (quest.scene.variant === "tower" && (quest.scene.tower_floor ?? 1) > 1) {
     return c.json({ joinable: null, reason: "tower_advanced" });
   }
+  // Pull the starter's display name so toast copy can attribute the quest.
+  // Fall back to slack_username, then null if neither is set.
+  const starterRow = await c.env.DB
+    .prepare("SELECT name, slack_username FROM characters WHERE slack_user_id = ?")
+    .bind(quest.created_by)
+    .first<{ name: string | null; slack_username: string | null }>();
+  const starterName = starterRow?.name ?? starterRow?.slack_username ?? null;
   return c.json({
     joinable: {
       quest_id: quest.id,
@@ -1665,6 +1716,7 @@ app.get("/api/quest/joinable", async (c) => {
       monster_name: quest.scene.monster_name,
       monster_max_hp: quest.scene.monster_max_hp,
       scene: quest.scene.scene,
+      starter_name: starterName,
     },
   });
 });
@@ -1681,6 +1733,9 @@ app.post("/api/quest/join", async (c) => {
   }
   if (await getActiveQuestForCharacter(c.env.DB, session.slack_user_id)) {
     return c.json({ error: "already_on_quest" }, 400);
+  }
+  if (await isMainCharacterGathering(c.env.DB, session.slack_user_id)) {
+    return c.json({ error: "main_gathering", note: "Your main character is mid-task at camp. Cancel it, or send a hired worker instead." }, 400);
   }
   const channelId = await recentChannelForUser(c.env.DB, session.slack_user_id, c.env);
   if (!channelId) return c.json({ error: "no_channel" }, 404);
@@ -1874,6 +1929,9 @@ app.post("/api/board/take", async (c) => {
   }
   if (await getActiveQuestForCharacter(c.env.DB, session.slack_user_id)) {
     return c.json({ error: "already_on_quest" }, 400);
+  }
+  if (await isMainCharacterGathering(c.env.DB, session.slack_user_id)) {
+    return c.json({ error: "main_gathering", note: "Your main character is mid-task at camp. Cancel it, or send a hired worker instead." }, 400);
   }
   const body = await c.req.json().catch(() => null) as { job_id?: string } | null;
   const jobId = body?.job_id;
@@ -2106,7 +2164,10 @@ app.post("/api/hunt", async (c) => {
   if (await getActiveQuestForCharacter(c.env.DB, session.slack_user_id)) {
     return c.json({ error: "already_on_quest" }, 400);
   }
-  const body = await c.req.json().catch(() => null) as { tier?: number; monster_count?: number; invitees?: unknown } | null;
+  if (await isMainCharacterGathering(c.env.DB, session.slack_user_id)) {
+    return c.json({ error: "main_gathering", note: "Your main character is mid-task at camp. Cancel it, or send a hired worker instead." }, 400);
+  }
+  const body = await c.req.json().catch(() => null) as { tier?: number; monster_count?: number; invitees?: unknown; is_private?: boolean } | null;
   const requestedTier = body?.tier;
   if (typeof requestedTier !== "number" || !Number.isInteger(requestedTier) || requestedTier < 1) {
     return c.json({ error: "invalid_tier" }, 400);
@@ -2116,6 +2177,7 @@ app.post("/api/hunt", async (c) => {
   const invitees = Array.isArray(body?.invitees)
     ? (body!.invitees as unknown[]).filter((x): x is string => typeof x === "string").slice(0, 5)
     : [];
+  const isPrivate = body?.is_private === true;
 
   const channelId = await recentChannelForUser(c.env.DB, session.slack_user_id, c.env);
   if (!channelId) return c.json({ error: "no_channel" }, 400);
@@ -2160,6 +2222,7 @@ app.post("/api/hunt", async (c) => {
     created_by: session.slack_user_id,
     lobby: invitees.length > 0,
     lobby_expires_at: invitees.length > 0 ? now + LOBBY_TTL : undefined,
+    is_private: isPrivate,
   });
 
   if (invitees.length > 0) {
@@ -2927,6 +2990,23 @@ app.post("/api/camp/start", async (c) => {
     duration_ms: tierSpec.duration_ms,
   });
   return c.json({ ok: true, task });
+});
+
+// DELETE the player's own active gathering task — frees the worker slot so
+// they can start a hunt/quest. Hired workers (slot ≥ 2) are left alone:
+// the user said the point of buying workers is exactly to keep gathering
+// running while the main character is out questing.
+app.post("/api/camp/cancel/:taskId", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const taskId = parseInt(c.req.param("taskId"), 10);
+  if (!Number.isFinite(taskId)) return c.json({ error: "bad_task_id" }, 400);
+  const task = await getGatheringTask(c.env.DB, taskId, session.slack_user_id);
+  if (!task) return c.json({ error: "not_yours" }, 404);
+  if (task.claimed_at) return c.json({ error: "already_claimed" }, 400);
+  const cancelled = await cancelGatheringTask(c.env.DB, taskId, session.slack_user_id);
+  if (!cancelled) return c.json({ error: "raced" }, 409);
+  return c.json({ ok: true, task_id: taskId });
 });
 
 app.post("/api/camp/claim/:taskId", async (c) => {

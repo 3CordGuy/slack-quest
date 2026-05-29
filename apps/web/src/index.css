@@ -115,6 +115,10 @@
 html, body, #root {
   height: 100%;
   margin: 0;
+  /* Prevent rogue child overflow (long words, fixed-width tables, etc.)
+     from triggering a viewport-wide horizontal scroll on mobile. */
+  overflow-x: hidden;
+  max-width: 100%;
 }
 
 body {

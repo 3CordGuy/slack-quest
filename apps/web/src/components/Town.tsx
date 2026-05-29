@@ -103,91 +103,108 @@ export function JobPostingCard({
       padding: "14px 16px",
       opacity: dim ? 0.55 : 1,
       position: "relative",
+      display: "grid",
+      gridTemplateColumns: "44px 1fr",
+      gap: 14,
+      alignItems: "start",
     }}>
-      {/* Variant badge + level row */}
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8, flexWrap: "wrap" }}>
-        <div style={{
-          display: "inline-flex", alignItems: "center", gap: 4,
-          background: vs.color + "1a", border: `1px solid ${vs.color}44`,
-          borderRadius: "var(--radius-sm)", padding: "2px 8px",
-        }}>
-          <Icon name={vs.icon} size={11} color={vs.color} />
-          <span style={{ fontSize: 10, fontWeight: 700, color: vs.color, letterSpacing: 0.6 }}>
+      {/* Variant icon disc — mirrors .offer .o-ico from the design kit */}
+      <div style={{
+        width: 44,
+        height: 44,
+        borderRadius: "var(--radius-md)",
+        background: "var(--bg-void)",
+        border: `1px solid ${dim ? "var(--border-base)" : vs.color + "55"}`,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        flexShrink: 0,
+      }}>
+        <Icon name={vs.icon} size={22} color={dim ? "var(--fg-faint)" : vs.color} />
+      </div>
+
+      <div style={{ minWidth: 0 }}>
+        {/* Variant badge + level row */}
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6, flexWrap: "wrap" }}>
+          <span style={{
+            fontSize: 10, fontWeight: 700, color: dim ? "var(--fg-faint)" : vs.color,
+            textTransform: "uppercase", letterSpacing: 0.7,
+          }}>
             {vs.label}
           </span>
+          {job.required_level > 1 && (
+            <span style={{ fontSize: 11, color: "var(--fg-mute-3)", fontFamily: "var(--font-mono)" }}>
+              · L{job.required_level}+
+            </span>
+          )}
+          {job.variant === "bounty_pack" && job.monster_count && job.monster_count > 1 && (
+            <span style={{
+              fontSize: 10, fontWeight: 700, color: "#fb923c",
+              background: "#fb923c1a", border: "1px solid #fb923c44",
+              borderRadius: "var(--radius-sm)", padding: "2px 7px",
+            }}>
+              ×{job.monster_count} enemies
+            </span>
+          )}
+          {isMyClaim && (
+            <span style={{ fontSize: 11, color: "var(--tone-good)", marginLeft: "auto" }}>✓ Claimed by you</span>
+          )}
+          {isTaken && !isMyClaim && (
+            <span style={{ fontSize: 11, color: "var(--fg-faint)", marginLeft: "auto" }}>✓ Taken</span>
+          )}
         </div>
-        {job.required_level > 1 && (
-          <span style={{ fontSize: 11, color: "var(--fg-mute-3)", fontFamily: "var(--font-mono)" }}>
-            L{job.required_level}+
-          </span>
-        )}
-        {job.variant === "bounty_pack" && job.monster_count && job.monster_count > 1 && (
-          <span style={{
-            fontSize: 10, fontWeight: 700, color: "#fb923c",
-            background: "#fb923c1a", border: "1px solid #fb923c44",
-            borderRadius: "var(--radius-sm)", padding: "2px 7px",
-          }}>
-            ×{job.monster_count} enemies
-          </span>
-        )}
-        {isMyClaim && (
-          <span style={{ fontSize: 11, color: "#86efac", marginLeft: "auto" }}>✓ Claimed by you</span>
-        )}
-        {isTaken && !isMyClaim && (
-          <span style={{ fontSize: 11, color: "var(--fg-faint)", marginLeft: "auto" }}>✓ Taken</span>
-        )}
-      </div>
 
-      <div style={{
-        fontFamily: "var(--font-display)",
-        fontWeight: 400,
-        color: titleColor,
-        marginBottom: 6,
-        fontSize: 16,
-        lineHeight: 1.25,
-      }}>
-        {job.title}
-      </div>
-
-      <p style={{
-        fontFamily: "var(--font-body)",
-        fontStyle: "italic",
-        fontSize: 12,
-        margin: "0 0 12px",
-        lineHeight: 1.5,
-        color: blurbColor,
-      }}>
-        {job.blurb}
-      </p>
-
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
-        <span style={{
-          fontSize: 12,
-          color: dim ? "var(--fg-faint)" : "var(--accent-gold)",
-          fontWeight: 600,
-          display: "inline-flex",
-          alignItems: "center",
-          gap: 5,
+        <div style={{
+          fontFamily: "var(--font-display)",
+          fontWeight: 400,
+          color: titleColor,
+          marginBottom: 4,
+          fontSize: 16,
+          lineHeight: 1.25,
         }}>
-          <Icon name="gold-bar" size={12} color={dim ? "var(--fg-faint)" : "var(--accent-gold)"} />
-          {job.reward_summary}
-        </span>
-        {!isTaken && !meetsLevel && (
-          <span style={{ fontSize: 12, color: "var(--fg-faint)" }}>
-            <Icon name="padlock" size={11} style={{ marginRight: 4 }} />
-            Need L{job.required_level}
+          {job.title}
+        </div>
+
+        <p style={{
+          fontFamily: "var(--font-body)",
+          fontStyle: "italic",
+          fontSize: 12,
+          margin: "0 0 12px",
+          lineHeight: 1.5,
+          color: blurbColor,
+        }}>
+          {job.blurb}
+        </p>
+
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+          <span style={{
+            fontSize: 12,
+            color: dim ? "var(--fg-faint)" : "var(--accent-gold)",
+            fontWeight: 600,
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 5,
+          }}>
+            <Icon name="gold-bar" size={12} color={dim ? "var(--fg-faint)" : "var(--accent-gold)"} />
+            {job.reward_summary}
           </span>
-        )}
-        {!isTaken && meetsLevel && (
-          <button
-            className="btn btn-gold btn-sm"
-            onClick={() => { setPending(true); onTake(); }}
-            disabled={pending}
-          >
-            <Icon name="gold-bar" size={12} />
-            {pending ? "Claiming…" : "Take Job"}
-          </button>
-        )}
+          {!isTaken && !meetsLevel && (
+            <span style={{ fontSize: 12, color: "var(--fg-faint)" }}>
+              <Icon name="padlock" size={11} style={{ marginRight: 4 }} />
+              Need L{job.required_level}
+            </span>
+          )}
+          {!isTaken && meetsLevel && (
+            <button
+              className="btn btn-gold btn-sm"
+              onClick={() => { setPending(true); onTake(); }}
+              disabled={pending}
+            >
+              <Icon name="gold-bar" size={12} />
+              {pending ? "Claiming…" : "Take Job"}
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -247,11 +264,12 @@ export function HuntSection({
   characterLevel: number;
   overviewArt: string | null;
   navOverlay?: ReactNode;
-  onStartHunt: (tier: number, monsterCount: number, invitees: string[]) => void;
+  onStartHunt: (tier: number, monsterCount: number, invitees: string[], isPrivate: boolean) => void;
 }) {
   const [tier, setTier] = useState(characterLevel);
   const [monsterCount, setMonsterCount] = useState(1);
   const [busy, setBusy] = useState(false);
+  const [isPrivate, setIsPrivate] = useState(false);
   const [teamMembers, setTeamMembers] = useState<{ slack_user_id: string; name: string; class: string; level: number }[]>([]);
   const [invitees, setInvitees] = useState<Set<string>>(new Set());
   const clampedTier = Math.max(1, Math.min(tier, characterLevel));
@@ -293,7 +311,7 @@ export function HuntSection({
 
   async function handle() {
     setBusy(true);
-    try { await onStartHunt(clampedTier, monsterCount, [...invitees]); } finally { setBusy(false); }
+    try { await onStartHunt(clampedTier, monsterCount, [...invitees], isPrivate); } finally { setBusy(false); }
   }
 
   return (
@@ -404,6 +422,28 @@ export function HuntSection({
           </div>
         )}
 
+        <label
+          title="Private hunts don't announce to the channel — other players won't see a join prompt."
+          style={{
+            display: "flex", alignItems: "center", gap: 8,
+            marginBottom: 12, fontSize: 13, color: "var(--fg-2)",
+            cursor: "pointer",
+          }}
+        >
+          <input
+            type="checkbox"
+            checked={isPrivate}
+            onChange={(e) => setIsPrivate(e.target.checked)}
+            style={{ accentColor: "var(--accent-arcane)", flexShrink: 0 }}
+          />
+          <span>
+            <strong>Private hunt</strong>
+            <span style={{ color: "var(--fg-mute)", marginLeft: 6, fontSize: 12 }}>
+              (no channel notification)
+            </span>
+          </span>
+        </label>
+
         <button
           onClick={handle}
           disabled={busy}
@@ -418,7 +458,7 @@ export function HuntSection({
           {busy ? "Scouting…"
             : invitees.size > 0
               ? `Start Lobby · Tier ${clampedTier} (${invitees.size + 1} players)`
-              : `Hunt Tier ${clampedTier}${monsterCount > 1 ? ` · ${HUNT_PACK_LABEL[monsterCount]}` : ""}`}
+              : `Hunt Tier ${clampedTier}${monsterCount > 1 ? ` · ${HUNT_PACK_LABEL[monsterCount]}` : ""}${isPrivate ? " · Private" : ""}`}
         </button>
       </div>
     </div>
@@ -451,9 +491,12 @@ export function JobBoardSection({
   onJoin: () => void;
 }) {
   const townName = board?.town_name ?? "Town";
+  const jobCount = board?.jobs.length ?? 0;
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      {/* Bulletin board card */}
+      {/* Bulletin board card — matches the StartQuestCard / HuntSection
+          rhythm: hero, eyebrow + display heading, body, no redundant
+          footer chrome. */}
       <div style={{
         background: "var(--bg-card-2)",
         border: "1px solid var(--border-faint)",
@@ -463,35 +506,35 @@ export function JobBoardSection({
       }}>
         <LocationHero flush src={overviewArt} label={`${townName} — Job Board`} nav={navOverlay} />
 
-        {/* Eyebrow */}
-        <div style={{
-          borderBottom: "1px solid var(--border-faint)",
-          padding: "14px 20px 12px",
-          display: "flex",
-          alignItems: "baseline",
-          justifyContent: "space-between",
-          gap: 12,
-          flexWrap: "wrap",
-        }}>
-          <span style={{
+        {/* Header — eyebrow + h2, mirrors StartQuestCard */}
+        <div style={{ padding: "20px 20px 6px" }}>
+          <div style={{
             font: "10px/1 var(--font-body)",
             textTransform: "uppercase",
             letterSpacing: 1.4,
             fontWeight: 700,
             color: "var(--accent-gold)",
+            marginBottom: 6,
           }}>
-            Today's Contracts · refresh daily
-          </span>
-          <span style={{
-            font: "11px/1 var(--font-body)",
-            color: "var(--fg-mute)",
-          }}>
-            First come, first served
-          </span>
+            Today's Contracts
+          </div>
+          <h2 style={{ ...h2, fontSize: 22, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+            Posted on the board
+            {jobCount > 0 && (
+              <span style={{
+                font: "11px/1 var(--font-mono)",
+                color: "var(--fg-mute)",
+                letterSpacing: 0.5,
+                textTransform: "uppercase",
+              }}>
+                {jobCount} open · first come, first served
+              </span>
+            )}
+          </h2>
         </div>
 
         {/* Job listings */}
-        <div style={{ padding: "16px 20px 20px", display: "flex", flexDirection: "column", gap: 10 }}>
+        <div style={{ padding: "12px 20px 20px", display: "flex", flexDirection: "column", gap: 10 }}>
           {board && board.jobs.length > 0 ? (
             board.jobs.map((job) => (
               <JobPostingCard
@@ -504,22 +547,23 @@ export function JobBoardSection({
               />
             ))
           ) : (
-            <p style={{ color: "var(--fg-mute)", fontSize: 13, margin: 0 }}>
-              The board is bare — run <code>/sq board</code> in Slack to seed today's postings.
-            </p>
+            <div style={{
+              background: "var(--bg-card)",
+              border: "1px dashed var(--border-faint)",
+              borderRadius: "var(--radius-lg)",
+              padding: "20px 16px",
+              textAlign: "center",
+              color: "var(--fg-mute)",
+              fontSize: 13,
+              lineHeight: 1.5,
+            }}>
+              <Icon name="hourglass" size={18} color="var(--fg-faint)" style={{ marginBottom: 6 }} />
+              <div>The board is bare.</div>
+              <div style={{ fontSize: 12, marginTop: 2 }}>
+                Run <code>/sq board</code> in Slack to seed today's postings.
+              </div>
+            </div>
           )}
-        </div>
-
-        <div style={{
-          borderTop: "1px solid var(--border-faint)",
-          padding: "10px 20px",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-        }}>
-          <span style={{ color: "var(--fg-faintest)", fontSize: 11 }}>
-            <Icon name="hourglass" size={11} style={{ marginRight: 4 }} />Postings refresh daily.
-          </span>
         </div>
       </div>
 
@@ -1028,7 +1072,7 @@ export function WardMap({
     {
       id: "outskirts",
       label: "Outskirts",
-      desc: "Solo hunt",
+      desc: "Free hunt",
       icon: "spinning-sword",
       left: "75.2%",
       top: "82.3%",
@@ -1706,7 +1750,7 @@ export function JoinableQuestCard({
         color: "var(--accent-ink-blue)",
         marginBottom: 6,
       }}>
-        Quest in progress · Joinable
+        Quest in progress · Joinable{joinable.starter_name ? ` · ${joinable.starter_name}` : ""}
       </div>
       <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
         <h2 style={{
