@@ -584,6 +584,7 @@ export interface PubPatron {
   archetype: string;
   blurb: string;
   icon: string;
+  art_url?: string | null;
   procure_resource_node: CampNode;
   rare_item: { item_name: string; item_type: ItemType; power: number; rarity: Rarity; slot?: EquipSlot; blurb: string };
   tip_pool: Array<{ item_name: string; item_type: ItemType; power: number; rarity: Rarity; weight: number; blurb: string }>;
