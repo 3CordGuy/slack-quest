@@ -1904,17 +1904,21 @@ export function CombatPage({
               stuck if their persisted position was "back" with no way
               to swap. Back row still matters in solo (reduces melee
               damage from front-positioned monsters). */}
-          <CBtn label={otherPosition === "front" ? "Front" : "Back"} icon={otherPosition === "front" ? "muscle-up" : "fall-down"} color="#6b7280" disabled={!myTurn} onClick={() => send({ kind: "position", actor: selfId, to: otherPosition })} />
+          <CBtn variant="dark" label={otherPosition === "front" ? "Front" : "Back"} icon={otherPosition === "front" ? "muscle-up" : "fall-down"} color="#6b7280" disabled={!myTurn} onClick={() => send({ kind: "position", actor: selfId, to: otherPosition })} />
           <CBtn label="Item" icon="ammo-bag" color="#c084fc" disabled={!myTurn || !items.some((i) => isCombatUsable(i.item_type))} onClick={() => setItemPicker("open")} />
           {items.some((i) => !i.equipped) && state.fighters.filter((f) => f.hp > 0 && f.id !== selfId).length > 0 && (
             <CBtn label="Give" icon="conversation" color="#fcd34d" disabled={!myTurn} onClick={() => setGivePicker("selectItem")} />
           )}
-          <CBtn label="Mark" icon="targeted" color="#f97316" disabled={liveMonsters.length > 1 && targetMonsterId === null} onClick={() => send({ kind: "mark", actor: selfId, target_id: effectiveTarget })} />
-          <CBtn label="Wait" icon="hourglass" color="#475569" disabled={!myTurn} onClick={() => send({ kind: "wait", actor: selfId })} />
+          {/* Divider separates the colored ability actions from the muted
+              utility actions (Mark / Wait / Flee), matching the design's
+              grouping in the .abar. Hidden when the row wraps (flex-basis 0). */}
+          <span className="adiv" aria-hidden />
+          <CBtn variant="dark" label="Mark" icon="targeted" color="#f97316" disabled={liveMonsters.length > 1 && targetMonsterId === null} onClick={() => send({ kind: "mark", actor: selfId, target_id: effectiveTarget })} />
+          <CBtn variant="dark" label="Wait" icon="hourglass" color="#475569" disabled={!myTurn} onClick={() => send({ kind: "wait", actor: selfId })} />
           {/* No flee inside the Tower — commit through each cycle. The exit
               valve is the post-boss "Call it a day" prompt. */}
           {liveMonsters[0]?.tower_floor === undefined && (
-            <CBtn label="Flee" icon="footprint" color="#9aa0a6" disabled={!myTurn} onClick={() => send({ kind: "flee", actor: selfId })} />
+            <CBtn variant="dark" label="Flee" icon="footprint" color="#9aa0a6" disabled={!myTurn} onClick={() => send({ kind: "flee", actor: selfId })} />
           )}
           {isMonsterTurn && !autoResolve && (
             <CBtn label="Resolve" icon="dragon" color="#5c1f1f" onClick={() => send({ kind: "monster_act" })} />
