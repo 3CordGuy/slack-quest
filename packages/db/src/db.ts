@@ -3959,3 +3959,313 @@ export async function bumpSharpens(
   return (result.meta.changes ?? 0) > 0;
 }
 
+
+// =============================================================================
+// PUB ERRANDS: timed NPC-driven mini-quests
+// =============================================================================
+
+export type PubErrandKind = "courier" | "procure" | "investigate" | "mercy" | "rare";
+export type PubErrandTier = "short" | "medium" | "long";
+
+export interface PubErrandOfferRow {
+  id: number;
+  channel_id: string;
+  patron_id: string;
+  kind: PubErrandKind;
+  tier: PubErrandTier;
+  generated_at: number;
+  taken_by: number | null;
+}
+
+export interface PubErrandRow {
+  id: number;
+  character_id: string;
+  patron_id: string;
+  kind: PubErrandKind;
+  tier: PubErrandTier;
+  started_at: number;
+  expires_at: number;
+  yield_json: string | null;
+  claimed_at: number | null;
+  cancelled_at: number | null;
+  input_resources_json: string | null;
+}
+
+export interface PubErrand extends Omit<PubErrandRow, "yield_json" | "input_resources_json"> {
+  yield: unknown | null;
+  input_resources: Array<{ name: string; qty: number }> | null;
+}
+
+function rowToPubErrand(row: PubErrandRow): PubErrand {
+  return {
+    ...row,
+    yield: row.yield_json ? JSON.parse(row.yield_json) : null,
+    input_resources: row.input_resources_json
+      ? (JSON.parse(row.input_resources_json) as Array<{ name: string; qty: number }>)
+      : null,
+  };
+}
+
+// Fetch live (un-taken) offers in a channel, generated within the restock
+// window. Caller checks emptiness to decide whether to regenerate.
+export async function getActivePubErrandOffers(
+  db: D1Database,
+  channelId: string,
+  windowMs: number,
+): Promise<PubErrandOfferRow[]> {
+  const cutoff = Date.now() - windowMs;
+  const result = await db
+    .prepare(
+      `SELECT id, channel_id, patron_id, kind, tier, generated_at, taken_by
+         FROM pub_errand_offers
+        WHERE channel_id = ? AND generated_at > ?
+        ORDER BY id ASC`,
+    )
+    .bind(channelId, cutoff)
+    .all<PubErrandOfferRow>();
+  return result.results ?? [];
+}
+
+export interface PubErrandOfferInput {
+  channel_id: string;
+  patron_id: string;
+  kind: PubErrandKind;
+  tier: PubErrandTier;
+  generated_at: number;
+}
+
+export async function insertPubErrandOffers(
+  db: D1Database,
+  offers: PubErrandOfferInput[],
+): Promise<void> {
+  if (offers.length === 0) return;
+  const stmts = offers.map((o) =>
+    db
+      .prepare(
+        `INSERT INTO pub_errand_offers (channel_id, patron_id, kind, tier, generated_at)
+         VALUES (?, ?, ?, ?, ?)`,
+      )
+      .bind(o.channel_id, o.patron_id, o.kind, o.tier, o.generated_at),
+  );
+  await db.batch(stmts);
+}
+
+export async function getPubErrandOffer(
+  db: D1Database,
+  offerId: number,
+  channelId: string,
+): Promise<PubErrandOfferRow | null> {
+  return db
+    .prepare(
+      `SELECT id, channel_id, patron_id, kind, tier, generated_at, taken_by
+         FROM pub_errand_offers WHERE id = ? AND channel_id = ?`,
+    )
+    .bind(offerId, channelId)
+    .first<PubErrandOfferRow>();
+}
+
+// Atomic claim — flips taken_by to the new errand id only if still unclaimed.
+export async function tryClaimPubErrandOffer(
+  db: D1Database,
+  offerId: number,
+  errandId: number,
+): Promise<boolean> {
+  const result = await db
+    .prepare(
+      "UPDATE pub_errand_offers SET taken_by = ? WHERE id = ? AND taken_by IS NULL",
+    )
+    .bind(errandId, offerId)
+    .run();
+  return (result.meta.changes ?? 0) > 0;
+}
+
+// Release a claim — used when the errand insert fails or on cancel.
+export async function releasePubErrandOffer(
+  db: D1Database,
+  offerId: number,
+): Promise<void> {
+  await db
+    .prepare("UPDATE pub_errand_offers SET taken_by = NULL WHERE id = ?")
+    .bind(offerId)
+    .run();
+}
+
+export async function getActivePubErrand(
+  db: D1Database,
+  characterId: string,
+): Promise<PubErrand | null> {
+  const row = await db
+    .prepare(
+      `SELECT * FROM pub_errands
+        WHERE character_id = ? AND claimed_at IS NULL AND cancelled_at IS NULL
+        ORDER BY id DESC LIMIT 1`,
+    )
+    .bind(characterId)
+    .first<PubErrandRow>();
+  return row ? rowToPubErrand(row) : null;
+}
+
+export async function getPubErrand(
+  db: D1Database,
+  errandId: number,
+  characterId: string,
+): Promise<PubErrand | null> {
+  const row = await db
+    .prepare("SELECT * FROM pub_errands WHERE id = ? AND character_id = ?")
+    .bind(errandId, characterId)
+    .first<PubErrandRow>();
+  return row ? rowToPubErrand(row) : null;
+}
+
+export interface StartPubErrandInput {
+  character_id: string;
+  patron_id: string;
+  kind: PubErrandKind;
+  tier: PubErrandTier;
+  duration_ms: number;
+  input_resources?: Array<{ name: string; qty: number }>;
+}
+
+export async function startPubErrand(
+  db: D1Database,
+  args: StartPubErrandInput,
+): Promise<PubErrand> {
+  const now = Date.now();
+  const result = await db
+    .prepare(
+      `INSERT INTO pub_errands
+       (character_id, patron_id, kind, tier, started_at, expires_at, input_resources_json)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .bind(
+      args.character_id,
+      args.patron_id,
+      args.kind,
+      args.tier,
+      now,
+      now + args.duration_ms,
+      args.input_resources && args.input_resources.length > 0
+        ? JSON.stringify(args.input_resources)
+        : null,
+    )
+    .run();
+  const id = result.meta.last_row_id;
+  const row = await getPubErrand(db, Number(id), args.character_id);
+  if (!row) throw new Error("Failed to read back pub errand");
+  return row;
+}
+
+export async function tryWritePubErrandYield(
+  db: D1Database,
+  errandId: number,
+  yieldData: unknown,
+): Promise<boolean> {
+  const result = await db
+    .prepare(
+      "UPDATE pub_errands SET yield_json = ? WHERE id = ? AND yield_json IS NULL",
+    )
+    .bind(JSON.stringify(yieldData), errandId)
+    .run();
+  return (result.meta.changes ?? 0) > 0;
+}
+
+export async function markPubErrandClaimed(
+  db: D1Database,
+  errandId: number,
+  characterId: string,
+): Promise<boolean> {
+  const result = await db
+    .prepare(
+      `UPDATE pub_errands SET claimed_at = ?
+        WHERE id = ? AND character_id = ? AND claimed_at IS NULL AND cancelled_at IS NULL`,
+    )
+    .bind(Date.now(), errandId, characterId)
+    .run();
+  return (result.meta.changes ?? 0) > 0;
+}
+
+export async function markPubErrandCancelled(
+  db: D1Database,
+  errandId: number,
+  characterId: string,
+): Promise<boolean> {
+  const result = await db
+    .prepare(
+      `UPDATE pub_errands SET cancelled_at = ?
+        WHERE id = ? AND character_id = ? AND claimed_at IS NULL AND cancelled_at IS NULL`,
+    )
+    .bind(Date.now(), errandId, characterId)
+    .run();
+  return (result.meta.changes ?? 0) > 0;
+}
+
+export interface PubTrustRow {
+  patron_id: string;
+  score: number;
+  rare_claimed: number;
+}
+
+export async function listPubTrust(
+  db: D1Database,
+  characterId: string,
+): Promise<PubTrustRow[]> {
+  const result = await db
+    .prepare(
+      "SELECT patron_id, score, rare_claimed FROM pub_trust WHERE character_id = ?",
+    )
+    .bind(characterId)
+    .all<PubTrustRow>();
+  return result.results ?? [];
+}
+
+export async function getPubTrust(
+  db: D1Database,
+  characterId: string,
+  patronId: string,
+): Promise<PubTrustRow> {
+  const row = await db
+    .prepare(
+      "SELECT patron_id, score, rare_claimed FROM pub_trust WHERE character_id = ? AND patron_id = ?",
+    )
+    .bind(characterId, patronId)
+    .first<PubTrustRow>();
+  return row ?? { patron_id: patronId, score: 0, rare_claimed: 0 };
+}
+
+// Bumps trust by +1 (capped at the application-level constant; caller clamps).
+// Also marks rare_claimed when the rare errand kind is collected.
+export async function bumpPubTrust(
+  db: D1Database,
+  characterId: string,
+  patronId: string,
+  delta: number,
+  markRare: boolean,
+  cap: number,
+): Promise<PubTrustRow> {
+  const existing = await db
+    .prepare(
+      "SELECT score, rare_claimed FROM pub_trust WHERE character_id = ? AND patron_id = ?",
+    )
+    .bind(characterId, patronId)
+    .first<{ score: number; rare_claimed: number }>();
+  const oldScore = existing?.score ?? 0;
+  const oldRare = existing?.rare_claimed ?? 0;
+  const newScore = Math.min(cap, Math.max(0, oldScore + delta));
+  const newRare = oldRare || (markRare ? 1 : 0);
+  if (existing) {
+    await db
+      .prepare(
+        "UPDATE pub_trust SET score = ?, rare_claimed = ? WHERE character_id = ? AND patron_id = ?",
+      )
+      .bind(newScore, newRare, characterId, patronId)
+      .run();
+  } else {
+    await db
+      .prepare(
+        "INSERT INTO pub_trust (character_id, patron_id, score, rare_claimed) VALUES (?, ?, ?, ?)",
+      )
+      .bind(characterId, patronId, newScore, newRare)
+      .run();
+  }
+  return { patron_id: patronId, score: newScore, rare_claimed: newRare };
+}

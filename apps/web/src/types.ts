@@ -566,6 +566,77 @@ export interface CampStatusResponse {
   level: number;
 }
 
+// ─── Pub Errands ──────────────────────────────────────────────────────────────
+
+export type PubErrandKind = "courier" | "procure" | "investigate" | "mercy" | "rare";
+export type PubErrandTier = "short" | "medium" | "long";
+
+export interface PubPatron {
+  id: string;
+  name: string;
+  archetype: string;
+  blurb: string;
+  icon: string;
+  procure_resource_node: CampNode;
+  rare_item: { item_name: string; item_type: ItemType; power: number; rarity: Rarity; slot?: EquipSlot; blurb: string };
+  tip_pool: Array<{ item_name: string; item_type: ItemType; power: number; rarity: Rarity; weight: number; blurb: string }>;
+}
+
+export interface PubErrandOffer {
+  id: number;
+  patron_id: string;
+  kind: PubErrandKind;
+  tier: PubErrandTier;
+  duration_ms: number;
+  base_xp: number;
+  base_gold: number;
+  procure_qty: number;
+}
+
+export interface PubErrandYieldItem {
+  item_name: string;
+  item_type: ItemType;
+  power: number;
+  rarity: Rarity;
+  slot?: EquipSlot | null;
+  blurb: string;
+}
+
+export interface PubErrandYield {
+  gold: number;
+  xp: number;
+  items: PubErrandYieldItem[];
+  apothecary_discount_stacks?: number;
+  lore_fragment?: string;
+}
+
+export interface ActivePubErrand {
+  id: number;
+  patron_id: string;
+  kind: PubErrandKind;
+  tier: PubErrandTier;
+  started_at: number;
+  expires_at: number;
+  ready: boolean;
+  yield: PubErrandYield | null;
+  input_resources: Array<{ name: string; qty: number }> | null;
+}
+
+export interface PubTrust {
+  patron_id: string;
+  score: number;
+  rare_claimed: boolean;
+  cap: number;
+}
+
+export interface PubErrandsResponse {
+  now: number;
+  patrons: PubPatron[];
+  offers: PubErrandOffer[];
+  active: ActivePubErrand | null;
+  trust: PubTrust[];
+}
+
 export interface TownArt {
   overview_art_url: string | null;
   pub_art_url: string | null;

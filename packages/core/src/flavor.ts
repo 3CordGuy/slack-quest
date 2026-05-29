@@ -2005,3 +2005,309 @@ export function gatherSlotCount(builtKeys: string[]): number {
   }
   return slots;
 }
+
+// =============================================================================
+// PUB ERRANDS: timed, NPC-driven mini-quests
+// =============================================================================
+//
+// Patrons at the pub offer timed errands. The player accepts one, waits the
+// duration in real wall-clock time, then collects gold + xp + flavor loot.
+// Yields are rolled lazily on read (deterministic by errand id) — same pattern
+// as gathering. Trust score per (character, patron) gates which kinds are
+// offered; at trust 10 the patron offers a one-shot rare errand with a
+// signature reward.
+//
+// All catalogs here are static. The DB tracks live offers (pub_errand_offers),
+// active errands (pub_errands), and trust scores (pub_trust).
+
+export type PubErrandKind = "courier" | "procure" | "investigate" | "mercy" | "rare";
+export type PubErrandTier = "short" | "medium" | "long";
+
+export interface PubErrandTierSpec {
+  tier: PubErrandTier;
+  duration_ms: number;
+  base_xp: number;
+  base_gold: number;
+}
+
+// Tier durations chosen so errands are slower than gathering (camp Quick is
+// 15 min) — these are flavor-heavy commitments, not idle clicks.
+export const PUB_ERRAND_TIERS: Record<PubErrandTier, PubErrandTierSpec> = {
+  short:  { tier: "short",  duration_ms:  30 * 60 * 1000, base_xp:  20, base_gold:  30 },
+  medium: { tier: "medium", duration_ms: 120 * 60 * 1000, base_xp:  80, base_gold: 100 },
+  long:   { tier: "long",   duration_ms: 360 * 60 * 1000, base_xp: 200, base_gold: 250 },
+};
+
+// Trust gates: minimum (character, patron) trust required to receive offers
+// of this kind on the daily rotation. Courier is always available so first-
+// time players have something to do; rare is a per-patron once-only at 10.
+export const PUB_ERRAND_TRUST_GATE: Record<PubErrandKind, number> = {
+  courier:     0,
+  procure:     3,
+  investigate: 3,
+  mercy:       6,
+  rare:        10,
+};
+
+// Max trust per patron. Once a player hits 10 and claims the rare, the
+// patron's offer pool collapses to non-rare kinds at +25% payout.
+export const PUB_TRUST_CAP = 10;
+
+// Payout multiplier applied once trust >= 6 (the "Mercy unlocks" threshold).
+export const PUB_TRUST_HIGH_MULT = 1.25;
+
+// Procure: how many resource units the patron demands. Tier-scaled.
+export const PUB_PROCURE_INPUT_QTY: Record<PubErrandTier, number> = {
+  short: 1, medium: 2, long: 3,
+};
+
+export interface PubPatronSpec {
+  id: string;
+  name: string;
+  archetype: string;
+  blurb: string;
+  // Display avatar — falls back to a generated NPC art slot if absent.
+  icon: string;
+  // Resource family they pay best for on Procure errands.
+  procure_resource_node: CampNode;
+  // Single signature reward (item_name) granted on the rare trust-10 errand.
+  rare_item: { item_name: string; item_type: ItemType; power: number; rarity: Rarity; slot?: EquipSlot; blurb: string };
+  // Items the patron tips out from on lower-trust errands. Picked weighted at roll time.
+  tip_pool: Array<{ item_name: string; item_type: ItemType; power: number; rarity: Rarity; weight: number; blurb: string }>;
+}
+
+export const PUB_PATRONS: PubPatronSpec[] = [
+  {
+    id: "cobb",
+    name: "Old Cobb the Cooper",
+    archetype: "Retired barrel-maker, three drinks deep, two stories left",
+    blurb: "Spent his life hooping casks for the smithy district. Keeps an unbroken streak of buying the next round.",
+    icon: "beer-stein",
+    procure_resource_node: "mine",
+    rare_item: {
+      item_name: "Cobb's Hooping Hammer",
+      item_type: "weapon",
+      power: 9,
+      rarity: "rare",
+      slot: "main_hand",
+      blurb: "The smithy never took it back when Cobb retired. He says it's still got swings in it.",
+    },
+    tip_pool: [
+      { item_name: "🧪 Health Potion",       item_type: "consumable", power: 10, rarity: "common",   weight: 4, blurb: "Pressed into your hand by a regular." },
+      { item_name: "⛏️ Iron Ore",            item_type: "resource",   power: 0,  rarity: "common",   weight: 3, blurb: "From the dust at the bottom of his pocket." },
+      { item_name: "🪙 Silver Ore",          item_type: "resource",   power: 0,  rarity: "uncommon", weight: 1, blurb: "He winks. 'Don't tell the smith.'" },
+    ],
+  },
+  {
+    id: "marra",
+    name: "Marra Fivecups",
+    archetype: "Off-shift apothecary, sharp tongue, sharper guesses",
+    blurb: "Has the apothecary's keys when nobody's looking. Says half the cures are placebo. Won't say which half.",
+    icon: "poison-bottle",
+    procure_resource_node: "forage",
+    rare_item: {
+      item_name: "🔮 Marra's Concentrate",
+      item_type: "magic",
+      power: 2,
+      rarity: "rare",
+      blurb: "Permanently raises max mana by 2. She wouldn't say where it's brewed.",
+    },
+    tip_pool: [
+      { item_name: "🌿 Mossroot",            item_type: "resource",   power: 0,  rarity: "common",   weight: 4, blurb: "Plucked from a sprig behind her ear." },
+      { item_name: "🍀 Sunleaf",             item_type: "resource",   power: 0,  rarity: "uncommon", weight: 2, blurb: "She pretends it was for someone else." },
+      { item_name: "✨ Mana Flask",          item_type: "consumable", power: 3,  rarity: "uncommon", weight: 2, blurb: "Tastes like dish soap. Works anyway." },
+    ],
+  },
+  {
+    id: "rell",
+    name: "Captain Rell",
+    archetype: "Riverboat captain on permanent shore leave",
+    blurb: "Lost a boat, gained a story. Will pay handsomely for anything pulled from the water.",
+    icon: "fishing-pole",
+    procure_resource_node: "fish",
+    rare_item: {
+      item_name: "Captain's Tide-Stained Ring",
+      item_type: "armor",
+      power: 4,
+      rarity: "rare",
+      slot: "ring",
+      blurb: "Worn smooth by a thousand knots. Calms the wearer's hand.",
+    },
+    tip_pool: [
+      { item_name: "🐟 River Carp",          item_type: "resource",   power: 0,  rarity: "common",   weight: 4, blurb: "Slid across the bar wrapped in paper." },
+      { item_name: "🐠 Silverfin",           item_type: "resource",   power: 0,  rarity: "uncommon", weight: 2, blurb: "'The pub kitchen'll take 'em.'" },
+      { item_name: "🧪 Greater Health Potion", item_type: "consumable", power: 25, rarity: "uncommon", weight: 1, blurb: "From a kit he keeps under his coat." },
+    ],
+  },
+];
+
+export function findPubPatron(id: string): PubPatronSpec | undefined {
+  return PUB_PATRONS.find((p) => p.id === id);
+}
+
+// Roll how many offers per patron land in the daily rotation. v1: every
+// patron always offers exactly 3 distinct kinds the player is eligible for,
+// drawn deterministically so the roster is stable across re-reads on the
+// same day.
+export const PUB_OFFERS_PER_PATRON = 3;
+
+// Daily rotation window. Offers regenerate when the cutoff has elapsed.
+export const PUB_ERRAND_RESTOCK_MS = 24 * 60 * 60 * 1000;
+
+// Deterministic seeded RNG so a status fetch and a later read agree on the
+// same yield. Mirrors the camp version (kept here to avoid an import cycle).
+function pubMulberry32(seed: number): () => number {
+  let s = seed >>> 0;
+  return () => {
+    s = (s + 0x6D2B79F5) >>> 0;
+    let t = s;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+// Pick which errand kinds a patron offers today given a deterministic seed
+// and current trust. Always returns kinds the player is gated for; rare
+// only appears once trust hits cap and the patron's rare hasn't been claimed.
+export function rollPatronOfferKinds(
+  patronId: string,
+  dayBucket: number,
+  trustScore: number,
+  rareClaimed: boolean,
+): PubErrandKind[] {
+  const seed = hashStringPub(patronId) ^ dayBucket;
+  const rng = pubMulberry32(seed);
+  const eligible: PubErrandKind[] = [];
+  for (const kind of ["courier", "procure", "investigate", "mercy"] as PubErrandKind[]) {
+    if (trustScore >= PUB_ERRAND_TRUST_GATE[kind]) eligible.push(kind);
+  }
+  // Always fill PUB_OFFERS_PER_PATRON slots; allow duplicates of eligible
+  // kinds (different tiers) so low-trust players still see 3 offers even
+  // when only Courier is unlocked.
+  const tiers: PubErrandTier[] = ["short", "medium", "long"];
+  const offers: PubErrandKind[] = [];
+  for (let i = 0; i < PUB_OFFERS_PER_PATRON; i++) {
+    offers.push(eligible[Math.floor(rng() * eligible.length)] ?? "courier");
+    tiers[i % 3]; // reserve a tier (consumed in the offer rotation, not here)
+  }
+  // Rare gates the rest: at cap + un-claimed, replace the last slot with a rare.
+  if (trustScore >= PUB_TRUST_CAP && !rareClaimed) {
+    offers[offers.length - 1] = "rare";
+  }
+  return offers;
+}
+
+// Stable per-offer tier picker — index 0/1/2 maps to short/medium/long so the
+// 3 daily slots span tiers.
+export function tierForOfferIndex(index: number): PubErrandTier {
+  return (["short", "medium", "long"] as const)[index % 3];
+}
+
+function hashStringPub(s: string): number {
+  let h = 2166136261 >>> 0;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
+}
+
+export interface PubErrandYield {
+  gold: number;
+  xp: number;
+  items: Array<{ item_name: string; item_type: ItemType; power: number; rarity: Rarity; slot?: EquipSlot | null; blurb: string }>;
+  // Mercy errands grant a stacking apothecary discount (caps at 3 stacks).
+  apothecary_discount_stacks?: number;
+  // Investigate errands return a short lore fragment.
+  lore_fragment?: string;
+}
+
+// Roll the reward bag for an errand. Deterministic by errand id so the same
+// errand always pays the same — fetch and claim agree without locking.
+export function rollPubErrandYield(
+  errandId: number,
+  patronId: string,
+  kind: PubErrandKind,
+  tier: PubErrandTier,
+  trustScore: number,
+): PubErrandYield {
+  const patron = findPubPatron(patronId);
+  if (!patron) return { gold: 0, xp: 0, items: [] };
+  const tierSpec = PUB_ERRAND_TIERS[tier];
+  const rng = pubMulberry32(errandId);
+  const trustMult = trustScore >= 6 ? PUB_TRUST_HIGH_MULT : 1;
+  let gold = Math.round(tierSpec.base_gold * trustMult);
+  let xp = Math.round(tierSpec.base_xp * trustMult);
+  const items: PubErrandYield["items"] = [];
+
+  if (kind === "rare") {
+    items.push({
+      item_name: patron.rare_item.item_name,
+      item_type: patron.rare_item.item_type,
+      power: patron.rare_item.power,
+      rarity: patron.rare_item.rarity,
+      slot: patron.rare_item.slot ?? null,
+      blurb: patron.rare_item.blurb,
+    });
+    gold = Math.round(gold * 1.5);
+    xp = Math.round(xp * 1.5);
+    return { gold, xp, items };
+  }
+
+  // Tip chance: courier 25%, procure 90% (you brought them resources),
+  // investigate 50%, mercy 70%.
+  const tipChance = kind === "courier" ? 0.25 : kind === "procure" ? 0.9 : kind === "investigate" ? 0.5 : 0.7;
+  if (rng() < tipChance) {
+    const totalWeight = patron.tip_pool.reduce((s, e) => s + e.weight, 0);
+    let pick = rng() * totalWeight;
+    for (const entry of patron.tip_pool) {
+      pick -= entry.weight;
+      if (pick <= 0) {
+        items.push({
+          item_name: entry.item_name,
+          item_type: entry.item_type,
+          power: entry.power,
+          rarity: entry.rarity,
+          slot: null,
+          blurb: entry.blurb,
+        });
+        break;
+      }
+    }
+  }
+
+  const result: PubErrandYield = { gold, xp, items };
+  if (kind === "investigate") {
+    result.lore_fragment = pickLoreFragment(patronId, rng);
+  }
+  if (kind === "mercy") {
+    result.apothecary_discount_stacks = 1;
+  }
+  return result;
+}
+
+// Short, flavor-heavy lore strings keyed by patron. Picked deterministically
+// off the errand's RNG so the same errand always returns the same fragment.
+const LORE_FRAGMENTS: Record<string, string[]> = {
+  cobb: [
+    "The old smithy's third anvil — the one they never use — was Cobb's. He sharpened it himself.",
+    "There's a hidden ore vein north of the bluffs. Cobb saw it once, never went back.",
+    "The smith owes Cobb a favor. He won't say what for.",
+  ],
+  marra: [
+    "Half the apothecary's stock is repackaged garden cuttings. Marra would know.",
+    "Nightbloom grows in the apothecary's back lot. The owner doesn't know.",
+    "There's a brewing recipe Marra hasn't written down. She says it works on the third try.",
+  ],
+  rell: [
+    "The river bends east of the pub. There's a quiet pool no one fishes.",
+    "Rell's old crew shipped silverfin past the customs house. He says they paid the right people.",
+    "The captain's ring matches a pattern on the pub's eastern wall. He won't say why.",
+  ],
+};
+
+function pickLoreFragment(patronId: string, rng: () => number): string {
+  const pool = LORE_FRAGMENTS[patronId] ?? LORE_FRAGMENTS.cobb;
+  return pool[Math.floor(rng() * pool.length)];
+}

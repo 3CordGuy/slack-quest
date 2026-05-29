@@ -87,6 +87,21 @@ import {
   type CampNode,
   type CampTier,
   type RecipeSpec,
+  // Pub Errands
+  PUB_ERRAND_RESTOCK_MS,
+  PUB_ERRAND_TIERS,
+  PUB_ERRAND_TRUST_GATE,
+  PUB_OFFERS_PER_PATRON,
+  PUB_PATRONS,
+  PUB_PROCURE_INPUT_QTY,
+  PUB_TRUST_CAP,
+  findPubPatron,
+  rollPatronOfferKinds,
+  rollPubErrandYield,
+  tierForOfferIndex,
+  type PubErrandKind,
+  type PubErrandTier,
+  type PubErrandYield,
   type CombatEvent,
   type CombatFighter,
   type CombatMonster,
@@ -241,6 +256,24 @@ import {
   tryConsumeResource,
   tryWriteGatheringYield,
   type GatheringTask,
+  // Pub Errands
+  bumpPubTrust,
+  getActivePubErrand,
+  getActivePubErrandOffers,
+  getPubErrand,
+  getPubErrandOffer,
+  getPubTrust,
+  insertPubErrandOffers,
+  listPubTrust,
+  markPubErrandCancelled,
+  markPubErrandClaimed,
+  releasePubErrandOffer,
+  startPubErrand,
+  tryClaimPubErrandOffer,
+  tryWritePubErrandYield,
+  type PubErrand,
+  type PubErrandOfferInput,
+  type PubErrandOfferRow,
 } from "@gantt-quest/db";
 
 // =============================================================================
@@ -3428,6 +3461,294 @@ async function spdResolveMatch(
   return { winner_user_id: winnerUserId, house_bump: houseBump, payout: winnerPayout, tie: false };
 }
 
+// =============================================================================
+// PUB ERRANDS — timed NPC-driven mini-quests
+// =============================================================================
+//
+// Daily-rotating offers per channel, accepted one at a time per character.
+// Reuses the camp's lazy-yield-on-read pattern: rollPubErrandYield(errandId,
+// patron, kind, tier, trust) is deterministic so a status fetch and a claim
+// always agree on the same payout.
+
+// Day-bucket for the daily offer rotation. UTC midnight units; same channel
+// rolls the same kinds within a day, fresh ones the next.
+function pubDayBucket(now: number): number {
+  return Math.floor(now / (24 * 60 * 60 * 1000));
+}
+
+// Ensure the channel has a live offer roster. Generates one per patron given
+// the player's current trust scores; offers stay around until restock window.
+async function ensurePubErrandOffers(
+  db: D1Database,
+  channelId: string,
+  characterId: string,
+): Promise<PubErrandOfferRow[]> {
+  const existing = await getActivePubErrandOffers(db, channelId, PUB_ERRAND_RESTOCK_MS);
+  const trust = await listPubTrust(db, characterId);
+  const trustByPatron = new Map(trust.map((t) => [t.patron_id, t]));
+  const now = Date.now();
+  const day = pubDayBucket(now);
+
+  // Per-patron top-up: any patron whose un-taken offers are exhausted gets a
+  // fresh row of PUB_OFFERS_PER_PATRON slots. New rows roll against current
+  // trust so unlocking Procure/Investigate flips the kinds available without
+  // waiting on the daily reset.
+  const openByPatron = new Map<string, number>();
+  for (const o of existing) {
+    if (o.taken_by === null) openByPatron.set(o.patron_id, (openByPatron.get(o.patron_id) ?? 0) + 1);
+  }
+  const toInsert: PubErrandOfferInput[] = [];
+  for (const patron of PUB_PATRONS) {
+    if ((openByPatron.get(patron.id) ?? 0) > 0) continue;
+    const t = trustByPatron.get(patron.id);
+    // Salt the day-bucket seed with the count of generations we've already
+    // done for this patron so successive top-ups within the same day produce
+    // a varied roster rather than the same kinds.
+    const generations = existing.filter((o) => o.patron_id === patron.id).length / PUB_OFFERS_PER_PATRON;
+    const kinds = rollPatronOfferKinds(patron.id, day + Math.floor(generations), t?.score ?? 0, (t?.rare_claimed ?? 0) === 1);
+    for (let i = 0; i < PUB_OFFERS_PER_PATRON; i++) {
+      toInsert.push({
+        channel_id: channelId,
+        patron_id: patron.id,
+        kind: kinds[i],
+        tier: kinds[i] === "rare" ? "long" : tierForOfferIndex(i),
+        generated_at: now,
+      });
+    }
+  }
+  if (toInsert.length === 0) return existing;
+  await insertPubErrandOffers(db, toInsert);
+  return getActivePubErrandOffers(db, channelId, PUB_ERRAND_RESTOCK_MS);
+}
+
+// Roll + persist yield for any expired-but-unrolled active errand. Idempotent
+// — safe to call from status and claim alike.
+async function rollAndPersistPubYield(
+  db: D1Database,
+  errand: PubErrand,
+  trustScore: number,
+): Promise<PubErrand> {
+  const now = Date.now();
+  if (errand.yield || errand.expires_at > now) return errand;
+  const rolled = rollPubErrandYield(errand.id, errand.patron_id, errand.kind, errand.tier, trustScore);
+  await tryWritePubErrandYield(db, errand.id, rolled);
+  return { ...errand, yield: rolled };
+}
+
+app.get("/api/pub/errands", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const character = await getCharacter(c.env.DB, session.slack_user_id);
+  if (!character) return c.json({ error: "no_character" }, 404);
+  const channelId = await recentChannelForUser(c.env.DB, session.slack_user_id, c.env);
+  if (!channelId) return c.json({ error: "no_channel" }, 404);
+  const offers = await ensurePubErrandOffers(c.env.DB, channelId, session.slack_user_id);
+  const activeRaw = await getActivePubErrand(c.env.DB, session.slack_user_id);
+  let active: PubErrand | null = null;
+  if (activeRaw) {
+    const trust = await getPubTrust(c.env.DB, session.slack_user_id, activeRaw.patron_id);
+    active = await rollAndPersistPubYield(c.env.DB, activeRaw, trust.score);
+  }
+  const trust = await listPubTrust(c.env.DB, session.slack_user_id);
+  return c.json({
+    now: Date.now(),
+    patrons: PUB_PATRONS,
+    offers: offers.filter((o) => o.taken_by === null).map((o) => ({
+      id: o.id,
+      patron_id: o.patron_id,
+      kind: o.kind,
+      tier: o.tier,
+      duration_ms: PUB_ERRAND_TIERS[o.tier as PubErrandTier].duration_ms,
+      base_xp: PUB_ERRAND_TIERS[o.tier as PubErrandTier].base_xp,
+      base_gold: PUB_ERRAND_TIERS[o.tier as PubErrandTier].base_gold,
+      procure_qty: PUB_PROCURE_INPUT_QTY[o.tier as PubErrandTier],
+    })),
+    active: active ? {
+      id: active.id,
+      patron_id: active.patron_id,
+      kind: active.kind,
+      tier: active.tier,
+      started_at: active.started_at,
+      expires_at: active.expires_at,
+      ready: active.expires_at <= Date.now(),
+      yield: active.yield,
+      input_resources: active.input_resources,
+    } : null,
+    trust: PUB_PATRONS.map((p) => {
+      const t = trust.find((row) => row.patron_id === p.id);
+      return {
+        patron_id: p.id,
+        score: t?.score ?? 0,
+        rare_claimed: (t?.rare_claimed ?? 0) === 1,
+        cap: PUB_TRUST_CAP,
+      };
+    }),
+  });
+});
+
+app.post("/api/pub/errands/start", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const character = await getCharacter(c.env.DB, session.slack_user_id);
+  if (!character) return c.json({ error: "no_character" }, 404);
+  if (character.downed_until && character.downed_until > Date.now()) {
+    return c.json({ error: "downed" }, 400);
+  }
+  if (await getActiveQuestForCharacter(c.env.DB, session.slack_user_id)) {
+    return c.json({ error: "mid_quest" }, 400);
+  }
+  const existingActive = await getActivePubErrand(c.env.DB, session.slack_user_id);
+  if (existingActive) return c.json({ error: "errand_in_flight", errand_id: existingActive.id }, 400);
+  const body = await c.req.json().catch(() => null) as { offer_id?: number; input_resource_id?: string } | null;
+  const offerId = body?.offer_id;
+  if (typeof offerId !== "number") return c.json({ error: "bad_offer_id" }, 400);
+  const channelId = await recentChannelForUser(c.env.DB, session.slack_user_id, c.env);
+  if (!channelId) return c.json({ error: "no_channel" }, 404);
+  const offer = await getPubErrandOffer(c.env.DB, offerId, channelId);
+  if (!offer) return c.json({ error: "offer_not_found" }, 404);
+  if (offer.taken_by !== null) return c.json({ error: "already_taken" }, 400);
+  if (Date.now() - offer.generated_at > PUB_ERRAND_RESTOCK_MS) {
+    return c.json({ error: "offer_expired" }, 400);
+  }
+  const patron = findPubPatron(offer.patron_id);
+  if (!patron) return c.json({ error: "unknown_patron" }, 404);
+
+  // Trust gate
+  const trust = await getPubTrust(c.env.DB, session.slack_user_id, patron.id);
+  if (trust.score < PUB_ERRAND_TRUST_GATE[offer.kind as PubErrandKind]) {
+    return c.json({ error: "trust_too_low", needed: PUB_ERRAND_TRUST_GATE[offer.kind as PubErrandKind], have: trust.score }, 400);
+  }
+  if (offer.kind === "rare" && trust.rare_claimed === 1) {
+    return c.json({ error: "rare_already_claimed" }, 400);
+  }
+
+  // Procure input handling — consumes the requested resource family up front.
+  const tierSpec = PUB_ERRAND_TIERS[offer.tier as PubErrandTier];
+  let inputResources: Array<{ name: string; qty: number }> = [];
+  if (offer.kind === "procure") {
+    const resourceId = body?.input_resource_id;
+    if (!resourceId) return c.json({ error: "bad_resource" }, 400);
+    const spec = findResource(resourceId);
+    if (!spec) return c.json({ error: "unknown_resource" }, 400);
+    if (spec.node !== patron.procure_resource_node) {
+      return c.json({ error: "wrong_resource_family", expected: patron.procure_resource_node }, 400);
+    }
+    const qty = PUB_PROCURE_INPUT_QTY[offer.tier as PubErrandTier];
+    const itemName = resourceItemName(resourceId);
+    const consumed = await tryConsumeResource(c.env.DB, session.slack_user_id, itemName, qty);
+    if (!consumed) return c.json({ error: "insufficient_resources", needed: resourceId, qty }, 400);
+    inputResources = [{ name: itemName, qty }];
+  }
+
+  // Atomic offer claim — temp errand id of -1 because we don't have one yet;
+  // we'll patch after insert.
+  const tempClaim = await tryClaimPubErrandOffer(c.env.DB, offerId, -1);
+  if (!tempClaim) {
+    // Refund any consumed resources, then bail.
+    for (const r of inputResources) {
+      await addResource(c.env.DB, session.slack_user_id, r.name, r.qty);
+    }
+    return c.json({ error: "already_taken" }, 409);
+  }
+  const errand = await startPubErrand(c.env.DB, {
+    character_id: session.slack_user_id,
+    patron_id: patron.id,
+    kind: offer.kind as PubErrandKind,
+    tier: offer.tier as PubErrandTier,
+    duration_ms: tierSpec.duration_ms,
+    input_resources: inputResources,
+  });
+  // Patch the offer with the real errand id so the audit trail is right.
+  await c.env.DB
+    .prepare("UPDATE pub_errand_offers SET taken_by = ? WHERE id = ?")
+    .bind(errand.id, offerId).run();
+
+  return c.json({ ok: true, errand });
+});
+
+app.post("/api/pub/errands/claim/:id", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const errandId = parseInt(c.req.param("id"), 10);
+  if (!Number.isFinite(errandId)) return c.json({ error: "bad_errand_id" }, 400);
+  const character = await getCharacter(c.env.DB, session.slack_user_id);
+  if (!character) return c.json({ error: "no_character" }, 404);
+  const errand = await getPubErrand(c.env.DB, errandId, session.slack_user_id);
+  if (!errand) return c.json({ error: "not_yours" }, 404);
+  if (errand.claimed_at) return c.json({ error: "already_claimed" }, 400);
+  if (errand.cancelled_at) return c.json({ error: "cancelled" }, 400);
+  if (errand.expires_at > Date.now()) return c.json({ error: "not_ready" }, 400);
+  const trust = await getPubTrust(c.env.DB, session.slack_user_id, errand.patron_id);
+  const filled = await rollAndPersistPubYield(c.env.DB, errand, trust.score);
+  const yieldData = filled.yield as PubErrandYield | null;
+  if (!yieldData) return c.json({ error: "no_yield" }, 500);
+  const marked = await markPubErrandClaimed(c.env.DB, errandId, session.slack_user_id);
+  if (!marked) return c.json({ error: "raced" }, 409);
+
+  // Grant items. Resources flow through addResource (stack); everything else
+  // is a fresh inventory row via addItem.
+  for (const item of yieldData.items) {
+    if (item.item_type === "resource") {
+      await addResource(c.env.DB, session.slack_user_id, item.item_name, 1, item.rarity, item.blurb);
+    } else {
+      await addItem(c.env.DB, {
+        character_id: session.slack_user_id,
+        item_name: item.item_name,
+        item_type: item.item_type,
+        power: item.power,
+        rarity: item.rarity,
+        flavor: item.blurb,
+        slot: item.slot ?? undefined,
+        weapon_range: item.item_type === "weapon" ? "melee" : null,
+      });
+    }
+  }
+  // Gold + XP via awardSpoils so level-up flows fire normally.
+  const spoils = await awardSpoils(
+    c.env.DB,
+    character,
+    yieldData.xp,
+    yieldData.gold,
+    () => 1 + Math.floor(Math.random() * 6),
+    xpForLevel,
+  );
+  // Trust bump (+1) + mark rare claimed if applicable.
+  const newTrust = await bumpPubTrust(
+    c.env.DB,
+    session.slack_user_id,
+    errand.patron_id,
+    1,
+    errand.kind === "rare",
+    PUB_TRUST_CAP,
+  );
+
+  return c.json({ ok: true, errand_id: errandId, yield: yieldData, spoils, trust: newTrust });
+});
+
+app.post("/api/pub/errands/cancel/:id", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const errandId = parseInt(c.req.param("id"), 10);
+  if (!Number.isFinite(errandId)) return c.json({ error: "bad_errand_id" }, 400);
+  const errand = await getPubErrand(c.env.DB, errandId, session.slack_user_id);
+  if (!errand) return c.json({ error: "not_yours" }, 404);
+  if (errand.claimed_at) return c.json({ error: "already_claimed" }, 400);
+  if (errand.cancelled_at) return c.json({ error: "already_cancelled" }, 400);
+  const marked = await markPubErrandCancelled(c.env.DB, errandId, session.slack_user_id);
+  if (!marked) return c.json({ error: "raced" }, 409);
+  // Refund any Procure inputs.
+  if (errand.input_resources) {
+    for (const r of errand.input_resources) {
+      await addResource(c.env.DB, session.slack_user_id, r.name, r.qty);
+    }
+  }
+  // Release the offer so the next channel-mate can grab it (within the day).
+  await c.env.DB
+    .prepare("UPDATE pub_errand_offers SET taken_by = NULL WHERE taken_by = ?")
+    .bind(errandId).run();
+  return c.json({ ok: true });
+});
+
 // GET /api/pub — drink menu + active buff state. Channel-scoped via the
 // player's most-recent quest (same fallback pattern as /api/shop).
 app.get("/api/pub", async (c) => {
@@ -4775,6 +5096,10 @@ app.post("/api/dev/cooldowns", async (c) => {
   // without waiting 15 minutes.
   await c.env.DB
     .prepare("UPDATE gathering_tasks SET expires_at = ? WHERE character_id = ? AND claimed_at IS NULL")
+    .bind(Date.now() - 1000, session.slack_user_id).run();
+  // Same treatment for pub errands.
+  await c.env.DB
+    .prepare("UPDATE pub_errands SET expires_at = ? WHERE character_id = ? AND claimed_at IS NULL AND cancelled_at IS NULL")
     .bind(Date.now() - 1000, session.slack_user_id).run();
   return c.json({ ok: true });
 });
