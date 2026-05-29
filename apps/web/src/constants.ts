@@ -150,7 +150,7 @@ export const ART_PLACEHOLDERS: Record<string, { bg: string; icon: string; color:
   "The Smithy": { bg: "#1e1208", icon: "anvil",                 color: "#e07840" },
   "The Pub":    { bg: "#1a1608", icon: "beer-stein",            color: "#d4a53a" },
   "Apothecary": { bg: "#140f22", icon: "potion-ball",           color: "#9a6fcd" },
-  "Inventory":  { bg: "#0f1620", icon: "cubes",                 color: "#5c9bd6" },
+  "Inventory":  { bg: "#0f1620", icon: "knapsack",              color: "#5c9bd6" },
   "Outskirts":  { bg: "#0d1a10", icon: "run",                   color: "#5da85a" },
   "Job Board":  { bg: "#101820", icon: "scroll-unfurled",       color: "#5a8ab5" },
 };

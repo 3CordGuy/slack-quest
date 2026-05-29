@@ -769,7 +769,7 @@ function PlazaButton({
             <span style={{ color: "var(--accent-gold)" }}>🪙 {character.gold}</span>
           </div>
         </div>
-        <Icon name="chest-armor" size={20} color={hovered ? "var(--accent-gold-warm)" : "var(--fg-faintest)"} />
+        <Icon name="knapsack" size={20} color={hovered ? "var(--accent-gold-warm)" : "var(--fg-faintest)"} />
       </button>
     );
   }
@@ -973,7 +973,7 @@ export function WardMap({
       id: "job_board",
       label: "Job Board",
       desc: jobsOpen > 0 ? `${jobsOpen} contracts posted` : "Pick a contract",
-      icon: "cloud-upload",
+      icon: "scroll-quill",
       left: "50%",
       top: "16.5%",
       hot: true,
