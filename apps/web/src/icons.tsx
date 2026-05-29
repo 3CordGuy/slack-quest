@@ -51,8 +51,8 @@ const SVG_ICONS = new Set([
   "icicles-fence", "sound-on", "cracked-disc", "screaming", "blood", "heart-drop", "lightning-branches", "shieldcomb",
   // Climb the Tower
   "tower-flag",
-  // My Camp (gathering nodes + ward tile)
-  "camping-tent", "ore", "grass-mushroom", "fishing-hook", "fish-bucket", "fish-cooked", "eel",
+  // My Camp + pub cooking (gathering nodes, ward tile, fish display)
+  "camping-tent", "ore", "grass-mushroom", "fishing-hook", "fish-bucket", "fish-cooked", "eel", "salmon",
   // Abstract fallback icons (used when no specific icon exists)
   "abstract-006",
 ]);
