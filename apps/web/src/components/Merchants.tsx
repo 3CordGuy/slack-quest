@@ -573,13 +573,14 @@ export function SmithyCard({
             {smithy.items.map((it) => {
               const atCap = it.sharpens_count >= it.cap;
               const canAfford = smithy.gold >= it.cost;
-              const remaining = it.cap - it.sharpens_count;
+              const remaining = Math.max(0, it.cap - it.sharpens_count);
               const label = atCap
-                ? `Maxed`
+                ? `Gold cap`
                 : canAfford
                   ? `${it.verb.verb} +1 — ${it.cost}g`
                   : `Need ${it.cost}g`;
-              const meter = "●".repeat(it.sharpens_count) + "○".repeat(remaining);
+              const filled = Math.min(it.sharpens_count, it.cap);
+              const meter = "●".repeat(filled) + "○".repeat(remaining);
               return (
                 <div
                   key={it.id}

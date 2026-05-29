@@ -1026,13 +1026,13 @@ export function WardMap({
       action: { kind: "location", loc: "inn" },
     },
     {
-      id: "outskirts",
-      label: "Outskirts",
-      desc: "Solo hunt",
-      icon: "spinning-sword",
+      id: "camp",
+      label: "My Camp",
+      desc: "Gather · Hunt",
+      icon: "tent",
       left: "75.2%",
       top: "82.3%",
-      action: { kind: "location", loc: "hunt" },
+      action: { kind: "location", loc: "camp" },
     },
     {
       id: "inventory",

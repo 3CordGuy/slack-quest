@@ -36,6 +36,12 @@ export interface Item {
   // Elemental affinity rolled at drop time. null for non-weapons, focus weapons,
   // and common/uncommon weapons. Only rare+ melee/ranged weapons can have an element.
   element: ElementType | null;
+  // Stack count for resources (ores / herbs / fish). Always 1 for gear /
+  // consumables — those use the per-row pattern.
+  qty: number;
+  // Apothecary Concentrate stacks on consumable potions (0..APOTHECARY_POTENCY_CAP).
+  // Each stack boosts the potion's effective power by +25% at use time.
+  potency_stacks: number;
 }
 
 interface ItemRow extends Omit<Item, "equipped" | "stat_bonus"> {
@@ -1054,7 +1060,7 @@ export interface CreateItemInput {
   element?: ElementType | null;
 }
 
-const ITEM_COLS = "id, character_id, item_name, item_type, power, rarity, flavor, equipped, weapon_range, sharpens_count, slot, stat_bonus, item_subtype, level_req, element";
+const ITEM_COLS = "id, character_id, item_name, item_type, power, rarity, flavor, equipped, weapon_range, sharpens_count, slot, stat_bonus, item_subtype, level_req, element, qty, potency_stacks";
 
 export async function addItem(db: D1Database, input: CreateItemInput): Promise<Item> {
   // Infer slot from item_type for legacy callers (shop purchases, etc.) that
@@ -2110,14 +2116,16 @@ async function restoreSnapshot(
       .prepare(
         `INSERT INTO inventory (
           character_id, item_name, item_type, power, rarity, flavor, qty, equipped,
-          weapon_range, sharpens_count, slot, stat_bonus, item_subtype, level_req, element
-        ) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          weapon_range, sharpens_count, slot, stat_bonus, item_subtype, level_req, element, potency_stacks
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .bind(
         userId, item.item_name, item.item_type, item.power, item.rarity, item.flavor,
+        item.qty ?? 1,
         item.equipped ? 1 : 0, item.weapon_range, item.sharpens_count ?? 0,
         item.slot, item.stat_bonus ? JSON.stringify(item.stat_bonus) : null,
         item.item_subtype, item.level_req ?? 1, item.element ?? null,
+        item.potency_stacks ?? 0,
       )
       .run();
   }
@@ -3676,3 +3684,278 @@ export async function clearHiredMercForParty(
     .bind(questId)
     .run();
 }
+
+// =============================================================================
+// CAMP: gathering tasks, resources, recipes, camp upgrades
+// =============================================================================
+
+export type CampNode = "mine" | "forage" | "fish";
+export type CampTier = "quick" | "standard" | "deep";
+
+// Max apothecary Concentrate stacks per potion. Each stack adds +25% potency.
+export const APOTHECARY_POTENCY_CAP = 2;
+
+// Smithy sharpen cap raised from 3 (gold) to 6 total: first 3 use gold,
+// next 3 require ore (Smithy Reinforce). Enforced in worker handlers.
+export const SMITHY_SHARPEN_GOLD_CAP = 3;
+export const SMITHY_SHARPEN_TOTAL_CAP = 6;
+
+export interface GatheringTaskRow {
+  id: number;
+  character_id: string;
+  node: CampNode;
+  tier: CampTier;
+  worker_slot: number;
+  started_at: number;
+  expires_at: number;
+  yield_json: string | null;
+  claimed_at: number | null;
+}
+
+export interface ResourceYieldEntry {
+  name: string;       // inventory item_name, with emoji prefix
+  qty: number;
+}
+
+export interface GatheringYield {
+  resources: ResourceYieldEntry[];
+  xp: number;
+  gold: number;
+  // True when a Deep-tier mine rolled the rare gold-vein strike. Surfaces
+  // a different toast headline; the gold amount is already included in `gold`.
+  gold_strike?: boolean;
+}
+
+export interface GatheringTask extends Omit<GatheringTaskRow, "yield_json"> {
+  yield: GatheringYield | null;
+}
+
+function rowToGatheringTask(row: GatheringTaskRow): GatheringTask {
+  return {
+    ...row,
+    yield: row.yield_json ? (JSON.parse(row.yield_json) as GatheringYield) : null,
+  };
+}
+
+// Active (unclaimed) tasks for a character, oldest first.
+export async function listActiveGatheringTasks(
+  db: D1Database,
+  characterId: string,
+): Promise<GatheringTask[]> {
+  const result = await db
+    .prepare(
+      `SELECT * FROM gathering_tasks
+        WHERE character_id = ? AND claimed_at IS NULL
+        ORDER BY expires_at ASC, id ASC`,
+    )
+    .bind(characterId)
+    .all<GatheringTaskRow>();
+  return (result.results ?? []).map(rowToGatheringTask);
+}
+
+export async function getGatheringTask(
+  db: D1Database,
+  taskId: number,
+  characterId: string,
+): Promise<GatheringTask | null> {
+  const row = await db
+    .prepare("SELECT * FROM gathering_tasks WHERE id = ? AND character_id = ?")
+    .bind(taskId, characterId)
+    .first<GatheringTaskRow>();
+  return row ? rowToGatheringTask(row) : null;
+}
+
+export async function startGatheringTask(
+  db: D1Database,
+  args: {
+    character_id: string;
+    node: CampNode;
+    tier: CampTier;
+    worker_slot: number;
+    duration_ms: number;
+  },
+): Promise<GatheringTask> {
+  const now = Date.now();
+  const result = await db
+    .prepare(
+      `INSERT INTO gathering_tasks (character_id, node, tier, worker_slot, started_at, expires_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+    )
+    .bind(
+      args.character_id,
+      args.node,
+      args.tier,
+      args.worker_slot,
+      now,
+      now + args.duration_ms,
+    )
+    .run();
+  const id = result.meta.last_row_id;
+  const row = await getGatheringTask(db, Number(id), args.character_id);
+  if (!row) throw new Error("Failed to read back gathering task");
+  return row;
+}
+
+// Persist a rolled yield to the task. Conditional on yield_json IS NULL so two
+// concurrent status fetches can't double-roll — the loser's write is dropped
+// and they re-read the winner's value.
+export async function tryWriteGatheringYield(
+  db: D1Database,
+  taskId: number,
+  yieldData: GatheringYield,
+): Promise<boolean> {
+  const result = await db
+    .prepare(
+      "UPDATE gathering_tasks SET yield_json = ? WHERE id = ? AND yield_json IS NULL",
+    )
+    .bind(JSON.stringify(yieldData), taskId)
+    .run();
+  return (result.meta.changes ?? 0) > 0;
+}
+
+export async function markGatheringTaskClaimed(
+  db: D1Database,
+  taskId: number,
+  characterId: string,
+): Promise<boolean> {
+  const result = await db
+    .prepare(
+      `UPDATE gathering_tasks SET claimed_at = ?
+        WHERE id = ? AND character_id = ? AND claimed_at IS NULL`,
+    )
+    .bind(Date.now(), taskId, characterId)
+    .run();
+  return (result.meta.changes ?? 0) > 0;
+}
+
+// Resource upsert. Resources stack by (character_id, item_name) — increment qty
+// when a row already exists, otherwise insert a fresh resource row.
+export async function addResource(
+  db: D1Database,
+  characterId: string,
+  itemName: string,
+  qty: number,
+  rarity: Rarity = "common",
+  flavor = "",
+): Promise<void> {
+  if (qty <= 0) return;
+  const existing = await db
+    .prepare(
+      "SELECT id FROM inventory WHERE character_id = ? AND item_name = ? AND item_type = 'resource' LIMIT 1",
+    )
+    .bind(characterId, itemName)
+    .first<{ id: number }>();
+  if (existing) {
+    await db
+      .prepare("UPDATE inventory SET qty = qty + ? WHERE id = ?")
+      .bind(qty, existing.id)
+      .run();
+    return;
+  }
+  await db
+    .prepare(
+      `INSERT INTO inventory
+       (character_id, item_name, item_type, power, rarity, flavor, qty, equipped, weapon_range, slot, stat_bonus, item_subtype, level_req, element)
+       VALUES (?, ?, 'resource', 0, ?, ?, ?, 0, NULL, NULL, NULL, NULL, 1, NULL)`,
+    )
+    .bind(characterId, itemName, rarity, flavor, qty)
+    .run();
+}
+
+// Atomically deducts qty from a resource row. Returns true if the row had
+// enough; false otherwise (nothing deducted). Used by craft / brew handlers
+// to consume recipe inputs without going negative under concurrent requests.
+export async function tryConsumeResource(
+  db: D1Database,
+  characterId: string,
+  itemName: string,
+  qty: number,
+): Promise<boolean> {
+  const result = await db
+    .prepare(
+      `UPDATE inventory SET qty = qty - ?
+        WHERE character_id = ? AND item_name = ? AND item_type = 'resource' AND qty >= ?`,
+    )
+    .bind(qty, characterId, itemName, qty)
+    .run();
+  if ((result.meta.changes ?? 0) === 0) return false;
+  // Delete empty rows so the inventory grid stays tidy.
+  await db
+    .prepare(
+      "DELETE FROM inventory WHERE character_id = ? AND item_name = ? AND item_type = 'resource' AND qty <= 0",
+    )
+    .bind(characterId, itemName)
+    .run();
+  return true;
+}
+
+export interface CampUpgradeRow {
+  upgrade_key: string;
+  built_at: number;
+}
+
+export async function listCampUpgrades(
+  db: D1Database,
+  characterId: string,
+): Promise<CampUpgradeRow[]> {
+  const result = await db
+    .prepare("SELECT upgrade_key, built_at FROM camp_upgrades WHERE character_id = ?")
+    .bind(characterId)
+    .all<CampUpgradeRow>();
+  return result.results ?? [];
+}
+
+// Atomic upgrade insert. INSERT OR IGNORE so two parallel build clicks won't
+// charge twice — the second insert is a no-op and the caller can detect that
+// via the returned bool.
+export async function tryBuildCampUpgrade(
+  db: D1Database,
+  characterId: string,
+  upgradeKey: string,
+): Promise<boolean> {
+  const result = await db
+    .prepare(
+      `INSERT OR IGNORE INTO camp_upgrades (character_id, upgrade_key, built_at)
+       VALUES (?, ?, ?)`,
+    )
+    .bind(characterId, upgradeKey, Date.now())
+    .run();
+  return (result.meta.changes ?? 0) > 0;
+}
+
+// Bumps an inventory item's potency_stacks by 1 (capped at cap). Returns true
+// if a stack landed, false if the item was already maxed.
+export async function tryAddPotencyStack(
+  db: D1Database,
+  itemId: number,
+  characterId: string,
+  cap: number,
+): Promise<boolean> {
+  const result = await db
+    .prepare(
+      `UPDATE inventory SET potency_stacks = potency_stacks + 1
+        WHERE id = ? AND character_id = ? AND potency_stacks < ?`,
+    )
+    .bind(itemId, characterId, cap)
+    .run();
+  return (result.meta.changes ?? 0) > 0;
+}
+
+// Bumps sharpens_count by 1 — used by both gold sharpen (caller checks gold
+// cap of 3) and ore Reinforce (caller checks total cap of 6). Returns true if
+// the row exists; existence is already validated by the caller.
+export async function bumpSharpens(
+  db: D1Database,
+  itemId: number,
+  characterId: string,
+): Promise<boolean> {
+  const result = await db
+    .prepare(
+      `UPDATE inventory SET sharpens_count = sharpens_count + 1, power = power + 1
+        WHERE id = ? AND character_id = ?`,
+    )
+    .bind(itemId, characterId)
+    .run();
+  return (result.meta.changes ?? 0) > 0;
+}
+
