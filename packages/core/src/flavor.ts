@@ -1847,10 +1847,10 @@ export function rollGatherYield(
   const tierSpec = CAMP_TIERS[tier];
   const rng = mulberry32(taskId);
   const resources: RolledYield["resources"] = [];
-  const xpScale =
-    levelScaledXpMultiplier(modifiers.character_level ?? 1) *
-    (modifiers.rested ? REST_BONUS_MULT : 1);
-  const goldScale = modifiers.rested ? REST_BONUS_MULT : 1;
+  const levelMult = levelScaledXpMultiplier(modifiers.character_level ?? 1);
+  const restedMult = modifiers.rested ? REST_BONUS_MULT : 1;
+  const xpScale = levelMult * restedMult;
+  const goldScale = levelMult * restedMult;
   let xp = Math.round(tierSpec.base_xp * xpScale);
   let gold = Math.round(tierSpec.base_gold * goldScale);
   let gold_strike = false;
@@ -2425,11 +2425,11 @@ export function rollPubErrandYield(
   const tierSpec = PUB_ERRAND_TIERS[tier];
   const rng = pubMulberry32(errandId);
   const trustMult = trustScore >= 6 ? PUB_TRUST_HIGH_MULT : 1;
-  // XP scales with character level (see levelScaledXpMultiplier rationale
-  // on the camp roller). Gold stays trust-only so the gold floor doesn't
-  // drift up with progression.
-  const xpScale = trustMult * levelScaledXpMultiplier(characterLevel);
-  let gold = Math.round(tierSpec.base_gold * trustMult);
+  // Both XP and gold scale with character level so the world stays relevant
+  // as the player progresses. Trust is an additional multiplier on top.
+  const levelMult = levelScaledXpMultiplier(characterLevel);
+  const xpScale = trustMult * levelMult;
+  let gold = Math.round(tierSpec.base_gold * trustMult * levelMult);
   let xp = Math.round(tierSpec.base_xp * xpScale);
   const items: PubErrandYield["items"] = [];
 
