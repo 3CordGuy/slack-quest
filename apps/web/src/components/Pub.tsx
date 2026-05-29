@@ -158,10 +158,15 @@ function NpcConversation({ npc, onClose }: { npc: PubNpc; onClose: () => void })
 // PUB CARD — Drink menu + Liars' Roll mini-game
 // =============================================================================
 
+/**
+ * `section` controls which section to render when the pub is in wide-modal
+ * sidebar mode. Defaults to "all" (legacy stacked layout).
+ */
 function PubCard({
   pub,
   navOverlay,
   inModal,
+  section = "all",
   onBuyDrink,
   onHireMerc,
   onDismissMerc,
@@ -170,6 +175,8 @@ function PubCard({
   pub: PubResponse;
   navOverlay?: React.ReactNode;
   inModal?: boolean;
+  /** Which section to render: "all" | "drinks" | "mercs" */
+  section?: "all" | "drinks" | "mercs";
   onBuyDrink: (drinkId: string) => void;
   onHireMerc: (mercId: string) => void;
   onDismissMerc: () => void;
@@ -207,14 +214,15 @@ function PubCard({
       )}
 
       {/* Drink menu */}
-      <div style={{ marginTop: 16 }}>
+      {(section === "all" || section === "drinks") && (
+      <div style={{ marginTop: section === "drinks" ? 0 : 16 }}>
         <div style={{ ...muted, fontSize: 11, textTransform: "uppercase", letterSpacing: 1.5, marginBottom: 10, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
           <span>Drink Menu · <span style={{ color: "#fbbf24" }}>{pub.gold}g</span></span>
           <span style={{ color: pub.drinks_remaining > 0 ? "#86efac" : "#fca5a5" }}>
             <Icon name="beer-stein" size={10} /> {pub.drinks_remaining}/{2} before quest
           </span>
         </div>
-        <div style={{ display: "grid", gap: 8 }}>
+        <div className="drinks-grid">
           {pub.drinks.map((d) => (
             <div
               key={d.id}
@@ -268,13 +276,16 @@ function PubCard({
           ))}
         </div>
       </div>
+      )}
 
       {/* Mercs for hire */}
-      {pub.mercs && pub.mercs.length > 0 && (
-        <div style={{ marginTop: 20 }}>
+      {(section === "all" || section === "mercs") && pub.mercs && pub.mercs.length > 0 && (
+        <div style={{ marginTop: section === "mercs" ? 0 : 20 }}>
+          {section !== "mercs" && (
           <div style={{ ...muted, fontSize: 11, textTransform: "uppercase", letterSpacing: 1.5, marginBottom: 10 }}>
             ⚔️ Looking for Work
           </div>
+          )}
           {pub.hired_merc ? (
             <div style={{
               padding: "12px 14px",
@@ -305,7 +316,7 @@ function PubCard({
               </button>
             </div>
           ) : (
-            <div style={{ display: "grid", gap: 8 }}>
+            <div className="mercs-grid">
               {pub.mercs.map((m) => (
                 <div
                   key={m.id}
@@ -351,8 +362,8 @@ function PubCard({
         </div>
       )}
 
-      {/* At the Bar — NPC conversations */}
-      {pub.npcs && (pub.npcs.bartender || pub.npcs.regulars.length > 0) && (
+      {/* At the Bar — NPC conversations (only in full/drinks view) */}
+      {section !== "mercs" && pub.npcs && (pub.npcs.bartender || pub.npcs.regulars.length > 0) && (
         <NpcSection npcs={pub.npcs} />
       )}
     </div>
