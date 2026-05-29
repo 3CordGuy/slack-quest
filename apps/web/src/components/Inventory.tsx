@@ -841,7 +841,10 @@ function BagFilterTabs({
 // Combat-relevant totals derived from equipped gear + base stats. Matches the
 // design's "Loadout Totals" panel below the paper-doll.
 // Attack/Magic = STR/INT modifier formulas from constants.PRIMARY_STAT_META.
-// Armor reflects the live armor_power. Crit derives from DEX (cap 10%).
+// Armor is recomputed from equipped slots so it updates reactively when the
+// player equips/unequips without waiting on the server to refresh the
+// character record (which doesn't carry armor_power on /api/me anyway).
+// Crit derives from DEX (cap 10%).
 export function LoadoutTotals({
   character,
   items,
@@ -858,9 +861,29 @@ export function LoadoutTotals({
     }
   }
   const effStat = (k: StatKey) => (character[k] ?? 5) + (bonus[k] ?? 0);
-  const atkMod = Math.floor((effStat("str") - 5) / 2);
-  const magMod = Math.floor((effStat("int_stat") - 5) / 2);
-  const armorNow = character.armor_power ?? 0;
+  // Basic attacks add the main-hand weapon's full power on top of the STR mod
+  // (combat.ts:resolvePlayerHit). Focus weapons feed Magic via the signature
+  // `wpn = floor(power/2)` term used by every caster ability that includes a
+  // weapon component.
+  const mainHand = equipped.find(
+    (i) => i.item_type === "weapon" && (i.slot === "main_hand" || i.slot === null),
+  );
+  const weaponAtk = mainHand?.power ?? 0;
+  const focusMag = mainHand?.weapon_range === "focus" ? Math.floor((mainHand.power ?? 0) / 2) : 0;
+  const atkMod = Math.floor((effStat("str") - 5) / 2) + weaponAtk;
+  const magMod = Math.floor((effStat("int_stat") - 5) / 2) + focusMag;
+  // Mirrors computeArmorPowerFromSlots in worker.ts:
+  //   body = power, helmet = floor(p/2), pants = floor(p/4),
+  //   shield off_hand = power.
+  const slotPower = (slot: EquipSlot) =>
+    equipped.find((i) => i.slot === slot)?.power ?? 0;
+  const offHand = equipped.find((i) => i.slot === "off_hand");
+  const shieldPower = offHand?.item_subtype === "shield" ? offHand.power : 0;
+  const armorNow =
+    slotPower("body") +
+    Math.floor(slotPower("helmet") / 2) +
+    Math.floor(slotPower("pants") / 4) +
+    shieldPower;
   const critPct = Math.round(
     Math.min(10, Math.max(0, (effStat("dex") - 5))),
   );
