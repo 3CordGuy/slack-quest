@@ -2262,6 +2262,8 @@ function SpotlightMonster({
         flexDirection: "column",
         alignItems: "center",
         gap: 0,
+        width: "100%",
+        minWidth: 0,
       }}
       onClick={!isDead && onClick ? onClick : undefined}
     >
@@ -2473,6 +2475,8 @@ function SpotlightMonster({
           display: "flex", gap: 6,
           justifyContent: "center", flexWrap: "wrap",
           marginTop: 12, minHeight: 22,
+          width: "100%", boxSizing: "border-box",
+          padding: "0 8px",
         }}>
           {monster.effects?.map((e, i) => {
             const def = EFFECT_PILLS[e.type];
@@ -2831,14 +2835,14 @@ function FighterHpRow({ hp, maxHp, shield, armorPower }: { hp: number; maxHp: nu
           <div style={{ width: `${pct * 100}%`, height: "100%", background: color, transition: "width 0.3s ease" }} />
         </div>
         {armorMax > 0 && (
-          <div style={{ height: 4, background: shield === 0 ? "#3b1515" : "#0e0f12", borderRadius: 2, overflow: "hidden" }} title={shield === 0 ? "Armor depleted" : `Armor: ${shield}/${armorMax}`}>
-            <div style={{ width: `${armorPct * 100}%`, height: "100%", background: "#6b7280", transition: "width 0.3s ease" }} />
+          <div style={{ height: 6, background: shield === 0 ? "#3b1515" : "#1a2a3a", borderRadius: 3, overflow: "hidden" }} title={shield === 0 ? "Armor depleted" : `Armor: ${shield}/${armorMax}`}>
+            <div style={{ width: `${armorPct * 100}%`, height: "100%", background: "#7dd3fc", transition: "width 0.3s ease" }} />
           </div>
         )}
       </div>
       <div style={{ ...muted, fontSize: 11, minWidth: 48, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
         {hp}/{maxHp}
-        {armorMax > 0 && <div style={{ fontSize: 10, color: shield === 0 ? "#ef4444" : "#6b7280" }}>{shield}/{armorMax} 🛡</div>}
+        {armorMax > 0 && <div style={{ fontSize: 10, color: shield === 0 ? "#ef4444" : "#7dd3fc", display: "flex", alignItems: "center", gap: 2 }}><Icon name="shield" size={9} color={shield === 0 ? "#ef4444" : "#7dd3fc"} />{shield}/{armorMax}</div>}
       </div>
     </div>
   );

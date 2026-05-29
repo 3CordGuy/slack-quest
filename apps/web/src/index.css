@@ -721,9 +721,14 @@ em, .flavor {
   cursor: not-allowed;
 }
 .abtn.dis .mana { color: var(--fg-faint); }
-/* Compact mobile sizing — keeps the same proportions. */
+/* Compact mobile sizing. flex-basis 52px forces wrapping at ~7 per row on
+   a 375px viewport so 9-10 buttons form 2 rows instead of one squished line. */
 @media (max-width: 540px) {
-  .abtn { height: 56px; }
+  .abtn {
+    height: 56px;
+    flex: 1 1 52px;   /* grow+shrink from a 52px base — triggers wrapping */
+    max-width: 76px;  /* cap so they don't balloon when there are only 2-3 */
+  }
   .abtn .al { font-size: 9px; }
 }
 
