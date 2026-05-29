@@ -17,7 +17,6 @@ import type {
 import { CAMP_NODE_CONFIG, CAMP_TIERS } from "../constants";
 import { card, h2, muted } from "../styles";
 import { LocationHero, SmallBadge } from "./ui";
-import { HuntSection } from "./Town";
 
 interface CampProps {
   characterLevel: number;
@@ -27,11 +26,9 @@ interface CampProps {
   onStartGather: (node: CampNode, tier: CampTier) => Promise<void>;
   onClaim: (taskId: number) => Promise<void>;
   onBuildUpgrade: (upgradeKey: string) => Promise<void>;
-  onStartHunt: (tier: number, monsterCount: number, invitees: string[]) => void;
 }
 
 const TAB_META: Array<{ tab: CampTab; label: string; icon: string }> = [
-  { tab: "hunt",   label: "Hunt",        icon: "sword" },
   { tab: "mine",   label: "Mine",        icon: "mining-diamonds" },
   { tab: "forage", label: "Herb Garden", icon: "herbs-bundle" },
   { tab: "fish",   label: "Fishing",     icon: "fishing-pole" },
@@ -40,7 +37,7 @@ const TAB_META: Array<{ tab: CampTab; label: string; icon: string }> = [
 
 export function Camp({
   characterLevel, overviewArt, navOverlay, status,
-  onStartGather, onClaim, onBuildUpgrade, onStartHunt,
+  onStartGather, onClaim, onBuildUpgrade,
 }: CampProps) {
   const [tab, setTab] = useState<CampTab>("mine");
   const activeBySlot = useMemo(() => {
@@ -64,13 +61,6 @@ export function Camp({
           ))}
         </div>
 
-        {tab === "hunt" && (
-          <HuntSection
-            characterLevel={characterLevel}
-            overviewArt={overviewArt}
-            onStartHunt={onStartHunt}
-          />
-        )}
         {(tab === "mine" || tab === "forage" || tab === "fish") && (
           <GatheringNodePanel
             node={tab}
