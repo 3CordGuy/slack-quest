@@ -158,13 +158,15 @@ export function App() {
         const summary = t.yield && t.yield.resources.length > 0
           ? t.yield.resources.map((r) => `${r.qty} × ${r.name}`).join(", ")
           : "ready to collect";
+        const nodeIcon = t.node === "mine" ? "ore" : t.node === "forage" ? "grass-mushroom" : "fishing-hook";
         toast(
           (tt) => (
-            <span>
-              <strong>{nodeLabel} complete</strong> — {summary}
+            <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <Icon name={nodeIcon} size={16} color="var(--fg-1)" />
+              <span><strong>{nodeLabel} complete</strong> — {summary}</span>
               <button
                 onClick={() => { dismissedReadyTasksRef.current.add(t.id); toast.dismiss(tt.id); }}
-                style={{ marginLeft: 12, background: "transparent", color: "inherit", border: "none", cursor: "pointer", textDecoration: "underline" }}
+                style={{ marginLeft: 4, background: "transparent", color: "inherit", border: "none", cursor: "pointer", textDecoration: "underline" }}
               >dismiss</button>
             </span>
           ),
@@ -196,11 +198,12 @@ export function App() {
           : "ready in the pub";
         toast(
           (tt) => (
-            <span>
-              <strong>{name}</strong> has your reward — {summary}
+            <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <Icon name={patron?.icon ?? "conversation"} size={16} color="var(--fg-1)" />
+              <span><strong>{name}</strong> has your reward — {summary}</span>
               <button
                 onClick={() => { dismissedErrandsRef.current.add(active.id); toast.dismiss(tt.id); }}
-                style={{ marginLeft: 12, background: "transparent", color: "inherit", border: "none", cursor: "pointer", textDecoration: "underline" }}
+                style={{ marginLeft: 4, background: "transparent", color: "inherit", border: "none", cursor: "pointer", textDecoration: "underline" }}
               >dismiss</button>
             </span>
           ),
@@ -352,8 +355,9 @@ export function App() {
       toast(
         (t) => (
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <Icon name="crossed-swords" size={16} color="var(--fg-1)" />
             <span style={{ flex: 1, minWidth: 0 }}>
-              ⚔ <strong>{j.monster_name}</strong> stirs — {j.starter_name ? <><strong>{j.starter_name}</strong> opened</> : "opened"} a {j.variant} quest!
+              <strong>{j.monster_name}</strong> stirs — {j.starter_name ? <><strong>{j.starter_name}</strong> opened</> : "opened"} a {j.variant} quest!
             </span>
             <button
               onClick={() => {
@@ -361,6 +365,7 @@ export function App() {
                 toast.dismiss(t.id);
               }}
               style={{
+                display: "flex", alignItems: "center", gap: 5,
                 padding: "5px 12px",
                 background: "#7f1d1d",
                 border: "1px solid #b91c1c",
@@ -373,7 +378,7 @@ export function App() {
                 whiteSpace: "nowrap",
               }}
             >
-              ⚔ Join fight
+              <Icon name="crossed-swords" size={12} color="#fecaca" /> Join fight
             </button>
           </div>
         ),
@@ -400,7 +405,15 @@ export function App() {
     if (qId !== prevLobbyToastRef.current && myStatus === "pending") {
       const starter = lobby.party.find((m) => m.slack_user_id === lobby.quest.created_by);
       const who = starter?.name ? `${starter.name} ` : "";
-      toast(`🛡 ${who}invited you to a quest lobby! Open the LOBBY tab →`, { duration: 7000 });
+      toast(
+        () => (
+          <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <Icon name="shield" size={16} color="var(--fg-1)" />
+            <span>{who}invited you to a quest lobby! Open the LOBBY tab →</span>
+          </span>
+        ),
+        { duration: 7000 },
+      );
       prevLobbyToastRef.current = qId;
     } else if (qId === prevLobbyToastRef.current && myStatus !== "pending") {
       // Reset so a later re-invite (rare but possible) re-toasts.

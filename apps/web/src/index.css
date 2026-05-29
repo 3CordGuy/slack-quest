@@ -422,24 +422,37 @@ em, .flavor {
   }
   .loc-wide-body { flex-direction: column; }
   .loc-wide-sidebar {
+    /* Grid: all tabs visible at once, evenly distributed, no horizontal scroll */
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(54px, 1fr));
     width: 100%;
-    flex-direction: row;
-    overflow-x: auto;
-    overflow-y: hidden;
+    overflow: visible;
     padding: 0;
     gap: 0;
     border-right: none;
     border-bottom: 1px solid var(--border-base);
+    /* Unset flex properties that no longer apply */
+    flex-direction: unset;
+    flex-shrink: unset;
   }
   .loc-wide-nav-item {
     flex-direction: column;
-    gap: 4px;
-    padding: 8px 12px;
-    font-size: 11px;
+    justify-content: center;
+    gap: 3px;
+    padding: 7px 4px;
+    font-size: 10px;
     border-left: none;
     border-bottom: 3px solid transparent;
     white-space: nowrap;
-    flex-shrink: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    text-align: center;
+  }
+  .loc-wide-nav-item span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 100%;
+    display: block;
   }
   .loc-wide-nav-item.active {
     border-left-color: transparent;

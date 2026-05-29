@@ -1141,7 +1141,7 @@ export function WardMap({
       desc: campTask?.ready
         ? "Ready to collect!"
         : campTask
-          ? `${campTask.node[0].toUpperCase()}${campTask.node.slice(1)}ing…`
+          ? (({ mine: "Mining…", forage: "Foraging…", fish: "Fishing…" } as Record<string, string>)[campTask.node] ?? "Gathering…")
           : activeTasks.length > 0
             ? `${activeTasks.length} task${activeTasks.length > 1 ? "s" : ""} active`
             : "Mine · Forage · Fish",

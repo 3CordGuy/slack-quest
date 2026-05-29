@@ -86,7 +86,7 @@ export function Camp({
   return null;
 }
 
-// Stockpile — at-a-glance qty for every gatherable resource, grouped by node.
+// Stockpile — 3×3 stat-card grid for every gatherable resource.
 // Always renders all 9 resources (zero-qty included) so the player can see
 // what they're missing for crafting recipes without opening the inventory.
 function Stockpile({ inventory }: { inventory: Item[] }) {
@@ -100,77 +100,41 @@ function Stockpile({ inventory }: { inventory: Item[] }) {
   }, [inventory]);
 
   return (
-    <div style={{
-      marginTop: 14,
-      padding: "12px 14px",
-      borderRadius: "var(--radius-lg)",
-      border: "1px solid var(--border-base)",
-      background: "var(--bg-card-2)",
-      backdropFilter: "blur(10px) saturate(1.05)",
-      WebkitBackdropFilter: "blur(10px) saturate(1.05)",
-    }}>
+    <div style={{ marginTop: 14 }}>
       <div style={{
+        fontSize: 11, textTransform: "uppercase", letterSpacing: 1.5, color: "var(--fg-mute)",
+        marginBottom: 10, fontFamily: "var(--font-display)",
         display: "flex", alignItems: "center", gap: 6,
-        font: "11px/1 var(--font-display)",
-        textTransform: "uppercase",
-        letterSpacing: 1.5,
-        color: "var(--fg-mute)",
-        marginBottom: 10,
       }}>
         <Icon name="wooden-crate" size={13} />
         Stockpile
       </div>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 14 }}>
-        {(["mine", "forage", "fish"] as CampNode[]).map((node) => (
-          <StockpileColumn
-            key={node}
-            node={node}
-            qtyByName={qtyByName}
-          />
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function StockpileColumn({
-  node,
-  qtyByName,
-}: {
-  node: CampNode;
-  qtyByName: Map<string, number>;
-}) {
-  const spec = CAMP_NODE_CONFIG[node];
-  const entries = STOCKPILE_RESOURCES.filter((r) => r.node === node);
-  return (
-    <div>
-      <div style={{
-        display: "flex", alignItems: "center", gap: 6,
-        fontSize: 11, color: "var(--fg-mute)", textTransform: "uppercase", letterSpacing: 1.2,
-        marginBottom: 6,
-      }}>
-        <Icon name={spec.icon} size={11} />
-        <span>{node === "mine" ? "Ore" : node === "forage" ? "Herbs" : "Fish"}</span>
-      </div>
-      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-        {entries.map((r) => {
-          const full = `${r.emoji} ${r.name}`;
-          const qty = qtyByName.get(full) ?? 0;
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8 }}>
+        {STOCKPILE_RESOURCES.map((r) => {
+          const qty = qtyByName.get(`${r.emoji} ${r.name}`) ?? 0;
+          const rarityColor = r.node === "mine"
+            ? (r.id === "mithril_ore" ? "#7dd3fc" : r.id === "silver_ore" ? "#d1d5db" : "#a78bfa")
+            : r.node === "forage"
+            ? (r.id === "nightbloom" ? "#c084fc" : r.id === "sunleaf" ? "#fbbf24" : "#86efac")
+            : (r.id === "abyss_eel" ? "#f87171" : r.id === "silverfin" ? "#7dd3fc" : "#6ee7b7");
           return (
             <div key={r.id} style={{
-              display: "flex", alignItems: "center", justifyContent: "space-between",
-              fontSize: 12,
-              color: qty > 0 ? "var(--fg-1)" : "var(--fg-mute)",
+              padding: "12px 10px",
+              borderRadius: "var(--radius-lg)",
+              border: `1px solid ${qty > 0 ? rarityColor + "44" : "var(--border-base)"}`,
+              background: qty > 0 ? rarityColor + "0d" : "var(--bg-card-2)",
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              gap: 6,
+              backdropFilter: "blur(10px) saturate(1.05)",
+              WebkitBackdropFilter: "blur(10px) saturate(1.05)",
+              transition: "border-color 0.2s",
+              opacity: qty === 0 ? 0.55 : 1,
             }}>
-              <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                <Icon name={r.icon} size={13} color={qty > 0 ? "var(--fg-1)" : "var(--fg-mute)"} />
-                {r.name}
-              </span>
-              <span style={{
-                fontVariantNumeric: "tabular-nums",
-                fontWeight: 600,
-                color: qty > 0 ? "var(--accent-go-1, #4ade80)" : "var(--fg-mute)",
-              }}>{qty}</span>
+              <Icon name={r.icon} size={24} color={qty > 0 ? rarityColor : "var(--fg-mute)"} />
+              <div style={{ fontSize: 11, color: "var(--fg-2)", textAlign: "center", fontWeight: 500, lineHeight: 1.2 }}>{r.name}</div>
+              <div style={{ fontSize: 22, fontWeight: 700, fontFamily: "var(--font-display)", color: qty > 0 ? rarityColor : "var(--fg-mute)", lineHeight: 1 }}>{qty}</div>
             </div>
           );
         })}

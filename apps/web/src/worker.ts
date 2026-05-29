@@ -24,6 +24,7 @@ import {
   getOrScheduleViewArt,
   generateCharacterArtNow,
   getOrScheduleCharacterArt,
+  type ViewArtKey,
 } from "./ai";
 
 import {
@@ -3774,9 +3775,26 @@ app.get("/api/pub/errands", async (c) => {
     active = await rollAndPersistPubYield(c.env.DB, activeRaw, trust.score, character.level);
   }
   const trust = await listPubTrust(c.env.DB, session.slack_user_id);
+  // Fetch patron portrait art in parallel — scheduled in background so
+  // first-render latency isn't affected; R2 cache returns instantly once warm.
+  const art = artTarget(c.env);
+  const patronArtKeys: Record<string, ViewArtKey> = {
+    cobb: "patron_cobb",
+    marra: "patron_marra",
+    rell: "patron_rell",
+  };
+  const patronArtUrls = await Promise.all(
+    PUB_PATRONS.map((p) => {
+      const key = patronArtKeys[p.id];
+      return key
+        ? getOrScheduleViewArt(c.env.AI, art, c.executionCtx, key, undefined, TOWN_WEEKLY_MS)
+        : Promise.resolve(null);
+    })
+  );
+  const patronsWithArt = PUB_PATRONS.map((p, i) => ({ ...p, art_url: patronArtUrls[i] }));
   return c.json({
     now: Date.now(),
-    patrons: PUB_PATRONS,
+    patrons: patronsWithArt,
     offers: offers.filter((o) => o.taken_by === null).map((o) => ({
       id: o.id,
       patron_id: o.patron_id,

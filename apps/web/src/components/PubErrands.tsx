@@ -9,7 +9,7 @@ import { useMemo, useState } from "react";
 import toast from "react-hot-toast";
 import type { CSSProperties, ReactNode } from "react";
 
-import { Icon } from "../icons";
+import { Avatar, Icon } from "../icons";
 import { RESOURCE_CATALOG, findResource, type ResourceSpec } from "@gantt-quest/core";
 
 import type {
@@ -192,15 +192,25 @@ function PatronCard({
       backdropFilter: "blur(10px) saturate(1.05)",
       WebkitBackdropFilter: "blur(10px) saturate(1.05)",
     }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-        <Icon name={patron.icon} size={26} color="var(--fg-1)" />
+      <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
+        <Avatar
+          src={patron.art_url ?? null}
+          alt={patron.name}
+          size={60}
+          radius={10}
+          fallbackIcon={patron.icon}
+          fallbackColor="var(--fg-mute)"
+          border="1px solid var(--border-base)"
+        />
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontWeight: 600, fontFamily: "var(--font-display)", fontSize: 16 }}>{patron.name}</div>
-          <div style={{ fontSize: 12, color: "var(--fg-mute)" }}>{patron.archetype}</div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <div style={{ fontWeight: 600, fontFamily: "var(--font-display)", fontSize: 16, flex: 1, minWidth: 0 }}>{patron.name}</div>
+            <TrustMeter score={trust.score} cap={trust.cap} />
+          </div>
+          <div style={{ fontSize: 12, color: "var(--fg-mute)", marginTop: 1 }}>{patron.archetype}</div>
+          <div style={{ fontSize: 12, color: "var(--fg-mute)", marginTop: 4, fontStyle: "italic", lineHeight: 1.4 }}>{patron.blurb}</div>
         </div>
-        <TrustMeter score={trust.score} cap={trust.cap} />
       </div>
-      <div style={{ ...muted, fontSize: 12, marginTop: 6 }}>{patron.blurb}</div>
 
       <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 8 }}>
         {offers.length === 0 ? (

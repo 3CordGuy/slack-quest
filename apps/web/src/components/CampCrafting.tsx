@@ -27,6 +27,7 @@ interface PanelCommon {
 export function ForgePanel(props: PanelCommon) {
   const recipes = useMemo(() => RECIPE_CATALOG.filter((r) => r.station === "smithy"), []);
   const ores = useMemo(() => filterResources(props.inventory, "mine"), [props.inventory]);
+  const allOres = useMemo(() => allResources(props.inventory, "mine"), [props.inventory]);
   // Reinforce candidates: equipped weapon/armor at sharpens >= 3 and < 6.
   const reinforceCandidates = useMemo(() => props.inventory.filter((it) =>
     (it.item_type === "weapon" || it.item_type === "armor")
@@ -37,6 +38,7 @@ export function ForgePanel(props: PanelCommon) {
 
   return (
     <div style={card}>
+      <StockpileMini label="Ore stockpile" resources={allOres} />
       <SectionTitle icon="anvil" title="Forge & Reinforce" />
       <p style={muted}>
         <em>"Bring me ore from the mine. I'll forge it into something worth swinging."</em>
@@ -82,6 +84,7 @@ export function ForgePanel(props: PanelCommon) {
 export function BrewPanel(props: PanelCommon) {
   const recipes = useMemo(() => RECIPE_CATALOG.filter((r) => r.station === "apothecary"), []);
   const herbs = useMemo(() => filterResources(props.inventory, "forage"), [props.inventory]);
+  const allHerbs = useMemo(() => allResources(props.inventory, "forage"), [props.inventory]);
   const concentrateCandidates = useMemo(() => props.inventory.filter((it) =>
     (it.item_type === "consumable" || it.item_type === "tool")
     && (it.potency_stacks ?? 0) < 2,
@@ -89,6 +92,7 @@ export function BrewPanel(props: PanelCommon) {
 
   return (
     <div style={card}>
+      <StockpileMini label="Herb stockpile" resources={allHerbs} />
       <SectionTitle icon="poison-bottle" title="Brew & Concentrate" />
       <p style={muted}>
         <em>"Herbs from the camp garden. Steep, decant, refine — same as gold, slower."</em>
@@ -186,7 +190,7 @@ function RecipeRow({
             const short = have < inp.qty;
             return (
               <span key={inp.resource_id} style={{ marginRight: 12, color: short ? "var(--accent-no-1, #f87171)" : "inherit" }}>
-                {inp.qty} × {spec?.emoji ?? ""} {spec?.name ?? inp.resource_id} <span style={{ opacity: 0.6 }}>({have} on hand)</span>
+                {inp.qty} × <span style={{ display: "inline-flex", alignItems: "center", gap: 3, verticalAlign: "middle" }}><Icon name={spec?.icon ?? "abstract-006"} size={12} color="var(--fg-mute)" /> {spec?.name ?? inp.resource_id}</span> <span style={{ opacity: 0.6 }}>({have} on hand)</span>
               </span>
             );
           })}
@@ -288,7 +292,7 @@ function ReinforceRow({
         {!hasAny && <option value="">No ore</option>}
         {ores.map((o) => (
           <option key={o.spec.id} value={o.spec.id}>
-            {o.spec.emoji} {o.spec.name} ({o.qty})
+            {o.spec.name} ({o.qty})
           </option>
         ))}
       </select>
@@ -362,7 +366,7 @@ function ConcentrateRow({
         {!hasAny && <option value="">No herbs</option>}
         {herbs.map((h) => (
           <option key={h.spec.id} value={h.spec.id}>
-            {h.spec.emoji} {h.spec.name} ({h.qty})
+            {h.spec.name} ({h.qty})
           </option>
         ))}
       </select>
@@ -398,6 +402,12 @@ function filterResources(inventory: Item[], node: "mine" | "forage" | "fish"): A
     .filter((entry) => entry.qty > 0);
 }
 
+function allResources(inventory: Item[], node: "mine" | "forage" | "fish"): Array<{ spec: ResourceSpec; qty: number }> {
+  return RESOURCE_CATALOG
+    .filter((s) => s.node === node)
+    .map((spec) => ({ spec, qty: inventoryQty(inventory, spec.id) }));
+}
+
 function SectionTitle({ icon, title }: { icon: string; title: string }) {
   return (
     <h2 style={{ ...h2, display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
@@ -429,6 +439,30 @@ const rowStyle: CSSProperties = {
   border: "1px solid var(--border-base)",
   background: "var(--bg-card-2)",
 };
+
+function StockpileMini({ label, resources }: { label: string; resources: Array<{ spec: ResourceSpec; qty: number }> }) {
+  return (
+    <div style={{ marginBottom: 16, padding: "10px 12px", borderRadius: "var(--radius-md)", border: "1px solid var(--border-faint, rgba(255,255,255,0.06))", background: "var(--bg-card-2)" }}>
+      <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: 1.2, color: "var(--fg-mute)", marginBottom: 8, fontFamily: "var(--font-display)" }}>
+        <Icon name="wooden-crate" size={11} /> {label}
+      </div>
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+        {resources.map((r) => (
+          <div key={r.spec.id} style={{
+            display: "flex", alignItems: "center", gap: 5, padding: "4px 10px",
+            borderRadius: "var(--radius-sm)", border: "1px solid var(--border-base)",
+            background: r.qty > 0 ? "var(--bg-card)" : "transparent",
+            opacity: r.qty === 0 ? 0.45 : 1,
+          }}>
+            <Icon name={r.spec.icon} size={14} color="var(--fg-2)" />
+            <span style={{ fontSize: 12 }}>{r.spec.name}</span>
+            <span style={{ fontWeight: 700, fontSize: 13, color: r.qty > 0 ? "var(--fg-1)" : "var(--fg-mute)", marginLeft: 2 }}>{r.qty}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 function actionBtnStyle(enabled: boolean): CSSProperties {
   return {

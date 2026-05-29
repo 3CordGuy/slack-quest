@@ -560,6 +560,13 @@ export const VIEW_ART_PROMPTS = {
     "Wide establishing shot of a hidden basement data den, lit by purple and magenta neon strip lights along the ceiling. Walls lined with floor-to-ceiling server racks pulsing with violet and pink status LEDs. Exposed pipes and ducts overhead, concrete floor, a cyberpunk-fantasy hybrid mood. Soft mist drifts across the floor; faint reflection of neon on a polished concrete surface. No characters — the chamber is the subject.",
   combat_deadline_dungeon:
     "Wide establishing shot of a cramped stone dungeon chamber repurposed as a war room. Stone walls covered in pinned Gantt charts, post-it notes, and burndown graphs. Heavy wooden table at center stage strewn with parchment scrolls of code, ergonomic keyboards, mugs of cold coffee, a guttering candle, a sword leaning against the table. Two wall-mounted monitors flicker urgently with red status indicators. Warm orange torchlight competes with the cold red monitor glow. No characters — the room is the subject. Tense, urgent atmosphere.",
+  // Pub patron portraits — 3/4 view, single figure, warm tavern light.
+  patron_cobb:
+    "Three-quarter view portrait of a grizzled heavyset barrel-maker in a worn leather apron, weathered hands wrapped around a large wooden mug, gap-toothed grin creasing a ruddy face. Sitting back at a tavern table, warm amber hearth-light behind him, sawdust on his boots. Single figure, candlelit pub.",
+  patron_marra:
+    "Three-quarter view portrait of a sharp-eyed woman in an apothecary's off-duty tunic — arms crossed, a knowing half-smile, a small glass vial tucked behind one ear. Cool candlelight, a half-finished drink on the bar beside her. Single figure, tavern setting, confident and slightly smug.",
+  patron_rell:
+    "Three-quarter view portrait of a weathered river-boat captain on permanent shore leave — sun-creased face, salt-and-pepper stubble, a captain's coat with water-stains and worn brass buttons, mid-story at a tavern bar, one hand gesturing animatedly. Warm tavern lantern-light. Single figure.",
   // Camp backdrops — wide establishing shots, no characters.
   camp_overview:
     "A campsite at dawn seen from just inside an open tent flap. Central fire pit with glowing embers, a wooden supply crate with rope and tools, a pickaxe and fishing rod leaned against a nearby tree, a second canvas worker tent visible to the side. Soft morning mist through the trees, golden hour light filtering through leaves. Establishing wide shot, no characters. Warm, lived-in, peaceful.",
