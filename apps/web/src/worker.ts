@@ -79,7 +79,9 @@ import {
   RECIPE_CATALOG,
   RESOURCE_CATALOG,
   findCampUpgrade,
+  findCookRecipe,
   findRecipe,
+  COOK_RECIPES,
   findResource,
   gatherSlotCount,
   resourceItemName,
@@ -3747,6 +3749,61 @@ app.post("/api/pub/errands/cancel/:id", async (c) => {
     .prepare("UPDATE pub_errand_offers SET taken_by = NULL WHERE taken_by = ?")
     .bind(errandId).run();
   return c.json({ ok: true });
+});
+
+// =============================================================================
+// PUB COOKING — turn raw fish into cooked food consumables
+// =============================================================================
+//
+// One endpoint, mirrors smithy forge / apothecary brew: validate fish + gold,
+// consume both, drop a fresh consumable into inventory. Food items route
+// through the same consumeItem (HP heal) path as Health Potions.
+
+app.post("/api/pub/cook/:recipeId", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const recipe = findCookRecipe(c.req.param("recipeId"));
+  if (!recipe) return c.json({ error: "unknown_recipe" }, 404);
+  const character = await getCharacter(c.env.DB, session.slack_user_id);
+  if (!character) return c.json({ error: "no_character" }, 404);
+  if (await getActiveQuestForCharacter(c.env.DB, session.slack_user_id)) {
+    return c.json({ error: "mid_quest" }, 400);
+  }
+  if (character.level < recipe.level_req) {
+    return c.json({ error: "level_too_low", needed: recipe.level_req, level: character.level }, 400);
+  }
+  if (character.gold < recipe.gold_cost) {
+    return c.json({ error: "insufficient_gold", price: recipe.gold_cost, gold: character.gold }, 400);
+  }
+  const fishSpec = findResource(recipe.input_fish_id);
+  if (!fishSpec) return c.json({ error: "unknown_fish" }, 500);
+  const fishName = resourceItemName(recipe.input_fish_id);
+  const consumed = await tryConsumeResource(c.env.DB, session.slack_user_id, fishName, recipe.input_qty);
+  if (!consumed) {
+    return c.json({ error: "insufficient_resources", needed: recipe.input_fish_id, qty: recipe.input_qty }, 400);
+  }
+  const paid = await tryDeductGold(c.env.DB, session.slack_user_id, recipe.gold_cost);
+  if (!paid) {
+    await addResource(c.env.DB, session.slack_user_id, fishName, recipe.input_qty);
+    return c.json({ error: "insufficient_gold_race" }, 400);
+  }
+  const item = await addItem(c.env.DB, {
+    character_id: session.slack_user_id,
+    item_name: recipe.output_name,
+    item_type: "consumable",
+    power: recipe.output_power,
+    rarity: recipe.output_rarity,
+    flavor: recipe.output_blurb,
+    weapon_range: null,
+  });
+  return c.json({
+    ok: true,
+    recipe_id: recipe.id,
+    item,
+    paid: recipe.gold_cost,
+    consumed_fish: recipe.input_fish_id,
+    gold_remaining: character.gold - recipe.gold_cost,
+  });
 });
 
 // GET /api/pub — drink menu + active buff state. Channel-scoped via the

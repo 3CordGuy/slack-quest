@@ -2311,3 +2311,65 @@ function pickLoreFragment(patronId: string, rng: () => number): string {
   const pool = LORE_FRAGMENTS[patronId] ?? LORE_FRAGMENTS.cobb;
   return pool[Math.floor(rng() * pool.length)];
 }
+
+// =============================================================================
+// PUB COOKING: turn raw fish into cooked food consumables
+// =============================================================================
+//
+// The bartender takes 1 fish + small gold and returns a food consumable (HP
+// heal on use). Closes the fish loop — without this, Captain Rell's procure
+// errand and the Fishing Hole only pay in gold + sell value. Mirrors the
+// smithy forge / apothecary brew flow: recipe catalog in code, consumed via
+// a single POST endpoint.
+
+export interface CookRecipeSpec {
+  id: string;             // slash-form slug
+  output_name: string;    // inventory item_name; pre-prefixed with food emoji
+  output_power: number;   // HP healed on use
+  output_rarity: Rarity;
+  output_blurb: string;
+  input_fish_id: string;  // resource id (river_carp / silverfin / abyss_eel)
+  input_qty: number;
+  gold_cost: number;
+  level_req: number;
+}
+
+export const COOK_RECIPES: CookRecipeSpec[] = [
+  {
+    id: "pan_fried_carp",
+    output_name: "🍣 Pan-Fried Carp",
+    output_power: 20,
+    output_rarity: "common",
+    output_blurb: "Restores 20 HP. Crispy skin, flaky middle. The bartender takes pride in this one.",
+    input_fish_id: "river_carp",
+    input_qty: 1,
+    gold_cost: 10,
+    level_req: 1,
+  },
+  {
+    id: "silverfin_steak",
+    output_name: "🐟 Silverfin Steak",
+    output_power: 40,
+    output_rarity: "uncommon",
+    output_blurb: "Restores 40 HP. Seared rare, served with a pinch of river salt.",
+    input_fish_id: "silverfin",
+    input_qty: 1,
+    gold_cost: 25,
+    level_req: 2,
+  },
+  {
+    id: "abyss_stew",
+    output_name: "🍲 Abyss Stew",
+    output_power: 75,
+    output_rarity: "rare",
+    output_blurb: "Restores 75 HP. The bartender stirs once and turns away. Best not to ask.",
+    input_fish_id: "abyss_eel",
+    input_qty: 1,
+    gold_cost: 50,
+    level_req: 4,
+  },
+];
+
+export function findCookRecipe(id: string): CookRecipeSpec | undefined {
+  return COOK_RECIPES.find((r) => r.id === id);
+}

@@ -62,6 +62,7 @@ import { StartQuestCard, JoinableQuestCard, TownNav, JobPostingCard, StepPicker,
 import { Camp } from "./components/Camp";
 import { BrewPanel, ForgePanel } from "./components/CampCrafting";
 import { PubErrands } from "./components/PubErrands";
+import { PubCooking } from "./components/PubCooking";
 import { TowerInterlude, ActiveQuestCard, ClickablePortrait } from "./components/Quest";
 import { DevToolsModal } from "./components/DevTools";
 
@@ -1251,6 +1252,14 @@ export function App() {
             onDismissMerc={dismissMerc}
             onRefresh={refreshPub}
           />
+          <div style={{ marginTop: 16 }}>
+            <PubCooking
+              characterLevel={state.me.character.level}
+              gold={state.me.character.gold}
+              inventory={state.inventory}
+              onAfterCook={async () => { await refresh(); }}
+            />
+          </div>
           <div style={{ marginTop: 16 }}>
             <PubErrands
               data={pubErrands}
