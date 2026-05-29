@@ -263,6 +263,9 @@ import {
   tryConsumeResource,
   tryWriteGatheringYield,
   type GatheringTask,
+  bumpCampClaimStats,
+  bumpSmithyCrafts,
+  bumpErrandStats,
   // Pub Errands
   bumpPubTrust,
   getActivePubErrand,
@@ -3003,11 +3006,26 @@ app.post("/api/camp/start", async (c) => {
     return c.json({ error: "errand_in_flight", errand_id: inFlightErrand?.id ?? null }, 400);
   }
   const tierSpec = CAMP_TIERS[tier];
-  // Snapshot the current perks onto the task. Future perk builds won't
-  // retroactively alter an in-flight gather's math (and the lazy yield-roll
-  // stays deterministic by row).
-  const modifiers = computeTentModifiers(upgrades.map((u) => u.upgrade_key));
-  const durationMs = applyDurationModifier(tierSpec.duration_ms, modifiers);
+  // Snapshot the current perks + character context onto the task. Future
+  // perk builds, level-ups, or claims of other tasks won't retroactively
+  // alter an in-flight gather's planned math.
+  const perks = computeTentModifiers(upgrades.map((u) => u.upgrade_key));
+  // Rested only fires when the player's *main* (slot 1) starts a gather,
+  // and only when they've been away ≥24h since their last claim. Workers
+  // (slot ≥ 2) are an always-on stream — the bonus is meant for players
+  // returning to the game, not for an extra tent.
+  const lastClaimAt = character.last_gather_claimed_at ?? null;
+  const restedThresholdMs = 24 * 60 * 60 * 1000;
+  const rested =
+    workerSlot === 1 &&
+    lastClaimAt != null &&
+    Date.now() - lastClaimAt >= restedThresholdMs;
+  const modifiers: TentModifiers = {
+    ...perks,
+    character_level: character.level,
+    rested,
+  };
+  const durationMs = applyDurationModifier(tierSpec.duration_ms, perks);
   const task = await startGatheringTask(c.env.DB, {
     character_id: session.slack_user_id,
     node, tier,
@@ -3015,7 +3033,7 @@ app.post("/api/camp/start", async (c) => {
     duration_ms: durationMs,
     modifiers,
   });
-  return c.json({ ok: true, task });
+  return c.json({ ok: true, task, rested });
 });
 
 // DELETE the player's own active gathering task — frees the worker slot so
@@ -3074,6 +3092,55 @@ app.post("/api/camp/claim/:taskId", async (c) => {
     () => 1 + Math.floor(Math.random() * 6),
     xpForLevel,
   );
+
+  // Camp counters + rested-bonus timer. Sum the qty by node so a single
+  // claim bumps the right per-node lifetime counter (drives the *_100
+  // achievements). Mithril detection rides off the same loop so we can
+  // emit `first_mithril` without re-walking yield resources.
+  let nodeOreDelta = 0;
+  let nodeHerbsDelta = 0;
+  let nodeFishDelta = 0;
+  let mithrilPulled = false;
+  for (const r of yieldData.resources) {
+    const id = RESOURCE_CATALOG.find((s) => `${s.emoji} ${s.name}` === r.name)?.id;
+    const spec = id ? findResource(id) : undefined;
+    if (!spec) continue;
+    if (spec.node === "mine") nodeOreDelta += r.qty;
+    else if (spec.node === "forage") nodeHerbsDelta += r.qty;
+    else if (spec.node === "fish") nodeFishDelta += r.qty;
+    if (id === "mithril_ore") mithrilPulled = true;
+  }
+  await bumpCampClaimStats(
+    c.env.DB,
+    session.slack_user_id,
+    {
+      ore: nodeOreDelta,
+      herbs: nodeHerbsDelta,
+      fish: nodeFishDelta,
+      deep: task.tier === "deep" ? 1 : 0,
+    },
+    task.worker_slot === 1,
+  );
+
+  // Achievement grants — order matters only for the toast feed. Always-
+  // grant flags are idempotent at the DB layer, so the first-claim ones
+  // no-op on subsequent calls.
+  const camp = character;
+  const newOre   = camp.camp_ore_mined     + nodeOreDelta;
+  const newHerbs = camp.camp_herbs_foraged + nodeHerbsDelta;
+  const newFish  = camp.camp_fish_caught   + nodeFishDelta;
+  const newDeep  = camp.camp_deep_claimed  + (task.tier === "deep" ? 1 : 0);
+  const achToGrant: string[] = ["first_gather"];
+  if (yieldData.gold_strike) achToGrant.push("gold_vein");
+  if (mithrilPulled) achToGrant.push("first_mithril");
+  if (newOre >= 100)   achToGrant.push("miner_100");
+  if (newHerbs >= 100) achToGrant.push("forager_100");
+  if (newFish >= 100)  achToGrant.push("fisher_100");
+  if (newDeep >= 10)   achToGrant.push("deep_gatherer_10");
+  for (const id of achToGrant) {
+    await grantAchievement(c.env.DB, session.slack_user_id, id);
+  }
+
   return c.json({ ok: true, task_id: taskId, yield: yieldData, spoils });
 });
 
@@ -3099,6 +3166,24 @@ app.post("/api/camp/upgrade/:upgradeKey", async (c) => {
     await addGold(c.env.DB, session.slack_user_id, spec.gold_cost);
     return c.json({ error: "already_built" }, 400);
   }
+
+  // Camp-perk achievements. Re-read built upgrades so the set check
+  // includes the one we just inserted (tryBuildCampUpgrade returns
+  // bool, not the full list).
+  const builtNow = await listCampUpgrades(c.env.DB, session.slack_user_id);
+  const builtKeys = new Set(builtNow.map((u) => u.upgrade_key));
+  const grants: string[] = [];
+  if (upgradeKey.startsWith("worker_tent_")) {
+    grants.push("first_tent");
+    const tents = ["worker_tent_1", "worker_tent_2", "worker_tent_3"];
+    if (tents.every((k) => builtKeys.has(k))) grants.push("full_camp");
+  }
+  const perks = ["tent_upgrade_quickdry", "tent_upgrade_haul", "tent_upgrade_keen_eye"];
+  if (perks.every((k) => builtKeys.has(k))) grants.push("camp_perks_all");
+  for (const id of grants) {
+    await grantAchievement(c.env.DB, session.slack_user_id, id);
+  }
+
   return c.json({ ok: true, upgrade: spec, paid: spec.gold_cost, gold_remaining: character.gold - spec.gold_cost });
 });
 
@@ -3165,6 +3250,23 @@ async function runRecipe(c: Context<{ Bindings: Env }>, userId: string, recipe: 
     item_subtype: recipe.output_subtype ?? undefined,
     weapon_range: recipe.output_type === "weapon" ? "melee" : null,
   });
+
+  // Smithy-only achievement wiring. Apothecary brews don't increment the
+  // smithy_crafts counter or trigger forge achievements — they have
+  // their own catalog (apothecary_purchases / checkApothecaryAchievements).
+  if (recipe.station === "smithy") {
+    await bumpSmithyCrafts(c.env.DB, userId);
+    const usesMithril = recipe.inputs.some((i) => i.resource_id === "mithril_ore");
+    const newCrafts = character.smithy_crafts + 1;
+    const grants: string[] = ["first_smith_craft"];
+    if (usesMithril) grants.push("mithril_craft");
+    if (newCrafts >= 25) grants.push("smith_25");
+    if (newCrafts >= 50) grants.push("smith_master_50");
+    for (const id of grants) {
+      await grantAchievement(c.env.DB, userId, id);
+    }
+  }
+
   return c.json({
     ok: true,
     recipe_id: recipe.id,
@@ -3635,10 +3737,18 @@ async function rollAndPersistPubYield(
   db: D1Database,
   errand: PubErrand,
   trustScore: number,
+  characterLevel: number,
 ): Promise<PubErrand> {
   const now = Date.now();
   if (errand.yield || errand.expires_at > now) return errand;
-  const rolled = rollPubErrandYield(errand.id, errand.patron_id, errand.kind, errand.tier, trustScore);
+  const rolled = rollPubErrandYield(
+    errand.id,
+    errand.patron_id,
+    errand.kind,
+    errand.tier,
+    trustScore,
+    characterLevel,
+  );
   await tryWritePubErrandYield(db, errand.id, rolled);
   return { ...errand, yield: rolled };
 }
@@ -3655,7 +3765,7 @@ app.get("/api/pub/errands", async (c) => {
   let active: PubErrand | null = null;
   if (activeRaw) {
     const trust = await getPubTrust(c.env.DB, session.slack_user_id, activeRaw.patron_id);
-    active = await rollAndPersistPubYield(c.env.DB, activeRaw, trust.score);
+    active = await rollAndPersistPubYield(c.env.DB, activeRaw, trust.score, character.level);
   }
   const trust = await listPubTrust(c.env.DB, session.slack_user_id);
   return c.json({
@@ -3790,7 +3900,7 @@ app.post("/api/pub/errands/claim/:id", async (c) => {
   if (errand.cancelled_at) return c.json({ error: "cancelled" }, 400);
   if (errand.expires_at > Date.now()) return c.json({ error: "not_ready" }, 400);
   const trust = await getPubTrust(c.env.DB, session.slack_user_id, errand.patron_id);
-  const filled = await rollAndPersistPubYield(c.env.DB, errand, trust.score);
+  const filled = await rollAndPersistPubYield(c.env.DB, errand, trust.score, character.level);
   const yieldData = filled.yield as PubErrandYield | null;
   if (!yieldData) return c.json({ error: "no_yield" }, 500);
   const marked = await markPubErrandClaimed(c.env.DB, errandId, session.slack_user_id);
@@ -3832,6 +3942,44 @@ app.post("/api/pub/errands/claim/:id", async (c) => {
     errand.kind === "rare",
     PUB_TRUST_CAP,
   );
+
+  // Counter bumps for the errand achievement set.
+  await bumpErrandStats(
+    c.env.DB,
+    session.slack_user_id,
+    errand.kind as "courier" | "procure" | "investigate" | "mercy" | "rare",
+    errand.tier as "short" | "medium" | "long",
+  );
+
+  // Achievement grants. Counters re-derived from in-memory character +
+  // delta since we just bumped them in DB — saves a re-read.
+  const grants: string[] = ["first_errand"];
+  const newCourier = character.errands_courier         + (errand.kind === "courier"     ? 1 : 0);
+  const newProcure = character.errands_procure         + (errand.kind === "procure"     ? 1 : 0);
+  const newInvest  = character.errands_investigate     + (errand.kind === "investigate" ? 1 : 0);
+  const newMercy   = character.errands_mercy           + (errand.kind === "mercy"       ? 1 : 0);
+  const newLong    = character.errands_long            + (errand.tier === "long"        ? 1 : 0);
+  if (newCourier >= 10) grants.push("courier_10");
+  if (newProcure >= 10) grants.push("procure_10");
+  if (newInvest  >=  5) grants.push("investigate_5");
+  if (errand.kind === "mercy") grants.push("mercy_first");
+  if (newMercy   >=  5) grants.push("mercy_5");
+  if (errand.kind === "rare") grants.push("rare_errand");
+  if (errand.tier === "long") grants.push("long_errand");
+  if (newLong    >=  5) grants.push("long_errand_5");
+  // Patron-trust achievements — need the snapshot AFTER bumpPubTrust above.
+  // newTrust covers the patron we just worked with; check all three for
+  // the "all patrons at max" achievement.
+  if (newTrust.score >= PUB_TRUST_CAP) grants.push("patron_pillar");
+  const allTrust = await listPubTrust(c.env.DB, session.slack_user_id);
+  const allPatronIds = ["cobb", "marra", "rell"];
+  const allMaxed = allPatronIds.every((pid) =>
+    (allTrust.find((t) => t.patron_id === pid)?.score ?? 0) >= PUB_TRUST_CAP,
+  );
+  if (allMaxed) grants.push("patron_friend_all");
+  for (const id of grants) {
+    await grantAchievement(c.env.DB, session.slack_user_id, id);
+  }
 
   return c.json({ ok: true, errand_id: errandId, yield: yieldData, spoils, trust: newTrust });
 });

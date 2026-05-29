@@ -311,21 +311,52 @@ function OfferRow({
   );
 }
 
+// The 25% payout multiplier kicks in at trust ≥ HIGH_TRUST_THRESHOLD —
+// keep in sync with PUB_ERRAND_TRUST_GATE.mercy / PUB_TRUST_HIGH_MULT
+// on the core side. The meter shades the pip at the threshold gold so
+// players can see how close they are without reading a tooltip.
+const HIGH_TRUST_THRESHOLD = 6;
+
 function TrustMeter({ score, cap }: { score: number; cap: number }) {
   const filled = Math.max(0, Math.min(cap, score));
+  const atOrAboveThreshold = score >= HIGH_TRUST_THRESHOLD;
+  const tooltip = atOrAboveThreshold
+    ? `Trust ${score}/${cap} · +25% payout active`
+    : `Trust ${score}/${cap} · +25% payout at ${HIGH_TRUST_THRESHOLD}`;
   return (
-    <div title={`Trust ${score}/${cap}`} style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 3 }}>
+    <div title={tooltip} style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 3 }}>
       <div style={{ fontSize: 10, color: "var(--fg-mute)", textTransform: "uppercase", letterSpacing: 1.2 }}>
         Trust
       </div>
       <div style={{ display: "flex", gap: 2 }}>
-        {Array.from({ length: cap }).map((_, i) => (
-          <span key={i} style={{
-            width: 6, height: 8, borderRadius: 2,
-            background: i < filled ? "var(--accent-go-1, #4ade80)" : "var(--bg-void)",
-            border: "1px solid var(--border-base)",
-          }} />
-        ))}
+        {Array.from({ length: cap }).map((_, i) => {
+          const isThresholdPip = i + 1 === HIGH_TRUST_THRESHOLD;
+          const filledPip = i < filled;
+          // Pip color: filled-and-past-threshold goes gold, filled stays
+          // green; empty pips at the threshold get a faint gold outline
+          // to telegraph "this is where the bonus unlocks."
+          const background = filledPip
+            ? (atOrAboveThreshold ? "var(--accent-gold)" : "var(--accent-go-1, #4ade80)")
+            : "var(--bg-void)";
+          const border = !filledPip && isThresholdPip
+            ? "1px solid var(--accent-gold)"
+            : "1px solid var(--border-base)";
+          return (
+            <span key={i} style={{
+              width: 6, height: 8, borderRadius: 2,
+              background, border,
+            }} />
+          );
+        })}
+      </div>
+      <div style={{
+        fontSize: 9, fontFamily: "var(--font-mono)",
+        color: atOrAboveThreshold ? "var(--accent-gold)" : "var(--fg-mute)",
+        textTransform: "uppercase", letterSpacing: 0.5,
+      }}>
+        {atOrAboveThreshold
+          ? "+25% payout"
+          : `+25% at ${HIGH_TRUST_THRESHOLD}`}
       </div>
     </div>
   );
