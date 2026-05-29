@@ -23,6 +23,7 @@ import {
   useInteractions,
 } from "@floating-ui/react";
 import { findCatalogEntry, sellPriceFor, type StatKey } from "@gantt-quest/core";
+import { classPortraitUrl } from "../CombatShared";
 import { Icon } from "../icons";
 import type {
   Character,
@@ -70,11 +71,14 @@ export const ItemCell = forwardRef<
     showSellPrice?: boolean;
     characterLevel?: number;
     cursor?: CSSProperties["cursor"];
+    /** Render the design-handoff rarity left-stripe (3px solid rarity color)
+        instead of the uniform 2px border. Used on doll slots + bag tiles. */
+    rarityStripe?: boolean;
     onClick?: MouseEventHandler<HTMLDivElement>;
   } & Omit<HTMLAttributes<HTMLDivElement>, "onClick">
 >(function ItemCell(
   { item, size = 72, mode = "icon", selected, isOver, isDragging, isMatch,
-    showSellPrice, characterLevel, cursor, onClick, style: extraStyle, ...rest },
+    showSellPrice, characterLevel, cursor, rarityStripe, onClick, style: extraStyle, ...rest },
   ref,
 ) {
   const rc = RARITY_COLOR[item.rarity];
@@ -83,6 +87,16 @@ export const ItemCell = forwardRef<
     : item.equipped ? "#b89b3a"
     : isMatch ? "#c084fc"
     : `${rc}99`;
+  // When rarityStripe is set, the left edge becomes a solid 3px rarity bar
+  // while the other three sides keep the standard 2px state-aware border.
+  const stripeBorder = rarityStripe
+    ? {
+        borderTop: `2px solid ${borderColor}`,
+        borderRight: `2px solid ${borderColor}`,
+        borderBottom: `2px solid ${borderColor}`,
+        borderLeft: `3px solid ${rc}`,
+      }
+    : { border: `2px solid ${borderColor}` };
   const iconSize = mode === "detailed" ? 40 : mode === "compact" ? 38 : 28;
   const elementEmoji = item.element === "fire" ? "🔥" : item.element === "ice" ? "❄️" : item.element === "lightning" ? "⚡" : null;
   const powerValue = item.power > 0
@@ -103,7 +117,7 @@ export const ItemCell = forwardRef<
         height: mode !== "detailed" ? size : undefined,
         padding: mode === "detailed" ? "10px 8px 8px" : undefined,
         background: selected ? "#1e1c2e" : isOver ? "#151d2e" : "#1d1f23",
-        border: `2px solid ${borderColor}`,
+        ...stripeBorder,
         borderRadius: mode === "icon" ? 8 : 10,
         cursor: cursor ?? (onClick ? "pointer" : undefined),
         position: "relative",
@@ -179,11 +193,85 @@ export function ItemSlot({ item, selected, onSelect, characterLevel }: { item: I
   );
 }
 
+// Side-by-side stat comparison between a candidate item and the item
+// currently equipped in the same slot. Renders one row per differing stat
+// with a ▲ green-up / ▼ red-down arrow matching the design handoff's spec.
+function StatDiffPanel({ candidate, equipped }: { candidate: Item; equipped: Item }) {
+  // `power` covers atk on weapons, mag on focus, armor on armor pieces.
+  // We collapse it under one "Power" row since the source item record
+  // doesn't disambiguate by item_type for this number.
+  const a: Record<string, number> = { power: candidate.power };
+  const b: Record<string, number> = { power: equipped.power };
+  if (candidate.stat_bonus) for (const [k, v] of Object.entries(candidate.stat_bonus)) a[k] = (a[k] ?? 0) + v;
+  if (equipped.stat_bonus)  for (const [k, v] of Object.entries(equipped.stat_bonus))  b[k] = (b[k] ?? 0) + v;
+  const keys = Array.from(new Set([...Object.keys(a), ...Object.keys(b)]));
+  const labelFor = (k: string) =>
+    k === "power"   ? "Power"
+    : k === "str"   ? "STR"
+    : k === "int_stat" ? "INT"
+    : k === "vit"   ? "VIT"
+    : k === "agi"   ? "AGI"
+    : k === "dex"   ? "DEX"
+    : k.toUpperCase();
+  const rows = keys
+    .map((k) => ({ k, av: a[k] ?? 0, bv: b[k] ?? 0 }))
+    .filter((r) => r.av !== 0 || r.bv !== 0);
+  if (rows.length === 0) return null;
+  return (
+    <div style={{
+      marginBottom: 10,
+      padding: "8px 10px",
+      background: "var(--bg-card-2)",
+      border: "1px solid var(--border-faint)",
+      borderRadius: 6,
+    }}>
+      <div style={{
+        font: "10px/1 var(--font-mono)",
+        textTransform: "uppercase",
+        letterSpacing: 1,
+        color: "var(--fg-faintest)",
+        marginBottom: 6,
+      }}>
+        vs Equipped — {equipped.item_name}
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+        {rows.map(({ k, av, bv }) => {
+          const diff = av - bv;
+          const arrow = diff > 0 ? "▲" : diff < 0 ? "▼" : "·";
+          const color = diff > 0 ? "var(--tone-good)" : diff < 0 ? "var(--tone-bad)" : "var(--fg-mute)";
+          return (
+            <div key={k} style={{
+              display: "grid",
+              gridTemplateColumns: "60px 1fr auto",
+              alignItems: "center",
+              gap: 8,
+              font: "11px/1.3 var(--font-body)",
+            }}>
+              <span style={{ color: "var(--fg-mute)" }}>{labelFor(k)}</span>
+              <span style={{ fontFamily: "var(--font-mono)", color: "var(--fg-3)" }}>
+                {av} <span style={{ color: "var(--fg-faintest)" }}>← {bv}</span>
+              </span>
+              <span style={{
+                font: "700 11px/1 var(--font-mono)",
+                color,
+                whiteSpace: "nowrap",
+              }}>
+                {arrow} {diff > 0 ? `+${diff}` : diff}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 export function ItemDetailPopover({
   item,
   inQuest,
   selfId,
   characterLevel,
+  equippedInSlot,
   onEquip,
   onUnequip,
   onSell,
@@ -196,6 +284,10 @@ export function ItemDetailPopover({
   inQuest: boolean;
   selfId: string;
   characterLevel?: number;
+  /** The item currently equipped in this item's slot, if any. When the
+      displayed item is unequipped and a comparison exists, the popover
+      renders a stat-diff (▲ +N / ▼ −N) section. */
+  equippedInSlot?: Item | null;
   onEquip: (itemId: number) => void;
   onUnequip: (itemId: number) => void;
   onSell: (itemId: number) => void;
@@ -298,6 +390,11 @@ export function ItemDetailPopover({
         <div style={{ fontSize: 11, color: "#86efac", marginBottom: 8, fontWeight: 600 }}>
           {statBonusSummary(item.stat_bonus)}
         </div>
+      )}
+
+      {/* Stat-diff vs the item currently equipped in the same slot */}
+      {!item.equipped && equippedInSlot && equippedInSlot.id !== item.id && (
+        <StatDiffPanel candidate={item} equipped={equippedInSlot} />
       )}
 
       {/* Flavor */}
@@ -408,6 +505,75 @@ export function ItemDetailPopover({
 
 // ── dnd-kit sub-components for InventoryFullScreen ──────────────────────────
 
+// Class-themed glyph used by FigureTile when no class portrait art is
+// available. Mirrors the design handoff's `crystal-wand` placeholder for
+// the DevOps Mage and matches the rpg-awesome / game-icons.net set.
+const CLASS_GLYPH: Record<string, string> = {
+  "DevOps Mage": "crystal-wand",
+  "QA Paladin": "bolt-shield",
+  "Backend Druid": "aura",
+  "Frontend Bard": "music-spell",
+  "Staff Sage": "wizard-staff",
+  "Refactor Rogue": "cloak-dagger",
+  "SRE Warden": "round-shield",
+  "Data Warlock": "death-skull",
+};
+
+// Center figure tile in the paper-doll grid — sized to span four 96px slots.
+// Shows the class portrait when available, falls back to a class glyph on the
+// void background. Matches the design's 96×190 figure idiom.
+export function FigureTile({
+  character,
+  height,
+}: {
+  character: Character;
+  height: number;
+}) {
+  const [portraitFailed, setPortraitFailed] = useState(false);
+  const portrait = classPortraitUrl(character.class);
+  const glyph = CLASS_GLYPH[character.class] ?? "crystal-wand";
+  const classShort = character.class.split(" ").slice(-1)[0] ?? character.class;
+  return (
+    <div
+      style={{
+        width: 96,
+        height,
+        background: "var(--bg-void)",
+        border: "1px solid var(--border-base)",
+        borderRadius: "var(--radius-lg)",
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: 8,
+        overflow: "hidden",
+      }}
+      title={`${character.name} · ${character.class}`}
+    >
+      {portrait && !portraitFailed ? (
+        <img
+          src={portrait}
+          alt={character.class}
+          style={{ width: "100%", flex: 1, objectFit: "cover", minHeight: 0 }}
+          onError={() => setPortraitFailed(true)}
+        />
+      ) : (
+        <Icon name={glyph} size={54} color="var(--accent-arcane-2)" />
+      )}
+      <div style={{
+        font: "9px/1 var(--font-mono)",
+        color: "var(--fg-faintest)",
+        textTransform: "uppercase",
+        letterSpacing: 1,
+        paddingBottom: 6,
+        whiteSpace: "nowrap",
+      }}>
+        L{character.level} {classShort}
+      </div>
+    </div>
+  );
+}
+
 export function DollSlotCell({
   slot, item, isHighlighted, isSelected, onSlotClick, onItemClick, characterLevel,
 }: {
@@ -433,6 +599,7 @@ export function DollSlotCell({
         item={item}
         size={S}
         mode="compact"
+        rarityStripe
         selected={isSelected}
         isOver={isOver}
         isDragging={isDragging}
@@ -444,11 +611,17 @@ export function DollSlotCell({
       />
     );
   }
+  const emptyEdge = isOver ? "#7dd3fc88" : isHighlighted ? "#c084fc55" : "#1e2128";
   return (
     <div ref={setDropRef} onClick={() => onSlotClick(slot)} title={`${label} — empty`}
       style={{
         width: S, height: S, background: isOver ? "#151d2e" : "#141618",
-        border: isOver ? "2px solid #7dd3fc88" : isHighlighted ? "2px solid #c084fc55" : "2px dashed #1e2128",
+        borderTop: `2px dashed ${emptyEdge}`,
+        borderRight: `2px dashed ${emptyEdge}`,
+        borderBottom: `2px dashed ${emptyEdge}`,
+        // Design uses a faint solid-grey left stripe on empty slots so each
+        // slot still reads as a placeholder for a rarity-stripe item.
+        borderLeft: "3px dashed var(--border-strong)",
         borderRadius: 10, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 4,
         cursor: "pointer", transition: "border-color 0.15s, background 0.15s",
       }}
@@ -489,12 +662,16 @@ export function DraggablePackItem({
   const sellPrice = sellPriceFor(item.item_type, item.rarity, { power: item.power, sharpens_count: item.sharpens_count });
   const isLevelLocked = (characterLevel ?? Infinity) < (item.level_req ?? 1);
   if (viewMode === "list") {
+    const listEdge = isSelected ? "#fff" : isMatch ? "#c084fc" : "#2a2d33";
     return (
       <div ref={setNodeRef} {...listeners} {...attributes} onClick={onSelect}
         style={{
           display: "flex", alignItems: "center", gap: 10, padding: "8px 10px",
           borderRadius: 8, background: isSelected ? "#1e1c2e" : "#1d1f23",
-          border: `1px solid ${isSelected ? "#fff" : isMatch ? "#c084fc" : "#2a2d33"}`,
+          borderTop: `1px solid ${listEdge}`,
+          borderRight: `1px solid ${listEdge}`,
+          borderBottom: `1px solid ${listEdge}`,
+          borderLeft: `3px solid ${rc}`,
           cursor: isDragging ? "grabbing" : "grab", opacity: isDragging ? 0.35 : isLevelLocked ? 0.45 : 1,
           transition: "background 0.1s", boxShadow: isMatch ? "0 0 6px #c084fc33" : undefined,
           touchAction: "none",
@@ -526,6 +703,7 @@ export function DraggablePackItem({
       ref={setNodeRef}
       item={item}
       mode="detailed"
+      rarityStripe
       selected={isSelected}
       isDragging={isDragging}
       isMatch={isMatch}
@@ -595,6 +773,77 @@ function BagFilterTabs({
           </button>
         );
       })}
+    </div>
+  );
+}
+
+// Combat-relevant totals derived from equipped gear + base stats. Matches the
+// design's "Loadout Totals" panel below the paper-doll.
+// Attack/Magic = STR/INT modifier formulas from constants.PRIMARY_STAT_META.
+// Armor reflects the live armor_power. Crit derives from DEX (cap 10%).
+export function LoadoutTotals({
+  character,
+  items,
+}: {
+  character: Character;
+  items: Item[];
+}) {
+  const equipped = items.filter((i) => i.equipped);
+  const bonus: Partial<Record<StatKey, number>> = {};
+  for (const it of equipped) {
+    if (!it.stat_bonus) continue;
+    for (const [k, v] of Object.entries(it.stat_bonus)) {
+      bonus[k as StatKey] = (bonus[k as StatKey] ?? 0) + v;
+    }
+  }
+  const effStat = (k: StatKey) => (character[k] ?? 5) + (bonus[k] ?? 0);
+  const atkMod = Math.floor((effStat("str") - 5) / 2);
+  const magMod = Math.floor((effStat("int_stat") - 5) / 2);
+  const armorNow = character.armor_power ?? 0;
+  const critPct = Math.round(
+    Math.min(10, Math.max(0, (effStat("dex") - 5))),
+  );
+  const fmtSigned = (n: number) => (n >= 0 ? `+${n}` : `${n}`);
+  const rows: { label: string; value: string; color?: string }[] = [
+    { label: "Attack", value: fmtSigned(atkMod), color: atkMod > 0 ? "var(--tone-good)" : undefined },
+    { label: "Magic",  value: fmtSigned(magMod), color: magMod > 0 ? "var(--tone-good)" : undefined },
+    { label: "Armor",  value: `${armorNow}`,     color: armorNow > 0 ? "var(--fg-1)" : undefined },
+    { label: "Crit",   value: `${critPct}%`,     color: critPct > 0 ? "var(--tone-good)" : undefined },
+  ];
+  return (
+    <div
+      style={{
+        alignSelf: "stretch",
+        padding: "10px 12px",
+        background: "var(--bg-card-2)",
+        borderRadius: "var(--radius-md)",
+        border: "1px solid var(--border-faint)",
+      }}
+    >
+      <div style={{
+        font: "10px/1 var(--font-mono)",
+        textTransform: "uppercase",
+        letterSpacing: 1,
+        color: "var(--fg-faintest)",
+        marginBottom: 10,
+      }}>
+        Loadout Totals
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+        {rows.map((r) => (
+          <div key={r.label} style={{
+            display: "flex",
+            justifyContent: "space-between",
+            font: "12px/1.4 var(--font-body)",
+          }}>
+            <span style={{ color: "var(--fg-mute)" }}>{r.label}</span>
+            <span style={{
+              fontFamily: "var(--font-mono)",
+              color: r.color ?? "var(--fg-3)",
+            }}>{r.value}</span>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -931,6 +1180,7 @@ export function InventoryFullScreen({
                 <div style={{ position: "absolute", left: 0, right: 0, bottom: 0, zIndex: 10, background: "#12141a", borderTop: "1px solid #2a2d33", borderRadius: "12px 12px 0 0", maxHeight: "60vh", overflowY: "auto", padding: 18, boxShadow: "0 -8px 32px rgba(0,0,0,0.7)" }}>
                   <ItemDetailPopover
                     item={selected} inQuest={inQuest} selfId={selfId} characterLevel={characterLevel} inline
+                    equippedInSlot={selected.slot ? equippedForSlot(selected.slot) ?? null : null}
                     onEquip={(id) => { onEquip(id); setSelectedId(null); }}
                     onUnequip={(id) => { onUnequip(id); setSelectedId(null); }}
                     onSell={(id) => { onSell(id); setSelectedId(null); }}
@@ -945,29 +1195,52 @@ export function InventoryFullScreen({
             /* ── Desktop: 3-panel layout ── */
             <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
               {/* Left — character sheet + paper doll */}
-              <div style={{ width: 360, flexShrink: 0, borderRight: "1px solid #2a2d33", overflowY: "auto", padding: "20px 16px", display: "flex", flexDirection: "column", alignItems: "center", gap: 14 }}>
+              <div style={{ width: 360, flexShrink: 0, borderRight: "1px solid #2a2d33", overflowY: "auto", padding: "20px 8px", display: "flex", flexDirection: "column", alignItems: "stretch", gap: 14 }}>
                 {characterSheet && (
                   <div style={{ alignSelf: "stretch", width: "100%" }}>{characterSheet}</div>
                 )}
                 <div style={{ ...muted, fontSize: 10, textTransform: "uppercase", letterSpacing: 1.5, alignSelf: "flex-start", fontFamily: DISPLAY_FONT }}>Equipped — drag items here to equip</div>
-                <div style={{ display: "flex", justifyContent: "center" }}>
-                  <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 96px)", gap: 6 }}>
-                    {([null, "helmet", null, "main_hand", "body", "off_hand", "amulet", "pants", "ring", null, "boots", null] as (EquipSlot | null)[]).map((s, i) =>
-                      s
-                        ? <DollSlotCell key={s} slot={s} item={equippedForSlot(s)}
-                            isHighlighted={highlightSlot === s} isSelected={selectedId === (equippedForSlot(s)?.id ?? -1)}
-                            onSlotClick={(sl) => setHighlightSlot(highlightSlot === sl ? null : sl)}
-                            onItemClick={(id) => setSelectedId(selectedId === id ? null : id)}
-                            characterLevel={characterLevel}
-                          />
-                        : <div key={i} style={{ width: 96, height: 96 }} />
-                    )}
-                  </div>
-                </div>
+                {(() => {
+                  const slotCellHeight = 96;
+                  const gap = 6;
+                  const colHeight = slotCellHeight * 4 + gap * 3;
+                  const renderSlot = (s: EquipSlot) => (
+                    <DollSlotCell
+                      key={s}
+                      slot={s}
+                      item={equippedForSlot(s)}
+                      isHighlighted={highlightSlot === s}
+                      isSelected={selectedId === (equippedForSlot(s)?.id ?? -1)}
+                      onSlotClick={(sl) => setHighlightSlot(highlightSlot === sl ? null : sl)}
+                      onItemClick={(id) => setSelectedId(selectedId === id ? null : id)}
+                      characterLevel={characterLevel}
+                    />
+                  );
+                  const leftSlots: EquipSlot[] = ["helmet", "body", "amulet", "ring"];
+                  const rightSlots: EquipSlot[] = ["main_hand", "off_hand", "pants", "boots"];
+                  return (
+                    <div style={{ display: "flex", alignItems: "stretch", justifyContent: "space-between", width: "100%" }}>
+                      <div style={{ display: "grid", gridTemplateRows: `repeat(4, ${slotCellHeight}px)`, gap }}>
+                        {leftSlots.map(renderSlot)}
+                      </div>
+                      {character ? (
+                        <FigureTile character={character} height={colHeight} />
+                      ) : (
+                        <div style={{ width: 96, height: colHeight }} />
+                      )}
+                      <div style={{ display: "grid", gridTemplateRows: `repeat(4, ${slotCellHeight}px)`, gap }}>
+                        {rightSlots.map(renderSlot)}
+                      </div>
+                    </div>
+                  );
+                })()}
                 {highlightSlot && (
                   <div style={{ fontSize: 11, color: "#c084fc88", marginTop: 4, textAlign: "center" }}>
                     Drag or click a matching item to equip in {SLOT_LABELS[highlightSlot]}
                   </div>
+                )}
+                {character?.str !== undefined && (
+                  <LoadoutTotals character={character} items={items} />
                 )}
                 {character?.str !== undefined && (
                   <div style={{ alignSelf: "stretch", padding: "10px 12px", background: "#16181c", borderRadius: 8, border: "1px solid #2a2d33" }}>
@@ -1043,6 +1316,7 @@ export function InventoryFullScreen({
                 <div style={{ width: 280, flexShrink: 0, borderLeft: "1px solid #2a2d33", overflowY: "auto", padding: 18 }}>
                   <ItemDetailPopover
                     item={selected} inQuest={inQuest} selfId={selfId} characterLevel={characterLevel} inline
+                    equippedInSlot={selected.slot ? equippedForSlot(selected.slot) ?? null : null}
                     onEquip={(id) => { onEquip(id); setSelectedId(null); }}
                     onUnequip={(id) => { onUnequip(id); setSelectedId(null); }}
                     onSell={(id) => { onSell(id); setSelectedId(null); }}
@@ -1275,6 +1549,7 @@ export function InventoryCard({
                 inQuest={inQuest}
                 selfId={selfId}
                 characterLevel={characterLevel}
+                equippedInSlot={selected.slot ? equippedForSlot(selected.slot) ?? null : null}
                 onEquip={(id) => { onEquip(id); setSelectedId(null); }}
                 onUnequip={(id) => { onUnequip(id); setSelectedId(null); }}
                 onSell={(id) => { onSell(id); setSelectedId(null); }}
