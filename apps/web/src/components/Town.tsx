@@ -770,6 +770,7 @@ function PlazaButton({
           color: "inherit",
           transition: "border-color 0.15s",
           width: "100%",
+          boxSizing: "border-box",
         }}
       >
         <div
@@ -1176,6 +1177,7 @@ export function WardMap({
       <div
         style={{
           width: "100%",
+          boxSizing: "border-box",
           background: "var(--bg-void)",
           border: "1px solid var(--border-base)",
           borderRadius: "var(--radius-2xl)",

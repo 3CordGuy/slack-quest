@@ -1855,7 +1855,7 @@ function DashboardLayout({
     // Mobile: stack everything, full viewport width (no 560px cap so tablets
     // breathe). Login keeps its narrower Stack — only the dashboard goes wide.
     return (
-      <div style={{ display: "flex", flexDirection: "column", gap: mobile ? 8 : 16, width: "100%" }}>
+      <div style={{ display: "flex", flexDirection: "column", gap: mobile ? 8 : 16, width: "100%", boxSizing: "border-box", minWidth: 0 }}>
         {main}
         {!hideSide && side}
         {footer}
@@ -1930,6 +1930,9 @@ function Centered({ children }: { children: React.ReactNode }) {
           "ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
         color: "#e6e6e6",
         padding: mobile ? 8 : 32,
+        boxSizing: "border-box",
+        width: "100%",
+        overflowX: "hidden",
         // CSS custom property consumed by `card` const and LocationHero
         ["--card-pad" as string]: mobile ? "16px" : "32px",
       } as React.CSSProperties}
