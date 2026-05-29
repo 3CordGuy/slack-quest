@@ -480,6 +480,72 @@ em, .flavor {
   border-radius: var(--radius-sm);
 }
 
+/* ── Combat action button (.abtn) ────────────────────────────────────────
+   64px tall flex button used inside the .abar action deck. The button
+   gets background + border in the action's element color; a `.dark`
+   variant maps to the design's utility-action treatment (Mark / Flee /
+   Wait / position-swap). Disabled (.dis) drops to muted void chrome.
+   Mana cost rides top-right via .mana so the icon stays vertically
+   centered with the label below. */
+.abtn {
+  flex: 1;
+  min-width: 0;
+  height: 64px;
+  border-radius: var(--radius-lg);
+  border: 2px solid;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  cursor: pointer;
+  position: relative;
+  padding: 4px;
+  transition: filter 0.12s;
+  font-family: inherit;
+}
+.abtn:hover:not(.dis) { filter: brightness(1.08); }
+.abtn:active:not(.dis) { filter: brightness(0.92); }
+.abtn .al {
+  font: 700 10px/1.05 var(--font-body);
+  text-align: center;
+  letter-spacing: 0.3px;
+}
+.abtn .mana {
+  position: absolute;
+  top: 4px;
+  right: 6px;
+  font: 700 9px/1 var(--font-body);
+  color: rgba(0,0,0,0.7);
+}
+.abtn.dark {
+  background: var(--bg-input);
+  border-color: var(--border-action);
+  color: var(--fg-mute-2);
+}
+.abtn.dark .mana { color: var(--fg-mute-2); }
+.abtn.dis {
+  background: var(--bg-input-2);
+  border-color: var(--border-base);
+  color: var(--fg-faint);
+  cursor: not-allowed;
+}
+.abtn.dis .mana { color: var(--fg-faint); }
+/* Compact mobile sizing — keeps the same proportions. */
+@media (max-width: 540px) {
+  .abtn { height: 56px; }
+  .abtn .al { font-size: 9px; }
+}
+
+/* Vertical divider used inside .abar to separate ability groups from
+   utility actions (Mark / Wait / Flee). */
+.adiv {
+  width: 1px;
+  align-self: stretch;
+  background: var(--border-base);
+  margin: 0 2px;
+}
+
 /* ─── COMBAT ANIMATIONS ───────────────────────────────────── */
 
 @keyframes spin { to { transform: rotate(360deg); } }

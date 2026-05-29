@@ -405,7 +405,7 @@ export function lootIcon(opt: {
 
 // ─── CBtn ─────────────────────────────────────────────────────────────────────
 
-export function CBtn({ label, icon, color, disabled, manaCost, tooltip, cooldown, onClick }: {
+export function CBtn({ label, icon, color, disabled, manaCost, tooltip, cooldown, variant, onClick }: {
   label: string;
   icon?: string;
   color: string;
@@ -413,37 +413,51 @@ export function CBtn({ label, icon, color, disabled, manaCost, tooltip, cooldown
   manaCost?: number;
   tooltip?: string;
   cooldown?: number;
+  /** "color" (default) renders the button filled in `color` with dark ink
+      text — used for Attack, abilities, Item, Give, Resolve. "dark" maps to
+      the design's muted utility-action treatment (Mark, Wait, Flee,
+      position swap) on bg-input with border-action. */
+  variant?: "color" | "dark";
   onClick: () => void;
 }) {
   const compact = typeof window !== "undefined" && window.innerWidth < 540;
-  const sz = compact ? 60 : 78;
   const onCooldown = (cooldown ?? 0) > 0;
   const isDisabled = disabled || onCooldown;
+  const isDark = variant === "dark";
+  // Filled-color buttons keep the action's color as bg + border + dark ink.
+  // The design uses `--bg-void` dark ink (#0e0f12) so the label reads
+  // legibly on saturated colors. Disabled and dark variants are entirely
+  // class-driven so the legacy inline style is empty.
+  const colorStyle: React.CSSProperties = !isDisabled && !isDark
+    ? { background: color, borderColor: color, color: "#0e0f12" }
+    : {};
+  const className = [
+    "abtn",
+    isDark ? "dark" : "",
+    isDisabled ? "dis" : "",
+  ].filter(Boolean).join(" ");
+  // Icon color picker: disabled = faint, dark = muted, filled = dark ink.
+  const iconColor = isDisabled
+    ? "var(--fg-faint)"
+    : isDark
+      ? "var(--fg-mute-2)"
+      : "#0e0f12";
+  const iconSize = compact ? 18 : 20;
   const trigger = (
-    <div style={{ position: "relative", flexShrink: 0 }}>
+    <div style={{ position: "relative", flex: 1, minWidth: 0, display: "flex" }}>
       <button
         onClick={onClick}
         disabled={isDisabled}
-        style={{
-          display: "flex", flexDirection: "column", alignItems: "center",
-          justifyContent: "center", gap: compact ? 2 : 3,
-          padding: compact ? "6px 4px" : "8px 6px", width: sz, height: sz,
-          background: isDisabled ? "var(--bg-input-2)" : color,
-          border: `2px solid ${isDisabled ? "var(--border-base)" : color}`,
-          borderRadius: "var(--radius-lg)",
-          color: isDisabled ? "var(--fg-faint)" : "#0e0f12",
-          cursor: isDisabled ? "not-allowed" : "pointer",
-          opacity: isDisabled ? 0.55 : 1,
-          transition: "opacity 0.15s, transform 0.08s",
-          flexShrink: 0, fontFamily: "inherit",
-        }}
-        onMouseDown={(e) => { if (!isDisabled) e.currentTarget.style.transform = "translateY(1px)"; }}
-        onMouseUp={(e)   => { e.currentTarget.style.transform = ""; }}
-        onMouseLeave={(e) => { e.currentTarget.style.transform = ""; }}
+        className={className}
+        style={colorStyle}
       >
-        {icon && <Icon name={icon} size={compact ? 20 : 26} />}
-        <span style={{ fontSize: compact ? 9 : 11, fontWeight: 700, lineHeight: 1, letterSpacing: 0.3, textAlign: "center" }}>{label}</span>
-        {manaCost !== undefined && <span style={{ fontSize: compact ? 8 : 9, opacity: 0.75 }}>{manaCost}✦</span>}
+        {manaCost !== undefined && (
+          <span className="mana">
+            {onCooldown ? "⏳" : ""}{manaCost}✦
+          </span>
+        )}
+        {icon && <Icon name={icon} size={iconSize} color={iconColor} />}
+        <span className="al">{label}</span>
       </button>
       {onCooldown && (
         <div style={{
@@ -451,7 +465,7 @@ export function CBtn({ label, icon, color, disabled, manaCost, tooltip, cooldown
           justifyContent: "center", pointerEvents: "none", borderRadius: 8,
         }}>
           <span style={{
-            fontSize: compact ? 28 : 36, fontWeight: 800, color: "#fff",
+            fontSize: compact ? 24 : 30, fontWeight: 800, color: "#fff",
             textShadow: "0 1px 6px rgba(0,0,0,0.9), 0 0 12px rgba(0,0,0,0.7)",
             lineHeight: 1,
           }}>{cooldown}</span>
