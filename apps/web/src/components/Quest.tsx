@@ -1,14 +1,32 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { CSSProperties } from "react";
 
 import { Icon } from "../icons";
 import type { ActiveQuest, Character, SceneJson } from "../types";
-import { DISPLAY_FONT, card, h2, muted, button } from "../styles";
+import { muted } from "../styles";
 import { SmallBadge } from "./ui";
 import {
   PartyMember, CharacterInspectDialog,
   HpBar, EffectChips, VariantBadge,
 } from "./Character";
+
+// Detect phone widths so the tower interlude can drop into a single column.
+// Used in TowerInterlude — kept module-local so other Quest.tsx exports don't
+// each have to wire their own media subscriber.
+function useIsMobile(query = "(max-width: 640px)"): boolean {
+  const [match, setMatch] = useState<boolean>(() =>
+    typeof window !== "undefined" ? window.matchMedia(query).matches : false,
+  );
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const mql = window.matchMedia(query);
+    const onChange = (e: MediaQueryListEvent) => setMatch(e.matches);
+    setMatch(mql.matches);
+    mql.addEventListener("change", onChange);
+    return () => mql.removeEventListener("change", onChange);
+  }, [query]);
+  return match;
+}
 
 // Full-screen interlude for non-combat tower floors (rest stop + post-boss
 // choice). Renders the merchant picker or the press-on/bank prompt; on
@@ -84,46 +102,151 @@ export function TowerInterlude({
     }
   }
 
-  const wrapper: CSSProperties = { padding: "32px 16px", maxWidth: 540, margin: "0 auto" };
-  const pickerBtn: CSSProperties = {
-    width: "100%",
-    padding: "12px 14px",
-    fontSize: 15,
-    borderRadius: 8,
-    border: "1px solid #2a2d33",
-    background: "#1a1c20",
-    color: "#f5f5f5",
-    cursor: "pointer",
-    textAlign: "left",
+  const isMobile = useIsMobile();
+
+  // Full-screen page shell — sits over var(--bg-void) and centers the modal.
+  // The interlude is a takeover state, not a card embedded in the dashboard,
+  // so we lean on the design system's modal kit (.modal-head/body/foot) for
+  // a familiar shape.
+  const pageShell: CSSProperties = {
+    minHeight: "100vh",
+    background: "var(--bg-void)",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: isMobile ? 12 : 32,
+    boxSizing: "border-box",
   };
+  const modalShell: CSSProperties = {
+    width: "100%",
+    maxWidth: 640,
+    background: "var(--bg-panel)",
+    border: "1px solid var(--border-base)",
+    borderRadius: "var(--radius-2xl)",
+    boxShadow: "var(--shadow-modal)",
+    overflow: "hidden",
+    display: "flex",
+    flexDirection: "column",
+  };
+
+  // Big floor numeral — the visual anchor of either interlude variant.
+  function FloorHero({ label }: { label: string }) {
+    return (
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 16,
+          padding: isMobile ? "16px 16px 0" : "22px 24px 0",
+        }}
+      >
+        <div
+          style={{
+            width: isMobile ? 60 : 72,
+            height: isMobile ? 60 : 72,
+            flexShrink: 0,
+            borderRadius: "var(--radius-lg)",
+            background: "var(--bg-void)",
+            border: "1px solid var(--border-strong)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            color: "var(--accent-gold)",
+          }}
+        >
+          <Icon name="tower-flag" size={isMobile ? 32 : 38} color="var(--accent-gold)" />
+        </div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div
+            style={{
+              font: "10px/1.3 var(--font-mono)",
+              color: "var(--fg-mute)",
+              textTransform: "uppercase",
+              letterSpacing: 0.7,
+            }}
+          >
+            {label}
+          </div>
+          <div
+            style={{
+              font: `${isMobile ? 28 : 36}px/1 var(--font-display)`,
+              color: "var(--accent-gold)",
+              marginTop: 6,
+            }}
+          >
+            Floor {floor}
+          </div>
+          <div
+            style={{
+              font: "11px/1.3 var(--font-mono)",
+              color: "var(--fg-mute)",
+              textTransform: "uppercase",
+              letterSpacing: 0.7,
+              marginTop: 6,
+            }}
+          >
+            Cycle {cycle} · Kills {kills}
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   if (scene.tower_awaiting_choice) {
     return (
-      <div style={wrapper}>
-        <div style={{ ...card, borderColor: "#854d0e" }}>
-          <div style={{ fontSize: 12, color: "#fbbf24", textTransform: "uppercase", letterSpacing: 1.5, display: "flex", alignItems: "center", gap: 6 }}>
-            <Icon name="tower-flag" size={14} color="#fbbf24" /> Cycle {cycle} cleared
+      <div style={pageShell}>
+        <div style={modalShell}>
+          <FloorHero label={`Cycle ${cycle} cleared`} />
+          <div
+            className="modal-body"
+            style={{ padding: isMobile ? 16 : "20px 24px" }}
+          >
+            <p style={{ ...muted, margin: 0, lineHeight: 1.55 }}>
+              The boss lies broken atop floor {floor}. Press on into cycle {cycle + 1} for
+              steeper rewards, or bank your spoils and descend.
+            </p>
+            {err && (
+              <div style={{ color: "var(--tone-bad)", fontFamily: "var(--font-mono)", fontSize: 12 }}>
+                Error: {err}
+              </div>
+            )}
           </div>
-          <h2 style={{ ...h2, marginTop: 4 }}>You stand atop floor {floor}.</h2>
-          <p style={muted}>
-            The boss lies broken. Tower kills this run: <strong>{kills}</strong>. Press on into
-            cycle {cycle + 1} for steeper rewards, or bank your spoils and descend.
-          </p>
-          {err && <div style={{ color: "#fca5a5", marginTop: 12 }}>Error: {err}</div>}
-          <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
+          <div
+            className="modal-foot"
+            style={{
+              padding: isMobile ? 14 : "16px 24px",
+              borderTop: "1px solid var(--border-faint)",
+              background: "var(--bg-deep)",
+              display: "flex",
+              flexDirection: isMobile ? "column" : "row",
+              gap: 10,
+              alignItems: "stretch",
+            }}
+          >
             <button
-              style={{ ...button, background: "#854d0e", color: "#fef3c7", marginTop: 0, flex: 1, display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6 }}
+              className="btn btn-gold"
+              style={{
+                flex: 1,
+                justifyContent: "center",
+                width: isMobile ? "100%" : undefined,
+              }}
               disabled={busy}
               onClick={() => void call("/tower/continue")}
             >
-              <Icon name="tower-flag" size={16} color="#fef3c7" /> Press on (Floor {floor + 1})
+              <Icon name="tower-flag" size={14} color="#1a1300" />
+              Advance · Floor {floor + 1}
             </button>
             <button
-              style={{ ...pickerBtn, fontWeight: 600, textAlign: "center", flex: 1 }}
+              className="btn btn-ghost"
+              style={{
+                flex: 1,
+                justifyContent: "center",
+                width: isMobile ? "100%" : undefined,
+              }}
               disabled={busy}
               onClick={() => void call("/tower/exit")}
             >
-              🛌 Call it a day
+              Rest · Call it a day
             </button>
           </div>
         </div>
@@ -138,92 +261,181 @@ export function TowerInterlude({
   const myClaimedIdx = Object.entries(claims).find(([, uid]) => uid === selfId)?.[0];
   const iHaveClaimed = myClaimedIdx !== undefined;
 
+  // Single-line offer row, lightly inspired by the design system's .offer
+  // pattern but using inline styles since we have variable claim states
+  // (own, taken, available) that need per-row treatment.
+  const offerRow = (claimed: boolean, mine: boolean): CSSProperties => ({
+    background: "var(--bg-card)",
+    border: `1px solid ${mine ? "var(--accent-gold)" : "var(--border-faint)"}`,
+    borderRadius: "var(--radius-lg)",
+    padding: "12px 14px",
+    opacity: claimed && !mine ? 0.55 : 1,
+    display: "flex",
+    flexDirection: "column",
+    gap: 6,
+  });
+
   return (
-    <div style={wrapper}>
-      <div style={{ ...card, borderColor: "#854d0e" }}>
-        <div style={{ fontSize: 12, color: "#fbbf24", textTransform: "uppercase", letterSpacing: 1.5 }}>
-          🛌 Floor {floor} · Cycle {cycle}
-        </div>
-        <h2 style={{ ...h2, marginTop: 4 }}>Rest stop</h2>
-        <p style={muted}>
-          The party is fully healed. A hooded trader has set out three trinkets — each party member
-          can take at most one. When you're ready, press on into the next floor.
-        </p>
-        {err && <div style={{ color: "#fca5a5", marginTop: 12 }}>Error: {err}</div>}
-        <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 16 }}>
-          {stock.map((it, idx) => {
-            const claimedBy = claims[String(idx)];
-            const claimedByMe = claimedBy === selfId;
-            const claimer = claimedBy ? partyById.get(claimedBy) : null;
-            const canTake = !claimedBy && !iHaveClaimed;
-            const isPending = pendingIdx === idx;
-            return (
-              <div
-                key={idx}
-                style={{
-                  ...pickerBtn,
-                  cursor: canTake ? "pointer" : "default",
-                  opacity: claimedBy && !claimedByMe ? 0.55 : 1,
-                  borderColor: claimedByMe ? "#fbbf24" : "#2a2d33",
-                }}
-              >
-                <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                  <strong>{it.name}</strong>
-                  <span style={{ ...muted, fontSize: 12 }}>
-                    ({it.item_type}, power {it.power}, {it.rarity})
-                  </span>
-                  {claimedBy && (
-                    <span style={{
-                      marginLeft: "auto",
-                      fontSize: 11,
-                      fontWeight: 600,
-                      color: claimedByMe ? "#fbbf24" : "#9aa0a6",
-                      padding: "2px 8px",
-                      borderRadius: 4,
-                      background: claimedByMe ? "#2d2410" : "#1a1c20",
-                    }}>
-                      {claimedByMe ? "you took this" : `taken by ${claimer?.name ?? claimedBy}`}
+    <div style={pageShell}>
+      <div style={modalShell}>
+        <FloorHero label="Rest stop" />
+        <div
+          className="modal-body"
+          style={{
+            padding: isMobile ? 16 : "20px 24px",
+            display: "flex",
+            flexDirection: "column",
+            gap: 14,
+          }}
+        >
+          <p style={{ ...muted, margin: 0, lineHeight: 1.55 }}>
+            The party is fully healed. A hooded trader has set out three trinkets — each party
+            member can take at most one. When you're ready, press on into the next floor.
+          </p>
+
+          {/* Party glance — surfaces who's at the rest stop and their class
+              in the design system's arcane purple, matching the briefing
+              language elsewhere. */}
+          {party.length > 0 && (
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: isMobile ? "1fr" : "repeat(auto-fit, minmax(160px, 1fr))",
+                gap: 8,
+              }}
+            >
+              {party.map((p) => (
+                <div
+                  key={p.slack_user_id}
+                  style={{
+                    background: "var(--bg-card-2)",
+                    border: "1px solid var(--border-faint)",
+                    borderRadius: "var(--radius-md)",
+                    padding: "8px 10px",
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 2,
+                  }}
+                >
+                  <div
+                    style={{
+                      font: "13px/1.2 var(--font-display)",
+                      color: "var(--fg-1)",
+                    }}
+                  >
+                    {p.name}
+                  </div>
+                  <div
+                    style={{
+                      font: "10px/1 var(--font-mono)",
+                      color: "var(--accent-arcane-2)",
+                      textTransform: "uppercase",
+                      letterSpacing: 0.5,
+                    }}
+                  >
+                    {p.class} · L{p.level}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {err && (
+            <div style={{ color: "var(--tone-bad)", fontFamily: "var(--font-mono)", fontSize: 12 }}>
+              Error: {err}
+            </div>
+          )}
+
+          <div className="group-label">Trader's wares</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {stock.map((it, idx) => {
+              const claimedBy = claims[String(idx)];
+              const claimedByMe = claimedBy === selfId;
+              const claimer = claimedBy ? partyById.get(claimedBy) : null;
+              const canTake = !claimedBy && !iHaveClaimed;
+              const isPending = pendingIdx === idx;
+              return (
+                <div key={idx} style={offerRow(!!claimedBy, claimedByMe)}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                    <strong
+                      style={{
+                        font: "700 14px/1.2 var(--font-body)",
+                        color: "var(--fg-1)",
+                      }}
+                    >
+                      {it.name}
+                    </strong>
+                    <span
+                      style={{
+                        font: "10px/1.2 var(--font-mono)",
+                        color: "var(--fg-mute-3)",
+                        textTransform: "uppercase",
+                        letterSpacing: 0.5,
+                      }}
+                    >
+                      {it.item_type} · pwr {it.power} · {it.rarity}
                     </span>
+                    {claimedBy && (
+                      <span
+                        style={{
+                          marginLeft: "auto",
+                          font: "700 10px/1 var(--font-mono)",
+                          color: claimedByMe ? "var(--accent-gold)" : "var(--fg-mute)",
+                          padding: "3px 8px",
+                          borderRadius: "var(--radius-sm)",
+                          background: claimedByMe ? "rgba(251,191,36,0.12)" : "var(--bg-input)",
+                          border: `1px solid ${claimedByMe ? "var(--accent-gold)" : "var(--border-base)"}`,
+                          textTransform: "uppercase",
+                          letterSpacing: 0.5,
+                        }}
+                      >
+                        {claimedByMe ? "you took this" : `taken by ${claimer?.name ?? claimedBy}`}
+                      </span>
+                    )}
+                  </div>
+                  {it.flavor && (
+                    <div className="flavor-line">{it.flavor}</div>
+                  )}
+                  {canTake && (
+                    <div>
+                      <button
+                        className="btn btn-gold btn-sm"
+                        disabled={isPending}
+                        onClick={() => void pickItem(idx)}
+                      >
+                        {isPending ? "Taking…" : "Take"}
+                      </button>
+                    </div>
                   )}
                 </div>
-                {it.flavor && <div style={{ ...muted, fontSize: 12, marginTop: 4 }}>{it.flavor}</div>}
-                {canTake && (
-                  <button
-                    style={{
-                      marginTop: 8,
-                      padding: "6px 12px",
-                      borderRadius: 6,
-                      border: "1px solid #b89b3a",
-                      background: "#2d2410",
-                      color: "#fbbf24",
-                      fontSize: 13,
-                      fontWeight: 600,
-                      cursor: "pointer",
-                    }}
-                    disabled={isPending}
-                    onClick={() => void pickItem(idx)}
-                  >
-                    {isPending ? "Taking…" : "Take"}
-                  </button>
-                )}
-              </div>
-            );
-          })}
+              );
+            })}
+          </div>
+        </div>
+        <div
+          className="modal-foot"
+          style={{
+            padding: isMobile ? 14 : "16px 24px",
+            borderTop: "1px solid var(--border-faint)",
+            background: "var(--bg-deep)",
+            display: "flex",
+            flexDirection: isMobile ? "column" : "row",
+            gap: 10,
+            alignItems: "stretch",
+            justifyContent: "flex-end",
+          }}
+        >
           <button
+            className="btn btn-gold"
             style={{
-              ...button,
-              background: "#854d0e",
-              color: "#fef3c7",
-              marginTop: 12,
-              display: "inline-flex",
-              alignItems: "center",
               justifyContent: "center",
-              gap: 6,
+              width: isMobile ? "100%" : undefined,
             }}
             disabled={busy || pendingIdx !== null}
             onClick={() => void call("/tower/rest_advance")}
           >
-            <Icon name="tower-flag" size={16} color="#fef3c7" /> Press on (Floor {floor + 1})
+            <Icon name="tower-flag" size={14} color="#1a1300" />
+            Advance · Floor {floor + 1}
           </button>
         </div>
       </div>
@@ -253,19 +465,54 @@ export function ActiveQuestCard({
   const otherParty = party.filter((p) => p.slack_user_id !== selfId);
 
   return (
-    <div style={{ ...card, borderColor: "#b89b3a", borderWidth: 1 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-        <h2 style={h2}>Active Quest</h2>
-        <VariantBadge variant={variant} />
-        {quest.elite && <SmallBadge>elite</SmallBadge>}
-        {variant === "boss" && s.boss_phase === 2 && (
-          <SmallBadge>phase 2</SmallBadge>
-        )}
-        {variant === "gauntlet" && s.wave && s.total_waves && (
-          <SmallBadge>
-            wave {s.wave}/{s.total_waves}
-          </SmallBadge>
-        )}
+    <div
+      style={{
+        // Quest banner: dark panel with the red quest-accent border, matching
+        // the WardMap quest banner so the dashboard pre-combat state and the
+        // map state read as the same surface.
+        background: "var(--bg-panel)",
+        border: "1px solid var(--tone-bad-3)",
+        borderRadius: "var(--radius-2xl)",
+        padding: 20,
+        boxSizing: "border-box",
+        boxShadow: "var(--shadow-pop)",
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+        <Icon name="death-skull" size={18} color="var(--tone-bad-2)" />
+        <div style={{ minWidth: 0, flex: 1 }}>
+          <div
+            style={{
+              font: "10px/1 var(--font-mono)",
+              color: "var(--fg-mute)",
+              textTransform: "uppercase",
+              letterSpacing: 0.7,
+              marginBottom: 4,
+            }}
+          >
+            Active Quest · {variant}
+          </div>
+          <div
+            style={{
+              font: "20px/1.1 var(--font-display)",
+              color: "var(--fg-1)",
+            }}
+          >
+            {s.monster_name || "Unknown threat"}
+          </div>
+        </div>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+          <VariantBadge variant={variant} />
+          {quest.elite && <SmallBadge>elite</SmallBadge>}
+          {variant === "boss" && s.boss_phase === 2 && (
+            <SmallBadge>phase 2</SmallBadge>
+          )}
+          {variant === "gauntlet" && s.wave && s.total_waves && (
+            <SmallBadge>
+              wave {s.wave}/{s.total_waves}
+            </SmallBadge>
+          )}
+        </div>
       </div>
 
       <div style={{ marginTop: 16 }}>
@@ -283,14 +530,18 @@ export function ActiveQuestCard({
           style={{
             display: "flex",
             alignItems: "baseline",
-            justifyContent: "space-between",
+            justifyContent: "flex-end",
             gap: 8,
           }}
         >
-          <div style={{ fontSize: 18, fontWeight: 600, color: "#f5f5f5", fontFamily: DISPLAY_FONT }}>
-            {s.monster_name || "—"}
-          </div>
-          <div style={{ ...muted, fontVariantNumeric: "tabular-nums" }}>
+          <div
+            style={{
+              ...muted,
+              fontVariantNumeric: "tabular-nums",
+              fontFamily: "var(--font-mono)",
+              fontSize: 12,
+            }}
+          >
             {s.monster_hp} / {s.monster_max_hp} HP
           </div>
         </div>
@@ -480,22 +731,21 @@ export function ActiveQuestCard({
             <div style={{ display: "flex", gap: 10, marginTop: 20, flexWrap: "wrap" }}>
               <button
                 onClick={onStartCombat}
-                style={{ ...button, flex: 1, minWidth: 200, background: "#b89b3a", color: "#0e0f12" }}
+                className="btn btn-primary"
+                style={{ flex: 1, minWidth: 200, justifyContent: "center" }}
               >
-                <Icon name="sword" /> {combatInProgress ? "Resume Combat" : "Open Combat"}
+                <Icon name="sword" size={14} color="#fff" />
+                {combatInProgress ? "Resume Combat" : "Start Combat"}
               </button>
               {isCreator && (
                 <button
                   onClick={onOpenRecruitment}
                   title="Open a reinforcement lobby. Invitees who accept will join the fight in progress."
-                  style={{
-                    ...button,
-                    background: "#1f2937",
-                    color: "#fca5a5",
-                    border: "1px solid #7f1d1d",
-                  }}
+                  className="btn btn-ghost"
+                  style={{ justifyContent: "center" }}
                 >
-                  🆘 Call Reinforcements
+                  <Icon name="death-skull" size={14} color="var(--tone-bad-2)" />
+                  Open recruitment
                 </button>
               )}
             </div>

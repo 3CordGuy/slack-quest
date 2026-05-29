@@ -37,6 +37,7 @@ import {
 import {
   LocationHero, Banner, RarityBadge, SmallBadge,
   RefreshButton, RestockButton, ModalBackdrop, HaggleResultDialog, ConfirmDialog,
+  LocationModal, AppTopBar, CharacterSlideOver,
 } from "./components/ui";
 import { PubCard, PubLeaderboardCard, LiarsRollCard, SpdCard } from "./components/Pub";
 import { QuestStatsCard, QuestLeaderboardCard, TowerLeaderboardCard, RecentQuestsCard } from "./components/StatsCards";
@@ -51,10 +52,11 @@ import {
   PrimaryStatCard, DerivedStatCard,
   CharacterCard,
   CharacterSlotsModal,
+  AccountPopover,
   Stats, Stat, Stack,
 } from "./components/Character";
 import { InventoryCard, InventoryFullScreen, DollSlotCell, DroppablePackPanel, DraggablePackItem, DragItemPreview, ItemCell, ItemSlot, ItemDetailPopover } from "./components/Inventory";
-import { StartQuestCard, JoinableQuestCard, TownNav, JobPostingCard, StepPicker, HuntSection, JobBoardSection, DistrictTile, TownMap } from "./components/Town";
+import { StartQuestCard, JoinableQuestCard, TownNav, JobPostingCard, StepPicker, HuntSection, JobBoardSection, DistrictTile, TownMap, WardMap } from "./components/Town";
 import { TowerInterlude, ActiveQuestCard, ClickablePortrait } from "./components/Quest";
 import { DevToolsModal } from "./components/DevTools";
 
@@ -118,6 +120,8 @@ export function App() {
   const [confirm, setConfirm] = useState<ConfirmRequest | null>(null);
   const [townSection, setTownSection] = useState<TownSection | null>(null);
   const [inventoryOpen, setInventoryOpen] = useState(false);
+  const [characterSheetOpen, setCharacterSheetOpen] = useState(false);
+  const [characterSlotsOpen, setCharacterSlotsOpen] = useState(false);
   const [devToolsOpen, setDevToolsOpen] = useState(false);
   const isMobile = useMobileViewport();
 
@@ -853,6 +857,25 @@ export function App() {
     );
   }
 
+  // Build the character sheet JSX once. Rendered inside CharacterSlideOver
+  // when the header's character chip is clicked. `hideMenu` suppresses the
+  // in-card gear/account popover because the topbar now hosts it.
+  const characterSheet = state.kind === "auth" && state.me.character ? (
+    <CharacterCard
+      me={state.me}
+      inventory={state.inventory}
+      inQuest={!!state.activeQuest}
+      onRest={rest}
+      onLogout={logout}
+      onReroll={rerollCharacter}
+      onSpend={spendStatPoint}
+      onSaveNotifyPref={saveNotifyPref}
+      onOpenDevTools={import.meta.env.DEV ? () => setDevToolsOpen(true) : undefined}
+      onRefresh={async () => { await refresh(); await refreshMe(); }}
+      hideMenu
+    />
+  ) : undefined;
+
   if (activeCombat) {
     const chr = state.me.character;
     return (
@@ -894,16 +917,55 @@ export function App() {
   }
   const inQuest = !!state.activeQuest;
 
+  // The 6 location-modal targets that overlay the ward map. job_board still
+  // switches the top-level view (per design), inventory uses its own
+  // fullscreen overlay state.
+  const LOCATION_MODAL_KEYS: TownSection[] = [
+    "pub", "shop", "inn", "smithy", "apothecary", "hunt",
+  ];
+  const modalLoc =
+    townSection && LOCATION_MODAL_KEYS.includes(townSection) ? townSection : null;
+  const showJobBoardView = townSection === "job_board";
+
   // Town section main content
   let sectionContent: React.ReactNode = null;
   if (!inQuest) {
-    if (townSection === null) {
+    if (showJobBoardView) {
+      const townNav = <TownNav active="job_board" onNavigate={setTownSection} />;
+      sectionContent = (
+        <JobBoardSection
+          board={state.board}
+          overviewArt={state.townArt?.overview_art_url ?? null}
+          selfId={state.me.slack_user_id}
+          characterLevel={state.me.character?.level ?? 0}
+          joinable={state.joinable}
+          navOverlay={townNav}
+          onTakeJob={takeJob}
+          onStartQuest={startQuest}
+          onJoin={joinQuest}
+        />
+      );
+    } else {
+      // Default town view: ward map + dashboard extras below.
       sectionContent = (
         <>
-          <TownMap
-            art={state.townArt}
-            onNavigate={setTownSection}
-          />
+          {state.me.character && (
+            <WardMap
+              character={state.me.character}
+              activeQuest={state.activeQuest ? {
+                quest: state.activeQuest.quest,
+                hasWebCombat,
+              } : null}
+              jobsOpen={state.board?.jobs.length ?? 0}
+              overviewArtUrl={state.townArt?.overview_art_url ?? null}
+              onOpenLocation={(loc) => setTownSection(loc)}
+              onOpenJobBoard={() => setTownSection("job_board")}
+              onOpenInventory={() => setInventoryOpen(true)}
+              onResumeCombat={() => {
+                if (state.activeQuest) startCombat(state.activeQuest.quest.id);
+              }}
+            />
+          )}
           {state.joinable && (
             <JoinableQuestCard joinable={state.joinable} onJoin={joinQuest} />
           )}
@@ -928,153 +990,224 @@ export function App() {
           </div>
         </>
       );
-    } else {
-      const townNav = <TownNav active={townSection} onNavigate={setTownSection} />;
-      if (townSection === "job_board") {
-        sectionContent = (
-          <JobBoardSection
-            board={state.board}
-            overviewArt={state.townArt?.overview_art_url ?? null}
-            selfId={state.me.slack_user_id}
-            characterLevel={state.me.character?.level ?? 0}
-            joinable={state.joinable}
-            navOverlay={townNav}
-            onTakeJob={takeJob}
-            onStartQuest={startQuest}
-            onJoin={joinQuest}
+    }
+  }
+
+  // Location modal overlays. Rendered above the dashboard tree below so
+  // they can sit over the dimmed ward map without affecting layout.
+  function renderLocationModal(): React.ReactNode {
+    if (state.kind !== "auth" || !modalLoc || !state.me.character) return null;
+    const close = () => setTownSection(null);
+    const gold = state.me.character.gold;
+    if (modalLoc === "pub" && state.pub) {
+      return (
+        <LocationModal
+          icon="beer-stein"
+          title="The Pub"
+          subtitle="Ale · Whiskey · Mercs"
+          gold={gold}
+          art={state.pub.art_url ?? state.townArt?.pub_art_url ?? null}
+          onClose={close}
+        >
+          <PubCard
+            pub={state.pub}
+            inModal
+            onBuyDrink={buyDrink}
+            onHireMerc={hireMerc}
+            onDismissMerc={dismissMerc}
+            onRefresh={refreshPub}
           />
-        );
-      } else if (townSection === "pub" && state.me.character && state.pub) {
-        sectionContent = (
-          <>
-            <PubCard
-              pub={state.pub}
-              navOverlay={townNav}
-              onBuyDrink={buyDrink}
-              onHireMerc={hireMerc}
-              onDismissMerc={dismissMerc}
-              onRefresh={refreshPub}
-            />
-            <LiarsRollCard gold={state.pub.gold} onRefresh={refreshPub} />
-            <SpdCard pub={state.pub} selfId={state.me.slack_user_id} onRefresh={refreshPub} />
-            {state.pub.leaderboard && state.pub.leaderboard.length > 0 && (
-              <PubLeaderboardCard entries={state.pub.leaderboard} />
-            )}
-          </>
-        );
-      } else if (townSection === "shop" && state.me.character && state.shop) {
-        sectionContent = (
+          <LiarsRollCard gold={state.pub.gold} onRefresh={refreshPub} />
+          <SpdCard pub={state.pub} selfId={state.me.slack_user_id} onRefresh={refreshPub} />
+          {state.pub.leaderboard && state.pub.leaderboard.length > 0 && (
+            <PubLeaderboardCard entries={state.pub.leaderboard} />
+          )}
+        </LocationModal>
+      );
+    }
+    if (modalLoc === "shop" && state.shop) {
+      return (
+        <LocationModal
+          icon="cash"
+          title="The Shop"
+          subtitle="Rotating wares"
+          gold={gold}
+          art={state.shop.art_url ?? state.townArt?.shop_art_url ?? null}
+          onClose={close}
+        >
           <ShopCard
             shop={state.shop}
-            navOverlay={townNav}
+            inModal
             onBuy={shopBuy}
             onHaggle={shopHaggle}
             onBuyStaple={shopBuyStaple}
             onRefresh={refreshShop}
             onRestock={restockShop}
           />
-        );
-      } else if (townSection === "inn" && state.me.character && state.inn) {
-        sectionContent = (
-          <InnCard inn={state.inn} navOverlay={townNav} onStay={innStay} />
-        );
-      } else if (townSection === "smithy" && state.me.character && state.smithy) {
-        sectionContent = (
-          <SmithyCard smithy={state.smithy} navOverlay={townNav} characterLevel={state.me.character.level} onSharpen={smithySharpen} onRepair={smithyRepair} onBuy={smithyBuy} />
-        );
-      } else if (townSection === "hunt" && state.me.character) {
-        sectionContent = (
-          <HuntSection
+        </LocationModal>
+      );
+    }
+    if (modalLoc === "inn" && state.inn) {
+      return (
+        <LocationModal
+          icon="bed"
+          title="The Inn"
+          subtitle="Pick your room"
+          gold={gold}
+          art={state.inn.art_url ?? state.townArt?.inn_art_url ?? null}
+          onClose={close}
+        >
+          <InnCard inn={state.inn} inModal onStay={innStay} />
+        </LocationModal>
+      );
+    }
+    if (modalLoc === "smithy" && state.smithy) {
+      return (
+        <LocationModal
+          icon="anvil"
+          title="The Smithy"
+          subtitle="Sharpen & repair"
+          gold={gold}
+          art={state.smithy.art_url ?? state.townArt?.smithy_art_url ?? null}
+          onClose={close}
+        >
+          <SmithyCard
+            smithy={state.smithy}
+            inModal
             characterLevel={state.me.character.level}
-            overviewArt={state.townArt?.outskirts_art_url ?? null}
-            navOverlay={townNav}
-            onStartHunt={startHunt}
+            onSharpen={smithySharpen}
+            onRepair={smithyRepair}
+            onBuy={smithyBuy}
           />
-        );
-      } else if (townSection === "apothecary" && state.me.character) {
-        sectionContent = (
+        </LocationModal>
+      );
+    }
+    if (modalLoc === "apothecary") {
+      return (
+        <LocationModal
+          icon="poison-bottle"
+          title="Apothecary"
+          subtitle="Potions & vials"
+          gold={gold}
+          art={state.apothecary?.art_url ?? state.townArt?.apothecary_art_url ?? null}
+          onClose={close}
+        >
           <ApothecaryCard
             apothecary={state.apothecary}
-            navOverlay={townNav}
+            inModal
             selfId={state.me.slack_user_id}
             onBuyStaple={apothecaryBuyStaple}
             onRevive={apothecaryRevive}
             onSelfRevive={apothecarySelfRevive}
             onRefresh={refreshApothecary}
           />
-        );
-      } else {
-        sectionContent = townNav;
-      }
+        </LocationModal>
+      );
     }
+    if (modalLoc === "hunt") {
+      return (
+        <LocationModal
+          icon="spinning-sword"
+          title="Outskirts"
+          subtitle="Solo hunts"
+          gold={gold}
+          art={state.townArt?.outskirts_art_url ?? null}
+          onClose={close}
+          maxWidth={760}
+        >
+          <HuntSection
+            characterLevel={state.me.character.level}
+            overviewArt={state.townArt?.outskirts_art_url ?? null}
+            onStartHunt={startHunt}
+          />
+        </LocationModal>
+      );
+    }
+    return null;
   }
 
+  // Top bar crumb reflects which dashboard view we're on. Job Board is the
+  // only sub-view that swaps the main pane today; everything else (locations,
+  // inventory) layers as a modal overlay.
+  const crumb = showJobBoardView
+    ? "Town · Job Board"
+    : modalLoc
+      ? `Town · ${modalLoc === "hunt" ? "Outskirts" : modalLoc[0].toUpperCase() + modalLoc.slice(1)}`
+      : "Town · The Ward";
+
   return (
-    <Centered>
-      <DashboardLayout
-        main={
-          <>
-            {(state.lobbyQuest || state.activeQuest) && (
-              <LobbyView
-                selfId={state.me.slack_user_id}
-                activeQuestId={state.activeQuest?.quest.id ?? null}
-                onQuestStarted={async () => {
-                  // Capture before the refresh — lobbyQuest may be null in
-                  // reinforcement scenarios where LobbyView is mounted on
-                  // state.activeQuest. Bail safely if we never had a lobby.
-                  const lobbyQuest = state.lobbyQuest;
-                  await refresh();
-                  if (!lobbyQuest) return;
-                  void startCombat(lobbyQuest.quest.id);
-                }}
-              />
-            )}
-            {state.activeQuest && (
-              <ActiveQuestCard
-                quest={state.activeQuest.quest}
-                party={state.activeQuest.party}
-                selfId={state.me.slack_user_id}
-                combatInProgress={hasWebCombat}
-                onStartCombat={() => startCombat(state.activeQuest!.quest.id)}
-                onOpenRecruitment={() => openRecruitment(state.activeQuest!.quest.id)}
-              />
-            )}
-            {sectionContent}
-          </>
+    <>
+      <AppTopBar
+        crumb={crumb}
+        character={state.me.character}
+        onClickCharacter={state.me.character ? () => setCharacterSheetOpen(true) : undefined}
+        rightExtras={
+          <AccountPopover
+            onLogout={logout}
+            onReroll={rerollCharacter}
+            character={state.me.character}
+            onSaveNotifyPref={saveNotifyPref}
+            onOpenDevTools={import.meta.env.DEV ? () => setDevToolsOpen(true) : undefined}
+            onOpenCharacterSlots={() => setCharacterSlotsOpen(true)}
+            placement="bottom-end"
+            buttonStyle={{
+              background: "var(--bg-card-2)",
+              border: "1px solid var(--border-base)",
+              borderRadius: "var(--radius-md)",
+              color: "var(--fg-mute)",
+              cursor: "pointer",
+              padding: "8px 10px",
+              lineHeight: 1,
+              fontFamily: "inherit",
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+            }}
+          />
         }
-        side={
-          <>
-            <CharacterCard
-              me={state.me}
-              inventory={state.inventory}
-              inQuest={!!state.activeQuest}
-              onRest={rest}
-              onLogout={logout}
-              onReroll={rerollCharacter}
-              onSpend={spendStatPoint}
-              onSaveNotifyPref={saveNotifyPref}
-              onOpenDevTools={import.meta.env.DEV ? () => setDevToolsOpen(true) : undefined}
-              onRefresh={async () => { await refresh(); await refreshMe(); }}
-            />
-            {state.me.character && (
-              <InventoryCard
-                items={state.inventory}
-                inQuest={!!state.activeQuest}
-                artUrl={state.inventoryArtUrl}
-                selfId={state.me.slack_user_id}
-                characterLevel={state.me.character.level}
-                onEquip={equipItem}
-                onUnequip={unequipItem}
-                onSell={sellItem}
-                onUse={useItem}
-                onGive={giveItem}
-                onOpenFull={() => setInventoryOpen(true)}
-              />
-            )}
-          </>
-        }
-        footer={undefined}
       />
+      <Centered>
+        <DashboardLayout
+          main={
+            <>
+              {(state.lobbyQuest || state.activeQuest) && (
+                <LobbyView
+                  selfId={state.me.slack_user_id}
+                  activeQuestId={state.activeQuest?.quest.id ?? null}
+                  onQuestStarted={async () => {
+                    // Capture before the refresh — lobbyQuest may be null in
+                    // reinforcement scenarios where LobbyView is mounted on
+                    // state.activeQuest. Bail safely if we never had a lobby.
+                    const lobbyQuest = state.lobbyQuest;
+                    await refresh();
+                    if (!lobbyQuest) return;
+                    void startCombat(lobbyQuest.quest.id);
+                  }}
+                />
+              )}
+              {state.activeQuest && (
+                <ActiveQuestCard
+                  quest={state.activeQuest.quest}
+                  party={state.activeQuest.party}
+                  selfId={state.me.slack_user_id}
+                  combatInProgress={hasWebCombat}
+                  onStartCombat={() => startCombat(state.activeQuest!.quest.id)}
+                  onOpenRecruitment={() => openRecruitment(state.activeQuest!.quest.id)}
+                />
+              )}
+              {sectionContent}
+            </>
+          }
+          side={null}
+          hideSide
+          footer={undefined}
+        />
+      {renderLocationModal()}
+      {characterSheetOpen && characterSheet && (
+        <CharacterSlideOver onClose={() => setCharacterSheetOpen(false)}>
+          {characterSheet}
+        </CharacterSlideOver>
+      )}
       {haggleResult && (
         <HaggleResultDialog result={haggleResult} onClose={() => setHaggleResult(null)} />
       )}
@@ -1086,6 +1219,14 @@ export function App() {
           character={state.me.character}
           onClose={() => setDevToolsOpen(false)}
           onRefresh={refreshMe}
+        />
+      )}
+      {characterSlotsOpen && state.kind === "auth" && state.me.character && (
+        <CharacterSlotsModal
+          activeCharacter={state.me.character}
+          inQuest={!!state.activeQuest}
+          onClose={() => setCharacterSlotsOpen(false)}
+          onChanged={async () => { await refresh(); await refreshMe(); }}
         />
       )}
       <AchievementToastStack
@@ -1107,7 +1248,8 @@ export function App() {
           onClose={() => setInventoryOpen(false)}
         />
       )}
-    </Centered>
+      </Centered>
+    </>
   );
 }
 
@@ -1161,13 +1303,61 @@ function Login({ onSuccess }: { onSuccess: () => void }) {
 
   return (
     <Centered>
-      <div style={card}>
-        <h1 style={h1}>Gantt Quest™</h1>
-        <p style={muted}>
-          Run <code style={kbd}>/gq web-login</code> in Slack to get a 6-digit
-          code, then paste it below.
+      <div
+        style={{
+          width: "100%",
+          maxWidth: 420,
+          marginTop: "10vh",
+          background: "var(--bg-panel)",
+          border: "1px solid var(--border-base)",
+          borderRadius: "var(--radius-2xl)",
+          boxShadow: "var(--shadow-modal)",
+          padding: "32px 28px 28px",
+          display: "flex",
+          flexDirection: "column",
+          gap: 18,
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <Icon name="tower-flag" size={36} color="var(--accent-gold)" />
+          <h1
+            style={{
+              margin: 0,
+              font: "28px/1 var(--font-display)",
+              color: "var(--fg-1)",
+              letterSpacing: 0.2,
+            }}
+          >
+            Gantt Quest
+            <sup style={{ fontSize: 11, color: "var(--accent-gold)", marginLeft: 2 }}>™</sup>
+          </h1>
+        </div>
+        <p
+          style={{
+            margin: 0,
+            font: "12px/1.55 var(--font-mono)",
+            color: "var(--fg-mute)",
+          }}
+        >
+          Run{" "}
+          <code
+            style={{
+              font: "12px/1 var(--font-mono)",
+              color: "var(--accent-gold)",
+              background: "var(--bg-card-2)",
+              border: "1px solid var(--border-faint)",
+              borderRadius: 4,
+              padding: "2px 6px",
+            }}
+          >
+            /gq web-login
+          </code>{" "}
+          in Slack for a 6-digit code, then paste it below.
         </p>
-        <form onSubmit={submit}>
+        <form
+          onSubmit={submit}
+          style={{ display: "flex", flexDirection: "column", gap: 10 }}
+        >
           <input
             inputMode="numeric"
             pattern="\d{6}"
@@ -1175,23 +1365,51 @@ function Login({ onSuccess }: { onSuccess: () => void }) {
             value={code}
             onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))}
             placeholder="123456"
-            style={input}
             autoFocus
+            style={{
+              width: "100%",
+              boxSizing: "border-box",
+              padding: "12px 14px",
+              background: "var(--bg-void)",
+              border: "1px solid var(--border-base)",
+              borderRadius: "var(--radius-md)",
+              color: "var(--fg-1)",
+              font: "20px/1 var(--font-mono)",
+              letterSpacing: "0.4em",
+              textAlign: "center",
+              outline: "none",
+            }}
           />
-          <button type="submit" disabled={pending} style={button}>
+          <button
+            type="submit"
+            disabled={pending}
+            className="btn btn-primary"
+            style={{ width: "100%", justifyContent: "center" }}
+          >
             {pending ? "Verifying…" : "Sign in"}
           </button>
           {import.meta.env.DEV && (
             <button
               type="button"
               onClick={dummyDevAuth}
-              style={{ ...button, background: "#1f2a3a", color: "#7dd3fc", border: "1px solid #2a3d55" }}
+              className="btn btn-ghost"
+              style={{ width: "100%", justifyContent: "center" }}
             >
               Dev login
             </button>
           )}
         </form>
-        {error && <p style={{ ...muted, color: "#c0392b" }}>{error}</p>}
+        {error && (
+          <p
+            style={{
+              margin: 0,
+              font: "12px/1.5 var(--font-mono)",
+              color: "var(--tone-bad)",
+            }}
+          >
+            {error}
+          </p>
+        )}
       </div>
     </Centered>
   );

@@ -1,3 +1,4 @@
+import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
 import { Icon } from "../icons";
 import { formatDuration, formatRelative } from "../utils";
 import { VARIANT_LABEL } from "../constants";
@@ -71,97 +72,466 @@ function QuestStatsCard({ stats }: { stats: QuestStats }) {
   );
 }
 
-function QuestLeaderboardCard({ entries, selfId }: { entries: QuestLeaderboardEntry[]; selfId: string }) {
+/* ─── Hall of Renown shared scaffolding ─────────────────────────────── */
+
+export type RenownEntry = {
+  id: string;
+  name: string;
+  subtitle: string;        // e.g. "Mage · L7" or just "L7 Mage"
+  metric: ReactNode;        // big metric value (already formatted)
+  metricLabel: string;     // e.g. "Renown"
+  iconName: string;        // small icon for list rows / podium
+  isSelf?: boolean;
+};
+
+type Period = "week" | "season" | "all";
+
+const MEDAL_COLORS: Record<1 | 2 | 3, string> = {
+  1: "var(--accent-gold)",
+  2: "var(--rarity-common)",      // silver-ish
+  3: "var(--accent-gold-dark)",   // bronze
+};
+
+function useIsMobile(breakpoint = 640) {
+  const [isMobile, setIsMobile] = useState<boolean>(() => {
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") return false;
+    return window.matchMedia(`(max-width: ${breakpoint}px)`).matches;
+  });
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") return;
+    const mq = window.matchMedia(`(max-width: ${breakpoint}px)`);
+    const handler = (e: MediaQueryListEvent) => setIsMobile(e.matches);
+    if (mq.addEventListener) mq.addEventListener("change", handler);
+    else mq.addListener(handler);
+    return () => {
+      if (mq.removeEventListener) mq.removeEventListener("change", handler);
+      else mq.removeListener(handler);
+    };
+  }, [breakpoint]);
+  return isMobile;
+}
+
+function PeriodToggle({ value, onChange }: { value: Period; onChange: (p: Period) => void }) {
+  const opts: { id: Period; label: string; soon: boolean }[] = [
+    { id: "week", label: "Week", soon: true },
+    { id: "season", label: "Season", soon: false },
+    { id: "all", label: "All-Time", soon: true },
+  ];
   return (
-    <div style={card}>
-      <h2 style={{ ...h2, marginBottom: 12 }}>
-        <Icon name="trophy" size={1} /> Hall of Heroes
-      </h2>
-      <div style={{ overflowX: "auto" }}>
-        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
-          <thead>
-            <tr style={{ borderBottom: "1px solid #2a2d33" }}>
-              <th style={{ textAlign: "left", padding: "4px 8px 4px 0", color: "#7a7d83", fontWeight: 500 }}>#</th>
-              <th style={{ textAlign: "left", padding: "4px 8px", color: "#7a7d83", fontWeight: 500 }}>Player</th>
-              <th style={{ textAlign: "right", padding: "4px 8px", color: "#7a7d83", fontWeight: 500, whiteSpace: "nowrap" }}>W</th>
-              <th style={{ textAlign: "right", padding: "4px 8px", color: "#7a7d83", fontWeight: 500, whiteSpace: "nowrap" }}>W%</th>
-              <th style={{ textAlign: "right", padding: "4px 0 4px 8px", color: "#7a7d83", fontWeight: 500, whiteSpace: "nowrap" }}>Elite</th>
-            </tr>
-          </thead>
-          <tbody>
-            {entries.map((e, i) => {
-              const rank = i + 1;
-              const rankColor = rank === 1 ? "#fbbf24" : rank === 2 ? "#d1d5db" : rank === 3 ? "#cd7c2f" : "#7a7d83";
-              const wr = e.total_quests > 0 ? Math.round((e.wins / e.total_quests) * 100) : 0;
-              const isSelf = e.slack_user_id === selfId;
-              return (
-                <tr key={e.slack_user_id} style={{ borderBottom: "1px solid #1e2025", background: isSelf ? "#1d2128" : "transparent" }}>
-                  <td style={{ padding: "6px 8px 6px 0", color: rankColor, fontWeight: rank <= 3 ? 700 : 400 }}>{rank}</td>
-                  <td style={{ padding: "6px 8px" }}>
-                    <div style={{ fontWeight: isSelf ? 700 : 500, color: isSelf ? "#a5b4fc" : "#f5f5f5" }}>
-                      {e.name} {isSelf && <span style={{ ...muted, fontSize: 11, fontWeight: 400 }}>(you)</span>}
-                    </div>
-                    <div style={{ color: "#7a7d83", fontSize: 11 }}>L{e.level} {e.class}</div>
-                  </td>
-                  <td style={{ padding: "6px 8px", textAlign: "right", color: "#86efac", fontWeight: 600 }}>{e.wins}</td>
-                  <td style={{ padding: "6px 8px", textAlign: "right", color: wr >= 50 ? "#86efac" : "#fca5a5" }}>{wr}%</td>
-                  <td style={{ padding: "6px 0 6px 8px", textAlign: "right", color: e.elite_wins > 0 ? "#f97316" : "#7a7d83", fontWeight: e.elite_wins > 0 ? 600 : 400 }}>
-                    {e.elite_wins > 0 ? e.elite_wins : "—"}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+    <div
+      role="tablist"
+      style={{
+        display: "inline-flex",
+        gap: 2,
+        padding: 2,
+        background: "var(--bg-card-2)",
+        border: "1px solid var(--border-faint)",
+        borderRadius: "var(--radius-lg)",
+      }}
+    >
+      {opts.map((o) => {
+        const active = value === o.id;
+        return (
+          <button
+            key={o.id}
+            type="button"
+            role="tab"
+            aria-selected={active}
+            onClick={() => onChange(o.id)}
+            title={o.soon ? "Coming soon" : undefined}
+            style={{
+              fontFamily: "var(--font-mono)",
+              fontSize: 11,
+              letterSpacing: 0.4,
+              textTransform: "uppercase",
+              padding: "4px 10px",
+              borderRadius: 6,
+              border: "1px solid",
+              borderColor: active ? "var(--border-faint)" : "transparent",
+              background: active ? "var(--bg-panel)" : "transparent",
+              color: active ? "var(--fg-1)" : "var(--fg-mute)",
+              cursor: "pointer",
+              fontWeight: 600,
+            }}
+          >
+            {o.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function PodiumCard({
+  entry,
+  rank,
+  emphasized,
+  iconName,
+  metricLabel,
+  isMobile,
+}: {
+  entry: RenownEntry;
+  rank: 1 | 2 | 3;
+  emphasized: boolean;
+  iconName: string;
+  metricLabel: string;
+  isMobile: boolean;
+}) {
+  const medalColor = MEDAL_COLORS[rank];
+  const borderColor = rank === 1 ? "var(--accent-gold)" : "var(--border-faint)";
+  const selfBorder = entry.isSelf ? "var(--accent-ink-blue-2)" : borderColor;
+  const bg = entry.isSelf ? "var(--accent-ink-deep)" : "var(--bg-panel)";
+  const discSize = emphasized && !isMobile ? 64 : 52;
+  const nameSize = emphasized && !isMobile ? 17 : 15;
+  const metricSize = emphasized && !isMobile ? 30 : 24;
+
+  return (
+    <div
+      style={{
+        background: bg,
+        border: `1px solid ${selfBorder}`,
+        borderRadius: "var(--radius-xl)",
+        padding: emphasized && !isMobile ? "18px 14px" : "14px 12px",
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        textAlign: "center",
+        gap: 6,
+        position: "relative",
+        boxShadow: rank === 1 ? "0 0 0 1px var(--accent-gold) inset, 0 4px 18px -8px rgba(251,191,36,0.35)" : undefined,
+        transform: !isMobile && emphasized ? "translateY(-6px)" : undefined,
+      }}
+    >
+      {/* Medal */}
+      <div
+        style={{
+          position: "absolute",
+          top: 8,
+          right: 10,
+          fontFamily: "var(--font-mono)",
+          fontSize: 12,
+          fontWeight: 700,
+          color: medalColor,
+          letterSpacing: 0.5,
+        }}
+      >
+        #{rank}
+      </div>
+      {/* Avatar disc */}
+      <div
+        style={{
+          width: discSize,
+          height: discSize,
+          borderRadius: "50%",
+          background: "var(--bg-card-2)",
+          border: `2px solid ${medalColor}`,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          marginTop: 4,
+        }}
+      >
+        <Icon name={iconName} size={Math.round(discSize * 0.55)} color={medalColor} />
+      </div>
+      {/* Name */}
+      <div
+        style={{
+          fontFamily: DISPLAY_FONT,
+          fontSize: nameSize,
+          color: entry.isSelf ? "var(--accent-ink-blue-2)" : "var(--fg-1)",
+          lineHeight: 1.15,
+          marginTop: 2,
+          maxWidth: "100%",
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+        }}
+      >
+        {entry.name}
+        {entry.isSelf && (
+          <span style={{ ...muted, fontFamily: "var(--font-mono)", fontSize: 10, marginLeft: 6 }}>(you)</span>
+        )}
+      </div>
+      {/* Class · Level (mono) */}
+      <div
+        style={{
+          fontFamily: "var(--font-mono)",
+          fontSize: 11,
+          letterSpacing: 0.4,
+          textTransform: "uppercase",
+          color: "var(--accent-arcane-2)",
+        }}
+      >
+        {entry.subtitle}
+      </div>
+      {/* Metric */}
+      <div style={{ marginTop: 4 }}>
+        <div
+          style={{
+            fontFamily: DISPLAY_FONT,
+            fontSize: metricSize,
+            color: "var(--accent-gold)",
+            lineHeight: 1,
+          }}
+        >
+          {entry.metric}
+        </div>
+        <div
+          style={{
+            ...muted,
+            fontFamily: "var(--font-mono)",
+            fontSize: 10,
+            letterSpacing: 0.6,
+            textTransform: "uppercase",
+            marginTop: 2,
+          }}
+        >
+          {metricLabel}
+        </div>
       </div>
     </div>
   );
 }
 
-function TowerLeaderboardCard({ entries, selfId }: { entries: TowerLeaderboardEntry[]; selfId: string }) {
+function FieldRow({
+  entry,
+  rank,
+  iconName,
+}: {
+  entry: RenownEntry;
+  rank: number;
+  iconName: string;
+}) {
+  const [hover, setHover] = useState(false);
+  const baseBg = entry.isSelf ? "var(--accent-ink-deep)" : "transparent";
+  const hoverBg = entry.isSelf ? "var(--accent-ink-deep)" : "var(--bg-card-2)";
+  const borderColor = entry.isSelf ? "var(--accent-ink-blue-2)" : "var(--border-faint)";
+
+  const rowStyle: CSSProperties = {
+    display: "grid",
+    gridTemplateColumns: "32px 28px 1fr auto",
+    alignItems: "center",
+    gap: 10,
+    padding: "8px 10px",
+    borderRadius: "var(--radius-lg)",
+    border: `1px solid ${entry.isSelf ? borderColor : "transparent"}`,
+    background: hover ? hoverBg : baseBg,
+    transition: "background 120ms ease",
+  };
+
   return (
-    <div style={{ ...card, borderColor: "#854d0e" }}>
-      <h2 style={{ ...h2, marginBottom: 12, display: "flex", alignItems: "center", gap: 8 }}>
-        <Icon name="tower-flag" size={22} color="#fbbf24" /> Tower of Ascension
-      </h2>
-      <p style={{ ...muted, fontSize: 11, marginTop: -4, marginBottom: 10 }}>
-        Highest floor reached · ties broken by total tower kills.
-      </p>
-      <div style={{ overflowX: "auto" }}>
-        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
-          <thead>
-            <tr style={{ borderBottom: "1px solid #2a2d33" }}>
-              <th style={{ textAlign: "left", padding: "4px 8px 4px 0", color: "#7a7d83", fontWeight: 500 }}>#</th>
-              <th style={{ textAlign: "left", padding: "4px 8px", color: "#7a7d83", fontWeight: 500 }}>Player</th>
-              <th style={{ textAlign: "right", padding: "4px 8px", color: "#7a7d83", fontWeight: 500, whiteSpace: "nowrap" }}>Best</th>
-              <th style={{ textAlign: "right", padding: "4px 8px", color: "#7a7d83", fontWeight: 500, whiteSpace: "nowrap" }}>Kills</th>
-              <th style={{ textAlign: "right", padding: "4px 0 4px 8px", color: "#7a7d83", fontWeight: 500, whiteSpace: "nowrap" }}>Climbed</th>
-            </tr>
-          </thead>
-          <tbody>
-            {entries.map((e, i) => {
-              const rank = i + 1;
-              const rankColor = rank === 1 ? "#fbbf24" : rank === 2 ? "#d1d5db" : rank === 3 ? "#cd7c2f" : "#7a7d83";
-              const isSelf = e.slack_user_id === selfId;
-              return (
-                <tr key={e.slack_user_id} style={{ borderBottom: "1px solid #1e2025", background: isSelf ? "#1d2128" : "transparent" }}>
-                  <td style={{ padding: "6px 8px 6px 0", color: rankColor, fontWeight: rank <= 3 ? 700 : 400 }}>{rank}</td>
-                  <td style={{ padding: "6px 8px" }}>
-                    <div style={{ fontWeight: isSelf ? 700 : 500, color: isSelf ? "#fbbf24" : "#f5f5f5" }}>
-                      {e.name} {isSelf && <span style={{ ...muted, fontSize: 11, fontWeight: 400 }}>(you)</span>}
-                    </div>
-                    <div style={{ color: "#7a7d83", fontSize: 11 }}>{e.class}</div>
-                  </td>
-                  <td style={{ padding: "6px 8px", textAlign: "right", color: "#fbbf24", fontWeight: 700 }}>Floor {e.tower_best_floor}</td>
-                  <td style={{ padding: "6px 8px", textAlign: "right", color: "#fca5a5", fontWeight: 600 }}>{e.tower_kills}</td>
-                  <td style={{ padding: "6px 0 6px 8px", textAlign: "right", color: "#9aa0a6" }}>{e.tower_floors_climbed}</td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+    <div
+      style={rowStyle}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+    >
+      <div
+        style={{
+          fontFamily: "var(--font-mono)",
+          fontSize: 12,
+          color: "var(--fg-mute)",
+          textAlign: "right",
+        }}
+      >
+        #{rank}
+      </div>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <Icon name={iconName} size={18} color={entry.isSelf ? "var(--accent-ink-blue-2)" : "var(--fg-mute)"} />
+      </div>
+      <div style={{ minWidth: 0 }}>
+        <div
+          style={{
+            fontFamily: DISPLAY_FONT,
+            fontSize: 14,
+            color: entry.isSelf ? "var(--accent-ink-blue-2)" : "var(--fg-1)",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {entry.name}
+          {entry.isSelf && (
+            <span style={{ ...muted, fontFamily: "var(--font-mono)", fontSize: 10, marginLeft: 6 }}>(you)</span>
+          )}
+        </div>
+        <div
+          style={{
+            fontFamily: "var(--font-mono)",
+            fontSize: 10,
+            letterSpacing: 0.3,
+            textTransform: "uppercase",
+            color: "var(--accent-arcane-2)",
+          }}
+        >
+          {entry.subtitle}
+        </div>
+      </div>
+      <div
+        style={{
+          fontFamily: DISPLAY_FONT,
+          fontSize: 16,
+          color: "var(--accent-gold)",
+          textAlign: "right",
+          whiteSpace: "nowrap",
+        }}
+      >
+        {entry.metric}
       </div>
     </div>
+  );
+}
+
+function HallOfRenown({
+  title,
+  entries,
+  metricLabel,
+  rowIcon,
+  footerNote,
+}: {
+  title: string;
+  entries: RenownEntry[];
+  metricLabel: string;
+  rowIcon: string;
+  footerNote?: string;
+}) {
+  const [period, setPeriod] = useState<Period>("season");
+  const isMobile = useIsMobile();
+
+  const top3 = entries.slice(0, 3);
+  const rest = entries.slice(3);
+
+  // Podium order on desktop: 2nd, 1st, 3rd (1st in center).
+  const podiumOrder: Array<{ entry: RenownEntry; rank: 1 | 2 | 3 }> = [];
+  if (top3[1]) podiumOrder.push({ entry: top3[1], rank: 2 });
+  if (top3[0]) podiumOrder.push({ entry: top3[0], rank: 1 });
+  if (top3[2]) podiumOrder.push({ entry: top3[2], rank: 3 });
+
+  // Mobile: 1st, 2nd, 3rd (stacked).
+  const mobilePodium: Array<{ entry: RenownEntry; rank: 1 | 2 | 3 }> = [];
+  if (top3[0]) mobilePodium.push({ entry: top3[0], rank: 1 });
+  if (top3[1]) mobilePodium.push({ entry: top3[1], rank: 2 });
+  if (top3[2]) mobilePodium.push({ entry: top3[2], rank: 3 });
+
+  const podiumList = isMobile ? mobilePodium : podiumOrder;
+
+  return (
+    <div style={card}>
+      {/* Header */}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 12,
+          marginBottom: 16,
+          flexWrap: "wrap",
+        }}
+      >
+        <h2 style={{ ...h2, display: "flex", alignItems: "center", gap: 8, margin: 0 }}>
+          <Icon name="trophy" size={20} color="var(--accent-gold)" />
+          {title}
+        </h2>
+        <PeriodToggle value={period} onChange={setPeriod} />
+      </div>
+
+      {/* Podium */}
+      {podiumList.length > 0 && (
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: isMobile ? "1fr" : "1fr 1.15fr 1fr",
+            alignItems: "end",
+            gap: 12,
+            marginBottom: rest.length > 0 ? 20 : 4,
+          }}
+        >
+          {podiumList.map(({ entry, rank }) => (
+            <PodiumCard
+              key={entry.id}
+              entry={entry}
+              rank={rank}
+              emphasized={rank === 1}
+              iconName={rowIcon}
+              metricLabel={metricLabel}
+              isMobile={isMobile}
+            />
+          ))}
+        </div>
+      )}
+
+      {/* Rest of the field */}
+      {rest.length > 0 && (
+        <>
+          <div
+            style={{
+              fontFamily: "var(--font-mono)",
+              fontSize: 10,
+              letterSpacing: 1.2,
+              textTransform: "uppercase",
+              color: "var(--fg-mute)",
+              marginBottom: 8,
+              marginTop: 4,
+            }}
+          >
+            The Rest of the Field
+          </div>
+          <div style={{ display: "grid", gap: 4 }}>
+            {rest.map((e, i) => (
+              <FieldRow key={e.id} entry={e} rank={i + 4} iconName={rowIcon} />
+            ))}
+          </div>
+        </>
+      )}
+
+      {footerNote && (
+        <p style={{ ...muted, fontSize: 11, marginTop: 12, marginBottom: 0 }}>{footerNote}</p>
+      )}
+    </div>
+  );
+}
+
+/* ─── Quest leaderboard ─────────────────────────────────────────────── */
+
+function QuestLeaderboardCard({ entries, selfId }: { entries: QuestLeaderboardEntry[]; selfId: string }) {
+  const renown: RenownEntry[] = entries.map((e) => ({
+    id: e.slack_user_id,
+    name: e.name,
+    subtitle: `${e.class} · L${e.level}`,
+    metric: e.wins,
+    metricLabel: "Renown",
+    iconName: "trophy",
+    isSelf: e.slack_user_id === selfId,
+  }));
+  return (
+    <HallOfRenown
+      title="Hall of Renown"
+      entries={renown}
+      metricLabel="Renown"
+      rowIcon="crowned-heart"
+    />
+  );
+}
+
+/* ─── Tower leaderboard ─────────────────────────────────────────────── */
+
+function TowerLeaderboardCard({ entries, selfId }: { entries: TowerLeaderboardEntry[]; selfId: string }) {
+  const renown: RenownEntry[] = entries.map((e) => ({
+    id: e.slack_user_id,
+    name: e.name,
+    subtitle: e.class,
+    metric: `F${e.tower_best_floor}`,
+    metricLabel: "Best Floor",
+    iconName: "tower-flag",
+    isSelf: e.slack_user_id === selfId,
+  }));
+  return (
+    <HallOfRenown
+      title="Tower Champions"
+      entries={renown}
+      metricLabel="Best Floor"
+      rowIcon="tower-flag"
+      footerNote="Highest floor reached · ties broken by total tower kills."
+    />
   );
 }
 
@@ -230,4 +600,4 @@ function RecentQuestRow({ q }: { q: RecentQuest }) {
   );
 }
 
-export { QuestStatsCard, QuestLeaderboardCard, TowerLeaderboardCard, RecentQuestsCard, RecentQuestRow };
+export { QuestStatsCard, QuestLeaderboardCard, TowerLeaderboardCard, RecentQuestsCard, RecentQuestRow, HallOfRenown };

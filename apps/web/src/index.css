@@ -205,7 +205,285 @@ em, .flavor {
   vertical-align: middle;
 }
 
+/* ─── LAYOUT COMPONENT CLASSES (ported from design handoff's gq.css) ─── */
+
+/* Top bar — brand mark + crumb + character chip */
+.gq-topbar {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 14px 24px;
+  background: var(--bg-deep);
+  border-bottom: 1px solid var(--border-base);
+}
+.gq-brand { display: flex; align-items: center; gap: 12px; }
+.gq-brand .mark { width: 28px; height: 28px; color: var(--accent-gold); }
+.gq-wordmark {
+  font: 24px/1 var(--font-display);
+  color: var(--fg-1);
+  letter-spacing: 0.4px;
+}
+.gq-wordmark sup { font-size: 10px; color: var(--accent-gold); }
+.gq-crumb {
+  font: 10px/1.3 var(--font-body);
+  text-transform: uppercase;
+  letter-spacing: 1.4px;
+  color: var(--fg-faintest);
+  margin-top: 3px;
+}
+.gq-charchip {
+  display: flex; align-items: center; gap: 16px;
+  font: 13px/1 var(--font-mono);
+}
+.gq-charchip .stat { display: inline-flex; align-items: center; gap: 5px; }
+
+@media (max-width: 720px) {
+  .gq-topbar { padding: 10px 14px; }
+  .gq-wordmark { font-size: 18px; }
+  .gq-crumb { display: none; }
+  .gq-charchip { gap: 10px; font-size: 12px; }
+  /* On narrow viewports drop the long "name · class · L#" text and
+     only show the stat chip — the inventory button gives access to
+     full character details. */
+  .gq-topbar [data-charname] { display: none; }
+}
+
+/* HP / resource bar */
+.bar {
+  height: 8px;
+  background: var(--bg-void);
+  border-radius: 5px;
+  overflow: hidden;
+  position: relative;
+}
+.bar > i {
+  position: absolute; inset: 0; display: block; border-radius: 5px;
+}
+
+/* Location-modal kit — shared shell for town location screens */
+.scene {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: grid;
+  place-items: center;
+  padding: 36px;
+  background: rgba(0, 0, 0, 0.55);
+  overflow-y: auto;
+}
+@media (max-width: 720px) {
+  .scene { padding: 12px; }
+  .modal-head { padding: 14px 14px; gap: 10px; }
+  .m-disc { width: 44px; height: 44px; }
+  .m-disc .gq-icon { width: 24px; height: 24px; }
+  .m-titles h2 { font-size: 18px; }
+  .modal-body { padding: 14px; }
+  .modal-foot { padding: 12px 14px; }
+}
+.modal {
+  width: 100%;
+  max-width: 700px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-base);
+  border-radius: var(--radius-2xl);
+  box-shadow: var(--shadow-modal);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  margin: auto;
+}
+.modal-head {
+  display: flex; align-items: center; gap: 14px;
+  padding: 18px 20px;
+  border-bottom: 1px solid var(--border-faint);
+}
+.m-disc {
+  width: 54px; height: 54px; flex-shrink: 0;
+  border-radius: var(--radius-lg);
+  background: var(--bg-void);
+  border: 1px solid var(--border-strong);
+  display: flex; align-items: center; justify-content: center;
+  color: var(--accent-gold);
+}
+.m-titles { flex: 1; min-width: 0; }
+.m-titles h2 {
+  font: 24px/1 var(--font-display);
+  color: var(--fg-1);
+  margin: 0;
+}
+.m-sub {
+  font: 10px/1.3 var(--font-mono);
+  color: var(--fg-mute);
+  text-transform: uppercase;
+  letter-spacing: 0.7px;
+  margin-top: 6px;
+}
+.m-gold {
+  display: inline-flex; align-items: center; gap: 6px;
+  flex-shrink: 0;
+  font: 13px/1 var(--font-mono);
+  color: var(--accent-gold);
+  background: var(--bg-card-2);
+  border: 1px solid var(--border-faint);
+  border-radius: 999px;
+  padding: 7px 12px;
+}
+.m-close {
+  width: 30px; height: 30px; flex-shrink: 0;
+  border-radius: var(--radius-md);
+  background: var(--bg-card-2);
+  border: 1px solid var(--border-base);
+  color: var(--fg-mute);
+  font: 16px/1 var(--font-body);
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+}
+.m-close:hover { color: var(--fg-1); border-color: var(--border-strong); }
+.modal-body {
+  padding: 18px 20px;
+  display: flex; flex-direction: column; gap: 12px;
+}
+.modal-foot {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 14px 20px;
+  border-top: 1px solid var(--border-faint);
+  background: var(--bg-deep);
+}
+.flavor-line {
+  font: italic 12px/1.5 var(--font-body);
+  color: var(--accent-flavor);
+}
+
+/* Buttons */
+.btn {
+  border: none;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  font: 700 13px/1 var(--font-body);
+  padding: 11px 18px;
+  display: inline-flex; align-items: center; gap: 8px;
+  transition: filter 0.14s, border-color 0.14s;
+}
+.btn-primary { background: var(--accent-ink-blue-2); color: #fff; }
+.btn-gold { background: var(--accent-gold); color: #1a1300; }
+.btn-ghost {
+  background: var(--bg-input);
+  color: var(--fg-2);
+  border: 1px solid var(--border-strong);
+}
+.btn-sm { padding: 8px 12px; font-size: 12px; }
+.btn:hover:not(:disabled) { filter: brightness(1.08); }
+.btn:disabled { filter: none; opacity: 0.5; cursor: not-allowed; }
+
+/* Offer / service row (smithy, inn, etc.) */
+.offer {
+  display: grid;
+  grid-template-columns: 48px 1fr auto;
+  gap: 14px;
+  align-items: center;
+  padding: 12px 14px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-faint);
+  border-radius: var(--radius-lg);
+}
+.offer.hot { border-color: var(--accent-gold); }
+.offer .o-ico {
+  width: 48px; height: 48px;
+  background: var(--bg-void);
+  border: 1px solid var(--border-base);
+  border-left: 3px solid var(--rar, var(--border-base));
+  border-radius: var(--radius-md);
+  display: flex; align-items: center; justify-content: center;
+  color: var(--rar, var(--fg-3));
+}
+.offer .o-name {
+  font: 700 14px/1.2 var(--font-body);
+  color: var(--rar, var(--fg-1));
+}
+.offer .o-desc {
+  font: 11px/1.4 var(--font-body);
+  color: var(--fg-mute);
+  margin-top: 3px;
+}
+.offer .o-eff {
+  font: 600 11px/1.4 var(--font-body);
+  color: var(--accent-ink-blue);
+  margin-top: 3px;
+}
+.offer .o-right {
+  display: flex; flex-direction: column; align-items: flex-end; gap: 7px;
+  white-space: nowrap;
+}
+.price {
+  font: 13px/1 var(--font-mono);
+  color: var(--accent-gold);
+  display: inline-flex; align-items: center; gap: 5px;
+}
+
+/* Catalog tile (shop, apothecary) */
+.cat-grid { display: grid; gap: 10px; }
+.cat-tile {
+  background: var(--bg-card);
+  border: 1px solid var(--rar, var(--border-faint));
+  border-top: 3px solid var(--rar, var(--border-base));
+  border-radius: var(--radius-lg);
+  padding: 13px;
+  display: flex; flex-direction: column; gap: 8px;
+  position: relative;
+}
+.cat-tile .ct-ico {
+  width: 44px; height: 44px;
+  background: var(--bg-void);
+  border: 1px solid var(--border-base);
+  border-radius: var(--radius-md);
+  display: flex; align-items: center; justify-content: center;
+  color: var(--rar, var(--fg-3));
+}
+.cat-tile .ct-name {
+  font: 700 13px/1.2 var(--font-body);
+  color: var(--rar, var(--fg-1));
+}
+.cat-tile .ct-meta {
+  font: 9px/1.2 var(--font-mono);
+  color: var(--fg-mute-3);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.cat-tile .ct-eff {
+  font: 600 11px/1.4 var(--font-body);
+  color: var(--accent-ink-blue);
+}
+.cat-tile .ct-foot {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-top: auto; padding-top: 4px;
+}
+.cat-tile .owned {
+  position: absolute; top: 11px; right: 12px;
+  font: 700 10px/1 var(--font-mono);
+  color: var(--fg-mute);
+}
+
+/* Eyebrow groups within body */
+.group-label {
+  font: 10px/1 var(--font-mono);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--fg-faintest);
+  margin: 4px 0 2px;
+}
+
+/* Generic tag pill (BOSS, ELITE, FRONT, status) */
+.tag {
+  display: inline-flex; align-items: center; gap: 4px;
+  font: 700 10px/1 var(--font-body);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 3px 6px;
+  border-radius: var(--radius-sm);
+}
+
 /* ─── COMBAT ANIMATIONS ───────────────────────────────────── */
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
 
 @keyframes gq-hit-shake {
   0%   { transform: translate(0, 0); }
@@ -281,3 +559,12 @@ em, .flavor {
 
 @keyframes gq-drawer-in  { from { right: -380px; } to { right: 0; } }
 @keyframes gq-drawer-out { from { right: 0; }      to { right: -380px; } }
+
+@keyframes gq-slideover-in {
+  from { transform: translateX(100%); }
+  to   { transform: translateX(0); }
+}
+@keyframes gq-slideover-scrim-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}

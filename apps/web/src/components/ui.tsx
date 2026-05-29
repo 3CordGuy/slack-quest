@@ -1,9 +1,10 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import type { ReactNode } from "react";
 import { Icon } from "../icons";
 import { artPlaceholder } from "../utils";
 import { RARITY_COLOR } from "../constants";
 import { muted, DISPLAY_FONT, refreshBtn, smallBadge, button } from "../styles";
-import type { HaggleResult, ConfirmRequest, Rarity } from "../types";
+import type { HaggleResult, ConfirmRequest, Rarity, Character } from "../types";
 
 // ─── Location art ─────────────────────────────────────────────────────────────
 
@@ -217,6 +218,361 @@ export function RestockButton({ onRestock }: { onRestock: () => Promise<void> })
     >
       {state === "loading" ? "Restocking…" : state === "done" ? "✓ Done" : "🛒 Restock Shop"}
     </button>
+  );
+}
+
+// ─── Global app top bar ──────────────────────────────────────────────────────
+//
+// Renders across every authenticated screen: brand mark + Metamorphous
+// wordmark + view crumb on the left, character chip on the right. Mobile
+// drops the crumb and condenses the chip to icon+number readouts.
+
+export function AppTopBar({
+  crumb,
+  character,
+  rightExtras,
+  onClickCharacter,
+}: {
+  crumb: string;
+  character: Character | null;
+  rightExtras?: ReactNode;
+  onClickCharacter?: () => void;
+}) {
+  return (
+    <header className="gq-topbar">
+      <div className="gq-brand">
+        <Icon name="tower-flag" size={28} color="var(--accent-gold)" />
+        <div>
+          <div className="gq-wordmark">
+            Gantt Quest<sup>™</sup>
+          </div>
+          <div className="gq-crumb">{crumb}</div>
+        </div>
+      </div>
+      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+        {character && (
+          <button
+            type="button"
+            onClick={onClickCharacter}
+            title={onClickCharacter ? "Open inventory" : undefined}
+            disabled={!onClickCharacter}
+            style={{
+              all: "unset",
+              cursor: onClickCharacter ? "pointer" : "default",
+              display: "flex",
+              alignItems: "center",
+              gap: 14,
+              padding: "6px 12px",
+              borderRadius: "var(--radius-md)",
+              border: "1px solid transparent",
+              transition: "border-color 0.15s, background 0.15s",
+            }}
+            onMouseEnter={(e) => {
+              if (!onClickCharacter) return;
+              e.currentTarget.style.borderColor = "var(--border-base)";
+              e.currentTarget.style.background = "var(--bg-card-2)";
+            }}
+            onMouseLeave={(e) => {
+              if (!onClickCharacter) return;
+              e.currentTarget.style.borderColor = "transparent";
+              e.currentTarget.style.background = "transparent";
+            }}
+          >
+            <span
+              data-charname
+              style={{
+                font: "13px/1 var(--font-body)",
+                color: "var(--fg-1)",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {character.name}
+              {" "}
+              <span style={{ color: "var(--accent-arcane-2)" }}>· {character.class}</span>
+              {" "}
+              <span style={{ color: "var(--accent-gold)", fontWeight: 700 }}>L{character.level}</span>
+            </span>
+            <span className="gq-charchip">
+              <span className="stat" style={{ color: "var(--tone-good-2)" }}>
+                <Icon name="health-normal" size={14} color="var(--tone-good-2)" />
+                {character.hp}/{character.max_hp}
+              </span>
+              <span className="stat" style={{ color: "var(--accent-arcane)" }}>
+                ✦ {character.mana}/{character.max_mana}
+              </span>
+              <span className="stat" style={{ color: "var(--accent-gold)" }}>
+                <Icon name="gold-bar" size={14} color="var(--accent-gold)" />
+                {character.gold.toLocaleString()}
+              </span>
+            </span>
+          </button>
+        )}
+        {rightExtras}
+      </div>
+    </header>
+  );
+}
+
+// ─── Right-side character slide-over ────────────────────────────────────────
+//
+// Triggered from the AppTopBar character chip. Houses the full
+// `CharacterCard` (passed in as `children`) in a fixed right panel with a
+// dim scrim behind it. Closes on × button, click-outside (scrim), or Esc.
+
+export function CharacterSlideOver({
+  onClose,
+  children,
+  title = "Character",
+  width = 520,
+}: {
+  onClose: () => void;
+  children: ReactNode;
+  title?: string;
+  width?: number;
+}) {
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") onClose();
+    }
+    window.addEventListener("keydown", onKey);
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      document.body.style.overflow = prevOverflow;
+    };
+  }, [onClose]);
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: "fixed",
+        inset: 0,
+        zIndex: 110,
+        background: "rgba(0,0,0,0.45)",
+        animation: "gq-slideover-scrim-in 160ms ease-out",
+      }}
+    >
+      <aside
+        onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+        style={{
+          position: "absolute",
+          top: 0,
+          right: 0,
+          bottom: 0,
+          width: `min(${width}px, 96vw)`,
+          background: "var(--bg-panel)",
+          borderLeft: "1px solid var(--border-base)",
+          boxShadow: "var(--shadow-deep)",
+          display: "flex",
+          flexDirection: "column",
+          animation: "gq-slideover-in 220ms cubic-bezier(0.22, 1, 0.36, 1)",
+        }}
+      >
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            padding: "14px 18px",
+            borderBottom: "1px solid var(--border-faint)",
+            flexShrink: 0,
+          }}
+        >
+          <span
+            className="eyebrow"
+            style={{
+              font: "11px/1.2 var(--font-body)",
+              textTransform: "uppercase",
+              letterSpacing: 1,
+              color: "var(--fg-mute)",
+            }}
+          >
+            {title}
+          </span>
+          <button
+            type="button"
+            className="m-close"
+            onClick={onClose}
+            aria-label="Close"
+          >
+            ×
+          </button>
+        </div>
+        <div
+          style={{
+            flex: 1,
+            overflowY: "auto",
+            padding: 18,
+          }}
+        >
+          {children}
+        </div>
+      </aside>
+    </div>
+  );
+}
+
+// ─── Location modal shell ────────────────────────────────────────────────────
+//
+// Wraps a town location (Smithy, Shop, Pub, Inn, Apothecary, Outskirts) in
+// the modal kit from the design handoff: dimmed backdrop, centered .modal,
+// head with icon disc + title + sub + gold chip + × close, body, optional foot.
+// Closes on × button, click-outside (scrim), or Esc.
+//
+// The existing merchant cards still render their full content inside `children`
+// — title and hero get suppressed by not passing `navOverlay`.
+
+export function LocationModal({
+  icon,
+  title,
+  subtitle,
+  gold,
+  art,
+  onClose,
+  bodyPadding,
+  maxWidth = 720,
+  foot,
+  children,
+}: {
+  icon: string;
+  title: string;
+  subtitle?: string;
+  gold?: number;
+  /** Cached location art (R2 URL in prod, placeholder in local dev).
+      Renders as a 16:7 banner between the modal head and body. Pass null
+      to skip — modal then falls back to an icon-only chrome. */
+  art?: string | null;
+  onClose: () => void;
+  bodyPadding?: number | string;
+  maxWidth?: number;
+  foot?: ReactNode;
+  children: ReactNode;
+}) {
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") onClose();
+    }
+    window.addEventListener("keydown", onKey);
+    // Lock body scroll while modal is open so the dimmed town doesn't scroll
+    // out from underneath.
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      document.body.style.overflow = prevOverflow;
+    };
+  }, [onClose]);
+
+  return (
+    <div className="scene" onClick={onClose}>
+      <div
+        className="modal"
+        style={{ maxWidth }}
+        onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+      >
+        <div className="modal-head">
+          <div className="m-disc">
+            <Icon name={icon} size={32} color="var(--accent-gold)" />
+          </div>
+          <div className="m-titles">
+            <h2>{title}</h2>
+            {subtitle && <div className="m-sub">{subtitle}</div>}
+          </div>
+          {typeof gold === "number" && (
+            <span className="m-gold">
+              <Icon name="gold-bar" size={14} color="var(--accent-gold)" />
+              {gold.toLocaleString()}
+            </span>
+          )}
+          <button
+            type="button"
+            className="m-close"
+            onClick={onClose}
+            aria-label="Close"
+          >
+            ×
+          </button>
+        </div>
+        {art !== undefined && (
+          <div
+            style={{
+              position: "relative",
+              width: "100%",
+              aspectRatio: "16 / 7",
+              background: "var(--bg-void)",
+              borderBottom: "1px solid var(--border-faint)",
+              overflow: "hidden",
+              flexShrink: 0,
+            }}
+          >
+            {art ? (
+              <img
+                src={art}
+                alt={title}
+                loading="lazy"
+                style={{
+                  width: "100%",
+                  height: "100%",
+                  objectFit: "cover",
+                  display: "block",
+                }}
+                onError={(e) => {
+                  // Hide broken art so the dark void shows through; the
+                  // location icon in the head still communicates the place.
+                  (e.currentTarget as HTMLImageElement).style.display = "none";
+                }}
+              />
+            ) : (
+              <div
+                style={{
+                  position: "absolute",
+                  inset: 0,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  color: "var(--fg-faintest)",
+                }}
+              >
+                <Icon name={icon} size={56} color="var(--fg-faint)" />
+              </div>
+            )}
+            {/* Bottom gradient so any embedded text reads cleanly on art. */}
+            <div
+              style={{
+                position: "absolute",
+                left: 0,
+                right: 0,
+                bottom: 0,
+                height: "45%",
+                background: "linear-gradient(to bottom, transparent, rgba(18,20,26,0.85))",
+                pointerEvents: "none",
+              }}
+            />
+          </div>
+        )}
+        <div
+          className="modal-body"
+          style={{
+            // Inline overrides only what the .modal-body class doesn't already
+            // set; padding stays in CSS so the @media (max-width: 720px) rule
+            // can shrink it on phones.
+            ...(bodyPadding ? { padding: bodyPadding } : null),
+            overflowY: "auto",
+            maxHeight: "calc(100vh - 220px)",
+          }}
+        >
+          {children}
+        </div>
+        {foot && <div className="modal-foot">{foot}</div>}
+      </div>
+    </div>
   );
 }
 

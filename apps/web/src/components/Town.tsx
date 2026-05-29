@@ -4,7 +4,7 @@ import type { ReactNode } from "react";
 import { Icon } from "../icons";
 import type {
   TownSection, TownArt, JobListing, BoardResponse,
-  JoinableQuest, QuestVariant,
+  JoinableQuest, QuestVariant, Character, ActiveQuest,
 } from "../types";
 import {
   DISTRICT_CONFIG, VARIANT_STYLE, HUNT_PACK_LABEL, QUEST_OPTIONS,
@@ -29,10 +29,10 @@ export function TownNav({
         onClick={() => onNavigate(null)}
         style={{
           display: "flex", alignItems: "center", justifyContent: "center", gap: 5,
-          padding: "7px 10px", borderRadius: 8,
-          border: "1.5px solid #2a2d33",
+          padding: "7px 10px", borderRadius: "var(--radius-lg)",
+          border: "1px solid var(--border-base)",
           background: "transparent",
-          color: "#9ca3af",
+          color: "var(--fg-mute-2)",
           cursor: "pointer", fontSize: 12, fontWeight: 400,
           flex: "0 0 auto",
         }}
@@ -48,10 +48,10 @@ export function TownNav({
             onClick={() => onNavigate(d.key)}
             style={{
               display: "flex", alignItems: "center", justifyContent: "center", gap: 5,
-              padding: "7px 6px", borderRadius: 8,
-              border: `1.5px solid ${isActive ? "#b89b3a" : "#2a2d33"}`,
-              background: isActive ? "rgba(184,155,58,0.15)" : "transparent",
-              color: isActive ? "#f1e8c8" : "#9ca3af",
+              padding: "7px 6px", borderRadius: "var(--radius-lg)",
+              border: `1px solid ${isActive ? "var(--accent-gold)" : "var(--border-base)"}`,
+              background: isActive ? "rgba(251,191,36,0.12)" : "transparent",
+              color: isActive ? "var(--accent-flavor)" : "var(--fg-mute-2)",
               cursor: "pointer", fontSize: 12,
               fontWeight: isActive ? 600 : 400,
               flex: 1, minWidth: 0,
@@ -90,22 +90,26 @@ export function JobPostingCard({
   const isMyClaim = claim?.taken_by === selfId;
   const meetsLevel = characterLevel >= job.required_level;
   const vs = VARIANT_STYLE[job.variant] ?? VARIANT_STYLE.standard;
+  const dim = isTaken && !isMyClaim;
+  const titleColor = dim ? "var(--fg-faint)" : "var(--fg-1)";
+  const blurbColor = dim ? "var(--fg-faintest)" : "var(--accent-flavor)";
 
   return (
     <div style={{
-      background: isTaken ? "#141416" : vs.bg,
-      border: `1px solid ${isTaken ? "#22242a" : vs.color + "44"}`,
-      borderRadius: 10,
+      background: "var(--bg-card)",
+      border: "1px solid var(--border-faint)",
+      borderLeft: `3px solid ${dim ? "var(--border-base)" : vs.color}`,
+      borderRadius: "var(--radius-lg)",
       padding: "14px 16px",
-      opacity: isTaken && !isMyClaim ? 0.6 : 1,
+      opacity: dim ? 0.55 : 1,
       position: "relative",
     }}>
       {/* Variant badge + level row */}
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8, flexWrap: "wrap" }}>
         <div style={{
           display: "inline-flex", alignItems: "center", gap: 4,
           background: vs.color + "1a", border: `1px solid ${vs.color}44`,
-          borderRadius: 4, padding: "2px 8px",
+          borderRadius: "var(--radius-sm)", padding: "2px 8px",
         }}>
           <Icon name={vs.icon} size={11} color={vs.color} />
           <span style={{ fontSize: 10, fontWeight: 700, color: vs.color, letterSpacing: 0.6 }}>
@@ -113,13 +117,15 @@ export function JobPostingCard({
           </span>
         </div>
         {job.required_level > 1 && (
-          <span style={{ fontSize: 11, color: "#6a7080" }}>L{job.required_level}+</span>
+          <span style={{ fontSize: 11, color: "var(--fg-mute-3)", fontFamily: "var(--font-mono)" }}>
+            L{job.required_level}+
+          </span>
         )}
         {job.variant === "bounty_pack" && job.monster_count && job.monster_count > 1 && (
           <span style={{
             fontSize: 10, fontWeight: 700, color: "#fb923c",
             background: "#fb923c1a", border: "1px solid #fb923c44",
-            borderRadius: 4, padding: "2px 7px",
+            borderRadius: "var(--radius-sm)", padding: "2px 7px",
           }}>
             ×{job.monster_count} enemies
           </span>
@@ -128,39 +134,58 @@ export function JobPostingCard({
           <span style={{ fontSize: 11, color: "#86efac", marginLeft: "auto" }}>✓ Claimed by you</span>
         )}
         {isTaken && !isMyClaim && (
-          <span style={{ fontSize: 11, color: "#6a7080", marginLeft: "auto" }}>✓ Taken</span>
+          <span style={{ fontSize: 11, color: "var(--fg-faint)", marginLeft: "auto" }}>✓ Taken</span>
         )}
       </div>
 
-      <div style={{ fontWeight: 600, color: isTaken ? "#6a7080" : "#f1f5f9", marginBottom: 6, fontSize: 14, lineHeight: 1.3 }}>
+      <div style={{
+        fontFamily: "var(--font-display)",
+        fontWeight: 400,
+        color: titleColor,
+        marginBottom: 6,
+        fontSize: 16,
+        lineHeight: 1.25,
+      }}>
         {job.title}
       </div>
 
-      <p style={{ ...muted, fontSize: 12, margin: "0 0 10px", fontStyle: "italic", lineHeight: 1.5 }}>
+      <p style={{
+        fontFamily: "var(--font-body)",
+        fontStyle: "italic",
+        fontSize: 12,
+        margin: "0 0 12px",
+        lineHeight: 1.5,
+        color: blurbColor,
+      }}>
         {job.blurb}
       </p>
 
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
-        <span style={{ fontSize: 12, color: "#9ca3af" }}>
-          <Icon name="gold-bar" size={11} color="#f1c26b" style={{ marginRight: 4 }} />{job.reward_summary}
+        <span style={{
+          fontSize: 12,
+          color: dim ? "var(--fg-faint)" : "var(--accent-gold)",
+          fontWeight: 600,
+          display: "inline-flex",
+          alignItems: "center",
+          gap: 5,
+        }}>
+          <Icon name="gold-bar" size={12} color={dim ? "var(--fg-faint)" : "var(--accent-gold)"} />
+          {job.reward_summary}
         </span>
         {!isTaken && !meetsLevel && (
-          <span style={{ fontSize: 12, color: "#6a7080" }}>
-            🔒 Need L{job.required_level}
+          <span style={{ fontSize: 12, color: "var(--fg-faint)" }}>
+            <Icon name="padlock" size={11} style={{ marginRight: 4 }} />
+            Need L{job.required_level}
           </span>
         )}
         {!isTaken && meetsLevel && (
           <button
+            className="btn btn-gold btn-sm"
             onClick={() => { setPending(true); onTake(); }}
             disabled={pending}
-            style={{
-              ...button, padding: "5px 14px", marginTop: 0, fontSize: 12,
-              background: pending ? "#2a2d33" : "#2a1f0a",
-              color: pending ? "#6a7080" : "#f1e8c8",
-              border: `1px solid ${vs.color}55`,
-            }}
           >
-            {pending ? "Claiming…" : "🪙 Take Job"}
+            <Icon name="gold-bar" size={12} />
+            {pending ? "Claiming…" : "Take Job"}
           </button>
         )}
       </div>
@@ -221,7 +246,7 @@ export function HuntSection({
 }: {
   characterLevel: number;
   overviewArt: string | null;
-  navOverlay: ReactNode;
+  navOverlay?: ReactNode;
   onStartHunt: (tier: number, monsterCount: number, invitees: string[]) => void;
 }) {
   const [tier, setTier] = useState(characterLevel);
@@ -273,13 +298,22 @@ export function HuntSection({
 
   return (
     <div style={{ ...card, padding: 0 }}>
-      <LocationHero src={overviewArt} label="Outskirts" nav={navOverlay} flush />
+      {navOverlay && (
+        <LocationHero src={overviewArt} label="Outskirts" nav={navOverlay} flush />
+      )}
       <div style={{ padding: "var(--card-pad, 32px)" }}>
         <div style={{ marginBottom: 20 }}>
-          <div style={{ fontSize: 13, fontWeight: 600, color: "#f1e8c8", marginBottom: 4 }}>
+          <div style={{
+            font: "10px/1 var(--font-body)",
+            textTransform: "uppercase",
+            letterSpacing: 1.4,
+            fontWeight: 700,
+            color: "var(--accent-gold)",
+            marginBottom: 6,
+          }}>
             Free Hunt
           </div>
-          <div style={{ fontSize: 12, color: "#9ca3af", lineHeight: 1.5 }}>
+          <div style={{ fontSize: 12, color: "var(--fg-mute)", lineHeight: 1.5 }}>
             Pick a tier and head into the outskirts. No job board contract — rewards scale
             with the tier you choose, so lower tiers mean faster fights but smaller gains.
           </div>
@@ -288,34 +322,45 @@ export function HuntSection({
         {/* Two pickers side by side */}
         <div style={{ display: "flex", gap: 32, marginBottom: 16, flexWrap: "wrap" }}>
           <div>
-            <div style={{ fontSize: 11, color: "#6b7280", textTransform: "uppercase", letterSpacing: 1, marginBottom: 10 }}>
+            <div style={{
+              fontSize: 10, color: "var(--fg-mute)", textTransform: "uppercase",
+              letterSpacing: 1.2, marginBottom: 10, fontWeight: 700,
+            }}>
               Difficulty
             </div>
             <StepPicker value={clampedTier} min={1} max={characterLevel} onChange={setTier} label="TIER" />
-            <div style={{ fontSize: 12, color: "#9ca3af", marginTop: 6 }}>{tierLabel}</div>
+            <div style={{ fontSize: 12, color: "var(--fg-mute)", marginTop: 6 }}>{tierLabel}</div>
           </div>
           <div>
-            <div style={{ fontSize: 11, color: "#6b7280", textTransform: "uppercase", letterSpacing: 1, marginBottom: 10 }}>
+            <div style={{
+              fontSize: 10, color: "var(--fg-mute)", textTransform: "uppercase",
+              letterSpacing: 1.2, marginBottom: 10, fontWeight: 700,
+            }}>
               Pack size
             </div>
             <StepPicker value={monsterCount} min={1} max={3} onChange={setMonsterCount} label={HUNT_PACK_LABEL[monsterCount]} />
-            <div style={{ fontSize: 12, color: monsterCount > 1 ? "#fbbf24" : "#9ca3af", marginTop: 6 }}>{packLabel}</div>
+            <div style={{ fontSize: 12, color: monsterCount > 1 ? "var(--accent-gold)" : "var(--fg-mute)", marginTop: 6 }}>
+              {packLabel}
+            </div>
           </div>
         </div>
 
         <div style={{
           display: "flex", gap: 20, marginBottom: 20,
-          padding: "10px 14px", background: "#0e1014", borderRadius: 8, border: "1px solid #2a2d33",
+          padding: "10px 14px",
+          background: "var(--bg-void)",
+          borderRadius: "var(--radius-lg)",
+          border: "1px solid var(--border-faint)",
         }}>
           <div style={{ textAlign: "center" }}>
             <div style={{ fontSize: 18, fontWeight: 700, color: "#a3e635" }}>~{xpEstimate}</div>
-            <div style={{ fontSize: 10, color: "#6b7280", marginTop: 2, fontFamily: DISPLAY_FONT }}>XP</div>
+            <div style={{ fontSize: 10, color: "var(--fg-mute-3)", marginTop: 2, fontFamily: "var(--font-display)" }}>XP</div>
           </div>
           <div style={{ textAlign: "center" }}>
-            <div style={{ fontSize: 18, fontWeight: 700, color: "#fbbf24" }}>~{goldEstimate}</div>
-            <div style={{ fontSize: 10, color: "#6b7280", marginTop: 2, fontFamily: DISPLAY_FONT }}>Gold</div>
+            <div style={{ fontSize: 18, fontWeight: 700, color: "var(--accent-gold)" }}>~{goldEstimate}</div>
+            <div style={{ fontSize: 10, color: "var(--fg-mute-3)", marginTop: 2, fontFamily: "var(--font-display)" }}>Gold</div>
           </div>
-          <div style={{ fontSize: 11, color: "#6b7280", alignSelf: "center", lineHeight: 1.4 }}>
+          <div style={{ fontSize: 11, color: "var(--fg-mute-3)", alignSelf: "center", lineHeight: 1.4 }}>
             Estimated single-fighter rewards.<br />Actual split across party members.
           </div>
         </div>
@@ -323,7 +368,10 @@ export function HuntSection({
         {/* Party invite picker */}
         {teamMembers.length > 0 && (
           <div style={{ marginBottom: 16 }}>
-            <div style={{ fontSize: 11, color: "#6b7280", textTransform: "uppercase", letterSpacing: 1, marginBottom: 6, fontWeight: 600 }}>
+            <div style={{
+              fontSize: 10, color: "var(--fg-mute)", textTransform: "uppercase",
+              letterSpacing: 1.2, marginBottom: 8, fontWeight: 700,
+            }}>
               Invite players (optional)
             </div>
             <div style={{ display: "grid", gap: 5 }}>
@@ -335,19 +383,20 @@ export function HuntSection({
                     style={{
                       display: "flex", alignItems: "center", gap: 10,
                       padding: "7px 10px",
-                      background: checked ? "#1a0f2e" : "#0e1014",
-                      border: `1px solid ${checked ? "#7c3aed" : "#2a2d33"}`,
-                      borderRadius: 7, cursor: "pointer", fontSize: 13,
+                      background: checked ? "rgba(167,139,250,0.12)" : "var(--bg-input)",
+                      border: `1px solid ${checked ? "var(--accent-arcane)" : "var(--border-faint)"}`,
+                      borderRadius: "var(--radius-md)", cursor: "pointer", fontSize: 13,
+                      color: "var(--fg-2)",
                     }}
                   >
                     <input
                       type="checkbox"
                       checked={checked}
                       onChange={() => toggleInvitee(tm.slack_user_id)}
-                      style={{ accentColor: "#7c3aed", flexShrink: 0 }}
+                      style={{ accentColor: "var(--accent-arcane)", flexShrink: 0 }}
                     />
-                    <span style={{ fontWeight: 600, color: "#f5f5f5" }}>{tm.name}</span>
-                    <span style={{ color: "#6b7280", marginLeft: "auto" }}>Lv{tm.level} {tm.class}</span>
+                    <span style={{ fontWeight: 600, color: "var(--fg-1)" }}>{tm.name}</span>
+                    <span style={{ color: "var(--fg-mute-3)", marginLeft: "auto" }}>Lv{tm.level} {tm.class}</span>
                   </label>
                 );
               })}
@@ -358,11 +407,12 @@ export function HuntSection({
         <button
           onClick={handle}
           disabled={busy}
+          className="btn btn-primary"
           style={{
-            width: "100%", padding: "12px 0", borderRadius: 8,
-            border: "none", background: busy ? "#2a2d33" : "#7c3aed",
-            color: busy ? "#6b7280" : "#fff",
-            fontSize: 15, fontWeight: 600, cursor: busy ? "not-allowed" : "pointer",
+            width: "100%",
+            justifyContent: "center",
+            fontSize: 14,
+            padding: "12px 18px",
           }}
         >
           {busy ? "Scouting…"
@@ -400,26 +450,44 @@ export function JobBoardSection({
   onStartQuest: (variant: QuestVariant, elite: boolean, invitees: string[]) => void;
   onJoin: () => void;
 }) {
+  const townName = board?.town_name ?? "Town";
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       {/* Bulletin board card */}
       <div style={{
-        ...card,
-        borderColor: "#5c4010",
-        background: "linear-gradient(180deg, #1e1508 0%, #130f05 100%)",
-        padding: 0,
+        background: "var(--bg-card-2)",
+        border: "1px solid var(--border-faint)",
+        borderRadius: "var(--radius-2xl)",
         overflow: "hidden",
+        boxSizing: "border-box",
       }}>
-        <LocationHero flush src={overviewArt} label={`${board?.town_name ?? "Town"} — Job Board`} nav={navOverlay} />
+        <LocationHero flush src={overviewArt} label={`${townName} — Job Board`} nav={navOverlay} />
 
-        {/* Board subheader */}
+        {/* Eyebrow */}
         <div style={{
-          borderBottom: "1px solid #2a1c08",
-          padding: "12px 20px",
+          borderBottom: "1px solid var(--border-faint)",
+          padding: "14px 20px 12px",
+          display: "flex",
+          alignItems: "baseline",
+          justifyContent: "space-between",
+          gap: 12,
+          flexWrap: "wrap",
         }}>
-          <p style={{ ...muted, margin: 0, fontSize: 12 }}>
-            Three contracts posted today. Each can only be claimed by one adventurer — first come, first served.
-          </p>
+          <span style={{
+            font: "10px/1 var(--font-body)",
+            textTransform: "uppercase",
+            letterSpacing: 1.4,
+            fontWeight: 700,
+            color: "var(--accent-gold)",
+          }}>
+            Today's Contracts · refresh daily
+          </span>
+          <span style={{
+            font: "11px/1 var(--font-body)",
+            color: "var(--fg-mute)",
+          }}>
+            First come, first served
+          </span>
         </div>
 
         {/* Job listings */}
@@ -436,20 +504,20 @@ export function JobBoardSection({
               />
             ))
           ) : (
-            <p style={{ ...muted, fontSize: 13 }}>
+            <p style={{ color: "var(--fg-mute)", fontSize: 13, margin: 0 }}>
               The board is bare — run <code>/sq board</code> in Slack to seed today's postings.
             </p>
           )}
         </div>
 
         <div style={{
-          borderTop: "1px solid #2a1c08",
+          borderTop: "1px solid var(--border-faint)",
           padding: "10px 20px",
           display: "flex",
           alignItems: "center",
           justifyContent: "space-between",
         }}>
-          <span style={{ ...muted, fontSize: 11 }}>
+          <span style={{ color: "var(--fg-faintest)", fontSize: 11 }}>
             <Icon name="hourglass" size={11} style={{ marginRight: 4 }} />Postings refresh daily.
           </span>
         </div>
@@ -457,9 +525,16 @@ export function JobBoardSection({
 
       {/* Divider */}
       <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-        <div style={{ flex: 1, height: 1, background: "#22242a" }} />
-        <span style={{ ...muted, fontSize: 12 }}>or start any quest</span>
-        <div style={{ flex: 1, height: 1, background: "#22242a" }} />
+        <div style={{ flex: 1, height: 1, background: "var(--border-faint)" }} />
+        <span style={{
+          font: "11px/1 var(--font-body)",
+          color: "var(--fg-faintest)",
+          textTransform: "uppercase",
+          letterSpacing: 1.2,
+        }}>
+          or start any quest
+        </span>
+        <div style={{ flex: 1, height: 1, background: "var(--border-faint)" }} />
       </div>
 
       {joinable ? (
@@ -538,7 +613,7 @@ export function DistrictTile({
 }
 
 // ─────────────────────────────────────────────────────────────
-// Town map (district overview grid)
+// Town map (district overview grid) — legacy, kept for compatibility
 // ─────────────────────────────────────────────────────────────
 
 export function TownMap({
@@ -596,6 +671,756 @@ export function TownMap({
 }
 
 // ─────────────────────────────────────────────────────────────
+// Ward map — radial hub with central plaza + 8 nodes
+// ─────────────────────────────────────────────────────────────
+
+type WardNodeKind =
+  | { kind: "location"; loc: Exclude<TownSection, "job_board"> }
+  | { kind: "view"; view: "job_board" | "inventory" | "combat" };
+
+interface WardNode {
+  id: string;
+  label: string;
+  desc: string;
+  icon: string;
+  left: string;   // % of map width
+  top: string;    // % of map height
+  hot?: boolean;
+  pin?: string;
+  action: WardNodeKind;
+}
+
+// Central plaza disc — clickable, opens the player's inventory.
+// Used on the desktop ward map; the mobile fallback uses a stacked variant.
+function PlazaButton({
+  character,
+  onClick,
+  variant = "disc",
+}: {
+  character: Character;
+  onClick: () => void;
+  variant?: "disc" | "card";
+}) {
+  const [hovered, setHovered] = useState(false);
+  if (variant === "card") {
+    return (
+      <button
+        type="button"
+        onClick={onClick}
+        onMouseEnter={() => setHovered(true)}
+        onMouseLeave={() => setHovered(false)}
+        title="Open inventory"
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 12,
+          padding: 14,
+          background: "var(--bg-panel)",
+          border: `2px solid ${hovered ? "var(--accent-gold-warm)" : "var(--accent-ink-blue-2)"}`,
+          borderRadius: "var(--radius-xl)",
+          cursor: "pointer",
+          textAlign: "left",
+          font: "inherit",
+          color: "inherit",
+          transition: "border-color 0.15s",
+          width: "100%",
+        }}
+      >
+        <div
+          style={{
+            width: 56,
+            height: 56,
+            borderRadius: "50%",
+            background: "var(--bg-void)",
+            border: "1px solid var(--border-base)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            flexShrink: 0,
+          }}
+        >
+          <Icon name="crystal-wand" size={32} color="var(--accent-arcane-2)" />
+        </div>
+        <div style={{ minWidth: 0, flex: 1 }}>
+          <div style={{
+            font: "9px/1 var(--font-mono)",
+            color: hovered ? "var(--accent-gold-warm)" : "var(--accent-ink-blue)",
+            textTransform: "uppercase",
+            letterSpacing: 1.5,
+          }}>{hovered ? "Open inventory" : "You are here"}</div>
+          <div style={{
+            font: "18px/1 var(--font-display)",
+            color: "var(--fg-1)",
+            marginTop: 4,
+            whiteSpace: "nowrap",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+          }}>{character.name}</div>
+          <div style={{
+            font: "9px/1 var(--font-mono)",
+            color: "var(--accent-arcane-2)",
+            marginTop: 3,
+            textTransform: "uppercase",
+            letterSpacing: 0.5,
+          }}>{character.class} · L{character.level}</div>
+          <div style={{ display: "flex", gap: 10, marginTop: 6, font: "11px/1 var(--font-mono)" }}>
+            <span style={{ color: "var(--tone-good-2)" }}>♥ {character.hp}</span>
+            <span style={{ color: "var(--accent-arcane)" }}>✦ {character.mana}</span>
+            <span style={{ color: "var(--accent-gold)" }}>🪙 {character.gold}</span>
+          </div>
+        </div>
+        <Icon name="chest-armor" size={20} color={hovered ? "var(--accent-gold-warm)" : "var(--fg-faintest)"} />
+      </button>
+    );
+  }
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      title="Open inventory"
+      style={{
+        position: "absolute",
+        left: "50%",
+        top: "50%",
+        transform: hovered ? "translate(-50%, -50%) scale(1.03)" : "translate(-50%, -50%)",
+        width: 230,
+        aspectRatio: "1 / 1",
+        background: "var(--bg-panel)",
+        border: `2px solid ${hovered ? "var(--accent-gold-warm)" : "var(--accent-ink-blue-2)"}`,
+        borderRadius: "50%",
+        zIndex: 3,
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: 20,
+        boxShadow: hovered ? "var(--shadow-deep)" : "var(--shadow-pop)",
+        textAlign: "center",
+        cursor: "pointer",
+        font: "inherit",
+        color: "inherit",
+        transition: "transform 0.15s, border-color 0.15s, box-shadow 0.15s",
+      }}
+    >
+      <span style={{
+        font: "9px/1 var(--font-mono)",
+        color: hovered ? "var(--accent-gold-warm)" : "var(--accent-ink-blue)",
+        textTransform: "uppercase",
+        letterSpacing: 1.5,
+      }}>{hovered ? "Open inventory" : "You are here"}</span>
+      <div style={{
+        width: 64, height: 64, margin: "10px 0 8px",
+        borderRadius: "50%",
+        background: "var(--bg-void)",
+        border: "1px solid var(--border-base)",
+        display: "flex", alignItems: "center", justifyContent: "center",
+      }}>
+        <Icon name="crystal-wand" size={38} color="var(--accent-arcane-2)" />
+      </div>
+      <div style={{
+        font: "19px/1 var(--font-display)",
+        color: "var(--fg-1)",
+        whiteSpace: "nowrap",
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        maxWidth: "100%",
+      }}>{character.name}</div>
+      <div style={{
+        font: "9px/1 var(--font-mono)",
+        color: "var(--accent-arcane-2)",
+        marginTop: 4,
+        textTransform: "uppercase",
+        letterSpacing: 0.5,
+      }}>{character.class} · L{character.level}</div>
+      <div style={{ display: "flex", gap: 12, marginTop: 12, font: "11px/1 var(--font-mono)" }}>
+        <span style={{ color: "var(--tone-good-2)" }}>♥ {character.hp}</span>
+        <span style={{ color: "var(--accent-arcane)" }}>✦ {character.mana}</span>
+        <span style={{ color: "var(--accent-gold)" }}>🪙 {character.gold}</span>
+      </div>
+    </button>
+  );
+}
+
+function WardMapNode({
+  node,
+  onClick,
+}: {
+  node: WardNode;
+  onClick: () => void;
+}) {
+  const [hovered, setHovered] = useState(false);
+  const borderColor = node.hot
+    ? "var(--accent-gold)"
+    : hovered
+      ? "var(--border-muted)"
+      : "var(--border-faint)";
+  const discBorder = node.hot ? "var(--accent-gold)" : "var(--border-base)";
+  const iconColor = node.hot ? "var(--accent-gold)" : "var(--fg-3)";
+  return (
+    <div
+      onClick={onClick}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      style={{
+        position: "absolute",
+        left: node.left,
+        top: node.top,
+        transform: "translate(-50%, -50%)",
+        width: 168,
+        background: "var(--bg-card-2)",
+        border: `1px solid ${borderColor}`,
+        borderRadius: "var(--radius-xl)",
+        padding: 14,
+        textAlign: "center",
+        cursor: "pointer",
+        transition: "border-color 0.15s",
+        zIndex: 2,
+      }}
+    >
+      {node.pin && (
+        <span
+          style={{
+            position: "absolute",
+            top: -10,
+            left: "50%",
+            transform: "translateX(-50%)",
+            font: "700 9px/1 var(--font-body)",
+            textTransform: "uppercase",
+            letterSpacing: 0.6,
+            background: "var(--accent-gold)",
+            color: "#1a1300",
+            padding: "4px 8px",
+            borderRadius: 999,
+            whiteSpace: "nowrap",
+          }}
+        >
+          {node.pin}
+        </span>
+      )}
+      <div
+        style={{
+          width: 52,
+          height: 52,
+          margin: "0 auto 9px",
+          borderRadius: "50%",
+          background: "var(--bg-void)",
+          border: `1px solid ${discBorder}`,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          boxShadow: node.hot ? "0 0 14px rgba(251,191,36,0.25)" : undefined,
+        }}
+      >
+        <Icon name={node.icon} size={28} color={iconColor} />
+      </div>
+      <div style={{ font: "15px/1.05 var(--font-display)", color: "var(--fg-1)" }}>
+        {node.label}
+      </div>
+      <div style={{ font: "10px/1.35 var(--font-body)", color: "var(--fg-mute)", marginTop: 4 }}>
+        {node.desc}
+      </div>
+    </div>
+  );
+}
+
+export interface WardMapProps {
+  character: Character;
+  activeQuest: {
+    quest: ActiveQuest;
+    hasWebCombat: boolean;
+  } | null;
+  jobsOpen: number;         // job board pin count, 0 hides the pin
+  /** Optional hand-painted world-map artwork (Ghibli/Tolkien-style) shown
+      behind the radial graph. Falls back to solid bg-void when null. */
+  overviewArtUrl?: string | null;
+  onOpenLocation: (loc: Exclude<TownSection, "job_board">) => void;
+  onOpenJobBoard: () => void;
+  onOpenInventory: () => void;
+  onResumeCombat: () => void;
+}
+
+function useNarrowViewport(breakpoint = 720) {
+  const [narrow, setNarrow] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return window.matchMedia(`(max-width: ${breakpoint}px)`).matches;
+  });
+  useEffect(() => {
+    const m = window.matchMedia(`(max-width: ${breakpoint}px)`);
+    const handler = (e: MediaQueryListEvent) => setNarrow(e.matches);
+    m.addEventListener("change", handler);
+    return () => m.removeEventListener("change", handler);
+  }, [breakpoint]);
+  return narrow;
+}
+
+export function WardMap({
+  character,
+  activeQuest,
+  jobsOpen,
+  overviewArtUrl,
+  onOpenLocation,
+  onOpenJobBoard,
+  onOpenInventory,
+  onResumeCombat,
+}: WardMapProps) {
+  const narrow = useNarrowViewport(720);
+  // Coords below come from design layouts/town-b.html. The SVG viewBox is
+  // 1232×712 and the nodes are positioned by % so the map can rescale.
+  const nodes: WardNode[] = [
+    {
+      id: "job_board",
+      label: "Job Board",
+      desc: jobsOpen > 0 ? `${jobsOpen} contracts posted` : "Pick a contract",
+      icon: "cloud-upload",
+      left: "50%",
+      top: "16.5%",
+      hot: true,
+      pin: jobsOpen > 0 ? `${jobsOpen} New Contract${jobsOpen === 1 ? "" : "s"}` : undefined,
+      action: { kind: "view", view: "job_board" },
+    },
+    {
+      id: "smithy",
+      label: "Smithy",
+      desc: "Sharpen & repair",
+      icon: "anvil",
+      left: "24.8%",
+      top: "23.6%",
+      action: { kind: "location", loc: "smithy" },
+    },
+    {
+      id: "shop",
+      label: "Shop",
+      desc: "Rotating gear",
+      icon: "cash",
+      left: "75.2%",
+      top: "23.6%",
+      action: { kind: "location", loc: "shop" },
+    },
+    {
+      id: "pub",
+      label: "Pub",
+      desc: "Ale · Whiskey",
+      icon: "beer-stein",
+      left: "14.3%",
+      top: "51.7%",
+      action: { kind: "location", loc: "pub" },
+    },
+    {
+      id: "apothecary",
+      label: "Apothecary",
+      desc: "Potions & vials",
+      icon: "health-potion",
+      left: "85.7%",
+      top: "51.7%",
+      action: { kind: "location", loc: "apothecary" },
+    },
+    {
+      id: "inn",
+      label: "Inn",
+      desc: "Skip rest cd",
+      icon: "bed",
+      left: "24.8%",
+      top: "82.3%",
+      action: { kind: "location", loc: "inn" },
+    },
+    {
+      id: "outskirts",
+      label: "Outskirts",
+      desc: "Solo hunt",
+      icon: "spinning-sword",
+      left: "75.2%",
+      top: "82.3%",
+      action: { kind: "location", loc: "hunt" },
+    },
+    {
+      id: "inventory",
+      label: "Inventory",
+      desc: "Gear & bag",
+      icon: "chest-armor",
+      left: "50%",
+      top: "86%",
+      action: { kind: "view", view: "inventory" },
+    },
+  ];
+
+  function handleClick(action: WardNodeKind) {
+    if (action.kind === "location") {
+      onOpenLocation(action.loc);
+    } else if (action.view === "job_board") {
+      onOpenJobBoard();
+    } else if (action.view === "inventory") {
+      onOpenInventory();
+    } else if (action.view === "combat") {
+      onResumeCombat();
+    }
+  }
+
+  const questBanner = activeQuest;
+
+  // Mobile / narrow fallback — the radial 168px nodes overlap below ~720px,
+  // so swap for a stacked plaza card + 2-col tile grid that mirrors the
+  // same destinations and the same quest banner.
+  if (narrow) {
+    return (
+      <div
+        style={{
+          width: "100%",
+          background: "var(--bg-void)",
+          border: "1px solid var(--border-base)",
+          borderRadius: "var(--radius-2xl)",
+          overflow: "hidden",
+          padding: 16,
+          display: "flex",
+          flexDirection: "column",
+          gap: 12,
+        }}
+      >
+        {/* Plaza card — character header, also opens inventory on tap */}
+        <PlazaButton character={character} onClick={onOpenInventory} variant="card" />
+
+        {/* Quest banner */}
+        {questBanner && (
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              background: "rgba(14,15,18,0.78)",
+              border: "1px solid var(--tone-bad-3)",
+              borderRadius: "var(--radius-lg)",
+              padding: "10px 12px",
+              gap: 10,
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: 9, minWidth: 0 }}>
+              <Icon name="death-skull" size={16} color="var(--tone-bad-2)" />
+              <div style={{ minWidth: 0 }}>
+                <div style={{
+                  font: "13px/1 var(--font-display)",
+                  color: "var(--fg-1)",
+                  whiteSpace: "nowrap",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                }}>
+                  {questBanner.quest.scene.monster_name ?? "Active Quest"}
+                </div>
+                <div style={{
+                  font: "9px/1 var(--font-mono)",
+                  color: "var(--fg-mute)",
+                  marginTop: 3,
+                  textTransform: "uppercase",
+                  letterSpacing: 0.5,
+                }}>
+                  Active · {questBanner.quest.scene.variant ?? "standard"}
+                </div>
+              </div>
+            </div>
+            {questBanner.hasWebCombat && (
+              <button
+                onClick={onResumeCombat}
+                style={{
+                  background: "var(--tone-bad-3)",
+                  color: "#fff",
+                  border: "none",
+                  borderRadius: "var(--radius-md)",
+                  padding: "8px 12px",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 6,
+                  font: "700 11px/1 var(--font-body)",
+                  cursor: "pointer",
+                  flexShrink: 0,
+                }}
+              >
+                <Icon name="broadsword" size={12} color="#fff" /> Resume
+              </button>
+            )}
+          </div>
+        )}
+
+        {/* 2-col tile grid */}
+        <div style={{
+          display: "grid",
+          gridTemplateColumns: "1fr 1fr",
+          gap: 8,
+        }}>
+          {nodes.map((node) => {
+            const hot = node.hot;
+            return (
+              <button
+                key={node.id}
+                onClick={() => handleClick(node.action)}
+                style={{
+                  background: "var(--bg-card-2)",
+                  border: `1px solid ${hot ? "var(--accent-gold)" : "var(--border-faint)"}`,
+                  borderRadius: "var(--radius-xl)",
+                  padding: "12px 10px",
+                  textAlign: "center",
+                  cursor: "pointer",
+                  position: "relative",
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: "center",
+                  gap: 6,
+                  font: "inherit",
+                  color: "inherit",
+                }}
+              >
+                {node.pin && (
+                  <span
+                    style={{
+                      position: "absolute",
+                      top: -8,
+                      left: "50%",
+                      transform: "translateX(-50%)",
+                      font: "700 9px/1 var(--font-body)",
+                      textTransform: "uppercase",
+                      letterSpacing: 0.5,
+                      background: "var(--accent-gold)",
+                      color: "#1a1300",
+                      padding: "3px 6px",
+                      borderRadius: 999,
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {node.pin}
+                  </span>
+                )}
+                <div
+                  style={{
+                    width: 44,
+                    height: 44,
+                    borderRadius: "50%",
+                    background: "var(--bg-void)",
+                    border: `1px solid ${hot ? "var(--accent-gold)" : "var(--border-base)"}`,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                  }}
+                >
+                  <Icon name={node.icon} size={24} color={hot ? "var(--accent-gold)" : "var(--fg-3)"} />
+                </div>
+                <div style={{
+                  font: "13px/1.05 var(--font-display)",
+                  color: "var(--fg-1)",
+                }}>{node.label}</div>
+                <div style={{
+                  font: "10px/1.3 var(--font-body)",
+                  color: "var(--fg-mute)",
+                }}>{node.desc}</div>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div
+      style={{
+        position: "relative",
+        width: "100%",
+        background: "var(--bg-void)",
+        border: "1px solid var(--border-base)",
+        borderRadius: "var(--radius-2xl)",
+        overflow: "hidden",
+        aspectRatio: "1232 / 712",
+        minHeight: 540,
+      }}
+    >
+      {/* Hand-painted world map backdrop. Heavy CSS treatment so the dashed
+          roads / nodes / plaza disc stay legible on top:
+          - opacity 0.35 — keeps art subtle
+          - saturate 0.65 — pulls toward night-tinted palette
+          - blur 0.5px — softens raster details
+          - bottom-vignette gradient — darker near nodes/plaza area
+          When overviewArtUrl is null the dark void shows through.
+          Below 720px the mobile fallback layout doesn't render this. */}
+      {overviewArtUrl && (
+        <>
+          <img
+            src={overviewArtUrl}
+            alt=""
+            aria-hidden
+            loading="lazy"
+            style={{
+              position: "absolute",
+              inset: 0,
+              width: "100%",
+              height: "100%",
+              objectFit: "cover",
+              opacity: 0.32,
+              filter: "saturate(0.6) brightness(0.7) blur(0.5px)",
+              pointerEvents: "none",
+              zIndex: 0,
+            }}
+            onError={(e) => {
+              (e.currentTarget as HTMLImageElement).style.display = "none";
+            }}
+          />
+          <div
+            aria-hidden
+            style={{
+              position: "absolute",
+              inset: 0,
+              background:
+                "radial-gradient(ellipse 80% 60% at 50% 50%, rgba(14,15,18,0.55), rgba(14,15,18,0.85))",
+              pointerEvents: "none",
+              zIndex: 1,
+            }}
+          />
+        </>
+      )}
+      {/* Dashed road SVG */}
+      <svg
+        viewBox="0 0 1232 712"
+        preserveAspectRatio="none"
+        style={{ position: "absolute", inset: 0, width: "100%", height: "100%" }}
+      >
+        {/* Hot path → Job Board (top) */}
+        <line
+          x1="616" y1="356" x2="616" y2="118"
+          stroke="rgba(251,191,36,0.4)" strokeWidth={2}
+          strokeDasharray="3 7" strokeLinecap="round"
+        />
+        {/* Smithy (upper L) */}
+        <line x1="616" y1="356" x2="306" y2="168" stroke="var(--border-base)" strokeWidth={2} strokeDasharray="2 7" strokeLinecap="round" />
+        {/* Shop (upper R) */}
+        <line x1="616" y1="356" x2="926" y2="168" stroke="var(--border-base)" strokeWidth={2} strokeDasharray="2 7" strokeLinecap="round" />
+        {/* Pub (left) */}
+        <line x1="616" y1="356" x2="176" y2="368" stroke="var(--border-base)" strokeWidth={2} strokeDasharray="2 7" strokeLinecap="round" />
+        {/* Apothecary (right) */}
+        <line x1="616" y1="356" x2="1056" y2="368" stroke="var(--border-base)" strokeWidth={2} strokeDasharray="2 7" strokeLinecap="round" />
+        {/* Inn (lower L) */}
+        <line x1="616" y1="356" x2="306" y2="586" stroke="var(--border-base)" strokeWidth={2} strokeDasharray="2 7" strokeLinecap="round" />
+        {/* Outskirts (lower R) */}
+        <line x1="616" y1="356" x2="926" y2="586" stroke="var(--border-base)" strokeWidth={2} strokeDasharray="2 7" strokeLinecap="round" />
+        {/* Inventory (bottom) */}
+        <line x1="616" y1="356" x2="616" y2="612" stroke="var(--border-base)" strokeWidth={2} strokeDasharray="2 7" strokeLinecap="round" />
+      </svg>
+
+      {/* Quest banner */}
+      {questBanner && (
+        <div
+          style={{
+            position: "absolute",
+            top: 18,
+            left: 24,
+            right: 24,
+            zIndex: 4,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            background: "rgba(14,15,18,0.78)",
+            border: "1px solid var(--tone-bad-3)",
+            borderRadius: "var(--radius-lg)",
+            padding: "10px 16px",
+            gap: 12,
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: 11, minWidth: 0 }}>
+            <Icon name="death-skull" size={18} color="var(--tone-bad-2)" />
+            <div style={{ minWidth: 0 }}>
+              <div style={{
+                font: "15px/1 var(--font-display)",
+                color: "var(--fg-1)",
+                whiteSpace: "nowrap",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+              }}>
+                {questBanner.quest.scene.monster_name ?? "Active Quest"}
+              </div>
+              <div style={{
+                font: "10px/1 var(--font-mono)",
+                color: "var(--fg-mute)",
+                marginTop: 3,
+                textTransform: "uppercase",
+                letterSpacing: 0.5,
+              }}>
+                Active Quest · {questBanner.quest.scene.variant ?? "standard"}
+              </div>
+            </div>
+          </div>
+          {questBanner.hasWebCombat && (
+            <button
+              onClick={onResumeCombat}
+              style={{
+                background: "var(--tone-bad-3)",
+                color: "#fff",
+                border: "none",
+                borderRadius: "var(--radius-md)",
+                padding: "9px 16px",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 7,
+                font: "700 12px/1 var(--font-body)",
+                cursor: "pointer",
+                flexShrink: 0,
+              }}
+            >
+              <Icon name="broadsword" size={14} color="#fff" /> Resume Combat
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* Central Plaza — clickable, opens inventory */}
+      <PlazaButton character={character} onClick={onOpenInventory} />
+
+
+      {/* Location nodes */}
+      {nodes.map((node) => (
+        <WardMapNode key={node.id} node={node} onClick={() => handleClick(node.action)} />
+      ))}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+// Top bar — brand + crumb + character stat chip
+// ─────────────────────────────────────────────────────────────
+
+export function TownTopBar({
+  crumb,
+  character,
+}: {
+  crumb: string;
+  character: Character | null;
+}) {
+  return (
+    <header className="gq-topbar">
+      <div className="gq-brand">
+        <Icon name="tower-flag" size={28} color="var(--accent-gold)" />
+        <div>
+          <div className="gq-wordmark">
+            Gantt Quest<sup>™</sup>
+          </div>
+          <div className="gq-crumb">{crumb}</div>
+        </div>
+      </div>
+      {character && (
+        <div className="gq-charchip">
+          <span className="stat" style={{ color: "var(--tone-good-2)" }}>
+            <Icon name="health-normal" size={14} color="var(--tone-good-2)" />
+            {character.hp}/{character.max_hp}
+          </span>
+          <span className="stat" style={{ color: "var(--accent-arcane)" }}>
+            ✦ {character.mana}/{character.max_mana}
+          </span>
+          <span className="stat" style={{ color: "var(--accent-gold)" }}>
+            <Icon name="gold-bar" size={14} color="var(--accent-gold)" />
+            {character.gold.toLocaleString()}
+          </span>
+        </div>
+      )}
+    </header>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
 // Quest start / join cards (used by JobBoardSection)
 // ─────────────────────────────────────────────────────────────
 
@@ -639,45 +1464,87 @@ export function StartQuestCard({
     onStart(selected, elite, [...invitees]);
   }
 
-  return (
-    <div style={{ ...card, borderColor: "#b89b3a" }}>
-      <h2 style={h2}>Start a new quest</h2>
+  const narrow = useNarrowViewport(640);
 
-      {/* 2×2 radio card grid */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 12 }}>
+  return (
+    <div style={{
+      background: "var(--bg-card-2)",
+      border: "1px solid var(--border-faint)",
+      borderRadius: "var(--radius-2xl)",
+      padding: "var(--card-pad, 32px)",
+      boxSizing: "border-box",
+      width: "100%",
+    }}>
+      <div style={{ marginBottom: 14 }}>
+        <div style={{
+          font: "10px/1 var(--font-body)",
+          textTransform: "uppercase",
+          letterSpacing: 1.4,
+          fontWeight: 700,
+          color: "var(--accent-gold)",
+          marginBottom: 6,
+        }}>
+          Forge Your Own Path
+        </div>
+        <h2 style={{ ...h2, fontSize: 22 }}>Start a new quest</h2>
+      </div>
+
+      {/* Variant grid — 2×2 desktop, 1 col on narrow */}
+      <div style={{
+        display: "grid",
+        gridTemplateColumns: narrow ? "1fr" : "1fr 1fr",
+        gap: 10,
+      }}>
         {QUEST_OPTIONS.map((opt) => {
           const locked = characterLevel < opt.minLevel;
           const isSelected = selected === opt.id;
+          const borderColor = isSelected
+            ? "var(--accent-gold)"
+            : locked
+              ? "var(--border-faint)"
+              : "var(--border-faint)";
+          const fgColor = locked ? "var(--fg-faint)" : opt.accentColor;
           return (
             <button
               key={opt.id}
               disabled={locked || pending !== null}
               onClick={() => setSelected(isSelected ? null : opt.id)}
               style={{
-                background: isSelected ? opt.bg : "#16181c",
-                border: `2px solid ${isSelected ? opt.border : locked ? opt.lockedBorder : "#2a2d33"}`,
-                borderRadius: 8,
-                padding: "12px 14px",
+                background: "var(--bg-card)",
+                border: `1px solid ${borderColor}`,
+                borderLeft: `3px solid ${locked ? "var(--border-base)" : opt.accentColor}`,
+                borderRadius: "var(--radius-lg)",
+                padding: "13px 14px",
                 cursor: locked ? "not-allowed" : "pointer",
                 textAlign: "left",
-                opacity: locked ? 0.45 : 1,
+                opacity: locked ? 0.5 : 1,
                 transition: "border-color 0.15s, background 0.15s",
                 position: "relative",
+                boxShadow: isSelected ? "0 0 0 1px var(--accent-gold)" : "none",
               }}
             >
               {isSelected && (
                 <span style={{
-                  position: "absolute", top: 6, right: 8,
-                  fontSize: 11, color: opt.accentColor, fontWeight: 700,
+                  position: "absolute", top: 8, right: 10,
+                  fontSize: 11, color: "var(--accent-gold)", fontWeight: 700,
                 }}>✓</span>
               )}
               <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 4 }}>
-                <Icon name={opt.icon} color={locked ? "#4a5060" : opt.accentColor} size={16} />
-                <span style={{ fontWeight: 600, fontSize: 13, color: locked ? "#4a5060" : opt.accentColor, fontFamily: DISPLAY_FONT }}>
+                <Icon name={opt.icon} color={fgColor} size={16} />
+                <span style={{
+                  fontWeight: 400,
+                  fontSize: 15,
+                  color: fgColor,
+                  fontFamily: "var(--font-display)",
+                }}>
                   {opt.label}
                 </span>
               </div>
-              <div style={{ fontSize: 11, color: locked ? "#3a3d44" : "#6b7280" }}>
+              <div style={{
+                fontSize: 11,
+                color: locked ? "var(--fg-faint)" : "var(--fg-mute)",
+                lineHeight: 1.4,
+              }}>
                 {locked ? `Requires level ${opt.minLevel}` : opt.tag}
               </div>
             </button>
@@ -685,32 +1552,60 @@ export function StartQuestCard({
         })}
       </div>
 
-      {/* Description panel — expands when a variant is selected */}
+      {/* Description panel */}
       {selectedOption && (
         <div style={{
-          marginTop: 12,
+          marginTop: 14,
           padding: "14px 16px",
-          background: selectedOption.bg,
-          border: `1px solid ${selectedOption.border}`,
-          borderRadius: 8,
+          background: "var(--bg-card)",
+          border: "1px solid var(--border-faint)",
+          borderLeft: `3px solid ${selectedOption.accentColor}`,
+          borderRadius: "var(--radius-lg)",
         }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
             <Icon name={selectedOption.icon} color={selectedOption.accentColor} size={18} />
-            <span style={{ fontWeight: 700, fontSize: 14, color: selectedOption.accentColor, fontFamily: DISPLAY_FONT }}>
+            <span style={{
+              fontWeight: 400,
+              fontSize: 16,
+              color: selectedOption.accentColor,
+              fontFamily: "var(--font-display)",
+            }}>
               {selectedOption.label}
             </span>
           </div>
-          <p style={{ ...muted, fontSize: 13, margin: 0, lineHeight: 1.55 }}>
+          <p style={{
+            fontFamily: "var(--font-body)",
+            fontStyle: "italic",
+            fontSize: 13,
+            margin: 0,
+            lineHeight: 1.55,
+            color: "var(--accent-flavor)",
+          }}>
             {selectedOption.description}
           </p>
-          <div style={{ marginTop: 8, fontSize: 12, color: "#9ca3af" }}>
-            <Icon name="gold-bar" size={11} color="#fbbf24" /> {selectedOption.rewards}
+          <div style={{
+            marginTop: 10,
+            fontSize: 12,
+            color: "var(--accent-gold)",
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 5,
+            fontWeight: 600,
+          }}>
+            <Icon name="gold-bar" size={12} color="var(--accent-gold)" /> {selectedOption.rewards}
           </div>
 
           {/* Party picker */}
           {teamMembers.length > 0 && (
-            <div style={{ marginTop: 14 }}>
-              <div style={{ fontSize: 12, color: "#9ca3af", marginBottom: 6, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5 }}>
+            <div style={{ marginTop: 16 }}>
+              <div style={{
+                fontSize: 10,
+                color: "var(--fg-mute)",
+                marginBottom: 8,
+                fontWeight: 700,
+                textTransform: "uppercase",
+                letterSpacing: 1,
+              }}>
                 Invite players (optional)
               </div>
               <div style={{ display: "grid", gap: 5 }}>
@@ -722,21 +1617,22 @@ export function StartQuestCard({
                       style={{
                         display: "flex", alignItems: "center", gap: 10,
                         padding: "7px 10px",
-                        background: checked ? "#0f1f3d" : "#0e1117",
-                        border: `1px solid ${checked ? "#2563eb" : "#1f2937"}`,
-                        borderRadius: 7,
+                        background: checked ? "var(--accent-ink-deep)" : "var(--bg-input)",
+                        border: `1px solid ${checked ? "var(--accent-ink-blue-2)" : "var(--border-faint)"}`,
+                        borderRadius: "var(--radius-md)",
                         cursor: "pointer",
                         fontSize: 13,
+                        color: "var(--fg-2)",
                       }}
                     >
                       <input
                         type="checkbox"
                         checked={checked}
                         onChange={() => toggleInvitee(tm.slack_user_id)}
-                        style={{ accentColor: "#2563eb", flexShrink: 0 }}
+                        style={{ accentColor: "var(--accent-ink-blue-2)", flexShrink: 0 }}
                       />
-                      <span style={{ fontWeight: 600, color: "#f5f5f5" }}>{tm.name}</span>
-                      <span style={{ color: "#6b7280", marginLeft: "auto" }}>Lv{tm.level} {tm.class}</span>
+                      <span style={{ fontWeight: 600, color: "var(--fg-1)" }}>{tm.name}</span>
+                      <span style={{ color: "var(--fg-mute-3)", marginLeft: "auto" }}>Lv{tm.level} {tm.class}</span>
                     </label>
                   );
                 })}
@@ -744,10 +1640,10 @@ export function StartQuestCard({
             </div>
           )}
 
-          {/* Elite toggle + begin button */}
+          {/* Elite toggle */}
           <label style={{
             display: "flex", alignItems: "center", gap: 8,
-            marginTop: 14, fontSize: 13, color: "#e6e6e6", cursor: "pointer",
+            marginTop: 14, fontSize: 13, color: "var(--fg-2)", cursor: "pointer",
           }}>
             <input
               type="checkbox"
@@ -757,22 +1653,21 @@ export function StartQuestCard({
             />
             <span>
               <strong>Elite mode</strong>
-              <span style={{ ...muted, marginLeft: 6 }}>(perma-death; tier bumped by 1)</span>
+              <span style={{ color: "var(--fg-mute)", marginLeft: 6, fontSize: 12 }}>
+                (perma-death; tier bumped by 1)
+              </span>
             </span>
           </label>
 
           <button
             onClick={go}
             disabled={pending !== null}
+            className="btn btn-primary"
             style={{
-              ...button,
-              marginTop: 12,
+              marginTop: 14,
               width: "100%",
-              background: elite ? "#3a1a1a" : selectedOption.bg,
-              color: selectedOption.accentColor,
-              border: `1px solid ${elite ? "#7f1d1d" : selectedOption.border}`,
-              fontWeight: 700,
-              opacity: pending ? 0.6 : 1,
+              justifyContent: "center",
+              fontSize: 14,
             }}
           >
             {pending
@@ -795,25 +1690,78 @@ export function JoinableQuestCard({
   onJoin: () => void;
 }) {
   return (
-    <div style={{ ...card, borderColor: "#7dd3fc" }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-        <h2 style={h2}>Quest in progress</h2>
+    <div style={{
+      background: "var(--bg-card-2)",
+      border: "1px solid var(--accent-ink-blue)",
+      borderRadius: "var(--radius-2xl)",
+      padding: "var(--card-pad, 32px)",
+      boxSizing: "border-box",
+      width: "100%",
+    }}>
+      <div style={{
+        font: "10px/1 var(--font-body)",
+        textTransform: "uppercase",
+        letterSpacing: 1.4,
+        fontWeight: 700,
+        color: "var(--accent-ink-blue)",
+        marginBottom: 6,
+      }}>
+        Quest in progress · Joinable
+      </div>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+        <h2 style={{
+          margin: 0,
+          fontSize: 22,
+          color: "var(--fg-1)",
+          fontFamily: "var(--font-display)",
+          fontWeight: 400,
+        }}>
+          {joinable.monster_name}
+        </h2>
         <SmallBadge>{joinable.variant}</SmallBadge>
         {joinable.elite && <SmallBadge>elite</SmallBadge>}
       </div>
-      <p style={{ ...muted, fontSize: 13, marginTop: 8 }}>
-        <strong style={{ color: "#f5f5f5" }}>{joinable.monster_name}</strong> ({joinable.monster_max_hp} HP)
+      <p style={{
+        fontFamily: "var(--font-mono)",
+        fontSize: 12,
+        marginTop: 6,
+        marginBottom: 0,
+        color: "var(--fg-mute)",
+      }}>
+        {joinable.monster_max_hp} HP
       </p>
       {joinable.scene && (
-        <p style={{ ...muted, fontSize: 13, fontStyle: "italic", marginTop: 4 }}>{joinable.scene}</p>
+        <p style={{
+          fontFamily: "var(--font-body)",
+          fontStyle: "italic",
+          color: "var(--accent-flavor)",
+          fontSize: 13,
+          marginTop: 10,
+          marginBottom: 0,
+          lineHeight: 1.55,
+        }}>
+          {joinable.scene}
+        </p>
       )}
       <button
         onClick={onJoin}
-        style={{ ...button, marginTop: 16, background: "#1f2a3a", color: "#7dd3fc" }}
+        className="btn btn-primary"
+        style={{
+          marginTop: 16,
+          width: "100%",
+          justifyContent: "center",
+          fontSize: 14,
+        }}
       >
         <Icon name="shield" /> Join the fight
       </button>
-      <p style={{ ...muted, fontSize: 11, marginTop: 8 }}>
+      <p style={{
+        color: "var(--fg-faintest)",
+        fontSize: 11,
+        marginTop: 10,
+        marginBottom: 0,
+        lineHeight: 1.5,
+      }}>
         Monster max HP scales by 40% for the joiner. Your mana refills on join.
       </p>
     </div>

@@ -65,16 +65,24 @@ function EnemyPreview({ quest }: { quest: LobbyQuestData }) {
   const isBoss = s.variant === "boss";
   const tier = s.tier ?? 1;
 
-  const tierColor = tier >= 5 ? "#ef4444" : tier >= 3 ? "#f59e0b" : "#6b7280";
-  const eliteLabel = quest.elite ? <span style={{ color: "#f59e0b", fontSize: 11, fontWeight: 700, marginLeft: 6 }}>ELITE</span> : null;
+  const tierColor = tier >= 5 ? "var(--tone-bad-2)" : tier >= 3 ? "var(--accent-gold-warm)" : "var(--fg-mute-3)";
+  const eliteLabel = quest.elite ? <span style={{ color: "var(--accent-gold-warm)", fontSize: 11, fontWeight: 700, marginLeft: 6, letterSpacing: 0.5 }}>ELITE</span> : null;
 
   const rowStyle: React.CSSProperties = {
     display: "flex", alignItems: "center", justifyContent: "space-between",
-    padding: "6px 10px", background: "#13161c", borderRadius: 6,
-    border: "1px solid #1f2937", marginBottom: 4,
+    padding: "8px 12px", background: "var(--bg-card-2)",
+    borderRadius: "var(--radius-md)",
+    border: "1px solid var(--border-faint)", marginBottom: 4,
+    flexWrap: "wrap", gap: 6,
   };
-  const labelStyle: React.CSSProperties = { fontSize: 13, color: "#d1d5db", fontWeight: 600 };
-  const statStyle: React.CSSProperties = { fontSize: 12, color: "#9ca3af", display: "flex", gap: 10 };
+  const labelStyle: React.CSSProperties = {
+    fontSize: 14, color: "var(--fg-1)", fontWeight: 600,
+    fontFamily: "var(--font-display)", letterSpacing: 0.2,
+  };
+  const statStyle: React.CSSProperties = {
+    fontSize: 12, color: "var(--fg-mute-2)", display: "flex", gap: 10,
+    fontFamily: "var(--font-mono)",
+  };
 
   if (isGauntlet) {
     const waves = s.total_waves ?? 1;
@@ -83,7 +91,11 @@ function EnemyPreview({ quest }: { quest: LobbyQuestData }) {
       : [{ name: s.monster_name ?? "?", max_hp: s.monster_max_hp ?? 0, tier }];
     return (
       <div style={{ marginBottom: 16 }}>
-        <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: 1, color: "#4b5563", marginBottom: 6 }}>
+        <div style={{
+          fontSize: 11, textTransform: "uppercase", letterSpacing: 1,
+          color: "var(--fg-faintest)", marginBottom: 6,
+          fontFamily: "var(--font-mono)",
+        }}>
           Gauntlet — {waves} wave{waves !== 1 ? "s" : ""}
         </div>
         {monsters.map((m, i) => (
@@ -106,14 +118,18 @@ function EnemyPreview({ quest }: { quest: LobbyQuestData }) {
 
   return (
     <div style={{ marginBottom: 16 }}>
-      <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: 1, color: "#4b5563", marginBottom: 6 }}>
+      <div style={{
+        fontSize: 11, textTransform: "uppercase", letterSpacing: 1,
+        color: "var(--fg-faintest)", marginBottom: 6,
+        fontFamily: "var(--font-mono)",
+      }}>
         {monsters.length > 1 ? `${monsters.length} Enemies` : isBoss ? "Boss" : "Enemy"}
       </div>
       {monsters.map((m, i) => (
         <div key={i} style={rowStyle}>
           <span style={labelStyle}>
             {m.name}
-            {m.is_boss && <span style={{ color: "#ef4444", fontSize: 11, marginLeft: 6 }}>BOSS</span>}
+            {m.is_boss && <span style={{ color: "var(--tone-bad-2)", fontSize: 11, marginLeft: 6, fontWeight: 700, letterSpacing: 0.5 }}>BOSS</span>}
             {eliteLabel}
           </span>
           <span style={statStyle}>
@@ -461,10 +477,10 @@ export function LobbyView({
         top: "50%",
         transform: "translateY(-50%)",
         zIndex: 1001,
-        background: needsMyAction ? "#f59e0b" : "#2563eb",
+        background: needsMyAction ? "var(--accent-gold-warm)" : "var(--accent-ink-blue-2)",
         color: needsMyAction ? "#000" : "#fff",
         border: "none",
-        borderRadius: open ? "6px 0 0 6px" : "6px 0 0 6px",
+        borderRadius: "var(--radius-md) 0 0 var(--radius-md)",
         padding: "12px 8px",
         cursor: "pointer",
         display: "flex",
@@ -474,9 +490,10 @@ export function LobbyView({
         fontSize: 11,
         fontWeight: 700,
         letterSpacing: 0.5,
+        fontFamily: "var(--font-body)",
         boxShadow: needsMyAction
           ? "-2px 0 18px rgba(245, 158, 11, 0.7)"
-          : "-2px 0 12px rgba(0,0,0,0.4)",
+          : "var(--shadow-pop)",
         transition: "right 0.25s ease, background 0.25s ease, box-shadow 0.25s ease",
         animation: needsMyAction && !open ? "lobbyTabPulse 1.4s ease-in-out infinite" : "none",
       }}
@@ -487,8 +504,8 @@ export function LobbyView({
       </span>
       {pendingCount > 0 && (
         <span style={{
-          background: needsMyAction ? "#000" : "#f59e0b",
-          color: needsMyAction ? "#f59e0b" : "#000",
+          background: needsMyAction ? "#000" : "var(--accent-gold-warm)",
+          color: needsMyAction ? "var(--accent-gold-warm)" : "#000",
           borderRadius: "50%",
           width: 16, height: 16, fontSize: 10, fontWeight: 700,
           display: "flex", alignItems: "center", justifyContent: "center",
@@ -510,17 +527,6 @@ export function LobbyView({
   }
   if (!quest) return null;
 
-  const btnBase: React.CSSProperties = {
-    padding: "9px 18px",
-    borderRadius: 8,
-    border: "none",
-    fontWeight: 600,
-    fontSize: 14,
-    cursor: acting ? "not-allowed" : "pointer",
-    opacity: acting ? 0.6 : 1,
-    transition: "opacity 0.15s",
-  };
-
   const drawerContent = (
     <>
       {tab}
@@ -530,7 +536,7 @@ export function LobbyView({
           onClick={() => setOpen(false)}
           style={{
             position: "fixed", inset: 0, zIndex: 999,
-            background: "rgba(0,0,0,0.35)",
+            background: "rgba(0,0,0,0.55)",
           }}
         />
       )}
@@ -540,12 +546,13 @@ export function LobbyView({
           position: "fixed",
           top: 0,
           right: open ? 0 : -400,
-          width: 380,
+          width: "min(380px, 100vw)",
+          maxWidth: "100vw",
           height: "100vh",
           zIndex: 1000,
-          background: "#0e1117",
-          borderLeft: "2px solid #2563eb",
-          boxShadow: "-4px 0 32px rgba(0,0,0,0.6)",
+          background: "var(--bg-panel)",
+          borderLeft: "1px solid var(--border-base)",
+          boxShadow: "var(--shadow-modal)",
           transition: "right 0.25s ease",
           display: "flex",
           flexDirection: "column",
@@ -570,24 +577,50 @@ export function LobbyView({
             fontSize: 11,
             textTransform: "uppercase",
             letterSpacing: 1,
-            color: quest?.status === "active" ? "#dc2626" : "#60a5fa",
-            marginBottom: 4,
+            color: quest?.status === "active" ? "var(--tone-bad-3)" : "var(--accent-ink-blue)",
+            marginBottom: 6,
             display: "flex",
             alignItems: "center",
-            gap: 6,
+            gap: 8,
+            flexWrap: "wrap",
+            fontFamily: "var(--font-mono)",
           }}
         >
-          {quest?.status === "active" ? "🆘 Reinforcement Lobby" : "Quest Lobby"}
-          {quest?.locked && <span style={{ color: "#fbbf24" }}>🔒 Locked</span>}
+          <span>{quest?.status === "active" ? "🆘 Reinforcement Lobby" : "Quest Lobby"}</span>
+          {quest?.locked && (
+            <span className="pill" style={{ color: "var(--accent-gold)", borderColor: "var(--accent-gold-dark)" }}>
+              🔒 Locked
+            </span>
+          )}
         </div>
-        <div style={{ fontSize: 20, fontWeight: 700, color: "#f5f5f5" }}>{questLabel}</div>
+        <div style={{
+          fontSize: 22,
+          fontWeight: 400,
+          color: "var(--fg-1)",
+          fontFamily: "var(--font-display)",
+          lineHeight: 1.2,
+        }}>
+          {questLabel}
+        </div>
         {expiresLabel && quest?.status !== "active" && (
-          <div style={{ fontSize: 12, color: "#6b7280", marginTop: 4 }}>
+          <div style={{
+            fontSize: 12,
+            color: "var(--fg-mute-3)",
+            marginTop: 6,
+            fontFamily: "var(--font-mono)",
+            letterSpacing: 0.3,
+          }}>
             Auto-starts in {expiresLabel}
           </div>
         )}
         {quest?.status === "active" && (
-          <div style={{ fontSize: 12, color: "#9ca3af", marginTop: 4 }}>
+          <div style={{
+            fontSize: 12,
+            color: "var(--accent-flavor)",
+            marginTop: 6,
+            fontStyle: "italic",
+            fontFamily: "var(--font-body)",
+          }}>
             Fight in progress. Accepting joins you straight into combat.
           </div>
         )}
@@ -599,25 +632,43 @@ export function LobbyView({
       {/* Party roster */}
       <div style={{ display: "grid", gap: 8, marginBottom: 20 }}>
         {party.map((m) => {
-          const statusIcon =
-            m.invite_status === "declined" ? (
-              <Icon name="plain-dagger" size={13} color="#ef4444" />
-            ) : m.invite_status === "pending" ? (
-              <Icon name="conversation" size={13} color="#f59e0b" />
-            ) : m.ready ? (
-              <Icon name="trophy" size={13} color="#22c55e" />
-            ) : (
-              <Icon name="bed" size={13} color="#9ca3af" />
-            );
-          const statusLabel =
-            m.invite_status === "declined"
-              ? "Declined"
-              : m.invite_status === "pending"
-                ? "Invite pending"
-                : m.ready
-                  ? "Ready"
-                  : "Joined, not ready";
           const isSelf = m.slack_user_id === selfId;
+          const declined = m.invite_status === "declined";
+          const pending = m.invite_status === "pending";
+          const accepted = m.invite_status === "accepted";
+
+          // Status pill colors per design system
+          let pillBg = "var(--bg-input)";
+          let pillBorder = "var(--border-base)";
+          let pillColor = "var(--fg-mute)";
+          let pillLabel = "WAITING";
+          let statusIcon: React.ReactNode = <Icon name="bed" size={13} color="var(--fg-mute-2)" />;
+          if (declined) {
+            pillBg = "var(--bg-input)";
+            pillBorder = "var(--tone-bad-2)";
+            pillColor = "var(--tone-bad-2)";
+            pillLabel = "DECLINED";
+            statusIcon = <Icon name="plain-dagger" size={13} color="var(--tone-bad-2)" />;
+          } else if (pending) {
+            pillBg = "var(--bg-input)";
+            pillBorder = "var(--border-base)";
+            pillColor = "var(--fg-mute)";
+            pillLabel = "WAITING";
+            statusIcon = <Icon name="conversation" size={13} color="var(--accent-gold-warm)" />;
+          } else if (accepted && m.ready) {
+            pillBg = "var(--tone-good-bg)";
+            pillBorder = "var(--tone-good-2)";
+            pillColor = "var(--tone-good-2)";
+            pillLabel = "READY!";
+            statusIcon = <Icon name="trophy" size={13} color="var(--tone-good-2)" />;
+          } else if (accepted) {
+            pillBg = "var(--accent-ink-deep)";
+            pillBorder = "var(--accent-ink-blue)";
+            pillColor = "var(--accent-ink-blue)";
+            pillLabel = "READY";
+            statusIcon = <Icon name="bed" size={13} color="var(--accent-ink-blue)" />;
+          }
+
           return (
             <div
               key={m.slack_user_id}
@@ -625,54 +676,84 @@ export function LobbyView({
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "space-between",
-                padding: "8px 12px",
-                background: isSelf ? "#0f1f3d" : "#13161c",
-                borderRadius: 8,
-                border: isSelf ? "1px solid #2563eb" : "1px solid #1f2937",
+                gap: 8,
+                flexWrap: "wrap",
+                padding: "10px 12px",
+                background: isSelf ? "var(--accent-ink-deep)" : "var(--bg-card-2)",
+                borderRadius: "var(--radius-lg)",
+                border: isSelf
+                  ? "1px solid var(--accent-ink-blue-2)"
+                  : "1px solid var(--border-faint)",
+                opacity: declined ? 0.5 : 1,
               }}
             >
-              <span style={{ display: "flex", flexDirection: "column", minWidth: 0, gap: 1 }}>
-                <span style={{ fontWeight: isSelf ? 700 : 400, color: "#f5f5f5", fontSize: 14 }}>
-                  {m.name}
-                  <span style={{ color: "#fbbf24", fontSize: 11, marginLeft: 6, fontWeight: 600 }}>L{m.level}</span>
+              <span style={{ display: "flex", flexDirection: "column", minWidth: 0, gap: 2, flex: "1 1 auto" }}>
+                <span style={{
+                  fontWeight: isSelf ? 700 : 600,
+                  color: declined ? "var(--tone-bad-2)" : "var(--fg-1)",
+                  fontSize: 14,
+                  fontFamily: "var(--font-display)",
+                  letterSpacing: 0.2,
+                  display: "inline-flex",
+                  alignItems: "center",
+                  flexWrap: "wrap",
+                  gap: 6,
+                }}>
+                  <span>{m.name}</span>
+                  <span style={{
+                    color: "var(--accent-gold)",
+                    fontSize: 11,
+                    fontWeight: 700,
+                    fontFamily: "var(--font-mono)",
+                  }}>
+                    L{m.level}
+                  </span>
                   {/* Position pill so the whole party can see who's
                       front vs back before combat starts. Self can flip
                       via the toggle button in the action row. */}
                   {m.invite_status === "accepted" && (
                     <span
+                      className="pill"
                       title={`${m.position === "front" ? "Front" : "Back"} row`}
                       style={{
-                        fontSize: 10, fontWeight: 700, marginLeft: 6,
-                        padding: "1px 5px", borderRadius: 4,
-                        background: m.position === "front" ? "#2a1f3a" : "#1a2a1a",
-                        color: m.position === "front" ? "#c084fc" : "#86efac",
-                        border: `1px solid ${m.position === "front" ? "#4a2f6a" : "#2a5a2a"}`,
-                        textTransform: "uppercase", letterSpacing: 0.4,
+                        background: m.position === "front" ? "var(--accent-arcane-bg)" : "var(--tone-good-bg)",
+                        color: m.position === "front" ? "var(--accent-arcane-2)" : "var(--tone-good)",
+                        borderColor: m.position === "front" ? "var(--accent-arcane-3)" : "var(--tone-good-br)",
                       }}
                     >
                       {m.position === "front" ? "Front" : "Back"}
                     </span>
                   )}
                   {isSelf && (
-                    <span style={{ color: "#60a5fa", fontSize: 12, marginLeft: 6 }}>(you)</span>
+                    <span style={{
+                      color: "var(--accent-ink-blue)",
+                      fontSize: 11,
+                      fontFamily: "var(--font-mono)",
+                    }}>
+                      (you)
+                    </span>
                   )}
                 </span>
                 {m.slack_username && (
-                  <span style={{ color: "#6b7280", fontSize: 11, fontFamily: "ui-monospace, SFMono-Regular, monospace" }}>
+                  <span style={{
+                    color: "var(--fg-mute-3)",
+                    fontSize: 11,
+                    fontFamily: "var(--font-mono)",
+                  }}>
                     @{m.slack_username}
                   </span>
                 )}
               </span>
               <span
+                className="pill"
                 style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 5,
-                  fontSize: 12,
-                  color: "#9ca3af",
+                  background: pillBg,
+                  borderColor: pillBorder,
+                  color: pillColor,
+                  flexShrink: 0,
                 }}
               >
-                {statusIcon} {statusLabel}
+                {statusIcon} {pillLabel}
               </span>
             </div>
           );
@@ -683,9 +764,9 @@ export function LobbyView({
       {isCreator && showInvite && (
         <div
           style={{
-            background: "#13161c",
-            border: "1px solid #1f2937",
-            borderRadius: 10,
+            background: "var(--bg-card-2)",
+            border: "1px solid var(--border-faint)",
+            borderRadius: "var(--radius-xl)",
             padding: 14,
             marginBottom: 16,
           }}
@@ -698,7 +779,14 @@ export function LobbyView({
               marginBottom: 10,
             }}
           >
-            <span style={{ fontSize: 13, fontWeight: 600, color: "#9ca3af" }}>
+            <span style={{
+              fontSize: 11,
+              fontWeight: 700,
+              color: "var(--fg-mute)",
+              textTransform: "uppercase",
+              letterSpacing: 1,
+              fontFamily: "var(--font-mono)",
+            }}>
               Invite a player
             </span>
             <button
@@ -706,7 +794,7 @@ export function LobbyView({
               style={{
                 background: "none",
                 border: "none",
-                color: "#6b7280",
+                color: "var(--fg-mute-3)",
                 cursor: "pointer",
                 fontSize: 16,
                 lineHeight: 1,
@@ -717,7 +805,11 @@ export function LobbyView({
             </button>
           </div>
           {inviteable.length === 0 ? (
-            <div style={{ fontSize: 13, color: "#6b7280" }}>
+            <div style={{
+              fontSize: 12,
+              color: "var(--accent-flavor)",
+              fontStyle: "italic",
+            }}>
               All available players are already in the lobby.
             </div>
           ) : (
@@ -729,42 +821,57 @@ export function LobbyView({
                     display: "flex",
                     alignItems: "center",
                     justifyContent: "space-between",
-                    padding: "7px 10px",
-                    background: "#0e1117",
-                    borderRadius: 7,
-                    border: "1px solid #1f2937",
+                    gap: 8,
+                    flexWrap: "wrap",
+                    padding: "8px 10px",
+                    background: "var(--bg-deep)",
+                    borderRadius: "var(--radius-md)",
+                    border: "1px solid var(--border-faint)",
                   }}
                 >
-                  <div style={{ display: "flex", flexDirection: "column", minWidth: 0, gap: 1 }}>
-                    <span style={{ fontSize: 13, fontWeight: 600, color: "#f5f5f5" }}>
-                      {tm.name}
-                      <span style={{ fontSize: 11, color: "#fbbf24", marginLeft: 8, fontWeight: 600 }}>
+                  <div style={{ display: "flex", flexDirection: "column", minWidth: 0, gap: 2, flex: "1 1 auto" }}>
+                    <span style={{
+                      fontSize: 13,
+                      fontWeight: 600,
+                      color: "var(--fg-1)",
+                      fontFamily: "var(--font-display)",
+                      letterSpacing: 0.2,
+                      display: "inline-flex",
+                      alignItems: "center",
+                      flexWrap: "wrap",
+                      gap: 6,
+                    }}>
+                      <span>{tm.name}</span>
+                      <span style={{
+                        fontSize: 11,
+                        color: "var(--accent-gold)",
+                        fontWeight: 700,
+                        fontFamily: "var(--font-mono)",
+                      }}>
                         L{tm.level}
                       </span>
-                      <span style={{ fontSize: 11, color: "#6b7280", marginLeft: 6 }}>
+                      <span style={{
+                        fontSize: 11,
+                        color: "var(--fg-mute-3)",
+                        fontFamily: "var(--font-mono)",
+                      }}>
                         {tm.class}
                       </span>
                     </span>
                     {tm.slack_username && (
-                      <span style={{ fontSize: 11, color: "#6b7280", fontFamily: "ui-monospace, SFMono-Regular, monospace" }}>
+                      <span style={{
+                        fontSize: 11,
+                        color: "var(--fg-mute-3)",
+                        fontFamily: "var(--font-mono)",
+                      }}>
                         @{tm.slack_username}
                       </span>
                     )}
                   </div>
                   <button
+                    className="btn btn-primary btn-sm"
                     disabled={inviting === tm.slack_user_id}
                     onClick={() => void invite(tm.slack_user_id)}
-                    style={{
-                      padding: "5px 12px",
-                      borderRadius: 6,
-                      border: "none",
-                      background: "#1d4ed8",
-                      color: "#fff",
-                      fontSize: 12,
-                      fontWeight: 600,
-                      cursor: inviting === tm.slack_user_id ? "not-allowed" : "pointer",
-                      opacity: inviting === tm.slack_user_id ? 0.6 : 1,
-                    }}
                   >
                     {inviting === tm.slack_user_id ? "…" : "Invite"}
                   </button>
@@ -776,28 +883,23 @@ export function LobbyView({
       )}
 
       {/* Action buttons */}
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
         {/* Reinforcement mode: pending invitee on an active quest. One-click
             "Join the Fight!" pulls them straight into combat (server handles
             accept+ready+notifyFighterJoined atomically). */}
         {me?.invite_status === "pending" && quest?.status === "active" && (
           <>
             <button
+              className="btn btn-gold"
               disabled={acting}
               onClick={() => void act("ready")}
-              style={{ ...btnBase, background: "#dc2626", color: "#fff" }}
             >
-              ⚔ Join the Fight!
+              {acting ? "Setting out…" : "⚔ Join the Fight!"}
             </button>
             <button
+              className="btn btn-ghost"
               disabled={acting}
               onClick={() => void act("decline")}
-              style={{
-                ...btnBase,
-                background: "#1f2937",
-                color: "#9ca3af",
-                border: "1px solid #374151",
-              }}
             >
               Decline
             </button>
@@ -807,21 +909,16 @@ export function LobbyView({
         {me?.invite_status === "pending" && quest?.status !== "active" && (
           <>
             <button
+              className="btn btn-primary"
               disabled={acting}
               onClick={() => void act("accept")}
-              style={{ ...btnBase, background: "#16a34a", color: "#fff" }}
             >
               Accept Invite
             </button>
             <button
+              className="btn btn-ghost"
               disabled={acting}
               onClick={() => void act("decline")}
-              style={{
-                ...btnBase,
-                background: "#1f2937",
-                color: "#9ca3af",
-                border: "1px solid #374151",
-              }}
             >
               Decline
             </button>
@@ -833,93 +930,93 @@ export function LobbyView({
             in-combat /position action instead. */}
         {me?.invite_status === "accepted" && !me.ready && (
           <button
+            className="btn"
             disabled={acting}
             onClick={() => void togglePosition()}
             title={me.position === "front"
               ? "Currently FRONT — eats hits first. Click to drop to BACK row."
               : "Currently BACK — reduced melee damage taken. Click to step up to FRONT row."}
             style={{
-              ...btnBase,
-              background: me.position === "front" ? "#2a1f3a" : "#1a2a1a",
-              color: me.position === "front" ? "#c084fc" : "#86efac",
-              border: `1px solid ${me.position === "front" ? "#4a2f6a" : "#2a5a2a"}`,
-              display: "inline-flex", alignItems: "center", gap: 6,
+              background: me.position === "front" ? "var(--accent-arcane-bg)" : "var(--tone-good-bg)",
+              color: me.position === "front" ? "var(--accent-arcane-2)" : "var(--tone-good)",
+              border: `1px solid ${me.position === "front" ? "var(--accent-arcane-3)" : "var(--tone-good-br)"}`,
             }}
           >
-            <Icon name={me.position === "front" ? "muscle-up" : "fall-down"} size={13} color={me.position === "front" ? "#c084fc" : "#86efac"} />
+            <Icon name={me.position === "front" ? "muscle-up" : "fall-down"} size={13} color={me.position === "front" ? "var(--accent-arcane-2)" : "var(--tone-good)"} />
             {me.position === "front" ? "Front row" : "Back row"}
           </button>
         )}
         {me?.invite_status === "accepted" && !me.ready && (
           <button
-            disabled={acting || allReady}
+            className={allReady ? "btn btn-gold" : "btn btn-primary"}
+            disabled={acting}
             onClick={() => void act("ready")}
-            style={{ ...btnBase, background: "#2563eb", color: "#fff" }}
           >
-            Ready Up
+            {acting ? "Setting out…" : allReady ? "Set Out" : "Ready Up"}
           </button>
         )}
         {me?.invite_status === "accepted" && me.ready && quest?.status !== "active" && (
           <div
             style={{
-              fontSize: 13,
-              color: hasPending ? "#f59e0b" : "#22c55e",
+              fontSize: 12,
+              color: hasPending ? "var(--accent-gold-warm)" : "var(--tone-good-2)",
               display: "flex",
               alignItems: "center",
               gap: 6,
+              fontStyle: "italic",
+              fontFamily: "var(--font-body)",
+              padding: "8px 4px",
             }}
           >
             {hasPending
-              ? <><Icon name="conversation" size={13} color="#f59e0b" /> Waiting for pending invites — or Force Start to skip them</>
-              : <><Icon name="trophy" size={13} color="#22c55e" /> You're ready — waiting for others…</>
+              ? <><Icon name="conversation" size={13} color="var(--accent-gold-warm)" /> Waiting for pending invites — or Force Start to skip them</>
+              : <><Icon name="trophy" size={13} color="var(--tone-good-2)" /> You're ready — waiting for others…</>
             }
           </div>
         )}
         {me?.invite_status === "accepted" && me.ready && quest?.status === "active" && isCreator && (
-          <div style={{ fontSize: 13, color: "#9ca3af", display: "flex", alignItems: "center", gap: 6 }}>
-            <Icon name="conversation" size={13} color="#9ca3af" /> Reinforcements pending — they'll join the fight as they ready up
+          <div style={{
+            fontSize: 12,
+            color: "var(--accent-flavor)",
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            fontStyle: "italic",
+            padding: "8px 4px",
+          }}>
+            <Icon name="conversation" size={13} color="var(--accent-flavor)" /> Reinforcements pending — they'll join the fight as they ready up
           </div>
         )}
         {isCreator && !showInvite && !quest?.locked && (
           <button
+            className="btn btn-ghost"
             onClick={() => void openInvite()}
-            style={{
-              ...btnBase,
-              background: "#1f2937",
-              color: "#9ca3af",
-              border: "1px solid #374151",
-            }}
           >
             + Invite Player
           </button>
         )}
         {isCreator && quest?.locked && (
-          <div style={{
-            fontSize: 12,
-            color: "#fbbf24",
-            display: "flex",
-            alignItems: "center",
-            gap: 6,
-            padding: "9px 12px",
-            background: "#1c1408",
-            border: "1px solid #92400e",
-            borderRadius: 8,
+          <div className="pill" style={{
+            color: "var(--accent-gold)",
+            borderColor: "var(--accent-gold-dark)",
+            background: "var(--bg-input)",
+            padding: "4px 8px",
           }}>
-            <Icon name="locked-fortress" size={13} color="#fbbf24" /> Locked — no new invites
+            <Icon name="locked-fortress" size={13} color="var(--accent-gold)" /> Locked — no new invites
           </div>
         )}
         {/* Creator-only: lock toggle + cancel */}
         {isCreator && (
           <button
+            className="btn btn-ghost"
             disabled={acting}
             onClick={() => void toggleLock()}
             title={quest?.locked ? "Unlock — re-allow invites" : "Lock — block new invites"}
             style={{
-              ...btnBase,
-              background: quest?.locked ? "#92400e" : "#1f2937",
-              color: quest?.locked ? "#fff" : "#9ca3af",
-              border: quest?.locked ? "none" : "1px solid #374151",
               marginLeft: "auto",
+              ...(quest?.locked
+                ? { background: "var(--accent-gold-dark)", color: "#fff", borderColor: "var(--accent-gold-dark)" }
+                : {}),
             }}
           >
             {quest?.locked ? "🔓 Unlock" : "🔒 Lock"}
@@ -927,16 +1024,16 @@ export function LobbyView({
         )}
         {isCreator && (
           <button
+            className="btn btn-ghost"
             disabled={acting}
             onClick={() => void cancelLobby()}
             title={quest?.status === "active"
               ? "Close recruitment — active fight continues"
               : "Cancel & delete the lobby entirely"}
             style={{
-              ...btnBase,
-              background: "#1f1414",
-              color: "#fca5a5",
-              border: "1px solid #7f1d1d",
+              background: "var(--bg-input)",
+              color: "var(--tone-bad)",
+              borderColor: "var(--tone-bad-3)",
             }}
           >
             🗑 {quest?.status === "active" ? "Close Recruit" : "Cancel"}
@@ -945,9 +1042,13 @@ export function LobbyView({
         {/* Force start only meaningful pre-combat */}
         {isCreator && quest?.status !== "active" && (
           <button
+            className="btn"
             disabled={acting}
             onClick={() => void act("force_start")}
-            style={{ ...btnBase, background: "#7c3aed", color: "#fff" }}
+            style={{
+              background: "var(--accent-arcane-3)",
+              color: "#fff",
+            }}
           >
             Force Start
           </button>
@@ -958,13 +1059,22 @@ export function LobbyView({
       {/* Party Chat */}
       {questId && (
         <div style={{
-          borderTop: "1px solid #1f2937",
+          borderTop: "1px solid var(--border-faint)",
           display: "flex",
           flexDirection: "column",
           marginTop: 16,
           paddingTop: 12,
         }}>
-          <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: 1, color: "#4b5563", marginBottom: 8, paddingLeft: 2 }}>
+          <div style={{
+            fontSize: 11,
+            fontWeight: 700,
+            textTransform: "uppercase",
+            letterSpacing: 1,
+            color: "var(--fg-faintest)",
+            marginBottom: 8,
+            paddingLeft: 2,
+            fontFamily: "var(--font-mono)",
+          }}>
             Party Chat
           </div>
           {/* Message list */}
@@ -978,7 +1088,12 @@ export function LobbyView({
             paddingRight: 2,
           }}>
             {messages.length === 0 ? (
-              <div style={{ color: "#4b5563", fontSize: 12, fontStyle: "italic", paddingLeft: 2 }}>
+              <div style={{
+                color: "var(--accent-flavor)",
+                fontSize: 12,
+                fontStyle: "italic",
+                paddingLeft: 2,
+              }}>
                 No messages yet. Say hello!
               </div>
             ) : (
@@ -986,12 +1101,14 @@ export function LobbyView({
                 <div key={m.id} style={{ fontSize: 13, lineHeight: 1.4 }}>
                   <span style={{
                     fontWeight: 700,
-                    color: m.user_id === selfId ? "#60a5fa" : "#a78bfa",
+                    color: m.user_id === selfId ? "var(--accent-ink-blue)" : "var(--accent-arcane)",
                     marginRight: 6,
+                    fontFamily: "var(--font-display)",
+                    letterSpacing: 0.2,
                   }}>
                     {m.user_id === selfId ? "You" : m.user_name}
                   </span>
-                  <span style={{ color: "#d1d5db" }}>{m.message}</span>
+                  <span style={{ color: "var(--fg-3)" }}>{m.message}</span>
                 </div>
               ))
             )}
@@ -1008,28 +1125,20 @@ export function LobbyView({
               maxLength={300}
               style={{
                 flex: 1,
-                background: "#13161c",
-                border: "1px solid #1f2937",
-                borderRadius: 6,
-                color: "#f5f5f5",
+                background: "var(--bg-card-2)",
+                border: "1px solid var(--border-faint)",
+                borderRadius: "var(--radius-md)",
+                color: "var(--fg-1)",
                 fontSize: 13,
-                padding: "7px 10px",
+                padding: "8px 10px",
                 outline: "none",
+                fontFamily: "var(--font-body)",
               }}
             />
             <button
+              className="btn btn-primary btn-sm"
               disabled={sending || !chatInput.trim()}
               onClick={() => void sendMessage()}
-              style={{
-                padding: "7px 12px",
-                borderRadius: 6,
-                border: "none",
-                background: sending || !chatInput.trim() ? "#1f2937" : "#2563eb",
-                color: sending || !chatInput.trim() ? "#4b5563" : "#fff",
-                fontSize: 13,
-                fontWeight: 600,
-                cursor: sending || !chatInput.trim() ? "not-allowed" : "pointer",
-              }}
             >
               Send
             </button>
