@@ -2978,19 +2978,30 @@ app.post("/api/camp/start", async (c) => {
   const tier = body?.tier as CampTier | undefined;
   if (!node || !(node in CAMP_NODE_CONFIG)) return c.json({ error: "bad_node" }, 400);
   if (!tier || !(tier in CAMP_TIERS)) return c.json({ error: "bad_tier" }, 400);
-  const [active, upgrades] = await Promise.all([
+  const [active, upgrades, inFlightErrand] = await Promise.all([
     listActiveGatheringTasks(c.env.DB, session.slack_user_id),
     listCampUpgrades(c.env.DB, session.slack_user_id),
+    getActivePubErrand(c.env.DB, session.slack_user_id),
   ]);
   const slotCount = gatherSlotCount(upgrades.map((u) => u.upgrade_key));
   if (active.length >= slotCount) {
     return c.json({ error: "no_slot", slots: slotCount, in_use: active.length }, 400);
   }
   // Worker slot is just an index — main char = 1, tents fill 2..N. Pick the
-  // lowest free index so the strip's slot labels stay stable.
+  // lowest free index so the strip's slot labels stay stable. If the main
+  // character is out on a pub errand, slot 1 is considered occupied — the
+  // main can only do one thing at a time. Hired tents (slot ≥ 2) can still
+  // gather; this gate just routes the task to a tent instead of the main.
   const used = new Set(active.map((t) => t.worker_slot));
+  if (inFlightErrand) used.add(1);
   let workerSlot = 1;
   while (used.has(workerSlot)) workerSlot += 1;
+  // If we walked past every available tent without finding a free slot,
+  // the main being on errand has effectively eaten the only slot. Surface
+  // a friendly error rather than writing worker_slot=slotCount+1.
+  if (workerSlot > slotCount) {
+    return c.json({ error: "errand_in_flight", errand_id: inFlightErrand?.id ?? null }, 400);
+  }
   const tierSpec = CAMP_TIERS[tier];
   // Snapshot the current perks onto the task. Future perk builds won't
   // retroactively alter an in-flight gather's math (and the lazy yield-roll
@@ -3693,6 +3704,9 @@ app.post("/api/pub/errands/start", async (c) => {
   }
   if (await getActiveQuestForCharacter(c.env.DB, session.slack_user_id)) {
     return c.json({ error: "mid_quest" }, 400);
+  }
+  if (await isMainCharacterGathering(c.env.DB, session.slack_user_id)) {
+    return c.json({ error: "main_gathering" }, 400);
   }
   const existingActive = await getActivePubErrand(c.env.DB, session.slack_user_id);
   if (existingActive) return c.json({ error: "errand_in_flight", errand_id: existingActive.id }, 400);
