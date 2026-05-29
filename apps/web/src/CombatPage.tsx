@@ -1581,35 +1581,43 @@ export function CombatPage({
                     {leftFlank.map((m) => renderMonsterCard(m, state.monsters.indexOf(m)))}
                   </div>
                 );
-                // Spotlight column — wraps the central MonsterCard with a
-                // rotating dashed gold ring (boss or focused target).
-                const spotlightCol = spotlightMonster ? (
-                  <div style={{
-                    position: "relative",
-                    display: "flex", justifyContent: "center", alignItems: "center",
-                    pointerEvents: "auto",
-                  }}>
-                    {/* Rotating dashed ring overlay (decorative; pointer-events: none) */}
-                    {spotlightMonster.hp > 0 && (
-                      <div
-                        aria-hidden
-                        style={{
-                          position: "absolute",
-                          width: isMobile ? 240 : 280,
-                          height: isMobile ? 240 : 280,
-                          borderRadius: "50%",
-                          border: `1px dashed ${spotlightMonster.is_boss ? "rgba(220,38,38,0.35)" : "rgba(251,191,36,0.32)"}`,
-                          boxShadow: spotlightMonster.is_boss ? "0 0 22px rgba(220,38,38,0.35)" : "var(--glow-target)",
-                          animation: "spin 26s linear infinite",
-                          pointerEvents: "none",
-                        }}
+                // Spotlight column — circular portrait inside a rotating
+                // dashed ring per the design handoff (Combat B Study.html).
+                const spotlightCol = spotlightMonster ? (() => {
+                  const spotIdx = state.monsters.indexOf(spotlightMonster);
+                  const spotId = spotlightMonster.id ?? String(spotIdx);
+                  return (
+                    <div style={{
+                      display: "flex", justifyContent: "center", alignItems: "center",
+                      pointerEvents: "auto",
+                    }}>
+                      <SpotlightMonster
+                        monster={spotlightMonster}
+                        round={state.round}
+                        showSageReading={me?.class === "Staff Sage"}
+                        sageTarget={me?.class === "Staff Sage" && lastForesee ? (() => { const tid = lastForesee.predicted_targets?.[spotId] ?? lastForesee.predicted_target; return tid ? (state.fighters.find((f) => f.id === tid)?.name ?? tid) : null; })() : null}
+                        markedBy={
+                          state.ability_state?.mark &&
+                          state.round <= state.ability_state.mark.expires_after_round &&
+                          (!state.ability_state.mark.monster_id || state.ability_state.mark.monster_id === spotId)
+                            ? (state.fighters.find((f) => f.id === state.ability_state!.mark!.marked_by)?.name ?? state.ability_state.mark.marked_by)
+                            : undefined
+                        }
+                        isTargeted={effectiveTarget !== null && (spotlightMonster.id ?? null) === effectiveTarget}
+                        smiteDebuffed={!!((state.ability_state as { paladin_smite_debuff?: Record<string, number> } | undefined)?.paladin_smite_debuff?.[spotId])}
+                        discouraged={(state.ability_state as { discourage?: Record<string, number> } | undefined)?.discourage?.[spotId] ?? 0}
+                        vulnerable={(state.ability_state as { vulnerable?: Record<string, { expires_after_round: number; magnitude: number }> } | undefined)?.vulnerable?.[spotId]}
+                        taunt={(() => { const t = (state.ability_state as { taunt?: { actor_id: string; swings_remaining: number } } | undefined)?.taunt; return t && t.swings_remaining > 0 ? { actor_name: state.fighters.find((f) => f.id === t.actor_id)?.name ?? t.actor_id, swings: t.swings_remaining } : undefined; })()}
+                        illOmen={(state.ability_state as { ill_omen?: Record<string, { accumulated: number; monster_turns_remaining: number }> } | undefined)?.ill_omen?.[spotId]}
+                        slashSeq={lastSlash?.id === spotId ? lastSlash.seq : 0}
+                        lungeSeq={lastLunge?.id === spotId ? lastLunge.seq : 0}
+                        dustSeq={hitDustSeq[spotId] ?? 0}
+                        compact={isMobile}
+                        onClick={liveMonsters.length > 1 && spotlightMonster.hp > 0 ? () => setTargetMonsterId(spotlightMonster.id ?? null) : undefined}
                       />
-                    )}
-                    <div style={{ zIndex: 1, transform: isMobile ? "scale(1)" : "scale(1.05)" }}>
-                      {renderMonsterCard(spotlightMonster, state.monsters.indexOf(spotlightMonster))}
                     </div>
-                  </div>
-                ) : <div />;
+                  );
+                })() : <div />;
                 // Right flank column (desktop) / row of flank chips below
                 // spotlight (mobile).
                 const rightCol = (
@@ -2003,6 +2011,363 @@ function DisconnectedModal({ onReconnect }: { onReconnect: () => void }): JSX.El
           Reconnect
         </button>
       </div>
+    </div>
+  );
+}
+
+// Spotlight monster — the cinematic centerpiece of the theatre. Per design,
+// this is a 184px circular portrait inside a 280px rotating dashed gold/red
+// ring, with a crown pill above ("★ BOSS Tier N" red or "◎ Focused Target"
+// gold). Name in 34px display below the ring, element/tier subtitle, big HP
+// number + bar, then status pills. Preserves every animation and ability
+// indicator from MonsterCard.
+function SpotlightMonster({
+  monster,
+  round,
+  showSageReading,
+  sageTarget,
+  markedBy,
+  isTargeted = false,
+  smiteDebuffed = false,
+  discouraged = 0,
+  vulnerable,
+  taunt,
+  illOmen,
+  slashSeq = 0,
+  lungeSeq = 0,
+  dustSeq = 0,
+  compact = false,
+  onClick,
+}: {
+  monster: Monster;
+  round: number;
+  showSageReading: boolean;
+  sageTarget?: string | null;
+  markedBy?: string;
+  isTargeted?: boolean;
+  smiteDebuffed?: boolean;
+  discouraged?: number;
+  vulnerable?: { expires_after_round: number; magnitude: number };
+  taunt?: { actor_name: string; swings: number };
+  illOmen?: { accumulated: number; monster_turns_remaining: number };
+  slashSeq?: number;
+  lungeSeq?: number;
+  dustSeq?: number;
+  /** Mobile: smaller ring + portrait + spacing. */
+  compact?: boolean;
+  onClick?: () => void;
+}) {
+  const isDead = monster.hp <= 0;
+  // Defeat clock — same pattern as MonsterCard so the rotateX animation
+  // plays for ~1.1s before the component unmounts.
+  const [defeatedAt, setDefeatedAt] = useState<number | null>(null);
+  useEffect(() => {
+    if (monster.hp <= 0 && defeatedAt === null) setDefeatedAt(Date.now());
+    else if (monster.hp > 0 && defeatedAt !== null) setDefeatedAt(null);
+  }, [monster.hp, defeatedAt]);
+  useEffect(() => {
+    if (defeatedAt === null) return;
+    const t = setTimeout(() => setDefeatedAt((v) => v), 1150);
+    return () => clearTimeout(t);
+  }, [defeatedAt]);
+  if (defeatedAt !== null && Date.now() > defeatedAt + 1100) return null;
+
+  const animClass = !isDead
+    ? "gq-monster-lunge-card"
+    : "gq-monster-defeated-card";
+
+  // Sage's reading bounds — identical to MonsterCard.
+  const sageLo = 1 + monster.tier;
+  const sageHi = 6 + monster.tier + (monster.is_boss && monster.boss_phase === 2 ? monster.tier : 0);
+
+  const ringPx = compact ? 220 : 280;
+  const portraitPx = compact ? 148 : 184;
+  // Portrait border priority: targeted (gold), then marked (orange-gold),
+  // then boss (red), then default muted edge for non-boss non-target.
+  const portraitBorder = isDead
+    ? "var(--border-base)"
+    : isTargeted
+      ? "var(--accent-gold-warm)"
+      : markedBy
+        ? "#f59e0b"
+        : monster.is_boss
+          ? "var(--tone-bad-3)"
+          : "var(--border-muted)";
+  // Ring color: red for boss, gold otherwise.
+  const ringColor = monster.is_boss
+    ? "rgba(220,38,38,0.42)"
+    : "rgba(251,191,36,0.4)";
+  const ringGlow = monster.is_boss
+    ? "0 0 22px rgba(220,38,38,0.4)"
+    : "0 0 22px rgba(251,191,36,0.55), inset 0 0 12px 0 rgba(251,191,36,0.15)";
+
+  // Crown pill above the ring.
+  const crownLabel = monster.is_boss
+    ? `★ Boss · Tier ${monster.tier}`
+    : "◎ Focused Target";
+  const crownColor = monster.is_boss ? "var(--tone-bad-2)" : "var(--accent-gold-warm)";
+  const crownBorder = monster.is_boss ? "var(--tone-bad-3)" : "var(--accent-gold-warm)";
+
+  const hp = Math.max(0, monster.hp);
+  const hpPct = monster.max_hp > 0 ? hp / monster.max_hp : 0;
+  const hpColor = hpPct < 0.25
+    ? "var(--tone-bad-2)"
+    : hpPct < 0.5
+      ? "var(--accent-gold-warm)"
+      : "var(--tone-good-2)";
+
+  return (
+    <div
+      key={`spotlight-${monster.id ?? ""}-${isDead ? "dead" : lungeSeq}`}
+      className={animClass}
+      style={{
+        position: "relative",
+        textAlign: "center",
+        cursor: onClick && !isDead ? "pointer" : undefined,
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        gap: 0,
+      }}
+      onClick={!isDead && onClick ? onClick : undefined}
+    >
+      {/* Marked-by ribbon above the ring (e.g. Mark ability) */}
+      {markedBy && !isDead && (
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 4,
+            background: "#78350f",
+            border: "2px solid #f59e0b",
+            borderRadius: 12,
+            padding: "2px 10px",
+            marginBottom: 4,
+            boxShadow: "0 0 12px #f59e0b80",
+            zIndex: 10,
+          }}
+        >
+          <Icon name="targeted" size={14} color="#fbbf24" />
+          <span style={{ fontSize: 11, fontWeight: 700, color: "#fbbf24", whiteSpace: "nowrap" }}>{markedBy}</span>
+        </div>
+      )}
+
+      {/* Ring + portrait. The rotating dashed ring is a positioned overlay
+          on top of the portrait so the spin animation doesn't fight the
+          lunge/hit-flash animations applied to the outer wrapper. */}
+      <div
+        style={{
+          width: ringPx,
+          height: ringPx,
+          position: "relative",
+          borderRadius: "50%",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          background: "radial-gradient(circle at 50% 40%, rgba(239,68,68,0.08), transparent 70%)",
+        }}
+      >
+        {/* Rotating dashed ring (decorative; pointer-events: none) */}
+        {!isDead && (
+          <div
+            aria-hidden
+            style={{
+              position: "absolute",
+              inset: compact ? 12 : 16,
+              borderRadius: "50%",
+              border: `1px dashed ${ringColor}`,
+              boxShadow: ringGlow,
+              animation: "spin 26s linear infinite",
+              pointerEvents: "none",
+            }}
+          />
+        )}
+        {/* Crown pill above the ring */}
+        <div
+          style={{
+            position: "absolute",
+            top: -4,
+            left: "50%",
+            transform: "translateX(-50%)",
+            font: "700 10px/1 var(--font-body)",
+            letterSpacing: 1.5,
+            textTransform: "uppercase",
+            color: crownColor,
+            background: "var(--bg-void)",
+            border: `1px solid ${crownBorder}`,
+            padding: "4px 10px",
+            borderRadius: 999,
+            whiteSpace: "nowrap",
+            zIndex: 3,
+          }}
+        >
+          {crownLabel}
+        </div>
+        {/* Target pulse overlay — separate so it doesn't fight the lunge anim */}
+        {isTargeted && !isDead && (
+          <div
+            className="gq-monster-targeted"
+            style={{
+              position: "absolute",
+              width: portraitPx,
+              height: portraitPx,
+              borderRadius: "50%",
+              pointerEvents: "none",
+            }}
+          />
+        )}
+        {/* Slash streak re-mounts when slashSeq bumps */}
+        {slashSeq > 0 && !isDead && (
+          <div aria-hidden style={{ position: "absolute", width: portraitPx, height: portraitPx, overflow: "hidden", borderRadius: "50%", pointerEvents: "none" }}>
+            <span key={`slash-${slashSeq}`} className="gq-slash-streak" />
+          </div>
+        )}
+        {/* Dust puffs anchor on the wrapper. */}
+        <HitDust seq={dustSeq} />
+        {/* Portrait circle */}
+        <Avatar
+          src={monster.art_url}
+          alt={monster.name}
+          size={portraitPx}
+          radius={portraitPx}
+          fallbackIcon="dragon"
+          fallbackColor={markedBy ? "#f59e0b" : "var(--tone-bad-2)"}
+          border={`2px solid ${portraitBorder}`}
+        />
+      </div>
+
+      {/* Name */}
+      <h1
+        style={{
+          font: `${compact ? 24 : 34}px/1 var(--font-display)`,
+          color: "var(--fg-1)",
+          margin: `${compact ? 12 : 16}px 0 4px`,
+        }}
+      >
+        {monster.name}
+      </h1>
+
+      {/* Element · Tier subtitle */}
+      <div style={{
+        font: "11px/1 var(--font-mono)",
+        color: "var(--fg-mute)",
+        textTransform: "uppercase",
+        letterSpacing: 1,
+        display: "flex",
+        alignItems: "center",
+        gap: 6,
+        flexWrap: "wrap",
+        justifyContent: "center",
+      }}>
+        {monster.tower_floor !== undefined && (
+          <>
+            <Icon name="tower-flag" size={11} color="var(--accent-gold)" />
+            <span style={{ color: "var(--accent-gold)", fontWeight: 600 }}>
+              Floor {monster.tower_floor}
+              {monster.tower_cycle ? ` · Cycle ${monster.tower_cycle}` : ""}
+            </span>
+            <span>·</span>
+          </>
+        )}
+        <span>Tier {monster.tier}</span>
+        {monster.is_boss && <span>· Boss (phase {monster.boss_phase})</span>}
+        {monster.wave && monster.total_waves && (
+          <span>· Wave {monster.wave}/{monster.total_waves}</span>
+        )}
+        <span>· Round {round}</span>
+      </div>
+
+      {/* Element attack-type / weakness / resistance chips */}
+      {((monster.attack_damage_type && monster.attack_damage_type !== "physical") || monster.element_weakness || monster.element_resistance) && !isDead && (
+        <div style={{ display: "flex", gap: 6, marginTop: 6, flexWrap: "wrap", justifyContent: "center" }}>
+          {monster.attack_damage_type && monster.attack_damage_type !== "physical" && (() => {
+            const t = monster.attack_damage_type;
+            const icon = t === "fire" ? "🔥" : t === "ice" ? "❄️" : t === "lightning" ? "⚡" : "✨";
+            const color = t === "fire" ? "#fb923c" : t === "ice" ? "#7dd3fc" : t === "lightning" ? "#fde047" : "#c084fc";
+            return (
+              <span
+                title={`Attacks deal ${t} damage — bypasses armor pool`}
+                style={{
+                  fontSize: 10, fontWeight: 700, background: color + "22",
+                  border: `1px solid ${color}55`, color, borderRadius: 4,
+                  padding: "1px 5px", textTransform: "uppercase", letterSpacing: 0.4,
+                }}
+              >
+                {icon} {t} attacks
+              </span>
+            );
+          })()}
+          {monster.element_weakness && (
+            <span style={{ fontSize: 10, background: "#7f1d1d22", border: "1px solid #f8717144", color: "#fca5a5", borderRadius: 4, padding: "1px 5px" }}>
+              {monster.element_weakness === "fire" ? "🔥" : monster.element_weakness === "ice" ? "❄️" : "⚡"} weak
+            </span>
+          )}
+          {monster.element_resistance && (
+            <span style={{ fontSize: 10, background: "#1e3a5f22", border: "1px solid #60a5fa44", color: "#93c5fd", borderRadius: 4, padding: "1px 5px" }}>
+              {monster.element_resistance === "fire" ? "🔥" : monster.element_resistance === "ice" ? "❄️" : "⚡"} resist
+            </span>
+          )}
+        </div>
+      )}
+
+      {/* HP line — number + bar */}
+      <div
+        style={{
+          margin: `${compact ? 10 : 14}px auto 0`,
+          width: compact ? "min(280px, 100%)" : 340,
+          maxWidth: "100%",
+          display: "flex",
+          alignItems: "center",
+          gap: 10,
+        }}
+      >
+        <span style={{
+          font: `${compact ? 20 : 24}px/1 var(--font-display)`,
+          color: hpColor,
+          whiteSpace: "nowrap",
+          fontVariantNumeric: "tabular-nums",
+        }}>
+          {hp}
+          <span style={{ fontSize: 13, color: "var(--fg-mute)" }}>/{monster.max_hp}</span>
+        </span>
+        <BigHpBar current={hp} max={monster.max_hp} />
+      </div>
+
+      {/* Status pills row */}
+      {((monster.effects && monster.effects.length > 0) || smiteDebuffed || discouraged > 0 || (vulnerable && round <= vulnerable.expires_after_round) || (illOmen && illOmen.monster_turns_remaining > 0) || !!taunt) && !isDead && (
+        <div style={{
+          display: "flex", gap: 6,
+          justifyContent: "center", flexWrap: "wrap",
+          marginTop: 12, minHeight: 22,
+        }}>
+          {monster.effects?.map((e, i) => {
+            const def = EFFECT_PILLS[e.type];
+            return def ? <def.pill key={i} effect={e} size="lg" /> : null;
+          })}
+          {taunt && (
+            <StatusPill size="lg" color="#f59e0b" icon="shield-reflect" label="taunted" suffix={`${taunt.swings}sw`} title={`Taunted: forced to attack ${taunt.actor_name} for ${taunt.swings} more swing${taunt.swings === 1 ? "" : "s"}`} />
+          )}
+          {smiteDebuffed && (
+            <StatusPill size="lg" color="#f87171" icon="axe-swing" label="breakpoint" suffix="½ dmg" title="Breakpoint: this monster deals 50% less damage on its next swing" />
+          )}
+          {discouraged > 0 && (
+            <StatusPill size="lg" color="#f87171" icon="morbid-humour" label="mocked" suffix={`${discouraged}c`} title={`Mocked: disadvantage on next ${discouraged} roll${discouraged === 1 ? "" : "s"}`} />
+          )}
+          {vulnerable && round <= vulnerable.expires_after_round && (
+            <StatusPill size="lg" color="#fb923c" icon="crossed-swords" label="vulnerable" suffix={`+${vulnerable.magnitude}%`} title={`Vulnerable: takes ${vulnerable.magnitude}% more damage (${vulnerable.expires_after_round - round + 1} round${vulnerable.expires_after_round - round + 1 === 1 ? "" : "s"} left)`} />
+          )}
+          {illOmen && illOmen.monster_turns_remaining > 0 && (
+            <StatusPill size="lg" color="#c084fc" icon="death-skull" label="stack overflow" suffix={`${illOmen.monster_turns_remaining}t`} title={`Stack Overflow: ${illOmen.accumulated} damage accumulated — bursts in ${illOmen.monster_turns_remaining} monster turn${illOmen.monster_turns_remaining === 1 ? "" : "s"}`} />
+          )}
+        </div>
+      )}
+
+      {showSageReading && !isDead && (
+        <div style={{ ...muted, fontSize: 11, marginTop: 8 }}>
+          <Icon name="scroll-unfurled" /> Sage's Reading: next swing ~{sageLo}–{sageHi} HP
+          {sageTarget ? <> → <span style={{ color: "#e2e8f0" }}>{sageTarget}</span></> : ""}
+        </div>
+      )}
     </div>
   );
 }
