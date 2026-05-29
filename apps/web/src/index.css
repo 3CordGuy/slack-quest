@@ -392,12 +392,26 @@ em, .flavor {
   padding: 24px 28px;
   min-height: 100%;
 }
-/* Frosted glass card — for items that render over an art background */
+/* When art is present (art-bg is a sibling), override card colour vars so every
+   CSS-variable consumer becomes semi-transparent automatically.             */
+.loc-wide-art-bg ~ .loc-wide-content-inner {
+  --bg-card:   rgba(12, 14, 18, 0.72);
+  --bg-card-2: rgba(14, 16, 22, 0.68);
+  --border-base: rgba(255, 255, 255, 0.08);
+}
+/* Shared frosted-glass surface: semi-transparent bg + blur. Apply via className. */
 .glass-card {
   background: rgba(12, 14, 18, 0.72) !important;
   backdrop-filter: blur(10px) saturate(1.1);
   -webkit-backdrop-filter: blur(10px) saturate(1.1);
   border-color: rgba(255,255,255,0.08) !important;
+}
+/* Frosted glass for smaller row-level items (recipe rows, task rows, etc.) */
+.glass-row {
+  background: rgba(14, 16, 22, 0.68) !important;
+  backdrop-filter: blur(10px) saturate(1.05);
+  -webkit-backdrop-filter: blur(10px) saturate(1.05);
+  border-color: rgba(255,255,255,0.07) !important;
 }
 /* Mobile: sidebar becomes horizontal tab strip */
 @media (max-width: 768px) {

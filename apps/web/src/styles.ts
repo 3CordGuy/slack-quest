@@ -11,6 +11,19 @@ export const card: CSSProperties = {
   boxSizing: "border-box",
 };
 
+/** Same geometry as `card` but with frosted-glass background + blur.
+ *  Use inside LocationModalWide sections that sit over an art backdrop. */
+export const glassCard: CSSProperties = {
+  background: "rgba(12, 14, 18, 0.72)",
+  padding: "var(--card-pad, 32px)",
+  borderRadius: "var(--radius-2xl)",
+  width: "100%",
+  border: "1px solid rgba(255,255,255,0.08)",
+  boxSizing: "border-box",
+  backdropFilter: "blur(10px) saturate(1.1)",
+  WebkitBackdropFilter: "blur(10px) saturate(1.1)",
+};
+
 export const h1: CSSProperties = { margin: 0, fontSize: 28, color: "var(--fg-1)", fontFamily: "var(--font-display)" };
 export const h2: CSSProperties = { margin: 0, fontSize: 20, color: "var(--fg-1)", fontFamily: "var(--font-display)" };
 export const muted: CSSProperties = { color: "var(--fg-mute)", fontSize: 14 };

@@ -1482,11 +1482,11 @@ export function App() {
           gold={gold}
           onClose={close}
           sections={[
-            { id: "overview", label: "Overview",  icon: "camping-tent" },
-            { id: "mine",     label: "Mine",      icon: "ore",          art: state.townArt?.mine_art_url ?? null },
+            { id: "overview", label: "Overview",  icon: "camping-tent",   art: state.townArt?.camp_overview_art_url ?? null },
+            { id: "mine",     label: "Mine",      icon: "ore",            art: state.townArt?.mine_art_url ?? null },
             { id: "forage",   label: "Forage",    icon: "grass-mushroom", art: state.townArt?.forage_art_url ?? null },
-            { id: "fish",     label: "Fishing",   icon: "fishing-hook", art: state.townArt?.fish_art_url ?? null },
-            { id: "build",    label: "Build",     icon: "anvil" },
+            { id: "fish",     label: "Fishing",   icon: "fishing-hook",   art: state.townArt?.fish_art_url ?? null },
+            { id: "build",    label: "Build",     icon: "anvil",          art: state.townArt?.camp_build_art_url ?? null },
           ]}
           defaultSection="overview"
         >

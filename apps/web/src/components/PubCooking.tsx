@@ -16,7 +16,7 @@ import type { CSSProperties } from "react";
 import { Icon } from "../icons";
 import { COOK_RECIPES, findResource, type CookRecipeSpec } from "@gantt-quest/core";
 import type { Item } from "../types";
-import { card, h2, muted } from "../styles";
+import { h2, muted } from "../styles";
 
 interface PubCookingProps {
   characterLevel: number;
@@ -27,7 +27,7 @@ interface PubCookingProps {
 
 export function PubCooking({ characterLevel, gold, inventory, onAfterCook }: PubCookingProps) {
   return (
-    <div style={card}>
+    <div>
       <h2 style={{ ...h2, display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
         <Icon name="fish-cooked" size={20} /> Cooking
       </h2>
@@ -129,6 +129,8 @@ const rowStyle: CSSProperties = {
   borderRadius: "var(--radius-md)",
   border: "1px solid var(--border-base)",
   background: "var(--bg-card-2)",
+  backdropFilter: "blur(10px) saturate(1.05)",
+  WebkitBackdropFilter: "blur(10px) saturate(1.05)",
 };
 
 function actionBtn(enabled: boolean): CSSProperties {

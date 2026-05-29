@@ -106,6 +106,8 @@ function Stockpile({ inventory }: { inventory: Item[] }) {
       borderRadius: "var(--radius-lg)",
       border: "1px solid var(--border-base)",
       background: "var(--bg-card-2)",
+      backdropFilter: "blur(10px) saturate(1.05)",
+      WebkitBackdropFilter: "blur(10px) saturate(1.05)",
     }}>
       <div style={{
         display: "flex", alignItems: "center", gap: 6,
@@ -253,6 +255,8 @@ function ActiveTaskRow({
       borderRadius: "var(--radius-lg)",
       border: ready ? "1px solid var(--accent-go-1, #4ade80)" : "1px solid var(--border-base)",
       background: "var(--bg-card-2)",
+      backdropFilter: "blur(10px) saturate(1.05)",
+      WebkitBackdropFilter: "blur(10px) saturate(1.05)",
     }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
         <Icon name={nodeSpec.icon} size={20} color={ready ? "#4ade80" : "var(--fg-mute)"} />
@@ -552,6 +556,8 @@ function UpgradeRow({
       background: locked || built ? "var(--bg-card-2)" : "var(--bg-card)",
       opacity: locked ? 0.6 : 1,
       alignItems: "center",
+      backdropFilter: "blur(10px) saturate(1.05)",
+      WebkitBackdropFilter: "blur(10px) saturate(1.05)",
     }}>
       <Icon name={upgrade.icon} size={22} color="var(--fg-1)" />
       <div>

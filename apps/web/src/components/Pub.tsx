@@ -3,7 +3,7 @@ import toast from "react-hot-toast";
 import { Icon } from "../icons";
 import { postJson, drinkBuffLabel, formatRelative } from "../utils";
 import { LIARS_TRUST_MULT_DISPLAY, LIARS_CHALLENGE_MULT_DISPLAY, GAME_LABELS, ERROR_LABELS } from "../constants";
-import { card, h2, muted, DISPLAY_FONT, smallActionBtn } from "../styles";
+import { card, glassCard, h2, muted, DISPLAY_FONT, smallActionBtn } from "../styles";
 import { LocationHero, Banner, RefreshButton } from "./ui";
 import { HallOfRenown, type RenownEntry } from "./StatsCards";
 import type {
@@ -519,7 +519,7 @@ function LiarsRollCard({ gold, onRefresh }: { gold: number; onRefresh: () => Pro
   }
 
   return (
-    <div style={card}>
+    <div style={glassCard}>
       <GameCardHeader
         icon="perspective-dice-six"
         title="Liars' Roll"
@@ -652,7 +652,7 @@ function SpdCard({ pub, selfId, onRefresh }: { pub: PubResponse; selfId: string;
   const canBet = openMatch !== null && !iAmInitiator && !iAmChallenger && myBet === null;
 
   return (
-    <div style={card}>
+    <div style={glassCard}>
       <GameCardHeader
         icon="plain-dagger"
         title="Stone-Parchment-Dagger"
