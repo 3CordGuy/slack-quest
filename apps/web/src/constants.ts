@@ -184,7 +184,8 @@ export const DISTRICT_CONFIG: {
   { key: "inn",       label: "Inn",       icon: "bed",             color: "#1a3a2a", artKey: "inn_art_url" },
   { key: "smithy",    label: "Smithy",    icon: "anvil",           color: "#2a1a1a", artKey: "smithy_art_url" },
   { key: "apothecary", label: "Apothecary", icon: "poison-bottle", color: "#1a2d1a", artKey: "apothecary_art_url" },
-  { key: "camp",      label: "My Camp",   icon: "tent",            color: "#1a2e1a", artKey: "outskirts_art_url" },
+  { key: "hunt",      label: "Outskirts", icon: "sword",           color: "#1a1a2e", artKey: "outskirts_art_url" },
+  { key: "camp",      label: "My Camp",   icon: "camping-tent",    color: "#1a2e1a", artKey: "outskirts_art_url" },
 ];
 
 // Mirror of CAMP_TIERS and CAMP_NODE_CONFIG in @gantt-quest/core, exported here
@@ -200,17 +201,17 @@ export const CAMP_TIERS: Record<CampTier, CampTierSpec> = {
 
 export const CAMP_NODE_CONFIG: Record<CampNode, CampNodeSpec> = {
   mine: {
-    node: "mine",   label: "The Mine",     icon: "mining-diamonds",
+    node: "mine",   label: "The Mine",     icon: "ore",
     primary: "iron_ore", uncommon: "silver_ore", rare: "mithril_ore",
     blurb: "Veins of ore run deep under the bluffs. Bring it back for the smithy.",
   },
   forage: {
-    node: "forage", label: "Herb Garden",  icon: "herbs-bundle",
+    node: "forage", label: "Herb Garden",  icon: "grass-mushroom",
     primary: "mossroot", uncommon: "sunleaf", rare: "nightbloom",
     blurb: "Wild herbs ring the camp clearing. The apothecary pays for stock.",
   },
   fish: {
-    node: "fish",   label: "Fishing Hole", icon: "fishing-pole",
+    node: "fish",   label: "Fishing Hole", icon: "fish-bucket",
     primary: "river_carp", uncommon: "silverfin", rare: "abyss_eel",
     blurb: "Quiet pool by the willows. The pub kitchen has standing orders.",
   },

@@ -501,11 +501,11 @@ export interface RecentQuestsResponse {
   quests: RecentQuest[];
 }
 
-export type TownSection = "job_board" | "pub" | "shop" | "inn" | "smithy" | "camp" | "apothecary";
+export type TownSection = "job_board" | "pub" | "shop" | "inn" | "smithy" | "hunt" | "camp" | "apothecary";
 
-// Sub-tab within My Camp. "hunt" is the legacy free-hunt launcher moved inside
-// camp; the gathering nodes (mine/forage/fish) sit alongside it.
-export type CampTab = "hunt" | "mine" | "forage" | "fish" | "build";
+// Sub-tab within My Camp. Outskirts (Hunt) is its own ward location now;
+// camp focuses purely on gathering and upgrades.
+export type CampTab = "mine" | "forage" | "fish" | "build";
 export type CampNode = "mine" | "forage" | "fish";
 export type CampTier = "quick" | "standard" | "deep";
 

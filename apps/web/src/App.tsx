@@ -1155,7 +1155,7 @@ export function App() {
   // switches the top-level view (per design), inventory uses its own
   // fullscreen overlay state.
   const LOCATION_MODAL_KEYS: TownSection[] = [
-    "pub", "shop", "inn", "smithy", "apothecary", "camp",
+    "pub", "shop", "inn", "smithy", "apothecary", "hunt", "camp",
   ];
   const modalLoc =
     townSection && LOCATION_MODAL_KEYS.includes(townSection) ? townSection : null;
@@ -1363,12 +1363,31 @@ export function App() {
         </LocationModal>
       );
     }
+    if (modalLoc === "hunt") {
+      return (
+        <LocationModal
+          icon="spinning-sword"
+          title="Outskirts"
+          subtitle="Solo hunts"
+          gold={gold}
+          art={state.townArt?.outskirts_art_url ?? null}
+          onClose={close}
+          maxWidth={760}
+        >
+          <HuntSection
+            characterLevel={state.me.character.level}
+            overviewArt={state.townArt?.outskirts_art_url ?? null}
+            onStartHunt={startHunt}
+          />
+        </LocationModal>
+      );
+    }
     if (modalLoc === "camp") {
       return (
         <LocationModal
           icon="tent"
           title="My Camp"
-          subtitle="Hunt · Mine · Forage · Fish · Build"
+          subtitle="Mine · Forage · Fish · Build"
           gold={gold}
           art={state.townArt?.outskirts_art_url ?? null}
           onClose={close}
@@ -1378,10 +1397,10 @@ export function App() {
             characterLevel={state.me.character.level}
             overviewArt={state.townArt?.outskirts_art_url ?? null}
             status={campStatus}
+            inventory={state.inventory}
             onStartGather={startGather}
             onClaim={claimGather}
             onBuildUpgrade={buildCampUpgrade}
-            onStartHunt={startHunt}
           />
         </LocationModal>
       );
@@ -1395,7 +1414,7 @@ export function App() {
   const crumb = showJobBoardView
     ? "Town · Job Board"
     : modalLoc
-      ? `Town · ${modalLoc === "camp" ? "My Camp" : modalLoc[0].toUpperCase() + modalLoc.slice(1)}`
+      ? `Town · ${modalLoc === "camp" ? "My Camp" : modalLoc === "hunt" ? "Outskirts" : modalLoc[0].toUpperCase() + modalLoc.slice(1)}`
       : "Town · The Ward";
 
   return (
