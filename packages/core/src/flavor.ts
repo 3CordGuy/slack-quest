@@ -198,7 +198,7 @@ export function generateScar(monster: string): string {
 
 // Loot system: deterministic rolls for slot/rarity/power. AI generates name + flavor on top.
 
-export type ItemType = "weapon" | "armor" | "consumable" | "magic" | "revive" | "tool" | "scroll";
+export type ItemType = "weapon" | "armor" | "consumable" | "magic" | "revive" | "tool" | "scroll" | "resource";
 
 // 8-slot equipment system (Phase 2). Items carry a `slot` field indicating
 // which body location they occupy when equipped. The equip-swap logic unequips
@@ -1629,4 +1629,379 @@ export function generateMerchantName(): string {
                 MID[Math.floor(Math.random() * MID.length)];
   const epithet = MERCHANT_EPITHET[Math.floor(Math.random() * MERCHANT_EPITHET.length)];
   return `${given} ${epithet}`;
+}
+
+// =============================================================================
+// CAMP: gathering nodes, resources, recipes, upgrades
+// =============================================================================
+//
+// Gathering is a real-time idle loop. Players start a task at the Mine /
+// Herb Garden / Fishing Hole inside "My Camp", wait the tier duration in
+// real wall-clock minutes, and collect resources + XP + (sometimes) gold
+// when they return.
+//
+// Yield rolls are deterministic on (taskId, node, tier) so a status fetch
+// and a claim never disagree — the same task id always lands the same yield
+// regardless of who triggers the roll first. The seed is task id so each
+// gather is its own outcome.
+
+export type CampNode = "mine" | "forage" | "fish";
+export type CampTier = "quick" | "standard" | "deep";
+
+export interface CampTierSpec {
+  tier: CampTier;
+  label: string;
+  duration_ms: number;
+  base_xp: number;
+  base_gold: number;
+}
+
+// Tier durations and base XP/gold rewards. Yield counts per node live in
+// CAMP_NODE_CONFIG below — tiers control time + reward floor, nodes control
+// what comes out the other side.
+export const CAMP_TIERS: Record<CampTier, CampTierSpec> = {
+  quick:    { tier: "quick",    label: "Quick",    duration_ms:  15 * 60 * 1000, base_xp:  6,  base_gold:  5 },
+  standard: { tier: "standard", label: "Standard", duration_ms:  60 * 60 * 1000, base_xp: 30,  base_gold: 25 },
+  deep:     { tier: "deep",     label: "Deep",     duration_ms: 240 * 60 * 1000, base_xp: 90,  base_gold: 80 },
+};
+
+// Resource catalog. Each resource is its own inventory item_name (with emoji
+// prefix, mirroring the convention in ITEM_CATALOG / STAPLES so the
+// inventory render shows the icon inline). Rarity drives crafting cost.
+export interface ResourceSpec {
+  id: string;          // short slug used in recipe inputs
+  name: string;        // bare name; full inventory name is `${emoji} ${name}`
+  emoji: string;
+  rarity: Rarity;
+  node: CampNode;
+  blurb: string;
+}
+
+export const RESOURCE_CATALOG: ResourceSpec[] = [
+  // Mine
+  { id: "iron_ore",    name: "Iron Ore",    emoji: "⛏️", rarity: "common",   node: "mine",   blurb: "Workhorse ore. Smithy fodder." },
+  { id: "silver_ore",  name: "Silver Ore",  emoji: "🪙", rarity: "uncommon", node: "mine",   blurb: "Glints in torchlight. Better gear inputs." },
+  { id: "mithril_ore", name: "Mithril Ore", emoji: "💠", rarity: "rare",     node: "mine",   blurb: "Light as feather, hard as fang. Rare deep-mine pull." },
+  // Forage
+  { id: "mossroot",    name: "Mossroot",    emoji: "🌿", rarity: "common",   node: "forage", blurb: "Bitter herb. Healing base." },
+  { id: "sunleaf",     name: "Sunleaf",     emoji: "🍀", rarity: "uncommon", node: "forage", blurb: "Stores warmth. Mana brews." },
+  { id: "nightbloom",  name: "Nightbloom",  emoji: "🌸", rarity: "rare",     node: "forage", blurb: "Blooms only after dusk. Powerful base." },
+  // Fish
+  { id: "river_carp",  name: "River Carp",  emoji: "🐟", rarity: "common",   node: "fish",   blurb: "Sells well at the Pub." },
+  { id: "silverfin",   name: "Silverfin",   emoji: "🐠", rarity: "uncommon", node: "fish",   blurb: "Prized at the Pub kitchen." },
+  { id: "abyss_eel",   name: "Abyss Eel",   emoji: "🐉", rarity: "rare",     node: "fish",   blurb: "Coiled muscle. The pub pays double for these." },
+];
+
+// Full inventory name (with emoji prefix) for a resource id. Used everywhere
+// resources cross the DB boundary so addResource/tryConsumeResource see the
+// same string the player sees.
+export function resourceItemName(id: string): string {
+  const spec = RESOURCE_CATALOG.find((r) => r.id === id);
+  if (!spec) throw new Error(`Unknown resource id: ${id}`);
+  return `${spec.emoji} ${spec.name}`;
+}
+
+export function findResource(id: string): ResourceSpec | undefined {
+  return RESOURCE_CATALOG.find((r) => r.id === id);
+}
+
+// Camp node config — what each node produces by tier. Yield counts are
+// before the deterministic roll mixes in the extras (Standard rolls 1
+// uncommon vs 2 commons; Deep rolls 3 commons + a chance at rare).
+export interface CampNodeSpec {
+  node: CampNode;
+  label: string;
+  icon: string;          // RPG-awesome icon name (or local svg)
+  primary: string;       // common resource id
+  uncommon: string;
+  rare: string;
+  blurb: string;
+}
+
+export const CAMP_NODE_CONFIG: Record<CampNode, CampNodeSpec> = {
+  mine: {
+    node: "mine",   label: "The Mine",      icon: "mining-diamonds",
+    primary: "iron_ore", uncommon: "silver_ore", rare: "mithril_ore",
+    blurb: "Veins of ore run deep under the bluffs. Bring it back for the smithy.",
+  },
+  forage: {
+    node: "forage", label: "Herb Garden",   icon: "herbs-bundle",
+    primary: "mossroot", uncommon: "sunleaf", rare: "nightbloom",
+    blurb: "Wild herbs ring the camp clearing. The apothecary pays for stock.",
+  },
+  fish: {
+    node: "fish",   label: "Fishing Hole",  icon: "fishing-pole",
+    primary: "river_carp", uncommon: "silverfin", rare: "abyss_eel",
+    blurb: "Quiet pool by the willows. The pub kitchen has standing orders.",
+  },
+};
+
+// Probability a Deep-tier mine rolls a gold-vein strike instead of the rare
+// ore. Surfaces as a chunky gold payout on top of the normal common yield.
+export const MINE_GOLD_VEIN_CHANCE = 0.05;
+export const MINE_GOLD_VEIN_PAYOUT = 250;
+
+// Yield ranges for the toast preview. Roll math lives in rollGatherYield —
+// these are the "you might get N..M" UI labels.
+export interface YieldPreview {
+  resources: string;     // human-readable preview, e.g. "1 ore"
+  xp_label: string;
+  gold_label: string;
+  rare_chance?: string;
+}
+
+export function yieldPreview(node: CampNode, tier: CampTier): YieldPreview {
+  const cfg = CAMP_NODE_CONFIG[node];
+  const tierSpec = CAMP_TIERS[tier];
+  const xp = `+${tierSpec.base_xp} XP`;
+  const gold = `+${tierSpec.base_gold} gold`;
+  if (tier === "quick") {
+    return { resources: `1 ${cfg.primary.replace(/_/g, " ")}`, xp_label: xp, gold_label: gold };
+  }
+  if (tier === "standard") {
+    return {
+      resources: `2 commons or 1 ${cfg.uncommon.replace(/_/g, " ")}`,
+      xp_label: xp, gold_label: gold,
+    };
+  }
+  return {
+    resources: `3 commons + chance ${cfg.rare.replace(/_/g, " ")}`,
+    xp_label: xp, gold_label: gold,
+    rare_chance: node === "mine" ? `${Math.round(MINE_GOLD_VEIN_CHANCE * 100)}% gold vein` : undefined,
+  };
+}
+
+// Deterministic seeded RNG so a status fetch and a later claim agree on the
+// same yield. mulberry32 — cheap, good distribution, no deps.
+function mulberry32(seed: number): () => number {
+  let s = seed >>> 0;
+  return () => {
+    s = (s + 0x6D2B79F5) >>> 0;
+    let t = s;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+export interface RolledYield {
+  resources: Array<{ id: string; name: string; qty: number; rarity: Rarity }>;
+  xp: number;
+  gold: number;
+  gold_strike?: boolean;
+}
+
+// Roll the gather yield. Deterministic on taskId — two parallel fetches of
+// the same task always produce the same result, so racing a status fetch
+// against a claim is harmless.
+export function rollGatherYield(taskId: number, node: CampNode, tier: CampTier): RolledYield {
+  const cfg = CAMP_NODE_CONFIG[node];
+  const tierSpec = CAMP_TIERS[tier];
+  const rng = mulberry32(taskId);
+  const resources: RolledYield["resources"] = [];
+  let xp = tierSpec.base_xp;
+  let gold = tierSpec.base_gold;
+  let gold_strike = false;
+
+  const pushResource = (id: string, qty: number) => {
+    const spec = findResource(id);
+    if (!spec) return;
+    resources.push({ id, name: resourceItemName(id), qty, rarity: spec.rarity });
+  };
+
+  if (tier === "quick") {
+    pushResource(cfg.primary, 1);
+  } else if (tier === "standard") {
+    // 70% → 2 commons, 30% → 1 uncommon
+    if (rng() < 0.7) pushResource(cfg.primary, 2);
+    else pushResource(cfg.uncommon, 1);
+  } else {
+    // Deep: 3 commons always, plus a rare-tier roll.
+    pushResource(cfg.primary, 3);
+    const rareRoll = rng();
+    if (node === "mine" && rareRoll < MINE_GOLD_VEIN_CHANCE) {
+      gold_strike = true;
+      gold += MINE_GOLD_VEIN_PAYOUT;
+    } else if (rareRoll < 0.20) {
+      pushResource(cfg.rare, 1);
+    } else if (rareRoll < 0.55) {
+      pushResource(cfg.uncommon, 1);
+    }
+  }
+
+  return { resources, xp, gold, ...(gold_strike ? { gold_strike: true } : {}) };
+}
+
+// Recipe catalog — Smithy Forge + Apothecary Brew. Inputs reference resource
+// ids; outputs are crafted into inventory as fresh items (gear) or stacked
+// (potions reuse Health/Mana Potion naming so they merge with shop stock).
+export type CraftStation = "smithy" | "apothecary";
+
+export interface RecipeSpec {
+  id: string;             // slash-form short slug
+  station: CraftStation;
+  output_name: string;    // inventory item_name; pre-prefixed where applicable
+  output_type: ItemType;
+  output_power: number;
+  output_slot?: EquipSlot | null;
+  output_subtype?: string | null;
+  output_rarity: Rarity;
+  output_blurb: string;
+  inputs: Array<{ resource_id: string; qty: number }>;
+  gold_cost: number;
+  level_req: number;
+}
+
+export const RECIPE_CATALOG: RecipeSpec[] = [
+  // Smithy Forge — 5 recipes.
+  {
+    id: "iron_sword", station: "smithy",
+    output_name: "Iron Sword", output_type: "weapon", output_power: 5,
+    output_slot: "main_hand", output_rarity: "common",
+    output_blurb: "Forged from honest ore. Reliable cutting edge.",
+    inputs: [{ resource_id: "iron_ore", qty: 3 }],
+    gold_cost: 40, level_req: 1,
+  },
+  {
+    id: "iron_buckler", station: "smithy",
+    output_name: "Iron Buckler", output_type: "armor", output_power: 4,
+    output_slot: "off_hand", output_subtype: "shield", output_rarity: "common",
+    output_blurb: "Small but sturdy. Soaks the first hit.",
+    inputs: [{ resource_id: "iron_ore", qty: 2 }],
+    gold_cost: 30, level_req: 1,
+  },
+  {
+    id: "iron_helm", station: "smithy",
+    output_name: "Iron Helm", output_type: "armor", output_power: 4,
+    output_slot: "helmet", output_rarity: "common",
+    output_blurb: "Dented but functional. Keeps the skull intact.",
+    inputs: [{ resource_id: "iron_ore", qty: 2 }],
+    gold_cost: 30, level_req: 2,
+  },
+  {
+    id: "steel_greaves", station: "smithy",
+    output_name: "Steel Greaves", output_type: "armor", output_power: 6,
+    output_slot: "pants", output_rarity: "uncommon",
+    output_blurb: "Layered silver bands. Cold steel runs the seams.",
+    inputs: [{ resource_id: "iron_ore", qty: 3 }, { resource_id: "silver_ore", qty: 1 }],
+    gold_cost: 90, level_req: 3,
+  },
+  {
+    id: "mithril_ring", station: "smithy",
+    output_name: "Mithril Ring", output_type: "armor", output_power: 3,
+    output_slot: "ring", output_rarity: "rare",
+    output_blurb: "Light braid. Hums faintly when worn.",
+    inputs: [{ resource_id: "mithril_ore", qty: 1 }, { resource_id: "silver_ore", qty: 2 }],
+    gold_cost: 200, level_req: 5,
+  },
+  // Apothecary Brew — 5 recipes. Names piggyback on existing potion handling
+  // where possible (Greater Health Potion etc. flow through existing use-item
+  // dispatch) and add a few new ones for variety.
+  {
+    id: "greater_healing", station: "apothecary",
+    output_name: "🧪 Greater Health Potion", output_type: "consumable", output_power: 25,
+    output_rarity: "uncommon",
+    output_blurb: "Restores 25 HP. Concentrate to boost potency.",
+    inputs: [{ resource_id: "mossroot", qty: 3 }],
+    gold_cost: 30, level_req: 1,
+  },
+  {
+    id: "greater_mana", station: "apothecary",
+    output_name: "✨ Mana Flask", output_type: "consumable", output_power: 3,
+    output_rarity: "uncommon",
+    output_blurb: "Restores 3 mana. Concentrate to boost potency.",
+    inputs: [{ resource_id: "sunleaf", qty: 2 }],
+    gold_cost: 25, level_req: 1,
+  },
+  {
+    id: "antidote", station: "apothecary",
+    output_name: "🟢 Antidote", output_type: "consumable", output_power: 0,
+    output_rarity: "uncommon",
+    output_blurb: "Clears poison status and grants brief Regen.",
+    inputs: [{ resource_id: "mossroot", qty: 2 }, { resource_id: "sunleaf", qty: 1 }],
+    gold_cost: 35, level_req: 2,
+  },
+  {
+    id: "endurance_tonic", station: "apothecary",
+    output_name: "⚗️ Endurance Tonic", output_type: "tool", output_power: 4,
+    output_rarity: "uncommon",
+    output_blurb: "Self-Regen for 5 actions. Stout, earthy taste.",
+    inputs: [{ resource_id: "mossroot", qty: 2 }, { resource_id: "nightbloom", qty: 1 }],
+    gold_cost: 60, level_req: 3,
+  },
+  {
+    id: "focus_draught", station: "apothecary",
+    output_name: "🔮 Focus Draught", output_type: "magic", output_power: 1,
+    output_rarity: "rare",
+    output_blurb: "Permanently raises max mana by 1. One-shot.",
+    inputs: [{ resource_id: "sunleaf", qty: 2 }, { resource_id: "nightbloom", qty: 1 }],
+    gold_cost: 120, level_req: 4,
+  },
+];
+
+export function findRecipe(id: string): RecipeSpec | undefined {
+  return RECIPE_CATALOG.find((r) => r.id === id);
+}
+
+// Camp upgrade catalog. v1 ships with one buildable upgrade (worker_tent_1).
+// `coming_soon: true` entries render greyed in the Build tab as a hint for
+// where the upgrade tree is going.
+export interface CampUpgradeSpec {
+  key: string;
+  label: string;
+  blurb: string;
+  icon: string;
+  gold_cost: number;
+  level_req: number;
+  // What the upgrade unlocks. v1 only honors `extra_slot`; later we add
+  // time_pct, yield_pct, etc.
+  effect: { kind: "extra_slot" } | { kind: "future" };
+  coming_soon?: boolean;
+}
+
+export const CAMP_UPGRADE_CATALOG: CampUpgradeSpec[] = [
+  {
+    key: "worker_tent_1",
+    label: "Pitch a Worker Tent",
+    blurb: "Hire a worker. Adds a second gathering slot — run two tasks in parallel.",
+    icon: "tent",
+    gold_cost: 250,
+    level_req: 3,
+    effect: { kind: "extra_slot" },
+  },
+  {
+    key: "worker_tent_2",
+    label: "Second Worker Tent",
+    blurb: "Three gathering tasks at once. Coming soon.",
+    icon: "tent",
+    gold_cost: 800,
+    level_req: 6,
+    effect: { kind: "future" },
+    coming_soon: true,
+  },
+  {
+    key: "tent_upgrade_quickdry",
+    label: "Quickdry Frames",
+    blurb: "Reduces all gather durations by 25%. Coming soon.",
+    icon: "fast-forward-button",
+    gold_cost: 600,
+    level_req: 5,
+    effect: { kind: "future" },
+    coming_soon: true,
+  },
+];
+
+export function findCampUpgrade(key: string): CampUpgradeSpec | undefined {
+  return CAMP_UPGRADE_CATALOG.find((u) => u.key === key);
+}
+
+// Total gather slots available to a character given their built upgrades. v1:
+// 1 (main char) + 1 per built `worker_tent_*` upgrade (only worker_tent_1 is
+// buildable for now; future tents extend this transparently).
+export function gatherSlotCount(builtKeys: string[]): number {
+  let slots = 1;
+  for (const key of builtKeys) {
+    if (key.startsWith("worker_tent_")) slots += 1;
+  }
+  return slots;
 }

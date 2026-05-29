@@ -5,7 +5,7 @@
 // combat over WebSocket.
 
 import { DurableObject } from "cloudflare:workers";
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { getCookie, setCookie, deleteCookie } from "hono/cookie";
 
 import {
@@ -72,6 +72,21 @@ import {
   MERCS,
   findMerc,
   MONSTER_ELEMENT_AFFINITY_CHANCE,
+  // Camp / gathering / crafting
+  CAMP_NODE_CONFIG,
+  CAMP_TIERS,
+  CAMP_UPGRADE_CATALOG,
+  RECIPE_CATALOG,
+  RESOURCE_CATALOG,
+  findCampUpgrade,
+  findRecipe,
+  findResource,
+  gatherSlotCount,
+  resourceItemName,
+  rollGatherYield,
+  type CampNode,
+  type CampTier,
+  type RecipeSpec,
   type CombatEvent,
   type CombatFighter,
   type CombatMonster,
@@ -210,6 +225,22 @@ import {
   setActiveSlot,
   deleteCharacterSlot,
   getRecentCharacterNames,
+  // Camp / gathering / crafting
+  APOTHECARY_POTENCY_CAP,
+  SMITHY_SHARPEN_GOLD_CAP,
+  SMITHY_SHARPEN_TOTAL_CAP,
+  addResource,
+  bumpSharpens,
+  getGatheringTask,
+  listActiveGatheringTasks,
+  listCampUpgrades,
+  markGatheringTaskClaimed,
+  startGatheringTask,
+  tryAddPotencyStack,
+  tryBuildCampUpgrade,
+  tryConsumeResource,
+  tryWriteGatheringYield,
+  type GatheringTask,
 } from "@gantt-quest/db";
 
 // =============================================================================
@@ -2758,6 +2789,334 @@ app.post("/api/smithy/repair", async (c) => {
   return c.json({ ok: true, paid: cost, gold_remaining: character.gold - cost, armor_restored: armorMissing, armor_max: armorMax });
 });
 
+// =============================================================================
+// CAMP — gathering tasks (mine / forage / fish), worker-tent upgrades.
+// Yields are rolled lazily: a task's yield_json is filled on the first read
+// after expires_at via rollGatherYield(taskId, …) so a status fetch and a
+// claim always agree on the same outcome.
+// =============================================================================
+
+// Ensures any expired-but-unrolled tasks have their yield persisted, then
+// returns the freshest list. Idempotent — safe to call from /status and
+// /claim alike.
+async function rollAndPersistExpiredYields(
+  db: D1Database,
+  tasks: GatheringTask[],
+): Promise<GatheringTask[]> {
+  const now = Date.now();
+  const refreshed: GatheringTask[] = [];
+  for (const task of tasks) {
+    if (task.yield || task.expires_at > now) {
+      refreshed.push(task);
+      continue;
+    }
+    const rolled = rollGatherYield(task.id, task.node, task.tier);
+    const yieldData = {
+      resources: rolled.resources.map((r) => ({ name: r.name, qty: r.qty })),
+      xp: rolled.xp,
+      gold: rolled.gold,
+      ...(rolled.gold_strike ? { gold_strike: true } : {}),
+    };
+    await tryWriteGatheringYield(db, task.id, yieldData);
+    refreshed.push({ ...task, yield: yieldData });
+  }
+  return refreshed;
+}
+
+app.get("/api/camp/status", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const character = await getCharacter(c.env.DB, session.slack_user_id);
+  if (!character) return c.json({ error: "no_character" }, 404);
+  const [activeRaw, upgrades] = await Promise.all([
+    listActiveGatheringTasks(c.env.DB, session.slack_user_id),
+    listCampUpgrades(c.env.DB, session.slack_user_id),
+  ]);
+  const active = await rollAndPersistExpiredYields(c.env.DB, activeRaw);
+  const builtKeys = upgrades.map((u) => u.upgrade_key);
+  const slotCount = gatherSlotCount(builtKeys);
+  return c.json({
+    now: Date.now(),
+    active: active.map((t) => ({
+      id: t.id,
+      node: t.node,
+      tier: t.tier,
+      worker_slot: t.worker_slot,
+      started_at: t.started_at,
+      expires_at: t.expires_at,
+      ready: t.expires_at <= Date.now(),
+      yield: t.yield,
+    })),
+    slots: { total: slotCount, in_use: active.length, available: Math.max(0, slotCount - active.length) },
+    upgrades_built: builtKeys,
+    upgrades_catalog: CAMP_UPGRADE_CATALOG,
+    gold: character.gold,
+    level: character.level,
+  });
+});
+
+app.post("/api/camp/start", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const character = await getCharacter(c.env.DB, session.slack_user_id);
+  if (!character) return c.json({ error: "no_character" }, 404);
+  if (character.downed_until && character.downed_until > Date.now()) {
+    return c.json({ error: "downed" }, 400);
+  }
+  if (await getActiveQuestForCharacter(c.env.DB, session.slack_user_id)) {
+    return c.json({ error: "mid_quest" }, 400);
+  }
+  const body = await c.req.json().catch(() => null) as { node?: string; tier?: string } | null;
+  const node = body?.node as CampNode | undefined;
+  const tier = body?.tier as CampTier | undefined;
+  if (!node || !(node in CAMP_NODE_CONFIG)) return c.json({ error: "bad_node" }, 400);
+  if (!tier || !(tier in CAMP_TIERS)) return c.json({ error: "bad_tier" }, 400);
+  const [active, upgrades] = await Promise.all([
+    listActiveGatheringTasks(c.env.DB, session.slack_user_id),
+    listCampUpgrades(c.env.DB, session.slack_user_id),
+  ]);
+  const slotCount = gatherSlotCount(upgrades.map((u) => u.upgrade_key));
+  if (active.length >= slotCount) {
+    return c.json({ error: "no_slot", slots: slotCount, in_use: active.length }, 400);
+  }
+  // Worker slot is just an index — main char = 1, tents fill 2..N. Pick the
+  // lowest free index so the strip's slot labels stay stable.
+  const used = new Set(active.map((t) => t.worker_slot));
+  let workerSlot = 1;
+  while (used.has(workerSlot)) workerSlot += 1;
+  const tierSpec = CAMP_TIERS[tier];
+  const task = await startGatheringTask(c.env.DB, {
+    character_id: session.slack_user_id,
+    node, tier,
+    worker_slot: workerSlot,
+    duration_ms: tierSpec.duration_ms,
+  });
+  return c.json({ ok: true, task });
+});
+
+app.post("/api/camp/claim/:taskId", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const taskId = parseInt(c.req.param("taskId"), 10);
+  if (!Number.isFinite(taskId)) return c.json({ error: "bad_task_id" }, 400);
+  const character = await getCharacter(c.env.DB, session.slack_user_id);
+  if (!character) return c.json({ error: "no_character" }, 404);
+  const task = await getGatheringTask(c.env.DB, taskId, session.slack_user_id);
+  if (!task) return c.json({ error: "not_yours" }, 404);
+  if (task.claimed_at) return c.json({ error: "already_claimed" }, 400);
+  if (task.expires_at > Date.now()) return c.json({ error: "not_ready" }, 400);
+  // Make sure the yield is rolled and persisted before marking claimed.
+  const [persisted] = await rollAndPersistExpiredYields(c.env.DB, [task]);
+  const yieldData = persisted.yield;
+  if (!yieldData) return c.json({ error: "no_yield" }, 500);
+  const marked = await markGatheringTaskClaimed(c.env.DB, taskId, session.slack_user_id);
+  if (!marked) return c.json({ error: "raced" }, 409);
+  // Grant resources + XP/gold. Resources stack via addResource; XP/gold via
+  // awardSpoils so level-up flows fire as normal.
+  for (const r of yieldData.resources) {
+    const id = RESOURCE_CATALOG.find((s) => `${s.emoji} ${s.name}` === r.name)?.id;
+    const spec = id ? findResource(id) : undefined;
+    await addResource(
+      c.env.DB,
+      session.slack_user_id,
+      r.name,
+      r.qty,
+      spec?.rarity ?? "common",
+      spec?.blurb ?? "",
+    );
+  }
+  const spoils = await awardSpoils(
+    c.env.DB,
+    character,
+    yieldData.xp,
+    yieldData.gold,
+    () => 1 + Math.floor(Math.random() * 6),
+    xpForLevel,
+  );
+  return c.json({ ok: true, task_id: taskId, yield: yieldData, spoils });
+});
+
+app.post("/api/camp/upgrade/:upgradeKey", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const upgradeKey = c.req.param("upgradeKey");
+  const spec = findCampUpgrade(upgradeKey);
+  if (!spec) return c.json({ error: "unknown_upgrade" }, 404);
+  if (spec.coming_soon) return c.json({ error: "coming_soon" }, 400);
+  const character = await getCharacter(c.env.DB, session.slack_user_id);
+  if (!character) return c.json({ error: "no_character" }, 404);
+  if (character.level < spec.level_req) {
+    return c.json({ error: "level_too_low", needed: spec.level_req, level: character.level }, 400);
+  }
+  if (character.gold < spec.gold_cost) {
+    return c.json({ error: "insufficient_gold", price: spec.gold_cost, gold: character.gold }, 400);
+  }
+  const paid = await tryDeductGold(c.env.DB, session.slack_user_id, spec.gold_cost);
+  if (!paid) return c.json({ error: "insufficient_gold_race" }, 400);
+  const built = await tryBuildCampUpgrade(c.env.DB, session.slack_user_id, upgradeKey);
+  if (!built) {
+    await addGold(c.env.DB, session.slack_user_id, spec.gold_cost);
+    return c.json({ error: "already_built" }, 400);
+  }
+  return c.json({ ok: true, upgrade: spec, paid: spec.gold_cost, gold_remaining: character.gold - spec.gold_cost });
+});
+
+// Smithy Forge — craft a gear item from ore. Inputs validated against the
+// recipe catalog; outputs go through addItem the same way shop purchases do.
+app.post("/api/smithy/forge/:recipeId", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const recipe = findRecipe(c.req.param("recipeId"));
+  if (!recipe || recipe.station !== "smithy") return c.json({ error: "unknown_recipe" }, 404);
+  return await runRecipe(c, session.slack_user_id, recipe);
+});
+
+app.post("/api/apothecary/brew/:recipeId", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const recipe = findRecipe(c.req.param("recipeId"));
+  if (!recipe || recipe.station !== "apothecary") return c.json({ error: "unknown_recipe" }, 404);
+  return await runRecipe(c, session.slack_user_id, recipe);
+});
+
+async function runRecipe(c: Context<{ Bindings: Env }>, userId: string, recipe: RecipeSpec): Promise<Response> {
+  const character = await getCharacter(c.env.DB, userId);
+  if (!character) return c.json({ error: "no_character" }, 404);
+  if (await getActiveQuestForCharacter(c.env.DB, userId)) {
+    return c.json({ error: "mid_quest" }, 400);
+  }
+  if (character.level < recipe.level_req) {
+    return c.json({ error: "level_too_low", needed: recipe.level_req, level: character.level }, 400);
+  }
+  if (character.gold < recipe.gold_cost) {
+    return c.json({ error: "insufficient_gold", price: recipe.gold_cost, gold: character.gold }, 400);
+  }
+  // Consume inputs first (atomic per-resource). If any consume fails, refund
+  // the resources we already deducted so the player doesn't end up partway.
+  const consumed: Array<{ resource_id: string; qty: number }> = [];
+  for (const input of recipe.inputs) {
+    const itemName = resourceItemName(input.resource_id);
+    const ok = await tryConsumeResource(c.env.DB, userId, itemName, input.qty);
+    if (!ok) {
+      // Refund anything we already took.
+      for (const back of consumed) {
+        await addResource(c.env.DB, userId, resourceItemName(back.resource_id), back.qty);
+      }
+      return c.json({ error: "insufficient_resources", needed: input.resource_id, qty: input.qty }, 400);
+    }
+    consumed.push(input);
+  }
+  const paid = await tryDeductGold(c.env.DB, userId, recipe.gold_cost);
+  if (!paid) {
+    for (const back of consumed) {
+      await addResource(c.env.DB, userId, resourceItemName(back.resource_id), back.qty);
+    }
+    return c.json({ error: "insufficient_gold_race" }, 400);
+  }
+  const item = await addItem(c.env.DB, {
+    character_id: userId,
+    item_name: recipe.output_name,
+    item_type: recipe.output_type,
+    power: recipe.output_power,
+    rarity: recipe.output_rarity,
+    flavor: recipe.output_blurb,
+    slot: recipe.output_slot ?? undefined,
+    item_subtype: recipe.output_subtype ?? undefined,
+    weapon_range: recipe.output_type === "weapon" ? "melee" : null,
+  });
+  return c.json({
+    ok: true,
+    recipe_id: recipe.id,
+    item,
+    paid: recipe.gold_cost,
+    consumed,
+    gold_remaining: character.gold - recipe.gold_cost,
+  });
+}
+
+// Smithy Reinforce — extend sharpens past the gold cap (3) up to total cap
+// (6) using ore. Each reinforce costs 1 ore of the matching tier (any ore
+// accepted; client picks). Power bumps +1 just like a normal sharpen.
+app.post("/api/smithy/reinforce/:itemId", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const itemId = parseInt(c.req.param("itemId"), 10);
+  if (!Number.isFinite(itemId)) return c.json({ error: "bad_item_id" }, 400);
+  const body = await c.req.json().catch(() => null) as { resource_id?: string } | null;
+  const resourceId = body?.resource_id;
+  if (!resourceId) return c.json({ error: "bad_resource" }, 400);
+  const spec = findResource(resourceId);
+  if (!spec || spec.node !== "mine") return c.json({ error: "not_ore" }, 400);
+  const character = await getCharacter(c.env.DB, session.slack_user_id);
+  if (!character) return c.json({ error: "no_character" }, 404);
+  if (await getActiveQuestForCharacter(c.env.DB, session.slack_user_id)) {
+    return c.json({ error: "mid_quest" }, 400);
+  }
+  const item = await getItem(c.env.DB, itemId, session.slack_user_id);
+  if (!item) return c.json({ error: "not_yours" }, 404);
+  if (item.item_type !== "weapon" && item.item_type !== "armor") {
+    return c.json({ error: "not_smithy_gear" }, 400);
+  }
+  if (item.sharpens_count < SMITHY_SHARPEN_GOLD_CAP) {
+    return c.json({ error: "use_sharpen_first", at: item.sharpens_count, gold_cap: SMITHY_SHARPEN_GOLD_CAP }, 400);
+  }
+  if (item.sharpens_count >= SMITHY_SHARPEN_TOTAL_CAP) {
+    return c.json({ error: "at_total_cap", cap: SMITHY_SHARPEN_TOTAL_CAP }, 400);
+  }
+  const consumed = await tryConsumeResource(c.env.DB, session.slack_user_id, resourceItemName(resourceId), 1);
+  if (!consumed) return c.json({ error: "insufficient_resources", needed: resourceId, qty: 1 }, 400);
+  const bumped = await bumpSharpens(c.env.DB, item.id, session.slack_user_id);
+  if (!bumped) {
+    await addResource(c.env.DB, session.slack_user_id, resourceItemName(resourceId), 1);
+    return c.json({ error: "raced" }, 409);
+  }
+  return c.json({
+    ok: true,
+    item: { id: item.id, item_name: item.item_name, old_power: item.power, new_power: item.power + 1, sharpens_count: item.sharpens_count + 1, total_cap: SMITHY_SHARPEN_TOTAL_CAP },
+    consumed: resourceId,
+  });
+});
+
+// Apothecary Concentrate — apply 1 herb to a potion to add a potency stack
+// (max 2). At use time the potion's effect is boosted by +25% per stack;
+// dispatch reads the potency_stacks field from inventory.
+app.post("/api/apothecary/concentrate/:itemId", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const itemId = parseInt(c.req.param("itemId"), 10);
+  if (!Number.isFinite(itemId)) return c.json({ error: "bad_item_id" }, 400);
+  const body = await c.req.json().catch(() => null) as { resource_id?: string } | null;
+  const resourceId = body?.resource_id;
+  if (!resourceId) return c.json({ error: "bad_resource" }, 400);
+  const spec = findResource(resourceId);
+  if (!spec || spec.node !== "forage") return c.json({ error: "not_herb" }, 400);
+  const character = await getCharacter(c.env.DB, session.slack_user_id);
+  if (!character) return c.json({ error: "no_character" }, 404);
+  if (await getActiveQuestForCharacter(c.env.DB, session.slack_user_id)) {
+    return c.json({ error: "mid_quest" }, 400);
+  }
+  const item = await getItem(c.env.DB, itemId, session.slack_user_id);
+  if (!item) return c.json({ error: "not_yours" }, 404);
+  if (item.item_type !== "consumable" && item.item_type !== "tool") {
+    return c.json({ error: "not_potion" }, 400);
+  }
+  if (item.potency_stacks >= APOTHECARY_POTENCY_CAP) {
+    return c.json({ error: "at_cap", cap: APOTHECARY_POTENCY_CAP }, 400);
+  }
+  const consumed = await tryConsumeResource(c.env.DB, session.slack_user_id, resourceItemName(resourceId), 1);
+  if (!consumed) return c.json({ error: "insufficient_resources", needed: resourceId, qty: 1 }, 400);
+  const bumped = await tryAddPotencyStack(c.env.DB, item.id, session.slack_user_id, APOTHECARY_POTENCY_CAP);
+  if (!bumped) {
+    await addResource(c.env.DB, session.slack_user_id, resourceItemName(resourceId), 1);
+    return c.json({ error: "raced" }, 409);
+  }
+  return c.json({
+    ok: true,
+    item: { id: item.id, item_name: item.item_name, potency_stacks: item.potency_stacks + 1, cap: APOTHECARY_POTENCY_CAP },
+    consumed: resourceId,
+  });
+});
+
 app.post("/api/inn/:roomId/stay", async (c) => {
   const session = await currentSession(c.env.DB, c.req.header("cookie"));
   if (!session) return c.json({ error: "unauthenticated" }, 401);
@@ -4411,6 +4770,12 @@ app.post("/api/dev/cooldowns", async (c) => {
     .bind(session.slack_user_id).run();
   await c.env.DB.prepare("DELETE FROM shop_stock WHERE channel_id = ?").bind("local-dev").run();
   await c.env.DB.prepare("DELETE FROM smithy_stock WHERE channel_id = ?").bind("local-dev").run();
+  // Camp: fast-forward any in-flight gather tasks so the next status fetch
+  // rolls + persists their yields. Lets local dev exercise the toast flow
+  // without waiting 15 minutes.
+  await c.env.DB
+    .prepare("UPDATE gathering_tasks SET expires_at = ? WHERE character_id = ? AND claimed_at IS NULL")
+    .bind(Date.now() - 1000, session.slack_user_id).run();
   return c.json({ ok: true });
 });
 

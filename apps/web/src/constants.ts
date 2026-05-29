@@ -88,6 +88,7 @@ export const ITEM_TYPE_ORDER: ItemType[] = [
   "revive",
   "tool",
   "scroll",
+  "resource",
 ];
 
 export const ITEM_TYPE_LABELS: Record<ItemType, string> = {
@@ -98,6 +99,7 @@ export const ITEM_TYPE_LABELS: Record<ItemType, string> = {
   revive: "Revives",
   tool: "Tools",
   scroll: "Scrolls",
+  resource: "Resources",
 };
 
 export const SLOT_LABELS: Record<EquipSlot, string> = {
@@ -182,8 +184,37 @@ export const DISTRICT_CONFIG: {
   { key: "inn",       label: "Inn",       icon: "bed",             color: "#1a3a2a", artKey: "inn_art_url" },
   { key: "smithy",    label: "Smithy",    icon: "anvil",           color: "#2a1a1a", artKey: "smithy_art_url" },
   { key: "apothecary", label: "Apothecary", icon: "poison-bottle", color: "#1a2d1a", artKey: "apothecary_art_url" },
-  { key: "hunt",      label: "Outskirts", icon: "sword",           color: "#1a1a2e", artKey: "outskirts_art_url" },
+  { key: "camp",      label: "My Camp",   icon: "tent",            color: "#1a2e1a", artKey: "outskirts_art_url" },
 ];
+
+// Mirror of CAMP_TIERS and CAMP_NODE_CONFIG in @gantt-quest/core, exported here
+// so the Camp components can render without importing from the workspace core
+// (keeps client-side bundle predictable; values are tiny and stable).
+import type { CampNode, CampNodeSpec, CampTier, CampTierSpec } from "./types";
+
+export const CAMP_TIERS: Record<CampTier, CampTierSpec> = {
+  quick:    { tier: "quick",    label: "Quick",    duration_ms:  15 * 60 * 1000, base_xp:  6,  base_gold:  5 },
+  standard: { tier: "standard", label: "Standard", duration_ms:  60 * 60 * 1000, base_xp: 30,  base_gold: 25 },
+  deep:     { tier: "deep",     label: "Deep",     duration_ms: 240 * 60 * 1000, base_xp: 90,  base_gold: 80 },
+};
+
+export const CAMP_NODE_CONFIG: Record<CampNode, CampNodeSpec> = {
+  mine: {
+    node: "mine",   label: "The Mine",     icon: "mining-diamonds",
+    primary: "iron_ore", uncommon: "silver_ore", rare: "mithril_ore",
+    blurb: "Veins of ore run deep under the bluffs. Bring it back for the smithy.",
+  },
+  forage: {
+    node: "forage", label: "Herb Garden",  icon: "herbs-bundle",
+    primary: "mossroot", uncommon: "sunleaf", rare: "nightbloom",
+    blurb: "Wild herbs ring the camp clearing. The apothecary pays for stock.",
+  },
+  fish: {
+    node: "fish",   label: "Fishing Hole", icon: "fishing-pole",
+    primary: "river_carp", uncommon: "silverfin", rare: "abyss_eel",
+    blurb: "Quiet pool by the willows. The pub kitchen has standing orders.",
+  },
+};
 
 export const PRIMARY_STAT_META: Record<string, { color: string; label: string; tooltip: (v: number, level: number) => string }> = {
   str:      { color: "#f87171", label: "STR", tooltip: (v) => `Attack modifier\nfloor((${v} − 5) / 2) = ${Math.floor((v - 5) / 2) >= 0 ? "+" : ""}${Math.floor((v - 5) / 2)}\nAdded to weapon damage rolls` },

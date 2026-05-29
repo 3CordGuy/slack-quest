@@ -145,9 +145,19 @@ export const ItemCell = forwardRef<
         </div>
       )}
       <Icon name={itemIcon(item)} size={iconSize} color={itemIconColor(item) ?? rc} />
-      {(mode === "icon" || (mode === "compact" && powerValue > 0)) && (
+      {item.item_type === "resource" && (item.qty ?? 1) > 0 && (mode === "icon" || mode === "compact") && (
+        <div style={{ position: "absolute", bottom: 3, right: 3, minWidth: 18, height: 18, background: "#0a0b0e", border: `1px solid ${rc}55`, borderRadius: "50%", fontSize: 9, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", color: rc, lineHeight: 1, padding: "0 2px" }}>
+          ×{item.qty ?? 1}
+        </div>
+      )}
+      {item.item_type !== "resource" && (mode === "icon" || (mode === "compact" && powerValue > 0)) && (
         <div style={{ position: "absolute", bottom: 3, right: 3, minWidth: 18, height: 18, background: "#0a0b0e", border: `1px solid ${rc}55`, borderRadius: "50%", fontSize: 9, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", color: rc, lineHeight: 1, padding: "0 2px" }}>
           +{powerValue}
+        </div>
+      )}
+      {(item.potency_stacks ?? 0) > 0 && mode !== "detailed" && (
+        <div style={{ position: "absolute", top: 4, left: 4, background: "#1d1f23", border: "1px solid #7e22ce", borderRadius: 3, fontSize: 8, fontWeight: 700, padding: "1px 3px", lineHeight: 1, color: "#c084fc" }} title={`Concentrated ×${item.potency_stacks}`}>
+          ✦×{item.potency_stacks}
         </div>
       )}
       {elementEmoji && mode === "icon" && (

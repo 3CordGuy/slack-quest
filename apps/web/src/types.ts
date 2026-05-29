@@ -34,7 +34,8 @@ export type ItemType =
   | "magic"
   | "revive"
   | "tool"
-  | "scroll";
+  | "scroll"
+  | "resource";
 export type Rarity = "common" | "uncommon" | "rare" | "epic" | "legendary";
 export type WeaponRange = "melee" | "ranged" | "focus";
 export type EquipSlot = "main_hand" | "off_hand" | "body" | "helmet" | "pants" | "boots" | "ring" | "amulet";
@@ -55,6 +56,8 @@ export interface Item {
   item_subtype: string | null;
   level_req: number;
   element: "fire" | "ice" | "lightning" | null;
+  qty?: number;
+  potency_stacks?: number;
 }
 
 export type QuestVariant = "standard" | "boss" | "gauntlet" | "bounty_pack" | "tower";
@@ -498,7 +501,70 @@ export interface RecentQuestsResponse {
   quests: RecentQuest[];
 }
 
-export type TownSection = "job_board" | "pub" | "shop" | "inn" | "smithy" | "hunt" | "apothecary";
+export type TownSection = "job_board" | "pub" | "shop" | "inn" | "smithy" | "camp" | "apothecary";
+
+// Sub-tab within My Camp. "hunt" is the legacy free-hunt launcher moved inside
+// camp; the gathering nodes (mine/forage/fish) sit alongside it.
+export type CampTab = "hunt" | "mine" | "forage" | "fish" | "build";
+export type CampNode = "mine" | "forage" | "fish";
+export type CampTier = "quick" | "standard" | "deep";
+
+export interface CampTierSpec {
+  tier: CampTier;
+  label: string;
+  duration_ms: number;
+  base_xp: number;
+  base_gold: number;
+}
+
+export interface CampNodeSpec {
+  node: CampNode;
+  label: string;
+  icon: string;
+  primary: string;
+  uncommon: string;
+  rare: string;
+  blurb: string;
+}
+
+export interface CampUpgradeSpec {
+  key: string;
+  label: string;
+  blurb: string;
+  icon: string;
+  gold_cost: number;
+  level_req: number;
+  effect: { kind: "extra_slot" } | { kind: "future" };
+  coming_soon?: boolean;
+}
+
+export interface GatheringYield {
+  resources: Array<{ name: string; qty: number }>;
+  xp: number;
+  gold: number;
+  gold_strike?: boolean;
+}
+
+export interface ActiveGatheringTask {
+  id: number;
+  node: CampNode;
+  tier: CampTier;
+  worker_slot: number;
+  started_at: number;
+  expires_at: number;
+  ready: boolean;
+  yield: GatheringYield | null;
+}
+
+export interface CampStatusResponse {
+  now: number;
+  active: ActiveGatheringTask[];
+  slots: { total: number; in_use: number; available: number };
+  upgrades_built: string[];
+  upgrades_catalog: CampUpgradeSpec[];
+  gold: number;
+  level: number;
+}
 
 export interface TownArt {
   overview_art_url: string | null;

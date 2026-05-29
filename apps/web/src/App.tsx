@@ -20,6 +20,7 @@ import type {
   AchievementsResponse, ConfirmRequest, ActiveQuestResponse, JoinableQuest, RecentQuestsResponse,
   TownSection, TownArt, ApothecaryDownedChar, ApothecaryStapleItem, ApothecaryResponse,
   JobListing, BoardResponse, LoadState, SlotsListResponse, QuestOption, InventorySort,
+  CampStatusResponse, CampNode, CampTier,
 } from "./types";
 import {
   CATALOG_EFFECT, ERROR_LABELS, RARITY_COLOR, RARITY_RANK, EFFECT_COLOR, EFFECT_ICON,
@@ -57,6 +58,8 @@ import {
 } from "./components/Character";
 import { InventoryCard, InventoryFullScreen, DollSlotCell, DroppablePackPanel, DraggablePackItem, DragItemPreview, ItemCell, ItemSlot, ItemDetailPopover } from "./components/Inventory";
 import { StartQuestCard, JoinableQuestCard, TownNav, JobPostingCard, StepPicker, HuntSection, JobBoardSection, DistrictTile, TownMap, WardMap } from "./components/Town";
+import { Camp } from "./components/Camp";
+import { BrewPanel, ForgePanel } from "./components/CampCrafting";
 import { TowerInterlude, ActiveQuestCard, ClickablePortrait } from "./components/Quest";
 import { DevToolsModal } from "./components/DevTools";
 
@@ -124,6 +127,55 @@ export function App() {
   const [characterSlotsOpen, setCharacterSlotsOpen] = useState(false);
   const [devToolsOpen, setDevToolsOpen] = useState(false);
   const isMobile = useMobileViewport();
+
+  // Camp status drives both the My Camp modal and the auto-claim toast that
+  // pops when a gathering task finishes while the player is elsewhere. We
+  // poll every 30s while authed; the server caps cost (it just returns the
+  // task list + lazily-rolled yields). Tasks the player has dismissed
+  // locally are tracked in a ref so a refresh doesn't re-trigger the toast.
+  const [campStatus, setCampStatus] = useState<CampStatusResponse | null>(null);
+  const dismissedReadyTasksRef = useRef<Set<number>>(new Set());
+
+  async function refreshCampStatus() {
+    try {
+      const res = await fetch("/api/camp/status", { credentials: "include", cache: "no-store" });
+      if (!res.ok) return;
+      const body = await res.json() as CampStatusResponse;
+      setCampStatus(body);
+      // Fire toasts for tasks the user hasn't dismissed yet. Each toast is
+      // dismissible; clicking Collect on the strip flips the local ref so
+      // we don't re-fire on next poll.
+      for (const t of body.active) {
+        if (!t.ready) continue;
+        if (dismissedReadyTasksRef.current.has(t.id)) continue;
+        const nodeLabel = t.node === "mine" ? "Mining" : t.node === "forage" ? "Foraging" : "Fishing";
+        const summary = t.yield && t.yield.resources.length > 0
+          ? t.yield.resources.map((r) => `${r.qty} × ${r.name}`).join(", ")
+          : "ready to collect";
+        toast(
+          (tt) => (
+            <span>
+              <strong>{nodeLabel} complete</strong> — {summary}
+              <button
+                onClick={() => { dismissedReadyTasksRef.current.add(t.id); toast.dismiss(tt.id); }}
+                style={{ marginLeft: 12, background: "transparent", color: "inherit", border: "none", cursor: "pointer", textDecoration: "underline" }}
+              >dismiss</button>
+            </span>
+          ),
+          { id: `gather-${t.id}`, duration: Infinity },
+        );
+      }
+    } catch {
+      // Polling errors are silent — next tick retries.
+    }
+  }
+
+  useEffect(() => {
+    if (state.kind !== "auth") return;
+    void refreshCampStatus();
+    const id = setInterval(() => { void refreshCampStatus(); }, 30000);
+    return () => clearInterval(id);
+  }, [state.kind]);
 
   useEffect(() => {
     void refresh();
@@ -844,11 +896,70 @@ export function App() {
       body: JSON.stringify({ tier, monster_count: monsterCount, invitees }),
     });
     if (ok) {
-      // Close the Outskirts modal so the new active-quest banner shows on
-      // the ward map underneath.
+      // Close My Camp so the new active-quest banner shows on the ward map.
       setTownSection(null);
       void refresh();
     }
+  }
+
+  async function startGather(node: CampNode, tier: CampTier) {
+    const res = await fetch("/api/camp/start", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({ node, tier }),
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({})) as { error?: string };
+      toast.error(`Couldn't start: ${body.error ?? res.statusText}`);
+      return;
+    }
+    toast.success("Gathering started");
+    await refreshCampStatus();
+  }
+
+  async function claimGather(taskId: number) {
+    const res = await fetch(`/api/camp/claim/${taskId}`, {
+      method: "POST",
+      credentials: "include",
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({})) as { error?: string };
+      toast.error(`Couldn't collect: ${body.error ?? res.statusText}`);
+      return;
+    }
+    const body = await res.json() as {
+      yield?: { resources: Array<{ name: string; qty: number }>; xp: number; gold: number; gold_strike?: boolean };
+    };
+    const yieldData = body.yield;
+    if (yieldData) {
+      const resLine = yieldData.resources.map((r) => `${r.qty} × ${r.name}`).join(", ");
+      const headline = yieldData.gold_strike
+        ? `💰 Struck gold! +${yieldData.gold} gold`
+        : resLine
+          ? `Collected ${resLine}`
+          : "Collected";
+      toast.success(headline);
+    }
+    // Mark this task locally so the polling toast doesn't re-fire on it.
+    dismissedReadyTasksRef.current.add(taskId);
+    await Promise.all([refreshCampStatus(), refreshMe()]);
+    // Refresh inventory in the auth state so the new resources/gold show up.
+    void refresh();
+  }
+
+  async function buildCampUpgrade(upgradeKey: string) {
+    const res = await fetch(`/api/camp/upgrade/${upgradeKey}`, {
+      method: "POST",
+      credentials: "include",
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({})) as { error?: string };
+      toast.error(`Couldn't build: ${body.error ?? res.statusText}`);
+      return;
+    }
+    toast.success("Worker tent pitched");
+    await Promise.all([refreshCampStatus(), refreshMe()]);
   }
 
   if (state.kind === "loading") return <Centered>Loading…</Centered>;
@@ -939,7 +1050,7 @@ export function App() {
   // switches the top-level view (per design), inventory uses its own
   // fullscreen overlay state.
   const LOCATION_MODAL_KEYS: TownSection[] = [
-    "pub", "shop", "inn", "smithy", "apothecary", "hunt",
+    "pub", "shop", "inn", "smithy", "apothecary", "camp",
   ];
   const modalLoc =
     townSection && LOCATION_MODAL_KEYS.includes(townSection) ? townSection : null;
@@ -1097,6 +1208,14 @@ export function App() {
             onRepair={smithyRepair}
             onBuy={smithyBuy}
           />
+          <div style={{ marginTop: 16 }}>
+            <ForgePanel
+              characterLevel={state.me.character.level}
+              gold={state.me.character.gold}
+              inventory={state.inventory}
+              onAfterAction={async () => { await refresh(); }}
+            />
+          </div>
         </LocationModal>
       );
     }
@@ -1119,23 +1238,35 @@ export function App() {
             onSelfRevive={apothecarySelfRevive}
             onRefresh={refreshApothecary}
           />
+          <div style={{ marginTop: 16 }}>
+            <BrewPanel
+              characterLevel={state.me.character.level}
+              gold={state.me.character.gold}
+              inventory={state.inventory}
+              onAfterAction={async () => { await refresh(); await refreshApothecary(); }}
+            />
+          </div>
         </LocationModal>
       );
     }
-    if (modalLoc === "hunt") {
+    if (modalLoc === "camp") {
       return (
         <LocationModal
-          icon="spinning-sword"
-          title="Outskirts"
-          subtitle="Solo hunts"
+          icon="tent"
+          title="My Camp"
+          subtitle="Hunt · Mine · Forage · Fish · Build"
           gold={gold}
           art={state.townArt?.outskirts_art_url ?? null}
           onClose={close}
-          maxWidth={760}
+          maxWidth={880}
         >
-          <HuntSection
+          <Camp
             characterLevel={state.me.character.level}
             overviewArt={state.townArt?.outskirts_art_url ?? null}
+            status={campStatus}
+            onStartGather={startGather}
+            onClaim={claimGather}
+            onBuildUpgrade={buildCampUpgrade}
             onStartHunt={startHunt}
           />
         </LocationModal>
@@ -1150,7 +1281,7 @@ export function App() {
   const crumb = showJobBoardView
     ? "Town · Job Board"
     : modalLoc
-      ? `Town · ${modalLoc === "hunt" ? "Outskirts" : modalLoc[0].toUpperCase() + modalLoc.slice(1)}`
+      ? `Town · ${modalLoc === "camp" ? "My Camp" : modalLoc[0].toUpperCase() + modalLoc.slice(1)}`
       : "Town · The Ward";
 
   return (
