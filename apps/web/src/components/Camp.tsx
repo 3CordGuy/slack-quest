@@ -411,8 +411,10 @@ function TierCard({
     <div style={{
       padding: 16,
       borderRadius: "var(--radius-lg)",
-      border: "1px solid var(--border-base)",
-      background: "var(--bg-card-2)",
+      border: "1px solid rgba(255,255,255,0.08)",
+      background: "rgba(12, 14, 18, 0.72)",
+      backdropFilter: "blur(10px) saturate(1.1)",
+      WebkitBackdropFilter: "blur(10px) saturate(1.1)",
       display: "flex",
       flexDirection: "column",
       gap: 8,

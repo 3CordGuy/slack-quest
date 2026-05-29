@@ -363,7 +363,41 @@ em, .flavor {
 .loc-wide-content {
   flex: 1;
   overflow-y: auto;
+  padding: 0;
+  position: relative;
+}
+/* Full-bleed art pinned to the bottom of the content pane, fading to
+   transparent at the top. Cards in .loc-wide-content-inner float over it. */
+.loc-wide-art-bg {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  width: 100%;
+  height: 55%;
+  min-height: 200px;
+  background-size: cover;
+  background-position: center center;
+  background-repeat: no-repeat;
+  /* Fade from transparent at top → opaque at bottom */
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0%, rgba(0,0,0,0.5) 35%, black 75%);
+  mask-image: linear-gradient(to bottom, transparent 0%, rgba(0,0,0,0.5) 35%, black 75%);
+  pointer-events: none;
+  z-index: 0;
+}
+/* Content sits above the art layer */
+.loc-wide-content-inner {
+  position: relative;
+  z-index: 1;
   padding: 24px 28px;
+  min-height: 100%;
+}
+/* Frosted glass card — for items that render over an art background */
+.glass-card {
+  background: rgba(12, 14, 18, 0.72) !important;
+  backdrop-filter: blur(10px) saturate(1.1);
+  -webkit-backdrop-filter: blur(10px) saturate(1.1);
+  border-color: rgba(255,255,255,0.08) !important;
 }
 /* Mobile: sidebar becomes horizontal tab strip */
 @media (max-width: 768px) {
@@ -397,7 +431,7 @@ em, .flavor {
     border-left-color: transparent;
     border-bottom-color: var(--accent-gold);
   }
-  .loc-wide-content {
+  .loc-wide-content-inner {
     padding: 16px;
   }
 }
