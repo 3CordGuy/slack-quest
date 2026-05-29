@@ -1231,12 +1231,13 @@ export function WardMap({
         minHeight: 540,
       }}
     >
-      {/* Hand-painted world map backdrop. Heavy CSS treatment so the dashed
+      {/* Hand-painted world map backdrop. Light CSS treatment — the art
+          shows through clearly, with only a subtle vignette so the dashed
           roads / nodes / plaza disc stay legible on top:
-          - opacity 0.35 — keeps art subtle
-          - saturate 0.65 — pulls toward night-tinted palette
-          - blur 0.5px — softens raster details
-          - bottom-vignette gradient — darker near nodes/plaza area
+          - opacity 0.55 — art is clearly visible
+          - saturate 0.85 — slight desaturation only
+          - brightness 0.9 — small night-tint dim
+          - bottom-vignette gradient — a touch darker around the edges
           When overviewArtUrl is null the dark void shows through.
           Below 720px the mobile fallback layout doesn't render this. */}
       {overviewArtUrl && (
@@ -1252,8 +1253,8 @@ export function WardMap({
               width: "100%",
               height: "100%",
               objectFit: "cover",
-              opacity: 0.32,
-              filter: "saturate(0.6) brightness(0.7) blur(0.5px)",
+              opacity: 0.55,
+              filter: "saturate(0.85) brightness(0.9)",
               pointerEvents: "none",
               zIndex: 0,
             }}
@@ -1267,7 +1268,7 @@ export function WardMap({
               position: "absolute",
               inset: 0,
               background:
-                "radial-gradient(ellipse 80% 60% at 50% 50%, rgba(14,15,18,0.55), rgba(14,15,18,0.85))",
+                "radial-gradient(ellipse 80% 60% at 50% 50%, rgba(14,15,18,0.25), rgba(14,15,18,0.65))",
               pointerEvents: "none",
               zIndex: 1,
             }}
