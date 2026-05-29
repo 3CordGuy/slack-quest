@@ -33,6 +33,16 @@ const KIND_META: Record<PubErrandKind, { label: string; icon: string; blurb: str
   rare:        { label: "Personal favor", icon: "trophy",       blurb: "A one-time ask. They wouldn't trust anyone else." },
 };
 
+function formatRefreshIn(nowMs: number): string {
+  const nextMidnightMs = (Math.floor(nowMs / 86_400_000) + 1) * 86_400_000;
+  const diffMs = Math.max(0, nextMidnightMs - nowMs);
+  const totalMin = Math.ceil(diffMs / 60_000);
+  const hr = Math.floor(totalMin / 60);
+  const min = totalMin % 60;
+  if (hr === 0) return `${min}m`;
+  return `${hr}h ${min.toString().padStart(2, "0")}m`;
+}
+
 export function PubErrands({ data, inventory, onStart, onClaim, onCancel }: PubErrandsProps) {
   if (!data) return null;
   const active = data.active;
@@ -50,11 +60,18 @@ export function PubErrands({ data, inventory, onStart, onClaim, onCancel }: PubE
     return m;
   }, [data.offers]);
 
+  const refreshIn = formatRefreshIn(data.now);
+
   return (
     <div style={card}>
-      <h2 style={{ ...h2, display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
-        <Icon name="conversation" size={20} /> Errands
-      </h2>
+      <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 8 }}>
+        <h2 style={{ ...h2, display: "flex", alignItems: "center", gap: 10, margin: 0 }}>
+          <Icon name="conversation" size={20} /> Errands
+        </h2>
+        <span style={{ fontSize: 11, color: "var(--fg-mute)", marginLeft: "auto" }}>
+          Refreshes in {refreshIn}
+        </span>
+      </div>
       <p style={muted}>
         <em>"Regulars'll ask favors. Sometimes they pay better than the job board."</em>
       </p>
