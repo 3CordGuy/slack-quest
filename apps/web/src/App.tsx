@@ -1225,6 +1225,7 @@ export function App() {
               } : null}
               jobsOpen={state.board?.jobs.length ?? 0}
               overviewArtUrl={state.townArt?.overview_art_url ?? null}
+              activeTasks={campStatus?.active ?? []}
               onOpenLocation={(loc) => setTownSection(loc)}
               onOpenJobBoard={() => setTownSection("job_board")}
               onOpenInventory={() => setInventoryOpen(true)}
