@@ -1695,6 +1695,7 @@ export interface ResourceSpec {
   id: string;          // short slug used in recipe inputs
   name: string;        // bare name; full inventory name is `${emoji} ${name}`
   emoji: string;
+  icon: string;        // SVG icon name from the local icons registry
   rarity: Rarity;
   node: CampNode;
   blurb: string;
@@ -1702,17 +1703,17 @@ export interface ResourceSpec {
 
 export const RESOURCE_CATALOG: ResourceSpec[] = [
   // Mine
-  { id: "iron_ore",    name: "Iron Ore",    emoji: "⛏️", rarity: "common",   node: "mine",   blurb: "Workhorse ore. Smithy fodder." },
-  { id: "silver_ore",  name: "Silver Ore",  emoji: "🪙", rarity: "uncommon", node: "mine",   blurb: "Glints in torchlight. Better gear inputs." },
-  { id: "mithril_ore", name: "Mithril Ore", emoji: "💠", rarity: "rare",     node: "mine",   blurb: "Light as feather, hard as fang. Rare deep-mine pull." },
+  { id: "iron_ore",    name: "Iron Ore",    emoji: "⛏️", icon: "coal-pile",        rarity: "common",   node: "mine",   blurb: "Workhorse ore. Smithy fodder." },
+  { id: "silver_ore",  name: "Silver Ore",  emoji: "🪙", icon: "crystal-bars",     rarity: "uncommon", node: "mine",   blurb: "Glints in torchlight. Better gear inputs." },
+  { id: "mithril_ore", name: "Mithril Ore", emoji: "💠", icon: "crystal-cluster",  rarity: "rare",     node: "mine",   blurb: "Light as feather, hard as fang. Rare deep-mine pull." },
   // Forage
-  { id: "mossroot",    name: "Mossroot",    emoji: "🌿", rarity: "common",   node: "forage", blurb: "Bitter herb. Healing base." },
-  { id: "sunleaf",     name: "Sunleaf",     emoji: "🍀", rarity: "uncommon", node: "forage", blurb: "Stores warmth. Mana brews." },
-  { id: "nightbloom",  name: "Nightbloom",  emoji: "🌸", rarity: "rare",     node: "forage", blurb: "Blooms only after dusk. Powerful base." },
+  { id: "mossroot",    name: "Mossroot",    emoji: "🌿", icon: "herbs-bundle",     rarity: "common",   node: "forage", blurb: "Bitter herb. Healing base." },
+  { id: "sunleaf",     name: "Sunleaf",     emoji: "🍀", icon: "chestnut-leaf",    rarity: "uncommon", node: "forage", blurb: "Stores warmth. Mana brews." },
+  { id: "nightbloom",  name: "Nightbloom",  emoji: "🌸", icon: "dandelion-flower", rarity: "rare",     node: "forage", blurb: "Blooms only after dusk. Powerful base." },
   // Fish
-  { id: "river_carp",  name: "River Carp",  emoji: "🐟", rarity: "common",   node: "fish",   blurb: "Sells well at the Pub." },
-  { id: "silverfin",   name: "Silverfin",   emoji: "🐠", rarity: "uncommon", node: "fish",   blurb: "Prized at the Pub kitchen." },
-  { id: "abyss_eel",   name: "Abyss Eel",   emoji: "🐉", rarity: "rare",     node: "fish",   blurb: "Coiled muscle. The pub pays double for these." },
+  { id: "river_carp",  name: "River Carp",  emoji: "🐟", icon: "salmon",           rarity: "common",   node: "fish",   blurb: "Sells well at the Pub." },
+  { id: "silverfin",   name: "Silverfin",   emoji: "🐠", icon: "flying-trout",     rarity: "uncommon", node: "fish",   blurb: "Prized at the Pub kitchen." },
+  { id: "abyss_eel",   name: "Abyss Eel",   emoji: "🐉", icon: "eel",              rarity: "rare",     node: "fish",   blurb: "Coiled muscle. The pub pays double for these." },
 ];
 
 // Full inventory name (with emoji prefix) for a resource id. Used everywhere
