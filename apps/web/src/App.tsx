@@ -804,14 +804,22 @@ export function App() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ variant, elite, invitees }),
       });
-      if (ok) void refresh();
+      if (ok) {
+        // Pop the player back to the ward map so the new active-quest banner
+        // is immediately visible instead of buried behind the Job Board view.
+        setTownSection(null);
+        void refresh();
+      }
     } else {
       const { ok } = await postJson(`/api/quest/start`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ variant, elite }),
       });
-      if (ok) void refresh();
+      if (ok) {
+        setTownSection(null);
+        void refresh();
+      }
     }
   }
 
@@ -821,7 +829,12 @@ export function App() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ job_id: jobId }),
     });
-    if (ok) void refresh();
+    if (ok) {
+      // Claiming a job creates a new active quest — dismiss the Job Board
+      // view so the player sees the new quest banner on the ward map.
+      setTownSection(null);
+      void refresh();
+    }
   }
 
   async function startHunt(tier: number, monsterCount: number, invitees: string[] = []) {
@@ -830,7 +843,12 @@ export function App() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ tier, monster_count: monsterCount, invitees }),
     });
-    if (ok) void refresh();
+    if (ok) {
+      // Close the Outskirts modal so the new active-quest banner shows on
+      // the ward map underneath.
+      setTownSection(null);
+      void refresh();
+    }
   }
 
   if (state.kind === "loading") return <Centered>Loading…</Centered>;

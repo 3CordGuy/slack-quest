@@ -3561,12 +3561,15 @@ function PartyChips({ fighters, selfId, flashIds, hitDustSeq, healBurstSeq, shie
           {standing} standing
         </span>
       </div>
-      {/* Flat party flex; overflows horizontally on narrow viewports */}
+      {/* Flat party flex; overflows horizontally on narrow viewports.
+          Top padding leaves room for the "Your turn" gold flag (top: -8)
+          and the status badge column (top: -6) so neither gets clipped. */}
       <div style={{
         display: "flex",
         gap: 9,
         alignItems: "stretch",
         overflowX: "auto",
+        paddingTop: 12,
         paddingBottom: 4,
       }}>
         {showRankBadges && front.length > 0 && (
