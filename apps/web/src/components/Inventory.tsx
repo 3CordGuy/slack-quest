@@ -536,7 +536,13 @@ export function FigureTile({
   return (
     <div
       style={{
-        width: 96,
+        // Flex-grow to fill the gap between the two slot columns. minWidth
+        // preserves the design's 96px floor on tight viewports.
+        flex: 1,
+        minWidth: 96,
+        // A soft ceiling so the figure doesn't bloat on ultra-wide layouts.
+        maxWidth: 240,
+        margin: "0 8px",
         height,
         background: "var(--bg-void)",
         border: "1px solid var(--border-base)",
@@ -1226,7 +1232,7 @@ export function InventoryFullScreen({
                       {character ? (
                         <FigureTile character={character} height={colHeight} />
                       ) : (
-                        <div style={{ width: 96, height: colHeight }} />
+                        <div style={{ flex: 1, minWidth: 96, height: colHeight }} />
                       )}
                       <div style={{ display: "grid", gridTemplateRows: `repeat(4, ${slotCellHeight}px)`, gap }}>
                         {rightSlots.map(renderSlot)}
