@@ -3688,7 +3688,11 @@ function PartyChips({ fighters, selfId, flashIds, hitDustSeq, healBurstSeq, shie
     const isActive = !!currentActorId && f.id === currentActorId && f.hp > 0;
     const clickable = isSelf && !!onClickSelf;
     const down = f.hp <= 0;
-    const hasShield = f.shield > Math.floor(f.armor_power / 2) && f.hp > 0;
+    // Any active shield surfaces in the .pcard chrome — blue stripe over
+    // the HP bar, accent border, and the subtle pulse glow. The previous
+    // gate `shield > armor_power/2` swallowed shields below 50%, which
+    // hid the bar overlay even when shield was actively absorbing hits.
+    const hasShield = f.shield > 0 && f.hp > 0;
 
     // pcard border resolution: active > self > shielded > default
     const borderColor = isActive
