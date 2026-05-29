@@ -29,10 +29,10 @@ interface CampProps {
 }
 
 const TAB_META: Array<{ tab: CampTab; label: string; icon: string }> = [
-  { tab: "mine",   label: "Mine",        icon: "mining-diamonds" },
-  { tab: "forage", label: "Herb Garden", icon: "herbs-bundle" },
-  { tab: "fish",   label: "Fishing",     icon: "fishing-pole" },
-  { tab: "build",  label: "Build",       icon: "anvil" },
+  { tab: "mine",   label: "Mine",    icon: "ore" },
+  { tab: "forage", label: "Forage",  icon: "herbs-bundle" },
+  { tab: "fish",   label: "Fishing", icon: "fishing-hook" },
+  { tab: "build",  label: "Build",   icon: "anvil" },
 ];
 
 export function Camp({
@@ -268,10 +268,14 @@ function TierCard({
       display: "flex",
       flexDirection: "column",
       gap: 8,
+      height: "100%",
     }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-        <div style={{ font: "12px/1 var(--font-display)", textTransform: "uppercase", letterSpacing: 1.4 }}>
-          {tierSpec.label}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <Icon name={nodeSpec.icon} size={16} color="var(--fg-mute)" />
+          <div style={{ font: "12px/1 var(--font-display)", textTransform: "uppercase", letterSpacing: 1.4 }}>
+            {tierSpec.label}
+          </div>
         </div>
         <SmallBadge>{formatDuration(tierSpec.duration_ms)}</SmallBadge>
       </div>
@@ -287,7 +291,7 @@ function TierCard({
         disabled={disabled || busy}
         onClick={handle}
         style={{
-          marginTop: 4,
+          marginTop: "auto",
           padding: "8px 12px",
           border: "1px solid var(--border-base)",
           borderRadius: "var(--radius-md)",

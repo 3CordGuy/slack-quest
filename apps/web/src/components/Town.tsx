@@ -1038,7 +1038,7 @@ export function WardMap({
       id: "camp",
       label: "My Camp",
       desc: "Mine · Forage · Fish",
-      icon: "tent",
+      icon: "camping-tent",
       left: "50%",
       top: "86%",
       action: { kind: "location", loc: "camp" },
