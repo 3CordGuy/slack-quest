@@ -292,6 +292,7 @@ export function HuntSection({
     });
   }
 
+  const narrow = useNarrowViewport(640);
   const packMultiplier = monsterCount === 3 ? 2.2 : monsterCount === 2 ? 1.5 : 1;
   const xpEstimate = Math.round(15 * Math.pow(clampedTier, 1.2) * packMultiplier);
   const goldEstimate = Math.round(8 * Math.pow(clampedTier, 1.2) * packMultiplier);
@@ -320,7 +321,7 @@ export function HuntSection({
         <LocationHero src={overviewArt} label="Outskirts" nav={navOverlay} flush />
       )}
       <div style={{ padding: "var(--card-pad, 32px)" }}>
-        <div style={{ marginBottom: 20 }}>
+        <div style={{ marginBottom: narrow ? 12 : 20 }}>
           <div style={{
             font: "10px/1 var(--font-body)",
             textTransform: "uppercase",
@@ -331,10 +332,12 @@ export function HuntSection({
           }}>
             Free Hunt
           </div>
-          <div style={{ fontSize: 12, color: "var(--fg-mute)", lineHeight: 1.5 }}>
-            Pick a tier and head into the outskirts. No job board contract — rewards scale
-            with the tier you choose, so lower tiers mean faster fights but smaller gains.
-          </div>
+          {!narrow && (
+            <div style={{ fontSize: 12, color: "var(--fg-mute)", lineHeight: 1.5 }}>
+              Pick a tier and head into the outskirts. No job board contract — rewards scale
+              with the tier you choose, so lower tiers mean faster fights but smaller gains.
+            </div>
+          )}
         </div>
 
         {/* Two pickers side by side */}
@@ -364,23 +367,26 @@ export function HuntSection({
         </div>
 
         <div style={{
-          display: "flex", gap: 20, marginBottom: 20,
-          padding: "10px 14px",
+          display: "flex", gap: narrow ? 12 : 20, marginBottom: narrow ? 12 : 20,
+          padding: narrow ? "8px 10px" : "10px 14px",
           background: "var(--bg-void)",
           borderRadius: "var(--radius-lg)",
           border: "1px solid var(--border-faint)",
+          alignItems: "center",
         }}>
-          <div style={{ textAlign: "center" }}>
-            <div style={{ fontSize: 18, fontWeight: 700, color: "#a3e635" }}>~{xpEstimate}</div>
+          <div style={{ textAlign: "center", flexShrink: 0 }}>
+            <div style={{ fontSize: narrow ? 15 : 18, fontWeight: 700, color: "#a3e635" }}>~{xpEstimate}</div>
             <div style={{ fontSize: 10, color: "var(--fg-mute-3)", marginTop: 2, fontFamily: "var(--font-display)" }}>XP</div>
           </div>
-          <div style={{ textAlign: "center" }}>
-            <div style={{ fontSize: 18, fontWeight: 700, color: "var(--accent-gold)" }}>~{goldEstimate}</div>
+          <div style={{ textAlign: "center", flexShrink: 0 }}>
+            <div style={{ fontSize: narrow ? 15 : 18, fontWeight: 700, color: "var(--accent-gold)" }}>~{goldEstimate}</div>
             <div style={{ fontSize: 10, color: "var(--fg-mute-3)", marginTop: 2, fontFamily: "var(--font-display)" }}>Gold</div>
           </div>
-          <div style={{ fontSize: 11, color: "var(--fg-mute-3)", alignSelf: "center", lineHeight: 1.4 }}>
-            Estimated single-fighter rewards.<br />Actual split across party members.
-          </div>
+          {!narrow && (
+            <div style={{ fontSize: 11, color: "var(--fg-mute-3)", alignSelf: "center", lineHeight: 1.4 }}>
+              Estimated single-fighter rewards.<br />Actual split across party members.
+            </div>
+          )}
         </div>
 
         {/* Party invite picker */}
@@ -392,7 +398,12 @@ export function HuntSection({
             }}>
               Invite players (optional)
             </div>
-            <div style={{ display: "grid", gap: 5 }}>
+            <div style={{
+              display: "grid", gap: 5,
+              maxHeight: 148, overflowY: "auto",
+              WebkitOverflowScrolling: "touch",
+              paddingRight: 2, /* room for scrollbar */
+            }}>
               {teamMembers.map((tm) => {
                 const checked = invitees.has(tm.slack_user_id);
                 return (
