@@ -21,7 +21,7 @@ import { LocationHero, SmallBadge } from "./ui";
 // Static resource list keyed by node. Mirrors RESOURCE_CATALOG from
 // @gantt-quest/core. Inlined here to keep Camp.tsx free of the workspace
 // core import (mirrors how CAMP_NODE_CONFIG is exported from constants).
-const STOCKPILE_RESOURCES: Array<{ id: string; node: CampNode; name: string; emoji: string }> = [
+const STOCKPILE_RESOURCES: Array<{ id: string; node: CampNode; name: string; emoji: string; icon?: string }> = [
   { id: "iron_ore",    node: "mine",   name: "Iron Ore",    emoji: "⛏️" },
   { id: "silver_ore",  node: "mine",   name: "Silver Ore",  emoji: "🪙" },
   { id: "mithril_ore", node: "mine",   name: "Mithril Ore", emoji: "💠" },
@@ -30,7 +30,7 @@ const STOCKPILE_RESOURCES: Array<{ id: string; node: CampNode; name: string; emo
   { id: "nightbloom",  node: "forage", name: "Nightbloom",  emoji: "🌸" },
   { id: "river_carp",  node: "fish",   name: "River Carp",  emoji: "🐟" },
   { id: "silverfin",   node: "fish",   name: "Silverfin",   emoji: "🐠" },
-  { id: "abyss_eel",   node: "fish",   name: "Abyss Eel",   emoji: "🐉" },
+  { id: "abyss_eel",   node: "fish",   name: "Abyss Eel",   emoji: "", icon: "eel" },
 ];
 
 interface CampProps {
@@ -166,7 +166,13 @@ function StockpileColumn({
               fontSize: 12,
               color: qty > 0 ? "var(--fg-1)" : "var(--fg-mute)",
             }}>
-              <span><span style={{ marginRight: 4 }}>{r.emoji}</span>{r.name}</span>
+              <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                {r.icon
+                  ? <Icon name={r.icon} size={13} color={qty > 0 ? "var(--fg-1)" : "var(--fg-mute)"} />
+                  : <span>{r.emoji}</span>
+                }
+                {r.name}
+              </span>
               <span style={{
                 fontVariantNumeric: "tabular-nums",
                 fontWeight: 600,
@@ -387,7 +393,10 @@ function TierCard({
         +{tierSpec.base_xp} XP · +{tierSpec.base_gold} gold
       </div>
       {rareNote && (
-        <div style={{ fontSize: 11, color: "var(--accent-go-1, #f59e0b)" }}>{rareNote}</div>
+        <div style={{ fontSize: 11, color: "var(--accent-go-1, #f59e0b)", display: "flex", alignItems: "center", gap: 4 }}>
+          {node === "fish" && tier === "deep" && <Icon name="eel" size={12} color="var(--accent-go-1, #f59e0b)" />}
+          {rareNote}
+        </div>
       )}
       <button
         type="button"
