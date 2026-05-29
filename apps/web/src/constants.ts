@@ -206,7 +206,7 @@ export const CAMP_NODE_CONFIG: Record<CampNode, CampNodeSpec> = {
     blurb: "Veins of ore run deep under the bluffs. Bring it back for the smithy.",
   },
   forage: {
-    node: "forage", label: "Herb Garden",  icon: "herbs-bundle",
+    node: "forage", label: "Herb Garden",  icon: "grass-mushroom",
     primary: "mossroot", uncommon: "sunleaf", rare: "nightbloom",
     blurb: "Wild herbs ring the camp clearing. The apothecary pays for stock.",
   },

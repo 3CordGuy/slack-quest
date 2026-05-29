@@ -12,17 +12,33 @@ import type { CSSProperties, ReactNode } from "react";
 import { Icon } from "../icons";
 import type {
   ActiveGatheringTask, CampNode, CampStatusResponse, CampTab, CampTier,
-  CampUpgradeSpec,
+  CampUpgradeSpec, Item,
 } from "../types";
 import { CAMP_NODE_CONFIG, CAMP_TIERS } from "../constants";
 import { card, h2, muted } from "../styles";
 import { LocationHero, SmallBadge } from "./ui";
+
+// Static resource list keyed by node. Mirrors RESOURCE_CATALOG from
+// @gantt-quest/core. Inlined here to keep Camp.tsx free of the workspace
+// core import (mirrors how CAMP_NODE_CONFIG is exported from constants).
+const STOCKPILE_RESOURCES: Array<{ id: string; node: CampNode; name: string; emoji: string }> = [
+  { id: "iron_ore",    node: "mine",   name: "Iron Ore",    emoji: "⛏️" },
+  { id: "silver_ore",  node: "mine",   name: "Silver Ore",  emoji: "🪙" },
+  { id: "mithril_ore", node: "mine",   name: "Mithril Ore", emoji: "💠" },
+  { id: "mossroot",    node: "forage", name: "Mossroot",    emoji: "🌿" },
+  { id: "sunleaf",     node: "forage", name: "Sunleaf",     emoji: "🍀" },
+  { id: "nightbloom",  node: "forage", name: "Nightbloom",  emoji: "🌸" },
+  { id: "river_carp",  node: "fish",   name: "River Carp",  emoji: "🐟" },
+  { id: "silverfin",   node: "fish",   name: "Silverfin",   emoji: "🐠" },
+  { id: "abyss_eel",   node: "fish",   name: "Abyss Eel",   emoji: "🐉" },
+];
 
 interface CampProps {
   characterLevel: number;
   overviewArt: string | null;
   navOverlay?: ReactNode;
   status: CampStatusResponse | null;
+  inventory: Item[];
   onStartGather: (node: CampNode, tier: CampTier) => Promise<void>;
   onClaim: (taskId: number) => Promise<void>;
   onBuildUpgrade: (upgradeKey: string) => Promise<void>;
@@ -30,13 +46,13 @@ interface CampProps {
 
 const TAB_META: Array<{ tab: CampTab; label: string; icon: string }> = [
   { tab: "mine",   label: "Mine",    icon: "ore" },
-  { tab: "forage", label: "Forage",  icon: "herbs-bundle" },
+  { tab: "forage", label: "Forage",  icon: "grass-mushroom" },
   { tab: "fish",   label: "Fishing", icon: "fishing-hook" },
   { tab: "build",  label: "Build",   icon: "anvil" },
 ];
 
 export function Camp({
-  characterLevel, overviewArt, navOverlay, status,
+  characterLevel, overviewArt, navOverlay, status, inventory,
   onStartGather, onClaim, onBuildUpgrade,
 }: CampProps) {
   const [tab, setTab] = useState<CampTab>("mine");
@@ -52,6 +68,7 @@ export function Camp({
       <div style={{ padding: "var(--card-pad, 32px)" }}>
         <CampHeader status={status} />
         <ActiveTaskStrip status={status} onClaim={onClaim} />
+        <Stockpile inventory={inventory} />
 
         <div style={{ display: "flex", gap: 6, marginTop: 24, marginBottom: 20, flexWrap: "wrap" }}>
           {TAB_META.map((m) => (
@@ -72,6 +89,92 @@ export function Camp({
         {tab === "build" && (
           <BuildPanel status={status} onBuild={onBuildUpgrade} />
         )}
+      </div>
+    </div>
+  );
+}
+
+// Stockpile — at-a-glance qty for every gatherable resource, grouped by node.
+// Always renders all 9 resources (zero-qty included) so the player can see
+// what they're missing for crafting recipes without opening the inventory.
+function Stockpile({ inventory }: { inventory: Item[] }) {
+  const qtyByName = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const it of inventory) {
+      if (it.item_type !== "resource") continue;
+      map.set(it.item_name, (map.get(it.item_name) ?? 0) + (it.qty ?? 1));
+    }
+    return map;
+  }, [inventory]);
+
+  return (
+    <div style={{
+      marginTop: 14,
+      padding: "12px 14px",
+      borderRadius: "var(--radius-lg)",
+      border: "1px solid var(--border-base)",
+      background: "var(--bg-card-2)",
+    }}>
+      <div style={{
+        font: "11px/1 var(--font-display)",
+        textTransform: "uppercase",
+        letterSpacing: 1.5,
+        color: "var(--fg-mute)",
+        marginBottom: 10,
+      }}>
+        Stockpile
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 14 }}>
+        {(["mine", "forage", "fish"] as CampNode[]).map((node) => (
+          <StockpileColumn
+            key={node}
+            node={node}
+            qtyByName={qtyByName}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function StockpileColumn({
+  node,
+  qtyByName,
+}: {
+  node: CampNode;
+  qtyByName: Map<string, number>;
+}) {
+  const spec = CAMP_NODE_CONFIG[node];
+  const entries = STOCKPILE_RESOURCES.filter((r) => r.node === node);
+  return (
+    <div>
+      <div style={{
+        display: "flex", alignItems: "center", gap: 6,
+        fontSize: 11, color: "var(--fg-mute)", textTransform: "uppercase", letterSpacing: 1.2,
+        marginBottom: 6,
+      }}>
+        <Icon name={spec.icon} size={11} />
+        <span>{node === "mine" ? "Ore" : node === "forage" ? "Herbs" : "Fish"}</span>
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+        {entries.map((r) => {
+          const full = `${r.emoji} ${r.name}`;
+          const qty = qtyByName.get(full) ?? 0;
+          return (
+            <div key={r.id} style={{
+              display: "flex", alignItems: "center", justifyContent: "space-between",
+              fontSize: 12,
+              color: qty > 0 ? "var(--fg-1)" : "var(--fg-mute)",
+            }}>
+              <span><span style={{ marginRight: 4 }}>{r.emoji}</span>{r.name}</span>
+              <span style={{
+                fontVariantNumeric: "tabular-nums",
+                fontWeight: 600,
+                color: qty > 0 ? "var(--accent-go-1, #4ade80)" : "var(--fg-mute)",
+              }}>{qty}</span>
+            </div>
+          );
+        })}
       </div>
     </div>
   );
