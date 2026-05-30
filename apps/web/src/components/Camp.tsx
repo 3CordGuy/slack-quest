@@ -343,7 +343,9 @@ function GatheringNodePanel({
 
       {allBusy && (
         <div style={{ marginTop: 16, padding: "10px 14px", border: "1px dashed var(--border-base)", borderRadius: "var(--radius-md)", color: "var(--fg-mute)", fontSize: 13 }}>
-          All tents busy. Collect a completed task or pitch another worker tent in Build.
+          {(status?.slots.total ?? 1) > 1
+            ? `All ${status!.slots.total} tents busy (${status!.slots.in_use} of ${status!.slots.total} in use). Collect a finished task to free a slot.`
+            : "Your tent is busy. Collect the finished task, or build a Worker Tent in the Build tab to run two tasks at once."}
         </div>
       )}
     </div>
