@@ -169,7 +169,7 @@ function ActiveTaskStrip({
   const errandSlot = status?.slots.errand_slot_used === true;
   if (active.length === 0 && !errandSlot) return null;
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 16 }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 16, marginBottom: 16 }}>
       {errandSlot && (
         <div style={{
           padding: "10px 14px",
