@@ -1550,6 +1550,39 @@ export function InventoryFullScreen({
                     Drag or click a matching item to equip in {SLOT_LABELS[highlightSlot]}
                   </div>
                 )}
+                {character?.hp !== undefined && (() => {
+                  const hpPct = character.max_hp > 0 ? Math.max(0, character.hp / character.max_hp) : 0;
+                  const hpCol = hpPct < 0.25 ? "#dc2626" : hpPct < 0.5 ? "#d97706" : "#16a34a";
+                  const armorMax = Math.floor((character.armor_power ?? 0) / 2);
+                  const shieldPct = armorMax > 0 ? Math.min(1, character.shield / armorMax) : 0;
+                  return (
+                    <div style={{ alignSelf: "stretch", padding: "10px 12px", background: "var(--bg-card-2)", borderRadius: "var(--radius-md)", border: "1px solid var(--border-faint)", display: "flex", flexDirection: "column", gap: 8 }}>
+                      <div style={{ font: "10px/1 var(--font-mono)", textTransform: "uppercase", letterSpacing: 1, color: "var(--fg-faintest)", marginBottom: 2 }}>Vitals</div>
+                      {/* HP bar */}
+                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <span style={{ font: "9px/1 var(--font-mono)", color: "var(--fg-mute)", width: 22, flexShrink: 0, textTransform: "uppercase", letterSpacing: 0.8 }}>HP</span>
+                        <div className="bar" style={{ flex: 1 }}>
+                          <i style={{ width: `${hpPct * 100}%`, background: hpCol }} />
+                        </div>
+                        <span style={{ font: "10px/1 var(--font-mono)", color: "var(--fg-3)", minWidth: 44, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
+                          {character.hp}/{character.max_hp}
+                        </span>
+                      </div>
+                      {/* Shield bar — only shown when character has armor */}
+                      {armorMax > 0 && (
+                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                          <span style={{ font: "9px/1 var(--font-mono)", color: "#7dd3fc", width: 22, flexShrink: 0, textTransform: "uppercase", letterSpacing: 0.8 }}>SH</span>
+                          <div className="bar" style={{ flex: 1, boxShadow: character.shield > 0 ? "0 0 5px rgba(96,165,250,.35)" : "none" }}>
+                            <i style={{ width: `${shieldPct * 100}%`, background: "repeating-linear-gradient(45deg,#93c5fd,#93c5fd 4px,#60a5fa 4px,#60a5fa 8px)" }} />
+                          </div>
+                          <span style={{ font: "10px/1 var(--font-mono)", color: character.shield > 0 ? "#7dd3fc" : "var(--fg-mute)", minWidth: 44, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
+                            {character.shield}/{armorMax}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
                 {character?.str !== undefined && (
                   <LoadoutTotals character={character} items={items} />
                 )}
