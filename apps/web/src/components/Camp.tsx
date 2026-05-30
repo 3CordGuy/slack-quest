@@ -501,6 +501,8 @@ function BuildPanel({
           borderRadius: "var(--radius-md)",
           border: "1px solid var(--accent-go-1, #4ade80)",
           background: "var(--bg-card-2)",
+          backdropFilter: "blur(10px) saturate(1.05)",
+          WebkitBackdropFilter: "blur(10px) saturate(1.05)",
           fontSize: 12,
           color: "var(--accent-go-1, #4ade80)",
           display: "flex", flexWrap: "wrap", gap: 12,
