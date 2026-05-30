@@ -1335,7 +1335,7 @@ export function CharacterCard({
           border: "1px solid var(--border-faint)",
         }}>
           <div className="eyebrow" style={{ marginBottom: 8, color: "var(--fg-mute-3)" }}>Primary Stats</div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 5, marginBottom: 8 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 5, marginBottom: hasUnspentPoints && onSpend ? 6 : 8 }}>
             {(["str", "int_stat", "vit", "agi", "dex"] as StatKey[]).map((key) => (
               <PrimaryStatCard
                 key={key}
@@ -1346,6 +1346,46 @@ export function CharacterCard({
               />
             ))}
           </div>
+          {hasUnspentPoints && onSpend && (
+            <div style={{
+              marginBottom: 8,
+              padding: "9px 10px",
+              background: "var(--accent-ink-deep)",
+              borderRadius: "var(--radius-md)",
+              border: "1px solid var(--accent-ink-blue-2)",
+              animation: "gq-spend-pulse 2.4s ease-in-out infinite",
+            }}>
+              <div style={{
+                fontFamily: "var(--font-mono)",
+                fontSize: 11,
+                color: "var(--accent-ink-blue)",
+                marginBottom: 7,
+              }}>
+                +{c.unspent_points} unspent {c.unspent_points === 1 ? "point" : "points"} — choose a stat:
+              </div>
+              <div style={{ display: "flex", gap: 5 }}>
+                {(["str", "int_stat", "vit", "agi", "dex"] as StatKey[]).map((key) => (
+                  <button
+                    key={key}
+                    onClick={() => onSpend(key)}
+                    className="btn btn-ghost btn-sm"
+                    style={{
+                      flex: 1,
+                      justifyContent: "center",
+                      padding: "6px 0",
+                      fontFamily: "var(--font-mono)",
+                      fontSize: 10,
+                      letterSpacing: 0.5,
+                      color: "var(--accent-ink-blue)",
+                      borderColor: "var(--accent-ink-blue-3)",
+                    }}
+                  >
+                    {key === "int_stat" ? "INT" : key.toUpperCase()}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
           {(() => {
             const { str, int_stat: int, vit, agi, dex } = primaryStats;
             const atkVal = derivedStats.attack_mod >= 0 ? `+${derivedStats.attack_mod}` : `${derivedStats.attack_mod}`;
@@ -1385,45 +1425,6 @@ export function CharacterCard({
               </div>
             );
           })()}
-          {hasUnspentPoints && onSpend && (
-            <div style={{
-              marginTop: 10,
-              padding: "9px 10px",
-              background: "var(--accent-ink-deep)",
-              borderRadius: "var(--radius-md)",
-              border: "1px solid var(--accent-ink-blue-2)",
-            }}>
-              <div style={{
-                fontFamily: "var(--font-mono)",
-                fontSize: 11,
-                color: "var(--accent-ink-blue)",
-                marginBottom: 7,
-              }}>
-                +{c.unspent_points} unspent {c.unspent_points === 1 ? "point" : "points"} — choose a stat:
-              </div>
-              <div style={{ display: "flex", gap: 5 }}>
-                {(["str", "int_stat", "vit", "agi", "dex"] as StatKey[]).map((key) => (
-                  <button
-                    key={key}
-                    onClick={() => onSpend(key)}
-                    className="btn btn-ghost btn-sm"
-                    style={{
-                      flex: 1,
-                      justifyContent: "center",
-                      padding: "6px 0",
-                      fontFamily: "var(--font-mono)",
-                      fontSize: 10,
-                      letterSpacing: 0.5,
-                      color: "var(--accent-ink-blue)",
-                      borderColor: "var(--accent-ink-blue-3)",
-                    }}
-                  >
-                    {key === "int_stat" ? "INT" : key.toUpperCase()}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
         </div>
       )}
       {/* Abilities section */}

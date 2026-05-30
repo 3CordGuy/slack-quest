@@ -265,6 +265,10 @@ em, .flavor {
     background: rgba(251, 191, 36, 0.22);
   }
 }
+@keyframes gq-spend-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(99, 162, 255, 0.4); }
+  50%       { box-shadow: 0 0 0 3px rgba(99, 162, 255, 0); }
+}
 @media (prefers-reduced-motion: reduce) {
   .gq-unspent-pill { animation: none; }
 }
