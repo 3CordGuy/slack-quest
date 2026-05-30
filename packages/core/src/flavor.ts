@@ -2080,7 +2080,7 @@ export const CAMP_UPGRADE_CATALOG: CampUpgradeSpec[] = [
     blurb: "A third hand at the camp — three gathering tasks at once.",
     icon: "camping-tent",
     gold_cost: 800,
-    level_req: 6,
+    level_req: 25,
     effect: { kind: "extra_slot" },
   },
   {
