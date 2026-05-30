@@ -101,7 +101,7 @@ export interface CombatFighter {
   // Elemental weapon affinity. undefined = no element or focus weapon.
   element?: ElementType;
   // Rarity of the equipped main-hand weapon. Used to gate proc rates.
-  weapon_rarity?: "rare" | "epic" | "legendary";
+  weapon_rarity?: "uncommon" | "rare" | "epic" | "legendary";
   // Summed gear resistance by damage type. Capped to 0–75 at combat init.
   // Absent keys = 0% resistance. physical is included but not used (armor handles it).
   resistances?: Partial<Record<DamageType, number>>;
