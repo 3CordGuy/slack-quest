@@ -547,8 +547,8 @@ export function BigHpBar({ current, max }: { current: number; max: number }) {
   return <HpBarCore current={current} max={max} height={14} borderRadius={7} marginTop={10} healthColor={HP_COLOR_FN} />;
 }
 
-export function HpBar({ current, max }: { current: number; max: number }) {
-  return <HpBarCore current={current} max={max} height={8} borderRadius={4} marginTop={6} healthColor={HP_COLOR_FN} />;
+export function HpBar({ current, max, marginTop = 6 }: { current: number; max: number; marginTop?: number }) {
+  return <HpBarCore current={current} max={max} height={8} borderRadius={4} marginTop={marginTop} healthColor={HP_COLOR_FN} />;
 }
 
 // ─── Dice ─────────────────────────────────────────────────────────────────────
