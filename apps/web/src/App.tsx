@@ -1084,19 +1084,20 @@ export function App() {
     }
   }
 
-  async function startGather(node: CampNode, tier: CampTier) {
+  async function startGather(node: CampNode, tier: CampTier, workerSlot: number) {
     const res = await fetch("/api/camp/start", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       credentials: "include",
-      body: JSON.stringify({ node, tier }),
+      body: JSON.stringify({ node, tier, worker_slot: workerSlot }),
     });
     if (!res.ok) {
       const body = await res.json().catch(() => ({})) as { error?: string };
       const errMsg =
-        body.error === "no_slot"         ? "All tents are busy — collect a finished task first." :
-        body.error === "errand_in_flight" ? "Your main character is on a pub errand. Collect it first or use a worker tent slot." :
-        body.error === "mid_quest"        ? "Can't gather while in a quest." :
+        body.error === "no_slot"         ? "Every worker is busy — collect a finished task first." :
+        body.error === "slot_busy"        ? "That worker is already on a task." :
+        body.error === "errand_in_flight" ? "Your main character is on a pub errand. Send a tent instead." :
+        body.error === "mid_quest"        ? "You're on a quest — send a tent instead." :
         body.error === "downed"           ? "You're downed — rest at the Inn first." :
         `Couldn't start: ${body.error ?? res.statusText}`;
       toast.error(errMsg);
@@ -1550,7 +1551,7 @@ export function App() {
         <LocationModalWide
           icon="camping-tent"
           title="My Camp"
-          subtitle={`${slotsUsed} of ${slotsTotal} ${slotsTotal === 1 ? "tent" : "tents"} in use`}
+          subtitle={`${slotsUsed} of ${slotsTotal} ${slotsTotal === 1 ? "worker" : "workers"} busy`}
           gold={gold}
           onClose={close}
           sections={[
