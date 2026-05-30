@@ -367,6 +367,20 @@ export function AppTopBar({
               {" "}
               <span style={{ color: "var(--accent-gold)", fontWeight: 700 }}>L{character.level}</span>
             </span>
+            {/* Unspent stat-point pill — visible across every screen the
+                topbar mounts on. Clicking the chip opens the character
+                slide-over where the points are spent. Pulses so players
+                returning from a level-up notice it. Hidden on mobile data-
+                charname doesn't apply because the pill is a sibling. */}
+            {(character.unspent_points ?? 0) > 0 && (
+              <span
+                className="gq-unspent-pill"
+                title={`${character.unspent_points} unspent stat point${character.unspent_points === 1 ? "" : "s"} — open character to assign`}
+              >
+                <Icon name="muscle-up" size={12} color="var(--accent-gold, #fbbf24)" />
+                +{character.unspent_points} pt{character.unspent_points === 1 ? "" : "s"}
+              </span>
+            )}
             <span className="gq-charchip">
               <span className="stat" style={{ color: "var(--tone-good-2)" }}>
                 <Icon name="health-normal" size={14} color="var(--tone-good-2)" />
