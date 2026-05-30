@@ -1394,7 +1394,7 @@ export function WardMap({
               position: "absolute",
               inset: 0,
               background:
-                "radial-gradient(ellipse 80% 60% at 50% 50%, rgba(14,15,18,0.55), rgba(14,15,18,0.85))",
+                "radial-gradient(ellipse 80% 60% at 50% 50%, rgba(14,15,18,0.1), rgba(14,15,18,0.35))",
               pointerEvents: "none",
               zIndex: 1,
             }}
