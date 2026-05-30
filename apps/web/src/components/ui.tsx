@@ -681,6 +681,8 @@ export interface LocWideSection {
 export function LocationModalWide({
   sections,
   defaultSection,
+  section,
+  onSectionChange,
   icon,
   title,
   subtitle,
@@ -691,6 +693,9 @@ export function LocationModalWide({
 }: {
   sections: LocWideSection[];
   defaultSection?: string;
+  /** Controlled active section id. When provided, the modal is controlled and onSectionChange must update it. */
+  section?: string;
+  onSectionChange?: (id: string) => void;
   icon: string;
   title: string;
   subtitle?: string;
@@ -700,7 +705,12 @@ export function LocationModalWide({
   onClose: () => void;
   children: (activeSection: string) => ReactNode;
 }) {
-  const [active, setActive] = useState(defaultSection ?? sections[0]?.id ?? "");
+  const [internal, setInternal] = useState(defaultSection ?? sections[0]?.id ?? "");
+  const active = section ?? internal;
+  const setActive = (id: string) => {
+    if (onSectionChange) onSectionChange(id);
+    else setInternal(id);
+  };
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) { if (e.key === "Escape") onClose(); }
