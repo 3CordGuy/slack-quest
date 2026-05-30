@@ -1359,7 +1359,7 @@ export function WardMap({
     >
       {/* Hand-painted world map backdrop. Light CSS treatment so the dashed
           roads / nodes / plaza disc stay legible on top:
-          - opacity 0.42 — image carries enough to read the town
+          - opacity 0.8 — mostly visible, town art legible
           - saturate 0.78 — slight pull toward night-tinted palette
           - brightness 0.9 — mild dim so node chips still pop
           - blur 0.5px — softens raster details
@@ -1379,7 +1379,7 @@ export function WardMap({
               width: "100%",
               height: "100%",
               objectFit: "cover",
-              opacity: 0.42,
+              opacity: 0.8,
               filter: "saturate(0.78) brightness(0.9) blur(0.5px)",
               pointerEvents: "none",
               zIndex: 0,
