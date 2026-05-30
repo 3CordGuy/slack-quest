@@ -725,9 +725,9 @@ em, .flavor {
    a 375px viewport so 9-10 buttons form 2 rows instead of one squished line. */
 @media (max-width: 540px) {
   .abtn {
-    height: 56px;
-    flex: 1 1 52px;   /* grow+shrink from a 52px base — triggers wrapping */
-    max-width: 76px;  /* cap so they don't balloon when there are only 2-3 */
+    height: 52px;
+    flex: 1 0 52px;   /* grow from 52px base, NO shrink → forces row wrap */
+    max-width: 72px;
   }
   .abtn .al { font-size: 9px; }
 }
