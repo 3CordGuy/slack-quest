@@ -38,7 +38,7 @@ interface CampProps {
   section: string;
   status: CampStatusResponse | null;
   inventory: Item[];
-  onStartGather: (node: CampNode, tier: CampTier) => Promise<void>;
+  onStartGather: (node: CampNode, tier: CampTier, workerSlot: number) => Promise<void>;
   onClaim: (taskId: number) => Promise<void>;
   onCancel: (taskId: number) => Promise<void>;
   onBuildUpgrade: (upgradeKey: string) => Promise<void>;
@@ -340,12 +340,36 @@ function GatheringNodePanel({
 }: {
   node: CampNode;
   status: CampStatusResponse | null;
-  onStart: (node: CampNode, tier: CampTier) => Promise<void>;
+  onStart: (node: CampNode, tier: CampTier, workerSlot: number) => Promise<void>;
   activeBySlot: Map<number, ActiveGatheringTask>;
 }) {
   const spec = CAMP_NODE_CONFIG[node];
+  const slotsTotal = status?.slots.total ?? 1;
   const slotsAvailable = status?.slots.available ?? 0;
+  const errandSlotUsed = status?.slots.errand_slot_used === true;
   const allBusy = slotsAvailable <= 0;
+
+  // Highest free slot wins by default — keeps "You" (slot 1) free for quests
+  // unless every tent is already working.
+  const freeSlots = useMemo(() => {
+    const out: number[] = [];
+    for (let s = 1; s <= slotsTotal; s++) {
+      if (activeBySlot.has(s)) continue;
+      if (s === 1 && errandSlotUsed) continue;
+      out.push(s);
+    }
+    return out;
+  }, [slotsTotal, activeBySlot, errandSlotUsed]);
+  const defaultSlot = freeSlots.length > 0 ? freeSlots[freeSlots.length - 1] : null;
+  const [selectedSlot, setSelectedSlot] = useState<number | null>(defaultSlot);
+
+  // If the picker's current pick becomes busy (e.g. user started a task with
+  // it), jump to the next free slot.
+  useEffect(() => {
+    const stillFree = selectedSlot != null && freeSlots.includes(selectedSlot);
+    if (!stillFree) setSelectedSlot(defaultSlot);
+  }, [defaultSlot, selectedSlot, freeSlots]);
+
   return (
     <div>
       <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 10 }}>
@@ -357,15 +381,24 @@ function GatheringNodePanel({
           <div style={{ fontSize: 22, fontFamily: "var(--font-display)" }}>{spec.label}</div>
         </div>
       </div>
-      <div style={{ ...muted, marginBottom: 18 }}>{spec.blurb}</div>
+      <div style={{ ...muted, marginBottom: 14 }}>{spec.blurb}</div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12 }}>
+      <WorkerPicker
+        slotsTotal={slotsTotal}
+        activeBySlot={activeBySlot}
+        errandSlotUsed={errandSlotUsed}
+        selectedSlot={selectedSlot}
+        onSelect={setSelectedSlot}
+      />
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12, marginTop: 14 }}>
         {(["quick", "standard", "deep"] as CampTier[]).map((tier) => (
           <TierCard
             key={tier}
             node={node}
             tier={tier}
-            disabled={allBusy}
+            disabled={allBusy || selectedSlot == null}
+            workerSlot={selectedSlot}
             onStart={onStart}
           />
         ))}
@@ -376,9 +409,9 @@ function GatheringNodePanel({
           {status?.slots.errand_slot_used && (status?.slots.total ?? 1) === 1
             ? "Your main character is out on a pub errand. Collect at the Pub, or build a Worker Tent to keep gathering in parallel."
             : status?.slots.errand_slot_used
-              ? `All ${status!.slots.total} slots busy — one is held by your main on a pub errand (${status!.slots.in_use} of ${status!.slots.total} in use).`
+              ? `Every worker is busy — your main is out on a pub errand (${status!.slots.in_use} of ${status!.slots.total} in use).`
               : (status?.slots.total ?? 1) > 1
-                ? `All ${status!.slots.total} tents busy (${status!.slots.in_use} of ${status!.slots.total} in use). Collect a finished task to free a slot.`
+                ? `Every worker is busy (${status!.slots.in_use} of ${status!.slots.total} in use). Collect a finished task to free a slot.`
                 : "Your tent is busy. Collect the finished task, or build a Worker Tent in the Build tab to run two tasks at once."}
         </div>
       )}
@@ -386,13 +419,91 @@ function GatheringNodePanel({
   );
 }
 
+function workerLabel(slot: number): string {
+  return slot === 1 ? "You" : `Tent ${slot - 1}`;
+}
+
+function WorkerPicker({
+  slotsTotal, activeBySlot, errandSlotUsed, selectedSlot, onSelect,
+}: {
+  slotsTotal: number;
+  activeBySlot: Map<number, ActiveGatheringTask>;
+  errandSlotUsed: boolean;
+  selectedSlot: number | null;
+  onSelect: (slot: number) => void;
+}) {
+  const slots: number[] = [];
+  for (let s = 1; s <= slotsTotal; s++) slots.push(s);
+  return (
+    <div style={{
+      display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap",
+      padding: "10px 12px",
+      borderRadius: "var(--radius-md)",
+      border: "1px solid var(--border-base)",
+      background: "var(--bg-card-2)",
+      backdropFilter: "blur(10px) saturate(1.05)",
+      WebkitBackdropFilter: "blur(10px) saturate(1.05)",
+    }}>
+      <span style={{
+        font: "11px/1 var(--font-display)",
+        textTransform: "uppercase",
+        letterSpacing: 1.4,
+        color: "var(--fg-mute)",
+      }}>
+        Send
+      </span>
+      {slots.map((s) => {
+        const busy = activeBySlot.get(s);
+        const onErrand = s === 1 && errandSlotUsed && !busy;
+        const disabled = !!busy || onErrand;
+        const active = selectedSlot === s;
+        const busyNote = busy
+          ? `Busy: ${CAMP_NODE_CONFIG[busy.node].label} · ${CAMP_TIERS[busy.tier].label}`
+          : onErrand
+            ? "Out on a pub errand"
+            : s === 1
+              ? "You'll be tied up — can't start a quest until this finishes"
+              : "Tent worker — leaves you free for quests";
+        return (
+          <button
+            key={s}
+            type="button"
+            onClick={() => !disabled && onSelect(s)}
+            disabled={disabled}
+            title={busyNote}
+            style={{
+              padding: "5px 10px",
+              border: active
+                ? "1px solid var(--accent-ink-blue-2)"
+                : "1px solid var(--border-base)",
+              borderRadius: 999,
+              background: active
+                ? "var(--accent-ink-blue-2)"
+                : disabled ? "var(--bg-card)" : "transparent",
+              color: active ? "#fff" : disabled ? "var(--fg-mute)" : "var(--fg-1)",
+              fontFamily: "inherit",
+              fontSize: 12,
+              fontWeight: 600,
+              cursor: disabled ? "not-allowed" : "pointer",
+              opacity: disabled ? 0.6 : 1,
+            }}
+          >
+            {workerLabel(s)}{busy ? " · busy" : onErrand ? " · errand" : ""}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 function TierCard({
-  node, tier, disabled, onStart,
+  node, tier, disabled, workerSlot, onStart,
 }: {
   node: CampNode;
   tier: CampTier;
   disabled: boolean;
-  onStart: (node: CampNode, tier: CampTier) => Promise<void>;
+  workerSlot: number | null;
+  onStart: (node: CampNode, tier: CampTier, workerSlot: number) => Promise<void>;
 }) {
   const tierSpec = CAMP_TIERS[tier];
   const nodeSpec = CAMP_NODE_CONFIG[node];
@@ -407,8 +518,9 @@ function TierCard({
         : null;
 
   async function handle() {
+    if (workerSlot == null) return;
     setBusy(true);
-    try { await onStart(node, tier); } finally { setBusy(false); }
+    try { await onStart(node, tier, workerSlot); } finally { setBusy(false); }
   }
 
   return (
@@ -459,7 +571,11 @@ function TierCard({
           fontFamily: "inherit",
         }}
       >
-        {busy ? "Starting…" : disabled ? "All tents busy" : "Start gathering"}
+        {busy
+          ? "Starting…"
+          : workerSlot == null
+            ? "All workers busy"
+            : `Send ${workerLabel(workerSlot)}`}
       </button>
     </div>
   );

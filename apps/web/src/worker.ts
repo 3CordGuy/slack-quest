@@ -2994,10 +2994,7 @@ app.post("/api/camp/start", async (c) => {
   if (character.downed_until && character.downed_until > Date.now()) {
     return c.json({ error: "downed" }, 400);
   }
-  if (await getActiveQuestForCharacter(c.env.DB, session.slack_user_id)) {
-    return c.json({ error: "mid_quest" }, 400);
-  }
-  const body = await c.req.json().catch(() => null) as { node?: string; tier?: string } | null;
+  const body = await c.req.json().catch(() => null) as { node?: string; tier?: string; worker_slot?: number } | null;
   const node = body?.node as CampNode | undefined;
   const tier = body?.tier as CampTier | undefined;
   if (!node || !(node in CAMP_NODE_CONFIG)) return c.json({ error: "bad_node" }, 400);
@@ -3011,20 +3008,43 @@ app.post("/api/camp/start", async (c) => {
   if (active.length >= slotCount) {
     return c.json({ error: "no_slot", slots: slotCount, in_use: active.length }, 400);
   }
-  // Worker slot is just an index — main char = 1, tents fill 2..N. Pick the
-  // lowest free index so the strip's slot labels stay stable. If the main
-  // character is out on a pub errand, slot 1 is considered occupied — the
-  // main can only do one thing at a time. Hired tents (slot ≥ 2) can still
-  // gather; this gate just routes the task to a tent instead of the main.
+  // Worker slot is just an index — slot 1 is the player (main character),
+  // slots 2..N are tents. If the main is out on a pub errand, slot 1 is
+  // occupied. The client can request a specific slot (the worker picker);
+  // otherwise default to the highest free slot so tents go first and the
+  // player stays free for quests/errands.
   const used = new Set(active.map((t) => t.worker_slot));
   if (inFlightErrand) used.add(1);
-  let workerSlot = 1;
-  while (used.has(workerSlot)) workerSlot += 1;
-  // If we walked past every available tent without finding a free slot,
-  // the main being on errand has effectively eaten the only slot. Surface
-  // a friendly error rather than writing worker_slot=slotCount+1.
-  if (workerSlot > slotCount) {
-    return c.json({ error: "errand_in_flight", errand_id: inFlightErrand?.id ?? null }, 400);
+
+  let workerSlot: number;
+  const requested = body?.worker_slot;
+  if (typeof requested === "number" && Number.isInteger(requested)) {
+    if (requested < 1 || requested > slotCount) {
+      return c.json({ error: "bad_slot", slots: slotCount }, 400);
+    }
+    if (used.has(requested)) {
+      if (requested === 1 && inFlightErrand) {
+        return c.json({ error: "errand_in_flight", errand_id: inFlightErrand.id }, 400);
+      }
+      return c.json({ error: "slot_busy", slot: requested }, 400);
+    }
+    workerSlot = requested;
+  } else {
+    workerSlot = slotCount;
+    while (workerSlot >= 1 && used.has(workerSlot)) workerSlot -= 1;
+    if (workerSlot < 1) {
+      if (inFlightErrand && active.length < slotCount) {
+        return c.json({ error: "errand_in_flight", errand_id: inFlightErrand.id }, 400);
+      }
+      return c.json({ error: "no_slot", slots: slotCount, in_use: active.length }, 400);
+    }
+  }
+
+  // Only the player going gathering blocks (and is blocked by) an active
+  // quest. A tent gathering in the background is fine while the player is
+  // out on a quest.
+  if (workerSlot === 1 && await getActiveQuestForCharacter(c.env.DB, session.slack_user_id)) {
+    return c.json({ error: "mid_quest" }, 400);
   }
   const tierSpec = CAMP_TIERS[tier];
   // Snapshot the current perks + character context onto the task. Future
