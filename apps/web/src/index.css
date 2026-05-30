@@ -239,6 +239,36 @@ em, .flavor {
 }
 .gq-charchip .stat { display: inline-flex; align-items: center; gap: 5px; }
 
+/* Unspent stat-point pill on the topbar character chip. Always visible
+   when unspent_points > 0 so the player notices a level-up regardless of
+   what screen they're on. Pulse is subtle — just enough to draw the eye. */
+.gq-unspent-pill {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 4px 9px;
+  border-radius: 999px;
+  background: rgba(251, 191, 36, 0.15);
+  border: 1px solid rgba(251, 191, 36, 0.55);
+  color: var(--accent-gold, #fbbf24);
+  font: 700 11px/1 var(--font-mono);
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  white-space: nowrap;
+  animation: gq-unspent-pulse 2.4s ease-in-out infinite;
+}
+@keyframes gq-unspent-pulse {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(251, 191, 36, 0.55), 0 0 0 0 rgba(251, 191, 36, 0);
+    background: rgba(251, 191, 36, 0.15);
+  }
+  50% {
+    box-shadow: 0 0 0 4px rgba(251, 191, 36, 0), 0 0 12px 2px rgba(251, 191, 36, 0.35);
+    background: rgba(251, 191, 36, 0.22);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .gq-unspent-pill { animation: none; }
+}
+
 @media (max-width: 720px) {
   .gq-topbar { padding: 10px 14px; }
   .gq-wordmark { font-size: 18px; }
@@ -366,22 +396,22 @@ em, .flavor {
   padding: 0;
   position: relative;
 }
-/* Full-bleed art pinned to the bottom of the content pane, fading to
-   transparent at the top. Cards in .loc-wide-content-inner float over it. */
+/* Full-bleed art covering the content pane. The mask keeps the image
+   partly visible at the top instead of fading to a flat dark panel —
+   the player still sees the place they're standing in. Cards in
+   .loc-wide-content-inner float over it. */
 .loc-wide-art-bg {
   position: absolute;
-  bottom: 0;
-  left: 0;
-  right: 0;
+  inset: 0;
   width: 100%;
-  height: 55%;
-  min-height: 200px;
   background-size: cover;
   background-position: center center;
   background-repeat: no-repeat;
-  /* Fade from transparent at top → opaque at bottom */
-  -webkit-mask-image: linear-gradient(to bottom, transparent 0%, rgba(0,0,0,0.5) 35%, black 75%);
-  mask-image: linear-gradient(to bottom, transparent 0%, rgba(0,0,0,0.5) 35%, black 75%);
+  /* Soft top haze (~28% alpha) so the image always reads, ramping to
+     fully opaque about two-thirds of the way down where the cards sit
+     on the brightest part of the art. */
+  -webkit-mask-image: linear-gradient(to bottom, rgba(0,0,0,0.28) 0%, rgba(0,0,0,0.55) 30%, rgba(0,0,0,0.85) 60%, black 80%);
+  mask-image: linear-gradient(to bottom, rgba(0,0,0,0.28) 0%, rgba(0,0,0,0.55) 30%, rgba(0,0,0,0.85) 60%, black 80%);
   pointer-events: none;
   z-index: 0;
 }
