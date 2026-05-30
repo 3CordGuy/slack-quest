@@ -752,6 +752,53 @@ interface WardNode {
   task?: ActiveGatheringTask;
 }
 
+// Animated XP donut ring — starts empty on mount and transitions to the
+// real fraction so the arc visibly fills in. Also animates on XP changes.
+function XpRing({ level, xp }: { level: number; xp: number }) {
+  const r    = 110;
+  const cx   = 115;
+  const circ = 2 * Math.PI * r;
+  const xpAtLevel = xpForLevel(level);
+  const xpAtNext  = xpForLevel(level + 1);
+  const fraction  = xpAtNext > xpAtLevel
+    ? Math.min(1, Math.max(0, (xp - xpAtLevel) / (xpAtNext - xpAtLevel)))
+    : 0;
+  const targetOffset = circ * (1 - fraction);
+
+  // Start at fully-empty (circ) so the CSS transition plays from 0 on mount.
+  const [offset, setOffset] = useState(circ);
+  useEffect(() => {
+    const id = requestAnimationFrame(() => setOffset(targetOffset));
+    return () => cancelAnimationFrame(id);
+  }, [targetOffset]);
+
+  return (
+    <svg
+      width={230} height={230}
+      viewBox="0 0 230 230"
+      style={{ position: "absolute", inset: 0, pointerEvents: "none", zIndex: 0 }}
+    >
+      {/* dim track */}
+      <circle cx={cx} cy={cx} r={r} fill="none" stroke="rgba(251,191,36,0.12)" strokeWidth={5} />
+      {/* progress arc — starts at 12 o'clock, transitions on mount + XP change */}
+      <circle
+        cx={cx} cy={cx} r={r}
+        fill="none"
+        stroke="#fbbf24"
+        strokeWidth={5}
+        strokeLinecap="round"
+        strokeDasharray={circ}
+        strokeDashoffset={offset}
+        transform={`rotate(-90 ${cx} ${cx})`}
+        style={{
+          transition: "stroke-dashoffset 1.2s cubic-bezier(0.4, 0, 0.2, 1)",
+          filter: "drop-shadow(0 0 3px rgba(251,191,36,0.6))",
+        }}
+      />
+    </svg>
+  );
+}
+
 // Central plaza disc — clickable, opens the player's inventory.
 // Used on the desktop ward map; the mobile fallback uses a stacked variant.
 function PlazaButton({
@@ -867,41 +914,8 @@ function PlazaButton({
         transition: "transform 0.15s, border-color 0.15s, box-shadow 0.15s",
       }}
     >
-      {/* XP donut ring — SVG arc that traces the button border */}
-      {(() => {
-        const xpAtLevel = xpForLevel(character.level);
-        const xpAtNext  = xpForLevel(character.level + 1);
-        const fraction  = xpAtNext > xpAtLevel
-          ? Math.min(1, Math.max(0, (character.xp - xpAtLevel) / (xpAtNext - xpAtLevel)))
-          : 0;
-        const r = 110;
-        const cx = 115;
-        const circ = 2 * Math.PI * r;
-        return (
-          <svg
-            width={230} height={230}
-            viewBox="0 0 230 230"
-            style={{ position: "absolute", inset: 0, pointerEvents: "none", zIndex: 0 }}
-          >
-            {/* dim track */}
-            <circle cx={cx} cy={cx} r={r} fill="none" stroke="rgba(251,191,36,0.12)" strokeWidth={5} />
-            {/* progress arc — starts at 12 o'clock */}
-            {fraction > 0 && (
-              <circle
-                cx={cx} cy={cx} r={r}
-                fill="none"
-                stroke="#fbbf24"
-                strokeWidth={5}
-                strokeLinecap="round"
-                strokeDasharray={circ}
-                strokeDashoffset={circ * (1 - fraction)}
-                transform={`rotate(-90 ${cx} ${cx})`}
-                style={{ filter: "drop-shadow(0 0 3px rgba(251,191,36,0.6))" }}
-              />
-            )}
-          </svg>
-        );
-      })()}
+      {/* XP donut ring — animated SVG arc tracing the button border */}
+      <XpRing level={character.level} xp={character.xp} />
       <span style={{
         font: "9px/1 var(--font-mono)",
         color: hovered ? "var(--accent-gold-warm)" : "var(--accent-ink-blue)",
