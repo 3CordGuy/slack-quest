@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 
-import { Icon } from "../icons";
+import { Avatar, Icon } from "../icons";
+import { charPortraitUrl, classPortraitUrl } from "../CombatShared";
 import type {
   TownSection, TownArt, JobListing, BoardResponse,
   JoinableQuest, QuestVariant, Character, ActiveQuest, ActiveGatheringTask,
@@ -907,21 +908,21 @@ function PlazaButton({
         textTransform: "uppercase",
         letterSpacing: 1.5,
       }}>{hovered ? "Open inventory" : "You are here"}</span>
+      <Avatar
+        src={charPortraitUrl(character.name)}
+        fallbackSrc={classPortraitUrl(character.class)}
+        alt={character.name}
+        size={64}
+        radius={32}
+        style={{ margin: "10px 0 8px", flexShrink: 0 }}
+      />
       <div style={{
-        width: 64, height: 64, margin: "10px 0 8px",
-        borderRadius: "50%",
-        background: "var(--bg-void)",
-        border: "1px solid var(--border-base)",
-        display: "flex", alignItems: "center", justifyContent: "center",
-      }}>
-        <Icon name="crystal-wand" size={38} color="var(--accent-arcane-2)" />
-      </div>
-      <div style={{
-        font: "19px/1 var(--font-display)",
+        font: "19px/1.2 var(--font-display)",
         color: "var(--fg-1)",
-        whiteSpace: "nowrap",
+        display: "-webkit-box",
+        WebkitBoxOrient: "vertical",
+        WebkitLineClamp: 2,
         overflow: "hidden",
-        textOverflow: "ellipsis",
         maxWidth: "100%",
       }}>{character.name}</div>
       <div style={{
@@ -932,9 +933,15 @@ function PlazaButton({
         letterSpacing: 0.5,
       }}>{character.class} · L{character.level}</div>
       <div style={{ display: "flex", gap: 12, marginTop: 12, font: "11px/1 var(--font-mono)" }}>
-        <span style={{ color: "var(--tone-good-2)" }}>♥ {character.hp}</span>
-        <span style={{ color: "var(--accent-arcane)" }}>✦ {character.mana}</span>
-        <span style={{ color: "var(--accent-gold)" }}>🪙 {character.gold}</span>
+        <span style={{ color: "var(--tone-good-2)", display: "flex", alignItems: "center", gap: 3 }}>
+          <Icon name="health-normal" size={13} color="var(--tone-good-2)" />{character.hp}
+        </span>
+        <span style={{ color: "var(--accent-arcane)", display: "flex", alignItems: "center", gap: 3 }}>
+          <Icon name="aura" size={13} color="var(--accent-arcane)" />{character.mana}
+        </span>
+        <span style={{ color: "var(--accent-gold)", display: "flex", alignItems: "center", gap: 3 }}>
+          <Icon name="gold-bar" size={13} color="var(--accent-gold)" />{character.gold}
+        </span>
       </div>
     </button>
   );
