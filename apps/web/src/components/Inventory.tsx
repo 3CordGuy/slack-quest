@@ -1244,71 +1244,6 @@ export function InventoryFullScreen({
           <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap", flex: 1, minWidth: 0 }}>
             <span style={{ fontSize: 16, fontWeight: 700, color: "#f5f5f5", fontFamily: DISPLAY_FONT }}>Inventory</span>
             <span style={{ ...muted, fontSize: 12 }}>{items.length} item{items.length !== 1 ? "s" : ""}</span>
-            {character && (() => {
-              const xpAtLevel = xpForLevel(character.level);
-              const xpAtNext = xpForLevel(character.level + 1);
-              const xpInto = Math.max(0, (character.xp ?? 0) - xpAtLevel);
-              const xpSpan = Math.max(1, xpAtNext - xpAtLevel);
-              const xpPct = Math.min(100, (xpInto / xpSpan) * 100);
-              return (
-                <div style={{
-                  display: "flex", alignItems: "center", gap: 10,
-                  minWidth: isMobile ? 0 : 260, flex: 1,
-                }}>
-                  <div style={{
-                    display: "flex", flexDirection: "column", lineHeight: 1.05,
-                    minWidth: 0,
-                  }}>
-                    <span style={{
-                      fontFamily: DISPLAY_FONT,
-                      fontSize: isMobile ? 14 : 16,
-                      color: "var(--accent-arcane, #c084fc)",
-                      letterSpacing: 0.4,
-                      whiteSpace: "nowrap",
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                    }}>
-                      {character.class}
-                    </span>
-                    <span style={{
-                      font: "10px/1 var(--font-mono)",
-                      color: "var(--accent-gold, #fbbf24)",
-                      textTransform: "uppercase",
-                      letterSpacing: 1.2,
-                      marginTop: 3,
-                    }}>
-                      Level {character.level}
-                    </span>
-                  </div>
-                  <div style={{ flex: 1, minWidth: 80 }}>
-                    <div style={{
-                      display: "flex", justifyContent: "space-between",
-                      font: "9px/1 var(--font-mono)",
-                      color: "var(--fg-mute, #9ca3af)",
-                      textTransform: "uppercase",
-                      letterSpacing: 0.8,
-                      marginBottom: 3,
-                    }}>
-                      <span style={{ color: "var(--accent-gold, #fbbf24)" }}>XP</span>
-                      <span>{xpInto} / {xpSpan}</span>
-                    </div>
-                    <div style={{
-                      height: 6, borderRadius: 999,
-                      background: "var(--bg-void, #0a0b0e)",
-                      border: "1px solid #2a2d33",
-                      overflow: "hidden",
-                    }}>
-                      <div style={{
-                        width: `${xpPct}%`,
-                        height: "100%",
-                        background: "linear-gradient(90deg, var(--accent-gold-deep, #b45309), var(--accent-gold, #fbbf24))",
-                        transition: "width 0.4s ease",
-                      }} />
-                    </div>
-                  </div>
-                </div>
-              );
-            })()}
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
             {!isMobile && SORT_LABELS.map(({ key, label }) => (
@@ -1551,13 +1486,32 @@ export function InventoryFullScreen({
                   </div>
                 )}
                 {character?.hp !== undefined && (() => {
-                  const hpPct = character.max_hp > 0 ? Math.max(0, character.hp / character.max_hp) : 0;
-                  const hpCol = hpPct < 0.25 ? "#dc2626" : hpPct < 0.5 ? "#d97706" : "#16a34a";
-                  const armorMax = Math.floor((character.armor_power ?? 0) / 2);
+                  const xpAtLevel = xpForLevel(character.level);
+                  const xpAtNext  = xpForLevel(character.level + 1);
+                  const xpInto    = Math.max(0, (character.xp ?? 0) - xpAtLevel);
+                  const xpSpan    = Math.max(1, xpAtNext - xpAtLevel);
+                  const xpPct     = Math.min(1, xpInto / xpSpan);
+                  const hpPct     = character.max_hp > 0 ? Math.max(0, character.hp / character.max_hp) : 0;
+                  const hpCol     = hpPct < 0.25 ? "#dc2626" : hpPct < 0.5 ? "#d97706" : "#16a34a";
+                  const armorMax  = Math.floor((character.armor_power ?? 0) / 2);
                   const shieldPct = armorMax > 0 ? Math.min(1, character.shield / armorMax) : 0;
                   return (
                     <div style={{ alignSelf: "stretch", padding: "10px 12px", background: "var(--bg-card-2)", borderRadius: "var(--radius-md)", border: "1px solid var(--border-faint)", display: "flex", flexDirection: "column", gap: 8 }}>
-                      <div style={{ font: "10px/1 var(--font-mono)", textTransform: "uppercase", letterSpacing: 1, color: "var(--fg-faintest)", marginBottom: 2 }}>Vitals</div>
+                      {/* Class + level heading */}
+                      <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 2 }}>
+                        <span style={{ fontFamily: DISPLAY_FONT, fontSize: 13, color: "var(--accent-arcane)", letterSpacing: 0.3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{character.class}</span>
+                        <span style={{ font: "10px/1 var(--font-mono)", color: "var(--accent-gold)", textTransform: "uppercase", letterSpacing: 1, flexShrink: 0, marginLeft: 8 }}>L{character.level}</span>
+                      </div>
+                      {/* XP bar */}
+                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <span style={{ font: "9px/1 var(--font-mono)", color: "var(--accent-gold)", width: 22, flexShrink: 0, textTransform: "uppercase", letterSpacing: 0.8 }}>XP</span>
+                        <div className="bar" style={{ flex: 1 }}>
+                          <i style={{ width: `${xpPct * 100}%`, background: "linear-gradient(90deg, var(--accent-gold-deep, #b45309), var(--accent-gold, #fbbf24))" }} />
+                        </div>
+                        <span style={{ font: "10px/1 var(--font-mono)", color: "var(--fg-mute)", minWidth: 44, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
+                          {xpInto}/{xpSpan}
+                        </span>
+                      </div>
                       {/* HP bar */}
                       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                         <span style={{ font: "9px/1 var(--font-mono)", color: "var(--fg-mute)", width: 22, flexShrink: 0, textTransform: "uppercase", letterSpacing: 0.8 }}>HP</span>
