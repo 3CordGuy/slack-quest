@@ -1502,7 +1502,7 @@ export function CombatPage({
           (fade-in when loaded) → atmospheric dim gradient → particles.
           The SVG keeps painting underneath even after the photo loads so
           slow networks never flash an empty void. */}
-      <div style={{ flex: 1, position: "relative", overflow: "hidden", minHeight: 0, background: "#0a0b10", maxHeight: isMobile ? "44vh" : undefined }}>
+      <div style={{ flex: 1, position: "relative", overflow: "hidden", minHeight: 0, background: "#0a0b10" }}>
         <CombatBackdropLayer scene={scene} />
         {bgArtUrl && (
           <img

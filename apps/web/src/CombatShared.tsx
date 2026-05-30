@@ -444,7 +444,9 @@ export function CBtn({ label, icon, color, disabled, manaCost, tooltip, cooldown
       : "#0e0f12";
   const iconSize = compact ? 18 : 20;
   const trigger = (
-    <div style={{ position: "relative", flex: 1, minWidth: 0, display: "flex" }}>
+    // On compact (mobile) viewports: flex-basis 52px + no-shrink forces row
+    // wrapping when 7+ buttons can't fit; flex-grow still fills available space.
+    <div style={{ position: "relative", flex: compact ? "1 0 52px" : 1, maxWidth: compact ? 72 : undefined, minWidth: 0, display: "flex" }}>
       <button
         onClick={onClick}
         disabled={isDisabled}
