@@ -6430,7 +6430,7 @@ async function buildInitialCombatState(
       stats: snap.stats,
       element: isFocus ? undefined : (weapon?.element ?? undefined),
       weapon_rarity: isFocus ? undefined
-        : (weapon?.rarity === "rare" || weapon?.rarity === "epic" || weapon?.rarity === "legendary"
+        : (weapon?.rarity === "uncommon" || weapon?.rarity === "rare" || weapon?.rarity === "epic" || weapon?.rarity === "legendary"
           ? weapon.rarity : undefined),
       resistances: Object.keys(resistances).length > 0 ? resistances : undefined,
     });
@@ -6949,7 +6949,7 @@ export class QuestRoom extends DurableObject<Env> {
       stats: snap.stats,
       element: isFocus ? undefined : (weapon?.element ?? undefined),
       weapon_rarity: isFocus ? undefined
-        : (weapon?.rarity === "rare" || weapon?.rarity === "epic" || weapon?.rarity === "legendary"
+        : (weapon?.rarity === "uncommon" || weapon?.rarity === "rare" || weapon?.rarity === "epic" || weapon?.rarity === "legendary"
           ? weapon.rarity : undefined),
       resistances: Object.keys(resistances2).length > 0 ? resistances2 : undefined,
       effects: character.effects ?? [],
