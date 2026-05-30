@@ -1406,14 +1406,14 @@ export function InventoryFullScreen({
                     )}
                     {character?.str !== undefined && (
                       <div style={{ alignSelf: "stretch", padding: "10px 12px", background: "#16181c", borderRadius: 8, border: "1px solid #2a2d33" }}>
-                        <div style={{ fontSize: 10, color: "#6b7280", textTransform: "uppercase", letterSpacing: 1.2, marginBottom: 6, fontFamily: DISPLAY_FONT }}>Primary Stats</div>
+                        <div style={{ fontSize: 10, color: "var(--fg-mute)", textTransform: "uppercase", letterSpacing: 1.2, marginBottom: 6, fontFamily: DISPLAY_FONT }}>Primary Stats</div>
                         <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 4, marginBottom: hasUnspentPoints && onSpend ? 8 : 0 }}>
                           {(["str", "int_stat", "vit", "agi", "dex"] as StatKey[]).map((key) => {
                             const base = character[key] ?? 5;
                             const bonus = dollEquipBonuses[key] ?? 0;
                             return (
                               <div key={key} style={{ textAlign: "center", background: "#1d1f23", borderRadius: 5, padding: "5px 3px" }}>
-                                <div style={{ fontSize: 8, color: "#6b7280", textTransform: "uppercase", letterSpacing: 0.8, fontFamily: DISPLAY_FONT }}>
+                                <div style={{ fontSize: 8, color: "var(--fg-mute-3)", textTransform: "uppercase", letterSpacing: 0.8, fontFamily: DISPLAY_FONT }}>
                                   {key === "int_stat" ? "INT" : key.toUpperCase()}
                                 </div>
                                 <div style={{ fontSize: 14, fontWeight: 700, color: "#f5f5f5", lineHeight: 1.2, fontFamily: DISPLAY_FONT }}>{base + bonus}</div>
