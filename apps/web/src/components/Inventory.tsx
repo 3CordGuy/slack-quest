@@ -1100,6 +1100,7 @@ export function InventoryFullScreen({
   characterLevel,
   character,
   characterSheet,
+  onSpend,
   onEquip,
   onUnequip,
   onSell,
@@ -1116,6 +1117,7 @@ export function InventoryFullScreen({
       Equipped column — used by App.tsx to fold the character sheet into
       the inventory now that the right sidebar is gone. */
   characterSheet?: ReactNode;
+  onSpend?: (stat: StatKey) => void;
   onEquip: (itemId: number) => void;
   onUnequip: (itemId: number) => void;
   onSell: (itemId: number) => void;
@@ -1131,6 +1133,7 @@ export function InventoryFullScreen({
     localStorage.setItem("inv_view", mode);
     setViewMode(mode);
   }
+  const hasUnspentPoints = (character?.unspent_points ?? 0) > 0;
   // Esc closes the modal — capture early so it beats any inner handlers.
   useEffect(() => {
     const handler = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
@@ -1339,7 +1342,7 @@ export function InventoryFullScreen({
                     {character?.str !== undefined && (
                       <div style={{ alignSelf: "stretch", padding: "10px 12px", background: "#16181c", borderRadius: 8, border: "1px solid #2a2d33" }}>
                         <div style={{ fontSize: 10, color: "#6b7280", textTransform: "uppercase", letterSpacing: 1.2, marginBottom: 6, fontFamily: DISPLAY_FONT }}>Primary Stats</div>
-                        <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 4 }}>
+                        <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 4, marginBottom: hasUnspentPoints && onSpend ? 8 : 0 }}>
                           {(["str", "int_stat", "vit", "agi", "dex"] as StatKey[]).map((key) => {
                             const base = character[key] ?? 5;
                             const bonus = dollEquipBonuses[key] ?? 0;
@@ -1354,6 +1357,45 @@ export function InventoryFullScreen({
                             );
                           })}
                         </div>
+                        {hasUnspentPoints && onSpend && (
+                          <div style={{
+                            padding: "9px 10px",
+                            background: "var(--accent-ink-deep)",
+                            borderRadius: "var(--radius-md)",
+                            border: "1px solid var(--accent-ink-blue-2)",
+                            animation: "gq-spend-pulse 2.4s ease-in-out infinite",
+                          }}>
+                            <div style={{
+                              fontFamily: "var(--font-mono)",
+                              fontSize: 11,
+                              color: "var(--accent-ink-blue)",
+                              marginBottom: 7,
+                            }}>
+                              +{character.unspent_points} unspent {character.unspent_points === 1 ? "point" : "points"} — choose a stat:
+                            </div>
+                            <div style={{ display: "flex", gap: 5 }}>
+                              {(["str", "int_stat", "vit", "agi", "dex"] as StatKey[]).map((key) => (
+                                <button
+                                  key={key}
+                                  onClick={() => onSpend(key)}
+                                  className="btn btn-ghost btn-sm"
+                                  style={{
+                                    flex: 1,
+                                    justifyContent: "center",
+                                    padding: "6px 0",
+                                    fontFamily: "var(--font-mono)",
+                                    fontSize: 10,
+                                    letterSpacing: 0.5,
+                                    color: "var(--accent-ink-blue)",
+                                    borderColor: "var(--accent-ink-blue-3)",
+                                  }}
+                                >
+                                  {key === "int_stat" ? "INT" : key.toUpperCase()}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>
@@ -1543,7 +1585,7 @@ export function InventoryFullScreen({
                 {character?.str !== undefined && (
                   <div style={{ alignSelf: "stretch", padding: "10px 12px", background: "#16181c", borderRadius: 8, border: "1px solid #2a2d33" }}>
                     <div style={{ fontSize: 10, color: "#6b7280", textTransform: "uppercase", letterSpacing: 1.2, marginBottom: 6, fontFamily: DISPLAY_FONT }}>Primary Stats</div>
-                    <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 4 }}>
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 4, marginBottom: hasUnspentPoints && onSpend ? 8 : 0 }}>
                       {(["str", "int_stat", "vit", "agi", "dex"] as StatKey[]).map((key) => {
                         const base = character[key] ?? 5;
                         const bonus = dollEquipBonuses[key] ?? 0;
@@ -1558,6 +1600,45 @@ export function InventoryFullScreen({
                         );
                       })}
                     </div>
+                    {hasUnspentPoints && onSpend && (
+                      <div style={{
+                        padding: "9px 10px",
+                        background: "var(--accent-ink-deep)",
+                        borderRadius: "var(--radius-md)",
+                        border: "1px solid var(--accent-ink-blue-2)",
+                        animation: "gq-spend-pulse 2.4s ease-in-out infinite",
+                      }}>
+                        <div style={{
+                          fontFamily: "var(--font-mono)",
+                          fontSize: 11,
+                          color: "var(--accent-ink-blue)",
+                          marginBottom: 7,
+                        }}>
+                          +{character.unspent_points} unspent {character.unspent_points === 1 ? "point" : "points"} — choose a stat:
+                        </div>
+                        <div style={{ display: "flex", gap: 5 }}>
+                          {(["str", "int_stat", "vit", "agi", "dex"] as StatKey[]).map((key) => (
+                            <button
+                              key={key}
+                              onClick={() => onSpend(key)}
+                              className="btn btn-ghost btn-sm"
+                              style={{
+                                flex: 1,
+                                justifyContent: "center",
+                                padding: "6px 0",
+                                fontFamily: "var(--font-mono)",
+                                fontSize: 10,
+                                letterSpacing: 0.5,
+                                color: "var(--accent-ink-blue)",
+                                borderColor: "var(--accent-ink-blue-3)",
+                              }}
+                            >
+                              {key === "int_stat" ? "INT" : key.toUpperCase()}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>

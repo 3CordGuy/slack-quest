@@ -1235,6 +1235,7 @@ export function App() {
             selfId={state.me.slack_user_id}
             characterLevel={chr.level}
             character={chr}
+            onSpend={spendStatPoint}
             onEquip={equipItem}
             onUnequip={unequipItem}
             onSell={sellItem}
@@ -1699,6 +1700,7 @@ export function App() {
           selfId={state.me.slack_user_id}
           characterLevel={state.me.character.level}
           character={state.me.character}
+          onSpend={spendStatPoint}
           onEquip={equipItem}
           onUnequip={unequipItem}
           onSell={sellItem}
