@@ -2088,8 +2088,11 @@ export const CAMP_UPGRADE_CATALOG: CampUpgradeSpec[] = [
     label: "Third Worker Tent",
     blurb: "Four parallel slots. Full camp.",
     icon: "camping-tent",
-    gold_cost: 2000,
-    level_req: 9,
+    // Late-game capstone: players are already hitting Lv50 with three tents.
+    // Gate the fourth slot far out of reach so it stays aspirational and
+    // adjust gold cost to match — anyone Lv50+ should have ample gold flow.
+    gold_cost: 25000,
+    level_req: 50,
     effect: { kind: "extra_slot" },
   },
   {

@@ -566,7 +566,7 @@ export interface ActiveGatheringTask {
 export interface CampStatusResponse {
   now: number;
   active: ActiveGatheringTask[];
-  slots: { total: number; in_use: number; available: number };
+  slots: { total: number; in_use: number; available: number; errand_slot_used?: boolean };
   upgrades_built: string[];
   upgrades_catalog: CampUpgradeSpec[];
   gold: number;

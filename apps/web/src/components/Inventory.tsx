@@ -22,8 +22,8 @@ import {
   useFloating,
   useInteractions,
 } from "@floating-ui/react";
-import { findCatalogEntry, sellPriceFor, type StatKey } from "@gantt-quest/core";
-import { classPortraitUrl } from "../CombatShared";
+import { findCatalogEntry, sellPriceFor, xpForLevel, type StatKey } from "@gantt-quest/core";
+import { charPortraitUrl, classPortraitUrl } from "../CombatShared";
 import { Icon } from "../icons";
 import type {
   Character,
@@ -71,6 +71,10 @@ export const ItemCell = forwardRef<
     isMatch?: boolean;
     showSellPrice?: boolean;
     characterLevel?: number;
+    /** Client-side stack size for grouped pack items (consumables, scrolls,
+        etc.). Renders a "×N" badge in the top-right corner when > 1. The
+        cell still represents a single item id under the hood. */
+    stackCount?: number;
     cursor?: CSSProperties["cursor"];
     /** Render the design-handoff rarity left-stripe (3px solid rarity color)
         instead of the uniform 2px border. Used on doll slots + bag tiles. */
@@ -79,7 +83,7 @@ export const ItemCell = forwardRef<
   } & Omit<HTMLAttributes<HTMLDivElement>, "onClick">
 >(function ItemCell(
   { item, size = 72, mode = "icon", selected, isOver, isDragging, isMatch,
-    showSellPrice, characterLevel, cursor, rarityStripe, onClick, style: extraStyle, ...rest },
+    showSellPrice, characterLevel, stackCount, cursor, rarityStripe, onClick, style: extraStyle, ...rest },
   ref,
 ) {
   const rc = RARITY_COLOR[item.rarity];
@@ -149,6 +153,27 @@ export const ItemCell = forwardRef<
       {item.item_type === "resource" && (item.qty ?? 1) > 0 && (mode === "icon" || mode === "compact") && (
         <div style={{ position: "absolute", bottom: 3, right: 3, minWidth: 18, height: 18, background: "#0a0b0e", border: `1px solid ${rc}55`, borderRadius: "50%", fontSize: 9, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", color: rc, lineHeight: 1, padding: "0 2px" }}>
           ×{item.qty ?? 1}
+        </div>
+      )}
+      {(stackCount ?? 1) > 1 && (
+        <div
+          title={`Stack of ${stackCount}`}
+          style={{
+            position: "absolute",
+            top: mode === "detailed" ? 6 : 4,
+            right: mode === "detailed" ? 6 : 4,
+            minWidth: 20, height: 18,
+            background: "#0a0b0e",
+            border: `1px solid ${rc}`,
+            borderRadius: 9,
+            fontSize: 10, fontWeight: 700,
+            display: "flex", alignItems: "center", justifyContent: "center",
+            color: "#f5f5f5",
+            lineHeight: 1, padding: "0 5px",
+            boxShadow: `0 0 0 2px ${rc}33`,
+          }}
+        >
+          ×{stackCount}
         </div>
       )}
       {item.item_type !== "resource" && (mode === "icon" || (mode === "compact" && powerValue > 0)) && (
@@ -228,44 +253,100 @@ function StatDiffPanel({ candidate, equipped }: { candidate: Item; equipped: Ite
     .map((k) => ({ k, av: a[k] ?? 0, bv: b[k] ?? 0 }))
     .filter((r) => r.av !== 0 || r.bv !== 0);
   if (rows.length === 0) return null;
+  // Net verdict — sum every row's diff. Positive = upgrade (green border),
+  // negative = downgrade (red), zero = sidegrade (neutral). Drives the
+  // panel's border + header tag so the player can read intent at a glance
+  // without scanning every row.
+  const net = rows.reduce((acc, r) => acc + (r.av - r.bv), 0);
+  const verdict = net > 0 ? "upgrade" : net < 0 ? "downgrade" : "sidegrade";
+  const verdictColor = verdict === "upgrade"
+    ? "#4ade80"
+    : verdict === "downgrade" ? "#f87171" : "#94a3b8";
+  const verdictBg = verdict === "upgrade"
+    ? "rgba(74, 222, 128, 0.08)"
+    : verdict === "downgrade"
+      ? "rgba(248, 113, 113, 0.08)"
+      : "rgba(148, 163, 184, 0.06)";
   return (
     <div style={{
-      marginBottom: 10,
-      padding: "8px 10px",
-      background: "var(--bg-card-2)",
-      border: "1px solid var(--border-faint)",
-      borderRadius: 6,
+      marginBottom: 12,
+      padding: "10px 12px",
+      background: verdictBg,
+      border: `2px solid ${verdictColor}`,
+      borderRadius: 8,
+      boxShadow: `0 0 0 1px ${verdictColor}33`,
     }}>
       <div style={{
-        font: "10px/1 var(--font-mono)",
-        textTransform: "uppercase",
-        letterSpacing: 1,
-        color: "var(--fg-faintest)",
-        marginBottom: 6,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 8,
+        marginBottom: 8,
       }}>
-        vs Equipped — {equipped.item_name}
+        <div style={{
+          font: "11px/1 var(--font-mono)",
+          textTransform: "uppercase",
+          letterSpacing: 1.1,
+          color: "#e2e8f0",
+          fontWeight: 700,
+        }}>
+          vs Equipped
+        </div>
+        <span style={{
+          font: "700 10px/1 var(--font-mono)",
+          textTransform: "uppercase",
+          letterSpacing: 1,
+          color: verdictColor,
+          background: `${verdictColor}22`,
+          border: `1px solid ${verdictColor}`,
+          borderRadius: 4,
+          padding: "3px 7px",
+          whiteSpace: "nowrap",
+        }}>
+          {verdict}{net !== 0 ? ` ${net > 0 ? `+${net}` : net}` : ""}
+        </span>
       </div>
-      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+      <div style={{
+        font: "11px/1.3 var(--font-body)",
+        color: "#cbd5e1",
+        marginBottom: 8,
+        whiteSpace: "nowrap",
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+      }}>
+        {equipped.item_name}
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
         {rows.map(({ k, av, bv }) => {
           const diff = av - bv;
-          const arrow = diff > 0 ? "▲" : diff < 0 ? "▼" : "·";
-          const color = diff > 0 ? "var(--tone-good)" : diff < 0 ? "var(--tone-bad)" : "var(--fg-mute)";
+          const arrow = diff > 0 ? "▲" : diff < 0 ? "▼" : "•";
+          const color = diff > 0 ? "#4ade80" : diff < 0 ? "#f87171" : "#94a3b8";
           return (
             <div key={k} style={{
               display: "grid",
-              gridTemplateColumns: "60px 1fr auto",
+              gridTemplateColumns: "64px 1fr auto",
               alignItems: "center",
-              gap: 8,
-              font: "11px/1.3 var(--font-body)",
+              gap: 10,
+              font: "13px/1.3 var(--font-body)",
             }}>
-              <span style={{ color: "var(--fg-mute)" }}>{labelFor(k)}</span>
-              <span style={{ fontFamily: "var(--font-mono)", color: "var(--fg-3)" }}>
-                {av} <span style={{ color: "var(--fg-faintest)" }}>← {bv}</span>
+              <span style={{
+                color: "#e2e8f0",
+                fontWeight: 600,
+                textTransform: "uppercase",
+                letterSpacing: 0.5,
+                fontSize: 11,
+              }}>{labelFor(k)}</span>
+              <span style={{ fontFamily: "var(--font-mono)", color: "#f5f5f5", fontSize: 13 }}>
+                <b style={{ fontWeight: 700 }}>{av}</b>
+                <span style={{ color: "#6b7280", margin: "0 6px" }}>vs</span>
+                <span style={{ color: "#9ca3af" }}>{bv}</span>
               </span>
               <span style={{
-                font: "700 11px/1 var(--font-mono)",
+                font: "700 13px/1 var(--font-mono)",
                 color,
                 whiteSpace: "nowrap",
+                minWidth: 50,
+                textAlign: "right",
               }}>
                 {arrow} {diff > 0 ? `+${diff}` : diff}
               </span>
@@ -541,7 +622,13 @@ export function FigureTile({
   height: number;
 }) {
   const [portraitFailed, setPortraitFailed] = useState(false);
-  const portrait = classPortraitUrl(character.class);
+  const [fellBack, setFellBack] = useState(false);
+  // Prefer the per-character art (unique, generated). Fall back to the
+  // shared class portrait if the character art 404s (e.g. art job still
+  // queued), then to a class glyph if even that's missing.
+  const charPortrait = charPortraitUrl(character.name);
+  const classPortrait = classPortraitUrl(character.class);
+  const portrait = !fellBack ? charPortrait : classPortrait;
   const glyph = CLASS_GLYPH[character.class] ?? "crystal-wand";
   const classShort = character.class.split(" ").slice(-1)[0] ?? character.class;
   return (
@@ -572,7 +659,10 @@ export function FigureTile({
           src={portrait}
           alt={character.class}
           style={{ width: "100%", flex: 1, objectFit: "cover", minHeight: 0 }}
-          onError={() => setPortraitFailed(true)}
+          onError={() => {
+            if (!fellBack && classPortrait) setFellBack(true);
+            else setPortraitFailed(true);
+          }}
         />
       ) : (
         <Icon name={glyph} size={54} color="var(--accent-arcane-2)" />
@@ -666,10 +756,13 @@ export function DroppablePackPanel({ children }: { children: ReactNode }) {
 }
 
 export function DraggablePackItem({
-  item, isSelected, isMatch, viewMode, onSelect, characterLevel,
+  item, isSelected, isMatch, viewMode, onSelect, characterLevel, stackCount,
 }: {
   item: Item; isSelected: boolean; isMatch: boolean;
   viewMode: "grid" | "list"; onSelect: () => void; characterLevel?: number;
+  /** Client-side stack count for the bag grid — purely cosmetic, dnd-kit
+      still operates on the representative item's id. */
+  stackCount?: number;
 }) {
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: `pack-item-${item.id}`,
@@ -696,7 +789,12 @@ export function DraggablePackItem({
       >
         <Icon name={itemIcon(item)} size={20} color={itemIconColor(item) ?? rc} />
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 13, fontWeight: 600, color: "#f5f5f5", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{resourceDisplayName(item)}</div>
+          <div style={{ fontSize: 13, fontWeight: 600, color: "#f5f5f5", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+            {resourceDisplayName(item)}
+            {(stackCount ?? 1) > 1 && (
+              <span style={{ marginLeft: 6, fontSize: 11, color: rc, fontWeight: 700 }}>×{stackCount}</span>
+            )}
+          </div>
           <div style={{ fontSize: 10, color: "#6b7280", marginTop: 1 }}>
             {slotLabel(item)}{item.stat_bonus && statBonusSummary(item.stat_bonus) ? ` · ${statBonusSummary(item.stat_bonus)}` : ""}
           </div>
@@ -726,6 +824,7 @@ export function DraggablePackItem({
       isMatch={isMatch}
       showSellPrice
       characterLevel={characterLevel}
+      stackCount={stackCount}
       cursor={isDragging ? "grabbing" : "grab"}
       onClick={onSelect}
       {...(listeners as HTMLAttributes<HTMLDivElement>)}
@@ -933,6 +1032,57 @@ export function LoadoutTotals({
   );
 }
 
+// ─── Client-side stacking for the bag grid ──────────────────────────────────
+// Resources already arrive pre-stacked (qty column, server-side). Other
+// stackables — consumables, scrolls, magic, revives, tools — arrive as
+// individual rows. The bag fills up fast with "Health Potion ×7" rendered
+// as seven tiles, which is noisy. Group identical bag entries here so each
+// distinct item gets a single tile with a stack-count badge.
+//
+// Equipped, weapon, and armor items deliberately don't stack — weapons and
+// armor almost always have unique stat rolls, and equipping a stack would
+// be ambiguous. Resources keep their existing `qty` badge regardless.
+type ItemStack = { item: Item; ids: number[] };
+
+function stackableKey(it: Item): string | null {
+  if (it.item_type === "weapon" || it.item_type === "armor" || it.item_type === "resource") {
+    return null;
+  }
+  return [
+    it.item_name,
+    it.item_type,
+    it.power,
+    it.rarity,
+    it.level_req ?? 1,
+    it.element ?? "",
+    it.item_subtype ?? "",
+    it.sharpens_count ?? 0,
+    it.potency_stacks ?? 0,
+    it.stat_bonus ? JSON.stringify(it.stat_bonus) : "",
+  ].join("|");
+}
+
+function stackPackItems(items: Item[]): ItemStack[] {
+  const byKey = new Map<string, ItemStack>();
+  const result: ItemStack[] = [];
+  for (const it of items) {
+    const k = stackableKey(it);
+    if (!k) {
+      result.push({ item: it, ids: [it.id] });
+      continue;
+    }
+    const existing = byKey.get(k);
+    if (existing) {
+      existing.ids.push(it.id);
+    } else {
+      const stack: ItemStack = { item: it, ids: [it.id] };
+      byKey.set(k, stack);
+      result.push(stack);
+    }
+  }
+  return result;
+}
+
 function useIsMobile(breakpoint = 700) {
   const [isMobile, setIsMobile] = useState(() => typeof window !== "undefined" && window.innerWidth < breakpoint);
   useEffect(() => {
@@ -1091,11 +1241,74 @@ export function InventoryFullScreen({
       >
         {/* Header */}
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: isMobile ? "12px 14px" : "14px 18px", borderBottom: "1px solid #2a2d33", flexShrink: 0, gap: 8, flexWrap: "wrap" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap", flex: 1, minWidth: 0 }}>
             <span style={{ fontSize: 16, fontWeight: 700, color: "#f5f5f5", fontFamily: DISPLAY_FONT }}>Inventory</span>
             <span style={{ ...muted, fontSize: 12 }}>{items.length} item{items.length !== 1 ? "s" : ""}</span>
-            {/* Character name / class / HP etc. now live in the global
-                AppTopBar and inside the embedded CharacterCard. */}
+            {character && (() => {
+              const xpAtLevel = xpForLevel(character.level);
+              const xpAtNext = xpForLevel(character.level + 1);
+              const xpInto = Math.max(0, (character.xp ?? 0) - xpAtLevel);
+              const xpSpan = Math.max(1, xpAtNext - xpAtLevel);
+              const xpPct = Math.min(100, (xpInto / xpSpan) * 100);
+              return (
+                <div style={{
+                  display: "flex", alignItems: "center", gap: 10,
+                  minWidth: isMobile ? 0 : 260, flex: 1,
+                }}>
+                  <div style={{
+                    display: "flex", flexDirection: "column", lineHeight: 1.05,
+                    minWidth: 0,
+                  }}>
+                    <span style={{
+                      fontFamily: DISPLAY_FONT,
+                      fontSize: isMobile ? 14 : 16,
+                      color: "var(--accent-arcane, #c084fc)",
+                      letterSpacing: 0.4,
+                      whiteSpace: "nowrap",
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                    }}>
+                      {character.class}
+                    </span>
+                    <span style={{
+                      font: "10px/1 var(--font-mono)",
+                      color: "var(--accent-gold, #fbbf24)",
+                      textTransform: "uppercase",
+                      letterSpacing: 1.2,
+                      marginTop: 3,
+                    }}>
+                      Level {character.level}
+                    </span>
+                  </div>
+                  <div style={{ flex: 1, minWidth: 80 }}>
+                    <div style={{
+                      display: "flex", justifyContent: "space-between",
+                      font: "9px/1 var(--font-mono)",
+                      color: "var(--fg-mute, #9ca3af)",
+                      textTransform: "uppercase",
+                      letterSpacing: 0.8,
+                      marginBottom: 3,
+                    }}>
+                      <span style={{ color: "var(--accent-gold, #fbbf24)" }}>XP</span>
+                      <span>{xpInto} / {xpSpan}</span>
+                    </div>
+                    <div style={{
+                      height: 6, borderRadius: 999,
+                      background: "var(--bg-void, #0a0b0e)",
+                      border: "1px solid #2a2d33",
+                      overflow: "hidden",
+                    }}>
+                      <div style={{
+                        width: `${xpPct}%`,
+                        height: "100%",
+                        background: "linear-gradient(90deg, var(--accent-gold-deep, #b45309), var(--accent-gold, #fbbf24))",
+                        transition: "width 0.4s ease",
+                      }} />
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
             {!isMobile && SORT_LABELS.map(({ key, label }) => (
@@ -1236,17 +1449,23 @@ export function InventoryFullScreen({
                       </div>
                     ) : (
                       <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                        {packItems.map((item) => {
+                        {stackPackItems(packItems).map(({ item, ids }) => {
                           const rc = RARITY_COLOR[item.rarity];
-                          const isSelected = selectedId === item.id;
+                          const isSelected = ids.includes(selectedId ?? -1);
                           const isMatch = highlightSlot !== null && item.slot === highlightSlot;
+                          const stackCount = ids.length;
                           return (
-                            <div key={item.id} onClick={() => setSelectedId(isSelected ? null : item.id)}
+                            <div key={item.id} onClick={() => setSelectedId(selectedId === item.id ? null : item.id)}
                               style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 12px", borderRadius: 10, background: isSelected ? "#1e1c2e" : "#1d1f23", border: `1px solid ${isSelected ? "#fff" : isMatch ? "#c084fc" : "#2a2d33"}`, cursor: "pointer", boxShadow: isMatch ? "0 0 6px #c084fc33" : undefined }}
                             >
                               <Icon name={itemIcon(item)} size={28} color={itemIconColor(item) ?? rc} />
                               <div style={{ flex: 1, minWidth: 0 }}>
-                                <div style={{ fontSize: 14, fontWeight: 600, color: "#f5f5f5", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{resourceDisplayName(item)}</div>
+                                <div style={{ fontSize: 14, fontWeight: 600, color: "#f5f5f5", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                                  {resourceDisplayName(item)}
+                                  {stackCount > 1 && (
+                                    <span style={{ marginLeft: 6, fontSize: 12, color: rc, fontWeight: 700 }}>×{stackCount}</span>
+                                  )}
+                                </div>
                                 <div style={{ fontSize: 11, color: "#6b7280", marginTop: 2 }}>
                                   {slotLabel(item)}{item.stat_bonus && statBonusSummary(item.stat_bonus) ? ` · ${statBonusSummary(item.stat_bonus)}` : ""}
                                 </div>
@@ -1378,24 +1597,26 @@ export function InventoryFullScreen({
                   </div>
                 ) : viewMode === "grid" ? (
                   <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(110px, 1fr))", gap: 10 }}>
-                    {packItems.map((item) => (
+                    {stackPackItems(packItems).map(({ item, ids }) => (
                       <DraggablePackItem key={item.id} item={item}
-                        isSelected={selectedId === item.id}
+                        isSelected={ids.includes(selectedId ?? -1)}
                         isMatch={highlightSlot !== null && item.slot === highlightSlot}
                         viewMode="grid"
                         characterLevel={characterLevel}
+                        stackCount={ids.length}
                         onSelect={() => setSelectedId(selectedId === item.id ? null : item.id)}
                       />
                     ))}
                   </div>
                 ) : (
                   <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
-                    {packItems.map((item) => (
+                    {stackPackItems(packItems).map(({ item, ids }) => (
                       <DraggablePackItem key={item.id} item={item}
-                        isSelected={selectedId === item.id}
+                        isSelected={ids.includes(selectedId ?? -1)}
                         isMatch={highlightSlot !== null && item.slot === highlightSlot}
                         viewMode="list"
                         characterLevel={characterLevel}
+                        stackCount={ids.length}
                         onSelect={() => setSelectedId(selectedId === item.id ? null : item.id)}
                       />
                     ))}
