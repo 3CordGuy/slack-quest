@@ -226,6 +226,14 @@ export function App() {
     return () => clearInterval(id);
   }, [state.kind]);
 
+  // Re-fetch camp status whenever the Camp modal opens so slot counts
+  // are always fresh (catches stale data after building a tent).
+  useEffect(() => {
+    if (state.kind === "auth" && townSection === "camp") {
+      void refreshCampStatus();
+    }
+  }, [townSection, state.kind]);
+
   async function startPubErrand(offerId: number, inputResourceId?: string) {
     const res = await fetch("/api/pub/errands/start", {
       method: "POST",
@@ -1047,7 +1055,14 @@ export function App() {
     });
     if (!res.ok) {
       const body = await res.json().catch(() => ({})) as { error?: string };
-      toast.error(`Couldn't start: ${body.error ?? res.statusText}`);
+      const errMsg =
+        body.error === "no_slot"         ? "All tents are busy — collect a finished task first." :
+        body.error === "errand_in_flight" ? "Your main character is on a pub errand. Collect it first or use a worker tent slot." :
+        body.error === "mid_quest"        ? "Can't gather while in a quest." :
+        body.error === "downed"           ? "You're downed — rest at the Inn first." :
+        `Couldn't start: ${body.error ?? res.statusText}`;
+      toast.error(errMsg);
+      await refreshCampStatus(); // sync UI even on failure
       return;
     }
     toast.success("Gathering started");
