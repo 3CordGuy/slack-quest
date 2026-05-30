@@ -6,6 +6,7 @@ import { CLASSES, findCatalogEntry, priceFor, sellPriceFor, type Achievement, ty
 
 import { CombatPage } from "./CombatPage";
 import { LobbyView } from "./LobbyView";
+import { parseHash, toHash, routesEqual } from "./route";
 import { Avatar, EmojiIcon, Icon } from "./icons";
 import { issueWebLoginCode } from "@gantt-quest/db";
 
@@ -108,6 +109,31 @@ export function App() {
     return () => { style.remove(); };
   }, []);
 
+  // Browser back/forward → re-read the hash into state.
+  useEffect(() => {
+    const onPop = () => {
+      const r = parseHash(window.location.hash);
+      setTownSectionRaw(r.section);
+      setTownSubRaw(r.sub);
+    };
+    window.addEventListener("popstate", onPop);
+    window.addEventListener("hashchange", onPop);
+    return () => {
+      window.removeEventListener("popstate", onPop);
+      window.removeEventListener("hashchange", onPop);
+    };
+  }, []);
+
+  // State → URL. Only pushes when the desired hash differs from the current
+  // one, so popstate-driven state updates don't loop back into pushState.
+  useEffect(() => {
+    const desired = toHash({ section: townSection, sub: townSub });
+    const current = window.location.hash || "";
+    if (!routesEqual(parseHash(current), parseHash(desired))) {
+      window.history.pushState(null, "", desired || window.location.pathname + window.location.search);
+    }
+  }, [townSection, townSub]);
+
   // True after the user explicitly backed out of CombatPage — suppresses
   // auto-resume on subsequent refresh() calls (e.g. after a shop purchase)
   // until they click Resume or combat ends. Reset when combat actually ends.
@@ -124,7 +150,19 @@ export function App() {
   // of the dashboard tree so they're not subtree-scoped to a single card.
   const [haggleResult, setHaggleResult] = useState<HaggleResult | null>(null);
   const [confirm, setConfirm] = useState<ConfirmRequest | null>(null);
-  const [townSection, setTownSection] = useState<TownSection | null>(null);
+  // URL-routed view state. Hash format: #<slug>[/<sub>] (e.g. #pub/errands).
+  // Seeded once from window.location.hash on mount; popstate listener keeps
+  // state in sync with browser back/forward.
+  const initialRoute = typeof window !== "undefined" ? parseHash(window.location.hash) : { section: null, sub: null };
+  const [townSection, setTownSectionRaw] = useState<TownSection | null>(initialRoute.section);
+  const [townSub, setTownSubRaw] = useState<string | null>(initialRoute.sub);
+  function setTownSection(s: TownSection | null) {
+    setTownSectionRaw(s);
+    setTownSubRaw(null);
+  }
+  function setTownSub(s: string | null) {
+    setTownSubRaw(s);
+  }
   const [inventoryOpen, setInventoryOpen] = useState(false);
   const [characterSheetOpen, setCharacterSheetOpen] = useState(false);
   const [characterSlotsOpen, setCharacterSlotsOpen] = useState(false);
@@ -1314,6 +1352,8 @@ export function App() {
             { id: "scores",   label: "Scores",    icon: "trophy" },
           ]}
           defaultSection="drinks"
+          section={townSub ?? "drinks"}
+          onSectionChange={setTownSub}
         >
           {(section) => (
             <>
@@ -1413,6 +1453,8 @@ export function App() {
             { id: "forge",     label: "Forge",     icon: "forging" },
           ]}
           defaultSection="equipment"
+          section={townSub ?? "equipment"}
+          onSectionChange={setTownSub}
         >
           {(section) => (
             <>
@@ -1453,6 +1495,8 @@ export function App() {
             { id: "brew",    label: "Brew",    icon: "bubbling-potion" },
           ]}
           defaultSection="potions"
+          section={townSub ?? "potions"}
+          onSectionChange={setTownSub}
         >
           {(section) => (
             <>
@@ -1517,6 +1561,8 @@ export function App() {
             { id: "build",    label: "Build",     icon: "anvil",          art: state.townArt?.camp_build_art_url ?? null },
           ]}
           defaultSection="overview"
+          section={townSub ?? "overview"}
+          onSectionChange={setTownSub}
         >
           {(activeSection) => (
             <Camp
