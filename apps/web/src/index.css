@@ -366,22 +366,22 @@ em, .flavor {
   padding: 0;
   position: relative;
 }
-/* Full-bleed art pinned to the bottom of the content pane, fading to
-   transparent at the top. Cards in .loc-wide-content-inner float over it. */
+/* Full-bleed art covering the content pane. The mask keeps the image
+   partly visible at the top instead of fading to a flat dark panel —
+   the player still sees the place they're standing in. Cards in
+   .loc-wide-content-inner float over it. */
 .loc-wide-art-bg {
   position: absolute;
-  bottom: 0;
-  left: 0;
-  right: 0;
+  inset: 0;
   width: 100%;
-  height: 55%;
-  min-height: 200px;
   background-size: cover;
   background-position: center center;
   background-repeat: no-repeat;
-  /* Fade from transparent at top → opaque at bottom */
-  -webkit-mask-image: linear-gradient(to bottom, transparent 0%, rgba(0,0,0,0.5) 35%, black 75%);
-  mask-image: linear-gradient(to bottom, transparent 0%, rgba(0,0,0,0.5) 35%, black 75%);
+  /* Soft top haze (~28% alpha) so the image always reads, ramping to
+     fully opaque about two-thirds of the way down where the cards sit
+     on the brightest part of the art. */
+  -webkit-mask-image: linear-gradient(to bottom, rgba(0,0,0,0.28) 0%, rgba(0,0,0,0.55) 30%, rgba(0,0,0,0.85) 60%, black 80%);
+  mask-image: linear-gradient(to bottom, rgba(0,0,0,0.28) 0%, rgba(0,0,0,0.55) 30%, rgba(0,0,0,0.85) 60%, black 80%);
   pointer-events: none;
   z-index: 0;
 }

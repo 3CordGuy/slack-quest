@@ -438,11 +438,15 @@ const rowStyle: CSSProperties = {
   borderRadius: "var(--radius-md)",
   border: "1px solid var(--border-base)",
   background: "var(--bg-card-2)",
+  // Frost the row so it stays legible when the location art shows through
+  // the (now mostly-transparent) --bg-card-2 inside LocationModalWide.
+  backdropFilter: "blur(10px) saturate(1.05)",
+  WebkitBackdropFilter: "blur(10px) saturate(1.05)",
 };
 
 function StockpileMini({ label, resources }: { label: string; resources: Array<{ spec: ResourceSpec; qty: number }> }) {
   return (
-    <div style={{ marginBottom: 16, padding: "10px 12px", borderRadius: "var(--radius-md)", border: "1px solid var(--border-faint, rgba(255,255,255,0.06))", background: "var(--bg-card-2)" }}>
+    <div style={{ marginBottom: 16, padding: "10px 12px", borderRadius: "var(--radius-md)", border: "1px solid var(--border-faint, rgba(255,255,255,0.06))", background: "var(--bg-card-2)", backdropFilter: "blur(10px) saturate(1.05)", WebkitBackdropFilter: "blur(10px) saturate(1.05)" }}>
       <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: 1.2, color: "var(--fg-mute)", marginBottom: 8, fontFamily: "var(--font-display)" }}>
         <Icon name="wooden-crate" size={11} /> {label}
       </div>

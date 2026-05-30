@@ -135,6 +135,8 @@ function ActiveErrandRow({
       borderRadius: "var(--radius-lg)",
       border: ready ? "1px solid var(--accent-go-1, #4ade80)" : "1px solid var(--border-base)",
       background: "var(--bg-card-2)",
+      backdropFilter: "blur(10px) saturate(1.05)",
+      WebkitBackdropFilter: "blur(10px) saturate(1.05)",
       display: "grid", gridTemplateColumns: "auto 1fr auto", gap: 14, alignItems: "center",
     }}>
       <Icon name={kindMeta.icon} size={22} color={ready ? "#4ade80" : "var(--fg-mute)"} />
@@ -264,6 +266,8 @@ function OfferRow({
     <div style={{
       padding: "10px 12px", borderRadius: "var(--radius-md)",
       border: "1px solid var(--border-base)", background: "var(--bg-card)",
+      backdropFilter: "blur(10px) saturate(1.05)",
+      WebkitBackdropFilter: "blur(10px) saturate(1.05)",
       display: "grid", gridTemplateColumns: "auto 1fr auto", gap: 12, alignItems: "center",
     }}>
       <Icon name={kindMeta.icon} size={18} color="var(--fg-mute)" />
