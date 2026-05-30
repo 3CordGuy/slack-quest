@@ -109,31 +109,6 @@ export function App() {
     return () => { style.remove(); };
   }, []);
 
-  // Browser back/forward → re-read the hash into state.
-  useEffect(() => {
-    const onPop = () => {
-      const r = parseHash(window.location.hash);
-      setTownSectionRaw(r.section);
-      setTownSubRaw(r.sub);
-    };
-    window.addEventListener("popstate", onPop);
-    window.addEventListener("hashchange", onPop);
-    return () => {
-      window.removeEventListener("popstate", onPop);
-      window.removeEventListener("hashchange", onPop);
-    };
-  }, []);
-
-  // State → URL. Only pushes when the desired hash differs from the current
-  // one, so popstate-driven state updates don't loop back into pushState.
-  useEffect(() => {
-    const desired = toHash({ section: townSection, sub: townSub });
-    const current = window.location.hash || "";
-    if (!routesEqual(parseHash(current), parseHash(desired))) {
-      window.history.pushState(null, "", desired || window.location.pathname + window.location.search);
-    }
-  }, [townSection, townSub]);
-
   // True after the user explicitly backed out of CombatPage — suppresses
   // auto-resume on subsequent refresh() calls (e.g. after a shop purchase)
   // until they click Resume or combat ends. Reset when combat actually ends.
