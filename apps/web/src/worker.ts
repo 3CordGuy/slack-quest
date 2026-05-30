@@ -5682,6 +5682,7 @@ interface ClientToServer {
 
 export type ItemEffect =
   | { kind: "heal"; target: string; amount: number; rolled: number }
+  | { kind: "mana_restore"; target: string; added: number; new_mana: number }
   | { kind: "mana_bump"; target: string; added: number; new_max_mana: number }
   | { kind: "revive"; target: string; hp_restored: number }
   | { kind: "monster_damage"; amount: number; capped_from?: number }
@@ -7035,6 +7036,20 @@ export class QuestRoom extends DurableObject<Env> {
 
     switch (item.item_type) {
       case "consumable": {
+        const staple = findStaple(item.item_name);
+        if (staple?.effect === "restore_mana") {
+          if (actor.mana >= actor.max_mana) {
+            this.sendOne(ws, { type: "error", message: "Already at full mana — save it for when you need it." });
+            return;
+          }
+          const added = Math.min(actor.max_mana - actor.mana, item.power);
+          const newMana = actor.mana + added;
+          updatedFighters = state.fighters.map((f) =>
+            f.id === actor.id ? { ...f, mana: newMana } : f,
+          );
+          effect = { kind: "mana_restore", target: actor.id, added, new_mana: newMana };
+          break;
+        }
         if (actor.hp >= actor.max_hp) {
           this.sendOne(ws, { type: "error", message: "Already at full HP — save it for when you need it." });
           return;

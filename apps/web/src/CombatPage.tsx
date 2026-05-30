@@ -327,6 +327,7 @@ type TurnAction =
 
 type ItemEffect =
   | { kind: "heal"; target: string; amount: number; rolled: number }
+  | { kind: "mana_restore"; target: string; added: number; new_mana: number }
   | { kind: "mana_bump"; target: string; added: number; new_max_mana: number }
   | { kind: "revive"; target: string; hp_restored: number }
   | { kind: "monster_damage"; amount: number; capped_from?: number }
@@ -589,6 +590,8 @@ function formatEvent(e: CombatEvent, state: CombatState | null): LogEntry[] {
       const head = <><Icon name="knapsack" /> {nameOf(e.actor)} used {e.item_name}</>;
       if (eff.kind === "heal") {
         return [{ id: nextLogId++, content: <>{head}: +{eff.amount} HP</>, tone: "good" }];
+      } else if (eff.kind === "mana_restore") {
+        return [{ id: nextLogId++, content: <>{head}: +{eff.added} mana (now {eff.new_mana})</>, tone: "good" }];
       } else if (eff.kind === "mana_bump") {
         return [{ id: nextLogId++, content: <>{head}: +{eff.added} max mana (now {eff.new_max_mana})</>, tone: "good" }];
       } else if (eff.kind === "revive") {
@@ -1048,6 +1051,7 @@ export function CombatPage({
             const eff = ev.effect;
             let summary = "";
             if (eff.kind === "heal") summary = `+${eff.amount} HP`;
+            else if (eff.kind === "mana_restore") summary = `+${eff.added} mana`;
             else if (eff.kind === "mana_bump") summary = `+${eff.added} max mana`;
             else if (eff.kind === "revive") summary = `revived`;
             else if (eff.kind === "monster_damage") summary = `${eff.amount} dmg${eff.capped_from ? ` (capped from ${eff.capped_from})` : ""}`;
