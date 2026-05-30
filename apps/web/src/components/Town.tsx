@@ -9,6 +9,7 @@ import type {
 import {
   DISTRICT_CONFIG, VARIANT_STYLE, HUNT_PACK_LABEL, QUEST_OPTIONS,
 } from "../constants";
+import { xpForLevel } from "@gantt-quest/core";
 import { DISPLAY_FONT, card, h2, muted, button } from "../styles";
 import { LocationHero, SmallBadge } from "./ui";
 
@@ -865,6 +866,41 @@ function PlazaButton({
         transition: "transform 0.15s, border-color 0.15s, box-shadow 0.15s",
       }}
     >
+      {/* XP donut ring — SVG arc that traces the button border */}
+      {(() => {
+        const xpAtLevel = xpForLevel(character.level);
+        const xpAtNext  = xpForLevel(character.level + 1);
+        const fraction  = xpAtNext > xpAtLevel
+          ? Math.min(1, Math.max(0, (character.xp - xpAtLevel) / (xpAtNext - xpAtLevel)))
+          : 0;
+        const r = 110;
+        const cx = 115;
+        const circ = 2 * Math.PI * r;
+        return (
+          <svg
+            width={230} height={230}
+            viewBox="0 0 230 230"
+            style={{ position: "absolute", inset: 0, pointerEvents: "none", zIndex: 0 }}
+          >
+            {/* dim track */}
+            <circle cx={cx} cy={cx} r={r} fill="none" stroke="rgba(251,191,36,0.12)" strokeWidth={5} />
+            {/* progress arc — starts at 12 o'clock */}
+            {fraction > 0 && (
+              <circle
+                cx={cx} cy={cx} r={r}
+                fill="none"
+                stroke="#fbbf24"
+                strokeWidth={5}
+                strokeLinecap="round"
+                strokeDasharray={circ}
+                strokeDashoffset={circ * (1 - fraction)}
+                transform={`rotate(-90 ${cx} ${cx})`}
+                style={{ filter: "drop-shadow(0 0 3px rgba(251,191,36,0.6))" }}
+              />
+            )}
+          </svg>
+        );
+      })()}
       <span style={{
         font: "9px/1 var(--font-mono)",
         color: hovered ? "var(--accent-gold-warm)" : "var(--accent-ink-blue)",
