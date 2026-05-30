@@ -109,7 +109,7 @@ function Stockpile({ inventory }: { inventory: Item[] }) {
         <Icon name="wooden-crate" size={13} />
         Stockpile
       </div>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: 8 }}>
         {STOCKPILE_RESOURCES.map((r) => {
           const qty = qtyByName.get(`${r.emoji} ${r.name}`) ?? 0;
           const rarityColor = r.node === "mine"
@@ -119,22 +119,34 @@ function Stockpile({ inventory }: { inventory: Item[] }) {
             : (r.id === "abyss_eel" ? "#f87171" : r.id === "silverfin" ? "#7dd3fc" : "#6ee7b7");
           return (
             <div key={r.id} style={{
-              padding: "12px 10px",
+              padding: "10px 12px",
               borderRadius: "var(--radius-lg)",
               border: `1px solid ${qty > 0 ? rarityColor + "44" : "var(--border-base)"}`,
               background: qty > 0 ? rarityColor + "0d" : "var(--bg-card-2)",
-              display: "flex",
-              flexDirection: "column",
+              display: "grid",
+              gridTemplateColumns: "44px 1fr auto",
               alignItems: "center",
-              gap: 6,
+              gap: 10,
               backdropFilter: "blur(10px) saturate(1.05)",
               WebkitBackdropFilter: "blur(10px) saturate(1.05)",
               transition: "border-color 0.2s",
               opacity: qty === 0 ? 0.55 : 1,
             }}>
-              <Icon name={r.icon} size={24} color={qty > 0 ? rarityColor : "var(--fg-mute)"} />
-              <div style={{ fontSize: 11, color: "var(--fg-2)", textAlign: "center", fontWeight: 500, lineHeight: 1.2 }}>{r.name}</div>
-              <div style={{ fontSize: 22, fontWeight: 700, fontFamily: "var(--font-display)", color: qty > 0 ? rarityColor : "var(--fg-mute)", lineHeight: 1 }}>{qty}</div>
+              <div style={{
+                width: 44, height: 44,
+                display: "flex", alignItems: "center", justifyContent: "center",
+                borderRadius: "var(--radius-md)",
+                background: qty > 0 ? rarityColor + "1a" : "var(--bg-void)",
+                border: `1px solid ${qty > 0 ? rarityColor + "55" : "var(--border-base)"}`,
+                flexShrink: 0,
+              }}>
+                <Icon name={r.icon} size={28} color={qty > 0 ? rarityColor : "var(--fg-mute)"} />
+              </div>
+              <div style={{ minWidth: 0, lineHeight: 1.25 }}>
+                <div style={{ fontSize: 12, color: "var(--fg-2)", fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{r.name}</div>
+                <div style={{ fontSize: 10, color: "var(--fg-mute)", textTransform: "uppercase", letterSpacing: 0.8, marginTop: 2 }}>{r.node}</div>
+              </div>
+              <div style={{ fontSize: 22, fontWeight: 700, fontFamily: "var(--font-display)", color: qty > 0 ? rarityColor : "var(--fg-mute)", lineHeight: 1, textAlign: "right" }}>{qty}</div>
             </div>
           );
         })}
@@ -154,9 +166,27 @@ function ActiveTaskStrip({
   onCancel: (taskId: number) => Promise<void>;
 }) {
   const active = status?.active ?? [];
-  if (active.length === 0) return null;
+  const errandSlot = status?.slots.errand_slot_used === true;
+  if (active.length === 0 && !errandSlot) return null;
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 16 }}>
+      {errandSlot && (
+        <div style={{
+          padding: "10px 14px",
+          borderRadius: "var(--radius-lg)",
+          border: "1px dashed var(--accent-gold-warm, #fbbf24)",
+          background: "rgba(251,191,36,0.08)",
+          fontSize: 12,
+          color: "var(--fg-2)",
+          display: "flex", alignItems: "center", gap: 10,
+        }}>
+          <Icon name="conversation" size={16} color="var(--accent-gold, #fbbf24)" />
+          <div>
+            <strong style={{ color: "var(--accent-gold, #fbbf24)" }}>Main is out on a pub errand.</strong>
+            {" "}Your tent slot stays occupied until you collect at the Pub.
+          </div>
+        </div>
+      )}
       {active.map((t) => (
         <ActiveTaskRow key={t.id} task={t} now={status?.now ?? Date.now()} onClaim={onClaim} onCancel={onCancel} />
       ))}
@@ -343,9 +373,13 @@ function GatheringNodePanel({
 
       {allBusy && (
         <div style={{ marginTop: 16, padding: "10px 14px", border: "1px dashed var(--border-base)", borderRadius: "var(--radius-md)", color: "var(--fg-mute)", fontSize: 13 }}>
-          {(status?.slots.total ?? 1) > 1
-            ? `All ${status!.slots.total} tents busy (${status!.slots.in_use} of ${status!.slots.total} in use). Collect a finished task to free a slot.`
-            : "Your tent is busy. Collect the finished task, or build a Worker Tent in the Build tab to run two tasks at once."}
+          {status?.slots.errand_slot_used && (status?.slots.total ?? 1) === 1
+            ? "Your main character is out on a pub errand. Collect at the Pub, or build a Worker Tent to keep gathering in parallel."
+            : status?.slots.errand_slot_used
+              ? `All ${status!.slots.total} slots busy — one is held by your main on a pub errand (${status!.slots.in_use} of ${status!.slots.total} in use).`
+              : (status?.slots.total ?? 1) > 1
+                ? `All ${status!.slots.total} tents busy (${status!.slots.in_use} of ${status!.slots.total} in use). Collect a finished task to free a slot.`
+                : "Your tent is busy. Collect the finished task, or build a Worker Tent in the Build tab to run two tasks at once."}
         </div>
       )}
     </div>

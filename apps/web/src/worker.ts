@@ -2945,13 +2945,22 @@ app.get("/api/camp/status", async (c) => {
   if (!session) return c.json({ error: "unauthenticated" }, 401);
   const character = await getCharacter(c.env.DB, session.slack_user_id);
   if (!character) return c.json({ error: "no_character" }, 404);
-  const [activeRaw, upgrades] = await Promise.all([
+  const [activeRaw, upgrades, inFlightErrand] = await Promise.all([
     listActiveGatheringTasks(c.env.DB, session.slack_user_id),
     listCampUpgrades(c.env.DB, session.slack_user_id),
+    getActivePubErrand(c.env.DB, session.slack_user_id),
   ]);
   const active = await rollAndPersistExpiredYields(c.env.DB, activeRaw);
   const builtKeys = upgrades.map((u) => u.upgrade_key);
   const slotCount = gatherSlotCount(builtKeys);
+  // Slot 1 is the main character. When they're out on a pub errand the
+  // tent slot they'd otherwise occupy is unavailable to start a gather —
+  // surface that in the count so the camp UI doesn't promise a slot it
+  // can't deliver. Tasks themselves still only count their own slot;
+  // errand_slot_used is the extra +1 occupant.
+  const mainOnErrand = !!inFlightErrand && !active.some((t) => t.worker_slot === 1);
+  const errandOccupied = mainOnErrand ? 1 : 0;
+  const inUse = active.length + errandOccupied;
   return c.json({
     now: Date.now(),
     active: active.map((t) => ({
@@ -2964,7 +2973,12 @@ app.get("/api/camp/status", async (c) => {
       ready: t.expires_at <= Date.now(),
       yield: t.yield,
     })),
-    slots: { total: slotCount, in_use: active.length, available: Math.max(0, slotCount - active.length) },
+    slots: {
+      total: slotCount,
+      in_use: inUse,
+      available: Math.max(0, slotCount - inUse),
+      errand_slot_used: errandOccupied === 1,
+    },
     upgrades_built: builtKeys,
     upgrades_catalog: CAMP_UPGRADE_CATALOG,
     gold: character.gold,
