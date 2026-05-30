@@ -15,7 +15,6 @@ import {
   TONE_COLOR,
   PURPOSE_LABEL,
   BigHpBar,
-  HpBar,
   CBtn,
   DiceRollDisplay,
   DiceRollEntry,
@@ -2825,19 +2824,28 @@ function PartySection({
 // Inject shield-particle keyframes once per page load.
 function FighterHpRow({ hp, maxHp, shield, armorPower }: { hp: number; maxHp: number; shield: number; armorPower: number }) {
   const pct = maxHp > 0 ? Math.max(0, Math.min(1, hp / maxHp)) : 0;
-  const color = pct < 0.25 ? "#dc2626" : pct < 0.5 ? "#d97706" : "#16a34a";
+  const hpCol = pct < 0.25 ? "#dc2626" : pct < 0.5 ? "#d97706" : "#16a34a";
   const armorMax = Math.floor(armorPower / 2);
-  const armorPct = armorMax > 0 ? Math.max(0, Math.min(1, shield / armorMax)) : 0;
+  const hasShield = shield > 0;
+  const shieldPct = armorMax > 0 ? Math.min(1, shield / armorMax) : 0;
   return (
     <div style={{ marginTop: 6, display: "flex", alignItems: "center", gap: 8 }}>
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 3 }}>
-        <div style={{ height: 8, background: "#0e0f12", borderRadius: 4, overflow: "hidden" }}>
-          <div style={{ width: `${pct * 100}%`, height: "100%", background: color, transition: "width 0.3s ease" }} />
-        </div>
-        {armorMax > 0 && (
-          <div style={{ height: 6, background: shield === 0 ? "#3b1515" : "#1a2a3a", borderRadius: 3, overflow: "hidden" }} title={shield === 0 ? "Armor depleted" : `Armor: ${shield}/${armorMax}`}>
-            <div style={{ width: `${armorPct * 100}%`, height: "100%", background: "#7dd3fc", transition: "width 0.3s ease" }} />
-          </div>
+      <div
+        className="bar"
+        style={{
+          flex: 1,
+          boxShadow: hasShield ? "0 0 5px rgba(96,165,250,.45)" : "none",
+        }}
+      >
+        <i style={{ width: `${pct * 100}%`, background: hpCol, zIndex: 1 }} />
+        {hasShield && shieldPct > 0 && (
+          <i style={{
+            left: "auto",
+            right: 0,
+            width: `${shieldPct * 100}%`,
+            background: "repeating-linear-gradient(45deg,#93c5fd,#93c5fd 4px,#60a5fa 4px,#60a5fa 8px)",
+            zIndex: 2,
+          }} />
         )}
       </div>
       <div style={{ ...muted, fontSize: 11, minWidth: 48, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
@@ -3840,7 +3848,8 @@ function PartyChips({ fighters, selfId, flashIds, hitDustSeq, healBurstSeq, shie
     const background = down ? "#1a0a0a" : "var(--bg-card-2)";
     const opacity = down ? 0.65 : 1;
 
-    const shieldPct = f.max_hp > 0 ? Math.min(0.9, f.shield / f.max_hp) : 0;
+    const chipArmorMax = Math.floor((f.armor_power ?? 0) / 2);
+    const shieldPct = chipArmorMax > 0 ? Math.min(1, f.shield / chipArmorMax) : 0;
     const padding = compactMode ? 8 : "9px 10px";
 
     return (
@@ -3952,9 +3961,11 @@ function PartyChips({ fighters, selfId, flashIds, hitDustSeq, healBurstSeq, shie
             <i style={{ width: `${pct * 100}%`, background: hpCol }} />
             {hasShield && shieldPct > 0 && (
               <i style={{
-                left: `${pct * 100}%`,
+                left: "auto",
+                right: 0,
                 width: `${shieldPct * 100}%`,
                 background: "repeating-linear-gradient(45deg,#93c5fd,#93c5fd 4px,#60a5fa 4px,#60a5fa 8px)",
+                zIndex: 2,
               }} />
             )}
           </div>
