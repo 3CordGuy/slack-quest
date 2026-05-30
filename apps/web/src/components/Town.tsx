@@ -215,23 +215,26 @@ export function JobPostingCard({
 // ─────────────────────────────────────────────────────────────
 
 export function StepPicker({
-  value, min, max, onChange, label,
-}: { value: number; min: number; max: number; onChange: (n: number) => void; label: string }) {
+  value, min, max, onChange, label, compact = false,
+}: { value: number; min: number; max: number; onChange: (n: number) => void; label: string; compact?: boolean }) {
+  const btnSize = compact ? 26 : 32;
+  const valFont = compact ? 20 : 28;
+  const minW    = compact ? 40 : 56;
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+    <div style={{ display: "flex", alignItems: "center", gap: compact ? 6 : 10 }}>
       <button
         onClick={() => onChange(Math.max(min, value - 1))}
         disabled={value <= min}
         style={{
-          width: 32, height: 32, borderRadius: 6,
+          width: btnSize, height: btnSize, borderRadius: 6,
           border: "1px solid #2a2d33", background: "#1a1d22",
           color: value <= min ? "#3a3d44" : "#e5e7eb",
           cursor: value <= min ? "not-allowed" : "pointer",
-          fontSize: 18, lineHeight: 1, display: "flex", alignItems: "center", justifyContent: "center",
+          fontSize: compact ? 15 : 18, lineHeight: 1, display: "flex", alignItems: "center", justifyContent: "center",
         }}
       >−</button>
-      <div style={{ textAlign: "center", minWidth: 56 }}>
-        <div style={{ fontSize: 28, fontWeight: 700, color: "#f1e8c8", lineHeight: 1, fontFamily: DISPLAY_FONT }}>
+      <div style={{ textAlign: "center", minWidth: minW }}>
+        <div style={{ fontSize: valFont, fontWeight: 700, color: "#f1e8c8", lineHeight: 1, fontFamily: DISPLAY_FONT }}>
           {value}
         </div>
         <div style={{ fontSize: 10, color: "#6b7280", marginTop: 2 }}>{label}</div>
@@ -240,11 +243,11 @@ export function StepPicker({
         onClick={() => onChange(Math.min(max, value + 1))}
         disabled={value >= max}
         style={{
-          width: 32, height: 32, borderRadius: 6,
+          width: btnSize, height: btnSize, borderRadius: 6,
           border: "1px solid #2a2d33", background: "#1a1d22",
           color: value >= max ? "#3a3d44" : "#e5e7eb",
           cursor: value >= max ? "not-allowed" : "pointer",
-          fontSize: 18, lineHeight: 1, display: "flex", alignItems: "center", justifyContent: "center",
+          fontSize: compact ? 15 : 18, lineHeight: 1, display: "flex", alignItems: "center", justifyContent: "center",
         }}
       >+</button>
     </div>
@@ -341,26 +344,26 @@ export function HuntSection({
         </div>
 
         {/* Two pickers side by side */}
-        <div style={{ display: "flex", gap: 32, marginBottom: 16, flexWrap: "wrap" }}>
+        <div style={{ display: "flex", gap: narrow ? 16 : 32, marginBottom: narrow ? 10 : 16, flexWrap: "wrap" }}>
           <div>
             <div style={{
               fontSize: 10, color: "var(--fg-mute)", textTransform: "uppercase",
-              letterSpacing: 1.2, marginBottom: 10, fontWeight: 700,
+              letterSpacing: 1.2, marginBottom: narrow ? 6 : 10, fontWeight: 700,
             }}>
               Difficulty
             </div>
-            <StepPicker value={clampedTier} min={1} max={characterLevel} onChange={setTier} label="TIER" />
-            <div style={{ fontSize: 12, color: "var(--fg-mute)", marginTop: 6 }}>{tierLabel}</div>
+            <StepPicker value={clampedTier} min={1} max={characterLevel} onChange={setTier} label="TIER" compact={narrow} />
+            <div style={{ fontSize: 11, color: "var(--fg-mute)", marginTop: 4 }}>{tierLabel}</div>
           </div>
           <div>
             <div style={{
               fontSize: 10, color: "var(--fg-mute)", textTransform: "uppercase",
-              letterSpacing: 1.2, marginBottom: 10, fontWeight: 700,
+              letterSpacing: 1.2, marginBottom: narrow ? 6 : 10, fontWeight: 700,
             }}>
               Pack size
             </div>
-            <StepPicker value={monsterCount} min={1} max={3} onChange={setMonsterCount} label={HUNT_PACK_LABEL[monsterCount]} />
-            <div style={{ fontSize: 12, color: monsterCount > 1 ? "var(--accent-gold)" : "var(--fg-mute)", marginTop: 6 }}>
+            <StepPicker value={monsterCount} min={1} max={3} onChange={setMonsterCount} label={HUNT_PACK_LABEL[monsterCount]} compact={narrow} />
+            <div style={{ fontSize: 11, color: monsterCount > 1 ? "var(--accent-gold)" : "var(--fg-mute)", marginTop: 4 }}>
               {packLabel}
             </div>
           </div>

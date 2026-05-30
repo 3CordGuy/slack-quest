@@ -1502,7 +1502,7 @@ export function CombatPage({
           (fade-in when loaded) → atmospheric dim gradient → particles.
           The SVG keeps painting underneath even after the photo loads so
           slow networks never flash an empty void. */}
-      <div style={{ flex: 1, position: "relative", overflow: "hidden", minHeight: 0, background: "#0a0b10" }}>
+      <div style={{ flex: 1, position: "relative", overflow: "hidden", minHeight: 0, background: "#0a0b10", maxHeight: isMobile ? "44vh" : undefined }}>
         <CombatBackdropLayer scene={scene} />
         {bgArtUrl && (
           <img
@@ -1797,7 +1797,7 @@ export function CombatPage({
           background: "var(--bg-deep)",
           borderTop: "1px solid var(--border-base)",
           borderBottom: "1px solid var(--border-faint)",
-          padding: isMobile ? "10px 12px 9px" : "13px 24px 12px",
+          padding: isMobile ? "6px 10px 5px" : "13px 24px 12px",
           flexShrink: 0,
           zIndex: 8,
         }}>
@@ -2214,8 +2214,8 @@ function SpotlightMonster({
   const sageLo = 1 + monster.tier;
   const sageHi = 6 + monster.tier + (monster.is_boss && monster.boss_phase === 2 ? monster.tier : 0);
 
-  const ringPx = compact ? 220 : 280;
-  const portraitPx = compact ? 148 : 184;
+  const ringPx = compact ? 170 : 280;
+  const portraitPx = compact ? 112 : 184;
   // Portrait border priority: targeted (gold), then marked (orange-gold),
   // then boss (red), then default muted edge for non-boss non-target.
   const portraitBorder = isDead
@@ -2375,9 +2375,9 @@ function SpotlightMonster({
       {/* Name */}
       <h1
         style={{
-          font: `${compact ? 24 : 34}px/1 var(--font-display)`,
+          font: `${compact ? 18 : 34}px/1 var(--font-display)`,
           color: "var(--fg-1)",
-          margin: `${compact ? 12 : 16}px 0 4px`,
+          margin: `${compact ? 6 : 16}px 0 4px`,
         }}
       >
         {monster.name}
@@ -2449,7 +2449,7 @@ function SpotlightMonster({
       {/* HP line — number + bar */}
       <div
         style={{
-          margin: `${compact ? 10 : 14}px auto 0`,
+          margin: `${compact ? 6 : 14}px auto 0`,
           width: compact ? "min(280px, 100%)" : 340,
           maxWidth: "100%",
           display: "flex",
