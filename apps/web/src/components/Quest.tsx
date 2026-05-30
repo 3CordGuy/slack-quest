@@ -1,13 +1,14 @@
 import { useEffect, useState } from "react";
 import type { CSSProperties } from "react";
 
-import { Icon } from "../icons";
+import { Avatar, Icon } from "../icons";
 import type { ActiveQuest, Character, SceneJson } from "../types";
 import { muted } from "../styles";
 import { SmallBadge } from "./ui";
+import { charPortraitUrl, classPortraitUrl } from "../CombatShared";
 import {
-  PartyMember, CharacterInspectDialog,
-  HpBar, EffectChips, VariantBadge,
+  CharacterInspectDialog,
+  HpBar, EffectChips, VariantBadge, PositionBadge,
 } from "./Character";
 
 // Detect phone widths so the tower interlude can drop into a single column.
@@ -450,6 +451,7 @@ export function ActiveQuestCard({
   combatInProgress,
   onStartCombat,
   onOpenRecruitment,
+  onOpenInventory,
 }: {
   quest: ActiveQuest;
   party: Character[];
@@ -457,6 +459,7 @@ export function ActiveQuestCard({
   combatInProgress: boolean;
   onStartCombat: () => void;
   onOpenRecruitment: () => void;
+  onOpenInventory?: () => void;
 }) {
   const s = quest.scene;
   const variant = s.variant ?? "standard";
@@ -645,6 +648,36 @@ export function ActiveQuestCard({
         {s.monster_effects && s.monster_effects.length > 0 && (
           <EffectChips effects={s.monster_effects} />
         )}
+        {/* Tier + estimated rewards row */}
+        {(() => {
+          const tier = s.tier ?? 1;
+          const isBoss = variant === "boss";
+          const xpMult = (isBoss ? 2 : 1) * (quest.elite ? 1.5 : 1);
+          const goldMult = (isBoss ? 2 : 1) * (quest.elite ? 1.5 : 1);
+          const estXp   = Math.round(15 * Math.pow(tier, 1.2) * xpMult);
+          const estGold = Math.round(8  * Math.pow(tier, 1.2) * goldMult);
+          return (
+            <div style={{ display: "flex", gap: 12, marginTop: 10, alignItems: "center", flexWrap: "wrap" }}>
+              <span style={{ font: "10px/1 var(--font-mono)", color: "var(--fg-mute)", textTransform: "uppercase", letterSpacing: 0.8, background: "var(--bg-card-2)", border: "1px solid var(--border-faint)", borderRadius: 4, padding: "3px 7px" }}>
+                Tier {tier}
+              </span>
+              <span style={{ font: "10px/1 var(--font-mono)", color: "var(--accent-gold)", display: "flex", alignItems: "center", gap: 4 }}>
+                <Icon name="perspective-dice-six" size={11} color="var(--accent-gold)" />
+                ~{estXp} XP
+              </span>
+              <span style={{ font: "10px/1 var(--font-mono)", color: "#a78059", display: "flex", alignItems: "center", gap: 4 }}>
+                <Icon name="gold-bar" size={11} color="#a78059" />
+                ~{estGold} gold
+              </span>
+              {party.length > 1 && (
+                <span style={{ font: "10px/1 var(--font-mono)", color: "var(--tone-good-2)", display: "flex", alignItems: "center", gap: 4 }}>
+                  <Icon name="linked-rings" size={11} color="var(--tone-good-2)" />
+                  +{party.length >= 4 ? 25 : party.length === 3 ? 20 : 10}% XP party bonus
+                </span>
+              )}
+            </div>
+          );
+        })()}
       </div>
 
       {s.scene && (
@@ -662,49 +695,72 @@ export function ActiveQuestCard({
 
       {party.length > 0 && (
         <div style={{ marginTop: 20 }}>
-          <div
-            style={{
-              ...muted,
-              fontSize: 11,
-              textTransform: "uppercase",
-              letterSpacing: 1.5,
-              marginBottom: 8,
-            }}
-          >
-            Party
+          <div style={{ ...muted, fontSize: 11, textTransform: "uppercase", letterSpacing: 1.5, marginBottom: 8 }}>
+            Party · {party.length}
           </div>
-          <div style={{ display: "grid", gap: 8 }}>
-            {selfMember && (
-              <PartyMember
-                fighter={selfMember}
-                self={true}
-              />
-            )}
-            {otherParty.length > 0 && (
-              <div style={{ marginTop: 12 }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            {[...(selfMember ? [selfMember] : []), ...otherParty].map((p) => {
+              const isSelf = p.slack_user_id === selfId;
+              const downed = p.downed_until !== null && p.downed_until > Date.now();
+              const hpPct  = p.max_hp > 0 ? Math.max(0, p.hp / p.max_hp) : 0;
+              const hpCol  = hpPct < 0.25 ? "#dc2626" : hpPct < 0.5 ? "#d97706" : "#16a34a";
+              const armorMax = Math.floor((p.armor_power ?? 0) / 2);
+              return (
                 <div
+                  key={p.slack_user_id}
                   style={{
-                    ...muted,
-                    fontSize: 11,
-                    textTransform: "uppercase",
-                    letterSpacing: 1.5,
-                    marginBottom: 6,
+                    display: "flex", alignItems: "center", gap: 10,
+                    padding: "8px 10px",
+                    background: "var(--bg-input)",
+                    borderRadius: "var(--radius-lg)",
+                    border: isSelf ? "1px solid var(--accent-ink-blue-2)" : "1px solid var(--border-faint)",
+                    opacity: downed ? 0.55 : 1,
                   }}
                 >
-                  Other players ({otherParty.length})
+                  <Avatar
+                    src={charPortraitUrl(p.name)}
+                    fallbackSrc={classPortraitUrl(p.class)}
+                    alt={p.name}
+                    size={40}
+                    radius={20}
+                    style={{ flexShrink: 0 }}
+                  />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", marginBottom: 4 }}>
+                      <span style={{ font: "13px/1 var(--font-display)", color: "var(--fg-1)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 160 }}>{p.name}</span>
+                      {p.slack_username && <span style={{ font: "10px/1 var(--font-mono)", color: "var(--accent-ink-blue)" }}>@{p.slack_username}</span>}
+                      <span style={{ font: "10px/1 var(--font-mono)", color: "var(--accent-arcane)", textTransform: "uppercase", letterSpacing: 0.4 }}>{p.class} · L{p.level}</span>
+                      {isSelf && <SmallBadge>you</SmallBadge>}
+                      {downed && <SmallBadge>downed</SmallBadge>}
+                      <PositionBadge position={p.position} />
+                    </div>
+                    {/* HP + optional shield on shared track */}
+                    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                      <div className="bar" style={{ flex: 1 }}>
+                        <i style={{ width: `${(p.hp / (p.max_hp + armorMax || 1)) * 100}%`, background: hpCol }} />
+                        {armorMax > 0 && p.shield > 0 && (
+                          <i style={{ left: `${(p.max_hp / (p.max_hp + armorMax)) * 100}%`, width: `${(p.shield / (p.max_hp + armorMax)) * 100}%`, background: "repeating-linear-gradient(45deg,#93c5fd,#93c5fd 4px,#60a5fa 4px,#60a5fa 8px)" }} />
+                        )}
+                      </div>
+                      <span style={{ font: "10px/1 var(--font-mono)", color: "var(--fg-mute)", flexShrink: 0, fontVariantNumeric: "tabular-nums" }}>{p.hp}/{p.max_hp}</span>
+                    </div>
+                    {p.max_mana > 0 && (
+                      <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 4 }}>
+                        <div className="bar" style={{ flex: 1, height: 4 }}>
+                          <i style={{ width: `${(p.mana / p.max_mana) * 100}%`, background: "var(--accent-arcane)" }} />
+                        </div>
+                        <span style={{ font: "10px/1 var(--font-mono)", color: "var(--fg-mute)", flexShrink: 0, fontVariantNumeric: "tabular-nums" }}>{p.mana}/{p.max_mana}</span>
+                      </div>
+                    )}
+                  </div>
+                  {!isSelf && (
+                    <button onClick={() => setInspected(p)} className="btn btn-ghost btn-sm" style={{ flexShrink: 0, color: "var(--accent-ink-blue)" }}>
+                      <Icon name="scroll-quill" size={12} color="var(--accent-ink-blue)" />
+                    </button>
+                  )}
                 </div>
-                <div style={{ display: "grid", gap: 8 }}>
-                  {otherParty.map((p) => (
-                    <PartyMember
-                      key={p.slack_user_id}
-                      fighter={p}
-                      self={false}
-                      onInspect={() => setInspected(p)}
-                    />
-                  ))}
-                </div>
-              </div>
-            )}
+              );
+            })}
           </div>
         </div>
       )}
@@ -737,6 +793,17 @@ export function ActiveQuestCard({
                 <Icon name="sword" size={14} color="#fff" />
                 {combatInProgress ? "Resume Combat" : "Start Combat"}
               </button>
+              {onOpenInventory && (
+                <button
+                  onClick={onOpenInventory}
+                  title="Check or swap your gear before entering combat"
+                  className="btn btn-ghost"
+                  style={{ justifyContent: "center" }}
+                >
+                  <Icon name="knapsack" size={14} color="var(--fg-3)" />
+                  Gear up
+                </button>
+              )}
               {isCreator && (
                 <button
                   onClick={onOpenRecruitment}
