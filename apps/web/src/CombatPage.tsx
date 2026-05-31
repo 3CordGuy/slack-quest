@@ -1816,6 +1816,7 @@ export function CombatPage({
           inQuest={true}
           selfId={selfId}
           characterLevel={state.fighters.find((f) => f.id === selfId)?.level}
+          effects={state.fighters.find((f) => f.id === selfId)?.effects ?? []}
           onEquip={() => {}}
           onUnequip={() => {}}
           onSell={() => {}}

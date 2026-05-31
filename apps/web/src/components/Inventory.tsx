@@ -23,7 +23,7 @@ import {
   useInteractions,
 } from "@floating-ui/react";
 import { findCatalogEntry, sellPriceFor, xpForLevel, type StatKey } from "@gantt-quest/core";
-import { charPortraitUrl, classPortraitUrl } from "../CombatShared";
+import { charPortraitUrl, classPortraitUrl, EFFECT_PILLS, type StatusEffect } from "../CombatShared";
 import { Icon } from "../icons";
 import type {
   Character,
@@ -1105,6 +1105,7 @@ export function InventoryFullScreen({
   characterLevel,
   character,
   characterSheet,
+  effects,
   onSpend,
   onEquip,
   onUnequip,
@@ -1118,6 +1119,8 @@ export function InventoryFullScreen({
   selfId: string;
   characterLevel?: number;
   character?: Character;
+  /** Active status effects from the current combat — shown in the Vitals card. */
+  effects?: StatusEffect[];
   /** Optional pre-built CharacterCard JSX shown at the top of the left
       Equipped column — used by App.tsx to fold the character sheet into
       the inventory now that the right sidebar is gone. */
@@ -1579,6 +1582,20 @@ export function InventoryFullScreen({
                           <span style={{ font: "10px/1 var(--font-mono)", color: character.shield > 0 ? "#7dd3fc" : "var(--fg-mute)", minWidth: 44, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
                             {character.shield}/{armorMax}
                           </span>
+                        </div>
+                      )}
+                      {/* Active status effects — only shown when in combat with effects */}
+                      {effects && effects.length > 0 && (
+                        <div>
+                          <div style={{ font: "9px/1 var(--font-mono)", color: "var(--fg-faintest)", textTransform: "uppercase", letterSpacing: 1, marginBottom: 6 }}>
+                            Active Effects
+                          </div>
+                          <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
+                            {effects.map((eff, i) => {
+                              const def = EFFECT_PILLS[eff.type];
+                              return def ? <def.pill key={i} effect={eff} size="md" /> : null;
+                            })}
+                          </div>
                         </div>
                       )}
                     </div>
