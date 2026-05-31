@@ -56,6 +56,8 @@ const SVG_ICONS = new Set([
   // Camp stockpile resource icons
   "coal-pile", "crystal-bars", "crystal-cluster",           // ore tier: iron / silver / mithril
   "herbs-bundle", "chestnut-leaf", "dandelion-flower",      // herb tier: mossroot / sunleaf / nightbloom
+  // Forage mini-game cells ("places in the forest")
+  "fruit-tree", "stone-rock", "snake-tongue", "super-mushroom", "tree-roots",
   "flying-trout",                                           // fish tier: silverfin (eel+salmon already above)
   // Camp upgrade icons
   "wood-frame", "wooden-crate",
