@@ -1,6 +1,8 @@
 import { useEffect, useReducer, useRef, useState } from "react";
 import toast from "react-hot-toast";
 import { isMonsterActor, classByName, activeAbilities, type ActiveAbilityDef, isAllyNpcActor } from "@gantt-quest/core";
+import { InventoryFullScreen } from "./components/Inventory";
+import type { Item } from "./types";
 
 import { Avatar, Icon } from "./icons";
 import { CombatBackdropLayer, pickScene, viewArtKeyForScene } from "./combatBackgrounds";
@@ -21,7 +23,6 @@ import {
   InitStrip,
   CombatLog,
   LogEntry,
-  ItemPicker,
   ReviveTargetPicker,
   GiveItemPicker,
   GiveTargetPicker,
@@ -851,7 +852,7 @@ export function CombatPage({
   const [anyPickerAbility, setAnyPickerAbility] = useState<ActiveAbilityDef | null>(null);
   const [protectConfirm, setProtectConfirm] = useState<{ pendingTargetId: string } | null>(null);
   const [givePicker, setGivePicker] = useState<"closed" | "selectItem" | { itemId: number }>("closed");
-  const [items, setItems] = useState<InventoryItem[]>([]);
+  const [items, setItems] = useState<Item[]>([]);
   const [autoResolve, setAutoResolve] = useState<boolean>(
     () => localStorage.getItem("combat_auto_resolve") === "true",
   );
@@ -890,7 +891,7 @@ export function CombatPage({
   // /api/inventory.
   async function loadItems() {
     const res = await fetch("/api/inventory", { credentials: "include" });
-    if (res.ok) setItems(((await res.json()) as { items: InventoryItem[] }).items);
+    if (res.ok) setItems(((await res.json()) as { items: Item[] }).items);
   }
   useEffect(() => {
     void loadItems();
@@ -1810,11 +1811,24 @@ export function CombatPage({
 
       {/* Pickers — all portal-based modals */}
       {state?.status === "active" && itemPicker === "open" && (
-        <ItemPicker
-          items={items as unknown as CombatItem[]}
-          onPickNoTarget={(id) => fireUseItem(id)}
-          onPickRevive={(id) => setItemPicker({ reviveItemId: id })}
-          onCancel={() => setItemPicker("closed")}
+        <InventoryFullScreen
+          items={items}
+          inQuest={true}
+          selfId={selfId}
+          characterLevel={state.fighters.find((f) => f.id === selfId)?.level}
+          onEquip={() => {}}
+          onUnequip={() => {}}
+          onSell={() => {}}
+          onUse={(id) => {
+            const item = items.find((i) => i.id === id);
+            if (item?.item_type === "revive") {
+              setItemPicker({ reviveItemId: id });
+            } else {
+              fireUseItem(id);
+            }
+          }}
+          onGive={() => {}}
+          onClose={() => setItemPicker("closed")}
         />
       )}
       {state?.status === "active" && typeof itemPicker === "object" && "reviveItemId" in itemPicker && (
