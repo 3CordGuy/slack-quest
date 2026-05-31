@@ -36,6 +36,9 @@ export interface FighterSnapshot {
   shield: number;
   armor_power: number;
   weapon_power: number;
+  // Full item power of an equipped focus weapon (wand/staff/codex); 0 otherwise.
+  // Added to heal and single-target shield amounts by the combat machine.
+  focus_power: number;
   attack_mod: number;
   magic_mod: number;
   level: number;

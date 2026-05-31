@@ -2168,6 +2168,15 @@ function applyUtilityAbilityEffects(
   let s = state;
   const events: CombatEvent[] = [...preEvents];
 
+  // If the acting fighter has a focus weapon equipped, their focus_power is
+  // added as a flat bonus to every heal and single-target shield they apply.
+  // This is the mechanic described in the item text ("boosts heal + shield by
+  // their power") — previously the field existed but was never read here.
+  // grant_shield_all (Warden tank ability) and grant_shield_from_armor
+  // (fraction-of-armor calc) are intentionally excluded.
+  const actorFighter = s.fighters.find((f) => f.id === actor);
+  const focusBonus = actorFighter?.focus_power ?? 0;
+
   for (const effect of effects) {
     switch (effect.kind) {
       case "deal_damage": {
@@ -2209,10 +2218,11 @@ function applyUtilityAbilityEffects(
       case "heal": {
         const target = s.fighters.find((f) => f.id === effect.target_id);
         if (!target || target.hp <= 0) continue;
-        const newHp = Math.min(target.max_hp, target.hp + effect.amount);
+        const healTotal = effect.amount + focusBonus;
+        const newHp = Math.min(target.max_hp, target.hp + healTotal);
         const applied = newHp - target.hp;
         if (applied > 0) {
-          events.push({ type: "heal_applied", actor, target: effect.target_id, amount: applied, rolled: effect.amount });
+          events.push({ type: "heal_applied", actor, target: effect.target_id, amount: applied, rolled: healTotal });
           s = { ...s, fighters: s.fighters.map((f) => f.id === effect.target_id ? { ...f, hp: newHp } : f) };
         }
         break;
@@ -2221,7 +2231,7 @@ function applyUtilityAbilityEffects(
         const target = s.fighters.find((f) => f.id === effect.target_id);
         if (!target || target.hp <= 0) continue;
         const shieldCap = target.max_hp * SHIELD_CAP_MULTIPLIER + resilientBonus(target, s.ability_state, s.round);
-        const newShield = Math.min(shieldCap, target.shield + effect.amount);
+        const newShield = Math.min(shieldCap, target.shield + effect.amount + focusBonus);
         const restored = newShield - target.shield;
         if (restored > 0) {
           events.push({ type: "shield_applied", actor, target: effect.target_id, restored, new_armor: newShield, bonus_barrier: false });
