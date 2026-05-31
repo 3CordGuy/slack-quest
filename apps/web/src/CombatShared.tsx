@@ -3,7 +3,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { isMonsterActor, isAllyNpcActor, classByName, activeAbilities, type ActiveAbilityDef, EFFECT_META, type EffectType } from "@gantt-quest/core";
+import { isMonsterActor, isAllyNpcActor, classByName, activeAbilities, type ActiveAbilityDef, EFFECT_META, type EffectType, findCatalogEntry } from "@gantt-quest/core";
 import { Icon } from "./icons";
 import { HoverTooltip } from "./components/ui";
 
@@ -807,7 +807,11 @@ export function isCombatUsable(t: string): boolean {
 export function describeCombatEffect(item: CombatItem): string {
   const p = item.power;
   switch (item.item_type) {
-    case "consumable": return `Heals ${p} HP`;
+    case "consumable": {
+      const entry = findCatalogEntry(item.item_name);
+      if (entry?.effect === "restore_mana") return `Restores ${p} mana`;
+      return `Heals ${p} HP`;
+    }
     case "magic":      return `+${p} max mana`;
     case "revive":     return `Revives a downed ally at ${p}% HP`;
     case "weapon": {
