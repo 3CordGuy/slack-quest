@@ -60,7 +60,7 @@ interface ReelResponse {
 
 function describeServerError(code: string | undefined): string {
   switch (code) {
-    case "no_vigor": return "You're out of fishing vigor — rest up and try again in an hour.";
+    case "no_vigor": return "The pond is fished out — fish return in an hour."; // legacy path; new code uses stock
     case "downed": return "You're downed — rest at the Inn first.";
     case "no_active_game": return "Your fishing line drifted away. Cast again.";
     case "bad_phase": return "Out-of-order — refresh and try again.";

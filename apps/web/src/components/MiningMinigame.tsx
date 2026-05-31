@@ -39,7 +39,7 @@ interface MinigameResult {
 
 function describeServerError(code: string | undefined): string {
   switch (code) {
-    case "no_vigor": return "You're out of vigor — your arms need rest. Try again in an hour.";
+    case "no_vigor": return "The mine is exhausted — resources come back in an hour."; // legacy path; new code uses stock
     case "downed": return "You're downed — rest at the Inn first.";
     case "unauthenticated": return "Your session expired. Please sign in again.";
     case "no_character": return "No character found. Reload the page.";

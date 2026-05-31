@@ -93,6 +93,10 @@ import {
   fishBiteWindowForDex,
   fishPullRateForStr,
   fishCatchQuality,
+  STOCK_CAP,
+  STOCK_EMPTY_XP,
+  currentStock,
+  spendStock,
   RECIPE_CATALOG,
   RESOURCE_CATALOG,
   findCampUpgrade,
@@ -3230,6 +3234,10 @@ app.post("/api/camp/claim/:taskId", async (c) => {
 // The server still rolls each drop probabilistically so a "rich" claim can
 // roll nothing (~10% miss).
 const MAX_VIGOR = 3;
+// DEPRECATED vigor pool (migration 0055/0057/0058). Replaced by per-node
+// stock pools in migration 0059. Kept as a stub so existing references
+// compile during the transition; new code should use currentStock /
+// spendStock from @gantt-quest/core.
 const VIGOR_REGEN_MS = 60 * 60 * 1000;
 
 function currentVigor(fullAt: number | null | undefined, now: number): number {
@@ -3262,48 +3270,46 @@ app.post("/api/camp/minigame", async (c) => {
     }
     strikes.push(z as Zone);
   }
-  // Vigor gate. If the player is out of vigor, no swing at all.
+  // Stock model: each play is always allowed (skill is its own reward).
+  // Resources are clamped to remaining mine stock; rich-vein leaderboard
+  // strikes count regardless of stock so the mini-game stays a meaningful
+  // score-attack mode even after the mine is exhausted.
   const now = Date.now();
-  const vigor = currentVigor(character.vigor_full_at, now);
-  if (vigor <= 0) {
-    return c.json({
-      error: "no_vigor",
-      vigor: 0,
-      vigor_full_at: character.vigor_full_at ?? null,
-    }, 400);
-  }
-  // Spend 1 vigor: push vigor_full_at forward by one tick. If it's already
-  // in the future, extend it; if it's null/past, start the regen clock now.
-  const baseFullAt = (character.vigor_full_at && character.vigor_full_at > now)
-    ? character.vigor_full_at
-    : now;
-  const newVigorFullAt = baseFullAt + VIGOR_REGEN_MS;
-  // Roll loot per strike, server-side.
+  const stockBefore = currentStock(character.mine_stock_full_at, now);
+  // Roll loot per strike, server-side. Build a candidate list first so we
+  // can apply the stock cap before granting.
   type Drop = { id: "iron_ore" | "silver_ore"; qty: number };
-  const drops: Drop[] = [];
+  const candidates: Drop[] = [];
   let richHits = 0;
   for (const z of strikes) {
     if (z === "rich") {
       richHits++;
       const r = Math.random();
-      if (r < 0.60) drops.push({ id: "silver_ore", qty: 1 });
-      else if (r < 0.90) drops.push({ id: "iron_ore", qty: 1 });
-      // ~10% nothing
+      if (r < 0.60) candidates.push({ id: "silver_ore", qty: 1 });
+      else if (r < 0.90) candidates.push({ id: "iron_ore", qty: 1 });
     } else if (z === "thin") {
       const r = Math.random();
-      if (r < 0.50) drops.push({ id: "iron_ore", qty: 1 });
-      // ~50% nothing
+      if (r < 0.50) candidates.push({ id: "iron_ore", qty: 1 });
     }
     // dull: never drops anything
   }
-  // Best-zone XP. Attempted: 3, any thin: 5, any rich: 10.
-  const bestZone: Zone = strikes.includes("rich") ? "rich" : strikes.includes("thin") ? "thin" : "dull";
-  const xpAward = bestZone === "rich" ? 10 : bestZone === "thin" ? 5 : 3;
-
+  // Trim drops to remaining stock (silver first so the player keeps the
+  // higher-value items when the mine is nearly empty).
+  candidates.sort((a, b) => (a.id === "silver_ore" ? -1 : 1));
+  const drops = candidates.slice(0, stockBefore);
+  const unitsConsumed = drops.length;
+  // XP. Scant when the mine is empty (so the leaderboard mode still pays
+  // something) — otherwise the original best-zone scale.
+  let xpAward: number;
+  if (stockBefore === 0) {
+    xpAward = STOCK_EMPTY_XP;
+  } else {
+    const bestZone: Zone = strikes.includes("rich") ? "rich" : strikes.includes("thin") ? "thin" : "dull";
+    xpAward = bestZone === "rich" ? 10 : bestZone === "thin" ? 5 : 3;
+  }
   // Stack drops into { id, qty } for response + addResource calls.
   const tally = new Map<Drop["id"], number>();
   for (const d of drops) tally.set(d.id, (tally.get(d.id) ?? 0) + d.qty);
-
   const grantedResources: Array<{ name: string; qty: number; rarity: string }> = [];
   for (const [id, qty] of tally) {
     const spec = findResource(id);
@@ -3312,7 +3318,6 @@ app.post("/api/camp/minigame", async (c) => {
     await addResource(c.env.DB, session.slack_user_id, name, qty, spec.rarity, spec.blurb);
     grantedResources.push({ name: `${spec.emoji} ${spec.name}`, qty, rarity: spec.rarity });
   }
-
   const spoils = await awardSpoils(
     c.env.DB,
     character,
@@ -3321,16 +3326,17 @@ app.post("/api/camp/minigame", async (c) => {
     () => rollDice(6),
     xpForLevel,
   );
-
   if (richHits > 0) {
     await bumpMineRichHits(c.env.DB, session.slack_user_id, richHits);
   }
-  // Commit the spent vigor.
-  await c.env.DB
-    .prepare("UPDATE characters SET vigor_full_at = ? WHERE slack_user_id = ?")
-    .bind(newVigorFullAt, session.slack_user_id)
-    .run();
-
+  // Commit stock change: push mine_stock_full_at forward by units consumed.
+  const newStockFullAt = spendStock(character.mine_stock_full_at, now, unitsConsumed);
+  if (unitsConsumed > 0) {
+    await c.env.DB
+      .prepare("UPDATE characters SET mine_stock_full_at = ? WHERE slack_user_id = ?")
+      .bind(newStockFullAt, session.slack_user_id)
+      .run();
+  }
   return c.json({
     ok: true,
     xp: xpAward,
@@ -3339,8 +3345,9 @@ app.post("/api/camp/minigame", async (c) => {
     newLevel: spoils.newLevel,
     resources: grantedResources,
     richHits,
-    vigor: currentVigor(newVigorFullAt, now),
-    vigor_full_at: newVigorFullAt,
+    stock: currentStock(newStockFullAt, now),
+    stock_cap: STOCK_CAP,
+    stock_full_at: newStockFullAt,
   });
 });
 
@@ -3362,26 +3369,10 @@ app.post("/api/camp/forage/start", async (c) => {
   if (character.downed_until && character.downed_until > Date.now()) {
     return c.json({ error: "downed" }, 400);
   }
+  // Stock-based: the game is always playable. Harvest yields will be
+  // clamped to remaining garden stock at /finish; a fully depleted garden
+  // still scores XP and Flawless-Forages stat for the leaderboard.
   const now = Date.now();
-  const vigor = currentVigor(character.forage_vigor_full_at, now);
-  if (vigor <= 0) {
-    return c.json({
-      error: "no_vigor",
-      vigor: 0,
-      vigor_full_at: character.forage_vigor_full_at ?? null,
-    }, 400);
-  }
-  const baseFullAt = (character.forage_vigor_full_at && character.forage_vigor_full_at > now)
-    ? character.forage_vigor_full_at
-    : now;
-  const newVigorFullAt = baseFullAt + VIGOR_REGEN_MS;
-  // Spend the vigor first so a crashed game still charges (anti-grind).
-  await c.env.DB
-    .prepare("UPDATE characters SET forage_vigor_full_at = ? WHERE slack_user_id = ?")
-    .bind(newVigorFullAt, session.slack_user_id)
-    .run();
-  // Generate a fresh grid + persist it. The client never sees cell contents
-  // until it /flip's them — no client-side cheat surface.
   const seed = Math.floor(Math.random() * 0xffffffff);
   const grid = generateForageGrid(seed);
   const flipsTotal = forageFlipsForInt(character.int_stat);
@@ -3394,8 +3385,8 @@ app.post("/api/camp/forage/start", async (c) => {
     flips_used: 0,
     hp: character.hp,
     max_hp: character.max_hp,
-    vigor: currentVigor(newVigorFullAt, now),
-    vigor_full_at: newVigorFullAt,
+    stock: currentStock(character.forage_stock_full_at, now),
+    stock_cap: STOCK_CAP,
   });
 });
 
@@ -3499,8 +3490,10 @@ app.post("/api/camp/forage/finish", async (c) => {
   if (!game) return c.json({ error: "no_active_game" }, 400);
   const grid = JSON.parse(game.grid_json) as ForageCellKind[][];
   const revealed = JSON.parse(game.revealed_json) as Array<[number, number]>;
-  // Tally herbs and grant resources. Mushroom reveals already debited HP at
-  // /flip time; here we only convert herb reveals to inventory drops.
+  // Tally herbs revealed. Mushroom reveals already debited HP at /flip
+  // time; here we only convert herb reveals to inventory drops, clamped to
+  // remaining garden stock. Sunleaf has priority since it's the higher-
+  // value herb (player keeps the rare drops when the garden is nearly bare).
   let mossroot = 0;
   let sunleaf = 0;
   let hazards = 0;
@@ -3510,17 +3503,26 @@ app.post("/api/camp/forage/finish", async (c) => {
     else if (k === "sunleaf") sunleaf++;
     else if (k === "mushroom") hazards++;
   }
-  if (mossroot > 0) {
+  const herbsRevealed = mossroot + sunleaf;
+  const now = Date.now();
+  const stockBefore = currentStock(character.forage_stock_full_at, now);
+  // Apply stock cap: sunleaf first, then mossroot.
+  const sunleafGranted = Math.min(sunleaf, stockBefore);
+  const mossrootGranted = Math.min(mossroot, Math.max(0, stockBefore - sunleafGranted));
+  const unitsConsumed = sunleafGranted + mossrootGranted;
+  if (mossrootGranted > 0) {
     const spec = findResource("mossroot");
-    if (spec) await addResource(c.env.DB, session.slack_user_id, resourceItemName("mossroot"), mossroot, spec.rarity, spec.blurb);
+    if (spec) await addResource(c.env.DB, session.slack_user_id, resourceItemName("mossroot"), mossrootGranted, spec.rarity, spec.blurb);
   }
-  if (sunleaf > 0) {
+  if (sunleafGranted > 0) {
     const spec = findResource("sunleaf");
-    if (spec) await addResource(c.env.DB, session.slack_user_id, resourceItemName("sunleaf"), sunleaf, spec.rarity, spec.blurb);
+    if (spec) await addResource(c.env.DB, session.slack_user_id, resourceItemName("sunleaf"), sunleafGranted, spec.rarity, spec.blurb);
   }
-  const herbsTotal = mossroot + sunleaf;
-  // XP: 3 floor + 1 per herb, capped at 9.
-  const xpAward = Math.min(9, 3 + herbsTotal);
+  // XP. Scant when the garden is empty; otherwise 3 floor + 1 per HARVESTED
+  // (not revealed-but-unharvested) herb, capped at the new ceiling of 12.
+  const xpAward = stockBefore === 0
+    ? STOCK_EMPTY_XP
+    : Math.min(12, 3 + unitsConsumed);
   const spoils = await awardSpoils(
     c.env.DB,
     character,
@@ -3529,23 +3531,31 @@ app.post("/api/camp/forage/finish", async (c) => {
     () => rollDice(6),
     xpForLevel,
   );
-  // Flawless = the player revealed at least 1 herb and ZERO hazards.
-  const flawless = revealed.length > 0 && hazards === 0 && herbsTotal > 0;
+  // Flawless = the player revealed at least 1 herb and ZERO hazards. Tracks
+  // the skill criterion regardless of stock, so the leaderboard mode stays
+  // meaningful on an exhausted garden.
+  const flawless = revealed.length > 0 && hazards === 0 && herbsRevealed > 0;
   if (flawless) {
     await bumpForageFlawless(c.env.DB, session.slack_user_id, 1);
   }
   await deleteForageGame(c.env.DB, session.slack_user_id);
+  // Commit stock change.
+  const newStockFullAt = spendStock(character.forage_stock_full_at, now, unitsConsumed);
+  if (unitsConsumed > 0) {
+    await c.env.DB
+      .prepare("UPDATE characters SET forage_stock_full_at = ? WHERE slack_user_id = ?")
+      .bind(newStockFullAt, session.slack_user_id)
+      .run();
+  }
   const grantedResources: Array<{ name: string; qty: number; rarity: string }> = [];
-  if (mossroot > 0) {
+  if (mossrootGranted > 0) {
     const spec = findResource("mossroot");
-    if (spec) grantedResources.push({ name: `${spec.emoji} ${spec.name}`, qty: mossroot, rarity: spec.rarity });
+    if (spec) grantedResources.push({ name: `${spec.emoji} ${spec.name}`, qty: mossrootGranted, rarity: spec.rarity });
   }
-  if (sunleaf > 0) {
+  if (sunleafGranted > 0) {
     const spec = findResource("sunleaf");
-    if (spec) grantedResources.push({ name: `${spec.emoji} ${spec.name}`, qty: sunleaf, rarity: spec.rarity });
+    if (spec) grantedResources.push({ name: `${spec.emoji} ${spec.name}`, qty: sunleafGranted, rarity: spec.rarity });
   }
-  // Refresh vigor for the response (no spend on finish).
-  const now = Date.now();
   return c.json({
     ok: true,
     xp: xpAward,
@@ -3553,12 +3563,14 @@ app.post("/api/camp/forage/finish", async (c) => {
     levelsGained: spoils.levelsGained,
     newLevel: spoils.newLevel,
     resources: grantedResources,
-    herbs: herbsTotal,
+    herbs: herbsRevealed,
+    herbs_harvested: unitsConsumed,
     hazards,
     hp_taken: game.hp_taken,
     flawless,
-    vigor: currentVigor(character.forage_vigor_full_at, now),
-    vigor_full_at: character.forage_vigor_full_at ?? null,
+    stock: currentStock(newStockFullAt, now),
+    stock_cap: STOCK_CAP,
+    stock_full_at: newStockFullAt,
   });
 });
 
@@ -3593,22 +3605,9 @@ app.post("/api/camp/fish/cast", async (c) => {
     return c.json({ error: "downed" }, 400);
   }
   const now = Date.now();
-  const vigor = currentVigor(character.fish_vigor_full_at, now);
-  if (vigor <= 0) {
-    return c.json({
-      error: "no_vigor",
-      vigor: 0,
-      vigor_full_at: character.fish_vigor_full_at ?? null,
-    }, 400);
-  }
-  const baseFullAt = (character.fish_vigor_full_at && character.fish_vigor_full_at > now)
-    ? character.fish_vigor_full_at
-    : now;
-  const newVigorFullAt = baseFullAt + VIGOR_REGEN_MS;
-  await c.env.DB
-    .prepare("UPDATE characters SET fish_vigor_full_at = ? WHERE slack_user_id = ?")
-    .bind(newVigorFullAt, session.slack_user_id)
-    .run();
+  // Stock model: cast is always allowed. Fish stock is spent at /reel time
+  // (1 unit per fish caught). Casting on an exhausted pond still scores
+  // reaction-time for the Fastest Hook leaderboard.
   const biteAtMs = Math.floor(
     FISH_BITE_MIN_MS + Math.random() * (FISH_BITE_MAX_MS - FISH_BITE_MIN_MS),
   );
@@ -3620,8 +3619,8 @@ app.post("/api/camp/fish/cast", async (c) => {
     bite_window_ms: biteWindowMs,
     reel_target_ms: FISH_REEL_TARGET_MS,
     pull_rate: fishPullRateForStr(character.str),
-    vigor: currentVigor(newVigorFullAt, now),
-    vigor_full_at: newVigorFullAt,
+    stock: currentStock(character.fish_stock_full_at, now),
+    stock_cap: STOCK_CAP,
   });
 });
 
@@ -3678,6 +3677,13 @@ app.post("/api/camp/fish/reel", async (c) => {
   } else if (safeFraction >= 0.25) {
     fishId = "river_carp";
   }
+  const now = Date.now();
+  const stockBefore = currentStock(character.fish_stock_full_at, now);
+  // Pond exhausted? The reel still scores (fast_best_ms, plays counter) but
+  // the fish slips out — leaderboard mode without resource flood.
+  if (fishId && stockBefore <= 0) {
+    fishId = null;
+  }
   const grantedResources: Array<{ name: string; qty: number; rarity: string }> = [];
   if (fishId) {
     const spec = findResource(fishId);
@@ -3686,12 +3692,16 @@ app.post("/api/camp/fish/reel", async (c) => {
       grantedResources.push({ name: `${spec.emoji} ${spec.name}`, qty: 1, rarity: spec.rarity });
     }
   }
-  // XP: 3 floor (already hooked = beat phase 1) + 2 if any fish caught +
-  // 5 if quality >= 0.55. Max 10.
-  let xpAward = 3;
-  if (fishId) xpAward += 2;
-  if (quality >= 0.55) xpAward += 5;
-  xpAward = Math.min(10, xpAward);
+  // XP. Scant when the pond is empty; otherwise the original formula.
+  let xpAward: number;
+  if (stockBefore <= 0) {
+    xpAward = STOCK_EMPTY_XP;
+  } else {
+    xpAward = 3;
+    if (fishId) xpAward += 2;
+    if (quality >= 0.55) xpAward += 5;
+    xpAward = Math.min(10, xpAward);
+  }
   const spoils = await awardSpoils(
     c.env.DB,
     character,
@@ -3704,7 +3714,15 @@ app.post("/api/camp/fish/reel", async (c) => {
   if (fishId) await updateFishBestMs(c.env.DB, session.slack_user_id, reactionMs);
   await bumpFishPlays(c.env.DB, session.slack_user_id);
   await deleteFishGame(c.env.DB, session.slack_user_id);
-  const now = Date.now();
+  // Commit stock change (1 unit per fish caught).
+  const unitsConsumed = fishId ? 1 : 0;
+  const newStockFullAt = spendStock(character.fish_stock_full_at, now, unitsConsumed);
+  if (unitsConsumed > 0) {
+    await c.env.DB
+      .prepare("UPDATE characters SET fish_stock_full_at = ? WHERE slack_user_id = ?")
+      .bind(newStockFullAt, session.slack_user_id)
+      .run();
+  }
   return c.json({
     ok: true,
     fish: fishId,
@@ -3715,8 +3733,9 @@ app.post("/api/camp/fish/reel", async (c) => {
     levelsGained: spoils.levelsGained,
     newLevel: spoils.newLevel,
     resources: grantedResources,
-    vigor: currentVigor(character.fish_vigor_full_at, now),
-    vigor_full_at: character.fish_vigor_full_at ?? null,
+    stock: currentStock(newStockFullAt, now),
+    stock_cap: STOCK_CAP,
+    stock_full_at: newStockFullAt,
   });
 });
 

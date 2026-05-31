@@ -14,11 +14,13 @@ import {
 
 describe("forage cascade + first-flip safety scaffolding", () => {
   it("constants tightened for the cascade economy", () => {
-    expect(FORAGE_BASE_FLIPS).toBe(4);
-    expect(FORAGE_MAX_FLIPS).toBe(6);
-    expect(forageFlipsForInt(5)).toBe(4);
-    expect(forageFlipsForInt(7)).toBe(6);
-    expect(forageFlipsForInt(20)).toBe(6); // capped
+    // 5×5 grid + 4-5 mushrooms means cascades stop earlier and more manual
+    // flips are needed to harvest scattered herbs — base bumped 4 → 5.
+    expect(FORAGE_BASE_FLIPS).toBe(5);
+    expect(FORAGE_MAX_FLIPS).toBe(7);
+    expect(forageFlipsForInt(5)).toBe(5);
+    expect(forageFlipsForInt(7)).toBe(7);
+    expect(forageFlipsForInt(20)).toBe(7); // capped
   });
 
   it("cascade never reveals a hazard", () => {

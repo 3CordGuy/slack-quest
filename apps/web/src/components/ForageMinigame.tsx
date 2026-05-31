@@ -80,7 +80,7 @@ interface FinishResponse {
 
 function describeServerError(code: string | undefined): string {
   switch (code) {
-    case "no_vigor": return "You're out of forage vigor — rest up and try again in an hour.";
+    case "no_vigor": return "The garden is picked clean — herbs return in an hour."; // legacy path; new code uses stock
     case "downed": return "You're downed — rest at the Inn first.";
     case "no_active_game": return "Your forage game has expired. Open a fresh one.";
     case "no_flips_left": return "No more flips — bank what you've found.";
