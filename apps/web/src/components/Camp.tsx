@@ -8,6 +8,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 
+import { useIsMobile } from "../CombatShared";
 import { Icon } from "../icons";
 import type {
   ActiveGatheringTask, CampNode, CampStatusResponse, CampTier,
@@ -284,6 +285,9 @@ function ActiveTaskRow({
   // is most important on the main slot since cancelling it unblocks
   // hunts/quests.
   const isMainSlot = task.worker_slot === 1;
+  // Below this width the 3-column layout (icon | progress bar | actions)
+  // gets cramped — stack into a single column with explicit gap instead.
+  const isNarrow = useIsMobile(560);
 
   async function handleClaim() {
     setBusy(true);
@@ -303,8 +307,8 @@ function ActiveTaskRow({
   return (
     <div style={{
       display: "grid",
-      gridTemplateColumns: "auto 1fr auto",
-      gap: 16,
+      gridTemplateColumns: isNarrow ? "minmax(0, 1fr)" : "auto 1fr auto",
+      gap: isNarrow ? 10 : 16,
       alignItems: "center",
       padding: "10px 14px",
       borderRadius: "var(--radius-lg)",
@@ -455,8 +459,12 @@ function GatheringNodePanel({
   }, [defaultSlot, selectedSlot, freeSlots]);
 
   return (
-    <div>
-      <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 10 }}>
+    // Flex column with an explicit gap so siblings (worker picker, immediate
+    // action row, tier card grid, busy banner) get uniform spacing on every
+    // viewport width — replaces a chain of ad-hoc marginTops that left gaps
+    // missing when sections wrapped at mobile breakpoints.
+    <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
         <Icon name={spec.icon} size={28} color="var(--fg-1)" />
         <div>
           <div style={{ font: "12px/1 var(--font-display)", textTransform: "uppercase", letterSpacing: 1.6, color: "var(--fg-mute)" }}>
@@ -465,7 +473,7 @@ function GatheringNodePanel({
           <div style={{ fontSize: 22, fontFamily: "var(--font-display)" }}>{spec.label}</div>
         </div>
       </div>
-      <div style={{ ...muted, marginBottom: 14 }}>{spec.blurb}</div>
+      <div style={{ ...muted }}>{spec.blurb}</div>
 
       <WorkerPicker
         slotsTotal={slotsTotal}
@@ -482,11 +490,12 @@ function GatheringNodePanel({
         const outOfVigor = vigor <= 0;
         return (
           <div style={{
-            marginTop: 10,
             padding: "10px 12px",
             borderRadius: "var(--radius-md)",
-            border: "1px dashed rgba(198, 161, 74, 0.45)",
-            background: "rgba(198, 161, 74, 0.06)",
+            border: "1px dashed rgba(198, 161, 74, 0.55)",
+            background: "linear-gradient(180deg, rgba(198, 161, 74, 0.14) 0%, rgba(12, 14, 18, 0.78) 100%)",
+            backdropFilter: "blur(10px) saturate(1.1)",
+            WebkitBackdropFilter: "blur(10px) saturate(1.1)",
             display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap",
             opacity: outOfVigor ? 0.7 : 1,
           }}>
@@ -538,11 +547,12 @@ function GatheringNodePanel({
         const outOfVigor = vigor <= 0;
         return (
           <div style={{
-            marginTop: 10,
             padding: "10px 12px",
             borderRadius: "var(--radius-md)",
-            border: "1px dashed rgba(120, 180, 90, 0.45)",
-            background: "rgba(120, 180, 90, 0.06)",
+            border: "1px dashed rgba(120, 180, 90, 0.55)",
+            background: "linear-gradient(180deg, rgba(120, 180, 90, 0.14) 0%, rgba(12, 14, 18, 0.78) 100%)",
+            backdropFilter: "blur(10px) saturate(1.1)",
+            WebkitBackdropFilter: "blur(10px) saturate(1.1)",
             display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap",
             opacity: outOfVigor ? 0.7 : 1,
           }}>
@@ -554,7 +564,7 @@ function GatheringNodePanel({
               </div>
               <div style={{ fontSize: 13, marginTop: 4 }}>
                 {outOfVigor
-                  ? `Out of forage vigor — rest up. Next swing ${tickIn != null ? `in ${formatVigorCountdown(tickIn)}` : "soon"}.`
+                  ? `Out of forage vigor — rest up. Next forage ${tickIn != null ? `in ${formatVigorCountdown(tickIn)}` : "soon"}.`
                   : "Quick Forage — search places in the forest. Read the clues. Bank early or push for more."}
               </div>
               {!outOfVigor && tickIn != null && (
@@ -594,11 +604,12 @@ function GatheringNodePanel({
         const outOfVigor = vigor <= 0;
         return (
           <div style={{
-            marginTop: 10,
             padding: "10px 12px",
             borderRadius: "var(--radius-md)",
-            border: "1px dashed rgba(95, 165, 220, 0.45)",
-            background: "rgba(95, 165, 220, 0.06)",
+            border: "1px dashed rgba(95, 165, 220, 0.55)",
+            background: "linear-gradient(180deg, rgba(95, 165, 220, 0.14) 0%, rgba(12, 14, 18, 0.78) 100%)",
+            backdropFilter: "blur(10px) saturate(1.1)",
+            WebkitBackdropFilter: "blur(10px) saturate(1.1)",
             display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap",
             opacity: outOfVigor ? 0.7 : 1,
           }}>
@@ -643,7 +654,7 @@ function GatheringNodePanel({
         );
       })()}
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12, marginTop: 14 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12 }}>
         {(["quick", "standard", "deep"] as CampTier[]).map((tier) => (
           <TierCard
             key={tier}
@@ -657,7 +668,7 @@ function GatheringNodePanel({
       </div>
 
       {allBusy && (
-        <div style={{ marginTop: 16, padding: "10px 14px", border: "1px dashed var(--border-base)", borderRadius: "var(--radius-md)", color: "var(--fg-mute)", fontSize: 13 }}>
+        <div style={{ padding: "10px 14px", border: "1px dashed var(--border-base)", borderRadius: "var(--radius-md)", color: "var(--fg-mute)", fontSize: 13 }}>
           {status?.slots.errand_slot_used && (status?.slots.total ?? 1) === 1
             ? "Your main character is out on a pub errand. Collect at the Pub, or build a Worker Tent to keep gathering in parallel."
             : status?.slots.errand_slot_used
@@ -962,6 +973,7 @@ function UpgradeRow({
   const affordable = gold >= upgrade.gold_cost;
   const meetsLevel = level >= upgrade.level_req;
   const canBuild = !built && !locked && affordable && meetsLevel;
+  const isNarrow = useIsMobile(560);
   async function handle() {
     setBusy(true);
     try { await onBuild(upgrade.key); } finally { setBusy(false); }
@@ -969,14 +981,14 @@ function UpgradeRow({
   return (
     <div style={{
       display: "grid",
-      gridTemplateColumns: "auto 1fr auto",
-      gap: 14,
+      gridTemplateColumns: isNarrow ? "minmax(0, 1fr)" : "auto 1fr auto",
+      gap: isNarrow ? 10 : 14,
       padding: "12px 14px",
       borderRadius: "var(--radius-md)",
       border: "1px solid var(--border-base)",
       background: locked || built ? "var(--bg-card-2)" : "var(--bg-card)",
       opacity: locked ? 0.6 : 1,
-      alignItems: "center",
+      alignItems: isNarrow ? "stretch" : "center",
       backdropFilter: "blur(10px) saturate(1.05)",
       WebkitBackdropFilter: "blur(10px) saturate(1.05)",
     }}>
