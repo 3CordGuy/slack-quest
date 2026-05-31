@@ -2433,14 +2433,59 @@ export type ForageCellKind =
   | "sunleaf"
   | "mushroom";
 
-export const FORAGE_GRID_ROWS = 4;
-export const FORAGE_GRID_COLS = 4;
-// Cascade reveals (Minesweeper-style flood from 0-hazard cells) are free, so
-// the manual flip budget is tighter — each tap is now a deduction, not a
-// resource to spend.
-export const FORAGE_BASE_FLIPS = 4;
-export const FORAGE_MAX_FLIPS = 6;
-export const FORAGE_HAZARD_DICE = 4; // 1dN HP per snake/mushroom
+// Camp node stock — capacity and replenishment for the per-node harvestable
+// pools that replaced the old hourly-vigor cooldowns. Each play depletes
+// stock by the resources granted (not a fixed cost), and stock refills at 1
+// unit per hour up to STOCK_CAP. Mini-games are always playable; depleted
+// stock just means scant XP and zero resources for that play.
+export const STOCK_CAP = 10;
+export const STOCK_REGEN_MS = 60 * 60 * 1000;
+// XP granted when the player completes a mini-game on an empty stock node.
+// Keeps the score-attack / leaderboard mode meaningful without flooding the
+// inventory with resources.
+export const STOCK_EMPTY_XP = 2;
+
+// Returns 0..STOCK_CAP. Same semantics as currentVigor: null/past timestamp
+// means full pool, otherwise we deduct based on how many regen-ticks remain.
+export function currentStock(fullAt: number | null | undefined, now: number): number {
+  if (!fullAt || fullAt <= now) return STOCK_CAP;
+  const ticksRemaining = Math.ceil((fullAt - now) / STOCK_REGEN_MS);
+  return Math.max(0, STOCK_CAP - ticksRemaining);
+}
+
+// Returns the ms until the next +1 stock would arrive, or null if the pool
+// is already full.
+export function nextStockTickMs(fullAt: number | null | undefined, now: number): number | null {
+  if (!fullAt || fullAt <= now) return null;
+  const msIntoCurrentTick = (fullAt - now) % STOCK_REGEN_MS;
+  return msIntoCurrentTick === 0 ? STOCK_REGEN_MS : msIntoCurrentTick;
+}
+
+// Spend N stock (where N = number of resource units the player actually
+// pulled this play). Returns the new full-at timestamp. Caller is responsible
+// for clamping N to currentStock(...) before granting resources.
+export function spendStock(
+  fullAt: number | null | undefined,
+  now: number,
+  units: number,
+): number {
+  if (units <= 0) return fullAt && fullAt > now ? fullAt : (fullAt ?? now);
+  // If pool is currently full, the regen clock starts now.
+  const base = (fullAt && fullAt > now) ? fullAt : now;
+  return base + units * STOCK_REGEN_MS;
+}
+
+// 5×5 grid feels right at this density — 4×4 was too small (cascade swept the
+// board, deduction trivial). 25 cells with 4-5 mushrooms keeps the cascade
+// bounded and leaves enough cells for genuine puzzle-solving after the
+// opening reveal.
+export const FORAGE_GRID_ROWS = 5;
+export const FORAGE_GRID_COLS = 5;
+// Cascade reveals are free, but the bigger grid + scattered herbs mean the
+// player needs more manual flips to harvest everything they spot.
+export const FORAGE_BASE_FLIPS = 5;
+export const FORAGE_MAX_FLIPS = 7;
+export const FORAGE_HAZARD_DICE = 4; // 1dN HP per mushroom
 
 export function forageFlipsForInt(intStat: number | null | undefined): number {
   const base = FORAGE_BASE_FLIPS;
@@ -2558,40 +2603,32 @@ export function generateForageGrid(seed: number): ForageCellKind[][] {
     Array.from({ length: FORAGE_GRID_COLS }, () => "empty" as ForageCellKind),
   );
 
-  // 1. Mossroot — clusters of 3-4 cells. Picks a seed at random and grows
-  //    outward into empty neighbors. Pure flavor; doesn't affect deduction.
+  // 1. Mossroot — 3-4 cells scattered individually (NOT clustered). Earlier
+  //    versions clustered mossroot so the opening cascade could grab all of
+  //    them in one tap; scattering them means at least one will be far from
+  //    the safe-start cell, requiring a real deduction.
   const mossrootCount = 3 + Math.floor(rnd() * 2);
-  const mossrootCells: Array<[number, number]> = [];
-  const firstMoss = pickRandomEmpty(grid, rnd);
-  if (firstMoss) {
-    grid[firstMoss[0]][firstMoss[1]] = "mossroot";
-    mossrootCells.push(firstMoss);
-  }
-  for (let i = 1; i < mossrootCount; i++) {
-    const seedCell = mossrootCells[mossrootCells.length - 1];
-    const candidates = neighbors(seedCell[0], seedCell[1]).filter(
-      ([r, c]) => grid[r][c] === "empty",
-    );
-    if (candidates.length === 0) break;
-    const [r, c] = candidates[Math.floor(rnd() * candidates.length)];
-    grid[r][c] = "mossroot";
-    mossrootCells.push([r, c]);
+  for (let i = 0; i < mossrootCount; i++) {
+    const slot = pickRandomEmpty(grid, rnd);
+    if (!slot) break;
+    grid[slot[0]][slot[1]] = "mossroot";
   }
 
-  // 2. Sunleaf — 1-2 placed randomly. Sunleaf will gate mushroom placement
-  //    in the next step, so revealing a sunleaf certifies its neighbors as
-  //    mushroom-free (the only ecological deduction rule left in the
-  //    simplified game).
-  const sunleafCount = 1 + Math.floor(rnd() * 2);
-  for (let i = 0; i < sunleafCount; i++) {
+  // 2. Sunleaf — exactly 2, placed randomly. Sunleaf gates mushroom
+  //    placement in the next step, so revealing a sunleaf certifies its
+  //    neighbors as mushroom-free (the deduction rule that survives the
+  //    simplified ecology).
+  for (let i = 0; i < 2; i++) {
     const slot = pickRandomEmpty(grid, rnd);
     if (!slot) break;
     grid[slot[0]][slot[1]] = "sunleaf";
   }
 
-  // 3. Mushrooms — 2-3 random hazards. Never spawn adjacent to a sunleaf so
-  //    sunleaf reveals are reliable safety signals for their neighbors.
-  const mushroomCount = 2 + Math.floor(rnd() * 2);
+  // 3. Mushrooms — 4-5 hazards (up from 2-3 on the old 4×4). Higher density
+  //    keeps cascades bounded by hazard-count > 0 cells and forces more
+  //    careful flipping. Never adjacent to sunleaf so sunleaf reveals stay
+  //    reliable safety signals.
+  const mushroomCount = 4 + Math.floor(rnd() * 2);
   for (let i = 0; i < mushroomCount; i++) {
     const slot = pickRandomEmpty(grid, rnd, (r, c) =>
       !neighbors(r, c).some(([nr, nc]) => grid[nr][nc] === "sunleaf"),

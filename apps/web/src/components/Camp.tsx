@@ -36,23 +36,28 @@ const STOCKPILE_RESOURCES: Array<{ id: string; node: CampNode; name: string; emo
   { id: "abyss_eel",   node: "fish",   name: "Abyss Eel",   emoji: "🐉", icon: "eel" },
 ];
 
-// Mining vigor system — kept in sync with worker.ts constants.
-export const MAX_VIGOR = 3;
-const VIGOR_REGEN_MS = 60 * 60 * 1000;
+// Per-node harvestable stock — replaces the old vigor cooldowns. Each node
+// has its own pool that depletes by resources harvested and replenishes 1
+// unit per hour up to STOCK_CAP. Mini-games are always playable regardless
+// of stock; depleted nodes just give scant XP and zero resources.
+export const STOCK_CAP = 10;
+const STOCK_REGEN_MS = 60 * 60 * 1000;
+// Kept for any lingering external import — pips count for the visualization.
+export const MAX_VIGOR = STOCK_CAP;
 
-export function currentVigor(fullAt: number | null | undefined, now: number): number {
-  if (!fullAt || fullAt <= now) return MAX_VIGOR;
-  const ticksRemaining = Math.ceil((fullAt - now) / VIGOR_REGEN_MS);
-  return Math.max(0, MAX_VIGOR - ticksRemaining);
+export function currentStock(fullAt: number | null | undefined, now: number): number {
+  if (!fullAt || fullAt <= now) return STOCK_CAP;
+  const ticksRemaining = Math.ceil((fullAt - now) / STOCK_REGEN_MS);
+  return Math.max(0, STOCK_CAP - ticksRemaining);
 }
 
-function nextVigorTickIn(fullAt: number | null | undefined, now: number): number | null {
+function nextStockTickIn(fullAt: number | null | undefined, now: number): number | null {
   if (!fullAt || fullAt <= now) return null;
-  const msIntoCurrentTick = (fullAt - now) % VIGOR_REGEN_MS;
-  return msIntoCurrentTick === 0 ? VIGOR_REGEN_MS : msIntoCurrentTick;
+  const msIntoCurrentTick = (fullAt - now) % STOCK_REGEN_MS;
+  return msIntoCurrentTick === 0 ? STOCK_REGEN_MS : msIntoCurrentTick;
 }
 
-function formatVigorCountdown(ms: number): string {
+function formatStockCountdown(ms: number): string {
   const totalMin = Math.ceil(ms / 60000);
   if (totalMin >= 60) {
     const h = Math.floor(totalMin / 60);
@@ -70,12 +75,11 @@ interface CampProps {
   characterInt?: number;
   /** Dexterity — widens the fishing bite window. */
   characterDex?: number;
-  /** Timestamp (ms) when mining vigor will be full. Null/past = full. */
-  characterVigorFullAt?: number | null;
-  /** Timestamp (ms) when forage vigor will be full. Null/past = full. */
-  characterForageVigorFullAt?: number | null;
-  /** Timestamp (ms) when fishing vigor will be full. Null/past = full. */
-  characterFishVigorFullAt?: number | null;
+  /** Per-node harvestable stock timestamps (migration 0059). Null/past = full
+      pool (cap 10). Replaces the older per-game vigor cooldowns. */
+  characterMineStockFullAt?: number | null;
+  characterForageStockFullAt?: number | null;
+  characterFishStockFullAt?: number | null;
   /** AI-generated mine art (used as the mining mini-game backdrop). */
   mineArtUrl?: string | null;
   /** AI-generated forage art (used as the forage mini-game backdrop). */
@@ -96,7 +100,7 @@ interface CampProps {
 
 export function Camp({
   characterLevel: _characterLevel, characterStr, characterInt, characterDex,
-  characterVigorFullAt, characterForageVigorFullAt, characterFishVigorFullAt,
+  characterMineStockFullAt, characterForageStockFullAt, characterFishStockFullAt,
   mineArtUrl, forageArtUrl, fishArtUrl, section, status, inventory,
   onStartGather, onClaim, onCancel, onBuildUpgrade, onMinigamePlayed,
 }: CampProps) {
@@ -126,9 +130,9 @@ export function Camp({
           characterStr={characterStr}
           characterInt={characterInt}
           characterDex={characterDex}
-          characterVigorFullAt={characterVigorFullAt}
-          characterForageVigorFullAt={characterForageVigorFullAt}
-          characterFishVigorFullAt={characterFishVigorFullAt}
+          characterMineStockFullAt={characterMineStockFullAt}
+          characterForageStockFullAt={characterForageStockFullAt}
+          characterFishStockFullAt={characterFishStockFullAt}
           mineArtUrl={mineArtUrl}
           forageArtUrl={forageArtUrl}
           fishArtUrl={fishArtUrl}
@@ -403,7 +407,7 @@ function ActiveTaskRow({
 function GatheringNodePanel({
   node, status, onStart, activeBySlot,
   characterStr, characterInt, characterDex,
-  characterVigorFullAt, characterForageVigorFullAt, characterFishVigorFullAt,
+  characterMineStockFullAt, characterForageStockFullAt, characterFishStockFullAt,
   mineArtUrl, forageArtUrl, fishArtUrl,
   onMinigamePlayed,
 }: {
@@ -414,9 +418,9 @@ function GatheringNodePanel({
   characterStr?: number;
   characterInt?: number;
   characterDex?: number;
-  characterVigorFullAt?: number | null;
-  characterForageVigorFullAt?: number | null;
-  characterFishVigorFullAt?: number | null;
+  characterMineStockFullAt?: number | null;
+  characterForageStockFullAt?: number | null;
+  characterFishStockFullAt?: number | null;
   mineArtUrl?: string | null;
   forageArtUrl?: string | null;
   fishArtUrl?: string | null;
@@ -483,176 +487,47 @@ function GatheringNodePanel({
         onSelect={setSelectedSlot}
       />
 
-      {node === "mine" && (() => {
-        const now = Date.now();
-        const vigor = currentVigor(characterVigorFullAt, now);
-        const tickIn = nextVigorTickIn(characterVigorFullAt, now);
-        const outOfVigor = vigor <= 0;
-        return (
-          <div style={{
-            padding: "10px 12px",
-            borderRadius: "var(--radius-md)",
-            border: "1px dashed rgba(198, 161, 74, 0.55)",
-            background: "linear-gradient(180deg, rgba(198, 161, 74, 0.14) 0%, rgba(12, 14, 18, 0.78) 100%)",
-            backdropFilter: "blur(10px) saturate(1.1)",
-            WebkitBackdropFilter: "blur(10px) saturate(1.1)",
-            display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap",
-            opacity: outOfVigor ? 0.7 : 1,
-          }}>
-            <Icon name="mining-diamonds" size={18} color="#c6a14a" />
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 8, font: "11px/1 var(--font-display)", textTransform: "uppercase", letterSpacing: 1.4, color: "var(--fg-mute)" }}>
-                <span>Immediate</span>
-                <VigorPips vigor={vigor} max={MAX_VIGOR} />
-              </div>
-              <div style={{ fontSize: 13, marginTop: 4 }}>
-                {outOfVigor
-                  ? `Out of vigor — rest up. Next swing ${tickIn != null ? `in ${formatVigorCountdown(tickIn)}` : "soon"}.`
-                  : "Quick Strike — three swings, no wait. Hammer the rich vein."}
-              </div>
-              {!outOfVigor && tickIn != null && (
-                <div style={{ fontSize: 11, color: "var(--fg-mute)", marginTop: 2 }}>
-                  +1 vigor in {formatVigorCountdown(tickIn)}
-                </div>
-              )}
-            </div>
-            <button
-              type="button"
-              onClick={() => setMinigameOpen(true)}
-              disabled={outOfVigor}
-              title={outOfVigor ? "No vigor — try again later." : undefined}
-              style={{
-                minHeight: 40,
-                padding: "8px 14px",
-                border: outOfVigor ? "1px solid var(--border-base)" : "1px solid #c6a14a",
-                borderRadius: "var(--radius-md)",
-                background: outOfVigor ? "var(--bg-card)" : "rgba(198, 161, 74, 0.18)",
-                color: outOfVigor ? "var(--fg-mute)" : "#f5d56b",
-                fontWeight: 600,
-                fontFamily: "inherit",
-                cursor: outOfVigor ? "not-allowed" : "pointer",
-                touchAction: "manipulation",
-              }}
-            >
-              Quick Strike
-            </button>
-          </div>
-        );
-      })()}
+      {node === "mine" && (
+        <ImmediateActionRow
+          stockFullAt={characterMineStockFullAt}
+          icon="mining-diamonds"
+          stockLabel="Mine"
+          color="#c6a14a"
+          tintRgb="198, 161, 74"
+          textColor="#f5d56b"
+          flavor="Quick Strike — three swings, no wait. Hammer the rich vein."
+          buttonLabel="Quick Strike"
+          onClick={() => setMinigameOpen(true)}
+        />
+      )}
 
-      {node === "forage" && (() => {
-        const now = Date.now();
-        const vigor = currentVigor(characterForageVigorFullAt, now);
-        const tickIn = nextVigorTickIn(characterForageVigorFullAt, now);
-        const outOfVigor = vigor <= 0;
-        return (
-          <div style={{
-            padding: "10px 12px",
-            borderRadius: "var(--radius-md)",
-            border: "1px dashed rgba(120, 180, 90, 0.55)",
-            background: "linear-gradient(180deg, rgba(120, 180, 90, 0.14) 0%, rgba(12, 14, 18, 0.78) 100%)",
-            backdropFilter: "blur(10px) saturate(1.1)",
-            WebkitBackdropFilter: "blur(10px) saturate(1.1)",
-            display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap",
-            opacity: outOfVigor ? 0.7 : 1,
-          }}>
-            <Icon name="herbs-bundle" size={18} color="#9ccb6c" />
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 8, font: "11px/1 var(--font-display)", textTransform: "uppercase", letterSpacing: 1.4, color: "var(--fg-mute)" }}>
-                <span>Immediate</span>
-                <VigorPips vigor={vigor} max={MAX_VIGOR} color="#9ccb6c" />
-              </div>
-              <div style={{ fontSize: 13, marginTop: 4 }}>
-                {outOfVigor
-                  ? `Out of forage vigor — rest up. Next forage ${tickIn != null ? `in ${formatVigorCountdown(tickIn)}` : "soon"}.`
-                  : "Quick Forage — search places in the forest. Read the clues. Bank early or push for more."}
-              </div>
-              {!outOfVigor && tickIn != null && (
-                <div style={{ fontSize: 11, color: "var(--fg-mute)", marginTop: 2 }}>
-                  +1 vigor in {formatVigorCountdown(tickIn)}
-                </div>
-              )}
-            </div>
-            <button
-              type="button"
-              onClick={() => setMinigameOpen(true)}
-              disabled={outOfVigor}
-              title={outOfVigor ? "No vigor — try again later." : undefined}
-              style={{
-                minHeight: 40,
-                padding: "8px 14px",
-                border: outOfVigor ? "1px solid var(--border-base)" : "1px solid #9ccb6c",
-                borderRadius: "var(--radius-md)",
-                background: outOfVigor ? "var(--bg-card)" : "rgba(120, 180, 90, 0.18)",
-                color: outOfVigor ? "var(--fg-mute)" : "#cfe9a4",
-                fontWeight: 600,
-                fontFamily: "inherit",
-                cursor: outOfVigor ? "not-allowed" : "pointer",
-                touchAction: "manipulation",
-              }}
-            >
-              Quick Forage
-            </button>
-          </div>
-        );
-      })()}
+      {node === "forage" && (
+        <ImmediateActionRow
+          stockFullAt={characterForageStockFullAt}
+          icon="herbs-bundle"
+          stockLabel="Garden"
+          color="#9ccb6c"
+          tintRgb="120, 180, 90"
+          textColor="#cfe9a4"
+          flavor="Quick Forage — search places in the forest. Read the clues. Bank early or push for more."
+          buttonLabel="Quick Forage"
+          onClick={() => setMinigameOpen(true)}
+        />
+      )}
 
-      {node === "fish" && (() => {
-        const now = Date.now();
-        const vigor = currentVigor(characterFishVigorFullAt, now);
-        const tickIn = nextVigorTickIn(characterFishVigorFullAt, now);
-        const outOfVigor = vigor <= 0;
-        return (
-          <div style={{
-            padding: "10px 12px",
-            borderRadius: "var(--radius-md)",
-            border: "1px dashed rgba(95, 165, 220, 0.55)",
-            background: "linear-gradient(180deg, rgba(95, 165, 220, 0.14) 0%, rgba(12, 14, 18, 0.78) 100%)",
-            backdropFilter: "blur(10px) saturate(1.1)",
-            WebkitBackdropFilter: "blur(10px) saturate(1.1)",
-            display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap",
-            opacity: outOfVigor ? 0.7 : 1,
-          }}>
-            <Icon name="fishing-hook" size={18} color="#7cb9e0" />
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 8, font: "11px/1 var(--font-display)", textTransform: "uppercase", letterSpacing: 1.4, color: "var(--fg-mute)" }}>
-                <span>Immediate</span>
-                <VigorPips vigor={vigor} max={MAX_VIGOR} color="#7cb9e0" />
-              </div>
-              <div style={{ fontSize: 13, marginTop: 4 }}>
-                {outOfVigor
-                  ? `Out of fishing vigor — rest up. Next cast ${tickIn != null ? `in ${formatVigorCountdown(tickIn)}` : "soon"}.`
-                  : "Quick Cast — wait for the tug, set the hook, then reel hard."}
-              </div>
-              {!outOfVigor && tickIn != null && (
-                <div style={{ fontSize: 11, color: "var(--fg-mute)", marginTop: 2 }}>
-                  +1 vigor in {formatVigorCountdown(tickIn)}
-                </div>
-              )}
-            </div>
-            <button
-              type="button"
-              onClick={() => setMinigameOpen(true)}
-              disabled={outOfVigor}
-              title={outOfVigor ? "No vigor — try again later." : undefined}
-              style={{
-                minHeight: 40,
-                padding: "8px 14px",
-                border: outOfVigor ? "1px solid var(--border-base)" : "1px solid #7cb9e0",
-                borderRadius: "var(--radius-md)",
-                background: outOfVigor ? "var(--bg-card)" : "rgba(95, 165, 220, 0.18)",
-                color: outOfVigor ? "var(--fg-mute)" : "#bcdcf0",
-                fontWeight: 600,
-                fontFamily: "inherit",
-                cursor: outOfVigor ? "not-allowed" : "pointer",
-                touchAction: "manipulation",
-              }}
-            >
-              Quick Cast
-            </button>
-          </div>
-        );
-      })()}
+      {node === "fish" && (
+        <ImmediateActionRow
+          stockFullAt={characterFishStockFullAt}
+          icon="fishing-hook"
+          stockLabel="Pond"
+          color="#7cb9e0"
+          tintRgb="95, 165, 220"
+          textColor="#bcdcf0"
+          flavor="Quick Cast — wait for the tug, set the hook, then reel hard."
+          buttonLabel="Quick Cast"
+          onClick={() => setMinigameOpen(true)}
+        />
+      )}
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12 }}>
         {(["quick", "standard", "deep"] as CampTier[]).map((tier) => (
@@ -708,28 +583,103 @@ function GatheringNodePanel({
   );
 }
 
-// Three small pips representing current vigor (filled = available swing).
-// Color is overridable so each node can themed its pips to match its action
-// row (gold for mining, green for foraging).
-function VigorPips({ vigor, max, color = "#c6a14a" }: { vigor: number; max: number; color?: string }) {
-  const emptyBorder = color.startsWith("#") ? `${color}59` : color; // ~35% alpha fallback
+// Shared immediate-action row used by all three node tabs. Renders the
+// per-node stock readout (with a regen countdown when below cap), tinted
+// gradient backdrop, and a Quick X button that's always enabled — when
+// stock is empty the player still gets scant XP + leaderboard credit.
+function ImmediateActionRow({
+  stockFullAt, icon, stockLabel, color, tintRgb, textColor, flavor, buttonLabel, onClick,
+}: {
+  stockFullAt: number | null | undefined;
+  icon: string;
+  stockLabel: string;
+  /** Solid hex used for icon, border, text accent. */
+  color: string;
+  /** "r, g, b" without the rgba() wrapper — used for the gradient/fill tints. */
+  tintRgb: string;
+  /** Brighter text color for the button label. */
+  textColor: string;
+  flavor: string;
+  buttonLabel: string;
+  onClick: () => void;
+}) {
+  const now = Date.now();
+  const stock = currentStock(stockFullAt, now);
+  const tickIn = nextStockTickIn(stockFullAt, now);
+  const empty = stock <= 0;
   return (
-    <span style={{ display: "inline-flex", gap: 3, alignItems: "center" }} aria-label={`Vigor ${vigor}/${max}`}>
-      {Array.from({ length: max }).map((_, i) => {
-        const filled = i < vigor;
-        return (
+    <div
+      style={{
+        padding: "10px 12px",
+        borderRadius: "var(--radius-md)",
+        border: `1px dashed rgba(${tintRgb}, 0.55)`,
+        background: `linear-gradient(180deg, rgba(${tintRgb}, 0.14) 0%, rgba(12, 14, 18, 0.78) 100%)`,
+        backdropFilter: "blur(10px) saturate(1.1)",
+        WebkitBackdropFilter: "blur(10px) saturate(1.1)",
+        display: "flex",
+        alignItems: "center",
+        gap: 10,
+        flexWrap: "wrap",
+      }}
+    >
+      <Icon name={icon} size={18} color={color} />
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div
+          style={{
+            display: "flex", alignItems: "center", gap: 8,
+            font: "11px/1 var(--font-display)",
+            textTransform: "uppercase",
+            letterSpacing: 1.4,
+            color: "var(--fg-mute)",
+          }}
+        >
+          <span>Immediate</span>
           <span
-            key={i}
             style={{
-              width: 10, height: 10, borderRadius: 999,
-              border: `1px solid ${filled ? color : emptyBorder}`,
-              background: filled ? color : "transparent",
-              display: "inline-block",
+              padding: "2px 6px",
+              borderRadius: 4,
+              border: `1px solid ${color}`,
+              background: `rgba(${tintRgb}, 0.12)`,
+              color,
+              font: "10px/1 var(--font-mono)",
+              letterSpacing: 0.4,
             }}
-          />
-        );
-      })}
-    </span>
+            aria-label={`${stockLabel} stock ${stock} of ${STOCK_CAP}`}
+          >
+            {stockLabel}: {stock}/{STOCK_CAP}
+          </span>
+        </div>
+        <div style={{ fontSize: 13, marginTop: 4 }}>
+          {empty
+            ? `The ${stockLabel.toLowerCase()} is picked clean. Play for XP and leaderboard cred — resources return ${tickIn != null ? `in ${formatStockCountdown(tickIn)}` : "soon"}.`
+            : flavor}
+        </div>
+        {tickIn != null && (
+          <div style={{ fontSize: 11, color: "var(--fg-mute)", marginTop: 2 }}>
+            +1 {stockLabel.toLowerCase()} stock in {formatStockCountdown(tickIn)}
+          </div>
+        )}
+      </div>
+      <button
+        type="button"
+        onClick={onClick}
+        title={empty ? `${stockLabel} is empty — scant XP only, but the score still counts.` : undefined}
+        style={{
+          minHeight: 40,
+          padding: "8px 14px",
+          border: `1px solid ${color}`,
+          borderRadius: "var(--radius-md)",
+          background: empty ? `rgba(${tintRgb}, 0.08)` : `rgba(${tintRgb}, 0.18)`,
+          color: empty ? "var(--fg-mute)" : textColor,
+          fontWeight: 600,
+          fontFamily: "inherit",
+          cursor: "pointer",
+          touchAction: "manipulation",
+        }}
+      >
+        {buttonLabel}
+      </button>
+    </div>
   );
 }
 

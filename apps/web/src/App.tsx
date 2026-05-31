@@ -1599,9 +1599,9 @@ export function App() {
               characterStr={state.me.character!.str}
               characterInt={state.me.character!.int_stat}
               characterDex={state.me.character!.dex}
-              characterVigorFullAt={state.me.character!.vigor_full_at}
-              characterForageVigorFullAt={state.me.character!.forage_vigor_full_at}
-              characterFishVigorFullAt={state.me.character!.fish_vigor_full_at}
+              characterMineStockFullAt={state.me.character!.mine_stock_full_at}
+              characterForageStockFullAt={state.me.character!.forage_stock_full_at}
+              characterFishStockFullAt={state.me.character!.fish_stock_full_at}
               mineArtUrl={state.townArt?.mine_art_url ?? null}
               forageArtUrl={state.townArt?.forage_art_url ?? null}
               fishArtUrl={state.townArt?.fish_art_url ?? null}

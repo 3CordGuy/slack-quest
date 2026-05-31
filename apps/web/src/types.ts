@@ -40,6 +40,13 @@ export interface Character {
   fish_vigor_full_at?: number | null;
   /** Lifetime Quick Cast play count (gates Fastest Hook leaderboard). */
   fish_plays?: number;
+  /** Per-node harvestable stock pools (migration 0059). Replaces the
+      vigor cooldowns. Null/past = full pool (cap 10). Each play depletes by
+      resources granted; refills 1/hour. Mini-game stays playable when
+      depleted — just scant XP, no resources. */
+  mine_stock_full_at?: number | null;
+  forage_stock_full_at?: number | null;
+  fish_stock_full_at?: number | null;
 }
 
 export type ItemType =

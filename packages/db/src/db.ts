@@ -153,14 +153,22 @@ export interface Character {
       (cap 3). Each Quick Strike push this forward by 1 hour. Current vigor
       is computed as MAX(0, 3 - ceil((vigor_full_at - now) / 1hr)). */
   vigor_full_at: number | null;
-  /** Forage-specific vigor pool (migration 0057). Separate from mining so
-      each node has its own bursty cadence. Same semantics as vigor_full_at. */
+  /** DEPRECATED: forage vigor (migration 0057). Replaced by forage_stock_full_at
+      in migration 0059. Kept in the schema for backward-compat; not read. */
   forage_vigor_full_at: number | null;
-  /** Fishing-specific vigor pool (migration 0058). */
+  /** DEPRECATED: fishing vigor (migration 0058). Replaced by fish_stock_full_at. */
   fish_vigor_full_at: number | null;
   /** Total Quick Cast plays — gates the Fastest Hook leaderboard so a
       lucky one-shot doesn't dominate. */
   fish_plays: number;
+  /** Mining harvestable stock — when this timestamp is past/null, the mine
+      has its full 10-stock. Each play depletes stock by the resources pulled
+      and pushes this forward by units × 1hr. Stock refills naturally over time. */
+  mine_stock_full_at: number | null;
+  /** Forage harvestable stock — same shape as mine_stock_full_at. */
+  forage_stock_full_at: number | null;
+  /** Fishing harvestable stock — same shape. */
+  fish_stock_full_at: number | null;
 }
 
 interface CharacterRow extends Omit<Character, "scars" | "effects" | "drink_buff" | "achievements" | "pending_achievements"> {
