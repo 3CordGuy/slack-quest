@@ -145,3 +145,43 @@ export function playMinigameComplete(): void {
     tone({ type: "triangle", startFreq: freq, duration: 0.18, gain: 0.18, delay: i * 0.09 });
   });
 }
+
+// === Foraging ===
+
+// Soft leaf rustle on any reveal — short highpass noise.
+export function playLeafRustle(): void {
+  noiseBurst({ duration: 0.13, gain: 0.13, filterType: "highpass", filterFreq: 1500 });
+}
+
+// Bright triple-ping when an herb is revealed (mossroot or sunleaf).
+export function playHerbSparkle(): void {
+  tone({ type: "sine", startFreq: 900, duration: 0.09, gain: 0.18 });
+  tone({ type: "sine", startFreq: 1300, duration: 0.09, gain: 0.16, delay: 0.06 });
+  tone({ type: "sine", startFreq: 1700, duration: 0.1, gain: 0.14, delay: 0.12 });
+}
+
+// Sustained downward hiss on a snake reveal — filtered noise + descending sine
+// wobble.
+export function playSnakeHiss(): void {
+  noiseBurst({ duration: 0.35, gain: 0.18, filterType: "bandpass", filterFreq: 3500 });
+  tone({ type: "sawtooth", startFreq: 320, endFreq: 80, duration: 0.32, gain: 0.08 });
+}
+
+// Wet pop on a poison mushroom reveal — short low sine + tiny noise burst.
+export function playMushroomPop(): void {
+  tone({ type: "sine", startFreq: 240, endFreq: 90, duration: 0.18, gain: 0.22 });
+  noiseBurst({ duration: 0.08, gain: 0.12, filterType: "lowpass", filterFreq: 600, delay: 0.02 });
+}
+
+// Dry knock when a rock or tree (a landmark) is revealed.
+export function playLandmarkReveal(): void {
+  tone({ type: "square", startFreq: 200, endFreq: 140, duration: 0.12, gain: 0.18 });
+}
+
+// Cheerful 3-note "bank" chime when the player ends a forage with a haul.
+export function playForageBank(): void {
+  const notes = [659.25, 880, 1174.66]; // E5 A5 D6
+  notes.forEach((freq, i) => {
+    tone({ type: "triangle", startFreq: freq, duration: 0.22, gain: 0.18, delay: i * 0.1 });
+  });
+}

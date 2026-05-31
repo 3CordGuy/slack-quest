@@ -568,13 +568,13 @@ function TowerLeaderboardCard({ entries, selfId }: { entries: TowerLeaderboardEn
 
 /* ─── Harvest Hall (camp mini-game) ─────────────────────────────────── */
 
-// Camp mini-game podium. Phase 1 surfaces the "Veins Struck" ranking
-// (mining rich-vein strikes). When the foraging and fishing mini-games
-// ship we'll surface their stats from the same response by rendering a
-// second/third HallOfRenown for `forage_rare_finds` and `fish_best_ms`.
+// Camp mini-game podium — surfaces per-node mastery boards. Mining ships
+// rich-vein strikes, foraging ships flawless plays. Fishing's best-reaction
+// row drops in when that game ships (phase 3).
 function HarvestHallCard({ entries, selfId }: { entries: HarvestLeaderboardEntry[]; selfId: string }) {
-  const renown: RenownEntry[] = entries
+  const mineEntries: RenownEntry[] = entries
     .filter((e) => e.mine_rich_hits > 0)
+    .sort((a, b) => b.mine_rich_hits - a.mine_rich_hits)
     .map((e) => ({
       id: e.slack_user_id,
       name: e.name,
@@ -584,15 +584,40 @@ function HarvestHallCard({ entries, selfId }: { entries: HarvestLeaderboardEntry
       iconName: "crystal-cluster",
       isSelf: e.slack_user_id === selfId,
     }));
-  if (renown.length === 0) return null;
+  const forageEntries: RenownEntry[] = entries
+    .filter((e) => e.forage_rare_finds > 0)
+    .sort((a, b) => b.forage_rare_finds - a.forage_rare_finds)
+    .map((e) => ({
+      id: e.slack_user_id,
+      name: e.name,
+      subtitle: e.class,
+      metric: e.forage_rare_finds,
+      metricLabel: "Flawless",
+      iconName: "chestnut-leaf",
+      isSelf: e.slack_user_id === selfId,
+    }));
+  if (mineEntries.length === 0 && forageEntries.length === 0) return null;
   return (
-    <HallOfRenown
-      title="Veins Struck"
-      entries={renown}
-      metricLabel="Veins"
-      rowIcon="crystal-cluster"
-      footerNote="Rich-vein strikes in the Quick Strike mini-game at the Mine."
-    />
+    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      {mineEntries.length > 0 && (
+        <HallOfRenown
+          title="Veins Struck"
+          entries={mineEntries}
+          metricLabel="Veins"
+          rowIcon="crystal-cluster"
+          footerNote="Rich-vein strikes in the Quick Strike mini-game at the Mine."
+        />
+      )}
+      {forageEntries.length > 0 && (
+        <HallOfRenown
+          title="Flawless Forages"
+          entries={forageEntries}
+          metricLabel="Flawless"
+          rowIcon="chestnut-leaf"
+          footerNote="Quick Forage runs that ended with herbs in the basket and zero hazards triggered."
+        />
+      )}
+    </div>
   );
 }
 

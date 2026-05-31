@@ -153,6 +153,9 @@ export interface Character {
       (cap 3). Each Quick Strike push this forward by 1 hour. Current vigor
       is computed as MAX(0, 3 - ceil((vigor_full_at - now) / 1hr)). */
   vigor_full_at: number | null;
+  /** Forage-specific vigor pool (migration 0057). Separate from mining so
+      each node has its own bursty cadence. Same semantics as vigor_full_at. */
+  forage_vigor_full_at: number | null;
 }
 
 interface CharacterRow extends Omit<Character, "scars" | "effects" | "drink_buff" | "achievements" | "pending_achievements"> {
@@ -858,7 +861,7 @@ export async function getHarvestLeaderboard(
               mine_rich_hits, forage_rare_finds, fish_best_ms
          FROM characters
         WHERE mine_rich_hits > 0 OR forage_rare_finds > 0 OR fish_best_ms > 0
-        ORDER BY mine_rich_hits DESC
+        ORDER BY (mine_rich_hits + forage_rare_finds + CASE WHEN fish_best_ms > 0 THEN 1 ELSE 0 END) DESC
         LIMIT ?`,
     )
     .bind(Math.max(1, Math.min(100, limit)))
@@ -3970,6 +3973,83 @@ export async function bumpCampClaimStats(
       .bind(ore, herbs, fish, deep, userId)
       .run();
   }
+}
+
+// ── Foraging mini-game DB helpers ──────────────────────────────────────────
+
+export interface ForageGameRow {
+  character_id: string;
+  grid_json: string;
+  revealed_json: string;
+  hp_taken: number;
+  flips_total: number;
+  started_at: number;
+}
+
+export async function getForageGame(
+  db: D1Database,
+  characterId: string,
+): Promise<ForageGameRow | null> {
+  return await db
+    .prepare("SELECT * FROM forage_games WHERE character_id = ?")
+    .bind(characterId)
+    .first<ForageGameRow>();
+}
+
+export async function startForageGame(
+  db: D1Database,
+  characterId: string,
+  gridJson: string,
+  flipsTotal: number,
+): Promise<void> {
+  // INSERT OR REPLACE wipes any abandoned prior game cleanly.
+  await db
+    .prepare(
+      `INSERT OR REPLACE INTO forage_games
+       (character_id, grid_json, revealed_json, hp_taken, flips_total, started_at)
+       VALUES (?, ?, '[]', 0, ?, ?)`,
+    )
+    .bind(characterId, gridJson, flipsTotal, Date.now())
+    .run();
+}
+
+export async function updateForageGame(
+  db: D1Database,
+  characterId: string,
+  revealedJson: string,
+  hpTaken: number,
+): Promise<void> {
+  await db
+    .prepare(
+      `UPDATE forage_games SET revealed_json = ?, hp_taken = ? WHERE character_id = ?`,
+    )
+    .bind(revealedJson, hpTaken, characterId)
+    .run();
+}
+
+export async function deleteForageGame(
+  db: D1Database,
+  characterId: string,
+): Promise<void> {
+  await db
+    .prepare("DELETE FROM forage_games WHERE character_id = ?")
+    .bind(characterId)
+    .run();
+}
+
+// Atomic increment for "Flawless Forages" — plays where every revealed cell
+// was an herb or landmark (zero hazards). Repurposes forage_rare_finds since
+// nightbloom is deep-tier-only.
+export async function bumpForageFlawless(
+  db: D1Database,
+  userId: string,
+  delta: number,
+): Promise<void> {
+  if (delta <= 0) return;
+  await db
+    .prepare("UPDATE characters SET forage_rare_finds = forage_rare_finds + ? WHERE slack_user_id = ?")
+    .bind(delta, userId)
+    .run();
 }
 
 // Atomic increment for mining mini-game rich-vein strikes. Drives the

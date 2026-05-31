@@ -77,6 +77,12 @@ import {
   CAMP_NODE_CONFIG,
   CAMP_TIERS,
   CAMP_UPGRADE_CATALOG,
+  FORAGE_GRID_ROWS,
+  FORAGE_GRID_COLS,
+  FORAGE_HAZARD_DICE,
+  forageFlipsForInt,
+  generateForageGrid,
+  type ForageCellKind,
   RECIPE_CATALOG,
   RESOURCE_CATALOG,
   findCampUpgrade,
@@ -268,9 +274,14 @@ import {
   type GatheringTask,
   bumpCampClaimStats,
   bumpMineRichHits,
+  bumpForageFlawless,
   bumpSmithyCrafts,
   bumpErrandStats,
   getHarvestLeaderboard,
+  getForageGame,
+  startForageGame,
+  updateForageGame,
+  deleteForageGame,
   // Pub Errands
   bumpPubTrust,
   getActivePubErrand,
@@ -3315,6 +3326,193 @@ app.post("/api/camp/minigame", async (c) => {
     vigor: currentVigor(newVigorFullAt, now),
     vigor_full_at: newVigorFullAt,
   });
+});
+
+// ── Foraging mini-game ─────────────────────────────────────────────────────
+//
+// /start  → spends 1 forage vigor; generates the 4x4 grid; returns row/col
+//           dimensions, flip budget, and the player's current HP (no grid
+//           contents — those reveal one cell at a time).
+// /flip   → reveals one cell. Applies hazard damage on the spot. Returns the
+//           cell kind + remaining flips + updated HP.
+// /finish → ends the play. Awards XP, resources, and the Flawless Forages
+//           stat bump if the player took zero hazards. Deletes the row.
+
+app.post("/api/camp/forage/start", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const character = await getCharacter(c.env.DB, session.slack_user_id);
+  if (!character) return c.json({ error: "no_character" }, 404);
+  if (character.downed_until && character.downed_until > Date.now()) {
+    return c.json({ error: "downed" }, 400);
+  }
+  const now = Date.now();
+  const vigor = currentVigor(character.forage_vigor_full_at, now);
+  if (vigor <= 0) {
+    return c.json({
+      error: "no_vigor",
+      vigor: 0,
+      vigor_full_at: character.forage_vigor_full_at ?? null,
+    }, 400);
+  }
+  const baseFullAt = (character.forage_vigor_full_at && character.forage_vigor_full_at > now)
+    ? character.forage_vigor_full_at
+    : now;
+  const newVigorFullAt = baseFullAt + VIGOR_REGEN_MS;
+  // Spend the vigor first so a crashed game still charges (anti-grind).
+  await c.env.DB
+    .prepare("UPDATE characters SET forage_vigor_full_at = ? WHERE slack_user_id = ?")
+    .bind(newVigorFullAt, session.slack_user_id)
+    .run();
+  // Generate a fresh grid + persist it. The client never sees cell contents
+  // until it /flip's them — no client-side cheat surface.
+  const seed = Math.floor(Math.random() * 0xffffffff);
+  const grid = generateForageGrid(seed);
+  const flipsTotal = forageFlipsForInt(character.int_stat);
+  await startForageGame(c.env.DB, session.slack_user_id, JSON.stringify(grid), flipsTotal);
+  return c.json({
+    ok: true,
+    rows: FORAGE_GRID_ROWS,
+    cols: FORAGE_GRID_COLS,
+    flips_total: flipsTotal,
+    flips_used: 0,
+    hp: character.hp,
+    max_hp: character.max_hp,
+    vigor: currentVigor(newVigorFullAt, now),
+    vigor_full_at: newVigorFullAt,
+  });
+});
+
+app.post("/api/camp/forage/flip", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const character = await getCharacter(c.env.DB, session.slack_user_id);
+  if (!character) return c.json({ error: "no_character" }, 404);
+  const game = await getForageGame(c.env.DB, session.slack_user_id);
+  if (!game) return c.json({ error: "no_active_game" }, 400);
+  const body = (await c.req.json().catch(() => null)) as { r?: number; c?: number } | null;
+  if (!body || typeof body.r !== "number" || typeof body.c !== "number") {
+    return c.json({ error: "bad_flip" }, 400);
+  }
+  if (body.r < 0 || body.r >= FORAGE_GRID_ROWS || body.c < 0 || body.c >= FORAGE_GRID_COLS) {
+    return c.json({ error: "bad_flip" }, 400);
+  }
+  const grid = JSON.parse(game.grid_json) as ForageCellKind[][];
+  const revealed = JSON.parse(game.revealed_json) as Array<[number, number]>;
+  // Already revealed? No-op (client may double-tap).
+  if (revealed.some(([rr, cc]) => rr === body.r && cc === body.c)) {
+    return c.json({ error: "already_revealed" }, 400);
+  }
+  if (revealed.length >= game.flips_total) {
+    return c.json({ error: "no_flips_left" }, 400);
+  }
+  const cell = grid[body.r][body.c];
+  let hpDamage = 0;
+  if (cell === "snake" || cell === "mushroom") {
+    hpDamage = 1 + Math.floor(Math.random() * FORAGE_HAZARD_DICE);
+  }
+  // Apply HP damage immediately but never down: clamp to min 1 HP.
+  let newHp = character.hp;
+  if (hpDamage > 0) {
+    newHp = Math.max(1, character.hp - hpDamage);
+    await c.env.DB
+      .prepare("UPDATE characters SET hp = ? WHERE slack_user_id = ?")
+      .bind(newHp, session.slack_user_id)
+      .run();
+  }
+  const nextRevealed = [...revealed, [body.r, body.c]];
+  const nextHpTaken = game.hp_taken + hpDamage;
+  await updateForageGame(c.env.DB, session.slack_user_id, JSON.stringify(nextRevealed), nextHpTaken);
+  return c.json({
+    ok: true,
+    cell,
+    hp_damage: hpDamage,
+    hp: newHp,
+    max_hp: character.max_hp,
+    flips_used: nextRevealed.length,
+    flips_total: game.flips_total,
+  });
+});
+
+app.post("/api/camp/forage/finish", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const character = await getCharacter(c.env.DB, session.slack_user_id);
+  if (!character) return c.json({ error: "no_character" }, 404);
+  const game = await getForageGame(c.env.DB, session.slack_user_id);
+  if (!game) return c.json({ error: "no_active_game" }, 400);
+  const grid = JSON.parse(game.grid_json) as ForageCellKind[][];
+  const revealed = JSON.parse(game.revealed_json) as Array<[number, number]>;
+  // Tally herbs and grant resources. Mushroom/snake reveals already debited
+  // HP at /flip time; here we only convert herb reveals to inventory drops.
+  let mossroot = 0;
+  let sunleaf = 0;
+  let hazards = 0;
+  for (const [r, cc] of revealed) {
+    const k = grid[r][cc];
+    if (k === "mossroot") mossroot++;
+    else if (k === "sunleaf") sunleaf++;
+    else if (k === "snake" || k === "mushroom") hazards++;
+  }
+  if (mossroot > 0) {
+    const spec = findResource("mossroot");
+    if (spec) await addResource(c.env.DB, session.slack_user_id, resourceItemName("mossroot"), mossroot, spec.rarity, spec.blurb);
+  }
+  if (sunleaf > 0) {
+    const spec = findResource("sunleaf");
+    if (spec) await addResource(c.env.DB, session.slack_user_id, resourceItemName("sunleaf"), sunleaf, spec.rarity, spec.blurb);
+  }
+  const herbsTotal = mossroot + sunleaf;
+  // XP: 3 floor + 1 per herb, capped at 9.
+  const xpAward = Math.min(9, 3 + herbsTotal);
+  const spoils = await awardSpoils(
+    c.env.DB,
+    character,
+    xpAward,
+    0,
+    () => rollDice(6),
+    xpForLevel,
+  );
+  // Flawless = the player revealed at least 1 herb and ZERO hazards.
+  const flawless = revealed.length > 0 && hazards === 0 && herbsTotal > 0;
+  if (flawless) {
+    await bumpForageFlawless(c.env.DB, session.slack_user_id, 1);
+  }
+  await deleteForageGame(c.env.DB, session.slack_user_id);
+  const grantedResources: Array<{ name: string; qty: number; rarity: string }> = [];
+  if (mossroot > 0) {
+    const spec = findResource("mossroot");
+    if (spec) grantedResources.push({ name: `${spec.emoji} ${spec.name}`, qty: mossroot, rarity: spec.rarity });
+  }
+  if (sunleaf > 0) {
+    const spec = findResource("sunleaf");
+    if (spec) grantedResources.push({ name: `${spec.emoji} ${spec.name}`, qty: sunleaf, rarity: spec.rarity });
+  }
+  // Refresh vigor for the response (no spend on finish).
+  const now = Date.now();
+  return c.json({
+    ok: true,
+    xp: xpAward,
+    gold: 0,
+    levelsGained: spoils.levelsGained,
+    newLevel: spoils.newLevel,
+    resources: grantedResources,
+    herbs: herbsTotal,
+    hazards,
+    hp_taken: game.hp_taken,
+    flawless,
+    vigor: currentVigor(character.forage_vigor_full_at, now),
+    vigor_full_at: character.forage_vigor_full_at ?? null,
+  });
+});
+
+// Abandon any in-flight forage game (e.g. when the modal is closed mid-play).
+// Vigor stays spent — no give-backs.
+app.post("/api/camp/forage/abandon", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  await deleteForageGame(c.env.DB, session.slack_user_id);
+  return c.json({ ok: true });
 });
 
 app.post("/api/camp/upgrade/:upgradeKey", async (c) => {

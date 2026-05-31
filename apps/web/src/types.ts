@@ -34,6 +34,8 @@ export interface Character {
   /** Timestamp (ms) when vigor will next be full. Null/past = full. Each
       Quick Strike pushes this forward by 1 hour. Cap 3. */
   vigor_full_at?: number | null;
+  /** Forage-specific vigor pool (separate from mining). */
+  forage_vigor_full_at?: number | null;
 }
 
 export type ItemType =
