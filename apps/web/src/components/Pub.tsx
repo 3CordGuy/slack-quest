@@ -778,7 +778,26 @@ function SpdCard({ pub, selfId, onRefresh }: { pub: PubResponse; selfId: string;
   );
 }
 
-function PubLeaderboardCard({ entries }: { entries: PubLeaderboardEntry[] }) {
+type Period = "week" | "all";
+
+function PubLeaderboardCard({ entries: initialEntries }: { entries: PubLeaderboardEntry[] }) {
+  const [period, setPeriod] = useState<Period>("all");
+  const [entries, setEntries] = useState(initialEntries);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    fetch(`/api/pub/leaderboard?period=${period}`, { credentials: "include" })
+      .then((r) => r.ok ? r.json() : null)
+      .then((data) => {
+        if (!cancelled && data) setEntries((data as { entries: PubLeaderboardEntry[] }).entries);
+      })
+      .catch(() => {})
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [period]);
+
   const renown: RenownEntry[] = entries.map((e) => {
     const winRate = e.games > 0 ? Math.round((e.wins / e.games) * 100) : 0;
     const sign = e.net > 0 ? "+" : "";
@@ -801,7 +820,10 @@ function PubLeaderboardCard({ entries }: { entries: PubLeaderboardEntry[] }) {
       entries={renown}
       metricLabel="Net"
       rowIcon="beer-stein"
-      footerNote="All-time across Liar's Roll, SPD matches, and side bets."
+      footerNote="Across Liar's Roll, SPD matches, and side bets."
+      period={period}
+      onPeriodChange={setPeriod}
+      loadingPeriod={loading}
     />
   );
 }

@@ -2465,7 +2465,9 @@ export interface PubLeaderboardEntry {
 export async function getPubLeaderboard(
   db: D1Database,
   channelId: string,
+  since?: number, // Unix ms — when provided, only games resolved after this time are counted
 ): Promise<PubLeaderboardEntry[]> {
+  const sinceClause = since != null ? `AND resolved_at >= ${since}` : "";
   // Pull the three event sources in parallel. Each query already filters
   // to resolved/done status so we don't have to dance around in-flight
   // matches. SPD bets join their match to pull winner_user_id +
@@ -2474,12 +2476,12 @@ export async function getPubLeaderboard(
     db.prepare(
       `SELECT user_id, stake, payout, outcome
          FROM liars_rounds
-        WHERE channel_id = ? AND status = 'resolved'`,
+        WHERE channel_id = ? AND status = 'resolved' ${sinceClause}`,
     ).bind(channelId).all<{ user_id: string; stake: number; payout: number | null; outcome: string }>(),
     db.prepare(
       `SELECT initiator_user_id, challenger_user_id, initiator_stake, winner_user_id, house_bump
          FROM spd_matches
-        WHERE channel_id = ? AND status = 'done'`,
+        WHERE channel_id = ? AND status = 'done' ${sinceClause}`,
     ).bind(channelId).all<{
       initiator_user_id: string; challenger_user_id: string | null;
       initiator_stake: number; winner_user_id: string | null; house_bump: number | null;
@@ -2488,7 +2490,7 @@ export async function getPubLeaderboard(
       `SELECT b.bettor_user_id, b.side, b.amount, m.winner_user_id, m.initiator_user_id, m.challenger_user_id
          FROM spd_bets b
          JOIN spd_matches m ON m.id = b.match_id
-        WHERE m.channel_id = ? AND m.status = 'done'`,
+        WHERE m.channel_id = ? AND m.status = 'done' ${sinceClause}`,
     ).bind(channelId).all<{
       bettor_user_id: string; side: string; amount: number;
       winner_user_id: string | null; initiator_user_id: string; challenger_user_id: string | null;
@@ -3265,13 +3267,15 @@ export async function getQuestStatsForCharacter(
 export async function getQuestLeaderboard(
   db: D1Database,
   limit = 10,
+  since?: number, // Unix ms — when provided, only quests completed after this time are counted
 ): Promise<QuestLeaderboardEntry[]> {
+  const sinceClause = since != null ? `AND q.completed_at >= ${since}` : "";
   const rows = await db
     .prepare(
       `SELECT c.slack_user_id, c.name, c.slack_username, c.class, c.level,
-              COUNT(CASE WHEN q.status = 'completed' THEN 1 END) as wins,
-              COUNT(CASE WHEN q.status IN ('completed','failed') THEN 1 END) as total_quests,
-              COUNT(CASE WHEN q.status = 'completed' AND q.elite = 1 THEN 1 END) as elite_wins
+              COUNT(CASE WHEN q.status = 'completed' ${sinceClause} THEN 1 END) as wins,
+              COUNT(CASE WHEN q.status IN ('completed','failed') ${sinceClause} THEN 1 END) as total_quests,
+              COUNT(CASE WHEN q.status = 'completed' AND q.elite = 1 ${sinceClause} THEN 1 END) as elite_wins
        FROM characters c
        LEFT JOIN quest_party qp ON qp.character_id = c.slack_user_id
        LEFT JOIN quests q ON q.id = qp.quest_id AND q.status IN ('completed','failed')
