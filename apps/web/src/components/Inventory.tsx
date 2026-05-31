@@ -23,6 +23,7 @@ import {
   useInteractions,
 } from "@floating-ui/react";
 import { findCatalogEntry, sellPriceFor, xpForLevel, type StatKey } from "@gantt-quest/core";
+import { applyPotency } from "@gantt-quest/db";
 import { charPortraitUrl, classPortraitUrl, EFFECT_PILLS, type StatusEffect } from "../CombatShared";
 import { Icon } from "../icons";
 import type {
@@ -182,8 +183,11 @@ export const ItemCell = forwardRef<
         </div>
       )}
       {(item.potency_stacks ?? 0) > 0 && mode !== "detailed" && (
-        <div style={{ position: "absolute", top: 4, left: 4, background: "#1d1f23", border: "1px solid #7e22ce", borderRadius: 3, fontSize: 8, fontWeight: 700, padding: "1px 3px", lineHeight: 1, color: "#c084fc" }} title={`Concentrated ×${item.potency_stacks}`}>
-          ✦×{item.potency_stacks}
+        <div
+          style={{ position: "absolute", top: 4, left: 4, background: "#1d1f23", border: "1px solid #7e22ce", borderRadius: 3, fontSize: 8, fontWeight: 700, padding: "1px 3px", lineHeight: 1, color: "#c084fc" }}
+          title={`Concentrated ×${item.potency_stacks} — effective power: ${applyPotency(item.power, item.potency_stacks ?? 0)} (base ${item.power} +${Math.round((Math.pow(1.25, item.potency_stacks ?? 0) - 1) * 100)}%)`}
+        >
+          ✦{applyPotency(item.power, item.potency_stacks ?? 0)}
         </div>
       )}
       {elementEmoji && mode === "icon" && (
@@ -472,11 +476,23 @@ export function ItemDetailPopover({
       </div>
 
       {/* Type line */}
-      <div style={{ ...muted, fontSize: 11, textTransform: "uppercase", letterSpacing: 1, marginBottom: item.sharpens_count > 0 ? 4 : 8 }}>
+      <div style={{ ...muted, fontSize: 11, textTransform: "uppercase", letterSpacing: 1, marginBottom: item.sharpens_count > 0 ? 4 : (item.potency_stacks ?? 0) > 0 ? 4 : 8 }}>
         {slotLabel(item)}
         {item.item_type === "weapon" && item.weapon_range && ` · ${item.weapon_range}`}
         {item.power > 0 && <>{" · "}+{item.power} power</>}
       </div>
+      {(item.potency_stacks ?? 0) > 0 && (
+        <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8, padding: "5px 8px", borderRadius: 5, background: "rgba(192,132,252,0.12)", border: "1px solid #7e22ce" }}>
+          <span style={{ fontSize: 13, lineHeight: 1 }}>✦</span>
+          <span style={{ fontSize: 12, fontWeight: 700, color: "#c084fc" }}>
+            Concentrated ×{item.potency_stacks}
+          </span>
+          <span style={{ fontSize: 11, color: "#9ca3af" }}>·</span>
+          <span style={{ fontSize: 12, color: "#e2e8f0" }}>
+            +{item.power} → <span style={{ color: "#c084fc", fontWeight: 700 }}>+{applyPotency(item.power, item.potency_stacks ?? 0)}</span> effective power
+          </span>
+        </div>
+      )}
       {item.sharpens_count > 0 && (
         <div style={{ fontSize: 11, color: "#fb923c", marginBottom: 8, display: "flex", alignItems: "center", gap: 4 }}>
           <Icon name="anvil" size={11} color="#fb923c" />
@@ -813,7 +829,16 @@ export function DraggablePackItem({
           </span>
         )}
         <span style={{ ...smallBadge, borderColor: `${rc}55`, color: rc, background: `${rc}15`, flexShrink: 0 }}>{item.rarity}</span>
-        <span style={{ fontSize: 11, color: rc, fontWeight: 600, flexShrink: 0, minWidth: 30, textAlign: "right" }}>+{item.power}</span>
+        {(item.potency_stacks ?? 0) > 0
+          ? (
+            <span style={{ fontSize: 11, fontWeight: 600, flexShrink: 0, textAlign: "right", color: "#c084fc" }}>
+              ✦ +{applyPotency(item.power, item.potency_stacks ?? 0)}
+            </span>
+          )
+          : (
+            <span style={{ fontSize: 11, color: rc, fontWeight: 600, flexShrink: 0, minWidth: 30, textAlign: "right" }}>+{item.power}</span>
+          )
+        }
         <span style={{ fontSize: 11, color: "#fbbf24", flexShrink: 0, minWidth: 28, textAlign: "right" }}>{sellPrice}g</span>
       </div>
     );
