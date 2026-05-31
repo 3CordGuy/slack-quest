@@ -164,7 +164,7 @@ em, .flavor {
   font-size: 11px;
   line-height: 1.2;
   font-family: var(--font-body);
-  color: var(--fg-faintest);
+  color: var(--fg-mute-3);
   text-transform: uppercase;
   letter-spacing: 1px;
 }

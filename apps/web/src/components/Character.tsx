@@ -561,7 +561,7 @@ export function AdventurersCard({ selfId }: { selfId: string }) {
                   fontFamily: "var(--font-mono)",
                   fontSize: 9,
                   flexShrink: 0,
-                  color: isOnline ? "var(--tone-good-2)" : isRecent ? "var(--fg-mute-2)" : "var(--fg-faint)",
+                  color: isOnline ? "var(--tone-good-2)" : isRecent ? "var(--fg-mute-2)" : "var(--fg-mute-3)",
                   textTransform: "uppercase",
                   letterSpacing: 0.4,
                 }}>{ago}</span>
@@ -1018,7 +1018,7 @@ export function PrimaryStatCard({
         <div style={{
           fontFamily: "var(--font-mono)",
           fontSize: 9,
-          color: "var(--fg-faintest)",
+          color: "var(--fg-mute-3)",
           textTransform: "uppercase",
           letterSpacing: 0.8,
         }}>
@@ -1079,7 +1079,7 @@ export function DerivedStatCard({
         <div style={{
           fontFamily: "var(--font-mono)",
           fontSize: 9,
-          color: "var(--fg-faintest)",
+          color: "var(--fg-mute-3)",
           textTransform: "uppercase",
           letterSpacing: 0.7,
           lineHeight: 1,
@@ -1334,7 +1334,7 @@ export function CharacterCard({
           borderRadius: "var(--radius-xl)",
           border: "1px solid var(--border-faint)",
         }}>
-          <div className="eyebrow" style={{ marginBottom: 8, color: "var(--fg-mute-3)" }}>Primary Stats</div>
+          <div className="eyebrow" style={{ marginBottom: 8, color: "var(--fg-mute)" }}>Primary Stats</div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 5, marginBottom: hasUnspentPoints && onSpend ? 6 : 8 }}>
             {(["str", "int_stat", "vit", "agi", "dex"] as StatKey[]).map((key) => (
               <PrimaryStatCard
