@@ -83,6 +83,13 @@ import {
   forageFlipsForInt,
   generateForageGrid,
   type ForageCellKind,
+  FISH_BITE_MIN_MS,
+  FISH_BITE_MAX_MS,
+  FISH_REACTION_FLOOR_MS,
+  FISH_REEL_TARGET_MS,
+  fishBiteWindowForDex,
+  fishPullRateForStr,
+  fishCatchQuality,
   RECIPE_CATALOG,
   RESOURCE_CATALOG,
   findCampUpgrade,
@@ -275,6 +282,8 @@ import {
   bumpCampClaimStats,
   bumpMineRichHits,
   bumpForageFlawless,
+  bumpFishPlays,
+  updateFishBestMs,
   bumpSmithyCrafts,
   bumpErrandStats,
   getHarvestLeaderboard,
@@ -282,6 +291,10 @@ import {
   startForageGame,
   updateForageGame,
   deleteForageGame,
+  getFishGame,
+  startFishGame,
+  recordFishStrike,
+  deleteFishGame,
   // Pub Errands
   bumpPubTrust,
   getActivePubErrand,
@@ -3512,6 +3525,162 @@ app.post("/api/camp/forage/abandon", async (c) => {
   const session = await currentSession(c.env.DB, c.req.header("cookie"));
   if (!session) return c.json({ error: "unauthenticated" }, 401);
   await deleteForageGame(c.env.DB, session.slack_user_id);
+  return c.json({ ok: true });
+});
+
+// ── Fishing mini-game ──────────────────────────────────────────────────────
+//
+// /cast    → spends 1 fish vigor; server picks bite_at and bite_window;
+//            returns target_at_ms (when client should fire the bite cue
+//            relative to now) and the window the player has to strike.
+// /strike  → { strike_at } — client time when the player pressed. Server
+//            validates the strike landed within [bite_at, bite_at+window]
+//            and records reaction_ms. Failure ends the game (no reel).
+// /reel    → { safe_fraction } — fraction of reel time the player kept the
+//            line in the SAFE zone (0..1, server clamps). Computes catch
+//            quality, awards loot/XP. Updates fish_best_ms when applicable.
+// /abandon → drops the row, vigor stays spent.
+
+app.post("/api/camp/fish/cast", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const character = await getCharacter(c.env.DB, session.slack_user_id);
+  if (!character) return c.json({ error: "no_character" }, 404);
+  if (character.downed_until && character.downed_until > Date.now()) {
+    return c.json({ error: "downed" }, 400);
+  }
+  const now = Date.now();
+  const vigor = currentVigor(character.fish_vigor_full_at, now);
+  if (vigor <= 0) {
+    return c.json({
+      error: "no_vigor",
+      vigor: 0,
+      vigor_full_at: character.fish_vigor_full_at ?? null,
+    }, 400);
+  }
+  const baseFullAt = (character.fish_vigor_full_at && character.fish_vigor_full_at > now)
+    ? character.fish_vigor_full_at
+    : now;
+  const newVigorFullAt = baseFullAt + VIGOR_REGEN_MS;
+  await c.env.DB
+    .prepare("UPDATE characters SET fish_vigor_full_at = ? WHERE slack_user_id = ?")
+    .bind(newVigorFullAt, session.slack_user_id)
+    .run();
+  const biteAtMs = Math.floor(
+    FISH_BITE_MIN_MS + Math.random() * (FISH_BITE_MAX_MS - FISH_BITE_MIN_MS),
+  );
+  const biteWindowMs = fishBiteWindowForDex(character.dex);
+  await startFishGame(c.env.DB, session.slack_user_id, now, biteAtMs, biteWindowMs);
+  return c.json({
+    ok: true,
+    bite_at_ms: biteAtMs,
+    bite_window_ms: biteWindowMs,
+    reel_target_ms: FISH_REEL_TARGET_MS,
+    pull_rate: fishPullRateForStr(character.str),
+    vigor: currentVigor(newVigorFullAt, now),
+    vigor_full_at: newVigorFullAt,
+  });
+});
+
+app.post("/api/camp/fish/strike", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const game = await getFishGame(c.env.DB, session.slack_user_id);
+  if (!game) return c.json({ error: "no_active_game" }, 400);
+  if (game.phase !== "waiting") return c.json({ error: "bad_phase" }, 400);
+  const body = (await c.req.json().catch(() => null)) as { strike_at?: number } | null;
+  if (!body || typeof body.strike_at !== "number") return c.json({ error: "bad_strike" }, 400);
+  // Server computes elapsed from its own clock, not the client's, then
+  // checks the elapsed against the planned bite + window.
+  const now = Date.now();
+  const elapsed = now - game.cast_at;
+  // Too early or too late → escaped.
+  if (elapsed < game.bite_at_ms) {
+    await deleteFishGame(c.env.DB, session.slack_user_id);
+    return c.json({ ok: true, result: "too_early", elapsed_ms: elapsed, bite_at_ms: game.bite_at_ms });
+  }
+  if (elapsed > game.bite_at_ms + game.bite_window_ms) {
+    await deleteFishGame(c.env.DB, session.slack_user_id);
+    return c.json({ ok: true, result: "too_late", elapsed_ms: elapsed, bite_at_ms: game.bite_at_ms });
+  }
+  const reactionMs = Math.max(FISH_REACTION_FLOOR_MS, elapsed - game.bite_at_ms);
+  await recordFishStrike(c.env.DB, session.slack_user_id, reactionMs);
+  return c.json({
+    ok: true,
+    result: "hooked",
+    reaction_ms: reactionMs,
+    reel_target_ms: FISH_REEL_TARGET_MS,
+  });
+});
+
+app.post("/api/camp/fish/reel", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const character = await getCharacter(c.env.DB, session.slack_user_id);
+  if (!character) return c.json({ error: "no_character" }, 404);
+  const game = await getFishGame(c.env.DB, session.slack_user_id);
+  if (!game) return c.json({ error: "no_active_game" }, 400);
+  if (game.phase !== "reeling") return c.json({ error: "bad_phase" }, 400);
+  const body = (await c.req.json().catch(() => null)) as { safe_fraction?: number } | null;
+  if (!body || typeof body.safe_fraction !== "number") return c.json({ error: "bad_reel" }, 400);
+  const safeFraction = Math.max(0, Math.min(1, body.safe_fraction));
+  const reactionMs = game.reaction_ms ?? 1000;
+  const quality = fishCatchQuality(reactionMs, safeFraction);
+  // Loot table — anti-grind keeps the rare exclusive to deep tier.
+  // Quality >= 0.55 → guaranteed silverfin; otherwise carp (or nothing on
+  // very poor reel). Quick Cast never drops abyss_eel.
+  let fishId: "river_carp" | "silverfin" | null = null;
+  if (safeFraction >= 0.45) {
+    fishId = quality >= 0.55 ? "silverfin" : "river_carp";
+  } else if (safeFraction >= 0.25) {
+    fishId = "river_carp";
+  }
+  const grantedResources: Array<{ name: string; qty: number; rarity: string }> = [];
+  if (fishId) {
+    const spec = findResource(fishId);
+    if (spec) {
+      await addResource(c.env.DB, session.slack_user_id, resourceItemName(fishId), 1, spec.rarity, spec.blurb);
+      grantedResources.push({ name: `${spec.emoji} ${spec.name}`, qty: 1, rarity: spec.rarity });
+    }
+  }
+  // XP: 3 floor (already hooked = beat phase 1) + 2 if any fish caught +
+  // 5 if quality >= 0.55. Max 10.
+  let xpAward = 3;
+  if (fishId) xpAward += 2;
+  if (quality >= 0.55) xpAward += 5;
+  xpAward = Math.min(10, xpAward);
+  const spoils = await awardSpoils(
+    c.env.DB,
+    character,
+    xpAward,
+    0,
+    () => rollDice(6),
+    xpForLevel,
+  );
+  // Only update fish_best_ms when an actual fish was hauled in.
+  if (fishId) await updateFishBestMs(c.env.DB, session.slack_user_id, reactionMs);
+  await bumpFishPlays(c.env.DB, session.slack_user_id);
+  await deleteFishGame(c.env.DB, session.slack_user_id);
+  const now = Date.now();
+  return c.json({
+    ok: true,
+    fish: fishId,
+    quality,
+    reaction_ms: reactionMs,
+    xp: xpAward,
+    gold: 0,
+    levelsGained: spoils.levelsGained,
+    newLevel: spoils.newLevel,
+    resources: grantedResources,
+    vigor: currentVigor(character.fish_vigor_full_at, now),
+    vigor_full_at: character.fish_vigor_full_at ?? null,
+  });
+});
+
+app.post("/api/camp/fish/abandon", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  await deleteFishGame(c.env.DB, session.slack_user_id);
   return c.json({ ok: true });
 });
 

@@ -36,6 +36,10 @@ export interface Character {
   vigor_full_at?: number | null;
   /** Forage-specific vigor pool (separate from mining). */
   forage_vigor_full_at?: number | null;
+  /** Fishing-specific vigor pool. */
+  fish_vigor_full_at?: number | null;
+  /** Lifetime Quick Cast play count (gates Fastest Hook leaderboard). */
+  fish_plays?: number;
 }
 
 export type ItemType =
@@ -203,6 +207,7 @@ export interface HarvestLeaderboardEntry {
   mine_rich_hits: number;
   forage_rare_finds: number;
   fish_best_ms: number;
+  fish_plays: number;
 }
 
 export interface MeResponse {
