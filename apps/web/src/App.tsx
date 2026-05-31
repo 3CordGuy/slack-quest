@@ -1429,6 +1429,7 @@ export function App() {
                   onHaggle={shopHaggle}
                   onRefresh={refreshShop}
                   onRestock={restockShop}
+                  inventory={state.inventory}
                 />
               )}
               {section === "staples" && (
@@ -1485,6 +1486,7 @@ export function App() {
                   onSharpen={smithySharpen}
                   onRepair={smithyRepair}
                   onBuy={smithyBuy}
+                  inventory={state.inventory}
                 />
               )}
               {section === "forge" && (

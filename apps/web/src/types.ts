@@ -209,6 +209,9 @@ export interface ShopItem {
   weapon_range: WeaponRange | null;
   haggled: "failed" | "15" | "25" | "30" | null;
   level_req: number;
+  slot: EquipSlot | null;
+  stat_bonus: Record<string, number> | null;
+  item_subtype: string | null;
 }
 
 export interface StapleItem {
