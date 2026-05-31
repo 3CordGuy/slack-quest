@@ -1,7 +1,7 @@
 import { useState } from "react";
 import type { ReactNode } from "react";
 import { Icon } from "../icons";
-import type { ShopResponse, ShopItem, StapleItem, InnResponse, SmithyResponse, WeaponRange, Rarity, ApothecaryResponse } from "../types";
+import type { ShopResponse, ShopItem, StapleItem, InnResponse, SmithyResponse, WeaponRange, Rarity, ApothecaryResponse, Item } from "../types";
 import { HAGGLE_LABEL } from "../constants";
 import { card, h2, muted, DISPLAY_FONT, smallBadge, smallActionBtn } from "../styles";
 import { itemIcon, itemIconColor, describeItemEffect, formatDuration } from "../utils";
@@ -124,13 +124,16 @@ export function ShopWaresPanel({
   onHaggle,
   onRefresh,
   onRestock,
+  inventory,
 }: {
   shop: ShopResponse;
   onBuy: (id: number, name: string) => void;
   onHaggle: (id: number) => void;
   onRefresh: () => Promise<void>;
   onRestock?: () => Promise<void>;
+  inventory?: Item[];
 }) {
+  const equippedItems = inventory?.filter((i) => i.equipped) ?? [];
   if (shop.error === "mid_quest") {
     return <p style={{ ...muted, margin: 0 }}>The shopkeep is afraid of monsters. Finish the quest first.</p>;
   }
@@ -173,6 +176,7 @@ export function ShopWaresPanel({
             atCap={atCap}
             onBuy={onBuy}
             onHaggle={onHaggle}
+            equippedItems={equippedItems}
           />
         ))}
       </div>
@@ -249,6 +253,42 @@ export function ShopStaplesPanel({
   );
 }
 
+// Compares a store item's power against the currently equipped item in the same slot.
+// Shows a coloured delta (▲ +5 | ▼ -3) or "New slot" when nothing is equipped there.
+function EquipDiff({
+  item,
+  equippedItems,
+}: {
+  item: { item_type: string; slot?: string | null; weapon_range?: WeaponRange | null; power: number };
+  equippedItems: Item[];
+}) {
+  // Resolve the target slot: weapons go to main_hand; armor uses item.slot.
+  const slot = item.slot ?? (item.item_type === "weapon" ? "main_hand" : null);
+  if (!slot || item.item_type === "consumable" || item.item_type === "magic") return null;
+
+  const current = equippedItems.find(
+    (i) => i.equipped && (i.slot === slot || (slot === "main_hand" && !i.slot && i.item_type === "weapon")),
+  );
+
+  if (!current) {
+    return (
+      <span style={{ font: "10px/1 var(--font-mono)", color: "var(--accent-arcane)", letterSpacing: 0.3 }}>
+        ★ new slot
+      </span>
+    );
+  }
+
+  const diff = item.power - current.power;
+  if (diff === 0) return null;
+
+  const positive = diff > 0;
+  return (
+    <span style={{ font: "10px/1 var(--font-mono)", color: positive ? "var(--tone-good-2)" : "var(--tone-bad-2)", letterSpacing: 0.3 }}>
+      {positive ? "▲" : "▼"} {positive ? "+" : ""}{diff} vs equipped
+    </span>
+  );
+}
+
 // Shared item row used by both the shop and smithy stock.
 // Handles icon, name, rarity/level/type badges, flavor text, and the Info panel.
 // Pass shop-specific or smithy-specific action buttons via `actions`.
@@ -260,6 +300,7 @@ function StoreItemRow({
   opacity,
   sold,
   actions,
+  equippedItems,
 }: {
   item: {
     item_name: string;
@@ -279,6 +320,7 @@ function StoreItemRow({
   opacity?: number;
   sold?: boolean;
   actions?: ReactNode;
+  equippedItems?: Item[];
 }) {
   const [showInfo, setShowInfo] = useState(false);
   const levelReq = item.level_req ?? Math.max(1, Math.ceil(item.power / 3));
@@ -331,6 +373,9 @@ function StoreItemRow({
             {item.item_type === "weapon" && item.weapon_range === "ranged" && <SmallBadge>ranged</SmallBadge>}
             {item.item_type === "weapon" && item.weapon_range === "focus" && <SmallBadge>focus</SmallBadge>}
             {extraBadges}
+            {equippedItems && !sold && (
+              <EquipDiff item={item} equippedItems={equippedItems} />
+            )}
           </div>
           {item.flavor && (
             <div style={{ ...muted, fontSize: 12, fontStyle: "italic", marginTop: 2 }}>
@@ -362,6 +407,7 @@ function ShopRow({
   atCap,
   onBuy,
   onHaggle,
+  equippedItems,
 }: {
   item: ShopItem;
   playerGold: number;
@@ -369,6 +415,7 @@ function ShopRow({
   atCap: boolean;
   onBuy: (id: number, name: string) => void;
   onHaggle: (id: number) => void;
+  equippedItems?: Item[];
 }) {
   const [pressing, setPressing] = useState(false);
   const sold = !!item.bought_by;
@@ -381,6 +428,7 @@ function ShopRow({
       playerLevel={playerLevel}
       opacity={sold ? 0.5 : 1}
       sold={sold}
+      equippedItems={equippedItems}
       headerRight={
         <div style={{ fontVariantNumeric: "tabular-nums", color: canAfford ? "#fbbf24" : "#c0392b", fontWeight: 600, fontSize: 13 }}>
           +{item.power} · {item.price}g
@@ -519,6 +567,7 @@ export function SmithyCard({
   onSharpen,
   onRepair,
   onBuy,
+  inventory,
 }: {
   smithy: SmithyResponse;
   navOverlay?: ReactNode;
@@ -527,7 +576,9 @@ export function SmithyCard({
   onSharpen: (itemId: number, itemName: string, cost: number, verb: string) => void;
   onRepair: (cost: number) => void;
   onBuy: (stockId: number, itemName: string, price: number) => void;
+  inventory?: Item[];
 }) {
+  const equippedItems = inventory?.filter((i) => i.equipped) ?? [];
   const showTitle = !navOverlay && !inModal;
   const hero = inModal
     ? null
@@ -610,6 +661,7 @@ export function SmithyCard({
                   key={s.id}
                   item={s}
                   playerLevel={characterLevel}
+                  equippedItems={equippedItems}
                   headerRight={
                     <div style={{ fontVariantNumeric: "tabular-nums", color: canAfford ? "#fbbf24" : "#c0392b", fontWeight: 600, fontSize: 13 }}>
                       +{s.power} · {s.price}g
