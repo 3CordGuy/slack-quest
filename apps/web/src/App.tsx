@@ -44,7 +44,7 @@ import {
 } from "./components/ui";
 import { PubCard, PubLeaderboardCard, LiarsRollCard, SpdCard } from "./components/Pub";
 import { QuestStatsCard, QuestLeaderboardCard, TowerLeaderboardCard, RecentQuestsCard } from "./components/StatsCards";
-import { ShopCard, InnCard, SmithyCard, ApothecaryCard } from "./components/Merchants";
+import { ShopCard, ShopWaresPanel, ShopStaplesPanel, InnCard, SmithyCard, ApothecaryCard } from "./components/Merchants";
 import {
   PartyMember, ReadOnlyDoll, CharacterInspectDialog,
   HpBar, ArmorBar, ManaBar,
@@ -1405,25 +1405,42 @@ export function App() {
     }
     if (modalLoc === "shop" && state.shop) {
       return (
-        <LocationModal
+        <LocationModalWide
           icon="cash"
           title="The Shop"
           subtitle="Rotating wares"
           gold={gold}
           art={state.shop.art_url ?? state.townArt?.shop_art_url ?? null}
           onClose={close}
-          maxWidth={1000}
+          sections={[
+            { id: "wares",   label: "Wares",   icon: "cash" },
+            { id: "staples", label: "Staples", icon: "bubbling-potion" },
+          ]}
+          defaultSection="wares"
+          section={townSub ?? "wares"}
+          onSectionChange={setTownSub}
         >
-          <ShopCard
-            shop={state.shop}
-            inModal
-            onBuy={shopBuy}
-            onHaggle={shopHaggle}
-            onBuyStaple={shopBuyStaple}
-            onRefresh={refreshShop}
-            onRestock={restockShop}
-          />
-        </LocationModal>
+          {(section) => (
+            <>
+              {section === "wares" && (
+                <ShopWaresPanel
+                  shop={state.shop!}
+                  onBuy={shopBuy}
+                  onHaggle={shopHaggle}
+                  onRefresh={refreshShop}
+                  onRestock={restockShop}
+                />
+              )}
+              {section === "staples" && (
+                <ShopStaplesPanel
+                  staples={state.shop!.staples ?? []}
+                  gold={state.shop!.gold}
+                  onBuyStaple={shopBuyStaple}
+                />
+              )}
+            </>
+          )}
+        </LocationModalWide>
       );
     }
     if (modalLoc === "inn" && state.inn) {
