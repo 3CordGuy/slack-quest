@@ -16,6 +16,7 @@ import type {
 import { CAMP_NODE_CONFIG, CAMP_TIERS } from "../constants";
 import { muted } from "../styles";
 import { SmallBadge } from "./ui";
+import { MiningMinigame } from "./MiningMinigame";
 
 // Static resource list keyed by node. Mirrors RESOURCE_CATALOG from
 // @gantt-quest/core. Inlined here to keep Camp.tsx free of the workspace
@@ -32,8 +33,40 @@ const STOCKPILE_RESOURCES: Array<{ id: string; node: CampNode; name: string; emo
   { id: "abyss_eel",   node: "fish",   name: "Abyss Eel",   emoji: "🐉", icon: "eel" },
 ];
 
+// Mining vigor system — kept in sync with worker.ts constants.
+export const MAX_VIGOR = 3;
+const VIGOR_REGEN_MS = 60 * 60 * 1000;
+
+export function currentVigor(fullAt: number | null | undefined, now: number): number {
+  if (!fullAt || fullAt <= now) return MAX_VIGOR;
+  const ticksRemaining = Math.ceil((fullAt - now) / VIGOR_REGEN_MS);
+  return Math.max(0, MAX_VIGOR - ticksRemaining);
+}
+
+function nextVigorTickIn(fullAt: number | null | undefined, now: number): number | null {
+  if (!fullAt || fullAt <= now) return null;
+  const msIntoCurrentTick = (fullAt - now) % VIGOR_REGEN_MS;
+  return msIntoCurrentTick === 0 ? VIGOR_REGEN_MS : msIntoCurrentTick;
+}
+
+function formatVigorCountdown(ms: number): string {
+  const totalMin = Math.ceil(ms / 60000);
+  if (totalMin >= 60) {
+    const h = Math.floor(totalMin / 60);
+    const m = totalMin - h * 60;
+    return m === 0 ? `${h}h` : `${h}h ${m}m`;
+  }
+  return `${totalMin} min`;
+}
+
 interface CampProps {
   characterLevel: number;
+  /** Strength score — widens the mining mini-game's rich-vein zone. */
+  characterStr?: number;
+  /** Timestamp (ms) when vigor will be full. Null/past = full. */
+  characterVigorFullAt?: number | null;
+  /** AI-generated mine art (used as the mining mini-game backdrop). */
+  mineArtUrl?: string | null;
   /** Active sidebar section from LocationModalWide render prop */
   section: string;
   status: CampStatusResponse | null;
@@ -42,11 +75,13 @@ interface CampProps {
   onClaim: (taskId: number) => Promise<void>;
   onCancel: (taskId: number) => Promise<void>;
   onBuildUpgrade: (upgradeKey: string) => Promise<void>;
+  /** Fired after a mini-game completes so the parent can refresh state. */
+  onMinigamePlayed?: () => void;
 }
 
 export function Camp({
-  characterLevel: _characterLevel, section, status, inventory,
-  onStartGather, onClaim, onCancel, onBuildUpgrade,
+  characterLevel: _characterLevel, characterStr, characterVigorFullAt, mineArtUrl, section, status, inventory,
+  onStartGather, onClaim, onCancel, onBuildUpgrade, onMinigamePlayed,
 }: CampProps) {
   const activeBySlot = useMemo(() => {
     const map = new Map<number, ActiveGatheringTask>();
@@ -71,6 +106,10 @@ export function Camp({
           status={status}
           onStart={onStartGather}
           activeBySlot={activeBySlot}
+          characterStr={characterStr}
+          characterVigorFullAt={characterVigorFullAt}
+          mineArtUrl={mineArtUrl}
+          onMinigamePlayed={onMinigamePlayed}
         />
       </div>
     );
@@ -336,13 +375,26 @@ function ActiveTaskRow({
 }
 
 function GatheringNodePanel({
-  node, status, onStart, activeBySlot,
+  node, status, onStart, activeBySlot, characterStr, characterVigorFullAt, mineArtUrl, onMinigamePlayed,
 }: {
   node: CampNode;
   status: CampStatusResponse | null;
   onStart: (node: CampNode, tier: CampTier, workerSlot: number) => Promise<void>;
   activeBySlot: Map<number, ActiveGatheringTask>;
+  characterStr?: number;
+  characterVigorFullAt?: number | null;
+  mineArtUrl?: string | null;
+  onMinigamePlayed?: () => void;
 }) {
+  // Mini-game modal state. Phase 1 wires this only for the mine node.
+  const [minigameOpen, setMinigameOpen] = useState(false);
+  // Re-render every 30s while the panel is open so the vigor countdown ticks.
+  const [, setNowTick] = useState(0);
+  useEffect(() => {
+    if (node !== "mine") return;
+    const id = window.setInterval(() => setNowTick((n) => n + 1), 30000);
+    return () => window.clearInterval(id);
+  }, [node]);
   const spec = CAMP_NODE_CONFIG[node];
   const slotsTotal = status?.slots.total ?? 1;
   const slotsAvailable = status?.slots.available ?? 0;
@@ -391,6 +443,62 @@ function GatheringNodePanel({
         onSelect={setSelectedSlot}
       />
 
+      {node === "mine" && (() => {
+        const now = Date.now();
+        const vigor = currentVigor(characterVigorFullAt, now);
+        const tickIn = nextVigorTickIn(characterVigorFullAt, now);
+        const outOfVigor = vigor <= 0;
+        return (
+          <div style={{
+            marginTop: 10,
+            padding: "10px 12px",
+            borderRadius: "var(--radius-md)",
+            border: "1px dashed rgba(198, 161, 74, 0.45)",
+            background: "rgba(198, 161, 74, 0.06)",
+            display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap",
+            opacity: outOfVigor ? 0.7 : 1,
+          }}>
+            <Icon name="mining-diamonds" size={18} color="#c6a14a" />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, font: "11px/1 var(--font-display)", textTransform: "uppercase", letterSpacing: 1.4, color: "var(--fg-mute)" }}>
+                <span>Immediate</span>
+                <VigorPips vigor={vigor} max={MAX_VIGOR} />
+              </div>
+              <div style={{ fontSize: 13, marginTop: 4 }}>
+                {outOfVigor
+                  ? `Out of vigor — rest up. Next swing ${tickIn != null ? `in ${formatVigorCountdown(tickIn)}` : "soon"}.`
+                  : "Quick Strike — three swings, no wait. Hammer the rich vein."}
+              </div>
+              {!outOfVigor && tickIn != null && (
+                <div style={{ fontSize: 11, color: "var(--fg-mute)", marginTop: 2 }}>
+                  +1 vigor in {formatVigorCountdown(tickIn)}
+                </div>
+              )}
+            </div>
+            <button
+              type="button"
+              onClick={() => setMinigameOpen(true)}
+              disabled={outOfVigor}
+              title={outOfVigor ? "No vigor — try again later." : undefined}
+              style={{
+                minHeight: 40,
+                padding: "8px 14px",
+                border: outOfVigor ? "1px solid var(--border-base)" : "1px solid #c6a14a",
+                borderRadius: "var(--radius-md)",
+                background: outOfVigor ? "var(--bg-card)" : "rgba(198, 161, 74, 0.18)",
+                color: outOfVigor ? "var(--fg-mute)" : "#f5d56b",
+                fontWeight: 600,
+                fontFamily: "inherit",
+                cursor: outOfVigor ? "not-allowed" : "pointer",
+                touchAction: "manipulation",
+              }}
+            >
+              Quick Strike
+            </button>
+          </div>
+        );
+      })()}
+
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12, marginTop: 14 }}>
         {(["quick", "standard", "deep"] as CampTier[]).map((tier) => (
           <TierCard
@@ -415,7 +523,38 @@ function GatheringNodePanel({
                 : "Your tent is busy. Collect the finished task, or build a Worker Tent in the Build tab to run two tasks at once."}
         </div>
       )}
+
+      {minigameOpen && node === "mine" && (
+        <MiningMinigame
+          str={characterStr}
+          backgroundArtUrl={mineArtUrl}
+          onClose={() => setMinigameOpen(false)}
+          onComplete={() => onMinigamePlayed?.()}
+        />
+      )}
     </div>
+  );
+}
+
+// Three small pips representing current vigor (filled = available swing).
+function VigorPips({ vigor, max }: { vigor: number; max: number }) {
+  return (
+    <span style={{ display: "inline-flex", gap: 3, alignItems: "center" }} aria-label={`Vigor ${vigor}/${max}`}>
+      {Array.from({ length: max }).map((_, i) => {
+        const filled = i < vigor;
+        return (
+          <span
+            key={i}
+            style={{
+              width: 10, height: 10, borderRadius: 999,
+              border: `1px solid ${filled ? "#c6a14a" : "rgba(198,161,74,0.35)"}`,
+              background: filled ? "#c6a14a" : "transparent",
+              display: "inline-block",
+            }}
+          />
+        );
+      })}
+    </span>
   );
 }
 

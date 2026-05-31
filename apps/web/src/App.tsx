@@ -13,7 +13,7 @@ import { issueWebLoginCode } from "@gantt-quest/db";
 import type {
   Character, ItemType, Rarity, WeaponRange, EquipSlot, Item, QuestVariant, EffectType,
   StatusEffect, LootOption, MonsterSpec, TowerRestStockItem, SceneJson, ActiveQuest,
-  RecentQuest, QuestStats, QuestLeaderboardEntry, TowerLeaderboardEntry, MeResponse,
+  RecentQuest, QuestStats, QuestLeaderboardEntry, TowerLeaderboardEntry, HarvestLeaderboardEntry, MeResponse,
   InventoryResponse, ShopItem, StapleItem, ShopResponse, HaggleResult, InnRoom, InnResponse,
   SmithyItem, SmithyStockListing, SmithyResponse, DrinkItem, DrinkBuff, SpdThrow, SpdOpenMatch,
   SpdBet, SpdBetTotals, SpdData, SpdResult, PubNpcOption, PubTalkResponse, PubNpc,
@@ -43,7 +43,7 @@ import {
   LocationModal, LocationModalWide, AppTopBar, CharacterSlideOver,
 } from "./components/ui";
 import { PubCard, PubLeaderboardCard, LiarsRollCard, SpdCard } from "./components/Pub";
-import { QuestStatsCard, QuestLeaderboardCard, TowerLeaderboardCard, RecentQuestsCard } from "./components/StatsCards";
+import { QuestStatsCard, QuestLeaderboardCard, TowerLeaderboardCard, HarvestHallCard, RecentQuestsCard } from "./components/StatsCards";
 import { ShopCard, ShopWaresPanel, ShopStaplesPanel, InnCard, SmithyCard, ApothecaryCard } from "./components/Merchants";
 import {
   PartyMember, ReadOnlyDoll, CharacterInspectDialog,
@@ -508,6 +508,7 @@ export function App() {
     let questStats: QuestStats | null = null;
     let leaderboard: QuestLeaderboardEntry[] = [];
     let towerLeaderboard: TowerLeaderboardEntry[] = [];
+    let harvestLeaderboard: HarvestLeaderboardEntry[] = [];
     let shop: ShopResponse | null = null;
     let joinable: JoinableQuest | null = null;
     let inn: InnResponse | null = null;
@@ -517,7 +518,7 @@ export function App() {
     let townArt: TownArt | null = null;
     let board: BoardResponse | null = null;
     if (me.character) {
-      const [invRes, qRes, lobbyRes, recentRes, statsRes, leaderboardRes, towerLbRes, shopRes, joinableRes, innRes, smithyRes, pubRes, townRes, boardRes, apoRes] = await Promise.all([
+      const [invRes, qRes, lobbyRes, recentRes, statsRes, leaderboardRes, towerLbRes, harvestLbRes, shopRes, joinableRes, innRes, smithyRes, pubRes, townRes, boardRes, apoRes] = await Promise.all([
         fetch("/api/inventory", { credentials: "include" }),
         fetch("/api/quest/active", { credentials: "include" }),
         fetch("/api/quest/lobby", { credentials: "include" }),
@@ -525,6 +526,7 @@ export function App() {
         fetch("/api/stats", { credentials: "include" }),
         fetch("/api/leaderboard", { credentials: "include" }),
         fetch("/api/leaderboard/tower", { credentials: "include" }),
+        fetch("/api/leaderboard/harvest", { credentials: "include" }),
         fetch("/api/shop", { credentials: "include" }),
         fetch("/api/quest/joinable", { credentials: "include" }),
         fetch("/api/inn", { credentials: "include" }),
@@ -575,6 +577,9 @@ export function App() {
       }
       if (towerLbRes.ok) {
         towerLeaderboard = ((await towerLbRes.json()) as { entries: TowerLeaderboardEntry[] }).entries;
+      }
+      if (harvestLbRes.ok) {
+        harvestLeaderboard = ((await harvestLbRes.json()) as { entries: HarvestLeaderboardEntry[] }).entries;
       }
       if (shopRes.ok) {
         shop = (await shopRes.json()) as ShopResponse;
@@ -633,7 +638,7 @@ export function App() {
         }
       }
     }
-    setState({ kind: "auth", me, inventory, inventoryArtUrl, activeQuest, lobbyQuest, recent, questStats, leaderboard, towerLeaderboard, shop, joinable, inn, smithy, pub, apothecary, townArt, board });
+    setState({ kind: "auth", me, inventory, inventoryArtUrl, activeQuest, lobbyQuest, recent, questStats, leaderboard, towerLeaderboard, harvestLeaderboard, shop, joinable, inn, smithy, pub, apothecary, townArt, board });
   }
 
   async function logout() {
@@ -1313,6 +1318,9 @@ export function App() {
               {state.towerLeaderboard.length > 0 && (
                 <TowerLeaderboardCard entries={state.towerLeaderboard} selfId={state.me.slack_user_id} />
               )}
+              {state.harvestLeaderboard.length > 0 && (
+                <HarvestHallCard entries={state.harvestLeaderboard} selfId={state.me.slack_user_id} />
+              )}
               {state.me.character && state.recent.length > 0 && (
                 <RecentQuestsCard quests={state.recent} />
               )}
@@ -1588,6 +1596,9 @@ export function App() {
           {(activeSection) => (
             <Camp
               characterLevel={state.me.character!.level}
+              characterStr={state.me.character!.str}
+              characterVigorFullAt={state.me.character!.vigor_full_at}
+              mineArtUrl={state.townArt?.mine_art_url ?? null}
               section={activeSection}
               status={campStatus}
               inventory={state.inventory}
@@ -1595,6 +1606,10 @@ export function App() {
               onClaim={claimGather}
               onCancel={cancelGather}
               onBuildUpgrade={buildCampUpgrade}
+              onMinigamePlayed={async () => {
+                await Promise.all([refreshCampStatus(), refreshMe()]);
+                void refresh();
+              }}
             />
           )}
         </LocationModalWide>

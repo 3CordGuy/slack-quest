@@ -267,8 +267,10 @@ import {
   tryWriteGatheringYield,
   type GatheringTask,
   bumpCampClaimStats,
+  bumpMineRichHits,
   bumpSmithyCrafts,
   bumpErrandStats,
+  getHarvestLeaderboard,
   // Pub Errands
   bumpPubTrust,
   getActivePubErrand,
@@ -3186,6 +3188,135 @@ app.post("/api/camp/claim/:taskId", async (c) => {
   return c.json({ ok: true, task_id: taskId, yield: yieldData, spoils });
 });
 
+// Immediate-action camp mini-game. Phase 1 ships mining only.
+//
+// The client (MiningMinigame.tsx) sends the zone each strike landed on:
+//   { node: "mine", strikes: ["dull"|"thin"|"rich", ...] }
+//
+// Loot table balance (locked in after first playtest revealed grinding):
+//   • DULL never drops ore — wasted swing, you only get the XP floor.
+//   • THIN gives iron at best — common everyday material.
+//   • RICH gives silver at best — uncommon. NO mithril from the mini-game,
+//     so deep-tier deferred gathers stay the exclusive mithril source.
+//   • Vigor cap (3, +1/hr) prevents back-to-back grinding even at full skill.
+//
+// The server still rolls each drop probabilistically so a "rich" claim can
+// roll nothing (~10% miss).
+const MAX_VIGOR = 3;
+const VIGOR_REGEN_MS = 60 * 60 * 1000;
+
+function currentVigor(fullAt: number | null | undefined, now: number): number {
+  if (!fullAt || fullAt <= now) return MAX_VIGOR;
+  const ticksRemaining = Math.ceil((fullAt - now) / VIGOR_REGEN_MS);
+  return Math.max(0, MAX_VIGOR - ticksRemaining);
+}
+
+app.post("/api/camp/minigame", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const character = await getCharacter(c.env.DB, session.slack_user_id);
+  if (!character) return c.json({ error: "no_character" }, 404);
+  if (character.downed_until && character.downed_until > Date.now()) {
+    return c.json({ error: "downed" }, 400);
+  }
+  const body = await c.req.json().catch(() => null) as
+    | { node?: string; strikes?: unknown }
+    | null;
+  if (!body || body.node !== "mine") return c.json({ error: "bad_node" }, 400);
+  if (!Array.isArray(body.strikes) || body.strikes.length !== 3) {
+    return c.json({ error: "bad_strikes" }, 400);
+  }
+  type Zone = "dull" | "thin" | "rich";
+  const VALID: ReadonlyArray<Zone> = ["dull", "thin", "rich"];
+  const strikes: Zone[] = [];
+  for (const z of body.strikes) {
+    if (typeof z !== "string" || !(VALID as readonly string[]).includes(z)) {
+      return c.json({ error: "bad_strikes" }, 400);
+    }
+    strikes.push(z as Zone);
+  }
+  // Vigor gate. If the player is out of vigor, no swing at all.
+  const now = Date.now();
+  const vigor = currentVigor(character.vigor_full_at, now);
+  if (vigor <= 0) {
+    return c.json({
+      error: "no_vigor",
+      vigor: 0,
+      vigor_full_at: character.vigor_full_at ?? null,
+    }, 400);
+  }
+  // Spend 1 vigor: push vigor_full_at forward by one tick. If it's already
+  // in the future, extend it; if it's null/past, start the regen clock now.
+  const baseFullAt = (character.vigor_full_at && character.vigor_full_at > now)
+    ? character.vigor_full_at
+    : now;
+  const newVigorFullAt = baseFullAt + VIGOR_REGEN_MS;
+  // Roll loot per strike, server-side.
+  type Drop = { id: "iron_ore" | "silver_ore"; qty: number };
+  const drops: Drop[] = [];
+  let richHits = 0;
+  for (const z of strikes) {
+    if (z === "rich") {
+      richHits++;
+      const r = Math.random();
+      if (r < 0.60) drops.push({ id: "silver_ore", qty: 1 });
+      else if (r < 0.90) drops.push({ id: "iron_ore", qty: 1 });
+      // ~10% nothing
+    } else if (z === "thin") {
+      const r = Math.random();
+      if (r < 0.50) drops.push({ id: "iron_ore", qty: 1 });
+      // ~50% nothing
+    }
+    // dull: never drops anything
+  }
+  // Best-zone XP. Attempted: 3, any thin: 5, any rich: 10.
+  const bestZone: Zone = strikes.includes("rich") ? "rich" : strikes.includes("thin") ? "thin" : "dull";
+  const xpAward = bestZone === "rich" ? 10 : bestZone === "thin" ? 5 : 3;
+
+  // Stack drops into { id, qty } for response + addResource calls.
+  const tally = new Map<Drop["id"], number>();
+  for (const d of drops) tally.set(d.id, (tally.get(d.id) ?? 0) + d.qty);
+
+  const grantedResources: Array<{ name: string; qty: number; rarity: string }> = [];
+  for (const [id, qty] of tally) {
+    const spec = findResource(id);
+    if (!spec) continue;
+    const name = resourceItemName(id);
+    await addResource(c.env.DB, session.slack_user_id, name, qty, spec.rarity, spec.blurb);
+    grantedResources.push({ name: `${spec.emoji} ${spec.name}`, qty, rarity: spec.rarity });
+  }
+
+  const spoils = await awardSpoils(
+    c.env.DB,
+    character,
+    xpAward,
+    0,
+    () => rollDice(6),
+    xpForLevel,
+  );
+
+  if (richHits > 0) {
+    await bumpMineRichHits(c.env.DB, session.slack_user_id, richHits);
+  }
+  // Commit the spent vigor.
+  await c.env.DB
+    .prepare("UPDATE characters SET vigor_full_at = ? WHERE slack_user_id = ?")
+    .bind(newVigorFullAt, session.slack_user_id)
+    .run();
+
+  return c.json({
+    ok: true,
+    xp: xpAward,
+    gold: 0,
+    levelsGained: spoils.levelsGained,
+    newLevel: spoils.newLevel,
+    resources: grantedResources,
+    richHits,
+    vigor: currentVigor(newVigorFullAt, now),
+    vigor_full_at: newVigorFullAt,
+  });
+});
+
 app.post("/api/camp/upgrade/:upgradeKey", async (c) => {
   const session = await currentSession(c.env.DB, c.req.header("cookie"));
   if (!session) return c.json({ error: "unauthenticated" }, 401);
@@ -5204,6 +5335,16 @@ app.get("/api/leaderboard/tower", async (c) => {
   const session = await currentSession(c.env.DB, c.req.header("cookie"));
   if (!session) return c.json({ error: "unauthenticated" }, 401);
   const entries = await getTowerLeaderboard(c.env.DB, 10);
+  return c.json({ entries });
+});
+
+// Camp mini-game leaderboard. Phase 1 surfaces mining "Veins Struck" only;
+// rows include forage_rare_finds and fish_best_ms so the UI can add their
+// rankings when those games ship without a new endpoint.
+app.get("/api/leaderboard/harvest", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const entries = await getHarvestLeaderboard(c.env.DB, 10);
   return c.json({ entries });
 });
 

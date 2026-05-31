@@ -4,7 +4,7 @@ import { formatDuration, formatRelative } from "../utils";
 import { VARIANT_LABEL } from "../constants";
 import { card, h2, muted, DISPLAY_FONT } from "../styles";
 import { SmallBadge } from "./ui";
-import type { QuestStats, QuestLeaderboardEntry, TowerLeaderboardEntry, RecentQuest } from "../types";
+import type { QuestStats, QuestLeaderboardEntry, TowerLeaderboardEntry, HarvestLeaderboardEntry, RecentQuest } from "../types";
 
 function QuestStatsCard({ stats }: { stats: QuestStats }) {
   const variants = Object.entries(stats.by_variant).sort((a, b) => b[1].total - a[1].total);
@@ -566,6 +566,36 @@ function TowerLeaderboardCard({ entries, selfId }: { entries: TowerLeaderboardEn
   );
 }
 
+/* ─── Harvest Hall (camp mini-game) ─────────────────────────────────── */
+
+// Camp mini-game podium. Phase 1 surfaces the "Veins Struck" ranking
+// (mining rich-vein strikes). When the foraging and fishing mini-games
+// ship we'll surface their stats from the same response by rendering a
+// second/third HallOfRenown for `forage_rare_finds` and `fish_best_ms`.
+function HarvestHallCard({ entries, selfId }: { entries: HarvestLeaderboardEntry[]; selfId: string }) {
+  const renown: RenownEntry[] = entries
+    .filter((e) => e.mine_rich_hits > 0)
+    .map((e) => ({
+      id: e.slack_user_id,
+      name: e.name,
+      subtitle: e.class,
+      metric: e.mine_rich_hits,
+      metricLabel: "Veins",
+      iconName: "crystal-cluster",
+      isSelf: e.slack_user_id === selfId,
+    }));
+  if (renown.length === 0) return null;
+  return (
+    <HallOfRenown
+      title="Veins Struck"
+      entries={renown}
+      metricLabel="Veins"
+      rowIcon="crystal-cluster"
+      footerNote="Rich-vein strikes in the Quick Strike mini-game at the Mine."
+    />
+  );
+}
+
 function RecentQuestsCard({ quests }: { quests: RecentQuest[] }) {
   return (
     <div style={card}>
@@ -631,4 +661,4 @@ function RecentQuestRow({ q }: { q: RecentQuest }) {
   );
 }
 
-export { QuestStatsCard, QuestLeaderboardCard, TowerLeaderboardCard, RecentQuestsCard, RecentQuestRow, HallOfRenown };
+export { QuestStatsCard, QuestLeaderboardCard, TowerLeaderboardCard, HarvestHallCard, RecentQuestsCard, RecentQuestRow, HallOfRenown };
