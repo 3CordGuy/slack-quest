@@ -25,6 +25,15 @@ export interface Character {
   unspent_points?: number;
   notification_pref?: "thread" | "dm";
   active_slot?: number;
+  /** Mining mini-game lifetime rich-vein strikes. */
+  mine_rich_hits?: number;
+  /** Foraging mini-game lifetime rare finds (phase 2). */
+  forage_rare_finds?: number;
+  /** Fishing mini-game fastest bite reaction in ms (phase 2). */
+  fish_best_ms?: number;
+  /** Timestamp (ms) when vigor will next be full. Null/past = full. Each
+      Quick Strike pushes this forward by 1 hour. Cap 3. */
+  vigor_full_at?: number | null;
 }
 
 export type ItemType =
@@ -182,6 +191,16 @@ export interface TowerLeaderboardEntry {
   tower_best_floor: number;
   tower_kills: number;
   tower_floors_climbed: number;
+}
+
+export interface HarvestLeaderboardEntry {
+  slack_user_id: string;
+  name: string;
+  class: string;
+  slack_username: string | null;
+  mine_rich_hits: number;
+  forage_rare_finds: number;
+  fish_best_ms: number;
 }
 
 export interface MeResponse {
@@ -733,6 +752,7 @@ export type LoadState =
       questStats: QuestStats | null;
       leaderboard: QuestLeaderboardEntry[];
       towerLeaderboard: TowerLeaderboardEntry[];
+      harvestLeaderboard: HarvestLeaderboardEntry[];
       shop: ShopResponse | null;
       joinable: JoinableQuest | null;
       inn: InnResponse | null;

@@ -143,6 +143,16 @@ export interface Character {
       +50% rested bonus when ≥24h has passed at the next gather start.
       Null = never gathered. */
   last_gather_claimed_at: number | null;
+  /** Mining mini-game lifetime rich-vein strikes (migration 0055). */
+  mine_rich_hits: number;
+  /** Foraging mini-game lifetime rare finds (migration 0055, phase 2). */
+  forage_rare_finds: number;
+  /** Fishing mini-game fastest bite reaction in ms (migration 0055, phase 2). */
+  fish_best_ms: number;
+  /** Timestamp (ms) when vigor will next be full. Null/past = full vigor
+      (cap 3). Each Quick Strike push this forward by 1 hour. Current vigor
+      is computed as MAX(0, 3 - ceil((vigor_full_at - now) / 1hr)). */
+  vigor_full_at: number | null;
 }
 
 interface CharacterRow extends Omit<Character, "scars" | "effects" | "drink_buff" | "achievements" | "pending_achievements"> {
@@ -818,6 +828,41 @@ export async function getTowerLeaderboard(
     )
     .bind(Math.max(1, Math.min(100, limit)))
     .all<TowerLeaderboardRow>();
+  return res.results ?? [];
+}
+
+// Camp mini-game leaderboard row. Each player has one row with all three
+// per-node mastery stats; the UI picks which one to rank by per row.
+export interface HarvestLeaderboardRow {
+  slack_user_id: string;
+  name: string;
+  class: string;
+  slack_username: string | null;
+  mine_rich_hits: number;
+  forage_rare_finds: number;
+  fish_best_ms: number;
+}
+
+// Pulls a single rows-per-character set with all three mini-game stats so
+// the UI can pivot into multiple ranked lists ("Veins Struck" / "Rare Finds"
+// / "Fastest Hook") without three separate round trips. Phase 1 ships only
+// the mining game, so we order by mine_rich_hits and filter to rows with
+// at least one strike; this query will widen when forage/fish ship.
+export async function getHarvestLeaderboard(
+  db: D1Database,
+  limit = 10,
+): Promise<HarvestLeaderboardRow[]> {
+  const res = await db
+    .prepare(
+      `SELECT slack_user_id, name, class, slack_username,
+              mine_rich_hits, forage_rare_finds, fish_best_ms
+         FROM characters
+        WHERE mine_rich_hits > 0 OR forage_rare_finds > 0 OR fish_best_ms > 0
+        ORDER BY mine_rich_hits DESC
+        LIMIT ?`,
+    )
+    .bind(Math.max(1, Math.min(100, limit)))
+    .all<HarvestLeaderboardRow>();
   return res.results ?? [];
 }
 
@@ -3925,6 +3970,20 @@ export async function bumpCampClaimStats(
       .bind(ore, herbs, fish, deep, userId)
       .run();
   }
+}
+
+// Atomic increment for mining mini-game rich-vein strikes. Drives the
+// "Veins Struck" row on the Harvest Hall leaderboard.
+export async function bumpMineRichHits(
+  db: D1Database,
+  userId: string,
+  delta: number,
+): Promise<void> {
+  if (delta <= 0) return;
+  await db
+    .prepare("UPDATE characters SET mine_rich_hits = mine_rich_hits + ? WHERE slack_user_id = ?")
+    .bind(delta, userId)
+    .run();
 }
 
 // Atomic increment for the smithy craft counter. Called once per
