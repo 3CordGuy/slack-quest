@@ -250,6 +250,7 @@ import {
   getRecentCharacterNames,
   // Camp / gathering / crafting
   APOTHECARY_POTENCY_CAP,
+  applyPotency,
   SMITHY_SHARPEN_GOLD_CAP,
   SMITHY_SHARPEN_TOTAL_CAP,
   addResource,
@@ -3459,9 +3460,10 @@ app.post("/api/inventory/:itemId/use", async (c) => {
       if (character.mana >= character.max_mana) {
         return c.json({ error: "at_full_mana" }, 400);
       }
-      const restored = await addMana(c.env.DB, character, item.power);
+      const effectivePower = applyPotency(item.power, item.potency_stacks ?? 0);
+      const restored = await addMana(c.env.DB, character, effectivePower);
       await removeItem(c.env.DB, item.id);
-      return c.json({ ok: true, kind: "mana", restored, requested: item.power });
+      return c.json({ ok: true, kind: "mana", restored, requested: effectivePower });
     }
     if (character.hp >= character.max_hp) {
       return c.json({ error: "at_full_hp" }, 400);
@@ -7067,12 +7069,13 @@ export class QuestRoom extends DurableObject<Env> {
     switch (item.item_type) {
       case "consumable": {
         const staple = findStaple(item.item_name);
+        const effectivePower = applyPotency(item.power, item.potency_stacks ?? 0);
         if (staple?.effect === "restore_mana") {
           if (actor.mana >= actor.max_mana) {
             this.sendOne(ws, { type: "error", message: "Already at full mana — save it for when you need it." });
             return;
           }
-          const added = Math.min(actor.max_mana - actor.mana, item.power);
+          const added = Math.min(actor.max_mana - actor.mana, effectivePower);
           const newMana = actor.mana + added;
           updatedFighters = state.fighters.map((f) =>
             f.id === actor.id ? { ...f, mana: newMana } : f,
@@ -7085,12 +7088,12 @@ export class QuestRoom extends DurableObject<Env> {
           return;
         }
         const before = actor.hp;
-        const after = Math.min(actor.max_hp, before + item.power);
+        const after = Math.min(actor.max_hp, before + effectivePower);
         const amount = after - before;
         updatedFighters = state.fighters.map((f) =>
           f.id === actor.id ? { ...f, hp: after } : f,
         );
-        effect = { kind: "heal", target: actor.id, amount, rolled: item.power };
+        effect = { kind: "heal", target: actor.id, amount, rolled: effectivePower };
         break;
       }
       case "magic": {

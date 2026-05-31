@@ -1952,7 +1952,8 @@ export async function consumeItem(
   character: Character,
   item: Item,
 ): Promise<number> {
-  const newHp = Math.min(character.max_hp, character.hp + item.power);
+  const effectivePower = applyPotency(item.power, item.potency_stacks ?? 0);
+  const newHp = Math.min(character.max_hp, character.hp + effectivePower);
   const healed = newHp - character.hp;
   await db.batch([
     db.prepare("UPDATE characters SET hp = ?, last_active = ? WHERE slack_user_id = ?")
@@ -3720,6 +3721,13 @@ export type CampTier = "quick" | "standard" | "deep";
 
 // Max apothecary Concentrate stacks per potion. Each stack adds +25% potency.
 export const APOTHECARY_POTENCY_CAP = 2;
+
+// Apply potency stacks to an item's base power. Each stack multiplies by 1.25
+// (round down). potency_stacks defaults to 0 if absent (legacy items).
+export function applyPotency(basePower: number, potencyStacks: number): number {
+  if (!potencyStacks) return basePower;
+  return Math.floor(basePower * Math.pow(1.25, potencyStacks));
+}
 
 // Smithy sharpen cap raised from 3 (gold) to 6 total: first 3 use gold,
 // next 3 require ore (Smithy Reinforce). Enforced in worker handlers.
