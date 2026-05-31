@@ -81,6 +81,9 @@ import {
   FORAGE_GRID_COLS,
   FORAGE_HAZARD_DICE,
   forageFlipsForInt,
+  forageHazardCount,
+  forageCascadeFrom,
+  isForageHazard,
   generateForageGrid,
   type ForageCellKind,
   FISH_BITE_MIN_MS,
@@ -3410,7 +3413,7 @@ app.post("/api/camp/forage/flip", async (c) => {
   if (body.r < 0 || body.r >= FORAGE_GRID_ROWS || body.c < 0 || body.c >= FORAGE_GRID_COLS) {
     return c.json({ error: "bad_flip" }, 400);
   }
-  const grid = JSON.parse(game.grid_json) as ForageCellKind[][];
+  let grid = JSON.parse(game.grid_json) as ForageCellKind[][];
   const revealed = JSON.parse(game.revealed_json) as Array<[number, number]>;
   // Already revealed? No-op (client may double-tap).
   if (revealed.some(([rr, cc]) => rr === body.r && cc === body.c)) {
@@ -3419,30 +3422,70 @@ app.post("/api/camp/forage/flip", async (c) => {
   if (revealed.length >= game.flips_total) {
     return c.json({ error: "no_flips_left" }, 400);
   }
-  const cell = grid[body.r][body.c];
-  let hpDamage = 0;
-  if (cell === "snake" || cell === "mushroom") {
-    hpDamage = 1 + Math.floor(Math.random() * FORAGE_HAZARD_DICE);
+  // First-flip safety: like real Minesweeper, the first click is guaranteed
+  // safe (a 0-hazard cell). Regenerate the grid up to 40 times if the
+  // requested cell is a hazard or has any hazards in its 8 neighbors. After
+  // 40 tries we give up and let the cell stand — the player still gets a
+  // playable game even if it's tougher.
+  if (revealed.length === 0) {
+    let tries = 0;
+    while (
+      tries < 40 &&
+      (isForageHazard(grid[body.r][body.c]) || forageHazardCount(grid, body.r, body.c) > 0)
+    ) {
+      const newSeed = Math.floor(Math.random() * 0xffffffff);
+      grid = generateForageGrid(newSeed);
+      tries++;
+    }
+    // Persist the (possibly regenerated) grid so subsequent /flip calls see
+    // the same world.
+    await c.env.DB
+      .prepare("UPDATE forage_games SET grid_json = ? WHERE character_id = ?")
+      .bind(JSON.stringify(grid), session.slack_user_id)
+      .run();
   }
-  // Apply HP damage immediately but never down: clamp to min 1 HP.
+  // Cascade from the requested cell. Hazards are never auto-revealed.
+  const alreadyKeys = new Set(revealed.map(([rr, cc]) => `${rr},${cc}`));
+  const revealedCells = forageCascadeFrom(grid, body.r, body.c, alreadyKeys);
+  // HP damage if the player MANUALLY flipped a hazard (only possible when
+  // the player's first cell was a hazard AND we couldn't find a safe
+  // regeneration within 40 tries, or if they probe a guess later).
+  let hpDamage = 0;
   let newHp = character.hp;
-  if (hpDamage > 0) {
+  const firstCell = grid[body.r][body.c];
+  if (isForageHazard(firstCell)) {
+    hpDamage = 1 + Math.floor(Math.random() * FORAGE_HAZARD_DICE);
     newHp = Math.max(1, character.hp - hpDamage);
     await c.env.DB
       .prepare("UPDATE characters SET hp = ? WHERE slack_user_id = ?")
       .bind(newHp, session.slack_user_id)
       .run();
   }
-  const nextRevealed = [...revealed, [body.r, body.c]];
+  // Persist new revealed set + HP tally.
+  const nextRevealed = [
+    ...revealed,
+    ...revealedCells.map((r) => [r.r, r.c] as [number, number]),
+  ];
   const nextHpTaken = game.hp_taken + hpDamage;
-  await updateForageGame(c.env.DB, session.slack_user_id, JSON.stringify(nextRevealed), nextHpTaken);
+  await updateForageGame(
+    c.env.DB,
+    session.slack_user_id,
+    JSON.stringify(nextRevealed),
+    nextHpTaken,
+  );
   return c.json({
     ok: true,
-    cell,
+    // Manual flip — the cell the player tapped and its hazard count.
+    cell: firstCell,
+    hazard_count: forageHazardCount(grid, body.r, body.c),
+    // Cascade — every cell auto-revealed FROM this manual flip, including
+    // the manual flip itself as the first entry. Useful for the client to
+    // batch-render with a fade-in.
+    cascade: revealedCells,
     hp_damage: hpDamage,
     hp: newHp,
     max_hp: character.max_hp,
-    flips_used: nextRevealed.length,
+    flips_used: revealed.length + 1, // only ONE manual flip consumed
     flips_total: game.flips_total,
   });
 });
@@ -3456,8 +3499,8 @@ app.post("/api/camp/forage/finish", async (c) => {
   if (!game) return c.json({ error: "no_active_game" }, 400);
   const grid = JSON.parse(game.grid_json) as ForageCellKind[][];
   const revealed = JSON.parse(game.revealed_json) as Array<[number, number]>;
-  // Tally herbs and grant resources. Mushroom/snake reveals already debited
-  // HP at /flip time; here we only convert herb reveals to inventory drops.
+  // Tally herbs and grant resources. Mushroom reveals already debited HP at
+  // /flip time; here we only convert herb reveals to inventory drops.
   let mossroot = 0;
   let sunleaf = 0;
   let hazards = 0;
@@ -3465,7 +3508,7 @@ app.post("/api/camp/forage/finish", async (c) => {
     const k = grid[r][cc];
     if (k === "mossroot") mossroot++;
     else if (k === "sunleaf") sunleaf++;
-    else if (k === "snake" || k === "mushroom") hazards++;
+    else if (k === "mushroom") hazards++;
   }
   if (mossroot > 0) {
     const spec = findResource("mossroot");

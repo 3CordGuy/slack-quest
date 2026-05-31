@@ -20,15 +20,13 @@ import {
   getMuted,
   playForageBank,
   playHerbSparkle,
-  playLandmarkReveal,
   playLeafRustle,
   playMinigameComplete,
   playMushroomPop,
-  playSnakeHiss,
   setMuted,
 } from "../sound";
 
-type CellKind = "empty" | "mossroot" | "sunleaf" | "tree" | "rock" | "snake" | "mushroom";
+type CellKind = "empty" | "mossroot" | "sunleaf" | "mushroom";
 
 interface StartResponse {
   rows: number;
@@ -39,13 +37,31 @@ interface StartResponse {
   max_hp: number;
 }
 
+// One cell that the server revealed in response to a manual flip. The first
+// entry is always the cell the player tapped; the rest are cells the cascade
+// auto-revealed (only from 0-hazard-count cells).
+interface RevealedCell {
+  r: number;
+  c: number;
+  cell: CellKind;
+  hazard_count: number;
+}
+
 interface FlipResponse {
   cell: CellKind;
+  hazard_count: number;
+  cascade: RevealedCell[];
   hp_damage: number;
   hp: number;
   max_hp: number;
   flips_used: number;
   flips_total: number;
+}
+
+// Stored per revealed cell so we can render its hazard-count badge later.
+interface KnownCell {
+  kind: CellKind;
+  hazard_count: number;
 }
 
 interface FinishResource { name: string; qty: number; rarity?: string }
@@ -78,9 +94,6 @@ const CELL_LABEL: Record<CellKind, string> = {
   empty: "Empty",
   mossroot: "Mossroot",
   sunleaf: "Sunleaf",
-  tree: "Fruit Tree",
-  rock: "Rock",
-  snake: "Snake",
   mushroom: "Toxic Mushroom",
 };
 
@@ -88,9 +101,6 @@ const CELL_ICON: Record<CellKind, string | null> = {
   empty: null,
   mossroot: "tree-roots",
   sunleaf: "chestnut-leaf",
-  tree: "fruit-tree",
-  rock: "stone-rock",
-  snake: "snake-tongue",
   mushroom: "super-mushroom",
 };
 
@@ -98,47 +108,19 @@ const CELL_COLOR: Record<CellKind, string> = {
   empty: "#3a3530",
   mossroot: "#6b9248",
   sunleaf: "#c7a04a",
-  tree: "#8e5a2c",
-  rock: "#8a8a8a",
-  snake: "#b04848",
   mushroom: "#a55ec2",
 };
 
-// 8-direction neighbors used for adjacency hints.
-function neighborCoords(r: number, c: number, rows: number, cols: number): Array<[number, number]> {
-  const out: Array<[number, number]> = [];
-  for (let dr = -1; dr <= 1; dr++) {
-    for (let dc = -1; dc <= 1; dc++) {
-      if (dr === 0 && dc === 0) continue;
-      const nr = r + dr, nc = c + dc;
-      if (nr < 0 || nr >= rows || nc < 0 || nc >= cols) continue;
-      out.push([nr, nc]);
-    }
+// Color for the hazard-count number badge. Mirrors classic Minesweeper —
+// brighter / hotter as the count climbs.
+function hazardCountColor(n: number): string {
+  switch (n) {
+    case 0: return "rgba(200, 220, 255, 0.35)";
+    case 1: return "#7fbf6c";
+    case 2: return "#d9c14a";
+    case 3: return "#e08f4a";
+    default: return "#d24a3c"; // 4+
   }
-  return out;
-}
-
-// Determines the hint outline color for an unrevealed cell based on its
-// revealed neighbors. Multiple signals may stack — the most specific wins.
-function hintForCell(
-  r: number, c: number,
-  revealed: Map<string, CellKind>,
-  rows: number, cols: number,
-): { color: string; label: string } | null {
-  let dangerHint = false;
-  let safeHint = false;
-  let lushHint = false;
-  for (const [nr, nc] of neighborCoords(r, c, rows, cols)) {
-    const k = revealed.get(`${nr},${nc}`);
-    if (!k) continue;
-    if (k === "rock") dangerHint = true;
-    if (k === "mossroot") lushHint = true;
-    if (k === "sunleaf" || k === "tree") safeHint = true;
-  }
-  if (dangerHint && !safeHint) return { color: "rgba(220,90,90,0.55)", label: "snake risk" };
-  if (lushHint && !safeHint) return { color: "rgba(120,180,90,0.45)", label: "mossy ground" };
-  if (safeHint) return { color: "rgba(110,170,220,0.50)", label: "safe ground" };
-  return null;
 }
 
 interface ForageMinigameProps {
@@ -153,7 +135,11 @@ interface ForageMinigameProps {
 export function ForageMinigame({ backgroundArtUrl, onClose, onComplete }: ForageMinigameProps) {
   const [phase, setPhase] = useState<"loading" | "playing" | "submitting" | "done">("loading");
   const [grid, setGrid] = useState<StartResponse | null>(null);
-  const [revealed, setRevealed] = useState<Map<string, CellKind>>(new Map());
+  const [revealed, setRevealed] = useState<Map<string, KnownCell>>(new Map());
+  // Cells the player has flagged as a suspected hazard. Purely visual, no
+  // server round-trip, doesn't count against the flip budget. Right-click on
+  // desktop, long-press on touch.
+  const [flagged, setFlagged] = useState<Set<string>>(new Set());
   const [hp, setHp] = useState<{ current: number; max: number } | null>(null);
   const [flipsUsed, setFlipsUsed] = useState(0);
   const [busy, setBusy] = useState(false);
@@ -222,9 +208,6 @@ export function ForageMinigame({ backgroundArtUrl, onClose, onComplete }: Forage
       empty:    { count: 6,  colors: ["#7a6a5b", "#a89580", "#4a3f33"], speed: 110, life: 480, size: 2.2, twinkle: false, gravity: 480, spreadRad: Math.PI * 0.9, baseAngle: -Math.PI / 2 },
       mossroot: { count: 18, colors: ["#7fb858", "#3e7d2c", "#9cc870"], speed: 200, life: 720, size: 3.0, twinkle: false, gravity: 400, spreadRad: Math.PI * 0.9, baseAngle: -Math.PI / 2 },
       sunleaf:  { count: 26, colors: ["#f5d56b", "#ffe9a8", "#b08a40"], speed: 240, life: 880, size: 3.4, twinkle: true, gravity: 350, spreadRad: Math.PI * 1.0, baseAngle: -Math.PI / 2 },
-      tree:     { count: 14, colors: ["#7a4a26", "#a06f3a", "#3a2014"], speed: 160, life: 620, size: 2.8, twinkle: false, gravity: 460, spreadRad: Math.PI * 0.9, baseAngle: -Math.PI / 2 },
-      rock:     { count: 14, colors: ["#9c9c9c", "#5a5a5a", "#cfcfcf"], speed: 170, life: 600, size: 2.8, twinkle: false, gravity: 540, spreadRad: Math.PI * 0.9, baseAngle: -Math.PI / 2 },
-      snake:    { count: 20, colors: ["#c33c3c", "#7c1f1f", "#e87878"], speed: 260, life: 820, size: 3.0, twinkle: false, gravity: 420, spreadRad: Math.PI * 1.1, baseAngle: -Math.PI / 2 },
       mushroom: { count: 22, colors: ["#a55ec2", "#5d2e74", "#d39be3"], speed: 220, life: 800, size: 3.2, twinkle: true, gravity: 380, spreadRad: Math.PI * 1.1, baseAngle: -Math.PI / 2 },
     };
     const cfg = palette[kind];
@@ -328,15 +311,27 @@ export function ForageMinigame({ backgroundArtUrl, onClose, onComplete }: Forage
         return;
       }
       const data = (await res.json()) as { ok: true } & FlipResponse;
-      // Update revealed map.
+      // Update revealed map with the cascade — every cell the server flipped
+      // in response (the manual tap plus any 0-hazard chain).
       setRevealed((prev) => {
         const next = new Map(prev);
-        next.set(key, data.cell);
+        for (const rc of data.cascade) {
+          next.set(`${rc.r},${rc.c}`, { kind: rc.cell, hazard_count: rc.hazard_count });
+        }
+        return next;
+      });
+      // Clear any flag the player had placed on the cells we just revealed.
+      setFlagged((prev) => {
+        if (data.cascade.every((rc) => !prev.has(`${rc.r},${rc.c}`))) return prev;
+        const next = new Set(prev);
+        for (const rc of data.cascade) next.delete(`${rc.r},${rc.c}`);
         return next;
       });
       setFlipsUsed(data.flips_used);
       setHp({ current: data.hp, max: data.max_hp });
-      // Cell-specific sound + particle burst.
+      // Spawn a particle burst at the tap location for the cell the player
+      // actually tapped (data.cell). Cascade cells don't burst — they fade in
+      // visually via the cell's CSS transition.
       const cellRect = btn.getBoundingClientRect();
       const containerRect = gridContainerRef.current?.getBoundingClientRect();
       if (containerRect) {
@@ -345,8 +340,6 @@ export function ForageMinigame({ backgroundArtUrl, onClose, onComplete }: Forage
         spawnBurst(cx, cy, data.cell);
       }
       if (data.cell === "mossroot" || data.cell === "sunleaf") playHerbSparkle();
-      else if (data.cell === "rock" || data.cell === "tree") playLandmarkReveal();
-      else if (data.cell === "snake") playSnakeHiss();
       else if (data.cell === "mushroom") playMushroomPop();
       // If that was the last flip, auto-finish.
       if (data.flips_used >= data.flips_total) {
@@ -357,6 +350,18 @@ export function ForageMinigame({ backgroundArtUrl, onClose, onComplete }: Forage
     } finally {
       setBusy(false);
     }
+  }
+
+  function toggleFlag(r: number, c: number) {
+    if (phase !== "playing") return;
+    const key = `${r},${c}`;
+    if (revealed.has(key)) return;
+    setFlagged((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
   }
 
   async function bank() {
@@ -460,7 +465,7 @@ export function ForageMinigame({ backgroundArtUrl, onClose, onComplete }: Forage
             <span aria-hidden="true">·</span>
             <span><strong style={{ color: hp.current < hp.max * 0.4 ? "#e76f51" : "var(--fg-1)" }}>{hp.current}/{hp.max}</strong> HP</span>
             <span aria-hidden="true">·</span>
-            <span>Bank early to lock in. Watch for snakes near rocks and mushrooms near mossy ground.</span>
+            <span>🍄 numbers show mushrooms nearby. Long-press (or right-click) to flag a suspected mushroom.</span>
           </div>
         )}
 
@@ -525,17 +530,17 @@ export function ForageMinigame({ backgroundArtUrl, onClose, onComplete }: Forage
               {Array.from({ length: grid.rows }).flatMap((_, r) =>
                 Array.from({ length: grid.cols }).map((_, c) => {
                   const key = `${r},${c}`;
-                  const cell = revealed.get(key);
-                  const hint = cell == null ? hintForCell(r, c, revealed, grid.rows, grid.cols) : null;
+                  const known = revealed.get(key);
                   return (
                     <ForageCell
                       key={key}
                       r={r}
                       c={c}
-                      kind={cell ?? null}
-                      hint={hint}
+                      known={known ?? null}
+                      flagged={flagged.has(key)}
                       disabled={phase !== "playing" || busy || flipsUsed >= grid.flips_total}
                       onFlip={flipCell}
+                      onToggleFlag={toggleFlag}
                     />
                   );
                 }),
@@ -583,32 +588,87 @@ export function ForageMinigame({ backgroundArtUrl, onClose, onComplete }: Forage
 }
 
 function ForageCell({
-  r, c, kind, hint, disabled, onFlip,
+  r, c, known, flagged, disabled, onFlip, onToggleFlag,
 }: {
   r: number; c: number;
-  kind: CellKind | null;
-  hint: { color: string; label: string } | null;
+  known: KnownCell | null;
+  flagged: boolean;
   disabled: boolean;
   onFlip: (r: number, c: number, btn: HTMLButtonElement) => void;
+  onToggleFlag: (r: number, c: number) => void;
 }) {
-  const revealed = kind != null;
+  const revealed = known != null;
+  const kind = known?.kind ?? null;
+  const hazardCount = known?.hazard_count ?? 0;
   const iconName = kind ? CELL_ICON[kind] : null;
+  // Long-press detection for touch — track pointerdown time and fire flag on
+  // 350ms+ press. If the player lifts before 350ms, fire the normal flip.
+  const pressTimerRef = useRef<number | null>(null);
+  const longPressFiredRef = useRef<boolean>(false);
   const cellBg = kind
     ? CELL_COLOR[kind]
-    : "rgba(36, 42, 30, 0.85)";
-  const outline = hint
-    ? `inset 0 0 0 2px ${hint.color}`
+    : flagged
+      ? "rgba(56, 38, 18, 0.85)"
+      : "rgba(36, 42, 30, 0.85)";
+  const outline = flagged
+    ? "inset 0 0 0 2px rgba(245, 213, 107, 0.55)"
     : "inset 0 0 0 1px rgba(255,255,255,0.06)";
+  // For a revealed cell, we always show its hazard count badge (even 0) so the
+  // player can audit any cell at a glance. Landmarks/herbs render their icon
+  // PLUS a small corner badge; empty cells render the number large in the
+  // center (real Minesweeper style).
+  const showCenterNumber = revealed && (kind === "empty");
+  const showCornerBadge = revealed && kind != null && kind !== "empty";
+  const numberColor = hazardCountColor(hazardCount);
   return (
     <button
       type="button"
-      aria-label={revealed ? CELL_LABEL[kind!] : `Hidden — ${hint?.label ?? "unknown"}`}
-      title={revealed ? CELL_LABEL[kind!] : hint?.label}
+      aria-label={
+        revealed
+          ? `${CELL_LABEL[kind!]}${hazardCount > 0 ? ` — ${hazardCount} mushrooms nearby` : ""}`
+          : flagged ? "Flagged — suspected mushroom" : "Hidden — long-press or right-click to flag"
+      }
+      title={
+        revealed
+          ? `${CELL_LABEL[kind!]}${hazardCount > 0 ? ` (${hazardCount} mushrooms adjacent)` : ""}`
+          : flagged ? "Flagged" : undefined
+      }
       disabled={disabled || revealed}
       onPointerDown={(e) => {
         if (disabled || revealed) return;
+        // Start the long-press timer; if it fires we treat this as a flag
+        // and suppress the upcoming flip.
+        longPressFiredRef.current = false;
+        const target = e.currentTarget;
+        pressTimerRef.current = window.setTimeout(() => {
+          longPressFiredRef.current = true;
+          onToggleFlag(r, c);
+        }, 350);
+        // Don't preventDefault here yet — we want the click event to fire too
+        // unless long-press triggers.
+        // Cancel long-press on pointer leave/cancel below.
+        target.setPointerCapture?.(e.pointerId);
+      }}
+      onPointerUp={(e) => {
+        if (disabled || revealed) return;
+        if (pressTimerRef.current != null) {
+          window.clearTimeout(pressTimerRef.current);
+          pressTimerRef.current = null;
+        }
+        if (longPressFiredRef.current) return; // long-press already flagged
         e.preventDefault();
         onFlip(r, c, e.currentTarget);
+      }}
+      onPointerCancel={() => {
+        if (pressTimerRef.current != null) {
+          window.clearTimeout(pressTimerRef.current);
+          pressTimerRef.current = null;
+        }
+      }}
+      onContextMenu={(e) => {
+        if (revealed) return;
+        e.preventDefault();
+        onToggleFlag(r, c);
       }}
       style={{
         position: "relative",
@@ -630,8 +690,75 @@ function ForageCell({
       {revealed && iconName && (
         <Icon name={iconName} size={32} color="#fff" />
       )}
-      {!revealed && (
+      {showCenterNumber && (
+        hazardCount === 0 ? (
+          // 0-hazard empty cell — keep it visually quiet; the cell is just safe ground.
+          <span
+            style={{
+              fontSize: 22,
+              fontFamily: "var(--font-display)",
+              color: "rgba(255,255,255,0.18)",
+            }}
+          >
+            ·
+          </span>
+        ) : (
+          // Real Minesweeper-style: a 🍄 emoji paired with the count so the
+          // type of hazard is self-evident. Color graduates with the count.
+          <span style={{ display: "flex", alignItems: "center", gap: 3 }}>
+            <span aria-hidden="true" style={{ fontSize: 16 }}>🍄</span>
+            <span
+              style={{
+                fontSize: 22,
+                fontFamily: "var(--font-display)",
+                fontWeight: 700,
+                color: numberColor,
+                textShadow: "0 0 6px rgba(0,0,0,0.6)",
+              }}
+            >
+              {hazardCount}
+            </span>
+          </span>
+        )
+      )}
+      {showCornerBadge && hazardCount > 0 && (
+        <span
+          style={{
+            position: "absolute",
+            top: 4,
+            right: 4,
+            padding: "1px 5px 1px 4px",
+            borderRadius: 6,
+            background: "rgba(0,0,0,0.8)",
+            border: `1px solid ${numberColor}`,
+            color: numberColor,
+            fontSize: 11,
+            fontWeight: 700,
+            display: "flex",
+            alignItems: "center",
+            gap: 2,
+            lineHeight: 1,
+          }}
+        >
+          <span aria-hidden="true" style={{ fontSize: 10 }}>🍄</span>
+          <span>{hazardCount}</span>
+        </span>
+      )}
+      {!revealed && !flagged && (
         <span aria-hidden="true" style={{ fontSize: 22, fontFamily: "var(--font-display)", color: "rgba(255,255,255,0.18)" }}>?</span>
+      )}
+      {!revealed && flagged && (
+        <span
+          aria-hidden="true"
+          style={{
+            fontSize: 22,
+            color: "#f5d56b",
+            textShadow: "0 0 4px rgba(245,213,107,0.6)",
+            lineHeight: 1,
+          }}
+        >
+          ⚑
+        </span>
       )}
     </button>
   );
