@@ -2416,41 +2416,109 @@ export interface PubErrandYield {
 
 // ── Forage mini-game grid ──────────────────────────────────────────────────
 //
-// Ecology-based Minesweeper. Each "place in the forest" is one of:
+// Minesweeper-style. Each "place in the forest" is one of:
 //   - empty       : nothing under the dirt
-//   - mossroot    : common herb. Clusters; mushrooms grow nearby (they eat
-//                   the leaves). Never adjacent to rock.
-//   - sunleaf     : uncommon herb. Only grows adjacent to a tree. Repels
-//                   mushrooms — never adjacent to one.
-//   - tree        : landmark. One per grid. Sunleaf candidates ring it.
-//   - rock        : landmark. One per grid. Snakes nest adjacent to it.
-//   - snake       : hazard (1d4 HP). Only adjacent to the rock.
-//   - mushroom    : poison hazard (1d4 HP). Adjacent to mossroot, never
-//                   adjacent to sunleaf or the tree.
+//   - mossroot    : common herb. Clusters together.
+//   - sunleaf     : uncommon herb. Repels mushrooms — never adjacent to one,
+//                   so revealing a sunleaf confirms its neighbors are safe.
+//   - mushroom    : poison hazard (1d4 HP). The only danger in the forest.
 //
-// Revealing a landmark/herb gives the player information about what *might*
-// be adjacent (via UI outlines). The server generates the grid; the client
-// echoes a signed state token back at /finish so the player can't fake the
-// underlying layout.
+// Revealed cells render a hazard-count badge (count of adjacent mushrooms in
+// the 8-neighborhood). Players deduce mushroom positions from the numbers,
+// classic Minesweeper-style. The server generates the grid and tracks
+// reveals in the forage_games table.
 export type ForageCellKind =
   | "empty"
   | "mossroot"
   | "sunleaf"
-  | "tree"
-  | "rock"
-  | "snake"
   | "mushroom";
 
 export const FORAGE_GRID_ROWS = 4;
 export const FORAGE_GRID_COLS = 4;
-export const FORAGE_BASE_FLIPS = 5;
-export const FORAGE_MAX_FLIPS = 7;
+// Cascade reveals (Minesweeper-style flood from 0-hazard cells) are free, so
+// the manual flip budget is tighter — each tap is now a deduction, not a
+// resource to spend.
+export const FORAGE_BASE_FLIPS = 4;
+export const FORAGE_MAX_FLIPS = 6;
 export const FORAGE_HAZARD_DICE = 4; // 1dN HP per snake/mushroom
 
 export function forageFlipsForInt(intStat: number | null | undefined): number {
   const base = FORAGE_BASE_FLIPS;
   const bonus = Math.min(FORAGE_MAX_FLIPS - base, Math.max(0, ((intStat ?? 5) - 5)));
   return base + bonus;
+}
+
+// True if the cell is a hazard. Mushrooms are the only danger in the
+// simplified ecology; the count badge on revealed cells reflects this.
+export function isForageHazard(kind: ForageCellKind): boolean {
+  return kind === "mushroom";
+}
+
+// Count hazards in the 8-neighborhood of (r, c).
+export function forageHazardCount(grid: ForageCellKind[][], r: number, c: number): number {
+  let n = 0;
+  for (let dr = -1; dr <= 1; dr++) {
+    for (let dc = -1; dc <= 1; dc++) {
+      if (dr === 0 && dc === 0) continue;
+      const nr = r + dr, nc = c + dc;
+      if (nr < 0 || nr >= FORAGE_GRID_ROWS || nc < 0 || nc >= FORAGE_GRID_COLS) continue;
+      if (isForageHazard(grid[nr][nc])) n++;
+    }
+  }
+  return n;
+}
+
+// BFS cascade from a starting reveal. The starting cell is always included.
+// Any revealed cell with hazard_count === 0 (and that isn't itself a hazard)
+// expands to its 8 neighbors. Hazards are NEVER returned by the cascade —
+// they only appear when manually flipped, since 0-count cells by definition
+// have no hazard neighbors.
+//
+// Pass `alreadyRevealed` as the set of "r,c" keys already in the player's
+// revealed list so the cascade doesn't redundantly re-include them.
+export interface ForageRevealedCell {
+  r: number;
+  c: number;
+  cell: ForageCellKind;
+  hazard_count: number;
+}
+
+export function forageCascadeFrom(
+  grid: ForageCellKind[][],
+  startR: number,
+  startC: number,
+  alreadyRevealed: Set<string>,
+): ForageRevealedCell[] {
+  const out: ForageRevealedCell[] = [];
+  const seen = new Set<string>();
+  const queue: Array<[number, number]> = [[startR, startC]];
+  while (queue.length > 0) {
+    const [r, c] = queue.shift()!;
+    const key = `${r},${c}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    if (alreadyRevealed.has(key)) continue;
+    const cell = grid[r][c];
+    const hazardCount = forageHazardCount(grid, r, c);
+    out.push({ r, c, cell, hazard_count: hazardCount });
+    // Cascade only through 0-count, non-hazard cells. (Hazards never appear
+    // via cascade because a 0-count cell has no hazard neighbors by
+    // definition; this is a belt-and-suspenders guard.)
+    if (hazardCount === 0 && !isForageHazard(cell)) {
+      for (let dr = -1; dr <= 1; dr++) {
+        for (let dc = -1; dc <= 1; dc++) {
+          if (dr === 0 && dc === 0) continue;
+          const nr = r + dr, nc = c + dc;
+          if (nr < 0 || nr >= FORAGE_GRID_ROWS || nc < 0 || nc >= FORAGE_GRID_COLS) continue;
+          const nKey = `${nr},${nc}`;
+          if (!seen.has(nKey) && !alreadyRevealed.has(nKey)) {
+            queue.push([nr, nc]);
+          }
+        }
+      }
+    }
+  }
+  return out;
 }
 
 // 8-direction adjacency.
@@ -2490,81 +2558,46 @@ export function generateForageGrid(seed: number): ForageCellKind[][] {
     Array.from({ length: FORAGE_GRID_COLS }, () => "empty" as ForageCellKind),
   );
 
-  // 1. Place exactly one rock and one tree, never adjacent to each other.
-  const rockPos = pickRandomEmpty(grid, rnd);
-  if (rockPos) grid[rockPos[0]][rockPos[1]] = "rock";
-  const treePos = pickRandomEmpty(grid, rnd, (r, c) => {
-    if (!rockPos) return true;
-    return !neighbors(r, c).some(([nr, nc]) => nr === rockPos[0] && nc === rockPos[1]);
-  });
-  if (treePos) grid[treePos[0]][treePos[1]] = "tree";
-
-  // 2. Snakes — only adjacent to the rock. 1-2 snakes.
-  const snakeCount = 1 + Math.floor(rnd() * 2);
-  if (rockPos) {
-    const candidates = neighbors(rockPos[0], rockPos[1]).filter(([r, c]) => grid[r][c] === "empty");
-    for (let i = 0; i < snakeCount && candidates.length > 0; i++) {
-      const idx = Math.floor(rnd() * candidates.length);
-      const [r, c] = candidates.splice(idx, 1)[0];
-      grid[r][c] = "snake";
-    }
-  }
-
-  // 3. Sunleaf — only adjacent to the tree. 1-2 sunleaf.
-  const sunleafCount = 1 + Math.floor(rnd() * 2);
-  const sunleafCells: Array<[number, number]> = [];
-  if (treePos) {
-    const candidates = neighbors(treePos[0], treePos[1]).filter(([r, c]) => grid[r][c] === "empty");
-    for (let i = 0; i < sunleafCount && candidates.length > 0; i++) {
-      const idx = Math.floor(rnd() * candidates.length);
-      const [r, c] = candidates.splice(idx, 1)[0];
-      grid[r][c] = "sunleaf";
-      sunleafCells.push([r, c]);
-    }
-  }
-
-  // 4. Mossroot clusters — 2 to 3 cells, never adjacent to rock.
-  const mossrootCount = 2 + Math.floor(rnd() * 2);
+  // 1. Mossroot — clusters of 3-4 cells. Picks a seed at random and grows
+  //    outward into empty neighbors. Pure flavor; doesn't affect deduction.
+  const mossrootCount = 3 + Math.floor(rnd() * 2);
   const mossrootCells: Array<[number, number]> = [];
-  // Seed the cluster.
-  const firstMoss = pickRandomEmpty(grid, rnd, (r, c) => {
-    if (!rockPos) return true;
-    return !neighbors(r, c).some(([nr, nc]) => nr === rockPos[0] && nc === rockPos[1]);
-  });
+  const firstMoss = pickRandomEmpty(grid, rnd);
   if (firstMoss) {
     grid[firstMoss[0]][firstMoss[1]] = "mossroot";
     mossrootCells.push(firstMoss);
   }
-  // Grow the cluster outward.
   for (let i = 1; i < mossrootCount; i++) {
     const seedCell = mossrootCells[mossrootCells.length - 1];
-    const candidates = neighbors(seedCell[0], seedCell[1]).filter(([r, c]) => {
-      if (grid[r][c] !== "empty") return false;
-      if (rockPos && neighbors(r, c).some(([nr, nc]) => nr === rockPos[0] && nc === rockPos[1])) return false;
-      return true;
-    });
+    const candidates = neighbors(seedCell[0], seedCell[1]).filter(
+      ([r, c]) => grid[r][c] === "empty",
+    );
     if (candidates.length === 0) break;
     const [r, c] = candidates[Math.floor(rnd() * candidates.length)];
     grid[r][c] = "mossroot";
     mossrootCells.push([r, c]);
   }
 
-  // 5. Mushrooms — adjacent to mossroot, NEVER adjacent to sunleaf or tree.
-  const mushroomCount = 1 + Math.floor(rnd() * 2);
-  const mossNeighbors = new Set<string>();
-  for (const [r, c] of mossrootCells) {
-    for (const [nr, nc] of neighbors(r, c)) {
-      if (grid[nr][nc] !== "empty") continue;
-      // Skip if adjacent to sunleaf or tree.
-      if (neighbors(nr, nc).some(([ar, ac]) => grid[ar][ac] === "sunleaf" || grid[ar][ac] === "tree")) continue;
-      mossNeighbors.add(`${nr},${nc}`);
-    }
+  // 2. Sunleaf — 1-2 placed randomly. Sunleaf will gate mushroom placement
+  //    in the next step, so revealing a sunleaf certifies its neighbors as
+  //    mushroom-free (the only ecological deduction rule left in the
+  //    simplified game).
+  const sunleafCount = 1 + Math.floor(rnd() * 2);
+  for (let i = 0; i < sunleafCount; i++) {
+    const slot = pickRandomEmpty(grid, rnd);
+    if (!slot) break;
+    grid[slot[0]][slot[1]] = "sunleaf";
   }
-  const mushroomCandidates = Array.from(mossNeighbors).map((k) => k.split(",").map(Number) as [number, number]);
-  for (let i = 0; i < mushroomCount && mushroomCandidates.length > 0; i++) {
-    const idx = Math.floor(rnd() * mushroomCandidates.length);
-    const [r, c] = mushroomCandidates.splice(idx, 1)[0];
-    if (grid[r][c] === "empty") grid[r][c] = "mushroom";
+
+  // 3. Mushrooms — 2-3 random hazards. Never spawn adjacent to a sunleaf so
+  //    sunleaf reveals are reliable safety signals for their neighbors.
+  const mushroomCount = 2 + Math.floor(rnd() * 2);
+  for (let i = 0; i < mushroomCount; i++) {
+    const slot = pickRandomEmpty(grid, rnd, (r, c) =>
+      !neighbors(r, c).some(([nr, nc]) => grid[nr][nc] === "sunleaf"),
+    );
+    if (!slot) break;
+    grid[slot[0]][slot[1]] = "mushroom";
   }
 
   return grid;
