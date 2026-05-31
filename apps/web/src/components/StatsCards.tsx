@@ -596,7 +596,21 @@ function HarvestHallCard({ entries, selfId }: { entries: HarvestLeaderboardEntry
       iconName: "chestnut-leaf",
       isSelf: e.slack_user_id === selfId,
     }));
-  if (mineEntries.length === 0 && forageEntries.length === 0) return null;
+  // Fastest Hook: lower ms = better. Min-plays gate (≥5) filters lucky
+  // one-shots so a single 80ms reaction doesn't crown an unproven player.
+  const fishEntries: RenownEntry[] = entries
+    .filter((e) => e.fish_best_ms > 0 && e.fish_plays >= 5)
+    .sort((a, b) => a.fish_best_ms - b.fish_best_ms)
+    .map((e) => ({
+      id: e.slack_user_id,
+      name: e.name,
+      subtitle: e.class,
+      metric: `${e.fish_best_ms} ms`,
+      metricLabel: "Hook",
+      iconName: "fishing-hook",
+      isSelf: e.slack_user_id === selfId,
+    }));
+  if (mineEntries.length === 0 && forageEntries.length === 0 && fishEntries.length === 0) return null;
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
       {mineEntries.length > 0 && (
@@ -615,6 +629,15 @@ function HarvestHallCard({ entries, selfId }: { entries: HarvestLeaderboardEntry
           metricLabel="Flawless"
           rowIcon="chestnut-leaf"
           footerNote="Quick Forage runs that ended with herbs in the basket and zero hazards triggered."
+        />
+      )}
+      {fishEntries.length > 0 && (
+        <HallOfRenown
+          title="Fastest Hook"
+          entries={fishEntries}
+          metricLabel="Reaction"
+          rowIcon="fishing-hook"
+          footerNote="Best reaction time to the Quick Cast bite. Lower is better. Requires 5+ casts logged."
         />
       )}
     </div>

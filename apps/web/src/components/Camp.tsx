@@ -18,6 +18,7 @@ import { muted } from "../styles";
 import { SmallBadge } from "./ui";
 import { MiningMinigame } from "./MiningMinigame";
 import { ForageMinigame } from "./ForageMinigame";
+import { FishingMinigame } from "./FishingMinigame";
 
 // Static resource list keyed by node. Mirrors RESOURCE_CATALOG from
 // @gantt-quest/core. Inlined here to keep Camp.tsx free of the workspace
@@ -66,14 +67,20 @@ interface CampProps {
   characterStr?: number;
   /** Intelligence — drives the foraging flip budget (5-7). */
   characterInt?: number;
+  /** Dexterity — widens the fishing bite window. */
+  characterDex?: number;
   /** Timestamp (ms) when mining vigor will be full. Null/past = full. */
   characterVigorFullAt?: number | null;
   /** Timestamp (ms) when forage vigor will be full. Null/past = full. */
   characterForageVigorFullAt?: number | null;
+  /** Timestamp (ms) when fishing vigor will be full. Null/past = full. */
+  characterFishVigorFullAt?: number | null;
   /** AI-generated mine art (used as the mining mini-game backdrop). */
   mineArtUrl?: string | null;
   /** AI-generated forage art (used as the forage mini-game backdrop). */
   forageArtUrl?: string | null;
+  /** AI-generated fishing art (used as the fishing mini-game backdrop). */
+  fishArtUrl?: string | null;
   /** Active sidebar section from LocationModalWide render prop */
   section: string;
   status: CampStatusResponse | null;
@@ -87,8 +94,9 @@ interface CampProps {
 }
 
 export function Camp({
-  characterLevel: _characterLevel, characterStr, characterInt, characterVigorFullAt, characterForageVigorFullAt,
-  mineArtUrl, forageArtUrl, section, status, inventory,
+  characterLevel: _characterLevel, characterStr, characterInt, characterDex,
+  characterVigorFullAt, characterForageVigorFullAt, characterFishVigorFullAt,
+  mineArtUrl, forageArtUrl, fishArtUrl, section, status, inventory,
   onStartGather, onClaim, onCancel, onBuildUpgrade, onMinigamePlayed,
 }: CampProps) {
   const activeBySlot = useMemo(() => {
@@ -116,10 +124,13 @@ export function Camp({
           activeBySlot={activeBySlot}
           characterStr={characterStr}
           characterInt={characterInt}
+          characterDex={characterDex}
           characterVigorFullAt={characterVigorFullAt}
           characterForageVigorFullAt={characterForageVigorFullAt}
+          characterFishVigorFullAt={characterFishVigorFullAt}
           mineArtUrl={mineArtUrl}
           forageArtUrl={forageArtUrl}
+          fishArtUrl={fishArtUrl}
           onMinigamePlayed={onMinigamePlayed}
         />
       </div>
@@ -386,8 +397,11 @@ function ActiveTaskRow({
 }
 
 function GatheringNodePanel({
-  node, status, onStart, activeBySlot, characterStr, characterInt, characterVigorFullAt, characterForageVigorFullAt,
-  mineArtUrl, forageArtUrl, onMinigamePlayed,
+  node, status, onStart, activeBySlot,
+  characterStr, characterInt, characterDex,
+  characterVigorFullAt, characterForageVigorFullAt, characterFishVigorFullAt,
+  mineArtUrl, forageArtUrl, fishArtUrl,
+  onMinigamePlayed,
 }: {
   node: CampNode;
   status: CampStatusResponse | null;
@@ -395,13 +409,16 @@ function GatheringNodePanel({
   activeBySlot: Map<number, ActiveGatheringTask>;
   characterStr?: number;
   characterInt?: number;
+  characterDex?: number;
   characterVigorFullAt?: number | null;
   characterForageVigorFullAt?: number | null;
+  characterFishVigorFullAt?: number | null;
   mineArtUrl?: string | null;
   forageArtUrl?: string | null;
+  fishArtUrl?: string | null;
   onMinigamePlayed?: () => void;
 }) {
-  // Mini-game modal state. Phase 1 wires this only for mine + forage nodes.
+  // Mini-game modal state — wired for all three node types.
   const [minigameOpen, setMinigameOpen] = useState(false);
   // Re-render every 30s while the panel is open so the vigor countdown ticks.
   const [, setNowTick] = useState(0);
@@ -570,6 +587,62 @@ function GatheringNodePanel({
         );
       })()}
 
+      {node === "fish" && (() => {
+        const now = Date.now();
+        const vigor = currentVigor(characterFishVigorFullAt, now);
+        const tickIn = nextVigorTickIn(characterFishVigorFullAt, now);
+        const outOfVigor = vigor <= 0;
+        return (
+          <div style={{
+            marginTop: 10,
+            padding: "10px 12px",
+            borderRadius: "var(--radius-md)",
+            border: "1px dashed rgba(95, 165, 220, 0.45)",
+            background: "rgba(95, 165, 220, 0.06)",
+            display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap",
+            opacity: outOfVigor ? 0.7 : 1,
+          }}>
+            <Icon name="fishing-hook" size={18} color="#7cb9e0" />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, font: "11px/1 var(--font-display)", textTransform: "uppercase", letterSpacing: 1.4, color: "var(--fg-mute)" }}>
+                <span>Immediate</span>
+                <VigorPips vigor={vigor} max={MAX_VIGOR} color="#7cb9e0" />
+              </div>
+              <div style={{ fontSize: 13, marginTop: 4 }}>
+                {outOfVigor
+                  ? `Out of fishing vigor — rest up. Next cast ${tickIn != null ? `in ${formatVigorCountdown(tickIn)}` : "soon"}.`
+                  : "Quick Cast — wait for the tug, set the hook, then reel hard."}
+              </div>
+              {!outOfVigor && tickIn != null && (
+                <div style={{ fontSize: 11, color: "var(--fg-mute)", marginTop: 2 }}>
+                  +1 vigor in {formatVigorCountdown(tickIn)}
+                </div>
+              )}
+            </div>
+            <button
+              type="button"
+              onClick={() => setMinigameOpen(true)}
+              disabled={outOfVigor}
+              title={outOfVigor ? "No vigor — try again later." : undefined}
+              style={{
+                minHeight: 40,
+                padding: "8px 14px",
+                border: outOfVigor ? "1px solid var(--border-base)" : "1px solid #7cb9e0",
+                borderRadius: "var(--radius-md)",
+                background: outOfVigor ? "var(--bg-card)" : "rgba(95, 165, 220, 0.18)",
+                color: outOfVigor ? "var(--fg-mute)" : "#bcdcf0",
+                fontWeight: 600,
+                fontFamily: "inherit",
+                cursor: outOfVigor ? "not-allowed" : "pointer",
+                touchAction: "manipulation",
+              }}
+            >
+              Quick Cast
+            </button>
+          </div>
+        );
+      })()}
+
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12, marginTop: 14 }}>
         {(["quick", "standard", "deep"] as CampTier[]).map((tier) => (
           <TierCard
@@ -607,6 +680,15 @@ function GatheringNodePanel({
         <ForageMinigame
           int_stat={characterInt}
           backgroundArtUrl={forageArtUrl}
+          onClose={() => setMinigameOpen(false)}
+          onComplete={() => onMinigamePlayed?.()}
+        />
+      )}
+      {minigameOpen && node === "fish" && (
+        <FishingMinigame
+          dex_stat={characterDex}
+          str_stat={characterStr}
+          backgroundArtUrl={fishArtUrl}
           onClose={() => setMinigameOpen(false)}
           onComplete={() => onMinigamePlayed?.()}
         />

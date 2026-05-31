@@ -156,6 +156,11 @@ export interface Character {
   /** Forage-specific vigor pool (migration 0057). Separate from mining so
       each node has its own bursty cadence. Same semantics as vigor_full_at. */
   forage_vigor_full_at: number | null;
+  /** Fishing-specific vigor pool (migration 0058). */
+  fish_vigor_full_at: number | null;
+  /** Total Quick Cast plays — gates the Fastest Hook leaderboard so a
+      lucky one-shot doesn't dominate. */
+  fish_plays: number;
 }
 
 interface CharacterRow extends Omit<Character, "scars" | "effects" | "drink_buff" | "achievements" | "pending_achievements"> {
@@ -836,6 +841,7 @@ export async function getTowerLeaderboard(
 
 // Camp mini-game leaderboard row. Each player has one row with all three
 // per-node mastery stats; the UI picks which one to rank by per row.
+// fish_plays gates the Fastest Hook board so a lucky one-shot doesn't win.
 export interface HarvestLeaderboardRow {
   slack_user_id: string;
   name: string;
@@ -844,6 +850,7 @@ export interface HarvestLeaderboardRow {
   mine_rich_hits: number;
   forage_rare_finds: number;
   fish_best_ms: number;
+  fish_plays: number;
 }
 
 // Pulls a single rows-per-character set with all three mini-game stats so
@@ -858,7 +865,7 @@ export async function getHarvestLeaderboard(
   const res = await db
     .prepare(
       `SELECT slack_user_id, name, class, slack_username,
-              mine_rich_hits, forage_rare_finds, fish_best_ms
+              mine_rich_hits, forage_rare_finds, fish_best_ms, fish_plays
          FROM characters
         WHERE mine_rich_hits > 0 OR forage_rare_finds > 0 OR fish_best_ms > 0
         ORDER BY (mine_rich_hits + forage_rare_finds + CASE WHEN fish_best_ms > 0 THEN 1 ELSE 0 END) DESC
@@ -4034,6 +4041,100 @@ export async function deleteForageGame(
   await db
     .prepare("DELETE FROM forage_games WHERE character_id = ?")
     .bind(characterId)
+    .run();
+}
+
+// ── Fishing mini-game DB helpers ───────────────────────────────────────────
+
+export interface FishGameRow {
+  character_id: string;
+  phase: "waiting" | "reeling";
+  cast_at: number;
+  bite_at_ms: number;
+  reaction_ms: number | null;
+  quality_score: number | null;
+  bite_window_ms: number;
+}
+
+export async function getFishGame(
+  db: D1Database,
+  characterId: string,
+): Promise<FishGameRow | null> {
+  return await db
+    .prepare("SELECT * FROM fish_games WHERE character_id = ?")
+    .bind(characterId)
+    .first<FishGameRow>();
+}
+
+export async function startFishGame(
+  db: D1Database,
+  characterId: string,
+  castAt: number,
+  biteAtMs: number,
+  biteWindowMs: number,
+): Promise<void> {
+  // INSERT OR REPLACE clears any stale prior game.
+  await db
+    .prepare(
+      `INSERT OR REPLACE INTO fish_games
+       (character_id, phase, cast_at, bite_at_ms, reaction_ms, quality_score, bite_window_ms)
+       VALUES (?, 'waiting', ?, ?, NULL, NULL, ?)`,
+    )
+    .bind(characterId, castAt, biteAtMs, biteWindowMs)
+    .run();
+}
+
+export async function recordFishStrike(
+  db: D1Database,
+  characterId: string,
+  reactionMs: number,
+): Promise<void> {
+  await db
+    .prepare(
+      `UPDATE fish_games SET phase = 'reeling', reaction_ms = ? WHERE character_id = ?`,
+    )
+    .bind(reactionMs, characterId)
+    .run();
+}
+
+export async function deleteFishGame(
+  db: D1Database,
+  characterId: string,
+): Promise<void> {
+  await db
+    .prepare("DELETE FROM fish_games WHERE character_id = ?")
+    .bind(characterId)
+    .run();
+}
+
+// Increment lifetime fishing plays — drives the >=5 plays gate on the
+// Fastest Hook leaderboard. Called once at /finish per Quick Cast.
+export async function bumpFishPlays(
+  db: D1Database,
+  userId: string,
+): Promise<void> {
+  await db
+    .prepare("UPDATE characters SET fish_plays = fish_plays + 1 WHERE slack_user_id = ?")
+    .bind(userId)
+    .run();
+}
+
+// Best-reaction-time tracker. Updates fish_best_ms only when the new value
+// is faster than the current best (or when fish_best_ms is 0 = no prior catch).
+export async function updateFishBestMs(
+  db: D1Database,
+  userId: string,
+  reactionMs: number,
+): Promise<void> {
+  if (reactionMs <= 0) return;
+  await db
+    .prepare(
+      `UPDATE characters
+          SET fish_best_ms = ?
+        WHERE slack_user_id = ?
+          AND (fish_best_ms = 0 OR fish_best_ms > ?)`,
+    )
+    .bind(reactionMs, userId, reactionMs)
     .run();
 }
 

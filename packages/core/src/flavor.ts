@@ -2570,6 +2570,50 @@ export function generateForageGrid(seed: number): ForageCellKind[][] {
   return grid;
 }
 
+// ── Fishing mini-game tuning ───────────────────────────────────────────────
+//
+// Two phases per cast:
+//   1. WAIT — bobber bobs for a random delay (FISH_BITE_MIN..FISH_BITE_MAX ms).
+//      A bite cue fires; the player has BITE_WINDOW ms to strike. DEX widens
+//      the window. Reaction time is recorded for the Fastest Hook board.
+//   2. REEL — the player holds to reel against a fish that pulls back. The
+//      indicator must stay in the SAFE zone (middle) to fill the catch meter.
+//      SLACK (top) and SNAP (bottom) zones leak the catch meter back down.
+//      STR softens the fish's pull rate.
+//
+// Loot tier follows the same anti-grind pattern as mining + forage:
+//   - Common  : river_carp
+//   - Uncommon: silverfin (mini-game ceiling; quality-gated)
+//   - Rare    : abyss_eel — DEEP TIER ONLY, never from Quick Cast.
+export const FISH_BITE_MIN_MS = 1800;
+export const FISH_BITE_MAX_MS = 6500;
+export const FISH_BITE_WINDOW_BASE_MS = 700;   // +30ms per DEX above 5, cap +400
+export const FISH_REACTION_FLOOR_MS = 80;      // human-floor anti-cheese
+export const FISH_REEL_TARGET_MS = 3500;       // total reel-phase duration
+export const FISH_PULL_RATE_BASE = 0.45;       // SAFE-zone falloff per second; STR softens
+
+export function fishBiteWindowForDex(dexStat: number | null | undefined): number {
+  const dex = dexStat ?? 5;
+  const bonusSteps = Math.max(0, Math.min(13, dex - 5));
+  return FISH_BITE_WINDOW_BASE_MS + bonusSteps * 30; // 700..1090ms
+}
+
+export function fishPullRateForStr(strStat: number | null | undefined): number {
+  const str = strStat ?? 5;
+  // Each STR above 5 trims the pull rate by 1.5%, cap -15% (so STR 15 → 0.85 × base).
+  const reduction = Math.max(0, Math.min(0.15, (str - 5) * 0.015));
+  return FISH_PULL_RATE_BASE * (1 - reduction);
+}
+
+// Catch quality blends reaction speed and reel performance. Returns 0..1.
+// Reaction component (40%): fastest = 1.0 at 120ms, decays to 0 at 700ms.
+// Reel component (60%): clamped raw value the client measured.
+export function fishCatchQuality(reactionMs: number, reelSafeFraction: number): number {
+  const reactScale = Math.max(0, Math.min(1, (700 - Math.max(reactionMs, 120)) / 580));
+  const reelScale = Math.max(0, Math.min(1, reelSafeFraction));
+  return 0.4 * reactScale + 0.6 * reelScale;
+}
+
 // Roll the reward bag for an errand. Deterministic by errand id so the same
 // errand always pays the same — fetch and claim agree without locking.
 export function rollPubErrandYield(

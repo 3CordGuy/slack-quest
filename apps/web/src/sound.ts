@@ -185,3 +185,36 @@ export function playForageBank(): void {
     tone({ type: "triangle", startFreq: freq, duration: 0.22, gain: 0.18, delay: i * 0.1 });
   });
 }
+
+// === Fishing ===
+
+// Soft plop when the bobber hits the water.
+export function playBobberCast(): void {
+  noiseBurst({ duration: 0.16, gain: 0.18, filterType: "lowpass", filterFreq: 400 });
+  tone({ type: "sine", startFreq: 180, endFreq: 90, duration: 0.18, gain: 0.16 });
+}
+
+// Two quick high ticks signalling the bite is live — the moment to strike.
+export function playBiteAlert(): void {
+  tone({ type: "square", startFreq: 880, duration: 0.05, gain: 0.16 });
+  tone({ type: "square", startFreq: 1100, duration: 0.05, gain: 0.16, delay: 0.09 });
+}
+
+// Short metallic click that repeats while the player holds to reel.
+export function playReelClick(): void {
+  tone({ type: "square", startFreq: 1500, endFreq: 1300, duration: 0.03, gain: 0.06 });
+}
+
+// Ascending 3-note chime on catch (C E G).
+export function playFishCaught(): void {
+  const notes = [523.25, 659.25, 783.99];
+  notes.forEach((freq, i) => {
+    tone({ type: "triangle", startFreq: freq, duration: 0.22, gain: 0.18, delay: i * 0.08 });
+  });
+}
+
+// Descending wobble when the fish escapes.
+export function playFishEscaped(): void {
+  tone({ type: "sine", startFreq: 420, endFreq: 180, duration: 0.4, gain: 0.18 });
+  noiseBurst({ duration: 0.12, gain: 0.1, filterType: "lowpass", filterFreq: 500, delay: 0.05 });
+}

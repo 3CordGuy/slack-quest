@@ -1598,10 +1598,13 @@ export function App() {
               characterLevel={state.me.character!.level}
               characterStr={state.me.character!.str}
               characterInt={state.me.character!.int_stat}
+              characterDex={state.me.character!.dex}
               characterVigorFullAt={state.me.character!.vigor_full_at}
               characterForageVigorFullAt={state.me.character!.forage_vigor_full_at}
+              characterFishVigorFullAt={state.me.character!.fish_vigor_full_at}
               mineArtUrl={state.townArt?.mine_art_url ?? null}
               forageArtUrl={state.townArt?.forage_art_url ?? null}
+              fishArtUrl={state.townArt?.fish_art_url ?? null}
               section={activeSection}
               status={campStatus}
               inventory={state.inventory}
