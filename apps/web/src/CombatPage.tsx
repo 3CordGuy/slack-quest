@@ -2827,11 +2827,15 @@ function PartySection({
 
 // Inject shield-particle keyframes once per page load.
 function FighterHpRow({ hp, maxHp, shield, armorPower }: { hp: number; maxHp: number; shield: number; armorPower: number }) {
-  const pct = maxHp > 0 ? Math.max(0, Math.min(1, hp / maxHp)) : 0;
-  const hpCol = pct < 0.25 ? "#dc2626" : pct < 0.5 ? "#d97706" : "#16a34a";
   const armorMax = Math.floor(armorPower / 2);
-  const hasShield = shield > 0;
-  const shieldPct = armorMax > 0 ? Math.min(1, shield / armorMax) : 0;
+  const total = maxHp + armorMax;
+  const hpFrac = maxHp > 0 ? hp / maxHp : 0;
+  const hpCol = hpFrac < 0.25 ? "#dc2626" : hpFrac < 0.5 ? "#d97706" : "#16a34a";
+  // HP occupies left (maxHp/total) of bar; shield occupies right (armorMax/total), anchored at the boundary.
+  const hpWidth = total > 0 ? (hp / total) * 100 : 0;
+  const shieldStart = total > 0 ? (maxHp / total) * 100 : 100;
+  const shieldWidth = total > 0 ? (shield / total) * 100 : 0;
+  const hasShield = armorMax > 0 && shield > 0;
   return (
     <div style={{ marginTop: 6, display: "flex", alignItems: "center", gap: 8 }}>
       <div
@@ -2841,14 +2845,12 @@ function FighterHpRow({ hp, maxHp, shield, armorPower }: { hp: number; maxHp: nu
           boxShadow: hasShield ? "0 0 5px rgba(96,165,250,.45)" : "none",
         }}
       >
-        <i style={{ width: `${pct * 100}%`, background: hpCol, zIndex: 1 }} />
-        {hasShield && shieldPct > 0 && (
+        <i style={{ width: `${hpWidth}%`, background: hpCol }} />
+        {armorMax > 0 && shield > 0 && (
           <i style={{
-            left: "auto",
-            right: 0,
-            width: `${shieldPct * 100}%`,
+            left: `${shieldStart}%`,
+            width: `${shieldWidth}%`,
             background: "repeating-linear-gradient(45deg,#93c5fd,#93c5fd 4px,#60a5fa 4px,#60a5fa 8px)",
-            zIndex: 2,
           }} />
         )}
       </div>
@@ -3853,7 +3855,10 @@ function PartyChips({ fighters, selfId, flashIds, hitDustSeq, healBurstSeq, shie
     const opacity = down ? 0.65 : 1;
 
     const chipArmorMax = Math.floor((f.armor_power ?? 0) / 2);
-    const shieldPct = chipArmorMax > 0 ? Math.min(1, f.shield / chipArmorMax) : 0;
+    const chipTotal = f.max_hp + chipArmorMax;
+    const chipHpWidth = chipTotal > 0 ? (f.hp / chipTotal) * 100 : 0;
+    const chipShieldStart = chipTotal > 0 ? (f.max_hp / chipTotal) * 100 : 100;
+    const chipShieldWidth = chipTotal > 0 ? (f.shield / chipTotal) * 100 : 0;
     const padding = compactMode ? 8 : "9px 10px";
 
     return (
@@ -3962,14 +3967,12 @@ function PartyChips({ fighters, selfId, flashIds, hitDustSeq, healBurstSeq, shie
               boxShadow: hasShield ? "0 0 5px rgba(96,165,250,.45)" : "none",
             }}
           >
-            <i style={{ width: `${pct * 100}%`, background: hpCol }} />
-            {hasShield && shieldPct > 0 && (
+            <i style={{ width: `${chipHpWidth}%`, background: hpCol }} />
+            {chipArmorMax > 0 && f.shield > 0 && (
               <i style={{
-                left: "auto",
-                right: 0,
-                width: `${shieldPct * 100}%`,
+                left: `${chipShieldStart}%`,
+                width: `${chipShieldWidth}%`,
                 background: "repeating-linear-gradient(45deg,#93c5fd,#93c5fd 4px,#60a5fa 4px,#60a5fa 8px)",
-                zIndex: 2,
               }} />
             )}
           </div>

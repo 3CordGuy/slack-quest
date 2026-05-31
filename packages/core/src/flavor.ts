@@ -276,9 +276,9 @@ export const DAMAGE_TYPE_EMOJI: Record<DamageType, string> = {
   lightning: "🌩️",
 };
 
-// Proc rate per hit by weapon rarity (only rare+ weapons can have elements).
-export const ELEMENT_PROC_RATE: Record<"rare" | "epic" | "legendary", number> = {
-  rare: 0.20, epic: 0.30, legendary: 0.40,
+// Proc rate per hit by weapon rarity. Uncommon weapons can have elements at a lower rate.
+export const ELEMENT_PROC_RATE: Record<"uncommon" | "rare" | "epic" | "legendary", number> = {
+  uncommon: 0.10, rare: 0.20, epic: 0.30, legendary: 0.40,
 };
 
 // Probability a rare+ non-focus weapon receives an element at drop time.
@@ -1384,7 +1384,7 @@ function rollWeaponElement(
   rarity: Rarity,
 ): ElementType | undefined {
   if (type !== "weapon" || weaponRange === "focus") return undefined;
-  if (rarity !== "rare" && rarity !== "epic" && rarity !== "legendary") return undefined;
+  if (rarity !== "uncommon" && rarity !== "rare" && rarity !== "epic" && rarity !== "legendary") return undefined;
   if (Math.random() >= ELEMENT_WEAPON_ROLL_CHANCE) return undefined;
   return ELEMENTS[Math.floor(Math.random() * ELEMENTS.length)];
 }

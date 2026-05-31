@@ -1652,6 +1652,7 @@ export function App() {
                   combatInProgress={hasWebCombat}
                   onStartCombat={() => startCombat(state.activeQuest!.quest.id)}
                   onOpenRecruitment={() => openRecruitment(state.activeQuest!.quest.id)}
+                  onOpenInventory={() => setInventoryOpen(true)}
                 />
               )}
               {sectionContent}

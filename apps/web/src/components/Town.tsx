@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 
-import { Icon } from "../icons";
+import { Avatar, Icon } from "../icons";
+import { charPortraitUrl, classPortraitUrl } from "../CombatShared";
 import type {
   TownSection, TownArt, JobListing, BoardResponse,
   JoinableQuest, QuestVariant, Character, ActiveQuest, ActiveGatheringTask,
@@ -9,6 +10,7 @@ import type {
 import {
   DISTRICT_CONFIG, VARIANT_STYLE, HUNT_PACK_LABEL, QUEST_OPTIONS,
 } from "../constants";
+import { xpForLevel } from "@gantt-quest/core";
 import { DISPLAY_FONT, card, h2, muted, button } from "../styles";
 import { LocationHero, SmallBadge } from "./ui";
 
@@ -750,6 +752,53 @@ interface WardNode {
   task?: ActiveGatheringTask;
 }
 
+// Animated XP donut ring — starts empty on mount and transitions to the
+// real fraction so the arc visibly fills in. Also animates on XP changes.
+function XpRing({ level, xp }: { level: number; xp: number }) {
+  const r    = 110;
+  const cx   = 115;
+  const circ = 2 * Math.PI * r;
+  const xpAtLevel = xpForLevel(level);
+  const xpAtNext  = xpForLevel(level + 1);
+  const fraction  = xpAtNext > xpAtLevel
+    ? Math.min(1, Math.max(0, (xp - xpAtLevel) / (xpAtNext - xpAtLevel)))
+    : 0;
+  const targetOffset = circ * (1 - fraction);
+
+  // Start at fully-empty (circ) so the CSS transition plays from 0 on mount.
+  const [offset, setOffset] = useState(circ);
+  useEffect(() => {
+    const id = requestAnimationFrame(() => setOffset(targetOffset));
+    return () => cancelAnimationFrame(id);
+  }, [targetOffset]);
+
+  return (
+    <svg
+      width={230} height={230}
+      viewBox="0 0 230 230"
+      style={{ position: "absolute", inset: 0, pointerEvents: "none", zIndex: 0 }}
+    >
+      {/* dim track */}
+      <circle cx={cx} cy={cx} r={r} fill="none" stroke="rgba(251,191,36,0.12)" strokeWidth={5} />
+      {/* progress arc — starts at 12 o'clock, transitions on mount + XP change */}
+      <circle
+        cx={cx} cy={cx} r={r}
+        fill="none"
+        stroke="#fbbf24"
+        strokeWidth={5}
+        strokeLinecap="round"
+        strokeDasharray={circ}
+        strokeDashoffset={offset}
+        transform={`rotate(-90 ${cx} ${cx})`}
+        style={{
+          transition: "stroke-dashoffset 1.2s cubic-bezier(0.4, 0, 0.2, 1)",
+          filter: "drop-shadow(0 0 3px rgba(251,191,36,0.6))",
+        }}
+      />
+    </svg>
+  );
+}
+
 // Central plaza disc — clickable, opens the player's inventory.
 // Used on the desktop ward map; the mobile fallback uses a stacked variant.
 function PlazaButton({
@@ -865,27 +914,29 @@ function PlazaButton({
         transition: "transform 0.15s, border-color 0.15s, box-shadow 0.15s",
       }}
     >
+      {/* XP donut ring — animated SVG arc tracing the button border */}
+      <XpRing level={character.level} xp={character.xp} />
       <span style={{
         font: "9px/1 var(--font-mono)",
         color: hovered ? "var(--accent-gold-warm)" : "var(--accent-ink-blue)",
         textTransform: "uppercase",
         letterSpacing: 1.5,
       }}>{hovered ? "Open inventory" : "You are here"}</span>
+      <Avatar
+        src={charPortraitUrl(character.name)}
+        fallbackSrc={classPortraitUrl(character.class)}
+        alt={character.name}
+        size={64}
+        radius={32}
+        style={{ margin: "10px 0 8px", flexShrink: 0 }}
+      />
       <div style={{
-        width: 64, height: 64, margin: "10px 0 8px",
-        borderRadius: "50%",
-        background: "var(--bg-void)",
-        border: "1px solid var(--border-base)",
-        display: "flex", alignItems: "center", justifyContent: "center",
-      }}>
-        <Icon name="crystal-wand" size={38} color="var(--accent-arcane-2)" />
-      </div>
-      <div style={{
-        font: "19px/1 var(--font-display)",
+        font: "19px/1.2 var(--font-display)",
         color: "var(--fg-1)",
-        whiteSpace: "nowrap",
+        display: "-webkit-box",
+        WebkitBoxOrient: "vertical",
+        WebkitLineClamp: 2,
         overflow: "hidden",
-        textOverflow: "ellipsis",
         maxWidth: "100%",
       }}>{character.name}</div>
       <div style={{
@@ -896,9 +947,15 @@ function PlazaButton({
         letterSpacing: 0.5,
       }}>{character.class} · L{character.level}</div>
       <div style={{ display: "flex", gap: 12, marginTop: 12, font: "11px/1 var(--font-mono)" }}>
-        <span style={{ color: "var(--tone-good-2)" }}>♥ {character.hp}</span>
-        <span style={{ color: "var(--accent-arcane)" }}>✦ {character.mana}</span>
-        <span style={{ color: "var(--accent-gold)" }}>🪙 {character.gold}</span>
+        <span style={{ color: "var(--tone-good-2)", display: "flex", alignItems: "center", gap: 3 }}>
+          <Icon name="health-normal" size={13} color="var(--tone-good-2)" />{character.hp}
+        </span>
+        <span style={{ color: "var(--accent-arcane)", display: "flex", alignItems: "center", gap: 3 }}>
+          <Icon name="aura" size={13} color="var(--accent-arcane)" />{character.mana}
+        </span>
+        <span style={{ color: "var(--accent-gold)", display: "flex", alignItems: "center", gap: 3 }}>
+          <Icon name="gold-bar" size={13} color="var(--accent-gold)" />{character.gold}
+        </span>
       </div>
     </button>
   );
@@ -956,23 +1013,22 @@ function NodeProgressBar({ task }: { task: ActiveGatheringTask }) {
 function WardMapNode({
   node,
   onClick,
+  onHoverChange,
 }: {
   node: WardNode;
   onClick: () => void;
+  onHoverChange: (id: string | null) => void;
 }) {
   const [hovered, setHovered] = useState(false);
-  const borderColor = node.hot
-    ? "var(--accent-gold)"
-    : hovered
-      ? "var(--border-muted)"
-      : "var(--border-faint)";
-  const discBorder = node.hot ? "var(--accent-gold)" : "var(--border-base)";
-  const iconColor = node.hot ? "var(--accent-gold)" : "var(--fg-3)";
+  const lit = hovered || !!node.hot;
+  const borderColor = lit ? "var(--accent-gold)" : "var(--border-faint)";
+  const discBorder  = lit ? "var(--accent-gold)" : "var(--border-base)";
+  const iconColor   = lit ? "var(--accent-gold)" : "var(--fg-3)";
   return (
     <div
       onClick={onClick}
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
+      onMouseEnter={() => { setHovered(true);  onHoverChange(node.id); }}
+      onMouseLeave={() => { setHovered(false); onHoverChange(null); }}
       style={{
         position: "absolute",
         left: node.left,
@@ -1082,6 +1138,19 @@ export function WardMap({
   // Slot-1 task = main character gathering. Used for the camp node progress bar.
   const campTask = activeTasks.find((t) => t.worker_slot === 1) ?? null;
   const narrow = useNarrowViewport(720);
+  const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
+
+  // SVG road endpoints keyed by node id (centre → node, in 1232×712 viewBox).
+  const roadCoords: Record<string, [number, number, number, number]> = {
+    job_board:  [616, 356, 616,  118],
+    smithy:     [616, 356, 306,  168],
+    shop:       [616, 356, 926,  168],
+    pub:        [616, 356, 176,  368],
+    apothecary: [616, 356, 1056, 368],
+    inn:        [616, 356, 306,  586],
+    outskirts:  [616, 356, 926,  586],
+    camp:       [616, 356, 616,  612],
+  };
   // Coords below come from design layouts/town-b.html. The SVG viewBox is
   // 1232×712 and the nodes are positioned by % so the map can rescale.
   const nodes: WardNode[] = [
@@ -1092,7 +1161,6 @@ export function WardMap({
       icon: "scroll-quill",
       left: "50%",
       top: "16.5%",
-      hot: true,
       pin: jobsOpen > 0 ? `${jobsOpen} New Contract${jobsOpen === 1 ? "" : "s"}` : undefined,
       action: { kind: "view", view: "job_board" },
     },
@@ -1401,32 +1469,28 @@ export function WardMap({
           />
         </>
       )}
-      {/* Dashed road SVG */}
+      {/* Dashed road SVG — lines light up gold when their node is hovered */}
       <svg
         viewBox="0 0 1232 712"
         preserveAspectRatio="none"
-        style={{ position: "absolute", inset: 0, width: "100%", height: "100%" }}
+        style={{ position: "absolute", inset: 0, width: "100%", height: "100%", zIndex: 2, pointerEvents: "none" }}
       >
-        {/* Hot path → Job Board (top) */}
-        <line
-          x1="616" y1="356" x2="616" y2="118"
-          stroke="rgba(251,191,36,0.4)" strokeWidth={2}
-          strokeDasharray="3 7" strokeLinecap="round"
-        />
-        {/* Smithy (upper L) */}
-        <line x1="616" y1="356" x2="306" y2="168" stroke="var(--border-base)" strokeWidth={2} strokeDasharray="2 7" strokeLinecap="round" />
-        {/* Shop (upper R) */}
-        <line x1="616" y1="356" x2="926" y2="168" stroke="var(--border-base)" strokeWidth={2} strokeDasharray="2 7" strokeLinecap="round" />
-        {/* Pub (left) */}
-        <line x1="616" y1="356" x2="176" y2="368" stroke="var(--border-base)" strokeWidth={2} strokeDasharray="2 7" strokeLinecap="round" />
-        {/* Apothecary (right) */}
-        <line x1="616" y1="356" x2="1056" y2="368" stroke="var(--border-base)" strokeWidth={2} strokeDasharray="2 7" strokeLinecap="round" />
-        {/* Inn (lower L) */}
-        <line x1="616" y1="356" x2="306" y2="586" stroke="var(--border-base)" strokeWidth={2} strokeDasharray="2 7" strokeLinecap="round" />
-        {/* Outskirts (lower R) */}
-        <line x1="616" y1="356" x2="926" y2="586" stroke="var(--border-base)" strokeWidth={2} strokeDasharray="2 7" strokeLinecap="round" />
-        {/* Inventory (bottom) */}
-        <line x1="616" y1="356" x2="616" y2="612" stroke="var(--border-base)" strokeWidth={2} strokeDasharray="2 7" strokeLinecap="round" />
+        {nodes.map((node) => {
+          const c = roadCoords[node.id];
+          if (!c) return null;
+          const lit = hoveredNodeId === node.id;
+          return (
+            <line
+              key={node.id}
+              x1={c[0]} y1={c[1]} x2={c[2]} y2={c[3]}
+              stroke={lit ? "rgba(251,191,36,0.7)" : "var(--border-base)"}
+              strokeWidth={lit ? 2.5 : 2}
+              strokeDasharray={lit ? "5 6" : "2 7"}
+              strokeLinecap="round"
+              style={{ transition: "stroke 0.15s, stroke-width 0.15s" }}
+            />
+          );
+        })}
       </svg>
 
       {/* Quest banner */}
@@ -1500,7 +1564,7 @@ export function WardMap({
 
       {/* Location nodes */}
       {nodes.map((node) => (
-        <WardMapNode key={node.id} node={node} onClick={() => handleClick(node.action)} />
+        <WardMapNode key={node.id} node={node} onClick={() => handleClick(node.action)} onHoverChange={setHoveredNodeId} />
       ))}
     </div>
   );
