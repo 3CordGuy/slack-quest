@@ -4254,6 +4254,29 @@ app.get("/api/pub", async (c) => {
   return c.json({ drinks: drinksWithPrice, drink_buff: drinkBuff, gold: character.gold, spd: spdData, art_url, drinks_remaining: drinksRemaining, npcs, leaderboard, mercs: MERCS, hired_merc });
 });
 
+// GET /api/pub/leaderboard — pub leaderboard with optional period filtering.
+// ?period=week  → last 7 days
+// ?period=all   → all-time (default)
+app.get("/api/pub/leaderboard", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const character = await getCharacter(c.env.DB, session.slack_user_id);
+  if (!character) return c.json({ error: "no_character" }, 404);
+  const channelId = character.channel_id;
+  if (!channelId) return c.json({ entries: [] });
+  const period = c.req.query("period") ?? "all";
+  const now = Date.now();
+  const since = period === "week" ? now - 7 * 24 * 60 * 60 * 1000 : undefined;
+  const rawLb = await getPubLeaderboard(c.env.DB, channelId, since);
+  const entries = await Promise.all(
+    rawLb.slice(0, 10).map(async (e) => {
+      const char = await getCharacter(c.env.DB, e.user_id);
+      return { user_id: e.user_id, name: char?.name ?? e.user_id, slack_username: char?.slack_username ?? null, games: e.games, wins: e.wins, net: e.net };
+    }),
+  );
+  return c.json({ entries });
+});
+
 // POST /api/pub/hire/:mercId — hire a mercenary from the pub.
 app.post("/api/pub/hire/:mercId", async (c) => {
   const session = await currentSession(c.env.DB, c.req.header("cookie"));
@@ -5159,10 +5182,17 @@ app.get("/api/stats", async (c) => {
 });
 
 // Global quest leaderboard — top players by total wins.
+// ?period=week  → last 7 days
+// ?period=all   → all-time (default)
 app.get("/api/leaderboard", async (c) => {
   const session = await currentSession(c.env.DB, c.req.header("cookie"));
   if (!session) return c.json({ error: "unauthenticated" }, 401);
-  const entries = await getQuestLeaderboard(c.env.DB, 10);
+  const period = c.req.query("period") ?? "all";
+  const now = Date.now();
+  const since =
+    period === "week" ? now - 7 * 24 * 60 * 60 * 1000 :
+    undefined;
+  const entries = await getQuestLeaderboard(c.env.DB, 10, since);
   return c.json({ entries });
 });
 

@@ -84,7 +84,7 @@ export type RenownEntry = {
   isSelf?: boolean;
 };
 
-type Period = "week" | "season" | "all";
+type Period = "week" | "all";
 
 const MEDAL_COLORS: Record<1 | 2 | 3, string> = {
   1: "var(--accent-gold)",
@@ -111,11 +111,10 @@ function useIsMobile(breakpoint = 640) {
   return isMobile;
 }
 
-function PeriodToggle({ value, onChange }: { value: Period; onChange: (p: Period) => void }) {
-  const opts: { id: Period; label: string; soon: boolean }[] = [
-    { id: "week", label: "Week", soon: true },
-    { id: "season", label: "Season", soon: false },
-    { id: "all", label: "All-Time", soon: true },
+function PeriodToggle({ value, onChange, loading }: { value: Period; onChange: (p: Period) => void; loading?: boolean }) {
+  const opts: { id: Period; label: string }[] = [
+    { id: "week", label: "Week" },
+    { id: "all",  label: "All-Time" },
   ];
   return (
     <div
@@ -127,6 +126,8 @@ function PeriodToggle({ value, onChange }: { value: Period; onChange: (p: Period
         background: "var(--bg-card-2)",
         border: "1px solid var(--border-faint)",
         borderRadius: "var(--radius-lg)",
+        opacity: loading ? 0.6 : 1,
+        transition: "opacity 0.15s",
       }}
     >
       {opts.map((o) => {
@@ -138,7 +139,6 @@ function PeriodToggle({ value, onChange }: { value: Period; onChange: (p: Period
             role="tab"
             aria-selected={active}
             onClick={() => onChange(o.id)}
-            title={o.soon ? "Coming soon" : undefined}
             style={{
               fontFamily: "var(--font-mono)",
               fontSize: 11,
@@ -387,14 +387,19 @@ function HallOfRenown({
   metricLabel,
   rowIcon,
   footerNote,
+  period,
+  onPeriodChange,
+  loadingPeriod,
 }: {
   title: string;
   entries: RenownEntry[];
   metricLabel: string;
   rowIcon: string;
   footerNote?: string;
+  period?: Period;
+  onPeriodChange?: (p: Period) => void;
+  loadingPeriod?: boolean;
 }) {
-  const [period, setPeriod] = useState<Period>("season");
   const isMobile = useIsMobile();
 
   const top3 = entries.slice(0, 3);
@@ -431,7 +436,9 @@ function HallOfRenown({
           <Icon name="trophy" size={20} color="var(--accent-gold)" />
           {title}
         </h2>
-        <PeriodToggle value={period} onChange={setPeriod} />
+        {period != null && onPeriodChange && (
+          <PeriodToggle value={period} onChange={onPeriodChange} loading={loadingPeriod} />
+        )}
       </div>
 
       {/* Podium */}
@@ -492,7 +499,24 @@ function HallOfRenown({
 
 /* ─── Quest leaderboard ─────────────────────────────────────────────── */
 
-function QuestLeaderboardCard({ entries, selfId }: { entries: QuestLeaderboardEntry[]; selfId: string }) {
+function QuestLeaderboardCard({ entries: initialEntries, selfId }: { entries: QuestLeaderboardEntry[]; selfId: string }) {
+  const [period, setPeriod] = useState<Period>("all");
+  const [entries, setEntries] = useState(initialEntries);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    fetch(`/api/leaderboard?period=${period}`, { credentials: "include" })
+      .then((r) => r.ok ? r.json() : null)
+      .then((data) => {
+        if (!cancelled && data) setEntries((data as { entries: QuestLeaderboardEntry[] }).entries);
+      })
+      .catch(() => {})
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [period]);
+
   const renown: RenownEntry[] = entries.map((e) => ({
     id: e.slack_user_id,
     name: e.name,
@@ -508,6 +532,9 @@ function QuestLeaderboardCard({ entries, selfId }: { entries: QuestLeaderboardEn
       entries={renown}
       metricLabel="Renown"
       rowIcon="crowned-heart"
+      period={period}
+      onPeriodChange={setPeriod}
+      loadingPeriod={loading}
     />
   );
 }
