@@ -3876,16 +3876,22 @@ function PartyChips({ fighters, selfId, flashIds, hitDustSeq, healBurstSeq, shie
     const padding = compactMode ? 8 : "9px 10px";
 
     return (
+      /* Outer wrapper: owns layout slot + hit-shake class.
+         Keeping it separate from the inner card means gq-hit-flash (CSS)
+         and gq-shield-pulse (inline) never compete on the same element —
+         inline style would win and suppress the shake animation. */
       <div
         key={f.id}
         className={isFlash ? "gq-hit-flash" : undefined}
+        style={{ flex: "1 1 0", minWidth: 0, maxWidth: 230 }}
+      >
+      <div
         onClick={clickable ? onClickSelf : undefined}
         title={clickable ? "Open inventory" : undefined}
         style={{
           position: "relative",
-          flex: "1 1 0",
-          minWidth: 0,
-          maxWidth: 230,
+          width: "100%",
+          height: "100%",
           background,
           border: `1px solid ${borderColor}`,
           boxShadow,
@@ -3895,6 +3901,7 @@ function PartyChips({ fighters, selfId, flashIds, hitDustSeq, healBurstSeq, shie
           cursor: clickable ? "pointer" : "default",
           animation: hasShield ? "gq-shield-pulse 2.5s ease-in-out infinite" : undefined,
           fontFamily: "var(--font-body)",
+          boxSizing: "border-box",
         }}
       >
         <HitDust seq={hitDustSeq[f.id] ?? 0} />
@@ -4075,6 +4082,7 @@ function PartyChips({ fighters, selfId, flashIds, hitDustSeq, healBurstSeq, shie
           );
         })()}
       </div>
+      </div>
     );
   }
   const standing = fighters.filter((f) => f.hp > 0).length;
@@ -4101,15 +4109,22 @@ function PartyChips({ fighters, selfId, flashIds, hitDustSeq, healBurstSeq, shie
         </span>
       </div>
       {/* Flat party flex; overflows horizontally on narrow viewports.
-          Top padding leaves room for the "Your turn" gold flag (top: -8)
-          and the status badge column (top: -6) so neither gets clipped. */}
+          Padding gives room for:
+          - "Your turn" flag (top: -8) and status badges (top: -6)
+          - gq-shield-pulse box-shadow (spreads ~20px) — overflow:auto on a
+            scroll container clips box-shadow to the padding box, so the
+            padding must exceed the shadow radius on all sides. */}
       <div style={{
         display: "flex",
         gap: 9,
         alignItems: "stretch",
         overflowX: "auto",
-        paddingTop: 12,
-        paddingBottom: 4,
+        paddingTop: 20,
+        paddingBottom: 20,
+        paddingLeft: 2,
+        paddingRight: 2,
+        marginTop: -8,
+        marginBottom: -8,
       }}>
         {showRankBadges && front.length > 0 && (
           <span style={{
