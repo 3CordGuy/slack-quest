@@ -109,49 +109,125 @@ export function ShopCard({
         bonus on the d6.
       </p>
       {shop.staples && shop.staples.length > 0 && (
-        <StaplesSection staples={shop.staples} gold={shop.gold} onBuyStaple={onBuyStaple} />
+        <ShopStaplesPanel staples={shop.staples} gold={shop.gold} onBuyStaple={onBuyStaple} inline />
       )}
     </div>
   );
 }
 
-// Always-in-stock potions — fixed prices, no buy cap, no haggle. Mirrors the
-// slack "🧺 Always in stock" section. Buy buttons gate on gold balance.
-function StaplesSection({
+// ─── ShopWaresPanel ─────────────────────────────────────────────────────────
+// Rotating stock tab — used as the "Wares" section of LocationModalWide.
+
+export function ShopWaresPanel({
+  shop,
+  onBuy,
+  onHaggle,
+  onRefresh,
+  onRestock,
+}: {
+  shop: ShopResponse;
+  onBuy: (id: number, name: string) => void;
+  onHaggle: (id: number) => void;
+  onRefresh: () => Promise<void>;
+  onRestock?: () => Promise<void>;
+}) {
+  if (shop.error === "mid_quest") {
+    return <p style={{ ...muted, margin: 0 }}>The shopkeep is afraid of monsters. Finish the quest first.</p>;
+  }
+  if (shop.error === "no_channel" || !shop.channel_id) {
+    return (
+      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        <p style={{ ...muted, margin: 0 }}>No shop channel yet — start a quest in Slack first so we know which channel's shop to show.</p>
+        <RefreshButton onRefresh={onRefresh} />
+      </div>
+    );
+  }
+  if (shop.needs_restock) {
+    return (
+      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        <p style={{ ...muted, margin: 0 }}>The shopkeep's shelves are bare.</p>
+        {onRestock && <RestockButton onRestock={onRestock} />}
+      </div>
+    );
+  }
+  const capUsed = shop.purchases_this_cycle ?? 0;
+  const cap = shop.purchase_cap ?? 2;
+  const atCap = capUsed >= cap;
+  const available = shop.stock.filter((s) => !s.bought_by).length;
+  return (
+    <div>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
+        <span style={{ ...muted, fontSize: 12 }}>
+          <strong style={{ color: "var(--accent-gold)" }}>{shop.gold}g</strong>
+          {" · "}{available}/{shop.stock.length} available{" · "}{capUsed}/{cap} bought this cycle
+        </span>
+        <RefreshButton onRefresh={onRefresh} />
+      </div>
+      <div style={{ display: "grid", gap: 8 }}>
+        {shop.stock.map((s) => (
+          <ShopRow
+            key={s.id}
+            item={s}
+            playerGold={shop.gold}
+            playerLevel={shop.level ?? 1}
+            atCap={atCap}
+            onBuy={onBuy}
+            onHaggle={onHaggle}
+          />
+        ))}
+      </div>
+      <p style={{ ...muted, fontSize: 11, marginTop: 10 }}>
+        Haggle is a free action (per item, once per cycle). Bards / Sages / Rogues get a bonus on the d6.
+      </p>
+    </div>
+  );
+}
+
+// Always-in-stock potions — fixed prices, no buy cap, no haggle.
+// Used as the "Staples" tab in the wide shop modal, and inline for legacy card mode.
+export function ShopStaplesPanel({
   staples,
   gold,
   onBuyStaple,
+  inline,
 }: {
   staples: StapleItem[];
   gold: number;
   onBuyStaple: (id: string) => void;
+  inline?: boolean; // true = adds section label + top margin for ShopCard legacy mode
 }) {
+  if (staples.length === 0) return <p style={{ ...muted, margin: 0 }}>No staples in stock.</p>;
   return (
-    <div style={{ marginTop: 20 }}>
-      <div style={{ ...muted, fontSize: 11, textTransform: "uppercase", letterSpacing: 1.5, marginBottom: 8 }}>
-        <Icon name="bubbling-potion" /> Always in stock
-      </div>
+    <div style={inline ? { marginTop: 20 } : undefined}>
+      {inline && (
+        <div style={{ ...muted, fontSize: 11, textTransform: "uppercase", letterSpacing: 1.5, marginBottom: 8 }}>
+          <Icon name="bubbling-potion" /> Always in stock
+        </div>
+      )}
       <div style={{ display: "grid", gap: 8 }}>
         {staples.map((s) => {
           const canAfford = gold >= s.price;
+          const iconName = s.effect === "restore_mana" ? "potion-ball" : "health-potion";
+          const iconColor = s.effect === "restore_mana" ? "var(--accent-arcane)" : "var(--tone-good-2)";
           return (
             <div
               key={s.id}
+              className="glass-row"
               style={{
-                padding: 12,
-                background: "#1d1f23",
+                padding: "10px 14px",
+                border: "1px solid var(--border-base)",
                 borderRadius: 8,
                 display: "flex",
                 alignItems: "center",
                 gap: 12,
               }}
             >
-              <div style={{ fontSize: 22 }}>{s.emoji}</div>
+              <Icon name={iconName} size={24} color={iconColor} />
               <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontWeight: 600, color: "#f5f5f5", fontSize: 15, fontFamily: DISPLAY_FONT }}>{s.name}</div>
+                <div style={{ fontWeight: 600, color: "var(--fg-1)", fontSize: 15, fontFamily: DISPLAY_FONT }}>{s.name}</div>
                 <div style={{ ...muted, fontSize: 12, marginTop: 2 }}>{s.blurb}</div>
               </div>
-              <div style={{ color: "#fbbf24", fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>
+              <div style={{ color: "var(--accent-gold)", fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>
                 {s.price}g
               </div>
               <button
@@ -208,7 +284,7 @@ function StoreItemRow({
   const levelReq = item.level_req ?? Math.max(1, Math.ceil(item.power / 3));
   const underLevel = playerLevel < levelReq;
   return (
-    <div style={{ padding: 12, background: "#1d1f23", borderRadius: 8, opacity: opacity ?? 1, position: "relative", overflow: "hidden" }}>
+    <div className="glass-row" style={{ padding: 12, border: "1px solid var(--border-base)", borderRadius: 8, opacity: opacity ?? 1, position: "relative", overflow: "hidden" }}>
       {sold && (
         <div style={{
           position: "absolute", inset: 0,
@@ -265,7 +341,7 @@ function StoreItemRow({
         {headerRight}
       </div>
       {showInfo && (
-        <div style={{ marginTop: 8, padding: "8px 10px", background: "#0e0f12", borderRadius: 6, border: "1px solid #2a2d33", color: "#cbd5e1", fontSize: 12 }}>
+        <div style={{ marginTop: 8, padding: "8px 10px", background: "var(--bg-void)", borderRadius: 6, border: "1px solid var(--border-faint)", color: "var(--fg-2)", fontSize: 12 }}>
           {describeItemEffect(item)}
         </div>
       )}
