@@ -198,6 +198,8 @@ function PodiumCard({
         textAlign: "center",
         gap: 6,
         position: "relative",
+        minWidth: 0,
+        overflow: "hidden",
         boxShadow: rank === 1 ? "0 0 0 1px var(--accent-gold) inset, 0 4px 18px -8px rgba(251,191,36,0.35)" : undefined,
         transform: !isMobile && emphasized ? "translateY(-6px)" : undefined,
       }}
@@ -400,7 +402,9 @@ function HallOfRenown({
   onPeriodChange?: (p: Period) => void;
   loadingPeriod?: boolean;
 }) {
-  const isMobile = useIsMobile();
+  // 900px: below this the panel column in a 2-col dashboard is too narrow
+  // (~450px) to fit 3 podium cards side-by-side without overflow.
+  const isMobile = useIsMobile(900);
 
   const top3 = entries.slice(0, 3);
   const rest = entries.slice(3);
@@ -446,7 +450,7 @@ function HallOfRenown({
         <div
           style={{
             display: "grid",
-            gridTemplateColumns: isMobile ? "1fr" : "1fr 1.15fr 1fr",
+            gridTemplateColumns: isMobile ? "minmax(0, 1fr)" : "minmax(0, 1fr) minmax(0, 1.15fr) minmax(0, 1fr)",
             alignItems: "end",
             gap: 12,
             marginBottom: rest.length > 0 ? 20 : 4,
