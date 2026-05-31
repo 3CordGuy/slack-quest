@@ -412,7 +412,12 @@ export function ItemDetailPopover({
   const canEquip = !item.equipped && item.slot !== null && meetsLevel;
   const canSell = !item.equipped && !inQuest;
   const canUse =
-    !item.equipped && (item.item_type === "consumable" || item.item_type === "magic");
+    !item.equipped && (
+      inQuest
+        // In combat all usable types are available (matches isCombatUsable in CombatShared)
+        ? (item.item_type === "consumable" || item.item_type === "magic" || item.item_type === "revive" || item.item_type === "tool" || item.item_type === "scroll")
+        : (item.item_type === "consumable" || item.item_type === "magic")
+    );
   const canGive = !item.equipped;
   const rc = RARITY_COLOR[item.rarity];
 
