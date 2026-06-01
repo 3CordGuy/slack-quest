@@ -13,14 +13,14 @@ import {
 } from "./flavor";
 
 describe("forage cascade + first-flip safety scaffolding", () => {
-  it("constants tightened for the cascade economy", () => {
-    // 5×5 grid + 4-5 mushrooms means cascades stop earlier and more manual
-    // flips are needed to harvest scattered herbs — base bumped 4 → 5.
-    expect(FORAGE_BASE_FLIPS).toBe(5);
-    expect(FORAGE_MAX_FLIPS).toBe(7);
-    expect(forageFlipsForInt(5)).toBe(5);
-    expect(forageFlipsForInt(7)).toBe(7);
-    expect(forageFlipsForInt(20)).toBe(7); // capped
+  // The flip-budget constants and forageFlipsForInt are deprecated (no
+  // manual flip cap anymore — HP damage is the pressure). Keep them
+  // exported for back-compat but don't assert on their values; the test
+  // here just confirms the helper still exists.
+  it("flip-budget helpers exist (deprecated; no longer enforced)", () => {
+    expect(typeof FORAGE_BASE_FLIPS).toBe("number");
+    expect(typeof FORAGE_MAX_FLIPS).toBe("number");
+    expect(typeof forageFlipsForInt(5)).toBe("number");
   });
 
   it("cascade never reveals a hazard", () => {
