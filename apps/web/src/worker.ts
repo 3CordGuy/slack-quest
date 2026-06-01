@@ -991,8 +991,10 @@ app.post("/api/auth/email/request", async (c) => {
 // POST /api/auth/email/verify { email, code } → consumes code + sets session.
 // Three paths:
 //   1. Email already linked to a character → log in to that character.
-//   2. Caller is currently signed in as a guest → upgrade the guest by linking
-//      the email to it. Guest's progress is preserved.
+//   2. Caller is currently signed in and that character has no email yet
+//      → attach the email to the existing row (guest or Slack-only, same flow).
+//      For a guest this flips is_guest to 0; for a Slack user it just adds an
+//      alternate sign-in method.
 //   3. Neither → create a fresh email-linked character.
 app.post("/api/auth/email/verify", async (c) => {
   const body = (await c.req.json().catch(() => null)) as {
@@ -1013,11 +1015,13 @@ app.post("/api/auth/email/verify", async (c) => {
   let userId = existingByEmail;
   let teamId = "email";
   if (!userId) {
-    // Path 2: caller is currently a guest — upgrade them in place.
+    // Path 2: caller is signed in and the character has no email yet.
+    // Works for guests (sets is_guest=0 as a side effect) and for Slack-only
+    // characters adding email as a second sign-in method.
     const session = await currentSession(c.env.DB, c.req.header("cookie"));
     if (session) {
       const character = await getCharacter(c.env.DB, session.slack_user_id);
-      if (character && character.is_guest) {
+      if (character && !character.email) {
         const linked = await linkCharacterEmail(c.env.DB, session.slack_user_id, email);
         if (linked) {
           userId = session.slack_user_id;
