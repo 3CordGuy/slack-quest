@@ -4865,16 +4865,32 @@ app.post("/api/pub/cook/:recipeId", async (c) => {
   if (character.gold < recipe.gold_cost) {
     return c.json({ error: "insufficient_gold", price: recipe.gold_cost, gold: character.gold }, 400);
   }
-  const fishSpec = findResource(recipe.input_fish_id);
-  if (!fishSpec) return c.json({ error: "unknown_fish" }, 500);
-  const fishName = resourceItemName(recipe.input_fish_id);
-  const consumed = await tryConsumeResource(c.env.DB, session.slack_user_id, fishName, recipe.input_qty);
-  if (!consumed) {
-    return c.json({ error: "insufficient_resources", needed: recipe.input_fish_id, qty: recipe.input_qty }, 400);
+  // Consume each input in order; if any fail, refund what we already deducted
+  // before bailing. Same rollback pattern the apothecary brew endpoint uses
+  // for multi-ingredient recipes.
+  const consumedSoFar: Array<{ name: string; qty: number }> = [];
+  for (const inp of recipe.inputs) {
+    if (!findResource(inp.resource_id)) {
+      for (const refund of consumedSoFar) {
+        await addResource(c.env.DB, session.slack_user_id, refund.name, refund.qty);
+      }
+      return c.json({ error: "unknown_resource", needed: inp.resource_id }, 500);
+    }
+    const itemName = resourceItemName(inp.resource_id);
+    const ok = await tryConsumeResource(c.env.DB, session.slack_user_id, itemName, inp.qty);
+    if (!ok) {
+      for (const refund of consumedSoFar) {
+        await addResource(c.env.DB, session.slack_user_id, refund.name, refund.qty);
+      }
+      return c.json({ error: "insufficient_resources", needed: inp.resource_id, qty: inp.qty }, 400);
+    }
+    consumedSoFar.push({ name: itemName, qty: inp.qty });
   }
   const paid = await tryDeductGold(c.env.DB, session.slack_user_id, recipe.gold_cost);
   if (!paid) {
-    await addResource(c.env.DB, session.slack_user_id, fishName, recipe.input_qty);
+    for (const refund of consumedSoFar) {
+      await addResource(c.env.DB, session.slack_user_id, refund.name, refund.qty);
+    }
     return c.json({ error: "insufficient_gold_race" }, 400);
   }
   const item = await addItem(c.env.DB, {
@@ -4891,7 +4907,7 @@ app.post("/api/pub/cook/:recipeId", async (c) => {
     recipe_id: recipe.id,
     item,
     paid: recipe.gold_cost,
-    consumed_fish: recipe.input_fish_id,
+    consumed_inputs: recipe.inputs,
     gold_remaining: character.gold - recipe.gold_cost,
   });
 });

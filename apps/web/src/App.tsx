@@ -1296,7 +1296,7 @@ export function App() {
                 quest: state.activeQuest.quest,
                 hasWebCombat,
               } : null}
-              jobsOpen={state.board?.jobs.length ?? 0}
+              jobsOpen={state.board ? state.board.jobs.filter((j) => !state.board!.claims[j.id]).length : 0}
               overviewArtUrl={state.townArt?.overview_art_url ?? null}
               activeTasks={campStatus?.active ?? []}
               onOpenLocation={(loc) => setTownSection(loc)}

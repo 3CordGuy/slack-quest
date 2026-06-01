@@ -151,12 +151,19 @@ export function buildBurndown(
   // AnyEvent's index signature gives every field type `any`, so we read
   // directly with no per-branch casts — TS can't auto-narrow on a stringly
   // discriminant anyway. Variants we don't list fall through silently.
+  //
+  // Sampling strategy: snapshot HP/mana only when a NEW round begins (inside
+  // turn_start), not after every event. Each sample at round N therefore
+  // captures the state going INTO round N (after round N-1's events). This
+  // prevents intra-round heals from creating "shoots up and comes back" spikes
+  // in the HP chart — the heal is visible as a higher starting point in the
+  // NEXT round instead of a within-round upward notch.
   for (const e of events) {
     switch (e.type) {
       case "turn_start":
         if (e.round !== round) {
           round = e.round;
-          flushRound();
+          flushRound(); // snapshot HP/mana/damage at the START of this round
         }
         break;
       case "player_hit":
@@ -237,8 +244,12 @@ export function buildBurndown(
         // or mana directly.
         break;
     }
-    flushRound();
+    // Do NOT call flushRound() here — we only snapshot at round boundaries
+    // (turn_start). Intra-round HP changes are tracked in the live `hp` map
+    // but don't create new chart points until the next round begins.
   }
+  // Capture final state after all events (end of last round).
+  flushRound();
 
   for (const a of actors) {
     a.final_hp = hp[a.id] ?? 0;

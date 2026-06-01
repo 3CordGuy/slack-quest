@@ -2024,6 +2024,35 @@ export const RECIPE_CATALOG: RecipeSpec[] = [
     inputs: [{ resource_id: "sunleaf", qty: 2 }, { resource_id: "nightbloom", qty: 1 }],
     gold_cost: 120, level_req: 4,
   },
+  // Apothecary combo brews. Each adds a second herb to the base healing
+  // recipe; the cross-ingredient synergy yields significantly more HP/mana
+  // per resource than crafting the single-herb base over and over.
+  {
+    id: "vital_brew", station: "apothecary",
+    output_name: "🧪 Vital Brew", output_type: "consumable", output_power: 60,
+    output_rarity: "rare",
+    output_blurb: "Restores 60 HP. Mossroot steeped with sunleaf — bitter and bright.",
+    inputs: [{ resource_id: "mossroot", qty: 2 }, { resource_id: "sunleaf", qty: 1 }],
+    gold_cost: 55, level_req: 3,
+  },
+  {
+    id: "master_healing_elixir", station: "apothecary",
+    output_name: "🧪 Master Health Elixir", output_type: "consumable", output_power: 120,
+    output_rarity: "rare",
+    output_blurb: "Restores 120 HP. Triple-distilled, finished with a nightbloom petal.",
+    inputs: [{ resource_id: "mossroot", qty: 4 }, { resource_id: "nightbloom", qty: 1 }],
+    gold_cost: 110, level_req: 5,
+  },
+  {
+    id: "twilight_concoction", station: "apothecary",
+    // Reuses Mana Flask name so the use-item path (findStaple → restore_mana)
+    // routes through cleanly. Item.power carries the bigger restore amount.
+    output_name: "✨ Mana Flask", output_type: "consumable", output_power: 8,
+    output_rarity: "rare",
+    output_blurb: "Restores 8 mana. Sunleaf base brightened with nightbloom — burns cold on the tongue.",
+    inputs: [{ resource_id: "sunleaf", qty: 3 }, { resource_id: "nightbloom", qty: 1 }],
+    gold_cost: 80, level_req: 4,
+  },
 ];
 
 export function findRecipe(id: string): RecipeSpec | undefined {
@@ -2805,21 +2834,22 @@ export interface CookRecipeSpec {
   output_power: number;   // HP healed on use
   output_rarity: Rarity;
   output_blurb: string;
-  input_fish_id: string;  // resource id (river_carp / silverfin / abyss_eel)
-  input_qty: number;
+  /** One or more resources combined into the dish. Multi-input recipes are
+      the "combo" tier — better HP yield per fish spent than the base singles. */
+  inputs: Array<{ resource_id: string; qty: number }>;
   gold_cost: number;
   level_req: number;
 }
 
 export const COOK_RECIPES: CookRecipeSpec[] = [
+  // Single-fish dishes — the baseline.
   {
     id: "pan_fried_carp",
     output_name: "🍣 Pan-Fried Carp",
     output_power: 20,
     output_rarity: "common",
     output_blurb: "Restores 20 HP. Crispy skin, flaky middle. The bartender takes pride in this one.",
-    input_fish_id: "river_carp",
-    input_qty: 1,
+    inputs: [{ resource_id: "river_carp", qty: 1 }],
     gold_cost: 10,
     level_req: 1,
   },
@@ -2829,8 +2859,7 @@ export const COOK_RECIPES: CookRecipeSpec[] = [
     output_power: 40,
     output_rarity: "uncommon",
     output_blurb: "Restores 40 HP. Seared rare, served with a pinch of river salt.",
-    input_fish_id: "silverfin",
-    input_qty: 1,
+    inputs: [{ resource_id: "silverfin", qty: 1 }],
     gold_cost: 25,
     level_req: 2,
   },
@@ -2840,10 +2869,52 @@ export const COOK_RECIPES: CookRecipeSpec[] = [
     output_power: 75,
     output_rarity: "rare",
     output_blurb: "Restores 75 HP. The bartender stirs once and turns away. Best not to ask.",
-    input_fish_id: "abyss_eel",
-    input_qty: 1,
+    inputs: [{ resource_id: "abyss_eel", qty: 1 }],
     gold_cost: 50,
     level_req: 4,
+  },
+  // Combo dishes — multi-fish, the bartender's specials. Each gives ~25-30%
+  // more HP per fish than cooking them as singles. The level gate keeps them
+  // off the menu until the player has access to all the inputs reliably.
+  {
+    id: "surf_and_stream",
+    output_name: "🍱 Surf & Stream Platter",
+    output_power: 110,
+    output_rarity: "uncommon",
+    output_blurb: "Restores 110 HP. Two carp seared crisp around a silverfin medallion. House special.",
+    inputs: [
+      { resource_id: "silverfin", qty: 1 },
+      { resource_id: "river_carp", qty: 2 },
+    ],
+    gold_cost: 50,
+    level_req: 3,
+  },
+  {
+    id: "three_fish_banquet",
+    output_name: "🍛 Three-Fish Banquet",
+    output_power: 180,
+    output_rarity: "rare",
+    output_blurb: "Restores 180 HP. River, lake, and deep — every layer cooked through. The bartender salutes.",
+    inputs: [
+      { resource_id: "river_carp", qty: 1 },
+      { resource_id: "silverfin", qty: 1 },
+      { resource_id: "abyss_eel", qty: 1 },
+    ],
+    gold_cost: 90,
+    level_req: 5,
+  },
+  {
+    id: "grand_mariners_feast",
+    output_name: "🍤 Grand Mariner's Feast",
+    output_power: 220,
+    output_rarity: "rare",
+    output_blurb: "Restores 220 HP. Silverfin filets, eel terrine, smoked pepper jus. Eats like a quest, recovers like one too.",
+    inputs: [
+      { resource_id: "silverfin", qty: 2 },
+      { resource_id: "abyss_eel", qty: 1 },
+    ],
+    gold_cost: 110,
+    level_req: 6,
   },
 ];
 
