@@ -3329,6 +3329,28 @@ function VictoryModal({
     ? "FLOOR CLEARED"
     : "VICTORY";
 
+  const [minimized, setMinimized] = useState(false);
+
+  if (minimized) {
+    return (
+      <div style={{
+        position: "fixed",
+        bottom: 24,
+        left: "50%",
+        transform: "translateX(-50%)",
+        zIndex: 100,
+      }}>
+        <button
+          onClick={() => setMinimized(false)}
+          className="btn btn-gold"
+          style={{ whiteSpace: "nowrap", boxShadow: "0 4px 24px rgba(0,0,0,0.6)" }}
+        >
+          ↩ View results
+        </button>
+      </div>
+    );
+  }
+
   return (
     <>
     <ConfettiOverlay />
@@ -3365,6 +3387,19 @@ function VictoryModal({
           {title === "VICTORY" && <Icon name="party-flags" size={28} color="var(--accent-gold)" />}
           {title}
           {title === "VICTORY" && <Icon name="party-flags" size={28} color="var(--accent-gold)" />}
+        </div>
+        <div style={{ textAlign: "center", marginBottom: 12 }}>
+          <button
+            onClick={() => setMinimized(true)}
+            style={{
+              background: "none", border: "none", cursor: "pointer",
+              color: "var(--fg-faint)", fontSize: 12,
+              padding: "2px 8px", borderRadius: 4,
+              textDecoration: "underline",
+            }}
+          >
+            View combat log
+          </button>
         </div>
         {!outcome && <p style={{ ...muted, textAlign: "center" }}>Resolving outcome…</p>}
         {outcome && (
