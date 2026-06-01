@@ -73,19 +73,26 @@ function RecipeRow({
   onAfterCook: () => void | Promise<void>;
 }) {
   const [busy, setBusy] = useState(false);
-  const fishSpec = findResource(recipe.input_fish_id);
-  const fishName = fishSpec ? `${fishSpec.emoji} ${fishSpec.name}` : recipe.input_fish_id;
-  const onHand = inventory
-    .filter((it) => it.item_type === "resource" && it.item_name === fishName)
-    .reduce((sum, it) => sum + (it.qty ?? 1), 0);
-
+  // Per-input availability check. Combo dishes (multi-input) show every
+  // ingredient pill below the recipe name; any single missing input
+  // disables the Cook button.
+  const inputs = recipe.inputs.map((inp) => {
+    const spec = findResource(inp.resource_id);
+    const name = spec ? `${spec.emoji} ${spec.name}` : inp.resource_id;
+    const onHand = inventory
+      .filter((it) => it.item_type === "resource" && it.item_name === name)
+      .reduce((sum, it) => sum + (it.qty ?? 1), 0);
+    return { inp, spec, name, onHand, has: onHand >= inp.qty };
+  });
   const meetsLevel = characterLevel >= recipe.level_req;
-  const hasFish = onHand >= recipe.input_qty;
+  const hasAllInputs = inputs.every((i) => i.has);
   const canAfford = gold >= recipe.gold_cost;
-  const canCook = meetsLevel && hasFish && canAfford;
-  // Abyss Stew earns the eel icon for the raw input; everything else uses
-  // the generic raw-fish icon (salmon).
-  const rawIcon = recipe.input_fish_id === "abyss_eel" ? "eel" : "salmon";
+  const canCook = meetsLevel && hasAllInputs && canAfford;
+  // Headline raw-fish icon: pick the highest-tier input present in the
+  // recipe so combos read at a glance (eel > silverfin > carp).
+  const headlineRawIcon = inputs.some((i) => i.inp.resource_id === "abyss_eel")
+    ? "eel"
+    : "salmon";
 
   async function handle() {
     setBusy(true);
@@ -106,20 +113,36 @@ function RecipeRow({
   return (
     <div style={rowStyle}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
-        <Icon name={rawIcon} size={22} color="var(--fg-mute)" />
+        <Icon name={headlineRawIcon} size={22} color="var(--fg-mute)" />
         <Icon name="cycle" size={10} color="var(--fg-mute)" />
         <Icon name="fish-cooked" size={22} color="var(--fg-1)" />
       </div>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ fontWeight: 600 }}>{recipe.output_name}</div>
         <div style={{ fontSize: 12, color: "var(--fg-mute)" }}>{recipe.output_blurb}</div>
-        <div style={{ fontSize: 11, color: "var(--fg-mute)", marginTop: 4 }}>
-          <span style={{ color: hasFish ? "inherit" : "var(--accent-no-1, #f87171)" }}>
-            {recipe.input_qty} × <span style={{ display: "inline-flex", alignItems: "center", gap: 3, verticalAlign: "middle" }}><Icon name={rawIcon} size={12} color="var(--fg-mute)" /> {fishSpec?.name ?? recipe.input_fish_id}</span>
-            {" "}<span style={{ opacity: 0.6 }}>({onHand} on hand)</span>
-          </span>
-          <span> · {recipe.gold_cost}g</span>
-          <span> · lvl {recipe.level_req}+</span>
+        <div style={{ fontSize: 11, color: "var(--fg-mute)", marginTop: 4, display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6 }}>
+          {inputs.map((i, ix) => {
+            const inputRawIcon = i.inp.resource_id === "abyss_eel" ? "eel" : "salmon";
+            return (
+              <span
+                key={i.inp.resource_id}
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 3,
+                  color: i.has ? "inherit" : "var(--tone-bad-2, #f87171)",
+                }}
+              >
+                {ix > 0 && <span style={{ opacity: 0.5 }}>+</span>}
+                {i.inp.qty} ×
+                <Icon name={inputRawIcon} size={12} color={i.has ? "var(--fg-mute)" : "var(--tone-bad-2, #f87171)"} />
+                {i.spec?.name ?? i.inp.resource_id}
+                <span style={{ opacity: 0.6 }}>({i.onHand})</span>
+              </span>
+            );
+          })}
+          <span>· {recipe.gold_cost}g</span>
+          <span>· lvl {recipe.level_req}+</span>
         </div>
       </div>
       <button
@@ -128,7 +151,7 @@ function RecipeRow({
         onClick={handle}
         style={actionBtn(canCook)}
       >
-        {busy ? "…" : !meetsLevel ? `Lvl ${recipe.level_req}` : !hasFish ? "Need fish" : !canAfford ? "Need gold" : "Cook"}
+        {busy ? "…" : !meetsLevel ? `Lvl ${recipe.level_req}` : !hasAllInputs ? "Need fish" : !canAfford ? "Need gold" : "Cook"}
       </button>
     </div>
   );
