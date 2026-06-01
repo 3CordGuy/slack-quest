@@ -169,6 +169,13 @@ export interface Character {
   forage_stock_full_at: number | null;
   /** Fishing harvestable stock — same shape. */
   fish_stock_full_at: number | null;
+  /** Email address for magic-code sign-in (migration 0060). Null on Slack-only
+      and unlinked guest accounts. Unique when set. */
+  email: string | null;
+  /** 1 when this row was created via /api/auth/guest (random uuid id, no email).
+      Flips to 0 once the player links an email. Surfaced in the popover so
+      guests see a "Save your character" CTA. */
+  is_guest: number;
 }
 
 interface CharacterRow extends Omit<Character, "scars" | "effects" | "drink_buff" | "achievements" | "pending_achievements"> {

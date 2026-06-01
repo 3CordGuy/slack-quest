@@ -1830,7 +1830,15 @@ export function AccountPopover({
 }: {
   onLogout: () => void;
   onReroll: (className?: string) => Promise<void>;
-  character: { name: string; notification_pref?: "thread" | "dm"; slack_username?: string | null } | null;
+  character: {
+    name: string;
+    notification_pref?: "thread" | "dm";
+    slack_username?: string | null;
+    /** Guest accounts (is_guest=1) get a highlighted "Save your character" row
+        in the popover so they can link an email and survive cookie loss. */
+    is_guest?: number;
+    email?: string | null;
+  } | null;
   onSaveNotifyPref?: (pref: "thread" | "dm") => Promise<void>;
   /** Optional handler to set the player's display @handle. When provided,
       shows a "Set display name" affordance — highlighted in the popover
@@ -1853,7 +1861,9 @@ export function AccountPopover({
   const [rerolling, setRerolling] = useState(false);
   const [showNotifyModal, setShowNotifyModal] = useState(false);
   const [showUsernameModal, setShowUsernameModal] = useState(false);
+  const [showLinkEmailModal, setShowLinkEmailModal] = useState(false);
   const missingUsername = !character?.slack_username;
+  const isGuest = !!character?.is_guest;
 
   const { refs, floatingStyles, context } = useFloating({
     open,
@@ -1911,6 +1921,35 @@ export function AccountPopover({
               >
                 <Icon name="player" size={13} /> Sign out
               </button>
+
+              {/* Save your character (guests) / Linked email (already linked).
+                  Guests get a highlighted CTA so they understand they will
+                  lose progress if cookies clear. */}
+              {isGuest ? (
+                <button
+                  onClick={() => { setOpen(false); setShowLinkEmailModal(true); }}
+                  style={{
+                    ...smallActionBtn("#1a1c20", "#fde68a"),
+                    textAlign: "left",
+                    outline: "1px solid #fde68a55",
+                  }}
+                  title="Attach an email to save this character across devices"
+                >
+                  <Icon name="wax-seal" size={13} /> Save your character
+                </button>
+              ) : character?.email ? (
+                <div
+                  style={{
+                    ...smallActionBtn("#1a1c20", "#9ca3af"),
+                    textAlign: "left",
+                    cursor: "default",
+                    fontSize: 11,
+                  }}
+                  title="This character is linked to this email"
+                >
+                  <Icon name="wax-seal" size={13} /> {character.email}
+                </div>
+              ) : null}
 
               {/* Notifications */}
               {onSaveNotifyPref && (
@@ -2054,7 +2093,193 @@ export function AccountPopover({
           onClose={() => setShowUsernameModal(false)}
         />
       )}
+      {showLinkEmailModal && (
+        <LinkEmailModal onClose={() => setShowLinkEmailModal(false)} />
+      )}
     </>
+  );
+}
+
+function LinkEmailModal({ onClose }: { onClose: () => void }) {
+  // Two-step: request a code, then verify it. Stays signed in as the guest
+  // throughout — /api/auth/email/verify upgrades the existing row when the
+  // session belongs to a guest, so the cookie keeps working but is_guest
+  // flips to 0 and the email is attached.
+  const [step, setStep] = useState<"email" | "code">("email");
+  const [email, setEmail] = useState("");
+  const [code, setCode] = useState("");
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function requestCode(e: React.FormEvent) {
+    e.preventDefault();
+    const trimmed = email.trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)) {
+      setError("Enter a valid email.");
+      return;
+    }
+    setPending(true);
+    setError(null);
+    const res = await fetch("/api/auth/link-email", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({ email: trimmed }),
+    });
+    setPending(false);
+    if (res.ok) {
+      setEmail(trimmed);
+      setCode("");
+      setStep("code");
+      return;
+    }
+    const body = (await res.json().catch(() => ({}))) as { error?: string };
+    setError(
+      body.error === "email_in_use"
+        ? "That email is already linked to another character."
+        : "Couldn't send the code. Try again.",
+    );
+  }
+
+  async function verify(e: React.FormEvent) {
+    e.preventDefault();
+    if (!/^\d{6}$/.test(code)) {
+      setError("Enter the 6-digit code.");
+      return;
+    }
+    setPending(true);
+    setError(null);
+    const res = await fetch("/api/auth/email/verify", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({ email, code }),
+    });
+    setPending(false);
+    if (res.ok) {
+      // The session cookie was refreshed on the same character row, so we
+      // just need the next refresh to see is_guest=0 + email populated.
+      onClose();
+      window.location.reload();
+      return;
+    }
+    setError("Code didn't match or has expired.");
+  }
+
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: "fixed", inset: 0, zIndex: 400,
+        background: "rgba(0,0,0,0.55)",
+        display: "flex", alignItems: "center", justifyContent: "center",
+        padding: 16,
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          background: "var(--bg-panel)",
+          border: "1px solid var(--border-base)",
+          borderRadius: "var(--radius-2xl)",
+          padding: 20,
+          width: "100%",
+          maxWidth: 420,
+          display: "flex", flexDirection: "column", gap: 12,
+        }}
+      >
+        <div>
+          <div style={{
+            font: "10px/1 var(--font-mono)",
+            color: "var(--accent-gold)",
+            textTransform: "uppercase",
+            letterSpacing: 1.4,
+            marginBottom: 6,
+          }}>
+            Save your character
+          </div>
+          <h2 style={{ ...h2, fontSize: 18, margin: 0 }}>
+            {step === "email" ? "Link an email" : "Enter your code"}
+          </h2>
+        </div>
+        {step === "email" ? (
+          <>
+            <p style={{ ...muted, margin: 0, fontSize: 13, lineHeight: 1.5 }}>
+              Right now this character only lives in this browser. Link an email
+              and you'll be able to sign back in from anywhere.
+            </p>
+            <form onSubmit={requestCode} style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              <input
+                type="email"
+                autoComplete="email"
+                value={email}
+                onChange={(e) => { setEmail(e.target.value); setError(null); }}
+                placeholder="you@example.com"
+                autoFocus
+                style={{
+                  padding: "10px 12px",
+                  borderRadius: "var(--radius-md)",
+                  background: "var(--bg-input)",
+                  border: "1px solid var(--border-base)",
+                  color: "var(--fg-1)",
+                  font: "14px/1 var(--font-body, system-ui)",
+                  outline: "none",
+                }}
+              />
+              <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+                <button type="button" onClick={onClose} style={smallActionBtn("#222428", "#9ca3af")}>
+                  Cancel
+                </button>
+                <button type="submit" disabled={pending} className="btn btn-primary">
+                  {pending ? "Sending…" : "Send code"}
+                </button>
+              </div>
+            </form>
+          </>
+        ) : (
+          <>
+            <p style={{ ...muted, margin: 0, fontSize: 13, lineHeight: 1.5 }}>
+              Check <strong style={{ color: "var(--fg-1)" }}>{email}</strong> for a 6-digit code.
+            </p>
+            <form onSubmit={verify} style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              <input
+                inputMode="numeric"
+                pattern="\d{6}"
+                maxLength={6}
+                value={code}
+                onChange={(e) => { setCode(e.target.value.replace(/\D/g, "")); setError(null); }}
+                placeholder="123456"
+                autoFocus
+                style={{
+                  padding: "10px 12px",
+                  borderRadius: "var(--radius-md)",
+                  background: "var(--bg-input)",
+                  border: "1px solid var(--border-base)",
+                  color: "var(--fg-1)",
+                  font: "20px/1 var(--font-mono)",
+                  letterSpacing: "0.4em",
+                  textAlign: "center",
+                  outline: "none",
+                }}
+              />
+              <div style={{ display: "flex", gap: 8, justifyContent: "space-between" }}>
+                <button type="button" onClick={() => { setStep("email"); setError(null); }} style={smallActionBtn("#222428", "#9ca3af")}>
+                  ← Different email
+                </button>
+                <button type="submit" disabled={pending} className="btn btn-primary">
+                  {pending ? "Verifying…" : "Save character"}
+                </button>
+              </div>
+            </form>
+          </>
+        )}
+        {error && (
+          <p style={{ margin: 0, color: "var(--tone-bad)", font: "12px/1.5 var(--font-mono)" }}>
+            {error}
+          </p>
+        )}
+      </div>
+    </div>
   );
 }
 
