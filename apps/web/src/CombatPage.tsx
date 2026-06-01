@@ -1,6 +1,7 @@
-import { useEffect, useReducer, useRef, useState } from "react";
+import { useEffect, useMemo, useReducer, useRef, useState } from "react";
 import toast from "react-hot-toast";
 import { isMonsterActor, classByName, activeAbilities, type ActiveAbilityDef, isAllyNpcActor } from "@gantt-quest/core";
+import { buildBurndown, BurndownChart } from "./CombatBurndown";
 import { InventoryFullScreen } from "./components/Inventory";
 import type { Item } from "./types";
 
@@ -406,6 +407,12 @@ interface UiState {
   connection: "connecting" | "open" | "reconnecting" | "closed";
   state: CombatState | null;
   log: LogEntry[];
+  /** Unbounded copy of every CombatEvent we've received this fight. Powers
+      the post-fight HP burndown chart in the victory/defeat modal. We don't
+      slice this — fights are at most low-hundreds of events, well under the
+      memory budget — because the burndown needs the full timeline. Wiped on
+      `reset` like the formatted log. */
+  rawEvents: CombatEvent[];
   error: string | null;
   outcome: OutcomeSummary | null;
 }
@@ -435,6 +442,7 @@ function reducer(s: UiState, a: UiAction): UiState {
         return {
           ...s,
           log: [...s.log, ...a.value.flatMap((e) => formatEvent(e, s.state))].slice(-50),
+          rawEvents: [...s.rawEvents, ...a.value],
         };
       } catch (err) {
         console.error("[CombatPage] event render error:", err);
@@ -460,7 +468,7 @@ function reducer(s: UiState, a: UiAction): UiState {
     case "outcome":
       return { ...s, outcome: a.value };
     case "reset":
-      return { connection: "connecting", state: null, log: [], error: null, outcome: null };
+      return { connection: "connecting", state: null, log: [], rawEvents: [], error: null, outcome: null };
   }
 }
 
@@ -843,6 +851,7 @@ export function CombatPage({
     connection: "connecting",
     state: null,
     log: [],
+    rawEvents: [],
     error: null,
     outcome: null,
   });
@@ -2086,6 +2095,8 @@ export function CombatPage({
           outcome={ui.outcome}
           selfId={selfId}
           fighters={state.fighters}
+          monsters={state.monsters}
+          rawEvents={ui.rawEvents}
           questId={questId}
           onBack={exit}
           onContinueClimbing={continueClimbing}
@@ -2101,6 +2112,8 @@ export function CombatPage({
           outcome={ui.outcome}
           selfId={selfId}
           fighters={state.fighters}
+          monsters={state.monsters}
+          rawEvents={ui.rawEvents}
           onBack={exit}
         />
       )}
@@ -3301,6 +3314,8 @@ function VictoryModal({
   outcome,
   selfId,
   fighters,
+  monsters,
+  rawEvents,
   questId,
   onBack,
   onContinueClimbing,
@@ -3310,6 +3325,8 @@ function VictoryModal({
   outcome: OutcomeSummary | null;
   selfId: string;
   fighters: Fighter[];
+  monsters: Monster[];
+  rawEvents: CombatEvent[];
   questId: number;
   onBack: () => void;
   // Tower mid-cycle: clicking "Continue climbing" triggers an in-place
@@ -3321,6 +3338,10 @@ function VictoryModal({
   onPressOnAfterBoss?: () => void;
   onBankAndExit?: () => void;
 }) {
+  const burndown = useMemo(
+    () => buildBurndown(rawEvents, fighters, monsters),
+    [rawEvents, fighters, monsters],
+  );
   const towerFloor = outcome?.tower_floor_cleared;
   const towerAwaitingChoice = outcome?.tower_awaiting_choice;
   const title = towerAwaitingChoice
@@ -3437,6 +3458,7 @@ function VictoryModal({
                 />
               ))}
             </div>
+            {rawEvents.length > 0 && <BurndownChart data={burndown} selfId={selfId} />}
             {towerFloor && !towerAwaitingChoice && (
               <p style={{ ...muted, fontSize: 12, textAlign: "center", marginBottom: 12, color: "var(--fg-mute)" }}>
                 {outcome?.tower_next_floor_kind === "rest"
@@ -3509,15 +3531,23 @@ function DefeatModal({
   outcome,
   selfId,
   fighters,
+  monsters,
+  rawEvents,
   onBack,
 }: {
   status: "defeat" | "fled";
   outcome: OutcomeSummary | null;
   selfId: string;
   fighters: Fighter[];
+  monsters: Monster[];
+  rawEvents: CombatEvent[];
   onBack: () => void;
 }) {
   const fled = status === "fled";
+  const burndown = useMemo(
+    () => buildBurndown(rawEvents, fighters, monsters),
+    [rawEvents, fighters, monsters],
+  );
 
   return (
     <div style={{
@@ -3600,6 +3630,7 @@ function DefeatModal({
             })}
           </div>
         )}
+        {rawEvents.length > 0 && <BurndownChart data={burndown} selfId={selfId} />}
         <button
           onClick={onBack}
           className={fled ? "btn btn-gold" : "btn btn-ghost"}
