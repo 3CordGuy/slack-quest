@@ -671,6 +671,11 @@ function ForageCell({
       disabled={disabled || revealed}
       onPointerDown={(e) => {
         if (disabled || revealed) return;
+        // Only react to the primary (left) button. Right/middle/back/forward
+        // all share onPointerDown/Up plumbing and would otherwise compete
+        // with onContextMenu: right-click would flag in contextmenu, then
+        // pointerup would flip the cell back open.
+        if (e.button !== 0) return;
         // Start the long-press timer; if it fires we treat this as a flag
         // and suppress the upcoming flip.
         longPressFiredRef.current = false;
@@ -686,6 +691,7 @@ function ForageCell({
       }}
       onPointerUp={(e) => {
         if (disabled || revealed) return;
+        if (e.button !== 0) return;  // see onPointerDown
         if (pressTimerRef.current != null) {
           window.clearTimeout(pressTimerRef.current);
           pressTimerRef.current = null;
