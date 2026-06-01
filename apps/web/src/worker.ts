@@ -5037,7 +5037,12 @@ app.get("/api/pub/leaderboard", async (c) => {
   if (!session) return c.json({ error: "unauthenticated" }, 401);
   const character = await getCharacter(c.env.DB, session.slack_user_id);
   if (!character) return c.json({ error: "no_character" }, 404);
-  const channelId = character.channel_id;
+  // Match /api/pub: characters don't have a channel_id column; the channel
+  // comes from the recent activity table. Using `character.channel_id` here
+  // was always undefined → period filtering always returned an empty array,
+  // which then overwrote the initial populated entries the parent passed in
+  // and made the Pub Legends card flicker → empty.
+  const channelId = await recentChannelForUser(c.env.DB, session.slack_user_id, c.env);
   if (!channelId) return c.json({ entries: [] });
   const period = c.req.query("period") ?? "all";
   const now = Date.now();
