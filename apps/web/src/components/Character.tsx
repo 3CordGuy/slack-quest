@@ -1922,22 +1922,13 @@ export function AccountPopover({
                 <Icon name="player" size={13} /> Sign out
               </button>
 
-              {/* Save your character (guests) / Linked email (already linked).
-                  Guests get a highlighted CTA so they understand they will
-                  lose progress if cookies clear. */}
-              {isGuest ? (
-                <button
-                  onClick={() => { setOpen(false); setShowLinkEmailModal(true); }}
-                  style={{
-                    ...smallActionBtn("#1a1c20", "#fde68a"),
-                    textAlign: "left",
-                    outline: "1px solid #fde68a55",
-                  }}
-                  title="Attach an email to save this character across devices"
-                >
-                  <Icon name="wax-seal" size={13} /> Save your character
-                </button>
-              ) : character?.email ? (
+              {/* Email link state:
+                    - Guests: highlighted "Save your character" — losing the
+                      cookie means losing the character without this.
+                    - Slack/email users with no email yet: muted "Add email"
+                      so they can pick up an alternate sign-in method.
+                    - Linked: just shows the address (no action). */}
+              {character?.email ? (
                 <div
                   style={{
                     ...smallActionBtn("#1a1c20", "#9ca3af"),
@@ -1949,7 +1940,27 @@ export function AccountPopover({
                 >
                   <Icon name="wax-seal" size={13} /> {character.email}
                 </div>
-              ) : null}
+              ) : isGuest ? (
+                <button
+                  onClick={() => { setOpen(false); setShowLinkEmailModal(true); }}
+                  style={{
+                    ...smallActionBtn("#1a1c20", "#fde68a"),
+                    textAlign: "left",
+                    outline: "1px solid #fde68a55",
+                  }}
+                  title="Attach an email to save this character across devices"
+                >
+                  <Icon name="wax-seal" size={13} /> Save your character
+                </button>
+              ) : (
+                <button
+                  onClick={() => { setOpen(false); setShowLinkEmailModal(true); }}
+                  style={{ ...smallActionBtn("#1a1c20", "#93c5fd"), textAlign: "left" }}
+                  title="Add an email so you can sign in without Slack"
+                >
+                  <Icon name="wax-seal" size={13} /> Add email
+                </button>
+              )}
 
               {/* Notifications */}
               {onSaveNotifyPref && (
@@ -2094,17 +2105,17 @@ export function AccountPopover({
         />
       )}
       {showLinkEmailModal && (
-        <LinkEmailModal onClose={() => setShowLinkEmailModal(false)} />
+        <LinkEmailModal isGuest={isGuest} onClose={() => setShowLinkEmailModal(false)} />
       )}
     </>
   );
 }
 
-function LinkEmailModal({ onClose }: { onClose: () => void }) {
-  // Two-step: request a code, then verify it. Stays signed in as the guest
-  // throughout — /api/auth/email/verify upgrades the existing row when the
-  // session belongs to a guest, so the cookie keeps working but is_guest
-  // flips to 0 and the email is attached.
+function LinkEmailModal({ isGuest, onClose }: { isGuest: boolean; onClose: () => void }) {
+  // Two-step: request a code, then verify it. Stays signed in as the same
+  // character throughout — /api/auth/email/verify attaches the email to the
+  // existing row whenever the caller has no email yet (guests and Slack-only
+  // users both qualify), so the cookie keeps working.
   const [step, setStep] = useState<"email" | "code">("email");
   const [email, setEmail] = useState("");
   const [code, setCode] = useState("");
@@ -2196,7 +2207,7 @@ function LinkEmailModal({ onClose }: { onClose: () => void }) {
             letterSpacing: 1.4,
             marginBottom: 6,
           }}>
-            Save your character
+            {isGuest ? "Save your character" : "Add email"}
           </div>
           <h2 style={{ ...h2, fontSize: 18, margin: 0 }}>
             {step === "email" ? "Link an email" : "Enter your code"}
@@ -2205,8 +2216,9 @@ function LinkEmailModal({ onClose }: { onClose: () => void }) {
         {step === "email" ? (
           <>
             <p style={{ ...muted, margin: 0, fontSize: 13, lineHeight: 1.5 }}>
-              Right now this character only lives in this browser. Link an email
-              and you'll be able to sign back in from anywhere.
+              {isGuest
+                ? "Right now this character only lives in this browser. Link an email and you'll be able to sign back in from anywhere."
+                : "Add an email so you can sign in without Slack. Your existing character stays exactly as it is."}
             </p>
             <form onSubmit={requestCode} style={{ display: "flex", flexDirection: "column", gap: 10 }}>
               <input
