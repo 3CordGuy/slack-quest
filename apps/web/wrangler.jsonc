@@ -40,7 +40,7 @@
   ],
   "vars": {
     "ENVIRONMENT": "production",
-    "MAIL_FROM_ADDRESS": "noreply@example.invalid",
+    "MAIL_FROM_ADDRESS": "noreply@heylets.party",
     "MAIL_FROM_NAME": "Gantt Quest"
   }
 }
