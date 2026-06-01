@@ -3433,46 +3433,83 @@ app.post("/api/camp/forage/flip", async (c) => {
       .bind(JSON.stringify(grid), session.slack_user_id)
       .run();
   }
-  // Cascade from the requested cell. Hazards are never auto-revealed.
-  const alreadyKeys = new Set(revealed.map(([rr, cc]) => `${rr},${cc}`));
-  const revealedCells = forageCascadeFrom(grid, body.r, body.c, alreadyKeys);
-  // HP damage if the player MANUALLY flipped a hazard (only possible when
-  // the player's first cell was a hazard AND we couldn't find a safe
-  // regeneration within 40 tries, or if they probe a guess later).
-  let hpDamage = 0;
-  let newHp = character.hp;
   const firstCell = grid[body.r][body.c];
+  const hazardCountAtTap = forageHazardCount(grid, body.r, body.c);
+
+  // ── Mushroom = game over ────────────────────────────────────────────────
+  // Tapping a mushroom ends the run immediately. The player takes HP damage
+  // and forfeits every herb revealed this play — the basket spills in the
+  // panic. Stock is NOT depleted (a bite is a wasted attempt, not a harvest),
+  // so the player can come back without burning down the garden's reserves.
   if (isForageHazard(firstCell)) {
-    hpDamage = 1 + Math.floor(Math.random() * FORAGE_HAZARD_DICE);
-    newHp = Math.max(1, character.hp - hpDamage);
+    const hpDamage = 1 + Math.floor(Math.random() * FORAGE_HAZARD_DICE);
+    const newHp = Math.max(1, character.hp - hpDamage);
     await c.env.DB
       .prepare("UPDATE characters SET hp = ? WHERE slack_user_id = ?")
       .bind(newHp, session.slack_user_id)
       .run();
+    // Game over: clean up the row. The /finish endpoint won't be called.
+    await deleteForageGame(c.env.DB, session.slack_user_id);
+    // XP floor so a bite still earns leaderboard credit for showing up.
+    const xpAward = STOCK_EMPTY_XP;
+    const spoils = await awardSpoils(
+      c.env.DB,
+      character,
+      xpAward,
+      0,
+      () => rollDice(6),
+      xpForLevel,
+    );
+    return c.json({
+      ok: true,
+      cell: firstCell,
+      hazard_count: hazardCountAtTap,
+      cascade: [{ r: body.r, c: body.c, cell: firstCell, hazard_count: hazardCountAtTap }],
+      hp_damage: hpDamage,
+      hp: newHp,
+      max_hp: character.max_hp,
+      // Bite-terminates-play sentinel + final result so the client can jump
+      // straight to a result panel without a /finish round-trip.
+      bitten: true,
+      xp: xpAward,
+      gold: 0,
+      levelsGained: spoils.levelsGained,
+      newLevel: spoils.newLevel,
+      resources: [],
+      herbs: 0,
+      herbs_harvested: 0,
+      hazards: 1,
+      hp_taken: game.hp_taken + hpDamage,
+      flawless: false,
+      // Stock is unchanged — no harvest happened.
+      stock: currentStock(character.forage_stock_full_at, Date.now()),
+      stock_cap: STOCK_CAP,
+      stock_full_at: character.forage_stock_full_at ?? null,
+    });
   }
-  // Persist new revealed set + HP tally.
+
+  // ── Safe reveal ────────────────────────────────────────────────────────
+  // Cascade from the requested cell. Hazards are never auto-revealed
+  // (0-count cells by definition have no hazard neighbors).
+  const alreadyKeys = new Set(revealed.map(([rr, cc]) => `${rr},${cc}`));
+  const revealedCells = forageCascadeFrom(grid, body.r, body.c, alreadyKeys);
   const nextRevealed = [
     ...revealed,
     ...revealedCells.map((r) => [r.r, r.c] as [number, number]),
   ];
-  const nextHpTaken = game.hp_taken + hpDamage;
   await updateForageGame(
     c.env.DB,
     session.slack_user_id,
     JSON.stringify(nextRevealed),
-    nextHpTaken,
+    game.hp_taken,
   );
   return c.json({
     ok: true,
-    // Manual flip — the cell the player tapped and its hazard count.
     cell: firstCell,
-    hazard_count: forageHazardCount(grid, body.r, body.c),
-    // Cascade — every cell auto-revealed FROM this manual flip, including
-    // the manual flip itself as the first entry. Useful for the client to
-    // batch-render with a fade-in.
+    hazard_count: hazardCountAtTap,
     cascade: revealedCells,
-    hp_damage: hpDamage,
-    hp: newHp,
+    hp_damage: 0,
+    hp: character.hp,
     max_hp: character.max_hp,
   });
 });

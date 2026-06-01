@@ -52,6 +52,21 @@ interface FlipResponse {
   hp_damage: number;
   hp: number;
   max_hp: number;
+  /** If true: player tapped a mushroom and the play is over. The other
+      result fields below mirror a FinishResponse so the client can jump
+      straight to the result panel without calling /finish. */
+  bitten?: boolean;
+  // Only present when bitten=true:
+  xp?: number;
+  gold?: number;
+  levelsGained?: number;
+  newLevel?: number;
+  resources?: FinishResource[];
+  herbs?: number;
+  herbs_harvested?: number;
+  hazards?: number;
+  hp_taken?: number;
+  flawless?: boolean;
 }
 
 // Stored per revealed cell so we can render its hazard-count badge later.
@@ -72,6 +87,9 @@ interface FinishResponse {
   hp_taken: number;
   flawless: boolean;
   vigor?: number;
+  /** True when the play ended by tapping a mushroom — the result panel
+      switches to the "bitten" branch (no herbs, dramatic copy). */
+  bitten?: boolean;
 }
 
 function describeServerError(code: string | undefined): string {
@@ -338,8 +356,26 @@ export function ForageMinigame({ backgroundArtUrl, onClose, onComplete }: Forage
       }
       if (data.cell === "mossroot" || data.cell === "sunleaf") playHerbSparkle();
       else if (data.cell === "mushroom") playMushroomPop();
-      // If that was the last flip, auto-finish.
-      // No auto-bank — the player decides when they've collected enough.
+      // Bitten by a mushroom → game over. The server already cleaned up the
+      // forage_games row and packed the result into this same response, so
+      // we skip the /finish round-trip and jump straight to the panel.
+      if (data.bitten) {
+        const finishResult: FinishResponse = {
+          xp: data.xp ?? 0,
+          gold: data.gold ?? 0,
+          levelsGained: data.levelsGained ?? 0,
+          newLevel: data.newLevel ?? 0,
+          resources: data.resources ?? [],
+          herbs: data.herbs ?? 0,
+          hazards: data.hazards ?? 1,
+          hp_taken: data.hp_taken ?? data.hp_damage,
+          flawless: false,
+          bitten: true,
+        };
+        setResult(finishResult);
+        setPhase("done");
+        onComplete?.(finishResult);
+      }
     } catch (e) {
       toast.error(`Network error: ${(e as Error).message}`);
     } finally {
@@ -458,7 +494,7 @@ export function ForageMinigame({ backgroundArtUrl, onClose, onComplete }: Forage
           <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", color: "var(--fg-mute)", fontSize: 12 }}>
             <span><strong style={{ color: hp.current < hp.max * 0.4 ? "#e76f51" : "var(--fg-1)" }}>{hp.current}/{hp.max}</strong> HP</span>
             <span aria-hidden="true">·</span>
-            <span>🍄 numbers show mushrooms nearby. Long-press (or right-click) to flag. Bank when you're satisfied — mushrooms bite.</span>
+            <span>🍄 numbers show mushrooms nearby. Long-press (or right-click) to flag. <strong>One bite ends the play and you lose every herb</strong> — bank early if you're unsure.</span>
           </div>
         )}
 
@@ -758,6 +794,43 @@ function ForageCell({
 }
 
 function ResultPanel({ result, onClose }: { result: FinishResponse; onClose: () => void }) {
+  if (result.bitten) {
+    return (
+      <div
+        style={{
+          marginTop: 4,
+          padding: 14,
+          border: "1px solid rgba(165, 94, 194, 0.55)",
+          borderRadius: 10,
+          background: "linear-gradient(180deg, rgba(165, 94, 194, 0.18) 0%, rgba(20, 12, 24, 0.78) 100%)",
+          display: "flex", flexDirection: "column", gap: 8,
+          textAlign: "center",
+        }}
+      >
+        <div style={{ font: "13px/1 var(--font-display)", textTransform: "uppercase", letterSpacing: 2, color: "#d39be3" }}>
+          Poisoned
+        </div>
+        <div style={{ fontSize: 22, fontFamily: "var(--font-display)", color: "#f5e5ff" }}>
+          🍄 Bitten by a Mushroom!
+        </div>
+        <div style={{ fontSize: 13, color: "var(--fg-mute)", marginTop: 2 }}>
+          You knocked over the basket fleeing — every herb you'd gathered spilled into the dirt.
+        </div>
+        <div style={{ fontSize: 13, color: "#e76f51", marginTop: 4 }}>
+          {result.hp_taken} HP lost · 0 herbs harvested
+        </div>
+        <div style={{ fontSize: 13, color: "var(--fg-mute)" }}>
+          +{result.xp} XP for showing up
+          {result.levelsGained > 0 ? ` · Level up! (now ${result.newLevel})` : ""}
+        </div>
+        <div style={{ display: "flex", justifyContent: "center", marginTop: 6 }}>
+          <button type="button" onClick={onClose} style={primaryBtn}>
+            Done (Enter)
+          </button>
+        </div>
+      </div>
+    );
+  }
   return (
     <div
       style={{
