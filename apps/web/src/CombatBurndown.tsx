@@ -24,15 +24,20 @@ interface ActorMeta {
   id: string;
   name: string;
   max_hp: number;
+  /** 0 for monsters + non-caster classes. Drives whether the actor shows
+      up on the mana view at all. */
+  max_mana: number;
   side: "party" | "monster";
   /** Final HP at end of fight — derived from the last sample. Used to dim
       lines for downed party / dead monsters. */
   final_hp?: number;
+  final_mana?: number;
 }
 
 interface Sample {
   round: number;     // 0 = pre-fight starting HP, then 1, 2, …
   hp: Record<string, number>;
+  mana: Record<string, number>;
 }
 
 export interface BurndownData {
@@ -42,6 +47,8 @@ export interface BurndownData {
       "raw output" stat players want to brag about. Heals tracked separately. */
   damageDealt: Record<string, number>;
   healingDone: Record<string, number>;
+  /** Total mana spent (sum of ability_used.mana_spent) per actor. */
+  manaSpent: Record<string, number>;
 }
 
 interface InitialFighter {
@@ -49,6 +56,8 @@ interface InitialFighter {
   name: string;
   hp: number;
   max_hp: number;
+  mana: number;
+  max_mana: number;
 }
 
 interface InitialMonster {
@@ -77,17 +86,22 @@ export function buildBurndown(
       id: f.id,
       name: f.name,
       max_hp: f.max_hp,
+      max_mana: f.max_mana,
       side: "party",
     })),
   ];
 
-  // Track HP per id as we replay. Start everyone at full — the live state's
-  // current HP is the *end* state, not the start.
+  // Track HP + mana per id as we replay. Start everyone at full — the live
+  // state's current values are the *end* state, not the start.
   const hp: Record<string, number> = {};
   const maxHp: Record<string, number> = {};
+  const mana: Record<string, number> = {};
+  const maxMana: Record<string, number> = {};
   for (const f of fighters) {
     hp[f.id] = f.max_hp;
     maxHp[f.id] = f.max_hp;
+    mana[f.id] = f.max_mana;
+    maxMana[f.id] = f.max_mana;
   }
 
   // Initial monster: assume the first monster from state is the one the fight
@@ -101,15 +115,17 @@ export function buildBurndown(
       id,
       name: initialMonster.name,
       max_hp: initialMonster.max_hp,
+      max_mana: 0,
       side: "monster",
     });
   }
 
   const damageDealt: Record<string, number> = {};
   const healingDone: Record<string, number> = {};
+  const manaSpent: Record<string, number> = {};
 
-  // round 0 = pre-fight HP snapshot
-  const samples: Sample[] = [{ round: 0, hp: { ...hp } }];
+  // round 0 = pre-fight HP + mana snapshot
+  const samples: Sample[] = [{ round: 0, hp: { ...hp }, mana: { ...mana } }];
   let round = 0;
 
   const flushRound = () => {
@@ -117,8 +133,9 @@ export function buildBurndown(
     const last = samples[samples.length - 1];
     if (last && last.round === round) {
       last.hp = { ...hp };
+      last.mana = { ...mana };
     } else {
-      samples.push({ round, hp: { ...hp } });
+      samples.push({ round, hp: { ...hp }, mana: { ...mana } });
     }
   };
 
@@ -184,8 +201,23 @@ export function buildBurndown(
         }
         break;
       }
+      case "ability_used":
+        // Ability cost paid up front. mana_spent is the actual mana drained
+        // (0 for free abilities, e.g. weapon strikes routed through abilities).
+        if (e.mana_spent > 0) {
+          mana[e.actor] = Math.max(0, (mana[e.actor] ?? 0) - e.mana_spent);
+          manaSpent[e.actor] = (manaSpent[e.actor] ?? 0) + e.mana_spent;
+        }
+        break;
+      case "passive_mage_mana_font": {
+        // DevOps Mage passive that ticks mana back. Restores up to max_mana.
+        const cap = maxMana[e.actor] ?? 0;
+        mana[e.actor] = Math.min(cap, (mana[e.actor] ?? 0) + e.amount);
+        break;
+      }
       default:
-        // begin/roll/hit_check/ability_*/flee_check/etc. don't move HP.
+        // begin/roll/hit_check/other ability_*/flee_check/etc. don't move HP
+        // or mana directly.
         break;
     }
     flushRound();
@@ -193,9 +225,10 @@ export function buildBurndown(
 
   for (const a of actors) {
     a.final_hp = hp[a.id] ?? 0;
+    a.final_mana = mana[a.id] ?? 0;
   }
 
-  return { actors, samples, damageDealt, healingDone };
+  return { actors, samples, damageDealt, healingDone, manaSpent };
 }
 
 const PALETTE = [
@@ -218,7 +251,10 @@ export function BurndownChart({ data, selfId }: { data: BurndownData; selfId: st
   const [enabled, setEnabled] = useState<Set<string>>(
     () => new Set(data.actors.map((a) => a.id)),
   );
-  const [tab, setTab] = useState<"hp" | "damage">("hp");
+  const [tab, setTab] = useState<"hp" | "damage" | "mana">("hp");
+  // Mana tab is only meaningful when at least one party member has a mana
+  // pool — non-caster fights would render an empty chart otherwise.
+  const anyManaUser = data.actors.some((a) => a.side === "party" && a.max_mana > 0);
 
   const colorFor = useMemo(() => {
     const m = new Map<string, string>();
@@ -255,6 +291,19 @@ export function BurndownChart({ data, selfId }: { data: BurndownData; selfId: st
     return pts.join(" ");
   }
 
+  function manaLineFor(actor: ActorMeta): string {
+    if (!enabled.has(actor.id) || actor.max_mana <= 0) return "";
+    const pts = data.samples
+      .map((s) => {
+        const m = s.mana[actor.id];
+        if (m === undefined) return null;
+        const pct = m / actor.max_mana;
+        return `${xOf(s.round)},${yOf(pct)}`;
+      })
+      .filter((p): p is string => !!p);
+    return pts.join(" ");
+  }
+
   function toggle(id: string) {
     setEnabled((prev) => {
       const next = new Set(prev);
@@ -277,22 +326,31 @@ export function BurndownChart({ data, selfId }: { data: BurndownData; selfId: st
         marginBottom: 12,
       }}
     >
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8, gap: 8, flexWrap: "wrap" }}>
         <div style={{
           font: "10px/1 var(--font-mono)",
           color: "var(--accent-gold)",
           textTransform: "uppercase",
           letterSpacing: 1.4,
+          display: "flex", alignItems: "center", gap: 6,
         }}>
-          {tab === "hp" ? "HP burndown" : "Damage dealt"}
+          <Icon
+            name={tab === "hp" ? "health-normal" : tab === "damage" ? "sword-brandish" : "crystal-ball"}
+            size={12}
+            color="var(--accent-gold)"
+          />
+          {tab === "hp" ? "HP burndown" : tab === "damage" ? "Damage dealt" : "Mana usage"}
         </div>
         <div style={{ display: "flex", gap: 4 }}>
-          <TabBtn label="HP" active={tab === "hp"} onClick={() => setTab("hp")} />
-          <TabBtn label="Damage" active={tab === "damage"} onClick={() => setTab("damage")} />
+          <TabBtn icon="health-normal" label="HP" active={tab === "hp"} onClick={() => setTab("hp")} />
+          <TabBtn icon="sword-brandish" label="Damage" active={tab === "damage"} onClick={() => setTab("damage")} />
+          {anyManaUser && (
+            <TabBtn icon="crystal-ball" label="Mana" active={tab === "mana"} onClick={() => setTab("mana")} />
+          )}
         </div>
       </div>
 
-      {tab === "hp" ? (
+      {tab === "hp" || tab === "mana" ? (
         <svg viewBox={`0 0 ${width} ${height}`} style={{ width: "100%", display: "block" }}>
           {/* Grid: 25/50/75/100% horizontals */}
           {[0, 0.25, 0.5, 0.75, 1].map((p) => (
@@ -310,19 +368,20 @@ export function BurndownChart({ data, selfId }: { data: BurndownData; selfId: st
           {/* Round axis labels at 0 and max */}
           <text x={padX} y={height - 2} fill="var(--fg-mute)" fontSize={9} fontFamily="var(--font-mono)">R0</text>
           <text x={width - padX} y={height - 2} fill="var(--fg-mute)" fontSize={9} fontFamily="var(--font-mono)" textAnchor="end">R{maxRound}</text>
-          {/* Lines: monster first (under), party on top so player's line is visible */}
-          {[...monsterActors, ...partyActors].map((a) => {
+          {/* HP view: monster first (under), party on top so player's line is
+              visible. Mana view: party only — monsters don't cast. */}
+          {(tab === "mana" ? partyActors.filter((a) => a.max_mana > 0) : [...monsterActors, ...partyActors]).map((a) => {
             if (!enabled.has(a.id)) return null;
             const isSelf = a.id === selfId;
             const isDown = (a.final_hp ?? 0) === 0;
             return (
               <polyline
                 key={a.id}
-                points={lineFor(a)}
+                points={tab === "mana" ? manaLineFor(a) : lineFor(a)}
                 fill="none"
                 stroke={colorFor.get(a.id) ?? "#888"}
                 strokeWidth={isSelf ? 2.5 : a.side === "monster" ? 2 : 1.5}
-                strokeOpacity={isDown ? 0.55 : 1}
+                strokeOpacity={isDown && tab === "hp" ? 0.55 : 1}
                 strokeLinejoin="round"
                 strokeLinecap="round"
               />
@@ -334,38 +393,55 @@ export function BurndownChart({ data, selfId }: { data: BurndownData; selfId: st
       )}
 
       {/* Legend / toggles. Monster's row is always on (no toggle); each party
-          member can be turned off to declutter long fights. */}
+          member can be turned off to declutter long fights. Mana view drops
+          monster chips (monsters have no mana pool) and skips non-casters. */}
       <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 10 }}>
-        {monsterActors.map((a) => (
+        {tab !== "mana" && monsterActors.map((a) => (
           <LegendChip
             key={a.id}
             color={colorFor.get(a.id) ?? "#888"}
             label={a.name}
             on={true}
+            subIcon={tab === "damage" ? "sword-brandish" : "health-normal"}
             sub={tab === "damage"
-              ? `${data.damageDealt[a.id] ?? 0} dmg`
+              ? `${data.damageDealt[a.id] ?? 0}`
               : `${a.final_hp ?? 0}/${a.max_hp}`}
             isMonster
           />
         ))}
-        {partyActors.map((a) => (
-          <LegendChip
-            key={a.id}
-            color={colorFor.get(a.id) ?? "#888"}
-            label={a.name + (a.id === selfId ? " (you)" : "")}
-            on={enabled.has(a.id)}
-            onToggle={() => toggle(a.id)}
-            sub={tab === "damage"
-              ? `${data.damageDealt[a.id] ?? 0} dmg${data.healingDone[a.id] ? ` · +${data.healingDone[a.id]} heal` : ""}`
-              : `${a.final_hp ?? 0}/${a.max_hp}`}
-          />
-        ))}
+        {partyActors
+          .filter((a) => tab !== "mana" || a.max_mana > 0)
+          .map((a) => {
+            const isManaTab = tab === "mana";
+            const isDmgTab = tab === "damage";
+            const subIcon = isManaTab ? "crystal-ball" : isDmgTab ? "sword-brandish" : "health-normal";
+            const sub = isManaTab
+              ? `${data.manaSpent[a.id] ?? 0} spent · ${a.final_mana ?? 0}/${a.max_mana}`
+              : isDmgTab
+              ? `${data.damageDealt[a.id] ?? 0}`
+              : `${a.final_hp ?? 0}/${a.max_hp}`;
+            const healSub = isDmgTab && data.healingDone[a.id]
+              ? { icon: "health-potion", text: `+${data.healingDone[a.id]}` }
+              : undefined;
+            return (
+              <LegendChip
+                key={a.id}
+                color={colorFor.get(a.id) ?? "#888"}
+                label={a.name + (a.id === selfId ? " (you)" : "")}
+                on={enabled.has(a.id)}
+                onToggle={() => toggle(a.id)}
+                subIcon={subIcon}
+                sub={sub}
+                extra={healSub}
+              />
+            );
+          })}
       </div>
     </div>
   );
 }
 
-function TabBtn({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) {
+function TabBtn({ icon, label, active, onClick }: { icon: string; label: string; active: boolean; onClick: () => void }) {
   return (
     <button
       onClick={onClick}
@@ -377,19 +453,24 @@ function TabBtn({ label, active, onClick }: { label: string; active: boolean; on
         font: "11px/1 var(--font-mono)",
         color: active ? "var(--fg-1)" : "var(--fg-mute)",
         cursor: "pointer",
+        display: "inline-flex", alignItems: "center", gap: 4,
       }}
     >
+      <Icon name={icon} size={11} color={active ? "var(--fg-1)" : "var(--fg-mute)"} />
       {label}
     </button>
   );
 }
 
 function LegendChip({
-  color, label, sub, on, onToggle, isMonster,
+  color, label, sub, subIcon, extra, on, onToggle, isMonster,
 }: {
   color: string;
   label: string;
   sub?: string;
+  subIcon?: string;
+  /** Optional second stat (currently used for healing alongside damage). */
+  extra?: { icon: string; text: string };
   on: boolean;
   onToggle?: () => void;
   isMonster?: boolean;
@@ -420,9 +501,20 @@ function LegendChip({
         borderRadius: 999,
         background: color,
       }} />
-      <span>{isMonster ? <><Icon name="death-skull" size={11} /> {label}</> : label}</span>
+      {isMonster && <Icon name="death-skull" size={11} />}
+      <span>{label}</span>
       {sub && (
-        <span style={{ color: "var(--fg-mute)", marginLeft: 4 }}>· {sub}</span>
+        <span style={{ color: "var(--fg-mute)", marginLeft: 4, display: "inline-flex", alignItems: "center", gap: 3 }}>
+          ·
+          {subIcon && <Icon name={subIcon} size={10} color="var(--fg-mute)" />}
+          {sub}
+        </span>
+      )}
+      {extra && (
+        <span style={{ color: "var(--tone-good)", marginLeft: 2, display: "inline-flex", alignItems: "center", gap: 3 }}>
+          <Icon name={extra.icon} size={10} color="var(--tone-good)" />
+          {extra.text}
+        </span>
       )}
     </button>
   );
@@ -464,8 +556,15 @@ function DamageBars({
                 transition: "width 0.3s ease",
               }} />
             </div>
-            <div style={{ flex: "0 0 90px", textAlign: "right", color: "var(--fg-mute)" }}>
-              {dmg}{heal > 0 ? ` · +${heal}` : ""}
+            <div style={{ flex: "0 0 90px", textAlign: "right", color: "var(--fg-mute)", display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 4 }}>
+              <Icon name="sword-brandish" size={10} color="var(--fg-mute)" />
+              <span>{dmg}</span>
+              {heal > 0 && (
+                <>
+                  <Icon name="health-potion" size={10} color="var(--tone-good)" />
+                  <span style={{ color: "var(--tone-good)" }}>{heal}</span>
+                </>
+              )}
             </div>
           </div>
         );
