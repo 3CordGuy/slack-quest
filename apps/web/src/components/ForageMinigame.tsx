@@ -166,32 +166,39 @@ export function ForageMinigame({ backgroundArtUrl, onClose, onComplete }: Forage
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const animRef = useRef<number | null>(null);
 
-  // Open the game on mount: spend vigor + generate grid server-side.
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const res = await fetch("/api/camp/forage/start", {
-          method: "POST",
-          credentials: "include",
-        });
-        if (!res.ok) {
-          const body = (await res.json().catch(() => ({}))) as { error?: string };
-          toast.error(describeServerError(body.error));
-          if (!cancelled) onClose();
-          return;
-        }
-        const data = (await res.json()) as { ok: true } & StartResponse;
-        if (cancelled) return;
-        setGrid(data);
-        setHp({ current: data.hp, max: data.max_hp });
-        setPhase("playing");
-      } catch (e) {
-        toast.error(`Network error: ${(e as Error).message}`);
-        if (!cancelled) onClose();
+  // Wipe per-play state and start a fresh game. Used both on initial mount
+  // and via the "Play Again" button on the result panel.
+  async function startNewPlay() {
+    setRevealed(new Map());
+    setFlagged(new Set());
+    setResult(null);
+    particlesRef.current = [];
+    spawnBurstRef.current = null;
+    setPhase("loading");
+    try {
+      const res = await fetch("/api/camp/forage/start", {
+        method: "POST",
+        credentials: "include",
+      });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        toast.error(describeServerError(body.error));
+        onClose();
+        return;
       }
-    })();
-    return () => { cancelled = true; };
+      const data = (await res.json()) as { ok: true } & StartResponse;
+      setGrid(data);
+      setHp({ current: data.hp, max: data.max_hp });
+      setPhase("playing");
+    } catch (e) {
+      toast.error(`Network error: ${(e as Error).message}`);
+      onClose();
+    }
+  }
+
+  // Open the game on mount.
+  useEffect(() => {
+    void startNewPlay();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -608,7 +615,7 @@ export function ForageMinigame({ backgroundArtUrl, onClose, onComplete }: Forage
           </div>
         )}
         {phase === "done" && result && (
-          <ResultPanel result={result} onClose={onClose} />
+          <ResultPanel result={result} onRetry={() => void startNewPlay()} onClose={onClose} />
         )}
       </div>
     </div>,
@@ -793,7 +800,7 @@ function ForageCell({
   );
 }
 
-function ResultPanel({ result, onClose }: { result: FinishResponse; onClose: () => void }) {
+function ResultPanel({ result, onRetry, onClose }: { result: FinishResponse; onRetry: () => void; onClose: () => void }) {
   if (result.bitten) {
     return (
       <div
@@ -823,10 +830,9 @@ function ResultPanel({ result, onClose }: { result: FinishResponse; onClose: () 
           +{result.xp} XP for showing up
           {result.levelsGained > 0 ? ` · Level up! (now ${result.newLevel})` : ""}
         </div>
-        <div style={{ display: "flex", justifyContent: "center", marginTop: 6 }}>
-          <button type="button" onClick={onClose} style={primaryBtn}>
-            Done (Enter)
-          </button>
+        <div style={{ display: "flex", justifyContent: "center", gap: 8, marginTop: 6, flexWrap: "wrap" }}>
+          <button type="button" onClick={onRetry} style={secondaryBtn}>Play Again</button>
+          <button type="button" onClick={onClose} style={primaryBtn}>Done (Enter)</button>
         </div>
       </div>
     );
@@ -881,10 +887,9 @@ function ResultPanel({ result, onClose }: { result: FinishResponse; onClose: () 
           ✦ Flawless forage — no hazards triggered!
         </div>
       )}
-      <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 4 }}>
-        <button type="button" onClick={onClose} style={primaryBtn}>
-          Done (Enter)
-        </button>
+      <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 4, flexWrap: "wrap" }}>
+        <button type="button" onClick={onRetry} style={secondaryBtn}>Play Again</button>
+        <button type="button" onClick={onClose} style={primaryBtn}>Done (Enter)</button>
       </div>
     </div>
   );
@@ -923,4 +928,12 @@ const disabledBtn: React.CSSProperties = {
   background: "var(--bg-card)",
   color: "var(--fg-mute)",
   cursor: "not-allowed",
+};
+
+// Less-prominent action for the "Play Again" companion to Done.
+const secondaryBtn: React.CSSProperties = {
+  ...primaryBtn,
+  background: "rgba(120, 180, 90, 0.18)",
+  border: "1px solid #9ccb6c",
+  color: "#cfe9a4",
 };

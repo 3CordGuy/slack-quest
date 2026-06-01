@@ -7,6 +7,7 @@ import {
   currentStock,
   nextStockTickMs,
   spendStock,
+  scaleMinigameXp,
 } from "./flavor";
 
 describe("camp node stock", () => {
@@ -66,5 +67,31 @@ describe("camp node stock", () => {
   it("STOCK_EMPTY_XP is the scant-XP floor for exhausted nodes", () => {
     expect(STOCK_EMPTY_XP).toBeGreaterThan(0);
     expect(STOCK_EMPTY_XP).toBeLessThan(5); // generous enough to feel worthwhile, tight enough not to flood XP
+  });
+});
+
+describe("mini-game XP level scaling", () => {
+  it("levels 1-3 see no change (no penalty for new players)", () => {
+    expect(scaleMinigameXp(10, 1)).toBe(10);
+    expect(scaleMinigameXp(10, 2)).toBe(10);
+    expect(scaleMinigameXp(10, 3)).toBe(10);
+  });
+
+  it("each level above 3 adds 15% to the base", () => {
+    // floor(10 * (1 + 0.15 * (level - 3)))
+    expect(scaleMinigameXp(10, 4)).toBe(11);   // floor(11.5) = 11
+    expect(scaleMinigameXp(10, 5)).toBe(13);   // floor(13.0) = 13
+    expect(scaleMinigameXp(10, 10)).toBe(20);  // floor(20.5) = 20
+    expect(scaleMinigameXp(10, 20)).toBe(35);  // floor(35.5) = 35
+  });
+
+  it("scant XP at high level becomes a respectable bonus", () => {
+    expect(scaleMinigameXp(2, 10)).toBe(4); // floor(2 * 2.05)
+    expect(scaleMinigameXp(2, 20)).toBe(7); // floor(2 * 3.55)
+  });
+
+  it("returns the base when level is missing or low", () => {
+    expect(scaleMinigameXp(5, 0)).toBe(5);
+    expect(scaleMinigameXp(5, 1)).toBe(5);
   });
 });

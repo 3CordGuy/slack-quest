@@ -117,32 +117,47 @@ export function FishingMinigame({ backgroundArtUrl, onClose, onComplete }: Fishi
   type Ripple = { x: number; y: number; bornAt: number; life: number; maxRadius: number; color: string };
   const ripplesRef = useRef<Ripple[]>([]);
 
+  // Reset per-cast state and POST a fresh /cast. Used on initial mount and
+  // by the Play Again button on the result panel.
+  async function startNewCast() {
+    biteFiredRef.current = false;
+    tooLateFiredRef.current = false;
+    strikeSubmittedRef.current = false;
+    indicatorRef.current = 0.5;
+    reelPressedRef.current = false;
+    reelStartedAtRef.current = 0;
+    safeTimeMsRef.current = 0;
+    lastTickMsRef.current = 0;
+    lastReelClickAtRef.current = 0;
+    finishSubmittedRef.current = false;
+    ripplesRef.current = [];
+    setResult(null);
+    setFailure(null);
+    setPhase("loading");
+    try {
+      const res = await fetch("/api/camp/fish/cast", { method: "POST", credentials: "include" });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        toast.error(describeServerError(body.error));
+        onClose();
+        return;
+      }
+      const data = (await res.json()) as { ok: true } & CastResponse;
+      setCastData(data);
+      castOriginRef.current = performance.now();
+      biteFireAtRef.current = castOriginRef.current + data.bite_at_ms;
+      biteCloseAtRef.current = biteFireAtRef.current + data.bite_window_ms;
+      setPhase("waiting");
+      playBobberCast();
+    } catch (e) {
+      toast.error(`Network error: ${(e as Error).message}`);
+      onClose();
+    }
+  }
+
   // ── /cast on mount ──────────────────────────────────────────────────────
   useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const res = await fetch("/api/camp/fish/cast", { method: "POST", credentials: "include" });
-        if (!res.ok) {
-          const body = (await res.json().catch(() => ({}))) as { error?: string };
-          toast.error(describeServerError(body.error));
-          if (!cancelled) onClose();
-          return;
-        }
-        const data = (await res.json()) as { ok: true } & CastResponse;
-        if (cancelled) return;
-        setCastData(data);
-        castOriginRef.current = performance.now();
-        biteFireAtRef.current = castOriginRef.current + data.bite_at_ms;
-        biteCloseAtRef.current = biteFireAtRef.current + data.bite_window_ms;
-        setPhase("waiting");
-        playBobberCast();
-      } catch (e) {
-        toast.error(`Network error: ${(e as Error).message}`);
-        if (!cancelled) onClose();
-      }
-    })();
-    return () => { cancelled = true; };
+    void startNewCast();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -648,14 +663,15 @@ export function FishingMinigame({ backgroundArtUrl, onClose, onComplete }: Fishi
                 ? "You jumped too early — the bobber didn't even dip."
                 : "Too slow — the fish spit the hook before you set it."}
             </div>
-            <div style={{ display: "flex", justifyContent: "flex-end" }}>
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, flexWrap: "wrap" }}>
+              <button type="button" onClick={() => void startNewCast()} style={secondaryBtn}>Cast Again</button>
               <button type="button" onClick={onClose} style={primaryBtn}>Done</button>
             </div>
           </div>
         )}
 
         {phase === "result" && result && (
-          <ResultPanel result={result} onClose={onClose} />
+          <ResultPanel result={result} onRetry={() => void startNewCast()} onClose={onClose} />
         )}
       </div>
     </div>,
@@ -663,7 +679,7 @@ export function FishingMinigame({ backgroundArtUrl, onClose, onComplete }: Fishi
   );
 }
 
-function ResultPanel({ result, onClose }: { result: ReelResponse; onClose: () => void }) {
+function ResultPanel({ result, onRetry, onClose }: { result: ReelResponse; onRetry: () => void; onClose: () => void }) {
   const caught = result.fish != null;
   return (
     <div
@@ -708,10 +724,9 @@ function ResultPanel({ result, onClose }: { result: ReelResponse; onClose: () =>
       <div style={{ fontSize: 12, color: "var(--fg-mute)" }}>
         Reaction: {result.reaction_ms} ms · Quality: {Math.round(result.quality * 100)}%
       </div>
-      <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 4 }}>
-        <button type="button" onClick={onClose} style={primaryBtn}>
-          Done (Enter)
-        </button>
+      <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 4, flexWrap: "wrap" }}>
+        <button type="button" onClick={onRetry} style={secondaryBtn}>Cast Again</button>
+        <button type="button" onClick={onClose} style={primaryBtn}>Done (Enter)</button>
       </div>
     </div>
   );
@@ -743,4 +758,11 @@ const primaryBtn: React.CSSProperties = {
   fontWeight: 600,
   fontSize: 14,
   touchAction: "manipulation",
+};
+
+const secondaryBtn: React.CSSProperties = {
+  ...primaryBtn,
+  background: "rgba(95, 165, 220, 0.18)",
+  border: "1px solid #7cb9e0",
+  color: "#bcdcf0",
 };
