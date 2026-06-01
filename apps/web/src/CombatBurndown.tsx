@@ -46,6 +46,9 @@ export interface BurndownData {
   /** Total damage dealt by each actor. Healing not subtracted; this is the
       "raw output" stat players want to brag about. Heals tracked separately. */
   damageDealt: Record<string, number>;
+  /** Total HP lost on each actor across the fight. Includes DoT ticks
+      (effect_tick with negative hp_delta) — anything that subtracted HP. */
+  damageTaken: Record<string, number>;
   healingDone: Record<string, number>;
   /** Total mana spent (sum of ability_used.mana_spent) per actor. */
   manaSpent: Record<string, number>;
@@ -121,6 +124,7 @@ export function buildBurndown(
   }
 
   const damageDealt: Record<string, number> = {};
+  const damageTaken: Record<string, number> = {};
   const healingDone: Record<string, number> = {};
   const manaSpent: Record<string, number> = {};
 
@@ -153,16 +157,19 @@ export function buildBurndown(
       case "player_hit":
         hp[e.target] = Math.max(0, (hp[e.target] ?? 0) - e.damage);
         damageDealt[e.actor] = (damageDealt[e.actor] ?? 0) + e.damage;
+        damageTaken[e.target] = (damageTaken[e.target] ?? 0) + e.damage;
         break;
       case "monster_attack":
         hp[e.target] = Math.max(0, (hp[e.target] ?? 0) - e.hp_damage);
         damageDealt[e.actor] = (damageDealt[e.actor] ?? 0) + e.hp_damage;
+        damageTaken[e.target] = (damageTaken[e.target] ?? 0) + e.hp_damage;
         break;
       case "monster_splash": {
         const targets = e.targets as Array<{ target: string; hp_damage: number }>;
         let total = 0;
         for (const hit of targets) {
           hp[hit.target] = Math.max(0, (hp[hit.target] ?? 0) - hit.hp_damage);
+          damageTaken[hit.target] = (damageTaken[hit.target] ?? 0) + hit.hp_damage;
           total += hit.hp_damage;
         }
         // No clean attacker attribution on splash; lump under the monster.
@@ -178,6 +185,11 @@ export function buildBurndown(
       case "effect_tick": {
         const cap = maxHp[e.actor] ?? hp[e.actor] ?? 0;
         hp[e.actor] = Math.max(0, Math.min(cap, (hp[e.actor] ?? 0) + e.hp_delta));
+        // DoTs subtract HP without a clear attacker — credit to damageTaken
+        // so the row reflects "what the fight did to you."
+        if (e.hp_delta < 0) {
+          damageTaken[e.actor] = (damageTaken[e.actor] ?? 0) + (-e.hp_delta);
+        }
         break;
       }
       case "fighter_down":
@@ -228,7 +240,7 @@ export function buildBurndown(
     a.final_mana = mana[a.id] ?? 0;
   }
 
-  return { actors, samples, damageDealt, healingDone, manaSpent };
+  return { actors, samples, damageDealt, damageTaken, healingDone, manaSpent };
 }
 
 const PALETTE = [
@@ -396,19 +408,25 @@ export function BurndownChart({ data, selfId }: { data: BurndownData; selfId: st
           member can be turned off to declutter long fights. Mana view drops
           monster chips (monsters have no mana pool) and skips non-casters. */}
       <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 10 }}>
-        {tab !== "mana" && monsterActors.map((a) => (
-          <LegendChip
-            key={a.id}
-            color={colorFor.get(a.id) ?? "#888"}
-            label={a.name}
-            on={true}
-            subIcon={tab === "damage" ? "sword-brandish" : "health-normal"}
-            sub={tab === "damage"
-              ? `${data.damageDealt[a.id] ?? 0}`
-              : `${a.final_hp ?? 0}/${a.max_hp}`}
-            isMonster
-          />
-        ))}
+        {tab !== "mana" && monsterActors.map((a) => {
+          const took = data.damageTaken[a.id] ?? 0;
+          return (
+            <LegendChip
+              key={a.id}
+              color={colorFor.get(a.id) ?? "#888"}
+              label={a.name}
+              on={true}
+              subIcon={tab === "damage" ? "sword-brandish" : "health-normal"}
+              sub={tab === "damage"
+                ? `${data.damageDealt[a.id] ?? 0}`
+                : `${a.final_hp ?? 0}/${a.max_hp}`}
+              extra={tab === "damage" && took > 0
+                ? { icon: "health-decrease", text: `${took}`, tone: "bad" as const }
+                : undefined}
+              isMonster
+            />
+          );
+        })}
         {partyActors
           .filter((a) => tab !== "mana" || a.max_mana > 0)
           .map((a) => {
@@ -420,9 +438,19 @@ export function BurndownChart({ data, selfId }: { data: BurndownData; selfId: st
               : isDmgTab
               ? `${data.damageDealt[a.id] ?? 0}`
               : `${a.final_hp ?? 0}/${a.max_hp}`;
-            const healSub = isDmgTab && data.healingDone[a.id]
-              ? { icon: "health-potion", text: `+${data.healingDone[a.id]}` }
-              : undefined;
+            const took = data.damageTaken[a.id] ?? 0;
+            const healed = data.healingDone[a.id] ?? 0;
+            // On the Damage tab, show whichever auxiliary stat exists. Heals
+            // win over taken when both are present so the "you supported the
+            // party" angle pops; long fights typically have one or the other.
+            const extra: { icon: string; text: string; tone?: "good" | "bad" } | undefined =
+              isDmgTab
+                ? healed > 0
+                  ? { icon: "health-potion", text: `${healed}`, tone: "good" }
+                  : took > 0
+                  ? { icon: "health-decrease", text: `${took}`, tone: "bad" }
+                  : undefined
+                : undefined;
             return (
               <LegendChip
                 key={a.id}
@@ -432,7 +460,7 @@ export function BurndownChart({ data, selfId }: { data: BurndownData; selfId: st
                 onToggle={() => toggle(a.id)}
                 subIcon={subIcon}
                 sub={sub}
-                extra={healSub}
+                extra={extra}
               />
             );
           })}
@@ -469,8 +497,8 @@ function LegendChip({
   label: string;
   sub?: string;
   subIcon?: string;
-  /** Optional second stat (currently used for healing alongside damage). */
-  extra?: { icon: string; text: string };
+  /** Optional second stat (e.g. healing or damage-taken alongside damage). */
+  extra?: { icon: string; text: string; tone?: "good" | "bad" };
   on: boolean;
   onToggle?: () => void;
   isMonster?: boolean;
@@ -510,12 +538,15 @@ function LegendChip({
           {sub}
         </span>
       )}
-      {extra && (
-        <span style={{ color: "var(--tone-good)", marginLeft: 2, display: "inline-flex", alignItems: "center", gap: 3 }}>
-          <Icon name={extra.icon} size={10} color="var(--tone-good)" />
-          {extra.text}
-        </span>
-      )}
+      {extra && (() => {
+        const c = extra.tone === "bad" ? "var(--tone-bad-2)" : "var(--tone-good)";
+        return (
+          <span style={{ color: c, marginLeft: 2, display: "inline-flex", alignItems: "center", gap: 3 }}>
+            <Icon name={extra.icon} size={10} color={c} />
+            {extra.text}
+          </span>
+        );
+      })()}
     </button>
   );
 }
@@ -531,6 +562,7 @@ function DamageBars({
     .map((a) => ({
       actor: a,
       dmg: data.damageDealt[a.id] ?? 0,
+      took: data.damageTaken[a.id] ?? 0,
       heal: data.healingDone[a.id] ?? 0,
     }))
     .sort((x, y) => y.dmg - x.dmg);
@@ -539,7 +571,7 @@ function DamageBars({
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-      {rows.map(({ actor, dmg, heal }) => {
+      {rows.map(({ actor, dmg, took, heal }) => {
         const pct = (dmg / max) * 100;
         const isMonster = isMonsterActor(actor.id);
         return (
@@ -556,9 +588,15 @@ function DamageBars({
                 transition: "width 0.3s ease",
               }} />
             </div>
-            <div style={{ flex: "0 0 90px", textAlign: "right", color: "var(--fg-mute)", display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 4 }}>
+            <div style={{ flex: "0 0 140px", textAlign: "right", color: "var(--fg-mute)", display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 4 }}>
               <Icon name="sword-brandish" size={10} color="var(--fg-mute)" />
               <span>{dmg}</span>
+              {took > 0 && (
+                <>
+                  <Icon name="health-decrease" size={10} color="var(--tone-bad-2)" />
+                  <span style={{ color: "var(--tone-bad-2)" }}>{took}</span>
+                </>
+              )}
               {heal > 0 && (
                 <>
                   <Icon name="health-potion" size={10} color="var(--tone-good)" />
