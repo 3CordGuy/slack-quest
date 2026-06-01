@@ -11,7 +11,7 @@
 // renders (it's usually the focal arc of the fight).
 
 import { useMemo, useState } from "react";
-import { isMonsterActor, MONSTER_ID } from "@gantt-quest/core";
+import { MONSTER_ID } from "@gantt-quest/core";
 import { Icon } from "./icons";
 
 // Caller-facing input is "any event with a string discriminant" — CombatEvent
@@ -38,6 +38,9 @@ interface Sample {
   round: number;     // 0 = pre-fight starting HP, then 1, 2, …
   hp: Record<string, number>;
   mana: Record<string, number>;
+  /** Cumulative damage dealt by each actor as of end of this round. Drives
+      the damage-over-time line chart on the Damage tab. */
+  cumDamage: Record<string, number>;
 }
 
 export interface BurndownData {
@@ -128,18 +131,20 @@ export function buildBurndown(
   const healingDone: Record<string, number> = {};
   const manaSpent: Record<string, number> = {};
 
-  // round 0 = pre-fight HP + mana snapshot
-  const samples: Sample[] = [{ round: 0, hp: { ...hp }, mana: { ...mana } }];
+  // round 0 = pre-fight snapshot (everything full, no damage yet)
+  const samples: Sample[] = [{ round: 0, hp: { ...hp }, mana: { ...mana }, cumDamage: {} }];
   let round = 0;
 
   const flushRound = () => {
+    const snap = { ...damageDealt };  // current cumulative damage totals
     // Replace the last sample if same round, else append.
     const last = samples[samples.length - 1];
     if (last && last.round === round) {
       last.hp = { ...hp };
       last.mana = { ...mana };
+      last.cumDamage = snap;
     } else {
-      samples.push({ round, hp: { ...hp }, mana: { ...mana } });
+      samples.push({ round, hp: { ...hp }, mana: { ...mana }, cumDamage: snap });
     }
   };
 
@@ -316,6 +321,27 @@ export function BurndownChart({ data, selfId }: { data: BurndownData; selfId: st
     return pts.join(" ");
   }
 
+  // Cumulative damage normalized to the top scorer across the whole fight,
+  // so every line shares a 0-100% scale and the chart stays readable when
+  // damage totals span orders of magnitude (e.g. tank vs. burst caster).
+  const maxCumDamage = useMemo(() => {
+    let m = 0;
+    for (const a of data.actors) {
+      m = Math.max(m, data.damageDealt[a.id] ?? 0);
+    }
+    return m;
+  }, [data]);
+
+  function damageLineFor(actor: ActorMeta): string {
+    if (!enabled.has(actor.id) || maxCumDamage <= 0) return "";
+    const pts = data.samples.map((s) => {
+      const dmg = s.cumDamage[actor.id] ?? 0;
+      const pct = dmg / maxCumDamage;
+      return `${xOf(s.round)},${yOf(pct)}`;
+    });
+    return pts.join(" ");
+  }
+
   function toggle(id: string) {
     setEnabled((prev) => {
       const next = new Set(prev);
@@ -362,47 +388,60 @@ export function BurndownChart({ data, selfId }: { data: BurndownData; selfId: st
         </div>
       </div>
 
-      {tab === "hp" || tab === "mana" ? (
-        <svg viewBox={`0 0 ${width} ${height}`} style={{ width: "100%", display: "block" }}>
-          {/* Grid: 25/50/75/100% horizontals */}
-          {[0, 0.25, 0.5, 0.75, 1].map((p) => (
-            <line
-              key={p}
-              x1={padX}
-              x2={width - padX}
-              y1={yOf(p)}
-              y2={yOf(p)}
-              stroke="var(--border-faint)"
-              strokeWidth={p === 0 || p === 1 ? 1 : 0.5}
-              strokeDasharray={p === 0 || p === 1 ? "" : "2 3"}
-            />
-          ))}
-          {/* Round axis labels at 0 and max */}
-          <text x={padX} y={height - 2} fill="var(--fg-mute)" fontSize={9} fontFamily="var(--font-mono)">R0</text>
-          <text x={width - padX} y={height - 2} fill="var(--fg-mute)" fontSize={9} fontFamily="var(--font-mono)" textAnchor="end">R{maxRound}</text>
-          {/* HP view: monster first (under), party on top so player's line is
-              visible. Mana view: party only — monsters don't cast. */}
-          {(tab === "mana" ? partyActors.filter((a) => a.max_mana > 0) : [...monsterActors, ...partyActors]).map((a) => {
+      <svg viewBox={`0 0 ${width} ${height}`} style={{ width: "100%", display: "block" }}>
+        {/* Grid: 25/50/75/100% horizontals */}
+        {[0, 0.25, 0.5, 0.75, 1].map((p) => (
+          <line
+            key={p}
+            x1={padX}
+            x2={width - padX}
+            y1={yOf(p)}
+            y2={yOf(p)}
+            stroke="var(--border-faint)"
+            strokeWidth={p === 0 || p === 1 ? 1 : 0.5}
+            strokeDasharray={p === 0 || p === 1 ? "" : "2 3"}
+          />
+        ))}
+        {/* Round axis labels at 0 and max */}
+        <text x={padX} y={height - 2} fill="var(--fg-mute)" fontSize={9} fontFamily="var(--font-mono)">R0</text>
+        <text x={width - padX} y={height - 2} fill="var(--fg-mute)" fontSize={9} fontFamily="var(--font-mono)" textAnchor="end">R{maxRound}</text>
+        {/* Scale-axis hint: HP/Mana share a "% of max" scale, Damage is "%
+            of top scorer's total." Tucked into the top-left corner. */}
+        <text x={padX + 2} y={padY + 8} fill="var(--fg-mute)" fontSize={9} fontFamily="var(--font-mono)">
+          {tab === "damage" ? "% of top scorer" : "% of max"}
+        </text>
+        {/* HP view: monster first (under), party on top so player's line is
+            visible. Mana view: party casters only. Damage view: every actor
+            who dealt damage (party + monster). Damage uses a dashed stroke
+            so it's visually distinct from the HP-down conventions. */}
+        {(tab === "mana"
+            ? partyActors.filter((a) => a.max_mana > 0)
+            : [...monsterActors, ...partyActors]
+          ).map((a) => {
             if (!enabled.has(a.id)) return null;
             const isSelf = a.id === selfId;
             const isDown = (a.final_hp ?? 0) === 0;
+            const points = tab === "mana"
+              ? manaLineFor(a)
+              : tab === "damage"
+              ? damageLineFor(a)
+              : lineFor(a);
+            if (!points) return null;
             return (
               <polyline
                 key={a.id}
-                points={tab === "mana" ? manaLineFor(a) : lineFor(a)}
+                points={points}
                 fill="none"
                 stroke={colorFor.get(a.id) ?? "#888"}
                 strokeWidth={isSelf ? 2.5 : a.side === "monster" ? 2 : 1.5}
                 strokeOpacity={isDown && tab === "hp" ? 0.55 : 1}
+                strokeDasharray={tab === "damage" ? "5 3" : ""}
                 strokeLinejoin="round"
                 strokeLinecap="round"
               />
             );
           })}
-        </svg>
-      ) : (
-        <DamageBars data={data} colorFor={colorFor} selfId={selfId} />
-      )}
+      </svg>
 
       {/* Legend / toggles. Monster's row is always on (no toggle); each party
           member can be turned off to declutter long fights. Mana view drops
@@ -551,62 +590,3 @@ function LegendChip({
   );
 }
 
-function DamageBars({
-  data, colorFor, selfId,
-}: {
-  data: BurndownData;
-  colorFor: Map<string, string>;
-  selfId: string;
-}) {
-  const rows = data.actors
-    .map((a) => ({
-      actor: a,
-      dmg: data.damageDealt[a.id] ?? 0,
-      took: data.damageTaken[a.id] ?? 0,
-      heal: data.healingDone[a.id] ?? 0,
-    }))
-    .sort((x, y) => y.dmg - x.dmg);
-
-  const max = Math.max(1, ...rows.map((r) => r.dmg));
-
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-      {rows.map(({ actor, dmg, took, heal }) => {
-        const pct = (dmg / max) * 100;
-        const isMonster = isMonsterActor(actor.id);
-        return (
-          <div key={actor.id} style={{ display: "flex", alignItems: "center", gap: 8, font: "11px/1 var(--font-mono)" }}>
-            <div style={{ flex: "0 0 110px", color: "var(--fg-1)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-              {isMonster && <Icon name="death-skull" size={10} />} {actor.name}
-              {actor.id === selfId && <span style={{ color: "var(--fg-mute)" }}> (you)</span>}
-            </div>
-            <div style={{ flex: 1, height: 12, background: "var(--bg-void)", borderRadius: 3, position: "relative", overflow: "hidden" }}>
-              <div style={{
-                width: `${pct}%`,
-                height: "100%",
-                background: colorFor.get(actor.id) ?? "#888",
-                transition: "width 0.3s ease",
-              }} />
-            </div>
-            <div style={{ flex: "0 0 140px", textAlign: "right", color: "var(--fg-mute)", display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 4 }}>
-              <Icon name="sword-brandish" size={10} color="var(--fg-mute)" />
-              <span>{dmg}</span>
-              {took > 0 && (
-                <>
-                  <Icon name="health-decrease" size={10} color="var(--tone-bad-2)" />
-                  <span style={{ color: "var(--tone-bad-2)" }}>{took}</span>
-                </>
-              )}
-              {heal > 0 && (
-                <>
-                  <Icon name="health-potion" size={10} color="var(--tone-good)" />
-                  <span style={{ color: "var(--tone-good)" }}>{heal}</span>
-                </>
-              )}
-            </div>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
