@@ -2433,6 +2433,17 @@ export type ForageCellKind =
   | "sunleaf"
   | "mushroom";
 
+// Mini-game XP level scaling. Without this, the 3–12 XP awards stay flat
+// while the character XP curve grows steeply — by L10 a 10 XP reward is
+// only 0.2% of the way to the next level, which feels insulting. Adds 15%
+// per character level above L3 (so L1–3 see no change but L10 doubles up
+// and L20 is ~3.5x). Mirrors the same scaling shape as rollGatherYield so
+// active and deferred gather paths feel commensurate.
+export function scaleMinigameXp(baseXp: number, level: number): number {
+  const factor = 1 + 0.15 * Math.max(0, level - 3);
+  return Math.floor(baseXp * factor);
+}
+
 // Camp node stock — capacity and replenishment for the per-node harvestable
 // pools that replaced the old hourly-vigor cooldowns. Each play depletes
 // stock by the resources granted (not a fixed cost), and stock refills at 1

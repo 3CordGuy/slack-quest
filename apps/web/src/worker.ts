@@ -96,6 +96,7 @@ import {
   STOCK_EMPTY_XP,
   currentStock,
   spendStock,
+  scaleMinigameXp,
   RECIPE_CATALOG,
   RESOURCE_CATALOG,
   findCampUpgrade,
@@ -3298,14 +3299,16 @@ app.post("/api/camp/minigame", async (c) => {
   const drops = candidates.slice(0, stockBefore);
   const unitsConsumed = drops.length;
   // XP. Scant when the mine is empty (so the leaderboard mode still pays
-  // something) — otherwise the original best-zone scale.
-  let xpAward: number;
+  // something) — otherwise the original best-zone scale, level-scaled so
+  // higher-level players don't see plays as insulting.
+  let baseXp: number;
   if (stockBefore === 0) {
-    xpAward = STOCK_EMPTY_XP;
+    baseXp = STOCK_EMPTY_XP;
   } else {
     const bestZone: Zone = strikes.includes("rich") ? "rich" : strikes.includes("thin") ? "thin" : "dull";
-    xpAward = bestZone === "rich" ? 10 : bestZone === "thin" ? 5 : 3;
+    baseXp = bestZone === "rich" ? 10 : bestZone === "thin" ? 5 : 3;
   }
+  const xpAward = scaleMinigameXp(baseXp, character.level);
   // Stack drops into { id, qty } for response + addResource calls.
   const tally = new Map<Drop["id"], number>();
   for (const d of drops) tally.set(d.id, (tally.get(d.id) ?? 0) + d.qty);
@@ -3451,7 +3454,9 @@ app.post("/api/camp/forage/flip", async (c) => {
     // Game over: clean up the row. The /finish endpoint won't be called.
     await deleteForageGame(c.env.DB, session.slack_user_id);
     // XP floor so a bite still earns leaderboard credit for showing up.
-    const xpAward = STOCK_EMPTY_XP;
+    // Level-scaled so a mid-level player doesn't see a 2 XP consolation
+    // as insulting.
+    const xpAward = scaleMinigameXp(STOCK_EMPTY_XP, character.level);
     const spoils = await awardSpoils(
       c.env.DB,
       character,
@@ -3553,9 +3558,11 @@ app.post("/api/camp/forage/finish", async (c) => {
   }
   // XP. Scant when the garden is empty; otherwise 3 floor + 1 per HARVESTED
   // (not revealed-but-unharvested) herb, capped at the new ceiling of 12.
-  const xpAward = stockBefore === 0
+  // Level-scaled to stay meaningful at high levels.
+  const baseXp = stockBefore === 0
     ? STOCK_EMPTY_XP
     : Math.min(12, 3 + unitsConsumed);
+  const xpAward = scaleMinigameXp(baseXp, character.level);
   const spoils = await awardSpoils(
     c.env.DB,
     character,
@@ -3725,16 +3732,18 @@ app.post("/api/camp/fish/reel", async (c) => {
       grantedResources.push({ name: `${spec.emoji} ${spec.name}`, qty: 1, rarity: spec.rarity });
     }
   }
-  // XP. Scant when the pond is empty; otherwise the original formula.
-  let xpAward: number;
+  // XP. Scant when the pond is empty; otherwise the original formula,
+  // level-scaled so high-level plays don't feel insulting.
+  let baseXp: number;
   if (stockBefore <= 0) {
-    xpAward = STOCK_EMPTY_XP;
+    baseXp = STOCK_EMPTY_XP;
   } else {
-    xpAward = 3;
-    if (fishId) xpAward += 2;
-    if (quality >= 0.55) xpAward += 5;
-    xpAward = Math.min(10, xpAward);
+    baseXp = 3;
+    if (fishId) baseXp += 2;
+    if (quality >= 0.55) baseXp += 5;
+    baseXp = Math.min(10, baseXp);
   }
+  const xpAward = scaleMinigameXp(baseXp, character.level);
   const spoils = await awardSpoils(
     c.env.DB,
     character,

@@ -540,8 +540,9 @@ export function MiningMinigame({ str = 5, backgroundArtUrl, onClose, onComplete 
         doStrike();
       }
       if (phase === "done") {
-        const outOfVigor = result?.vigor != null && result.vigor <= 0;
-        if (e.code === "Space" && !outOfVigor) {
+        // Stock model: Play Again is always allowed (depleted-mine plays
+        // still pay scant XP and count for the leaderboard).
+        if (e.code === "Space") {
           e.preventDefault();
           resetForNewPlay();
         } else if (e.key === "Enter" || e.key === "Escape") {
@@ -729,9 +730,8 @@ export function MiningMinigame({ str = 5, backgroundArtUrl, onClose, onComplete 
 }
 
 function ResultPanel({ result, onRetry, onClose }: { result: MinigameResult; onRetry: () => void; onClose: () => void }) {
-  // Server returns vigor remaining; if it's missing (older response), assume
-  // OK to retry — the server will gate it.
-  const outOfVigor = result.vigor != null && result.vigor <= 0;
+  // Stock model: Play Again is always available. Even on a depleted mine,
+  // the player still earns scant XP and leaderboard credit.
   return (
     <div
       style={{
@@ -778,14 +778,8 @@ function ResultPanel({ result, onRetry, onClose }: { result: MinigameResult; onR
         </div>
       )}
       <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 4, flexWrap: "wrap" }}>
-        <button
-          type="button"
-          onClick={onRetry}
-          disabled={outOfVigor}
-          title={outOfVigor ? "Out of vigor — rest up first." : "Swing again"}
-          style={outOfVigor ? disabledBtn : secondaryBtn}
-        >
-          {outOfVigor ? "Out of vigor" : "Play Again"}
+        <button type="button" onClick={onRetry} title="Swing again" style={secondaryBtn}>
+          Play Again
         </button>
         <button type="button" onClick={onClose} style={primaryBtn}>
           Done (Enter)
