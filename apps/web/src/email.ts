@@ -1,24 +1,21 @@
-// Outbound transactional email via MailChannels — the standard way to send
-// from a Cloudflare Worker. No SDK; just a JSON POST to their relay.
+// Outbound transactional email via the native Cloudflare Email Sending
+// binding (https://developers.cloudflare.com/email-service/get-started/send-emails/).
+// No SDK, no API key — `env.EMAIL.send({to, from, subject, html, text})`.
 //
-// DNS / wrangler setup (one-time, ~15 min):
-//   1. SPF record on your sending domain (e.g. teamgantt.dev):
-//        TXT @ "v=spf1 a mx include:relay.mailchannels.net ~all"
-//   2. domain_lockdown record so only your Workers can send from this
-//      domain (prevents other CF accounts from spoofing you):
-//        TXT _mailchannels "v=mc1 cfid=<your-cloudflare-account-id>"
-//   3. (Recommended) DKIM keypair so messages aren't marked as spam:
-//        - Generate: openssl genrsa 2048 | openssl rsa -pubout
-//        - Publish public part as a TXT at <selector>._domainkey
-//        - Add private key as a wrangler SECRET: DKIM_PRIVATE_KEY
-//        - Set DKIM_DOMAIN + DKIM_SELECTOR in wrangler.jsonc vars
+// Domain setup (one-time, in the Cloudflare dashboard):
+//   1. Email Service → Send Emails → Onboard Domain
+//   2. Pick your domain (must already be on Cloudflare DNS)
+//   3. Add records — Cloudflare auto-provisions MX/SPF/DKIM/DMARC on the
+//      cf-bounce subdomain.
+//   4. Wait for propagation (usually 5-15 min).
 //
-// Wrangler env vars expected (defaults work for dev):
-//   MAIL_FROM_ADDRESS  e.g. "noreply@teamgantt.dev"
-//   MAIL_FROM_NAME     e.g. "Gantt Quest"
-//   DKIM_DOMAIN        the domain in MAIL_FROM_ADDRESS (omit to skip DKIM)
-//   DKIM_SELECTOR      e.g. "mailchannels" (omit to skip DKIM)
-//   DKIM_PRIVATE_KEY   PEM-formatted RSA private key (wrangler secret)
+// Wrangler binding (apps/web/wrangler.jsonc):
+//   "send_email": [{ "name": "EMAIL", "remote": true }]
+//   "vars": { "MAIL_FROM_ADDRESS": "noreply@yourdomain.com" }
+//
+// Local dev: the binding is optional. When EMAIL is unbound (no `remote: true`
+// connection or no domain onboarded), we fall back to console.log so the
+// developer can copy the 6-digit code from wrangler logs.
 
 export interface SendEmailOpts {
   to: string;
@@ -28,22 +25,19 @@ export interface SendEmailOpts {
 }
 
 export interface EmailEnv {
+  EMAIL?: SendEmail;
   ENVIRONMENT?: string;
   MAIL_FROM_ADDRESS?: string;
   MAIL_FROM_NAME?: string;
-  DKIM_DOMAIN?: string;
-  DKIM_SELECTOR?: string;
-  DKIM_PRIVATE_KEY?: string;
 }
 
 /** Returns true on success. Logs failures but does not throw — callers
  *  typically still want to succeed (e.g. /auth/email/request) and let the
  *  user try again rather than 500. */
 export async function sendEmail(env: EmailEnv, opts: SendEmailOpts): Promise<boolean> {
-  // In local dev (no MailChannels DKIM setup), just log to console so the
-  // developer can copy the code from wrangler logs instead of needing a
-  // real email round-trip.
-  if (env.ENVIRONMENT !== "production") {
+  // Local dev or unbound: log to console so the developer can copy the code
+  // from wrangler dev output without needing a domain onboarded.
+  if (!env.EMAIL || env.ENVIRONMENT !== "production") {
     console.log(`[email/dev] to=${opts.to} subject=${opts.subject}\n${opts.text}`);
     return true;
   }
@@ -51,42 +45,17 @@ export async function sendEmail(env: EmailEnv, opts: SendEmailOpts): Promise<boo
   const fromAddress = env.MAIL_FROM_ADDRESS ?? "noreply@example.invalid";
   const fromName = env.MAIL_FROM_NAME ?? "Gantt Quest";
 
-  const personalizations: Array<Record<string, unknown>> = [{
-    to: [{ email: opts.to }],
-  }];
-
-  // Attach DKIM info if configured. MailChannels signs the message before
-  // relaying — receivers verify with the public key in your DNS.
-  if (env.DKIM_DOMAIN && env.DKIM_SELECTOR && env.DKIM_PRIVATE_KEY) {
-    personalizations[0].dkim_domain = env.DKIM_DOMAIN;
-    personalizations[0].dkim_selector = env.DKIM_SELECTOR;
-    personalizations[0].dkim_private_key = env.DKIM_PRIVATE_KEY;
-  }
-
-  const body = {
-    personalizations,
-    from: { email: fromAddress, name: fromName },
-    subject: opts.subject,
-    content: [
-      { type: "text/plain", value: opts.text },
-      ...(opts.html ? [{ type: "text/html", value: opts.html }] : []),
-    ],
-  };
-
   try {
-    const res = await fetch("https://api.mailchannels.net/tx/v1/send", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
+    await env.EMAIL.send({
+      to: opts.to,
+      from: { email: fromAddress, name: fromName },
+      subject: opts.subject,
+      text: opts.text,
+      html: opts.html,
     });
-    if (!res.ok) {
-      const text = await res.text().catch(() => "<no body>");
-      console.error(`[email] MailChannels rejected: ${res.status} ${text}`);
-      return false;
-    }
     return true;
   } catch (e) {
-    console.error(`[email] MailChannels send failed: ${(e as Error).message}`);
+    console.error(`[email] EMAIL.send failed: ${(e as Error).message}`);
     return false;
   }
 }

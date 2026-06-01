@@ -35,7 +35,12 @@
     { "tag": "v1", "new_sqlite_classes": ["QuestRoom"] },
     { "tag": "v2", "new_sqlite_classes": ["LobbyRoom"] }
   ],
+  "send_email": [
+    { "name": "EMAIL", "remote": true }
+  ],
   "vars": {
-    "ENVIRONMENT": "production"
+    "ENVIRONMENT": "production",
+    "MAIL_FROM_ADDRESS": "noreply@example.invalid",
+    "MAIL_FROM_NAME": "Gantt Quest"
   }
 }

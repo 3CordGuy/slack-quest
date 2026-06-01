@@ -851,6 +851,11 @@ interface Env {
   SLACK_BOT_TOKEN?: string;
   // Set to "local" via .dev.vars to enable dev-only endpoints (e.g. /api/dev/login).
   ENVIRONMENT?: string;
+  // Cloudflare Email Sending binding. Optional so local dev without a domain
+  // onboarded still boots — apps/web/src/email.ts falls back to console.log.
+  EMAIL?: SendEmail;
+  MAIL_FROM_ADDRESS?: string;
+  MAIL_FROM_NAME?: string;
 }
 
 // Web worker's own public domain. Used as the baseUrl for art assets so the
