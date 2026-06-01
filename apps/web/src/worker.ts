@@ -8,6 +8,8 @@ import { DurableObject } from "cloudflare:workers";
 import { Hono, type Context } from "hono";
 import { getCookie, setCookie, deleteCookie } from "hono/cookie";
 
+import { sendLoginCodeEmail } from "./email";
+
 import {
   VIEW_ART_PROMPTS,
   flavorCatalogItem,
@@ -191,6 +193,10 @@ import {
   issueWebLoginCode,
   consumeWebLoginCode,
   createWebSession,
+  issueEmailLoginCode,
+  consumeEmailLoginCode,
+  getCharacterIdByEmail,
+  linkCharacterEmail,
   deleteWebCombatState,
   deleteWebSession,
   deleteCharacter,
@@ -845,6 +851,11 @@ interface Env {
   SLACK_BOT_TOKEN?: string;
   // Set to "local" via .dev.vars to enable dev-only endpoints (e.g. /api/dev/login).
   ENVIRONMENT?: string;
+  // Cloudflare Email Sending binding. Optional so local dev without a domain
+  // onboarded still boots — apps/web/src/email.ts falls back to console.log.
+  EMAIL?: SendEmail;
+  MAIL_FROM_ADDRESS?: string;
+  MAIL_FROM_NAME?: string;
 }
 
 // Web worker's own public domain. Used as the baseUrl for art assets so the
@@ -906,6 +917,162 @@ app.post("/api/auth/logout", async (c) => {
   const sessionId = getCookie(c, SESSION_COOKIE);
   if (sessionId) await deleteWebSession(c.env.DB, sessionId);
   deleteCookie(c, SESSION_COOKIE, { path: "/" });
+  return c.json({ ok: true });
+});
+
+// ── Guest auth ─────────────────────────────────────────────────────────────
+//
+// One-tap onramp. Creates a random-id character with is_guest=1, sets the
+// session cookie, returns ok. Player can attach an email later from the
+// account menu to persist across devices.
+app.post("/api/auth/guest", async (c) => {
+  const guestId = `guest-${crypto.randomUUID()}`;
+  // Slack-team is required by the schema but meaningless for guests; use a
+  // sentinel that won't collide with any real workspace id.
+  const guestTeam = "guest";
+  const cls = pickRandomClass();
+  const hp = cls.base_hp + rollDice(4);
+  const gender: CharGender = rollDice(2) === 1 ? "m" : "f";
+  const recentNames = await getRecentCharacterNames(c.env.DB);
+  const heroName = await generateCharacterName(c.env.AI, gender, cls.name, recentNames);
+  await createCharacter(c.env.DB, {
+    slack_user_id: guestId,
+    slack_team_id: guestTeam,
+    name: heroName,
+    class: cls.name,
+    hp,
+    max_hp: hp,
+    gender,
+  });
+  // Mark as guest so the UI can surface a "Save your character" CTA.
+  await c.env.DB
+    .prepare(`UPDATE characters SET is_guest = 1 WHERE slack_user_id = ?`)
+    .bind(guestId)
+    .run();
+  const session = await createWebSession(c.env.DB, guestId, guestTeam);
+  setCookie(c, SESSION_COOKIE, session.session_id, {
+    httpOnly: true,
+    sameSite: "Lax",
+    secure: true,
+    maxAge: SESSION_MAX_AGE_SEC,
+    path: "/",
+  });
+  return c.json({ ok: true, character: { name: heroName, class: cls.name } });
+});
+
+// ── Email magic code ───────────────────────────────────────────────────────
+
+function normalizeEmail(raw: string): string {
+  return raw.trim().toLowerCase();
+}
+function looksLikeEmail(s: string): boolean {
+  // Cheap RFC-ish check. Server-side; real verification happens via the
+  // mailed code, so we just want to reject obvious typos here.
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s) && s.length < 254;
+}
+
+// POST /api/auth/email/request { email } → issues a 6-digit code and mails it.
+// Always returns ok (even when the email looks valid but the send fails) so
+// we don't leak whether an account exists. Caller polls /verify with the code.
+app.post("/api/auth/email/request", async (c) => {
+  const body = (await c.req.json().catch(() => null)) as { email?: unknown } | null;
+  const emailRaw = typeof body?.email === "string" ? body.email : "";
+  const email = normalizeEmail(emailRaw);
+  if (!looksLikeEmail(email)) {
+    return c.json({ error: "invalid_email" }, 400);
+  }
+  const { code } = await issueEmailLoginCode(c.env.DB, email);
+  // Best-effort send. If it fails we still 200 — the user can request again,
+  // and the error already logged on the server.
+  await sendLoginCodeEmail(c.env, email, code);
+  return c.json({ ok: true });
+});
+
+// POST /api/auth/email/verify { email, code } → consumes code + sets session.
+// Three paths:
+//   1. Email already linked to a character → log in to that character.
+//   2. Caller is currently signed in as a guest → upgrade the guest by linking
+//      the email to it. Guest's progress is preserved.
+//   3. Neither → create a fresh email-linked character.
+app.post("/api/auth/email/verify", async (c) => {
+  const body = (await c.req.json().catch(() => null)) as {
+    email?: unknown;
+    code?: unknown;
+  } | null;
+  const email = normalizeEmail(typeof body?.email === "string" ? body.email : "");
+  const code = typeof body?.code === "string" ? body.code.trim() : "";
+  if (!looksLikeEmail(email) || !/^\d{6}$/.test(code)) {
+    return c.json({ error: "invalid_input" }, 400);
+  }
+  const ok = await consumeEmailLoginCode(c.env.DB, email, code);
+  if (!ok) {
+    return c.json({ error: "invalid_or_expired" }, 401);
+  }
+  // Path 1: an existing character is linked to this email.
+  const existingByEmail = await getCharacterIdByEmail(c.env.DB, email);
+  let userId = existingByEmail;
+  let teamId = "email";
+  if (!userId) {
+    // Path 2: caller is currently a guest — upgrade them in place.
+    const session = await currentSession(c.env.DB, c.req.header("cookie"));
+    if (session) {
+      const character = await getCharacter(c.env.DB, session.slack_user_id);
+      if (character && character.is_guest) {
+        const linked = await linkCharacterEmail(c.env.DB, session.slack_user_id, email);
+        if (linked) {
+          userId = session.slack_user_id;
+          teamId = session.slack_team_id;
+        }
+      }
+    }
+  }
+  if (!userId) {
+    // Path 3: fresh email signup. Create a character keyed on a stable id
+    // derived from the email so re-running this flow always lands on the
+    // same row (idempotent if /linkCharacterEmail races).
+    userId = `email-${crypto.randomUUID()}`;
+    const cls = pickRandomClass();
+    const hp = cls.base_hp + rollDice(4);
+    const gender: CharGender = rollDice(2) === 1 ? "m" : "f";
+    const recentNames = await getRecentCharacterNames(c.env.DB);
+    const heroName = await generateCharacterName(c.env.AI, gender, cls.name, recentNames);
+    await createCharacter(c.env.DB, {
+      slack_user_id: userId,
+      slack_team_id: teamId,
+      name: heroName,
+      class: cls.name,
+      hp,
+      max_hp: hp,
+      gender,
+    });
+    await linkCharacterEmail(c.env.DB, userId, email);
+  }
+  const session = await createWebSession(c.env.DB, userId, teamId);
+  setCookie(c, SESSION_COOKIE, session.session_id, {
+    httpOnly: true,
+    sameSite: "Lax",
+    secure: true,
+    maxAge: SESSION_MAX_AGE_SEC,
+    path: "/",
+  });
+  return c.json({ ok: true });
+});
+
+// POST /api/auth/link-email — attach an email to the currently authenticated
+// (presumably guest) character without changing the session. Sends a code;
+// caller must follow up with /api/auth/email/verify while still signed in.
+app.post("/api/auth/link-email", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const body = (await c.req.json().catch(() => null)) as { email?: unknown } | null;
+  const email = normalizeEmail(typeof body?.email === "string" ? body.email : "");
+  if (!looksLikeEmail(email)) return c.json({ error: "invalid_email" }, 400);
+  const existing = await getCharacterIdByEmail(c.env.DB, email);
+  if (existing && existing !== session.slack_user_id) {
+    return c.json({ error: "email_in_use" }, 409);
+  }
+  const { code } = await issueEmailLoginCode(c.env.DB, email);
+  await sendLoginCodeEmail(c.env, email, code);
   return c.json({ ok: true });
 });
 

@@ -1765,13 +1765,83 @@ function useIsMobile(breakpoint = 700) {
 }
 
 function Login({ onSuccess }: { onSuccess: () => void }) {
+  // Three-step flow:
+  //   step 'email' → ask for an email, POST /api/auth/email/request, advance
+  //   step 'code'  → ask for the 6-digit code, POST /api/auth/email/verify
+  //   slack flow   → tucked behind a "Have a Slack code?" link for now,
+  //                  keeps existing /gq web-login codes working during the
+  //                  transition.
+  const [step, setStep] = useState<"email" | "code" | "slack">("email");
+  const [email, setEmail] = useState("");
   const [code, setCode] = useState("");
+  const [slackCode, setSlackCode] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
 
-  async function submit(e: React.FormEvent) {
+  async function requestEmailCode(e: React.FormEvent) {
+    e.preventDefault();
+    const trimmed = email.trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)) {
+      setError("Enter a valid email address.");
+      return;
+    }
+    setPending(true);
+    setError(null);
+    const res = await fetch("/api/auth/email/request", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({ email: trimmed }),
+    });
+    setPending(false);
+    if (!res.ok) {
+      setError("Couldn't send the code. Try again in a moment.");
+      return;
+    }
+    setEmail(trimmed);
+    setCode("");
+    setStep("code");
+  }
+
+  async function verifyEmailCode(e: React.FormEvent) {
     e.preventDefault();
     if (!/^\d{6}$/.test(code)) {
+      setError("Enter the 6-digit code from your email.");
+      return;
+    }
+    setPending(true);
+    setError(null);
+    const res = await fetch("/api/auth/email/verify", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({ email, code }),
+    });
+    setPending(false);
+    if (res.ok) { onSuccess(); return; }
+    const body = (await res.json().catch(() => ({}))) as { error?: string };
+    setError(
+      body.error === "invalid_or_expired"
+        ? "Code didn't match or has expired. Request a fresh one."
+        : "Couldn't verify. Try again.",
+    );
+  }
+
+  async function playAsGuest() {
+    setPending(true);
+    setError(null);
+    const res = await fetch("/api/auth/guest", {
+      method: "POST",
+      credentials: "include",
+    });
+    setPending(false);
+    if (res.ok) { onSuccess(); return; }
+    setError("Couldn't create a guest character. Try again.");
+  }
+
+  async function verifySlackCode(e: React.FormEvent) {
+    e.preventDefault();
+    if (!/^\d{6}$/.test(slackCode)) {
       setError("Enter a 6-digit code.");
       return;
     }
@@ -1781,25 +1851,18 @@ function Login({ onSuccess }: { onSuccess: () => void }) {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       credentials: "include",
-      body: JSON.stringify({ code }),
+      body: JSON.stringify({ code: slackCode }),
     });
     setPending(false);
-    if (res.ok) {
-      onSuccess();
-      return;
-    }
-    const body = (await res.json().catch(() => ({}))) as { error?: string };
-    setError(
-      body.error === "invalid_or_expired"
-        ? "Invalid or expired code. Run /gq web-login in Slack for a new one."
-        : "Couldn't verify. Try again.",
-    );
+    if (res.ok) { onSuccess(); return; }
+    setError("Invalid or expired Slack code.");
   }
 
   async function dummyDevAuth() {
     const res = await fetch("/api/dev/login", { method: "POST" });
-    const { code } = (await res.json()) as { code: string };
-    setCode(code);
+    const { code: c } = (await res.json()) as { code: string };
+    setSlackCode(c);
+    setStep("slack");
   }
 
   return (
@@ -1821,93 +1884,120 @@ function Login({ onSuccess }: { onSuccess: () => void }) {
       >
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
           <Icon name="tower-flag" size={36} color="var(--accent-gold)" />
-          <h1
-            style={{
-              margin: 0,
-              font: "28px/1 var(--font-display)",
-              color: "var(--fg-1)",
-              letterSpacing: 0.2,
-            }}
-          >
+          <h1 style={{ margin: 0, font: "28px/1 var(--font-display)", color: "var(--fg-1)", letterSpacing: 0.2 }}>
             Gantt Quest
             <sup style={{ fontSize: 11, color: "var(--accent-gold)", marginLeft: 2 }}>™</sup>
           </h1>
         </div>
-        <p
-          style={{
-            margin: 0,
-            font: "12px/1.55 var(--font-mono)",
-            color: "var(--fg-mute)",
-          }}
-        >
-          Run{" "}
-          <code
-            style={{
-              font: "12px/1 var(--font-mono)",
-              color: "var(--accent-gold)",
-              background: "var(--bg-card-2)",
-              border: "1px solid var(--border-faint)",
-              borderRadius: 4,
-              padding: "2px 6px",
-            }}
-          >
-            /gq web-login
-          </code>{" "}
-          in Slack for a 6-digit code, then paste it below.
-        </p>
-        <form
-          onSubmit={submit}
-          style={{ display: "flex", flexDirection: "column", gap: 10 }}
-        >
-          <input
-            inputMode="numeric"
-            pattern="\d{6}"
-            maxLength={6}
-            value={code}
-            onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))}
-            placeholder="123456"
-            autoFocus
-            style={{
-              width: "100%",
-              boxSizing: "border-box",
-              padding: "12px 14px",
-              background: "var(--bg-void)",
-              border: "1px solid var(--border-base)",
-              borderRadius: "var(--radius-md)",
-              color: "var(--fg-1)",
-              font: "20px/1 var(--font-mono)",
-              letterSpacing: "0.4em",
-              textAlign: "center",
-              outline: "none",
-            }}
-          />
-          <button
-            type="submit"
-            disabled={pending}
-            className="btn btn-primary"
-            style={{ width: "100%", justifyContent: "center" }}
-          >
-            {pending ? "Verifying…" : "Sign in"}
-          </button>
-          {import.meta.env.DEV && (
+
+        {step === "email" && (
+          <>
+            <p style={{ margin: 0, font: "12px/1.55 var(--font-mono)", color: "var(--fg-mute)" }}>
+              Sign in with your email — we'll send you a 6-digit code.
+            </p>
+            <form onSubmit={requestEmailCode} style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              <input
+                type="email"
+                autoComplete="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="you@example.com"
+                autoFocus
+                style={inputStyle}
+              />
+              <button type="submit" disabled={pending} className="btn btn-primary" style={{ width: "100%", justifyContent: "center" }}>
+                {pending ? "Sending…" : "Send code"}
+              </button>
+            </form>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, color: "var(--fg-mute)", font: "11px/1 var(--font-mono)" }}>
+              <div style={{ flex: 1, height: 1, background: "var(--border-faint)" }} />
+              <span>OR</span>
+              <div style={{ flex: 1, height: 1, background: "var(--border-faint)" }} />
+            </div>
             <button
               type="button"
-              onClick={dummyDevAuth}
+              onClick={playAsGuest}
+              disabled={pending}
               className="btn btn-ghost"
               style={{ width: "100%", justifyContent: "center" }}
             >
-              Dev login
+              Play as guest
             </button>
-          )}
-        </form>
+            <p style={{ margin: 0, font: "11px/1.4 var(--font-mono)", color: "var(--fg-mute)", textAlign: "center" }}>
+              No email needed — you can save your character later.
+            </p>
+            <button
+              type="button"
+              onClick={() => { setError(null); setStep("slack"); }}
+              style={linkBtnStyle}
+            >
+              Have a Slack code?
+            </button>
+            {import.meta.env.DEV && (
+              <button type="button" onClick={dummyDevAuth} className="btn btn-ghost" style={{ width: "100%", justifyContent: "center" }}>
+                Dev login (Slack code)
+              </button>
+            )}
+          </>
+        )}
+
+        {step === "code" && (
+          <>
+            <p style={{ margin: 0, font: "12px/1.55 var(--font-mono)", color: "var(--fg-mute)" }}>
+              Check <strong style={{ color: "var(--fg-1)" }}>{email}</strong> for a 6-digit code.
+            </p>
+            <form onSubmit={verifyEmailCode} style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              <input
+                inputMode="numeric"
+                pattern="\d{6}"
+                maxLength={6}
+                value={code}
+                onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))}
+                placeholder="123456"
+                autoFocus
+                style={codeInputStyle}
+              />
+              <button type="submit" disabled={pending} className="btn btn-primary" style={{ width: "100%", justifyContent: "center" }}>
+                {pending ? "Verifying…" : "Sign in"}
+              </button>
+            </form>
+            <button type="button" onClick={() => { setError(null); setStep("email"); }} style={linkBtnStyle}>
+              ← Use a different email
+            </button>
+          </>
+        )}
+
+        {step === "slack" && (
+          <>
+            <p style={{ margin: 0, font: "12px/1.55 var(--font-mono)", color: "var(--fg-mute)" }}>
+              Run{" "}
+              <code style={{ font: "12px/1 var(--font-mono)", color: "var(--accent-gold)", background: "var(--bg-card-2)", border: "1px solid var(--border-faint)", borderRadius: 4, padding: "2px 6px" }}>
+                /gq web-login
+              </code>{" "}in Slack and paste the 6-digit code.
+            </p>
+            <form onSubmit={verifySlackCode} style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              <input
+                inputMode="numeric"
+                pattern="\d{6}"
+                maxLength={6}
+                value={slackCode}
+                onChange={(e) => setSlackCode(e.target.value.replace(/\D/g, ""))}
+                placeholder="123456"
+                autoFocus
+                style={codeInputStyle}
+              />
+              <button type="submit" disabled={pending} className="btn btn-primary" style={{ width: "100%", justifyContent: "center" }}>
+                {pending ? "Verifying…" : "Sign in"}
+              </button>
+            </form>
+            <button type="button" onClick={() => { setError(null); setStep("email"); }} style={linkBtnStyle}>
+              ← Back to email sign-in
+            </button>
+          </>
+        )}
+
         {error && (
-          <p
-            style={{
-              margin: 0,
-              font: "12px/1.5 var(--font-mono)",
-              color: "var(--tone-bad)",
-            }}
-          >
+          <p style={{ margin: 0, font: "12px/1.5 var(--font-mono)", color: "var(--tone-bad)" }}>
             {error}
           </p>
         )}
@@ -1915,6 +2005,36 @@ function Login({ onSuccess }: { onSuccess: () => void }) {
     </Centered>
   );
 }
+
+const inputStyle: React.CSSProperties = {
+  width: "100%",
+  boxSizing: "border-box",
+  padding: "12px 14px",
+  background: "var(--bg-void)",
+  border: "1px solid var(--border-base)",
+  borderRadius: "var(--radius-md)",
+  color: "var(--fg-1)",
+  font: "15px/1 var(--font-body, system-ui)",
+  outline: "none",
+};
+
+const codeInputStyle: React.CSSProperties = {
+  ...inputStyle,
+  font: "20px/1 var(--font-mono)",
+  letterSpacing: "0.4em",
+  textAlign: "center",
+};
+
+const linkBtnStyle: React.CSSProperties = {
+  background: "transparent",
+  border: "none",
+  color: "var(--fg-mute)",
+  font: "12px/1 var(--font-mono)",
+  cursor: "pointer",
+  textDecoration: "underline",
+  padding: 0,
+  textAlign: "center",
+};
 
 
 

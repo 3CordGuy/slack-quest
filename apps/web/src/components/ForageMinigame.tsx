@@ -173,7 +173,6 @@ export function ForageMinigame({ backgroundArtUrl, onClose, onComplete }: Forage
     setFlagged(new Set());
     setResult(null);
     particlesRef.current = [];
-    spawnBurstRef.current = null;
     setPhase("loading");
     try {
       const res = await fetch("/api/camp/forage/start", {
