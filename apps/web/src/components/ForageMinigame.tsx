@@ -31,8 +31,6 @@ type CellKind = "empty" | "mossroot" | "sunleaf" | "mushroom";
 interface StartResponse {
   rows: number;
   cols: number;
-  flips_total: number;
-  flips_used: number;
   hp: number;
   max_hp: number;
 }
@@ -54,8 +52,6 @@ interface FlipResponse {
   hp_damage: number;
   hp: number;
   max_hp: number;
-  flips_used: number;
-  flips_total: number;
 }
 
 // Stored per revealed cell so we can render its hazard-count badge later.
@@ -83,7 +79,7 @@ function describeServerError(code: string | undefined): string {
     case "no_vigor": return "The garden is picked clean — herbs return in an hour."; // legacy path; new code uses stock
     case "downed": return "You're downed — rest at the Inn first.";
     case "no_active_game": return "Your forage game has expired. Open a fresh one.";
-    case "no_flips_left": return "No more flips — bank what you've found.";
+    case "no_flips_left": return "Stale game state — refresh and try again."; // legacy path, no longer thrown
     case "already_revealed": return "Already searched that place.";
     case "bad_flip": return "Couldn't search that place.";
     default: return code ? `Couldn't forage: ${code}` : "Something went wrong.";
@@ -141,7 +137,10 @@ export function ForageMinigame({ backgroundArtUrl, onClose, onComplete }: Forage
   // desktop, long-press on touch.
   const [flagged, setFlagged] = useState<Set<string>>(new Set());
   const [hp, setHp] = useState<{ current: number; max: number } | null>(null);
-  const [flipsUsed, setFlipsUsed] = useState(0);
+  // Has the player tapped at least one cell? Drives the Bank button's
+  // "need to flip at least once first" guard. No upper limit anymore —
+  // unlimited flips, HP damage from mushrooms is the pressure.
+  const hasRevealed = revealed.size > 0;
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<FinishResponse | null>(null);
   const [muted, setMutedState] = useState<boolean>(() => getMuted());
@@ -168,7 +167,6 @@ export function ForageMinigame({ backgroundArtUrl, onClose, onComplete }: Forage
         if (cancelled) return;
         setGrid(data);
         setHp({ current: data.hp, max: data.max_hp });
-        setFlipsUsed(data.flips_used);
         setPhase("playing");
       } catch (e) {
         toast.error(`Network error: ${(e as Error).message}`);
@@ -295,7 +293,7 @@ export function ForageMinigame({ backgroundArtUrl, onClose, onComplete }: Forage
     const key = `${r},${c}`;
     if (revealed.has(key)) return;
     if (!grid) return;
-    if (flipsUsed >= grid.flips_total) return;
+    // No flip cap — let the player flip until they've banked.
     setBusy(true);
     playLeafRustle();
     try {
@@ -327,7 +325,6 @@ export function ForageMinigame({ backgroundArtUrl, onClose, onComplete }: Forage
         for (const rc of data.cascade) next.delete(`${rc.r},${rc.c}`);
         return next;
       });
-      setFlipsUsed(data.flips_used);
       setHp({ current: data.hp, max: data.max_hp });
       // Spawn a particle burst at the tap location for the cell the player
       // actually tapped (data.cell). Cascade cells don't burst — they fade in
@@ -342,9 +339,7 @@ export function ForageMinigame({ backgroundArtUrl, onClose, onComplete }: Forage
       if (data.cell === "mossroot" || data.cell === "sunleaf") playHerbSparkle();
       else if (data.cell === "mushroom") playMushroomPop();
       // If that was the last flip, auto-finish.
-      if (data.flips_used >= data.flips_total) {
-        setTimeout(() => void bank(), 600);
-      }
+      // No auto-bank — the player decides when they've collected enough.
     } catch (e) {
       toast.error(`Network error: ${(e as Error).message}`);
     } finally {
@@ -406,14 +401,14 @@ export function ForageMinigame({ backgroundArtUrl, onClose, onComplete }: Forage
       }
       if (e.key === "Enter") {
         e.preventDefault();
-        if (phase === "playing" && flipsUsed > 0) void bank();
+        if (phase === "playing" && hasRevealed) void bank();
         else if (phase === "done") onClose();
       }
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [phase, flipsUsed, onClose]);
+  }, [phase, hasRevealed, onClose]);
 
   // ── Render ───────────────────────────────────────────────────────────────
   return createPortal(
@@ -461,11 +456,9 @@ export function ForageMinigame({ backgroundArtUrl, onClose, onComplete }: Forage
         {/* Status row */}
         {grid && hp && (
           <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", color: "var(--fg-mute)", fontSize: 12 }}>
-            <span><strong style={{ color: "var(--fg-1)" }}>{grid.flips_total - flipsUsed}</strong> flips left</span>
-            <span aria-hidden="true">·</span>
             <span><strong style={{ color: hp.current < hp.max * 0.4 ? "#e76f51" : "var(--fg-1)" }}>{hp.current}/{hp.max}</strong> HP</span>
             <span aria-hidden="true">·</span>
-            <span>🍄 numbers show mushrooms nearby. Long-press (or right-click) to flag a suspected mushroom.</span>
+            <span>🍄 numbers show mushrooms nearby. Long-press (or right-click) to flag. Bank when you're satisfied — mushrooms bite.</span>
           </div>
         )}
 
@@ -538,7 +531,7 @@ export function ForageMinigame({ backgroundArtUrl, onClose, onComplete }: Forage
                       c={c}
                       known={known ?? null}
                       flagged={flagged.has(key)}
-                      disabled={phase !== "playing" || busy || flipsUsed >= grid.flips_total}
+                      disabled={phase !== "playing" || busy}
                       onFlip={flipCell}
                       onToggleFlag={toggleFlag}
                     />
@@ -565,11 +558,11 @@ export function ForageMinigame({ backgroundArtUrl, onClose, onComplete }: Forage
             <button
               type="button"
               onClick={() => void bank()}
-              disabled={flipsUsed === 0}
-              title={flipsUsed === 0 ? "Reveal at least one place first." : "Bank your haul (Enter)"}
-              style={flipsUsed === 0 ? disabledBtn : primaryBtn}
+              disabled={!hasRevealed}
+              title={!hasRevealed ? "Reveal at least one place first." : "Bank your haul (Enter)"}
+              style={!hasRevealed ? disabledBtn : primaryBtn}
             >
-              {flipsUsed === 0 ? "Bank (need a flip)" : `Bank (Enter)`}
+              {!hasRevealed ? "Bank (need a flip)" : `Bank (Enter)`}
             </button>
           </div>
         )}

@@ -80,7 +80,6 @@ import {
   FORAGE_GRID_ROWS,
   FORAGE_GRID_COLS,
   FORAGE_HAZARD_DICE,
-  forageFlipsForInt,
   forageHazardCount,
   forageCascadeFrom,
   isForageHazard,
@@ -3372,17 +3371,17 @@ app.post("/api/camp/forage/start", async (c) => {
   // Stock-based: the game is always playable. Harvest yields will be
   // clamped to remaining garden stock at /finish; a fully depleted garden
   // still scores XP and Flawless-Forages stat for the leaderboard.
+  // No flip limit — Minesweeper-style. HP damage from mushrooms is the
+  // pressure; the player banks when they're satisfied.
   const now = Date.now();
   const seed = Math.floor(Math.random() * 0xffffffff);
   const grid = generateForageGrid(seed);
-  const flipsTotal = forageFlipsForInt(character.int_stat);
-  await startForageGame(c.env.DB, session.slack_user_id, JSON.stringify(grid), flipsTotal);
+  // flips_total column kept for schema-compat but unused at gameplay time.
+  await startForageGame(c.env.DB, session.slack_user_id, JSON.stringify(grid), 99);
   return c.json({
     ok: true,
     rows: FORAGE_GRID_ROWS,
     cols: FORAGE_GRID_COLS,
-    flips_total: flipsTotal,
-    flips_used: 0,
     hp: character.hp,
     max_hp: character.max_hp,
     stock: currentStock(character.forage_stock_full_at, now),
@@ -3410,9 +3409,8 @@ app.post("/api/camp/forage/flip", async (c) => {
   if (revealed.some(([rr, cc]) => rr === body.r && cc === body.c)) {
     return c.json({ error: "already_revealed" }, 400);
   }
-  if (revealed.length >= game.flips_total) {
-    return c.json({ error: "no_flips_left" }, 400);
-  }
+  // No manual flip budget anymore — HP damage from mushrooms is the
+  // pressure mechanism, banking is the player's call.
   // First-flip safety: like real Minesweeper, the first click is guaranteed
   // safe (a 0-hazard cell). Regenerate the grid up to 40 times if the
   // requested cell is a hazard or has any hazards in its 8 neighbors. After
@@ -3476,8 +3474,6 @@ app.post("/api/camp/forage/flip", async (c) => {
     hp_damage: hpDamage,
     hp: newHp,
     max_hp: character.max_hp,
-    flips_used: revealed.length + 1, // only ONE manual flip consumed
-    flips_total: game.flips_total,
   });
 });
 
