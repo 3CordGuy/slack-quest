@@ -1019,7 +1019,7 @@ export function CombatHexGrid({
       ctx!.scale(effectiveScale, effectiveScale);
 
       // 1. Hex tiles
-      drawTiles(ctx!, state, grid, overlay, hover, currentActor, hexToPixel, hexSize);
+      drawTiles(ctx!, state, grid, overlay, hover, currentActor, hexToPixel, hexSize, targetMonsterId ?? null, now);
 
       // 1.5 AoE blast radius preview — paints a translucent red overlay on
       // every hex within `aimAoeRadiusTiles` of the currently-hovered enemy
@@ -1282,8 +1282,17 @@ function drawTiles(
   currentActor: CombatFighter | CombatMonster | null,
   hexToPixel: (pos: HexPos) => { x: number; y: number },
   hexSize: number,
+  targetMonsterId: string | null,
+  now: number,
 ) {
   const obstacles = new Set((state.obstacles ?? []).map((o) => posKey(o.pos)));
+  // Resolve the target's hex up front so the tile pass can mark it with a
+  // subtle dashed border (replaces the old pawn-orbit ring).
+  let targetKey: string | null = null;
+  if (targetMonsterId) {
+    const t = state.monsters.find((m) => m.id === targetMonsterId);
+    if (t?.pos && t.hp > 0) targetKey = posKey(t.pos);
+  }
   // Brick layout: walk the valid axial coords per row. Even rows have `cols`
   // hexes, odd rows have `cols - 1` hexes (shifted right by half).
   for (let r = 0; r < grid.rows; r++) {
@@ -1341,6 +1350,21 @@ function drawTiles(
       }
 
       drawHex(ctx, x, y, hexSize * 0.94, fill, stroke, lineWidth);
+
+      // Target marker: subtle slow-drifting dashed border on the targeted
+      // monster's hex. Replaces the old pawn-orbit ring so the pawn itself
+      // stays uncluttered for status-effect particles.
+      if (targetKey === key) {
+        ctx.save();
+        ctx.globalAlpha = 0.85;
+        ctx.strokeStyle = "#fb923c";
+        ctx.lineWidth = 1.5;
+        ctx.setLineDash([5, 4]);
+        ctx.lineDashOffset = -now / 60;
+        drawHex(ctx, x, y, hexSize * 0.94, "rgba(0,0,0,0)", "#fb923c", 1.5);
+        ctx.setLineDash([]);
+        ctx.restore();
+      }
     }
   }
 }
@@ -1582,29 +1606,132 @@ function drawBurningEmbers(
   ctx.restore();
 }
 
-// Static-feeling sparkle of pale-blue crystal points around the rim.
+// Frost halo on the pawn + jagged icicles hanging from the rim.
 function drawFrostGlints(
   ctx: CanvasRenderingContext2D,
   cx: number, cy: number, r: number, now: number, seed: number,
 ) {
-  const COUNT = 6;
   ctx.save();
+  // Frosted rim — soft icy-blue glow so the viewer reads "this thing is
+  // cold" even before the icicles register.
+  const haloPulse = 0.55 + 0.2 * Math.sin(now / 700);
+  const grad = ctx.createRadialGradient(cx, cy, r * 0.85, cx, cy, r * 1.35);
+  grad.addColorStop(0, "rgba(186, 230, 253, 0)");
+  grad.addColorStop(0.55, `rgba(125, 211, 252, ${0.55 * haloPulse})`);
+  grad.addColorStop(1, "rgba(125, 211, 252, 0)");
+  ctx.fillStyle = grad;
+  ctx.beginPath();
+  ctx.arc(cx, cy, r * 1.35, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Icicles hang from the LOWER rim — gravity reads correctly with pointy
+  // tips dripping down. Six icicles distributed across the bottom half
+  // (ang in [0, π], where 0 = right, π/2 = bottom, π = left in canvas
+  // y-flipped coords).
+  const COUNT = 6;
   for (let i = 0; i < COUNT; i++) {
-    const ang = (i / COUNT) * Math.PI * 2 + rng01(seed, i) * 0.6;
-    // Slow twinkle: brightness oscillates per-glint at different phases.
-    const tw = 0.4 + 0.6 * (0.5 + 0.5 * Math.sin(now / 380 + i * 1.3));
-    const rad = r * (0.95 + 0.18 * Math.sin(now / 600 + i));
-    const x = cx + Math.cos(ang) * rad;
-    const y = cy + Math.sin(ang) * rad;
-    ctx.globalAlpha = tw * 0.85;
-    ctx.fillStyle = "#bfdbfe";
+    // Spread across bottom half; tiny per-pawn jitter avoids lockstep.
+    const t = (i + 0.5) / COUNT;
+    const ang = Math.PI * (t - 0.05) + rng01(seed, i) * 0.12;
+    const rimX = cx + Math.cos(ang) * r * 0.96;
+    const rimY = cy + Math.sin(ang) * r * 0.96;
+    // Length pulses subtly so the icicles feel like they're slowly growing.
+    const lenPulse = 0.85 + 0.15 * Math.sin(now / 540 + i * 1.3);
+    const len = r * (0.45 + 0.25 * rng01(seed, i + 13)) * lenPulse;
+    const width = r * (0.22 + 0.08 * rng01(seed, i + 31));
+    // Icicle direction: from the rim point AWAY from pawn center, biased
+    // toward straight-down so they read as gravity-anchored.
+    const radialDx = Math.cos(ang);
+    const radialDy = Math.sin(ang);
+    const dirX = radialDx * 0.35;
+    const dirY = radialDy * 0.35 + 1; // gravity bias
+    const dirLen = Math.hypot(dirX, dirY);
+    const ux = dirX / dirLen, uy = dirY / dirLen;
+    drawIcicle(ctx, rimX, rimY, ux, uy, len, width, seed * 17 + i);
+  }
+
+  // Occasional water drip from the tip of one icicle — slow cycle so it's
+  // noticed in passing, not constant motion.
+  const dripCycle = 1800;
+  const dripPhase = (now % dripCycle) / dripCycle;
+  if (dripPhase < 0.55) {
+    const which = Math.floor(now / dripCycle) % COUNT;
+    const t = (which + 0.5) / COUNT;
+    const ang = Math.PI * (t - 0.05) + rng01(seed, which) * 0.12;
+    const rimX = cx + Math.cos(ang) * r * 0.96;
+    const rimY = cy + Math.sin(ang) * r * 0.96;
+    const tipY = rimY + r * 0.55;
+    const dy = dripPhase * r * 1.6;
+    ctx.globalAlpha = 0.75 * (1 - dripPhase / 0.55);
+    ctx.fillStyle = "#bae6fd";
     ctx.beginPath();
-    // 4-pointed crystal star: a tiny plus.
-    ctx.fillRect(x - 1, y - 3.5, 2, 7);
-    ctx.fillRect(x - 3.5, y - 1, 7, 2);
+    ctx.arc(rimX, tipY + dy, Math.max(1, r * 0.07), 0, Math.PI * 2);
     ctx.fill();
   }
   ctx.restore();
+}
+
+// Single jagged icicle: tapered shape from (sx, sy) along (ux, uy) for
+// `len` px, `width` px wide at the base, narrowing to a point. Sides are
+// slightly notched to look like an irregular natural icicle.
+function drawIcicle(
+  ctx: CanvasRenderingContext2D,
+  sx: number, sy: number,
+  ux: number, uy: number,
+  len: number, width: number,
+  seed: number,
+) {
+  // Perpendicular vector — gives us the "across" axis for the icicle width.
+  const px = -uy, py = ux;
+  const baseHalf = width / 2;
+  // Walk one side of the icicle from base to tip with small jagged notches,
+  // then the other side back. Path closes into a tapered, notched diamond.
+  const SEGS = 5;
+  ctx.beginPath();
+  // Left side base.
+  ctx.moveTo(sx + px * baseHalf, sy + py * baseHalf);
+  for (let i = 1; i <= SEGS; i++) {
+    const t = i / SEGS;
+    // Width tapers quadratically so the tip stays sharp.
+    const w = baseHalf * (1 - t) * (1 - t * 0.6);
+    // Tiny perpendicular notch alternating in/out.
+    const notch = (rng01(seed, i + 100) - 0.5) * baseHalf * 0.35;
+    const x = sx + ux * len * t + px * (w + notch);
+    const y = sy + uy * len * t + py * (w + notch);
+    ctx.lineTo(x, y);
+  }
+  // Right side tip → base.
+  for (let i = SEGS - 1; i >= 0; i--) {
+    const t = i / SEGS;
+    const w = baseHalf * (1 - t) * (1 - t * 0.6);
+    const notch = (rng01(seed, i + 200) - 0.5) * baseHalf * 0.35;
+    const x = sx + ux * len * t - px * (w + notch);
+    const y = sy + uy * len * t - py * (w + notch);
+    ctx.lineTo(x, y);
+  }
+  ctx.closePath();
+  // Fill: icy-blue translucent body so the pawn rim shows faintly behind.
+  ctx.globalAlpha = 0.85;
+  ctx.fillStyle = "rgba(186, 230, 253, 0.88)";
+  ctx.fill();
+  // Highlight stripe along the leading edge.
+  ctx.globalAlpha = 0.95;
+  ctx.strokeStyle = "#f0f9ff";
+  ctx.lineWidth = Math.max(0.6, width * 0.18);
+  ctx.lineCap = "round";
+  ctx.beginPath();
+  ctx.moveTo(sx + px * baseHalf * 0.2, sy + py * baseHalf * 0.2);
+  ctx.lineTo(sx + ux * len * 0.95, sy + uy * len * 0.95);
+  ctx.stroke();
+  // Dark shadow on the trailing edge to give some 3D feel.
+  ctx.globalAlpha = 0.4;
+  ctx.strokeStyle = "rgba(30, 64, 175, 0.55)";
+  ctx.lineWidth = Math.max(0.5, width * 0.12);
+  ctx.beginPath();
+  ctx.moveTo(sx - px * baseHalf * 0.4, sy - py * baseHalf * 0.4);
+  ctx.lineTo(sx + ux * len * 0.9, sy + uy * len * 0.9);
+  ctx.stroke();
+  ctx.globalAlpha = 1;
 }
 
 // Forking sparks that snap to random rim points for a single frame.
@@ -1802,7 +1929,11 @@ function drawActors(
     const radius = hexSize * 0.55;
     if (!downed && previewSet?.has(f.id)) drawPreviewGlow(x, y, radius, isReachable(f as never));
     if (!downed && f.id === currentActorId) {
-      drawCurrentActorPulse(x, y, radius);
+      // No pawn-level "current actor" pulse — the hex tile already paints
+      // a gold border around the active hex, the class-color rim on the
+      // pawn already says "yours," and the on-canvas overlays for status
+      // effects (icicles, embers, sparks) need that visual budget so they
+      // can stand out. Reach ring is still useful: shows attack range.
       // Reach ring around the current actor. Uses the aim mode's override
       // range when present (e.g. an ability with custom range), otherwise
       // the actor's weapon range. Only draws when ≥2 (melee adjacency is
@@ -1870,24 +2001,13 @@ function drawActors(
     // Boss pawns are visibly larger so threat reads instantly.
     const radius = hexSize * (m.is_boss ? 0.78 : 0.6);
     if (!downed && previewSet?.has(m.id)) drawPreviewGlow(x, y, radius, isReachable(m as never));
-    if (!downed && m.id === currentActorId) drawCurrentActorPulse(x, y, radius);
-    // Selected-target indicator: pulsing orange ring around the picked monster
-    // so the player knows who their next Attack/ability will hit. Drawn
-    // OUTSIDE the status-effect arc layer (which sits at radius * 1.18) so
-    // the dashes don't blur out the debuff arcs.
-    if (!downed && m.id === targetMonsterId) {
-      const pulse = 0.6 + 0.25 * Math.sin(now / 220);
-      ctx.save();
-      ctx.globalAlpha = pulse;
-      ctx.strokeStyle = "#fb923c";
-      ctx.lineWidth = 1.5;
-      ctx.setLineDash([4, 5]);
-      ctx.lineDashOffset = -now / 30;
-      ctx.beginPath();
-      ctx.arc(x, y, radius * 1.42, 0, Math.PI * 2);
-      ctx.stroke();
-      ctx.restore();
-    }
+    // Monster current-actor pulse intentionally dropped — same reasoning as
+    // the fighter side. The hex tile border + gold rim already mark active
+    // turn; the ambient effects need room to breathe.
+    // Selected-target indicator: the target's HEX TILE gets a dashed orange
+    // border (drawn in the tile pass, not here). No pawn-ring orbit — the
+    // tile marker carries the targeting cue and leaves the pawn clean for
+    // status-effect particles. (Code intentionally left empty for clarity.)
     ctx.globalAlpha = downed ? 0.35 : 1;
     const mPortrait =
       resolvePortrait(m.art_url)

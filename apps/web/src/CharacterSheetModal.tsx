@@ -15,7 +15,7 @@ import { activeAbilities, classByName, type ActiveAbilityDef } from "@gantt-ques
 
 import { Avatar, Icon } from "./icons";
 import { charPortraitUrl, classPortraitUrl, DISPLAY_FONT } from "./CombatShared";
-import type { PawnLike } from "./PawnCallout";
+import { EFFECT_DESCRIPTIONS, type PawnLike } from "./PawnCallout";
 
 export interface CharacterSheetSubject {
   pawn: PawnLike;
@@ -160,26 +160,42 @@ export function CharacterSheetModal({ subject, onClose }: CharacterSheetModalPro
         {/* Status effects */}
         {pawn.effects && pawn.effects.length > 0 && (
           <Section title="Status Effects">
-            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-              {pawn.effects.map((e, i) => (
-                <span
-                  key={i}
-                  style={{
-                    padding: "3px 8px",
-                    borderRadius: 4,
-                    background: "rgba(30,41,59,0.6)",
-                    border: `1px solid ${effectColor(e.type)}`,
-                    color: effectColor(e.type),
-                    fontSize: 11,
-                    fontWeight: 600,
-                    letterSpacing: 0.3,
-                    textTransform: "capitalize",
-                  }}
-                  title={`${e.type} ×${e.magnitude} (${e.remaining}t remaining)`}
-                >
-                  {e.type} ×{e.magnitude} · {e.remaining}t
-                </span>
-              ))}
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              {pawn.effects.map((e, i) => {
+                const desc = EFFECT_DESCRIPTIONS[e.type];
+                const color = effectColor(e.type);
+                return (
+                  <div
+                    key={i}
+                    style={{
+                      padding: "6px 10px",
+                      borderRadius: 6,
+                      background: "rgba(30,41,59,0.55)",
+                      border: `1px solid ${color}`,
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: 2,
+                    }}
+                  >
+                    <div style={{
+                      display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12,
+                      color, fontSize: 12, fontWeight: 700, letterSpacing: 0.4,
+                    }}>
+                      <span style={{ textTransform: "uppercase" }}>
+                        {desc?.label ?? e.type} {e.magnitude > 1 && `×${e.magnitude}`}
+                      </span>
+                      <span style={{ fontSize: 10, color: "#94a3b8", fontWeight: 600 }}>
+                        {e.remaining}t left
+                      </span>
+                    </div>
+                    {desc && (
+                      <div style={{ fontSize: 11, color: "#cbd5e1", lineHeight: 1.45 }}>
+                        {desc.what.replace("{mag}", String(e.magnitude))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           </Section>
         )}

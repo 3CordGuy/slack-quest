@@ -202,7 +202,7 @@ export function PawnCallout({
       {expanded && pawn.effects && pawn.effects.length > 0 && (
         <div style={{ display: "flex", gap: 3, flexWrap: "wrap" }}>
           {pawn.effects.slice(0, 6).map((e, i) => (
-            <span key={i} style={effectPill(e.type)} title={`${e.type} (${e.remaining}t)`}>
+            <span key={i} style={effectPill(e.type)} title={effectTooltipText(e.type, e.magnitude, e.remaining)}>
               {e.type.slice(0, 4)}
             </span>
           ))}
@@ -331,7 +331,7 @@ export function DockedPawnCard({
         {pawn.effects && pawn.effects.length > 0 && (
           <div style={{ display: "flex", gap: 3, flexWrap: "wrap" }}>
             {pawn.effects.slice(0, 8).map((e, i) => (
-              <span key={i} style={effectPill(e.type)} title={`${e.type} (${e.remaining}t)`}>
+              <span key={i} style={effectPill(e.type)} title={effectTooltipText(e.type, e.magnitude, e.remaining)}>
                 {e.type.slice(0, 4)}
               </span>
             ))}
@@ -484,6 +484,42 @@ const EFFECT_COLOR: Partial<Record<EffectType, string>> = {
   barkskin: "#84cc16",
   animal_form: "#22c55e",
 };
+
+// Player-facing copy for every effect the engine can apply. Used for chip
+// tooltips on pawn cards and the status section of the character sheet so
+// the player understands what each badge actually does mechanically.
+// magnitude/remaining are interpolated in the formatter below.
+// String-keyed so we can describe transient "soft" effect badges
+// (taunt, marked, vulnerable, foreseen, shield_of_faith…) that
+// don't live in the engine's EffectType union — they're surfaced
+// via separate event flows but still show up as chips on pawn cards.
+export const EFFECT_DESCRIPTIONS: Record<string, { label: string; what: string }> = {
+  burning:    { label: "Burning",    what: "Takes {mag} damage at the start of each turn." },
+  frozen:     { label: "Frozen",     what: "Skips the next turn entirely." },
+  shocked:    { label: "Shocked",    what: "Takes +{mag} bonus damage from every hit." },
+  poisoned:   { label: "Poisoned",   what: "Takes {mag} damage at the start of each turn (bypasses armor)." },
+  bleeding:   { label: "Bleeding",   what: "Takes {mag} damage at the start of each turn." },
+  stunned:    { label: "Stunned",    what: "Skips the next attack — broken when damage threshold is hit." },
+  hexed:      { label: "Hexed",      what: "Takes 25% more damage from all sources." },
+  entangled:  { label: "Entangled",  what: "-4 to hit. Can't move next turn." },
+  taunt:      { label: "Taunted",    what: "Must attack the taunter — can't pick other targets." },
+  marked:     { label: "Marked",     what: "Allies deal +{mag} bonus damage to this target." },
+  vulnerable: { label: "Vulnerable", what: "Takes +{mag} extra damage from the next hit." },
+  foreseen:   { label: "Foreseen",   what: "Attack predicted by the Sage — defenders ready a counter." },
+  regen:      { label: "Regenerating", what: "Heals {mag} HP at the start of each turn." },
+  empowered:  { label: "Empowered",  what: "Deals +{mag} bonus damage on the next attack." },
+  barkskin:   { label: "Barkskin",   what: "Damage reduced by {mag} for every hit." },
+  animal_form:{ label: "Animal Form", what: "Bonus damage + AC while transformed." },
+  shield_of_faith: { label: "Shield of Faith", what: "+{mag} shield while active." },
+  good_fortune: { label: "Good Fortune", what: "Heals {mag} HP at end of turn." },
+};
+
+export function effectTooltipText(type: EffectType, magnitude: number, remaining: number): string {
+  const d = EFFECT_DESCRIPTIONS[type];
+  if (!d) return `${type} (${remaining}t)`;
+  const what = d.what.replace("{mag}", String(magnitude));
+  return `${d.label} · ${remaining}t left\n${what}`;
+}
 
 function effectPill(type: EffectType): CSSProperties {
   const c = EFFECT_COLOR[type] ?? "#94a3b8";
