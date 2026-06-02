@@ -1523,7 +1523,8 @@ function drawStatusOverlay(
       || e.type === "poisoned" || e.type === "bleeding"
       || e.type === "stunned" || e.type === "regen"
       || e.type === "empowered" || e.type === "entangled"
-      || e.type === "hexed" || e.type === "barkskin") {
+      || e.type === "hexed" || e.type === "barkskin"
+      || e.type === "animal_form") {
       ambient.push(e);
     } else {
       ringEffects.push(e);
@@ -1542,6 +1543,7 @@ function drawStatusOverlay(
     else if (e.type === "entangled") drawEntangledRoots(ctx, cx, cy, baseRadius, now, seed);
     else if (e.type === "hexed") drawHexedWisps(ctx, cx, cy, baseRadius, now, seed);
     else if (e.type === "barkskin") drawBarkskinLeaves(ctx, cx, cy, baseRadius, now, seed);
+    else if (e.type === "animal_form") drawScaledUpAura(ctx, cx, cy, baseRadius, now, seed);
   }
 
   if (ringEffects.length > 0) {
@@ -1757,6 +1759,96 @@ function drawPortraitTint(
     ctx.fillRect(cx - radius, cy - radius, radius * 2, radius * 2);
     ctx.restore();
   }
+}
+
+// "Scaled Up" — orange energy surge around the pawn. Reads as compute
+// provisioning: a hot upward draft of streaks rising from below the
+// figure, a swelling halo, and ringed concentric pulses expanding
+// outward from the feet. Matches the Druid's Scale Up ability blurb
+// ("Compute provisioned — stats surged while active").
+function drawScaledUpAura(
+  ctx: CanvasRenderingContext2D,
+  cx: number, cy: number, r: number, now: number, seed: number,
+) {
+  ctx.save();
+
+  // Pulsing orange halo behind everything else.
+  const halo = 0.55 + 0.2 * Math.sin(now / 500);
+  const haloGrad = ctx.createRadialGradient(cx, cy, r * 0.6, cx, cy, r * 1.55);
+  haloGrad.addColorStop(0, "rgba(249, 115, 22, 0)");
+  haloGrad.addColorStop(0.5, `rgba(249, 115, 22, ${0.40 * halo})`);
+  haloGrad.addColorStop(1, "rgba(180, 83, 9, 0)");
+  ctx.fillStyle = haloGrad;
+  ctx.beginPath();
+  ctx.arc(cx, cy, r * 1.55, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Concentric rings expanding outward from the pawn's base, fading as
+  // they grow — reads as resources scaling up beneath the actor.
+  const RINGS = 3;
+  const RING_CYCLE = 1500;
+  for (let i = 0; i < RINGS; i++) {
+    const phase = ((now + i * (RING_CYCLE / RINGS)) % RING_CYCLE) / RING_CYCLE;
+    const ringR = r * (0.95 + phase * 0.7);
+    const alpha = (1 - phase) * 0.6;
+    ctx.globalAlpha = alpha;
+    ctx.strokeStyle = "#fb923c";
+    ctx.lineWidth = Math.max(1.2, r * 0.07 * (1 - phase * 0.5));
+    ctx.setLineDash([]);
+    ctx.beginPath();
+    ctx.ellipse(cx, cy + r * 0.65, ringR, ringR * 0.32, 0, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
+  // Upward-rising energy streaks emanating from the lower hemisphere —
+  // hot yellow inner with orange-red outer for that scale-up burst feel.
+  const STREAKS = 9;
+  const STREAK_CYCLE = 900;
+  ctx.lineCap = "round";
+  for (let i = 0; i < STREAKS; i++) {
+    const phase = ((now + i * (STREAK_CYCLE / STREAKS) + rng01(seed, i + 700) * STREAK_CYCLE) % STREAK_CYCLE) / STREAK_CYCLE;
+    // Origin point spread across the bottom of the pawn — slight side jitter.
+    const baseAng = Math.PI * (0.05 + (i / STREAKS) * 0.9);
+    const x0 = cx + Math.cos(baseAng) * r * 0.85;
+    const y0 = cy + Math.sin(baseAng) * r * 0.85;
+    // Each streak rises upward + slightly outward; length grows with phase
+    // and fades at both ends so they don't pop.
+    const len = r * (0.4 + phase * 0.95);
+    const tipX = x0 + (rng01(seed, i + 720) - 0.5) * r * 0.4;
+    const tipY = y0 - len;
+    const alpha = (phase < 0.2 ? phase / 0.2 : 1) * (phase > 0.7 ? (1 - phase) / 0.3 : 1) * 0.95;
+    // Outer warm body — orange.
+    ctx.globalAlpha = alpha * 0.85;
+    ctx.strokeStyle = "#fb923c";
+    ctx.lineWidth = Math.max(1.5, r * 0.10);
+    ctx.beginPath();
+    ctx.moveTo(x0, y0);
+    ctx.lineTo(tipX, tipY);
+    ctx.stroke();
+    // Hot inner core — yellow.
+    ctx.globalAlpha = alpha;
+    ctx.strokeStyle = "#fef3c7";
+    ctx.lineWidth = Math.max(0.6, r * 0.03);
+    ctx.beginPath();
+    ctx.moveTo(x0, y0);
+    ctx.lineTo(tipX, tipY);
+    ctx.stroke();
+  }
+
+  // Bright crown highlight at the top of the pawn — adds the "ascending"
+  // feel without obscuring the avatar's face.
+  const crownPulse = 0.5 + 0.5 * Math.sin(now / 380);
+  ctx.globalAlpha = 0.55 * crownPulse;
+  const crownGrad = ctx.createRadialGradient(cx, cy - r * 0.9, 0, cx, cy - r * 0.9, r * 0.85);
+  crownGrad.addColorStop(0, "rgba(254, 240, 138, 0.8)");
+  crownGrad.addColorStop(0.5, "rgba(251, 146, 60, 0.45)");
+  crownGrad.addColorStop(1, "rgba(180, 83, 9, 0)");
+  ctx.fillStyle = crownGrad;
+  ctx.beginPath();
+  ctx.arc(cx, cy - r * 0.9, r * 0.85, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.restore();
 }
 
 // Bark patches anchored to the pawn rim + a slow drift of small leaves
