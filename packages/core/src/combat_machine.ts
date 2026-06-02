@@ -66,6 +66,7 @@ import {
   type WeaponRange,
 } from "./flavor";
 import { type AbilityContext, type AbilityEffect, type ActiveAbilityDef, type AllyNpcSpec } from "./abilities";
+import { ALL_TALENT_NODES } from "./abilities/tree";
 import { deriveArmorBonus, deriveCritBonus, deriveDodgeChance, deriveInitiativeBonus, type Stats } from "./stats";
 
 export type ActorId = string;
@@ -2889,9 +2890,18 @@ function handleAbility(
   if (fighter.hp <= 0) return reject(state, `${action.actor} is downed`);
 
   const cls = classByName(fighter.class);
-  const ability = cls.abilities.find(
+  // Look up the active ability in the class kit first, then fall back to the
+  // talent-tree registry for new nodes (Rolling Restart, Sanity Check, etc.)
+  // that aren't in the legacy per-class arrays.
+  let ability = cls.abilities.find(
     (a): a is ActiveAbilityDef => a.kind === "active" && a.id === action.ability_id,
   );
+  if (!ability) {
+    const node = ALL_TALENT_NODES.find((n) => n.id === action.ability_id);
+    if (node && node.ability.kind === "active" && node.class_id === cls.id) {
+      ability = node.ability;
+    }
+  }
   if (!ability) {
     return reject(state, `${fighter.class} has no active ability with id ${action.ability_id}`);
   }

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useReducer, useRef, useState } from "react";
 import toast from "react-hot-toast";
-import { isMonsterActor, classByName, activeAbilities, hexDistance, type ActiveAbilityDef, isAllyNpcActor } from "@gantt-quest/core";
+import { isMonsterActor, classByName, activeAbilities, hexDistance, findNode, type AbilityLoadout, type ActiveAbilityDef, isAllyNpcActor } from "@gantt-quest/core";
 import { buildBurndown, BurndownChart } from "./CombatBurndown";
 import { InventoryFullScreen } from "./components/Inventory";
 import type { Item } from "./types";
@@ -1736,7 +1736,29 @@ export function CombatPage({
 
   const me = state?.fighters.find((f) => f.id === selfId);
   const myMana = me?.mana ?? 0;
-  const myActiveAbilities = me ? activeAbilities(classByName(me.class).abilities) : [];
+  // Pulled once per combat session — the loadout doesn't change mid-fight.
+  // Falls back to the full class kit while in flight or if the fetch errors,
+  // so abilities still render even when the talents endpoint is unreachable.
+  const [equippedLoadout, setEquippedLoadout] = useState<AbilityLoadout | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/character/talents").then((r) => r.ok ? r.json() : null).then((raw) => {
+      const j = raw as { loadout?: AbilityLoadout } | null;
+      if (!cancelled && j?.loadout) setEquippedLoadout(j.loadout);
+    }).catch(() => { /* fall through to class-kit fallback */ });
+    return () => { cancelled = true; };
+  }, []);
+  const myActiveAbilities: ActiveAbilityDef[] = useMemo(() => {
+    if (!me) return [];
+    if (!equippedLoadout) return activeAbilities(classByName(me.class).abilities);
+    const out: ActiveAbilityDef[] = [];
+    for (const id of equippedLoadout.active) {
+      if (!id) continue;
+      const node = findNode(id);
+      if (node && node.ability.kind === "active") out.push(node.ability as ActiveAbilityDef);
+    }
+    return out;
+  }, [me, equippedLoadout]);
   const liveMonsters = state?.monsters.filter((m) => m.hp > 0) ?? [];
   const [targetMonsterId, setTargetMonsterId] = useState<string | null>(null);
   // Auto-select the only live monster; clear stale target when that monster dies.
@@ -1784,6 +1806,38 @@ export function CombatPage({
     // error frame produces a toast so the user knows it didn't fire.
     setItemPicker("closed");
   }
+
+  // Keyboard hotkeys 1-4 for the first four loadout actives. Skips when an
+  // input/textarea/contenteditable is focused, or any modifier key is held —
+  // we don't want to hijack Cmd+1 / browser tab shortcuts.
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      const target = e.target as HTMLElement | null;
+      if (target) {
+        const tag = target.tagName;
+        if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || target.isContentEditable) return;
+      }
+      const n = parseInt(e.key, 10);
+      if (!Number.isFinite(n) || n < 1 || n > 4) return;
+      const ability = myActiveAbilities[n - 1];
+      if (!ability) return;
+      if (!myTurn) return;
+      if (myMana < ability.mana_cost) return;
+      const cooldown = state?.cooldowns?.[selfId]?.[ability.id] ?? 0;
+      if (cooldown > 0) return;
+      e.preventDefault();
+      // If already aiming this ability, cancel; otherwise fire.
+      if (aimingAction?.kind === "ability" && aimingAction.ability.id === ability.id) {
+        setAimingAction(null);
+      } else {
+        fireAbility(ability);
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [myActiveAbilities, myTurn, myMana, aimingAction, state?.cooldowns, selfId]);
 
   function fireAbility(ability: ActiveAbilityDef) {
     if (ability.needs_position_picker) {
@@ -2852,9 +2906,10 @@ export function CombatPage({
             onMouseEnter={() => setPreviewedKind({ scope: "single_enemy" })}
             onMouseLeave={() => setPreviewedKind(null)}
           />
-          {myActiveAbilities.map((ability) => {
+          {myActiveAbilities.map((ability, abilityIndex) => {
             const cooldown = state?.cooldowns?.[selfId]?.[ability.id] ?? 0;
             const isAiming = aimingAction?.kind === "ability" && aimingAction.ability.id === ability.id;
+            const hotkey = abilityIndex < 4 ? abilityIndex + 1 : undefined;
             return (
               <CBtn
                 key={ability.id}
@@ -2864,6 +2919,7 @@ export function CombatPage({
                 manaCost={ability.mana_cost > 0 ? ability.mana_cost : undefined}
                 tooltip={ability.blurb}
                 cooldown={cooldown}
+                hotkey={hotkey}
                 disabled={!myTurn || myMana < ability.mana_cost}
                 onClick={() => {
                   if (isAiming) { setAimingAction(null); return; }

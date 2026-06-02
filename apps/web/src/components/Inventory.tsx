@@ -54,6 +54,7 @@ import {
   resourceDisplayName,
 } from "../utils";
 import { Banner, RarityBadge } from "./ui";
+import { AbilitiesPanel } from "./AbilitiesPanel";
 
 // ── Unified item cell ─────────────────────────────────────────────────────
 // mode="icon"     — fixed square, power badge circle       (InventoryCard)
@@ -1206,7 +1207,10 @@ export function InventoryFullScreen({
   // differs from the source the cursor appears to drift. Sizing the preview
   // to match the source keeps the grab anchor under the cursor.
   const [dragRect, setDragRect] = useState<{ width: number; height: number } | null>(null);
-  const [mobileTab, setMobileTab] = useState<"doll" | "pack">("pack");
+  const [mobileTab, setMobileTab] = useState<"doll" | "abilities" | "pack">("pack");
+  // Top-level center-column tab: abilities tree vs. items pack. State persists
+  // across re-renders of the inventory modal.
+  const [topTab, setTopTab] = useState<"abilities" | "items">("items");
   const isMobile = useIsMobile();
   const activeItem = activeItemId != null ? items.find((i) => i.id === activeItemId) ?? null : null;
 
@@ -1317,7 +1321,7 @@ export function InventoryFullScreen({
             <div style={{ display: "flex", flexDirection: "column", flex: 1, overflow: "hidden" }}>
               {/* Tab bar */}
               <div style={{ display: "flex", borderBottom: "1px solid #2a2d33", flexShrink: 0 }}>
-                {([["doll", "Equipped"], ["pack", `Pack (${packItems.length})`]] as const).map(([tab, label]) => (
+                {([["doll", "Equipped"], ["abilities", "Abilities"], ["pack", `Pack (${packItems.length})`]] as const).map(([tab, label]) => (
                   <button key={tab} onClick={() => setMobileTab(tab)}
                     style={{
                       flex: 1, padding: "10px 0", fontSize: 13, fontWeight: 600, fontFamily: DISPLAY_FONT,
@@ -1332,7 +1336,12 @@ export function InventoryFullScreen({
 
               {/* Tab content */}
               <div style={{ flex: 1, overflowY: "auto", padding: 14 }}>
-                {mobileTab === "doll" ? (
+                {mobileTab === "abilities" ? (
+                  <AbilitiesPanel
+                    characterGold={character?.gold ?? null}
+                    onCharacterUpdated={() => { /* parent re-fetches lazily */ }}
+                  />
+                ) : mobileTab === "doll" ? (
                   <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 10 }}>
                     {characterSheet && (
                       <div style={{ alignSelf: "stretch", width: "100%" }}>{characterSheet}</div>
@@ -1578,8 +1587,34 @@ export function InventoryFullScreen({
                 )}
               </div>
 
-              {/* Center — pack */}
-              <DroppablePackPanel>
+              {/* Center — tabs (Abilities | Items) then panel */}
+              <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0, padding: 18, gap: 10 }}>
+                {/* Top-level Abilities | Items tab strip */}
+                <div style={{ display: "flex", gap: 4, borderBottom: "1px solid #2a2d33", paddingBottom: 8, flexShrink: 0 }}>
+                  {(["abilities", "items"] as const).map((t) => (
+                    <button key={t} onClick={() => setTopTab(t)}
+                      style={{
+                        background: topTab === t ? "var(--accent-ink-deep, #2a2d3a)" : "var(--bg-input, #1d1f23)",
+                        color: topTab === t ? "#c084fc" : "#9ca3af",
+                        border: `1px solid ${topTab === t ? "#c084fc55" : "var(--border-base, #2a2d33)"}`,
+                        borderRadius: 6,
+                        padding: "6px 16px",
+                        fontSize: 13,
+                        fontWeight: 700,
+                        cursor: "pointer",
+                        fontFamily: DISPLAY_FONT,
+                        textTransform: "capitalize",
+                      }}
+                    >{t}</button>
+                  ))}
+                </div>
+                {topTab === "abilities" ? (
+                  <AbilitiesPanel
+                    characterGold={character?.gold ?? null}
+                    onCharacterUpdated={() => { /* parent will re-fetch character on next interaction */ }}
+                  />
+                ) : (
+                  <DroppablePackPanel>
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10, gap: 8, flexWrap: "wrap" }}>
                   <BagFilterTabs filter={bagFilter} onChange={setBagFilter} counts={{
                     all: allPackItems.length,
@@ -1626,9 +1661,11 @@ export function InventoryFullScreen({
                   </div>
                 )}
               </DroppablePackPanel>
+                )}
+              </div>
 
-              {/* Right — detail pane */}
-              {selected ? (
+              {/* Right — detail pane (hidden in Abilities mode; AbilitiesPanel renders its own detail inline) */}
+              {topTab === "abilities" ? null : selected ? (
                 <div style={{ width: 280, flexShrink: 0, borderLeft: "1px solid #2a2d33", overflowY: "auto", padding: 18 }}>
                   <ItemDetailPopover
                     item={selected} inQuest={inQuest} selfId={selfId} characterLevel={characterLevel} inline

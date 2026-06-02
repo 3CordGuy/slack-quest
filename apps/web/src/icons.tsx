@@ -65,6 +65,8 @@ const SVG_ICONS = new Set([
   "knapsack",
   // User menu trigger
   "cog",
+  // Talent-tree new ability icons (migration 0062)
+  "frozen-arrow", "magnifying-glass", "tombstone",
   // Abstract fallback icons (used when no specific icon exists)
   "abstract-006",
 ]);
