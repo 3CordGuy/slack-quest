@@ -984,8 +984,12 @@ function drawTiles(
         fill = "rgba(71, 85, 105, 0.85)";
         stroke = "rgba(148, 163, 184, 0.5)";
       } else if (overlay.reachable.has(key)) {
-        fill = "rgba(34, 197, 94, 0.18)";
-        stroke = "rgba(34, 197, 94, 0.55)";
+        // Cyan, not green — green-tinted battlefield art (forest/swamp/desk
+        // scenes) makes a 0.18-alpha green fill disappear. Cyan pops against
+        // every scene palette and the higher alpha keeps the reachable area
+        // unambiguous when the AI ground art is busy.
+        fill = "rgba(56, 189, 248, 0.32)";
+        stroke = "rgba(56, 189, 248, 0.85)";
       } else if (overlay.inRange.has(key)) {
         fill = "rgba(248, 113, 113, 0.18)";
         stroke = "rgba(248, 113, 113, 0.55)";
@@ -1004,7 +1008,7 @@ function drawTiles(
       if (hover && posKey(hover.pos) === key) {
         switch (hover.reason) {
           case "reachable":
-            fill = "rgba(34, 197, 94, 0.42)"; break;
+            fill = "rgba(56, 189, 248, 0.55)"; break;
           case "blocked":
             fill = "rgba(239, 68, 68, 0.30)"; break;
           case "in_range":

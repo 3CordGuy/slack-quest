@@ -312,8 +312,15 @@ export function initialHexPositions(
 // ── Stat-derived range helpers ────────────────────────────────────────────────
 
 // Move range in hexes per turn, derived from AGI stat.
+//
+// Capped at MAX_MOVE_RANGE so stacked AGI equipment (boots + pants + ring,
+// each potentially +5/+6 at high tier) can't trivially let a fighter cross
+// the entire grid in one move and skip tactical positioning. The cap roughly
+// corresponds to half the grid height, so a high-AGI build can comfortably
+// reposition but still can't reach the back line in one step.
+export const MAX_MOVE_RANGE = 5;
 export function deriveMoveRange(agi: number): number {
-  return 2 + Math.floor(Math.max(0, agi - 5) / 3);
+  return Math.min(MAX_MOVE_RANGE, 2 + Math.floor(Math.max(0, agi - 5) / 3));
 }
 
 // Weapon range in hexes, derived from weapon type and relevant stat.

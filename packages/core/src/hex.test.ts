@@ -335,6 +335,12 @@ describe("deriveMoveRange", () => {
     expect(deriveMoveRange(1)).toBe(2);
     expect(deriveMoveRange(0)).toBe(2);
   });
+
+  it("caps at MAX_MOVE_RANGE so AGI-stacked equipment can't trivialize the grid", () => {
+    // formula would give 2 + floor((50-5)/3) = 17 without the cap
+    expect(deriveMoveRange(50)).toBe(5);
+    expect(deriveMoveRange(100)).toBe(5);
+  });
 });
 
 describe("deriveRangeTiles", () => {
