@@ -1,18 +1,23 @@
-// New talent-tree nodes introduced by the abilities rework. Each class gets
-// one representative new active in v1 to validate the end-to-end loop
-// (buy → equip → cast → rank up). The remaining nodes in the plan (Bisect,
-// CDN Surge, Compost Heap, Encore, Hailstorm, etc.) land in follow-up PRs
-// per the design doc.
+// New talent-tree nodes introduced by the abilities rework. PR #167 shipped
+// the framework + 8 representative abilities (one active per class) to prove
+// the end-to-end loop. This file extends the roster toward the plan's full
+// 41-node target with abilities that can be implemented using the current
+// AbilityEffect primitives.
 //
-// All v1 new nodes ship as max_rank: 1 with level_req: [1], cost: [1].
-// Adding R2/R3 later: bump max_rank in the node entry below + branch on
-// ctx.rank inside the ability's execute().
+// Abilities requiring new engine work (e.g. cooldown reset, buff strip,
+// position swap, HP-cost casting, scaling-passive triggers) are deferred to
+// a follow-up "engine primitives" PR and listed in the design doc.
+//
+// All nodes ship at max_rank: 1 today. Adding R2/R3 later: bump max_rank
+// in the per-class registry below + branch on ctx.rank inside execute().
 
-import type { AbilityDef, MonsterSnapshot } from "../abilities";
+import type { AbilityDef, FighterSnapshot, MonsterSnapshot } from "../abilities";
 import { fx, rollSum } from "./effects";
 import type { ClassId, TalentNodeDef } from "./types";
 
-// ---- Per-class new ability defs ----
+// ────────────────────────────────────────────────────────────────────────
+// DevOps Mage
+// ────────────────────────────────────────────────────────────────────────
 
 const rollingRestart: AbilityDef = {
   kind: "active",
@@ -33,6 +38,49 @@ const rollingRestart: AbilityDef = {
   },
 };
 
+const cdnSurge: AbilityDef = {
+  kind: "active",
+  id: "cdn_surge",
+  name: "CDN Surge",
+  blurb: "Push a lightning surge through the edge — strikes every enemy within 2 hexes for mag×d4 lightning damage.",
+  icon: "arcing-bolt",
+  mana_cost: 0,
+  cooldown_turns: 4,
+  routing: "aoe_damage",
+  target: "all_enemies",
+  range_tiles: 5,
+  aoe_radius_tiles: 2,
+  execute(ctx) {
+    const mag = Math.max(1, ctx.caster.magic_mod);
+    const amount = rollSum(ctx.roll, mag, 4);
+    const formula = `${mag}d4`;
+    return ctx.monsters.map((m) => fx.damage(m.id, amount, formula, { damageType: "lightning" }));
+  },
+};
+
+const canaryDeploy: AbilityDef = {
+  kind: "active",
+  id: "canary_deploy",
+  name: "Canary Deploy",
+  blurb: "Ship the small risky change first — single-target fire strike for 1d6 + magic damage.",
+  icon: "fire",
+  mana_cost: 1,
+  routing: "damage",
+  target: "single_enemy",
+  range_tiles: 4,
+  aoe_radius_tiles: 0,
+  execute(ctx) {
+    const monster = ctx.target as MonsterSnapshot;
+    const mag = ctx.caster.magic_mod;
+    const amount = ctx.roll(6) + mag;
+    return [fx.damage(monster.id, amount, `1d6+${mag}m`, { damageType: "fire" })];
+  },
+};
+
+// ────────────────────────────────────────────────────────────────────────
+// QA Paladin
+// ────────────────────────────────────────────────────────────────────────
+
 const sanityCheck: AbilityDef = {
   kind: "active",
   id: "sanity_check",
@@ -51,6 +99,32 @@ const sanityCheck: AbilityDef = {
     return [fx.damage(monster.id, amount, `1d8+${atk}a`, { damageType: "physical" })];
   },
 };
+
+const bisect: AbilityDef = {
+  kind: "active",
+  id: "bisect",
+  name: "Bisect",
+  blurb: "Split the failure space in half — sweep all adjacent enemies for 1d8 + attack and entangle them for 2 rounds.",
+  icon: "battle-axe",
+  mana_cost: 0,
+  cooldown_turns: 3,
+  routing: "aoe_damage",
+  target: "all_enemies",
+  range_tiles: 1,
+  aoe_radius_tiles: 1,
+  execute(ctx) {
+    const atk = ctx.caster.attack_mod;
+    const amount = ctx.roll(8) + atk;
+    const formula = `1d8+${atk}a`;
+    const damageEffects = ctx.monsters.map((m) => fx.damage(m.id, amount, formula, { damageType: "physical" }));
+    const entangleEffects = ctx.monsters.map((m) => fx.entangleMonster(m.id, 2));
+    return [...damageEffects, ...entangleEffects];
+  },
+};
+
+// ────────────────────────────────────────────────────────────────────────
+// Backend Druid
+// ────────────────────────────────────────────────────────────────────────
 
 const pruning: AbilityDef = {
   kind: "active",
@@ -74,6 +148,78 @@ const pruning: AbilityDef = {
   },
 };
 
+const mycelialWeb: AbilityDef = {
+  kind: "active",
+  id: "mycelial_web",
+  name: "Mycelial Web",
+  blurb: "Lash every enemy in a 2-hex bloom for 2d6 + magic damage and root them for 1 round.",
+  icon: "grass",
+  mana_cost: 3,
+  cooldown_turns: 4,
+  routing: "utility",
+  target: "all_enemies",
+  range_tiles: 3,
+  aoe_radius_tiles: 2,
+  execute(ctx) {
+    const mag = ctx.caster.magic_mod;
+    const amount = rollSum(ctx.roll, 2, 6) + mag;
+    const formula = `2d6+${mag}m`;
+    const damageEffects = ctx.monsters.map((m) => fx.damage(m.id, amount, formula, { damageType: "magic" }));
+    // Root one random enemy in addition to AoE damage; entangle reuses the
+    // existing Druid Deadlock primitive.
+    const rooted = ctx.monsters.length > 0
+      ? [fx.entangleMonster(ctx.monsters[Math.floor((ctx.roll(20) - 1) / 20 * ctx.monsters.length)].id, 1)]
+      : [];
+    return [...damageEffects, ...rooted];
+  },
+};
+
+const compostHeap: AbilityDef = {
+  kind: "active",
+  id: "compost_heap",
+  name: "Compost Heap",
+  blurb: "Seed a regen patch — every ally regenerates magic HP per turn for 3 rounds.",
+  icon: "health-increase",
+  mana_cost: 0,
+  cooldown_turns: 4,
+  routing: "utility",
+  target: "all_allies",
+  execute(ctx) {
+    const mag = Math.max(1, ctx.caster.magic_mod);
+    return ctx.party.map((p) => fx.fighterRegen(p.id, mag, 3));
+  },
+};
+
+const deepRoots: AbilityDef = {
+  kind: "passive",
+  id: "deep_roots",
+  name: "Deep Roots",
+  blurb: "Roots run deep before the fight starts — gain +2 AC barkskin for the entire combat.",
+  icon: "tree-roots",
+  trigger: "on_action",
+  once_per_fight: true,
+  execute(ctx) {
+    return [fx.barkskin(ctx.caster.id, 2, 99)];
+  },
+};
+
+const cronJob: AbilityDef = {
+  kind: "passive",
+  id: "cron_job",
+  name: "Cron Job",
+  blurb: "Schedules a steady patch — regenerate 1 HP at the start of every turn.",
+  icon: "cycle",
+  trigger: "on_action",
+  once_per_fight: false,
+  execute(ctx) {
+    return [fx.heal(ctx.caster.id, 1)];
+  },
+};
+
+// ────────────────────────────────────────────────────────────────────────
+// Frontend Bard
+// ────────────────────────────────────────────────────────────────────────
+
 const standupMeeting: AbilityDef = {
   kind: "active",
   id: "standup_meeting",
@@ -88,6 +234,33 @@ const standupMeeting: AbilityDef = {
     return ctx.party.map((m) => fx.encourage(m.id, 2));
   },
 };
+
+const discordNotification: AbilityDef = {
+  kind: "active",
+  id: "discord_notification",
+  name: "Discord Notification",
+  blurb: "A jarring ping locks the target up — 1d6 + magic damage and stun (30% break chance per turn).",
+  icon: "sound-on",
+  mana_cost: 2,
+  cooldown_turns: 2,
+  routing: "utility",
+  target: "single_enemy",
+  range_tiles: 4,
+  aoe_radius_tiles: 0,
+  execute(ctx) {
+    const monster = ctx.target as MonsterSnapshot;
+    const mag = ctx.caster.magic_mod;
+    const amount = ctx.roll(6) + mag;
+    return [
+      fx.damage(monster.id, amount, `1d6+${mag}m`, { damageType: "magic" }),
+      fx.stunMonster(monster.id, 30, 50),
+    ];
+  },
+};
+
+// ────────────────────────────────────────────────────────────────────────
+// Staff Sage
+// ────────────────────────────────────────────────────────────────────────
 
 const frostBolt: AbilityDef = {
   kind: "active",
@@ -107,6 +280,30 @@ const frostBolt: AbilityDef = {
     return [fx.attackRollDamage(monster.id, mag, amount, `${Math.max(1, mag)}d4`, "ice", undefined, undefined, 25)];
   },
 };
+
+const hailstorm: AbilityDef = {
+  kind: "active",
+  id: "hailstorm",
+  name: "Hailstorm",
+  blurb: "Drop a wall of icy hail — every enemy in a 2-hex blast takes magic×d4 ice damage, with a 15% freeze chance per target.",
+  icon: "icicles-fence",
+  mana_cost: 0,
+  cooldown_turns: 5,
+  routing: "utility",
+  target: "all_enemies",
+  range_tiles: 4,
+  aoe_radius_tiles: 2,
+  execute(ctx) {
+    const mag = Math.max(1, ctx.caster.magic_mod);
+    return ctx.monsters.map((m) =>
+      fx.attackRollDamage(m.id, mag, rollSum(ctx.roll, mag, 4), `${mag}d4`, "ice", undefined, undefined, 15),
+    );
+  },
+};
+
+// ────────────────────────────────────────────────────────────────────────
+// Refactor Rogue
+// ────────────────────────────────────────────────────────────────────────
 
 const codeAudit: AbilityDef = {
   kind: "active",
@@ -131,6 +328,29 @@ const codeAudit: AbilityDef = {
   },
 };
 
+const smokeTest: AbilityDef = {
+  kind: "active",
+  id: "smoke_test",
+  name: "Smoke Test",
+  blurb: "Trip every alarm at once — vanish for 1 swing and pepper every nearby enemy with 1d4 + magic chip damage.",
+  icon: "cloak-dagger",
+  mana_cost: 0,
+  cooldown_turns: 3,
+  routing: "utility",
+  target: "self",
+  execute(ctx) {
+    const mag = ctx.caster.magic_mod;
+    const amount = ctx.roll(4) + mag;
+    const formula = `1d4+${mag}m`;
+    const damageEffects = ctx.monsters.map((m) => fx.damage(m.id, amount, formula, { damageType: "magic" }));
+    return [fx.vanish(ctx.caster.id, 1), ...damageEffects];
+  },
+};
+
+// ────────────────────────────────────────────────────────────────────────
+// SRE Warden
+// ────────────────────────────────────────────────────────────────────────
+
 const postmortem: AbilityDef = {
   kind: "active",
   id: "postmortem",
@@ -152,6 +372,29 @@ const postmortem: AbilityDef = {
     return [fx.damage(monster.id, amount, `1d8+${atk}a+${debuffCount}×2dbf`, { damageType: "physical" })];
   },
 };
+
+const circuitBreaker: AbilityDef = {
+  kind: "active",
+  id: "circuit_breaker",
+  name: "Circuit Breaker",
+  blurb: "Trip the breaker — every ally gains 1d6 + vit shield, and the nearest enemy is entangled for 2 rounds.",
+  icon: "energy-shield",
+  mana_cost: 3,
+  cooldown_turns: 4,
+  routing: "utility",
+  target: "all_allies",
+  execute(ctx) {
+    const vit = (ctx.caster as FighterSnapshot & { stats?: { vit: number } }).stats?.vit ?? 5;
+    const shieldAmt = ctx.roll(6) + vit;
+    const allyShields = ctx.party.map((p) => fx.shield(p.id, shieldAmt));
+    const entangle = ctx.monsters.length > 0 ? [fx.entangleMonster(ctx.monsters[0].id, 2)] : [];
+    return [...allyShields, ...entangle];
+  },
+};
+
+// ────────────────────────────────────────────────────────────────────────
+// Data Warlock
+// ────────────────────────────────────────────────────────────────────────
 
 const indexScan: AbilityDef = {
   kind: "active",
@@ -175,96 +418,81 @@ const indexScan: AbilityDef = {
   },
 };
 
-// ---- Class → new node list ----
+const stackTrace: AbilityDef = {
+  kind: "active",
+  id: "stack_trace",
+  name: "Stack Trace",
+  blurb: "Unwind the failure path — magic strike for magic + 2 extra damage per DoT stack already on the target.",
+  icon: "stack",
+  mana_cost: 0,
+  cooldown_turns: 3,
+  routing: "utility",
+  target: "single_enemy",
+  range_tiles: 4,
+  aoe_radius_tiles: 0,
+  execute(ctx) {
+    const monster = ctx.target as MonsterSnapshot;
+    const mag = ctx.caster.magic_mod;
+    const dotStacks = (monster.effects ?? [])
+      .filter((e) => ["bleeding", "poisoned", "burning"].includes(e.type))
+      .reduce((sum, e) => sum + e.magnitude, 0);
+    const amount = Math.max(1, mag) + dotStacks * 2;
+    return [fx.damage(monster.id, amount, `${mag}m+${dotStacks}×2dot`, { damageType: "magic" })];
+  },
+};
+
+// ────────────────────────────────────────────────────────────────────────
+// Registry — per-class TalentNodeDef list
+// ────────────────────────────────────────────────────────────────────────
+
+function activeNode(classId: ClassId, ability: AbilityDef, category: TalentNodeDef["category"]): TalentNodeDef {
+  return {
+    id: ability.id,
+    class_id: classId,
+    category,
+    max_rank: 1,
+    level_req_per_rank: [1],
+    point_cost_per_rank: [1],
+    ability,
+  };
+}
 
 const NEW_NODES_BY_CLASS: Record<ClassId, TalentNodeDef[]> = {
   devops_mage: [
-    {
-      id: "rolling_restart",
-      class_id: "devops_mage",
-      category: "damage",
-      max_rank: 1,
-      level_req_per_rank: [1],
-      point_cost_per_rank: [1],
-      ability: rollingRestart,
-    },
+    activeNode("devops_mage", rollingRestart, "damage"),
+    activeNode("devops_mage", cdnSurge, "damage"),
+    activeNode("devops_mage", canaryDeploy, "damage"),
   ],
   qa_paladin: [
-    {
-      id: "sanity_check",
-      class_id: "qa_paladin",
-      category: "damage",
-      max_rank: 1,
-      level_req_per_rank: [1],
-      point_cost_per_rank: [1],
-      ability: sanityCheck,
-    },
+    activeNode("qa_paladin", sanityCheck, "damage"),
+    activeNode("qa_paladin", bisect, "damage"),
   ],
   backend_druid: [
-    {
-      id: "pruning",
-      class_id: "backend_druid",
-      category: "damage",
-      max_rank: 1,
-      level_req_per_rank: [1],
-      point_cost_per_rank: [1],
-      ability: pruning,
-    },
+    activeNode("backend_druid", pruning, "damage"),
+    activeNode("backend_druid", mycelialWeb, "damage"),
+    activeNode("backend_druid", compostHeap, "support"),
+    activeNode("backend_druid", deepRoots, "defense"),
+    activeNode("backend_druid", cronJob, "support"),
   ],
   frontend_bard: [
-    {
-      id: "standup_meeting",
-      class_id: "frontend_bard",
-      category: "support",
-      max_rank: 1,
-      level_req_per_rank: [1],
-      point_cost_per_rank: [1],
-      ability: standupMeeting,
-    },
+    activeNode("frontend_bard", standupMeeting, "support"),
+    activeNode("frontend_bard", discordNotification, "control"),
   ],
   staff_sage: [
-    {
-      id: "frost_bolt",
-      class_id: "staff_sage",
-      category: "control",
-      max_rank: 1,
-      level_req_per_rank: [1],
-      point_cost_per_rank: [1],
-      ability: frostBolt,
-    },
+    activeNode("staff_sage", frostBolt, "control"),
+    activeNode("staff_sage", hailstorm, "damage"),
   ],
   refactor_rogue: [
-    {
-      id: "code_audit",
-      class_id: "refactor_rogue",
-      category: "control",
-      max_rank: 1,
-      level_req_per_rank: [1],
-      point_cost_per_rank: [1],
-      ability: codeAudit,
-    },
+    activeNode("refactor_rogue", codeAudit, "control"),
+    activeNode("refactor_rogue", smokeTest, "utility"),
   ],
   sre_warden: [
-    {
-      id: "postmortem",
-      class_id: "sre_warden",
-      category: "damage",
-      max_rank: 1,
-      level_req_per_rank: [1],
-      point_cost_per_rank: [1],
-      ability: postmortem,
-    },
+    activeNode("sre_warden", postmortem, "damage"),
+    activeNode("sre_warden", circuitBreaker, "defense"),
   ],
   data_warlock: [
-    {
-      id: "index_scan",
-      class_id: "data_warlock",
-      category: "damage",
-      max_rank: 1,
-      level_req_per_rank: [1],
-      point_cost_per_rank: [1],
-      ability: indexScan,
-    },
+    activeNode("data_warlock", indexScan, "damage"),
+    activeNode("data_warlock", stackTrace, "damage"),
   ],
 };
 
@@ -274,15 +502,13 @@ export function newNodesForClass(classId: ClassId): TalentNodeDef[] {
 
 export const ALL_NEW_NODES: TalentNodeDef[] = Object.values(NEW_NODES_BY_CLASS).flat();
 
-// Re-export the ability defs for any callers that need to iterate or test them.
 export const NEW_ABILITY_DEFS: AbilityDef[] = [
-  rollingRestart,
-  sanityCheck,
-  pruning,
-  standupMeeting,
-  frostBolt,
-  codeAudit,
-  postmortem,
-  indexScan,
+  rollingRestart, cdnSurge, canaryDeploy,
+  sanityCheck, bisect,
+  pruning, mycelialWeb, compostHeap, deepRoots, cronJob,
+  standupMeeting, discordNotification,
+  frostBolt, hailstorm,
+  codeAudit, smokeTest,
+  postmortem, circuitBreaker,
+  indexScan, stackTrace,
 ];
-

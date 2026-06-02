@@ -243,6 +243,11 @@ export interface PassiveAbilityDef {
   id: string;
   name: string;
   blurb: string;
+  // Optional rpg-awesome / SVG icon name. Display-only — surfaced in the
+  // talent tree and character-sheet ability lists. UI sites fall back to a
+  // generic placeholder when omitted (matches the existing Druid Primal
+  // Strikes / Bard Bardic Aura / Warden passives which had no icon).
+  icon?: string;
   trigger: PassiveTrigger;
   once_per_fight: boolean;
   // Optional guard: passive fires only when this returns true.

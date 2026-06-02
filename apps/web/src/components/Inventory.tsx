@@ -1286,29 +1286,6 @@ export function InventoryFullScreen({
             <span style={{ ...muted, fontSize: 12 }}>{items.length} item{items.length !== 1 ? "s" : ""}</span>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-            {!isMobile && SORT_LABELS.map(({ key, label }) => (
-              <button key={key} onClick={() => setSort(key)}
-                style={{
-                  background: sort === key ? "#2a2d3a" : "none",
-                  color: sort === key ? "#c084fc" : "#6b7280",
-                  border: sort === key ? "1px solid #c084fc55" : "1px solid transparent",
-                  borderRadius: 20, padding: "3px 12px", fontSize: 12,
-                  fontWeight: 600, cursor: "pointer", fontFamily: "inherit",
-                }}
-              >{label}</button>
-            ))}
-            {!isMobile && <div style={{ width: 1, height: 16, background: "#2a2d33", margin: "0 2px" }} />}
-            {!isMobile && (["grid", "list"] as const).map((mode) => (
-              <button key={mode} onClick={() => changeViewMode(mode)} title={mode === "grid" ? "Grid view" : "List view"}
-                style={{
-                  background: viewMode === mode ? "#2a2d3a" : "none",
-                  color: viewMode === mode ? "#7dd3fc" : "#6b7280",
-                  border: viewMode === mode ? "1px solid #7dd3fc55" : "1px solid transparent",
-                  borderRadius: 6, padding: "3px 8px", fontSize: 14,
-                  cursor: "pointer", fontFamily: "inherit", lineHeight: 1,
-                }}
-              >{mode === "grid" ? "⊞" : "☰"}</button>
-            ))}
             <button onClick={onClose}
               style={{ background: "none", border: "1px solid #3a3d44", borderRadius: 6, color: "#9ca3af", cursor: "pointer", padding: "4px 10px", fontSize: 13, fontFamily: "inherit", marginLeft: 4 }}
             >✕</button>
@@ -1626,6 +1603,37 @@ export function InventoryFullScreen({
                     {allPackItems.length} item{allPackItems.length === 1 ? "" : "s"}
                   </span>
                 </div>
+                {/* Sort + view-mode toggles — moved from the inventory header so
+                    they only render inside the Items tab content (irrelevant
+                    on the Abilities tab). Hidden on mobile because the mobile
+                    pack tab already renders its own sort row inline below. */}
+                {!isMobile && (
+                  <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 12, flexWrap: "wrap" }}>
+                    {SORT_LABELS.map(({ key, label }) => (
+                      <button key={key} onClick={() => setSort(key)}
+                        style={{
+                          background: sort === key ? "#2a2d3a" : "none",
+                          color: sort === key ? "#c084fc" : "#6b7280",
+                          border: sort === key ? "1px solid #c084fc55" : "1px solid transparent",
+                          borderRadius: 20, padding: "3px 12px", fontSize: 12,
+                          fontWeight: 600, cursor: "pointer", fontFamily: "inherit",
+                        }}
+                      >{label}</button>
+                    ))}
+                    <div style={{ width: 1, height: 16, background: "#2a2d33", margin: "0 4px" }} />
+                    {(["grid", "list"] as const).map((mode) => (
+                      <button key={mode} onClick={() => changeViewMode(mode)} title={mode === "grid" ? "Grid view" : "List view"}
+                        style={{
+                          background: viewMode === mode ? "#2a2d3a" : "none",
+                          color: viewMode === mode ? "#7dd3fc" : "#6b7280",
+                          border: viewMode === mode ? "1px solid #7dd3fc55" : "1px solid transparent",
+                          borderRadius: 6, padding: "3px 8px", fontSize: 14,
+                          cursor: "pointer", fontFamily: "inherit", lineHeight: 1,
+                        }}
+                      >{mode === "grid" ? "⊞" : "☰"}</button>
+                    ))}
+                  </div>
+                )}
                 <div style={{ ...muted, fontSize: 10, textTransform: "uppercase", letterSpacing: 1.5, marginBottom: 12, fontFamily: DISPLAY_FONT }}>
                   Drag equipped items here to unequip
                 </div>
@@ -1664,8 +1672,11 @@ export function InventoryFullScreen({
                 )}
               </div>
 
-              {/* Right — detail pane (hidden in Abilities mode; AbilitiesPanel renders its own detail inline) */}
-              {topTab === "abilities" ? null : selected ? (
+              {/* Right — detail pane. Hidden in Abilities mode (AbilitiesPanel
+                  renders its own detail inline) AND when no item is selected,
+                  so the Items tab gets the full center width by default
+                  rather than being squeezed by an empty 280px placeholder. */}
+              {topTab === "items" && selected && (
                 <div style={{ width: 280, flexShrink: 0, borderLeft: "1px solid #2a2d33", overflowY: "auto", padding: 18 }}>
                   <ItemDetailPopover
                     item={selected} inQuest={inQuest} selfId={selfId} characterLevel={characterLevel} inline
@@ -1677,10 +1688,6 @@ export function InventoryFullScreen({
                     onGive={(id, uid, name) => { onGive(id, uid, name); setSelectedId(null); }}
                     onClose={() => setSelectedId(null)}
                   />
-                </div>
-              ) : (
-                <div style={{ width: 280, flexShrink: 0, borderLeft: "1px solid #2a2d33", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                  <div style={{ color: "#374151", fontSize: 12, textAlign: "center", padding: 16 }}>Select an item to view details</div>
                 </div>
               )}
             </div>
