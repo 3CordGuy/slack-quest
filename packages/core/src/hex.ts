@@ -330,6 +330,232 @@ export function initialHexPositions(
   return positions;
 }
 
+// ── Monster spawn formations ─────────────────────────────────────────────────
+
+// One of several deterministic monster-side layouts. Picked by scene_seed so
+// the same quest always uses the same formation across resumes. Boss fights
+// always use "center" regardless of seed — boss reads visually as the
+// centerpiece.
+export type MonsterFormation =
+  | "center"     // baseline — center-fill the back row (matches pre-formation behavior)
+  | "line"       // single row strung wider across the back
+  | "wedge"      // V shape: center hex one row back, wings one row forward
+  | "scatter"    // jittered rows + q within the monster zone, looser
+  | "flank"      // split into two clusters at left + right corners
+  | "back_rank"; // ranged/focus at the deepest row, melee pushed forward
+
+const FORMATIONS: MonsterFormation[] =
+  ["center", "line", "wedge", "scatter", "flank", "back_rank"];
+
+// Picks the formation deterministically given a seed and monster count. Tiny
+// groups (≤1) always use "center" — formation variety only kicks in once
+// there's enough monsters to actually shape a layout.
+export function pickMonsterFormation(seed: number, count: number): MonsterFormation {
+  if (count <= 1) return "center";
+  // Pull from a small RNG so changing the FORMATIONS list reshuffles cleanly.
+  const rng = mulberry32((seed ^ 0xC2B2AE35) >>> 0);
+  return FORMATIONS[Math.floor(rng() * FORMATIONS.length)];
+}
+
+// Minimal spec the placer needs from each monster: weapon range (so back-rank
+// can sort) and is_boss (so the boss always lands center-stage). Tier is
+// optional and unused today — reserved for future "minions cluster around
+// boss" behavior.
+export interface MonsterPlacementSpec {
+  weapon_range?: "melee" | "ranged" | "focus";
+  is_boss?: boolean;
+  tier?: number;
+}
+
+// Snaps `target` to the nearest in-bounds non-taken hex, preferring the
+// candidate itself if it's valid. Returns null if no nearby hex works (which
+// shouldn't happen on the default 9×11 grid for any sane formation).
+function snapToValid(target: HexPos, grid: HexGrid, taken: Set<string>): HexPos | null {
+  if (inBounds(target, grid) && !taken.has(posKey(target))) return target;
+  // Expanding-radius search outward from the target until we find a slot.
+  for (let radius = 1; radius <= Math.max(grid.cols, grid.rows); radius++) {
+    for (const candidate of hexRing(target, radius, grid)) {
+      if (!taken.has(posKey(candidate))) return candidate;
+    }
+  }
+  return null;
+}
+
+// Places monsters on the bottom side of the grid using a seeded formation.
+// Bosses are always placed first at the back-row center (so the formation
+// drapes around them); remaining monsters fill in around the boss.
+//
+// Falls back to `initialHexPositions(count, "bottom", grid)` when there are
+// fewer than 2 placements (no formation makes sense), keeping behavior
+// identical to the pre-formation engine for solo fights.
+export function placeMonsters(
+  specs: MonsterPlacementSpec[],
+  grid: HexGrid,
+  seed: number,
+): HexPos[] {
+  if (specs.length === 0) return [];
+  if (specs.length === 1) return initialHexPositions(1, "bottom", grid);
+
+  const formation = pickMonsterFormation(seed, specs.length);
+  const backRow = grid.rows - 1;          // r=10 for the default 9×11 grid
+  const midRow = backRow - 1;             // r=9 — the existing center-fill row
+  const frontRow = Math.max(backRow - 2, Math.floor(grid.rows / 2) + 1);
+  const rowShiftBack = Math.floor(backRow / 2);
+  const rowShiftMid = Math.floor(midRow / 2);
+  const rowShiftFront = Math.floor(frontRow / 2);
+  const rowWidthMid = midRow % 2 === 0 ? grid.cols : grid.cols - 1;
+  const centerOffset = Math.floor(rowWidthMid / 2);
+  const centerHex: HexPos = { q: centerOffset - rowShiftMid, r: midRow };
+
+  const taken = new Set<string>();
+  const placed: HexPos[] = new Array(specs.length).fill(null) as unknown as HexPos[];
+
+  // Reserve boss slot at the centered mid row, if any. Boss always claims
+  // the visual center regardless of formation.
+  const bossIdx = specs.findIndex((s) => s.is_boss);
+  if (bossIdx >= 0) {
+    const bossPos = snapToValid(centerHex, grid, taken);
+    if (bossPos) {
+      placed[bossIdx] = bossPos;
+      taken.add(posKey(bossPos));
+    }
+  }
+
+  // Build the ordered list of indices still to place.
+  const remaining: number[] = [];
+  for (let i = 0; i < specs.length; i++) if (i !== bossIdx) remaining.push(i);
+
+  // Formation-specific target positions. We compute as many targets as
+  // needed (length === remaining.length), then snap each to a valid hex.
+  const targets: HexPos[] = [];
+
+  function pushTarget(t: HexPos): void { targets.push(t); }
+
+  switch (formation) {
+    case "center": {
+      // Original center-fill behavior on the back-most filled row.
+      // Walk outward from center in mid row, then back row.
+      for (const r of [midRow, backRow]) {
+        const rs = Math.floor(r / 2);
+        const rw = r % 2 === 0 ? grid.cols : grid.cols - 1;
+        const mid = Math.floor(rw / 2);
+        for (let dist = 0; dist <= mid; dist++) {
+          pushTarget({ q: mid - rs + dist, r });
+          if (dist > 0) pushTarget({ q: mid - rs - dist, r });
+        }
+      }
+      break;
+    }
+    case "line": {
+      // Single row strung wider — equal spacing across the row's q range.
+      const rw = rowWidthMid;
+      const slots = Math.min(remaining.length, rw);
+      const step = (rw - 1) / Math.max(1, slots - 1);
+      for (let i = 0; i < slots; i++) {
+        const oc = Math.round(i * step);
+        pushTarget({ q: oc - rowShiftMid, r: midRow });
+      }
+      // Overflow falls back to center-fill of the back row.
+      const rs = rowShiftBack;
+      const rw2 = backRow % 2 === 0 ? grid.cols : grid.cols - 1;
+      const mid = Math.floor(rw2 / 2);
+      for (let dist = 0; targets.length < remaining.length && dist <= mid; dist++) {
+        pushTarget({ q: mid - rs + dist, r: backRow });
+        if (dist > 0) pushTarget({ q: mid - rs - dist, r: backRow });
+      }
+      break;
+    }
+    case "wedge": {
+      // Apex at mid row, wings one row forward, expanding outward. Reads as
+      // a V opening toward the party.
+      pushTarget({ q: centerOffset - rowShiftMid, r: midRow });
+      for (let dist = 1; targets.length < remaining.length; dist++) {
+        pushTarget({ q: centerOffset + dist - rowShiftFront, r: frontRow });
+        if (targets.length < remaining.length)
+          pushTarget({ q: centerOffset - dist - rowShiftFront, r: frontRow });
+      }
+      break;
+    }
+    case "scatter": {
+      // Jittered rows + q within the monster zone using a seeded RNG. Each
+      // monster picks an offset (-1..+1) in both axes from a baseline near
+      // the back row, snapping to a valid hex if the raw pick collides.
+      const rng = mulberry32((seed ^ 0xA1B2C3D4) >>> 0);
+      for (let i = 0; i < remaining.length; i++) {
+        const dq = Math.floor(rng() * 3) - 1;
+        const dr = Math.floor(rng() * 3) - 1;
+        const r = Math.min(backRow, Math.max(frontRow, midRow + dr));
+        const rs = Math.floor(r / 2);
+        const rw = r % 2 === 0 ? grid.cols : grid.cols - 1;
+        const oc = Math.min(rw - 1, Math.max(0, centerOffset + dq + i - Math.floor(remaining.length / 2)));
+        pushTarget({ q: oc - rs, r });
+      }
+      break;
+    }
+    case "flank": {
+      // Two clusters near left and right of the back row, gap in the middle.
+      const half = Math.ceil(remaining.length / 2);
+      for (let i = 0; i < half; i++) {
+        pushTarget({ q: 1 + Math.floor(i / 2) - rowShiftMid, r: midRow + (i % 2) });
+      }
+      const right = rowWidthMid - 2;
+      for (let i = 0; i < remaining.length - half; i++) {
+        pushTarget({ q: right - Math.floor(i / 2) - rowShiftMid, r: midRow + (i % 2) });
+      }
+      break;
+    }
+    case "back_rank": {
+      // Ranged/focus at the deepest row, melee pushed one row forward. Both
+      // sorts fill from the center outward, so the back row visually centers
+      // around the boss when present.
+      const remSpecs = remaining.map((idx) => ({ idx, spec: specs[idx] }));
+      const ranged = remSpecs.filter((r) => r.spec.weapon_range && r.spec.weapon_range !== "melee");
+      const melee = remSpecs.filter((r) => !r.spec.weapon_range || r.spec.weapon_range === "melee");
+      const rowsAssignment: Array<{ row: number; pool: typeof remSpecs }> = [
+        { row: backRow, pool: ranged },
+        { row: frontRow, pool: melee },
+      ];
+      const targetsByIdx: Record<number, HexPos> = {};
+      for (const { row, pool } of rowsAssignment) {
+        const rs = Math.floor(row / 2);
+        const rw = row % 2 === 0 ? grid.cols : grid.cols - 1;
+        const mid = Math.floor(rw / 2);
+        let dist = 0;
+        let placeLeft = false;
+        for (const { idx } of pool) {
+          const oc = placeLeft ? mid - dist : mid + dist;
+          targetsByIdx[idx] = { q: oc - rs, r: row };
+          if (placeLeft) dist++;
+          placeLeft = !placeLeft;
+        }
+      }
+      // Push in the original `remaining` order so the snap loop matches.
+      for (const idx of remaining) pushTarget(targetsByIdx[idx]);
+      break;
+    }
+  }
+
+  // Snap each target to a valid, untaken hex (in formation order).
+  for (let i = 0; i < remaining.length; i++) {
+    const idx = remaining[i];
+    const targetPos = targets[i];
+    const snapped = targetPos ? snapToValid(targetPos, grid, taken) : null;
+    const finalPos = snapped ?? snapToValid(centerHex, grid, taken);
+    if (!finalPos) continue; // grid impossibly small — bail
+    placed[idx] = finalPos;
+    taken.add(posKey(finalPos));
+  }
+
+  // Defensive: any null slots get one last snap to centerHex's neighborhood.
+  for (let i = 0; i < placed.length; i++) {
+    if (!placed[i]) {
+      const fb = snapToValid(centerHex, grid, taken);
+      if (fb) { placed[i] = fb; taken.add(posKey(fb)); }
+    }
+  }
+  return placed;
+}
+
 // ── Stat-derived range helpers ────────────────────────────────────────────────
 
 // Default monster move-range by tier. Replaces the pre-tuning `Math.min(5, 2 + tier)`

@@ -34,6 +34,7 @@ import {
   hexReachable,
   initialHexPositions,
   defaultMonsterMoveRange,
+  placeMonsters,
   generateObstacles,
   generateLootTiles,
   lootTileGold,
@@ -717,10 +718,22 @@ export function createCombatState(init: CombatInit): CombatState {
   const monsterSpecs = init.monsters ?? (init.monster ? [init.monster] : []);
   const grid = GRID_DEFAULT;
 
-  // Assign initial hex positions. Fighters start on the left columns (q=1,2),
-  // monsters on the right columns (q=10,11). Spread evenly across rows.
+  // Assign initial hex positions. Fighters fill from the top of the grid in
+  // a stable center-out pattern. Monsters pick a seeded formation (line /
+  // wedge / scatter / flank / back-rank / center) so each quest's opening
+  // shape is different but deterministic per scene_seed; bosses always claim
+  // the visual center regardless of formation. Solo fights skip formation
+  // logic entirely (one monster → original center-fill behavior).
   const fighterPositions = initialHexPositions(init.fighters.length, "top", grid);
-  const monsterPositions = initialHexPositions(monsterSpecs.length, "bottom", grid);
+  const monsterPositions = placeMonsters(
+    monsterSpecs.map((m) => ({
+      weapon_range: m.weapon_range,
+      is_boss: m.is_boss,
+      tier: m.tier,
+    })),
+    grid,
+    init.scene_seed ?? 0,
+  );
 
   const monsters = monsterSpecs.map((m, i) => {
     const weaponRange = m.weapon_range ?? "melee";
