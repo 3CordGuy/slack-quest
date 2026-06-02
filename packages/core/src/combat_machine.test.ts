@@ -474,6 +474,116 @@ describe("combat_machine.step", () => {
       );
       expect(result.events.find((e) => e.type === "rejected")).toBeDefined();
     });
+
+    describe("LOS gating on AoE", () => {
+      // Fireball is "damage all enemies" with no per-target check pre-fix.
+      // These tests pin the rule: a focus-weapon caster needs hex line of
+      // sight to each individual monster, melee casters bypass (burst), and
+      // hex_range_enabled=false (Slack mode) skips the gate entirely.
+      function mageHexInit(): CombatInit {
+        const init = mageInit({
+          hex_range_enabled: true,
+          monsters: [
+            { name: "Goblin Near", hp: 10, max_hp: 10, tier: 1, is_boss: false },
+            { name: "Goblin Far", hp: 10, max_hp: 10, tier: 1, is_boss: false },
+          ],
+        });
+        init.fighters[0].weapon_range = "focus";
+        return init;
+      }
+
+      it("skips targets the focus-weapon caster can't see", () => {
+        const begun = runBegin(createCombatState(mageHexInit()), [15, 10, 5]);
+        // Caster at (4,1), monster A at (4,3) — clear LOS; monster B at (4,7)
+        // with an obstacle at (4,5) directly between caster and B.
+        const setup: CombatState = {
+          ...begun.state,
+          fighters: begun.state.fighters.map((f) => ({ ...f, pos: { q: 4, r: 1 } })),
+          monsters: [
+            { ...begun.state.monsters[0], pos: { q: 4, r: 3 } },
+            { ...begun.state.monsters[1], pos: { q: 4, r: 7 } },
+          ],
+          obstacles: [{ pos: { q: 4, r: 5 }, kind: "boulder" }],
+        };
+        const result = step(
+          setup,
+          { kind: "ability", actor: "U_PALADIN", ability_id: "fireball" },
+          seqRoll([3]),
+        );
+        // Near monster takes damage, far monster is untouched.
+        expect(result.state.monsters[0].hp).toBe(7);
+        expect(result.state.monsters[1].hp).toBe(10);
+        const hits = result.events.filter((e) => e.type === "player_hit");
+        expect(hits).toHaveLength(1);
+      });
+
+      it("rejects when no target has LOS", () => {
+        const begun = runBegin(createCombatState(mageHexInit()), [15, 10, 5]);
+        // Both monsters behind the same wall, caster looking down a column.
+        const setup: CombatState = {
+          ...begun.state,
+          fighters: begun.state.fighters.map((f) => ({ ...f, pos: { q: 4, r: 1 } })),
+          monsters: [
+            { ...begun.state.monsters[0], pos: { q: 4, r: 7 } },
+            { ...begun.state.monsters[1], pos: { q: 4, r: 9 } },
+          ],
+          obstacles: [
+            { pos: { q: 4, r: 3 }, kind: "boulder" },
+            { pos: { q: 4, r: 5 }, kind: "boulder" },
+          ],
+        };
+        const result = step(
+          setup,
+          { kind: "ability", actor: "U_PALADIN", ability_id: "fireball" },
+          seqRoll([3]),
+        );
+        const rejected = result.events.find((e) => e.type === "rejected");
+        expect(rejected).toBeDefined();
+        expect(result.state.monsters[0].hp).toBe(10);
+        expect(result.state.monsters[1].hp).toBe(10);
+      });
+
+      it("melee-weapon caster bypasses LOS (AoE burst centered on self)", () => {
+        const init = mageHexInit();
+        init.fighters[0].weapon_range = "melee";
+        const begun = runBegin(createCombatState(init), [15, 10, 5]);
+        const setup: CombatState = {
+          ...begun.state,
+          fighters: begun.state.fighters.map((f) => ({ ...f, pos: { q: 4, r: 1 } })),
+          monsters: [
+            { ...begun.state.monsters[0], pos: { q: 4, r: 7 } },
+            { ...begun.state.monsters[1], pos: { q: 4, r: 9 } },
+          ],
+          obstacles: [{ pos: { q: 4, r: 5 }, kind: "boulder" }],
+        };
+        const result = step(
+          setup,
+          { kind: "ability", actor: "U_PALADIN", ability_id: "fireball" },
+          seqRoll([3]),
+        );
+        // Both monsters damaged despite the wall.
+        expect(result.state.monsters[0].hp).toBe(7);
+        expect(result.state.monsters[1].hp).toBe(7);
+      });
+
+      it("hex_range_enabled=false (Slack mode) bypasses LOS entirely", () => {
+        const init = mageHexInit();
+        init.hex_range_enabled = false;
+        const begun = runBegin(createCombatState(init), [15, 10, 5]);
+        const setup: CombatState = {
+          ...begun.state,
+          obstacles: [{ pos: { q: 4, r: 5 }, kind: "boulder" }],
+        };
+        const result = step(
+          setup,
+          { kind: "ability", actor: "U_PALADIN", ability_id: "fireball" },
+          seqRoll([3]),
+        );
+        // No LOS math when hex range is off; both monsters take damage.
+        expect(result.state.monsters[0].hp).toBe(7);
+        expect(result.state.monsters[1].hp).toBe(7);
+      });
+    });
   });
 
   describe("gauntlet waves", () => {

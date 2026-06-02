@@ -2445,10 +2445,31 @@ function handleAoeDamageAbility(
   };
 
   const effects = ability.execute(ctx);
-  const dmgEffects = effects.filter(
+  let dmgEffects = effects.filter(
     (e): e is Extract<AbilityEffect, { kind: "deal_damage" }> => e.kind === "deal_damage",
   );
   if (dmgEffects.length === 0) return reject(state, `${ability.id} produced no AoE damage effects`);
+
+  // LOS gate: caster needs line of sight to each individual target. Without
+  // this, an "all enemies" damage AoE (e.g. mage Prod Fire) curves around
+  // every obstacle on the field. Skipped for melee weapons (an AoE on a
+  // melee caster represents a burst centered on them, not a projected one)
+  // and when hex_range_enabled is off (Slack combat + unit tests don't use
+  // hex positions).
+  const casterWeaponRange = tickedActor.weapon_range ?? "melee";
+  if (state.hex_range_enabled && tickedActor.pos && casterWeaponRange !== "melee") {
+    const obstacles = state.obstacles ?? [];
+    const casterPos = tickedActor.pos;
+    const visibleEffects = dmgEffects.filter((e) => {
+      const m = state.monsters.find((mm) => mm.id === e.target_id);
+      if (!m?.pos) return true;
+      return hexLos(casterPos, m.pos, obstacles);
+    });
+    if (visibleEffects.length === 0) {
+      return reject(state, `no line of sight to any target for ${ability.name}`);
+    }
+    dmgEffects = visibleEffects;
+  }
 
   const events: CombatEvent[] = [...preEvents];
   let nextState: CombatState = state;

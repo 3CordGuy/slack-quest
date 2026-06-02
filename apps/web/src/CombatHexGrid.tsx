@@ -1551,48 +1551,49 @@ function drawObstacleSprite(
   hexSize: number,
   kind: ObstacleKind,
 ) {
+  // Sprite footprints are kept inside the hex inscribed circle (~0.866 × hexSize
+  // wide at the flats, narrowing to 0 at the points). Earlier versions had
+  // canopies and capitals that visibly spilled across hex borders, which made
+  // ranged attacks "look" blocked when the hex math line skirted past the
+  // obstacle's actual tile. Tighter sprites keep the visual and the LOS math
+  // in sync.
   ctx.save();
   switch (kind) {
     case "boulder": {
-      // Filled grey blob with shadow underneath.
       ctx.fillStyle = "rgba(0,0,0,0.4)";
       ctx.beginPath();
-      ctx.ellipse(cx, cy + hexSize * 0.55, hexSize * 0.55, hexSize * 0.15, 0, 0, Math.PI * 2);
+      ctx.ellipse(cx, cy + hexSize * 0.42, hexSize * 0.40, hexSize * 0.12, 0, 0, Math.PI * 2);
       ctx.fill();
       ctx.fillStyle = "#7c7a78";
       ctx.beginPath();
-      ctx.ellipse(cx, cy + hexSize * 0.08, hexSize * 0.62, hexSize * 0.5, 0, 0, Math.PI * 2);
+      ctx.ellipse(cx, cy + hexSize * 0.05, hexSize * 0.48, hexSize * 0.38, 0, 0, Math.PI * 2);
       ctx.fill();
       ctx.fillStyle = "#a8a6a3";
       ctx.beginPath();
-      ctx.ellipse(cx - hexSize * 0.15, cy - hexSize * 0.05, hexSize * 0.35, hexSize * 0.28, -0.4, 0, Math.PI * 2);
+      ctx.ellipse(cx - hexSize * 0.12, cy - hexSize * 0.05, hexSize * 0.27, hexSize * 0.22, -0.4, 0, Math.PI * 2);
       ctx.fill();
       break;
     }
     case "pillar": {
-      // Vertical column with capital + base.
       ctx.fillStyle = "rgba(0,0,0,0.4)";
       ctx.beginPath();
-      ctx.ellipse(cx, cy + hexSize * 0.6, hexSize * 0.5, hexSize * 0.12, 0, 0, Math.PI * 2);
+      ctx.ellipse(cx, cy + hexSize * 0.46, hexSize * 0.38, hexSize * 0.10, 0, 0, Math.PI * 2);
       ctx.fill();
       ctx.fillStyle = "#a8a09a";
-      const colW = hexSize * 0.6;
-      const colH = hexSize * 1.1;
-      ctx.fillRect(cx - colW / 2, cy - colH * 0.6, colW, colH);
-      // Capital
+      const colW = hexSize * 0.46;
+      const colH = hexSize * 0.86;
+      ctx.fillRect(cx - colW / 2, cy - colH * 0.55, colW, colH);
       ctx.fillStyle = "#c0b8b0";
-      ctx.fillRect(cx - colW * 0.62, cy - colH * 0.6 - hexSize * 0.12, colW * 1.24, hexSize * 0.12);
-      // Base
-      ctx.fillRect(cx - colW * 0.62, cy + colH * 0.5, colW * 1.24, hexSize * 0.12);
+      ctx.fillRect(cx - colW * 0.58, cy - colH * 0.55 - hexSize * 0.10, colW * 1.16, hexSize * 0.10);
+      ctx.fillRect(cx - colW * 0.58, cy + colH * 0.45, colW * 1.16, hexSize * 0.10);
       break;
     }
     case "crate": {
-      // Wooden box with X braces.
       ctx.fillStyle = "rgba(0,0,0,0.4)";
       ctx.beginPath();
-      ctx.ellipse(cx, cy + hexSize * 0.55, hexSize * 0.55, hexSize * 0.13, 0, 0, Math.PI * 2);
+      ctx.ellipse(cx, cy + hexSize * 0.42, hexSize * 0.42, hexSize * 0.10, 0, 0, Math.PI * 2);
       ctx.fill();
-      const s = hexSize * 0.95;
+      const s = hexSize * 0.72;
       ctx.fillStyle = "#8b5e3c";
       ctx.fillRect(cx - s / 2, cy - s / 2, s, s);
       ctx.strokeStyle = "#5a3a22";
@@ -1607,35 +1608,33 @@ function drawObstacleSprite(
       break;
     }
     case "tree": {
-      // Trunk + circular canopy.
       ctx.fillStyle = "rgba(0,0,0,0.4)";
       ctx.beginPath();
-      ctx.ellipse(cx, cy + hexSize * 0.6, hexSize * 0.5, hexSize * 0.12, 0, 0, Math.PI * 2);
+      ctx.ellipse(cx, cy + hexSize * 0.48, hexSize * 0.38, hexSize * 0.10, 0, 0, Math.PI * 2);
       ctx.fill();
       ctx.fillStyle = "#5a3a22";
-      ctx.fillRect(cx - hexSize * 0.1, cy - hexSize * 0.1, hexSize * 0.2, hexSize * 0.7);
+      ctx.fillRect(cx - hexSize * 0.08, cy - hexSize * 0.05, hexSize * 0.16, hexSize * 0.55);
       ctx.fillStyle = "#3d6b3a";
       ctx.beginPath();
-      ctx.arc(cx, cy - hexSize * 0.2, hexSize * 0.62, 0, Math.PI * 2);
+      ctx.arc(cx, cy - hexSize * 0.15, hexSize * 0.46, 0, Math.PI * 2);
       ctx.fill();
       ctx.fillStyle = "#4d7b4a";
       ctx.beginPath();
-      ctx.arc(cx - hexSize * 0.18, cy - hexSize * 0.35, hexSize * 0.3, 0, Math.PI * 2);
+      ctx.arc(cx - hexSize * 0.14, cy - hexSize * 0.26, hexSize * 0.22, 0, Math.PI * 2);
       ctx.fill();
       break;
     }
     case "rubble": {
-      // Scattered small stones.
       ctx.fillStyle = "rgba(0,0,0,0.35)";
       ctx.beginPath();
-      ctx.ellipse(cx, cy + hexSize * 0.4, hexSize * 0.55, hexSize * 0.15, 0, 0, Math.PI * 2);
+      ctx.ellipse(cx, cy + hexSize * 0.34, hexSize * 0.42, hexSize * 0.12, 0, 0, Math.PI * 2);
       ctx.fill();
       const stones: Array<[number, number, number, string]> = [
-        [-0.3, 0.1, 0.22, "#7c7a78"],
-        [0.0, -0.05, 0.28, "#a8a6a3"],
-        [0.3, 0.15, 0.18, "#5a5856"],
-        [-0.05, 0.3, 0.16, "#6b6967"],
-        [0.2, -0.2, 0.14, "#8c8a88"],
+        [-0.24, 0.08, 0.18, "#7c7a78"],
+        [0.0, -0.04, 0.22, "#a8a6a3"],
+        [0.24, 0.12, 0.14, "#5a5856"],
+        [-0.04, 0.24, 0.12, "#6b6967"],
+        [0.16, -0.16, 0.11, "#8c8a88"],
       ];
       for (const [dx, dy, r, color] of stones) {
         ctx.fillStyle = color;
