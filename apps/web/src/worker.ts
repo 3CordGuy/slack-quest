@@ -547,6 +547,11 @@ const SHOP_STOCK_BASE = 6;
 const SHOP_STOCK_PER_EXTRA_PLAYER = 1;
 const SHOP_STOCK_CAP = 12;
 const SHOP_STOCK_PLAYER_BASELINE = 4;
+// 1.5% luck roll at the end of any quick-play mini-game that awards the
+// deep-tier rare resource (mithril / nightbloom / abyss eel). Only fires
+// when the node still has stock — exhausted-node leaderboard mode is
+// skill-only, no lucky bonuses.
+const DEEP_RESOURCE_CHANCE = 0.015;
 // Town refresh cadences — kept in sync with Slack's rebuildTownState:
 //   weekly: town name + location art
 //   daily: job board + pub regulars (handled by Slack; web checks staleness)
@@ -3563,6 +3568,14 @@ app.post("/api/camp/minigame", async (c) => {
     await addResource(c.env.DB, session.slack_user_id, name, qty, spec.rarity, spec.blurb);
     grantedResources.push({ name: `${spec.emoji} ${spec.name}`, qty, rarity: spec.rarity });
   }
+  // 1.5% luck: bonus mithril ore drop (deep-tier rare). Doesn't consume stock.
+  if (stockBefore > 0 && Math.random() < DEEP_RESOURCE_CHANCE) {
+    const spec = findResource("mithril_ore");
+    if (spec) {
+      await addResource(c.env.DB, session.slack_user_id, resourceItemName("mithril_ore"), 1, spec.rarity, spec.blurb);
+      grantedResources.push({ name: `${spec.emoji} ${spec.name}`, qty: 1, rarity: spec.rarity });
+    }
+  }
   const spoils = await awardSpoils(
     c.env.DB,
     character,
@@ -3799,6 +3812,15 @@ app.post("/api/camp/forage/finish", async (c) => {
     const spec = findResource("sunleaf");
     if (spec) await addResource(c.env.DB, session.slack_user_id, resourceItemName("sunleaf"), sunleafGranted, spec.rarity, spec.blurb);
   }
+  // 1.5% luck: bonus nightbloom drop (deep-tier rare). Doesn't consume stock.
+  let nightbloomGranted = 0;
+  if (stockBefore > 0 && Math.random() < DEEP_RESOURCE_CHANCE) {
+    const spec = findResource("nightbloom");
+    if (spec) {
+      await addResource(c.env.DB, session.slack_user_id, resourceItemName("nightbloom"), 1, spec.rarity, spec.blurb);
+      nightbloomGranted = 1;
+    }
+  }
   // XP. Scant when the garden is empty; otherwise 3 floor + 1 per HARVESTED
   // (not revealed-but-unharvested) herb, capped at the new ceiling of 12.
   // Level-scaled to stay meaningful at high levels.
@@ -3838,6 +3860,10 @@ app.post("/api/camp/forage/finish", async (c) => {
   if (sunleafGranted > 0) {
     const spec = findResource("sunleaf");
     if (spec) grantedResources.push({ name: `${spec.emoji} ${spec.name}`, qty: sunleafGranted, rarity: spec.rarity });
+  }
+  if (nightbloomGranted > 0) {
+    const spec = findResource("nightbloom");
+    if (spec) grantedResources.push({ name: `${spec.emoji} ${spec.name}`, qty: nightbloomGranted, rarity: spec.rarity });
   }
   return c.json({
     ok: true,
@@ -3951,9 +3977,8 @@ app.post("/api/camp/fish/reel", async (c) => {
   const safeFraction = Math.max(0, Math.min(1, body.safe_fraction));
   const reactionMs = game.reaction_ms ?? 1000;
   const quality = fishCatchQuality(reactionMs, safeFraction);
-  // Loot table — anti-grind keeps the rare exclusive to deep tier.
-  // Quality >= 0.55 → guaranteed silverfin; otherwise carp (or nothing on
-  // very poor reel). Quick Cast never drops abyss_eel.
+  // Loot table. Quality >= 0.55 → guaranteed silverfin; otherwise carp
+  // (or nothing on very poor reel).
   let fishId: "river_carp" | "silverfin" | null = null;
   if (safeFraction >= 0.45) {
     fishId = quality >= 0.55 ? "silverfin" : "river_carp";
@@ -3967,7 +3992,19 @@ app.post("/api/camp/fish/reel", async (c) => {
   if (fishId && stockBefore <= 0) {
     fishId = null;
   }
+  // 1.5% luck: bonus abyss eel drop (deep-tier rare). Doesn't consume stock.
+  let abyssEelBonus = false;
+  if (stockBefore > 0 && Math.random() < DEEP_RESOURCE_CHANCE) {
+    abyssEelBonus = true;
+  }
   const grantedResources: Array<{ name: string; qty: number; rarity: string }> = [];
+  if (abyssEelBonus) {
+    const spec = findResource("abyss_eel");
+    if (spec) {
+      await addResource(c.env.DB, session.slack_user_id, resourceItemName("abyss_eel"), 1, spec.rarity, spec.blurb);
+      grantedResources.push({ name: `${spec.emoji} ${spec.name}`, qty: 1, rarity: spec.rarity });
+    }
+  }
   if (fishId) {
     const spec = findResource(fishId);
     if (spec) {
