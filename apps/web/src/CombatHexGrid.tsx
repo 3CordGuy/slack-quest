@@ -1614,6 +1614,37 @@ function drawPortraitTint(
     ctx.fillRect(cx - radius, cy - radius, radius * 2, radius * 2);
     ctx.restore();
   }
+
+  const burning = effects.some((e) => e.type === "burning" && e.remaining > 0);
+  if (burning) {
+    // Warm flicker — multiply orange over the portrait so highlights blow
+    // into a fire-lit warmth instead of just darkening. Intensity flickers
+    // at ~7Hz so the surface looks like it's licked by flames.
+    const flicker = 0.65 + 0.25 * Math.sin(now / 90) * 0.5 + 0.15 * Math.sin(now / 53);
+    ctx.save();
+    ctx.globalCompositeOperation = "multiply";
+    ctx.fillStyle = `rgba(251, 146, 60, ${0.55 + 0.2 * flicker})`;
+    ctx.beginPath();
+    ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+
+    // Bright inner glow at the bottom of the pawn — like flames licking up
+    // from underneath. Radial gradient anchored low so the fire seems to
+    // come from the ground.
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+    ctx.clip();
+    const glow = ctx.createRadialGradient(cx, cy + radius * 0.7, 0, cx, cy + radius * 0.7, radius * 1.4);
+    glow.addColorStop(0, `rgba(254, 240, 138, ${0.55 * flicker})`);
+    glow.addColorStop(0.45, `rgba(251, 146, 60, ${0.35 * flicker})`);
+    glow.addColorStop(1, "rgba(127, 29, 29, 0)");
+    ctx.globalCompositeOperation = "screen";
+    ctx.fillStyle = glow;
+    ctx.fillRect(cx - radius, cy - radius, radius * 2, radius * 2);
+    ctx.restore();
+  }
 }
 
 function drawBurningEmbers(
