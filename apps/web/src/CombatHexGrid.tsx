@@ -1542,7 +1542,7 @@ function drawStatusOverlay(
     else if (e.type === "empowered") drawEmpoweredAura(ctx, cx, cy, baseRadius, now, seed);
     else if (e.type === "entangled") drawEntangledRoots(ctx, cx, cy, baseRadius, now, seed);
     else if (e.type === "hexed") drawHexedWisps(ctx, cx, cy, baseRadius, now, seed);
-    else if (e.type === "barkskin") drawBarkskinLeaves(ctx, cx, cy, baseRadius, now, seed);
+    else if (e.type === "barkskin") drawFirewalled(ctx, cx, cy, baseRadius, now, seed);
     else if (e.type === "animal_form") drawScaledUpAura(ctx, cx, cy, baseRadius, now, seed);
   }
 
@@ -1851,9 +1851,121 @@ function drawScaledUpAura(
   ctx.restore();
 }
 
+// "Firewalled" (key: `barkskin`) — translucent green hex-tile barrier
+// orbiting the pawn, with individual tiles flickering in/out at random
+// intervals to suggest packets being inspected and dropped. Replaces the
+// older bark + leaves visual now that the canonical name is engineering
+// vocabulary (druid Firewall ability — "Configure inbound rules: deny
+// all"). Uses the EFFECT_META.barkskin.color (#a3e635 lime green).
+function drawFirewalled(
+  ctx: CanvasRenderingContext2D,
+  cx: number, cy: number, r: number, now: number, seed: number,
+) {
+  ctx.save();
+
+  // Soft glow halo behind the mesh — gives the barrier presence even
+  // between hex flickers and conveys "active shield."
+  const haloPulse = 0.6 + 0.25 * Math.sin(now / 480);
+  const haloGrad = ctx.createRadialGradient(cx, cy, r * 0.8, cx, cy, r * 1.5);
+  haloGrad.addColorStop(0, "rgba(163, 230, 53, 0)");
+  haloGrad.addColorStop(0.55, `rgba(132, 204, 22, ${0.30 * haloPulse})`);
+  haloGrad.addColorStop(1, "rgba(132, 204, 22, 0)");
+  ctx.fillStyle = haloGrad;
+  ctx.beginPath();
+  ctx.arc(cx, cy, r * 1.5, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Hex barrier tiles arranged around the pawn — 12 tiles on a ring,
+  // each flickering at its own phase so it looks like packets are
+  // continuously hitting and being denied.
+  const TILES = 12;
+  const ringR = r * 1.25;
+  const tileR = r * 0.22;
+  const ringRotation = now / 4800; // very slow CW rotation
+  for (let i = 0; i < TILES; i++) {
+    const ang = ringRotation + (i / TILES) * Math.PI * 2;
+    const tx = cx + Math.cos(ang) * ringR;
+    const ty = cy + Math.sin(ang) * ringR;
+    // Per-tile flicker phase keyed by seed + index so neighbouring
+    // pawns flicker independently.
+    const flickerCycle = 800 + rng01(seed, i + 800) * 600;
+    const flickerPhase = ((now + rng01(seed, i + 820) * flickerCycle) % flickerCycle) / flickerCycle;
+    // Tile alpha pulses bright at the start of its cycle then dims —
+    // simulates a quick "drop packet" flash.
+    const flicker = flickerPhase < 0.15
+      ? 1
+      : flickerPhase < 0.5
+        ? 0.35 + 0.4 * (1 - (flickerPhase - 0.15) / 0.35)
+        : 0.35;
+    drawFirewallHexTile(ctx, tx, ty, tileR, flicker);
+  }
+
+  // Scanline sweep — a thin bright bar slowly rotating around the pawn,
+  // like a radar arm or active inspection beam.
+  const scanAng = (now / 1800) * Math.PI * 2;
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.rotate(scanAng);
+  const scanGrad = ctx.createLinearGradient(0, -r * 1.35, 0, r * 1.35);
+  scanGrad.addColorStop(0, "rgba(217, 249, 157, 0)");
+  scanGrad.addColorStop(0.48, "rgba(217, 249, 157, 0)");
+  scanGrad.addColorStop(0.5, "rgba(217, 249, 157, 0.65)");
+  scanGrad.addColorStop(0.52, "rgba(217, 249, 157, 0)");
+  scanGrad.addColorStop(1, "rgba(217, 249, 157, 0)");
+  ctx.globalCompositeOperation = "screen";
+  ctx.fillStyle = scanGrad;
+  ctx.fillRect(-r * 1.35, -r * 1.35, r * 2.7, r * 2.7);
+  ctx.restore();
+
+  ctx.restore();
+}
+
+// Single firewall-barrier hex panel: translucent body + bright outline,
+// alpha modulated by the caller's flicker value.
+function drawFirewallHexTile(
+  ctx: CanvasRenderingContext2D,
+  cx: number, cy: number, size: number, flicker: number,
+) {
+  ctx.save();
+  // Flat-top hex path.
+  ctx.beginPath();
+  for (let i = 0; i < 6; i++) {
+    const ang = (Math.PI / 3) * i;
+    const x = cx + Math.cos(ang) * size;
+    const y = cy + Math.sin(ang) * size;
+    if (i === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  }
+  ctx.closePath();
+  // Translucent panel body.
+  ctx.globalAlpha = 0.30 * flicker;
+  ctx.fillStyle = "#84cc16";
+  ctx.fill();
+  // Bright outline so the panel reads as a discrete cell.
+  ctx.globalAlpha = 0.85 * flicker;
+  ctx.strokeStyle = "#a3e635";
+  ctx.lineWidth = Math.max(0.6, size * 0.16);
+  ctx.stroke();
+  // Inner highlight stroke for a touch of dimension.
+  ctx.globalAlpha = 0.65 * flicker;
+  ctx.strokeStyle = "#ecfccb";
+  ctx.lineWidth = Math.max(0.3, size * 0.06);
+  ctx.beginPath();
+  for (let i = 0; i < 6; i++) {
+    const ang = (Math.PI / 3) * i;
+    const x = cx + Math.cos(ang) * size * 0.72;
+    const y = cy + Math.sin(ang) * size * 0.72;
+    if (i === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  }
+  ctx.closePath();
+  ctx.stroke();
+  ctx.restore();
+}
+
 // Bark patches anchored to the pawn rim + a slow drift of small leaves
-// around the actor — reads as "hardened skin" the way the canonical
-// EFFECT_META.barkskin blurb describes ("Hardened skin — bonus AC").
+// around the actor — kept here for reference. Replaced by drawFirewalled
+// once the canonical effect name became "Firewalled."
 function drawBarkskinLeaves(
   ctx: CanvasRenderingContext2D,
   cx: number, cy: number, r: number, now: number, seed: number,
