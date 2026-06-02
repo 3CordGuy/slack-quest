@@ -1523,7 +1523,7 @@ function drawStatusOverlay(
       || e.type === "poisoned" || e.type === "bleeding"
       || e.type === "stunned" || e.type === "regen"
       || e.type === "empowered" || e.type === "entangled"
-      || e.type === "hexed") {
+      || e.type === "hexed" || e.type === "barkskin") {
       ambient.push(e);
     } else {
       ringEffects.push(e);
@@ -1541,6 +1541,7 @@ function drawStatusOverlay(
     else if (e.type === "empowered") drawEmpoweredAura(ctx, cx, cy, baseRadius, now, seed);
     else if (e.type === "entangled") drawEntangledRoots(ctx, cx, cy, baseRadius, now, seed);
     else if (e.type === "hexed") drawHexedWisps(ctx, cx, cy, baseRadius, now, seed);
+    else if (e.type === "barkskin") drawBarkskinLeaves(ctx, cx, cy, baseRadius, now, seed);
   }
 
   if (ringEffects.length > 0) {
@@ -1756,6 +1757,99 @@ function drawPortraitTint(
     ctx.fillRect(cx - radius, cy - radius, radius * 2, radius * 2);
     ctx.restore();
   }
+}
+
+// Bark patches anchored to the pawn rim + a slow drift of small leaves
+// around the actor — reads as "hardened skin" the way the canonical
+// EFFECT_META.barkskin blurb describes ("Hardened skin — bonus AC").
+function drawBarkskinLeaves(
+  ctx: CanvasRenderingContext2D,
+  cx: number, cy: number, r: number, now: number, seed: number,
+) {
+  // Static bark plates fixed to the pawn rim — small wedge shapes that
+  // suggest armor segments grown over the figure. Position seeded by the
+  // pawn so plates don't move and can't be confused for damage particles.
+  const PLATES = 6;
+  ctx.save();
+  for (let i = 0; i < PLATES; i++) {
+    // Distribute around the upper hemisphere so the plates read as a
+    // shoulder/back coating rather than a full enclosure.
+    const ang = Math.PI * (1.05 + (i / PLATES) * 0.9 + rng01(seed, i + 500) * 0.12);
+    const plateR = r * 0.97;
+    const px = cx + Math.cos(ang) * plateR;
+    const py = cy + Math.sin(ang) * plateR;
+    const tx = -Math.sin(ang);
+    const ty = Math.cos(ang);
+    const w = r * (0.20 + 0.04 * rng01(seed, i + 520));
+    const h = r * (0.12 + 0.03 * rng01(seed, i + 540));
+    // Draw a small flattened rounded rectangle aligned tangentially.
+    ctx.save();
+    ctx.translate(px, py);
+    ctx.rotate(Math.atan2(ty, tx));
+    // Dark bark base.
+    ctx.fillStyle = "#4d2d10";
+    roundRect(ctx, -w / 2, -h / 2, w, h, h * 0.45);
+    ctx.fill();
+    // Brighter wood-grain stripe along the top.
+    ctx.fillStyle = "#854d0e";
+    roundRect(ctx, -w / 2 + 0.5, -h / 2 + 0.6, w - 1, h * 0.45, h * 0.25);
+    ctx.fill();
+    // Tiny moss highlight so each plate has a hint of green growth.
+    ctx.fillStyle = "rgba(163, 230, 53, 0.55)";
+    ctx.fillRect(-w * 0.3, -h * 0.45, w * 0.18, 0.6);
+    ctx.restore();
+  }
+
+  // Slow-drifting leaves around the pawn. Each leaf orbits gently with a
+  // sin-bob and rotates on its own axis. Reads as living wood.
+  const LEAVES = 5;
+  const CYCLE = 4800;
+  for (let i = 0; i < LEAVES; i++) {
+    const phase = ((now + i * (CYCLE / LEAVES) + rng01(seed, i + 600) * CYCLE) % CYCLE) / CYCLE;
+    // Each leaf circles the pawn at a slow ang speed (fraction of a full
+    // orbit per cycle) so multiple leaves orbit at different angles.
+    const orbitR = r * (1.05 + 0.18 * Math.sin(now / 800 + i * 1.4));
+    const orbitAng = phase * Math.PI * 2 + i * 1.2;
+    const x = cx + Math.cos(orbitAng) * orbitR;
+    const y = cy + Math.sin(orbitAng) * orbitR;
+    const rot = now / 700 + i * 1.3;
+    const size = r * 0.18;
+    // Fade in and out across cycle so leaves don't pop in/out at the boundary.
+    const alpha = 0.85 * (
+      phase < 0.15 ? phase / 0.15
+      : phase > 0.85 ? (1 - phase) / 0.15
+      : 1
+    );
+    ctx.globalAlpha = alpha;
+    drawLeaf(ctx, x, y, size, rot);
+  }
+  ctx.restore();
+}
+
+function drawLeaf(
+  ctx: CanvasRenderingContext2D,
+  x: number, y: number, size: number, rot: number,
+) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(rot);
+  // Almond-shape body: two arcs meeting at the tip and stem.
+  ctx.beginPath();
+  ctx.moveTo(-size, 0);
+  ctx.quadraticCurveTo(0, -size * 0.65, size, 0);
+  ctx.quadraticCurveTo(0,  size * 0.65, -size, 0);
+  ctx.closePath();
+  ctx.fillStyle = "#65a30d"; // healthy lime green
+  ctx.fill();
+  // Mid-vein.
+  ctx.strokeStyle = "rgba(20, 83, 45, 0.7)";
+  ctx.lineWidth = Math.max(0.6, size * 0.1);
+  ctx.lineCap = "round";
+  ctx.beginPath();
+  ctx.moveTo(-size * 0.92, 0);
+  ctx.lineTo(size * 0.92, 0);
+  ctx.stroke();
+  ctx.restore();
 }
 
 // Cursed purple wisps swirling around the pawn — slow counter-clockwise
