@@ -39,6 +39,16 @@ import {
 const DEFAULT_HEX_SIZE = 26;
 const CANVAS_PAD = 18;
 const PAWN_TWEEN_MS = 280;
+// Zoom clamps — 0.5× lets the player pull back for a strategic overview;
+// 2.5× zooms in tight enough to read pawn details at small hex sizes.
+const ZOOM_MIN = 0.5;
+const ZOOM_MAX = 2.5;
+// Wheel sensitivity — per pixel of wheel deltaY. Small enough that a single
+// notch (typically 100px) feels like a deliberate zoom step.
+const WHEEL_ZOOM_RATE = 0.0015;
+// Pan clamp slack — extra hexes beyond the grid edge a user can scroll past,
+// so they're not jammed against an invisible wall when zoomed in.
+const PAN_SLACK_HEXES = 2;
 const easeOutCubic = (t: number) => 1 - Math.pow(1 - t, 3);
 
 // Status-effect ambient overlay palette. Each entry is the color used to
@@ -346,6 +356,12 @@ export interface CombatHexGridProps {
   // a radius preview around the hovered target hex so the player sees
   // who'll be hit by the splash. The primary target is always included.
   aimAoeRadiusTiles?: number;
+  // Viewport dimensions to fill. When provided, the canvas grows to this
+  // size and the hex grid is centered + scaled to fit, with user zoom/pan
+  // applied on top. When omitted, falls back to legacy intrinsic sizing
+  // (canvas matches the natural grid bounding box).
+  viewportWidth?: number;
+  viewportHeight?: number;
 }
 
 interface HoverInfo {
@@ -374,14 +390,50 @@ export function CombatHexGrid({
   aimActive = false,
   aimRangeTiles,
   aimAoeRadiusTiles,
+  viewportWidth,
+  viewportHeight,
 }: CombatHexGridProps) {
   void myActorId;
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const grid = state.grid ?? GRID_DEFAULT;
-  const { w, h } = useMemo(() => canvasSizeAt(grid, hexSize), [grid.cols, grid.rows, hexSize]);
+  // Natural (unscaled) grid bounding box — used both for legacy intrinsic
+  // sizing and as the world-space the new viewport transform fits into.
+  const natural = useMemo(() => canvasSizeAt(grid, hexSize), [grid.cols, grid.rows, hexSize]);
+  const fillViewport = typeof viewportWidth === "number" && typeof viewportHeight === "number"
+    && viewportWidth > 0 && viewportHeight > 0;
+  // Canvas pixel size — viewport dims when filling, natural bounding box otherwise.
+  const w = fillViewport ? viewportWidth! : natural.w;
+  const h = fillViewport ? viewportHeight! : natural.h;
+  // Auto-fit scale: how much to shrink the natural grid to fit the viewport
+  // with a small breathing margin. = 1 when not filling viewport (legacy).
+  const baseScale = useMemo(() => {
+    if (!fillViewport) return 1;
+    const sx = (w - CANVAS_PAD * 2) / natural.w;
+    const sy = (h - CANVAS_PAD * 2) / natural.h;
+    return Math.max(0.1, Math.min(sx, sy));
+  }, [fillViewport, w, h, natural.w, natural.h]);
+  // User-controlled zoom on top of baseScale. Wheel adjusts.
+  const [zoom, setZoom] = useState(1);
+  // User-controlled pan offset (in screen pixels). Dragging adjusts.
+  const [pan, setPan] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+  const effectiveScale = baseScale * zoom;
+  // Top-left of the scaled grid inside the viewport (auto-centered + pan).
+  const offsetX = (w - natural.w * effectiveScale) / 2 + pan.x;
+  const offsetY = (h - natural.h * effectiveScale) / 2 + pan.y;
   const hexToPixel = useMemo(() => (pos: HexPos) => hexToPixelAt(pos, hexSize), [hexSize]);
   const pixelToHex = useMemo(() => (px: number, py: number) => pixelToHexAt(px, py, hexSize), [hexSize]);
+  // World-space (hexToPixel output) → screen pixel within the canvas.
+  // Used by mouse handlers and the parent-facing pawn-position callback so
+  // tooltips/callouts line up with the visually-scaled grid.
+  const worldToScreen = (wx: number, wy: number) => ({
+    x: wx * effectiveScale + offsetX,
+    y: wy * effectiveScale + offsetY,
+  });
+  const screenToWorld = (sx: number, sy: number) => ({
+    x: (sx - offsetX) / effectiveScale,
+    y: (sy - offsetY) / effectiveScale,
+  });
 
   const [hover, setHover] = useState<HoverInfo | null>(null);
   const [tooltipPx, setTooltipPx] = useState<{ x: number; y: number } | null>(null);
@@ -392,17 +444,28 @@ export function CombatHexGrid({
   // Also emits final target positions to the parent so callouts know where
   // to anchor — their own CSS `transition: top/left` handles smoothing.
   useEffect(() => {
+    // World-space (hexToPixel) targets — drive the internal pawn tween +
+    // canvas draw which runs UNDER the world→screen transform. Particles
+    // and projectiles glue to these too via animatedPosRef.
     const targets: Record<string, { x: number; y: number; radius: number }> = {};
+    // Screen-space report — for the parent's DockedPawnCard, status arcs
+    // overlay, hover-pin chip, etc. These need to map to actual canvas
+    // pixels visible on screen.
+    const screenReport: Record<string, { x: number; y: number; radius: number }> = {};
     for (const f of state.fighters) {
       if (f.pos && f.hp > 0) {
-        const { x, y } = hexToPixel(f.pos);
-        targets[f.id] = { x, y, radius: hexSize * 0.55 };
+        const w0 = hexToPixel(f.pos);
+        targets[f.id] = { x: w0.x, y: w0.y, radius: hexSize * 0.55 };
+        const s = worldToScreen(w0.x, w0.y);
+        screenReport[f.id] = { x: s.x, y: s.y, radius: hexSize * 0.55 * effectiveScale };
       }
     }
     for (const m of state.monsters) {
       if (m.id && m.pos && m.hp > 0) {
-        const { x, y } = hexToPixel(m.pos);
-        targets[m.id] = { x, y, radius: hexSize * 0.6 };
+        const w0 = hexToPixel(m.pos);
+        targets[m.id] = { x: w0.x, y: w0.y, radius: hexSize * 0.6 };
+        const s = worldToScreen(w0.x, w0.y);
+        screenReport[m.id] = { x: s.x, y: s.y, radius: hexSize * 0.6 * effectiveScale };
       }
     }
 
@@ -429,8 +492,8 @@ export function CombatHexGrid({
       if (!(id in targets)) delete next[id];
     }
 
-    onPawnPositionsChange?.(targets);
-  }, [state.fighters, state.monsters, hexToPixel, hexSize, onPawnPositionsChange]);
+    onPawnPositionsChange?.(screenReport);
+  }, [state.fighters, state.monsters, hexToPixel, hexSize, effectiveScale, offsetX, offsetY, onPawnPositionsChange]);
 
   // Report canvas display size so the parent's callout container can clamp.
   useEffect(() => {
@@ -558,12 +621,28 @@ export function CombatHexGrid({
   function handleMouseMove(e: React.MouseEvent<HTMLCanvasElement>) {
     const canvas = canvasRef.current;
     if (!canvas) return;
+    // Active drag pans the camera instead of hovering hexes.
+    if (panDragRef.current) {
+      const dx = e.clientX - panDragRef.current.lastX;
+      const dy = e.clientY - panDragRef.current.lastY;
+      panDragRef.current.lastX = e.clientX;
+      panDragRef.current.lastY = e.clientY;
+      if (Math.abs(dx) + Math.abs(dy) > 0) {
+        panDragRef.current.moved = true;
+        setPan((p) => clampPan({ x: p.x + dx, y: p.y + dy }));
+      }
+      return;
+    }
     const rect = canvas.getBoundingClientRect();
     const scaleX = canvas.width / rect.width;
     const scaleY = canvas.height / rect.height;
-    const px = (e.clientX - rect.left) * scaleX;
-    const py = (e.clientY - rect.top) * scaleY;
-    const hex = pixelToHex(px, py);
+    // Canvas-pixel position relative to the canvas top-left, then unwound
+    // through the same offset/scale transform we apply when drawing so the
+    // mouse maps back to world-space (hexToPixel coords) and on to a hex.
+    const cx = (e.clientX - rect.left) * scaleX;
+    const cy = (e.clientY - rect.top) * scaleY;
+    const world = screenToWorld(cx, cy);
+    const hex = pixelToHex(world.x, world.y);
     if (!inBounds(hex, grid)) {
       setHover(null);
       setTooltipPx(null);
@@ -648,14 +727,113 @@ export function CombatHexGrid({
   function handleClick(e: React.MouseEvent<HTMLCanvasElement>) {
     const canvas = canvasRef.current;
     if (!canvas) return;
+    // A drag that ended on this canvas is a pan release — don't fire the
+    // underlying hex click. Reset the flag after consuming.
+    if (panDragRef.current?.moved) {
+      panDragRef.current = null;
+      return;
+    }
+    panDragRef.current = null;
     const rect = canvas.getBoundingClientRect();
     const scaleX = canvas.width / rect.width;
     const scaleY = canvas.height / rect.height;
-    const px = (e.clientX - rect.left) * scaleX;
-    const py = (e.clientY - rect.top) * scaleY;
-    const hex = pixelToHex(px, py);
+    const cx = (e.clientX - rect.left) * scaleX;
+    const cy = (e.clientY - rect.top) * scaleY;
+    const world = screenToWorld(cx, cy);
+    const hex = pixelToHex(world.x, world.y);
     if (!inBounds(hex, grid)) return;
     onHexClick(hex);
+  }
+
+  // ── Zoom + pan plumbing ────────────────────────────────────────────────────
+  // Pan drag (middle button OR right button OR shift+left). Tracked in a ref
+  // so mid-drag re-renders don't lose accumulated state.
+  const panDragRef = useRef<{ lastX: number; lastY: number; moved: boolean } | null>(null);
+  // Clamp a candidate pan so the grid can't be dragged completely off-screen.
+  // Allow PAN_SLACK_HEXES worth of overscroll past the edges so the player
+  // can compose shots near corners without fighting an invisible wall.
+  function clampPan(p: { x: number; y: number }): { x: number; y: number } {
+    if (!fillViewport) return p;
+    const slack = hexSize * Math.sqrt(3) * PAN_SLACK_HEXES * effectiveScale;
+    const scaledW = natural.w * effectiveScale;
+    const scaledH = natural.h * effectiveScale;
+    // When the scaled grid is smaller than the viewport, allow pan equal to
+    // half the leftover space; when larger, allow pan up to the overflow.
+    const maxX = Math.max((scaledW - w) / 2 + slack, slack);
+    const maxY = Math.max((scaledH - h) / 2 + slack, slack);
+    return {
+      x: Math.max(-maxX, Math.min(maxX, p.x)),
+      y: Math.max(-maxY, Math.min(maxY, p.y)),
+    };
+  }
+  function handleWheel(e: React.WheelEvent<HTMLCanvasElement>) {
+    if (!fillViewport) return;
+    e.preventDefault();
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
+    const cx = (e.clientX - rect.left) * scaleX;
+    const cy = (e.clientY - rect.top) * scaleY;
+    // Trackpad pinch on macOS arrives as wheel + ctrlKey with a different
+    // sensitivity; the deltaY ratio still maps cleanly through the same
+    // multiplier.
+    const factor = Math.exp(-e.deltaY * WHEEL_ZOOM_RATE);
+    setZoom((z) => {
+      const newZoom = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, z * factor));
+      const realFactor = newZoom / z;
+      if (realFactor === 1) return z;
+      // Anchor zoom at the cursor: shift pan so the world point under the
+      // mouse stays under the mouse after the scale changes.
+      setPan((p) => {
+        const newOffX = (w - natural.w * baseScale * newZoom) / 2 + p.x;
+        const newOffY = (h - natural.h * baseScale * newZoom) / 2 + p.y;
+        // Solve for pan that keeps (cx, cy) → same world point:
+        //   worldX = (cx - oldOffX) / (baseScale * z)
+        //         = (cx - newOffX') / (baseScale * newZoom)
+        const worldX = (cx - offsetX) / effectiveScale;
+        const worldY = (cy - offsetY) / effectiveScale;
+        const wantNewOffX = cx - worldX * baseScale * newZoom;
+        const wantNewOffY = cy - worldY * baseScale * newZoom;
+        // newPanX such that newOffX (with newPanX) equals wantNewOffX:
+        const newPanX = wantNewOffX - (w - natural.w * baseScale * newZoom) / 2;
+        const newPanY = wantNewOffY - (h - natural.h * baseScale * newZoom) / 2;
+        void newOffX; void newOffY;
+        return clampPan({ x: newPanX, y: newPanY });
+      });
+      return newZoom;
+    });
+  }
+  function handlePointerDown(e: React.PointerEvent<HTMLCanvasElement>) {
+    // Middle button, right button, or shift+left starts panning.
+    if (e.button === 1 || e.button === 2 || (e.button === 0 && e.shiftKey)) {
+      e.preventDefault();
+      panDragRef.current = { lastX: e.clientX, lastY: e.clientY, moved: false };
+      const canvas = canvasRef.current;
+      if (canvas) {
+        try { canvas.setPointerCapture(e.pointerId); } catch { /* ignore */ }
+        canvas.style.cursor = "grabbing";
+      }
+    }
+  }
+  function handlePointerUp(e: React.PointerEvent<HTMLCanvasElement>) {
+    if (panDragRef.current) {
+      const canvas = canvasRef.current;
+      if (canvas) {
+        try { canvas.releasePointerCapture(e.pointerId); } catch { /* ignore */ }
+        canvas.style.cursor = "default";
+      }
+      // Keep the "moved" flag for handleClick to inspect, then drop the drag.
+      if (!panDragRef.current.moved) panDragRef.current = null;
+    }
+  }
+  function resetView() {
+    setZoom(1);
+    setPan({ x: 0, y: 0 });
+  }
+  function bumpZoom(delta: number) {
+    setZoom((z) => Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, z + delta)));
   }
 
   // Expose imperative API via ref.
@@ -765,17 +943,23 @@ export function CombatHexGrid({
       ctx!.translate(shakeX, shakeY);
 
       // 0. Battlefield art (AI-generated ground texture, ~30% alpha so the
-      //    hex grid stays readable on top). Skipped if the image hasn't loaded
-      //    yet or generation failed — the flat canvas background tint shows.
+      //    hex grid stays readable on top). Drawn in SCREEN space (no
+      //    transform) so the terrain fills the canvas regardless of where
+      //    the player has panned/zoomed — the ground feels stable while the
+      //    grid moves over it.
       if (backgroundReadyRef.current && backgroundImageRef.current) {
         const img = backgroundImageRef.current;
-        ctx!.globalAlpha = 0.35;
-        // Cover the canvas; the image is approximately square but we letterbox-
-        // stretch it across the wider grid since the prompts requested
-        // top-down terrain that tolerates non-square cropping.
+        ctx!.globalAlpha = 0.40;
         ctx!.drawImage(img, 0, 0, w, h);
         ctx!.globalAlpha = 1;
       }
+
+      // Apply the world→screen transform so every subsequent drawing call
+      // (tiles, obstacles, pawns, particles, projectiles) can stay in world
+      // space — hexToPixel coords flow straight to the canvas without
+      // per-call scaling. Composes with shake by translating first.
+      ctx!.translate(offsetX, offsetY);
+      ctx!.scale(effectiveScale, effectiveScale);
 
       // 1. Hex tiles
       drawTiles(ctx!, state, grid, overlay, hover, currentActor, hexToPixel, hexSize);
@@ -893,13 +1077,29 @@ export function CombatHexGrid({
 
     raf = requestAnimationFrame(frame);
     return () => cancelAnimationFrame(raf);
-  }, [state, grid, overlay, hover, currentActor, w, h]);
+  }, [state, grid, overlay, hover, currentActor, w, h, effectiveScale, offsetX, offsetY]);
 
-  // Cosmetic horizontal nudge — moves the entire battlefield over by half a
-  // hex tile so the grid doesn't sit flush against the left edge of its
-  // container. Doesn't affect canvas pixel coords (hover, pawn positions,
-  // particles) — just the CSS placement of the canvas.
-  const gridShiftX = Math.round((Math.sqrt(3) / 2) * hexSize);
+  // Cosmetic horizontal nudge — only applied in legacy intrinsic-size mode
+  // since fill-viewport mode auto-centers the grid via the world→screen
+  // transform.
+  const gridShiftX = fillViewport ? 0 : Math.round((Math.sqrt(3) / 2) * hexSize);
+
+  // Keyboard zoom — bound to the container while focused so the player can
+  // tap +/- without leaving the battlefield.
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (!fillViewport) return;
+      // Ignore when typing in inputs / textareas (combat doesn't have any
+      // inside this scope today, but cheap insurance).
+      const tgt = e.target as HTMLElement | null;
+      if (tgt && (tgt.tagName === "INPUT" || tgt.tagName === "TEXTAREA")) return;
+      if (e.key === "+" || e.key === "=") { e.preventDefault(); bumpZoom(0.15); }
+      else if (e.key === "-" || e.key === "_") { e.preventDefault(); bumpZoom(-0.15); }
+      else if (e.key === "0") { e.preventDefault(); resetView(); }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [fillViewport]);
 
   return (
     <div
@@ -923,11 +1123,35 @@ export function CombatHexGrid({
           backgroundColor: "rgba(15, 23, 42, 0.55)",
           borderRadius: 8,
           border: "1px solid rgba(148, 163, 184, 0.25)",
+          touchAction: fillViewport ? "none" : undefined,
         }}
         onMouseMove={handleMouseMove}
         onMouseLeave={handleMouseLeave}
         onClick={handleClick}
+        onWheel={fillViewport ? handleWheel : undefined}
+        onPointerDown={fillViewport ? handlePointerDown : undefined}
+        onPointerUp={fillViewport ? handlePointerUp : undefined}
+        onContextMenu={fillViewport ? (e) => e.preventDefault() : undefined}
       />
+      {/* Zoom controls — bottom-right corner of the canvas. Hidden in
+          legacy intrinsic mode since the canvas has no extra room. */}
+      {fillViewport && (
+        <div
+          style={{
+            position: "absolute",
+            right: 12,
+            bottom: 12,
+            display: "flex",
+            flexDirection: "column",
+            gap: 4,
+            zIndex: 5,
+          }}
+        >
+          <ZoomControl label="+" title="Zoom in (+)" onClick={() => bumpZoom(0.2)} />
+          <ZoomControl label="−" title="Zoom out (−)" onClick={() => bumpZoom(-0.2)} />
+          <ZoomControl label="⌖" title="Reset view (0)" onClick={resetView} />
+        </div>
+      )}
       {tooltipPx && hover?.label && (
         <div
           style={{
@@ -949,6 +1173,32 @@ export function CombatHexGrid({
         </div>
       )}
     </div>
+  );
+}
+
+// Floating zoom button — small slate chip with a single glyph. Used by the
+// fill-viewport mode for [+] / [−] / [⌖] in the canvas corner.
+function ZoomControl({ label, title, onClick }: { label: string; title: string; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={title}
+      style={{
+        width: 30, height: 30,
+        background: "rgba(15, 23, 42, 0.85)",
+        border: "1px solid rgba(148, 163, 184, 0.45)",
+        borderRadius: 6,
+        color: "#e5e7eb",
+        cursor: "pointer",
+        fontSize: 16,
+        lineHeight: "28px",
+        padding: 0,
+        boxShadow: "0 2px 6px rgba(0,0,0,0.4)",
+      }}
+    >
+      {label}
+    </button>
   );
 }
 

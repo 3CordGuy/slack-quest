@@ -938,6 +938,24 @@ export function CombatPage({
   // dispatch reads from this ref instead so it always finds up-to-date
   // pawn positions.
   const stateRef = useRef<CombatState | null>(null);
+  // Battlefield viewport — measured live so the hex canvas can fill the
+  // area left of the combat log and respond to window resizes. The
+  // ResizeObserver watches `battlefieldFrameRef` (the absolutely-positioned
+  // wrapper of the canvas) and emits {w, h} for the canvas to consume.
+  const battlefieldFrameRef = useRef<HTMLDivElement | null>(null);
+  const [battlefieldSize, setBattlefieldSize] = useState<{ w: number; h: number }>({ w: 0, h: 0 });
+  useEffect(() => {
+    const el = battlefieldFrameRef.current;
+    if (!el) return;
+    const update = () => {
+      const r = el.getBoundingClientRect();
+      setBattlefieldSize({ w: Math.round(r.width), h: Math.round(r.height) });
+    };
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [battlefieldFrameRef.current]);
   // Timestamp (ms epoch) by which the latest in-flight projectile/swing will
   // land. State dispatches (which can zero out a monster's HP) are deferred
   // until then so the kill visually lands AFTER the shot connects, not before.
@@ -1833,14 +1851,15 @@ export function CombatPage({
         />
       )}
 
-      {/* Room view — flex: 1, themed scenery backdrop + floating overlays.
-          Layer order: CSS/SVG fallback scenery → flux-generated room photo
-          (fade-in when loaded) → atmospheric dim gradient → particles.
-          The SVG keeps painting underneath even after the photo loads so
-          slow networks never flash an empty void. */}
+      {/* Room view — flex: 1, flat dark background. The old themed scenery
+          backdrop (CombatBackdropLayer SVG + full-screen flux room photo +
+          atmospheric gradient) is retired in hex mode: the AI-generated
+          terrain now lives INSIDE the canvas and fills the actual play
+          area, not the whole page. Slack/legacy combats still render the
+          full backdrop for parity. */}
       <div style={{ flex: 1, position: "relative", overflow: "hidden", minHeight: 0, background: "#0a0b10" }}>
-        <CombatBackdropLayer scene={scene} />
-        {bgArtUrl && (
+        {!ui.state?.hex_range_enabled && <CombatBackdropLayer scene={scene} />}
+        {!ui.state?.hex_range_enabled && bgArtUrl && (
           <img
             src={bgArtUrl}
             alt=""
@@ -1858,13 +1877,15 @@ export function CombatPage({
             onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
           />
         )}
-        <div
-          aria-hidden
-          style={{
-            position: "absolute", inset: 0, pointerEvents: "none",
-            background: "linear-gradient(to bottom, rgba(0,0,0,0.30) 0%, rgba(0,0,0,0.05) 38%, rgba(0,0,0,0.78) 100%)",
-          }}
-        />
+        {!ui.state?.hex_range_enabled && (
+          <div
+            aria-hidden
+            style={{
+              position: "absolute", inset: 0, pointerEvents: "none",
+              background: "linear-gradient(to bottom, rgba(0,0,0,0.30) 0%, rgba(0,0,0,0.05) 38%, rgba(0,0,0,0.78) 100%)",
+            }}
+          />
+        )}
         {/* DOM particle overlay — retired in hex mode (canvas particles
             cover everything, positioned to actor pawns instead of screen
             center). Slack-compat / legacy combats still see it. */}
@@ -2225,24 +2246,23 @@ export function CombatPage({
               );
 
               return (
-                <div style={{
-                  position: "absolute",
-                  top: 50,
-                  left: 0,
-                  right: isMobile ? 0 : 300,
-                  bottom: 12,
-                  display: "flex",
-                  flexDirection: "column",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  gap: 8,
-                  zIndex: 5,
-                  pointerEvents: "none",
-                }}>
+                <div
+                  ref={battlefieldFrameRef}
+                  style={{
+                    position: "absolute",
+                    top: 50,
+                    left: 0,
+                    right: isMobile ? 0 : 300,
+                    bottom: 12,
+                    zIndex: 5,
+                    pointerEvents: "none",
+                  }}
+                >
                   <div style={{
                     position: "relative",
                     pointerEvents: "auto",
-                    maxWidth: "100%",
+                    width: "100%",
+                    height: "100%",
                   }}>
                     {phaseChip}
                     {aimBanner}
@@ -2251,6 +2271,8 @@ export function CombatPage({
                       myActorId={selfId}
                       currentActorId={currentActorId}
                       isMyTurn={myTurn}
+                      viewportWidth={battlefieldSize.w}
+                      viewportHeight={battlefieldSize.h}
                       turnPhase={state.turn_phase ?? "attack"}
                       hexSize={HEX_SIZE}
                       apiRef={hexApiRef}
