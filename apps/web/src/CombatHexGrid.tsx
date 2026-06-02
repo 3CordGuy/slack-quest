@@ -2132,16 +2132,17 @@ function drawDeadlockedChain(
   cx: number, cy: number, r: number, now: number, _seed: number,
 ) {
   ctx.save();
-  const LINKS = 10;
+  // More links, smaller per-link size — reads as a finer, longer chain
+  // wrapping the pawn rather than a few chunky shackles. Even count so
+  // the alternating tangential/radial orientation closes cleanly.
+  const LINKS = 18;
   const ringR = r * 1.18;
   // arcSpan = chord-length between adjacent link centers along the ring.
-  // For tangentially-oriented links, that span IS the distance to the
-  // next link's center, so a link length equal to arcSpan makes them
-  // touch end-to-end and anything > 1.0 overlaps. Tuned for visible
-  // interlocking.
+  // Link length 1.35× arcSpan keeps tangential links visibly interlocking
+  // with their neighbours even at the higher count.
   const arcSpan = (Math.PI * 2 * ringR) / LINKS;
   const linkLen = arcSpan * 1.35;
-  const linkW = r * 0.32; // wider links so the radial pair visibly hooks through the tangential ones
+  const linkW = r * 0.18;
   const rotation = now / 5200; // very slow CW drift
   // Per-link pulse — synchronized so the entire chain breathes in/out
   // together (signaling the lock holds tight).
