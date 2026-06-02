@@ -1,7 +1,7 @@
 // D1 query helpers. Raw prepared statements — no ORM.
 
-import type { DamageType, DrinkBuff, EffectType, ElementType, EarnedAchievement, EquipSlot, ItemType, Rarity, StatKey, Stats, TownState, WeaponRange } from "@gantt-quest/core";
-import { deriveMaxMana, startingStatsForClass } from "@gantt-quest/core";
+import type { AbilityLoadout, DamageType, DrinkBuff, EffectType, ElementType, EarnedAchievement, EquipSlot, ItemType, Rarity, StatKey, Stats, TalentNodeDef, TownState, WeaponRange } from "@gantt-quest/core";
+import { classIdForTree, deriveMaxMana, emptyLoadoutForLevel, findNode, MAX_ACTIVE_SLOTS, nodesForClass, passiveSlotsForLevel, pointCostForRank, startingStatsForClass } from "@gantt-quest/core";
 
 // Active status effect on a character or monster. Ticks on the affected actor's
 // own combat action / monster turn. Cleared at quest end.
@@ -180,14 +180,22 @@ export interface Character {
       separately from the INT+level formula so level-ups don't wipe crystal
       progress. max_mana = deriveMaxMana(int_stat, level) + mana_bonus. */
   mana_bonus: number;
+  /** Talent tree points pool (migration 0062). +1 granted per level via
+      awardSpoils. Spent on ability rank purchases via /api/character/talents/buy. */
+  talent_points: number;
+  /** Equipped ability loadout (migration 0062). Null on first read for
+      pre-rollout characters; getCharacter() lazy-seeds with the player's
+      class starter kit and the matching character_talents rank-1 rows. */
+  ability_loadout: AbilityLoadout | null;
 }
 
-interface CharacterRow extends Omit<Character, "scars" | "effects" | "drink_buff" | "achievements" | "pending_achievements"> {
+interface CharacterRow extends Omit<Character, "scars" | "effects" | "drink_buff" | "achievements" | "pending_achievements" | "ability_loadout"> {
   scars: string;
   effects: string;
   drink_buff_json: string | null;
   achievements: string;
   pending_achievements: string;
+  ability_loadout: string | null;
 }
 
 function rowToCharacter(row: CharacterRow): Character {
@@ -198,7 +206,49 @@ function rowToCharacter(row: CharacterRow): Character {
     drink_buff: row.drink_buff_json ? (JSON.parse(row.drink_buff_json) as DrinkBuff) : null,
     achievements: JSON.parse(row.achievements ?? "[]") as EarnedAchievement[],
     pending_achievements: JSON.parse(row.pending_achievements ?? "[]") as string[],
+    ability_loadout: row.ability_loadout ? (JSON.parse(row.ability_loadout) as AbilityLoadout) : null,
   };
+}
+
+// Build the starter loadout for a player who's never touched the talent tree:
+// first 4 active class abilities → active slots, first passive → passive slot.
+// Pads with nulls if the class kit is smaller than the slot count.
+function buildStarterLoadout(className: string, level: number): { loadout: AbilityLoadout; seededNodeIds: string[] } {
+  const empty = emptyLoadoutForLevel(level);
+  const classId = classIdForTree(className);
+  if (!classId) return { loadout: empty, seededNodeIds: [] };
+  const nodes = nodesForClass(classId);
+  const activeNodes = nodes.filter((n) => n.ability.kind === "active");
+  const passiveNodes = nodes.filter((n) => n.ability.kind === "passive");
+  const passiveSlots = passiveSlotsForLevel(level);
+  const active: (string | null)[] = Array.from({ length: MAX_ACTIVE_SLOTS }, (_, i) => activeNodes[i]?.id ?? null);
+  const passive: (string | null)[] = Array.from({ length: passiveSlots }, (_, i) => passiveNodes[i]?.id ?? null);
+  const seededNodeIds = [
+    ...active.filter((id): id is string => id !== null),
+    ...passive.filter((id): id is string => id !== null),
+  ];
+  return { loadout: { active, passive }, seededNodeIds };
+}
+
+// Persist the starter loadout + rank-1 character_talents rows for an existing
+// player on first read after the talent rollout. Idempotent — if rows already
+// exist (PRIMARY KEY conflict on character_talents), the INSERT OR IGNORE skips.
+async function seedDefaultLoadout(db: D1Database, character: Character): Promise<Character> {
+  const { loadout, seededNodeIds } = buildStarterLoadout(character.class, character.level);
+  const now = Date.now();
+  const writes: D1PreparedStatement[] = [];
+  writes.push(
+    db.prepare("UPDATE characters SET ability_loadout = ? WHERE slack_user_id = ?")
+      .bind(JSON.stringify(loadout), character.slack_user_id),
+  );
+  for (const nodeId of seededNodeIds) {
+    writes.push(
+      db.prepare("INSERT OR IGNORE INTO character_talents (character_id, node_id, rank, acquired_at) VALUES (?, ?, 1, ?)")
+        .bind(character.slack_user_id, nodeId, now),
+    );
+  }
+  if (writes.length > 0) await db.batch(writes);
+  return { ...character, ability_loadout: loadout };
 }
 
 export async function getCharacter(db: D1Database, userId: string): Promise<Character | null> {
@@ -206,7 +256,12 @@ export async function getCharacter(db: D1Database, userId: string): Promise<Char
     .prepare("SELECT * FROM characters WHERE slack_user_id = ?")
     .bind(userId)
     .first<CharacterRow>();
-  return row ? rowToCharacter(row) : null;
+  if (!row) return null;
+  const character = rowToCharacter(row);
+  if (character.ability_loadout === null) {
+    return seedDefaultLoadout(db, character);
+  }
+  return character;
 }
 
 export async function setNotificationPref(
@@ -1009,10 +1064,11 @@ export async function awardSpoils(
            max_hp = ?, hp = ?,
            max_mana = ?, mana = ?,
            unspent_points = unspent_points + ?,
+           talent_points = talent_points + ?,
            last_active = ?
        WHERE slack_user_id = ?`,
     )
-    .bind(totalXp, gold, level, maxHp, newHp, maxMana, newMana, levelsGained, Date.now(), character.slack_user_id)
+    .bind(totalXp, gold, level, maxHp, newHp, maxMana, newMana, levelsGained, levelsGained, Date.now(), character.slack_user_id)
     .run();
   return { levelsGained, newLevel: level, newMaxHp: maxHp, newHp, newMaxMana: maxMana, newMana };
 }
@@ -3968,6 +4024,176 @@ export async function spendStatPoint(
     .run();
   if (result.meta.changes === 0) return null;
   return getCharacter(db, userId);
+}
+
+// ---- Talent tree (migration 0062) ----
+
+interface TalentRow {
+  node_id: string;
+  rank: number;
+}
+
+// Returns the player's owned talent nodes as { node_id: rank }. Empty object
+// when they haven't bought anything (or no rows for this character_id).
+export async function getCharacterTalents(
+  db: D1Database,
+  userId: string,
+): Promise<Record<string, number>> {
+  const rs = await db
+    .prepare("SELECT node_id, rank FROM character_talents WHERE character_id = ?")
+    .bind(userId)
+    .all<TalentRow>();
+  const out: Record<string, number> = {};
+  for (const row of rs.results ?? []) out[row.node_id] = row.rank;
+  return out;
+}
+
+export type BuyTalentError =
+  | "unknown_node"
+  | "wrong_class"
+  | "level_too_low"
+  | "rank_out_of_range"
+  | "rank_not_sequential"
+  | "prereq_unmet"
+  | "insufficient_points"
+  | "no_character";
+
+// Atomically buys the next rank of a node. Validates class match, level req,
+// prereqs, and point balance. The DB-level guard (talent_points >= cost) makes
+// the spend race-safe under concurrent requests. Returns the updated character
+// on success.
+export async function buyTalentRank(
+  db: D1Database,
+  userId: string,
+  nodeId: string,
+  targetRank: number,
+): Promise<{ ok: true; character: Character } | { ok: false; error: BuyTalentError }> {
+  const node = findNode(nodeId);
+  if (!node) return { ok: false, error: "unknown_node" };
+  const character = await getCharacter(db, userId);
+  if (!character) return { ok: false, error: "no_character" };
+  const classId = classIdForTree(character.class);
+  if (classId !== node.class_id) return { ok: false, error: "wrong_class" };
+  if (targetRank < 1 || targetRank > node.max_rank) return { ok: false, error: "rank_out_of_range" };
+  const owned = await getCharacterTalents(db, userId);
+  const currentRank = owned[nodeId] ?? 0;
+  if (targetRank !== currentRank + 1) return { ok: false, error: "rank_not_sequential" };
+  const levelReq = node.level_req_per_rank[targetRank - 1] ?? 1;
+  if (character.level < levelReq) return { ok: false, error: "level_too_low" };
+  for (const pr of node.prereq ?? []) {
+    if ((owned[pr.node_id] ?? 0) < pr.min_rank) return { ok: false, error: "prereq_unmet" };
+  }
+  const cost = pointCostForRank(node, targetRank);
+  if (character.talent_points < cost) return { ok: false, error: "insufficient_points" };
+
+  const spend = await db
+    .prepare("UPDATE characters SET talent_points = talent_points - ? WHERE slack_user_id = ? AND talent_points >= ?")
+    .bind(cost, userId, cost)
+    .run();
+  if (spend.meta.changes === 0) return { ok: false, error: "insufficient_points" };
+  await db
+    .prepare(
+      "INSERT INTO character_talents (character_id, node_id, rank, acquired_at) VALUES (?, ?, ?, ?) " +
+      "ON CONFLICT(character_id, node_id) DO UPDATE SET rank = excluded.rank, acquired_at = excluded.acquired_at",
+    )
+    .bind(userId, nodeId, targetRank, Date.now())
+    .run();
+  const updated = await getCharacter(db, userId);
+  if (!updated) return { ok: false, error: "no_character" };
+  return { ok: true, character: updated };
+}
+
+// Refunds every spent point, deletes character_talents rows, and resets the
+// loadout to the class's starter kit. Charges `goldCost` upfront via an atomic
+// DB-level guard so the gold can't go negative under concurrent requests.
+export async function respecTalents(
+  db: D1Database,
+  userId: string,
+  goldCost: number,
+): Promise<{ ok: true; character: Character } | { ok: false; error: "no_character" | "insufficient_gold" }> {
+  const character = await getCharacter(db, userId);
+  if (!character) return { ok: false, error: "no_character" };
+  const owned = await getCharacterTalents(db, userId);
+  const node_ids = Object.keys(owned);
+  // Total refund = sum of point_cost_per_rank up to the owned rank for every node.
+  let refund = 0;
+  for (const id of node_ids) {
+    const node = findNode(id);
+    if (!node) continue;
+    for (let r = 1; r <= owned[id]; r++) refund += pointCostForRank(node, r);
+  }
+  if (goldCost > 0) {
+    const paid = await db
+      .prepare("UPDATE characters SET gold = gold - ? WHERE slack_user_id = ? AND gold >= ?")
+      .bind(goldCost, userId, goldCost)
+      .run();
+    if (paid.meta.changes === 0) return { ok: false, error: "insufficient_gold" };
+  }
+  const { loadout, seededNodeIds } = buildStarterLoadout(character.class, character.level);
+  await db.batch([
+    db.prepare("DELETE FROM character_talents WHERE character_id = ?").bind(userId),
+    db.prepare("UPDATE characters SET talent_points = talent_points + ?, ability_loadout = ? WHERE slack_user_id = ?")
+      .bind(refund, JSON.stringify(loadout), userId),
+    ...seededNodeIds.map((id) =>
+      db.prepare("INSERT OR IGNORE INTO character_talents (character_id, node_id, rank, acquired_at) VALUES (?, ?, 1, ?)")
+        .bind(userId, id, Date.now()),
+    ),
+  ]);
+  const updated = await getCharacter(db, userId);
+  if (!updated) return { ok: false, error: "no_character" };
+  return { ok: true, character: updated };
+}
+
+export type SetLoadoutError =
+  | "no_character"
+  | "bad_shape"
+  | "unowned_node"
+  | "wrong_class"
+  | "wrong_kind"
+  | "wrong_slot_count";
+
+// Validates and writes the loadout JSON. Each non-null id must exist in the
+// registry, be owned at rank ≥ 1, match the character's class, and match the
+// slot kind (active vs passive). Active slot count is fixed at 4; passive slot
+// count derives from level.
+export async function setAbilityLoadout(
+  db: D1Database,
+  userId: string,
+  loadout: AbilityLoadout,
+): Promise<{ ok: true; character: Character } | { ok: false; error: SetLoadoutError }> {
+  if (!loadout || !Array.isArray(loadout.active) || !Array.isArray(loadout.passive)) {
+    return { ok: false, error: "bad_shape" };
+  }
+  const character = await getCharacter(db, userId);
+  if (!character) return { ok: false, error: "no_character" };
+  if (loadout.active.length !== MAX_ACTIVE_SLOTS) return { ok: false, error: "wrong_slot_count" };
+  if (loadout.passive.length !== passiveSlotsForLevel(character.level)) return { ok: false, error: "wrong_slot_count" };
+  const classId = classIdForTree(character.class);
+  const owned = await getCharacterTalents(db, userId);
+  const validateSlot = (id: string | null, kind: "active" | "passive"): SetLoadoutError | null => {
+    if (id === null) return null;
+    const node: TalentNodeDef | undefined = findNode(id);
+    if (!node) return "unowned_node";
+    if (node.class_id !== classId) return "wrong_class";
+    if (node.ability.kind !== kind) return "wrong_kind";
+    if ((owned[id] ?? 0) < 1) return "unowned_node";
+    return null;
+  };
+  for (const id of loadout.active) {
+    const err = validateSlot(id, "active");
+    if (err) return { ok: false, error: err };
+  }
+  for (const id of loadout.passive) {
+    const err = validateSlot(id, "passive");
+    if (err) return { ok: false, error: err };
+  }
+  await db
+    .prepare("UPDATE characters SET ability_loadout = ? WHERE slack_user_id = ?")
+    .bind(JSON.stringify(loadout), userId)
+    .run();
+  const updated = await getCharacter(db, userId);
+  if (!updated) return { ok: false, error: "no_character" };
+  return { ok: true, character: updated };
 }
 
 export async function setHiredMerc(

@@ -426,7 +426,7 @@ export function lootIcon(opt: {
 
 // ─── CBtn ─────────────────────────────────────────────────────────────────────
 
-export function CBtn({ label, icon, color, disabled, manaCost, tooltip, cooldown, variant, onClick, onMouseEnter, onMouseLeave }: {
+export function CBtn({ label, icon, color, disabled, manaCost, tooltip, cooldown, variant, hotkey, onClick, onMouseEnter, onMouseLeave }: {
   label: string;
   icon?: string;
   color: string;
@@ -439,6 +439,10 @@ export function CBtn({ label, icon, color, disabled, manaCost, tooltip, cooldown
       the design's muted utility-action treatment (Mark, Wait, Flee,
       position swap) on bg-input with border-action. */
   variant?: "color" | "dark";
+  /** Optional numbered hotkey (1-9) shown as a corner badge. Caller is
+      responsible for wiring the keyboard listener — CBtn only renders the
+      affordance + appends "Press N" to the tooltip. */
+  hotkey?: number;
   onClick: () => void;
   /** Optional hover hooks — used by the hex grid to preview which pawns the
       ability would affect (AoE / target preview). */
@@ -487,6 +491,15 @@ export function CBtn({ label, icon, color, disabled, manaCost, tooltip, cooldown
             {onCooldown ? "⏳" : ""}{manaCost}✦
           </span>
         )}
+        {hotkey !== undefined && (
+          <span style={{
+            position: "absolute", top: 3, left: 4,
+            fontSize: 10, fontWeight: 800,
+            color: isDisabled ? "var(--fg-faint)" : isDark ? "var(--fg-mute-2)" : "#0e0f12",
+            opacity: 0.85, lineHeight: 1, pointerEvents: "none",
+            fontFamily: "var(--font-mono)",
+          }} aria-hidden>{hotkey}</span>
+        )}
         {icon && <Icon name={icon} size={iconSize} color={iconColor} />}
         <span className="al">{label}</span>
       </button>
@@ -518,6 +531,9 @@ export function CBtn({ label, icon, color, disabled, manaCost, tooltip, cooldown
           )}
           {manaCost !== undefined && (
             <div style={{ marginTop: 6, color: "var(--accent-arcane)", fontSize: 11, fontWeight: 600 }}>{manaCost}✦ mana</div>
+          )}
+          {hotkey !== undefined && (
+            <div style={{ marginTop: 6, color: "var(--fg-mute)", fontSize: 11, fontWeight: 600 }}>Press {hotkey}</div>
           )}
         </>
       }

@@ -245,6 +245,10 @@ import {
   saveWebCombatOutcome,
   saveWebCombatState,
   spendStatPoint,
+  buyTalentRank,
+  respecTalents,
+  setAbilityLoadout,
+  getCharacterTalents,
   setCharacterHpAndShield,
   setNotificationPref,
   setHiredMerc,
@@ -1297,6 +1301,76 @@ app.post("/api/character/spend", async (c) => {
     return c.json({ error: "no_unspent_points" }, 400);
   }
   return c.json({ ok: true, character: updated });
+});
+
+// ---- Talent tree (migration 0062) ----
+
+const RESPEC_GOLD_COST = 500;
+
+// GET /api/character/talents — read the player's tree state for the inventory
+// Abilities tab. Returns talent_points, the owned-rank map, and the current
+// loadout (lazy-seeded if this is the player's first read post-rollout).
+app.get("/api/character/talents", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const character = await getCharacter(c.env.DB, session.slack_user_id);
+  if (!character) return c.json({ error: "no_character" }, 404);
+  const owned = await getCharacterTalents(c.env.DB, session.slack_user_id);
+  return c.json({
+    talent_points: character.talent_points,
+    owned,
+    loadout: character.ability_loadout,
+    level: character.level,
+    class: character.class,
+  });
+});
+
+// POST /api/character/talents/buy — Body: { node_id, target_rank }.
+// Validates class match, level req, prereqs, sequential rank, point balance.
+// Atomic spend (DB-level WHERE guard). Returns the updated character.
+app.post("/api/character/talents/buy", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const body = await c.req
+    .json<{ node_id?: string; target_rank?: number }>()
+    .catch((): { node_id?: string; target_rank?: number } => ({}));
+  const nodeId = body.node_id;
+  const targetRank = body.target_rank;
+  if (!nodeId || typeof targetRank !== "number") {
+    return c.json({ error: "bad_request" }, 400);
+  }
+  const result = await buyTalentRank(c.env.DB, session.slack_user_id, nodeId, targetRank);
+  if (!result.ok) return c.json({ error: result.error }, 400);
+  return c.json({ ok: true, character: result.character });
+});
+
+// POST /api/character/talents/respec — costs 500g. Refunds every spent point,
+// clears character_talents, resets loadout to the starter kit.
+app.post("/api/character/talents/respec", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const result = await respecTalents(c.env.DB, session.slack_user_id, RESPEC_GOLD_COST);
+  if (!result.ok) return c.json({ error: result.error, gold_cost: RESPEC_GOLD_COST }, 400);
+  return c.json({ ok: true, character: result.character, paid: RESPEC_GOLD_COST });
+});
+
+// POST /api/character/loadout — Body: { active: (string|null)[4], passive: (string|null)[1-3] }.
+// Validates each id (owned, class-match, kind-match) and the slot counts. Writes JSON.
+app.post("/api/character/loadout", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const body = await c.req
+    .json<{ active?: (string | null)[]; passive?: (string | null)[] }>()
+    .catch((): { active?: (string | null)[]; passive?: (string | null)[] } => ({}));
+  if (!Array.isArray(body.active) || !Array.isArray(body.passive)) {
+    return c.json({ error: "bad_request" }, 400);
+  }
+  const result = await setAbilityLoadout(c.env.DB, session.slack_user_id, {
+    active: body.active,
+    passive: body.passive,
+  });
+  if (!result.ok) return c.json({ error: result.error }, 400);
+  return c.json({ ok: true, character: result.character });
 });
 
 app.post("/api/settings/notify", async (c) => {

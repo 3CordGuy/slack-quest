@@ -73,6 +73,10 @@ export interface AbilityContext {
   // Injected for Paladin Lay on Hands: the ID of the ally currently under Protect,
   // if the caster is the active protector. Undefined otherwise.
   protected_ally_id?: string;
+  // Talent rank of this ability for this caster (1, 2, or 3). Defaults to 1
+  // when the caster has not unlocked higher ranks. execute() reads this to
+  // scale potency / duration / add capstone effects.
+  rank?: number;
 }
 
 // Minimal spec for an ally NPC summoned into combat via summon_ally_npc.
