@@ -1566,6 +1566,56 @@ function rng01(seed: number, salt: number): number {
 }
 
 // Rising orange→red embers that drift up off the pawn and fade.
+// Status-driven tint applied INSIDE the pawn-portrait clip. Layered on top
+// of the portrait so the avatar still reads through, with an animated icy
+// sheen for frozen specifically. Adding more tints (charred/red for burning,
+// sickly green for poisoned, etc.) is just another branch on `type`.
+function drawPortraitTint(
+  ctx: CanvasRenderingContext2D,
+  cx: number, cy: number, radius: number,
+  effects: readonly { type: string; remaining: number }[],
+  now: number,
+) {
+  if (!effects || effects.length === 0) return;
+  const frozen = effects.some((e) => e.type === "frozen" && e.remaining > 0);
+  if (frozen) {
+    // Cool-blue color overlay: blend with the underlying portrait so the
+    // image still shows through but reads as frozen-over. Multiply darkens
+    // shadows; the rgba alpha controls intensity.
+    ctx.save();
+    ctx.globalCompositeOperation = "multiply";
+    ctx.fillStyle = "rgba(125, 211, 252, 0.85)";
+    ctx.beginPath();
+    ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+
+    // Drifting icy sheen — a soft white diagonal sweep that slowly travels
+    // across the pawn so the surface looks like polished ice catching light.
+    const sweepCycle = 4200;
+    const t = ((now % sweepCycle) / sweepCycle) * 2 - 0.5; // -0.5 → 1.5
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+    ctx.clip();
+    // 45° gradient band moving from upper-left to lower-right.
+    const span = radius * 2.4;
+    const cxBand = cx - radius + span * t;
+    const cyBand = cy - radius + span * t;
+    const grad = ctx.createLinearGradient(
+      cxBand - span * 0.25, cyBand - span * 0.25,
+      cxBand + span * 0.25, cyBand + span * 0.25,
+    );
+    grad.addColorStop(0,    "rgba(255, 255, 255, 0)");
+    grad.addColorStop(0.45, "rgba(240, 249, 255, 0.55)");
+    grad.addColorStop(0.55, "rgba(186, 230, 253, 0.65)");
+    grad.addColorStop(1,    "rgba(255, 255, 255, 0)");
+    ctx.fillStyle = grad;
+    ctx.fillRect(cx - radius, cy - radius, radius * 2, radius * 2);
+    ctx.restore();
+  }
+}
+
 function drawBurningEmbers(
   ctx: CanvasRenderingContext2D,
   cx: number, cy: number, r: number, now: number, seed: number,
@@ -1971,6 +2021,9 @@ function drawActors(
       if (srcAspect > 1) drawW = d * srcAspect;
       else drawH = d / srcAspect;
       ctx.drawImage(fPortrait, x - drawW / 2, y - drawH / 2, drawW, drawH);
+      // Status tints stay INSIDE the clip so the colored overlay never bleeds
+      // past the circular pawn frame.
+      drawPortraitTint(ctx, x, y, radius, (f.effects ?? []) as never, now);
       ctx.restore();
     } else {
       ctx.beginPath();
@@ -2026,6 +2079,7 @@ function drawActors(
       if (srcAspect > 1) drawW = d * srcAspect;
       else drawH = d / srcAspect;
       ctx.drawImage(mPortrait, x - drawW / 2, y - drawH / 2, drawW, drawH);
+      drawPortraitTint(ctx, x, y, radius, (m.effects ?? []) as never, now);
       ctx.restore();
     } else {
       ctx.beginPath();
