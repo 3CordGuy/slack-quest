@@ -26,6 +26,7 @@ import { findCatalogEntry, sellPriceFor, xpForLevel, type StatKey } from "@gantt
 import { applyPotency } from "@gantt-quest/db";
 import { charPortraitUrl, classPortraitUrl, EFFECT_PILLS, type StatusEffect } from "../CombatShared";
 import { Icon } from "../icons";
+import { PrimaryStatCard } from "./Character";
 import type {
   Character,
   EffectType,
@@ -1373,20 +1374,14 @@ export function InventoryFullScreen({
                       </div>
                     )}
                     {character?.str !== undefined && (
-                      <div style={{ alignSelf: "stretch", padding: "10px 12px", background: "#16181c", borderRadius: 8, border: "1px solid #2a2d33" }}>
-                        <div style={{ fontSize: 10, color: "var(--fg-mute)", textTransform: "uppercase", letterSpacing: 1.2, marginBottom: 6, fontFamily: DISPLAY_FONT }}>Primary Stats</div>
-                        <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 4, marginBottom: hasUnspentPoints && onSpend ? 8 : 0 }}>
+                      <div style={{ alignSelf: "stretch", padding: "10px 12px", background: "var(--bg-card-2)", borderRadius: "var(--radius-xl)", border: "1px solid var(--border-faint)" }}>
+                        <div className="eyebrow" style={{ color: "var(--fg-mute)", marginBottom: 8 }}>Primary Stats</div>
+                        <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 5, marginBottom: hasUnspentPoints && onSpend ? 8 : 0 }}>
                           {(["str", "int_stat", "vit", "agi", "dex"] as StatKey[]).map((key) => {
                             const base = character[key] ?? 5;
                             const bonus = dollEquipBonuses[key] ?? 0;
                             return (
-                              <div key={key} style={{ textAlign: "center", background: "#1d1f23", borderRadius: 5, padding: "5px 3px" }}>
-                                <div style={{ fontSize: 8, color: "var(--fg-mute-3)", textTransform: "uppercase", letterSpacing: 0.8, fontFamily: DISPLAY_FONT }}>
-                                  {key === "int_stat" ? "INT" : key.toUpperCase()}
-                                </div>
-                                <div style={{ fontSize: 14, fontWeight: 700, color: "#f5f5f5", lineHeight: 1.2, fontFamily: DISPLAY_FONT }}>{base + bonus}</div>
-                                {bonus > 0 && <div style={{ fontSize: 7, color: "#86efac" }}>+{bonus}</div>}
-                              </div>
+                              <PrimaryStatCard key={key} statKey={key} value={base + bonus} bonus={bonus} level={character.level} />
                             );
                           })}
                         </div>
@@ -1630,20 +1625,14 @@ export function InventoryFullScreen({
                   <LoadoutTotals character={character} items={items} />
                 )}
                 {character?.str !== undefined && (
-                  <div style={{ alignSelf: "stretch", padding: "10px 12px", background: "#16181c", borderRadius: 8, border: "1px solid #2a2d33" }}>
-                    <div style={{ fontSize: 10, color: "#6b7280", textTransform: "uppercase", letterSpacing: 1.2, marginBottom: 6, fontFamily: DISPLAY_FONT }}>Primary Stats</div>
-                    <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 4, marginBottom: hasUnspentPoints && onSpend ? 8 : 0 }}>
+                  <div style={{ alignSelf: "stretch", padding: "10px 12px", background: "var(--bg-card-2)", borderRadius: "var(--radius-xl)", border: "1px solid var(--border-faint)" }}>
+                    <div className="eyebrow" style={{ color: "var(--fg-mute)", marginBottom: 8 }}>Primary Stats</div>
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 5, marginBottom: hasUnspentPoints && onSpend ? 8 : 0 }}>
                       {(["str", "int_stat", "vit", "agi", "dex"] as StatKey[]).map((key) => {
                         const base = character[key] ?? 5;
                         const bonus = dollEquipBonuses[key] ?? 0;
                         return (
-                          <div key={key} style={{ textAlign: "center", background: "#1d1f23", borderRadius: 5, padding: "5px 3px" }}>
-                            <div style={{ fontSize: 8, color: "#6b7280", textTransform: "uppercase", letterSpacing: 0.8, fontFamily: DISPLAY_FONT }}>
-                              {key === "int_stat" ? "INT" : key.toUpperCase()}
-                            </div>
-                            <div style={{ fontSize: 14, fontWeight: 700, color: "#f5f5f5", lineHeight: 1.2, fontFamily: DISPLAY_FONT }}>{base + bonus}</div>
-                            {bonus > 0 && <div style={{ fontSize: 7, color: "#86efac" }}>+{bonus}</div>}
-                          </div>
+                          <PrimaryStatCard key={key} statKey={key} value={base + bonus} bonus={bonus} level={character.level} />
                         );
                       })}
                     </div>

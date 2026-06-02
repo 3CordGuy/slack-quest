@@ -2729,6 +2729,25 @@ function handleAbility(
   } else if (ability.target === "self") {
     ctxTarget = tickedActor;
   }
+  // Hex range + LOS gate for utility abilities targeting a single enemy.
+  // Mirrors the identical check on the "damage" routing above — utility
+  // abilities that declare range_tiles (e.g. Containerize) must respect it.
+  if (
+    ability.target === "single_enemy"
+    && sPostMana.hex_range_enabled
+    && tickedActor.pos
+    && ctxTarget && "pos" in ctxTarget && ctxTarget.pos
+  ) {
+    const abilityRange = ability.range_tiles ?? fighterRangeTiles(tickedActor);
+    const dist = hexDistance(tickedActor.pos, ctxTarget.pos);
+    if (dist > abilityRange) {
+      return reject(sPostMana, `${ability.name} is out of range (${dist} > ${abilityRange})`);
+    }
+    const weaponRange = tickedActor.weapon_range ?? "melee";
+    if (weaponRange !== "melee" && !hexLos(tickedActor.pos, ctxTarget.pos, sPostMana.obstacles ?? [])) {
+      return reject(sPostMana, `no line of sight for ${ability.name}`);
+    }
+  }
   const protectForCtx = sPostMana.ability_state?.paladin_protect;
   const ctx: AbilityContext = {
     caster: tickedActor,
