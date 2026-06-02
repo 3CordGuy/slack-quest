@@ -338,6 +338,15 @@ type CombatEvent =
   | { type: "victory" }
   | { type: "defeat" }
   | { type: "rejected"; reason: string }
+  | {
+      type: "loot_pickup";
+      actor: string;
+      tile_id: string;
+      pos: { q: number; r: number };
+      kind: "gold" | "item";
+      gold?: number;
+      item_tier?: number;
+    }
   | ItemUsedEvent;
 
 type TurnAction =
@@ -857,6 +866,13 @@ function formatEvent(e: CombatEvent, state: CombatState | null): LogEntry[] {
       return [{ id: nextLogId++, content: <>💥 Ill Omen bursts for {e.burst} damage ({e.accumulated} accumulated)</>, tone: "bad" }];
     case "effect_applied":
       return [{ id: nextLogId++, content: <>{state ? nameOf(e.target) : e.target} is {e.effect} ({e.duration}t)</>, tone: "bad" }];
+    case "loot_pickup": {
+      const actorName = state ? nameOf(e.actor) : e.actor;
+      const label = e.kind === "gold"
+        ? <>💰 {actorName} grabs <strong>+{e.gold ?? 0}g</strong> from the battlefield</>
+        : <>📦 {actorName} pockets a mystery chest</>;
+      return [{ id: nextLogId++, content: label, tone: "good" }];
+    }
     default: {
       const _exhaustive: never = e;
       void _exhaustive;
@@ -1371,6 +1387,11 @@ export function CombatPage({
               if (evt.type === "heal_applied") {
                 const target = findFighter(evt.target);
                 if (target?.pos) hex.emitParticle({ id: `h${Date.now()}`, kind: "heal", at: target.pos, actorId: target.id });
+              }
+              if (evt.type === "loot_pickup") {
+                // Burst at the pickup hex (not the fighter's actor id, because
+                // the pawn is mid-tween to the tile when this event fires).
+                hex.emitParticle({ id: `lt${Date.now()}`, kind: "loot", at: evt.pos });
               }
               if (evt.type === "shield_applied") {
                 const target = findFighter(evt.target);

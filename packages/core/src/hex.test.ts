@@ -3,6 +3,7 @@ import {
   GRID_DEFAULT,
   deriveMoveRange,
   deriveRangeTiles,
+  generateLootTiles,
   generateObstacles,
   hexDisk,
   hexDistance,
@@ -13,6 +14,8 @@ import {
   hexRing,
   inBounds,
   initialHexPositions,
+  lootTileGold,
+  lootTileItemTier,
   posKey,
   type HexGrid,
 } from "./hex";
@@ -456,5 +459,90 @@ describe("hexLos with obstacles array", () => {
 
   it("clear path with no obstacles", () => {
     expect(hexLos({ q: 1, r: 3 }, { q: 11, r: 3 }, [])).toBe(true);
+  });
+});
+
+describe("generateLootTiles", () => {
+  const party = [{ q: 1, r: 3 }];
+  const monsters = [{ q: 11, r: 3 }];
+
+  it("is deterministic for the same seed and inputs", () => {
+    const a = generateLootTiles(GRID, party, monsters, [], 42, 3);
+    const b = generateLootTiles(GRID, party, monsters, [], 42, 3);
+    expect(a).toEqual(b);
+  });
+
+  it("count scales with tier (1 / 2 / 3)", () => {
+    expect(generateLootTiles(GRID, party, monsters, [], 7, 1)).toHaveLength(1);
+    expect(generateLootTiles(GRID, party, monsters, [], 7, 3)).toHaveLength(1);
+    expect(generateLootTiles(GRID, party, monsters, [], 7, 5)).toHaveLength(2);
+    expect(generateLootTiles(GRID, party, monsters, [], 7, 7)).toHaveLength(3);
+    expect(generateLootTiles(GRID, party, monsters, [], 7, 12)).toHaveLength(3);
+  });
+
+  it("never places a tile on a start hex, its neighbors, or an obstacle hex", () => {
+    const obs = generateObstacles(GRID, party, monsters, 11, "cave");
+    const forbidden = new Set<string>([
+      posKey(party[0]),
+      posKey(monsters[0]),
+      ...hexNeighbors(party[0], GRID).map(posKey),
+      ...hexNeighbors(monsters[0], GRID).map(posKey),
+      ...obs.map((o) => posKey(o.pos)),
+    ]);
+    for (let seed = 1; seed < 30; seed++) {
+      const tiles = generateLootTiles(GRID, party, monsters, obs, seed, 6);
+      for (const t of tiles) {
+        expect(forbidden.has(posKey(t.pos)), `seed=${seed}`).toBe(false);
+      }
+    }
+  });
+
+  it("tiles are at least 2 hexes apart from each other and from obstacles", () => {
+    const obs = generateObstacles(GRID, party, monsters, 13, "cave");
+    for (let seed = 1; seed < 20; seed++) {
+      const tiles = generateLootTiles(GRID, party, monsters, obs, seed, 8);
+      for (let i = 0; i < tiles.length; i++) {
+        for (let j = i + 1; j < tiles.length; j++) {
+          expect(hexDistance(tiles[i].pos, tiles[j].pos)).toBeGreaterThanOrEqual(2);
+        }
+        for (const o of obs) {
+          expect(hexDistance(tiles[i].pos, o.pos)).toBeGreaterThanOrEqual(2);
+        }
+      }
+    }
+  });
+
+  it("kind is gold ~60% / item ~40% across many seeds", () => {
+    let gold = 0;
+    let item = 0;
+    for (let seed = 1; seed < 200; seed++) {
+      for (const t of generateLootTiles(GRID, party, monsters, [], seed, 5)) {
+        if (t.kind === "gold") gold++;
+        else item++;
+      }
+    }
+    const total = gold + item;
+    const goldRatio = gold / total;
+    expect(goldRatio).toBeGreaterThan(0.5);
+    expect(goldRatio).toBeLessThan(0.7);
+  });
+
+  it("tile ids are unique within a battlefield", () => {
+    const tiles = generateLootTiles(GRID, party, monsters, [], 99, 9);
+    const ids = new Set(tiles.map((t) => t.id));
+    expect(ids.size).toBe(tiles.length);
+  });
+
+  it("lootTileGold scales with tier and is monotonic", () => {
+    expect(lootTileGold(1)).toBe(8);
+    expect(lootTileGold(5)).toBe(16);
+    expect(lootTileGold(9)).toBe(24);
+    expect(lootTileGold(2)).toBeGreaterThan(lootTileGold(1));
+  });
+
+  it("lootTileItemTier is one below source tier and clamps to 1", () => {
+    expect(lootTileItemTier(5)).toBe(4);
+    expect(lootTileItemTier(1)).toBe(1);
+    expect(lootTileItemTier(0)).toBe(1);
   });
 });

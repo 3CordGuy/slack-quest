@@ -2631,4 +2631,115 @@ describe("hex obstacles", () => {
     const obstacleKeys = new Set(withSetup.obstacles!.map((o) => posKey(o.pos)));
     expect(obstacleKeys.has(posKey(movedMonster!.pos!))).toBe(false);
   });
+
+  describe("loot tiles", () => {
+    // The engine accumulates pickups in `state.pickups[fighterId]` when a
+    // fighter's move action lands on a loot tile. Engine doesn't roll real
+    // items — it just records the tier; the web worker resolves items at
+    // victory time using the existing rollItem pipeline.
+
+    function lootInit(): CombatInit {
+      return {
+        ...rangedInit(),
+        scene_seed: 1234,
+        scene: "cave",
+      };
+    }
+
+    it("createCombatState seeds loot_tiles when scene_seed is set", () => {
+      const state = createCombatState(lootInit());
+      expect(state.loot_tiles).toBeDefined();
+      expect(state.loot_tiles!.length).toBeGreaterThanOrEqual(1);
+      expect(state.pickups).toEqual({});
+    });
+
+    it("scene_seed undefined → no loot tiles", () => {
+      const state = createCombatState(rangedInit());
+      expect(state.loot_tiles).toEqual([]);
+    });
+
+    it("walking onto a gold tile awards gold and removes the tile", () => {
+      const begun = runBegin(createCombatState(lootInit()), [20, 5]);
+      const fighter = begun.state.fighters[0];
+      // Synthesize a tile adjacent to the fighter so a single move lands on it.
+      // Pick a neighbor hex that's reachable (range >= 1 always).
+      const neighbor = { q: fighter.pos!.q + 1, r: fighter.pos!.r };
+      const tileId = "loot-test-gold";
+      const withLoot: CombatState = {
+        ...begun.state,
+        loot_tiles: [{ id: tileId, pos: neighbor, kind: "gold", tier: 3 }],
+        turn_phase: "move",
+        turn_order: [fighter.id, "M1"],
+        turn_index: 0,
+      };
+      const result = step(withLoot, { kind: "move", actor: fighter.id, to: neighbor }, seqRoll([]));
+      // Tile removed
+      expect(result.state.loot_tiles).toHaveLength(0);
+      // Pickup recorded with the tier-3 gold formula (6 + 3*2 = 12)
+      expect(result.state.pickups?.[fighter.id]).toEqual({ gold: 12, item_tile_tiers: [] });
+      // Event emitted
+      const pickupEvt = result.events.find((e) => e.type === "loot_pickup");
+      expect(pickupEvt).toMatchObject({
+        actor: fighter.id,
+        tile_id: tileId,
+        kind: "gold",
+        gold: 12,
+      });
+      // Turn phase advanced as usual
+      expect(result.state.turn_phase).toBe("attack");
+    });
+
+    it("walking onto an item tile records the item tier and removes the tile", () => {
+      const begun = runBegin(createCombatState(lootInit()), [20, 5]);
+      const fighter = begun.state.fighters[0];
+      const neighbor = { q: fighter.pos!.q + 1, r: fighter.pos!.r };
+      const withLoot: CombatState = {
+        ...begun.state,
+        loot_tiles: [{ id: "loot-test-item", pos: neighbor, kind: "item", tier: 5 }],
+        turn_phase: "move",
+        turn_order: [fighter.id, "M1"],
+        turn_index: 0,
+      };
+      const result = step(withLoot, { kind: "move", actor: fighter.id, to: neighbor }, seqRoll([]));
+      expect(result.state.loot_tiles).toHaveLength(0);
+      // Item tier = max(1, source - 1) = 4
+      expect(result.state.pickups?.[fighter.id]).toEqual({ gold: 0, item_tile_tiers: [4] });
+      const pickupEvt = result.events.find((e) => e.type === "loot_pickup");
+      expect(pickupEvt).toMatchObject({ kind: "item", item_tier: 4 });
+    });
+
+    it("multiple pickups by the same fighter accumulate", () => {
+      const begun = runBegin(createCombatState(lootInit()), [20, 5]);
+      const fighter = begun.state.fighters[0];
+      const tilePos = { q: fighter.pos!.q + 1, r: fighter.pos!.r };
+      const withLoot: CombatState = {
+        ...begun.state,
+        loot_tiles: [{ id: "t1", pos: tilePos, kind: "gold", tier: 2 }],
+        pickups: { [fighter.id]: { gold: 5, item_tile_tiers: [3] } },
+        turn_phase: "move",
+        turn_order: [fighter.id, "M1"],
+        turn_index: 0,
+      };
+      const result = step(withLoot, { kind: "move", actor: fighter.id, to: tilePos }, seqRoll([]));
+      // Existing 5g + new tier-2 gold (6 + 2*2 = 10) = 15g
+      expect(result.state.pickups?.[fighter.id]).toEqual({ gold: 15, item_tile_tiers: [3] });
+    });
+
+    it("moving to a hex with no tile does not touch pickups", () => {
+      const begun = runBegin(createCombatState(lootInit()), [20, 5]);
+      const fighter = begun.state.fighters[0];
+      const neighbor = { q: fighter.pos!.q + 1, r: fighter.pos!.r };
+      const empty: CombatState = {
+        ...begun.state,
+        loot_tiles: [],
+        pickups: {},
+        turn_phase: "move",
+        turn_order: [fighter.id, "M1"],
+        turn_index: 0,
+      };
+      const result = step(empty, { kind: "move", actor: fighter.id, to: neighbor }, seqRoll([]));
+      expect(result.state.pickups).toEqual({});
+      expect(result.events.find((e) => e.type === "loot_pickup")).toBeUndefined();
+    });
+  });
 });

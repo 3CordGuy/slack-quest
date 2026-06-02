@@ -7095,6 +7095,43 @@ async function applyWebCombatOutcome(
       }
     }
 
+    // Loot tile pickups — applied REGARDLESS of victory/defeat. The fighter
+    // physically grabbed the gold sack / chest mid-fight, so even on a wipe
+    // they keep what they collected. Gold credits the character directly and
+    // mirrors into gold_awarded so the post-combat panel shows the bump.
+    // Items run through the same rollItem + nameLootViaAi + addItem pipeline
+    // as the regular drop, just at a tier capped one below the source combat
+    // (kept inside the engine via lootTileItemTier).
+    const pickups = state.pickups?.[fighter.id];
+    if (pickups && pickups.gold > 0) {
+      await addGold(env.DB, fighter.id, pickups.gold);
+      goldAwarded += pickups.gold;
+    }
+    if (pickups && pickups.item_tile_tiers.length > 0) {
+      for (const itemTier of pickups.item_tile_tiers) {
+        const roll = rollItem(itemTier);
+        const named = await nameLootViaAi(env, roll, primaryMonster.name);
+        const created = await addItem(env.DB, {
+          character_id: fighter.id,
+          item_name: named.name,
+          item_type: roll.type,
+          power: roll.power,
+          rarity: roll.rarity,
+          flavor: named.flavor,
+          weapon_range: roll.weapon_range ?? null,
+        });
+        loot.push({
+          item_name: created.item_name,
+          item_type: created.item_type,
+          power: created.power,
+          rarity: created.rarity,
+          flavor: created.flavor ?? named.flavor,
+          weapon_range: created.weapon_range,
+          level_req: created.level_req,
+        });
+      }
+    }
+
     rewards.push({
       user_id: fighter.id,
       damage_dealt: dmg,

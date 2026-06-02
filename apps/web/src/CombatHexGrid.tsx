@@ -127,7 +127,7 @@ function classColor(className: string): string {
 
 export type ParticleKind =
   | "physical" | "fire" | "ice" | "lightning"
-  | "poison" | "bleed" | "heal" | "shield" | "crit" | "magic";
+  | "poison" | "bleed" | "heal" | "shield" | "crit" | "magic" | "loot";
 
 export interface ParticleEmit {
   id: string;
@@ -223,6 +223,7 @@ const PARTICLE_CONFIG: Record<ParticleKind, { count: number; speed: number; size
   shield:   { count: 12, speed: 0.16, size: 3, life: 550, colors: ["#7dd3fc", "#bae6fd", "#ffffff"], gravity: 0 },
   crit:     { count: 32, speed: 0.28, size: 4, life: 600, colors: ["#fde047", "#facc15", "#fb923c", "#ffffff"], gravity: 0 },
   magic:    { count: 20, speed: 0.18, size: 3, life: 700, colors: ["#c4b5fd", "#a78bfa", "#ffffff"], gravity: 0 },
+  loot:     { count: 24, speed: 0.18, size: 3, life: 900, colors: ["#fde047", "#fbbf24", "#fde68a", "#ffffff"], gravity: -0.0005 },
 };
 
 const PROJECTILE_DURATION: Record<ProjectileKind, number> = {
@@ -813,10 +814,21 @@ export function CombatHexGrid({
         info = { pos: hex, reason: "self", label: occupant.name, cursor: "default" };
       }
     } else if (turnPhase === "move") {
+      const lootHere = (state.loot_tiles ?? []).find((t) => posKey(t.pos) === posKey(hex));
       if (currentActor.pos && posKey(currentActor.pos) === posKey(hex)) {
         info = { pos: hex, reason: "self", label: "You are here", cursor: "default" };
       } else if (overlay.reachable.has(posKey(hex))) {
-        info = { pos: hex, reason: "reachable", label: "Move here", cursor: "pointer" };
+        const pickupLabel = lootHere
+          ? (lootHere.kind === "gold" ? "Move here · pick up gold" : "Move here · pick up chest")
+          : "Move here";
+        info = { pos: hex, reason: "reachable", label: pickupLabel, cursor: "pointer" };
+      } else if (lootHere) {
+        info = {
+          pos: hex,
+          reason: "blocked",
+          label: lootHere.kind === "gold" ? "Gold pile · out of move range" : "Mystery chest · out of move range",
+          cursor: "not-allowed",
+        };
       } else {
         info = { pos: hex, reason: "blocked", label: "Can't move here", cursor: "not-allowed" };
       }
@@ -1203,6 +1215,11 @@ export function CombatHexGrid({
 
       // 2. Obstacles (between tiles and pawns so pawns can stand "near" them)
       drawObstacles(ctx!, state, hexToPixel, hexSize);
+
+      // 2b. Loot tiles — drawn over the tile fill so the sparkle ring shows,
+      // but underneath pawns so a fighter who walks onto a tile visually
+      // covers it for the brief tween before pickup fires.
+      drawLootTiles(ctx!, state, hexToPixel, hexSize, now);
 
       // Advance any in-flight pawn-move tweens.
       const anim = animatedPosRef.current;
@@ -1881,6 +1898,158 @@ function drawObstacleSprite(
     }
   }
   ctx.restore();
+}
+
+// ── Layer 2b: loot tiles ─────────────────────────────────────────────────────
+
+function drawLootTiles(
+  ctx: CanvasRenderingContext2D,
+  state: CombatState,
+  hexToPixel: (pos: HexPos) => { x: number; y: number },
+  hexSize: number,
+  now: number,
+) {
+  for (const t of state.loot_tiles ?? []) {
+    const { x, y } = hexToPixel(t.pos);
+    if (t.kind === "gold") drawGoldPile(ctx, x, y, hexSize, now);
+    else drawLootChest(ctx, x, y, hexSize, now);
+  }
+}
+
+function drawSparkleRing(
+  ctx: CanvasRenderingContext2D,
+  cx: number, cy: number,
+  radius: number,
+  count: number,
+  now: number,
+  color: string,
+  seed: number,
+) {
+  const phase = (now / 900) % (Math.PI * 2);
+  ctx.save();
+  for (let i = 0; i < count; i++) {
+    const ang = phase + (i / count) * Math.PI * 2 + (seed + i) * 0.1;
+    const r = radius + Math.sin(now / 240 + i) * 1.5;
+    const sx = cx + Math.cos(ang) * r;
+    const sy = cy + Math.sin(ang) * r * 0.55; // squashed into a flatter orbit
+    const twinkle = 0.5 + 0.5 * Math.sin(now / 320 + i * 1.3);
+    ctx.globalAlpha = 0.45 + 0.45 * twinkle;
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.arc(sx, sy, 1.4 + twinkle * 0.6, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
+function drawGoldPile(
+  ctx: CanvasRenderingContext2D,
+  cx: number, cy: number,
+  hexSize: number,
+  now: number,
+) {
+  ctx.save();
+  // Ground shadow
+  ctx.fillStyle = "rgba(0,0,0,0.4)";
+  ctx.beginPath();
+  ctx.ellipse(cx, cy + hexSize * 0.36, hexSize * 0.40, hexSize * 0.10, 0, 0, Math.PI * 2);
+  ctx.fill();
+  // Coin mound — three rows of slightly offset golden discs
+  const coins: Array<[number, number, number]> = [
+    [-0.18, 0.20, 0.10],
+    [0.00,  0.20, 0.11],
+    [0.18,  0.20, 0.10],
+    [-0.10, 0.06, 0.11],
+    [0.10,  0.06, 0.11],
+    [0.00, -0.06, 0.10],
+  ];
+  for (const [dx, dy, r] of coins) {
+    const x = cx + dx * hexSize;
+    const y = cy + dy * hexSize;
+    // Coin face (gold)
+    ctx.fillStyle = "#fbbf24";
+    ctx.beginPath();
+    ctx.arc(x, y, r * hexSize, 0, Math.PI * 2);
+    ctx.fill();
+    // Inner shading
+    ctx.fillStyle = "#f59e0b";
+    ctx.beginPath();
+    ctx.arc(x, y, r * hexSize * 0.7, 0, Math.PI * 2);
+    ctx.fill();
+    // Highlight glint
+    ctx.fillStyle = "#fde68a";
+    ctx.beginPath();
+    ctx.arc(x - r * hexSize * 0.3, y - r * hexSize * 0.3, r * hexSize * 0.3, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  // Tiny pile-on-top coin
+  ctx.fillStyle = "#fcd34d";
+  ctx.beginPath();
+  ctx.arc(cx, cy - hexSize * 0.18, hexSize * 0.09, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "#fde68a";
+  ctx.beginPath();
+  ctx.arc(cx - hexSize * 0.025, cy - hexSize * 0.20, hexSize * 0.025, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+  // Sparkle aura — orbits the pile so the player notices it across the grid
+  drawSparkleRing(ctx, cx, cy, hexSize * 0.46, 6, now, "#fde047", Math.round(cx + cy));
+}
+
+function drawLootChest(
+  ctx: CanvasRenderingContext2D,
+  cx: number, cy: number,
+  hexSize: number,
+  now: number,
+) {
+  ctx.save();
+  // Ground shadow
+  ctx.fillStyle = "rgba(0,0,0,0.4)";
+  ctx.beginPath();
+  ctx.ellipse(cx, cy + hexSize * 0.38, hexSize * 0.44, hexSize * 0.11, 0, 0, Math.PI * 2);
+  ctx.fill();
+  const w = hexSize * 0.66;
+  const bodyH = hexSize * 0.32;
+  const lidH = hexSize * 0.22;
+  const x0 = cx - w / 2;
+  const bodyY = cy + hexSize * 0.04;
+  const lidY = bodyY - lidH;
+  // Body (dark walnut)
+  ctx.fillStyle = "#6b3f1d";
+  ctx.fillRect(x0, bodyY, w, bodyH);
+  // Body strapping
+  ctx.fillStyle = "#3f2412";
+  ctx.fillRect(x0, bodyY + bodyH - hexSize * 0.04, w, hexSize * 0.04);
+  // Lid (lighter band)
+  ctx.fillStyle = "#8b5e3c";
+  ctx.beginPath();
+  ctx.moveTo(x0, lidY + lidH);
+  ctx.lineTo(x0, lidY + lidH * 0.30);
+  ctx.quadraticCurveTo(cx, lidY - lidH * 0.20, x0 + w, lidY + lidH * 0.30);
+  ctx.lineTo(x0 + w, lidY + lidH);
+  ctx.closePath();
+  ctx.fill();
+  // Brass bands
+  ctx.strokeStyle = "#fbbf24";
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(x0 + w * 0.15, lidY);
+  ctx.quadraticCurveTo(x0 + w * 0.15, lidY - lidH * 0.05, x0 + w * 0.15, bodyY + bodyH);
+  ctx.moveTo(x0 + w * 0.85, lidY);
+  ctx.quadraticCurveTo(x0 + w * 0.85, lidY - lidH * 0.05, x0 + w * 0.85, bodyY + bodyH);
+  ctx.stroke();
+  // Lock plate
+  ctx.fillStyle = "#fbbf24";
+  ctx.fillRect(cx - hexSize * 0.06, bodyY + bodyH * 0.20, hexSize * 0.12, hexSize * 0.16);
+  ctx.fillStyle = "#0b1320";
+  ctx.fillRect(cx - hexSize * 0.015, bodyY + bodyH * 0.32, hexSize * 0.03, hexSize * 0.06);
+  // Frame outline
+  ctx.strokeStyle = "#3f2412";
+  ctx.lineWidth = 1.5;
+  ctx.strokeRect(x0, bodyY, w, bodyH);
+  ctx.restore();
+  // Sparkle ring with brass tones
+  drawSparkleRing(ctx, cx, cy, hexSize * 0.48, 8, now, "#fbbf24", Math.round(cx + cy));
 }
 
 // ── Layer 3: actor tokens ────────────────────────────────────────────────────
