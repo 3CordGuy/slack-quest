@@ -1537,7 +1537,7 @@ function drawStatusOverlay(
     else if (e.type === "shocked") drawShockSparks(ctx, cx, cy, baseRadius, now, seed);
     else if (e.type === "poisoned") drawPoisonBubbles(ctx, cx, cy, baseRadius, now, seed);
     else if (e.type === "bleeding") drawBleedDrips(ctx, cx, cy, baseRadius, now, seed);
-    else if (e.type === "stunned") drawStunnedStars(ctx, cx, cy, baseRadius, now, seed);
+    else if (e.type === "stunned") drawContainerized(ctx, cx, cy, baseRadius, now, seed);
     else if (e.type === "regen") drawRegenPluses(ctx, cx, cy, baseRadius, now, seed);
     else if (e.type === "empowered") drawEmpoweredAura(ctx, cx, cy, baseRadius, now, seed);
     else if (e.type === "entangled") drawEntangledRoots(ctx, cx, cy, baseRadius, now, seed);
@@ -2256,9 +2256,119 @@ function roundRect(
   ctx.closePath();
 }
 
+// "Containerized" — translucent shipping-container box clamped over the
+// pawn. Reads as the actor being wrapped/boxed up (matches the mage
+// Containerize ability + the EFFECT_META.stunned emoji 📦). Subtle
+// shake jitter so it looks like the container is being banged on from
+// the inside but won't open.
+function drawContainerized(
+  ctx: CanvasRenderingContext2D,
+  cx: number, cy: number, r: number, now: number, _seed: number,
+) {
+  // Small repeating bang animation — every ~600ms the container jolts
+  // briefly as if the actor inside is trying to break out.
+  const bangCycle = 600;
+  const bangPhase = (now % bangCycle) / bangCycle;
+  const bang = bangPhase < 0.12 ? Math.sin(bangPhase / 0.12 * Math.PI) : 0;
+  const jx = bang * 1.2;
+  const jy = bang * 0.4;
+
+  ctx.save();
+  ctx.translate(cx + jx, cy + jy);
+
+  // Container dimensions — box hugs the pawn, slightly oversized so the
+  // avatar reads through but the silhouette is clearly enclosed.
+  const w = r * 1.55;
+  const h = r * 1.75;
+  const depth = r * 0.32; // isometric back-offset
+
+  const FACE = "rgba(124, 58, 237, 0.20)"; // translucent purple fill
+  const EDGE = "#a78bfa";
+  const HIGHLIGHT = "#ddd6fe";
+
+  ctx.lineCap = "square";
+  ctx.lineJoin = "miter";
+  ctx.lineWidth = Math.max(1.2, r * 0.07);
+
+  // Top face — parallelogram giving an isometric peek of the lid.
+  ctx.beginPath();
+  ctx.moveTo(-w / 2, -h / 2);
+  ctx.lineTo( w / 2, -h / 2);
+  ctx.lineTo( w / 2 + depth, -h / 2 - depth);
+  ctx.lineTo(-w / 2 + depth, -h / 2 - depth);
+  ctx.closePath();
+  ctx.fillStyle = "rgba(167, 139, 250, 0.25)";
+  ctx.fill();
+  ctx.strokeStyle = EDGE;
+  ctx.stroke();
+
+  // Right side face — visible because of the iso skew.
+  ctx.beginPath();
+  ctx.moveTo( w / 2, -h / 2);
+  ctx.lineTo( w / 2 + depth, -h / 2 - depth);
+  ctx.lineTo( w / 2 + depth,  h / 2 - depth);
+  ctx.lineTo( w / 2,  h / 2);
+  ctx.closePath();
+  ctx.fillStyle = "rgba(91, 33, 182, 0.30)";
+  ctx.fill();
+  ctx.strokeStyle = EDGE;
+  ctx.stroke();
+
+  // Front face — translucent so the avatar shows through, but with the
+  // box's defining vertical ridges painted on so it reads as a container.
+  ctx.beginPath();
+  ctx.rect(-w / 2, -h / 2, w, h);
+  ctx.fillStyle = FACE;
+  ctx.fill();
+  ctx.strokeStyle = EDGE;
+  ctx.stroke();
+
+  // Vertical ridges (corrugated container panels) — three thin lines
+  // dividing the front face into segments. Skip the center so the
+  // avatar's face stays unobscured.
+  ctx.strokeStyle = "rgba(167, 139, 250, 0.65)";
+  ctx.lineWidth = Math.max(0.6, r * 0.03);
+  for (const fx of [-0.32, 0.32]) {
+    ctx.beginPath();
+    ctx.moveTo(fx * w, -h / 2);
+    ctx.lineTo(fx * w,  h / 2);
+    ctx.stroke();
+  }
+
+  // Top edge highlight — bright violet line catching light.
+  ctx.strokeStyle = HIGHLIGHT;
+  ctx.lineWidth = Math.max(0.8, r * 0.04);
+  ctx.globalAlpha = 0.85;
+  ctx.beginPath();
+  ctx.moveTo(-w / 2 + 1, -h / 2 + 1);
+  ctx.lineTo( w / 2 - 1, -h / 2 + 1);
+  ctx.stroke();
+  ctx.globalAlpha = 1;
+
+  // Latches: small rectangles on the upper corners where the container
+  // lid would clamp shut.
+  ctx.fillStyle = "#c4b5fd";
+  for (const lx of [-0.42, 0.42]) {
+    ctx.fillRect(lx * w - r * 0.06, -h / 2 - 1, r * 0.12, r * 0.10);
+  }
+
+  // "CNTR" stencil marking — small monospaced label stamped on the
+  // upper-left of the front face so it reads unambiguously as a
+  // shipping container.
+  ctx.fillStyle = "rgba(196, 181, 253, 0.85)";
+  ctx.font = `bold ${Math.max(6, r * 0.18)}px ui-monospace, Menlo, monospace`;
+  ctx.textBaseline = "top";
+  ctx.textAlign = "left";
+  ctx.fillText("CNTR", -w / 2 + r * 0.12, -h / 2 + r * 0.12);
+
+  ctx.restore();
+}
+
 // Classic cartoon "seeing stars" — small gold 5-pointed stars on a slow
 // elliptical orbit above the pawn's head. Each star spins on its own
 // axis at a different rate so the cluster doesn't move in lockstep.
+// Kept here in case "stunned" ever needs to revert to the classic
+// visualization; currently drawContainerized is wired in instead.
 function drawStunnedStars(
   ctx: CanvasRenderingContext2D,
   cx: number, cy: number, r: number, now: number, seed: number,
