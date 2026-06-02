@@ -136,6 +136,11 @@ import {
   type PubErrandKind,
   type PubErrandTier,
   type PubErrandYield,
+  initialHexPositions,
+  allHexesInGrid,
+  posKey,
+  GRID_DEFAULT,
+  type HexPos,
   type CombatEvent,
   type CombatFighter,
   type CombatMonster,
@@ -8173,6 +8178,17 @@ export class QuestRoom extends DurableObject<Env> {
       equipBonuses: equipBonuses2,
     });
 
+    const grid = state.grid ?? GRID_DEFAULT;
+    const occupied = new Set<string>();
+    for (const f of state.fighters) if (f.pos) occupied.add(posKey(f.pos));
+    for (const m of state.monsters) if (m.pos && m.hp > 0) occupied.add(posKey(m.pos));
+    for (const o of state.obstacles ?? []) occupied.add(posKey(o.pos));
+    const candidates: HexPos[] = [
+      ...initialHexPositions(state.fighters.length + 1, "top", grid),
+      ...allHexesInGrid(grid),
+    ];
+    const joinerPos = candidates.find((p) => !occupied.has(posKey(p))) ?? { q: 1, r: 1 };
+
     const newFighter: CombatFighter = {
       id: character.slack_user_id,
       name: character.name,
@@ -8200,6 +8216,7 @@ export class QuestRoom extends DurableObject<Env> {
       resistances: Object.keys(resistances2).length > 0 ? resistances2 : undefined,
       effects: character.effects ?? [],
       initiative: 0,
+      pos: joinerPos,
     };
 
     // Append to end of turn_order so the joiner acts last in the current
