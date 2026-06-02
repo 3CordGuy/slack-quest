@@ -2052,6 +2052,212 @@ export async function deleteCharacter(db: D1Database, userId: string): Promise<v
   await db.prepare("DELETE FROM characters WHERE slack_user_id = ?").bind(userId).run();
 }
 
+// === Shared (per-user) camp state =========================================
+// The camp tables (gathering_tasks, camp_upgrades, forage_games, fish_games)
+// FK to characters(slack_user_id) ON DELETE CASCADE, and several columns on
+// the characters row itself (stock timestamps + lifetime camp counters) also
+// belong to "the player", not "this one hero". When the user switches slots,
+// rerolls, or rolls a new slot, deleteCharacter() blows all of that away.
+// Capture-and-reapply around any characters-row replacement so the camp is
+// preserved as a per-user feature.
+//
+// Excluded on purpose: pub_errands/pub_trust + errands_* counters. Pub trust
+// is per-(character, patron) by design and is not part of the "shared camp".
+
+interface GatheringTaskSnapshotRow {
+  id: number;
+  node: string;
+  tier: string;
+  worker_slot: number;
+  started_at: number;
+  expires_at: number;
+  yield_json: string | null;
+  claimed_at: number | null;
+  modifiers_json: string | null;
+}
+interface CampUpgradeSnapshotRow {
+  upgrade_key: string;
+  built_at: number;
+}
+interface ForageGameSnapshotRow {
+  grid_json: string;
+  revealed_json: string;
+  hp_taken: number;
+  flips_total: number;
+  started_at: number;
+}
+interface FishGameSnapshotRow {
+  phase: string;
+  cast_at: number;
+  bite_at_ms: number;
+  reaction_ms: number | null;
+  quality_score: number | null;
+  bite_window_ms: number;
+}
+
+export interface SharedCampSnapshot {
+  mine_stock_full_at: number | null;
+  forage_stock_full_at: number | null;
+  fish_stock_full_at: number | null;
+  camp_ore_mined: number;
+  camp_herbs_foraged: number;
+  camp_fish_caught: number;
+  camp_deep_claimed: number;
+  smithy_crafts: number;
+  mine_rich_hits: number;
+  forage_rare_finds: number;
+  fish_best_ms: number;
+  fish_plays: number;
+  last_gather_claimed_at: number | null;
+  gathering_tasks: GatheringTaskSnapshotRow[];
+  camp_upgrades: CampUpgradeSnapshotRow[];
+  forage_game: ForageGameSnapshotRow | null;
+  fish_game: FishGameSnapshotRow | null;
+}
+
+const EMPTY_CAMP_SNAPSHOT: SharedCampSnapshot = {
+  mine_stock_full_at: null,
+  forage_stock_full_at: null,
+  fish_stock_full_at: null,
+  camp_ore_mined: 0,
+  camp_herbs_foraged: 0,
+  camp_fish_caught: 0,
+  camp_deep_claimed: 0,
+  smithy_crafts: 0,
+  mine_rich_hits: 0,
+  forage_rare_finds: 0,
+  fish_best_ms: 0,
+  fish_plays: 0,
+  last_gather_claimed_at: null,
+  gathering_tasks: [],
+  camp_upgrades: [],
+  forage_game: null,
+  fish_game: null,
+};
+
+export async function captureSharedCampState(
+  db: D1Database,
+  userId: string,
+): Promise<SharedCampSnapshot> {
+  const [charRow, tasksRes, upgradesRes, forageRow, fishRow] = await Promise.all([
+    db
+      .prepare(
+        `SELECT mine_stock_full_at, forage_stock_full_at, fish_stock_full_at,
+                camp_ore_mined, camp_herbs_foraged, camp_fish_caught, camp_deep_claimed,
+                smithy_crafts, mine_rich_hits, forage_rare_finds, fish_best_ms,
+                fish_plays, last_gather_claimed_at
+         FROM characters WHERE slack_user_id = ?`,
+      )
+      .bind(userId)
+      .first<Omit<SharedCampSnapshot, "gathering_tasks" | "camp_upgrades" | "forage_game" | "fish_game">>(),
+    db
+      .prepare(
+        `SELECT id, node, tier, worker_slot, started_at, expires_at,
+                yield_json, claimed_at, modifiers_json
+         FROM gathering_tasks WHERE character_id = ?`,
+      )
+      .bind(userId)
+      .all<GatheringTaskSnapshotRow>(),
+    db
+      .prepare(`SELECT upgrade_key, built_at FROM camp_upgrades WHERE character_id = ?`)
+      .bind(userId)
+      .all<CampUpgradeSnapshotRow>(),
+    db
+      .prepare(
+        `SELECT grid_json, revealed_json, hp_taken, flips_total, started_at
+         FROM forage_games WHERE character_id = ?`,
+      )
+      .bind(userId)
+      .first<ForageGameSnapshotRow>(),
+    db
+      .prepare(
+        `SELECT phase, cast_at, bite_at_ms, reaction_ms, quality_score, bite_window_ms
+         FROM fish_games WHERE character_id = ?`,
+      )
+      .bind(userId)
+      .first<FishGameSnapshotRow>(),
+  ]);
+  if (!charRow) return EMPTY_CAMP_SNAPSHOT;
+  return {
+    ...charRow,
+    gathering_tasks: tasksRes.results ?? [],
+    camp_upgrades: upgradesRes.results ?? [],
+    forage_game: forageRow ?? null,
+    fish_game: fishRow ?? null,
+  };
+}
+
+// Reapply a captured snapshot onto the (just-recreated) characters row for
+// the same userId. Safe to call with an empty snapshot — the UPDATE writes
+// the DB defaults back into place.
+export async function applySharedCampState(
+  db: D1Database,
+  userId: string,
+  snap: SharedCampSnapshot,
+): Promise<void> {
+  await db
+    .prepare(
+      `UPDATE characters SET
+         mine_stock_full_at = ?, forage_stock_full_at = ?, fish_stock_full_at = ?,
+         camp_ore_mined = ?, camp_herbs_foraged = ?, camp_fish_caught = ?,
+         camp_deep_claimed = ?, smithy_crafts = ?, mine_rich_hits = ?,
+         forage_rare_finds = ?, fish_best_ms = ?, fish_plays = ?,
+         last_gather_claimed_at = ?
+       WHERE slack_user_id = ?`,
+    )
+    .bind(
+      snap.mine_stock_full_at, snap.forage_stock_full_at, snap.fish_stock_full_at,
+      snap.camp_ore_mined, snap.camp_herbs_foraged, snap.camp_fish_caught,
+      snap.camp_deep_claimed, snap.smithy_crafts, snap.mine_rich_hits,
+      snap.forage_rare_finds, snap.fish_best_ms, snap.fish_plays,
+      snap.last_gather_claimed_at, userId,
+    )
+    .run();
+
+  for (const t of snap.gathering_tasks) {
+    await db
+      .prepare(
+        `INSERT INTO gathering_tasks
+           (id, character_id, node, tier, worker_slot, started_at, expires_at,
+            yield_json, claimed_at, modifiers_json)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .bind(
+        t.id, userId, t.node, t.tier, t.worker_slot, t.started_at, t.expires_at,
+        t.yield_json, t.claimed_at, t.modifiers_json,
+      )
+      .run();
+  }
+  for (const u of snap.camp_upgrades) {
+    await db
+      .prepare(`INSERT INTO camp_upgrades (character_id, upgrade_key, built_at) VALUES (?, ?, ?)`)
+      .bind(userId, u.upgrade_key, u.built_at)
+      .run();
+  }
+  if (snap.forage_game) {
+    const g = snap.forage_game;
+    await db
+      .prepare(
+        `INSERT INTO forage_games
+           (character_id, grid_json, revealed_json, hp_taken, flips_total, started_at)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+      )
+      .bind(userId, g.grid_json, g.revealed_json, g.hp_taken, g.flips_total, g.started_at)
+      .run();
+  }
+  if (snap.fish_game) {
+    const g = snap.fish_game;
+    await db
+      .prepare(
+        `INSERT INTO fish_games
+           (character_id, phase, cast_at, bite_at_ms, reaction_ms, quality_score, bite_window_ms)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .bind(userId, g.phase, g.cast_at, g.bite_at_ms, g.reaction_ms, g.quality_score, g.bite_window_ms)
+      .run();
+  }
+}
+
 // === Multi-character slots (web only) =====================================
 // The "active" character lives in the `characters` table as before — one row
 // per slack_user_id. Up to two additional saved builds are stashed as JSON
@@ -2154,7 +2360,10 @@ async function restoreSnapshot(
   inventory: Item[],
   activeSlot: number,
 ): Promise<void> {
-  await deleteCharacter(db, userId); // cascades inventory
+  // Camp is per-user; survive the cascade so tents/gathers/stock/counters
+  // persist into the freshly-restored hero. Reapplied after the INSERT below.
+  const camp = await captureSharedCampState(db, userId);
+  await deleteCharacter(db, userId); // cascades inventory + camp tables
   // keys_bronze/silver/gold are intentionally omitted from the column list —
   // the columns still exist (per the live migrations) but the dungeon system
   // that consumed them was retired, so we let the DB defaults (0) take.
@@ -2220,6 +2429,7 @@ async function restoreSnapshot(
       )
       .run();
   }
+  await applySharedCampState(db, userId, camp);
 }
 
 // Snapshot the live character into its current slot, then restore the target
@@ -2259,7 +2469,7 @@ export async function reserveSlotForNewCharacter(
   db: D1Database,
   userId: string,
   targetSlot: number,
-): Promise<{ prior_slot: number }> {
+): Promise<{ prior_slot: number; camp: SharedCampSnapshot }> {
   if (targetSlot < 1 || targetSlot > 3) throw new Error("bad_slot");
   const current = await getCharacter(db, userId);
   if (!current) throw new Error("no_active_character");
@@ -2271,8 +2481,11 @@ export async function reserveSlotForNewCharacter(
   if (existing) throw new Error("slot_occupied");
   const priorSlot = current.active_slot;
   await snapshotActiveToSlot(db, userId, priorSlot);
+  // Hand the camp snapshot back to the caller so it can be reapplied after
+  // the new character row is inserted via createCharacter().
+  const camp = await captureSharedCampState(db, userId);
   await deleteCharacter(db, userId);
-  return { prior_slot: priorSlot };
+  return { prior_slot: priorSlot, camp };
 }
 
 // Set the active_slot column. Used right after createCharacter so a freshly

@@ -278,6 +278,8 @@ import {
   setActiveSlot,
   deleteCharacterSlot,
   getRecentCharacterNames,
+  captureSharedCampState,
+  applySharedCampState,
   // Camp / gathering / crafting
   APOTHECARY_POTENCY_CAP,
   applyPotency,
@@ -1106,6 +1108,10 @@ app.post("/api/character/reroll", async (c) => {
   // real slot-1 snapshot on the next activate.
   const priorSlot = existing.active_slot ?? 1;
 
+  // Camp is per-user, not per-character: reroll forfeits gear/gold/level but
+  // tents, in-flight gathers, node stock, and lifetime camp counters stay
+  // with the player across the new hero.
+  const preservedCamp = await captureSharedCampState(c.env.DB, session.slack_user_id);
   await deleteCharacter(c.env.DB, session.slack_user_id);
 
   const body = await c.req.json<{ class?: string }>().catch((): { class?: string } => ({}));
@@ -1128,6 +1134,7 @@ app.post("/api/character/reroll", async (c) => {
   });
   // Restore slot identity — createCharacter defaults to 1.
   if (priorSlot !== 1) await setActiveSlot(c.env.DB, session.slack_user_id, priorSlot);
+  await applySharedCampState(c.env.DB, session.slack_user_id, preservedCamp);
 
   // Block on art generation so the response includes the URL and the UI can
   // display the portrait immediately without a second round-trip.
@@ -1196,8 +1203,10 @@ app.post("/api/character-slots/new", async (c) => {
   const activeQuest = await getActiveQuestForCharacter(c.env.DB, session.slack_user_id);
   if (activeQuest) return c.json({ error: "mid_quest" }, 400);
 
+  let preservedCamp;
   try {
-    await reserveSlotForNewCharacter(c.env.DB, session.slack_user_id, slot as number);
+    const reserved = await reserveSlotForNewCharacter(c.env.DB, session.slack_user_id, slot as number);
+    preservedCamp = reserved.camp;
   } catch (err) {
     const msg = err instanceof Error ? err.message : "unknown";
     if (msg === "no_active_character" || msg === "slot_occupied" || msg === "bad_slot") {
@@ -1224,6 +1233,7 @@ app.post("/api/character-slots/new", async (c) => {
     gender,
   });
   await setActiveSlot(c.env.DB, session.slack_user_id, slot as number);
+  await applySharedCampState(c.env.DB, session.slack_user_id, preservedCamp);
 
   const art_url = await generateCharacterArtNow(
     c.env.AI,
