@@ -2252,7 +2252,14 @@ export function CombatPage({
                     position: "absolute",
                     top: 50,
                     left: 0,
-                    right: isMobile ? 0 : 300,
+                    // Right edge tracks the combat log's actual left edge.
+                    // Log is positioned `right: 12` with `width: min(280px, 22vw)`,
+                    // so the canvas right edge is `12 + log.width + 8` for a small
+                    // visual gap. This calc keeps the canvas flush against the log
+                    // even when the viewport is narrow and the log shrinks below
+                    // 280px — the old hard-coded `right: 300` left a big dead
+                    // strip in that case.
+                    right: isMobile ? 0 : "calc(min(280px, 22vw) + 20px)",
                     bottom: 12,
                     zIndex: 5,
                     pointerEvents: "none",
