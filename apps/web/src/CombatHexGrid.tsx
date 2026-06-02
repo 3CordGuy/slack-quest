@@ -617,22 +617,30 @@ export function CombatHexGrid({
     return { reachable: new Set<string>(), inRange: new Set<string>(), losBlocked: new Set<string>() };
   }, [currentActor, isMyTurn, turnPhase, aimActive, aimRangeTiles, state.fighters, state.monsters, state.obstacles, grid]);
 
+  // Pointer move during an active pan drag. Uses pointer events because
+  // setPointerCapture redirects pointer (not mouse) events to the captured
+  // element — onMouseMove fires inconsistently mid-drag, and right-button
+  // drags in particular get eaten by the browser's context-menu handling
+  // so onMouseMove never fires at all between pointerdown and pointerup.
+  function handlePointerMove(e: React.PointerEvent<HTMLCanvasElement>) {
+    if (!panDragRef.current) return;
+    const dx = e.clientX - panDragRef.current.lastX;
+    const dy = e.clientY - panDragRef.current.lastY;
+    panDragRef.current.lastX = e.clientX;
+    panDragRef.current.lastY = e.clientY;
+    if (Math.abs(dx) + Math.abs(dy) > 0) {
+      panDragRef.current.moved = true;
+      setPan((p) => clampPan({ x: p.x + dx, y: p.y + dy }));
+    }
+  }
+
   // Mouse hover handler — converts screen → hex, computes overlay state.
+  // Skips during active pan so the cursor stays "grabbing" and the hover
+  // overlay doesn't flicker.
   function handleMouseMove(e: React.MouseEvent<HTMLCanvasElement>) {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    // Active drag pans the camera instead of hovering hexes.
-    if (panDragRef.current) {
-      const dx = e.clientX - panDragRef.current.lastX;
-      const dy = e.clientY - panDragRef.current.lastY;
-      panDragRef.current.lastX = e.clientX;
-      panDragRef.current.lastY = e.clientY;
-      if (Math.abs(dx) + Math.abs(dy) > 0) {
-        panDragRef.current.moved = true;
-        setPan((p) => clampPan({ x: p.x + dx, y: p.y + dy }));
-      }
-      return;
-    }
+    if (panDragRef.current) return;
     const rect = canvas.getBoundingClientRect();
     const scaleX = canvas.width / rect.width;
     const scaleY = canvas.height / rect.height;
@@ -727,13 +735,13 @@ export function CombatHexGrid({
   function handleClick(e: React.MouseEvent<HTMLCanvasElement>) {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    // A drag that ended on this canvas is a pan release — don't fire the
-    // underlying hex click. Reset the flag after consuming.
-    if (panDragRef.current?.moved) {
-      panDragRef.current = null;
+    // A shift+drag pan that ended on this canvas suppresses the click that
+    // the browser fires on release — otherwise releasing a pan would
+    // trigger a hex-move action on the destination.
+    if (suppressNextClickRef.current) {
+      suppressNextClickRef.current = false;
       return;
     }
-    panDragRef.current = null;
     const rect = canvas.getBoundingClientRect();
     const scaleX = canvas.width / rect.width;
     const scaleY = canvas.height / rect.height;
@@ -817,16 +825,21 @@ export function CombatHexGrid({
       }
     }
   }
+  // Brief click-suppression after a LEFT-button pan ends. Right/middle drags
+  // don't need this — they don't fire onClick anyway. Without the gate, a
+  // shift+drag pan would release into a hex-move click on the destination.
+  const suppressNextClickRef = useRef(false);
   function handlePointerUp(e: React.PointerEvent<HTMLCanvasElement>) {
-    if (panDragRef.current) {
-      const canvas = canvasRef.current;
-      if (canvas) {
-        try { canvas.releasePointerCapture(e.pointerId); } catch { /* ignore */ }
-        canvas.style.cursor = "default";
-      }
-      // Keep the "moved" flag for handleClick to inspect, then drop the drag.
-      if (!panDragRef.current.moved) panDragRef.current = null;
+    if (!panDragRef.current) return;
+    const wasLeft = e.button === 0;
+    const moved = panDragRef.current.moved;
+    const canvas = canvasRef.current;
+    if (canvas) {
+      try { canvas.releasePointerCapture(e.pointerId); } catch { /* ignore */ }
+      canvas.style.cursor = "default";
     }
+    panDragRef.current = null;
+    if (wasLeft && moved) suppressNextClickRef.current = true;
   }
   function resetView() {
     setZoom(1);
@@ -1130,7 +1143,9 @@ export function CombatHexGrid({
         onClick={handleClick}
         onWheel={fillViewport ? handleWheel : undefined}
         onPointerDown={fillViewport ? handlePointerDown : undefined}
+        onPointerMove={fillViewport ? handlePointerMove : undefined}
         onPointerUp={fillViewport ? handlePointerUp : undefined}
+        onPointerCancel={fillViewport ? handlePointerUp : undefined}
         onContextMenu={fillViewport ? (e) => e.preventDefault() : undefined}
       />
       {/* Zoom controls — bottom-right corner of the canvas. Hidden in
