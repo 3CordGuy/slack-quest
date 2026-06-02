@@ -58,6 +58,19 @@ const cdnSurge: AbilityDef = {
   },
 };
 
+const observability: AbilityDef = {
+  kind: "passive",
+  id: "observability",
+  name: "Observability",
+  blurb: "Read the chaos on the field — every distinct debuff on the enemy team adds +1 damage to your strikes.",
+  icon: "crystal-ball",
+  trigger: "always_on",
+  once_per_fight: false,
+  execute: () => [],
+  // Damage bonus is applied inline by handleDamageAbility +
+  // the attack_roll_damage handler via observabilityBonus().
+};
+
 const canaryDeploy: AbilityDef = {
   kind: "active",
   id: "canary_deploy",
@@ -387,6 +400,20 @@ const timeDilation: AbilityDef = {
   },
 };
 
+const memoization: AbilityDef = {
+  kind: "passive",
+  id: "memoization",
+  name: "Memoization",
+  blurb: "Cache the answer once — the first cast of each ability this combat costs no mana.",
+  icon: "stack",
+  trigger: "always_on",
+  once_per_fight: false,
+  execute: () => [],
+  // Mana refund is applied inline by the ability cast handler — when the
+  // caster has this passive and the ability id isn't in their per-fight
+  // memoization_casts list, the cost is zeroed and the id is appended.
+};
+
 const hailstorm: AbilityDef = {
   kind: "active",
   id: "hailstorm",
@@ -705,6 +732,7 @@ const NEW_NODES_BY_CLASS: Record<ClassId, TalentNodeDef[]> = {
     activeNode("devops_mage", rollingRestart, "damage"),
     activeNode("devops_mage", cdnSurge, "damage"),
     activeNode("devops_mage", canaryDeploy, "damage"),
+    activeNode("devops_mage", observability, "damage"),
   ],
   qa_paladin: [
     activeNode("qa_paladin", sanityCheck, "damage"),
@@ -730,6 +758,7 @@ const NEW_NODES_BY_CLASS: Record<ClassId, TalentNodeDef[]> = {
     activeNode("staff_sage", frostBolt, "control"),
     activeNode("staff_sage", hailstorm, "damage"),
     activeNode("staff_sage", timeDilation, "control"),
+    activeNode("staff_sage", memoization, "support"),
   ],
   refactor_rogue: [
     activeNode("refactor_rogue", codeAudit, "control"),
@@ -760,11 +789,11 @@ export function newNodesForClass(classId: ClassId): TalentNodeDef[] {
 export const ALL_NEW_NODES: TalentNodeDef[] = Object.values(NEW_NODES_BY_CLASS).flat();
 
 export const NEW_ABILITY_DEFS: AbilityDef[] = [
-  rollingRestart, cdnSurge, canaryDeploy,
+  rollingRestart, cdnSurge, canaryDeploy, observability,
   sanityCheck, bisect, codeReview, staticAnalysis, defensiveProgramming,
   pruning, mycelialWeb, compostHeap, deepRoots, cronJob,
   standupMeeting, discordNotification, encore, unsubscribeFromAll,
-  frostBolt, hailstorm, timeDilation,
+  frostBolt, hailstorm, timeDilation, memoization,
   codeAudit, smokeTest, silentMode, hotpath, cherryPick,
   postmortem, circuitBreaker, failover, capacityPlanning,
   indexScan, stackTrace, dropTable, staleCache, garbageCollection,
