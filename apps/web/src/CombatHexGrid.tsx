@@ -571,7 +571,11 @@ export function CombatHexGrid({
     const existing = cache.get(url);
     if (existing) return existing;
     const img = new Image();
-    img.crossOrigin = "anonymous";
+    // No crossOrigin: portraits are same-origin (served by the worker at
+    // /img/...) and drawImage doesn't need CORS for tainted canvases when
+    // we're not reading pixels back out. Setting crossOrigin="anonymous"
+    // here would FAIL the load whenever the response omitted CORS headers,
+    // silently dropping us to the initial-letter fallback.
     const entry: PortraitCacheEntry = { img, ready: false };
     img.onload = () => { entry.ready = true; };
     img.onerror = () => { entry.ready = false; };
