@@ -1634,7 +1634,9 @@ function drawPortraitTint(
     ctx.globalCompositeOperation = "source-over";
     const SEED = Math.round(cx) ^ Math.round(cy);
     for (let i = 0; i < 6; i++) {
-      const phase = ((now / 2200 + i * 0.17 + (Math.sin(SEED + i) + 1) * 0.5) % 1);
+      // Slower smear cycle — was 2200ms, now 4800ms, so the splotches feel
+      // like a slow seep rather than fast-moving paint.
+      const phase = ((now / 4800 + i * 0.17 + (Math.sin(SEED + i) + 1) * 0.5) % 1);
       const ang = Math.PI * (0.15 + (i / 6) * 0.7);
       const r0 = radius * 0.85;
       const x0 = cx + Math.cos(ang) * r0;
@@ -1982,7 +1984,9 @@ function drawBleedDrips(
   cx: number, cy: number, r: number, now: number, seed: number,
 ) {
   const COUNT = 4;
-  const CYCLE = 900;
+  // Slower cycle — drips were skittering too fast, looked twitchy. Slowing
+  // them lets each fall read as one continuous drop rather than a shower.
+  const CYCLE = 2000;
   ctx.save();
   for (let i = 0; i < COUNT; i++) {
     const phase = ((now + i * (CYCLE / COUNT) + rng01(seed, i + 90) * CYCLE) % CYCLE) / CYCLE;
