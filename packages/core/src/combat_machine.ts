@@ -890,6 +890,13 @@ function handleMove(
   if ((state.turn_phase ?? "attack") !== "move") {
     return reject(state, "move is only valid during the move phase");
   }
+  // Frozen actors lose the whole turn (move + attack). The tick-based skip
+  // only fires when the actor commits to an attack/ability/wait, so without
+  // this gate a frozen fighter could still walk freely during move phase
+  // and only get hit by the skip after attempting the second phase.
+  if (fighter.effects.some((e) => e.type === "frozen")) {
+    return reject(state, `${action.actor} is frozen`);
+  }
   if (!fighter.pos) return reject(state, "actor has no hex position");
 
   const grid = state.grid ?? GRID_DEFAULT;
