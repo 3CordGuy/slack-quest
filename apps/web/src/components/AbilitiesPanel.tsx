@@ -163,6 +163,37 @@ export function AbilitiesPanel({
     }
   }
 
+  // One-click equip from the detail panel. Mirrors the inventory's item flow
+  // where clicking "Equip" auto-routes the item to its matching gear slot.
+  // Auto-targets the first empty slot of the matching kind; if every slot is
+  // already full, replaces slot 0 (the user can re-arrange via slot-click).
+  function quickEquipFromDetail(node: TalentNodeDef) {
+    if (!data?.loadout) return;
+    const kind = node.ability.kind;
+    const slots = kind === "active" ? [...data.loadout.active] : [...data.loadout.passive];
+    const emptyIdx = slots.findIndex((s) => s === null);
+    const targetIdx = emptyIdx >= 0 ? emptyIdx : 0;
+    slots[targetIdx] = node.id;
+    writeLoadout({
+      active: kind === "active" ? slots : data.loadout.active,
+      passive: kind === "passive" ? slots : data.loadout.passive,
+    });
+  }
+
+  // Finds which slot holds this node and nulls it. No-op if not equipped.
+  function quickUnequipFromDetail(node: TalentNodeDef) {
+    if (!data?.loadout) return;
+    const kind = node.ability.kind;
+    const slots = kind === "active" ? [...data.loadout.active] : [...data.loadout.passive];
+    const idx = slots.findIndex((s) => s === node.id);
+    if (idx < 0) return;
+    slots[idx] = null;
+    writeLoadout({
+      active: kind === "active" ? slots : data.loadout.active,
+      passive: kind === "passive" ? slots : data.loadout.passive,
+    });
+  }
+
   function equipToSlot(node: TalentNodeDef) {
     if (!pickingSlot || !data?.loadout) return;
     if (pickingSlot.kind !== node.ability.kind) return;
@@ -191,6 +222,11 @@ export function AbilitiesPanel({
     return <div style={{ color: "#9ca3af", padding: 20, fontSize: 13 }}>{error ?? "Loading abilities…"}</div>;
   }
 
+  // Marching-ants style border for a slot in pick mode. The dashes scroll
+  // around the box (animating border-image-source position via background-
+  // position on overlaid linear-gradients). Keyframes are emitted once via
+  // an injected <style>; the class is applied in LoadoutSlot when isPicking.
+
   const ownedRank = (id: string) => data.owned[id] ?? 0;
   const equippedIds = new Set<string>([
     ...(data.loadout?.active ?? []).filter((x): x is string => !!x),
@@ -201,6 +237,26 @@ export function AbilitiesPanel({
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14, flex: 1, minHeight: 0 }}>
+      {/* Marching-ants animation for pick-mode slots. Four background gradients
+          paint a dashed border on each side; their positions animate one dash
+          unit (8px) over 800ms so the ants appear to chase around the box. */}
+      <style>{`
+        @keyframes gq-marching-ants {
+          0%   { background-position: 0 0, 0 100%, 0 0, 100% 0; }
+          100% { background-position: 16px 0, -16px 100%, 0 16px, 100% -16px; }
+        }
+        .gq-pick-marching {
+          background-image:
+            linear-gradient(90deg, #c084fc 50%, transparent 50%),
+            linear-gradient(90deg, #c084fc 50%, transparent 50%),
+            linear-gradient(0deg,  #c084fc 50%, transparent 50%),
+            linear-gradient(0deg,  #c084fc 50%, transparent 50%);
+          background-repeat: repeat-x, repeat-x, repeat-y, repeat-y;
+          background-size: 16px 2px, 16px 2px, 2px 16px, 2px 16px;
+          background-position: 0 0, 0 100%, 0 0, 100% 0;
+          animation: gq-marching-ants 0.8s linear infinite;
+        }
+      `}</style>
       {/* Header — talent points + respec */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -352,9 +408,12 @@ export function AbilitiesPanel({
         <NodeDetail
           node={selectedNode}
           rank={ownedRank(selectedNode.id)}
+          equipped={equippedIds.has(selectedNode.id)}
           points={data.talent_points}
           level={data.level}
           onBuy={(targetRank) => buyRank(selectedNode, targetRank)}
+          onEquip={() => quickEquipFromDetail(selectedNode)}
+          onUnequip={() => quickUnequipFromDetail(selectedNode)}
           onClose={() => setSelectedId(null)}
           busy={busy}
         />
@@ -411,6 +470,7 @@ function LoadoutSlot({
   const slot = (
     <div
       onClick={onPick}
+      className={isPicking ? "gq-pick-marching" : undefined}
       title={
         isPicking
           ? "Click an ability below to equip — click slot again to cancel"
@@ -422,9 +482,13 @@ function LoadoutSlot({
         position: "relative",
         width: 64,
         height: 64,
-        background: filled ? "#1e1c2e" : "#141618",
+        // In pick mode the marching-ants class paints the border via inset
+        // gradients, so the actual border is transparent to avoid double-stacking.
+        // backgroundColor (not background) — `background` shorthand would wipe
+        // the gradient images set by the marching-ants class.
+        backgroundColor: filled ? "#1e1c2e" : "#141618",
         border: isPicking
-          ? "2px solid #c084fc"
+          ? "2px solid transparent"
           : filled
             ? "2px solid #b89b3a"
             : "2px dashed #1e2128",
@@ -436,7 +500,7 @@ function LoadoutSlot({
         gap: 3,
         cursor: "pointer",
         padding: 4,
-        boxShadow: isPicking ? "0 0 8px #c084fc66" : undefined,
+        boxShadow: isPicking ? "0 0 10px #c084fc77" : undefined,
       }}
     >
       {filled ? (
@@ -563,17 +627,23 @@ function RankPip({ rank, max }: { rank: number; max: number }) {
 function NodeDetail({
   node,
   rank,
+  equipped,
   points,
   level,
   onBuy,
+  onEquip,
+  onUnequip,
   onClose,
   busy,
 }: {
   node: TalentNodeDef;
   rank: number;
+  equipped: boolean;
   points: number;
   level: number;
   onBuy: (targetRank: number) => void;
+  onEquip: () => void;
+  onUnequip: () => void;
   onClose: () => void;
   busy: boolean;
 }) {
@@ -609,32 +679,70 @@ function NodeDetail({
           )}
         </div>
       )}
-      {canRankUp ? (
-        <button
-          disabled={busy || !meetsLevel || !meetsCost}
-          onClick={() => onBuy(targetRank)}
-          style={{
-            background: meetsLevel && meetsCost ? "#1e1c2e" : "#1d1f23",
-            color: meetsLevel && meetsCost ? "#c084fc" : "#6b7280",
-            border: `1px solid ${meetsLevel && meetsCost ? "#c084fc55" : "#2a2d33"}`,
-            borderRadius: 6,
-            padding: "8px 12px",
-            fontSize: 12,
-            fontWeight: 700,
-            cursor: meetsLevel && meetsCost && !busy ? "pointer" : "not-allowed",
-            fontFamily: "inherit",
-            textAlign: "left",
-          }}
-        >
-          {rank === 0
-            ? `Unlock (${cost} pt${cost === 1 ? "" : "s"})`
-            : `Rank up to ${targetRank} (${cost} pts)`}
-          {!meetsLevel && <span style={{ color: "#fca5a5", marginLeft: 6 }}>— L{levelReq} required</span>}
-          {meetsLevel && !meetsCost && <span style={{ color: "#fca5a5", marginLeft: 6 }}>— need {cost} points</span>}
-        </button>
-      ) : (
-        <div style={{ fontSize: 11, color: "#9ca3af" }}>Max rank reached.</div>
-      )}
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+        {/* Equip / Unequip — matches the inventory item flow (smallActionBtn).
+            Equip is only shown when the node is owned at rank ≥ 1; it auto-
+            targets the first empty slot of the matching kind. */}
+        {rank >= 1 && !equipped && (
+          <button
+            disabled={busy}
+            onClick={onEquip}
+            style={{
+              background: "#1f3a1f",
+              color: "#86efac",
+              border: "1px solid #86efac55",
+              borderRadius: 6,
+              padding: "6px 12px",
+              fontSize: 12,
+              fontWeight: 700,
+              cursor: busy ? "not-allowed" : "pointer",
+              fontFamily: "inherit",
+            }}
+          >Equip</button>
+        )}
+        {equipped && (
+          <button
+            disabled={busy}
+            onClick={onUnequip}
+            style={{
+              background: "#2a1a1a",
+              color: "#fca5a5",
+              border: "1px solid #fca5a555",
+              borderRadius: 6,
+              padding: "6px 12px",
+              fontSize: 12,
+              fontWeight: 700,
+              cursor: busy ? "not-allowed" : "pointer",
+              fontFamily: "inherit",
+            }}
+          >Unequip</button>
+        )}
+        {canRankUp ? (
+          <button
+            disabled={busy || !meetsLevel || !meetsCost}
+            onClick={() => onBuy(targetRank)}
+            style={{
+              background: meetsLevel && meetsCost ? "#1e1c2e" : "#1d1f23",
+              color: meetsLevel && meetsCost ? "#c084fc" : "#6b7280",
+              border: `1px solid ${meetsLevel && meetsCost ? "#c084fc55" : "#2a2d33"}`,
+              borderRadius: 6,
+              padding: "6px 12px",
+              fontSize: 12,
+              fontWeight: 700,
+              cursor: meetsLevel && meetsCost && !busy ? "pointer" : "not-allowed",
+              fontFamily: "inherit",
+            }}
+          >
+            {rank === 0
+              ? `Unlock (${cost} pt${cost === 1 ? "" : "s"})`
+              : `Rank up to ${targetRank} (${cost} pts)`}
+            {!meetsLevel && <span style={{ color: "#fca5a5", marginLeft: 6 }}>— L{levelReq} required</span>}
+            {meetsLevel && !meetsCost && <span style={{ color: "#fca5a5", marginLeft: 6 }}>— need {cost} points</span>}
+          </button>
+        ) : (
+          <div style={{ fontSize: 11, color: "#9ca3af", alignSelf: "center" }}>Max rank reached</div>
+        )}
+      </div>
     </div>
   );
 }
