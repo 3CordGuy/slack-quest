@@ -592,7 +592,12 @@ export function deriveMoveRange(agi: number): number {
 }
 
 // Weapon range in hexes, derived from weapon type and relevant stat.
-// melee = 1 (always); focus = 3 + INT bonus; ranged = 5 + DEX bonus.
+// melee = 1 (always); focus = 2 + INT bonus; ranged = 4 + DEX bonus.
+// Bases were toned back one hex (focus 3→2, ranged 5→4) — character reach
+// was previously generous enough that ranged characters never had to move,
+// which both undercut positioning and made bows/staves feel identical.
+// Scaling rate is unchanged so a high-stat archer still out-ranges a fresh
+// recruit; they just don't start the fight able to hit anything on screen.
 export function deriveRangeTiles(
   weaponRange: "melee" | "ranged" | "focus",
   intStat = 5,
@@ -600,8 +605,8 @@ export function deriveRangeTiles(
 ): number {
   switch (weaponRange) {
     case "melee": return 1;
-    case "focus": return 3 + Math.floor(Math.max(0, intStat - 5) / 4);
-    case "ranged": return 5 + Math.floor(Math.max(0, dex - 5) / 4);
+    case "focus": return 2 + Math.floor(Math.max(0, intStat - 5) / 4);
+    case "ranged": return 4 + Math.floor(Math.max(0, dex - 5) / 4);
   }
 }
 

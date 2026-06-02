@@ -1030,6 +1030,41 @@ function handleMove(
   return { state: next, events };
 }
 
+// ── Ally NPC auto-move helper ─────────────────────────────────────────────────
+
+// Steps an ally NPC (hired merc / summoned NPC) up to `moveRange` hexes
+// toward `targetPos`, stopping one tile short so the NPC ends up adjacent
+// instead of on top of the target. Returns updated state + a single
+// generic `moved` event (same kind player characters emit when they
+// move). Noop if the NPC has no pos, no path is found, or one step would
+// already overshoot. Routes around fighters, monsters, and obstacles via
+// `occupiedHexes`.
+function autoMoveAllyNpc(
+  state: CombatState,
+  npcId: ActorId,
+  targetPos: HexPos,
+  moveRange: number,
+): { state: CombatState; events: CombatEvent[] } {
+  const npc = state.fighters.find((f) => f.id === npcId);
+  if (!npc?.pos) return { state, events: [] };
+  const grid = state.grid ?? GRID_DEFAULT;
+  const occupied = occupiedHexes(state, npcId);
+  const path = hexPath(npc.pos, targetPos, occupied, grid);
+  if (path.length === 0) return { state, events: [] };
+  const stepsToTake = Math.min(moveRange, path.length - 1);
+  if (stepsToTake <= 0) return { state, events: [] };
+  const dest = path[stepsToTake - 1];
+  const from = npc.pos;
+  const nextState: CombatState = {
+    ...state,
+    fighters: state.fighters.map((f) => f.id === npcId ? { ...f, pos: dest } : f),
+  };
+  return {
+    state: nextState,
+    events: [{ type: "moved", actor: npcId, from, to: dest }],
+  };
+}
+
 // ── Monster auto-move helper ──────────────────────────────────────────────────
 
 // Automatically moves a monster toward the closest fighter (BFS).
@@ -1583,21 +1618,71 @@ function handleAllyNpcAct(state: CombatState, roll: RollFn): StepResult {
 
   const tick = tickAtTurnStart(state, actorId);
   if (tick.earlyReturn) return tick.earlyReturn;
-  const s = tick.state;
-  const mercAfterTick = s.fighters.find((f) => f.id === actorId);
+  let s = tick.state;
+  let mercAfterTick = s.fighters.find((f) => f.id === actorId);
   if (!mercAfterTick || mercAfterTick.hp <= 0) {
     return tick.earlyReturn ?? { state: s, events: tick.events };
   }
 
   const events: CombatEvent[] = [...tick.events];
 
-  const monster = s.monsters.reduce<CombatMonster | null>((best, m) => {
-    if (m.hp <= 0) return best;
-    if (!best || m.hp < best.hp) return m;
-    return best;
-  }, null);
+  // Range gate + auto-move: in hex mode the merc respects its weapon range
+  // just like a player character. We pick the lowest-HP monster within
+  // reach (LOS-checked for ranged/focus weapons); if nothing's in reach the
+  // merc auto-steps toward the closest live monster using a small move
+  // range, then re-checks. If it still can't reach anyone, the turn passes
+  // — no more free attacks on monsters across the whole battlefield.
+  // Slack mode (hex_range_enabled=false) keeps the original "pick lowest-HP
+  // monster anywhere" behavior since positions aren't tracked there.
+  let monster: CombatMonster | null;
+  if (s.hex_range_enabled && mercAfterTick.pos) {
+    const obstacles = s.obstacles ?? [];
+    const isMelee = (mercAfterTick.weapon_range ?? "melee") === "melee";
+    const reachable = (m: CombatMonster, pos: HexPos, range: number): boolean =>
+      m.hp > 0 && !!m.pos
+      && hexDistance(pos, m.pos) <= range
+      && (isMelee || hexLos(pos, m.pos, obstacles));
+
+    let range = fighterRangeTiles(mercAfterTick);
+    let inReach = s.monsters.filter((m) => reachable(m, mercAfterTick!.pos!, range));
+
+    if (inReach.length === 0) {
+      // Nothing in reach — try a single auto-step toward the closest live
+      // monster. Mercs don't have stats so `fighterMoveRange` returns the
+      // base move of 2; that's enough to make positioning matter without
+      // letting the merc sprint across the field every turn.
+      const live = s.monsters.filter((m) => m.hp > 0 && m.pos);
+      if (live.length > 0) {
+        const closest = live.reduce<CombatMonster>(
+          (best, m) => hexDistance(mercAfterTick!.pos!, m.pos!) < hexDistance(mercAfterTick!.pos!, best.pos!) ? m : best,
+          live[0],
+        );
+        const move = autoMoveAllyNpc(s, actorId, closest.pos!, fighterMoveRange(mercAfterTick, s));
+        s = move.state;
+        events.push(...move.events);
+        mercAfterTick = s.fighters.find((f) => f.id === actorId) ?? mercAfterTick;
+        range = fighterRangeTiles(mercAfterTick);
+        inReach = s.monsters.filter((m) => reachable(m, mercAfterTick!.pos!, range));
+      }
+    }
+
+    monster = inReach.reduce<CombatMonster | null>((best, m) => {
+      if (!best || m.hp < best.hp) return m;
+      return best;
+    }, null);
+  } else {
+    // Slack / hex-disabled mode: original "pick lowest-HP monster" behavior.
+    monster = s.monsters.reduce<CombatMonster | null>((best, m) => {
+      if (m.hp <= 0) return best;
+      if (!best || m.hp < best.hp) return m;
+      return best;
+    }, null);
+  }
 
   if (!monster) {
+    // Either no live monsters anywhere, or none in reach after the auto-
+    // step. Advance the turn quietly; the UI shows the move event (if any)
+    // and the next actor's turn-start banner.
     const next = advanceTurn(s);
     return { state: next, events: [...events, ...turnStartEvent(next)] };
   }
@@ -1977,26 +2062,36 @@ function handleMonsterAct(state: CombatState, roll: RollFn): StepResult {
   const rmt = { round: s.round, counts: rmtCounts };
 
   // ── Boss splash (AoE) ──
-  // Bosses have a chance to forgo single-target targeting and slam the whole
-  // party for reduced damage. Taunt does NOT redirect a splash — it hits every
-  // alive non-vanished fighter. Only fires when multiple fighters are alive.
+  // Bosses have a chance to forgo single-target targeting and slam the
+  // area around them for reduced damage. Taunt does NOT redirect a splash.
+  // The `volley` special grants the same AoE behavior at a higher base
+  // chance even on non-boss monsters.
   //
-  // The `volley` special grants the same AoE behavior at a higher base chance
-  // even on non-boss monsters — but only when at least two alive fighters are
-  // clustered within radius 2 of any single fighter (otherwise it's just a
-  // less effective single-target attack).
+  // Splash is centered on the monster's tile and only catches fighters
+  // within `SPLASH_RADIUS_TILES`. Without this cap the boss-slam hit every
+  // alive party member regardless of where they stood — a backline ally
+  // 10 hexes away took the same damage as the tank in melee, which made
+  // splash feel un-counterable. With the cap, spreading the party out
+  // becomes a real defensive option. In Slack mode (no hex positions) the
+  // radius is meaningless, so the legacy "hit everyone" behavior is kept.
+  const SPLASH_RADIUS_TILES = 2;
+  const splashEligible = (s.hex_range_enabled && monster.pos)
+    ? aliveFighters.filter((f) => f.pos && hexDistance(monster.pos!, f.pos) <= SPLASH_RADIUS_TILES)
+    : aliveFighters;
+
   const bossPhase2 = monster.is_boss && monster.boss_phase === 2;
   const splashChance = bossPhase2 ? 2 : 1; // 2-in-5 P2, 1-in-5 P1
   const hasVolley = monster.specials?.includes("volley") === true;
-  const volleyTriggers = hasVolley && monster.pos
-    ? aliveFighters.filter((f) => f.pos && hexDistance(monster.pos!, f.pos) <= (monster.range_tiles ?? 1) + 2).length >= 2
-    : false;
-  const doSplash = (monster.is_boss && aliveFighters.length > 1 && roll(5) <= splashChance)
+  // Splash needs 2+ fighters inside the radius — a single nearby target
+  // doesn't justify the AoE swing; let the normal single-target attack
+  // resolve instead.
+  const volleyTriggers = hasVolley && splashEligible.length >= 2;
+  const doSplash = (monster.is_boss && splashEligible.length > 1 && roll(5) <= splashChance)
     || volleyTriggers;
 
   if (doSplash) {
     const splashDamageType = monster.attack_damage_type ?? "physical";
-    const splashTargets = aliveFighters.filter((f) => (vanished[f.id] ?? 0) <= 0);
+    const splashTargets = splashEligible.filter((f) => (vanished[f.id] ?? 0) <= 0);
     const splashHexMult = monster.effects.some((e) => e.type === "hexed") ? 0.75 : 1.0;
     const splashHits = splashTargets.map((f) => {
       const resistPct = splashDamageType !== "physical" ? (f.resistances?.[splashDamageType] ?? 0) : 0;
@@ -2545,6 +2640,26 @@ function handleAoeDamageAbility(
     (e): e is Extract<AbilityEffect, { kind: "deal_damage" }> => e.kind === "deal_damage",
   );
   if (dmgEffects.length === 0) return reject(state, `${ability.id} produced no AoE damage effects`);
+
+  // Radius gate: when the AoE declares `aoe_radius_tiles`, the burst is
+  // centered on the caster and only enemies within that hex distance take
+  // damage. Without this, an "all enemies" ability hits everything anywhere
+  // on the field — fine for global buffs, wrong for a fireball that should
+  // reward positioning. Skipped when hex positions aren't tracked (Slack
+  // combat + unit tests) since distance is meaningless there.
+  const aoeRadius = ability.aoe_radius_tiles ?? 0;
+  if (state.hex_range_enabled && tickedActor.pos && aoeRadius > 0) {
+    const casterPos = tickedActor.pos;
+    const inRange = dmgEffects.filter((e) => {
+      const m = state.monsters.find((mm) => mm.id === e.target_id);
+      if (!m?.pos) return true;
+      return hexDistance(casterPos, m.pos) <= aoeRadius;
+    });
+    if (inRange.length === 0) {
+      return reject(state, `no enemies within ${aoeRadius} hexes for ${ability.name}`);
+    }
+    dmgEffects = inRange;
+  }
 
   // LOS gate: caster needs line of sight to each individual target. Without
   // this, an "all enemies" damage AoE (e.g. mage Prod Fire) curves around

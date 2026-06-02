@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useReducer, useRef, useState } from "react";
 import toast from "react-hot-toast";
-import { isMonsterActor, classByName, activeAbilities, type ActiveAbilityDef, isAllyNpcActor } from "@gantt-quest/core";
+import { isMonsterActor, classByName, activeAbilities, hexDistance, type ActiveAbilityDef, isAllyNpcActor } from "@gantt-quest/core";
 import { buildBurndown, BurndownChart } from "./CombatBurndown";
 import { InventoryFullScreen } from "./components/Inventory";
 import type { Item } from "./types";
@@ -1011,8 +1011,11 @@ export function CombatPage({
   // used to paint glow rings on every pawn that action would affect.
   // null when not hovering anything.
   type PreviewKind =
-    | { scope: "all_enemies" }
-    | { scope: "all_allies" }
+    // For all_enemies / all_allies, an optional radiusTiles caps the glow
+    // to pawns within that hex distance of the caster — matches the
+    // engine's caster-centered AoE gate so the preview is honest.
+    | { scope: "all_enemies"; radiusTiles?: number }
+    | { scope: "all_allies"; radiusTiles?: number }
     | { scope: "single_enemy" } // uses targetMonsterId (the currently selected target)
     | { scope: "single_ally"; actorId: string }
     | { scope: "self"; actorId: string };
@@ -2378,8 +2381,23 @@ export function CombatPage({
                           return liveMonsters.map((m) => m.id ?? "").filter(Boolean);
                         }
                         if (!previewedKind) return [];
-                        if (previewedKind.scope === "all_enemies") return liveMonsters.map((m) => m.id ?? "").filter(Boolean);
-                        if (previewedKind.scope === "all_allies") return state.fighters.filter((f) => f.hp > 0).map((f) => f.id);
+                        if (previewedKind.scope === "all_enemies") {
+                          const r = previewedKind.radiusTiles;
+                          const casterPos = me?.pos;
+                          const inRange = (typeof r === "number" && r > 0 && casterPos)
+                            ? (m: { pos?: { q: number; r: number } | null }) => !!m.pos && hexDistance(casterPos, m.pos) <= r
+                            : () => true;
+                          return liveMonsters.filter(inRange).map((m) => m.id ?? "").filter(Boolean);
+                        }
+                        if (previewedKind.scope === "all_allies") {
+                          const r = previewedKind.radiusTiles;
+                          const casterPos = me?.pos;
+                          const allies = state.fighters.filter((f) => f.hp > 0);
+                          if (typeof r === "number" && r > 0 && casterPos) {
+                            return allies.filter((f) => f.pos && hexDistance(casterPos, f.pos) <= r).map((f) => f.id);
+                          }
+                          return allies.map((f) => f.id);
+                        }
                         if (previewedKind.scope === "single_enemy" && effectiveTarget) return [effectiveTarget];
                         if (previewedKind.scope === "single_ally") return [previewedKind.actorId];
                         if (previewedKind.scope === "self") return [previewedKind.actorId];
@@ -2853,11 +2871,15 @@ export function CombatPage({
                 }}
                 onMouseEnter={() => {
                   const t = ability.target;
-                  if (t === "all_enemies") setPreviewedKind({ scope: "all_enemies" });
-                  else if (t === "all_allies") setPreviewedKind({ scope: "all_allies" });
+                  // For all_* scopes, pass the ability's aoe_radius_tiles so
+                  // the preview honors the same caster-centered radius the
+                  // engine enforces (e.g. Prod Fire's 3-hex burst).
+                  const radiusTiles = ability.aoe_radius_tiles;
+                  if (t === "all_enemies") setPreviewedKind({ scope: "all_enemies", radiusTiles });
+                  else if (t === "all_allies") setPreviewedKind({ scope: "all_allies", radiusTiles });
                   else if (t === "single_enemy") setPreviewedKind({ scope: "single_enemy" });
                   else if (t === "self") setPreviewedKind({ scope: "self", actorId: selfId });
-                  else if (t === "single_ally") setPreviewedKind({ scope: "all_allies" });
+                  else if (t === "single_ally") setPreviewedKind({ scope: "all_allies", radiusTiles });
                   else setPreviewedKind(null);
                 }}
                 onMouseLeave={() => setPreviewedKind(null)}

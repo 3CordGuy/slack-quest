@@ -384,14 +384,14 @@ describe("deriveRangeTiles", () => {
     expect(deriveRangeTiles("melee", 1, 1)).toBe(1);
   });
 
-  it("focus base range is 3 + INT bonus", () => {
-    expect(deriveRangeTiles("focus", 5)).toBe(3); // no bonus
-    expect(deriveRangeTiles("focus", 9)).toBe(4); // floor((9-5)/4) = 1
+  it("focus base range is 2 + INT bonus", () => {
+    expect(deriveRangeTiles("focus", 5)).toBe(2); // no bonus
+    expect(deriveRangeTiles("focus", 9)).toBe(3); // floor((9-5)/4) = 1
   });
 
-  it("ranged base range is 5 + DEX bonus", () => {
-    expect(deriveRangeTiles("ranged", 5, 5)).toBe(5); // no bonus
-    expect(deriveRangeTiles("ranged", 5, 9)).toBe(6); // floor((9-5)/4) = 1
+  it("ranged base range is 4 + DEX bonus", () => {
+    expect(deriveRangeTiles("ranged", 5, 5)).toBe(4); // no bonus
+    expect(deriveRangeTiles("ranged", 5, 9)).toBe(5); // floor((9-5)/4) = 1
   });
 });
 

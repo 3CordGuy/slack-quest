@@ -211,20 +211,25 @@ export interface ActiveAbilityDef {
   // reach than a normal cast. AoE abilities ignore this (they fire on all
   // valid targets regardless of position).
   range_tiles?: number;
-  // Optional blast radius in hex tiles around the primary target. When
-  // unset, the ability hits only the picked target (single-target). When
-  // set, the ability ALSO damages every other live enemy within this many
-  // hexes of the primary target (Manhattan-style hex distance). The
-  // primary target still takes the full damage from execute(); secondary
-  // targets in the blast take an additional damage instance equal to the
-  // primary's damage (the engine applies per-target as it iterates).
+  // Optional blast radius in hex tiles.
+  //
+  // For single-target abilities (target: "single_enemy"/"single_ally"), the
+  // blast is centered on the picked target and damages every other live
+  // enemy within this many hexes of it. The primary takes full damage from
+  // execute(); secondaries take an additional damage instance equal to the
+  // primary's damage (the engine applies per-target as it iterates):
   //
   //   aoe_radius_tiles: 1 → primary + adjacent enemies
   //   aoe_radius_tiles: 2 → primary + everyone within 2 hexes
   //   aoe_radius_tiles: 0 (or unset) → primary only
   //
-  // The hex grid UI paints the blast radius around the hovered target
-  // during aim mode so the player sees who'll be hit.
+  // For "all_enemies" / "all_allies" routing the blast is centered on the
+  // CASTER instead — only targets within this many hexes of the caster are
+  // hit (e.g. Prod Fire only burns enemies within 3 hexes of the mage).
+  // When unset on an all_* ability, every live target on the field is hit.
+  //
+  // The hex grid UI paints the blast radius around the aim point during
+  // aim mode so the player sees who'll be hit.
   aoe_radius_tiles?: number;
   execute: (ctx: AbilityContext) => AbilityEffect[];
 }
