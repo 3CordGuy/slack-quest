@@ -1184,24 +1184,69 @@ export function CombatHexGrid({
       ctx!.clearRect(0, 0, w, h);
       ctx!.translate(shakeX, shakeY);
 
-      // 0. Battlefield art (AI-generated ground texture, ~30% alpha so the
-      //    hex grid stays readable on top). Drawn in SCREEN space (no
-      //    transform) so the terrain fills the canvas regardless of where
-      //    the player has panned/zoomed — the ground feels stable while the
-      //    grid moves over it.
-      if (backgroundReadyRef.current && backgroundImageRef.current) {
-        const img = backgroundImageRef.current;
-        ctx!.globalAlpha = 0.40;
-        ctx!.drawImage(img, 0, 0, w, h);
-        ctx!.globalAlpha = 1;
-      }
-
       // Apply the world→screen transform so every subsequent drawing call
       // (tiles, obstacles, pawns, particles, projectiles) can stay in world
       // space — hexToPixel coords flow straight to the canvas without
       // per-call scaling. Composes with shake by translating first.
       ctx!.translate(offsetX, offsetY);
       ctx!.scale(effectiveScale, effectiveScale);
+
+      // 0. Battlefield art (curated terrain or AI-generated ground texture).
+      //    Drawn in WORLD space so it pans and zooms with the hex grid as a
+      //    single attached layer — never stretches to fit the viewport.
+      //    Anchored to the grid's natural bounding box; the image is sized so
+      //    its "playable interior" (the inner region excluding decorative
+      //    rock/tree borders) covers the grid bounds. Borders extend outward
+      //    into the canvas padding to frame the play area.
+      if (backgroundReadyRef.current && backgroundImageRef.current) {
+        const img = backgroundImageRef.current;
+        const imgW = img.naturalWidth || 1024;
+        const imgH = img.naturalHeight || 1024;
+        // Native grid bounding box at default settings (hexSize=26, pad=18,
+        // 9 cols × 11 rows) is 442 × 478 world pixels. When BG_MODE = "native"
+        // and the curated PNG is generated at that aspect (or any multiple:
+        // 884×956, 1326×1434, 1768×1912 — see docs/curated-battlefield-art.md),
+        // the image is downscaled to fit the natural grid bounds 1:1 — no
+        // scale knobs, only X/Y offset to align. COVER mode keeps the
+        // earlier behavior for square-ish curated art that needs to oversize
+        // to frame the grid.
+        const BG_MODE: "native" | "cover" = "cover";
+
+        // X/Y offset in world pixels. Positive X = right, positive Y = down.
+        // Used in both modes to nudge the image into final alignment.
+        const BG_OFFSET_X = -13;
+        const BG_OFFSET_Y = 10;
+
+        let drawW: number;
+        let drawH: number;
+        if (BG_MODE === "native") {
+          // Lay the image down at the grid's natural width while preserving
+          // the image's aspect ratio. If you generate at exactly 442×478 (or
+          // a multiple), drawW=natural.w and drawH=natural.h — pixel-perfect
+          // overlap, no aspect distortion.
+          drawW = natural.w;
+          drawH = imgH * (natural.w / imgW);
+        } else {
+          // Per-side border allowance for COVER mode: how much of the image
+          // is decorative border that should extend OUTSIDE the playable
+          // grid area. Only consulted in COVER mode.
+          const BG_BORDER_FRAC = 0.015;
+          const interior = 1 - 2 * BG_BORDER_FRAC;
+          // Final multiplier layered on top of COVER fit (1.0 = pure cover).
+          const BG_SCALE_ADJUST = 0.90;
+          const scale = Math.max(
+            natural.w / (imgW * interior),
+            natural.h / (imgH * interior),
+          ) * BG_SCALE_ADJUST;
+          drawW = imgW * scale;
+          drawH = imgH * scale;
+        }
+        const drawX = natural.w / 2 - drawW / 2 + BG_OFFSET_X;
+        const drawY = natural.h / 2 - drawH / 2 + BG_OFFSET_Y;
+        ctx!.globalAlpha = 0.55;
+        ctx!.drawImage(img, drawX, drawY, drawW, drawH);
+        ctx!.globalAlpha = 1;
+      }
 
       // 1. Hex tiles
       drawTiles(ctx!, state, grid, overlay, hover, currentActor, hexToPixel, hexSize, targetMonsterId ?? null, now);
@@ -1507,7 +1552,7 @@ function drawTiles(
       const { x, y } = hexToPixel(pos);
       const key = posKey(pos);
 
-      let fill = "rgba(30, 41, 59, 0.55)";
+      let fill = "rgba(30, 41, 59, 0.14)";
       let stroke = "rgba(100, 116, 139, 0.35)";
       let lineWidth = 1;
 
