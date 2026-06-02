@@ -35,6 +35,7 @@ import {
 import {
   SmallBadge, ModalBackdrop, HoverTooltip,
 } from "./ui";
+import { StatsRulebook } from "./StatsRulebook";
 
 export function PartyMember({ fighter, self, onInspect }: { fighter: Character; self: boolean; onInspect?: () => void }) {
   const downed =
@@ -1891,6 +1892,7 @@ export function AccountPopover({
   const [showNotifyModal, setShowNotifyModal] = useState(false);
   const [showUsernameModal, setShowUsernameModal] = useState(false);
   const [showLinkEmailModal, setShowLinkEmailModal] = useState(false);
+  const [showRulebook, setShowRulebook] = useState(false);
   const missingUsername = !character?.slack_username;
   const isGuest = !!character?.is_guest;
 
@@ -2028,6 +2030,14 @@ export function AccountPopover({
                 </button>
               )}
 
+              {/* Stats Rulebook */}
+              <button
+                onClick={() => { setOpen(false); setShowRulebook(true); }}
+                style={{ ...smallActionBtn("#1a1c20", "#c4b5fd"), textAlign: "left" }}
+              >
+                <Icon name="scroll-quill" size={13} /> Stats Rulebook
+              </button>
+
               {/* Dev tools — local env only */}
               {import.meta.env.DEV && onOpenDevTools && (
                 <button
@@ -2135,6 +2145,9 @@ export function AccountPopover({
       )}
       {showLinkEmailModal && (
         <LinkEmailModal isGuest={isGuest} onClose={() => setShowLinkEmailModal(false)} />
+      )}
+      {showRulebook && (
+        <StatsRulebook onClose={() => setShowRulebook(false)} />
       )}
     </>
   );

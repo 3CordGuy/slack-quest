@@ -13,7 +13,7 @@ export const ERROR_LABELS: Record<string, string> = {
   already_full: "Already at full HP/mana — no rest needed.",
   at_full_hp: "Already at full HP — save it for when you need it.",
   at_full_mana: "Already at full mana — save it for when you need it.",
-  at_max_mana_cap: "Already at max mana cap (5) — save it for another character.",
+  at_max_mana_cap: "Already at the level's max-mana cap — level up to push it higher, or save the crystal for another character.",
   no_rest_mid_quest: "Can't rest mid-quest. Finish the fight first.",
   no_long_rest_mid_quest: "Long rest blocked mid-quest. Wrap up first.",
   downed: "You're downed — wait for the cooldown.",

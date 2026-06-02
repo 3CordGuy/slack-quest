@@ -3,11 +3,13 @@ import {
   CLASSES,
   MAGIC_PRICE,
   MAX_MANA_CAP,
+  MAX_MANA_CAP_CEILING,
   RARITY_BADGE,
   SHOP_PRICE,
   classByName,
   dropChance,
   generateScar,
+  maxManaCap,
   priceFor,
   rollDice,
   rollItem,
@@ -223,6 +225,28 @@ describe("MAX_MANA_CAP", () => {
   it("is a sensible positive cap", () => {
     expect(MAX_MANA_CAP).toBeGreaterThan(1);
     expect(MAX_MANA_CAP).toBeLessThanOrEqual(10);
+  });
+});
+
+describe("maxManaCap", () => {
+  it("starts at the base cap at L1", () => {
+    expect(maxManaCap(1)).toBe(MAX_MANA_CAP);
+  });
+  it("steps up every 3 levels", () => {
+    expect(maxManaCap(3)).toBe(5);
+    expect(maxManaCap(4)).toBe(6);
+    expect(maxManaCap(6)).toBe(6);
+    expect(maxManaCap(7)).toBe(7);
+    expect(maxManaCap(10)).toBe(8);
+    expect(maxManaCap(13)).toBe(9);
+  });
+  it("clamps at the ceiling so endgame magic crystals can't push past it", () => {
+    expect(maxManaCap(16)).toBe(MAX_MANA_CAP_CEILING);
+    expect(maxManaCap(50)).toBe(MAX_MANA_CAP_CEILING);
+  });
+  it("treats sub-1 levels as L1 instead of returning a smaller cap", () => {
+    expect(maxManaCap(0)).toBe(MAX_MANA_CAP);
+    expect(maxManaCap(-3)).toBe(MAX_MANA_CAP);
   });
 });
 
