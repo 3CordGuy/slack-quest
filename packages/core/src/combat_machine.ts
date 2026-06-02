@@ -361,6 +361,11 @@ export interface AbilityRuntimeState {
   taunt_fortify?: Record<ActorId, { turns_remaining: number }>;
   // SRE Warden — Resilient stacks: each element is the expires_after_round value for one stack.
   resilient?: Record<ActorId, number[]>;
+  // Staff Sage — Memoization: per-actor list of ability ids whose first cast
+  // this combat has already been comped. The cast handler consults this on
+  // every cast; if the actor has the passive equipped AND the ability id
+  // isn't in this list yet, the cast is mana-free and the id is appended.
+  memoization_casts?: Record<ActorId, string[]>;
 }
 
 // How many rounds a mark stays active. Roughly mirrors slack's 90s timer
@@ -2501,6 +2506,9 @@ function handleDamageAbility(
     ? clearHolyRage(state.ability_state, actorId)
     : state.ability_state;
   amount += holyRageBonusAbility;
+  // DevOps Mage — Observability: flat +1 per unique debuff on the enemy field.
+  const obsBonus = observabilityBonus(state, tickedActor);
+  amount += obsBonus;
 
   // Drink buff — only buff_next_crit applies to ability damage.
   const drinkResult = dmgEffect.drink_buff_context === "ability"
@@ -2923,8 +2931,14 @@ function handleAbility(
     return reject(state, `${fighter.class} has no active ability with id ${action.ability_id}`);
   }
 
-  if (fighter.mana < ability.mana_cost) {
-    return reject(state, `not enough mana (need ${ability.mana_cost})`);
+  // Staff Sage — Memoization: first cast of each distinct ability id per fight
+  // is mana-free. The check happens BEFORE the mana_cost gate so a Sage with
+  // Memoization can fire their pricey abilities even when nearly empty.
+  const memoCastsPrior = state.ability_state?.memoization_casts?.[action.actor] ?? [];
+  const memoActive = fighterHasPassive(fighter, "memoization") && !memoCastsPrior.includes(ability.id);
+  const effectiveManaCost = memoActive ? 0 : ability.mana_cost;
+  if (fighter.mana < effectiveManaCost) {
+    return reject(state, `not enough mana (need ${effectiveManaCost})`);
   }
   const remainingCooldown = state.cooldowns?.[action.actor]?.[ability.id] ?? 0;
   if (remainingCooldown > 0) {
@@ -2939,7 +2953,7 @@ function handleAbility(
   const sPostMana: CombatState = {
     ...s,
     fighters: s.fighters.map((f) =>
-      f.id === action.actor ? { ...f, mana: Math.max(0, f.mana - ability.mana_cost) } : f,
+      f.id === action.actor ? { ...f, mana: Math.max(0, f.mana - effectiveManaCost) } : f,
     ),
     ...(ability.cooldown_turns ? {
       cooldowns: {
@@ -2950,6 +2964,15 @@ function handleAbility(
         },
       },
     } : {}),
+    ...(memoActive ? {
+      ability_state: {
+        ...(s.ability_state ?? {}),
+        memoization_casts: {
+          ...(s.ability_state?.memoization_casts ?? {}),
+          [action.actor]: [...memoCastsPrior, ability.id],
+        },
+      },
+    } : {}),
   };
 
   const usedEvent: CombatEvent = {
@@ -2957,7 +2980,7 @@ function handleAbility(
     actor: action.actor,
     ability_id: ability.id,
     name: ability.name,
-    mana_spent: ability.mana_cost,
+    mana_spent: effectiveManaCost,
   };
   const preEvents: CombatEvent[] = [...tick.events, usedEvent];
 
@@ -3348,7 +3371,9 @@ function applyUtilityAbilityEffects(
 
         const isCrit = effect.is_crit ?? false;
         const atkVulnMult = vulnerabilityMult(s, targetMonster.id, s.round);
-        const atkDamage = Math.max(1, Math.round(effect.amount * atkVulnMult));
+        // DevOps Mage — Observability adds flat damage per unique enemy debuff.
+        const atkObsBonus = observabilityBonus(s, fighter);
+        const atkDamage = Math.max(1, Math.round((effect.amount + atkObsBonus) * atkVulnMult));
         events.push({ type: "player_hit", actor, target: targetMonster.id, damage: atkDamage, armor_absorbed: 0, crit: isCrit, formula: effect.formula });
         const newHp = Math.max(0, targetMonster.hp - atkDamage);
         s = {
@@ -4289,6 +4314,25 @@ function classHasPassive(className: string, passiveId: string): boolean {
 function fighterHasPassive(fighter: CombatFighter, passiveId: string): boolean {
   if (classHasPassive(fighter.class, passiveId)) return true;
   return fighter.equipped_passive_ids?.includes(passiveId) ?? false;
+}
+
+// DevOps Mage — Observability: + flat damage equal to the number of distinct
+// debuff types currently on the enemy field. Reads only the unique types
+// (not stacks) so a target with bleed×5 still counts as one. Returns 0 when
+// the attacker doesn't have the passive equipped.
+const OBSERVABILITY_DEBUFF_TYPES: ReadonlySet<EffectType> = new Set<EffectType>([
+  "bleeding", "burning", "poisoned", "entangled", "stunned", "hexed", "shocked", "frozen",
+]);
+function observabilityBonus(state: CombatState, fighter: CombatFighter): number {
+  if (!fighterHasPassive(fighter, "observability")) return 0;
+  const types = new Set<EffectType>();
+  for (const m of state.monsters) {
+    if (m.hp <= 0) continue;
+    for (const e of m.effects ?? []) {
+      if (OBSERVABILITY_DEBUFF_TYPES.has(e.type)) types.add(e.type);
+    }
+  }
+  return types.size;
 }
 
 function isPassiveUsed(state: CombatState, actorId: ActorId, key: string): boolean {
