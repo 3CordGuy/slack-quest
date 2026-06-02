@@ -169,6 +169,10 @@ export const fx = {
   deductCasterHp(casterId: string, amount: number): AbilityEffect {
     return { kind: "deduct_caster_hp", caster_id: casterId, amount };
   },
+
+  cleanseSingleAlly(targetId: string): AbilityEffect {
+    return { kind: "cleanse_single_ally", target_id: targetId };
+  },
 };
 
 // Roll count dice of `sides` and return the sum.

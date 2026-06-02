@@ -100,6 +100,57 @@ const sanityCheck: AbilityDef = {
   },
 };
 
+const codeReview: AbilityDef = {
+  kind: "active",
+  id: "code_review",
+  name: "Code Review",
+  blurb: "Audit an ally's state and clean up — strips every debuff from the target and restores 1d4 + vit HP.",
+  icon: "scroll-unfurled",
+  mana_cost: 2,
+  cooldown_turns: 2,
+  routing: "utility",
+  target: "single_ally",
+  range_tiles: 3,
+  execute(ctx) {
+    const target = ctx.target as FighterSnapshot;
+    const vit = (ctx.caster as FighterSnapshot & { stats?: { vit: number } }).stats?.vit ?? 5;
+    const heal = ctx.roll(4) + vit;
+    return [fx.cleanseSingleAlly(target.id), fx.heal(target.id, heal)];
+  },
+};
+
+const staticAnalysis: AbilityDef = {
+  kind: "passive",
+  id: "static_analysis",
+  name: "Static Analysis",
+  blurb: "When you're alone in the call stack, you focus — gain +1 AC barkskin at the start of every turn you have no adjacent allies.",
+  icon: "convergence-target",
+  trigger: "on_action",
+  once_per_fight: false,
+  execute(ctx) {
+    // Without hex positions we can't truly measure adjacency from execute();
+    // approximate with "no living allies besides self" — a strict version of
+    // the design that fires when the Paladin is the last one standing.
+    const livingAllies = ctx.party.filter((p) => p.id !== ctx.caster.id);
+    if (livingAllies.length > 0) return [];
+    return [fx.barkskin(ctx.caster.id, 1, 1)];
+  },
+};
+
+const defensiveProgramming: AbilityDef = {
+  kind: "passive",
+  id: "defensive_programming",
+  name: "Defensive Programming",
+  blurb: "Tighten the guards when things go wrong — gain +2 AC barkskin at the start of every turn while below 50% HP.",
+  icon: "round-shield",
+  trigger: "on_action",
+  once_per_fight: false,
+  execute(ctx) {
+    if (ctx.caster.hp * 2 > ctx.caster.max_hp) return [];
+    return [fx.barkskin(ctx.caster.id, 2, 1)];
+  },
+};
+
 const bisect: AbilityDef = {
   kind: "active",
   id: "bisect",
@@ -311,6 +362,28 @@ const frostBolt: AbilityDef = {
     const mag = ctx.caster.magic_mod;
     const amount = rollSum(ctx.roll, Math.max(1, mag), 4);
     return [fx.attackRollDamage(monster.id, mag, amount, `${Math.max(1, mag)}d4`, "ice", undefined, undefined, 25)];
+  },
+};
+
+// Time Dilation — re-designed from the original "AoE adds +1 to enemy
+// cooldowns" because monsters in this engine don't have player-style
+// cooldowns. The replacement still reads as "slow them down" — applies a
+// 2-turn entangled debuff (-4 to-hit) to every enemy in a 1-hex blast
+// around the picked target. Pure control, no damage.
+const timeDilation: AbilityDef = {
+  kind: "active",
+  id: "time_dilation",
+  name: "Time Dilation",
+  blurb: "Stretch the clock around the target — every enemy in a 1-hex radius is entangled (-4 to-hit) for 2 rounds.",
+  icon: "stopwatch",
+  mana_cost: 0,
+  cooldown_turns: 5,
+  routing: "utility",
+  target: "single_enemy",
+  range_tiles: 4,
+  aoe_radius_tiles: 1,
+  execute(ctx) {
+    return ctx.monsters.map((m) => fx.entangleMonster(m.id, 2));
   },
 };
 
@@ -547,6 +620,9 @@ const NEW_NODES_BY_CLASS: Record<ClassId, TalentNodeDef[]> = {
   qa_paladin: [
     activeNode("qa_paladin", sanityCheck, "damage"),
     activeNode("qa_paladin", bisect, "damage"),
+    activeNode("qa_paladin", codeReview, "support"),
+    activeNode("qa_paladin", staticAnalysis, "defense"),
+    activeNode("qa_paladin", defensiveProgramming, "defense"),
   ],
   backend_druid: [
     activeNode("backend_druid", pruning, "damage"),
@@ -564,6 +640,7 @@ const NEW_NODES_BY_CLASS: Record<ClassId, TalentNodeDef[]> = {
   staff_sage: [
     activeNode("staff_sage", frostBolt, "control"),
     activeNode("staff_sage", hailstorm, "damage"),
+    activeNode("staff_sage", timeDilation, "control"),
   ],
   refactor_rogue: [
     activeNode("refactor_rogue", codeAudit, "control"),
@@ -590,10 +667,10 @@ export const ALL_NEW_NODES: TalentNodeDef[] = Object.values(NEW_NODES_BY_CLASS).
 
 export const NEW_ABILITY_DEFS: AbilityDef[] = [
   rollingRestart, cdnSurge, canaryDeploy,
-  sanityCheck, bisect,
+  sanityCheck, bisect, codeReview, staticAnalysis, defensiveProgramming,
   pruning, mycelialWeb, compostHeap, deepRoots, cronJob,
   standupMeeting, discordNotification, encore, unsubscribeFromAll,
-  frostBolt, hailstorm,
+  frostBolt, hailstorm, timeDilation,
   codeAudit, smokeTest,
   postmortem, circuitBreaker,
   indexScan, stackTrace, dropTable, staleCache, garbageCollection,
