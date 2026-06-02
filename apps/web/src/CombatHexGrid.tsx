@@ -15,6 +15,7 @@
 // and consistently styled with the rest of the UI.
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { charPortraitUrl, classPortraitUrl } from "./CombatShared";
 import {
   GRID_DEFAULT,
   deriveMoveRange,
@@ -556,6 +557,41 @@ export function CombatHexGrid({
     backgroundImageRef.current = img;
   }, [backgroundUrl]);
 
+  // Portrait cache keyed by URL. Fighters use char art (with class art as
+  // fallback); monsters use whatever art_url the server provides. The cache
+  // outlives any single rAF frame so loaded images survive React re-renders.
+  // Each entry stores the image + a "ready" flag — drawing checks ready
+  // before invoking drawImage so failures (404, CORS) fall back to the
+  // initial-letter token without crashing the frame.
+  type PortraitCacheEntry = { img: HTMLImageElement; ready: boolean };
+  const portraitCacheRef = useRef<Map<string, PortraitCacheEntry>>(new Map());
+  function loadPortrait(url: string): PortraitCacheEntry | null {
+    if (!url) return null;
+    const cache = portraitCacheRef.current;
+    const existing = cache.get(url);
+    if (existing) return existing;
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    const entry: PortraitCacheEntry = { img, ready: false };
+    img.onload = () => { entry.ready = true; };
+    img.onerror = () => { entry.ready = false; };
+    img.src = url;
+    cache.set(url, entry);
+    return entry;
+  }
+  // Eagerly preload all current actors' portraits whenever the roster
+  // changes so the first frame after a state update has them ready.
+  useEffect(() => {
+    for (const f of state.fighters) {
+      loadPortrait(charPortraitUrl(f.name));
+      const fallback = classPortraitUrl(f.class);
+      if (fallback) loadPortrait(fallback);
+    }
+    for (const m of state.monsters) {
+      if (m.art_url) loadPortrait(m.art_url);
+    }
+  }, [state.fighters, state.monsters]);
+
   // Current actor (for move/attack overlay computation).
   const currentActor = useMemo(() => {
     if (!currentActorId) return null;
@@ -1021,7 +1057,17 @@ export function CombatHexGrid({
       }
 
       // 3. Actor tokens — use animated positions so moves slide smoothly.
-      drawActors(ctx!, state, animatedPosRef.current, hexSize, targetMonsterId ?? null, currentActorId, turnPhase, previewedTargetIds ?? null, previewedTargetKind, overlay.inRange, aimActive, aimRangeTiles, now);
+      drawActors(
+        ctx!, state, animatedPosRef.current, hexSize,
+        targetMonsterId ?? null, currentActorId, turnPhase,
+        previewedTargetIds ?? null, previewedTargetKind,
+        overlay.inRange, aimActive, aimRangeTiles, now,
+        (url) => {
+          if (!url) return null;
+          const entry = portraitCacheRef.current.get(url);
+          return entry?.ready ? entry.img : null;
+        },
+      );
 
       // 3. Projectiles (update + draw, fire onArrive on completion)
       const stillFlying: ActiveProjectile[] = [];
@@ -1471,6 +1517,7 @@ function drawActors(
   aimActive: boolean,
   aimRangeTiles: number | undefined,
   now: number,
+  resolvePortrait: (url: string | null | undefined) => HTMLImageElement | null,
 ) {
   const previewSet = previewedTargetIds && previewedTargetIds.length > 0
     ? new Set(previewedTargetIds)
@@ -1573,18 +1620,45 @@ function drawActors(
       }
     }
     ctx.globalAlpha = downed ? 0.4 : 1;
+    // Fighter token: portrait clipped to circle if available, else slate
+    // fill + class-color rim + initial. The rim sits at radius regardless
+    // so the class color always reads.
+    const fPortrait =
+      resolvePortrait(charPortraitUrl(f.name))
+      ?? resolvePortrait(classPortraitUrl(f.class));
+    if (fPortrait) {
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(x, y, radius, 0, Math.PI * 2);
+      ctx.closePath();
+      ctx.clip();
+      // Cover-crop: paint the source image so the shorter dimension fills
+      // the circle and the longer one bleeds off, keeping faces centered.
+      const d = radius * 2;
+      const sw = fPortrait.naturalWidth || 1;
+      const sh = fPortrait.naturalHeight || 1;
+      const srcAspect = sw / sh;
+      let drawW = d, drawH = d;
+      if (srcAspect > 1) drawW = d * srcAspect;
+      else drawH = d / srcAspect;
+      ctx.drawImage(fPortrait, x - drawW / 2, y - drawH / 2, drawW, drawH);
+      ctx.restore();
+    } else {
+      ctx.beginPath();
+      ctx.arc(x, y, radius, 0, Math.PI * 2);
+      ctx.fillStyle = "rgba(15, 23, 42, 0.92)";
+      ctx.fill();
+      ctx.fillStyle = "#e5e7eb";
+      ctx.font = `bold ${hexSize * 0.5}px system-ui, sans-serif`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText((f.name ?? "?").charAt(0).toUpperCase(), x, y - 2);
+    }
     ctx.beginPath();
     ctx.arc(x, y, radius, 0, Math.PI * 2);
-    ctx.fillStyle = "rgba(15, 23, 42, 0.92)";
-    ctx.fill();
     ctx.lineWidth = 3;
     ctx.strokeStyle = classColor(f.class);
     ctx.stroke();
-    ctx.fillStyle = "#e5e7eb";
-    ctx.font = `bold ${hexSize * 0.5}px system-ui, sans-serif`;
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    ctx.fillText((f.name ?? "?").charAt(0).toUpperCase(), x, y - 2);
     if (!downed) drawHpBar(ctx, x, y + hexSize * 0.62, hexSize * 1.2, 4, f.hp, f.max_hp);
     if (!downed && f.effects) drawStatusOverlay(ctx, x, y, radius, f.effects as never, now);
     ctx.globalAlpha = 1;
@@ -1617,18 +1691,38 @@ function drawActors(
       ctx.restore();
     }
     ctx.globalAlpha = downed ? 0.35 : 1;
+    const mPortrait = resolvePortrait(m.art_url);
+    if (mPortrait) {
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(x, y, radius, 0, Math.PI * 2);
+      ctx.closePath();
+      ctx.clip();
+      const d = radius * 2;
+      const sw = mPortrait.naturalWidth || 1;
+      const sh = mPortrait.naturalHeight || 1;
+      const srcAspect = sw / sh;
+      let drawW = d, drawH = d;
+      if (srcAspect > 1) drawW = d * srcAspect;
+      else drawH = d / srcAspect;
+      ctx.drawImage(mPortrait, x - drawW / 2, y - drawH / 2, drawW, drawH);
+      ctx.restore();
+    } else {
+      ctx.beginPath();
+      ctx.arc(x, y, radius, 0, Math.PI * 2);
+      ctx.fillStyle = m.is_boss ? "rgba(127, 29, 29, 0.95)" : "rgba(76, 5, 25, 0.92)";
+      ctx.fill();
+      ctx.fillStyle = "#fee2e2";
+      ctx.font = `bold ${hexSize * (m.is_boss ? 0.72 : 0.55)}px system-ui, sans-serif`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText((m.name ?? "?").charAt(0).toUpperCase(), x, y - 2);
+    }
     ctx.beginPath();
     ctx.arc(x, y, radius, 0, Math.PI * 2);
-    ctx.fillStyle = m.is_boss ? "rgba(127, 29, 29, 0.95)" : "rgba(76, 5, 25, 0.92)";
-    ctx.fill();
     ctx.lineWidth = m.is_boss ? 4 : 2.5;
     ctx.strokeStyle = m.is_boss ? "#fbbf24" : "#fca5a5"; // bosses get a gold rim
     ctx.stroke();
-    ctx.fillStyle = "#fee2e2";
-    ctx.font = `bold ${hexSize * (m.is_boss ? 0.72 : 0.55)}px system-ui, sans-serif`;
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    ctx.fillText((m.name ?? "?").charAt(0).toUpperCase(), x, y - 2);
     if (!downed) drawHpBar(ctx, x, y + radius + 4, hexSize * (m.is_boss ? 1.7 : 1.25), m.is_boss ? 5 : 4, m.hp, m.max_hp);
     if (!downed && m.effects) drawStatusOverlay(ctx, x, y, radius, m.effects as never, now);
     ctx.globalAlpha = 1;
