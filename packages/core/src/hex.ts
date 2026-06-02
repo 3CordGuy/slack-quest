@@ -16,8 +16,15 @@ export type MonsterSpecial =
   | "pounce";        // teleport adjacent to farthest fighter when out of range
 
 // Cosmetic obstacle kind. The engine treats all obstacles identically — kind
-// only drives the rendered sprite + tooltip text.
-export type ObstacleKind = "boulder" | "pillar" | "crate" | "tree" | "rubble";
+// only drives the rendered sprite + tooltip text. The "engineering" set is
+// drawn from the corporate-fantasy hybrid world the game lives in (server
+// racks in the catacomb, file cabinets and printers on the office floor,
+// k8s clusters humming in the neon basement). Generic kinds are kept for
+// older persisted combats and any future "outdoor" scenes.
+export type ObstacleKind =
+  | "boulder" | "pillar" | "crate" | "tree" | "rubble"
+  | "server_rack" | "desktop_computer" | "printer" | "file_cabinet"
+  | "watercooler" | "cubicle_wall" | "k8s_cluster";
 
 // Battlefield obstacle: blocks movement AND blocks line of sight.
 export interface Obstacle {
@@ -355,23 +362,25 @@ function mulberry32(seed: number): () => number {
 
 // Picks an obstacle kind appropriate for the given scene. Accepts both the
 // generic kind names (cave/forest/...) and the gantt-quest themed scene
-// keys (server_catacomb/cubicle_forest/...).
+// keys (server_catacomb/cubicle_forest/...). Themed scenes now pull from
+// the engineering-fantasy obstacle set (server racks, file cabinets, etc.).
+// Generic outdoor scenes still use the natural obstacle set.
 function obstacleKindForScene(scene: string, rng: () => number): ObstacleKind {
   const palette: Record<string, ObstacleKind[]> = {
-    // Generic
+    // Generic outdoor / dungeon
     cave: ["boulder", "rubble", "pillar"],
     forest: ["tree", "boulder", "rubble"],
     ruins: ["pillar", "rubble", "crate"],
     castle: ["crate", "pillar", "rubble"],
     swamp: ["tree", "boulder", "rubble"],
     tower: ["pillar", "crate", "rubble"],
-    // Themed (mapped to closest visual analog)
-    server_catacomb: ["pillar", "rubble", "crate"],   // ruined data hall
-    cubicle_forest: ["crate", "pillar", "tree"],      // office plants + cubicle walls
-    warehouse_floor: ["crate", "crate", "rubble"],    // boxes everywhere
-    fluorescent_office: ["crate", "pillar", "rubble"], // file cabinets + columns
-    neon_basement: ["pillar", "crate", "rubble"],     // exposed beams
-    deadline_dungeon: ["pillar", "rubble", "boulder"], // stone + debris
+    // Themed corporate-fantasy scenes
+    server_catacomb:    ["server_rack", "k8s_cluster", "server_rack", "rubble"],
+    cubicle_forest:     ["cubicle_wall", "watercooler", "tree", "cubicle_wall"],
+    warehouse_floor:    ["crate", "file_cabinet", "crate", "rubble"],
+    fluorescent_office: ["file_cabinet", "printer", "desktop_computer", "cubicle_wall", "watercooler"],
+    neon_basement:      ["server_rack", "k8s_cluster", "pillar", "server_rack"],
+    deadline_dungeon:   ["desktop_computer", "file_cabinet", "pillar", "rubble"],
   };
   const pool = palette[scene] ?? ["boulder", "rubble", "pillar"];
   return pool[Math.floor(rng() * pool.length)];
