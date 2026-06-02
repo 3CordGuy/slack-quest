@@ -6532,6 +6532,64 @@ app.post("/api/dev/combat-mana", async (c) => {
   return c.json({ ok: true });
 });
 
+// Test-only: stamp a status effect on a fighter or monster so the canvas
+// renderer can be visually inspected. Pass { questId, target: "self" |
+// "first_monster", type: "burning" | "frozen" | etc., magnitude?, remaining? }.
+app.post("/api/dev/combat-effect", async (c) => {
+  if (c.env.ENVIRONMENT !== "local") return c.json({ error: "forbidden" }, 403);
+  const session = await currentSession(c.env.DB, c.req.header("Cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const body = await c.req.json<{
+    questId?: unknown;
+    target?: unknown;
+    type?: unknown;
+    magnitude?: unknown;
+    remaining?: unknown;
+    clear?: unknown;
+  }>();
+  const questId = Number(body.questId);
+  if (!Number.isFinite(questId)) return c.json({ error: "invalid questId" }, 400);
+  const target = String(body.target ?? "self");
+  const type = String(body.type ?? "");
+  const magnitude = Number.isFinite(Number(body.magnitude)) ? Number(body.magnitude) : 1;
+  const remaining = Number.isFinite(Number(body.remaining)) ? Number(body.remaining) : 5;
+  const clear = body.clear === true;
+  const snap = await getWebCombatSnapshot(c.env.DB, questId);
+  if (!snap) return c.json({ error: "no combat" }, 404);
+  const state = snap.state;
+  let newState = state;
+  if (target === "self") {
+    const idx = state.fighters.findIndex((f) => f.id === session.slack_user_id);
+    if (idx === -1) return c.json({ error: "fighter not found" }, 404);
+    const fighter = state.fighters[idx];
+    const baseEffects = (fighter.effects ?? []).filter((e) => e.type !== type);
+    const nextEffects = clear || !type
+      ? baseEffects
+      : [...baseEffects, { type, magnitude, remaining }];
+    const newFighters = [...state.fighters];
+    newFighters[idx] = { ...fighter, effects: nextEffects as never };
+    newState = { ...state, fighters: newFighters };
+  } else if (target === "first_monster") {
+    const idx = state.monsters.findIndex((m) => m.hp > 0);
+    if (idx === -1) return c.json({ error: "no live monster" }, 404);
+    const monster = state.monsters[idx];
+    const baseEffects = (monster.effects ?? []).filter((e) => e.type !== type);
+    const nextEffects = clear || !type
+      ? baseEffects
+      : [...baseEffects, { type, magnitude, remaining }];
+    const newMonsters = [...state.monsters];
+    newMonsters[idx] = { ...monster, effects: nextEffects as never };
+    newState = { ...state, monsters: newMonsters };
+  } else {
+    return c.json({ error: "invalid target" }, 400);
+  }
+  await saveWebCombatState(c.env.DB, questId, newState);
+  const doId = c.env.QUEST_ROOM.idFromName(`quest:${questId}`);
+  const doStub = c.env.QUEST_ROOM.get(doId);
+  await doStub.refreshFromD1(questId);
+  return c.json({ ok: true });
+});
+
 app.post("/api/dev/combat-kill-enemies", async (c) => {
   if (c.env.ENVIRONMENT !== "local") return c.json({ error: "forbidden" }, 403);
   const session = await currentSession(c.env.DB, c.req.header("Cookie"));
