@@ -1521,7 +1521,8 @@ function drawStatusOverlay(
   for (const e of live) {
     if (e.type === "burning" || e.type === "frozen" || e.type === "shocked"
       || e.type === "poisoned" || e.type === "bleeding"
-      || e.type === "stunned" || e.type === "regen") {
+      || e.type === "stunned" || e.type === "regen"
+      || e.type === "empowered") {
       ambient.push(e);
     } else {
       ringEffects.push(e);
@@ -1536,6 +1537,7 @@ function drawStatusOverlay(
     else if (e.type === "bleeding") drawBleedDrips(ctx, cx, cy, baseRadius, now, seed);
     else if (e.type === "stunned") drawStunnedStars(ctx, cx, cy, baseRadius, now, seed);
     else if (e.type === "regen") drawRegenPluses(ctx, cx, cy, baseRadius, now, seed);
+    else if (e.type === "empowered") drawEmpoweredAura(ctx, cx, cy, baseRadius, now, seed);
   }
 
   if (ringEffects.length > 0) {
@@ -1751,6 +1753,71 @@ function drawPortraitTint(
     ctx.fillRect(cx - radius, cy - radius, radius * 2, radius * 2);
     ctx.restore();
   }
+}
+
+// Anime "power up" speed lines — short violet/white spokes radiating
+// outward from the pawn rim, jittering in length on every frame so the
+// burst feels like crackling energy. Lines are biased upward (more
+// density above the head than below) so the silhouette reads as
+// rising-power rather than evenly-haloed.
+function drawEmpoweredAura(
+  ctx: CanvasRenderingContext2D,
+  cx: number, cy: number, r: number, now: number, seed: number,
+) {
+  const COUNT = 14;
+  // Fast tick — lines snap to slightly different lengths every frame so
+  // the whole burst vibrates like motion-line effects in shonen anime.
+  const tick = Math.floor(now / 65);
+  ctx.save();
+  ctx.lineCap = "round";
+  for (let i = 0; i < COUNT; i++) {
+    // Spread evenly around the pawn with a small per-line angle jitter.
+    const baseAng = (i / COUNT) * Math.PI * 2;
+    const jitter = (rng01(seed ^ tick, i) - 0.5) * 0.25;
+    const ang = baseAng + jitter;
+    // Upper-hemisphere density bias: shorten/dim lines pointing downward
+    // so the visual weight rides above the pawn.
+    const vertical = Math.sin(ang); // -1 (up) to 1 (down) — canvas y inverted
+    const upBias = 1 - Math.max(0, vertical) * 0.6;
+    // Line length jitters between 50% and 100% of max — that's the "vibrate".
+    const lengthFrac = 0.5 + rng01(seed ^ tick, i + 50) * 0.5;
+    const innerR = r * 1.05;
+    const outerR = r * (1.05 + 0.55 * lengthFrac * upBias);
+    const x0 = cx + Math.cos(ang) * innerR;
+    const y0 = cy + Math.sin(ang) * innerR;
+    const x1 = cx + Math.cos(ang) * outerR;
+    const y1 = cy + Math.sin(ang) * outerR;
+    // Two-tone stroke: bright violet body with a hotter inner core for
+    // the front-most spokes.
+    ctx.globalAlpha = 0.85 * upBias;
+    ctx.strokeStyle = "#a78bfa";
+    ctx.lineWidth = Math.max(1, r * 0.06);
+    ctx.beginPath();
+    ctx.moveTo(x0, y0);
+    ctx.lineTo(x1, y1);
+    ctx.stroke();
+    // White-violet core inside the line.
+    ctx.globalAlpha = 0.85 * upBias;
+    ctx.strokeStyle = "#ede9fe";
+    ctx.lineWidth = Math.max(0.4, r * 0.025);
+    ctx.beginPath();
+    ctx.moveTo(x0, y0);
+    ctx.lineTo(x1, y1);
+    ctx.stroke();
+  }
+  // Subtle pulsing violet halo over the upper rim — the "aura" backdrop
+  // behind the speed lines so they don't look like floating sticks.
+  ctx.globalAlpha = 0.55;
+  const pulse = 0.5 + 0.5 * Math.sin(now / 280);
+  const grad = ctx.createRadialGradient(cx, cy - r * 0.4, r * 0.8, cx, cy - r * 0.4, r * 1.6);
+  grad.addColorStop(0, "rgba(167, 139, 250, 0)");
+  grad.addColorStop(0.55, `rgba(167, 139, 250, ${0.35 * pulse})`);
+  grad.addColorStop(1, "rgba(167, 139, 250, 0)");
+  ctx.fillStyle = grad;
+  ctx.beginPath();
+  ctx.arc(cx, cy - r * 0.4, r * 1.6, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
 }
 
 // Light-green medical "+" signs floating gently up + sideways-bobbing.
