@@ -703,7 +703,43 @@ export function CombatHexGrid({
   // drags in particular get eaten by the browser's context-menu handling
   // so onMouseMove never fires at all between pointerdown and pointerup.
   function handlePointerMove(e: React.PointerEvent<HTMLCanvasElement>) {
+    // Update tracked touch position first so pinch math sees the latest
+    // finger location.
+    if (e.pointerType === "touch" && activeTouchesRef.current.has(e.pointerId)) {
+      activeTouchesRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    }
+    // Two-finger pinch — drives zoom anchored at the midpoint between the
+    // touches so the world point under the midpoint stays put as the
+    // user zooms in/out.
+    if (e.pointerType === "touch" && activeTouchesRef.current.size === 2 && pinchStartRef.current) {
+      const pts = Array.from(activeTouchesRef.current.values());
+      const dx = pts[1].x - pts[0].x;
+      const dy = pts[1].y - pts[0].y;
+      const dist = Math.hypot(dx, dy);
+      if (dist <= 0) return;
+      const start = pinchStartRef.current;
+      const factor = dist / start.dist;
+      const newZoom = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, start.zoom * factor));
+      const realFactor = newZoom / start.zoom;
+      // Same midpoint-anchor math as the wheel handler. Use the snapshot
+      // pan/zoom (`start.*`) as the reference frame so the gesture is
+      // stable across the whole pinch.
+      const startOffX = (w - natural.w * baseScale * start.zoom) / 2 + start.pan.x;
+      const startOffY = (h - natural.h * baseScale * start.zoom) / 2 + start.pan.y;
+      const worldX = (start.midX - startOffX) / (baseScale * start.zoom);
+      const worldY = (start.midY - startOffY) / (baseScale * start.zoom);
+      const wantNewOffX = start.midX - worldX * baseScale * newZoom;
+      const wantNewOffY = start.midY - worldY * baseScale * newZoom;
+      const newPanX = wantNewOffX - (w - natural.w * baseScale * newZoom) / 2;
+      const newPanY = wantNewOffY - (h - natural.h * baseScale * newZoom) / 2;
+      void realFactor;
+      setZoom(newZoom);
+      setPan(clampPan({ x: newPanX, y: newPanY }));
+      return;
+    }
+    // Single-pointer pan path (mouse drag OR single-touch on mobile).
     if (!panDragRef.current) return;
+    if (panDragRef.current.pointerId !== e.pointerId) return;
     const dx = e.clientX - panDragRef.current.lastX;
     const dy = e.clientY - panDragRef.current.lastY;
     panDragRef.current.lastX = e.clientX;
@@ -834,9 +870,21 @@ export function CombatHexGrid({
   }
 
   // ── Zoom + pan plumbing ────────────────────────────────────────────────────
-  // Pan drag (middle button OR right button OR shift+left). Tracked in a ref
-  // so mid-drag re-renders don't lose accumulated state.
-  const panDragRef = useRef<{ lastX: number; lastY: number; moved: boolean } | null>(null);
+  // Pan drag (middle button OR right button OR shift+left, OR single
+  // touch-pointer on mobile). Tracked in a ref so mid-drag re-renders don't
+  // lose accumulated state. `pointerId` keeps the captured pointer's
+  // identifier so multi-touch can route correctly (the pan pointer keeps
+  // panning; a second touch-finger triggers pinch mode instead of
+  // appending to the pan).
+  const panDragRef = useRef<{ pointerId: number; lastX: number; lastY: number; moved: boolean } | null>(null);
+  // Active touch points keyed by pointerId. Drives pinch-zoom on mobile:
+  // when two touches are down we treat it as a pinch (compute the distance
+  // between them per frame and scale `zoom` proportionally). A single
+  // touch falls through to the pan handler.
+  const activeTouchesRef = useRef<Map<number, { x: number; y: number }>>(new Map());
+  // Snapshot of the pinch state at the moment the second finger went
+  // down — used as the divisor when computing the current zoom multiplier.
+  const pinchStartRef = useRef<{ dist: number; zoom: number; midX: number; midY: number; pan: { x: number; y: number } } | null>(null);
   // Clamp a candidate pan so the grid can't be dragged completely off-screen.
   // Allow PAN_SLACK_HEXES worth of overscroll past the edges so the player
   // can compose shots near corners without fighting an invisible wall.
@@ -894,11 +942,41 @@ export function CombatHexGrid({
     });
   }
   function handlePointerDown(e: React.PointerEvent<HTMLCanvasElement>) {
-    // Middle button, right button, or shift+left starts panning.
+    const canvas = canvasRef.current;
+    // Touch: register the contact in the multi-touch map. The 2nd touch
+    // becomes the start of a pinch; a single touch becomes a single-
+    // finger pan (mobile).
+    if (e.pointerType === "touch") {
+      activeTouchesRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      try { canvas?.setPointerCapture(e.pointerId); } catch { /* ignore */ }
+      if (activeTouchesRef.current.size === 2) {
+        // Pinch begin — snapshot start distance, zoom, mid, and pan so the
+        // current pan also follows the pinch midpoint deterministically.
+        const pts = Array.from(activeTouchesRef.current.values());
+        const dx = pts[1].x - pts[0].x;
+        const dy = pts[1].y - pts[0].y;
+        const dist = Math.hypot(dx, dy);
+        const rect = canvas?.getBoundingClientRect();
+        if (rect) {
+          const scaleX = canvas!.width / rect.width;
+          const scaleY = canvas!.height / rect.height;
+          const midX = (((pts[0].x + pts[1].x) / 2) - rect.left) * scaleX;
+          const midY = (((pts[0].y + pts[1].y) / 2) - rect.top)  * scaleY;
+          pinchStartRef.current = { dist, zoom, midX, midY, pan: { x: pan.x, y: pan.y } };
+        }
+        // While pinching, suppress any in-flight single-touch pan so the
+        // gesture doesn't fight itself.
+        panDragRef.current = null;
+        return;
+      }
+      // Single touch — start a pan.
+      panDragRef.current = { pointerId: e.pointerId, lastX: e.clientX, lastY: e.clientY, moved: false };
+      return;
+    }
+    // Mouse: middle button, right button, or shift+left starts panning.
     if (e.button === 1 || e.button === 2 || (e.button === 0 && e.shiftKey)) {
       e.preventDefault();
-      panDragRef.current = { lastX: e.clientX, lastY: e.clientY, moved: false };
-      const canvas = canvasRef.current;
+      panDragRef.current = { pointerId: e.pointerId, lastX: e.clientX, lastY: e.clientY, moved: false };
       if (canvas) {
         try { canvas.setPointerCapture(e.pointerId); } catch { /* ignore */ }
         canvas.style.cursor = "grabbing";
@@ -910,10 +988,35 @@ export function CombatHexGrid({
   // shift+drag pan would release into a hex-move click on the destination.
   const suppressNextClickRef = useRef(false);
   function handlePointerUp(e: React.PointerEvent<HTMLCanvasElement>) {
+    const canvas = canvasRef.current;
+    // Touch cleanup — drop the contact and end pinch mode if it was active.
+    if (e.pointerType === "touch") {
+      const wasPinching = activeTouchesRef.current.size === 2;
+      activeTouchesRef.current.delete(e.pointerId);
+      try { canvas?.releasePointerCapture(e.pointerId); } catch { /* ignore */ }
+      if (wasPinching) {
+        // Pinch ended (one finger lifted). Drop the pinch snapshot. The
+        // remaining finger could keep panning, but for simplicity we
+        // require lift+retouch to start a new pan to avoid surprising
+        // jumps from where the pinch ended.
+        pinchStartRef.current = null;
+        panDragRef.current = null;
+        return;
+      }
+      // Single-touch pan release. Suppress the synthetic click the
+      // browser fires on a tap that registered as a pan.
+      if (panDragRef.current?.pointerId === e.pointerId) {
+        const moved = panDragRef.current.moved;
+        panDragRef.current = null;
+        if (moved) suppressNextClickRef.current = true;
+      }
+      return;
+    }
+    // Mouse path.
     if (!panDragRef.current) return;
+    if (panDragRef.current.pointerId !== e.pointerId) return;
     const wasLeft = e.button === 0;
     const moved = panDragRef.current.moved;
-    const canvas = canvasRef.current;
     if (canvas) {
       try { canvas.releasePointerCapture(e.pointerId); } catch { /* ignore */ }
       canvas.style.cursor = "default";
