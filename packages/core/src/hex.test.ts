@@ -420,6 +420,27 @@ describe("generateObstacles", () => {
     expect(forest.every((o) => ["tree", "boulder", "rubble"].includes(o.kind))).toBe(true);
     expect(ruins.every((o) => ["pillar", "rubble", "crate"].includes(o.kind))).toBe(true);
   });
+
+  it("themed corporate-fantasy scenes pull from the engineering obstacle set", () => {
+    // Sample several seeds per scene so we exercise the palette pick instead
+    // of pinning a single result.
+    const sceneToAllowedKinds: Record<string, string[]> = {
+      server_catacomb:    ["server_rack", "k8s_cluster", "rubble"],
+      cubicle_forest:     ["cubicle_wall", "watercooler", "tree"],
+      warehouse_floor:    ["crate", "file_cabinet", "rubble"],
+      fluorescent_office: ["file_cabinet", "printer", "desktop_computer", "cubicle_wall", "watercooler"],
+      neon_basement:      ["server_rack", "k8s_cluster", "pillar"],
+      deadline_dungeon:   ["desktop_computer", "file_cabinet", "pillar", "rubble"],
+    };
+    for (const [scene, allowed] of Object.entries(sceneToAllowedKinds)) {
+      for (let seed = 1; seed < 20; seed++) {
+        const obs = generateObstacles(GRID, party, monsters, seed, scene);
+        for (const o of obs) {
+          expect(allowed, `scene=${scene} seed=${seed}`).toContain(o.kind);
+        }
+      }
+    }
+  });
 });
 
 describe("hexLos with obstacles array", () => {

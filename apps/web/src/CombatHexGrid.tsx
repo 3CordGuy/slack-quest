@@ -409,6 +409,13 @@ const OBSTACLE_LABEL: Record<ObstacleKind, string> = {
   crate: "Crate",
   tree: "Tree",
   rubble: "Rubble",
+  server_rack: "Server Rack",
+  desktop_computer: "Workstation",
+  printer: "Printer",
+  file_cabinet: "File Cabinet",
+  watercooler: "Water Cooler",
+  cubicle_wall: "Cubicle Wall",
+  k8s_cluster: "k8s Cluster",
 };
 
 export function CombatHexGrid({
@@ -1642,6 +1649,234 @@ function drawObstacleSprite(
         ctx.beginPath();
         ctx.arc(cx + dx * hexSize, cy + dy * hexSize, r * hexSize, 0, Math.PI * 2);
         ctx.fill();
+      }
+      break;
+    }
+    case "server_rack": {
+      // Tall dark chassis with 3 rows of LED status lights and a faint cable
+      // drape at the bottom — reads as a 1U server pile from across the grid.
+      ctx.fillStyle = "rgba(0,0,0,0.4)";
+      ctx.beginPath();
+      ctx.ellipse(cx, cy + hexSize * 0.46, hexSize * 0.36, hexSize * 0.09, 0, 0, Math.PI * 2);
+      ctx.fill();
+      const w = hexSize * 0.52;
+      const h = hexSize * 0.82;
+      const x0 = cx - w / 2;
+      const y0 = cy - h * 0.52;
+      ctx.fillStyle = "#1f2937";
+      ctx.fillRect(x0, y0, w, h);
+      ctx.strokeStyle = "#0b1320";
+      ctx.lineWidth = 1.5;
+      ctx.strokeRect(x0, y0, w, h);
+      ctx.fillStyle = "#374151";
+      ctx.fillRect(x0, y0, w, hexSize * 0.08);
+      const rowYs = [0.20, 0.45, 0.70];
+      for (let row = 0; row < rowYs.length; row++) {
+        const ry = y0 + h * rowYs[row];
+        ctx.fillStyle = "#0b1320";
+        ctx.fillRect(x0 + w * 0.08, ry, w * 0.84, hexSize * 0.06);
+        const ledColor = row === 1 ? "#fbbf24" : "#22d3ee";
+        for (let i = 0; i < 6; i++) {
+          ctx.fillStyle = ledColor;
+          ctx.beginPath();
+          ctx.arc(x0 + w * (0.16 + i * 0.13), ry + hexSize * 0.03, hexSize * 0.022, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+      ctx.strokeStyle = "#1f2937";
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(x0 + w * 0.25, y0 + h);
+      ctx.quadraticCurveTo(x0 + w * 0.3, y0 + h + hexSize * 0.10, x0 + w * 0.18, y0 + h + hexSize * 0.18);
+      ctx.moveTo(x0 + w * 0.65, y0 + h);
+      ctx.quadraticCurveTo(x0 + w * 0.7, y0 + h + hexSize * 0.12, x0 + w * 0.82, y0 + h + hexSize * 0.18);
+      ctx.stroke();
+      break;
+    }
+    case "desktop_computer": {
+      // Boxy monitor on a small stand with a glowing screen + side tower.
+      ctx.fillStyle = "rgba(0,0,0,0.4)";
+      ctx.beginPath();
+      ctx.ellipse(cx, cy + hexSize * 0.42, hexSize * 0.42, hexSize * 0.10, 0, 0, Math.PI * 2);
+      ctx.fill();
+      const monW = hexSize * 0.56;
+      const monH = hexSize * 0.42;
+      const mx = cx - hexSize * 0.06 - monW / 2;
+      const my = cy - hexSize * 0.18;
+      ctx.fillStyle = "#0f172a";
+      ctx.fillRect(mx, my, monW, monH);
+      const grad = ctx.createLinearGradient(mx, my, mx, my + monH);
+      grad.addColorStop(0, "#22d3ee");
+      grad.addColorStop(1, "#0ea5e9");
+      ctx.fillStyle = grad;
+      ctx.fillRect(mx + 2, my + 2, monW - 4, monH - 4);
+      ctx.fillStyle = "#475569";
+      ctx.fillRect(cx - hexSize * 0.10, my + monH, hexSize * 0.08, hexSize * 0.10);
+      ctx.fillRect(cx - hexSize * 0.20, my + monH + hexSize * 0.10, hexSize * 0.28, hexSize * 0.04);
+      ctx.fillStyle = "#1f2937";
+      ctx.fillRect(cx + hexSize * 0.24, my + monH * 0.20, hexSize * 0.14, hexSize * 0.30);
+      ctx.fillStyle = "#22d3ee";
+      ctx.beginPath();
+      ctx.arc(cx + hexSize * 0.31, my + monH * 0.46, hexSize * 0.018, 0, Math.PI * 2);
+      ctx.fill();
+      break;
+    }
+    case "printer": {
+      // Squat off-white box, paper tray peeks out the top, blinking LED.
+      ctx.fillStyle = "rgba(0,0,0,0.4)";
+      ctx.beginPath();
+      ctx.ellipse(cx, cy + hexSize * 0.40, hexSize * 0.46, hexSize * 0.12, 0, 0, Math.PI * 2);
+      ctx.fill();
+      const w = hexSize * 0.74;
+      const h = hexSize * 0.46;
+      const x0 = cx - w / 2;
+      const y0 = cy - hexSize * 0.10;
+      ctx.fillStyle = "#e5e7eb";
+      ctx.fillRect(x0, y0, w, h);
+      ctx.strokeStyle = "#94a3b8";
+      ctx.lineWidth = 1.5;
+      ctx.strokeRect(x0, y0, w, h);
+      ctx.fillStyle = "#f9fafb";
+      ctx.fillRect(x0 + w * 0.20, y0 - hexSize * 0.10, w * 0.60, hexSize * 0.10);
+      ctx.strokeStyle = "#cbd5e1";
+      ctx.strokeRect(x0 + w * 0.20, y0 - hexSize * 0.10, w * 0.60, hexSize * 0.10);
+      ctx.fillStyle = "#1f2937";
+      ctx.fillRect(x0 + w * 0.08, y0 + h * 0.20, w * 0.26, h * 0.16);
+      ctx.fillStyle = "#34d399";
+      ctx.beginPath();
+      ctx.arc(x0 + w * 0.82, y0 + h * 0.30, hexSize * 0.025, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "#1f2937";
+      ctx.fillRect(x0 + w * 0.10, y0 + h * 0.55, w * 0.80, hexSize * 0.04);
+      break;
+    }
+    case "file_cabinet": {
+      // Tall narrow metal cabinet with 4 drawers and small pull handles.
+      ctx.fillStyle = "rgba(0,0,0,0.4)";
+      ctx.beginPath();
+      ctx.ellipse(cx, cy + hexSize * 0.46, hexSize * 0.34, hexSize * 0.10, 0, 0, Math.PI * 2);
+      ctx.fill();
+      const w = hexSize * 0.48;
+      const h = hexSize * 0.86;
+      const x0 = cx - w / 2;
+      const y0 = cy - h * 0.54;
+      ctx.fillStyle = "#9ca3af";
+      ctx.fillRect(x0, y0, w, h);
+      ctx.strokeStyle = "#4b5563";
+      ctx.lineWidth = 1.5;
+      ctx.strokeRect(x0, y0, w, h);
+      for (let i = 0; i < 4; i++) {
+        const dy = y0 + (h / 4) * i;
+        ctx.strokeStyle = "#6b7280";
+        ctx.beginPath();
+        ctx.moveTo(x0, dy);
+        ctx.lineTo(x0 + w, dy);
+        ctx.stroke();
+        ctx.fillStyle = "#374151";
+        ctx.fillRect(x0 + w * 0.35, dy + (h / 4) * 0.55, w * 0.30, hexSize * 0.04);
+      }
+      break;
+    }
+    case "watercooler": {
+      // Translucent blue jug atop a white base with a spigot. Air bubbles inside.
+      ctx.fillStyle = "rgba(0,0,0,0.4)";
+      ctx.beginPath();
+      ctx.ellipse(cx, cy + hexSize * 0.46, hexSize * 0.34, hexSize * 0.10, 0, 0, Math.PI * 2);
+      ctx.fill();
+      const baseW = hexSize * 0.50;
+      const baseH = hexSize * 0.36;
+      const bx = cx - baseW / 2;
+      const by = cy + hexSize * 0.10;
+      ctx.fillStyle = "#f3f4f6";
+      ctx.fillRect(bx, by, baseW, baseH);
+      ctx.strokeStyle = "#9ca3af";
+      ctx.lineWidth = 1.5;
+      ctx.strokeRect(bx, by, baseW, baseH);
+      ctx.fillStyle = "#1e3a8a";
+      ctx.fillRect(bx + baseW * 0.40, by + baseH * 0.50, baseW * 0.20, hexSize * 0.08);
+      ctx.fillStyle = "#94a3b8";
+      ctx.fillRect(bx + baseW * 0.20, by + baseH - hexSize * 0.04, baseW * 0.60, hexSize * 0.04);
+      const jugW = hexSize * 0.40;
+      const jugH = hexSize * 0.42;
+      const jx = cx - jugW / 2;
+      const jy = by - jugH + hexSize * 0.06;
+      ctx.fillStyle = "rgba(56, 189, 248, 0.55)";
+      ctx.fillRect(jx, jy, jugW, jugH);
+      ctx.strokeStyle = "#0284c7";
+      ctx.strokeRect(jx, jy, jugW, jugH);
+      ctx.fillStyle = "rgba(255,255,255,0.75)";
+      ctx.beginPath();
+      ctx.arc(jx + jugW * 0.30, jy + jugH * 0.30, hexSize * 0.025, 0, Math.PI * 2);
+      ctx.arc(jx + jugW * 0.65, jy + jugH * 0.55, hexSize * 0.020, 0, Math.PI * 2);
+      ctx.fill();
+      break;
+    }
+    case "cubicle_wall": {
+      // Gray fabric panel with a darker frame and a couple of sticky notes.
+      ctx.fillStyle = "rgba(0,0,0,0.4)";
+      ctx.beginPath();
+      ctx.ellipse(cx, cy + hexSize * 0.46, hexSize * 0.42, hexSize * 0.10, 0, 0, Math.PI * 2);
+      ctx.fill();
+      const w = hexSize * 0.78;
+      const h = hexSize * 0.72;
+      const x0 = cx - w / 2;
+      const y0 = cy - h * 0.55;
+      ctx.fillStyle = "#475569";
+      ctx.fillRect(x0 + w, y0 + hexSize * 0.04, hexSize * 0.06, h - hexSize * 0.04);
+      ctx.fillStyle = "#94a3b8";
+      ctx.fillRect(x0, y0, w, h);
+      ctx.strokeStyle = "#475569";
+      ctx.lineWidth = 1.5;
+      ctx.strokeRect(x0, y0, w, h);
+      ctx.strokeStyle = "rgba(71,85,105,0.4)";
+      ctx.lineWidth = 0.6;
+      for (let i = 1; i < 4; i++) {
+        const tx = x0 + (w / 4) * i;
+        ctx.beginPath();
+        ctx.moveTo(tx, y0 + 2);
+        ctx.lineTo(tx, y0 + h - 2);
+        ctx.stroke();
+      }
+      ctx.fillStyle = "#fde047";
+      ctx.fillRect(x0 + w * 0.15, y0 + h * 0.20, hexSize * 0.14, hexSize * 0.14);
+      ctx.fillStyle = "#f9a8d4";
+      ctx.fillRect(x0 + w * 0.55, y0 + h * 0.45, hexSize * 0.14, hexSize * 0.14);
+      break;
+    }
+    case "k8s_cluster": {
+      // 3×3 grid of small dark node cubes with cyan LEDs — reads as a humming
+      // pod cluster at a glance.
+      ctx.fillStyle = "rgba(0,0,0,0.4)";
+      ctx.beginPath();
+      ctx.ellipse(cx, cy + hexSize * 0.44, hexSize * 0.44, hexSize * 0.11, 0, 0, Math.PI * 2);
+      ctx.fill();
+      const span = hexSize * 0.70;
+      const step = span / 2;
+      const node = hexSize * 0.16;
+      for (let row = 0; row < 3; row++) {
+        for (let c = 0; c < 3; c++) {
+          const nx = cx - span / 2 + c * step;
+          const ny = cy - span / 2 + row * step;
+          ctx.fillStyle = "#1e293b";
+          ctx.fillRect(nx - node / 2, ny - node / 2, node, node);
+          ctx.strokeStyle = "#0ea5e9";
+          ctx.lineWidth = 1;
+          ctx.strokeRect(nx - node / 2, ny - node / 2, node, node);
+          ctx.fillStyle = (row + c) % 2 === 0 ? "#34d399" : "#22d3ee";
+          ctx.beginPath();
+          ctx.arc(nx + node * 0.30, ny + node * 0.30, hexSize * 0.018, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+      ctx.fillStyle = "rgba(34,211,238,0.5)";
+      for (let row = 0; row < 3; row++) {
+        for (let c = 0; c < 2; c++) {
+          const nx = cx - span / 2 + (c + 0.5) * step;
+          const ny = cy - span / 2 + row * step;
+          ctx.beginPath();
+          ctx.arc(nx, ny, hexSize * 0.012, 0, Math.PI * 2);
+          ctx.fill();
+        }
       }
       break;
     }
