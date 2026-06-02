@@ -17,8 +17,11 @@ import {
   initialHexPositions,
   lootTileGold,
   lootTileItemTier,
+  pickMonsterFormation,
+  placeMonsters,
   posKey,
   type HexGrid,
+  type MonsterPlacementSpec,
 } from "./hex";
 
 const GRID = GRID_DEFAULT; // 9×11 (portrait)
@@ -573,5 +576,97 @@ describe("generateLootTiles", () => {
     expect(lootTileItemTier(5)).toBe(4);
     expect(lootTileItemTier(1)).toBe(1);
     expect(lootTileItemTier(0)).toBe(1);
+  });
+});
+
+describe("pickMonsterFormation", () => {
+  it("singleton fights always use center (no formation makes sense)", () => {
+    for (let seed = 0; seed < 20; seed++) {
+      expect(pickMonsterFormation(seed, 1)).toBe("center");
+      expect(pickMonsterFormation(seed, 0)).toBe("center");
+    }
+  });
+
+  it("is deterministic for the same seed + count", () => {
+    expect(pickMonsterFormation(42, 4)).toBe(pickMonsterFormation(42, 4));
+    expect(pickMonsterFormation(1337, 3)).toBe(pickMonsterFormation(1337, 3));
+  });
+
+  it("samples across all formations as seed varies", () => {
+    const seen = new Set<string>();
+    for (let seed = 0; seed < 200; seed++) {
+      seen.add(pickMonsterFormation(seed, 4));
+    }
+    expect(seen.has("center")).toBe(true);
+    expect(seen.has("line")).toBe(true);
+    expect(seen.has("wedge")).toBe(true);
+    expect(seen.has("scatter")).toBe(true);
+    expect(seen.has("flank")).toBe(true);
+    expect(seen.has("back_rank")).toBe(true);
+  });
+});
+
+describe("placeMonsters", () => {
+  function specs(count: number, mix?: Partial<MonsterPlacementSpec>[]): MonsterPlacementSpec[] {
+    return Array.from({ length: count }, (_, i) => ({ weapon_range: "melee" as const, ...mix?.[i] }));
+  }
+
+  it("empty specs return empty positions", () => {
+    expect(placeMonsters([], GRID, 1)).toEqual([]);
+  });
+
+  it("solo monsters use the original center-fill behavior", () => {
+    const placed = placeMonsters(specs(1), GRID, 99);
+    expect(placed).toEqual(initialHexPositions(1, "bottom", GRID));
+  });
+
+  it("places every monster on an in-bounds, distinct hex for any seed", () => {
+    for (let seed = 0; seed < 100; seed++) {
+      const placed = placeMonsters(specs(5), GRID, seed);
+      expect(placed).toHaveLength(5);
+      const keys = new Set(placed.map(posKey));
+      expect(keys.size).toBe(placed.length);
+      for (const p of placed) {
+        expect(inBounds(p, GRID), `seed=${seed} pos=${posKey(p)}`).toBe(true);
+      }
+    }
+  });
+
+  it("bosses always claim a center-stage slot (never the corners)", () => {
+    const bossSpecs: MonsterPlacementSpec[] = [
+      { weapon_range: "melee" },
+      { weapon_range: "melee", is_boss: true },
+      { weapon_range: "ranged" },
+      { weapon_range: "focus" },
+    ];
+    const midCol = Math.floor(GRID.cols / 2);
+    for (let seed = 0; seed < 30; seed++) {
+      const placed = placeMonsters(bossSpecs, GRID, seed);
+      const bossPos = placed[1];
+      const offsetCol = bossPos.q + Math.floor(bossPos.r / 2);
+      expect(Math.abs(offsetCol - midCol), `seed=${seed}`).toBeLessThanOrEqual(2);
+    }
+  });
+
+  it("monsters stay in the bottom half of the grid", () => {
+    const midRow = Math.floor(GRID.rows / 2);
+    for (let seed = 0; seed < 50; seed++) {
+      const placed = placeMonsters(specs(4), GRID, seed);
+      for (const p of placed) expect(p.r, `seed=${seed}`).toBeGreaterThanOrEqual(midRow);
+    }
+  });
+
+  it("scene_seed determinism: same seed → identical layout", () => {
+    const a = placeMonsters(specs(5), GRID, 12345);
+    const b = placeMonsters(specs(5), GRID, 12345);
+    expect(a).toEqual(b);
+  });
+
+  it("different seeds produce different layouts for the same party size", () => {
+    const layouts = new Set<string>();
+    for (let seed = 1; seed < 30; seed++) {
+      layouts.add(placeMonsters(specs(4), GRID, seed).map(posKey).join("|"));
+    }
+    expect(layouts.size).toBeGreaterThan(2);
   });
 });
