@@ -15,7 +15,7 @@
 // and consistently styled with the rest of the UI.
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { charPortraitUrl, classPortraitUrl } from "./CombatShared";
+import { charPortraitUrl, classPortraitUrl, monsterPortraitUrl } from "./CombatShared";
 import {
   GRID_DEFAULT,
   deriveMoveRange,
@@ -593,6 +593,10 @@ export function CombatHexGrid({
     }
     for (const m of state.monsters) {
       if (m.art_url) loadPortrait(m.art_url);
+      // Fallback to the deterministic R2 URL by monster name — covers the
+      // case where art was generated AFTER scene creation (resumed quest)
+      // and never made it onto the live state's art_url field.
+      if (m.name) loadPortrait(monsterPortraitUrl(m.name));
     }
   }, [state.fighters, state.monsters]);
 
@@ -1695,7 +1699,9 @@ function drawActors(
       ctx.restore();
     }
     ctx.globalAlpha = downed ? 0.35 : 1;
-    const mPortrait = resolvePortrait(m.art_url);
+    const mPortrait =
+      resolvePortrait(m.art_url)
+      ?? (m.name ? resolvePortrait(monsterPortraitUrl(m.name)) : null);
     if (mPortrait) {
       ctx.save();
       ctx.beginPath();
