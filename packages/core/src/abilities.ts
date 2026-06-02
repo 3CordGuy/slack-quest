@@ -208,7 +208,12 @@ export type AbilityEffect =
   // specific ally. Targeted version of cleanse_ally_debuffs. The cleanse
   // semantics (which effect types count as "negative") match the field-wide
   // cleanse handler for consistency.
-  | { kind: "cleanse_single_ally"; target_id: string };
+  | { kind: "cleanse_single_ally"; target_id: string }
+  // SRE Warden — Failover: swap the caster's hex position with the targeted
+  // ally's. Both must have a `pos` for the swap to apply; otherwise no-op.
+  // Hex-grid combat only — in legacy front/back this is also a no-op since
+  // there's no meaningful position to swap.
+  | { kind: "swap_positions"; caster_id: string; target_id: string };
 
 export interface ActiveAbilityDef {
   kind: "active";

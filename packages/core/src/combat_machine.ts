@@ -3609,6 +3609,27 @@ function applyUtilityAbilityEffects(
         };
         break;
       }
+      case "swap_positions": {
+        // SRE Warden — Failover: trade hex positions with the targeted ally.
+        // Both must have a pos for the swap to apply (legacy front/back combat
+        // doesn't have hex positions; the swap is a no-op there).
+        const caster = s.fighters.find((f) => f.id === effect.caster_id);
+        const target = s.fighters.find((f) => f.id === effect.target_id);
+        if (!caster || !target || !caster.pos || !target.pos) break;
+        const casterPos = caster.pos;
+        const targetPos = target.pos;
+        s = {
+          ...s,
+          fighters: s.fighters.map((f) => {
+            if (f.id === effect.caster_id) return { ...f, pos: targetPos };
+            if (f.id === effect.target_id) return { ...f, pos: casterPos };
+            return f;
+          }),
+        };
+        events.push({ type: "moved", actor: effect.caster_id, from: casterPos, to: targetPos });
+        events.push({ type: "moved", actor: effect.target_id, from: targetPos, to: casterPos });
+        break;
+      }
       case "cleanse_single_ally": {
         // QA Paladin — Code Review: strip every negative status from one
         // ally. Same NEGATIVE set as the field-wide cleanse_ally_debuffs
