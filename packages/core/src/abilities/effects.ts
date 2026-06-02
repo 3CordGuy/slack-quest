@@ -177,6 +177,10 @@ export const fx = {
   swapPositions(casterId: string, targetId: string): AbilityEffect {
     return { kind: "swap_positions", caster_id: casterId, target_id: targetId };
   },
+
+  leapAdjacentTo(actorId: string, targetId: string): AbilityEffect {
+    return { kind: "leap_adjacent_to", actor_id: actorId, target_id: targetId };
+  },
 };
 
 // Roll count dice of `sides` and return the sum.

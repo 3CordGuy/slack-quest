@@ -453,6 +453,45 @@ const smokeTest: AbilityDef = {
   },
 };
 
+// Hotpath — leap to a hex adjacent to the target, then strike. The leap
+// auto-resolves: the engine picks the unoccupied neighbor closest to the
+// rogue's current position (least-jarring jump). Player only picks the target
+// enemy — no new hex picker needed in the UI.
+const hotpath: AbilityDef = {
+  kind: "active",
+  id: "hotpath",
+  name: "Hotpath",
+  blurb: "Sprint the hot path — leap to the target's flank and strike for 1d8 + attack physical damage.",
+  icon: "run",
+  mana_cost: 1,
+  cooldown_turns: 2,
+  routing: "utility",
+  target: "single_enemy",
+  range_tiles: 4,
+  aoe_radius_tiles: 0,
+  execute(ctx) {
+    const monster = ctx.target as MonsterSnapshot;
+    const atk = ctx.caster.attack_mod;
+    const amount = ctx.roll(8) + atk;
+    return [
+      fx.leapAdjacentTo(ctx.caster.id, monster.id),
+      fx.damage(monster.id, amount, `1d8+${atk}a`, { damageType: "physical" }),
+    ];
+  },
+};
+
+const cherryPick: AbilityDef = {
+  kind: "passive",
+  id: "cherry_pick",
+  name: "Cherry-Pick",
+  blurb: "Finish the broken builds first — your damage on enemies under 25% HP is increased by 50%.",
+  icon: "daggers",
+  trigger: "always_on",
+  once_per_fight: false,
+  execute: () => [],
+  // Effect is applied inline by handleDamageAbility via fighterHasPassive.
+};
+
 const silentMode: AbilityDef = {
   kind: "passive",
   id: "silent_mode",
@@ -696,6 +735,8 @@ const NEW_NODES_BY_CLASS: Record<ClassId, TalentNodeDef[]> = {
     activeNode("refactor_rogue", codeAudit, "control"),
     activeNode("refactor_rogue", smokeTest, "utility"),
     activeNode("refactor_rogue", silentMode, "defense"),
+    activeNode("refactor_rogue", hotpath, "damage"),
+    activeNode("refactor_rogue", cherryPick, "damage"),
   ],
   sre_warden: [
     activeNode("sre_warden", postmortem, "damage"),
@@ -724,7 +765,7 @@ export const NEW_ABILITY_DEFS: AbilityDef[] = [
   pruning, mycelialWeb, compostHeap, deepRoots, cronJob,
   standupMeeting, discordNotification, encore, unsubscribeFromAll,
   frostBolt, hailstorm, timeDilation,
-  codeAudit, smokeTest, silentMode,
+  codeAudit, smokeTest, silentMode, hotpath, cherryPick,
   postmortem, circuitBreaker, failover, capacityPlanning,
   indexScan, stackTrace, dropTable, staleCache, garbageCollection,
 ];
