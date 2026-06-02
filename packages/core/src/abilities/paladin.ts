@@ -54,6 +54,8 @@ export const paladinAbilities: AbilityDef[] = [
     cooldown_turns: 1,
     routing: "damage",
     target: "single_enemy",
+    range_tiles: 1, // melee strike
+    aoe_radius_tiles: 0, // single-target smite
     execute(ctx) {
       const monster = ctx.target as { id: string };
       const wpn = Math.max(0, ctx.caster.weapon_power);

@@ -19,12 +19,31 @@ import {
   applyDamageWithShield,
   isBossPhaseTransition,
   pickMonsterTarget,
-  positionDamageMod,
   resolveHeal,
   resolveMonsterHit,
   resolvePlayerHit,
   type BattlePosition,
 } from "./combat";
+import {
+  GRID_DEFAULT,
+  hexDistance,
+  hexDisk,
+  hexLos,
+  hexNeighbors,
+  hexPath,
+  hexReachable,
+  initialHexPositions,
+  generateObstacles,
+  obstaclePositions,
+  deriveMoveRange,
+  deriveRangeTiles,
+  inBounds,
+  posKey,
+  type HexGrid,
+  type HexPos,
+  type MonsterSpecial,
+  type Obstacle,
+} from "./hex";
 import {
   ELEMENT_META,
   ELEMENT_PROC_RATE,
@@ -79,6 +98,12 @@ export interface CombatFighter {
   mana: number;
   max_mana: number;
   shield: number;
+  // Hex grid position (axial coordinates). Populated by createCombatState()
+  // and updated by move actions. Optional for backward compat with serialized
+  // states that pre-date the tactical grid.
+  pos?: HexPos;
+  // Legacy front/back position — kept for Slack combat and old serialized
+  // states. In hex combat, `pos` is the authoritative position.
   position: BattlePosition;
   attack_mod: number;
   magic_mod: number;
@@ -125,6 +150,15 @@ export interface CombatMonster {
   effects: MachineStatusEffect[];
   is_boss: boolean;
   boss_phase: 1 | 2;
+  // Hex grid position. Populated by createCombatState() from initialHexPositions.
+  // Optional for backward compat with serialized states that pre-date the grid.
+  pos?: HexPos;
+  // Hexes the monster can move per turn. Defaults to min(5, 2 + tier) at combat init.
+  move_range?: number;
+  // Computed attack range in hexes. Defaults based on weapon_range (melee=1, ranged=4, focus=3).
+  range_tiles?: number;
+  // Anti-kite special abilities. Empty for basic monsters.
+  specials?: MonsterSpecial[];
   // Gauntlet wave state. Set only when the quest variant is "gauntlet";
   // undefined for standard / boss combats. `wave` is 1-indexed. On the
   // current monster's death, the engine pops the next entry from
@@ -150,6 +184,9 @@ export interface CombatMonster {
   // Damage-type routing for this monster's attacks. undefined defaults to "physical".
   // Determines whether armor or gear resistance applies when the monster hits a fighter.
   attack_damage_type?: DamageType;
+  // Weapon range category for this monster. Drives initial range_tiles calculation
+  // and determines whether the monster is a melee, ranged, or caster threat.
+  weapon_range?: WeaponRange;
   damage_roll?: string;
   // Player damage type weaknesses/resistances (separate from elemental proc affinities).
   // weakness: player deals +30% to this monster with matching type.
@@ -219,6 +256,24 @@ export interface CombatState {
   // queue and actual post can't double-broadcast on replay. Engine
   // ignores this field — the DO is the only writer/reader.
   milestones_posted?: string[];
+  // ── Hex grid fields (added with tactical combat) ──────────────────────────
+  // Arena dimensions. Defaults to GRID_DEFAULT (13×7) when not present.
+  grid?: HexGrid;
+  // Current sub-phase of the active turn. "move" → player may move or skip;
+  // "attack" → player may attack, cast, or wait. Monsters resolve both phases
+  // automatically. Absent on legacy states (treated as "attack").
+  turn_phase?: "move" | "attack";
+  // Terrain obstacles: block movement AND line of sight. Generated
+  // deterministically at combat init from `scene_seed`.
+  obstacles?: Obstacle[];
+  // Visual/AI hint for battlefield generation (cave, forest, ruins, etc.).
+  // Used by the obstacle generator to pick scene-appropriate kinds.
+  scene?: string;
+  // Once-per-fight monster specials that have already fired, keyed by monster id.
+  specials_used?: Record<ActorId, MonsterSpecial[]>;
+  // When true, hex range and LOS are enforced on attacks. Set by the web app;
+  // false/absent on Slack combats, old serialized states, and unit tests.
+  hex_range_enabled?: boolean;
 }
 
 // Passive tuning knobs. Mirror src/commands.ts constants in main.
@@ -302,6 +357,8 @@ export type TurnAction =
       target?: ActorId;
       position?: BattlePosition;
     }
+  // Hex grid: move the actor to an adjacent-or-reachable hex during move phase.
+  | { kind: "move"; actor: ActorId; to: HexPos }
   | { kind: "monster_act"; actor?: ActorId }
   // ally_npc_act covers both hired mercs (__merc_*) and ability-summoned NPCs
   // (__ally_*). The DO/client dispatches this whenever isAllyNpcActor() is true
@@ -407,6 +464,15 @@ export type CombatEvent =
       from: BattlePosition;
       to: BattlePosition;
     }
+  // Hex grid movement events.
+  | { type: "moved"; actor: ActorId; from: HexPos; to: HexPos }
+  | { type: "monster_moved"; actor: ActorId; from: HexPos; to: HexPos }
+  | { type: "monster_charge"; actor: ActorId }
+  | { type: "monster_pounce"; actor: ActorId; to: HexPos }
+  | { type: "out_of_range"; actor: ActorId; distance: number; max_range: number }
+  // Generic "status effect applied" event — used by monster specials like
+  // entangle_on_hit. Ability-driven effects still emit their bespoke types.
+  | { type: "effect_applied"; actor: ActorId; target: ActorId; effect: EffectType; magnitude: number; duration: number }
   | {
       type: "effect_tick";
       actor: ActorId;
@@ -475,7 +541,7 @@ export type CombatEvent =
       from: BattlePosition;
       to: BattlePosition;
     }
-  | { type: "monster_swing_skipped"; reason: "stunned" }
+  | { type: "monster_swing_skipped"; reason: "stunned" | "out_of_range" }
   | { type: "monster_stun_broken"; turns_active: number }
   | { type: "monster_target_redirected"; from: ActorId; to: ActorId; reason: "taunt" | "vanish" }
   | { type: "battle_hymn_expired"; actor: ActorId }
@@ -581,18 +647,31 @@ export type RollFn = (sides: number) => number;
 // step({ kind: "begin" }) to roll initiative and enter the active phase.
 // Wave fields on monster are opt-in: omit them for standard/boss combats.
 // Use `monsters` for multi-enemy; `monster` for single-enemy (backward compat).
-type MonsterInitSpec = Omit<CombatMonster, "initiative" | "effects" | "boss_phase" | "id" | "shield"> & {
+type MonsterInitSpec = Omit<CombatMonster, "initiative" | "effects" | "boss_phase" | "id" | "shield" | "pos"> & {
   id?: ActorId;    // auto-generated if omitted
   boss_phase?: 1 | 2;
   shield?: number; // defaults to tier when omitted
+  // Hex position is auto-assigned by createCombatState(); callers don't set it.
+  pos?: never;
 };
 export interface CombatInit {
   // focus_power and weapon_range default to 0 and "melee" when omitted — keeps
   // older call sites and tests valid without having to know about focus weapons.
-  fighters: (Omit<CombatFighter, "initiative" | "effects" | "focus_power" | "weapon_range"> & {
+  // pos is auto-assigned by createCombatState(); callers don't provide it.
+  fighters: (Omit<CombatFighter, "initiative" | "effects" | "focus_power" | "weapon_range" | "pos"> & {
     focus_power?: number;
     weapon_range?: WeaponRange;
   })[];
+  // When true, hex range and LOS are enforced on attacks. The web app sets
+  // this; Slack combat and unit tests leave it false (backward compatible).
+  hex_range_enabled?: boolean;
+  // Seed for deterministic obstacle generation. Typically the quest id so a
+  // player resuming a combat sees the same battlefield. Omit / undefined →
+  // no obstacles.
+  scene_seed?: number;
+  // Scene kind for picking obstacle visual variety (cave/forest/ruins/...).
+  // Stored on CombatState for the renderer.
+  scene?: string;
   // Single monster (legacy). Alias for monsters: [monster].
   monster?: MonsterInitSpec;
   // Multi-monster (Phase 3). When present, `monster` is ignored.
@@ -605,38 +684,104 @@ export function createCombatState(init: CombatInit): CombatState {
   const stats: CombatState["stats"] = {};
   for (const f of init.fighters) stats[f.id] = { damage_taken: 0, healing_done: 0, shielding_done: 0, kills: 0 };
   const monsterSpecs = init.monsters ?? (init.monster ? [init.monster] : []);
-  return {
-    fighters: init.fighters.map((f) => ({
-      ...f,
-      focus_power: f.focus_power ?? 0,
-      weapon_range: f.weapon_range ?? "melee",
-      initiative: 0,
-      effects: [],
-    })),
-    monsters: monsterSpecs.map((m, i) => ({
+  const grid = GRID_DEFAULT;
+
+  // Assign initial hex positions. Fighters start on the left columns (q=1,2),
+  // monsters on the right columns (q=10,11). Spread evenly across rows.
+  const fighterPositions = initialHexPositions(init.fighters.length, "top", grid);
+  const monsterPositions = initialHexPositions(monsterSpecs.length, "bottom", grid);
+
+  const monsters = monsterSpecs.map((m, i) => {
+    const weaponRange = m.weapon_range ?? "melee";
+    const tier = m.tier;
+    // Tier 5+ monsters get "charge" special automatically if none specified.
+    const specials: MonsterSpecial[] = m.specials ?? (tier >= 5 ? ["charge"] : []);
+    return {
       ...m,
       id: m.id ?? (monsterSpecs.length === 1 ? MONSTER_ID : `__monster_${i}__`),
       initiative: 0,
       effects: [],
       boss_phase: m.boss_phase ?? 1,
-      shield: m.shield ?? m.tier,   // armor pool defaults to tier
+      shield: m.shield ?? tier,
+      pos: monsterPositions[i] ?? { q: 11, r: 3 },
+      move_range: m.move_range ?? Math.min(5, 2 + tier),
+      range_tiles: m.range_tiles ?? (weaponRange === "ranged" ? 4 : weaponRange === "focus" ? 3 : (specials.includes("reach") ? 2 : 1)),
+      specials,
+    };
+  });
+
+  return {
+    fighters: init.fighters.map((f, i) => ({
+      ...f,
+      focus_power: f.focus_power ?? 0,
+      weapon_range: f.weapon_range ?? "melee",
+      initiative: 0,
+      effects: [],
+      pos: fighterPositions[i] ?? { q: 1, r: 3 },
     })),
+    monsters,
     turn_order: [],
     turn_index: 0,
     round: 0,
     status: "pending",
     contribution,
     stats,
+    grid,
+    turn_phase: "move",
+    obstacles: init.scene_seed != null
+      ? generateObstacles(grid, fighterPositions, monsterPositions, init.scene_seed, init.scene ?? "cave")
+      : [],
+    scene: init.scene,
+    hex_range_enabled: init.hex_range_enabled ?? false,
   };
 }
 
-// Upgrades a persisted combat state from pre-Phase-3 format (single `monster`)
-// to the current `monsters[]` format. Safe to call on already-upgraded states.
+// Upgrades a persisted combat state from older formats to the current one.
+// Safe to call on already-upgraded states (idempotent).
 export function upgradeCombatState(raw: CombatState): CombatState {
-  if (raw.monsters && raw.monsters.length > 0) return raw;
-  const legacy = raw.monster;
-  if (!legacy) return raw;
-  return { ...raw, monsters: [{ ...legacy, id: legacy.id ?? MONSTER_ID }] };
+  // Phase 3 upgrade: monsters[] from legacy monster field.
+  let s: CombatState = raw;
+  if (!s.monsters || s.monsters.length === 0) {
+    const legacy = s.monster;
+    if (legacy) s = { ...s, monsters: [{ ...legacy, id: legacy.id ?? MONSTER_ID }] };
+  }
+  // Hex grid upgrade: add grid, turn_phase, obstacles, and positions if missing.
+  // Skip when there are no actors (empty test states, etc.) to preserve toBe() identity.
+  if (!s.grid && (s.fighters.length > 0 || s.monsters.length > 0)) {
+    const grid = GRID_DEFAULT;
+    const fighterPositions = initialHexPositions(s.fighters.length, "top", grid);
+    const monsterPositions = initialHexPositions(s.monsters.length, "bottom", grid);
+    s = {
+      ...s,
+      grid,
+      // Active mid-combat states without turn_phase default to "attack" so
+      // they don't require a move action before the next swing.
+      turn_phase: "attack",
+      obstacles: [],
+      fighters: s.fighters.map((f, i) => ({
+        ...f,
+        pos: f.pos ?? (fighterPositions[i] ?? { q: 1, r: 3 }),
+      })),
+      monsters: s.monsters.map((m, i) => ({
+        ...m,
+        pos: m.pos ?? (monsterPositions[i] ?? { q: 11, r: 3 }),
+        move_range: m.move_range ?? Math.min(5, 2 + m.tier),
+        range_tiles: m.range_tiles ?? (m.weapon_range === "ranged" ? 4 : m.weapon_range === "focus" ? 3 : 1),
+        specials: m.specials ?? (m.tier >= 5 ? ["charge"] : []),
+      })),
+    };
+  }
+  // Obstacle format upgrade: very old persisted states may carry obstacles as
+  // bare HexPos[] (pre-Obstacle interface). Wrap them as {pos, kind:"rubble"}.
+  if (s.obstacles && s.obstacles.length > 0) {
+    const upgraded = s.obstacles.map((o: Obstacle | HexPos) =>
+      "pos" in o ? o : { pos: o, kind: "rubble" as const }
+    );
+    if (upgraded.some((o, i) => o !== s.obstacles![i])) {
+      s = { ...s, obstacles: upgraded };
+    }
+  }
+  return s;
 }
 
 // The engine. Pure function: same (state, action, rng) → same (state', events).
@@ -672,6 +817,8 @@ export function step(state: CombatState, action: TurnAction, roll: RollFn): Step
       return handleMark(state, action);
     case "ability":
       return handleAbility(state, action, roll);
+    case "move":
+      return handleMove(state, action);
     case "monster_act":
       // After the monster acts, if the next actor is a Staff Sage with Foresee
       // active, inject the intel refresh right before the turn_start divider so
@@ -683,6 +830,244 @@ export function step(state: CombatState, action: TurnAction, roll: RollFn): Step
 }
 
 // --- Handlers ---
+
+// ── Hex movement helper ───────────────────────────────────────────────────────
+
+// Returns all occupied hex positions: alive actors with `pos` (excluding
+// `excludeId`) plus all terrain obstacles. Used as the `occupied` argument
+// to `hexReachable` / `hexPath` so movement routes around both units and
+// terrain.
+function occupiedHexes(state: CombatState, excludeId?: ActorId): HexPos[] {
+  const result: HexPos[] = [];
+  for (const f of state.fighters) {
+    if (f.hp > 0 && f.pos && f.id !== excludeId) result.push(f.pos);
+  }
+  for (const m of state.monsters) {
+    if (m.hp > 0 && m.pos && m.id !== excludeId) result.push(m.pos);
+  }
+  for (const o of state.obstacles ?? []) result.push(o.pos);
+  return result;
+}
+
+// Returns the effective move range for a fighter, derived from AGI stat when available.
+// When the fighter is adjacent (hex distance ≤ 1) to a monster with the
+// `guardian_aura` special, the move range is halved (rounded down, minimum 1).
+function fighterMoveRange(fighter: CombatFighter, state?: CombatState): number {
+  const base = fighter.stats ? deriveMoveRange(fighter.stats.agi) : 2;
+  if (!state || !fighter.pos) return base;
+  const adjacentGuardian = state.monsters.some(
+    (m) => m.hp > 0 && m.pos && m.specials?.includes("guardian_aura") && hexDistance(fighter.pos!, m.pos) <= 1,
+  );
+  return adjacentGuardian ? Math.max(1, Math.floor(base / 2)) : base;
+}
+
+// Returns the effective attack range in hexes for a fighter.
+function fighterRangeTiles(fighter: CombatFighter): number {
+  return deriveRangeTiles(
+    fighter.weapon_range,
+    fighter.stats?.int_stat,
+    fighter.stats?.dex,
+  );
+}
+
+// Move phase handler: validates the destination, updates pos, advances to attack phase.
+// Does NOT advance turn_index — the actor still needs to take their attack action.
+function handleMove(
+  state: CombatState,
+  action: { kind: "move"; actor: ActorId; to: HexPos },
+): StepResult {
+  const fighter = state.fighters.find((f) => f.id === action.actor);
+  if (!fighter) return reject(state, `unknown actor: ${action.actor}`);
+  if (currentActor(state) !== action.actor) {
+    return reject(state, `not ${action.actor}'s turn (current: ${currentActor(state)})`);
+  }
+  if (fighter.hp <= 0) return reject(state, `${action.actor} is downed`);
+  if ((state.turn_phase ?? "attack") !== "move") {
+    return reject(state, "move is only valid during the move phase");
+  }
+  if (!fighter.pos) return reject(state, "actor has no hex position");
+
+  const grid = state.grid ?? GRID_DEFAULT;
+  const from = fighter.pos;
+  const toKey = posKey(action.to);
+
+  // Stay-in-place: moving to your current hex is a no-op that advances the
+  // phase. Lets the UI offer a "Skip Move" button without a separate action.
+  if (toKey === posKey(from)) {
+    return {
+      state: { ...state, turn_phase: "attack" },
+      events: [{ type: "moved", actor: action.actor, from, to: action.to }],
+    };
+  }
+
+  const range = fighterMoveRange(fighter, state);
+  const occupied = occupiedHexes(state, action.actor);
+  const reachable = hexReachable(from, range, occupied, grid);
+  const canMove = reachable.some((p) => posKey(p) === toKey);
+  if (!canMove) {
+    return reject(state, `hex (${action.to.q},${action.to.r}) is not reachable in ${range} steps`);
+  }
+
+  const next: CombatState = {
+    ...state,
+    turn_phase: "attack",
+    fighters: state.fighters.map((f) =>
+      f.id === action.actor ? { ...f, pos: action.to } : f,
+    ),
+  };
+
+  return {
+    state: next,
+    events: [{ type: "moved", actor: action.actor, from, to: action.to }],
+  };
+}
+
+// ── Monster auto-move helper ──────────────────────────────────────────────────
+
+// Automatically moves a monster toward the closest fighter (BFS).
+// Returns updated state + movement events. Noop if already in attack range.
+function autoMoveMonster(
+  state: CombatState,
+  monsterId: ActorId,
+  aliveFighters: CombatFighter[],
+): { state: CombatState; events: CombatEvent[] } {
+  const monster = state.monsters.find((m) => m.id === monsterId);
+  if (!monster?.pos) return { state, events: [] };
+
+  const moveRange = monster.move_range ?? Math.min(5, 2 + monster.tier);
+  const attackRange = monster.range_tiles ?? 1;
+  const grid = state.grid ?? GRID_DEFAULT;
+
+  // If any fighter is already in attack range, no need to move.
+  const figtersWithPos = aliveFighters.filter((f) => f.pos);
+  if (figtersWithPos.some((f) => hexDistance(monster.pos!, f.pos!) <= attackRange)) {
+    return { state, events: [] };
+  }
+
+  // Find the closest fighter to path toward.
+  const closest = figtersWithPos.reduce<CombatFighter | null>((best, f) => {
+    if (!best) return f;
+    return hexDistance(monster.pos!, f.pos!) < hexDistance(monster.pos!, best.pos!) ? f : best;
+  }, null);
+  if (!closest?.pos) return { state, events: [] };
+
+  const occupied = occupiedHexes(state, monsterId);
+  const path = hexPath(monster.pos, closest.pos, occupied, grid);
+  if (path.length === 0) return { state, events: [] };
+
+  // Move up to moveRange steps, stopping BEFORE the fighter's tile.
+  const stepsToTake = Math.min(moveRange, path.length - 1);
+  if (stepsToTake <= 0) return { state, events: [] };
+
+  const dest = path[stepsToTake - 1];
+  const from = monster.pos;
+
+  const nextState: CombatState = {
+    ...state,
+    monsters: state.monsters.map((m) =>
+      m.id === monsterId ? { ...m, pos: dest } : m,
+    ),
+  };
+
+  return {
+    state: nextState,
+    events: [{ type: "monster_moved", actor: monsterId, from, to: dest }],
+  };
+}
+
+// Handles the "charge" special: doubles move range for this turn (once per fight).
+// Returns { state, events, charged } — charged=true means the special was consumed.
+function tryMonsterCharge(
+  state: CombatState,
+  monsterId: ActorId,
+  aliveFighters: CombatFighter[],
+): { state: CombatState; events: CombatEvent[]; charged: boolean } {
+  const monster = state.monsters.find((m) => m.id === monsterId);
+  if (!monster?.pos) return { state, events: [], charged: false };
+
+  const alreadyUsed = (state.specials_used?.[monsterId] ?? []).includes("charge");
+  if (!monster.specials?.includes("charge") || alreadyUsed) {
+    return { state, events: [], charged: false };
+  }
+
+  const attackRange = monster.range_tiles ?? 1;
+  const figtersWithPos = aliveFighters.filter((f) => f.pos);
+  if (figtersWithPos.some((f) => hexDistance(monster.pos!, f.pos!) <= attackRange)) {
+    return { state, events: [], charged: false }; // already in range
+  }
+
+  // Double the move range for this charge.
+  const chargeMonster: CombatMonster = { ...monster, move_range: (monster.move_range ?? 3) * 2 };
+  const tempState: CombatState = {
+    ...state,
+    monsters: state.monsters.map((m) => m.id === monsterId ? chargeMonster : m),
+  };
+  const move = autoMoveMonster(tempState, monsterId, aliveFighters);
+
+  // Record the special as used.
+  const prevUsed = state.specials_used?.[monsterId] ?? [];
+  const nextState: CombatState = {
+    ...move.state,
+    specials_used: { ...(state.specials_used ?? {}), [monsterId]: [...prevUsed, "charge"] },
+  };
+
+  return {
+    state: nextState,
+    events: [{ type: "monster_charge", actor: monsterId }, ...move.events],
+    charged: true,
+  };
+}
+
+// Handles the "pounce" special: teleport adjacent to the farthest fighter.
+function tryMonsterPounce(
+  state: CombatState,
+  monsterId: ActorId,
+  aliveFighters: CombatFighter[],
+): { state: CombatState; events: CombatEvent[]; pounced: boolean } {
+  const monster = state.monsters.find((m) => m.id === monsterId);
+  if (!monster?.pos) return { state, events: [], pounced: false };
+
+  const alreadyUsed = (state.specials_used?.[monsterId] ?? []).includes("pounce");
+  if (!monster.specials?.includes("pounce") || alreadyUsed) {
+    return { state, events: [], pounced: false };
+  }
+
+  const figtersWithPos = aliveFighters.filter((f) => f.pos);
+  if (figtersWithPos.length === 0) return { state, events: [], pounced: false };
+
+  // Find farthest fighter.
+  const farthest = figtersWithPos.reduce((best, f) =>
+    hexDistance(monster.pos!, f.pos!) > hexDistance(monster.pos!, best.pos!) ? f : best,
+  );
+  if (!farthest.pos) return { state, events: [], pounced: false };
+
+  // Find an adjacent hex to the farthest fighter that isn't occupied.
+  const grid = state.grid ?? GRID_DEFAULT;
+  const occupied = new Set(occupiedHexes(state, monsterId).map(posKey));
+  const adjacentTiles = hexNeighbors(farthest.pos, grid).filter((p) => !occupied.has(posKey(p)));
+
+  if (adjacentTiles.length === 0) return { state, events: [], pounced: false };
+
+  // Land on the closest available adjacent tile to our current position.
+  const dest = adjacentTiles.reduce((best, p) =>
+    hexDistance(monster.pos!, p) < hexDistance(monster.pos!, best) ? p : best,
+  );
+
+  const prevUsed = state.specials_used?.[monsterId] ?? [];
+  const nextState: CombatState = {
+    ...state,
+    monsters: state.monsters.map((m) =>
+      m.id === monsterId ? { ...m, pos: dest } : m,
+    ),
+    specials_used: { ...(state.specials_used ?? {}), [monsterId]: [...prevUsed, "pounce"] },
+  };
+
+  return {
+    state: nextState,
+    events: [{ type: "monster_pounce", actor: monsterId, to: dest }],
+    pounced: true,
+  };
+}
 
 function handleBegin(state: CombatState, roll: RollFn): StepResult {
   if (state.status !== "pending") {
@@ -750,16 +1135,12 @@ function handlePlayerHit(
     return reject(state, `not ${action.actor}'s turn (current: ${currentActor(state)})`);
   }
   if (fighter.hp <= 0) return reject(state, `${action.actor} is downed`);
-  // Back-row melee restriction only applies in a party — solo fights have
-  // no positioning concept. Only ranged or focus weapons can attack from
-  // the back row; melee weapons demand front-row engagement.
-  if (
-    fighter.position === "back"
-    && state.fighters.length > 1
-    && fighter.weapon_range !== "ranged"
-    && fighter.weapon_range !== "focus"
-  ) {
-    return reject(state, "back-row melee blocked — equip a ranged or focus weapon or move to front");
+
+  // Hex grid: attacking implicitly skips the move phase if the player hasn't moved yet.
+  // This preserves backward compat (tests don't need explicit move actions) and mirrors
+  // standard tactical-RPG UX where taking an action consumes both sub-phases.
+  if ((state.turn_phase ?? "attack") === "move") {
+    state = { ...state, turn_phase: "attack" };
   }
 
   // Target selection: use explicit target_id if provided, else pick first alive monster.
@@ -767,6 +1148,26 @@ function handlePlayerHit(
     ? state.monsters.find((m) => m.id === action.target_id && m.hp > 0)
     : state.monsters.find((m) => m.hp > 0);
   if (!targetMonster) return reject(state, "no valid target");
+
+  // Hex range + LOS check (only when hex_range_enabled is set — the web app
+  // enables this; Slack combat and unit tests are unaffected).
+  if (state.hex_range_enabled && fighter.pos && targetMonster.pos) {
+    const rangeTiles = fighterRangeTiles(fighter);
+    const dist = hexDistance(fighter.pos, targetMonster.pos);
+    if (dist > rangeTiles) {
+      return {
+        state,
+        events: [{ type: "out_of_range", actor: action.actor, distance: dist, max_range: rangeTiles }],
+      };
+    }
+    // LOS check for non-melee weapons.
+    if (fighter.weapon_range !== "melee") {
+      const obstacles = state.obstacles ?? [];
+      if (!hexLos(fighter.pos, targetMonster.pos, obstacles)) {
+        return reject(state, "no line of sight to target");
+      }
+    }
+  }
 
   const tick = tickAtTurnStart(state, action.actor);
   if (tick.earlyReturn) return tick.earlyReturn;
@@ -1328,6 +1729,54 @@ function handleMonsterAct(state: CombatState, roll: RollFn): StepResult {
     return { state: { ...s, status: "defeat" }, events: [...events, { type: "defeat" }] };
   }
 
+  // ── Hex grid: auto-move phase ─────────────────────────────────────────────
+  // Monster automatically moves toward the closest fighter before attacking.
+  // Only active when hex_range_enabled — keeps Slack combat and unit tests fast.
+  // If it still can't reach a fighter, it tries charge/pounce specials.
+  if (s.hex_range_enabled) {
+    const actingMonster = s.monsters.find((m) => m.id === actorId);
+    if (actingMonster?.pos) {
+      const attackRange = actingMonster.range_tiles ?? 1;
+      const figtersInRange = aliveFighters.filter(
+        (f) => f.pos && hexDistance(actingMonster.pos!, f.pos) <= attackRange,
+      );
+      if (figtersInRange.length === 0) {
+        // Move toward closest fighter.
+        const moveResult = autoMoveMonster(s, actorId, aliveFighters);
+        s = moveResult.state;
+        events.push(...moveResult.events);
+
+        // Re-fetch monster after move to check updated position.
+        const movedMonster = s.monsters.find((m) => m.id === actorId);
+        const nowInRange = movedMonster?.pos && aliveFighters.some(
+          (f) => f.pos && hexDistance(movedMonster.pos!, f.pos) <= attackRange,
+        );
+
+        if (!nowInRange) {
+          // Still out of range — try anti-kite specials.
+          const chargeResult = tryMonsterCharge(s, actorId, aliveFighters);
+          if (chargeResult.charged) {
+            s = chargeResult.state;
+            events.push(...chargeResult.events);
+          } else {
+            const pounceResult = tryMonsterPounce(s, actorId, aliveFighters);
+            if (pounceResult.pounced) {
+              s = pounceResult.state;
+              events.push(...pounceResult.events);
+            } else {
+              // Can't reach any fighter — skip attack.
+              const next = advanceTurn(s);
+              return {
+                state: next,
+                events: [...events, { type: "monster_swing_skipped", reason: "out_of_range" }, ...turnStartEvent(next)],
+              };
+            }
+          }
+        }
+      }
+    }
+  }
+
   // Anti-pile-on: fetch (or reset) the round-scoped target tally so monsters
   // in the same round are less likely to all converge on the same fighter.
   const prevRmt = s.round_monster_targets;
@@ -1340,7 +1789,9 @@ function handleMonsterAct(state: CombatState, roll: RollFn): StepResult {
   // pre-rolled fighter died before the monster swings.
   const foretoldId = s.ability_state?.foretold_targets?.[actorId];
   const foretoldFighter = foretoldId ? aliveFighters.find((f) => f.id === foretoldId) : null;
-  const initialTarget = foretoldFighter ?? pickMonsterTarget(aliveFighters, () => roll(101) / 100, rmtCounts);
+  // Pass the monster's current position to bias targeting toward nearby fighters.
+  const actingMonsterPos = s.monsters.find((m) => m.id === actorId)?.pos;
+  const initialTarget = foretoldFighter ?? pickMonsterTarget(aliveFighters, () => roll(101) / 100, rmtCounts, actingMonsterPos);
   // Clear this monster's entry; leave other monsters' entries untouched.
   const ftRemaining = { ...(s.ability_state?.foretold_targets ?? {}) };
   delete ftRemaining[actorId];
@@ -1400,9 +1851,19 @@ function handleMonsterAct(state: CombatState, roll: RollFn): StepResult {
   // Bosses have a chance to forgo single-target targeting and slam the whole
   // party for reduced damage. Taunt does NOT redirect a splash — it hits every
   // alive non-vanished fighter. Only fires when multiple fighters are alive.
+  //
+  // The `volley` special grants the same AoE behavior at a higher base chance
+  // even on non-boss monsters — but only when at least two alive fighters are
+  // clustered within radius 2 of any single fighter (otherwise it's just a
+  // less effective single-target attack).
   const bossPhase2 = monster.is_boss && monster.boss_phase === 2;
   const splashChance = bossPhase2 ? 2 : 1; // 2-in-5 P2, 1-in-5 P1
-  const doSplash = monster.is_boss && aliveFighters.length > 1 && roll(5) <= splashChance;
+  const hasVolley = monster.specials?.includes("volley") === true;
+  const volleyTriggers = hasVolley && monster.pos
+    ? aliveFighters.filter((f) => f.pos && hexDistance(monster.pos!, f.pos) <= (monster.range_tiles ?? 1) + 2).length >= 2
+    : false;
+  const doSplash = (monster.is_boss && aliveFighters.length > 1 && roll(5) <= splashChance)
+    || volleyTriggers;
 
   if (doSplash) {
     const splashDamageType = monster.attack_damage_type ?? "physical";
@@ -1413,7 +1874,7 @@ function handleMonsterAct(state: CombatState, roll: RollFn): StepResult {
       const hit = resolveMonsterHit(monster.tier, aliveFighters.length, 0, bossPhase2, roll, splashDamageType, resistPct, monster.damage_roll ?? "1d4");
       const splashShocked = f.effects.find((e) => e.type === "shocked");
       const splashShockMult = splashShocked ? (splashShocked.magnitude >= 2 ? 1.45 : 1.30) : 1.0;
-      const posAdj = positionDamageMod(f.position, Math.round(hit.final * splashShockMult * splashHexMult));
+      const posAdj = Math.round(hit.final * splashShockMult * splashHexMult);
       // Physical depletes armor pool; non-physical bypasses it.
       const splashArmorPool = splashDamageType === "physical" ? f.shield : 0;
       const rawSplash = applyDamageWithShield(posAdj, splashArmorPool, f.hp);
@@ -1558,12 +2019,13 @@ function handleMonsterAct(state: CombatState, roll: RollFn): StepResult {
   const targetShocked = target.effects.find((e) => e.type === "shocked");
   const targetShockMult = targetShocked ? (targetShocked.magnitude >= 2 ? 1.45 : 1.30) : 1.0;
   const hexMult = monster.effects.some((e) => e.type === "hexed") ? 0.75 : 1.0;
-  const positionAdjusted = positionDamageMod(target.position, Math.round(hit.final * targetShockMult * hexMult));
+  // In hex combat, damage is no longer reduced by front/back position.
+  const mitigatedDamage = Math.round(hit.final * targetShockMult * hexMult);
   // QA Paladin — Smite debuff: 50% reduced damage on this swing.
   const smiteDebuffSwings = s.ability_state?.paladin_smite_debuff?.[actorId] ?? 0;
   const smiteAdjusted = smiteDebuffSwings > 0
-    ? Math.max(1, Math.round(positionAdjusted * 0.5))
-    : positionAdjusted;
+    ? Math.max(1, Math.round(mitigatedDamage * 0.5))
+    : mitigatedDamage;
   const brace = s.ability_state?.brace?.[target.id];
   const effectiveDamage = brace && brace.turns_remaining > 0
     ? Math.max(1, Math.round(smiteAdjusted * (1 - brace.pct / 100)))
@@ -1599,6 +2061,39 @@ function handleMonsterAct(state: CombatState, roll: RollFn): StepResult {
     shield_absorbed: shieldAbsorbed,
     hp_damage: hpDamage,
   });
+
+  // ── Special: entangle_on_hit ──
+  // Monsters with this special apply the `entangled` status to any fighter
+  // they damage with a melee hit. Forces the player to stick close (the
+  // entangled effect zeros their move range until it ticks down).
+  if (
+    hpDamage > 0
+    && monster.specials?.includes("entangle_on_hit")
+    && (monster.range_tiles ?? 1) <= 2
+  ) {
+    const entangleEff: MachineStatusEffect = {
+      type: "entangled",
+      magnitude: 1,
+      remaining: 2,
+      source: actorId,
+    };
+    s = {
+      ...s,
+      fighters: s.fighters.map((f) =>
+        f.id === target.id
+          ? { ...f, effects: mergeEffect(f.effects, entangleEff) }
+          : f,
+      ),
+    };
+    events.push({
+      type: "effect_applied",
+      actor: actorId,
+      target: target.id,
+      effect: "entangled",
+      magnitude: 1,
+      duration: 2,
+    });
+  }
 
   // QA Paladin — Protect: split HP damage between the protected ally and the paladin.
   const protectState = s.ability_state?.paladin_protect;
@@ -1853,6 +2348,44 @@ function handleDamageAbility(
     events.push(...proc.events);
   }
 
+  // ── AoE blast around the primary target ──
+  // When the ability declares `aoe_radius_tiles`, the same damage instance
+  // (scaled by SPLASH_MULT) fires on every other live enemy whose pos lies
+  // within radius hexes of the primary target. Uses cube-distance.
+  const aoeRadius = ability.aoe_radius_tiles ?? 0;
+  if (aoeRadius > 0 && monster.pos && state.hex_range_enabled) {
+    const SPLASH_MULT = 0.6;
+    const splashDamage = Math.max(1, Math.round(finalDamage * SPLASH_MULT));
+    const primaryPos = monster.pos;
+    const splashTargets = nextState.monsters.filter((m) =>
+      m.id !== monster.id
+      && m.hp > 0
+      && m.pos
+      && hexDistance(primaryPos, m.pos) <= aoeRadius,
+    );
+    for (const splashMonster of splashTargets) {
+      const splashOldHp = splashMonster.hp;
+      const splashNewHp = Math.max(0, splashOldHp - splashDamage);
+      events.push({
+        type: "player_hit",
+        actor: actorId,
+        target: splashMonster.id,
+        damage: splashDamage,
+        armor_absorbed: 0,
+        crit: false,
+        formula: `${formula} (splash)`,
+      });
+      nextState = {
+        ...nextState,
+        monsters: nextState.monsters.map((m) => m.id === splashMonster.id ? { ...m, hp: splashNewHp } : m),
+        contribution: {
+          ...nextState.contribution,
+          [actorId]: (nextState.contribution[actorId] ?? 0) + splashDamage,
+        },
+      };
+    }
+  }
+
   if (monsterKilled) return resolveMonsterKill(nextState, monster.id, actorId, events);
   nextState = advanceTurn(nextState);
   return { state: nextState, events: [...events, ...turnStartEvent(nextState)] };
@@ -1952,6 +2485,16 @@ function handleFlee(
   }
   if (actor.hp <= 0) return reject(state, `${action.actor} is downed`);
 
+  // Guardian aura: a fighter adjacent to a guardian-aura monster can't flee.
+  if (actor.pos) {
+    const guardian = state.monsters.find(
+      (m) => m.hp > 0 && m.pos && m.specials?.includes("guardian_aura") && hexDistance(actor.pos!, m.pos) <= 1,
+    );
+    if (guardian) {
+      return reject(state, `${guardian.name} blocks your escape`);
+    }
+  }
+
   const tick = tickAtTurnStart(state, action.actor);
   if (tick.earlyReturn) return tick.earlyReturn;
   const s = tick.state;
@@ -1983,9 +2526,8 @@ function handleFlee(
   const alive = s.fighters.filter((f) => f.hp > 0);
   const bossPhase2 = (fleeMonster?.is_boss && fleeMonster?.boss_phase === 2) ?? false;
   const hit = resolveMonsterHit(fleeMonster?.tier ?? 1, alive.length, 0, bossPhase2, roll, "physical", 0, fleeMonster?.damage_roll ?? "1d4");
-  const positionAdjusted = positionDamageMod(tickedActor.position, hit.final);
   const { newShield, newHp, shieldAbsorbed, hpDamage } = applyDamageWithShield(
-    positionAdjusted,
+    hit.final,
     tickedActor.shield,
     tickedActor.hp,
   );
@@ -1996,7 +2538,7 @@ function handleFlee(
     target: action.actor,
     damage_type: "physical",
     raw_damage: hit.raw,
-    damage_after_position: positionAdjusted,
+    damage_after_position: hit.final,
     damage_after_mitigation: hit.final,
     armor_reduction: hit.armorReduction,
     resistance_reduction: 0,
@@ -2115,6 +2657,25 @@ function handleAbility(
       ? sPostMana.monsters.find((m) => m.id === action.target_id && m.hp > 0)
       : sPostMana.monsters.find((m) => m.hp > 0);
     if (!targetMonster) return reject(sPostMana, "no valid target");
+    // Hex range + LOS gate for single_enemy abilities. Mirrors the basic
+    // attack check. Abilities inherit weapon range unless they declare
+    // their own `range_tiles`.
+    if (
+      sPostMana.hex_range_enabled
+      && tickedActor.pos
+      && targetMonster.pos
+      && ability.target === "single_enemy"
+    ) {
+      const abilityRange = ability.range_tiles ?? fighterRangeTiles(tickedActor);
+      const dist = hexDistance(tickedActor.pos, targetMonster.pos);
+      if (dist > abilityRange) {
+        return reject(sPostMana, `${ability.name} is out of range (${dist} > ${abilityRange})`);
+      }
+      const weaponRange = tickedActor.weapon_range ?? "melee";
+      if (weaponRange !== "melee" && !hexLos(tickedActor.pos, targetMonster.pos, sPostMana.obstacles ?? [])) {
+        return reject(sPostMana, `no line of sight for ${ability.name}`);
+      }
+    }
     const ctx: AbilityContext = {
       caster: tickedActor,
       party: sPostMana.fighters.filter((f) => f.hp > 0),
@@ -2751,28 +3312,29 @@ function buildForeseeEvent(
     }
   }
 
-  // Net damage range for the predicted target.
+  // Net damage range for the predicted target (no position reduction in hex combat).
   const targetFighter = predicted ? aliveFighters.find((f) => f.id === predicted) : null;
   let netLo = rawLo;
   let netHi = rawHi;
   let verdict: "safe" | "at_risk" | "lethal" = "safe";
   if (targetFighter) {
     const armorReduction = Math.floor(targetFighter.armor_power / 2);
-    const isBack = targetFighter.position === "back";
-    netLo = isBack
-      ? Math.max(1, Math.round((rawLo - armorReduction) * 0.6))
-      : Math.max(1, rawLo - armorReduction);
-    netHi = isBack
-      ? Math.max(1, Math.round((rawHi - armorReduction) * 0.6))
-      : Math.max(1, rawHi - armorReduction);
+    netLo = Math.max(1, rawLo - armorReduction);
+    netHi = Math.max(1, rawHi - armorReduction);
     verdict = targetFighter.hp > netHi ? "safe"
       : targetFighter.hp <= netLo ? "lethal"
       : "at_risk";
   }
 
-  // Targeting probabilities for each non-vanished alive fighter.
+  // Targeting probabilities: closer fighters are more likely to be targeted.
+  const foreseeMonstPos = state.monsters.find((m) => m.hp > 0)?.pos;
   const targetable = aliveFighters.filter((f) => (vanishedMap[f.id] ?? 0) <= 0);
-  const weights = targetable.map((f) => (f.position === "back" ? 1 : 3));
+  const weights = targetable.map((f) => {
+    if (foreseeMonstPos && f.pos) {
+      return Math.max(1, 8 - hexDistance(foreseeMonstPos, f.pos));
+    }
+    return 3; // legacy fallback
+  });
   const total = weights.reduce((a, b) => a + b, 0);
   const probabilities = targetable.map((f, i) => ({
     id: f.id,
@@ -4207,14 +4769,14 @@ function advanceTurn(state: CombatState): CombatState {
     if (isMonsterActor(id)) {
       const m = state.monsters.find((x) => x.id === id);
       if (m && m.hp > 0) {
-        return { ...state, turn_index: candidate, round: state.round + roundBump };
+        return { ...state, turn_index: candidate, round: state.round + roundBump, turn_phase: "move" };
       }
       // Dead monster slot — keep scanning.
       continue;
     }
     const f = state.fighters.find((x) => x.id === id);
     if (f && f.hp > 0) {
-      const next = { ...state, turn_index: candidate, round: state.round + roundBump };
+      const next: CombatState = { ...state, turn_index: candidate, round: state.round + roundBump, turn_phase: "move" };
       return tickActorCooldowns(next, id);
     }
   }

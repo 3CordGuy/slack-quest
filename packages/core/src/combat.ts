@@ -1,33 +1,32 @@
 // Pure combat math. Lives outside commands.ts so tests can exercise it without a DB.
 
+import { hexDistance, type HexPos } from "./hex";
 import type { DamageType } from "./flavor";
 
 export type CombatAction = "attack" | "flee";
 
+// Kept for backward compatibility with Slack combat and legacy serialized states.
 export type BattlePosition = "front" | "back";
 
-// Position-based monster damage multiplier. Front-row eats full damage; back-row
-// takes 60% (rounded down, with a minimum of 1 so back-row isn't immune).
-export function positionDamageMod(position: BattlePosition, rawDamage: number): number {
-  if (position === "back") return Math.max(1, Math.floor(rawDamage * 0.6));
-  return rawDamage;
-}
-
-// Picks a monster's target from the alive party, weighted by battle position.
-// Front-row characters are 3× more likely to be hit than back-row. If only back-row
-// fighters remain, the monster targets back. Random injection makes it testable.
-export function pickMonsterTarget<T extends { id: string; position: BattlePosition }>(
+// Picks a monster's target from the alive party. Closer fighters (by hex
+// distance) are more likely to be hit. Anti-pile-on: fighters already
+// targeted this round are progressively downweighted. Random injection
+// keeps this testable.
+export function pickMonsterTarget<T extends { id: string; pos?: HexPos }>(
   fighters: T[],
   random: () => number,
   alreadyTargeted?: Record<string, number>,
+  monsterPos?: HexPos,
 ): T {
   if (fighters.length === 0) throw new Error("pickMonsterTarget: empty fighters list");
-  // Base weight: front row 3×, back row 1×.
-  // Anti-pile-on: divide by (1 + times already targeted this round) so a
-  // fighter who was just picked by another monster is 2× less likely to get
-  // picked again, 3× less likely if picked twice, etc.
+  // Base weight: closer fighters are preferred (max distance weight = 8, min = 1).
+  // Falls back to equal weight when no hex position data is available.
   const weights = fighters.map((f) => {
-    const base = f.position === "back" ? 1 : 3;
+    let base = 3;
+    if (monsterPos && f.pos) {
+      const dist = hexDistance(monsterPos, f.pos);
+      base = Math.max(1, 8 - dist);
+    }
     const already = alreadyTargeted?.[f.id] ?? 0;
     return base / (1 + already);
   });

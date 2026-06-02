@@ -49,6 +49,8 @@ export const rogueAbilities: AbilityDef[] = [
     cooldown_turns: 2,
     routing: "utility",
     target: "single_enemy",
+    range_tiles: 1, // up-close knife work
+    aoe_radius_tiles: 0, // surgical single-target strike
     execute(ctx) {
       const monster = ctx.target as MonsterSnapshot;
       const totalMod = ctx.caster.attack_mod + Math.max(0, ctx.caster.weapon_power);
@@ -71,6 +73,8 @@ export const rogueAbilities: AbilityDef[] = [
     cooldown_turns: 3,
     routing: "utility",
     target: "single_enemy",
+    range_tiles: 2, // close-range disruption
+    aoe_radius_tiles: 0, // single-target disrupt
     execute(ctx) {
       const monster = ctx.target as MonsterSnapshot;
       return [

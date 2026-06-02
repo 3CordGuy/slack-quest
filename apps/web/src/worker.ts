@@ -24,6 +24,7 @@ import {
   generateTownName,
   generateCharacterName,
   getOrScheduleViewArt,
+  getOrScheduleBattlefieldArt,
   generateCharacterArtNow,
   getOrScheduleCharacterArt,
   type ViewArtKey,
@@ -1436,7 +1437,10 @@ app.post("/api/inventory/:itemId/equip", async (c) => {
   await equipItem(c.env.DB, item);
 
   // If there's a pending or active web combat state for this character's quest,
-  // patch the fighter's armor_power so the equip is reflected without a restart.
+  // patch the fighter so the equip is reflected without a restart. Both
+  // armor (any slot change) AND weapon (main_hand change) need to flow
+  // through, otherwise the engine would keep using the previous weapon's
+  // range/element/power until the next combat — confusing mid-fight swaps.
   const activeQuest = await getActiveQuestForCharacter(c.env.DB, session.slack_user_id);
   if (activeQuest) {
     const combatState = await getWebCombatState(c.env.DB, activeQuest.id);
@@ -1444,13 +1448,40 @@ app.post("/api/inventory/:itemId/equip", async (c) => {
     if (combatState && !terminalStates.has(combatState.status as string)) {
       const allSlots = await getAllEquippedSlots(c.env.DB, session.slack_user_id);
       const newArmorPower = computeArmorPowerFromSlots(allSlots);
+      // Weapon fields refresh only when a weapon was equipped. For focus
+      // weapons the weapon_power slot covers heal/shield via focus_power,
+      // not attack damage — mirror the same split the character bootstrap
+      // does (see buildInitialCombatState).
+      const weaponPatch: Record<string, unknown> = {};
+      if (item.item_type === "weapon") {
+        const isFocus = item.weapon_range === "focus";
+        weaponPatch.weapon_range = item.weapon_range;
+        weaponPatch.element = item.element ?? null;
+        weaponPatch.weapon_power = isFocus ? 0 : item.power;
+        weaponPatch.focus_power = isFocus ? item.power : 0;
+      }
+      // Also bump max_mana when a focus swap shifted it (manaDelta was
+      // applied to the character row above; the live fighter snapshot
+      // needs the same bump so the UI shows the new ceiling).
       const patched = {
         ...combatState,
-        fighters: (combatState.fighters as unknown as Array<Record<string, unknown>>).map((f) =>
-          f.id === session.slack_user_id ? { ...f, armor_power: newArmorPower } : f,
-        ),
+        fighters: (combatState.fighters as unknown as Array<Record<string, unknown>>).map((f) => {
+          if (f.id !== session.slack_user_id) return f;
+          const next: Record<string, unknown> = { ...f, armor_power: newArmorPower, ...weaponPatch };
+          if (manaDelta !== 0 && typeof f.max_mana === "number") {
+            const newMax = Math.max(0, (f.max_mana as number) + manaDelta);
+            next.max_mana = newMax;
+            next.mana = Math.min(newMax, (f.mana as number) ?? 0);
+          }
+          return next;
+        }),
       };
       await saveWebCombatState(c.env.DB, activeQuest.id, patched as unknown as CombatState);
+      // Bounce the DO's in-memory cache so the next attack reads the new
+      // weapon stats and connected clients see the change immediately.
+      const doId = c.env.QUEST_ROOM.idFromName(`quest:${activeQuest.id}`);
+      const doStub = c.env.QUEST_ROOM.get(doId);
+      await (doStub as unknown as { refreshFromD1: (q: number) => Promise<unknown> }).refreshFromD1(activeQuest.id);
     }
   }
 
@@ -1465,10 +1496,51 @@ app.post("/api/inventory/:itemId/unequip", async (c) => {
   const item = await getItem(c.env.DB, itemId, session.slack_user_id);
   if (!item) return c.json({ error: "not_yours" }, 404);
   if (!item.equipped) return c.json({ error: "not_equipped" }, 400);
+  let manaDelta = 0;
   if (item.item_type === "weapon" && item.weapon_range === "focus") {
-    await applyFocusManaShift(c.env.DB, session.slack_user_id, -focusManaBonus(item.power));
+    manaDelta = -focusManaBonus(item.power);
+    await applyFocusManaShift(c.env.DB, session.slack_user_id, manaDelta);
   }
   await c.env.DB.prepare("UPDATE inventory SET equipped = 0 WHERE id = ?").bind(itemId).run();
+
+  // Patch the live combat state too — armor recomputes from remaining slots;
+  // weapon unequip leaves the fighter with no weapon (melee fists, range 1,
+  // power 0). Without this, the engine would keep applying the unequipped
+  // weapon's range/element/power for the rest of the fight.
+  const activeQuest = await getActiveQuestForCharacter(c.env.DB, session.slack_user_id);
+  if (activeQuest) {
+    const combatState = await getWebCombatState(c.env.DB, activeQuest.id);
+    const terminalStates = new Set(["victory", "defeat", "fled"]);
+    if (combatState && !terminalStates.has(combatState.status as string)) {
+      const allSlots = await getAllEquippedSlots(c.env.DB, session.slack_user_id);
+      const newArmorPower = computeArmorPowerFromSlots(allSlots);
+      const weaponPatch: Record<string, unknown> = {};
+      if (item.item_type === "weapon") {
+        weaponPatch.weapon_range = "melee";
+        weaponPatch.element = null;
+        weaponPatch.weapon_power = 0;
+        weaponPatch.focus_power = 0;
+      }
+      const patched = {
+        ...combatState,
+        fighters: (combatState.fighters as unknown as Array<Record<string, unknown>>).map((f) => {
+          if (f.id !== session.slack_user_id) return f;
+          const next: Record<string, unknown> = { ...f, armor_power: newArmorPower, ...weaponPatch };
+          if (manaDelta !== 0 && typeof f.max_mana === "number") {
+            const newMax = Math.max(0, (f.max_mana as number) + manaDelta);
+            next.max_mana = newMax;
+            next.mana = Math.min(newMax, (f.mana as number) ?? 0);
+          }
+          return next;
+        }),
+      };
+      await saveWebCombatState(c.env.DB, activeQuest.id, patched as unknown as CombatState);
+      const doId = c.env.QUEST_ROOM.idFromName(`quest:${activeQuest.id}`);
+      const doStub = c.env.QUEST_ROOM.get(doId);
+      await (doStub as unknown as { refreshFromD1: (q: number) => Promise<unknown> }).refreshFromD1(activeQuest.id);
+    }
+  }
+
   return c.json({ ok: true });
 });
 
@@ -5688,6 +5760,27 @@ async function webStartQuestFromLobby(
   }
 }
 
+// Returns the AI-generated battlefield ground texture URL for the given scene
+// (cave/forest/server_catacomb/...). On cache miss, kicks off generation in
+// the background and returns null; the client renders without a background
+// this turn and the next request will hit cache.
+//
+// Auth is required so anonymous scraping is blocked, but the result is
+// shared across all users for the same scene.
+app.get("/api/battlefield-art", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const scene = c.req.query("scene");
+  if (!scene) return c.json({ error: "missing scene" }, 400);
+  const url = await getOrScheduleBattlefieldArt(
+    c.env.AI,
+    artTarget(c.env),
+    c.executionCtx,
+    scene,
+  );
+  return c.json({ url });
+});
+
 // Returns the current user's lobby quest + party if they have a pending invite or are in a lobby.
 app.get("/api/quest/lobby", async (c) => {
   const session = await currentSession(c.env.DB, c.req.header("cookie"));
@@ -7147,6 +7240,58 @@ function rollMonsterAttackAndDamageTypes(
   };
 }
 
+// Per-tier monster combat profile. Drives weapon_range / move_range /
+// specials so hex combat feels different at each tier without requiring
+// each monster spec to spell it out.
+//
+//   tier 1–2: pure melee mobs, default move
+//   tier 3–4: 50% chance ranged, otherwise melee
+//   tier 5–6: always have `charge` so they can close ranged-kited gaps
+//   tier 7–8: ranged + reach (melee=2 hexes)
+//   tier 9+ : ranged + AoE volley + always-on charge (boss tier)
+//
+// Bosses always pile on at least `charge` + one of `volley` / `pounce`
+// regardless of tier so a tier-3 boss still threatens kiters.
+function tierCombatProfile(
+  tier: number,
+  isBoss: boolean,
+  seed: number,
+): { weapon_range: "melee" | "ranged" | "focus"; move_range: number; specials: import("@gantt-quest/core").MonsterSpecial[] } {
+  // Mulberry-ish: derive a deterministic pseudo-random 0..1 from quest+tier
+  // without needing real randomness — keeps replays consistent.
+  const sample = ((Math.abs(seed * 2654435761 + tier * 11) % 1000) / 1000);
+  const sample2 = ((Math.abs(seed * 88654 + tier * 7919) % 1000) / 1000);
+
+  const t = Math.max(1, tier);
+  let weapon_range: "melee" | "ranged" | "focus" = "melee";
+  let move_range = 3;
+  const specials: import("@gantt-quest/core").MonsterSpecial[] = [];
+
+  if (t >= 3 && t <= 4) {
+    weapon_range = sample < 0.5 ? "ranged" : "melee";
+    move_range = 3;
+  } else if (t === 5 || t === 6) {
+    weapon_range = sample < 0.5 ? "ranged" : "melee";
+    move_range = 4;
+    specials.push("charge");
+  } else if (t === 7 || t === 8) {
+    weapon_range = "ranged";
+    move_range = 4;
+    specials.push("reach");
+  } else if (t >= 9) {
+    weapon_range = "ranged";
+    move_range = 3;
+    specials.push("charge", "volley");
+  }
+
+  if (isBoss) {
+    if (!specials.includes("charge")) specials.push("charge");
+    specials.push(sample2 < 0.5 ? "pounce" : "volley");
+  }
+
+  return { weapon_range, move_range, specials };
+}
+
 // Shared loader used by both the HTTP `/api/quest/:id/start_web_combat`
 // route and the DO's `bootstrapFromSlack` RPC. Reads the party from D1,
 // builds CombatInit, runs createCombatState, then seeds the resulting
@@ -7296,11 +7441,24 @@ async function buildInitialCombatState(
     ? quest.scene.monsters
     : null;
 
+  // Scene seed: deterministic per quest so obstacle layouts are stable across
+  // resumes and DO restarts. Scene kind picks visual variety (boulder vs crate).
+  // Inline scene picker mirrors combatBackgrounds.tsx#pickScene without pulling
+  // a React module into the worker bundle.
+  const SCENES = [
+    "server_catacomb", "cubicle_forest", "warehouse_floor",
+    "fluorescent_office", "neon_basement", "deadline_dungeon",
+  ] as const;
+  const sceneKey = SCENES[Math.abs(Math.floor(quest.id)) % SCENES.length];
   const init: CombatInit = scenePackMonsters
     ? {
         fighters,
-        monsters: scenePackMonsters.map((m) => {
+        hex_range_enabled: true,
+        scene_seed: quest.id,
+        scene: sceneKey,
+        monsters: scenePackMonsters.map((m, i) => {
           const affinity = rollMonsterElementAffinity();
+          const profile = tierCombatProfile(m.tier, false, quest.id + i);
           return {
             name: m.name,
             hp: m.hp,
@@ -7311,11 +7469,15 @@ async function buildInitialCombatState(
             art_url: m.art_url ?? undefined,
             ...affinity,
             ...rollMonsterAttackAndDamageTypes(m.tier, affinity.element_weakness),
+            ...profile,
           };
         }),
       }
     : {
         fighters,
+        hex_range_enabled: true,
+        scene_seed: quest.id,
+        scene: sceneKey,
         monster: {
           name: quest.scene.monster_name,
           hp: quest.scene.monster_hp,
@@ -7338,6 +7500,11 @@ async function buildInitialCombatState(
             const affinity = rollMonsterElementAffinity();
             return { ...affinity, ...rollMonsterAttackAndDamageTypes(quest.scene.tier, affinity.element_weakness) };
           })(),
+          ...tierCombatProfile(
+            quest.scene.tier,
+            variant === "boss" || quest.scene.tower_floor_kind === "boss",
+            quest.id,
+          ),
         },
       };
   const initial = createCombatState(init);
@@ -7635,6 +7802,23 @@ export class QuestRoom extends DurableObject<Env> {
     const newMonsters = prevState.monsters.map((m) => ({ ...m, hp: 0 }));
     const newState: CombatState = { ...prevState, monsters: newMonsters, status: "victory" };
     await this.handleStepResult(questId, prevState, { state: newState, events: [{ type: "victory" }] });
+    return { ok: true };
+  }
+
+  // Drops the DO's in-memory cache so the next loadState() pulls fresh from
+  // D1. Called by HTTP equip/unequip routes after they patch live fighter
+  // weapon/armor stats — without this, the DO would keep serving the old
+  // cached snapshot and the engine would use stale weapon range / element.
+  async refreshFromD1(questId: number): Promise<{ ok: boolean }> {
+    if (this.cacheQuestId === questId) {
+      this.cacheState = null;
+      this.cacheLog = [];
+    }
+    // Re-broadcast the freshly-loaded state to all connected clients so the
+    // UI updates immediately (otherwise they'd only see the change after
+    // their next action).
+    const state = await this.loadState(questId);
+    if (state) this.broadcast({ type: "state", state });
     return { ok: true };
   }
 

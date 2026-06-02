@@ -11,6 +11,8 @@ export const bardAbilities: AbilityDef[] = [
     mana_cost: 1,
     routing: "utility",
     target: "single_enemy",
+    range_tiles: 3, // musical wave carries a few hexes
+    aoe_radius_tiles: 1, // crescendo wave catches adjacent foes
     execute(ctx) {
       const monster = ctx.target as { id: string };
       const wpn = Math.max(0, ctx.caster.weapon_power);
