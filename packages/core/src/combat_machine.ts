@@ -366,6 +366,11 @@ export interface AbilityRuntimeState {
   // every cast; if the actor has the passive equipped AND the ability id
   // isn't in this list yet, the cast is mana-free and the id is appended.
   memoization_casts?: Record<ActorId, string[]>;
+  // Staff Sage — Cache Warmer: list of actor ids whose next ability cast is
+  // mana-free because they took damage since their last cast. Damaged
+  // fighters with the cache_warmer passive are added; the cast handler
+  // zeroes mana_cost for any actor on this list and removes them after.
+  cache_warmer_primed?: ActorId[];
 }
 
 // How many rounds a mark stays active. Roughly mirrors slack's 90s timer
@@ -647,6 +652,9 @@ export type CombatEvent =
   | { type: "ability_self_hp_cost"; actor: ActorId; amount: number }
   | { type: "passive_on_kill"; actor: ActorId; passive_id: string; target: ActorId }
   | { type: "passive_earworm_refund"; actor: ActorId; amount: number }
+  | { type: "passive_load_balancer"; warden: ActorId; target: ActorId; redirect_damage: number }
+  | { type: "passive_cache_warmer_primed"; actor: ActorId }
+  | { type: "passive_cache_warmer_freed"; actor: ActorId; ability_id: string }
   | {
       type: "elemental_proc";
       actor: ActorId;
@@ -2370,16 +2378,38 @@ function handleMonsterAct(state: CombatState, roll: RollFn): StepResult {
     });
   }
 
-  // QA Paladin — Protect: split HP damage between the protected ally and the paladin.
+  // SRE Warden — Load Balancer: redirect 25% of HP damage to an adjacent
+  // Warden who has the passive equipped. Applies before Protect splits the
+  // remainder — Load Balancer absorbs first off the top.
+  let loadBalancerWarden: CombatFighter | null = null;
+  let loadBalancerDamage = 0;
+  if (hpDamage > 0 && target.pos) {
+    for (const f of s.fighters) {
+      if (f.id === target.id || f.hp <= 0 || !f.pos) continue;
+      if (!fighterHasPassive(f, "load_balancer")) continue;
+      if (hexDistance(f.pos, target.pos) > 1) continue;
+      loadBalancerWarden = f;
+      loadBalancerDamage = Math.floor(hpDamage * 0.25);
+      break;
+    }
+  }
+  const postLoadBalancerHpDamage = hpDamage - loadBalancerDamage;
+
+  // QA Paladin — Protect: split remaining HP damage between the protected
+  // ally and the paladin (after Load Balancer has skimmed its share).
   const protectState = s.ability_state?.paladin_protect;
   const protectPaladin = protectState?.target_id === target.id
-    ? s.fighters.find((f) => f.id === protectState!.paladin_id && f.hp > 0 && f.id !== target.id)
+    ? s.fighters.find((f) => f.id === protectState!.paladin_id && f.hp > 0 && f.id !== target.id && f.id !== loadBalancerWarden?.id)
     : null;
-  const targetHpDamage = protectPaladin ? Math.floor(hpDamage / 2) : hpDamage;
-  const paladinProtectDamage = hpDamage - targetHpDamage;
+  const targetHpDamage = protectPaladin ? Math.floor(postLoadBalancerHpDamage / 2) : postLoadBalancerHpDamage;
+  const paladinProtectDamage = protectPaladin ? (postLoadBalancerHpDamage - targetHpDamage) : 0;
   const targetNewHp = Math.max(0, target.hp - targetHpDamage);
   const paladinProtectNewHp = protectPaladin ? Math.max(0, protectPaladin.hp - paladinProtectDamage) : null;
+  const wardenNewHp = loadBalancerWarden ? Math.max(0, loadBalancerWarden.hp - loadBalancerDamage) : null;
 
+  if (loadBalancerWarden) {
+    events.push({ type: "passive_load_balancer", warden: loadBalancerWarden.id, target: target.id, redirect_damage: loadBalancerDamage });
+  }
   if (protectPaladin) {
     events.push({ type: "protect_triggered", paladin: protectPaladin.id, target: target.id, target_damage: targetHpDamage, paladin_damage: paladinProtectDamage });
   }
@@ -2387,6 +2417,7 @@ function handleMonsterAct(state: CombatState, roll: RollFn): StepResult {
   const updatedFighters = s.fighters.map((f) => {
     if (f.id === target.id) return { ...f, shield: newShield, hp: targetNewHp };
     if (protectPaladin && f.id === protectPaladin.id) return { ...f, hp: paladinProtectNewHp! };
+    if (loadBalancerWarden && f.id === loadBalancerWarden.id) return { ...f, hp: wardenNewHp! };
     return f;
   });
   const targetDowned = targetNewHp <= 0 && target.hp > 0;
@@ -2396,16 +2427,39 @@ function handleMonsterAct(state: CombatState, roll: RollFn): StepResult {
   if (protectPaladin && paladinProtectNewHp! <= 0 && protectPaladin.hp > 0) {
     events.push({ type: "fighter_down", target: protectPaladin.id });
   }
+  if (loadBalancerWarden && wardenNewHp! <= 0 && loadBalancerWarden.hp > 0) {
+    events.push({ type: "fighter_down", target: loadBalancerWarden.id });
+  }
+
+  // Staff Sage — Cache Warmer: any fighter who took damage AND has the
+  // passive equipped gets primed for a free next cast. Persists across
+  // turns until the next ability cast consumes the prime.
+  let cacheWarmerPrimed = s.ability_state?.cache_warmer_primed ?? [];
+  const damagedIds: ActorId[] = [];
+  if (targetHpDamage > 0) damagedIds.push(target.id);
+  if (protectPaladin && paladinProtectDamage > 0) damagedIds.push(protectPaladin.id);
+  if (loadBalancerWarden && loadBalancerDamage > 0) damagedIds.push(loadBalancerWarden.id);
+  for (const fid of damagedIds) {
+    const updated = updatedFighters.find((f) => f.id === fid);
+    if (!updated || updated.hp <= 0) continue;
+    if (!fighterHasPassive(updated, "cache_warmer")) continue;
+    if (cacheWarmerPrimed.includes(fid)) continue;
+    cacheWarmerPrimed = [...cacheWarmerPrimed, fid];
+    events.push({ type: "passive_cache_warmer_primed", actor: fid });
+  }
 
   // Consume smite debuff for this monster's swing (hit or miss handled elsewhere for miss).
   const abilityStateAfterSmite = consumeSmiteDebuff(
     tickAbilityCountersAfterSwing(s.ability_state), actorId,
   );
+  const abilityStateAfterPrime = cacheWarmerPrimed !== (s.ability_state?.cache_warmer_primed ?? [])
+    ? { ...abilityStateAfterSmite, cache_warmer_primed: cacheWarmerPrimed }
+    : abilityStateAfterSmite;
 
   let next: CombatState = {
     ...s,
     fighters: updatedFighters,
-    ability_state: abilityStateAfterSmite,
+    ability_state: abilityStateAfterPrime,
     stats: {
       ...s.stats,
       [target.id]: {
@@ -2416,6 +2470,12 @@ function handleMonsterAct(state: CombatState, roll: RollFn): StepResult {
         [protectPaladin.id]: {
           ...(s.stats[protectPaladin.id] ?? { damage_taken: 0, healing_done: 0, shielding_done: 0, kills: 0 }),
           damage_taken: (s.stats[protectPaladin.id]?.damage_taken ?? 0) + paladinProtectDamage,
+        },
+      } : {}),
+      ...(loadBalancerWarden ? {
+        [loadBalancerWarden.id]: {
+          ...(s.stats[loadBalancerWarden.id] ?? { damage_taken: 0, healing_done: 0, shielding_done: 0, kills: 0 }),
+          damage_taken: (s.stats[loadBalancerWarden.id]?.damage_taken ?? 0) + loadBalancerDamage,
         },
       } : {}),
     },
@@ -2956,7 +3016,12 @@ function handleAbility(
   // Memoization can fire their pricey abilities even when nearly empty.
   const memoCastsPrior = state.ability_state?.memoization_casts?.[action.actor] ?? [];
   const memoActive = fighterHasPassive(fighter, "memoization") && !memoCastsPrior.includes(ability.id);
-  const effectiveManaCost = memoActive ? 0 : ability.mana_cost;
+  // Staff Sage — Cache Warmer: a Sage who took damage since their last cast
+  // gets one free cast. Same check shape as Memoization; either passive can
+  // independently zero the cost.
+  const cacheWarmerPriorPrimed = state.ability_state?.cache_warmer_primed ?? [];
+  const cacheWarmerActive = fighterHasPassive(fighter, "cache_warmer") && cacheWarmerPriorPrimed.includes(action.actor);
+  const effectiveManaCost = (memoActive || cacheWarmerActive) ? 0 : ability.mana_cost;
   if (fighter.mana < effectiveManaCost) {
     return reject(state, `not enough mana (need ${effectiveManaCost})`);
   }
@@ -2984,13 +3049,18 @@ function handleAbility(
         },
       },
     } : {}),
-    ...(memoActive ? {
+    ...(memoActive || cacheWarmerActive ? {
       ability_state: {
         ...(s.ability_state ?? {}),
-        memoization_casts: {
-          ...(s.ability_state?.memoization_casts ?? {}),
-          [action.actor]: [...memoCastsPrior, ability.id],
-        },
+        ...(memoActive ? {
+          memoization_casts: {
+            ...(s.ability_state?.memoization_casts ?? {}),
+            [action.actor]: [...memoCastsPrior, ability.id],
+          },
+        } : {}),
+        ...(cacheWarmerActive ? {
+          cache_warmer_primed: cacheWarmerPriorPrimed.filter((id) => id !== action.actor),
+        } : {}),
       },
     } : {}),
   };
@@ -3003,6 +3073,7 @@ function handleAbility(
     mana_spent: effectiveManaCost,
   };
   const preEvents: CombatEvent[] = [...tick.events, usedEvent];
+  if (cacheWarmerActive) preEvents.push({ type: "passive_cache_warmer_freed", actor: action.actor, ability_id: ability.id });
 
   // ── AoE damage ──
   if (ability.routing === "aoe_damage") {
