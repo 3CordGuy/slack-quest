@@ -213,7 +213,13 @@ export type AbilityEffect =
   // ally's. Both must have a `pos` for the swap to apply; otherwise no-op.
   // Hex-grid combat only — in legacy front/back this is also a no-op since
   // there's no meaningful position to swap.
-  | { kind: "swap_positions"; caster_id: string; target_id: string };
+  | { kind: "swap_positions"; caster_id: string; target_id: string }
+  // Refactor Rogue — Hotpath: leap the actor to an unoccupied hex adjacent
+  // to the target monster. The handler picks the neighbor closest to the
+  // actor's current pos (least jarring jump) and emits a "moved" event so
+  // animations fire. No-op when either pos is missing or no adjacent hex is
+  // free — the strike effect that follows still lands.
+  | { kind: "leap_adjacent_to"; actor_id: string; target_id: string };
 
 export interface ActiveAbilityDef {
   kind: "active";

@@ -453,37 +453,30 @@ const smokeTest: AbilityDef = {
   },
 };
 
-// Hotpath — originally designed as a hex leap + strike, but the leap needs a
-// hex-position picker the combat UI doesn't currently surface. Re-framed as a
-// "distance-scaled" ranged strike: the further the rogue is from the target,
-// the more momentum the swing carries. Uses standard damage routing and
-// existing pos data on the caster + target snapshot (when hex combat is on).
+// Hotpath — leap to a hex adjacent to the target, then strike. The leap
+// auto-resolves: the engine picks the unoccupied neighbor closest to the
+// rogue's current position (least-jarring jump). Player only picks the target
+// enemy — no new hex picker needed in the UI.
 const hotpath: AbilityDef = {
   kind: "active",
   id: "hotpath",
   name: "Hotpath",
-  blurb: "Sprint the hot path — 1d6 + attack + 2 bonus damage per hex of distance to the target.",
+  blurb: "Sprint the hot path — leap to the target's flank and strike for 1d8 + attack physical damage.",
   icon: "run",
   mana_cost: 1,
   cooldown_turns: 2,
-  routing: "damage",
+  routing: "utility",
   target: "single_enemy",
   range_tiles: 4,
   aoe_radius_tiles: 0,
   execute(ctx) {
-    const monster = ctx.target as MonsterSnapshot & { pos?: { q: number; r: number } };
-    const casterPos = (ctx.caster as FighterSnapshot & { pos?: { q: number; r: number } }).pos;
-    let distance = 0;
-    if (casterPos && monster.pos) {
-      // Inline Manhattan-style hex distance (matches hexDistance in hex.ts) so
-      // we don't have to import the hex module here.
-      const dq = casterPos.q - monster.pos.q;
-      const dr = casterPos.r - monster.pos.r;
-      distance = (Math.abs(dq) + Math.abs(dr) + Math.abs(dq + dr)) / 2;
-    }
+    const monster = ctx.target as MonsterSnapshot;
     const atk = ctx.caster.attack_mod;
-    const amount = ctx.roll(6) + atk + distance * 2;
-    return [fx.damage(monster.id, amount, `1d6+${atk}a+${distance}×2dist`, { damageType: "physical" })];
+    const amount = ctx.roll(8) + atk;
+    return [
+      fx.leapAdjacentTo(ctx.caster.id, monster.id),
+      fx.damage(monster.id, amount, `1d8+${atk}a`, { damageType: "physical" }),
+    ];
   },
 };
 

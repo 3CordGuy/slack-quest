@@ -3624,6 +3624,34 @@ function applyUtilityAbilityEffects(
         };
         break;
       }
+      case "leap_adjacent_to": {
+        // Refactor Rogue — Hotpath: jump the actor to an unoccupied hex
+        // adjacent to the target monster. Picks the neighbor closest to the
+        // actor's current pos so the leap reads as "minimum jump that gets
+        // me into range." Silently no-ops when there's no free landing
+        // square or either fighter lacks a pos — the strike effect that
+        // follows still lands.
+        const leapActor = s.fighters.find((f) => f.id === effect.actor_id);
+        const leapTarget = s.monsters.find((m) => m.id === effect.target_id);
+        if (!leapActor || !leapTarget || !leapActor.pos || !leapTarget.pos) break;
+        const grid = s.grid ?? GRID_DEFAULT;
+        const occupied = new Set<string>();
+        for (const f of s.fighters) if (f.pos && f.hp > 0 && f.id !== effect.actor_id) occupied.add(`${f.pos.q},${f.pos.r}`);
+        for (const m of s.monsters) if (m.pos && m.hp > 0) occupied.add(`${m.pos.q},${m.pos.r}`);
+        for (const o of s.obstacles ?? []) occupied.add(`${o.pos.q},${o.pos.r}`);
+        const from = leapActor.pos;
+        const candidates = hexNeighbors(leapTarget.pos, grid)
+          .filter((n) => !occupied.has(`${n.q},${n.r}`))
+          .sort((a, b) => hexDistance(a, from) - hexDistance(b, from));
+        const dest = candidates[0];
+        if (!dest) break;
+        s = {
+          ...s,
+          fighters: s.fighters.map((f) => f.id === effect.actor_id ? { ...f, pos: dest } : f),
+        };
+        events.push({ type: "moved", actor: effect.actor_id, from, to: dest });
+        break;
+      }
       case "swap_positions": {
         // SRE Warden — Failover: trade hex positions with the targeted ally.
         // Both must have a pos for the swap to apply (legacy front/back combat
