@@ -266,6 +266,7 @@ import {
   spdCompareThrows,
   STAPLES,
   MAX_MANA_CAP,
+  maxManaCap,
   RARITY_BADGE,
   SHIELD_CAP_MULTIPLIER,
   SKILL_META,
@@ -280,6 +281,7 @@ import {
   checkSpdAchievements,
   checkProgressionAchievements,
   deriveAll,
+  deriveMaxMana,
   DAMAGE_TYPE_EMOJI,
   STARTING_STATS,
   type DamageType,
@@ -4828,10 +4830,14 @@ async function handleUse(
   const activeQuest = await getActiveQuestForCharacter(env.DB, payload.user_id);
 
   if (item.item_type === "magic") {
-    if (character.max_mana >= MAX_MANA_CAP) {
-      return ephemeral(`Already at the max-mana cap (${MAX_MANA_CAP}). Sell it instead with \`${payload.command} sell ${item.id}\`.`);
+    const cap = maxManaCap(character.level);
+    const formulaMana = deriveMaxMana(character.int_stat ?? 5, character.level);
+    const crystalHeadroom = Math.max(0, cap - formulaMana - (character.mana_bonus ?? 0));
+    if (crystalHeadroom <= 0) {
+      return ephemeral(`Already at the max-mana cap (${cap}). Sell it instead with \`${payload.command} sell ${item.id}\`.`);
     }
-    const result = await bumpMaxMana(env.DB, character, item.power);
+    const clampedPower = Math.min(item.power, crystalHeadroom);
+    const result = await bumpMaxMana(env.DB, character, clampedPower);
     await removeItem(env.DB, item.id);
     const wasted = item.power - result.added;
     const wastedNote = wasted > 0 ? ` (${wasted} over the cap, lost)` : "";

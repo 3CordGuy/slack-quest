@@ -36,6 +36,7 @@ import {
   FOCUS_MAX_MANA_BONUS,
   focusManaBonus,
   MAX_MANA_CAP,
+  maxManaCap,
   checkApothecaryAchievements,
   checkCombatAchievements,
   checkDeathAchievements,
@@ -4404,7 +4405,7 @@ app.post("/api/inn/:roomId/stay", async (c) => {
 
 // Use an inventory item out of combat. Mirrors /sq use for the contexts
 // that don't need a foe: consumables heal the user (clamped to max_hp),
-// magic items bump max_mana (capped at MAX_MANA_CAP). Tools / scrolls /
+// magic items bump max_mana (capped at maxManaCap(level)). Tools / scrolls /
 // revive items reject — those require combat context (use_item via WS)
 // or a target picker (revive). Mid-combat use also rejects; route those
 // through the WS protocol's use_item action instead.
@@ -4439,16 +4440,21 @@ app.post("/api/inventory/:itemId/use", async (c) => {
     return c.json({ ok: true, kind: "heal", healed });
   }
   if (item.item_type === "magic") {
-    if (character.max_mana >= 5) {
-      return c.json({ error: "at_max_mana_cap" }, 400);
+    const cap = maxManaCap(character.level);
+    const formulaMana = deriveMaxMana(character.int_stat ?? 5, character.level);
+    const crystalHeadroom = Math.max(0, cap - formulaMana - (character.mana_bonus ?? 0));
+    if (crystalHeadroom <= 0) {
+      return c.json({ error: "at_max_mana_cap", cap }, 400);
     }
-    const result = await bumpMaxMana(c.env.DB, character, item.power);
+    const clampedPower = Math.min(item.power, crystalHeadroom);
+    const result = await bumpMaxMana(c.env.DB, character, clampedPower);
     await removeItem(c.env.DB, item.id);
     return c.json({
       ok: true,
       kind: "mana_bump",
       added: result.added,
       new_max_mana: result.newMaxMana,
+      cap,
     });
   }
   return c.json({
@@ -6544,7 +6550,8 @@ app.post("/api/dev/level", async (c) => {
   // spends are not tracked per-level, so we reset to the clean baseline and
   // restore all free points for the target level.
   const stats = statsAtLevel(character.class, targetLevel);
-  const maxMana = deriveMaxMana(stats.int_stat, targetLevel);
+  const formulaMana = deriveMaxMana(stats.int_stat, targetLevel);
+  const maxMana = formulaMana + (character.mana_bonus ?? 0);
   // HP: use class base_hp + 3 per level above 1 (≈ avg d6 rounded down).
   const maxHp = cls.base_hp + Math.max(0, targetLevel - 1) * 3;
   const newXp = xpForLevel(targetLevel);
@@ -8328,12 +8335,19 @@ export class QuestRoom extends DurableObject<Env> {
         break;
       }
       case "magic": {
-        if (actor.max_mana >= 5) {
-          this.sendOne(ws, { type: "error", message: "Already at max mana cap — save it for another character." });
+        const cap = maxManaCap(actor.level);
+        const dbChar = await getCharacter(this.env.DB, actor.id);
+        if (!dbChar) { this.sendOne(ws, { type: "error", message: "character not found" }); return; }
+        const formulaMana = deriveMaxMana(dbChar.int_stat ?? 5, dbChar.level);
+        const crystalHeadroom = Math.max(0, cap - formulaMana - (dbChar.mana_bonus ?? 0));
+        if (crystalHeadroom <= 0) {
+          this.sendOne(ws, { type: "error", message: `Already at max mana cap (${cap}) — save it for another character.` });
           return;
         }
-        const newMax = Math.min(5 /* MAX_MANA_CAP */, actor.max_mana + item.power);
-        const added = newMax - actor.max_mana;
+        const clampedPower = Math.min(item.power, crystalHeadroom);
+        await bumpMaxMana(this.env.DB, dbChar, clampedPower);
+        const newMax = actor.max_mana + clampedPower;
+        const added = clampedPower;
         updatedFighters = state.fighters.map((f) =>
           f.id === actor.id
             ? { ...f, max_mana: newMax, mana: Math.min(newMax, f.mana + added) }

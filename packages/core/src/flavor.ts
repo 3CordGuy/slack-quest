@@ -382,7 +382,20 @@ export const FOCUS_WEAPON_ROLL_CHANCE = 0.25;
 export const SHIELD_CAP_MULTIPLIER = 2; // shield caps at SHIELD_CAP_MULTIPLIER × max_hp
 export type Rarity = "common" | "uncommon" | "rare" | "epic" | "legendary";
 
-export const MAX_MANA_CAP = 5;
+// Magic-item max-mana cap. Level 1 caps at 5 (the starting max for INT-10 classes),
+// then +1 every 3 levels up to a ceiling of 10 — so crystals from the shop stay
+// useful past the early game instead of becoming dead inventory at L1 for casters
+// or at ~L5 for everyone else. L1: 5 | L4: 6 | L7: 7 | L10: 8 | L13: 9 | L16+: 10.
+export const MAX_MANA_CAP_BASE = 5;
+export const MAX_MANA_CAP_CEILING = 10;
+export function maxManaCap(level: number): number {
+  return Math.min(
+    MAX_MANA_CAP_CEILING,
+    MAX_MANA_CAP_BASE + Math.floor(Math.max(0, level - 1) / 3),
+  );
+}
+// Legacy export — equals the L1 cap. Prefer maxManaCap(level) in new code.
+export const MAX_MANA_CAP = MAX_MANA_CAP_BASE;
 
 // AbilityId is the string id of any active ability. No longer a closed union —
 // adding a new ability only requires updating the ability file itself.
@@ -1209,7 +1222,7 @@ function rollRarity(tier: number): Rarity {
 // Power maps to mechanic by type:
 //   weapon/armor → flat modifier added to attack/cast (weapon) or subtracted /2 from incoming dmg (armor)
 //   consumable   → HP healed on `<cmd> use`
-//   magic        → max_mana increase on `<cmd> use` (capped at MAX_MANA_CAP)
+//   magic        → max_mana increase on `<cmd> use` (capped at maxManaCap(level))
 //
 // Weapon and armor power scales with monster tier (+2 base per tier above 1)
 // so gear from higher-tier fights is meaningfully better regardless of rarity.
@@ -1229,7 +1242,7 @@ function rollPower(type: ItemType, rarity: Rarity, tier = 1): number {
     return 5 + hpScale + rollDice(4);                                // 6-8 (legacy)
   }
   if (type === "magic") {
-    // max_mana boost — flat by rarity, capped by caller at MAX_MANA_CAP.
+    // max_mana boost — flat by rarity, capped by caller at maxManaCap(level).
     // Tier-invariant: mana pools don't scale with level.
     if (rarity === "legendary") return 5;
     if (rarity === "epic") return 4;

@@ -176,6 +176,10 @@ export interface Character {
       Flips to 0 once the player links an email. Surfaced in the popover so
       guests see a "Save your character" CTA. */
   is_guest: number;
+  /** Cumulative max-mana added by magic crystals (migration 0061). Stored
+      separately from the INT+level formula so level-ups don't wipe crystal
+      progress. max_mana = deriveMaxMana(int_stat, level) + mana_bonus. */
+  mana_bonus: number;
 }
 
 interface CharacterRow extends Omit<Character, "scars" | "effects" | "drink_buff" | "achievements" | "pending_achievements"> {
@@ -993,8 +997,10 @@ export async function awardSpoils(
     maxHp += hpRollPerLevel();
   }
   const newHp = levelsGained > 0 ? maxHp : character.hp;
-  // Mana scales with INT and level; recalculate at the new level and refill on level-up.
-  const maxMana = deriveMaxMana(character.int_stat ?? 5, level);
+  // max_mana = formula(INT, level) + crystal bonus. Crystal bonus persists
+  // across level-ups; the formula part grows automatically with level.
+  const formulaMana = deriveMaxMana(character.int_stat ?? 5, level);
+  const maxMana = formulaMana + (character.mana_bonus ?? 0);
   const newMana = levelsGained > 0 ? maxMana : Math.min(character.mana, maxMana);
   await db
     .prepare(
@@ -1071,22 +1077,25 @@ export async function tryDeductMana(
   return (result.meta.changes ?? 0) > 0;
 }
 
-// Increases max_mana by `amount`. Also bumps current mana by the same delta.
-// Used when a magic-type item is consumed. No hard cap — mana scales freely.
+// Increments mana_bonus (the persistent crystal contribution) by `amount`.
+// max_mana is recalculated as deriveMaxMana(int_stat, level) + new mana_bonus
+// so level-ups preserve crystal progress. Current mana is bumped by the same
+// delta, clamped to the new max.
 export async function bumpMaxMana(
   db: D1Database,
   character: Character,
   amount: number,
 ): Promise<{ added: number; newMaxMana: number; newMana: number }> {
-  const newMaxMana = character.max_mana + amount;
+  const newBonus = (character.mana_bonus ?? 0) + amount;
+  const newMaxMana = deriveMaxMana(character.int_stat ?? 5, character.level) + newBonus;
   const added = amount;
   const newMana = Math.min(newMaxMana, character.mana + added);
   await db
     .prepare(
-      `UPDATE characters SET max_mana = ?, mana = ?, last_active = ?
+      `UPDATE characters SET mana_bonus = ?, max_mana = ?, mana = ?, last_active = ?
        WHERE slack_user_id = ?`,
     )
-    .bind(newMaxMana, newMana, Date.now(), character.slack_user_id)
+    .bind(newBonus, newMaxMana, newMana, Date.now(), character.slack_user_id)
     .run();
   return { added, newMaxMana, newMana };
 }
