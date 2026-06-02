@@ -243,19 +243,43 @@ export interface EffectMeta {
   color: string;
 }
 
+// Display-side metadata for every EffectType the engine emits.
+//
+// **Naming convention — important:**
+// The `name` field is the player-facing display label and follows Gantt
+// Quest's engineering-themed vocabulary, matching the ability that
+// applies the effect (or the elemental concept that procs it). The
+// `EffectType` *key* on the other hand is the stable internal identifier
+// used in code (e.g. `effects.some(e => e.type === "barkskin")`) — it
+// purposefully sticks with the classic short identifier so grepping
+// and engine logic stay readable.
+//
+// So you'll see pairs like:
+//   key: "barkskin"     name: "Firewalled"     (druid Firewall ability)
+//   key: "animal_form"  name: "Scaled Up"      (druid Scale Up ability)
+//   key: "stunned"      name: "Containerized"  (mage Containerize ability)
+//   key: "entangled"    name: "Deadlocked"     (druid Deadlock ability)
+//
+// Player-visible surfaces (pill chips, character sheet, Slack pills,
+// combat log) MUST render `meta.name`, not the type key. If you add a
+// new effect type or ability, update the `name` here to match the
+// engineering vocabulary of the action that applied it.
 export const EFFECT_META: Record<EffectType, EffectMeta> = {
-  regen:     { emoji: "🟢", name: "Regen",     kind: "buff",    ignoresArmor: true,  blurb: "Restores HP each action.",                                                icon: "regeneration",   color: "#4ade80" },
-  bleeding:  { emoji: "🔴", name: "Bleeding",  kind: "debuff",  ignoresArmor: false, blurb: "Loses HP each action.",                                                   icon: "bleeding-wound", color: "#f87171" },
-  burning:   { emoji: "🔥", name: "Burning",   kind: "debuff",  ignoresArmor: true,  blurb: "Loses HP each action; ignores armor.",                                    icon: "fire",           color: "#fb923c" },
-  poisoned:  { emoji: "☠️", name: "Poisoned",  kind: "debuff",  ignoresArmor: true,  blurb: "Loses HP each turn.",                                                     icon: "poison-cloud",   color: "#c084fc" },
-  empowered: { emoji: "⚡", name: "Empowered", kind: "passive", ignoresArmor: false, blurb: "+25% damage dealt for N turns.",                                          icon: "aura",           color: "#f59e0b" },
-  frozen:    { emoji: "❄️", name: "Frozen",    kind: "passive", ignoresArmor: false, blurb: "Skips next action.",                                                      icon: "ice-bolt",       color: "#93c5fd" },
-  shocked:   { emoji: "🌩️", name: "Shocked",   kind: "passive", ignoresArmor: false, blurb: "Takes +30% damage from all sources.",                                    icon: "electric",       color: "#fbbf24" },
-  stunned:   { emoji: "📦", name: "Stunned",   kind: "passive", ignoresArmor: false, blurb: "Containerized — skips swings with escalating 30%/turn break chance.",    icon: "fluffy-swirl",   color: "#a78bfa" },
-  hexed:     { emoji: "🔮", name: "Hexed",     kind: "passive", ignoresArmor: false, blurb: "Deals -25% damage. Takes 3 bleed stacks whenever it takes damage.",      icon: "death-skull",    color: "#a855f7" },
-  entangled: { emoji: "🌿", name: "Entangled", kind: "debuff",  ignoresArmor: false, blurb: "-4 to attack rolls.",                                                     icon: "vine-whip",      color: "#86efac" },
-  barkskin:    { emoji: "🍃", name: "Barkskin",    kind: "passive", ignoresArmor: false, blurb: "Hardened skin — bonus AC for N turns.",              icon: "leaf",      color: "#a3e635" },
-  animal_form: { emoji: "🐺", name: "Animal Form", kind: "buff",    ignoresArmor: false, blurb: "Transformed — mag + 25% stat boost active.",          icon: "wolf-head", color: "#f97316" },
+  // Generic DoT/HoT effects — applied by many sources (weapon procs, abilities, items).
+  regen:     { emoji: "🟢", name: "Auto-Heal", kind: "buff",    ignoresArmor: true,  blurb: "Restores HP each action.",                  icon: "regeneration",   color: "#4ade80" },
+  bleeding:  { emoji: "🔴", name: "Bleeding",  kind: "debuff",  ignoresArmor: false, blurb: "Loses HP each action.",                     icon: "bleeding-wound", color: "#f87171" },
+  burning:   { emoji: "🔥", name: "Burning",   kind: "debuff",  ignoresArmor: true,  blurb: "Loses HP each action; ignores armor.",      icon: "fire",           color: "#fb923c" },
+  poisoned:  { emoji: "☠️", name: "Poisoned",  kind: "debuff",  ignoresArmor: true,  blurb: "Loses HP each turn.",                       icon: "poison-cloud",   color: "#c084fc" },
+  // Elemental procs (lightning weapons + ice procs) — keep the elemental name.
+  frozen:    { emoji: "❄️", name: "Frozen",    kind: "passive", ignoresArmor: false, blurb: "Skips next action.",                        icon: "ice-bolt",       color: "#93c5fd" },
+  shocked:   { emoji: "🌩️", name: "Shocked",   kind: "passive", ignoresArmor: false, blurb: "Takes +30% damage from all sources.",      icon: "electric",       color: "#fbbf24" },
+  // Ability-driven effects — name matches the engineering ability that applies them.
+  empowered: { emoji: "⚡", name: "Empowered", kind: "passive", ignoresArmor: false, blurb: "+25% damage dealt for N turns.",            icon: "aura",           color: "#f59e0b" },
+  stunned:   { emoji: "📦", name: "Containerized", kind: "passive", ignoresArmor: false, blurb: "Containerized — skips swings with escalating 30%/turn break chance.", icon: "fluffy-swirl", color: "#a78bfa" },
+  hexed:     { emoji: "🔮", name: "Hexed",     kind: "passive", ignoresArmor: false, blurb: "Deals -25% damage. Takes 3 bleed stacks whenever it takes damage.", icon: "death-skull", color: "#a855f7" },
+  entangled: { emoji: "🌿", name: "Deadlocked", kind: "debuff",  ignoresArmor: false, blurb: "Held by an upstream dependency. -4 to attack rolls.",         icon: "vine-whip", color: "#86efac" },
+  barkskin:    { emoji: "🍃", name: "Firewalled", kind: "passive", ignoresArmor: false, blurb: "Inbound deny-all rule active — bonus AC for N turns.",     icon: "leaf",      color: "#a3e635" },
+  animal_form: { emoji: "🐺", name: "Scaled Up",  kind: "buff",    ignoresArmor: false, blurb: "Compute provisioned — stats surged while active.",         icon: "wolf-head", color: "#f97316" },
 };
 
 export const ELEMENT_META: Record<ElementType, { emoji: string; name: string; effect: EffectType }> = {
