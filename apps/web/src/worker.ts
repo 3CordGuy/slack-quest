@@ -917,7 +917,10 @@ app.post("/api/auth/verify", async (c) => {
   setCookie(c, SESSION_COOKIE, session.session_id, {
     httpOnly: true,
     sameSite: "Lax",
-    secure: true,
+    // Browsers reject `Secure` cookies over plain HTTP, which breaks login in
+    // local dev (vite serves http://localhost:5174). Drop the flag locally and
+    // keep it on everywhere else.
+    secure: c.env.ENVIRONMENT !== "local",
     maxAge: SESSION_MAX_AGE_SEC,
     path: "/",
   });
@@ -964,7 +967,10 @@ app.post("/api/auth/guest", async (c) => {
   setCookie(c, SESSION_COOKIE, session.session_id, {
     httpOnly: true,
     sameSite: "Lax",
-    secure: true,
+    // Browsers reject `Secure` cookies over plain HTTP, which breaks login in
+    // local dev (vite serves http://localhost:5174). Drop the flag locally and
+    // keep it on everywhere else.
+    secure: c.env.ENVIRONMENT !== "local",
     maxAge: SESSION_MAX_AGE_SEC,
     path: "/",
   });
@@ -1066,7 +1072,10 @@ app.post("/api/auth/email/verify", async (c) => {
   setCookie(c, SESSION_COOKIE, session.session_id, {
     httpOnly: true,
     sameSite: "Lax",
-    secure: true,
+    // Browsers reject `Secure` cookies over plain HTTP, which breaks login in
+    // local dev (vite serves http://localhost:5174). Drop the flag locally and
+    // keep it on everywhere else.
+    secure: c.env.ENVIRONMENT !== "local",
     maxAge: SESSION_MAX_AGE_SEC,
     path: "/",
   });
@@ -6371,7 +6380,10 @@ app.post("/api/quest/:id/start_web_combat", async (c) => {
   // web_combat_state row. start_web_combat is idempotent: if state already
   // exists (e.g. Slack /gq attack already ran bootstrapFromSlack), the
   // earlier check above returned the existing state.
-  const built = await buildInitialCombatState(c.env.DB, quest);
+  const built = await buildInitialCombatState(c.env.DB, quest, {
+    ENVIRONMENT: c.env.ENVIRONMENT,
+    DEV_FORCE_SCENE: (c.env as Env & { DEV_FORCE_SCENE?: string }).DEV_FORCE_SCENE,
+  });
   if (!built.ok) {
     if (built.reason === "non_combat_room") {
       return c.json({ error: "non_combat_room", room_type: built.detail ?? null }, 400);
@@ -7521,6 +7533,7 @@ function tierCombatProfile(
 async function buildInitialCombatState(
   db: D1Database,
   quest: ActiveQuest,
+  envOpts?: { ENVIRONMENT?: string; DEV_FORCE_SCENE?: string },
 ): Promise<
   | { ok: true; seeded: CombatState }
   | { ok: false; reason: "unsupported_variant" | "non_combat_room"; detail?: string }
@@ -7668,7 +7681,14 @@ async function buildInitialCombatState(
     "server_catacomb", "cubicle_forest", "warehouse_floor",
     "fluorescent_office", "neon_basement", "deadline_dungeon",
   ] as const;
-  const sceneKey = SCENES[Math.abs(Math.floor(quest.id)) % SCENES.length];
+  // Local-dev scene force-override: when ENVIRONMENT=local and DEV_FORCE_SCENE
+  // is set to one of the scene keys, every new combat uses that scene
+  // regardless of quest.id. Used for testing curated battlefield art without
+  // having to roll the dice on quest.id % 6. No-op in production.
+  const forcedScene = envOpts?.ENVIRONMENT === "local" ? envOpts.DEV_FORCE_SCENE : undefined;
+  const sceneKey = (forcedScene && (SCENES as readonly string[]).includes(forcedScene))
+    ? forcedScene as typeof SCENES[number]
+    : SCENES[Math.abs(Math.floor(quest.id)) % SCENES.length];
   const init: CombatInit = scenePackMonsters
     ? {
         fighters,
@@ -8059,7 +8079,10 @@ export class QuestRoom extends DurableObject<Env> {
     const quest = await getQuestById(this.env.DB, questId);
     if (!quest) return { ok: false, reason: "quest_not_found" };
 
-    const built = await buildInitialCombatState(this.env.DB, quest);
+    const built = await buildInitialCombatState(this.env.DB, quest, {
+      ENVIRONMENT: this.env.ENVIRONMENT,
+      DEV_FORCE_SCENE: (this.env as Env & { DEV_FORCE_SCENE?: string }).DEV_FORCE_SCENE,
+    });
     if (!built.ok) return { ok: false, reason: built.reason, detail: built.detail };
 
     // Seed drink_buffs from the characters table so a pub buff bought before
