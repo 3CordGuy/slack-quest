@@ -195,6 +195,15 @@ interface ActiveSwing {
 const SWING_DURATION_MS = 260;
 const SWING_ARC_RADIANS = (140 * Math.PI) / 180;
 
+interface ActiveRiseEffect {
+  id: string;
+  kind: RiseKind;
+  fromActorId?: string;
+  born: number;
+  duration: number;
+}
+const RISE_DURATION_MS = 1400;
+
 const SWING_COLOR_BY_ELEMENT: Record<string, string> = {
   fire: "#fb923c",
   ice: "#7dd3fc",
@@ -292,7 +301,29 @@ export interface CombatHexGridHandle {
    *  direction of the target, and invokes onArrive when the swing reaches
    *  peak (so impact particles fire on contact, not at the start). */
   emitSwing: (p: SwingEmit, onArrive: () => void) => void;
+  /** Brief "popup" rise effect — a small kind-specific colored icon plus
+   *  matching sparkles float up from the pawn over ~1.4 s. Used for
+   *  one-shot event indicators (taunt, marked, vulnerable, foreseen,
+   *  test-coverage shield, delivery bonus) that don't live on the
+   *  persistent effects array. */
+  emitRiseEffect: (p: RiseEffectEmit) => void;
   shake: () => void;
+}
+
+export type RiseKind =
+  | "taunt"        // angry red shout
+  | "marked"       // orange crosshair
+  | "vulnerable"   // cracked shield, amber
+  | "foreseen"     // blue eye / forecast
+  | "test_coverage" // green checkmark
+  | "delivery_bonus" // gold coin
+  | "ill_omen";     // dark hex / curse forewarning
+
+export interface RiseEffectEmit {
+  id: string;
+  kind: RiseKind;
+  /** Pawn to glue the rise to. Falls back to canvas center if unknown. */
+  actorId?: string;
 }
 
 export interface SwingEmit {
@@ -524,6 +555,11 @@ export function CombatHexGrid({
   const particlesRef = useRef<Particle[]>([]);
   const projectilesRef = useRef<ActiveProjectile[]>([]);
   const swingsRef = useRef<ActiveSwing[]>([]);
+  // Active "popup" rise effects — kind-specific colored icon + sparkles
+  // floating up from the actor for ~1.4 s, then auto-removed in the rAF
+  // loop. Used for transient event indicators (taunt/marked/etc.) that
+  // don't sit on the persistent effects array.
+  const risesRef = useRef<ActiveRiseEffect[]>([]);
   const shakeRef = useRef<{ start: number; duration: number } | null>(null);
   const lastTimeRef = useRef<number>(0);
 
@@ -961,6 +997,15 @@ export function CombatHexGrid({
           arrived: false,
         });
       },
+      emitRiseEffect(p) {
+        risesRef.current.push({
+          id: p.id,
+          kind: p.kind,
+          fromActorId: p.actorId,
+          born: performance.now(),
+          duration: RISE_DURATION_MS,
+        });
+      },
       shake() {
         shakeRef.current = { start: performance.now(), duration: 240 };
       },
@@ -1116,6 +1161,19 @@ export function CombatHexGrid({
         }
       }
       swingsRef.current = stillSwinging;
+
+      // 3c. Rise effects — kind-specific colored icon + sparkles floating
+      // up from each glued pawn. Auto-removed when past duration.
+      const stillRising: ActiveRiseEffect[] = [];
+      for (const rise of risesRef.current) {
+        const age = now - rise.born;
+        if (age >= rise.duration) continue;
+        const t = age / rise.duration;
+        const anchor = rise.fromActorId ? animatedPosRef.current[rise.fromActorId] : null;
+        if (anchor) drawRiseEffect(ctx!, anchor.x, anchor.y, hexSize, rise.kind, t);
+        stillRising.push(rise);
+      }
+      risesRef.current = stillRising;
 
       // 4. Particles (update + draw)
       const alive: Particle[] = [];
@@ -2459,6 +2517,248 @@ function roundRect(
   ctx.lineTo(x, y + radius);
   ctx.quadraticCurveTo(x, y, x + radius, y);
   ctx.closePath();
+}
+
+// ── Rise effects (one-shot popups) ────────────────────────────────────────
+// Each rise renders for ~1.4 s on top of the pawn: the symbol icon floats
+// straight up while a cloud of small sparkles in the matching color fan
+// out around it. Alpha follows a sin(πt) envelope so the rise fades in
+// and out smoothly. Kind palettes live in RISE_PALETTE.
+
+const RISE_PALETTE: Record<RiseKind, { color: string; spark: string }> = {
+  taunt:           { color: "#ef4444", spark: "#fecaca" }, // angry red
+  marked:          { color: "#fb923c", spark: "#fed7aa" }, // hunt orange
+  vulnerable:      { color: "#f59e0b", spark: "#fde68a" }, // amber crack
+  foreseen:        { color: "#38bdf8", spark: "#bae6fd" }, // forecast cyan
+  test_coverage:   { color: "#34d399", spark: "#bbf7d0" }, // covered green
+  delivery_bonus:  { color: "#fbbf24", spark: "#fef3c7" }, // gold coin
+  ill_omen:        { color: "#a855f7", spark: "#e9d5ff" }, // dark hex purple
+};
+
+function drawRiseEffect(
+  ctx: CanvasRenderingContext2D,
+  cx: number, cy: number, r: number, kind: RiseKind, t: number,
+) {
+  const pal = RISE_PALETTE[kind];
+  // Icon rises straight up from just above the pawn over its lifetime.
+  const yLift = r * 1.8 * t;
+  const iconY = cy - r * 0.9 - yLift;
+  const iconX = cx;
+  // Envelope: ease-in fade up to ~25%, hold, fade out from ~70%.
+  const alpha = t < 0.25 ? t / 0.25 : t > 0.7 ? (1 - t) / 0.3 : 1;
+  const size = r * (0.55 + 0.10 * Math.sin(t * Math.PI));
+
+  ctx.save();
+  ctx.globalAlpha = Math.max(0, Math.min(1, alpha));
+
+  // Halo behind the icon — soft radial in the kind color so the symbol
+  // doesn't get lost against busy backgrounds.
+  const halo = ctx.createRadialGradient(iconX, iconY, 0, iconX, iconY, size * 1.6);
+  halo.addColorStop(0, hexToRgba(pal.color, 0.55));
+  halo.addColorStop(0.6, hexToRgba(pal.color, 0.20));
+  halo.addColorStop(1, hexToRgba(pal.color, 0));
+  ctx.fillStyle = halo;
+  ctx.beginPath();
+  ctx.arc(iconX, iconY, size * 1.6, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Kind-specific glyph.
+  ctx.fillStyle = pal.color;
+  ctx.strokeStyle = pal.color;
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  switch (kind) {
+    case "taunt":          drawRiseExclamation(ctx, iconX, iconY, size, pal); break;
+    case "marked":         drawRiseCrosshair(ctx, iconX, iconY, size, pal); break;
+    case "vulnerable":     drawRiseCrackedShield(ctx, iconX, iconY, size, pal); break;
+    case "foreseen":       drawRiseEye(ctx, iconX, iconY, size, pal); break;
+    case "test_coverage":  drawRiseCheck(ctx, iconX, iconY, size, pal); break;
+    case "delivery_bonus": drawRiseCoin(ctx, iconX, iconY, size, pal); break;
+    case "ill_omen":       drawRiseHexRune(ctx, iconX, iconY, size, pal); break;
+  }
+
+  // Sparkle cloud — small dots fanning out from the icon position, each
+  // travelling outward as the rise progresses. Spread is deterministic
+  // per-rise so the cluster looks chosen, not randomized every frame.
+  const SPARKS = 8;
+  for (let i = 0; i < SPARKS; i++) {
+    const ang = (i / SPARKS) * Math.PI * 2 + t * 0.6;
+    const dist = r * (0.35 + t * 1.1);
+    const sx = iconX + Math.cos(ang) * dist;
+    const sy = iconY + Math.sin(ang) * dist - r * 0.2 * t; // also drift up
+    const sparkR = r * 0.07 * (1 - t * 0.5);
+    ctx.globalAlpha = Math.max(0, alpha) * (0.7 - t * 0.5);
+    ctx.fillStyle = pal.spark;
+    ctx.beginPath();
+    ctx.arc(sx, sy, sparkR, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
+// Tiny helper: convert an #rrggbb hex string to an rgba() form with alpha.
+// Used by the rise halo gradients.
+function hexToRgba(hex: string, alpha: number): string {
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
+// ── Rise glyphs ───────────────────────────────────────────────────────────
+
+function drawRiseExclamation(
+  ctx: CanvasRenderingContext2D, x: number, y: number, s: number,
+  pal: { color: string; spark: string },
+) {
+  // Bold "!" — vertical bar tapered downward + a round dot below.
+  ctx.fillStyle = pal.color;
+  ctx.beginPath();
+  ctx.moveTo(x - s * 0.10, y - s * 0.42);
+  ctx.lineTo(x + s * 0.10, y - s * 0.42);
+  ctx.lineTo(x + s * 0.06, y + s * 0.10);
+  ctx.lineTo(x - s * 0.06, y + s * 0.10);
+  ctx.closePath();
+  ctx.fill();
+  ctx.beginPath();
+  ctx.arc(x, y + s * 0.30, s * 0.12, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+function drawRiseCrosshair(
+  ctx: CanvasRenderingContext2D, x: number, y: number, s: number,
+  pal: { color: string; spark: string },
+) {
+  ctx.strokeStyle = pal.color;
+  ctx.lineWidth = s * 0.10;
+  ctx.beginPath();
+  ctx.arc(x, y, s * 0.45, 0, Math.PI * 2);
+  ctx.stroke();
+  // Four ticks at cardinal points.
+  for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
+    ctx.beginPath();
+    ctx.moveTo(x + dx * s * 0.45, y + dy * s * 0.45);
+    ctx.lineTo(x + dx * s * 0.65, y + dy * s * 0.65);
+    ctx.stroke();
+  }
+  // Center dot.
+  ctx.fillStyle = pal.color;
+  ctx.beginPath();
+  ctx.arc(x, y, s * 0.08, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+function drawRiseCrackedShield(
+  ctx: CanvasRenderingContext2D, x: number, y: number, s: number,
+  pal: { color: string; spark: string },
+) {
+  // Simple heater shield silhouette with a zigzag crack down the middle.
+  ctx.fillStyle = pal.color;
+  ctx.beginPath();
+  ctx.moveTo(x - s * 0.42, y - s * 0.4);
+  ctx.lineTo(x + s * 0.42, y - s * 0.4);
+  ctx.lineTo(x + s * 0.42, y);
+  ctx.quadraticCurveTo(x + s * 0.42, y + s * 0.5, x, y + s * 0.55);
+  ctx.quadraticCurveTo(x - s * 0.42, y + s * 0.5, x - s * 0.42, y);
+  ctx.closePath();
+  ctx.fill();
+  // Dark zigzag crack overlay.
+  ctx.strokeStyle = "#1c1917";
+  ctx.lineWidth = s * 0.08;
+  ctx.beginPath();
+  ctx.moveTo(x - s * 0.06, y - s * 0.32);
+  ctx.lineTo(x + s * 0.08, y - s * 0.10);
+  ctx.lineTo(x - s * 0.08, y + s * 0.12);
+  ctx.lineTo(x + s * 0.06, y + s * 0.42);
+  ctx.stroke();
+}
+
+function drawRiseEye(
+  ctx: CanvasRenderingContext2D, x: number, y: number, s: number,
+  pal: { color: string; spark: string },
+) {
+  // Almond eye shape + pupil — reads as "seen" / "foreseen."
+  ctx.fillStyle = pal.spark;
+  ctx.beginPath();
+  ctx.ellipse(x, y, s * 0.5, s * 0.28, 0, 0, Math.PI * 2);
+  ctx.fill();
+  // Iris.
+  ctx.fillStyle = pal.color;
+  ctx.beginPath();
+  ctx.arc(x, y, s * 0.22, 0, Math.PI * 2);
+  ctx.fill();
+  // Pupil + sparkle.
+  ctx.fillStyle = "#0f172a";
+  ctx.beginPath();
+  ctx.arc(x, y, s * 0.10, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "#ffffff";
+  ctx.beginPath();
+  ctx.arc(x - s * 0.07, y - s * 0.07, s * 0.05, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+function drawRiseCheck(
+  ctx: CanvasRenderingContext2D, x: number, y: number, s: number,
+  pal: { color: string; spark: string },
+) {
+  // Bold checkmark — for Test Coverage / shield_of_faith.
+  ctx.strokeStyle = pal.color;
+  ctx.lineWidth = s * 0.18;
+  ctx.beginPath();
+  ctx.moveTo(x - s * 0.35, y + s * 0.05);
+  ctx.lineTo(x - s * 0.10, y + s * 0.35);
+  ctx.lineTo(x + s * 0.40, y - s * 0.30);
+  ctx.stroke();
+}
+
+function drawRiseCoin(
+  ctx: CanvasRenderingContext2D, x: number, y: number, s: number,
+  pal: { color: string; spark: string },
+) {
+  // Gold coin disk with $ embossed.
+  ctx.fillStyle = pal.color;
+  ctx.beginPath();
+  ctx.arc(x, y, s * 0.50, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = "#92400e";
+  ctx.lineWidth = s * 0.05;
+  ctx.stroke();
+  ctx.fillStyle = "#78350f";
+  ctx.font = `bold ${Math.max(6, s * 0.55)}px ui-sans-serif, system-ui`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText("$", x, y);
+}
+
+function drawRiseHexRune(
+  ctx: CanvasRenderingContext2D, x: number, y: number, s: number,
+  pal: { color: string; spark: string },
+) {
+  // Hexagonal rune outline + an angular sigil inside — used for hex /
+  // ill_omen events that warn of an incoming curse burst.
+  ctx.strokeStyle = pal.color;
+  ctx.lineWidth = s * 0.10;
+  ctx.beginPath();
+  for (let i = 0; i < 6; i++) {
+    const ang = (Math.PI / 3) * i - Math.PI / 2;
+    const px = x + Math.cos(ang) * s * 0.48;
+    const py = y + Math.sin(ang) * s * 0.48;
+    if (i === 0) ctx.moveTo(px, py);
+    else ctx.lineTo(px, py);
+  }
+  ctx.closePath();
+  ctx.stroke();
+  // Three small intersecting strokes inside — abstract "rune."
+  ctx.beginPath();
+  ctx.moveTo(x - s * 0.18, y - s * 0.10);
+  ctx.lineTo(x + s * 0.18, y + s * 0.10);
+  ctx.moveTo(x + s * 0.18, y - s * 0.10);
+  ctx.lineTo(x - s * 0.18, y + s * 0.10);
+  ctx.moveTo(x, y - s * 0.22);
+  ctx.lineTo(x, y + s * 0.22);
+  ctx.lineWidth = s * 0.06;
+  ctx.stroke();
 }
 
 // "Containerized" — translucent shipping-container box clamped over the

@@ -1412,7 +1412,13 @@ export function CombatPage({
               ) {
                 const e = evt as { actor?: string; target?: string };
                 const tgt = e.target ? findFighter(e.target) : e.actor ? findFighter(e.actor) : null;
-                if (tgt?.pos) hex.emitParticle({ id: `sof${Date.now()}`, kind: "shield", at: tgt.pos, actorId: tgt.id });
+                if (tgt?.pos) {
+                  hex.emitParticle({ id: `sof${Date.now()}`, kind: "shield", at: tgt.pos, actorId: tgt.id });
+                  // Shield of Faith → "Test Coverage" rise (green checkmark).
+                  if (evt.type === "ability_shield_of_faith") {
+                    hex.emitRiseEffect({ id: `r${Date.now()}`, kind: "test_coverage", actorId: tgt.id });
+                  }
+                }
               }
               if (
                 evt.type === "passive_paladin_auto_heal"
@@ -1420,12 +1426,50 @@ export function CombatPage({
               ) {
                 const e = evt as { target?: string; actor?: string };
                 const tgt = e.target ? findFighter(e.target) : e.actor ? findFighter(e.actor) : null;
-                if (tgt?.pos) hex.emitParticle({ id: `hl${Date.now()}`, kind: "heal", at: tgt.pos, actorId: tgt.id });
+                if (tgt?.pos) {
+                  hex.emitParticle({ id: `hl${Date.now()}`, kind: "heal", at: tgt.pos, actorId: tgt.id });
+                  // Good Fortune → "Delivery Bonus" rise (gold coin).
+                  if (evt.type === "ability_good_fortune_delayed") {
+                    hex.emitRiseEffect({ id: `r${Date.now()}`, kind: "delivery_bonus", actorId: tgt.id });
+                  }
+                }
               }
               if (evt.type === "ability_animal_form" || evt.type === "ability_ill_omen_applied" || evt.type === "ability_hex") {
                 const e = evt as { actor?: string; target?: string };
                 const tgt = e.target ? (findFighter(e.target) ?? findMonster(e.target)) : e.actor ? findFighter(e.actor) : null;
-                if (tgt?.pos) hex.emitParticle({ id: `mg${Date.now()}`, kind: "magic", at: tgt.pos, actorId: tgt.id });
+                if (tgt?.pos) {
+                  hex.emitParticle({ id: `mg${Date.now()}`, kind: "magic", at: tgt.pos, actorId: tgt.id });
+                  // Ill Omen → dark hex rune rise on the target. The
+                  // persistent status effects (animal_form / hex) already
+                  // have ambient canvas overlays; no rise needed for them.
+                  if (evt.type === "ability_ill_omen_applied" && tgt.id) {
+                    hex.emitRiseEffect({ id: `r${Date.now()}`, kind: "ill_omen", actorId: tgt.id });
+                  }
+                }
+              }
+              // Taunt, Mark, Foresee — pure soft-effect rises with no
+              // persistent status to render. Each fires on the relevant
+              // pawn so the player sees who was just taunted / marked /
+              // foreseen.
+              if (evt.type === "ability_taunt") {
+                const e = evt as { actor?: string };
+                const aid = e.actor;
+                if (aid) hex.emitRiseEffect({ id: `r${Date.now()}`, kind: "taunt", actorId: aid });
+              }
+              if (evt.type === "ability_mark" as never) {
+                const e = evt as { target?: string };
+                if (e.target) {
+                  const tgt = findMonster(e.target) ?? findFighter(e.target);
+                  if (tgt?.id) hex.emitRiseEffect({ id: `r${Date.now()}`, kind: "marked", actorId: tgt.id });
+                }
+              }
+              if (evt.type === "ability_foresee") {
+                const e = evt as { predicted_target?: string; actor?: string };
+                const aid = e.predicted_target ?? e.actor;
+                if (aid) {
+                  const tgt = findMonster(aid) ?? findFighter(aid);
+                  if (tgt?.id) hex.emitRiseEffect({ id: `r${Date.now()}`, kind: "foreseen", actorId: tgt.id });
+                }
               }
               // Generic effect_applied from monster specials (entangle_on_hit etc.).
               if (evt.type === "effect_applied") {
