@@ -453,6 +453,52 @@ const smokeTest: AbilityDef = {
   },
 };
 
+// Hotpath — originally designed as a hex leap + strike, but the leap needs a
+// hex-position picker the combat UI doesn't currently surface. Re-framed as a
+// "distance-scaled" ranged strike: the further the rogue is from the target,
+// the more momentum the swing carries. Uses standard damage routing and
+// existing pos data on the caster + target snapshot (when hex combat is on).
+const hotpath: AbilityDef = {
+  kind: "active",
+  id: "hotpath",
+  name: "Hotpath",
+  blurb: "Sprint the hot path — 1d6 + attack + 2 bonus damage per hex of distance to the target.",
+  icon: "run",
+  mana_cost: 1,
+  cooldown_turns: 2,
+  routing: "damage",
+  target: "single_enemy",
+  range_tiles: 4,
+  aoe_radius_tiles: 0,
+  execute(ctx) {
+    const monster = ctx.target as MonsterSnapshot & { pos?: { q: number; r: number } };
+    const casterPos = (ctx.caster as FighterSnapshot & { pos?: { q: number; r: number } }).pos;
+    let distance = 0;
+    if (casterPos && monster.pos) {
+      // Inline Manhattan-style hex distance (matches hexDistance in hex.ts) so
+      // we don't have to import the hex module here.
+      const dq = casterPos.q - monster.pos.q;
+      const dr = casterPos.r - monster.pos.r;
+      distance = (Math.abs(dq) + Math.abs(dr) + Math.abs(dq + dr)) / 2;
+    }
+    const atk = ctx.caster.attack_mod;
+    const amount = ctx.roll(6) + atk + distance * 2;
+    return [fx.damage(monster.id, amount, `1d6+${atk}a+${distance}×2dist`, { damageType: "physical" })];
+  },
+};
+
+const cherryPick: AbilityDef = {
+  kind: "passive",
+  id: "cherry_pick",
+  name: "Cherry-Pick",
+  blurb: "Finish the broken builds first — your damage on enemies under 25% HP is increased by 50%.",
+  icon: "daggers",
+  trigger: "always_on",
+  once_per_fight: false,
+  execute: () => [],
+  // Effect is applied inline by handleDamageAbility via fighterHasPassive.
+};
+
 const silentMode: AbilityDef = {
   kind: "passive",
   id: "silent_mode",
@@ -696,6 +742,8 @@ const NEW_NODES_BY_CLASS: Record<ClassId, TalentNodeDef[]> = {
     activeNode("refactor_rogue", codeAudit, "control"),
     activeNode("refactor_rogue", smokeTest, "utility"),
     activeNode("refactor_rogue", silentMode, "defense"),
+    activeNode("refactor_rogue", hotpath, "damage"),
+    activeNode("refactor_rogue", cherryPick, "damage"),
   ],
   sre_warden: [
     activeNode("sre_warden", postmortem, "damage"),
@@ -724,7 +772,7 @@ export const NEW_ABILITY_DEFS: AbilityDef[] = [
   pruning, mycelialWeb, compostHeap, deepRoots, cronJob,
   standupMeeting, discordNotification, encore, unsubscribeFromAll,
   frostBolt, hailstorm, timeDilation,
-  codeAudit, smokeTest, silentMode,
+  codeAudit, smokeTest, silentMode, hotpath, cherryPick,
   postmortem, circuitBreaker, failover, capacityPlanning,
   indexScan, stackTrace, dropTable, staleCache, garbageCollection,
 ];

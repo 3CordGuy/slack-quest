@@ -7716,6 +7716,10 @@ async function buildInitialCombatState(
         : (weapon?.rarity === "uncommon" || weapon?.rarity === "rare" || weapon?.rarity === "epic" || weapon?.rarity === "legendary"
           ? weapon.rarity : undefined),
       resistances: Object.keys(resistances).length > 0 ? resistances : undefined,
+      // Talent-tree passives the player has equipped — used by combat hooks
+      // like Cherry-Pick that don't auto-apply to every member of the class.
+      // Strips out the null placeholders the loadout JSON keeps for empty slots.
+      equipped_passive_ids: (member.ability_loadout?.passive ?? []).filter((id): id is string => !!id),
     });
 
     // Inject hired merc as an additional CombatFighter for this member.
