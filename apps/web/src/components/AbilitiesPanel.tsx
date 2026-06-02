@@ -303,8 +303,17 @@ export function AbilitiesPanel({
           )}
         </div>
         {pickingSlot && (
-          <div style={{ fontSize: 11, color: "#c084fc88", marginTop: 6 }}>
-            Click an owned {subKind} ability below to equip it in this slot.
+          <div style={{
+            fontSize: 12,
+            color: "#e9d5ff",
+            background: "#2a1f3a",
+            border: "1px solid #c084fc55",
+            borderRadius: 6,
+            padding: "6px 10px",
+            marginTop: 8,
+            fontWeight: 600,
+          }}>
+            ↓ Click any owned {subKind} ability below to equip it here. Click the slot again to cancel.
           </div>
         )}
       </div>
@@ -401,16 +410,23 @@ function LoadoutSlot({
   const filled = node !== null;
   const slot = (
     <div
-      onClick={filled ? onClear : onPick}
-      title={filled ? `Click to clear ${node.ability.name}` : isPicking ? "Cancel slot pick" : "Pick an ability to equip here"}
+      onClick={onPick}
+      title={
+        isPicking
+          ? "Click an ability below to equip — click slot again to cancel"
+          : filled
+            ? `Replace ${node.ability.name} — click then pick an ability`
+            : "Click then pick an ability to equip"
+      }
       style={{
+        position: "relative",
         width: 64,
         height: 64,
         background: filled ? "#1e1c2e" : "#141618",
-        border: filled
-          ? "2px solid #b89b3a"
-          : isPicking
-            ? "2px solid #c084fc"
+        border: isPicking
+          ? "2px solid #c084fc"
+          : filled
+            ? "2px solid #b89b3a"
             : "2px dashed #1e2128",
         borderRadius: 8,
         display: "flex",
@@ -420,6 +436,7 @@ function LoadoutSlot({
         gap: 3,
         cursor: "pointer",
         padding: 4,
+        boxShadow: isPicking ? "0 0 8px #c084fc66" : undefined,
       }}
     >
       {filled ? (
@@ -428,9 +445,32 @@ function LoadoutSlot({
           <div style={{ fontSize: 8, color: "#fff", textAlign: "center", lineHeight: 1.1, fontWeight: 600 }}>
             {node.ability.name}
           </div>
+          <button
+            onClick={(e) => { e.stopPropagation(); onClear(); }}
+            title={`Unequip ${node.ability.name}`}
+            style={{
+              position: "absolute",
+              top: -6,
+              right: -6,
+              width: 18,
+              height: 18,
+              padding: 0,
+              borderRadius: 9,
+              background: "#1d1f23",
+              border: "1px solid #4b5563",
+              color: "#9ca3af",
+              fontSize: 11,
+              lineHeight: 1,
+              cursor: "pointer",
+              fontFamily: "inherit",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+            }}
+          >×</button>
         </>
       ) : (
-        <div style={{ fontSize: 10, color: isPicking ? "#c084fc88" : "#374151" }}>empty</div>
+        <div style={{ fontSize: 10, color: isPicking ? "#c084fc88" : "#374151" }}>{isPicking ? "pick…" : "empty"}</div>
       )}
     </div>
   );
