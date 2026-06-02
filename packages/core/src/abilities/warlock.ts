@@ -22,6 +22,8 @@ export const warlockAbilities: AbilityDef[] = [
     mana_cost: 1,
     routing: "utility",
     target: "single_enemy",
+    range_tiles: 4, // siphon a remote target
+    aoe_radius_tiles: 0, // single-tap drain
     execute(ctx) {
       const monster = ctx.target as MonsterSnapshot;
       const roll1 = ctx.roll(6);
@@ -43,6 +45,8 @@ export const warlockAbilities: AbilityDef[] = [
     mana_cost: 1,
     routing: "utility",
     target: "single_enemy",
+    range_tiles: 5, // hex from across the battlefield
+    aoe_radius_tiles: 0, // pinpoint corruption
     execute(ctx) {
       const monster = ctx.target as MonsterSnapshot;
       return [fx.hexMonster(monster.id, 10)];
@@ -88,6 +92,8 @@ export const warlockAbilities: AbilityDef[] = [
     mana_cost: 2,
     routing: "utility",
     target: "single_enemy",
+    range_tiles: 5, // ranged dark-magic burst
+    aoe_radius_tiles: 1, // consume-and-burst splashes adjacent foes
     execute(ctx) {
       const monster = ctx.target as MonsterSnapshot;
       const bleedEffect = monster.effects?.find((e) => e.type === "bleeding");

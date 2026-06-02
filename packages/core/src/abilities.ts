@@ -204,6 +204,28 @@ export interface ActiveAbilityDef {
   // Whether this ability needs a migrate-style position picker in addition to
   // a target picker. Currently only Druid's Migrate needs this.
   needs_position_picker?: boolean;
+  // Optional hex-range override. When unset, the ability inherits the
+  // caster's weapon range (see `deriveRangeTiles` in hex.ts). Set this for
+  // abilities whose effective reach differs from the weapon — e.g. a melee
+  // fighter's special area shout, or a focused incantation with shorter
+  // reach than a normal cast. AoE abilities ignore this (they fire on all
+  // valid targets regardless of position).
+  range_tiles?: number;
+  // Optional blast radius in hex tiles around the primary target. When
+  // unset, the ability hits only the picked target (single-target). When
+  // set, the ability ALSO damages every other live enemy within this many
+  // hexes of the primary target (Manhattan-style hex distance). The
+  // primary target still takes the full damage from execute(); secondary
+  // targets in the blast take an additional damage instance equal to the
+  // primary's damage (the engine applies per-target as it iterates).
+  //
+  //   aoe_radius_tiles: 1 → primary + adjacent enemies
+  //   aoe_radius_tiles: 2 → primary + everyone within 2 hexes
+  //   aoe_radius_tiles: 0 (or unset) → primary only
+  //
+  // The hex grid UI paints the blast radius around the hovered target
+  // during aim mode so the player sees who'll be hit.
+  aoe_radius_tiles?: number;
   execute: (ctx: AbilityContext) => AbilityEffect[];
 }
 

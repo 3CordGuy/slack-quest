@@ -4,6 +4,7 @@
 export * from "./combat";
 export * from "./flavor";
 export * from "./combat_machine";
+export * from "./hex";
 export * from "./abilities";
 export * from "./achievements";
 export * from "./stats";

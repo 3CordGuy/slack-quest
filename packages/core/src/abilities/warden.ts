@@ -12,6 +12,8 @@ export const wardenAbilities: AbilityDef[] = [
     cooldown_turns: 2,
     routing: "utility",
     target: "single_enemy",
+    range_tiles: 3, // synthetic-load probe from a few hexes away
+    aoe_radius_tiles: 0, // single-target stress probe
     execute(ctx) {
       const monster = ctx.target as { id: string };
       const shieldBonus = Math.floor(ctx.caster.shield * 0.5);

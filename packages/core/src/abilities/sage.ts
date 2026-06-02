@@ -21,6 +21,8 @@ export const sageAbilities: AbilityDef[] = [
     mana_cost: 1,
     routing: "utility",
     target: "single_enemy",
+    range_tiles: 4, // ranged frost spell
+    aoe_radius_tiles: 0, // pinpoint icicle
     execute(ctx) {
       const monster = ctx.target as MonsterSnapshot;
       const mag = ctx.caster.magic_mod;
@@ -72,6 +74,8 @@ export const sageAbilities: AbilityDef[] = [
     cooldown_turns: 1,
     routing: "utility",
     target: "single_enemy",
+    range_tiles: 4, // curse from across the room
+    aoe_radius_tiles: 0, // single-target curse
     execute(ctx) {
       const monster = ctx.target as MonsterSnapshot;
       return [fx.illOmen(ctx.caster.id, monster.id)];

@@ -306,12 +306,12 @@ export function describeItemEffect(item: {
   switch (item.item_type) {
     case "weapon":
       if (item.weapon_range === "focus") {
-        return <>{lead("crystal-ball")}Focus weapon: adds +{p} to heal & shield rolls (no attack/cast damage). +1 max mana while equipped.</>;
+        return <>{lead("crystal-ball")}Focus weapon: adds +{p} to heal & shield rolls (no attack/cast damage). +1 max mana while equipped. Reach: 3 hexes (+1 per 4 INT above 5).</>;
       }
       if (item.weapon_range === "ranged") {
-        return <>{lead("crossbow")}Ranged weapon: +{p} attack/cast damage. Can attack from back row.</>;
+        return <>{lead("crossbow")}Ranged weapon: +{p} attack/cast damage. Reach: 5 hexes (+1 per 4 DEX above 5).</>;
       }
-      return <>{lead("sword")}Melee weapon: +{p} attack/cast damage. Front row only for attack.</>;
+      return <>{lead("sword")}Melee weapon: +{p} attack/cast damage. Reach: 1 hex — must be adjacent to strike.</>;
     case "armor": {
       const slot = item.slot;
       if (slot === "boots" || slot === "ring" || slot === "amulet") {

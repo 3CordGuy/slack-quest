@@ -30,6 +30,8 @@ export const mageAbilities: AbilityDef[] = [
     cooldown_turns: 1,
     routing: "utility",
     target: "single_enemy",
+    range_tiles: 4, // arcane containment lobs across the room
+    aoe_radius_tiles: 0, // single-target lockdown
     execute(ctx) {
       const target = ctx.target as { id: string } | undefined;
       if (!target) return [];
@@ -40,11 +42,13 @@ export const mageAbilities: AbilityDef[] = [
     kind: "active",
     id: "lightning_bolt",
     name: "Zero-Day Strike",
-    blurb: "A precision strike through an unpatched vulnerability — rolls d20 + magic to hit; deals magic × d8 damage on hit.",
+    blurb: "A precision strike through an unpatched vulnerability — rolls d20 + magic to hit; deals magic × d8 damage + chain damage to enemies within 1 hex.",
     icon: "lightning-branches",
     mana_cost: 1,
     routing: "utility",
     target: "single_enemy",
+    range_tiles: 5, // long-range hex/lightning strike
+    aoe_radius_tiles: 1, // arcing lightning chains to adjacent foes
     execute(ctx) {
       const monster = ctx.target as MonsterSnapshot;
       const mag = ctx.caster.magic_mod;

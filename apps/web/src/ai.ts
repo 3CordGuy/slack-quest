@@ -479,6 +479,10 @@ const ART_VERSION = "v6";
 // the global anchor (corporate-fantasy office-dungeon, Ghibli watercolor).
 const MONSTER_ART_VERSION = "v8";
 
+// Battlefield ground textures (top-down view of the floor where the hex grid
+// sits). One image per scene; cached forever once generated.
+const BATTLEFIELD_ART_VERSION = "v1";
+
 // Wrap a bucket + public base-url so art helpers can build full asset URLs
 // without leaking the env type into ai.ts. baseUrl points at whichever worker
 // serves /img/<key> from this bucket.
@@ -499,6 +503,29 @@ const NEGATIVES =
 // flux doesn't fight a competing "dim moody" hint.
 const MONSTER_STYLE_ANCHOR =
   "Studio Ghibli style hand-drawn anime illustration — watercolor textures, soft cel-shading, vibrant saturated colors, expressive painterly brushwork. The kind of frame you'd see in a Hayao Miyazaki film (Spirited Away / Princess Mononoke / Howl's Moving Castle). SETTING: a corporate-fantasy hybrid world where adventurers fight in a half-stone half-office workplace dungeon. The environment is a high-tech office crossed with a stone keep — warm natural daylight, soft desk lamps, glowing computer monitors lighting the scene. Gantt charts and burndown graphs are pinned to stone walls. Sticky notes and kanban-board cards cover desks. Server racks hum in alcoves. Coffee cups, ergonomic keyboards, mechanical office gear, ethernet cables, and scattered scrolls of printout code are visible in the background. LIGHTING IS BRIGHT, WARM, AND DREAMLIKE — not dim, not shadowy, not dungeon-gloomy. The monster is clearly lit and expressive against the busy office-dungeon backdrop. Whimsical creature design, gentle melancholy or wonder typical of Ghibli antagonists.";
+
+// Battlefield ground textures sit BEHIND the hex grid on the canvas. They
+// need to be flat top-down terrain views with NO characters, NO horizon line,
+// and roughly even diffuse lighting so the hex overlay reads cleanly on top.
+// Aspect ratio is roughly 13:7 (the grid dimensions) — flux will return a
+// square but we letterbox-crop on the client.
+const BATTLEFIELD_STYLE_ANCHOR =
+  "Studio Ghibli style hand-painted top-down battlefield ground texture. STRICT TOP-DOWN ORTHOGONAL VIEW — looking straight down at the floor from directly above, like a tabletop wargame map. NO horizon line, NO sky, NO characters, NO creatures, NO people, NO units, NO monsters, NO buildings rising above the floor. Just the ground, edge-to-edge. EVEN DIFFUSED LIGHTING with very soft shadows so the surface reads clearly from any direction. Subtle painterly texture and color variation gives the terrain life without competing with overlaid hex grid lines. Wide landscape aspect ratio. Painterly watercolor brushwork, muted but not flat colors, gentle palette appropriate to the scene.";
+
+export const BATTLEFIELD_PROMPTS: Record<string, string> = {
+  server_catacomb:
+    "A top-down view of a stone catacomb floor. Cool grey flagstones with mortar lines, scattered with thin trailing ethernet cables, a few patches of glowing cyan circuit-board fragments embedded in the stone, faint dust drift, mossy edges in the corners.",
+  cubicle_forest:
+    "A top-down view of an abandoned office floor reclaimed by nature. Cracked grey carpet tiles split by twisting tree roots, scattered moss patches in soft green, a few fallen leaves, the corner of a toppled keyboard half-buried, golden warm tint.",
+  warehouse_floor:
+    "A top-down view of a polished concrete warehouse floor. Painted yellow lane lines crossing the surface, faint tire scuffs, a few wood-grain pallet outlines, oil staining, sodium-orange tinted ambient light evenly diffused.",
+  fluorescent_office:
+    "A top-down view of an office's grey low-pile carpet floor. Subtle squared carpet-tile pattern, scattered paper sheets, a few coffee-cup ring stains, cool fluorescent cyan-white tint, faint cable trails crossing.",
+  neon_basement:
+    "A top-down view of a polished dark concrete floor. Faint purple-magenta neon glow reflecting on the wet-looking surface, painted glyphs and arrows in cool pink, scattered exposed-cable shadows, deep moody color palette.",
+  deadline_dungeon:
+    "A top-down view of a torch-lit dungeon floor — large rough flagstones with cracks. Scattered scrolls of parchment, a quill, a few burnt-orange torch-glow patches, scattered post-it note squares pinned to the stone, warm amber tint.",
+};
 
 // View-art prompts. Each renders the same image every time — generated once
 // on first cache miss, then served from R2 forever. Keys stable across deploys
@@ -710,6 +737,48 @@ export async function generateMonsterArt(
     `${variantHint}`;
   const prompt = `${subject} ${MONSTER_STYLE_ANCHOR} ${NEGATIVES}`;
   return generateAndCacheArt(ai, art, key, prompt, `monster:${monsterName}`);
+}
+
+// Battlefield ground art. One image per scene, cached forever in R2 once
+// generated. The web client overlays the hex grid on top at ~25% alpha so
+// the texture reads as ground without competing with gameplay.
+//
+// Fail-soft: returns null on any error or when art is disabled (local dev).
+// The hex grid falls back to its flat tinted background color when null.
+export async function generateBattlefieldArt(
+  ai: Ai,
+  art: ArtTarget,
+  scene: string,
+): Promise<string | null> {
+  if (art.disabled) return null;
+  const key = `art/battlefield/${BATTLEFIELD_ART_VERSION}/${scene}.png`;
+  const subject = BATTLEFIELD_PROMPTS[scene] ?? BATTLEFIELD_PROMPTS.deadline_dungeon;
+  const prompt = `${subject} ${BATTLEFIELD_STYLE_ANCHOR} ${NEGATIVES}`;
+  return generateAndCacheArt(ai, art, key, prompt, `battlefield:${scene}`);
+}
+
+// Returns the cached battlefield URL if present, else null AND schedules a
+// background generation via ctx.waitUntil so the next request hits cache.
+// Mirrors getOrScheduleViewArt — the hex grid renders with no background
+// for the first user but persistent cache means subsequent quests get art.
+export async function getOrScheduleBattlefieldArt(
+  ai: Ai,
+  art: ArtTarget,
+  ctx: { waitUntil: (p: Promise<unknown>) => void },
+  scene: string,
+): Promise<string | null> {
+  if (art.disabled) return null;
+  const key = `art/battlefield/${BATTLEFIELD_ART_VERSION}/${scene}.png`;
+  const publicUrl = `${art.baseUrl}/img/${key}`;
+  try {
+    const existing = await art.bucket.head(key);
+    if (existing) return publicUrl;
+  } catch (err) {
+    console.warn("battlefield-art:head-error", { scene, err: err instanceof Error ? err.message : String(err) });
+  }
+  // Cache miss — schedule generation, return null this turn.
+  ctx.waitUntil(generateBattlefieldArt(ai, art, scene));
+  return null;
 }
 
 // Core image-generation primitive. Checks R2 for the cached object first,

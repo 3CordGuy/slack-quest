@@ -15,6 +15,7 @@ import {
   type RollFn,
   type TurnAction,
 } from "./combat_machine";
+import { posKey } from "./hex";
 
 // Sequence-RNG: returns the next number from a fixed list. Tests must pass
 // enough values to cover every roll the engine will request — see comments
@@ -1275,8 +1276,9 @@ describe("QA Paladin — protect", () => {
   });
 
   it("splits incoming HP damage: protected target takes floor(dmg/2), paladin absorbs the rest", () => {
-    // Paladin (back, weight=1) + U_FIGHTER2 (front, weight=3).
-    // roll(101)=50 → picks front fighter (U_FIGHTER2).
+    // Both fighters are equidistant from the monster in hex mode, so weights are equal (1:1).
+    // roll(101)=60 → r = 60/100 * 2 = 1.2; after fighter[0] (Paladin, weight=1): r=0.2 > 0;
+    // after fighter[1] (U_FIGHTER2, weight=1): r=-0.8 ≤ 0 → picks U_FIGHTER2.
     // d20=15 → 15+5=20 ≥ AC 12 → HIT.
     // d4=4 → raw=4+3+0=7, hpDamage=7 (no armor pool).
     // U_FIGHTER2 takes floor(7/2)=3; paladin takes 7−3=4.
@@ -1286,7 +1288,7 @@ describe("QA Paladin — protect", () => {
       ...begun.state,
       ability_state: { paladin_protect: { paladin_id: "U_PALADIN", target_id: "U_FIGHTER2" } },
     };
-    const result = step(withProtect, { kind: "monster_act" }, seqRoll([50, 15, 4]));
+    const result = step(withProtect, { kind: "monster_act" }, seqRoll([60, 15, 4]));
     expect(result.state.fighters.find((f) => f.id === "U_FIGHTER2")?.hp).toBe(17); // 20 − 3
     expect(result.state.fighters.find((f) => f.id === "U_PALADIN")?.hp).toBe(26); // 30 − 4
     expect(result.events.find((e) => e.type === "protect_triggered")).toMatchObject({
@@ -2410,5 +2412,113 @@ describe("Staff Sage — Ill Omen", () => {
     expect(result.state.status).toBe("victory");
     expect(result.events.find((e) => e.type === "ability_ill_omen_burst")).toMatchObject({ accumulated: 30, burst: 15 });
     expect(result.events.find((e) => e.type === "victory")).toBeDefined();
+  });
+});
+
+describe("hex obstacles", () => {
+  // Ranged fighter at (1,3), monster at (11,3), obstacle planted between them.
+  // Verifies the obstacle blocks LOS and the engine emits a reject.
+  function rangedInit(): CombatInit {
+    return {
+      fighters: [{
+        id: "U_RANGER",
+        name: "Aria",
+        class: "Refactor Rogue",
+        level: 5,
+        hp: 20, max_hp: 20, mana: 3, max_mana: 3, shield: 0,
+        position: "front",
+        attack_mod: 2, magic_mod: 0,
+        weapon_power: 4, focus_power: 0,
+        weapon_range: "ranged",
+        armor_power: 0,
+        scars: [],
+      }],
+      monster: {
+        name: "Bandit",
+        hp: 20, max_hp: 20, tier: 1,
+        is_boss: false,
+      },
+      hex_range_enabled: true,
+    };
+  }
+
+  function runBegin(state: CombatState, initRolls: number[]) {
+    return step(state, { kind: "begin" }, seqRoll(initRolls));
+  }
+
+  it("generateObstacles is wired into createCombatState via scene_seed", () => {
+    const init = { ...rangedInit(), scene_seed: 42, scene: "cave" };
+    const state = createCombatState(init);
+    expect(state.obstacles?.length).toBeGreaterThanOrEqual(2);
+    expect(state.obstacles?.length).toBeLessThanOrEqual(4);
+    expect(state.scene).toBe("cave");
+  });
+
+  it("scene_seed undefined → no obstacles generated", () => {
+    const state = createCombatState(rangedInit());
+    expect(state.obstacles).toEqual([]);
+  });
+
+  it("obstacle on the ray between attacker and target blocks LOS", () => {
+    // Position actors 4 hexes apart (within ranged 5-hex range), obstacle at midpoint (3,3).
+    const init = rangedInit();
+    const begun = runBegin(createCombatState(init), [20, 5]);
+    const withObstacle: CombatState = {
+      ...begun.state,
+      fighters: begun.state.fighters.map((f) => ({ ...f, pos: { q: 1, r: 3 } })),
+      monsters: begun.state.monsters.map((m) => ({ ...m, pos: { q: 5, r: 3 } })),
+      obstacles: [{ pos: { q: 3, r: 3 }, kind: "boulder" }],
+    };
+    const result = step(withObstacle, { kind: "attack", actor: "U_RANGER" }, seqRoll([20, 6]));
+    // The engine rejects the attack with a "rejected" event citing no line of sight.
+    const rejected = result.events.find((e) => e.type === "rejected");
+    expect(rejected).toMatchObject({ reason: "no line of sight to target" });
+    expect(result.state.monsters[0].hp).toBe(20);
+  });
+
+  it("obstacle off the ray does not block LOS — attack proceeds", () => {
+    const init = rangedInit();
+    const begun = runBegin(createCombatState(init), [20, 5]);
+    const withObstacle: CombatState = {
+      ...begun.state,
+      fighters: begun.state.fighters.map((f) => ({ ...f, pos: { q: 1, r: 3 } })),
+      monsters: begun.state.monsters.map((m) => ({ ...m, pos: { q: 5, r: 3 } })),
+      // Off the line between (1,3) and (5,3) — placed two rows below.
+      obstacles: [{ pos: { q: 3, r: 6 }, kind: "boulder" }],
+    };
+    const result = step(withObstacle, { kind: "attack", actor: "U_RANGER" }, seqRoll([20, 6]));
+    // Attack lands: monster takes damage.
+    expect(result.state.monsters[0].hp).toBeLessThan(20);
+  });
+
+  it("obstacle hexes are excluded from monster auto-move pathing", () => {
+    // Vertical brick layout: fighter near the top, monster near the bottom,
+    // obstacle wall blocking the direct path. Verify monster still moves
+    // (around the obstacles) rather than getting stuck on its starting hex.
+    const init = rangedInit();
+    init.monster!.tier = 3; // ensure move_range >= 3 so it can route around
+    const begun = runBegin(createCombatState({ ...init, scene_seed: 1 }), [5, 20]);
+    const monsterStart = { q: 3, r: 9 };
+    const withSetup: CombatState = {
+      ...begun.state,
+      fighters: begun.state.fighters.map((f) => ({ ...f, pos: { q: 4, r: 5 } })),
+      monsters: begun.state.monsters.map((m) => ({ ...m, pos: monsterStart })),
+      // Block the direct column hexes between them: (3,8), (3,7), (3,6).
+      // Leave neighboring hexes open so monster can route around.
+      obstacles: [
+        { pos: { q: 3, r: 8 }, kind: "boulder" },
+        { pos: { q: 3, r: 7 }, kind: "boulder" },
+        { pos: { q: 3, r: 6 }, kind: "boulder" },
+      ],
+      turn_order: [MONSTER_ID, "U_RANGER"],
+      turn_index: 0,
+    };
+    const result = step(withSetup, { kind: "monster_act" }, seqRoll([20, 10, 4]));
+    const movedMonster = result.state.monsters.find((m) => m.id === MONSTER_ID);
+    // Monster should have moved off its start — either left/right of the column to route around.
+    expect(posKey(movedMonster!.pos!)).not.toBe(posKey(monsterStart));
+    // And it must NOT have landed on any obstacle hex.
+    const obstacleKeys = new Set(withSetup.obstacles!.map((o) => posKey(o.pos)));
+    expect(obstacleKeys.has(posKey(movedMonster!.pos!))).toBe(false);
   });
 });

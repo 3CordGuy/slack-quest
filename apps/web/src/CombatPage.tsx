@@ -9,6 +9,16 @@ import { Avatar, Icon } from "./icons";
 import { CombatBackdropLayer, pickScene, viewArtKeyForScene } from "./combatBackgrounds";
 import { CombatParticles, CombatParticlesProvider, triggerBurst } from "./CombatParticles";
 import {
+  CombatHexGrid,
+  particleKindForEvent,
+  projectileKindForAttack,
+  type CombatHexGridHandle,
+  type ParticleKind,
+  type ProjectileKind,
+} from "./CombatHexGrid";
+import { DockedPawnCard, type PawnLike } from "./PawnCallout";
+import { CharacterSheetModal, type CharacterSheetSubject } from "./CharacterSheetModal";
+import {
   DISPLAY_FONT,
   ensureCombatAnimStyles,
   useIsMobile,
@@ -69,6 +79,11 @@ interface Fighter {
   initiative: number;
   effects: StatusEffect[];
   scars: string[];
+  // Hex grid fields (added with tactical combat). Optional for backward compat.
+  pos?: { q: number; r: number };
+  weapon_range?: "melee" | "ranged" | "focus";
+  element?: "fire" | "ice" | "lightning";
+  stats?: { str: number; int_stat: number; vit: number; agi: number; dex: number };
 }
 
 interface Monster {
@@ -81,6 +96,9 @@ interface Monster {
   effects: StatusEffect[];
   is_boss: boolean;
   boss_phase: 1 | 2;
+  // Depletable armor pool. Starts at `tier`; players drain it before HP damage.
+  // Surfaced on the callout's shield bar segment.
+  shield?: number;
   wave?: number;
   total_waves?: number;
   tower_floor?: number;
@@ -92,6 +110,12 @@ interface Monster {
   // the player armor pool entirely; surfaced on the monster card so
   // players see it before the swing lands.
   attack_damage_type?: "physical" | "magic" | "fire" | "ice" | "lightning";
+  // Hex grid fields (added with tactical combat). Optional for backward compat.
+  pos?: { q: number; r: number };
+  weapon_range?: "melee" | "ranged" | "focus";
+  move_range?: number;
+  range_tiles?: number;
+  specials?: string[];
 }
 
 interface CombatState {
@@ -106,6 +130,12 @@ interface CombatState {
     [key: string]: unknown;
   };
   cooldowns?: Record<string, Record<string, number>>;
+  // Hex grid fields (added with tactical combat).
+  grid?: { cols: number; rows: number };
+  turn_phase?: "move" | "attack";
+  obstacles?: { pos: { q: number; r: number }; kind: string }[];
+  scene?: string;
+  hex_range_enabled?: boolean;
 }
 
 // Mirrors BARD_AURA_HYMN_DAMAGE in combat_machine.ts — keep in sync.
@@ -124,7 +154,7 @@ type CombatEvent =
       ac: number;
       hit: boolean;
     }
-  | { type: "player_hit"; actor: string; target: string; damage: number; crit: boolean; formula: string }
+  | { type: "player_hit"; actor: string; target: string; damage: number; crit: boolean; formula: string; damage_type?: "physical" | "magic" | "fire" | "ice" | "lightning" }
   | {
       type: "monster_attack";
       actor: string;
@@ -148,6 +178,7 @@ type CombatEvent =
   | { type: "monster_down"; killed_by: string }
   | { type: "heal_applied"; actor: string; target: string; amount: number; rolled: number }
   | { type: "shield_applied"; actor: string; target: string; restored: number; new_armor: number; bonus_barrier?: boolean }
+  | { type: "effect_applied"; actor: string; target: string; effect: "burning" | "frozen" | "shocked" | "poisoned" | "bleeding" | "entangled" | "stunned" | "hexed" | "empowered" | "regen" | "barkskin" | "animal_form"; magnitude: number; duration: number }
   | {
       type: "flee_check";
       actor: string;
@@ -824,6 +855,8 @@ function formatEvent(e: CombatEvent, state: CombatState | null): LogEntry[] {
       return [{ id: nextLogId++, content: <>🔮 {state ? nameOf(e.actor) : e.actor} casts Ill Omen on the monster</>, tone: "flavor" }];
     case "ability_ill_omen_burst":
       return [{ id: nextLogId++, content: <>💥 Ill Omen bursts for {e.burst} damage ({e.accumulated} accumulated)</>, tone: "bad" }];
+    case "effect_applied":
+      return [{ id: nextLogId++, content: <>{state ? nameOf(e.target) : e.target} is {e.effect} ({e.duration}t)</>, tone: "bad" }];
     default: {
       const _exhaustive: never = e;
       void _exhaustive;
@@ -895,6 +928,78 @@ export function CombatPage({
   const [victoryModalReady, setVictoryModalReady] = useState(false);
   const [defeatModalReady, setDefeatModalReady] = useState(false);
 
+  // Hex grid: imperative handle for emitting particles/projectiles/shake from
+  // the WS event handler.
+  const hexApiRef = useRef<CombatHexGridHandle | null>(null);
+  // Live ref to the latest combat state. The WS-setup useEffect captures `ui`
+  // in closure (deps = [questId, reconnectKey]), so reading `ui.state` inside
+  // the ws.onmessage handler would always see the value at mount time —
+  // stale for every event after the first. Canvas particle/projectile
+  // dispatch reads from this ref instead so it always finds up-to-date
+  // pawn positions.
+  const stateRef = useRef<CombatState | null>(null);
+  // Timestamp (ms epoch) by which the latest in-flight projectile/swing will
+  // land. State dispatches (which can zero out a monster's HP) are deferred
+  // until then so the kill visually lands AFTER the shot connects, not before.
+  // A small buffer is added so the impact particle has a frame to draw before
+  // the pawn fades.
+  const animationLandAtRef = useRef<number>(0);
+  const noteAnimationLands = (durationMs: number) => {
+    const landsAt = Date.now() + durationMs + 60; // 60ms post-impact buffer
+    if (landsAt > animationLandAtRef.current) animationLandAtRef.current = landsAt;
+  };
+  // Travel durations mirror CombatHexGrid's PROJECTILE_DURATION map. Kept local
+  // (not imported) because the canvas constant is internal. Off-by-a-frame is
+  // harmless — these are upper bounds.
+  const PROJECTILE_TRAVEL_MS: Record<ProjectileKind, number> = {
+    arrow: 350, fire: 300, ice: 320, lightning: 80, poison: 400, magic: 300,
+  };
+  // Swing onArrive fires at t≥0.45 of SWING_DURATION_MS=260 → ~120ms.
+  const SWING_IMPACT_MS = 120;
+
+  // Battlefield-first layout: pawn screen positions reported by the hex grid,
+  // hovered pawn id (for expanding the callout), and canvas dimensions used
+  // to clamp callout horizontal placement.
+  const [pawnPositions, setPawnPositions] = useState<Record<string, { x: number; y: number; radius: number }>>({});
+  const [hoveredPawnId, setHoveredPawnId] = useState<string | null>(null);
+  // Mobile: tapping a pawn pins its callout open until another tap (or
+  // tapping the same pawn again). Desktop uses pure hover so this stays null.
+  const [pinnedPawnId, setPinnedPawnId] = useState<string | null>(null);
+  const [canvasSize, setCanvasSize] = useState<{ w: number; h: number }>({ w: 0, h: 0 });
+  // AI-generated battlefield ground texture URL (fetched once per scene).
+  // null while loading or on cache miss; the canvas falls back to its flat tint.
+  const [battlefieldArtUrl, setBattlefieldArtUrl] = useState<string | null>(null);
+
+  // Full character sheet modal — opened by clicking the docked pawn card.
+  const [sheetSubject, setSheetSubject] = useState<CharacterSheetSubject | null>(null);
+
+  // The "preview kind" the player is currently hovering on an action button —
+  // used to paint glow rings on every pawn that action would affect.
+  // null when not hovering anything.
+  type PreviewKind =
+    | { scope: "all_enemies" }
+    | { scope: "all_allies" }
+    | { scope: "single_enemy" } // uses targetMonsterId (the currently selected target)
+    | { scope: "single_ally"; actorId: string }
+    | { scope: "self"; actorId: string };
+  const [previewedKind, setPreviewedKind] = useState<PreviewKind | null>(null);
+
+  // Aim mode: after clicking Attack or a single-target ability, the player
+  // commits the target by clicking a pawn on the grid. self / all-enemy /
+  // all-ally abilities skip aim mode entirely (no choice to make).
+  type AimingAction =
+    | { kind: "attack" }
+    | { kind: "ability"; ability: ActiveAbilityDef };
+  const [aimingAction, setAimingAction] = useState<AimingAction | null>(null);
+
+  // Escape always cancels aim. Convenient for power users.
+  useEffect(() => {
+    if (!aimingAction) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setAimingAction(null); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [aimingAction]);
+
   // Inventory loaded once on mount; refreshed after each item_used event so
   // the picker reflects post-use state. Authoritative source is D1 via
   // /api/inventory.
@@ -905,6 +1010,24 @@ export function CombatPage({
   useEffect(() => {
     void loadItems();
   }, []);
+
+  // Fetch the AI-generated battlefield ground art once per scene. The server
+  // returns a cached URL or null (and kicks off generation in the background
+  // on miss). Refetches when the scene changes mid-quest (rare — only when
+  // resuming an existing quest).
+  const sceneKey = ui.state?.scene;
+  useEffect(() => {
+    if (!sceneKey || !ui.state?.hex_range_enabled) {
+      setBattlefieldArtUrl(null);
+      return;
+    }
+    let cancelled = false;
+    fetch(`/api/battlefield-art?scene=${encodeURIComponent(sceneKey)}`, { credentials: "include" })
+      .then((r) => r.ok ? r.json() as Promise<{ url: string | null }> : { url: null })
+      .then((j) => { if (!cancelled) setBattlefieldArtUrl(j.url); })
+      .catch(() => { if (!cancelled) setBattlefieldArtUrl(null); });
+    return () => { cancelled = true; };
+  }, [sceneKey, ui.state?.hex_range_enabled]);
 
 
   useEffect(() => {
@@ -1001,7 +1124,19 @@ export function CombatPage({
           const normalised: CombatState = "monsters" in s && Array.isArray(s.monsters)
             ? s
             : { ...s, monsters: [(s as unknown as { monster: Monster }).monster] };
-          dispatch({ kind: "state", value: normalised });
+          // Defer state dispatch until any in-flight projectile/swing has
+          // landed. The worker broadcasts `events` immediately followed by
+          // `state`; without this guard, a killing-blow's state arrives ~ms
+          // after the projectile spawns and the monster pawn fades to its
+          // downed alpha while the shot is still mid-flight, making the
+          // visual order read as "enemy clears, then arrow arrives." Now
+          // the state update waits for impact + a small post-impact buffer.
+          const lag = animationLandAtRef.current - Date.now();
+          if (lag > 0) {
+            setTimeout(() => dispatch({ kind: "state", value: normalised }), lag);
+          } else {
+            dispatch({ kind: "state", value: normalised });
+          }
         }
         else if (msg.type === "events") {
           // Show dice first. Delay the state update (HP bars, log, turn
@@ -1097,15 +1232,18 @@ export function CombatPage({
               setTimeout(() => setFlashIds((prev) => { const n = new Set(prev); n.delete(tgt); return n; }), 600);
               setHitDustSeq((prev) => ({ ...prev, [tgt]: (prev[tgt] ?? 0) + 1 }));
             }
-            // Particle bursts.
-            if (evt.type === "elemental_proc" && !evt.resisted) {
+            // Particle bursts. DOM `triggerBurst` is the legacy path; in hex
+            // mode the canvas particle emitter below carries the same events
+            // positioned to the pawn instead of the screen center.
+            const _hexActiveTop = stateRef.current?.hex_range_enabled === true;
+            if (evt.type === "elemental_proc" && !evt.resisted && !_hexActiveTop) {
               triggerBurst(evt.element === "fire" ? "fire" : evt.element === "ice" ? "ice" : "lightning");
             }
             // Monster procs a status on a fighter — burst on element type +
             // a toast if it landed on the local player (otherwise the
             // status pill in their roster row may go unnoticed).
             if (evt.type === "monster_elemental_proc") {
-              triggerBurst(evt.element === "fire" ? "fire" : evt.element === "ice" ? "ice" : "lightning");
+              if (!_hexActiveTop) triggerBurst(evt.element === "fire" ? "fire" : evt.element === "ice" ? "ice" : "lightning");
               if (evt.target === selfId) {
                 const elemIcon = evt.element === "fire" ? "🔥" : evt.element === "ice" ? "❄️" : "⚡";
                 toast(`${elemIcon} You're now ${evt.effect}! (${evt.duration}t)`, { duration: 3500 });
@@ -1119,15 +1257,174 @@ export function CombatPage({
               const tgt = (evt as { target: string }).target;
               setShieldBurstSeq((prev) => ({ ...prev, [tgt]: (prev[tgt] ?? 0) + 1 }));
             }
-            if (evt.type === "turn_skip") triggerBurst("frozen");
-            if (evt.type === "victory") triggerBurst("victory");
-            if (evt.type === "player_hit") triggerBurst("hit");
-            if (evt.type === "ability_envenom_proc") triggerBurst("poison");
-            if (evt.type === "passive_rogue_lethal_strike" || evt.type === "passive_sinister_queries" || evt.type === "hex_bleed_proc") triggerBurst("bleed");
-            if (evt.type === "ability_shield_of_faith" || evt.type === "ability_barkskin" || evt.type === "ability_brace") triggerBurst("shield");
-            if (evt.type === "passive_paladin_auto_heal" || evt.type === "ability_good_fortune_delayed") triggerBurst("heal");
-            if (evt.type === "ability_ill_omen_applied" || evt.type === "ability_hex") triggerBurst("curse");
-            if (evt.type === "ability_animal_form") triggerBurst("deploy");
+            // Legacy DOM particle bursts. Only fire when the hex grid is NOT
+            // active — in hex mode the canvas particles below cover the same
+            // events with pawn-positioned effects.
+            const hexActive = stateRef.current?.hex_range_enabled === true;
+            if (!hexActive) {
+              if (evt.type === "turn_skip") triggerBurst("frozen");
+              if (evt.type === "victory") triggerBurst("victory");
+              if (evt.type === "player_hit") triggerBurst("hit");
+              if (evt.type === "ability_envenom_proc") triggerBurst("poison");
+              if (evt.type === "passive_rogue_lethal_strike" || evt.type === "passive_sinister_queries" || evt.type === "hex_bleed_proc") triggerBurst("bleed");
+              if (evt.type === "ability_shield_of_faith" || evt.type === "ability_barkskin" || evt.type === "ability_brace") triggerBurst("shield");
+              if (evt.type === "passive_paladin_auto_heal" || evt.type === "ability_good_fortune_delayed") triggerBurst("heal");
+              if (evt.type === "ability_ill_omen_applied" || evt.type === "ability_hex") triggerBurst("curse");
+              if (evt.type === "ability_animal_form") triggerBurst("deploy");
+            }
+
+            // ── Canvas hex grid: particle bursts + projectiles ─────────────
+            // Fire positioned particles on the hex grid wherever the event
+            // happens. emitParticle is a no-op if the hex grid isn't mounted.
+            // Read from stateRef (not ui.state) because the ws.onmessage
+            // useEffect closure captures `ui` at mount time — stale for
+            // every event after the first state arrival.
+            const hex = hexApiRef.current;
+            const liveSnapshot = stateRef.current;
+            if (hex && liveSnapshot) {
+              const findFighter = (id: string) => liveSnapshot.fighters.find((f) => f.id === id);
+              const findMonster = (id: string) => liveSnapshot.monsters.find((m) => m.id === id);
+              if (evt.type === "player_hit") {
+                const attacker = findFighter(evt.actor);
+                const target = findMonster(evt.target);
+                if (attacker?.pos && target?.pos) {
+                  const projKind = projectileKindForAttack(attacker.weapon_range ?? "melee", attacker.element);
+                  const partKind: ParticleKind = particleKindForEvent(evt.damage_type, false, false, evt.crit);
+                  if (projKind) {
+                    noteAnimationLands(PROJECTILE_TRAVEL_MS[projKind] ?? 350);
+                    hex.emitProjectile(
+                      { id: `p${evt.actor}${Date.now()}`, kind: projKind, from: attacker.pos, to: target.pos, fromActorId: attacker.id, toActorId: target.id },
+                      () => {
+                        hex.emitParticle({ id: `pt${Date.now()}`, kind: partKind, at: target.pos!, actorId: target.id });
+                        if (evt.crit) hex.shake();
+                      },
+                    );
+                  } else {
+                    // Melee — arc swing originating at the attacker, sweeping
+                    // toward the target. Impact particles fire on contact.
+                    if (target.id) {
+                      const tid = target.id;
+                      noteAnimationLands(SWING_IMPACT_MS);
+                      hex.emitSwing(
+                        { id: `s${evt.actor}${Date.now()}`, fromActorId: attacker.id, toActorId: tid, element: attacker.element },
+                        () => {
+                          hex.emitParticle({ id: `pt${Date.now()}`, kind: partKind, at: target.pos!, actorId: tid });
+                          if (evt.crit) hex.shake();
+                        },
+                      );
+                    }
+                  }
+                }
+              }
+              if (evt.type === "monster_attack") {
+                const attacker = findMonster(evt.actor);
+                const target = findFighter(evt.target);
+                if (attacker?.pos && target?.pos) {
+                  const partKind = particleKindForEvent(evt.damage_type);
+                  const isRanged = (attacker.weapon_range ?? "melee") !== "melee";
+                  if (isRanged) {
+                    const projKind: ProjectileKind =
+                      evt.damage_type === "fire" ? "fire" :
+                      evt.damage_type === "ice" ? "ice" :
+                      evt.damage_type === "lightning" ? "lightning" :
+                      evt.damage_type === "magic" ? "magic" : "arrow";
+                    noteAnimationLands(PROJECTILE_TRAVEL_MS[projKind] ?? 350);
+                    hex.emitProjectile(
+                      { id: `mp${Date.now()}`, kind: projKind, from: attacker.pos, to: target.pos, fromActorId: attacker.id, toActorId: target.id },
+                      () => hex.emitParticle({ id: `mt${Date.now()}`, kind: partKind, at: target.pos!, actorId: target.id }),
+                    );
+                  } else {
+                    // Monster melee — swing toward target too
+                    const monsterEl: "fire" | "ice" | "lightning" | "poison" | null =
+                      evt.damage_type === "fire" ? "fire" :
+                      evt.damage_type === "ice" ? "ice" :
+                      evt.damage_type === "lightning" ? "lightning" : null;
+                    if (attacker.id) {
+                      const aid = attacker.id;
+                      noteAnimationLands(SWING_IMPACT_MS);
+                      hex.emitSwing(
+                        { id: `ms${Date.now()}`, fromActorId: aid, toActorId: target.id, element: monsterEl },
+                        () => hex.emitParticle({ id: `mt${Date.now()}`, kind: partKind, at: target.pos!, actorId: target.id }),
+                      );
+                    }
+                  }
+                }
+              }
+              if (evt.type === "heal_applied") {
+                const target = findFighter(evt.target);
+                if (target?.pos) hex.emitParticle({ id: `h${Date.now()}`, kind: "heal", at: target.pos, actorId: target.id });
+              }
+              if (evt.type === "shield_applied") {
+                const target = findFighter(evt.target);
+                if (target?.pos) hex.emitParticle({ id: `s${Date.now()}`, kind: "shield", at: target.pos, actorId: target.id });
+              }
+              // Status proc particles — fire on the targeted actor (pawn-glued).
+              if (evt.type === "elemental_proc" && !evt.resisted) {
+                const target = findMonster(evt.target);
+                if (target?.pos) {
+                  const k: ParticleKind = evt.element === "fire" ? "fire" : evt.element === "ice" ? "ice" : "lightning";
+                  hex.emitParticle({ id: `ep${Date.now()}`, kind: k, at: target.pos, actorId: target.id });
+                }
+              }
+              if (evt.type === "monster_elemental_proc") {
+                const target = findFighter(evt.target);
+                if (target?.pos) {
+                  const k: ParticleKind = evt.element === "fire" ? "fire" : evt.element === "ice" ? "ice" : "lightning";
+                  hex.emitParticle({ id: `mep${Date.now()}`, kind: k, at: target.pos, actorId: target.id });
+                }
+              }
+              if (evt.type === "ability_envenom_proc") {
+                const e = evt as { target?: string };
+                const tgt = e.target ? findMonster(e.target) : null;
+                if (tgt?.pos) hex.emitParticle({ id: `poi${Date.now()}`, kind: "poison", at: tgt.pos, actorId: tgt.id });
+              }
+              if (
+                evt.type === "passive_rogue_lethal_strike"
+                || evt.type === "passive_sinister_queries"
+                || evt.type === "hex_bleed_proc"
+              ) {
+                const e = evt as { target?: string };
+                const tgt = e.target ? findMonster(e.target) : null;
+                if (tgt?.pos) hex.emitParticle({ id: `bld${Date.now()}`, kind: "bleed", at: tgt.pos, actorId: tgt.id });
+              }
+              if (
+                evt.type === "ability_shield_of_faith"
+                || evt.type === "ability_barkskin"
+                || evt.type === "ability_brace"
+              ) {
+                const e = evt as { actor?: string; target?: string };
+                const tgt = e.target ? findFighter(e.target) : e.actor ? findFighter(e.actor) : null;
+                if (tgt?.pos) hex.emitParticle({ id: `sof${Date.now()}`, kind: "shield", at: tgt.pos, actorId: tgt.id });
+              }
+              if (
+                evt.type === "passive_paladin_auto_heal"
+                || evt.type === "ability_good_fortune_delayed"
+              ) {
+                const e = evt as { target?: string; actor?: string };
+                const tgt = e.target ? findFighter(e.target) : e.actor ? findFighter(e.actor) : null;
+                if (tgt?.pos) hex.emitParticle({ id: `hl${Date.now()}`, kind: "heal", at: tgt.pos, actorId: tgt.id });
+              }
+              if (evt.type === "ability_animal_form" || evt.type === "ability_ill_omen_applied" || evt.type === "ability_hex") {
+                const e = evt as { actor?: string; target?: string };
+                const tgt = e.target ? (findFighter(e.target) ?? findMonster(e.target)) : e.actor ? findFighter(e.actor) : null;
+                if (tgt?.pos) hex.emitParticle({ id: `mg${Date.now()}`, kind: "magic", at: tgt.pos, actorId: tgt.id });
+              }
+              // Generic effect_applied from monster specials (entangle_on_hit etc.).
+              if (evt.type === "effect_applied") {
+                const tgt = findFighter(evt.target) ?? findMonster(evt.target);
+                if (tgt?.pos) {
+                  const k: ParticleKind =
+                    evt.effect === "burning" ? "fire" :
+                    evt.effect === "frozen" ? "ice" :
+                    evt.effect === "shocked" ? "lightning" :
+                    evt.effect === "poisoned" ? "poison" :
+                    evt.effect === "bleeding" ? "bleed" : "magic";
+                  hex.emitParticle({ id: `ea${Date.now()}`, kind: k, at: tgt.pos, actorId: tgt.id });
+                }
+              }
+              // Crit on monster attack: shake even if the attack itself is melee.
+              if (evt.type === "monster_attack" && evt.hp_damage >= 8) hex.shake();
+            }
           }
           // 950ms ≈ tumble duration (700ms) + brief pause to read the value.
           const delay = hasRolls ? 950 : 0;
@@ -1192,6 +1489,13 @@ export function CombatPage({
     autoResolveRef.current = autoResolve;
     localStorage.setItem("combat_auto_resolve", String(autoResolve));
   }, [autoResolve]);
+
+  // Mirror the latest combat state into a ref so the long-lived WS event
+  // handler (whose useEffect deps don't include `ui`) can always read
+  // current actor positions when dispatching canvas particles + projectiles.
+  useEffect(() => {
+    stateRef.current = ui.state;
+  }, [ui.state]);
 
   // Auto-resolve monster and merc turns: fires ~800ms after the turn becomes
   // active so the player still sees the transition before it resolves.
@@ -1392,12 +1696,31 @@ export function CombatPage({
       setAnyPickerAbility(ability);
       return;
     }
+    // Hex mode + single_enemy → require the player to click a target on the
+    // grid (aim mode). Skipped when there's no choice to make.
+    if (ui.state?.hex_range_enabled && ability.target === "single_enemy") {
+      setAimingAction({ kind: "ability", ability });
+      return;
+    }
     send({
       kind: "ability",
       actor: selfId,
       ability_id: ability.id,
       target_id: ability.target === "single_enemy" ? (effectiveTarget ?? undefined) : undefined,
     });
+  }
+
+  // Commits a queued aim action against the picked target. Called from the
+  // canvas click handler when the player taps a valid pawn in aim mode.
+  function commitAim(targetActorId: string) {
+    if (!aimingAction) return;
+    if (aimingAction.kind === "attack") {
+      send({ kind: "attack", actor: selfId, target_id: targetActorId });
+    } else {
+      send({ kind: "ability", actor: selfId, ability_id: aimingAction.ability.id, target_id: targetActorId });
+    }
+    setTargetMonsterId(targetActorId);
+    setAimingAction(null);
   }
 
   function fireAllyAbility(targetId: string) {
@@ -1542,7 +1865,10 @@ export function CombatPage({
             background: "linear-gradient(to bottom, rgba(0,0,0,0.30) 0%, rgba(0,0,0,0.05) 38%, rgba(0,0,0,0.78) 100%)",
           }}
         />
-        <CombatParticles />
+        {/* DOM particle overlay — retired in hex mode (canvas particles
+            cover everything, positioned to actor pawns instead of screen
+            center). Slack-compat / legacy combats still see it. */}
+        {!ui.state?.hex_range_enabled && <CombatParticles />}
 
         {/* Pre-combat state — shown while the QuestRoom DO boots and the WS
             handshake completes. Themed to the rest of the combat UI (gold
@@ -1644,7 +1970,10 @@ export function CombatPage({
                 Other monsters split across left/right flanks. Right rail
                 reserves 300px so the combat log doesn't overlap flanks.
                 On mobile collapses to a single column: spotlight on top,
-                flanks below as scrollable chip rows. */}
+                flanks below as scrollable chip rows.
+                Hidden entirely in battlefield-first (hex) mode — the grid
+                shows actor positions and callouts handle name + HP. */}
+            {!state.hex_range_enabled && (
             <div style={isMobile ? {
               position: "absolute",
               top: 50, left: 0, right: 0, bottom: 0,
@@ -1767,6 +2096,7 @@ export function CombatPage({
                 return <>{leftCol}{spotlightCol}{rightCol}</>;
               })()}
             </div>
+            )}
 
             {/* Left column — dice rolls, below the initiative strip */}
             <div style={{ position: "absolute", top: 60, left: 12, zIndex: 6, maxWidth: isMobile ? 90 : "min(200px, 16vw)" }}>
@@ -1786,11 +2116,329 @@ export function CombatPage({
             )}
 
             {/* Pick-a-target prompt */}
-            {myTurn && liveMonsters.length > 1 && targetMonsterId === null && !isPickerOpen && (
+            {myTurn && liveMonsters.length > 1 && targetMonsterId === null && !isPickerOpen && !state.hex_range_enabled && (
               <div style={{ position: "absolute", bottom: 10, left: "50%", transform: "translateX(-50%)", zIndex: 7, background: "rgba(30,26,46,0.92)", border: "1px solid #c084fc", borderRadius: 8, padding: "6px 18px", color: "#e9d5ff", fontSize: 13, fontWeight: 600, backdropFilter: "blur(6px)", whiteSpace: "nowrap" }}>
                 Click a monster to target it
               </div>
             )}
+
+            {/* Battlefield-first hex grid view. The hex grid IS the combat
+                scene — the dense card layout above is hidden when
+                hex_range_enabled is set. Pawn callouts are absolutely
+                positioned over the canvas using positions reported by the
+                grid component. */}
+            {state.hex_range_enabled && state.grid && (() => {
+              // Portrait grid is 9×11 → taller than wide. Tune hex size so the
+              // arena fits the available vertical space on each device.
+              const HEX_SIZE = isMobile ? 14 : 24;
+              const canvasDisplayW = canvasSize.w;
+              const canvasDisplayH = canvasSize.h;
+
+              // Aim-mode banner floating at the top of the battlefield —
+              // tells the player to click an enemy pawn (with a Cancel button).
+              const aimBanner = aimingAction && (
+                <div style={{
+                  position: "absolute",
+                  top: 8,
+                  left: "50%",
+                  transform: "translateX(-50%)",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 10,
+                  zIndex: 41,
+                  pointerEvents: "auto",
+                  background: "rgba(251,146,60,0.95)",
+                  color: "#0e0f12",
+                  borderRadius: 6,
+                  padding: "4px 12px",
+                  fontWeight: 700,
+                  fontSize: 12,
+                  letterSpacing: 0.5,
+                  boxShadow: "0 4px 12px rgba(0,0,0,0.55)",
+                }}>
+                  <span>
+                    {aimingAction.kind === "attack" ? "ATTACK" : aimingAction.ability.name.toUpperCase()} —
+                    {" "}click an enemy
+                  </span>
+                  <button
+                    onClick={() => setAimingAction(null)}
+                    style={{
+                      background: "rgba(15,23,42,0.85)",
+                      border: "1px solid rgba(15,23,42,0.7)",
+                      borderRadius: 4,
+                      padding: "1px 8px",
+                      color: "#fff",
+                      fontSize: 11,
+                      cursor: "pointer",
+                      fontWeight: 600,
+                    }}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              );
+
+              // Phase/Skip-Move floating chip at the top of the battlefield.
+              const phaseChip = !aimingAction && myTurn && (
+                <div style={{
+                  position: "absolute",
+                  top: 8,
+                  left: "50%",
+                  transform: "translateX(-50%)",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  zIndex: 40,
+                  pointerEvents: "auto",
+                }}>
+                  <span style={{
+                    padding: "3px 12px",
+                    borderRadius: 4,
+                    background: state.turn_phase === "move" ? "rgba(34,197,94,0.85)" : "rgba(248,113,113,0.85)",
+                    color: "#fff",
+                    fontWeight: 700,
+                    fontSize: 11,
+                    letterSpacing: 0.6,
+                    boxShadow: "0 2px 8px rgba(0,0,0,0.45)",
+                  }}>
+                    {state.turn_phase === "move" ? "MOVE" : "ATTACK"}
+                  </span>
+                  {state.turn_phase === "move" && me?.pos && (
+                    <button
+                      onClick={() => send({ kind: "move" as never, actor: selfId, to: me.pos! } as never)}
+                      style={{
+                        background: "rgba(15,23,42,0.85)",
+                        border: "1px solid rgba(148,163,184,0.5)",
+                        borderRadius: 4,
+                        padding: "2px 10px",
+                        color: "#e5e7eb",
+                        fontSize: 11,
+                        cursor: "pointer",
+                        fontWeight: 600,
+                      }}
+                      title="Stay in place — advance to attack phase"
+                    >
+                      Skip Move
+                    </button>
+                  )}
+                </div>
+              );
+
+              return (
+                <div style={{
+                  position: "absolute",
+                  top: 50,
+                  left: 0,
+                  right: isMobile ? 0 : 300,
+                  bottom: 12,
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: 8,
+                  zIndex: 5,
+                  pointerEvents: "none",
+                }}>
+                  <div style={{
+                    position: "relative",
+                    pointerEvents: "auto",
+                    maxWidth: "100%",
+                  }}>
+                    {phaseChip}
+                    {aimBanner}
+                    <CombatHexGrid
+                      state={state as never}
+                      myActorId={selfId}
+                      currentActorId={currentActorId}
+                      isMyTurn={myTurn}
+                      turnPhase={state.turn_phase ?? "attack"}
+                      hexSize={HEX_SIZE}
+                      apiRef={hexApiRef}
+                      backgroundUrl={battlefieldArtUrl}
+                      targetMonsterId={effectiveTarget}
+                      previewedTargetIds={(() => {
+                        // Aim mode wins — show every valid target the player
+                        // could click. Falls back to hover preview otherwise.
+                        if (aimingAction) {
+                          // For attack/single_enemy abilities, every live in-range
+                          // monster is fair game. We don't filter by range here
+                          // (engine rejects out-of-range), but the glow makes
+                          // it obvious where the player can aim.
+                          return liveMonsters.map((m) => m.id ?? "").filter(Boolean);
+                        }
+                        if (!previewedKind) return [];
+                        if (previewedKind.scope === "all_enemies") return liveMonsters.map((m) => m.id ?? "").filter(Boolean);
+                        if (previewedKind.scope === "all_allies") return state.fighters.filter((f) => f.hp > 0).map((f) => f.id);
+                        if (previewedKind.scope === "single_enemy" && effectiveTarget) return [effectiveTarget];
+                        if (previewedKind.scope === "single_ally") return [previewedKind.actorId];
+                        if (previewedKind.scope === "self") return [previewedKind.actorId];
+                        return [];
+                      })()}
+                      previewedTargetKind={
+                        aimingAction
+                          ? "enemy"
+                          : previewedKind?.scope === "all_allies" || previewedKind?.scope === "single_ally" || previewedKind?.scope === "self"
+                            ? "ally"
+                            : "enemy"
+                      }
+                      aimActive={!!aimingAction}
+                      aimRangeTiles={
+                        aimingAction?.kind === "ability" && typeof aimingAction.ability.range_tiles === "number"
+                          ? aimingAction.ability.range_tiles
+                          : undefined
+                      }
+                      aimAoeRadiusTiles={
+                        aimingAction?.kind === "ability" && typeof aimingAction.ability.aoe_radius_tiles === "number"
+                          ? aimingAction.ability.aoe_radius_tiles
+                          : undefined
+                      }
+                      onPawnHoverChange={setHoveredPawnId}
+                      onPawnPositionsChange={setPawnPositions}
+                      onCanvasResize={setCanvasSize}
+                      onHexClick={(hex) => {
+                        // Identify occupant first — tapping a pawn always toggles
+                        // its callout pin, separately from game actions.
+                        const fighter = state.fighters.find((f) => f.hp > 0 && f.pos && f.pos.q === hex.q && f.pos.r === hex.r);
+                        const monster = state.monsters.find((m) => m.hp > 0 && m.pos && m.pos.q === hex.q && m.pos.r === hex.r);
+                        const occupantId = fighter?.id ?? monster?.id ?? null;
+
+                        // Aim mode: commit the queued attack/ability on the clicked enemy pawn.
+                        if (aimingAction && monster?.id) {
+                          // Reachability gate: cube-coord hex distance vs the
+                          // EFFECTIVE range for the active action — basic
+                          // attack uses weapon range; abilities use their
+                          // explicit `range_tiles` if declared, else weapon range.
+                          const dq = (me?.pos?.q ?? 0) - (monster.pos?.q ?? 0);
+                          const dr = (me?.pos?.r ?? 0) - (monster.pos?.r ?? 0);
+                          const ds = -dq - dr;
+                          const dist = Math.max(Math.abs(dq), Math.abs(dr), Math.abs(ds));
+                          const weaponRange = me?.weapon_range === "ranged"
+                            ? (5 + Math.floor(Math.max(0, (me?.stats?.dex ?? 5) - 5) / 4))
+                            : me?.weapon_range === "focus"
+                              ? (3 + Math.floor(Math.max(0, (me?.stats?.int_stat ?? 5) - 5) / 4))
+                              : 1;
+                          const range = aimingAction.kind === "ability"
+                            ? (aimingAction.ability.range_tiles ?? weaponRange)
+                            : weaponRange;
+                          if (dist > range) {
+                            toast.error("Out of range");
+                            return;
+                          }
+                          commitAim(monster.id);
+                          return;
+                        }
+                        // Clicking off-pawn while aiming cancels aim.
+                        if (aimingAction && !occupantId) {
+                          setAimingAction(null);
+                          // …and falls through to the move handler below so
+                          // an empty-hex tap can still move during MOVE phase.
+                        }
+
+                        if (occupantId) {
+                          // Toggle pin (mobile + accessibility).
+                          setPinnedPawnId((prev) => prev === occupantId ? null : occupantId);
+                          // Click on an enemy pawn during MY attack phase selects
+                          // it as the target — the player then clicks Attack or
+                          // an ability button to fire. No auto-attack here.
+                          if (monster && myTurn && state.turn_phase === "attack") {
+                            setTargetMonsterId(monster.id ?? null);
+                          }
+                          return;
+                        }
+
+                        if (!myTurn || !currentActorId) return;
+                        // Empty hex tap in move phase: try to move there.
+                        if (state.turn_phase === "move") {
+                          send({ kind: "move" as never, actor: selfId, to: hex } as never);
+                        }
+                      }}
+                    />
+                  </div>
+                  {/* Focused pawn card — single docked card BELOW the canvas
+                      so it never obscures the battlefield. Priority:
+                      pinned (user tap/click) > hovered > current actor.
+                      Replaces the per-pawn floating callouts entirely. */}
+                  {(() => {
+                    const focusId = pinnedPawnId ?? hoveredPawnId ?? currentActorId ?? null;
+                    if (!focusId) return null;
+                    const fighter = state.fighters.find((f) => f.id === focusId);
+                    const monster = state.monsters.find((m) => m.id === focusId);
+                    if (!fighter && !monster) return null;
+                    const isPinnedFocus = pinnedPawnId === focusId;
+                    return (
+                      <div style={{
+                        marginTop: 10,
+                        display: "flex",
+                        justifyContent: "center",
+                        pointerEvents: "auto",
+                      }}>
+                        {fighter && (() => {
+                          const pawn: PawnLike = {
+                            id: fighter.id, name: fighter.name,
+                            hp: fighter.hp, max_hp: fighter.max_hp,
+                            mana: fighter.mana, max_mana: fighter.max_mana,
+                            class: fighter.class, level: fighter.level,
+                            shield: fighter.shield,
+                            armor_power: fighter.armor_power,
+                            effects: (fighter.effects ?? []) as never,
+                          };
+                          const themeColor = fighter.id === selfId ? "#7dd3fc" : "#a78bfa";
+                          return (
+                            <DockedPawnCard
+                              pawn={pawn}
+                              side="fighter"
+                              themeColor={themeColor}
+                              isSelf={fighter.id === selfId}
+                              isCurrent={currentActorId === fighter.id}
+                              pinned={isPinnedFocus}
+                              onUnpin={() => setPinnedPawnId(null)}
+                              onOpenSheet={() => setSheetSubject({ pawn, side: "fighter", themeColor, isSelf: fighter.id === selfId })}
+                            />
+                          );
+                        })()}
+                        {monster && (() => {
+                          const pawn: PawnLike = {
+                            id: monster.id ?? "", name: monster.name,
+                            hp: monster.hp, max_hp: monster.max_hp,
+                            tier: monster.tier, is_boss: monster.is_boss,
+                            shield: monster.shield ?? 0,
+                            armor_power: 2 * monster.tier,
+                            art_url: monster.art_url,
+                            effects: (monster.effects ?? []) as never,
+                          };
+                          const themeColor = monster.is_boss ? "#f87171" : "#fca5a5";
+                          return (
+                            <DockedPawnCard
+                              pawn={pawn}
+                              side="monster"
+                              themeColor={themeColor}
+                              isCurrent={currentActorId === monster.id}
+                              pinned={isPinnedFocus}
+                              onUnpin={() => setPinnedPawnId(null)}
+                              onOpenSheet={() => setSheetSubject({
+                                pawn,
+                                side: "monster",
+                                themeColor,
+                                monsterExtras: {
+                                  weapon_range: monster.weapon_range,
+                                  range_tiles: monster.range_tiles,
+                                  move_range: monster.move_range,
+                                  specials: monster.specials,
+                                  element_weakness: monster.element_weakness,
+                                  element_resistance: monster.element_resistance,
+                                  attack_damage_type: monster.attack_damage_type,
+                                  boss_phase: monster.boss_phase,
+                                },
+                              })}
+                            />
+                          );
+                        })()}
+                      </div>
+                    );
+                  })()}
+                </div>
+              );
+            })()}
 
             {/* Combat-end tint (before modal appears) */}
             {ended && state.status !== "victory" && !defeatModalReady && (
@@ -1804,8 +2452,9 @@ export function CombatPage({
         )}
       </div>
 
-      {/* Party chips row */}
-      {state && (
+      {/* Party chips row — hidden in battlefield-first mode; pawn callouts
+          on the grid carry the same info. */}
+      {state && !state.hex_range_enabled && (
         <div style={{
           background: "var(--bg-deep)",
           borderTop: "1px solid var(--border-base)",
@@ -1826,8 +2475,27 @@ export function CombatPage({
           selfId={selfId}
           characterLevel={state.fighters.find((f) => f.id === selfId)?.level}
           effects={state.fighters.find((f) => f.id === selfId)?.effects ?? []}
-          onEquip={() => {}}
-          onUnequip={() => {}}
+          onEquip={async (id) => {
+            // Mid-combat swap: hit the equip endpoint, refresh inventory,
+            // and the WS handler picks up the new fighter stats from the
+            // DO's refreshFromD1 broadcast (see worker.ts).
+            const r = await fetch(`/api/inventory/${id}/equip`, { method: "POST", credentials: "include" });
+            if (!r.ok) {
+              const err = await r.json().catch(() => ({ error: "unknown" })) as { error?: string };
+              toast.error(`Can't equip: ${err.error ?? r.statusText}`);
+              return;
+            }
+            await loadItems();
+          }}
+          onUnequip={async (id) => {
+            const r = await fetch(`/api/inventory/${id}/unequip`, { method: "POST", credentials: "include" });
+            if (!r.ok) {
+              const err = await r.json().catch(() => ({ error: "unknown" })) as { error?: string };
+              toast.error(`Can't unequip: ${err.error ?? r.statusText}`);
+              return;
+            }
+            await loadItems();
+          }}
           onSell={() => {}}
           onUse={(id) => {
             const item = items.find((i) => i.id === id);
@@ -2037,32 +2705,59 @@ export function CombatPage({
               )}
             </div>
           )}
-          <CBtn label="Attack" icon="sword" color="#b89b3a" disabled={!myTurn || (liveMonsters.length > 1 && targetMonsterId === null)} onClick={() => send({ kind: "attack", actor: selfId, target_id: effectiveTarget })} />
+          <CBtn
+            label={aimingAction?.kind === "attack" ? "Aiming…" : "Attack"}
+            icon="sword"
+            color={aimingAction?.kind === "attack" ? "#fb923c" : "#b89b3a"}
+            disabled={!myTurn}
+            onClick={() => {
+              // Click Attack again while aiming = cancel.
+              if (aimingAction?.kind === "attack") { setAimingAction(null); return; }
+              // Hex mode → enter aim, otherwise fire immediately on current
+              // selected target (legacy single-monster + front/back combat).
+              if (state.hex_range_enabled) setAimingAction({ kind: "attack" });
+              else send({ kind: "attack", actor: selfId, target_id: effectiveTarget });
+            }}
+            onMouseEnter={() => setPreviewedKind({ scope: "single_enemy" })}
+            onMouseLeave={() => setPreviewedKind(null)}
+          />
           {myActiveAbilities.map((ability) => {
-            const needsTarget = ability.target === "single_enemy";
-            const targetMissing = needsTarget && liveMonsters.length > 1 && targetMonsterId === null;
             const cooldown = state?.cooldowns?.[selfId]?.[ability.id] ?? 0;
+            const isAiming = aimingAction?.kind === "ability" && aimingAction.ability.id === ability.id;
             return (
               <CBtn
                 key={ability.id}
-                label={ability.name}
+                label={isAiming ? "Aiming…" : ability.name}
                 icon={ability.icon}
-                color="#d946ef"
+                color={isAiming ? "#fb923c" : "#d946ef"}
                 manaCost={ability.mana_cost > 0 ? ability.mana_cost : undefined}
                 tooltip={ability.blurb}
                 cooldown={cooldown}
-                disabled={!myTurn || myMana < ability.mana_cost || targetMissing}
-                onClick={() => fireAbility(ability)}
+                disabled={!myTurn || myMana < ability.mana_cost}
+                onClick={() => {
+                  if (isAiming) { setAimingAction(null); return; }
+                  fireAbility(ability);
+                }}
+                onMouseEnter={() => {
+                  const t = ability.target;
+                  if (t === "all_enemies") setPreviewedKind({ scope: "all_enemies" });
+                  else if (t === "all_allies") setPreviewedKind({ scope: "all_allies" });
+                  else if (t === "single_enemy") setPreviewedKind({ scope: "single_enemy" });
+                  else if (t === "self") setPreviewedKind({ scope: "self", actorId: selfId });
+                  else if (t === "single_ally") setPreviewedKind({ scope: "all_allies" });
+                  else setPreviewedKind(null);
+                }}
+                onMouseLeave={() => setPreviewedKind(null)}
               />
             );
           })}
-          {/* Position swap — available even in solo. Was previously
-              gated on multi-fighter parties, which left solo players
-              stuck if their persisted position was "back" with no way
-              to swap. Back row still matters in solo (reduces melee
-              damage from front-positioned monsters). */}
-          <CBtn variant="dark" label={otherPosition === "front" ? "Front" : "Back"} icon={otherPosition === "front" ? "muscle-up" : "fall-down"} color="#6b7280" disabled={!myTurn} onClick={() => send({ kind: "position", actor: selfId, to: otherPosition })} />
-          <CBtn label="Item" icon="knapsack" color="#c084fc" disabled={!myTurn || !items.some((i) => isCombatUsable(i.item_type))} onClick={() => setItemPicker("open")} />
+          {/* Position swap — only meaningful in legacy front/back combat.
+              In hex mode actor location IS the position, set via the move
+              phase, so this button is hidden. */}
+          {!state.hex_range_enabled && (
+            <CBtn variant="dark" label={otherPosition === "front" ? "Front" : "Back"} icon={otherPosition === "front" ? "muscle-up" : "fall-down"} color="#6b7280" disabled={!myTurn} onClick={() => send({ kind: "position", actor: selfId, to: otherPosition })} />
+          )}
+          <CBtn label="Item" icon="knapsack" color="#c084fc" disabled={!myTurn || items.length === 0} onClick={() => setItemPicker("open")} />
           {items.some((i) => !i.equipped) && state.fighters.filter((f) => f.hp > 0 && f.id !== selfId).length > 0 && (
             <CBtn label="Give" icon="conversation" color="#fcd34d" disabled={!myTurn} onClick={() => setGivePicker("selectItem")} />
           )}
@@ -2126,6 +2821,10 @@ export function CombatPage({
           reconnectAttemptsRef.current = 0;
           setReconnectKey((k) => k + 1);
         }} />
+      )}
+      {/* Full character sheet — opened by clicking the docked pawn card. */}
+      {sheetSubject && (
+        <CharacterSheetModal subject={sheetSubject} onClose={() => setSheetSubject(null)} />
       )}
     </div>
     </CombatParticlesProvider>
@@ -3180,7 +3879,7 @@ function MonsterHitEntry({
 
   const tags: string[] = [];
   if (armorReduction > 0) tags.push(`−${armorReduction} armor`);
-  if (positionReduction > 0) tags.push(`−${positionReduction} back row`);
+  if (positionReduction > 0) tags.push(`−${positionReduction} cover`);
   if (shield_absorbed > 0) tags.push(`−${shield_absorbed} shield`);
   if ((resistance_reduction ?? 0) > 0) tags.push(`−${resistance_reduction} resist`);
 

@@ -405,7 +405,7 @@ export function lootIcon(opt: {
 
 // ─── CBtn ─────────────────────────────────────────────────────────────────────
 
-export function CBtn({ label, icon, color, disabled, manaCost, tooltip, cooldown, variant, onClick }: {
+export function CBtn({ label, icon, color, disabled, manaCost, tooltip, cooldown, variant, onClick, onMouseEnter, onMouseLeave }: {
   label: string;
   icon?: string;
   color: string;
@@ -419,6 +419,10 @@ export function CBtn({ label, icon, color, disabled, manaCost, tooltip, cooldown
       position swap) on bg-input with border-action. */
   variant?: "color" | "dark";
   onClick: () => void;
+  /** Optional hover hooks — used by the hex grid to preview which pawns the
+      ability would affect (AoE / target preview). */
+  onMouseEnter?: () => void;
+  onMouseLeave?: () => void;
 }) {
   const compact = typeof window !== "undefined" && window.innerWidth < 540;
   const onCooldown = (cooldown ?? 0) > 0;
@@ -446,7 +450,11 @@ export function CBtn({ label, icon, color, disabled, manaCost, tooltip, cooldown
   const trigger = (
     // On compact (mobile) viewports: flex-basis 52px + no-shrink forces row
     // wrapping when 7+ buttons can't fit; flex-grow still fills available space.
-    <div style={{ position: "relative", flex: compact ? "1 0 52px" : 1, maxWidth: compact ? 72 : undefined, minWidth: 0, display: "flex" }}>
+    <div
+      style={{ position: "relative", flex: compact ? "1 0 52px" : 1, maxWidth: compact ? 72 : undefined, minWidth: 0, display: "flex" }}
+      onMouseEnter={onMouseEnter}
+      onMouseLeave={onMouseLeave}
+    >
       <button
         onClick={onClick}
         disabled={isDisabled}
