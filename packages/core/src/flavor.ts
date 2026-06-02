@@ -2083,6 +2083,85 @@ export function findRecipe(id: string): RecipeSpec | undefined {
   return RECIPE_CATALOG.find((r) => r.id === id);
 }
 
+// ── Transmutation ──────────────────────────────────────────────────────────
+//
+// Resource-to-resource conversion done at the smithy (ore) or apothecary
+// (herbs). Inputs are consumed like normal recipe ingredients; output is
+// awarded as a resource (not a gear item).
+//
+// Supply estimates (idle nodes + mini-game plays, typical active player):
+//   Ore node
+//     Iron    ~5-6/day  (idle Quick/Standard + mini-game thin/rich hits)
+//     Silver  ~2-2.5/day (idle Standard/Deep + mini-game rich hits at ~10% per strike)
+//     Mithril ~0.25/day  (Deep 20% chance per 4h task only)
+//   Herb node
+//     Mossroot ~5-6/day  (idle Quick/Standard + forage grid reveals)
+//     Sunleaf  ~2-3/day  (idle Standard/Deep + forage grid reveals)
+//     Nightbloom ~0.25/day (Deep 20% chance per 4h task only)
+//
+// Tier 1→2 conversions (smithy / apothecary): 6:1 + small gold fee.
+//   6 iron  ≈ 1 day's supply  →  1 silver  (≈ 0.5 day's supply) — small tax for convenience
+//   6 mossroot ≈ 1 day       →  1 sunleaf  (≈ 0.4 day)
+//
+// Tier 2→3 conversion (smithy): 25 silver + 40 iron + 100g → 1 mithril
+//   25 silver ≈ 10-12 days (rate-limiting gate, accounts for mini-game supply)
+//   40 iron   ≈  7-8  days (secondary gate, non-trivial at 5-6/day)
+//   Natural mithril from Deep ≈ 0.25/day → transmute is a fallback for
+//   unlucky streaks, still slower than optimal Deep mining.
+
+export interface TransmuteSpec {
+  id: string;
+  station: "smithy" | "apothecary";
+  label: string;
+  blurb: string;
+  inputs: Array<{ resource_id: string; qty: number }>;
+  output_resource_id: string;
+  gold_cost: number;
+  level_req: number;
+}
+
+export const TRANSMUTE_CATALOG: TransmuteSpec[] = [
+  // ── Smithy — ore upgrades ────────────────────────────────────────────────
+  {
+    id: "transmute_silver",
+    station: "smithy",
+    label: "Refine Silver Ore",
+    blurb: "Smelt six iron ingots into a single silver bar. Quick wins from mini-game surplus.",
+    inputs: [{ resource_id: "iron_ore", qty: 6 }],
+    output_resource_id: "silver_ore",
+    gold_cost: 15,
+    level_req: 1,
+  },
+  {
+    id: "transmute_mithril",
+    station: "smithy",
+    label: "Transmute Mithril Ore",
+    blurb: "Forge-fuse silver and iron under extreme heat. Costly — but a path when Deep luck won't budge.",
+    inputs: [
+      { resource_id: "silver_ore", qty: 25 },
+      { resource_id: "iron_ore",   qty: 40 },
+    ],
+    output_resource_id: "mithril_ore",
+    gold_cost: 100,
+    level_req: 5,
+  },
+  // ── Apothecary — herb upgrades ───────────────────────────────────────────
+  {
+    id: "transmute_sunleaf",
+    station: "apothecary",
+    label: "Distil Sunleaf",
+    blurb: "Reduce six mossroot bundles into a single concentrated sunleaf extract.",
+    inputs: [{ resource_id: "mossroot", qty: 6 }],
+    output_resource_id: "sunleaf",
+    gold_cost: 15,
+    level_req: 1,
+  },
+];
+
+export function findTransmute(id: string): TransmuteSpec | undefined {
+  return TRANSMUTE_CATALOG.find((t) => t.id === id);
+}
+
 // Smithy gear scales with the crafter's level so items stay relevant past the
 // unlock tier. +2 power per level above level_req tracks the dungeon drop
 // formula (rare power ≈ 2×tier + 4.5, level ≈ tier).

@@ -7,7 +7,7 @@ import { useMemo, useState } from "react";
 import toast from "react-hot-toast";
 import type { CSSProperties } from "react";
 
-import { RECIPE_CATALOG, RESOURCE_CATALOG, findResource, smithyEffectivePower, type RecipeSpec, type ResourceSpec } from "@gantt-quest/core";
+import { RECIPE_CATALOG, RESOURCE_CATALOG, TRANSMUTE_CATALOG, findResource, smithyEffectivePower, type RecipeSpec, type ResourceSpec, type TransmuteSpec } from "@gantt-quest/core";
 
 import { Icon } from "../icons";
 import type { Item } from "../types";
@@ -53,6 +53,20 @@ export function ForgePanel(props: PanelCommon) {
             gold={props.gold}
             inventory={props.inventory}
             station="smithy"
+            onAfterAction={props.onAfterAction}
+          />
+        ))}
+      </div>
+
+      <SubHeader>Transmute <span style={{ color: "var(--fg-mute)", fontWeight: 400 }}>(upgrade ore tiers)</span></SubHeader>
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        {TRANSMUTE_CATALOG.filter((t) => t.station === "smithy").map((t) => (
+          <TransmuteRow
+            key={t.id}
+            spec={t}
+            characterLevel={props.characterLevel}
+            gold={props.gold}
+            inventory={props.inventory}
             onAfterAction={props.onAfterAction}
           />
         ))}
@@ -107,6 +121,20 @@ export function BrewPanel(props: PanelCommon) {
             gold={props.gold}
             inventory={props.inventory}
             station="apothecary"
+            onAfterAction={props.onAfterAction}
+          />
+        ))}
+      </div>
+
+      <SubHeader>Distil <span style={{ color: "var(--fg-mute)", fontWeight: 400 }}>(upgrade herb tiers)</span></SubHeader>
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        {TRANSMUTE_CATALOG.filter((t) => t.station === "apothecary").map((t) => (
+          <TransmuteRow
+            key={t.id}
+            spec={t}
+            characterLevel={props.characterLevel}
+            gold={props.gold}
+            inventory={props.inventory}
             onAfterAction={props.onAfterAction}
           />
         ))}
@@ -230,6 +258,81 @@ function RecipeRow({
         style={actionBtnStyle(canCraft)}
       >
         {busy ? "…" : !meetsLevel ? `Lvl ${recipe.level_req}` : !hasInputs ? "Need inputs" : !affordable ? "Need gold" : station === "smithy" ? "Forge" : "Brew"}
+      </button>
+    </div>
+  );
+}
+
+function TransmuteRow({
+  spec, characterLevel, gold, inventory, onAfterAction,
+}: {
+  spec: TransmuteSpec;
+  characterLevel: number;
+  gold: number;
+  inventory: Item[];
+  onAfterAction: () => void | Promise<void>;
+}) {
+  const [busy, setBusy] = useState(false);
+  const meetsLevel = characterLevel >= spec.level_req;
+  const affordable = gold >= spec.gold_cost;
+  const missingInputs = spec.inputs.filter((inp) => inventoryQty(inventory, inp.resource_id) < inp.qty);
+  const hasInputs = missingInputs.length === 0;
+  const canTransmute = meetsLevel && affordable && hasInputs;
+  const outSpec = findResource(spec.output_resource_id);
+
+  async function handle() {
+    setBusy(true);
+    const endpoint = spec.station === "smithy"
+      ? `/api/smithy/transmute/${spec.id}`
+      : `/api/apothecary/transmute/${spec.id}`;
+    try {
+      const res = await fetch(endpoint, { method: "POST", credentials: "include" });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({})) as { error?: string };
+        toast.error(`${spec.station === "smithy" ? "Transmute" : "Distil"} failed: ${body.error ?? res.statusText}`);
+        return;
+      }
+      toast.success(`${spec.station === "smithy" ? "Transmuted" : "Distilled"} → ${outSpec ? `${outSpec.emoji} ${outSpec.name}` : spec.output_resource_id}`);
+      await onAfterAction();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div style={rowStyle}>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontWeight: 600 }}>{spec.label}</div>
+        <div style={{ fontSize: 12, color: "var(--fg-mute)" }}>{spec.blurb}</div>
+        <div style={{ fontSize: 11, color: "var(--fg-mute)", marginTop: 4 }}>
+          {spec.inputs.map((inp) => {
+            const s = findResource(inp.resource_id);
+            const have = inventoryQty(inventory, inp.resource_id);
+            const short = have < inp.qty;
+            return (
+              <span key={inp.resource_id} style={{ marginRight: 12, color: short ? "var(--accent-no-1, #f87171)" : "inherit" }}>
+                {inp.qty} × <span style={{ display: "inline-flex", alignItems: "center", gap: 3, verticalAlign: "middle" }}>
+                  <Icon name={s?.icon ?? "abstract-006"} size={12} color="var(--fg-mute)" /> {s?.name ?? inp.resource_id}
+                </span> <span style={{ opacity: 0.6 }}>({have} on hand)</span>
+              </span>
+            );
+          })}
+          <span> · {spec.gold_cost}g</span>
+          <span> · lvl {spec.level_req}+</span>
+          {outSpec && (
+            <span style={{ color: "var(--accent-gold, #f59e0b)" }}>
+              {" → "}<Icon name={outSpec.icon} size={12} color="var(--accent-gold, #f59e0b)" style={{ verticalAlign: "middle" }} /> {outSpec.name}
+            </span>
+          )}
+        </div>
+      </div>
+      <button
+        type="button"
+        disabled={!canTransmute || busy}
+        onClick={handle}
+        style={actionBtnStyle(canTransmute)}
+      >
+        {busy ? "…" : !meetsLevel ? `Lvl ${spec.level_req}` : !hasInputs ? "Need inputs" : !affordable ? "Need gold" : spec.station === "smithy" ? "Transmute" : "Distil"}
       </button>
     </div>
   );
