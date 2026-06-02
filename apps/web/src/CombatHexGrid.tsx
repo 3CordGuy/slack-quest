@@ -1615,6 +1615,34 @@ function drawPortraitTint(
     ctx.restore();
   }
 
+  const shocked = effects.some((e) => e.type === "shocked" && e.remaining > 0);
+  if (shocked) {
+    // Strobing electric flash — yellow-white overlay with a high-frequency
+    // pulse so the pawn looks like it's being zapped. Period chosen short
+    // enough to feel jittery but not so fast it strobes unpleasantly.
+    const strobe = 0.35 + 0.45 * (0.5 + 0.5 * Math.sin(now / 65));
+    ctx.save();
+    ctx.globalCompositeOperation = "screen";
+    ctx.fillStyle = `rgba(254, 240, 138, ${0.45 * strobe})`;
+    ctx.beginPath();
+    ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+
+    // Brief high-frequency white flash that lands on every ~6th frame so
+    // the pawn occasionally pops with a hot electric burst.
+    const tick = Math.floor(now / 220);
+    if ((tick % 3) === 0) {
+      ctx.save();
+      ctx.globalAlpha = 0.45;
+      ctx.fillStyle = "#fefce8";
+      ctx.beginPath();
+      ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+  }
+
   const burning = effects.some((e) => e.type === "burning" && e.remaining > 0);
   if (burning) {
     // Warm flicker — multiply orange over the portrait so highlights blow
