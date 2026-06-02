@@ -3609,6 +3609,21 @@ function applyUtilityAbilityEffects(
         };
         break;
       }
+      case "cleanse_single_ally": {
+        // QA Paladin — Code Review: strip every negative status from one
+        // ally. Same NEGATIVE set as the field-wide cleanse_ally_debuffs
+        // handler so the semantics stay consistent.
+        const NEGATIVE = new Set<EffectType>(["bleeding", "burning", "poisoned", "entangled", "stunned", "hexed", "shocked", "frozen"]);
+        const target = s.fighters.find((f) => f.id === effect.target_id);
+        if (!target) break;
+        s = {
+          ...s,
+          fighters: s.fighters.map((f) =>
+            f.id === effect.target_id ? { ...f, effects: (f.effects ?? []).filter((e) => !NEGATIVE.has(e.type)) } : f,
+          ),
+        };
+        break;
+      }
       case "deduct_caster_hp": {
         // Drop Table (Warlock): pay HP instead of mana. Bypasses shield + armor
         // because it's a self-sacrifice cost, not damage. Floors at 1 so the

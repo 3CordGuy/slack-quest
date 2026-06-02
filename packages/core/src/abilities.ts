@@ -203,7 +203,12 @@ export type AbilityEffect =
   // Data Warlock — Drop Table: pay HP instead of mana. Reduces the caster's
   // current HP by amount, bypassing shield + armor (it's a self-sacrifice
   // cost, not damage). Floors at 1 HP so the cast can't be lethal.
-  | { kind: "deduct_caster_hp"; caster_id: string; amount: number };
+  | { kind: "deduct_caster_hp"; caster_id: string; amount: number }
+  // QA Paladin — Code Review: strip every negative status effect from one
+  // specific ally. Targeted version of cleanse_ally_debuffs. The cleanse
+  // semantics (which effect types count as "negative") match the field-wide
+  // cleanse handler for consistency.
+  | { kind: "cleanse_single_ally"; target_id: string };
 
 export interface ActiveAbilityDef {
   kind: "active";
