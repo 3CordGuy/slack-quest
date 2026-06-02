@@ -251,11 +251,11 @@ export const EFFECT_META: Record<EffectType, EffectMeta> = {
   empowered: { emoji: "⚡", name: "Empowered", kind: "passive", ignoresArmor: false, blurb: "+25% damage dealt for N turns.",                                          icon: "aura",           color: "#f59e0b" },
   frozen:    { emoji: "❄️", name: "Frozen",    kind: "passive", ignoresArmor: false, blurb: "Skips next action.",                                                      icon: "ice-bolt",       color: "#93c5fd" },
   shocked:   { emoji: "🌩️", name: "Shocked",   kind: "passive", ignoresArmor: false, blurb: "Takes +30% damage from all sources.",                                    icon: "electric",       color: "#fbbf24" },
-  stunned:   { emoji: "📦", name: "Containerized", kind: "passive", ignoresArmor: false, blurb: "Containerized — skips swings with escalating 30%/turn break chance.", icon: "fluffy-swirl",   color: "#a78bfa" },
+  stunned:   { emoji: "📦", name: "Stunned",   kind: "passive", ignoresArmor: false, blurb: "Containerized — skips swings with escalating 30%/turn break chance.",    icon: "fluffy-swirl",   color: "#a78bfa" },
   hexed:     { emoji: "🔮", name: "Hexed",     kind: "passive", ignoresArmor: false, blurb: "Deals -25% damage. Takes 3 bleed stacks whenever it takes damage.",      icon: "death-skull",    color: "#a855f7" },
-  entangled: { emoji: "🌿", name: "Deadlocked", kind: "debuff",  ignoresArmor: false, blurb: "Held by an upstream dependency. -4 to attack rolls.",                  icon: "vine-whip",      color: "#86efac" },
-  barkskin:    { emoji: "🍃", name: "Firewalled", kind: "passive", ignoresArmor: false, blurb: "Inbound deny-all rule active — bonus AC for N turns.",     icon: "leaf",      color: "#a3e635" },
-  animal_form: { emoji: "🐺", name: "Scaled Up",  kind: "buff",    ignoresArmor: false, blurb: "Compute provisioned — stats surged while active.",          icon: "wolf-head", color: "#f97316" },
+  entangled: { emoji: "🌿", name: "Entangled", kind: "debuff",  ignoresArmor: false, blurb: "-4 to attack rolls.",                                                     icon: "vine-whip",      color: "#86efac" },
+  barkskin:    { emoji: "🍃", name: "Barkskin",    kind: "passive", ignoresArmor: false, blurb: "Hardened skin — bonus AC for N turns.",              icon: "leaf",      color: "#a3e635" },
+  animal_form: { emoji: "🐺", name: "Animal Form", kind: "buff",    ignoresArmor: false, blurb: "Transformed — mag + 25% stat boost active.",          icon: "wolf-head", color: "#f97316" },
 };
 
 export const ELEMENT_META: Record<ElementType, { emoji: string; name: string; effect: EffectType }> = {
