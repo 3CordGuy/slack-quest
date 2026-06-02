@@ -646,6 +646,7 @@ export type CombatEvent =
   | { type: "ability_ill_omen_burst"; actor: ActorId; target: ActorId; accumulated: number; burst: number }
   | { type: "ability_self_hp_cost"; actor: ActorId; amount: number }
   | { type: "passive_on_kill"; actor: ActorId; passive_id: string; target: ActorId }
+  | { type: "passive_earworm_refund"; actor: ActorId; amount: number }
   | {
       type: "elemental_proc";
       actor: ActorId;
@@ -1449,6 +1450,14 @@ function handlePlayerHit(
     }
   }
 
+  // Frontend Bard — Earworm: +1 mana to every bard with the passive on
+  // any party crit. Applies before drink-buff because forceCrit could flip
+  // isCrit later but we want the refund only on rolls that are actually
+  // critting at this point (or via vanish).
+  const attackEarworm = applyEarwormOnCrit(s, isCrit);
+  s = attackEarworm.state;
+  events.push(...attackEarworm.events);
+
   // Pub drink-buff. Applied between rogue first-crit and bard aura so the
   // crit-doubling has happened (buff_next_crit gates on !isCrit) but the
   // aura/mark bonuses haven't yet (those are partymate-driven additive
@@ -2249,7 +2258,11 @@ function handleMonsterAct(state: CombatState, roll: RollFn): StepResult {
   // deriveDodgeChance returns a fraction (0..0.15); we compare against a
   // 1-100 roll so max 15 is cap (Rogue at AGI 8 → 3%, end-game AGI 15 → 10%).
   if (target.stats) {
-    const threshold = Math.round(deriveDodgeChance(target.stats) * 100);
+    const baseThreshold = Math.round(deriveDodgeChance(target.stats) * 100);
+    // Frontend Bard — A11y First: +1% dodge chance if the target has the
+    // passive equipped. Stacks additively with the AGI dodge bonus.
+    const a11yDodgeBonus = fighterHasPassive(target, "a11y_first") ? 1 : 0;
+    const threshold = baseThreshold + a11yDodgeBonus;
     if (threshold > 0 && roll(100) <= threshold) {
       events.push({ type: "monster_dodged", target: target.id });
       const decremented: CombatState = {
@@ -2516,6 +2529,13 @@ function handleDamageAbility(
     : { damage: amount, forceCrit: false, event: null as CombatEvent | null, nextDrinkBuffs: state.drink_buffs };
   amount = drinkResult.damage;
   if (drinkResult.forceCrit) isCrit = true;
+
+  // Frontend Bard — Earworm: refund mana to bards with the passive on any
+  // ability crit. nextState isn't constructed yet so we operate on `state`
+  // directly and the refund carries into the final nextState below.
+  const abilityEarworm = applyEarwormOnCrit(state, isCrit);
+  state = abilityEarworm.state;
+  preEvents.push(...abilityEarworm.events);
 
   // Shocked amplifier.
   const sigShockedEffect = monster.effects.find((e) => e.type === "shocked");
@@ -3362,7 +3382,9 @@ function applyUtilityAbilityEffects(
           }
         }
         const atkAc = monsterAc(targetMonster.tier);
-        const hitTotal = d20 + effect.hit_mod;
+        // Frontend Bard — A11y First: +1 to attack rolls for the caster.
+        const a11yHitBonus = fighterHasPassive(fighter, "a11y_first") ? 1 : 0;
+        const hitTotal = d20 + effect.hit_mod + a11yHitBonus;
         const landed = hitTotal >= atkAc;
         events.push({ type: "roll", actor, die: "d20", value: d20, purpose: "hit_check" });
         events.push({ type: "hit_check", actor, target: targetMonster.id, roll: d20, modifier: effect.hit_mod, total: hitTotal, ac: atkAc, hit: landed });
@@ -3370,6 +3392,10 @@ function applyUtilityAbilityEffects(
         if (!landed) break;
 
         const isCrit = effect.is_crit ?? false;
+        // Frontend Bard — Earworm: refund mana to bards on any party crit.
+        const arEarworm = applyEarwormOnCrit(s, isCrit);
+        s = arEarworm.state;
+        events.push(...arEarworm.events);
         const atkVulnMult = vulnerabilityMult(s, targetMonster.id, s.round);
         // DevOps Mage — Observability adds flat damage per unique enemy debuff.
         const atkObsBonus = observabilityBonus(s, fighter);
@@ -4323,6 +4349,24 @@ function fighterHasPassive(fighter: CombatFighter, passiveId: string): boolean {
 const OBSERVABILITY_DEBUFF_TYPES: ReadonlySet<EffectType> = new Set<EffectType>([
   "bleeding", "burning", "poisoned", "entangled", "stunned", "hexed", "shocked", "frozen",
 ]);
+// Frontend Bard — Earworm: every party member with the passive equipped
+// gets +1 mana when ANY party crit lands (their own crit also counts —
+// the bard is "in the party"). Capped at max_mana. Returns the modified
+// state + one event per actual refund (so the UI can show the trigger).
+function applyEarwormOnCrit(state: CombatState, isCrit: boolean): { state: CombatState; events: CombatEvent[] } {
+  if (!isCrit) return { state, events: [] };
+  const events: CombatEvent[] = [];
+  const fighters = state.fighters.map((f) => {
+    if (f.hp <= 0 || !fighterHasPassive(f, "earworm") || f.mana >= f.max_mana) return f;
+    const refund = Math.min(1, f.max_mana - f.mana);
+    if (refund <= 0) return f;
+    events.push({ type: "passive_earworm_refund", actor: f.id, amount: refund });
+    return { ...f, mana: f.mana + refund };
+  });
+  if (events.length === 0) return { state, events };
+  return { state: { ...state, fighters }, events };
+}
+
 function observabilityBonus(state: CombatState, fighter: CombatFighter): number {
   if (!fighterHasPassive(fighter, "observability")) return 0;
   const types = new Set<EffectType>();
