@@ -203,7 +203,7 @@ export function PawnCallout({
         <div style={{ display: "flex", gap: 3, flexWrap: "wrap" }}>
           {pawn.effects.slice(0, 6).map((e, i) => (
             <span key={i} style={effectPill(e.type)} title={effectTooltipText(e.type, e.magnitude, e.remaining)}>
-              {(EFFECT_DESCRIPTIONS[e.type]?.label ?? e.type).slice(0, 4).toUpperCase()}
+              {EFFECT_DESCRIPTIONS[e.type]?.label ?? e.type}
             </span>
           ))}
         </div>
@@ -332,7 +332,7 @@ export function DockedPawnCard({
           <div style={{ display: "flex", gap: 3, flexWrap: "wrap" }}>
             {pawn.effects.slice(0, 8).map((e, i) => (
               <span key={i} style={effectPill(e.type)} title={effectTooltipText(e.type, e.magnitude, e.remaining)}>
-                {(EFFECT_DESCRIPTIONS[e.type]?.label ?? e.type).slice(0, 4).toUpperCase()}
+                {EFFECT_DESCRIPTIONS[e.type]?.label ?? e.type}
               </span>
             ))}
           </div>
@@ -525,14 +525,19 @@ export function effectTooltipText(type: EffectType, magnitude: number, remaining
 function effectPill(type: EffectType): CSSProperties {
   const c = EFFECT_COLOR[type] ?? "#94a3b8";
   return {
-    padding: "1px 4px",
-    borderRadius: 3,
+    // Wider padding + larger font so long engineering labels like
+    // "Containerized" / "Firewalled" / "Auto-Heal" read without
+    // truncation. Letter-spacing tightened a hair so longer words
+    // don't push neighboring chips off the row.
+    padding: "2px 7px",
+    borderRadius: 4,
     background: "rgba(0,0,0,0.45)",
     border: `1px solid ${c}`,
     color: c,
-    fontSize: 8,
+    fontSize: 10,
     fontWeight: 700,
-    letterSpacing: 0.3,
+    letterSpacing: 0.2,
     textTransform: "uppercase",
+    whiteSpace: "nowrap",
   };
 }
