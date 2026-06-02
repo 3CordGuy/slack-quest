@@ -20,6 +20,7 @@ export type PassiveTrigger =
   | "on_action"     // at the start of this fighter's own turn (druid regen, warden shield)
   | "on_ally_hit"   // after any ally takes damage from a monster swing
   | "on_crit"       // after this fighter scores a critical hit
+  | "on_kill"       // after any monster dies — passive's nearby_radius_tiles (if set) filters by hex distance from caster to dying monster
   | "always_on";    // continuous modifier managed inline by the machine (bard aura, sage reading, mana font, rogue first strike)
 
 // Minimal fighter/monster views injected into execute functions. Structurally
@@ -186,7 +187,23 @@ export type AbilityEffect =
   | { kind: "apply_taunt_fortify"; target_id: string; turns: number }
   // SRE Warden — grant shield equal to floor((armor_power + resilient_bonus) * fraction).
   // Machine resolves the live effective armor at application time.
-  | { kind: "grant_shield_from_armor"; target_id: string; fraction: number };
+  | { kind: "grant_shield_from_armor"; target_id: string; fraction: number }
+  // Frontend Bard — Encore: clear every active ability cooldown the target ally
+  // is currently sitting on. Target acquires the freedom to immediately re-cast
+  // anything that was gated. No-op if the target has no cooldowns.
+  | { kind: "reset_cooldowns"; target_id: string }
+  // Frontend Bard — Unsubscribe from All: strip every buff-typed status
+  // effect (regen, barkskin, animal_form, empowered) from every enemy. Debuffs
+  // are left intact (use cleanse_ally_debuffs for the inverse).
+  | { kind: "dispel_enemy_buffs" }
+  // Frontend Bard — Unsubscribe from All R2 (reserved): wipe every debuff-typed
+  // effect (bleeding, poisoned, burning, stunned, frozen, shocked, hexed,
+  // entangled) from every ally. Buffs are left intact.
+  | { kind: "cleanse_ally_debuffs" }
+  // Data Warlock — Drop Table: pay HP instead of mana. Reduces the caster's
+  // current HP by amount, bypassing shield + armor (it's a self-sacrifice
+  // cost, not damage). Floors at 1 HP so the cast can't be lethal.
+  | { kind: "deduct_caster_hp"; caster_id: string; amount: number };
 
 export interface ActiveAbilityDef {
   kind: "active";
@@ -250,6 +267,12 @@ export interface PassiveAbilityDef {
   icon?: string;
   trigger: PassiveTrigger;
   once_per_fight: boolean;
+  // For on_kill passives: optional hex-distance filter from caster to dying
+  // monster. When set, the passive only fires if the kill happens within
+  // this many hexes (Manhattan distance). Omit to fire on any kill on the
+  // field (Garbage Collection-style); set to 2 for "nearby kill" semantics
+  // (Stale Cache-style). No effect for other trigger kinds.
+  nearby_radius_tiles?: number;
   // Optional guard: passive fires only when this returns true.
   condition?: (ctx: AbilityContext) => boolean;
   // For always_on passives this can be a no-op — the machine handles them
