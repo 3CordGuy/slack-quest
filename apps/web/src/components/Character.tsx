@@ -1291,14 +1291,14 @@ export function CharacterCard({
         <Stat
           label="HP"
           icon={<Icon name="health-normal" color="#86efac" size={36} />}
-          tooltip={`VIT ${primaryStats.vit}  ·  Level ${c.level}\n16 + 2×${primaryStats.vit} + 2×${c.level} = ${c.max_hp} max HP`}
-          value={`${c.hp} / ${c.max_hp}`}
+          tooltip={`VIT ${primaryStats.vit}  ·  Level ${c.level}\n16 + 2×${primaryStats.vit} + 2×${c.level} = ${derivedStats.max_hp} max HP`}
+          value={`${c.hp} / ${derivedStats.max_hp}`}
         />
         <Stat
           label="Mana"
           icon={<Icon name="wizard-staff" color="#a78bfa" size={36} />}
-          tooltip={`INT ${primaryStats.int_stat}\n2 + floor((INT − 4) / 2) + floor(level / 6) = ${c.max_mana} max mana\nSpent to cast active abilities`}
-          value={`${c.mana} / ${c.max_mana}`}
+          tooltip={`INT ${primaryStats.int_stat}\n2 + floor((INT − 4) / 2) + floor(level / 6) = ${derivedStats.max_mana} max mana\nSpent to cast active abilities`}
+          value={`${c.mana} / ${derivedStats.max_mana}`}
         />
         <Stat
           label="Armor"
