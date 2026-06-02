@@ -235,6 +235,39 @@ const standupMeeting: AbilityDef = {
   },
 };
 
+const encore: AbilityDef = {
+  kind: "active",
+  id: "encore",
+  name: "Encore",
+  blurb: "Call for one more take — wipes every cooldown on the targeted ally so they can immediately re-cast.",
+  icon: "musical-notes",
+  mana_cost: 0,
+  cooldown_turns: 5,
+  routing: "utility",
+  target: "single_ally",
+  range_tiles: 3,
+  execute(ctx) {
+    const target = ctx.target as { id: string } | undefined;
+    if (!target) return [];
+    return [fx.resetCooldowns(target.id)];
+  },
+};
+
+const unsubscribeFromAll: AbilityDef = {
+  kind: "active",
+  id: "unsubscribe_from_all",
+  name: "Unsubscribe from All",
+  blurb: "Strip every positive buff from the enemy field at once — regen, barkskin, animal_form, empowered. The party gets a clean slate to push.",
+  icon: "trash-can",
+  mana_cost: 0,
+  cooldown_turns: 6,
+  routing: "utility",
+  target: "all_enemies",
+  execute() {
+    return [fx.dispelEnemyBuffs()];
+  },
+};
+
 const discordNotification: AbilityDef = {
   kind: "active",
   id: "discord_notification",
@@ -418,6 +451,54 @@ const indexScan: AbilityDef = {
   },
 };
 
+const dropTable: AbilityDef = {
+  kind: "active",
+  id: "drop_table",
+  name: "Drop Table",
+  blurb: "Pay 5 HP — no mana — to detonate a magic AoE on every enemy in a 1-hex blast for 2d6 + magic damage. Caster floors at 1 HP.",
+  icon: "blood",
+  mana_cost: 0,
+  cooldown_turns: 4,
+  routing: "utility",
+  target: "all_enemies",
+  range_tiles: 4,
+  aoe_radius_tiles: 1,
+  execute(ctx) {
+    const mag = ctx.caster.magic_mod;
+    const amount = rollSum(ctx.roll, 2, 6) + mag;
+    const formula = `2d6+${mag}m`;
+    const damage = ctx.monsters.map((m) => fx.damage(m.id, amount, formula, { damageType: "magic" }));
+    return [fx.deductCasterHp(ctx.caster.id, 5), ...damage];
+  },
+};
+
+const staleCache: AbilityDef = {
+  kind: "passive",
+  id: "stale_cache",
+  name: "Stale Cache",
+  blurb: "Every nearby kill leaks something back — restore 1 mana whenever an enemy dies within 2 hexes of you.",
+  icon: "database",
+  trigger: "on_kill",
+  once_per_fight: false,
+  nearby_radius_tiles: 2,
+  execute(ctx) {
+    return [fx.restoreMana(ctx.caster.id, 1)];
+  },
+};
+
+const garbageCollection: AbilityDef = {
+  kind: "passive",
+  id: "garbage_collection",
+  name: "Garbage Collection",
+  blurb: "Reap the dead allocations — restore 3 HP whenever any enemy dies on the field.",
+  icon: "trash-can",
+  trigger: "on_kill",
+  once_per_fight: false,
+  execute(ctx) {
+    return [fx.heal(ctx.caster.id, 3)];
+  },
+};
+
 const stackTrace: AbilityDef = {
   kind: "active",
   id: "stack_trace",
@@ -477,6 +558,8 @@ const NEW_NODES_BY_CLASS: Record<ClassId, TalentNodeDef[]> = {
   frontend_bard: [
     activeNode("frontend_bard", standupMeeting, "support"),
     activeNode("frontend_bard", discordNotification, "control"),
+    activeNode("frontend_bard", encore, "utility"),
+    activeNode("frontend_bard", unsubscribeFromAll, "utility"),
   ],
   staff_sage: [
     activeNode("staff_sage", frostBolt, "control"),
@@ -493,6 +576,9 @@ const NEW_NODES_BY_CLASS: Record<ClassId, TalentNodeDef[]> = {
   data_warlock: [
     activeNode("data_warlock", indexScan, "damage"),
     activeNode("data_warlock", stackTrace, "damage"),
+    activeNode("data_warlock", dropTable, "damage"),
+    activeNode("data_warlock", staleCache, "support"),
+    activeNode("data_warlock", garbageCollection, "support"),
   ],
 };
 
@@ -506,9 +592,9 @@ export const NEW_ABILITY_DEFS: AbilityDef[] = [
   rollingRestart, cdnSurge, canaryDeploy,
   sanityCheck, bisect,
   pruning, mycelialWeb, compostHeap, deepRoots, cronJob,
-  standupMeeting, discordNotification,
+  standupMeeting, discordNotification, encore, unsubscribeFromAll,
   frostBolt, hailstorm,
   codeAudit, smokeTest,
   postmortem, circuitBreaker,
-  indexScan, stackTrace,
+  indexScan, stackTrace, dropTable, staleCache, garbageCollection,
 ];

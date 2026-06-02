@@ -66,7 +66,7 @@ const SVG_ICONS = new Set([
   // User menu trigger
   "cog",
   // Talent-tree new ability icons (migration 0062)
-  "frozen-arrow", "magnifying-glass", "tombstone",
+  "frozen-arrow", "magnifying-glass", "tombstone", "musical-notes", "trash-can",
   // Abstract fallback icons (used when no specific icon exists)
   "abstract-006",
 ]);

@@ -153,6 +153,22 @@ export const fx = {
   shieldFromArmor(targetId: string, fraction: number): AbilityEffect {
     return { kind: "grant_shield_from_armor", target_id: targetId, fraction };
   },
+
+  resetCooldowns(targetId: string): AbilityEffect {
+    return { kind: "reset_cooldowns", target_id: targetId };
+  },
+
+  dispelEnemyBuffs(): AbilityEffect {
+    return { kind: "dispel_enemy_buffs" };
+  },
+
+  cleanseAllyDebuffs(): AbilityEffect {
+    return { kind: "cleanse_ally_debuffs" };
+  },
+
+  deductCasterHp(casterId: string, amount: number): AbilityEffect {
+    return { kind: "deduct_caster_hp", caster_id: casterId, amount };
+  },
 };
 
 // Roll count dice of `sides` and return the sum.

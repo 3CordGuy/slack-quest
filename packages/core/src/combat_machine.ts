@@ -65,7 +65,7 @@ import {
   type Rarity,
   type WeaponRange,
 } from "./flavor";
-import { type AbilityContext, type AbilityEffect, type ActiveAbilityDef, type AllyNpcSpec } from "./abilities";
+import { type AbilityContext, type AbilityEffect, type ActiveAbilityDef, type AllyNpcSpec, type PassiveAbilityDef } from "./abilities";
 import { ALL_TALENT_NODES } from "./abilities/tree";
 import { deriveArmorBonus, deriveCritBonus, deriveDodgeChance, deriveInitiativeBonus, type Stats } from "./stats";
 
@@ -633,6 +633,8 @@ export type CombatEvent =
   | { type: "ability_good_fortune_delayed"; actor: ActorId; target: ActorId; amount: number }
   | { type: "ability_ill_omen_applied"; actor: ActorId; target: ActorId }
   | { type: "ability_ill_omen_burst"; actor: ActorId; target: ActorId; accumulated: number; burst: number }
+  | { type: "ability_self_hp_cost"; actor: ActorId; amount: number }
+  | { type: "passive_on_kill"; actor: ActorId; passive_id: string; target: ActorId }
   | {
       type: "elemental_proc";
       actor: ActorId;
@@ -3567,6 +3569,62 @@ function applyUtilityAbilityEffects(
         events.push({ type: "ability_ill_omen_applied", actor, target: effect.target_id });
         break;
       }
+      case "reset_cooldowns": {
+        // Encore (Bard): wipe every ability cooldown the target ally is sitting
+        // on. No-op if they have none. The map entry is left in place but with
+        // an empty inner object; cooldowns?.[id]?.[abilityId] reads work either
+        // way, and a follow-up cast will repopulate as needed.
+        if (!s.cooldowns?.[effect.target_id]) break;
+        const { [effect.target_id]: _dropped, ...rest } = s.cooldowns;
+        s = { ...s, cooldowns: rest };
+        break;
+      }
+      case "dispel_enemy_buffs": {
+        // Unsubscribe from All (Bard): strip every positive effect from each
+        // living monster. Hardcoded list covers buff-kind (regen, animal_form)
+        // plus positive passives (empowered, barkskin). Negative effects
+        // (bleeding/poisoned/stunned/etc) are left intact — those are the
+        // player's leverage and shouldn't be cleared by their own cast.
+        const POSITIVE = new Set<EffectType>(["regen", "animal_form", "empowered", "barkskin"]);
+        s = {
+          ...s,
+          monsters: s.monsters.map((m) => ({
+            ...m,
+            effects: (m.effects ?? []).filter((e) => !POSITIVE.has(e.type)),
+          })),
+        };
+        break;
+      }
+      case "cleanse_ally_debuffs": {
+        // Unsubscribe from All R2 (reserved): strip every negative effect from
+        // each living ally. Same shape as dispel above but flipped — buffs
+        // stay, debuffs and negative passives go.
+        const NEGATIVE = new Set<EffectType>(["bleeding", "burning", "poisoned", "entangled", "stunned", "hexed", "shocked", "frozen"]);
+        s = {
+          ...s,
+          fighters: s.fighters.map((f) => ({
+            ...f,
+            effects: (f.effects ?? []).filter((e) => !NEGATIVE.has(e.type)),
+          })),
+        };
+        break;
+      }
+      case "deduct_caster_hp": {
+        // Drop Table (Warlock): pay HP instead of mana. Bypasses shield + armor
+        // because it's a self-sacrifice cost, not damage. Floors at 1 so the
+        // cast can't be lethal — the cost is real but never the final blow.
+        const caster = s.fighters.find((f) => f.id === effect.caster_id);
+        if (!caster) break;
+        const newHp = Math.max(1, caster.hp - effect.amount);
+        const lost = caster.hp - newHp;
+        if (lost <= 0) break;
+        s = {
+          ...s,
+          fighters: s.fighters.map((f) => f.id === effect.caster_id ? { ...f, hp: newHp } : f),
+        };
+        events.push({ type: "ability_self_hp_cost", actor: effect.caster_id, amount: lost });
+        break;
+      }
     }
   }
 
@@ -3818,6 +3876,82 @@ export function resolveMonsterKill(
   const deadMonster = stateWithKill.monsters.find((m) => m.id === monsterId);
   const upcoming = deadMonster?.upcoming_waves ?? [];
 
+  // Fire on_kill passives. Each living fighter's class kit + their talent-
+  // tree-registered passives are scanned for trigger === "on_kill"; nearby_
+  // radius_tiles filters by hex distance from the fighter to the dying
+  // monster. Effects are applied inline (restore_mana / heal only — other
+  // kinds become no-ops here so we don't need to thread RollFn into every
+  // resolveMonsterKill caller). Most on_kill passives are mana/HP refunds,
+  // so this covers the design space; richer effects can graduate to the
+  // full applyUtilityAbilityEffects path in a follow-up.
+  let afterKill = stateWithKill;
+  for (const fighter of afterKill.fighters) {
+    if (fighter.hp <= 0) continue;
+    const fighterCls = classByName(fighter.class);
+    const kitPassives = fighterCls.abilities.filter(
+      (a): a is PassiveAbilityDef => a.kind === "passive" && a.trigger === "on_kill",
+    );
+    const treePassives = ALL_TALENT_NODES
+      .filter((n) => n.class_id === fighterCls.id && n.ability.kind === "passive")
+      .map((n) => n.ability)
+      .filter((a): a is PassiveAbilityDef => a.kind === "passive" && a.trigger === "on_kill");
+    // Deduplicate by id so a talent-tree node sharing the kit's id (rank-1
+    // wrappers) doesn't double-fire.
+    const seen = new Set<string>();
+    const allPassives = [...kitPassives, ...treePassives].filter((p) => {
+      if (seen.has(p.id)) return false;
+      seen.add(p.id);
+      return true;
+    });
+    for (const passive of allPassives) {
+      // Nearby radius filter — Stale Cache style.
+      if (
+        passive.nearby_radius_tiles !== undefined
+        && fighter.pos
+        && deadMonster?.pos
+        && hexDistance(fighter.pos, deadMonster.pos) > passive.nearby_radius_tiles
+      ) continue;
+      const ctx: AbilityContext = {
+        caster: fighter,
+        party: afterKill.fighters.filter((f) => f.hp > 0),
+        monsters: afterKill.monsters.filter((m) => m.hp > 0 && m.id !== monsterId),
+        roll: (sides: number) => Math.floor((sides + 1) / 2), // deterministic mid-roll; on_kill execs are non-random
+      };
+      const passiveEffects = passive.execute(ctx);
+      if (passiveEffects.length === 0) continue;
+      let anyApplied = false;
+      for (const eff of passiveEffects) {
+        if (eff.kind === "restore_mana") {
+          const t = afterKill.fighters.find((f) => f.id === eff.target_id);
+          if (!t) continue;
+          afterKill = {
+            ...afterKill,
+            fighters: afterKill.fighters.map((f) =>
+              f.id === eff.target_id ? { ...f, mana: Math.min(f.max_mana, f.mana + eff.amount) } : f,
+            ),
+          };
+          anyApplied = true;
+        } else if (eff.kind === "heal") {
+          const t = afterKill.fighters.find((f) => f.id === eff.target_id);
+          if (!t || t.hp <= 0) continue;
+          const newHp = Math.min(t.max_hp, t.hp + eff.amount);
+          afterKill = {
+            ...afterKill,
+            fighters: afterKill.fighters.map((f) =>
+              f.id === eff.target_id ? { ...f, hp: newHp } : f,
+            ),
+          };
+          anyApplied = true;
+        }
+      }
+      if (anyApplied) {
+        events.push({ type: "passive_on_kill", actor: fighter.id, passive_id: passive.id, target: monsterId });
+      }
+    }
+  }
+  // From here on, use `afterKill` as the canonical state (passive effects baked in).
+  const stateWithKillAndPassives = afterKill;
+
   if (upcoming.length > 0) {
     // Gauntlet wave transition — replace the dead monster in-place.
     const [next, ...rest] = upcoming;
@@ -3846,22 +3980,22 @@ export function resolveMonsterKill(
       total_waves: newMonster.total_waves ?? newMonster.wave!,
     });
     // Wave transition clears mark — the previous focus target is gone.
-    const ability_state = stripField(stateWithKill.ability_state, "mark");
-    const updatedMonsters = stateWithKill.monsters.map((m) => m.id === monsterId ? newMonster : m);
-    const advanced = advanceTurn({ ...stateWithKill, monsters: updatedMonsters, ability_state });
+    const ability_state = stripField(stateWithKillAndPassives.ability_state, "mark");
+    const updatedMonsters = stateWithKillAndPassives.monsters.map((m) => m.id === monsterId ? newMonster : m);
+    const advanced = advanceTurn({ ...stateWithKillAndPassives, monsters: updatedMonsters, ability_state });
     return { state: advanced, events: [...events, ...turnStartEvent(advanced)] };
   }
 
   // Check if ALL monsters are now dead.
-  const allMonstersDown = stateWithKill.monsters.every((m) => m.id === monsterId || m.hp <= 0);
+  const allMonstersDown = stateWithKillAndPassives.monsters.every((m) => m.id === monsterId || m.hp <= 0);
   if (allMonstersDown) {
     events.push({ type: "victory" });
-    return { state: { ...stateWithKill, status: "victory" }, events };
+    return { state: { ...stateWithKillAndPassives, status: "victory" }, events };
   }
 
   // Some monsters still alive — combat continues. Clear mark (target is dead).
-  const ability_state = stripField(stateWithKill.ability_state, "mark");
-  const advanced = advanceTurn({ ...stateWithKill, ability_state });
+  const ability_state = stripField(stateWithKillAndPassives.ability_state, "mark");
+  const advanced = advanceTurn({ ...stateWithKillAndPassives, ability_state });
   return { state: advanced, events: [...events, ...turnStartEvent(advanced)] };
 }
 
