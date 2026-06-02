@@ -453,6 +453,20 @@ const smokeTest: AbilityDef = {
   },
 };
 
+const silentMode: AbilityDef = {
+  kind: "passive",
+  id: "silent_mode",
+  name: "Silent Mode",
+  blurb: "When the logs are clean, the rogue is dangerous — gain +1 AC barkskin at the start of every turn while at full HP.",
+  icon: "cloak-dagger",
+  trigger: "on_action",
+  once_per_fight: false,
+  execute(ctx) {
+    if (ctx.caster.hp < ctx.caster.max_hp) return [];
+    return [fx.barkskin(ctx.caster.id, 1, 1)];
+  },
+};
+
 // ────────────────────────────────────────────────────────────────────────
 // SRE Warden
 // ────────────────────────────────────────────────────────────────────────
@@ -495,6 +509,42 @@ const circuitBreaker: AbilityDef = {
     const allyShields = ctx.party.map((p) => fx.shield(p.id, shieldAmt));
     const entangle = ctx.monsters.length > 0 ? [fx.entangleMonster(ctx.monsters[0].id, 2)] : [];
     return [...allyShields, ...entangle];
+  },
+};
+
+const failover: AbilityDef = {
+  kind: "active",
+  id: "failover",
+  name: "Failover",
+  blurb: "Take an ally's slot in the rotation — swap hex positions with the targeted ally and absorb 8 shield for yourself.",
+  icon: "cycle",
+  mana_cost: 0,
+  cooldown_turns: 4,
+  routing: "utility",
+  target: "single_ally",
+  range_tiles: 2,
+  execute(ctx) {
+    const target = ctx.target as FighterSnapshot;
+    if (target.id === ctx.caster.id) return [];
+    return [
+      fx.swapPositions(ctx.caster.id, target.id),
+      fx.shield(ctx.caster.id, 8),
+    ];
+  },
+};
+
+const capacityPlanning: AbilityDef = {
+  kind: "passive",
+  id: "capacity_planning",
+  name: "Capacity Planning",
+  blurb: "Provision headroom for the team — gain 2 shield per living ally at the start of every turn.",
+  icon: "energy-shield",
+  trigger: "on_action",
+  once_per_fight: false,
+  execute(ctx) {
+    const livingAllies = ctx.party.filter((p) => p.hp > 0 && p.id !== ctx.caster.id).length;
+    if (livingAllies <= 0) return [];
+    return [fx.shield(ctx.caster.id, livingAllies * 2)];
   },
 };
 
@@ -645,10 +695,13 @@ const NEW_NODES_BY_CLASS: Record<ClassId, TalentNodeDef[]> = {
   refactor_rogue: [
     activeNode("refactor_rogue", codeAudit, "control"),
     activeNode("refactor_rogue", smokeTest, "utility"),
+    activeNode("refactor_rogue", silentMode, "defense"),
   ],
   sre_warden: [
     activeNode("sre_warden", postmortem, "damage"),
     activeNode("sre_warden", circuitBreaker, "defense"),
+    activeNode("sre_warden", failover, "utility"),
+    activeNode("sre_warden", capacityPlanning, "defense"),
   ],
   data_warlock: [
     activeNode("data_warlock", indexScan, "damage"),
@@ -671,7 +724,7 @@ export const NEW_ABILITY_DEFS: AbilityDef[] = [
   pruning, mycelialWeb, compostHeap, deepRoots, cronJob,
   standupMeeting, discordNotification, encore, unsubscribeFromAll,
   frostBolt, hailstorm, timeDilation,
-  codeAudit, smokeTest,
-  postmortem, circuitBreaker,
+  codeAudit, smokeTest, silentMode,
+  postmortem, circuitBreaker, failover, capacityPlanning,
   indexScan, stackTrace, dropTable, staleCache, garbageCollection,
 ];
