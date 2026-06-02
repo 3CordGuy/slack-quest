@@ -1106,6 +1106,131 @@ export function DerivedStatCard({
   );
 }
 
+export function PrimaryStatsPanel({
+  character,
+  equipBonuses,
+  onSpend,
+}: {
+  character: Character;
+  equipBonuses: Partial<Record<StatKey, number>>;
+  onSpend?: (stat: StatKey) => void;
+}) {
+  const level = character.level;
+  const baseStats: CoreStats = {
+    str: character.str ?? 5,
+    int_stat: character.int_stat ?? 5,
+    vit: character.vit ?? 5,
+    agi: character.agi ?? 5,
+    dex: character.dex ?? 5,
+  };
+  const primaryStats: CoreStats = {
+    str: baseStats.str + (equipBonuses.str ?? 0),
+    int_stat: baseStats.int_stat + (equipBonuses.int_stat ?? 0),
+    vit: baseStats.vit + (equipBonuses.vit ?? 0),
+    agi: baseStats.agi + (equipBonuses.agi ?? 0),
+    dex: baseStats.dex + (equipBonuses.dex ?? 0),
+  };
+  const derivedStats = deriveAll(primaryStats, level);
+  const hasUnspentPoints = (character.unspent_points ?? 0) > 0;
+  const { str, int_stat: int, vit, agi, dex } = primaryStats;
+  const atkVal = derivedStats.attack_mod >= 0 ? `+${derivedStats.attack_mod}` : `${derivedStats.attack_mod}`;
+  const magVal = derivedStats.magic_mod >= 0 ? `+${derivedStats.magic_mod}` : `${derivedStats.magic_mod}`;
+  const dodgePct = Math.round(derivedStats.dodge_chance * 100);
+  const critPct = Math.round(derivedStats.crit_bonus * 100);
+  const initVal = derivedStats.initiative_bonus >= 0 ? `+${derivedStats.initiative_bonus}` : `${derivedStats.initiative_bonus}`;
+  const derived: { icon: string; label: string; value: string; color: string; formula: string }[] = [
+    {
+      icon: "sword-brandish", label: "Attack", value: atkVal, color: "#f87171",
+      formula: `STR ${str}\nfloor((${str} − 5) / 2) = ${atkVal}\nAdded to weapon damage rolls`,
+    },
+    {
+      icon: "wizard-staff", label: "Magic", value: magVal, color: "#7dd3fc",
+      formula: `INT ${int}\nfloor((${int} − 5) / 2) = ${magVal}\nAdded to spell & heal rolls`,
+    },
+    {
+      icon: "dodging", label: "Dodge", value: `${dodgePct}%`, color: "#34d399",
+      formula: `AGI ${agi}\nmin(15%, (${agi} − 5) × 1%) = ${dodgePct}%\nChance to fully negate a hit`,
+    },
+    {
+      icon: "target-poster", label: "Crit", value: `+${critPct}%`, color: "#fbbf24",
+      formula: `DEX ${dex}\nmax(0, (${dex} − 5) × 1%) = +${critPct}%\nBonus crit chance (cap 10%)`,
+    },
+    {
+      icon: "coffee-cup", label: "Init", value: initVal, color: "#fb923c",
+      formula: `AGI ${agi}\nfloor((${agi} − 5) / 2) = ${initVal}\nAdded to d6 initiative roll`,
+    },
+    ...(derivedStats.armor_bonus > 0 ? [{
+      icon: "round-shield", label: "Armor", value: `+${derivedStats.armor_bonus}`, color: "#a78bfa",
+      formula: `VIT ${vit}\nfloor((${vit} − 5) / 4) = +${derivedStats.armor_bonus}\nBonus armor on top of gear`,
+    }] : []),
+  ];
+  return (
+    <div style={{
+      alignSelf: "stretch",
+      padding: "12px 12px",
+      background: "var(--bg-card-2)",
+      borderRadius: "var(--radius-xl)",
+      border: "1px solid var(--border-faint)",
+    }}>
+      <div className="eyebrow" style={{ marginBottom: 8, color: "var(--fg-mute)" }}>Primary Stats</div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 5, marginBottom: hasUnspentPoints && onSpend ? 6 : 8 }}>
+        {(["str", "int_stat", "vit", "agi", "dex"] as StatKey[]).map((key) => (
+          <PrimaryStatCard
+            key={key}
+            statKey={key}
+            value={primaryStats[key]}
+            bonus={equipBonuses[key] ?? 0}
+            level={level}
+          />
+        ))}
+      </div>
+      {hasUnspentPoints && onSpend && (
+        <div style={{
+          marginBottom: 8,
+          padding: "9px 10px",
+          background: "var(--accent-ink-deep)",
+          borderRadius: "var(--radius-md)",
+          border: "1px solid var(--accent-ink-blue-2)",
+          animation: "gq-spend-pulse 2.4s ease-in-out infinite",
+        }}>
+          <div style={{
+            fontFamily: "var(--font-mono)",
+            fontSize: 11,
+            color: "var(--accent-ink-blue)",
+            marginBottom: 7,
+          }}>
+            +{character.unspent_points} unspent {character.unspent_points === 1 ? "point" : "points"} — choose a stat:
+          </div>
+          <div style={{ display: "flex", gap: 5 }}>
+            {(["str", "int_stat", "vit", "agi", "dex"] as StatKey[]).map((key) => (
+              <button
+                key={key}
+                onClick={() => onSpend(key)}
+                className="btn btn-ghost btn-sm"
+                style={{
+                  flex: 1,
+                  justifyContent: "center",
+                  padding: "6px 0",
+                  fontFamily: "var(--font-mono)",
+                  fontSize: 10,
+                  letterSpacing: 0.5,
+                  color: "var(--accent-ink-blue)",
+                  borderColor: "var(--accent-ink-blue-3)",
+                }}
+              >
+                {key === "int_stat" ? "INT" : key.toUpperCase()}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+      <div style={{ display: "grid", gridTemplateColumns: `repeat(${derived.length}, 1fr)`, gap: 5 }}>
+        {derived.map((s) => <DerivedStatCard key={s.label} {...s} />)}
+      </div>
+    </div>
+  );
+}
+
 export function CharacterCard({
   me,
   inventory,
@@ -1327,104 +1452,8 @@ export function CharacterCard({
       </Stats>
       {/* Primary stats block — only shown after migration 0032 */}
       {(statHasData || hasUnspentPoints) && (
-        <div style={{
-          marginTop: 12,
-          padding: "12px 12px",
-          background: "var(--bg-card-2)",
-          borderRadius: "var(--radius-xl)",
-          border: "1px solid var(--border-faint)",
-        }}>
-          <div className="eyebrow" style={{ marginBottom: 8, color: "var(--fg-mute)" }}>Primary Stats</div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 5, marginBottom: hasUnspentPoints && onSpend ? 6 : 8 }}>
-            {(["str", "int_stat", "vit", "agi", "dex"] as StatKey[]).map((key) => (
-              <PrimaryStatCard
-                key={key}
-                statKey={key}
-                value={primaryStats[key]}
-                bonus={equipBonuses[key] ?? 0}
-                level={c.level}
-              />
-            ))}
-          </div>
-          {hasUnspentPoints && onSpend && (
-            <div style={{
-              marginBottom: 8,
-              padding: "9px 10px",
-              background: "var(--accent-ink-deep)",
-              borderRadius: "var(--radius-md)",
-              border: "1px solid var(--accent-ink-blue-2)",
-              animation: "gq-spend-pulse 2.4s ease-in-out infinite",
-            }}>
-              <div style={{
-                fontFamily: "var(--font-mono)",
-                fontSize: 11,
-                color: "var(--accent-ink-blue)",
-                marginBottom: 7,
-              }}>
-                +{c.unspent_points} unspent {c.unspent_points === 1 ? "point" : "points"} — choose a stat:
-              </div>
-              <div style={{ display: "flex", gap: 5 }}>
-                {(["str", "int_stat", "vit", "agi", "dex"] as StatKey[]).map((key) => (
-                  <button
-                    key={key}
-                    onClick={() => onSpend(key)}
-                    className="btn btn-ghost btn-sm"
-                    style={{
-                      flex: 1,
-                      justifyContent: "center",
-                      padding: "6px 0",
-                      fontFamily: "var(--font-mono)",
-                      fontSize: 10,
-                      letterSpacing: 0.5,
-                      color: "var(--accent-ink-blue)",
-                      borderColor: "var(--accent-ink-blue-3)",
-                    }}
-                  >
-                    {key === "int_stat" ? "INT" : key.toUpperCase()}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-          {(() => {
-            const { str, int_stat: int, vit, agi, dex } = primaryStats;
-            const atkVal = derivedStats.attack_mod >= 0 ? `+${derivedStats.attack_mod}` : `${derivedStats.attack_mod}`;
-            const magVal = derivedStats.magic_mod >= 0 ? `+${derivedStats.magic_mod}` : `${derivedStats.magic_mod}`;
-            const dodgePct = Math.round(derivedStats.dodge_chance * 100);
-            const critPct  = Math.round(derivedStats.crit_bonus * 100);
-            const initVal  = derivedStats.initiative_bonus >= 0 ? `+${derivedStats.initiative_bonus}` : `${derivedStats.initiative_bonus}`;
-            const stats: { icon: string; label: string; value: string; color: string; formula: string }[] = [
-              {
-                icon: "sword-brandish", label: "Attack", value: atkVal, color: "#f87171",
-                formula: `STR ${str}\nfloor((${str} − 5) / 2) = ${atkVal}\nAdded to weapon damage rolls`,
-              },
-              {
-                icon: "wizard-staff", label: "Magic", value: magVal, color: "#7dd3fc",
-                formula: `INT ${int}\nfloor((${int} − 5) / 2) = ${magVal}\nAdded to spell & heal rolls`,
-              },
-              {
-                icon: "dodging", label: "Dodge", value: `${dodgePct}%`, color: "#34d399",
-                formula: `AGI ${agi}\nmin(15%, (${agi} − 5) × 1%) = ${dodgePct}%\nChance to fully negate a hit`,
-              },
-              {
-                icon: "target-poster", label: "Crit", value: `+${critPct}%`, color: "#fbbf24",
-                formula: `DEX ${dex}\nmax(0, (${dex} − 5) × 1%) = +${critPct}%\nBonus crit chance (cap 10%)`,
-              },
-              {
-                icon: "coffee-cup", label: "Init", value: initVal, color: "#fb923c",
-                formula: `AGI ${agi}\nfloor((${agi} − 5) / 2) = ${initVal}\nAdded to d6 initiative roll`,
-              },
-              ...(derivedStats.armor_bonus > 0 ? [{
-                icon: "round-shield", label: "Armor", value: `+${derivedStats.armor_bonus}`, color: "#a78bfa",
-                formula: `VIT ${vit}\nfloor((${vit} − 5) / 4) = +${derivedStats.armor_bonus}\nBonus armor on top of gear`,
-              }] : []),
-            ];
-            return (
-              <div style={{ display: "grid", gridTemplateColumns: `repeat(${stats.length}, 1fr)`, gap: 5 }}>
-                {stats.map((s) => <DerivedStatCard key={s.label} {...s} />)}
-              </div>
-            );
-          })()}
+        <div style={{ marginTop: 12 }}>
+          <PrimaryStatsPanel character={c} equipBonuses={equipBonuses} onSpend={onSpend} />
         </div>
       )}
       {/* Abilities section */}
