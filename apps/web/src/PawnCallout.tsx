@@ -11,7 +11,7 @@
 
 import type { CSSProperties } from "react";
 
-import type { EffectType } from "@gantt-quest/core";
+import { EFFECT_META, type EffectType } from "@gantt-quest/core";
 
 import { Avatar, Icon } from "./icons";
 import { charPortraitUrl, classPortraitUrl } from "./CombatShared";
@@ -202,8 +202,8 @@ export function PawnCallout({
       {expanded && pawn.effects && pawn.effects.length > 0 && (
         <div style={{ display: "flex", gap: 3, flexWrap: "wrap" }}>
           {pawn.effects.slice(0, 6).map((e, i) => (
-            <span key={i} style={effectPill(e.type)} title={`${e.type} (${e.remaining}t)`}>
-              {e.type.slice(0, 4)}
+            <span key={i} style={effectPill(e.type)} title={effectTooltipText(e.type, e.magnitude, e.remaining)}>
+              {EFFECT_DESCRIPTIONS[e.type]?.label ?? e.type}
             </span>
           ))}
         </div>
@@ -331,8 +331,8 @@ export function DockedPawnCard({
         {pawn.effects && pawn.effects.length > 0 && (
           <div style={{ display: "flex", gap: 3, flexWrap: "wrap" }}>
             {pawn.effects.slice(0, 8).map((e, i) => (
-              <span key={i} style={effectPill(e.type)} title={`${e.type} (${e.remaining}t)`}>
-                {e.type.slice(0, 4)}
+              <span key={i} style={effectPill(e.type)} title={effectTooltipText(e.type, e.magnitude, e.remaining)}>
+                {EFFECT_DESCRIPTIONS[e.type]?.label ?? e.type}
               </span>
             ))}
           </div>
@@ -485,17 +485,59 @@ const EFFECT_COLOR: Partial<Record<EffectType, string>> = {
   animal_form: "#22c55e",
 };
 
+// Player-facing copy for every effect the engine can apply. Used for chip
+// tooltips on pawn cards and the status section of the character sheet so
+// the player understands what each badge actually does mechanically.
+// magnitude/remaining are interpolated in the formatter below.
+// Display labels + descriptions for status chips and the sheet's effect
+// section. Derived from EFFECT_META in @gantt-quest/core so the canonical
+// names (Burning, Frozen, Shocked, Poisoned, Bleeding, Stunned/Containerized,
+// Hexed, Entangled, Empowered, Barkskin, Animal Form, Regen) and blurbs
+// from the engine package are the single source of truth — no risk of the
+// UI drifting away from the engine's naming.
+//
+// A few "soft" event-driven chips (taunt, marked, vulnerable, foreseen,
+// shield_of_faith, good_fortune) don't live in EffectType and are described
+// here directly. They surface via separate event flows but still appear as
+// chips on pawn cards.
+export const EFFECT_DESCRIPTIONS: Record<string, { label: string; what: string }> = {
+  ...Object.fromEntries(
+    (Object.entries(EFFECT_META) as [EffectType, typeof EFFECT_META[EffectType]][]).map(
+      ([key, meta]) => [key, { label: meta.name, what: meta.blurb }],
+    ),
+  ),
+  // Event-driven chips that aren't part of EFFECT_META — described here.
+  taunt:           { label: "Taunted",         what: "Must attack the taunter — can't pick other targets." },
+  marked:          { label: "Marked",          what: "Allies deal +{mag} bonus damage to this target." },
+  vulnerable:      { label: "Vulnerable",      what: "Takes +{mag} extra damage from the next hit." },
+  foreseen:        { label: "Foreseen",        what: "Attack predicted by the Sage — defenders ready a counter." },
+  shield_of_faith: { label: "Shield of Faith", what: "+{mag} shield while active." },
+  good_fortune:    { label: "Good Fortune",    what: "Heals {mag} HP at end of turn." },
+};
+
+export function effectTooltipText(type: EffectType, magnitude: number, remaining: number): string {
+  const d = EFFECT_DESCRIPTIONS[type];
+  if (!d) return `${type} (${remaining}t)`;
+  const what = d.what.replace("{mag}", String(magnitude));
+  return `${d.label} · ${remaining}t left\n${what}`;
+}
+
 function effectPill(type: EffectType): CSSProperties {
   const c = EFFECT_COLOR[type] ?? "#94a3b8";
   return {
-    padding: "1px 4px",
-    borderRadius: 3,
+    // Wider padding + larger font so long engineering labels like
+    // "Containerized" / "Firewalled" / "Auto-Heal" read without
+    // truncation. Letter-spacing tightened a hair so longer words
+    // don't push neighboring chips off the row.
+    padding: "2px 7px",
+    borderRadius: 4,
     background: "rgba(0,0,0,0.45)",
     border: `1px solid ${c}`,
     color: c,
-    fontSize: 8,
+    fontSize: 10,
     fontWeight: 700,
-    letterSpacing: 0.3,
+    letterSpacing: 0.2,
     textTransform: "uppercase",
+    whiteSpace: "nowrap",
   };
 }

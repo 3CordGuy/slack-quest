@@ -481,7 +481,12 @@ const MONSTER_ART_VERSION = "v8";
 
 // Battlefield ground textures (top-down view of the floor where the hex grid
 // sits). One image per scene; cached forever once generated.
-const BATTLEFIELD_ART_VERSION = "v1";
+// v2 — switched from full-screen page backdrop to canvas-inscribed terrain.
+// New prompt asks for a wider rectangular layout that crops cleanly to the
+// hex-grid bounding box, so old square v1 art (Studio-Ghibli-style "top-down
+// terrain") no longer fits the canvas aspect. Bumping the version forces
+// fresh generation on first combat in each scene.
+const BATTLEFIELD_ART_VERSION = "v2";
 
 // Wrap a bucket + public base-url so art helpers can build full asset URLs
 // without leaking the env type into ai.ts. baseUrl points at whichever worker
@@ -510,7 +515,7 @@ const MONSTER_STYLE_ANCHOR =
 // Aspect ratio is roughly 13:7 (the grid dimensions) — flux will return a
 // square but we letterbox-crop on the client.
 const BATTLEFIELD_STYLE_ANCHOR =
-  "Studio Ghibli style hand-painted top-down battlefield ground texture. STRICT TOP-DOWN ORTHOGONAL VIEW — looking straight down at the floor from directly above, like a tabletop wargame map. NO horizon line, NO sky, NO characters, NO creatures, NO people, NO units, NO monsters, NO buildings rising above the floor. Just the ground, edge-to-edge. EVEN DIFFUSED LIGHTING with very soft shadows so the surface reads clearly from any direction. Subtle painterly texture and color variation gives the terrain life without competing with overlaid hex grid lines. Wide landscape aspect ratio. Painterly watercolor brushwork, muted but not flat colors, gentle palette appropriate to the scene.";
+  "Studio Ghibli style hand-painted top-down battlefield ground texture intended to fill a tactical-RPG hex grid arena. STRICT TOP-DOWN ORTHOGONAL VIEW — looking straight down at the floor from directly above, like a tabletop wargame map. NO horizon line, NO sky, NO characters, NO creatures, NO people, NO units, NO monsters, NO buildings rising above the floor, NO frame, NO border, NO vignette. Just the ground, edge-to-edge, all four corners filled with continuous terrain. EVEN DIFFUSED LIGHTING with very soft shadows so the surface reads clearly from any direction. Subtle painterly texture and color variation gives the terrain life without competing with overlaid hex grid lines and pawn tokens. Composition tiles seamlessly outward in every direction — visual interest spread evenly across the whole image, no single focal point, no center-of-attention. Painterly watercolor brushwork, muted but readable colors, gentle palette appropriate to the scene.";
 
 export const BATTLEFIELD_PROMPTS: Record<string, string> = {
   server_catacomb:

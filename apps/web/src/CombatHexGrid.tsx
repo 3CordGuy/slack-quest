@@ -15,6 +15,7 @@
 // and consistently styled with the rest of the UI.
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { charPortraitUrl, classPortraitUrl, monsterPortraitUrl } from "./CombatShared";
 import {
   GRID_DEFAULT,
   deriveMoveRange,
@@ -39,6 +40,16 @@ import {
 const DEFAULT_HEX_SIZE = 26;
 const CANVAS_PAD = 18;
 const PAWN_TWEEN_MS = 280;
+// Zoom clamps — 0.5× lets the player pull back for a strategic overview;
+// 2.5× zooms in tight enough to read pawn details at small hex sizes.
+const ZOOM_MIN = 0.5;
+const ZOOM_MAX = 2.5;
+// Wheel sensitivity — per pixel of wheel deltaY. Small enough that a single
+// notch (typically 100px) feels like a deliberate zoom step.
+const WHEEL_ZOOM_RATE = 0.0015;
+// Pan clamp slack — extra hexes beyond the grid edge a user can scroll past,
+// so they're not jammed against an invisible wall when zoomed in.
+const PAN_SLACK_HEXES = 2;
 const easeOutCubic = (t: number) => 1 - Math.pow(1 - t, 3);
 
 // Status-effect ambient overlay palette. Each entry is the color used to
@@ -184,6 +195,15 @@ interface ActiveSwing {
 const SWING_DURATION_MS = 260;
 const SWING_ARC_RADIANS = (140 * Math.PI) / 180;
 
+interface ActiveRiseEffect {
+  id: string;
+  kind: RiseKind;
+  fromActorId?: string;
+  born: number;
+  duration: number;
+}
+const RISE_DURATION_MS = 1400;
+
 const SWING_COLOR_BY_ELEMENT: Record<string, string> = {
   fire: "#fb923c",
   ice: "#7dd3fc",
@@ -281,7 +301,29 @@ export interface CombatHexGridHandle {
    *  direction of the target, and invokes onArrive when the swing reaches
    *  peak (so impact particles fire on contact, not at the start). */
   emitSwing: (p: SwingEmit, onArrive: () => void) => void;
+  /** Brief "popup" rise effect — a small kind-specific colored icon plus
+   *  matching sparkles float up from the pawn over ~1.4 s. Used for
+   *  one-shot event indicators (taunt, marked, vulnerable, foreseen,
+   *  test-coverage shield, delivery bonus) that don't live on the
+   *  persistent effects array. */
+  emitRiseEffect: (p: RiseEffectEmit) => void;
   shake: () => void;
+}
+
+export type RiseKind =
+  | "taunt"        // angry red shout
+  | "marked"       // orange crosshair
+  | "vulnerable"   // cracked shield, amber
+  | "foreseen"     // blue eye / forecast
+  | "test_coverage" // green checkmark
+  | "delivery_bonus" // gold coin
+  | "ill_omen";     // dark hex / curse forewarning
+
+export interface RiseEffectEmit {
+  id: string;
+  kind: RiseKind;
+  /** Pawn to glue the rise to. Falls back to canvas center if unknown. */
+  actorId?: string;
 }
 
 export interface SwingEmit {
@@ -346,6 +388,12 @@ export interface CombatHexGridProps {
   // a radius preview around the hovered target hex so the player sees
   // who'll be hit by the splash. The primary target is always included.
   aimAoeRadiusTiles?: number;
+  // Viewport dimensions to fill. When provided, the canvas grows to this
+  // size and the hex grid is centered + scaled to fit, with user zoom/pan
+  // applied on top. When omitted, falls back to legacy intrinsic sizing
+  // (canvas matches the natural grid bounding box).
+  viewportWidth?: number;
+  viewportHeight?: number;
 }
 
 interface HoverInfo {
@@ -374,14 +422,50 @@ export function CombatHexGrid({
   aimActive = false,
   aimRangeTiles,
   aimAoeRadiusTiles,
+  viewportWidth,
+  viewportHeight,
 }: CombatHexGridProps) {
   void myActorId;
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const grid = state.grid ?? GRID_DEFAULT;
-  const { w, h } = useMemo(() => canvasSizeAt(grid, hexSize), [grid.cols, grid.rows, hexSize]);
+  // Natural (unscaled) grid bounding box — used both for legacy intrinsic
+  // sizing and as the world-space the new viewport transform fits into.
+  const natural = useMemo(() => canvasSizeAt(grid, hexSize), [grid.cols, grid.rows, hexSize]);
+  const fillViewport = typeof viewportWidth === "number" && typeof viewportHeight === "number"
+    && viewportWidth > 0 && viewportHeight > 0;
+  // Canvas pixel size — viewport dims when filling, natural bounding box otherwise.
+  const w = fillViewport ? viewportWidth! : natural.w;
+  const h = fillViewport ? viewportHeight! : natural.h;
+  // Auto-fit scale: how much to shrink the natural grid to fit the viewport
+  // with a small breathing margin. = 1 when not filling viewport (legacy).
+  const baseScale = useMemo(() => {
+    if (!fillViewport) return 1;
+    const sx = (w - CANVAS_PAD * 2) / natural.w;
+    const sy = (h - CANVAS_PAD * 2) / natural.h;
+    return Math.max(0.1, Math.min(sx, sy));
+  }, [fillViewport, w, h, natural.w, natural.h]);
+  // User-controlled zoom on top of baseScale. Wheel adjusts.
+  const [zoom, setZoom] = useState(1);
+  // User-controlled pan offset (in screen pixels). Dragging adjusts.
+  const [pan, setPan] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+  const effectiveScale = baseScale * zoom;
+  // Top-left of the scaled grid inside the viewport (auto-centered + pan).
+  const offsetX = (w - natural.w * effectiveScale) / 2 + pan.x;
+  const offsetY = (h - natural.h * effectiveScale) / 2 + pan.y;
   const hexToPixel = useMemo(() => (pos: HexPos) => hexToPixelAt(pos, hexSize), [hexSize]);
   const pixelToHex = useMemo(() => (px: number, py: number) => pixelToHexAt(px, py, hexSize), [hexSize]);
+  // World-space (hexToPixel output) → screen pixel within the canvas.
+  // Used by mouse handlers and the parent-facing pawn-position callback so
+  // tooltips/callouts line up with the visually-scaled grid.
+  const worldToScreen = (wx: number, wy: number) => ({
+    x: wx * effectiveScale + offsetX,
+    y: wy * effectiveScale + offsetY,
+  });
+  const screenToWorld = (sx: number, sy: number) => ({
+    x: (sx - offsetX) / effectiveScale,
+    y: (sy - offsetY) / effectiveScale,
+  });
 
   const [hover, setHover] = useState<HoverInfo | null>(null);
   const [tooltipPx, setTooltipPx] = useState<{ x: number; y: number } | null>(null);
@@ -392,17 +476,28 @@ export function CombatHexGrid({
   // Also emits final target positions to the parent so callouts know where
   // to anchor — their own CSS `transition: top/left` handles smoothing.
   useEffect(() => {
+    // World-space (hexToPixel) targets — drive the internal pawn tween +
+    // canvas draw which runs UNDER the world→screen transform. Particles
+    // and projectiles glue to these too via animatedPosRef.
     const targets: Record<string, { x: number; y: number; radius: number }> = {};
+    // Screen-space report — for the parent's DockedPawnCard, status arcs
+    // overlay, hover-pin chip, etc. These need to map to actual canvas
+    // pixels visible on screen.
+    const screenReport: Record<string, { x: number; y: number; radius: number }> = {};
     for (const f of state.fighters) {
       if (f.pos && f.hp > 0) {
-        const { x, y } = hexToPixel(f.pos);
-        targets[f.id] = { x, y, radius: hexSize * 0.55 };
+        const w0 = hexToPixel(f.pos);
+        targets[f.id] = { x: w0.x, y: w0.y, radius: hexSize * 0.55 };
+        const s = worldToScreen(w0.x, w0.y);
+        screenReport[f.id] = { x: s.x, y: s.y, radius: hexSize * 0.55 * effectiveScale };
       }
     }
     for (const m of state.monsters) {
       if (m.id && m.pos && m.hp > 0) {
-        const { x, y } = hexToPixel(m.pos);
-        targets[m.id] = { x, y, radius: hexSize * 0.6 };
+        const w0 = hexToPixel(m.pos);
+        targets[m.id] = { x: w0.x, y: w0.y, radius: hexSize * 0.6 };
+        const s = worldToScreen(w0.x, w0.y);
+        screenReport[m.id] = { x: s.x, y: s.y, radius: hexSize * 0.6 * effectiveScale };
       }
     }
 
@@ -429,8 +524,8 @@ export function CombatHexGrid({
       if (!(id in targets)) delete next[id];
     }
 
-    onPawnPositionsChange?.(targets);
-  }, [state.fighters, state.monsters, hexToPixel, hexSize, onPawnPositionsChange]);
+    onPawnPositionsChange?.(screenReport);
+  }, [state.fighters, state.monsters, hexToPixel, hexSize, effectiveScale, offsetX, offsetY, onPawnPositionsChange]);
 
   // Report canvas display size so the parent's callout container can clamp.
   useEffect(() => {
@@ -460,6 +555,11 @@ export function CombatHexGrid({
   const particlesRef = useRef<Particle[]>([]);
   const projectilesRef = useRef<ActiveProjectile[]>([]);
   const swingsRef = useRef<ActiveSwing[]>([]);
+  // Active "popup" rise effects — kind-specific colored icon + sparkles
+  // floating up from the actor for ~1.4 s, then auto-removed in the rAF
+  // loop. Used for transient event indicators (taunt/marked/etc.) that
+  // don't sit on the persistent effects array.
+  const risesRef = useRef<ActiveRiseEffect[]>([]);
   const shakeRef = useRef<{ start: number; duration: number } | null>(null);
   const lastTimeRef = useRef<number>(0);
 
@@ -492,6 +592,49 @@ export function CombatHexGrid({
     img.src = backgroundUrl;
     backgroundImageRef.current = img;
   }, [backgroundUrl]);
+
+  // Portrait cache keyed by URL. Fighters use char art (with class art as
+  // fallback); monsters use whatever art_url the server provides. The cache
+  // outlives any single rAF frame so loaded images survive React re-renders.
+  // Each entry stores the image + a "ready" flag — drawing checks ready
+  // before invoking drawImage so failures (404, CORS) fall back to the
+  // initial-letter token without crashing the frame.
+  type PortraitCacheEntry = { img: HTMLImageElement; ready: boolean };
+  const portraitCacheRef = useRef<Map<string, PortraitCacheEntry>>(new Map());
+  function loadPortrait(url: string): PortraitCacheEntry | null {
+    if (!url) return null;
+    const cache = portraitCacheRef.current;
+    const existing = cache.get(url);
+    if (existing) return existing;
+    const img = new Image();
+    // No crossOrigin: portraits are same-origin (served by the worker at
+    // /img/...) and drawImage doesn't need CORS for tainted canvases when
+    // we're not reading pixels back out. Setting crossOrigin="anonymous"
+    // here would FAIL the load whenever the response omitted CORS headers,
+    // silently dropping us to the initial-letter fallback.
+    const entry: PortraitCacheEntry = { img, ready: false };
+    img.onload = () => { entry.ready = true; };
+    img.onerror = () => { entry.ready = false; };
+    img.src = url;
+    cache.set(url, entry);
+    return entry;
+  }
+  // Eagerly preload all current actors' portraits whenever the roster
+  // changes so the first frame after a state update has them ready.
+  useEffect(() => {
+    for (const f of state.fighters) {
+      loadPortrait(charPortraitUrl(f.name));
+      const fallback = classPortraitUrl(f.class);
+      if (fallback) loadPortrait(fallback);
+    }
+    for (const m of state.monsters) {
+      if (m.art_url) loadPortrait(m.art_url);
+      // Fallback to the deterministic R2 URL by monster name — covers the
+      // case where art was generated AFTER scene creation (resumed quest)
+      // and never made it onto the live state's art_url field.
+      if (m.name) loadPortrait(monsterPortraitUrl(m.name));
+    }
+  }, [state.fighters, state.monsters]);
 
   // Current actor (for move/attack overlay computation).
   const currentActor = useMemo(() => {
@@ -554,16 +697,40 @@ export function CombatHexGrid({
     return { reachable: new Set<string>(), inRange: new Set<string>(), losBlocked: new Set<string>() };
   }, [currentActor, isMyTurn, turnPhase, aimActive, aimRangeTiles, state.fighters, state.monsters, state.obstacles, grid]);
 
+  // Pointer move during an active pan drag. Uses pointer events because
+  // setPointerCapture redirects pointer (not mouse) events to the captured
+  // element — onMouseMove fires inconsistently mid-drag, and right-button
+  // drags in particular get eaten by the browser's context-menu handling
+  // so onMouseMove never fires at all between pointerdown and pointerup.
+  function handlePointerMove(e: React.PointerEvent<HTMLCanvasElement>) {
+    if (!panDragRef.current) return;
+    const dx = e.clientX - panDragRef.current.lastX;
+    const dy = e.clientY - panDragRef.current.lastY;
+    panDragRef.current.lastX = e.clientX;
+    panDragRef.current.lastY = e.clientY;
+    if (Math.abs(dx) + Math.abs(dy) > 0) {
+      panDragRef.current.moved = true;
+      setPan((p) => clampPan({ x: p.x + dx, y: p.y + dy }));
+    }
+  }
+
   // Mouse hover handler — converts screen → hex, computes overlay state.
+  // Skips during active pan so the cursor stays "grabbing" and the hover
+  // overlay doesn't flicker.
   function handleMouseMove(e: React.MouseEvent<HTMLCanvasElement>) {
     const canvas = canvasRef.current;
     if (!canvas) return;
+    if (panDragRef.current) return;
     const rect = canvas.getBoundingClientRect();
     const scaleX = canvas.width / rect.width;
     const scaleY = canvas.height / rect.height;
-    const px = (e.clientX - rect.left) * scaleX;
-    const py = (e.clientY - rect.top) * scaleY;
-    const hex = pixelToHex(px, py);
+    // Canvas-pixel position relative to the canvas top-left, then unwound
+    // through the same offset/scale transform we apply when drawing so the
+    // mouse maps back to world-space (hexToPixel coords) and on to a hex.
+    const cx = (e.clientX - rect.left) * scaleX;
+    const cy = (e.clientY - rect.top) * scaleY;
+    const world = screenToWorld(cx, cy);
+    const hex = pixelToHex(world.x, world.y);
     if (!inBounds(hex, grid)) {
       setHover(null);
       setTooltipPx(null);
@@ -648,14 +815,118 @@ export function CombatHexGrid({
   function handleClick(e: React.MouseEvent<HTMLCanvasElement>) {
     const canvas = canvasRef.current;
     if (!canvas) return;
+    // A shift+drag pan that ended on this canvas suppresses the click that
+    // the browser fires on release — otherwise releasing a pan would
+    // trigger a hex-move action on the destination.
+    if (suppressNextClickRef.current) {
+      suppressNextClickRef.current = false;
+      return;
+    }
     const rect = canvas.getBoundingClientRect();
     const scaleX = canvas.width / rect.width;
     const scaleY = canvas.height / rect.height;
-    const px = (e.clientX - rect.left) * scaleX;
-    const py = (e.clientY - rect.top) * scaleY;
-    const hex = pixelToHex(px, py);
+    const cx = (e.clientX - rect.left) * scaleX;
+    const cy = (e.clientY - rect.top) * scaleY;
+    const world = screenToWorld(cx, cy);
+    const hex = pixelToHex(world.x, world.y);
     if (!inBounds(hex, grid)) return;
     onHexClick(hex);
+  }
+
+  // ── Zoom + pan plumbing ────────────────────────────────────────────────────
+  // Pan drag (middle button OR right button OR shift+left). Tracked in a ref
+  // so mid-drag re-renders don't lose accumulated state.
+  const panDragRef = useRef<{ lastX: number; lastY: number; moved: boolean } | null>(null);
+  // Clamp a candidate pan so the grid can't be dragged completely off-screen.
+  // Allow PAN_SLACK_HEXES worth of overscroll past the edges so the player
+  // can compose shots near corners without fighting an invisible wall.
+  function clampPan(p: { x: number; y: number }): { x: number; y: number } {
+    if (!fillViewport) return p;
+    const slack = hexSize * Math.sqrt(3) * PAN_SLACK_HEXES * effectiveScale;
+    const scaledW = natural.w * effectiveScale;
+    const scaledH = natural.h * effectiveScale;
+    // When the scaled grid is smaller than the viewport, allow pan equal to
+    // half the leftover space; when larger, allow pan up to the overflow.
+    const maxX = Math.max((scaledW - w) / 2 + slack, slack);
+    const maxY = Math.max((scaledH - h) / 2 + slack, slack);
+    return {
+      x: Math.max(-maxX, Math.min(maxX, p.x)),
+      y: Math.max(-maxY, Math.min(maxY, p.y)),
+    };
+  }
+  function handleWheel(e: React.WheelEvent<HTMLCanvasElement>) {
+    if (!fillViewport) return;
+    e.preventDefault();
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
+    const cx = (e.clientX - rect.left) * scaleX;
+    const cy = (e.clientY - rect.top) * scaleY;
+    // Trackpad pinch on macOS arrives as wheel + ctrlKey with a different
+    // sensitivity; the deltaY ratio still maps cleanly through the same
+    // multiplier.
+    const factor = Math.exp(-e.deltaY * WHEEL_ZOOM_RATE);
+    setZoom((z) => {
+      const newZoom = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, z * factor));
+      const realFactor = newZoom / z;
+      if (realFactor === 1) return z;
+      // Anchor zoom at the cursor: shift pan so the world point under the
+      // mouse stays under the mouse after the scale changes.
+      setPan((p) => {
+        const newOffX = (w - natural.w * baseScale * newZoom) / 2 + p.x;
+        const newOffY = (h - natural.h * baseScale * newZoom) / 2 + p.y;
+        // Solve for pan that keeps (cx, cy) → same world point:
+        //   worldX = (cx - oldOffX) / (baseScale * z)
+        //         = (cx - newOffX') / (baseScale * newZoom)
+        const worldX = (cx - offsetX) / effectiveScale;
+        const worldY = (cy - offsetY) / effectiveScale;
+        const wantNewOffX = cx - worldX * baseScale * newZoom;
+        const wantNewOffY = cy - worldY * baseScale * newZoom;
+        // newPanX such that newOffX (with newPanX) equals wantNewOffX:
+        const newPanX = wantNewOffX - (w - natural.w * baseScale * newZoom) / 2;
+        const newPanY = wantNewOffY - (h - natural.h * baseScale * newZoom) / 2;
+        void newOffX; void newOffY;
+        return clampPan({ x: newPanX, y: newPanY });
+      });
+      return newZoom;
+    });
+  }
+  function handlePointerDown(e: React.PointerEvent<HTMLCanvasElement>) {
+    // Middle button, right button, or shift+left starts panning.
+    if (e.button === 1 || e.button === 2 || (e.button === 0 && e.shiftKey)) {
+      e.preventDefault();
+      panDragRef.current = { lastX: e.clientX, lastY: e.clientY, moved: false };
+      const canvas = canvasRef.current;
+      if (canvas) {
+        try { canvas.setPointerCapture(e.pointerId); } catch { /* ignore */ }
+        canvas.style.cursor = "grabbing";
+      }
+    }
+  }
+  // Brief click-suppression after a LEFT-button pan ends. Right/middle drags
+  // don't need this — they don't fire onClick anyway. Without the gate, a
+  // shift+drag pan would release into a hex-move click on the destination.
+  const suppressNextClickRef = useRef(false);
+  function handlePointerUp(e: React.PointerEvent<HTMLCanvasElement>) {
+    if (!panDragRef.current) return;
+    const wasLeft = e.button === 0;
+    const moved = panDragRef.current.moved;
+    const canvas = canvasRef.current;
+    if (canvas) {
+      try { canvas.releasePointerCapture(e.pointerId); } catch { /* ignore */ }
+      canvas.style.cursor = "default";
+    }
+    panDragRef.current = null;
+    if (wasLeft && moved) suppressNextClickRef.current = true;
+  }
+  function resetView() {
+    setZoom(1);
+    setPan({ x: 0, y: 0 });
+  }
+  function bumpZoom(delta: number) {
+    setZoom((z) => Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, z + delta)));
   }
 
   // Expose imperative API via ref.
@@ -726,6 +997,15 @@ export function CombatHexGrid({
           arrived: false,
         });
       },
+      emitRiseEffect(p) {
+        risesRef.current.push({
+          id: p.id,
+          kind: p.kind,
+          fromActorId: p.actorId,
+          born: performance.now(),
+          duration: RISE_DURATION_MS,
+        });
+      },
       shake() {
         shakeRef.current = { start: performance.now(), duration: 240 };
       },
@@ -765,20 +1045,26 @@ export function CombatHexGrid({
       ctx!.translate(shakeX, shakeY);
 
       // 0. Battlefield art (AI-generated ground texture, ~30% alpha so the
-      //    hex grid stays readable on top). Skipped if the image hasn't loaded
-      //    yet or generation failed — the flat canvas background tint shows.
+      //    hex grid stays readable on top). Drawn in SCREEN space (no
+      //    transform) so the terrain fills the canvas regardless of where
+      //    the player has panned/zoomed — the ground feels stable while the
+      //    grid moves over it.
       if (backgroundReadyRef.current && backgroundImageRef.current) {
         const img = backgroundImageRef.current;
-        ctx!.globalAlpha = 0.35;
-        // Cover the canvas; the image is approximately square but we letterbox-
-        // stretch it across the wider grid since the prompts requested
-        // top-down terrain that tolerates non-square cropping.
+        ctx!.globalAlpha = 0.40;
         ctx!.drawImage(img, 0, 0, w, h);
         ctx!.globalAlpha = 1;
       }
 
+      // Apply the world→screen transform so every subsequent drawing call
+      // (tiles, obstacles, pawns, particles, projectiles) can stay in world
+      // space — hexToPixel coords flow straight to the canvas without
+      // per-call scaling. Composes with shake by translating first.
+      ctx!.translate(offsetX, offsetY);
+      ctx!.scale(effectiveScale, effectiveScale);
+
       // 1. Hex tiles
-      drawTiles(ctx!, state, grid, overlay, hover, currentActor, hexToPixel, hexSize);
+      drawTiles(ctx!, state, grid, overlay, hover, currentActor, hexToPixel, hexSize, targetMonsterId ?? null, now);
 
       // 1.5 AoE blast radius preview — paints a translucent red overlay on
       // every hex within `aimAoeRadiusTiles` of the currently-hovered enemy
@@ -824,7 +1110,17 @@ export function CombatHexGrid({
       }
 
       // 3. Actor tokens — use animated positions so moves slide smoothly.
-      drawActors(ctx!, state, animatedPosRef.current, hexSize, targetMonsterId ?? null, currentActorId, turnPhase, previewedTargetIds ?? null, previewedTargetKind, overlay.inRange, aimActive, aimRangeTiles, now);
+      drawActors(
+        ctx!, state, animatedPosRef.current, hexSize,
+        targetMonsterId ?? null, currentActorId, turnPhase,
+        previewedTargetIds ?? null, previewedTargetKind,
+        overlay.inRange, aimActive, aimRangeTiles, now,
+        (url) => {
+          if (!url) return null;
+          const entry = portraitCacheRef.current.get(url);
+          return entry?.ready ? entry.img : null;
+        },
+      );
 
       // 3. Projectiles (update + draw, fire onArrive on completion)
       const stillFlying: ActiveProjectile[] = [];
@@ -866,6 +1162,19 @@ export function CombatHexGrid({
       }
       swingsRef.current = stillSwinging;
 
+      // 3c. Rise effects — kind-specific colored icon + sparkles floating
+      // up from each glued pawn. Auto-removed when past duration.
+      const stillRising: ActiveRiseEffect[] = [];
+      for (const rise of risesRef.current) {
+        const age = now - rise.born;
+        if (age >= rise.duration) continue;
+        const t = age / rise.duration;
+        const anchor = rise.fromActorId ? animatedPosRef.current[rise.fromActorId] : null;
+        if (anchor) drawRiseEffect(ctx!, anchor.x, anchor.y, hexSize, rise.kind, t);
+        stillRising.push(rise);
+      }
+      risesRef.current = stillRising;
+
       // 4. Particles (update + draw)
       const alive: Particle[] = [];
       for (const p of particlesRef.current) {
@@ -893,13 +1202,29 @@ export function CombatHexGrid({
 
     raf = requestAnimationFrame(frame);
     return () => cancelAnimationFrame(raf);
-  }, [state, grid, overlay, hover, currentActor, w, h]);
+  }, [state, grid, overlay, hover, currentActor, w, h, effectiveScale, offsetX, offsetY]);
 
-  // Cosmetic horizontal nudge — moves the entire battlefield over by half a
-  // hex tile so the grid doesn't sit flush against the left edge of its
-  // container. Doesn't affect canvas pixel coords (hover, pawn positions,
-  // particles) — just the CSS placement of the canvas.
-  const gridShiftX = Math.round((Math.sqrt(3) / 2) * hexSize);
+  // Cosmetic horizontal nudge — only applied in legacy intrinsic-size mode
+  // since fill-viewport mode auto-centers the grid via the world→screen
+  // transform.
+  const gridShiftX = fillViewport ? 0 : Math.round((Math.sqrt(3) / 2) * hexSize);
+
+  // Keyboard zoom — bound to the container while focused so the player can
+  // tap +/- without leaving the battlefield.
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (!fillViewport) return;
+      // Ignore when typing in inputs / textareas (combat doesn't have any
+      // inside this scope today, but cheap insurance).
+      const tgt = e.target as HTMLElement | null;
+      if (tgt && (tgt.tagName === "INPUT" || tgt.tagName === "TEXTAREA")) return;
+      if (e.key === "+" || e.key === "=") { e.preventDefault(); bumpZoom(0.15); }
+      else if (e.key === "-" || e.key === "_") { e.preventDefault(); bumpZoom(-0.15); }
+      else if (e.key === "0") { e.preventDefault(); resetView(); }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [fillViewport]);
 
   return (
     <div
@@ -923,11 +1248,37 @@ export function CombatHexGrid({
           backgroundColor: "rgba(15, 23, 42, 0.55)",
           borderRadius: 8,
           border: "1px solid rgba(148, 163, 184, 0.25)",
+          touchAction: fillViewport ? "none" : undefined,
         }}
         onMouseMove={handleMouseMove}
         onMouseLeave={handleMouseLeave}
         onClick={handleClick}
+        onWheel={fillViewport ? handleWheel : undefined}
+        onPointerDown={fillViewport ? handlePointerDown : undefined}
+        onPointerMove={fillViewport ? handlePointerMove : undefined}
+        onPointerUp={fillViewport ? handlePointerUp : undefined}
+        onPointerCancel={fillViewport ? handlePointerUp : undefined}
+        onContextMenu={fillViewport ? (e) => e.preventDefault() : undefined}
       />
+      {/* Zoom controls — bottom-right corner of the canvas. Hidden in
+          legacy intrinsic mode since the canvas has no extra room. */}
+      {fillViewport && (
+        <div
+          style={{
+            position: "absolute",
+            right: 12,
+            bottom: 12,
+            display: "flex",
+            flexDirection: "column",
+            gap: 4,
+            zIndex: 5,
+          }}
+        >
+          <ZoomControl label="+" title="Zoom in (+)" onClick={() => bumpZoom(0.2)} />
+          <ZoomControl label="−" title="Zoom out (−)" onClick={() => bumpZoom(-0.2)} />
+          <ZoomControl label="⌖" title="Reset view (0)" onClick={resetView} />
+        </div>
+      )}
       {tooltipPx && hover?.label && (
         <div
           style={{
@@ -952,6 +1303,32 @@ export function CombatHexGrid({
   );
 }
 
+// Floating zoom button — small slate chip with a single glyph. Used by the
+// fill-viewport mode for [+] / [−] / [⌖] in the canvas corner.
+function ZoomControl({ label, title, onClick }: { label: string; title: string; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={title}
+      style={{
+        width: 30, height: 30,
+        background: "rgba(15, 23, 42, 0.85)",
+        border: "1px solid rgba(148, 163, 184, 0.45)",
+        borderRadius: 6,
+        color: "#e5e7eb",
+        cursor: "pointer",
+        fontSize: 16,
+        lineHeight: "28px",
+        padding: 0,
+        boxShadow: "0 2px 6px rgba(0,0,0,0.4)",
+      }}
+    >
+      {label}
+    </button>
+  );
+}
+
 // ── Layer 1: tiles ───────────────────────────────────────────────────────────
 
 function drawTiles(
@@ -963,8 +1340,17 @@ function drawTiles(
   currentActor: CombatFighter | CombatMonster | null,
   hexToPixel: (pos: HexPos) => { x: number; y: number },
   hexSize: number,
+  targetMonsterId: string | null,
+  now: number,
 ) {
   const obstacles = new Set((state.obstacles ?? []).map((o) => posKey(o.pos)));
+  // Resolve the target's hex up front so the tile pass can mark it with a
+  // subtle dashed border (replaces the old pawn-orbit ring).
+  let targetKey: string | null = null;
+  if (targetMonsterId) {
+    const t = state.monsters.find((m) => m.id === targetMonsterId);
+    if (t?.pos && t.hp > 0) targetKey = posKey(t.pos);
+  }
   // Brick layout: walk the valid axial coords per row. Even rows have `cols`
   // hexes, odd rows have `cols - 1` hexes (shifted right by half).
   for (let r = 0; r < grid.rows; r++) {
@@ -1022,6 +1408,21 @@ function drawTiles(
       }
 
       drawHex(ctx, x, y, hexSize * 0.94, fill, stroke, lineWidth);
+
+      // Target marker: subtle slow-drifting dashed border on the targeted
+      // monster's hex. Replaces the old pawn-orbit ring so the pawn itself
+      // stays uncluttered for status-effect particles.
+      if (targetKey === key) {
+        ctx.save();
+        ctx.globalAlpha = 0.85;
+        ctx.strokeStyle = "#fb923c";
+        ctx.lineWidth = 1.5;
+        ctx.setLineDash([5, 4]);
+        ctx.lineDashOffset = -now / 60;
+        drawHex(ctx, x, y, hexSize * 0.94, "rgba(0,0,0,0)", "#fb923c", 1.5);
+        ctx.setLineDash([]);
+        ctx.restore();
+      }
     }
   }
 }
@@ -1152,6 +1553,10 @@ function drawObstacleSprite(
 // active, so a fighter with three statuses gets three thirds of the ring.
 // The ring lives just outside the pawn body so it doesn't compete with the
 // class/monster border.
+// Per-effect ambient visualizations: fire embers, frost glints, lightning
+// sparks, poison bubbles, bleed drips. Each effect with a particle look
+// owns its own draw function; effects without one (stunned, taunt, marked,
+// vulnerable, foreseen, etc.) fall back to a thin arc on the orbit ring.
 function drawStatusOverlay(
   ctx: CanvasRenderingContext2D,
   cx: number, cy: number, baseRadius: number,
@@ -1159,35 +1564,1640 @@ function drawStatusOverlay(
   now: number,
 ) {
   if (!effects || effects.length === 0) return;
-  // Filter to effects we know how to render and that are still ticking.
-  const live = effects
-    .filter((e) => e.remaining > 0 && EFFECT_VISUAL[e.type])
-    .sort((a, b) => (EFFECT_VISUAL[b.type].weight - EFFECT_VISUAL[a.type].weight));
+  const live = effects.filter((e) => e.remaining > 0 && EFFECT_VISUAL[e.type]);
   if (live.length === 0) return;
 
-  const ringRadius = baseRadius + 4;
-  const lineWidth = 3.5;
-  const slice = (Math.PI * 2) / live.length;
-  // Small rotation drift so multi-effect rings feel alive.
-  const driftStart = (now / 2400) % (Math.PI * 2);
+  // Deterministic per-pawn jitter so two adjacent burning pawns don't ember
+  // in sync. Uses the integer-rounded position as a stable seed.
+  const seed = Math.round(cx) * 73856093 ^ Math.round(cy) * 19349663;
+
+  // Split into "ambient" (custom particles) vs "ring" (arc segments). Ring
+  // is used for status types without a custom visualizer so they still
+  // appear, just less expressively.
+  const ambient: typeof live = [];
+  const ringEffects: typeof live = [];
+  for (const e of live) {
+    if (e.type === "burning" || e.type === "frozen" || e.type === "shocked"
+      || e.type === "poisoned" || e.type === "bleeding"
+      || e.type === "stunned" || e.type === "regen"
+      || e.type === "empowered" || e.type === "entangled"
+      || e.type === "hexed" || e.type === "barkskin"
+      || e.type === "animal_form") {
+      ambient.push(e);
+    } else {
+      ringEffects.push(e);
+    }
+  }
+
+  for (const e of ambient) {
+    if (e.type === "burning") drawBurningEmbers(ctx, cx, cy, baseRadius, now, seed);
+    else if (e.type === "frozen") drawFrostGlints(ctx, cx, cy, baseRadius, now, seed);
+    else if (e.type === "shocked") drawShockSparks(ctx, cx, cy, baseRadius, now, seed);
+    else if (e.type === "poisoned") drawPoisonBubbles(ctx, cx, cy, baseRadius, now, seed);
+    else if (e.type === "bleeding") drawBleedDrips(ctx, cx, cy, baseRadius, now, seed);
+    else if (e.type === "stunned") drawContainerized(ctx, cx, cy, baseRadius, now, seed);
+    else if (e.type === "regen") drawRegenPluses(ctx, cx, cy, baseRadius, now, seed);
+    else if (e.type === "empowered") drawEmpoweredAura(ctx, cx, cy, baseRadius, now, seed);
+    else if (e.type === "entangled") drawDeadlockedChain(ctx, cx, cy, baseRadius, now, seed);
+    else if (e.type === "hexed") drawHexedWisps(ctx, cx, cy, baseRadius, now, seed);
+    else if (e.type === "barkskin") drawFirewalled(ctx, cx, cy, baseRadius, now, seed);
+    else if (e.type === "animal_form") drawScaledUpAura(ctx, cx, cy, baseRadius, now, seed);
+  }
+
+  if (ringEffects.length > 0) {
+    const ringRadius = baseRadius + 4;
+    const slice = (Math.PI * 2) / ringEffects.length;
+    const driftStart = (now / 2400) % (Math.PI * 2);
+    ctx.save();
+    ctx.lineWidth = 3;
+    ctx.lineCap = "round";
+    for (let i = 0; i < ringEffects.length; i++) {
+      const e = ringEffects[i];
+      const v = EFFECT_VISUAL[e.type];
+      ctx.globalAlpha = 0.85;
+      ctx.strokeStyle = v.color;
+      const start = driftStart + slice * i + slice * 0.08;
+      const end = driftStart + slice * (i + 1) - slice * 0.08;
+      ctx.beginPath();
+      ctx.arc(cx, cy, ringRadius, start, end);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+}
+
+// Tiny deterministic pseudo-random: cheap LCG keyed by an integer seed.
+// Returns a value in [0,1). Use to spread particle positions per pawn
+// without burning a real PRNG instance per frame.
+function rng01(seed: number, salt: number): number {
+  const x = Math.sin(seed * 9301 + salt * 49297) * 233280;
+  return x - Math.floor(x);
+}
+
+// Rising orange→red embers that drift up off the pawn and fade.
+// Status-driven tint applied INSIDE the pawn-portrait clip. Layered on top
+// of the portrait so the avatar still reads through, with an animated icy
+// sheen for frozen specifically. Adding more tints (charred/red for burning,
+// sickly green for poisoned, etc.) is just another branch on `type`.
+function drawPortraitTint(
+  ctx: CanvasRenderingContext2D,
+  cx: number, cy: number, radius: number,
+  effects: readonly { type: string; remaining: number }[],
+  now: number,
+) {
+  if (!effects || effects.length === 0) return;
+  const frozen = effects.some((e) => e.type === "frozen" && e.remaining > 0);
+  if (frozen) {
+    // Cool-blue color overlay: blend with the underlying portrait so the
+    // image still shows through but reads as frozen-over. Multiply darkens
+    // shadows; the rgba alpha controls intensity.
+    ctx.save();
+    ctx.globalCompositeOperation = "multiply";
+    ctx.fillStyle = "rgba(125, 211, 252, 0.85)";
+    ctx.beginPath();
+    ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+
+    // Drifting icy sheen — a soft white diagonal sweep that slowly travels
+    // across the pawn so the surface looks like polished ice catching light.
+    const sweepCycle = 4200;
+    const t = ((now % sweepCycle) / sweepCycle) * 2 - 0.5; // -0.5 → 1.5
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+    ctx.clip();
+    // 45° gradient band moving from upper-left to lower-right.
+    const span = radius * 2.4;
+    const cxBand = cx - radius + span * t;
+    const cyBand = cy - radius + span * t;
+    const grad = ctx.createLinearGradient(
+      cxBand - span * 0.25, cyBand - span * 0.25,
+      cxBand + span * 0.25, cyBand + span * 0.25,
+    );
+    grad.addColorStop(0,    "rgba(255, 255, 255, 0)");
+    grad.addColorStop(0.45, "rgba(240, 249, 255, 0.55)");
+    grad.addColorStop(0.55, "rgba(186, 230, 253, 0.65)");
+    grad.addColorStop(1,    "rgba(255, 255, 255, 0)");
+    ctx.fillStyle = grad;
+    ctx.fillRect(cx - radius, cy - radius, radius * 2, radius * 2);
+    ctx.restore();
+  }
+
+  const bleeding = effects.some((e) => e.type === "bleeding" && e.remaining > 0);
+  if (bleeding) {
+    // Blood smears at the lower rim — small irregular red splotches that
+    // shift position slowly so the wound feels like it's seeping. Drawn
+    // inside the portrait clip so the avatar takes the marks instead of
+    // floating over it.
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+    ctx.clip();
+    // Dim the portrait slightly — pale loss-of-color from blood loss.
+    ctx.globalCompositeOperation = "multiply";
+    ctx.fillStyle = "rgba(220, 38, 38, 0.18)";
+    ctx.fillRect(cx - radius, cy - radius, radius * 2, radius * 2);
+    // Six slow-moving smears across the lower half. Positions seeded by
+    // pawn coords so neighboring bleeding pawns don't smear identically.
+    ctx.globalCompositeOperation = "source-over";
+    const SEED = Math.round(cx) ^ Math.round(cy);
+    for (let i = 0; i < 6; i++) {
+      // Slower smear cycle — was 2200ms, now 4800ms, so the splotches feel
+      // like a slow seep rather than fast-moving paint.
+      const phase = ((now / 4800 + i * 0.17 + (Math.sin(SEED + i) + 1) * 0.5) % 1);
+      const ang = Math.PI * (0.15 + (i / 6) * 0.7);
+      const r0 = radius * 0.85;
+      const x0 = cx + Math.cos(ang) * r0;
+      const y0 = cy + Math.sin(ang) * r0;
+      const dy = phase * radius * 0.55;
+      const size = radius * (0.14 + 0.05 * Math.sin(SEED * 7 + i));
+      const alpha = 0.75 * (0.6 + 0.4 * Math.sin(SEED * 3 + i * 1.3));
+      ctx.globalAlpha = alpha;
+      // Dark crimson splotch.
+      ctx.fillStyle = "#7f1d1d";
+      ctx.beginPath();
+      ctx.ellipse(x0, y0 + dy, size * 1.1, size * 0.75, 0, 0, Math.PI * 2);
+      ctx.fill();
+      // Brighter highlight on the trailing edge so it reads as wet, not scab.
+      ctx.fillStyle = "#dc2626";
+      ctx.globalAlpha = alpha * 0.85;
+      ctx.beginPath();
+      ctx.ellipse(x0 - size * 0.2, y0 + dy - size * 0.1, size * 0.7, size * 0.4, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  const poisoned = effects.some((e) => e.type === "poisoned" && e.remaining > 0);
+  if (poisoned) {
+    // Sickly chartreuse cast — slow nauseating throb so the avatar feels
+    // wrong, not energetic. Multiply pulls the underlying skin tones into
+    // a greener register.
+    const pulse = 0.65 + 0.15 * Math.sin(now / 480);
+    ctx.save();
+    ctx.globalCompositeOperation = "multiply";
+    ctx.fillStyle = `rgba(132, 204, 22, ${0.55 * pulse})`;
+    ctx.beginPath();
+    ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+
+    // Faint inner haze — radial gradient gives the surface a wet/sickly
+    // sheen as if sweat or venom is beading at the center of the figure.
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+    ctx.clip();
+    const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, radius);
+    grad.addColorStop(0, "rgba(163, 230, 53, 0.30)");
+    grad.addColorStop(0.6, "rgba(101, 163, 13, 0.15)");
+    grad.addColorStop(1, "rgba(0, 0, 0, 0)");
+    ctx.globalCompositeOperation = "screen";
+    ctx.fillStyle = grad;
+    ctx.fillRect(cx - radius, cy - radius, radius * 2, radius * 2);
+    ctx.restore();
+  }
+
+  const shocked = effects.some((e) => e.type === "shocked" && e.remaining > 0);
+  if (shocked) {
+    // Strobing electric flash — yellow-white overlay with a high-frequency
+    // pulse so the pawn looks like it's being zapped. Period chosen short
+    // enough to feel jittery but not so fast it strobes unpleasantly.
+    const strobe = 0.35 + 0.45 * (0.5 + 0.5 * Math.sin(now / 65));
+    ctx.save();
+    ctx.globalCompositeOperation = "screen";
+    ctx.fillStyle = `rgba(254, 240, 138, ${0.45 * strobe})`;
+    ctx.beginPath();
+    ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+
+    // Brief high-frequency white flash that lands on every ~6th frame so
+    // the pawn occasionally pops with a hot electric burst.
+    const tick = Math.floor(now / 220);
+    if ((tick % 3) === 0) {
+      ctx.save();
+      ctx.globalAlpha = 0.45;
+      ctx.fillStyle = "#fefce8";
+      ctx.beginPath();
+      ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+  }
+
+  const burning = effects.some((e) => e.type === "burning" && e.remaining > 0);
+  if (burning) {
+    // Warm flicker — multiply orange over the portrait so highlights blow
+    // into a fire-lit warmth instead of just darkening. Intensity flickers
+    // at ~7Hz so the surface looks like it's licked by flames.
+    const flicker = 0.65 + 0.25 * Math.sin(now / 90) * 0.5 + 0.15 * Math.sin(now / 53);
+    ctx.save();
+    ctx.globalCompositeOperation = "multiply";
+    ctx.fillStyle = `rgba(251, 146, 60, ${0.55 + 0.2 * flicker})`;
+    ctx.beginPath();
+    ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+
+    // Bright inner glow at the bottom of the pawn — like flames licking up
+    // from underneath. Radial gradient anchored low so the fire seems to
+    // come from the ground.
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+    ctx.clip();
+    const glow = ctx.createRadialGradient(cx, cy + radius * 0.7, 0, cx, cy + radius * 0.7, radius * 1.4);
+    glow.addColorStop(0, `rgba(254, 240, 138, ${0.55 * flicker})`);
+    glow.addColorStop(0.45, `rgba(251, 146, 60, ${0.35 * flicker})`);
+    glow.addColorStop(1, "rgba(127, 29, 29, 0)");
+    ctx.globalCompositeOperation = "screen";
+    ctx.fillStyle = glow;
+    ctx.fillRect(cx - radius, cy - radius, radius * 2, radius * 2);
+    ctx.restore();
+  }
+}
+
+// "Scaled Up" — orange energy surge around the pawn. Reads as compute
+// provisioning: a hot upward draft of streaks rising from below the
+// figure, a swelling halo, and ringed concentric pulses expanding
+// outward from the feet. Matches the Druid's Scale Up ability blurb
+// ("Compute provisioned — stats surged while active").
+function drawScaledUpAura(
+  ctx: CanvasRenderingContext2D,
+  cx: number, cy: number, r: number, now: number, seed: number,
+) {
+  ctx.save();
+
+  // Pulsing orange halo behind everything else.
+  const halo = 0.55 + 0.2 * Math.sin(now / 500);
+  const haloGrad = ctx.createRadialGradient(cx, cy, r * 0.6, cx, cy, r * 1.55);
+  haloGrad.addColorStop(0, "rgba(249, 115, 22, 0)");
+  haloGrad.addColorStop(0.5, `rgba(249, 115, 22, ${0.40 * halo})`);
+  haloGrad.addColorStop(1, "rgba(180, 83, 9, 0)");
+  ctx.fillStyle = haloGrad;
+  ctx.beginPath();
+  ctx.arc(cx, cy, r * 1.55, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Concentric rings expanding outward from the pawn's base, fading as
+  // they grow — reads as resources scaling up beneath the actor.
+  const RINGS = 3;
+  const RING_CYCLE = 1500;
+  for (let i = 0; i < RINGS; i++) {
+    const phase = ((now + i * (RING_CYCLE / RINGS)) % RING_CYCLE) / RING_CYCLE;
+    const ringR = r * (0.95 + phase * 0.7);
+    const alpha = (1 - phase) * 0.6;
+    ctx.globalAlpha = alpha;
+    ctx.strokeStyle = "#fb923c";
+    ctx.lineWidth = Math.max(1.2, r * 0.07 * (1 - phase * 0.5));
+    ctx.setLineDash([]);
+    ctx.beginPath();
+    ctx.ellipse(cx, cy + r * 0.65, ringR, ringR * 0.32, 0, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
+  // Upward-rising energy streaks emanating from the lower hemisphere —
+  // hot yellow inner with orange-red outer for that scale-up burst feel.
+  const STREAKS = 9;
+  const STREAK_CYCLE = 900;
+  ctx.lineCap = "round";
+  for (let i = 0; i < STREAKS; i++) {
+    const phase = ((now + i * (STREAK_CYCLE / STREAKS) + rng01(seed, i + 700) * STREAK_CYCLE) % STREAK_CYCLE) / STREAK_CYCLE;
+    // Origin point spread across the bottom of the pawn — slight side jitter.
+    const baseAng = Math.PI * (0.05 + (i / STREAKS) * 0.9);
+    const x0 = cx + Math.cos(baseAng) * r * 0.85;
+    const y0 = cy + Math.sin(baseAng) * r * 0.85;
+    // Each streak rises upward + slightly outward; length grows with phase
+    // and fades at both ends so they don't pop.
+    const len = r * (0.4 + phase * 0.95);
+    const tipX = x0 + (rng01(seed, i + 720) - 0.5) * r * 0.4;
+    const tipY = y0 - len;
+    const alpha = (phase < 0.2 ? phase / 0.2 : 1) * (phase > 0.7 ? (1 - phase) / 0.3 : 1) * 0.95;
+    // Outer warm body — orange.
+    ctx.globalAlpha = alpha * 0.85;
+    ctx.strokeStyle = "#fb923c";
+    ctx.lineWidth = Math.max(1.5, r * 0.10);
+    ctx.beginPath();
+    ctx.moveTo(x0, y0);
+    ctx.lineTo(tipX, tipY);
+    ctx.stroke();
+    // Hot inner core — yellow.
+    ctx.globalAlpha = alpha;
+    ctx.strokeStyle = "#fef3c7";
+    ctx.lineWidth = Math.max(0.6, r * 0.03);
+    ctx.beginPath();
+    ctx.moveTo(x0, y0);
+    ctx.lineTo(tipX, tipY);
+    ctx.stroke();
+  }
+
+  // Bright crown highlight at the top of the pawn — adds the "ascending"
+  // feel without obscuring the avatar's face.
+  const crownPulse = 0.5 + 0.5 * Math.sin(now / 380);
+  ctx.globalAlpha = 0.55 * crownPulse;
+  const crownGrad = ctx.createRadialGradient(cx, cy - r * 0.9, 0, cx, cy - r * 0.9, r * 0.85);
+  crownGrad.addColorStop(0, "rgba(254, 240, 138, 0.8)");
+  crownGrad.addColorStop(0.5, "rgba(251, 146, 60, 0.45)");
+  crownGrad.addColorStop(1, "rgba(180, 83, 9, 0)");
+  ctx.fillStyle = crownGrad;
+  ctx.beginPath();
+  ctx.arc(cx, cy - r * 0.9, r * 0.85, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.restore();
+}
+
+// "Firewalled" (key: `barkskin`) — translucent green hex-tile barrier
+// orbiting the pawn, with individual tiles flickering in/out at random
+// intervals to suggest packets being inspected and dropped. Replaces the
+// older bark + leaves visual now that the canonical name is engineering
+// vocabulary (druid Firewall ability — "Configure inbound rules: deny
+// all"). Uses the EFFECT_META.barkskin.color (#a3e635 lime green).
+function drawFirewalled(
+  ctx: CanvasRenderingContext2D,
+  cx: number, cy: number, r: number, now: number, seed: number,
+) {
+  ctx.save();
+
+  // Soft glow halo behind the mesh — gives the barrier presence even
+  // between hex flickers and conveys "active shield."
+  const haloPulse = 0.6 + 0.25 * Math.sin(now / 480);
+  const haloGrad = ctx.createRadialGradient(cx, cy, r * 0.8, cx, cy, r * 1.5);
+  haloGrad.addColorStop(0, "rgba(163, 230, 53, 0)");
+  haloGrad.addColorStop(0.55, `rgba(132, 204, 22, ${0.30 * haloPulse})`);
+  haloGrad.addColorStop(1, "rgba(132, 204, 22, 0)");
+  ctx.fillStyle = haloGrad;
+  ctx.beginPath();
+  ctx.arc(cx, cy, r * 1.5, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Hex barrier tiles arranged around the pawn — 12 tiles on a ring,
+  // each flickering at its own phase so it looks like packets are
+  // continuously hitting and being denied.
+  const TILES = 12;
+  const ringR = r * 1.25;
+  const tileR = r * 0.22;
+  const ringRotation = now / 4800; // very slow CW rotation
+  for (let i = 0; i < TILES; i++) {
+    const ang = ringRotation + (i / TILES) * Math.PI * 2;
+    const tx = cx + Math.cos(ang) * ringR;
+    const ty = cy + Math.sin(ang) * ringR;
+    // Per-tile flicker phase keyed by seed + index so neighbouring
+    // pawns flicker independently.
+    const flickerCycle = 800 + rng01(seed, i + 800) * 600;
+    const flickerPhase = ((now + rng01(seed, i + 820) * flickerCycle) % flickerCycle) / flickerCycle;
+    // Tile alpha pulses bright at the start of its cycle then dims —
+    // simulates a quick "drop packet" flash.
+    const flicker = flickerPhase < 0.15
+      ? 1
+      : flickerPhase < 0.5
+        ? 0.35 + 0.4 * (1 - (flickerPhase - 0.15) / 0.35)
+        : 0.35;
+    drawFirewallHexTile(ctx, tx, ty, tileR, flicker);
+  }
+
+  // Scanline sweep — a thin bright bar slowly rotating around the pawn,
+  // like a radar arm or active inspection beam.
+  const scanAng = (now / 1800) * Math.PI * 2;
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.rotate(scanAng);
+  const scanGrad = ctx.createLinearGradient(0, -r * 1.35, 0, r * 1.35);
+  scanGrad.addColorStop(0, "rgba(217, 249, 157, 0)");
+  scanGrad.addColorStop(0.48, "rgba(217, 249, 157, 0)");
+  scanGrad.addColorStop(0.5, "rgba(217, 249, 157, 0.65)");
+  scanGrad.addColorStop(0.52, "rgba(217, 249, 157, 0)");
+  scanGrad.addColorStop(1, "rgba(217, 249, 157, 0)");
+  ctx.globalCompositeOperation = "screen";
+  ctx.fillStyle = scanGrad;
+  ctx.fillRect(-r * 1.35, -r * 1.35, r * 2.7, r * 2.7);
+  ctx.restore();
+
+  ctx.restore();
+}
+
+// Single firewall-barrier hex panel: translucent body + bright outline,
+// alpha modulated by the caller's flicker value.
+function drawFirewallHexTile(
+  ctx: CanvasRenderingContext2D,
+  cx: number, cy: number, size: number, flicker: number,
+) {
+  ctx.save();
+  // Flat-top hex path.
+  ctx.beginPath();
+  for (let i = 0; i < 6; i++) {
+    const ang = (Math.PI / 3) * i;
+    const x = cx + Math.cos(ang) * size;
+    const y = cy + Math.sin(ang) * size;
+    if (i === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  }
+  ctx.closePath();
+  // Translucent panel body.
+  ctx.globalAlpha = 0.30 * flicker;
+  ctx.fillStyle = "#84cc16";
+  ctx.fill();
+  // Bright outline so the panel reads as a discrete cell.
+  ctx.globalAlpha = 0.85 * flicker;
+  ctx.strokeStyle = "#a3e635";
+  ctx.lineWidth = Math.max(0.6, size * 0.16);
+  ctx.stroke();
+  // Inner highlight stroke for a touch of dimension.
+  ctx.globalAlpha = 0.65 * flicker;
+  ctx.strokeStyle = "#ecfccb";
+  ctx.lineWidth = Math.max(0.3, size * 0.06);
+  ctx.beginPath();
+  for (let i = 0; i < 6; i++) {
+    const ang = (Math.PI / 3) * i;
+    const x = cx + Math.cos(ang) * size * 0.72;
+    const y = cy + Math.sin(ang) * size * 0.72;
+    if (i === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  }
+  ctx.closePath();
+  ctx.stroke();
+  ctx.restore();
+}
+
+// Bark patches anchored to the pawn rim + a slow drift of small leaves
+// around the actor — kept here for reference. Replaced by drawFirewalled
+// once the canonical effect name became "Firewalled."
+function drawBarkskinLeaves(
+  ctx: CanvasRenderingContext2D,
+  cx: number, cy: number, r: number, now: number, seed: number,
+) {
+  // Static bark plates fixed to the pawn rim — small wedge shapes that
+  // suggest armor segments grown over the figure. Position seeded by the
+  // pawn so plates don't move and can't be confused for damage particles.
+  const PLATES = 6;
+  ctx.save();
+  for (let i = 0; i < PLATES; i++) {
+    // Distribute around the upper hemisphere so the plates read as a
+    // shoulder/back coating rather than a full enclosure.
+    const ang = Math.PI * (1.05 + (i / PLATES) * 0.9 + rng01(seed, i + 500) * 0.12);
+    const plateR = r * 0.97;
+    const px = cx + Math.cos(ang) * plateR;
+    const py = cy + Math.sin(ang) * plateR;
+    const tx = -Math.sin(ang);
+    const ty = Math.cos(ang);
+    const w = r * (0.20 + 0.04 * rng01(seed, i + 520));
+    const h = r * (0.12 + 0.03 * rng01(seed, i + 540));
+    // Draw a small flattened rounded rectangle aligned tangentially.
+    ctx.save();
+    ctx.translate(px, py);
+    ctx.rotate(Math.atan2(ty, tx));
+    // Dark bark base.
+    ctx.fillStyle = "#4d2d10";
+    roundRect(ctx, -w / 2, -h / 2, w, h, h * 0.45);
+    ctx.fill();
+    // Brighter wood-grain stripe along the top.
+    ctx.fillStyle = "#854d0e";
+    roundRect(ctx, -w / 2 + 0.5, -h / 2 + 0.6, w - 1, h * 0.45, h * 0.25);
+    ctx.fill();
+    // Tiny moss highlight so each plate has a hint of green growth.
+    ctx.fillStyle = "rgba(163, 230, 53, 0.55)";
+    ctx.fillRect(-w * 0.3, -h * 0.45, w * 0.18, 0.6);
+    ctx.restore();
+  }
+
+  // Slow-drifting leaves around the pawn. Each leaf orbits gently with a
+  // sin-bob and rotates on its own axis. Reads as living wood.
+  const LEAVES = 5;
+  const CYCLE = 4800;
+  for (let i = 0; i < LEAVES; i++) {
+    const phase = ((now + i * (CYCLE / LEAVES) + rng01(seed, i + 600) * CYCLE) % CYCLE) / CYCLE;
+    // Each leaf circles the pawn at a slow ang speed (fraction of a full
+    // orbit per cycle) so multiple leaves orbit at different angles.
+    const orbitR = r * (1.05 + 0.18 * Math.sin(now / 800 + i * 1.4));
+    const orbitAng = phase * Math.PI * 2 + i * 1.2;
+    const x = cx + Math.cos(orbitAng) * orbitR;
+    const y = cy + Math.sin(orbitAng) * orbitR;
+    const rot = now / 700 + i * 1.3;
+    const size = r * 0.18;
+    // Fade in and out across cycle so leaves don't pop in/out at the boundary.
+    const alpha = 0.85 * (
+      phase < 0.15 ? phase / 0.15
+      : phase > 0.85 ? (1 - phase) / 0.15
+      : 1
+    );
+    ctx.globalAlpha = alpha;
+    drawLeaf(ctx, x, y, size, rot);
+  }
+  ctx.restore();
+}
+
+function drawLeaf(
+  ctx: CanvasRenderingContext2D,
+  x: number, y: number, size: number, rot: number,
+) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(rot);
+  // Almond-shape body: two arcs meeting at the tip and stem.
+  ctx.beginPath();
+  ctx.moveTo(-size, 0);
+  ctx.quadraticCurveTo(0, -size * 0.65, size, 0);
+  ctx.quadraticCurveTo(0,  size * 0.65, -size, 0);
+  ctx.closePath();
+  ctx.fillStyle = "#65a30d"; // healthy lime green
+  ctx.fill();
+  // Mid-vein.
+  ctx.strokeStyle = "rgba(20, 83, 45, 0.7)";
+  ctx.lineWidth = Math.max(0.6, size * 0.1);
+  ctx.lineCap = "round";
+  ctx.beginPath();
+  ctx.moveTo(-size * 0.92, 0);
+  ctx.lineTo(size * 0.92, 0);
+  ctx.stroke();
+  ctx.restore();
+}
+
+// Cursed purple wisps swirling around the pawn — slow counter-clockwise
+// drift with arcing trails so the hex reads as a death-skull curse
+// rather than just a colored halo. Inner pulse adds the breath of an
+// active malediction.
+function drawHexedWisps(
+  ctx: CanvasRenderingContext2D,
+  cx: number, cy: number, r: number, now: number, seed: number,
+) {
+  // Dim sickly purple halo behind the wisps — pulses slowly so the curse
+  // feels alive without flickering.
+  const halo = 0.55 + 0.2 * Math.sin(now / 760);
+  const haloGrad = ctx.createRadialGradient(cx, cy, r * 0.6, cx, cy, r * 1.5);
+  haloGrad.addColorStop(0, "rgba(168, 85, 247, 0)");
+  haloGrad.addColorStop(0.45, `rgba(126, 34, 206, ${0.45 * halo})`);
+  haloGrad.addColorStop(1, "rgba(126, 34, 206, 0)");
+  ctx.save();
+  ctx.fillStyle = haloGrad;
+  ctx.beginPath();
+  ctx.arc(cx, cy, r * 1.5, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+
+  const WISPS = 5;
+  const ORBIT_MS = 4200; // counter-clockwise (slower than empowered)
+  const t = -now / ORBIT_MS; // negative = counter-clockwise
+  ctx.save();
+  ctx.lineCap = "round";
+  for (let i = 0; i < WISPS; i++) {
+    const angBase = t * Math.PI * 2 + (i / WISPS) * Math.PI * 2 + rng01(seed, i) * 0.5;
+    // Each wisp is a short trailing arc — sample 10 points along the
+    // orbit, plot a curve through them with decreasing alpha so it reads
+    // as a smoky trail.
+    const ARC_SAMPLES = 10;
+    const ARC_LEN = 0.55; // fraction of orbit covered by one wisp
+    const orbitRBase = r * (1.08 + 0.06 * Math.sin(now / 600 + i));
+    // Smoke breathes slightly in/out radially over time so the wisps
+    // feel airier than a fixed-radius spinner.
+    for (let s = 0; s < ARC_SAMPLES; s++) {
+      const sFrac = s / (ARC_SAMPLES - 1);
+      const ang = angBase + sFrac * ARC_LEN;
+      // Radius wobble per sample so the wisp curves rather than tracing
+      // a perfect circle.
+      const orbitR = orbitRBase + Math.sin(now / 400 + i * 1.7 + sFrac * 5) * r * 0.04;
+      const x0 = cx + Math.cos(ang) * orbitR;
+      const y0 = cy + Math.sin(ang) * orbitR;
+      const sizeFrac = 1 - sFrac; // bright head, fading tail
+      const size = r * 0.13 * (0.5 + sizeFrac * 0.6);
+      const alpha = 0.75 * sizeFrac * sizeFrac;
+      ctx.globalAlpha = alpha;
+      // Inner-to-outer wisp body: bright violet core + dim purple haze.
+      ctx.fillStyle = "#c084fc";
+      ctx.beginPath();
+      ctx.arc(x0, y0, size, 0, Math.PI * 2);
+      ctx.fill();
+      // Dark mauve halo around each puff for that classic curse-smoke
+      // feel — soft, fuzzy, slightly threatening.
+      ctx.globalAlpha = alpha * 0.45;
+      ctx.fillStyle = "#581c87";
+      ctx.beginPath();
+      ctx.arc(x0, y0, size * 1.8, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+  ctx.restore();
+}
+
+// "Deadlocked" (key: `entangled`) — interlocking chain ring orbiting
+// the pawn. Reads as the actor being locked into a circular dependency
+// (the canonical EFFECT_META blurb is "Held by an upstream dependency.
+// -4 to attack rolls."). Alternating link orientation gives the chain
+// 3D presence; slow rotation conveys "still stuck after all this time."
+function drawDeadlockedChain(
+  ctx: CanvasRenderingContext2D,
+  cx: number, cy: number, r: number, now: number, _seed: number,
+) {
+  ctx.save();
+  // More links, smaller per-link size — reads as a finer, longer chain
+  // wrapping the pawn rather than a few chunky shackles. Even count so
+  // the alternating tangential/radial orientation closes cleanly.
+  const LINKS = 18;
+  const ringR = r * 1.18;
+  // arcSpan = chord-length between adjacent link centers along the ring.
+  // Link length 1.35× arcSpan keeps tangential links visibly interlocking
+  // with their neighbours even at the higher count.
+  const arcSpan = (Math.PI * 2 * ringR) / LINKS;
+  const linkLen = arcSpan * 1.35;
+  const linkW = r * 0.18;
+  const rotation = now / 5200; // very slow CW drift
+  // Per-link pulse — synchronized so the entire chain breathes in/out
+  // together (signaling the lock holds tight).
+  const breathing = 0.95 + 0.05 * Math.sin(now / 700);
+
+  for (let i = 0; i < LINKS; i++) {
+    const ang = rotation + (i / LINKS) * Math.PI * 2;
+    const lx = cx + Math.cos(ang) * ringR * breathing;
+    const ly = cy + Math.sin(ang) * ringR * breathing;
+    // Alternate "tangential" vs "radial" link orientation so every
+    // other link is turned 90° (real chain look). The radial links
+    // hook through the tangential ones visually because their length
+    // crosses the chain centerline.
+    const tangent = ang + Math.PI / 2;
+    const localRot = tangent + (i % 2 === 0 ? 0 : Math.PI / 2);
+    drawChainLink(ctx, lx, ly, linkLen, linkW, localRot);
+  }
+
+  // Subtle dim green halo behind the chain — gives the lock-down state
+  // some body and a tint of the canonical entangled color.
+  const halo = 0.55 + 0.2 * Math.sin(now / 900);
+  const grad = ctx.createRadialGradient(cx, cy, r * 0.85, cx, cy, r * 1.45);
+  grad.addColorStop(0, "rgba(134, 239, 172, 0)");
+  grad.addColorStop(0.55, `rgba(101, 163, 13, ${0.22 * halo})`);
+  grad.addColorStop(1, "rgba(101, 163, 13, 0)");
+  ctx.globalCompositeOperation = "source-over";
+  ctx.fillStyle = grad;
+  ctx.globalAlpha = 1;
+  ctx.beginPath();
+  ctx.arc(cx, cy, r * 1.45, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.restore();
+}
+
+// Single chain link rendered as a thick stadium (rounded rectangle)
+// stroke, centered at (cx, cy) and rotated by `rot` radians. Uses a
+// dark outer stroke with a lighter inner highlight for that classic
+// metallic chain look.
+function drawChainLink(
+  ctx: CanvasRenderingContext2D,
+  cx: number, cy: number, length: number, width: number, rot: number,
+) {
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.rotate(rot);
+  // Outer dark body of the link.
+  ctx.strokeStyle = "#1f2937";
+  ctx.lineWidth = width * 0.65;
+  ctx.lineCap = "round";
+  ctx.beginPath();
+  ctx.moveTo(-length / 2, 0);
+  ctx.lineTo( length / 2, 0);
+  ctx.stroke();
+  // Mid-tone metallic body.
+  ctx.strokeStyle = "#4b5563";
+  ctx.lineWidth = width * 0.45;
+  ctx.beginPath();
+  ctx.moveTo(-length / 2 + 1, 0);
+  ctx.lineTo( length / 2 - 1, 0);
+  ctx.stroke();
+  // Bright highlight stripe along the upper edge — sells the 3D feel.
+  ctx.strokeStyle = "#d1d5db";
+  ctx.lineWidth = width * 0.12;
+  ctx.beginPath();
+  ctx.moveTo(-length / 2 + 1, -width * 0.08);
+  ctx.lineTo( length / 2 - 1, -width * 0.08);
+  ctx.stroke();
+  ctx.restore();
+}
+
+// Jagged dark roots wrap inward from the hex edge with thorns sticking
+// out along their length. Reads as the actor being snared / held in
+// place. Roots have a slow constricting wiggle so the binding feels
+// alive, not static. Kept here for reference; replaced by
+// drawDeadlockedChain once the canonical effect name became "Deadlocked."
+function drawEntangledRoots(
+  ctx: CanvasRenderingContext2D,
+  cx: number, cy: number, r: number, now: number, seed: number,
+) {
+  const ROOT_COUNT = 5;
+  // Reach outward to roughly the hex edge (hex tile is drawn at
+  // ~hexSize * 0.94 from center, and the pawn radius is ~hexSize * 0.55).
+  // baseRadius here IS the pawn radius, so root tip lives ~1.55× r out.
+  const tipR = r * 1.5;
+  const baseR = r * 0.9;
+  // Constricting wiggle — very slow, looks like the roots are slowly
+  // pulling tight around the actor.
+  const breathing = 1 - 0.04 * Math.sin(now / 1600);
+  ctx.save();
+  for (let i = 0; i < ROOT_COUNT; i++) {
+    // Even angular spread around the pawn with deterministic jitter so
+    // adjacent entangled pawns aren't identical.
+    const angBase = (i / ROOT_COUNT) * Math.PI * 2;
+    const angJitter = (rng01(seed, i + 400) - 0.5) * 0.5;
+    const ang = angBase + angJitter;
+    // Tip position (out near hex edge) and base (just outside pawn rim).
+    const tipX = cx + Math.cos(ang) * tipR * breathing;
+    const tipY = cy + Math.sin(ang) * tipR * breathing;
+    const baseX = cx + Math.cos(ang) * baseR;
+    const baseY = cy + Math.sin(ang) * baseR;
+    // Each root curves — use a quadratic bezier with the control point
+    // offset perpendicular to the root direction, jittered per-root so
+    // each branch hooks a different way.
+    const perpX = -Math.sin(ang);
+    const perpY = Math.cos(ang);
+    const curveSide = rng01(seed, i + 410) > 0.5 ? 1 : -1;
+    const curveMag = (0.18 + rng01(seed, i + 420) * 0.18) * tipR;
+    const wobble = Math.sin(now / 900 + i * 1.2) * 0.05 * tipR;
+    const midX = (tipX + baseX) / 2 + perpX * (curveSide * curveMag + wobble);
+    const midY = (tipY + baseY) / 2 + perpY * (curveSide * curveMag + wobble);
+    // Root body — dark mossy brown stroke with a slight gradient feel
+    // (two passes: dark outer, brighter inner for dimension).
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    ctx.strokeStyle = "#451a03";
+    ctx.lineWidth = Math.max(2, r * 0.16);
+    ctx.globalAlpha = 0.92;
+    ctx.beginPath();
+    ctx.moveTo(tipX, tipY);
+    ctx.quadraticCurveTo(midX, midY, baseX, baseY);
+    ctx.stroke();
+    ctx.strokeStyle = "#65a30d";
+    ctx.lineWidth = Math.max(0.8, r * 0.06);
+    ctx.globalAlpha = 0.85;
+    ctx.beginPath();
+    ctx.moveTo(tipX, tipY);
+    ctx.quadraticCurveTo(midX, midY, baseX, baseY);
+    ctx.stroke();
+    // Thorns — 3 along each root pointing outward perpendicular to the
+    // root tangent. Length jitters per thorn.
+    for (let t = 1; t <= 3; t++) {
+      // Position along the bezier at parameter `s` (0 = tip, 1 = base).
+      const s = t / 4;
+      // Quadratic bezier formula and tangent.
+      const px = (1 - s) * (1 - s) * tipX + 2 * (1 - s) * s * midX + s * s * baseX;
+      const py = (1 - s) * (1 - s) * tipY + 2 * (1 - s) * s * midY + s * s * baseY;
+      const tx = 2 * (1 - s) * (midX - tipX) + 2 * s * (baseX - midX);
+      const ty = 2 * (1 - s) * (midY - tipY) + 2 * s * (baseY - midY);
+      const tLen = Math.hypot(tx, ty) || 1;
+      // Thorn perpendicular — alternate side per thorn.
+      const sideThorn = (t % 2 === 0) ? 1 : -1;
+      const nx = -ty / tLen * sideThorn;
+      const ny =  tx / tLen * sideThorn;
+      const thornLen = r * (0.22 + 0.06 * rng01(seed, i * 7 + t));
+      const tipThornX = px + nx * thornLen;
+      const tipThornY = py + ny * thornLen;
+      // Triangle thorn — base perpendicular to root, point sticks outward.
+      const baseHalf = r * 0.06;
+      const baseAx = px - (tx / tLen) * baseHalf;
+      const baseAy = py - (ty / tLen) * baseHalf;
+      const baseBx = px + (tx / tLen) * baseHalf;
+      const baseBy = py + (ty / tLen) * baseHalf;
+      ctx.globalAlpha = 0.95;
+      ctx.fillStyle = "#1c1917";
+      ctx.beginPath();
+      ctx.moveTo(baseAx, baseAy);
+      ctx.lineTo(tipThornX, tipThornY);
+      ctx.lineTo(baseBx, baseBy);
+      ctx.closePath();
+      ctx.fill();
+      // Slight green highlight on the trailing edge so the thorn reads
+      // as wood/plant rather than pure ink.
+      ctx.strokeStyle = "#3f6212";
+      ctx.lineWidth = 0.7;
+      ctx.stroke();
+    }
+  }
+  ctx.restore();
+}
+
+// Anime "power up" speed lines — short violet/white spokes radiating
+// outward from the pawn rim, jittering in length on every frame so the
+// burst feels like crackling energy. Lines are biased upward (more
+// density above the head than below) so the silhouette reads as
+// rising-power rather than evenly-haloed.
+function drawEmpoweredAura(
+  ctx: CanvasRenderingContext2D,
+  cx: number, cy: number, r: number, now: number, seed: number,
+) {
+  const COUNT = 14;
+  // Fast tick — lines snap to slightly different lengths every frame so
+  // the whole burst vibrates like motion-line effects in shonen anime.
+  const tick = Math.floor(now / 65);
+  ctx.save();
+  ctx.lineCap = "round";
+  for (let i = 0; i < COUNT; i++) {
+    // Spread evenly around the pawn with a small per-line angle jitter.
+    const baseAng = (i / COUNT) * Math.PI * 2;
+    const jitter = (rng01(seed ^ tick, i) - 0.5) * 0.25;
+    const ang = baseAng + jitter;
+    // Upper-hemisphere density bias: shorten/dim lines pointing downward
+    // so the visual weight rides above the pawn.
+    const vertical = Math.sin(ang); // -1 (up) to 1 (down) — canvas y inverted
+    const upBias = 1 - Math.max(0, vertical) * 0.6;
+    // Line length jitters between 50% and 100% of max — that's the "vibrate".
+    const lengthFrac = 0.5 + rng01(seed ^ tick, i + 50) * 0.5;
+    const innerR = r * 1.05;
+    const outerR = r * (1.05 + 0.55 * lengthFrac * upBias);
+    const x0 = cx + Math.cos(ang) * innerR;
+    const y0 = cy + Math.sin(ang) * innerR;
+    const x1 = cx + Math.cos(ang) * outerR;
+    const y1 = cy + Math.sin(ang) * outerR;
+    // Two-tone stroke: bright violet body with a hotter inner core for
+    // the front-most spokes.
+    ctx.globalAlpha = 0.85 * upBias;
+    ctx.strokeStyle = "#a78bfa";
+    ctx.lineWidth = Math.max(1, r * 0.06);
+    ctx.beginPath();
+    ctx.moveTo(x0, y0);
+    ctx.lineTo(x1, y1);
+    ctx.stroke();
+    // White-violet core inside the line.
+    ctx.globalAlpha = 0.85 * upBias;
+    ctx.strokeStyle = "#ede9fe";
+    ctx.lineWidth = Math.max(0.4, r * 0.025);
+    ctx.beginPath();
+    ctx.moveTo(x0, y0);
+    ctx.lineTo(x1, y1);
+    ctx.stroke();
+  }
+  // Subtle pulsing violet halo over the upper rim — the "aura" backdrop
+  // behind the speed lines so they don't look like floating sticks.
+  ctx.globalAlpha = 0.55;
+  const pulse = 0.5 + 0.5 * Math.sin(now / 280);
+  const grad = ctx.createRadialGradient(cx, cy - r * 0.4, r * 0.8, cx, cy - r * 0.4, r * 1.6);
+  grad.addColorStop(0, "rgba(167, 139, 250, 0)");
+  grad.addColorStop(0.55, `rgba(167, 139, 250, ${0.35 * pulse})`);
+  grad.addColorStop(1, "rgba(167, 139, 250, 0)");
+  ctx.fillStyle = grad;
+  ctx.beginPath();
+  ctx.arc(cx, cy - r * 0.4, r * 1.6, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
+// Light-green medical "+" signs floating gently up + sideways-bobbing.
+// Same rising-particle structure as burning embers, but the symbol is a
+// healing cross and the motion is much slower and softer.
+function drawRegenPluses(
+  ctx: CanvasRenderingContext2D,
+  cx: number, cy: number, r: number, now: number, seed: number,
+) {
+  const COUNT = 5;
+  const CYCLE = 2600; // ms — full rise + fade
+  ctx.save();
+  for (let i = 0; i < COUNT; i++) {
+    const phase = ((now + i * (CYCLE / COUNT) + rng01(seed, i + 200) * CYCLE) % CYCLE) / CYCLE;
+    // Horizontal start position around the pawn, with a gentle sideways
+    // bob as it rises so each plus drifts left-right while floating.
+    const baseX = (rng01(seed, i + 220) - 0.5) * r * 1.6;
+    const bob = Math.sin(now / 700 + i * 1.4 + rng01(seed, i + 240) * 6) * r * 0.15;
+    const x = cx + baseX + bob;
+    // Rise: starts near the pawn's mid-bottom, drifts up and slightly past
+    // the top, slower than burning embers (lower rise distance).
+    const y = cy + r * 0.4 - phase * r * 1.9;
+    // Size pulses softly, peaks mid-life.
+    const size = r * (0.16 + 0.04 * Math.sin(now / 540 + i));
+    // Soft fade: ramp up over first 20%, hold, ramp down last 30%.
+    const alpha = phase < 0.2
+      ? (phase / 0.2) * 0.8
+      : phase > 0.7
+        ? ((1 - phase) / 0.3) * 0.8
+        : 0.8;
+    ctx.globalAlpha = alpha;
+    // Light, pastel green so it reads as healing/restoration.
+    drawPlus(ctx, x, y, size, "#86efac");
+  }
+  ctx.restore();
+}
+
+function drawPlus(
+  ctx: CanvasRenderingContext2D,
+  x: number, y: number, size: number, color: string,
+) {
+  // Thick "+" with rounded ends — slightly chunkier so it reads as a
+  // medical symbol rather than a math operator.
+  const arm = size;
+  const thickness = Math.max(1.5, size * 0.42);
+  ctx.save();
+  ctx.fillStyle = color;
+  ctx.strokeStyle = "rgba(20, 83, 45, 0.55)";
+  ctx.lineWidth = Math.max(0.5, size * 0.12);
+  ctx.lineJoin = "round";
+  // Vertical bar.
+  roundRect(ctx, x - thickness / 2, y - arm, thickness, arm * 2, thickness * 0.3);
+  ctx.fill();
+  ctx.stroke();
+  // Horizontal bar.
+  roundRect(ctx, x - arm, y - thickness / 2, arm * 2, thickness, thickness * 0.3);
+  ctx.fill();
+  ctx.stroke();
+  // Center highlight so the plus has a touch of dimension.
+  ctx.fillStyle = "rgba(220, 252, 231, 0.55)";
+  ctx.beginPath();
+  ctx.arc(x, y, thickness * 0.45, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
+function roundRect(
+  ctx: CanvasRenderingContext2D,
+  x: number, y: number, w: number, h: number, r: number,
+) {
+  const radius = Math.min(r, w / 2, h / 2);
+  ctx.beginPath();
+  ctx.moveTo(x + radius, y);
+  ctx.lineTo(x + w - radius, y);
+  ctx.quadraticCurveTo(x + w, y, x + w, y + radius);
+  ctx.lineTo(x + w, y + h - radius);
+  ctx.quadraticCurveTo(x + w, y + h, x + w - radius, y + h);
+  ctx.lineTo(x + radius, y + h);
+  ctx.quadraticCurveTo(x, y + h, x, y + h - radius);
+  ctx.lineTo(x, y + radius);
+  ctx.quadraticCurveTo(x, y, x + radius, y);
+  ctx.closePath();
+}
+
+// ── Rise effects (one-shot popups) ────────────────────────────────────────
+// Each rise renders for ~1.4 s on top of the pawn: the symbol icon floats
+// straight up while a cloud of small sparkles in the matching color fan
+// out around it. Alpha follows a sin(πt) envelope so the rise fades in
+// and out smoothly. Kind palettes live in RISE_PALETTE.
+
+const RISE_PALETTE: Record<RiseKind, { color: string; spark: string }> = {
+  taunt:           { color: "#ef4444", spark: "#fecaca" }, // angry red
+  marked:          { color: "#fb923c", spark: "#fed7aa" }, // hunt orange
+  vulnerable:      { color: "#f59e0b", spark: "#fde68a" }, // amber crack
+  foreseen:        { color: "#38bdf8", spark: "#bae6fd" }, // forecast cyan
+  test_coverage:   { color: "#34d399", spark: "#bbf7d0" }, // covered green
+  delivery_bonus:  { color: "#fbbf24", spark: "#fef3c7" }, // gold coin
+  ill_omen:        { color: "#a855f7", spark: "#e9d5ff" }, // dark hex purple
+};
+
+function drawRiseEffect(
+  ctx: CanvasRenderingContext2D,
+  cx: number, cy: number, r: number, kind: RiseKind, t: number,
+) {
+  const pal = RISE_PALETTE[kind];
+  // Icon rises straight up from just above the pawn over its lifetime.
+  const yLift = r * 1.8 * t;
+  const iconY = cy - r * 0.9 - yLift;
+  const iconX = cx;
+  // Envelope: ease-in fade up to ~25%, hold, fade out from ~70%.
+  const alpha = t < 0.25 ? t / 0.25 : t > 0.7 ? (1 - t) / 0.3 : 1;
+  const size = r * (0.55 + 0.10 * Math.sin(t * Math.PI));
 
   ctx.save();
-  ctx.lineWidth = lineWidth;
+  ctx.globalAlpha = Math.max(0, Math.min(1, alpha));
+
+  // Halo behind the icon — soft radial in the kind color so the symbol
+  // doesn't get lost against busy backgrounds.
+  const halo = ctx.createRadialGradient(iconX, iconY, 0, iconX, iconY, size * 1.6);
+  halo.addColorStop(0, hexToRgba(pal.color, 0.55));
+  halo.addColorStop(0.6, hexToRgba(pal.color, 0.20));
+  halo.addColorStop(1, hexToRgba(pal.color, 0));
+  ctx.fillStyle = halo;
+  ctx.beginPath();
+  ctx.arc(iconX, iconY, size * 1.6, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Kind-specific glyph.
+  ctx.fillStyle = pal.color;
+  ctx.strokeStyle = pal.color;
   ctx.lineCap = "round";
-  for (let i = 0; i < live.length; i++) {
-    const e = live[i];
-    const v = EFFECT_VISUAL[e.type];
-    // Burning + shocked + bleeding pulse so they read as "hurting".
-    const pulse = (e.type === "burning" || e.type === "shocked" || e.type === "bleeding")
-      ? 0.7 + 0.3 * Math.sin(now / 160 + i)
-      : 1;
-    ctx.globalAlpha = 0.85 * pulse;
-    ctx.strokeStyle = v.color;
-    const start = driftStart + slice * i + slice * 0.08;
-    const end = driftStart + slice * (i + 1) - slice * 0.08;
+  ctx.lineJoin = "round";
+  switch (kind) {
+    case "taunt":          drawRiseExclamation(ctx, iconX, iconY, size, pal); break;
+    case "marked":         drawRiseCrosshair(ctx, iconX, iconY, size, pal); break;
+    case "vulnerable":     drawRiseCrackedShield(ctx, iconX, iconY, size, pal); break;
+    case "foreseen":       drawRiseEye(ctx, iconX, iconY, size, pal); break;
+    case "test_coverage":  drawRiseCheck(ctx, iconX, iconY, size, pal); break;
+    case "delivery_bonus": drawRiseCoin(ctx, iconX, iconY, size, pal); break;
+    case "ill_omen":       drawRiseHexRune(ctx, iconX, iconY, size, pal); break;
+  }
+
+  // Sparkle cloud — small dots fanning out from the icon position, each
+  // travelling outward as the rise progresses. Spread is deterministic
+  // per-rise so the cluster looks chosen, not randomized every frame.
+  const SPARKS = 8;
+  for (let i = 0; i < SPARKS; i++) {
+    const ang = (i / SPARKS) * Math.PI * 2 + t * 0.6;
+    const dist = r * (0.35 + t * 1.1);
+    const sx = iconX + Math.cos(ang) * dist;
+    const sy = iconY + Math.sin(ang) * dist - r * 0.2 * t; // also drift up
+    const sparkR = r * 0.07 * (1 - t * 0.5);
+    ctx.globalAlpha = Math.max(0, alpha) * (0.7 - t * 0.5);
+    ctx.fillStyle = pal.spark;
     ctx.beginPath();
-    ctx.arc(cx, cy, ringRadius, start, end);
+    ctx.arc(sx, sy, sparkR, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
+// Tiny helper: convert an #rrggbb hex string to an rgba() form with alpha.
+// Used by the rise halo gradients.
+function hexToRgba(hex: string, alpha: number): string {
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
+// ── Rise glyphs ───────────────────────────────────────────────────────────
+
+function drawRiseExclamation(
+  ctx: CanvasRenderingContext2D, x: number, y: number, s: number,
+  pal: { color: string; spark: string },
+) {
+  // Bold "!" — vertical bar tapered downward + a round dot below.
+  ctx.fillStyle = pal.color;
+  ctx.beginPath();
+  ctx.moveTo(x - s * 0.10, y - s * 0.42);
+  ctx.lineTo(x + s * 0.10, y - s * 0.42);
+  ctx.lineTo(x + s * 0.06, y + s * 0.10);
+  ctx.lineTo(x - s * 0.06, y + s * 0.10);
+  ctx.closePath();
+  ctx.fill();
+  ctx.beginPath();
+  ctx.arc(x, y + s * 0.30, s * 0.12, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+function drawRiseCrosshair(
+  ctx: CanvasRenderingContext2D, x: number, y: number, s: number,
+  pal: { color: string; spark: string },
+) {
+  ctx.strokeStyle = pal.color;
+  ctx.lineWidth = s * 0.10;
+  ctx.beginPath();
+  ctx.arc(x, y, s * 0.45, 0, Math.PI * 2);
+  ctx.stroke();
+  // Four ticks at cardinal points.
+  for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
+    ctx.beginPath();
+    ctx.moveTo(x + dx * s * 0.45, y + dy * s * 0.45);
+    ctx.lineTo(x + dx * s * 0.65, y + dy * s * 0.65);
     ctx.stroke();
+  }
+  // Center dot.
+  ctx.fillStyle = pal.color;
+  ctx.beginPath();
+  ctx.arc(x, y, s * 0.08, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+function drawRiseCrackedShield(
+  ctx: CanvasRenderingContext2D, x: number, y: number, s: number,
+  pal: { color: string; spark: string },
+) {
+  // Simple heater shield silhouette with a zigzag crack down the middle.
+  ctx.fillStyle = pal.color;
+  ctx.beginPath();
+  ctx.moveTo(x - s * 0.42, y - s * 0.4);
+  ctx.lineTo(x + s * 0.42, y - s * 0.4);
+  ctx.lineTo(x + s * 0.42, y);
+  ctx.quadraticCurveTo(x + s * 0.42, y + s * 0.5, x, y + s * 0.55);
+  ctx.quadraticCurveTo(x - s * 0.42, y + s * 0.5, x - s * 0.42, y);
+  ctx.closePath();
+  ctx.fill();
+  // Dark zigzag crack overlay.
+  ctx.strokeStyle = "#1c1917";
+  ctx.lineWidth = s * 0.08;
+  ctx.beginPath();
+  ctx.moveTo(x - s * 0.06, y - s * 0.32);
+  ctx.lineTo(x + s * 0.08, y - s * 0.10);
+  ctx.lineTo(x - s * 0.08, y + s * 0.12);
+  ctx.lineTo(x + s * 0.06, y + s * 0.42);
+  ctx.stroke();
+}
+
+function drawRiseEye(
+  ctx: CanvasRenderingContext2D, x: number, y: number, s: number,
+  pal: { color: string; spark: string },
+) {
+  // Almond eye shape + pupil — reads as "seen" / "foreseen."
+  ctx.fillStyle = pal.spark;
+  ctx.beginPath();
+  ctx.ellipse(x, y, s * 0.5, s * 0.28, 0, 0, Math.PI * 2);
+  ctx.fill();
+  // Iris.
+  ctx.fillStyle = pal.color;
+  ctx.beginPath();
+  ctx.arc(x, y, s * 0.22, 0, Math.PI * 2);
+  ctx.fill();
+  // Pupil + sparkle.
+  ctx.fillStyle = "#0f172a";
+  ctx.beginPath();
+  ctx.arc(x, y, s * 0.10, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "#ffffff";
+  ctx.beginPath();
+  ctx.arc(x - s * 0.07, y - s * 0.07, s * 0.05, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+function drawRiseCheck(
+  ctx: CanvasRenderingContext2D, x: number, y: number, s: number,
+  pal: { color: string; spark: string },
+) {
+  // Bold checkmark — for Test Coverage / shield_of_faith.
+  ctx.strokeStyle = pal.color;
+  ctx.lineWidth = s * 0.18;
+  ctx.beginPath();
+  ctx.moveTo(x - s * 0.35, y + s * 0.05);
+  ctx.lineTo(x - s * 0.10, y + s * 0.35);
+  ctx.lineTo(x + s * 0.40, y - s * 0.30);
+  ctx.stroke();
+}
+
+function drawRiseCoin(
+  ctx: CanvasRenderingContext2D, x: number, y: number, s: number,
+  pal: { color: string; spark: string },
+) {
+  // Gold coin disk with $ embossed.
+  ctx.fillStyle = pal.color;
+  ctx.beginPath();
+  ctx.arc(x, y, s * 0.50, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = "#92400e";
+  ctx.lineWidth = s * 0.05;
+  ctx.stroke();
+  ctx.fillStyle = "#78350f";
+  ctx.font = `bold ${Math.max(6, s * 0.55)}px ui-sans-serif, system-ui`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText("$", x, y);
+}
+
+function drawRiseHexRune(
+  ctx: CanvasRenderingContext2D, x: number, y: number, s: number,
+  pal: { color: string; spark: string },
+) {
+  // Hexagonal rune outline + an angular sigil inside — used for hex /
+  // ill_omen events that warn of an incoming curse burst.
+  ctx.strokeStyle = pal.color;
+  ctx.lineWidth = s * 0.10;
+  ctx.beginPath();
+  for (let i = 0; i < 6; i++) {
+    const ang = (Math.PI / 3) * i - Math.PI / 2;
+    const px = x + Math.cos(ang) * s * 0.48;
+    const py = y + Math.sin(ang) * s * 0.48;
+    if (i === 0) ctx.moveTo(px, py);
+    else ctx.lineTo(px, py);
+  }
+  ctx.closePath();
+  ctx.stroke();
+  // Three small intersecting strokes inside — abstract "rune."
+  ctx.beginPath();
+  ctx.moveTo(x - s * 0.18, y - s * 0.10);
+  ctx.lineTo(x + s * 0.18, y + s * 0.10);
+  ctx.moveTo(x + s * 0.18, y - s * 0.10);
+  ctx.lineTo(x - s * 0.18, y + s * 0.10);
+  ctx.moveTo(x, y - s * 0.22);
+  ctx.lineTo(x, y + s * 0.22);
+  ctx.lineWidth = s * 0.06;
+  ctx.stroke();
+}
+
+// "Containerized" — translucent shipping-container box clamped over the
+// pawn. Reads as the actor being wrapped/boxed up (matches the mage
+// Containerize ability + the EFFECT_META.stunned emoji 📦). Subtle
+// shake jitter so it looks like the container is being banged on from
+// the inside but won't open.
+function drawContainerized(
+  ctx: CanvasRenderingContext2D,
+  cx: number, cy: number, r: number, now: number, _seed: number,
+) {
+  // Small repeating bang animation — every ~600ms the container jolts
+  // briefly as if the actor inside is trying to break out.
+  const bangCycle = 600;
+  const bangPhase = (now % bangCycle) / bangCycle;
+  const bang = bangPhase < 0.12 ? Math.sin(bangPhase / 0.12 * Math.PI) : 0;
+  const jx = bang * 1.2;
+  const jy = bang * 0.4;
+
+  ctx.save();
+  ctx.translate(cx + jx, cy + jy);
+
+  // Container dimensions — box hugs the pawn, slightly oversized so the
+  // avatar reads through but the silhouette is clearly enclosed.
+  const w = r * 1.55;
+  const h = r * 1.75;
+  const depth = r * 0.32; // isometric back-offset
+
+  const FACE = "rgba(124, 58, 237, 0.20)"; // translucent purple fill
+  const EDGE = "#a78bfa";
+  const HIGHLIGHT = "#ddd6fe";
+
+  ctx.lineCap = "square";
+  ctx.lineJoin = "miter";
+  ctx.lineWidth = Math.max(1.2, r * 0.07);
+
+  // Top face — parallelogram giving an isometric peek of the lid.
+  ctx.beginPath();
+  ctx.moveTo(-w / 2, -h / 2);
+  ctx.lineTo( w / 2, -h / 2);
+  ctx.lineTo( w / 2 + depth, -h / 2 - depth);
+  ctx.lineTo(-w / 2 + depth, -h / 2 - depth);
+  ctx.closePath();
+  ctx.fillStyle = "rgba(167, 139, 250, 0.25)";
+  ctx.fill();
+  ctx.strokeStyle = EDGE;
+  ctx.stroke();
+
+  // Right side face — visible because of the iso skew.
+  ctx.beginPath();
+  ctx.moveTo( w / 2, -h / 2);
+  ctx.lineTo( w / 2 + depth, -h / 2 - depth);
+  ctx.lineTo( w / 2 + depth,  h / 2 - depth);
+  ctx.lineTo( w / 2,  h / 2);
+  ctx.closePath();
+  ctx.fillStyle = "rgba(91, 33, 182, 0.30)";
+  ctx.fill();
+  ctx.strokeStyle = EDGE;
+  ctx.stroke();
+
+  // Front face — translucent so the avatar shows through, but with the
+  // box's defining vertical ridges painted on so it reads as a container.
+  ctx.beginPath();
+  ctx.rect(-w / 2, -h / 2, w, h);
+  ctx.fillStyle = FACE;
+  ctx.fill();
+  ctx.strokeStyle = EDGE;
+  ctx.stroke();
+
+  // Vertical ridges (corrugated container panels) — three thin lines
+  // dividing the front face into segments. Skip the center so the
+  // avatar's face stays unobscured.
+  ctx.strokeStyle = "rgba(167, 139, 250, 0.65)";
+  ctx.lineWidth = Math.max(0.6, r * 0.03);
+  for (const fx of [-0.32, 0.32]) {
+    ctx.beginPath();
+    ctx.moveTo(fx * w, -h / 2);
+    ctx.lineTo(fx * w,  h / 2);
+    ctx.stroke();
+  }
+
+  // Top edge highlight — bright violet line catching light.
+  ctx.strokeStyle = HIGHLIGHT;
+  ctx.lineWidth = Math.max(0.8, r * 0.04);
+  ctx.globalAlpha = 0.85;
+  ctx.beginPath();
+  ctx.moveTo(-w / 2 + 1, -h / 2 + 1);
+  ctx.lineTo( w / 2 - 1, -h / 2 + 1);
+  ctx.stroke();
+  ctx.globalAlpha = 1;
+
+  // Latches: small rectangles on the upper corners where the container
+  // lid would clamp shut.
+  ctx.fillStyle = "#c4b5fd";
+  for (const lx of [-0.42, 0.42]) {
+    ctx.fillRect(lx * w - r * 0.06, -h / 2 - 1, r * 0.12, r * 0.10);
+  }
+
+  // "CNTR" stencil marking — small monospaced label stamped on the
+  // upper-left of the front face so it reads unambiguously as a
+  // shipping container.
+  ctx.fillStyle = "rgba(196, 181, 253, 0.85)";
+  ctx.font = `bold ${Math.max(6, r * 0.18)}px ui-monospace, Menlo, monospace`;
+  ctx.textBaseline = "top";
+  ctx.textAlign = "left";
+  ctx.fillText("CNTR", -w / 2 + r * 0.12, -h / 2 + r * 0.12);
+
+  ctx.restore();
+}
+
+// Classic cartoon "seeing stars" — small gold 5-pointed stars on a slow
+// elliptical orbit above the pawn's head. Each star spins on its own
+// axis at a different rate so the cluster doesn't move in lockstep.
+// Kept here in case "stunned" ever needs to revert to the classic
+// visualization; currently drawContainerized is wired in instead.
+function drawStunnedStars(
+  ctx: CanvasRenderingContext2D,
+  cx: number, cy: number, r: number, now: number, seed: number,
+) {
+  const STARS = 3;
+  const ORBIT_MS = 1800; // one full orbit
+  const orbitRX = r * 0.85;
+  const orbitRY = r * 0.32; // squashed ellipse — perspective from above
+  const orbitCY = cy - r * 0.95; // center of orbit above the head
+  const baseAng = (now / ORBIT_MS) * Math.PI * 2;
+  ctx.save();
+  for (let i = 0; i < STARS; i++) {
+    const ang = baseAng + (i / STARS) * Math.PI * 2;
+    const x = cx + Math.cos(ang) * orbitRX;
+    const y = orbitCY + Math.sin(ang) * orbitRY;
+    // Far-side stars (sin(ang) > 0 means lower on the squashed orbit → in
+    // front of pawn). Apply a perspective scale so the cluster reads as
+    // moving in 3D — bigger in front, smaller behind.
+    const depth = Math.sin(ang); // -1 (behind) to 1 (front)
+    const scale = 0.7 + 0.3 * ((depth + 1) / 2);
+    const starR = r * 0.22 * scale;
+    const rot = now / 600 + i * 1.7 + rng01(seed, i) * 6;
+    ctx.globalAlpha = 0.85 + 0.15 * depth;
+    drawStar(ctx, x, y, starR, rot);
+  }
+  ctx.restore();
+}
+
+// Filled 5-pointed star centered at (x,y) with outer radius r, rotated by
+// `rot` radians. Gold body with a brighter inner core so it pops without
+// needing an outline.
+function drawStar(
+  ctx: CanvasRenderingContext2D,
+  x: number, y: number, r: number, rot: number,
+) {
+  const SPIKES = 5;
+  const innerR = r * 0.42;
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(rot);
+  ctx.beginPath();
+  for (let i = 0; i < SPIKES * 2; i++) {
+    const ang = (i / (SPIKES * 2)) * Math.PI * 2 - Math.PI / 2;
+    const radius = i % 2 === 0 ? r : innerR;
+    const px = Math.cos(ang) * radius;
+    const py = Math.sin(ang) * radius;
+    if (i === 0) ctx.moveTo(px, py);
+    else ctx.lineTo(px, py);
+  }
+  ctx.closePath();
+  ctx.fillStyle = "#fde047"; // bright gold body
+  ctx.fill();
+  // Subtle stroke so the star reads against bright backgrounds too.
+  ctx.lineWidth = Math.max(0.5, r * 0.1);
+  ctx.strokeStyle = "rgba(120, 53, 15, 0.6)";
+  ctx.stroke();
+  // Bright inner highlight for a touch of dimension.
+  ctx.beginPath();
+  ctx.arc(0, 0, innerR * 0.6, 0, Math.PI * 2);
+  ctx.fillStyle = "#fef9c3";
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawBurningEmbers(
+  ctx: CanvasRenderingContext2D,
+  cx: number, cy: number, r: number, now: number, seed: number,
+) {
+  const COUNT = 7;
+  const CYCLE = 1100; // ms — full rise+fade
+  ctx.save();
+  for (let i = 0; i < COUNT; i++) {
+    const phase = ((now + i * (CYCLE / COUNT) + rng01(seed, i) * CYCLE) % CYCLE) / CYCLE;
+    // Horizontal start jitter spans the pawn width, with a slight inward bias.
+    const hx = (rng01(seed, i + 100) - 0.5) * r * 1.6;
+    // Slight horizontal sway so embers feel buoyant.
+    const sway = Math.sin(now / 280 + i * 1.7) * r * 0.08;
+    const x = cx + hx + sway;
+    // Rise from pawn's lower hemisphere → past the top.
+    const y = cy + r * 0.7 - phase * r * 2.4;
+    const size = Math.max(0.5, r * 0.18 * (1 - phase * 0.7));
+    const alpha = phase < 0.15 ? phase / 0.15 : 1 - (phase - 0.15) / 0.85;
+    // Color shifts orange → red → dim red as it rises and cools.
+    const t = phase;
+    const rch = Math.round(255 * (1 - t * 0.2));
+    const gch = Math.round(140 * (1 - t * 0.8));
+    const bch = Math.round(40 * (1 - t));
+    ctx.globalAlpha = Math.max(0, Math.min(1, alpha)) * 0.95;
+    ctx.fillStyle = `rgb(${rch},${gch},${bch})`;
+    ctx.beginPath();
+    ctx.arc(x, y, size, 0, Math.PI * 2);
+    ctx.fill();
+    // Bright core for the youngest embers.
+    if (phase < 0.4) {
+      ctx.globalAlpha = (1 - phase / 0.4) * 0.8;
+      ctx.fillStyle = "#fef08a";
+      ctx.beginPath();
+      ctx.arc(x, y, size * 0.4, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+  ctx.restore();
+}
+
+// Frost halo on the pawn + jagged icicles hanging from the rim.
+function drawFrostGlints(
+  ctx: CanvasRenderingContext2D,
+  cx: number, cy: number, r: number, now: number, seed: number,
+) {
+  ctx.save();
+  // Frosted rim — soft icy-blue glow so the viewer reads "this thing is
+  // cold" even before the icicles register.
+  const haloPulse = 0.55 + 0.2 * Math.sin(now / 700);
+  const grad = ctx.createRadialGradient(cx, cy, r * 0.85, cx, cy, r * 1.35);
+  grad.addColorStop(0, "rgba(186, 230, 253, 0)");
+  grad.addColorStop(0.55, `rgba(125, 211, 252, ${0.55 * haloPulse})`);
+  grad.addColorStop(1, "rgba(125, 211, 252, 0)");
+  ctx.fillStyle = grad;
+  ctx.beginPath();
+  ctx.arc(cx, cy, r * 1.35, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Icicles hang from the LOWER rim — gravity reads correctly with pointy
+  // tips dripping down. Six icicles distributed across the bottom half
+  // (ang in [0, π], where 0 = right, π/2 = bottom, π = left in canvas
+  // y-flipped coords).
+  const COUNT = 6;
+  for (let i = 0; i < COUNT; i++) {
+    // Spread across bottom half; tiny per-pawn jitter avoids lockstep.
+    const t = (i + 0.5) / COUNT;
+    const ang = Math.PI * (t - 0.05) + rng01(seed, i) * 0.12;
+    const rimX = cx + Math.cos(ang) * r * 0.96;
+    const rimY = cy + Math.sin(ang) * r * 0.96;
+    // Length pulses subtly so the icicles feel like they're slowly growing.
+    const lenPulse = 0.85 + 0.15 * Math.sin(now / 540 + i * 1.3);
+    const len = r * (0.45 + 0.25 * rng01(seed, i + 13)) * lenPulse;
+    const width = r * (0.22 + 0.08 * rng01(seed, i + 31));
+    // Icicle direction: from the rim point AWAY from pawn center, biased
+    // toward straight-down so they read as gravity-anchored.
+    const radialDx = Math.cos(ang);
+    const radialDy = Math.sin(ang);
+    const dirX = radialDx * 0.35;
+    const dirY = radialDy * 0.35 + 1; // gravity bias
+    const dirLen = Math.hypot(dirX, dirY);
+    const ux = dirX / dirLen, uy = dirY / dirLen;
+    drawIcicle(ctx, rimX, rimY, ux, uy, len, width, seed * 17 + i);
+  }
+
+  // Occasional water drip from the tip of one icicle — slow cycle so it's
+  // noticed in passing, not constant motion.
+  const dripCycle = 1800;
+  const dripPhase = (now % dripCycle) / dripCycle;
+  if (dripPhase < 0.55) {
+    const which = Math.floor(now / dripCycle) % COUNT;
+    const t = (which + 0.5) / COUNT;
+    const ang = Math.PI * (t - 0.05) + rng01(seed, which) * 0.12;
+    const rimX = cx + Math.cos(ang) * r * 0.96;
+    const rimY = cy + Math.sin(ang) * r * 0.96;
+    const tipY = rimY + r * 0.55;
+    const dy = dripPhase * r * 1.6;
+    ctx.globalAlpha = 0.75 * (1 - dripPhase / 0.55);
+    ctx.fillStyle = "#bae6fd";
+    ctx.beginPath();
+    ctx.arc(rimX, tipY + dy, Math.max(1, r * 0.07), 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
+// Single jagged icicle: tapered shape from (sx, sy) along (ux, uy) for
+// `len` px, `width` px wide at the base, narrowing to a point. Sides are
+// slightly notched to look like an irregular natural icicle.
+function drawIcicle(
+  ctx: CanvasRenderingContext2D,
+  sx: number, sy: number,
+  ux: number, uy: number,
+  len: number, width: number,
+  seed: number,
+) {
+  // Perpendicular vector — gives us the "across" axis for the icicle width.
+  const px = -uy, py = ux;
+  const baseHalf = width / 2;
+  // Walk one side of the icicle from base to tip with small jagged notches,
+  // then the other side back. Path closes into a tapered, notched diamond.
+  const SEGS = 5;
+  ctx.beginPath();
+  // Left side base.
+  ctx.moveTo(sx + px * baseHalf, sy + py * baseHalf);
+  for (let i = 1; i <= SEGS; i++) {
+    const t = i / SEGS;
+    // Width tapers quadratically so the tip stays sharp.
+    const w = baseHalf * (1 - t) * (1 - t * 0.6);
+    // Tiny perpendicular notch alternating in/out.
+    const notch = (rng01(seed, i + 100) - 0.5) * baseHalf * 0.35;
+    const x = sx + ux * len * t + px * (w + notch);
+    const y = sy + uy * len * t + py * (w + notch);
+    ctx.lineTo(x, y);
+  }
+  // Right side tip → base.
+  for (let i = SEGS - 1; i >= 0; i--) {
+    const t = i / SEGS;
+    const w = baseHalf * (1 - t) * (1 - t * 0.6);
+    const notch = (rng01(seed, i + 200) - 0.5) * baseHalf * 0.35;
+    const x = sx + ux * len * t - px * (w + notch);
+    const y = sy + uy * len * t - py * (w + notch);
+    ctx.lineTo(x, y);
+  }
+  ctx.closePath();
+  // Fill: icy-blue translucent body so the pawn rim shows faintly behind.
+  ctx.globalAlpha = 0.85;
+  ctx.fillStyle = "rgba(186, 230, 253, 0.88)";
+  ctx.fill();
+  // Highlight stripe along the leading edge.
+  ctx.globalAlpha = 0.95;
+  ctx.strokeStyle = "#f0f9ff";
+  ctx.lineWidth = Math.max(0.6, width * 0.18);
+  ctx.lineCap = "round";
+  ctx.beginPath();
+  ctx.moveTo(sx + px * baseHalf * 0.2, sy + py * baseHalf * 0.2);
+  ctx.lineTo(sx + ux * len * 0.95, sy + uy * len * 0.95);
+  ctx.stroke();
+  // Dark shadow on the trailing edge to give some 3D feel.
+  ctx.globalAlpha = 0.4;
+  ctx.strokeStyle = "rgba(30, 64, 175, 0.55)";
+  ctx.lineWidth = Math.max(0.5, width * 0.12);
+  ctx.beginPath();
+  ctx.moveTo(sx - px * baseHalf * 0.4, sy - py * baseHalf * 0.4);
+  ctx.lineTo(sx + ux * len * 0.9, sy + uy * len * 0.9);
+  ctx.stroke();
+  ctx.globalAlpha = 1;
+}
+
+// Forking sparks that snap to random rim points for a single frame.
+function drawShockSparks(
+  ctx: CanvasRenderingContext2D,
+  cx: number, cy: number, r: number, now: number, seed: number,
+) {
+  // ~6 sparks/sec — fast strobe so it reads as electric.
+  const tick = Math.floor(now / 160);
+  ctx.save();
+  ctx.strokeStyle = "#fef08a";
+  ctx.lineWidth = 1.5;
+  for (let i = 0; i < 2; i++) {
+    const ang = rng01(seed ^ tick, i) * Math.PI * 2;
+    const x0 = cx + Math.cos(ang) * r;
+    const y0 = cy + Math.sin(ang) * r;
+    // Zigzag of 3 segments outward.
+    ctx.globalAlpha = 0.95;
+    ctx.beginPath();
+    ctx.moveTo(x0, y0);
+    let px = x0, py = y0;
+    for (let s = 1; s <= 3; s++) {
+      const dx = Math.cos(ang + (rng01(seed ^ tick, i * 10 + s) - 0.5) * 1.4) * r * 0.22;
+      const dy = Math.sin(ang + (rng01(seed ^ tick, i * 10 + s) - 0.5) * 1.4) * r * 0.22;
+      px += dx; py += dy;
+      ctx.lineTo(px, py);
+    }
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+// Slow rising green bubbles that swell and pop above the pawn.
+function drawPoisonBubbles(
+  ctx: CanvasRenderingContext2D,
+  cx: number, cy: number, r: number, now: number, seed: number,
+) {
+  const COUNT = 5;
+  const CYCLE = 1600;
+  ctx.save();
+  for (let i = 0; i < COUNT; i++) {
+    const phase = ((now + i * (CYCLE / COUNT) + rng01(seed, i + 50) * CYCLE) % CYCLE) / CYCLE;
+    const hx = (rng01(seed, i + 30) - 0.5) * r * 1.4;
+    const x = cx + hx;
+    const y = cy + r * 0.6 - phase * r * 1.8;
+    const size = r * 0.14 * (0.5 + phase * 0.8);
+    const alpha = phase < 0.1 ? phase / 0.1 : phase > 0.85 ? (1 - phase) / 0.15 : 1;
+    ctx.globalAlpha = alpha * 0.7;
+    ctx.fillStyle = "rgba(132, 204, 22, 0.7)";
+    ctx.beginPath();
+    ctx.arc(x, y, size, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = "#a3e635";
+    ctx.lineWidth = 1;
+    ctx.globalAlpha = alpha * 0.9;
+    ctx.beginPath();
+    ctx.arc(x, y, size, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+// Falling red drips that streak down from random points on the lower rim.
+function drawBleedDrips(
+  ctx: CanvasRenderingContext2D,
+  cx: number, cy: number, r: number, now: number, seed: number,
+) {
+  const COUNT = 4;
+  // Slower cycle — drips were skittering too fast, looked twitchy. Slowing
+  // them lets each fall read as one continuous drop rather than a shower.
+  const CYCLE = 2000;
+  ctx.save();
+  for (let i = 0; i < COUNT; i++) {
+    const phase = ((now + i * (CYCLE / COUNT) + rng01(seed, i + 90) * CYCLE) % CYCLE) / CYCLE;
+    const ang = Math.PI * 0.25 + rng01(seed, i + 80) * Math.PI * 0.5; // bottom arc
+    const x0 = cx + Math.cos(ang) * r;
+    const y0 = cy + Math.abs(Math.sin(ang)) * r;
+    const y = y0 + phase * r * 1.3;
+    const size = r * 0.11 * (1 - phase * 0.5);
+    const alpha = phase < 0.15 ? phase / 0.15 : 1 - (phase - 0.5) / 0.5;
+    ctx.globalAlpha = Math.max(0, alpha) * 0.85;
+    ctx.fillStyle = "#dc2626";
+    ctx.beginPath();
+    // Teardrop: small circle at the head with a smear above it.
+    ctx.arc(x0, y, size, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.globalAlpha = Math.max(0, alpha) * 0.45;
+    ctx.fillStyle = "#991b1b";
+    ctx.beginPath();
+    ctx.moveTo(x0 - size * 0.5, y);
+    ctx.lineTo(x0, y - size * 1.4);
+    ctx.lineTo(x0 + size * 0.5, y);
+    ctx.closePath();
+    ctx.fill();
   }
   ctx.restore();
 }
@@ -1206,6 +3216,7 @@ function drawActors(
   aimActive: boolean,
   aimRangeTiles: number | undefined,
   now: number,
+  resolvePortrait: (url: string | null | undefined) => HTMLImageElement | null,
 ) {
   const previewSet = previewedTargetIds && previewedTargetIds.length > 0
     ? new Set(previewedTargetIds)
@@ -1292,7 +3303,11 @@ function drawActors(
     const radius = hexSize * 0.55;
     if (!downed && previewSet?.has(f.id)) drawPreviewGlow(x, y, radius, isReachable(f as never));
     if (!downed && f.id === currentActorId) {
-      drawCurrentActorPulse(x, y, radius);
+      // No pawn-level "current actor" pulse — the hex tile already paints
+      // a gold border around the active hex, the class-color rim on the
+      // pawn already says "yours," and the on-canvas overlays for status
+      // effects (icicles, embers, sparks) need that visual budget so they
+      // can stand out. Reach ring is still useful: shows attack range.
       // Reach ring around the current actor. Uses the aim mode's override
       // range when present (e.g. an ability with custom range), otherwise
       // the actor's weapon range. Only draws when ≥2 (melee adjacency is
@@ -1308,18 +3323,48 @@ function drawActors(
       }
     }
     ctx.globalAlpha = downed ? 0.4 : 1;
+    // Fighter token: portrait clipped to circle if available, else slate
+    // fill + class-color rim + initial. The rim sits at radius regardless
+    // so the class color always reads.
+    const fPortrait =
+      resolvePortrait(charPortraitUrl(f.name))
+      ?? resolvePortrait(classPortraitUrl(f.class));
+    if (fPortrait) {
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(x, y, radius, 0, Math.PI * 2);
+      ctx.closePath();
+      ctx.clip();
+      // Cover-crop: paint the source image so the shorter dimension fills
+      // the circle and the longer one bleeds off, keeping faces centered.
+      const d = radius * 2;
+      const sw = fPortrait.naturalWidth || 1;
+      const sh = fPortrait.naturalHeight || 1;
+      const srcAspect = sw / sh;
+      let drawW = d, drawH = d;
+      if (srcAspect > 1) drawW = d * srcAspect;
+      else drawH = d / srcAspect;
+      ctx.drawImage(fPortrait, x - drawW / 2, y - drawH / 2, drawW, drawH);
+      // Status tints stay INSIDE the clip so the colored overlay never bleeds
+      // past the circular pawn frame.
+      drawPortraitTint(ctx, x, y, radius, (f.effects ?? []) as never, now);
+      ctx.restore();
+    } else {
+      ctx.beginPath();
+      ctx.arc(x, y, radius, 0, Math.PI * 2);
+      ctx.fillStyle = "rgba(15, 23, 42, 0.92)";
+      ctx.fill();
+      ctx.fillStyle = "#e5e7eb";
+      ctx.font = `bold ${hexSize * 0.5}px system-ui, sans-serif`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText((f.name ?? "?").charAt(0).toUpperCase(), x, y - 2);
+    }
     ctx.beginPath();
     ctx.arc(x, y, radius, 0, Math.PI * 2);
-    ctx.fillStyle = "rgba(15, 23, 42, 0.92)";
-    ctx.fill();
     ctx.lineWidth = 3;
     ctx.strokeStyle = classColor(f.class);
     ctx.stroke();
-    ctx.fillStyle = "#e5e7eb";
-    ctx.font = `bold ${hexSize * 0.5}px system-ui, sans-serif`;
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    ctx.fillText((f.name ?? "?").charAt(0).toUpperCase(), x, y - 2);
     if (!downed) drawHpBar(ctx, x, y + hexSize * 0.62, hexSize * 1.2, 4, f.hp, f.max_hp);
     if (!downed && f.effects) drawStatusOverlay(ctx, x, y, radius, f.effects as never, now);
     ctx.globalAlpha = 1;
@@ -1333,35 +3378,49 @@ function drawActors(
     // Boss pawns are visibly larger so threat reads instantly.
     const radius = hexSize * (m.is_boss ? 0.78 : 0.6);
     if (!downed && previewSet?.has(m.id)) drawPreviewGlow(x, y, radius, isReachable(m as never));
-    if (!downed && m.id === currentActorId) drawCurrentActorPulse(x, y, radius);
-    // Selected-target indicator: pulsing orange ring around the picked monster
-    // so the player knows who their next Attack/ability will hit.
-    if (!downed && m.id === targetMonsterId) {
-      const pulse = 0.7 + 0.3 * Math.sin(now / 220);
-      ctx.save();
-      ctx.globalAlpha = pulse;
-      ctx.strokeStyle = "#fb923c";
-      ctx.lineWidth = 3;
-      ctx.setLineDash([6, 4]);
-      ctx.lineDashOffset = -now / 30;
-      ctx.beginPath();
-      ctx.arc(x, y, radius * 1.32, 0, Math.PI * 2);
-      ctx.stroke();
-      ctx.restore();
-    }
+    // Monster current-actor pulse intentionally dropped — same reasoning as
+    // the fighter side. The hex tile border + gold rim already mark active
+    // turn; the ambient effects need room to breathe.
+    // Selected-target indicator: the target's HEX TILE gets a dashed orange
+    // border (drawn in the tile pass, not here). No pawn-ring orbit — the
+    // tile marker carries the targeting cue and leaves the pawn clean for
+    // status-effect particles. (Code intentionally left empty for clarity.)
     ctx.globalAlpha = downed ? 0.35 : 1;
+    const mPortrait =
+      resolvePortrait(m.art_url)
+      ?? (m.name ? resolvePortrait(monsterPortraitUrl(m.name)) : null);
+    if (mPortrait) {
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(x, y, radius, 0, Math.PI * 2);
+      ctx.closePath();
+      ctx.clip();
+      const d = radius * 2;
+      const sw = mPortrait.naturalWidth || 1;
+      const sh = mPortrait.naturalHeight || 1;
+      const srcAspect = sw / sh;
+      let drawW = d, drawH = d;
+      if (srcAspect > 1) drawW = d * srcAspect;
+      else drawH = d / srcAspect;
+      ctx.drawImage(mPortrait, x - drawW / 2, y - drawH / 2, drawW, drawH);
+      drawPortraitTint(ctx, x, y, radius, (m.effects ?? []) as never, now);
+      ctx.restore();
+    } else {
+      ctx.beginPath();
+      ctx.arc(x, y, radius, 0, Math.PI * 2);
+      ctx.fillStyle = m.is_boss ? "rgba(127, 29, 29, 0.95)" : "rgba(76, 5, 25, 0.92)";
+      ctx.fill();
+      ctx.fillStyle = "#fee2e2";
+      ctx.font = `bold ${hexSize * (m.is_boss ? 0.72 : 0.55)}px system-ui, sans-serif`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText((m.name ?? "?").charAt(0).toUpperCase(), x, y - 2);
+    }
     ctx.beginPath();
     ctx.arc(x, y, radius, 0, Math.PI * 2);
-    ctx.fillStyle = m.is_boss ? "rgba(127, 29, 29, 0.95)" : "rgba(76, 5, 25, 0.92)";
-    ctx.fill();
     ctx.lineWidth = m.is_boss ? 4 : 2.5;
     ctx.strokeStyle = m.is_boss ? "#fbbf24" : "#fca5a5"; // bosses get a gold rim
     ctx.stroke();
-    ctx.fillStyle = "#fee2e2";
-    ctx.font = `bold ${hexSize * (m.is_boss ? 0.72 : 0.55)}px system-ui, sans-serif`;
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    ctx.fillText((m.name ?? "?").charAt(0).toUpperCase(), x, y - 2);
     if (!downed) drawHpBar(ctx, x, y + radius + 4, hexSize * (m.is_boss ? 1.7 : 1.25), m.is_boss ? 5 : 4, m.hp, m.max_hp);
     if (!downed && m.effects) drawStatusOverlay(ctx, x, y, radius, m.effects as never, now);
     ctx.globalAlpha = 1;

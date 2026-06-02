@@ -59,6 +59,27 @@ export function charPortraitUrl(name: string): string {
   return `/img/art/${CHAR_ART_VERSION}/character/${slugifyName(name)}.png`;
 }
 
+// Monster portrait URL — mirrors the worker's deterministic R2 key so
+// existing generated art is reachable even when the live CombatState
+// hasn't been re-hydrated with `art_url` (the in-memory state only
+// populates art_url at scene-creation time; resumed quests with art
+// generated later won't have it set).
+//
+// Keep MONSTER_ART_VERSION here in lockstep with the same constant in
+// apps/web/src/ai.ts. A mismatch silently serves the previous version.
+const MONSTER_ART_VERSION = "v8";
+function slugifyMonsterName(name: string): string {
+  return name
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/[̀-ͯ]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+export function monsterPortraitUrl(name: string): string {
+  return `/img/art/${MONSTER_ART_VERSION}/${slugifyMonsterName(name)}.png`;
+}
+
 export function hpColor(current: number, max: number): string {
   const pct = max > 0 ? current / max : 1;
   return pct < 0.25 ? "#dc2626" : pct < 0.5 ? "#d97706" : "#16a34a";

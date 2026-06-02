@@ -938,6 +938,24 @@ export function CombatPage({
   // dispatch reads from this ref instead so it always finds up-to-date
   // pawn positions.
   const stateRef = useRef<CombatState | null>(null);
+  // Battlefield viewport — measured live so the hex canvas can fill the
+  // area left of the combat log and respond to window resizes. The
+  // ResizeObserver watches `battlefieldFrameRef` (the absolutely-positioned
+  // wrapper of the canvas) and emits {w, h} for the canvas to consume.
+  const battlefieldFrameRef = useRef<HTMLDivElement | null>(null);
+  const [battlefieldSize, setBattlefieldSize] = useState<{ w: number; h: number }>({ w: 0, h: 0 });
+  useEffect(() => {
+    const el = battlefieldFrameRef.current;
+    if (!el) return;
+    const update = () => {
+      const r = el.getBoundingClientRect();
+      setBattlefieldSize({ w: Math.round(r.width), h: Math.round(r.height) });
+    };
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [battlefieldFrameRef.current]);
   // Timestamp (ms epoch) by which the latest in-flight projectile/swing will
   // land. State dispatches (which can zero out a monster's HP) are deferred
   // until then so the kill visually lands AFTER the shot connects, not before.
@@ -1394,7 +1412,13 @@ export function CombatPage({
               ) {
                 const e = evt as { actor?: string; target?: string };
                 const tgt = e.target ? findFighter(e.target) : e.actor ? findFighter(e.actor) : null;
-                if (tgt?.pos) hex.emitParticle({ id: `sof${Date.now()}`, kind: "shield", at: tgt.pos, actorId: tgt.id });
+                if (tgt?.pos) {
+                  hex.emitParticle({ id: `sof${Date.now()}`, kind: "shield", at: tgt.pos, actorId: tgt.id });
+                  // Shield of Faith → "Test Coverage" rise (green checkmark).
+                  if (evt.type === "ability_shield_of_faith") {
+                    hex.emitRiseEffect({ id: `r${Date.now()}`, kind: "test_coverage", actorId: tgt.id });
+                  }
+                }
               }
               if (
                 evt.type === "passive_paladin_auto_heal"
@@ -1402,12 +1426,50 @@ export function CombatPage({
               ) {
                 const e = evt as { target?: string; actor?: string };
                 const tgt = e.target ? findFighter(e.target) : e.actor ? findFighter(e.actor) : null;
-                if (tgt?.pos) hex.emitParticle({ id: `hl${Date.now()}`, kind: "heal", at: tgt.pos, actorId: tgt.id });
+                if (tgt?.pos) {
+                  hex.emitParticle({ id: `hl${Date.now()}`, kind: "heal", at: tgt.pos, actorId: tgt.id });
+                  // Good Fortune → "Delivery Bonus" rise (gold coin).
+                  if (evt.type === "ability_good_fortune_delayed") {
+                    hex.emitRiseEffect({ id: `r${Date.now()}`, kind: "delivery_bonus", actorId: tgt.id });
+                  }
+                }
               }
               if (evt.type === "ability_animal_form" || evt.type === "ability_ill_omen_applied" || evt.type === "ability_hex") {
                 const e = evt as { actor?: string; target?: string };
                 const tgt = e.target ? (findFighter(e.target) ?? findMonster(e.target)) : e.actor ? findFighter(e.actor) : null;
-                if (tgt?.pos) hex.emitParticle({ id: `mg${Date.now()}`, kind: "magic", at: tgt.pos, actorId: tgt.id });
+                if (tgt?.pos) {
+                  hex.emitParticle({ id: `mg${Date.now()}`, kind: "magic", at: tgt.pos, actorId: tgt.id });
+                  // Ill Omen → dark hex rune rise on the target. The
+                  // persistent status effects (animal_form / hex) already
+                  // have ambient canvas overlays; no rise needed for them.
+                  if (evt.type === "ability_ill_omen_applied" && tgt.id) {
+                    hex.emitRiseEffect({ id: `r${Date.now()}`, kind: "ill_omen", actorId: tgt.id });
+                  }
+                }
+              }
+              // Taunt, Mark, Foresee — pure soft-effect rises with no
+              // persistent status to render. Each fires on the relevant
+              // pawn so the player sees who was just taunted / marked /
+              // foreseen.
+              if (evt.type === "ability_taunt") {
+                const e = evt as { actor?: string };
+                const aid = e.actor;
+                if (aid) hex.emitRiseEffect({ id: `r${Date.now()}`, kind: "taunt", actorId: aid });
+              }
+              if (evt.type === "ability_mark" as never) {
+                const e = evt as { target?: string };
+                if (e.target) {
+                  const tgt = findMonster(e.target) ?? findFighter(e.target);
+                  if (tgt?.id) hex.emitRiseEffect({ id: `r${Date.now()}`, kind: "marked", actorId: tgt.id });
+                }
+              }
+              if (evt.type === "ability_foresee") {
+                const e = evt as { predicted_target?: string; actor?: string };
+                const aid = e.predicted_target ?? e.actor;
+                if (aid) {
+                  const tgt = findMonster(aid) ?? findFighter(aid);
+                  if (tgt?.id) hex.emitRiseEffect({ id: `r${Date.now()}`, kind: "foreseen", actorId: tgt.id });
+                }
               }
               // Generic effect_applied from monster specials (entangle_on_hit etc.).
               if (evt.type === "effect_applied") {
@@ -1609,6 +1671,23 @@ export function CombatPage({
     const t = setTimeout(() => setSkipReady(true), 8000);
     return () => clearTimeout(t);
   }, [isInactivePlayerTurn, currentActorId]);
+
+  // Auto-skip when it's my turn but I'm frozen. The engine rejects move
+  // while frozen and the attack-phase tick auto-skips, but without this
+  // helper the player just sees disabled buttons and has to manually
+  // click "Wait" — which feels broken. Sending wait fires the same
+  // tickAtTurnStart that emits turn_skip + advances the turn.
+  const meFrozen = !!state?.fighters.find((f) => f.id === selfId)?.effects?.some((e) => e.type === "frozen");
+  useEffect(() => {
+    if (!myTurn || !meFrozen || !state || state.status !== "active") return;
+    // Small delay so the player visibly registers their turn started
+    // (avatar tinted blue, "Frozen — turn skipped" log entry) before
+    // the turn auto-advances. Otherwise it feels like nothing happened.
+    const t = setTimeout(() => {
+      send({ kind: "wait", actor: selfId });
+    }, 800);
+    return () => clearTimeout(t);
+  }, [myTurn, meFrozen, state?.status, selfId]);
 
   const ended =
     state?.status === "victory" || state?.status === "defeat" || state?.status === "fled";
@@ -1833,14 +1912,15 @@ export function CombatPage({
         />
       )}
 
-      {/* Room view — flex: 1, themed scenery backdrop + floating overlays.
-          Layer order: CSS/SVG fallback scenery → flux-generated room photo
-          (fade-in when loaded) → atmospheric dim gradient → particles.
-          The SVG keeps painting underneath even after the photo loads so
-          slow networks never flash an empty void. */}
+      {/* Room view — flex: 1, flat dark background. The old themed scenery
+          backdrop (CombatBackdropLayer SVG + full-screen flux room photo +
+          atmospheric gradient) is retired in hex mode: the AI-generated
+          terrain now lives INSIDE the canvas and fills the actual play
+          area, not the whole page. Slack/legacy combats still render the
+          full backdrop for parity. */}
       <div style={{ flex: 1, position: "relative", overflow: "hidden", minHeight: 0, background: "#0a0b10" }}>
-        <CombatBackdropLayer scene={scene} />
-        {bgArtUrl && (
+        {!ui.state?.hex_range_enabled && <CombatBackdropLayer scene={scene} />}
+        {!ui.state?.hex_range_enabled && bgArtUrl && (
           <img
             src={bgArtUrl}
             alt=""
@@ -1858,13 +1938,15 @@ export function CombatPage({
             onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
           />
         )}
-        <div
-          aria-hidden
-          style={{
-            position: "absolute", inset: 0, pointerEvents: "none",
-            background: "linear-gradient(to bottom, rgba(0,0,0,0.30) 0%, rgba(0,0,0,0.05) 38%, rgba(0,0,0,0.78) 100%)",
-          }}
-        />
+        {!ui.state?.hex_range_enabled && (
+          <div
+            aria-hidden
+            style={{
+              position: "absolute", inset: 0, pointerEvents: "none",
+              background: "linear-gradient(to bottom, rgba(0,0,0,0.30) 0%, rgba(0,0,0,0.05) 38%, rgba(0,0,0,0.78) 100%)",
+            }}
+          />
+        )}
         {/* DOM particle overlay — retired in hex mode (canvas particles
             cover everything, positioned to actor pawns instead of screen
             center). Slack-compat / legacy combats still see it. */}
@@ -2225,24 +2307,30 @@ export function CombatPage({
               );
 
               return (
-                <div style={{
-                  position: "absolute",
-                  top: 50,
-                  left: 0,
-                  right: isMobile ? 0 : 300,
-                  bottom: 12,
-                  display: "flex",
-                  flexDirection: "column",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  gap: 8,
-                  zIndex: 5,
-                  pointerEvents: "none",
-                }}>
+                <div
+                  ref={battlefieldFrameRef}
+                  style={{
+                    position: "absolute",
+                    top: 50,
+                    left: 0,
+                    // Right edge tracks the combat log's actual left edge.
+                    // Log is positioned `right: 12` with `width: min(280px, 22vw)`,
+                    // so the canvas right edge is `12 + log.width + 8` for a small
+                    // visual gap. This calc keeps the canvas flush against the log
+                    // even when the viewport is narrow and the log shrinks below
+                    // 280px — the old hard-coded `right: 300` left a big dead
+                    // strip in that case.
+                    right: isMobile ? 0 : "calc(min(280px, 22vw) + 20px)",
+                    bottom: 12,
+                    zIndex: 5,
+                    pointerEvents: "none",
+                  }}
+                >
                   <div style={{
                     position: "relative",
                     pointerEvents: "auto",
-                    maxWidth: "100%",
+                    width: "100%",
+                    height: "100%",
                   }}>
                     {phaseChip}
                     {aimBanner}
@@ -2251,6 +2339,8 @@ export function CombatPage({
                       myActorId={selfId}
                       currentActorId={currentActorId}
                       isMyTurn={myTurn}
+                      viewportWidth={battlefieldSize.w}
+                      viewportHeight={battlefieldSize.h}
                       turnPhase={state.turn_phase ?? "attack"}
                       hexSize={HEX_SIZE}
                       apiRef={hexApiRef}
@@ -2354,10 +2444,10 @@ export function CombatPage({
                       }}
                     />
                   </div>
-                  {/* Focused pawn card — single docked card BELOW the canvas
-                      so it never obscures the battlefield. Priority:
-                      pinned (user tap/click) > hovered > current actor.
-                      Replaces the per-pawn floating callouts entirely. */}
+                  {/* Focused pawn card — overlaid on the canvas in the
+                      bottom-left corner so it stays in the player's eye
+                      line during the action. Priority: pinned (user
+                      tap/click) > hovered > current actor. */}
                   {(() => {
                     const focusId = pinnedPawnId ?? hoveredPawnId ?? currentActorId ?? null;
                     if (!focusId) return null;
@@ -2367,10 +2457,12 @@ export function CombatPage({
                     const isPinnedFocus = pinnedPawnId === focusId;
                     return (
                       <div style={{
-                        marginTop: 10,
-                        display: "flex",
-                        justifyContent: "center",
+                        position: "absolute",
+                        left: 12,
+                        bottom: 12,
+                        zIndex: 6,
                         pointerEvents: "auto",
+                        maxWidth: "min(360px, 38vw)",
                       }}>
                         {fighter && (() => {
                           const pawn: PawnLike = {
