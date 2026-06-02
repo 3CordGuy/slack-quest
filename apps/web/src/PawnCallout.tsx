@@ -203,7 +203,7 @@ export function PawnCallout({
         <div style={{ display: "flex", gap: 3, flexWrap: "wrap" }}>
           {pawn.effects.slice(0, 6).map((e, i) => (
             <span key={i} style={effectPill(e.type)} title={effectTooltipText(e.type, e.magnitude, e.remaining)}>
-              {e.type.slice(0, 4)}
+              {(EFFECT_DESCRIPTIONS[e.type]?.label ?? e.type).slice(0, 4).toUpperCase()}
             </span>
           ))}
         </div>
