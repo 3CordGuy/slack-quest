@@ -2134,8 +2134,14 @@ function drawDeadlockedChain(
   ctx.save();
   const LINKS = 10;
   const ringR = r * 1.18;
-  const linkLen = (Math.PI * 2 * ringR) / LINKS * 0.95; // tangential span per link
-  const linkW = r * 0.22; // perpendicular thickness
+  // arcSpan = chord-length between adjacent link centers along the ring.
+  // For tangentially-oriented links, that span IS the distance to the
+  // next link's center, so a link length equal to arcSpan makes them
+  // touch end-to-end and anything > 1.0 overlaps. Tuned for visible
+  // interlocking.
+  const arcSpan = (Math.PI * 2 * ringR) / LINKS;
+  const linkLen = arcSpan * 1.35;
+  const linkW = r * 0.32; // wider links so the radial pair visibly hooks through the tangential ones
   const rotation = now / 5200; // very slow CW drift
   // Per-link pulse — synchronized so the entire chain breathes in/out
   // together (signaling the lock holds tight).
@@ -2145,12 +2151,13 @@ function drawDeadlockedChain(
     const ang = rotation + (i / LINKS) * Math.PI * 2;
     const lx = cx + Math.cos(ang) * ringR * breathing;
     const ly = cy + Math.sin(ang) * ringR * breathing;
-    // Alternate "vertical" vs "horizontal" link orientation by rotating
-    // each link 90° relative to the previous. Read as a real chain
-    // where every other link is turned perpendicular.
+    // Alternate "tangential" vs "radial" link orientation so every
+    // other link is turned 90° (real chain look). The radial links
+    // hook through the tangential ones visually because their length
+    // crosses the chain centerline.
     const tangent = ang + Math.PI / 2;
     const localRot = tangent + (i % 2 === 0 ? 0 : Math.PI / 2);
-    drawChainLink(ctx, lx, ly, linkLen * 0.62, linkW, localRot);
+    drawChainLink(ctx, lx, ly, linkLen, linkW, localRot);
   }
 
   // Subtle dim green halo behind the chain — gives the lock-down state
