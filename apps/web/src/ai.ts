@@ -482,11 +482,11 @@ const MONSTER_ART_VERSION = "v8";
 // Battlefield ground textures (top-down view of the floor where the hex grid
 // sits). One image per scene; cached forever once generated.
 // v2 — switched from full-screen page backdrop to canvas-inscribed terrain.
-// New prompt asks for a wider rectangular layout that crops cleanly to the
-// hex-grid bounding box, so old square v1 art (Studio-Ghibli-style "top-down
-// terrain") no longer fits the canvas aspect. Bumping the version forces
-// fresh generation on first combat in each scene.
-const BATTLEFIELD_ART_VERSION = "v2";
+// v3 — opens the slot for hand-curated art (e.g. Gemini "Nano Banana") to be
+// dropped at the documented R2 key. Flux still generates on cache miss for
+// any scene that doesn't have a curated drop. See
+// docs/curated-battlefield-art.md for the full workflow.
+const BATTLEFIELD_ART_VERSION = "v3";
 
 // Wrap a bucket + public base-url so art helpers can build full asset URLs
 // without leaking the env type into ai.ts. baseUrl points at whichever worker
