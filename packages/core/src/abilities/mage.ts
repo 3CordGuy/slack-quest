@@ -6,12 +6,13 @@ export const mageAbilities: AbilityDef[] = [
     kind: "active",
     id: "fireball",
     name: "Prod Fire",
-    blurb: "When prod ignites, everything burns — deals magic×d6 arcane fire damage to all enemies.",
+    blurb: "When prod ignites, everything within 3 hexes burns — deals magic×d6 arcane fire damage to every enemy in the blast.",
     icon: "fire",
     mana_cost: 2,
     cooldown_turns: 1,
     routing: "aoe_damage",
     target: "all_enemies",
+    aoe_radius_tiles: 3, // burst centered on the mage; misses stragglers across the field
     execute(ctx) {
       const mag = ctx.caster.magic_mod;
       const r = rollSum(ctx.roll, Math.max(1, mag), 6);

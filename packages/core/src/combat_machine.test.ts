@@ -547,14 +547,18 @@ describe("combat_machine.step", () => {
         const init = mageHexInit();
         init.fighters[0].weapon_range = "melee";
         const begun = runBegin(createCombatState(init), [15, 10, 5]);
+        // Caster at (4,1), monsters at (4,3) and (4,4) — both inside Prod
+        // Fire's 3-hex burst. Obstacle at (4,2) blocks line of sight to
+        // both. With a focus weapon the LOS gate would filter them; with
+        // melee the gate is bypassed and the burst still hits both.
         const setup: CombatState = {
           ...begun.state,
           fighters: begun.state.fighters.map((f) => ({ ...f, pos: { q: 4, r: 1 } })),
           monsters: [
-            { ...begun.state.monsters[0], pos: { q: 4, r: 7 } },
-            { ...begun.state.monsters[1], pos: { q: 4, r: 9 } },
+            { ...begun.state.monsters[0], pos: { q: 4, r: 3 } },
+            { ...begun.state.monsters[1], pos: { q: 4, r: 4 } },
           ],
-          obstacles: [{ pos: { q: 4, r: 5 }, kind: "boulder" }],
+          obstacles: [{ pos: { q: 4, r: 2 }, kind: "boulder" }],
         };
         const result = step(
           setup,
@@ -564,6 +568,53 @@ describe("combat_machine.step", () => {
         // Both monsters damaged despite the wall.
         expect(result.state.monsters[0].hp).toBe(7);
         expect(result.state.monsters[1].hp).toBe(7);
+      });
+
+      it("aoe_radius_tiles caps the burst — enemies beyond the radius are not hit", () => {
+        const begun = runBegin(createCombatState(mageHexInit()), [15, 10, 5]);
+        // Caster at (4,1). Near at (4,3) — distance 2, inside the 3-hex
+        // burst. Far at (4,7) — distance 6, outside. No obstacles so LOS
+        // is clean; the only thing keeping Far safe is the radius gate.
+        const setup: CombatState = {
+          ...begun.state,
+          fighters: begun.state.fighters.map((f) => ({ ...f, pos: { q: 4, r: 1 } })),
+          monsters: [
+            { ...begun.state.monsters[0], pos: { q: 4, r: 3 } },
+            { ...begun.state.monsters[1], pos: { q: 4, r: 7 } },
+          ],
+          obstacles: [],
+        };
+        const result = step(
+          setup,
+          { kind: "ability", actor: "U_PALADIN", ability_id: "fireball" },
+          seqRoll([3]),
+        );
+        expect(result.state.monsters[0].hp).toBe(7); // Near burns
+        expect(result.state.monsters[1].hp).toBe(10); // Far untouched
+        const hits = result.events.filter((e) => e.type === "player_hit");
+        expect(hits).toHaveLength(1);
+      });
+
+      it("rejects when every enemy is beyond aoe_radius_tiles", () => {
+        const begun = runBegin(createCombatState(mageHexInit()), [15, 10, 5]);
+        const setup: CombatState = {
+          ...begun.state,
+          fighters: begun.state.fighters.map((f) => ({ ...f, pos: { q: 4, r: 1 } })),
+          monsters: [
+            { ...begun.state.monsters[0], pos: { q: 4, r: 7 } }, // dist 6
+            { ...begun.state.monsters[1], pos: { q: 4, r: 9 } }, // dist 8
+          ],
+          obstacles: [],
+        };
+        const result = step(
+          setup,
+          { kind: "ability", actor: "U_PALADIN", ability_id: "fireball" },
+          seqRoll([3]),
+        );
+        const rejected = result.events.find((e) => e.type === "rejected");
+        expect(rejected).toBeDefined();
+        expect(result.state.monsters[0].hp).toBe(10);
+        expect(result.state.monsters[1].hp).toBe(10);
       });
 
       it("hex_range_enabled=false (Slack mode) bypasses LOS entirely", () => {
@@ -2740,6 +2791,231 @@ describe("hex obstacles", () => {
       const result = step(empty, { kind: "move", actor: fighter.id, to: neighbor }, seqRoll([]));
       expect(result.state.pickups).toEqual({});
       expect(result.events.find((e) => e.type === "loot_pickup")).toBeUndefined();
+    });
+  });
+
+  describe("ally NPC (merc) range gate", () => {
+    function mercInit(): CombatInit {
+      const init = baseInit({ hex_range_enabled: true });
+      // Add a ranged merc next to the paladin. Range 4 (base for "ranged"
+      // with no DEX stat tracked on a merc).
+      init.fighters.push({
+        id: "__merc_U_PALADIN__",
+        name: "Uncle Bob",
+        class: "Clean Coder",
+        level: 5,
+        hp: 20,
+        max_hp: 20,
+        mana: 0,
+        max_mana: 0,
+        shield: 0,
+        position: "back",
+        attack_mod: 4,
+        magic_mod: 0,
+        weapon_power: 5,
+        armor_power: 0,
+        scars: [],
+        weapon_range: "ranged",
+      });
+      return init;
+    }
+
+    function setupMercTurn(state: CombatState, mercPos: { q: number; r: number }, monsterPos: { q: number; r: number }): CombatState {
+      // Force the merc to act first and pin everyone's positions for the test.
+      return {
+        ...state,
+        fighters: state.fighters.map((f) =>
+          f.id === "__merc_U_PALADIN__" ? { ...f, pos: mercPos } : f,
+        ),
+        monsters: state.monsters.map((m) => ({ ...m, pos: monsterPos })),
+        turn_order: ["__merc_U_PALADIN__", "U_PALADIN", MONSTER_ID],
+        turn_index: 0,
+        turn_phase: "move",
+      };
+    }
+
+    it("only attacks monsters inside the merc's weapon range", () => {
+      // Merc range = 4 (ranged base). Monster at distance 8 — out of reach
+      // even after the 2-hex auto-step, so the merc holds fire.
+      const begun = runBegin(createCombatState(mercInit()), [20, 18, 5]);
+      const setup = setupMercTurn(begun.state, { q: 1, r: 1 }, { q: 1, r: 9 });
+      const result = step(setup, { kind: "ally_npc_act" }, seqRoll([]));
+      // No hit_check event — the merc didn't fire a shot.
+      expect(result.events.find((e) => e.type === "hit_check")).toBeUndefined();
+      // Monster still at full HP.
+      expect(result.state.monsters[0].hp).toBe(40);
+      // The merc did move toward the monster.
+      const moved = result.events.find((e) => e.type === "moved");
+      expect(moved).toBeDefined();
+    });
+
+    it("auto-steps toward the closest monster when out of range", () => {
+      const begun = runBegin(createCombatState(mercInit()), [20, 18, 5]);
+      const setup = setupMercTurn(begun.state, { q: 1, r: 1 }, { q: 1, r: 9 });
+      const result = step(setup, { kind: "ally_npc_act" }, seqRoll([]));
+      const moved = result.events.find((e) => e.type === "moved");
+      expect(moved).toBeDefined();
+      const merc = result.state.fighters.find((f) => f.id === "__merc_U_PALADIN__");
+      // Default ally NPC move range is 2 (no stats). The merc steps 2 hexes
+      // along the path from (1,1) toward (1,9) — ending at (1,3).
+      expect(merc?.pos).toEqual({ q: 1, r: 3 });
+    });
+
+    it("attacks the in-range monster after auto-step closes the gap", () => {
+      // Monster 5 hexes away. Merc range 4. After 2-hex step, distance is
+      // 3 — inside range — so the merc fires.
+      const begun = runBegin(createCombatState(mercInit()), [20, 18, 5]);
+      const setup = setupMercTurn(begun.state, { q: 1, r: 1 }, { q: 1, r: 6 });
+      const result = step(setup, { kind: "ally_npc_act" }, seqRoll([18, 4]));
+      const hit = result.events.find((e) => e.type === "hit_check");
+      expect(hit).toBeDefined();
+      expect(result.state.monsters[0].hp).toBeLessThan(40);
+    });
+
+    it("Slack mode (hex_range_enabled=false) bypasses the range gate entirely", () => {
+      const init = mercInit();
+      init.hex_range_enabled = false;
+      const begun = runBegin(createCombatState(init), [20, 18, 5]);
+      const setup = {
+        ...begun.state,
+        turn_order: ["__merc_U_PALADIN__", "U_PALADIN", MONSTER_ID],
+        turn_index: 0,
+        turn_phase: "move" as const,
+      };
+      // No positions matter in Slack mode — the merc just fires at the
+      // lowest-HP monster anywhere. (d20=18 lands; d6=4 deals damage.)
+      const result = step(setup, { kind: "ally_npc_act" }, seqRoll([18, 4]));
+      expect(result.events.find((e) => e.type === "hit_check")).toBeDefined();
+      expect(result.state.monsters[0].hp).toBeLessThan(40);
+    });
+  });
+
+  describe("boss / volley splash radius", () => {
+    function splashInit(): CombatInit {
+      // Two fighters + one boss with a wide damage roll so splash is easy
+      // to read.  hex_range_enabled so the radius gate fires.
+      const init = baseInit({
+        hex_range_enabled: true,
+        fighters: [
+          ...baseInit().fighters,
+          {
+            id: "U_MAGE",
+            name: "Aurora",
+            class: "DevOps Mage",
+            level: 5,
+            hp: 25,
+            max_hp: 25,
+            mana: 3,
+            max_mana: 3,
+            shield: 0,
+            position: "back",
+            attack_mod: 0,
+            magic_mod: 2,
+            weapon_power: 0,
+            armor_power: 0,
+            scars: [],
+          },
+        ],
+        monster: {
+          name: "API Abuser",
+          hp: 50,
+          max_hp: 50,
+          shield: 0,
+          tier: 3,
+          is_boss: true,
+          damage_roll: "1d4",
+        },
+      });
+      return init;
+    }
+
+    function setupMonsterTurn(
+      state: CombatState,
+      paladinPos: { q: number; r: number },
+      magePos: { q: number; r: number },
+      monsterPos: { q: number; r: number },
+    ): CombatState {
+      return {
+        ...state,
+        fighters: state.fighters.map((f) =>
+          f.id === "U_PALADIN" ? { ...f, pos: paladinPos }
+          : f.id === "U_MAGE" ? { ...f, pos: magePos }
+          : f,
+        ),
+        monsters: state.monsters.map((m) => ({ ...m, pos: monsterPos })),
+        turn_order: [MONSTER_ID, "U_PALADIN", "U_MAGE"],
+        turn_index: 0,
+        turn_phase: "attack",
+      };
+    }
+
+    it("splash only hits fighters within SPLASH_RADIUS_TILES of the boss", () => {
+      // Paladin adjacent to boss (dist 1); mage at dist 3. Splash radius
+      // is 2 hexes — mage stays clean, only one fighter is in the burst
+      // zone, splash doesn't trigger at all and the boss falls back to a
+      // single-target attack on the paladin.
+      const begun = runBegin(createCombatState(splashInit()), [20, 15, 5]);
+      const setup = setupMonsterTurn(
+        begun.state,
+        { q: 4, r: 4 }, // paladin — dist 1 from boss
+        { q: 1, r: 4 }, // mage — dist 3 from boss (outside SPLASH_RADIUS_TILES)
+        { q: 5, r: 4 }, // boss
+      );
+      const result = step(setup, { kind: "monster_act" }, seqRoll([
+        50,   // pickMonsterTarget weight roll (101-sided)
+        20,   // single-target hit_check d20 (guaranteed land)
+        4,    // damage 1d4
+      ]));
+      const splash = result.events.find((e) => e.type === "monster_splash");
+      // Splash should NOT have fired — only one fighter in radius.
+      expect(splash).toBeUndefined();
+      // Mage stays at full HP regardless.
+      expect(result.state.fighters.find((f) => f.id === "U_MAGE")?.hp).toBe(25);
+    });
+
+    it("splash fires and hits both fighters when both are within radius", () => {
+      const begun = runBegin(createCombatState(splashInit()), [20, 15, 5]);
+      const setup = setupMonsterTurn(
+        begun.state,
+        { q: 4, r: 4 }, // paladin — dist 1
+        { q: 3, r: 4 }, // mage — dist 2
+        { q: 5, r: 4 }, // boss
+      );
+      const result = step(setup, { kind: "monster_act" }, seqRoll([
+        50,   // target weight
+        1,    // splash trigger (≤ splashChance=1)
+        4, 4, // damage rolls for both splash targets
+      ]));
+      const splash = result.events.find((e) => e.type === "monster_splash");
+      expect(splash).toBeDefined();
+      if (splash && splash.type === "monster_splash") {
+        const ids = splash.targets.map((t) => t.target).sort();
+        expect(ids).toEqual(["U_MAGE", "U_PALADIN"]);
+      }
+    });
+
+    it("Slack mode (no hex) keeps the legacy hit-everyone splash", () => {
+      const init = splashInit();
+      init.hex_range_enabled = false;
+      const begun = runBegin(createCombatState(init), [20, 15, 5]);
+      const setup = {
+        ...begun.state,
+        turn_order: [MONSTER_ID, "U_PALADIN", "U_MAGE"],
+        turn_index: 0,
+        turn_phase: "attack" as const,
+      };
+      const result = step(setup, { kind: "monster_act" }, seqRoll([
+        50,    // target weight
+        1,     // splash trigger
+        4, 4,  // damage rolls for both splash targets
+      ]));
+      const splash = result.events.find((e) => e.type === "monster_splash");
+      expect(splash).toBeDefined();
+      if (splash && splash.type === "monster_splash") {
+        // Both fighters get hit regardless of position (positions aren't
+        // tracked in Slack mode).
+        expect(splash.targets).toHaveLength(2);
+      }
     });
   });
 });
