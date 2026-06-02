@@ -332,6 +332,33 @@ const unsubscribeFromAll: AbilityDef = {
   },
 };
 
+const a11yFirst: AbilityDef = {
+  kind: "passive",
+  id: "a11y_first",
+  name: "A11y First",
+  blurb: "Audit every interaction — gain +1 to your attack rolls and +1% dodge chance, always on.",
+  icon: "aura",
+  trigger: "always_on",
+  once_per_fight: false,
+  execute: () => [],
+  // Bonuses are applied inline by the combat machine: +1 to hitTotal in the
+  // attack_roll_damage handler and +1% to the AGI dodge threshold in the
+  // monster-vs-fighter dodge check.
+};
+
+const earworm: AbilityDef = {
+  kind: "passive",
+  id: "earworm",
+  name: "Earworm",
+  blurb: "Every brilliant moment becomes a song — gain +1 mana whenever any party member lands a crit.",
+  icon: "sound-on",
+  trigger: "always_on",
+  once_per_fight: false,
+  execute: () => [],
+  // Mana refund is applied inline by applyEarwormOnCrit() at every crit
+  // resolution site: basic attack, handleDamageAbility, attack_roll_damage.
+};
+
 const discordNotification: AbilityDef = {
   kind: "active",
   id: "discord_notification",
@@ -753,6 +780,8 @@ const NEW_NODES_BY_CLASS: Record<ClassId, TalentNodeDef[]> = {
     activeNode("frontend_bard", discordNotification, "control"),
     activeNode("frontend_bard", encore, "utility"),
     activeNode("frontend_bard", unsubscribeFromAll, "utility"),
+    activeNode("frontend_bard", a11yFirst, "support"),
+    activeNode("frontend_bard", earworm, "support"),
   ],
   staff_sage: [
     activeNode("staff_sage", frostBolt, "control"),
@@ -792,7 +821,7 @@ export const NEW_ABILITY_DEFS: AbilityDef[] = [
   rollingRestart, cdnSurge, canaryDeploy, observability,
   sanityCheck, bisect, codeReview, staticAnalysis, defensiveProgramming,
   pruning, mycelialWeb, compostHeap, deepRoots, cronJob,
-  standupMeeting, discordNotification, encore, unsubscribeFromAll,
+  standupMeeting, discordNotification, encore, unsubscribeFromAll, a11yFirst, earworm,
   frostBolt, hailstorm, timeDilation, memoization,
   codeAudit, smokeTest, silentMode, hotpath, cherryPick,
   postmortem, circuitBreaker, failover, capacityPlanning,
