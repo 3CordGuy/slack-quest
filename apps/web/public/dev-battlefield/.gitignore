@@ -1,0 +1,14 @@
+# Local-dev curated battlefield art. Drop a PNG here named exactly
+# `<scene>.png` (e.g. deadline_dungeon.png, cubicle_forest.png) and
+# vite dev will serve it under `/dev-battlefield/<scene>.png`.
+# CombatHexGrid probes that URL first and uses it instead of the
+# Flux/R2 image whenever it's present.
+#
+# Promote a curated drop to prod by uploading to R2 via wrangler — see
+# docs/curated-battlefield-art.md.
+*.png
+*.jpg
+*.jpeg
+*.webp
+!.gitignore
+!README.md
