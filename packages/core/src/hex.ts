@@ -311,6 +311,27 @@ export function initialHexPositions(
 
 // ── Stat-derived range helpers ────────────────────────────────────────────────
 
+// Default monster move-range by tier. Replaces the pre-tuning `Math.min(5, 2 + tier)`
+// formula which gave tier-1 monsters 3 hexes and tier-3+ monsters the max 5 —
+// low-tier mobs would close the entire grid in one or two turns, leaving no
+// room for the move/attack phase to actually feel tactical.
+//
+// New schedule (loosely matches the design doc's tier table):
+//   tier 1–2  → 2  (matches fighter base; positioning matters)
+//   tier 3–4  → 3
+//   tier 5–6  → 4
+//   tier 7–8  → 4
+//   tier 9+   → 3  (boss tier — heavy and slower; charge special compensates)
+//
+// Engine still respects an explicit `move_range` on the MonsterSpec — this
+// helper is only the default when nothing's provided.
+export function defaultMonsterMoveRange(tier: number): number {
+  if (tier <= 2) return 2;
+  if (tier <= 4) return 3;
+  if (tier <= 8) return 4;
+  return 3;
+}
+
 // Move range in hexes per turn, derived from AGI stat.
 //
 // Capped at MAX_MOVE_RANGE so stacked AGI equipment (boots + pants + ring,

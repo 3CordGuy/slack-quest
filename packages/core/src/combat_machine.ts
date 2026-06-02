@@ -33,6 +33,7 @@ import {
   hexPath,
   hexReachable,
   initialHexPositions,
+  defaultMonsterMoveRange,
   generateObstacles,
   obstaclePositions,
   deriveMoveRange,
@@ -709,7 +710,7 @@ export function createCombatState(init: CombatInit): CombatState {
       boss_phase: m.boss_phase ?? 1,
       shield: m.shield ?? tier,
       pos: monsterPositions[i] ?? { q: 11, r: 3 },
-      move_range: m.move_range ?? Math.min(5, 2 + tier),
+      move_range: m.move_range ?? defaultMonsterMoveRange(tier),
       range_tiles: m.range_tiles ?? (weaponRange === "ranged" ? 4 : weaponRange === "focus" ? 3 : (specials.includes("reach") ? 2 : 1)),
       specials,
     };
@@ -770,7 +771,7 @@ export function upgradeCombatState(raw: CombatState): CombatState {
       monsters: s.monsters.map((m, i) => ({
         ...m,
         pos: m.pos ?? (monsterPositions[i] ?? { q: 11, r: 3 }),
-        move_range: m.move_range ?? Math.min(5, 2 + m.tier),
+        move_range: m.move_range ?? defaultMonsterMoveRange(m.tier),
         range_tiles: m.range_tiles ?? (m.weapon_range === "ranged" ? 4 : m.weapon_range === "focus" ? 3 : 1),
         specials: m.specials ?? (m.tier >= 5 ? ["charge"] : []),
       })),

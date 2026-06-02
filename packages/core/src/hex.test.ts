@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   GRID_DEFAULT,
+  defaultMonsterMoveRange,
   deriveMoveRange,
   deriveRangeTiles,
   generateObstacles,
@@ -317,6 +318,34 @@ describe("initialHexPositions", () => {
       const positions = initialHexPositions(4, side, grid);
       const keys = positions.map(posKey);
       expect(new Set(keys).size).toBe(keys.length);
+    }
+  });
+});
+
+describe("defaultMonsterMoveRange", () => {
+  it("matches the tuned tier schedule", () => {
+    // tier 1–2 → 2 (matches fighter base; positioning has time to matter)
+    expect(defaultMonsterMoveRange(1)).toBe(2);
+    expect(defaultMonsterMoveRange(2)).toBe(2);
+    // tier 3–4 → 3
+    expect(defaultMonsterMoveRange(3)).toBe(3);
+    expect(defaultMonsterMoveRange(4)).toBe(3);
+    // tier 5–8 → 4
+    expect(defaultMonsterMoveRange(5)).toBe(4);
+    expect(defaultMonsterMoveRange(6)).toBe(4);
+    expect(defaultMonsterMoveRange(7)).toBe(4);
+    expect(defaultMonsterMoveRange(8)).toBe(4);
+    // tier 9+ → 3 (boss tier — heavier; charge special compensates)
+    expect(defaultMonsterMoveRange(9)).toBe(3);
+    expect(defaultMonsterMoveRange(20)).toBe(3);
+  });
+
+  it("low-tier monsters never out-move a 5-AGI fighter", () => {
+    // A baseline fighter starts at move-range 2. Low-tier monsters should
+    // never exceed that, otherwise they out-position the party for free.
+    const fighterBase = deriveMoveRange(5);
+    for (let tier = 1; tier <= 2; tier++) {
+      expect(defaultMonsterMoveRange(tier)).toBeLessThanOrEqual(fighterBase);
     }
   });
 });

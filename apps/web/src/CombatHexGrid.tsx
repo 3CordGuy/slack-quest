@@ -579,19 +579,37 @@ export function CombatHexGrid({
 
   // Preload the AI-generated battlefield art whenever the URL changes.
   // Image is drawn as Layer 0 in the rAF loop once loaded.
+  //
+  // Local-dev override: in `vite dev`, the client probes
+  // `/dev-battlefield/<scene>.png` first. When found it's used instead of
+  // the worker-provided R2 URL — lets contributors drop a curated PNG into
+  // `apps/web/public/dev-battlefield/` and see it immediately without
+  // uploading to R2. In production builds (`import.meta.env.DEV === false`)
+  // the probe is skipped entirely.
   useEffect(() => {
     backgroundReadyRef.current = false;
-    if (!backgroundUrl) {
-      backgroundImageRef.current = null;
-      return;
+
+    function loadFinal(src: string | null): void {
+      if (!src) { backgroundImageRef.current = null; return; }
+      const img = new Image();
+      img.crossOrigin = "anonymous";
+      img.onload = () => { backgroundReadyRef.current = true; };
+      img.onerror = () => { backgroundReadyRef.current = false; };
+      img.src = src;
+      backgroundImageRef.current = img;
     }
-    const img = new Image();
-    img.crossOrigin = "anonymous";
-    img.onload = () => { backgroundReadyRef.current = true; };
-    img.onerror = () => { backgroundReadyRef.current = false; };
-    img.src = backgroundUrl;
-    backgroundImageRef.current = img;
-  }, [backgroundUrl]);
+
+    const scene = state.scene;
+    if (import.meta.env.DEV && scene) {
+      const devUrl = `/dev-battlefield/${scene}.png`;
+      const probe = new Image();
+      probe.onload = () => loadFinal(devUrl);
+      probe.onerror = () => loadFinal(backgroundUrl ?? null);
+      probe.src = devUrl;
+    } else {
+      loadFinal(backgroundUrl ?? null);
+    }
+  }, [backgroundUrl, state.scene]);
 
   // Portrait cache keyed by URL. Fighters use char art (with class art as
   // fallback); monsters use whatever art_url the server provides. The cache
