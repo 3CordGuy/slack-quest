@@ -11,7 +11,7 @@
 
 import type { CSSProperties } from "react";
 
-import type { EffectType } from "@gantt-quest/core";
+import { EFFECT_META, type EffectType } from "@gantt-quest/core";
 
 import { Avatar, Icon } from "./icons";
 import { charPortraitUrl, classPortraitUrl } from "./CombatShared";
@@ -489,35 +489,30 @@ const EFFECT_COLOR: Partial<Record<EffectType, string>> = {
 // tooltips on pawn cards and the status section of the character sheet so
 // the player understands what each badge actually does mechanically.
 // magnitude/remaining are interpolated in the formatter below.
-// String-keyed so we can describe transient "soft" effect badges
-// (taunt, marked, vulnerable, foreseen, shield_of_faith…) that
-// don't live in the engine's EffectType union — they're surfaced
-// via separate event flows but still show up as chips on pawn cards.
+// Display labels + descriptions for status chips and the sheet's effect
+// section. Derived from EFFECT_META in @gantt-quest/core so the canonical
+// names (Burning, Frozen, Shocked, Poisoned, Bleeding, Stunned/Containerized,
+// Hexed, Entangled, Empowered, Barkskin, Animal Form, Regen) and blurbs
+// from the engine package are the single source of truth — no risk of the
+// UI drifting away from the engine's naming.
 //
-// Labels match the rest of Gantt Quest's software-engineering theming:
-// the existing class abilities are named "Prod Fire", "Cold Start",
-// "Stack Overflow", "Hotfix", "Regression Rage", "Containerize",
-// "Test Coverage", "Breakpoint" — these descriptions extend that voice
-// to the per-tick effects.
+// A few "soft" event-driven chips (taunt, marked, vulnerable, foreseen,
+// shield_of_faith, good_fortune) don't live in EffectType and are described
+// here directly. They surface via separate event flows but still appear as
+// chips on pawn cards.
 export const EFFECT_DESCRIPTIONS: Record<string, { label: string; what: string }> = {
-  burning:    { label: "Prod Fire",      what: "Production is burning. Takes {mag} damage at the start of each turn." },
-  frozen:     { label: "Cold Start",     what: "Stuck booting up. Skips the next turn entirely." },
-  shocked:    { label: "Race Condition", what: "Timing's off. Takes +{mag} bonus damage from every hit." },
-  poisoned:   { label: "Memory Leak",    what: "Slow drain on resources. Takes {mag} damage each turn (bypasses armor)." },
-  bleeding:   { label: "Regression",     what: "Quiet rot setting in. Takes {mag} damage at the start of each turn." },
-  stunned:    { label: "Stack Overflow", what: "System halted. Skips the next attack — broken when damage threshold is hit." },
-  hexed:      { label: "Code Smell",     what: "Anti-pattern exposed. Takes 25% more damage from all sources." },
-  entangled:  { label: "Dependency Hell", what: "Tangled in transitive deps. −4 to hit. Can't move next turn." },
-  taunt:      { label: "On-Call",        what: "Pulled into the incident. Must attack the taunter — can't pick other targets." },
-  marked:     { label: "Flagged",        what: "Triage queue priority. Allies deal +{mag} bonus damage to this target." },
-  vulnerable: { label: "Unpatched",      what: "Known CVE wide open. Takes +{mag} extra damage from the next hit." },
-  foreseen:   { label: "Forecasted",     what: "Sage predicted this attack — defenders ready a counter." },
-  regen:      { label: "Auto-Heal",      what: "CI pipeline patching live. Heals {mag} HP at the start of each turn." },
-  empowered:  { label: "In the Zone",    what: "Flow state engaged. Deals +{mag} bonus damage on the next attack." },
-  barkskin:   { label: "Hardened",       what: "Production-hardened armor. Damage reduced by {mag} for every hit." },
-  animal_form:{ label: "Beast Mode",     what: "Shipped to prod with no review. Bonus damage + AC while active." },
-  shield_of_faith: { label: "Test Coverage", what: "Edge cases covered. +{mag} shield while active." },
-  good_fortune:    { label: "Delivery Bonus",  what: "Stakeholder happy. Heals {mag} HP at end of turn." },
+  ...Object.fromEntries(
+    (Object.entries(EFFECT_META) as [EffectType, typeof EFFECT_META[EffectType]][]).map(
+      ([key, meta]) => [key, { label: meta.name, what: meta.blurb }],
+    ),
+  ),
+  // Event-driven chips that aren't part of EFFECT_META — described here.
+  taunt:           { label: "Taunted",         what: "Must attack the taunter — can't pick other targets." },
+  marked:          { label: "Marked",          what: "Allies deal +{mag} bonus damage to this target." },
+  vulnerable:      { label: "Vulnerable",      what: "Takes +{mag} extra damage from the next hit." },
+  foreseen:        { label: "Foreseen",        what: "Attack predicted by the Sage — defenders ready a counter." },
+  shield_of_faith: { label: "Shield of Faith", what: "+{mag} shield while active." },
+  good_fortune:    { label: "Good Fortune",    what: "Heals {mag} HP at end of turn." },
 };
 
 export function effectTooltipText(type: EffectType, magnitude: number, remaining: number): string {
