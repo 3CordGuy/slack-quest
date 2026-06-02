@@ -1628,6 +1628,23 @@ export function CombatPage({
     return () => clearTimeout(t);
   }, [isInactivePlayerTurn, currentActorId]);
 
+  // Auto-skip when it's my turn but I'm frozen. The engine rejects move
+  // while frozen and the attack-phase tick auto-skips, but without this
+  // helper the player just sees disabled buttons and has to manually
+  // click "Wait" — which feels broken. Sending wait fires the same
+  // tickAtTurnStart that emits turn_skip + advances the turn.
+  const meFrozen = !!state?.fighters.find((f) => f.id === selfId)?.effects?.some((e) => e.type === "frozen");
+  useEffect(() => {
+    if (!myTurn || !meFrozen || !state || state.status !== "active") return;
+    // Small delay so the player visibly registers their turn started
+    // (avatar tinted blue, "Frozen — turn skipped" log entry) before
+    // the turn auto-advances. Otherwise it feels like nothing happened.
+    const t = setTimeout(() => {
+      send({ kind: "wait", actor: selfId });
+    }, 800);
+    return () => clearTimeout(t);
+  }, [myTurn, meFrozen, state?.status, selfId]);
+
   const ended =
     state?.status === "victory" || state?.status === "defeat" || state?.status === "fled";
 
