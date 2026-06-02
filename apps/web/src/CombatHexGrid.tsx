@@ -1615,6 +1615,36 @@ function drawPortraitTint(
     ctx.restore();
   }
 
+  const poisoned = effects.some((e) => e.type === "poisoned" && e.remaining > 0);
+  if (poisoned) {
+    // Sickly chartreuse cast — slow nauseating throb so the avatar feels
+    // wrong, not energetic. Multiply pulls the underlying skin tones into
+    // a greener register.
+    const pulse = 0.65 + 0.15 * Math.sin(now / 480);
+    ctx.save();
+    ctx.globalCompositeOperation = "multiply";
+    ctx.fillStyle = `rgba(132, 204, 22, ${0.55 * pulse})`;
+    ctx.beginPath();
+    ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+
+    // Faint inner haze — radial gradient gives the surface a wet/sickly
+    // sheen as if sweat or venom is beading at the center of the figure.
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+    ctx.clip();
+    const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, radius);
+    grad.addColorStop(0, "rgba(163, 230, 53, 0.30)");
+    grad.addColorStop(0.6, "rgba(101, 163, 13, 0.15)");
+    grad.addColorStop(1, "rgba(0, 0, 0, 0)");
+    ctx.globalCompositeOperation = "screen";
+    ctx.fillStyle = grad;
+    ctx.fillRect(cx - radius, cy - radius, radius * 2, radius * 2);
+    ctx.restore();
+  }
+
   const shocked = effects.some((e) => e.type === "shocked" && e.remaining > 0);
   if (shocked) {
     // Strobing electric flash — yellow-white overlay with a high-frequency
