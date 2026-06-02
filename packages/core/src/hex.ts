@@ -25,6 +25,20 @@ export interface Obstacle {
   kind: ObstacleKind;
 }
 
+// Loot tile kind. `gold` drops a sack of coins; `item` rolls into a real
+// inventory item at pickup time (worker-side, since rollItem lives in
+// flavor.ts and uses Math.random()). Tiles do NOT block movement or LOS —
+// fighters walk over them and pick them up automatically.
+export type LootKind = "gold" | "item";
+
+export interface LootTile {
+  id: string;          // deterministic ID (e.g. "loot-seed-idx") for client/server sync
+  pos: HexPos;
+  kind: LootKind;
+  // Tier of the source combat — feeds gold amount and item-roll level.
+  tier: number;
+}
+
 // Portrait-oriented battlefield: narrower and taller so it fits mobile
 // screens without crushing the hex size. Party spawns near the TOP, monsters
 // near the BOTTOM, giving roughly 10 hex rows of vertical play space.
@@ -422,6 +436,82 @@ export function generateObstacles(
     if (tooClose) continue;
     placed.push({ pos: h, kind: obstacleKindForScene(scene, rng) });
   }
-
   return placed;
+}
+
+// ── Loot tile generation ─────────────────────────────────────────────────────
+
+// Generates 1–3 loot tiles for a battlefield, deterministic given `seed`.
+//
+// Rules:
+//   - Never on a party / monster start hex (or their neighbors — same
+//     "don't box people in" rule as obstacles)
+//   - Never on an obstacle hex
+//   - Biased toward the MID-FIELD between party and monsters (so picking
+//     them up is a real tactical detour, not a free top-row pickup)
+//   - At least 2 hexes apart from each other and from any obstacle
+//   - Count scales with `tier`: tier ≤ 3 → 1 tile, 4–6 → 2 tiles, 7+ → 3 tiles
+//   - 60% gold / 40% item, rolled per tile from the seeded RNG
+export function generateLootTiles(
+  grid: HexGrid,
+  partyPositions: HexPos[],
+  monsterPositions: HexPos[],
+  obstacles: (HexPos | Obstacle)[],
+  seed: number,
+  tier: number,
+): LootTile[] {
+  // Use a different seed bias from obstacles so loot tile positions don't
+  // collide with the same first-picks the obstacle generator burned through.
+  const rng = mulberry32((seed ^ 0x9E3779B9) >>> 0);
+  const count = tier <= 3 ? 1 : tier <= 6 ? 2 : 3;
+
+  const forbidden = new Set<string>();
+  for (const start of [...partyPositions, ...monsterPositions]) {
+    forbidden.add(posKey(start));
+    for (const n of hexNeighbors(start, grid)) forbidden.add(posKey(n));
+  }
+  for (const o of obstacles) forbidden.add(posKey("pos" in o ? o.pos : o));
+
+  const allHexes = allHexesInGrid(grid).filter((h) => !forbidden.has(posKey(h)));
+
+  // Bias toward the middle 3 rows — same "tactical detour" reasoning as
+  // obstacles, only tighter so loot tiles consistently land in the danger
+  // zone rather than the safe top or bottom edges.
+  const midRow = Math.floor(grid.rows / 2);
+  const isMiddle = (h: HexPos) => Math.abs(h.r - midRow) <= 1;
+  const weighted = allHexes
+    .map((h) => ({ h, key: (isMiddle(h) ? 0 : 1) + rng() }))
+    .sort((a, b) => a.key - b.key);
+
+  const obstaclePosList = obstacles.map((o) => ("pos" in o ? o.pos : o));
+  const placed: LootTile[] = [];
+  for (const { h } of weighted) {
+    if (placed.length >= count) break;
+    const tooClose =
+      placed.some((p) => hexDistance(p.pos, h) < 2)
+      || obstaclePosList.some((op) => hexDistance(op, h) < 2);
+    if (tooClose) continue;
+    const kind: LootKind = rng() < 0.6 ? "gold" : "item";
+    placed.push({
+      id: `loot-${seed}-${placed.length}`,
+      pos: h,
+      kind,
+      tier,
+    });
+  }
+  return placed;
+}
+
+// Gold amount a "gold" loot tile pays out. Pure helper so worker + engine
+// stay aligned on the formula. Scales gently with tier — picking up two
+// loot tiles in a tier-5 fight is worth ~30g, a meaningful but not
+// dominant chunk vs. the 50–150g victory split.
+export function lootTileGold(tier: number): number {
+  return 6 + Math.max(0, tier) * 2;
+}
+
+// Item-roll level for an "item" loot tile. One tier BELOW the source
+// combat so battlefield-tile items don't outclass the victory drops.
+export function lootTileItemTier(tier: number): number {
+  return Math.max(1, tier - 1);
 }

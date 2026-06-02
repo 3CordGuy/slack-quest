@@ -34,6 +34,9 @@ import {
   hexReachable,
   initialHexPositions,
   generateObstacles,
+  generateLootTiles,
+  lootTileGold,
+  lootTileItemTier,
   obstaclePositions,
   deriveMoveRange,
   deriveRangeTiles,
@@ -41,6 +44,8 @@ import {
   posKey,
   type HexGrid,
   type HexPos,
+  type LootKind,
+  type LootTile,
   type MonsterSpecial,
   type Obstacle,
 } from "./hex";
@@ -271,6 +276,17 @@ export interface CombatState {
   // Terrain obstacles: block movement AND line of sight. Generated
   // deterministically at combat init from `scene_seed`.
   obstacles?: Obstacle[];
+  // Pickup tiles scattered across the battlefield. Walking a fighter ONTO
+  // one of these auto-picks it up — the tile leaves `loot_tiles` and the
+  // payload accumulates in `pickups[fighterId]`. Worker-side reward
+  // resolution reads `pickups` on victory and rolls real items via the
+  // existing rollItem/flavorLootDrop pipeline (kept out of the engine
+  // because rollItem uses Math.random and lives in flavor.ts).
+  loot_tiles?: LootTile[];
+  // Per-fighter accumulated pickups from loot tiles walked over this fight.
+  // `gold` is raw coins; `item_tile_tiers` is one entry per item tile picked
+  // up, capturing the tier to roll at victory. Cleared on combat resolve.
+  pickups?: Record<ActorId, { gold: number; item_tile_tiers: number[] }>;
   // Visual/AI hint for battlefield generation (cave, forest, ruins, etc.).
   // Used by the obstacle generator to pick scene-appropriate kinds.
   scene?: string;
@@ -472,6 +488,15 @@ export type CombatEvent =
   // Hex grid movement events.
   | { type: "moved"; actor: ActorId; from: HexPos; to: HexPos }
   | { type: "monster_moved"; actor: ActorId; from: HexPos; to: HexPos }
+  | {
+      type: "loot_pickup";
+      actor: ActorId;
+      tile_id: string;
+      pos: HexPos;
+      kind: LootKind;
+      gold?: number;       // present when kind === "gold"
+      item_tier?: number;  // present when kind === "item" — worker rolls the real item at victory
+    }
   | { type: "monster_charge"; actor: ActorId }
   | { type: "monster_pounce"; actor: ActorId; to: HexPos }
   | { type: "out_of_range"; actor: ActorId; distance: number; max_range: number }
@@ -715,6 +740,23 @@ export function createCombatState(init: CombatInit): CombatState {
     };
   });
 
+  // Generate terrain + loot tiles once, then share with the return object so
+  // both `obstacles` and `loot_tiles` reference the same obstacle layout.
+  const obstacles = init.scene_seed != null
+    ? generateObstacles(grid, fighterPositions, monsterPositions, init.scene_seed, init.scene ?? "cave")
+    : [];
+  const loot_tiles = init.scene_seed != null
+    ? generateLootTiles(
+        grid,
+        fighterPositions,
+        monsterPositions,
+        obstacles,
+        init.scene_seed,
+        // Tier hint: highest-tier monster on the field (boss > pack > lead).
+        monsters.reduce((max, m) => Math.max(max, m.tier ?? 1), 1),
+      )
+    : [];
+
   return {
     fighters: init.fighters.map((f, i) => ({
       ...f,
@@ -733,9 +775,9 @@ export function createCombatState(init: CombatInit): CombatState {
     stats,
     grid,
     turn_phase: "move",
-    obstacles: init.scene_seed != null
-      ? generateObstacles(grid, fighterPositions, monsterPositions, init.scene_seed, init.scene ?? "cave")
-      : [],
+    obstacles,
+    loot_tiles,
+    pickups: {},
     scene: init.scene,
     hex_range_enabled: init.hex_range_enabled ?? false,
   };
@@ -763,6 +805,10 @@ export function upgradeCombatState(raw: CombatState): CombatState {
       // they don't require a move action before the next swing.
       turn_phase: "attack",
       obstacles: [],
+      // Legacy states have no loot tiles — back-fill empty so renderers/handlers
+      // don't have to null-check. Pickups likewise start empty.
+      loot_tiles: s.loot_tiles ?? [],
+      pickups: s.pickups ?? {},
       fighters: s.fighters.map((f, i) => ({
         ...f,
         pos: f.pos ?? (fighterPositions[i] ?? { q: 1, r: 3 }),
@@ -920,7 +966,7 @@ function handleMove(
     return reject(state, `hex (${action.to.q},${action.to.r}) is not reachable in ${range} steps`);
   }
 
-  const next: CombatState = {
+  let next: CombatState = {
     ...state,
     turn_phase: "attack",
     fighters: state.fighters.map((f) =>
@@ -928,10 +974,46 @@ function handleMove(
     ),
   };
 
-  return {
-    state: next,
-    events: [{ type: "moved", actor: action.actor, from, to: action.to }],
-  };
+  const events: CombatEvent[] = [
+    { type: "moved", actor: action.actor, from, to: action.to },
+  ];
+
+  // Loot pickup: if the destination hex matches a loot tile, accumulate it
+  // into the fighter's pickups and remove the tile. Engine produces the
+  // event with kind + payload hint; worker rolls real items at victory.
+  const pickedUp = (state.loot_tiles ?? []).find((t) => posKey(t.pos) === toKey);
+  if (pickedUp) {
+    const currentPickups = next.pickups?.[action.actor]
+      ?? { gold: 0, item_tile_tiers: [] };
+    let updatedPickups = currentPickups;
+    const evt: Extract<CombatEvent, { type: "loot_pickup" }> = {
+      type: "loot_pickup",
+      actor: action.actor,
+      tile_id: pickedUp.id,
+      pos: pickedUp.pos,
+      kind: pickedUp.kind,
+    };
+    if (pickedUp.kind === "gold") {
+      const gold = lootTileGold(pickedUp.tier);
+      updatedPickups = { ...currentPickups, gold: currentPickups.gold + gold };
+      evt.gold = gold;
+    } else {
+      const itemTier = lootTileItemTier(pickedUp.tier);
+      updatedPickups = {
+        ...currentPickups,
+        item_tile_tiers: [...currentPickups.item_tile_tiers, itemTier],
+      };
+      evt.item_tier = itemTier;
+    }
+    next = {
+      ...next,
+      loot_tiles: (next.loot_tiles ?? []).filter((t) => t.id !== pickedUp.id),
+      pickups: { ...(next.pickups ?? {}), [action.actor]: updatedPickups },
+    };
+    events.push(evt);
+  }
+
+  return { state: next, events };
 }
 
 // ── Monster auto-move helper ──────────────────────────────────────────────────
