@@ -1540,7 +1540,7 @@ function drawStatusOverlay(
     else if (e.type === "stunned") drawContainerized(ctx, cx, cy, baseRadius, now, seed);
     else if (e.type === "regen") drawRegenPluses(ctx, cx, cy, baseRadius, now, seed);
     else if (e.type === "empowered") drawEmpoweredAura(ctx, cx, cy, baseRadius, now, seed);
-    else if (e.type === "entangled") drawEntangledRoots(ctx, cx, cy, baseRadius, now, seed);
+    else if (e.type === "entangled") drawDeadlockedChain(ctx, cx, cy, baseRadius, now, seed);
     else if (e.type === "hexed") drawHexedWisps(ctx, cx, cy, baseRadius, now, seed);
     else if (e.type === "barkskin") drawFirewalled(ctx, cx, cy, baseRadius, now, seed);
     else if (e.type === "animal_form") drawScaledUpAura(ctx, cx, cy, baseRadius, now, seed);
@@ -2122,10 +2122,95 @@ function drawHexedWisps(
   ctx.restore();
 }
 
+// "Deadlocked" (key: `entangled`) — interlocking chain ring orbiting
+// the pawn. Reads as the actor being locked into a circular dependency
+// (the canonical EFFECT_META blurb is "Held by an upstream dependency.
+// -4 to attack rolls."). Alternating link orientation gives the chain
+// 3D presence; slow rotation conveys "still stuck after all this time."
+function drawDeadlockedChain(
+  ctx: CanvasRenderingContext2D,
+  cx: number, cy: number, r: number, now: number, _seed: number,
+) {
+  ctx.save();
+  const LINKS = 10;
+  const ringR = r * 1.18;
+  const linkLen = (Math.PI * 2 * ringR) / LINKS * 0.95; // tangential span per link
+  const linkW = r * 0.22; // perpendicular thickness
+  const rotation = now / 5200; // very slow CW drift
+  // Per-link pulse — synchronized so the entire chain breathes in/out
+  // together (signaling the lock holds tight).
+  const breathing = 0.95 + 0.05 * Math.sin(now / 700);
+
+  for (let i = 0; i < LINKS; i++) {
+    const ang = rotation + (i / LINKS) * Math.PI * 2;
+    const lx = cx + Math.cos(ang) * ringR * breathing;
+    const ly = cy + Math.sin(ang) * ringR * breathing;
+    // Alternate "vertical" vs "horizontal" link orientation by rotating
+    // each link 90° relative to the previous. Read as a real chain
+    // where every other link is turned perpendicular.
+    const tangent = ang + Math.PI / 2;
+    const localRot = tangent + (i % 2 === 0 ? 0 : Math.PI / 2);
+    drawChainLink(ctx, lx, ly, linkLen * 0.62, linkW, localRot);
+  }
+
+  // Subtle dim green halo behind the chain — gives the lock-down state
+  // some body and a tint of the canonical entangled color.
+  const halo = 0.55 + 0.2 * Math.sin(now / 900);
+  const grad = ctx.createRadialGradient(cx, cy, r * 0.85, cx, cy, r * 1.45);
+  grad.addColorStop(0, "rgba(134, 239, 172, 0)");
+  grad.addColorStop(0.55, `rgba(101, 163, 13, ${0.22 * halo})`);
+  grad.addColorStop(1, "rgba(101, 163, 13, 0)");
+  ctx.globalCompositeOperation = "source-over";
+  ctx.fillStyle = grad;
+  ctx.globalAlpha = 1;
+  ctx.beginPath();
+  ctx.arc(cx, cy, r * 1.45, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.restore();
+}
+
+// Single chain link rendered as a thick stadium (rounded rectangle)
+// stroke, centered at (cx, cy) and rotated by `rot` radians. Uses a
+// dark outer stroke with a lighter inner highlight for that classic
+// metallic chain look.
+function drawChainLink(
+  ctx: CanvasRenderingContext2D,
+  cx: number, cy: number, length: number, width: number, rot: number,
+) {
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.rotate(rot);
+  // Outer dark body of the link.
+  ctx.strokeStyle = "#1f2937";
+  ctx.lineWidth = width * 0.65;
+  ctx.lineCap = "round";
+  ctx.beginPath();
+  ctx.moveTo(-length / 2, 0);
+  ctx.lineTo( length / 2, 0);
+  ctx.stroke();
+  // Mid-tone metallic body.
+  ctx.strokeStyle = "#4b5563";
+  ctx.lineWidth = width * 0.45;
+  ctx.beginPath();
+  ctx.moveTo(-length / 2 + 1, 0);
+  ctx.lineTo( length / 2 - 1, 0);
+  ctx.stroke();
+  // Bright highlight stripe along the upper edge — sells the 3D feel.
+  ctx.strokeStyle = "#d1d5db";
+  ctx.lineWidth = width * 0.12;
+  ctx.beginPath();
+  ctx.moveTo(-length / 2 + 1, -width * 0.08);
+  ctx.lineTo( length / 2 - 1, -width * 0.08);
+  ctx.stroke();
+  ctx.restore();
+}
+
 // Jagged dark roots wrap inward from the hex edge with thorns sticking
 // out along their length. Reads as the actor being snared / held in
 // place. Roots have a slow constricting wiggle so the binding feels
-// alive, not static.
+// alive, not static. Kept here for reference; replaced by
+// drawDeadlockedChain once the canonical effect name became "Deadlocked."
 function drawEntangledRoots(
   ctx: CanvasRenderingContext2D,
   cx: number, cy: number, r: number, now: number, seed: number,
