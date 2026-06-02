@@ -107,6 +107,7 @@ import {
   findRecipe,
   findTransmute,
   TRANSMUTE_CATALOG,
+  type TransmuteSpec,
   smithyEffectivePower,
   COOK_RECIPES,
   findResource,
@@ -4131,13 +4132,25 @@ app.post("/api/apothecary/brew/:recipeId", async (c) => {
   return await runRecipe(c, session.slack_user_id, recipe);
 });
 
-// ── Smithy Transmute — resource-to-resource conversion ────────────────────
+// ── Transmute — resource-to-resource conversion (smithy + apothecary) ─────
 app.post("/api/smithy/transmute/:recipeId", async (c) => {
   const session = await currentSession(c.env.DB, c.req.header("cookie"));
   if (!session) return c.json({ error: "unauthenticated" }, 401);
   const spec = findTransmute(c.req.param("recipeId"));
-  if (!spec) return c.json({ error: "unknown_recipe" }, 404);
-  const character = await getCharacter(c.env.DB, session.slack_user_id);
+  if (!spec || spec.station !== "smithy") return c.json({ error: "unknown_recipe" }, 404);
+  return runTransmute(c, session.slack_user_id, spec);
+});
+
+app.post("/api/apothecary/transmute/:recipeId", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const spec = findTransmute(c.req.param("recipeId"));
+  if (!spec || spec.station !== "apothecary") return c.json({ error: "unknown_recipe" }, 404);
+  return runTransmute(c, session.slack_user_id, spec);
+});
+
+async function runTransmute(c: Context<{ Bindings: Env }>, userId: string, spec: TransmuteSpec): Promise<Response> {
+  const character = await getCharacter(c.env.DB, userId);
   if (!character) return c.json({ error: "no_character" }, 404);
   if (character.level < spec.level_req) {
     return c.json({ error: "level_too_low", needed: spec.level_req, level: character.level }, 400);
@@ -4148,25 +4161,25 @@ app.post("/api/smithy/transmute/:recipeId", async (c) => {
   // Consume inputs atomically — refund anything already taken if one fails.
   const consumed: Array<{ resource_id: string; qty: number }> = [];
   for (const input of spec.inputs) {
-    const ok = await tryConsumeResource(c.env.DB, session.slack_user_id, resourceItemName(input.resource_id), input.qty);
+    const ok = await tryConsumeResource(c.env.DB, userId, resourceItemName(input.resource_id), input.qty);
     if (!ok) {
       for (const back of consumed) {
-        await addResource(c.env.DB, session.slack_user_id, resourceItemName(back.resource_id), back.qty);
+        await addResource(c.env.DB, userId, resourceItemName(back.resource_id), back.qty);
       }
       return c.json({ error: "insufficient_resources", needed: input.resource_id, qty: input.qty }, 400);
     }
     consumed.push(input);
   }
-  const paid = await tryDeductGold(c.env.DB, session.slack_user_id, spec.gold_cost);
+  const paid = await tryDeductGold(c.env.DB, userId, spec.gold_cost);
   if (!paid) {
     for (const back of consumed) {
-      await addResource(c.env.DB, session.slack_user_id, resourceItemName(back.resource_id), back.qty);
+      await addResource(c.env.DB, userId, resourceItemName(back.resource_id), back.qty);
     }
     return c.json({ error: "insufficient_gold_race" }, 400);
   }
   const outSpec = findResource(spec.output_resource_id);
   if (!outSpec) return c.json({ error: "unknown_output" }, 500);
-  await addResource(c.env.DB, session.slack_user_id, resourceItemName(spec.output_resource_id), 1, outSpec.rarity, outSpec.blurb);
+  await addResource(c.env.DB, userId, resourceItemName(spec.output_resource_id), 1, outSpec.rarity, outSpec.blurb);
   return c.json({
     ok: true,
     recipe_id: spec.id,
@@ -4175,7 +4188,7 @@ app.post("/api/smithy/transmute/:recipeId", async (c) => {
     consumed,
     gold_remaining: character.gold - spec.gold_cost,
   });
-});
+}
 
 async function runRecipe(c: Context<{ Bindings: Env }>, userId: string, recipe: RecipeSpec): Promise<Response> {
   const character = await getCharacter(c.env.DB, userId);

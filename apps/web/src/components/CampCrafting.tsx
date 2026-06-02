@@ -58,9 +58,9 @@ export function ForgePanel(props: PanelCommon) {
         ))}
       </div>
 
-      <SubHeader>Transmute <span style={{ color: "var(--fg-mute)", fontWeight: 400 }}>(convert ore tiers)</span></SubHeader>
+      <SubHeader>Transmute <span style={{ color: "var(--fg-mute)", fontWeight: 400 }}>(upgrade ore tiers)</span></SubHeader>
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-        {TRANSMUTE_CATALOG.map((t) => (
+        {TRANSMUTE_CATALOG.filter((t) => t.station === "smithy").map((t) => (
           <TransmuteRow
             key={t.id}
             spec={t}
@@ -121,6 +121,20 @@ export function BrewPanel(props: PanelCommon) {
             gold={props.gold}
             inventory={props.inventory}
             station="apothecary"
+            onAfterAction={props.onAfterAction}
+          />
+        ))}
+      </div>
+
+      <SubHeader>Distil <span style={{ color: "var(--fg-mute)", fontWeight: 400 }}>(upgrade herb tiers)</span></SubHeader>
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        {TRANSMUTE_CATALOG.filter((t) => t.station === "apothecary").map((t) => (
+          <TransmuteRow
+            key={t.id}
+            spec={t}
+            characterLevel={props.characterLevel}
+            gold={props.gold}
+            inventory={props.inventory}
             onAfterAction={props.onAfterAction}
           />
         ))}
@@ -268,14 +282,17 @@ function TransmuteRow({
 
   async function handle() {
     setBusy(true);
+    const endpoint = spec.station === "smithy"
+      ? `/api/smithy/transmute/${spec.id}`
+      : `/api/apothecary/transmute/${spec.id}`;
     try {
-      const res = await fetch(`/api/smithy/transmute/${spec.id}`, { method: "POST", credentials: "include" });
+      const res = await fetch(endpoint, { method: "POST", credentials: "include" });
       if (!res.ok) {
         const body = await res.json().catch(() => ({})) as { error?: string };
-        toast.error(`Transmute failed: ${body.error ?? res.statusText}`);
+        toast.error(`${spec.station === "smithy" ? "Transmute" : "Distil"} failed: ${body.error ?? res.statusText}`);
         return;
       }
-      toast.success(`Transmuted → ${outSpec ? `${outSpec.emoji} ${outSpec.name}` : spec.output_resource_id}`);
+      toast.success(`${spec.station === "smithy" ? "Transmuted" : "Distilled"} → ${outSpec ? `${outSpec.emoji} ${outSpec.name}` : spec.output_resource_id}`);
       await onAfterAction();
     } finally {
       setBusy(false);
@@ -315,7 +332,7 @@ function TransmuteRow({
         onClick={handle}
         style={actionBtnStyle(canTransmute)}
       >
-        {busy ? "…" : !meetsLevel ? `Lvl ${spec.level_req}` : !hasInputs ? "Need inputs" : !affordable ? "Need gold" : "Transmute"}
+        {busy ? "…" : !meetsLevel ? `Lvl ${spec.level_req}` : !hasInputs ? "Need inputs" : !affordable ? "Need gold" : spec.station === "smithy" ? "Transmute" : "Distil"}
       </button>
     </div>
   );
