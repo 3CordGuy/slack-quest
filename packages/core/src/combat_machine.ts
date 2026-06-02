@@ -3648,10 +3648,11 @@ function tickAtTurnStart(state: CombatState, actorId: ActorId): TickGate {
     // Staff Sage — Ill Omen: accumulate DoT damage dealt to an omen-marked monster.
     const monsterDotDamage = Math.max(0, monster.hp - tick.newHp);
     if (monsterDotDamage > 0) newState = accumulateIllOmenDamage(newState, actorId, monsterDotDamage);
-    // Frozen: the monster's turn is skipped when the frozen effect expires this tick.
+    // Frozen: skip every turn while the effect is active (see fighter side
+    // comment). Was a `wasFrozen && !stillFrozen` gate which only fired on
+    // the expiry turn.
     const wasMonsterFrozen = monster.effects.some((e) => e.type === "frozen");
-    const stillMonsterFrozen = tick.newEffects.some((e) => e.type === "frozen");
-    if (wasMonsterFrozen && !stillMonsterFrozen && tick.newHp > 0) {
+    if (wasMonsterFrozen && tick.newHp > 0) {
       const skipEvent: CombatEvent = { type: "turn_skip", actor: actorId, reason: "frozen" };
       const advanced = advanceTurn(newState);
       return {
@@ -3713,10 +3714,15 @@ function tickAtTurnStart(state: CombatState, actorId: ActorId): TickGate {
     passiveEvents = [...passiveEvents, ...gf.events];
   }
 
-  // Frozen: the fighter's turn is skipped when the frozen effect expires this tick.
+  // Frozen: the fighter's turn is skipped while frozen is active. The tick
+  // above already decrements the effect's `remaining` counter, so the player
+  // skips every turn for as many turns as `remaining` started at. The old
+  // `wasFrozen && !stillFrozen` check only triggered the skip on the turn
+  // the effect EXPIRED — fine for engine-applied frozen with remaining=1
+  // but silently broken for any longer freeze (the actor would play
+  // normally for N-1 turns and then skip one).
   const wasFighterFrozen = fighter.effects.some((e) => e.type === "frozen");
-  const stillFighterFrozen = tick.newEffects.some((e) => e.type === "frozen");
-  if (wasFighterFrozen && !stillFighterFrozen && tick.newHp > 0) {
+  if (wasFighterFrozen && tick.newHp > 0) {
     const skipEvent: CombatEvent = { type: "turn_skip", actor: actorId, reason: "frozen" };
     const advanced = advanceTurn(newState);
     return {
