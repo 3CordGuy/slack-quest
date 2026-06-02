@@ -1615,6 +1615,49 @@ function drawPortraitTint(
     ctx.restore();
   }
 
+  const bleeding = effects.some((e) => e.type === "bleeding" && e.remaining > 0);
+  if (bleeding) {
+    // Blood smears at the lower rim — small irregular red splotches that
+    // shift position slowly so the wound feels like it's seeping. Drawn
+    // inside the portrait clip so the avatar takes the marks instead of
+    // floating over it.
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+    ctx.clip();
+    // Dim the portrait slightly — pale loss-of-color from blood loss.
+    ctx.globalCompositeOperation = "multiply";
+    ctx.fillStyle = "rgba(220, 38, 38, 0.18)";
+    ctx.fillRect(cx - radius, cy - radius, radius * 2, radius * 2);
+    // Six slow-moving smears across the lower half. Positions seeded by
+    // pawn coords so neighboring bleeding pawns don't smear identically.
+    ctx.globalCompositeOperation = "source-over";
+    const SEED = Math.round(cx) ^ Math.round(cy);
+    for (let i = 0; i < 6; i++) {
+      const phase = ((now / 2200 + i * 0.17 + (Math.sin(SEED + i) + 1) * 0.5) % 1);
+      const ang = Math.PI * (0.15 + (i / 6) * 0.7);
+      const r0 = radius * 0.85;
+      const x0 = cx + Math.cos(ang) * r0;
+      const y0 = cy + Math.sin(ang) * r0;
+      const dy = phase * radius * 0.55;
+      const size = radius * (0.14 + 0.05 * Math.sin(SEED * 7 + i));
+      const alpha = 0.75 * (0.6 + 0.4 * Math.sin(SEED * 3 + i * 1.3));
+      ctx.globalAlpha = alpha;
+      // Dark crimson splotch.
+      ctx.fillStyle = "#7f1d1d";
+      ctx.beginPath();
+      ctx.ellipse(x0, y0 + dy, size * 1.1, size * 0.75, 0, 0, Math.PI * 2);
+      ctx.fill();
+      // Brighter highlight on the trailing edge so it reads as wet, not scab.
+      ctx.fillStyle = "#dc2626";
+      ctx.globalAlpha = alpha * 0.85;
+      ctx.beginPath();
+      ctx.ellipse(x0 - size * 0.2, y0 + dy - size * 0.1, size * 0.7, size * 0.4, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
   const poisoned = effects.some((e) => e.type === "poisoned" && e.remaining > 0);
   if (poisoned) {
     // Sickly chartreuse cast — slow nauseating throb so the avatar feels
