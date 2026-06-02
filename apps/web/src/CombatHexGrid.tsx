@@ -1600,17 +1600,19 @@ function drawActors(
     if (!downed && previewSet?.has(m.id)) drawPreviewGlow(x, y, radius, isReachable(m as never));
     if (!downed && m.id === currentActorId) drawCurrentActorPulse(x, y, radius);
     // Selected-target indicator: pulsing orange ring around the picked monster
-    // so the player knows who their next Attack/ability will hit.
+    // so the player knows who their next Attack/ability will hit. Drawn
+    // OUTSIDE the status-effect arc layer (which sits at radius * 1.18) so
+    // the dashes don't blur out the debuff arcs.
     if (!downed && m.id === targetMonsterId) {
-      const pulse = 0.7 + 0.3 * Math.sin(now / 220);
+      const pulse = 0.6 + 0.25 * Math.sin(now / 220);
       ctx.save();
       ctx.globalAlpha = pulse;
       ctx.strokeStyle = "#fb923c";
-      ctx.lineWidth = 3;
-      ctx.setLineDash([6, 4]);
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([4, 5]);
       ctx.lineDashOffset = -now / 30;
       ctx.beginPath();
-      ctx.arc(x, y, radius * 1.32, 0, Math.PI * 2);
+      ctx.arc(x, y, radius * 1.42, 0, Math.PI * 2);
       ctx.stroke();
       ctx.restore();
     }
