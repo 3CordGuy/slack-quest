@@ -1520,7 +1520,8 @@ function drawStatusOverlay(
   const ringEffects: typeof live = [];
   for (const e of live) {
     if (e.type === "burning" || e.type === "frozen" || e.type === "shocked"
-      || e.type === "poisoned" || e.type === "bleeding") {
+      || e.type === "poisoned" || e.type === "bleeding"
+      || e.type === "stunned") {
       ambient.push(e);
     } else {
       ringEffects.push(e);
@@ -1533,6 +1534,7 @@ function drawStatusOverlay(
     else if (e.type === "shocked") drawShockSparks(ctx, cx, cy, baseRadius, now, seed);
     else if (e.type === "poisoned") drawPoisonBubbles(ctx, cx, cy, baseRadius, now, seed);
     else if (e.type === "bleeding") drawBleedDrips(ctx, cx, cy, baseRadius, now, seed);
+    else if (e.type === "stunned") drawStunnedStars(ctx, cx, cy, baseRadius, now, seed);
   }
 
   if (ringEffects.length > 0) {
@@ -1748,6 +1750,73 @@ function drawPortraitTint(
     ctx.fillRect(cx - radius, cy - radius, radius * 2, radius * 2);
     ctx.restore();
   }
+}
+
+// Classic cartoon "seeing stars" — small gold 5-pointed stars on a slow
+// elliptical orbit above the pawn's head. Each star spins on its own
+// axis at a different rate so the cluster doesn't move in lockstep.
+function drawStunnedStars(
+  ctx: CanvasRenderingContext2D,
+  cx: number, cy: number, r: number, now: number, seed: number,
+) {
+  const STARS = 3;
+  const ORBIT_MS = 1800; // one full orbit
+  const orbitRX = r * 0.85;
+  const orbitRY = r * 0.32; // squashed ellipse — perspective from above
+  const orbitCY = cy - r * 0.95; // center of orbit above the head
+  const baseAng = (now / ORBIT_MS) * Math.PI * 2;
+  ctx.save();
+  for (let i = 0; i < STARS; i++) {
+    const ang = baseAng + (i / STARS) * Math.PI * 2;
+    const x = cx + Math.cos(ang) * orbitRX;
+    const y = orbitCY + Math.sin(ang) * orbitRY;
+    // Far-side stars (sin(ang) > 0 means lower on the squashed orbit → in
+    // front of pawn). Apply a perspective scale so the cluster reads as
+    // moving in 3D — bigger in front, smaller behind.
+    const depth = Math.sin(ang); // -1 (behind) to 1 (front)
+    const scale = 0.7 + 0.3 * ((depth + 1) / 2);
+    const starR = r * 0.22 * scale;
+    const rot = now / 600 + i * 1.7 + rng01(seed, i) * 6;
+    ctx.globalAlpha = 0.85 + 0.15 * depth;
+    drawStar(ctx, x, y, starR, rot);
+  }
+  ctx.restore();
+}
+
+// Filled 5-pointed star centered at (x,y) with outer radius r, rotated by
+// `rot` radians. Gold body with a brighter inner core so it pops without
+// needing an outline.
+function drawStar(
+  ctx: CanvasRenderingContext2D,
+  x: number, y: number, r: number, rot: number,
+) {
+  const SPIKES = 5;
+  const innerR = r * 0.42;
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(rot);
+  ctx.beginPath();
+  for (let i = 0; i < SPIKES * 2; i++) {
+    const ang = (i / (SPIKES * 2)) * Math.PI * 2 - Math.PI / 2;
+    const radius = i % 2 === 0 ? r : innerR;
+    const px = Math.cos(ang) * radius;
+    const py = Math.sin(ang) * radius;
+    if (i === 0) ctx.moveTo(px, py);
+    else ctx.lineTo(px, py);
+  }
+  ctx.closePath();
+  ctx.fillStyle = "#fde047"; // bright gold body
+  ctx.fill();
+  // Subtle stroke so the star reads against bright backgrounds too.
+  ctx.lineWidth = Math.max(0.5, r * 0.1);
+  ctx.strokeStyle = "rgba(120, 53, 15, 0.6)";
+  ctx.stroke();
+  // Bright inner highlight for a touch of dimension.
+  ctx.beginPath();
+  ctx.arc(0, 0, innerR * 0.6, 0, Math.PI * 2);
+  ctx.fillStyle = "#fef9c3";
+  ctx.fill();
+  ctx.restore();
 }
 
 function drawBurningEmbers(
