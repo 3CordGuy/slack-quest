@@ -2059,6 +2059,45 @@ export function findRecipe(id: string): RecipeSpec | undefined {
   return RECIPE_CATALOG.find((r) => r.id === id);
 }
 
+// ── Transmutation ──────────────────────────────────────────────────────────
+//
+// Ore-to-ore conversion done at the smithy. Inputs are consumed like normal
+// recipe ingredients; output is awarded as a resource (not a gear item).
+// Numbers from economy audit:
+//   - Silver generates ~1.5/day  →  20 silver ≈ 13-day gate
+//   - Iron generates ~4/day      →  30 iron ≈ 7-8 days (not the bottleneck)
+//   - Natural mithril via Deep (20% per 4h task) ≈ 0.25/day → transmute is
+//     a fallback for unlucky streaks, not a faster farming strategy.
+
+export interface TransmuteSpec {
+  id: string;
+  label: string;
+  blurb: string;
+  inputs: Array<{ resource_id: string; qty: number }>;
+  output_resource_id: string;
+  gold_cost: number;
+  level_req: number;
+}
+
+export const TRANSMUTE_CATALOG: TransmuteSpec[] = [
+  {
+    id: "transmute_mithril",
+    label: "Transmute Mithril Ore",
+    blurb: "Forge-fuse silver and iron under extreme heat. Costly — but a path when Deep luck won't budge.",
+    inputs: [
+      { resource_id: "silver_ore", qty: 20 },
+      { resource_id: "iron_ore",   qty: 30 },
+    ],
+    output_resource_id: "mithril_ore",
+    gold_cost: 100,
+    level_req: 5,
+  },
+];
+
+export function findTransmute(id: string): TransmuteSpec | undefined {
+  return TRANSMUTE_CATALOG.find((t) => t.id === id);
+}
+
 // Smithy gear scales with the crafter's level so items stay relevant past the
 // unlock tier. +2 power per level above level_req tracks the dungeon drop
 // formula (rare power ≈ 2×tier + 4.5, level ≈ tier).
