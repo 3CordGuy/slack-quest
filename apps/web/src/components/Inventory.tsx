@@ -26,7 +26,7 @@ import { findCatalogEntry, sellPriceFor, xpForLevel, type StatKey } from "@gantt
 import { applyPotency } from "@gantt-quest/db";
 import { charPortraitUrl, classPortraitUrl, EFFECT_PILLS, type StatusEffect } from "../CombatShared";
 import { Icon } from "../icons";
-import { PrimaryStatCard } from "./Character";
+import { PrimaryStatsPanel } from "./Character";
 import type {
   Character,
   EffectType,
@@ -1167,7 +1167,6 @@ export function InventoryFullScreen({
     localStorage.setItem("inv_view", mode);
     setViewMode(mode);
   }
-  const hasUnspentPoints = (character?.unspent_points ?? 0) > 0;
   // Esc closes the modal — capture early so it beats any inner handlers.
   useEffect(() => {
     const handler = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
@@ -1374,57 +1373,7 @@ export function InventoryFullScreen({
                       </div>
                     )}
                     {character?.str !== undefined && (
-                      <div style={{ alignSelf: "stretch", padding: "10px 12px", background: "var(--bg-card-2)", borderRadius: "var(--radius-xl)", border: "1px solid var(--border-faint)" }}>
-                        <div className="eyebrow" style={{ color: "var(--fg-mute)", marginBottom: 8 }}>Primary Stats</div>
-                        <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 5, marginBottom: hasUnspentPoints && onSpend ? 8 : 0 }}>
-                          {(["str", "int_stat", "vit", "agi", "dex"] as StatKey[]).map((key) => {
-                            const base = character[key] ?? 5;
-                            const bonus = dollEquipBonuses[key] ?? 0;
-                            return (
-                              <PrimaryStatCard key={key} statKey={key} value={base + bonus} bonus={bonus} level={character.level} />
-                            );
-                          })}
-                        </div>
-                        {hasUnspentPoints && onSpend && (
-                          <div style={{
-                            padding: "9px 10px",
-                            background: "var(--accent-ink-deep)",
-                            borderRadius: "var(--radius-md)",
-                            border: "1px solid var(--accent-ink-blue-2)",
-                            animation: "gq-spend-pulse 2.4s ease-in-out infinite",
-                          }}>
-                            <div style={{
-                              fontFamily: "var(--font-mono)",
-                              fontSize: 11,
-                              color: "var(--accent-ink-blue)",
-                              marginBottom: 7,
-                            }}>
-                              +{character.unspent_points} unspent {character.unspent_points === 1 ? "point" : "points"} — choose a stat:
-                            </div>
-                            <div style={{ display: "flex", gap: 5 }}>
-                              {(["str", "int_stat", "vit", "agi", "dex"] as StatKey[]).map((key) => (
-                                <button
-                                  key={key}
-                                  onClick={() => onSpend(key)}
-                                  className="btn btn-ghost btn-sm"
-                                  style={{
-                                    flex: 1,
-                                    justifyContent: "center",
-                                    padding: "6px 0",
-                                    fontFamily: "var(--font-mono)",
-                                    fontSize: 10,
-                                    letterSpacing: 0.5,
-                                    color: "var(--accent-ink-blue)",
-                                    borderColor: "var(--accent-ink-blue-3)",
-                                  }}
-                                >
-                                  {key === "int_stat" ? "INT" : key.toUpperCase()}
-                                </button>
-                              ))}
-                            </div>
-                          </div>
-                        )}
-                      </div>
+                      <PrimaryStatsPanel character={character} equipBonuses={dollEquipBonuses} onSpend={onSpend} />
                     )}
                   </div>
                 ) : (
@@ -1625,57 +1574,7 @@ export function InventoryFullScreen({
                   <LoadoutTotals character={character} items={items} />
                 )}
                 {character?.str !== undefined && (
-                  <div style={{ alignSelf: "stretch", padding: "10px 12px", background: "var(--bg-card-2)", borderRadius: "var(--radius-xl)", border: "1px solid var(--border-faint)" }}>
-                    <div className="eyebrow" style={{ color: "var(--fg-mute)", marginBottom: 8 }}>Primary Stats</div>
-                    <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 5, marginBottom: hasUnspentPoints && onSpend ? 8 : 0 }}>
-                      {(["str", "int_stat", "vit", "agi", "dex"] as StatKey[]).map((key) => {
-                        const base = character[key] ?? 5;
-                        const bonus = dollEquipBonuses[key] ?? 0;
-                        return (
-                          <PrimaryStatCard key={key} statKey={key} value={base + bonus} bonus={bonus} level={character.level} />
-                        );
-                      })}
-                    </div>
-                    {hasUnspentPoints && onSpend && (
-                      <div style={{
-                        padding: "9px 10px",
-                        background: "var(--accent-ink-deep)",
-                        borderRadius: "var(--radius-md)",
-                        border: "1px solid var(--accent-ink-blue-2)",
-                        animation: "gq-spend-pulse 2.4s ease-in-out infinite",
-                      }}>
-                        <div style={{
-                          fontFamily: "var(--font-mono)",
-                          fontSize: 11,
-                          color: "var(--accent-ink-blue)",
-                          marginBottom: 7,
-                        }}>
-                          +{character.unspent_points} unspent {character.unspent_points === 1 ? "point" : "points"} — choose a stat:
-                        </div>
-                        <div style={{ display: "flex", gap: 5 }}>
-                          {(["str", "int_stat", "vit", "agi", "dex"] as StatKey[]).map((key) => (
-                            <button
-                              key={key}
-                              onClick={() => onSpend(key)}
-                              className="btn btn-ghost btn-sm"
-                              style={{
-                                flex: 1,
-                                justifyContent: "center",
-                                padding: "6px 0",
-                                fontFamily: "var(--font-mono)",
-                                fontSize: 10,
-                                letterSpacing: 0.5,
-                                color: "var(--accent-ink-blue)",
-                                borderColor: "var(--accent-ink-blue-3)",
-                              }}
-                            >
-                              {key === "int_stat" ? "INT" : key.toUpperCase()}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                  </div>
+                  <PrimaryStatsPanel character={character} equipBonuses={dollEquipBonuses} onSpend={onSpend} />
                 )}
               </div>
 
