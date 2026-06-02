@@ -61,6 +61,11 @@ import { type AbilityContext, type AbilityEffect, type ActiveAbilityDef, type Al
 import { deriveArmorBonus, deriveCritBonus, deriveDodgeChance, deriveInitiativeBonus, type Stats } from "./stats";
 
 export type ActorId = string;
+// Charge ceiling — caps the doubled-move "anti-kite" special so a high-tier
+// monster can't traverse the entire map in one turn. Sits a couple hexes
+// above the normal MAX_MOVE_RANGE so charge still feels meaningful.
+export const MAX_CHARGE_MOVE = 8;
+
 export const MONSTER_ID: ActorId = "__monster__";
 export const isMonsterActor = (id: ActorId): boolean => id === MONSTER_ID || id.startsWith("__monster_");
 // Merc IDs are "__merc_<hiring_user_id>__". Auto-resolved by the server; never
@@ -992,12 +997,22 @@ function tryMonsterCharge(
 
   const attackRange = monster.range_tiles ?? 1;
   const figtersWithPos = aliveFighters.filter((f) => f.pos);
-  if (figtersWithPos.some((f) => hexDistance(monster.pos!, f.pos!) <= attackRange)) {
-    return { state, events: [], charged: false }; // already in range
+  const monsterWeaponRange = monster.weapon_range ?? "melee";
+  const hasLos = (a: HexPos, b: HexPos) =>
+    monsterWeaponRange === "melee" || hexLos(a, b, state.obstacles ?? []);
+  if (figtersWithPos.some(
+    (f) => hexDistance(monster.pos!, f.pos!) <= attackRange && hasLos(monster.pos!, f.pos!),
+  )) {
+    return { state, events: [], charged: false }; // already in range with LOS
   }
 
-  // Double the move range for this charge.
-  const chargeMonster: CombatMonster = { ...monster, move_range: (monster.move_range ?? 3) * 2 };
+  // Double the move range for this charge, capped at MAX_CHARGE_MOVE so a
+  // tier-9 monster (base move 5) can't sprint 10 hexes in one turn and reach
+  // the back of the party from anywhere on the map. Cap is intentionally
+  // larger than MAX_MOVE_RANGE so charge still feels like a meaningful
+  // anti-kite tool — just not a teleport.
+  const baseMove = monster.move_range ?? 3;
+  const chargeMonster: CombatMonster = { ...monster, move_range: Math.min(MAX_CHARGE_MOVE, baseMove * 2) };
   const tempState: CombatState = {
     ...state,
     monsters: state.monsters.map((m) => m.id === monsterId ? chargeMonster : m),
@@ -1737,8 +1752,17 @@ function handleMonsterAct(state: CombatState, roll: RollFn): StepResult {
     const actingMonster = s.monsters.find((m) => m.id === actorId);
     if (actingMonster?.pos) {
       const attackRange = actingMonster.range_tiles ?? 1;
+      const monsterWeaponRange = actingMonster.weapon_range ?? "melee";
+      // LOS gate for ranged/focus monsters — symmetric with the player-side
+      // check in handlePlayerHit. Without this, a kobold archer behind a
+      // pillar can shoot the party through solid stone. Melee monsters
+      // skip the check (they need to be adjacent anyway).
+      const hasLos = (a: HexPos, b: HexPos) =>
+        monsterWeaponRange === "melee" || hexLos(a, b, s.obstacles ?? []);
       const figtersInRange = aliveFighters.filter(
-        (f) => f.pos && hexDistance(actingMonster.pos!, f.pos) <= attackRange,
+        (f) => f.pos
+          && hexDistance(actingMonster.pos!, f.pos) <= attackRange
+          && hasLos(actingMonster.pos!, f.pos),
       );
       if (figtersInRange.length === 0) {
         // Move toward closest fighter.
@@ -1749,7 +1773,9 @@ function handleMonsterAct(state: CombatState, roll: RollFn): StepResult {
         // Re-fetch monster after move to check updated position.
         const movedMonster = s.monsters.find((m) => m.id === actorId);
         const nowInRange = movedMonster?.pos && aliveFighters.some(
-          (f) => f.pos && hexDistance(movedMonster.pos!, f.pos) <= attackRange,
+          (f) => f.pos
+            && hexDistance(movedMonster.pos!, f.pos) <= attackRange
+            && hasLos(movedMonster.pos!, f.pos),
         );
 
         if (!nowInRange) {
