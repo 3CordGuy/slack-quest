@@ -12,7 +12,7 @@ import {
 } from "../constants";
 import { xpForLevel } from "@gantt-quest/core";
 import { DISPLAY_FONT, card, h2, muted, button } from "../styles";
-import { LocationHero, SmallBadge } from "./ui";
+import { LocationHero, SmallBadge, FakeProgressBar } from "./ui";
 
 // ─────────────────────────────────────────────────────────────
 // Persistent top navigation shown whenever a town section is active.
@@ -476,6 +476,12 @@ export function HuntSection({
               ? `Start Lobby · Tier ${clampedTier} (${invitees.size + 1} players)`
               : `Hunt Tier ${clampedTier}${monsterCount > 1 ? ` · ${HUNT_PACK_LABEL[monsterCount]}` : ""}${isPrivate ? " · Private" : ""}`}
         </button>
+
+        {busy && (
+          <div style={{ marginTop: 12, display: "flex", justifyContent: "center" }}>
+            <FakeProgressBar expectedMs={3000} accent="var(--accent-blood, #dc2626)" width="100%" />
+          </div>
+        )}
       </div>
     </div>
   );
@@ -1867,6 +1873,12 @@ export function StartQuestCard({
                 ? <><Icon name="conversation" /> Start Lobby ({invitees.size + 1} players)</>
                 : <><Icon name={selectedOption.icon} /> {selectedOption.beginLabel}</>}
           </button>
+
+          {pending && (
+            <div style={{ marginTop: 12, display: "flex", justifyContent: "center" }}>
+              <FakeProgressBar expectedMs={3000} accent={selectedOption.accentColor} width="100%" />
+            </div>
+          )}
         </div>
       )}
     </div>

@@ -40,7 +40,7 @@ import {
 import {
   LocationHero, Banner, RarityBadge, SmallBadge,
   RefreshButton, RestockButton, ModalBackdrop, HaggleResultDialog, ConfirmDialog,
-  LocationModal, LocationModalWide, AppTopBar, CharacterSlideOver,
+  LocationModal, LocationModalWide, AppTopBar, CharacterSlideOver, FakeProgressBar,
 } from "./components/ui";
 import { PubCard, PubLeaderboardCard, LiarsRollCard, SpdCard } from "./components/Pub";
 import { QuestStatsCard, QuestLeaderboardCard, TowerLeaderboardCard, HarvestHallCard, RecentQuestsCard } from "./components/StatsCards";
@@ -1171,7 +1171,14 @@ export function App() {
     await Promise.all([refreshCampStatus(), refreshMe()]);
   }
 
-  if (state.kind === "loading") return <Centered>Loading…</Centered>;
+  if (state.kind === "loading") return (
+    <Centered>
+      <div style={{ marginTop: "20vh", display: "flex", flexDirection: "column", gap: 16, alignItems: "center" }}>
+        <div style={{ color: "#e6e6e6", fontSize: 14, letterSpacing: 1, textTransform: "uppercase" }}>Loading</div>
+        <FakeProgressBar expectedMs={1500} />
+      </div>
+    </Centered>
+  );
   if (state.kind === "anon") return <Login onSuccess={refresh} />;
 
   // Tower: pause for non-combat floor states (rest stop / post-boss choice).

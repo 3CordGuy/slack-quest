@@ -219,6 +219,76 @@ export function Banner({ src, alt }: { src: string | null | undefined; alt: stri
   );
 }
 
+// ─── Fake progress bar ───────────────────────────────────────────────────────
+//
+// Shown while we wait on AI / procedurally-generated content (opening scenes,
+// NPC dialog, monster spawns, minigame procgen). The server doesn't stream
+// progress — we just need the player to feel like things are happening. Bar
+// eases toward ~95% over `expectedMs` and stops there; whatever's loading
+// unmounts us before we'd hit 100, so the player never sees the bar stall at
+// the finish line. Tone matches the gold accent used elsewhere; tucks under
+// the existing loading text so callers don't restructure layouts.
+
+export function FakeProgressBar({
+  label,
+  expectedMs = 2200,
+  width = 220,
+  accent = "var(--accent-gold)",
+}: {
+  label?: string;
+  expectedMs?: number;
+  width?: number | string;
+  accent?: string;
+}) {
+  const [target, setTarget] = useState(0);
+  useEffect(() => {
+    const id = requestAnimationFrame(() => setTarget(95));
+    return () => cancelAnimationFrame(id);
+  }, []);
+  return (
+    <div
+      role="progressbar"
+      aria-label={label ?? "Loading"}
+      aria-valuemin={0}
+      aria-valuemax={100}
+      style={{
+        width,
+        maxWidth: "100%",
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        gap: 8,
+      }}
+    >
+      {label && (
+        <div style={{ ...muted, fontSize: 12, fontFamily: DISPLAY_FONT, letterSpacing: 0.6 }}>
+          {label}
+        </div>
+      )}
+      <div
+        style={{
+          width: "100%",
+          height: 6,
+          background: "rgba(255,255,255,0.06)",
+          border: "1px solid var(--border-faint, #2a2d33)",
+          borderRadius: 999,
+          overflow: "hidden",
+        }}
+      >
+        <div
+          style={{
+            width: `${target}%`,
+            height: "100%",
+            background: `linear-gradient(90deg, ${accent}, #fbbf24)`,
+            transition: `width ${expectedMs}ms cubic-bezier(0.12, 0.85, 0.22, 1)`,
+            boxShadow: `0 0 10px ${accent}55`,
+          }}
+        />
+      </div>
+    </div>
+  );
+}
+
 // ─── Item badges ──────────────────────────────────────────────────────────────
 
 export function RarityBadge({ rarity }: { rarity: Rarity }) {
