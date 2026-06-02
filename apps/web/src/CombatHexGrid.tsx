@@ -1522,7 +1522,8 @@ function drawStatusOverlay(
     if (e.type === "burning" || e.type === "frozen" || e.type === "shocked"
       || e.type === "poisoned" || e.type === "bleeding"
       || e.type === "stunned" || e.type === "regen"
-      || e.type === "empowered" || e.type === "entangled") {
+      || e.type === "empowered" || e.type === "entangled"
+      || e.type === "hexed") {
       ambient.push(e);
     } else {
       ringEffects.push(e);
@@ -1539,6 +1540,7 @@ function drawStatusOverlay(
     else if (e.type === "regen") drawRegenPluses(ctx, cx, cy, baseRadius, now, seed);
     else if (e.type === "empowered") drawEmpoweredAura(ctx, cx, cy, baseRadius, now, seed);
     else if (e.type === "entangled") drawEntangledRoots(ctx, cx, cy, baseRadius, now, seed);
+    else if (e.type === "hexed") drawHexedWisps(ctx, cx, cy, baseRadius, now, seed);
   }
 
   if (ringEffects.length > 0) {
@@ -1754,6 +1756,72 @@ function drawPortraitTint(
     ctx.fillRect(cx - radius, cy - radius, radius * 2, radius * 2);
     ctx.restore();
   }
+}
+
+// Cursed purple wisps swirling around the pawn — slow counter-clockwise
+// drift with arcing trails so the hex reads as a death-skull curse
+// rather than just a colored halo. Inner pulse adds the breath of an
+// active malediction.
+function drawHexedWisps(
+  ctx: CanvasRenderingContext2D,
+  cx: number, cy: number, r: number, now: number, seed: number,
+) {
+  // Dim sickly purple halo behind the wisps — pulses slowly so the curse
+  // feels alive without flickering.
+  const halo = 0.55 + 0.2 * Math.sin(now / 760);
+  const haloGrad = ctx.createRadialGradient(cx, cy, r * 0.6, cx, cy, r * 1.5);
+  haloGrad.addColorStop(0, "rgba(168, 85, 247, 0)");
+  haloGrad.addColorStop(0.45, `rgba(126, 34, 206, ${0.45 * halo})`);
+  haloGrad.addColorStop(1, "rgba(126, 34, 206, 0)");
+  ctx.save();
+  ctx.fillStyle = haloGrad;
+  ctx.beginPath();
+  ctx.arc(cx, cy, r * 1.5, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+
+  const WISPS = 5;
+  const ORBIT_MS = 4200; // counter-clockwise (slower than empowered)
+  const t = -now / ORBIT_MS; // negative = counter-clockwise
+  ctx.save();
+  ctx.lineCap = "round";
+  for (let i = 0; i < WISPS; i++) {
+    const angBase = t * Math.PI * 2 + (i / WISPS) * Math.PI * 2 + rng01(seed, i) * 0.5;
+    // Each wisp is a short trailing arc — sample 10 points along the
+    // orbit, plot a curve through them with decreasing alpha so it reads
+    // as a smoky trail.
+    const ARC_SAMPLES = 10;
+    const ARC_LEN = 0.55; // fraction of orbit covered by one wisp
+    const orbitRBase = r * (1.08 + 0.06 * Math.sin(now / 600 + i));
+    // Smoke breathes slightly in/out radially over time so the wisps
+    // feel airier than a fixed-radius spinner.
+    for (let s = 0; s < ARC_SAMPLES; s++) {
+      const sFrac = s / (ARC_SAMPLES - 1);
+      const ang = angBase + sFrac * ARC_LEN;
+      // Radius wobble per sample so the wisp curves rather than tracing
+      // a perfect circle.
+      const orbitR = orbitRBase + Math.sin(now / 400 + i * 1.7 + sFrac * 5) * r * 0.04;
+      const x0 = cx + Math.cos(ang) * orbitR;
+      const y0 = cy + Math.sin(ang) * orbitR;
+      const sizeFrac = 1 - sFrac; // bright head, fading tail
+      const size = r * 0.13 * (0.5 + sizeFrac * 0.6);
+      const alpha = 0.75 * sizeFrac * sizeFrac;
+      ctx.globalAlpha = alpha;
+      // Inner-to-outer wisp body: bright violet core + dim purple haze.
+      ctx.fillStyle = "#c084fc";
+      ctx.beginPath();
+      ctx.arc(x0, y0, size, 0, Math.PI * 2);
+      ctx.fill();
+      // Dark mauve halo around each puff for that classic curse-smoke
+      // feel — soft, fuzzy, slightly threatening.
+      ctx.globalAlpha = alpha * 0.45;
+      ctx.fillStyle = "#581c87";
+      ctx.beginPath();
+      ctx.arc(x0, y0, size * 1.8, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+  ctx.restore();
 }
 
 // Jagged dark roots wrap inward from the hex edge with thorns sticking
