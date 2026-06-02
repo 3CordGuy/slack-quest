@@ -26,6 +26,7 @@ import {
 } from "./combat";
 import {
   GRID_DEFAULT,
+  allHexesInGrid,
   hexDistance,
   hexDisk,
   hexLos,
@@ -834,6 +835,29 @@ export function upgradeCombatState(raw: CombatState): CombatState {
         range_tiles: m.range_tiles ?? (m.weapon_range === "ranged" ? 4 : m.weapon_range === "focus" ? 3 : 1),
         specials: m.specials ?? (m.tier >= 5 ? ["charge"] : []),
       })),
+    };
+  }
+  // Position backfill: a joiner added to active combat without a hex position
+  // (pre-fix bug) leaves the fighter invisible and unable to move. Assign any
+  // free party-side hex so they show up and the move action unblocks.
+  if (s.grid && s.fighters.some((f) => !f.pos)) {
+    const grid = s.grid;
+    const occupied = new Set<string>();
+    for (const f of s.fighters) if (f.pos) occupied.add(posKey(f.pos));
+    for (const m of s.monsters ?? []) if (m.pos && m.hp > 0) occupied.add(posKey(m.pos));
+    for (const o of s.obstacles ?? []) if (o.pos) occupied.add(posKey(o.pos));
+    const candidates = [
+      ...initialHexPositions(s.fighters.length, "top", grid),
+      ...allHexesInGrid(grid),
+    ];
+    s = {
+      ...s,
+      fighters: s.fighters.map((f) => {
+        if (f.pos) return f;
+        const pick = candidates.find((p) => !occupied.has(posKey(p))) ?? { q: 1, r: 1 };
+        occupied.add(posKey(pick));
+        return { ...f, pos: pick };
+      }),
     };
   }
   // Obstacle format upgrade: very old persisted states may carry obstacles as
