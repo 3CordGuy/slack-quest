@@ -2383,10 +2383,10 @@ export function CombatPage({
                       }}
                     />
                   </div>
-                  {/* Focused pawn card — single docked card BELOW the canvas
-                      so it never obscures the battlefield. Priority:
-                      pinned (user tap/click) > hovered > current actor.
-                      Replaces the per-pawn floating callouts entirely. */}
+                  {/* Focused pawn card — overlaid on the canvas in the
+                      bottom-left corner so it stays in the player's eye
+                      line during the action. Priority: pinned (user
+                      tap/click) > hovered > current actor. */}
                   {(() => {
                     const focusId = pinnedPawnId ?? hoveredPawnId ?? currentActorId ?? null;
                     if (!focusId) return null;
@@ -2396,10 +2396,12 @@ export function CombatPage({
                     const isPinnedFocus = pinnedPawnId === focusId;
                     return (
                       <div style={{
-                        marginTop: 10,
-                        display: "flex",
-                        justifyContent: "center",
+                        position: "absolute",
+                        left: 12,
+                        bottom: 12,
+                        zIndex: 6,
                         pointerEvents: "auto",
+                        maxWidth: "min(360px, 38vw)",
                       }}>
                         {fighter && (() => {
                           const pawn: PawnLike = {
