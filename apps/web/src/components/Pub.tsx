@@ -4,7 +4,7 @@ import { Icon } from "../icons";
 import { postJson, drinkBuffLabel, formatRelative } from "../utils";
 import { LIARS_TRUST_MULT_DISPLAY, LIARS_CHALLENGE_MULT_DISPLAY, GAME_LABELS, ERROR_LABELS } from "../constants";
 import { card, glassCard, h2, muted, DISPLAY_FONT, smallActionBtn } from "../styles";
-import { LocationHero, Banner, RefreshButton } from "./ui";
+import { LocationHero, Banner, RefreshButton, FakeProgressBar } from "./ui";
 import { HallOfRenown, type RenownEntry } from "./StatsCards";
 import type {
   PubResponse, PubNpc, PubTalkResponse, DrinkBuff, SpdData, SpdResult, SpdThrow,
@@ -96,7 +96,11 @@ function NpcConversation({ npc, onClose }: { npc: PubNpc; onClose: () => void })
         )}
       </div>
 
-      {loading && <p style={{ ...muted, fontSize: 13 }}>…</p>}
+      {loading && (
+        <div style={{ padding: "10px 0", display: "flex", justifyContent: "center" }}>
+          <FakeProgressBar label={path ? "Listening…" : `${npc.name} eyes you…`} expectedMs={1800} />
+        </div>
+      )}
       {error && <p style={{ color: "#fca5a5", fontSize: 13 }}>{error}</p>}
 
       {dialog && !loading && (

@@ -19,6 +19,7 @@ import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import toast from "react-hot-toast";
 
+import { FakeProgressBar } from "./ui";
 import {
   getMuted,
   playBiteAlert,
@@ -640,8 +641,9 @@ export function FishingMinigame({ backgroundArtUrl, onClose, onComplete }: Fishi
             style={{ position: "relative", display: "block", width: "100%", height: 280, pointerEvents: "none" }}
           />
           {phase === "loading" && (
-            <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--fg-mute)" }}>
-              Casting the line…
+            <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", gap: 14, alignItems: "center", justifyContent: "center", color: "var(--fg-mute)" }}>
+              <div>Casting the line…</div>
+              <FakeProgressBar expectedMs={2200} accent="#5fb3d8" />
             </div>
           )}
         </div>

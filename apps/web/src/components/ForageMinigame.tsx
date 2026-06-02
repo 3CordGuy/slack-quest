@@ -16,6 +16,7 @@ import { createPortal } from "react-dom";
 import toast from "react-hot-toast";
 
 import { Icon } from "../icons";
+import { FakeProgressBar } from "./ui";
 import {
   getMuted,
   playForageBank,
@@ -506,8 +507,9 @@ export function ForageMinigame({ backgroundArtUrl, onClose, onComplete }: Forage
 
         {/* Grid + particle overlay */}
         {phase === "loading" && (
-          <div style={{ padding: "30px 0", textAlign: "center", color: "var(--fg-mute)" }}>
-            Walking into the garden…
+          <div style={{ padding: "30px 0", display: "flex", flexDirection: "column", gap: 14, alignItems: "center", color: "var(--fg-mute)" }}>
+            <div>Walking into the garden…</div>
+            <FakeProgressBar expectedMs={1100} accent="#7fc15f" />
           </div>
         )}
         {grid && (
