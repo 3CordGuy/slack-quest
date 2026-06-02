@@ -1522,7 +1522,7 @@ function drawStatusOverlay(
     if (e.type === "burning" || e.type === "frozen" || e.type === "shocked"
       || e.type === "poisoned" || e.type === "bleeding"
       || e.type === "stunned" || e.type === "regen"
-      || e.type === "empowered") {
+      || e.type === "empowered" || e.type === "entangled") {
       ambient.push(e);
     } else {
       ringEffects.push(e);
@@ -1538,6 +1538,7 @@ function drawStatusOverlay(
     else if (e.type === "stunned") drawStunnedStars(ctx, cx, cy, baseRadius, now, seed);
     else if (e.type === "regen") drawRegenPluses(ctx, cx, cy, baseRadius, now, seed);
     else if (e.type === "empowered") drawEmpoweredAura(ctx, cx, cy, baseRadius, now, seed);
+    else if (e.type === "entangled") drawEntangledRoots(ctx, cx, cy, baseRadius, now, seed);
   }
 
   if (ringEffects.length > 0) {
@@ -1753,6 +1754,105 @@ function drawPortraitTint(
     ctx.fillRect(cx - radius, cy - radius, radius * 2, radius * 2);
     ctx.restore();
   }
+}
+
+// Jagged dark roots wrap inward from the hex edge with thorns sticking
+// out along their length. Reads as the actor being snared / held in
+// place. Roots have a slow constricting wiggle so the binding feels
+// alive, not static.
+function drawEntangledRoots(
+  ctx: CanvasRenderingContext2D,
+  cx: number, cy: number, r: number, now: number, seed: number,
+) {
+  const ROOT_COUNT = 5;
+  // Reach outward to roughly the hex edge (hex tile is drawn at
+  // ~hexSize * 0.94 from center, and the pawn radius is ~hexSize * 0.55).
+  // baseRadius here IS the pawn radius, so root tip lives ~1.55× r out.
+  const tipR = r * 1.5;
+  const baseR = r * 0.9;
+  // Constricting wiggle — very slow, looks like the roots are slowly
+  // pulling tight around the actor.
+  const breathing = 1 - 0.04 * Math.sin(now / 1600);
+  ctx.save();
+  for (let i = 0; i < ROOT_COUNT; i++) {
+    // Even angular spread around the pawn with deterministic jitter so
+    // adjacent entangled pawns aren't identical.
+    const angBase = (i / ROOT_COUNT) * Math.PI * 2;
+    const angJitter = (rng01(seed, i + 400) - 0.5) * 0.5;
+    const ang = angBase + angJitter;
+    // Tip position (out near hex edge) and base (just outside pawn rim).
+    const tipX = cx + Math.cos(ang) * tipR * breathing;
+    const tipY = cy + Math.sin(ang) * tipR * breathing;
+    const baseX = cx + Math.cos(ang) * baseR;
+    const baseY = cy + Math.sin(ang) * baseR;
+    // Each root curves — use a quadratic bezier with the control point
+    // offset perpendicular to the root direction, jittered per-root so
+    // each branch hooks a different way.
+    const perpX = -Math.sin(ang);
+    const perpY = Math.cos(ang);
+    const curveSide = rng01(seed, i + 410) > 0.5 ? 1 : -1;
+    const curveMag = (0.18 + rng01(seed, i + 420) * 0.18) * tipR;
+    const wobble = Math.sin(now / 900 + i * 1.2) * 0.05 * tipR;
+    const midX = (tipX + baseX) / 2 + perpX * (curveSide * curveMag + wobble);
+    const midY = (tipY + baseY) / 2 + perpY * (curveSide * curveMag + wobble);
+    // Root body — dark mossy brown stroke with a slight gradient feel
+    // (two passes: dark outer, brighter inner for dimension).
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    ctx.strokeStyle = "#451a03";
+    ctx.lineWidth = Math.max(2, r * 0.16);
+    ctx.globalAlpha = 0.92;
+    ctx.beginPath();
+    ctx.moveTo(tipX, tipY);
+    ctx.quadraticCurveTo(midX, midY, baseX, baseY);
+    ctx.stroke();
+    ctx.strokeStyle = "#65a30d";
+    ctx.lineWidth = Math.max(0.8, r * 0.06);
+    ctx.globalAlpha = 0.85;
+    ctx.beginPath();
+    ctx.moveTo(tipX, tipY);
+    ctx.quadraticCurveTo(midX, midY, baseX, baseY);
+    ctx.stroke();
+    // Thorns — 3 along each root pointing outward perpendicular to the
+    // root tangent. Length jitters per thorn.
+    for (let t = 1; t <= 3; t++) {
+      // Position along the bezier at parameter `s` (0 = tip, 1 = base).
+      const s = t / 4;
+      // Quadratic bezier formula and tangent.
+      const px = (1 - s) * (1 - s) * tipX + 2 * (1 - s) * s * midX + s * s * baseX;
+      const py = (1 - s) * (1 - s) * tipY + 2 * (1 - s) * s * midY + s * s * baseY;
+      const tx = 2 * (1 - s) * (midX - tipX) + 2 * s * (baseX - midX);
+      const ty = 2 * (1 - s) * (midY - tipY) + 2 * s * (baseY - midY);
+      const tLen = Math.hypot(tx, ty) || 1;
+      // Thorn perpendicular — alternate side per thorn.
+      const sideThorn = (t % 2 === 0) ? 1 : -1;
+      const nx = -ty / tLen * sideThorn;
+      const ny =  tx / tLen * sideThorn;
+      const thornLen = r * (0.22 + 0.06 * rng01(seed, i * 7 + t));
+      const tipThornX = px + nx * thornLen;
+      const tipThornY = py + ny * thornLen;
+      // Triangle thorn — base perpendicular to root, point sticks outward.
+      const baseHalf = r * 0.06;
+      const baseAx = px - (tx / tLen) * baseHalf;
+      const baseAy = py - (ty / tLen) * baseHalf;
+      const baseBx = px + (tx / tLen) * baseHalf;
+      const baseBy = py + (ty / tLen) * baseHalf;
+      ctx.globalAlpha = 0.95;
+      ctx.fillStyle = "#1c1917";
+      ctx.beginPath();
+      ctx.moveTo(baseAx, baseAy);
+      ctx.lineTo(tipThornX, tipThornY);
+      ctx.lineTo(baseBx, baseBy);
+      ctx.closePath();
+      ctx.fill();
+      // Slight green highlight on the trailing edge so the thorn reads
+      // as wood/plant rather than pure ink.
+      ctx.strokeStyle = "#3f6212";
+      ctx.lineWidth = 0.7;
+      ctx.stroke();
+    }
+  }
+  ctx.restore();
 }
 
 // Anime "power up" speed lines — short violet/white spokes radiating
