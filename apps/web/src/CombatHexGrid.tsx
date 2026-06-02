@@ -1471,6 +1471,10 @@ function drawObstacleSprite(
 // active, so a fighter with three statuses gets three thirds of the ring.
 // The ring lives just outside the pawn body so it doesn't compete with the
 // class/monster border.
+// Per-effect ambient visualizations: fire embers, frost glints, lightning
+// sparks, poison bubbles, bleed drips. Each effect with a particle look
+// owns its own draw function; effects without one (stunned, taunt, marked,
+// vulnerable, foreseen, etc.) fall back to a thin arc on the orbit ring.
 function drawStatusOverlay(
   ctx: CanvasRenderingContext2D,
   cx: number, cy: number, baseRadius: number,
@@ -1478,35 +1482,221 @@ function drawStatusOverlay(
   now: number,
 ) {
   if (!effects || effects.length === 0) return;
-  // Filter to effects we know how to render and that are still ticking.
-  const live = effects
-    .filter((e) => e.remaining > 0 && EFFECT_VISUAL[e.type])
-    .sort((a, b) => (EFFECT_VISUAL[b.type].weight - EFFECT_VISUAL[a.type].weight));
+  const live = effects.filter((e) => e.remaining > 0 && EFFECT_VISUAL[e.type]);
   if (live.length === 0) return;
 
-  const ringRadius = baseRadius + 4;
-  const lineWidth = 3.5;
-  const slice = (Math.PI * 2) / live.length;
-  // Small rotation drift so multi-effect rings feel alive.
-  const driftStart = (now / 2400) % (Math.PI * 2);
+  // Deterministic per-pawn jitter so two adjacent burning pawns don't ember
+  // in sync. Uses the integer-rounded position as a stable seed.
+  const seed = Math.round(cx) * 73856093 ^ Math.round(cy) * 19349663;
 
+  // Split into "ambient" (custom particles) vs "ring" (arc segments). Ring
+  // is used for status types without a custom visualizer so they still
+  // appear, just less expressively.
+  const ambient: typeof live = [];
+  const ringEffects: typeof live = [];
+  for (const e of live) {
+    if (e.type === "burning" || e.type === "frozen" || e.type === "shocked"
+      || e.type === "poisoned" || e.type === "bleeding") {
+      ambient.push(e);
+    } else {
+      ringEffects.push(e);
+    }
+  }
+
+  for (const e of ambient) {
+    if (e.type === "burning") drawBurningEmbers(ctx, cx, cy, baseRadius, now, seed);
+    else if (e.type === "frozen") drawFrostGlints(ctx, cx, cy, baseRadius, now, seed);
+    else if (e.type === "shocked") drawShockSparks(ctx, cx, cy, baseRadius, now, seed);
+    else if (e.type === "poisoned") drawPoisonBubbles(ctx, cx, cy, baseRadius, now, seed);
+    else if (e.type === "bleeding") drawBleedDrips(ctx, cx, cy, baseRadius, now, seed);
+  }
+
+  if (ringEffects.length > 0) {
+    const ringRadius = baseRadius + 4;
+    const slice = (Math.PI * 2) / ringEffects.length;
+    const driftStart = (now / 2400) % (Math.PI * 2);
+    ctx.save();
+    ctx.lineWidth = 3;
+    ctx.lineCap = "round";
+    for (let i = 0; i < ringEffects.length; i++) {
+      const e = ringEffects[i];
+      const v = EFFECT_VISUAL[e.type];
+      ctx.globalAlpha = 0.85;
+      ctx.strokeStyle = v.color;
+      const start = driftStart + slice * i + slice * 0.08;
+      const end = driftStart + slice * (i + 1) - slice * 0.08;
+      ctx.beginPath();
+      ctx.arc(cx, cy, ringRadius, start, end);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+}
+
+// Tiny deterministic pseudo-random: cheap LCG keyed by an integer seed.
+// Returns a value in [0,1). Use to spread particle positions per pawn
+// without burning a real PRNG instance per frame.
+function rng01(seed: number, salt: number): number {
+  const x = Math.sin(seed * 9301 + salt * 49297) * 233280;
+  return x - Math.floor(x);
+}
+
+// Rising orange→red embers that drift up off the pawn and fade.
+function drawBurningEmbers(
+  ctx: CanvasRenderingContext2D,
+  cx: number, cy: number, r: number, now: number, seed: number,
+) {
+  const COUNT = 7;
+  const CYCLE = 1100; // ms — full rise+fade
   ctx.save();
-  ctx.lineWidth = lineWidth;
-  ctx.lineCap = "round";
-  for (let i = 0; i < live.length; i++) {
-    const e = live[i];
-    const v = EFFECT_VISUAL[e.type];
-    // Burning + shocked + bleeding pulse so they read as "hurting".
-    const pulse = (e.type === "burning" || e.type === "shocked" || e.type === "bleeding")
-      ? 0.7 + 0.3 * Math.sin(now / 160 + i)
-      : 1;
-    ctx.globalAlpha = 0.85 * pulse;
-    ctx.strokeStyle = v.color;
-    const start = driftStart + slice * i + slice * 0.08;
-    const end = driftStart + slice * (i + 1) - slice * 0.08;
+  for (let i = 0; i < COUNT; i++) {
+    const phase = ((now + i * (CYCLE / COUNT) + rng01(seed, i) * CYCLE) % CYCLE) / CYCLE;
+    // Horizontal start jitter spans the pawn width, with a slight inward bias.
+    const hx = (rng01(seed, i + 100) - 0.5) * r * 1.6;
+    // Slight horizontal sway so embers feel buoyant.
+    const sway = Math.sin(now / 280 + i * 1.7) * r * 0.08;
+    const x = cx + hx + sway;
+    // Rise from pawn's lower hemisphere → past the top.
+    const y = cy + r * 0.7 - phase * r * 2.4;
+    const size = Math.max(0.5, r * 0.18 * (1 - phase * 0.7));
+    const alpha = phase < 0.15 ? phase / 0.15 : 1 - (phase - 0.15) / 0.85;
+    // Color shifts orange → red → dim red as it rises and cools.
+    const t = phase;
+    const rch = Math.round(255 * (1 - t * 0.2));
+    const gch = Math.round(140 * (1 - t * 0.8));
+    const bch = Math.round(40 * (1 - t));
+    ctx.globalAlpha = Math.max(0, Math.min(1, alpha)) * 0.95;
+    ctx.fillStyle = `rgb(${rch},${gch},${bch})`;
     ctx.beginPath();
-    ctx.arc(cx, cy, ringRadius, start, end);
+    ctx.arc(x, y, size, 0, Math.PI * 2);
+    ctx.fill();
+    // Bright core for the youngest embers.
+    if (phase < 0.4) {
+      ctx.globalAlpha = (1 - phase / 0.4) * 0.8;
+      ctx.fillStyle = "#fef08a";
+      ctx.beginPath();
+      ctx.arc(x, y, size * 0.4, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+  ctx.restore();
+}
+
+// Static-feeling sparkle of pale-blue crystal points around the rim.
+function drawFrostGlints(
+  ctx: CanvasRenderingContext2D,
+  cx: number, cy: number, r: number, now: number, seed: number,
+) {
+  const COUNT = 6;
+  ctx.save();
+  for (let i = 0; i < COUNT; i++) {
+    const ang = (i / COUNT) * Math.PI * 2 + rng01(seed, i) * 0.6;
+    // Slow twinkle: brightness oscillates per-glint at different phases.
+    const tw = 0.4 + 0.6 * (0.5 + 0.5 * Math.sin(now / 380 + i * 1.3));
+    const rad = r * (0.95 + 0.18 * Math.sin(now / 600 + i));
+    const x = cx + Math.cos(ang) * rad;
+    const y = cy + Math.sin(ang) * rad;
+    ctx.globalAlpha = tw * 0.85;
+    ctx.fillStyle = "#bfdbfe";
+    ctx.beginPath();
+    // 4-pointed crystal star: a tiny plus.
+    ctx.fillRect(x - 1, y - 3.5, 2, 7);
+    ctx.fillRect(x - 3.5, y - 1, 7, 2);
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
+// Forking sparks that snap to random rim points for a single frame.
+function drawShockSparks(
+  ctx: CanvasRenderingContext2D,
+  cx: number, cy: number, r: number, now: number, seed: number,
+) {
+  // ~6 sparks/sec — fast strobe so it reads as electric.
+  const tick = Math.floor(now / 160);
+  ctx.save();
+  ctx.strokeStyle = "#fef08a";
+  ctx.lineWidth = 1.5;
+  for (let i = 0; i < 2; i++) {
+    const ang = rng01(seed ^ tick, i) * Math.PI * 2;
+    const x0 = cx + Math.cos(ang) * r;
+    const y0 = cy + Math.sin(ang) * r;
+    // Zigzag of 3 segments outward.
+    ctx.globalAlpha = 0.95;
+    ctx.beginPath();
+    ctx.moveTo(x0, y0);
+    let px = x0, py = y0;
+    for (let s = 1; s <= 3; s++) {
+      const dx = Math.cos(ang + (rng01(seed ^ tick, i * 10 + s) - 0.5) * 1.4) * r * 0.22;
+      const dy = Math.sin(ang + (rng01(seed ^ tick, i * 10 + s) - 0.5) * 1.4) * r * 0.22;
+      px += dx; py += dy;
+      ctx.lineTo(px, py);
+    }
     ctx.stroke();
+  }
+  ctx.restore();
+}
+
+// Slow rising green bubbles that swell and pop above the pawn.
+function drawPoisonBubbles(
+  ctx: CanvasRenderingContext2D,
+  cx: number, cy: number, r: number, now: number, seed: number,
+) {
+  const COUNT = 5;
+  const CYCLE = 1600;
+  ctx.save();
+  for (let i = 0; i < COUNT; i++) {
+    const phase = ((now + i * (CYCLE / COUNT) + rng01(seed, i + 50) * CYCLE) % CYCLE) / CYCLE;
+    const hx = (rng01(seed, i + 30) - 0.5) * r * 1.4;
+    const x = cx + hx;
+    const y = cy + r * 0.6 - phase * r * 1.8;
+    const size = r * 0.14 * (0.5 + phase * 0.8);
+    const alpha = phase < 0.1 ? phase / 0.1 : phase > 0.85 ? (1 - phase) / 0.15 : 1;
+    ctx.globalAlpha = alpha * 0.7;
+    ctx.fillStyle = "rgba(132, 204, 22, 0.7)";
+    ctx.beginPath();
+    ctx.arc(x, y, size, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = "#a3e635";
+    ctx.lineWidth = 1;
+    ctx.globalAlpha = alpha * 0.9;
+    ctx.beginPath();
+    ctx.arc(x, y, size, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+// Falling red drips that streak down from random points on the lower rim.
+function drawBleedDrips(
+  ctx: CanvasRenderingContext2D,
+  cx: number, cy: number, r: number, now: number, seed: number,
+) {
+  const COUNT = 4;
+  const CYCLE = 900;
+  ctx.save();
+  for (let i = 0; i < COUNT; i++) {
+    const phase = ((now + i * (CYCLE / COUNT) + rng01(seed, i + 90) * CYCLE) % CYCLE) / CYCLE;
+    const ang = Math.PI * 0.25 + rng01(seed, i + 80) * Math.PI * 0.5; // bottom arc
+    const x0 = cx + Math.cos(ang) * r;
+    const y0 = cy + Math.abs(Math.sin(ang)) * r;
+    const y = y0 + phase * r * 1.3;
+    const size = r * 0.11 * (1 - phase * 0.5);
+    const alpha = phase < 0.15 ? phase / 0.15 : 1 - (phase - 0.5) / 0.5;
+    ctx.globalAlpha = Math.max(0, alpha) * 0.85;
+    ctx.fillStyle = "#dc2626";
+    ctx.beginPath();
+    // Teardrop: small circle at the head with a smear above it.
+    ctx.arc(x0, y, size, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.globalAlpha = Math.max(0, alpha) * 0.45;
+    ctx.fillStyle = "#991b1b";
+    ctx.beginPath();
+    ctx.moveTo(x0 - size * 0.5, y);
+    ctx.lineTo(x0, y - size * 1.4);
+    ctx.lineTo(x0 + size * 0.5, y);
+    ctx.closePath();
+    ctx.fill();
   }
   ctx.restore();
 }
