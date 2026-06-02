@@ -1521,7 +1521,7 @@ function drawStatusOverlay(
   for (const e of live) {
     if (e.type === "burning" || e.type === "frozen" || e.type === "shocked"
       || e.type === "poisoned" || e.type === "bleeding"
-      || e.type === "stunned") {
+      || e.type === "stunned" || e.type === "regen") {
       ambient.push(e);
     } else {
       ringEffects.push(e);
@@ -1535,6 +1535,7 @@ function drawStatusOverlay(
     else if (e.type === "poisoned") drawPoisonBubbles(ctx, cx, cy, baseRadius, now, seed);
     else if (e.type === "bleeding") drawBleedDrips(ctx, cx, cy, baseRadius, now, seed);
     else if (e.type === "stunned") drawStunnedStars(ctx, cx, cy, baseRadius, now, seed);
+    else if (e.type === "regen") drawRegenPluses(ctx, cx, cy, baseRadius, now, seed);
   }
 
   if (ringEffects.length > 0) {
@@ -1750,6 +1751,88 @@ function drawPortraitTint(
     ctx.fillRect(cx - radius, cy - radius, radius * 2, radius * 2);
     ctx.restore();
   }
+}
+
+// Light-green medical "+" signs floating gently up + sideways-bobbing.
+// Same rising-particle structure as burning embers, but the symbol is a
+// healing cross and the motion is much slower and softer.
+function drawRegenPluses(
+  ctx: CanvasRenderingContext2D,
+  cx: number, cy: number, r: number, now: number, seed: number,
+) {
+  const COUNT = 5;
+  const CYCLE = 2600; // ms — full rise + fade
+  ctx.save();
+  for (let i = 0; i < COUNT; i++) {
+    const phase = ((now + i * (CYCLE / COUNT) + rng01(seed, i + 200) * CYCLE) % CYCLE) / CYCLE;
+    // Horizontal start position around the pawn, with a gentle sideways
+    // bob as it rises so each plus drifts left-right while floating.
+    const baseX = (rng01(seed, i + 220) - 0.5) * r * 1.6;
+    const bob = Math.sin(now / 700 + i * 1.4 + rng01(seed, i + 240) * 6) * r * 0.15;
+    const x = cx + baseX + bob;
+    // Rise: starts near the pawn's mid-bottom, drifts up and slightly past
+    // the top, slower than burning embers (lower rise distance).
+    const y = cy + r * 0.4 - phase * r * 1.9;
+    // Size pulses softly, peaks mid-life.
+    const size = r * (0.16 + 0.04 * Math.sin(now / 540 + i));
+    // Soft fade: ramp up over first 20%, hold, ramp down last 30%.
+    const alpha = phase < 0.2
+      ? (phase / 0.2) * 0.8
+      : phase > 0.7
+        ? ((1 - phase) / 0.3) * 0.8
+        : 0.8;
+    ctx.globalAlpha = alpha;
+    // Light, pastel green so it reads as healing/restoration.
+    drawPlus(ctx, x, y, size, "#86efac");
+  }
+  ctx.restore();
+}
+
+function drawPlus(
+  ctx: CanvasRenderingContext2D,
+  x: number, y: number, size: number, color: string,
+) {
+  // Thick "+" with rounded ends — slightly chunkier so it reads as a
+  // medical symbol rather than a math operator.
+  const arm = size;
+  const thickness = Math.max(1.5, size * 0.42);
+  ctx.save();
+  ctx.fillStyle = color;
+  ctx.strokeStyle = "rgba(20, 83, 45, 0.55)";
+  ctx.lineWidth = Math.max(0.5, size * 0.12);
+  ctx.lineJoin = "round";
+  // Vertical bar.
+  roundRect(ctx, x - thickness / 2, y - arm, thickness, arm * 2, thickness * 0.3);
+  ctx.fill();
+  ctx.stroke();
+  // Horizontal bar.
+  roundRect(ctx, x - arm, y - thickness / 2, arm * 2, thickness, thickness * 0.3);
+  ctx.fill();
+  ctx.stroke();
+  // Center highlight so the plus has a touch of dimension.
+  ctx.fillStyle = "rgba(220, 252, 231, 0.55)";
+  ctx.beginPath();
+  ctx.arc(x, y, thickness * 0.45, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
+function roundRect(
+  ctx: CanvasRenderingContext2D,
+  x: number, y: number, w: number, h: number, r: number,
+) {
+  const radius = Math.min(r, w / 2, h / 2);
+  ctx.beginPath();
+  ctx.moveTo(x + radius, y);
+  ctx.lineTo(x + w - radius, y);
+  ctx.quadraticCurveTo(x + w, y, x + w, y + radius);
+  ctx.lineTo(x + w, y + h - radius);
+  ctx.quadraticCurveTo(x + w, y + h, x + w - radius, y + h);
+  ctx.lineTo(x + radius, y + h);
+  ctx.quadraticCurveTo(x, y + h, x, y + h - radius);
+  ctx.lineTo(x, y + radius);
+  ctx.quadraticCurveTo(x, y, x + radius, y);
+  ctx.closePath();
 }
 
 // Classic cartoon "seeing stars" — small gold 5-pointed stars on a slow
