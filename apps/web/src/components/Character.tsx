@@ -13,7 +13,19 @@ import {
   useInteractions,
 } from "@floating-ui/react";
 
-import { CLASSES, classByName, deriveAll, xpForLevel, type Achievement, type EarnedAchievement, type StatKey, type Stats as CoreStats } from "@gantt-quest/core";
+import {
+  CLASSES,
+  classByName,
+  deriveAll,
+  findNode,
+  xpForLevel,
+  type AbilityDef,
+  type AbilityLoadout,
+  type Achievement,
+  type EarnedAchievement,
+  type StatKey,
+  type Stats as CoreStats,
+} from "@gantt-quest/core";
 
 import { Avatar, Icon } from "../icons";
 
@@ -1266,6 +1278,22 @@ export function CharacterCard({
   const [trophyDefs, setTrophyDefs] = useState<Achievement[]>([]);
   const [trophyEarned, setTrophyEarned] = useState<EarnedAchievement[]>([]);
   const [abilitiesOpen, setAbilitiesOpen] = useState(false);
+  // Equipped loadout — fetched once when the drawer mounts so the abilities
+  // section reflects the slotted actives/passives instead of the full class
+  // kit. Falls back to the kit when unavailable so older characters / fetch
+  // failures still see something useful.
+  const [equippedLoadout, setEquippedLoadout] = useState<AbilityLoadout | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/character/talents")
+      .then((r) => r.ok ? r.json() : null)
+      .then((raw) => {
+        const j = raw as { loadout?: AbilityLoadout } | null;
+        if (!cancelled && j?.loadout) setEquippedLoadout(j.loadout);
+      })
+      .catch(() => { /* fall through to class-kit fallback */ });
+    return () => { cancelled = true; };
+  }, [me.character?.slack_user_id]);
   useEffect(() => {
     fetch("/api/achievements")
       .then((r) => r.ok ? r.json() as Promise<AchievementsResponse> : null)
@@ -1459,7 +1487,22 @@ export function CharacterCard({
       )}
       {/* Abilities section */}
       {(() => {
-        const abilities = classByName(c.class)?.abilities ?? [];
+        const kit = classByName(c.class)?.abilities ?? [];
+        // Prefer the slotted loadout when we have it: only show the actives
+        // and passives the player has actually equipped. Falls back to the
+        // full class kit if the loadout fetch is still in flight or errored.
+        const abilities: AbilityDef[] = equippedLoadout
+          ? [
+              ...equippedLoadout.active
+                .map((id) => (id ? findNode(id)?.ability : undefined))
+                .filter((a): a is AbilityDef => !!a && a.kind === "active"),
+              ...equippedLoadout.passive
+                .map((id) =>
+                  id ? findNode(id)?.ability ?? kit.find((a) => a.id === id) : undefined,
+                )
+                .filter((a): a is AbilityDef => !!a && a.kind === "passive"),
+            ]
+          : kit;
         if (abilities.length === 0) return null;
         return (
           <div style={{

@@ -84,6 +84,11 @@ interface Fighter {
   weapon_range?: "melee" | "ranged" | "focus";
   element?: "fire" | "ice" | "lightning";
   stats?: { str: number; int_stat: number; vit: number; agi: number; dex: number };
+  // Talent-tree fields broadcast from the engine. Used by the character sheet
+  // to show the passives this fighter actually has slotted, instead of the
+  // full class kit.
+  equipped_passive_ids?: string[];
+  talent_ranks?: Record<string, number>;
 }
 
 interface Monster {
@@ -2619,7 +2624,17 @@ export function CombatPage({
                               isCurrent={currentActorId === fighter.id}
                               pinned={isPinnedFocus}
                               onUnpin={() => setPinnedPawnId(null)}
-                              onOpenSheet={() => setSheetSubject({ pawn, side: "fighter", themeColor, isSelf: fighter.id === selfId })}
+                              onOpenSheet={() => setSheetSubject({
+                                pawn,
+                                side: "fighter",
+                                themeColor,
+                                isSelf: fighter.id === selfId,
+                                // Self's loadout comes from the local /api/character/talents
+                                // fetch; other party members fall back to the class kit
+                                // until per-fighter loadouts are broadcast on the wire.
+                                loadout: fighter.id === selfId ? equippedLoadout ?? undefined : undefined,
+                                equippedPassiveIds: fighter.equipped_passive_ids,
+                              })}
                             />
                           );
                         })()}
