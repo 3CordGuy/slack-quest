@@ -7567,8 +7567,8 @@ function rollMonsterAttackAndDamageTypes(
 //   tier 7–8: ranged + reach (melee=2 hexes)
 //   tier 9+ : ranged + AoE volley + always-on charge (boss tier)
 //
-// Bosses always pile on at least `charge` + one of `volley` / `pounce`
-// regardless of tier so a tier-3 boss still threatens kiters.
+// Bosses always pile on `pounce` or `volley` regardless of tier so a tier-3
+// boss still threatens kiters.
 function tierCombatProfile(
   tier: number,
   isBoss: boolean,
@@ -7590,7 +7590,6 @@ function tierCombatProfile(
   } else if (t === 5 || t === 6) {
     weapon_range = sample < 0.5 ? "ranged" : "melee";
     move_range = 4;
-    specials.push("charge");
   } else if (t === 7 || t === 8) {
     weapon_range = "ranged";
     move_range = 4;
@@ -7598,11 +7597,10 @@ function tierCombatProfile(
   } else if (t >= 9) {
     weapon_range = "ranged";
     move_range = 3;
-    specials.push("charge", "volley");
+    specials.push("volley");
   }
 
   if (isBoss) {
-    if (!specials.includes("charge")) specials.push("charge");
     specials.push(sample2 < 0.5 ? "pounce" : "volley");
   }
 

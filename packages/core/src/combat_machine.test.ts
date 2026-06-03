@@ -306,6 +306,79 @@ describe("combat_machine.step", () => {
     });
   });
 
+  describe("attack range gating (hex mode)", () => {
+    // Two-fighter init with hex_range_enabled. Goblin is melee (range 1).
+    function rangeInit(): CombatInit {
+      return {
+        hex_range_enabled: true,
+        fighters: [
+          {
+            id: "U_PALADIN", name: "Edmund", class: "QA Paladin", level: 5,
+            hp: 30, max_hp: 30, mana: 3, max_mana: 3, shield: 0, position: "front",
+            attack_mod: 2, magic_mod: 0, weapon_power: 4, armor_power: 3, scars: [],
+          },
+          {
+            id: "U_ROGUE", name: "Fenel", class: "Refactor Rogue", level: 4,
+            hp: 20, max_hp: 20, mana: 3, max_mana: 3, shield: 0, position: "back",
+            attack_mod: 1, magic_mod: 0, weapon_power: 3, armor_power: 1, scars: [],
+          },
+        ],
+        monster: { name: "Goblin", hp: 10, max_hp: 10, tier: 1, is_boss: false },
+      };
+    }
+
+    it("a melee monster only swings at fighters within attack range", () => {
+      // Monster adjacent to PALADIN (dist 1), ROGUE far away (dist 8).
+      // Without the gate, pickMonsterTarget could still roll for ROGUE and the
+      // swing would land across the map. Roll 95 biases toward the FAR fighter
+      // in the unfiltered weighted pick; with the gate the pool is [PALADIN]
+      // only, so the swing must target PALADIN regardless of the roll.
+      const begun = runBegin(createCombatState(rangeInit()), [3, 1, 18]);
+      const setup: CombatState = {
+        ...begun.state,
+        fighters: begun.state.fighters.map((f) =>
+          f.id === "U_PALADIN" ? { ...f, pos: { q: 1, r: 2 } } : { ...f, pos: { q: 4, r: 9 } },
+        ),
+        monsters: [{ ...begun.state.monsters[0], pos: { q: 1, r: 1 } }],
+      };
+      // [95 target-pick (would prefer ROGUE), 15 d20 hit, 3 d4 damage]
+      const result = step(setup, { kind: "monster_act" }, seqRoll([95, 15, 3]));
+      const attack = result.events.find((e) => e.type === "monster_attack");
+      expect(attack).toBeDefined();
+      expect(attack).toMatchObject({ target: "U_PALADIN" });
+      // ROGUE is untouched; PALADIN took the hit (shield 0, hp 30 → < 30).
+      expect(result.state.fighters.find((f) => f.id === "U_ROGUE")?.hp).toBe(20);
+      expect(result.state.fighters.find((f) => f.id === "U_PALADIN")!.hp).toBeLessThan(30);
+    });
+
+    it("skips the swing when no fighter is in range and movement can't close the gap", () => {
+      // Monster boxed in by obstacles 8 hexes from the nearest fighter — no
+      // path, no charge (charge is removed), no pounce. Swing must skip.
+      const begun = runBegin(createCombatState(rangeInit()), [3, 1, 18]);
+      const setup: CombatState = {
+        ...begun.state,
+        fighters: begun.state.fighters.map((f) =>
+          f.id === "U_PALADIN" ? { ...f, pos: { q: 1, r: 9 } } : { ...f, pos: { q: 4, r: 9 } },
+        ),
+        monsters: [{ ...begun.state.monsters[0], pos: { q: 1, r: 1 } }],
+        obstacles: [
+          { pos: { q: 0, r: 2 }, kind: "boulder" },
+          { pos: { q: 1, r: 2 }, kind: "boulder" },
+          { pos: { q: 2, r: 1 }, kind: "boulder" },
+        ],
+      };
+      // No rolls consumed past the auto-move/skip path (target pick + d20 + dmg
+      // never reached). Use a single safe value to detect over-consumption.
+      const result = step(setup, { kind: "monster_act" }, seqRoll([50]));
+      const skipped = result.events.find((e) => e.type === "monster_swing_skipped");
+      expect(skipped).toMatchObject({ reason: "out_of_range" });
+      expect(result.events.find((e) => e.type === "monster_attack")).toBeUndefined();
+      // Both fighters untouched.
+      expect(result.state.fighters.find((f) => f.id === "U_PALADIN")!.hp).toBe(30);
+      expect(result.state.fighters.find((f) => f.id === "U_ROGUE")!.hp).toBe(20);
+    });
+  });
+
   describe("boss phase transition", () => {
     it("flips to phase 2 when HP crosses 50% on the killing chip", () => {
       const init = baseInit();
