@@ -120,6 +120,14 @@ const RANK_SPEC: Record<string, { max_rank: 1 | 2 | 3; level_req_per_rank: numbe
   // combat_machine (applyRogueLethalStrike), not execute(). Plumbing
   // kit_ranks through CombatFighter so the machine can read rank is a
   // follow-up; for now Lethal Strikes stays R1.
+  // ── Staff Sage kit ──
+  ray_of_frost: { max_rank: 3, level_req_per_rank: [1, 6, 12], point_cost_per_rank: [1, 2, 3] },
+  blizzard: { max_rank: 3, level_req_per_rank: [1, 6, 12], point_cost_per_rank: [1, 2, 3] },
+  good_fortune: { max_rank: 3, level_req_per_rank: [1, 6, 12], point_cost_per_rank: [1, 2, 3] },
+  // foretell deliberately omitted — passive with no execute() scaling surface.
+  // ill_omen deliberately omitted — its delayed-burst payout lives in the
+  // apply_ill_omen handler (combat_machine), not execute(). Scaling its
+  // magnitude param needs talent_ranks plumbed into that handler; deferred.
 };
 
 const DEFAULT_RANKS: { max_rank: 1; level_req_per_rank: number[]; point_cost_per_rank: number[] } = {

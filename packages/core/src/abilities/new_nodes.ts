@@ -459,10 +459,16 @@ const frostBolt: AbilityDef = {
   range_tiles: 4,
   aoe_radius_tiles: 0,
   execute(ctx) {
+    const rank = ctx.rank ?? 1;
     const monster = ctx.target as MonsterSnapshot;
     const mag = ctx.caster.magic_mod;
-    const amount = rollSum(ctx.roll, Math.max(1, mag), 4);
-    return [fx.attackRollDamage(monster.id, mag, amount, `${Math.max(1, mag)}d4`, "ice", undefined, undefined, 25)];
+    const baseRoll = rollSum(ctx.roll, Math.max(1, mag), 4);
+    // R1 ×1 dmg + 25% freeze, R2 ×1.25 dmg + 35% freeze, R3 ×1.5 dmg + 45% freeze.
+    const mult = rank >= 3 ? 1.5 : rank >= 2 ? 1.25 : 1;
+    const amount = Math.round(baseRoll * mult);
+    const freezeChance = rank >= 3 ? 45 : rank >= 2 ? 35 : 25;
+    const formula = rank > 1 ? `${Math.max(1, mag)}d4×${mult}` : `${Math.max(1, mag)}d4`;
+    return [fx.attackRollDamage(monster.id, mag, amount, formula, "ice", undefined, undefined, freezeChance)];
   },
 };
 
@@ -484,7 +490,10 @@ const timeDilation: AbilityDef = {
   range_tiles: 4,
   aoe_radius_tiles: 1,
   execute(ctx) {
-    return ctx.monsters.map((m) => fx.entangleMonster(m.id, 2));
+    const rank = ctx.rank ?? 1;
+    // R1 = 2 turns, R2 = 3 turns, R3 = 4 turns of entangle (-4 to-hit).
+    const duration = rank >= 3 ? 4 : rank >= 2 ? 3 : 2;
+    return ctx.monsters.map((m) => fx.entangleMonster(m.id, duration));
   },
 };
 
@@ -529,9 +538,14 @@ const hailstorm: AbilityDef = {
   range_tiles: 4,
   aoe_radius_tiles: 2,
   execute(ctx) {
+    const rank = ctx.rank ?? 1;
     const mag = Math.max(1, ctx.caster.magic_mod);
+    // R1 ×1 dmg + 15% freeze, R2 ×1.25 dmg + 20% freeze, R3 ×1.5 dmg + 25% freeze.
+    const mult = rank >= 3 ? 1.5 : rank >= 2 ? 1.25 : 1;
+    const freezeChance = rank >= 3 ? 25 : rank >= 2 ? 20 : 15;
+    const formula = rank > 1 ? `${mag}d4×${mult}` : `${mag}d4`;
     return ctx.monsters.map((m) =>
-      fx.attackRollDamage(m.id, mag, rollSum(ctx.roll, mag, 4), `${mag}d4`, "ice", undefined, undefined, 15),
+      fx.attackRollDamage(m.id, mag, Math.round(rollSum(ctx.roll, mag, 4) * mult), formula, "ice", undefined, undefined, freezeChance),
     );
   },
 };
@@ -934,9 +948,13 @@ const NEW_NODES_BY_CLASS: Record<ClassId, TalentNodeDef[]> = {
     activeNode("frontend_bard", earworm, "support"),
   ],
   staff_sage: [
-    activeNode("staff_sage", frostBolt, "control"),
-    activeNode("staff_sage", hailstorm, "damage"),
-    activeNode("staff_sage", timeDilation, "control"),
+    activeNode("staff_sage", frostBolt, "control", RANK_3),
+    activeNode("staff_sage", hailstorm, "damage", RANK_3),
+    activeNode("staff_sage", timeDilation, "control", RANK_3),
+    // memoization + cacheWarmer stay R1 — their effects are applied inline by
+    // combat_machine (cast handler zeroes mana for first-cast / damage-primed
+    // casts). Scaling needs the machine helpers to read fighter.talent_ranks;
+    // deferred until that plumbing lands alongside Observability/Failsafe.
     activeNode("staff_sage", memoization, "support"),
     activeNode("staff_sage", cacheWarmer, "support"),
   ],
