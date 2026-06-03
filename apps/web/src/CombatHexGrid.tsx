@@ -285,12 +285,53 @@ function drawHex(ctx: CanvasRenderingContext2D, cx: number, cy: number, size: nu
   }
 }
 
-function drawHpBar(ctx: CanvasRenderingContext2D, cx: number, cy: number, w: number, h: number, hp: number, maxHp: number) {
-  const pct = Math.max(0, Math.min(1, hp / maxHp));
+// Vitals readout drawn below each pawn: a thin HP bar, plus an optional
+// shield bar and (for fighters) a mana bar stacked underneath. The
+// combined stack height is roughly the same as the original solo HP bar,
+// so it doesn't fight pawn art for screen real estate.
+function drawPawnVitals(
+  ctx: CanvasRenderingContext2D,
+  cx: number,
+  cy: number,
+  w: number,
+  hp: number,
+  maxHp: number,
+  shield: number,
+  shieldMax: number,
+  mana: number,
+  maxMana: number,
+) {
+  const barH = 2;
+  const gap = 1;
+  const x = cx - w / 2;
+  let y = cy;
+
+  // HP
+  const hpPct = maxHp > 0 ? Math.max(0, Math.min(1, hp / maxHp)) : 0;
   ctx.fillStyle = "rgba(0,0,0,0.65)";
-  ctx.fillRect(cx - w / 2, cy, w, h);
-  ctx.fillStyle = pct > 0.5 ? "#22c55e" : pct > 0.25 ? "#facc15" : "#ef4444";
-  ctx.fillRect(cx - w / 2, cy, w * pct, h);
+  ctx.fillRect(x, y, w, barH);
+  ctx.fillStyle = hpPct > 0.5 ? "#22c55e" : hpPct > 0.25 ? "#facc15" : "#ef4444";
+  ctx.fillRect(x, y, w * hpPct, barH);
+
+  // Shield (only when the pawn can actually wear shield)
+  if (shieldMax > 0) {
+    y += barH + gap;
+    const sPct = Math.max(0, Math.min(1, shield / shieldMax));
+    ctx.fillStyle = "rgba(0,0,0,0.65)";
+    ctx.fillRect(x, y, w, barH);
+    ctx.fillStyle = sPct > 0 ? "#60a5fa" : "#7f1d1d";
+    ctx.fillRect(x, y, w * sPct, barH);
+  }
+
+  // Mana (fighters only)
+  if (maxMana > 0) {
+    y += barH + gap;
+    const mPct = Math.max(0, Math.min(1, mana / maxMana));
+    ctx.fillStyle = "rgba(0,0,0,0.65)";
+    ctx.fillRect(x, y, w, barH);
+    ctx.fillStyle = "#8b5cf6";
+    ctx.fillRect(x, y, w * mPct, barH);
+  }
 }
 
 // ── Component ────────────────────────────────────────────────────────────────
@@ -3920,7 +3961,21 @@ function drawActors(
     ctx.lineWidth = 3;
     ctx.strokeStyle = classColor(f.class);
     ctx.stroke();
-    if (!downed) drawHpBar(ctx, x, y + hexSize * 0.62, hexSize * 1.2, 4, f.hp, f.max_hp);
+    if (!downed) {
+      const armorMax = Math.floor((f.armor_power ?? 0) / 2);
+      drawPawnVitals(
+        ctx,
+        x,
+        y + hexSize * 0.62,
+        hexSize * 1.2,
+        f.hp,
+        f.max_hp,
+        f.shield ?? 0,
+        armorMax,
+        f.mana ?? 0,
+        f.max_mana ?? 0,
+      );
+    }
     if (!downed && f.effects) drawStatusOverlay(ctx, x, y, radius, f.effects as never, now);
     ctx.globalAlpha = 1;
   }
@@ -3976,7 +4031,22 @@ function drawActors(
     ctx.lineWidth = m.is_boss ? 4 : 2.5;
     ctx.strokeStyle = m.is_boss ? "#fbbf24" : "#fca5a5"; // bosses get a gold rim
     ctx.stroke();
-    if (!downed) drawHpBar(ctx, x, y + radius + 4, hexSize * (m.is_boss ? 1.7 : 1.25), m.is_boss ? 5 : 4, m.hp, m.max_hp);
+    if (!downed) {
+      // Monster armor mirrors the docked card: armorMax = floor((2*tier)/2) = tier.
+      const armorMax = m.tier ?? 0;
+      drawPawnVitals(
+        ctx,
+        x,
+        y + radius + 4,
+        hexSize * (m.is_boss ? 1.7 : 1.25),
+        m.hp,
+        m.max_hp,
+        m.shield ?? 0,
+        armorMax,
+        0,
+        0,
+      );
+    }
     if (!downed && m.effects) drawStatusOverlay(ctx, x, y, radius, m.effects as never, now);
     ctx.globalAlpha = 1;
   }

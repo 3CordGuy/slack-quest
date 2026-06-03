@@ -11,7 +11,14 @@
 
 import { useEffect } from "react";
 
-import { activeAbilities, classByName, type ActiveAbilityDef } from "@gantt-quest/core";
+import {
+  activeAbilities,
+  classByName,
+  findNode,
+  type AbilityDef,
+  type AbilityLoadout,
+  type ActiveAbilityDef,
+} from "@gantt-quest/core";
 
 import { Avatar, Icon } from "./icons";
 import { charPortraitUrl, classPortraitUrl, DISPLAY_FONT } from "./CombatShared";
@@ -22,6 +29,15 @@ export interface CharacterSheetSubject {
   side: "fighter" | "monster";
   themeColor: string;
   isSelf?: boolean;
+  // Equipped loadout for the pawn (fighters only). When provided, the
+  // sheet renders the slotted actives instead of the full class kit.
+  // Currently only plumbed through for self — other party members fall
+  // back to the kit until per-fighter loadouts are broadcast on the wire.
+  loadout?: AbilityLoadout;
+  // Equipped passive node ids for this fighter. When provided, the sheet
+  // shows only these as passives; otherwise it falls back to the kit's
+  // passives.
+  equippedPassiveIds?: string[];
   // For monsters: pass-through fields the sheet wants but PawnLike doesn't carry.
   monsterExtras?: {
     weapon_range?: "melee" | "ranged" | "focus";
@@ -48,7 +64,7 @@ export function CharacterSheetModal({ subject, onClose }: CharacterSheetModalPro
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
-  const { pawn, side, themeColor, isSelf, monsterExtras } = subject;
+  const { pawn, side, themeColor, isSelf, monsterExtras, loadout, equippedPassiveIds } = subject;
   const borderColor = side === "fighter" ? themeColor : "#dc2626";
 
   const avatarSrc =
@@ -203,7 +219,11 @@ export function CharacterSheetModal({ subject, onClose }: CharacterSheetModalPro
         {/* Fighter abilities */}
         {side === "fighter" && pawn.class && (
           <Section title="Abilities">
-            <FighterAbilitiesList className={pawn.class} />
+            <FighterAbilitiesList
+              className={pawn.class}
+              loadout={loadout}
+              equippedPassiveIds={equippedPassiveIds}
+            />
           </Section>
         )}
 
@@ -272,15 +292,37 @@ function Badge({ bg, fg, children }: { bg: string; fg: string; children: React.R
   );
 }
 
-function FighterAbilitiesList({ className }: { className: string }) {
+function FighterAbilitiesList({
+  className,
+  loadout,
+  equippedPassiveIds,
+}: {
+  className: string;
+  loadout?: AbilityLoadout;
+  equippedPassiveIds?: string[];
+}) {
   let cls: ReturnType<typeof classByName> | null = null;
   try {
     cls = classByName(className);
   } catch {
     return <div style={{ color: "#94a3b8" }}>No abilities found for {className}.</div>;
   }
-  const actives = activeAbilities(cls.abilities);
-  const passives = cls.abilities.filter((a) => a.kind === "passive");
+
+  // Actives: prefer the equipped loadout slots; fall back to the full class
+  // kit when we don't have loadout info (e.g. other party members).
+  const actives: ActiveAbilityDef[] = loadout
+    ? loadout.active
+        .map((id) => (id ? findNode(id)?.ability : undefined))
+        .filter((a): a is ActiveAbilityDef => !!a && a.kind === "active")
+    : activeAbilities(cls.abilities);
+
+  // Passives: prefer the equipped passive ids; fall back to the kit passives.
+  const passives: AbilityDef[] =
+    equippedPassiveIds && equippedPassiveIds.length > 0
+      ? equippedPassiveIds
+          .map((id) => findNode(id)?.ability ?? cls!.abilities.find((a) => a.id === id))
+          .filter((a): a is AbilityDef => !!a && a.kind === "passive")
+      : cls.abilities.filter((a) => a.kind === "passive");
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
       {actives.map((a) => <AbilityRow key={a.id} ability={a} />)}
