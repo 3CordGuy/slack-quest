@@ -497,7 +497,7 @@ const codeAudit: AbilityDef = {
   kind: "active",
   id: "code_audit",
   name: "Code Audit",
-  blurb: "Trace every call path — deals 1d6 + magic damage and hexes the target for 6 of its turns.",
+  blurb: "Trace every call path — deals 1d6 + magic damage and flags the target for 6 of its turns (cascading errors apply 3 bleed stacks per hit).",
   icon: "magnifying-glass",
   mana_cost: 2,
   cooldown_turns: 3,
