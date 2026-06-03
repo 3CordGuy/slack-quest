@@ -67,7 +67,7 @@ import {
 } from "./flavor";
 import { type AbilityContext, type AbilityEffect, type ActiveAbilityDef, type AllyNpcSpec, type PassiveAbilityDef } from "./abilities";
 import { ALL_TALENT_NODES } from "./abilities/tree";
-import { deriveArmorBonus, deriveCritBonus, deriveDodgeChance, deriveInitiativeBonus, type Stats } from "./stats";
+import { deriveArmorBonus, deriveCritBonus, deriveDodgeChance, deriveInitiativeBonus, type AffixEffects, type Stats } from "./stats";
 
 export type ActorId = string;
 
@@ -151,6 +151,22 @@ export interface CombatFighter {
   // rank-aware execute() branches fire. Undefined = treat all abilities as
   // rank 1 (legacy combats, fresh characters who haven't bought any ranks).
   talent_ranks?: Record<string, number>;
+  // Gear-affix effects (design doc: docs/gear-affixes-and-uniques.md).
+  // Summed from all equipped items at combat init; frozen for the encounter.
+  // Each field is the magnitude that combat hooks read:
+  //   crit_pct adds to crit chance; lifesteal heals on damage dealt;
+  //   *_dmg flat-adds to the matching elemental damage line; resist_*
+  //   reduces incoming damage of that type; thorns reflects on melee
+  //   taken; mana_regen ticks each turn; dodge_pct adds to dodge.
+  // Absent keys default to 0 — legacy combats and pre-affix items work unchanged.
+  affix_effects?: AffixEffects;
+  // Equipped legendary unique-effect ids (UNIQUE_REGISTRY keys). Combat hooks
+  // dispatch these at named lifecycle points (onCritHit, onTakeDamage, etc.).
+  unique_ids?: string[];
+  // Active set bonuses keyed by set_id, with the highest piece-count
+  // threshold currently active (2 / 4 / etc.). Drives the set bonus
+  // dispatcher in the equip aggregator.
+  active_sets?: Record<string, number>;
 }
 
 export interface GauntletWaveSpec {
@@ -609,6 +625,9 @@ export type CombatEvent =
   | { type: "ability_envenom_proc"; actor: ActorId; target: ActorId; stacks: number }
   | { type: "passive_bard_aura"; actor: ActorId; source: ActorId; bonus: number }
 | { type: "passive_holy_rage"; paladin: ActorId; bonus: number }
+  | { type: "passive_lifesteal"; actor: ActorId; healed: number }
+  | { type: "passive_thorns"; actor: ActorId; reflected: number }
+  | { type: "passive_mana_regen"; actor: ActorId; amount: number }
   | { type: "ability_shield_of_faith"; actor: ActorId; expires_after_round: number }
   | { type: "ability_protect"; actor: ActorId; target: ActorId }
   | { type: "ability_smite_debuff"; actor: ActorId; target: ActorId }
@@ -1405,6 +1424,30 @@ function handlePlayerHit(
     }
   }
 
+  // Gear-affix crit_pct — extra crit chance from rolled weapon affixes
+  // (docs/gear-affixes-and-uniques.md). Stacks additively with the DEX
+  // threshold; capped together at 50% to keep degenerate stacks in check.
+  if (!isCrit && (tickedFighter.affix_effects?.crit_pct ?? 0) > 0) {
+    const dexThreshold = tickedFighter.stats ? Math.round(deriveCritBonus(tickedFighter.stats) * 100) : 0;
+    const affixThreshold = Math.min(50 - dexThreshold, tickedFighter.affix_effects!.crit_pct);
+    if (affixThreshold > 0 && roll(100) <= affixThreshold) {
+      isCrit = true;
+      damage = damage * 2;
+    }
+  }
+
+  // Gear-affix elemental damage adds — fire_dmg / ice_dmg / lightning_dmg
+  // flat-add to the damage line when the wielder's weapon element matches.
+  // For non-elemental weapons no add applies (the dmg key is dormant).
+  const elementKey: keyof AffixEffects | null = tickedFighter.element === "fire" ? "fire_dmg"
+    : tickedFighter.element === "ice" ? "ice_dmg"
+    : tickedFighter.element === "lightning" ? "lightning_dmg"
+    : null;
+  if (elementKey && tickedFighter.affix_effects) {
+    const bonus = tickedFighter.affix_effects[elementKey] ?? 0;
+    if (bonus > 0) damage += bonus;
+  }
+
   // Frontend Bard — Earworm: +1 mana to every bard with the passive on
   // any party crit. Applies before drink-buff because forceCrit could flip
   // isCrit later but we want the refund only on rolls that are actually
@@ -1500,6 +1543,14 @@ function handlePlayerHit(
     formula: `${hit.roll}+${hit.totalMod}${isCrit ? " ×2" : ""}${drinkBonusForFormula}${hasEmpowered ? " ⚡" : ""}${aura.bonus > 0 ? ` +${aura.bonus} aura` : ""}`,
   });
 
+  // Gear-affix lifesteal — heal the attacker by `lifesteal` HP per landed hit,
+  // capped at their max_hp. Applies only when damage actually lands (not on
+  // overkill that hit shield-only) so weak attacks still feel "drained-back".
+  const lifestealAmt = tickedFighter.affix_effects?.lifesteal ?? 0;
+  const lifestealHeal = lifestealAmt > 0 && hpDamage > 0
+    ? Math.min(lifestealAmt, Math.max(0, hit.totalMod + tickedFighter.max_hp - tickedFighter.hp))
+    : 0;
+
   let nextState: CombatState = {
     ...s,
     monsters: s.monsters.map((m) =>
@@ -1513,6 +1564,10 @@ function handlePlayerHit(
           }
         : m,
     ),
+    // Apply lifesteal to the attacker's fighter row.
+    ...(lifestealHeal > 0
+      ? { fighters: s.fighters.map((f) => f.id === action.actor ? { ...f, hp: Math.min(f.max_hp, f.hp + lifestealHeal) } : f) }
+      : {}),
     contribution: {
       ...s.contribution,
       [action.actor]: (s.contribution[action.actor] ?? 0) + finalDamage,
@@ -1522,6 +1577,9 @@ function handlePlayerHit(
     // doesn't get coerced to undefined for unrelated turns.
     ...(drinkResult.event ? { drink_buffs: drinkResult.nextDrinkBuffs } : {}),
   };
+  if (lifestealHeal > 0) {
+    events.push({ type: "passive_lifesteal", actor: action.actor, healed: lifestealHeal });
+  }
 
   // Sinister Queries passive — applies bleed on any hit.
   if (!monsterKilled) {
@@ -2229,12 +2287,15 @@ function handleMonsterAct(state: CombatState, roll: RollFn): StepResult {
   // AGI dodge — checked after the to-hit succeeds, before damage is rolled.
   // deriveDodgeChance returns a fraction (0..0.15); we compare against a
   // 1-100 roll so max 15 is cap (Rogue at AGI 8 → 3%, end-game AGI 15 → 10%).
-  if (target.stats) {
-    const baseThreshold = Math.round(deriveDodgeChance(target.stats) * 100);
+  if (target.stats || (target.affix_effects?.dodge_pct ?? 0) > 0) {
+    const baseThreshold = target.stats ? Math.round(deriveDodgeChance(target.stats) * 100) : 0;
     // Frontend Bard — A11y First: +1% dodge per rank (R1 +1, R2 +2, R3 +3).
     // Stacks additively with the AGI dodge bonus.
     const a11yDodgeBonus = fighterHasPassive(target, "a11y_first") ? fighterRank(target, "a11y_first") : 0;
-    const threshold = baseThreshold + a11yDodgeBonus;
+    // Gear-affix dodge_pct — armor-rolled dodge stack. Stacks additively;
+    // total dodge is hard-capped at 35% to bound the degenerate stack.
+    const affixDodge = target.affix_effects?.dodge_pct ?? 0;
+    const threshold = Math.min(35, baseThreshold + a11yDodgeBonus + affixDodge);
     if (threshold > 0 && roll(100) <= threshold) {
       events.push({ type: "monster_dodged", target: target.id });
       const decremented: CombatState = {
@@ -2308,6 +2369,21 @@ function handleMonsterAct(state: CombatState, roll: RollFn): StepResult {
     shield_absorbed: shieldAbsorbed,
     hp_damage: hpDamage,
   });
+
+  // Gear-affix thorns — reflect damage to the attacking monster when the
+  // target took physical HP damage. Cosmetic ceiling: never reflect more
+  // than 10 per hit so a stacked thorns build can't trivially nuke bosses.
+  const thornsAmt = target.affix_effects?.thorns ?? 0;
+  if (thornsAmt > 0 && attackDamageType === "physical" && hpDamage > 0) {
+    const reflected = Math.min(10, thornsAmt);
+    s = {
+      ...s,
+      monsters: s.monsters.map((m) =>
+        m.id === monster.id ? { ...m, hp: Math.max(0, m.hp - reflected) } : m,
+      ),
+    };
+    events.push({ type: "passive_thorns", actor: target.id, reflected });
+  }
 
   // ── Special: entangle_on_hit ──
   // Monsters with this special apply the `entangled` status to any fighter
@@ -5504,19 +5580,33 @@ function computeTurnOrder(state: CombatState): ActorId[] {
 // Advances turn_index past any downed fighters or dead monsters so the next
 // live actor takes the turn. Increments round when wrapping.
 function tickActorCooldowns(state: CombatState, actorId: ActorId): CombatState {
-  const actorCooldowns = state.cooldowns?.[actorId];
-  if (!actorCooldowns || Object.keys(actorCooldowns).length === 0) return state;
+  // Gear-affix mana_regen — restore mana at the start of the actor's turn.
+  // Silent (no event) for v1 to keep the combat log uncluttered; players see
+  // the mana bar tick visually. Capped at max_mana so it never overflows.
+  const actor = state.fighters.find((f) => f.id === actorId);
+  const manaRegenAmt = actor?.affix_effects?.mana_regen ?? 0;
+  let next = state;
+  if (actor && manaRegenAmt > 0 && actor.hp > 0 && actor.mana < actor.max_mana) {
+    const restored = Math.min(manaRegenAmt, actor.max_mana - actor.mana);
+    next = {
+      ...next,
+      fighters: next.fighters.map((f) => f.id === actorId ? { ...f, mana: f.mana + restored } : f),
+    };
+  }
+
+  const actorCooldowns = next.cooldowns?.[actorId];
+  if (!actorCooldowns || Object.keys(actorCooldowns).length === 0) return next;
   const updated: Record<string, number> = {};
   for (const [abilityId, remaining] of Object.entries(actorCooldowns)) {
     if (remaining > 1) updated[abilityId] = remaining - 1;
     // remaining === 1: cooldown expires this turn — omit from updated
   }
-  const allCooldowns = { ...(state.cooldowns ?? {}), [actorId]: updated };
+  const allCooldowns = { ...(next.cooldowns ?? {}), [actorId]: updated };
   if (Object.keys(updated).length === 0) {
     const { [actorId]: _removed, ...rest } = allCooldowns;
-    return { ...state, cooldowns: Object.keys(rest).length > 0 ? rest : undefined };
+    return { ...next, cooldowns: Object.keys(rest).length > 0 ? rest : undefined };
   }
-  return { ...state, cooldowns: allCooldowns };
+  return { ...next, cooldowns: allCooldowns };
 }
 
 function advanceTurn(state: CombatState): CombatState {

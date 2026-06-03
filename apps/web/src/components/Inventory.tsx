@@ -206,9 +206,25 @@ export const ItemCell = forwardRef<
         <>
           <div style={{ marginTop: 2, fontSize: 10, fontWeight: 600, color: "#e2e8f0", lineHeight: 1.3, wordBreak: "break-word" }}>{resourceDisplayName(item)}</div>
           <div style={{ fontSize: 10, color: rc, fontWeight: 600 }}>+{powerValue}</div>
+          {item.item_level != null && item.item_level !== item.power && (
+            <div style={{ fontSize: 9, color: "#9ca3af" }}>iLvl {item.item_level}</div>
+          )}
           <div style={{ fontSize: 9, color: "#6b7280" }}>{slotLabel(item)}</div>
           {item.stat_bonus && statBonusSummary(item.stat_bonus) && (
             <div style={{ fontSize: 8, color: "#86efac" }}>{statBonusSummary(item.stat_bonus)}</div>
+          )}
+          {item.affixes && item.affixes.length > 0 && (
+            <div style={{ fontSize: 8, color: "#86efac", lineHeight: 1.3 }}>
+              {item.affixes.map((aff) => (
+                <div key={aff.id}>+{aff.value} {aff.label}</div>
+              ))}
+            </div>
+          )}
+          {item.unique_id && (
+            <div style={{ fontSize: 9, color: "#fbbf24", fontWeight: 600 }}>✦ Unique</div>
+          )}
+          {item.set_id && (
+            <div style={{ fontSize: 9, color: "#a78bfa" }}>◆ Set</div>
           )}
           {elementEmoji && (
             <div style={{ fontSize: 9, color: "#9ca3af" }}>{elementEmoji} {item.element}</div>

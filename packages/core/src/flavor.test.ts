@@ -281,3 +281,123 @@ describe("RARITY_BADGE", () => {
     expect(RARITY_BADGE.rare).toBeTruthy();
   });
 });
+
+describe("affix system", () => {
+  it("rolls 0 affixes for common items", async () => {
+    const { rollAffixes } = await import("./flavor");
+    const affixes = rollAffixes(
+      { type: "weapon", rarity: "common", weapon_range: "melee", slot: "main_hand" },
+      5,
+    );
+    expect(affixes).toEqual([]);
+  });
+
+  it("rolls 1 affix for uncommon, 2 for rare, 3 for epic+", async () => {
+    const { rollAffixes } = await import("./flavor");
+    const base = { type: "weapon" as const, weapon_range: "melee" as const, slot: "main_hand" as const };
+    expect(rollAffixes({ ...base, rarity: "uncommon" }, 5)).toHaveLength(1);
+    expect(rollAffixes({ ...base, rarity: "rare" }, 5)).toHaveLength(2);
+    expect(rollAffixes({ ...base, rarity: "epic" }, 5)).toHaveLength(3);
+    expect(rollAffixes({ ...base, rarity: "legendary" }, 5)).toHaveLength(3);
+  });
+
+  it("only rolls weapon-eligible affixes on weapons", async () => {
+    const { rollAffixes } = await import("./flavor");
+    // Run many trials to surface any leaks
+    for (let i = 0; i < 50; i++) {
+      const affixes = rollAffixes(
+        { type: "weapon", rarity: "legendary", weapon_range: "melee", slot: "main_hand" },
+        10,
+      );
+      for (const aff of affixes) {
+        // Armor-only affixes should never land on weapons
+        expect(aff.id).not.toBe("thorns");
+        expect(aff.id).not.toBe("dodge_pct");
+      }
+    }
+  });
+
+  it("only rolls armor/accessory-eligible affixes on rings", async () => {
+    const { rollAffixes } = await import("./flavor");
+    for (let i = 0; i < 50; i++) {
+      const affixes = rollAffixes(
+        { type: "armor", rarity: "legendary", slot: "ring" },
+        10,
+      );
+      for (const aff of affixes) {
+        // Weapon-only affixes should never land on accessories
+        expect(aff.id).not.toBe("crit_pct");
+        expect(aff.id).not.toBe("lifesteal");
+        expect(aff.id).not.toBe("fire_dmg");
+      }
+    }
+  });
+
+  it("does not duplicate affixes on a single item", async () => {
+    const { rollAffixes } = await import("./flavor");
+    for (let i = 0; i < 50; i++) {
+      const affixes = rollAffixes(
+        { type: "weapon", rarity: "legendary", weapon_range: "melee", slot: "main_hand" },
+        10,
+      );
+      const ids = affixes.map((a) => a.id);
+      expect(new Set(ids).size).toBe(ids.length);
+    }
+  });
+
+  it("affix tier scales with item_level", async () => {
+    const { rollAffixes } = await import("./flavor");
+    // Low-iLvl items should never roll tier-5
+    let sawHighTier = false;
+    for (let i = 0; i < 50; i++) {
+      const affixes = rollAffixes(
+        { type: "weapon", rarity: "legendary", weapon_range: "melee", slot: "main_hand" },
+        2, // low iLvl
+      );
+      if (affixes.some((a) => a.tier >= 4)) sawHighTier = true;
+    }
+    expect(sawHighTier).toBe(false);
+  });
+
+  it("rollItem on weapons attaches item_level and affixes (when rarity > common)", () => {
+    // High tier raises rarity odds — sample until we hit a non-common weapon
+    for (let i = 0; i < 200; i++) {
+      const roll = rollItem(5);
+      if (roll.type !== "weapon") continue;
+      expect(roll.item_level).toBeGreaterThan(0);
+      if (roll.rarity !== "common") {
+        expect(roll.affixes).toBeDefined();
+        expect(roll.affixes!.length).toBeGreaterThanOrEqual(1);
+        return;
+      }
+    }
+    throw new Error("never sampled a non-common weapon in 200 rolls at tier 5");
+  });
+
+  it("rollItem common weapons have empty affixes (but item_level is set)", () => {
+    for (let i = 0; i < 200; i++) {
+      const roll = rollItem(1);
+      if (roll.type === "weapon" && roll.rarity === "common") {
+        expect(roll.affixes).toEqual([]);
+        expect(roll.item_level).toBeGreaterThan(0);
+        return;
+      }
+    }
+    // Common at tier 1 is the dominant outcome — should always hit
+    throw new Error("never sampled a common weapon in 200 rolls at tier 1");
+  });
+
+  it("decorate merges affix values into stat_bonus for downstream readers", () => {
+    for (let i = 0; i < 200; i++) {
+      const roll = rollItem(5);
+      if (roll.type !== "weapon" || !roll.affixes || roll.affixes.length === 0) continue;
+      // Every rolled affix's value must appear in stat_bonus under its stat key
+      for (const aff of roll.affixes) {
+        expect(roll.stat_bonus).toBeDefined();
+        expect(roll.stat_bonus![aff.stat]).toBeGreaterThanOrEqual(aff.value);
+      }
+      return;
+    }
+    // Soft pass — tier 5 should almost always produce affixed weapons
+  });
+});

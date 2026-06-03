@@ -1,6 +1,6 @@
 // D1 query helpers. Raw prepared statements — no ORM.
 
-import type { AbilityLoadout, DamageType, DrinkBuff, EffectType, ElementType, EarnedAchievement, EquipSlot, ItemType, Rarity, StatKey, Stats, TalentNodeDef, TownState, WeaponRange } from "@gantt-quest/core";
+import type { AbilityLoadout, DamageType, DrinkBuff, EffectType, ElementType, EarnedAchievement, EquipSlot, ItemRoll, ItemType, Rarity, RolledAffix, StatKey, Stats, TalentNodeDef, TownState, WeaponRange } from "@gantt-quest/core";
 import { classIdForTree, deriveMaxMana, emptyLoadoutForLevel, findNode, MAX_ACTIVE_SLOTS, nodesForClass, passiveSlotsForLevel, pointCostForRank, startingStatsForClass } from "@gantt-quest/core";
 
 // Active status effect on a character or monster. Ticks on the affected actor's
@@ -42,11 +42,19 @@ export interface Item {
   // Apothecary Concentrate stacks on consumable potions (0..APOTHECARY_POTENCY_CAP).
   // Each stack boosts the potion's effective power by +25% at use time.
   potency_stacks: number;
+  // Gear-affix system (migration 0063, design doc:
+  // docs/gear-affixes-and-uniques.md). null on consumables/tools/resources;
+  // legacy rows backfill item_level from power and treat affixes as empty.
+  item_level: number | null;
+  affixes: RolledAffix[];          // [] if none rolled (common items, legacy rows)
+  unique_id: string | null;        // UNIQUE_REGISTRY key, legendary only
+  set_id: string | null;           // SET_REGISTRY key, set pieces only
 }
 
-interface ItemRow extends Omit<Item, "equipped" | "stat_bonus"> {
+interface ItemRow extends Omit<Item, "equipped" | "stat_bonus" | "affixes"> {
   equipped: number;
   stat_bonus: string | null; // stored as JSON text in D1
+  affixes: string | null;    // stored as JSON text in D1
 }
 
 function rowToItem(row: ItemRow): Item {
@@ -54,6 +62,12 @@ function rowToItem(row: ItemRow): Item {
     ...row,
     equipped: row.equipped === 1,
     stat_bonus: row.stat_bonus ? JSON.parse(row.stat_bonus) as Record<string, number> : null,
+    affixes: row.affixes ? JSON.parse(row.affixes) as RolledAffix[] : [],
+    // Legacy rows pre-migration get item_level synthesized from power so
+    // downstream gating (level_req, tooltip iLvl display) stays sane.
+    item_level: row.item_level ?? row.power,
+    unique_id: row.unique_id ?? null,
+    set_id: row.set_id ?? null,
   };
 }
 
@@ -384,6 +398,13 @@ export interface LootOption {
   level_req?: number;
   element?: ElementType | null;
   tier?: number;
+  // Gear-affix system (design doc: docs/gear-affixes-and-uniques.md).
+  // Optional so legacy persisted scenes still parse — read paths treat
+  // missing fields as legacy and the picked item ends up affix-less.
+  item_level?: number | null;
+  affixes?: RolledAffix[];
+  unique_id?: string | null;
+  set_id?: string | null;
 }
 
 export interface MonsterSpec {
@@ -1213,9 +1234,95 @@ export interface CreateItemInput {
   // Phase 3 — defaults to ceil(power/3), minimum 1.
   level_req?: number;
   element?: ElementType | null;
+  // Gear-affix system (migration 0063). Optional — pre-affix callers leave
+  // these null and the engine treats the item as legacy (item_level synthesized
+  // from power on read, affixes empty, no unique/set effects).
+  item_level?: number | null;
+  affixes?: RolledAffix[] | null;
+  unique_id?: string | null;
+  set_id?: string | null;
 }
 
-const ITEM_COLS = "id, character_id, item_name, item_type, power, rarity, flavor, equipped, weapon_range, sharpens_count, slot, stat_bonus, item_subtype, level_req, element, qty, potency_stacks";
+// Translates a rolled ItemRoll into a CreateItemInput, preserving every
+// field that should persist to DB. Centralized so loot-drop / treasure /
+// reward call sites don't drift — historically these sites lost roll.slot,
+// roll.stat_bonus, roll.element and roll.item_subtype, which broke ring/
+// amulet drops and elemental weapons silently. Pass-through plus the new
+// affix-system fields (item_level, affixes, unique_id, set_id).
+export function itemRollToCreateInput(args: {
+  character_id: string;
+  roll: ItemRoll;
+  item_name: string;
+  flavor: string;
+}): CreateItemInput {
+  const { character_id, roll, item_name, flavor } = args;
+  return {
+    character_id,
+    item_name,
+    item_type: roll.type,
+    power: roll.power,
+    rarity: roll.rarity,
+    flavor,
+    weapon_range: roll.weapon_range ?? null,
+    slot: roll.slot ?? null,
+    stat_bonus: (roll.stat_bonus as Record<string, number> | undefined) ?? null,
+    item_subtype: roll.item_subtype ?? null,
+    element: roll.element ?? null,
+    item_level: roll.item_level ?? null,
+    affixes: roll.affixes ?? null,
+    unique_id: roll.unique_id ?? null,
+    set_id: roll.set_id ?? null,
+  };
+}
+
+// Translates a rotating-stock row (shop, smithy, tower rest stock) into a
+// CreateItemInput when a player buys / picks it. Centralizes the field
+// passthrough so future affix additions land in one place. The stock-row
+// type intentionally accepts the common subset across ShopItem,
+// SmithyStockItem, and LootOption — the buy handlers don't need different
+// shapes per surface.
+export function stockToCreateInput(args: {
+  character_id: string;
+  stock: {
+    item_name: string;
+    item_type: ItemType;
+    power: number;
+    rarity: Rarity;
+    flavor: string | null;
+    weapon_range?: WeaponRange | null;
+    slot?: EquipSlot | null;
+    stat_bonus?: Record<string, number> | null;
+    item_subtype?: string | null;
+    element?: ElementType | null;
+    item_level?: number | null;
+    affixes?: RolledAffix[];
+    unique_id?: string | null;
+    set_id?: string | null;
+  };
+  item_name?: string;
+  flavor?: string;
+}): CreateItemInput {
+  const { character_id, stock } = args;
+  return {
+    character_id,
+    item_name: args.item_name ?? stock.item_name,
+    item_type: stock.item_type,
+    power: stock.power,
+    rarity: stock.rarity,
+    flavor: args.flavor ?? stock.flavor ?? "",
+    weapon_range: stock.weapon_range ?? null,
+    slot: stock.slot ?? null,
+    stat_bonus: stock.stat_bonus ?? null,
+    item_subtype: stock.item_subtype ?? null,
+    element: stock.element ?? null,
+    item_level: stock.item_level ?? null,
+    affixes: stock.affixes ?? null,
+    unique_id: stock.unique_id ?? null,
+    set_id: stock.set_id ?? null,
+  };
+}
+
+const ITEM_COLS = "id, character_id, item_name, item_type, power, rarity, flavor, equipped, weapon_range, sharpens_count, slot, stat_bonus, item_subtype, level_req, element, qty, potency_stacks, item_level, affixes, unique_id, set_id";
 
 export async function addItem(db: D1Database, input: CreateItemInput): Promise<Item> {
   // Infer slot from item_type for legacy callers (shop purchases, etc.) that
@@ -1225,11 +1332,20 @@ export async function addItem(db: D1Database, input: CreateItemInput): Promise<I
     ?? (input.item_type === "weapon" ? "main_hand"
       : input.item_type === "armor" ? "body"
       : null);
-  const levelReq = input.level_req ?? Math.max(1, Math.ceil(input.power / 3));
+  // item_level defaults to power for backwards-compat — matches the rowToItem
+  // legacy synthesis so callers that pre-date the affix system stay consistent.
+  const itemLevel = input.item_level ?? input.power;
+  // level_req: prefer the iLvl-derived formula from the design doc when iLvl
+  // is supplied; fall back to the legacy ceil(power/3) for pre-affix callers.
+  const levelReq = input.level_req
+    ?? (input.item_level != null
+      ? Math.max(1, Math.floor(itemLevel / 2))
+      : Math.max(1, Math.ceil(input.power / 3)));
+  const affixesJson = input.affixes && input.affixes.length > 0 ? JSON.stringify(input.affixes) : null;
   const result = await db
     .prepare(
-      `INSERT INTO inventory (character_id, item_name, item_type, power, rarity, flavor, qty, equipped, weapon_range, slot, stat_bonus, item_subtype, level_req, element)
-       VALUES (?, ?, ?, ?, ?, ?, 1, 0, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO inventory (character_id, item_name, item_type, power, rarity, flavor, qty, equipped, weapon_range, slot, stat_bonus, item_subtype, level_req, element, item_level, affixes, unique_id, set_id)
+       VALUES (?, ?, ?, ?, ?, ?, 1, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .bind(
       input.character_id, input.item_name, input.item_type, input.power, input.rarity, input.flavor,
@@ -1239,6 +1355,10 @@ export async function addItem(db: D1Database, input: CreateItemInput): Promise<I
       input.item_subtype ?? null,
       levelReq,
       input.element ?? null,
+      itemLevel,
+      affixesJson,
+      input.unique_id ?? null,
+      input.set_id ?? null,
     )
     .run();
   const id = result.meta.last_row_id;
@@ -1391,10 +1511,35 @@ export interface ShopItem {
   // attempts). "15"/"25"/"30" = succeeded at that % off (price already discounted).
   haggled: string | null;
   element: ElementType | null;
+  // Gear-affix system (migration 0064). Mirrors the inventory shape so
+  // buyers receive items with the same affix / unique / set data the roll
+  // produced. Legacy rows normalize item_level from power on read.
+  item_level: number | null;
+  affixes: RolledAffix[];
+  unique_id: string | null;
+  set_id: string | null;
 }
 
 // Returns active shop stock (generated within the cutoff window, available items only),
 // or null if a fresh restock is needed.
+// Column list shared by getActiveShopStock + getShopItem so the two stay
+// in sync as new fields are added.
+const SHOP_STOCK_COLS = "id, channel_id, generated_at, item_name, item_type, power, rarity, flavor, price, bought_by, weapon_range, slot, stat_bonus, item_subtype, haggled, element, item_level, affixes, unique_id, set_id";
+
+// Normalizes a shop_stock row read from D1: parses JSON columns, synthesizes
+// item_level from power for legacy rows pre-migration-0064, and defaults
+// affixes to [] when absent so callers always get a stable array shape.
+function normalizeShopRow(row: ShopItem & { stat_bonus: string | null; affixes?: string | null }): ShopItem {
+  return {
+    ...row,
+    stat_bonus: row.stat_bonus ? JSON.parse(row.stat_bonus) as Record<string, number> : null,
+    affixes: row.affixes ? JSON.parse(row.affixes) as RolledAffix[] : [],
+    item_level: row.item_level ?? row.power,
+    unique_id: row.unique_id ?? null,
+    set_id: row.set_id ?? null,
+  };
+}
+
 export async function getActiveShopStock(
   db: D1Database,
   channelId: string,
@@ -1403,19 +1548,16 @@ export async function getActiveShopStock(
   const cutoff = Date.now() - windowMs;
   const result = await db
     .prepare(
-      `SELECT id, channel_id, generated_at, item_name, item_type, power, rarity, flavor, price, bought_by, weapon_range, slot, stat_bonus, item_subtype, haggled, element
+      `SELECT ${SHOP_STOCK_COLS}
        FROM shop_stock
        WHERE channel_id = ? AND generated_at > ?
        ORDER BY id ASC`,
     )
     .bind(channelId, cutoff)
-    .all<ShopItem & { stat_bonus: string | null }>();
+    .all<ShopItem & { stat_bonus: string | null; affixes: string | null }>();
   const rows = result.results ?? [];
   if (rows.length === 0) return null;
-  return rows.map((row) => ({
-    ...row,
-    stat_bonus: row.stat_bonus ? JSON.parse(row.stat_bonus) as Record<string, number> : null,
-  })) as ShopItem[];
+  return rows.map(normalizeShopRow);
 }
 
 export interface ShopStockInput {
@@ -1432,6 +1574,12 @@ export interface ShopStockInput {
   stat_bonus?: Record<string, number> | null;
   item_subtype?: string | null;
   element?: ElementType | null;
+  // Gear-affix system (migration 0064). Optional — pre-affix callers
+  // leave these null and the buyer ends up with a legacy-shaped item.
+  item_level?: number | null;
+  affixes?: RolledAffix[] | null;
+  unique_id?: string | null;
+  set_id?: string | null;
 }
 
 export async function insertShopStock(
@@ -1441,8 +1589,8 @@ export async function insertShopStock(
   if (items.length === 0) return;
   const stmts = items.map((it) =>
     db.prepare(
-      `INSERT INTO shop_stock (channel_id, generated_at, item_name, item_type, power, rarity, flavor, price, weapon_range, slot, stat_bonus, item_subtype, element)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO shop_stock (channel_id, generated_at, item_name, item_type, power, rarity, flavor, price, weapon_range, slot, stat_bonus, item_subtype, element, item_level, affixes, unique_id, set_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).bind(
       it.channel_id, it.generated_at, it.item_name, it.item_type, it.power, it.rarity, it.flavor, it.price,
       it.weapon_range ?? null,
@@ -1450,6 +1598,10 @@ export async function insertShopStock(
       it.stat_bonus ? JSON.stringify(it.stat_bonus) : null,
       it.item_subtype ?? null,
       it.element ?? null,
+      it.item_level ?? it.power,
+      it.affixes && it.affixes.length > 0 ? JSON.stringify(it.affixes) : null,
+      it.unique_id ?? null,
+      it.set_id ?? null,
     ),
   );
   await db.batch(stmts);
@@ -1462,18 +1614,12 @@ export async function getShopItem(
 ): Promise<ShopItem | null> {
   return db
     .prepare(
-      `SELECT id, channel_id, generated_at, item_name, item_type, power, rarity, flavor, price, bought_by, weapon_range, slot, stat_bonus, item_subtype, haggled, element
+      `SELECT ${SHOP_STOCK_COLS}
        FROM shop_stock WHERE id = ? AND channel_id = ?`,
     )
     .bind(itemId, channelId)
-    .first<ShopItem & { stat_bonus: string | null }>()
-    .then((row) => {
-      if (!row) return null;
-      return {
-        ...row,
-        stat_bonus: row.stat_bonus ? JSON.parse(row.stat_bonus) as Record<string, number> : null,
-      } as ShopItem;
-    });
+    .first<ShopItem & { stat_bonus: string | null; affixes: string | null }>()
+    .then((row) => row ? normalizeShopRow(row) : null);
 }
 
 // Atomically attempts a haggle on a shop item. Returns true if the row was
@@ -1560,6 +1706,12 @@ export interface SmithyStockItem {
   stat_bonus: Record<string, number> | null;
   item_subtype: string | null;
   bought_by: string | null;
+  // Gear-affix system (migration 0064). Same shape as ShopItem; buyers
+  // get items with full affix data instead of legacy-shaped plate.
+  item_level: number | null;
+  affixes: RolledAffix[];
+  unique_id: string | null;
+  set_id: string | null;
 }
 
 export interface SmithyStockInput {
@@ -1577,6 +1729,24 @@ export interface SmithyStockInput {
   slot?: EquipSlot | null;
   stat_bonus?: Record<string, number> | null;
   item_subtype?: string | null;
+  // Gear-affix system (migration 0064). Optional for pre-affix callers.
+  item_level?: number | null;
+  affixes?: RolledAffix[] | null;
+  unique_id?: string | null;
+  set_id?: string | null;
+}
+
+const SMITHY_STOCK_COLS = "id, character_id, channel_id, generated_at, item_name, item_type, power, rarity, flavor, price, slot, stat_bonus, item_subtype, bought_by, item_level, affixes, unique_id, set_id";
+
+function normalizeSmithyRow(row: SmithyStockItem & { stat_bonus: string | null; affixes?: string | null }): SmithyStockItem {
+  return {
+    ...row,
+    stat_bonus: row.stat_bonus ? JSON.parse(row.stat_bonus) as Record<string, number> : null,
+    affixes: row.affixes ? JSON.parse(row.affixes) as RolledAffix[] : [],
+    item_level: row.item_level ?? row.power,
+    unique_id: row.unique_id ?? null,
+    set_id: row.set_id ?? null,
+  };
 }
 
 export async function getActiveSmithyStock(
@@ -1587,19 +1757,16 @@ export async function getActiveSmithyStock(
   const cutoff = Date.now() - windowMs;
   const result = await db
     .prepare(
-      `SELECT id, character_id, channel_id, generated_at, item_name, item_type, power, rarity, flavor, price, slot, stat_bonus, item_subtype, bought_by
+      `SELECT ${SMITHY_STOCK_COLS}
        FROM smithy_stock
        WHERE channel_id = ? AND generated_at > ?
        ORDER BY id ASC`,
     )
     .bind(channelId, cutoff)
-    .all<SmithyStockItem & { stat_bonus: string | null }>();
+    .all<SmithyStockItem & { stat_bonus: string | null; affixes: string | null }>();
   const rows = result.results ?? [];
   if (rows.length === 0) return null;
-  return rows.map((row) => ({
-    ...row,
-    stat_bonus: row.stat_bonus ? JSON.parse(row.stat_bonus) as Record<string, number> : null,
-  })) as SmithyStockItem[];
+  return rows.map(normalizeSmithyRow);
 }
 
 export async function insertSmithyStock(
@@ -1609,13 +1776,17 @@ export async function insertSmithyStock(
   if (items.length === 0) return;
   const stmts = items.map((it) =>
     db.prepare(
-      `INSERT INTO smithy_stock (character_id, channel_id, generated_at, item_name, item_type, power, rarity, flavor, price, slot, stat_bonus, item_subtype)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO smithy_stock (character_id, channel_id, generated_at, item_name, item_type, power, rarity, flavor, price, slot, stat_bonus, item_subtype, item_level, affixes, unique_id, set_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).bind(
       it.character_id, it.channel_id, it.generated_at, it.item_name, it.item_type, it.power, it.rarity, it.flavor, it.price,
       it.slot ?? null,
       it.stat_bonus ? JSON.stringify(it.stat_bonus) : null,
       it.item_subtype ?? null,
+      it.item_level ?? it.power,
+      it.affixes && it.affixes.length > 0 ? JSON.stringify(it.affixes) : null,
+      it.unique_id ?? null,
+      it.set_id ?? null,
     ),
   );
   await db.batch(stmts);
@@ -1630,16 +1801,12 @@ export async function getSmithyStockItem(
 ): Promise<SmithyStockItem | null> {
   const row = await db
     .prepare(
-      `SELECT id, character_id, channel_id, generated_at, item_name, item_type, power, rarity, flavor, price, slot, stat_bonus, item_subtype, bought_by
+      `SELECT ${SMITHY_STOCK_COLS}
        FROM smithy_stock WHERE id = ? AND channel_id = ?`,
     )
     .bind(itemId, channelId)
-    .first<SmithyStockItem & { stat_bonus: string | null }>();
-  if (!row) return null;
-  return {
-    ...row,
-    stat_bonus: row.stat_bonus ? JSON.parse(row.stat_bonus) as Record<string, number> : null,
-  } as SmithyStockItem;
+    .first<SmithyStockItem & { stat_bonus: string | null; affixes: string | null }>();
+  return row ? normalizeSmithyRow(row) : null;
 }
 
 // Atomically claim a smithy stock row. Returns true if we won the race.
@@ -2481,8 +2648,9 @@ async function restoreSnapshot(
       .prepare(
         `INSERT INTO inventory (
           character_id, item_name, item_type, power, rarity, flavor, qty, equipped,
-          weapon_range, sharpens_count, slot, stat_bonus, item_subtype, level_req, element, potency_stacks
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          weapon_range, sharpens_count, slot, stat_bonus, item_subtype, level_req, element, potency_stacks,
+          item_level, affixes, unique_id, set_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .bind(
         userId, item.item_name, item.item_type, item.power, item.rarity, item.flavor,
@@ -2491,6 +2659,9 @@ async function restoreSnapshot(
         item.slot, item.stat_bonus ? JSON.stringify(item.stat_bonus) : null,
         item.item_subtype, item.level_req ?? 1, item.element ?? null,
         item.potency_stacks ?? 0,
+        item.item_level ?? item.power,
+        item.affixes && item.affixes.length > 0 ? JSON.stringify(item.affixes) : null,
+        item.unique_id ?? null, item.set_id ?? null,
       )
       .run();
   }

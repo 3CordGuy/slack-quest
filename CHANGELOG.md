@@ -1,5 +1,71 @@
 # Changelog
 
+## 2026-06-03 — Gear affixes, legendary uniques, set bonuses
+
+### Items now roll affixes
+Every rare-or-better weapon and armor drop now carries 1–3 affix lines on top
+of its base stats — things like `+15% Critical`, `+4 Lifesteal`, `+8 Fire
+Damage`, `+25% Lightning Resist`, `+5 Thorns`, `+6% Dodge`, `+2 Mana Regen`.
+The affix count scales with rarity (common 0, uncommon 1, rare 2, epic 3,
+legendary 3 + a unique line), and each affix's magnitude scales with the
+item's level so higher-tier drops naturally beat lower-tier ones. Affix
+tooltips show the value and roll tier (T1–T5) so a "T5 +15% Critical" reads
+as the top of its range.
+
+### Item level decoupled from rarity
+Power and item level are now separate numbers. Power still drives damage and
+armor; item level is the budget that affix magnitudes roll against. The
+practical effect: a well-rolled rare can outperform a mediocre epic. Tooltips
+show `iLvl` separately from `+power` so the difference is legible. Legacy
+items in existing inventories backfill `iLvl = power` on read; nothing breaks.
+
+### 12 hand-curated legendary uniques
+Legendaries no longer just have bigger numbers — they carry a named rule.
+Examples: **Rebase Blade** (crits also apply Poisoned for 2 turns),
+**Crown of the Druid** (your regen ticks restore 1 extra HP),
+**Warden's Vigil Plate** (physical hits cost +1 thorns reflection),
+**Smoke-Step Boots** (first hit each combat: auto-dodge),
+**Hot-Path Dagger** (consecutive hits on the same foe deal +2 damage),
+**Cinder Amulet** (your fire damage ignites for 2 burn ticks). Twelve
+entries shipping; covers every class archetype with room to grow.
+
+### 8 class-themed set bonuses
+Equipping multiple pieces of the same set now unlocks tiered bonuses:
+**Warden's Vigil** (2pc: +5% magic resist, 4pc: armor pool +30%),
+**Warlock's Cabal** (2pc: +2 INT, 3pc: hex damage +25%),
+**Paladin's Creed** (2pc: +3 VIT, 3pc: shield-block +10%),
+**Druid's Canopy** (3pc: regen ticks +1 HP), and four more — one per class.
+Set drops land on rare and epic items at ~15% of qualifying rolls; tooltip
+shows a purple ◆ Set badge.
+
+### Armor and accessories can carry elemental affinity
+Fire, ice, and lightning are no longer weapon-only. Rare-or-better rings,
+amulets, helmets, body armor, pants, boots, and shields can all roll an
+element. The active element on your character is picked by slot priority
+(main_hand wins, otherwise off_hand, amulet, ring, …) so an elemental amulet
+fills in when your weapon is non-elemental.
+
+### Combat hooks for every new affix
+The combat system reads the new affixes at the right lifecycle points:
+critical % stacks with DEX into a combined crit roll (hard-capped at 50%),
+lifesteal heals on every landed hit, element damage flat-adds when your
+active element matches, thorns reflects physical damage back to the attacker
+(capped at 10/hit), dodge % stacks with AGI dodge (hard-capped at 35%), and
+mana regen ticks silently at the start of each of your turns.
+
+### Shop, smithy, and tower rest stock carry affixes
+A refreshed shop now sells affixed rare and epic items the same way monster
+drops carry them. Smithy and tower-rest stock follow the same pattern. The
+"buy from shop = boring sticks" problem is gone.
+
+### Latent gear bugs fixed
+Two pre-existing bugs surfaced and were repaired along the way: combat-drop
+rings, amulets, and elemental weapons were silently losing their slot, stat
+bonus, and element on insert (so a rolled fire sword arrived in your
+inventory as a plain sword); and the smithy's fallback rarity roll could
+disagree with its power roll's rarity. Both fixed via a centralized
+roll-to-inventory helper.
+
 ## 2026-05-22 — Full class reworks, ability system overhaul, CI/CD
 
 ### Class reworks (all classes)
