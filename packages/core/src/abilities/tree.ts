@@ -91,35 +91,32 @@ const RANK_SPEC: Record<string, { max_rank: 1 | 2 | 3; level_req_per_rank: numbe
   containerize: { max_rank: 3, level_req_per_rank: [1, 6, 12], point_cost_per_rank: [1, 2, 3] },
   lightning_bolt: { max_rank: 3, level_req_per_rank: [1, 6, 12], point_cost_per_rank: [1, 2, 3] },
   mage_armor: { max_rank: 3, level_req_per_rank: [1, 6, 12], point_cost_per_rank: [1, 2, 3] },
-  // mana_font deliberately omitted — its regen logic lives in combat_machine
-  // (applyManaFont), not execute(). Plumbing kit_ranks through CombatFighter
-  // so the machine can read rank is a follow-up; for now Mana Font stays R1.
+  // Mana Font interval shortens at higher ranks (R1 every 3t, R2 every 2t,
+  // R3 every turn) — applyManaFont reads fighterRank().
+  mana_font: { max_rank: 3, level_req_per_rank: [1, 6, 12], point_cost_per_rank: [1, 2, 3] },
   // ── QA Paladin kit ──
   shield_of_faith: { max_rank: 3, level_req_per_rank: [1, 6, 12], point_cost_per_rank: [1, 2, 3] },
   lay_on_hands: { max_rank: 3, level_req_per_rank: [1, 6, 12], point_cost_per_rank: [1, 2, 3] },
   smite: { max_rank: 3, level_req_per_rank: [1, 6, 12], point_cost_per_rank: [1, 2, 3] },
   protect: { max_rank: 3, level_req_per_rank: [1, 6, 12], point_cost_per_rank: [1, 2, 3] },
-  // holy_rage deliberately omitted — its damage buildup is a passive trigger
-  // handled inline by the combat machine (on_ally_hit accumulator), not
-  // execute(). Same talent_ranks plumbing follow-up as observability/failsafe;
-  // for now Regression Rage stays R1.
+  // Holy Rage % climbs at higher ranks (R1 10%, R2 15%, R3 20%) — read by
+  // the damage handler via fighterRank().
+  holy_rage: { max_rank: 3, level_req_per_rank: [1, 6, 12], point_cost_per_rank: [1, 2, 3] },
   // ── Frontend Bard kit ──
   crescendo: { max_rank: 3, level_req_per_rank: [1, 6, 12], point_cost_per_rank: [1, 2, 3] },
   verse: { max_rank: 3, level_req_per_rank: [1, 6, 12], point_cost_per_rank: [1, 2, 3] },
   battle_hymn: { max_rank: 3, level_req_per_rank: [1, 6, 12], point_cost_per_rank: [1, 2, 3] },
   serenade: { max_rank: 3, level_req_per_rank: [1, 6, 12], point_cost_per_rank: [1, 2, 3] },
-  // bardic_aura deliberately omitted — Morale Boost's damage bonus is read
-  // inline by the combat machine (not execute()), same situation as Mana Font.
-  // Plumbing kit_ranks to the bonus formula is a follow-up; stays R1.
+  // Bardic Aura base bonus +0/+1/+2 at R1/R2/R3 — computeBardAuraBonus reads
+  // fighterRank() on the aura-providing bard.
+  bardic_aura: { max_rank: 3, level_req_per_rank: [1, 6, 12], point_cost_per_rank: [1, 2, 3] },
   // ── Refactor Rogue kit ──
   vanish: { max_rank: 3, level_req_per_rank: [1, 6, 12], point_cost_per_rank: [1, 2, 3] },
   envenom_weapon: { max_rank: 3, level_req_per_rank: [1, 6, 12], point_cost_per_rank: [1, 2, 3] },
   backstab: { max_rank: 3, level_req_per_rank: [1, 6, 12], point_cost_per_rank: [1, 2, 3] },
   debilitate: { max_rank: 3, level_req_per_rank: [1, 6, 12], point_cost_per_rank: [1, 2, 3] },
-  // lethal_strikes deliberately omitted — its crit-bleed logic lives in
-  // combat_machine (applyRogueLethalStrike), not execute(). Plumbing
-  // kit_ranks through CombatFighter so the machine can read rank is a
-  // follow-up; for now Lethal Strikes stays R1.
+  // Lethal Strikes crit-bleed gets +0/+1/+2 stacks at R1/R2/R3 — applyRogueLethalStrike reads fighterRank().
+  lethal_strikes: { max_rank: 3, level_req_per_rank: [1, 6, 12], point_cost_per_rank: [1, 2, 3] },
   // ── Staff Sage kit ──
   ray_of_frost: { max_rank: 3, level_req_per_rank: [1, 6, 12], point_cost_per_rank: [1, 2, 3] },
   blizzard: { max_rank: 3, level_req_per_rank: [1, 6, 12], point_cost_per_rank: [1, 2, 3] },
@@ -134,27 +131,27 @@ const RANK_SPEC: Record<string, { max_rank: 1 | 2 | 3; level_req_per_rank: numbe
   animal_form: { max_rank: 3, level_req_per_rank: [1, 6, 12], point_cost_per_rank: [1, 2, 3] },
   wildgrowth: { max_rank: 3, level_req_per_rank: [1, 6, 12], point_cost_per_rank: [1, 2, 3] },
   barkskin: { max_rank: 3, level_req_per_rank: [1, 6, 12], point_cost_per_rank: [1, 2, 3] },
-  // primal_strikes deliberately omitted — it's a passive (kind: "passive",
-  // trigger: "always_on") that returns no effects from execute(). Its
-  // magic-mod-to-attack/damage and on-hit heal logic lives machine-side and
-  // needs talent_ranks plumbing into that helper before it can graduate. R1.
+  // Primal Strikes hit-heal multiplier (×1 / ×1.5 / ×2) is read by the
+  // basic-attack handler via fighterRank().
+  primal_strikes: { max_rank: 3, level_req_per_rank: [1, 6, 12], point_cost_per_rank: [1, 2, 3] },
   // ── Data Warlock kit ──
   leech_life: { max_rank: 3, level_req_per_rank: [1, 6, 12], point_cost_per_rank: [1, 2, 3] },
   hex: { max_rank: 3, level_req_per_rank: [1, 6, 12], point_cost_per_rank: [1, 2, 3] },
   summon_imp: { max_rank: 3, level_req_per_rank: [1, 6, 12], point_cost_per_rank: [1, 2, 3] },
   forbidden_sql: { max_rank: 3, level_req_per_rank: [1, 6, 12], point_cost_per_rank: [1, 2, 3] },
-  // sinister_queries deliberately omitted — bleed application lives in
-  // combat_machine (applySinisterQueries), not execute(). Stays R1 until
-  // talent_ranks plumbing lets the machine read rank.
+  // Sinister Queries bleed magnitude +0/+1/+2 at R1/R2/R3 — applySinisterQueries
+  // reads fighterRank().
+  sinister_queries: { max_rank: 3, level_req_per_rank: [1, 6, 12], point_cost_per_rank: [1, 2, 3] },
   // ── SRE Warden kit ──
   bulwark_strike: { max_rank: 3, level_req_per_rank: [1, 6, 12], point_cost_per_rank: [1, 2, 3] },
   taunt: { max_rank: 3, level_req_per_rank: [1, 6, 12], point_cost_per_rank: [1, 2, 3] },
   brace: { max_rank: 3, level_req_per_rank: [1, 6, 12], point_cost_per_rank: [1, 2, 3] },
-  // thorns + resilient deferred — pure machine-side mechanics (reflect%
-  // and resilient-stack accumulation) with no execute() body to rank.
-  // Plumbing kit_ranks into combat_machine for those is a follow-up.
-  // armor_up deferred — passive shield regen lives in combat_machine
-  // (applyArmorUp) with execute() returning []; needs the same plumbing.
+  // Thorns reflect % R1 25 / R2 35 / R3 45 — applyWardenThorns reads fighterRank().
+  thorns: { max_rank: 3, level_req_per_rank: [1, 6, 12], point_cost_per_rank: [1, 2, 3] },
+  // Armor Up adds +0/+1/+2 to per-turn shield gain at R1/R2/R3.
+  armor_up: { max_rank: 3, level_req_per_rank: [1, 6, 12], point_cost_per_rank: [1, 2, 3] },
+  // Resilient per-stack bonus +0/+1/+2 at R1/R2/R3 — resilientBonus reads fighterRank().
+  resilient: { max_rank: 3, level_req_per_rank: [1, 6, 12], point_cost_per_rank: [1, 2, 3] },
 };
 
 const DEFAULT_RANKS: { max_rank: 1; level_req_per_rank: number[]; point_cost_per_rank: number[] } = {

@@ -1484,7 +1484,9 @@ function handlePlayerHit(
 
   // QA Paladin — Holy Rage: consume accumulated bonus from damage taken.
   const holyRageTotal = s.ability_state?.holy_rage?.[action.actor] ?? 0;
-  const holyRageBonus = Math.floor(holyRageTotal * 0.1);
+  // R1 10% of accumulated damage, R2 15%, R3 20%.
+  const holyRagePct = 0.05 + 0.05 * fighterRank(tickedFighter, "holy_rage");
+  const holyRageBonus = Math.floor(holyRageTotal * holyRagePct);
   if (holyRageBonus > 0) {
     damage += holyRageBonus;
     s = { ...s, ability_state: clearHolyRage(s.ability_state, action.actor) };
@@ -1643,9 +1645,11 @@ function handlePlayerHit(
     events.push(...killResult.events);
   }
 
-  // Primal Strikes — heal on landing an attack.
+  // Primal Strikes — heal on landing an attack. R1 ×1, R2 ×1.5, R3 ×2.
   if (primalBonus > 0) {
-    const healAmount = 2 * tickedFighter.magic_mod + tickedFighter.attack_mod;
+    const psRank = fighterRank(tickedFighter, "primal_strikes");
+    const psMult = psRank >= 3 ? 2 : psRank >= 2 ? 1.5 : 1;
+    const healAmount = Math.round((2 * tickedFighter.magic_mod + tickedFighter.attack_mod) * psMult);
     const primalFighter = nextState.fighters.find((f) => f.id === action.actor)!;
     const newHp = Math.min(primalFighter.max_hp, primalFighter.hp + healAmount);
     const healed = newHp - primalFighter.hp;
@@ -2273,9 +2277,9 @@ function handleMonsterAct(state: CombatState, roll: RollFn): StepResult {
   // 1-100 roll so max 15 is cap (Rogue at AGI 8 → 3%, end-game AGI 15 → 10%).
   if (target.stats) {
     const baseThreshold = Math.round(deriveDodgeChance(target.stats) * 100);
-    // Frontend Bard — A11y First: +1% dodge chance if the target has the
-    // passive equipped. Stacks additively with the AGI dodge bonus.
-    const a11yDodgeBonus = fighterHasPassive(target, "a11y_first") ? 1 : 0;
+    // Frontend Bard — A11y First: +1% dodge per rank (R1 +1, R2 +2, R3 +3).
+    // Stacks additively with the AGI dodge bonus.
+    const a11yDodgeBonus = fighterHasPassive(target, "a11y_first") ? fighterRank(target, "a11y_first") : 0;
     const threshold = baseThreshold + a11yDodgeBonus;
     if (threshold > 0 && roll(100) <= threshold) {
       events.push({ type: "monster_dodged", target: target.id });
@@ -2395,7 +2399,9 @@ function handleMonsterAct(state: CombatState, roll: RollFn): StepResult {
       if (!fighterHasPassive(f, "load_balancer")) continue;
       if (hexDistance(f.pos, target.pos) > 1) continue;
       loadBalancerWarden = f;
-      loadBalancerDamage = Math.floor(hpDamage * 0.25);
+      // R1 25%, R2 35%, R3 45% redirect share.
+      const pct = 0.15 + 0.10 * fighterRank(f, "load_balancer");
+      loadBalancerDamage = Math.floor(hpDamage * pct);
       break;
     }
   }
@@ -2430,16 +2436,35 @@ function handleMonsterAct(state: CombatState, roll: RollFn): StepResult {
   if (protectPaladin) {
     events.push({ type: "protect_triggered", paladin: protectPaladin.id, target: target.id, target_damage: targetHpDamage, paladin_damage: paladinProtectDamage });
   }
+  // Helper: at R2 a triggered Failsafe also grants 5 shield; at R3 it grants
+  // 10 shield. Lets the saved fighter stick around a moment instead of being
+  // a 1-HP sitting duck on the next swing.
+  const failsafeShieldFor = (f: CombatFighter): number => {
+    const r = fighterRank(f, "failsafe");
+    return r >= 3 ? 10 : r >= 2 ? 5 : 0;
+  };
   if (targetFailsafe.triggered) {
     s = markPassiveUsed(s, target.id, "failsafe");
+    const shieldBonus = failsafeShieldFor(target);
+    if (shieldBonus > 0) {
+      s = { ...s, fighters: s.fighters.map((f) => f.id === target.id ? { ...f, shield: f.shield + shieldBonus } : f) };
+    }
     events.push({ type: "passive_failsafe_triggered", actor: target.id });
   }
   if (paladinFailsafe.triggered && protectPaladin) {
     s = markPassiveUsed(s, protectPaladin.id, "failsafe");
+    const shieldBonus = failsafeShieldFor(protectPaladin);
+    if (shieldBonus > 0) {
+      s = { ...s, fighters: s.fighters.map((f) => f.id === protectPaladin.id ? { ...f, shield: f.shield + shieldBonus } : f) };
+    }
     events.push({ type: "passive_failsafe_triggered", actor: protectPaladin.id });
   }
   if (wardenFailsafe.triggered && loadBalancerWarden) {
     s = markPassiveUsed(s, loadBalancerWarden.id, "failsafe");
+    const shieldBonus = failsafeShieldFor(loadBalancerWarden);
+    if (shieldBonus > 0) {
+      s = { ...s, fighters: s.fighters.map((f) => f.id === loadBalancerWarden.id ? { ...f, shield: f.shield + shieldBonus } : f) };
+    }
     events.push({ type: "passive_failsafe_triggered", actor: loadBalancerWarden.id });
   }
 
@@ -2603,7 +2628,9 @@ function handleDamageAbility(
 
   // QA Paladin — Holy Rage: consume accumulated bonus.
   const holyRageTotal = state.ability_state?.holy_rage?.[actorId] ?? 0;
-  const holyRageBonusAbility = Math.floor(holyRageTotal * 0.1);
+  // R1 10%, R2 15%, R3 20% — matches the basic-attack path.
+  const holyRagePct = 0.05 + 0.05 * fighterRank(tickedActor, "holy_rage");
+  const holyRageBonusAbility = Math.floor(holyRageTotal * holyRagePct);
   const abilityStateAfterAnger = holyRageTotal > 0
     ? clearHolyRage(state.ability_state, actorId)
     : state.ability_state;
@@ -2638,7 +2665,10 @@ function handleDamageAbility(
   const cherryPickActive = !!cherryPickFighter
     && fighterHasPassive(cherryPickFighter, "cherry_pick")
     && targetHpFrac <= 0.25;
-  const cherryPickMult = cherryPickActive ? 1.5 : 1.0;
+  // R1 ×1.5. R2 ×1.75. R3 ×2.0. Linear scaling on the execute bonus.
+  const cherryPickMult = cherryPickActive && cherryPickFighter
+    ? 1.0 + 0.5 * fighterRank(cherryPickFighter, "cherry_pick")
+    : 1.0;
   const finalDamage = Math.round(amount * sigShockMult * sigVulnMult * cherryPickMult);
 
   const oldHp = monster.hp;
@@ -3485,8 +3515,8 @@ function applyUtilityAbilityEffects(
           }
         }
         const atkAc = monsterAc(targetMonster.tier);
-        // Frontend Bard — A11y First: +1 to attack rolls for the caster.
-        const a11yHitBonus = fighterHasPassive(fighter, "a11y_first") ? 1 : 0;
+        // Frontend Bard — A11y First: +1 to attack rolls per rank.
+        const a11yHitBonus = fighterHasPassive(fighter, "a11y_first") ? fighterRank(fighter, "a11y_first") : 0;
         const hitTotal = d20 + effect.hit_mod + a11yHitBonus;
         const landed = hitTotal >= atkAc;
         events.push({ type: "roll", actor, die: "d20", value: d20, purpose: "hit_check" });
@@ -4445,6 +4475,15 @@ function fighterHasPassive(fighter: CombatFighter, passiveId: string): boolean {
   return fighter.equipped_passive_ids?.includes(passiveId) ?? false;
 }
 
+// Returns the fighter's owned rank for the given passive/ability id. Defaults
+// to 1 — kit passives without a tree purchase, legacy combats without
+// talent_ranks populated, and pre-talent-tree characters all read as R1.
+// Used by machine-side helpers (observabilityBonus, applyManaFont, etc.) to
+// scale their effects when the passive has been ranked up via the tree.
+function fighterRank(fighter: CombatFighter, passiveId: string): number {
+  return fighter.talent_ranks?.[passiveId] ?? 1;
+}
+
 // DevOps Mage — Observability: + flat damage equal to the number of distinct
 // debuff types currently on the enemy field. Reads only the unique types
 // (not stacks) so a target with bleed×5 still counts as one. Returns 0 when
@@ -4477,7 +4516,8 @@ function applyEarwormOnCrit(state: CombatState, isCrit: boolean): { state: Comba
   const events: CombatEvent[] = [];
   const fighters = state.fighters.map((f) => {
     if (f.hp <= 0 || !fighterHasPassive(f, "earworm") || f.mana >= f.max_mana) return f;
-    const refund = Math.min(1, f.max_mana - f.mana);
+    // R1 +1 mana per crit. R2 +2. R3 +3. Capped at max_mana headroom.
+    const refund = Math.min(fighterRank(f, "earworm"), f.max_mana - f.mana);
     if (refund <= 0) return f;
     events.push({ type: "passive_earworm_refund", actor: f.id, amount: refund });
     return { ...f, mana: f.mana + refund };
@@ -4495,7 +4535,8 @@ function observabilityBonus(state: CombatState, fighter: CombatFighter): number 
       if (OBSERVABILITY_DEBUFF_TYPES.has(e.type)) types.add(e.type);
     }
   }
-  return types.size;
+  // R1 +1 per unique debuff. R2 +2. R3 +3.
+  return types.size * fighterRank(fighter, "observability");
 }
 
 function isPassiveUsed(state: CombatState, actorId: ActorId, key: string): boolean {
@@ -4521,7 +4562,8 @@ function applyWardenArmorUp(
   actor: CombatFighter,
 ): { state: CombatState; events: CombatEvent[] } {
   if (!classHasPassive(actor.class, "armor_up")) return { state, events: [] };
-  const amount = 2 + Math.floor(actor.level / 4);
+  // R1 +0, R2 +1, R3 +2 bonus on top of the level scaling.
+  const amount = 2 + Math.floor(actor.level / 4) + Math.max(0, fighterRank(actor, "armor_up") - 1);
   const cap = actor.max_hp * SHIELD_CAP_MULTIPLIER + resilientBonus(actor, state.ability_state, state.round);
   const newShield = Math.min(cap, actor.shield + amount);
   const added = newShield - actor.shield;
@@ -4585,7 +4627,9 @@ function resilientBonus(
   );
   if (stacks.length === 0) return 0;
   const vit = fighter.stats?.vit ?? 0;
-  return stacks.length * (2 + Math.floor(vit / 4));
+  // R1 +0, R2 +1, R3 +2 per stack on top of the vit scaling.
+  const rankBonus = Math.max(0, fighterRank(fighter, "resilient") - 1);
+  return stacks.length * (2 + Math.floor(vit / 4) + rankBonus);
 }
 
 // SRE Warden — Resilient. Called after any successful hit by the warden to
@@ -4622,7 +4666,9 @@ function applyWardenThorns(
   const fighter = state.fighters.find((f) => f.id === targetFighterId);
   if (!fighter || !classHasPassive(fighter.class, "thorns")) return { state, events: [] };
   const effectiveArmor = fighter.armor_power + resilientBonus(fighter, state.ability_state, state.round);
-  const amount = Math.max(1, Math.floor(effectiveArmor * 0.25));
+  // R1 25% reflect, R2 35%, R3 45%.
+  const reflectPct = 0.15 + 0.10 * fighterRank(fighter, "thorns");
+  const amount = Math.max(1, Math.floor(effectiveArmor * reflectPct));
   const monster = state.monsters.find((m) => m.id === monsterId && m.hp > 0);
   if (!monster) return { state, events: [] };
   const newHp = Math.max(0, monster.hp - amount);
@@ -4647,7 +4693,10 @@ function applyManaFont(
   const prev = counters[actor.id] ?? 0;
   const next = prev + 1;
   const updatedCounters = { ...counters, [actor.id]: next };
-  const fires = next % MANA_FONT_INTERVAL === 0;
+  // R1 every 3 turns, R2 every 2, R3 every turn.
+  const rank = fighterRank(actor, "mana_font");
+  const interval = rank >= 3 ? 1 : rank >= 2 ? 2 : MANA_FONT_INTERVAL;
+  const fires = next % interval === 0;
   if (!fires) {
     return { state: { ...state, action_counters: updatedCounters }, events: [] };
   }
@@ -4826,7 +4875,9 @@ function computeBardAuraBonus(
     (f) => f.hp > 0 && classHasPassive(f.class, "bardic_aura"),
   );
   if (!bard) return { bonus: 0 };
-  const base = 1 + Math.floor(bard.level / 5);
+  // R1 +0, R2 +1, R3 +2 on top of the level scaling.
+  const rankBonus = Math.max(0, fighterRank(bard, "bardic_aura") - 1);
+  const base = 1 + Math.floor(bard.level / 5) + rankBonus;
   const hymnActive =
     state.ability_state?.battle_hymn != null &&
     state.round <= state.ability_state.battle_hymn.expires_after_round;
@@ -4843,7 +4894,8 @@ function applySinisterQueries(
   if (!classHasPassive(actor.class, "sinister_queries")) return { state, events: [] };
   const targetMonster = state.monsters.find((m) => m.id === targetMonsterId && m.hp > 0);
   if (!targetMonster) return { state, events: [] };
-  const magnitude = 1 + Math.floor(actor.level / 5);
+  // R1 +0, R2 +1, R3 +2 bleed stacks on top of the level scaling.
+  const magnitude = 1 + Math.floor(actor.level / 5) + Math.max(0, fighterRank(actor, "sinister_queries") - 1);
   const newEffect: MachineStatusEffect = { type: "bleeding", magnitude, remaining: 3, source: actor.id };
   return {
     state: {
@@ -5431,7 +5483,8 @@ function applyRogueLethalStrike(
   if (!classHasPassive(actor.class, "lethal_strikes")) return { state, events: [] };
   const targetMonster = state.monsters.find((m) => m.id === targetMonsterId && m.hp > 0);
   if (!targetMonster) return { state, events: [] };
-  const stacks = 2 + Math.floor(actor.level / 2);
+  // R1 +0, R2 +1, R3 +2 bonus bleed stacks on top of the level scaling.
+  const stacks = 2 + Math.floor(actor.level / 2) + Math.max(0, fighterRank(actor, "lethal_strikes") - 1);
   const duration = 2;
   const bleedEffect: MachineStatusEffect = { type: "bleeding", magnitude: stacks, remaining: duration, source: actor.id };
   const updated: CombatState = {

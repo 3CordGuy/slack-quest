@@ -970,11 +970,10 @@ const NEW_NODES_BY_CLASS: Record<ClassId, TalentNodeDef[]> = {
     activeNode("devops_mage", rollingRestart, "damage", RANK_3),
     activeNode("devops_mage", cdnSurge, "damage", RANK_3),
     activeNode("devops_mage", canaryDeploy, "damage", RANK_3),
-    // observability + failsafe stay R1 for this slice — their scaling needs
-    // CombatFighter.talent_ranks plumbing so machine-side helpers
-    // (observabilityBonus, applyFailsafe) can read the owner's rank. Deferred.
-    activeNode("devops_mage", observability, "damage"),
-    activeNode("devops_mage", failsafe, "defense"),
+    // Observability scales per-debuff bonus +1/+2/+3 via observabilityBonus(rank).
+    // Failsafe stays once-per-fight; R2/R3 also grant +5/+10 shield on trigger.
+    activeNode("devops_mage", observability, "damage", RANK_3),
+    activeNode("devops_mage", failsafe, "defense", RANK_3),
   ],
   qa_paladin: [
     activeNode("qa_paladin", sanityCheck, "damage", RANK_3),
@@ -1003,13 +1002,11 @@ const NEW_NODES_BY_CLASS: Record<ClassId, TalentNodeDef[]> = {
     activeNode("frontend_bard", discordNotification, "control", RANK_3),
     activeNode("frontend_bard", encore, "utility", RANK_3),
     activeNode("frontend_bard", unsubscribeFromAll, "utility", RANK_3),
-    // a11y_first + earworm stay R1 — their machine-side helpers
-    // (fighterHasPassive AC/dodge bonuses, applyEarwormOnCrit mana refund)
-    // don't read fighter rank yet. Same situation as Observability/Failsafe
-    // in the Mage pass — plumbing kit_ranks into the combat machine is the
-    // follow-up. Deferred.
-    activeNode("frontend_bard", a11yFirst, "support"),
-    activeNode("frontend_bard", earworm, "support"),
+    // A11y First: +rank to dodge and to-hit bonuses (read in the dodge gate +
+    // attack_roll_damage handler). Earworm: +rank mana refund per crit
+    // (applyEarwormOnCrit reads fighterRank).
+    activeNode("frontend_bard", a11yFirst, "support", RANK_3),
+    activeNode("frontend_bard", earworm, "support", RANK_3),
   ],
   staff_sage: [
     activeNode("staff_sage", frostBolt, "control", RANK_3),
@@ -1027,20 +1024,18 @@ const NEW_NODES_BY_CLASS: Record<ClassId, TalentNodeDef[]> = {
     activeNode("refactor_rogue", smokeTest, "utility", RANK_3),
     activeNode("refactor_rogue", silentMode, "defense", RANK_3),
     activeNode("refactor_rogue", hotpath, "damage", RANK_3),
-    // cherryPick stays R1 — its multiplier is hardcoded in
-    // handleDamageAbility (cherryPickMult). Scaling it needs the same
-    // CombatFighter.talent_ranks plumbing as observability/failsafe. Deferred.
-    activeNode("refactor_rogue", cherryPick, "damage"),
+    // Cherry-Pick multiplier scales 1.5/1.75/2.0 at R1/R2/R3 — cherryPickMult
+    // reads fighterRank() in handleDamageAbility.
+    activeNode("refactor_rogue", cherryPick, "damage", RANK_3),
   ],
   sre_warden: [
     activeNode("sre_warden", postmortem, "damage", RANK_3),
     activeNode("sre_warden", circuitBreaker, "defense", RANK_3),
     activeNode("sre_warden", failover, "utility", RANK_3),
     activeNode("sre_warden", capacityPlanning, "defense", RANK_3),
-    // loadBalancer stays R1 — redirect % is hardcoded in the
-    // monster-attacks-fighter damage path; no execute() to rank without
-    // plumbing kit_ranks into the inline redirect helper. Deferred.
-    activeNode("sre_warden", loadBalancer, "defense"),
+    // Load Balancer redirect % scales 25/35/45 at R1/R2/R3 — read in the
+    // monster-attacks-fighter damage path via fighterRank().
+    activeNode("sre_warden", loadBalancer, "defense", RANK_3),
   ],
   data_warlock: [
     activeNode("data_warlock", indexScan, "damage", RANK_3),
