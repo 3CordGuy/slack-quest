@@ -20,8 +20,10 @@ export const paladinAbilities: AbilityDef[] = [
     mana_cost: 2,
     routing: "utility",
     target: "all_allies",
-    execute() {
-      return [fx.shieldOfFaith(3)];
+    execute(ctx) {
+      const rank = ctx.rank ?? 1;
+      const rounds = rank >= 3 ? 7 : rank >= 2 ? 5 : 3;
+      return [fx.shieldOfFaith(rounds)];
     },
   },
   {
@@ -34,9 +36,12 @@ export const paladinAbilities: AbilityDef[] = [
     routing: "utility",
     target: "single_ally",
     execute(ctx) {
+      const rank = ctx.rank ?? 1;
       const target = ctx.target as { id: string };
       const vit = ctx.caster.stats?.vit ?? 5;
-      const healAmt = ctx.roll(6) + Math.floor(ctx.caster.magic_mod / 2) + Math.floor(vit / 2);
+      const baseHeal = ctx.roll(6) + Math.floor(ctx.caster.magic_mod / 2) + Math.floor(vit / 2);
+      const mult = rank >= 3 ? 2 : rank >= 2 ? 1.5 : 1;
+      const healAmt = Math.round(baseHeal * mult);
       const effects = [fx.heal(target.id, healAmt)];
       if (ctx.protected_ally_id === target.id) {
         effects.push(fx.heal(ctx.caster.id, healAmt));
@@ -57,13 +62,18 @@ export const paladinAbilities: AbilityDef[] = [
     range_tiles: 1, // melee strike
     aoe_radius_tiles: 0, // single-target smite
     execute(ctx) {
+      const rank = ctx.rank ?? 1;
       const monster = ctx.target as { id: string };
       const wpn = Math.max(0, ctx.caster.weapon_power);
       const baseDmg = ctx.roll(6) + ctx.caster.attack_mod + wpn;
       const extraDmg = rollSum(ctx.roll, 2, 8);
-      const formula = `1d6 + ${ctx.caster.attack_mod}a + ${wpn}w + 2d8`;
+      const mult = rank >= 3 ? 1.5 : rank >= 2 ? 1.25 : 1;
+      const total = Math.round((baseDmg + extraDmg) * mult);
+      const formula = rank > 1
+        ? `(1d6 + ${ctx.caster.attack_mod}a + ${wpn}w + 2d8)×${mult}`
+        : `1d6 + ${ctx.caster.attack_mod}a + ${wpn}w + 2d8`;
       return [
-        fx.damage(monster.id, baseDmg + extraDmg, formula, { drinkBuff: "ability" }),
+        fx.damage(monster.id, total, formula, { drinkBuff: "ability" }),
         fx.smiteDebuff(monster.id),
       ];
     },
@@ -79,10 +89,13 @@ export const paladinAbilities: AbilityDef[] = [
     routing: "utility",
     target: "single_ally",
     execute(ctx) {
+      const rank = ctx.rank ?? 1;
       const target = ctx.target as { id: string };
       if (target.id === ctx.caster.id) {
         const vit = ctx.caster.stats?.vit ?? 5;
-        const shieldAmt = rollSum(ctx.roll, 2, 6) + Math.floor(ctx.caster.magic_mod / 2) + Math.floor(vit / 2);
+        const baseShield = rollSum(ctx.roll, 2, 6) + Math.floor(ctx.caster.magic_mod / 2) + Math.floor(vit / 2);
+        const mult = rank >= 3 ? 2 : rank >= 2 ? 1.5 : 1;
+        const shieldAmt = Math.round(baseShield * mult);
         return [fx.shield(ctx.caster.id, shieldAmt)];
       }
       return [fx.protect(target.id)];
