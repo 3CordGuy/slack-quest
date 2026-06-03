@@ -67,6 +67,10 @@ const SVG_ICONS = new Set([
   "cog",
   // Talent-tree new ability icons (migration 0062)
   "frozen-arrow", "magnifying-glass", "tombstone", "musical-notes", "trash-can", "stopwatch",
+  // Talent-tree icon-duplicate audit — sky-themed swaps
+  "firework-rocket", "umbrella", "parachute", "flower-twirl", "swan-breeze",
+  "swirl-ring", "lightning-storm", "snowing", "fluffy-trefoil", "dust-cloud",
+  "fog", "cursed-star", "crossed-air-flows", "cloud-ring", "stomp-tornado",
   // Abstract fallback icons (used when no specific icon exists)
   "abstract-006",
 ]);
