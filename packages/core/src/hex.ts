@@ -8,7 +8,6 @@
 export type HexPos = { q: number; r: number };
 export type HexGrid = { cols: number; rows: number };
 export type MonsterSpecial =
-  | "charge"         // once per fight: double move when out of range
   | "reach"          // melee range extends to 2 hexes
   | "volley"         // ranged AoE within radius 2 of a target
   | "entangle_on_hit" // applies entangled status on melee hit
@@ -568,7 +567,7 @@ export function placeMonsters(
 //   tier 3–4  → 3
 //   tier 5–6  → 4
 //   tier 7–8  → 4
-//   tier 9+   → 3  (boss tier — heavy and slower; charge special compensates)
+//   tier 9+   → 3  (boss tier — heavy and slower)
 //
 // Engine still respects an explicit `move_range` on the MonsterSpec — this
 // helper is only the default when nothing's provided.

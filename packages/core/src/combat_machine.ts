@@ -70,10 +70,6 @@ import { ALL_TALENT_NODES } from "./abilities/tree";
 import { deriveArmorBonus, deriveCritBonus, deriveDodgeChance, deriveInitiativeBonus, type Stats } from "./stats";
 
 export type ActorId = string;
-// Charge ceiling — caps the doubled-move "anti-kite" special so a high-tier
-// monster can't traverse the entire map in one turn. Sits a couple hexes
-// above the normal MAX_MOVE_RANGE so charge still feels meaningful.
-export const MAX_CHARGE_MOVE = 8;
 
 export const MONSTER_ID: ActorId = "__monster__";
 export const isMonsterActor = (id: ActorId): boolean => id === MONSTER_ID || id.startsWith("__monster_");
@@ -522,7 +518,6 @@ export type CombatEvent =
       gold?: number;       // present when kind === "gold"
       item_tier?: number;  // present when kind === "item" — worker rolls the real item at victory
     }
-  | { type: "monster_charge"; actor: ActorId }
   | { type: "monster_pounce"; actor: ActorId; to: HexPos }
   | { type: "out_of_range"; actor: ActorId; distance: number; max_range: number }
   // Generic "status effect applied" event — used by monster specials like
@@ -768,8 +763,7 @@ export function createCombatState(init: CombatInit): CombatState {
   const monsters = monsterSpecs.map((m, i) => {
     const weaponRange = m.weapon_range ?? "melee";
     const tier = m.tier;
-    // Tier 5+ monsters get "charge" special automatically if none specified.
-    const specials: MonsterSpecial[] = m.specials ?? (tier >= 5 ? ["charge"] : []);
+    const specials: MonsterSpecial[] = m.specials ?? [];
     return {
       ...m,
       id: m.id ?? (monsterSpecs.length === 1 ? MONSTER_ID : `__monster_${i}__`),
@@ -862,7 +856,7 @@ export function upgradeCombatState(raw: CombatState): CombatState {
         pos: m.pos ?? (monsterPositions[i] ?? { q: 11, r: 3 }),
         move_range: m.move_range ?? defaultMonsterMoveRange(m.tier),
         range_tiles: m.range_tiles ?? (m.weapon_range === "ranged" ? 4 : m.weapon_range === "focus" ? 3 : 1),
-        specials: m.specials ?? (m.tier >= 5 ? ["charge"] : []),
+        specials: m.specials ?? [],
       })),
     };
   }
@@ -1168,59 +1162,6 @@ function autoMoveMonster(
   return {
     state: nextState,
     events: [{ type: "monster_moved", actor: monsterId, from, to: dest }],
-  };
-}
-
-// Handles the "charge" special: doubles move range for this turn (once per fight).
-// Returns { state, events, charged } — charged=true means the special was consumed.
-function tryMonsterCharge(
-  state: CombatState,
-  monsterId: ActorId,
-  aliveFighters: CombatFighter[],
-): { state: CombatState; events: CombatEvent[]; charged: boolean } {
-  const monster = state.monsters.find((m) => m.id === monsterId);
-  if (!monster?.pos) return { state, events: [], charged: false };
-
-  const alreadyUsed = (state.specials_used?.[monsterId] ?? []).includes("charge");
-  if (!monster.specials?.includes("charge") || alreadyUsed) {
-    return { state, events: [], charged: false };
-  }
-
-  const attackRange = monster.range_tiles ?? 1;
-  const figtersWithPos = aliveFighters.filter((f) => f.pos);
-  const monsterWeaponRange = monster.weapon_range ?? "melee";
-  const hasLos = (a: HexPos, b: HexPos) =>
-    monsterWeaponRange === "melee" || hexLos(a, b, state.obstacles ?? []);
-  if (figtersWithPos.some(
-    (f) => hexDistance(monster.pos!, f.pos!) <= attackRange && hasLos(monster.pos!, f.pos!),
-  )) {
-    return { state, events: [], charged: false }; // already in range with LOS
-  }
-
-  // Double the move range for this charge, capped at MAX_CHARGE_MOVE so a
-  // tier-9 monster (base move 5) can't sprint 10 hexes in one turn and reach
-  // the back of the party from anywhere on the map. Cap is intentionally
-  // larger than MAX_MOVE_RANGE so charge still feels like a meaningful
-  // anti-kite tool — just not a teleport.
-  const baseMove = monster.move_range ?? 3;
-  const chargeMonster: CombatMonster = { ...monster, move_range: Math.min(MAX_CHARGE_MOVE, baseMove * 2) };
-  const tempState: CombatState = {
-    ...state,
-    monsters: state.monsters.map((m) => m.id === monsterId ? chargeMonster : m),
-  };
-  const move = autoMoveMonster(tempState, monsterId, aliveFighters);
-
-  // Record the special as used.
-  const prevUsed = state.specials_used?.[monsterId] ?? [];
-  const nextState: CombatState = {
-    ...move.state,
-    specials_used: { ...(state.specials_used ?? {}), [monsterId]: [...prevUsed, "charge"] },
-  };
-
-  return {
-    state: nextState,
-    events: [{ type: "monster_charge", actor: monsterId }, ...move.events],
-    charged: true,
   };
 }
 
@@ -2000,7 +1941,7 @@ function handleMonsterAct(state: CombatState, roll: RollFn): StepResult {
   // ── Hex grid: auto-move phase ─────────────────────────────────────────────
   // Monster automatically moves toward the closest fighter before attacking.
   // Only active when hex_range_enabled — keeps Slack combat and unit tests fast.
-  // If it still can't reach a fighter, it tries charge/pounce specials.
+  // If it still can't reach a fighter, it tries the pounce special.
   if (s.hex_range_enabled) {
     const actingMonster = s.monsters.find((m) => m.id === actorId);
     if (actingMonster?.pos) {
@@ -2033,23 +1974,17 @@ function handleMonsterAct(state: CombatState, roll: RollFn): StepResult {
 
         if (!nowInRange) {
           // Still out of range — try anti-kite specials.
-          const chargeResult = tryMonsterCharge(s, actorId, aliveFighters);
-          if (chargeResult.charged) {
-            s = chargeResult.state;
-            events.push(...chargeResult.events);
+          const pounceResult = tryMonsterPounce(s, actorId, aliveFighters);
+          if (pounceResult.pounced) {
+            s = pounceResult.state;
+            events.push(...pounceResult.events);
           } else {
-            const pounceResult = tryMonsterPounce(s, actorId, aliveFighters);
-            if (pounceResult.pounced) {
-              s = pounceResult.state;
-              events.push(...pounceResult.events);
-            } else {
-              // Can't reach any fighter — skip attack.
-              const next = advanceTurn(s);
-              return {
-                state: next,
-                events: [...events, { type: "monster_swing_skipped", reason: "out_of_range" }, ...turnStartEvent(next)],
-              };
-            }
+            // Can't reach any fighter — skip attack.
+            const next = advanceTurn(s);
+            return {
+              state: next,
+              events: [...events, { type: "monster_swing_skipped", reason: "out_of_range" }, ...turnStartEvent(next)],
+            };
           }
         }
       }
@@ -2062,15 +1997,34 @@ function handleMonsterAct(state: CombatState, roll: RollFn): StepResult {
   const rmtCounts: Record<ActorId, number> =
     prevRmt && prevRmt.round === s.round ? { ...prevRmt.counts } : {};
 
+  // Range/LOS-gated target pool. The auto-move phase only guarantees ≥1
+  // fighter is reachable; without this filter the monster could be melee-
+  // adjacent to fighter A but swing at fighter B across the map. Slack mode
+  // (no hex positions) keeps the full pool.
+  const postMovePos = s.monsters.find((m) => m.id === actorId)?.pos;
+  const monsterAttackRange = monster.range_tiles ?? 1;
+  const monsterAttackWeaponRange = monster.weapon_range ?? "melee";
+  const targetPool = (s.hex_range_enabled && postMovePos)
+    ? aliveFighters.filter((f) =>
+        f.pos
+        && hexDistance(postMovePos, f.pos) <= monsterAttackRange
+        && (monsterAttackWeaponRange === "melee" || hexLos(postMovePos, f.pos, s.obstacles ?? [])),
+      )
+    : aliveFighters;
+  // Safety net: if filtering somehow leaves no candidates (shouldn't happen
+  // after the auto-move/pounce guards above), fall back to aliveFighters so
+  // we don't crash; the OOR skip path catches the truly-unreachable case.
+  const effectivePool = targetPool.length > 0 ? targetPool : aliveFighters;
+
   // Target selection honors taunt (override) and vanish (filter out).
   // If Foretell pre-rolled this monster's target, use it so the Sage's
   // prediction is guaranteed correct. Falls back to a fresh roll if the
   // pre-rolled fighter died before the monster swings.
   const foretoldId = s.ability_state?.foretold_targets?.[actorId];
-  const foretoldFighter = foretoldId ? aliveFighters.find((f) => f.id === foretoldId) : null;
-  // Pass the monster's current position to bias targeting toward nearby fighters.
-  const actingMonsterPos = s.monsters.find((m) => m.id === actorId)?.pos;
-  const initialTarget = foretoldFighter ?? pickMonsterTarget(aliveFighters, () => roll(101) / 100, rmtCounts, actingMonsterPos);
+  const foretoldFighter = foretoldId
+    ? effectivePool.find((f) => f.id === foretoldId) ?? aliveFighters.find((f) => f.id === foretoldId)
+    : null;
+  const initialTarget = foretoldFighter ?? pickMonsterTarget(effectivePool, () => roll(101) / 100, rmtCounts, postMovePos);
   // Clear this monster's entry; leave other monsters' entries untouched.
   const ftRemaining = { ...(s.ability_state?.foretold_targets ?? {}) };
   delete ftRemaining[actorId];
@@ -2097,8 +2051,8 @@ function handleMonsterAct(state: CombatState, roll: RollFn): StepResult {
       target = tauntTarget;
     }
   } else if ((vanished[initialTarget.id] ?? 0) > 0) {
-    // Vanish blocks this target — re-pick from the non-vanished alive pool.
-    const eligible = aliveFighters.filter((f) => (vanished[f.id] ?? 0) <= 0);
+    // Vanish blocks this target — re-pick from the non-vanished, in-range pool.
+    const eligible = effectivePool.filter((f) => (vanished[f.id] ?? 0) <= 0);
     if (eligible.length > 0) {
       const reroll = pickMonsterTarget(eligible, () => roll(101) / 100, rmtCounts);
       events.push({
