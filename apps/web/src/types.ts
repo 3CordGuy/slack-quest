@@ -122,6 +122,11 @@ export interface LootOption {
   stat_bonus?: Record<string, number>;
   item_subtype?: string;
   level_req?: number;
+  // Gear-affix system (mirrors @gantt-quest/db LootOption).
+  item_level?: number | null;
+  affixes?: ItemAffix[];
+  unique_id?: string | null;
+  set_id?: string | null;
 }
 
 export interface MonsterSpec {

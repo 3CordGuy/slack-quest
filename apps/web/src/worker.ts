@@ -168,6 +168,7 @@ import {
   addGold,
   addItem,
   itemRollToCreateInput,
+  stockToCreateInput,
   addMana,
   addShield,
   applyFocusManaShift,
@@ -1763,6 +1764,13 @@ async function buildTowerSegment(
       ...(r.stat_bonus ? { stat_bonus: r.stat_bonus as Record<string, number> } : {}),
       ...(r.item_subtype ? { item_subtype: r.item_subtype } : {}),
       ...(r.element ? { element: r.element } : {}),
+      // Gear-affix system pass-through. tower_rest_stock persists in the
+      // quest scene JSON, so these fields ride through the existing JSON
+      // column — no DB migration needed for this surface.
+      ...(r.item_level != null ? { item_level: r.item_level } : {}),
+      ...(r.affixes && r.affixes.length > 0 ? { affixes: r.affixes } : {}),
+      ...(r.unique_id ? { unique_id: r.unique_id } : {}),
+      ...(r.set_id ? { set_id: r.set_id } : {}),
     };
   }
   function isPlaceholderLootName(name: string): boolean {
@@ -2545,6 +2553,14 @@ app.post("/api/shop/restock", async (c) => {
       stat_bonus: (roll.stat_bonus ?? null) as Record<string, number> | null,
       item_subtype: roll.item_subtype ?? null,
       element: roll.element ?? null,
+      // Gear-affix system pass-through (migration 0064). Affixes / unique /
+      // set tags were already rolled by decorateWithAffixes in flavor.ts;
+      // persisting here means buyers receive the same data inventory drops
+      // already carry.
+      item_level: roll.item_level ?? null,
+      affixes: roll.affixes ?? null,
+      unique_id: roll.unique_id ?? null,
+      set_id: roll.set_id ?? null,
     });
   }
   await insertShopStock(c.env.DB, items);
@@ -2670,19 +2686,10 @@ app.post("/api/shop/:itemId/buy", async (c) => {
     await releaseShopClaim(c.env.DB, stock.id);
     return c.json({ error: "insufficient_gold_race" }, 400);
   }
-  const item = await addItem(c.env.DB, {
+  const item = await addItem(c.env.DB, stockToCreateInput({
     character_id: session.slack_user_id,
-    item_name: stock.item_name,
-    item_type: stock.item_type,
-    power: stock.power,
-    rarity: stock.rarity,
-    flavor: stock.flavor ?? "",
-    weapon_range: stock.weapon_range,
-    slot: stock.slot ?? undefined,
-    stat_bonus: stock.stat_bonus ?? undefined,
-    item_subtype: stock.item_subtype ?? undefined,
-    element: stock.element ?? undefined,
-  });
+    stock,
+  }));
   await grantAchievement(c.env.DB, session.slack_user_id, "first_purchase");
   return c.json({
     ok: true,
@@ -3114,6 +3121,11 @@ async function ensureSmithyStock(
       slot: roll.slot ?? null,
       stat_bonus: (roll.stat_bonus ?? null) as Record<string, number> | null,
       item_subtype: roll.item_subtype ?? null,
+      // Gear-affix system pass-through (migration 0064).
+      item_level: roll.item_level ?? null,
+      affixes: roll.affixes ?? null,
+      unique_id: roll.unique_id ?? null,
+      set_id: roll.set_id ?? null,
     };
   }));
   await insertSmithyStock(env.DB, items);
@@ -3206,18 +3218,10 @@ app.post("/api/smithy/buy/:stockId", async (c) => {
     await releaseSmithyClaim(c.env.DB, stockId);
     return c.json({ error: "insufficient_gold_race" }, 400);
   }
-  const item = await addItem(c.env.DB, {
+  const item = await addItem(c.env.DB, stockToCreateInput({
     character_id: session.slack_user_id,
-    item_name: stockItem.item_name,
-    item_type: stockItem.item_type,
-    power: stockItem.power,
-    rarity: stockItem.rarity,
-    flavor: stockItem.flavor ?? "",
-    weapon_range: null,
-    slot: stockItem.slot,
-    stat_bonus: stockItem.stat_bonus,
-    item_subtype: stockItem.item_subtype,
-  });
+    stock: stockItem,
+  }));
   return c.json({ ok: true, paid: stockItem.price, gold_remaining: character.gold - stockItem.price, item });
 });
 
@@ -6385,18 +6389,24 @@ app.post("/api/quest/:id/tower/rest_pick", async (c) => {
   }
   const picked = stock[idx];
 
-  await addItem(c.env.DB, {
+  await addItem(c.env.DB, stockToCreateInput({
     character_id: session.slack_user_id,
-    item_name: picked.name,
-    item_type: picked.item_type,
-    power: picked.power,
-    rarity: picked.rarity,
-    flavor: picked.flavor,
-    weapon_range: picked.weapon_range ?? null,
-    slot: picked.slot ?? undefined,
-    stat_bonus: picked.stat_bonus ?? undefined,
-    item_subtype: picked.item_subtype ?? undefined,
-  });
+    stock: {
+      item_name: picked.name,
+      item_type: picked.item_type,
+      power: picked.power,
+      rarity: picked.rarity,
+      flavor: picked.flavor,
+      weapon_range: picked.weapon_range ?? null,
+      slot: picked.slot ?? null,
+      stat_bonus: picked.stat_bonus ?? null,
+      item_subtype: picked.item_subtype ?? null,
+      item_level: picked.item_level ?? null,
+      affixes: picked.affixes ?? [],
+      unique_id: picked.unique_id ?? null,
+      set_id: picked.set_id ?? null,
+    },
+  }));
 
   claims[String(idx)] = session.slack_user_id;
   const updatedScene: SceneJson = { ...quest.scene, tower_rest_claims: claims };
