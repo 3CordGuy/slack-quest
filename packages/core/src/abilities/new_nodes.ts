@@ -58,6 +58,20 @@ const cdnSurge: AbilityDef = {
   },
 };
 
+const failsafe: AbilityDef = {
+  kind: "passive",
+  id: "failsafe",
+  name: "Failsafe",
+  blurb: "Provision a kill switch — once per fight, the lethal blow that would down you leaves you at 1 HP instead.",
+  icon: "bolt-shield",
+  trigger: "always_on",
+  once_per_fight: true,
+  execute: () => [],
+  // Guard is applied inline by the monster-attacks-fighter handler via
+  // applyFailsafe(). Triggers once, then markPassiveUsed locks it for the
+  // rest of the combat.
+};
+
 const observability: AbilityDef = {
   kind: "passive",
   id: "observability",
@@ -789,6 +803,7 @@ const NEW_NODES_BY_CLASS: Record<ClassId, TalentNodeDef[]> = {
     activeNode("devops_mage", cdnSurge, "damage"),
     activeNode("devops_mage", canaryDeploy, "damage"),
     activeNode("devops_mage", observability, "damage"),
+    activeNode("devops_mage", failsafe, "defense"),
   ],
   qa_paladin: [
     activeNode("qa_paladin", sanityCheck, "damage"),
@@ -849,7 +864,7 @@ export function newNodesForClass(classId: ClassId): TalentNodeDef[] {
 export const ALL_NEW_NODES: TalentNodeDef[] = Object.values(NEW_NODES_BY_CLASS).flat();
 
 export const NEW_ABILITY_DEFS: AbilityDef[] = [
-  rollingRestart, cdnSurge, canaryDeploy, observability,
+  rollingRestart, cdnSurge, canaryDeploy, observability, failsafe,
   sanityCheck, bisect, codeReview, staticAnalysis, defensiveProgramming,
   pruning, mycelialWeb, compostHeap, deepRoots, cronJob,
   standupMeeting, discordNotification, encore, unsubscribeFromAll, a11yFirst, earworm,
