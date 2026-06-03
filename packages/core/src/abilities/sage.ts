@@ -24,10 +24,16 @@ export const sageAbilities: AbilityDef[] = [
     range_tiles: 4, // ranged frost spell
     aoe_radius_tiles: 0, // pinpoint icicle
     execute(ctx) {
+      const rank = ctx.rank ?? 1;
       const monster = ctx.target as MonsterSnapshot;
       const mag = ctx.caster.magic_mod;
-      const amount = rollSum(ctx.roll, mag, 4);
-      return [fx.attackRollDamage(monster.id, mag, amount, `${mag}d4`, "ice", undefined, undefined, 25)];
+      const baseRoll = rollSum(ctx.roll, mag, 4);
+      // R1 ×1, R2 ×1.25 dmg, R3 ×1.5 dmg + freeze chance +5% (25→30).
+      const mult = rank >= 3 ? 1.5 : rank >= 2 ? 1.25 : 1;
+      const amount = Math.round(baseRoll * mult);
+      const freezeChance = rank >= 3 ? 30 : 25;
+      const formula = rank > 1 ? `${mag}d4×${mult}` : `${mag}d4`;
+      return [fx.attackRollDamage(monster.id, mag, amount, formula, "ice", undefined, undefined, freezeChance)];
     },
   },
   {
@@ -41,7 +47,14 @@ export const sageAbilities: AbilityDef[] = [
     routing: "utility",
     target: "all_enemies",
     execute(ctx) {
-      return [fx.blizzard(ctx.caster.id, ctx.caster.magic_mod)];
+      const rank = ctx.rank ?? 1;
+      // Scale per-tick magnitude. R1 ×1, R2 ×1.25, R3 ×1.5. Duration bump
+      // (+1 turn at R3) deferred — apply_blizzard handler hardcodes charges:3
+      // in combat_machine; would need a duration param plumbed through fx.blizzard.
+      const baseMag = Math.max(1, ctx.caster.magic_mod);
+      const mult = rank >= 3 ? 1.5 : rank >= 2 ? 1.25 : 1;
+      const scaledMag = Math.round(baseMag * mult);
+      return [fx.blizzard(ctx.caster.id, scaledMag)];
     },
   },
   {
@@ -55,9 +68,14 @@ export const sageAbilities: AbilityDef[] = [
     routing: "utility",
     target: "single_ally",
     execute(ctx) {
+      const rank = ctx.rank ?? 1;
       const target = ctx.target as FighterSnapshot;
       const mag = ctx.caster.magic_mod;
-      const amount = rollSum(ctx.roll, 1, 4) + mag;
+      const baseAmount = rollSum(ctx.roll, 1, 4) + mag;
+      // R1 ×1, R2 ×1.25, R3 ×1.5. Delayed heal already trails at amount × 2,
+      // so both the immediate and delayed amounts scale together with rank.
+      const mult = rank >= 3 ? 1.5 : rank >= 2 ? 1.25 : 1;
+      const amount = Math.round(baseAmount * mult);
       return [
         fx.heal(target.id, amount),
         fx.goodFortune(ctx.caster.id, target.id, amount * 2),
