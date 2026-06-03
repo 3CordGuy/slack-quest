@@ -76,14 +76,41 @@ const EXISTING_CATEGORY: Record<string, TalentCategory> = {
   forbidden_sql: "damage",
 };
 
+// Per-ability rank specs for the existing class kit. Abilities that need
+// R2/R3 progression list their max_rank + per-rank level/cost gates here.
+// Abilities not in the map fall back to the single-rank default (R1 only,
+// 1 point, level 1) so adding ranks is purely additive — existing kit
+// abilities without an entry behave exactly as they did pre-R2/R3.
+//
+// Default progression for rankable nodes is { max_rank: 3, level_req: [1, 6, 12],
+// point_cost: [1, 2, 3] } unless an ability needs a steeper level gate (e.g.
+// signature kit nodes may push R3 to L15).
+const RANK_SPEC: Record<string, { max_rank: 1 | 2 | 3; level_req_per_rank: number[]; point_cost_per_rank: number[] }> = {
+  // ── DevOps Mage kit ──
+  fireball: { max_rank: 3, level_req_per_rank: [1, 6, 12], point_cost_per_rank: [1, 2, 3] },
+  containerize: { max_rank: 3, level_req_per_rank: [1, 6, 12], point_cost_per_rank: [1, 2, 3] },
+  lightning_bolt: { max_rank: 3, level_req_per_rank: [1, 6, 12], point_cost_per_rank: [1, 2, 3] },
+  mage_armor: { max_rank: 3, level_req_per_rank: [1, 6, 12], point_cost_per_rank: [1, 2, 3] },
+  // mana_font deliberately omitted — its regen logic lives in combat_machine
+  // (applyManaFont), not execute(). Plumbing kit_ranks through CombatFighter
+  // so the machine can read rank is a follow-up; for now Mana Font stays R1.
+};
+
+const DEFAULT_RANKS: { max_rank: 1; level_req_per_rank: number[]; point_cost_per_rank: number[] } = {
+  max_rank: 1,
+  level_req_per_rank: [1],
+  point_cost_per_rank: [1],
+};
+
 function wrapExisting(classId: ClassId, ability: AbilityDef): TalentNodeDef {
+  const ranks = RANK_SPEC[ability.id] ?? DEFAULT_RANKS;
   return {
     id: ability.id,
     class_id: classId,
     category: EXISTING_CATEGORY[ability.id] ?? "utility",
-    max_rank: 1,
-    level_req_per_rank: [1],
-    point_cost_per_rank: [1],
+    max_rank: ranks.max_rank,
+    level_req_per_rank: ranks.level_req_per_rank,
+    point_cost_per_rank: ranks.point_cost_per_rank,
     ability,
   };
 }

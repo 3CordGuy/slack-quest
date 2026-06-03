@@ -31,10 +31,14 @@ const rollingRestart: AbilityDef = {
   range_tiles: 4,
   aoe_radius_tiles: 0,
   execute(ctx) {
+    const rank = ctx.rank ?? 1;
     const monster = ctx.target as MonsterSnapshot;
     const mag = Math.max(1, ctx.caster.magic_mod);
-    const amount = rollSum(ctx.roll, mag, 6);
-    return [fx.damage(monster.id, amount, `${mag}d6`, { damageType: "magic" })];
+    const baseRoll = rollSum(ctx.roll, mag, 6);
+    const mult = rank >= 3 ? 1.5 : rank >= 2 ? 1.25 : 1;
+    const amount = Math.round(baseRoll * mult);
+    const formula = rank > 1 ? `${mag}d6×${mult}` : `${mag}d6`;
+    return [fx.damage(monster.id, amount, formula, { damageType: "magic" })];
   },
 };
 
@@ -51,9 +55,12 @@ const cdnSurge: AbilityDef = {
   range_tiles: 5,
   aoe_radius_tiles: 2,
   execute(ctx) {
+    const rank = ctx.rank ?? 1;
     const mag = Math.max(1, ctx.caster.magic_mod);
-    const amount = rollSum(ctx.roll, mag, 4);
-    const formula = `${mag}d4`;
+    const baseRoll = rollSum(ctx.roll, mag, 4);
+    const mult = rank >= 3 ? 1.5 : rank >= 2 ? 1.25 : 1;
+    const amount = Math.round(baseRoll * mult);
+    const formula = rank > 1 ? `${mag}d4×${mult}` : `${mag}d4`;
     return ctx.monsters.map((m) => fx.damage(m.id, amount, formula, { damageType: "lightning" }));
   },
 };
@@ -97,10 +104,14 @@ const canaryDeploy: AbilityDef = {
   range_tiles: 4,
   aoe_radius_tiles: 0,
   execute(ctx) {
+    const rank = ctx.rank ?? 1;
     const monster = ctx.target as MonsterSnapshot;
     const mag = ctx.caster.magic_mod;
-    const amount = ctx.roll(6) + mag;
-    return [fx.damage(monster.id, amount, `1d6+${mag}m`, { damageType: "fire" })];
+    const baseRoll = ctx.roll(6) + mag;
+    const mult = rank >= 3 ? 1.5 : rank >= 2 ? 1.25 : 1;
+    const amount = Math.round(baseRoll * mult);
+    const formula = rank > 1 ? `1d6+${mag}m×${mult}` : `1d6+${mag}m`;
+    return [fx.damage(monster.id, amount, formula, { damageType: "fire" })];
   },
 };
 
@@ -785,23 +796,52 @@ const stackTrace: AbilityDef = {
 // Registry — per-class TalentNodeDef list
 // ────────────────────────────────────────────────────────────────────────
 
-function activeNode(classId: ClassId, ability: AbilityDef, category: TalentNodeDef["category"]): TalentNodeDef {
+// Optional per-node rank config. Defaults to single-rank (R1, 1 point, level 1)
+// for any caller that omits it — keeps the helper backward-compatible while
+// letting ranked nodes declare their progression inline.
+type NodeRanks = {
+  max_rank: 1 | 2 | 3;
+  level_req_per_rank: number[];
+  point_cost_per_rank: number[];
+};
+const SINGLE_RANK: NodeRanks = {
+  max_rank: 1,
+  level_req_per_rank: [1],
+  point_cost_per_rank: [1],
+};
+// Standard 3-rank progression. Use for most ranked nodes — signature nodes
+// can push their R3 gate higher inline (e.g. { ...RANK_3, level_req_per_rank: [1, 8, 15] }).
+const RANK_3: NodeRanks = {
+  max_rank: 3,
+  level_req_per_rank: [1, 6, 12],
+  point_cost_per_rank: [1, 2, 3],
+};
+
+function activeNode(
+  classId: ClassId,
+  ability: AbilityDef,
+  category: TalentNodeDef["category"],
+  ranks: NodeRanks = SINGLE_RANK,
+): TalentNodeDef {
   return {
     id: ability.id,
     class_id: classId,
     category,
-    max_rank: 1,
-    level_req_per_rank: [1],
-    point_cost_per_rank: [1],
+    max_rank: ranks.max_rank,
+    level_req_per_rank: ranks.level_req_per_rank,
+    point_cost_per_rank: ranks.point_cost_per_rank,
     ability,
   };
 }
 
 const NEW_NODES_BY_CLASS: Record<ClassId, TalentNodeDef[]> = {
   devops_mage: [
-    activeNode("devops_mage", rollingRestart, "damage"),
-    activeNode("devops_mage", cdnSurge, "damage"),
-    activeNode("devops_mage", canaryDeploy, "damage"),
+    activeNode("devops_mage", rollingRestart, "damage", RANK_3),
+    activeNode("devops_mage", cdnSurge, "damage", RANK_3),
+    activeNode("devops_mage", canaryDeploy, "damage", RANK_3),
+    // observability + failsafe stay R1 for this slice — their scaling needs
+    // CombatFighter.talent_ranks plumbing so machine-side helpers
+    // (observabilityBonus, applyFailsafe) can read the owner's rank. Deferred.
     activeNode("devops_mage", observability, "damage"),
     activeNode("devops_mage", failsafe, "defense"),
   ],
