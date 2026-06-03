@@ -1278,21 +1278,31 @@ export function CharacterCard({
   const [trophyDefs, setTrophyDefs] = useState<Achievement[]>([]);
   const [trophyEarned, setTrophyEarned] = useState<EarnedAchievement[]>([]);
   const [abilitiesOpen, setAbilitiesOpen] = useState(false);
-  // Equipped loadout — fetched once when the drawer mounts so the abilities
+  // Equipped loadout — fetched when the drawer mounts so the abilities
   // section reflects the slotted actives/passives instead of the full class
   // kit. Falls back to the kit when unavailable so older characters / fetch
-  // failures still see something useful.
+  // failures still see something useful. Also refetches when the
+  // AbilitiesPanel dispatches `gq-loadout-changed` after the player saves a
+  // new loadout, so the drawer doesn't go stale while it's open.
   const [equippedLoadout, setEquippedLoadout] = useState<AbilityLoadout | null>(null);
   useEffect(() => {
     let cancelled = false;
-    fetch("/api/character/talents")
-      .then((r) => r.ok ? r.json() : null)
-      .then((raw) => {
-        const j = raw as { loadout?: AbilityLoadout } | null;
-        if (!cancelled && j?.loadout) setEquippedLoadout(j.loadout);
-      })
-      .catch(() => { /* fall through to class-kit fallback */ });
-    return () => { cancelled = true; };
+    function pull() {
+      fetch("/api/character/talents")
+        .then((r) => r.ok ? r.json() : null)
+        .then((raw) => {
+          const j = raw as { loadout?: AbilityLoadout } | null;
+          if (!cancelled && j?.loadout) setEquippedLoadout(j.loadout);
+        })
+        .catch(() => { /* fall through to class-kit fallback */ });
+    }
+    pull();
+    const onLoadoutChange = () => pull();
+    window.addEventListener("gq-loadout-changed", onLoadoutChange);
+    return () => {
+      cancelled = true;
+      window.removeEventListener("gq-loadout-changed", onLoadoutChange);
+    };
   }, [me.character?.slack_user_id]);
   useEffect(() => {
     fetch("/api/achievements")
@@ -1494,7 +1504,9 @@ export function CharacterCard({
         const abilities: AbilityDef[] = equippedLoadout
           ? [
               ...equippedLoadout.active
-                .map((id) => (id ? findNode(id)?.ability : undefined))
+                .map((id) =>
+                  id ? findNode(id)?.ability ?? kit.find((a) => a.id === id) : undefined,
+                )
                 .filter((a): a is AbilityDef => !!a && a.kind === "active"),
               ...equippedLoadout.passive
                 .map((id) =>

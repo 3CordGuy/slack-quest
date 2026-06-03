@@ -157,6 +157,9 @@ export function AbilitiesPanel({
       } else {
         await refresh();
         onCharacterUpdated?.();
+        // Let other surfaces that cache the loadout (the character drawer's
+        // Abilities section) refetch without having to re-mount.
+        window.dispatchEvent(new Event("gq-loadout-changed"));
       }
     } finally {
       setBusy(false);

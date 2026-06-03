@@ -309,10 +309,14 @@ function FighterAbilitiesList({
   }
 
   // Actives: prefer the equipped loadout slots; fall back to the full class
-  // kit when we don't have loadout info (e.g. other party members).
+  // kit when we don't have loadout info (e.g. other party members). The
+  // `kit.find` step covers ids that aren't registered as talent nodes (or
+  // future schema drift) so a recognized active is never silently dropped.
   const actives: ActiveAbilityDef[] = loadout
     ? loadout.active
-        .map((id) => (id ? findNode(id)?.ability : undefined))
+        .map((id) =>
+          id ? findNode(id)?.ability ?? cls!.abilities.find((a) => a.id === id) : undefined,
+        )
         .filter((a): a is ActiveAbilityDef => !!a && a.kind === "active")
     : activeAbilities(cls.abilities);
 
