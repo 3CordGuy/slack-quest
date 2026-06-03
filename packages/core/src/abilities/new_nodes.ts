@@ -427,6 +427,20 @@ const timeDilation: AbilityDef = {
   },
 };
 
+const cacheWarmer: AbilityDef = {
+  kind: "passive",
+  id: "cache_warmer",
+  name: "Cache Warmer",
+  blurb: "Pressure compiles wisdom — your next ability cast after taking damage costs no mana.",
+  icon: "fire",
+  trigger: "always_on",
+  once_per_fight: false,
+  execute: () => [],
+  // Priming is done inline by the monster-attacks-fighter damage path
+  // (adds the sage to ability_state.cache_warmer_primed). The cast handler
+  // zeroes mana_cost for primed casters and unprimes them after.
+};
+
 const memoization: AbilityDef = {
   kind: "passive",
   id: "memoization",
@@ -563,6 +577,21 @@ const silentMode: AbilityDef = {
 // ────────────────────────────────────────────────────────────────────────
 // SRE Warden
 // ────────────────────────────────────────────────────────────────────────
+
+const loadBalancer: AbilityDef = {
+  kind: "passive",
+  id: "load_balancer",
+  name: "Load Balancer",
+  blurb: "Distribute the hit across the cluster — soak 25% of HP damage taken by any adjacent ally.",
+  icon: "shieldcomb",
+  trigger: "always_on",
+  once_per_fight: false,
+  execute: () => [],
+  // Redirect is applied inline by the monster-attacks-fighter damage path:
+  // when a fighter takes hp damage, if an adjacent warden has this passive
+  // equipped, 25% of the damage is reassigned to the warden BEFORE Protect
+  // splits the remainder.
+};
 
 const postmortem: AbilityDef = {
   kind: "active",
@@ -788,6 +817,7 @@ const NEW_NODES_BY_CLASS: Record<ClassId, TalentNodeDef[]> = {
     activeNode("staff_sage", hailstorm, "damage"),
     activeNode("staff_sage", timeDilation, "control"),
     activeNode("staff_sage", memoization, "support"),
+    activeNode("staff_sage", cacheWarmer, "support"),
   ],
   refactor_rogue: [
     activeNode("refactor_rogue", codeAudit, "control"),
@@ -801,6 +831,7 @@ const NEW_NODES_BY_CLASS: Record<ClassId, TalentNodeDef[]> = {
     activeNode("sre_warden", circuitBreaker, "defense"),
     activeNode("sre_warden", failover, "utility"),
     activeNode("sre_warden", capacityPlanning, "defense"),
+    activeNode("sre_warden", loadBalancer, "defense"),
   ],
   data_warlock: [
     activeNode("data_warlock", indexScan, "damage"),
@@ -822,8 +853,8 @@ export const NEW_ABILITY_DEFS: AbilityDef[] = [
   sanityCheck, bisect, codeReview, staticAnalysis, defensiveProgramming,
   pruning, mycelialWeb, compostHeap, deepRoots, cronJob,
   standupMeeting, discordNotification, encore, unsubscribeFromAll, a11yFirst, earworm,
-  frostBolt, hailstorm, timeDilation, memoization,
+  frostBolt, hailstorm, timeDilation, memoization, cacheWarmer,
   codeAudit, smokeTest, silentMode, hotpath, cherryPick,
-  postmortem, circuitBreaker, failover, capacityPlanning,
+  postmortem, circuitBreaker, failover, capacityPlanning, loadBalancer,
   indexScan, stackTrace, dropTable, staleCache, garbageCollection,
 ];
