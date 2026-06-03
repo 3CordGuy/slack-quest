@@ -673,7 +673,7 @@ export function CombatHexGrid({
   // Compute reachable / attackable hexes for the current actor.
   const overlay = useMemo(() => {
     if (!currentActor || !currentActor.pos || !isMyTurn) {
-      return { reachable: new Set<string>(), inRange: new Set<string>(), losBlocked: new Set<string>() };
+      return { reachable: new Set<string>(), inRange: new Set<string>(), attackArea: new Set<string>(), losBlocked: new Set<string>() };
     }
     const actorPos = currentActor.pos;
     const isFighter = "class" in currentActor;
@@ -688,6 +688,7 @@ export function CombatHexGrid({
       return {
         reachable: new Set(reachable.map(posKey)),
         inRange: new Set<string>(),
+        attackArea: new Set<string>(),
         losBlocked: new Set<string>(),
       };
     }
@@ -717,10 +718,22 @@ export function CombatHexGrid({
         }
         inRange.add(posKey(m.pos));
       }
-      return { reachable: new Set<string>(), inRange, losBlocked };
+      // attackArea = every hex within range, LOS-permitting for non-melee.
+      // Drawn as a green tile tint so the player sees their reach at a
+      // glance — replaces the old rotating dashed "range ring" around the
+      // actor. Empty hexes don't gain a click handler; targeting still
+      // requires a monster (inRange).
+      const attackArea = new Set<string>();
+      const disk = hexDisk(actorPos, rangeTiles, grid);
+      const isMelee = fighter.weapon_range === "melee";
+      for (const p of disk) {
+        if (!isMelee && !hexLos(actorPos, p, obstacles)) continue;
+        attackArea.add(posKey(p));
+      }
+      return { reachable: new Set<string>(), inRange, attackArea, losBlocked };
     }
 
-    return { reachable: new Set<string>(), inRange: new Set<string>(), losBlocked: new Set<string>() };
+    return { reachable: new Set<string>(), inRange: new Set<string>(), attackArea: new Set<string>(), losBlocked: new Set<string>() };
   }, [currentActor, isMyTurn, turnPhase, aimActive, aimRangeTiles, state.fighters, state.monsters, state.obstacles, grid]);
 
   // Pointer move during an active pan drag. Uses pointer events because
@@ -1525,7 +1538,7 @@ function drawTiles(
   ctx: CanvasRenderingContext2D,
   state: CombatState,
   grid: { cols: number; rows: number },
-  overlay: { reachable: Set<string>; inRange: Set<string>; losBlocked: Set<string> },
+  overlay: { reachable: Set<string>; inRange: Set<string>; attackArea: Set<string>; losBlocked: Set<string> },
   hover: HoverInfo | null,
   currentActor: CombatFighter | CombatMonster | null,
   hexToPixel: (pos: HexPos) => { x: number; y: number },
@@ -1566,9 +1579,14 @@ function drawTiles(
         // unambiguous when the AI ground art is busy.
         fill = "rgba(56, 189, 248, 0.32)";
         stroke = "rgba(56, 189, 248, 0.85)";
-      } else if (overlay.inRange.has(key)) {
-        fill = "rgba(248, 113, 113, 0.18)";
-        stroke = "rgba(248, 113, 113, 0.55)";
+      } else if (overlay.attackArea.has(key)) {
+        // Attack-phase reach: every hex within range + LOS tinted emerald
+        // green. Mirrors the move-phase cyan fill so range reads at the
+        // same glance. The inRange (monster-targetable) tint sits inside
+        // this same green wash — the hex with the targeted monster gets
+        // its own gold/orange border so the active pick still stands out.
+        fill = "rgba(34, 197, 94, 0.28)";
+        stroke = "rgba(34, 197, 94, 0.75)";
       } else if (overlay.losBlocked.has(key)) {
         fill = "rgba(148, 163, 184, 0.15)";
         stroke = "rgba(148, 163, 184, 0.35)";
@@ -3845,24 +3863,9 @@ function drawActors(
     ctx.restore();
   }
 
-  // Current actor's attack-range ring: a faint dashed circle around the
-  // active fighter during ATTACK phase. Helps players judge reach without
-  // having to read the highlighted hexes.
-  function drawAttackRangeRing(cx: number, cy: number, rangeTiles: number) {
-    // Convert hex-range to pixel-range. One hex is sqrt(3)*hexSize wide for
-    // pointy-top, so distance in pixels ≈ rangeTiles * sqrt(3) * hexSize.
-    const r = rangeTiles * Math.sqrt(3) * hexSize;
-    ctx.save();
-    ctx.globalAlpha = 0.30;
-    ctx.strokeStyle = "#fbbf24";
-    ctx.lineWidth = 1.5;
-    ctx.setLineDash([4, 6]);
-    ctx.lineDashOffset = -now / 60;
-    ctx.beginPath();
-    ctx.arc(cx, cy, r, 0, Math.PI * 2);
-    ctx.stroke();
-    ctx.restore();
-  }
+  // Attack range used to draw a rotating dashed circle around the active
+  // fighter. The green attackArea tile tint (see drawTiles) communicates
+  // the same reach with less visual noise, so the ring is gone.
 
   for (const f of state.fighters) {
     const a = animatedPos[f.id];
@@ -3871,26 +3874,6 @@ function drawActors(
     const downed = f.hp <= 0;
     const radius = hexSize * 0.55;
     if (!downed && previewSet?.has(f.id)) drawPreviewGlow(x, y, radius, isReachable(f as never));
-    if (!downed && f.id === currentActorId) {
-      // No pawn-level "current actor" pulse — the hex tile already paints
-      // a gold border around the active hex, the class-color rim on the
-      // pawn already says "yours," and the on-canvas overlays for status
-      // effects (icicles, embers, sparks) need that visual budget so they
-      // can stand out. Reach ring is still useful: shows attack range.
-      // Reach ring around the current actor. Uses the aim mode's override
-      // range when present (e.g. an ability with custom range), otherwise
-      // the actor's weapon range. Only draws when ≥2 (melee adjacency is
-      // already obvious from the neighbor hexes).
-      const weaponRangeTiles = f.weapon_range
-        ? (f.weapon_range === "melee" ? 1
-          : f.weapon_range === "focus" ? (3 + Math.floor(Math.max(0, (f.stats?.int_stat ?? 5) - 5) / 4))
-          : (5 + Math.floor(Math.max(0, (f.stats?.dex ?? 5) - 5) / 4)))
-        : 1;
-      const effectiveRange = aimActive && aimRangeTiles ? aimRangeTiles : weaponRangeTiles;
-      if ((turnPhase === "attack" || aimActive) && effectiveRange >= 2) {
-        drawAttackRangeRing(x, y, effectiveRange);
-      }
-    }
     ctx.globalAlpha = downed ? 0.4 : 1;
     // Fighter token: portrait clipped to circle if available, else slate
     // fill + class-color rim + initial. The rim sits at radius regardless
