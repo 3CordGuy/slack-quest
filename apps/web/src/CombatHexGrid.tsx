@@ -719,16 +719,19 @@ export function CombatHexGrid({
         inRange.add(posKey(m.pos));
       }
       // attackArea = every hex within range, LOS-permitting for non-melee.
-      // Drawn as a green tile tint so the player sees their reach at a
-      // glance — replaces the old rotating dashed "range ring" around the
-      // actor. Empty hexes don't gain a click handler; targeting still
-      // requires a monster (inRange).
+      // Drawn as a green tile tint so the player sees the reach of the
+      // primed action at a glance. Gated on aimActive so the wash only
+      // appears once an attack or ability has been selected — during the
+      // open attack phase (no action primed yet) the grid stays clean and
+      // click-to-target still works via the inRange set.
       const attackArea = new Set<string>();
-      const disk = hexDisk(actorPos, rangeTiles, grid);
-      const isMelee = fighter.weapon_range === "melee";
-      for (const p of disk) {
-        if (!isMelee && !hexLos(actorPos, p, obstacles)) continue;
-        attackArea.add(posKey(p));
+      if (aimActive) {
+        const disk = hexDisk(actorPos, rangeTiles, grid);
+        const isMelee = fighter.weapon_range === "melee";
+        for (const p of disk) {
+          if (!isMelee && !hexLos(actorPos, p, obstacles)) continue;
+          attackArea.add(posKey(p));
+        }
       }
       return { reachable: new Set<string>(), inRange, attackArea, losBlocked };
     }
