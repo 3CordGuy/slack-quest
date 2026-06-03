@@ -14,12 +14,18 @@ export const bardAbilities: AbilityDef[] = [
     range_tiles: 3, // musical wave carries a few hexes
     aoe_radius_tiles: 1, // crescendo wave catches adjacent foes
     execute(ctx) {
+      const rank = ctx.rank ?? 1;
       const monster = ctx.target as { id: string };
       const wpn = Math.max(0, ctx.caster.weapon_power);
       const party = Math.max(1, ctx.party.length);
       const r = ctx.roll(6);
-      const amount = r + ctx.caster.magic_mod + party * 2 + wpn;
-      return [fx.attackRollDamage(monster.id, ctx.caster.magic_mod, amount, `1d6 + ${ctx.caster.magic_mod}m + ${party}p×2 + ${wpn}w`)];
+      const baseAmount = r + ctx.caster.magic_mod + party * 2 + wpn;
+      // R1 ×1, R2 ×1.25, R3 ×1.5.
+      const mult = rank >= 3 ? 1.5 : rank >= 2 ? 1.25 : 1;
+      const amount = Math.round(baseAmount * mult);
+      const baseFormula = `1d6 + ${ctx.caster.magic_mod}m + ${party}p×2 + ${wpn}w`;
+      const formula = rank > 1 ? `(${baseFormula})×${mult}` : baseFormula;
+      return [fx.attackRollDamage(monster.id, ctx.caster.magic_mod, amount, formula)];
     },
   },
   {
@@ -33,12 +39,15 @@ export const bardAbilities: AbilityDef[] = [
     routing: "utility",
     target: "any",
     execute(ctx) {
+      const rank = ctx.rank ?? 1;
       const target = ctx.target as { id: string; hp?: number; max_hp?: number } | undefined;
       if (!target) return [];
       // Fighters have max_hp; monsters do not always — distinguish by checking the
       // party array so we don't rely on a fragile field heuristic.
       const isAlly = (ctx.party as Array<{ id: string }>).some((f) => f.id === target.id);
-      return isAlly ? [fx.encourage(target.id, 2)] : [fx.discourage(target.id, 2)];
+      // R1 2 charges, R2 3 charges, R3 4 charges.
+      const charges = rank >= 3 ? 4 : rank >= 2 ? 3 : 2;
+      return isAlly ? [fx.encourage(target.id, charges)] : [fx.discourage(target.id, charges)];
     },
   },
   {
@@ -51,9 +60,13 @@ export const bardAbilities: AbilityDef[] = [
     routing: "utility",
     target: "all_allies",
     execute(ctx) {
-      const manaRestore = 1 + Math.floor(ctx.caster.level / 8);
+      const rank = ctx.rank ?? 1;
+      // R1: 1+lvl/8 mana. R2: +1 mana per ally. R3: +2 mana per ally and +1 round duration.
+      const baseRestore = 1 + Math.floor(ctx.caster.level / 8);
+      const manaRestore = baseRestore + (rank >= 3 ? 2 : rank >= 2 ? 1 : 0);
+      const rounds = rank >= 3 ? 4 : 3;
       return [
-        fx.battleHymn(3),
+        fx.battleHymn(rounds),
         ...ctx.party.map((m) => fx.restoreMana(m.id, manaRestore)),
       ];
     },
@@ -68,9 +81,14 @@ export const bardAbilities: AbilityDef[] = [
     routing: "utility",
     target: "single_ally",
     execute(ctx) {
+      const rank = ctx.rank ?? 1;
       const target = ctx.target as { id: string };
-      const healAmt = ctx.roll(6) + ctx.roll(6) + ctx.caster.magic_mod;
-      const shieldAmt = 2 + Math.floor(ctx.caster.level / 5);
+      const baseHeal = ctx.roll(6) + ctx.roll(6) + ctx.caster.magic_mod;
+      const baseShield = 2 + Math.floor(ctx.caster.level / 5);
+      // R1 ×1, R2 ×1.25, R3 ×1.5 on both heal and shield.
+      const mult = rank >= 3 ? 1.5 : rank >= 2 ? 1.25 : 1;
+      const healAmt = Math.round(baseHeal * mult);
+      const shieldAmt = Math.round(baseShield * mult);
       return [fx.heal(target.id, healAmt), fx.shield(target.id, shieldAmt)];
     },
   },
@@ -82,5 +100,8 @@ export const bardAbilities: AbilityDef[] = [
     trigger: "always_on",
     once_per_fight: false,
     execute: () => [],
+    // Morale damage bonus is computed inline by the combat machine (reads
+    // caster level), not execute(). Plumbing kit_ranks to the bonus formula
+    // is a follow-up — same situation as Mana Font in the Mage kit. Stays R1.
   },
 ];

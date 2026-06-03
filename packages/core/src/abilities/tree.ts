@@ -103,6 +103,14 @@ const RANK_SPEC: Record<string, { max_rank: 1 | 2 | 3; level_req_per_rank: numbe
   // handled inline by the combat machine (on_ally_hit accumulator), not
   // execute(). Same talent_ranks plumbing follow-up as observability/failsafe;
   // for now Regression Rage stays R1.
+  // ── Frontend Bard kit ──
+  crescendo: { max_rank: 3, level_req_per_rank: [1, 6, 12], point_cost_per_rank: [1, 2, 3] },
+  verse: { max_rank: 3, level_req_per_rank: [1, 6, 12], point_cost_per_rank: [1, 2, 3] },
+  battle_hymn: { max_rank: 3, level_req_per_rank: [1, 6, 12], point_cost_per_rank: [1, 2, 3] },
+  serenade: { max_rank: 3, level_req_per_rank: [1, 6, 12], point_cost_per_rank: [1, 2, 3] },
+  // bardic_aura deliberately omitted — Morale Boost's damage bonus is read
+  // inline by the combat machine (not execute()), same situation as Mana Font.
+  // Plumbing kit_ranks to the bonus formula is a follow-up; stays R1.
 };
 
 const DEFAULT_RANKS: { max_rank: 1; level_req_per_rank: number[]; point_cost_per_rank: number[] } = {

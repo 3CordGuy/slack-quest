@@ -330,7 +330,10 @@ const standupMeeting: AbilityDef = {
   routing: "utility",
   target: "all_allies",
   execute(ctx) {
-    return ctx.party.map((m) => fx.encourage(m.id, 2));
+    const rank = ctx.rank ?? 1;
+    // R1 2 charges, R2 3 charges, R3 4 charges.
+    const charges = rank >= 3 ? 4 : rank >= 2 ? 3 : 2;
+    return ctx.party.map((m) => fx.encourage(m.id, charges));
   },
 };
 
@@ -346,9 +349,18 @@ const encore: AbilityDef = {
   target: "single_ally",
   range_tiles: 3,
   execute(ctx) {
+    const rank = ctx.rank ?? 1;
     const target = ctx.target as { id: string } | undefined;
     if (!target) return [];
-    return [fx.resetCooldowns(target.id)];
+    // R1 just resets cooldowns. R2 also restores 2 mana to the target.
+    // R3 restores 3 mana to the target. Cooldown reset is binary; layering
+    // mana restore is the cleanest scaling without new effect kinds.
+    const effects = [fx.resetCooldowns(target.id)];
+    if (rank >= 2) {
+      const mana = rank >= 3 ? 3 : 2;
+      effects.push(fx.restoreMana(target.id, mana));
+    }
+    return effects;
   },
 };
 
@@ -362,8 +374,14 @@ const unsubscribeFromAll: AbilityDef = {
   cooldown_turns: 6,
   routing: "utility",
   target: "all_enemies",
-  execute() {
-    return [fx.dispelEnemyBuffs()];
+  execute(ctx) {
+    const rank = ctx.rank ?? 1;
+    // R1 dispels enemy buffs. R2 also cleanses every ally's debuffs.
+    // R3 same plus restore 1 mana to the bard.
+    const effects = [fx.dispelEnemyBuffs()];
+    if (rank >= 2) effects.push(fx.cleanseAllyDebuffs());
+    if (rank >= 3) effects.push(fx.restoreMana(ctx.caster.id, 1));
+    return effects;
   },
 };
 
@@ -407,12 +425,20 @@ const discordNotification: AbilityDef = {
   range_tiles: 4,
   aoe_radius_tiles: 0,
   execute(ctx) {
+    const rank = ctx.rank ?? 1;
     const monster = ctx.target as MonsterSnapshot;
     const mag = ctx.caster.magic_mod;
-    const amount = ctx.roll(6) + mag;
+    const baseRoll = ctx.roll(6) + mag;
+    // R1 ×1, R2 ×1.25, R3 ×1.5 on damage. Stun break% drops at higher
+    // ranks → longer effective stun.
+    const mult = rank >= 3 ? 1.5 : rank >= 2 ? 1.25 : 1;
+    const amount = Math.round(baseRoll * mult);
+    const formula = rank > 1 ? `(1d6+${mag}m)×${mult}` : `1d6+${mag}m`;
+    const breakPct = rank >= 3 ? 10 : rank >= 2 ? 20 : 30;
+    const bossBreakPct = rank >= 3 ? 30 : rank >= 2 ? 40 : 50;
     return [
-      fx.damage(monster.id, amount, `1d6+${mag}m`, { damageType: "magic" }),
-      fx.stunMonster(monster.id, 30, 50),
+      fx.damage(monster.id, amount, formula, { damageType: "magic" }),
+      fx.stunMonster(monster.id, breakPct, bossBreakPct),
     ];
   },
 };
@@ -874,10 +900,15 @@ const NEW_NODES_BY_CLASS: Record<ClassId, TalentNodeDef[]> = {
     activeNode("backend_druid", cronJob, "support"),
   ],
   frontend_bard: [
-    activeNode("frontend_bard", standupMeeting, "support"),
-    activeNode("frontend_bard", discordNotification, "control"),
-    activeNode("frontend_bard", encore, "utility"),
-    activeNode("frontend_bard", unsubscribeFromAll, "utility"),
+    activeNode("frontend_bard", standupMeeting, "support", RANK_3),
+    activeNode("frontend_bard", discordNotification, "control", RANK_3),
+    activeNode("frontend_bard", encore, "utility", RANK_3),
+    activeNode("frontend_bard", unsubscribeFromAll, "utility", RANK_3),
+    // a11y_first + earworm stay R1 — their machine-side helpers
+    // (fighterHasPassive AC/dodge bonuses, applyEarwormOnCrit mana refund)
+    // don't read fighter rank yet. Same situation as Observability/Failsafe
+    // in the Mage pass — plumbing kit_ranks into the combat machine is the
+    // follow-up. Deferred.
     activeNode("frontend_bard", a11yFirst, "support"),
     activeNode("frontend_bard", earworm, "support"),
   ],
