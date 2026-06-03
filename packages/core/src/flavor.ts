@@ -339,6 +339,399 @@ function rollResistance(slot: EquipSlot, rarity: Rarity, subtype?: string): { ty
   return { type, pct };
 }
 
+// ────────────────────────────────────────────────────────────────────────────
+// Affix system (design doc: docs/gear-affixes-and-uniques.md).
+//
+// Rarity governs how many affix lines an item carries; item_level governs
+// the magnitude tier of each line. So a great-rolled rare (two tier-5
+// affixes) can beat a mediocre epic (three tier-3 affixes). Most affixes
+// flow through the existing stat_bonus JSON column — the engine doesn't
+// need new storage, just new keys.
+// ────────────────────────────────────────────────────────────────────────────
+
+// Slot eligibility classes. We keep the categories coarse so adding new
+// affixes is mostly a one-line table edit, not a switch sprawl.
+type AffixSlotClass = "weapon" | "armor" | "accessory" | "focus" | "any";
+
+export type AffixId =
+  | "crit_pct"
+  | "lifesteal"
+  | "fire_dmg"
+  | "ice_dmg"
+  | "lightning_dmg"
+  | "resist_fire"
+  | "resist_ice"
+  | "resist_lightning"
+  | "resist_magic"
+  | "thorns"
+  | "mana_regen"
+  | "dodge_pct"
+  | "vit_bonus"
+  | "str_bonus"
+  | "int_bonus";
+
+export interface AffixDef {
+  id: AffixId;
+  label: string;             // player-facing label, e.g. "Critical %"
+  stat: string;              // stat_bonus key the rolled value writes to
+  perTier: [number, number, number, number, number]; // magnitudes for tiers 1..5
+  slots: AffixSlotClass[];   // empty = "any"
+}
+
+// Magnitudes are tuned for v1 — see balance notes in the design doc.
+// Crit and lifesteal are weapon-only; resists and stat-letter bumps spread
+// freely; thorns/dodge are armor-flavor; mana_regen is caster-only.
+export const AFFIX_REGISTRY: Record<AffixId, AffixDef> = {
+  crit_pct:         { id: "crit_pct",         label: "Critical %",        stat: "crit_pct",         perTier: [3, 6, 9, 12, 15], slots: ["weapon"] },
+  lifesteal:        { id: "lifesteal",        label: "Lifesteal",         stat: "lifesteal",        perTier: [2, 3, 4, 5, 6],   slots: ["weapon"] },
+  fire_dmg:         { id: "fire_dmg",         label: "Fire Damage",       stat: "fire_dmg",         perTier: [2, 4, 6, 8, 10],  slots: ["weapon"] },
+  ice_dmg:          { id: "ice_dmg",          label: "Ice Damage",        stat: "ice_dmg",          perTier: [2, 4, 6, 8, 10],  slots: ["weapon"] },
+  lightning_dmg:    { id: "lightning_dmg",    label: "Lightning Damage",  stat: "lightning_dmg",    perTier: [2, 4, 6, 8, 10],  slots: ["weapon"] },
+  resist_fire:      { id: "resist_fire",      label: "Fire Resist %",     stat: "resist_fire",      perTier: [5, 10, 15, 20, 25], slots: ["armor", "accessory"] },
+  resist_ice:       { id: "resist_ice",       label: "Ice Resist %",      stat: "resist_ice",       perTier: [5, 10, 15, 20, 25], slots: ["armor", "accessory"] },
+  resist_lightning: { id: "resist_lightning", label: "Lightning Resist %", stat: "resist_lightning", perTier: [5, 10, 15, 20, 25], slots: ["armor", "accessory"] },
+  resist_magic:     { id: "resist_magic",     label: "Magic Resist %",    stat: "resist_magic",     perTier: [5, 10, 15, 20, 25], slots: ["armor", "accessory"] },
+  thorns:           { id: "thorns",           label: "Thorns",            stat: "thorns",           perTier: [1, 2, 3, 4, 5],   slots: ["armor"] },
+  mana_regen:       { id: "mana_regen",       label: "Mana Regen",        stat: "mana_regen",       perTier: [1, 1, 2, 2, 3],   slots: ["focus", "accessory"] },
+  dodge_pct:        { id: "dodge_pct",        label: "Dodge %",           stat: "dodge_pct",        perTier: [2, 4, 6, 8, 10],  slots: ["armor"] },
+  vit_bonus:        { id: "vit_bonus",        label: "Vitality",          stat: "vit",              perTier: [1, 2, 3, 4, 5],   slots: ["any"] },
+  str_bonus:        { id: "str_bonus",        label: "Strength",          stat: "str",              perTier: [1, 2, 3, 4, 5],   slots: ["any"] },
+  int_bonus:        { id: "int_bonus",        label: "Intellect",         stat: "int_stat",         perTier: [1, 2, 3, 4, 5],   slots: ["any"] },
+};
+
+// Number of affix lines per rarity. Legendary's "+1" is the unique-effect
+// line, which isn't a rolled affix — it's a curated rule from
+// UNIQUE_REGISTRY (deferred to a follow-up slice).
+export const AFFIX_SLOTS_BY_RARITY: Record<Rarity, number> = {
+  common: 0,
+  uncommon: 1,
+  rare: 2,
+  epic: 3,
+  legendary: 3,
+};
+
+export interface RolledAffix {
+  id: AffixId;
+  tier: 1 | 2 | 3 | 4 | 5;
+  value: number;
+  stat: string;
+  label: string;
+}
+
+// Tier is centered on the item's level, clamped to [1, 5], with ±1 dice
+// variance so identical-iLvl drops still feel distinct.
+function rollAffixTier(itemLevel: number): 1 | 2 | 3 | 4 | 5 {
+  const center = Math.max(1, Math.ceil(itemLevel / 3));
+  const wobble = Math.floor(Math.random() * 3) - 1; // -1, 0, +1
+  const clamped = Math.max(1, Math.min(5, center + wobble));
+  return clamped as 1 | 2 | 3 | 4 | 5;
+}
+
+// What slot-class does this item count as for affix eligibility?
+// `range="focus"` overrides — codices/wands draw from the caster pool.
+function affixSlotClassFor(roll: Pick<ItemRoll, "type" | "weapon_range" | "slot">): AffixSlotClass[] {
+  if (roll.type === "weapon") {
+    if (roll.weapon_range === "focus") return ["focus", "weapon"]; // focus weapons get weapon-tagged crit/lifesteal too — fine for v1
+    return ["weapon"];
+  }
+  if (roll.type === "armor") {
+    if (roll.slot === "ring" || roll.slot === "amulet") return ["accessory"];
+    return ["armor"];
+  }
+  return [];
+}
+
+function eligibleAffixesFor(slotClasses: AffixSlotClass[]): AffixDef[] {
+  return Object.values(AFFIX_REGISTRY).filter((def) =>
+    def.slots.includes("any") || def.slots.some((s) => slotClasses.includes(s))
+  );
+}
+
+// Rolls N distinct affixes for an item. Returns an empty array for
+// `common` items or items that can't carry affixes (consumables, tools,
+// scrolls, magic, revive).
+export function rollAffixes(roll: Pick<ItemRoll, "type" | "rarity" | "weapon_range" | "slot">, itemLevel: number): RolledAffix[] {
+  const count = AFFIX_SLOTS_BY_RARITY[roll.rarity];
+  if (count <= 0) return [];
+  const slotClasses = affixSlotClassFor(roll);
+  if (slotClasses.length === 0) return [];
+
+  const pool = eligibleAffixesFor(slotClasses);
+  if (pool.length === 0) return [];
+
+  // Sample WITHOUT replacement so we never duplicate an affix on the same
+  // item. If the pool is smaller than `count` (unlikely with the v1
+  // catalog), we just roll fewer affixes.
+  const picks: AffixDef[] = [];
+  const available = [...pool];
+  const want = Math.min(count, available.length);
+  for (let i = 0; i < want; i++) {
+    const idx = Math.floor(Math.random() * available.length);
+    picks.push(available[idx]);
+    available.splice(idx, 1);
+  }
+
+  return picks.map((def) => {
+    const tier = rollAffixTier(itemLevel);
+    return {
+      id: def.id,
+      tier,
+      value: def.perTier[tier - 1],
+      stat: def.stat,
+      label: def.label,
+    };
+  });
+}
+
+// Folds the rolled affix list into the item's stat_bonus map so the
+// existing equip/stat-snapshot pipeline picks them up without further
+// changes. New keys (crit_pct, lifesteal, etc.) live alongside the
+// existing primary stats and resist_* entries.
+export function mergeAffixesIntoStatBonus(
+  base: Partial<Record<string, number>> | undefined,
+  affixes: RolledAffix[],
+): Partial<Record<string, number>> {
+  const out: Record<string, number> = {};
+  if (base) {
+    for (const [k, v] of Object.entries(base)) {
+      if (typeof v === "number") out[k] = v;
+    }
+  }
+  for (const aff of affixes) {
+    out[aff.stat] = (out[aff.stat] ?? 0) + aff.value;
+  }
+  return out;
+}
+
+// item_level decoupled from rarity. For v1 we anchor it to power so legacy
+// callers see ~the same level_req math, but it lives as its own field so
+// future systems (infusion, reroll, set-piece scaling) can move it
+// independently. Common items still get a meaningful item_level — their
+// affixes count is 0 but the level still gates equip and price.
+export function deriveItemLevel(tier: number | undefined, power: number): number {
+  const tierFloor = Math.max(1, tier ?? 1);
+  // Lift slightly above raw power so a tier-bumped item still feels
+  // distinct from a same-power lower-tier drop. Capped at power + 2.
+  return Math.max(1, Math.min(power + 2, Math.max(power, tierFloor * 2)));
+}
+
+// One-shot decoration applied at the end of every public roll function.
+// Sets item_level, rolls affixes (no-op for ineligible types/rarities),
+// rolls a legendary unique effect when eligible, optionally tags a set,
+// and folds affix magnitudes into stat_bonus so downstream code that
+// already sums stat_bonus picks them up unchanged.
+export function decorateWithAffixes(roll: ItemRoll): ItemRoll {
+  if (roll.type !== "weapon" && roll.type !== "armor") return roll;
+  const item_level = deriveItemLevel(roll.tier, roll.power);
+  const affixes = rollAffixes(roll, item_level);
+  const decorated: ItemRoll = { ...roll, item_level, affixes };
+  // Legendary unique effect — picks from UNIQUE_REGISTRY filtered by slot/range.
+  if (roll.rarity === "legendary") {
+    const unique = rollUniqueId(roll);
+    if (unique) decorated.unique_id = unique;
+  }
+  // Set membership — rare/epic rolls only, ~15% slot in for set drops.
+  if (roll.rarity === "rare" || roll.rarity === "epic") {
+    const setTag = rollSetIdForDrop(roll);
+    if (setTag) decorated.set_id = setTag;
+  }
+  if (affixes.length > 0) {
+    decorated.stat_bonus = mergeAffixesIntoStatBonus(roll.stat_bonus, affixes);
+  }
+  return decorated;
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Legendary unique-effect registry (design doc § "Legendary unique effects").
+//
+// Twelve hand-curated lines, each tied to a (slot, range) constraint so
+// the dispatcher only fires the effect on items that conceptually carry it.
+// The `hook` field names a lifecycle point — combat reads
+// fighter.unique_ids[] at that point and applies each matching effect.
+// The `rule` text is shown in the tooltip and prepended to AI flavor.
+// ────────────────────────────────────────────────────────────────────────────
+
+export type UniqueHook =
+  | "onCritHit"           // fires when an attack/cast crits
+  | "onAttackHit"         // fires when an attack/cast lands (not necessarily crit)
+  | "onTakeDamage"        // fires when the wearer takes post-armor damage
+  | "onApplyStatus"       // fires when applying a status effect to a target
+  | "onRegenTick"         // fires each tick of a regen/passive heal
+  | "onSpendMana";        // fires when the wearer spends mana
+
+export interface UniqueDef {
+  id: string;
+  name: string;             // overrides AI-generated name on drop
+  slot: EquipSlot;
+  range?: WeaponRange;      // only enforced when slot === "main_hand" / "off_hand"
+  rule: string;             // tooltip line
+  hook: UniqueHook;
+  // The actual effect lives in combat.ts dispatcher tables — keyed by id —
+  // so the engine can read its own state at hook time. The registry just
+  // holds the "what to show players" + "where it lives" metadata.
+}
+
+export const UNIQUE_REGISTRY: Record<string, UniqueDef> = {
+  rebase_blade:        { id: "rebase_blade",        name: "Rebase Blade",          slot: "main_hand", range: "melee",  hook: "onCritHit",     rule: "Critical hits also apply Poisoned (2 turns)." },
+  hotpath_dagger:      { id: "hotpath_dagger",      name: "Hot-Path Dagger",       slot: "main_hand", range: "melee",  hook: "onAttackHit",   rule: "Each consecutive hit on the same foe deals +2 damage (resets on miss)." },
+  loadbalancer_bow:    { id: "loadbalancer_bow",    name: "Load-Balancer Bow",     slot: "main_hand", range: "ranged", hook: "onAttackHit",   rule: "Ranged hits splash 30% damage to one adjacent foe." },
+  grimoire_of_hexes:   { id: "grimoire_of_hexes",   name: "Grimoire of Hexes",     slot: "off_hand",  range: "focus",  hook: "onApplyStatus", rule: "Hex effects you apply last +1 turn." },
+  staff_of_uptime:     { id: "staff_of_uptime",     name: "Staff of Uptime",       slot: "main_hand", range: "focus",  hook: "onRegenTick",   rule: "Regen ticks you cause also restore 1 mana." },
+  crown_of_the_druid:  { id: "crown_of_the_druid",  name: "Crown of the Druid",    slot: "helmet",                    hook: "onRegenTick",   rule: "Your regen ticks restore 1 extra HP." },
+  wardens_vigil_plate: { id: "wardens_vigil_plate", name: "Warden's Vigil Plate",  slot: "body",                      hook: "onTakeDamage",  rule: "Physical hits cost +1 thorns reflection." },
+  rogues_smoke_boots:  { id: "rogues_smoke_boots",  name: "Smoke-Step Boots",      slot: "boots",                     hook: "onTakeDamage",  rule: "First hit each combat: dodge automatically." },
+  paladins_aegis_ring: { id: "paladins_aegis_ring", name: "Aegis Ring",            slot: "ring",                      hook: "onTakeDamage",  rule: "Reduces incoming magic damage by 10% (stacks with resist_magic)." },
+  amulet_of_focus:     { id: "amulet_of_focus",     name: "Amulet of Focus",       slot: "amulet",                    hook: "onSpendMana",   rule: "Spells cost 1 less mana (min 1)." },
+  bards_overture_belt: { id: "bards_overture_belt", name: "Overture Pants",        slot: "pants",                     hook: "onCritHit",     rule: "Critical hits grant the party +1 mana." },
+  mages_cinder_amulet: { id: "mages_cinder_amulet", name: "Cinder Amulet",         slot: "amulet",                    hook: "onAttackHit",   rule: "Fire damage you deal ignites for 2 burn ticks." },
+};
+
+// Eligible uniques for a given drop. Filters by slot + (range when set).
+function eligibleUniquesFor(roll: Pick<ItemRoll, "slot" | "weapon_range">): UniqueDef[] {
+  if (!roll.slot) return [];
+  return Object.values(UNIQUE_REGISTRY).filter((u) => {
+    if (u.slot !== roll.slot) return false;
+    if (u.range && u.range !== roll.weapon_range) return false;
+    return true;
+  });
+}
+
+// Roll a unique id for a legendary drop. Picks at random from eligible
+// entries. Returns undefined for slots with no curated unique — drop
+// degrades gracefully to "fancy generic legendary" per the design doc.
+export function rollUniqueId(roll: Pick<ItemRoll, "slot" | "weapon_range" | "rarity">): string | undefined {
+  if (roll.rarity !== "legendary") return undefined;
+  const pool = eligibleUniquesFor(roll);
+  if (pool.length === 0) return undefined;
+  return pool[Math.floor(Math.random() * pool.length)].id;
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Set bonus registry (design doc § "Set bonuses").
+//
+// One set per class archetype. Each set defines a pieces-count → bonus
+// table; thresholds 2 / 3 / 4 etc. unlock incrementally. The equip
+// aggregator counts equipped pieces per set_id and looks up the highest
+// active threshold.
+// ────────────────────────────────────────────────────────────────────────────
+
+export interface SetBonus {
+  // What the bonus does at this threshold. Either a flat stat add
+  // (stat + value), or a hook that combat looks up at runtime.
+  rule: string;                          // tooltip line
+  stat_bonus?: Record<string, number>;   // flat keys merged into the bag at equip
+  hook?: string;                         // free-form hook id read by combat (e.g. "armor_pool_multiplier")
+  value?: number;                        // numeric payload paired with hook (e.g. 1.3 = +30%)
+}
+
+export interface SetDef {
+  id: string;
+  name: string;
+  classId: string;                       // archetype anchor (sre_warden, devops_mage, ...)
+  // Slots a piece of this set CAN appear in. Drop logic biases toward these.
+  pieces: EquipSlot[];
+  // Threshold → bonus. Lower thresholds also remain active above their floor.
+  bonuses: Record<number, SetBonus>;
+}
+
+export const SET_REGISTRY: Record<string, SetDef> = {
+  wardens_vigil: {
+    id: "wardens_vigil", name: "Warden's Vigil", classId: "sre_warden",
+    pieces: ["body", "helmet", "pants", "boots"],
+    bonuses: {
+      2: { rule: "+5% magic resist", stat_bonus: { resist_magic: 5 } },
+      4: { rule: "Armor pool +30%", hook: "armor_pool_multiplier", value: 1.3 },
+    },
+  },
+  warlocks_cabal: {
+    id: "warlocks_cabal", name: "Warlock's Cabal", classId: "data_warlock",
+    pieces: ["helmet", "amulet", "ring"],
+    bonuses: {
+      2: { rule: "+2 INT", stat_bonus: { int_stat: 2 } },
+      3: { rule: "Hex damage +25%", hook: "hex_damage_multiplier", value: 1.25 },
+    },
+  },
+  mages_circuit: {
+    id: "mages_circuit", name: "Mage's Circuit", classId: "devops_mage",
+    pieces: ["body", "amulet", "ring"],
+    bonuses: {
+      2: { rule: "+1 max mana", stat_bonus: { max_mana: 1 } },
+      3: { rule: "Spell damage +15%", hook: "spell_damage_multiplier", value: 1.15 },
+    },
+  },
+  paladins_creed: {
+    id: "paladins_creed", name: "Paladin's Creed", classId: "qa_paladin",
+    pieces: ["body", "helmet", "off_hand"],
+    bonuses: {
+      2: { rule: "+3 VIT", stat_bonus: { vit: 3 } },
+      3: { rule: "Shield-block chance +10%", hook: "block_chance_bonus", value: 0.10 },
+    },
+  },
+  druids_canopy: {
+    id: "druids_canopy", name: "Druid's Canopy", classId: "backend_druid",
+    pieces: ["helmet", "body", "pants"],
+    bonuses: {
+      2: { rule: "+2 INT", stat_bonus: { int_stat: 2 } },
+      3: { rule: "Regen ticks +1 HP", hook: "regen_tick_bonus", value: 1 },
+    },
+  },
+  rogues_silence: {
+    id: "rogues_silence", name: "Rogue's Silence", classId: "refactor_rogue",
+    pieces: ["boots", "pants", "ring"],
+    bonuses: {
+      2: { rule: "+3% dodge", stat_bonus: { dodge_pct: 3 } },
+      3: { rule: "Crit damage +25%", hook: "crit_damage_multiplier", value: 1.25 },
+    },
+  },
+  bards_anthem: {
+    id: "bards_anthem", name: "Bard's Anthem", classId: "frontend_bard",
+    pieces: ["amulet", "body", "ring"],
+    bonuses: {
+      2: { rule: "+1 mana regen", stat_bonus: { mana_regen: 1 } },
+      3: { rule: "Party heals +25%", hook: "ally_heal_multiplier", value: 1.25 },
+    },
+  },
+  sages_compendium: {
+    id: "sages_compendium", name: "Sage's Compendium", classId: "staff_sage",
+    pieces: ["helmet", "body", "off_hand"],
+    bonuses: {
+      2: { rule: "+2 INT", stat_bonus: { int_stat: 2 } },
+      3: { rule: "Cooldowns reduced 1 turn", hook: "cooldown_reduction", value: 1 },
+    },
+  },
+};
+
+// Returns the highest threshold ≤ pieceCount with a defined bonus, or 0 if
+// none active. Encodes the "2 unlocks at 2, 3 at 3, 4 at 4" ladder.
+export function setActiveTierForCount(setId: string, pieceCount: number): number {
+  const def = SET_REGISTRY[setId];
+  if (!def) return 0;
+  let best = 0;
+  for (const t of Object.keys(def.bonuses)) {
+    const n = parseInt(t, 10);
+    if (n <= pieceCount && n > best) best = n;
+  }
+  return best;
+}
+
+// Probability that a rare/epic gear drop gets tagged with a set id (instead
+// of staying generic). Tuned per design doc balance notes — too high and
+// sets feel mandatory, too low and players never see one.
+const SET_DROP_CHANCE = 0.15;
+
+// Pick a set id for the drop based on the slot it landed in. Returns
+// undefined when (a) the rarity isn't rare/epic, (b) the set roll misses,
+// or (c) no set has a piece in that slot. Pure RNG over eligible sets —
+// later we can bias toward the recipient's class.
+export function rollSetIdForDrop(roll: Pick<ItemRoll, "slot" | "rarity">): string | undefined {
+  if (roll.rarity !== "rare" && roll.rarity !== "epic") return undefined;
+  if (!roll.slot) return undefined;
+  if (Math.random() >= SET_DROP_CHANCE) return undefined;
+  const eligible = Object.values(SET_REGISTRY).filter((s) => s.pieces.includes(roll.slot!));
+  if (eligible.length === 0) return undefined;
+  return eligible[Math.floor(Math.random() * eligible.length)].id;
+}
+
 // "focus" weapons are the caster/support tier: wands, staves, codices.
 // They don't add to attack/cast/sig damage (the bot zeroes weaponMod
 // when range = "focus") and instead boost /sq heal + /sq shield by
@@ -418,6 +811,16 @@ export interface ItemRoll {
   // Gear resistance — only on ring/amulet (rare+) or armor slots (epic+).
   // Stored as resist_<type> key inside stat_bonus JSON column; no schema change needed.
   resistance?: { type: DamageType; pct: number };
+  // Affix system (design doc: docs/gear-affixes-and-uniques.md).
+  // item_level is the budget that drives affix magnitude tiers; it's
+  // independent of rarity so a great-rolled rare can beat a mediocre epic.
+  // Legacy callers can read item_level as ~equal to power.
+  item_level?: number;
+  affixes?: RolledAffix[];
+  // Hand-curated legendary effect from UNIQUE_REGISTRY (legendary only).
+  unique_id?: string;
+  // Set-piece tag from SET_REGISTRY (set drops only).
+  set_id?: string;
 }
 
 // Tool & scroll catalog. Names are fixed (no AI naming) so handleUse can dispatch
@@ -1347,7 +1750,12 @@ function _rollArmorSlotInner(tier: number): ItemRoll {
 }
 
 export function rollArmorSlot(tier: number): ItemRoll {
-  return { ..._rollArmorSlotInner(tier), tier };
+  const inner = _rollArmorSlotInner(tier);
+  // Roll elemental affinity onto rare+ armor/accessories — the equip
+  // aggregator picks the highest-priority equipped element source on each
+  // attack-proc (see ELEMENT_SLOT_PRIORITY).
+  const element = rollArmorAccessoryElement(inner.slot, inner.rarity, inner.item_subtype);
+  return decorateWithAffixes({ ...inner, ...(element ? { element } : {}), tier });
 }
 
 // Rolls an armor-pool-contributing piece: body / helmet / pants / shield off-hand.
@@ -1360,7 +1768,8 @@ export function rollSmithyArmor(tier: number): ItemRoll {
     if (roll.slot === "off_hand" && roll.item_subtype === "shield") return roll;
   }
   // Final fallback: force a body roll so callers always get a usable piece.
-  return { type: "armor", rarity: rollRarity(tier), power: rollPower("armor", rollRarity(tier), tier), slot: "body", tier };
+  const rarity = rollRarity(tier);
+  return decorateWithAffixes({ type: "armor", rarity, power: rollPower("armor", rarity, tier), slot: "body", tier });
 }
 
 // Rolls an armor item that is guaranteed NOT to be body armor. Used by shop
@@ -1410,7 +1819,8 @@ export function rollAccessorySlot(tier: number): ItemRoll {
     return withResist({ type: "armor", rarity, power: rollPower("armor", rarity, tier), slot: "off_hand",
       item_subtype: "shield", stat_bonus: statBonus("vit", bonusAmt) }, "off_hand", "shield");
   })();
-  return { ...inner, tier };
+  const element = rollArmorAccessoryElement(inner.slot, inner.rarity, inner.item_subtype);
+  return decorateWithAffixes({ ...inner, ...(element ? { element } : {}), tier });
 }
 
 const ELEMENTS: ElementType[] = ["fire", "ice", "lightning"];
@@ -1425,6 +1835,30 @@ function rollWeaponElement(
   if (Math.random() >= ELEMENT_WEAPON_ROLL_CHANCE) return undefined;
   return ELEMENTS[Math.floor(Math.random() * ELEMENTS.length)];
 }
+
+// Armor / accessory element affinity (design doc § "Armor/accessory elements").
+// Rare+ non-shield armor slots, rings, and amulets can roll an element with
+// the same ~35% gate as weapons. On attack-proc the equip aggregator picks
+// the highest-rarity equipped element source (see SLOT_PRIORITY below).
+function rollArmorAccessoryElement(slot: EquipSlot | undefined, rarity: Rarity, subtype?: string): ElementType | undefined {
+  if (!slot) return undefined;
+  const isEligible = slot === "ring" || slot === "amulet"
+    || (slot === "helmet" || slot === "pants" || slot === "boots")
+    || (slot === "body")
+    || (slot === "off_hand" && subtype === "shield");
+  if (!isEligible) return undefined;
+  if (rarity !== "rare" && rarity !== "epic" && rarity !== "legendary") return undefined;
+  if (Math.random() >= ELEMENT_WEAPON_ROLL_CHANCE) return undefined;
+  return ELEMENTS[Math.floor(Math.random() * ELEMENTS.length)];
+}
+
+// Slot priority for element tie-break when multiple equipped pieces carry
+// an element. main_hand wins over everything; accessories beat body armor
+// (the more "ornamental" piece is the lore explanation). Combat equip
+// aggregator reads this to pick the active element for attack procs.
+export const ELEMENT_SLOT_PRIORITY: EquipSlot[] = [
+  "main_hand", "off_hand", "amulet", "ring", "body", "helmet", "pants", "boots",
+];
 
 export function rollItem(tier: number, forShop = false): ItemRoll {
   const type = rollItemType();
@@ -1451,7 +1885,7 @@ export function rollItem(tier: number, forShop = false): ItemRoll {
     ? rollFocusPower(rarity, tier)
     : rollPower(type, rarity, tier);
   const element = rollWeaponElement(type, weapon_range, rarity);
-  return { type, rarity, power, weapon_range, slot: type === "weapon" ? "main_hand" : undefined, element, tier };
+  return decorateWithAffixes({ type, rarity, power, weapon_range, slot: type === "weapon" ? "main_hand" : undefined, element, tier });
 }
 
 // Merchant slot weights — practical-for-this-fight stock only. Excludes magic
@@ -1487,7 +1921,7 @@ export function rollMerchantItem(tier: number): ItemRoll {
     ? rollFocusPower(rarity, tier)
     : rollPower(type, rarity, tier);
   const element = rollWeaponElement(type, weapon_range, rarity);
-  return { type, rarity, power, weapon_range, element, tier };
+  return decorateWithAffixes({ type, rarity, power, weapon_range, slot: type === "weapon" ? "main_hand" : undefined, element, tier });
 }
 
 // Per-fighter drop chance after a kill. 35% baseline, +5% per tier.

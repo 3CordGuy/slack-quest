@@ -186,11 +186,80 @@ export interface StatSnapshotInput {
   stats?: Stats; // optional — falls back to statsAtLevel(className, level)
   // Summed stat_bonus from all equipped slot items; added on top of base stats.
   equipBonuses?: Partial<Stats>;
+  // Summed non-primary affix bonuses from all equipped items. Flows
+  // straight through into the snapshot's `effects` bag for combat-side
+  // hooks to read. Keys mirror AFFIX_REGISTRY[*].stat — e.g. crit_pct,
+  // lifesteal, fire_dmg, thorns, mana_regen, dodge_pct, resist_fire.
+  affixBonuses?: Partial<AffixEffects>;
+}
+
+// Non-primary-stat bonuses produced by gear affixes. Resistances mirror the
+// existing resist_* keys already read directly by combat.ts; the rest are
+// new hooks that combat / regen / proc handlers will pick up in the next
+// slice (see docs/gear-affixes-and-uniques.md "Combat hooks" section).
+export interface AffixEffects {
+  crit_pct: number;
+  lifesteal: number;
+  fire_dmg: number;
+  ice_dmg: number;
+  lightning_dmg: number;
+  resist_fire: number;
+  resist_ice: number;
+  resist_lightning: number;
+  resist_magic: number;
+  thorns: number;
+  mana_regen: number;
+  dodge_pct: number;
+}
+
+export const EMPTY_AFFIX_EFFECTS: AffixEffects = {
+  crit_pct: 0,
+  lifesteal: 0,
+  fire_dmg: 0,
+  ice_dmg: 0,
+  lightning_dmg: 0,
+  resist_fire: 0,
+  resist_ice: 0,
+  resist_lightning: 0,
+  resist_magic: 0,
+  thorns: 0,
+  mana_regen: 0,
+  dodge_pct: 0,
+};
+
+// Splits a summed stat_bonus map into (primary-stat deltas, affix-effect deltas).
+// Useful for callers that read raw item.stat_bonus JSON and want to feed
+// statSnapshot without re-keying everything by hand.
+export function splitStatBonus(stat_bonus: Partial<Record<string, number>> | undefined): {
+  primary: Partial<Stats>;
+  affixes: Partial<AffixEffects>;
+} {
+  const primary: Partial<Stats> = {};
+  const affixes: Partial<AffixEffects> = {};
+  if (!stat_bonus) return { primary, affixes };
+  for (const [key, raw] of Object.entries(stat_bonus)) {
+    if (typeof raw !== "number") continue;
+    if (key === "str" || key === "int_stat" || key === "vit" || key === "agi" || key === "dex") {
+      primary[key] = (primary[key] ?? 0) + raw;
+    } else if (key in EMPTY_AFFIX_EFFECTS) {
+      const k = key as keyof AffixEffects;
+      affixes[k] = (affixes[k] ?? 0) + raw;
+    }
+    // Unknown keys are silently ignored — keeps forward-compat with affixes
+    // added in newer drops than the reader knows about.
+  }
+  return { primary, affixes };
 }
 
 export interface StatSnapshot {
   stats: Stats;
   derived: DerivedStats;
+  // Effects from gear affixes, summed across all equipped items. Combat
+  // code reads these at the matching lifecycle hooks: crit_pct adds to
+  // crit chance, lifesteal heals on hit, *_dmg adds flat elemental damage,
+  // resist_* reduces incoming damage of that type, thorns reflects on
+  // melee taken, mana_regen ticks each turn, dodge_pct adds to dodge.
+  effects: AffixEffects;
 }
 
 export function statSnapshot(input: StatSnapshotInput): StatSnapshot {
@@ -203,9 +272,25 @@ export function statSnapshot(input: StatSnapshotInput): StatSnapshot {
     agi: base.agi + (eq.agi ?? 0),
     dex: base.dex + (eq.dex ?? 0),
   } : base;
+  const aff = input.affixBonuses;
+  const effects: AffixEffects = aff ? {
+    crit_pct: aff.crit_pct ?? 0,
+    lifesteal: aff.lifesteal ?? 0,
+    fire_dmg: aff.fire_dmg ?? 0,
+    ice_dmg: aff.ice_dmg ?? 0,
+    lightning_dmg: aff.lightning_dmg ?? 0,
+    resist_fire: aff.resist_fire ?? 0,
+    resist_ice: aff.resist_ice ?? 0,
+    resist_lightning: aff.resist_lightning ?? 0,
+    resist_magic: aff.resist_magic ?? 0,
+    thorns: aff.thorns ?? 0,
+    mana_regen: aff.mana_regen ?? 0,
+    dodge_pct: aff.dodge_pct ?? 0,
+  } : EMPTY_AFFIX_EFFECTS;
   return {
     stats,
     derived: deriveAll(stats, input.level),
+    effects,
   };
 }
 

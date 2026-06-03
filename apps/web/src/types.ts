@@ -62,6 +62,17 @@ export type Rarity = "common" | "uncommon" | "rare" | "epic" | "legendary";
 export type WeaponRange = "melee" | "ranged" | "focus";
 export type EquipSlot = "main_hand" | "off_hand" | "body" | "helmet" | "pants" | "boots" | "ring" | "amulet";
 
+// Mirrors the gear-affix RolledAffix shape from @gantt-quest/core. Kept here
+// so the web app can read tooltip data without pulling the core package's
+// type machinery into the bundle.
+export interface ItemAffix {
+  id: string;          // AFFIX_REGISTRY key (e.g. "crit_pct")
+  tier: 1 | 2 | 3 | 4 | 5;
+  value: number;       // resolved magnitude (e.g. 15 for "+15% crit")
+  stat: string;        // stat_bonus key the value writes to
+  label: string;       // player-facing label (e.g. "Critical %")
+}
+
 export interface Item {
   id: number;
   character_id: string;
@@ -80,6 +91,14 @@ export interface Item {
   element: "fire" | "ice" | "lightning" | null;
   qty?: number;
   potency_stacks?: number;
+  // Gear-affix system (design doc: docs/gear-affixes-and-uniques.md).
+  // item_level is the magnitude budget — distinct from power so a
+  // great-rolled rare can beat a mediocre epic. null on legacy rows
+  // (synthesized from power on read in @gantt-quest/db).
+  item_level?: number | null;
+  affixes?: ItemAffix[];
+  unique_id?: string | null;     // UNIQUE_REGISTRY key, legendary only
+  set_id?: string | null;        // SET_REGISTRY key, set pieces only
 }
 
 export type QuestVariant = "standard" | "boss" | "gauntlet" | "bounty_pack" | "tower";

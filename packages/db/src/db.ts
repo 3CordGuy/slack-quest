@@ -1,6 +1,6 @@
 // D1 query helpers. Raw prepared statements — no ORM.
 
-import type { AbilityLoadout, DamageType, DrinkBuff, EffectType, ElementType, EarnedAchievement, EquipSlot, ItemType, Rarity, StatKey, Stats, TalentNodeDef, TownState, WeaponRange } from "@gantt-quest/core";
+import type { AbilityLoadout, DamageType, DrinkBuff, EffectType, ElementType, EarnedAchievement, EquipSlot, ItemRoll, ItemType, Rarity, RolledAffix, StatKey, Stats, TalentNodeDef, TownState, WeaponRange } from "@gantt-quest/core";
 import { classIdForTree, deriveMaxMana, emptyLoadoutForLevel, findNode, MAX_ACTIVE_SLOTS, nodesForClass, passiveSlotsForLevel, pointCostForRank, startingStatsForClass } from "@gantt-quest/core";
 
 // Active status effect on a character or monster. Ticks on the affected actor's
@@ -42,11 +42,19 @@ export interface Item {
   // Apothecary Concentrate stacks on consumable potions (0..APOTHECARY_POTENCY_CAP).
   // Each stack boosts the potion's effective power by +25% at use time.
   potency_stacks: number;
+  // Gear-affix system (migration 0063, design doc:
+  // docs/gear-affixes-and-uniques.md). null on consumables/tools/resources;
+  // legacy rows backfill item_level from power and treat affixes as empty.
+  item_level: number | null;
+  affixes: RolledAffix[];          // [] if none rolled (common items, legacy rows)
+  unique_id: string | null;        // UNIQUE_REGISTRY key, legendary only
+  set_id: string | null;           // SET_REGISTRY key, set pieces only
 }
 
-interface ItemRow extends Omit<Item, "equipped" | "stat_bonus"> {
+interface ItemRow extends Omit<Item, "equipped" | "stat_bonus" | "affixes"> {
   equipped: number;
   stat_bonus: string | null; // stored as JSON text in D1
+  affixes: string | null;    // stored as JSON text in D1
 }
 
 function rowToItem(row: ItemRow): Item {
@@ -54,6 +62,12 @@ function rowToItem(row: ItemRow): Item {
     ...row,
     equipped: row.equipped === 1,
     stat_bonus: row.stat_bonus ? JSON.parse(row.stat_bonus) as Record<string, number> : null,
+    affixes: row.affixes ? JSON.parse(row.affixes) as RolledAffix[] : [],
+    // Legacy rows pre-migration get item_level synthesized from power so
+    // downstream gating (level_req, tooltip iLvl display) stays sane.
+    item_level: row.item_level ?? row.power,
+    unique_id: row.unique_id ?? null,
+    set_id: row.set_id ?? null,
   };
 }
 
@@ -1213,9 +1227,48 @@ export interface CreateItemInput {
   // Phase 3 — defaults to ceil(power/3), minimum 1.
   level_req?: number;
   element?: ElementType | null;
+  // Gear-affix system (migration 0063). Optional — pre-affix callers leave
+  // these null and the engine treats the item as legacy (item_level synthesized
+  // from power on read, affixes empty, no unique/set effects).
+  item_level?: number | null;
+  affixes?: RolledAffix[] | null;
+  unique_id?: string | null;
+  set_id?: string | null;
 }
 
-const ITEM_COLS = "id, character_id, item_name, item_type, power, rarity, flavor, equipped, weapon_range, sharpens_count, slot, stat_bonus, item_subtype, level_req, element, qty, potency_stacks";
+// Translates a rolled ItemRoll into a CreateItemInput, preserving every
+// field that should persist to DB. Centralized so loot-drop / treasure /
+// reward call sites don't drift — historically these sites lost roll.slot,
+// roll.stat_bonus, roll.element and roll.item_subtype, which broke ring/
+// amulet drops and elemental weapons silently. Pass-through plus the new
+// affix-system fields (item_level, affixes, unique_id, set_id).
+export function itemRollToCreateInput(args: {
+  character_id: string;
+  roll: ItemRoll;
+  item_name: string;
+  flavor: string;
+}): CreateItemInput {
+  const { character_id, roll, item_name, flavor } = args;
+  return {
+    character_id,
+    item_name,
+    item_type: roll.type,
+    power: roll.power,
+    rarity: roll.rarity,
+    flavor,
+    weapon_range: roll.weapon_range ?? null,
+    slot: roll.slot ?? null,
+    stat_bonus: (roll.stat_bonus as Record<string, number> | undefined) ?? null,
+    item_subtype: roll.item_subtype ?? null,
+    element: roll.element ?? null,
+    item_level: roll.item_level ?? null,
+    affixes: roll.affixes ?? null,
+    unique_id: roll.unique_id ?? null,
+    set_id: roll.set_id ?? null,
+  };
+}
+
+const ITEM_COLS = "id, character_id, item_name, item_type, power, rarity, flavor, equipped, weapon_range, sharpens_count, slot, stat_bonus, item_subtype, level_req, element, qty, potency_stacks, item_level, affixes, unique_id, set_id";
 
 export async function addItem(db: D1Database, input: CreateItemInput): Promise<Item> {
   // Infer slot from item_type for legacy callers (shop purchases, etc.) that
@@ -1225,11 +1278,20 @@ export async function addItem(db: D1Database, input: CreateItemInput): Promise<I
     ?? (input.item_type === "weapon" ? "main_hand"
       : input.item_type === "armor" ? "body"
       : null);
-  const levelReq = input.level_req ?? Math.max(1, Math.ceil(input.power / 3));
+  // item_level defaults to power for backwards-compat — matches the rowToItem
+  // legacy synthesis so callers that pre-date the affix system stay consistent.
+  const itemLevel = input.item_level ?? input.power;
+  // level_req: prefer the iLvl-derived formula from the design doc when iLvl
+  // is supplied; fall back to the legacy ceil(power/3) for pre-affix callers.
+  const levelReq = input.level_req
+    ?? (input.item_level != null
+      ? Math.max(1, Math.floor(itemLevel / 2))
+      : Math.max(1, Math.ceil(input.power / 3)));
+  const affixesJson = input.affixes && input.affixes.length > 0 ? JSON.stringify(input.affixes) : null;
   const result = await db
     .prepare(
-      `INSERT INTO inventory (character_id, item_name, item_type, power, rarity, flavor, qty, equipped, weapon_range, slot, stat_bonus, item_subtype, level_req, element)
-       VALUES (?, ?, ?, ?, ?, ?, 1, 0, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO inventory (character_id, item_name, item_type, power, rarity, flavor, qty, equipped, weapon_range, slot, stat_bonus, item_subtype, level_req, element, item_level, affixes, unique_id, set_id)
+       VALUES (?, ?, ?, ?, ?, ?, 1, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .bind(
       input.character_id, input.item_name, input.item_type, input.power, input.rarity, input.flavor,
@@ -1239,6 +1301,10 @@ export async function addItem(db: D1Database, input: CreateItemInput): Promise<I
       input.item_subtype ?? null,
       levelReq,
       input.element ?? null,
+      itemLevel,
+      affixesJson,
+      input.unique_id ?? null,
+      input.set_id ?? null,
     )
     .run();
   const id = result.meta.last_row_id;
@@ -2481,8 +2547,9 @@ async function restoreSnapshot(
       .prepare(
         `INSERT INTO inventory (
           character_id, item_name, item_type, power, rarity, flavor, qty, equipped,
-          weapon_range, sharpens_count, slot, stat_bonus, item_subtype, level_req, element, potency_stacks
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          weapon_range, sharpens_count, slot, stat_bonus, item_subtype, level_req, element, potency_stacks,
+          item_level, affixes, unique_id, set_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .bind(
         userId, item.item_name, item.item_type, item.power, item.rarity, item.flavor,
@@ -2491,6 +2558,9 @@ async function restoreSnapshot(
         item.slot, item.stat_bonus ? JSON.stringify(item.stat_bonus) : null,
         item.item_subtype, item.level_req ?? 1, item.element ?? null,
         item.potency_stacks ?? 0,
+        item.item_level ?? item.power,
+        item.affixes && item.affixes.length > 0 ? JSON.stringify(item.affixes) : null,
+        item.unique_id ?? null, item.set_id ?? null,
       )
       .run();
   }

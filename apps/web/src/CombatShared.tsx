@@ -823,6 +823,11 @@ export interface CombatItem {
   weapon_range?: string | null;
   item_subtype?: string | null;
   level_req?: number;
+  // Gear-affix system tooltip fields (design doc: docs/gear-affixes-and-uniques.md).
+  item_level?: number | null;
+  affixes?: Array<{ id: string; tier: number; value: number; label: string }>;
+  unique_id?: string | null;
+  set_id?: string | null;
 }
 
 export interface CombatFighter {
@@ -885,6 +890,50 @@ export function describeCombatEffect(item: CombatItem): string {
   }
 }
 
+// Shared renderer for the gear-affix tooltip block. Shows item_level
+// distinct from power, lists each rolled affix as "+value label · T<tier>",
+// surfaces the legendary unique-effect rule, and the set membership.
+// Returns null when the item carries none of these (the common case for
+// legacy items and consumables) so callers can drop it straight into JSX.
+export function GearAffixDetails({ item }: { item: CombatItem }) {
+  const hasILvl = item.item_level != null && item.item_level !== item.power;
+  const hasAffixes = item.affixes && item.affixes.length > 0;
+  const hasUnique = !!item.unique_id;
+  const hasSet = !!item.set_id;
+  if (!hasILvl && !hasAffixes && !hasUnique && !hasSet) return null;
+  // Unique rule + set name lookup is a string the engine pre-resolves into
+  // item.flavor for now; v1 doesn't ship a UNIQUE_REGISTRY lookup on the
+  // client. Just show the id label so players know something special is on.
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 3, fontSize: 10, marginTop: 2 }}>
+      {hasILvl && (
+        <div style={{ color: "#9ca3af" }}>
+          iLvl {item.item_level}
+        </div>
+      )}
+      {hasAffixes && item.affixes!.map((aff) => (
+        <div key={aff.id} style={{ color: "#86efac" }}>
+          +{aff.value} {aff.label} <span style={{ color: "#6b7280" }}>· T{aff.tier}</span>
+        </div>
+      ))}
+      {hasUnique && (
+        <div style={{ color: "#fbbf24", fontWeight: 600 }}>
+          ✦ {humanizeId(item.unique_id!)}
+        </div>
+      )}
+      {hasSet && (
+        <div style={{ color: "#a78bfa" }}>
+          ◆ Set: {humanizeId(item.set_id!)}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function humanizeId(id: string): string {
+  return id.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
 export function UseItemTile({ item, onClick, readOnly }: { item: CombatItem; onClick: () => void; readOnly?: boolean }) {
   const tint = RARITY_TINT[item.rarity ?? "common"] ?? "#2a2d33";
   const icon = lootIcon({
@@ -917,6 +966,7 @@ export function UseItemTile({ item, onClick, readOnly }: { item: CombatItem; onC
         </div>
       </div>
       <div style={{ fontSize: 11, color: "#93c5fd", fontWeight: 600 }}>{effectDesc}</div>
+      <GearAffixDetails item={item} />
       {item.flavor && <div style={{ fontSize: 11, color: "#9aa0a6", fontStyle: "italic", lineHeight: 1.35 }}>{item.flavor}</div>}
     </button>
   );

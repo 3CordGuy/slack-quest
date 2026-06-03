@@ -70,6 +70,9 @@ import {
   step,
   xpForLevel,
   statSnapshot,
+  setActiveTierForCount,
+  type AffixEffects,
+  ELEMENT_SLOT_PRIORITY,
   upgradeCombatState,
   mergeEffect,
   MONSTER_ID,
@@ -164,6 +167,7 @@ import {
 import {
   addGold,
   addItem,
+  itemRollToCreateInput,
   addMana,
   addShield,
   applyFocusManaShift,
@@ -7116,15 +7120,12 @@ async function applyWebCombatOutcome(
       if (!isTowerFloor && Math.random() < dropChance(tier)) {
         const roll = rollItem(tier);
         const named = await nameLootViaAi(env, roll, primaryMonster.name);
-        const created = await addItem(env.DB, {
+        const created = await addItem(env.DB, itemRollToCreateInput({
           character_id: fighter.id,
+          roll,
           item_name: named.name,
-          item_type: roll.type,
-          power: roll.power,
-          rarity: roll.rarity,
           flavor: named.flavor,
-          weapon_range: roll.weapon_range ?? null,
-        });
+        }));
         loot.push({
           item_name: created.item_name,
           item_type: created.item_type,
@@ -7209,15 +7210,12 @@ async function applyWebCombatOutcome(
       for (const itemTier of pickups.item_tile_tiers) {
         const roll = rollItem(itemTier);
         const named = await nameLootViaAi(env, roll, primaryMonster.name);
-        const created = await addItem(env.DB, {
+        const created = await addItem(env.DB, itemRollToCreateInput({
           character_id: fighter.id,
+          roll,
           item_name: named.name,
-          item_type: roll.type,
-          power: roll.power,
-          rarity: roll.rarity,
           flavor: named.flavor,
-          weapon_range: roll.weapon_range ?? null,
-        });
+        }));
         loot.push({
           item_name: created.item_name,
           item_type: created.item_type,
@@ -7352,40 +7350,23 @@ async function advanceTowerAfterCombat(
     // reroll a fresh hoard at the boss tier — matches scale, same effect.
     // Name + flavor come from nameLootViaAi (catalog entries get their canonical
     // name + a fresh blurb; everything else gets full AI naming with a fallback).
-    const treasure: LootOption[] = [];
+    const treasure: { roll: ItemRoll; name: string; flavor: string }[] = [];
     for (let i = 0; i < 3; i++) {
       const r = rollItem(tier);
       const named = await nameLootViaAi(env, r, primaryMonster.name);
-      treasure.push({
-        name: named.name,
-        item_type: r.type,
-        power: r.power,
-        rarity: r.rarity,
-        flavor: named.flavor,
-        weapon_range: r.weapon_range ?? null,
-        ...(r.slot ? { slot: r.slot } : {}),
-        ...(r.stat_bonus ? { stat_bonus: r.stat_bonus as Record<string, number> } : {}),
-        ...(r.item_subtype ? { item_subtype: r.item_subtype } : {}),
-        ...(r.element ? { element: r.element } : {}),
-      });
+      treasure.push({ roll: r, name: named.name, flavor: named.flavor });
     }
     const survivors = humanFighters.filter((f) => f.hp > 0);
     for (let i = 0; i < treasure.length; i++) {
-      const item = treasure[i];
+      const { roll, name, flavor } = treasure[i];
       const recipient = survivors[i % Math.max(1, survivors.length)] ?? humanFighters[0];
       if (!recipient) break;
-      const added = await addItem(env.DB, {
+      const added = await addItem(env.DB, itemRollToCreateInput({
         character_id: recipient.id,
-        item_name: item.name,
-        item_type: item.item_type,
-        power: item.power,
-        rarity: item.rarity,
-        flavor: item.flavor,
-        weapon_range: item.weapon_range ?? null,
-        slot: item.slot ?? undefined,
-        stat_bonus: item.stat_bonus ?? undefined,
-        item_subtype: item.item_subtype ?? undefined,
-      });
+        roll,
+        item_name: name,
+        flavor,
+      }));
       const r = rewards.find((rr) => rr.user_id === recipient.id);
       if (r) {
         r.loot.push({
@@ -7614,6 +7595,18 @@ function tierCombatProfile(
 // character row (player status effects) so an active poison/burn carries
 // across the boundary.
 // Returns a discriminated union so callers can render specific errors.
+// Picks the active element for attack procs from the equipped slot map.
+// Walks ELEMENT_SLOT_PRIORITY in order and returns the first equipped piece
+// whose `element` field is set. Returns undefined when no equipped item
+// carries an element (the common case for pre-rare-tier characters).
+function pickActiveElement(slots: Record<string, { element?: ElementType | null } | null>): ElementType | undefined {
+  for (const slot of ELEMENT_SLOT_PRIORITY) {
+    const item = slots[slot];
+    if (item?.element) return item.element;
+  }
+  return undefined;
+}
+
 async function buildInitialCombatState(
   db: D1Database,
   quest: ActiveQuest,
@@ -7652,18 +7645,38 @@ async function buildInitialCombatState(
       Math.floor((slots.pants?.power ?? 0) / 4) +
       (slots.off_hand?.item_subtype === "shield" ? (slots.off_hand?.power ?? 0) : 0);
 
-    // Sum stat_bonus and resist_* keys from all equipped items.
+    // Sum stat_bonus across equipped items, partitioning into:
+    //   - primary stats (str/int_stat/vit/agi/dex) → equipBonuses
+    //   - resistances (resist_*) → rawResistances (capped at 75)
+    //   - other affix effects (crit_pct, lifesteal, *_dmg, thorns,
+    //     mana_regen, dodge_pct) → affixBonuses, fed to statSnapshot for
+    //     downstream combat-hook consumption.
     const equipBonuses: Partial<Stats> = {};
     const rawResistances: Partial<Record<DamageType, number>> = {};
+    const affixBonuses: Partial<AffixEffects> = {};
+    const PRIMARY_STAT_KEYS = new Set(["str", "int_stat", "vit", "agi", "dex"]);
+    const KNOWN_AFFIX_EFFECT_KEYS = new Set([
+      "crit_pct", "lifesteal", "fire_dmg", "ice_dmg", "lightning_dmg",
+      "thorns", "mana_regen", "dodge_pct",
+    ]);
+    const uniqueIds: string[] = [];
+    const setCounts: Record<string, number> = {};
     for (const item of Object.values(slots)) {
-      if (!item?.stat_bonus) continue;
+      if (!item) continue;
+      if (item.unique_id) uniqueIds.push(item.unique_id);
+      if (item.set_id) setCounts[item.set_id] = (setCounts[item.set_id] ?? 0) + 1;
+      if (!item.stat_bonus) continue;
       for (const [key, val] of Object.entries(item.stat_bonus)) {
+        if (typeof val !== "number") continue;
         if (key.startsWith("resist_")) {
           const dtype = key.slice("resist_".length) as DamageType;
           rawResistances[dtype] = (rawResistances[dtype] ?? 0) + val;
-        } else {
+        } else if (PRIMARY_STAT_KEYS.has(key)) {
           (equipBonuses as Record<string, number>)[key] = ((equipBonuses as Record<string, number>)[key] ?? 0) + val;
+        } else if (KNOWN_AFFIX_EFFECT_KEYS.has(key)) {
+          (affixBonuses as Record<string, number>)[key] = ((affixBonuses as Record<string, number>)[key] ?? 0) + val;
         }
+        // Unknown keys silently ignored — forward-compat with future affixes.
       }
     }
     // Cap each resistance at 75% and apply focus weapon passive (+10% magic).
@@ -7673,6 +7686,14 @@ async function buildInitialCombatState(
     }
     if (isFocus) {
       resistances.magic = Math.min(75, (resistances.magic ?? 0) + 10);
+    }
+    // Active set bonuses: pick the highest threshold ≤ piece count for each set_id.
+    // SET_REGISTRY in core determines what each (set_id, threshold) actually does;
+    // here we just record what's active so the dispatcher can look up effects.
+    const activeSets: Record<string, number> = {};
+    for (const [setId, count] of Object.entries(setCounts)) {
+      const activeTier = setActiveTierForCount(setId, count);
+      if (activeTier > 0) activeSets[setId] = activeTier;
     }
 
     const memberStats: Stats = {
@@ -7687,6 +7708,7 @@ async function buildInitialCombatState(
       level: member.level,
       stats: memberStats,
       equipBonuses,
+      affixBonuses,
     });
     fighters.push({
       id: member.slack_user_id,
@@ -7709,7 +7731,12 @@ async function buildInitialCombatState(
       armor_power: armorPower,
       scars: member.scars,
       stats: snap.stats,
-      element: isFocus ? undefined : (weapon?.element ?? undefined),
+      // Active element for attack-procs: walks ELEMENT_SLOT_PRIORITY and
+      // picks the first equipped piece carrying an element. Weapon wins by
+      // default when present; otherwise an off-hand/amulet/ring/armor
+      // element fills in for non-elemental weapons. Focus weapons opt out
+      // (they don't proc attacks — they cast).
+      element: isFocus ? undefined : pickActiveElement(slots),
       weapon_rarity: isFocus ? undefined
         : (weapon?.rarity === "uncommon" || weapon?.rarity === "rare" || weapon?.rarity === "epic" || weapon?.rarity === "legendary"
           ? weapon.rarity : undefined),
@@ -7722,6 +7749,12 @@ async function buildInitialCombatState(
       // cast handler to set ctx.rank so rank-aware execute() branches fire.
       // Defaults to {} when no ranks have been bought.
       talent_ranks: await getCharacterTalents(db, member.slack_user_id),
+      // Gear-affix effects bag — combat hooks read these at matching lifecycle points.
+      affix_effects: snap.effects,
+      // Legendary unique-effect ids on equipped items. Empty array if none.
+      unique_ids: uniqueIds.length > 0 ? uniqueIds : undefined,
+      // Active set bonuses (highest threshold per set_id).
+      active_sets: Object.keys(activeSets).length > 0 ? activeSets : undefined,
     });
 
     // Inject hired merc as an additional CombatFighter for this member.
@@ -8231,15 +8264,30 @@ export class QuestRoom extends DurableObject<Env> {
 
     const equipBonuses2: Partial<Stats> = {};
     const rawResistances2: Partial<Record<DamageType, number>> = {};
+    const affixBonuses2: Partial<AffixEffects> = {};
+    const uniqueIds2: string[] = [];
+    const setCounts2: Record<string, number> = {};
+    const PRIMARY2 = new Set(["str", "int_stat", "vit", "agi", "dex"]);
+    const AFFIX2 = new Set([
+      "crit_pct", "lifesteal", "fire_dmg", "ice_dmg", "lightning_dmg",
+      "thorns", "mana_regen", "dodge_pct",
+    ]);
     for (const item of Object.values(slots)) {
-      if (!item?.stat_bonus) continue;
+      if (!item) continue;
+      if (item.unique_id) uniqueIds2.push(item.unique_id);
+      if (item.set_id) setCounts2[item.set_id] = (setCounts2[item.set_id] ?? 0) + 1;
+      if (!item.stat_bonus) continue;
       for (const [key, val] of Object.entries(item.stat_bonus)) {
+        if (typeof val !== "number") continue;
         if (key.startsWith("resist_")) {
           const dtype = key.slice("resist_".length) as DamageType;
-          rawResistances2[dtype] = (rawResistances2[dtype] ?? 0) + (val as number);
-        } else {
+          rawResistances2[dtype] = (rawResistances2[dtype] ?? 0) + val;
+        } else if (PRIMARY2.has(key)) {
           (equipBonuses2 as Record<string, number>)[key] =
-            ((equipBonuses2 as Record<string, number>)[key] ?? 0) + (val as number);
+            ((equipBonuses2 as Record<string, number>)[key] ?? 0) + val;
+        } else if (AFFIX2.has(key)) {
+          (affixBonuses2 as Record<string, number>)[key] =
+            ((affixBonuses2 as Record<string, number>)[key] ?? 0) + val;
         }
       }
     }
@@ -8249,6 +8297,11 @@ export class QuestRoom extends DurableObject<Env> {
     }
     if (isFocus) {
       resistances2.magic = Math.min(75, (resistances2.magic ?? 0) + 10);
+    }
+    const activeSets2: Record<string, number> = {};
+    for (const [setId, count] of Object.entries(setCounts2)) {
+      const tier = setActiveTierForCount(setId, count);
+      if (tier > 0) activeSets2[setId] = tier;
     }
 
     const memberStats: Stats = {
@@ -8263,6 +8316,7 @@ export class QuestRoom extends DurableObject<Env> {
       level: character.level,
       stats: memberStats,
       equipBonuses: equipBonuses2,
+      affixBonuses: affixBonuses2,
     });
 
     const grid = state.grid ?? GRID_DEFAULT;
@@ -8296,7 +8350,7 @@ export class QuestRoom extends DurableObject<Env> {
       armor_power: armorPower,
       scars: character.scars,
       stats: snap.stats,
-      element: isFocus ? undefined : (weapon?.element ?? undefined),
+      element: isFocus ? undefined : pickActiveElement(slots),
       weapon_rarity: isFocus ? undefined
         : (weapon?.rarity === "uncommon" || weapon?.rarity === "rare" || weapon?.rarity === "epic" || weapon?.rarity === "legendary"
           ? weapon.rarity : undefined),
@@ -8304,6 +8358,9 @@ export class QuestRoom extends DurableObject<Env> {
       effects: character.effects ?? [],
       initiative: 0,
       pos: joinerPos,
+      affix_effects: snap.effects,
+      unique_ids: uniqueIds2.length > 0 ? uniqueIds2 : undefined,
+      active_sets: Object.keys(activeSets2).length > 0 ? activeSets2 : undefined,
     };
 
     // Append to end of turn_order so the joiner acts last in the current

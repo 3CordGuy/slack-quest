@@ -204,5 +204,53 @@ describe("statSnapshot", () => {
     const snap = statSnapshot({ className: "QA Paladin", level: 1 });
     expect(snap.stats).toEqual(statsAtLevel("QA Paladin", 1));
   });
+
+  it("defaults effects bag to zeros when no affixBonuses provided", () => {
+    const snap = statSnapshot({ className: "QA Paladin", level: 1 });
+    expect(snap.effects.crit_pct).toBe(0);
+    expect(snap.effects.lifesteal).toBe(0);
+    expect(snap.effects.resist_fire).toBe(0);
+  });
+
+  it("threads affix effects through to the snapshot", () => {
+    const snap = statSnapshot({
+      className: "QA Paladin",
+      level: 1,
+      affixBonuses: { crit_pct: 9, lifesteal: 3, resist_fire: 15 },
+    });
+    expect(snap.effects.crit_pct).toBe(9);
+    expect(snap.effects.lifesteal).toBe(3);
+    expect(snap.effects.resist_fire).toBe(15);
+    expect(snap.effects.thorns).toBe(0); // unset keys stay zero
+  });
+});
+
+describe("splitStatBonus", () => {
+  it("partitions primary stats from affix-effect keys", async () => {
+    const { splitStatBonus } = await import("./stats");
+    const { primary, affixes } = splitStatBonus({
+      str: 2,
+      int_stat: 1,
+      crit_pct: 9,
+      resist_fire: 15,
+      thorns: 2,
+    });
+    expect(primary).toEqual({ str: 2, int_stat: 1 });
+    expect(affixes).toEqual({ crit_pct: 9, resist_fire: 15, thorns: 2 });
+  });
+
+  it("silently drops unknown keys (forward-compat with newer affixes)", async () => {
+    const { splitStatBonus } = await import("./stats");
+    const { primary, affixes } = splitStatBonus({ str: 1, future_affix_xyz: 99 });
+    expect(primary).toEqual({ str: 1 });
+    expect(affixes).toEqual({});
+  });
+
+  it("handles undefined input", async () => {
+    const { splitStatBonus } = await import("./stats");
+    const { primary, affixes } = splitStatBonus(undefined);
+    expect(primary).toEqual({});
+    expect(affixes).toEqual({});
+  });
 });
 
