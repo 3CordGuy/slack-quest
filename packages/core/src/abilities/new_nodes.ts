@@ -131,10 +131,14 @@ const sanityCheck: AbilityDef = {
   range_tiles: 2,
   aoe_radius_tiles: 0,
   execute(ctx) {
+    const rank = ctx.rank ?? 1;
     const monster = ctx.target as MonsterSnapshot;
     const atk = ctx.caster.attack_mod;
-    const amount = ctx.roll(8) + atk;
-    return [fx.damage(monster.id, amount, `1d8+${atk}a`, { damageType: "physical" })];
+    const baseRoll = ctx.roll(8) + atk;
+    const mult = rank >= 3 ? 1.5 : rank >= 2 ? 1.25 : 1;
+    const amount = Math.round(baseRoll * mult);
+    const formula = rank > 1 ? `(1d8+${atk}a)×${mult}` : `1d8+${atk}a`;
+    return [fx.damage(monster.id, amount, formula, { damageType: "physical" })];
   },
 };
 
@@ -150,9 +154,12 @@ const codeReview: AbilityDef = {
   target: "single_ally",
   range_tiles: 3,
   execute(ctx) {
+    const rank = ctx.rank ?? 1;
     const target = ctx.target as FighterSnapshot;
     const vit = (ctx.caster as FighterSnapshot & { stats?: { vit: number } }).stats?.vit ?? 5;
-    const heal = ctx.roll(4) + vit;
+    const baseHeal = ctx.roll(4) + vit;
+    const mult = rank >= 3 ? 2 : rank >= 2 ? 1.5 : 1;
+    const heal = Math.round(baseHeal * mult);
     return [fx.cleanseSingleAlly(target.id), fx.heal(target.id, heal)];
   },
 };
@@ -202,9 +209,12 @@ const bisect: AbilityDef = {
   range_tiles: 1,
   aoe_radius_tiles: 1,
   execute(ctx) {
+    const rank = ctx.rank ?? 1;
     const atk = ctx.caster.attack_mod;
-    const amount = ctx.roll(8) + atk;
-    const formula = `1d8+${atk}a`;
+    const baseRoll = ctx.roll(8) + atk;
+    const mult = rank >= 3 ? 1.5 : rank >= 2 ? 1.25 : 1;
+    const amount = Math.round(baseRoll * mult);
+    const formula = rank > 1 ? `(1d8+${atk}a)×${mult}` : `1d8+${atk}a`;
     const damageEffects = ctx.monsters.map((m) => fx.damage(m.id, amount, formula, { damageType: "physical" }));
     const entangleEffects = ctx.monsters.map((m) => fx.entangleMonster(m.id, 2));
     return [...damageEffects, ...entangleEffects];
@@ -846,9 +856,13 @@ const NEW_NODES_BY_CLASS: Record<ClassId, TalentNodeDef[]> = {
     activeNode("devops_mage", failsafe, "defense"),
   ],
   qa_paladin: [
-    activeNode("qa_paladin", sanityCheck, "damage"),
-    activeNode("qa_paladin", bisect, "damage"),
-    activeNode("qa_paladin", codeReview, "support"),
+    activeNode("qa_paladin", sanityCheck, "damage", RANK_3),
+    activeNode("qa_paladin", bisect, "damage", RANK_3),
+    activeNode("qa_paladin", codeReview, "support", RANK_3),
+    // staticAnalysis + defensiveProgramming stay R1 — their on_action passives
+    // already branch on machine-side state (party adjacency, % HP); proper R2/R3
+    // scaling would need talent_ranks plumbed into the passive trigger context
+    // alongside observability/failsafe. Deferred.
     activeNode("qa_paladin", staticAnalysis, "defense"),
     activeNode("qa_paladin", defensiveProgramming, "defense"),
   ],

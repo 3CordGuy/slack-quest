@@ -94,6 +94,15 @@ const RANK_SPEC: Record<string, { max_rank: 1 | 2 | 3; level_req_per_rank: numbe
   // mana_font deliberately omitted — its regen logic lives in combat_machine
   // (applyManaFont), not execute(). Plumbing kit_ranks through CombatFighter
   // so the machine can read rank is a follow-up; for now Mana Font stays R1.
+  // ── QA Paladin kit ──
+  shield_of_faith: { max_rank: 3, level_req_per_rank: [1, 6, 12], point_cost_per_rank: [1, 2, 3] },
+  lay_on_hands: { max_rank: 3, level_req_per_rank: [1, 6, 12], point_cost_per_rank: [1, 2, 3] },
+  smite: { max_rank: 3, level_req_per_rank: [1, 6, 12], point_cost_per_rank: [1, 2, 3] },
+  protect: { max_rank: 3, level_req_per_rank: [1, 6, 12], point_cost_per_rank: [1, 2, 3] },
+  // holy_rage deliberately omitted — its damage buildup is a passive trigger
+  // handled inline by the combat machine (on_ally_hit accumulator), not
+  // execute(). Same talent_ranks plumbing follow-up as observability/failsafe;
+  // for now Regression Rage stays R1.
 };
 
 const DEFAULT_RANKS: { max_rank: 1; level_req_per_rank: number[]; point_cost_per_rank: number[] } = {
