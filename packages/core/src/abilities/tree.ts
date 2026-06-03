@@ -128,6 +128,16 @@ const RANK_SPEC: Record<string, { max_rank: 1 | 2 | 3; level_req_per_rank: numbe
   // ill_omen deliberately omitted — its delayed-burst payout lives in the
   // apply_ill_omen handler (combat_machine), not execute(). Scaling its
   // magnitude param needs talent_ranks plumbed into that handler; deferred.
+
+  // ── Backend Druid kit ──
+  regeneration: { max_rank: 3, level_req_per_rank: [1, 6, 12], point_cost_per_rank: [1, 2, 3] },
+  animal_form: { max_rank: 3, level_req_per_rank: [1, 6, 12], point_cost_per_rank: [1, 2, 3] },
+  wildgrowth: { max_rank: 3, level_req_per_rank: [1, 6, 12], point_cost_per_rank: [1, 2, 3] },
+  barkskin: { max_rank: 3, level_req_per_rank: [1, 6, 12], point_cost_per_rank: [1, 2, 3] },
+  // primal_strikes deliberately omitted — it's a passive (kind: "passive",
+  // trigger: "always_on") that returns no effects from execute(). Its
+  // magic-mod-to-attack/damage and on-hit heal logic lives machine-side and
+  // needs talent_ranks plumbing into that helper before it can graduate. R1.
 };
 
 const DEFAULT_RANKS: { max_rank: 1; level_req_per_rank: number[]; point_cost_per_rank: number[] } = {
