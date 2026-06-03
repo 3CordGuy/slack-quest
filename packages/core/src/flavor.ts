@@ -276,7 +276,7 @@ export const EFFECT_META: Record<EffectType, EffectMeta> = {
   // Ability-driven effects — name matches the engineering ability that applies them.
   empowered: { emoji: "⚡", name: "Empowered", kind: "passive", ignoresArmor: false, blurb: "+25% damage dealt for N turns.",            icon: "aura",           color: "#f59e0b" },
   stunned:   { emoji: "📦", name: "Containerized", kind: "passive", ignoresArmor: false, blurb: "Containerized — skips swings with escalating 30%/turn break chance.", icon: "fluffy-swirl", color: "#a78bfa" },
-  hexed:     { emoji: "🔮", name: "Hexed",     kind: "passive", ignoresArmor: false, blurb: "Deals -25% damage. Takes 3 bleed stacks whenever it takes damage.", icon: "death-skull", color: "#a855f7" },
+  hexed:     { emoji: "🔮", name: "Flagged",   kind: "passive", ignoresArmor: false, blurb: "Deals -25% damage. Takes 3 bleed stacks whenever it takes damage.", icon: "death-skull", color: "#a855f7" },
   entangled: { emoji: "🌿", name: "Deadlocked", kind: "debuff",  ignoresArmor: false, blurb: "Held by an upstream dependency. -4 to attack rolls.",         icon: "vine-whip", color: "#86efac" },
   barkskin:    { emoji: "🍃", name: "Firewalled", kind: "passive", ignoresArmor: false, blurb: "Inbound deny-all rule active — bonus AC for N turns.",     icon: "leaf",      color: "#a3e635" },
   animal_form: { emoji: "🐺", name: "Scaled Up",  kind: "buff",    ignoresArmor: false, blurb: "Compute provisioned — stats surged while active.",         icon: "wolf-head", color: "#f97316" },
