@@ -160,6 +160,59 @@ const DEFAULT_RANKS: { max_rank: 1; level_req_per_rank: number[]; point_cost_per
   point_cost_per_rank: [1],
 };
 
+// Short per-ability rank-progression strings surfaced in the AbilitiesPanel
+// detail popover and hover tooltip. Format: "R2: <bump>. R3: <bump>."
+// Omit for single-rank kit abilities.
+const RANK_PROGRESSION: Record<string, string> = {
+  // ── DevOps Mage kit ──
+  fireball: "R2: ×1.25 dmg. R3: ×1.5 dmg.",
+  containerize: "R2: lower break% (20/40). R3: even lower (10/30) — longer stun.",
+  lightning_bolt: "R2: ×1.25 dmg. R3: ×1.5 dmg.",
+  mage_armor: "R2: ×1.5 shield. R3: ×2 shield.",
+  mana_font: "R2: regen every 2t. R3: every turn.",
+  // ── QA Paladin kit ──
+  shield_of_faith: "R2: 5 rounds duration. R3: 7 rounds.",
+  lay_on_hands: "R2: ×1.5 heal. R3: ×2 heal.",
+  smite: "R2: ×1.25 dmg. R3: ×1.5 dmg.",
+  protect: "R2: ×1.5 self-shield. R3: ×2 self-shield.",
+  holy_rage: "R2: 15% of dmg taken. R3: 20%.",
+  // ── Frontend Bard kit ──
+  crescendo: "R2: ×1.25 dmg. R3: ×1.5 dmg.",
+  verse: "R2: 3 charges. R3: 4 charges.",
+  battle_hymn: "R2: +1 mana per ally. R3: +2 mana per ally + 1 extra round.",
+  serenade: "R2: ×1.25 heal+shield. R3: ×1.5.",
+  bardic_aura: "R2: +1 base aura bonus. R3: +2.",
+  // ── Refactor Rogue kit ──
+  vanish: "R2: 3 swings untargetable. R3: 4 swings.",
+  envenom_weapon: "R2: +1 poison stack per hit. R3: +2 stacks.",
+  backstab: "R2: ×1.25 dmg. R3: ×1.5 dmg.",
+  debilitate: "R2: +1 round vulnerability. R3: +1 round, +10% magnitude.",
+  lethal_strikes: "R2: +1 bleed stack on crit. R3: +2 bleed stacks.",
+  // ── Staff Sage kit ──
+  ray_of_frost: "R2: ×1.25 dmg. R3: ×1.5 dmg + 30% freeze (was 25%).",
+  blizzard: "R2: ×1.25 storm dmg. R3: ×1.5 storm dmg.",
+  good_fortune: "R2: ×1.25 heal. R3: ×1.5 heal.",
+  // ── Backend Druid kit ──
+  regeneration: "R2: ×1.25 regen. R3: ×1.5 regen.",
+  animal_form: "R2: ×1.25 stat bonus. R3: ×1.5.",
+  wildgrowth: "R2: ×1.25 AoE dmg. R3: ×1.5.",
+  barkskin: "R2: +6 AC (was +5). R3: +7 AC.",
+  primal_strikes: "R2: ×1.5 hit-heal. R3: ×2 hit-heal.",
+  // ── Data Warlock kit ──
+  leech_life: "R2: ×1.25 dmg. R3: ×1.5 dmg + ×1.5 lifesteal.",
+  hex: "R2: 12 turns (was 10). R3: 14 turns.",
+  summon_imp: "R2: summon +25% HP/mag. R3: +50%.",
+  forbidden_sql: "R2: +1 dmg per stack. R3: +2 dmg per stack.",
+  sinister_queries: "R2: +1 bleed stack on hit. R3: +2 stacks.",
+  // ── SRE Warden kit ──
+  bulwark_strike: "R2: ×1.25 dmg. R3: ×1.5 dmg.",
+  taunt: "R2: ×1.5 shield, 3 turn fortify. R3: ×2 shield, 4 turn fortify.",
+  brace: "R2: 25% reduction. R3: 30% reduction.",
+  thorns: "R2: 35% reflect. R3: 45% reflect.",
+  armor_up: "R2: +1 to per-turn shield gain. R3: +2.",
+  resilient: "R2: +1 per-stack bonus. R3: +2 per stack.",
+};
+
 function wrapExisting(classId: ClassId, ability: AbilityDef): TalentNodeDef {
   const ranks = RANK_SPEC[ability.id] ?? DEFAULT_RANKS;
   return {
@@ -170,6 +223,7 @@ function wrapExisting(classId: ClassId, ability: AbilityDef): TalentNodeDef {
     level_req_per_rank: ranks.level_req_per_rank,
     point_cost_per_rank: ranks.point_cost_per_rank,
     ability,
+    ...(RANK_PROGRESSION[ability.id] ? { rank_progression: RANK_PROGRESSION[ability.id] } : {}),
   };
 }
 

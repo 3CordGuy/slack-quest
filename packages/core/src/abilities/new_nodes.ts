@@ -953,6 +953,7 @@ function activeNode(
   ability: AbilityDef,
   category: TalentNodeDef["category"],
   ranks: NodeRanks = SINGLE_RANK,
+  rankProgression?: string,
 ): TalentNodeDef {
   return {
     id: ability.id,
@@ -962,87 +963,67 @@ function activeNode(
     level_req_per_rank: ranks.level_req_per_rank,
     point_cost_per_rank: ranks.point_cost_per_rank,
     ability,
+    ...(rankProgression ? { rank_progression: rankProgression } : {}),
   };
 }
 
 const NEW_NODES_BY_CLASS: Record<ClassId, TalentNodeDef[]> = {
   devops_mage: [
-    activeNode("devops_mage", rollingRestart, "damage", RANK_3),
-    activeNode("devops_mage", cdnSurge, "damage", RANK_3),
-    activeNode("devops_mage", canaryDeploy, "damage", RANK_3),
-    // Observability scales per-debuff bonus +1/+2/+3 via observabilityBonus(rank).
-    // Failsafe stays once-per-fight; R2/R3 also grant +5/+10 shield on trigger.
-    activeNode("devops_mage", observability, "damage", RANK_3),
-    activeNode("devops_mage", failsafe, "defense", RANK_3),
+    activeNode("devops_mage", rollingRestart, "damage", RANK_3, "R2: ×1.25 dmg. R3: ×1.5 dmg."),
+    activeNode("devops_mage", cdnSurge, "damage", RANK_3, "R2: ×1.25 dmg. R3: ×1.5 dmg."),
+    activeNode("devops_mage", canaryDeploy, "damage", RANK_3, "R2: ×1.25 dmg. R3: ×1.5 dmg."),
+    activeNode("devops_mage", observability, "damage", RANK_3, "R2: +2 dmg per debuff. R3: +3 dmg per debuff."),
+    activeNode("devops_mage", failsafe, "defense", RANK_3, "R2: +5 shield on save. R3: +10 shield on save."),
   ],
   qa_paladin: [
-    activeNode("qa_paladin", sanityCheck, "damage", RANK_3),
-    activeNode("qa_paladin", bisect, "damage", RANK_3),
-    activeNode("qa_paladin", codeReview, "support", RANK_3),
-    // staticAnalysis + defensiveProgramming stay R1 — their on_action passives
-    // already branch on machine-side state (party adjacency, % HP); proper R2/R3
-    // scaling would need talent_ranks plumbed into the passive trigger context
-    // alongside observability/failsafe. Deferred.
+    activeNode("qa_paladin", sanityCheck, "damage", RANK_3, "R2: ×1.25 dmg. R3: ×1.5 dmg."),
+    activeNode("qa_paladin", bisect, "damage", RANK_3, "R2: ×1.25 dmg. R3: ×1.5 dmg."),
+    activeNode("qa_paladin", codeReview, "support", RANK_3, "R2: ×1.5 heal. R3: ×2 heal."),
     activeNode("qa_paladin", staticAnalysis, "defense"),
     activeNode("qa_paladin", defensiveProgramming, "defense"),
   ],
   backend_druid: [
-    activeNode("backend_druid", pruning, "damage", RANK_3),
-    activeNode("backend_druid", mycelialWeb, "damage", RANK_3),
-    activeNode("backend_druid", compostHeap, "support", RANK_3),
-    // deepRoots + cronJob are passives but their execute() still returns
-    // effects (on_action trigger), and ctx.rank is set by the engine — so
-    // scaling lives in execute() like the actives. No machine-side helper
-    // changes required.
-    activeNode("backend_druid", deepRoots, "defense", RANK_3),
-    activeNode("backend_druid", cronJob, "support", RANK_3),
+    activeNode("backend_druid", pruning, "damage", RANK_3, "R2: ×1.25 dmg. R3: ×1.5 dmg."),
+    activeNode("backend_druid", mycelialWeb, "damage", RANK_3, "R2: ×1.25 dmg. R3: ×1.5 dmg."),
+    activeNode("backend_druid", compostHeap, "support", RANK_3, "R2: ×1.5 regen. R3: ×2 regen."),
+    activeNode("backend_druid", deepRoots, "defense", RANK_3, "R2: +3 AC barkskin. R3: +4 AC barkskin."),
+    activeNode("backend_druid", cronJob, "support", RANK_3, "R2: 2 HP/turn. R3: 3 HP/turn."),
   ],
   frontend_bard: [
-    activeNode("frontend_bard", standupMeeting, "support", RANK_3),
-    activeNode("frontend_bard", discordNotification, "control", RANK_3),
-    activeNode("frontend_bard", encore, "utility", RANK_3),
-    activeNode("frontend_bard", unsubscribeFromAll, "utility", RANK_3),
-    // A11y First: +rank to dodge and to-hit bonuses (read in the dodge gate +
-    // attack_roll_damage handler). Earworm: +rank mana refund per crit
-    // (applyEarwormOnCrit reads fighterRank).
-    activeNode("frontend_bard", a11yFirst, "support", RANK_3),
-    activeNode("frontend_bard", earworm, "support", RANK_3),
+    activeNode("frontend_bard", standupMeeting, "support", RANK_3, "R2: 3 advantage charges. R3: 4 charges."),
+    activeNode("frontend_bard", discordNotification, "control", RANK_3, "R2: ×1.25 dmg + lower break%. R3: ×1.5 dmg + lowest break%."),
+    activeNode("frontend_bard", encore, "utility", RANK_3, "R2: also refund half mana. R3: also makes ally's next ability crit."),
+    activeNode("frontend_bard", unsubscribeFromAll, "utility", RANK_3, "R2: also cleanses ally debuffs. R3: also +1 mana to bard."),
+    activeNode("frontend_bard", a11yFirst, "support", RANK_3, "R2: +2 dodge / +2 hit. R3: +3 dodge / +3 hit."),
+    activeNode("frontend_bard", earworm, "support", RANK_3, "R2: +2 mana per party crit. R3: +3 mana per crit."),
   ],
   staff_sage: [
-    activeNode("staff_sage", frostBolt, "control", RANK_3),
-    activeNode("staff_sage", hailstorm, "damage", RANK_3),
-    activeNode("staff_sage", timeDilation, "control", RANK_3),
-    // memoization + cacheWarmer stay R1 — their effects are applied inline by
-    // combat_machine (cast handler zeroes mana for first-cast / damage-primed
-    // casts). Scaling needs the machine helpers to read fighter.talent_ranks;
-    // deferred until that plumbing lands alongside Observability/Failsafe.
+    activeNode("staff_sage", frostBolt, "control", RANK_3, "R2: ×1.25 dmg + 35% freeze. R3: ×1.5 dmg + 45% freeze."),
+    activeNode("staff_sage", hailstorm, "damage", RANK_3, "R2: ×1.25 dmg + 20% freeze. R3: ×1.5 dmg + 25% freeze."),
+    activeNode("staff_sage", timeDilation, "control", RANK_3, "R2: entangle 3 turns. R3: entangle 4 turns."),
     activeNode("staff_sage", memoization, "support"),
     activeNode("staff_sage", cacheWarmer, "support"),
   ],
   refactor_rogue: [
-    activeNode("refactor_rogue", codeAudit, "control", RANK_3),
-    activeNode("refactor_rogue", smokeTest, "utility", RANK_3),
-    activeNode("refactor_rogue", silentMode, "defense", RANK_3),
-    activeNode("refactor_rogue", hotpath, "damage", RANK_3),
-    // Cherry-Pick multiplier scales 1.5/1.75/2.0 at R1/R2/R3 — cherryPickMult
-    // reads fighterRank() in handleDamageAbility.
-    activeNode("refactor_rogue", cherryPick, "damage", RANK_3),
+    activeNode("refactor_rogue", codeAudit, "control", RANK_3, "R2: ×1.25 dmg + 8 turn hex. R3: ×1.5 dmg + 10 turn hex."),
+    activeNode("refactor_rogue", smokeTest, "utility", RANK_3, "R2: 2 swings vanish + ×1.25 chip. R3: 3 swings + ×1.5 chip."),
+    activeNode("refactor_rogue", silentMode, "defense", RANK_3, "R2: +2 AC at full HP. R3: +2 AC + small dodge."),
+    activeNode("refactor_rogue", hotpath, "damage", RANK_3, "R2: ×1.25 dmg. R3: ×1.5 dmg."),
+    activeNode("refactor_rogue", cherryPick, "damage", RANK_3, "R2: ×1.75 dmg on low-HP enemies. R3: ×2.0 dmg."),
   ],
   sre_warden: [
-    activeNode("sre_warden", postmortem, "damage", RANK_3),
-    activeNode("sre_warden", circuitBreaker, "defense", RANK_3),
-    activeNode("sre_warden", failover, "utility", RANK_3),
-    activeNode("sre_warden", capacityPlanning, "defense", RANK_3),
-    // Load Balancer redirect % scales 25/35/45 at R1/R2/R3 — read in the
-    // monster-attacks-fighter damage path via fighterRank().
-    activeNode("sre_warden", loadBalancer, "defense", RANK_3),
+    activeNode("sre_warden", postmortem, "damage", RANK_3, "R2: ×1.25 dmg + 3/debuff. R3: ×1.5 dmg + 4/debuff."),
+    activeNode("sre_warden", circuitBreaker, "defense", RANK_3, "R2: ×1.5 ally shield. R3: ×2 ally shield."),
+    activeNode("sre_warden", failover, "utility", RANK_3, "R2: 12 self-shield. R3: 16 self-shield."),
+    activeNode("sre_warden", capacityPlanning, "defense", RANK_3, "R2: 3 shield per ally. R3: 4 shield per ally."),
+    activeNode("sre_warden", loadBalancer, "defense", RANK_3, "R2: 35% damage redirect. R3: 45% redirect."),
   ],
   data_warlock: [
-    activeNode("data_warlock", indexScan, "damage", RANK_3),
-    activeNode("data_warlock", stackTrace, "damage", RANK_3),
-    activeNode("data_warlock", dropTable, "damage", RANK_3),
-    activeNode("data_warlock", staleCache, "support", RANK_3),
-    activeNode("data_warlock", garbageCollection, "support", RANK_3),
+    activeNode("data_warlock", indexScan, "damage", RANK_3, "R2: ×1.25 dmg + 4 poison stacks. R3: ×1.5 dmg + 5 poison stacks."),
+    activeNode("data_warlock", stackTrace, "damage", RANK_3, "R2: 3 dmg per DoT stack. R3: 4 dmg per stack."),
+    activeNode("data_warlock", dropTable, "damage", RANK_3, "R2: ×1.25 dmg. R3: ×1.5 dmg."),
+    activeNode("data_warlock", staleCache, "support", RANK_3, "R2: +2 mana on nearby kill. R3: +3 mana + 1 HP."),
+    activeNode("data_warlock", garbageCollection, "support", RANK_3, "R2: +5 HP on kill. R3: +5 HP + 1 mana."),
   ],
 };
 
