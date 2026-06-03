@@ -17,7 +17,7 @@
 
 import { useEffect, useRef, useState } from "react";
 
-export type BurstKind = "fire" | "ice" | "lightning" | "frozen" | "victory" | "hit" | "poison" | "bleed" | "shield" | "heal" | "curse" | "deploy";
+export type BurstKind = "fire" | "ice" | "lightning" | "frozen" | "victory" | "hit" | "poison" | "bleed" | "shield" | "heal" | "curse" | "deploy" | "music" | "smoke" | "nature" | "dispel" | "slowtime";
 
 // ─── Per-kind visual config ──────────────────────────────────────────────────
 
@@ -114,6 +114,45 @@ const BURST: Record<BurstKind, BurstConfig> = {
     glow: "rgba(245,158,11,0.95)",
     gravity: -60,
     scatter: 18,
+  },
+  // Pink/violet swirl with a musical-note levity — gentle rise like notes on a staff.
+  music: {
+    count: 22, distance: 130, duration: 1300, size: 8,
+    colors: ["#f472b6", "#ec4899", "#c084fc", "#a78bfa", "#fbcfe8", "#ffffff"],
+    glow: "rgba(236,72,153,0.85)",
+    gravity: -55,
+    scatter: 26,
+  },
+  // Gray/charcoal swirl that lingers and drifts upward like a smoke cloud.
+  smoke: {
+    count: 24, distance: 95, duration: 1500, size: 11,
+    colors: ["#4b5563", "#6b7280", "#9ca3af", "#374151", "#1f2937", "#d1d5db"],
+    glow: "rgba(107,114,128,0.6)",
+    gravity: -45,
+    scatter: 40,
+  },
+  // Green leafy burst — falls gently like leaves dropping from a canopy.
+  nature: {
+    count: 24, distance: 110, duration: 1300, size: 9,
+    colors: ["#22c55e", "#16a34a", "#65a30d", "#84cc16", "#bbf7d0", "#4ade80"],
+    glow: "rgba(34,197,94,0.85)",
+    gravity: 55,
+    scatter: 28,
+  },
+  // Bright white shimmer for stripping enchantments — fast, airy, dispersive.
+  dispel: {
+    count: 28, distance: 140, duration: 850, size: 7,
+    colors: ["#ffffff", "#f5f5f4", "#e0e7ff", "#fef9c3", "#fde68a"],
+    glow: "rgba(255,255,255,0.95)",
+    scatter: 36,
+  },
+  // Blue clockface glow that lingers slowly, evoking time crawling to a halt.
+  slowtime: {
+    count: 20, distance: 100, duration: 1700, size: 9,
+    colors: ["#60a5fa", "#3b82f6", "#1e3a8a", "#93c5fd", "#bfdbfe", "#ffffff"],
+    glow: "rgba(96,165,250,0.85)",
+    gravity: 10,
+    scatter: 20,
   },
 };
 

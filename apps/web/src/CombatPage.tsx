@@ -7,7 +7,7 @@ import type { Item } from "./types";
 
 import { Avatar, Icon } from "./icons";
 import { CombatBackdropLayer, pickScene, viewArtKeyForScene } from "./combatBackgrounds";
-import { CombatParticles, CombatParticlesProvider, triggerBurst } from "./CombatParticles";
+import { CombatParticles, CombatParticlesProvider, triggerBurst, type BurstKind } from "./CombatParticles";
 import {
   CombatHexGrid,
   particleKindForEvent,
@@ -470,6 +470,38 @@ type UiAction =
   | { kind: "reset" };
 
 let nextLogId = 1;
+
+// ── AoE ability → particle burst mapping ─────────────────────────────────────
+// Triggered on `ability_used` events for any ability whose routing is
+// `aoe_damage` or target is `all_enemies` / `all_allies`. Keyed by
+// `ability_id` so we don't need any new combat-machine events — every active
+// ability already emits `ability_used` with its id.
+const AOE_ABILITY_BURST: Record<string, BurstKind> = {
+  // mage
+  fireball: "fire",
+  // sage
+  blizzard: "ice",
+  // druid
+  wildgrowth: "nature",
+  // bard
+  battle_hymn: "music",
+  // paladin
+  shield_of_faith: "shield",
+  // new_nodes / class talents
+  cdn_surge: "lightning",
+  bisect: "hit",
+  mycelial_web: "nature",
+  compost_heap: "heal",
+  standup_meeting: "heal",
+  unsubscribe_from_all: "dispel",
+  hailstorm: "ice",
+  circuit_breaker: "shield",
+  drop_table: "curse",
+  // time_dilation is single-target per the def, but its flavor matches slowtime
+  time_dilation: "slowtime",
+  // smoke_test targets self but its theme is a smoke cloud — fires at caster
+  smoke_test: "smoke",
+};
 
 function reducer(s: UiState, a: UiAction): UiState {
   switch (a.kind) {
@@ -1308,6 +1340,16 @@ export function CombatPage({
               if (evt.type === "passive_paladin_auto_heal" || evt.type === "ability_good_fortune_delayed") triggerBurst("heal");
               if (evt.type === "ability_ill_omen_applied" || evt.type === "ability_hex") triggerBurst("curse");
               if (evt.type === "ability_animal_form") triggerBurst("deploy");
+            }
+
+            // AoE ability bursts — fire a centered DOM burst when any AoE
+            // ability is cast, regardless of hex mode. The canvas particle
+            // system handles per-target impact effects elsewhere; this gives
+            // the cast itself a satisfying punctuation. Driven by
+            // `ability_used.ability_id` so we don't need any new event types.
+            if (evt.type === "ability_used") {
+              const kind = AOE_ABILITY_BURST[evt.ability_id];
+              if (kind) triggerBurst(kind);
             }
 
             // ── Canvas hex grid: particle bursts + projectiles ─────────────
