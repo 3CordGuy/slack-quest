@@ -721,13 +721,21 @@ const postmortem: AbilityDef = {
   range_tiles: 1,
   aoe_radius_tiles: 0,
   execute(ctx) {
+    const rank = ctx.rank ?? 1;
     const monster = ctx.target as MonsterSnapshot;
     const atk = ctx.caster.attack_mod;
     const debuffCount = (monster.effects ?? []).filter((e) =>
       ["bleeding", "poisoned", "burning", "stunned", "hexed", "entangled", "shocked", "frozen"].includes(e.type),
     ).length;
-    const amount = ctx.roll(8) + atk + debuffCount * 2;
-    return [fx.damage(monster.id, amount, `1d8+${atk}a+${debuffCount}×2dbf`, { damageType: "physical" })];
+    // R1 ×1 base + 2/debuff, R2 ×1.25 + 3/debuff, R3 ×1.5 + 4/debuff.
+    const mult = rank >= 3 ? 1.5 : rank >= 2 ? 1.25 : 1;
+    const perDebuff = rank >= 3 ? 4 : rank >= 2 ? 3 : 2;
+    const base = ctx.roll(8) + atk;
+    const amount = Math.round(base * mult) + debuffCount * perDebuff;
+    const formula = rank > 1
+      ? `(1d8+${atk}a)×${mult}+${debuffCount}×${perDebuff}dbf`
+      : `1d8+${atk}a+${debuffCount}×2dbf`;
+    return [fx.damage(monster.id, amount, formula, { damageType: "physical" })];
   },
 };
 
@@ -742,8 +750,11 @@ const circuitBreaker: AbilityDef = {
   routing: "utility",
   target: "all_allies",
   execute(ctx) {
+    const rank = ctx.rank ?? 1;
     const vit = (ctx.caster as FighterSnapshot & { stats?: { vit: number } }).stats?.vit ?? 5;
-    const shieldAmt = ctx.roll(6) + vit;
+    // R1 ×1, R2 ×1.5, R3 ×2 shield amount. Entangle duration unchanged.
+    const mult = rank >= 3 ? 2 : rank >= 2 ? 1.5 : 1;
+    const shieldAmt = Math.round((ctx.roll(6) + vit) * mult);
     const allyShields = ctx.party.map((p) => fx.shield(p.id, shieldAmt));
     const entangle = ctx.monsters.length > 0 ? [fx.entangleMonster(ctx.monsters[0].id, 2)] : [];
     return [...allyShields, ...entangle];
@@ -762,11 +773,14 @@ const failover: AbilityDef = {
   target: "single_ally",
   range_tiles: 2,
   execute(ctx) {
+    const rank = ctx.rank ?? 1;
     const target = ctx.target as FighterSnapshot;
     if (target.id === ctx.caster.id) return [];
+    // R1 8, R2 12 (×1.5), R3 16 (×2) shield on swap-in.
+    const shieldAmt = rank >= 3 ? 16 : rank >= 2 ? 12 : 8;
     return [
       fx.swapPositions(ctx.caster.id, target.id),
-      fx.shield(ctx.caster.id, 8),
+      fx.shield(ctx.caster.id, shieldAmt),
     ];
   },
 };
@@ -780,9 +794,12 @@ const capacityPlanning: AbilityDef = {
   trigger: "on_action",
   once_per_fight: false,
   execute(ctx) {
+    const rank = ctx.rank ?? 1;
     const livingAllies = ctx.party.filter((p) => p.hp > 0 && p.id !== ctx.caster.id).length;
     if (livingAllies <= 0) return [];
-    return [fx.shield(ctx.caster.id, livingAllies * 2)];
+    // R1 ×2/ally, R2 ×3/ally, R3 ×4/ally shield each turn.
+    const perAlly = rank >= 3 ? 4 : rank >= 2 ? 3 : 2;
+    return [fx.shield(ctx.caster.id, livingAllies * perAlly)];
   },
 };
 
@@ -1016,10 +1033,13 @@ const NEW_NODES_BY_CLASS: Record<ClassId, TalentNodeDef[]> = {
     activeNode("refactor_rogue", cherryPick, "damage"),
   ],
   sre_warden: [
-    activeNode("sre_warden", postmortem, "damage"),
-    activeNode("sre_warden", circuitBreaker, "defense"),
-    activeNode("sre_warden", failover, "utility"),
-    activeNode("sre_warden", capacityPlanning, "defense"),
+    activeNode("sre_warden", postmortem, "damage", RANK_3),
+    activeNode("sre_warden", circuitBreaker, "defense", RANK_3),
+    activeNode("sre_warden", failover, "utility", RANK_3),
+    activeNode("sre_warden", capacityPlanning, "defense", RANK_3),
+    // loadBalancer stays R1 — redirect % is hardcoded in the
+    // monster-attacks-fighter damage path; no execute() to rank without
+    // plumbing kit_ranks into the inline redirect helper. Deferred.
     activeNode("sre_warden", loadBalancer, "defense"),
   ],
   data_warlock: [

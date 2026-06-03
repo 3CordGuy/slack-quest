@@ -15,10 +15,18 @@ export const wardenAbilities: AbilityDef[] = [
     range_tiles: 3, // synthetic-load probe from a few hexes away
     aoe_radius_tiles: 0, // single-target stress probe
     execute(ctx) {
+      const rank = ctx.rank ?? 1;
       const monster = ctx.target as { id: string };
       const shieldBonus = Math.floor(ctx.caster.shield * 0.5);
-      const amount = ctx.roll(10) + ctx.caster.attack_mod + shieldBonus;
-      return [fx.attackRollDamage(monster.id, ctx.caster.attack_mod, amount, `1d10 + ${ctx.caster.attack_mod}a + ${shieldBonus}sh`)];
+      // R1 ×1, R2 ×1.25, R3 ×1.5. Shield→damage conversion stays at 50%;
+      // only the final strike scales so the trade-off remains intuitive.
+      const mult = rank >= 3 ? 1.5 : rank >= 2 ? 1.25 : 1;
+      const base = ctx.roll(10) + ctx.caster.attack_mod + shieldBonus;
+      const amount = Math.round(base * mult);
+      const formula = rank > 1
+        ? `(1d10 + ${ctx.caster.attack_mod}a + ${shieldBonus}sh)×${mult}`
+        : `1d10 + ${ctx.caster.attack_mod}a + ${shieldBonus}sh`;
+      return [fx.attackRollDamage(monster.id, ctx.caster.attack_mod, amount, formula)];
     },
   },
   {
@@ -32,12 +40,17 @@ export const wardenAbilities: AbilityDef[] = [
     routing: "utility",
     target: "self",
     execute(ctx) {
+      const rank = ctx.rank ?? 1;
       const vit = ctx.caster.stats?.vit ?? 0;
       const str = ctx.caster.stats?.str ?? 0;
       const base = Math.floor((vit + str) / 8);
       const solo = ctx.party.length === 1;
-      const shieldAmt = solo ? base * 2 : base;
-      return [fx.taunt(ctx.caster.id, 2), fx.shield(ctx.caster.id, shieldAmt), fx.tauntFortify(ctx.caster.id, 2)];
+      // R1 ×1, R2 ×1.5, R3 ×2 shield. Fortify duration also bumps
+      // (R1 2, R2 3, R3 4 turns) so the routing window grows with rank.
+      const shieldMult = rank >= 3 ? 2 : rank >= 2 ? 1.5 : 1;
+      const fortifyTurns = rank >= 3 ? 4 : rank >= 2 ? 3 : 2;
+      const shieldAmt = Math.round((solo ? base * 2 : base) * shieldMult);
+      return [fx.taunt(ctx.caster.id, 2), fx.shield(ctx.caster.id, shieldAmt), fx.tauntFortify(ctx.caster.id, fortifyTurns)];
     },
   },
   {
@@ -51,9 +64,12 @@ export const wardenAbilities: AbilityDef[] = [
     routing: "utility",
     target: "self",
     execute(ctx) {
+      const rank = ctx.rank ?? 1;
+      // R1 20%, R2 25%, R3 30% reduction. Shield-from-armor fraction unchanged.
+      const reductionPct = rank >= 3 ? 30 : rank >= 2 ? 25 : 20;
       return [
         fx.shieldFromArmor(ctx.caster.id, 0.5),
-        fx.damageReduction(ctx.caster.id, 20, 2),
+        fx.damageReduction(ctx.caster.id, reductionPct, 2),
       ];
     },
   },

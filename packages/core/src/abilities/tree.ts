@@ -146,6 +146,15 @@ const RANK_SPEC: Record<string, { max_rank: 1 | 2 | 3; level_req_per_rank: numbe
   // sinister_queries deliberately omitted — bleed application lives in
   // combat_machine (applySinisterQueries), not execute(). Stays R1 until
   // talent_ranks plumbing lets the machine read rank.
+  // ── SRE Warden kit ──
+  bulwark_strike: { max_rank: 3, level_req_per_rank: [1, 6, 12], point_cost_per_rank: [1, 2, 3] },
+  taunt: { max_rank: 3, level_req_per_rank: [1, 6, 12], point_cost_per_rank: [1, 2, 3] },
+  brace: { max_rank: 3, level_req_per_rank: [1, 6, 12], point_cost_per_rank: [1, 2, 3] },
+  // thorns + resilient deferred — pure machine-side mechanics (reflect%
+  // and resilient-stack accumulation) with no execute() body to rank.
+  // Plumbing kit_ranks into combat_machine for those is a follow-up.
+  // armor_up deferred — passive shield regen lives in combat_machine
+  // (applyArmorUp) with execute() returning []; needs the same plumbing.
 };
 
 const DEFAULT_RANKS: { max_rank: 1; level_req_per_rank: number[]; point_cost_per_rank: number[] } = {
