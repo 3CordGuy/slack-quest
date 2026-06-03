@@ -802,12 +802,18 @@ const indexScan: AbilityDef = {
   range_tiles: 4,
   aoe_radius_tiles: 0,
   execute(ctx) {
+    const rank = ctx.rank ?? 1;
     const monster = ctx.target as MonsterSnapshot;
     const mag = ctx.caster.magic_mod;
-    const amount = ctx.roll(6) + mag;
+    const baseRoll = ctx.roll(6) + mag;
+    const mult = rank >= 3 ? 1.5 : rank >= 2 ? 1.25 : 1;
+    const amount = Math.round(baseRoll * mult);
+    // R1 3 stacks, R2 4 stacks, R3 5 stacks of poison.
+    const stacks = rank >= 3 ? 5 : rank >= 2 ? 4 : 3;
+    const formula = rank > 1 ? `1d6+${mag}m×${mult}` : `1d6+${mag}m`;
     return [
-      fx.damage(monster.id, amount, `1d6+${mag}m`, { damageType: "magic" }),
-      fx.poison(monster.id, 3, 3),
+      fx.damage(monster.id, amount, formula, { damageType: "magic" }),
+      fx.poison(monster.id, stacks, 3),
     ];
   },
 };
@@ -825,9 +831,13 @@ const dropTable: AbilityDef = {
   range_tiles: 4,
   aoe_radius_tiles: 1,
   execute(ctx) {
+    const rank = ctx.rank ?? 1;
     const mag = ctx.caster.magic_mod;
-    const amount = rollSum(ctx.roll, 2, 6) + mag;
-    const formula = `2d6+${mag}m`;
+    const baseRoll = rollSum(ctx.roll, 2, 6) + mag;
+    // R1 ×1, R2 ×1.25, R3 ×1.5. HP cost stays 5.
+    const mult = rank >= 3 ? 1.5 : rank >= 2 ? 1.25 : 1;
+    const amount = Math.round(baseRoll * mult);
+    const formula = rank > 1 ? `2d6+${mag}m×${mult}` : `2d6+${mag}m`;
     const damage = ctx.monsters.map((m) => fx.damage(m.id, amount, formula, { damageType: "magic" }));
     return [fx.deductCasterHp(ctx.caster.id, 5), ...damage];
   },
@@ -843,7 +853,12 @@ const staleCache: AbilityDef = {
   once_per_fight: false,
   nearby_radius_tiles: 2,
   execute(ctx) {
-    return [fx.restoreMana(ctx.caster.id, 1)];
+    const rank = ctx.rank ?? 1;
+    // R1 +1 mana, R2 +2 mana, R3 +3 mana + 1 HP.
+    const mana = rank >= 3 ? 3 : rank >= 2 ? 2 : 1;
+    const effects = [fx.restoreMana(ctx.caster.id, mana)];
+    if (rank >= 3) effects.push(fx.heal(ctx.caster.id, 1));
+    return effects;
   },
 };
 
@@ -856,7 +871,12 @@ const garbageCollection: AbilityDef = {
   trigger: "on_kill",
   once_per_fight: false,
   execute(ctx) {
-    return [fx.heal(ctx.caster.id, 3)];
+    const rank = ctx.rank ?? 1;
+    // R1 +3 HP, R2 +5 HP, R3 +5 HP + 1 mana.
+    const heal = rank >= 2 ? 5 : 3;
+    const effects = [fx.heal(ctx.caster.id, heal)];
+    if (rank >= 3) effects.push(fx.restoreMana(ctx.caster.id, 1));
+    return effects;
   },
 };
 
@@ -873,13 +893,16 @@ const stackTrace: AbilityDef = {
   range_tiles: 4,
   aoe_radius_tiles: 0,
   execute(ctx) {
+    const rank = ctx.rank ?? 1;
     const monster = ctx.target as MonsterSnapshot;
     const mag = ctx.caster.magic_mod;
     const dotStacks = (monster.effects ?? [])
       .filter((e) => ["bleeding", "poisoned", "burning"].includes(e.type))
       .reduce((sum, e) => sum + e.magnitude, 0);
-    const amount = Math.max(1, mag) + dotStacks * 2;
-    return [fx.damage(monster.id, amount, `${mag}m+${dotStacks}×2dot`, { damageType: "magic" })];
+    // R1 2 / R2 3 / R3 4 damage per DoT stack.
+    const perStack = rank >= 3 ? 4 : rank >= 2 ? 3 : 2;
+    const amount = Math.max(1, mag) + dotStacks * perStack;
+    return [fx.damage(monster.id, amount, `${mag}m+${dotStacks}×${perStack}dot`, { damageType: "magic" })];
   },
 };
 
@@ -1000,11 +1023,11 @@ const NEW_NODES_BY_CLASS: Record<ClassId, TalentNodeDef[]> = {
     activeNode("sre_warden", loadBalancer, "defense"),
   ],
   data_warlock: [
-    activeNode("data_warlock", indexScan, "damage"),
-    activeNode("data_warlock", stackTrace, "damage"),
-    activeNode("data_warlock", dropTable, "damage"),
-    activeNode("data_warlock", staleCache, "support"),
-    activeNode("data_warlock", garbageCollection, "support"),
+    activeNode("data_warlock", indexScan, "damage", RANK_3),
+    activeNode("data_warlock", stackTrace, "damage", RANK_3),
+    activeNode("data_warlock", dropTable, "damage", RANK_3),
+    activeNode("data_warlock", staleCache, "support", RANK_3),
+    activeNode("data_warlock", garbageCollection, "support", RANK_3),
   ],
 };
 
