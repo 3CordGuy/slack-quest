@@ -553,12 +553,18 @@ const codeAudit: AbilityDef = {
   range_tiles: 3,
   aoe_radius_tiles: 0,
   execute(ctx) {
+    const rank = ctx.rank ?? 1;
     const monster = ctx.target as MonsterSnapshot;
     const mag = ctx.caster.magic_mod;
-    const amount = ctx.roll(6) + mag;
+    const baseRoll = ctx.roll(6) + mag;
+    // R1 ×1 / 6 turns, R2 ×1.25 / 8 turns, R3 ×1.5 / 10 turns.
+    const mult = rank >= 3 ? 1.5 : rank >= 2 ? 1.25 : 1;
+    const amount = Math.round(baseRoll * mult);
+    const hexTurns = rank >= 3 ? 10 : rank >= 2 ? 8 : 6;
+    const formula = rank > 1 ? `1d6+${mag}m×${mult}` : `1d6+${mag}m`;
     return [
-      fx.damage(monster.id, amount, `1d6+${mag}m`, { damageType: "magic" }),
-      fx.hexMonster(monster.id, 6),
+      fx.damage(monster.id, amount, formula, { damageType: "magic" }),
+      fx.hexMonster(monster.id, hexTurns),
     ];
   },
 };
@@ -574,11 +580,16 @@ const smokeTest: AbilityDef = {
   routing: "utility",
   target: "self",
   execute(ctx) {
+    const rank = ctx.rank ?? 1;
     const mag = ctx.caster.magic_mod;
-    const amount = ctx.roll(4) + mag;
-    const formula = `1d4+${mag}m`;
+    const baseRoll = ctx.roll(4) + mag;
+    // R1 ×1 / 1 swing, R2 ×1.25 / 2 swings, R3 ×1.5 / 3 swings.
+    const mult = rank >= 3 ? 1.5 : rank >= 2 ? 1.25 : 1;
+    const amount = Math.round(baseRoll * mult);
+    const swings = rank >= 3 ? 3 : rank >= 2 ? 2 : 1;
+    const formula = rank > 1 ? `1d4+${mag}m×${mult}` : `1d4+${mag}m`;
     const damageEffects = ctx.monsters.map((m) => fx.damage(m.id, amount, formula, { damageType: "magic" }));
-    return [fx.vanish(ctx.caster.id, 1), ...damageEffects];
+    return [fx.vanish(ctx.caster.id, swings), ...damageEffects];
   },
 };
 
@@ -599,12 +610,17 @@ const hotpath: AbilityDef = {
   range_tiles: 4,
   aoe_radius_tiles: 0,
   execute(ctx) {
+    const rank = ctx.rank ?? 1;
     const monster = ctx.target as MonsterSnapshot;
     const atk = ctx.caster.attack_mod;
-    const amount = ctx.roll(8) + atk;
+    const baseRoll = ctx.roll(8) + atk;
+    // R1 ×1, R2 ×1.25, R3 ×1.5. Leap behavior is unchanged across ranks.
+    const mult = rank >= 3 ? 1.5 : rank >= 2 ? 1.25 : 1;
+    const amount = Math.round(baseRoll * mult);
+    const formula = rank > 1 ? `1d8+${atk}a×${mult}` : `1d8+${atk}a`;
     return [
       fx.leapAdjacentTo(ctx.caster.id, monster.id),
-      fx.damage(monster.id, amount, `1d8+${atk}a`, { damageType: "physical" }),
+      fx.damage(monster.id, amount, formula, { damageType: "physical" }),
     ];
   },
 };
@@ -630,8 +646,13 @@ const silentMode: AbilityDef = {
   trigger: "on_action",
   once_per_fight: false,
   execute(ctx) {
+    const rank = ctx.rank ?? 1;
     if (ctx.caster.hp < ctx.caster.max_hp) return [];
-    return [fx.barkskin(ctx.caster.id, 1, 1)];
+    // R1 +1 AC, R2 +2 AC, R3 +2 AC (dodge bump deferred — needs a new fx
+    // kind for transient dodge buffs, or plumbing rank into the AGI
+    // dodge-check site in combat_machine).
+    const bonus = rank >= 2 ? 2 : 1;
+    return [fx.barkskin(ctx.caster.id, bonus, 1)];
   },
 };
 
@@ -920,10 +941,13 @@ const NEW_NODES_BY_CLASS: Record<ClassId, TalentNodeDef[]> = {
     activeNode("staff_sage", cacheWarmer, "support"),
   ],
   refactor_rogue: [
-    activeNode("refactor_rogue", codeAudit, "control"),
-    activeNode("refactor_rogue", smokeTest, "utility"),
-    activeNode("refactor_rogue", silentMode, "defense"),
-    activeNode("refactor_rogue", hotpath, "damage"),
+    activeNode("refactor_rogue", codeAudit, "control", RANK_3),
+    activeNode("refactor_rogue", smokeTest, "utility", RANK_3),
+    activeNode("refactor_rogue", silentMode, "defense", RANK_3),
+    activeNode("refactor_rogue", hotpath, "damage", RANK_3),
+    // cherryPick stays R1 — its multiplier is hardcoded in
+    // handleDamageAbility (cherryPickMult). Scaling it needs the same
+    // CombatFighter.talent_ranks plumbing as observability/failsafe. Deferred.
     activeNode("refactor_rogue", cherryPick, "damage"),
   ],
   sre_warden: [
