@@ -25,13 +25,22 @@ export const warlockAbilities: AbilityDef[] = [
     range_tiles: 4, // siphon a remote target
     aoe_radius_tiles: 0, // single-tap drain
     execute(ctx) {
+      const rank = ctx.rank ?? 1;
       const monster = ctx.target as MonsterSnapshot;
       const roll1 = ctx.roll(6);
       const roll2 = ctx.roll(6);
-      const damage = roll1 + roll2 + ctx.caster.magic_mod;
-      const heal = Math.floor(damage / 2);
+      const baseDamage = roll1 + roll2 + ctx.caster.magic_mod;
+      // R1 ×1, R2 ×1.25, R3 ×1.5. Lifesteal stays half at R1/R2; R3 boosts
+      // lifesteal ratio by ×1.5 (i.e. ~75% of damage healed).
+      const mult = rank >= 3 ? 1.5 : rank >= 2 ? 1.25 : 1;
+      const damage = Math.round(baseDamage * mult);
+      const lifestealMult = rank >= 3 ? 1.5 : 1;
+      const heal = Math.floor((damage / 2) * lifestealMult);
+      const formula = rank > 1
+        ? `2d6(${roll1}+${roll2})+${ctx.caster.magic_mod}m×${mult}`
+        : `2d6(${roll1}+${roll2})+${ctx.caster.magic_mod}m`;
       return [
-        fx.damage(monster.id, damage, `2d6(${roll1}+${roll2})+${ctx.caster.magic_mod}m`),
+        fx.damage(monster.id, damage, formula),
         fx.heal(ctx.caster.id, heal),
       ];
     },
@@ -48,8 +57,11 @@ export const warlockAbilities: AbilityDef[] = [
     range_tiles: 5, // hex from across the battlefield
     aoe_radius_tiles: 0, // pinpoint corruption
     execute(ctx) {
+      const rank = ctx.rank ?? 1;
       const monster = ctx.target as MonsterSnapshot;
-      return [fx.hexMonster(monster.id, 10)];
+      // R1 10 turns, R2 +2 (12), R3 +4 (14).
+      const duration = rank >= 3 ? 14 : rank >= 2 ? 12 : 10;
+      return [fx.hexMonster(monster.id, duration)];
     },
   },
   {
@@ -63,8 +75,14 @@ export const warlockAbilities: AbilityDef[] = [
     routing: "utility",
     target: "self",
     execute(ctx) {
+      const rank = ctx.rank ?? 1;
       const mag = ctx.caster.magic_mod;
-      const hp = 5 + ctx.caster.level + mag;
+      const baseHp = 5 + ctx.caster.level + mag;
+      // R2 hp ×1.25 / mag ×1.25, R3 hp ×1.5 / mag ×1.5.
+      const hpMult = rank >= 3 ? 1.5 : rank >= 2 ? 1.25 : 1;
+      const magMult = rank >= 3 ? 1.5 : rank >= 2 ? 1.25 : 1;
+      const hp = Math.round(baseHp * hpMult);
+      const scaledMag = Math.max(0, Math.round(mag * magMult));
       return [
         fx.summonAllyNpc(
           {
@@ -72,8 +90,8 @@ export const warlockAbilities: AbilityDef[] = [
             class_label: "Service Worker",
             level: ctx.caster.level,
             hp,
-            attack_mod: mag,
-            weapon_power: mag,
+            attack_mod: scaledMag,
+            weapon_power: scaledMag,
             position: "front",
             weapon_range: "melee",
             damage_roll: '0'
@@ -95,15 +113,18 @@ export const warlockAbilities: AbilityDef[] = [
     range_tiles: 5, // ranged dark-magic burst
     aoe_radius_tiles: 1, // consume-and-burst splashes adjacent foes
     execute(ctx) {
+      const rank = ctx.rank ?? 1;
       const monster = ctx.target as MonsterSnapshot;
       const bleedEffect = monster.effects?.find((e) => e.type === "bleeding");
       const stacks = bleedEffect?.magnitude ?? 0;
       if (stacks === 0) return [];
-      const dmgPerStack = 2 + Math.floor(ctx.caster.magic_mod / 4);
+      // R1 +0 / R2 +1 / R3 +2 bonus damage per stack.
+      const rankBonus = rank >= 3 ? 2 : rank >= 2 ? 1 : 0;
+      const dmgPerStack = 2 + Math.floor(ctx.caster.magic_mod / 4) + rankBonus;
       const total = stacks * dmgPerStack;
       return [
         fx.consumeMonsterBleed(monster.id),
-        fx.damage(monster.id, total, `${stacks}×${dmgPerStack}(3+${Math.floor(ctx.caster.magic_mod / 4)})`),
+        fx.damage(monster.id, total, `${stacks}×${dmgPerStack}(3+${Math.floor(ctx.caster.magic_mod / 4)}${rankBonus ? `+${rankBonus}r` : ""})`),
       ];
     },
   },

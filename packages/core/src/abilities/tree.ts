@@ -138,6 +138,14 @@ const RANK_SPEC: Record<string, { max_rank: 1 | 2 | 3; level_req_per_rank: numbe
   // trigger: "always_on") that returns no effects from execute(). Its
   // magic-mod-to-attack/damage and on-hit heal logic lives machine-side and
   // needs talent_ranks plumbing into that helper before it can graduate. R1.
+  // ── Data Warlock kit ──
+  leech_life: { max_rank: 3, level_req_per_rank: [1, 6, 12], point_cost_per_rank: [1, 2, 3] },
+  hex: { max_rank: 3, level_req_per_rank: [1, 6, 12], point_cost_per_rank: [1, 2, 3] },
+  summon_imp: { max_rank: 3, level_req_per_rank: [1, 6, 12], point_cost_per_rank: [1, 2, 3] },
+  forbidden_sql: { max_rank: 3, level_req_per_rank: [1, 6, 12], point_cost_per_rank: [1, 2, 3] },
+  // sinister_queries deliberately omitted — bleed application lives in
+  // combat_machine (applySinisterQueries), not execute(). Stays R1 until
+  // talent_ranks plumbing lets the machine read rank.
 };
 
 const DEFAULT_RANKS: { max_rank: 1; level_req_per_rank: number[]; point_cost_per_rank: number[] } = {
