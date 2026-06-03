@@ -655,6 +655,7 @@ export type CombatEvent =
   | { type: "passive_load_balancer"; warden: ActorId; target: ActorId; redirect_damage: number }
   | { type: "passive_cache_warmer_primed"; actor: ActorId }
   | { type: "passive_cache_warmer_freed"; actor: ActorId; ability_id: string }
+  | { type: "passive_failsafe_triggered"; actor: ActorId }
   | {
       type: "elemental_proc";
       actor: ActorId;
@@ -2403,15 +2404,38 @@ function handleMonsterAct(state: CombatState, roll: RollFn): StepResult {
     : null;
   const targetHpDamage = protectPaladin ? Math.floor(postLoadBalancerHpDamage / 2) : postLoadBalancerHpDamage;
   const paladinProtectDamage = protectPaladin ? (postLoadBalancerHpDamage - targetHpDamage) : 0;
-  const targetNewHp = Math.max(0, target.hp - targetHpDamage);
-  const paladinProtectNewHp = protectPaladin ? Math.max(0, protectPaladin.hp - paladinProtectDamage) : null;
-  const wardenNewHp = loadBalancerWarden ? Math.max(0, loadBalancerWarden.hp - loadBalancerDamage) : null;
+  // DevOps Mage — Failsafe: once-per-fight death save for any party member
+  // (mage or otherwise) who has the passive equipped. Floors HP at 1 instead
+  // of downing them. Applied at each damage-take point so a redirected hit
+  // (Load Balancer / Protect) also gets the save.
+  const targetFailsafe = applyFailsafe(s, target, Math.max(0, target.hp - targetHpDamage));
+  const targetNewHp = targetFailsafe.newHp;
+  const paladinFailsafe = protectPaladin
+    ? applyFailsafe(s, protectPaladin, Math.max(0, protectPaladin.hp - paladinProtectDamage))
+    : { newHp: 0, triggered: false };
+  const paladinProtectNewHp = protectPaladin ? paladinFailsafe.newHp : null;
+  const wardenFailsafe = loadBalancerWarden
+    ? applyFailsafe(s, loadBalancerWarden, Math.max(0, loadBalancerWarden.hp - loadBalancerDamage))
+    : { newHp: 0, triggered: false };
+  const wardenNewHp = loadBalancerWarden ? wardenFailsafe.newHp : null;
 
   if (loadBalancerWarden) {
     events.push({ type: "passive_load_balancer", warden: loadBalancerWarden.id, target: target.id, redirect_damage: loadBalancerDamage });
   }
   if (protectPaladin) {
     events.push({ type: "protect_triggered", paladin: protectPaladin.id, target: target.id, target_damage: targetHpDamage, paladin_damage: paladinProtectDamage });
+  }
+  if (targetFailsafe.triggered) {
+    s = markPassiveUsed(s, target.id, "failsafe");
+    events.push({ type: "passive_failsafe_triggered", actor: target.id });
+  }
+  if (paladinFailsafe.triggered && protectPaladin) {
+    s = markPassiveUsed(s, protectPaladin.id, "failsafe");
+    events.push({ type: "passive_failsafe_triggered", actor: protectPaladin.id });
+  }
+  if (wardenFailsafe.triggered && loadBalancerWarden) {
+    s = markPassiveUsed(s, loadBalancerWarden.id, "failsafe");
+    events.push({ type: "passive_failsafe_triggered", actor: loadBalancerWarden.id });
   }
 
   const updatedFighters = s.fighters.map((f) => {
@@ -4420,6 +4444,22 @@ function fighterHasPassive(fighter: CombatFighter, passiveId: string): boolean {
 const OBSERVABILITY_DEBUFF_TYPES: ReadonlySet<EffectType> = new Set<EffectType>([
   "bleeding", "burning", "poisoned", "entangled", "stunned", "hexed", "shocked", "frozen",
 ]);
+// DevOps Mage — Failsafe: once per fight, a lethal blow leaves the mage at
+// 1 HP instead of downing them. Caller passes the proposed new HP; if it's
+// ≤ 0 AND the fighter has the passive equipped AND hasn't triggered it this
+// fight, the function returns `{ newHp: 1, triggered: true }` so the caller
+// can mark the passive used + emit the event. Otherwise pass-through.
+function applyFailsafe(
+  state: CombatState,
+  fighter: CombatFighter,
+  proposedNewHp: number,
+): { newHp: number; triggered: boolean } {
+  if (proposedNewHp > 0 || fighter.hp <= 0) return { newHp: proposedNewHp, triggered: false };
+  if (!fighterHasPassive(fighter, "failsafe")) return { newHp: proposedNewHp, triggered: false };
+  if (isPassiveUsed(state, fighter.id, "failsafe")) return { newHp: proposedNewHp, triggered: false };
+  return { newHp: 1, triggered: true };
+}
+
 // Frontend Bard — Earworm: every party member with the passive equipped
 // gets +1 mana when ANY party crit lands (their own crit also counts —
 // the bard is "in the party"). Capped at max_mana. Returns the modified
