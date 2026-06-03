@@ -7720,6 +7720,10 @@ async function buildInitialCombatState(
       // like Cherry-Pick that don't auto-apply to every member of the class.
       // Strips out the null placeholders the loadout JSON keeps for empty slots.
       equipped_passive_ids: (member.ability_loadout?.passive ?? []).filter((id): id is string => !!id),
+      // Per-ability ranks the player owns via the talent tree. Read by the
+      // cast handler to set ctx.rank so rank-aware execute() branches fire.
+      // Defaults to {} when no ranks have been bought.
+      talent_ranks: await getCharacterTalents(db, member.slack_user_id),
     });
 
     // Inject hired merc as an additional CombatFighter for this member.

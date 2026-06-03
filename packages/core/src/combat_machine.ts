@@ -150,6 +150,11 @@ export interface CombatFighter {
   // backward compat — legacy combats and Slack init leave it undefined and
   // only kit passives apply.
   equipped_passive_ids?: string[];
+  // Talent-tree owned rank per ability id (covers both kit abilities and
+  // tree-only nodes). The cast handler reads this to set ctx.rank so
+  // rank-aware execute() branches fire. Undefined = treat all abilities as
+  // rank 1 (legacy combats, fresh characters who haven't bought any ranks).
+  talent_ranks?: Record<string, number>;
 }
 
 export interface GauntletWaveSpec {
@@ -2787,6 +2792,7 @@ function handleAoeDamageAbility(
     party: state.fighters.filter((f) => f.hp > 0),
     monsters: liveMonsters,
     roll,
+    rank: tickedActor.talent_ranks?.[ability.id] ?? 1,
   };
 
   const effects = ability.execute(ctx);
@@ -3136,6 +3142,7 @@ function handleAbility(
       monsters: sPostMana.monsters.filter((m) => m.hp > 0),
       target: targetMonster,
       roll,
+      rank: tickedActor.talent_ranks?.[ability.id] ?? 1,
     };
     return handleDamageAbility(sPostMana, action.actor, tickedActor, ability, ctx, targetMonster, preEvents, roll);
   }
@@ -3185,6 +3192,7 @@ function handleAbility(
     roll,
     position: action.position,
     protected_ally_id: protectForCtx?.paladin_id === action.actor ? protectForCtx?.target_id : undefined,
+    rank: tickedActor.talent_ranks?.[ability.id] ?? 1,
   };
   return applyUtilityAbilityEffects(sPostMana, ability.execute(ctx), action.actor, preEvents, roll);
 }
