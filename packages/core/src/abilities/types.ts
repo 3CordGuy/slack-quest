@@ -26,6 +26,12 @@ export interface TalentNodeDef {
   point_cost_per_rank: number[];
   prereq?: { node_id: string; min_rank: number }[];
   ability: AbilityDef;
+  // Optional one-line description of what each rank bump delivers. Surfaced
+  // in the AbilitiesPanel detail popover next to the "Rank up to N" button
+  // and in the hover tooltip so players see what they're buying before
+  // they spend points. Format: short comma- or dot-separated bumps like
+  // "R2: +25% dmg. R3: +50% dmg." Omit for single-rank nodes.
+  rank_progression?: string;
 }
 
 export interface AbilityLoadout {

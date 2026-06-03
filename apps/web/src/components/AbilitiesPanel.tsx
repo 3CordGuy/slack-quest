@@ -445,6 +445,11 @@ export function abilityTooltipContent(node: TalentNodeDef, rank?: number): JSX.E
         {node.category} · {a.kind}
       </div>
       <div style={{ fontSize: 12, color: "#d1d5db", lineHeight: 1.45, marginBottom: 6 }}>{a.blurb}</div>
+      {node.rank_progression && (
+        <div style={{ fontSize: 11, color: "#a78bfa", lineHeight: 1.45, marginBottom: 6, fontStyle: "italic" }}>
+          {node.rank_progression}
+        </div>
+      )}
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap", fontSize: 11, color: "#9ca3af" }}>
         {mana !== null && mana > 0 && <span>{mana}✦ mana</span>}
         {cd ? <span>{cd}t CD</span> : null}
@@ -677,6 +682,23 @@ function NodeDetail({
           {(node.ability as { aoe_radius_tiles?: number }).aoe_radius_tiles !== undefined && (node.ability as { aoe_radius_tiles: number }).aoe_radius_tiles > 0 && (
             <span>AoE {(node.ability as { aoe_radius_tiles: number }).aoe_radius_tiles}</span>
           )}
+        </div>
+      )}
+      {/* Rank progression — surfaces the R2/R3 effects so players can see
+          what they're buying before they spend points. Only shown for nodes
+          with max_rank > 1 that opted into a progression description. */}
+      {node.max_rank > 1 && node.rank_progression && (
+        <div style={{
+          fontSize: 11,
+          color: "#a78bfa",
+          background: "#1e1c2e",
+          border: "1px solid #c084fc33",
+          borderRadius: 6,
+          padding: "6px 10px",
+          lineHeight: 1.45,
+        }}>
+          <span style={{ fontWeight: 700, marginRight: 6, color: "#c084fc", textTransform: "uppercase", letterSpacing: 0.5, fontSize: 10 }}>Ranks</span>
+          {node.rank_progression}
         </div>
       )}
       <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
