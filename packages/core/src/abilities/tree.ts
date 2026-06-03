@@ -111,6 +111,15 @@ const RANK_SPEC: Record<string, { max_rank: 1 | 2 | 3; level_req_per_rank: numbe
   // bardic_aura deliberately omitted — Morale Boost's damage bonus is read
   // inline by the combat machine (not execute()), same situation as Mana Font.
   // Plumbing kit_ranks to the bonus formula is a follow-up; stays R1.
+  // ── Refactor Rogue kit ──
+  vanish: { max_rank: 3, level_req_per_rank: [1, 6, 12], point_cost_per_rank: [1, 2, 3] },
+  envenom_weapon: { max_rank: 3, level_req_per_rank: [1, 6, 12], point_cost_per_rank: [1, 2, 3] },
+  backstab: { max_rank: 3, level_req_per_rank: [1, 6, 12], point_cost_per_rank: [1, 2, 3] },
+  debilitate: { max_rank: 3, level_req_per_rank: [1, 6, 12], point_cost_per_rank: [1, 2, 3] },
+  // lethal_strikes deliberately omitted — its crit-bleed logic lives in
+  // combat_machine (applyRogueLethalStrike), not execute(). Plumbing
+  // kit_ranks through CombatFighter so the machine can read rank is a
+  // follow-up; for now Lethal Strikes stays R1.
 };
 
 const DEFAULT_RANKS: { max_rank: 1; level_req_per_rank: number[]; point_cost_per_rank: number[] } = {
