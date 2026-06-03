@@ -237,11 +237,17 @@ const pruning: AbilityDef = {
   range_tiles: 1,
   aoe_radius_tiles: 0,
   execute(ctx) {
+    const rank = ctx.rank ?? 1;
     const monster = ctx.target as MonsterSnapshot;
     const atk = ctx.caster.attack_mod;
-    const amount = ctx.roll(6) + atk;
+    // R1 ×1, R2 ×1.25, R3 ×1.5. Bleed-stack bump deferred — extra stacks shift
+    // the ability identity toward a bleed-stacker rather than a strike.
+    const baseRoll = ctx.roll(6) + atk;
+    const mult = rank >= 3 ? 1.5 : rank >= 2 ? 1.25 : 1;
+    const amount = Math.round(baseRoll * mult);
+    const formula = rank > 1 ? `1d6+${atk}a×${mult}` : `1d6+${atk}a`;
     return [
-      fx.damage(monster.id, amount, `1d6+${atk}a`, { damageType: "physical" }),
+      fx.damage(monster.id, amount, formula, { damageType: "physical" }),
       fx.bleed(monster.id, 3, 2),
     ];
   },
@@ -260,9 +266,12 @@ const mycelialWeb: AbilityDef = {
   range_tiles: 3,
   aoe_radius_tiles: 2,
   execute(ctx) {
+    const rank = ctx.rank ?? 1;
     const mag = ctx.caster.magic_mod;
-    const amount = rollSum(ctx.roll, 2, 6) + mag;
-    const formula = `2d6+${mag}m`;
+    const baseRoll = rollSum(ctx.roll, 2, 6) + mag;
+    const mult = rank >= 3 ? 1.5 : rank >= 2 ? 1.25 : 1;
+    const amount = Math.round(baseRoll * mult);
+    const formula = rank > 1 ? `2d6+${mag}m×${mult}` : `2d6+${mag}m`;
     const damageEffects = ctx.monsters.map((m) => fx.damage(m.id, amount, formula, { damageType: "magic" }));
     // Root one random enemy in addition to AoE damage; entangle reuses the
     // existing Druid Deadlock primitive.
@@ -284,8 +293,12 @@ const compostHeap: AbilityDef = {
   routing: "utility",
   target: "all_allies",
   execute(ctx) {
+    const rank = ctx.rank ?? 1;
+    // R1 mag/turn, R2 ×1.5 regen, R3 ×2 regen.
     const mag = Math.max(1, ctx.caster.magic_mod);
-    return ctx.party.map((p) => fx.fighterRegen(p.id, mag, 3));
+    const mult = rank >= 3 ? 2 : rank >= 2 ? 1.5 : 1;
+    const amount = Math.max(1, Math.round(mag * mult));
+    return ctx.party.map((p) => fx.fighterRegen(p.id, amount, 3));
   },
 };
 
@@ -298,7 +311,11 @@ const deepRoots: AbilityDef = {
   trigger: "on_action",
   once_per_fight: true,
   execute(ctx) {
-    return [fx.barkskin(ctx.caster.id, 2, 99)];
+    const rank = ctx.rank ?? 1;
+    // R1 +2 AC, R2 +3 AC, R3 +4 AC. on_action passives still pass ctx.rank
+    // through the engine, so we scale the barkskin bonus here.
+    const bonus = rank >= 3 ? 4 : rank >= 2 ? 3 : 2;
+    return [fx.barkskin(ctx.caster.id, bonus, 99)];
   },
 };
 
@@ -311,7 +328,10 @@ const cronJob: AbilityDef = {
   trigger: "on_action",
   once_per_fight: false,
   execute(ctx) {
-    return [fx.heal(ctx.caster.id, 1)];
+    const rank = ctx.rank ?? 1;
+    // R1 1 HP/turn, R2 2 HP/turn, R3 3 HP/turn.
+    const amount = rank >= 3 ? 3 : rank >= 2 ? 2 : 1;
+    return [fx.heal(ctx.caster.id, amount)];
   },
 };
 
@@ -928,11 +948,15 @@ const NEW_NODES_BY_CLASS: Record<ClassId, TalentNodeDef[]> = {
     activeNode("qa_paladin", defensiveProgramming, "defense"),
   ],
   backend_druid: [
-    activeNode("backend_druid", pruning, "damage"),
-    activeNode("backend_druid", mycelialWeb, "damage"),
-    activeNode("backend_druid", compostHeap, "support"),
-    activeNode("backend_druid", deepRoots, "defense"),
-    activeNode("backend_druid", cronJob, "support"),
+    activeNode("backend_druid", pruning, "damage", RANK_3),
+    activeNode("backend_druid", mycelialWeb, "damage", RANK_3),
+    activeNode("backend_druid", compostHeap, "support", RANK_3),
+    // deepRoots + cronJob are passives but their execute() still returns
+    // effects (on_action trigger), and ctx.rank is set by the engine — so
+    // scaling lives in execute() like the actives. No machine-side helper
+    // changes required.
+    activeNode("backend_druid", deepRoots, "defense", RANK_3),
+    activeNode("backend_druid", cronJob, "support", RANK_3),
   ],
   frontend_bard: [
     activeNode("frontend_bard", standupMeeting, "support", RANK_3),
