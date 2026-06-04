@@ -2763,6 +2763,117 @@ export function CombatPage({
         </div>
       )}
 
+      {/* Mobile participant strip — battlefield-first mode hides the
+          right rail (too narrow on phones), so the same dock pattern
+          lives here as a horizontal scroll strip between the map and
+          the action bar. Tap a card to open its full character sheet. */}
+      {state && state.hex_range_enabled && isMobile && (() => {
+        const allFighters = state.fighters;
+        const liveMons = state.monsters.filter((m) => m.hp > 0);
+        if (allFighters.length === 0 && liveMons.length === 0) return null;
+        return (
+          <div style={{
+            background: "var(--bg-deep)",
+            borderTop: "1px solid var(--border-base)",
+            borderBottom: "1px solid var(--border-faint)",
+            padding: "6px 8px",
+            flexShrink: 0,
+            zIndex: 8,
+            overflowX: "auto",
+            overflowY: "hidden",
+            WebkitOverflowScrolling: "touch",
+          }}>
+            <div style={{
+              display: "flex",
+              gap: 6,
+              minWidth: "min-content",
+            }}>
+              {allFighters.map((f) => {
+                const pawn: PawnLike = {
+                  id: f.id, name: f.name,
+                  hp: f.hp, max_hp: f.max_hp,
+                  mana: f.mana, max_mana: f.max_mana,
+                  class: f.class, level: f.level,
+                  shield: f.shield,
+                  armor_power: f.armor_power,
+                  effects: (f.effects ?? []) as never,
+                };
+                const themeColor = f.id === selfId ? "#7dd3fc" : "#a78bfa";
+                return (
+                  <div key={f.id} style={{ flex: "0 0 200px" }}>
+                    <RailParticipantCard
+                      pawn={pawn}
+                      side="fighter"
+                      themeColor={themeColor}
+                      isSelf={f.id === selfId}
+                      isCurrent={currentActorId === f.id}
+                      isHovered={hoveredPawnId === f.id}
+                      isPinned={pinnedPawnId === f.id}
+                      onClick={() => {
+                        // Mobile: single tap opens the sheet directly —
+                        // no two-step pin dance.
+                        setPinnedPawnId(f.id);
+                        setSheetSubject({
+                          pawn,
+                          side: "fighter",
+                          themeColor,
+                          isSelf: f.id === selfId,
+                          loadout: f.id === selfId ? equippedLoadout ?? undefined : undefined,
+                          equippedPassiveIds: f.equipped_passive_ids,
+                        });
+                      }}
+                    />
+                  </div>
+                );
+              })}
+              {liveMons.map((m) => {
+                const pawn: PawnLike = {
+                  id: m.id ?? "", name: m.name,
+                  hp: m.hp, max_hp: m.max_hp,
+                  tier: m.tier, is_boss: m.is_boss,
+                  shield: m.shield ?? 0,
+                  armor_power: 2 * m.tier,
+                  art_url: m.art_url,
+                  effects: (m.effects ?? []) as never,
+                };
+                const themeColor = m.is_boss ? "#f87171" : "#fca5a5";
+                const monsterId = m.id ?? "";
+                return (
+                  <div key={monsterId} style={{ flex: "0 0 200px" }}>
+                    <RailParticipantCard
+                      pawn={pawn}
+                      side="monster"
+                      themeColor={themeColor}
+                      isCurrent={currentActorId === m.id}
+                      isHovered={hoveredPawnId === monsterId}
+                      isPinned={pinnedPawnId === monsterId}
+                      onClick={() => {
+                        setPinnedPawnId(monsterId);
+                        setSheetSubject({
+                          pawn,
+                          side: "monster",
+                          themeColor,
+                          monsterExtras: {
+                            weapon_range: m.weapon_range,
+                            range_tiles: m.range_tiles,
+                            move_range: m.move_range,
+                            specials: m.specials,
+                            element_weakness: m.element_weakness,
+                            element_resistance: m.element_resistance,
+                            attack_damage_type: m.attack_damage_type,
+                            boss_phase: m.boss_phase,
+                          },
+                        });
+                      }}
+                    />
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })()}
+
       {/* Pickers — all portal-based modals */}
       {state?.status === "active" && itemPicker === "open" && (
         <InventoryFullScreen
