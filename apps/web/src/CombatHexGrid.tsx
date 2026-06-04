@@ -263,6 +263,55 @@ const PARTICLE_CONFIG: Record<ParticleKind, ParticleConfig> = {
   loot:     { count: 24, speed: 0.18, size: 3, life: 900, colors: ["#fde047", "#fbbf24", "#fde68a", "#ffffff"], gravity: -0.0005 },
 };
 
+// Hand-authored Path2D shapes — one per ParticleShape, built once at module
+// load and reused for every particle. Cheaper than the per-particle
+// imperative draws they replaced (a single fill() vs. multiple beginPath +
+// moveTo/lineTo chains) and cheaper than fetching game-icons SVGs (no
+// network, no parse, no async). All paths are normalized to a [-1, 1]
+// unit space; the render loop scales by the particle's size.
+function buildEmberPath(): Path2D {
+  // Teardrop pointing up (-y). One quadratic curve per side.
+  const p = new Path2D();
+  p.moveTo(0, -1);                              // sharp tip
+  p.quadraticCurveTo(0.85, -0.15, 0, 0.85);     // right belly down to base
+  p.quadraticCurveTo(-0.85, -0.15, 0, -1);      // left belly back up
+  p.closePath();
+  return p;
+}
+function buildSnowflakePath(): Path2D {
+  // Six arms with two short bristles each — reads as a crystal at small
+  // sizes. Stroked, not filled (lineWidth set in the render loop).
+  const p = new Path2D();
+  for (let i = 0; i < 6; i++) {
+    const a = (Math.PI / 3) * i;
+    const cx = Math.cos(a), cy = Math.sin(a);
+    p.moveTo(0, 0);
+    p.lineTo(cx, cy);
+    const bx = cx * 0.6, by = cy * 0.6;
+    const ba = a + Math.PI / 3;
+    const bristleCos = Math.cos(ba) * 0.28, bristleSin = Math.sin(ba) * 0.28;
+    p.moveTo(bx, by);
+    p.lineTo(bx + bristleCos, by + bristleSin);
+    p.moveTo(bx, by);
+    p.lineTo(bx - bristleCos, by - bristleSin);
+  }
+  return p;
+}
+function buildSparkPath(): Path2D {
+  // Three-segment forked streak. Stroked, asymmetric so rotation reads.
+  const p = new Path2D();
+  p.moveTo(-1, 0);
+  p.lineTo(0.15, 0.18);
+  p.lineTo(0.45, -0.05);
+  p.lineTo(1, 0.05);
+  return p;
+}
+const SHAPE_PATHS: Record<Exclude<ParticleShape, "circle">, Path2D> = {
+  ember: buildEmberPath(),
+  snowflake: buildSnowflakePath(),
+  spark: buildSparkPath(),
+};
+
 // Projectile flight time. Bumped fire/ice from ~300ms to ~600ms so they
 // actually read as travelling — at 300ms the trail barely registered before
 // the impact burst started. Lightning stays near-instant by design.
@@ -1567,70 +1616,71 @@ export function CombatHexGrid({
         const sz = p.size * (1 - lifeT * 0.35);
 
         if (p.shape === "ember") {
-          // Glowing teardrop: bright additive core + soft halo. Reads as
-          // a hot ember rising off the impact tile.
+          // Soft additive halo (a single arc) + the pre-built ember
+          // teardrop on top. The teardrop is filled with the particle's
+          // color; the halo gives it the white-hot glow.
+          ctx!.save();
           ctx!.globalCompositeOperation = "lighter";
           ctx!.globalAlpha = alpha * 0.55;
           ctx!.fillStyle = p.color;
           ctx!.beginPath();
-          ctx!.arc(p.x, p.y, sz * 2.2, 0, Math.PI * 2);
+          ctx!.arc(p.x, p.y, sz * 2.4, 0, Math.PI * 2);
           ctx!.fill();
+          // Pre-built teardrop, scaled + tinted per particle.
           ctx!.globalAlpha = alpha;
+          ctx!.translate(p.x, p.y);
+          // Slight wobble around the upward axis so embers don't look
+          // identical — uses the particle's birth time as a stable seed.
+          ctx!.rotate(Math.sin(age * 0.004 + p.born * 0.0003) * 0.15);
+          ctx!.scale(sz * 0.9, sz * 0.9);
+          ctx!.fillStyle = p.color;
+          ctx!.fill(SHAPE_PATHS.ember);
+          // Hot white tip
           ctx!.fillStyle = "#ffffff";
+          ctx!.globalAlpha = alpha * 0.85;
           ctx!.beginPath();
-          ctx!.arc(p.x, p.y, Math.max(0.5, sz * 0.55), 0, Math.PI * 2);
+          ctx!.arc(0, -0.5, 0.28, 0, Math.PI * 2);
           ctx!.fill();
-          ctx!.globalCompositeOperation = "source-over";
+          ctx!.restore();
         } else if (p.shape === "snowflake") {
-          // Six-armed crystal. Slowly rotating + twinkling. Rendered as
-          // three crossed line segments — cheap but unmistakably icy.
+          // Single stroke of the pre-built 6-arm crystal + a center pip.
           ctx!.save();
           ctx!.translate(p.x, p.y);
           ctx!.rotate(p.rot ?? 0);
-          ctx!.globalAlpha = alpha * 0.85;
+          const arm = sz * 1.6;
+          ctx!.scale(arm, arm);
+          ctx!.globalAlpha = alpha * 0.9;
           ctx!.strokeStyle = p.color;
-          ctx!.lineWidth = Math.max(0.6, sz * 0.4);
+          ctx!.lineWidth = Math.max(0.04, 0.2 / arm * sz); // ≈ sz*0.18 px in screen space
           ctx!.lineCap = "round";
-          for (let arm = 0; arm < 3; arm++) {
-            const a = (Math.PI / 3) * arm;
-            ctx!.beginPath();
-            ctx!.moveTo(Math.cos(a) * -sz * 1.6, Math.sin(a) * -sz * 1.6);
-            ctx!.lineTo(Math.cos(a) * sz * 1.6, Math.sin(a) * sz * 1.6);
-            ctx!.stroke();
-          }
-          // Bright center pip
+          ctx!.stroke(SHAPE_PATHS.snowflake);
+          // Bright center pip (in unit-space coords now)
           ctx!.globalAlpha = alpha;
           ctx!.fillStyle = "#ffffff";
           ctx!.beginPath();
-          ctx!.arc(0, 0, Math.max(0.6, sz * 0.45), 0, Math.PI * 2);
+          ctx!.arc(0, 0, 0.22, 0, Math.PI * 2);
           ctx!.fill();
           ctx!.restore();
         } else if (p.shape === "spark") {
-          // Forked spark — two short bright segments meeting at a hot
-          // center. Rotation sells the "thrown off by the strike" look.
+          // Pre-built forked streak, stroked twice — wide color underlay
+          // and a thin white-hot core on top.
           ctx!.save();
           ctx!.translate(p.x, p.y);
           ctx!.rotate(p.rot ?? 0);
+          const halfLen = sz * 3.5;
+          ctx!.scale(halfLen, halfLen);
           ctx!.globalCompositeOperation = "lighter";
           ctx!.globalAlpha = alpha;
-          ctx!.strokeStyle = p.color;
-          ctx!.lineWidth = Math.max(0.8, sz * 0.7);
           ctx!.lineCap = "round";
-          const len = sz * 3.5;
-          ctx!.beginPath();
-          ctx!.moveTo(-len, 0);
-          ctx!.lineTo(len * 0.2, sz * 0.5);
-          ctx!.lineTo(len, -sz * 0.4);
-          ctx!.stroke();
-          // White-hot core
-          ctx!.globalAlpha = alpha;
+          ctx!.lineJoin = "round";
+          // Wide color stroke
+          ctx!.strokeStyle = p.color;
+          ctx!.lineWidth = Math.max(0.06, sz * 0.7 / halfLen);
+          ctx!.stroke(SHAPE_PATHS.spark);
+          // Thin white-hot core
           ctx!.strokeStyle = "#ffffff";
-          ctx!.lineWidth = Math.max(0.4, sz * 0.3);
-          ctx!.beginPath();
-          ctx!.moveTo(-len * 0.6, 0);
-          ctx!.lineTo(len * 0.6, 0);
-          ctx!.stroke();
-          ctx!.globalCompositeOperation = "source-over";
+          ctx!.lineWidth = Math.max(0.03, sz * 0.3 / halfLen);
+          ctx!.stroke(SHAPE_PATHS.spark);
           ctx!.restore();
         } else {
           // Legacy circle path — used by everything that doesn't opt into
