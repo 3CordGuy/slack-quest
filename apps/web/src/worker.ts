@@ -1453,6 +1453,7 @@ app.get("/api/me", async (c) => {
   const character = await getCharacter(c.env.DB, session.slack_user_id);
   let class_art_url: string | null = null;
   let char_art_url: string | null = null;
+  let effective: Character | null = character;
   if (character) {
     const id = classByName(character.class).id;
     const shortKey = `class_${id}` as keyof typeof VIEW_ART_PROMPTS;
@@ -1469,11 +1470,16 @@ app.get("/api/me", async (c) => {
         id,
       );
     }
+    // Overlay equipment-augmented caps so camp HP/mana ceilings match what
+    // combat will compute when the player enters a fight. The stored max_hp /
+    // max_mana columns only reflect base stats.
+    const caps = await effectiveCharacterCaps(c.env.DB, character);
+    effective = { ...character, max_hp: caps.max_hp, max_mana: caps.max_mana };
   }
   return c.json({
     slack_user_id: session.slack_user_id,
     slack_team_id: session.slack_team_id,
-    character,
+    character: effective,
     class_art_url,
     char_art_url,
   });
@@ -2794,6 +2800,48 @@ const SHORT_REST_COOLDOWN_MS = 10 * 60 * 1000;
 const LONG_REST_COOLDOWN_MS = 24 * 60 * 60 * 1000;
 const SHORT_REST_HEAL_RATIO = 0.5;
 
+// Effective HP/mana caps including equipped-gear VIT/INT bonuses. The stored
+// character.max_hp / max_mana on the row only reflect base stats, so camp and
+// combat would otherwise show different ceilings (combat re-snapshots with
+// equipment, camp does not). Single source of truth for "what's this
+// character's real ceiling right now" — call this anywhere the UI shows max
+// HP/mana or a heal needs to refill to full.
+async function effectiveCharacterCaps(
+  db: D1Database,
+  character: Character,
+): Promise<{ max_hp: number; max_mana: number }> {
+  const slots = await getAllEquippedSlots(db, character.slack_user_id);
+  const equipBonuses: Partial<Stats> = {};
+  const PRIMARY = new Set(["str", "int_stat", "vit", "agi", "dex"]);
+  for (const item of Object.values(slots)) {
+    if (!item?.stat_bonus) continue;
+    for (const [key, val] of Object.entries(item.stat_bonus)) {
+      if (typeof val !== "number" || !PRIMARY.has(key)) continue;
+      (equipBonuses as Record<string, number>)[key] =
+        ((equipBonuses as Record<string, number>)[key] ?? 0) + val;
+    }
+  }
+  const hasStats =
+    character.str != null && character.int_stat != null && character.vit != null
+    && character.agi != null && character.dex != null;
+  const baseStats: Stats | undefined = hasStats
+    ? {
+        str: character.str!,
+        int_stat: character.int_stat!,
+        vit: character.vit!,
+        agi: character.agi!,
+        dex: character.dex!,
+      }
+    : undefined;
+  const snap = statSnapshot({
+    className: character.class,
+    level: character.level,
+    stats: baseStats,
+    equipBonuses,
+  });
+  return { max_hp: snap.derived.max_hp, max_mana: snap.derived.max_mana };
+}
+
 // Set the character's persisted battle position. Free action — no
 // cost, no cooldown. Used by the lobby's position toggle so players
 // can pick a row before combat starts; mid-combat positioning goes
@@ -2833,7 +2881,10 @@ app.post("/api/character/rest", async (c) => {
   // refuses any mid-quest short rest with a clear hint. Slack's
   // canRestBetweenRooms gate is more permissive — bring that in if needed.
   if (activeQuest) return c.json({ error: "no_rest_mid_quest" }, 400);
-  if (character.hp >= character.max_hp && character.mana >= character.max_mana) {
+  // Equipment-augmented caps: a character with VIT-bonus gear has a higher
+  // real ceiling than the stored max_hp on the row. Heal up to that.
+  const caps = await effectiveCharacterCaps(c.env.DB, character);
+  if (character.hp >= caps.max_hp && character.mana >= caps.max_mana) {
     return c.json({ error: "already_full" }, 400);
   }
 
@@ -2844,9 +2895,9 @@ app.post("/api/character/rest", async (c) => {
     if (since < LONG_REST_COOLDOWN_MS) {
       return c.json({ error: "cooldown", ready_in_ms: LONG_REST_COOLDOWN_MS - since }, 400);
     }
-    await applyLongRest(c.env.DB, session.slack_user_id);
+    await applyLongRest(c.env.DB, session.slack_user_id, caps);
     await initArmorPool(c.env.DB, session.slack_user_id);
-    return c.json({ ok: true, kind: "long", new_hp: character.max_hp });
+    return c.json({ ok: true, kind: "long", new_hp: caps.max_hp });
   }
 
   const since = character.last_rest_at == null
@@ -2855,10 +2906,10 @@ app.post("/api/character/rest", async (c) => {
   if (since < SHORT_REST_COOLDOWN_MS) {
     return c.json({ error: "cooldown", ready_in_ms: SHORT_REST_COOLDOWN_MS - since }, 400);
   }
-  const missing = character.max_hp - character.hp;
+  const missing = caps.max_hp - character.hp;
   const healed = Math.max(1, Math.floor(missing * SHORT_REST_HEAL_RATIO));
-  const newHp = Math.min(character.max_hp, character.hp + healed);
-  await applyShortRest(c.env.DB, session.slack_user_id, newHp);
+  const newHp = Math.min(caps.max_hp, character.hp + healed);
+  await applyShortRest(c.env.DB, session.slack_user_id, newHp, caps);
   await initArmorPool(c.env.DB, session.slack_user_id);
   return c.json({ ok: true, kind: "short", healed, new_hp: newHp });
 });
@@ -3025,13 +3076,14 @@ app.get("/api/inn", async (c) => {
   const activeQuest = await getActiveQuestForCharacter(c.env.DB, session.slack_user_id);
   if (activeQuest) return c.json({ error: "mid_quest" }, 400);
   const art_url = await getOrScheduleViewArt(c.env.AI, artTarget(c.env), c.executionCtx, "inn_interior", undefined, TOWN_WEEKLY_MS);
+  const caps = await effectiveCharacterCaps(c.env.DB, character);
   return c.json({
     rooms: INN_ROOMS,
     gold: character.gold,
     hp: character.hp,
-    max_hp: character.max_hp,
+    max_hp: caps.max_hp,
     mana: character.mana,
-    max_mana: character.max_mana,
+    max_mana: caps.max_mana,
     art_url,
   });
 });
@@ -3747,12 +3799,13 @@ app.post("/api/camp/forage/start", async (c) => {
   const grid = generateForageGrid(seed);
   // flips_total column kept for schema-compat but unused at gameplay time.
   await startForageGame(c.env.DB, session.slack_user_id, JSON.stringify(grid), 99);
+  const startCaps = await effectiveCharacterCaps(c.env.DB, character);
   return c.json({
     ok: true,
     rows: FORAGE_GRID_ROWS,
     cols: FORAGE_GRID_COLS,
     hp: character.hp,
-    max_hp: character.max_hp,
+    max_hp: startCaps.max_hp,
     stock: currentStock(character.forage_stock_full_at, now),
     stock_cap: STOCK_CAP,
   });
@@ -3813,6 +3866,7 @@ app.post("/api/camp/forage/flip", async (c) => {
   if (isForageHazard(firstCell)) {
     const hpDamage = 1 + Math.floor(Math.random() * FORAGE_HAZARD_DICE);
     const newHp = Math.max(1, character.hp - hpDamage);
+    const hazardCaps = await effectiveCharacterCaps(c.env.DB, character);
     await c.env.DB
       .prepare("UPDATE characters SET hp = ? WHERE slack_user_id = ?")
       .bind(newHp, session.slack_user_id)
@@ -3838,7 +3892,7 @@ app.post("/api/camp/forage/flip", async (c) => {
       cascade: [{ r: body.r, c: body.c, cell: firstCell, hazard_count: hazardCountAtTap }],
       hp_damage: hpDamage,
       hp: newHp,
-      max_hp: character.max_hp,
+      max_hp: hazardCaps.max_hp,
       // Bite-terminates-play sentinel + final result so the client can jump
       // straight to a result panel without a /finish round-trip.
       bitten: true,
@@ -3874,6 +3928,7 @@ app.post("/api/camp/forage/flip", async (c) => {
     JSON.stringify(nextRevealed),
     game.hp_taken,
   );
+  const safeCaps = await effectiveCharacterCaps(c.env.DB, character);
   return c.json({
     ok: true,
     cell: firstCell,
@@ -3881,7 +3936,7 @@ app.post("/api/camp/forage/flip", async (c) => {
     cascade: revealedCells,
     hp_damage: 0,
     hp: character.hp,
-    max_hp: character.max_hp,
+    max_hp: safeCaps.max_hp,
   });
 });
 
@@ -4477,8 +4532,9 @@ app.post("/api/inn/:roomId/stay", async (c) => {
   if (await getActiveQuestForCharacter(c.env.DB, session.slack_user_id)) {
     return c.json({ error: "mid_quest" }, 400);
   }
-  const wouldRefillHp = room.refills.hp && character.hp < character.max_hp;
-  const wouldRefillMana = room.refills.mana && character.mana < character.max_mana;
+  const caps = await effectiveCharacterCaps(c.env.DB, character);
+  const wouldRefillHp = room.refills.hp && character.hp < caps.max_hp;
+  const wouldRefillMana = room.refills.mana && character.mana < caps.max_mana;
   if (!wouldRefillHp && !wouldRefillMana) {
     return c.json({ error: "already_full" }, 400);
   }
@@ -4487,15 +4543,15 @@ app.post("/api/inn/:roomId/stay", async (c) => {
   }
   const paid = await tryDeductGold(c.env.DB, session.slack_user_id, room.price);
   if (!paid) return c.json({ error: "insufficient_gold_race" }, 400);
-  await applyInnRest(c.env.DB, session.slack_user_id, room.refills);
+  await applyInnRest(c.env.DB, session.slack_user_id, room.refills, caps);
   await initArmorPool(c.env.DB, session.slack_user_id);
   return c.json({
     ok: true,
     paid: room.price,
     gold_remaining: character.gold - room.price,
     refills: room.refills,
-    hp_gained: wouldRefillHp ? character.max_hp - character.hp : 0,
-    mana_gained: wouldRefillMana ? character.max_mana - character.mana : 0,
+    hp_gained: wouldRefillHp ? caps.max_hp - character.hp : 0,
+    mana_gained: wouldRefillMana ? caps.max_mana - character.mana : 0,
   });
 });
 
@@ -4520,8 +4576,9 @@ app.post("/api/inventory/:itemId/use", async (c) => {
     // (Mana Vial / Mana Flask) restore mana, not HP. Health staples and
     // any non-staple consumable fall through to consumeItem (HP heal).
     const staple = findStaple(item.item_name);
+    const useCaps = await effectiveCharacterCaps(c.env.DB, character);
     if (staple?.effect === "restore_mana") {
-      if (character.mana >= character.max_mana) {
+      if (character.mana >= useCaps.max_mana) {
         return c.json({ error: "at_full_mana" }, 400);
       }
       const effectivePower = applyPotency(item.power, item.potency_stacks ?? 0);
@@ -4529,7 +4586,7 @@ app.post("/api/inventory/:itemId/use", async (c) => {
       await removeItem(c.env.DB, item.id);
       return c.json({ ok: true, kind: "mana", restored, requested: effectivePower });
     }
-    if (character.hp >= character.max_hp) {
+    if (character.hp >= useCaps.max_hp) {
       return c.json({ error: "at_full_hp" }, 400);
     }
     const healed = await consumeItem(c.env.DB, character, item);
@@ -5458,7 +5515,8 @@ app.post("/api/pub/drink/:drinkId", async (c) => {
       break;
     }
     case "instant_shield": {
-      const cap = character.max_hp * SHIELD_CAP_MULTIPLIER;
+      const shieldCaps = await effectiveCharacterCaps(c.env.DB, character);
+      const cap = shieldCaps.max_hp * SHIELD_CAP_MULTIPLIER;
       const added = await addShield(c.env.DB, character, eff.amount, cap);
       summary = `+${added} shield`;
       break;
@@ -5586,7 +5644,8 @@ async function applyNpcPayload(
         return `Free ${drink.name}: +${added} mana.`;
       }
       case "instant_shield": {
-        const cap = character.max_hp * SHIELD_CAP_MULTIPLIER;
+        const drinkCaps = await effectiveCharacterCaps(db, character);
+        const cap = drinkCaps.max_hp * SHIELD_CAP_MULTIPLIER;
         const added = await addShield(db, character, eff.amount, cap);
         return `Free ${drink.name}: +${added} shield.`;
       }
@@ -7460,7 +7519,9 @@ async function advanceTowerAfterCombat(
   // multi-claim picker isn't tangled up in heal logic.
   if (next.kind === "rest") {
     for (const f of humanFighters) {
-      await applyLongRest(env.DB, f.id);
+      const fChar = await getCharacter(env.DB, f.id);
+      const caps = fChar ? await effectiveCharacterCaps(env.DB, fChar) : undefined;
+      await applyLongRest(env.DB, f.id, caps);
     }
   }
   await setQuestMode(env.DB, questId, "slack");
@@ -8354,15 +8415,23 @@ export class QuestRoom extends DurableObject<Env> {
     ];
     const joinerPos = candidates.find((p) => !occupied.has(posKey(p))) ?? { q: 1, r: 1 };
 
+    // Use the snap-derived caps (which include equipment VIT/INT bonuses) so
+    // the joiner matches what buildInitialCombatState computes for fighters
+    // who started the fight. Without this, mid-combat joiners would enter at
+    // the lower base-stats ceiling and the bar would jump on first action
+    // when other systems recompute against the snap value.
+    const joinerMaxHp = snap.derived.max_hp;
+    const joinerMaxMana = snap.derived.max_mana;
+
     const newFighter: CombatFighter = {
       id: character.slack_user_id,
       name: character.name,
       class: character.class,
       level: character.level,
-      hp: character.hp,
-      max_hp: character.max_hp,
-      mana: character.mana,
-      max_mana: character.max_mana,
+      hp: Math.min(character.hp, joinerMaxHp),
+      max_hp: joinerMaxHp,
+      mana: Math.min(character.mana, joinerMaxMana),
+      max_mana: joinerMaxMana,
       shield: Math.floor(armorPower / 2),
       position: character.position,
       attack_mod: snap.derived.attack_mod,
