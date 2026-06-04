@@ -107,6 +107,12 @@ export type AbilityEffect =
       is_crit?: boolean;
       drink_buff_context?: "ability";
       damage_type?: DamageType;
+      // Optional elemental proc: if set and the target survives, machine rolls
+      // d100 — if ≤ the chance, applies the matching status effect. Mirrors
+      // the freeze_chance pattern on attack_roll_damage so fire/lightning
+      // AoEs can leave embers / static behind on their own.
+      burn_chance?: number;
+      shock_chance?: number;
     }
   // Restore HP to a fighter.
   | { kind: "heal"; target_id: string; amount: number }
@@ -147,8 +153,9 @@ export type AbilityEffect =
   | { kind: "apply_smite_debuff"; target_id: string }
   // Weapon attack with machine-side d20 hit check; emits roll + hit_check events.
   // If advantage is true, the d20 is rolled twice and the higher value is used.
-  // freeze_chance: if set and the attack hits, machine rolls d100 — if ≤ freeze_chance, applies frozen.
-  | { kind: "attack_roll_damage"; target_id: string; hit_mod: number; amount: number; formula: string; damage_type?: DamageType; advantage?: boolean; is_crit?: boolean; freeze_chance?: number }
+  // freeze_chance / burn_chance / shock_chance: if set and the attack hits,
+  // machine rolls d100 — if ≤ the chance, applies the matching status effect.
+  | { kind: "attack_roll_damage"; target_id: string; hit_mod: number; amount: number; formula: string; damage_type?: DamageType; advantage?: boolean; is_crit?: boolean; freeze_chance?: number; burn_chance?: number; shock_chance?: number }
   // Rogue Lethal Strikes — apply bleeding to a monster.
   | { kind: "apply_bleed"; target_id: string; stacks: number; duration: number }
   // Rogue Envenom Weapon — apply poison to a monster.

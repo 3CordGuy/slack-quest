@@ -484,11 +484,11 @@ describe("combat_machine.step", () => {
     it("hits the single monster and spends 2 mana", () => {
       const init = mageInit();
       const begun = runBegin(createCombatState(init), [15, 8]);
-      // Fireball: magic_mod(1) d6. Roll: 4. Damage: 4.
+      // Fireball: magic_mod(1) d6. Roll: 4. Damage: 4. d100=99 → no burn proc.
       const result = step(
         begun.state,
         { kind: "ability", actor: "U_PALADIN", ability_id: "fireball" },
-        seqRoll([4]),
+        seqRoll([4, 99]),
       );
       expect(result.state.fighters[0].mana).toBe(1); // 3 - 2 = 1
       const hit = result.events.find((e) => e.type === "player_hit");
@@ -506,11 +506,11 @@ describe("combat_machine.step", () => {
         ],
       });
       const begun = runBegin(createCombatState(init), [15, 10, 5]);
-      // magic_mod(1) d6 → roll 3. Damage: 3 each.
+      // magic_mod(1) d6 → roll 3. Damage: 3 each. d100=99,99 → no burn procs.
       const result = step(
         begun.state,
         { kind: "ability", actor: "U_PALADIN", ability_id: "fireball" },
-        seqRoll([3]),
+        seqRoll([3, 99, 99]),
       );
       expect(result.state.monsters[0].hp).toBe(7); // 10 - 3
       expect(result.state.monsters[1].hp).toBe(7);
@@ -581,7 +581,7 @@ describe("combat_machine.step", () => {
         const result = step(
           setup,
           { kind: "ability", actor: "U_PALADIN", ability_id: "fireball" },
-          seqRoll([3]),
+          seqRoll([3, 99]),
         );
         // Near monster takes damage, far monster is untouched.
         expect(result.state.monsters[0].hp).toBe(7);
@@ -636,7 +636,7 @@ describe("combat_machine.step", () => {
         const result = step(
           setup,
           { kind: "ability", actor: "U_PALADIN", ability_id: "fireball" },
-          seqRoll([3]),
+          seqRoll([3, 99, 99]),
         );
         // Both monsters damaged despite the wall.
         expect(result.state.monsters[0].hp).toBe(7);
@@ -660,7 +660,7 @@ describe("combat_machine.step", () => {
         const result = step(
           setup,
           { kind: "ability", actor: "U_PALADIN", ability_id: "fireball" },
-          seqRoll([3]),
+          seqRoll([3, 99]),
         );
         expect(result.state.monsters[0].hp).toBe(7); // Near burns
         expect(result.state.monsters[1].hp).toBe(10); // Far untouched
@@ -701,12 +701,134 @@ describe("combat_machine.step", () => {
         const result = step(
           setup,
           { kind: "ability", actor: "U_PALADIN", ability_id: "fireball" },
-          seqRoll([3]),
+          seqRoll([3, 99, 99]),
         );
         // No LOS math when hex range is off; both monsters take damage.
         expect(result.state.monsters[0].hp).toBe(7);
         expect(result.state.monsters[1].hp).toBe(7);
       });
+    });
+
+    describe("burn proc", () => {
+      it("applies burning to a survivor when burn roll ≤ 15", () => {
+        // damage=3 (mag=1, d6=3); newHp=10-3=7 (alive); burn d100=15 → proc.
+        const init = mageInit({
+          monsters: [
+            { name: "Goblin A", hp: 10, max_hp: 10, tier: 1, is_boss: false },
+          ],
+        });
+        const begun = runBegin(createCombatState(init), [15, 8]);
+        const result = step(
+          begun.state,
+          { kind: "ability", actor: "U_PALADIN", ability_id: "fireball" },
+          seqRoll([3, 15]),
+        );
+        expect(result.state.monsters[0].effects.some((e) => e.type === "burning")).toBe(true);
+        const proc = result.events.find((e) => e.type === "ability_burn_applied");
+        expect(proc).toMatchObject({ actor: "U_PALADIN", target: result.state.monsters[0].id, magnitude: 1, duration: 3 });
+      });
+
+      it("does not apply burning when burn roll > 15", () => {
+        // damage=3; burn d100=16 → miss.
+        const init = mageInit({
+          monsters: [
+            { name: "Goblin A", hp: 10, max_hp: 10, tier: 1, is_boss: false },
+          ],
+        });
+        const begun = runBegin(createCombatState(init), [15, 8]);
+        const result = step(
+          begun.state,
+          { kind: "ability", actor: "U_PALADIN", ability_id: "fireball" },
+          seqRoll([3, 16]),
+        );
+        expect(result.state.monsters[0].effects.some((e) => e.type === "burning")).toBe(false);
+        expect(result.events.find((e) => e.type === "ability_burn_applied")).toBeUndefined();
+      });
+
+      it("does not roll burn for a target the blast killed", () => {
+        // damage=4; newHp=3-4=0 (kill) → burn check skipped → no d100 consumed.
+        const init = mageInit({
+          monsters: [
+            { name: "Goblin A", hp: 3, max_hp: 3, tier: 1, is_boss: false },
+          ],
+        });
+        const begun = runBegin(createCombatState(init), [15, 8]);
+        // Only ONE roll provided. If burn check fired we'd throw on the d100.
+        const result = step(
+          begun.state,
+          { kind: "ability", actor: "U_PALADIN", ability_id: "fireball" },
+          seqRoll([4]),
+        );
+        expect(result.state.status).toBe("victory");
+        expect(result.events.find((e) => e.type === "ability_burn_applied")).toBeUndefined();
+      });
+
+      it("rolls a separate d100 per surviving target", () => {
+        // Two goblins, both survive. d100=14 procs A; d100=20 misses B.
+        const init = mageInit({
+          monsters: [
+            { name: "Goblin A", hp: 10, max_hp: 10, tier: 1, is_boss: false },
+            { name: "Goblin B", hp: 10, max_hp: 10, tier: 1, is_boss: false },
+          ],
+        });
+        const begun = runBegin(createCombatState(init), [15, 10, 5]);
+        const result = step(
+          begun.state,
+          { kind: "ability", actor: "U_PALADIN", ability_id: "fireball" },
+          seqRoll([3, 14, 20]),
+        );
+        expect(result.state.monsters[0].effects.some((e) => e.type === "burning")).toBe(true);
+        expect(result.state.monsters[1].effects.some((e) => e.type === "burning")).toBe(false);
+        const procs = result.events.filter((e) => e.type === "ability_burn_applied");
+        expect(procs).toHaveLength(1);
+      });
+    });
+  });
+
+  describe("lightning_bolt ability (DevOps Mage)", () => {
+    function mageInit(overrides: Partial<CombatInit> = {}): CombatInit {
+      const init = baseInit(overrides);
+      init.fighters[0].class = "DevOps Mage";
+      init.fighters[0].mana = 3;
+      init.fighters[0].magic_mod = 1;
+      return init;
+    }
+
+    it("applies shocked when shock roll ≤ 25", () => {
+      // execute(): d8=4 → amount=4. d20=15 hit (mag=1 → 16 vs tier 3 AC=7).
+      // Only shock_chance is set on the effect, so a single d100 fires.
+      // d100=20 ≤ 25 → proc.
+      const begun = runBegin(createCombatState(mageInit()), [15, 8]);
+      const result = step(
+        begun.state,
+        { kind: "ability", actor: "U_PALADIN", ability_id: "lightning_bolt", target_id: MONSTER_ID },
+        seqRoll([4, 15, 20]),
+      );
+      expect(result.state.monsters[0].effects.some((e) => e.type === "shocked")).toBe(true);
+      expect(result.events.find((e) => e.type === "ability_shock_applied")).toMatchObject({ actor: "U_PALADIN", target: MONSTER_ID, magnitude: 1, duration: 2 });
+    });
+
+    it("does not apply shocked when shock roll > 25", () => {
+      const begun = runBegin(createCombatState(mageInit()), [15, 8]);
+      const result = step(
+        begun.state,
+        { kind: "ability", actor: "U_PALADIN", ability_id: "lightning_bolt", target_id: MONSTER_ID },
+        seqRoll([4, 15, 26]),
+      );
+      expect(result.state.monsters[0].effects.some((e) => e.type === "shocked")).toBe(false);
+      expect(result.events.find((e) => e.type === "ability_shock_applied")).toBeUndefined();
+    });
+
+    it("does not roll shocked on a miss", () => {
+      // d20=2 → 2+1=3 < AC 7: MISS. No damage / shock roll consumed.
+      const begun = runBegin(createCombatState(mageInit()), [15, 8]);
+      const result = step(
+        begun.state,
+        { kind: "ability", actor: "U_PALADIN", ability_id: "lightning_bolt", target_id: MONSTER_ID },
+        seqRoll([4, 2]),
+      );
+      expect(result.state.monsters[0].effects.some((e) => e.type === "shocked")).toBe(false);
+      expect(result.events.find((e) => e.type === "player_hit")).toBeUndefined();
     });
   });
 

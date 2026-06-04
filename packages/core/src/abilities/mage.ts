@@ -6,7 +6,7 @@ export const mageAbilities: AbilityDef[] = [
     kind: "active",
     id: "fireball",
     name: "Prod Fire",
-    blurb: "When prod ignites, everything within 3 hexes burns — deals magic×d6 arcane fire damage to every enemy in the blast.",
+    blurb: "When prod ignites, everything within 3 hexes burns — deals magic×d6 arcane fire damage to every enemy in the blast, with a 15% chance to leave each one burning.",
     icon: "fire",
     mana_cost: 2,
     cooldown_turns: 1,
@@ -22,7 +22,11 @@ export const mageAbilities: AbilityDef[] = [
       const mult = rank >= 3 ? 1.5 : rank >= 2 ? 1.25 : 1;
       const amount = Math.round(baseRoll * mult);
       const formula = rank > 1 ? `${Math.max(1, mag)}d6×${mult}` : `${Math.max(1, mag)}d6`;
-      return ctx.monsters.map((m) => fx.damage(m.id, amount, formula, { damageType: "fire" }));
+      // Burn proc per-target. Lower than single-target frost (matches Sage
+      // Hailstorm's AoE scaling: 15/20/25) so AoE doesn't trivialize the
+      // status game.
+      const burnChance = rank >= 3 ? 25 : rank >= 2 ? 20 : 15;
+      return ctx.monsters.map((m) => fx.damage(m.id, amount, formula, { damageType: "fire", burnChance }));
     },
   },
   {
@@ -51,7 +55,7 @@ export const mageAbilities: AbilityDef[] = [
     kind: "active",
     id: "lightning_bolt",
     name: "Zero-Day Strike",
-    blurb: "A precision strike through an unpatched vulnerability — rolls d20 + magic to hit; deals magic × d8 damage + chain damage to enemies within 1 hex.",
+    blurb: "A precision strike through an unpatched vulnerability — rolls d20 + magic to hit; deals magic × d8 damage + chain damage to enemies within 1 hex, with a 25% chance to leave the primary target shocked.",
     icon: "lightning-branches",
     mana_cost: 1,
     routing: "utility",
@@ -68,7 +72,10 @@ export const mageAbilities: AbilityDef[] = [
       const mult = rank >= 3 ? 1.5 : rank >= 2 ? 1.25 : 1;
       const amount = Math.round(baseRoll * mult);
       const formula = rank > 1 ? `${Math.max(1, mag)}d8×${mult}` : `${Math.max(1, mag)}d8`;
-      return [fx.attackRollDamage(monster.id, mag, amount, formula, "lightning")];
+      // Single-target shock proc. Matches Sage Ray of Frost's 25/25/30
+      // since both are pinpoint elemental strikes.
+      const shockChance = rank >= 3 ? 30 : 25;
+      return [fx.attackRollDamage(monster.id, mag, amount, formula, "lightning", undefined, undefined, undefined, undefined, shockChance)];
     },
   },
   {

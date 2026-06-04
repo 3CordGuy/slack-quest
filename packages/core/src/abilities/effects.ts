@@ -13,7 +13,7 @@ export const fx = {
     targetId: string,
     amount: number,
     formula: string,
-    opts?: { isCrit?: boolean; drinkBuff?: "ability"; damageType?: DamageType },
+    opts?: { isCrit?: boolean; drinkBuff?: "ability"; damageType?: DamageType; burnChance?: number; shockChance?: number },
   ): AbilityEffect {
     return {
       kind: "deal_damage",
@@ -23,6 +23,8 @@ export const fx = {
       is_crit: opts?.isCrit,
       drink_buff_context: opts?.drinkBuff,
       damage_type: opts?.damageType,
+      burn_chance: opts?.burnChance,
+      shock_chance: opts?.shockChance,
     };
   },
 
@@ -82,8 +84,8 @@ export const fx = {
     return { kind: "apply_smite_debuff", target_id: targetId };
   },
 
-  attackRollDamage(targetId: string, hitMod: number, amount: number, formula: string, damageType?: DamageType, advantage?: boolean, isCrit?: boolean, freezeChance?: number): AbilityEffect {
-    return { kind: "attack_roll_damage", target_id: targetId, hit_mod: hitMod, amount, formula, damage_type: damageType, advantage, is_crit: isCrit, freeze_chance: freezeChance };
+  attackRollDamage(targetId: string, hitMod: number, amount: number, formula: string, damageType?: DamageType, advantage?: boolean, isCrit?: boolean, freezeChance?: number, burnChance?: number, shockChance?: number): AbilityEffect {
+    return { kind: "attack_roll_damage", target_id: targetId, hit_mod: hitMod, amount, formula, damage_type: damageType, advantage, is_crit: isCrit, freeze_chance: freezeChance, burn_chance: burnChance, shock_chance: shockChance };
   },
 
   bleed(targetId: string, stacks: number, duration = 2): AbilityEffect {
