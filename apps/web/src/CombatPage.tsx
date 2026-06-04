@@ -2710,8 +2710,12 @@ export function CombatPage({
               );
             })()}
 
-            {/* Combat-end tint (before modal appears) */}
-            {ended && state.status !== "victory" && !defeatModalReady && (
+            {/* Combat-end tint (before modal appears). Stays up until BOTH
+                the dice-settle delay finishes AND the server outcome has
+                arrived — without the second condition there'd be a brief
+                blank gap between the banner disappearing and the modal
+                rendering on a fast no-dice exit. */}
+            {ended && state.status !== "victory" && (!defeatModalReady || !ui.outcome) && (
               <div style={{ position: "absolute", inset: 0, background: "rgba(80,0,0,0.55)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 20 }}>
                 <div style={{ fontFamily: DISPLAY_FONT, fontSize: 44, color: "#fca5a5", textShadow: "0 0 24px rgba(252,165,165,0.5)" }}>
                   {state.status === "fled" ? "ESCAPED" : "DEFEATED"}
@@ -3060,8 +3064,14 @@ export function CombatPage({
         );
       })()}
 
-      {/* Victory modal — delayed until dice settle */}
-      {ended && state?.status === "victory" && victoryModalReady && (
+      {/* Victory modal — delayed until dice settle AND the server's outcome
+          event arrives. The outcome broadcast fires only after the server has
+          committed markQuestStatus(completed) — without this gate the Back
+          button could fire onExit before the quest was marked complete in
+          D1, and the dashboard's /api/quest/active refetch would return the
+          just-finished quest as still active, bouncing the user back to the
+          Quest screen with a "Start Combat" button. */}
+      {ended && state?.status === "victory" && victoryModalReady && ui.outcome && (
         <VictoryModal
           outcome={ui.outcome}
           selfId={selfId}
@@ -3076,8 +3086,9 @@ export function CombatPage({
         />
       )}
 
-      {/* Defeat / fled modal — delayed until dice settle */}
-      {ended && state?.status !== "victory" && defeatModalReady && (
+      {/* Defeat / fled modal — same gating as victory: wait for both the
+          dice-settle delay and the server outcome before exposing Back. */}
+      {ended && state?.status !== "victory" && defeatModalReady && ui.outcome && (
         <DefeatModal
           status={state.status as "defeat" | "fled"}
           outcome={ui.outcome}
