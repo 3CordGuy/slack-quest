@@ -839,12 +839,22 @@ export async function setPosition(
 
 // Short rest: partial HP restore + bumps last_rest_at. Caller computes the new HP
 // (e.g. current + 50% of missing) and passes it in so the math stays in commands.ts.
+// `effective`, when provided, also bumps the stored max_hp/max_mana columns so
+// camp's displayed ceiling stays aligned with the equipment-augmented cap.
 export async function applyShortRest(
   db: D1Database,
   userId: string,
   newHp: number,
+  effective?: { max_hp: number; max_mana: number },
 ): Promise<void> {
   const now = Date.now();
+  if (effective) {
+    await db
+      .prepare("UPDATE characters SET hp = ?, max_hp = ?, max_mana = ?, last_rest_at = ?, last_active = ? WHERE slack_user_id = ?")
+      .bind(newHp, effective.max_hp, effective.max_mana, now, now, userId)
+      .run();
+    return;
+  }
   await db
     .prepare(
       "UPDATE characters SET hp = ?, last_rest_at = ?, last_active = ? WHERE slack_user_id = ?",
@@ -855,8 +865,22 @@ export async function applyShortRest(
 
 // Long rest: full HP + full mana restore + bumps last_long_rest_at. Once per 24 hours.
 // Doesn't touch last_rest_at — the two cooldowns are independent.
-export async function applyLongRest(db: D1Database, userId: string): Promise<void> {
+// When `effective` is provided, refills to the equipment-augmented caps (and
+// bumps the stored max_hp/max_mana to match) so camp HP matches what combat
+// computes. Without it, refills to the stored max_hp/max_mana on the row.
+export async function applyLongRest(
+  db: D1Database,
+  userId: string,
+  effective?: { max_hp: number; max_mana: number },
+): Promise<void> {
   const now = Date.now();
+  if (effective) {
+    await db
+      .prepare("UPDATE characters SET hp = ?, mana = ?, max_hp = ?, max_mana = ?, last_long_rest_at = ?, last_active = ? WHERE slack_user_id = ?")
+      .bind(effective.max_hp, effective.max_mana, effective.max_hp, effective.max_mana, now, now, userId)
+      .run();
+    return;
+  }
   await db
     .prepare("UPDATE characters SET hp = max_hp, mana = max_mana, last_long_rest_at = ?, last_active = ? WHERE slack_user_id = ?")
     .bind(now, now, userId)
@@ -864,11 +888,29 @@ export async function applyLongRest(db: D1Database, userId: string): Promise<voi
 }
 
 // Inn room rest: refills HP and/or mana without consuming either rest cooldown.
+// `effective`, when provided, mirrors applyLongRest's behavior: HP/mana refill
+// to the equipment-augmented caps and the stored max columns get bumped.
 export async function applyInnRest(
   db: D1Database,
   userId: string,
   refills: { hp: boolean; mana: boolean },
+  effective?: { max_hp: number; max_mana: number },
 ): Promise<void> {
+  const now = Date.now();
+  if (effective) {
+    const sets: string[] = [];
+    const binds: unknown[] = [];
+    if (refills.hp) { sets.push("hp = ?", "max_hp = ?"); binds.push(effective.max_hp, effective.max_hp); }
+    if (refills.mana) { sets.push("mana = ?", "max_mana = ?"); binds.push(effective.max_mana, effective.max_mana); }
+    if (sets.length === 0) return;
+    sets.push("last_active = ?");
+    binds.push(now, userId);
+    await db
+      .prepare(`UPDATE characters SET ${sets.join(", ")} WHERE slack_user_id = ?`)
+      .bind(...binds)
+      .run();
+    return;
+  }
   const sets: string[] = [];
   if (refills.hp) sets.push("hp = max_hp");
   if (refills.mana) sets.push("mana = max_mana");
@@ -876,7 +918,7 @@ export async function applyInnRest(
   if (sets.length === 1) return;
   await db
     .prepare(`UPDATE characters SET ${sets.join(", ")} WHERE slack_user_id = ?`)
-    .bind(Date.now(), userId)
+    .bind(now, userId)
     .run();
 }
 
