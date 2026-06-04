@@ -4400,6 +4400,14 @@ async function runRecipe(c: Context<{ Bindings: Env }>, userId: string, recipe: 
     }
     return c.json({ error: "insufficient_gold_race" }, 400);
   }
+  // For non-gear recipe outputs (consumable / magic / revive) the
+  // crafter's current level is the right level_req — they should always
+  // be able to use what they brewed. Weapons / armor keep the addItem
+  // power-derived fallback because gear power scales with crafter level.
+  const isNonGearOutput =
+    recipe.output_type === "consumable"
+    || recipe.output_type === "magic"
+    || recipe.output_type === "revive";
   const item = await addItem(c.env.DB, {
     character_id: userId,
     item_name: recipe.output_name,
@@ -4410,6 +4418,7 @@ async function runRecipe(c: Context<{ Bindings: Env }>, userId: string, recipe: 
     slot: recipe.output_slot ?? undefined,
     item_subtype: recipe.output_subtype ?? undefined,
     weapon_range: recipe.output_type === "weapon" ? "melee" : null,
+    ...(isNonGearOutput ? { level_req: character.level } : {}),
   });
 
   // Smithy-only achievement wiring. Apothecary brews don't increment the
@@ -5254,6 +5263,11 @@ app.post("/api/pub/cook/:recipeId", async (c) => {
     rarity: recipe.output_rarity,
     flavor: recipe.output_blurb,
     weapon_range: null,
+    // Default level_req to the cook's current level so they can always
+    // consume what they just made. (A higher-tier dish gated to a lower-
+    // tier eater never makes sense — the recipe.level_req already gates
+    // crafting, no second gate at use time.)
+    level_req: character.level,
   });
   return c.json({
     ok: true,
