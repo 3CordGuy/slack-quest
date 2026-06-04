@@ -4262,22 +4262,35 @@ async function runTransmute(c: Context<{ Bindings: Env }>, userId: string, spec:
   if (character.level < spec.level_req) {
     return c.json({ error: "level_too_low", needed: spec.level_req, level: character.level }, 400);
   }
-  if (character.gold < spec.gold_cost) {
-    return c.json({ error: "insufficient_gold", price: spec.gold_cost, gold: character.gold }, 400);
+  // Optional `{count: N}` body — when present, transmute N batches at once.
+  // Falls back to 1 when the body is empty or malformed so legacy single-
+  // click callers keep working unchanged. Server clamps to [1, 999] as a
+  // safety rail; the client also caps to what the inventory can support.
+  const body = await c.req.json<{ count?: number }>().catch(() => ({} as { count?: number }));
+  const requested = Math.floor(Number(body.count ?? 1));
+  const count = Math.max(1, Math.min(999, Number.isFinite(requested) ? requested : 1));
+  const totalGoldCost = spec.gold_cost * count;
+  if (character.gold < totalGoldCost) {
+    return c.json({ error: "insufficient_gold", price: totalGoldCost, gold: character.gold }, 400);
   }
   // Consume inputs atomically — refund anything already taken if one fails.
+  // Inputs scale linearly with count, so we consume `input.qty * count` of
+  // each resource in one pass per input rather than looping N times. Same
+  // refund-on-failure pattern as before so a race never leaves the player
+  // partially deducted.
   const consumed: Array<{ resource_id: string; qty: number }> = [];
   for (const input of spec.inputs) {
-    const ok = await tryConsumeResource(c.env.DB, userId, resourceItemName(input.resource_id), input.qty);
+    const totalQty = input.qty * count;
+    const ok = await tryConsumeResource(c.env.DB, userId, resourceItemName(input.resource_id), totalQty);
     if (!ok) {
       for (const back of consumed) {
         await addResource(c.env.DB, userId, resourceItemName(back.resource_id), back.qty);
       }
-      return c.json({ error: "insufficient_resources", needed: input.resource_id, qty: input.qty }, 400);
+      return c.json({ error: "insufficient_resources", needed: input.resource_id, qty: totalQty }, 400);
     }
-    consumed.push(input);
+    consumed.push({ resource_id: input.resource_id, qty: totalQty });
   }
-  const paid = await tryDeductGold(c.env.DB, userId, spec.gold_cost);
+  const paid = await tryDeductGold(c.env.DB, userId, totalGoldCost);
   if (!paid) {
     for (const back of consumed) {
       await addResource(c.env.DB, userId, resourceItemName(back.resource_id), back.qty);
@@ -4286,14 +4299,15 @@ async function runTransmute(c: Context<{ Bindings: Env }>, userId: string, spec:
   }
   const outSpec = findResource(spec.output_resource_id);
   if (!outSpec) return c.json({ error: "unknown_output" }, 500);
-  await addResource(c.env.DB, userId, resourceItemName(spec.output_resource_id), 1, outSpec.rarity, outSpec.blurb);
+  await addResource(c.env.DB, userId, resourceItemName(spec.output_resource_id), count, outSpec.rarity, outSpec.blurb);
   return c.json({
     ok: true,
     recipe_id: spec.id,
-    output: { resource_id: spec.output_resource_id, name: `${outSpec.emoji} ${outSpec.name}`, qty: 1 },
-    paid: spec.gold_cost,
+    count,
+    output: { resource_id: spec.output_resource_id, name: `${outSpec.emoji} ${outSpec.name}`, qty: count },
+    paid: totalGoldCost,
     consumed,
-    gold_remaining: character.gold - spec.gold_cost,
+    gold_remaining: character.gold - totalGoldCost,
   });
 }
 
