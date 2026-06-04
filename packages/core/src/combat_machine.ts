@@ -664,6 +664,8 @@ export type CombatEvent =
   | { type: "rejected"; reason: string }
   | { type: "turn_skip"; actor: ActorId; reason: "frozen" }
   | { type: "ability_freeze_applied"; actor: ActorId; target: ActorId }
+  | { type: "ability_burn_applied"; actor: ActorId; target: ActorId; magnitude: number; duration: number }
+  | { type: "ability_shock_applied"; actor: ActorId; target: ActorId; magnitude: number; duration: number }
   | { type: "ability_blizzard_tick"; actor: ActorId; charges_remaining: number; hits: Array<{ target: ActorId; damage: number }> }
   | { type: "ability_good_fortune_delayed"; actor: ActorId; target: ActorId; amount: number }
   | { type: "ability_ill_omen_applied"; actor: ActorId; target: ActorId }
@@ -2930,6 +2932,27 @@ function handleAoeDamageAbility(
         [actorId]: (nextState.contribution[actorId] ?? 0) + finalDamage,
       },
     };
+
+    // Elemental procs on AoE hits — only fires on survivors (a dead target
+    // can't be on fire). Same roll cadence as the single-target deal_damage
+    // path: one d100 per chance per target. Per-target roll matches how the
+    // monster-side weapon proc works.
+    if (newHp > 0) {
+      if (dmgEffect.burn_chance && roll(100) <= dmgEffect.burn_chance) {
+        const burnMag = 1;
+        const burnDur = 3;
+        const burnEff: MachineStatusEffect = { type: "burning", magnitude: burnMag, remaining: burnDur, source: actorId };
+        nextState = { ...nextState, monsters: nextState.monsters.map((m) => m.id === monster.id ? { ...m, effects: mergeEffect(m.effects, burnEff) } : m) };
+        events.push({ type: "ability_burn_applied", actor: actorId, target: monster.id, magnitude: burnMag, duration: burnDur });
+      }
+      if (dmgEffect.shock_chance && roll(100) <= dmgEffect.shock_chance) {
+        const shockMag = 1;
+        const shockDur = 2;
+        const shockEff: MachineStatusEffect = { type: "shocked", magnitude: shockMag, remaining: shockDur, source: actorId };
+        nextState = { ...nextState, monsters: nextState.monsters.map((m) => m.id === monster.id ? { ...m, effects: mergeEffect(m.effects, shockEff) } : m) };
+        events.push({ type: "ability_shock_applied", actor: actorId, target: monster.id, magnitude: shockMag, duration: shockDur });
+      }
+    }
   }
 
   // Check kills after all damage is applied.
@@ -3315,6 +3338,24 @@ function applyUtilityAbilityEffects(
         const hexProc = applyHexBleedProc(s, monster.id);
         s = hexProc.state;
         events.push(...hexProc.events);
+        // Elemental procs (Mage Fireball burn / Lightning shock). Same roll
+        // pattern as Sage Ray of Frost — roll d100 after the damage lands;
+        // only fires when the target is still alive (the kill path above
+        // returns early before we get here).
+        if (effect.burn_chance && roll(100) <= effect.burn_chance) {
+          const burnMag = 1;
+          const burnDur = 3;
+          const burnEff: MachineStatusEffect = { type: "burning", magnitude: burnMag, remaining: burnDur, source: actor };
+          s = { ...s, monsters: s.monsters.map((m) => m.id === monster.id ? { ...m, effects: mergeEffect(m.effects, burnEff) } : m) };
+          events.push({ type: "ability_burn_applied", actor, target: monster.id, magnitude: burnMag, duration: burnDur });
+        }
+        if (effect.shock_chance && roll(100) <= effect.shock_chance) {
+          const shockMag = 1;
+          const shockDur = 2;
+          const shockEff: MachineStatusEffect = { type: "shocked", magnitude: shockMag, remaining: shockDur, source: actor };
+          s = { ...s, monsters: s.monsters.map((m) => m.id === monster.id ? { ...m, effects: mergeEffect(m.effects, shockEff) } : m) };
+          events.push({ type: "ability_shock_applied", actor, target: monster.id, magnitude: shockMag, duration: shockDur });
+        }
         break;
       }
       case "heal": {
@@ -3578,6 +3619,23 @@ function applyUtilityAbilityEffects(
           const frozenEff: MachineStatusEffect = { type: "frozen", magnitude: 1, remaining: 1, source: actor };
           s = { ...s, monsters: s.monsters.map((m) => m.id === targetMonster.id ? { ...m, effects: mergeEffect(m.effects, frozenEff) } : m) };
           events.push({ type: "ability_freeze_applied", actor, target: targetMonster.id });
+        }
+        // DevOps Mage — Zero-Day Strike shock proc (and any future ranged
+        // physical/elemental attack that opts in). Same roll cadence as
+        // freeze above.
+        if (effect.burn_chance && roll(100) <= effect.burn_chance) {
+          const burnMag = 1;
+          const burnDur = 3;
+          const burnEff: MachineStatusEffect = { type: "burning", magnitude: burnMag, remaining: burnDur, source: actor };
+          s = { ...s, monsters: s.monsters.map((m) => m.id === targetMonster.id ? { ...m, effects: mergeEffect(m.effects, burnEff) } : m) };
+          events.push({ type: "ability_burn_applied", actor, target: targetMonster.id, magnitude: burnMag, duration: burnDur });
+        }
+        if (effect.shock_chance && roll(100) <= effect.shock_chance) {
+          const shockMag = 1;
+          const shockDur = 2;
+          const shockEff: MachineStatusEffect = { type: "shocked", magnitude: shockMag, remaining: shockDur, source: actor };
+          s = { ...s, monsters: s.monsters.map((m) => m.id === targetMonster.id ? { ...m, effects: mergeEffect(m.effects, shockEff) } : m) };
+          events.push({ type: "ability_shock_applied", actor, target: targetMonster.id, magnitude: shockMag, duration: shockDur });
         }
 
         if (isCrit) {

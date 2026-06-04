@@ -164,6 +164,15 @@ interface Particle {
   color: string;
   born: number;                // ms timestamp
   life: number;                // total lifetime (ms)
+  /** Draw path. Defaults to "circle" when unset. */
+  shape?: ParticleShape;
+  /** Current rotation in radians (snowflakes / sparks). */
+  rot?: number;
+  /** Rotation speed in rad/ms. */
+  rotSpeed?: number;
+  /** When true, alpha is modulated by a sine over time for a candle-like
+   *  flicker (embers / snowflake glints). */
+  flicker?: boolean;
 }
 
 interface ActiveProjectile {
@@ -212,11 +221,39 @@ const SWING_COLOR_BY_ELEMENT: Record<string, string> = {
   default: "#fef3c7",
 };
 
-const PARTICLE_CONFIG: Record<ParticleKind, { count: number; speed: number; size: number; life: number; colors: string[]; gravity: number; }> = {
+// ParticleShape drives the per-particle draw path inside the render loop.
+// "circle" is the legacy disc; the others read like what they describe so
+// fire impacts actually look like rising embers, ice like falling crystals,
+// and lightning like sharp electric sparks. New shapes plug in here.
+type ParticleShape = "circle" | "ember" | "snowflake" | "spark";
+
+interface ParticleConfig {
+  count: number;
+  speed: number;
+  size: number;
+  life: number;
+  colors: string[];
+  gravity: number;
+  /** Shape drawn per particle; defaults to "circle". */
+  shape?: ParticleShape;
+  /** When true, particles flicker their alpha for a candle-like feel. */
+  flicker?: boolean;
+  /** When true, particles tumble — used for snowflakes / spark forks. */
+  rotates?: boolean;
+}
+
+const PARTICLE_CONFIG: Record<ParticleKind, ParticleConfig> = {
   physical: { count: 14, speed: 0.18, size: 3, life: 450, colors: ["#fde68a", "#facc15", "#ffffff"], gravity: 0.0004 },
-  fire:     { count: 22, speed: 0.20, size: 4, life: 700, colors: ["#ff4500", "#ff8c00", "#fbbf24"], gravity: -0.0006 },
-  ice:      { count: 18, speed: 0.15, size: 3, life: 850, colors: ["#bfdbfe", "#dbeafe", "#93c5fd"], gravity: 0.0008 },
-  lightning:{ count: 24, speed: 0.35, size: 2, life: 320, colors: ["#fbbf24", "#fef08a", "#ffffff"], gravity: 0 },
+  // Fire — long-lived embers that rise + flicker. Lifetime intentionally
+  // ~2s so impacts feel like the tile is briefly on fire even when no burn
+  // status procced. Higher count + ember shape + strong upward gravity.
+  fire:     { count: 36, speed: 0.18, size: 4, life: 1900, colors: ["#ff2a00", "#ff6a00", "#ffae00", "#fde047"], gravity: -0.0009, shape: "ember", flicker: true },
+  // Ice — slow-falling snowflakes that drift and twinkle. Long lifetime so
+  // the chill lingers; rotation gives crystal shapes visual identity.
+  ice:      { count: 28, speed: 0.10, size: 4, life: 1900, colors: ["#e0f2fe", "#bae6fd", "#7dd3fc", "#ffffff"], gravity: 0.00045, shape: "snowflake", rotates: true, flicker: true },
+  // Lightning — short, sharp forked sparks. Higher count + multi-pop feel
+  // via short life. Spark shape draws angular two-segment streaks.
+  lightning:{ count: 40, speed: 0.45, size: 3, life: 700, colors: ["#fef9c3", "#fde047", "#a78bfa", "#ffffff"], gravity: 0.0001, shape: "spark", rotates: true },
   poison:   { count: 14, speed: 0.12, size: 4, life: 1000, colors: ["#84cc16", "#a3e635", "#65a30d"], gravity: 0.001 },
   bleed:    { count: 12, speed: 0.14, size: 3, life: 800, colors: ["#dc2626", "#ef4444", "#7f1d1d"], gravity: 0.0012 },
   heal:     { count: 16, speed: 0.14, size: 3, life: 900, colors: ["#86efac", "#bbf7d0", "#ffffff"], gravity: -0.0008 },
@@ -226,8 +263,18 @@ const PARTICLE_CONFIG: Record<ParticleKind, { count: number; speed: number; size
   loot:     { count: 24, speed: 0.18, size: 3, life: 900, colors: ["#fde047", "#fbbf24", "#fde68a", "#ffffff"], gravity: -0.0005 },
 };
 
+// Projectile flight time. Bumped fire/ice from ~300ms to ~600ms so they
+// actually read as travelling — at 300ms the trail barely registered before
+// the impact burst started. Lightning stays near-instant by design.
 const PROJECTILE_DURATION: Record<ProjectileKind, number> = {
-  arrow: 350, fire: 300, ice: 320, lightning: 80, poison: 400, magic: 300,
+  arrow: 350, fire: 620, ice: 620, lightning: 120, poison: 460, magic: 380,
+};
+
+// Mid-flight vertical lift in pixels — controls how much each projectile
+// arcs vs. flies straight. Fire rockets nearly flat; arrows lob (gravity);
+// magic floats up and curves down; lightning is dead straight.
+const PROJECTILE_ARC: Record<ProjectileKind, number> = {
+  arrow: 22, fire: 6, ice: 4, lightning: 0, poison: 18, magic: 14,
 };
 
 const PROJECTILE_COLOR: Record<ProjectileKind, string> = {
@@ -1138,20 +1185,45 @@ export function CombatHexGrid({
         const center = live ? { x: live.x, y: live.y } : hexToPixel(p.at);
         const cfg = PARTICLE_CONFIG[p.kind];
         const now = performance.now();
+        // For "ember" particles we bias initial velocity upward so the
+        // dome of embers reads as fire rising from the impact, not a
+        // circular ring blasting outward. Snowflakes and sparks keep the
+        // even radial spread but add per-particle rotation.
         for (let i = 0; i < cfg.count; i++) {
-          const angle = (Math.PI * 2 * i) / cfg.count + (Math.random() - 0.5) * 0.3;
+          let vx: number;
+          let vy: number;
           const speed = cfg.speed * (0.7 + Math.random() * 0.6);
+          if (cfg.shape === "ember") {
+            // Cone upward: -135° to -45° (where 0° points right, -90° up).
+            const ang = -Math.PI / 4 - (Math.PI / 2) * Math.random();
+            vx = Math.cos(ang) * speed;
+            vy = Math.sin(ang) * speed * 1.2; // a touch more vertical thrust
+          } else if (cfg.shape === "spark") {
+            // Wide radial blast but with a bias so a few sparks always
+            // jet sideways — reads as electricity arcing along the ground.
+            const ang = (Math.PI * 2 * i) / cfg.count + (Math.random() - 0.5) * 1.1;
+            vx = Math.cos(ang) * speed * (1 + Math.random() * 0.6);
+            vy = Math.sin(ang) * speed * (1 + Math.random() * 0.6);
+          } else {
+            const ang = (Math.PI * 2 * i) / cfg.count + (Math.random() - 0.5) * 0.3;
+            vx = Math.cos(ang) * speed;
+            vy = Math.sin(ang) * speed;
+          }
           particlesRef.current.push({
             x: center.x,
             y: center.y,
-            vx: Math.cos(angle) * speed,
-            vy: Math.sin(angle) * speed,
+            vx,
+            vy,
             ax: 0,
             ay: cfg.gravity,
             size: cfg.size * (0.6 + Math.random() * 0.8),
             color: cfg.colors[i % cfg.colors.length],
             born: now,
-            life: cfg.life,
+            life: cfg.life * (0.85 + Math.random() * 0.3), // jitter so they don't all die at once
+            shape: cfg.shape,
+            rot: cfg.rotates ? Math.random() * Math.PI * 2 : undefined,
+            rotSpeed: cfg.rotates ? (Math.random() - 0.5) * 0.012 : undefined,
+            flicker: cfg.flicker,
           });
         }
       },
@@ -1369,7 +1441,9 @@ export function CombatHexGrid({
         },
       );
 
-      // 3. Projectiles (update + draw, fire onArrive on completion)
+      // 3. Projectiles (update + draw, fire onArrive on completion).
+      // Per-kind arc + trail emission live here so drawProjectile can stay
+      // focused on the silhouette of the projectile itself.
       const stillFlying: ActiveProjectile[] = [];
       for (const proj of projectilesRef.current) {
         const t = (now - proj.born) / proj.duration;
@@ -1377,9 +1451,51 @@ export function CombatHexGrid({
           try { proj.onArrive(); } catch { /* swallow */ }
           continue;
         }
+        const arc = PROJECTILE_ARC[proj.kind];
         const x = proj.fromX + (proj.toX - proj.fromX) * t;
-        const y = proj.fromY + (proj.toY - proj.fromY) * t - (proj.kind !== "lightning" ? Math.sin(t * Math.PI) * 16 : 0);
+        const y = proj.fromY + (proj.toY - proj.fromY) * t - Math.sin(t * Math.PI) * arc;
         drawProjectile(ctx!, proj, x, y, t);
+        // Trail emission: fire and ice projectiles shed element-themed
+        // motes as they fly. Throttled so the trail reads as a stream
+        // (every ~28ms ≈ 35 fps of trail particles, plenty for the eye).
+        if (proj.kind === "fire" || proj.kind === "ice") {
+          const lastTrail = (proj as ActiveProjectile & { lastTrail?: number }).lastTrail ?? 0;
+          if (now - lastTrail > 28) {
+            (proj as ActiveProjectile & { lastTrail?: number }).lastTrail = now;
+            if (proj.kind === "fire") {
+              // Tiny rising embers behind the fireball
+              particlesRef.current.push({
+                x: x + (Math.random() - 0.5) * 4,
+                y: y + (Math.random() - 0.5) * 4,
+                vx: (Math.random() - 0.5) * 0.08,
+                vy: -0.05 - Math.random() * 0.08,
+                ax: 0, ay: -0.0006,
+                size: 2.5 + Math.random() * 1.5,
+                color: ["#ff5500", "#ff8c00", "#fbbf24"][Math.floor(Math.random() * 3)],
+                born: now,
+                life: 520,
+                shape: "ember",
+                flicker: true,
+              });
+            } else {
+              // Slow falling ice motes behind the frost shard
+              particlesRef.current.push({
+                x: x + (Math.random() - 0.5) * 4,
+                y: y + (Math.random() - 0.5) * 4,
+                vx: (Math.random() - 0.5) * 0.04,
+                vy: 0.03 + Math.random() * 0.04,
+                ax: 0, ay: 0.0003,
+                size: 2 + Math.random() * 1.2,
+                color: ["#e0f2fe", "#bae6fd", "#ffffff"][Math.floor(Math.random() * 3)],
+                born: now,
+                life: 600,
+                shape: "snowflake",
+                rot: Math.random() * Math.PI * 2,
+                rotSpeed: (Math.random() - 0.5) * 0.01,
+              });
+            }
+          }
+        }
         stillFlying.push(proj);
       }
       projectilesRef.current = stillFlying;
@@ -1422,7 +1538,11 @@ export function CombatHexGrid({
       }
       risesRef.current = stillRising;
 
-      // 4. Particles (update + draw)
+      // 4. Particles (update + draw). Shape-aware: each shape renders with
+      // its own geometry + blend so fire/ice/lightning impacts read as
+      // their element instead of "yet another colored circle." Lifetime
+      // is intentionally long for the elemental impacts (~2s) so the
+      // animation feels like the tile is briefly on fire / frozen / arcing.
       const alive: Particle[] = [];
       for (const p of particlesRef.current) {
         const age = now - p.born;
@@ -1431,13 +1551,96 @@ export function CombatHexGrid({
         p.vy += p.ay * dt;
         p.x += p.vx * dt;
         p.y += p.vy * dt;
+        if (p.rotSpeed) p.rot = (p.rot ?? 0) + p.rotSpeed * dt;
         const lifeT = age / p.life;
-        const alpha = 1 - lifeT;
-        ctx!.globalAlpha = alpha;
-        ctx!.fillStyle = p.color;
-        ctx!.beginPath();
-        ctx!.arc(p.x, p.y, p.size * (1 - lifeT * 0.4), 0, Math.PI * 2);
-        ctx!.fill();
+        // Embers fade slowly at first then ramp out near death so the heart
+        // of the burst stays bright; circles use the legacy linear fade.
+        const baseAlpha = p.shape === "ember"
+          ? 1 - Math.pow(lifeT, 1.8)
+          : p.shape === "snowflake"
+            ? 1 - Math.pow(lifeT, 1.4)
+            : 1 - lifeT;
+        const flick = p.flicker
+          ? 0.75 + 0.25 * Math.sin(age * 0.025 + p.x * 0.13)
+          : 1;
+        const alpha = Math.max(0, Math.min(1, baseAlpha * flick));
+        const sz = p.size * (1 - lifeT * 0.35);
+
+        if (p.shape === "ember") {
+          // Glowing teardrop: bright additive core + soft halo. Reads as
+          // a hot ember rising off the impact tile.
+          ctx!.globalCompositeOperation = "lighter";
+          ctx!.globalAlpha = alpha * 0.55;
+          ctx!.fillStyle = p.color;
+          ctx!.beginPath();
+          ctx!.arc(p.x, p.y, sz * 2.2, 0, Math.PI * 2);
+          ctx!.fill();
+          ctx!.globalAlpha = alpha;
+          ctx!.fillStyle = "#ffffff";
+          ctx!.beginPath();
+          ctx!.arc(p.x, p.y, Math.max(0.5, sz * 0.55), 0, Math.PI * 2);
+          ctx!.fill();
+          ctx!.globalCompositeOperation = "source-over";
+        } else if (p.shape === "snowflake") {
+          // Six-armed crystal. Slowly rotating + twinkling. Rendered as
+          // three crossed line segments — cheap but unmistakably icy.
+          ctx!.save();
+          ctx!.translate(p.x, p.y);
+          ctx!.rotate(p.rot ?? 0);
+          ctx!.globalAlpha = alpha * 0.85;
+          ctx!.strokeStyle = p.color;
+          ctx!.lineWidth = Math.max(0.6, sz * 0.4);
+          ctx!.lineCap = "round";
+          for (let arm = 0; arm < 3; arm++) {
+            const a = (Math.PI / 3) * arm;
+            ctx!.beginPath();
+            ctx!.moveTo(Math.cos(a) * -sz * 1.6, Math.sin(a) * -sz * 1.6);
+            ctx!.lineTo(Math.cos(a) * sz * 1.6, Math.sin(a) * sz * 1.6);
+            ctx!.stroke();
+          }
+          // Bright center pip
+          ctx!.globalAlpha = alpha;
+          ctx!.fillStyle = "#ffffff";
+          ctx!.beginPath();
+          ctx!.arc(0, 0, Math.max(0.6, sz * 0.45), 0, Math.PI * 2);
+          ctx!.fill();
+          ctx!.restore();
+        } else if (p.shape === "spark") {
+          // Forked spark — two short bright segments meeting at a hot
+          // center. Rotation sells the "thrown off by the strike" look.
+          ctx!.save();
+          ctx!.translate(p.x, p.y);
+          ctx!.rotate(p.rot ?? 0);
+          ctx!.globalCompositeOperation = "lighter";
+          ctx!.globalAlpha = alpha;
+          ctx!.strokeStyle = p.color;
+          ctx!.lineWidth = Math.max(0.8, sz * 0.7);
+          ctx!.lineCap = "round";
+          const len = sz * 3.5;
+          ctx!.beginPath();
+          ctx!.moveTo(-len, 0);
+          ctx!.lineTo(len * 0.2, sz * 0.5);
+          ctx!.lineTo(len, -sz * 0.4);
+          ctx!.stroke();
+          // White-hot core
+          ctx!.globalAlpha = alpha;
+          ctx!.strokeStyle = "#ffffff";
+          ctx!.lineWidth = Math.max(0.4, sz * 0.3);
+          ctx!.beginPath();
+          ctx!.moveTo(-len * 0.6, 0);
+          ctx!.lineTo(len * 0.6, 0);
+          ctx!.stroke();
+          ctx!.globalCompositeOperation = "source-over";
+          ctx!.restore();
+        } else {
+          // Legacy circle path — used by everything that doesn't opt into
+          // a custom shape (poison droplets, bleed splats, heal motes…).
+          ctx!.globalAlpha = alpha;
+          ctx!.fillStyle = p.color;
+          ctx!.beginPath();
+          ctx!.arc(p.x, p.y, sz, 0, Math.PI * 2);
+          ctx!.fill();
+        }
         ctx!.globalAlpha = 1;
         alive.push(p);
       }
@@ -4056,44 +4259,221 @@ function drawActors(
 
 function drawProjectile(ctx: CanvasRenderingContext2D, proj: ActiveProjectile, x: number, y: number, t: number) {
   const color = PROJECTILE_COLOR[proj.kind];
-  if (proj.kind === "lightning") {
-    // Instant zigzag bolt
-    const segments = 6;
-    ctx.strokeStyle = color;
-    ctx.lineWidth = 2 + (1 - t) * 2;
-    ctx.globalAlpha = 1 - t;
-    ctx.beginPath();
-    ctx.moveTo(proj.fromX, proj.fromY);
-    for (let i = 1; i < segments; i++) {
-      const segT = i / segments;
-      const sx = proj.fromX + (proj.toX - proj.fromX) * segT + (Math.random() - 0.5) * 12;
-      const sy = proj.fromY + (proj.toY - proj.fromY) * segT + (Math.random() - 0.5) * 12;
-      ctx.lineTo(sx, sy);
-    }
-    ctx.lineTo(proj.toX, proj.toY);
-    ctx.stroke();
-    ctx.globalAlpha = 1;
-    return;
-  }
-  // Trail
+  // Direction unit-vector — used by every kind to orient heads + tails.
   const dx = proj.toX - proj.fromX;
   const dy = proj.toY - proj.fromY;
   const len = Math.sqrt(dx * dx + dy * dy) || 1;
-  const tailX = x - (dx / len) * 18;
-  const tailY = y - (dy / len) * 18;
-  ctx.strokeStyle = color;
-  ctx.globalAlpha = 0.55;
-  ctx.lineWidth = 4;
-  ctx.beginPath();
-  ctx.moveTo(tailX, tailY);
-  ctx.lineTo(x, y);
-  ctx.stroke();
-  ctx.globalAlpha = 1;
-  // Head
-  ctx.fillStyle = color;
-  ctx.beginPath();
-  ctx.arc(x, y, 5, 0, Math.PI * 2);
-  ctx.fill();
+  const ux = dx / len;
+  const uy = dy / len;
+  const angle = Math.atan2(dy, dx);
+
+  switch (proj.kind) {
+    case "lightning": {
+      // Forked zigzag bolt with a soft glow halo and one branch fork.
+      // Instant — the whole thing renders for the brief projectile window.
+      const segments = 7;
+      const points: Array<[number, number]> = [[proj.fromX, proj.fromY]];
+      for (let i = 1; i < segments; i++) {
+        const segT = i / segments;
+        const sx = proj.fromX + dx * segT + (Math.random() - 0.5) * 14;
+        const sy = proj.fromY + dy * segT + (Math.random() - 0.5) * 14;
+        points.push([sx, sy]);
+      }
+      points.push([proj.toX, proj.toY]);
+      // Outer halo
+      ctx.save();
+      ctx.globalCompositeOperation = "lighter";
+      ctx.strokeStyle = "#a78bfa";
+      ctx.lineWidth = 7;
+      ctx.globalAlpha = 0.35 * (1 - t);
+      ctx.lineCap = "round";
+      ctx.beginPath();
+      ctx.moveTo(points[0][0], points[0][1]);
+      for (let i = 1; i < points.length; i++) ctx.lineTo(points[i][0], points[i][1]);
+      ctx.stroke();
+      // Bright core
+      ctx.globalAlpha = 1 - t;
+      ctx.strokeStyle = "#ffffff";
+      ctx.lineWidth = 2.2;
+      ctx.beginPath();
+      ctx.moveTo(points[0][0], points[0][1]);
+      for (let i = 1; i < points.length; i++) ctx.lineTo(points[i][0], points[i][1]);
+      ctx.stroke();
+      // Yellow electrified outline on top
+      ctx.globalAlpha = (1 - t) * 0.9;
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 3.2;
+      ctx.beginPath();
+      ctx.moveTo(points[0][0], points[0][1]);
+      for (let i = 1; i < points.length; i++) ctx.lineTo(points[i][0], points[i][1]);
+      ctx.stroke();
+      // One stubby branch fork off the middle joint
+      const mid = points[Math.floor(points.length / 2)];
+      const forkAngle = angle + (Math.random() < 0.5 ? 1 : -1) * (Math.PI / 4);
+      const forkLen = 14 + Math.random() * 10;
+      ctx.globalAlpha = (1 - t) * 0.7;
+      ctx.strokeStyle = "#fde047";
+      ctx.lineWidth = 1.8;
+      ctx.beginPath();
+      ctx.moveTo(mid[0], mid[1]);
+      ctx.lineTo(mid[0] + Math.cos(forkAngle) * forkLen, mid[1] + Math.sin(forkAngle) * forkLen);
+      ctx.stroke();
+      ctx.restore();
+      return;
+    }
+    case "fire": {
+      // Pulsing fireball with radial gradient core + warm halo. The
+      // trailing embers are emitted by the projectile loop separately.
+      const pulse = 0.85 + 0.15 * Math.sin(t * 14);
+      const r = 7 * pulse;
+      ctx.save();
+      ctx.globalCompositeOperation = "lighter";
+      // Outer halo
+      const halo = ctx.createRadialGradient(x, y, 1, x, y, r * 3.2);
+      halo.addColorStop(0, "rgba(255, 200, 60, 0.95)");
+      halo.addColorStop(0.4, "rgba(255, 100, 0, 0.45)");
+      halo.addColorStop(1, "rgba(255, 0, 0, 0)");
+      ctx.fillStyle = halo;
+      ctx.beginPath();
+      ctx.arc(x, y, r * 3.2, 0, Math.PI * 2);
+      ctx.fill();
+      // Hot core
+      const core = ctx.createRadialGradient(x, y, 0, x, y, r);
+      core.addColorStop(0, "#ffffff");
+      core.addColorStop(0.45, "#fde047");
+      core.addColorStop(1, "#ff5500");
+      ctx.fillStyle = core;
+      ctx.beginPath();
+      ctx.arc(x, y, r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+      return;
+    }
+    case "ice": {
+      // Sharp crystalline shard pointing forward. Rotates slightly so it
+      // glints. The frost trail is emitted separately by the projectile loop.
+      const len2 = 14;
+      const wid = 5;
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.rotate(angle);
+      // Soft cyan halo
+      ctx.globalCompositeOperation = "lighter";
+      ctx.globalAlpha = 0.55;
+      const halo = ctx.createRadialGradient(0, 0, 1, 0, 0, 18);
+      halo.addColorStop(0, "rgba(186, 230, 253, 0.9)");
+      halo.addColorStop(1, "rgba(125, 211, 252, 0)");
+      ctx.fillStyle = halo;
+      ctx.beginPath();
+      ctx.arc(0, 0, 18, 0, Math.PI * 2);
+      ctx.fill();
+      // Diamond shard
+      ctx.globalCompositeOperation = "source-over";
+      ctx.globalAlpha = 0.95;
+      ctx.fillStyle = "#e0f2fe";
+      ctx.strokeStyle = "#7dd3fc";
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(len2, 0);
+      ctx.lineTo(0, wid);
+      ctx.lineTo(-len2 * 0.6, 0);
+      ctx.lineTo(0, -wid);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+      // Hot-white center stripe
+      ctx.globalAlpha = 0.95;
+      ctx.strokeStyle = "#ffffff";
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(-len2 * 0.5, 0);
+      ctx.lineTo(len2 * 0.85, 0);
+      ctx.stroke();
+      ctx.restore();
+      return;
+    }
+    case "arrow": {
+      // Slim shaft with a triangular head + small fletching at the tail.
+      const shaftLen = 18;
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.rotate(angle);
+      // Shaft
+      ctx.strokeStyle = "#92400e";
+      ctx.lineWidth = 1.6;
+      ctx.beginPath();
+      ctx.moveTo(-shaftLen, 0);
+      ctx.lineTo(shaftLen * 0.6, 0);
+      ctx.stroke();
+      // Head (triangle)
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.moveTo(shaftLen, 0);
+      ctx.lineTo(shaftLen * 0.5, -3);
+      ctx.lineTo(shaftLen * 0.5, 3);
+      ctx.closePath();
+      ctx.fill();
+      // Fletching (two angled lines at tail)
+      ctx.strokeStyle = "#fef3c7";
+      ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      ctx.moveTo(-shaftLen, 0);
+      ctx.lineTo(-shaftLen + 4, -3);
+      ctx.moveTo(-shaftLen, 0);
+      ctx.lineTo(-shaftLen + 4, 3);
+      ctx.stroke();
+      ctx.restore();
+      return;
+    }
+    case "magic": {
+      // Three orbiting motes around a soft purple core. Spirals as it flies.
+      ctx.save();
+      ctx.globalCompositeOperation = "lighter";
+      const halo = ctx.createRadialGradient(x, y, 0, x, y, 14);
+      halo.addColorStop(0, "rgba(196, 181, 253, 0.95)");
+      halo.addColorStop(1, "rgba(167, 139, 250, 0)");
+      ctx.fillStyle = halo;
+      ctx.beginPath();
+      ctx.arc(x, y, 14, 0, Math.PI * 2);
+      ctx.fill();
+      // Core
+      ctx.fillStyle = "#ddd6fe";
+      ctx.beginPath();
+      ctx.arc(x, y, 4, 0, Math.PI * 2);
+      ctx.fill();
+      // Orbiting motes
+      const orbit = 9;
+      for (let i = 0; i < 3; i++) {
+        const a = t * 18 + (i * Math.PI * 2) / 3;
+        ctx.fillStyle = ["#fde047", "#c4b5fd", "#ffffff"][i];
+        ctx.beginPath();
+        ctx.arc(x + Math.cos(a) * orbit, y + Math.sin(a) * orbit, 2, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.restore();
+      return;
+    }
+    case "poison":
+    default: {
+      // Default: small dripping orb with a trailing tail line. Used for
+      // poison + any future generic kind.
+      const tailX = x - ux * 18;
+      const tailY = y - uy * 18;
+      ctx.strokeStyle = color;
+      ctx.globalAlpha = 0.55;
+      ctx.lineWidth = 4;
+      ctx.beginPath();
+      ctx.moveTo(tailX, tailY);
+      ctx.lineTo(x, y);
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.arc(x, y, 5, 0, Math.PI * 2);
+      ctx.fill();
+      return;
+    }
+  }
 }
 
 // ── Melee swing arc ─────────────────────────────────────────────────────────

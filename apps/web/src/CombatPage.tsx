@@ -305,6 +305,9 @@ type CombatEvent =
   | { type: "passive_rogue_first_crit"; actor: string }
   | { type: "passive_sinister_queries"; actor: string; target: string; magnitude: number }
   | { type: "ability_hex"; actor: string; target: string; duration: number }
+  | { type: "ability_freeze_applied"; actor: string; target: string }
+  | { type: "ability_burn_applied"; actor: string; target: string; magnitude: number; duration: number }
+  | { type: "ability_shock_applied"; actor: string; target: string; magnitude: number; duration: number }
   | { type: "hex_bleed_proc"; target: string; stacks: number }
   | { type: "ability_forbidden_sql"; actor: string; target: string; stacks_consumed: number; damage: number }
   | { type: "passive_paladin_auto_heal"; paladin: string; target: string; amount: number }
@@ -910,6 +913,12 @@ function formatEvent(e: CombatEvent, state: CombatState | null): LogEntry[] {
         : <>📦 {actorName} pockets a mystery chest</>;
       return [{ id: nextLogId++, content: label, tone: "good" }];
     }
+    case "ability_freeze_applied":
+      return [{ id: nextLogId++, content: <>❄️ {state ? nameOf(e.target) : e.target} is frozen</>, tone: "good" }];
+    case "ability_burn_applied":
+      return [{ id: nextLogId++, content: <>🔥 {state ? nameOf(e.target) : e.target} catches fire ({e.duration}t)</>, tone: "good" }];
+    case "ability_shock_applied":
+      return [{ id: nextLogId++, content: <>⚡ {state ? nameOf(e.target) : e.target} is shocked ({e.duration}t)</>, tone: "good" }];
     default: {
       const _exhaustive: never = e;
       void _exhaustive;
@@ -1466,6 +1475,25 @@ export function CombatPage({
                 const e = evt as { target?: string };
                 const tgt = e.target ? findMonster(e.target) : null;
                 if (tgt?.pos) hex.emitParticle({ id: `poi${Date.now()}`, kind: "poison", at: tgt.pos, actorId: tgt.id });
+              }
+              // Ability-applied elemental status procs (Mage Fireball burn,
+              // Mage Zero-Day shock, Sage Ray of Frost freeze). The damage
+              // hit already fires its own element burst; this second burst
+              // on the proc emphasizes the status actually landing.
+              if (evt.type === "ability_freeze_applied") {
+                const e = evt as { target?: string };
+                const tgt = e.target ? findMonster(e.target) : null;
+                if (tgt?.pos) hex.emitParticle({ id: `fz${Date.now()}`, kind: "ice", at: tgt.pos, actorId: tgt.id });
+              }
+              if (evt.type === "ability_burn_applied") {
+                const e = evt as { target?: string };
+                const tgt = e.target ? findMonster(e.target) : null;
+                if (tgt?.pos) hex.emitParticle({ id: `bn${Date.now()}`, kind: "fire", at: tgt.pos, actorId: tgt.id });
+              }
+              if (evt.type === "ability_shock_applied") {
+                const e = evt as { target?: string };
+                const tgt = e.target ? findMonster(e.target) : null;
+                if (tgt?.pos) hex.emitParticle({ id: `sk${Date.now()}`, kind: "lightning", at: tgt.pos, actorId: tgt.id });
               }
               if (
                 evt.type === "passive_rogue_lethal_strike"
