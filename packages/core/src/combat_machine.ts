@@ -3604,7 +3604,7 @@ function applyUtilityAbilityEffects(
         // DevOps Mage — Observability adds flat damage per unique enemy debuff.
         const atkObsBonus = observabilityBonus(s, fighter);
         const atkDamage = Math.max(1, Math.round((effect.amount + atkObsBonus) * atkVulnMult));
-        events.push({ type: "player_hit", actor, target: targetMonster.id, damage: atkDamage, armor_absorbed: 0, crit: isCrit, formula: effect.formula });
+        events.push({ type: "player_hit", actor, target: targetMonster.id, damage: atkDamage, armor_absorbed: 0, crit: isCrit, formula: effect.formula, damage_type: effect.damage_type });
         const newHp = Math.max(0, targetMonster.hp - atkDamage);
         s = {
           ...s,
