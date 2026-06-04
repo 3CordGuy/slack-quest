@@ -342,6 +342,124 @@ export function DockedPawnCard({
   );
 }
 
+// ── Rail participant card ────────────────────────────────────────────────────
+//
+// Slim variant used in the combat-page right rail below the log. Lists every
+// live participant (party + monsters) so the player can scan the whole fight
+// at a glance. Hovering a card sets the same hoveredPawnId the canvas uses,
+// so hovering here glows the matching pawn on the battlefield; conversely,
+// hovering a pawn on the canvas highlights the matching card here. Click
+// toggles the pinned state — same semantics as the bottom-left dock had.
+
+export interface RailParticipantCardProps {
+  pawn: PawnLike;
+  side: "fighter" | "monster";
+  themeColor: string;
+  isSelf?: boolean;
+  isCurrent?: boolean;
+  isHovered?: boolean;
+  isPinned?: boolean;
+  onMouseEnter?: () => void;
+  onMouseLeave?: () => void;
+  onClick?: () => void;
+}
+
+export function RailParticipantCard({
+  pawn, side, themeColor, isSelf, isCurrent,
+  isHovered, isPinned,
+  onMouseEnter, onMouseLeave, onClick,
+}: RailParticipantCardProps) {
+  const downed = pawn.hp <= 0;
+
+  const accent =
+    isCurrent ? "#facc15"
+    : side === "fighter" ? themeColor
+    : "#dc2626";
+
+  // Three states layer visually: base, hovered (subtle outer ring), pinned
+  // (stronger). Current actor still wins on border colour.
+  const ringShadow =
+    isPinned ? `0 0 0 2px ${accent}, 0 0 12px ${accent}80`
+    : isHovered ? `0 0 0 1px ${accent}, 0 0 8px ${accent}60`
+    : isCurrent ? `0 0 10px ${accent}66`
+    : "0 1px 4px rgba(0,0,0,0.5)";
+
+  const avatarSrc =
+    side === "fighter"
+      ? charPortraitUrl(pawn.name)
+      : pawn.art_url ?? null;
+  const avatarFallback =
+    side === "fighter" && pawn.class
+      ? classPortraitUrl(pawn.class)
+      : null;
+
+  return (
+    <div
+      onMouseEnter={onMouseEnter}
+      onMouseLeave={onMouseLeave}
+      onClick={onClick}
+      data-rail-pawn={pawn.id}
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 6,
+        padding: "4px 6px",
+        background: downed ? "rgba(127,29,29,0.45)" : "rgba(15,23,42,0.85)",
+        border: `1px solid ${accent}`,
+        borderRadius: 6,
+        boxShadow: ringShadow,
+        color: "#e5e7eb",
+        fontSize: 11,
+        cursor: onClick ? "pointer" : "default",
+        opacity: downed ? 0.55 : 1,
+        transition: "box-shadow 120ms ease, background 120ms ease",
+        boxSizing: "border-box",
+      }}
+      title={onClick ? `Click to ${isPinned ? "unpin" : "pin"} • opens character sheet on second click` : undefined}
+    >
+      <Avatar
+        src={avatarSrc}
+        fallbackSrc={avatarFallback}
+        alt={pawn.name}
+        size={32}
+        radius={4}
+        fallbackIcon={side === "fighter" ? "player" : "dragon"}
+        fallbackColor={side === "fighter" ? "#3a4150" : "#5a1f1f"}
+        border={`1px solid ${accent}`}
+      />
+      <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 2 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 4, minWidth: 0 }}>
+          <span style={{
+            fontWeight: 700, fontSize: 11, lineHeight: 1.1, color: "#fff",
+            overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1,
+          }} title={pawn.name}>
+            {pawn.name}
+          </span>
+          {isSelf && <span style={badgeStyle("#1f2a3a", "#7dd3fc")}>YOU</span>}
+          {pawn.is_boss && <span style={badgeStyle("#3a1f1f", "#fbbf24")}>BOSS</span>}
+          {isCurrent && <span style={badgeStyle("#3a3a1f", "#facc15")}>TURN</span>}
+        </div>
+        {downed ? (
+          <div style={{ fontSize: 9, color: "#fca5a5", fontWeight: 700, letterSpacing: 0.5 }}>× DOWNED</div>
+        ) : (
+          <>
+            <SegmentedHpBar
+              hp={pawn.hp}
+              maxHp={pawn.max_hp}
+              shield={pawn.shield ?? 0}
+              armorPower={pawn.armor_power ?? 0}
+              height={6}
+            />
+            {side === "fighter" && pawn.max_mana != null && pawn.max_mana > 0 && (
+              <ManaBar value={pawn.mana ?? 0} max={pawn.max_mana} height={4} />
+            )}
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ── Bars ─────────────────────────────────────────────────────────────────────
 
 // Mirrors apps/web/src/CombatPage.tsx#FighterHpRow — HP segment on the left,
