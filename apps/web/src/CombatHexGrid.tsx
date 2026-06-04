@@ -39,7 +39,7 @@ import {
 
 const DEFAULT_HEX_SIZE = 26;
 const CANVAS_PAD = 18;
-const PAWN_TWEEN_MS = 280;
+const PAWN_TWEEN_MS = 308;
 // Zoom clamps — 0.5× lets the player pull back for a strategic overview;
 // 2.5× zooms in tight enough to read pawn details at small hex sizes.
 const ZOOM_MIN = 0.5;
@@ -201,7 +201,7 @@ interface ActiveSwing {
   arrived: boolean;
 }
 
-const SWING_DURATION_MS = 260;
+const SWING_DURATION_MS = 286;
 const SWING_ARC_RADIANS = (140 * Math.PI) / 180;
 
 interface ActiveRiseEffect {
@@ -211,7 +211,7 @@ interface ActiveRiseEffect {
   born: number;
   duration: number;
 }
-const RISE_DURATION_MS = 1400;
+const RISE_DURATION_MS = 1540;
 
 const SWING_COLOR_BY_ELEMENT: Record<string, string> = {
   fire: "#fb923c",
@@ -260,7 +260,7 @@ const PARTICLE_CONFIG: Record<ParticleKind, ParticleConfig> = {
   shield:   { count: 12, speed: 0.16, size: 3, life: 550, colors: ["#7dd3fc", "#bae6fd", "#ffffff"], gravity: 0 },
   crit:     { count: 32, speed: 0.28, size: 4, life: 600, colors: ["#fde047", "#facc15", "#fb923c", "#ffffff"], gravity: 0 },
   magic:    { count: 20, speed: 0.18, size: 3, life: 700, colors: ["#c4b5fd", "#a78bfa", "#ffffff"], gravity: 0 },
-  loot:     { count: 24, speed: 0.18, size: 3, life: 900, colors: ["#fde047", "#fbbf24", "#fde68a", "#ffffff"], gravity: -0.0005 },
+  loot:     { count: 14, speed: 0.10, size: 3, life: 450, colors: ["#fde047", "#fbbf24", "#fde68a", "#ffffff"], gravity: -0.0003 },
 };
 
 // Hand-authored Path2D shapes — one per ParticleShape, built once at module
@@ -316,7 +316,7 @@ const SHAPE_PATHS: Record<Exclude<ParticleShape, "circle">, Path2D> = {
 // actually read as travelling — at 300ms the trail barely registered before
 // the impact burst started. Lightning stays near-instant by design.
 const PROJECTILE_DURATION: Record<ProjectileKind, number> = {
-  arrow: 350, fire: 620, ice: 620, lightning: 120, poison: 460, magic: 380,
+  arrow: 385, fire: 682, ice: 682, lightning: 132, poison: 506, magic: 418,
 };
 
 // Mid-flight vertical lift in pixels — controls how much each projectile

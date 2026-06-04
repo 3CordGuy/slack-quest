@@ -1032,10 +1032,10 @@ export function CombatPage({
   // (not imported) because the canvas constant is internal. Off-by-a-frame is
   // harmless — these are upper bounds.
   const PROJECTILE_TRAVEL_MS: Record<ProjectileKind, number> = {
-    arrow: 350, fire: 300, ice: 320, lightning: 80, poison: 400, magic: 300,
+    arrow: 385, fire: 330, ice: 352, lightning: 88, poison: 440, magic: 330,
   };
-  // Swing onArrive fires at t≥0.45 of SWING_DURATION_MS=260 → ~120ms.
-  const SWING_IMPACT_MS = 120;
+  // Swing onArrive fires at t≥0.45 of SWING_DURATION_MS=286 → ~132ms.
+  const SWING_IMPACT_MS = 132;
 
   // Battlefield-first layout: pawn screen positions reported by the hex grid,
   // hovered pawn id (for expanding the callout), and canvas dimensions used
@@ -1381,7 +1381,7 @@ export function CombatPage({
                 const attacker = findFighter(evt.actor);
                 const target = findMonster(evt.target);
                 if (attacker?.pos && target?.pos) {
-                  const projKind = projectileKindForAttack(attacker.weapon_range ?? "melee", attacker.element);
+                  const projKind = projectileKindForAttack(attacker.weapon_range ?? "melee", evt.damage_type ?? attacker.element);
                   const partKind: ParticleKind = particleKindForEvent(evt.damage_type, false, false, evt.crit);
                   if (projKind) {
                     noteAnimationLands(PROJECTILE_TRAVEL_MS[projKind] ?? 350);
