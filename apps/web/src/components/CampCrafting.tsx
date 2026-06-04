@@ -272,7 +272,7 @@ function TransmuteRow({
   inventory: Item[];
   onAfterAction: () => void | Promise<void>;
 }) {
-  const [busy, setBusy] = useState(false);
+  const [modalOpen, setModalOpen] = useState(false);
   const meetsLevel = characterLevel >= spec.level_req;
   const affordable = gold >= spec.gold_cost;
   const missingInputs = spec.inputs.filter((inp) => inventoryQty(inventory, inp.resource_id) < inp.qty);
@@ -280,19 +280,109 @@ function TransmuteRow({
   const canTransmute = meetsLevel && affordable && hasInputs;
   const outSpec = findResource(spec.output_resource_id);
 
-  async function handle() {
+  return (
+    <>
+      <div style={rowStyle}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontWeight: 600 }}>{spec.label}</div>
+          <div style={{ fontSize: 12, color: "var(--fg-mute)" }}>{spec.blurb}</div>
+          <div style={{ fontSize: 11, color: "var(--fg-mute)", marginTop: 4 }}>
+            {spec.inputs.map((inp) => {
+              const s = findResource(inp.resource_id);
+              const have = inventoryQty(inventory, inp.resource_id);
+              const short = have < inp.qty;
+              return (
+                <span key={inp.resource_id} style={{ marginRight: 12, color: short ? "var(--accent-no-1, #f87171)" : "inherit" }}>
+                  {inp.qty} × <span style={{ display: "inline-flex", alignItems: "center", gap: 3, verticalAlign: "middle" }}>
+                    <Icon name={s?.icon ?? "abstract-006"} size={12} color="var(--fg-mute)" /> {s?.name ?? inp.resource_id}
+                  </span> <span style={{ opacity: 0.6 }}>({have} on hand)</span>
+                </span>
+              );
+            })}
+            <span> · {spec.gold_cost}g</span>
+            <span> · lvl {spec.level_req}+</span>
+            {outSpec && (
+              <span style={{ color: "var(--accent-gold, #f59e0b)" }}>
+                {" → "}<Icon name={outSpec.icon} size={12} color="var(--accent-gold, #f59e0b)" style={{ verticalAlign: "middle" }} /> {outSpec.name}
+              </span>
+            )}
+          </div>
+        </div>
+        <button
+          type="button"
+          disabled={!canTransmute}
+          onClick={() => setModalOpen(true)}
+          style={actionBtnStyle(canTransmute)}
+        >
+          {!meetsLevel ? `Lvl ${spec.level_req}` : !hasInputs ? "Need inputs" : !affordable ? "Need gold" : spec.station === "smithy" ? "Transmute" : "Distil"}
+        </button>
+      </div>
+      {modalOpen && (
+        <TransmuteModal
+          spec={spec}
+          gold={gold}
+          inventory={inventory}
+          onClose={() => setModalOpen(false)}
+          onAfterAction={onAfterAction}
+        />
+      )}
+    </>
+  );
+}
+
+// Multi-batch transmute UX. Shows the recipe's inputs and output as large
+// SVG icons with stat-style quantity numbers, separated by a big arrow,
+// and a +/- counter clamped to what the player's inventory + gold can
+// actually pay for. Submits a single POST with `{count}` so the server
+// scales the transaction atomically.
+function TransmuteModal({
+  spec, gold, inventory, onClose, onAfterAction,
+}: {
+  spec: TransmuteSpec;
+  gold: number;
+  inventory: Item[];
+  onClose: () => void;
+  onAfterAction: () => void | Promise<void>;
+}) {
+  const outSpec = findResource(spec.output_resource_id);
+  const verb = spec.station === "smithy" ? "Transmute" : "Distil";
+  const verbPast = spec.station === "smithy" ? "Transmuted" : "Distilled";
+  // Cap = the most batches the player could afford right now. The min of
+  // (gold / gold_cost) and floor(have / qty) across every input — anything
+  // beyond this is disallowed before the request leaves the client.
+  const inputAvailability = spec.inputs.map((inp) => {
+    const have = inventoryQty(inventory, inp.resource_id);
+    const maxByInput = Math.floor(have / inp.qty);
+    return { input: inp, have, maxByInput, spec: findResource(inp.resource_id) };
+  });
+  const maxByInputs = inputAvailability.reduce((m, a) => Math.min(m, a.maxByInput), Number.POSITIVE_INFINITY);
+  const maxByGold = spec.gold_cost > 0 ? Math.floor(gold / spec.gold_cost) : Number.POSITIVE_INFINITY;
+  const maxCount = Math.max(1, Math.min(maxByInputs, maxByGold, 999));
+  const [count, setCount] = useState(1);
+  const [busy, setBusy] = useState(false);
+  const clamped = Math.max(1, Math.min(maxCount, count));
+  const totalGold = spec.gold_cost * clamped;
+
+  async function submit() {
     setBusy(true);
     const endpoint = spec.station === "smithy"
       ? `/api/smithy/transmute/${spec.id}`
       : `/api/apothecary/transmute/${spec.id}`;
     try {
-      const res = await fetch(endpoint, { method: "POST", credentials: "include" });
+      const res = await fetch(endpoint, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ count: clamped }),
+      });
       if (!res.ok) {
         const body = await res.json().catch(() => ({})) as { error?: string };
-        toast.error(`${spec.station === "smithy" ? "Transmute" : "Distil"} failed: ${body.error ?? res.statusText}`);
+        toast.error(`${verb} failed: ${body.error ?? res.statusText}`);
         return;
       }
-      toast.success(`${spec.station === "smithy" ? "Transmuted" : "Distilled"} → ${outSpec ? `${outSpec.emoji} ${outSpec.name}` : spec.output_resource_id}`);
+      const outName = outSpec ? `${outSpec.emoji} ${outSpec.name}` : spec.output_resource_id;
+      toast.success(`${verbPast} ×${clamped} → ${outName}`);
+      onClose();
       await onAfterAction();
     } finally {
       setBusy(false);
@@ -300,42 +390,182 @@ function TransmuteRow({
   }
 
   return (
-    <div style={rowStyle}>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontWeight: 600 }}>{spec.label}</div>
-        <div style={{ fontSize: 12, color: "var(--fg-mute)" }}>{spec.blurb}</div>
-        <div style={{ fontSize: 11, color: "var(--fg-mute)", marginTop: 4 }}>
-          {spec.inputs.map((inp) => {
-            const s = findResource(inp.resource_id);
-            const have = inventoryQty(inventory, inp.resource_id);
-            const short = have < inp.qty;
-            return (
-              <span key={inp.resource_id} style={{ marginRight: 12, color: short ? "var(--accent-no-1, #f87171)" : "inherit" }}>
-                {inp.qty} × <span style={{ display: "inline-flex", alignItems: "center", gap: 3, verticalAlign: "middle" }}>
-                  <Icon name={s?.icon ?? "abstract-006"} size={12} color="var(--fg-mute)" /> {s?.name ?? inp.resource_id}
-                </span> <span style={{ opacity: 0.6 }}>({have} on hand)</span>
-              </span>
-            );
-          })}
-          <span> · {spec.gold_cost}g</span>
-          <span> · lvl {spec.level_req}+</span>
-          {outSpec && (
-            <span style={{ color: "var(--accent-gold, #f59e0b)" }}>
-              {" → "}<Icon name={outSpec.icon} size={12} color="var(--accent-gold, #f59e0b)" style={{ verticalAlign: "middle" }} /> {outSpec.name}
-            </span>
-          )}
+    <div
+      onClick={onClose}
+      style={{
+        position: "fixed", inset: 0, background: "rgba(0,0,0,0.65)",
+        display: "flex", alignItems: "center", justifyContent: "center",
+        zIndex: 1000, padding: 16,
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          background: "var(--bg-card-1, #1a1c20)",
+          border: "1px solid var(--border-base, #2a2d33)",
+          borderRadius: 14,
+          padding: 24,
+          maxWidth: 480,
+          width: "100%",
+          boxShadow: "0 12px 48px rgba(0,0,0,0.6)",
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
+          <div style={{ fontFamily: "var(--font-display)", fontSize: 18, fontWeight: 700 }}>{spec.label}</div>
+          <button onClick={onClose} style={{ background: "none", border: "none", color: "var(--fg-mute)", cursor: "pointer", fontSize: 20, lineHeight: 1, padding: 4 }}>×</button>
+        </div>
+        <div style={{ fontSize: 12, color: "var(--fg-mute)", marginBottom: 18 }}>{spec.blurb}</div>
+
+        {/* Big From → To visual with stat numbers */}
+        <div style={{
+          display: "flex", alignItems: "center", justifyContent: "center", gap: 12,
+          padding: "18px 8px",
+          background: "var(--bg-card-2, rgba(255,255,255,0.03))",
+          border: "1px solid var(--border-faint, rgba(255,255,255,0.06))",
+          borderRadius: 12, marginBottom: 16,
+        }}>
+          <div style={{ display: "flex", gap: 8, flex: 1, justifyContent: "center", flexWrap: "wrap" }}>
+            {inputAvailability.map((a, i) => (
+              <div key={a.input.resource_id} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}>
+                <Icon name={a.spec?.icon ?? "abstract-006"} size={56} color="var(--fg-2, #cbd5e1)" />
+                <div style={{
+                  fontFamily: "var(--font-display)", fontSize: 26, fontWeight: 700,
+                  fontFeatureSettings: '"tnum" 1, "lnum" 1',
+                  color: "var(--fg-1)", lineHeight: 1,
+                }}>
+                  {a.input.qty * clamped}
+                </div>
+                <div style={{ fontSize: 10, color: "var(--fg-mute)", textTransform: "uppercase", letterSpacing: 1 }}>
+                  of {a.have}
+                </div>
+                {i < inputAvailability.length - 1 && (
+                  <div style={{ position: "absolute", marginTop: 28, fontSize: 18, color: "var(--fg-mute)" }}>+</div>
+                )}
+              </div>
+            ))}
+          </div>
+          <div style={{ fontSize: 24, color: "var(--fg-mute)", padding: "0 4px" }}>→</div>
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6, flex: 1 }}>
+            <Icon name={outSpec?.icon ?? "abstract-006"} size={56} color="var(--accent-gold, #f59e0b)" />
+            <div style={{
+              fontFamily: "var(--font-display)", fontSize: 26, fontWeight: 700,
+              fontFeatureSettings: '"tnum" 1, "lnum" 1',
+              color: "var(--accent-gold, #f59e0b)", lineHeight: 1,
+            }}>
+              {clamped}
+            </div>
+            <div style={{ fontSize: 10, color: "var(--fg-mute)", textTransform: "uppercase", letterSpacing: 1 }}>
+              {outSpec?.name ?? "output"}
+            </div>
+          </div>
+        </div>
+
+        {/* +/- counter */}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 14, marginBottom: 16 }}>
+          <button
+            type="button"
+            onClick={() => setCount(Math.max(1, clamped - 1))}
+            disabled={clamped <= 1 || busy}
+            style={counterBtn(clamped > 1)}
+            aria-label="Decrease"
+          >
+            −
+          </button>
+          <div style={{
+            font: "700 30px/1 var(--font-display)",
+            fontFeatureSettings: '"tnum" 1, "lnum" 1',
+            minWidth: 70, textAlign: "center",
+            color: "var(--fg-1)",
+          }}>
+            {clamped}
+          </div>
+          <button
+            type="button"
+            onClick={() => setCount(Math.min(maxCount, clamped + 1))}
+            disabled={clamped >= maxCount || busy}
+            style={counterBtn(clamped < maxCount)}
+            aria-label="Increase"
+          >
+            +
+          </button>
+          <button
+            type="button"
+            onClick={() => setCount(maxCount)}
+            disabled={clamped >= maxCount || busy}
+            style={{
+              marginLeft: 8, padding: "6px 12px",
+              fontSize: 11, textTransform: "uppercase", letterSpacing: 1.2,
+              background: "transparent", color: "var(--fg-mute)",
+              border: "1px solid var(--border-base)",
+              borderRadius: 6, cursor: clamped < maxCount ? "pointer" : "not-allowed",
+            }}
+          >
+            Max ({maxCount})
+          </button>
+        </div>
+
+        {/* Cost */}
+        <div style={{
+          display: "flex", justifyContent: "space-between", alignItems: "center",
+          padding: "10px 12px", marginBottom: 16,
+          background: "var(--bg-card-2, rgba(255,255,255,0.03))",
+          border: "1px solid var(--border-faint, rgba(255,255,255,0.06))",
+          borderRadius: 8, fontSize: 13,
+        }}>
+          <span style={{ color: "var(--fg-mute)" }}>Gold cost</span>
+          <span>
+            <strong style={{ color: "var(--accent-gold, #f59e0b)" }}>{totalGold}g</strong>
+            <span style={{ color: "var(--fg-mute)", marginLeft: 6 }}>· {gold - totalGold}g remaining</span>
+          </span>
+        </div>
+
+        {/* Actions */}
+        <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={busy}
+            style={{
+              padding: "10px 16px",
+              background: "transparent", color: "var(--fg-2)",
+              border: "1px solid var(--border-base)",
+              borderRadius: 8, cursor: "pointer",
+            }}
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={submit}
+            disabled={busy || clamped < 1}
+            style={{
+              padding: "10px 18px",
+              background: busy ? "var(--bg-card-2)" : "var(--accent-gold, #f59e0b)",
+              color: busy ? "var(--fg-mute)" : "#0b0d10",
+              border: "1px solid var(--accent-gold, #f59e0b)",
+              borderRadius: 8, cursor: busy ? "not-allowed" : "pointer",
+              fontWeight: 600,
+            }}
+          >
+            {busy ? "…" : `${verb} ×${clamped}`}
+          </button>
         </div>
       </div>
-      <button
-        type="button"
-        disabled={!canTransmute || busy}
-        onClick={handle}
-        style={actionBtnStyle(canTransmute)}
-      >
-        {busy ? "…" : !meetsLevel ? `Lvl ${spec.level_req}` : !hasInputs ? "Need inputs" : !affordable ? "Need gold" : spec.station === "smithy" ? "Transmute" : "Distil"}
-      </button>
     </div>
   );
+}
+
+function counterBtn(enabled: boolean): CSSProperties {
+  return {
+    width: 44, height: 44,
+    borderRadius: 22,
+    background: enabled ? "var(--accent-gold, #f59e0b)" : "var(--bg-card-2, rgba(255,255,255,0.04))",
+    color: enabled ? "#0b0d10" : "var(--fg-mute)",
+    border: `1px solid ${enabled ? "var(--accent-gold, #f59e0b)" : "var(--border-base)"}`,
+    fontSize: 22, fontWeight: 700, lineHeight: 1,
+    cursor: enabled ? "pointer" : "not-allowed",
+    display: "flex", alignItems: "center", justifyContent: "center",
+  };
 }
 
 function ReinforceRow({
