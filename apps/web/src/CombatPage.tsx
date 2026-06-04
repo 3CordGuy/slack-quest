@@ -16,7 +16,7 @@ import {
   type ParticleKind,
   type ProjectileKind,
 } from "./CombatHexGrid";
-import { DockedPawnCard, type PawnLike } from "./PawnCallout";
+import { RailParticipantCard, type PawnLike } from "./PawnCallout";
 import { CharacterSheetModal, type CharacterSheetSubject } from "./CharacterSheetModal";
 import {
   DISPLAY_FONT,
@@ -2338,15 +2338,128 @@ export function CombatPage({
               <DiceRollDisplay rolls={diceRolls} align="left" />
             </div>
 
-            {/* Right rail — combat log (hidden on mobile; too narrow to be useful) */}
+            {/* Right rail — combat log on top (flex: 1 absorbs leftover height)
+                + participant dock below (all live fighters + monsters, always
+                visible). Hidden on mobile since the rail's too narrow to be
+                useful there. */}
             {!isMobile && (
               <div style={{
                 position: "absolute", top: 12, right: 12, bottom: 12, width: "min(280px, 22vw)",
-                display: "flex", flexDirection: "column", zIndex: 6,
+                display: "flex", flexDirection: "column", gap: 8, zIndex: 6,
                 background: "rgba(0,0,0,0.6)", border: "1px solid rgba(255,255,255,0.12)",
                 borderRadius: 8, backdropFilter: "blur(6px)", padding: "8px 6px 6px",
               }}>
-                <CombatLog log={ui.log} scrollRef={logScrollRef} />
+                <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+                  <CombatLog log={ui.log} scrollRef={logScrollRef} />
+                </div>
+                {(() => {
+                  // Fighters: include downed so the rail reflects who needs a
+                  // revive. Monsters: hide once dead — no value lingering on a
+                  // corpse, and gauntlet waves swap in fresh foes.
+                  const allFighters = state.fighters;
+                  const liveMons = state.monsters.filter((m) => m.hp > 0);
+                  if (allFighters.length === 0 && liveMons.length === 0) return null;
+                  return (
+                    <div style={{
+                      flex: "0 1 auto",
+                      maxHeight: "55%",
+                      overflowY: "auto",
+                      display: "flex", flexDirection: "column", gap: 4,
+                      paddingTop: 6,
+                      borderTop: "1px solid rgba(255,255,255,0.08)",
+                    }}>
+                      {allFighters.map((f) => {
+                        const pawn: PawnLike = {
+                          id: f.id, name: f.name,
+                          hp: f.hp, max_hp: f.max_hp,
+                          mana: f.mana, max_mana: f.max_mana,
+                          class: f.class, level: f.level,
+                          shield: f.shield,
+                          armor_power: f.armor_power,
+                          effects: (f.effects ?? []) as never,
+                        };
+                        const themeColor = f.id === selfId ? "#7dd3fc" : "#a78bfa";
+                        return (
+                          <RailParticipantCard
+                            key={f.id}
+                            pawn={pawn}
+                            side="fighter"
+                            themeColor={themeColor}
+                            isSelf={f.id === selfId}
+                            isCurrent={currentActorId === f.id}
+                            isHovered={hoveredPawnId === f.id}
+                            isPinned={pinnedPawnId === f.id}
+                            onMouseEnter={() => setHoveredPawnId(f.id)}
+                            onMouseLeave={() => setHoveredPawnId((prev) => prev === f.id ? null : prev)}
+                            onClick={() => {
+                              // First click pins (or unpins); second click on
+                              // an already-pinned card opens the full sheet.
+                              if (pinnedPawnId === f.id) {
+                                setSheetSubject({
+                                  pawn,
+                                  side: "fighter",
+                                  themeColor,
+                                  isSelf: f.id === selfId,
+                                  loadout: f.id === selfId ? equippedLoadout ?? undefined : undefined,
+                                  equippedPassiveIds: f.equipped_passive_ids,
+                                });
+                              } else {
+                                setPinnedPawnId(f.id);
+                              }
+                            }}
+                          />
+                        );
+                      })}
+                      {liveMons.map((m) => {
+                        const pawn: PawnLike = {
+                          id: m.id ?? "", name: m.name,
+                          hp: m.hp, max_hp: m.max_hp,
+                          tier: m.tier, is_boss: m.is_boss,
+                          shield: m.shield ?? 0,
+                          armor_power: 2 * m.tier,
+                          art_url: m.art_url,
+                          effects: (m.effects ?? []) as never,
+                        };
+                        const themeColor = m.is_boss ? "#f87171" : "#fca5a5";
+                        const monsterId = m.id ?? "";
+                        return (
+                          <RailParticipantCard
+                            key={monsterId}
+                            pawn={pawn}
+                            side="monster"
+                            themeColor={themeColor}
+                            isCurrent={currentActorId === m.id}
+                            isHovered={hoveredPawnId === monsterId}
+                            isPinned={pinnedPawnId === monsterId}
+                            onMouseEnter={() => setHoveredPawnId(monsterId)}
+                            onMouseLeave={() => setHoveredPawnId((prev) => prev === monsterId ? null : prev)}
+                            onClick={() => {
+                              if (pinnedPawnId === monsterId) {
+                                setSheetSubject({
+                                  pawn,
+                                  side: "monster",
+                                  themeColor,
+                                  monsterExtras: {
+                                    weapon_range: m.weapon_range,
+                                    range_tiles: m.range_tiles,
+                                    move_range: m.move_range,
+                                    specials: m.specials,
+                                    element_weakness: m.element_weakness,
+                                    element_resistance: m.element_resistance,
+                                    attack_damage_type: m.attack_damage_type,
+                                    boss_phase: m.boss_phase,
+                                  },
+                                });
+                              } else {
+                                setPinnedPawnId(monsterId);
+                              }
+                            }}
+                          />
+                        );
+                      })}
+                    </div>
+                  );
+                })()}
               </div>
             )}
 
@@ -2612,100 +2725,9 @@ export function CombatPage({
                       }}
                     />
                   </div>
-                  {/* Focused pawn card — overlaid on the canvas in the
-                      bottom-left corner so it stays in the player's eye
-                      line during the action. Priority: pinned (user
-                      tap/click) > hovered > current actor. */}
-                  {(() => {
-                    const focusId = pinnedPawnId ?? hoveredPawnId ?? currentActorId ?? null;
-                    if (!focusId) return null;
-                    const fighter = state.fighters.find((f) => f.id === focusId);
-                    const monster = state.monsters.find((m) => m.id === focusId);
-                    if (!fighter && !monster) return null;
-                    const isPinnedFocus = pinnedPawnId === focusId;
-                    return (
-                      <div style={{
-                        position: "absolute",
-                        left: 12,
-                        bottom: 12,
-                        zIndex: 6,
-                        pointerEvents: "auto",
-                        maxWidth: "min(360px, 38vw)",
-                      }}>
-                        {fighter && (() => {
-                          const pawn: PawnLike = {
-                            id: fighter.id, name: fighter.name,
-                            hp: fighter.hp, max_hp: fighter.max_hp,
-                            mana: fighter.mana, max_mana: fighter.max_mana,
-                            class: fighter.class, level: fighter.level,
-                            shield: fighter.shield,
-                            armor_power: fighter.armor_power,
-                            effects: (fighter.effects ?? []) as never,
-                          };
-                          const themeColor = fighter.id === selfId ? "#7dd3fc" : "#a78bfa";
-                          return (
-                            <DockedPawnCard
-                              pawn={pawn}
-                              side="fighter"
-                              themeColor={themeColor}
-                              isSelf={fighter.id === selfId}
-                              isCurrent={currentActorId === fighter.id}
-                              pinned={isPinnedFocus}
-                              onUnpin={() => setPinnedPawnId(null)}
-                              onOpenSheet={() => setSheetSubject({
-                                pawn,
-                                side: "fighter",
-                                themeColor,
-                                isSelf: fighter.id === selfId,
-                                // Self's loadout comes from the local /api/character/talents
-                                // fetch; other party members fall back to the class kit
-                                // until per-fighter loadouts are broadcast on the wire.
-                                loadout: fighter.id === selfId ? equippedLoadout ?? undefined : undefined,
-                                equippedPassiveIds: fighter.equipped_passive_ids,
-                              })}
-                            />
-                          );
-                        })()}
-                        {monster && (() => {
-                          const pawn: PawnLike = {
-                            id: monster.id ?? "", name: monster.name,
-                            hp: monster.hp, max_hp: monster.max_hp,
-                            tier: monster.tier, is_boss: monster.is_boss,
-                            shield: monster.shield ?? 0,
-                            armor_power: 2 * monster.tier,
-                            art_url: monster.art_url,
-                            effects: (monster.effects ?? []) as never,
-                          };
-                          const themeColor = monster.is_boss ? "#f87171" : "#fca5a5";
-                          return (
-                            <DockedPawnCard
-                              pawn={pawn}
-                              side="monster"
-                              themeColor={themeColor}
-                              isCurrent={currentActorId === monster.id}
-                              pinned={isPinnedFocus}
-                              onUnpin={() => setPinnedPawnId(null)}
-                              onOpenSheet={() => setSheetSubject({
-                                pawn,
-                                side: "monster",
-                                themeColor,
-                                monsterExtras: {
-                                  weapon_range: monster.weapon_range,
-                                  range_tiles: monster.range_tiles,
-                                  move_range: monster.move_range,
-                                  specials: monster.specials,
-                                  element_weakness: monster.element_weakness,
-                                  element_resistance: monster.element_resistance,
-                                  attack_damage_type: monster.attack_damage_type,
-                                  boss_phase: monster.boss_phase,
-                                },
-                              })}
-                            />
-                          );
-                        })()}
-                      </div>
-                    );
-                  })()}
+                  {/* Bottom-left dock removed — participant info now lives in
+                      the right rail under the combat log, where hover/pin
+                      state highlights the matching rail card. */}
                 </div>
               );
             })()}
@@ -2740,6 +2762,117 @@ export function CombatPage({
           <PartyChips fighters={state.fighters} selfId={selfId} flashIds={flashIds} hitDustSeq={hitDustSeq} healBurstSeq={healBurstSeq} shieldBurstSeq={shieldBurstSeq} onClickSelf={onOpenInventory} abilityState={state.ability_state} round={state.round} currentActorId={currentActorId} />
         </div>
       )}
+
+      {/* Mobile participant strip — battlefield-first mode hides the
+          right rail (too narrow on phones), so the same dock pattern
+          lives here as a horizontal scroll strip between the map and
+          the action bar. Tap a card to open its full character sheet. */}
+      {state && state.hex_range_enabled && isMobile && (() => {
+        const allFighters = state.fighters;
+        const liveMons = state.monsters.filter((m) => m.hp > 0);
+        if (allFighters.length === 0 && liveMons.length === 0) return null;
+        return (
+          <div style={{
+            background: "var(--bg-deep)",
+            borderTop: "1px solid var(--border-base)",
+            borderBottom: "1px solid var(--border-faint)",
+            padding: "6px 8px",
+            flexShrink: 0,
+            zIndex: 8,
+            overflowX: "auto",
+            overflowY: "hidden",
+            WebkitOverflowScrolling: "touch",
+          }}>
+            <div style={{
+              display: "flex",
+              gap: 6,
+              minWidth: "min-content",
+            }}>
+              {allFighters.map((f) => {
+                const pawn: PawnLike = {
+                  id: f.id, name: f.name,
+                  hp: f.hp, max_hp: f.max_hp,
+                  mana: f.mana, max_mana: f.max_mana,
+                  class: f.class, level: f.level,
+                  shield: f.shield,
+                  armor_power: f.armor_power,
+                  effects: (f.effects ?? []) as never,
+                };
+                const themeColor = f.id === selfId ? "#7dd3fc" : "#a78bfa";
+                return (
+                  <div key={f.id} style={{ flex: "0 0 200px" }}>
+                    <RailParticipantCard
+                      pawn={pawn}
+                      side="fighter"
+                      themeColor={themeColor}
+                      isSelf={f.id === selfId}
+                      isCurrent={currentActorId === f.id}
+                      isHovered={hoveredPawnId === f.id}
+                      isPinned={pinnedPawnId === f.id}
+                      onClick={() => {
+                        // Mobile: single tap opens the sheet directly —
+                        // no two-step pin dance.
+                        setPinnedPawnId(f.id);
+                        setSheetSubject({
+                          pawn,
+                          side: "fighter",
+                          themeColor,
+                          isSelf: f.id === selfId,
+                          loadout: f.id === selfId ? equippedLoadout ?? undefined : undefined,
+                          equippedPassiveIds: f.equipped_passive_ids,
+                        });
+                      }}
+                    />
+                  </div>
+                );
+              })}
+              {liveMons.map((m) => {
+                const pawn: PawnLike = {
+                  id: m.id ?? "", name: m.name,
+                  hp: m.hp, max_hp: m.max_hp,
+                  tier: m.tier, is_boss: m.is_boss,
+                  shield: m.shield ?? 0,
+                  armor_power: 2 * m.tier,
+                  art_url: m.art_url,
+                  effects: (m.effects ?? []) as never,
+                };
+                const themeColor = m.is_boss ? "#f87171" : "#fca5a5";
+                const monsterId = m.id ?? "";
+                return (
+                  <div key={monsterId} style={{ flex: "0 0 200px" }}>
+                    <RailParticipantCard
+                      pawn={pawn}
+                      side="monster"
+                      themeColor={themeColor}
+                      isCurrent={currentActorId === m.id}
+                      isHovered={hoveredPawnId === monsterId}
+                      isPinned={pinnedPawnId === monsterId}
+                      onClick={() => {
+                        setPinnedPawnId(monsterId);
+                        setSheetSubject({
+                          pawn,
+                          side: "monster",
+                          themeColor,
+                          monsterExtras: {
+                            weapon_range: m.weapon_range,
+                            range_tiles: m.range_tiles,
+                            move_range: m.move_range,
+                            specials: m.specials,
+                            element_weakness: m.element_weakness,
+                            element_resistance: m.element_resistance,
+                            attack_damage_type: m.attack_damage_type,
+                            boss_phase: m.boss_phase,
+                          },
+                        });
+                      }}
+                    />
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Pickers — all portal-based modals */}
       {state?.status === "active" && itemPicker === "open" && (

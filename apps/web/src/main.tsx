@@ -1,14 +1,31 @@
-import React from "react";
+import React, { useEffect } from "react";
 import ReactDOM from "react-dom/client";
-import { Toaster } from "react-hot-toast";
+import { Toaster, toast } from "react-hot-toast";
 import "rpg-awesome/css/rpg-awesome.min.css";
 import "./index.css";
 
 import { App } from "./App";
 
+// Dismisses every visible toast on any tap/click on the page. Without this,
+// mobile users frequently get stuck with a toast lingering after they've
+// already read it (the auto-timeout is long enough to feel sticky and there's
+// no swipe-to-dismiss on tap). Runs on pointerdown so the dismiss happens
+// before the click handler fires — any toast queued by that same handler
+// (e.g. an "out of range" rejection) gets posted after dismiss runs and so
+// remains visible.
+function DismissToastsOnTap() {
+  useEffect(() => {
+    const onPointerDown = () => toast.dismiss();
+    window.addEventListener("pointerdown", onPointerDown);
+    return () => window.removeEventListener("pointerdown", onPointerDown);
+  }, []);
+  return null;
+}
+
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <App />
+    <DismissToastsOnTap />
     <Toaster
       position="top-center"
       toastOptions={{
