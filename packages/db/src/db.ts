@@ -1337,10 +1337,26 @@ export async function addItem(db: D1Database, input: CreateItemInput): Promise<I
   const itemLevel = input.item_level ?? input.power;
   // level_req: prefer the iLvl-derived formula from the design doc when iLvl
   // is supplied; fall back to the legacy ceil(power/3) for pre-affix callers.
+  //
+  // Consumables (and the other non-equippable types) are an exception: their
+  // `power` is the HP/MP they restore, not gear power, so dividing by 3 to
+  // get a level_req produces wildly wrong numbers — a Surf & Stream Platter
+  // (power 110) was landing at level_req 37. The recipe's own `level_req`
+  // already gates *crafting*; once it's in your inventory it should be
+  // usable regardless of level. Default to 1 when no explicit level_req is
+  // passed for these types.
+  const nonEquippable =
+    input.item_type === "consumable"
+    || input.item_type === "magic"
+    || input.item_type === "revive"
+    || input.item_type === "tool"
+    || input.item_type === "scroll";
   const levelReq = input.level_req
-    ?? (input.item_level != null
-      ? Math.max(1, Math.floor(itemLevel / 2))
-      : Math.max(1, Math.ceil(input.power / 3)));
+    ?? (nonEquippable
+      ? 1
+      : input.item_level != null
+        ? Math.max(1, Math.floor(itemLevel / 2))
+        : Math.max(1, Math.ceil(input.power / 3)));
   const affixesJson = input.affixes && input.affixes.length > 0 ? JSON.stringify(input.affixes) : null;
   const result = await db
     .prepare(
