@@ -6,6 +6,8 @@ import { createPortal } from "react-dom";
 import { isMonsterActor, isAllyNpcActor, classByName, activeAbilities, type ActiveAbilityDef, EFFECT_META, type EffectType, findCatalogEntry } from "@gantt-quest/core";
 import { Icon } from "./icons";
 import { HoverTooltip } from "./components/ui";
+import { itemIcon } from "./utils";
+import type { ItemType, WeaponRange, EquipSlot } from "./types";
 
 export const DISPLAY_FONT = "'Metamorphous', serif";
 
@@ -388,40 +390,20 @@ export function lootIcon(opt: {
   item_name?: string | null;
   flavor?: string | null;
 }): string {
-  if (opt.slot && opt.slot !== "main_hand") {
-    switch (opt.slot) {
-      case "off_hand": return opt.item_subtype === "gloves" ? "gloves" : "round-shield";
-      case "body":     return "chest-armor";
-      case "helmet":   return "heavy-helm";
-      case "pants":    return "armored-pants";
-      case "boots":    return "boots";
-      case "ring":     return "ring";
-      case "amulet":   return "gem-chain";
-    }
-  }
-  if (opt.item_type === "weapon") {
-    // Specific firearm name matches win over the generic "gun" flavor rule
-    // so loot tiles stay consistent with the inventory itemIcon rules.
-    const f = (opt.flavor ?? "").toLowerCase();
-    const n = (opt.item_name ?? "").toLowerCase();
-    if (/\bcannon(ball|shot)?\b/.test(n)) return /\b(shot|ball)\b/.test(n) ? "cannon-shot" : "cannon";
-    if (/\b(sawed-?off|shotgun)\b/.test(n)) return "shotgun";
-    if (/\bblunderbuss\b/.test(n) || /\bblunderbuss\b/.test(f)) return "blunderbuss";
-    if (/\bmusket\b/.test(n)) return "musket";
-    if (/\brifle\b/.test(n)) return "rifle";
-    if (/\b(pistol|revolver|sidearm|six-?shooter)\b/.test(n)) return "pistol-gun";
-    if (/\bgun\b/.test(f) || /\bgun\b/.test(n)) return "blunderbuss";
-    if (opt.weapon_range === "focus")  return "crystal-wand";
-    if (opt.weapon_range === "ranged") return "crossbow";
-    return "sword";
-  }
-  if (opt.item_type === "armor")      return "chest-armor";
-  if (opt.item_type === "consumable") return "bubbling-potion";
-  if (opt.item_type === "magic")      return "crystal-ball";
-  if (opt.item_type === "revive")     return "crowned-heart";
-  if (opt.item_type === "tool")       return "anvil";
-  if (opt.item_type === "scroll")     return "scroll-unfurled";
-  return "anvil";
+  // Delegate to the inventory's icon resolver so the loot summary in the
+  // Victory modal picks the same SVG that inventory shows for the same
+  // item (axe → battle-axe, hammer → hammer-drop, scimitar → spinning-
+  // sword, etc.). Previously this had a small subset of weapon patterns
+  // and fell through to "sword" for everything else, producing the
+  // generic icon for "API Apocalypse Axe" and friends.
+  return itemIcon({
+    item_type: opt.item_type as ItemType,
+    weapon_range: (opt.weapon_range ?? null) as WeaponRange | null,
+    item_name: opt.item_name ?? "",
+    slot: (opt.slot ?? null) as EquipSlot | null,
+    item_subtype: opt.item_subtype ?? null,
+    flavor: opt.flavor ?? null,
+  });
 }
 
 // ─── CBtn ─────────────────────────────────────────────────────────────────────
