@@ -269,6 +269,41 @@ describe("ground effects — on_enter trigger", () => {
     expect(remaining!.hexes).toHaveLength(1);
     expect(remaining!.hexes[0]).toEqual(untouched);
   });
+
+  it("a downing on_enter trigger does not drop unvisited effects from state", () => {
+    // Regression: applyGroundOnEnter used to `break` after the actor was
+    // downed without flushing later effects in the iteration into `updated`,
+    // so a fire wall placed AFTER caltrops in the array silently vanished.
+    const s = begun();
+    const mageOrigin = s.fighters[0].pos!;
+    const caltropsPos: HexPos = { q: mageOrigin.q + 1, r: mageOrigin.r };
+    const fireWallPos: HexPos = { q: mageOrigin.q + 1, r: mageOrigin.r + 1 };
+    // Soften the mage so caltrops downs them. Mage hp = 30 in baseInit;
+    // potency 999 guarantees the trigger drops them to 0.
+    const softened: CombatState = {
+      ...s,
+      fighters: s.fighters.map((f) => (f.id === "U_MAGE" ? { ...f, hp: 1 } : f)),
+      ground_effects: [
+        makeGround("caltrops", [caltropsPos], "U_MAGE", "on_enter", 999, 5, "ge-caltrops"),
+        // Fire wall ordered AFTER the on_enter caltrops — this is the one
+        // that used to disappear when the loop bailed out early.
+        makeGround("fire", [fireWallPos], "U_MAGE", "tick", 3, 5, "ge-firewall"),
+      ],
+    };
+    const t1 = step(softened, { kind: "move", actor: "U_MAGE", to: caltropsPos }, seqRoll([]));
+    // Caltrops triggered and downed the mage.
+    const triggered = t1.events.find((e): e is Extract<CombatEvent, { type: "ground_triggered" }> => e.type === "ground_triggered");
+    expect(triggered?.kind).toBe("caltrops");
+    const mageAfter = t1.state.fighters.find((f) => f.id === "U_MAGE")!;
+    expect(mageAfter.hp).toBeLessThanOrEqual(0);
+    // Fire wall must still be on the board.
+    const ground = t1.state.ground_effects ?? [];
+    const firewall = ground.find((g) => g.id === "ge-firewall");
+    expect(firewall).toBeDefined();
+    expect(firewall!.hexes).toEqual([fireWallPos]);
+    // And caltrops (single-hex) was consumed by the down-triggering enter.
+    expect(ground.find((g) => g.id === "ge-caltrops")).toBeUndefined();
+  });
 });
 
 describe("ground effects — expiration", () => {

@@ -1188,7 +1188,8 @@ function applyGroundOnEnter(
   let s = state;
   const targetKey = posKey(pos);
   const updated: GroundEffect[] = [];
-  for (const ge of effects) {
+  for (let idx = 0; idx < effects.length; idx++) {
+    const ge = effects[idx];
     if (ge.trigger !== "on_enter") {
       updated.push(ge);
       continue;
@@ -1219,13 +1220,21 @@ function applyGroundOnEnter(
       events.push({ type: "ground_expired", ground_id: ge.id, kind: ge.kind, source: ge.source_id });
     }
     // If the trigger downed the actor, stop processing further on_enter
-    // effects on this tile — the actor is already off the board.
-    if (isMonsterActor(actorId)) {
-      const m = s.monsters.find((mm) => mm.id === actorId);
-      if (!m || m.hp <= 0) break;
-    } else {
-      const f = s.fighters.find((ff) => ff.id === actorId);
-      if (!f || f.hp <= 0) break;
+    // effects on this tile — the actor is already off the board. Preserve
+    // any unvisited effects (ticks, on_enter on other hexes, etc.) so the
+    // bail-out doesn't silently drop them from state.
+    const stop = isMonsterActor(actorId)
+      ? (() => {
+          const m = s.monsters.find((mm) => mm.id === actorId);
+          return !m || m.hp <= 0;
+        })()
+      : (() => {
+          const f = s.fighters.find((ff) => ff.id === actorId);
+          return !f || f.hp <= 0;
+        })();
+    if (stop) {
+      for (let j = idx + 1; j < effects.length; j++) updated.push(effects[j]);
+      break;
     }
   }
   s = { ...s, ground_effects: updated };
