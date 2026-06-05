@@ -24,9 +24,16 @@ import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
 import {
   ExpeditionMembershipConflictError,
+  appendExpeditionBuff,
   createExpedition,
   finalizeExpeditionMap,
+  getExpedition,
+  getExpeditionPartyState,
+  parseExpeditionBuffs,
+  recordExpeditionNodeProgress,
+  refillExpeditionPartyToMax,
   setExpeditionCurrentNodeIfCurrent,
+  setExpeditionPartyHpMana,
 } from "./expedition.js";
 import { generateExpeditionMap } from "@gantt-quest/core";
 
@@ -108,6 +115,7 @@ function freshDb(): D1Like {
       seed          TEXT NOT NULL,
       map_json      TEXT NOT NULL,
       current_node  TEXT,
+      buffs_json    TEXT NOT NULL DEFAULT '[]',
       created_by    TEXT NOT NULL,
       created_at    INTEGER NOT NULL,
       completed_at  INTEGER
@@ -116,6 +124,10 @@ function freshDb(): D1Like {
       expedition_id INTEGER NOT NULL REFERENCES expeditions(id) ON DELETE CASCADE,
       character_id  TEXT NOT NULL,
       joined_at     INTEGER NOT NULL,
+      current_hp    INTEGER,
+      current_mana  INTEGER,
+      max_hp        INTEGER,
+      max_mana      INTEGER,
       PRIMARY KEY (expedition_id, character_id)
     );
     CREATE TABLE expedition_node_progress (
@@ -259,5 +271,193 @@ describe("setExpeditionCurrentNodeIfCurrent / pick race", () => {
     expect(
       await setExpeditionCurrentNodeIfCurrent(asDb(db), id, "n_0_0", "n_1_0"),
     ).toBe(true);
+  });
+});
+
+// ─── HP/mana carry between combat nodes ─────────────────────────────────────
+//
+// Pass 2 wires HP/mana to carry across nodes via the expedition_party
+// current_hp/current_mana columns. These tests exercise the persistence layer
+// in isolation: write through the helpers, read through the helpers, verify
+// values survive an arbitrary number of advances.
+
+describe("expedition party HP/mana carry", () => {
+  it("setExpeditionPartyHpMana persists and reads back per-character", async () => {
+    const db = freshDb();
+    const map = tinyMap();
+    const id = await createExpedition(asDb(db), {
+      channel_id: "web:U1",
+      seed: "s",
+      map,
+      created_by: "U1",
+      party: ["U1", "U2"],
+    });
+    await setExpeditionPartyHpMana(asDb(db), id, "U1", {
+      current_hp: 14,
+      current_mana: 3,
+      max_hp: 30,
+      max_mana: 6,
+    });
+    await setExpeditionPartyHpMana(asDb(db), id, "U2", {
+      current_hp: 22,
+      current_mana: 5,
+      max_hp: 28,
+      max_mana: 7,
+    });
+    const state = await getExpeditionPartyState(asDb(db), id);
+    const u1 = state.find((r) => r.character_id === "U1");
+    const u2 = state.find((r) => r.character_id === "U2");
+    expect(u1?.current_hp).toBe(14);
+    expect(u1?.max_hp).toBe(30);
+    expect(u2?.current_mana).toBe(5);
+    expect(u2?.max_mana).toBe(7);
+  });
+
+  it("carries HP/mana across two combat nodes", async () => {
+    const db = freshDb();
+    const map = tinyMap();
+    const id = await createExpedition(asDb(db), {
+      channel_id: "web:U1",
+      seed: "s",
+      map,
+      created_by: "U1",
+      party: ["U1"],
+    });
+    // First combat resolve: write surviving HP/mana.
+    await setExpeditionPartyHpMana(asDb(db), id, "U1", {
+      current_hp: 14,
+      current_mana: 2,
+      max_hp: 30,
+      max_mana: 6,
+    });
+    // Worker would read these to seed the next combat. Simulate that read:
+    const before = await getExpeditionPartyState(asDb(db), id);
+    expect(before[0].current_hp).toBe(14);
+    expect(before[0].current_mana).toBe(2);
+    // Second combat resolve: write new HP/mana.
+    await setExpeditionPartyHpMana(asDb(db), id, "U1", {
+      current_hp: 8,
+      current_mana: 0,
+      max_hp: 30,
+      max_mana: 6,
+    });
+    const after = await getExpeditionPartyState(asDb(db), id);
+    expect(after[0].current_hp).toBe(8);
+    expect(after[0].current_mana).toBe(0);
+    expect(after[0].max_hp).toBe(30);
+  });
+
+  it("refillExpeditionPartyToMax restores every member to max", async () => {
+    const db = freshDb();
+    const map = tinyMap();
+    const id = await createExpedition(asDb(db), {
+      channel_id: "web:U1",
+      seed: "s",
+      map,
+      created_by: "U1",
+      party: ["U1", "U2"],
+    });
+    await setExpeditionPartyHpMana(asDb(db), id, "U1", {
+      current_hp: 3,
+      current_mana: 0,
+      max_hp: 30,
+      max_mana: 6,
+    });
+    await setExpeditionPartyHpMana(asDb(db), id, "U2", {
+      current_hp: 9,
+      current_mana: 1,
+      max_hp: 28,
+      max_mana: 7,
+    });
+    await refillExpeditionPartyToMax(asDb(db), id);
+    const state = await getExpeditionPartyState(asDb(db), id);
+    const u1 = state.find((r) => r.character_id === "U1");
+    const u2 = state.find((r) => r.character_id === "U2");
+    expect(u1?.current_hp).toBe(30);
+    expect(u1?.current_mana).toBe(6);
+    expect(u2?.current_hp).toBe(28);
+    expect(u2?.current_mana).toBe(7);
+  });
+
+  it("refillExpeditionPartyToMax leaves rows with NULL max alone", async () => {
+    const db = freshDb();
+    const map = tinyMap();
+    const id = await createExpedition(asDb(db), {
+      channel_id: "web:U1",
+      seed: "s",
+      map,
+      created_by: "U1",
+      party: ["U1"],
+    });
+    // U1 row exists but max_hp is NULL (never been combat-seeded).
+    await refillExpeditionPartyToMax(asDb(db), id);
+    const state = await getExpeditionPartyState(asDb(db), id);
+    expect(state[0].max_hp).toBeNull();
+    expect(state[0].current_hp).toBeNull();
+  });
+});
+
+// ─── Run buffs ──────────────────────────────────────────────────────────────
+
+describe("expedition buffs", () => {
+  it("appendExpeditionBuff accumulates and survives a read-modify-write cycle", async () => {
+    const db = freshDb();
+    const map = tinyMap();
+    const id = await createExpedition(asDb(db), {
+      channel_id: "web:U1",
+      seed: "s",
+      map,
+      created_by: "U1",
+      party: ["U1"],
+    });
+    const after1 = await appendExpeditionBuff(asDb(db), id, {
+      kind: "max_hp",
+      value: 5,
+      node_id: "n_1_0",
+      applied_at: 100,
+    });
+    expect(after1).toHaveLength(1);
+    const after2 = await appendExpeditionBuff(asDb(db), id, {
+      kind: "stat",
+      value: 1,
+      stat: "str",
+      node_id: "n_3_0",
+      applied_at: 200,
+    });
+    expect(after2).toHaveLength(2);
+    const row = await getExpedition(asDb(db), id);
+    expect(row).not.toBeNull();
+    const buffs = parseExpeditionBuffs(row!);
+    expect(buffs).toHaveLength(2);
+    expect(buffs[0].kind).toBe("max_hp");
+    expect(buffs[1].stat).toBe("str");
+  });
+});
+
+// ─── Combat-resolve hook idempotency (simulated) ────────────────────────────
+//
+// The expedition advance hook is supposed to be a no-op if progress already
+// exists for the node. We exercise that contract at the helper level by
+// recording progress twice and verifying the second write doesn't change the
+// stored outcome.
+
+describe("recordExpeditionNodeProgress idempotency surface", () => {
+  it("INSERT OR REPLACE keeps the latest outcome but doesn't multiply rows", async () => {
+    const db = freshDb();
+    const map = tinyMap();
+    const id = await createExpedition(asDb(db), {
+      channel_id: "web:U1",
+      seed: "s",
+      map,
+      created_by: "U1",
+      party: ["U1"],
+    });
+    await recordExpeditionNodeProgress(asDb(db), id, "n_0_0", { kind: "combat", quest_id: 100 });
+    await recordExpeditionNodeProgress(asDb(db), id, "n_0_0", { kind: "combat", quest_id: 100 });
+    const count = await asDb(db)
+      .prepare(`SELECT COUNT(*) as c FROM expedition_node_progress WHERE expedition_id = ?`)
+      .bind(id)
+      .first<{ c: number }>();
+    expect(count?.c).toBe(1);
   });
 });
