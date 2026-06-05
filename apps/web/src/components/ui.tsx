@@ -20,6 +20,19 @@ import type { HaggleResult, ConfirmRequest, Rarity, Character } from "../types";
 // Pass the trigger element as `children` — we forward `onMouseEnter` /
 // `onMouseLeave` / `ref` onto it via cloneElement. The tooltip content goes
 // in `content`. Provide a `placement` to override the default "top".
+//
+// Mobile (`(hover: none)`): hover events don't really exist, so on touch
+// devices we toggle the tooltip on tap of the trigger and dismiss on the
+// next tap anywhere. The dismiss listener fires on `touchstart` in capture
+// phase and calls `preventDefault()` — this is the canonical fix for the
+// mobile tap-pass-through bug. Without it, the tooltip panel has
+// `pointer-events: none` and the tap falls through to whatever is rendered
+// beneath, firing that element's click handler (e.g. tapping a tooltip to
+// dismiss it would also fire the button it was anchored to). Calling
+// `preventDefault()` on `touchstart` suppresses the synthesized `mousedown`
+// / `mouseup` / `click` for that touch, so the underlying surface stays
+// inert until the user taps again. Same belt-and-suspenders pattern PR #206
+// used for toasts.
 
 export function HoverTooltip({
   content,
@@ -40,16 +53,76 @@ export function HoverTooltip({
     middleware: [offset(8), flip({ padding: 8 }), shift({ padding: 8 })],
     whileElementsMounted: autoUpdate,
   });
+
+  // While the tooltip is open on a touch device, listen for the next tap
+  // anywhere on the page. We dismiss the tooltip AND swallow the touch via
+  // preventDefault so the underlying surface (button, hex, slot) doesn't
+  // see a click. The trigger itself is exempt via a contains() check so
+  // the trigger's own toggle behaviour still works.
+  useEffect(() => {
+    if (!open) return;
+    if (typeof window === "undefined") return;
+    // Only enable the swallow-on-tap behaviour on touch / coarse-pointer
+    // devices. On a mouse/trackpad the tooltip auto-closes via mouseleave
+    // and an extra capture-phase listener would interfere with normal
+    // clicking.
+    const isTouch = window.matchMedia?.("(hover: none)").matches ?? false;
+    if (!isTouch) return;
+
+    const triggerEl = refs.reference.current as Element | null;
+    const floatingEl = refs.floating.current as Element | null;
+
+    const onTouchStart = (e: TouchEvent) => {
+      const target = e.target as Node | null;
+      // Tapping the trigger itself: let the trigger handle toggling so the
+      // user can re-open immediately. Don't preventDefault here.
+      if (target && triggerEl && triggerEl.contains(target)) {
+        setOpen(false);
+        return;
+      }
+      // Tap anywhere else (including the tooltip panel itself): close the
+      // tooltip and swallow the touch so it doesn't bleed through to the
+      // element underneath. This is the mobile-tap-passthrough fix.
+      setOpen(false);
+      if (target && floatingEl && floatingEl.contains(target)) {
+        // Tap on the tooltip panel — definitely swallow it.
+        if (e.cancelable) e.preventDefault();
+        return;
+      }
+      // Outside tap — also swallow so the user's dismiss-tap doesn't
+      // accidentally activate whatever they tapped (matches popover UX).
+      if (e.cancelable) e.preventDefault();
+    };
+
+    // capture: true so we run before any other listeners (including React's
+    // delegated handlers). Non-passive so preventDefault() actually works.
+    window.addEventListener("touchstart", onTouchStart, { capture: true, passive: false });
+    return () => {
+      window.removeEventListener("touchstart", onTouchStart, { capture: true } as EventListenerOptions);
+    };
+  }, [open, refs.reference, refs.floating]);
+
   const child = isValidElement(children) ? children : <span>{children}</span>;
   // We attach hover handlers and the floating-ui reference ref to the
   // trigger. If the trigger has its own mouse handlers / ref they'd be
   // overwritten — none of the current call sites do, so this stays simple.
+  // onClick toggles on touch devices (where mouseenter fires alongside
+  // click but the user has no way to "move away" to close).
   const triggerProps = {
     ref: refs.setReference,
     onMouseEnter: () => setOpen(true),
     onMouseLeave: () => setOpen(false),
     onFocus: () => setOpen(true),
     onBlur: () => setOpen(false),
+    onClick: () => {
+      // Touch devices: the document touchstart listener above closes the
+      // tooltip when open; this only needs to OPEN on a fresh tap. The
+      // listener calls setOpen(false) BEFORE this onClick fires (capture
+      // phase, earlier in the event loop than React's synthetic click),
+      // so by the time we get here `open` reflects post-dismiss state.
+      // Hover devices: harmless — mouseenter already opened it.
+      setOpen((prev) => !prev);
+    },
   };
   return (
     <>
@@ -61,7 +134,11 @@ export function HoverTooltip({
             style={{
               ...floatingStyles,
               zIndex: 1000,
-              pointerEvents: "none",
+              // pointer-events: auto so the tooltip panel can receive the
+              // dismiss tap on mobile. The document-level touchstart
+              // listener above turns that tap into a dismiss + swallow so
+              // it doesn't bleed through to the element beneath.
+              pointerEvents: "auto",
               background: "var(--bg-panel)",
               border: "1px solid var(--border-base)",
               borderRadius: "var(--radius-md)",
