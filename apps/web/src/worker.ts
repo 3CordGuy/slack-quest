@@ -7145,14 +7145,15 @@ async function applyWebCombatOutcome(
     }
   }
 
-  // Per-fighter outcome pipeline. Run all fighters in PARALLEL — each
-  // operates on its own character_id, so the DB writes (hp/shield/mana
-  // sync, awardSpoils, grantAchievement, addItem) and the AI naming
-  // calls don't contend. Previously this was a serial for-loop, which
-  // meant a 4-fighter party paid 4× the AI-flavor latency before the
-  // victory modal could resolve — the dominant cost in "Resolving
-  // outcome…" time. Same per-fighter logic, wrapped in an async fn.
-  const rewards: FighterReward[] = await Promise.all(humanFighters.map(async (fighter) => {
+  // Per-fighter outcome pipeline. Run fighters SEQUENTIALLY — #200 tried
+  // Promise.all here but on Workers it regressed badly: each fighter
+  // issues one or more Workers-AI calls (loot name+flavor), and fanning
+  // those out N-wide blows the per-request CPU budget and starves the AI
+  // calls of subrequest slots, causing the whole resolve to time out for
+  // 4-fighter parties. Sequential keeps total wall-clock close to N× a
+  // single fighter (AI call dominates) without bursting CPU.
+  const rewards: FighterReward[] = [];
+  for (const fighter of humanFighters) {
     const dmg = state.contribution[fighter.id] ?? 0;
     let xpAwarded = 0;
     let goldAwarded = 0;
@@ -7176,7 +7177,7 @@ async function applyWebCombatOutcome(
     const character = await getCharacter(env.DB, fighter.id);
     const fighterStats = state.stats?.[fighter.id] ?? { damage_taken: 0, healing_done: 0, shielding_done: 0, kills: 0 };
     if (!character) {
-      return {
+      rewards.push({
         user_id: fighter.id,
         damage_dealt: dmg,
         damage_taken: fighterStats.damage_taken,
@@ -7189,7 +7190,8 @@ async function applyWebCombatOutcome(
         new_level: fighter.level,
         loot: [],
         soft_death: null,
-      };
+      });
+      continue;
     }
 
     if (won) {
@@ -7316,34 +7318,31 @@ async function applyWebCombatOutcome(
       goldAwarded += pickups.gold;
     }
     if (pickups && pickups.item_tile_tiers.length > 0) {
-      // Roll + name + persist every loot-tile pickup in parallel — each
-      // tile is independent (own AI call, own addItem). Order in `loot[]`
-      // matches the order in pickups.item_tile_tiers thanks to Promise.all.
-      const tilePickupResults = await Promise.all(
-        pickups.item_tile_tiers.map(async (itemTier) => {
-          const roll = rollItem(itemTier);
-          const named = await nameLootViaAi(env, roll, primaryMonster.name);
-          const created = await addItem(env.DB, itemRollToCreateInput({
-            character_id: fighter.id,
-            roll,
-            item_name: named.name,
-            flavor: named.flavor,
-          }));
-          return {
-            item_name: created.item_name,
-            item_type: created.item_type,
-            power: created.power,
-            rarity: created.rarity,
-            flavor: created.flavor ?? named.flavor,
-            weapon_range: created.weapon_range,
-            level_req: created.level_req,
-          };
-        }),
-      );
-      loot.push(...tilePickupResults);
+      // Sequential per tile — each pickup is its own Workers-AI call for
+      // name + flavor; parallelizing here re-creates the #200 regression
+      // at the inner scope.
+      for (const itemTier of pickups.item_tile_tiers) {
+        const roll = rollItem(itemTier);
+        const named = await nameLootViaAi(env, roll, primaryMonster.name);
+        const created = await addItem(env.DB, itemRollToCreateInput({
+          character_id: fighter.id,
+          roll,
+          item_name: named.name,
+          flavor: named.flavor,
+        }));
+        loot.push({
+          item_name: created.item_name,
+          item_type: created.item_type,
+          power: created.power,
+          rarity: created.rarity,
+          flavor: created.flavor ?? named.flavor,
+          weapon_range: created.weapon_range,
+          level_req: created.level_req,
+        });
+      }
     }
 
-    return {
+    rewards.push({
       user_id: fighter.id,
       damage_dealt: dmg,
       damage_taken: fighterStats.damage_taken,
@@ -7356,8 +7355,8 @@ async function applyWebCombatOutcome(
       new_level: newLevel,
       loot,
       soft_death: softDeath,
-    };
-  }));
+    });
+  }
 
   // Tower advance: each engine combat is exactly one floor. On win, pop the
   // next floor from scene.tower_queue (rest or combat or boss). On a boss
