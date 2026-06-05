@@ -363,13 +363,15 @@ import {
   type PubErrandOfferRow,
   // Expedition map persistence
   createExpedition,
+  ExpeditionMembershipConflictError,
+  finalizeExpeditionMap,
   getActiveExpeditionForCharacter,
   getExpedition,
   getExpeditionParty,
   getExpeditionProgress,
   getRecentExpeditionsForCharacter,
   recordExpeditionNodeProgress,
-  setExpeditionCurrentNode,
+  setExpeditionCurrentNodeIfCurrent,
   setExpeditionStatus,
   type ExpeditionRow,
 } from "@gantt-quest/db";
@@ -6726,8 +6728,12 @@ app.post("/api/expedition/start", async (c) => {
     MAX_EXPEDITION_PARTY,
   );
 
-  // Mutual exclusion — every party member must be free of an active expedition
-  // AND any one-off quest.
+  // Mutual exclusion: best-effort pre-check for nicer error messages. The
+  // SOURCE OF TRUTH is the UNIQUE PRIMARY KEY on `active_expedition_membership`
+  // (see createExpedition), which closes the TOCTOU window between this check
+  // and the actual insert. Two concurrent /start calls from the same user
+  // will BOTH pass this check; exactly one will succeed at insert time, the
+  // other throws ExpeditionMembershipConflictError and we return 409 below.
   for (const uid of party) {
     if (await getActiveExpeditionForCharacter(c.env.DB, uid)) {
       return c.json({ error: "already_in_expedition", character_id: uid }, 400);
@@ -6739,30 +6745,39 @@ app.post("/api/expedition/start", async (c) => {
 
   const channelId = `web:${session.slack_user_id}`;
 
-  // Two-phase: insert with a placeholder seed so we get an id, generate the
-  // map deterministically from (id, party), then UPDATE the row with the
-  // canonical seed + map_json. This matches the design doc — the seed is
-  // `(expedition_id, party_signature)`.
-  const provisionalSeed =
-    typeof body?.seed === "string" && body!.seed!.length > 0 && body!.seed!.length < 64
-      ? (body!.seed as string)
-      : `provisional-${Date.now()}-${session.slack_user_id}`;
-  // Generate the map up front with a temp seed; we'll re-seed after insert
-  // so debug/replay works off (id, party).
-  const tempMap = generateExpeditionMap({ seed: provisionalSeed, partySize: party.length });
-  const expeditionId = await createExpedition(c.env.DB, {
-    channel_id: channelId,
-    seed: provisionalSeed,
-    map: tempMap,
-    created_by: session.slack_user_id,
-    party,
-  });
+  // Two-phase, both deterministic:
+  //   1) INSERT with a stable bootstrap seed so we get an id. The bootstrap
+  //      seed depends only on the sorted party signature — no Date.now() —
+  //      so a concurrent GET racing this brief window sees a deterministic
+  //      (if non-canonical) map rather than a different value each call.
+  //   2) Regenerate the map with the canonical seed = (id, party_signature)
+  //      and UPDATE the row.
+  // The bootstrap map is overwritten in step 2 well before any user-visible
+  // navigation can pick a node (current_node is NULL throughout).
+  const bootstrapSeed = `bootstrap|${[...party].sort().join(",")}`;
+  const bootstrapMap = generateExpeditionMap({ seed: bootstrapSeed, partySize: party.length });
+  let expeditionId: number;
+  try {
+    expeditionId = await createExpedition(c.env.DB, {
+      channel_id: channelId,
+      seed: bootstrapSeed,
+      map: bootstrapMap,
+      created_by: session.slack_user_id,
+      party,
+    });
+  } catch (err) {
+    if (err instanceof ExpeditionMembershipConflictError) {
+      // Lost the race with a concurrent /start that included this character.
+      return c.json(
+        { error: "already_in_expedition", character_id: err.characterId },
+        409,
+      );
+    }
+    throw err;
+  }
   const finalSeed = expeditionSeed(expeditionId, party);
   const finalMap = generateExpeditionMap({ seed: finalSeed, partySize: party.length });
-  await c.env.DB
-    .prepare(`UPDATE expeditions SET seed = ?, map_json = ? WHERE id = ?`)
-    .bind(finalSeed, JSON.stringify(finalMap), expeditionId)
-    .run();
+  await finalizeExpeditionMap(c.env.DB, expeditionId, finalSeed, finalMap);
 
   return c.json({
     ok: true,
@@ -6850,7 +6865,21 @@ app.post("/api/expedition/:id/pick", async (c) => {
     return c.json({ error: "not_available" }, 400);
   }
 
-  await setExpeditionCurrentNode(c.env.DB, expeditionId, nodeId);
+  // Compare-and-swap on current_node closes the pick-race TOCTOU window: two
+  // concurrent picks from the same expedition both load the same
+  // `view.row.current_node`, both validate against `view.picks`, and both try
+  // to UPDATE. The CAS ensures exactly one wins; the other gets 409 so its
+  // client refetches the expedition view (the second pick was made against
+  // a stale state and should re-prompt the user with the now-current picks).
+  const swapped = await setExpeditionCurrentNodeIfCurrent(
+    c.env.DB,
+    expeditionId,
+    view.row.current_node,
+    nodeId,
+  );
+  if (!swapped) {
+    return c.json({ error: "race_lost" }, 409);
+  }
 
   // Dispatch per kind. Pass 1 wires the event sampler + records placeholder
   // outcomes for shrine/treasure/camp so the state machine round-trips
@@ -6860,12 +6889,22 @@ app.post("/api/expedition/:id/pick", async (c) => {
     case "combat":
     case "elite":
     case "boss": {
-      // TODO(pass-2): spawn a row in `quests` with from_expedition_id =
-      // expeditionId, set the scene based on tier (elite=true for elite,
-      // boss=true for boss), wire the post-resolve callback (in
-      // applyWebCombatOutcome) to advance the expedition state machine when
-      // the quest completes. For Pass 1 we return the intended dispatch shape
-      // so the client can render a "begin combat" affordance.
+      // TODO(pass-2): combat node integration.
+      //   - Spawn a row in `quests` with from_expedition_id = expeditionId,
+      //     set the scene based on tier (elite=true for elite, boss=true for
+      //     boss).
+      //   - Thread the surviving party HP/mana from the previous combat into
+      //     the spawned quest's starting state — see the ExpeditionPartyHp
+      //     comment block in packages/core/src/expedition.ts. The expedition
+      //     map design (docs/expedition-map.md "Party HP/mana between nodes")
+      //     requires HP/mana to CARRY across nodes, which is what makes camp
+      //     and shrine nodes meaningful. Pass 2 will add the persistence
+      //     columns and load/save here.
+      //   - Wire the post-resolve callback (in applyWebCombatOutcome) to
+      //     advance the expedition state machine + write back updated HP/mana
+      //     when the quest completes.
+      // For Pass 1 we return the intended dispatch shape so the client can
+      // render a "begin combat" affordance.
       dispatched = {
         kind: target.kind,
         action: "spawn_combat",
@@ -6919,6 +6958,18 @@ app.post("/api/expedition/:id/pick", async (c) => {
         };
       })();
       const evt = sampleEvent({ rng, history });
+      // TODO(pass-2): event-outcome resolve route + progress write.
+      //   Today: we sample and PRESENT an event here but never write a row
+      //   to `expedition_node_progress`. The sampler's within-run no-repeat
+      //   invariant (see SamplerHistory.expeditionResolvedIds above) depends
+      //   on those rows existing — without them, picking the same event node
+      //   twice (or events later in the same run after the player advances)
+      //   could re-sample the same event id, breaking the no-repeat rule.
+      //   Pass 2 adds POST /api/expedition/:id/event/resolve which takes the
+      //   chosen branch + outcome variant, applies effects, and calls
+      //   recordExpeditionNodeProgress with `{ kind: "event", event_id,
+      //   branch_id, outcome_id }` so the next event-node pick filters this
+      //   event out and so `recentExpeditionTags` reflects history.
       dispatched = {
         kind: "event",
         action: "present_event",
