@@ -35,8 +35,9 @@ function emptyHistory(): SamplerHistory {
 }
 
 describe("event pool basic shape", () => {
-  it("Pass 1 ships at least 10 events covering all 4 setups", () => {
-    expect(ALL_EVENTS.length).toBeGreaterThanOrEqual(10);
+  it("Pass 2 ships at least 60 events covering all 4 setups", () => {
+    // Hard floor per docs/expedition-map.md "Event pool depth": 60 events.
+    expect(ALL_EVENTS.length).toBeGreaterThanOrEqual(60);
     const setups = new Set(ALL_EVENTS.map((e) => e.setup));
     expect(setups.has("encounter")).toBe(true);
     expect(setups.has("discovery")).toBe(true);

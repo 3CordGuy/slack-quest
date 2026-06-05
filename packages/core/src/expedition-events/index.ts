@@ -1,8 +1,8 @@
 // Expedition event pool + sampler.
 //
-// Pass 1 ships ~10 events to prove the typing + sampling pattern. The
-// remaining 50 (target: 60 total) are explicit follow-up content work — see
-// docs/expedition-map.md "Authoring distribution for the 60-event pool".
+// Pass 2 ships 60 events (encounter 16, discovery 15, dilemma 15, npc 14)
+// hitting the design doc's 60-event floor — see docs/expedition-map.md
+// "Authoring distribution for the 60-event pool".
 //
 // Sampler rules (from the design doc):
 //   1. No repeat within a single expedition.
@@ -38,7 +38,7 @@ export type {
 };
 export { ENCOUNTER_EVENTS, DISCOVERY_EVENTS, DILEMMA_EVENTS, NPC_EVENTS };
 
-/** Full v1 event pool. Pass 1: 10 events; growing toward 60. */
+/** Full v1 event pool. Pass 2: 60 events across 4 setup categories. */
 export const ALL_EVENTS: ExpeditionEvent[] = [
   ...ENCOUNTER_EVENTS,
   ...DISCOVERY_EVENTS,
