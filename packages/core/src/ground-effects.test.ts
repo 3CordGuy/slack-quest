@@ -279,6 +279,29 @@ describe("ground effects — expiration", () => {
     expect(t3.state.round).toBeGreaterThanOrEqual(2);
     expect(t3.state.ground_effects ?? []).toHaveLength(0);
   });
+
+  it("emits ground_expired events from round-advance for UI fade-outs", () => {
+    const s = begun();
+    // Two effects: one expires at end of round 1, one persists.
+    const seeded: CombatState = {
+      ...s,
+      ground_effects: [
+        makeGround("fire", [{ q: 99, r: 99 }], "U_MAGE", "tick", 5, 1, "ge-expiring"),
+        makeGround("brambles", [{ q: 98, r: 98 }], "U_MAGE", "tick", 3, 10, "ge-persisting"),
+      ],
+    };
+    // Round bump happens when the monster_act wraps the turn cursor.
+    const t1 = step(seeded, { kind: "move", actor: "U_MAGE", to: s.fighters[0].pos! }, seqRoll([]));
+    const t2 = step(t1.state, { kind: "wait", actor: "U_MAGE" }, seqRoll([]));
+    const t3 = step(t2.state, { kind: "monster_act" }, seqRoll([50, 1, 1]));
+    const expired = t3.events.filter((e): e is Extract<CombatEvent, { type: "ground_expired" }> => e.type === "ground_expired");
+    // The expiring fire effect's event should surface — UI needs it.
+    const expiringIds = expired.map((e) => e.ground_id);
+    expect(expiringIds).toContain("ge-expiring");
+    expect(expiringIds).not.toContain("ge-persisting");
+    // Survivor still on the board.
+    expect((t3.state.ground_effects ?? []).find((g) => g.id === "ge-persisting")).toBeDefined();
+  });
 });
 
 describe("ground effects — friendly fire and dead-source credit", () => {

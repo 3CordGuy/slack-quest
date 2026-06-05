@@ -1690,7 +1690,7 @@ function handlePlayerHit(
   });
 
   if (!landed) {
-    const next = advanceTurn(s);
+    const next = advanceTurn(s, events);
     return { state: next, events: [...events, ...turnStartEvent(next)] };
   }
 
@@ -1966,7 +1966,7 @@ function handlePlayerHit(
     }
   }
 
-  return { state: advanceTurn(nextState), events: [...events, ...turnStartEvent(nextState)] };
+  return { state: advanceTurn(nextState, events), events: [...events, ...turnStartEvent(nextState)] };
 }
 
 // Auto-resolved ally NPC turn (hired mercs and ability-summoned NPCs): simple
@@ -1981,8 +1981,9 @@ function handleAllyNpcAct(state: CombatState, roll: RollFn): StepResult {
   }
   const merc = state.fighters.find((f) => f.id === actorId);
   if (!merc || merc.hp <= 0) {
-    const next = advanceTurn(state);
-    return { state: next, events: [...turnStartEvent(next)] };
+    const expiredEvents: CombatEvent[] = [];
+    const next = advanceTurn(state, expiredEvents);
+    return { state: next, events: [...expiredEvents, ...turnStartEvent(next)] };
   }
 
   const tick = tickAtTurnStart(state, actorId);
@@ -2052,7 +2053,7 @@ function handleAllyNpcAct(state: CombatState, roll: RollFn): StepResult {
     // Either no live monsters anywhere, or none in reach after the auto-
     // step. Advance the turn quietly; the UI shows the move event (if any)
     // and the next actor's turn-start banner.
-    const next = advanceTurn(s);
+    const next = advanceTurn(s, events);
     return { state: next, events: [...events, ...turnStartEvent(next)] };
   }
 
@@ -2074,7 +2075,7 @@ function handleAllyNpcAct(state: CombatState, roll: RollFn): StepResult {
   });
 
   if (!landed) {
-    const next = advanceTurn(s);
+    const next = advanceTurn(s, events);
     return { state: next, events: [...events, ...turnStartEvent(next)] };
   }
 
@@ -2123,7 +2124,7 @@ function handleAllyNpcAct(state: CombatState, roll: RollFn): StepResult {
   const hexProc = applyHexBleedProc(nextState, monster.id);
   events.push(...hexProc.events);
 
-  return { state: advanceTurn(hexProc.state), events: [...events, ...turnStartEvent(hexProc.state)] };
+  return { state: advanceTurn(hexProc.state, events), events: [...events, ...turnStartEvent(hexProc.state)] };
 }
 
 function handlePosition(
@@ -2163,7 +2164,7 @@ function handlePosition(
     events.push(...killResult.events);
   }
 
-  const next = advanceTurn(s);
+  const next = advanceTurn(s, events);
   return { state: next, events: [...events, ...turnStartEvent(next)] };
 }
 
@@ -2192,7 +2193,7 @@ function handleWait(
     events.push(...killResult.events);
   }
 
-  const next = advanceTurn(s);
+  const next = advanceTurn(s, events);
   return { state: next, events: [...events, ...turnStartEvent(next)] };
 }
 
@@ -2232,8 +2233,9 @@ function handleMonsterAct(state: CombatState, roll: RollFn): StepResult {
   const actingMonster = state.monsters.find((m) => m.id === actorId);
   if (!actingMonster || actingMonster.hp <= 0) {
     // Dead monster's turn slot — skip it silently.
-    const next = advanceTurn(state);
-    return { state: next, events: [...turnStartEvent(next)] };
+    const expiredEvents: CombatEvent[] = [];
+    const next = advanceTurn(state, expiredEvents);
+    return { state: next, events: [...expiredEvents, ...turnStartEvent(next)] };
   }
 
   const tick = tickAtTurnStart(state, actorId);
@@ -2275,7 +2277,7 @@ function handleMonsterAct(state: CombatState, roll: RollFn): StepResult {
             : m,
         );
     const skippedState: CombatState = { ...s, monsters: updatedMonsters };
-    const next = advanceTurn(skippedState);
+    const next = advanceTurn(skippedState, events);
     return {
       state: next,
       events: [
@@ -2343,7 +2345,7 @@ function handleMonsterAct(state: CombatState, roll: RollFn): StepResult {
             events.push(...pounceResult.events);
           } else {
             // Can't reach any fighter — skip attack.
-            const next = advanceTurn(s);
+            const next = advanceTurn(s, events);
             return {
               state: next,
               events: [...events, { type: "monster_swing_skipped", reason: "out_of_range" }, ...turnStartEvent(next)],
@@ -2431,7 +2433,7 @@ function handleMonsterAct(state: CombatState, roll: RollFn): StepResult {
       const next = advanceTurn({
         ...s,
         ability_state: tickAbilityCountersAfterSwing(s.ability_state),
-      });
+      }, events);
       return { state: next, events: [...events, ...turnStartEvent(next)] };
     }
   }
@@ -2536,7 +2538,7 @@ function handleMonsterAct(state: CombatState, roll: RollFn): StepResult {
       events.push({ type: "defeat" });
       return { state: { ...postSplashState, status: "defeat" }, events };
     }
-    const next = advanceTurn(postSplashState);
+    const next = advanceTurn(postSplashState, events);
     return { state: next, events: [...events, ...turnStartEvent(next)] };
   }
 
@@ -2585,7 +2587,7 @@ function handleMonsterAct(state: CombatState, roll: RollFn): StepResult {
   if (!landed) {
     // Even a miss consumes one tick of taunt / vanish / smite debuff — the swing happened.
     const decremented: CombatState = { ...s, ability_state: consumeSmiteDebuff(tickAbilityCountersAfterSwing(s.ability_state), actorId), round_monster_targets: rmt };
-    const next = advanceTurn(decremented);
+    const next = advanceTurn(decremented, events);
     return { state: next, events: [...events, ...turnStartEvent(next)] };
   }
 
@@ -2608,7 +2610,7 @@ function handleMonsterAct(state: CombatState, roll: RollFn): StepResult {
         ability_state: consumeSmiteDebuff(tickAbilityCountersAfterSwing(s.ability_state), actorId),
         round_monster_targets: rmt,
       };
-      const next = advanceTurn(decremented);
+      const next = advanceTurn(decremented, events);
       return { state: next, events: [...events, ...turnStartEvent(next)] };
     }
   }
@@ -2933,7 +2935,7 @@ function handleMonsterAct(state: CombatState, roll: RollFn): StepResult {
     events.push({ type: "defeat" });
     return { state: { ...next, status: "defeat" }, events };
   }
-  next = advanceTurn(next);
+  next = advanceTurn(next, events);
   return { state: next, events: [...events, ...turnStartEvent(next)] };
 }
 
@@ -3135,7 +3137,7 @@ function handleDamageAbility(
   }
 
   if (monsterKilled) return resolveMonsterKill(nextState, monster.id, actorId, events);
-  nextState = advanceTurn(nextState);
+  nextState = advanceTurn(nextState, events);
   return { state: nextState, events: [...events, ...turnStartEvent(nextState)] };
 }
 
@@ -3262,7 +3264,7 @@ function handleAoeDamageAbility(
   const killedIds = nextState.monsters.filter((m) => m.hp <= 0).map((m) => m.id);
 
   if (killedIds.length === 0) {
-    nextState = advanceTurn(nextState);
+    nextState = advanceTurn(nextState, events);
     return { state: nextState, events: [...events, ...turnStartEvent(nextState)] };
   }
 
@@ -3379,7 +3381,7 @@ function handleFlee(
     events.push({ type: "defeat" });
     return { state: { ...next, status: "defeat" }, events };
   }
-  next = advanceTurn(next);
+  next = advanceTurn(next, events);
   return { state: next, events: [...events, ...turnStartEvent(next)] };
 }
 
@@ -4363,7 +4365,7 @@ function applyUtilityAbilityEffects(
     events.push(...killResult.events);
   }
 
-  const next = advanceTurn(s);
+  const next = advanceTurn(s, events);
   return { state: next, events: [...events, ...turnStartEvent(next)] };
 }
 
@@ -4705,7 +4707,7 @@ export function resolveMonsterKill(
     // Wave transition clears mark — the previous focus target is gone.
     const ability_state = stripField(stateWithKillAndPassives.ability_state, "mark");
     const updatedMonsters = stateWithKillAndPassives.monsters.map((m) => m.id === monsterId ? newMonster : m);
-    const advanced = advanceTurn({ ...stateWithKillAndPassives, monsters: updatedMonsters, ability_state });
+    const advanced = advanceTurn({ ...stateWithKillAndPassives, monsters: updatedMonsters, ability_state }, events);
     return { state: advanced, events: [...events, ...turnStartEvent(advanced)] };
   }
 
@@ -4718,7 +4720,7 @@ export function resolveMonsterKill(
 
   // Some monsters still alive — combat continues. Clear mark (target is dead).
   const ability_state = stripField(stateWithKillAndPassives.ability_state, "mark");
-  const advanced = advanceTurn({ ...stateWithKillAndPassives, ability_state });
+  const advanced = advanceTurn({ ...stateWithKillAndPassives, ability_state }, events);
   return { state: advanced, events: [...events, ...turnStartEvent(advanced)] };
 }
 
@@ -4798,11 +4800,12 @@ function tickAtTurnStart(state: CombatState, actorId: ActorId): TickGate {
       if (state.status === "victory") {
         return { state, events: groundEvents, earlyReturn: { state, events: groundEvents } };
       }
-      const advanced = advanceTurn(state);
+      const expiredEvents: CombatEvent[] = [];
+      const advanced = advanceTurn(state, expiredEvents);
       return {
         state,
         events: groundEvents,
-        earlyReturn: { state: advanced, events: [...groundEvents, ...turnStartEvent(advanced)] },
+        earlyReturn: { state: advanced, events: [...groundEvents, ...expiredEvents, ...turnStartEvent(advanced)] },
       };
     }
     // Fighter downed by ground tick.
@@ -4811,11 +4814,12 @@ function tickAtTurnStart(state: CombatState, actorId: ActorId): TickGate {
       const events: CombatEvent[] = [...groundEvents, { type: "defeat" }];
       return { state, events, earlyReturn: { state: { ...state, status: "defeat" }, events } };
     }
-    const advanced = advanceTurn(state);
+    const expiredEvents: CombatEvent[] = [];
+    const advanced = advanceTurn(state, expiredEvents);
     return {
       state,
       events: groundEvents,
-      earlyReturn: { state: advanced, events: [...groundEvents, ...turnStartEvent(advanced)] },
+      earlyReturn: { state: advanced, events: [...groundEvents, ...expiredEvents, ...turnStartEvent(advanced)] },
     };
   }
   if (isMonsterActor(actorId)) {
@@ -4837,11 +4841,12 @@ function tickAtTurnStart(state: CombatState, actorId: ActorId): TickGate {
     const wasMonsterFrozen = monster.effects.some((e) => e.type === "frozen");
     if (wasMonsterFrozen && tick.newHp > 0) {
       const skipEvent: CombatEvent = { type: "turn_skip", actor: actorId, reason: "frozen" };
-      const advanced = advanceTurn(newState);
+      const expiredEvents: CombatEvent[] = [];
+      const advanced = advanceTurn(newState, expiredEvents);
       return {
         state: newState,
         events: [...groundEvents, ...tick.events, skipEvent],
-        earlyReturn: { state: advanced, events: [...groundEvents, ...tick.events, skipEvent, ...turnStartEvent(advanced)] },
+        earlyReturn: { state: advanced, events: [...groundEvents, ...tick.events, skipEvent, ...expiredEvents, ...turnStartEvent(advanced)] },
       };
     }
     if (tick.newHp <= 0 && monster.hp > 0) {
@@ -4907,11 +4912,12 @@ function tickAtTurnStart(state: CombatState, actorId: ActorId): TickGate {
   const wasFighterFrozen = fighter.effects.some((e) => e.type === "frozen");
   if (wasFighterFrozen && tick.newHp > 0) {
     const skipEvent: CombatEvent = { type: "turn_skip", actor: actorId, reason: "frozen" };
-    const advanced = advanceTurn(newState);
+    const expiredEvents: CombatEvent[] = [];
+    const advanced = advanceTurn(newState, expiredEvents);
     return {
       state: newState,
       events: [...groundEvents, ...tick.events, skipEvent],
-      earlyReturn: { state: advanced, events: [...groundEvents, ...tick.events, skipEvent, ...turnStartEvent(advanced)] },
+      earlyReturn: { state: advanced, events: [...groundEvents, ...tick.events, skipEvent, ...expiredEvents, ...turnStartEvent(advanced)] },
     };
   }
 
@@ -4932,11 +4938,12 @@ function tickAtTurnStart(state: CombatState, actorId: ActorId): TickGate {
         earlyReturn: { state: { ...newState, status: "defeat" }, events },
       };
     }
-    const advanced = advanceTurn(newState);
+    const expiredEvents: CombatEvent[] = [];
+    const advanced = advanceTurn(newState, expiredEvents);
     return {
       state: newState,
       events,
-      earlyReturn: { state: advanced, events: [...events, ...turnStartEvent(advanced)] },
+      earlyReturn: { state: advanced, events: [...events, ...expiredEvents, ...turnStartEvent(advanced)] },
     };
   }
 
@@ -6074,7 +6081,13 @@ function tickActorCooldowns(state: CombatState, actorId: ActorId): CombatState {
   return { ...next, cooldowns: allCooldowns };
 }
 
-function advanceTurn(state: CombatState): CombatState {
+// advanceTurn moves the cursor to the next live actor and bumps the round
+// counter when it wraps. Optional `outEvents`: when provided, ground_expired
+// events from round-advance expiration are pushed into it so callers can
+// surface them to the UI (canvas fade-outs, combat log "Fire Wall fades").
+// Callers without an events accumulator can omit the param — events are
+// silently dropped, preserving back-compat with the legacy single-arg shape.
+function advanceTurn(state: CombatState, outEvents?: CombatEvent[]): CombatState {
   if (state.turn_order.length === 0) return state;
   const total = state.turn_order.length;
   for (let i = 1; i <= total; i++) {
@@ -6083,11 +6096,10 @@ function advanceTurn(state: CombatState): CombatState {
     const roundBump = Math.floor(state.turn_index / total) < Math.floor(candidate / total) ? 1 : 0;
     const newRound = state.round + roundBump;
     // Round-advance expiration: when the round counter increments, drop
-    // ground effects whose duration has run out. Expiration events are
-    // dropped on the floor here — they'd require a return-shape change
-    // (advanceTurn returns just state today). Callers fold the surviving
-    // state in transparently. See docs/ground-effects.md.
+    // ground effects whose duration has run out. Surface ground_expired
+    // events into `outEvents` if provided so the UI can animate fade-outs.
     const expiry = roundBump > 0 ? expireGroundEffects(state, newRound) : { state, events: [] as CombatEvent[] };
+    if (outEvents && expiry.events.length > 0) outEvents.push(...expiry.events);
     const stateForCheck = expiry.state;
     if (isMonsterActor(id)) {
       const m = stateForCheck.monsters.find((x) => x.id === id);
