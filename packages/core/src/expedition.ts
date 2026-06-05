@@ -179,8 +179,6 @@ export function generateExpeditionMap(args: GenerateMapArgs): ExpeditionMap {
     const fromLanes = [...realized[d]].sort((a, b) => a - b);
     /** lanes at depth d that emitted a right-going edge (d, L) -> (d+1, L+1) */
     const rightFromLane = new Set<number>();
-    /** lanes at depth d that emitted a left-going edge (d, L) -> (d+1, L-1) */
-    const leftFromLane = new Set<number>();
 
     for (const lane of fromLanes) {
       // Candidate target lanes: lane-1, lane, lane+1 (clamped).
@@ -223,12 +221,10 @@ export function generateExpeditionMap(args: GenerateMapArgs): ExpeditionMap {
         if (tlane === lane + 1) {
           rightFromLane.add(lane);
           // Tell the right-neighbor (when processed) not to go left here.
-          // We do this by marking that going (d, lane+1) -> (d+1, lane) is
-          // now forbidden: the right neighbor will check leftFromLane via
-          // the rightFromLane set above when constructing its candidates.
-        }
-        if (tlane === lane - 1) {
-          leftFromLane.add(lane);
+          // We walk lanes in ascending order, so the right neighbor will see
+          // `rightFromLane.has(lane)` when building its candidate list and
+          // exclude its own left-going edge — that's enough to prevent the
+          // symmetric crossing pair. No `leftFromLane` set is needed.
         }
         const toId = `n_${d + 1}_${tlane}`;
         const fromId = `n_${d}_${lane}`;
@@ -299,7 +295,6 @@ export function generateExpeditionMap(args: GenerateMapArgs): ExpeditionMap {
       }
       kindByNodeId.set(nodeId, kind);
       prevLaneKind.set(lane, kind);
-      nodes.unshift; // no-op for side-effect-free clarity
     }
   }
 
@@ -419,6 +414,27 @@ export function availablePicks(
 // Reducers are pure: (state, action) -> state. The worker owns I/O (D1 writes,
 // spawning quests, etc.); this layer just decides *what should happen*.
 
+/**
+ * TODO(pass-2): persistence for between-node HP/mana carry.
+ *
+ * The design doc ("Party HP/mana between nodes", open question #1) requires
+ * HP and mana to carry across nodes within a single expedition — this is what
+ * makes camp/shrine nodes meaningful. This type is the in-memory shape Pass 2
+ * will read/write, but Pass 1 deliberately does NOT persist it:
+ *
+ *   - No DB column on `expeditions` or `expedition_party` for current HP/mana
+ *     yet — Pass 2 will add `current_hp`, `current_mana`, `max_hp`, `max_mana`
+ *     columns to `expedition_party` (or a sibling table) when wiring the
+ *     combat-node spawn + post-resolve callback.
+ *   - The reducer carries `party: ExpeditionPartyHp[]` through state purely
+ *     in-memory today; the worker doesn't read or write it. That's intentional
+ *     — the natural place to thread HP/mana through is the combat-node
+ *     spawn/resolve cycle, which lands in Pass 2.
+ *
+ * When Pass 2 lands, this type stays; the migration adds columns; the worker
+ * loads the values into `ExpeditionState.party` on read and writes them back
+ * on each node-resolve.
+ */
 export interface ExpeditionPartyHp {
   characterId: string;
   hp: number;
