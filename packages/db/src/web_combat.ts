@@ -83,12 +83,16 @@ export async function deleteWebCombatState(
     .run();
 }
 
-// Write the final OutcomeSummary into the existing combat row. The mid-combat
-// path (saveWebCombatState) intentionally doesn't carry outcome — keeping the
-// hot path narrow — so this dedicated UPDATE runs exactly once per fight, at
-// terminal transition. The row already exists because handleStepResult /
-// handleUseItem call saveWebCombatState for the terminal state before
-// reaching the becameTerminal branch.
+// Write the final OutcomeSummary into the combat row. The mid-combat path
+// (saveWebCombatState) intentionally doesn't carry outcome — keeping the hot
+// path narrow — so this dedicated UPDATE runs at terminal transition.
+//
+// As of the orphan-row fix, applyWebCombatOutcome calls endQuestWithStatus →
+// deleteWebCombatState, so by the time handleStepResult / handleUseItem reach
+// this UPDATE the row is already gone and the WHERE clause matches zero rows.
+// The live broadcast is the primary outcome delivery; the persisted-outcome
+// replay-on-reconnect path is no longer load-bearing. Kept as a defensive
+// write in case the cleanup order changes in the future.
 export async function saveWebCombatOutcome(
   db: D1Database,
   questId: number,
