@@ -353,38 +353,53 @@ describe("ground effects — friendly fire and dead-source credit", () => {
   });
 
   it("source can be downed and still gets credit for ongoing ticks", () => {
-    const init = baseInit();
-    init.fighters[0].hp = 1; // mage about to fall
-    const s = begun(init);
+    // Two-fighter party: bard goes first (init 18), then monster, then mage.
+    // We pre-down the mage so the contribution check is purely from a dead
+    // source, and the party doesn't wipe (bard is still alive).
+    const init: CombatInit = {
+      fighters: [
+        {
+          id: "U_BARD",
+          name: "Lyric",
+          class: "Frontend Bard",
+          level: 3,
+          hp: 20,
+          max_hp: 20,
+          mana: 3,
+          max_mana: 3,
+          shield: 0,
+          position: "back",
+          attack_mod: 1,
+          magic_mod: 2,
+          weapon_power: 2,
+          armor_power: 1,
+          scars: [],
+        },
+        { ...baseInit().fighters[0] },
+      ],
+      monster: baseInit().monster,
+    };
+    const s = begun(init, [18, 12, 5]);
     const monster = s.monsters[0];
-    // Plant brambles on monster's hex; then knock the mage out before the tick.
-    const seeded = withGroundEffect(s, makeGround("brambles", [monster.pos!], "U_MAGE", "tick", 5, 5));
-    // Force the mage to "die" by zeroing HP directly (simulating a prior hit).
+    // Plant brambles on monster's hex.
+    const POTENCY = 5;
+    const seeded = withGroundEffect(s, makeGround("brambles", [monster.pos!], "U_MAGE", "tick", POTENCY, 10));
+    // Force the mage down so source_id refers to a dead fighter.
     const downed: CombatState = {
       ...seeded,
       fighters: seeded.fighters.map((f) => f.id === "U_MAGE" ? { ...f, hp: 0 } : f),
     };
-    // Now the monster's turn starts — brambles ticks.
-    // We're already past begin; but we need the monster's turn next.
-    // For determinism we walk: mage tries action while downed → rejected;
-    // monster_act runs (its turn comes after we artificially down).
-    // The current turn might be the mage's; in that case advance via wait/monster_act.
-    // Use monster_act directly to advance through one turn.
-    const t1 = step(downed, { kind: "monster_act" }, seqRoll([50, 1, 1]));
-    // Either monster_act runs (if monster's turn), or it gets rejected (mage's turn).
-    // Either way, find a state where the monster acted and the tick fired.
-    // The brambles tick still credits U_MAGE even though mage is down.
-    const grand = t1.state.contribution["U_MAGE"] ?? 0;
-    // Either the tick already fired (credit >= 5) or it didn't yet — in
-    // which case we trip another monster turn.
-    if (grand >= 5) {
-      expect(grand).toBeGreaterThanOrEqual(5);
-      return;
-    }
-    // The tick fires when the monster's turn comes around; with our turn_order
-    // it should fire within one more step. The state should at least preserve
-    // U_MAGE's contribution path (no errors thrown).
-    expect(t1.state.status).not.toBe("defeat"); // single fighter; could be defeat
+    // Bard acts first (init 18). Then monster_act fires — tick should land.
+    const t1 = step(downed, { kind: "wait", actor: "U_BARD" }, seqRoll([]));
+    const t2 = step(t1.state, { kind: "monster_act" }, seqRoll([50, 1, 1]));
+    // Tight assertion: contribution credited to U_MAGE for exactly the
+    // brambles tick damage. (The brambles potency is the deterministic
+    // damage; no other source can credit U_MAGE in this scenario.)
+    expect(t2.state.contribution["U_MAGE"] ?? 0).toBe(POTENCY);
+    const tickEvt = t2.events.find((e): e is Extract<CombatEvent, { type: "ground_tick" }> => e.type === "ground_tick");
+    expect(tickEvt?.kind).toBe("brambles");
+    expect(tickEvt?.source).toBe("U_MAGE");
+    expect(tickEvt?.hp_delta).toBe(-POTENCY);
   });
 });
 
@@ -548,6 +563,59 @@ describe("ground effects — on_enter fires on every position mutation", () => {
     expect(triggered.length).toBe(2);
     const kinds = triggered.map((t) => t.kind).sort();
     expect(kinds).toEqual(["caltrops", "rune"]);
+  });
+});
+
+describe("ground effects — monotonic ids", () => {
+  it("place → consume → place again yields a different id even with same round/actor/kind", () => {
+    // Use Caltrops (on_enter, single hex). Place caltrops on a hex; manually
+    // consume by walking another actor onto it; then place caltrops again on
+    // a new hex in the same round. The old length-based id scheme would
+    // collide (length resets to 0 after consumption); the monotonic
+    // next_ground_effect_seq counter keeps them distinct.
+    const init: CombatInit = {
+      fighters: [
+        {
+          id: "U_ROGUE", name: "Fenel", class: "Refactor Rogue", level: 4,
+          hp: 20, max_hp: 20, mana: 6, max_mana: 6, shield: 0, position: "back",
+          attack_mod: 1, magic_mod: 0, weapon_power: 3, armor_power: 1, scars: [],
+        },
+      ],
+      monster: { name: "Practice Dummy", hp: 40, max_hp: 40, shield: 0, tier: 3, is_boss: false },
+    };
+    const s = begun(init, [18, 5]);
+    const rogue = s.fighters[0];
+    // Caltrops placement target — within range, neighbor of the rogue.
+    const targetA: HexPos = { q: rogue.pos!.q + 1, r: rogue.pos!.r };
+    // Round 1: cast Caltrops (d4 = 3).
+    const c1 = step(s, { kind: "ability", actor: "U_ROGUE", ability_id: "caltrops", target_pos: targetA }, seqRoll([3]));
+    const placed1 = c1.events.find((e): e is Extract<CombatEvent, { type: "ground_placed" }> => e.type === "ground_placed");
+    expect(placed1).toBeDefined();
+    const id1 = placed1!.ground_id;
+    // Manually consume the caltrops by stripping it from ground_effects —
+    // this mirrors what on-enter consumption does to the array (shrinks it
+    // back to length 0). We don't go through the move-action path because
+    // the rogue already spent their turn on the cast.
+    const consumed: CombatState = {
+      ...c1.state,
+      ground_effects: (c1.state.ground_effects ?? []).filter((g) => g.id !== id1),
+    };
+    expect(consumed.ground_effects).toHaveLength(0);
+    // Monster's turn fires; rolls: target pick, d20, damage.
+    const c2 = step(consumed, { kind: "monster_act" }, seqRoll([50, 1, 1]));
+    // Rogue's turn again. Cast a second Caltrops on a different hex. Clear
+    // caltrops cooldown so the second cast lands.
+    const ready: CombatState = { ...c2.state, cooldowns: {} };
+    const rogue2 = ready.fighters.find((f) => f.id === "U_ROGUE")!;
+    const targetB: HexPos = { q: rogue2.pos!.q + 1, r: rogue2.pos!.r + 1 };
+    const c3 = step(ready, { kind: "ability", actor: "U_ROGUE", ability_id: "caltrops", target_pos: targetB }, seqRoll([3]));
+    const placed2 = c3.events.find((e): e is Extract<CombatEvent, { type: "ground_placed" }> => e.type === "ground_placed");
+    expect(placed2).toBeDefined();
+    const id2 = placed2!.ground_id;
+    // Old length-based scheme would produce identical ids (both end in "-0"
+    // because the array was empty before each placement). Monotonic seq
+    // guarantees they differ.
+    expect(id2).not.toBe(id1);
   });
 });
 

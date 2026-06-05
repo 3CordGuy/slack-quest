@@ -331,6 +331,11 @@ export interface CombatState {
   // array is absent or empty. Cleared on combat resolve regardless of any
   // remaining duration.
   ground_effects?: GroundEffect[];
+  // Monotonic counter used to mint unique GroundEffect ids. Increments on
+  // every placement, even within the same round + actor + kind, so a place →
+  // consume → place sequence can't collide on the old length-based id scheme.
+  // Optional / back-compat: persisted states without it start at 0.
+  next_ground_effect_seq?: number;
 }
 
 // Passive tuning knobs. Mirror src/commands.ts constants in main.
@@ -4330,9 +4335,12 @@ function applyUtilityAbilityEffects(
         const validHexes = effect.hexes.filter((h) => inBounds(h, grid));
         if (validHexes.length === 0) break;
         const existing = s.ground_effects ?? [];
-        // Stable id from round + actor + kind + hex count so events can
-        // correlate without depending on insertion order.
-        const id = `ge-${s.round}-${actor}-${effect.ground_kind}-${existing.length}`;
+        // Monotonic id: bumping a counter on every placement guarantees
+        // uniqueness even after on-enter consumption shrinks the array. The
+        // old `existing.length` suffix could collide (place → consume → place
+        // in the same round + actor + kind hands out the same id twice).
+        const seq = s.next_ground_effect_seq ?? 0;
+        const id = `ge-${s.round}-${actor}-${effect.ground_kind}-${seq}`;
         const ground: GroundEffect = {
           id,
           kind: effect.ground_kind,
@@ -4344,7 +4352,7 @@ function applyUtilityAbilityEffects(
           trigger: effect.trigger,
           potency: Math.max(0, Math.round(effect.potency)),
         };
-        s = { ...s, ground_effects: [...existing, ground] };
+        s = { ...s, ground_effects: [...existing, ground], next_ground_effect_seq: seq + 1 };
         events.push({
           type: "ground_placed",
           actor,
