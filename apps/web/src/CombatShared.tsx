@@ -101,7 +101,7 @@ export function hpColor(current: number, max: number): string {
 // Parent must be `position: relative` for the inset:0 overlay to sit
 // inside the card.
 
-const DUST_COUNT = 14;
+const DUST_COUNT = 8;
 
 export function HitDust({ seq }: { seq: number }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -114,21 +114,21 @@ export function HitDust({ seq }: { seq: number }) {
     const els = Array.from(root.querySelectorAll<HTMLSpanElement>("[data-gq-dust]"));
     for (const el of els) {
       const angleDeg = Math.random() * 360;
-      const distance = 22 + Math.random() * 38;
+      const distance = 12 + Math.random() * 22;
       const rad = (angleDeg * Math.PI) / 180;
       const x = Math.cos(rad) * distance;
       // Bias upward so the puff drifts like settling dust.
-      const y = Math.sin(rad) * distance - 18;
-      const finalScale = 1.4 + Math.random() * 0.8;
+      const y = Math.sin(rad) * distance - 10;
+      const finalScale = 1.0 + Math.random() * 0.5;
       el.animate(
         [
           { transform: "translate(-50%, -50%) scale(0)", opacity: 0 },
-          { transform: "translate(-50%, -50%) scale(1)", opacity: 0.85, offset: 0.12 },
+          { transform: "translate(-50%, -50%) scale(0.8)", opacity: 0.6, offset: 0.15 },
           { transform: `translate(-50%, -50%) translate(${x}px, ${y}px) scale(${finalScale})`, opacity: 0 },
         ],
         {
-          duration: 650 + Math.random() * 250,
-          delay: Math.random() * 70,
+          duration: 380 + Math.random() * 160,
+          delay: Math.random() * 50,
           easing: "cubic-bezier(0.22, 1, 0.36, 1)",
           fill: "forwards",
         },
@@ -361,6 +361,7 @@ export function HealBurst({ seq }: { seq: number }) {
     </div>
   );
 }
+
 
 export const TONE_COLOR: Record<string, string> = {
   info:   "#e6e6e6",
