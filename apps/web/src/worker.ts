@@ -45,6 +45,8 @@ import {
   createCombatState,
   statsAtLevel,
   deriveMaxMana,
+  growLoadoutToLevel,
+  passiveSlotsForLevel,
   FREE_POINTS_PER_LEVEL,
   dropChance,
   findApothecaryStaple,
@@ -6730,6 +6732,14 @@ app.post("/api/dev/level", async (c) => {
   const maxHp = cls.base_hp + Math.max(0, targetLevel - 1) * 3;
   const newXp = xpForLevel(targetLevel);
   const unspentPoints = (targetLevel - 1) * FREE_POINTS_PER_LEVEL;
+  // Mirror the awardSpoils path: keep ability_loadout.passive in sync with
+  // passiveSlotsForLevel(targetLevel) so the loadout validator doesn't reject
+  // edits with wrong_slot_count after a dev-driven level jump.
+  const loadoutNeedsGrow = character.ability_loadout
+    && character.ability_loadout.passive.length !== passiveSlotsForLevel(targetLevel);
+  const newLoadoutJson = loadoutNeedsGrow
+    ? JSON.stringify(growLoadoutToLevel(character.ability_loadout!, targetLevel))
+    : null;
   await c.env.DB
     .prepare(`UPDATE characters
        SET level = ?, xp = ?,
@@ -6737,6 +6747,7 @@ app.post("/api/dev/level", async (c) => {
            unspent_points = ?,
            max_hp = ?, hp = ?,
            max_mana = ?, mana = ?,
+           ability_loadout = COALESCE(?, ability_loadout),
            last_active = ?
        WHERE slack_user_id = ?`)
     .bind(
@@ -6745,6 +6756,7 @@ app.post("/api/dev/level", async (c) => {
       unspentPoints,
       maxHp, maxHp,
       maxMana, maxMana,
+      newLoadoutJson,
       Date.now(), session.slack_user_id,
     ).run();
   return c.json({ ok: true });
