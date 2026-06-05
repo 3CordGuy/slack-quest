@@ -13,6 +13,7 @@
 
 import type { AbilityDef, FighterSnapshot, MonsterSnapshot } from "../abilities";
 import { fx, rollSum } from "./effects";
+import { GRID_DEFAULT, hexBlast, hexLine, hexRing, type HexPos } from "../hex";
 import type { ClassId, TalentNodeDef } from "./types";
 
 // ────────────────────────────────────────────────────────────────────────
@@ -924,6 +925,159 @@ const stackTrace: AbilityDef = {
 };
 
 // ────────────────────────────────────────────────────────────────────────
+// Ground-effect abilities (see docs/ground-effects.md)
+// ────────────────────────────────────────────────────────────────────────
+//
+// Six starter abilities exercising the GroundEffect system. Each places a
+// persistent tile effect — the shape is baked at placement time inside the
+// execute() callback using hex.ts helpers (hexLine / hexRing / hexBlast).
+// Potency, duration and shape are pinned per the design doc.
+
+const fireWall: AbilityDef = {
+  kind: "active",
+  id: "fire_wall",
+  name: "Fire Wall",
+  blurb: "Conjure a wall of flame — a line of 3 hexes ignites for 2 rounds, burning anyone (friend or foe) who stands in it for magic damage on their turn.",
+  icon: "fire",
+  mana_cost: 2,
+  cooldown_turns: 2,
+  routing: "utility",
+  target: "ground",
+  range_tiles: 4,
+  execute(ctx) {
+    const center = ctx.target_pos;
+    if (!center) return [];
+    const grid = GRID_DEFAULT;
+    // V1 picks horizontal orientation by default (axial right vector). UI
+    // can pass an oriented center later; for now this is "wall along the
+    // row containing the picked hex" — see design doc open question #1.
+    const hexes = hexLine(center, 3, grid, { q: 1, r: 0 });
+    const rank = ctx.rank ?? 1;
+    const mag = Math.max(1, ctx.caster.magic_mod);
+    const potency = rank >= 3 ? Math.round(mag * 1.5) : rank >= 2 ? Math.round(mag * 1.25) : mag;
+    return [fx.placeGroundEffect("fire", hexes, "tick", potency, 2)];
+  },
+};
+
+const ringOfFrost: AbilityDef = {
+  kind: "active",
+  id: "ring_of_frost",
+  name: "Ring of Frost",
+  blurb: "Encircle a hex with biting frost — every hex on the ring inflicts magic/2 cold damage at the start of any actor's turn for 2 rounds.",
+  icon: "snowflake-1",
+  mana_cost: 2,
+  cooldown_turns: 3,
+  routing: "utility",
+  target: "ground",
+  range_tiles: 4,
+  execute(ctx) {
+    const center = ctx.target_pos;
+    if (!center) return [];
+    const grid = GRID_DEFAULT;
+    const hexes = hexRing(center, 1, grid);
+    const rank = ctx.rank ?? 1;
+    const base = Math.max(1, Math.floor(ctx.caster.magic_mod / 2));
+    const potency = rank >= 3 ? Math.round(base * 1.5) : rank >= 2 ? Math.round(base * 1.25) : base;
+    return [fx.placeGroundEffect("frost", hexes, "tick", Math.max(1, potency), 2)];
+  },
+};
+
+const brambles: AbilityDef = {
+  kind: "active",
+  id: "brambles",
+  name: "Brambles",
+  blurb: "Snarl the ground with thorned vines — a 7-hex blast deals magic/2 piercing damage to anyone standing in it each round for 3 rounds.",
+  icon: "thorn-helix",
+  mana_cost: 2,
+  cooldown_turns: 3,
+  routing: "utility",
+  target: "ground",
+  range_tiles: 3,
+  execute(ctx) {
+    const center = ctx.target_pos;
+    if (!center) return [];
+    const grid = GRID_DEFAULT;
+    const hexes = hexBlast(center, 1, grid);
+    const rank = ctx.rank ?? 1;
+    const base = Math.max(1, Math.floor(ctx.caster.magic_mod / 2));
+    const potency = rank >= 3 ? Math.round(base * 1.5) : rank >= 2 ? Math.round(base * 1.25) : base;
+    return [fx.placeGroundEffect("brambles", hexes, "tick", Math.max(1, potency), 3)];
+  },
+};
+
+const consecrate: AbilityDef = {
+  kind: "active",
+  id: "consecrate",
+  name: "Consecrate",
+  blurb: "Bless a 7-hex area with holy light — allies standing within heal for magic HP each round for 3 rounds. Enemies are unaffected.",
+  icon: "sun-spear",
+  mana_cost: 3,
+  cooldown_turns: 4,
+  routing: "utility",
+  target: "ground",
+  range_tiles: 3,
+  execute(ctx) {
+    const center = ctx.target_pos;
+    if (!center) return [];
+    const grid = GRID_DEFAULT;
+    const hexes = hexBlast(center, 1, grid);
+    const rank = ctx.rank ?? 1;
+    const mag = Math.max(1, ctx.caster.magic_mod);
+    const potency = rank >= 3 ? Math.round(mag * 1.5) : rank >= 2 ? Math.round(mag * 1.25) : mag;
+    return [fx.placeGroundEffect("consecrated", hexes, "tick", potency, 3)];
+  },
+};
+
+const caltrops: AbilityDef = {
+  kind: "active",
+  id: "caltrops",
+  name: "Caltrops",
+  blurb: "Strew razor-sharp caltrops on a single hex — the next actor to step on them takes dex×d4 piercing damage and the trap is consumed. Lingers 4 rounds.",
+  icon: "metal-spikes",
+  mana_cost: 1,
+  cooldown_turns: 2,
+  routing: "utility",
+  target: "ground",
+  range_tiles: 3,
+  execute(ctx) {
+    const center = ctx.target_pos;
+    if (!center) return [];
+    const hexes: HexPos[] = [center];
+    const rank = ctx.rank ?? 1;
+    const dex = Math.max(1, ctx.caster.stats?.dex ?? 5);
+    // dex × d4. Rank multiplier scales the dex term.
+    const mult = rank >= 3 ? 1.5 : rank >= 2 ? 1.25 : 1;
+    const roll = ctx.roll(4);
+    const potency = Math.max(1, Math.round(dex * roll * mult));
+    return [fx.placeGroundEffect("caltrops", hexes, "on_enter", potency, 4)];
+  },
+};
+
+const trappedRune: AbilityDef = {
+  kind: "active",
+  id: "trapped_rune",
+  name: "Trapped Rune",
+  blurb: "Etch a volatile rune on a hex — the next actor to step on it suffers magic×d6 arcane damage and the rune detonates. Lingers 4 rounds.",
+  icon: "stone-tower",
+  mana_cost: 2,
+  cooldown_turns: 3,
+  routing: "utility",
+  target: "ground",
+  range_tiles: 4,
+  execute(ctx) {
+    const center = ctx.target_pos;
+    if (!center) return [];
+    const hexes: HexPos[] = [center];
+    const rank = ctx.rank ?? 1;
+    const mag = Math.max(1, ctx.caster.magic_mod);
+    const mult = rank >= 3 ? 1.5 : rank >= 2 ? 1.25 : 1;
+    const roll = ctx.roll(6);
+    const potency = Math.max(1, Math.round(mag * roll * mult));
+    return [fx.placeGroundEffect("rune", hexes, "on_enter", potency, 4)];
+  },
+};
+
+// ────────────────────────────────────────────────────────────────────────
 // Registry — per-class TalentNodeDef list
 // ────────────────────────────────────────────────────────────────────────
 
@@ -974,6 +1128,8 @@ const NEW_NODES_BY_CLASS: Record<ClassId, TalentNodeDef[]> = {
     activeNode("devops_mage", canaryDeploy, "damage", RANK_3, "R2: ×1.25 dmg. R3: ×1.5 dmg."),
     activeNode("devops_mage", observability, "damage", RANK_3, "R2: +2 dmg per debuff. R3: +3 dmg per debuff."),
     activeNode("devops_mage", failsafe, "defense", RANK_3, "R2: +5 shield on save. R3: +10 shield on save."),
+    activeNode("devops_mage", fireWall, "damage", RANK_3, "R2: ×1.25 tick dmg. R3: ×1.5 tick dmg."),
+    activeNode("devops_mage", ringOfFrost, "control", RANK_3, "R2: ×1.25 tick dmg. R3: ×1.5 tick dmg."),
   ],
   qa_paladin: [
     activeNode("qa_paladin", sanityCheck, "damage", RANK_3, "R2: ×1.25 dmg. R3: ×1.5 dmg."),
@@ -981,6 +1137,7 @@ const NEW_NODES_BY_CLASS: Record<ClassId, TalentNodeDef[]> = {
     activeNode("qa_paladin", codeReview, "support", RANK_3, "R2: ×1.5 heal. R3: ×2 heal."),
     activeNode("qa_paladin", staticAnalysis, "defense"),
     activeNode("qa_paladin", defensiveProgramming, "defense"),
+    activeNode("qa_paladin", consecrate, "support", RANK_3, "R2: ×1.25 heal. R3: ×1.5 heal."),
   ],
   backend_druid: [
     activeNode("backend_druid", pruning, "damage", RANK_3, "R2: ×1.25 dmg. R3: ×1.5 dmg."),
@@ -988,6 +1145,7 @@ const NEW_NODES_BY_CLASS: Record<ClassId, TalentNodeDef[]> = {
     activeNode("backend_druid", compostHeap, "support", RANK_3, "R2: ×1.5 regen. R3: ×2 regen."),
     activeNode("backend_druid", deepRoots, "defense", RANK_3, "R2: +3 AC barkskin. R3: +4 AC barkskin."),
     activeNode("backend_druid", cronJob, "support", RANK_3, "R2: 2 HP/turn. R3: 3 HP/turn."),
+    activeNode("backend_druid", brambles, "damage", RANK_3, "R2: ×1.25 tick dmg. R3: ×1.5 tick dmg."),
   ],
   frontend_bard: [
     activeNode("frontend_bard", standupMeeting, "support", RANK_3, "R2: 3 advantage charges. R3: 4 charges."),
@@ -1003,6 +1161,7 @@ const NEW_NODES_BY_CLASS: Record<ClassId, TalentNodeDef[]> = {
     activeNode("staff_sage", timeDilation, "control", RANK_3, "R2: entangle 3 turns. R3: entangle 4 turns."),
     activeNode("staff_sage", memoization, "support"),
     activeNode("staff_sage", cacheWarmer, "support"),
+    activeNode("staff_sage", trappedRune, "damage", RANK_3, "R2: ×1.25 trigger dmg. R3: ×1.5 trigger dmg."),
   ],
   refactor_rogue: [
     activeNode("refactor_rogue", codeAudit, "control", RANK_3, "R2: ×1.25 dmg + 8 turn hex. R3: ×1.5 dmg + 10 turn hex."),
@@ -1010,6 +1169,7 @@ const NEW_NODES_BY_CLASS: Record<ClassId, TalentNodeDef[]> = {
     activeNode("refactor_rogue", silentMode, "defense", RANK_3, "R2: +2 AC at full HP. R3: +2 AC + small dodge."),
     activeNode("refactor_rogue", hotpath, "damage", RANK_3, "R2: ×1.25 dmg. R3: ×1.5 dmg."),
     activeNode("refactor_rogue", cherryPick, "damage", RANK_3, "R2: ×1.75 dmg on low-HP enemies. R3: ×2.0 dmg."),
+    activeNode("refactor_rogue", caltrops, "control", RANK_3, "R2: ×1.25 trigger dmg. R3: ×1.5 trigger dmg."),
   ],
   sre_warden: [
     activeNode("sre_warden", postmortem, "damage", RANK_3, "R2: ×1.25 dmg + 3/debuff. R3: ×1.5 dmg + 4/debuff."),
@@ -1042,4 +1202,6 @@ export const NEW_ABILITY_DEFS: AbilityDef[] = [
   codeAudit, smokeTest, silentMode, hotpath, cherryPick,
   postmortem, circuitBreaker, failover, capacityPlanning, loadBalancer,
   indexScan, stackTrace, dropTable, staleCache, garbageCollection,
+  // Ground-effect actives (see docs/ground-effects.md)
+  fireWall, ringOfFrost, brambles, consecrate, caltrops, trappedRune,
 ];

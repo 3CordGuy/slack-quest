@@ -51,6 +51,8 @@ import {
   type LootTile,
   type MonsterSpecial,
   type Obstacle,
+  type GroundEffect,
+  type GroundEffectKind,
 } from "./hex";
 import {
   ELEMENT_META,
@@ -322,6 +324,13 @@ export interface CombatState {
   // When true, hex range and LOS are enforced on attacks. Set by the web app;
   // false/absent on Slack combats, old serialized states, and unit tests.
   hex_range_enabled?: boolean;
+  // Persistent tile effects placed by player abilities — fire walls, caltrops,
+  // consecrated ground, etc. See `GroundEffect` in hex.ts + the design doc at
+  // docs/ground-effects.md. Optional/back-compat: persisted states without
+  // this field deserialize cleanly and all three engine hooks no-op when the
+  // array is absent or empty. Cleared on combat resolve regardless of any
+  // remaining duration.
+  ground_effects?: GroundEffect[];
 }
 
 // Passive tuning knobs. Mirror src/commands.ts constants in main.
@@ -414,6 +423,9 @@ export type TurnAction =
       // Used by migrate (target fighter + new position).
       target?: ActorId;
       position?: BattlePosition;
+      // For ground-targeted abilities (target: "ground"): the chosen hex.
+      // execute() resolves the shape around this center.
+      target_pos?: HexPos;
     }
   // Hex grid: move the actor to an adjacent-or-reachable hex during move phase.
   | { kind: "move"; actor: ActorId; to: HexPos }
@@ -699,6 +711,44 @@ export type CombatEvent =
       effect: "burning" | "frozen" | "shocked";
       magnitude: number;
       duration: number;
+    }
+  // ── Ground effects ──────────────────────────────────────────────────────
+  // A persistent tile effect was placed on the battlefield.
+  | {
+      type: "ground_placed";
+      actor: ActorId;          // source / initiator
+      ground_id: string;
+      kind: GroundEffectKind;
+      hexes: HexPos[];
+      expires_after_round: number;
+      potency: number;
+    }
+  // A tick fired against an actor standing on a ground effect this turn.
+  // hp_delta is signed: negative for damage, positive for heals.
+  | {
+      type: "ground_tick";
+      actor: ActorId;          // actor standing on the tile
+      source: ActorId;         // who planted the effect
+      ground_id: string;
+      kind: GroundEffectKind;
+      hp_delta: number;
+    }
+  // An on_enter effect fired when an actor stepped onto its hex.
+  | {
+      type: "ground_triggered";
+      actor: ActorId;          // actor who stepped on
+      source: ActorId;
+      ground_id: string;
+      kind: GroundEffectKind;
+      pos: HexPos;
+      hp_delta: number;        // signed (negative for damage)
+    }
+  // A ground effect's duration ran out at round-advance.
+  | {
+      type: "ground_expired";
+      ground_id: string;
+      kind: GroundEffectKind;
+      source: ActorId;
     };
 
 // AC formulas — defense thresholds the attacker must equal or exceed on a
@@ -1095,7 +1145,248 @@ function handleMove(
     events.push(evt);
   }
 
+  // Ground effects — on_enter trigger. Parallel to loot pickup: if the
+  // destination matches any on_enter ground effect, fire its potency as
+  // damage, credit `source_id` via contribution, and consume the entered
+  // hex from the effect. See docs/ground-effects.md.
+  const onEnterResult = applyGroundOnEnter(next, action.actor, action.to);
+  next = onEnterResult.state;
+  events.push(...onEnterResult.events);
+
   return { state: next, events };
+}
+
+// ── Ground effect hooks ───────────────────────────────────────────────────
+//
+// Three hooks, all back-compat (no-op when ground_effects is absent / empty):
+//   - applyGroundOnEnter — fired from handleMove right after loot pickup
+//   - applyGroundTicks   — fired from tickAtTurnStart for the upcoming actor
+//   - expireGroundEffects — fired from advanceTurn on round bump
+//
+// All damage flows through contribution[source_id] (credit follows the
+// planter, even if source is downed/dead). Heals never grant credit.
+
+// Apply on_enter ground effects when `actor` steps onto `pos`. Damage credit
+// flows to each effect's source_id. Consumed hexes are stripped from the
+// effect; empty effects are removed entirely. Fighters and monsters both
+// trigger and receive damage — friendly fire is intentional.
+function applyGroundOnEnter(
+  state: CombatState,
+  actorId: ActorId,
+  pos: HexPos,
+): { state: CombatState; events: CombatEvent[] } {
+  const effects = state.ground_effects;
+  if (!effects || effects.length === 0) return { state, events: [] };
+  const events: CombatEvent[] = [];
+  let s = state;
+  const targetKey = posKey(pos);
+  const updated: GroundEffect[] = [];
+  for (const ge of effects) {
+    if (ge.trigger !== "on_enter") {
+      updated.push(ge);
+      continue;
+    }
+    const hit = ge.hexes.some((h) => posKey(h) === targetKey);
+    if (!hit) {
+      updated.push(ge);
+      continue;
+    }
+    // Apply damage. on_enter ground effects are damage-only in v1.
+    const apply = applyGroundDamage(s, actorId, ge.source_id, ge.potency);
+    s = apply.state;
+    events.push({
+      type: "ground_triggered",
+      actor: actorId,
+      source: ge.source_id,
+      ground_id: ge.id,
+      kind: ge.kind,
+      pos: { ...pos },
+      hp_delta: -apply.dealt,
+    });
+    events.push(...apply.events);
+    // Consume the hex. If this empties the effect, drop it entirely.
+    const remaining = ge.hexes.filter((h) => posKey(h) !== targetKey);
+    if (remaining.length > 0) {
+      updated.push({ ...ge, hexes: remaining });
+    } else {
+      events.push({ type: "ground_expired", ground_id: ge.id, kind: ge.kind, source: ge.source_id });
+    }
+    // If the trigger downed the actor, stop processing further on_enter
+    // effects on this tile — the actor is already off the board.
+    if (isMonsterActor(actorId)) {
+      const m = s.monsters.find((mm) => mm.id === actorId);
+      if (!m || m.hp <= 0) break;
+    } else {
+      const f = s.fighters.find((ff) => ff.id === actorId);
+      if (!f || f.hp <= 0) break;
+    }
+  }
+  s = { ...s, ground_effects: updated };
+  return { state: s, events };
+}
+
+// Apply tick ground effects to whichever actor is about to start a turn.
+// fire/brambles/frost damage any actor; consecrated heals only allies of
+// source_id (fighters → other fighters; monsters never benefit). Damage
+// credit flows to each effect's source_id; heals grant no credit.
+function applyGroundTicks(
+  state: CombatState,
+  actorId: ActorId,
+): { state: CombatState; events: CombatEvent[]; downed: boolean } {
+  const effects = state.ground_effects;
+  if (!effects || effects.length === 0) return { state, events: [], downed: false };
+  // Actor's current pos. If they have no pos (legacy / pre-hex state), skip.
+  const actorPos = actorPosOf(state, actorId);
+  if (!actorPos) return { state, events: [], downed: false };
+  const actorKey = posKey(actorPos);
+  const events: CombatEvent[] = [];
+  let s = state;
+  let downed = false;
+  for (const ge of effects) {
+    if (ge.trigger !== "tick") continue;
+    if (!ge.hexes.some((h) => posKey(h) === actorKey)) continue;
+    if (ge.kind === "consecrated") {
+      // Heal only allies of the source (player-only kind in v1 — monsters
+      // never plant consecrated ground, so a monster standing on it never
+      // benefits even if it happens to share an axis with the source).
+      const sourceIsFighter = !isMonsterActor(ge.source_id);
+      const actorIsFighter = !isMonsterActor(actorId);
+      if (!sourceIsFighter || !actorIsFighter) continue;
+      const fighter = s.fighters.find((f) => f.id === actorId);
+      if (!fighter || fighter.hp <= 0) continue;
+      const newHp = Math.min(fighter.max_hp, fighter.hp + ge.potency);
+      const applied = newHp - fighter.hp;
+      if (applied <= 0) continue;
+      s = {
+        ...s,
+        fighters: s.fighters.map((f) => f.id === actorId ? { ...f, hp: newHp } : f),
+      };
+      events.push({
+        type: "ground_tick",
+        actor: actorId,
+        source: ge.source_id,
+        ground_id: ge.id,
+        kind: ge.kind,
+        hp_delta: applied,
+      });
+      continue;
+    }
+    // Damage kinds: fire / brambles / frost. Friendly fire ON.
+    const apply = applyGroundDamage(s, actorId, ge.source_id, ge.potency);
+    s = apply.state;
+    events.push({
+      type: "ground_tick",
+      actor: actorId,
+      source: ge.source_id,
+      ground_id: ge.id,
+      kind: ge.kind,
+      hp_delta: -apply.dealt,
+    });
+    events.push(...apply.events);
+    if (apply.downed) { downed = true; break; }
+  }
+  return { state: s, events, downed };
+}
+
+// Drop expired ground effects after the round counter increments. Returns
+// the filtered state + ground_expired events for the dropped effects.
+function expireGroundEffects(
+  state: CombatState,
+  newRound: number,
+): { state: CombatState; events: CombatEvent[] } {
+  const effects = state.ground_effects;
+  if (!effects || effects.length === 0) return { state, events: [] };
+  const surviving: GroundEffect[] = [];
+  const events: CombatEvent[] = [];
+  for (const ge of effects) {
+    if (ge.expires_after_round < newRound) {
+      events.push({ type: "ground_expired", ground_id: ge.id, kind: ge.kind, source: ge.source_id });
+    } else {
+      surviving.push(ge);
+    }
+  }
+  if (events.length === 0) return { state, events: [] };
+  return { state: { ...state, ground_effects: surviving }, events };
+}
+
+// Returns the current hex pos of an actor, or undefined if absent.
+function actorPosOf(state: CombatState, actorId: ActorId): HexPos | undefined {
+  if (isMonsterActor(actorId)) {
+    return state.monsters.find((m) => m.id === actorId)?.pos;
+  }
+  return state.fighters.find((f) => f.id === actorId)?.pos;
+}
+
+// Apply a flat damage hit from a ground effect to either a fighter or a
+// monster. Damage bypasses armor + shield (simple model in v1 — these tiles
+// are environmental hazards, not weapon swings). Damage credit flows to
+// `sourceId` via contribution, ALWAYS — even if the source is downed/dead.
+// Emits monster_down / fighter_down events as appropriate and routes through
+// the existing kill resolver to keep wave transitions intact.
+function applyGroundDamage(
+  state: CombatState,
+  victimId: ActorId,
+  sourceId: ActorId,
+  potency: number,
+): { state: CombatState; events: CombatEvent[]; dealt: number; downed: boolean } {
+  if (potency <= 0) return { state, events: [], dealt: 0, downed: false };
+  if (isMonsterActor(victimId)) {
+    const monster = state.monsters.find((m) => m.id === victimId);
+    if (!monster || monster.hp <= 0) return { state, events: [], dealt: 0, downed: false };
+    const oldHp = monster.hp;
+    const newHp = Math.max(0, oldHp - potency);
+    const dealt = oldHp - newHp;
+    let next: CombatState = {
+      ...state,
+      monsters: state.monsters.map((m) => m.id === monster.id ? { ...m, hp: newHp } : m),
+    };
+    // Credit even if the planter is downed/dead — only credit if the planter
+    // is a fighter (matches existing contribution semantics: monsters never
+    // appear in contribution).
+    if (!isMonsterActor(sourceId)) {
+      next = {
+        ...next,
+        contribution: { ...next.contribution, [sourceId]: (next.contribution[sourceId] ?? 0) + dealt },
+      };
+    }
+    if (newHp <= 0) {
+      // Route through the shared kill resolver so wave transitions / passives fire.
+      const result = resolveMonsterKill(next, monster.id, sourceId, []);
+      return { state: result.state, events: result.events, dealt, downed: true };
+    }
+    return { state: next, events: [], dealt, downed: false };
+  }
+  const fighter = state.fighters.find((f) => f.id === victimId);
+  if (!fighter || fighter.hp <= 0) return { state, events: [], dealt: 0, downed: false };
+  const oldHp = fighter.hp;
+  const newHp = Math.max(0, oldHp - potency);
+  const dealt = oldHp - newHp;
+  let next: CombatState = {
+    ...state,
+    fighters: state.fighters.map((f) => f.id === fighter.id ? { ...f, hp: newHp } : f),
+    // Damage-taken stats accumulate for end-of-combat breakdown.
+    stats: {
+      ...state.stats,
+      [fighter.id]: {
+        ...(state.stats[fighter.id] ?? { damage_taken: 0, healing_done: 0, shielding_done: 0, kills: 0 }),
+        damage_taken: (state.stats[fighter.id]?.damage_taken ?? 0) + dealt,
+      },
+    },
+  };
+  // Credit only if the planter is a fighter.
+  if (!isMonsterActor(sourceId)) {
+    next = {
+      ...next,
+      contribution: { ...next.contribution, [sourceId]: (next.contribution[sourceId] ?? 0) + dealt },
+    };
+  }
+  const events: CombatEvent[] = [];
+  let downed = false;
+  if (newHp <= 0) {
+    events.push({ type: "fighter_down", target: fighter.id });
+    downed = true;
+  }
+  return { state: next, events, dealt, downed };
 }
 
 // ── Ally NPC auto-move helper ─────────────────────────────────────────────────
@@ -3097,6 +3388,7 @@ function handleAbility(
     target_id?: ActorId;
     target?: ActorId;
     position?: BattlePosition;
+    target_pos?: HexPos;
   },
   roll: RollFn,
 ): StepResult {
@@ -3266,6 +3558,27 @@ function handleAbility(
       return reject(sPostMana, `no line of sight for ${ability.name}`);
     }
   }
+  // Ground-targeted abilities: require a target_pos in-bounds and within
+  // range of the caster. The ability's execute() reads ctx.target_pos and
+  // bakes the shape into a place_ground_effect AbilityEffect.
+  if (ability.target === "ground") {
+    if (!action.target_pos) return reject(sPostMana, `${ability.name} requires a hex target`);
+    const grid = sPostMana.grid ?? GRID_DEFAULT;
+    if (!inBounds(action.target_pos, grid)) {
+      return reject(sPostMana, `target hex (${action.target_pos.q},${action.target_pos.r}) is out of bounds`);
+    }
+    if (sPostMana.hex_range_enabled && tickedActor.pos) {
+      const abilityRange = ability.range_tiles ?? fighterRangeTiles(tickedActor);
+      const dist = hexDistance(tickedActor.pos, action.target_pos);
+      if (dist > abilityRange) {
+        return reject(sPostMana, `${ability.name} is out of range (${dist} > ${abilityRange})`);
+      }
+      const weaponRange = tickedActor.weapon_range ?? "melee";
+      if (weaponRange !== "melee" && !hexLos(tickedActor.pos, action.target_pos, sPostMana.obstacles ?? [])) {
+        return reject(sPostMana, `no line of sight for ${ability.name}`);
+      }
+    }
+  }
   const protectForCtx = sPostMana.ability_state?.paladin_protect;
   const ctx: AbilityContext = {
     caster: tickedActor,
@@ -3276,6 +3589,7 @@ function handleAbility(
     position: action.position,
     protected_ally_id: protectForCtx?.paladin_id === action.actor ? protectForCtx?.target_id : undefined,
     rank: tickedActor.talent_ranks?.[ability.id] ?? 1,
+    target_pos: action.target_pos,
   };
   return applyUtilityAbilityEffects(sPostMana, ability.execute(ctx), action.actor, preEvents, roll);
 }
@@ -3976,6 +4290,41 @@ function applyUtilityAbilityEffects(
         events.push({ type: "ability_self_hp_cost", actor: effect.caster_id, amount: lost });
         break;
       }
+      case "place_ground_effect": {
+        // Drop a baked-shape persistent tile effect onto the field. The
+        // shape (hexes) is resolved at ability-execute time so this handler
+        // is a thin pusher — see docs/ground-effects.md.
+        if (effect.hexes.length === 0) break;
+        const grid = s.grid ?? GRID_DEFAULT;
+        const validHexes = effect.hexes.filter((h) => inBounds(h, grid));
+        if (validHexes.length === 0) break;
+        const existing = s.ground_effects ?? [];
+        // Stable id from round + actor + kind + hex count so events can
+        // correlate without depending on insertion order.
+        const id = `ge-${s.round}-${actor}-${effect.ground_kind}-${existing.length}`;
+        const ground: GroundEffect = {
+          id,
+          kind: effect.ground_kind,
+          hexes: validHexes,
+          source_id: actor,
+          // duration_rounds counts the round of placement. Effect is active
+          // through round = current_round + duration_rounds - 1 (inclusive).
+          expires_after_round: s.round + Math.max(1, effect.duration_rounds) - 1,
+          trigger: effect.trigger,
+          potency: Math.max(0, Math.round(effect.potency)),
+        };
+        s = { ...s, ground_effects: [...existing, ground] };
+        events.push({
+          type: "ground_placed",
+          actor,
+          ground_id: id,
+          kind: ground.kind,
+          hexes: ground.hexes,
+          expires_after_round: ground.expires_after_round,
+          potency: ground.potency,
+        });
+        break;
+      }
     }
   }
 
@@ -4412,9 +4761,43 @@ interface TickGate {
 }
 
 function tickAtTurnStart(state: CombatState, actorId: ActorId): TickGate {
+  // Ground effect ticks fire first — they're environmental "you're standing
+  // on a fire" damage that should resolve before status DoTs decide whether
+  // the actor is still alive to bleed. If a ground tick downs the actor,
+  // skip the rest of the tick path entirely.
+  const groundTickResult = applyGroundTicks(state, actorId);
+  state = groundTickResult.state;
+  const groundEvents = groundTickResult.events;
+  if (groundTickResult.downed) {
+    if (isMonsterActor(actorId)) {
+      // resolveMonsterKill was already invoked inside applyGroundDamage
+      // (via the monster_down path). State is post-kill / post-victory.
+      if (state.status === "victory") {
+        return { state, events: groundEvents, earlyReturn: { state, events: groundEvents } };
+      }
+      const advanced = advanceTurn(state);
+      return {
+        state,
+        events: groundEvents,
+        earlyReturn: { state: advanced, events: [...groundEvents, ...turnStartEvent(advanced)] },
+      };
+    }
+    // Fighter downed by ground tick.
+    const allDown = state.fighters.every((f) => f.hp <= 0);
+    if (allDown) {
+      const events: CombatEvent[] = [...groundEvents, { type: "defeat" }];
+      return { state, events, earlyReturn: { state: { ...state, status: "defeat" }, events } };
+    }
+    const advanced = advanceTurn(state);
+    return {
+      state,
+      events: groundEvents,
+      earlyReturn: { state: advanced, events: [...groundEvents, ...turnStartEvent(advanced)] },
+    };
+  }
   if (isMonsterActor(actorId)) {
     const monster = state.monsters.find((m) => m.id === actorId);
-    if (!monster) return { state, events: [], earlyReturn: null };
+    if (!monster) return { state, events: groundEvents, earlyReturn: null };
     const tick = tickEffects(monster.hp, monster.max_hp, monster.effects, actorId);
     let newState: CombatState = {
       ...state,
@@ -4434,8 +4817,8 @@ function tickAtTurnStart(state: CombatState, actorId: ActorId): TickGate {
       const advanced = advanceTurn(newState);
       return {
         state: newState,
-        events: [...tick.events, skipEvent],
-        earlyReturn: { state: advanced, events: [...tick.events, skipEvent, ...turnStartEvent(advanced)] },
+        events: [...groundEvents, ...tick.events, skipEvent],
+        earlyReturn: { state: advanced, events: [...groundEvents, ...tick.events, skipEvent, ...turnStartEvent(advanced)] },
       };
     }
     if (tick.newHp <= 0 && monster.hp > 0) {
@@ -4459,17 +4842,17 @@ function tickAtTurnStart(state: CombatState, actorId: ActorId): TickGate {
       // Defer victory vs wave transition to the shared resolver so
       // gauntlet quests keep going past a poison-kill.
       const withContribution: CombatState = { ...newState, contribution };
-      const result = resolveMonsterKill(withContribution, actorId, killerId, tick.events);
+      const result = resolveMonsterKill(withContribution, actorId, killerId, [...groundEvents, ...tick.events]);
       return { state: result.state, events: result.events, earlyReturn: result };
     }
-    return { state: newState, events: tick.events, earlyReturn: null };
+    return { state: newState, events: [...groundEvents, ...tick.events], earlyReturn: null };
   }
 
   const fighter = state.fighters.find((f) => f.id === actorId);
   if (!fighter) {
     // Shouldn't happen — turn_order is built from current fighters — but
     // defensively pass through.
-    return { state, events: [], earlyReturn: null };
+    return { state, events: groundEvents, earlyReturn: null };
   }
   const tick = tickEffects(fighter.hp, fighter.max_hp, fighter.effects, actorId);
   const updatedFighters = state.fighters.map((f) =>
@@ -4504,8 +4887,8 @@ function tickAtTurnStart(state: CombatState, actorId: ActorId): TickGate {
     const advanced = advanceTurn(newState);
     return {
       state: newState,
-      events: [...tick.events, skipEvent],
-      earlyReturn: { state: advanced, events: [...tick.events, skipEvent, ...turnStartEvent(advanced)] },
+      events: [...groundEvents, ...tick.events, skipEvent],
+      earlyReturn: { state: advanced, events: [...groundEvents, ...tick.events, skipEvent, ...turnStartEvent(advanced)] },
     };
   }
 
@@ -4513,6 +4896,7 @@ function tickAtTurnStart(state: CombatState, actorId: ActorId): TickGate {
     // Tick downed the fighter — skip their action, advance turn (or end
     // combat on full party wipe).
     const events: CombatEvent[] = [
+      ...groundEvents,
       ...tick.events,
       { type: "fighter_down", target: actorId },
     ];
@@ -4533,7 +4917,7 @@ function tickAtTurnStart(state: CombatState, actorId: ActorId): TickGate {
     };
   }
 
-  return { state: newState, events: [...tick.events, ...passiveEvents], earlyReturn: null };
+  return { state: newState, events: [...groundEvents, ...tick.events, ...passiveEvents], earlyReturn: null };
 }
 
 // ── Class passives ───────────────────────────────────────────────────────
@@ -5674,19 +6058,31 @@ function advanceTurn(state: CombatState): CombatState {
     const candidate = state.turn_index + i;
     const id = state.turn_order[candidate % total];
     const roundBump = Math.floor(state.turn_index / total) < Math.floor(candidate / total) ? 1 : 0;
+    const newRound = state.round + roundBump;
+    // Round-advance expiration: when the round counter increments, drop
+    // ground effects whose duration has run out. Expiration events are
+    // dropped on the floor here — they'd require a return-shape change
+    // (advanceTurn returns just state today). Callers fold the surviving
+    // state in transparently. See docs/ground-effects.md.
+    const expiry = roundBump > 0 ? expireGroundEffects(state, newRound) : { state, events: [] as CombatEvent[] };
+    const stateForCheck = expiry.state;
     if (isMonsterActor(id)) {
-      const m = state.monsters.find((x) => x.id === id);
+      const m = stateForCheck.monsters.find((x) => x.id === id);
       if (m && m.hp > 0) {
-        return { ...state, turn_index: candidate, round: state.round + roundBump, turn_phase: "move" };
+        return { ...stateForCheck, turn_index: candidate, round: newRound, turn_phase: "move" };
       }
-      // Dead monster slot — keep scanning.
+      // Dead monster slot — keep scanning. We carry the expired state
+      // forward so a second wrap of the round counter doesn't try to
+      // expire already-dropped effects.
+      state = stateForCheck;
       continue;
     }
-    const f = state.fighters.find((x) => x.id === id);
+    const f = stateForCheck.fighters.find((x) => x.id === id);
     if (f && f.hp > 0) {
-      const next: CombatState = { ...state, turn_index: candidate, round: state.round + roundBump, turn_phase: "move" };
+      const next: CombatState = { ...stateForCheck, turn_index: candidate, round: newRound, turn_phase: "move" };
       return tickActorCooldowns(next, id);
     }
+    state = stateForCheck;
   }
   // Shouldn't reach here unless the whole party is down — defeat is detected
   // by the caller in handleMonsterAct before we get here.
