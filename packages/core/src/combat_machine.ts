@@ -1159,7 +1159,9 @@ function handleMove(
 // ── Ground effect hooks ───────────────────────────────────────────────────
 //
 // Three hooks, all back-compat (no-op when ground_effects is absent / empty):
-//   - applyGroundOnEnter — fired from handleMove right after loot pickup
+//   - applyGroundOnEnter — fired from EVERY position-mutation site:
+//       handleMove (player move), autoMoveMonster, autoMoveAllyNpc,
+//       tryMonsterPounce, leap_adjacent_to, swap_positions.
 //   - applyGroundTicks   — fired from tickAtTurnStart for the upcoming actor
 //   - expireGroundEffects — fired from advanceTurn on round bump
 //
@@ -1414,14 +1416,17 @@ function autoMoveAllyNpc(
   if (stepsToTake <= 0) return { state, events: [] };
   const dest = path[stepsToTake - 1];
   const from = npc.pos;
-  const nextState: CombatState = {
+  let nextState: CombatState = {
     ...state,
     fighters: state.fighters.map((f) => f.id === npcId ? { ...f, pos: dest } : f),
   };
-  return {
-    state: nextState,
-    events: [{ type: "moved", actor: npcId, from, to: dest }],
-  };
+  const events: CombatEvent[] = [{ type: "moved", actor: npcId, from, to: dest }];
+  // On-enter ground effects fire for any position mutation, not just
+  // player handleMove. See applyGroundOnEnter / docs/ground-effects.md.
+  const onEnter = applyGroundOnEnter(nextState, npcId, dest);
+  nextState = onEnter.state;
+  events.push(...onEnter.events);
+  return { state: nextState, events };
 }
 
 // ── Monster auto-move helper ──────────────────────────────────────────────────
@@ -1464,17 +1469,19 @@ function autoMoveMonster(
   const dest = path[stepsToTake - 1];
   const from = monster.pos;
 
-  const nextState: CombatState = {
+  let nextState: CombatState = {
     ...state,
     monsters: state.monsters.map((m) =>
       m.id === monsterId ? { ...m, pos: dest } : m,
     ),
   };
-
-  return {
-    state: nextState,
-    events: [{ type: "monster_moved", actor: monsterId, from, to: dest }],
-  };
+  const events: CombatEvent[] = [{ type: "monster_moved", actor: monsterId, from, to: dest }];
+  // On-enter ground effects fire for monster movement too — caltrops should
+  // trigger on a monster stepping onto them (per design doc smoke test).
+  const onEnter = applyGroundOnEnter(nextState, monsterId, dest);
+  nextState = onEnter.state;
+  events.push(...onEnter.events);
+  return { state: nextState, events };
 }
 
 // Handles the "pounce" special: teleport adjacent to the farthest fighter.
@@ -1513,17 +1520,22 @@ function tryMonsterPounce(
   );
 
   const prevUsed = state.specials_used?.[monsterId] ?? [];
-  const nextState: CombatState = {
+  let nextState: CombatState = {
     ...state,
     monsters: state.monsters.map((m) =>
       m.id === monsterId ? { ...m, pos: dest } : m,
     ),
     specials_used: { ...(state.specials_used ?? {}), [monsterId]: [...prevUsed, "pounce"] },
   };
+  const events: CombatEvent[] = [{ type: "monster_pounce", actor: monsterId, to: dest }];
+  // Pounce is a position mutation; on-enter ground effects still trigger.
+  const onEnter = applyGroundOnEnter(nextState, monsterId, dest);
+  nextState = onEnter.state;
+  events.push(...onEnter.events);
 
   return {
     state: nextState,
-    events: [{ type: "monster_pounce", actor: monsterId, to: dest }],
+    events,
     pounced: true,
   };
 }
@@ -4236,6 +4248,10 @@ function applyUtilityAbilityEffects(
           fighters: s.fighters.map((f) => f.id === effect.actor_id ? { ...f, pos: dest } : f),
         };
         events.push({ type: "moved", actor: effect.actor_id, from, to: dest });
+        // Position mutation → check on-enter ground effects on the landing tile.
+        const onEnter = applyGroundOnEnter(s, effect.actor_id, dest);
+        s = onEnter.state;
+        events.push(...onEnter.events);
         break;
       }
       case "swap_positions": {
@@ -4257,6 +4273,13 @@ function applyUtilityAbilityEffects(
         };
         events.push({ type: "moved", actor: effect.caster_id, from: casterPos, to: targetPos });
         events.push({ type: "moved", actor: effect.target_id, from: targetPos, to: casterPos });
+        // Both actors check on-enter ground effects at their new tiles.
+        const onEnterCaster = applyGroundOnEnter(s, effect.caster_id, targetPos);
+        s = onEnterCaster.state;
+        events.push(...onEnterCaster.events);
+        const onEnterTarget = applyGroundOnEnter(s, effect.target_id, casterPos);
+        s = onEnterTarget.state;
+        events.push(...onEnterTarget.events);
         break;
       }
       case "cleanse_single_ally": {

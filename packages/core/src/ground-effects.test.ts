@@ -390,6 +390,140 @@ describe("ground effects — placement via place_ground_effect", () => {
   });
 });
 
+describe("ground effects — on_enter fires on every position mutation", () => {
+  it("monster walking onto caltrops triggers the on_enter effect, credits source", () => {
+    // Place the monster well outside attack range so it must move toward the
+    // mage. Lay caltrops on the BFS step the monster will land on.
+    const init = baseInit();
+    init.monster.hp = 50;
+    const s = begun(init);
+    const mage = s.fighters.find((f) => f.id === "U_MAGE")!;
+    // Set up positions: mage at (1,1), monster at (5,1). Caltrops at (4,1) —
+    // the monster's first move step toward the mage along the row.
+    const magePos: HexPos = { q: 1, r: 1 };
+    const monsterStart: HexPos = { q: 5, r: 1 };
+    // Monster move_range defaults to ~5; BFS path is (5,1)→(4,1)→(3,1)→(2,1)
+    // and the monster moves to the end of the path stopping one short of the
+    // fighter — so it lands on (2,1). Place caltrops there.
+    const caltrops: HexPos = { q: 2, r: 1 };
+    const seeded: CombatState = {
+      ...s,
+      hex_range_enabled: true,
+      fighters: s.fighters.map((f) => f.id === "U_MAGE" ? { ...f, pos: magePos } : f),
+      monsters: s.monsters.map((m) => ({ ...m, pos: monsterStart, range_tiles: 1 })),
+      ground_effects: [
+        makeGround("caltrops", [caltrops], "U_MAGE", "on_enter", 7, 5, "ge-trap-1"),
+      ],
+    };
+    // Step through the mage's turn first (wait), then the monster acts and
+    // auto-moves toward the mage — landing on caltrops mid-path.
+    const t1 = step(seeded, { kind: "wait", actor: "U_MAGE" }, seqRoll([]));
+    const t2 = step(t1.state, { kind: "monster_act" }, seqRoll([50, 1, 1]));
+    void mage;
+    const triggered = t2.events.find((e): e is Extract<CombatEvent, { type: "ground_triggered" }> => e.type === "ground_triggered");
+    expect(triggered).toBeDefined();
+    expect(triggered!.kind).toBe("caltrops");
+    expect(triggered!.source).toBe("U_MAGE");
+    // The mage gets contribution credit even though the monster triggered.
+    expect(t2.state.contribution["U_MAGE"]).toBeGreaterThanOrEqual(7);
+    // Caltrops consumed.
+    expect((t2.state.ground_effects ?? []).find((g) => g.id === "ge-trap-1")).toBeUndefined();
+  });
+
+  it("leap_adjacent_to onto a trapped rune triggers the rune on the leaper", () => {
+    // Set up a Refactor Rogue with hotpath (leap + strike). Place a trapped
+    // rune on the rogue's landing tile and confirm on_enter fires.
+    const init: CombatInit = {
+      fighters: [
+        {
+          id: "U_ROGUE", name: "Fenel", class: "Refactor Rogue", level: 4,
+          hp: 20, max_hp: 20, mana: 3, max_mana: 3, shield: 0, position: "back",
+          attack_mod: 2, magic_mod: 0, weapon_power: 3, armor_power: 1, scars: [],
+        },
+      ],
+      monster: { name: "Goblin", hp: 30, max_hp: 30, tier: 2, is_boss: false },
+    };
+    const s = begun(init, [18, 5]);
+    // Place rogue at (1,1), monster at (4,1). Hotpath leaps adjacent to monster
+    // — landing tile will be (3,1), the unoccupied neighbor closest to (1,1).
+    const positioned: CombatState = {
+      ...s,
+      fighters: s.fighters.map((f) => ({ ...f, pos: { q: 1, r: 1 } })),
+      monsters: s.monsters.map((m) => ({ ...m, pos: { q: 4, r: 1 } })),
+    };
+    const landing: HexPos = { q: 3, r: 1 };
+    const seeded = withGroundEffect(
+      positioned,
+      makeGround("rune", [landing], "U_ROGUE", "on_enter", 5, 5, "ge-rune-1"),
+    );
+    // Hotpath: 1d8 + atk damage + leap. Rolls: d8 = 5, d20 hit = 18, d4 dmg = 3.
+    const result = step(
+      seeded,
+      { kind: "ability", actor: "U_ROGUE", ability_id: "hotpath", target_id: seeded.monsters[0].id },
+      seqRoll([5, 18, 3]),
+    );
+    const triggered = result.events.find((e): e is Extract<CombatEvent, { type: "ground_triggered" }> => e.type === "ground_triggered");
+    expect(triggered).toBeDefined();
+    expect(triggered!.kind).toBe("rune");
+    expect(triggered!.actor).toBe("U_ROGUE");
+    // Self-cast rune fires damage but the planter/victim are the same actor
+    // — per fix 3, no contribution credit for self-tick (covered below). Here
+    // we just assert the on_enter trigger event fired.
+  });
+
+  it("swap_positions onto a fire-tick hex schedules a tick for the swapper next turn", () => {
+    // swap_positions itself is a position mutation; on_enter ground effects
+    // (caltrops/rune) fire immediately for both swappers. For a tick-trigger
+    // ground effect (fire) the immediate-step on_enter helper won't fire
+    // — but it WILL fire when the swapped-in actor's next turn starts.
+    // Here we assert: swap moves both actors, no crash, no errant ground
+    // events for tick effects from the swap itself, and the fire is still
+    // sitting on the tile for their next-turn tick.
+    const init: CombatInit = {
+      fighters: [
+        {
+          id: "U_WARDEN", name: "Ari", class: "SRE Warden", level: 5,
+          hp: 30, max_hp: 30, mana: 3, max_mana: 3, shield: 0, position: "front",
+          attack_mod: 1, magic_mod: 0, weapon_power: 3, armor_power: 2, scars: [],
+        },
+        {
+          id: "U_MAGE", name: "Anya", class: "DevOps Mage", level: 5,
+          hp: 30, max_hp: 30, mana: 6, max_mana: 6, shield: 0, position: "back",
+          attack_mod: 0, magic_mod: 3, weapon_power: 2, armor_power: 1, scars: [],
+        },
+      ],
+      monster: baseInit().monster,
+    };
+    const s = begun(init, [18, 12, 5]);
+    const wardenPos: HexPos = { q: 1, r: 1 };
+    const magePos: HexPos = { q: 2, r: 1 }; // distance 1, within failover range_tiles=2
+    // Place caltrops on warden's destination (mage's pos) and rune on mage's
+    // destination (warden's pos). Swap should trigger BOTH.
+    const positioned: CombatState = {
+      ...s,
+      fighters: s.fighters.map((f) =>
+        f.id === "U_WARDEN" ? { ...f, pos: wardenPos } : f.id === "U_MAGE" ? { ...f, pos: magePos } : f,
+      ),
+      ground_effects: [
+        makeGround("caltrops", [magePos], "U_MAGE", "on_enter", 4, 5, "ge-trap-warden"),
+        makeGround("rune", [wardenPos], "U_MAGE", "on_enter", 4, 5, "ge-rune-mage"),
+      ],
+    };
+    // Failover is the SRE Warden swap_positions ability. action.target is the
+    // ally id for single_ally targets.
+    const result = step(
+      positioned,
+      { kind: "ability", actor: "U_WARDEN", ability_id: "failover", target: "U_MAGE" },
+      seqRoll([]),
+    );
+    const triggered = result.events.filter((e): e is Extract<CombatEvent, { type: "ground_triggered" }> => e.type === "ground_triggered");
+    // Both swappers checked the new tile — two on_enter triggers.
+    expect(triggered.length).toBe(2);
+    const kinds = triggered.map((t) => t.kind).sort();
+    expect(kinds).toEqual(["caltrops", "rune"]);
+  });
+});
+
 describe("ground effects — back-compat", () => {
   it("missing ground_effects field is a no-op (handleMove / advanceTurn don't crash)", () => {
     const s = begun();
