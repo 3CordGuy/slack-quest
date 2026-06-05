@@ -6414,8 +6414,7 @@ app.post("/api/quest/:id/tower/exit", async (c) => {
   if (!quest) return c.json({ error: "no_quest" }, 404);
   if (quest.scene.variant !== "tower") return c.json({ error: "not_tower" }, 400);
   if (!quest.scene.tower_awaiting_choice) return c.json({ error: "not_awaiting_choice" }, 400);
-  await markQuestStatus(c.env.DB, questId, "completed");
-  await clearHiredMercForParty(c.env.DB, questId);
+  await endQuestWithStatus(c.env.DB, questId, "completed");
   return c.json({ ok: true, floors_climbed: quest.scene.tower_floor ?? 0 });
 });
 
@@ -7059,6 +7058,21 @@ interface ServerToClient {
   };
 }
 
+// Single funnel for marking a quest as completed/failed. Every terminal-status
+// site goes through here so the three paired writes — quest status, hired-merc
+// release, and web_combat_state cleanup — can't drift apart. Leaving a
+// web_combat_state row on a completed quest produced orphan rows that surfaced
+// as a stuck "active combat" UI (see quest 1043, 2026-06).
+async function endQuestWithStatus(
+  db: D1Database,
+  questId: number,
+  status: "completed" | "failed",
+): Promise<void> {
+  await markQuestStatus(db, questId, status);
+  await clearHiredMercForParty(db, questId);
+  await deleteWebCombatState(db, questId);
+}
+
 // End-of-combat side-effects:
 //   - Victory: contribution-proportional XP + gold split, scaled for boss
 //     (×2) / elite (×1.5); awardSpoils handles level-ups; per-fighter loot
@@ -7369,8 +7383,7 @@ async function applyWebCombatOutcome(
     return towerOutcome;
   }
 
-  await markQuestStatus(env.DB, questId, won ? "completed" : "failed");
-  await clearHiredMercForParty(env.DB, questId);
+  await endQuestWithStatus(env.DB, questId, won ? "completed" : "failed");
 
   return {
     status: state.status as "victory" | "defeat",
@@ -7438,8 +7451,7 @@ async function advanceTowerAfterCombat(
     for (const f of humanFighters) {
       await incrementTowerStats(env.DB, f.id, { bestFloor: currentFloor });
     }
-    await markQuestStatus(env.DB, questId, "failed");
-    await clearHiredMercForParty(env.DB, questId);
+    await endQuestWithStatus(env.DB, questId, "failed");
     return {
       status: state.status as "victory" | "defeat" | "fled",
       rewards,
@@ -7528,8 +7540,7 @@ async function advanceTowerAfterCombat(
   if (!next) {
     // Shouldn't happen — a non-boss floor should always have a next entry —
     // but bail safely if the queue is empty: treat this as a wipe-style end.
-    await markQuestStatus(env.DB, questId, "completed");
-    await clearHiredMercForParty(env.DB, questId);
+    await endQuestWithStatus(env.DB, questId, "completed");
     return {
       status: "victory",
       rewards,

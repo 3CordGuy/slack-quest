@@ -1696,9 +1696,10 @@ export function CombatPage({
   }, [stateForAuto?.turn_index, stateForAuto?.status, autoResolve]);
 
   function exit() {
-    // Just navigate away — combat state stays in D1 so the player can resume
-    // from the dashboard. Use the EndBanner's Abandon control (or the dashboard's
-    // explicit abandon button) to actually clear web combat state.
+    // Just navigate away. For an in-progress fight, the combat state stays in
+    // D1 so the player can resume from the dashboard. For a terminal fight,
+    // the server's endQuestWithStatus already removed the row when the quest
+    // was marked completed/failed — no extra client cleanup needed.
     onExit();
   }
 
