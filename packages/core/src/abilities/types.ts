@@ -54,6 +54,32 @@ export function emptyLoadoutForLevel(level: number): AbilityLoadout {
   };
 }
 
+// Resizes loadout.passive to match passiveSlotsForLevel(level): pads with
+// null when growing, trims trailing null slots first when shrinking so
+// non-null picks survive a level drop when possible.
+export function growLoadoutToLevel(loadout: AbilityLoadout, level: number): AbilityLoadout {
+  const target = passiveSlotsForLevel(level);
+  const passive = loadout.passive.slice();
+  if (passive.length < target) {
+    while (passive.length < target) passive.push(null);
+  } else if (passive.length > target) {
+    while (passive.length > target) {
+      const tail = passive[passive.length - 1];
+      if (tail === null) {
+        passive.pop();
+      } else {
+        const firstNull = passive.indexOf(null);
+        if (firstNull >= 0 && firstNull < passive.length - 1) {
+          passive.splice(firstNull, 1);
+        } else {
+          passive.pop();
+        }
+      }
+    }
+  }
+  return { active: loadout.active.slice(), passive };
+}
+
 export function totalPointsCost(node: TalentNodeDef, targetRank: number): number {
   let sum = 0;
   for (let r = 1; r <= targetRank; r++) sum += node.point_cost_per_rank[r - 1] ?? 0;

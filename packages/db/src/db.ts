@@ -1,7 +1,7 @@
 // D1 query helpers. Raw prepared statements — no ORM.
 
 import type { AbilityLoadout, DamageType, DrinkBuff, EffectType, ElementType, EarnedAchievement, EquipSlot, ItemRoll, ItemType, Rarity, RolledAffix, StatKey, Stats, TalentNodeDef, TownState, WeaponRange } from "@gantt-quest/core";
-import { classIdForTree, deriveMaxMana, emptyLoadoutForLevel, findNode, MAX_ACTIVE_SLOTS, nodesForClass, passiveSlotsForLevel, pointCostForRank, startingStatsForClass } from "@gantt-quest/core";
+import { classIdForTree, deriveMaxMana, emptyLoadoutForLevel, findNode, growLoadoutToLevel, MAX_ACTIVE_SLOTS, nodesForClass, passiveSlotsForLevel, pointCostForRank, startingStatsForClass } from "@gantt-quest/core";
 
 // Active status effect on a character or monster. Ticks on the affected actor's
 // own combat action / monster turn. Cleared at quest end.
@@ -1120,6 +1120,15 @@ export async function awardSpoils(
   const formulaMana = deriveMaxMana(character.int_stat ?? 5, level);
   const maxMana = formulaMana + (character.mana_bonus ?? 0);
   const newMana = levelsGained > 0 ? maxMana : Math.min(character.mana, maxMana);
+  // Passive slot count grows at L10 and L30. Pad the stored ability_loadout
+  // so /api/character/loadout's wrong_slot_count check doesn't fire the next
+  // time the player edits it.
+  const slotsChanged = levelsGained > 0
+    && character.ability_loadout
+    && character.ability_loadout.passive.length !== passiveSlotsForLevel(level);
+  const newLoadoutJson = slotsChanged
+    ? JSON.stringify(growLoadoutToLevel(character.ability_loadout!, level))
+    : null;
   await db
     .prepare(
       `UPDATE characters
@@ -1128,10 +1137,11 @@ export async function awardSpoils(
            max_mana = ?, mana = ?,
            unspent_points = unspent_points + ?,
            talent_points = talent_points + ?,
+           ability_loadout = COALESCE(?, ability_loadout),
            last_active = ?
        WHERE slack_user_id = ?`,
     )
-    .bind(totalXp, gold, level, maxHp, newHp, maxMana, newMana, levelsGained, levelsGained, Date.now(), character.slack_user_id)
+    .bind(totalXp, gold, level, maxHp, newHp, maxMana, newMana, levelsGained, levelsGained, newLoadoutJson, Date.now(), character.slack_user_id)
     .run();
   return { levelsGained, newLevel: level, newMaxHp: maxHp, newHp, newMaxMana: maxMana, newMana };
 }
