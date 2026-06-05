@@ -338,7 +338,7 @@ export function describeItemEffect(item: {
       return <>{lead("bubbling-potion")}Restores {p} HP on use. Single-use.</>;
     }
     case "magic":
-      return <>{lead("crystal-ball")}Permanently grants +{p} max mana on use (capped at 5).</>;
+      return <>{lead("crystal-ball")}Permanently grants +{p} max mana on use (cap scales with level).</>;
     case "revive":
       return <>{lead("crowned-heart")}Revives a downed party member to {p}% of their max HP. Combat-only.</>;
     case "tool":
