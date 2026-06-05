@@ -705,14 +705,16 @@ export async function createQuest(
     lobby?: boolean;
     lobby_expires_at?: number;
     is_private?: boolean;
+    /** Back-pointer to the expedition that spawned this quest, if any. */
+    from_expedition_id?: number | null;
   },
 ): Promise<number> {
   const now = Date.now();
   const status = args.lobby ? "lobby" : "active";
   const result = await db
     .prepare(
-      `INSERT INTO quests (channel_id, thread_ts, status, elite, scene_json, mode, created_by, created_at, lobby_expires_at, is_private)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO quests (channel_id, thread_ts, status, elite, scene_json, mode, created_by, created_at, lobby_expires_at, is_private, from_expedition_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .bind(
       args.channel_id,
@@ -725,6 +727,7 @@ export async function createQuest(
       now,
       args.lobby_expires_at ?? null,
       args.is_private ? 1 : 0,
+      args.from_expedition_id ?? null,
     )
     .run();
   const questId = result.meta.last_row_id;

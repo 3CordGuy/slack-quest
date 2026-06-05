@@ -13,6 +13,12 @@ CREATE TABLE expeditions (
   seed          TEXT NOT NULL,                           -- deterministic generation seed
   map_json      TEXT NOT NULL,                           -- canonical generated graph; nodes + edges
   current_node  TEXT,                                    -- node id; null until first pick
+  -- Run-long shrine buffs accumulated this expedition. JSON array of
+  -- { kind: "max_hp" | "mana_refill" | "stat", value: number, stat?: string,
+  --   node_id: string, applied_at: number }. Pass 2 reads this when seeding
+  -- the next combat to apply the run's stacked HP bonus and to refresh mana
+  -- on a "mana_refill" shrine. Empty array on start.
+  buffs_json    TEXT NOT NULL DEFAULT '[]',
   created_by    TEXT NOT NULL REFERENCES characters(slack_user_id) ON DELETE CASCADE,
   created_at    INTEGER NOT NULL,
   completed_at  INTEGER
@@ -24,6 +30,14 @@ CREATE TABLE expedition_party (
   expedition_id INTEGER NOT NULL REFERENCES expeditions(id) ON DELETE CASCADE,
   character_id  TEXT NOT NULL REFERENCES characters(slack_user_id) ON DELETE CASCADE,
   joined_at     INTEGER NOT NULL,
+  -- Pass 2: per-character HP/mana carried between nodes. NULL on row insert
+  -- (start of expedition); first time a combat node resolves the worker
+  -- writes the post-fight values here, and the next combat seeds from these.
+  -- See docs/expedition-map.md open question #1 (HP/mana between nodes).
+  current_hp    INTEGER,
+  current_mana  INTEGER,
+  max_hp        INTEGER,                            -- effective max incl. run buffs
+  max_mana      INTEGER,
   PRIMARY KEY (expedition_id, character_id)
 );
 CREATE INDEX idx_expedition_party_character ON expedition_party(character_id);

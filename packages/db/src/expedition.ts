@@ -13,9 +13,34 @@ export interface ExpeditionRow {
   seed: string;
   map_json: string;
   current_node: string | null;
+  buffs_json: string;
   created_by: string;
   created_at: number;
   completed_at: number | null;
+}
+
+/**
+ * Run-long shrine buff. Stored as a JSON array on `expeditions.buffs_json`.
+ * Pass 2 supports three kinds: a permanent +max HP, a one-shot mana refill
+ * (recorded so the player can audit history but the effect lands at apply
+ * time), and a permanent +1 to a primary stat (str/int/vit/agi/dex).
+ */
+export interface ExpeditionBuff {
+  kind: "max_hp" | "mana_refill" | "stat";
+  value: number;
+  stat?: "str" | "int" | "vit" | "agi" | "dex";
+  node_id: string;
+  applied_at: number;
+}
+
+export interface ExpeditionPartyRow {
+  expedition_id: number;
+  character_id: string;
+  joined_at: number;
+  current_hp: number | null;
+  current_mana: number | null;
+  max_hp: number | null;
+  max_mana: number | null;
 }
 
 export interface ExpeditionProgressRow {
@@ -146,7 +171,7 @@ export async function getExpedition(
 ): Promise<ExpeditionRow | null> {
   const row = await db
     .prepare(
-      `SELECT id, channel_id, status, seed, map_json, current_node, created_by, created_at, completed_at
+      `SELECT id, channel_id, status, seed, map_json, current_node, buffs_json, created_by, created_at, completed_at
        FROM expeditions WHERE id = ? LIMIT 1`,
     )
     .bind(id)
@@ -278,7 +303,7 @@ export async function getActiveExpeditionForCharacter(
 ): Promise<ExpeditionRow | null> {
   const row = await db
     .prepare(
-      `SELECT e.id, e.channel_id, e.status, e.seed, e.map_json, e.current_node, e.created_by, e.created_at, e.completed_at
+      `SELECT e.id, e.channel_id, e.status, e.seed, e.map_json, e.current_node, e.buffs_json, e.created_by, e.created_at, e.completed_at
        FROM expeditions e
        JOIN active_expedition_membership m ON m.expedition_id = e.id
        WHERE m.character_id = ? AND e.status = 'active'
@@ -289,6 +314,108 @@ export async function getActiveExpeditionForCharacter(
   return row ?? null;
 }
 
+/**
+ * Read per-character HP/mana state for every party member. Used at combat-node
+ * spawn time to seed the next combat with carried HP/mana, and on the
+ * /:id view so the UI can render party HP bars.
+ */
+export async function getExpeditionPartyState(
+  db: D1Database,
+  id: number,
+): Promise<ExpeditionPartyRow[]> {
+  const r = await db
+    .prepare(
+      `SELECT expedition_id, character_id, joined_at, current_hp, current_mana, max_hp, max_mana
+       FROM expedition_party WHERE expedition_id = ? ORDER BY joined_at ASC`,
+    )
+    .bind(id)
+    .all<ExpeditionPartyRow>();
+  return r.results ?? [];
+}
+
+/**
+ * Persist a single party member's carried HP/mana after a combat node resolves.
+ * The four fields are written together so a partial write can't leave a max
+ * out of sync with the current value. Idempotent — called once per fighter at
+ * combat resolve; calling it again with the same values is a no-op.
+ */
+export async function setExpeditionPartyHpMana(
+  db: D1Database,
+  expeditionId: number,
+  characterId: string,
+  args: { current_hp: number; current_mana: number; max_hp: number; max_mana: number },
+): Promise<void> {
+  await db
+    .prepare(
+      `UPDATE expedition_party
+         SET current_hp = ?, current_mana = ?, max_hp = ?, max_mana = ?
+       WHERE expedition_id = ? AND character_id = ?`,
+    )
+    .bind(
+      args.current_hp,
+      args.current_mana,
+      args.max_hp,
+      args.max_mana,
+      expeditionId,
+      characterId,
+    )
+    .run();
+}
+
+/**
+ * Refill HP/mana to max for every party member. Used by the camp node
+ * resolver — per the design doc, camp acts as a free rest before the next
+ * encounter. Leaves max_hp/max_mana alone (shrine buffs still apply).
+ */
+export async function refillExpeditionPartyToMax(
+  db: D1Database,
+  expeditionId: number,
+): Promise<void> {
+  await db
+    .prepare(
+      `UPDATE expedition_party
+         SET current_hp = max_hp, current_mana = max_mana
+       WHERE expedition_id = ?
+         AND max_hp IS NOT NULL`,
+    )
+    .bind(expeditionId)
+    .run();
+}
+
+/**
+ * Append a shrine buff to the expedition's run-long buff list. The column
+ * stores a JSON array; we read-modify-write since the table is small (one row
+ * per active expedition per character on average) and the operation is rare
+ * (~1 shrine per run).
+ */
+export async function appendExpeditionBuff(
+  db: D1Database,
+  id: number,
+  buff: ExpeditionBuff,
+): Promise<ExpeditionBuff[]> {
+  const row = await db
+    .prepare(`SELECT buffs_json FROM expeditions WHERE id = ?`)
+    .bind(id)
+    .first<{ buffs_json: string }>();
+  const existing: ExpeditionBuff[] = row?.buffs_json
+    ? (JSON.parse(row.buffs_json) as ExpeditionBuff[])
+    : [];
+  const next = [...existing, buff];
+  await db
+    .prepare(`UPDATE expeditions SET buffs_json = ? WHERE id = ?`)
+    .bind(JSON.stringify(next), id)
+    .run();
+  return next;
+}
+
+export function parseExpeditionBuffs(row: ExpeditionRow): ExpeditionBuff[] {
+  try {
+    return JSON.parse(row.buffs_json ?? "[]") as ExpeditionBuff[];
+  } catch {
+    return [];
+  }
+}
+
 export async function getRecentExpeditionsForCharacter(
   db: D1Database,
   userId: string,
@@ -296,7 +423,7 @@ export async function getRecentExpeditionsForCharacter(
 ): Promise<ExpeditionRow[]> {
   const r = await db
     .prepare(
-      `SELECT e.id, e.channel_id, e.status, e.seed, e.map_json, e.current_node, e.created_by, e.created_at, e.completed_at
+      `SELECT e.id, e.channel_id, e.status, e.seed, e.map_json, e.current_node, e.buffs_json, e.created_by, e.created_at, e.completed_at
        FROM expeditions e
        JOIN expedition_party ep ON ep.expedition_id = e.id
        WHERE ep.character_id = ?
