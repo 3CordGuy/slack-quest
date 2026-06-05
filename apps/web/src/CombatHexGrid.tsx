@@ -127,7 +127,7 @@ function classColor(className: string): string {
 
 export type ParticleKind =
   | "physical" | "fire" | "ice" | "lightning"
-  | "poison" | "bleed" | "heal" | "shield" | "crit" | "magic" | "loot";
+  | "poison" | "bleed" | "heal" | "shield" | "crit" | "magic" | "loot" | "death";
 
 export interface ParticleEmit {
   id: string;
@@ -243,7 +243,7 @@ interface ParticleConfig {
 }
 
 const PARTICLE_CONFIG: Record<ParticleKind, ParticleConfig> = {
-  physical: { count: 14, speed: 0.18, size: 3, life: 450, colors: ["#fde68a", "#facc15", "#ffffff"], gravity: 0.0004 },
+  physical: { count: 6, speed: 0.055, size: 2.5, life: 160, colors: ["#fde68a", "#facc15", "#ffffff"], gravity: 0.0002 },
   // Fire — long-lived embers that rise + flicker. Lifetime intentionally
   // ~2s so impacts feel like the tile is briefly on fire even when no burn
   // status procced. Higher count + ember shape + strong upward gravity.
@@ -251,16 +251,18 @@ const PARTICLE_CONFIG: Record<ParticleKind, ParticleConfig> = {
   // Ice — slow-falling snowflakes that drift and twinkle. Long lifetime so
   // the chill lingers; rotation gives crystal shapes visual identity.
   ice:      { count: 28, speed: 0.10, size: 4, life: 1900, colors: ["#e0f2fe", "#bae6fd", "#7dd3fc", "#ffffff"], gravity: 0.00045, shape: "snowflake", rotates: true, flicker: true },
-  // Lightning — short, sharp forked sparks. Higher count + multi-pop feel
-  // via short life. Spark shape draws angular two-segment streaks.
-  lightning:{ count: 40, speed: 0.45, size: 3, life: 700, colors: ["#fef9c3", "#fde047", "#a78bfa", "#ffffff"], gravity: 0.0001, shape: "spark", rotates: true },
-  poison:   { count: 14, speed: 0.12, size: 4, life: 1000, colors: ["#84cc16", "#a3e635", "#65a30d"], gravity: 0.001 },
-  bleed:    { count: 12, speed: 0.14, size: 3, life: 800, colors: ["#dc2626", "#ef4444", "#7f1d1d"], gravity: 0.0012 },
+  // Lightning — tight spark burst, dissipates within ~2 tiles.
+  lightning:{ count: 18, speed: 0.13, size: 3, life: 380, colors: ["#fef9c3", "#fde047", "#a78bfa", "#ffffff"], gravity: 0.0001, shape: "spark", rotates: true },
+  poison:   { count: 10, speed: 0.08, size: 4, life: 650, colors: ["#84cc16", "#a3e635", "#65a30d"], gravity: 0.001 },
+  bleed:    { count: 10, speed: 0.10, size: 3, life: 600, colors: ["#dc2626", "#ef4444", "#7f1d1d"], gravity: 0.0012 },
   heal:     { count: 16, speed: 0.14, size: 3, life: 900, colors: ["#86efac", "#bbf7d0", "#ffffff"], gravity: -0.0008 },
   shield:   { count: 12, speed: 0.16, size: 3, life: 550, colors: ["#7dd3fc", "#bae6fd", "#ffffff"], gravity: 0 },
-  crit:     { count: 32, speed: 0.28, size: 4, life: 600, colors: ["#fde047", "#facc15", "#fb923c", "#ffffff"], gravity: 0 },
-  magic:    { count: 20, speed: 0.18, size: 3, life: 700, colors: ["#c4b5fd", "#a78bfa", "#ffffff"], gravity: 0 },
+  crit:     { count: 10, speed: 0.09, size: 3, life: 240, colors: ["#fde047", "#facc15", "#fb923c", "#ffffff"], gravity: 0 },
+  magic:    { count: 12, speed: 0.09, size: 3, life: 480, colors: ["#c4b5fd", "#a78bfa", "#ffffff"], gravity: 0 },
   loot:     { count: 14, speed: 0.10, size: 3, life: 450, colors: ["#fde047", "#fbbf24", "#fde68a", "#ffffff"], gravity: -0.0003 },
+  // Death poof — warm dust that drifts upward and fades. Replaces the actor
+  // token right as it disappears so the eye has somewhere to rest.
+  death:    { count: 12, speed: 0.06, size: 3.5, life: 520, colors: ["#d4c8b0", "#b3a487", "#c8bca4", "#e8dfd0"], gravity: -0.0003 },
 };
 
 // Hand-authored Path2D shapes — one per ParticleShape, built once at module
@@ -446,6 +448,8 @@ export interface CombatHexGridHandle {
    *  persistent effects array. */
   emitRiseEffect: (p: RiseEffectEmit) => void;
   shake: () => void;
+  /** Shake a single pawn token for a brief impact wiggle. */
+  shakePawn: (actorId: string) => void;
 }
 
 export type RiseKind =
@@ -706,6 +710,7 @@ export function CombatHexGrid({
   // don't sit on the persistent effects array.
   const risesRef = useRef<ActiveRiseEffect[]>([]);
   const shakeRef = useRef<{ start: number; duration: number } | null>(null);
+  const pawnShakesRef = useRef<Record<string, { start: number; duration: number }>>({});
   const lastTimeRef = useRef<number>(0);
 
   // Per-actor animated pixel positions for smooth move tweens. When state
@@ -1327,6 +1332,9 @@ export function CombatHexGrid({
       shake() {
         shakeRef.current = { start: performance.now(), duration: 240 };
       },
+      shakePawn(actorId: string) {
+        pawnShakesRef.current[actorId] = { start: performance.now(), duration: 260 };
+      },
     };
     return () => { if (apiRef) apiRef.current = null; };
   }, [apiRef]);
@@ -1477,9 +1485,32 @@ export function CombatHexGrid({
         }
       }
 
+      // Apply per-pawn shake offsets — create a shallow copy only when shakes
+      // are active so the hot path (no active shakes) stays allocation-free.
+      let drawPositions: typeof anim = anim;
+      const pawnShakes = pawnShakesRef.current;
+      const shakeKeys = Object.keys(pawnShakes);
+      if (shakeKeys.length > 0) {
+        drawPositions = { ...anim };
+        for (const actorId of shakeKeys) {
+          const sh = pawnShakes[actorId];
+          const elapsed = now - sh.start;
+          if (elapsed >= sh.duration) {
+            delete pawnShakes[actorId];
+          } else if (drawPositions[actorId]) {
+            const t = 1 - elapsed / sh.duration;
+            drawPositions[actorId] = {
+              ...drawPositions[actorId],
+              x: drawPositions[actorId].x + (Math.random() - 0.5) * 8 * t,
+              y: drawPositions[actorId].y + (Math.random() - 0.5) * 6 * t,
+            };
+          }
+        }
+      }
+
       // 3. Actor tokens — use animated positions so moves slide smoothly.
       drawActors(
-        ctx!, state, animatedPosRef.current, hexSize,
+        ctx!, state, drawPositions, hexSize,
         targetMonsterId ?? null, currentActorId, turnPhase,
         previewedTargetIds ?? null, previewedTargetKind,
         overlay.inRange, aimActive, aimRangeTiles, now,

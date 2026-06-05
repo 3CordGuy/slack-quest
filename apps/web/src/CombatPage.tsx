@@ -986,6 +986,7 @@ export function CombatPage({
   const [hitDustSeq, setHitDustSeq] = useState<Record<string, number>>({});
   const [healBurstSeq, setHealBurstSeq] = useState<Record<string, number>>({});
   const [shieldBurstSeq, setShieldBurstSeq] = useState<Record<string, number>>({});
+  const [deathDustSeq, setDeathDustSeq] = useState<Record<string, number>>({});
   // Delay victory modal until after dice settle so player sees the killing blow.
   const [victoryModalReady, setVictoryModalReady] = useState(false);
   const [defeatModalReady, setDefeatModalReady] = useState(false);
@@ -1340,6 +1341,9 @@ export function CombatPage({
               const tgt = (evt as { target: string }).target;
               setShieldBurstSeq((prev) => ({ ...prev, [tgt]: (prev[tgt] ?? 0) + 1 }));
             }
+            if (evt.type === "fighter_down") {
+              setDeathDustSeq((prev) => ({ ...prev, [evt.target]: (prev[evt.target] ?? 0) + 1 }));
+            }
             // Legacy DOM particle bursts. Only fire when the hex grid is NOT
             // active — in hex mode the canvas particles below cover the same
             // events with pawn-positioned effects.
@@ -1585,6 +1589,19 @@ export function CombatPage({
               }
               // Crit on monster attack: shake even if the attack itself is melee.
               if (evt.type === "monster_attack" && evt.hp_damage >= 8) hex.shake();
+              // Per-pawn shake: fighter shakes when they take any HP damage,
+              // monster shakes on any landed player hit.
+              if (evt.type === "monster_attack" && evt.hp_damage > 0) hex.shakePawn(evt.target);
+              if (evt.type === "player_hit") hex.shakePawn(evt.target);
+              // Death dust poof — emit at the dying actor's last canvas position.
+              if (evt.type === "fighter_down") {
+                const f = findFighter(evt.target);
+                if (f?.pos) hex.emitParticle({ id: `dfd${Date.now()}`, kind: "death", at: f.pos, actorId: f.id });
+              }
+              if (evt.type === "monster_down") {
+                const m = liveSnapshot?.monsters.find((mo) => mo.hp > 0);
+                if (m?.pos) hex.emitParticle({ id: `dmd${Date.now()}`, kind: "death", at: m.pos, actorId: m.id });
+              }
             }
           }
           // 950ms ≈ tumble duration (700ms) + brief pause to read the value.
@@ -5093,6 +5110,7 @@ function PartyChips({ fighters, selfId, flashIds, hitDustSeq, healBurstSeq, shie
         <HitDust seq={hitDustSeq[f.id] ?? 0} />
         <HealBurst seq={healBurstSeq[f.id] ?? 0} />
         <ShieldBurst seq={shieldBurstSeq[f.id] ?? 0} />
+        <HitDust seq={deathDustSeq[f.id] ?? 0} />
         {hasShield && <ShieldGlow />}
 
         {/* "Your turn" gold flag chip top-left */}

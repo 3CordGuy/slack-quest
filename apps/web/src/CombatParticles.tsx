@@ -68,10 +68,10 @@ const BURST: Record<BurstKind, BurstConfig> = {
     scatter: 18,
   },
   hit: {
-    count: 20, distance: 95, duration: 550, size: 7,
+    count: 8, distance: 30, duration: 220, size: 5,
     colors: ["#ef4444", "#fca5a5", "#f87171", "#ffffff"],
     glow: "rgba(252,165,165,1)",
-    scatter: 28,
+    scatter: 18,
   },
   poison: {
     count: 18, distance: 85, duration: 1200, size: 9,
