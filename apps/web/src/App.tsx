@@ -61,6 +61,7 @@ import {
 import { InventoryCard, InventoryFullScreen, DollSlotCell, DroppablePackPanel, DraggablePackItem, DragItemPreview, ItemCell, ItemSlot, ItemDetailPopover } from "./components/Inventory";
 import { StartQuestCard, JoinableQuestCard, TownNav, JobPostingCard, StepPicker, HuntSection, JobBoardSection, DistrictTile, TownMap, WardMap } from "./components/Town";
 import { Camp } from "./components/Camp";
+import { Expedition } from "./components/Expedition";
 import { BrewPanel, ForgePanel } from "./components/CampCrafting";
 import { PubErrands } from "./components/PubErrands";
 import { PubCooking } from "./components/PubCooking";
@@ -100,6 +101,11 @@ class CombatErrorBoundary extends Component<{ children: ReactNode; onReset: () =
 export function App() {
   const [state, setState] = useState<LoadState>({ kind: "loading" });
   const [activeCombat, setActiveCombat] = useState<{ questId: number } | null>(null);
+  // Active expedition id, if the player is currently in a run. Polled at
+  // login via /api/expedition/recent (status=active). When set, App routes
+  // to the Expedition screen instead of the town. Combat nodes still go
+  // through the regular CombatPage flow — the expedition just orchestrates.
+  const [activeExpeditionId, setActiveExpeditionId] = useState<number | null>(null);
   const [toastQueue, setToastQueue] = useState<Achievement[]>([]);
 
   useEffect(() => {
@@ -639,6 +645,21 @@ export function App() {
       }
     }
     setState({ kind: "auth", me, inventory, inventoryArtUrl, activeQuest, lobbyQuest, recent, questStats, leaderboard, towerLeaderboard, harvestLeaderboard, shop, joinable, inn, smithy, pub, apothecary, townArt, board });
+
+    // Expedition: detect whether the player is mid-run. We treat any
+    // non-terminal expedition as "active" — keep the UI in the Expedition
+    // screen until the player abandons or wins. Combat nodes spawn regular
+    // quests, which the rest of the App.tsx flow handles naturally.
+    try {
+      const expRes = await fetch("/api/expedition/recent", { credentials: "include" });
+      if (expRes.ok) {
+        const expBody = (await expRes.json()) as { expeditions?: { id: number; status: string }[] };
+        const active = expBody.expeditions?.find((e) => e.status === "active");
+        setActiveExpeditionId(active ? active.id : null);
+      }
+    } catch {
+      // expedition is an optional feature; failing to load shouldn't tank login
+    }
   }
 
   async function logout() {
@@ -1036,6 +1057,26 @@ export function App() {
     if (ok) void refresh();
   }
 
+  async function startExpedition() {
+    const res = await fetch("/api/expedition/start", {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    if (!res.ok) {
+      const body = (await res.json().catch(() => ({}))) as { error?: string };
+      toast.error(`Could not start expedition: ${body.error ?? res.statusText}`);
+      return;
+    }
+    const body = (await res.json()) as { expedition_id?: number };
+    if (body.expedition_id) {
+      setActiveExpeditionId(body.expedition_id);
+      setTownSection(null);
+      void refresh();
+    }
+  }
+
   async function startQuest(variant: QuestVariant, elite: boolean, invitees: string[] = []) {
     if (invitees.length > 0) {
       const { ok } = await postJson(`/api/quest/start_with_party`, {
@@ -1264,6 +1305,29 @@ export function App() {
   }
   const inQuest = !!state.activeQuest;
 
+  // If the player is mid-expedition AND not currently in a quest, route to the
+  // Expedition screen. Combat-kind nodes spawn regular quests, which take over
+  // via the activeCombat / activeQuest paths above (CombatPage flow); when
+  // combat ends and the user returns, refresh() updates activeExpeditionId and
+  // we land back here.
+  if (activeExpeditionId != null && !state.activeQuest) {
+    return (
+      <Expedition
+        expeditionId={activeExpeditionId}
+        onCombatSpawned={(questId) => {
+          // Combat node spawned a regular quest; route through the existing
+          // combat flow. The expedition advance hook fires on combat resolve.
+          setActiveCombat({ questId });
+          void refresh();
+        }}
+        onExit={() => {
+          setActiveExpeditionId(null);
+          void refresh();
+        }}
+      />
+    );
+  }
+
   // The 6 location-modal targets that overlay the ward map. job_board still
   // switches the top-level view (per design), inventory uses its own
   // fullscreen overlay state.
@@ -1289,6 +1353,7 @@ export function App() {
           navOverlay={townNav}
           onTakeJob={takeJob}
           onStartQuest={startQuest}
+          onStartExpedition={() => void startExpedition()}
           onJoin={joinQuest}
         />
       );
