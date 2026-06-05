@@ -11,3 +11,5 @@ export * from "./abilities/tree";
 export { newNodesForClass, ALL_NEW_NODES, NEW_ABILITY_DEFS } from "./abilities/new_nodes";
 export * from "./achievements";
 export * from "./stats";
+export * from "./expedition";
+export * from "./expedition-events";
