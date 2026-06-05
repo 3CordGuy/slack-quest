@@ -4,7 +4,7 @@
 // ABILITIES maps in flavor.ts.
 
 import type { DamageType } from "./flavor";
-import type { GroundEffectKind, HexPos } from "./hex";
+import type { GroundEffectKind, HexGrid, HexPos } from "./hex";
 import type { Stats } from "./stats";
 
 export type TargetKind =
@@ -88,6 +88,12 @@ export interface AbilityContext {
   // full shape (single/line/ring/blast) around this center and returns a
   // place_ground_effect AbilityEffect.
   target_pos?: HexPos;
+  // Live combat grid — passed through so shape helpers (hexLine/hexBlast/
+  // hexRing) clip against the actual scene bounds rather than GRID_DEFAULT.
+  // Engine-level placement re-filters against the same grid (inBounds check
+  // in the place_ground_effect handler), so this is defense-in-depth for
+  // anyone who wants pre-filtered hex arrays inside execute().
+  grid?: HexGrid;
 }
 
 // Minimal spec for an ally NPC summoned into combat via summon_ally_npc.

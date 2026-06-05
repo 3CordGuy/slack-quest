@@ -3163,6 +3163,7 @@ function handleAoeDamageAbility(
     monsters: liveMonsters,
     roll,
     rank: tickedActor.talent_ranks?.[ability.id] ?? 1,
+    grid: state.grid ?? GRID_DEFAULT,
   };
 
   const effects = ability.execute(ctx);
@@ -3535,6 +3536,7 @@ function handleAbility(
       target: targetMonster,
       roll,
       rank: tickedActor.talent_ranks?.[ability.id] ?? 1,
+      grid: sPostMana.grid ?? GRID_DEFAULT,
     };
     return handleDamageAbility(sPostMana, action.actor, tickedActor, ability, ctx, targetMonster, preEvents, roll);
   }
@@ -3607,6 +3609,7 @@ function handleAbility(
     protected_ally_id: protectForCtx?.paladin_id === action.actor ? protectForCtx?.target_id : undefined,
     rank: tickedActor.talent_ranks?.[ability.id] ?? 1,
     target_pos: action.target_pos,
+    grid: sPostMana.grid ?? GRID_DEFAULT,
   };
   return applyUtilityAbilityEffects(sPostMana, ability.execute(ctx), action.actor, preEvents, roll);
 }
@@ -4644,6 +4647,7 @@ export function resolveMonsterKill(
         party: afterKill.fighters.filter((f) => f.hp > 0),
         monsters: afterKill.monsters.filter((m) => m.hp > 0 && m.id !== monsterId),
         roll: (sides: number) => Math.floor((sides + 1) / 2), // deterministic mid-roll; on_kill execs are non-random
+        grid: afterKill.grid ?? GRID_DEFAULT,
       };
       const passiveEffects = passive.execute(ctx);
       if (passiveEffects.length === 0) continue;

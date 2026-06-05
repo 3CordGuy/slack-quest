@@ -947,7 +947,7 @@ const fireWall: AbilityDef = {
   execute(ctx) {
     const center = ctx.target_pos;
     if (!center) return [];
-    const grid = GRID_DEFAULT;
+    const grid = ctx.grid ?? GRID_DEFAULT;
     // V1 picks horizontal orientation by default (axial right vector). UI
     // can pass an oriented center later; for now this is "wall along the
     // row containing the picked hex" — see design doc open question #1.
@@ -973,7 +973,7 @@ const ringOfFrost: AbilityDef = {
   execute(ctx) {
     const center = ctx.target_pos;
     if (!center) return [];
-    const grid = GRID_DEFAULT;
+    const grid = ctx.grid ?? GRID_DEFAULT;
     const hexes = hexRing(center, 1, grid);
     const rank = ctx.rank ?? 1;
     const base = Math.max(1, Math.floor(ctx.caster.magic_mod / 2));
@@ -996,7 +996,7 @@ const brambles: AbilityDef = {
   execute(ctx) {
     const center = ctx.target_pos;
     if (!center) return [];
-    const grid = GRID_DEFAULT;
+    const grid = ctx.grid ?? GRID_DEFAULT;
     const hexes = hexBlast(center, 1, grid);
     const rank = ctx.rank ?? 1;
     const base = Math.max(1, Math.floor(ctx.caster.magic_mod / 2));
@@ -1019,7 +1019,7 @@ const consecrate: AbilityDef = {
   execute(ctx) {
     const center = ctx.target_pos;
     if (!center) return [];
-    const grid = GRID_DEFAULT;
+    const grid = ctx.grid ?? GRID_DEFAULT;
     const hexes = hexBlast(center, 1, grid);
     const rank = ctx.rank ?? 1;
     const mag = Math.max(1, ctx.caster.magic_mod);
