@@ -1462,6 +1462,12 @@ export function CombatHexGrid({
         ctx!.restore();
       }
 
+      // 1.6 Ground effects (fire walls, caltrops, consecrated, etc.). Drawn
+      // BELOW obstacles and pawns so a fighter standing on a fire tile reads
+      // as "on top of the effect." Static tinted highlight + a small per-kind
+      // glyph for v1 — fancier VFX deferred to a follow-up.
+      drawGroundEffects(ctx!, state, hexToPixel, hexSize, now);
+
       // 2. Obstacles (between tiles and pawns so pawns can stand "near" them)
       drawObstacles(ctx!, state, hexToPixel, hexSize);
 
@@ -2322,6 +2328,59 @@ function drawLootTiles(
     const { x, y } = hexToPixel(t.pos);
     if (t.kind === "gold") drawGoldPile(ctx, x, y, hexSize, now);
     else drawLootChest(ctx, x, y, hexSize, now);
+  }
+}
+
+// ── Layer 1.6: ground effects ──────────────────────────────────────────────
+//
+// Per-kind colour + glyph palette. Tints the hex with a soft fill plus a
+// 1.5px dashed stroke so the effect reads as "marked terrain" without
+// overpowering the pawn art. The glyph is a single emoji-style character
+// drawn dimmer at the hex centre. See docs/ground-effects.md.
+const GROUND_PALETTE: Record<string, { fill: string; stroke: string; glyph: string }> = {
+  fire:         { fill: "rgba(239,68,68,0.32)",  stroke: "#f97316", glyph: "🔥" },
+  brambles:     { fill: "rgba(132,204,22,0.30)", stroke: "#65a30d", glyph: "🌿" },
+  frost:        { fill: "rgba(125,211,252,0.35)",stroke: "#38bdf8", glyph: "❄" },
+  caltrops:     { fill: "rgba(161,161,170,0.32)",stroke: "#a1a1aa", glyph: "✦" },
+  consecrated:  { fill: "rgba(250,204,21,0.28)", stroke: "#facc15", glyph: "✦" },
+  rune:         { fill: "rgba(168,85,247,0.32)", stroke: "#a855f7", glyph: "✶" },
+};
+
+function drawGroundEffects(
+  ctx: CanvasRenderingContext2D,
+  state: CombatState,
+  hexToPixel: (pos: HexPos) => { x: number; y: number },
+  hexSize: number,
+  now: number,
+) {
+  const effects = state.ground_effects;
+  if (!effects || effects.length === 0) return;
+  for (const ge of effects) {
+    const palette = GROUND_PALETTE[ge.kind] ?? GROUND_PALETTE.fire;
+    for (const h of ge.hexes) {
+      const { x, y } = hexToPixel(h);
+      // Tinted hex fill — slight pulse so the effect breathes (10% alpha
+      // wobble over ~1.6s). Static enough not to distract, animated enough
+      // to read as "live."
+      const pulse = 0.85 + Math.sin(now / 800) * 0.15;
+      ctx.save();
+      ctx.globalAlpha = pulse;
+      drawHex(ctx, x, y, hexSize * 0.92, palette.fill, "rgba(0,0,0,0)", 0);
+      // Dashed stroke marquee around the perimeter.
+      ctx.globalAlpha = 1;
+      ctx.setLineDash([4, 3]);
+      ctx.lineDashOffset = -now / 90;
+      drawHex(ctx, x, y, hexSize * 0.92, "rgba(0,0,0,0)", palette.stroke, 1.5);
+      ctx.setLineDash([]);
+      // Glyph at hex center, dimmed so a standing pawn covers it cleanly.
+      ctx.globalAlpha = 0.85;
+      ctx.fillStyle = palette.stroke;
+      ctx.font = `${Math.round(hexSize * 0.5)}px system-ui, sans-serif`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(palette.glyph, x, y);
+      ctx.restore();
+    }
   }
 }
 

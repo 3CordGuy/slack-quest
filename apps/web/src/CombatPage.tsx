@@ -1951,6 +1951,15 @@ export function CombatPage({
       setAimingAction({ kind: "ability", ability });
       return;
     }
+    // Ground-targeted abilities (Fire Wall, Caltrops, etc.) — player picks a
+    // hex on the grid. The aim flow reuses the existing in-range overlay; the
+    // canvas click handler routes a hex (any hex, occupied or empty) into
+    // commitAim with target_pos when the active aim action is a ground
+    // ability. See docs/ground-effects.md.
+    if (ability.target === "ground") {
+      setAimingAction({ kind: "ability", ability });
+      return;
+    }
     send({
       kind: "ability",
       actor: selfId,
@@ -2690,6 +2699,28 @@ export function CombatPage({
                         const monster = state.monsters.find((m) => m.hp > 0 && m.pos && m.pos.q === hex.q && m.pos.r === hex.r);
                         const occupantId = fighter?.id ?? monster?.id ?? null;
 
+                        // Aim mode (ground-targeted): the click is the hex itself,
+                        // not a pawn. Range-gate against the caster's pos using the
+                        // ability's declared range; send target_pos with the picked hex.
+                        if (aimingAction?.kind === "ability" && aimingAction.ability.target === "ground") {
+                          const dq = (me?.pos?.q ?? 0) - hex.q;
+                          const dr = (me?.pos?.r ?? 0) - hex.r;
+                          const ds = -dq - dr;
+                          const dist = Math.max(Math.abs(dq), Math.abs(dr), Math.abs(ds));
+                          const weaponRange = me?.weapon_range === "ranged"
+                            ? (5 + Math.floor(Math.max(0, (me?.stats?.dex ?? 5) - 5) / 4))
+                            : me?.weapon_range === "focus"
+                              ? (3 + Math.floor(Math.max(0, (me?.stats?.int_stat ?? 5) - 5) / 4))
+                              : 1;
+                          const range = aimingAction.ability.range_tiles ?? weaponRange;
+                          if (dist > range) {
+                            toast.error("Out of range");
+                            return;
+                          }
+                          send({ kind: "ability", actor: selfId, ability_id: aimingAction.ability.id, target_pos: hex });
+                          setAimingAction(null);
+                          return;
+                        }
                         // Aim mode: commit the queued attack/ability on the clicked enemy pawn.
                         if (aimingAction && monster?.id) {
                           // Reachability gate: cube-coord hex distance vs the
