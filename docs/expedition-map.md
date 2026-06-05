@@ -218,6 +218,47 @@ Manual:
 - No DO schema change (combat DOs are spawned per-node via existing path).
 - Feature is opt-in from the lobby; doesn't affect users who only do one-off quests.
 
+## Pass 1 implementation notes
+
+These notes apply to the first shipped slice of the feature (PR #209). They
+narrow the scope of what's wired vs. what's stubbed so reviewers and Pass-2
+work have a clean handoff.
+
+**Wired in Pass 1:**
+
+- Map generation (deterministic, all hard rules enforced).
+- D1 schema (4 tables — `expeditions`, `expedition_party`,
+  `expedition_node_progress`, `active_expedition_membership`).
+- Worker routes: `/api/expedition/start`, `/:id`, `/:id/pick`, `/:id/abandon`,
+  `/recent`.
+- Event sampler with within-run no-repeat + anti-monotony bias.
+- Race/concurrency hardening:
+  - `/start` defends against the TOCTOU window between "is this character in
+    an active expedition?" and the actual insert via the
+    `active_expedition_membership` table's UNIQUE PK on `character_id`.
+  - `/pick` uses a compare-and-swap on `current_node` so two concurrent picks
+    cannot both succeed.
+
+**Deferred to Pass 2 (search for `TODO(pass-2)`):**
+
+- Combat-node spawn: creating a row in `quests` with `from_expedition_id`,
+  threading party HP/mana from the previous combat into the new one, and the
+  post-resolve callback in `applyWebCombatOutcome` that advances expedition
+  state when the spawned quest finishes.
+- **Party HP/mana persistence between nodes.** The design (open question #1)
+  requires HP/mana to carry between nodes. `ExpeditionPartyHp` exists in the
+  core types and the reducer threads it in-memory, but there is no DB column
+  yet — Pass 2 adds the persistence and load/save plumbing, naturally
+  alongside the combat-node spawn work.
+- Event-outcome resolve route + `expedition_node_progress` write for events.
+  Events currently advance `current_node` and present a sampled event, but
+  the chosen-branch outcome is not yet written to progress — which is why
+  the sampler's no-repeat invariant for events is best-effort in Pass 1.
+- Real shrine/camp/treasure resolutions (Pass 1 marks them resolved with a
+  placeholder so the path to the boss is traversable end-to-end).
+- Cross-expedition character recency for the sampler
+  (`recentCharacterEventIds`, `longTailCharacterEventIds`).
+
 ## Open questions
 
 1. **Party HP/mana between nodes** — does HP carry over from combat node to combat node, or fully heal between encounters? Recommend **carry over** (StS-faithful, makes camp nodes meaningful), but worth confirming.
