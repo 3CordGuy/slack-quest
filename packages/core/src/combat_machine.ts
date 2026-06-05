@@ -1344,8 +1344,10 @@ function applyGroundDamage(
     };
     // Credit even if the planter is downed/dead — only credit if the planter
     // is a fighter (matches existing contribution semantics: monsters never
-    // appear in contribution).
-    if (!isMonsterActor(sourceId)) {
+    // appear in contribution). Skip self-ticks: a planter standing in their
+    // own fire wall does not credit themselves, otherwise they could farm
+    // contribution and warp the spoils-share split.
+    if (!isMonsterActor(sourceId) && sourceId !== victimId) {
       next = {
         ...next,
         contribution: { ...next.contribution, [sourceId]: (next.contribution[sourceId] ?? 0) + dealt },
@@ -1375,8 +1377,9 @@ function applyGroundDamage(
       },
     },
   };
-  // Credit only if the planter is a fighter.
-  if (!isMonsterActor(sourceId)) {
+  // Credit only if the planter is a fighter AND not self-ticking (see the
+  // monster branch above for rationale — self-credit warps spoils splits).
+  if (!isMonsterActor(sourceId) && sourceId !== victimId) {
     next = {
       ...next,
       contribution: { ...next.contribution, [sourceId]: (next.contribution[sourceId] ?? 0) + dealt },

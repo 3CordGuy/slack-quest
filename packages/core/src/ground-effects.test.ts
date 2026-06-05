@@ -130,7 +130,11 @@ describe("ground effects — shapes", () => {
 });
 
 describe("ground effects — tick (fire / brambles / frost)", () => {
-  it("damages the actor whose turn starts on a fire hex, credits source", () => {
+  it("self-tick deals damage but does not credit the planter", () => {
+    // Planter standing in their own fire wall takes the damage (friendly
+    // fire is intentional) but the contribution-proportional spoils split
+    // can't be farmed by parking on top of your own AoE — self-credit is
+    // explicitly skipped in applyGroundDamage.
     const s = begun();
     const magePos = s.fighters[0].pos!;
     const seeded = withGroundEffect(s, makeGround("fire", [magePos], "U_MAGE", "tick", 5, 5));
@@ -144,9 +148,10 @@ describe("ground effects — tick (fire / brambles / frost)", () => {
     // ground ticks first, including the fire wall on mage's hex.
     const t4 = step(t3.state, { kind: "wait", actor: "U_MAGE" }, seqRoll([]));
     const mageAfter = t4.state.fighters.find((f) => f.id === "U_MAGE")!;
+    // Damage still applies — friendly fire is real.
     expect(mageAfter.hp).toBeLessThanOrEqual(30 - 5);
-    // Damage credit flows to source even on self-tick.
-    expect(t4.state.contribution["U_MAGE"]).toBeGreaterThanOrEqual(5);
+    // But contribution stays at zero — no self-credit.
+    expect(t4.state.contribution["U_MAGE"] ?? 0).toBe(0);
     const tickEvt = t4.events.find((e): e is Extract<CombatEvent, { type: "ground_tick" }> => e.type === "ground_tick");
     expect(tickEvt).toBeDefined();
     expect(tickEvt!.kind).toBe("fire");
@@ -236,10 +241,9 @@ describe("ground effects — on_enter trigger", () => {
     expect(triggered!.hp_delta).toBe(-6);
     // Hex consumed → effect dropped.
     expect((t1.state.ground_effects ?? []).find((g) => g.kind === "caltrops")).toBeUndefined();
-    // Credit goes to source (here mage triggered own caltrops — credit still
-    // flows but it's self-credit. The kill credit semantics are exercised in
-    // dead-source test below).
-    expect(t1.state.contribution["U_MAGE"]).toBeGreaterThanOrEqual(6);
+    // Self-trigger: damage applies but no contribution credit (the planter
+    // can't farm their own spoils share — see fix 3).
+    expect(t1.state.contribution["U_MAGE"] ?? 0).toBe(0);
   });
 
   it("rune triggers magic damage on the entering actor", () => {
