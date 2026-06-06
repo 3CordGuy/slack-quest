@@ -816,6 +816,8 @@ interface WardNode {
   top: string;    // % of map height
   hot?: boolean;
   pin?: string;
+  pinTone?: "gold" | "danger";
+  pinIcon?: string;
   action: WardNodeKind;
   /** Active gathering task for the main character (slot 1). Drives the progress bar. */
   task?: ActiveGatheringTask;
@@ -1121,16 +1123,27 @@ function WardMapNode({
             top: -10,
             left: "50%",
             transform: "translateX(-50%)",
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 4,
             font: "700 9px/1 var(--font-body)",
             textTransform: "uppercase",
             letterSpacing: 0.6,
-            background: "var(--accent-gold)",
-            color: "#1a1300",
+            background: node.pinTone === "danger" ? "#b91c1c" : "var(--accent-gold)",
+            color: node.pinTone === "danger" ? "#fff" : "#1a1300",
             padding: "4px 8px",
             borderRadius: 999,
             whiteSpace: "nowrap",
+            boxShadow: node.pinTone === "danger" ? "0 0 10px rgba(220,38,38,0.55)" : undefined,
           }}
         >
+          {node.pinIcon && (
+            <Icon
+              name={node.pinIcon}
+              size={11}
+              color={node.pinTone === "danger" ? "#fff" : "#1a1300"}
+            />
+          )}
           {node.pin}
         </span>
       )}
@@ -1208,6 +1221,7 @@ export function WardMap({
   const campTask = activeTasks.find((t) => t.worker_slot === 1) ?? null;
   const narrow = useNarrowViewport(720);
   const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
+  const isDowned = !!character.downed_until && character.downed_until > Date.now();
 
   // SVG road endpoints keyed by node id (centre → node, in 1232×712 viewBox).
   const roadCoords: Record<string, [number, number, number, number]> = {
@@ -1263,10 +1277,14 @@ export function WardMap({
     {
       id: "apothecary",
       label: "Apothecary",
-      desc: "Potions & vials",
+      desc: isDowned ? "Visit to revive" : "Potions & vials",
       icon: "health-potion",
       left: "85.7%",
       top: "51.7%",
+      hot: isDowned || undefined,
+      pin: isDowned ? "Visit to Revive" : undefined,
+      pinTone: isDowned ? "danger" : undefined,
+      pinIcon: isDowned ? "death-skull" : undefined,
       action: { kind: "location", loc: "apothecary" },
     },
     {
