@@ -7430,16 +7430,18 @@ app.post("/api/expedition/:id/pick", async (c) => {
       break;
     }
     case "treasure": {
-      // Per-party treasure: roll one tier-3 item per party member. Each
+      // Per-party treasure: roll one item per party member at THEIR own
+      // level (matching the existing tier = character.level convention the
+      // rest of the loot system uses — a L36 player rolling treasure was
+      // getting tier-3 trash because this used to be hard-coded). Each
       // member independently accepts or skips their own offer; the node
-      // stays pending until everyone has decided. Solo runs collapse to the
-      // old single-offer behavior naturally (one offer, one decision).
+      // stays pending until everyone has decided. Solo runs collapse to
+      // the old single-offer behavior naturally.
       //
       // Offers are persisted on first pick as a pending progress row so
       // refreshing during the decision phase shows the same items (rolls
       // aren't deterministic without seeding the underlying rollItem
       // chain — easier to persist than re-roll).
-      const tier = 3;
       const existingPending = view.progress.find((p) => p.node_id === target.id);
       let offers: TreasureOffer[];
       let decisions: Record<string, "accepted" | "skipped" | null>;
@@ -7448,9 +7450,14 @@ app.post("/api/expedition/:id/pick", async (c) => {
         offers = stored.offers;
         decisions = stored.decisions;
       } else {
-        offers = view.party.map((memberId) => {
+        offers = [];
+        for (const memberId of view.party) {
+          const memberChar = await getCharacter(c.env.DB, memberId);
+          // Match the existing tier-from-level rule (tier = level). A
+          // missing character row is treated as L1 so we never roll tier 0.
+          const tier = Math.max(1, memberChar?.level ?? 1);
           const roll = rollItem(tier);
-          return {
+          offers.push({
             character_id: memberId,
             item: {
               item_name: roll.catalog_name ?? roll.item_subtype ?? roll.type,
@@ -7460,8 +7467,8 @@ app.post("/api/expedition/:id/pick", async (c) => {
               rarity: roll.rarity,
               weapon_range: roll.weapon_range ?? null,
             },
-          };
-        });
+          });
+        }
         decisions = Object.fromEntries(view.party.map((memberId) => [memberId, null]));
         const pending: TreasureProgress = {
           kind: "treasure",
