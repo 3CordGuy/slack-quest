@@ -260,6 +260,18 @@ export function AbilitiesPanel({
     writeLoadout(next);
   }
 
+  // Hooks must be called unconditionally on every render — keep useIsMobile
+  // ABOVE the early-return on `!data`. Previously this lived below the
+  // return, which made the hook count change between renders the moment
+  // /api/character/talents resolved (React error #310).
+  // The mobile branch: this panel lives inside a parent that already owns
+  // the vertical scroll. Letting the node grid claim flex: 1 + its own
+  // overflow:auto makes the panel exactly the height of the outer scroll
+  // box — leaving zero room for the NodeDetail equip panel below the grid.
+  // Drop those on mobile so NodeDetail flows beneath the grid into the
+  // outer scroll.
+  const isMobile = useIsMobile(640);
+
   if (!data) {
     return <div style={{ color: "#9ca3af", padding: 20, fontSize: 13 }}>{error ?? "Loading abilities…"}</div>;
   }
@@ -276,14 +288,6 @@ export function AbilitiesPanel({
   ]);
   const passiveSlotCount = passiveSlotsForLevel(data.level);
   const canAffordRespec = (characterGold ?? 0) >= RESPEC_GOLD;
-  // On mobile this panel lives inside a parent that already owns the
-  // vertical scroll. Letting the node grid claim flex: 1 + its own
-  // overflow:auto makes the panel exactly the height of the outer scroll
-  // box — leaving zero room for the NodeDetail equip panel below the grid,
-  // which is why the equip card doesn't appear on phones. Detect mobile
-  // and let the grid auto-size so NodeDetail flows naturally beneath it
-  // and the outer scroll reveals both.
-  const isMobile = useIsMobile(640);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14, flex: 1, minHeight: 0 }}>
