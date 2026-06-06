@@ -488,6 +488,19 @@ const MONSTER_ART_VERSION = "v8";
 // docs/curated-battlefield-art.md for the full workflow.
 const BATTLEFIELD_ART_VERSION = "v3";
 
+// Expedition hero banner — wide landscape illustration shown at the TOP of
+// the expedition view's title card. One image per variant, picked
+// deterministically from the expedition seed so each run feels visually
+// distinct but the same expedition always renders the same hero.
+export const EXPEDITION_HERO_ART_VERSION = "v1";
+export const EXPEDITION_HERO_VARIANTS = [
+  "dawn-hills",
+  "windswept-plains",
+  "river-bend",
+  "mountain-pass",
+] as const;
+export type ExpeditionHeroVariant = (typeof EXPEDITION_HERO_VARIANTS)[number];
+
 // Wrap a bucket + public base-url so art helpers can build full asset URLs
 // without leaking the env type into ai.ts. baseUrl points at whichever worker
 // serves /img/<key> from this bucket.
@@ -530,6 +543,27 @@ export const BATTLEFIELD_PROMPTS: Record<string, string> = {
     "A top-down view of a polished dark concrete floor. Faint purple-magenta neon glow reflecting on the wet-looking surface, painted glyphs and arrows in cool pink, scattered exposed-cable shadows, deep moody color palette.",
   deadline_dungeon:
     "A top-down view of a torch-lit dungeon floor — large rough flagstones with cracks. Scattered scrolls of parchment, a quill, a few burnt-orange torch-glow patches, scattered post-it note squares pinned to the stone, warm amber tint.",
+};
+
+// Expedition hero banner style anchor. DELIBERATELY NOT the Ghibli STYLE_ANCHOR —
+// the title-card hero is a Tolkien-flavored landscape illustration: hand-drawn
+// watercolor with muted painterly tones, cinematic depth, evoking the
+// "standing at the trailhead" feeling at the start of a long journey.
+const EXPEDITION_HERO_STYLE_ANCHOR =
+  "Tolkien-inspired hand-drawn watercolor landscape illustration in the style of John Howe, Alan Lee, or classic Lord of the Rings concept art. Wide cinematic horizon view, panoramic 16:9 / 21:9 aspect, painterly brushwork with soft washes and muted naturalistic palette — sage greens, dusty golds, slate blues, warm earth tones. Deep atmospheric perspective with layered receding planes leading the eye toward a distant horizon. Gentle, evocative, adventurous mood — the kind of opening matte painting that makes the viewer feel they are standing at the trailhead of a long journey. PURE LANDSCAPE — environment only.";
+
+// Per-variant subject prompts. Each one bias-loads flux toward a specific
+// trailhead vibe; the shared negatives below clamp out characters, frames,
+// and text.
+const EXPEDITION_HERO_PROMPTS: Record<ExpeditionHeroVariant, string> = {
+  "dawn-hills":
+    "A wide panoramic vista of rolling green hills at dawn, golden hour light pouring across the slopes from a low sun just above a distant ridge line. Layered receding ridges fade into soft morning haze. A faint dirt path winds away into the middle distance and over a rise. Wisps of low ground mist in the valleys. Warm gold and sage palette, cinematic atmospheric depth.",
+  "windswept-plains":
+    "A wide panoramic vista of vast windswept grasslands curving gently toward distant cliffs and a high mesa on the horizon. Pale gold and amber grasses bend in a steady wind, scattered with rocky outcrops and a single weather-bent tree on a rise. Layered cloud bands streak a wide pale sky. Cool dusty palette with warm afternoon highlights, deep horizon, painterly.",
+  "river-bend":
+    "A wide panoramic vista of a winding silver river curving through a dense old-growth forest valley, snow-capped mountain peaks rising in the far distance. Soft mist clings to the river surface. Layered evergreen canopy in the middle distance, lighter mossy banks in the foreground, deep blue ridges fading into atmospheric haze beyond. Cool teal and emerald palette with warm light catching the peaks.",
+  "mountain-pass":
+    "A wide panoramic vista of a narrow stone path threading between towering snow-capped peaks, the trail receding into a high mountain pass. Sheer rock walls in shadow on both sides, brilliant snowfields above, a distant gap revealing a glimpse of valley far below. Crisp cool palette of slate, deep blue shadow, and clean white snow, with a single warm shaft of late sunlight breaking through the gap.",
 };
 
 // View-art prompts. Each renders the same image every time — generated once
@@ -783,6 +817,56 @@ export async function getOrScheduleBattlefieldArt(
   }
   // Cache miss — schedule generation, return null this turn.
   ctx.waitUntil(generateBattlefieldArt(ai, art, scene));
+  return null;
+}
+
+// Expedition hero banner (top-of-card landscape illustration). One image per
+// variant, cached forever in R2 once generated. The Expedition view picks a
+// variant deterministically from the run's seed so each expedition feels
+// visually distinct and the same run renders the same hero on every load.
+//
+// Negatives are loaded HARD against the common flux failure modes for
+// landscape banners — text overlays, painted frames, scattered adventurers
+// and beasts in the foreground, close-up subjects that crowd out the horizon.
+const EXPEDITION_HERO_NEGATIVES =
+  "no text, no letters, no words, no signage, no title, no logo, no frame, no border, no card, no name plate, no UI, no vignette, no characters, no people, no figures, no humans, no creatures, no animals, no monsters, no buildings, no castle, no tower, no village, no close-up, no portrait, no foreground subject — just the empty landscape";
+
+function expeditionHeroPrompt(variant: ExpeditionHeroVariant): string {
+  const subject = EXPEDITION_HERO_PROMPTS[variant];
+  return `${subject} ${EXPEDITION_HERO_STYLE_ANCHOR} ${EXPEDITION_HERO_NEGATIVES}`;
+}
+
+export async function generateExpeditionHeroArt(
+  ai: Ai,
+  art: ArtTarget,
+  variant: ExpeditionHeroVariant,
+): Promise<string | null> {
+  if (art.disabled) return null;
+  const key = `art/expedition-hero/${EXPEDITION_HERO_ART_VERSION}/${variant}.png`;
+  return generateAndCacheArt(ai, art, key, expeditionHeroPrompt(variant), `expedition-hero:${variant}`);
+}
+
+// Returns the cached hero URL if present, else null AND schedules a
+// background generation via ctx.waitUntil so the next request hits cache.
+// Mirrors getOrScheduleBattlefieldArt — the title card falls back to its
+// flat dark header for the first user, persistent cache means subsequent
+// loads get the painted hero.
+export async function getOrScheduleExpeditionHeroArt(
+  ai: Ai,
+  art: ArtTarget,
+  ctx: { waitUntil: (p: Promise<unknown>) => void },
+  variant: ExpeditionHeroVariant,
+): Promise<string | null> {
+  if (art.disabled) return null;
+  const key = `art/expedition-hero/${EXPEDITION_HERO_ART_VERSION}/${variant}.png`;
+  const publicUrl = `${art.baseUrl}/img/${key}`;
+  try {
+    const existing = await art.bucket.head(key);
+    if (existing) return publicUrl;
+  } catch (err) {
+    console.warn("expedition-hero-art:head-error", { variant, err: err instanceof Error ? err.message : String(err) });
+  }
+  ctx.waitUntil(generateExpeditionHeroArt(ai, art, variant));
   return null;
 }
 
