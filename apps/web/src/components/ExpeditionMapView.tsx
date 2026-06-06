@@ -142,13 +142,14 @@ export function ExpeditionMapView({
         preserveAspectRatio="xMidYMid meet"
         style={{
           display: "block",
+          // Fill the available card width and scale proportionally via the
+          // viewBox. Previously capped at the SVG's intrinsic pixel width,
+          // which on mobile (vertical rotation, 3-lane = 280px intrinsic
+          // inside a ~343px card) left big empty margins of parchment. No
+          // cap is fine: preserveAspectRatio="xMidYMid meet" keeps the
+          // graph proportional, and the height auto-scales accordingly.
           width: "100%",
           height: "auto",
-          maxWidth: width,
-          // Center the graph inside the parchment card on mobile (where
-          // the vertical-rotated SVG is narrower than the screen width)
-          // and on any breakpoint where the card grows past the SVG's
-          // intrinsic width. Without margin auto it hugged the left edge.
           marginLeft: "auto",
           marginRight: "auto",
         }}
