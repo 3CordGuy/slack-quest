@@ -465,6 +465,28 @@ describe("ground effects — placement via place_ground_effect", () => {
     expect(placed!.hexes.length).toBeGreaterThan(0);
     expect((result.state.ground_effects ?? []).length).toBe(1);
   });
+
+  // Regression: "stays for N rounds" must mean N full round-cycles AFTER the
+  // cast round. Fire Wall has duration_rounds=2 and is cast in round R, so it
+  // must persist through rounds R+1 and R+2 and drop at the start of R+3.
+  // Previously the formula included the cast round in N, giving only 1 full
+  // post-cast round — see commit "Ground effects: stays-for-N now means N full
+  // post-cast rounds (drop the off-by-one)".
+  it("Fire Wall placed in round R survives at least 2 round-bumps past R", () => {
+    const init = baseInit();
+    const s = begun(init);
+    const magePos = s.fighters[0].pos!;
+    const target: HexPos = { q: magePos.q + 1, r: magePos.r };
+    const result = step(
+      s,
+      { kind: "ability", actor: "U_MAGE", ability_id: "fire_wall", target_pos: target },
+      seqRoll([]),
+    );
+    const fire = (result.state.ground_effects ?? [])[0];
+    expect(fire).toBeDefined();
+    // R + 2 means: alive when round bumps to R+1 and R+2; drops when bumps to R+3.
+    expect(fire.expires_after_round).toBe(result.state.round + 2);
+  });
 });
 
 describe("ground effects — on_enter fires on every position mutation", () => {

@@ -4355,9 +4355,12 @@ function applyUtilityAbilityEffects(
           kind: effect.ground_kind,
           hexes: validHexes,
           source_id: actor,
-          // duration_rounds counts the round of placement. Effect is active
-          // through round = current_round + duration_rounds - 1 (inclusive).
-          expires_after_round: s.round + Math.max(1, effect.duration_rounds) - 1,
+          // duration_rounds = full round-cycles of burn AFTER the cast round.
+          // Cast in round R with duration 2 → expires_after_round = R + 2 →
+          // alive in rounds R (rest of it), R+1, R+2; drops at start of R+3.
+          // This matches user intuition of "stays for N rounds" meaning N full
+          // post-cast rounds. See docs/ground-effects.md.
+          expires_after_round: s.round + Math.max(1, effect.duration_rounds),
           trigger: effect.trigger,
           potency: Math.max(0, Math.round(effect.potency)),
         };
