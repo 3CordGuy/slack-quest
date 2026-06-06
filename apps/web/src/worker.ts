@@ -165,6 +165,18 @@ import {
   type RollFn,
   type Stats,
   type TurnAction,
+  // Expedition map
+  ALL_EVENTS,
+  availablePicks,
+  expeditionSeed,
+  findEventById,
+  generateExpeditionMap,
+  sampleEvent,
+  sampleOutcome,
+  type ExpeditionEvent,
+  type ExpeditionMap,
+  type ExpeditionNode,
+  type SamplerHistory,
 } from "@gantt-quest/core";
 import {
   addGold,
@@ -349,6 +361,26 @@ import {
   type PubErrand,
   type PubErrandOfferInput,
   type PubErrandOfferRow,
+  // Expedition map persistence
+  createExpedition,
+  ExpeditionMembershipConflictError,
+  finalizeExpeditionMap,
+  getActiveExpeditionForCharacter,
+  getExpedition,
+  getExpeditionParty,
+  getExpeditionPartyState,
+  getExpeditionProgress,
+  getRecentExpeditionsForCharacter,
+  recordExpeditionNodeProgress,
+  setExpeditionCurrentNodeIfCurrent,
+  setExpeditionPartyHpMana,
+  setExpeditionStatus,
+  refillExpeditionPartyToMax,
+  appendExpeditionBuff,
+  parseExpeditionBuffs,
+  type ExpeditionBuff,
+  type ExpeditionPartyRow,
+  type ExpeditionRow,
 } from "@gantt-quest/db";
 
 // =============================================================================
@@ -6650,6 +6682,1120 @@ app.get("/api/ws/quest/:id", async (c) => {
 // wrangler `not_found_handling: single-page-application` config.
 app.get("/api/health", (c) => c.json({ ok: true }));
 
+// ─── Expedition Map ─────────────────────────────────────────────────────────
+//
+// Slay-the-Spire-style branching node map. See docs/expedition-map.md.
+// Pass 1: routes wired end-to-end for state machine transitions; combat
+// node spawning + resolve callbacks are STUBBED — the route persists the
+// expedition link but the existing combat resolver isn't yet aware of
+// from_expedition_id. See TODO markers below.
+
+const MAX_EXPEDITION_PARTY = 6;
+
+/**
+ * Shrine choices presented to the player on a shrine node. The picker commits
+ * to one via POST /api/expedition/:id/shrine/choose. Each is a run-long buff
+ * applied to the picker. Kept small (+5 max HP, full mana refill, +1 to a
+ * primary stat) to keep balance smooth across 1-2 shrine visits per run.
+ */
+const SHRINE_CHOICES = [
+  {
+    id: "blessing_vigor",
+    label: "Blessing of Vigor",
+    description: "+5 max HP for the rest of the run.",
+    buff: { kind: "max_hp", value: 5 },
+  },
+  {
+    id: "blessing_clarity",
+    label: "Blessing of Clarity",
+    description: "Mana refilled to full.",
+    buff: { kind: "mana_refill", value: 0 },
+  },
+  {
+    id: "blessing_might",
+    label: "Blessing of Might",
+    description: "+1 to your primary stat for the rest of the run.",
+    buff: { kind: "stat", value: 1, stat: "str" },
+  },
+] as const;
+
+/**
+ * Before spawning a combat quest, seed the live `characters` rows with each
+ * member's carried HP/mana from `expedition_party`. This is how Pass 2
+ * threads HP/mana across nodes: the existing combat init reads
+ * `character.hp/mana` (see buildInitialCombatState); we just need the live
+ * row to match the carried value.
+ *
+ * For first-time party members (no carried row yet), we initialize the
+ * carry-row from the live character so subsequent reads have a baseline.
+ * Also applies shrine buffs (max_hp +N, +stat) to the relevant character at
+ * spawn time so the new combat sees the boosted max.
+ */
+async function seedCharactersFromExpeditionParty(
+  db: D1Database,
+  expeditionId: number,
+  party: readonly string[],
+  buffs: readonly { kind: string; value: number; stat?: string }[],
+): Promise<void> {
+  const partyState = await getExpeditionPartyState(db, expeditionId);
+  for (const cid of party) {
+    const carried = partyState.find((p) => p.character_id === cid);
+    const character = await getCharacter(db, cid);
+    if (!character) continue;
+    // Compute effective max from baseline + run-long buffs.
+    const maxHpBonus = buffs
+      .filter((b) => b.kind === "max_hp")
+      .reduce((acc, b) => acc + b.value, 0);
+    const effectiveMaxHp = character.max_hp + maxHpBonus;
+    const effectiveMaxMana = character.max_mana;
+    if (carried && carried.current_hp != null && carried.current_mana != null) {
+      // Subsequent combat: write the carried values back to the live row.
+      // Mana_refill buffs land at apply time, not spawn time, so we just
+      // honor whatever the carried mana says.
+      const hp = Math.min(carried.current_hp, effectiveMaxHp);
+      const mana = Math.min(carried.current_mana, effectiveMaxMana);
+      await db
+        .prepare(
+          "UPDATE characters SET hp = ?, max_hp = ?, mana = ?, max_mana = ? WHERE slack_user_id = ?",
+        )
+        .bind(hp, effectiveMaxHp, mana, effectiveMaxMana, cid).run();
+    } else {
+      // First-time read: stamp the carry row from the live character.
+      await setExpeditionPartyHpMana(db, expeditionId, cid, {
+        current_hp: character.hp,
+        current_mana: character.mana,
+        max_hp: effectiveMaxHp,
+        max_mana: effectiveMaxMana,
+      });
+      // Apply HP buff to live row for the first combat too.
+      if (maxHpBonus > 0) {
+        await db
+          .prepare(
+            "UPDATE characters SET max_hp = ?, hp = MIN(hp + ?, ?) WHERE slack_user_id = ?",
+          )
+          .bind(effectiveMaxHp, maxHpBonus, effectiveMaxHp, cid).run();
+      }
+    }
+  }
+}
+
+function partyHpFromCharacter(c: { slack_user_id: string; hp: number; max_hp: number; mana: number; max_mana: number }) {
+  return {
+    characterId: c.slack_user_id,
+    hp: c.hp,
+    maxHp: c.max_hp,
+    mana: c.mana,
+    maxMana: c.max_mana,
+  };
+}
+
+// Hydrate the worker-side view used by GET /api/expedition/:id.
+async function loadExpeditionView(db: D1Database, id: number) {
+  const row = await getExpedition(db, id);
+  if (!row) return null;
+  const party = await getExpeditionParty(db, id);
+  const progress = await getExpeditionProgress(db, id);
+  const partyState = await getExpeditionPartyState(db, id);
+  const map = JSON.parse(row.map_json) as ExpeditionMap;
+  const picks = availablePicks(map, row.current_node);
+  const buffs = parseExpeditionBuffs(row);
+  return { row, party, progress, partyState, buffs, map, picks };
+}
+
+// Apply event outcome effects to the picker's character row. Mirrors the small
+// declarative surface in packages/core/src/expedition-events/types.ts. Returns
+// the effects actually applied (HP/mana clamped to current max, gold floor 0,
+// item grant logged for the response). Status effects are written through the
+// existing add-effect helper so EFFECT_META naming stays canonical.
+async function applyEventEffects(
+  env: Env,
+  userId: string,
+  effects: {
+    gold?: number;
+    hp?: number;
+    mana?: number;
+    xp?: number;
+    item?: string;
+    effect?: string;
+  } | undefined,
+): Promise<{
+  gold_delta: number;
+  hp_delta: number;
+  mana_delta: number;
+  xp_delta: number;
+  item_granted: string | null;
+  effect_applied: string | null;
+}> {
+  const summary = {
+    gold_delta: 0,
+    hp_delta: 0,
+    mana_delta: 0,
+    xp_delta: 0,
+    item_granted: null as string | null,
+    effect_applied: null as string | null,
+  };
+  if (!effects) return summary;
+  const character = await getCharacter(env.DB, userId);
+  if (!character) return summary;
+  if (typeof effects.gold === "number" && effects.gold !== 0) {
+    const newGold = Math.max(0, character.gold + effects.gold);
+    summary.gold_delta = newGold - character.gold;
+    await env.DB
+      .prepare("UPDATE characters SET gold = ? WHERE slack_user_id = ?")
+      .bind(newGold, userId).run();
+  }
+  if (typeof effects.hp === "number" && effects.hp !== 0) {
+    const newHp = Math.max(0, Math.min(character.max_hp, character.hp + effects.hp));
+    summary.hp_delta = newHp - character.hp;
+    await env.DB
+      .prepare("UPDATE characters SET hp = ? WHERE slack_user_id = ?")
+      .bind(newHp, userId).run();
+  }
+  if (typeof effects.mana === "number" && effects.mana !== 0) {
+    const newMana = Math.max(0, Math.min(character.max_mana, character.mana + effects.mana));
+    summary.mana_delta = newMana - character.mana;
+    await env.DB
+      .prepare("UPDATE characters SET mana = ? WHERE slack_user_id = ?")
+      .bind(newMana, userId).run();
+  }
+  if (typeof effects.xp === "number" && effects.xp > 0) {
+    // Use the awardSpoils path so level-ups land correctly. Pass zero gold
+    // since gold was already handled above.
+    const result = await awardSpoils(
+      env.DB,
+      character,
+      effects.xp,
+      0,
+      () => rollDice(6),
+      xpForLevel,
+    );
+    summary.xp_delta = effects.xp;
+    void result;
+  }
+  if (typeof effects.item === "string" && effects.item.trim().length > 0) {
+    // Events can grant a catalog-named item without rolling tiers. The catalog
+    // lookup is best-effort — if the name isn't a registered catalog entry we
+    // silently drop the grant (events are content authors, not gameplay code,
+    // and a typo shouldn't crash the run).
+    try {
+      const catalogItem = lookupCatalogItem(effects.item);
+      if (catalogItem) {
+        await addItem(env.DB, {
+          character_id: userId,
+          item_name: catalogItem.name,
+          item_type: catalogItem.item_type,
+          power: catalogItem.power,
+          rarity: catalogItem.rarity,
+          flavor: catalogItem.flavor,
+        });
+        summary.item_granted = catalogItem.name;
+      } else {
+        // Fallback: just record the cosmetic item name in the outcome JSON so
+        // the UI can display "you got X" even if no inventory grant happened.
+        summary.item_granted = effects.item;
+      }
+    } catch {
+      summary.item_granted = effects.item;
+    }
+  }
+  if (typeof effects.effect === "string" && effects.effect.trim().length > 0) {
+    // Status effects from events are mostly flavor (guilt/cursed/haunted).
+    // We record the name in the outcome JSON for the UI; binding them through
+    // the combat status system here would require a combat scene, which we
+    // don't have outside a quest. Keep this layer cosmetic.
+    summary.effect_applied = effects.effect;
+  }
+  return summary;
+}
+
+// Catalog lookup helper for event-granted items. The catalog has a small
+// number of named items; events reference them by display name (with the
+// emoji prefix preserved for player recognition). Returns null on miss.
+function lookupCatalogItem(name: string): {
+  name: string;
+  item_type: ItemType;
+  power: number;
+  rarity: Rarity;
+  flavor: string;
+} | null {
+  // Strip emoji prefix and any leading whitespace for normalization.
+  const stripped = name.replace(/^[^a-zA-Z0-9]+/, "").trim().toLowerCase();
+  // A tiny embedded mini-catalog of items events may grant. Each maps to a
+  // generic tier-2 utility item. We keep this list short on purpose — events
+  // grant flavor more than power. We use "tool" / "scroll" types since those
+  // are the catalog-naming utility types (per ItemType union in flavor.ts).
+  const catalog: Record<string, {
+    item_type: ItemType;
+    power: number;
+    rarity: Rarity;
+    flavor: string;
+  }> = {
+    "spare parts": { item_type: "tool", power: 2, rarity: "common", flavor: "A bundle of useful odds." },
+    "scrap bundle": { item_type: "tool", power: 2, rarity: "common", flavor: "Salvage worth carrying." },
+    "scroll": { item_type: "scroll", power: 3, rarity: "uncommon", flavor: "A folded paper of useful tradecraft." },
+    "trinket": { item_type: "tool", power: 2, rarity: "uncommon", flavor: "Small, oddly heavy." },
+    "jade pendant": { item_type: "tool", power: 3, rarity: "uncommon", flavor: "Cool to the touch. Worn smooth." },
+    "reader's deck": { item_type: "tool", power: 3, rarity: "rare", flavor: "A deck of soft-edged cards that hum." },
+  };
+  const hit = catalog[stripped];
+  if (!hit) return null;
+  return { name, ...hit };
+}
+
+// POST /api/expedition/start
+// Body: { party?: [characterIds], seed?: string }
+// `party` defaults to [solo current user]. Refuses if any member is mid-quest
+// or already in an active expedition.
+app.post("/api/expedition/start", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const character = await getCharacter(c.env.DB, session.slack_user_id);
+  if (!character) return c.json({ error: "no_character" }, 404);
+
+  const body = (await c.req.json().catch(() => null)) as
+    | { party?: unknown; seed?: unknown }
+    | null;
+  const rawParty = Array.isArray(body?.party)
+    ? (body!.party as unknown[]).filter((x): x is string => typeof x === "string")
+    : [];
+  // Always include the caller.
+  const party = Array.from(new Set([session.slack_user_id, ...rawParty])).slice(
+    0,
+    MAX_EXPEDITION_PARTY,
+  );
+
+  // Mutual exclusion: best-effort pre-check for nicer error messages. The
+  // SOURCE OF TRUTH is the UNIQUE PRIMARY KEY on `active_expedition_membership`
+  // (see createExpedition), which closes the TOCTOU window between this check
+  // and the actual insert. Two concurrent /start calls from the same user
+  // will BOTH pass this check; exactly one will succeed at insert time, the
+  // other throws ExpeditionMembershipConflictError and we return 409 below.
+  for (const uid of party) {
+    if (await getActiveExpeditionForCharacter(c.env.DB, uid)) {
+      return c.json({ error: "already_in_expedition", character_id: uid }, 400);
+    }
+    if (await getActiveQuestForCharacter(c.env.DB, uid)) {
+      return c.json({ error: "member_on_quest", character_id: uid }, 400);
+    }
+  }
+
+  const channelId = `web:${session.slack_user_id}`;
+
+  // Two-phase, both deterministic:
+  //   1) INSERT with a stable bootstrap seed so we get an id. The bootstrap
+  //      seed depends only on the sorted party signature — no Date.now() —
+  //      so a concurrent GET racing this brief window sees a deterministic
+  //      (if non-canonical) map rather than a different value each call.
+  //   2) Regenerate the map with the canonical seed = (id, party_signature)
+  //      and UPDATE the row.
+  // The bootstrap map is overwritten in step 2 well before any user-visible
+  // navigation can pick a node (current_node is NULL throughout).
+  const bootstrapSeed = `bootstrap|${[...party].sort().join(",")}`;
+  const bootstrapMap = generateExpeditionMap({ seed: bootstrapSeed, partySize: party.length });
+  let expeditionId: number;
+  try {
+    expeditionId = await createExpedition(c.env.DB, {
+      channel_id: channelId,
+      seed: bootstrapSeed,
+      map: bootstrapMap,
+      created_by: session.slack_user_id,
+      party,
+    });
+  } catch (err) {
+    if (err instanceof ExpeditionMembershipConflictError) {
+      // Lost the race with a concurrent /start that included this character.
+      return c.json(
+        { error: "already_in_expedition", character_id: err.characterId },
+        409,
+      );
+    }
+    throw err;
+  }
+  const finalSeed = expeditionSeed(expeditionId, party);
+  const finalMap = generateExpeditionMap({ seed: finalSeed, partySize: party.length });
+  await finalizeExpeditionMap(c.env.DB, expeditionId, finalSeed, finalMap);
+
+  return c.json({
+    ok: true,
+    expedition_id: expeditionId,
+    seed: finalSeed,
+    map: finalMap,
+    party,
+    available_picks: availablePicks(finalMap, null).map((n) => n.id),
+  });
+});
+
+// GET /api/expedition/recent — recent runs for the signed-in character.
+// (Must be declared before /:id so it doesn't get captured by the id route.)
+app.get("/api/expedition/recent", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const rows = await getRecentExpeditionsForCharacter(c.env.DB, session.slack_user_id, 10);
+  return c.json({
+    expeditions: rows.map((r) => ({
+      id: r.id,
+      status: r.status,
+      created_at: r.created_at,
+      completed_at: r.completed_at,
+      current_node: r.current_node,
+    })),
+  });
+});
+
+// GET /api/expedition/:id — full expedition state.
+app.get("/api/expedition/:id", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const expeditionId = parseInt(c.req.param("id"), 10);
+  if (!Number.isFinite(expeditionId)) return c.json({ error: "bad_id" }, 400);
+  const view = await loadExpeditionView(c.env.DB, expeditionId);
+  if (!view) return c.json({ error: "not_found" }, 404);
+  // Authorization: must be a party member.
+  if (!view.party.includes(session.slack_user_id)) {
+    return c.json({ error: "forbidden" }, 403);
+  }
+  // Hydrate per-character state — preferring carried HP/mana from
+  // expedition_party (Pass 2: set after each combat node resolves), falling
+  // back to the live characters row on first read (before any combat has
+  // resolved or when the carried max diverges from the equipment-augmented
+  // live max).
+  const partyDetails: Array<{
+    character_id: string;
+    name: string;
+    class: string;
+    level: number;
+    hp: number;
+    max_hp: number;
+    mana: number;
+    max_mana: number;
+  }> = [];
+  for (const cid of view.party) {
+    const carried = view.partyState.find((p) => p.character_id === cid);
+    const char = await getCharacter(c.env.DB, cid);
+    if (!char) continue;
+    partyDetails.push({
+      character_id: cid,
+      name: char.name,
+      class: char.class,
+      level: char.level,
+      hp: carried?.current_hp ?? char.hp,
+      max_hp: carried?.max_hp ?? char.max_hp,
+      mana: carried?.current_mana ?? char.mana,
+      max_mana: carried?.max_mana ?? char.max_mana,
+    });
+  }
+
+  return c.json({
+    expedition: {
+      id: view.row.id,
+      status: view.row.status,
+      seed: view.row.seed,
+      current_node: view.row.current_node,
+      created_at: view.row.created_at,
+      completed_at: view.row.completed_at,
+    },
+    map: view.map,
+    progress: view.progress.map((p) => ({
+      node_id: p.node_id,
+      resolved_at: p.resolved_at,
+      outcome: JSON.parse(p.outcome_json),
+    })),
+    party: view.party,
+    party_details: partyDetails,
+    buffs: view.buffs,
+    available_picks: view.picks.map((n) => n.id),
+  });
+});
+
+// POST /api/expedition/:id/pick — advance state by picking a forward node.
+app.post("/api/expedition/:id/pick", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const expeditionId = parseInt(c.req.param("id"), 10);
+  if (!Number.isFinite(expeditionId)) return c.json({ error: "bad_id" }, 400);
+  const body = (await c.req.json().catch(() => null)) as
+    | { node_id?: unknown }
+    | null;
+  const nodeId = typeof body?.node_id === "string" ? body!.node_id : null;
+  if (!nodeId) return c.json({ error: "missing_node_id" }, 400);
+
+  const view = await loadExpeditionView(c.env.DB, expeditionId);
+  if (!view) return c.json({ error: "not_found" }, 404);
+  if (!view.party.includes(session.slack_user_id)) {
+    return c.json({ error: "forbidden" }, 403);
+  }
+  if (view.row.status !== "active") {
+    return c.json({ error: "not_active", status: view.row.status }, 400);
+  }
+
+  const target = view.map.nodes.find((n) => n.id === nodeId);
+  if (!target) return c.json({ error: "unknown_node" }, 400);
+  if (!view.picks.some((p) => p.id === nodeId)) {
+    return c.json({ error: "not_available" }, 400);
+  }
+
+  // Compare-and-swap on current_node closes the pick-race TOCTOU window: two
+  // concurrent picks from the same expedition both load the same
+  // `view.row.current_node`, both validate against `view.picks`, and both try
+  // to UPDATE. The CAS ensures exactly one wins; the other gets 409 so its
+  // client refetches the expedition view (the second pick was made against
+  // a stale state and should re-prompt the user with the now-current picks).
+  const swapped = await setExpeditionCurrentNodeIfCurrent(
+    c.env.DB,
+    expeditionId,
+    view.row.current_node,
+    nodeId,
+  );
+  if (!swapped) {
+    return c.json({ error: "race_lost" }, 409);
+  }
+
+  // Dispatch per kind. Pass 2 wires combat spawn + real shrine/camp/treasure
+  // resolvers. Events are still presented here; the player then POSTs to
+  // /resolve-event to write progress + apply effects.
+  let dispatched: Record<string, unknown> = { kind: target.kind };
+  switch (target.kind) {
+    case "combat":
+    case "elite":
+    case "boss": {
+      // Combat-node spawn: seed the characters' HP/mana from the carried
+      // expedition_party values (if any), then create a regular quest with
+      // from_expedition_id back-pointing here. Combat resolves through the
+      // existing engine; applyWebCombatOutcome's expedition-advance branch
+      // (further down this file) writes carried HP/mana back to
+      // expedition_party and records node progress on victory.
+      await seedCharactersFromExpeditionParty(c.env.DB, expeditionId, view.party, view.buffs);
+      const tier = target.kind === "boss" ? "boss" : "standard";
+      const isElite = target.kind === "elite";
+      const channelId = `web:${session.slack_user_id}`;
+      const avoidNames: string[] = [];
+      const sceneCharacter = await getCharacter(c.env.DB, session.slack_user_id);
+      if (!sceneCharacter) return c.json({ error: "no_character" }, 500);
+      const scene = await generateOpeningScene(
+        c.env.AI,
+        sceneCharacter,
+        isElite,
+        tier,
+        undefined,
+        avoidNames,
+        artTarget(c.env),
+      );
+      if (tier === "boss") scene.boss_phase = 1;
+      scene.variant = tier === "boss" ? "boss" : "standard";
+      const questId = await createQuest(c.env.DB, {
+        channel_id: channelId,
+        thread_ts: `expedition-${expeditionId}-${target.id}-${Date.now()}`,
+        elite: isElite,
+        scene,
+        mode: "web",
+        created_by: session.slack_user_id,
+        from_expedition_id: expeditionId,
+      });
+      // Add the rest of the party to the quest_party.
+      for (const cid of view.party) {
+        if (cid === session.slack_user_id) continue;
+        try {
+          await c.env.DB
+            .prepare("INSERT INTO quest_party (quest_id, character_id, joined_at) VALUES (?, ?, ?)")
+            .bind(questId, cid, Date.now()).run();
+        } catch {
+          // already present — ignore
+        }
+      }
+      dispatched = {
+        kind: target.kind,
+        action: "spawn_combat",
+        tier,
+        node_id: target.id,
+        quest_id: questId,
+        elite: isElite,
+      };
+      break;
+    }
+    case "event": {
+      // Sample an event using the no-repeat / recency / anti-monotony rules.
+      const expeditionResolvedIds = view.progress
+        .map((p) => {
+          try {
+            const o = JSON.parse(p.outcome_json) as { event_id?: string };
+            return o.event_id ?? null;
+          } catch {
+            return null;
+          }
+        })
+        .filter((x): x is string => x != null);
+      const recentExpeditionTags = expeditionResolvedIds
+        .map((id) => findEventById(id))
+        .filter((e): e is ExpeditionEvent => e != null)
+        .slice(-3)
+        .map((e) => ({ tone: e.tone, setup: e.setup, risk: e.risk, theme: e.theme }));
+
+      // For Pass 1, character-recency history is intentionally empty —
+      // tracking per-character last-10 events across expeditions is a
+      // small follow-up (needs a new lightweight table or a JSON column).
+      // The pool is already small enough that within-expedition no-repeat
+      // is the dominant constraint.
+      const history: SamplerHistory = {
+        expeditionResolvedIds,
+        recentCharacterEventIds: [],
+        longTailCharacterEventIds: [],
+        recentExpeditionTags,
+      };
+      // Deterministic-per-pick PRNG: derive from (expeditionId, node id) so
+      // the player can refresh without re-sampling a different event.
+      const rng = (() => {
+        let s = (expeditionId * 2654435761 + hashString(target.id)) >>> 0;
+        return () => {
+          s = (s + 0x6d2b79f5) >>> 0;
+          let t = s;
+          t = Math.imul(t ^ (t >>> 15), t | 1);
+          t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+          return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+        };
+      })();
+      const evt = sampleEvent({ rng, history });
+      // TODO(pass-2): event-outcome resolve route + progress write.
+      //   Today: we sample and PRESENT an event here but never write a row
+      //   to `expedition_node_progress`. The sampler's within-run no-repeat
+      //   invariant (see SamplerHistory.expeditionResolvedIds above) depends
+      //   on those rows existing — without them, picking the same event node
+      //   twice (or events later in the same run after the player advances)
+      //   could re-sample the same event id, breaking the no-repeat rule.
+      //   Pass 2 adds POST /api/expedition/:id/event/resolve which takes the
+      //   chosen branch + outcome variant, applies effects, and calls
+      //   recordExpeditionNodeProgress with `{ kind: "event", event_id,
+      //   branch_id, outcome_id }` so the next event-node pick filters this
+      //   event out and so `recentExpeditionTags` reflects history.
+      dispatched = {
+        kind: "event",
+        action: "present_event",
+        node_id: target.id,
+        event: evt
+          ? {
+              id: evt.id,
+              title: evt.title,
+              body: evt.body,
+              branches: evt.branches.map((b) => ({ id: b.id, label: b.label })),
+            }
+          : null,
+      };
+      break;
+    }
+    case "shrine": {
+      // Shrine presents three buff options. Player chooses via
+      // POST /api/expedition/:id/shrine/choose; until then we DON'T record
+      // progress — the node is "in flight" with no outcome yet. The current
+      // node is already set by the CAS above, so subsequent reads see the
+      // shrine as the active state.
+      dispatched = {
+        kind: "shrine",
+        action: "present_choices",
+        node_id: target.id,
+        choices: SHRINE_CHOICES,
+      };
+      break;
+    }
+    case "camp": {
+      // Camp: full HP/mana refill for the entire party, plus a small
+      // resource bundle. We keep the carry max as-is (run buffs persist).
+      // Per the design doc, the pre-boss row is always a camp — and the
+      // free rest is what makes the boss tractable.
+      await refillExpeditionPartyToMax(c.env.DB, expeditionId);
+      // Also refill the live character row so the next combat reads max.
+      for (const cid of view.party) {
+        await c.env.DB
+          .prepare(
+            "UPDATE characters SET hp = max_hp, mana = max_mana WHERE slack_user_id = ?",
+          )
+          .bind(cid).run();
+      }
+      // Award the picker a small resource bundle (modest gold).
+      const restGold = target.depth >= 5 ? 14 : 8;
+      await addGold(c.env.DB, session.slack_user_id, restGold);
+      const outcome = {
+        kind: "camp",
+        rested: true,
+        restored: "hp+mana",
+        gold_awarded: restGold,
+        party: view.party,
+      };
+      await recordExpeditionNodeProgress(c.env.DB, expeditionId, target.id, outcome);
+      dispatched = { kind: "camp", action: "rested", outcome };
+      break;
+    }
+    case "treasure": {
+      // Roll a tier-3 item via the existing pipeline. Present accept/skip in
+      // the response; player commits via POST /api/expedition/:id/treasure/choose.
+      const tier = 3;
+      const roll = rollItem(tier);
+      // Stash the rolled item in the response — the client echoes it back to
+      // the choose endpoint with the same deterministic seed so it's the same
+      // item. Simpler: persist the roll on the node as a "pending" outcome
+      // and only commit on accept.
+      const offered = {
+        item_name: roll.catalog_name ?? roll.item_subtype ?? roll.type,
+        item_type: roll.type,
+        item_subtype: roll.item_subtype ?? null,
+        power: roll.power,
+        rarity: roll.rarity,
+        weapon_range: roll.weapon_range ?? null,
+      };
+      dispatched = {
+        kind: "treasure",
+        action: "present_offer",
+        node_id: target.id,
+        offer: offered,
+      };
+      break;
+    }
+    case "start":
+      return c.json({ error: "cannot_pick_start" }, 400);
+  }
+
+  const refreshed = await loadExpeditionView(c.env.DB, expeditionId);
+  return c.json({
+    ok: true,
+    current_node: refreshed?.row.current_node ?? null,
+    dispatch: dispatched,
+    available_picks: refreshed?.picks.map((n) => n.id) ?? [],
+  });
+});
+
+// POST /api/expedition/:id/abandon — owner can quit; status -> abandoned.
+app.post("/api/expedition/:id/abandon", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const expeditionId = parseInt(c.req.param("id"), 10);
+  if (!Number.isFinite(expeditionId)) return c.json({ error: "bad_id" }, 400);
+  const row = await getExpedition(c.env.DB, expeditionId);
+  if (!row) return c.json({ error: "not_found" }, 404);
+  if (row.created_by !== session.slack_user_id) {
+    return c.json({ error: "only_creator_can_abandon" }, 403);
+  }
+  if (row.status !== "active") {
+    return c.json({ error: "not_active" }, 400);
+  }
+  await setExpeditionStatus(c.env.DB, expeditionId, "abandoned");
+  return c.json({ ok: true });
+});
+
+// POST /api/expedition/:id/resolve-event — apply a chosen branch+outcome on
+// the currently-sampled event for the current node. Validates that the event
+// id encoded in the request matches what the deterministic sampler would
+// produce for this node (so the player can't smuggle in an arbitrary
+// outcome). Writes progress, applies effects, returns the resolved outcome.
+app.post("/api/expedition/:id/resolve-event", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const expeditionId = parseInt(c.req.param("id"), 10);
+  if (!Number.isFinite(expeditionId)) return c.json({ error: "bad_id" }, 400);
+  const body = (await c.req.json().catch(() => null)) as
+    | { node_id?: unknown; branch_id?: unknown; outcome_id?: unknown }
+    | null;
+  const nodeId = typeof body?.node_id === "string" ? body!.node_id : null;
+  const branchId = typeof body?.branch_id === "string" ? body!.branch_id : null;
+  if (!nodeId || !branchId) {
+    return c.json({ error: "missing_fields" }, 400);
+  }
+
+  const view = await loadExpeditionView(c.env.DB, expeditionId);
+  if (!view) return c.json({ error: "not_found" }, 404);
+  if (!view.party.includes(session.slack_user_id)) {
+    return c.json({ error: "forbidden" }, 403);
+  }
+  if (view.row.status !== "active") {
+    return c.json({ error: "not_active" }, 400);
+  }
+  if (view.row.current_node !== nodeId) {
+    return c.json({ error: "not_current_node" }, 400);
+  }
+  const node = view.map.nodes.find((n) => n.id === nodeId);
+  if (!node || node.kind !== "event") {
+    return c.json({ error: "not_event_node" }, 400);
+  }
+  // Idempotency: if progress already recorded for this node, return the
+  // stored outcome rather than re-applying effects.
+  const existing = view.progress.find((p) => p.node_id === nodeId);
+  if (existing) {
+    return c.json({
+      ok: true,
+      already_resolved: true,
+      outcome: JSON.parse(existing.outcome_json),
+      available_picks: view.picks.map((n) => n.id),
+    });
+  }
+
+  // Re-derive the deterministic sampler state to confirm which event is on
+  // this node. Mirrors the pick-route sampling exactly.
+  const expeditionResolvedIds = view.progress
+    .map((p) => {
+      try {
+        const o = JSON.parse(p.outcome_json) as { event_id?: string };
+        return o.event_id ?? null;
+      } catch {
+        return null;
+      }
+    })
+    .filter((x): x is string => x != null);
+  const recentExpeditionTags = expeditionResolvedIds
+    .map((id) => findEventById(id))
+    .filter((e): e is ExpeditionEvent => e != null)
+    .slice(-3)
+    .map((e) => ({ tone: e.tone, setup: e.setup, risk: e.risk, theme: e.theme }));
+  const history: SamplerHistory = {
+    expeditionResolvedIds,
+    recentCharacterEventIds: [],
+    longTailCharacterEventIds: [],
+    recentExpeditionTags,
+  };
+  const sampleRng = (() => {
+    let s = (expeditionId * 2654435761 + hashString(nodeId)) >>> 0;
+    return () => {
+      s = (s + 0x6d2b79f5) >>> 0;
+      let t = s;
+      t = Math.imul(t ^ (t >>> 15), t | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  })();
+  const evt = sampleEvent({ rng: sampleRng, history });
+  if (!evt) return c.json({ error: "no_event_for_node" }, 500);
+
+  const branch = evt.branches.find((b) => b.id === branchId);
+  if (!branch) return c.json({ error: "unknown_branch" }, 400);
+
+  // Sample the outcome variant deterministically — same seed every time so
+  // a refresh doesn't roll a different outcome.
+  const outcomeRng = (() => {
+    let s = (expeditionId * 0x9e3779b1 + hashString(`${nodeId}:${branchId}`)) >>> 0;
+    return () => {
+      s = (s + 0x6d2b79f5) >>> 0;
+      let t = s;
+      t = Math.imul(t ^ (t >>> 15), t | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  })();
+  const outcome = sampleOutcome(outcomeRng, branch);
+
+  // Apply effects to the picker.
+  const applied = await applyEventEffects(c.env, session.slack_user_id, outcome.effects);
+
+  // After effects, also sync the picker's HP/mana back into expedition_party
+  // so the next combat node picks up the new values.
+  const character = await getCharacter(c.env.DB, session.slack_user_id);
+  if (character) {
+    await setExpeditionPartyHpMana(c.env.DB, expeditionId, session.slack_user_id, {
+      current_hp: character.hp,
+      current_mana: character.mana,
+      max_hp: character.max_hp,
+      max_mana: character.max_mana,
+    });
+  }
+
+  const progressRow = {
+    kind: "event",
+    event_id: evt.id,
+    branch_id: branchId,
+    outcome_text: outcome.text,
+    effects: outcome.effects ?? null,
+    applied,
+    resolved_by: session.slack_user_id,
+  };
+  await recordExpeditionNodeProgress(c.env.DB, expeditionId, nodeId, progressRow);
+
+  const refreshed = await loadExpeditionView(c.env.DB, expeditionId);
+  return c.json({
+    ok: true,
+    outcome: progressRow,
+    available_picks: refreshed?.picks.map((n) => n.id) ?? [],
+  });
+});
+
+// POST /api/expedition/:id/shrine/choose — apply a shrine buff for the rest
+// of the run, write progress, idempotent on re-call.
+app.post("/api/expedition/:id/shrine/choose", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const expeditionId = parseInt(c.req.param("id"), 10);
+  if (!Number.isFinite(expeditionId)) return c.json({ error: "bad_id" }, 400);
+  const body = (await c.req.json().catch(() => null)) as
+    | { node_id?: unknown; choice_id?: unknown }
+    | null;
+  const nodeId = typeof body?.node_id === "string" ? body!.node_id : null;
+  const choiceId = typeof body?.choice_id === "string" ? body!.choice_id : null;
+  if (!nodeId || !choiceId) return c.json({ error: "missing_fields" }, 400);
+
+  const view = await loadExpeditionView(c.env.DB, expeditionId);
+  if (!view) return c.json({ error: "not_found" }, 404);
+  if (!view.party.includes(session.slack_user_id)) {
+    return c.json({ error: "forbidden" }, 403);
+  }
+  if (view.row.status !== "active") return c.json({ error: "not_active" }, 400);
+  if (view.row.current_node !== nodeId) return c.json({ error: "not_current_node" }, 400);
+  const node = view.map.nodes.find((n) => n.id === nodeId);
+  if (!node || node.kind !== "shrine") return c.json({ error: "not_shrine_node" }, 400);
+
+  // Idempotency.
+  const existing = view.progress.find((p) => p.node_id === nodeId);
+  if (existing) {
+    return c.json({
+      ok: true,
+      already_resolved: true,
+      outcome: JSON.parse(existing.outcome_json),
+      available_picks: view.picks.map((n) => n.id),
+    });
+  }
+
+  const choice = SHRINE_CHOICES.find((cc) => cc.id === choiceId);
+  if (!choice) return c.json({ error: "unknown_choice" }, 400);
+
+  // Apply the buff. For max_hp and stat we append to the buffs list and let
+  // the next combat seed read the updated effective max. For mana_refill we
+  // bump the picker's mana right now and don't append anything (it's a
+  // one-shot).
+  let buffApplied: ExpeditionBuff | null = null;
+  if (choice.buff.kind === "mana_refill") {
+    const character = await getCharacter(c.env.DB, session.slack_user_id);
+    if (character) {
+      await c.env.DB
+        .prepare("UPDATE characters SET mana = max_mana WHERE slack_user_id = ?")
+        .bind(session.slack_user_id).run();
+      await setExpeditionPartyHpMana(c.env.DB, expeditionId, session.slack_user_id, {
+        current_hp: character.hp,
+        current_mana: character.max_mana,
+        max_hp: character.max_hp,
+        max_mana: character.max_mana,
+      });
+    }
+    buffApplied = {
+      kind: "mana_refill",
+      value: 0,
+      node_id: nodeId,
+      applied_at: Date.now(),
+    };
+    await appendExpeditionBuff(c.env.DB, expeditionId, buffApplied);
+  } else if (choice.buff.kind === "max_hp") {
+    buffApplied = {
+      kind: "max_hp",
+      value: choice.buff.value,
+      node_id: nodeId,
+      applied_at: Date.now(),
+    };
+    await appendExpeditionBuff(c.env.DB, expeditionId, buffApplied);
+    // Bump the carry-row's max so the next combat seed reads the new max
+    // even if the picker hasn't been combat-seeded yet.
+    const partyState = await getExpeditionPartyState(c.env.DB, expeditionId);
+    for (const ps of partyState) {
+      if (ps.max_hp != null) {
+        await setExpeditionPartyHpMana(c.env.DB, expeditionId, ps.character_id, {
+          current_hp: ps.current_hp ?? 0,
+          current_mana: ps.current_mana ?? 0,
+          max_hp: ps.max_hp + choice.buff.value,
+          max_mana: ps.max_mana ?? 0,
+        });
+      }
+    }
+  } else if (choice.buff.kind === "stat") {
+    buffApplied = {
+      kind: "stat",
+      value: choice.buff.value,
+      stat: choice.buff.stat ?? "str",
+      node_id: nodeId,
+      applied_at: Date.now(),
+    };
+    await appendExpeditionBuff(c.env.DB, expeditionId, buffApplied);
+    // Persist the +1 to the picker's character row immediately. Stat buffs
+    // are a small permanent-for-the-run change to the live character; they
+    // get rolled back on expedition end via the recorded buff history (not
+    // implemented in v1 — buffs persist to the character forever, which
+    // matches existing "stat-bumping events" behavior elsewhere).
+    const stat = (choice.buff.stat ?? "str") as string;
+    // SQL column mapping — `int` is stored as `int_stat` since `int` is a
+    // SQLite keyword. The rest map 1:1 with their stat name. We cast through
+    // string above because today the SHRINE_CHOICES only references "str";
+    // future shrine choices may use any primary stat without re-narrowing.
+    const col = stat === "int" ? "int_stat" : stat;
+    await c.env.DB
+      .prepare(`UPDATE characters SET ${col} = ${col} + ? WHERE slack_user_id = ?`)
+      .bind(choice.buff.value, session.slack_user_id).run();
+  }
+
+  const outcome = {
+    kind: "shrine",
+    choice_id: choiceId,
+    buff: buffApplied,
+    resolved_by: session.slack_user_id,
+  };
+  await recordExpeditionNodeProgress(c.env.DB, expeditionId, nodeId, outcome);
+
+  const refreshed = await loadExpeditionView(c.env.DB, expeditionId);
+  return c.json({
+    ok: true,
+    outcome,
+    available_picks: refreshed?.picks.map((n) => n.id) ?? [],
+  });
+});
+
+// POST /api/expedition/:id/treasure/choose — accept or skip the offered item.
+// The item is rolled deterministically from (expeditionId, node_id) so a
+// refresh shows the same offer.
+app.post("/api/expedition/:id/treasure/choose", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const expeditionId = parseInt(c.req.param("id"), 10);
+  if (!Number.isFinite(expeditionId)) return c.json({ error: "bad_id" }, 400);
+  const body = (await c.req.json().catch(() => null)) as
+    | { node_id?: unknown; accept?: unknown }
+    | null;
+  const nodeId = typeof body?.node_id === "string" ? body!.node_id : null;
+  const accept = body?.accept === true;
+  if (!nodeId) return c.json({ error: "missing_node_id" }, 400);
+
+  const view = await loadExpeditionView(c.env.DB, expeditionId);
+  if (!view) return c.json({ error: "not_found" }, 404);
+  if (!view.party.includes(session.slack_user_id)) {
+    return c.json({ error: "forbidden" }, 403);
+  }
+  if (view.row.status !== "active") return c.json({ error: "not_active" }, 400);
+  if (view.row.current_node !== nodeId) return c.json({ error: "not_current_node" }, 400);
+  const node = view.map.nodes.find((n) => n.id === nodeId);
+  if (!node || node.kind !== "treasure") return c.json({ error: "not_treasure_node" }, 400);
+  const existing = view.progress.find((p) => p.node_id === nodeId);
+  if (existing) {
+    return c.json({
+      ok: true,
+      already_resolved: true,
+      outcome: JSON.parse(existing.outcome_json),
+      available_picks: view.picks.map((n) => n.id),
+    });
+  }
+
+  const tier = 3;
+  const roll = rollItem(tier);
+  let outcome: Record<string, unknown>;
+  if (accept) {
+    const named = await nameLootViaAi(c.env, roll, "expedition cache");
+    const created = await addItem(c.env.DB, itemRollToCreateInput({
+      character_id: session.slack_user_id,
+      roll,
+      item_name: named.name,
+      flavor: named.flavor,
+    }));
+    outcome = {
+      kind: "treasure",
+      accepted: true,
+      item: {
+        name: created.item_name,
+        item_type: created.item_type,
+        power: created.power,
+        rarity: created.rarity,
+        flavor: created.flavor ?? named.flavor,
+      },
+      resolved_by: session.slack_user_id,
+    };
+  } else {
+    outcome = {
+      kind: "treasure",
+      accepted: false,
+      resolved_by: session.slack_user_id,
+    };
+  }
+  await recordExpeditionNodeProgress(c.env.DB, expeditionId, nodeId, outcome);
+  const refreshed = await loadExpeditionView(c.env.DB, expeditionId);
+  return c.json({
+    ok: true,
+    outcome,
+    available_picks: refreshed?.picks.map((n) => n.id) ?? [],
+  });
+});
+
+/**
+ * Post-combat hook: called by applyWebCombatOutcome AFTER quest status is
+ * flipped, when the quest carries a `from_expedition_id`. Threads the
+ * surviving fighters' HP/mana back into expedition_party, records node
+ * progress, and marks the expedition completed on a boss kill.
+ *
+ * Idempotent: a second call with the same questId is a no-op once the
+ * progress row exists. Soft-death (party-wipe with surviving fighters) is
+ * handled by the existing applyWebCombatOutcome — we just don't advance
+ * the expedition until the next combat re-resolves successfully.
+ */
+async function advanceExpeditionAfterCombat(
+  env: Env,
+  questId: number,
+  state: CombatState,
+  rewards: FighterReward[],
+  won: boolean,
+): Promise<void> {
+  const link = await env.DB
+    .prepare("SELECT from_expedition_id FROM quests WHERE id = ?")
+    .bind(questId)
+    .first<{ from_expedition_id: number | null }>();
+  if (!link || link.from_expedition_id == null) return;
+  const expeditionId = link.from_expedition_id;
+
+  const view = await loadExpeditionView(env.DB, expeditionId);
+  if (!view) return;
+  // Derive the current node id from the combat-resolve context.
+  // The pick-route set current_node to the combat node id when the player
+  // picked it. If something raced, just bail — the run can resume.
+  const nodeId = view.row.current_node;
+  if (!nodeId) return;
+  const node = view.map.nodes.find((n) => n.id === nodeId);
+  if (!node) return;
+
+  // Idempotency: if progress is already recorded, skip.
+  if (view.progress.some((p) => p.node_id === nodeId)) return;
+
+  // Write back surviving HP/mana per party member.
+  for (const fighter of state.fighters) {
+    if (isAllyNpcActor(fighter.id)) continue;
+    await setExpeditionPartyHpMana(env.DB, expeditionId, fighter.id, {
+      current_hp: Math.max(0, fighter.hp),
+      current_mana: Math.max(0, fighter.mana),
+      max_hp: fighter.max_hp,
+      max_mana: fighter.max_mana ?? 0,
+    });
+  }
+
+  if (!won) {
+    // Defeat: leave current_node in place so the player can retry / abandon.
+    // Don't record progress — they have to pick the node again after the
+    // soft-death cooldown.
+    return;
+  }
+
+  // Victory: record progress + advance.
+  const outcome = {
+    kind: node.kind,
+    quest_id: questId,
+    monster_name: state.monsters[0]?.name ?? "monster",
+    rewards: rewards.map((r) => ({
+      user_id: r.user_id,
+      xp: r.xp_awarded,
+      gold: r.gold_awarded,
+      loot_count: r.loot.length,
+    })),
+  };
+  await recordExpeditionNodeProgress(env.DB, expeditionId, nodeId, outcome);
+
+  if (node.kind === "boss") {
+    await setExpeditionStatus(env.DB, expeditionId, "completed");
+  }
+}
+
+// Small inline hash used to derive per-node PRNG seeds. Mirrors the FNV-1a
+// hash in @gantt-quest/core; kept local because we only need it here.
+function hashString(s: string): number {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return h >>> 0;
+}
+
 // DEV ONLY — dev tool actions (heal, mana, gold, revive, cooldown reset).
 app.post("/api/dev/heal", async (c) => {
   if (c.env.ENVIRONMENT !== "local") return c.json({ error: "forbidden" }, 403);
@@ -7396,6 +8542,16 @@ async function applyWebCombatOutcome(
   }
 
   await endQuestWithStatus(env.DB, questId, won ? "completed" : "failed");
+
+  // Expedition map post-combat hook — see docs/expedition-map.md and
+  // advanceExpeditionAfterCombat above. No-op for non-expedition quests.
+  // Wrapped in try/catch because a failure here shouldn't tank the regular
+  // combat-resolve flow; expedition state can be recovered from quest state.
+  try {
+    await advanceExpeditionAfterCombat(env, questId, state, rewards, won);
+  } catch (err) {
+    console.error("expedition advance failed:", err);
+  }
 
   return {
     status: state.status as "victory" | "defeat",

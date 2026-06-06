@@ -500,6 +500,7 @@ export function JobBoardSection({
   navOverlay,
   onTakeJob,
   onStartQuest,
+  onStartExpedition,
   onJoin,
 }: {
   board: BoardResponse | null;
@@ -510,6 +511,7 @@ export function JobBoardSection({
   navOverlay: ReactNode;
   onTakeJob: (jobId: string) => void;
   onStartQuest: (variant: QuestVariant, elite: boolean, invitees: string[]) => void;
+  onStartExpedition?: () => void;
   onJoin: () => void;
 }) {
   const townName = board?.town_name ?? "Town";
@@ -608,6 +610,67 @@ export function JobBoardSection({
       ) : (
         <StartQuestCard characterLevel={characterLevel} onStart={onStartQuest} />
       )}
+
+      {/* Expedition entry — Slay-the-Spire-style branching run. Lives next to
+          StartQuestCard so the player chooses one-off quest vs. structured run. */}
+      {onStartExpedition && (
+        <StartExpeditionCard onStart={onStartExpedition} />
+      )}
+    </div>
+  );
+}
+
+// Expedition entry card — companion to StartQuestCard for the new run mode.
+function StartExpeditionCard({ onStart }: { onStart: () => void }) {
+  const [pending, setPending] = useState(false);
+  function go() {
+    if (pending) return;
+    setPending(true);
+    onStart();
+  }
+  return (
+    <div style={{
+      background: "var(--bg-card-2)",
+      border: "1px solid var(--accent-gold)",
+      borderRadius: "var(--radius-2xl)",
+      padding: "var(--card-pad, 32px)",
+      boxSizing: "border-box",
+      width: "100%",
+    }}>
+      <div style={{ marginBottom: 14 }}>
+        <div style={{
+          font: "10px/1 var(--font-body)",
+          textTransform: "uppercase",
+          letterSpacing: 1.4,
+          fontWeight: 700,
+          color: "var(--accent-gold)",
+          marginBottom: 6,
+        }}>
+          A Longer Road
+        </div>
+        <h2 style={{ ...h2, fontSize: 22 }}>Start an expedition</h2>
+        <div style={{ marginTop: 8, color: "var(--fg-mute)", fontSize: 13, lineHeight: 1.5 }}>
+          A branching run from start to boss — combat, events, shrines, camp,
+          treasure. HP and mana carry between nodes; the boss is paid for in
+          choices made along the way.
+        </div>
+      </div>
+      <button
+        onClick={go}
+        disabled={pending}
+        style={{
+          background: "var(--bg-elev)",
+          border: "1px solid var(--accent-gold)",
+          borderRadius: "var(--radius-lg)",
+          padding: "12px 22px",
+          cursor: pending ? "wait" : "pointer",
+          color: "var(--accent-gold)",
+          fontWeight: 600,
+          fontSize: 14,
+        }}
+      >
+        {pending ? "Starting…" : "Begin expedition →"}
+      </button>
     </div>
   );
 }
