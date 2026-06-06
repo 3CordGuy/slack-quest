@@ -11,6 +11,7 @@ import { useCallback, useEffect, useState } from "react";
 import type { ExpeditionMap } from "@gantt-quest/core";
 import { ExpeditionMapView } from "./ExpeditionMapView";
 import { ExpeditionEvent, type EventOutcomePayload } from "./ExpeditionEvent";
+import { RailParticipantCard, type PawnLike } from "../PawnCallout";
 
 interface ProgressRow {
   node_id: string;
@@ -80,13 +81,16 @@ type Dispatch =
 
 export interface ExpeditionProps {
   expeditionId: number;
+  /** Current user's slack_user_id — used to highlight the player's own
+   *  pawn card in the party rail (matches CombatPage / dock behavior). */
+  selfId: string;
   /** Notify parent when a combat node spawns a quest — parent routes to combat UI. */
   onCombatSpawned: (questId: number) => void;
   /** Called when the player abandons the run (status → abandoned). */
   onExit: () => void;
 }
 
-export function Expedition({ expeditionId, onCombatSpawned, onExit }: ExpeditionProps) {
+export function Expedition({ expeditionId, selfId, onCombatSpawned, onExit }: ExpeditionProps) {
   const [view, setView] = useState<ExpeditionViewResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [pending, setPending] = useState(false);
@@ -330,7 +334,12 @@ export function Expedition({ expeditionId, onCombatSpawned, onExit }: Expedition
         </div>
       </header>
 
-      {/* Party HP bars + buffs */}
+      {/* Party rail + run buffs.
+          Reuses the same RailParticipantCard component the combat dock uses,
+          so the avatar + HP/shield/mana stack + level chip in expedition mode
+          matches what the player sees mid-fight. Previously this slot
+          rendered a one-off PartyHpBar that just showed HP/mana bars without
+          portraits or class affiliation — no visual continuity with combat. */}
       <div
         style={{
           background: "var(--bg-card-2)",
@@ -338,13 +347,36 @@ export function Expedition({ expeditionId, onCombatSpawned, onExit }: Expedition
           borderRadius: "var(--radius-2xl)",
           padding: "12px 16px",
           display: "flex",
-          gap: 16,
+          gap: 12,
           flexWrap: "wrap",
+          alignItems: "center",
         }}
       >
-        {view.party_details.map((p) => (
-          <PartyHpBar key={p.character_id} member={p} />
-        ))}
+        {view.party_details.map((p) => {
+          const pawn: PawnLike = {
+            id: p.character_id,
+            name: p.name,
+            class: p.class,
+            level: p.level,
+            hp: p.hp,
+            max_hp: p.max_hp,
+            mana: p.mana,
+            max_mana: p.max_mana,
+          };
+          const isSelf = p.character_id === selfId;
+          // Match CombatPage's palette: cyan for self, purple for party-
+          // mates. Keeps the "this one is you" cue consistent across modes.
+          const themeColor = isSelf ? "#7dd3fc" : "#a78bfa";
+          return (
+            <RailParticipantCard
+              key={p.character_id}
+              pawn={pawn}
+              side="fighter"
+              themeColor={themeColor}
+              isSelf={isSelf}
+            />
+          );
+        })}
         {view.buffs.length > 0 && (
           <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
             <span style={{ fontSize: 10, color: "var(--fg-mute)", textTransform: "uppercase", letterSpacing: 1 }}>
@@ -508,61 +540,9 @@ function buffLabel(b: { kind: string; value: number; stat?: string }): string {
   return b.kind;
 }
 
-function PartyHpBar({
-  member,
-}: {
-  member: { name: string; class: string; level: number; hp: number; max_hp: number; mana: number; max_mana: number };
-}) {
-  const hpPct = member.max_hp > 0 ? Math.max(0, Math.min(1, member.hp / member.max_hp)) : 0;
-  const manaPct = member.max_mana > 0 ? Math.max(0, Math.min(1, member.mana / member.max_mana)) : 0;
-  return (
-    <div style={{ minWidth: 180 }}>
-      <div style={{ fontSize: 12, color: "var(--fg-base)", marginBottom: 4 }}>
-        {member.name} <span style={{ color: "var(--fg-mute)" }}>Lv {member.level} {member.class}</span>
-      </div>
-      <div
-        style={{
-          height: 7,
-          background: "var(--bg-card)",
-          border: "1px solid var(--border-faint)",
-          borderRadius: 4,
-          overflow: "hidden",
-          marginBottom: 3,
-        }}
-      >
-        <div
-          style={{
-            width: `${hpPct * 100}%`,
-            height: "100%",
-            background: "var(--accent-hp, #d9534f)",
-          }}
-        />
-      </div>
-      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: "var(--fg-mute)" }}>
-        <span>HP {member.hp}/{member.max_hp}</span>
-        <span>MP {member.mana}/{member.max_mana}</span>
-      </div>
-      <div
-        style={{
-          height: 5,
-          background: "var(--bg-card)",
-          border: "1px solid var(--border-faint)",
-          borderRadius: 4,
-          overflow: "hidden",
-          marginTop: 2,
-        }}
-      >
-        <div
-          style={{
-            width: `${manaPct * 100}%`,
-            height: "100%",
-            background: "var(--accent-mana, #5bc0de)",
-          }}
-        />
-      </div>
-    </div>
-  );
-}
+// PartyHpBar removed — the expedition rail now reuses RailParticipantCard
+// from PawnCallout.tsx for visual continuity with combat. See the party
+// render block in <Expedition> above.
 
 // Modal scaffold for the active node panel (event / shrine / treasure / camp
 // outcome). Borrowed from the VictoryModal pattern in CombatPage so the
