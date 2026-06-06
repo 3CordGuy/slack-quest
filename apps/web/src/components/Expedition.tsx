@@ -306,20 +306,27 @@ export function Expedition({ expeditionId, onCombatSpawned, onExit }: Expedition
               Abandon
             </button>
           )}
-          <button
-            onClick={onExit}
-            style={{
-              background: "transparent",
-              border: "1px solid var(--border-faint)",
-              color: "var(--fg-mute)",
-              borderRadius: "var(--radius-lg)",
-              padding: "6px 12px",
-              cursor: "pointer",
-              fontSize: 12,
-            }}
-          >
-            ← Town
-          </button>
+          {/* "← Town" header button only makes sense once the expedition is
+              over — clicking it mid-run did nothing user-visible (App.tsx's
+              auto-detect re-fetched /api/expedition/recent and snapped the
+              user straight back to this screen on the next render). For an
+              in-progress run, Abandon is the only real escape. */}
+          {view.expedition.status !== "active" && (
+            <button
+              onClick={onExit}
+              style={{
+                background: "transparent",
+                border: "1px solid var(--border-faint)",
+                color: "var(--fg-mute)",
+                borderRadius: "var(--radius-lg)",
+                padding: "6px 12px",
+                cursor: "pointer",
+                fontSize: 12,
+              }}
+            >
+              ← Town
+            </button>
+          )}
         </div>
       </header>
 
