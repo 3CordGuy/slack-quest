@@ -3352,7 +3352,12 @@ export function CombatPage({
           D1, and the dashboard's /api/quest/active refetch would return the
           just-finished quest as still active, bouncing the user back to the
           Quest screen with a "Start Combat" button. */}
-      {ended && state?.status === "victory" && victoryModalReady && ui.outcome && (
+      {/* Pop the victory modal as soon as the dice have settled; the modal
+          now shows a "Gathering up your spoils…" indicator if the server is
+          still resolving outcome (AI loot flavor pass, achievements, etc.).
+          Used to wait on ui.outcome too, which made the screen sit silent
+          for several seconds and feel broken. */}
+      {ended && state?.status === "victory" && victoryModalReady && (
         <VictoryModal
           outcome={ui.outcome}
           selfId={selfId}
@@ -3370,7 +3375,10 @@ export function CombatPage({
 
       {/* Defeat / fled modal — same gating as victory: wait for both the
           dice-settle delay and the server outcome before exposing Back. */}
-      {ended && state?.status !== "victory" && defeatModalReady && ui.outcome && (
+      {/* Same fast-show treatment for defeat/fled: render once dice settle,
+          let the modal carry the "Tallying the cost…" placeholder until the
+          server finishes resolving. */}
+      {ended && state?.status !== "victory" && defeatModalReady && (
         <DefeatModal
           status={state.status as "defeat" | "fled"}
           outcome={ui.outcome}
@@ -4693,7 +4701,30 @@ function VictoryModal({
             View combat log
           </button>
         </div>
-        {!outcome && <p style={{ ...muted, textAlign: "center" }}>Resolving outcome…</p>}
+        {!outcome && (
+          <div style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: 12,
+            padding: "24px 12px",
+            color: "var(--fg-mute)",
+            fontSize: 14,
+          }}>
+            <div
+              aria-hidden
+              style={{
+                width: 22,
+                height: 22,
+                borderRadius: "50%",
+                border: "2px solid rgba(251,191,36,0.18)",
+                borderTopColor: "var(--accent-gold)",
+                animation: "spin 0.9s linear infinite",
+              }}
+            />
+            <span>Gathering up your spoils…</span>
+          </div>
+        )}
         {outcome && (
           <>
             {(outcome.is_boss || outcome.elite) && (
@@ -4783,11 +4814,17 @@ function VictoryModal({
             : inExpedition
               ? "Back to map"
               : "Back to town";
+          // Don't let the player bounce away before the server has actually
+          // applied XP/loot/etc. Disable until ui.outcome arrives (the same
+          // gate that used to hide the whole modal).
+          const waitingForResolve = outcome == null;
           return (
             <button
               onClick={inPlaceClimb && onContinueClimbing ? onContinueClimbing : onBack}
               className="btn btn-gold"
-              style={fullWidth}
+              style={{ ...fullWidth, opacity: waitingForResolve ? 0.55 : 1, cursor: waitingForResolve ? "wait" : "pointer" }}
+              disabled={waitingForResolve}
+              title={waitingForResolve ? "Waiting for spoils to settle…" : undefined}
             >
               {label}
             </button>
@@ -4855,7 +4892,30 @@ function DefeatModal({
           )}
         </div>
 
-        {!outcome && <p style={{ ...muted, textAlign: "center", color: "var(--fg-mute)" }}>Resolving outcome…</p>}
+        {!outcome && (
+          <div style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: 12,
+            padding: "24px 12px",
+            color: "var(--fg-mute)",
+            fontSize: 14,
+          }}>
+            <div
+              aria-hidden
+              style={{
+                width: 22,
+                height: 22,
+                borderRadius: "50%",
+                border: "2px solid rgba(248,113,113,0.18)",
+                borderTopColor: "var(--tone-bad)",
+                animation: "spin 0.9s linear infinite",
+              }}
+            />
+            <span>{fled ? "Counting your blessings…" : "Tallying the cost…"}</span>
+          </div>
+        )}
         {outcome && (
           <div style={{ display: "grid", gap: 10, marginBottom: 16 }}>
             {outcome.rewards.map((r) => {
@@ -4909,7 +4969,15 @@ function DefeatModal({
         <button
           onClick={onBack}
           className={fled ? "btn btn-gold" : "btn btn-ghost"}
-          style={{ marginTop: 8, width: "100%", justifyContent: "center" }}
+          style={{
+            marginTop: 8,
+            width: "100%",
+            justifyContent: "center",
+            opacity: outcome == null ? 0.55 : 1,
+            cursor: outcome == null ? "wait" : "pointer",
+          }}
+          disabled={outcome == null}
+          title={outcome == null ? "Waiting for the dust to settle…" : undefined}
         >
           {inExpedition ? "Back to map" : "Back to town"}
         </button>
