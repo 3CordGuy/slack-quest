@@ -6915,6 +6915,40 @@ async function applyEventEffects(
   return summary;
 }
 
+// Fan an event's effects across every party member. Scalar rewards (gold /
+// HP / mana / XP / status) apply per-character — picking a node should feel
+// rewarding for the whole party, not just the picker. The item grant is an
+// exception: there's exactly one of each named catalog item and it goes to
+// the picker (the player who engaged the node). This is what fixes the
+// "shrines and events feel meaningless to anyone but the picker in a
+// multi-party run" report — previously every effect path silently targeted
+// session.slack_user_id only. Returns a map of userId → per-character
+// applied summary so the response can show what landed where.
+async function applyEventEffectsToParty(
+  env: Env,
+  partyIds: readonly string[],
+  pickerId: string,
+  effects: {
+    gold?: number;
+    hp?: number;
+    mana?: number;
+    xp?: number;
+    item?: string;
+    effect?: string;
+  } | undefined,
+): Promise<Record<string, Awaited<ReturnType<typeof applyEventEffects>>>> {
+  const out: Record<string, Awaited<ReturnType<typeof applyEventEffects>>> = {};
+  if (!effects) return out;
+  // Item only flows to the picker; everyone else gets the scalar bundle.
+  const scalarEffects = { ...effects };
+  delete scalarEffects.item;
+  for (const userId of partyIds) {
+    const isPicker = userId === pickerId;
+    out[userId] = await applyEventEffects(env, userId, isPicker ? effects : scalarEffects);
+  }
+  return out;
+}
+
 // Catalog lookup helper for event-granted items. The catalog has a small
 // number of named items; events reference them by display name (with the
 // emoji prefix preserved for player recognition). Returns null on miss.
@@ -7485,18 +7519,26 @@ app.post("/api/expedition/:id/resolve-event", async (c) => {
   })();
   const outcome = sampleOutcome(outcomeRng, branch);
 
-  // Apply effects to the picker.
-  const applied = await applyEventEffects(c.env, session.slack_user_id, outcome.effects);
+  // Apply effects to every party member — scalar rewards (gold/hp/mana/xp/
+  // status) hit each character; only the item (single artifact) flows to
+  // the picker.
+  const appliedByMember = await applyEventEffectsToParty(
+    c.env,
+    view.party,
+    session.slack_user_id,
+    outcome.effects,
+  );
 
-  // After effects, also sync the picker's HP/mana back into expedition_party
-  // so the next combat node picks up the new values.
-  const character = await getCharacter(c.env.DB, session.slack_user_id);
-  if (character) {
-    await setExpeditionPartyHpMana(c.env.DB, expeditionId, session.slack_user_id, {
-      current_hp: character.hp,
-      current_mana: character.mana,
-      max_hp: character.max_hp,
-      max_mana: character.max_mana,
+  // Sync every party member's HP/mana back into expedition_party so the
+  // next combat node seeds carry the new values (not just the picker's).
+  for (const memberId of view.party) {
+    const member = await getCharacter(c.env.DB, memberId);
+    if (!member) continue;
+    await setExpeditionPartyHpMana(c.env.DB, expeditionId, memberId, {
+      current_hp: member.hp,
+      current_mana: member.mana,
+      max_hp: member.max_hp,
+      max_mana: member.max_mana,
     });
   }
 
@@ -7506,7 +7548,11 @@ app.post("/api/expedition/:id/resolve-event", async (c) => {
     branch_id: branchId,
     outcome_text: outcome.text,
     effects: outcome.effects ?? null,
-    applied,
+    // `applied` was historically a single per-picker summary. Keep it for
+    // back-compat (picker's row) and add `applied_by_member` with the full
+    // party breakdown so the UI can show "+5 gold (everyone)".
+    applied: appliedByMember[session.slack_user_id] ?? null,
+    applied_by_member: appliedByMember,
     resolved_by: session.slack_user_id,
   };
   await recordExpeditionNodeProgress(c.env.DB, expeditionId, nodeId, progressRow);
@@ -7559,20 +7605,26 @@ app.post("/api/expedition/:id/shrine/choose", async (c) => {
 
   // Apply the buff. For max_hp and stat we append to the buffs list and let
   // the next combat seed read the updated effective max. For mana_refill we
-  // bump the picker's mana right now and don't append anything (it's a
-  // one-shot).
+  // bump every party member's mana right now and don't append anything
+  // (it's a one-shot).
+  //
+  // All three buff kinds now apply to the whole party — previously
+  // mana_refill and stat targeted only the picker, which made shrines feel
+  // useless to anyone but whoever tapped the node. max_hp already iterated
+  // the party correctly.
   let buffApplied: ExpeditionBuff | null = null;
   if (choice.buff.kind === "mana_refill") {
-    const character = await getCharacter(c.env.DB, session.slack_user_id);
-    if (character) {
+    for (const memberId of view.party) {
+      const member = await getCharacter(c.env.DB, memberId);
+      if (!member) continue;
       await c.env.DB
         .prepare("UPDATE characters SET mana = max_mana WHERE slack_user_id = ?")
-        .bind(session.slack_user_id).run();
-      await setExpeditionPartyHpMana(c.env.DB, expeditionId, session.slack_user_id, {
-        current_hp: character.hp,
-        current_mana: character.max_mana,
-        max_hp: character.max_hp,
-        max_mana: character.max_mana,
+        .bind(memberId).run();
+      await setExpeditionPartyHpMana(c.env.DB, expeditionId, memberId, {
+        current_hp: member.hp,
+        current_mana: member.max_mana,
+        max_hp: member.max_hp,
+        max_mana: member.max_mana,
       });
     }
     buffApplied = {
@@ -7612,20 +7664,25 @@ app.post("/api/expedition/:id/shrine/choose", async (c) => {
       applied_at: Date.now(),
     };
     await appendExpeditionBuff(c.env.DB, expeditionId, buffApplied);
-    // Persist the +1 to the picker's character row immediately. Stat buffs
-    // are a small permanent-for-the-run change to the live character; they
-    // get rolled back on expedition end via the recorded buff history (not
-    // implemented in v1 — buffs persist to the character forever, which
-    // matches existing "stat-bumping events" behavior elsewhere).
+    // Persist the +N to every party member's character row immediately. Stat
+    // buffs are a small permanent-for-the-run change to the live character;
+    // they get rolled back on expedition end via the recorded buff history
+    // (not implemented in v1 — buffs persist to the character forever, which
+    // matches existing "stat-bumping events" behavior elsewhere). Applying
+    // to all party members keeps the shrine's value uniform regardless of
+    // who tapped the node.
     const stat = (choice.buff.stat ?? "str") as string;
     // SQL column mapping — `int` is stored as `int_stat` since `int` is a
-    // SQLite keyword. The rest map 1:1 with their stat name. We cast through
-    // string above because today the SHRINE_CHOICES only references "str";
-    // future shrine choices may use any primary stat without re-narrowing.
+    // SQLite keyword. The rest map 1:1 with their stat name.
     const col = stat === "int" ? "int_stat" : stat;
-    await c.env.DB
-      .prepare(`UPDATE characters SET ${col} = ${col} + ? WHERE slack_user_id = ?`)
-      .bind(choice.buff.value, session.slack_user_id).run();
+    // Static col allow-list keeps the dynamic SQL safe.
+    if (["str", "int_stat", "vit", "agi", "dex"].includes(col)) {
+      for (const memberId of view.party) {
+        await c.env.DB
+          .prepare(`UPDATE characters SET ${col} = ${col} + ? WHERE slack_user_id = ?`)
+          .bind(choice.buff.value, memberId).run();
+      }
+    }
   }
 
   const outcome = {
