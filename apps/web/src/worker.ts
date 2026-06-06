@@ -27,6 +27,8 @@ import {
   getOrScheduleBattlefieldArt,
   getOrScheduleExpeditionHeroArt,
   EXPEDITION_HERO_VARIANTS,
+  getOrScheduleExpeditionMapArt,
+  pickExpeditionMapVariant,
   generateCharacterArtNow,
   getOrScheduleCharacterArt,
   type ViewArtKey,
@@ -7205,6 +7207,18 @@ app.get("/api/expedition/:id", async (c) => {
     heroVariant,
   );
 
+  // Deterministic parchment-map background — variant picked from seed so the
+  // same expedition always renders against the same scenery. Cache miss
+  // schedules a flux generation via waitUntil; first load returns null and
+  // the client falls back to the pure-CSS parchment from PR #221.
+  const mapVariant = pickExpeditionMapVariant(view.row.seed);
+  const art_url = await getOrScheduleExpeditionMapArt(
+    c.env.AI,
+    artTarget(c.env),
+    c.executionCtx,
+    mapVariant,
+  );
+
   return c.json({
     expedition: {
       id: view.row.id,
@@ -7215,6 +7229,8 @@ app.get("/api/expedition/:id", async (c) => {
       completed_at: view.row.completed_at,
     },
     map: view.map,
+    map_variant: mapVariant,
+    art_url,
     progress: view.progress.map((p) => ({
       node_id: p.node_id,
       resolved_at: p.resolved_at,

@@ -30,6 +30,8 @@ interface ExpeditionViewResponse {
     completed_at: number | null;
   };
   map: ExpeditionMap;
+  /** R2 URL of the deterministic parchment art for this run, or null on cache miss. */
+  art_url?: string | null;
   progress: ProgressRow[];
   party: string[];
   party_details: Array<{
@@ -537,6 +539,7 @@ export function Expedition({ expeditionId, selfId, onCombatSpawned, onExit }: Ex
         currentNode={view.expedition.current_node}
         resolvedNodeIds={resolvedNodeIds}
         availablePickIds={availablePickIds}
+        artUrl={view.art_url ?? null}
         onPick={(id) => void handlePick(id)}
       />
 

@@ -796,6 +796,83 @@ export async function generateBattlefieldArt(
   return generateAndCacheArt(ai, art, key, prompt, `battlefield:${scene}`);
 }
 
+// Expedition map parchment backgrounds. Five hand-tuned variants picked
+// deterministically per expedition seed. Each variant renders the same image
+// every time and is cached in R2 forever — total R2 footprint is ~3MB
+// (5 × ~600KB). Bump EXPEDITION_MAP_ART_VERSION to invalidate the cache.
+const EXPEDITION_MAP_ART_VERSION = "v1";
+
+export const EXPEDITION_MAP_VARIANTS = [
+  "misty-mountains",
+  "river-valley",
+  "deep-forest",
+  "wraith-fens",
+  "rolling-hills",
+] as const;
+
+export type ExpeditionMapVariant = (typeof EXPEDITION_MAP_VARIANTS)[number];
+
+// Each prompt asks flux for a top-down old-Tolkien-style hand-drawn map
+// background. We bias HARD against text/labels/borders/characters in the
+// negatives because flux-1-schnell's first instinct on "old map" is to add
+// scrawled place names. Variant clauses vary terrain only — style anchor
+// keeps the parchment + sepia palette consistent across all five.
+const EXPEDITION_MAP_STYLE_ANCHOR =
+  "An old hand-drawn Tolkien-style adventure map on aged sepia parchment, top-down cartographic view. STRICT CONSTRAINTS: NO TEXT of any kind, NO LETTERS, NO NUMBERS, NO PLACE NAMES, NO LABELS, NO LEGEND, NO COMPASS ROSE, NO FRAME, NO BORDER, NO TORN-PAPER PANEL on top of a background — the parchment IS the entire image edge-to-edge. NO CHARACTERS, NO PEOPLE, NO ANIMALS, NO BUILDINGS, NO TOWERS, NO CASTLES, NO ROADS, NO DASHED LINES, NO PATH MARKERS, NO X-MARKS. Only natural landscape features rendered as soft sepia ink line-work with light watercolor wash. Even distribution across the whole image — no single focal point, no center-of-attention vignette. Subtle parchment grain and faint torn-paper texture at the four edges. Muted warm beige, sepia brown, soft umber palette. Hand-drawn quill-and-ink feel, gentle painterly wash, slightly faded as if centuries old.";
+
+const EXPEDITION_MAP_NEGATIVES =
+  "no text, no letters, no numbers, no labels, no place names, no legend, no compass rose, no scale bar, no frame, no border, no vignette, no characters, no people, no creatures, no animals, no buildings, no towers, no castles, no houses, no roads, no paths, no dashed lines, no X marks, no UI elements, no logos, no signatures";
+
+const EXPEDITION_MAP_PROMPTS: Record<ExpeditionMapVariant, string> = {
+  "misty-mountains":
+    "Top-down map view of a rugged mountain range running across the parchment — many overlapping ridge lines drawn in soft sepia hatching, scattered jagged peaks with faint snowcap wash, a few highland valleys threading between the ridges, drifts of pale mist suggested by translucent watercolor patches. Mountains spread evenly across the whole composition.",
+  "river-valley":
+    "Top-down map view of a meandering river winding gently across the parchment, with smaller tributaries branching off in soft sepia ink. Patches of marshland and reed-bed wash along the banks, scattered low woodland clumps drawn as tiny tree-stipple, gentle contour lines suggesting a wide river valley. Even composition — the river system spans the whole image edge-to-edge.",
+  "deep-forest":
+    "Top-down map view of a vast ancient forest covering the entire parchment — dense stipple of tiny hand-drawn tree symbols in soft sepia, varied with darker thickets and a few small clearings of paler wash. Faint suggestions of game trails as broken ink, scattered moss-patch shading. The forest fills every corner of the composition with no single focal point.",
+  "wraith-fens":
+    "Top-down map view of a brooding fen and marshland — soft sepia wash for standing pools of water, scattered tussocks of bog grass drawn as quick ink dashes, gnarled twisted trees rendered as spidery sepia line-work, drifts of pale fog suggested by translucent wash. A few stagnant winding waterways thread through. Even, eerie composition across the whole image.",
+  "rolling-hills":
+    "Top-down map view of gentle rolling hill country — soft sepia contour lines suggesting low hills and shallow vales drifting across the parchment, scattered small copses of trees as light stipple, patches of meadow wash, a few wandering stream lines in pale ink. Open, peaceful composition spread evenly across the whole image.",
+};
+
+// Picks a variant deterministically from an expedition seed. Hash the seed +
+// modulo variant count. Same seed → same variant forever.
+export function pickExpeditionMapVariant(seed: string): ExpeditionMapVariant {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < seed.length; i++) {
+    h ^= seed.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  const idx = (h >>> 0) % EXPEDITION_MAP_VARIANTS.length;
+  return EXPEDITION_MAP_VARIANTS[idx];
+}
+
+// Returns the cached expedition-map URL if present, else null AND schedules
+// a background generation via ctx.waitUntil. Same shape as
+// getOrScheduleBattlefieldArt — fail-soft, no surface errors, caller falls
+// back to the pure-CSS parchment when null.
+export async function getOrScheduleExpeditionMapArt(
+  ai: Ai,
+  art: ArtTarget,
+  ctx: { waitUntil: (p: Promise<unknown>) => void },
+  variant: ExpeditionMapVariant,
+): Promise<string | null> {
+  if (art.disabled) return null;
+  const key = `art/expedition-map/${EXPEDITION_MAP_ART_VERSION}/${variant}.png`;
+  const publicUrl = `${art.baseUrl}/img/${key}`;
+  try {
+    const existing = await art.bucket.head(key);
+    if (existing) return publicUrl;
+  } catch (err) {
+    console.warn("expedition-map-art:head-error", { variant, err: err instanceof Error ? err.message : String(err) });
+  }
+  const subject = EXPEDITION_MAP_PROMPTS[variant];
+  const prompt = `${subject} ${EXPEDITION_MAP_STYLE_ANCHOR} ${EXPEDITION_MAP_NEGATIVES}`;
+  ctx.waitUntil(generateAndCacheArt(ai, art, key, prompt, `expedition-map:${variant}`));
+  return null;
+}
+
 // Returns the cached battlefield URL if present, else null AND schedules a
 // background generation via ctx.waitUntil so the next request hits cache.
 // Mirrors getOrScheduleViewArt — the hex grid renders with no background
