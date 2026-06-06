@@ -15,6 +15,7 @@
 // avoid empty rows.
 
 import type { ExpeditionMap, ExpeditionNode, NodeKind } from "@gantt-quest/core";
+import { useIsMobile } from "../CombatShared";
 
 export interface ExpeditionMapViewProps {
   map: ExpeditionMap;
@@ -75,26 +76,40 @@ export function ExpeditionMapView({
   availablePickIds,
   onPick,
 }: ExpeditionMapViewProps) {
-  // Position each node. Depth is the X axis, lane is the Y axis. START
-  // sits at depth=-1 (rendered as column 0) and BOSS at depth=map.depth.
-  // Centerline lane (laneCount/2) sits in the middle of the canvas.
+  // Desktop: depth on X (start left, boss right), lanes stacked vertically.
+  // Mobile portrait: rotate 90° — depth on Y (start top, boss bottom), lanes
+  // across the X axis. A 3-4-lane × 15-depth graph fits a phone column far
+  // better that way, and matches how StS itself renders on phones. Trigger
+  // off the same useIsMobile hook the rest of the app already uses.
+  const vertical = useIsMobile(640);
   const laneCount = map.laneCount;
   const cols = map.depth + 2; // start + intermediate depths + boss
-  const width = PAD_X * 2 + cols * COL_W;
-  const height = PAD_Y * 2 + laneCount * ROW_H;
+  // Per-axis spacing — depth axis gets COL_W, lane axis gets ROW_H. In
+  // vertical mode those still apply, just to flipped screen axes.
+  const depthExtent = PAD_X * 2 + cols * COL_W;
+  const laneExtent = PAD_Y * 2 + laneCount * ROW_H;
+  const width = vertical ? laneExtent : depthExtent;
+  const height = vertical ? depthExtent : laneExtent;
 
   function nodePos(node: ExpeditionNode): { x: number; y: number } {
+    // Compute as if horizontal first — `depthAxis` is the long axis, `laneAxis`
+    // is the short one. At the end, swap onto x/y based on orientation.
+    let depthAxis: number;
+    let laneAxis: number;
     if (node.kind === "start") {
-      // Vertically centered at the left.
-      return { x: PAD_X + COL_W / 2, y: PAD_Y + (laneCount * ROW_H) / 2 };
+      depthAxis = PAD_X + COL_W / 2;
+      laneAxis = PAD_Y + (laneCount * ROW_H) / 2;
+    } else if (node.kind === "boss") {
+      depthAxis = PAD_X + (cols - 0.5) * COL_W;
+      laneAxis = PAD_Y + (laneCount * ROW_H) / 2;
+    } else {
+      const col = node.depth + 1; // shift to leave column 0 for start
+      depthAxis = PAD_X + (col + 0.5) * COL_W;
+      laneAxis = PAD_Y + (node.lane + 0.5) * ROW_H;
     }
-    if (node.kind === "boss") {
-      return { x: PAD_X + (cols - 0.5) * COL_W, y: PAD_Y + (laneCount * ROW_H) / 2 };
-    }
-    const col = node.depth + 1; // shift to leave column 0 for start
-    const x = PAD_X + (col + 0.5) * COL_W;
-    const y = PAD_Y + (node.lane + 0.5) * ROW_H;
-    return { x, y };
+    return vertical
+      ? { x: laneAxis, y: depthAxis }
+      : { x: depthAxis, y: laneAxis };
   }
 
   // Pre-position all nodes once.

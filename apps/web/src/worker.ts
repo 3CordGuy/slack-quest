@@ -1408,7 +1408,14 @@ app.post("/api/character/loadout", async (c) => {
     active: body.active,
     passive: body.passive,
   });
-  if (!result.ok) return c.json({ error: result.error }, 400);
+  if (!result.ok) {
+    // Surface wrong_slot_count diagnostics so the UI/log can show which array
+    // was wrong instead of a bare "wrong_slot_count". Other errors stay flat.
+    if (result.error === "wrong_slot_count") {
+      return c.json({ error: result.error, details: result.details }, 400);
+    }
+    return c.json({ error: result.error }, 400);
+  }
   return c.json({ ok: true, character: result.character });
 });
 
