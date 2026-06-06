@@ -2373,6 +2373,9 @@ function drawGroundEffects(
 ) {
   const effects = state.ground_effects;
   if (!effects || effects.length === 0) return;
+  // Tile ambient is sized smaller than the pawn version so it sits inside the
+  // hex without crowding a standing pawn. Tuned at ~55% of hex radius.
+  const ambientRadius = hexSize * 0.55;
   for (const ge of effects) {
     const palette = GROUND_PALETTE[ge.kind] ?? GROUND_PALETTE.fire;
     for (const h of ge.hexes) {
@@ -2391,6 +2394,18 @@ function drawGroundEffects(
       drawHex(ctx, x, y, hexSize * 0.92, "rgba(0,0,0,0)", palette.stroke, 1.5);
       ctx.setLineDash([]);
       ctx.restore();
+      // Ambient per-frame FX — same helpers the pawn status overlay uses so a
+      // fire-wall tile and a burning pawn share visual language. Per-hex seed
+      // keeps adjacent tiles in a wall/ring from embering in lockstep.
+      const seed = Math.round(x) * 73856093 ^ Math.round(y) * 19349663 ^ ge.id.length;
+      switch (ge.kind) {
+        case "fire":        drawBurningEmbers(ctx, x, y, ambientRadius, now, seed); break;
+        case "frost":       drawFrostGlints(ctx, x, y, ambientRadius, now, seed); break;
+        case "brambles":    drawPoisonBubbles(ctx, x, y, ambientRadius, now, seed); break;
+        case "consecrated": drawEmpoweredAura(ctx, x, y, ambientRadius, now, seed); break;
+        case "rune":        drawHexedWisps(ctx, x, y, ambientRadius, now, seed); break;
+        case "caltrops":    /* trap stays subtle — tile color + dashed stroke only */ break;
+      }
     }
   }
 }
