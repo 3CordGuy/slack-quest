@@ -384,60 +384,75 @@ export function Expedition({ expeditionId, onCombatSpawned, onExit }: Expedition
         </div>
       )}
 
-      {/* Active panel — event / shrine / treasure / camp */}
-      {activePanel?.kind === "event" && activePanel.event && (
-        <ExpeditionEvent
-          nodeId={activePanel.node_id}
-          event={activePanel.event}
-          resolved={eventOutcome}
-          onPickBranch={handleEventBranch}
-          onContinue={() => {
-            setActivePanel(null);
-            setEventOutcome(null);
-          }}
-        />
-      )}
-      {activePanel?.kind === "shrine" && !shrineOutcome && (
-        <ShrinePanel choices={activePanel.choices} pending={pending} onChoose={handleShrineChoose} />
-      )}
-      {shrineOutcome && (
-        <CompletionPanel
-          title="Blessing received"
-          body="The shrine's gift settles over the party."
-          onContinue={() => {
-            setActivePanel(null);
-            setShrineOutcome(null);
-          }}
-        />
-      )}
-      {activePanel?.kind === "treasure" && !treasureOutcome && (
-        <TreasurePanel
-          offer={activePanel.offer}
-          pending={pending}
-          onChoose={handleTreasureChoose}
-        />
-      )}
-      {treasureOutcome && (
-        <CompletionPanel
-          title={treasureOutcome.accepted ? "You picked up the loot" : "You left it behind"}
-          body={
-            treasureOutcome.accepted && treasureOutcome.item
-              ? `${treasureOutcome.item.name} — power ${treasureOutcome.item.power}, ${treasureOutcome.item.rarity}.`
-              : "Sometimes the cache stays closed."
-          }
-          onContinue={() => {
-            setActivePanel(null);
-            setTreasureOutcome(null);
-          }}
-        />
-      )}
-      {campOutcome?.kind === "camp" && (
-        <CompletionPanel
-          title="Camped for the night"
-          body={`The party rests. HP and mana refilled. +${campOutcome.outcome.gold_awarded} gold from foraging.`}
-          onContinue={() => setCampOutcome(null)}
-        />
-      )}
+      {/* Active node interaction — event / shrine / treasure / camp.
+          Wrapped in a fixed-position modal so it's always visible regardless
+          of where the player has the map scrolled. Previously these
+          rendered inline below the map, which on a tall map (or after a
+          vertical-mode scroll on mobile) could leave the panel completely
+          off-screen — the player tapped a node and saw no UI change, looked
+          like the game broke. The modal forces focus on the interaction. */}
+      <ExpeditionPanelModal
+        open={
+          activePanel != null
+          || shrineOutcome != null
+          || treasureOutcome != null
+          || campOutcome != null
+        }
+      >
+        {activePanel?.kind === "event" && activePanel.event && (
+          <ExpeditionEvent
+            nodeId={activePanel.node_id}
+            event={activePanel.event}
+            resolved={eventOutcome}
+            onPickBranch={handleEventBranch}
+            onContinue={() => {
+              setActivePanel(null);
+              setEventOutcome(null);
+            }}
+          />
+        )}
+        {activePanel?.kind === "shrine" && !shrineOutcome && (
+          <ShrinePanel choices={activePanel.choices} pending={pending} onChoose={handleShrineChoose} />
+        )}
+        {shrineOutcome && (
+          <CompletionPanel
+            title="Blessing received"
+            body="The shrine's gift settles over the party."
+            onContinue={() => {
+              setActivePanel(null);
+              setShrineOutcome(null);
+            }}
+          />
+        )}
+        {activePanel?.kind === "treasure" && !treasureOutcome && (
+          <TreasurePanel
+            offer={activePanel.offer}
+            pending={pending}
+            onChoose={handleTreasureChoose}
+          />
+        )}
+        {treasureOutcome && (
+          <CompletionPanel
+            title={treasureOutcome.accepted ? "You picked up the loot" : "You left it behind"}
+            body={
+              treasureOutcome.accepted && treasureOutcome.item
+                ? `${treasureOutcome.item.name} — power ${treasureOutcome.item.power}, ${treasureOutcome.item.rarity}.`
+                : "Sometimes the cache stays closed."
+            }
+            onContinue={() => {
+              setActivePanel(null);
+              setTreasureOutcome(null);
+            }}
+          />
+        )}
+        {campOutcome?.kind === "camp" && (
+          <CompletionPanel
+            title="Camped for the night"
+            body={`The party rests. HP and mana refilled. +${campOutcome.outcome.gold_awarded} gold from foraging.`}
+            onContinue={() => setCampOutcome(null)}
+          />
+        )}
+      </ExpeditionPanelModal>
 
       {/* Map view always visible at bottom (or top if no panel). */}
       <ExpeditionMapView
@@ -544,6 +559,51 @@ function PartyHpBar({
             background: "var(--accent-mana, #5bc0de)",
           }}
         />
+      </div>
+    </div>
+  );
+}
+
+// Modal scaffold for the active node panel (event / shrine / treasure / camp
+// outcome). Borrowed from the VictoryModal pattern in CombatPage so the
+// player gets a centered card that owns the viewport — no risk of the
+// panel rendering off-screen below a scrolled map. The card itself
+// scrolls if its content is taller than the viewport, important for the
+// longer event payloads. There's no scrim-tap-to-dismiss because each
+// inner panel owns its own "continue" / "pick branch" affordance — every
+// path through these screens has a deliberate exit, so dismiss-by-accident
+// would only cause confusion.
+function ExpeditionPanelModal({
+  open,
+  children,
+}: {
+  open: boolean;
+  children: React.ReactNode;
+}) {
+  if (!open) return null;
+  return (
+    <div
+      style={{
+        position: "fixed",
+        inset: 0,
+        background: "rgba(0,0,0,0.78)",
+        display: "flex",
+        alignItems: "flex-start",
+        justifyContent: "center",
+        zIndex: 100,
+        padding: 16,
+        overflowY: "auto",
+      }}
+    >
+      <div
+        style={{
+          width: "100%",
+          maxWidth: 560,
+          margin: "24px auto auto",
+          boxSizing: "border-box",
+        }}
+      >
+        {children}
       </div>
     </div>
   );
