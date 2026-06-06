@@ -2352,13 +2352,16 @@ function drawLootTiles(
 // 1.5px dashed stroke so the effect reads as "marked terrain" without
 // overpowering the pawn art. The glyph is a single emoji-style character
 // drawn dimmer at the hex centre. See docs/ground-effects.md.
-const GROUND_PALETTE: Record<string, { fill: string; stroke: string; glyph: string }> = {
-  fire:         { fill: "rgba(239,68,68,0.32)",  stroke: "#f97316", glyph: "🔥" },
-  brambles:     { fill: "rgba(132,204,22,0.30)", stroke: "#65a30d", glyph: "🌿" },
-  frost:        { fill: "rgba(125,211,252,0.35)",stroke: "#38bdf8", glyph: "❄" },
-  caltrops:     { fill: "rgba(161,161,170,0.32)",stroke: "#a1a1aa", glyph: "✦" },
-  consecrated:  { fill: "rgba(250,204,21,0.28)", stroke: "#facc15", glyph: "✦" },
-  rune:         { fill: "rgba(168,85,247,0.32)", stroke: "#a855f7", glyph: "✶" },
+// Tile colors only — the per-kind identity now comes from the particle bursts
+// (see particleKindForGroundKind), not a center glyph. Keeps the tile clean so
+// a standing pawn isn't fighting an emoji underneath it.
+const GROUND_PALETTE: Record<string, { fill: string; stroke: string }> = {
+  fire:         { fill: "rgba(239,68,68,0.32)",  stroke: "#f97316" },
+  brambles:     { fill: "rgba(132,204,22,0.30)", stroke: "#65a30d" },
+  frost:        { fill: "rgba(125,211,252,0.35)",stroke: "#38bdf8" },
+  caltrops:     { fill: "rgba(161,161,170,0.32)",stroke: "#a1a1aa" },
+  consecrated:  { fill: "rgba(250,204,21,0.28)", stroke: "#facc15" },
+  rune:         { fill: "rgba(168,85,247,0.32)", stroke: "#a855f7" },
 };
 
 function drawGroundEffects(
@@ -2387,13 +2390,6 @@ function drawGroundEffects(
       ctx.lineDashOffset = -now / 90;
       drawHex(ctx, x, y, hexSize * 0.92, "rgba(0,0,0,0)", palette.stroke, 1.5);
       ctx.setLineDash([]);
-      // Glyph at hex center, dimmed so a standing pawn covers it cleanly.
-      ctx.globalAlpha = 0.85;
-      ctx.fillStyle = palette.stroke;
-      ctx.font = `${Math.round(hexSize * 0.5)}px system-ui, sans-serif`;
-      ctx.textAlign = "center";
-      ctx.textBaseline = "middle";
-      ctx.fillText(palette.glyph, x, y);
       ctx.restore();
     }
   }
