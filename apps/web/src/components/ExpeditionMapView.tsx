@@ -44,7 +44,7 @@ const PAD_Y = 44;
 const KIND_ICON: Record<NodeKind, string> = {
   start: "footprint",
   combat: "broadsword",
-  elite: "spinning-sword",
+  elite: "brutal-helm",
   event: "scroll-quill",
   shrine: "aura",
   camp: "camping-tent",
@@ -140,7 +140,18 @@ export function ExpeditionMapView({
       <svg
         viewBox={`0 0 ${width} ${height}`}
         preserveAspectRatio="xMidYMid meet"
-        style={{ display: "block", width: "100%", height: "auto", maxWidth: width }}
+        style={{
+          display: "block",
+          width: "100%",
+          height: "auto",
+          maxWidth: width,
+          // Center the graph inside the parchment card on mobile (where
+          // the vertical-rotated SVG is narrower than the screen width)
+          // and on any breakpoint where the card grows past the SVG's
+          // intrinsic width. Without margin auto it hugged the left edge.
+          marginLeft: "auto",
+          marginRight: "auto",
+        }}
       >
         <defs>
           {/* SVG noise filter applied to a rect across the full viewBox to
