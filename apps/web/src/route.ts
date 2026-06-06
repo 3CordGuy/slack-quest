@@ -14,6 +14,7 @@ const SECTION_TO_SLUG: Record<TownSection, string> = {
   apothecary: "apothecary",
   hunt: "hunt",
   camp: "camp",
+  leaderboards: "leaderboards",
 };
 
 const SLUG_TO_SECTION: Record<string, TownSection> = Object.fromEntries(

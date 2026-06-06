@@ -62,6 +62,7 @@ import { InventoryCard, InventoryFullScreen, DollSlotCell, DroppablePackPanel, D
 import { StartQuestCard, JoinableQuestCard, TownNav, JobPostingCard, StepPicker, HuntSection, JobBoardSection, DistrictTile, TownMap, WardMap } from "./components/Town";
 import { Camp } from "./components/Camp";
 import { Expedition } from "./components/Expedition";
+import { ExpeditionLeaderboards, ExpeditionLeaderboardsTile } from "./components/ExpeditionLeaderboards";
 import { BrewPanel, ForgePanel } from "./components/CampCrafting";
 import { PubErrands } from "./components/PubErrands";
 import { PubCooking } from "./components/PubCooking";
@@ -1440,6 +1441,7 @@ export function App() {
               {state.leaderboard.length > 0 && (
                 <QuestLeaderboardCard entries={state.leaderboard} selfId={state.me.slack_user_id} />
               )}
+              <ExpeditionLeaderboardsTile onOpen={() => setTownSection("leaderboards")} />
             </div>
           </div>
         </>
@@ -1729,6 +1731,21 @@ export function App() {
             />
           )}
         </LocationModalWide>
+      );
+    }
+    if (modalLoc === "leaderboards") {
+      return (
+        <LocationModal
+          icon="trophy"
+          title="Leaderboards"
+          subtitle="Expedition standings"
+          gold={gold}
+          art={state.townArt?.overview_art_url ?? null}
+          onClose={close}
+          maxWidth={820}
+        >
+          <ExpeditionLeaderboards selfId={state.me.slack_user_id} />
+        </LocationModal>
       );
     }
     return null;
