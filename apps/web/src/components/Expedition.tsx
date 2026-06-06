@@ -12,6 +12,7 @@ import type { ExpeditionMap } from "@gantt-quest/core";
 import { ExpeditionMapView } from "./ExpeditionMapView";
 import { ExpeditionEvent, type EventOutcomePayload } from "./ExpeditionEvent";
 import { RailParticipantCard, type PawnLike } from "../PawnCallout";
+import { CharacterSheetModal, type CharacterSheetSubject } from "../CharacterSheetModal";
 
 interface ProgressRow {
   node_id: string;
@@ -100,6 +101,10 @@ export function Expedition({ expeditionId, selfId, onCombatSpawned, onExit }: Ex
   const [treasureOutcome, setTreasureOutcome] = useState<{ accepted: boolean; item?: { name: string; rarity: string; power: number } } | null>(null);
   const [shrineOutcome, setShrineOutcome] = useState<{ choice_id: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Click any party rail card to open the full CharacterSheetModal — same
+  // interaction CombatPage exposes on its dock pawns so a player can audit
+  // stats, equipped abilities, etc. without leaving the expedition view.
+  const [sheetSubject, setSheetSubject] = useState<CharacterSheetSubject | null>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -374,6 +379,7 @@ export function Expedition({ expeditionId, selfId, onCombatSpawned, onExit }: Ex
               side="fighter"
               themeColor={themeColor}
               isSelf={isSelf}
+              onClick={() => setSheetSubject({ pawn, side: "fighter", themeColor, isSelf })}
             />
           );
         })}
@@ -527,6 +533,10 @@ export function Expedition({ expeditionId, selfId, onCombatSpawned, onExit }: Ex
           </button>
         </div>
       )}
+
+      {/* Character sheet — rendered as a sibling so its fixed-position
+          overlay isn't clipped by any ancestor with overflow:hidden. */}
+      <CharacterSheetModal subject={sheetSubject} onClose={() => setSheetSubject(null)} />
     </div>
   );
 }
