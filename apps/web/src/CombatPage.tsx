@@ -7,6 +7,7 @@ import type { Item } from "./types";
 
 import { Avatar, Icon } from "./icons";
 import { CombatBackdropLayer, pickScene, viewArtKeyForScene } from "./combatBackgrounds";
+import { RARITY_COLOR } from "./constants";
 import { CombatParticles, CombatParticlesProvider, triggerBurst, type BurstKind } from "./CombatParticles";
 import {
   CombatHexGrid,
@@ -4969,11 +4970,11 @@ const LOOT_ICON: Record<string, string> = {
   scroll: "scroll-unfurled",
 };
 
-const RARITY_COLOR: Record<string, string> = {
-  common: "#9aa0a6",
-  uncommon: "#22c55e",
-  rare: "#a855f7",
-};
+// RARITY_COLOR is the canonical 5-rarity map from constants.ts — see
+// import at top of file. Previously CombatPage had a local 3-rarity map
+// that mistakenly assigned rare → purple (the canonical epic color) and
+// silently fell back to grey for epic/legendary, so rare loot looked
+// "epic" in the summary modal while epics and legendaries lost their tint.
 
 // Strip the boring "Weapon (power N)" / "Armor (power N)" / "Item (power N)"
 // placeholders that loot drops used when AI flavor hadn't been applied.
@@ -5010,6 +5011,13 @@ function LootCard({ item, index }: { item: LootDrop; index: number }) {
         borderLeft: `4px solid ${color}`,
         borderRadius: 8,
         padding: "10px 14px",
+        // The grid cell is `1fr` wide but a long item name with whiteSpace:
+        // nowrap (used to keep the title on one line + ellipsis) makes the
+        // flex container want to grow past its cell width. minWidth: 0 +
+        // boxSizing lets the card shrink to its column on narrow screens
+        // instead of spilling past the modal's right edge.
+        minWidth: 0,
+        boxSizing: "border-box",
         animationName: "dice-roll-in",
         animationDuration: "500ms",
         animationDelay: `${index * 120}ms`,
@@ -5034,7 +5042,10 @@ function LootCard({ item, index }: { item: LootDrop; index: number }) {
       >
         <Icon name={icon} />
       </div>
-      <div style={{ minWidth: 0 }}>
+      {/* flex: 1 + minWidth: 0 is the textbook ellipsis-in-flex pattern: claim
+          the remaining inline space AND allow the box to shrink below its
+          content's intrinsic width, so the nowrap title actually clips. */}
+      <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ fontWeight: 700, fontSize: 15, color: "#f5f5f5", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
           {displayName}
         </div>
@@ -5046,7 +5057,7 @@ function LootCard({ item, index }: { item: LootDrop; index: number }) {
           )}
         </div>
         {item.flavor && (
-          <div style={{ fontSize: 11, color: "#6b7280", fontStyle: "italic", marginTop: 3 }}>
+          <div style={{ fontSize: 11, color: "#6b7280", fontStyle: "italic", marginTop: 3, overflowWrap: "anywhere" }}>
             "{item.flavor}"
           </div>
         )}
@@ -5073,6 +5084,11 @@ function RewardRow({
         background: "#0e0f12",
         borderRadius: 8,
         border: isSelf ? "1px solid #3a7bd5" : "1px solid transparent",
+        // Allow the row (and the loot grid inside it) to shrink to whatever
+        // width the modal gives us on mobile, instead of expanding to fit a
+        // long-name LootCard.
+        minWidth: 0,
+        boxSizing: "border-box",
       }}
     >
       <div
@@ -5109,7 +5125,7 @@ function RewardRow({
         </div>
       )}
       {reward.loot.length > 0 && (
-        <div style={{ marginTop: 10, display: "grid", gap: 8 }}>
+        <div style={{ marginTop: 10, display: "grid", gap: 8, minWidth: 0 }}>
           {reward.loot.map((it, i) => (
             <LootCard key={i} item={it} index={i} />
           ))}
