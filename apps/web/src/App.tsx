@@ -1349,6 +1349,7 @@ export function App() {
     return (
       <Expedition
         expeditionId={activeExpeditionId}
+        selfId={state.me.slack_user_id}
         onCombatSpawned={(questId) => {
           // Combat node spawned a regular quest; bootstrap the combat DO via
           // the same start_web_combat path the standard quest flow uses
