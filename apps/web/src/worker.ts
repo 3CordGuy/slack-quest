@@ -6807,7 +6807,23 @@ async function loadExpeditionView(db: D1Database, id: number) {
   const progress = await getExpeditionProgress(db, id);
   const partyState = await getExpeditionPartyState(db, id);
   const map = JSON.parse(row.map_json) as ExpeditionMap;
-  const picks = availablePicks(map, row.current_node);
+  let picks = availablePicks(map, row.current_node);
+  // If the current node has a pending treasure progress row (not all
+  // party members have decided yet), suppress the next picks so the UI
+  // can't advance until every member resolves their offer. Otherwise a
+  // refresh during the decision phase could surface forward picks and
+  // the picker might tap one before party-mates accept their items.
+  if (row.current_node != null) {
+    const cur = progress.find((p) => p.node_id === row.current_node);
+    if (cur) {
+      try {
+        const parsed = JSON.parse(cur.outcome_json) as { kind?: string; pending?: boolean };
+        if (parsed.kind === "treasure" && parsed.pending === true) picks = [];
+      } catch {
+        // unparseable progress row — leave picks as-is.
+      }
+    }
+  }
   const buffs = parseExpeditionBuffs(row);
   return { row, party, progress, partyState, buffs, map, picks };
 }
@@ -7166,6 +7182,37 @@ app.get("/api/expedition/:id", async (c) => {
   });
 });
 
+// Per-party treasure node shapes. One offer per party member; each member
+// decides independently (accepts the item or skips it). The progress row
+// stays pending until every member has a non-null decision, at which point
+// pending flips false and accepted_items_by_member records what landed in
+// inventory (so the resolved outcome stays self-describing for replay).
+interface TreasureOfferItem {
+  item_name: string;
+  item_type: string;
+  item_subtype: string | null;
+  power: number;
+  rarity: string;
+  weapon_range: string | null;
+}
+interface TreasureOffer {
+  character_id: string;
+  item: TreasureOfferItem;
+}
+interface TreasureProgress {
+  kind: "treasure";
+  offers: TreasureOffer[];
+  decisions: Record<string, "accepted" | "skipped" | null>;
+  accepted_items_by_member: Record<string, {
+    name: string;
+    item_type: string;
+    power: number;
+    rarity: string;
+    flavor?: string;
+  }>;
+  pending: boolean;
+}
+
 // POST /api/expedition/:id/pick — advance state by picking a forward node.
 app.post("/api/expedition/:id/pick", async (c) => {
   const session = await currentSession(c.env.DB, c.req.header("cookie"));
@@ -7383,27 +7430,61 @@ app.post("/api/expedition/:id/pick", async (c) => {
       break;
     }
     case "treasure": {
-      // Roll a tier-3 item via the existing pipeline. Present accept/skip in
-      // the response; player commits via POST /api/expedition/:id/treasure/choose.
-      const tier = 3;
-      const roll = rollItem(tier);
-      // Stash the rolled item in the response — the client echoes it back to
-      // the choose endpoint with the same deterministic seed so it's the same
-      // item. Simpler: persist the roll on the node as a "pending" outcome
-      // and only commit on accept.
-      const offered = {
-        item_name: roll.catalog_name ?? roll.item_subtype ?? roll.type,
-        item_type: roll.type,
-        item_subtype: roll.item_subtype ?? null,
-        power: roll.power,
-        rarity: roll.rarity,
-        weapon_range: roll.weapon_range ?? null,
-      };
+      // Per-party treasure: roll one item per party member at THEIR own
+      // level (matching the existing tier = character.level convention the
+      // rest of the loot system uses — a L36 player rolling treasure was
+      // getting tier-3 trash because this used to be hard-coded). Each
+      // member independently accepts or skips their own offer; the node
+      // stays pending until everyone has decided. Solo runs collapse to
+      // the old single-offer behavior naturally.
+      //
+      // Offers are persisted on first pick as a pending progress row so
+      // refreshing during the decision phase shows the same items (rolls
+      // aren't deterministic without seeding the underlying rollItem
+      // chain — easier to persist than re-roll).
+      const existingPending = view.progress.find((p) => p.node_id === target.id);
+      let offers: TreasureOffer[];
+      let decisions: Record<string, "accepted" | "skipped" | null>;
+      if (existingPending) {
+        const stored = JSON.parse(existingPending.outcome_json) as TreasureProgress;
+        offers = stored.offers;
+        decisions = stored.decisions;
+      } else {
+        offers = [];
+        for (const memberId of view.party) {
+          const memberChar = await getCharacter(c.env.DB, memberId);
+          // Match the existing tier-from-level rule (tier = level). A
+          // missing character row is treated as L1 so we never roll tier 0.
+          const tier = Math.max(1, memberChar?.level ?? 1);
+          const roll = rollItem(tier);
+          offers.push({
+            character_id: memberId,
+            item: {
+              item_name: roll.catalog_name ?? roll.item_subtype ?? roll.type,
+              item_type: roll.type,
+              item_subtype: roll.item_subtype ?? null,
+              power: roll.power,
+              rarity: roll.rarity,
+              weapon_range: roll.weapon_range ?? null,
+            },
+          });
+        }
+        decisions = Object.fromEntries(view.party.map((memberId) => [memberId, null]));
+        const pending: TreasureProgress = {
+          kind: "treasure",
+          offers,
+          decisions,
+          accepted_items_by_member: {},
+          pending: true,
+        };
+        await recordExpeditionNodeProgress(c.env.DB, expeditionId, target.id, pending);
+      }
       dispatched = {
         kind: "treasure",
         action: "present_offer",
         node_id: target.id,
-        offer: offered,
+        offers,
+        decisions,
       };
       break;
     }
@@ -7719,9 +7800,10 @@ app.post("/api/expedition/:id/shrine/choose", async (c) => {
   });
 });
 
-// POST /api/expedition/:id/treasure/choose — accept or skip the offered item.
-// The item is rolled deterministically from (expeditionId, node_id) so a
-// refresh shows the same offer.
+// POST /api/expedition/:id/treasure/choose — each party member calls this
+// to accept or skip THEIR OWN offer. Offers were persisted as a pending
+// progress row at /pick time. Solo runs collapse to the original one-call
+// flow (a single offer, one decision, pending flips false immediately).
 app.post("/api/expedition/:id/treasure/choose", async (c) => {
   const session = await currentSession(c.env.DB, c.req.header("cookie"));
   if (!session) return c.json({ error: "unauthenticated" }, 401);
@@ -7743,20 +7825,50 @@ app.post("/api/expedition/:id/treasure/choose", async (c) => {
   if (view.row.current_node !== nodeId) return c.json({ error: "not_current_node" }, 400);
   const node = view.map.nodes.find((n) => n.id === nodeId);
   if (!node || node.kind !== "treasure") return c.json({ error: "not_treasure_node" }, 400);
+
+  // The pending row must exist — the /pick handler writes it the moment the
+  // treasure node is chosen. If it's missing the client is out of sync.
   const existing = view.progress.find((p) => p.node_id === nodeId);
-  if (existing) {
+  if (!existing) return c.json({ error: "no_pending_offer" }, 400);
+  const stored = JSON.parse(existing.outcome_json) as TreasureProgress;
+
+  // Already fully resolved → return the stored final outcome (idempotent).
+  if (stored.pending === false) {
     return c.json({
       ok: true,
       already_resolved: true,
-      outcome: JSON.parse(existing.outcome_json),
+      outcome: stored,
       available_picks: view.picks.map((n) => n.id),
     });
   }
 
-  const tier = 3;
-  const roll = rollItem(tier);
-  let outcome: Record<string, unknown>;
+  // Does this member have an offer + have they already decided?
+  const myOffer = stored.offers.find((o) => o.character_id === session.slack_user_id);
+  if (!myOffer) return c.json({ error: "no_offer_for_member" }, 400);
+  if (stored.decisions[session.slack_user_id] != null) {
+    // Idempotent on re-call from the same user — return current state.
+    return c.json({
+      ok: true,
+      already_decided: true,
+      outcome: stored,
+      available_picks: view.picks.map((n) => n.id),
+    });
+  }
+
+  // Apply the decision. If accepting, drop the rolled item into the
+  // member's inventory via the same name-flavor-then-create flow the old
+  // single-offer path used.
   if (accept) {
+    // Reconstitute an ItemRoll-shaped object from the stored offer so
+    // nameLootViaAi + itemRollToCreateInput can take it.
+    const roll = {
+      type: myOffer.item.item_type as ItemType,
+      rarity: myOffer.item.rarity as Rarity,
+      power: myOffer.item.power,
+      catalog_name: myOffer.item.item_name,
+      item_subtype: myOffer.item.item_subtype ?? undefined,
+      weapon_range: (myOffer.item.weapon_range ?? undefined) as "melee" | "ranged" | "focus" | undefined,
+    };
     const named = await nameLootViaAi(c.env, roll, "expedition cache");
     const created = await addItem(c.env.DB, itemRollToCreateInput({
       character_id: session.slack_user_id,
@@ -7764,30 +7876,26 @@ app.post("/api/expedition/:id/treasure/choose", async (c) => {
       item_name: named.name,
       flavor: named.flavor,
     }));
-    outcome = {
-      kind: "treasure",
-      accepted: true,
-      item: {
-        name: created.item_name,
-        item_type: created.item_type,
-        power: created.power,
-        rarity: created.rarity,
-        flavor: created.flavor ?? named.flavor,
-      },
-      resolved_by: session.slack_user_id,
-    };
-  } else {
-    outcome = {
-      kind: "treasure",
-      accepted: false,
-      resolved_by: session.slack_user_id,
+    stored.accepted_items_by_member[session.slack_user_id] = {
+      name: created.item_name,
+      item_type: created.item_type,
+      power: created.power,
+      rarity: created.rarity,
+      flavor: created.flavor ?? named.flavor,
     };
   }
-  await recordExpeditionNodeProgress(c.env.DB, expeditionId, nodeId, outcome);
+  stored.decisions[session.slack_user_id] = accept ? "accepted" : "skipped";
+
+  // Pending flag flips false the moment every party member has a non-null
+  // decision. Solo runs hit this on the first call.
+  const allDecided = view.party.every((memberId) => stored.decisions[memberId] != null);
+  stored.pending = !allDecided;
+
+  await recordExpeditionNodeProgress(c.env.DB, expeditionId, nodeId, stored);
   const refreshed = await loadExpeditionView(c.env.DB, expeditionId);
   return c.json({
     ok: true,
-    outcome,
+    outcome: stored,
     available_picks: refreshed?.picks.map((n) => n.id) ?? [],
   });
 });

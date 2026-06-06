@@ -73,19 +73,26 @@ type Dispatch =
       kind: "treasure";
       action: "present_offer";
       node_id: string;
-      offer: {
-        item_name: string;
-        item_type: string;
-        item_subtype: string | null;
-        power: number;
-        rarity: string;
-      };
+      offers: Array<{
+        character_id: string;
+        item: {
+          item_name: string;
+          item_type: string;
+          item_subtype: string | null;
+          power: number;
+          rarity: string;
+          weapon_range: string | null;
+        };
+      }>;
+      decisions: Record<string, "accepted" | "skipped" | null>;
     };
 
 export interface ExpeditionProps {
   expeditionId: number;
-  /** Current user's slack_user_id — used to highlight the player's own
-   *  pawn card in the party rail (matches CombatPage / dock behavior). */
+  /** Current user's slack_user_id. Used to (a) highlight this player's
+   *  pawn card in the party rail (matches CombatPage / dock behavior) and
+   *  (b) pick out this user's offer from the party-wide treasure offer
+   *  list and surface the right "you got X" summary on completion. */
   selfId: string;
   /** Notify parent when a combat node spawns a quest — parent routes to combat UI. */
   onCombatSpawned: (questId: number) => void;
@@ -220,17 +227,32 @@ export function Expedition({ expeditionId, selfId, onCombatSpawned, onExit }: Ex
       });
       const body = (await res.json()) as {
         ok?: boolean;
-        outcome?: { accepted: boolean; item?: { name: string; rarity: string; power: number } };
+        outcome?: {
+          decisions?: Record<string, "accepted" | "skipped" | null>;
+          pending?: boolean;
+          accepted_items_by_member?: Record<string, { name: string; rarity: string; power: number }>;
+        };
         error?: string;
       };
       if (!body.ok) {
         setError(`Treasure choice failed: ${body.error ?? res.statusText}`);
         return;
       }
-      setTreasureOutcome({
-        accepted: body.outcome?.accepted ?? accept,
-        item: body.outcome?.item,
-      });
+      // Merge the server's updated decisions back into the live dispatch so
+      // the panel re-renders without needing a full refresh round-trip.
+      if (body.outcome?.decisions && activePanel.kind === "treasure") {
+        setActivePanel({ ...activePanel, decisions: body.outcome.decisions });
+      }
+      // When every party member has decided the server flips pending false.
+      // Surface the summary completion panel + clear the active treasure.
+      if (body.outcome?.pending === false) {
+        const items = body.outcome.accepted_items_by_member ?? {};
+        const myItem = items[selfId];
+        setTreasureOutcome({
+          accepted: !!myItem,
+          item: myItem,
+        });
+      }
       await refresh();
     } finally {
       setPending(false);
@@ -478,7 +500,10 @@ export function Expedition({ expeditionId, selfId, onCombatSpawned, onExit }: Ex
         )}
         {activePanel?.kind === "treasure" && !treasureOutcome && (
           <TreasurePanel
-            offer={activePanel.offer}
+            offers={activePanel.offers}
+            decisions={activePanel.decisions}
+            selfId={selfId}
+            partyDetails={view.party_details}
             pending={pending}
             onChoose={handleTreasureChoose}
           />
@@ -671,14 +696,31 @@ function ShrinePanel({
 }
 
 function TreasurePanel({
-  offer,
+  offers,
+  decisions,
+  selfId,
+  partyDetails,
   pending,
   onChoose,
 }: {
-  offer: { item_name: string; item_type: string; power: number; rarity: string };
+  offers: ReadonlyArray<{
+    character_id: string;
+    item: { item_name: string; item_type: string; power: number; rarity: string };
+  }>;
+  decisions: Record<string, "accepted" | "skipped" | null>;
+  selfId: string;
+  partyDetails: ReadonlyArray<{ character_id: string; name: string }>;
   pending: boolean;
   onChoose: (accept: boolean) => void;
 }) {
+  const myOffer = offers.find((o) => o.character_id === selfId);
+  const myDecision = decisions[selfId];
+  const stillWaiting = offers
+    .filter((o) => o.character_id !== selfId)
+    .filter((o) => decisions[o.character_id] == null);
+  const nameOf = (cid: string) =>
+    partyDetails.find((p) => p.character_id === cid)?.name ?? "Party member";
+
   return (
     <div
       style={{
@@ -695,48 +737,114 @@ function TreasurePanel({
           letterSpacing: 1.4,
           fontWeight: 700,
           color: "var(--accent-gold)",
-          marginBottom: 6,
+          marginBottom: 10,
         }}
       >
-        A Cache
+        {offers.length > 1 ? "A Cache — One Each" : "A Cache"}
       </div>
-      <h2 style={{ margin: "0 0 4px", fontSize: 20 }}>{offer.item_name}</h2>
-      <div style={{ color: "var(--fg-mute)", fontSize: 12, marginBottom: 14 }}>
-        {offer.rarity} {offer.item_type} · power {offer.power}
-      </div>
-      <div style={{ display: "flex", gap: 10 }}>
-        <button
-          onClick={() => onChoose(true)}
-          disabled={pending}
-          style={{
-            flex: 1,
-            background: "var(--bg-elev)",
-            border: "1px solid var(--accent-gold)",
-            borderRadius: "var(--radius-lg)",
-            padding: "10px 14px",
-            cursor: pending ? "wait" : "pointer",
-            color: "var(--accent-gold)",
-            fontWeight: 600,
-          }}
-        >
-          Take it
-        </button>
-        <button
-          onClick={() => onChoose(false)}
-          disabled={pending}
-          style={{
-            flex: 1,
-            background: "transparent",
-            border: "1px solid var(--border-faint)",
-            borderRadius: "var(--radius-lg)",
-            padding: "10px 14px",
-            cursor: pending ? "wait" : "pointer",
-            color: "var(--fg-mute)",
-          }}
-        >
-          Leave it
-        </button>
-      </div>
+
+      {/* This member's own offer with accept/skip buttons. */}
+      {myOffer && (
+        <div style={{ marginBottom: stillWaiting.length > 0 || offers.length > 1 ? 16 : 0 }}>
+          <h2 style={{ margin: "0 0 4px", fontSize: 20 }}>{myOffer.item.item_name}</h2>
+          <div style={{ color: "var(--fg-mute)", fontSize: 12, marginBottom: 14 }}>
+            {myOffer.item.rarity} {myOffer.item.item_type} · power {myOffer.item.power}
+          </div>
+          {myDecision == null ? (
+            <div style={{ display: "flex", gap: 10 }}>
+              <button
+                onClick={() => onChoose(true)}
+                disabled={pending}
+                style={{
+                  flex: 1,
+                  background: "var(--bg-elev)",
+                  border: "1px solid var(--accent-gold)",
+                  borderRadius: "var(--radius-lg)",
+                  padding: "10px 14px",
+                  cursor: pending ? "wait" : "pointer",
+                  color: "var(--accent-gold)",
+                  fontWeight: 600,
+                }}
+              >
+                Take it
+              </button>
+              <button
+                onClick={() => onChoose(false)}
+                disabled={pending}
+                style={{
+                  flex: 1,
+                  background: "transparent",
+                  border: "1px solid var(--border-faint)",
+                  borderRadius: "var(--radius-lg)",
+                  padding: "10px 14px",
+                  cursor: pending ? "wait" : "pointer",
+                  color: "var(--fg-mute)",
+                }}
+              >
+                Leave it
+              </button>
+            </div>
+          ) : (
+            <div style={{ fontSize: 13, color: "var(--accent-gold)" }}>
+              ✓ You {myDecision === "accepted" ? "took it" : "left it"}.
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Party-mate offers — visible-but-not-decidable. Each shows the rolled
+          item and current decision state ("waiting…" / "took it" / "left it"). */}
+      {offers.length > 1 && (
+        <div style={{ display: "grid", gap: 8 }}>
+          {offers
+            .filter((o) => o.character_id !== selfId)
+            .map((o) => {
+              const dec = decisions[o.character_id];
+              return (
+                <div
+                  key={o.character_id}
+                  style={{
+                    background: "var(--bg-card)",
+                    border: "1px solid var(--border-faint)",
+                    borderRadius: "var(--radius-lg)",
+                    padding: "10px 14px",
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    gap: 12,
+                  }}
+                >
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontSize: 12, color: "var(--fg-mute)" }}>
+                      {nameOf(o.character_id)}
+                    </div>
+                    <div style={{ fontSize: 14, fontWeight: 600 }}>{o.item.item_name}</div>
+                    <div style={{ fontSize: 11, color: "var(--fg-mute)" }}>
+                      {o.item.rarity} {o.item.item_type} · power {o.item.power}
+                    </div>
+                  </div>
+                  <div
+                    style={{
+                      fontSize: 11,
+                      color: dec == null ? "var(--fg-faint)" : "var(--accent-gold)",
+                      textTransform: "uppercase",
+                      letterSpacing: 1,
+                      fontWeight: 600,
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {dec == null ? "Deciding…" : dec === "accepted" ? "Took it" : "Left it"}
+                  </div>
+                </div>
+              );
+            })}
+          {stillWaiting.length > 0 && (
+            <div style={{ fontSize: 11, color: "var(--fg-mute)", textAlign: "center", marginTop: 4 }}>
+              Waiting on {stillWaiting.map((o) => nameOf(o.character_id)).join(", ")}…
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
