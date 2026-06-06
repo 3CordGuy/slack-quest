@@ -25,6 +25,8 @@ import {
   generateCharacterName,
   getOrScheduleViewArt,
   getOrScheduleBattlefieldArt,
+  getOrScheduleExpeditionHeroArt,
+  EXPEDITION_HERO_VARIANTS,
   generateCharacterArtNow,
   getOrScheduleCharacterArt,
   type ViewArtKey,
@@ -173,6 +175,7 @@ import {
   generateExpeditionMap,
   sampleEvent,
   sampleOutcome,
+  stringToSeed,
   type ExpeditionEvent,
   type ExpeditionMap,
   type ExpeditionNode,
@@ -7092,6 +7095,20 @@ app.get("/api/expedition/:id", async (c) => {
     });
   }
 
+  // Hero banner: deterministic variant from the seed so the same expedition
+  // always renders the same painting; different expeditions feel distinct.
+  // Fail-soft: null on first cache miss + while art is disabled (local dev),
+  // the title card falls back to the flat dark header.
+  const heroVariant = EXPEDITION_HERO_VARIANTS[
+    stringToSeed(view.row.seed) % EXPEDITION_HERO_VARIANTS.length
+  ];
+  const hero_art_url = await getOrScheduleExpeditionHeroArt(
+    c.env.AI,
+    artTarget(c.env),
+    c.executionCtx,
+    heroVariant,
+  );
+
   return c.json({
     expedition: {
       id: view.row.id,
@@ -7111,6 +7128,7 @@ app.get("/api/expedition/:id", async (c) => {
     party_details: partyDetails,
     buffs: view.buffs,
     available_picks: view.picks.map((n) => n.id),
+    hero_art_url,
   });
 });
 

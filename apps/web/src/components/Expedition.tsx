@@ -48,6 +48,8 @@ interface ExpeditionViewResponse {
     applied_at: number;
   }>;
   available_picks: string[];
+  /** Wide hero banner painted for the title card. Null on cache miss / disabled. */
+  hero_art_url?: string | null;
 }
 
 type Dispatch =
@@ -251,19 +253,29 @@ export function Expedition({ expeditionId, onCombatSpawned, onExit }: Expedition
   const resolvedNodeIds = new Set(view.progress.map((p) => p.node_id));
   const availablePickIds = new Set(view.available_picks);
 
+  const heroUrl = view.hero_art_url ?? null;
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16, maxWidth: 980, margin: "0 auto", padding: "0 12px" }}>
       <header
         style={{
+          position: "relative",
           display: "flex",
           justifyContent: "space-between",
-          alignItems: "center",
-          background: "var(--bg-card-2)",
+          alignItems: "flex-end",
+          background: heroUrl
+            ? `linear-gradient(to top, rgba(0,0,0,0.78) 0%, rgba(0,0,0,0.45) 45%, rgba(0,0,0,0.12) 80%, rgba(0,0,0,0) 100%), url("${heroUrl}") center / cover no-repeat, var(--bg-card-2)`
+            : "var(--bg-card-2)",
+          minHeight: heroUrl ? 180 : undefined,
           border: "1px solid var(--border-faint)",
           borderRadius: "var(--radius-2xl)",
-          padding: "12px 16px",
+          padding: heroUrl ? "120px 16px 14px" : "12px 16px",
           flexWrap: "wrap",
           gap: 12,
+          overflow: "hidden",
+          color: heroUrl ? "#fff" : undefined,
+          textShadow: heroUrl ? "0 1px 4px rgba(0,0,0,0.85)" : undefined,
+          transition: "background 0.4s ease",
         }}
       >
         <div>
@@ -279,7 +291,7 @@ export function Expedition({ expeditionId, onCombatSpawned, onExit }: Expedition
           >
             Expedition #{view.expedition.id}
           </div>
-          <div style={{ fontSize: 12, color: "var(--fg-mute)" }}>
+          <div style={{ fontSize: 12, color: heroUrl ? "rgba(255,255,255,0.88)" : "var(--fg-mute)" }}>
             {view.progress.length} of {view.map.nodes.length - 2} nodes cleared
             {view.expedition.status !== "active" && (
               <span style={{ marginLeft: 8, color: "var(--accent-gold)" }}>
@@ -294,13 +306,14 @@ export function Expedition({ expeditionId, onCombatSpawned, onExit }: Expedition
               onClick={handleAbandon}
               disabled={pending}
               style={{
-                background: "transparent",
-                border: "1px solid var(--border-faint)",
+                background: heroUrl ? "rgba(0,0,0,0.45)" : "transparent",
+                border: heroUrl ? "1px solid rgba(255,255,255,0.35)" : "1px solid var(--border-faint)",
                 color: "var(--fg-warn)",
                 borderRadius: "var(--radius-lg)",
                 padding: "6px 12px",
                 cursor: pending ? "wait" : "pointer",
                 fontSize: 12,
+                backdropFilter: heroUrl ? "blur(2px)" : undefined,
               }}
             >
               Abandon
@@ -315,13 +328,14 @@ export function Expedition({ expeditionId, onCombatSpawned, onExit }: Expedition
             <button
               onClick={onExit}
               style={{
-                background: "transparent",
-                border: "1px solid var(--border-faint)",
-                color: "var(--fg-mute)",
+                background: heroUrl ? "rgba(0,0,0,0.45)" : "transparent",
+                border: heroUrl ? "1px solid rgba(255,255,255,0.35)" : "1px solid var(--border-faint)",
+                color: heroUrl ? "rgba(255,255,255,0.92)" : "var(--fg-mute)",
                 borderRadius: "var(--radius-lg)",
                 padding: "6px 12px",
                 cursor: "pointer",
                 fontSize: 12,
+                backdropFilter: heroUrl ? "blur(2px)" : undefined,
               }}
             >
               ← Town
