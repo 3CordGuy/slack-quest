@@ -11,6 +11,7 @@ import { CombatParticles, CombatParticlesProvider, triggerBurst, type BurstKind 
 import {
   CombatHexGrid,
   particleKindForEvent,
+  particleKindForGroundKind,
   projectileKindForAttack,
   type CombatHexGridHandle,
   type ParticleKind,
@@ -354,6 +355,40 @@ type CombatEvent =
       kind: "gold" | "item";
       gold?: number;
       item_tier?: number;
+    }
+  // Ground-effect events from the engine — see packages/core/src/combat_machine.ts.
+  // We mirror the shapes here so CombatPage's WS event switch can react.
+  | {
+      type: "ground_placed";
+      actor: string;
+      ground_id: string;
+      kind: import("@gantt-quest/core").GroundEffectKind;
+      hexes: { q: number; r: number }[];
+      expires_after_round: number;
+      potency: number;
+    }
+  | {
+      type: "ground_tick";
+      actor: string;
+      source: string;
+      ground_id: string;
+      kind: import("@gantt-quest/core").GroundEffectKind;
+      hp_delta: number;
+    }
+  | {
+      type: "ground_triggered";
+      actor: string;
+      source: string;
+      ground_id: string;
+      kind: import("@gantt-quest/core").GroundEffectKind;
+      pos: { q: number; r: number };
+      hp_delta: number;
+    }
+  | {
+      type: "ground_expired";
+      ground_id: string;
+      kind: import("@gantt-quest/core").GroundEffectKind;
+      source: string;
     }
   | ItemUsedEvent;
 
@@ -919,6 +954,29 @@ function formatEvent(e: CombatEvent, state: CombatState | null): LogEntry[] {
       return [{ id: nextLogId++, content: <>🔥 {state ? nameOf(e.target) : e.target} catches fire ({e.duration}t)</>, tone: "good" }];
     case "ability_shock_applied":
       return [{ id: nextLogId++, content: <>⚡ {state ? nameOf(e.target) : e.target} is shocked ({e.duration}t)</>, tone: "good" }];
+    case "ground_placed": {
+      const actorName = state ? nameOf(e.actor) : e.actor;
+      const glyph = GROUND_KIND_GLYPH[e.kind];
+      const label = GROUND_KIND_LABEL[e.kind];
+      return [{ id: nextLogId++, content: <>{glyph} {actorName} lays down {label} ({e.hexes.length}t)</>, tone: "good" }];
+    }
+    case "ground_tick": {
+      const targetName = state ? nameOf(e.actor) : e.actor;
+      const glyph = GROUND_KIND_GLYPH[e.kind];
+      if (e.hp_delta >= 0) {
+        // Heal tick (consecrated)
+        return [{ id: nextLogId++, content: <>{glyph} {targetName} heals <strong>+{e.hp_delta}</strong></>, tone: "good" }];
+      }
+      return [{ id: nextLogId++, content: <>{glyph} {targetName} takes <strong>{Math.abs(e.hp_delta)}</strong> from {GROUND_KIND_LABEL[e.kind]}</>, tone: "bad" }];
+    }
+    case "ground_triggered": {
+      const targetName = state ? nameOf(e.actor) : e.actor;
+      const glyph = GROUND_KIND_GLYPH[e.kind];
+      return [{ id: nextLogId++, content: <>{glyph} {targetName} triggers {GROUND_KIND_LABEL[e.kind]} — <strong>{Math.abs(e.hp_delta)}</strong></>, tone: "bad" }];
+    }
+    case "ground_expired":
+      // Silent — the fading overlay handles the visual cue.
+      return [];
     default: {
       const _exhaustive: never = e;
       void _exhaustive;
@@ -926,6 +984,15 @@ function formatEvent(e: CombatEvent, state: CombatState | null): LogEntry[] {
     }
   }
 }
+
+// Compact glyph + label maps for ground-effect log entries. Keeps the switch
+// above readable and matches the kind-coded glyphs the canvas renders on tile.
+const GROUND_KIND_GLYPH: Record<import("@gantt-quest/core").GroundEffectKind, string> = {
+  fire: "🔥", frost: "❄️", brambles: "🌿", consecrated: "✨", caltrops: "🔻", rune: "🔯",
+};
+const GROUND_KIND_LABEL: Record<import("@gantt-quest/core").GroundEffectKind, string> = {
+  fire: "fire", frost: "frost", brambles: "brambles", consecrated: "consecrated ground", caltrops: "caltrops", rune: "rune",
+};
 
 function signed(n: number): string {
   return n >= 0 ? `+${n}` : `${n}`;
@@ -1498,6 +1565,32 @@ export function CombatPage({
                 const e = evt as { target?: string };
                 const tgt = e.target ? findMonster(e.target) : null;
                 if (tgt?.pos) hex.emitParticle({ id: `sk${Date.now()}`, kind: "lightning", at: tgt.pos, actorId: tgt.id });
+              }
+              // Ground-effect bursts. Reuses the single-tile elemental particle
+              // configs so a fire wall reads as the same "fire" as a fireball
+              // proc, frost ring as the same "ice" as Ray of Frost, etc.
+              if (evt.type === "ground_placed") {
+                const e = evt as { kind: import("@gantt-quest/core").GroundEffectKind; hexes: { q: number; r: number }[]; ground_id: string };
+                const partKind = particleKindForGroundKind(e.kind);
+                // Fire one burst per hex in the placed shape. Multi-hex shapes
+                // (walls / rings / blasts) light up simultaneously.
+                e.hexes.forEach((h, i) => {
+                  hex.emitParticle({ id: `gp${e.ground_id}-${i}`, kind: partKind, at: h });
+                });
+              }
+              if (evt.type === "ground_tick") {
+                const e = evt as { kind: import("@gantt-quest/core").GroundEffectKind; actor: string; ground_id: string };
+                const tgt = findFighter(e.actor) ?? findMonster(e.actor);
+                if (tgt?.pos) {
+                  const partKind = particleKindForGroundKind(e.kind);
+                  hex.emitParticle({ id: `gt${e.ground_id}-${Date.now()}`, kind: partKind, at: tgt.pos, actorId: tgt.id });
+                }
+              }
+              if (evt.type === "ground_triggered") {
+                const e = evt as { kind: import("@gantt-quest/core").GroundEffectKind; pos: { q: number; r: number }; actor: string; ground_id: string };
+                const partKind = particleKindForGroundKind(e.kind);
+                const tgt = findFighter(e.actor) ?? findMonster(e.actor);
+                hex.emitParticle({ id: `gx${e.ground_id}-${Date.now()}`, kind: partKind, at: e.pos, actorId: tgt?.id });
               }
               if (
                 evt.type === "passive_rogue_lethal_strike"

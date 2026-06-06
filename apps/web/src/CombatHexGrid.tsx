@@ -351,6 +351,21 @@ export function particleKindForEvent(damage_type?: string, isHeal?: boolean, isS
   }
 }
 
+// Maps a GroundEffectKind to the matching basic-elemental ParticleKind used by
+// the single-tile elemental procs (fire/ice/magic/etc.). Used by CombatPage to
+// emit bursts on ground_placed / ground_tick / ground_triggered so the new
+// ground abilities visually match the existing single-tile elemental effects.
+export function particleKindForGroundKind(kind: import("@gantt-quest/core").GroundEffectKind): ParticleKind {
+  switch (kind) {
+    case "fire": return "fire";
+    case "frost": return "ice";
+    case "brambles": return "poison";
+    case "consecrated": return "heal";
+    case "caltrops": return "physical";
+    case "rune": return "magic";
+  }
+}
+
 export function projectileKindForAttack(weaponRange: string, element?: string): ProjectileKind | null {
   // Melee attacks don't fire projectiles — the lunge animation handles them.
   if (weaponRange === "melee") return null;
