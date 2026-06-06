@@ -24,6 +24,7 @@ import {
 } from "@gantt-quest/core";
 import { Icon } from "../icons";
 import { HoverTooltip } from "./ui";
+import { useIsMobile } from "../CombatShared";
 
 const RESPEC_GOLD = 500;
 const DISPLAY_FONT = "var(--font-display, 'Cinzel', serif)";
@@ -168,9 +169,33 @@ export function AbilitiesPanel({
         headers: { "content-type": "application/json" },
         body: JSON.stringify(next),
       });
-      const json = (await res.json()) as { ok?: boolean; error?: string };
+      const json = (await res.json()) as {
+        ok?: boolean;
+        error?: string;
+        details?: {
+          active_received: number;
+          active_expected: number;
+          passive_received: number;
+          passive_expected: number;
+          character_level: number;
+        };
+      };
       if (!res.ok || !json.ok) {
-        setError(json.error ?? "loadout_failed");
+        // Make wrong_slot_count self-explanatory in the UI + console so any
+        // future repro tells us which array is off without engine instrumentation.
+        if (json.error === "wrong_slot_count" && json.details) {
+          const d = json.details;
+          const wrongActive = d.active_received !== d.active_expected;
+          const wrongPassive = d.passive_received !== d.passive_expected;
+          const parts: string[] = [];
+          if (wrongActive) parts.push(`active ${d.active_received}/${d.active_expected}`);
+          if (wrongPassive) parts.push(`passive ${d.passive_received}/${d.passive_expected}`);
+          // eslint-disable-next-line no-console
+          console.warn("[loadout] wrong_slot_count", { sent: next, details: d });
+          setError(`Slot count off (${parts.join(", ")}) — try refreshing the page.`);
+        } else {
+          setError(json.error ?? "loadout_failed");
+        }
       } else {
         await refresh();
         onCharacterUpdated?.();
@@ -251,6 +276,14 @@ export function AbilitiesPanel({
   ]);
   const passiveSlotCount = passiveSlotsForLevel(data.level);
   const canAffordRespec = (characterGold ?? 0) >= RESPEC_GOLD;
+  // On mobile this panel lives inside a parent that already owns the
+  // vertical scroll. Letting the node grid claim flex: 1 + its own
+  // overflow:auto makes the panel exactly the height of the outer scroll
+  // box — leaving zero room for the NodeDetail equip panel below the grid,
+  // which is why the equip card doesn't appear on phones. Detect mobile
+  // and let the grid auto-size so NodeDetail flows naturally beneath it
+  // and the outer scroll reveals both.
+  const isMobile = useIsMobile(640);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14, flex: 1, minHeight: 0 }}>
@@ -392,7 +425,16 @@ export function AbilitiesPanel({
       </div>
 
       {/* Node grid */}
-      <div style={{ flex: 1, overflowY: "auto", display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: 8, alignContent: "start" }}>
+      <div style={{
+        // On desktop: claim flex space + internally scroll. On mobile: drop
+        // both so NodeDetail (sibling below) is reachable via the outer
+        // wrapper's scroll instead of being pinned below a sealed flex box.
+        ...(isMobile ? {} : { flex: 1, overflowY: "auto" as const }),
+        display: "grid",
+        gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))",
+        gap: 8,
+        alignContent: "start",
+      }}>
         {filteredNodes.length === 0 ? (
           <div style={{ color: "#374151", fontSize: 13, padding: 20 }}>
             No {subKind} abilities match the {categoryFilter !== "all" ? CATEGORY_LABELS[categoryFilter].toLowerCase() : ""} filter.
@@ -533,19 +575,30 @@ function LoadoutSlot({
           <div style={{ fontSize: 8, color: "#fff", textAlign: "center", lineHeight: 1.1, fontWeight: 600 }}>
             {node.ability.name}
           </div>
+          {/* Mobile-friendly hit target: the visible badge stays ~18×18, but
+              transparent padding extends the tap area to 32×32 (well above
+              the iOS 44pt rec when you include the slot border). Offsets are
+              recomputed so the visible glyph still sits flush in the corner.
+              background-clip ensures the visible chip respects the padding
+              boundary instead of bleeding to the full button. */}
           <button
             onClick={(e) => { e.stopPropagation(); onClear(); }}
+            onPointerDown={(e) => e.stopPropagation()}
             title={`Unequip ${node.ability.name}`}
+            aria-label={`Unequip ${node.ability.name}`}
             style={{
               position: "absolute",
-              top: -6,
-              right: -6,
-              width: 18,
-              height: 18,
-              padding: 0,
-              borderRadius: 9,
-              background: "#1d1f23",
-              border: "1px solid #4b5563",
+              // Was top/right -6 with an 18×18 button. Now the button is 32×32
+              // with 7px of padding, so the visible 18×18 chip lives at the
+              // same on-screen position: outer offset = old (-6) - padding (7).
+              top: -13,
+              right: -13,
+              width: 32,
+              height: 32,
+              padding: 7,
+              borderRadius: 16,
+              background: "transparent",
+              border: "none",
               color: "#9ca3af",
               fontSize: 11,
               lineHeight: 1,
@@ -554,8 +607,25 @@ function LoadoutSlot({
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
+              WebkitTapHighlightColor: "transparent",
+              touchAction: "manipulation",
             }}
-          >×</button>
+          >
+            <span
+              aria-hidden="true"
+              style={{
+                width: 18,
+                height: 18,
+                borderRadius: 9,
+                background: "#1d1f23",
+                border: "1px solid #4b5563",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                lineHeight: 1,
+              }}
+            >×</span>
+          </button>
         </>
       ) : (
         <div style={{ fontSize: 10, color: isPicking ? "#c084fc88" : "#374151" }}>{isPicking ? "pick…" : "empty"}</div>

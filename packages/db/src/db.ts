@@ -4394,6 +4394,23 @@ export type SetLoadoutError =
   | "wrong_kind"
   | "wrong_slot_count";
 
+// When `error === "wrong_slot_count"` the caller gets this so the failure
+// mode is self-diagnosing: was active wrong, passive wrong, or both?
+// `active_expected` is always MAX_ACTIVE_SLOTS today, but we include it so
+// any future per-class variation surfaces without a UI change.
+export interface WrongSlotCountDetails {
+  active_received: number;
+  active_expected: number;
+  passive_received: number;
+  passive_expected: number;
+  character_level: number;
+}
+
+export type SetLoadoutResult =
+  | { ok: true; character: Character }
+  | { ok: false; error: Exclude<SetLoadoutError, "wrong_slot_count"> }
+  | { ok: false; error: "wrong_slot_count"; details: WrongSlotCountDetails };
+
 // Validates and writes the loadout JSON. Each non-null id must exist in the
 // registry, be owned at rank ≥ 1, match the character's class, and match the
 // slot kind (active vs passive). Active slot count is fixed at 4; passive slot
@@ -4402,14 +4419,31 @@ export async function setAbilityLoadout(
   db: D1Database,
   userId: string,
   loadout: AbilityLoadout,
-): Promise<{ ok: true; character: Character } | { ok: false; error: SetLoadoutError }> {
+): Promise<SetLoadoutResult> {
   if (!loadout || !Array.isArray(loadout.active) || !Array.isArray(loadout.passive)) {
     return { ok: false, error: "bad_shape" };
   }
   const character = await getCharacter(db, userId);
   if (!character) return { ok: false, error: "no_character" };
-  if (loadout.active.length !== MAX_ACTIVE_SLOTS) return { ok: false, error: "wrong_slot_count" };
-  if (loadout.passive.length !== passiveSlotsForLevel(character.level)) return { ok: false, error: "wrong_slot_count" };
+  const expectedPassive = passiveSlotsForLevel(character.level);
+  if (
+    loadout.active.length !== MAX_ACTIVE_SLOTS ||
+    loadout.passive.length !== expectedPassive
+  ) {
+    // Always emit the full shape so logs / UI immediately show which array
+    // is wrong, no guesswork about active vs passive.
+    return {
+      ok: false,
+      error: "wrong_slot_count",
+      details: {
+        active_received: loadout.active.length,
+        active_expected: MAX_ACTIVE_SLOTS,
+        passive_received: loadout.passive.length,
+        passive_expected: expectedPassive,
+        character_level: character.level,
+      },
+    };
+  }
   const classId = classIdForTree(character.class);
   const owned = await getCharacterTalents(db, userId);
   const validateSlot = (id: string | null, kind: "active" | "passive"): SetLoadoutError | null => {

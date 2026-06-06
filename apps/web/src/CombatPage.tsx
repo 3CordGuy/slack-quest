@@ -1003,11 +1003,16 @@ export function CombatPage({
   selfId,
   onExit,
   onOpenInventory,
+  inExpedition = false,
 }: {
   questId: number;
   selfId: string;
   onExit: () => void;
   onOpenInventory?: () => void;
+  /** When true, victory/defeat modals say "Back to map" instead of "Back to
+   *  town" because the player will land back on the expedition map screen,
+   *  not the town view. */
+  inExpedition?: boolean;
 }) {
   const [ui, dispatch] = useReducer(reducer, {
     connection: "connecting",
@@ -3358,6 +3363,7 @@ export function CombatPage({
           onContinueClimbing={continueClimbing}
           onPressOnAfterBoss={pressOnAfterBoss}
           onBankAndExit={bankAndExit}
+          inExpedition={inExpedition}
         />
       )}
 
@@ -3372,6 +3378,7 @@ export function CombatPage({
           monsters={state.monsters}
           rawEvents={ui.rawEvents}
           onBack={exit}
+          inExpedition={inExpedition}
         />
       )}
 
@@ -4582,6 +4589,7 @@ function VictoryModal({
   onContinueClimbing,
   onPressOnAfterBoss,
   onBankAndExit,
+  inExpedition = false,
 }: {
   outcome: OutcomeSummary | null;
   selfId: string;
@@ -4598,6 +4606,7 @@ function VictoryModal({
   // cycle in-place; "Bank spoils" calls /tower/exit and heads home.
   onPressOnAfterBoss?: () => void;
   onBankAndExit?: () => void;
+  inExpedition?: boolean;
 }) {
   const burndown = useMemo(
     () => buildBurndown(rawEvents, fighters, monsters),
@@ -4770,7 +4779,9 @@ function VictoryModal({
               : nextKind === "boss"
               ? "Engage the boss"
               : "Continue climbing"
-            : "Back to town";
+            : inExpedition
+              ? "Back to map"
+              : "Back to town";
           return (
             <button
               onClick={inPlaceClimb && onContinueClimbing ? onContinueClimbing : onBack}
@@ -4795,6 +4806,7 @@ function DefeatModal({
   monsters,
   rawEvents,
   onBack,
+  inExpedition = false,
 }: {
   status: "defeat" | "fled";
   outcome: OutcomeSummary | null;
@@ -4803,6 +4815,7 @@ function DefeatModal({
   monsters: Monster[];
   rawEvents: CombatEvent[];
   onBack: () => void;
+  inExpedition?: boolean;
 }) {
   const fled = status === "fled";
   const burndown = useMemo(
@@ -4897,7 +4910,7 @@ function DefeatModal({
           className={fled ? "btn btn-gold" : "btn btn-ghost"}
           style={{ marginTop: 8, width: "100%", justifyContent: "center" }}
         >
-          Back to town
+          {inExpedition ? "Back to map" : "Back to town"}
         </button>
       </div>
     </div>

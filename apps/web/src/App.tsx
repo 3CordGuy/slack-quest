@@ -1271,6 +1271,7 @@ export function App() {
           questId={activeCombat.questId}
           selfId={state.me.slack_user_id}
           onOpenInventory={chr ? () => setInventoryOpen(true) : undefined}
+          inExpedition={activeExpeditionId != null}
           onExit={() => {
             setActiveCombat(null);
             setCombatDismissed(true);
@@ -1315,10 +1316,12 @@ export function App() {
       <Expedition
         expeditionId={activeExpeditionId}
         onCombatSpawned={(questId) => {
-          // Combat node spawned a regular quest; route through the existing
-          // combat flow. The expedition advance hook fires on combat resolve.
-          setActiveCombat({ questId });
-          void refresh();
+          // Combat node spawned a regular quest; bootstrap the combat DO via
+          // the same start_web_combat path the standard quest flow uses
+          // (startCombat does the POST + sets activeCombat in order). Without
+          // this the WS opens against an empty DO and CombatPage sits on the
+          // "Drawing steel" overlay until the user hits refresh.
+          void startCombat(questId);
         }}
         onExit={() => {
           setActiveExpeditionId(null);
