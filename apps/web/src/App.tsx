@@ -98,6 +98,30 @@ class CombatErrorBoundary extends Component<{ children: ReactNode; onReset: () =
   }
 }
 
+// Wraps a react-hot-toast renderer so any dismiss path (tap-anywhere from
+// PR #206, programmatic dismiss, the inline "dismiss" link, or the toast
+// timing out) flips `visible` false → fires `onHide` exactly once. This is
+// what stops the camp/errand "ready" toasts from re-firing on the next
+// 30-second poll after a user taps to dismiss them mid-combat: without this
+// wrapper, the tap-anywhere dismiss never reaches the per-task `dismissed`
+// ref, so the next poll re-fires the same toast.
+function DismissOnHide({
+  visible,
+  onHide,
+  children,
+}: {
+  visible: boolean;
+  onHide: () => void;
+  children: React.ReactNode;
+}) {
+  const wasVisibleRef = useRef(visible);
+  useEffect(() => {
+    if (wasVisibleRef.current && !visible) onHide();
+    wasVisibleRef.current = visible;
+  }, [visible, onHide]);
+  return <>{children}</>;
+}
+
 export function App() {
   const [state, setState] = useState<LoadState>({ kind: "loading" });
   const [activeCombat, setActiveCombat] = useState<{ questId: number } | null>(null);
@@ -205,14 +229,19 @@ export function App() {
         const nodeIcon = t.node === "mine" ? "ore" : t.node === "forage" ? "grass-mushroom" : "fishing-hook";
         toast(
           (tt) => (
-            <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <Icon name={nodeIcon} size={16} color="var(--fg-1)" />
-              <span><strong>{nodeLabel} complete</strong> — {summary}</span>
-              <button
-                onClick={() => { dismissedReadyTasksRef.current.add(t.id); toast.dismiss(tt.id); }}
-                style={{ marginLeft: 4, background: "transparent", color: "inherit", border: "none", cursor: "pointer", textDecoration: "underline" }}
-              >dismiss</button>
-            </span>
+            <DismissOnHide
+              visible={tt.visible}
+              onHide={() => dismissedReadyTasksRef.current.add(t.id)}
+            >
+              <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <Icon name={nodeIcon} size={16} color="var(--fg-1)" />
+                <span><strong>{nodeLabel} complete</strong> — {summary}</span>
+                <button
+                  onClick={() => { dismissedReadyTasksRef.current.add(t.id); toast.dismiss(tt.id); }}
+                  style={{ marginLeft: 4, background: "transparent", color: "inherit", border: "none", cursor: "pointer", textDecoration: "underline" }}
+                >dismiss</button>
+              </span>
+            </DismissOnHide>
           ),
           { id: `gather-${t.id}`, duration: Infinity },
         );
@@ -242,14 +271,19 @@ export function App() {
           : "ready in the pub";
         toast(
           (tt) => (
-            <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <Icon name={patron?.icon ?? "conversation"} size={16} color="var(--fg-1)" />
-              <span><strong>{name}</strong> has your reward — {summary}</span>
-              <button
-                onClick={() => { dismissedErrandsRef.current.add(active.id); toast.dismiss(tt.id); }}
-                style={{ marginLeft: 4, background: "transparent", color: "inherit", border: "none", cursor: "pointer", textDecoration: "underline" }}
-              >dismiss</button>
-            </span>
+            <DismissOnHide
+              visible={tt.visible}
+              onHide={() => dismissedErrandsRef.current.add(active.id)}
+            >
+              <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <Icon name={patron?.icon ?? "conversation"} size={16} color="var(--fg-1)" />
+                <span><strong>{name}</strong> has your reward — {summary}</span>
+                <button
+                  onClick={() => { dismissedErrandsRef.current.add(active.id); toast.dismiss(tt.id); }}
+                  style={{ marginLeft: 4, background: "transparent", color: "inherit", border: "none", cursor: "pointer", textDecoration: "underline" }}
+                >dismiss</button>
+              </span>
+            </DismissOnHide>
           ),
           { id: `errand-${active.id}`, duration: Infinity },
         );

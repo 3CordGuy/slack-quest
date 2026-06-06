@@ -103,18 +103,20 @@ export function HoverTooltip({
   }, [open, refs.reference, refs.floating]);
 
   const child = isValidElement(children) ? children : <span>{children}</span>;
-  // We attach hover handlers and the floating-ui reference ref to the
-  // trigger. If the trigger has its own mouse handlers / ref they'd be
-  // overwritten — none of the current call sites do, so this stays simple.
-  // onClick toggles on touch devices (where mouseenter fires alongside
-  // click but the user has no way to "move away" to close).
+  // Preserve the child's own onClick (NodeCell / LoadoutSlot need theirs
+  // to fire for select / equip). cloneElement would otherwise replace it
+  // with our toggle, which is why on mobile tapping an ability cell only
+  // brought up the tooltip and never opened the detail panel.
+  const childOnClick = (child.props as { onClick?: (e: React.MouseEvent) => void }).onClick;
   const triggerProps = {
     ref: refs.setReference,
     onMouseEnter: () => setOpen(true),
     onMouseLeave: () => setOpen(false),
     onFocus: () => setOpen(true),
     onBlur: () => setOpen(false),
-    onClick: () => {
+    onClick: (e: React.MouseEvent) => {
+      // Run the child's own click first so equip/select wins the round.
+      childOnClick?.(e);
       // Touch devices: the document touchstart listener above closes the
       // tooltip when open; this only needs to OPEN on a fresh tap. The
       // listener calls setOpen(false) BEFORE this onClick fires (capture
