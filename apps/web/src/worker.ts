@@ -371,6 +371,11 @@ import {
   getExpeditionPartyState,
   getExpeditionProgress,
   getRecentExpeditionsForCharacter,
+  getExpeditionFastestClearLeaderboard,
+  getExpeditionMostClearedLeaderboard,
+  getExpeditionStreakLeaderboard,
+  getExpeditionNodesLeaderboard,
+  getExpeditionEliteLeaderboard,
   recordExpeditionNodeProgress,
   setExpeditionCurrentNodeIfCurrent,
   setExpeditionPartyHpMana,
@@ -6439,6 +6444,47 @@ app.get("/api/leaderboard/harvest", async (c) => {
   const session = await currentSession(c.env.DB, c.req.header("cookie"));
   if (!session) return c.json({ error: "unauthenticated" }, 401);
   const entries = await getHarvestLeaderboard(c.env.DB, 10);
+  return c.json({ entries });
+});
+
+// ── Expedition leaderboards ─────────────────────────────────────────────────
+// Five categories surfacing different play styles (StS-style roguelike
+// conventions): fastest clear, most cleared, longest streak, lifetime nodes
+// resolved, and elite slayer. Each route mirrors the existing leaderboard
+// pattern — auth-gated session check, top 20, JSON `{ entries }`.
+
+app.get("/api/leaderboard/expedition/fastest-clear", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const entries = await getExpeditionFastestClearLeaderboard(c.env.DB, 20);
+  return c.json({ entries });
+});
+
+app.get("/api/leaderboard/expedition/most-cleared", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const entries = await getExpeditionMostClearedLeaderboard(c.env.DB, 20);
+  return c.json({ entries });
+});
+
+app.get("/api/leaderboard/expedition/streak", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const entries = await getExpeditionStreakLeaderboard(c.env.DB, 20);
+  return c.json({ entries });
+});
+
+app.get("/api/leaderboard/expedition/nodes", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const entries = await getExpeditionNodesLeaderboard(c.env.DB, 20);
+  return c.json({ entries });
+});
+
+app.get("/api/leaderboard/expedition/elite", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const entries = await getExpeditionEliteLeaderboard(c.env.DB, 20);
   return c.json({ entries });
 });
 

@@ -241,6 +241,55 @@ export interface HarvestLeaderboardEntry {
   fish_plays: number;
 }
 
+// Expedition leaderboard entry types. Shape mirrors the worker JSON for each
+// of the five categories returned by /api/leaderboard/expedition/*.
+export interface ExpeditionFastestClearEntry {
+  slack_user_id: string;
+  name: string;
+  slack_username: string | null;
+  class: string;
+  level: number;
+  expedition_id: number;
+  duration_ms: number;
+}
+
+export interface ExpeditionMostClearedEntry {
+  slack_user_id: string;
+  name: string;
+  slack_username: string | null;
+  class: string;
+  level: number;
+  completed_count: number;
+}
+
+export interface ExpeditionStreakEntry {
+  slack_user_id: string;
+  name: string;
+  slack_username: string | null;
+  class: string;
+  level: number;
+  current_streak: number;
+  best_streak: number;
+}
+
+export interface ExpeditionNodesEntry {
+  slack_user_id: string;
+  name: string;
+  slack_username: string | null;
+  class: string;
+  level: number;
+  total_nodes: number;
+}
+
+export interface ExpeditionEliteEntry {
+  slack_user_id: string;
+  name: string;
+  slack_username: string | null;
+  class: string;
+  level: number;
+  elite_clears: number;
+}
+
 export interface MeResponse {
   slack_user_id: string;
   slack_team_id: string;
@@ -564,7 +613,7 @@ export interface RecentQuestsResponse {
   quests: RecentQuest[];
 }
 
-export type TownSection = "job_board" | "pub" | "shop" | "inn" | "smithy" | "hunt" | "camp" | "apothecary";
+export type TownSection = "job_board" | "pub" | "shop" | "inn" | "smithy" | "hunt" | "camp" | "apothecary" | "leaderboards";
 
 // Sub-tab within My Camp. Outskirts (Hunt) is its own ward location now;
 // camp focuses purely on gathering and upgrades.

@@ -188,6 +188,7 @@ export const DISTRICT_CONFIG: {
   { key: "apothecary", label: "Apothecary", icon: "poison-bottle", color: "#1a2d1a", artKey: "apothecary_art_url" },
   { key: "hunt",      label: "Outskirts", icon: "sword",           color: "#1a1a2e", artKey: "outskirts_art_url" },
   { key: "camp",      label: "My Camp",   icon: "camping-tent",    color: "#1a2e1a", artKey: "outskirts_art_url" },
+  { key: "leaderboards", label: "Leaderboards", icon: "trophy",    color: "#3a2a05", artKey: "overview_art_url" },
 ];
 
 // Mirror of CAMP_TIERS and CAMP_NODE_CONFIG in @gantt-quest/core, exported here

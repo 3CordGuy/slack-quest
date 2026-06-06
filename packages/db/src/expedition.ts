@@ -434,3 +434,250 @@ export async function getRecentExpeditionsForCharacter(
     .all<ExpeditionRow>();
   return r.results ?? [];
 }
+
+// ── Expedition leaderboards ──────────────────────────────────────────────────
+//
+// Each leaderboard joins through `expedition_party` so a "clear" credits every
+// member who actually walked the run, not just the `created_by` initiator
+// (matches the StS-style party convention). All five share the same character
+// columns up front so the UI can render the player row uniformly (avatar +
+// name + class + level + metric).
+
+export interface ExpeditionFastestClearEntry {
+  slack_user_id: string;
+  name: string;
+  slack_username: string | null;
+  class: string;
+  level: number;
+  expedition_id: number;
+  duration_ms: number;
+}
+
+export interface ExpeditionMostClearedEntry {
+  slack_user_id: string;
+  name: string;
+  slack_username: string | null;
+  class: string;
+  level: number;
+  completed_count: number;
+}
+
+export interface ExpeditionStreakEntry {
+  slack_user_id: string;
+  name: string;
+  slack_username: string | null;
+  class: string;
+  level: number;
+  current_streak: number;
+  best_streak: number;
+}
+
+export interface ExpeditionNodesEntry {
+  slack_user_id: string;
+  name: string;
+  slack_username: string | null;
+  class: string;
+  level: number;
+  total_nodes: number;
+}
+
+export interface ExpeditionEliteEntry {
+  slack_user_id: string;
+  name: string;
+  slack_username: string | null;
+  class: string;
+  level: number;
+  elite_clears: number;
+}
+
+/**
+ * Fastest expedition clear — top N party members ordered by ascending
+ * (completed_at - created_at). Each row is one (character, expedition) pair,
+ * so a single fast run with three party members produces three rows. This
+ * matches roguelike conventions (StS posts each victorious run separately).
+ */
+export async function getExpeditionFastestClearLeaderboard(
+  db: D1Database,
+  limit = 20,
+): Promise<ExpeditionFastestClearEntry[]> {
+  const r = await db
+    .prepare(
+      `SELECT c.slack_user_id, c.name, c.slack_username, c.class, c.level,
+              e.id as expedition_id,
+              (e.completed_at - e.created_at) as duration_ms
+         FROM expeditions e
+         JOIN expedition_party ep ON ep.expedition_id = e.id
+         JOIN characters c ON c.slack_user_id = ep.character_id
+        WHERE e.status = 'completed'
+          AND e.completed_at IS NOT NULL
+          AND (e.completed_at - e.created_at) > 0
+        ORDER BY duration_ms ASC
+        LIMIT ?`,
+    )
+    .bind(Math.max(1, Math.min(100, limit)))
+    .all<ExpeditionFastestClearEntry>();
+  return r.results ?? [];
+}
+
+/**
+ * Most expeditions cleared — COUNT of completed expeditions per character.
+ * A character with zero completions is excluded (HAVING completed_count > 0).
+ */
+export async function getExpeditionMostClearedLeaderboard(
+  db: D1Database,
+  limit = 20,
+): Promise<ExpeditionMostClearedEntry[]> {
+  const r = await db
+    .prepare(
+      `SELECT c.slack_user_id, c.name, c.slack_username, c.class, c.level,
+              COUNT(e.id) as completed_count
+         FROM characters c
+         JOIN expedition_party ep ON ep.character_id = c.slack_user_id
+         JOIN expeditions e ON e.id = ep.expedition_id AND e.status = 'completed'
+        GROUP BY c.slack_user_id
+        HAVING completed_count > 0
+        ORDER BY completed_count DESC, c.level DESC
+        LIMIT ?`,
+    )
+    .bind(Math.max(1, Math.min(100, limit)))
+    .all<ExpeditionMostClearedEntry>();
+  return r.results ?? [];
+}
+
+/**
+ * Boss-killer streak — longest run of consecutive 'completed' expeditions
+ * per character with no 'failed' or 'abandoned' in between. Current streak
+ * is the tail of consecutive completes; best is the all-time max. We do the
+ * streak math in JS because SQLite lacks proper window functions across the
+ * deployment target (D1 supports them in recent versions but the row counts
+ * are small enough that fetching the per-character status sequence is
+ * cheaper than rolling a CTE).
+ */
+export async function getExpeditionStreakLeaderboard(
+  db: D1Database,
+  limit = 20,
+): Promise<ExpeditionStreakEntry[]> {
+  // Pull every terminated expedition for every character, oldest-first per
+  // character. Only characters with at least one completion matter — we drop
+  // the rest before sorting.
+  const r = await db
+    .prepare(
+      `SELECT c.slack_user_id, c.name, c.slack_username, c.class, c.level,
+              e.status, e.completed_at
+         FROM characters c
+         JOIN expedition_party ep ON ep.character_id = c.slack_user_id
+         JOIN expeditions e ON e.id = ep.expedition_id
+        WHERE e.status IN ('completed','failed','abandoned')
+          AND e.completed_at IS NOT NULL
+        ORDER BY c.slack_user_id ASC, e.completed_at ASC`,
+    )
+    .all<{
+      slack_user_id: string;
+      name: string;
+      slack_username: string | null;
+      class: string;
+      level: number;
+      status: ExpeditionStatus;
+      completed_at: number;
+    }>();
+  const byChar = new Map<string, {
+    meta: Omit<ExpeditionStreakEntry, "current_streak" | "best_streak">;
+    statuses: ExpeditionStatus[];
+  }>();
+  for (const row of r.results ?? []) {
+    let entry = byChar.get(row.slack_user_id);
+    if (!entry) {
+      entry = {
+        meta: {
+          slack_user_id: row.slack_user_id,
+          name: row.name,
+          slack_username: row.slack_username,
+          class: row.class,
+          level: row.level,
+        },
+        statuses: [],
+      };
+      byChar.set(row.slack_user_id, entry);
+    }
+    entry.statuses.push(row.status);
+  }
+  const entries: ExpeditionStreakEntry[] = [];
+  for (const { meta, statuses } of byChar.values()) {
+    let best = 0;
+    let run = 0;
+    let tail = 0;
+    for (const s of statuses) {
+      if (s === "completed") {
+        run += 1;
+        if (run > best) best = run;
+      } else {
+        run = 0;
+      }
+    }
+    // Tail = run of completes at the end of the sequence.
+    for (let i = statuses.length - 1; i >= 0; i--) {
+      if (statuses[i] === "completed") tail += 1;
+      else break;
+    }
+    if (best === 0) continue;
+    entries.push({ ...meta, current_streak: tail, best_streak: best });
+  }
+  entries.sort((a, b) => b.best_streak - a.best_streak || b.current_streak - a.current_streak);
+  return entries.slice(0, Math.max(1, Math.min(100, limit)));
+}
+
+/**
+ * Most nodes resolved lifetime — SUM of `expedition_node_progress` rows
+ * across every expedition the character was party to. Counts every node the
+ * party resolved, including non-combat (events, shrines, treasure, camp).
+ */
+export async function getExpeditionNodesLeaderboard(
+  db: D1Database,
+  limit = 20,
+): Promise<ExpeditionNodesEntry[]> {
+  const r = await db
+    .prepare(
+      `SELECT c.slack_user_id, c.name, c.slack_username, c.class, c.level,
+              COUNT(p.node_id) as total_nodes
+         FROM characters c
+         JOIN expedition_party ep ON ep.character_id = c.slack_user_id
+         JOIN expedition_node_progress p ON p.expedition_id = ep.expedition_id
+        GROUP BY c.slack_user_id
+        HAVING total_nodes > 0
+        ORDER BY total_nodes DESC, c.level DESC
+        LIMIT ?`,
+    )
+    .bind(Math.max(1, Math.min(100, limit)))
+    .all<ExpeditionNodesEntry>();
+  return r.results ?? [];
+}
+
+/**
+ * Elite slayer — count of completed expeditions where the party resolved
+ * at least one elite-kind node. We detect elite nodes by looking for
+ * `"kind":"elite"` in `expedition_node_progress.outcome_json`. This is a
+ * substring match because outcome_json is a stable JSON shape written by
+ * the worker; if the shape ever changes, update this and the test together.
+ */
+export async function getExpeditionEliteLeaderboard(
+  db: D1Database,
+  limit = 20,
+): Promise<ExpeditionEliteEntry[]> {
+  const r = await db
+    .prepare(
+      `SELECT c.slack_user_id, c.name, c.slack_username, c.class, c.level,
+              COUNT(DISTINCT e.id) as elite_clears
+         FROM characters c
+         JOIN expedition_party ep ON ep.character_id = c.slack_user_id
+         JOIN expeditions e ON e.id = ep.expedition_id AND e.status = 'completed'
+         JOIN expedition_node_progress p ON p.expedition_id = e.id
+        WHERE p.outcome_json LIKE '%"kind":"elite"%'
+        GROUP BY c.slack_user_id
+        HAVING elite_clears > 0
+        ORDER BY elite_clears DESC, c.level DESC
+        LIMIT ?`,
+    )
+    .bind(Math.max(1, Math.min(100, limit)))
+    .all<ExpeditionEliteEntry>();
+  return r.results ?? [];
+}
