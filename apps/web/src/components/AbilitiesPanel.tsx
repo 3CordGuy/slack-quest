@@ -8,7 +8,7 @@
 //   POST /api/character/talents/respec — () → { ok, character, paid }
 //   POST /api/character/loadout       — { active, passive } → { ok, character }
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type {
   AbilityLoadout,
   ClassId,
@@ -62,6 +62,12 @@ export function AbilitiesPanel({
   const [pickingSlot, setPickingSlot] = useState<{ kind: SubKind; index: number } | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Scroll NodeDetail into view when it mounts/changes. The detail panel
+  // renders as a sibling below the flex-1 scrollable node grid; if the
+  // user clicked a cell near the bottom of a long list (Ring of Frost
+  // being the last devops_mage entry is the canonical case), the panel
+  // can appear past the visible viewport with nothing scrolling to it.
+  const detailRef = useRef<HTMLDivElement | null>(null);
 
   async function refresh() {
     try {
@@ -81,6 +87,17 @@ export function AbilitiesPanel({
   useEffect(() => {
     refresh();
   }, []);
+
+  // When the user selects a node, scroll the detail panel into view so the
+  // Buy / Equip / Unequip buttons are always reachable — otherwise clicking
+  // a node near the bottom of the scrollable list (e.g. Ring of Frost as
+  // the last devops_mage entry) leaves the detail panel below the viewport.
+  useEffect(() => {
+    if (!selectedId) return;
+    const el = detailRef.current;
+    if (!el) return;
+    el.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }, [selectedId]);
 
   const classId: ClassId | undefined = useMemo(
     () => (data ? classIdForTree(data.class) : undefined),
@@ -405,6 +422,7 @@ export function AbilitiesPanel({
 
       {/* Detail panel */}
       {selectedNode && (
+        <div ref={detailRef}>
         <NodeDetail
           node={selectedNode}
           rank={ownedRank(selectedNode.id)}
@@ -417,6 +435,7 @@ export function AbilitiesPanel({
           onClose={() => setSelectedId(null)}
           busy={busy}
         />
+        </div>
       )}
 
       {error && (

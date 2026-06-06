@@ -4,6 +4,7 @@
 // ABILITIES maps in flavor.ts.
 
 import type { DamageType } from "./flavor";
+import type { GroundEffectKind, HexGrid, HexPos } from "./hex";
 import type { Stats } from "./stats";
 
 export type TargetKind =
@@ -12,7 +13,11 @@ export type TargetKind =
   | "single_ally"
   | "any"           // fighter or monster — execute sees ctx.target as either type
   | "all_allies"
-  | "all_enemies";
+  | "all_enemies"
+  // Ground-targeted: the player picks a hex on the grid. The action carries
+  // `target_pos`; execute() reads ctx.target_pos and bakes the shape into a
+  // GroundEffect via fx.placeGroundEffect.
+  | "ground";
 
 // When a passive ability checks in. The machine calls passive execute functions
 // at these points; once_per_fight passives are skipped after their first fire.
@@ -78,6 +83,17 @@ export interface AbilityContext {
   // when the caster has not unlocked higher ranks. execute() reads this to
   // scale potency / duration / add capstone effects.
   rank?: number;
+  // For ground-targeted abilities (target: "ground"): the hex the player
+  // chose as the center of the shape. The ability's execute() resolves the
+  // full shape (single/line/ring/blast) around this center and returns a
+  // place_ground_effect AbilityEffect.
+  target_pos?: HexPos;
+  // Live combat grid — passed through so shape helpers (hexLine/hexBlast/
+  // hexRing) clip against the actual scene bounds rather than GRID_DEFAULT.
+  // Engine-level placement re-filters against the same grid (inBounds check
+  // in the place_ground_effect handler), so this is defense-in-depth for
+  // anyone who wants pre-filtered hex arrays inside execute().
+  grid?: HexGrid;
 }
 
 // Minimal spec for an ally NPC summoned into combat via summon_ally_npc.
@@ -226,7 +242,21 @@ export type AbilityEffect =
   // actor's current pos (least jarring jump) and emits a "moved" event so
   // animations fire. No-op when either pos is missing or no adjacent hex is
   // free — the strike effect that follows still lands.
-  | { kind: "leap_adjacent_to"; actor_id: string; target_id: string };
+  | { kind: "leap_adjacent_to"; actor_id: string; target_id: string }
+  // Place a persistent ground effect on the battlefield. The ability has
+  // already resolved the shape into a baked `hexes` array; the engine just
+  // pushes the GroundEffect into `state.ground_effects`. expires_after_round
+  // is computed by the ability from caster state + duration.
+  | {
+      kind: "place_ground_effect";
+      ground_kind: GroundEffectKind;
+      hexes: HexPos[];
+      trigger: "tick" | "on_enter";
+      potency: number;
+      // Duration in rounds. The engine converts to expires_after_round at
+      // application time so the count is anchored to the placement round.
+      duration_rounds: number;
+    };
 
 export interface ActiveAbilityDef {
   kind: "active";

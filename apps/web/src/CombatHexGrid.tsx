@@ -351,6 +351,21 @@ export function particleKindForEvent(damage_type?: string, isHeal?: boolean, isS
   }
 }
 
+// Maps a GroundEffectKind to the matching basic-elemental ParticleKind used by
+// the single-tile elemental procs (fire/ice/magic/etc.). Used by CombatPage to
+// emit bursts on ground_placed / ground_tick / ground_triggered so the new
+// ground abilities visually match the existing single-tile elemental effects.
+export function particleKindForGroundKind(kind: import("@gantt-quest/core").GroundEffectKind): ParticleKind {
+  switch (kind) {
+    case "fire": return "fire";
+    case "frost": return "ice";
+    case "brambles": return "poison";
+    case "consecrated": return "heal";
+    case "caltrops": return "physical";
+    case "rune": return "magic";
+  }
+}
+
 export function projectileKindForAttack(weaponRange: string, element?: string): ProjectileKind | null {
   // Melee attacks don't fire projectiles — the lunge animation handles them.
   if (weaponRange === "melee") return null;
@@ -1462,6 +1477,12 @@ export function CombatHexGrid({
         ctx!.restore();
       }
 
+      // 1.6 Ground effects (fire walls, caltrops, consecrated, etc.). Drawn
+      // BELOW obstacles and pawns so a fighter standing on a fire tile reads
+      // as "on top of the effect." Static tinted highlight + a small per-kind
+      // glyph for v1 — fancier VFX deferred to a follow-up.
+      drawGroundEffects(ctx!, state, hexToPixel, hexSize, now);
+
       // 2. Obstacles (between tiles and pawns so pawns can stand "near" them)
       drawObstacles(ctx!, state, hexToPixel, hexSize);
 
@@ -2322,6 +2343,64 @@ function drawLootTiles(
     const { x, y } = hexToPixel(t.pos);
     if (t.kind === "gold") drawGoldPile(ctx, x, y, hexSize, now);
     else drawLootChest(ctx, x, y, hexSize, now);
+  }
+}
+
+// ── Layer 1.6: ground effects ──────────────────────────────────────────────
+//
+// Per-kind colour + glyph palette. Tints the hex with a soft fill plus a
+// 1.5px dashed stroke so the effect reads as "marked terrain" without
+// overpowering the pawn art. The glyph is a single emoji-style character
+// drawn dimmer at the hex centre. See docs/ground-effects.md.
+// Tile colors only — the per-kind identity now comes from the particle bursts
+// (see particleKindForGroundKind), not a center glyph. Keeps the tile clean so
+// a standing pawn isn't fighting an emoji underneath it.
+const GROUND_PALETTE: Record<string, { fill: string; stroke: string }> = {
+  fire:         { fill: "rgba(239,68,68,0.32)",  stroke: "#f97316" },
+  brambles:     { fill: "rgba(132,204,22,0.30)", stroke: "#65a30d" },
+  frost:        { fill: "rgba(125,211,252,0.35)",stroke: "#38bdf8" },
+  caltrops:     { fill: "rgba(161,161,170,0.32)",stroke: "#a1a1aa" },
+  consecrated:  { fill: "rgba(250,204,21,0.28)", stroke: "#facc15" },
+  rune:         { fill: "rgba(168,85,247,0.32)", stroke: "#a855f7" },
+};
+
+function drawGroundEffects(
+  ctx: CanvasRenderingContext2D,
+  state: CombatState,
+  hexToPixel: (pos: HexPos) => { x: number; y: number },
+  hexSize: number,
+  now: number,
+) {
+  const effects = state.ground_effects;
+  if (!effects || effects.length === 0) return;
+  // Tile ambient is sized smaller than the pawn version so it sits inside the
+  // hex without crowding a standing pawn. Tuned at ~55% of hex radius.
+  const ambientRadius = hexSize * 0.55;
+  for (const ge of effects) {
+    const palette = GROUND_PALETTE[ge.kind] ?? GROUND_PALETTE.fire;
+    for (const h of ge.hexes) {
+      const { x, y } = hexToPixel(h);
+      // Tinted hex fill — slight pulse so the effect breathes (10% alpha
+      // wobble over ~1.6s). Static enough not to distract, animated enough
+      // to read as "live."
+      const pulse = 0.85 + Math.sin(now / 800) * 0.15;
+      ctx.save();
+      ctx.globalAlpha = pulse;
+      drawHex(ctx, x, y, hexSize * 0.92, palette.fill, "rgba(0,0,0,0)", 0);
+      ctx.restore();
+      // Ambient per-frame FX — same helpers the pawn status overlay uses so a
+      // fire-wall tile and a burning pawn share visual language. Per-hex seed
+      // keeps adjacent tiles in a wall/ring from embering in lockstep.
+      const seed = Math.round(x) * 73856093 ^ Math.round(y) * 19349663 ^ ge.id.length;
+      switch (ge.kind) {
+        case "fire":        drawBurningEmbers(ctx, x, y, ambientRadius, now, seed); break;
+        case "frost":       drawFrostGlints(ctx, x, y, ambientRadius, now, seed); break;
+        case "brambles":    drawPoisonBubbles(ctx, x, y, ambientRadius, now, seed); break;
+        case "consecrated": drawEmpoweredAura(ctx, x, y, ambientRadius, now, seed); break;
+        case "rune":        drawHexedWisps(ctx, x, y, ambientRadius, now, seed); break;
+        case "caltrops":    /* trap stays subtle — tile color + dashed stroke only */ break;
+      }
+    }
   }
 }
 

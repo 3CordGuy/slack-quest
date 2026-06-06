@@ -5,6 +5,7 @@
 
 import type { AbilityEffect, AllyNpcSpec } from "../abilities";
 import type { DamageType } from "../flavor";
+import type { GroundEffectKind, HexPos } from "../hex";
 
 export const fx = {
   // Deal damage to a monster (bypasses armor). Pass drink_buff_context:
@@ -182,6 +183,28 @@ export const fx = {
 
   leapAdjacentTo(actorId: string, targetId: string): AbilityEffect {
     return { kind: "leap_adjacent_to", actor_id: actorId, target_id: targetId };
+  },
+
+  // Place a persistent ground effect on a baked set of hexes. The caller
+  // (the ability's execute()) is responsible for resolving the shape
+  // (single/line/ring/blast) up front — see hex.ts helpers `hexLine`,
+  // `hexRing`, `hexBlast`. Damage credit on every tick / trigger flows to
+  // the caster via the engine.
+  placeGroundEffect(
+    groundKind: GroundEffectKind,
+    hexes: HexPos[],
+    trigger: "tick" | "on_enter",
+    potency: number,
+    durationRounds: number,
+  ): AbilityEffect {
+    return {
+      kind: "place_ground_effect",
+      ground_kind: groundKind,
+      hexes,
+      trigger,
+      potency,
+      duration_rounds: durationRounds,
+    };
   },
 };
 

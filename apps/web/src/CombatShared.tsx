@@ -1279,7 +1279,7 @@ export type PanelTurnAction =
   | { kind: "position"; actor: string; to: "front" | "back" }
   | { kind: "wait"; actor: string }
   | { kind: "mark"; actor: string }
-  | { kind: "ability"; actor: string; ability_id: string; target_id?: string; target?: string; position?: "front" | "back" }
+  | { kind: "ability"; actor: string; ability_id: string; target_id?: string; target?: string; position?: "front" | "back"; target_pos?: { q: number; r: number } }
   | { kind: "monster_act" }
   | { kind: "use_item"; actor: string; item_id: number; target_id?: string };
 

@@ -31,6 +31,83 @@ export interface Obstacle {
   kind: ObstacleKind;
 }
 
+// ── Ground effects ───────────────────────────────────────────────────────────
+//
+// Persistent tile effects placed by player abilities (fire walls, caltrops,
+// consecrated ground, etc.). See docs/ground-effects.md for the full design.
+//
+// kind drives potency interpretation:
+//   "fire" / "brambles" / "frost" — tick: damage any actor standing on the hex
+//   "consecrated"                 — tick: heal allies of source_id only
+//   "caltrops" / "rune"           — on_enter: one-shot damage, hex consumed
+//
+// hexes is baked at placement time (shape resolved up front). Hooks scan this
+// array and never recompute the shape, so partial consumption (e.g. caltrops
+// triggered on hex A but not B) is trivially handled by removing the entered
+// hex from `hexes` and dropping the GroundEffect when it empties.
+export type GroundEffectKind =
+  | "fire"
+  | "brambles"
+  | "caltrops"
+  | "consecrated"
+  | "frost"
+  | "rune";
+
+export type GroundEffectTrigger = "tick" | "on_enter";
+
+export interface GroundEffect {
+  // Stable id for idempotency / event correlation.
+  id: string;
+  kind: GroundEffectKind;
+  // Tiles the effect covers (one entry per affected hex). Shape resolved at
+  // placement time inside the placing ability's execute() callback.
+  hexes: HexPos[];
+  // Initiator — damage credit flows to this actor via the existing
+  // contribution map. Persists even after the source is downed/dead.
+  source_id: string;
+  // Last round (inclusive) the effect is still active. The round-advance
+  // hook drops effects whose expires_after_round < new_round.
+  expires_after_round: number;
+  trigger: GroundEffectTrigger;
+  // Damage per tick (tick kinds) or per trigger (on_enter kinds), or heal
+  // amount (consecrated). Resolved once at placement from caster stats.
+  potency: number;
+}
+
+// A line of `length` collinear hexes through `center` along axial direction
+// `direction`. The line is centered on `center` (so a 3-hex line is the
+// center plus one hex on each side along the axis). Out-of-bounds hexes
+// are skipped so the line shortens at the grid edge.
+//
+// `direction` is an axial unit vector — one of the six neighbor offsets.
+// Defaults to (1, 0) "right" if not supplied.
+export function hexLine(
+  center: HexPos,
+  length: number,
+  grid: HexGrid,
+  direction: HexPos = { q: 1, r: 0 },
+): HexPos[] {
+  const half = Math.floor((length - 1) / 2);
+  const startOffset = -half;
+  const result: HexPos[] = [];
+  for (let i = 0; i < length; i++) {
+    const k = startOffset + i;
+    const pos = { q: center.q + direction.q * k, r: center.r + direction.r * k };
+    if (inBounds(pos, grid)) result.push(pos);
+  }
+  return result;
+}
+
+// All hexes within `radius` hex-distance of `center`, INCLUDING center.
+// Used by ground-effect shape "blast" (filled disk). Differs from `hexDisk`
+// which excludes the center.
+export function hexBlast(center: HexPos, radius: number, grid: HexGrid): HexPos[] {
+  const result: HexPos[] = [];
+  if (inBounds(center, grid)) result.push({ ...center });
+  for (const pos of hexDisk(center, radius, grid)) result.push(pos);
+  return result;
+}
+
 // Loot tile kind. `gold` drops a sack of coins; `item` rolls into a real
 // inventory item at pickup time (worker-side, since rollItem lives in
 // flavor.ts and uses Math.random()). Tiles do NOT block movement or LOS —

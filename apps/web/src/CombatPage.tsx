@@ -11,6 +11,7 @@ import { CombatParticles, CombatParticlesProvider, triggerBurst, type BurstKind 
 import {
   CombatHexGrid,
   particleKindForEvent,
+  particleKindForGroundKind,
   projectileKindForAttack,
   type CombatHexGridHandle,
   type ParticleKind,
@@ -354,6 +355,40 @@ type CombatEvent =
       kind: "gold" | "item";
       gold?: number;
       item_tier?: number;
+    }
+  // Ground-effect events from the engine — see packages/core/src/combat_machine.ts.
+  // We mirror the shapes here so CombatPage's WS event switch can react.
+  | {
+      type: "ground_placed";
+      actor: string;
+      ground_id: string;
+      kind: import("@gantt-quest/core").GroundEffectKind;
+      hexes: { q: number; r: number }[];
+      expires_after_round: number;
+      potency: number;
+    }
+  | {
+      type: "ground_tick";
+      actor: string;
+      source: string;
+      ground_id: string;
+      kind: import("@gantt-quest/core").GroundEffectKind;
+      hp_delta: number;
+    }
+  | {
+      type: "ground_triggered";
+      actor: string;
+      source: string;
+      ground_id: string;
+      kind: import("@gantt-quest/core").GroundEffectKind;
+      pos: { q: number; r: number };
+      hp_delta: number;
+    }
+  | {
+      type: "ground_expired";
+      ground_id: string;
+      kind: import("@gantt-quest/core").GroundEffectKind;
+      source: string;
     }
   | ItemUsedEvent;
 
@@ -919,6 +954,29 @@ function formatEvent(e: CombatEvent, state: CombatState | null): LogEntry[] {
       return [{ id: nextLogId++, content: <>🔥 {state ? nameOf(e.target) : e.target} catches fire ({e.duration}t)</>, tone: "good" }];
     case "ability_shock_applied":
       return [{ id: nextLogId++, content: <>⚡ {state ? nameOf(e.target) : e.target} is shocked ({e.duration}t)</>, tone: "good" }];
+    case "ground_placed": {
+      const actorName = state ? nameOf(e.actor) : e.actor;
+      const glyph = GROUND_KIND_GLYPH[e.kind];
+      const label = GROUND_KIND_LABEL[e.kind];
+      return [{ id: nextLogId++, content: <>{glyph} {actorName} lays down {label} ({e.hexes.length}t)</>, tone: "good" }];
+    }
+    case "ground_tick": {
+      const targetName = state ? nameOf(e.actor) : e.actor;
+      const glyph = GROUND_KIND_GLYPH[e.kind];
+      if (e.hp_delta >= 0) {
+        // Heal tick (consecrated)
+        return [{ id: nextLogId++, content: <>{glyph} {targetName} heals <strong>+{e.hp_delta}</strong></>, tone: "good" }];
+      }
+      return [{ id: nextLogId++, content: <>{glyph} {targetName} takes <strong>{Math.abs(e.hp_delta)}</strong> from {GROUND_KIND_LABEL[e.kind]}</>, tone: "bad" }];
+    }
+    case "ground_triggered": {
+      const targetName = state ? nameOf(e.actor) : e.actor;
+      const glyph = GROUND_KIND_GLYPH[e.kind];
+      return [{ id: nextLogId++, content: <>{glyph} {targetName} triggers {GROUND_KIND_LABEL[e.kind]} — <strong>{Math.abs(e.hp_delta)}</strong></>, tone: "bad" }];
+    }
+    case "ground_expired":
+      // Silent — the fading overlay handles the visual cue.
+      return [];
     default: {
       const _exhaustive: never = e;
       void _exhaustive;
@@ -926,6 +984,15 @@ function formatEvent(e: CombatEvent, state: CombatState | null): LogEntry[] {
     }
   }
 }
+
+// Compact glyph + label maps for ground-effect log entries. Keeps the switch
+// above readable and matches the kind-coded glyphs the canvas renders on tile.
+const GROUND_KIND_GLYPH: Record<import("@gantt-quest/core").GroundEffectKind, string> = {
+  fire: "🔥", frost: "❄️", brambles: "🌿", consecrated: "✨", caltrops: "🔻", rune: "🔯",
+};
+const GROUND_KIND_LABEL: Record<import("@gantt-quest/core").GroundEffectKind, string> = {
+  fire: "fire", frost: "frost", brambles: "brambles", consecrated: "consecrated ground", caltrops: "caltrops", rune: "rune",
+};
 
 function signed(n: number): string {
   return n >= 0 ? `+${n}` : `${n}`;
@@ -1499,6 +1566,32 @@ export function CombatPage({
                 const tgt = e.target ? findMonster(e.target) : null;
                 if (tgt?.pos) hex.emitParticle({ id: `sk${Date.now()}`, kind: "lightning", at: tgt.pos, actorId: tgt.id });
               }
+              // Ground-effect bursts. Reuses the single-tile elemental particle
+              // configs so a fire wall reads as the same "fire" as a fireball
+              // proc, frost ring as the same "ice" as Ray of Frost, etc.
+              if (evt.type === "ground_placed") {
+                const e = evt as { kind: import("@gantt-quest/core").GroundEffectKind; hexes: { q: number; r: number }[]; ground_id: string };
+                const partKind = particleKindForGroundKind(e.kind);
+                // Fire one burst per hex in the placed shape. Multi-hex shapes
+                // (walls / rings / blasts) light up simultaneously.
+                e.hexes.forEach((h, i) => {
+                  hex.emitParticle({ id: `gp${e.ground_id}-${i}`, kind: partKind, at: h });
+                });
+              }
+              if (evt.type === "ground_tick") {
+                const e = evt as { kind: import("@gantt-quest/core").GroundEffectKind; actor: string; ground_id: string };
+                const tgt = findFighter(e.actor) ?? findMonster(e.actor);
+                if (tgt?.pos) {
+                  const partKind = particleKindForGroundKind(e.kind);
+                  hex.emitParticle({ id: `gt${e.ground_id}-${Date.now()}`, kind: partKind, at: tgt.pos, actorId: tgt.id });
+                }
+              }
+              if (evt.type === "ground_triggered") {
+                const e = evt as { kind: import("@gantt-quest/core").GroundEffectKind; pos: { q: number; r: number }; actor: string; ground_id: string };
+                const partKind = particleKindForGroundKind(e.kind);
+                const tgt = findFighter(e.actor) ?? findMonster(e.actor);
+                hex.emitParticle({ id: `gx${e.ground_id}-${Date.now()}`, kind: partKind, at: e.pos, actorId: tgt?.id });
+              }
               if (
                 evt.type === "passive_rogue_lethal_strike"
                 || evt.type === "passive_sinister_queries"
@@ -1949,6 +2042,15 @@ export function CombatPage({
     // Hex mode + single_enemy → require the player to click a target on the
     // grid (aim mode). Skipped when there's no choice to make.
     if (ui.state?.hex_range_enabled && ability.target === "single_enemy") {
+      setAimingAction({ kind: "ability", ability });
+      return;
+    }
+    // Ground-targeted abilities (Fire Wall, Caltrops, etc.) — player picks a
+    // hex on the grid. The aim flow reuses the existing in-range overlay; the
+    // canvas click handler routes a hex (any hex, occupied or empty) into
+    // commitAim with target_pos when the active aim action is a ground
+    // ability. See docs/ground-effects.md.
+    if (ability.target === "ground") {
       setAimingAction({ kind: "ability", ability });
       return;
     }
@@ -2691,6 +2793,28 @@ export function CombatPage({
                         const monster = state.monsters.find((m) => m.hp > 0 && m.pos && m.pos.q === hex.q && m.pos.r === hex.r);
                         const occupantId = fighter?.id ?? monster?.id ?? null;
 
+                        // Aim mode (ground-targeted): the click is the hex itself,
+                        // not a pawn. Range-gate against the caster's pos using the
+                        // ability's declared range; send target_pos with the picked hex.
+                        if (aimingAction?.kind === "ability" && aimingAction.ability.target === "ground") {
+                          const dq = (me?.pos?.q ?? 0) - hex.q;
+                          const dr = (me?.pos?.r ?? 0) - hex.r;
+                          const ds = -dq - dr;
+                          const dist = Math.max(Math.abs(dq), Math.abs(dr), Math.abs(ds));
+                          const weaponRange = me?.weapon_range === "ranged"
+                            ? (5 + Math.floor(Math.max(0, (me?.stats?.dex ?? 5) - 5) / 4))
+                            : me?.weapon_range === "focus"
+                              ? (3 + Math.floor(Math.max(0, (me?.stats?.int_stat ?? 5) - 5) / 4))
+                              : 1;
+                          const range = aimingAction.ability.range_tiles ?? weaponRange;
+                          if (dist > range) {
+                            toast.error("Out of range");
+                            return;
+                          }
+                          send({ kind: "ability", actor: selfId, ability_id: aimingAction.ability.id, target_pos: hex });
+                          setAimingAction(null);
+                          return;
+                        }
                         // Aim mode: commit the queued attack/ability on the clicked enemy pawn.
                         if (aimingAction && monster?.id) {
                           // Reachability gate: cube-coord hex distance vs the
