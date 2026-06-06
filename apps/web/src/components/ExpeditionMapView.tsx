@@ -140,19 +140,32 @@ export function ExpeditionMapView({
       <svg
         viewBox={`0 0 ${width} ${height}`}
         preserveAspectRatio="xMidYMid meet"
-        style={{
-          display: "block",
-          // Fill the available card width and scale proportionally via the
-          // viewBox. Previously capped at the SVG's intrinsic pixel width,
-          // which on mobile (vertical rotation, 3-lane = 280px intrinsic
-          // inside a ~343px card) left big empty margins of parchment. No
-          // cap is fine: preserveAspectRatio="xMidYMid meet" keeps the
-          // graph proportional, and the height auto-scales accordingly.
-          width: "100%",
-          height: "auto",
-          marginLeft: "auto",
-          marginRight: "auto",
-        }}
+        // Mode-aware sizing:
+        //  - vertical (mobile): style width: 100% so the narrow intrinsic
+        //    SVG scales UP to fill the card; nodes become tappable.
+        //    preserveAspectRatio keeps proportions; height auto-scales.
+        //  - horizontal (desktop): use the intrinsic SVG width/height
+        //    attributes so the wide map renders at full natural size and
+        //    the wrapper's overflowX: auto provides a horizontal scroll
+        //    when the card isn't wide enough. style: maxWidth: 100%
+        //    still lets it shrink on truly narrow viewports.
+        {...(vertical ? {} : { width, height })}
+        style={vertical
+          ? {
+              display: "block",
+              width: "100%",
+              height: "auto",
+              marginLeft: "auto",
+              marginRight: "auto",
+            }
+          : {
+              display: "block",
+              maxWidth: "100%",
+              height: "auto",
+              marginLeft: "auto",
+              marginRight: "auto",
+            }
+        }
       >
         <defs>
           {/* SVG noise filter applied to a rect across the full viewBox to
