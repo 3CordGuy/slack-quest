@@ -2387,12 +2387,6 @@ function drawGroundEffects(
       ctx.save();
       ctx.globalAlpha = pulse;
       drawHex(ctx, x, y, hexSize * 0.92, palette.fill, "rgba(0,0,0,0)", 0);
-      // Dashed stroke marquee around the perimeter.
-      ctx.globalAlpha = 1;
-      ctx.setLineDash([4, 3]);
-      ctx.lineDashOffset = -now / 90;
-      drawHex(ctx, x, y, hexSize * 0.92, "rgba(0,0,0,0)", palette.stroke, 1.5);
-      ctx.setLineDash([]);
       ctx.restore();
       // Ambient per-frame FX — same helpers the pawn status overlay uses so a
       // fire-wall tile and a burning pawn share visual language. Per-hex seed
