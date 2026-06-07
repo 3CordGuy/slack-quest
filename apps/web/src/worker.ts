@@ -29,6 +29,7 @@ import {
   EXPEDITION_HERO_VARIANTS,
   getOrScheduleExpeditionMapArt,
   pickExpeditionMapVariant,
+  EXPEDITION_MAP_TITLES,
   generateCharacterArtNow,
   getOrScheduleCharacterArt,
   type ViewArtKey,
@@ -7230,6 +7231,7 @@ app.get("/api/expedition/:id", async (c) => {
     },
     map: view.map,
     map_variant: mapVariant,
+    map_title: EXPEDITION_MAP_TITLES[mapVariant],
     art_url,
     progress: view.progress.map((p) => ({
       node_id: p.node_id,

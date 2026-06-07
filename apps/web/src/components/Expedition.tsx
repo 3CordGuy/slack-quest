@@ -54,6 +54,8 @@ interface ExpeditionViewResponse {
   available_picks: string[];
   /** Wide hero banner painted for the title card. Null on cache miss / disabled. */
   hero_art_url?: string | null;
+  /** Place-name title derived from the map variant (e.g. "The Misty Mountains"). */
+  map_title?: string;
 }
 
 type Dispatch =
@@ -324,8 +326,27 @@ export function Expedition({ expeditionId, selfId, onCombatSpawned, onExit }: Ex
           >
             Expedition #{view.expedition.id}
           </div>
+          {/* Place-name title from the map variant. Falls back to the
+              generic "Expedition" wordmark when an older expedition row
+              didn't have a variant yet. */}
+          <div
+            style={{
+              font: "22px/1.1 var(--font-display, serif)",
+              fontWeight: 700,
+              color: heroUrl ? "#fff" : "var(--fg-1)",
+              marginBottom: 6,
+              letterSpacing: 0.5,
+            }}
+          >
+            {view.map_title ?? "Expedition"}
+          </div>
+          {/* Stage counter — counts "decision points" (one pick per depth
+              column, plus the boss) so the number reads at the same
+              cadence as the player's choices. Previously this was
+              \`nodes.length - 2\` (every lane, not just one per depth) and
+              read like "0 of 38" on a 13-depth map, which felt wrong. */}
           <div style={{ fontSize: 12, color: heroUrl ? "rgba(255,255,255,0.88)" : "var(--fg-mute)" }}>
-            {view.progress.length} of {view.map.nodes.length - 2} nodes cleared
+            {view.progress.length} of {view.map.depth + 1} stages cleared
             {view.expedition.status !== "active" && (
               <span style={{ marginLeft: 8, color: "var(--accent-gold)" }}>
                 ({view.expedition.status})
