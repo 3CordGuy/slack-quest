@@ -577,8 +577,14 @@ export function Expedition({ expeditionId, selfId, onCombatSpawned, onExit }: Ex
       )}
 
       {/* Character sheet — rendered as a sibling so its fixed-position
-          overlay isn't clipped by any ancestor with overflow:hidden. */}
-      <CharacterSheetModal subject={sheetSubject} onClose={() => setSheetSubject(null)} />
+          overlay isn't clipped by any ancestor with overflow:hidden. Guard
+          on truthy subject: the modal destructures `subject.pawn` at the
+          top of its body, so mounting with subject={null} (the initial
+          state) crashes the entire Expedition tree → black screen. Mirrors
+          how CombatPage gates the same modal. */}
+      {sheetSubject && (
+        <CharacterSheetModal subject={sheetSubject} onClose={() => setSheetSubject(null)} />
+      )}
     </div>
   );
 }
