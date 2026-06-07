@@ -964,7 +964,7 @@ const ringOfFrost: AbilityDef = {
   id: "ring_of_frost",
   name: "Ring of Frost",
   blurb: "Encircle a hex with biting frost — every hex on the ring inflicts magic/2 cold damage at the start of any actor's turn for 2 rounds.",
-  icon: "snowflake-1",
+  icon: "frozen-ring",
   mana_cost: 2,
   cooldown_turns: 3,
   routing: "utility",
