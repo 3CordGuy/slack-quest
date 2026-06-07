@@ -26,6 +26,12 @@ export interface ExpeditionMapViewProps {
   availablePickIds: ReadonlySet<string>;
   /** Click handler — fires only for nodes in availablePickIds. */
   onPick: (nodeId: string) => void;
+  /**
+   * Flux-generated parchment background. When set, renders inside the SVG
+   * behind nodes/edges. When null/undefined, the CSS parchment gradient
+   * carries the look (PR #221 baseline + cache miss).
+   */
+  artUrl?: string | null;
 }
 
 // Visual constants
@@ -83,6 +89,7 @@ export function ExpeditionMapView({
   resolvedNodeIds,
   availablePickIds,
   onPick,
+  artUrl,
 }: ExpeditionMapViewProps) {
   // Desktop: depth on X (start left, boss right), lanes stacked vertically.
   // Mobile portrait: rotate 90° — depth on Y (start top, boss bottom).
@@ -194,8 +201,30 @@ export function ExpeditionMapView({
           </filter>
         </defs>
 
-        {/* Paper grain texture — covers full canvas under everything else. */}
-        <rect width={width} height={height} fill="transparent" filter="url(#parchment-noise)" />
+        {/* Flux-generated parchment art when available. Slice-fit so the
+            image fills the canvas without distortion; the noise rect above
+            adds a hint of grain so flux's flat patches don't feel plastic. */}
+        {artUrl && (
+          <image
+            href={artUrl}
+            x={0}
+            y={0}
+            width={width}
+            height={height}
+            preserveAspectRatio="xMidYMid slice"
+          />
+        )}
+
+        {/* Paper grain texture — covers full canvas. With art behind it the
+            noise reads as parchment fiber; without art it carries the look
+            on its own. */}
+        <rect
+          width={width}
+          height={height}
+          fill="transparent"
+          filter="url(#parchment-noise)"
+          opacity={artUrl ? 0.4 : 1}
+        />
 
         {/* Edges */}
         {map.edges.map((e, i) => {
