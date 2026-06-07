@@ -29,7 +29,7 @@ const SVG_ICONS = new Set([
   // Loot / containers
   "chest",
   // Expedition map node kinds
-  "brutal-helm",
+  "brutal-helm", "footprint",
   // Derived-stat icons
   "sword-brandish", "wizard-staff", "target-poster", "coffee-cup", "dodge", "dodging",
   // Action-button icons
