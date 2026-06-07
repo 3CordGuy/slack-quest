@@ -346,8 +346,14 @@ export function ExpeditionMapView({
                 filter="url(#node-shadow)"
               />
               {/* SVG icon via foreignObject so the shared <Icon> component
-                  (mask-image based, supports any CSS color) renders inside
-                  the SVG without a separate sprite system. */}
+                  (mask-image based + RPG-Awesome font fallback, supports
+                  any CSS color) renders inside the SVG without a separate
+                  sprite system. The inner div is a flex centerer: without
+                  it, font-icon glyphs (e.g. ra-footprint, ra-aura) inherit
+                  their font baseline / line-height and slip ~1px south
+                  inside the box, which made nodes look like the icon
+                  wasn't centered. Flex centering forces the icon dead
+                  center regardless of font metrics. */}
               <foreignObject
                 x={p.x - ICON_SIZE / 2}
                 y={p.y - ICON_SIZE / 2}
@@ -355,7 +361,18 @@ export function ExpeditionMapView({
                 height={ICON_SIZE}
                 style={{ pointerEvents: "none", opacity }}
               >
-                <Icon name={iconName} size={ICON_SIZE} color={iconColor} />
+                <div
+                  style={{
+                    width: ICON_SIZE,
+                    height: ICON_SIZE,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    lineHeight: 1,
+                  }}
+                >
+                  <Icon name={iconName} size={ICON_SIZE} color={iconColor} />
+                </div>
               </foreignObject>
               {/* Resolved check tucked in the top-right corner */}
               {resolved && (
