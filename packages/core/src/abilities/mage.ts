@@ -103,6 +103,7 @@ export const mageAbilities: AbilityDef[] = [
     id: "mana_font",
     name: "Mana Font",
     blurb: "An always-on background process — quietly regenerates 1 mana every 3 turns.",
+    icon: "droplets",
     trigger: "always_on",
     once_per_fight: false,
     execute: () => [],

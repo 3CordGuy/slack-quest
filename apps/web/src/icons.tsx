@@ -46,7 +46,7 @@ const SVG_ICONS = new Set([
   // Bard ability icons
   "music-spell", "morbid-humour",
   // Class ability icons (registered as SVG for crisp rendering)
-  "aura", "axe-swing", "crystal-ball", "fire", "grass", "linked-rings",
+  "aura", "axe-swing", "crystal-ball", "droplets", "fire", "grass", "linked-rings",
   "scroll-unfurled", "shield-reflect",
   // Expedition node icons
   "star-altar",
