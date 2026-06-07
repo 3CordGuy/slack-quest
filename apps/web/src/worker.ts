@@ -369,6 +369,14 @@ import {
   type PubErrandOfferRow,
   // Expedition map persistence
   createExpedition,
+  createExpeditionLobby,
+  acceptExpeditionLobbyInvite,
+  addExpeditionLobbyInvitee,
+  countPendingExpeditionInvitees,
+  declineExpeditionLobbyInvite,
+  deleteExpeditionLobby,
+  getExpeditionLobbyMembers,
+  getLobbyExpeditionForCharacter,
   ExpeditionMembershipConflictError,
   finalizeExpeditionMap,
   getActiveExpeditionForCharacter,
@@ -7134,6 +7142,220 @@ app.post("/api/expedition/start", async (c) => {
   });
 });
 
+// POST /api/expedition/start_with_party
+// Creates a lobby-state expedition. The caller is the picker/creator and is
+// auto-accepted; invitees must be added via /:id/invite, then accept, before
+// /:id/begin flips status to 'active' and the map becomes pickable.
+//
+// Mirrors /api/quest/start_with_party in shape (returns { ok, expedition_id,
+// lobby: true }). Map is generated with the bootstrap seed up front so the
+// LobbyView has something stable to show; finalizeExpeditionMap rewrites it
+// at /begin time with the canonical (id, accepted-party) seed.
+app.post("/api/expedition/start_with_party", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const character = await getCharacter(c.env.DB, session.slack_user_id);
+  if (!character) return c.json({ error: "no_character" }, 404);
+  if (await getActiveExpeditionForCharacter(c.env.DB, session.slack_user_id)) {
+    return c.json({ error: "already_in_expedition", character_id: session.slack_user_id }, 400);
+  }
+  if (await getActiveQuestForCharacter(c.env.DB, session.slack_user_id)) {
+    return c.json({ error: "member_on_quest", character_id: session.slack_user_id }, 400);
+  }
+
+  const channelId = `web:${session.slack_user_id}`;
+  // Bootstrap seed depends only on the creator; rewritten at /begin with the
+  // accepted-party signature, so concurrent peeks see a stable map.
+  const bootstrapSeed = `bootstrap-lobby|${session.slack_user_id}`;
+  const bootstrapMap = generateExpeditionMap({ seed: bootstrapSeed, partySize: 1 });
+  let expeditionId: number;
+  try {
+    expeditionId = await createExpeditionLobby(c.env.DB, {
+      channel_id: channelId,
+      seed: bootstrapSeed,
+      map: bootstrapMap,
+      created_by: session.slack_user_id,
+    });
+  } catch (err) {
+    if (err instanceof ExpeditionMembershipConflictError) {
+      return c.json(
+        { error: "already_in_expedition", character_id: err.characterId },
+        409,
+      );
+    }
+    throw err;
+  }
+  return c.json({ ok: true, expedition_id: expeditionId, lobby: true });
+});
+
+// GET /api/expedition/lobby
+// Returns the signed-in user's currently-pending expedition lobby (if any),
+// in a shape ExpeditionLobbyView consumes. `my_invite_status` distinguishes
+// creator/accepted from pending invitee for the action panel.
+app.get("/api/expedition/lobby", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const lobby = await getLobbyExpeditionForCharacter(c.env.DB, session.slack_user_id);
+  if (!lobby) return c.json({ lobby: null });
+  const members = await getExpeditionLobbyMembers(c.env.DB, lobby.expedition.id);
+  return c.json({
+    lobby: {
+      id: lobby.expedition.id,
+      created_by: lobby.expedition.created_by,
+      created_at: lobby.expedition.created_at,
+      status: lobby.expedition.status,
+      my_invite_status: lobby.myInviteStatus,
+      members: members.map((m) => ({
+        character_id: m.character_id,
+        name: m.name,
+        slack_username: m.slack_username,
+        level: m.level,
+        class: m.class,
+        invite_status: m.invite_status,
+      })),
+    },
+  });
+});
+
+// POST /api/expedition/:id/invite { character_id }
+// Creator invites a team member. Pre-checks mutex (already in an expedition
+// or quest) for a friendly error; UNIQUE PK on expedition_party (and on
+// active_expedition_membership at /accept time) closes the TOCTOU.
+app.post("/api/expedition/:id/invite", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const expeditionId = parseInt(c.req.param("id"), 10);
+  if (!Number.isFinite(expeditionId)) return c.json({ error: "bad_id" }, 400);
+  const row = await getExpedition(c.env.DB, expeditionId);
+  if (!row) return c.json({ error: "not_found" }, 404);
+  if (row.status !== "lobby") return c.json({ error: "not_in_lobby" }, 400);
+  if (row.created_by !== session.slack_user_id) {
+    return c.json({ error: "not_creator" }, 403);
+  }
+  const body = (await c.req.json().catch(() => null)) as { character_id?: unknown } | null;
+  const targetId = typeof body?.character_id === "string" ? body.character_id : null;
+  if (!targetId) return c.json({ error: "missing_character_id" }, 400);
+
+  // Verify the target exists on the same team
+  const target = await c.env.DB
+    .prepare(`SELECT slack_user_id FROM characters WHERE slack_user_id = ? AND slack_team_id = ?`)
+    .bind(targetId, session.slack_team_id)
+    .first<{ slack_user_id: string }>();
+  if (!target) return c.json({ error: "target_not_found" }, 404);
+
+  // Mutex pre-check — friendly error if the target is busy elsewhere.
+  if (await getActiveExpeditionForCharacter(c.env.DB, targetId)) {
+    return c.json({ error: "target_in_expedition", character_id: targetId }, 400);
+  }
+  if (await getActiveQuestForCharacter(c.env.DB, targetId)) {
+    return c.json({ error: "target_on_quest", character_id: targetId }, 400);
+  }
+
+  const inserted = await addExpeditionLobbyInvitee(c.env.DB, expeditionId, targetId);
+  if (!inserted) return c.json({ error: "already_invited" }, 400);
+  return c.json({ ok: true });
+});
+
+// POST /api/expedition/:id/accept — invitee accepts.
+app.post("/api/expedition/:id/accept", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const expeditionId = parseInt(c.req.param("id"), 10);
+  if (!Number.isFinite(expeditionId)) return c.json({ error: "bad_id" }, 400);
+  const row = await getExpedition(c.env.DB, expeditionId);
+  if (!row) return c.json({ error: "not_found" }, 404);
+  if (row.status !== "lobby") return c.json({ error: "not_in_lobby" }, 400);
+
+  // Confirm the user actually has a pending invite.
+  const members = await getExpeditionLobbyMembers(c.env.DB, expeditionId);
+  const me = members.find((m) => m.character_id === session.slack_user_id);
+  if (!me || me.invite_status !== "pending") {
+    return c.json({ error: "not_pending" }, 400);
+  }
+
+  // Also block accepting if the user just landed in an active quest between
+  // invite and accept (defensive — the active_expedition_membership PK only
+  // covers expedition vs. expedition; quests live in a separate table).
+  if (await getActiveQuestForCharacter(c.env.DB, session.slack_user_id)) {
+    return c.json({ error: "member_on_quest" }, 409);
+  }
+  try {
+    await acceptExpeditionLobbyInvite(c.env.DB, expeditionId, session.slack_user_id);
+  } catch (err) {
+    if (err instanceof ExpeditionMembershipConflictError) {
+      return c.json({ error: "already_in_expedition", character_id: err.characterId }, 409);
+    }
+    throw err;
+  }
+  return c.json({ ok: true });
+});
+
+// POST /api/expedition/:id/decline — invitee declines. Row is removed.
+app.post("/api/expedition/:id/decline", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const expeditionId = parseInt(c.req.param("id"), 10);
+  if (!Number.isFinite(expeditionId)) return c.json({ error: "bad_id" }, 400);
+  const row = await getExpedition(c.env.DB, expeditionId);
+  if (!row) return c.json({ error: "not_found" }, 404);
+  if (row.status !== "lobby") return c.json({ error: "not_in_lobby" }, 400);
+  await declineExpeditionLobbyInvite(c.env.DB, expeditionId, session.slack_user_id);
+  return c.json({ ok: true });
+});
+
+// POST /api/expedition/:id/begin — creator transitions lobby → active.
+// Refuses if any invitee is still 'pending'. Regenerates the map with the
+// canonical (id, accepted-party) seed so the map's branching reflects the
+// real party size.
+app.post("/api/expedition/:id/begin", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const expeditionId = parseInt(c.req.param("id"), 10);
+  if (!Number.isFinite(expeditionId)) return c.json({ error: "bad_id" }, 400);
+  const row = await getExpedition(c.env.DB, expeditionId);
+  if (!row) return c.json({ error: "not_found" }, 404);
+  if (row.created_by !== session.slack_user_id) return c.json({ error: "not_creator" }, 403);
+  if (row.status !== "lobby") return c.json({ error: "not_in_lobby" }, 400);
+  if (row.current_node) return c.json({ error: "already_started" }, 400);
+  const pending = await countPendingExpeditionInvitees(c.env.DB, expeditionId);
+  if (pending > 0) {
+    return c.json({ error: "pending_invites", pending }, 400);
+  }
+
+  // Regenerate the map for the final accepted party — at this point
+  // getExpeditionParty returns only accepted members, which is what we want
+  // to drive partySize.
+  const party = await getExpeditionParty(c.env.DB, expeditionId);
+  const finalSeed = expeditionSeed(expeditionId, party);
+  const finalMap = generateExpeditionMap({ seed: finalSeed, partySize: party.length });
+  await finalizeExpeditionMap(c.env.DB, expeditionId, finalSeed, finalMap);
+  await setExpeditionStatus(c.env.DB, expeditionId, "active");
+
+  return c.json({
+    ok: true,
+    expedition_id: expeditionId,
+    seed: finalSeed,
+    map: finalMap,
+    party,
+    available_picks: availablePicks(finalMap, null).map((n) => n.id),
+  });
+});
+
+// POST /api/expedition/:id/cancel — creator deletes a lobby entirely.
+// Pre-run only; refuses if the expedition has already begun.
+app.post("/api/expedition/:id/cancel", async (c) => {
+  const session = await currentSession(c.env.DB, c.req.header("cookie"));
+  if (!session) return c.json({ error: "unauthenticated" }, 401);
+  const expeditionId = parseInt(c.req.param("id"), 10);
+  if (!Number.isFinite(expeditionId)) return c.json({ error: "bad_id" }, 400);
+  const row = await getExpedition(c.env.DB, expeditionId);
+  if (!row) return c.json({ error: "not_found" }, 404);
+  if (row.created_by !== session.slack_user_id) return c.json({ error: "not_creator" }, 403);
+  if (row.status !== "lobby") return c.json({ error: "not_in_lobby" }, 400);
+  await deleteExpeditionLobby(c.env.DB, expeditionId);
+  return c.json({ ok: true, deleted: true });
+});
+
 // GET /api/expedition/recent — recent runs for the signed-in character.
 // (Must be declared before /:id so it doesn't get captured by the id route.)
 app.get("/api/expedition/recent", async (c) => {
@@ -7294,7 +7516,30 @@ app.post("/api/expedition/:id/pick", async (c) => {
   if (!view.party.includes(session.slack_user_id)) {
     return c.json({ error: "forbidden" }, 403);
   }
-  if (view.row.status !== "active") {
+  // Defensive: if the lobby is still open but the picker hits /pick before
+  // /begin (rare race — UI guards against this), close the lobby implicitly
+  // rather than soft-lock. Refuse if there are still pending invites; the
+  // creator must decide whether to wait or proceed.
+  if (view.row.status === "lobby") {
+    if (view.row.created_by !== session.slack_user_id) {
+      return c.json({ error: "not_active", status: view.row.status }, 400);
+    }
+    const pending = await countPendingExpeditionInvitees(c.env.DB, expeditionId);
+    if (pending > 0) {
+      return c.json({ error: "pending_invites", pending }, 400);
+    }
+    // Regenerate map for the accepted party (same as /begin would have done).
+    const finalSeed = expeditionSeed(expeditionId, view.party);
+    const finalMap = generateExpeditionMap({ seed: finalSeed, partySize: view.party.length });
+    await finalizeExpeditionMap(c.env.DB, expeditionId, finalSeed, finalMap);
+    await setExpeditionStatus(c.env.DB, expeditionId, "active");
+    // Re-load so the rest of the handler sees the active row + canonical map.
+    const reloaded = await loadExpeditionView(c.env.DB, expeditionId);
+    if (!reloaded) return c.json({ error: "not_found" }, 404);
+    view.row = reloaded.row;
+    view.map = reloaded.map;
+    view.picks = reloaded.picks;
+  } else if (view.row.status !== "active") {
     return c.json({ error: "not_active", status: view.row.status }, 400);
   }
 

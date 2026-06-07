@@ -98,6 +98,7 @@ function freshDb(): D1Like {
       current_mana  INTEGER,
       max_hp        INTEGER,
       max_mana      INTEGER,
+      invite_status TEXT NOT NULL DEFAULT 'accepted',
       PRIMARY KEY (expedition_id, character_id)
     );
     CREATE TABLE expedition_node_progress (
