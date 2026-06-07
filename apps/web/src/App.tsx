@@ -6,6 +6,7 @@ import { CLASSES, findCatalogEntry, priceFor, sellPriceFor, type Achievement, ty
 
 import { CombatPage } from "./CombatPage";
 import { LobbyView } from "./LobbyView";
+import { ExpeditionLobbyView } from "./ExpeditionLobbyView";
 import { parseHash, toHash, routesEqual } from "./route";
 import { Avatar, EmojiIcon, Icon } from "./icons";
 import { issueWebLoginCode } from "@gantt-quest/db";
@@ -131,6 +132,10 @@ export function App() {
   // to the Expedition screen instead of the town. Combat nodes still go
   // through the regular CombatPage flow — the expedition just orchestrates.
   const [activeExpeditionId, setActiveExpeditionId] = useState<number | null>(null);
+  // Lobby-state expedition id (pre-run). When set, we DON'T route into the
+  // <Expedition> screen — we render the ExpeditionLobbyView drawer over the
+  // current view so the player can wrangle invites without losing town context.
+  const [lobbyExpeditionId, setLobbyExpeditionId] = useState<number | null>(null);
   const [toastQueue, setToastQueue] = useState<Achievement[]>([]);
 
   useEffect(() => {
@@ -692,6 +697,12 @@ export function App() {
         const active = expBody.expeditions?.find((e) => e.status === "active");
         setActiveExpeditionId(active ? active.id : null);
       }
+      // Lobby is a separate endpoint — surfaces creator + pending invitees.
+      const lobbyRes = await fetch("/api/expedition/lobby", { credentials: "include" });
+      if (lobbyRes.ok) {
+        const body = (await lobbyRes.json()) as { lobby: { id: number } | null };
+        setLobbyExpeditionId(body.lobby?.id ?? null);
+      }
     } catch {
       // expedition is an optional feature; failing to load shouldn't tank login
     }
@@ -1093,7 +1104,12 @@ export function App() {
   }
 
   async function startExpedition() {
-    const res = await fetch("/api/expedition/start", {
+    // Always go through the lobby path. If the player wants a solo run, they
+    // hit "Begin Solo" in the lobby drawer (no pending invites required).
+    // This keeps the entry point uniform with how /quest start_with_party
+    // behaves and lets the player pivot to inviting a teammate without
+    // restarting.
+    const res = await fetch("/api/expedition/start_with_party", {
       method: "POST",
       credentials: "include",
       headers: { "Content-Type": "application/json" },
@@ -1104,11 +1120,19 @@ export function App() {
       toast.error(`Could not start expedition: ${body.error ?? res.statusText}`);
       return;
     }
-    const body = (await res.json()) as { expedition_id?: number };
+    const body = (await res.json()) as { expedition_id?: number; lobby?: boolean };
     if (body.expedition_id) {
-      setActiveExpeditionId(body.expedition_id);
-      setTownSection(null);
-      void refresh();
+      if (body.lobby) {
+        setLobbyExpeditionId(body.expedition_id);
+        setTownSection(null);
+        // refresh() will also pick this up but we set it eagerly so the
+        // drawer appears immediately.
+        void refresh();
+      } else {
+        setActiveExpeditionId(body.expedition_id);
+        setTownSection(null);
+        void refresh();
+      }
     }
   }
 
@@ -1808,6 +1832,23 @@ export function App() {
                     await refresh();
                     if (!lobbyQuest) return;
                     void startCombat(lobbyQuest.quest.id);
+                  }}
+                />
+              )}
+              {lobbyExpeditionId != null && (
+                <ExpeditionLobbyView
+                  selfId={state.me.slack_user_id}
+                  onLobbyClosed={() => {
+                    // Lobby ended (creator cancelled, this invitee declined,
+                    // or it began). Drop the id and re-poll.
+                    setLobbyExpeditionId(null);
+                    void refresh();
+                  }}
+                  onBegan={(expeditionId) => {
+                    // Lobby flipped to active — route into the Expedition view.
+                    setLobbyExpeditionId(null);
+                    setActiveExpeditionId(expeditionId);
+                    void refresh();
                   }}
                 />
               )}

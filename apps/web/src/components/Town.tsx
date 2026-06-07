@@ -654,6 +654,9 @@ function StartExpeditionCard({ onStart }: { onStart: () => void }) {
           treasure. HP and mana carry between nodes; the boss is paid for in
           choices made along the way.
         </div>
+        <div style={{ marginTop: 8, color: "var(--fg-faint)", fontSize: 12, lineHeight: 1.5, fontStyle: "italic" }}>
+          Opens a lobby — invite teammates, then begin (or go solo).
+        </div>
       </div>
       <button
         onClick={go}

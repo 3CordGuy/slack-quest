@@ -4,7 +4,9 @@
 import type { D1Database } from "@cloudflare/workers-types";
 import type { ExpeditionMap } from "@gantt-quest/core";
 
-export type ExpeditionStatus = "active" | "completed" | "failed" | "abandoned";
+export type ExpeditionStatus = "lobby" | "active" | "completed" | "failed" | "abandoned";
+
+export type ExpeditionInviteStatus = "pending" | "accepted" | "declined";
 
 export interface ExpeditionRow {
   id: number;
@@ -41,6 +43,7 @@ export interface ExpeditionPartyRow {
   current_mana: number | null;
   max_hp: number | null;
   max_mana: number | null;
+  invite_status: ExpeditionInviteStatus;
 }
 
 export interface ExpeditionProgressRow {
@@ -115,8 +118,8 @@ export async function createExpedition(
     for (const cid of args.party) {
       await db
         .prepare(
-          `INSERT INTO expedition_party (expedition_id, character_id, joined_at)
-           VALUES (?, ?, ?)`,
+          `INSERT INTO expedition_party (expedition_id, character_id, joined_at, invite_status)
+           VALUES (?, ?, ?, 'accepted')`,
         )
         .bind(id, cid, now)
         .run();
@@ -183,9 +186,14 @@ export async function getExpeditionParty(
   db: D1Database,
   id: number,
 ): Promise<string[]> {
+  // Only accepted members are "the party" — pending invitees haven't committed
+  // and declined ones won't. This keeps loadExpeditionView() consistent for
+  // lobbies (creator-only) and active runs (everyone who accepted).
   const r = await db
     .prepare(
-      `SELECT character_id FROM expedition_party WHERE expedition_id = ? ORDER BY joined_at ASC`,
+      `SELECT character_id FROM expedition_party
+        WHERE expedition_id = ? AND invite_status = 'accepted'
+        ORDER BY joined_at ASC`,
     )
     .bind(id)
     .all<{ character_id: string }>();
@@ -293,9 +301,11 @@ export async function recordExpeditionNodeProgress(
 }
 
 /**
- * Returns the active expedition for a character, if any. A character may
- * only be in one active expedition at a time (enforced at start by the
- * `active_expedition_membership` table's PK on character_id).
+ * Returns the active OR lobby-state expedition for a character, if any. A
+ * character may only be in one non-terminal expedition at a time (enforced at
+ * accept-time by the `active_expedition_membership` table's PK on
+ * character_id). The lobby creator's membership row is inserted at /start;
+ * invitees' rows are inserted at /accept — so this query covers both cases.
  */
 export async function getActiveExpeditionForCharacter(
   db: D1Database,
@@ -306,7 +316,7 @@ export async function getActiveExpeditionForCharacter(
       `SELECT e.id, e.channel_id, e.status, e.seed, e.map_json, e.current_node, e.buffs_json, e.created_by, e.created_at, e.completed_at
        FROM expeditions e
        JOIN active_expedition_membership m ON m.expedition_id = e.id
-       WHERE m.character_id = ? AND e.status = 'active'
+       WHERE m.character_id = ? AND e.status IN ('active','lobby')
        LIMIT 1`,
     )
     .bind(userId)
@@ -325,8 +335,8 @@ export async function getExpeditionPartyState(
 ): Promise<ExpeditionPartyRow[]> {
   const r = await db
     .prepare(
-      `SELECT expedition_id, character_id, joined_at, current_hp, current_mana, max_hp, max_mana
-       FROM expedition_party WHERE expedition_id = ? ORDER BY joined_at ASC`,
+      `SELECT expedition_id, character_id, joined_at, current_hp, current_mana, max_hp, max_mana, invite_status
+       FROM expedition_party WHERE expedition_id = ? AND invite_status = 'accepted' ORDER BY joined_at ASC`,
     )
     .bind(id)
     .all<ExpeditionPartyRow>();
@@ -680,4 +690,267 @@ export async function getExpeditionEliteLeaderboard(
     .bind(Math.max(1, Math.min(100, limit)))
     .all<ExpeditionEliteEntry>();
   return r.results ?? [];
+}
+
+// ─── Expedition lobby (party + invites pre-run) ─────────────────────────────
+//
+// A "lobby" expedition is created by POST /api/expedition/start_with_party.
+// The creator's character_id is inserted into both expedition_party
+// (invite_status='accepted') and active_expedition_membership immediately;
+// invitees are added later via POST /api/expedition/:id/invite with
+// invite_status='pending' — no membership row yet. They're only enrolled in
+// the mutex when they /accept; that's also when their HP/mana carry slot
+// is reserved by a regular expedition_party row already.
+
+export interface ExpeditionLobbyMemberRow {
+  expedition_id: number;
+  character_id: string;
+  name: string;
+  slack_username: string | null;
+  level: number;
+  class: string;
+  invite_status: ExpeditionInviteStatus;
+  joined_at: number;
+}
+
+/**
+ * Insert a lobby-state expedition. Only the creator is auto-accepted; no
+ * invitees yet. Returns the new expedition id.
+ *
+ * Throws ExpeditionMembershipConflictError if the creator is already in
+ * another active OR lobby expedition (same mutex as the active-start path).
+ */
+export async function createExpeditionLobby(
+  db: D1Database,
+  args: {
+    channel_id: string;
+    seed: string;
+    map: ExpeditionMap;
+    created_by: string;
+  },
+): Promise<number> {
+  const now = Date.now();
+  const result = await db
+    .prepare(
+      `INSERT INTO expeditions (channel_id, status, seed, map_json, current_node, created_by, created_at)
+       VALUES (?, 'lobby', ?, ?, NULL, ?, ?)`,
+    )
+    .bind(args.channel_id, args.seed, JSON.stringify(args.map), args.created_by, now)
+    .run();
+  const id = result.meta.last_row_id as number;
+  try {
+    await db
+      .prepare(
+        `INSERT INTO expedition_party (expedition_id, character_id, joined_at, invite_status)
+         VALUES (?, ?, ?, 'accepted')`,
+      )
+      .bind(id, args.created_by, now)
+      .run();
+    try {
+      await db
+        .prepare(
+          `INSERT INTO active_expedition_membership (character_id, expedition_id)
+           VALUES (?, ?)`,
+        )
+        .bind(args.created_by, id)
+        .run();
+    } catch {
+      throw new ExpeditionMembershipConflictError(args.created_by);
+    }
+  } catch (err) {
+    // Cleanup half-built row.
+    try {
+      await db.prepare(`DELETE FROM expeditions WHERE id = ?`).bind(id).run();
+    } catch {
+      // swallow — cleanup-on-error path
+    }
+    throw err;
+  }
+  return id;
+}
+
+/**
+ * Returns the lobby-or-active expedition the user is currently a party
+ * member of (any invite_status: pending invitees see their invite). At most
+ * one row — see active_expedition_membership PK for the accepted-side mutex
+ * and (in App.tsx) the join-quest mutex for non-expedition collisions.
+ *
+ * The returned row distinguishes between two surfaces:
+ *   - status='lobby' AND invite_status='accepted' → creator (or just-accepted
+ *     invitee); show begin button + roster
+ *   - status='lobby' AND invite_status='pending'  → invitee; show accept/decline
+ *   - status='active' AND current_node IS NULL    → never (lobby flips to
+ *     active on /begin); but if some racing /pick implicitly closes the lobby
+ *     the routes return null here (we filter to status='lobby').
+ */
+export async function getLobbyExpeditionForCharacter(
+  db: D1Database,
+  userId: string,
+): Promise<{ expedition: ExpeditionRow; myInviteStatus: ExpeditionInviteStatus } | null> {
+  const row = await db
+    .prepare(
+      `SELECT e.id, e.channel_id, e.status, e.seed, e.map_json, e.current_node, e.buffs_json, e.created_by, e.created_at, e.completed_at,
+              ep.invite_status as my_invite_status
+         FROM expeditions e
+         JOIN expedition_party ep ON ep.expedition_id = e.id
+        WHERE ep.character_id = ?
+          AND e.status = 'lobby'
+          AND e.current_node IS NULL
+        ORDER BY e.created_at DESC
+        LIMIT 1`,
+    )
+    .bind(userId)
+    .first<ExpeditionRow & { my_invite_status: ExpeditionInviteStatus }>();
+  if (!row) return null;
+  const { my_invite_status, ...rest } = row;
+  return { expedition: rest as ExpeditionRow, myInviteStatus: my_invite_status };
+}
+
+/**
+ * Return every party member of a lobby (incl. pending invitees + declined for
+ * UI accounting), joined to the characters table for display.
+ */
+export async function getExpeditionLobbyMembers(
+  db: D1Database,
+  expeditionId: number,
+): Promise<ExpeditionLobbyMemberRow[]> {
+  const r = await db
+    .prepare(
+      `SELECT ep.expedition_id, ep.character_id, ep.invite_status, ep.joined_at,
+              c.name, c.slack_username, c.level, c.class
+         FROM expedition_party ep
+         JOIN characters c ON c.slack_user_id = ep.character_id
+        WHERE ep.expedition_id = ?
+        ORDER BY ep.joined_at ASC`,
+    )
+    .bind(expeditionId)
+    .all<ExpeditionLobbyMemberRow>();
+  return r.results ?? [];
+}
+
+/**
+ * Add a 'pending' invitee to a lobby. Inserts an expedition_party row but
+ * NOT a membership row — the invitee's mutex slot is only reserved on
+ * /accept. Returns false if the invitee is already a party member (any
+ * status); otherwise true. No-op safe; the unique PK on
+ * (expedition_id, character_id) prevents duplicate inserts.
+ */
+export async function addExpeditionLobbyInvitee(
+  db: D1Database,
+  expeditionId: number,
+  characterId: string,
+): Promise<boolean> {
+  try {
+    await db
+      .prepare(
+        `INSERT INTO expedition_party (expedition_id, character_id, joined_at, invite_status)
+         VALUES (?, ?, ?, 'pending')`,
+      )
+      .bind(expeditionId, characterId, Date.now())
+      .run();
+    return true;
+  } catch {
+    // Duplicate insert — they're already in the lobby
+    return false;
+  }
+}
+
+/**
+ * Accept an invite. Atomically: flips invite_status to 'accepted' AND inserts
+ * the active_expedition_membership row. If the membership insert fails
+ * (UNIQUE conflict on character_id — the user is in another expedition that
+ * raced this accept) we revert the invite_status to 'pending' so the lobby
+ * UI re-prompts.
+ *
+ * Returns true on success; throws ExpeditionMembershipConflictError on the
+ * race-lost path.
+ */
+export async function acceptExpeditionLobbyInvite(
+  db: D1Database,
+  expeditionId: number,
+  characterId: string,
+): Promise<void> {
+  // First flip the status — caller already verified the row exists and is
+  // pending (or we'd have returned a 4xx before getting here).
+  const upd = await db
+    .prepare(
+      `UPDATE expedition_party SET invite_status = 'accepted'
+        WHERE expedition_id = ? AND character_id = ? AND invite_status = 'pending'`,
+    )
+    .bind(expeditionId, characterId)
+    .run();
+  if ((upd.meta?.changes ?? 0) !== 1) {
+    // Row missing or already accepted/declined — nothing to do.
+    return;
+  }
+  try {
+    await db
+      .prepare(
+        `INSERT INTO active_expedition_membership (character_id, expedition_id)
+         VALUES (?, ?)`,
+      )
+      .bind(characterId, expeditionId)
+      .run();
+  } catch {
+    // Race lost: another expedition grabbed this character's slot between the
+    // accept click and the insert. Revert and surface the conflict.
+    await db
+      .prepare(
+        `UPDATE expedition_party SET invite_status = 'pending'
+          WHERE expedition_id = ? AND character_id = ?`,
+      )
+      .bind(expeditionId, characterId)
+      .run();
+    throw new ExpeditionMembershipConflictError(characterId);
+  }
+}
+
+/**
+ * Decline an invite. Removes the expedition_party row entirely (no audit
+ * trail kept — design decision: a declined invite is a no-op, not a record).
+ */
+export async function declineExpeditionLobbyInvite(
+  db: D1Database,
+  expeditionId: number,
+  characterId: string,
+): Promise<void> {
+  await db
+    .prepare(
+      `DELETE FROM expedition_party
+        WHERE expedition_id = ? AND character_id = ? AND invite_status = 'pending'`,
+    )
+    .bind(expeditionId, characterId)
+    .run();
+}
+
+/**
+ * Refuse to begin if any party member is still 'pending'. Returns the count
+ * of pending invitees so the caller can return a useful error.
+ */
+export async function countPendingExpeditionInvitees(
+  db: D1Database,
+  expeditionId: number,
+): Promise<number> {
+  const row = await db
+    .prepare(
+      `SELECT COUNT(*) as c FROM expedition_party
+        WHERE expedition_id = ? AND invite_status = 'pending'`,
+    )
+    .bind(expeditionId)
+    .first<{ c: number }>();
+  return row?.c ?? 0;
+}
+
+/**
+ * Delete a lobby expedition entirely (cascades expedition_party +
+ * active_expedition_membership rows). Used when the creator cancels.
+ */
+export async function deleteExpeditionLobby(
+  db: D1Database,
+  expeditionId: number,
+): Promise<void> {
+  await db
+    .prepare(`DELETE FROM expeditions WHERE id = ? AND status = 'lobby'`)
+    .bind(expeditionId)
+    .run();
 }
