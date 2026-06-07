@@ -42,17 +42,17 @@ const ROW_H = 64;
 const PAD_X = 44;
 const PAD_Y = 44;
 
-// Per-kind iconography — drawn from the existing /public/icons/* set so
-// nothing new needs to ship. Kind→icon picks aim for "reads at a glance":
-// crossed swords for combat, a spinning sword for elite, a quill scroll
-// for unknown events, an aura halo for shrines, a tent for camps, a treasure chest
-// for treasure, a skull for the boss, footprints for the start.
+// Per-kind iconography — drawn from /public/icons/*. Kind→icon picks
+// aim for "reads at a glance": crossed swords for combat, a spinning
+// sword for elite, a quill scroll for unknown events, a star altar
+// for shrines, a tent for camps, a treasure chest for treasure, a
+// skull for the boss, footprints for the start.
 const KIND_ICON: Record<NodeKind, string> = {
   start: "footprint",
   combat: "broadsword",
   elite: "brutal-helm",
   event: "scroll-quill",
-  shrine: "aura",
+  shrine: "star-altar",
   camp: "camping-tent",
   treasure: "chest",
   boss: "death-skull",

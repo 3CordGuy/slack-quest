@@ -48,6 +48,8 @@ const SVG_ICONS = new Set([
   // Class ability icons (registered as SVG for crisp rendering)
   "aura", "axe-swing", "crystal-ball", "fire", "grass", "linked-rings",
   "scroll-unfurled", "shield-reflect",
+  // Expedition node icons
+  "star-altar",
   // Engineering-themed ability icons
   "cloud-upload", "crossed-chains", "firewall", "cloak-dagger", "spawn-node",
   "stack", "convergence-target", "database", "virus", "cpu-shot", "energy-shield",
