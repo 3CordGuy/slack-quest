@@ -202,8 +202,10 @@ export function ExpeditionMapView({
         </defs>
 
         {/* Flux-generated parchment art when available. Slice-fit so the
-            image fills the canvas without distortion; the noise rect above
-            adds a hint of grain so flux's flat patches don't feel plastic. */}
+            image fills the canvas without distortion. Capped at ~55%
+            opacity so the parchment underneath bleeds through — flux's
+            high-contrast forest patches were drowning the node labels at
+            full strength. */}
         {artUrl && (
           <image
             href={artUrl}
@@ -212,6 +214,19 @@ export function ExpeditionMapView({
             width={width}
             height={height}
             preserveAspectRatio="xMidYMid slice"
+            opacity={0.55}
+          />
+        )}
+
+        {/* Warm cream wash on top of the art to flatten the dynamic range
+            into a readable backdrop. Without art this is a no-op (no
+            rect). */}
+        {artUrl && (
+          <rect
+            width={width}
+            height={height}
+            fill="#e8d5a8"
+            opacity={0.28}
           />
         )}
 
@@ -223,7 +238,7 @@ export function ExpeditionMapView({
           height={height}
           fill="transparent"
           filter="url(#parchment-noise)"
-          opacity={artUrl ? 0.4 : 1}
+          opacity={artUrl ? 0.35 : 1}
         />
 
         {/* Edges */}
@@ -355,14 +370,20 @@ export function ExpeditionMapView({
                   ✓
                 </text>
               )}
-              {/* Kind label in a serif-ish stroke beneath the node */}
+              {/* Kind label in a serif-ish stroke beneath the node. The
+                  paint-order/stroke combo paints a thin cream halo first,
+                  then the dark label fill on top — keeps it readable over
+                  flux's busy forest patches without darkening the art. */}
               <text
                 x={p.x}
                 y={p.y + NODE_R + 14}
                 textAnchor="middle"
                 fontSize={9.5}
                 fill={resolved ? "#a89171" : "#5b4326"}
-                opacity={0.9}
+                stroke="#f3e6c3"
+                strokeWidth={2.5}
+                paintOrder="stroke"
+                opacity={0.95}
                 style={{
                   userSelect: "none",
                   textTransform: "uppercase",

@@ -812,6 +812,18 @@ export const EXPEDITION_MAP_VARIANTS = [
 
 export type ExpeditionMapVariant = (typeof EXPEDITION_MAP_VARIANTS)[number];
 
+// Player-facing place names — used as the expedition title on the map
+// screen so the run reads as "Expedition: The Misty Mountains" instead
+// of "Expedition #N". Kept in lockstep with EXPEDITION_MAP_VARIANTS so
+// the deterministic seed-based variant pick lines up with the title.
+export const EXPEDITION_MAP_TITLES: Record<ExpeditionMapVariant, string> = {
+  "misty-mountains": "The Misty Mountains",
+  "river-valley": "The River Valley",
+  "deep-forest": "The Deep Forest",
+  "wraith-fens": "The Wraith Fens",
+  "rolling-hills": "The Rolling Hills",
+};
+
 // Each prompt asks flux for a top-down old-Tolkien-style hand-drawn map
 // background. We bias HARD against text/labels/borders/characters in the
 // negatives because flux-1-schnell's first instinct on "old map" is to add
