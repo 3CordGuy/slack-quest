@@ -14,7 +14,6 @@
 
 import type { ExpeditionMap, ExpeditionNode, NodeKind } from "@gantt-quest/core";
 import { useIsMobile } from "../CombatShared";
-import { Icon } from "../icons";
 
 export interface ExpeditionMapViewProps {
   map: ExpeditionMap;
@@ -82,6 +81,19 @@ const KIND_LABEL: Record<NodeKind, string> = {
   treasure: "Treasure",
   boss: "Boss",
 };
+
+// Color used to render the icon for a resolved (greyed-out) node.
+const RESOLVED_COLOR = "#a89171";
+
+// Unique set of colors we need tint filters for. SVG filters can only
+// produce one preset color per definition, so we emit one filter per
+// unique color and reference it by a sanitized id.
+const TINT_COLORS = Array.from(
+  new Set<string>([...Object.values(KIND_COLOR), RESOLVED_COLOR]),
+);
+
+// Turn "#a83232" into "a83232" — safe to embed inline in the filter id.
+const colorToFilterId = (color: string) => `tint-${color.replace(/[^a-zA-Z0-9]/g, "")}`;
 
 export function ExpeditionMapView({
   map,
@@ -199,6 +211,19 @@ export function ExpeditionMapView({
               <feMergeNode in="SourceGraphic" />
             </feMerge>
           </filter>
+          {/* Per-color tint filters for node icons. Each filter floods the
+              entire icon area with the target color and composites it
+              against the icon's alpha — equivalent to CSS mask-image but
+              implemented natively in SVG so we don't need <foreignObject>
+              + HTML at all. Mobile Safari was painting the foreignObject-
+              wrapped HTML outside the SVG coordinate system; native
+              <image> + filter is what every browser handles consistently. */}
+          {TINT_COLORS.map((color) => (
+            <filter id={colorToFilterId(color)} key={color} colorInterpolationFilters="sRGB">
+              <feFlood floodColor={color} result="flood" />
+              <feComposite in="flood" in2="SourceGraphic" operator="in" />
+            </filter>
+          ))}
         </defs>
 
         {/* Flux-generated parchment art when available. Slice-fit so the
@@ -345,35 +370,24 @@ export function ExpeditionMapView({
                 opacity={opacity}
                 filter="url(#node-shadow)"
               />
-              {/* SVG icon via foreignObject so the shared <Icon> component
-                  (mask-image based + RPG-Awesome font fallback, supports
-                  any CSS color) renders inside the SVG without a separate
-                  sprite system. The inner div is a flex centerer: without
-                  it, font-icon glyphs (e.g. ra-footprint, ra-aura) inherit
-                  their font baseline / line-height and slip ~1px south
-                  inside the box, which made nodes look like the icon
-                  wasn't centered. Flex centering forces the icon dead
-                  center regardless of font metrics. */}
-              <foreignObject
+              {/* Kind icon rendered as a native SVG <image>. Tinted via the
+                  per-color feFlood/feComposite filter defined in <defs>
+                  above. We avoid <foreignObject> + HTML entirely because
+                  mobile Safari paints foreignObject contents outside the
+                  SVG coordinate system at unpredictable offsets — icons
+                  ended up sitting outside their circles. <image> is a
+                  first-class SVG element and Just Works. */}
+              <image
+                href={`/icons/${iconName}.svg`}
                 x={p.x - ICON_SIZE / 2}
                 y={p.y - ICON_SIZE / 2}
                 width={ICON_SIZE}
                 height={ICON_SIZE}
-                style={{ pointerEvents: "none", opacity }}
-              >
-                <div
-                  style={{
-                    width: ICON_SIZE,
-                    height: ICON_SIZE,
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    lineHeight: 1,
-                  }}
-                >
-                  <Icon name={iconName} size={ICON_SIZE} color={iconColor} />
-                </div>
-              </foreignObject>
+                preserveAspectRatio="xMidYMid meet"
+                filter={`url(#${colorToFilterId(iconColor)})`}
+                opacity={opacity}
+                style={{ pointerEvents: "none" }}
+              />
               {/* Resolved check tucked in the top-right corner */}
               {resolved && (
                 <text
