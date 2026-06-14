@@ -1727,7 +1727,7 @@ export function CharacterSlotsModal({
     if (!res.ok) {
       const body = await res.json().catch(() => ({})) as { error?: string };
       if (body.error === "mid_quest") toast.error("Finish your quest before creating a new character.");
-      else toast.error("Create failed.");
+      else toast.error(body.error ? `Create failed: ${body.error}` : "Create failed.");
       return;
     }
     toast.success("New hero rolled!");

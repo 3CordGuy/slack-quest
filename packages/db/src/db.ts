@@ -2351,7 +2351,21 @@ export async function getRecentCharacterNames(
 
 // Perma-death. quests.created_by uses ON DELETE SET NULL (see 0002 migration), so
 // historical quests survive their creator. Inventory + quest_party cascade as expected.
+//
+// expeditions.created_by cascades ON DELETE — so deleting a character also
+// deletes the expeditions they created. But quests.from_expedition_id (0066)
+// references expeditions(id) with no ON DELETE clause (defaults to NO ACTION),
+// so the cascade would fail if any historical quest still back-points at one
+// of those expeditions. Null those refs out first so the cascade can complete.
+// Manifests as "Create failed" on /api/character-slots/new for anyone who has
+// rolled an expedition that spawned a combat quest.
 export async function deleteCharacter(db: D1Database, userId: string): Promise<void> {
+  await db
+    .prepare(
+      "UPDATE quests SET from_expedition_id = NULL WHERE from_expedition_id IN (SELECT id FROM expeditions WHERE created_by = ?)",
+    )
+    .bind(userId)
+    .run();
   await db.prepare("DELETE FROM characters WHERE slack_user_id = ?").bind(userId).run();
 }
 
