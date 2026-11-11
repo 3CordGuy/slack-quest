@@ -36,6 +36,19 @@ What the code review found that shapes the plan:
 - The voyage lobby is the ship: players board with a code, ready up, and the host sets sail. Leaving the island (victory, defeat or the doom clock) returns everyone to the Harbor with what they earned.
 - Room to grow, not in milestone 1: choosing between several islands on a sea chart (difficulty, biome, story frame), provisioning the ship with gold before sailing (potions, focus, extra doom-clock days), and Harbor upgrades paid for with island loot.
 
+### Proposed: the Harbor as a shared, walkable place
+Not built. Recorded 2026-11-11 as the leading candidate for the milestone after the thin slice.
+
+- **A place, not a menu.** The Harbor becomes a small hex map drawn by the same renderer as the islands. Everyone in it sees everyone else's sprite walking around in real time.
+- **Free movement, no turns.** Click a hex to walk there. The server checks the path and broadcasts it once; clients animate along it. No server tick loop, which keeps to the Durable Object rules.
+- **One `HarborRoom` Durable Object per harbor.** Hibernating WebSockets, presence held in socket attachments, huts and placed items in D1.
+- **Ships at the docks replace codes.** A captain's ship appears moored at the dock; crewmates walk onto it to board. The four-letter code stays as a fallback.
+- **Huts.** Each player owns a plot in a hut district. The outside is visible to all; the inside is a small room others can visit. Players place trophies and furniture on a grid and buy hut tiers with gold.
+- **Loot to bring home.** Islands need a third loot category beside gear and gold: trophies and decor (each story's relic, a villain's mask, biome-themed furniture) and building materials.
+- **Upgrades stay modest.** Mostly cosmetic, plus conveniences (storage, a display shelf, starting a voyage rested). Anything stronger would make new players weaker than veterans on the same ship.
+- **Prerequisite: durable accounts.** Guest accounts live in a browser cookie. A hut someone has decorated must survive a cleared cookie, so email sign-in comes first.
+- **Open questions:** one Harbor for everyone or one per crew; free-text chat or emotes only; whether hut upgrades give any gameplay bonus.
+
 ### Run loop (server-authoritative)
 - One `RunRoom` DO per run, joined by a short code. Clients send intents over a hibernating WebSocket; the DO runs `stepWorld(state, action, rng)` from `packages/world`, persists to D1, then broadcasts events.
 - RNG is seeded and its cursor lives in run state, so every run is replayable from its action log.
