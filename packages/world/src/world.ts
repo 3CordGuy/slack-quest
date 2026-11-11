@@ -1,0 +1,694 @@
+// The world reducer. One island, one story, one party.
+//
+// stepWorld(state, action) is pure and deterministic: the RNG state lives in
+// WorldState, so a run can be replayed from its seed and action log. It
+// returns the next state, the events to show players, and the effects the
+// server must carry out (model calls, D1 writes).
+
+import { hexDistance, type HexPos, type StatKey, type Stats } from "@gantt-quest/core";
+import {
+  createBattle,
+  currentActor,
+  stepBattle,
+  type BattleAction,
+  type BattleEvent,
+  type BattleState,
+  type Combatant,
+} from "./battle";
+import { rollCheck, statPct, type CheckResult } from "./check";
+import { KEY_ITEMS, WEAPONS, rollItem, type ItemDef } from "./content";
+import { findPath, generateMap, poiAt, poiById, type Poi, type WorldMap } from "./map";
+import {
+  MAX_NPC_MESSAGES,
+  MAX_PERSUADE_ATTEMPTS,
+  MAX_PLAYER_TEXT,
+  newNpcRun,
+  validateIntent,
+  type NpcOutput,
+  type NpcRun,
+} from "./npc";
+import { addStats, applyXp, maxFocusFor, maxHpFor } from "./progression";
+import { makeRng, seedFromString, type Rng } from "./rng";
+import { validateBible, type StoryBible } from "./story";
+
+export const MAX_PARTY = 4;
+export const BATTLE_JOIN_RANGE = 2;
+export const TALK_RANGE = 1;
+
+/** What the server knows about a character when it boards. */
+export interface HeroInit {
+  id: string;
+  name: string;
+  classId: string;
+  level: number;
+  xp: number;
+  unspent: number;
+  /** Base stats, without gear. */
+  base: Stats;
+  /** Sum of equipped gear bonuses. */
+  bonus: Partial<Stats>;
+  weapon: string;
+}
+
+export interface Hero extends HeroInit {
+  hp: number;
+  maxHp: number;
+  focus: number;
+  maxFocus: number;
+  potions: number;
+  keyItems: string[];
+  pos: HexPos;
+  ready: boolean;
+}
+
+export interface ChatLine {
+  npcId: string;
+  who: "hero" | "npc" | "system";
+  name: string;
+  text: string;
+}
+
+export interface Turn {
+  heroId: string;
+  /** Movement points left this turn. */
+  mp: number;
+  /** The movement roll, for display. */
+  rolls: boolean[];
+  /** The hero has used their one action this turn. */
+  acted: boolean;
+  /** Epoch ms when the server will end this turn. Set by the server, not the reducer. */
+  deadline: number | null;
+}
+
+export interface Earned {
+  xp: number;
+  gold: number;
+  items: ItemDef[];
+}
+
+export type Phase = "lobby" | "generating" | "overworld" | "battle" | "ended";
+
+export interface WorldState {
+  v: 1;
+  code: string;
+  seed: string;
+  rng: number;
+  phase: Phase;
+  hostId: string | null;
+  map: WorldMap;
+  bible: StoryBible | null;
+  heroes: Hero[];
+  /** Hero ids in overworld turn order. */
+  order: string[];
+  turnIdx: number;
+  round: number;
+  /** Rounds left before the villain escapes. */
+  doom: number;
+  turn: Turn | null;
+  facts: Record<string, boolean>;
+  npcs: Record<string, NpcRun>;
+  chat: ChatLine[];
+  battle: (BattleState & { npcId: string | null; deadline: number | null }) | null;
+  result: { outcome: "victory" | "defeat"; reason: string; epilogue: string | null } | null;
+  earned: Record<string, Earned>;
+}
+
+export type WorldAction =
+  | { type: "join"; hero: HeroInit }
+  | { type: "ready"; heroId: string; ready: boolean }
+  | { type: "start"; heroId: string }
+  | { type: "begin"; bible: StoryBible }
+  | { type: "move"; heroId: string; to: HexPos }
+  | { type: "interact"; heroId: string }
+  | { type: "end_turn"; heroId: string }
+  | { type: "timeout" }
+  | { type: "talk"; heroId: string; npcId: string; text: string; persuade?: boolean; focus?: number }
+  | { type: "npc_reply"; npcId: string; heroId: string; output: NpcOutput }
+  | { type: "battle"; heroId: string; action: BattleAction }
+  | { type: "epilogue"; text: string };
+
+/** Action types a player's client may send. Everything else is server-only. */
+export const CLIENT_ACTIONS: ReadonlySet<WorldAction["type"]> = new Set([
+  "ready",
+  "start",
+  "move",
+  "interact",
+  "end_turn",
+  "talk",
+  "battle",
+]);
+
+export type WorldEvent =
+  | { t: "joined"; heroId: string; name: string }
+  | { t: "phase"; phase: Phase }
+  | { t: "turn_start"; heroId: string; mp: number; check: CheckResult }
+  | { t: "round"; round: number; doom: number }
+  | { t: "moved"; heroId: string; path: HexPos[] }
+  | { t: "poi_revealed"; poiId: string }
+  | { t: "check"; heroId: string; check: CheckResult }
+  | { t: "rest"; heroId: string; hp: number; focus: number; where: string }
+  | { t: "search"; heroId: string; found: boolean }
+  | { t: "xp"; heroId: string; amount: number }
+  | { t: "level_up"; heroId: string; level: number }
+  | { t: "gold"; heroId: string; amount: number }
+  | { t: "loot"; heroId: string; item: ItemDef }
+  | { t: "key_item"; heroId: string; item: string; name: string }
+  | { t: "chat"; line: ChatLine }
+  | { t: "npc_intent"; npcId: string; verb: string; ok: boolean; reason?: string }
+  | { t: "objective"; id: string }
+  | { t: "battle_start"; heroes: string[]; enemies: string[] }
+  | { t: "battle"; ev: BattleEvent }
+  | { t: "battle_end"; status: string }
+  | { t: "ended"; outcome: "victory" | "defeat"; reason: string };
+
+export type WorldEffect =
+  | { kind: "story_gen" }
+  | { kind: "npc_call"; npcId: string; heroId: string; text: string; check: CheckResult | null }
+  | { kind: "grant"; heroId: string; xp: number; gold: number; item: ItemDef | null }
+  | { kind: "penalty"; heroId: string; goldPct: number; cap: number }
+  | { kind: "epilogue" }
+  | { kind: "run_end"; outcome: "victory" | "defeat" };
+
+export type StepResult =
+  | { ok: true; state: WorldState; events: WorldEvent[]; effects: WorldEffect[] }
+  | { ok: false; error: string };
+
+export function createWorld(code: string, seed: string): WorldState {
+  return {
+    v: 1,
+    code,
+    seed,
+    rng: seedFromString(`run|${seed}`),
+    phase: "lobby",
+    hostId: null,
+    map: generateMap(seed),
+    bible: null,
+    heroes: [],
+    order: [],
+    turnIdx: -1,
+    round: 0,
+    doom: 0,
+    turn: null,
+    facts: {},
+    npcs: {},
+    chat: [],
+    battle: null,
+    result: null,
+    earned: {},
+  };
+}
+
+export function heroStats(hero: Pick<Hero, "base" | "bonus">): Stats {
+  return addStats(hero.base, hero.bonus);
+}
+
+export function heroPct(hero: Pick<Hero, "base" | "bonus">, stat: StatKey): number {
+  return statPct(heroStats(hero)[stat]);
+}
+
+/**
+ * Identifies the input the game is currently waiting on, or null. The server
+ * resets its turn timer whenever this changes.
+ */
+export function awaitingKey(state: WorldState): string | null {
+  if (state.phase === "overworld" && state.turn) return `o:${state.round}:${state.turn.heroId}`;
+  if (state.phase === "battle" && state.battle) {
+    return `b:${state.battle.round}:${state.battle.turn}:${state.battle.order[state.battle.turn]}`;
+  }
+  return null;
+}
+
+// ---------- internals ----------
+
+interface Ctx {
+  state: WorldState;
+  rng: Rng;
+  events: WorldEvent[];
+  effects: WorldEffect[];
+}
+
+const fail = (error: string): StepResult => ({ ok: false, error });
+const heroById = (state: WorldState, id: string) => state.heroes.find((h) => h.id === id);
+
+function grant(ctx: Ctx, hero: Hero, g: { xp?: number; gold?: number; item?: ItemDef | null }) {
+  const xp = g.xp ?? 0;
+  const gold = g.gold ?? 0;
+  const item = g.item ?? null;
+  const earned = (ctx.state.earned[hero.id] ??= { xp: 0, gold: 0, items: [] });
+  earned.xp += xp;
+  earned.gold += gold;
+  if (item) earned.items.push(item);
+  if (xp > 0) {
+    ctx.events.push({ t: "xp", heroId: hero.id, amount: xp });
+    const next = applyXp({ classId: hero.classId, level: hero.level, xp: hero.xp, stats: hero.base, unspent: hero.unspent }, xp);
+    if (next.levelsGained > 0) {
+      const oldMax = hero.maxHp;
+      hero.base = next.stats;
+      hero.level = next.level;
+      hero.unspent = next.unspent;
+      hero.maxHp = maxHpFor(heroStats(hero), hero.level);
+      hero.hp += hero.maxHp - oldMax;
+      const focusGain = maxFocusFor(hero.level) - maxFocusFor(hero.level - next.levelsGained);
+      hero.maxFocus += focusGain;
+      hero.focus += focusGain;
+      ctx.events.push({ t: "level_up", heroId: hero.id, level: hero.level });
+    }
+    hero.xp = next.xp;
+  }
+  if (gold > 0) ctx.events.push({ t: "gold", heroId: hero.id, amount: gold });
+  if (item) ctx.events.push({ t: "loot", heroId: hero.id, item });
+  if (xp > 0 || gold > 0 || item) ctx.effects.push({ kind: "grant", heroId: hero.id, xp, gold, item });
+}
+
+function setFact(ctx: Ctx, fact: string) {
+  if (ctx.state.facts[fact]) return;
+  ctx.state.facts[fact] = true;
+  const bible = ctx.state.bible;
+  if (!bible) return;
+  for (const o of bible.objectives) {
+    if (o.fact !== fact) continue;
+    ctx.events.push({ t: "objective", id: o.id });
+    if (o.id === bible.finalObjective) endRun(ctx, "victory", `${bible.villain.name} is defeated.`);
+  }
+}
+
+function revealPoi(ctx: Ctx, poi: Poi) {
+  if (!poi.hidden) return;
+  poi.hidden = false;
+  ctx.events.push({ t: "poi_revealed", poiId: poi.id });
+  setFact(ctx, `revealed:${poi.id}`);
+}
+
+function endRun(ctx: Ctx, outcome: "victory" | "defeat", reason: string) {
+  const { state } = ctx;
+  if (state.phase === "ended") return;
+  state.phase = "ended";
+  state.turn = null;
+  state.battle = null;
+  state.result = { outcome, reason, epilogue: null };
+  for (const hero of state.heroes) {
+    if (outcome === "victory") {
+      grant(ctx, hero, { xp: 50, gold: 30, item: rollItem(ctx.rng, hero.classId, 0.8) });
+    } else {
+      // Soft death: a capped gold loss, never the character.
+      ctx.effects.push({ kind: "penalty", heroId: hero.id, goldPct: 0.1, cap: 25 });
+    }
+  }
+  ctx.events.push({ t: "ended", outcome, reason });
+  ctx.effects.push({ kind: "epilogue" }, { kind: "run_end", outcome });
+}
+
+function startTurn(ctx: Ctx) {
+  const { state, rng } = ctx;
+  for (let i = 0; i < state.order.length; i++) {
+    state.turnIdx += 1;
+    if (state.turnIdx >= state.order.length) {
+      state.turnIdx = 0;
+      state.round += 1;
+      state.doom -= 1;
+      ctx.events.push({ t: "round", round: state.round, doom: state.doom });
+      if (state.doom <= 0) {
+        endRun(ctx, "defeat", `${state.bible?.villain.name ?? "The villain"} slipped away with ${state.bible?.relicName ?? "the relic"}.`);
+        return;
+      }
+    }
+    const hero = heroById(state, state.order[state.turnIdx]);
+    if (!hero) continue;
+    const check = rollCheck(rng, { label: "Movement", stat: "agi", pct: heroPct(hero, "agi"), count: 4 });
+    const mp = 2 + check.successes;
+    state.turn = { heroId: hero.id, mp, rolls: check.rolls, acted: false, deadline: null };
+    ctx.events.push({ t: "turn_start", heroId: hero.id, mp, check });
+    return;
+  }
+}
+
+function toCombatant(hero: Hero): Combatant {
+  const stats = heroStats(hero);
+  return {
+    id: hero.id,
+    side: "hero",
+    name: hero.name,
+    kind: hero.classId,
+    level: hero.level,
+    hp: hero.hp,
+    maxHp: hero.maxHp,
+    pct: { str: statPct(stats.str), int_stat: statPct(stats.int_stat), vit: statPct(stats.vit), agi: statPct(stats.agi), dex: statPct(stats.dex) },
+    speed: statPct(stats.agi),
+    focus: hero.focus,
+    potions: hero.potions,
+    abilities: WEAPONS[hero.weapon]?.abilities ?? [],
+    effects: [],
+    down: false,
+  };
+}
+
+function startBattle(ctx: Ctx, at: HexPos, enemies: string[], poiId: string | null, npcId: string | null) {
+  const { state } = ctx;
+  const fighters = state.heroes.filter((h) => hexDistance(h.pos, at) <= BATTLE_JOIN_RANGE);
+  if (fighters.length === 0) return;
+  const boss = enemies.includes("villain");
+  const created = createBattle(
+    {
+      heroes: fighters.map(toCombatant),
+      enemyKinds: enemies,
+      bossName: boss ? state.bible?.villain.name : undefined,
+      avgLevel: fighters.reduce((a, h) => a + h.level, 0) / fighters.length,
+      poiId,
+    },
+    ctx.rng,
+  );
+  state.phase = "battle";
+  state.battle = { ...created.state, npcId, deadline: null };
+  ctx.events.push({ t: "battle_start", heroes: fighters.map((h) => h.id), enemies });
+  for (const ev of created.events) ctx.events.push({ t: "battle", ev });
+  if (created.state.status !== "active") finishBattle(ctx);
+}
+
+function finishBattle(ctx: Ctx) {
+  const { state, rng } = ctx;
+  const battle = state.battle!;
+  const fighters: Hero[] = [];
+  for (const c of battle.combatants) {
+    if (c.side !== "hero") continue;
+    const hero = heroById(state, c.id);
+    if (!hero) continue;
+    hero.hp = Math.max(1, c.hp);
+    hero.focus = c.focus;
+    hero.potions = c.potions;
+    fighters.push(hero);
+  }
+  ctx.events.push({ t: "battle_end", status: battle.status });
+  state.battle = null;
+
+  if (battle.status === "defeat") {
+    endRun(ctx, "defeat", "The party fell in battle.");
+    return;
+  }
+  state.phase = "overworld";
+  if (state.turn) state.turn.acted = true;
+  if (battle.status !== "victory") return;
+
+  for (const hero of fighters) {
+    grant(ctx, hero, {
+      xp: battle.xp,
+      gold: rng.int(5, 12) * (battle.boss ? 3 : 1),
+      item: battle.boss || rng.chance(0.4) ? rollItem(rng, hero.classId, battle.boss ? 0.6 : 0.2) : null,
+    });
+  }
+  if (battle.npcId) setFact(ctx, `fought:${battle.npcId}`);
+  if (battle.poiId) {
+    const poi = poiById(state.map, battle.poiId);
+    if (poi) poi.cleared = true;
+    setFact(ctx, `defeated:${battle.poiId}`);
+  }
+}
+
+function pushChat(ctx: Ctx, line: ChatLine) {
+  ctx.state.chat.push(line);
+  if (ctx.state.chat.length > 60) ctx.state.chat.splice(0, ctx.state.chat.length - 60);
+  ctx.events.push({ t: "chat", line });
+}
+
+// ---------- action handlers ----------
+
+function interact(ctx: Ctx, hero: Hero): string | null {
+  const { state, rng } = ctx;
+  const poi = poiAt(state.map, hero.pos);
+  if (!poi) return "nothing here";
+  const turn = state.turn!;
+
+  if (poi.kind === "shrine") {
+    if (poi.usedBy.includes(hero.id)) return "the shrine has nothing more for you";
+    poi.usedBy.push(hero.id);
+    const hp = Math.min(hero.maxHp - hero.hp, 12);
+    const focus = hero.maxFocus - hero.focus;
+    hero.hp += hp;
+    hero.focus = hero.maxFocus;
+    ctx.events.push({ t: "rest", heroId: hero.id, hp, focus, where: "shrine" });
+  } else if (poi.kind === "landing") {
+    const hp = Math.min(hero.maxHp - hero.hp, 6);
+    hero.hp += hp;
+    ctx.events.push({ t: "rest", heroId: hero.id, hp, focus: 0, where: "landing" });
+  } else if (poi.kind === "cache") {
+    if (poi.cleared) return "already searched";
+    poi.cleared = true;
+    const check = rollCheck(rng, { label: "Search", stat: "dex", pct: heroPct(hero, "dex"), count: 3 });
+    ctx.events.push({ t: "check", heroId: hero.id, check });
+    ctx.events.push({ t: "search", heroId: hero.id, found: !check.fumble });
+    if (!check.fumble) {
+      if (check.successes >= 2) hero.potions += 1;
+      grant(ctx, hero, {
+        xp: 10,
+        gold: rng.int(6, 14) * check.successes,
+        item: check.perfect ? rollItem(rng, hero.classId, 0.4) : null,
+      });
+    }
+  } else if (poi.kind === "camp" || poi.kind === "lair") {
+    if (poi.cleared) return "nothing left to fight here";
+    turn.acted = true;
+    startBattle(ctx, poi.pos, poi.enemies, poi.id, null);
+    return null;
+  } else {
+    return "nothing to do here";
+  }
+  turn.acted = true;
+  return null;
+}
+
+function talk(ctx: Ctx, hero: Hero, action: Extract<WorldAction, { type: "talk" }>): string | null {
+  const { state, rng } = ctx;
+  const sheet = state.bible?.npcs.find((n) => n.id === action.npcId);
+  const run = state.npcs[action.npcId];
+  if (!sheet || !run) return "no such character";
+  const poi = poiById(state.map, sheet.poi);
+  if (!poi || hexDistance(hero.pos, poi.pos) > TALK_RANGE) return "too far away to talk";
+  if (run.hostile) return `${sheet.name} will not speak to you`;
+  if (run.busy) return `${sheet.name} is still answering`;
+  if (run.messages >= MAX_NPC_MESSAGES) return `${sheet.name} has said all they will say`;
+  const text = String(action.text ?? "").replace(/\s+/g, " ").trim().slice(0, MAX_PLAYER_TEXT);
+  if (!text) return "say something";
+
+  let check: CheckResult | null = null;
+  if (action.persuade) {
+    const attempts = run.attempts[hero.id] ?? 0;
+    if (attempts >= MAX_PERSUADE_ATTEMPTS) return "you have pressed your case as far as it will go";
+    const focus = Math.max(0, Math.min(hero.focus, 3, Math.floor(action.focus ?? 0)));
+    hero.focus -= focus;
+    run.attempts[hero.id] = attempts + 1;
+    check = rollCheck(rng, { label: "Persuade", stat: "int_stat", pct: heroPct(hero, "int_stat"), count: 3, focus });
+    ctx.events.push({ t: "check", heroId: hero.id, check });
+    if (check.successes >= 2) {
+      run.persuaded = true;
+      run.attitude = Math.min(2, run.attitude + 1);
+    } else if (check.fumble) {
+      run.attitude = Math.max(-2, run.attitude - 1);
+    }
+  }
+  run.messages += 1;
+  run.busy = true;
+  pushChat(ctx, { npcId: sheet.id, who: "hero", name: hero.name, text });
+  setFact(ctx, `met:${sheet.id}`);
+  ctx.effects.push({ kind: "npc_call", npcId: sheet.id, heroId: hero.id, text, check });
+  return null;
+}
+
+function npcReply(ctx: Ctx, action: Extract<WorldAction, { type: "npc_reply" }>): string | null {
+  const { state } = ctx;
+  const sheet = state.bible?.npcs.find((n) => n.id === action.npcId);
+  const run = state.npcs[action.npcId];
+  if (!sheet || !run) return "no such character";
+  run.busy = false;
+  const { say, intent, attitudeDelta } = action.output;
+  // Words alone can warm an NPC to 1; only a passed check takes it higher.
+  const ceiling = run.persuaded ? 2 : 1;
+  run.attitude = Math.max(-2, Math.min(Math.max(run.attitude, ceiling), run.attitude + attitudeDelta));
+  pushChat(ctx, { npcId: sheet.id, who: "npc", name: sheet.name, text: say });
+  if (!intent || state.phase !== "overworld") return null;
+
+  const verdict = validateIntent(sheet, run, intent);
+  if (!verdict.ok) {
+    ctx.events.push({ t: "npc_intent", npcId: sheet.id, verb: intent.verb, ok: false, reason: verdict.reason });
+    return null;
+  }
+  ctx.events.push({ t: "npc_intent", npcId: sheet.id, verb: intent.verb, ok: true });
+  const cap = verdict.capability;
+  if (!cap) return null;
+  run.used.push(cap.id);
+  const hero = heroById(state, action.heroId) ?? state.heroes[0];
+  const poi = poiById(state.map, sheet.poi)!;
+
+  if (cap.verb === "give_item") {
+    const def = KEY_ITEMS[cap.item];
+    hero.keyItems.push(cap.item);
+    if (def?.grant.maxFocus) {
+      hero.maxFocus += def.grant.maxFocus;
+      hero.focus += def.grant.maxFocus;
+    }
+    if (def?.grant.potions) hero.potions += def.grant.potions;
+    ctx.events.push({ t: "key_item", heroId: hero.id, item: cap.item, name: cap.itemName });
+    pushChat(ctx, { npcId: sheet.id, who: "system", name: "", text: `${hero.name} received ${cap.itemName}.` });
+  } else if (cap.verb === "reveal_location") {
+    const target = poiById(state.map, cap.poi);
+    if (target) {
+      revealPoi(ctx, target);
+      pushChat(ctx, { npcId: sheet.id, who: "system", name: "", text: `${cap.poiName} is now marked on the map.` });
+      for (const h of state.heroes) grant(ctx, h, { xp: 15 });
+    }
+  } else if (cap.verb === "start_combat") {
+    run.hostile = true;
+    pushChat(ctx, { npcId: sheet.id, who: "system", name: "", text: `${sheet.name} calls for help. Steel is drawn.` });
+    startBattle(ctx, poi.pos, cap.enemies, null, sheet.id);
+  }
+  return null;
+}
+
+function timeout(ctx: Ctx): string | null {
+  const { state } = ctx;
+  if (state.phase === "overworld" && state.turn) {
+    startTurn(ctx);
+    return null;
+  }
+  if (state.phase === "battle" && state.battle) {
+    const actor = currentActor(state.battle);
+    if (!actor || actor.side !== "hero") return "nothing to time out";
+    // An absent player's hero falls back to their first ability.
+    return battleAction(ctx, actor.id, { type: "ability", ability: actor.abilities[0] });
+  }
+  return "nothing to time out";
+}
+
+function battleAction(ctx: Ctx, heroId: string, action: BattleAction): string | null {
+  const { state } = ctx;
+  if (state.phase !== "battle" || !state.battle) return "not in battle";
+  const { npcId, deadline, ...battle } = state.battle;
+  const res = stepBattle(battle, heroId, action, ctx.rng);
+  if (!res.ok) return res.error;
+  state.battle = { ...res.state, npcId, deadline };
+  for (const ev of res.events) ctx.events.push({ t: "battle", ev });
+  if (res.state.status !== "active") finishBattle(ctx);
+  return null;
+}
+
+// ---------- the reducer ----------
+
+export function stepWorld(prev: WorldState, action: WorldAction): StepResult {
+  const state = structuredClone(prev);
+  const ctx: Ctx = { state, rng: makeRng(state.rng), events: [], effects: [] };
+  const done = (error: string | null): StepResult => {
+    if (error) return fail(error);
+    state.rng = ctx.rng.state();
+    return { ok: true, state, events: ctx.events, effects: ctx.effects };
+  };
+
+  switch (action.type) {
+    case "join": {
+      if (heroById(state, action.hero.id)) return done(null);
+      if (state.phase !== "lobby") return fail("this ship has already sailed");
+      if (state.heroes.length >= MAX_PARTY) return fail("the ship is full");
+      const init = action.hero;
+      const maxHp = maxHpFor(addStats(init.base, init.bonus), init.level);
+      const maxFocus = maxFocusFor(init.level);
+      state.heroes.push({
+        ...init,
+        hp: maxHp,
+        maxHp,
+        focus: maxFocus,
+        maxFocus,
+        potions: 1,
+        keyItems: [],
+        pos: poiById(state.map, "landing")!.pos,
+        ready: false,
+      });
+      state.hostId ??= init.id;
+      ctx.events.push({ t: "joined", heroId: init.id, name: init.name });
+      return done(null);
+    }
+
+    case "ready": {
+      const hero = heroById(state, action.heroId);
+      if (!hero) return fail("not aboard");
+      if (state.phase !== "lobby") return fail("already under way");
+      hero.ready = !!action.ready;
+      return done(null);
+    }
+
+    case "start": {
+      if (state.phase !== "lobby") return fail("already under way");
+      if (action.heroId !== state.hostId) return fail("only the captain can set sail");
+      if (state.heroes.some((h) => h.id !== state.hostId && !h.ready)) return fail("not everyone is ready");
+      state.phase = "generating";
+      ctx.events.push({ t: "phase", phase: "generating" });
+      ctx.effects.push({ kind: "story_gen" });
+      return done(null);
+    }
+
+    case "begin": {
+      if (state.phase !== "generating") return fail("not waiting for a story");
+      const problems = validateBible(action.bible, state.map);
+      if (problems.length > 0) return fail(`story rejected: ${problems.join("; ")}`);
+      state.bible = action.bible;
+      state.doom = action.bible.doomRounds;
+      state.npcs = Object.fromEntries(action.bible.npcs.map((n) => [n.id, newNpcRun()]));
+      state.order = [...state.heroes]
+        .sort((a, b) => heroStats(b).agi - heroStats(a).agi || a.id.localeCompare(b.id))
+        .map((h) => h.id);
+      state.phase = "overworld";
+      state.round = 1;
+      ctx.events.push({ t: "phase", phase: "overworld" });
+      startTurn(ctx);
+      return done(null);
+    }
+
+    case "move": {
+      if (state.phase !== "overworld" || !state.turn) return fail("you cannot move right now");
+      if (state.turn.heroId !== action.heroId) return fail("not your turn");
+      const hero = heroById(state, action.heroId)!;
+      const route = findPath(state.map, hero.pos, action.to, state.turn.mp);
+      if (!route || route.path.length === 0) return fail("out of reach");
+      state.turn.mp -= route.cost;
+      hero.pos = route.path[route.path.length - 1];
+      ctx.events.push({ t: "moved", heroId: hero.id, path: route.path });
+      // Walking past something hidden uncovers it.
+      for (const poi of state.map.pois) {
+        if (poi.hidden && route.path.some((p) => hexDistance(p, poi.pos) <= 1)) revealPoi(ctx, poi);
+      }
+      return done(null);
+    }
+
+    case "interact": {
+      if (state.phase !== "overworld" || !state.turn) return fail("you cannot act right now");
+      if (state.turn.heroId !== action.heroId) return fail("not your turn");
+      if (state.turn.acted) return fail("you have already acted this turn");
+      return done(interact(ctx, heroById(state, action.heroId)!));
+    }
+
+    case "end_turn": {
+      if (state.phase !== "overworld" || !state.turn) return fail("no turn to end");
+      if (state.turn.heroId !== action.heroId) return fail("not your turn");
+      startTurn(ctx);
+      return done(null);
+    }
+
+    case "timeout":
+      return done(timeout(ctx));
+
+    case "talk": {
+      if (state.phase !== "overworld") return fail("you cannot talk right now");
+      const hero = heroById(state, action.heroId);
+      if (!hero) return fail("not aboard");
+      return done(talk(ctx, hero, action));
+    }
+
+    case "npc_reply":
+      return done(npcReply(ctx, action));
+
+    case "battle":
+      return done(battleAction(ctx, action.heroId, action.action));
+
+    case "epilogue": {
+      if (state.phase !== "ended" || !state.result) return fail("the story is not over");
+      state.result.epilogue = String(action.text).trim().slice(0, 1200);
+      return done(null);
+    }
+  }
+}

@@ -29,6 +29,13 @@ What the code review found that shapes the plan:
 - `apps/game` (new) — Hono worker, `RunRoom` Durable Object, AI modules, React shell with a Three.js renderer. Own `wrangler.example.jsonc`, own migrations folder, **own D1 database** with a clean `players` table (reuse the email-code and guest auth approach from `apps/web`, not the schema).
 - `apps/web`, `apps/slack` — untouched.
 
+### World structure: the Harbor and the Islands
+- **The Harbor** is the persistent base of operations between sessions: where a player's character lives, where the party gathers, and (later) where shops, the smithy, the inn and camp-style upgrades go. It is ordinary screens backed by D1, not a Durable Object.
+- **An Island** is one session world. The party loads a ship at the Harbor and sails to an island; each island is one seeded hex map with one generated story. A run *is* a voyage to an island.
+- The session map is generated as an island: sea around the rim, the ship puts in at a **landing** on the shore, and the story's lair sits far inland.
+- The voyage lobby is the ship: players board with a code, ready up, and the host sets sail. Leaving the island (victory, defeat or the doom clock) returns everyone to the Harbor with what they earned.
+- Room to grow, not in milestone 1: choosing between several islands on a sea chart (difficulty, biome, story frame), provisioning the ship with gold before sailing (potions, focus, extra doom-clock days), and Harbor upgrades paid for with island loot.
+
 ### Run loop (server-authoritative)
 - One `RunRoom` DO per run, joined by a short code. Clients send intents over a hibernating WebSocket; the DO runs `stepWorld(state, action, rng)` from `packages/world`, persists to D1, then broadcasts events.
 - RNG is seeded and its cursor lives in run state, so every run is replayable from its action log.
@@ -44,7 +51,7 @@ What the code review found that shapes the plan:
 - DO Alarms drive the soft turn timer and monster turns, so nothing depends on a client staying connected.
 
 ### Overworld (For the King style)
-- Seeded hex map with biomes that carry movement cost; points of interest (town, lair, shrine, camp) placed by the story skeleton.
+- Seeded hex map with biomes that carry movement cost; points of interest (landing, hut, lair, shrine, camp, caches) placed by the story skeleton.
 - Round-based turns: each hero rolls movement points from speed, moves, then acts (talk, search, rest, fight). Heroes can split up; a fight pulls in heroes within 2 hexes.
 - A doom clock ticks each round and is the story's deadline, which keeps a run bite-size.
 - `hexPath` in `hex.ts` is unweighted BFS; add a weighted A* in `packages/world` rather than changing core.
@@ -107,7 +114,7 @@ Later milestones, not planned in detail: the look (real sprites, fog of war, day
 ## Assumptions to veto
 
 - **Characters start fresh in the new game.** Same creation flow and stats as today, but in the new database; existing characters, gear and gold do not migrate.
-- **No town between sessions yet.** Shops, smithy, inn and camp are not rebuilt in milestone 1; loot and levels are the only progression.
+- **The Harbor is bare in milestone 1.** It is the character sheet plus "set sail" and "board a ship"; shops, smithy, inn, provisioning and upgrades come later, so loot and levels are the only progression.
 - **Persuasion rolls use `int_stat`** rather than adding a sixth social stat.
 - **Heroes move individually**, not as one party token.
 - **Nothing ships.** Milestone 1 runs under `wrangler dev` only. A new worker needs changes to the GitHub Actions deploy workflow and its `wrangler.jsonc` secret, which waits for review.
