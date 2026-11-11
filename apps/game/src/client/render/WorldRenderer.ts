@@ -1,0 +1,682 @@
+// Three.js view of an island: low-poly hex terrain with pixel sprites
+// standing on it. Imperative on purpose. React owns the HUD; this class owns
+// the canvas and is told about state (setState) and things that just
+// happened (playEvents).
+//
+// The same scene shows the overworld and battles: a battle pushes the camera
+// in on the fight and lines the two sides up facing each other.
+
+import * as THREE from "three";
+import type { HexPos } from "@gantt-quest/core";
+import { findPath, reachable, tileAt, type ClientState, type Poi, type Tile, type WorldEvent } from "@gantt-quest/world";
+import { SPRITE_ASPECT, spriteTexture, textTexture } from "./sprites";
+
+const SQRT3 = Math.sqrt(3);
+/** Render at 1/PIXEL resolution and scale up unsmoothed for a chunky look. */
+const PIXEL = 2;
+const PLAYER_COLORS = ["#ffd23f", "#5ce1e6", "#ff7ab6", "#9dff6b"];
+const BIOME_COLOR: Record<string, string> = { plains: "#7cb856", forest: "#4c9a52", hills: "#a39672", water: "#3f86dc" };
+
+export function hexToWorld(p: HexPos): { x: number; z: number } {
+  return { x: SQRT3 * (p.q + p.r / 2), z: 1.5 * p.r };
+}
+
+const tileTop = (t: Tile | undefined) => (!t ? 0.2 : t.biome === "water" ? 0.14 : 0.35 + t.h * 1.1);
+const key = (p: HexPos) => `${p.q},${p.r}`;
+/** Small deterministic hash for per-tile variation. */
+const noise = (q: number, r: number, salt: number) => {
+  const n = Math.sin(q * 127.1 + r * 311.7 + salt * 74.7) * 43758.5453;
+  return n - Math.floor(n);
+};
+
+interface Unit {
+  sprite: THREE.Sprite;
+  ring: THREE.Mesh | null;
+  hpBack: THREE.Sprite | null;
+  hpFill: THREE.Sprite | null;
+  goal: THREE.Vector3;
+  /** Waypoints still to walk before settling on `goal`. */
+  path: THREE.Vector3[];
+  /** Brief attack lunge, decays to zero. */
+  kick: THREE.Vector3;
+  kind: string;
+}
+
+interface Want {
+  kind: string;
+  pos: THREE.Vector3;
+  size: number;
+  ring?: string;
+  pulse?: boolean;
+  hp?: number;
+  down?: boolean;
+}
+
+interface Floater {
+  sprite: THREE.Sprite;
+  age: number;
+}
+
+export interface RendererCallbacks {
+  onHexClick(pos: HexPos): void;
+  onHover(pos: HexPos | null): void;
+}
+
+export class WorldRenderer {
+  private scene = new THREE.Scene();
+  private camera = new THREE.PerspectiveCamera(35, 1, 0.1, 200);
+  private renderer: THREE.WebGLRenderer;
+  private raycaster = new THREE.Raycaster();
+  private resizeObserver: ResizeObserver;
+  private raf = 0;
+  private last = performance.now();
+  private clock = 0;
+
+  private terrain: THREE.InstancedMesh | null = null;
+  private tiles: Tile[] = [];
+  private mapCode = "";
+  private decor = new THREE.Group();
+  private poiGroup = new THREE.Group();
+  private poiSig = "";
+  private unitGroup = new THREE.Group();
+  private fxGroup = new THREE.Group();
+  private pathGroup = new THREE.Group();
+  private hoverRing: THREE.Mesh;
+  private arena: THREE.Mesh;
+  private units = new Map<string, Unit>();
+  private pulsing = new Set<string>();
+  private floaters: Floater[] = [];
+  private pending: { at: number; run: () => void }[] = [];
+
+  private state: ClientState | null = null;
+  private reach = new Map<string, { cost: number }>();
+  private hovered: HexPos | null = null;
+  private turnKey = "";
+
+  private target = new THREE.Vector3();
+  private targetGoal = new THREE.Vector3();
+  private dist = 24;
+  private userDist = 24;
+  private pointer = { x: 0, y: 0, downX: 0, downY: 0, down: false, dragged: false, dirty: false, inside: false };
+
+  constructor(private container: HTMLElement, private callbacks: RendererCallbacks) {
+    this.renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: "low-power" });
+    this.renderer.setPixelRatio(1);
+    const canvas = this.renderer.domElement;
+    canvas.style.width = "100%";
+    canvas.style.height = "100%";
+    canvas.style.display = "block";
+    canvas.style.imageRendering = "pixelated";
+    canvas.style.touchAction = "none";
+    container.appendChild(canvas);
+
+    this.scene.background = new THREE.Color("#a9dcf7");
+    this.scene.add(new THREE.HemisphereLight("#ffffff", "#5a6a8a", 1.5));
+    const sun = new THREE.DirectionalLight("#fff3d6", 1.6);
+    sun.position.set(-6, 12, 5);
+    this.scene.add(sun);
+
+    const sea = new THREE.Mesh(new THREE.PlaneGeometry(240, 240), new THREE.MeshLambertMaterial({ color: "#3577cf" }));
+    sea.rotation.x = -Math.PI / 2;
+    sea.position.y = 0.1;
+    this.scene.add(sea);
+
+    this.hoverRing = new THREE.Mesh(
+      new THREE.RingGeometry(0.78, 0.95, 6),
+      new THREE.MeshBasicMaterial({ color: "#ffffff", transparent: true, opacity: 0.9, side: THREE.DoubleSide }),
+    );
+    this.hoverRing.rotation.x = -Math.PI / 2;
+    this.hoverRing.rotation.z = Math.PI / 6;
+    this.hoverRing.visible = false;
+
+    this.arena = new THREE.Mesh(
+      new THREE.CylinderGeometry(3.8, 4.1, 1.6, 24),
+      new THREE.MeshLambertMaterial({ color: "#3b3550", flatShading: true }),
+    );
+    this.arena.visible = false;
+
+    this.scene.add(this.decor, this.poiGroup, this.pathGroup, this.hoverRing, this.arena, this.unitGroup, this.fxGroup);
+
+    canvas.addEventListener("pointerdown", this.onPointerDown);
+    canvas.addEventListener("pointermove", this.onPointerMove);
+    canvas.addEventListener("pointerup", this.onPointerUp);
+    canvas.addEventListener("pointerleave", this.onPointerLeave);
+    canvas.addEventListener("wheel", this.onWheel, { passive: false });
+    this.resizeObserver = new ResizeObserver(() => this.resize());
+    this.resizeObserver.observe(container);
+    this.resize();
+    this.raf = requestAnimationFrame(this.frame);
+  }
+
+  dispose() {
+    cancelAnimationFrame(this.raf);
+    this.resizeObserver.disconnect();
+    const canvas = this.renderer.domElement;
+    canvas.removeEventListener("pointerdown", this.onPointerDown);
+    canvas.removeEventListener("pointermove", this.onPointerMove);
+    canvas.removeEventListener("pointerup", this.onPointerUp);
+    canvas.removeEventListener("pointerleave", this.onPointerLeave);
+    canvas.removeEventListener("wheel", this.onWheel);
+    this.renderer.dispose();
+    canvas.remove();
+  }
+
+  // ---------- state ----------
+
+  setState(state: ClientState) {
+    const first = this.mapCode !== state.code;
+    if (first) this.buildTerrain(state);
+    this.state = state;
+    this.buildPois(state);
+
+    const me = state.heroes.find((h) => h.id === state.you);
+    const myTurn = state.phase === "overworld" && state.turn?.heroId === state.you && !!me;
+    this.reach = myTurn ? reachable(state.map, me!.pos, state.turn!.mp) : new Map();
+    this.paintTiles();
+    this.syncUnits(state);
+    this.updatePath();
+
+    if (state.battle) {
+      this.targetGoal.copy(this.battleCentre(state));
+      this.dist = 12;
+    } else {
+      this.dist = this.userDist;
+      const turnKey = `${state.phase}:${state.round}:${state.turn?.heroId ?? ""}`;
+      if (first && me) this.target.copy(this.standAt(me.pos));
+      if ((first || turnKey !== this.turnKey) && me && (myTurn || first)) this.targetGoal.copy(this.standAt(me.pos));
+      this.turnKey = turnKey;
+    }
+  }
+
+  /** Animate things that just happened. Call after setState for the same update. */
+  playEvents(events: WorldEvent[]) {
+    let beat = 0;
+    for (const ev of events) {
+      if (ev.t === "moved") {
+        const unit = this.units.get(ev.heroId);
+        if (unit) unit.path = ev.path.map((p) => this.standAt(p));
+      } else if (ev.t === "battle") {
+        const b = ev.ev;
+        if (b.t === "hit") this.later(beat++, () => { this.lunge(b.actor, b.target); this.float(b.target, `-${b.amount}`, b.perfect ? "#ffd23f" : "#ff6b6b"); });
+        else if (b.t === "miss") this.later(beat++, () => { this.lunge(b.actor, b.target); this.float(b.target, "miss", "#c9d1e0"); });
+        else if (b.t === "heal") this.later(beat++, () => this.float(b.target, `+${b.amount}`, "#7dff9a"));
+        else if (b.t === "tick") this.later(beat++, () => this.float(b.target, `-${b.amount}`, "#ffa94d"));
+      }
+    }
+  }
+
+  private later(beat: number, run: () => void) {
+    this.pending.push({ at: this.clock + beat * 0.38, run });
+  }
+
+  private lunge(actorId: string, targetId: string) {
+    const a = this.units.get(actorId);
+    const t = this.units.get(targetId);
+    if (a && t && a !== t) a.kick.copy(t.goal).sub(a.goal).setLength(0.7);
+  }
+
+  private float(unitId: string, text: string, color: string) {
+    const unit = this.units.get(unitId);
+    if (!unit) return;
+    const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: textTexture(text, color), transparent: true, depthTest: false }));
+    sprite.scale.set(1.2, 0.45, 1);
+    sprite.position.copy(unit.sprite.position).add(new THREE.Vector3(0, unit.sprite.scale.y + 0.5, 0));
+    sprite.renderOrder = 10;
+    this.fxGroup.add(sprite);
+    this.floaters.push({ sprite, age: 0 });
+  }
+
+  // ---------- terrain ----------
+
+  private buildTerrain(state: ClientState) {
+    this.mapCode = state.code;
+    this.tiles = state.map.tiles;
+    if (this.terrain) {
+      this.scene.remove(this.terrain);
+      this.terrain.geometry.dispose();
+    }
+    this.decor.clear();
+    this.poiSig = "";
+
+    const geo = new THREE.CylinderGeometry(0.985, 0.985, 1, 6);
+    geo.translate(0, 0.5, 0);
+    const terrain = new THREE.InstancedMesh(geo, new THREE.MeshLambertMaterial({ flatShading: true }), this.tiles.length);
+    const m = new THREE.Matrix4();
+    this.tiles.forEach((t, i) => {
+      const { x, z } = hexToWorld(t);
+      m.compose(new THREE.Vector3(x, 0, z), new THREE.Quaternion(), new THREE.Vector3(1, tileTop(t), 1));
+      terrain.setMatrixAt(i, m);
+    });
+    this.terrain = terrain;
+    this.scene.add(terrain);
+
+    // Trees on forest, rocks on hills. POI hexes stay clear.
+    const poiKeys = new Set(state.map.pois.map((p) => key(p.pos)));
+    const trees: THREE.Matrix4[] = [];
+    const rocks: THREE.Matrix4[] = [];
+    for (const t of this.tiles) {
+      if (poiKeys.has(key(t))) continue;
+      const { x, z } = hexToWorld(t);
+      const top = tileTop(t);
+      if (t.biome === "forest") {
+        for (let i = 0; i < 2; i++) {
+          const s = 0.8 + noise(t.q, t.r, i) * 0.5;
+          trees.push(
+            new THREE.Matrix4().compose(
+              new THREE.Vector3(x + (noise(t.q, t.r, i + 3) - 0.5) * 0.9, top + 0.45 * s, z + (noise(t.q, t.r, i + 7) - 0.5) * 0.8 - 0.1),
+              new THREE.Quaternion(),
+              new THREE.Vector3(s, s, s),
+            ),
+          );
+        }
+      } else if (t.biome === "hills") {
+        const s = 0.7 + noise(t.q, t.r, 1) * 0.6;
+        rocks.push(
+          new THREE.Matrix4().compose(
+            new THREE.Vector3(x + (noise(t.q, t.r, 2) - 0.5) * 0.7, top + 0.12, z - 0.3),
+            new THREE.Quaternion().setFromEuler(new THREE.Euler(noise(t.q, t.r, 4), noise(t.q, t.r, 5) * 3, 0)),
+            new THREE.Vector3(s, s * 0.8, s),
+          ),
+        );
+      }
+    }
+    const instanced = (geometry: THREE.BufferGeometry, color: string, mats: THREE.Matrix4[]) => {
+      const mesh = new THREE.InstancedMesh(geometry, new THREE.MeshLambertMaterial({ color, flatShading: true }), Math.max(1, mats.length));
+      mesh.count = mats.length;
+      mats.forEach((mat, i) => mesh.setMatrixAt(i, mat));
+      this.decor.add(mesh);
+    };
+    instanced(new THREE.ConeGeometry(0.34, 0.9, 5), "#2f7a3d", trees);
+    instanced(new THREE.DodecahedronGeometry(0.3, 0), "#8d8674", rocks);
+
+    // Start centred on the island.
+    const xs = this.tiles.map((t) => hexToWorld(t).x);
+    const zs = this.tiles.map((t) => hexToWorld(t).z);
+    this.target.set((Math.min(...xs) + Math.max(...xs)) / 2, 0, (Math.min(...zs) + Math.max(...zs)) / 2);
+    this.targetGoal.copy(this.target);
+  }
+
+  private paintTiles() {
+    if (!this.terrain) return;
+    const c = new THREE.Color();
+    const white = new THREE.Color("#ffffff");
+    this.tiles.forEach((t, i) => {
+      c.set(BIOME_COLOR[t.biome]);
+      c.offsetHSL(0, 0, (noise(t.q, t.r, 9) - 0.5) * 0.06);
+      const r = this.reach.get(key(t));
+      if (r && r.cost > 0) c.lerp(white, 0.3);
+      this.terrain!.setColorAt(i, c);
+    });
+    if (this.terrain.instanceColor) this.terrain.instanceColor.needsUpdate = true;
+  }
+
+  /** World position for something standing on a hex. */
+  private standAt(pos: HexPos): THREE.Vector3 {
+    const { x, z } = hexToWorld(pos);
+    return new THREE.Vector3(x, tileTop(this.state ? tileAt(this.state.map, pos) : undefined), z);
+  }
+
+  // ---------- points of interest ----------
+
+  private buildPois(state: ClientState) {
+    const sig = state.map.pois.map((p) => `${p.id}:${p.cleared}`).join("|");
+    if (sig === this.poiSig) return;
+    this.poiSig = sig;
+    this.poiGroup.clear();
+    for (const poi of state.map.pois) {
+      const g = this.poiModel(poi);
+      const at = this.standAt(poi.pos);
+      g.position.set(at.x, at.y, at.z - 0.28);
+      this.poiGroup.add(g);
+    }
+  }
+
+  private poiModel(poi: Poi): THREE.Group {
+    const g = new THREE.Group();
+    const lambert = (color: string) => new THREE.MeshLambertMaterial({ color, flatShading: true });
+    const add = (geometry: THREE.BufferGeometry, material: THREE.Material, x: number, y: number, z: number, rotY = 0) => {
+      const mesh = new THREE.Mesh(geometry, material);
+      mesh.position.set(x, y, z);
+      mesh.rotation.y = rotY;
+      g.add(mesh);
+      return mesh;
+    };
+    const box = (w: number, h: number, d: number) => new THREE.BoxGeometry(w, h, d);
+
+    switch (poi.kind) {
+      case "landing": {
+        add(box(1.0, 0.08, 0.5), lambert("#8a6a44"), 0, 0.05, 0.1);
+        // The party's ship, moored just offshore to the west.
+        add(box(1.1, 0.32, 0.5), lambert("#6b4a2b"), -1.5, -0.05, 0.3);
+        add(new THREE.CylinderGeometry(0.04, 0.04, 1.1, 5), lambert("#4a3520"), -1.5, 0.6, 0.3);
+        add(box(0.05, 0.6, 0.55), lambert("#f4efe1"), -1.42, 0.75, 0.3);
+        break;
+      }
+      case "hut":
+        add(box(0.75, 0.45, 0.6), lambert("#b98b5a"), 0, 0.225, 0);
+        add(new THREE.ConeGeometry(0.66, 0.42, 4), lambert("#8c3b2f"), 0, 0.66, 0, Math.PI / 4);
+        break;
+      case "lair":
+        add(new THREE.ConeGeometry(0.6, 1.0, 5), lambert("#3a3340"), -0.1, 0.5, 0);
+        add(new THREE.ConeGeometry(0.38, 0.65, 5), lambert("#2a2430"), 0.45, 0.32, 0.1);
+        add(new THREE.OctahedronGeometry(0.16), new THREE.MeshBasicMaterial({ color: poi.cleared ? "#6a6a6a" : "#e04fd0" }), 0.1, 1.15, 0.15);
+        break;
+      case "shrine":
+        add(new THREE.CylinderGeometry(0.3, 0.34, 0.12, 6), lambert("#d8d8d8"), 0, 0.06, 0);
+        add(new THREE.CylinderGeometry(0.1, 0.12, 0.7, 6), lambert("#efefef"), 0, 0.45, 0);
+        add(new THREE.OctahedronGeometry(0.15), new THREE.MeshBasicMaterial({ color: "#ffd23f" }), 0, 0.98, 0);
+        break;
+      case "cache":
+        add(box(0.38, 0.24, 0.26), lambert(poi.cleared ? "#6b6b6b" : "#9a6b2f"), 0, 0.12, 0.2);
+        if (!poi.cleared) add(box(0.4, 0.05, 0.28), lambert("#e0b12e"), 0, 0.26, 0.2);
+        break;
+      case "camp":
+        add(new THREE.ConeGeometry(0.48, 0.6, 4), lambert(poi.cleared ? "#777777" : "#b9433d"), -0.2, 0.3, 0, Math.PI / 4);
+        if (!poi.cleared) add(new THREE.ConeGeometry(0.1, 0.22, 4), new THREE.MeshBasicMaterial({ color: "#ff9a3c" }), 0.4, 0.11, 0.25);
+        break;
+    }
+    return g;
+  }
+
+  // ---------- units ----------
+
+  private battleCentre(state: ClientState): THREE.Vector3 {
+    const battle = state.battle!;
+    const poiId = battle.poiId ?? state.story?.npcs.find((n) => n.id === battle.npcId)?.poi;
+    const poi = state.map.pois.find((p) => p.id === poiId);
+    const centre = this.standAt(poi?.pos ?? state.heroes[0].pos);
+    // The arena is a raised stage, clear of the tallest nearby tile and its trees.
+    let top = centre.y;
+    for (const t of this.tiles) {
+      const w = hexToWorld(t);
+      if (Math.hypot(w.x - centre.x, w.z - centre.z) < 4.2) top = Math.max(top, tileTop(t));
+    }
+    centre.y = top + 1.2;
+    return centre;
+  }
+
+  private syncUnits(state: ClientState) {
+    const want = new Map<string, Want>();
+    const colorOf = (heroId: string) => PLAYER_COLORS[state.heroes.findIndex((h) => h.id === heroId) % PLAYER_COLORS.length];
+
+    if (state.battle) {
+      const centre = this.battleCentre(state);
+      this.arena.visible = true;
+      this.poiGroup.visible = false;
+      this.arena.position.set(centre.x, centre.y - 0.8, centre.z);
+      const actor = state.battle.order[state.battle.turn];
+      for (const side of ["hero", "enemy"] as const) {
+        const line = state.battle.combatants.filter((c) => c.side === side);
+        line.forEach((c, i) => {
+          const dir = side === "hero" ? -1 : 1;
+          want.set(c.id, {
+            kind: c.kind,
+            // Staggered diagonally so the tall sprites do not hide each other.
+            pos: new THREE.Vector3(centre.x + dir * (1.2 + i * 1.05), centre.y, centre.z + (i - (line.length - 1) / 2) * 1.25),
+            size: c.kind === "villain" ? 2.5 : 1.9,
+            ring: side === "hero" ? colorOf(c.id) : "#e23b3b",
+            pulse: c.id === actor,
+            hp: c.hp / c.maxHp,
+            down: c.down,
+          });
+        });
+      }
+    } else {
+      this.arena.visible = false;
+      this.poiGroup.visible = true;
+      const stacks = new Map<string, number>();
+      for (const h of state.heroes) stacks.set(key(h.pos), (stacks.get(key(h.pos)) ?? 0) + 1);
+      const seen = new Map<string, number>();
+      for (const h of state.heroes) {
+        const n = stacks.get(key(h.pos))!;
+        const i = seen.get(key(h.pos)) ?? 0;
+        seen.set(key(h.pos), i + 1);
+        const pos = this.standAt(h.pos);
+        pos.x += (i - (n - 1) / 2) * 0.6;
+        pos.z += 0.25;
+        want.set(h.id, { kind: h.classId, pos, size: 1.5, ring: colorOf(h.id), pulse: state.turn?.heroId === h.id });
+      }
+      for (const npc of state.story?.npcs ?? []) {
+        const poi = state.map.pois.find((p) => p.id === npc.poi);
+        if (!poi || state.npcs[npc.id]?.hostile) continue;
+        const pos = this.standAt(poi.pos);
+        pos.x += 0.62;
+        want.set(`npc:${npc.id}`, { kind: "npc", pos, size: 1.4 });
+      }
+      for (const poi of state.map.pois) {
+        if (poi.cleared || poi.enemies.length === 0) continue;
+        poi.enemies.forEach((kind, i) => {
+          const pos = this.standAt(poi.pos);
+          pos.x += (i - (poi.enemies.length - 1) / 2) * 0.6 + 0.2;
+          pos.z += 0.05;
+          want.set(`poi:${poi.id}:${i}`, { kind, pos, size: kind === "villain" ? 1.7 : 1.3 });
+        });
+      }
+    }
+
+    for (const [id, unit] of this.units) {
+      if (want.has(id) && want.get(id)!.kind === unit.kind) continue;
+      this.unitGroup.remove(unit.sprite);
+      if (unit.ring) this.unitGroup.remove(unit.ring);
+      if (unit.hpBack) this.unitGroup.remove(unit.hpBack);
+      if (unit.hpFill) this.unitGroup.remove(unit.hpFill);
+      this.units.delete(id);
+    }
+    this.pulsing.clear();
+    for (const [id, w] of want) {
+      let unit = this.units.get(id);
+      if (!unit) {
+        const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: spriteTexture(w.kind), transparent: true, alphaTest: 0.5 }));
+        sprite.center.set(0.5, 0);
+        sprite.position.copy(w.pos);
+        this.unitGroup.add(sprite);
+        unit = { sprite, ring: null, hpBack: null, hpFill: null, goal: w.pos.clone(), path: [], kick: new THREE.Vector3(), kind: w.kind };
+        this.units.set(id, unit);
+      }
+      unit.goal.copy(w.pos);
+      unit.sprite.scale.set(w.size * SPRITE_ASPECT, w.size, 1);
+      const mat = unit.sprite.material;
+      mat.rotation = w.down ? Math.PI / 2 : 0;
+      mat.opacity = w.down ? 0.55 : 1;
+      unit.sprite.center.set(0.5, w.down ? 0.5 : 0);
+
+      if (w.ring && !unit.ring) {
+        unit.ring = new THREE.Mesh(new THREE.RingGeometry(0.3, 0.44, 6), new THREE.MeshBasicMaterial({ side: THREE.DoubleSide }));
+        unit.ring.rotation.x = -Math.PI / 2;
+        this.unitGroup.add(unit.ring);
+      }
+      if (unit.ring) {
+        unit.ring.visible = !!w.ring;
+        if (w.ring) (unit.ring.material as THREE.MeshBasicMaterial).color.set(w.ring);
+      }
+      if (w.pulse) this.pulsing.add(id);
+
+      if (w.hp !== undefined && !unit.hpBack) {
+        unit.hpBack = new THREE.Sprite(new THREE.SpriteMaterial({ color: "#1b1830", depthTest: false }));
+        unit.hpFill = new THREE.Sprite(new THREE.SpriteMaterial({ color: "#6ee06e", depthTest: false }));
+        unit.hpBack.center.set(0, 0.5);
+        unit.hpFill.center.set(0, 0.5);
+        unit.hpBack.renderOrder = 5;
+        unit.hpFill.renderOrder = 6;
+        this.unitGroup.add(unit.hpBack, unit.hpFill);
+      }
+      if (unit.hpBack && unit.hpFill) {
+        const show = w.hp !== undefined && !w.down;
+        unit.hpBack.visible = unit.hpFill.visible = show;
+        if (show) {
+          unit.hpBack.scale.set(1.2, 0.16, 1);
+          unit.hpFill.scale.set(Math.max(0.001, 1.14 * w.hp!), 0.1, 1);
+          unit.hpFill.material.color.set(w.hp! > 0.5 ? "#6ee06e" : w.hp! > 0.25 ? "#ffd23f" : "#ff6b6b");
+          unit.hpBack.userData.lift = unit.hpFill.userData.lift = w.size + 0.25;
+        }
+      }
+    }
+  }
+
+  // ---------- hover and path ----------
+
+  private updatePath() {
+    this.pathGroup.clear();
+    const state = this.state;
+    const hovered = this.hovered;
+    this.hoverRing.visible = false;
+    if (!state || !hovered || state.battle) return;
+    const at = this.standAt(hovered);
+    this.hoverRing.position.set(at.x, at.y + 0.04, at.z);
+    this.hoverRing.visible = true;
+    const reach = this.reach.get(key(hovered));
+    const me = state.heroes.find((h) => h.id === state.you);
+    (this.hoverRing.material as THREE.MeshBasicMaterial).color.set(reach && reach.cost > 0 ? "#ffffff" : "#35405a");
+    if (!reach || reach.cost === 0 || !me || !state.turn) return;
+    const route = findPath(state.map, me.pos, hovered, state.turn.mp);
+    for (const step of route?.path ?? []) {
+      const dot = new THREE.Mesh(new THREE.SphereGeometry(0.13, 6, 4), new THREE.MeshBasicMaterial({ color: "#ffffff" }));
+      const p = this.standAt(step);
+      dot.position.set(p.x, p.y + 0.2, p.z);
+      this.pathGroup.add(dot);
+    }
+  }
+
+  private pick(): HexPos | null {
+    if (!this.terrain) return null;
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    const ndc = new THREE.Vector2(((this.pointer.x - rect.left) / rect.width) * 2 - 1, -((this.pointer.y - rect.top) / rect.height) * 2 + 1);
+    this.raycaster.setFromCamera(ndc, this.camera);
+    const hit = this.raycaster.intersectObject(this.terrain)[0];
+    if (!hit || hit.instanceId === undefined) return null;
+    const t = this.tiles[hit.instanceId];
+    return { q: t.q, r: t.r };
+  }
+
+  private onPointerDown = (e: PointerEvent) => {
+    this.pointer.down = true;
+    this.pointer.dragged = false;
+    this.pointer.downX = this.pointer.x = e.clientX;
+    this.pointer.downY = this.pointer.y = e.clientY;
+    this.renderer.domElement.setPointerCapture(e.pointerId);
+  };
+
+  private onPointerMove = (e: PointerEvent) => {
+    const dx = e.clientX - this.pointer.x;
+    const dy = e.clientY - this.pointer.y;
+    this.pointer.x = e.clientX;
+    this.pointer.y = e.clientY;
+    this.pointer.inside = true;
+    if (this.pointer.down) {
+      if (Math.hypot(e.clientX - this.pointer.downX, e.clientY - this.pointer.downY) > 6) this.pointer.dragged = true;
+      if (this.pointer.dragged && !this.state?.battle) {
+        const k = (this.dist / this.container.clientHeight) * 0.75;
+        this.targetGoal.x -= dx * k;
+        this.targetGoal.z -= dy * k * 1.3;
+        this.target.copy(this.targetGoal);
+      }
+    } else {
+      this.pointer.dirty = true;
+    }
+  };
+
+  private onPointerUp = (e: PointerEvent) => {
+    this.renderer.domElement.releasePointerCapture(e.pointerId);
+    const wasClick = this.pointer.down && !this.pointer.dragged;
+    this.pointer.down = false;
+    if (!wasClick) return;
+    const pos = this.pick();
+    if (pos) this.callbacks.onHexClick(pos);
+  };
+
+  private onPointerLeave = () => {
+    this.pointer.inside = false;
+    this.setHovered(null);
+  };
+
+  private onWheel = (e: WheelEvent) => {
+    e.preventDefault();
+    this.userDist = Math.max(9, Math.min(38, this.userDist * (e.deltaY > 0 ? 1.1 : 0.9)));
+    if (!this.state?.battle) this.dist = this.userDist;
+  };
+
+  private setHovered(pos: HexPos | null) {
+    if ((pos && this.hovered && key(pos) === key(this.hovered)) || (!pos && !this.hovered)) return;
+    this.hovered = pos;
+    this.updatePath();
+    this.callbacks.onHover(pos);
+  }
+
+  // ---------- frame loop ----------
+
+  private resize() {
+    const w = Math.max(1, this.container.clientWidth);
+    const h = Math.max(1, this.container.clientHeight);
+    this.renderer.setSize(Math.ceil(w / PIXEL), Math.ceil(h / PIXEL), false);
+    this.camera.aspect = w / h;
+    this.camera.updateProjectionMatrix();
+  }
+
+  private camDist = 24;
+
+  private frame = (now: number) => {
+    this.raf = requestAnimationFrame(this.frame);
+    const dt = Math.min(0.1, (now - this.last) / 1000);
+    this.last = now;
+    this.clock += dt;
+    const ease = 1 - Math.exp(-dt * 6);
+
+    if (this.pointer.dirty && this.pointer.inside) {
+      this.pointer.dirty = false;
+      this.setHovered(this.pick());
+    }
+
+    for (let i = this.pending.length - 1; i >= 0; i--) {
+      if (this.pending[i].at <= this.clock) this.pending.splice(i, 1)[0].run();
+    }
+
+    this.target.lerp(this.targetGoal, ease);
+    this.camDist += (this.dist - this.camDist) * ease;
+    this.camera.position.set(this.target.x, this.target.y + this.camDist * 0.78, this.target.z + this.camDist * 0.72);
+    this.camera.lookAt(this.target);
+
+    for (const [id, unit] of this.units) {
+      const p = unit.sprite.position;
+      if (unit.path.length > 0) {
+        const next = unit.path[0].clone();
+        next.z += 0.25;
+        const step = 6 * dt;
+        if (p.distanceTo(next) <= step) {
+          p.copy(next);
+          unit.path.shift();
+        } else {
+          p.add(next.sub(p).setLength(step));
+        }
+      } else {
+        const goal = unit.goal.clone().add(unit.kick);
+        p.lerp(goal, 1 - Math.exp(-dt * 14));
+        unit.kick.multiplyScalar(Math.exp(-dt * 9));
+      }
+      if (unit.ring) {
+        unit.ring.position.set(p.x, p.y + 0.04, p.z);
+        const s = this.pulsing.has(id) ? 1.25 + Math.sin(this.clock * 6) * 0.2 : 1;
+        unit.ring.scale.set(s, s, 1);
+      }
+      if (unit.hpBack && unit.hpFill) {
+        const lift = unit.hpBack.userData.lift ?? 2;
+        unit.hpBack.position.set(p.x - 0.6, p.y + lift, p.z);
+        unit.hpFill.position.set(p.x - 0.57, p.y + lift, p.z);
+      }
+    }
+
+    for (let i = this.floaters.length - 1; i >= 0; i--) {
+      const f = this.floaters[i];
+      f.age += dt;
+      f.sprite.position.y += dt * 1.4;
+      f.sprite.material.opacity = Math.max(0, 1 - f.age / 1.0);
+      if (f.age >= 1.0) {
+        this.fxGroup.remove(f.sprite);
+        f.sprite.material.map?.dispose();
+        f.sprite.material.dispose();
+        this.floaters.splice(i, 1);
+      }
+    }
+
+    this.renderer.render(this.scene, this.camera);
+  };
+}

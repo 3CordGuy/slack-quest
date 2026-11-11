@@ -29,6 +29,26 @@ What the code review found that shapes the plan:
 - `apps/game` (new) — Hono worker, `RunRoom` Durable Object, AI modules, React shell with a Three.js renderer. Own `wrangler.example.jsonc`, own migrations folder, **own D1 database** with a clean `players` table (reuse the email-code and guest auth approach from `apps/web`, not the schema).
 - `apps/web`, `apps/slack` — untouched.
 
+### World structure: the Harbor and the Islands
+- **The Harbor** is the persistent base of operations between sessions: where a player's character lives, where the party gathers, and (later) where shops, the smithy, the inn and camp-style upgrades go. It is ordinary screens backed by D1, not a Durable Object.
+- **An Island** is one session world. The party loads a ship at the Harbor and sails to an island; each island is one seeded hex map with one generated story. A run *is* a voyage to an island.
+- The session map is generated as an island: sea around the rim, the ship puts in at a **landing** on the shore, and the story's lair sits far inland.
+- The voyage lobby is the ship: players board with a code, ready up, and the host sets sail. Leaving the island (victory, defeat or the doom clock) returns everyone to the Harbor with what they earned.
+- Room to grow, not in milestone 1: choosing between several islands on a sea chart (difficulty, biome, story frame), provisioning the ship with gold before sailing (potions, focus, extra doom-clock days), and Harbor upgrades paid for with island loot.
+
+### Proposed: the Harbor as a shared, walkable place
+Not built. Recorded 2026-11-11 as the leading candidate for the milestone after the thin slice.
+
+- **A place, not a menu.** The Harbor becomes a small hex map drawn by the same renderer as the islands. Everyone in it sees everyone else's sprite walking around in real time.
+- **Free movement, no turns.** Click a hex to walk there. The server checks the path and broadcasts it once; clients animate along it. No server tick loop, which keeps to the Durable Object rules.
+- **One `HarborRoom` Durable Object per harbor.** Hibernating WebSockets, presence held in socket attachments, huts and placed items in D1.
+- **Ships at the docks replace codes.** A captain's ship appears moored at the dock; crewmates walk onto it to board. The four-letter code stays as a fallback.
+- **Huts.** Each player owns a plot in a hut district. The outside is visible to all; the inside is a small room others can visit. Players place trophies and furniture on a grid and buy hut tiers with gold.
+- **Loot to bring home.** Islands need a third loot category beside gear and gold: trophies and decor (each story's relic, a villain's mask, biome-themed furniture) and building materials.
+- **Upgrades stay modest.** Mostly cosmetic, plus conveniences (storage, a display shelf, starting a voyage rested). Anything stronger would make new players weaker than veterans on the same ship.
+- **Prerequisite: durable accounts.** Guest accounts live in a browser cookie. A hut someone has decorated must survive a cleared cookie, so email sign-in comes first.
+- **Open questions:** one Harbor for everyone or one per crew; free-text chat or emotes only; whether hut upgrades give any gameplay bonus.
+
 ### Run loop (server-authoritative)
 - One `RunRoom` DO per run, joined by a short code. Clients send intents over a hibernating WebSocket; the DO runs `stepWorld(state, action, rng)` from `packages/world`, persists to D1, then broadcasts events.
 - RNG is seeded and its cursor lives in run state, so every run is replayable from its action log.
@@ -44,7 +64,7 @@ What the code review found that shapes the plan:
 - DO Alarms drive the soft turn timer and monster turns, so nothing depends on a client staying connected.
 
 ### Overworld (For the King style)
-- Seeded hex map with biomes that carry movement cost; points of interest (town, lair, shrine, camp) placed by the story skeleton.
+- Seeded hex map with biomes that carry movement cost; points of interest (landing, hut, lair, shrine, camp, caches) placed by the story skeleton.
 - Round-based turns: each hero rolls movement points from speed, moves, then acts (talk, search, rest, fight). Heroes can split up; a fight pulls in heroes within 2 hexes.
 - A doom clock ticks each round and is the story's deadline, which keeps a run bite-size.
 - `hexPath` in `hex.ts` is unweighted BFS; add a weighted A* in `packages/world` rather than changing core.
@@ -85,6 +105,7 @@ What the code review found that shapes the plan:
   - Each NPC has a whitelist of **capabilities** written into the bible (holds item X, knows location Y). The model only decides *when* to use one; it cannot invent items, gold or facts.
   - Anything the NPC should not reveal is simply not in its prompt.
   - Verbs that need persuading trigger a `rollCheck()` on the speaking hero's `int_stat` (there is no social stat today); the result is fed back for the NPC's next line.
+  - Starting a fight is gated on the NPC already disliking the party before the exchange, so it takes two bad exchanges, not one odd remark.
   - Rejected intents are dropped and the `say` text still shows, so a jailbroken reply is only words.
   - Caps: messages per conversation and per run, message length, one speaker at a time.
 - Conversations are shared: every hero on the hex sees the stream through the DO.
@@ -107,7 +128,7 @@ Later milestones, not planned in detail: the look (real sprites, fog of war, day
 ## Assumptions to veto
 
 - **Characters start fresh in the new game.** Same creation flow and stats as today, but in the new database; existing characters, gear and gold do not migrate.
-- **No town between sessions yet.** Shops, smithy, inn and camp are not rebuilt in milestone 1; loot and levels are the only progression.
+- **The Harbor is bare in milestone 1.** It is the character sheet plus "set sail" and "board a ship"; shops, smithy, inn, provisioning and upgrades come later, so loot and levels are the only progression.
 - **Persuasion rolls use `int_stat`** rather than adding a sixth social stat.
 - **Heroes move individually**, not as one party token.
 - **Nothing ships.** Milestone 1 runs under `wrangler dev` only. A new worker needs changes to the GitHub Actions deploy workflow and its `wrangler.jsonc` secret, which waits for review.
