@@ -11,16 +11,21 @@ import {
   NPC_OUTPUT_SCHEMA,
   STORY_FILL_SCHEMA,
   availableCapabilities,
+  demandMet,
+  describeBearing,
   parseNpcOutput,
+  poiById,
   validateFill,
   type CheckResult,
   type ChatLine,
+  type Demand,
   type NpcOutput,
   type NpcRun,
   type NpcSheet,
   type StoryBible,
   type StoryFill,
   type StoryFrame,
+  type WorldMap,
   type WorldState,
 } from "@gantt-quest/world";
 import type { Env } from "./db";
@@ -65,7 +70,26 @@ async function runText(env: Env, messages: Message[], maxTokens: number): Promis
 
 // ---------- story ----------
 
-export async function generateFill(env: Env, frame: StoryFrame, partyNames: string[]): Promise<StoryFill | null> {
+/** True things about this island, so the model's prose matches the map the players walk on. */
+export function islandFacts(map: WorldMap): string[] {
+  const at = (id: string) => poiById(map, id)?.pos;
+  const landing = at("landing");
+  const hut = at("hut");
+  const lair = at("lair");
+  const camp = at("camp");
+  const biome = (b: string) => map.tiles.filter((t) => t.biome === b).length;
+  const facts: string[] = [];
+  if (landing && hut) facts.push(`The islander's hut is ${describeBearing(landing, hut)} of where the ship lands.`);
+  if (hut && lair) facts.push(`The villain's lair is in the hills, ${describeBearing(hut, lair)} of the hut.`);
+  if (hut && camp) facts.push(`A camp of brigands lies ${describeBearing(hut, camp)} of the hut.`);
+  facts.push(
+    biome("forest") > biome("hills") ? "The island is mostly woodland and meadow, with some rocky hills." : "The island is mostly rocky hills and meadow, with some woodland.",
+    "There are no towns, caves, swamps, rivers, mountains or other islands. Do not mention any.",
+  );
+  return facts;
+}
+
+export async function generateFill(env: Env, frame: StoryFrame, partyNames: string[], demand: Demand, facts: string[]): Promise<StoryFill | null> {
   if (isMock(env)) return null;
   const messages: Message[] = [
     {
@@ -80,6 +104,8 @@ export async function generateFill(env: Env, frame: StoryFrame, partyNames: stri
       content:
         `Story shape (do not change it): ${frame.brief}\n\n` +
         `The heroes arriving by ship: ${partyNames.join(", ")}.\n\n` +
+        `True facts about this island. Everything you write must agree with them:\n${facts.map((f) => `- ${f}`).join("\n")}\n\n` +
+        `Before the islander will say where the lair is, the heroes must: ${demand.text}. That is the only thing the islander asks for.\n\n` +
         "Fill in:\n" +
         "- title: the adventure's title, 2-6 words\n" +
         "- premise: 2-3 sentences the players read on arrival; say what was stolen and why it matters\n" +
@@ -90,9 +116,9 @@ export async function generateFill(env: Env, frame: StoryFrame, partyNames: stri
         "- npc_name, npc_role: the islander in the hut\n" +
         "- npc_persona: one or two sentences of temperament\n" +
         "- npc_voice: how they talk\n" +
-        "- npc_goal: what they want from the heroes before they will help\n" +
+        "- npc_goal: why that one request matters so much to them (do not add any other request)\n" +
         "- npc_secret: something they are ashamed of or hiding\n" +
-        "- npc_knowledge: 3 short facts they know about the villain, the lair or the island\n" +
+        "- npc_knowledge: 3 short facts they know about the villain or the island, agreeing with the true facts above; do not say where the lair is\n" +
         "- charm_name: a small protective keepsake they own",
     },
   ];
@@ -119,10 +145,14 @@ export interface NpcTurnInput {
 
 function npcSystemPrompt(input: NpcTurnInput): string {
   const { bible, sheet, run, state } = input;
-  const caps = availableCapabilities(sheet, run);
+  const met = demandMet(bible, state.facts, run.persuaded);
+  const caps = availableCapabilities(sheet, run, { demandMet: met });
+  const hut = poiById(state.map, sheet.poi)?.pos;
   const actions = caps.map((c) => {
     if (c.verb === "reveal_location") {
-      return `- {"verb":"reveal_location","args":{"poi":"${c.poi}"}} : tell them how to reach ${c.poiName}. Only when they have given you a reason, in line with what you want, to trust them with it.`;
+      const target = poiById(state.map, c.poi)?.pos;
+      const where = hut && target ? ` It lies ${describeBearing(hut, target)} of your hut; say so.` : "";
+      return `- {"verb":"reveal_location","args":{"poi":"${c.poi}"}} : tell them how to reach ${c.poiName}.${where} They have done what you asked, so do this when they ask.`;
     }
     if (c.verb === "give_item") {
       return `- {"verb":"give_item","args":{"item":"${c.item}"}} : hand over your ${c.itemName}. They have convinced you; do it if it still feels right.`;
@@ -138,7 +168,12 @@ function npcSystemPrompt(input: NpcTurnInput): string {
     `You are ${sheet.name}, ${sheet.role}, a person living on the island of ${bible.islandName} in a fantasy adventure game. Stay in character in every reply.`,
     `PERSONA: ${sheet.persona}`,
     `HOW YOU SPEAK: ${sheet.voice}`,
-    `WHAT YOU WANT: ${sheet.goal}`,
+    `WHAT YOU CARE ABOUT: ${sheet.goal}`,
+    !bible.demand.text
+      ? ""
+      : met
+      ? `WHAT YOU ASKED OF THEM: that they ${bible.demand.text}. They have done it. You are grateful and ready to help.`
+      : `THE ONE THING YOU ASK OF THEM: that they ${bible.demand.text}. They have not done it yet. Until they do, you will not say where ${bible.poiNames.lair ?? "the lair"} is, however they ask. Tell them plainly that this is what you need. Ask for exactly this and nothing else: no errands, items, payments or favours of any other kind.`,
     `YOUR SECRET (never state it outright; you may let it slip only to someone you have truly come to trust): ${sheet.secret}`,
     `WHAT YOU KNOW:\n${sheet.knows.map((k) => `- ${k}`).join("\n")}`,
     `THE SITUATION: ${bible.premise} The one responsible is ${bible.villain.name}: ${bible.villain.description}`,
@@ -203,8 +238,9 @@ export async function npcTurn(env: Env, input: NpcTurnInput): Promise<NpcOutput 
  */
 function mockNpc(input: NpcTurnInput): NpcOutput {
   const t = input.text.toLowerCase();
-  const { sheet } = input;
+  const { sheet, bible } = input;
   const charm = sheet.capabilities.find((c) => c.verb === "give_item");
+  const met = demandMet(bible, input.state.facts, input.run.persuaded);
   if (/\bgold\b|coins?|money/.test(t)) {
     return { say: "Gold? Aye, take a thousand, why not.", intent: { verb: "give_gold", args: { amount: 1000 } }, attitudeDelta: 0 };
   }
@@ -220,7 +256,13 @@ function mockNpc(input: NpcTurnInput): NpcOutput {
     };
   }
   if (/where|lair|find|hid|villain|map/.test(t)) {
-    return { say: `${sheet.knows[1] ?? "Far inland."} I'll mark it for you.`, intent: { verb: "reveal_location", args: { poi: "lair" } }, attitudeDelta: 0 };
+    // Proposes the reveal either way; the demand gate decides whether it happens.
+    const hut = poiById(input.state.map, sheet.poi)?.pos;
+    const lair = poiById(input.state.map, "lair")?.pos;
+    const say = met
+      ? `You kept your word. It lies ${hut && lair ? describeBearing(hut, lair) : "far inland"} of here. I'll mark it for you.`
+      : `I'll tell you, but first you must ${bible.demand.text}.`;
+    return { say, intent: { verb: "reveal_location", args: { poi: "lair" } }, attitudeDelta: 0 };
   }
   if (input.check) {
     return { say: input.check.successes >= 2 ? "Hm. You speak well. Ask what you came to ask." : "Fine words. I've heard finer.", intent: null, attitudeDelta: 0 };

@@ -83,6 +83,18 @@ export function poiById(map: WorldMap, id: string): Poi | undefined {
   return map.pois.find((p) => p.id === id);
 }
 
+/** Compass bearing and hex distance from one hex to another, e.g. "about 6 hexes to the north-east". North is away from the camera. */
+export function describeBearing(from: HexPos, to: HexPos): string {
+  const dq = to.q - from.q;
+  const dr = to.r - from.r;
+  const distance = hexDistance(from, to);
+  if (distance === 0) return "right here";
+  const angle = Math.atan2(Math.sqrt(3) * (dq + dr / 2), -1.5 * dr);
+  const names = ["north", "north-east", "east", "south-east", "south", "south-west", "west", "north-west"];
+  const dir = names[((Math.round(angle / (Math.PI / 4)) % 8) + 8) % 8];
+  return `about ${distance} hex${distance === 1 ? "" : "es"} to the ${dir}`;
+}
+
 // ---------- pathfinding ----------
 
 type CostFn = (tile: Tile) => number;

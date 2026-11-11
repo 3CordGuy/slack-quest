@@ -60,6 +60,7 @@ Build before deploying: `wrangler deploy` ships whatever the last build produced
 ## Rules worth knowing before changing things
 
 - **The model never changes the game.** It returns words plus a *proposed* intent. `validateIntent` checks that intent against the NPC's capability list in the story bible; anything else is dropped. New NPC powers are added as capabilities and verbs in `packages/world`, not as prompt text.
+- **What an NPC asks for is a fixed list too.** Demands live on the story frame (`packages/world/src/story.ts`) so the game can always tell whether one is met. Don't let prompt text introduce new requests.
 - **The reducer is the authority.** Clients send intents; the Durable Object runs `stepWorld`. The acting hero is taken from the socket, never from the message.
 - **Everything random goes through the seeded RNG in `WorldState`.** No `Math.random` in `packages/world`; a run must replay from its seed and action log.
 - **D1 is the system of record.** The Durable Object caches state and reloads it after hibernation. Persist before broadcast. Timers are DO Alarms.

@@ -86,9 +86,23 @@ export function validateFill(raw: unknown): StoryFill | null {
  * When a capability may fire. `free`: whenever the NPC chooses. `persuade`:
  * only after a hero passes a persuasion check. `provoked`: only once the NPC
  * already disliked the party before this exchange, so it takes two bad
- * exchanges, not one odd remark, to start a fight.
+ * exchanges, not one odd remark, to start a fight. `demand`: only once the
+ * story's Demand has been met.
  */
-export type Gate = "free" | "persuade" | "provoked";
+export type Gate = "free" | "persuade" | "provoked" | "demand";
+
+/**
+ * The one thing an NPC asks of the party before helping. Demands come from
+ * a fixed list so the game can always tell whether one has been met; the
+ * model words the request but cannot invent a different one.
+ */
+export interface Demand {
+  id: string;
+  /** Completes "They ask that you …". */
+  text: string;
+  /** World fact that satisfies it, or null when a passed persuasion check does. */
+  fact: string | null;
+}
 
 /** One thing an NPC is able to do to the game. The model only decides when. */
 export type Capability =
@@ -127,6 +141,8 @@ export interface StoryBible {
   poiNames: Record<string, string>;
   npcs: NpcSheet[];
   objectives: Objective[];
+  /** What the NPC asks before revealing the lair. */
+  demand: Demand;
   /** Completing this objective wins the run. */
   finalObjective: string;
   /** Rounds before the villain gets away. */
@@ -137,7 +153,9 @@ export interface StoryFrame {
   id: string;
   /** One line telling the model what kind of story to write. */
   brief: string;
+  /** Shortest the doom clock may be; the run lengthens it to fit the island. */
   doomRounds: number;
+  demands: Demand[];
 }
 
 export const STORY_FRAMES: StoryFrame[] = [
@@ -147,6 +165,10 @@ export const STORY_FRAMES: StoryFrame[] = [
       "A villain has stolen a relic the island's people depend on and gone to ground in a hidden lair. " +
       "One islander living in a hut near the shore knows where the lair is and owns a protective charm.",
     doomRounds: 16,
+    demands: [
+      { id: "clear_camp", text: "drive the brigands out of their camp", fact: "defeated:camp" },
+      { id: "earn_trust", text: "convince them you can be trusted", fact: null },
+    ],
   },
 ];
 
@@ -154,7 +176,20 @@ export function pickFrame(rng: Rng): StoryFrame {
   return rng.pick(STORY_FRAMES);
 }
 
-export function buildBible(frame: StoryFrame, fill: StoryFill): StoryBible {
+export function pickDemand(frame: StoryFrame, rng: Rng): Demand {
+  return rng.pick(frame.demands);
+}
+
+/** Stands in for a demand on stories saved before demands existed: nothing is asked. */
+export const NO_DEMAND: Demand = { id: "none", text: "", fact: null };
+
+/** Has the party done what the NPC asked? `persuaded` is that NPC's persuasion flag. */
+export function demandMet(bible: StoryBible, facts: Record<string, boolean>, persuaded: boolean): boolean {
+  if (bible.demand.id === NO_DEMAND.id) return true;
+  return bible.demand.fact ? !!facts[bible.demand.fact] : persuaded;
+}
+
+export function buildBible(frame: StoryFrame, fill: StoryFill, demand: Demand = frame.demands[0]): StoryBible {
   const npc: NpcSheet = {
     id: "npc1",
     poi: "hut",
@@ -166,7 +201,7 @@ export function buildBible(frame: StoryFrame, fill: StoryFill): StoryBible {
     secret: fill.npc_secret,
     knows: fill.npc_knowledge,
     capabilities: [
-      { id: "reveal_lair", verb: "reveal_location", poi: "lair", poiName: fill.lair_name, gate: "free" },
+      { id: "reveal_lair", verb: "reveal_location", poi: "lair", poiName: fill.lair_name, gate: "demand" },
       { id: "give_charm", verb: "give_item", item: "charm", itemName: fill.charm_name, gate: "persuade" },
       { id: "call_guard", verb: "start_combat", enemies: ["bandit"], gate: "provoked" },
     ],
@@ -185,6 +220,7 @@ export function buildBible(frame: StoryFrame, fill: StoryFill): StoryBible {
       { id: "locate", text: `Learn where ${fill.lair_name} is hidden`, fact: "revealed:lair" },
       { id: "defeat", text: `Defeat ${fill.villain_name} and recover ${fill.relic_name}`, fact: "defeated:lair" },
     ],
+    demand,
     finalObjective: "defeat",
     doomRounds: frame.doomRounds,
   };
@@ -215,6 +251,11 @@ export function validateBible(bible: StoryBible, map: WorldMap): string[] {
       if (!poi) problems.push(`objective ${o.id} needs missing poi ${ref}`);
       else if (kind === "defeated" && poi.enemies.length === 0) problems.push(`objective ${o.id}: nothing to defeat at ${ref}`);
     }
+  }
+  if (bible.demand.fact) {
+    const [kind, ref] = bible.demand.fact.split(":");
+    const poi = poiById(map, ref);
+    if (kind !== "defeated" || !poi || poi.enemies.length === 0) problems.push(`demand ${bible.demand.id} cannot be met on this island`);
   }
   if (bible.doomRounds < 6) problems.push("doom clock too short");
   return problems;

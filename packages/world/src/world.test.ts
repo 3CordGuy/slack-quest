@@ -9,6 +9,8 @@ import {
   createBattle,
   createWorld,
   currentActor,
+  demandMet,
+  describeBearing,
   findPath,
   generateMap,
   makeRng,
@@ -16,12 +18,14 @@ import {
   parseNpcOutput,
   poiById,
   reachable,
+  requiredDoom,
   rollCheck,
   rollStartingStats,
   statPct,
   stepBattle,
   stepWorld,
   tileAt,
+  upgradeWorld,
   validateBible,
   validateFill,
   validateIntent,
@@ -29,6 +33,7 @@ import {
   type BattleState,
   type Combatant,
   type HeroInit,
+  type StoryBible,
   type WorldAction,
   type WorldEffect,
   type WorldEvent,
@@ -273,6 +278,7 @@ describe("story bible", () => {
 
 describe("npc output and intent validation", () => {
   const sheet = buildBible(frame, fill).npcs[0];
+  const met = { demandMet: true };
 
   it("parses objects, JSON strings and fenced JSON; rejects junk", () => {
     expect(parseNpcOutput({ say: " hi  there " })).toEqual({ say: "hi there", intent: null, attitudeDelta: 0 });
@@ -297,23 +303,25 @@ describe("npc output and intent validation", () => {
       { verb: "set_fact", args: { fact: "defeated:lair" } },
       { verb: "__proto__", args: {} },
     ];
-    for (const intent of bad) expect(validateIntent(sheet, run, intent).ok, JSON.stringify(intent)).toBe(false);
+    for (const intent of bad) expect(validateIntent(sheet, run, intent, met).ok, JSON.stringify(intent)).toBe(false);
   });
 
   it("gates persuasion-locked capabilities, and each fires once", () => {
     const run = newNpcRun();
     const give = { verb: "give_item", args: { item: "charm" } };
-    expect(validateIntent(sheet, run, give).ok).toBe(false);
+    expect(validateIntent(sheet, run, give, met).ok).toBe(false);
     run.persuaded = true;
-    expect(validateIntent(sheet, run, give).ok).toBe(true);
+    expect(validateIntent(sheet, run, give, met).ok).toBe(true);
     run.used.push("give_charm");
-    expect(validateIntent(sheet, run, give).ok).toBe(false);
+    expect(validateIntent(sheet, run, give, met).ok).toBe(false);
     const reveal = { verb: "reveal_location", args: { poi: "lair" } };
-    expect(validateIntent(sheet, newNpcRun(), reveal).ok).toBe(true);
-    expect(validateIntent(sheet, { ...newNpcRun(), hostile: true }, reveal).ok).toBe(false);
+    expect(validateIntent(sheet, newNpcRun(), reveal, met).ok).toBe(true);
+    expect(validateIntent(sheet, { ...newNpcRun(), hostile: true }, reveal, met).ok).toBe(false);
+    // The lair is only given up once the NPC's demand has been met.
+    expect(validateIntent(sheet, newNpcRun(), reveal, { demandMet: false }).ok).toBe(false);
     const fight = { verb: "start_combat", args: {} };
-    expect(validateIntent(sheet, newNpcRun(), fight).ok).toBe(false);
-    expect(validateIntent(sheet, { ...newNpcRun(), attitude: -1 }, fight).ok).toBe(true);
+    expect(validateIntent(sheet, newNpcRun(), fight, met).ok).toBe(false);
+    expect(validateIntent(sheet, { ...newNpcRun(), attitude: -1 }, fight, met).ok).toBe(true);
   });
 });
 
@@ -341,6 +349,7 @@ describe("world reducer", () => {
 
   it("enforces turn order, movement points and one action per turn", () => {
     let s = startedWorld();
+    const doomAtStart = s.doom;
     const turn = s.turn!;
     const other = s.heroes.find((h) => h.id !== turn.heroId)!;
     expect(turn.mp).toBeGreaterThanOrEqual(2);
@@ -359,7 +368,7 @@ describe("world reducer", () => {
     expect(s.turn!.heroId).toBe(other.id);
     s = must(s, { type: "end_turn", heroId: other.id });
     expect(s.round).toBe(2);
-    expect(s.doom).toBe(frame.doomRounds - 1);
+    expect(s.doom).toBe(doomAtStart - 1);
   });
 
   it("ends in defeat when the doom clock runs out, with a capped penalty", () => {
@@ -404,6 +413,15 @@ describe("world reducer", () => {
     s = must(s, { type: "talk", heroId: "p1", npcId: "npc1", text: "another?" });
     s = must(s, { type: "npc_reply", npcId: "npc1", heroId: "p1", output: { say: "No.", intent: { verb: "give_item", args: { item: "charm" } }, attitudeDelta: 0 } });
     expect(s.heroes[0].keyItems).toEqual(["charm"]);
+
+    // The NPC asked for the camp to be cleared; until then it cannot reveal the lair, whatever the model says.
+    expect(clientView(s, "p1").story!.demand).toEqual({ npcName: fill.npc_name, text: frame.demands[0].text, done: false });
+    const tell: WorldAction = { type: "npc_reply", npcId: "npc1", heroId: "p2", output: { say: "East.", intent: { verb: "reveal_location", args: { poi: "lair" } }, attitudeDelta: 0 } };
+    s = must(s, { type: "talk", heroId: "p2", npcId: "npc1", text: "just tell us" });
+    s = must(s, tell);
+    expect(poiById(s.map, "lair")!.hidden).toBe(true);
+    s = { ...s, facts: { ...s.facts, "defeated:camp": true } };
+    expect(clientView(s, "p1").story!.demand!.done).toBe(true);
 
     // Revealing the lair completes an objective and pays XP to everyone.
     sink.events.length = 0;
@@ -485,6 +503,55 @@ describe("world reducer", () => {
   });
 });
 
+describe("story fits the island", () => {
+  it("gives the doom clock room for the walk the story needs", () => {
+    for (let i = 0; i < 30; i++) {
+      const s = startedWorld(`doom-${i}`);
+      const stops = ["landing", "hut", "camp", "hut", "lair"].map((id) => poiById(s.map, id)!.pos);
+      let cost = 0;
+      for (let j = 1; j < stops.length; j++) cost += findPath(s.map, stops[j - 1], stops[j])!.cost;
+      // Even at the minimum of 2 movement a turn, plus slack, the party is not asked for the impossible.
+      expect(s.doom).toBeGreaterThanOrEqual(frame.doomRounds);
+      expect(s.doom).toBeGreaterThanOrEqual(requiredDoom(s.map, s.bible!, s.heroes));
+      expect(s.doom, `seed doom-${i}`).toBeGreaterThanOrEqual(Math.ceil(cost / 4.4) + 4);
+    }
+  });
+
+  it("needs fewer days when the NPC only wants persuading", () => {
+    const s = startedWorld("demand");
+    const trust = buildBible(frame, fill, frame.demands[1]);
+    expect(requiredDoom(s.map, trust, s.heroes)).toBeLessThanOrEqual(requiredDoom(s.map, s.bible!, s.heroes));
+    expect(validateBible(trust, s.map)).toEqual([]);
+    expect(demandMet(trust, {}, false)).toBe(false);
+    expect(demandMet(trust, {}, true)).toBe(true);
+    expect(demandMet(s.bible!, { "defeated:camp": true }, false)).toBe(true);
+  });
+
+  it("upgrades a story saved before demands existed", () => {
+    const s = placeAll(startedWorld("legacy"), "hut");
+    const saved = JSON.parse(JSON.stringify(s)) as WorldState;
+    delete (saved.bible as Partial<StoryBible>).demand;
+    let old = upgradeWorld(saved);
+    expect(demandMet(old.bible!, {}, false)).toBe(true);
+    old = must(old, { type: "talk", heroId: "p1", npcId: "npc1", text: "hello" });
+    expect(clientView(old, "p1").story!.demand).toBeNull();
+  });
+
+  it("rejects a demand the island cannot satisfy", () => {
+    const s = startedWorld("demand");
+    const bad = buildBible(frame, fill, { id: "x", text: "slay the dragon", fact: "defeated:dragon_roost" });
+    expect(validateBible(bad, s.map).some((p) => p.includes("demand"))).toBe(true);
+  });
+
+  it("describes bearings the way the map is drawn", () => {
+    expect(describeBearing({ q: 0, r: 0 }, { q: 3, r: 0 })).toBe("about 3 hexes to the east");
+    expect(describeBearing({ q: 0, r: 4 }, { q: 2, r: 0 })).toBe("about 4 hexes to the north");
+    expect(describeBearing({ q: 2, r: 0 }, { q: 0, r: 4 })).toBe("about 4 hexes to the south");
+    expect(describeBearing({ q: 0, r: 0 }, { q: 0, r: 1 })).toBe("about 1 hex to the south-east");
+    expect(describeBearing({ q: 1, r: 1 }, { q: 1, r: 1 })).toBe("right here");
+  });
+});
+
 describe("client view", () => {
   it("hides the lair, NPC secrets and the RNG", () => {
     const s = startedWorld();
@@ -499,6 +566,8 @@ describe("client view", () => {
     expect("seed" in view).toBe(false);
     expect(view.you).toBe("p1");
     expect(view.story!.objectives.map((o) => o.done)).toEqual([false, false, false]);
+    // The NPC's ask is not shown until the party has actually met them.
+    expect(view.story!.demand).toBeNull();
     // The source state is untouched.
     expect(poiById(s.map, "lair")).toBeDefined();
   });

@@ -1,6 +1,7 @@
 // What a player's client is allowed to see. The full WorldState holds the
 // hidden lair, NPC secrets and the RNG state; none of that leaves the server.
 
+import { demandMet } from "./story";
 import type { WorldState } from "./world";
 
 export interface PublicStory {
@@ -12,6 +13,8 @@ export interface PublicStory {
   poiNames: Record<string, string>;
   npcs: { id: string; name: string; role: string; poi: string }[];
   objectives: { id: string; text: string; done: boolean }[];
+  /** What the NPC has asked of the party; null until they have met. */
+  demand: { npcName: string; text: string; done: boolean } | null;
 }
 
 export type ClientState = Omit<WorldState, "rng" | "seed" | "bible"> & {
@@ -33,6 +36,9 @@ export function clientView(state: WorldState, playerId: string): ClientState {
     poiNames: Object.fromEntries(Object.entries(bible.poiNames).filter(([id]) => visibleIds.has(id))),
     npcs: bible.npcs.map((n) => ({ id: n.id, name: n.name, role: n.role, poi: n.poi })),
     objectives: bible.objectives.map((o) => ({ id: o.id, text: o.text, done: !!state.facts[o.fact] })),
+    demand: bible.demand.text && state.facts[`met:${bible.npcs[0].id}`]
+      ? { npcName: bible.npcs[0].name, text: bible.demand.text, done: demandMet(bible, state.facts, !!state.npcs[bible.npcs[0].id]?.persuaded) }
+      : null,
   };
   return { ...rest, map: { ...state.map, pois: visible }, story, you: playerId };
 }
