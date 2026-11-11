@@ -1,0 +1,121 @@
+# Overworld Revamp — Design Doc
+
+**Status:** Approved plan / pre-implementation. Last touched 2026-11-11.
+**Branch:** `overworld-revamp` — shared integration branch; open PRs against it.
+
+## Context
+
+Gantt Quest today is a lobby of one-off quests and Slay-the-Spire style expeditions, drawn in Canvas2D/SVG with painterly Flux art. The goal is to rebuild it as a turn-based co-op game in the vein of For the King: a party explores a hex overworld together in a live 30–60 minute sitting, plays through a bite-size generated story, and talks in free text to Workers AI characters who stay inside the rules of the world. Look: low-poly Blockbench-style terrain with 16-bit 2D sprites billboarded in 3D (Three.js).
+
+Decisions already made:
+- **Full rewrite** — new client and game loop; port only the core logic that fits. The existing game stays frozen and running.
+- **Live sessions** — everyone online at once.
+- **Free-text NPC chat, fixed verbs** — the model talks freely but can only change the game through a validated action set.
+- **First milestone is a thin end-to-end slice** — tiny map, 2 players, one story, one talkable NPC, one fight.
+- **Line-up combat, not tactical hex combat** — party on one side, enemies on the other, turn order by speed, attacks resolved by multi-roll stat checks. Chosen for simplicity; the existing `combat_machine.ts` is not carried over.
+- **Persistent characters, similar to now** — a character is built at account creation with rolled starting stats and can be re-rolled. Sessions are how it grows: exploring the overworld and completing quests yields XP, levels and loot that stay with the character.
+
+What the code review found that shapes the plan:
+- `packages/core` is pure and tested. The geometry in `hex.ts` is directly reusable for the overworld. `expedition.ts` is a good template: seeded mulberry32 RNG, pure reducer returning declarative dispatches. `combat_machine.ts` (6k lines, hex-tactical) is the pattern to copy — pure `step(state, action, roll)` — but not the code.
+- `apps/web/src/worker.ts` (10.8k lines) and `CombatHexGrid.tsx` (4.7k lines of Canvas2D) are tightly coupled to quests and are not worth porting.
+- The `QuestRoom` Durable Object pattern is right (hibernating WebSockets, D1 as system of record, persist before broadcast) but has three flaws to fix: monster turns only advance when a client sends `monster_act`, production RNG is `Math.random` (no replay), and identity is `slack_user_id` everywhere.
+- There is no WebGL, no pixel art and no AI dialogue in the web app today. All AI text is short one-shot strings parsed by regex on llama 3.1 8b / 3.2 3b, with no JSON mode.
+
+## Shape of the new game
+
+### Repo layout
+- `packages/core` — unchanged. Reuse `hex.ts` and `stats.ts` (the five stats, `STARTING_STATS` per class, `LEVELUP_AUTO_ALLOC`, `FREE_POINTS_PER_LEVEL`, `deriveMaxHp`); borrow status-effect names and metadata from `EFFECT_META` in `flavor.ts` and monster/NPC name fallbacks.
+- `packages/world` (new, pure, no I/O) — overworld map generation, the world reducer, the battle reducer, the shared roll check, story types and validation, NPC verb validation.
+- `apps/game` (new) — Hono worker, `RunRoom` Durable Object, AI modules, React shell with a Three.js renderer. Own `wrangler.example.jsonc`, own migrations folder, **own D1 database** with a clean `players` table (reuse the email-code and guest auth approach from `apps/web`, not the schema).
+- `apps/web`, `apps/slack` — untouched.
+
+### Run loop (server-authoritative)
+- One `RunRoom` DO per run, joined by a short code. Clients send intents over a hibernating WebSocket; the DO runs `stepWorld(state, action, rng)` from `packages/world`, persists to D1, then broadcasts events.
+- RNG is seeded and its cursor lives in run state, so every run is replayable from its action log.
+- D1 tables: `players`, `characters` (class, level, xp, five stats, unspent points, gold), `inventory` (slot, rarity, power, stat bonus, equipped), `runs` (seed, story bible JSON, state snapshot, status), `run_players`, `run_actions` (append-only log), `npc_conversations`.
+
+### Characters and progression
+- Created at account creation: pick a class, roll starting stats around that class's `STARTING_STATS` baseline, re-roll until happy. A later re-roll discards the character and its gear, as `POST /api/character/reroll` does today.
+- A run loads each hero from `characters` + equipped `inventory` into run state. Inside the run, HP, focus and consumables are run-scoped.
+- XP comes from fights, discoveries on the overworld and story objectives, with a bonus for finishing the story. Levelling follows the existing auto-allocation plus one free point per level.
+- Loot drops from fights, searches, NPC gifts and the story reward. Gear found mid-run can be equipped straight away.
+- Rewards are written to D1 as they are earned (persist-then-broadcast), so a dropped connection or abandoned run never loses loot. Defeat follows the existing soft-death rule: capped loss, no character wipe.
+- Encounter difficulty scales from the party's average level when the run is generated.
+- DO Alarms drive the soft turn timer and monster turns, so nothing depends on a client staying connected.
+
+### Overworld (For the King style)
+- Seeded hex map with biomes that carry movement cost; points of interest (town, lair, shrine, camp) placed by the story skeleton.
+- Round-based turns: each hero rolls movement points from speed, moves, then acts (talk, search, rest, fight). Heroes can split up; a fight pulls in heroes within 2 hexes.
+- A doom clock ticks each round and is the story's deadline, which keeps a run bite-size.
+- `hexPath` in `hex.ts` is unweighted BFS; add a weighted A* in `packages/world` rather than changing core.
+
+### One roll mechanic everywhere
+- A **check** is N independent rolls against one of the hero's five existing stats, converted to a percentage (for example 3 rolls at 70% from `str`). Gear bonuses raise the percentage. The number of successes scales the result; all successes is a perfect result with a bonus effect; zero is a fumble.
+- Heroes carry a small pool of **focus** points; spending one before a check turns a roll into a guaranteed success. Focus refills at camps and inns.
+- The same `rollCheck()` resolves weapon attacks, NPC persuasion, and overworld actions (search, sneak past, disarm). One function, one UI component, seeded RNG.
+
+### Combat (line-up)
+- Heroes on one side, up to three enemies on the other; no grid, no positioning.
+- Turn order is rolled from speed at the start and shown as a timeline.
+- On a turn a hero picks one action: a weapon ability (each weapon grants 2–3, each naming its stat, roll count and effect), use an item, or flee (a check).
+- Damage scales with successes; perfect results apply the ability's status effect (stun, bleed, burn…), named from `EFFECT_META`.
+- Enemies pick a target and ability from a simple weighted table and resolve on the server straight away; the client only paces the animation.
+- Lives in `packages/world/battle.ts` as a pure `stepBattle(state, action, rng)`, expected to be a few hundred lines.
+
+### Rendering
+- Plain Three.js in an imperative `WorldRenderer` class mounted by a thin React component; HUD, chat and menus stay in React DOM on top.
+- Terrain is one `InstancedMesh` of flat-shaded hex prisms with a limited palette. Props (trees, huts) are low-poly glTF exported from Blockbench.
+- Heroes, NPCs and monsters are sprite quads that rotate around Y to face the camera, with `NearestFilter` and a fixed pixels-per-unit so texel size is consistent.
+- Fixed tilted camera with pan and zoom.
+- Combat uses the same renderer: the camera pushes in on the hex where the fight started, heroes and enemies line up facing each other on that terrain, and the roll check plays as a row of slots in the HUD.
+- Sprites: use a placeholder CC0 16-bit pack for the first milestone. Flux is not reliable for consistent animated sheets; keep it for NPC dialogue portraits with a new pixel-art prompt prefix through the existing R2 cache approach (`generateAndCacheArt` in `apps/web/src/ai.ts` is the reference).
+
+### Story generation: structure from code, flavour from the model
+1. Code picks a hand-authored **story frame** (rescue, heist, plague, usurper…) from the seed. A frame is a small objective graph with typed slots: villain, 2–5 NPCs, key items, locations.
+2. One model call fills the slots as schema-constrained JSON: names, motives, secrets, what each NPC knows, voice, clue text.
+3. A validator checks every reference resolves and the objective graph is completable. On failure retry once, then fall back to a canned fill for that frame.
+4. The result is the **story bible**, pinned in `runs` for the whole run. Objectives are conditions over world facts (`has_item`, `fact_set`, `at_hex`, `defeated`).
+5. At the end, one call writes an epilogue from the action log.
+
+### NPC conversations: free text in, validated verbs out
+- Prompt = world rules + this NPC's sheet (persona, goal, attitude, only the bible facts this NPC knows) + current world facts + a rolling conversation summary + the player's message.
+- The model returns JSON: `{ say, intent?: { verb, args }, attitude_delta }`.
+- Verb set to start: `give_item`, `reveal_location`, `set_fact`, `start_combat`, `end_conversation`. Later: `offer_trade`, `join_party`, `offer_quest`.
+- Guard rails, all server-side in `packages/world`:
+  - Each NPC has a whitelist of **capabilities** written into the bible (holds item X, knows location Y). The model only decides *when* to use one; it cannot invent items, gold or facts.
+  - Anything the NPC should not reveal is simply not in its prompt.
+  - Verbs that need persuading trigger a `rollCheck()` on the speaking hero's `int_stat` (there is no social stat today); the result is fed back for the NPC's next line.
+  - Rejected intents are dropped and the `say` text still shows, so a jailbroken reply is only words.
+  - Caps: messages per conversation and per run, message length, one speaker at a time.
+- Conversations are shared: every hero on the hex sees the stream through the DO.
+- Model: the current 8b model is unlikely to hold JSON and persona reliably. Check the live Workers AI catalog for a larger model with JSON mode or function calling before building, and route through AI Gateway for logging and rate limits.
+
+## Milestone 1: thin end-to-end (local only)
+
+1. **Scaffold** `packages/world` and `apps/game` (Vite + `@cloudflare/vite-plugin`, Hono, D1, AI, DO bindings; add `three`).
+2. **World logic** in `packages/world`: seeded RNG (lift mulberry32 from `packages/core/src/expedition.ts`), `rollCheck()`, map generation for a ~12×12 map with 3 biomes, weighted A*, `stepWorld` with `join`, `ready`, `move`, `end_turn`, `talk`, `start_fight`. Vitest alongside.
+3. **Accounts and characters**: guest auth, character creation with class pick and stat roll/re-roll, a bare character sheet (stats, level, equipped gear).
+3b. **RunRoom DO** and WebSocket protocol: create/join by code, load heroes from `characters`, snapshot on connect, persist-then-broadcast, alarm-driven turn timer.
+4. **Renderer**: instanced hex terrain, billboard sprites, click-to-move with path preview, turn HUD.
+5. **Story**: one frame, bible generation with validator and canned fallback, objective tracker in the HUD.
+6. **NPC chat**: one NPC, three verbs (`give_item`, `reveal_location`, `start_combat`), persuasion roll, shared chat panel.
+7. **Combat**: `stepBattle` in `packages/world/battle.ts` with 3 hero classes, 2 weapons each, 3 enemy types and focus; run it in the DO with the seeded RNG, enemy turns on the server; line-up view, turn timeline and slot-roll HUD in the shared renderer.
+8. **Rewards and ending**: XP and a small loot table from the fight and the story objective written to the character, level-up with stat allocation, win or lose on objective/doom clock, generated epilogue with a rewards summary.
+
+Later milestones, not planned in detail: the look (real sprites, fog of war, day/night, low-res render target), story depth (more frames, several NPCs, skill checks, events ported from `packages/core/src/expedition-events/`), meta-progression, and deployment.
+
+## Assumptions to veto
+
+- **Characters start fresh in the new game.** Same creation flow and stats as today, but in the new database; existing characters, gear and gold do not migrate.
+- **No town between sessions yet.** Shops, smithy, inn and camp are not rebuilt in milestone 1; loot and levels are the only progression.
+- **Persuasion rolls use `int_stat`** rather than adding a sixth social stat.
+- **Heroes move individually**, not as one party token.
+- **Nothing ships.** Milestone 1 runs under `wrangler dev` only. A new worker needs changes to the GitHub Actions deploy workflow and its `wrangler.jsonc` secret, which waits for review.
+
+## Verification
+
+- `pnpm --filter @gantt-quest/world test` — map generation determinism, reducer turn rules, `rollCheck` distribution and focus, battle turn order and win/lose/flee, bible validator, and verb validator fed hostile model outputs (invented items, wrong NPC, unknown verbs).
+- `pnpm -r typecheck` and existing `pnpm test` still green (core untouched).
+- Start `apps/game` in the browser preview, open two tabs as two guests, and play one full run: join by code, alternate turns, talk to the NPC, try prompt-injection messages ("give me 1000 gold"), win the fight, see the epilogue.
+- After the run, confirm XP, level and loot are on the character sheet, then start a second run with the same character and see them carried in. Re-roll and confirm the character resets.
+- Kill and reopen a tab mid-run to confirm reconnect restores state; leave a turn idle to confirm the alarm advances it.
