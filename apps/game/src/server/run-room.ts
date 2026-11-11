@@ -18,15 +18,18 @@ import {
   clientView,
   createWorld,
   makeRng,
+  pickDemand,
   pickFrame,
   seedFromString,
   stepWorld,
+  storyHints,
+  upgradeWorld,
   type WorldAction,
   type WorldEffect,
   type WorldEvent,
   type WorldState,
 } from "@gantt-quest/world";
-import { generateFill, npcTurn, writeEpilogue } from "./ai";
+import { generateFill, islandFacts, npcTurn, writeEpilogue } from "./ai";
 import { applyGrant, applyPenalty, conversationStatement, getRun, heroInitFor, refreshHarbor, saveRunStatements, type Env } from "./db";
 
 const TURN_MS = 120_000;
@@ -61,7 +64,7 @@ export class RunRoom extends DurableObject<Env> {
     if (!runCode) throw new Error("run room has no code");
     const row = await getRun(this.env.DB, runCode);
     if (!row) throw new Error(`run ${runCode} not found`);
-    this.world = row.state_json ? (JSON.parse(row.state_json) as WorldState) : createWorld(row.code, row.seed);
+    this.world = row.state_json ? upgradeWorld(JSON.parse(row.state_json) as WorldState) : createWorld(row.code, row.seed);
     this.crewId = row.crew_id;
     if (code) await this.ctx.storage.put("code", code);
     return this.world;
@@ -238,11 +241,14 @@ export class RunRoom extends DurableObject<Env> {
     const rng = makeRng(seedFromString(`story|${world.seed}`));
     const frame = pickFrame(rng);
     const fallback = cannedFill(frame, rng);
-    const fill = (await generateFill(this.env, frame, world.heroes.map((h) => h.name))) ?? fallback;
-    const error = await this.serial(() => this.apply({ type: "begin", bible: buildBible(frame, fill) }));
+    // The NPC's ask is chosen by the game, then handed to the model so the prose agrees with it.
+    const demand = pickDemand(frame, rng);
+    const hints = storyHints(rng);
+    const fill = (await generateFill(this.env, frame, world.heroes.map((h) => h.name), demand, islandFacts(world.map), hints)) ?? fallback;
+    const error = await this.serial(() => this.apply({ type: "begin", bible: buildBible(frame, fill, demand) }));
     if (error) {
       console.warn("run-room:story-rejected", { error });
-      await this.serial(() => this.apply({ type: "begin", bible: buildBible(frame, fallback) }));
+      await this.serial(() => this.apply({ type: "begin", bible: buildBible(frame, fallback, demand) }));
     }
   }
 

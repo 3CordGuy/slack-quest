@@ -103,6 +103,13 @@ Still to build:
 4. The result is the **story bible**, pinned in `runs` for the whole run. Objectives are conditions over world facts (`has_item`, `fact_set`, `at_hex`, `defeated`).
 5. At the end, one call writes an epilogue from the action log.
 
+Keeping the story completable and the prose honest:
+- **The NPC's ask is a fixed, checkable demand.** Each frame lists the demands an NPC may make (clear the brigand camp; or win them over with a persuasion check). The game picks one, tells the model, and gates the lair reveal on it. The model words the request but cannot ask for anything else, and the HUD shows the ask with a tick once it is met.
+- **The model is given true facts about the island.** Bearings and distances between the landing, hut, camp and lair, the terrain mix, and a list of things that do not exist (towns, caves, swamps). The NPC is given the lair's real bearing to say when it reveals it.
+- **The doom clock is sized to the island.** At the start of a run the game adds up the walk the story needs (landing → hut → errand and back → lair) at the slowest hero's expected pace, adds half again plus a few days, and lengthens the clock if the frame's minimum is too short.
+- **Each voyage gets seeded flavour.** Left alone the model writes nearly the same story every time. The run's seed picks a mood, the island's character, what kind of thing was stolen, the villain's and islander's archetypes, a naming style and the first letters of the names, and the prompt is built around them.
+- Not yet checked: whether a given party can win the fights.
+
 ### NPC conversations: free text in, validated verbs out
 - Prompt = world rules + this NPC's sheet (persona, goal, attitude, only the bible facts this NPC knows) + current world facts + a rolling conversation summary + the player's message.
 - The model returns JSON: `{ say, intent?: { verb, args }, attitude_delta }`.
@@ -112,6 +119,7 @@ Still to build:
   - Anything the NPC should not reveal is simply not in its prompt.
   - Verbs that need persuading trigger a `rollCheck()` on the speaking hero's `int_stat` (there is no social stat today); the result is fed back for the NPC's next line.
   - Starting a fight is gated on the NPC already disliking the party before the exchange, so it takes two bad exchanges, not one odd remark.
+  - The lair reveal is gated on the story's demand being met, whatever the model says.
   - Rejected intents are dropped and the `say` text still shows, so a jailbroken reply is only words.
   - Caps: messages per conversation and per run, message length, one speaker at a time.
 - Conversations are shared: every hero on the hex sees the stream through the DO.

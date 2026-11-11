@@ -29,7 +29,7 @@ import {
 } from "./npc";
 import { addStats, applyXp, maxFocusFor, maxHpFor } from "./progression";
 import { makeRng, seedFromString, type Rng } from "./rng";
-import { validateBible, type StoryBible } from "./story";
+import { NO_DEMAND, demandMet, validateBible, type StoryBible } from "./story";
 
 export const MAX_PARTY = 4;
 export const BATTLE_JOIN_RANGE = 2;
@@ -198,6 +198,12 @@ export function createWorld(code: string, seed: string): WorldState {
   };
 }
 
+/** Bring a saved state up to the current shape. Call on every state loaded from storage. */
+export function upgradeWorld(state: WorldState): WorldState {
+  if (state.bible && !state.bible.demand) state.bible.demand = NO_DEMAND;
+  return state;
+}
+
 export function heroStats(hero: Pick<Hero, "base" | "bonus">): Stats {
   return addStats(hero.base, hero.bonus);
 }
@@ -216,6 +222,26 @@ export function awaitingKey(state: WorldState): string | null {
     return `b:${state.battle.round}:${state.battle.turn}:${state.battle.order[state.battle.turn]}`;
   }
   return null;
+}
+
+/**
+ * Days the doom clock must allow for this party to finish this story on this
+ * island: walk landing → hut → (the demanded camp and back) → lair at the slowest
+ * hero's expected pace, with half again for detours and bad rolls, plus a
+ * few days to talk, rest and fight.
+ */
+export function requiredDoom(map: WorldMap, bible: StoryBible, heroes: Pick<Hero, "base" | "bonus">[]): number {
+  const hut = bible.npcs[0]?.poi;
+  const errand = bible.demand.fact?.startsWith("defeated:") ? bible.demand.fact.slice(9) : null;
+  // After the errand the party has to return to the NPC to be told where the lair is.
+  const stops = ["landing", hut, ...(errand ? [errand, hut] : []), "lair"]
+    .map((id) => (id ? poiById(map, id) : undefined))
+    .filter((p): p is Poi => !!p);
+  let cost = 0;
+  for (let i = 1; i < stops.length; i++) cost += findPath(map, stops[i - 1].pos, stops[i].pos)?.cost ?? 0;
+  // Movement is 2 plus one per success on four Agility rolls.
+  const slowest = Math.min(...heroes.map((h) => 2 + (4 * heroPct(h, "agi")) / 100), 6);
+  return Math.ceil((cost / slowest) * 1.5) + 4;
 }
 
 // ---------- internals ----------
@@ -500,7 +526,7 @@ function npcReply(ctx: Ctx, action: Extract<WorldAction, { type: "npc_reply" }>)
   run.busy = false;
   const { say, intent, attitudeDelta } = action.output;
   // Judge the intent against how the NPC felt going into this exchange.
-  const verdict = intent ? validateIntent(sheet, run, intent) : null;
+  const verdict = intent ? validateIntent(sheet, run, intent, { demandMet: demandMet(state.bible!, state.facts, run.persuaded) }) : null;
   // Words alone can warm an NPC to 1; only a passed check takes it higher.
   const ceiling = run.persuaded ? 2 : 1;
   run.attitude = Math.max(-2, Math.min(Math.max(run.attitude, ceiling), run.attitude + attitudeDelta));
@@ -628,7 +654,7 @@ export function stepWorld(prev: WorldState, action: WorldAction): StepResult {
       const problems = validateBible(action.bible, state.map);
       if (problems.length > 0) return fail(`story rejected: ${problems.join("; ")}`);
       state.bible = action.bible;
-      state.doom = action.bible.doomRounds;
+      state.doom = Math.max(action.bible.doomRounds, requiredDoom(state.map, action.bible, state.heroes));
       state.npcs = Object.fromEntries(action.bible.npcs.map((n) => [n.id, newNpcRun()]));
       state.order = [...state.heroes]
         .sort((a, b) => heroStats(b).agi - heroStats(a).agi || a.id.localeCompare(b.id))

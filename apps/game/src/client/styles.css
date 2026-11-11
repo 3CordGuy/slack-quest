@@ -102,6 +102,8 @@ input:focus, button:focus-visible, select:focus { outline: 2px solid var(--accen
 .story { position: absolute; top: 48px; left: 10px; width: min(330px, 40vw); z-index: 10; }
 .objectives li { padding: 2px 0; }
 .objectives li.done { color: var(--good); text-decoration: line-through; }
+.demand { margin: 8px 0 0; padding-top: 8px; border-top: 1px dashed #37335a; color: var(--gold); }
+.demand.done { color: var(--good); }
 
 .crew { position: absolute; top: 48px; right: 10px; width: 210px; z-index: 10; display: flex; flex-direction: column; gap: 8px; }
 .hero-card { padding: 8px 10px; }

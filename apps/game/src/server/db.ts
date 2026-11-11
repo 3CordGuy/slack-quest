@@ -363,6 +363,7 @@ export async function harborBoard(db: D1Database, crewId: string, pierCount: num
   const ships: HarborShip[] = [];
   const log: HarborLogEntry[] = [];
   for (const row of runs.results) {
+    // Read-only peek for the dock board; no upgrade needed for the fields used here.
     const state = row.state_json ? (JSON.parse(row.state_json) as WorldState) : null;
     const aboard = state?.heroes.map((h) => h.name) ?? [];
     const captain = state?.heroes.find((h) => h.id === state.hostId)?.name ?? row.creator ?? "Someone";

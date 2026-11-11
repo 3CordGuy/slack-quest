@@ -265,6 +265,11 @@ function Story({ state }: { state: ClientState }) {
           <li key={o.id} className={o.done ? "done" : ""}>{o.done ? "☑" : "☐"} {o.text}</li>
         ))}
       </ul>
+      {state.story.demand && (
+        <p className={`demand ${state.story.demand.done ? "done" : ""}`}>
+          {state.story.demand.done ? "☑" : "☐"} {state.story.demand.npcName} asks that you {state.story.demand.text}.
+        </p>
+      )}
     </div>
   );
 }
