@@ -7,10 +7,14 @@ import {
   applyXp,
   heroClass,
   weaponItem,
+  type HarborBoard,
+  type HarborLogEntry,
+  type HarborShip,
   type HeroInit,
   type ItemDef,
   type WorldState,
 } from "@gantt-quest/world";
+import type { HarborRoom } from "./harbor-room";
 import type { RunRoom } from "./run-room";
 
 export interface Env {
@@ -18,6 +22,7 @@ export interface Env {
   AI?: Ai;
   ASSETS: Fetcher;
   RUN_ROOM: DurableObjectNamespace<RunRoom>;
+  HARBOR_ROOM: DurableObjectNamespace<HarborRoom>;
   /** "mock" replaces Workers AI with a scripted stand-in. */
   AI_MODE?: string;
 }
@@ -223,9 +228,10 @@ export interface RunRow {
   seed: string;
   status: string;
   state_json: string | null;
+  crew_id: string | null;
 }
 
-export async function createRun(db: D1Database, playerId: string): Promise<string> {
+export async function createRun(db: D1Database, playerId: string, crewId: string | null): Promise<string> {
   // No vowels, so codes never spell anything.
   const alphabet = "BCDFGHJKLMNPQRSTVWXZ";
   for (let attempt = 0; attempt < 5; attempt++) {
@@ -233,8 +239,8 @@ export async function createRun(db: D1Database, playerId: string): Promise<strin
     const code = [...bytes].map((b) => alphabet[b % alphabet.length]).join("");
     try {
       await db
-        .prepare("INSERT INTO runs (code, seed, status, created_by, created_at, updated_at) VALUES (?, ?, 'lobby', ?, ?, ?)")
-        .bind(code, crypto.randomUUID(), playerId, now(), now())
+        .prepare("INSERT INTO runs (code, seed, status, created_by, crew_id, created_at, updated_at) VALUES (?, ?, 'lobby', ?, ?, ?, ?)")
+        .bind(code, crypto.randomUUID(), playerId, crewId, now(), now())
         .run();
       return code;
     } catch {
@@ -245,7 +251,7 @@ export async function createRun(db: D1Database, playerId: string): Promise<strin
 }
 
 export async function getRun(db: D1Database, code: string): Promise<RunRow | null> {
-  return db.prepare("SELECT code, seed, status, state_json FROM runs WHERE code = ?").bind(code).first<RunRow>();
+  return db.prepare("SELECT code, seed, status, state_json, crew_id FROM runs WHERE code = ?").bind(code).first<RunRow>();
 }
 
 export function saveRunStatements(db: D1Database, state: WorldState, action: unknown): D1PreparedStatement[] {
@@ -269,4 +275,118 @@ export function conversationStatement(
   return db
     .prepare("INSERT INTO npc_conversations (code, npc_id, speaker, text, meta_json, created_at) VALUES (?, ?, ?, ?, ?, ?)")
     .bind(code, npcId, speaker, text, meta ? JSON.stringify(meta) : null, now());
+}
+
+// ---------- crews and the Harbor ----------
+
+export interface Crew {
+  id: string;
+  name: string;
+}
+
+function randomCode(length: number): string {
+  // No vowels, so codes never spell anything.
+  const alphabet = "BCDFGHJKLMNPQRSTVWXZ";
+  return [...crypto.getRandomValues(new Uint8Array(length))].map((b) => alphabet[b % alphabet.length]).join("");
+}
+
+export async function crewFor(db: D1Database, playerId: string): Promise<Crew | null> {
+  return db
+    .prepare("SELECT c.id, c.name FROM crew_members m JOIN crews c ON c.id = m.crew_id WHERE m.player_id = ?")
+    .bind(playerId)
+    .first<Crew>();
+}
+
+export async function getCrew(db: D1Database, crewId: string): Promise<Crew | null> {
+  return db.prepare("SELECT id, name FROM crews WHERE id = ?").bind(crewId).first<Crew>();
+}
+
+/** Found a crew and make the founder its first member. Leaves any crew they were in. */
+export async function createCrew(db: D1Database, playerId: string, name: string): Promise<Crew> {
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const id = randomCode(6);
+    try {
+      await db.batch([
+        db.prepare("INSERT INTO crews (id, name, created_by, created_at) VALUES (?, ?, ?, ?)").bind(id, name, playerId, now()),
+        db.prepare("DELETE FROM crew_members WHERE player_id = ?").bind(playerId),
+        db.prepare("INSERT INTO crew_members (crew_id, player_id, joined_at) VALUES (?, ?, ?)").bind(id, playerId, now()),
+      ]);
+      return { id, name };
+    } catch {
+      // Code collision; try another.
+    }
+  }
+  throw new Error("could not allocate a crew code");
+}
+
+/** Join a crew by its invite code, leaving any other crew. Returns null if there is no such crew or it is full. */
+export async function joinCrew(db: D1Database, playerId: string, crewId: string, maxMembers: number): Promise<Crew | null> {
+  const crew = await getCrew(db, crewId);
+  if (!crew) return null;
+  const count = await db.prepare("SELECT COUNT(*) AS n FROM crew_members WHERE crew_id = ? AND player_id != ?").bind(crewId, playerId).first<{ n: number }>();
+  if ((count?.n ?? 0) >= maxMembers) return null;
+  await db.batch([
+    db.prepare("DELETE FROM crew_members WHERE player_id = ?").bind(playerId),
+    db.prepare("INSERT INTO crew_members (crew_id, player_id, joined_at) VALUES (?, ?, ?)").bind(crewId, playerId, now()),
+  ]);
+  return crew;
+}
+
+export async function leaveCrew(db: D1Database, playerId: string): Promise<void> {
+  await db.prepare("DELETE FROM crew_members WHERE player_id = ?").bind(playerId).run();
+}
+
+const LOBBY_STALE_MS = 2 * 60 * 60_000;
+const VOYAGE_STALE_MS = 12 * 60 * 60_000;
+
+/** Everything on a Harbor's notice board: who is in the crew, which ships are moored or away, and recent voyages. */
+export async function harborBoard(db: D1Database, crewId: string, pierCount: number): Promise<HarborBoard> {
+  const [members, runs] = await Promise.all([
+    db
+      .prepare(
+        `SELECT m.player_id AS id, c.name, c.class_id AS classId, c.level
+         FROM crew_members m JOIN characters c ON c.player_id = m.player_id AND c.status = 'active'
+         WHERE m.crew_id = ? ORDER BY m.joined_at, m.player_id`,
+      )
+      .bind(crewId)
+      .all<{ id: string; name: string; classId: string; level: number }>(),
+    db
+      .prepare(
+        `SELECT r.code, r.status, r.state_json, r.updated_at, c.name AS creator
+         FROM runs r LEFT JOIN characters c ON c.player_id = r.created_by
+         WHERE r.crew_id = ? ORDER BY r.created_at DESC LIMIT 30`,
+      )
+      .bind(crewId)
+      .all<{ code: string; status: string; state_json: string | null; updated_at: number; creator: string | null }>(),
+  ]);
+
+  const ships: HarborShip[] = [];
+  const log: HarborLogEntry[] = [];
+  for (const row of runs.results) {
+    const state = row.state_json ? (JSON.parse(row.state_json) as WorldState) : null;
+    const aboard = state?.heroes.map((h) => h.name) ?? [];
+    const captain = state?.heroes.find((h) => h.id === state.hostId)?.name ?? row.creator ?? "Someone";
+    if (row.status === "victory" || row.status === "defeat") {
+      if (log.length < 8) log.push({ code: row.code, title: state?.bible?.title ?? "An uncharted island", outcome: row.status, crew: aboard, at: row.updated_at });
+      continue;
+    }
+    const age = now() - row.updated_at;
+    if (age > (row.status === "lobby" ? LOBBY_STALE_MS : VOYAGE_STALE_MS)) continue;
+    ships.push({ code: row.code, captain, aboard, phase: row.status, title: state?.bible?.title ?? null, day: state && state.round > 0 ? state.round : null, pier: null });
+  }
+  // Oldest moored ship takes the first pier.
+  ships.reverse();
+  let pier = 0;
+  for (const ship of ships) if (ship.phase === "lobby" && pier < pierCount) ship.pier = pier++;
+  return { members: members.results, ships, log };
+}
+
+/** Ask a crew's Harbor to re-read its notice board and tell everyone present. Never throws. */
+export async function refreshHarbor(env: Env, crewId: string | null): Promise<void> {
+  if (!crewId) return;
+  try {
+    await env.HARBOR_ROOM.get(env.HARBOR_ROOM.idFromName(crewId)).fetch("https://harbor/refresh", { headers: { "x-crew-id": crewId } });
+  } catch (err) {
+    console.warn("harbor:refresh-failed", { err: err instanceof Error ? err.message : String(err) });
+  }
 }

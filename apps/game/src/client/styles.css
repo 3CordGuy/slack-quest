@@ -174,3 +174,25 @@ input:focus, button:focus-visible, select:focus { outline: 2px solid var(--accen
   .turnbar { white-space: normal; flex-wrap: wrap; width: calc(100% - 20px); justify-content: center; }
   .side { width: 44vw; }
 }
+
+/* ---------- Shared Harbor ---------- */
+.docks { width: min(340px, 40vw); max-height: calc(100vh - 270px); overflow-y: auto; }
+.docks h3:first-child { margin-top: 0; }
+.ships li, .roster li { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 5px 0; border-bottom: 1px dashed #37335a; }
+.ships { margin-bottom: 10px; }
+.log li { padding: 3px 0; font-size: 12px; }
+.roster li.away { opacity: 0.5; }
+.roster h3 { margin-top: 0; }
+.crew .panel h3 { margin-top: 0; }
+.dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #4a4570; }
+.dot.on { background: var(--good); }
+.harbor-chat { left: 10px; right: auto; bottom: 12px; width: min(340px, 40vw); }
+.harbor-chat .chat-lines { height: 110px; }
+.harbor-view .docks { bottom: auto; }
+.sheet-wrap { width: 100%; max-width: 560px; max-height: 100%; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
+.sheet-wrap .panel { max-width: none; }
+
+@media (max-width: 760px) {
+  .docks { width: 46vw; font-size: 12px; }
+  .harbor-chat { width: calc(100% - 20px); bottom: 70px; }
+}

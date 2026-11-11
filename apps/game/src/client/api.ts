@@ -35,6 +35,8 @@ export interface Me {
   player: { id: string; name: string };
   character: Character | null;
   inventory: InventoryItem[];
+  /** The crew whose Harbor this player shares, if any. The id doubles as the invite code. */
+  crew: { id: string; name: string } | null;
 }
 
 export type { StatKey };
@@ -72,4 +74,7 @@ export const api = {
   spend: (stat: StatKey) => request("/api/character/spend", { stat }),
   equip: (itemId: number) => request("/api/character/equip", { itemId }),
   createRun: () => request<{ code: string }>("/api/run", {}),
+  createCrew: (name: string) => request("/api/crew", { name }),
+  joinCrew: (code: string) => request("/api/crew/join", { code }),
+  leaveCrew: () => request("/api/crew/leave", {}),
 };

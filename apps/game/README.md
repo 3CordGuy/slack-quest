@@ -1,6 +1,6 @@
 # Gantt Quest — overworld game (`apps/game`)
 
-The rewrite described in [`docs/overworld-revamp.md`](../../docs/overworld-revamp.md): a live, turn-based co-op game. A party gathers at **the Harbor**, sails to **an Island** (one seeded hex map with one generated story), talks to Workers AI characters, fights line-up battles, and brings XP and loot home.
+The rewrite described in [`docs/overworld-revamp.md`](../../docs/overworld-revamp.md): a live, turn-based co-op game. A crew shares **the Harbor** (a walkable place where you see each other), up to four of them board a ship and sail to **an Island** (one seeded hex map with one generated story), talks to Workers AI characters, fights line-up battles, and brings XP and loot home.
 
 This app is separate from `apps/web` (the existing game), with its own Worker, Durable Object and D1 database. Nothing here is deployed yet.
 
@@ -15,7 +15,7 @@ pnpm --filter @gantt-quest/game db:migrate:local
 pnpm --filter @gantt-quest/game dev
 ```
 
-Open http://localhost:5180. To play two players on one machine, open a second tab at http://localhost:5180/?p=2 — the `p` parameter gives that tab its own guest account.
+Open http://localhost:5180, create a character and found a crew. To play two players on one machine, open a second tab at http://localhost:5180/?p=2 — the `p` parameter gives that tab its own guest account — and join the crew with its invite code. Background tabs do not animate (browsers pause rendering), so bring a tab to the front to watch it.
 
 ### AI: mock or live
 
@@ -48,12 +48,14 @@ Build before deploying: `wrangler deploy` ships whatever the last build produced
 | `…/story.ts` | Story frames, the story bible, and its validators |
 | `…/npc.ts` | Parsing and validating what the model proposes |
 | `…/view.ts` | What a client is allowed to see (hides the lair, NPC secrets, RNG) |
+| `…/harbor.ts` | The Harbor map, path check and message types |
 | `apps/game/src/worker.ts` | Harbor HTTP API and the WebSocket route |
 | `apps/game/src/server/run-room.ts` | One Durable Object per voyage: persist, broadcast, timers |
+| `apps/game/src/server/harbor-room.ts` | One Durable Object per crew: presence, walking, chat, dock board |
 | `apps/game/src/server/ai.ts` | Prompts and the Workers AI calls (and the mock) |
 | `apps/game/src/server/db.ts` | D1 access |
 | `apps/game/src/client/render/` | Three.js island renderer and placeholder sprites |
-| `apps/game/src/client/*.tsx` | Harbor and in-voyage HUD (React) |
+| `apps/game/src/client/*.tsx` | Character creation, crew gate, shared Harbor and in-voyage HUD (React) |
 
 ## Rules worth knowing before changing things
 
@@ -71,7 +73,7 @@ pnpm --filter @gantt-quest/world typecheck
 pnpm --filter @gantt-quest/game typecheck
 ```
 
-In dev builds the page exposes `window.__gq` (`state`, `send`, and the `World` module) for driving a run from the console.
+In dev builds the page exposes `window.__gq` (`state`, `send`, and the `World` module) on a voyage and `window.__harbor` in the Harbor, for driving either from the console.
 
 ## Known gaps in milestone 1
 
@@ -79,5 +81,7 @@ In dev builds the page exposes `window.__gq` (`state`, `send`, and the `World` m
 - One story frame, one talkable NPC, three hero classes.
 - Battle numbers are not tuned; a focused party can stun-lock the boss.
 - Battle events animate in sequence but HP bars jump to the final value.
-- The Harbor has no shops, provisioning or upgrades yet.
+- Huts are plots only: no interiors, decorating or upgrades yet, and only the first 12 crew members get one drawn.
+- The Harbor has no shops or provisioning yet. Crew chat is not stored.
+- Accounts are still guest cookies.
 - No production deploy and no CI deploy. Staging is deployed by hand; production needs a workflow change and review.
