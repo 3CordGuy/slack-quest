@@ -94,14 +94,21 @@ export function parseNpcOutput(raw: unknown): NpcOutput | null {
 }
 
 /** Capabilities the NPC could use right now. This is also what the prompt is allowed to mention. */
-export function availableCapabilities(sheet: NpcSheet, run: NpcRun): Capability[] {
+export function availableCapabilities(sheet: NpcSheet, run: NpcRun, ctx: GateContext): Capability[] {
   if (run.hostile) return [];
-  return sheet.capabilities.filter((c) => !run.used.includes(c.id) && gateOpen(c.gate, run));
+  return sheet.capabilities.filter((c) => !run.used.includes(c.id) && gateOpen(c.gate, run, ctx));
 }
 
-function gateOpen(gate: Capability["gate"], run: NpcRun): boolean {
+/** Facts about the story a gate may depend on. */
+export interface GateContext {
+  /** The party has done what this NPC asked (see demandMet in story.ts). */
+  demandMet: boolean;
+}
+
+function gateOpen(gate: Capability["gate"], run: NpcRun, ctx: GateContext): boolean {
   if (gate === "persuade") return run.persuaded;
   if (gate === "provoked") return run.attitude < 0;
+  if (gate === "demand") return ctx.demandMet;
   return true;
 }
 
@@ -115,7 +122,7 @@ export type IntentVerdict =
  * sheet whose gate is open. Call it with the NPC's state from *before* this
  * reply's attitude change is applied.
  */
-export function validateIntent(sheet: NpcSheet, run: NpcRun, intent: NpcIntent): IntentVerdict {
+export function validateIntent(sheet: NpcSheet, run: NpcRun, intent: NpcIntent, ctx: GateContext): IntentVerdict {
   if (!(NPC_VERBS as readonly string[]).includes(intent.verb)) {
     return { ok: false, reason: `unknown verb "${intent.verb}"` };
   }
@@ -133,6 +140,7 @@ export function validateIntent(sheet: NpcSheet, run: NpcRun, intent: NpcIntent):
   if (!match) return { ok: false, reason: `${sheet.id} has nothing matching ${JSON.stringify(intent.args)}` };
   if (run.used.includes(match.id)) return { ok: false, reason: `${match.id} already used` };
   if (match.gate === "persuade" && !run.persuaded) return { ok: false, reason: `${match.id} needs a passed persuasion check` };
+  if (match.gate === "demand" && !ctx.demandMet) return { ok: false, reason: `${match.id} needs the npc's demand met first` };
   if (match.gate === "provoked" && run.attitude >= 0) return { ok: false, reason: `${match.id} needs the npc to be provoked first` };
   return { ok: true, capability: match };
 }

@@ -166,3 +166,26 @@ export function textTexture(text: string, color: string): THREE.CanvasTexture {
   tex.colorSpace = THREE.SRGBColorSpace;
   return tex;
 }
+
+/** A name tag. Returns the texture and its width-to-height ratio so the caller can size the sprite. */
+export function labelTexture(text: string): { texture: THREE.CanvasTexture; aspect: number } {
+  const font = "bold 20px ui-monospace, Menlo, monospace";
+  const probe = document.createElement("canvas").getContext("2d")!;
+  probe.font = font;
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.ceil(probe.measureText(text).width) + 16;
+  canvas.height = 28;
+  const ctx = canvas.getContext("2d")!;
+  ctx.fillStyle = "rgba(27, 24, 48, 0.78)";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.font = font;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillStyle = "#f1eee4";
+  ctx.fillText(text, canvas.width / 2, canvas.height / 2 + 1);
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.minFilter = THREE.LinearFilter;
+  texture.generateMipmaps = false;
+  texture.colorSpace = THREE.SRGBColorSpace;
+  return { texture, aspect: canvas.width / canvas.height };
+}
