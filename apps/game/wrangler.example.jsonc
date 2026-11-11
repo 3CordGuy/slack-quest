@@ -36,5 +36,25 @@
   "durable_objects": {
     "bindings": [{ "name": "RUN_ROOM", "class_name": "RunRoom" }]
   },
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["RunRoom"] }]
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["RunRoom"] }],
+  // Staging: `CLOUDFLARE_ENV=staging pnpm build && wrangler deploy`.
+  // Environments do not inherit bindings, so they are repeated here.
+  "env": {
+    "staging": {
+      "name": "gantt-quest-game-staging",
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "gantt-quest-game-staging",
+          "database_id": "REPLACE_WITH_STAGING_D1_ID",
+          "migrations_dir": "./migrations"
+        }
+      ],
+      "ai": { "binding": "AI" },
+      "vars": { "AI_MODE": "live" },
+      "durable_objects": {
+        "bindings": [{ "name": "RUN_ROOM", "class_name": "RunRoom" }]
+      }
+    }
+  }
 }

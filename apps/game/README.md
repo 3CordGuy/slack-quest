@@ -24,6 +24,18 @@ Open http://localhost:5180. To play two players on one machine, open a second ta
 - `"mock"` (the default in the example): a scripted stand-in. Stories come from the canned fills in `packages/world/src/story.ts`; the NPC is a deliberately gullible script that proposes whatever your words suggest, so you can watch the server-side guard rails refuse it.
 - `"live"`: real Workers AI. Requires `wrangler login`. AI bindings always call the remote service, so this uses your account's Workers AI allocation.
 
+## Staging
+
+A hand-deployed test copy runs as the `gantt-quest-game-staging` Worker with its own D1 database and live Workers AI. It is defined as the `staging` environment in `wrangler.jsonc` (put the real database id in your local, gitignored copy).
+
+```bash
+pnpm --filter @gantt-quest/game exec wrangler d1 migrations apply DB --remote --env staging
+CLOUDFLARE_ENV=staging pnpm --filter @gantt-quest/game build
+pnpm --filter @gantt-quest/game exec wrangler deploy
+```
+
+Build before deploying: `wrangler deploy` ships whatever the last build produced, for whichever environment it was built for. Sign-in is an ungated guest account, so anyone with the URL can use the Workers AI allocation.
+
 ## Where things live
 
 | Path | What |
@@ -68,4 +80,4 @@ In dev builds the page exposes `window.__gq` (`state`, `send`, and the `World` m
 - Battle numbers are not tuned; a focused party can stun-lock the boss.
 - Battle events animate in sequence but HP bars jump to the final value.
 - The Harbor has no shops, provisioning or upgrades yet.
-- No deploy pipeline. Shipping needs a D1 database, a workflow change and review.
+- No production deploy and no CI deploy. Staging is deployed by hand; production needs a workflow change and review.
