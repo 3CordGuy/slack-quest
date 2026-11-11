@@ -23,7 +23,9 @@ import {
   rollStartingStats,
   statPct,
   stepBattle,
+  seedFromString,
   stepWorld,
+  storyHints,
   tileAt,
   upgradeWorld,
   validateBible,
@@ -252,6 +254,20 @@ describe("story bible", () => {
       expect(validateFill(f)).not.toBeNull();
       expect(validateBible(buildBible(frame, f), map)).toEqual([]);
     }
+  });
+
+  it("gives each voyage its own seeded flavour", () => {
+    const hintsFor = (seed: string) => storyHints(makeRng(seedFromString(seed)));
+    expect(hintsFor("a")).toEqual(hintsFor("a"));
+    const many = Array.from({ length: 40 }, (_, i) => hintsFor(`voyage-${i}`));
+    for (const h of many) {
+      const { island, villain, islander } = h.initials;
+      expect(new Set([island, villain, islander]).size).toBe(3);
+    }
+    // Nearly every voyage should differ from every other in the combination it gets.
+    const combos = new Set(many.map((h) => `${h.relic}|${h.villain}|${h.island}|${h.initials.island}`));
+    expect(combos.size).toBeGreaterThanOrEqual(38);
+    expect(new Set(many.map((h) => h.relic)).size).toBeGreaterThanOrEqual(8);
   });
 
   it("rejects malformed model output", () => {

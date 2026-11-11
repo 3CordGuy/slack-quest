@@ -107,6 +107,7 @@ Keeping the story completable and the prose honest:
 - **The NPC's ask is a fixed, checkable demand.** Each frame lists the demands an NPC may make (clear the brigand camp; or win them over with a persuasion check). The game picks one, tells the model, and gates the lair reveal on it. The model words the request but cannot ask for anything else, and the HUD shows the ask with a tick once it is met.
 - **The model is given true facts about the island.** Bearings and distances between the landing, hut, camp and lair, the terrain mix, and a list of things that do not exist (towns, caves, swamps). The NPC is given the lair's real bearing to say when it reveals it.
 - **The doom clock is sized to the island.** At the start of a run the game adds up the walk the story needs (landing → hut → errand and back → lair) at the slowest hero's expected pace, adds half again plus a few days, and lengthens the clock if the frame's minimum is too short.
+- **Each voyage gets seeded flavour.** Left alone the model writes nearly the same story every time. The run's seed picks a mood, the island's character, what kind of thing was stolen, the villain's and islander's archetypes, a naming style and the first letters of the names, and the prompt is built around them.
 - Not yet checked: whether a given party can win the fights.
 
 ### NPC conversations: free text in, validated verbs out

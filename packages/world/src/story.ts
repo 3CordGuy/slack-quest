@@ -189,6 +189,110 @@ export function demandMet(bible: StoryBible, facts: Record<string, boolean>, per
   return bible.demand.fact ? !!facts[bible.demand.fact] : persuaded;
 }
 
+// ---------- per-voyage flavour ----------
+
+/**
+ * Seeded prompts that push the model somewhere different on each voyage.
+ * Left alone it writes nearly the same title, island and villain every time;
+ * these come from the run's seed, so a run's story is still reproducible.
+ */
+export interface StoryHints {
+  mood: string;
+  island: string;
+  relic: string;
+  villain: string;
+  islander: string;
+  naming: string;
+  /** First letters for the island, villain and islander names. */
+  initials: { island: string; villain: string; islander: string };
+}
+
+const HINT_MOODS = [
+  "wistful and salt-worn, like a sea shanty",
+  "wry and a little absurd",
+  "eerie and hushed",
+  "warm and pastoral, with trouble at the edges",
+  "swashbuckling and brisk",
+  "melancholy, about things slowly being forgotten",
+  "tense, like a village holding its breath",
+  "storybook-bright with a sharp edge",
+];
+const HINT_ISLANDS = [
+  "a fishing community that lives by the tides",
+  "an island of orchards and beekeepers",
+  "a windswept place of shepherds and standing stones",
+  "an island of glassblowers and kiln smoke",
+  "a quiet island of retired sailors and their gardens",
+  "an island of bell-makers where every hill has a bell",
+  "a salt-harvesting island of white pans and grey skies",
+  "an island of kite-flyers and weather-watchers",
+  "a mossy island of weavers and dye-makers",
+  "an island of lamplighters whose paths are lit every dusk",
+];
+const HINT_RELICS = [
+  "a lantern or lamp",
+  "a seed, sapling or graft",
+  "a bell or chime",
+  "a loom shuttle or spindle",
+  "a weathervane or compass",
+  "a kettle, cauldron or cup",
+  "a book of names or a ledger",
+  "a mask or crown of woven reeds",
+  "a tuning fork or pipe",
+  "a jar holding something alive",
+  "a key that fits no door on the island",
+  "an anchor or ship's wheel",
+];
+const HINT_VILLAINS = [
+  "a wrecker who profits from other people's misfortune",
+  "a preacher certain the island must suffer to be saved",
+  "an exiled islander nursing an old grudge",
+  "a collector who cannot bear for anyone else to own a beautiful thing",
+  "a failed inventor who needs the relic for one last machine",
+  "a tax-gatherer from the mainland who has gone too far",
+  "a charming smuggler who thinks of it as borrowing",
+  "a hermit who believes the relic is whispering to them",
+  "a deposed harbourmaster who wants to be needed again",
+  "a storm-chaser who thinks the relic can command the weather",
+];
+const HINT_ISLANDERS = [
+  "a retired keeper of something (a light, a lock, a ledger)",
+  "a sharp-tongued herbalist",
+  "a young ferryman who saw too much",
+  "a widowed boatbuilder",
+  "a former follower of the villain",
+  "a gossiping innkeeper with no inn left to keep",
+  "a patient schoolteacher",
+  "a half-deaf bell-ringer",
+  "a shepherd who talks to the flock more than to people",
+  "a mapmaker who distrusts their own maps",
+];
+const HINT_NAMING = [
+  "short, blunt names of one or two syllables",
+  "soft names full of L, M and N sounds",
+  "old seafaring names, as from a ship's muster",
+  "names with a descriptive byname, like 'the Wrecker' or 'of the Low Road'",
+  "plain country names a farmer would have",
+  "names that sound faintly Nordic",
+  "names that sound faintly Cornish or Breton",
+];
+const HINT_INITIALS = "ABCDEFGHIKLMNOPRSTVW";
+
+export function storyHints(rng: Rng): StoryHints {
+  const letters = [...HINT_INITIALS];
+  // Three different letters, so the names do not alliterate.
+  const letter = () => letters.splice(rng.int(0, letters.length - 1), 1)[0];
+  return {
+    mood: rng.pick(HINT_MOODS),
+    island: rng.pick(HINT_ISLANDS),
+    relic: rng.pick(HINT_RELICS),
+    villain: rng.pick(HINT_VILLAINS),
+    islander: rng.pick(HINT_ISLANDERS),
+    naming: rng.pick(HINT_NAMING),
+    initials: { island: letter(), villain: letter(), islander: letter() },
+  };
+}
+
 export function buildBible(frame: StoryFrame, fill: StoryFill, demand: Demand = frame.demands[0]): StoryBible {
   const npc: NpcSheet = {
     id: "npc1",

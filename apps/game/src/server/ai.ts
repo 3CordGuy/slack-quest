@@ -25,6 +25,7 @@ import {
   type StoryBible,
   type StoryFill,
   type StoryFrame,
+  type StoryHints,
   type WorldMap,
   type WorldState,
 } from "@gantt-quest/world";
@@ -89,7 +90,14 @@ export function islandFacts(map: WorldMap): string[] {
   return facts;
 }
 
-export async function generateFill(env: Env, frame: StoryFrame, partyNames: string[], demand: Demand, facts: string[]): Promise<StoryFill | null> {
+export async function generateFill(
+  env: Env,
+  frame: StoryFrame,
+  partyNames: string[],
+  demand: Demand,
+  facts: string[],
+  hints: StoryHints,
+): Promise<StoryFill | null> {
   if (isMock(env)) return null;
   const messages: Message[] = [
     {
@@ -105,9 +113,18 @@ export async function generateFill(env: Env, frame: StoryFrame, partyNames: stri
         `Story shape (do not change it): ${frame.brief}\n\n` +
         `The heroes arriving by ship: ${partyNames.join(", ")}.\n\n` +
         `True facts about this island. Everything you write must agree with them:\n${facts.map((f) => `- ${f}`).join("\n")}\n\n` +
+        "What makes THIS voyage different from every other. Build the story around these, not around generic fantasy:\n" +
+        `- Mood: ${hints.mood}\n` +
+        `- The island is ${hints.island}\n` +
+        `- The stolen thing is ${hints.relic}, and the islanders depend on it for something specific and practical\n` +
+        `- The villain is ${hints.villain}\n` +
+        `- The islander in the hut is ${hints.islander}\n` +
+        `- Naming style: ${hints.naming}\n` +
+        `- The island's name starts with ${hints.initials.island}, the villain's with ${hints.initials.villain}, the islander's with ${hints.initials.islander}\n` +
+        "- Do not use the words relic, ancient, shadow, dark, sacred, balance or prosperity anywhere. No apostrophes inside names. No sorcerers.\n\n" +
         `Before the islander will say where the lair is, the heroes must: ${demand.text}. That is the only thing the islander asks for.\n\n` +
         "Fill in:\n" +
-        "- title: the adventure's title, 2-6 words\n" +
+        "- title: the adventure's title, 2-6 words, naming the stolen thing or the island rather than describing a quest\n" +
         "- premise: 2-3 sentences the players read on arrival; say what was stolen and why it matters\n" +
         "- island_name\n" +
         "- villain_name, villain_description (one sentence)\n" +
