@@ -86,9 +86,23 @@ export function validateFill(raw: unknown): StoryFill | null {
  * When a capability may fire. `free`: whenever the NPC chooses. `persuade`:
  * only after a hero passes a persuasion check. `provoked`: only once the NPC
  * already disliked the party before this exchange, so it takes two bad
- * exchanges, not one odd remark, to start a fight.
+ * exchanges, not one odd remark, to start a fight. `demand`: only once the
+ * story's Demand has been met.
  */
-export type Gate = "free" | "persuade" | "provoked";
+export type Gate = "free" | "persuade" | "provoked" | "demand";
+
+/**
+ * The one thing an NPC asks of the party before helping. Demands come from
+ * a fixed list so the game can always tell whether one has been met; the
+ * model words the request but cannot invent a different one.
+ */
+export interface Demand {
+  id: string;
+  /** Completes "They ask that you …". */
+  text: string;
+  /** World fact that satisfies it, or null when a passed persuasion check does. */
+  fact: string | null;
+}
 
 /** One thing an NPC is able to do to the game. The model only decides when. */
 export type Capability =
@@ -127,6 +141,8 @@ export interface StoryBible {
   poiNames: Record<string, string>;
   npcs: NpcSheet[];
   objectives: Objective[];
+  /** What the NPC asks before revealing the lair. */
+  demand: Demand;
   /** Completing this objective wins the run. */
   finalObjective: string;
   /** Rounds before the villain gets away. */
@@ -137,7 +153,9 @@ export interface StoryFrame {
   id: string;
   /** One line telling the model what kind of story to write. */
   brief: string;
+  /** Shortest the doom clock may be; the run lengthens it to fit the island. */
   doomRounds: number;
+  demands: Demand[];
 }
 
 export const STORY_FRAMES: StoryFrame[] = [
@@ -147,6 +165,10 @@ export const STORY_FRAMES: StoryFrame[] = [
       "A villain has stolen a relic the island's people depend on and gone to ground in a hidden lair. " +
       "One islander living in a hut near the shore knows where the lair is and owns a protective charm.",
     doomRounds: 16,
+    demands: [
+      { id: "clear_camp", text: "drive the brigands out of their camp", fact: "defeated:camp" },
+      { id: "earn_trust", text: "convince them you can be trusted", fact: null },
+    ],
   },
 ];
 
@@ -154,7 +176,124 @@ export function pickFrame(rng: Rng): StoryFrame {
   return rng.pick(STORY_FRAMES);
 }
 
-export function buildBible(frame: StoryFrame, fill: StoryFill): StoryBible {
+export function pickDemand(frame: StoryFrame, rng: Rng): Demand {
+  return rng.pick(frame.demands);
+}
+
+/** Stands in for a demand on stories saved before demands existed: nothing is asked. */
+export const NO_DEMAND: Demand = { id: "none", text: "", fact: null };
+
+/** Has the party done what the NPC asked? `persuaded` is that NPC's persuasion flag. */
+export function demandMet(bible: StoryBible, facts: Record<string, boolean>, persuaded: boolean): boolean {
+  if (bible.demand.id === NO_DEMAND.id) return true;
+  return bible.demand.fact ? !!facts[bible.demand.fact] : persuaded;
+}
+
+// ---------- per-voyage flavour ----------
+
+/**
+ * Seeded prompts that push the model somewhere different on each voyage.
+ * Left alone it writes nearly the same title, island and villain every time;
+ * these come from the run's seed, so a run's story is still reproducible.
+ */
+export interface StoryHints {
+  mood: string;
+  island: string;
+  relic: string;
+  villain: string;
+  islander: string;
+  naming: string;
+  /** First letters for the island, villain and islander names. */
+  initials: { island: string; villain: string; islander: string };
+}
+
+const HINT_MOODS = [
+  "wistful and salt-worn, like a sea shanty",
+  "wry and a little absurd",
+  "eerie and hushed",
+  "warm and pastoral, with trouble at the edges",
+  "swashbuckling and brisk",
+  "melancholy, about things slowly being forgotten",
+  "tense, like a village holding its breath",
+  "storybook-bright with a sharp edge",
+];
+const HINT_ISLANDS = [
+  "a fishing community that lives by the tides",
+  "an island of orchards and beekeepers",
+  "a windswept place of shepherds and standing stones",
+  "an island of glassblowers and kiln smoke",
+  "a quiet island of retired sailors and their gardens",
+  "an island of bell-makers where every hill has a bell",
+  "a salt-harvesting island of white pans and grey skies",
+  "an island of kite-flyers and weather-watchers",
+  "a mossy island of weavers and dye-makers",
+  "an island of lamplighters whose paths are lit every dusk",
+];
+const HINT_RELICS = [
+  "a lantern or lamp",
+  "a seed, sapling or graft",
+  "a bell or chime",
+  "a loom shuttle or spindle",
+  "a weathervane or compass",
+  "a kettle, cauldron or cup",
+  "a book of names or a ledger",
+  "a mask or crown of woven reeds",
+  "a tuning fork or pipe",
+  "a jar holding something alive",
+  "a key that fits no door on the island",
+  "an anchor or ship's wheel",
+];
+const HINT_VILLAINS = [
+  "a wrecker who profits from other people's misfortune",
+  "a preacher certain the island must suffer to be saved",
+  "an exiled islander nursing an old grudge",
+  "a collector who cannot bear for anyone else to own a beautiful thing",
+  "a failed inventor who needs the relic for one last machine",
+  "a tax-gatherer from the mainland who has gone too far",
+  "a charming smuggler who thinks of it as borrowing",
+  "a hermit who believes the relic is whispering to them",
+  "a deposed harbourmaster who wants to be needed again",
+  "a storm-chaser who thinks the relic can command the weather",
+];
+const HINT_ISLANDERS = [
+  "a retired keeper of something (a light, a lock, a ledger)",
+  "a sharp-tongued herbalist",
+  "a young ferryman who saw too much",
+  "a widowed boatbuilder",
+  "a former follower of the villain",
+  "a gossiping innkeeper with no inn left to keep",
+  "a patient schoolteacher",
+  "a half-deaf bell-ringer",
+  "a shepherd who talks to the flock more than to people",
+  "a mapmaker who distrusts their own maps",
+];
+const HINT_NAMING = [
+  "short, blunt names of one or two syllables",
+  "soft names full of L, M and N sounds",
+  "old seafaring names, as from a ship's muster",
+  "names with a descriptive byname, like 'the Wrecker' or 'of the Low Road'",
+  "plain country names a farmer would have",
+  "names that sound faintly Nordic",
+  "names that sound faintly Cornish or Breton",
+];
+const HINT_INITIALS = "ABCDEFGHIKLMNOPRSTVW";
+
+export function storyHints(rng: Rng): StoryHints {
+  const letters = [...HINT_INITIALS];
+  // Three different letters, so the names do not alliterate.
+  const letter = () => letters.splice(rng.int(0, letters.length - 1), 1)[0];
+  return {
+    mood: rng.pick(HINT_MOODS),
+    island: rng.pick(HINT_ISLANDS),
+    relic: rng.pick(HINT_RELICS),
+    villain: rng.pick(HINT_VILLAINS),
+    islander: rng.pick(HINT_ISLANDERS),
+    naming: rng.pick(HINT_NAMING),
+    initials: { island: letter(), villain: letter(), islander: letter() },
+  };
+}
+
+export function buildBible(frame: StoryFrame, fill: StoryFill, demand: Demand = frame.demands[0]): StoryBible {
   const npc: NpcSheet = {
     id: "npc1",
     poi: "hut",
@@ -166,7 +305,7 @@ export function buildBible(frame: StoryFrame, fill: StoryFill): StoryBible {
     secret: fill.npc_secret,
     knows: fill.npc_knowledge,
     capabilities: [
-      { id: "reveal_lair", verb: "reveal_location", poi: "lair", poiName: fill.lair_name, gate: "free" },
+      { id: "reveal_lair", verb: "reveal_location", poi: "lair", poiName: fill.lair_name, gate: "demand" },
       { id: "give_charm", verb: "give_item", item: "charm", itemName: fill.charm_name, gate: "persuade" },
       { id: "call_guard", verb: "start_combat", enemies: ["bandit"], gate: "provoked" },
     ],
@@ -185,6 +324,7 @@ export function buildBible(frame: StoryFrame, fill: StoryFill): StoryBible {
       { id: "locate", text: `Learn where ${fill.lair_name} is hidden`, fact: "revealed:lair" },
       { id: "defeat", text: `Defeat ${fill.villain_name} and recover ${fill.relic_name}`, fact: "defeated:lair" },
     ],
+    demand,
     finalObjective: "defeat",
     doomRounds: frame.doomRounds,
   };
@@ -215,6 +355,11 @@ export function validateBible(bible: StoryBible, map: WorldMap): string[] {
       if (!poi) problems.push(`objective ${o.id} needs missing poi ${ref}`);
       else if (kind === "defeated" && poi.enemies.length === 0) problems.push(`objective ${o.id}: nothing to defeat at ${ref}`);
     }
+  }
+  if (bible.demand.fact) {
+    const [kind, ref] = bible.demand.fact.split(":");
+    const poi = poiById(map, ref);
+    if (kind !== "defeated" || !poi || poi.enemies.length === 0) problems.push(`demand ${bible.demand.id} cannot be met on this island`);
   }
   if (bible.doomRounds < 6) problems.push("doom clock too short");
   return problems;

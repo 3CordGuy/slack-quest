@@ -14,13 +14,15 @@ import {
 } from "@gantt-quest/core";
 import { makeRng, seedFromString, type Rng } from "./rng";
 
-export type Biome = "plains" | "forest" | "hills" | "water";
+/** `dock` is the wooden pier surface used in the Harbor. */
+export type Biome = "plains" | "forest" | "hills" | "water" | "dock";
 
 export const MOVE_COST: Record<Biome, number> = {
   plains: 1,
   forest: 2,
   hills: 2,
   water: Infinity,
+  dock: 1,
 };
 
 export interface Tile {
@@ -31,8 +33,12 @@ export interface Tile {
   h: number;
 }
 
-/** `landing` is the dock where the party's ship puts in. */
-export type PoiKind = "landing" | "hut" | "lair" | "shrine" | "cache" | "camp";
+/**
+ * `landing` is where the party's ship puts in on an island. `pier`, `plot`
+ * and `board` exist only in the Harbor: a moored ship, a crew member's hut,
+ * and the notice board.
+ */
+export type PoiKind = "landing" | "hut" | "lair" | "shrine" | "cache" | "camp" | "pier" | "plot" | "board";
 
 export interface Poi {
   id: string;
@@ -75,6 +81,18 @@ export function poiAt(map: WorldMap, pos: HexPos): Poi | undefined {
 
 export function poiById(map: WorldMap, id: string): Poi | undefined {
   return map.pois.find((p) => p.id === id);
+}
+
+/** Compass bearing and hex distance from one hex to another, e.g. "about 6 hexes to the north-east". North is away from the camera. */
+export function describeBearing(from: HexPos, to: HexPos): string {
+  const dq = to.q - from.q;
+  const dr = to.r - from.r;
+  const distance = hexDistance(from, to);
+  if (distance === 0) return "right here";
+  const angle = Math.atan2(Math.sqrt(3) * (dq + dr / 2), -1.5 * dr);
+  const names = ["north", "north-east", "east", "south-east", "south", "south-west", "west", "north-west"];
+  const dir = names[((Math.round(angle / (Math.PI / 4)) % 8) + 8) % 8];
+  return `about ${distance} hex${distance === 1 ? "" : "es"} to the ${dir}`;
 }
 
 // ---------- pathfinding ----------
@@ -165,7 +183,7 @@ function pickBiome(rng: Rng): Biome {
   return "plains";
 }
 
-const BASE_HEIGHT: Record<Biome, number> = { water: 0.05, plains: 0.3, forest: 0.4, hills: 0.75 };
+const BASE_HEIGHT: Record<Biome, number> = { water: 0.05, plains: 0.3, forest: 0.4, hills: 0.75, dock: 0.1 };
 
 /** Offset-space position of a hex, used for the island outline. */
 function flatPos(pos: HexPos): { x: number; y: number } {

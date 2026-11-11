@@ -30,24 +30,30 @@ What the code review found that shapes the plan:
 - `apps/web`, `apps/slack` — untouched.
 
 ### World structure: the Harbor and the Islands
-- **The Harbor** is the persistent base of operations between sessions: where a player's character lives, where the party gathers, and (later) where shops, the smithy, the inn and camp-style upgrades go. It is ordinary screens backed by D1, not a Durable Object.
+- **The Harbor** is the persistent base of operations between sessions: where a player's character lives, where the crew gathers, and (later) where shops, the smithy, the inn and camp-style upgrades go. See the next section.
 - **An Island** is one session world. The party loads a ship at the Harbor and sails to an island; each island is one seeded hex map with one generated story. A run *is* a voyage to an island.
 - The session map is generated as an island: sea around the rim, the ship puts in at a **landing** on the shore, and the story's lair sits far inland.
-- The voyage lobby is the ship: players board with a code, ready up, and the host sets sail. Leaving the island (victory, defeat or the doom clock) returns everyone to the Harbor with what they earned.
+- The voyage lobby is the ship: players board at the docks (or with a code), ready up, and the captain sets sail. Leaving the island (victory, defeat or the doom clock) returns everyone to the Harbor with what they earned.
 - Room to grow, not in milestone 1: choosing between several islands on a sea chart (difficulty, biome, story frame), provisioning the ship with gold before sailing (potions, focus, extra doom-clock days), and Harbor upgrades paid for with island loot.
 
-### Proposed: the Harbor as a shared, walkable place
-Not built. Recorded 2026-11-11 as the leading candidate for the milestone after the thin slice.
+### The Harbor as a shared, walkable place
+Decided 2026-11-11: **one Harbor per crew**. The first slice is built; huts are plots only so far.
 
-- **A place, not a menu.** The Harbor becomes a small hex map drawn by the same renderer as the islands. Everyone in it sees everyone else's sprite walking around in real time.
+- **Crews.** A crew is a group of players (up to 40) sharing one Harbor. A player founds one or joins by invite code or link (`#crew/CODE`) and belongs to one crew at a time. Crew size is independent of party size: a ship still carries at most four.
+- **A place, not a menu.** The Harbor is a fixed hex map drawn by the same renderer as the islands. Everyone present sees everyone else's sprite, with a name tag, walking around in real time.
 - **Free movement, no turns.** Click a hex to walk there. The server checks the path and broadcasts it once; clients animate along it. No server tick loop, which keeps to the Durable Object rules.
-- **One `HarborRoom` Durable Object per harbor.** Hibernating WebSockets, presence held in socket attachments, huts and placed items in D1.
-- **Ships at the docks replace codes.** A captain's ship appears moored at the dock; crewmates walk onto it to board. The four-letter code stays as a fallback.
-- **Huts.** Each player owns a plot in a hut district. The outside is visible to all; the inside is a small room others can visit. Players place trophies and furniture on a grid and buy hut tiers with gold.
+- **One `HarborRoom` Durable Object per crew.** Hibernating WebSockets; who is present and where they stand lives in socket attachments; crew membership, ships and the voyage log are read from D1.
+- **Ships at the docks.** A launched ship is moored at one of three piers; crewmates walk onto the pier and board, or use the dock board. Ships at sea are listed with their story title and day, so those ashore can follow along. The four-letter code still works as a fallback.
+- **Voyage log.** Finished voyages (title, outcome, who went) are listed for the whole crew.
+- **Crew chat.** Free text among crew members, relayed to whoever is in the Harbor and not stored.
+- **Hut plots.** Each member gets a hut on a plot, handed out in join order (12 plots drawn so far).
+
+Still to build:
+- **Hut interiors, decorating and upgrades.** The inside is a small room others can visit. Players place trophies and furniture on a grid and buy hut tiers with gold.
 - **Loot to bring home.** Islands need a third loot category beside gear and gold: trophies and decor (each story's relic, a villain's mask, biome-themed furniture) and building materials.
 - **Upgrades stay modest.** Mostly cosmetic, plus conveniences (storage, a display shelf, starting a voyage rested). Anything stronger would make new players weaker than veterans on the same ship.
-- **Prerequisite: durable accounts.** Guest accounts live in a browser cookie. A hut someone has decorated must survive a cleared cookie, so email sign-in comes first.
-- **Open questions:** one Harbor for everyone or one per crew; free-text chat or emotes only; whether hut upgrades give any gameplay bonus.
+- **Durable accounts first.** Guest accounts live in a browser cookie. A hut someone has decorated must survive a cleared cookie, so email sign-in comes before hut customisation.
+- **More than 12 huts**, and several ships beyond three piers, need a larger or scrolling Harbor.
 
 ### Run loop (server-authoritative)
 - One `RunRoom` DO per run, joined by a short code. Clients send intents over a hibernating WebSocket; the DO runs `stepWorld(state, action, rng)` from `packages/world`, persists to D1, then broadcasts events.
@@ -97,6 +103,13 @@ Not built. Recorded 2026-11-11 as the leading candidate for the milestone after 
 4. The result is the **story bible**, pinned in `runs` for the whole run. Objectives are conditions over world facts (`has_item`, `fact_set`, `at_hex`, `defeated`).
 5. At the end, one call writes an epilogue from the action log.
 
+Keeping the story completable and the prose honest:
+- **The NPC's ask is a fixed, checkable demand.** Each frame lists the demands an NPC may make (clear the brigand camp; or win them over with a persuasion check). The game picks one, tells the model, and gates the lair reveal on it. The model words the request but cannot ask for anything else, and the HUD shows the ask with a tick once it is met.
+- **The model is given true facts about the island.** Bearings and distances between the landing, hut, camp and lair, the terrain mix, and a list of things that do not exist (towns, caves, swamps). The NPC is given the lair's real bearing to say when it reveals it.
+- **The doom clock is sized to the island.** At the start of a run the game adds up the walk the story needs (landing → hut → errand and back → lair) at the slowest hero's expected pace, adds half again plus a few days, and lengthens the clock if the frame's minimum is too short.
+- **Each voyage gets seeded flavour.** Left alone the model writes nearly the same story every time. The run's seed picks a mood, the island's character, what kind of thing was stolen, the villain's and islander's archetypes, a naming style and the first letters of the names, and the prompt is built around them.
+- Not yet checked: whether a given party can win the fights.
+
 ### NPC conversations: free text in, validated verbs out
 - Prompt = world rules + this NPC's sheet (persona, goal, attitude, only the bible facts this NPC knows) + current world facts + a rolling conversation summary + the player's message.
 - The model returns JSON: `{ say, intent?: { verb, args }, attitude_delta }`.
@@ -106,6 +119,7 @@ Not built. Recorded 2026-11-11 as the leading candidate for the milestone after 
   - Anything the NPC should not reveal is simply not in its prompt.
   - Verbs that need persuading trigger a `rollCheck()` on the speaking hero's `int_stat` (there is no social stat today); the result is fed back for the NPC's next line.
   - Starting a fight is gated on the NPC already disliking the party before the exchange, so it takes two bad exchanges, not one odd remark.
+  - The lair reveal is gated on the story's demand being met, whatever the model says.
   - Rejected intents are dropped and the `say` text still shows, so a jailbroken reply is only words.
   - Caps: messages per conversation and per run, message length, one speaker at a time.
 - Conversations are shared: every hero on the hex sees the stream through the DO.
@@ -128,7 +142,7 @@ Later milestones, not planned in detail: the look (real sprites, fog of war, day
 ## Assumptions to veto
 
 - **Characters start fresh in the new game.** Same creation flow and stats as today, but in the new database; existing characters, gear and gold do not migrate.
-- **The Harbor is bare in milestone 1.** It is the character sheet plus "set sail" and "board a ship"; shops, smithy, inn, provisioning and upgrades come later, so loot and levels are the only progression.
+- **The Harbor has no economy yet.** It is a shared place with docks, huts and a character sheet; shops, smithy, inn, provisioning and upgrades come later, so loot and levels are the only progression.
 - **Persuasion rolls use `int_stat`** rather than adding a sixth social stat.
 - **Heroes move individually**, not as one party token.
 - **Nothing ships.** Milestone 1 runs under `wrangler dev` only. A new worker needs changes to the GitHub Actions deploy workflow and its `wrangler.jsonc` secret, which waits for review.
