@@ -111,11 +111,11 @@ input:focus, button:focus-visible, select:focus { outline: 2px solid var(--accen
 .pips i { width: 8px; height: 8px; background: #14122a; border: 1px solid var(--accent); transform: rotate(45deg); }
 .pips i.on { background: var(--accent); }
 
-.feed { position: absolute; left: 10px; bottom: 10px; width: min(420px, 42vw); max-height: 170px; overflow: hidden; z-index: 9; font-size: 12px; color: #e6e2f5; text-shadow: 0 1px 0 #000, 0 0 4px #000; pointer-events: none; display: flex; flex-direction: column; justify-content: flex-end; }
+.feed { position: absolute; left: 10px; bottom: 84px; width: min(420px, 42vw); max-height: 170px; overflow: hidden; z-index: 9; font-size: 12px; color: #e6e2f5; text-shadow: 0 1px 0 #000, 0 0 4px #000; pointer-events: none; display: flex; flex-direction: column; justify-content: flex-end; }
 
 .turnbar { position: absolute; left: 50%; bottom: 12px; transform: translateX(-50%); z-index: 12; display: flex; gap: 12px; align-items: center; white-space: nowrap; }
 
-.tip { position: absolute; left: 50%; bottom: 76px; transform: translateX(-50%); z-index: 11; background: var(--panel); border: 2px solid var(--line); padding: 2px 10px; pointer-events: none; }
+.tip { white-space: nowrap; position: absolute; left: 50%; bottom: 76px; transform: translateX(-50%); z-index: 11; background: var(--panel); border: 2px solid var(--line); padding: 2px 10px; pointer-events: none; }
 .toast { position: absolute; left: 50%; top: 52px; transform: translateX(-50%); z-index: 40; background: #4a2020; border: 2px solid var(--bad); padding: 6px 14px; }
 
 .slots { position: absolute; left: 50%; top: 22%; transform: translateX(-50%); z-index: 35; text-align: center; pointer-events: none; }
@@ -173,4 +173,26 @@ input:focus, button:focus-visible, select:focus { outline: 2px solid var(--accen
   .chat { left: 10px; right: 10px; width: auto; bottom: 70px; }
   .turnbar { white-space: normal; flex-wrap: wrap; width: calc(100% - 20px); justify-content: center; }
   .side { width: 44vw; }
+}
+
+/* ---------- Shared Harbor ---------- */
+.docks { width: min(340px, 40vw); max-height: calc(100vh - 270px); overflow-y: auto; }
+.docks h3:first-child { margin-top: 0; }
+.ships li, .roster li { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 5px 0; border-bottom: 1px dashed #37335a; }
+.ships { margin-bottom: 10px; }
+.log li { padding: 3px 0; font-size: 12px; }
+.roster li.away { opacity: 0.5; }
+.roster h3 { margin-top: 0; }
+.crew .panel h3 { margin-top: 0; }
+.dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #4a4570; }
+.dot.on { background: var(--good); }
+.harbor-chat { left: 10px; right: auto; bottom: 12px; width: min(340px, 40vw); }
+.harbor-chat .chat-lines { height: 110px; }
+.harbor-view .docks { bottom: auto; }
+.sheet-wrap { width: 100%; max-width: 560px; max-height: 100%; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
+.sheet-wrap .panel { max-width: none; }
+
+@media (max-width: 760px) {
+  .docks { width: 46vw; font-size: 12px; }
+  .harbor-chat { width: calc(100% - 20px); bottom: 70px; }
 }

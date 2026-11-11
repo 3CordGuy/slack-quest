@@ -9,9 +9,12 @@ import {
   HERO_CLASSES,
   MAX_NPC_MESSAGES,
   MAX_PERSUADE_ATTEMPTS,
+  MOVE_COST,
   STAT_LABEL,
+  findPath,
   heroPct,
   poiAt,
+  tileAt,
   type AbilityDef,
   type CheckResult,
   type ClientState,
@@ -140,7 +143,6 @@ export function RunView({ code, onLeave }: { code: string; onLeave(): void }) {
   const state = run.state;
   // Dev-only handle for driving a run from the console or a test script.
   if (import.meta.env.DEV) (window as unknown as { __gq: unknown }).__gq = { state, send: run.send, World };
-  const hoverPoi = state && hover ? poiAt(state.map, hover) : undefined;
 
   return (
     <div className={`run ${state?.phase === "battle" ? "in-battle" : ""}`}>
@@ -159,7 +161,7 @@ export function RunView({ code, onLeave }: { code: string; onLeave(): void }) {
               {state.phase === "overworld" && <TurnBar state={state} run={run} />}
               {state.phase === "overworld" && <Chat state={state} run={run} />}
               {state.phase === "battle" && <Battle state={state} run={run} />}
-              {hoverPoi && state.phase === "overworld" && <div className="tip">{poiName(state, hoverPoi)}{hoverPoi.cleared ? " (cleared)" : ""}</div>}
+              {hover && state.phase === "overworld" && <HexTip state={state} hover={hover} />}
             </>
           )}
           {state.phase === "ended" && <Ending state={state} onLeave={onLeave} />}
@@ -167,6 +169,31 @@ export function RunView({ code, onLeave }: { code: string; onLeave(): void }) {
           {run.error && <div className="toast">{run.error}</div>}
         </>
       )}
+    </div>
+  );
+}
+
+const BIOME_LABEL: Record<string, string> = { plains: "Plains", forest: "Forest", hills: "Hills", water: "Sea", dock: "Dock" };
+
+/** What the hovered hex is, what it costs to enter, and what walking there would cost this turn. */
+function HexTip({ state, hover }: { state: ClientState; hover: HexPos }) {
+  const tile = tileAt(state.map, hover);
+  if (!tile) return null;
+  const poi = poiAt(state.map, hover);
+  const cost = MOVE_COST[tile.biome];
+  const me = state.heroes.find((h) => h.id === state.you);
+  const turn = state.turn?.heroId === state.you ? state.turn : null;
+  let walk: string | null = null;
+  if (turn && me && Number.isFinite(cost) && !(me.pos.q === hover.q && me.pos.r === hover.r)) {
+    const route = findPath(state.map, me.pos, hover, turn.mp);
+    walk = route ? `${route.cost} of your ${turn.mp} movement to walk here` : "out of reach this turn";
+  }
+  return (
+    <div className="tip">
+      <strong>{poi ? `${poiName(state, poi)}${poi.cleared ? " (cleared)" : ""}` : BIOME_LABEL[tile.biome]}</strong>
+      {poi && <span className="muted"> · {BIOME_LABEL[tile.biome]}</span>}
+      <span className="muted"> · {Number.isFinite(cost) ? `${cost} movement to enter` : "cannot be crossed"}</span>
+      {walk && <span className={walk.startsWith("out") ? "bad" : "good"}> · {walk}</span>}
     </div>
   );
 }
@@ -312,7 +339,7 @@ function TurnBar({ state, run }: { state: ClientState; run: RunConnection }) {
         <>
           <strong>Your turn</strong>
           <span>{turn.mp} movement left</span>
-          <span className="muted">Click a lit hex to move.</span>
+          <span className="muted">Click a lit hex to move. Plains cost 1, forest and hills 2.</span>
           {action && <button className="primary" onClick={() => run.send({ type: "interact" })}>{action}</button>}
           <button onClick={() => run.send({ type: "end_turn" })}>End turn</button>
         </>

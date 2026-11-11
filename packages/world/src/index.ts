@@ -11,3 +11,4 @@ export * from "./story";
 export * from "./npc";
 export * from "./world";
 export * from "./view";
+export * from "./harbor";

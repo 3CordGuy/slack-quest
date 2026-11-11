@@ -8,14 +8,37 @@
 
 import * as THREE from "three";
 import type { HexPos } from "@gantt-quest/core";
-import { findPath, reachable, tileAt, type ClientState, type Poi, type Tile, type WorldEvent } from "@gantt-quest/world";
-import { SPRITE_ASPECT, spriteTexture, textTexture } from "./sprites";
+import { findPath, reachable, tileAt, type ClientState, type Phase, type Poi, type Tile, type WorldEvent, type WorldMap } from "@gantt-quest/world";
+import { SPRITE_ASPECT, labelTexture, spriteTexture, textTexture } from "./sprites";
+
+/**
+ * What the renderer needs to draw a scene. An island's ClientState satisfies
+ * this as it is; the Harbor builds one by hand with `freeRoam` set.
+ */
+export interface RenderState {
+  /** Identifies the map; the terrain is rebuilt when it changes. */
+  code: string;
+  you: string;
+  phase: Phase;
+  round: number;
+  map: WorldMap;
+  heroes: { id: string; classId: string; pos: HexPos; label?: string }[];
+  turn: { heroId: string; mp: number } | null;
+  battle: ClientState["battle"];
+  story: { npcs: { id: string; poi: string }[] } | null;
+  npcs: Record<string, { hostile: boolean }>;
+  /** No turns or movement points: the viewer may walk anywhere reachable, and tiles are not lit. */
+  freeRoam?: boolean;
+}
+
+/** Furthest a free-roaming walk may be previewed; matches the Harbor's server-side limit. */
+const FREE_ROAM_REACH = 60;
 
 const SQRT3 = Math.sqrt(3);
 /** Render at 1/PIXEL resolution and scale up unsmoothed for a chunky look. */
 const PIXEL = 2;
 const PLAYER_COLORS = ["#ffd23f", "#5ce1e6", "#ff7ab6", "#9dff6b"];
-const BIOME_COLOR: Record<string, string> = { plains: "#7cb856", forest: "#4c9a52", hills: "#a39672", water: "#3f86dc" };
+const BIOME_COLOR: Record<string, string> = { plains: "#7cb856", forest: "#4c9a52", hills: "#a39672", water: "#3f86dc", dock: "#9a7748" };
 
 export function hexToWorld(p: HexPos): { x: number; z: number } {
   return { x: SQRT3 * (p.q + p.r / 2), z: 1.5 * p.r };
@@ -34,6 +57,8 @@ interface Unit {
   ring: THREE.Mesh | null;
   hpBack: THREE.Sprite | null;
   hpFill: THREE.Sprite | null;
+  label: THREE.Sprite | null;
+  labelText: string;
   goal: THREE.Vector3;
   /** Waypoints still to walk before settling on `goal`. */
   path: THREE.Vector3[];
@@ -46,6 +71,7 @@ interface Want {
   kind: string;
   pos: THREE.Vector3;
   size: number;
+  label?: string;
   ring?: string;
   pulse?: boolean;
   hp?: number;
@@ -88,7 +114,7 @@ export class WorldRenderer {
   private floaters: Floater[] = [];
   private pending: { at: number; run: () => void }[] = [];
 
-  private state: ClientState | null = null;
+  private state: RenderState | null = null;
   private reach = new Map<string, { cost: number }>();
   private hovered: HexPos | null = null;
   private turnKey = "";
@@ -163,15 +189,15 @@ export class WorldRenderer {
 
   // ---------- state ----------
 
-  setState(state: ClientState) {
+  setState(state: RenderState) {
     const first = this.mapCode !== state.code;
     if (first) this.buildTerrain(state);
     this.state = state;
     this.buildPois(state);
 
     const me = state.heroes.find((h) => h.id === state.you);
-    const myTurn = state.phase === "overworld" && state.turn?.heroId === state.you && !!me;
-    this.reach = myTurn ? reachable(state.map, me!.pos, state.turn!.mp) : new Map();
+    const myTurn = !!me && (state.freeRoam || (state.phase === "overworld" && state.turn?.heroId === state.you));
+    this.reach = myTurn ? reachable(state.map, me!.pos, state.freeRoam ? FREE_ROAM_REACH : state.turn!.mp) : new Map();
     this.paintTiles();
     this.syncUnits(state);
     this.updatePath();
@@ -228,7 +254,7 @@ export class WorldRenderer {
 
   // ---------- terrain ----------
 
-  private buildTerrain(state: ClientState) {
+  private buildTerrain(state: RenderState) {
     this.mapCode = state.code;
     this.tiles = state.map.tiles;
     if (this.terrain) {
@@ -304,7 +330,7 @@ export class WorldRenderer {
       c.set(BIOME_COLOR[t.biome]);
       c.offsetHSL(0, 0, (noise(t.q, t.r, 9) - 0.5) * 0.06);
       const r = this.reach.get(key(t));
-      if (r && r.cost > 0) c.lerp(white, 0.3);
+      if (r && r.cost > 0 && !this.state?.freeRoam) c.lerp(white, 0.3);
       this.terrain!.setColorAt(i, c);
     });
     if (this.terrain.instanceColor) this.terrain.instanceColor.needsUpdate = true;
@@ -318,7 +344,7 @@ export class WorldRenderer {
 
   // ---------- points of interest ----------
 
-  private buildPois(state: ClientState) {
+  private buildPois(state: RenderState) {
     const sig = state.map.pois.map((p) => `${p.id}:${p.cleared}`).join("|");
     if (sig === this.poiSig) return;
     this.poiSig = sig;
@@ -370,6 +396,30 @@ export class WorldRenderer {
         add(box(0.38, 0.24, 0.26), lambert(poi.cleared ? "#6b6b6b" : "#9a6b2f"), 0, 0.12, 0.2);
         if (!poi.cleared) add(box(0.4, 0.05, 0.28), lambert("#e0b12e"), 0, 0.26, 0.2);
         break;
+      case "pier": {
+        // A crew ship moored off the end of the pier, toward the open sea.
+        add(box(1.5, 0.4, 0.62), lambert("#6b4a2b"), 0, -0.02, 1.75);
+        add(box(0.5, 0.22, 0.5), lambert("#5a3d22"), 0.5, 0.28, 1.75);
+        add(new THREE.CylinderGeometry(0.05, 0.05, 1.5, 5), lambert("#4a3520"), -0.1, 0.9, 1.75);
+        add(box(0.75, 0.75, 0.05), lambert("#f4efe1"), -0.1, 1.15, 1.7);
+        add(box(0.3, 0.06, 0.9), lambert("#8a6a44"), 0, 0.02, 0.95);
+        break;
+      }
+      case "plot": {
+        // Roof colour is picked from the owner's id so each hut is recognisable.
+        const roofs = ["#8c3b2f", "#2f6f8c", "#6b8c2f", "#8c6a2f", "#6a2f8c", "#2f8c7a"];
+        let hash = 0;
+        for (const ch of poi.id) hash = (hash * 31 + ch.charCodeAt(0)) >>> 0;
+        add(box(0.8, 0.5, 0.65), lambert("#c9a877"), 0, 0.25, 0);
+        add(new THREE.ConeGeometry(0.72, 0.45, 4), lambert(roofs[hash % roofs.length]), 0, 0.72, 0, Math.PI / 4);
+        add(box(0.18, 0.3, 0.04), lambert("#5a3d22"), 0, 0.15, 0.33);
+        break;
+      }
+      case "board":
+        add(new THREE.CylinderGeometry(0.05, 0.05, 0.9, 5), lambert("#5a3d22"), -0.3, 0.45, 0);
+        add(new THREE.CylinderGeometry(0.05, 0.05, 0.9, 5), lambert("#5a3d22"), 0.3, 0.45, 0);
+        add(box(0.8, 0.5, 0.06), lambert("#e8dcc0"), 0, 0.7, 0);
+        break;
       case "camp":
         add(new THREE.ConeGeometry(0.48, 0.6, 4), lambert(poi.cleared ? "#777777" : "#b9433d"), -0.2, 0.3, 0, Math.PI / 4);
         if (!poi.cleared) add(new THREE.ConeGeometry(0.1, 0.22, 4), new THREE.MeshBasicMaterial({ color: "#ff9a3c" }), 0.4, 0.11, 0.25);
@@ -380,7 +430,7 @@ export class WorldRenderer {
 
   // ---------- units ----------
 
-  private battleCentre(state: ClientState): THREE.Vector3 {
+  private battleCentre(state: RenderState): THREE.Vector3 {
     const battle = state.battle!;
     const poiId = battle.poiId ?? state.story?.npcs.find((n) => n.id === battle.npcId)?.poi;
     const poi = state.map.pois.find((p) => p.id === poiId);
@@ -395,7 +445,7 @@ export class WorldRenderer {
     return centre;
   }
 
-  private syncUnits(state: ClientState) {
+  private syncUnits(state: RenderState) {
     const want = new Map<string, Want>();
     const colorOf = (heroId: string) => PLAYER_COLORS[state.heroes.findIndex((h) => h.id === heroId) % PLAYER_COLORS.length];
 
@@ -434,7 +484,7 @@ export class WorldRenderer {
         const pos = this.standAt(h.pos);
         pos.x += (i - (n - 1) / 2) * 0.6;
         pos.z += 0.25;
-        want.set(h.id, { kind: h.classId, pos, size: 1.5, ring: colorOf(h.id), pulse: state.turn?.heroId === h.id });
+        want.set(h.id, { kind: h.classId, pos, size: 1.5, label: h.label, ring: colorOf(h.id), pulse: state.turn?.heroId === h.id });
       }
       for (const npc of state.story?.npcs ?? []) {
         const poi = state.map.pois.find((p) => p.id === npc.poi);
@@ -460,6 +510,7 @@ export class WorldRenderer {
       if (unit.ring) this.unitGroup.remove(unit.ring);
       if (unit.hpBack) this.unitGroup.remove(unit.hpBack);
       if (unit.hpFill) this.unitGroup.remove(unit.hpFill);
+      this.dropLabel(unit);
       this.units.delete(id);
     }
     this.pulsing.clear();
@@ -470,7 +521,7 @@ export class WorldRenderer {
         sprite.center.set(0.5, 0);
         sprite.position.copy(w.pos);
         this.unitGroup.add(sprite);
-        unit = { sprite, ring: null, hpBack: null, hpFill: null, goal: w.pos.clone(), path: [], kick: new THREE.Vector3(), kind: w.kind };
+        unit = { sprite, ring: null, hpBack: null, hpFill: null, label: null, labelText: "", goal: w.pos.clone(), path: [], kick: new THREE.Vector3(), kind: w.kind };
         this.units.set(id, unit);
       }
       unit.goal.copy(w.pos);
@@ -490,6 +541,19 @@ export class WorldRenderer {
         if (w.ring) (unit.ring.material as THREE.MeshBasicMaterial).color.set(w.ring);
       }
       if (w.pulse) this.pulsing.add(id);
+
+      if ((w.label ?? "") !== unit.labelText) {
+        this.dropLabel(unit);
+        unit.labelText = w.label ?? "";
+        if (w.label) {
+          const { texture, aspect } = labelTexture(w.label);
+          unit.label = new THREE.Sprite(new THREE.SpriteMaterial({ map: texture, transparent: true, depthTest: false }));
+          unit.label.scale.set(0.42 * aspect, 0.42, 1);
+          unit.label.userData.lift = w.size + 0.55;
+          unit.label.renderOrder = 7;
+          this.unitGroup.add(unit.label);
+        }
+      }
 
       if (w.hp !== undefined && !unit.hpBack) {
         unit.hpBack = new THREE.Sprite(new THREE.SpriteMaterial({ color: "#1b1830", depthTest: false }));
@@ -513,6 +577,14 @@ export class WorldRenderer {
     }
   }
 
+  private dropLabel(unit: Unit) {
+    if (!unit.label) return;
+    this.unitGroup.remove(unit.label);
+    unit.label.material.map?.dispose();
+    unit.label.material.dispose();
+    unit.label = null;
+  }
+
   // ---------- hover and path ----------
 
   private updatePath() {
@@ -527,8 +599,9 @@ export class WorldRenderer {
     const reach = this.reach.get(key(hovered));
     const me = state.heroes.find((h) => h.id === state.you);
     (this.hoverRing.material as THREE.MeshBasicMaterial).color.set(reach && reach.cost > 0 ? "#ffffff" : "#35405a");
-    if (!reach || reach.cost === 0 || !me || !state.turn) return;
-    const route = findPath(state.map, me.pos, hovered, state.turn.mp);
+    const budget = state.freeRoam ? FREE_ROAM_REACH : state.turn?.mp;
+    if (!reach || reach.cost === 0 || !me || budget === undefined) return;
+    const route = findPath(state.map, me.pos, hovered, budget);
     for (const step of route?.path ?? []) {
       const dot = new THREE.Mesh(new THREE.SphereGeometry(0.13, 6, 4), new THREE.MeshBasicMaterial({ color: "#ffffff" }));
       const p = this.standAt(step);
@@ -657,6 +730,7 @@ export class WorldRenderer {
         const s = this.pulsing.has(id) ? 1.25 + Math.sin(this.clock * 6) * 0.2 : 1;
         unit.ring.scale.set(s, s, 1);
       }
+      if (unit.label) unit.label.position.set(p.x, p.y + unit.label.userData.lift, p.z);
       if (unit.hpBack && unit.hpFill) {
         const lift = unit.hpBack.userData.lift ?? 2;
         unit.hpBack.position.set(p.x - 0.6, p.y + lift, p.z);

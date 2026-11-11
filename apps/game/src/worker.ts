@@ -4,23 +4,29 @@
 
 import { Hono, type Context } from "hono";
 import { getCookie, setCookie } from "hono/cookie";
-import { HERO_CLASSES, makeRng, rollStartingStats } from "@gantt-quest/world";
+import { HERO_CLASSES, MAX_CREW, makeRng, rollStartingStats } from "@gantt-quest/world";
 import {
   confirmCharacter,
+  createCrew,
   createGuest,
   createRun,
+  crewFor,
   deleteCharacter,
   equipItem,
   getCharacter,
   getInventory,
   getRun,
+  joinCrew,
+  leaveCrew,
   playerForToken,
+  refreshHarbor,
   saveDraft,
   spendPoint,
   type Env,
   type Player,
 } from "./server/db";
 
+export { HarborRoom } from "./server/harbor-room";
 export { RunRoom } from "./server/run-room";
 
 type App = { Bindings: Env; Variables: { player: Player } };
@@ -53,8 +59,12 @@ app.use("/api/*", async (c, next) => {
 
 app.get("/api/me", async (c) => {
   const player = c.get("player");
-  const [character, inventory] = await Promise.all([getCharacter(c.env.DB, player.id), getInventory(c.env.DB, player.id)]);
-  return c.json({ player, character, inventory });
+  const [character, inventory, crew] = await Promise.all([
+    getCharacter(c.env.DB, player.id),
+    getInventory(c.env.DB, player.id),
+    crewFor(c.env.DB, player.id),
+  ]);
+  return c.json({ player, character, inventory, crew });
 });
 
 // Roll (or re-roll) starting stats for a character that is still a draft.
@@ -78,7 +88,10 @@ app.post("/api/character/confirm", async (c) => {
 
 // Discards the character and all its gear; the player starts creation again.
 app.post("/api/character/reroll", async (c) => {
-  await deleteCharacter(c.env.DB, c.get("player").id);
+  const player = c.get("player");
+  await deleteCharacter(c.env.DB, player.id);
+  // Their hut and roster entry disappear until the new character is confirmed.
+  c.executionCtx.waitUntil(crewFor(c.env.DB, player.id).then((crew) => refreshHarbor(c.env, crew?.id ?? null)));
   return c.json({ ok: true });
 });
 
@@ -94,12 +107,55 @@ app.post("/api/character/equip", async (c) => {
   return ok ? c.json({ ok }) : c.json({ error: "Cannot equip that." }, 409);
 });
 
-// Launch a voyage: allocates a run code. The island is generated from the run's seed.
+// ---------- crews and the shared Harbor ----------
+
+app.post("/api/crew", async (c) => {
+  const body = await c.req.json<{ name?: string }>().catch(() => ({}) as { name?: string });
+  const name = String(body.name ?? "").replace(/\s+/g, " ").trim();
+  if (name.length < 2 || name.length > 30) return c.json({ error: "Crew name must be 2 to 30 characters." }, 400);
+  return c.json({ crew: await createCrew(c.env.DB, c.get("player").id, name) });
+});
+
+app.post("/api/crew/join", async (c) => {
+  const body = await c.req.json<{ code?: string }>().catch(() => ({}) as { code?: string });
+  const code = String(body.code ?? "").toUpperCase();
+  const before = await crewFor(c.env.DB, c.get("player").id);
+  const crew = /^[A-Z]{6}$/.test(code) ? await joinCrew(c.env.DB, c.get("player").id, code, MAX_CREW) : null;
+  if (!crew) return c.json({ error: "No crew with that code, or it is full." }, 404);
+  if (before && before.id !== crew.id) c.executionCtx.waitUntil(refreshHarbor(c.env, before.id));
+  return c.json({ crew });
+});
+
+app.post("/api/crew/leave", async (c) => {
+  const crew = await crewFor(c.env.DB, c.get("player").id);
+  await leaveCrew(c.env.DB, c.get("player").id);
+  c.executionCtx.waitUntil(refreshHarbor(c.env, crew?.id ?? null));
+  return c.json({ ok: true });
+});
+
+app.get("/api/crew/ws", async (c) => {
+  const player = c.get("player");
+  const [crew, character] = await Promise.all([crewFor(c.env.DB, player.id), getCharacter(c.env.DB, player.id)]);
+  if (!crew) return c.text("You are not in a crew.", 403);
+  if (character?.status !== "active") return c.text("Create a character first.", 409);
+  const headers = new Headers(c.req.raw.headers);
+  headers.set("x-crew-id", crew.id);
+  headers.set("x-player-id", player.id);
+  headers.set("x-player-name", encodeURIComponent(character.name));
+  headers.set("x-player-class", character.class_id);
+  headers.set("x-player-level", String(character.level));
+  return c.env.HARBOR_ROOM.get(c.env.HARBOR_ROOM.idFromName(crew.id)).fetch(new Request(c.req.url, { headers }));
+});
+
+// Launch a voyage: allocates a run code and moors the ship at the crew's Harbor.
+// The island is generated from the run's seed.
 app.post("/api/run", async (c) => {
   const player = c.get("player");
-  const character = await getCharacter(c.env.DB, player.id);
+  const [character, crew] = await Promise.all([getCharacter(c.env.DB, player.id), crewFor(c.env.DB, player.id)]);
   if (character?.status !== "active") return c.json({ error: "Create a character first." }, 409);
-  return c.json({ code: await createRun(c.env.DB, player.id) });
+  const code = await createRun(c.env.DB, player.id, crew?.id ?? null);
+  c.executionCtx.waitUntil(refreshHarbor(c.env, crew?.id ?? null));
+  return c.json({ code });
 });
 
 app.get("/api/run/:code/ws", async (c) => {
