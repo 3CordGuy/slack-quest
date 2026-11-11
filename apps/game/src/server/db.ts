@@ -1,0 +1,272 @@
+// D1 access for the overworld game. D1 is the system of record for
+// players, characters, inventory and run state.
+
+import type { StatKey, Stats } from "@gantt-quest/core";
+import {
+  WEAPONS,
+  applyXp,
+  heroClass,
+  weaponItem,
+  type HeroInit,
+  type ItemDef,
+  type WorldState,
+} from "@gantt-quest/world";
+import type { RunRoom } from "./run-room";
+
+export interface Env {
+  DB: D1Database;
+  AI?: Ai;
+  ASSETS: Fetcher;
+  RUN_ROOM: DurableObjectNamespace<RunRoom>;
+  /** "mock" replaces Workers AI with a scripted stand-in. */
+  AI_MODE?: string;
+}
+
+export interface Player {
+  id: string;
+  name: string;
+}
+
+export interface CharacterRow {
+  player_id: string;
+  name: string;
+  class_id: string;
+  status: "draft" | "active";
+  level: number;
+  xp: number;
+  str: number;
+  int_stat: number;
+  vit: number;
+  agi: number;
+  dex: number;
+  unspent_points: number;
+  gold: number;
+}
+
+export interface InventoryRow {
+  id: number;
+  kind: "weapon" | "trinket";
+  ref: string;
+  name: string;
+  rarity: string;
+  slot: "weapon" | "trinket";
+  stat_bonus_json: string;
+  equipped: number;
+}
+
+const now = () => Date.now();
+const STAT_COLUMNS: StatKey[] = ["str", "int_stat", "vit", "agi", "dex"];
+
+export const statsOf = (c: CharacterRow): Stats => ({ str: c.str, int_stat: c.int_stat, vit: c.vit, agi: c.agi, dex: c.dex });
+
+// ---------- players and sessions ----------
+
+export async function createGuest(db: D1Database, name: string): Promise<{ player: Player; token: string }> {
+  const player = { id: crypto.randomUUID(), name };
+  const token = `${crypto.randomUUID()}${crypto.randomUUID()}`.replace(/-/g, "");
+  await db.batch([
+    db.prepare("INSERT INTO players (id, name, created_at) VALUES (?, ?, ?)").bind(player.id, name, now()),
+    db.prepare("INSERT INTO sessions (token, player_id, created_at) VALUES (?, ?, ?)").bind(token, player.id, now()),
+  ]);
+  return { player, token };
+}
+
+export async function playerForToken(db: D1Database, token: string): Promise<Player | null> {
+  return db
+    .prepare("SELECT p.id, p.name FROM sessions s JOIN players p ON p.id = s.player_id WHERE s.token = ?")
+    .bind(token)
+    .first<Player>();
+}
+
+// ---------- characters ----------
+
+export async function getCharacter(db: D1Database, playerId: string): Promise<CharacterRow | null> {
+  return db.prepare("SELECT * FROM characters WHERE player_id = ?").bind(playerId).first<CharacterRow>();
+}
+
+export async function getInventory(db: D1Database, playerId: string): Promise<InventoryRow[]> {
+  const res = await db.prepare("SELECT * FROM inventory WHERE player_id = ? ORDER BY id").bind(playerId).all<InventoryRow>();
+  return res.results;
+}
+
+/** Create or overwrite the player's draft character with freshly rolled stats. */
+export async function saveDraft(db: D1Database, playerId: string, name: string, classId: string, stats: Stats): Promise<void> {
+  await db
+    .prepare(
+      `INSERT INTO characters (player_id, name, class_id, status, str, int_stat, vit, agi, dex, created_at)
+       VALUES (?1, ?2, ?3, 'draft', ?4, ?5, ?6, ?7, ?8, ?9)
+       ON CONFLICT(player_id) DO UPDATE SET name = ?2, class_id = ?3, str = ?4, int_stat = ?5, vit = ?6, agi = ?7, dex = ?8
+       WHERE characters.status = 'draft'`,
+    )
+    .bind(playerId, name, classId, stats.str, stats.int_stat, stats.vit, stats.agi, stats.dex, now())
+    .run();
+}
+
+/** Lock in the draft and hand out the class's starting weapon. */
+export async function confirmCharacter(db: D1Database, playerId: string): Promise<boolean> {
+  const c = await getCharacter(db, playerId);
+  if (!c || c.status !== "draft") return false;
+  const cls = heroClass(c.class_id);
+  if (!cls) return false;
+  const weapon = weaponItem(cls.weapons[0]);
+  await db.batch([
+    db.prepare("UPDATE characters SET status = 'active' WHERE player_id = ?").bind(playerId),
+    db
+      .prepare(
+        "INSERT INTO inventory (player_id, kind, ref, name, rarity, slot, stat_bonus_json, equipped, created_at) VALUES (?, 'weapon', ?, ?, 'common', 'weapon', '{}', 1, ?)",
+      )
+      .bind(playerId, weapon.ref, weapon.name, now()),
+  ]);
+  return true;
+}
+
+/** Re-roll: the character and everything it owns is discarded. */
+export async function deleteCharacter(db: D1Database, playerId: string): Promise<void> {
+  await db.batch([
+    db.prepare("DELETE FROM inventory WHERE player_id = ?").bind(playerId),
+    db.prepare("DELETE FROM characters WHERE player_id = ?").bind(playerId),
+  ]);
+}
+
+export async function spendPoint(db: D1Database, playerId: string, stat: string): Promise<boolean> {
+  if (!STAT_COLUMNS.includes(stat as StatKey)) return false;
+  // `stat` is checked against the fixed column list above before being inlined.
+  const res = await db
+    .prepare(`UPDATE characters SET ${stat} = ${stat} + 1, unspent_points = unspent_points - 1 WHERE player_id = ? AND status = 'active' AND unspent_points > 0`)
+    .bind(playerId)
+    .run();
+  return res.meta.changes > 0;
+}
+
+export async function equipItem(db: D1Database, playerId: string, itemId: number): Promise<boolean> {
+  const item = await db.prepare("SELECT * FROM inventory WHERE id = ? AND player_id = ?").bind(itemId, playerId).first<InventoryRow>();
+  if (!item) return false;
+  if (item.kind === "weapon") {
+    const c = await getCharacter(db, playerId);
+    if (!c || WEAPONS[item.ref]?.classId !== c.class_id) return false;
+  }
+  await db.batch([
+    db.prepare("UPDATE inventory SET equipped = 0 WHERE player_id = ? AND slot = ?").bind(playerId, item.slot),
+    db.prepare("UPDATE inventory SET equipped = 1 WHERE id = ?").bind(itemId),
+  ]);
+  return true;
+}
+
+/** Everything a run needs to know about a character when it boards. */
+export async function heroInitFor(db: D1Database, playerId: string): Promise<HeroInit | null> {
+  const c = await getCharacter(db, playerId);
+  if (!c || c.status !== "active") return null;
+  const equipped = (await getInventory(db, playerId)).filter((i) => i.equipped);
+  const bonus: Partial<Stats> = {};
+  for (const item of equipped) {
+    const b = JSON.parse(item.stat_bonus_json) as Partial<Stats>;
+    for (const key of STAT_COLUMNS) if (b[key]) bonus[key] = (bonus[key] ?? 0) + b[key]!;
+  }
+  const weapon = equipped.find((i) => i.kind === "weapon")?.ref ?? heroClass(c.class_id)!.weapons[0];
+  return { id: c.player_id, name: c.name, classId: c.class_id, level: c.level, xp: c.xp, unspent: c.unspent_points, base: statsOf(c), bonus, weapon };
+}
+
+// ---------- rewards ----------
+
+/** Write XP, gold and an item to the character as they are earned. */
+export async function applyGrant(
+  db: D1Database,
+  code: string,
+  playerId: string,
+  grant: { xp: number; gold: number; item: ItemDef | null },
+): Promise<void> {
+  const c = await getCharacter(db, playerId);
+  if (!c) return;
+  let gold = grant.gold;
+  const stmts: D1PreparedStatement[] = [];
+  if (grant.item) {
+    const owned = grant.item.kind === "weapon"
+      ? await db.prepare("SELECT id FROM inventory WHERE player_id = ? AND ref = ?").bind(playerId, grant.item.ref).first()
+      : null;
+    // A second copy of a weapon is worth more as coin.
+    if (owned) gold += 15;
+    else {
+      stmts.push(
+        db
+          .prepare("INSERT INTO inventory (player_id, kind, ref, name, rarity, slot, stat_bonus_json, equipped, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?)")
+          .bind(playerId, grant.item.kind, grant.item.ref, grant.item.name, grant.item.rarity, grant.item.slot, JSON.stringify(grant.item.statBonus), now()),
+      );
+    }
+  }
+  const next = applyXp({ classId: c.class_id, level: c.level, xp: c.xp, stats: statsOf(c), unspent: c.unspent_points }, grant.xp);
+  stmts.push(
+    db
+      .prepare("UPDATE characters SET level = ?, xp = ?, str = ?, int_stat = ?, vit = ?, agi = ?, dex = ?, unspent_points = ?, gold = gold + ? WHERE player_id = ?")
+      .bind(next.level, next.xp, next.stats.str, next.stats.int_stat, next.stats.vit, next.stats.agi, next.stats.dex, next.unspent, gold, playerId),
+    db
+      .prepare(
+        `INSERT INTO run_players (code, player_id, xp_earned, gold_earned) VALUES (?1, ?2, ?3, ?4)
+         ON CONFLICT(code, player_id) DO UPDATE SET xp_earned = xp_earned + ?3, gold_earned = gold_earned + ?4`,
+      )
+      .bind(code, playerId, grant.xp, gold),
+  );
+  await db.batch(stmts);
+}
+
+/** Soft death: lose a capped slice of gold, nothing else. */
+export async function applyPenalty(db: D1Database, playerId: string, goldPct: number, cap: number): Promise<void> {
+  await db
+    .prepare("UPDATE characters SET gold = gold - MIN(?, CAST(gold * ? AS INTEGER)) WHERE player_id = ?")
+    .bind(cap, goldPct, playerId)
+    .run();
+}
+
+// ---------- runs ----------
+
+export interface RunRow {
+  code: string;
+  seed: string;
+  status: string;
+  state_json: string | null;
+}
+
+export async function createRun(db: D1Database, playerId: string): Promise<string> {
+  // No vowels, so codes never spell anything.
+  const alphabet = "BCDFGHJKLMNPQRSTVWXZ";
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const bytes = crypto.getRandomValues(new Uint8Array(4));
+    const code = [...bytes].map((b) => alphabet[b % alphabet.length]).join("");
+    try {
+      await db
+        .prepare("INSERT INTO runs (code, seed, status, created_by, created_at, updated_at) VALUES (?, ?, 'lobby', ?, ?, ?)")
+        .bind(code, crypto.randomUUID(), playerId, now(), now())
+        .run();
+      return code;
+    } catch {
+      // Code collision; try another.
+    }
+  }
+  throw new Error("could not allocate a run code");
+}
+
+export async function getRun(db: D1Database, code: string): Promise<RunRow | null> {
+  return db.prepare("SELECT code, seed, status, state_json FROM runs WHERE code = ?").bind(code).first<RunRow>();
+}
+
+export function saveRunStatements(db: D1Database, state: WorldState, action: unknown): D1PreparedStatement[] {
+  const status = state.phase === "ended" ? (state.result?.outcome ?? "defeat") : state.phase;
+  return [
+    db
+      .prepare("UPDATE runs SET state_json = ?, bible_json = ?, status = ?, updated_at = ? WHERE code = ?")
+      .bind(JSON.stringify(state), state.bible ? JSON.stringify(state.bible) : null, status, now(), state.code),
+    db.prepare("INSERT INTO run_actions (code, action_json, created_at) VALUES (?, ?, ?)").bind(state.code, JSON.stringify(action), now()),
+  ];
+}
+
+export function conversationStatement(
+  db: D1Database,
+  code: string,
+  npcId: string,
+  speaker: string,
+  text: string,
+  meta: unknown = null,
+): D1PreparedStatement {
+  return db
+    .prepare("INSERT INTO npc_conversations (code, npc_id, speaker, text, meta_json, created_at) VALUES (?, ?, ?, ?, ?, ?)")
+    .bind(code, npcId, speaker, text, meta ? JSON.stringify(meta) : null, now());
+}

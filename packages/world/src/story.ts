@@ -82,7 +82,13 @@ export function validateFill(raw: unknown): StoryFill | null {
 
 // ---------- the bible ----------
 
-export type Gate = "free" | "persuade";
+/**
+ * When a capability may fire. `free`: whenever the NPC chooses. `persuade`:
+ * only after a hero passes a persuasion check. `provoked`: only once the NPC
+ * already disliked the party before this exchange, so it takes two bad
+ * exchanges, not one odd remark, to start a fight.
+ */
+export type Gate = "free" | "persuade" | "provoked";
 
 /** One thing an NPC is able to do to the game. The model only decides when. */
 export type Capability =
@@ -162,7 +168,7 @@ export function buildBible(frame: StoryFrame, fill: StoryFill): StoryBible {
     capabilities: [
       { id: "reveal_lair", verb: "reveal_location", poi: "lair", poiName: fill.lair_name, gate: "free" },
       { id: "give_charm", verb: "give_item", item: "charm", itemName: fill.charm_name, gate: "persuade" },
-      { id: "call_guard", verb: "start_combat", enemies: ["bandit"], gate: "free" },
+      { id: "call_guard", verb: "start_combat", enemies: ["bandit"], gate: "provoked" },
     ],
   };
   return {

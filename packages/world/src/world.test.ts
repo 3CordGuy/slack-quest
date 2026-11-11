@@ -311,6 +311,9 @@ describe("npc output and intent validation", () => {
     const reveal = { verb: "reveal_location", args: { poi: "lair" } };
     expect(validateIntent(sheet, newNpcRun(), reveal).ok).toBe(true);
     expect(validateIntent(sheet, { ...newNpcRun(), hostile: true }, reveal).ok).toBe(false);
+    const fight = { verb: "start_combat", args: {} };
+    expect(validateIntent(sheet, newNpcRun(), fight).ok).toBe(false);
+    expect(validateIntent(sheet, { ...newNpcRun(), attitude: -1 }, fight).ok).toBe(true);
   });
 });
 
@@ -429,8 +432,14 @@ describe("world reducer", () => {
 
   it("lets an NPC start a fight, then refuses to talk", () => {
     let s = placeAll(startedWorld(), "hut");
+    const threat: WorldAction = { type: "npc_reply", npcId: "npc1", heroId: "p1", output: { say: "Guards!", intent: { verb: "start_combat", args: {} }, attitudeDelta: -1 } };
+    // The first bad exchange only sours the NPC; it takes a second to start a fight.
     s = must(s, { type: "talk", heroId: "p1", npcId: "npc1", text: "hand it over or else" });
-    s = must(s, { type: "npc_reply", npcId: "npc1", heroId: "p1", output: { say: "Guards!", intent: { verb: "start_combat", args: {} }, attitudeDelta: -1 } });
+    s = must(s, threat);
+    expect(s.phase).toBe("overworld");
+    expect(s.npcs.npc1.attitude).toBe(-1);
+    s = must(s, { type: "talk", heroId: "p1", npcId: "npc1", text: "I said hand it over" });
+    s = must(s, threat);
     expect(s.phase).toBe("battle");
     expect(s.battle!.npcId).toBe("npc1");
     expect(s.npcs.npc1.hostile).toBe(true);

@@ -92,6 +92,7 @@ What the code review found that shapes the plan:
   - Each NPC has a whitelist of **capabilities** written into the bible (holds item X, knows location Y). The model only decides *when* to use one; it cannot invent items, gold or facts.
   - Anything the NPC should not reveal is simply not in its prompt.
   - Verbs that need persuading trigger a `rollCheck()` on the speaking hero's `int_stat` (there is no social stat today); the result is fed back for the NPC's next line.
+  - Starting a fight is gated on the NPC already disliking the party before the exchange, so it takes two bad exchanges, not one odd remark.
   - Rejected intents are dropped and the `say` text still shows, so a jailbroken reply is only words.
   - Caps: messages per conversation and per run, message length, one speaker at a time.
 - Conversations are shared: every hero on the hex sees the stream through the DO.

@@ -96,7 +96,13 @@ export function parseNpcOutput(raw: unknown): NpcOutput | null {
 /** Capabilities the NPC could use right now. This is also what the prompt is allowed to mention. */
 export function availableCapabilities(sheet: NpcSheet, run: NpcRun): Capability[] {
   if (run.hostile) return [];
-  return sheet.capabilities.filter((c) => !run.used.includes(c.id) && (c.gate === "free" || run.persuaded));
+  return sheet.capabilities.filter((c) => !run.used.includes(c.id) && gateOpen(c.gate, run));
+}
+
+function gateOpen(gate: Capability["gate"], run: NpcRun): boolean {
+  if (gate === "persuade") return run.persuaded;
+  if (gate === "provoked") return run.attitude < 0;
+  return true;
 }
 
 export type IntentVerdict =
@@ -106,7 +112,8 @@ export type IntentVerdict =
 /**
  * Decide whether an intent from the model is allowed. A valid intent names
  * a known verb and matches, exactly, one unspent capability on this NPC's
- * sheet whose gate is open.
+ * sheet whose gate is open. Call it with the NPC's state from *before* this
+ * reply's attitude change is applied.
  */
 export function validateIntent(sheet: NpcSheet, run: NpcRun, intent: NpcIntent): IntentVerdict {
   if (!(NPC_VERBS as readonly string[]).includes(intent.verb)) {
@@ -126,6 +133,7 @@ export function validateIntent(sheet: NpcSheet, run: NpcRun, intent: NpcIntent):
   if (!match) return { ok: false, reason: `${sheet.id} has nothing matching ${JSON.stringify(intent.args)}` };
   if (run.used.includes(match.id)) return { ok: false, reason: `${match.id} already used` };
   if (match.gate === "persuade" && !run.persuaded) return { ok: false, reason: `${match.id} needs a passed persuasion check` };
+  if (match.gate === "provoked" && run.attitude >= 0) return { ok: false, reason: `${match.id} needs the npc to be provoked first` };
   return { ok: true, capability: match };
 }
 

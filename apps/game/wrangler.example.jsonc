@@ -1,0 +1,40 @@
+// Template for apps/game/wrangler.jsonc. The real file is gitignored.
+//
+// Local development needs no Cloudflare resources:
+//   1. cp apps/game/wrangler.example.jsonc apps/game/wrangler.jsonc
+//   2. pnpm --filter @gantt-quest/game db:migrate:local
+//   3. pnpm --filter @gantt-quest/game dev
+//
+// AI_MODE "mock" swaps Workers AI for a scripted stand-in so the game runs
+// offline and for free. Set it to "live" (and be logged in to wrangler) to
+// use real models for the story, NPC replies and the epilogue.
+//
+// This worker has its own D1 database. It does not share the legacy
+// slack-quest database used by apps/web and apps/slack.
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "gantt-quest-game",
+  "main": "src/worker.ts",
+  "compatibility_date": "2025-05-01",
+  "workers_dev": true,
+  "observability": { "enabled": true },
+  "assets": {
+    "directory": "./dist/client",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "gantt-quest-game",
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "./migrations"
+    }
+  ],
+  "ai": { "binding": "AI" },
+  "vars": { "AI_MODE": "mock" },
+  "durable_objects": {
+    "bindings": [{ "name": "RUN_ROOM", "class_name": "RunRoom" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["RunRoom"] }]
+}

@@ -499,13 +499,14 @@ function npcReply(ctx: Ctx, action: Extract<WorldAction, { type: "npc_reply" }>)
   if (!sheet || !run) return "no such character";
   run.busy = false;
   const { say, intent, attitudeDelta } = action.output;
+  // Judge the intent against how the NPC felt going into this exchange.
+  const verdict = intent ? validateIntent(sheet, run, intent) : null;
   // Words alone can warm an NPC to 1; only a passed check takes it higher.
   const ceiling = run.persuaded ? 2 : 1;
   run.attitude = Math.max(-2, Math.min(Math.max(run.attitude, ceiling), run.attitude + attitudeDelta));
   pushChat(ctx, { npcId: sheet.id, who: "npc", name: sheet.name, text: say });
-  if (!intent || state.phase !== "overworld") return null;
+  if (!intent || !verdict || state.phase !== "overworld") return null;
 
-  const verdict = validateIntent(sheet, run, intent);
   if (!verdict.ok) {
     ctx.events.push({ t: "npc_intent", npcId: sheet.id, verb: intent.verb, ok: false, reason: verdict.reason });
     return null;
