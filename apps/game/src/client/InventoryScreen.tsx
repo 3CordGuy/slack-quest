@@ -24,6 +24,7 @@ import {
   type Slot,
 } from "@gantt-quest/world";
 import { api, type Me, type StatKey } from "./api";
+import { DragPanel } from "./DragPanel";
 import { useAct } from "./Harbor";
 import { Icon, ItemDetail, ItemTile, toOwned, type OwnedItem } from "./items";
 import { spriteDataUrl } from "./render/sprites";
@@ -112,7 +113,7 @@ export function InventoryScreen({ me, refresh, onClose }: { me: Me; refresh(): P
 
   return (
     <div className="overlay inv-overlay" onClick={(e) => e.target === e.currentTarget && onClose()}>
-      <div className="inv panel" role="dialog" aria-label="Inventory">
+      <DragPanel id="inventory" title="Inventory" compact className="inv panel" role="dialog" aria-label="Inventory">
         <header className="inv-head">
           <h2>{c.name} <span className="muted">· {cls?.name} · Level {c.level}</span></h2>
           <span className="spacer" />
@@ -224,7 +225,7 @@ export function InventoryScreen({ me, refresh, onClose }: { me: Me; refresh(): P
             Leave crew
           </button>
         </footer>
-      </div>
+      </DragPanel>
     </div>
   );
 }

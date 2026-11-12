@@ -110,6 +110,11 @@ Built to bring the new game closer to the original's inventory and economy.
 - Combat uses the same renderer: the camera pushes in on the hex where the fight started, heroes and enemies line up facing each other on that terrain, and the roll check plays as a row of slots in the HUD.
 - Sprites: use a placeholder CC0 16-bit pack for the first milestone. Flux is not reliable for consistent animated sheets; keep it for NPC dialogue portraits with a new pixel-art prompt prefix through the existing R2 cache approach (`generateAndCacheArt` in `apps/web/src/ai.ts` is the reference).
 
+### HUD panels and touch
+- **Every floating panel can be moved and minimized.** `DragPanel` wraps each one: drag it by its grip (or, with a mouse, by any part that is not a control), and fold it to its title with the minimize button. Positions and folded state are remembered per browser; double-click the grip to put a panel back.
+- **On a phone the larger panels start minimized** (story, crew, docks, crew chat) as chips under the top bar, so the map and the turn bar are clear.
+- **The map takes touch gestures.** One finger pans, two fingers pinch to zoom and pan together, and a tap walks. A pinch never counts as a tap.
+
 ### Story generation: structure from code, flavour from the model
 1. Code picks a hand-authored **story frame** (rescue, heist, plague, usurper…) from the seed. A frame is a small objective graph with typed slots: villain, 2–5 NPCs, key items, locations.
 2. One model call fills the slots as schema-constrained JSON: names, motives, secrets, what each NPC knows, voice, clue text.

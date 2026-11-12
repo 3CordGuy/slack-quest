@@ -6,6 +6,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { HexPos } from "@gantt-quest/core";
 import { HARBOR_PIERS, HARBOR_PLOTS, HARBOR_SHOP, HERO_CLASSES, MAX_PARTY, generateHarbor, harborPoi, poiAt, type HarborShip } from "@gantt-quest/world";
 import { api, type Me } from "./api";
+import { DragPanel } from "./DragPanel";
 import { InventoryScreen } from "./InventoryScreen";
 import { ShopScreen } from "./ShopScreen";
 import { WorldRenderer, type RenderState } from "./render/WorldRenderer";
@@ -129,15 +130,14 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
         <span className="muted">{harbor.crew?.name ?? me.crew?.name}</span>
         <span className="spacer" />
         {harbor.status !== "open" && <span className="bad">connecting…</span>}
-        {harbor.crew && <span className="muted">Invite code {harbor.crew.id}</span>}
-        <button className="small" onClick={copy}>{copied ? "Copied" : "Copy invite link"}</button>
+        {harbor.crew && <span className="muted wide-only">Invite code {harbor.crew.id}</span>}
+        <button className="small" onClick={copy}>{copied ? "Copied" : <>Invite<span className="wide-only"> link</span></>}</button>
         <button className="small" onClick={() => setSheet(true)}>
-          Inventory · {me.character?.name}{me.character && me.character.unspent_points > 0 ? " ●" : ""}
+          Inventory<span className="wide-only"> · {me.character?.name}</span>{me.character && me.character.unspent_points > 0 ? " ●" : ""}
         </button>
       </div>
 
-      <div className="story panel docks">
-        <h3>Docks</h3>
+      <DragPanel id="harbor.docks" title="Docks" foldOnPhone className="story panel docks">
         {board.ships.length === 0 && <p className="muted">No ships in port. Moor one and your crew can walk aboard.</p>}
         <ul className="ships">
           {board.ships.map((s) => {
@@ -168,11 +168,11 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
             </li>
           ))}
         </ul>
-      </div>
+      </DragPanel>
 
-      <div className="crew">
+      <DragPanel id="harbor.crew" title="Crew" foldOnPhone className="crew">
         <div className="panel">
-          <h3>Crew · {players.length} here</h3>
+          <h3>{players.length} here now</h3>
           <ul className="roster">
             {board.members.map((m) => {
               const here = players.some((p) => p.id === m.id);
@@ -185,9 +185,9 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
             })}
           </ul>
         </div>
-      </div>
+      </DragPanel>
 
-      <div className="chat panel harbor-chat">
+      <DragPanel id="harbor.chat" title="Crew chat" foldOnPhone className="chat panel harbor-chat">
         <div className="chat-lines">
           {harbor.chat.length === 0 && <div className="muted">Crew chat. Only people in the Harbor right now see it.</div>}
           {harbor.chat.map((l, i) => <div key={i} className="line hero"><strong>{l.name}: </strong>{l.text}</div>)}
@@ -197,9 +197,9 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
           <input value={text} maxLength={200} placeholder="Say something to the crew…" onChange={(e) => setText(e.target.value)} onKeyDown={(e) => e.key === "Enter" && say()} />
           <button disabled={!text.trim()} onClick={say}>Say</button>
         </div>
-      </div>
+      </DragPanel>
 
-      <div className="turnbar panel">
+      <DragPanel id="harbor.turn" title="Here" compact className="turnbar panel">
         {shipHere ? (
           <>
             <span>{shipHere.captain}'s ship · {shipHere.aboard.length}/{MAX_PARTY} aboard</span>
@@ -215,7 +215,7 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
         ) : (
           <span className="muted">Click a hex to walk. Ships are boarded at the piers; gear is traded at the market stall.</span>
         )}
-      </div>
+      </DragPanel>
 
       {tip && <div className="tip">{tip}</div>}
       {error && <div className="toast">{error}</div>}
