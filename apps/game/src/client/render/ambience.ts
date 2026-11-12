@@ -236,6 +236,16 @@ const puddleTexture = () =>
     ctx.fillRect(8, 2, 1, 1);
   });
 
+/**
+ * Which way the wind blows across the map, as a unit vector on the ground:
+ * mostly along +x, a little toward +z. Wisps travel this way and rain slants
+ * with it, fixed in the world so turning the camera never turns the weather.
+ */
+const WIND = (() => {
+  const a = 0.35;
+  return { x: Math.cos(a), z: Math.sin(a) };
+})();
+
 /** Pixels in one wisp's trail. */
 const TRAIL = 34;
 
@@ -770,7 +780,7 @@ export class Ambience {
           const along = (s - 0.5) * reach;
           const up = Math.sin(s * beat + r(13) * 6) * swell + Math.sin(s * underBeat + r(6) * 6) * under + (s - 0.5) * drift;
           const k = n * TRAIL + i;
-          pos.setXYZ(k, x0 + cos * along, y0 + up, z0 - sin * along);
+          pos.setXYZ(k, x0 + WIND.x * along, y0 + up, z0 + WIND.z * along);
           // Fades toward the tail, and the whole trail fades in at the start of a crossing and out over its last third.
           const fade = s <= 0 ? 0 : life * (1 - i / TRAIL) ** 0.8;
           col.setXYZW(k, 1, 0.95 + 0.05 * this.daylight, glow, fade * (0.55 + 0.35 * this.daylight));
@@ -781,7 +791,7 @@ export class Ambience {
     }
   }
 
-  /** Rain: each drop is two pixels, one above the other, falling on a slant around wherever the camera looks. */
+  /** Rain: each drop is two pixels, one above the other, falling on a slant with the wind around wherever the camera looks. */
   private fall(clock: number, target: THREE.Vector3) {
     if (!this.rain) return;
     const pos = this.rain.geometry.getAttribute("position") as THREE.BufferAttribute;
@@ -797,10 +807,11 @@ export class Ambience {
       }
       const life = (clock * (0.9 + hash(i, 1, 500) * 0.5) + hash(i, 2, 500)) % 1;
       const y = 8 * (1 - life);
-      const x = target.x + (hash(i, 3, 500) - 0.5) * 30 + life * 2.2;
-      const z = target.z + (hash(i, 4, 500) - 0.5) * 24;
+      // Drops are spread around wherever the camera looks, and blown downwind as they fall.
+      const x = target.x + (hash(i, 3, 500) - 0.5) * 30 + life * 2.2 * WIND.x;
+      const z = target.z + (hash(i, 4, 500) - 0.5) * 30 + life * 2.2 * WIND.z;
       pos.setXYZ(i * 2, x, y, z);
-      pos.setXYZ(i * 2 + 1, x - 0.07, y + 0.24, z);
+      pos.setXYZ(i * 2 + 1, x - 0.07 * WIND.x, y + 0.24, z - 0.07 * WIND.z);
     }
     pos.needsUpdate = true;
   }
