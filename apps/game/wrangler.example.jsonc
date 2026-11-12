@@ -57,7 +57,11 @@
         }
       ],
       "ai": { "binding": "AI" },
-      "vars": { "AI_MODE": "live" },
+      // Email sign-in codes. Needs a domain onboarded under Email Service > Send
+      // Emails in the Cloudflare dashboard. Leave both out and codes are written
+      // to the Worker's log instead of being mailed.
+      "send_email": [{ "name": "EMAIL", "remote": true }],
+      "vars": { "AI_MODE": "live", "MAIL_FROM_ADDRESS": "noreply@yourdomain.com", "MAIL_FROM_NAME": "Gantt Quest" },
       "durable_objects": {
         "bindings": [
           { "name": "RUN_ROOM", "class_name": "RunRoom" },

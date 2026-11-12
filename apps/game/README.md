@@ -17,6 +17,12 @@ pnpm --filter @gantt-quest/game dev
 
 Open http://localhost:5180, create a character and found a crew. To play two players on one machine, open a second tab at http://localhost:5180/?p=2 — the `p` parameter gives that tab its own guest account — and join the crew with its invite code. Background tabs do not animate (browsers pause rendering), so bring a tab to the front to watch it.
 
+### Email sign-in
+
+Players start as guests and can attach an email to keep their character. Locally there is no mail binding, so the six-digit code is printed in the dev server's output as `[email/dev] to=… Your Gantt Quest sign-in code is …`. Use any made-up address.
+
+To send real mail (staging does), the environment needs a `send_email` binding named `EMAIL` and a `MAIL_FROM_ADDRESS` var on a domain onboarded for Email Sending; see the staging block in `wrangler.example.jsonc`.
+
 ### AI: mock or live
 
 `AI_MODE` in `wrangler.jsonc` controls the model calls.
@@ -55,6 +61,7 @@ Build before deploying: `wrangler deploy` ships whatever the last build produced
 | `apps/game/src/server/harbor-room.ts` | One Durable Object per crew: presence, walking, chat, dock board |
 | `apps/game/src/server/ai.ts` | Prompts and the Workers AI calls (and the mock) |
 | `apps/game/src/server/db.ts` | D1 access |
+| `apps/game/src/server/email.ts` | Sending sign-in codes |
 | `apps/game/src/client/render/` | Three.js island renderer and placeholder sprites |
 | `apps/game/src/client/*.tsx` | Character creation, crew gate, shared Harbor, inventory, market stall and in-voyage HUD (React) |
 | `apps/game/src/client/itemArt.ts` | Pixel-art item icons drawn in code, in the style of the hero sprites; the accent colour is the item's rarity |
@@ -87,5 +94,4 @@ In dev builds the page exposes `window.__gq` (`state`, `send`, and the `World` m
 - Huts are plots only: no interiors, decorating or upgrades yet, and only the first 12 crew members get one drawn.
 - The Harbor's only shop is the market stall (gear). No smithy, potions or provisioning yet. Crew chat is not stored.
 - Gear has no affixes, uniques, sets or elements.
-- Accounts are still guest cookies.
 - No production deploy and no CI deploy. Staging is deployed by hand; production needs a workflow change and review.

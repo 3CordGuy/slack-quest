@@ -431,3 +431,13 @@ body { touch-action: manipulation; overscroll-behavior: none; }
   .totals { order: 6; }
   .inv .stats { order: 7; }
 }
+
+/* ---------- Account and sign-in ---------- */
+.overlay .panel.account { max-width: 460px; display: flex; flex-direction: column; gap: 8px; }
+.signin { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
+.signin .field { width: 100%; max-width: 320px; margin: 0; }
+.code-input { font-size: 22px; letter-spacing: 0.35em; width: 9em; text-align: center; }
+.small-print { font-size: 12px; }
+.returning { margin-top: 16px; max-width: 520px; }
+.signed-in { margin-top: 16px; }
+button.nudge { border-color: var(--gold); color: var(--gold); }

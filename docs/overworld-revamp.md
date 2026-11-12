@@ -52,8 +52,16 @@ Still to build:
 - **Hut interiors, decorating and upgrades.** The inside is a small room others can visit. Players place trophies and furniture on a grid and buy hut tiers with gold.
 - **Loot to bring home.** Islands need a third loot category beside gear and gold: trophies and decor (each story's relic, a villain's mask, biome-themed furniture) and building materials.
 - **Upgrades stay modest.** Mostly cosmetic, plus conveniences (storage, a display shelf, starting a voyage rested). Anything stronger would make new players weaker than veterans on the same ship.
-- **Durable accounts first.** Guest accounts live in a browser cookie. A hut someone has decorated must survive a cleared cookie, so email sign-in comes before hut customisation.
+- **Durable accounts are in place** (see Accounts below), so hut customisation can now be built on them.
 - **More than 12 huts**, and several ships beyond three piers, need a larger or scrolling Harbor.
+
+### Accounts
+- **Everyone starts as a guest**: a player row and a session cookie, no sign-up. That account exists only in that browser.
+- **Adding an email makes it durable.** The player asks for a six-digit code, mailed through the Cloudflare Email Sending binding, and enters it. If no account has that address, it is attached to the guest, who keeps their character, gear and crew. If one does, the browser is signed in to that account and the guest is left behind.
+- **Codes** last 15 minutes, are single-use, are burned after five wrong guesses, and can be requested at most once every 30 seconds per address. The reply to a request is the same whether or not the address has an account.
+- **Without the mail binding or a from-address** (local development) the code is written to the Worker's log.
+- Signing out drops the session; the browser then starts a new guest.
+- Not yet: changing an account's email, merging a guest into an existing account, per-IP rate limiting, and session expiry.
 
 ### Gear, inventory and the market stall
 Built to bring the new game closer to the original's inventory and economy.

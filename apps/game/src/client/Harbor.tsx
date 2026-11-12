@@ -5,6 +5,7 @@
 import { useState } from "react";
 import { STARTING_STATS } from "@gantt-quest/core";
 import { HERO_CLASSES, STAT_BLURB, STAT_KEYS, STAT_LABEL, WEAPONS, statPct } from "@gantt-quest/world";
+import { EmailSignIn } from "./Account";
 import { api, type Character, type Me, type StatKey } from "./api";
 
 type Act = (fn: () => Promise<unknown>) => Promise<void>;
@@ -46,6 +47,15 @@ export function Harbor({ me, refresh, invite }: Props) {
       </header>
       {error && <div className="banner error">{error}</div>}
       {hasCharacter ? <CrewGate busy={busy} act={act} invite={invite} /> : <Creation draft={me.character} busy={busy} act={act} invite={invite} />}
+      {me.player.email ? (
+        <p className="muted signed-in">Signed in as {me.player.email}.</p>
+      ) : (
+        <section className="panel returning">
+          <h2>Played before?</h2>
+          <p className="muted">Sign in with your email to pick up your character, gear and crew.</p>
+          <EmailSignIn onDone={refresh} hasCharacter={hasCharacter} />
+        </section>
+      )}
     </div>
   );
 }
