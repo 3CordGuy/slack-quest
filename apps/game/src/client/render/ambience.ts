@@ -63,34 +63,29 @@ const grassTexture = () =>
     ),
   );
 
+/** Two scallops of a cut-out wave: a white crest over a lighter blue body. */
 const waveTexture = () =>
-  pixelTexture(14, 4, (ctx) =>
+  pixelTexture(24, 6, (ctx) =>
     stamp(
       ctx,
       [
-        "    aaaa      ",
-        "  aa    aa    ",
-        "aa        aaaa",
-        "              ",
+        "    wwww        wwww    ",
+        "  wwbbbbww    wwbbbbww  ",
+        " wbbbbbbbbw  wbbbbbbbbw ",
+        "wbbbbbbbbbbwwbbbbbbbbbbw",
+        "bbbbbbbbbbbbbbbbbbbbbbbb",
+        "bbbbbbbbbbbbbbbbbbbbbbbb",
       ],
-      { a: "#ffffff" },
+      { w: "#f2f9ff", b: "#4f95e4" },
     ),
   );
 
-const wispTexture = () =>
-  pixelTexture(20, 5, (ctx) =>
-    stamp(
-      ctx,
-      [
-        "              aa    ",
-        "            aa  a   ",
-        "aaaaaaaaaaaa    a   ",
-        "               a    ",
-        "                    ",
-      ],
-      { a: "#ffffff" },
-    ),
-  );
+/** Width of a wave strip: short enough that two rows fit inside a hex at any angle. */
+const WAVE_WIDTH = 1.3;
+/** How far each row sits from the middle of its hex. */
+const WAVE_ROW = 0.3;
+/** Pixels in one wisp's trail. */
+const TRAIL = 22;
 
 interface Tuft {
   x: number;
@@ -100,20 +95,20 @@ interface Tuft {
   phase: number;
 }
 interface Crest {
+  /** Centre of the water hex it belongs to. */
   x: number;
   y: number;
   z: number;
-  size: number;
-  offset: number;
-  speed: number;
+  phase: number;
 }
 interface Wisp {
-  sprite: THREE.Sprite;
   x: number;
   y: number;
   z: number;
   offset: number;
   speed: number;
+  /** Radius of its loop. */
+  loop: number;
 }
 
 export class Ambience {
@@ -127,9 +122,10 @@ export class Ambience {
 
   private grass: THREE.InstancedMesh | null = null;
   private tufts: Tuft[] = [];
-  private waves: THREE.InstancedMesh | null = null;
+  private waves: THREE.InstancedMesh[] = [];
   private crests: Crest[] = [];
   private wisps: Wisp[] = [];
+  private wispPoints: THREE.Points | null = null;
   private flatTint = new THREE.Color();
   private still = typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
   private m = new THREE.Matrix4();
@@ -180,17 +176,7 @@ export class Ambience {
       const n = (salt: number) => hash(t.q, t.r, salt);
 
       if (t.biome === "water") {
-        const count = n(20) < 0.55 ? 1 : n(20) < 0.85 ? 2 : 0;
-        for (let i = 0; i < count; i++) {
-          crests.push({
-            x: p.x + (n(21 + i) - 0.5) * 1.1,
-            y: p.y + 0.012,
-            z: p.z + (n(24 + i) - 0.5) * 1.0,
-            size: 0.55 + n(27 + i) * 0.35,
-            offset: n(30 + i),
-            speed: 0.16 + n(33 + i) * 0.12,
-          });
-        }
+        crests.push({ x: p.x, y: p.y - 0.13, z: p.z, phase: p.x * 0.35 + n(21) * 1.5 });
         continue;
       }
       if (skip(t)) continue;
@@ -257,47 +243,57 @@ export class Ambience {
     this.grass.frustumCulled = false;
     this.group.add(this.grass);
 
-    // ---- waves: flat crests that swell, slide and sink back ----
+    // ---- waves: two rows of upright paper cut-outs on each water hex ----
+    // Each strip is short enough to stay inside its own hex however the view is turned.
+    // The scallops scroll along it, the back row one way and the front row the other.
     this.crests = crests;
-    const crest = new THREE.PlaneGeometry(1, 4 / 14);
-    crest.rotateX(-Math.PI / 2);
-    this.waves = new THREE.InstancedMesh(
-      crest,
-      new THREE.MeshBasicMaterial({ map: waveTexture(), transparent: true, opacity: 0.55, depthWrite: false }),
-      Math.max(1, crests.length),
-    );
-    this.waves.count = crests.length;
-    this.waves.frustumCulled = false;
-    this.group.add(this.waves);
+    this.waves = [0, 1].map(() => {
+      const strip = new THREE.PlaneGeometry(WAVE_WIDTH, WAVE_WIDTH * (6 / 24) * 1.25);
+      strip.translate(0, WAVE_WIDTH * (6 / 24) * 0.625, 0);
+      const map = waveTexture();
+      map.wrapS = THREE.RepeatWrapping;
+      map.repeat.x = 0.8;
+      const mesh = new THREE.InstancedMesh(strip, new THREE.MeshBasicMaterial({ map, alphaTest: 0.5, side: THREE.DoubleSide }), Math.max(1, crests.length));
+      mesh.count = crests.length;
+      mesh.frustumCulled = false;
+      this.group.add(mesh);
+      return mesh;
+    });
 
-    // ---- wisps: a few curls of wind over the island ----
-    const wisp = wispTexture();
-    const count = this.still ? 0 : Math.min(18, Math.max(6, Math.round(tiles.length / 28)));
+    // ---- wisps: trails of single pixels that curl through a loop as they cross ----
+    const count = this.still ? 0 : Math.min(14, Math.max(7, Math.round(tiles.length / 30)));
     for (let i = 0; i < count; i++) {
-      const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: wisp, transparent: true, opacity: 0, depthWrite: false }));
-      this.group.add(sprite);
       this.wisps.push({
-        sprite,
         x: minX + hash(i, 1, 100) * (maxX - minX),
-        y: 1.6 + hash(i, 2, 100) * 2.6,
+        y: 1.4 + hash(i, 2, 100) * 2.2,
         z: minZ + hash(i, 3, 100) * (maxZ - minZ),
         offset: hash(i, 4, 100),
-        speed: 0.07 + hash(i, 5, 100) * 0.06,
+        speed: 0.08 + hash(i, 5, 100) * 0.05,
+        loop: 0.3 + hash(i, 6, 100) * 0.25,
       });
+    }
+    if (count > 0) {
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute("position", new THREE.BufferAttribute(new Float32Array(count * TRAIL * 3), 3));
+      geometry.setAttribute("color", new THREE.BufferAttribute(new Float32Array(count * TRAIL * 4), 4));
+      this.wispPoints = new THREE.Points(geometry, new THREE.PointsMaterial({ size: 2, sizeAttenuation: false, vertexColors: true, transparent: true, depthWrite: false }));
+      this.wispPoints.frustumCulled = false;
+      this.group.add(this.wispPoints);
     }
   }
 
   private clear() {
     for (const child of this.group.children) {
-      const mesh = child as THREE.Mesh | THREE.Sprite;
-      if (!(mesh instanceof THREE.Sprite)) mesh.geometry.dispose();
+      const mesh = child as THREE.Mesh | THREE.Points;
+      mesh.geometry.dispose();
       const material = mesh.material as THREE.Material & { map?: THREE.Texture | null };
       material.map?.dispose();
       material.dispose();
     }
     this.group.clear();
     this.grass = null;
-    this.waves = null;
+    this.waves = [];
+    this.wispPoints = null;
     this.tufts = [];
     this.crests = [];
     this.wisps = [];
@@ -343,31 +339,49 @@ export class Ambience {
       (this.grass.material as THREE.MeshBasicMaterial).color.copy(this.flatTint);
     }
 
-    if (this.waves) {
+    const cos = Math.cos(yaw);
+    const sin = Math.sin(yaw);
+    this.waves.forEach((mesh, row) => {
+      // Front row (toward the camera) is row 1.
+      const off = row ? WAVE_ROW : -WAVE_ROW;
       this.crests.forEach((c, i) => {
-        const life = motion ? (clock * c.speed + c.offset) % 1 : 0.5;
-        const swell = Math.sin(Math.PI * life);
-        const width = c.size * (0.25 + 0.75 * swell);
+        const bob = motion * Math.sin(clock * 1.8 + c.phase * 2 + row * 1.6) * 0.03;
         this.m.set(
-          width, 0, 0, c.x + (life - 0.5) * 0.7,
-          0, 1, 0, c.y,
-          0, 0, c.size * swell, c.z + (life - 0.5) * 0.25,
+          cos, 0, sin, c.x + sin * off,
+          0, 1, 0, c.y + bob - (row ? 0.03 : 0),
+          -sin, 0, cos, c.z + cos * off,
           0, 0, 0, 1,
         );
-        this.waves!.setMatrixAt(i, this.m);
+        mesh.setMatrixAt(i, this.m);
       });
-      this.waves.instanceMatrix.needsUpdate = true;
-      (this.waves.material as THREE.MeshBasicMaterial).color.copy(this.flatTint);
-    }
+      mesh.instanceMatrix.needsUpdate = true;
+      const material = mesh.material as THREE.MeshBasicMaterial;
+      material.color.copy(this.flatTint);
+      material.map!.offset.x = motion * clock * (row ? 0.11 : -0.08) + row * 0.25;
+    });
 
-    for (const w of this.wisps) {
-      const life = (clock * w.speed + w.offset) % 1;
-      w.sprite.position.set(w.x + (life - 0.5) * 7, w.y + Math.sin(life * Math.PI * 2 + w.offset * 6) * 0.35, w.z + (life - 0.5) * 2);
-      const length = 1.1 + Math.sin(Math.PI * life) * 0.7;
-      w.sprite.scale.set(length, length * 0.25, 1);
-      w.sprite.material.opacity = Math.sin(Math.PI * life) ** 2 * (0.25 + 0.3 * this.daylight);
-      // Pale by day; a faint warm glow after dark.
-      w.sprite.material.color.setRGB(1, 0.94 + 0.06 * this.daylight, 0.72 + 0.28 * this.daylight);
+    if (this.wispPoints) {
+      const pos = this.wispPoints.geometry.getAttribute("position") as THREE.BufferAttribute;
+      const col = this.wispPoints.geometry.getAttribute("color") as THREE.BufferAttribute;
+      const glow = 0.72 + 0.28 * this.daylight;
+      this.wisps.forEach((w, n) => {
+        const head = (clock * w.speed + w.offset) % 1;
+        for (let i = 0; i < TRAIL; i++) {
+          // Each pixel follows the head a little further back along the same path.
+          const s = head - i * 0.011;
+          // Mid-flight the path rolls once round a loop.
+          const u = smooth(0.32, 0.68, s);
+          const along = (s - 0.5) * 6 - Math.sin(u * Math.PI * 2) * w.loop;
+          const up = (1 - Math.cos(u * Math.PI * 2)) * w.loop + Math.sin(s * 9 + w.offset * 6) * 0.12;
+          const k = n * TRAIL + i;
+          pos.setXYZ(k, w.x + cos * along, w.y + up, w.z - sin * along);
+          // Fades toward the tail, and in and out at the ends of the crossing. Every other pixel is fainter, so it reads as dots.
+          const fade = s <= 0 ? 0 : Math.sin(Math.PI * Math.min(1, s)) ** 0.7 * (1 - i / TRAIL) * (i % 2 ? 0.5 : 1);
+          col.setXYZW(k, 1, 0.95 + 0.05 * this.daylight, glow, fade * (0.6 + 0.35 * this.daylight));
+        }
+      });
+      pos.needsUpdate = true;
+      col.needsUpdate = true;
     }
   }
 
