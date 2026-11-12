@@ -54,3 +54,15 @@
 .gather-block .tree-glyph { color: #9aa3b2; }
 .gather-block.ore .tree-glyph { color: var(--gold); }
 .gather-block.picked .tree-glyph { color: #6b7180; }
+
+/* The timing bar for fishing and the quarry. */
+.timing { display: flex; flex-direction: column; gap: 6px; padding: 8px; border: 1px solid var(--line); background: #17152c; }
+.timing-bar { position: relative; height: 34px; background: #24406f; border: 2px solid #3f6fb0; cursor: pointer; overflow: hidden; touch-action: manipulation; }
+.timing.quarry .timing-bar { background: #3b3f4a; border-color: #6b7180; }
+.timing-zone { position: absolute; top: 0; bottom: 0; background: rgba(110, 224, 110, 0.28); border-left: 2px solid var(--good); border-right: 2px solid var(--good); }
+.timing-sweet { position: absolute; top: 0; bottom: 0; left: 32%; right: 32%; background: rgba(255, 210, 63, 0.45); }
+.timing-marker { position: absolute; top: 50%; transform: translate(-50%, -50%); font-size: 20px; line-height: 1; pointer-events: none; filter: drop-shadow(0 1px 0 #000); }
+.timing .row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 12px; }
+.tag.timing-perfect { color: var(--gold); border-color: var(--gold); }
+.tag.timing-good { color: var(--good); border-color: var(--good); }
+.tag.timing-miss, .tag.timing-late { color: var(--bad); border-color: var(--bad); }

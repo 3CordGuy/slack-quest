@@ -3,7 +3,7 @@
 // posts the player's choice to push on or bank.
 
 import { useEffect, useRef, useState } from "react";
-import { FELLING_SIDE, GATHER_SPOTS, QUARRY_SIDE, STAT_LABEL, type GatherChoice, type GatherSpot, type GatherView, type Resources } from "@gantt-quest/world";
+import { FELLING_SIDE, GATHER_SPOTS, QUARRY_SIDE, TIMING, markerAt, STAT_LABEL, type GatherChoice, type GatherSpot, type GatherView, type Resources } from "@gantt-quest/world";
 import { api, type GatherStatus } from "./api";
 import { DragPanel } from "./DragPanel";
 import { ResourceChips, resourceText } from "./hutDrops";
@@ -89,6 +89,63 @@ function Face({ outing, busy, cut }: { outing: GatherView; busy: boolean; cut(ce
       })}
       {face.cols.map((n, c) => <span key={`c${c}`} className={`gather-dust ${n ? "on" : ""}`} title="Weak blocks in this column">{dust(n)}</span>)}
       <span />
+    </div>
+  );
+}
+
+/**
+ * The timing bar: a marker moving along it and the mark to stop it on. It starts moving when it is shown, and the
+ * player stops it with the button or the space bar. What is sent is how long after it started they pressed; the
+ * server checks that against its own clock.
+ */
+function TimingBar({ aim, spot, busy, stop }: { aim: NonNullable<GatherView["aim"]>; spot: "fishing" | "quarry"; busy: boolean; stop(at: number): void }) {
+  const marker = useRef<HTMLDivElement>(null);
+  const started = useRef(performance.now());
+  const done = useRef(false);
+  const { motion } = aim;
+  useEffect(() => {
+    started.current = performance.now();
+    done.current = false;
+    let raf = 0;
+    const frame = () => {
+      raf = requestAnimationFrame(frame);
+      if (marker.current) marker.current.style.left = `${markerAt(motion, performance.now() - started.current) * 100}%`;
+    };
+    raf = requestAnimationFrame(frame);
+    return () => cancelAnimationFrame(raf);
+  }, [motion]);
+  // On a short screen the bar can open below the fold: bring it into view.
+  const box = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    box.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }, [motion]);
+  const press = () => {
+    if (done.current || busy) return;
+    done.current = true;
+    stop(Math.round(performance.now() - started.current));
+  };
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.code !== "Space" || (e.target as HTMLElement)?.closest?.("input, textarea")) return;
+      e.preventDefault();
+      press();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  });
+  const left = (motion.zone - motion.width / 2) * 100;
+  return (
+    <div className={`timing ${spot}`} ref={box}>
+      <div className="timing-bar" onPointerDown={press}>
+        <div className="timing-zone" style={{ left: `${left}%`, width: `${motion.width * 100}%` }}>
+          <div className="timing-sweet" />
+        </div>
+        <div className="timing-marker" ref={marker}>{spot === "fishing" ? "🐟" : "⛏"}</div>
+      </div>
+      <div className="row">
+        <button className="primary" disabled={busy} onClick={press}>{spot === "fishing" ? "Reel!" : "Strike!"}</button>
+        <span className="muted">Stop it on the mark (or press space). Bang on the middle: +{TIMING.perfect.bonus}% a roll. On the mark: +{TIMING.good.bonus}%. Off it: {TIMING.miss.bonus}%.</span>
+      </div>
     </div>
   );
 }
@@ -185,16 +242,18 @@ export function GatherPanel({ spot, onClose }: { spot: GatherSpot; onClose(): vo
             {outing.trees && <Trees outing={outing} busy={busy} pick={(cell) => step({ t: "push", cell })} />}
             {outing.water && (
               <>
-                <Water outing={outing} busy={busy} cast={(cell) => step({ t: "push", cell })} />
+                <Water outing={outing} busy={busy || !!outing.aim} cast={(cell) => step({ t: "aim", cell })} />
                 {active && <p className="muted gather-hint">On the school: +{outing.water.read}% a roll and one more fish. Two or more places off: −{outing.water.read}%. The school drifts a place at most between casts.</p>}
               </>
             )}
             {outing.face && (
               <>
-                <Face outing={outing} busy={busy} cut={(cell) => step({ t: "push", cell })} />
+                <Face outing={outing} busy={busy || !!outing.aim} cut={(cell) => step({ t: "aim", cell })} />
                 {active && <p className="muted gather-hint">Dust marks a row or column with a weak block in it (two dots: both). A weak block is two cracks; missing both rolls is one.</p>}
               </>
             )}
+
+            {outing.aim && active && outing.spot !== "felling" && <TimingBar aim={outing.aim} spot={outing.spot} busy={busy} stop={(at) => step({ t: "push", at })} />}
 
             <div className="gather-haul">
               <span className="muted">{active ? "Haul so far" : outing.status === "banked" ? "Brought home" : "Lost"}</span>
@@ -206,12 +265,13 @@ export function GatherPanel({ spot, onClose }: { spot: GatherSpot; onClose(): vo
             <ol className="gather-log">
               {outing.log.map((entry, i) => (
                 <li key={i} ref={i === outing.log.length - 1 ? logEnd : undefined} className={i === outing.log.length - 1 ? "latest" : ""}>
+                  {entry.timing && <span className={`tag timing-${entry.timing}`}>{TIMING[entry.timing].label}{TIMING[entry.timing].bonus ? ` ${TIMING[entry.timing].bonus > 0 ? "+" : ""}${TIMING[entry.timing].bonus}%` : ""}</span>}
                   {entry.check && <><span className="tag">{entry.check.label} · {entry.check.pct}%</span><Rolls rolls={entry.check.rolls} /></>}
                   <span>{entry.text}</span>
                   {Object.keys(entry.gained).length > 0 && <span className="good"> +{resourceText(entry.gained)}</span>}
                 </li>
               ))}
-              {outing.log.length === 0 && <li className="muted">{outing.spot === "felling" ? "Nine trees. Pick one." : outing.spot === "fishing" ? "Gulls are circling. The school is under them or right beside. Pick where to cast." : "Nine blocks. Read the dust, then pick one to cut."}</li>}
+              {outing.log.length === 0 && <li className="muted">{outing.spot === "felling" ? "Nine trees. Pick one." : outing.spot === "fishing" ? "Gulls are circling. The school is under them or right beside. Pick where to cast, then reel when the fish is on the hook." : "Nine blocks. Read the dust, pick one to cut, then strike when the pick is on the mark."}</li>}
             </ol>
 
             {active ? (

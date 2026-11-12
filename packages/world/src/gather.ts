@@ -80,6 +80,67 @@ export const FISHING_READ = 15;
 export const QUARRY_SIDE = 3;
 export const QUARRY_WEAK = 2;
 export const QUARRY_ORE = 3;
+// ---------- timing ----------
+//
+// Fishing and the quarry are timed. Having chosen where, the player stops a
+// marker moving along a bar, and how close it is to the mark shifts the
+// chance of each roll. The marker's motion is set by the server from the
+// outing's seed; the server also times the stop itself, and only believes the
+// moment the client reports within a round trip of what it saw.
+
+/** How a marker moves: a fish darting about a line, or a pick swinging back and forth. */
+export interface Motion {
+  kind: "dart" | "swing";
+  /** Milliseconds for one full cycle. */
+  period: number;
+  /** Where in its cycle the marker starts, 0 to 1. */
+  phase: number;
+  /** The mark: its centre on the bar (0 to 1) and its full width. */
+  zone: number;
+  width: number;
+}
+
+/** What a stop was worth: how it is named, and the points it adds to each roll. */
+export const TIMING = {
+  perfect: { label: "Perfect", bonus: 20 },
+  good: { label: "Good", bonus: 10 },
+  close: { label: "Close", bonus: 0 },
+  miss: { label: "Missed", bonus: -15 },
+  late: { label: "Too slow", bonus: -15 },
+} as const;
+export type TimingGrade = keyof typeof TIMING;
+/** Longer than this and the moment has passed. */
+export const TIMING_LIMIT_MS = 10_000;
+
+/**
+ * How much a hero's stat eases the timing. `pct` is their chance per roll for the spot's stat (20 to 95):
+ * the weakest get a mark 0.7 times as wide and a marker 0.85 times as slow; the strongest 1.4 and 1.25.
+ */
+export function timingEase(pct: number): { width: number; pace: number } {
+  const t = Math.max(0, Math.min(1, (pct - 20) / 75));
+  return { width: 0.7 + 0.7 * t, pace: 0.85 + 0.4 * t };
+}
+
+/** Where the marker is on the bar, 0 to 1, `ms` after it started moving. */
+export function markerAt(m: Motion, ms: number): number {
+  const turn = ms / m.period + m.phase;
+  if (m.kind === "swing") return 0.5 - 0.5 * Math.cos(2 * Math.PI * turn);
+  // A fish: a long run back and forth with a quicker flick on top.
+  const x = 0.5 + 0.4 * Math.sin(2 * Math.PI * turn) + 0.08 * Math.sin(2 * Math.PI * turn * 2.7 + m.phase * 9);
+  return Math.max(0, Math.min(1, x));
+}
+
+/** How good a stop `ms` after the start was. No moment at all (an outing from before timing) counts as close. */
+export function timingGrade(m: Motion, ms: number | undefined): TimingGrade {
+  if (ms === undefined || !Number.isFinite(ms)) return "close";
+  if (ms > TIMING_LIMIT_MS) return "late";
+  const off = Math.abs(markerAt(m, ms) - m.zone);
+  if (off <= m.width * 0.18) return "perfect";
+  if (off <= m.width / 2) return "good";
+  if (off <= m.width) return "close";
+  return "miss";
+}
+
 /** Quarry: cracks the roof can take. Missing both rolls is one; cutting a weak block is two. */
 export const QUARRY_MAX_CRACKS = 3;
 
@@ -99,6 +160,8 @@ export interface GatherEntry {
   text: string;
   check: CheckResult | null;
   gained: Resources;
+  /** How well a timed stop went. */
+  timing?: TimingGrade;
 }
 
 export interface GatherState {
@@ -122,11 +185,23 @@ export interface GatherState {
   face?: BlockKind[];
   /** Fishing: where the school is now (hidden), where the gulls were at the start, and each cast so far. */
   water?: { school: number; gulls: number; casts: Cast[] };
+  /** Fishing and the quarry: where the player has chosen, and the marker they now have to stop. Cleared by the stop. */
+  aim?: { cell: number; startedAt: number; motion: Motion };
+  /** Set on outings that are timed. Older outings in progress are played without it. */
+  timed?: boolean;
 }
 
 export type GatherChoice =
-  /** Cast, fell or cut. `cell` is where: a place along the shore (0 to 4), or a tree or block (0 to 8, row by row). */
-  | { t: "push"; cell?: number }
+  /**
+   * Fishing and the quarry: choose where (a place along the shore, 0 to 4, or a block, 0 to 8) and set the
+   * marker moving. `now` is the server's clock, filled in by the server.
+   */
+  | { t: "aim"; cell: number; now?: number }
+  /**
+   * Fell a tree (`cell`, 0 to 8), or stop the marker. `at` is how long after it started, in ms, as the
+   * server has judged it.
+   */
+  | { t: "push"; cell?: number; at?: number }
   | { t: "bank" };
 
 /** A tree as the client sees it. Unpicked trees say nothing until the outing is over. */
@@ -162,6 +237,8 @@ export interface GatherView {
   maxCracks: number | null;
   /** Quarry: the face, and how many weak blocks are in each row and each column. */
   face: { blocks: BlockView[]; rows: number[]; cols: number[] } | null;
+  /** The marker to stop, while one is moving. The client starts it when it receives this. */
+  aim: { cell: number; motion: Motion } | null;
   /** Fishing: where the gulls were circling at the start (within one place of the school), each cast, and the school itself once it is over. */
   water: { cells: number; gulls: number; casts: Cast[]; school: number | null; read: number } | null;
 }
@@ -199,7 +276,7 @@ export function startGather(spot: GatherSpot, seed: number, stat: number): Gathe
     const school = rng.int(0, FISHING_CELLS - 1);
     water = { school, gulls: Math.max(0, Math.min(FISHING_CELLS - 1, school + rng.int(-1, 1))), casts: [] };
   }
-  return { spot, seed: seed >>> 0, rng: rng.state(), pct: statPct(stat), status: "active", step: 0, haul: {}, log: [], trees, picked: [], cracks: 0, face, water };
+  return { spot, seed: seed >>> 0, rng: rng.state(), pct: statPct(stat), status: "active", step: 0, haul: {}, log: [], trees, picked: [], cracks: 0, face, water, timed: spot !== "felling" };
 }
 
 /** Chance per roll of the next push, before what the cast's place does to it. Only fishing changes it as the outing goes on. */
@@ -261,12 +338,36 @@ export function stepGather(state: GatherState, choice: GatherChoice): GatherStep
     const empty = units(state.haul) === 0;
     return { state: { ...state, status: "banked", log: [...state.log, { text: empty ? "You head back with what little you can carry." : "You pack up and head back.", check: null, gained: {} }] } };
   }
+  if (choice.t === "aim") {
+    if (!state.timed) return { state, error: state.spot === "felling" ? "Pick a tree." : "Unknown choice." };
+    if (state.aim) return { state, error: "Stop the one you have going first." };
+    const cell = Number(choice.cell);
+    if (state.spot === "fishing" && !(Number.isInteger(cell) && cell >= 0 && cell < FISHING_CELLS)) return { state, error: "Pick a place to cast." };
+    if (state.spot === "quarry") {
+      if (!Number.isInteger(cell) || cell < 0 || cell >= (state.face?.length ?? 0)) return { state, error: "Pick a block." };
+      if (state.picked.includes(cell)) return { state, error: "That block is already cut." };
+    }
+    const r = makeRng(state.rng);
+    // The hero's stat for the spot (Dexterity for fishing, Vitality for the quarry) makes the mark wider and the marker slower.
+    const { width, pace } = timingEase(state.pct);
+    const motion: Motion =
+      state.spot === "fishing"
+        ? // The fish gets livelier with every cast, as the line tightens.
+          { kind: "dart", period: Math.round(Math.max(800, 1700 - 200 * state.step) * pace), phase: r.next(), zone: 0.3 + r.next() * 0.4, width: 0.18 * width }
+        : { kind: "swing", period: Math.round(1500 * pace), phase: r.next(), zone: 0.15 + r.next() * 0.7, width: 0.16 * width };
+    return { state: { ...state, rng: r.state(), aim: { cell, startedAt: Math.floor(Number(choice.now) || 0), motion } } };
+  }
   if (choice.t !== "push") return { state, error: "Unknown choice." };
+  if (state.timed && !state.aim) return { state, error: state.spot === "fishing" ? "Pick a place to cast." : "Pick a block." };
+  // A timed stop shifts every roll of this check; an untimed push (felling, or an older outing) does not.
+  const timing = state.aim ? timingGrade(state.aim.motion, choice.at) : undefined;
+  const bonus = timing ? TIMING[timing].bonus : 0;
+  if (state.aim) choice = { ...choice, cell: state.aim.cell };
 
   const def = GATHER_SPOTS[state.spot];
   const rng = makeRng(state.rng);
-  const next: GatherState = { ...state, haul: { ...state.haul }, log: [...state.log], picked: [...state.picked], step: state.step + 1 };
-  const roll = (label: string) => rollCheck(rng, { label, stat: def.stat, pct: gatherPct(state), count: GATHER_ROLLS });
+  const next: GatherState = { ...state, aim: undefined, haul: { ...state.haul }, log: [...state.log], picked: [...state.picked], step: state.step + 1 };
+  const roll = (label: string) => rollCheck(rng, { label, stat: def.stat, pct: Math.max(MIN_PCT, Math.min(MAX_PCT, gatherPct(state) + bonus)), count: GATHER_ROLLS });
   let check: CheckResult;
   let gained: Resources = {};
   let text: string;
@@ -280,7 +381,7 @@ export function stepGather(state: GatherState, choice: GatherChoice): GatherStep
     const off = water.school - cell;
     const read: FishRead = off === 0 ? "on" : Math.abs(off) === 1 ? "near" : "far";
     const dir = Math.sign(off) as -1 | 0 | 1;
-    const pct = Math.max(MIN_PCT, Math.min(MAX_PCT, gatherPct(state) + (read === "on" ? FISHING_READ : read === "far" ? -FISHING_READ : 0)));
+    const pct = Math.max(MIN_PCT, Math.min(MAX_PCT, gatherPct(state) + bonus + (read === "on" ? FISHING_READ : read === "far" ? -FISHING_READ : 0)));
     check = rollCheck(rng, { label: `Cast ${next.step}`, stat: def.stat, pct, count: GATHER_ROLLS });
     const where = dir < 0 ? "west" : "east";
     if (check.fumble) {
@@ -347,7 +448,7 @@ export function stepGather(state: GatherState, choice: GatherChoice): GatherStep
   } else {
     for (const [kind, n] of Object.entries(gained) as [ResourceKind, number][]) next.haul[kind] = (next.haul[kind] ?? 0) + n;
   }
-  next.log.push({ text, check, gained });
+  next.log.push({ text, check, gained, ...(timing ? { timing } : {}) });
   if (!bust && next.step >= GATHER_MAX_STEPS) {
     next.status = "banked";
     next.log.push({ text: state.spot === "fishing" ? "The light is going. You land the last of it." : state.spot === "felling" ? "Your arms are done for the day." : "The seam is worked out.", check: null, gained: {} });
@@ -399,6 +500,7 @@ export function gatherView(state: GatherState): GatherView {
       rows: Array.from({ length: QUARRY_SIDE }, (_, r) => state.face!.filter((k, i) => k === "weak" && Math.floor(i / QUARRY_SIDE) === r).length),
       cols: Array.from({ length: QUARRY_SIDE }, (_, c) => state.face!.filter((k, i) => k === "weak" && i % QUARRY_SIDE === c).length),
     },
+    aim: state.aim ? { cell: state.aim.cell, motion: state.aim.motion } : null,
     water: !state.water ? null : { cells: FISHING_CELLS, gulls: state.water.gulls, casts: state.water.casts, school: over ? state.water.school : null, read: FISHING_READ },
   };
 }
