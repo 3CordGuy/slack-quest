@@ -14,6 +14,8 @@ import type { HexPos } from "@gantt-quest/core";
 import { hexDistance } from "@gantt-quest/core";
 import { BASE_HEIGHT, BATTLE_JOIN_RANGE, BIG_REACH, ENEMIES, HEX_DIRS, TRAIT_BY_ID, MOVE_COST, WALL_FACE_HALF, WALL_ITEM_BOTTOM, WALL_ITEM_TOP, findPath, xpProgress, reachable, tileAt, wallFace, wallFaces, type ClientState, type Outfit, type Phase, type Poi, type Tile, type WorldEvent, type WorldMap } from "@gantt-quest/world";
 import { ghostModel, propModel, tintGhost, type LightKind } from "./props";
+import { armAudio, isMuted, onMuteChange, playFootstep, setMuted } from "../audio";
+import { PUFFS, footfalls, stepGround, stepVolume, worldToHex } from "./footsteps";
 import { SPRITE_ASPECT, bubbleTexture, fxTexture, labelTexture, plateKey, sleepZTexture, spriteKey, spriteTexture, textTexture, type FxKind, type PlateStats } from "./sprites";
 
 /** Spells fly as a coloured bolt; these are their colours, by ability name. */
@@ -387,6 +389,23 @@ interface SleepZ {
 
 const Z_LIFE = 2.6;
 
+/** A puff kicked up by a footfall: drifts out and up a little and fades. Pooled, so walking makes no garbage. */
+interface Puff {
+  sprite: THREE.Sprite;
+  age: number;
+  life: number;
+  x: number;
+  y: number;
+  z: number;
+  vx: number;
+  vy: number;
+  size: number;
+  alpha: number;
+}
+
+/** No more puffs than this are ever out at once; past it the oldest is reused. */
+const PUFF_POOL = 36;
+
 /** A short-lived effect sprite: a swipe, a projectile in flight, a burst. */
 interface Fx {
   sprite: THREE.Sprite;
@@ -479,6 +498,13 @@ export class WorldRenderer {
   private pulsing = new Set<string>();
   private floaters: Floater[] = [];
   private sleepZs: SleepZ[] = [];
+  /** Footfall puffs, made as needed up to PUFF_POOL and then reused; `nextPuff` is the one to reuse next. */
+  private puffs: Puff[] = [];
+  private nextPuff = 0;
+  /** The player asked for less motion: footsteps are still heard, but kick up no puffs. */
+  private still = typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
+  private muteButton: HTMLButtonElement;
+  private stopMuteWatch: () => void;
   private fx: Fx[] = [];
   /** Speech over units' heads, by unit id; kept apart from the unit so a change of gear does not cut it short. */
   private bubbles = new Map<string, Bubble>();
@@ -599,6 +625,22 @@ export class WorldRenderer {
       b.addEventListener("click", run);
       this.rotateButtons.appendChild(b);
     }
+    // And one to hush the footsteps, remembered between visits.
+    armAudio();
+    this.muteButton = document.createElement("button");
+    this.muteButton.type = "button";
+    this.muteButton.className = "camera-mute";
+    const showMute = (muted: boolean) => {
+      this.muteButton.textContent = muted ? "🔇" : "🔊";
+      const title = muted ? "Turn the sound on" : "Turn the sound off";
+      this.muteButton.title = title;
+      this.muteButton.setAttribute("aria-label", title);
+      this.muteButton.setAttribute("aria-pressed", String(muted));
+    };
+    showMute(isMuted());
+    this.stopMuteWatch = onMuteChange(showMute);
+    this.muteButton.addEventListener("click", () => setMuted(!isMuted()));
+    this.rotateButtons.appendChild(this.muteButton);
     container.appendChild(this.rotateButtons);
     this.resizeObserver = new ResizeObserver(() => this.resize());
     this.resizeObserver.observe(container);
@@ -621,6 +663,7 @@ export class WorldRenderer {
     removeEventListener("keyup", this.onKeyUp);
     removeEventListener("blur", this.onBlur);
     this.rotateButtons.remove();
+    this.stopMuteWatch();
     this.ambience.dispose();
     this.renderer.dispose();
     canvas.remove();
@@ -942,6 +985,63 @@ export class WorldRenderer {
    * up for a moment. `levelUp` adds a bigger flourish: more motes, a gold
    * burst, a ring of motes thrown outward and "LEVEL UP" over the top.
    */
+  /**
+   * A walking hero's hop has just touched the ground: a step sounds, by what they stepped on, and a little
+   * puff is kicked up at their feet. Only heroes out of a fight, awake, and in view.
+   */
+  private footfall(id: string, unit: Unit) {
+    const state = this.state;
+    if (!state || state.battle || unit.asleep || !unit.sprite.visible) return;
+    const hero = state.heroes.find((h) => h.id === id);
+    if (!hero || hero.asleep) return;
+    const feet = unit.feet;
+    // Nothing off screen is heard or drawn.
+    const seen = feet.clone().project(this.camera);
+    if (seen.z > 1 || Math.abs(seen.x) > 1.05 || Math.abs(seen.y) > 1.05) return;
+    // Heroes stand a quarter hex toward the camera from the middle of their hex (see syncUnits).
+    const ground = stepGround(tileAt(state.map, worldToHex(feet.x, feet.z - 0.25))?.biome);
+    if (!ground) return;
+    const mine = id === state.you;
+    const away = Math.hypot(feet.x - this.target.x, feet.z - this.target.z);
+    playFootstep(ground, stepVolume(mine, away), mine);
+    if (!this.still) this.puff(ground, feet);
+  }
+
+  private puff(ground: keyof typeof PUFFS, at: THREE.Vector3) {
+    const look = PUFFS[ground];
+    for (let i = 0; i < look.count; i++) {
+      let puff = this.puffs.find((p) => !p.sprite.visible);
+      if (!puff && this.puffs.length < PUFF_POOL) {
+        const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ transparent: true, depthWrite: false }));
+        // Drawn before the hero cards (renderOrder 2), so a hero is always in front of the dust at their feet.
+        sprite.renderOrder = 1;
+        this.fxGroup.add(sprite);
+        puff = { sprite, age: 0, life: 0, x: 0, y: 0, z: 0, vx: 0, vy: 0, size: 0, alpha: 0 };
+        this.puffs.push(puff);
+      }
+      if (!puff) puff = this.puffs[(this.nextPuff = (this.nextPuff + 1) % this.puffs.length)];
+      // Kicked out to either side of the foot, the second the other way.
+      const side = (i % 2 ? 1 : -1) * (0.5 + Math.random() * 0.5);
+      const color = look.colors[(Math.random() * look.colors.length) | 0];
+      puff.sprite.material.map = fxTexture(look.kind, color, side > 0);
+      puff.sprite.material.needsUpdate = true;
+      puff.sprite.visible = true;
+      puff.age = 0;
+      puff.life = 0.32 + Math.random() * 0.14;
+      puff.x = at.x + side * 0.22;
+      puff.z = at.z + 0.06;
+      // The shapes are drawn low in their tile (rows 4 to 11 of 16): lift it so the lowest row rests on the ground.
+      puff.y = at.y + look.size * 0.26;
+      puff.vx = side * 0.9;
+      puff.vy = look.kind === "splash" ? 0.6 : 0.3;
+      puff.size = look.size * (0.85 + Math.random() * 0.3);
+      puff.alpha = look.alpha;
+      puff.sprite.position.set(puff.x, puff.y, puff.z);
+      puff.sprite.scale.set(puff.size * 0.8, puff.size * 0.8, 1);
+      puff.sprite.material.opacity = puff.alpha;
+    }
+  }
+
   xpGain(unitId: string, amount: number, levelUp = false) {
     const unit = this.units.get(unitId);
     if (!unit || !(amount > 0 || levelUp)) return;
@@ -2916,10 +3016,12 @@ export class WorldRenderer {
       const p = unit.sprite.position;
       // The hop is drawn on top of where the unit really is; take it off before moving.
       p.y -= unit.bob;
+      let landed = 0;
       if (unit.path.length > 0) {
         const next = unit.path[0].clone();
         next.z += 0.25;
         const step = 4.2 * dt;
+        landed = footfalls(unit.stride, unit.stride + step);
         unit.stride += step;
         if (p.distanceTo(next) <= step) {
           p.copy(next);
@@ -2940,6 +3042,7 @@ export class WorldRenderer {
       unit.sprite.material.rotation = unit.baseRot + unit.lean;
       const ground = p.y;
       unit.feet.set(p.x, ground, p.z);
+      if (landed) this.footfall(id, unit);
       p.y += unit.bob;
       unit.casters.forEach((caster, i) => {
         caster.position.copy(p);
@@ -2996,6 +3099,24 @@ export class WorldRenderer {
         this.fx.splice(i, 1);
         f.onEnd?.();
       }
+    }
+
+    for (const puff of this.puffs) {
+      if (!puff.sprite.visible) continue;
+      puff.age += dt;
+      const t = puff.age / puff.life;
+      if (t >= 1) {
+        puff.sprite.visible = false;
+        continue;
+      }
+      puff.x += puff.vx * dt;
+      puff.y += puff.vy * dt;
+      puff.vx *= Math.exp(-dt * 5);
+      puff.vy *= Math.exp(-dt * 4);
+      puff.sprite.position.set(puff.x, puff.y, puff.z);
+      const s = puff.size * (0.8 + t * 0.45);
+      puff.sprite.scale.set(s, s, 1);
+      puff.sprite.material.opacity = puff.alpha * (1 - t * t);
     }
 
     // Sleepers breathe out a z now and then: small, small, then a big one.
