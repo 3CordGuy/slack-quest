@@ -1642,7 +1642,7 @@ export class WorldRenderer {
       this.poiGroup.visible = false;
       this.arena.position.set(centre.x, centre.y - 0.8, centre.z);
       this.dressArena(state);
-      const actor = state.battle.order[state.battle.turn];
+      const actor = state.battle.actor;
       for (const side of ["hero", "enemy"] as const) {
         const line = state.battle.combatants.filter((c) => c.side === side);
         line.forEach((c, i) => {

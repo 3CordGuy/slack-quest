@@ -332,7 +332,7 @@ export function heroPct(hero: Pick<Hero, "base" | "bonus">, stat: StatKey): numb
 export function awaitingKey(state: WorldState): string | null {
   if (state.phase === "overworld" && state.turn) return `o:${state.round}:${state.turn.heroId}`;
   if (state.phase === "battle" && state.battle) {
-    return `b:${state.battle.round}:${state.battle.turn}:${state.battle.order[state.battle.turn]}`;
+    return `b:${state.battle.turnNo}:${state.battle.actor}`;
   }
   return null;
 }

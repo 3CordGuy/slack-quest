@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { STARTING_STATS, hexDistance } from "@gantt-quest/core";
-import { BATTLE_JOIN_RANGE, BERRY_HEAL, FORAGE_ODDS, ROAMERS_AT_START, ROAMERS_MAX, ROAMER_SCENT, VISION,
+import { upcomingTurns, BATTLE_JOIN_RANGE, BERRY_HEAL, FORAGE_ODDS, ROAMERS_AT_START, ROAMERS_MAX, ROAMER_SCENT, VISION,
   PERK_CAPS, PUB_BUFF_CAPS, pubBuff,
   xpWithBonus,
   CANNED_FILLS,
@@ -164,7 +164,7 @@ describe("battle", () => {
 
   it("orders by speed and stops on a hero turn", () => {
     const { state } = setup([fighter("h1")], ["bandit", "wolf"]);
-    expect(state.order[0]).toBe("h1");
+    expect(upcomingTurns(state)[0].id).toBe("h1");
     expect(currentActor(state)!.id).toBe("h1");
     expect(state.xp).toBe(22);
   });
@@ -172,10 +172,12 @@ describe("battle", () => {
   it("rejects out-of-turn and unknown actions", () => {
     const { state } = setup([fighter("h1"), fighter("h2", { speed: 150 })], ["bandit"]);
     const rng = makeRng(1);
-    expect(stepBattle(state, "h2", { type: "ability", ability: "smite" }, rng).ok).toBe(false);
-    expect(stepBattle(state, "h1", { type: "ability", ability: "firebolt" }, rng).ok).toBe(false);
-    expect(stepBattle(state, "h1", { type: "ability", ability: "smite", focus: 9 }, rng).ok).toBe(false);
-    expect(stepBattle(state, "h1", { type: "ability", ability: "smite", target: "h2" }, rng).ok).toBe(false);
+    const me = state.actor!;
+    const other = me === "h1" ? "h2" : "h1";
+    expect(stepBattle(state, other, { type: "ability", ability: "smite" }, rng).ok).toBe(false);
+    expect(stepBattle(state, me, { type: "ability", ability: "firebolt" }, rng).ok).toBe(false);
+    expect(stepBattle(state, me, { type: "ability", ability: "smite", focus: 9 }, rng).ok).toBe(false);
+    expect(stepBattle(state, me, { type: "ability", ability: "smite", target: other }, rng).ok).toBe(false);
   });
 
   it("runs to victory, with perfect results applying effects", () => {
@@ -186,7 +188,9 @@ describe("battle", () => {
     // 100% over 3 rolls is perfect: full damage (9 + level) and a stun.
     expect(first.events).toContainEqual(expect.objectContaining({ t: "hit", amount: 10, perfect: true }));
     expect(first.events).toContainEqual({ t: "effect", target: "e0", effect: "stunned", turns: 1 });
-    expect(first.events).toContainEqual({ t: "skip", id: "e0", effect: "stunned" });
+    // The hero is so fast it acts again before the bandit comes round, still stunned.
+    expect(first.state.actor).toBe("h1");
+    expect(first.state.combatants.find((c) => c.id === "e0")!.effects).toContainEqual({ kind: "stunned", turns: 1 });
     state = first.state;
     const second = stepBattle(state, "h1", { type: "ability", ability: "smite", target: "e0" }, rng);
     if (!second.ok) throw new Error(second.error);

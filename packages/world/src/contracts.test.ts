@@ -232,12 +232,13 @@ describe("tallies", () => {
     const pos = poiById(s.map, "camp")!.pos;
     s = { ...s, heroes: s.heroes.map((h) => ({ ...h, pos, base: { str: 12, int_stat: 12, vit: 12, agi: 12, dex: 12 }, hp: 200, maxHp: 200, focus: 9, maxFocus: 9 })) };
     s = must(s, { type: "interact", heroId: s.turn!.heroId });
-    const actor = () => s.battle!.order[s.battle!.turn];
+    const actor = () => s.battle!.actor!;
     const first = actor();
     s = must(s, { type: "battle", heroId: first, action: { type: "potion" } });
     expect(s.heroes.find((h) => h.id === first)!.tally).toEqual({ potions: 1 });
-    // Focus guarantees every roll, so the result is perfect whatever the seed.
+    // The potion is free, so the same hero still has the turn. Focus guarantees every roll, so the result is perfect whatever the seed.
     const second = actor();
+    expect(second).toBe(first);
     const ability = s.battle!.combatants.find((c) => c.id === second)!.abilities[0];
     const before = s.heroes.find((h) => h.id === second)!.tally?.perfects ?? 0;
     s = must(s, { type: "battle", heroId: second, action: { type: "ability", ability, focus: 2 } });

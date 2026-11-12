@@ -5,7 +5,7 @@
 // a texture per `kind`.
 
 import * as THREE from "three";
-import { RARITY_COLOR, barPixels, healthBand, outfitKey, type HealthBand, type Outfit, type Slot } from "@gantt-quest/world";
+import { ENEMIES, RARITY_COLOR, barPixels, healthBand, outfitKey, type HealthBand, type Outfit, type Slot } from "@gantt-quest/world";
 import { LOOKS, mergeLook, type Look, type LookPalette } from "./looks";
 
 const W = 18;
@@ -457,6 +457,20 @@ export function spriteKey(kind: string, outfit?: Outfit, asleep = false): string
   return (outfit ? `${kind}|${outfitKey(outfit)}` : kind) + (asleep ? "|zz" : "") + `|r${revision}`;
 }
 
+/** Flip the canvas left to right, in place. */
+function mirror(ctx: CanvasRenderingContext2D) {
+  const img = ctx.getImageData(0, 0, W, H);
+  const out = ctx.createImageData(W, H);
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      const from = (y * W + x) * 4;
+      const to = (y * W + (W - 1 - x)) * 4;
+      for (let k = 0; k < 4; k++) out.data[to + k] = img.data[from + k];
+    }
+  }
+  ctx.putImageData(out, 0, 0);
+}
+
 /** Draw one sprite onto a fresh canvas. Shared by the cached textures and the admin preview. */
 function drawSprite(kind: string, look: Look, outfit: Outfit | undefined, asleep: boolean): HTMLCanvasElement {
   const canvas = document.createElement("canvas");
@@ -478,6 +492,9 @@ function drawSprite(kind: string, look: Look, outfit: Outfit | undefined, asleep
     ctx.fillRect(7, 7, 2, 1);
     ctx.fillRect(10, 7, 2, 1);
   }
+  // Everything is drawn facing right (a wolf's nose, a weapon in the right of the picture).
+  // Enemies line up on the right of the arena, so turn them round to face the heroes.
+  if (ENEMIES[kind] && !outfit) mirror(ctx);
   finish(ctx);
   return canvas;
 }
