@@ -219,6 +219,22 @@ const mudTexture = () =>
     }
   });
 
+/**
+ * A puddle: a blocky pixel blob of dark water, stepped at the ends rather than
+ * round, with a pale glint along its far edge.
+ */
+const puddleTexture = () =>
+  pixelTexture(12, 8, (ctx) => {
+    const water: [number, number, number][] = [[0, 3, 8], [1, 1, 10], [2, 0, 11], [3, 0, 11], [4, 0, 10], [5, 1, 10], [6, 2, 8], [7, 4, 6]];
+    ctx.fillStyle = "#3b4a63";
+    for (const [y, a, b] of water) ctx.fillRect(a, y, b - a + 1, 1);
+    ctx.fillStyle = "#33405a";
+    ctx.fillRect(2, 5, 6, 1);
+    ctx.fillStyle = "#6f86a8";
+    ctx.fillRect(4, 1, 3, 1);
+    ctx.fillRect(8, 2, 1, 1);
+  });
+
 /** Pixels in one wisp's trail. */
 const TRAIL = 34;
 
@@ -384,19 +400,6 @@ export class Ambience {
       this.group.add(mesh);
     });
 
-    // ---- grass: upright cut-outs that turn to the camera and lean with the wind ----
-    this.tufts = tufts;
-    const blade = new THREE.PlaneGeometry(1.5, 1);
-    blade.translate(0, 0.5, 0);
-    this.grass = new THREE.InstancedMesh(
-      blade,
-      new THREE.MeshBasicMaterial({ map: grassTexture(), alphaTest: 0.5, side: THREE.DoubleSide }),
-      Math.max(1, tufts.length),
-    );
-    this.grass.count = tufts.length;
-    this.grass.frustumCulled = false;
-    this.group.add(this.grass);
-
     // ---- waves: two rows of upright paper cut-outs on each water hex ----
     // Each strip is short enough to stay inside its own hex however the view is turned.
     // The scallops scroll along it, the back row one way and the front row the other.
@@ -432,7 +435,7 @@ export class Ambience {
     }
 
     // ---- floorboards and cobbles: laid as one sheet each, so the pattern runs across hexes ----
-    const lay = (biome: string, map: THREE.CanvasTexture, span: number) => {
+    const lay = (biome: string, map: THREE.CanvasTexture, span: number, material?: THREE.Material) => {
       const under = tiles.filter((t) => (t.biome as string) === biome);
       if (under.length === 0) return;
       const positions: number[] = [];
@@ -454,14 +457,106 @@ export class Ambience {
       sheet.setAttribute("uv", new THREE.Float32BufferAttribute(uvs, 2));
       sheet.computeVertexNormals();
       map.wrapS = map.wrapT = THREE.RepeatWrapping;
-      const mesh = new THREE.Mesh(sheet, new THREE.MeshLambertMaterial({ map }));
+      const mesh = new THREE.Mesh(sheet, material ?? new THREE.MeshLambertMaterial({ map }));
       mesh.receiveShadow = true;
       this.group.add(mesh);
     };
+    // The Harbor's grass is drabbed by the wet, as the renderer does for every grass tile in a port.
+    const wet = tiles.some((t) => (t.biome as string) === "cobble");
+    const grassTint = new THREE.Color("#7cb856");
+    if (wet) grassTint.lerp(new THREE.Color("#5d6a5c"), 0.5);
     lay("floor", floorTexture(), BOARD_SPAN);
     lay("cobble", cobbleTexture(), BOARD_SPAN);
     lay("mud", mudTexture(), BOARD_SPAN);
     lay("dock", pierTexture(), BOARD_SPAN);
+    // ---- grass edges: where a dirt path meets grass, the grass breaks up into tiny hexes across the dirt ----
+    // The tiny hexes sit on one lattice for the whole map, so they line up across tile borders, and thin out
+    // the further they are from the grass: about half the edge row, a few just beyond it, then bare dirt.
+    const byKey = new Map(tiles.map((t) => [`${t.q},${t.r}`, t]));
+    const MINI = 0.13;
+    const stepX = Math.sqrt(3) * MINI;
+    const stepZ = 1.5 * MINI;
+    const APOTHEM = 0.985 * Math.cos(Math.PI / 6);
+    const bits: { m: THREE.Matrix4; tone: number }[] = [];
+    for (const t of tiles) {
+      if ((t.biome as string) !== "mud" || skip(t)) continue;
+      const p = place(t);
+      // The sides of this hex that face grass, as their two corners.
+      const edges: { ax: number; az: number; bx: number; bz: number; y: number }[] = [];
+      for (const [dq, dr] of [[1, 0], [1, -1], [0, -1], [-1, 0], [-1, 1], [0, 1]]) {
+        const nb = byKey.get(`${t.q + dq},${t.r + dr}`);
+        if (!nb || (nb.biome as string) !== "plains") continue;
+        const o = place(nb);
+        const side = (((Math.round(Math.atan2(o.x - p.x, o.z - p.z) / (Math.PI / 3) - 0.5) % 6) + 6) % 6);
+        const a = (side * Math.PI) / 3;
+        const b = ((side + 1) * Math.PI) / 3;
+        edges.push({ ax: p.x + Math.sin(a) * 0.985, az: p.z + Math.cos(a) * 0.985, bx: p.x + Math.sin(b) * 0.985, bz: p.z + Math.cos(b) * 0.985, y: o.y });
+      }
+      if (edges.length === 0) continue;
+      const toEdge = (x: number, z: number, e: (typeof edges)[number]) => {
+        const dx = e.bx - e.ax, dz = e.bz - e.az;
+        const f = Math.max(0, Math.min(1, ((x - e.ax) * dx + (z - e.az) * dz) / (dx * dx + dz * dz)));
+        return Math.hypot(x - (e.ax + dx * f), z - (e.az + dz * f));
+      };
+      for (let row = Math.floor((p.z - 1) / stepZ); row <= Math.ceil((p.z + 1) / stepZ); row++) {
+        const z = row * stepZ;
+        const shift = row % 2 === 0 ? 0 : stepX / 2;
+        for (let col = Math.floor((p.x - 1) / stepX) - 1; col <= Math.ceil((p.x + 1) / stepX) + 1; col++) {
+          const x = col * stepX + shift;
+          // Only whole tiny hexes, inside this tile.
+          const vx = x - p.x, vz = z - p.z;
+          let inside = true;
+          for (let k = 0; k < 6; k++) {
+            const n = Math.PI / 6 + (k * Math.PI) / 3;
+            if (vx * Math.sin(n) + vz * Math.cos(n) > APOTHEM - MINI * 0.9) inside = false;
+          }
+          if (!inside) continue;
+          let near = Infinity;
+          let y = p.y;
+          for (const e of edges) {
+            const d = toEdge(x, z, e);
+            if (d < near) {
+              near = d;
+              y = e.y;
+            }
+          }
+          const roll = hash(col, row, 660);
+          const keep = near < MINI * 1.2 ? 0.5 : near < MINI * 2.6 ? 0.15 : 0;
+          if (roll >= keep) continue;
+          // The first row stands at the grass's height; the scattered ones further out sit lower, on the dirt.
+          const top = near < MINI * 1.2 ? y : p.y + 0.02;
+          bits.push({
+            m: new THREE.Matrix4().compose(new THREE.Vector3(x, (top + p.y) / 2, z), new THREE.Quaternion(), new THREE.Vector3(1, Math.max(0.02, top - p.y + 0.012), 1)),
+            tone: hash(col, row, 661),
+          });
+        }
+      }
+    }
+    if (bits.length > 0) {
+      const mesh = new THREE.InstancedMesh(new THREE.CylinderGeometry(MINI * 0.96, MINI * 0.96, 1, 6), new THREE.MeshLambertMaterial({ flatShading: true }), bits.length);
+      const c = new THREE.Color();
+      bits.forEach((bit, i) => {
+        mesh.setMatrixAt(i, bit.m);
+        // Mostly the grass's own green, with the odd lighter or darker one.
+        mesh.setColorAt(i, c.copy(grassTint).offsetHSL(0, 0, bit.tone < 0.15 ? -0.04 : bit.tone > 0.85 ? 0.04 : 0));
+      });
+      mesh.receiveShadow = true;
+      mesh.castShadow = true;
+      this.group.add(mesh);
+    }
+
+    // ---- grass: upright cut-outs that turn to the camera and lean with the wind ----
+    this.tufts = tufts;
+    const blade = new THREE.PlaneGeometry(1.5, 1);
+    blade.translate(0, 0.5, 0);
+    this.grass = new THREE.InstancedMesh(
+      blade,
+      new THREE.MeshBasicMaterial({ map: grassTexture(), alphaTest: 0.5, side: THREE.DoubleSide }),
+      Math.max(1, tufts.length),
+    );
+    this.grass.count = tufts.length;
+    this.grass.frustumCulled = false;
+    this.group.add(this.grass);
 
     // ---- puddles: standing water on the mud and in the dips of the street ----
     const pools: THREE.Matrix4[] = [];
@@ -473,13 +568,14 @@ export class Ambience {
       pools.push(
         new THREE.Matrix4().compose(
           new THREE.Vector3(p.x + (hash(t.q, t.r, 402) - 0.5) * 0.7, p.y + 0.014, p.z + (hash(t.q, t.r, 403) - 0.5) * 0.7),
-          new THREE.Quaternion().setFromEuler(new THREE.Euler(-Math.PI / 2, 0, hash(t.q, t.r, 404) * 6)),
-          new THREE.Vector3(size * 1.5, size, 1),
+          // Square to the ground's pixels, never turned, so the blocky edge stays crisp; some are flipped for variety.
+          new THREE.Quaternion().setFromEuler(new THREE.Euler(-Math.PI / 2, 0, 0)),
+          new THREE.Vector3(size * (hash(t.q, t.r, 404) < 0.5 ? -1 : 1), size, 1),
         ),
       );
     }
     if (pools.length > 0) {
-      const mesh = new THREE.InstancedMesh(new THREE.CircleGeometry(1, 7), new THREE.MeshLambertMaterial({ color: "#3b4a63" }), pools.length);
+      const mesh = new THREE.InstancedMesh(new THREE.PlaneGeometry(1.5, 1), new THREE.MeshLambertMaterial({ map: puddleTexture(), alphaTest: 0.5, side: THREE.DoubleSide }), pools.length);
       pools.forEach((m, i) => mesh.setMatrixAt(i, m));
       mesh.receiveShadow = true;
       this.group.add(mesh);
