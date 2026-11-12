@@ -17,6 +17,7 @@ import {
 } from "./battle";
 import { rollCheck, statPct, type CheckResult } from "./check";
 import { ENEMIES, KEY_ITEMS, WEAPONS } from "./content";
+import { bumpTally, contractById, tallyBattle, type TakenContract, type TallyKey } from "./contracts";
 import { battleDrops, cacheDrops, storyTrophy } from "./drops";
 import { rollItem, type ItemDef, type Outfit } from "./gear";
 import { freshVitals, heroCombatant } from "./hero";
@@ -69,6 +70,10 @@ export interface Hero extends HeroInit {
   keyItems: string[];
   pos: HexPos;
   ready: boolean;
+  /** The notice-board contract taken in the lobby. Absent on voyages saved before contracts. */
+  contract?: TakenContract;
+  /** Counts that contracts are judged on. Absent until something is counted. */
+  tally?: Partial<Record<TallyKey, number>>;
 }
 
 export interface ChatLine {
@@ -137,6 +142,7 @@ export type WorldAction =
   | { type: "join"; hero: HeroInit }
   | { type: "ready"; heroId: string; ready: boolean }
   | { type: "start"; heroId: string }
+  | { type: "contract"; heroId: string; contractId: string | null }
   | { type: "begin"; bible: StoryBible }
   | { type: "move"; heroId: string; to: HexPos }
   | { type: "interact"; heroId: string }
@@ -152,6 +158,7 @@ export type WorldAction =
 export const CLIENT_ACTIONS: ReadonlySet<WorldAction["type"]> = new Set([
   "ready",
   "start",
+  "contract",
   "move",
   "interact",
   "end_turn",
@@ -182,6 +189,7 @@ export type WorldEvent =
   | { t: "chat"; line: ChatLine }
   | { t: "npc_intent"; npcId: string; verb: string; ok: boolean; reason?: string }
   | { t: "objective"; id: string }
+  | { t: "contract"; heroId: string; contractId: string; met: boolean }
   | { t: "battle_start"; heroes: string[]; enemies: string[] }
   | { t: "battle"; ev: BattleEvent }
   | { t: "battle_end"; status: string }
@@ -369,6 +377,19 @@ function revealPoi(ctx: Ctx, poi: Poi) {
   setFact(ctx, `revealed:${poi.id}`);
 }
 
+/** Settle every hero's notice-board contract, once. Only a won story pays. */
+function settleContracts(ctx: Ctx, outcome: "victory" | "defeat") {
+  for (const hero of ctx.state.heroes) {
+    const taken = hero.contract;
+    if (!taken || taken.outcome) continue;
+    const def = contractById(taken.id);
+    const met = outcome === "victory" && !!def && def.check(ctx.state, hero);
+    taken.outcome = met ? "met" : "failed";
+    ctx.events.push({ t: "contract", heroId: hero.id, contractId: taken.id, met });
+    if (met && def) grant(ctx, hero, def.reward);
+  }
+}
+
 function endRun(ctx: Ctx, outcome: "victory" | "defeat", reason: string) {
   const { state } = ctx;
   if (state.phase === "ended") return;
@@ -389,6 +410,7 @@ function endRun(ctx: Ctx, outcome: "victory" | "defeat", reason: string) {
       ctx.effects.push({ kind: "penalty", heroId: hero.id, goldPct: 0.1, cap: 25 });
     }
   }
+  settleContracts(ctx, outcome);
   ctx.events.push({ t: "ended", outcome, reason });
   ctx.effects.push({ kind: "epilogue" }, { kind: "run_end", outcome });
 }
@@ -441,6 +463,7 @@ function startBattle(ctx: Ctx, at: HexPos, enemies: string[], poiId: string | nu
   state.battle = { ...created.state, npcId, deadline: null };
   ctx.events.push({ t: "battle_start", heroes: fighters.map((h) => h.id), enemies });
   for (const ev of created.events) ctx.events.push({ t: "battle", ev });
+  tallyBattle(state.heroes, created.events);
   if (created.state.status !== "active") finishBattle(ctx);
 }
 
@@ -574,6 +597,7 @@ function talk(ctx: Ctx, hero: Hero, action: Extract<WorldAction, { type: "talk" 
     check = rollCheck(rng, { label: "Persuade", stat: "int_stat", pct: heroPct(hero, "int_stat"), count: 3, focus });
     ctx.events.push({ t: "check", heroId: hero.id, check });
     if (check.successes >= 2) {
+      bumpTally(hero, "persuaded");
       run.persuaded = true;
       run.attitude = Math.min(2, run.attitude + 1);
     } else if (check.fumble) {
@@ -662,6 +686,7 @@ function battleAction(ctx: Ctx, heroId: string, action: BattleAction): string | 
   if (!res.ok) return res.error;
   state.battle = { ...res.state, npcId, deadline };
   for (const ev of res.events) ctx.events.push({ t: "battle", ev });
+  tallyBattle(state.heroes, res.events, { heroId, action });
   if (res.state.status !== "active") finishBattle(ctx);
   return null;
 }
@@ -700,6 +725,21 @@ export function stepWorld(prev: WorldState, action: WorldAction): StepResult {
       if (!hero) return fail("not aboard");
       if (state.phase !== "lobby") return fail("already under way");
       hero.ready = !!action.ready;
+      return done(null);
+    }
+
+    case "contract": {
+      // Take (or, with null, put back) a notice-board contract. Only before the ship sails.
+      const hero = heroById(state, action.heroId);
+      if (!hero) return fail("not aboard");
+      if (state.phase !== "lobby") return fail("contracts are taken before the ship sails");
+      if (action.contractId === null || action.contractId === undefined) {
+        delete hero.contract;
+        return done(null);
+      }
+      const def = contractById(String(action.contractId));
+      if (!def) return fail("no such contract");
+      hero.contract = { id: def.id };
       return done(null);
     }
 
