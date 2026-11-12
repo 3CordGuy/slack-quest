@@ -42,6 +42,8 @@ export interface RenderState {
   battle: ClientState["battle"];
   story: { npcs: { id: string; poi: string }[] } | null;
   npcs: Record<string, { hostile: boolean }>;
+  /** Enemy bands in sight on the map. */
+  roamers?: { id: string; kinds: string[]; pos: HexPos }[];
   /** No turns or movement points: the viewer may walk anywhere reachable, and tiles are not lit. */
   freeRoam?: boolean;
   /** Furniture standing on hexes (a hut's room). Each blocks the hex it is on. */
@@ -91,7 +93,7 @@ const MAX_PITCH = 1.25;
 /** Camera distance per unit of zoom, kept from when the tilt was fixed. */
 const CAMERA_REACH = Math.hypot(0.72, 0.78);
 const PLAYER_COLORS = ["#ffd23f", "#5ce1e6", "#ff7ab6", "#9dff6b"];
-const BIOME_COLOR: Record<string, string> = { plains: "#7cb856", forest: "#4c9a52", hills: "#a39672", water: "#3f86dc", dock: "#9a7748", cobble: "#6f7279", mud: "#5f5140", rampart: "#62656d", floor: "#b08a5c", wall: "#6e5a48" };
+const BIOME_COLOR: Record<string, string> = { plains: "#7cb856", forest: "#4c9a52", hills: "#a39672", water: "#3f86dc", dock: "#9a7748", cobble: "#6f7279", mud: "#5f5140", rampart: "#62656d", floor: "#b08a5c", wall: "#6e5a48", fog: "#2b3140" };
 /** What grass and trees are pulled toward under the Harbor's low cloud. */
 const DRAB = new THREE.Color("#5d6a5c");
 /** And the sea there: cold and grey-green. */
@@ -198,7 +200,11 @@ export class WorldRenderer {
   private rangeGroup = new THREE.Group();
   private rangeSig = "";
   private hoverRing: THREE.Mesh;
-  private arena: THREE.Mesh;
+  private arena = new THREE.Group();
+  private arenaGround: THREE.Mesh;
+  private arenaDecor = new THREE.Group();
+  /** What the battleground was last dressed for, so it is only rebuilt when the fight moves. */
+  private arenaSig = "";
   private units = new Map<string, Unit>();
   private pulsing = new Set<string>();
   private floaters: Floater[] = [];
@@ -235,6 +241,10 @@ export class WorldRenderer {
   private heldKeys = new Set<string>();
   /** The map is a wet, walled port (it has streets): greens are drawn drab. */
   private sodden = false;
+  /** How many hexes were out of the fog when the ground was last drawn. */
+  private lifted = -1;
+  /** Water hexes far enough from land that they are not drawn: the open sea shows instead. */
+  private deep = new Set<string>();
   /** The camera turn the indoor walls were last cut for. */
   private wallTurn = NaN;
   private rotateButtons: HTMLDivElement;
@@ -269,12 +279,13 @@ export class WorldRenderer {
     this.hoverRing.rotation.z = Math.PI / 6;
     this.hoverRing.visible = false;
 
-    this.arena = new THREE.Mesh(
-      new THREE.CylinderGeometry(3.8, 4.1, 1.6, 24),
-      new THREE.MeshLambertMaterial({ color: "#3b3550", flatShading: true }),
-    );
+    // The battleground: one great hex of whatever ground the fight broke out on, dressed to match (see dressArena).
+    this.arenaGround = new THREE.Mesh(new THREE.CylinderGeometry(4.4, 4.4, 1.6, 6), new THREE.MeshLambertMaterial({ color: "#7cb856", flatShading: true }));
+    this.arenaGround.receiveShadow = true;
+    const skirt = new THREE.Mesh(new THREE.CylinderGeometry(4.4, 3.9, 1.1, 6), new THREE.MeshLambertMaterial({ color: "#4a3f35", flatShading: true }));
+    skirt.position.y = -1.35;
+    this.arena.add(this.arenaGround, skirt, this.arenaDecor);
     this.arena.visible = false;
-    this.arena.receiveShadow = true;
 
     this.scene.add(this.decor, this.poiGroup, this.propGroup, this.rangeGroup, this.pathGroup, this.hoverRing, this.arena, this.unitGroup, this.fxGroup);
 
@@ -338,7 +349,10 @@ export class WorldRenderer {
 
   setState(state: RenderState) {
     const first = this.mapCode !== state.code;
-    if (first) this.buildTerrain(state);
+    // The ground is redrawn for a new map, and whenever fog lifts off more of this one.
+    const lifted = state.map.tiles.reduce((n, t) => n + (t.biome === "fog" ? 0 : 1), 0);
+    if (first || lifted !== this.lifted) this.buildTerrain(state, first);
+    this.lifted = lifted;
     this.state = state;
     this.buildPois(state);
     this.buildProps(state);
@@ -378,8 +392,9 @@ export class WorldRenderer {
   }
 
   /** Animate things that just happened. Call after setState for the same update. */
-  playEvents(events: WorldEvent[]) {
-    let beat = 0;
+  /** Animate what just happened. `startBeat` holds the first blow back, for a fight's opening card. */
+  playEvents(events: WorldEvent[], startBeat = 0) {
+    let beat = startBeat;
     for (const ev of events) {
       if (ev.t === "moved") {
         const unit = this.units.get(ev.heroId);
@@ -466,7 +481,7 @@ export class WorldRenderer {
 
   // ---------- terrain ----------
 
-  private buildTerrain(state: RenderState) {
+  private buildTerrain(state: RenderState, recentre = true) {
     this.mapCode = state.code;
     this.sodden = state.map.tiles.some((t) => t.biome === "cobble");
     (this.sea.material as THREE.MeshLambertMaterial).color.set(this.sodden ? "#2b4558" : "#3577cf");
@@ -483,9 +498,25 @@ export class WorldRenderer {
     geo.translate(0, 0.5, 0);
     const terrain = new THREE.InstancedMesh(geo, new THREE.MeshLambertMaterial({ flatShading: true }), this.tiles.length);
     const m = new THREE.Matrix4();
+    // Open sea is left to the sea itself: only water within a couple of hexes of land is drawn as hexes,
+    // with a ragged edge, so the map does not end in a straight-sided block of water.
+    const land = this.tiles.filter((t) => t.biome !== "water");
+    this.deep = new Set(
+      this.tiles
+        .filter((t) => {
+          // Water with something standing in it (rocks, a wreck) stays, so it can still be pointed at.
+          if (t.biome !== "water" || state.map.pois.some((p) => p.pos.q === t.q && p.pos.r === t.r)) return false;
+          // A map that is all sea (the crossing to an island) is drawn whole.
+          if (land.length === 0) return false;
+          const near = Math.min(...land.map((l) => hexDistance(l, t)));
+          return near > 2 || (near === 2 && noise(t.q, t.r, 31) < 0.45);
+        })
+        .map(key),
+    );
     this.tiles.forEach((t, i) => {
       const { x, z } = hexToWorld(t);
-      m.compose(new THREE.Vector3(x, 0, z), new THREE.Quaternion(), new THREE.Vector3(1, tileTop(t), 1));
+      const shown = this.deep.has(key(t)) ? 0 : 1;
+      m.compose(new THREE.Vector3(x, 0, z), new THREE.Quaternion(), new THREE.Vector3(shown, tileTop(t) * shown, shown));
       terrain.setMatrixAt(i, m);
     });
     terrain.castShadow = true;
@@ -525,7 +556,7 @@ export class WorldRenderer {
       }
     }
     this.ambience.build(
-      this.tiles,
+      this.tiles.filter((t) => !this.deep.has(key(t))),
       (t) => poiKeys.has(key(t)),
       (t) => ({ ...hexToWorld(t), y: tileTop(t) }),
     );
@@ -540,7 +571,8 @@ export class WorldRenderer {
     instanced(new THREE.ConeGeometry(0.34, 0.9, 5), this.sodden ? "#3a5d41" : "#2f7a3d", trees);
     if (merlons.length > 0) instanced(new THREE.BoxGeometry(1, 1, 1), "#6a6d75", merlons);
 
-    // Start centred on the island.
+    // Start centred on the island. Fog lifting redraws the ground but leaves the camera where the player put it.
+    if (!recentre) return;
     const xs = this.tiles.map((t) => hexToWorld(t).x);
     const zs = this.tiles.map((t) => hexToWorld(t).z);
     this.target.set((Math.min(...xs) + Math.max(...xs)) / 2, 0, (Math.min(...zs) + Math.max(...zs)) / 2);
@@ -619,6 +651,11 @@ export class WorldRenderer {
     v.project(this.camera);
     if (v.z < -1 || v.z > 1 || Math.abs(v.x) > 1 || Math.abs(v.y) > 1) return null;
     return { x: ((v.x + 1) / 2) * this.container.clientWidth, y: ((1 - v.y) / 2) * this.container.clientHeight };
+  }
+
+  /** Ease the camera over to a hex. */
+  lookAt(pos: HexPos) {
+    this.targetGoal.copy(this.standAt(pos));
   }
 
   /** Whether a unit is still on its way along a walked path. */
@@ -782,6 +819,30 @@ export class WorldRenderer {
         add(new THREE.CylinderGeometry(0.05, 0.05, 1.5, 5), lambert("#4a3520"), -0.1, 0.9, 1.75);
         add(box(0.75, 0.75, 0.05), lambert("#f4efe1"), -0.1, 1.15, 1.7);
         add(box(0.3, 0.06, 0.9), lambert("#8a6a44"), 0, 0.02, 0.95);
+        break;
+      }
+      case "ship": {
+        // The crew's ship under sail, seen from the beam: hull, deckhouse, a mast with a full square sail, and a white curl at the bow.
+        add(box(1.6, 0.42, 0.66), lambert("#6b4a2b"), 0, 0.02, 0.28);
+        add(box(1.7, 0.06, 0.72), lambert("#4a3520"), 0, 0.25, 0.28);
+        add(box(0.5, 0.24, 0.5), lambert("#5a3d22"), -0.5, 0.4, 0.28);
+        add(new THREE.CylinderGeometry(0.05, 0.06, 1.7, 5), lambert("#4a3520"), 0.1, 1.1, 0.28);
+        // The sail is drawn side on, like the hull, so it shows its face while she runs left to right.
+        add(box(0.95, 0.95, 0.06), lambert("#f4efe1"), 0.22, 1.25, 0.28);
+        add(box(1.05, 0.07, 0.07), lambert("#4a3520"), 0.22, 1.74, 0.28);
+        add(box(0.3, 0.16, 0.03), lambert("#b9433d"), 0.1, 2.0, 0.28);
+        add(box(0.3, 0.06, 0.8), new THREE.MeshBasicMaterial({ color: "#f2f9ff" }), 0.95, -0.12, 0.28);
+        add(box(0.6, 0.04, 0.5), new THREE.MeshBasicMaterial({ color: "#cfe6fb" }), -1.1, -0.14, 0.28);
+        break;
+      }
+      case "lot": {
+        // A plot for sale: four corner stakes, a line of twine, and a board on a post.
+        const stake = lambert("#7a5230");
+        for (const [x, z] of [[-0.5, -0.15], [0.5, -0.15], [-0.5, 0.65], [0.5, 0.65]]) add(box(0.06, 0.3, 0.06), stake, x, 0.15, z);
+        add(box(1.0, 0.02, 0.02), lambert("#d8d2c0"), 0, 0.26, -0.15);
+        add(box(1.0, 0.02, 0.02), lambert("#d8d2c0"), 0, 0.26, 0.65);
+        add(box(0.05, 0.55, 0.05), stake, 0, 0.27, 0.0);
+        add(box(0.42, 0.24, 0.04), lambert("#c9a877"), 0, 0.55, 0.0);
         break;
       }
       case "plot": {
@@ -982,6 +1043,105 @@ export class WorldRenderer {
 
   // ---------- units ----------
 
+  /**
+   * Make the battleground look like where the fight is: the colour of that
+   * hex's ground, with a scatter of what grows or lies there, kept to the back
+   * and the sides so the two lines of fighters stand in the clear. A fight at
+   * a camp or a lair gets that place's own dressing.
+   */
+  private dressArena(state: RenderState) {
+    const battle = state.battle!;
+    const poi = state.map.pois.find((p) => p.id === (battle.poiId ?? state.story?.npcs.find((n) => n.id === battle.npcId)?.poi));
+    const at = poi?.pos ?? state.heroes[0].pos;
+    const found = tileAt(state.map, at)?.biome ?? "plains";
+    const biome = found === "fog" || found === "water" ? "plains" : found;
+    const sig = `${state.code}|${at.q},${at.r}|${biome}|${poi?.kind ?? ""}`;
+    if (sig === this.arenaSig) return;
+    this.arenaSig = sig;
+    this.arenaDecor.traverse((o) => {
+      const mesh = o as THREE.Mesh;
+      mesh.geometry?.dispose();
+      (mesh.material as THREE.Material | undefined)?.dispose();
+    });
+    this.arenaDecor.clear();
+    (this.arenaGround.material as THREE.MeshLambertMaterial).color.set(BIOME_COLOR[biome] ?? BIOME_COLOR.plains);
+    if (this.sodden && (biome === "plains" || biome === "forest")) (this.arenaGround.material as THREE.MeshLambertMaterial).color.lerp(DRAB, 0.5);
+
+    const TOP = 0.8;
+    const rnd = (i: number, salt: number) => noise(at.q * 3 + i, at.r * 5 - i, 40 + salt);
+    const put = (geometry: THREE.BufferGeometry, color: string, x: number, y: number, z: number, rotY = 0, scale = 1) => {
+      const mesh = new THREE.Mesh(geometry, new THREE.MeshLambertMaterial({ color, flatShading: true }));
+      mesh.position.set(x, TOP + y, z);
+      mesh.rotation.y = rotY;
+      mesh.scale.setScalar(scale);
+      mesh.castShadow = mesh.receiveShadow = true;
+      this.arenaDecor.add(mesh);
+      return mesh;
+    };
+    /** A spot off the fighting line: along the back, or out at either side. Kept inside the hex. */
+    const spot = (i: number): [number, number] => {
+      if (i % 3 === 2) {
+        const side = i % 2 ? 1 : -1;
+        return [side * (2.9 + rnd(i, 1) * 0.5), -0.6 + rnd(i, 2) * 2.2];
+      }
+      return [(rnd(i, 3) - 0.5) * 5.2, -3.1 + rnd(i, 4) * 1.5];
+    };
+    const tree = (x: number, z: number, s: number, dark = false) => {
+      put(new THREE.CylinderGeometry(0.07, 0.09, 0.3, 5), "#5a3d22", x, 0.15 * s, z, 0, s);
+      put(new THREE.ConeGeometry(0.42, 1.1, 5), dark ? "#2a5f38" : "#2f7a3d", x, 0.8 * s, z, rnd(x * 7, 5) * 3, s);
+    };
+    const rock = (x: number, z: number, s: number, tone = "#8d8674") => put(new THREE.DodecahedronGeometry(0.36, 0), tone, x, 0.2 * s, z, rnd(x * 5, 6) * 6, s);
+    const tuft = (x: number, z: number, s: number) => {
+      for (const [dx, lean] of [[-0.08, -0.25], [0, 0], [0.08, 0.25]]) put(new THREE.ConeGeometry(0.05, 0.34, 3), "#a6dd6f", x + dx, 0.17 * s, z, 0, s).rotation.z = -lean;
+    };
+
+    if (poi?.kind === "camp") {
+      // A raiders' camp: two tents, a fire ringed with stones, crates.
+      for (const [x, z, r] of [[-2.0, -2.6, 0.3], [1.7, -2.9, -0.4]]) put(new THREE.ConeGeometry(0.85, 1.1, 4), "#8a7a5a", x, 0.55, z, Math.PI / 4 + r);
+      put(new THREE.ConeGeometry(0.22, 0.5, 5), "#ff9b3d", 0, 0.25, -2.4);
+      for (let i = 0; i < 6; i++) put(new THREE.DodecahedronGeometry(0.11, 0), "#6d6960", Math.sin(i) * 0.42, 0.06, -2.4 + Math.cos(i) * 0.42);
+      put(new THREE.BoxGeometry(0.5, 0.42, 0.5), "#9a6b2f", 3.0, 0.21, -0.9, 0.4);
+      put(new THREE.BoxGeometry(0.36, 0.3, 0.36), "#8a6a44", -3.1, 0.15, 0.2, 0.9);
+    } else if (poi?.kind === "lair") {
+      // The lair: leaning standing stones and old bones.
+      for (let i = 0; i < 6; i++) {
+        const a = Math.PI + ((i - 2.5) / 6) * Math.PI * 1.1;
+        const stone = put(new THREE.BoxGeometry(0.5, 1.5 + rnd(i, 7) * 0.9, 0.36), "#4a4458", Math.sin(a) * 3.3, 0.8, Math.cos(a) * 3.0 - 0.3, a);
+        stone.rotation.z = (rnd(i, 8) - 0.5) * 0.35;
+      }
+      for (let i = 0; i < 4; i++) put(new THREE.BoxGeometry(0.4, 0.05, 0.06), "#d8d2c0", (rnd(i, 9) - 0.5) * 4.6, 0.03, -2.2 - rnd(i, 10), rnd(i, 11) * 3);
+    }
+
+    if (biome === "forest") {
+      for (let i = 0; i < 9; i++) {
+        const [x, z] = spot(i);
+        tree(x, z, 0.9 + rnd(i, 12) * 0.8, i % 2 === 0);
+      }
+      const log = put(new THREE.CylinderGeometry(0.16, 0.16, 1.3, 6), "#6b4a2b", -2.6, 0.16, 1.7, 0.5);
+      log.rotation.z = Math.PI / 2;
+      for (let i = 0; i < 5; i++) tuft((rnd(i, 13) - 0.5) * 6, 1.8 + rnd(i, 14) * 1.2, 1);
+    } else if (biome === "hills") {
+      for (let i = 0; i < 8; i++) {
+        const [x, z] = spot(i);
+        rock(x, z, 0.8 + rnd(i, 15) * 1.3, ["#8d8674", "#7b786f", "#9c917b"][i % 3]);
+      }
+      put(new THREE.ConeGeometry(0.5, 1.6, 4), "#7b786f", -3.2, 0.8, -2.2, 0.6);
+      for (let i = 0; i < 5; i++) rock((rnd(i, 16) - 0.5) * 6.4, 2.0 + rnd(i, 17), 0.35, "#a39a86");
+    } else if (biome === "plains") {
+      for (let i = 0; i < 18; i++) {
+        const [x, z] = i < 12 ? spot(i) : [(rnd(i, 18) - 0.5) * 6.6, 1.7 + rnd(i, 19) * 1.5];
+        tuft(x, z, 0.9 + rnd(i, 20) * 0.7);
+      }
+      for (let i = 0; i < 3; i++) rock(spot(i + 20)[0], spot(i + 20)[1], 0.5 + rnd(i, 21) * 0.4);
+      for (let i = 0; i < 4; i++) put(new THREE.BoxGeometry(0.09, 0.09, 0.09), i % 2 ? "#ffd23f" : "#f4efe1", (rnd(i, 22) - 0.5) * 5.5, 0.22, -2.6 + rnd(i, 23) * 0.9);
+      tree(3.2, -2.5, 1.2);
+    } else {
+      // Bare ground (mud, boards, stone): a few rocks and a broken crate.
+      for (let i = 0; i < 5; i++) rock(spot(i)[0], spot(i)[1], 0.6 + rnd(i, 24) * 0.6, "#6d6960");
+      put(new THREE.BoxGeometry(0.5, 0.4, 0.5), "#8a6a44", -2.9, 0.2, -2.3, 0.5);
+    }
+  }
+
   private battleCentre(state: RenderState): THREE.Vector3 {
     const battle = state.battle!;
     const poiId = battle.poiId ?? state.story?.npcs.find((n) => n.id === battle.npcId)?.poi;
@@ -1006,6 +1166,7 @@ export class WorldRenderer {
       this.arena.visible = true;
       this.poiGroup.visible = false;
       this.arena.position.set(centre.x, centre.y - 0.8, centre.z);
+      this.dressArena(state);
       const actor = state.battle.order[state.battle.turn];
       for (const side of ["hero", "enemy"] as const) {
         const line = state.battle.combatants.filter((c) => c.side === side);
@@ -1045,6 +1206,15 @@ export class WorldRenderer {
         const pos = this.standAt(poi.pos);
         pos.x += 0.62;
         want.set(`npc:${npc.id}`, { kind: "npc", pos, size: 1.4 });
+      }
+      // Bands loose on the island, drawn where they stand while a hero can see them.
+      for (const band of state.roamers ?? []) {
+        band.kinds.forEach((kind, i) => {
+          const pos = this.standAt(band.pos);
+          pos.x += (i - (band.kinds.length - 1) / 2) * 0.55;
+          pos.z += 0.15;
+          want.set(`roam:${band.id}:${i}`, { kind, pos, size: 1.3, ring: i === 0 ? "#ff3b3b" : undefined, pulse: i === 0 });
+        });
       }
       for (const poi of state.map.pois) {
         if (poi.cleared || poi.enemies.length === 0) continue;

@@ -172,6 +172,51 @@ const cobbleTexture = () =>
     }
   });
 
+/**
+ * Planks for the piers: long weathered boards running out to sea, in close
+ * browns with thin dark gaps and the odd nail. Quieter than the hut floor.
+ */
+const pierTexture = () =>
+  pixelTexture(32, 32, (ctx) => {
+    const boards = ["#9a7748", "#927044", "#a07d4e", "#967446"];
+    for (let col = 0; col < 4; col++) {
+      const x = col * 8;
+      // Each run is two boards end to end, the joint somewhere different every run.
+      const joint = [9, 22, 15, 4][col];
+      for (let y = 0; y < 32; y++) {
+        ctx.fillStyle = boards[(y < joint ? col : col + 2) % boards.length];
+        ctx.fillRect(x, y, 7, 1);
+      }
+      ctx.fillStyle = "#7a5c38";
+      ctx.fillRect(x + 7, 0, 1, 32);
+      ctx.fillRect(x, joint, 7, 1);
+      ctx.fillStyle = "#6b5234";
+      ctx.fillRect(x + 3, (joint + 2) % 32, 1, 1);
+      // A streak or two of pale, salt-bleached grain.
+      ctx.fillStyle = "#a98658";
+      for (let i = 0; i < 2; i++) ctx.fillRect(x + 1 + Math.floor(hash(col, i, 630) * 5), Math.floor(hash(col, i, 631) * 28), 1, 2 + Math.floor(hash(col, i, 632) * 3));
+    }
+  });
+
+/**
+ * Mud for the Harbor's unpaved ground: one brown with a faint scatter of
+ * darker wet patches, paler grit and a few short ruts. Barely there.
+ */
+const mudTexture = () =>
+  pixelTexture(32, 32, (ctx) => {
+    ctx.fillStyle = "#5f5140";
+    ctx.fillRect(0, 0, 32, 32);
+    for (let i = 0; i < 46; i++) {
+      const x = Math.floor(hash(i, 1, 620) * 32);
+      const y = Math.floor(hash(i, 2, 620) * 32);
+      const kind = hash(i, 3, 620);
+      ctx.fillStyle = kind < 0.5 ? "#574a3a" : kind < 0.85 ? "#665846" : "#52463a";
+      // Mostly single pixels; some smears two or three long, and a few ruts.
+      const len = kind < 0.5 ? 1 + Math.floor(hash(i, 4, 620) * 3) : kind < 0.85 ? 1 : 4 + Math.floor(hash(i, 4, 620) * 3);
+      for (let dx = 0; dx < len; dx++) ctx.fillRect((x + dx) % 32, y, 1, 1);
+    }
+  });
+
 /** Pixels in one wisp's trail. */
 const TRAIL = 34;
 
@@ -303,7 +348,7 @@ export class Ambience {
         }
         if (n(70) < 0.35) tufts.push({ x: p.x + (n(71) - 0.5) * 1.1, y: p.y, z: p.z + 0.45, size: 0.3, phase: n(72) * 6 });
       } else if (t.biome === "plains") {
-        const count = Math.floor(n(80) * 2.7);
+        const count = 1 + Math.floor(n(80) * 3.99);
         for (let i = 0; i < count; i++) {
           const angle = n(81 + i) * Math.PI * 2;
           const spread = 0.25 + n(84 + i) * 0.5;
@@ -408,6 +453,8 @@ export class Ambience {
     };
     lay("floor", floorTexture(), BOARD_SPAN);
     lay("cobble", cobbleTexture(), BOARD_SPAN);
+    lay("mud", mudTexture(), BOARD_SPAN);
+    lay("dock", pierTexture(), BOARD_SPAN);
 
     // ---- puddles: standing water on the mud and in the dips of the street ----
     const pools: THREE.Matrix4[] = [];

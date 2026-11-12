@@ -4,6 +4,10 @@ import {
   FELLING_DENS,
   FELLING_ROTTEN,
   GATHER_DAILY_OUTINGS,
+  REST_COOLDOWN_MS,
+  REST_OUTINGS,
+  restProblem,
+  restReadyAt,
   GATHER_MAX_STEPS,
   GATHER_MAX_UNITS,
   GATHER_MIN_BANK,
@@ -330,5 +334,26 @@ describe("gathering stamina", () => {
     expect(outingsLeft({ day, used: 3 }, midnight - 1)).toBe(0);
     expect(outingsLeft({ day, used: 3 }, midnight)).toBe(3);
     expect(gatherResetAt(midnight)).toBe(midnight + 86_400_000);
+  });
+});
+
+describe("resting", () => {
+  const noon = Date.UTC(2026, 10, 11, 12);
+  const today = gatherDay(noon);
+
+  it("does nothing for someone who is not tired, and waits out its cooldown", () => {
+    expect(restProblem(null, noon)).toMatch(/not tired/);
+    expect(restProblem({ day: today, used: 0 }, noon)).toMatch(/not tired/);
+    expect(restProblem({ day: "2020-01-01", used: 3 }, noon)).toMatch(/not tired/);
+    expect(restProblem({ day: today, used: 2 }, noon)).toBeNull();
+    expect(restProblem({ day: today, used: 2, rested_at: noon - 5 * 60_000 }, noon)).toMatch(/15 min/);
+    expect(restProblem({ day: today, used: 2, rested_at: noon - REST_COOLDOWN_MS }, noon)).toBeNull();
+    expect(restReadyAt(null)).toBe(0);
+    expect(restReadyAt(noon)).toBe(noon + 20 * 60_000);
+  });
+
+  it("gives back more at home than on a bedroll, and never more than a day's outings", () => {
+    expect(REST_OUTINGS.hut).toBeGreaterThan(REST_OUTINGS.bedroll);
+    expect(REST_OUTINGS.hut).toBeLessThan(GATHER_DAILY_OUTINGS);
   });
 });

@@ -40,7 +40,7 @@ export const HARBOR_WORKS: HexPos = at(5, 6);
 export const HARBOR_ROCKS: HexPos[] = [at(0, 9), at(4, 9), at(8, 10), at(1, 10), at(12, 10)];
 export const HARBOR_WRECK: HexPos = at(11, 9);
 
-const HEIGHT: Record<Biome, number> = { water: 0.05, plains: 0.3, forest: 0.42, hills: 0.75, dock: 0.1, cobble: 0.26, mud: 0.2, rampart: 1.25, floor: 0.1, wall: 0.9 };
+const HEIGHT: Record<Biome, number> = { water: 0.05, plains: 0.3, forest: 0.42, hills: 0.75, dock: 0.1, cobble: 0.26, mud: 0.2, rampart: 1.25, floor: 0.1, wall: 0.9, fog: 0.3 };
 
 export function harborPoi(id: string, kind: PoiKind, pos: HexPos): Poi {
   return { id, kind, pos, hidden: false, cleared: false, usedBy: [], enemies: [] };
@@ -62,8 +62,10 @@ function isStreet(col: number, r: number): boolean {
 }
 
 /**
- * The Harbor map. The same for every crew: an old stone rampart at the back
- * and down the sides, fallen in places; two rows of hut plots with a cobbled
+ * The Harbor map. The same for every crew, and not a tidy rectangle: the sea
+ * comes round its back corners and into its sides, and the shore runs out
+ * in spits of shingle. An old stone rampart at the back and down the sides,
+ * fallen in places; two rows of hut plots with a cobbled
  * lane between them; a plaza; a quay along the shore with three piers; and
  * beyond them the sea, with rocks standing out of it and a wreck on the rocks.
  * Off the cobbles the ground is mud and scrub.
@@ -86,6 +88,12 @@ export function generateHarbor(): WorldMap {
       if (biome === "rampart" && pos.r === 6) h = 0.7;
     } else if (isStreet(col, pos.r)) biome = "cobble";
     else biome = grit(col, pos.r) < (pos.r >= 5 ? 0.6 : 0.35) ? "mud" : "plains";
+    // The coast is not square. The sea comes round the back corners of the wall and bites into both sides,
+    // and between and beyond the piers the shore runs out into shingle.
+    if (pos.r === 0 && (col <= 1 || col >= last - 1)) biome = "water";
+    if (pos.r === 6 && (col === 0 || col === last)) biome = "water";
+    if (pos.r === 8 && biome === "water" && [4, 8, 11, 12].includes(col)) biome = "mud";
+    if (biome !== "rampart") h = null;
     // The gathering spots keep the ground they are about.
     if (same(pos, HARBOR_GATHER.quarry)) biome = "hills";
     if (same(pos, HARBOR_GATHER.felling)) biome = "forest";
@@ -129,6 +137,8 @@ export interface HarborPlayer {
   pos: HexPos;
   /** What they are visibly wearing. */
   outfit?: Outfit;
+  /** Where their bedroll is laid out, until they walk off. */
+  bedroll?: HexPos;
 }
 
 export interface HarborMember {
@@ -138,6 +148,8 @@ export interface HarborMember {
   level: number;
   /** How big their hut is, so its building can be drawn to match. Absent from boards saved before tiers. */
   hutTier?: number;
+  /** Which plot they have bought (an index into HARBOR_PLOTS), or null while they sleep on a bedroll. */
+  plot?: number | null;
 }
 
 export interface HarborShip {
@@ -183,7 +195,8 @@ export type HarborClientMessage =
   | { type: "say"; text: string }
   /** "I changed my gear or level": the server re-reads the sender's character and tells everyone. */
   | { type: "refresh" }
-;
+  /** "I have just rested here": lay the sender's bedroll out where they stand, for everyone to see. */
+  | { type: "bedroll" };
 
 export const HARBOR_MAX_SAY = 200;
 export const MAX_CREW = 40;

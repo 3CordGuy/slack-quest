@@ -130,6 +130,9 @@ export const HUT_TIERS: HutTier[] = [
   { tier: 3, name: "Lodge", cols: 8, rows: 6, gold: 400, resources: { wood: 40, stone: 30, iron: 10 } },
 ];
 
+/** What a plot of land in the Harbor costs. A hut can only be built, entered or furnished once its owner has one. */
+export const PLOT_PRICE = 120;
+
 // ---------- what a player owns ----------
 
 /** One owned furnishing. `q`/`r` are null while it is in storage. */

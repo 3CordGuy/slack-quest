@@ -54,6 +54,13 @@ class Builder {
 }
 
 const MODELS: Record<string, (b: Builder) => void> = {
+  // A bedroll laid out on the ground: a blanket, a rolled end for a pillow, and a pack beside it.
+  bedroll(b) {
+    b.box("#7a5a3c", 0.55, 0.05, 1.05, 0.25, 0, 0.1);
+    b.box("#9c3f36", 0.5, 0.06, 0.7, 0.25, 0.04, 0.25);
+    b.box("#d8d2c0", 0.42, 0.12, 0.2, 0.25, 0.04, -0.32);
+    b.box("#5a4632", 0.28, 0.24, 0.24, -0.35, 0, -0.25);
+  },
   // A length of bar counter, a full hex wide so neighbouring lengths join into one bar.
   bar(b) {
     b.box(WOOD, 1.76, 0.6, 0.5);
