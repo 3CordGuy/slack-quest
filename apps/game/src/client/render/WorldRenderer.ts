@@ -550,7 +550,7 @@ export class WorldRenderer {
   // ---------- points of interest ----------
 
   private buildPois(state: RenderState) {
-    const sig = state.map.pois.map((p) => `${p.id}:${p.cleared}`).join("|");
+    const sig = state.map.pois.map((p) => `${p.id}:${p.cleared}:${p.tier ?? ""}`).join("|");
     if (sig === this.poiSig) return;
     this.poiSig = sig;
     this.poiGroup.clear();
@@ -703,9 +703,18 @@ export class WorldRenderer {
         const roofs = ["#8c3b2f", "#2f6f8c", "#6b8c2f", "#8c6a2f", "#6a2f8c", "#2f8c7a"];
         let hash = 0;
         for (const ch of poi.id) hash = (hash * 31 + ch.charCodeAt(0)) >>> 0;
-        add(box(0.8, 0.5, 0.65), lambert("#c9a877"), 0, 0.25, 0);
-        add(new THREE.ConeGeometry(0.72, 0.45, 4), lambert(roofs[hash % roofs.length]), 0, 0.72, 0, Math.PI / 4);
-        add(box(0.18, 0.3, 0.04), lambert("#5a3d22"), 0, 0.15, 0.33);
+        // A bigger hut is a wider, taller building: a Cottage gains a chimney, a Lodge a second wing.
+        const tier = Math.max(1, Math.min(3, poi.tier ?? 1));
+        const k = 1 + (tier - 1) * 0.22;
+        const roof = lambert(roofs[hash % roofs.length]);
+        add(box(0.8 * k, 0.5 * k, 0.65 * k), lambert("#c9a877"), 0, 0.25 * k, 0);
+        add(new THREE.ConeGeometry(0.72 * k, 0.45 * k, 4), roof, 0, 0.72 * k, 0, Math.PI / 4);
+        add(box(0.18, 0.3, 0.04), lambert("#5a3d22"), 0, 0.15, 0.325 * k + 0.005);
+        if (tier >= 2) add(box(0.14, 0.42, 0.14), lambert("#8b8f96"), 0.26 * k, 0.86 * k, -0.1);
+        if (tier >= 3) {
+          add(box(0.5, 0.42, 0.5), lambert("#c9a877"), -0.72, 0.21, 0.08);
+          add(new THREE.ConeGeometry(0.46, 0.3, 4), roof, -0.72, 0.57, 0.08, Math.PI / 4);
+        }
         break;
       }
       case "shop": {

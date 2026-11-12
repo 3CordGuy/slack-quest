@@ -9,7 +9,9 @@ import { noticeBoard } from "./server/board";
 import { sendSignInCode } from "./server/email";
 import {
   attachEmail,
+  buyFurniture,
   buyShopItem,
+  craftFurnishing,
   consumeEmailCode,
   createPlayerWithEmail,
   createSession,
@@ -33,10 +35,12 @@ import {
   leaveCrew,
   playerForToken,
   refreshHarbor,
+  refreshHut,
   saveDraft,
   sellItem,
   spendPoint,
   unequipItem,
+  upgradeHut,
   type Env,
   type Player,
 } from "./server/db";
@@ -202,12 +206,46 @@ app.post("/api/shop/buy", async (c) => {
   return error ? c.json({ error }, 409) : c.json({ ok: true });
 });
 
+// Furniture for gold. Only the piece is named here; the price comes from the catalogue.
+app.post("/api/shop/furniture", async (c) => {
+  const player = c.get("player");
+  const body = await c.req.json<{ defId?: string }>().catch(() => ({}) as { defId?: string });
+  const error = await buyFurniture(c.env.DB, player.id, String(body.defId));
+  if (error) return c.json({ error }, 409);
+  // If they are somehow inside their hut (another tab), its storage list updates.
+  c.executionCtx.waitUntil(refreshHut(c.env, player.id));
+  return c.json({ ok: true });
+});
+
 // ---------- huts ----------
 
-// Everything the player owns for their hut, and the perks it currently gives.
+// Everything the player owns for their hut, the perks it currently gives, and the gold they could spend on it.
 app.get("/api/hut", async (c) => {
-  const hut = await getHut(c.env.DB, c.get("player").id);
-  return c.json({ ...hut, perks: hutPerks(hut.furnishings) });
+  const player = c.get("player");
+  const [hut, character] = await Promise.all([getHut(c.env.DB, player.id), getCharacter(c.env.DB, player.id)]);
+  return c.json({ ...hut, perks: hutPerks(hut.furnishings), gold: character?.gold ?? 0 });
+});
+
+// Build a furnishing from materials. It lands in storage.
+app.post("/api/hut/craft", async (c) => {
+  const player = c.get("player");
+  const body = await c.req.json<{ defId?: string }>().catch(() => ({}) as { defId?: string });
+  const error = await craftFurnishing(c.env.DB, player.id, String(body.defId));
+  if (error) return c.json({ error }, 409);
+  // Written to D1 above; now the room they are standing in is told.
+  await refreshHut(c.env, player.id);
+  return c.json({ ok: true });
+});
+
+// Make the hut one tier bigger, for the gold and materials in HUT_TIERS.
+app.post("/api/hut/upgrade", async (c) => {
+  const player = c.get("player");
+  const result = await upgradeHut(c.env.DB, player.id);
+  if (typeof result === "string") return c.json({ error: result }, 409);
+  await refreshHut(c.env, player.id);
+  // The building in the Harbor grows too.
+  c.executionCtx.waitUntil(crewFor(c.env.DB, player.id).then((crew) => refreshHarbor(c.env, crew?.id ?? null)));
+  return c.json(result);
 });
 
 // Walk into a hut's room: your own, or a crewmate's.

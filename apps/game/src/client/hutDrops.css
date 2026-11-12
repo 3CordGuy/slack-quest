@@ -11,3 +11,12 @@
 .hut-spoils { margin: 10px 0 14px; }
 .hut-spoils h4 { margin: 0 0 6px; font-size: 12px; color: var(--muted); font-weight: normal; }
 .hut-spoils ul { list-style: none; padding: 0; margin: 8px 0 0; display: grid; gap: 4px; }
+
+/* Costs, perks and stall furniture: shared by the hut, the stall and the ship lobby. */
+.cost-chips { display: inline-flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.cost { display: inline-flex; align-items: center; gap: 3px; font-variant-numeric: tabular-nums; }
+.cost.short { color: var(--bad); }
+.perk-meter { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.perk-meter li { display: flex; justify-content: space-between; gap: 6px; }
+.perk-meter li.full > span:last-child, .perk-meter li.some > span:last-child { color: var(--gold); }
+.hut-perks { color: var(--gold); }
