@@ -4,10 +4,12 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { HexPos } from "@gantt-quest/core";
-import { HERO_CLASSES, PUB_BARKEEP, PUB_BARKEEP_POS, PUB_COUNTER, PUB_DICE, PUB_FITTINGS, PUB_MAX_TALK, PUB_MENU, PUB_SHOALS, poiAt, pubRoom, type Perk } from "@gantt-quest/world";
+import { HERO_CLASSES, PUB_BARKEEP, PUB_BARKEEP_POS, PUB_COUNTER, PUB_DICE, PUB_FITTINGS, PUB_MAX_TALK, PUB_MENU, PUB_SALESMAN_POS, PUB_SHOALS, PUB_TRADER, dueIn, poiAt, pubRoom, salesman, type Perk } from "@gantt-quest/world";
 import { api, type Me, type PubTab } from "./api";
 import { DiceTable } from "./DiceTable";
 import { ShoalsTable } from "./ShoalsTable";
+import { SalesmanPanel } from "./SalesmanPanel";
+import { useSalesman } from "./salesmanClock";
 import { DragPanel } from "./DragPanel";
 import { perkText } from "./hutDrops";
 import { TileAction } from "./TileAction";
@@ -44,6 +46,16 @@ export function PubView({ me, refresh, onLeave }: { me: Me; refresh(): Promise<u
   const [waiting, setWaiting] = useState(false);
   const talkEnd = useRef<HTMLDivElement>(null);
 
+  const visitor = useSalesman(me.crew?.id);
+  const seller = visitor.here ? salesman(visitor.here.salesmanId) : undefined;
+  const due = visitor.next ? salesman(visitor.next.salesmanId) : undefined;
+  /** Old Tam's word on the corner: who is in, or who is due. */
+  const word = seller ? `${seller.name}, ${seller.trade}, has the corner by the far wall until ${new Date(visitor.here!.endsAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}.`
+    : due ? `Nobody in the corner. ${due.name}, ${due.trade}, is due ${dueIn(visitor.next!.startsAt - visitor.now)}.`
+    : "Nobody in the corner, and nobody due that I know of.";
+  const sellerHere = useRef(!!seller);
+  sellerHere.current = !!seller;
+
   const pub = usePub((id, path) => renderer.current?.playEvents([{ t: "moved", heroId: id, path }]));
   const { you, players } = pub;
   const self = players.find((p) => p.id === you);
@@ -73,6 +85,8 @@ export function PubView({ me, refresh, onLeave }: { me: Me; refresh(): Promise<u
         ...players.map((p) => ({ id: p.id, classId: p.classId, pos: p.pos, label: p.name, outfit: p.outfit })),
         // The barkeep stands behind his bar and is drawn like anyone else.
         { id: PUB_BARKEEP.id, classId: "npc", pos: PUB_BARKEEP_POS, label: PUB_BARKEEP.name },
+        // A traveling salesman, when one is in, takes the corner by the far wall.
+        ...(seller ? [{ id: "salesman", classId: seller.look, pos: PUB_SALESMAN_POS, label: seller.name }] : []),
       ],
       turn: null,
       battle: null,
@@ -82,14 +96,18 @@ export function PubView({ me, refresh, onLeave }: { me: Me; refresh(): Promise<u
       indoors: true,
       props: PUB_FITTINGS.map((f) => ({ id: f.id, model: f.model, pos: { q: f.q, r: f.r }, facing: f.facing })),
     };
-  }, [players, you]);
+  }, [players, you, seller]);
   const latest = useRef(scene);
   latest.current = scene;
   const send = useRef(pub.send);
   send.current = pub.send;
 
   useEffect(() => {
-    const r = new WorldRenderer(mount.current!, { onHexClick: (to) => !pinned.current && send.current({ type: "move", to }), onHover: setHover });
+    const r = new WorldRenderer(mount.current!, { onHexClick: (to) => {
+        if (pinned.current) return;
+        // Clicking the salesman walks you up to their table.
+        send.current({ type: "move", to: sellerHere.current && same(to, PUB_SALESMAN_POS) ? PUB_TRADER : to });
+      }, onHover: setHover });
     renderer.current = r;
     if (latest.current) r.setState(latest.current);
     return () => {
@@ -117,12 +135,15 @@ export function PubView({ me, refresh, onLeave }: { me: Me; refresh(): Promise<u
   const atDice = !!self && same(self.pos, PUB_DICE);
   const atShoals = !!self && same(self.pos, PUB_SHOALS);
   const atDoor = !!self && same(self.pos, DOOR);
+  const atTrader = !!self && same(self.pos, PUB_TRADER);
   const gold = me.character?.gold ?? 0;
   const hoverPoi = hover ? poiAt(ROOM, hover) : undefined;
   const tip = hover && same(hover, PUB_BARKEEP_POS) ? `${PUB_BARKEEP.name}, the barkeep. Stand at the menu board to talk to him.`
+    : hover && seller && same(hover, PUB_SALESMAN_POS) ? `${seller.name}, ${seller.trade}. Click to walk up and trade.`
     : !hoverPoi ? null
     : hoverPoi.kind === "counter" ? "The menu board: order here, or have a word with the barkeep"
     : hoverPoi.kind === "dice" ? "Dice table: a bluffing game for a small stake"
+    : hoverPoi.kind === "trader" ? (seller ? `Trade with ${seller.name}, ${seller.trade}` : "The corner where traveling salesmen set up. Empty for now.")
     : hoverPoi.kind === "shoals" ? "Shoals: lay your markers, bid, and sail without running aground"
     : hoverPoi.kind === "door" ? "The door back to the Harbor"
     : null;
@@ -206,6 +227,7 @@ export function PubView({ me, refresh, onLeave }: { me: Me; refresh(): Promise<u
           <h3>{PUB_BARKEEP.name}</h3>
           <div className="pub-talk">
             {talk.length === 0 && <div className="muted">He is wiping a mug that is already clean. Say something.</div>}
+            {talk.length === 0 && <div className="line npc"><strong>{PUB_BARKEEP.name}: </strong>{word}</div>}
             {talk.map((l, i) => <div key={i} className={l.who === PUB_BARKEEP.name ? "line npc" : "line hero"}><strong>{l.who}: </strong>{l.text}</div>)}
             {waiting && <div className="muted">He thinks about it…</div>}
             <div ref={talkEnd} />
@@ -217,6 +239,7 @@ export function PubView({ me, refresh, onLeave }: { me: Me; refresh(): Promise<u
         </DragPanel>
       )}
 
+      {you && atTrader && seller && <SalesmanPanel me={me} refresh={refresh} />}
       {you && atShoals && <ShoalsTable table={pub.shoals} you={you} gold={gold} error={pub.shoalsError} send={(action) => pub.send({ type: "shoals", action })} />}
       {you && atDice && <DiceTable table={pub.dice} you={you} gold={gold} error={pub.diceError} send={(action) => pub.send({ type: "dice", action })} />}
 
@@ -253,6 +276,8 @@ export function PubView({ me, refresh, onLeave }: { me: Me; refresh(): Promise<u
           : atCounter ? <span>At the bar.</span>
           : atDice ? <span>At the dice table.</span>
           : atShoals ? <span>At the Shoals table.</span>
+          : atTrader ? (seller ? <span>At {seller.name}'s table.</span> : <span className="muted">The corner is empty.{due && ` ${due.name} is due ${dueIn(visitor.next!.startsAt - visitor.now)}.`}</span>)
+          : seller ? <span className="pub-visitor">{seller.name}, {seller.trade}, is in the corner by the far wall.</span>
           : <span className="muted">Click a hex to walk. Order at the menu board; the game tables are across the room.</span>}
         <button className={atDoor ? "primary" : ""} disabled={holdingDice} onClick={onLeave}>Leave</button>
       </DragPanel>
