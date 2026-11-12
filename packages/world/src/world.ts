@@ -21,9 +21,9 @@ import { bumpTally, contractById, tallyBattle, type TakenContract, type TallyKey
 import { battleDrops, cacheDrops, storyTrophy } from "./drops";
 import { rollItem, type ItemDef, type Outfit } from "./gear";
 import { freshVitals, heroCombatant } from "./hero";
-import { addResources, capPerks, xpWithBonus, type Perk, type Resources } from "./hut";
+import { addResources, capPerks, xpWithBonus, type Perk, type ResourceKind, type Resources } from "./hut";
 import { capPubBuff } from "./pub";
-import { MOVE_COST, findPath, generateMap, poiAt, poiById, tileAt, type Poi, type WorldMap } from "./map";
+import { MOVE_COST, PICKUP_MAX, findPath, generateMap, poiAt, poiById, tileAt, type Poi, type WorldMap } from "./map";
 import {
   MAX_NPC_MESSAGES,
   MAX_PERSUADE_ATTEMPTS,
@@ -228,6 +228,8 @@ export type WorldEvent =
   | { t: "ambush"; heroId: string; kinds: string[]; by: "band" | "hero" }
   /** Something turned up while crossing a forest hex. `hp` is what berries restored. */
   | { t: "forage"; heroId: string; kind: ForageKind; hp?: number }
+  /** A hero walked over herbs, mushrooms or a pile of wood or stone and took it. What it gave follows as `resources`. */
+  | { t: "pickup"; heroId: string; poiId: string; find: ResourceKind }
   | { t: "xp"; heroId: string; amount: number }
   | { t: "level_up"; heroId: string; level: number }
   | { t: "gold"; heroId: string; amount: number }
@@ -506,7 +508,7 @@ function spawnRoamer(ctx: Ctx): boolean {
       walkable(state, t) &&
       !poiAt(state.map, t) &&
       state.heroes.every((h) => hexDistance(t, h.pos) >= VISION + 2) &&
-      state.map.pois.every((p) => hexDistance(t, p.pos) >= 2) &&
+      state.map.pois.every((p) => p.kind === "pickup" || hexDistance(t, p.pos) >= 2) &&
       roamers.every((r) => hexDistance(t, r.pos) >= 3),
   );
   if (open.length === 0) return false;
@@ -636,6 +638,17 @@ function forage(ctx: Ctx, hero: Hero, path: HexPos[]): { ambushAt: number | null
     });
   }
   return { ambushAt: null, after };
+}
+
+/** Take whatever lies on the hexes of a walk: one to PICKUP_MAX of it, each pickup once, by whoever gets there first. */
+function pickUp(ctx: Ctx, hero: Hero, path: HexPos[]) {
+  for (const pos of path) {
+    const poi = poiAt(ctx.state.map, pos);
+    if (poi?.kind !== "pickup" || poi.cleared || !poi.find) continue;
+    poi.cleared = true;
+    ctx.events.push({ t: "pickup", heroId: hero.id, poiId: poi.id, find: poi.find });
+    grant(ctx, hero, { resources: { [poi.find]: ctx.rng.int(1, PICKUP_MAX) } });
+  }
 }
 
 function startBattle(ctx: Ctx, at: HexPos, enemies: string[], poiId: string | null, npcId: string | null) {
@@ -1007,6 +1020,7 @@ export function stepWorld(prev: WorldState, action: WorldAction): StepResult {
       ctx.events.push({ t: "moved", heroId: hero.id, path: walked });
       look(state, walked);
       for (const run of walk.after) run();
+      pickUp(ctx, hero, walked);
       // Walking past something hidden uncovers it.
       for (const poi of state.map.pois) {
         if (poi.hidden && walked.some((p) => hexDistance(p, poi.pos) <= 1)) revealPoi(ctx, poi);

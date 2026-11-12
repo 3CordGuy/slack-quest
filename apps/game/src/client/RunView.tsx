@@ -40,7 +40,10 @@ const MIN_CROSSING_MS = 4500;
 const className = (id: string) => HERO_CLASSES.find((c) => c.id === id)?.name ?? id;
 const POI_LABEL: Record<string, string> = { landing: "The Landing", hut: "Hut", lair: "Lair", shrine: "Old shrine", cache: "Hidden cache", camp: "Brigand camp" };
 
+const PICKUP_LABEL: Record<string, string> = { herbs: "A patch of herbs", mushrooms: "A ring of mushrooms", wood: "A pile of wood", stone: "A pile of stones" };
+
 function poiName(state: ClientState, poi: Poi): string {
+  if (poi.kind === "pickup") return PICKUP_LABEL[poi.find ?? ""] ?? "Something lying about";
   return state.story?.poiNames[poi.id] ?? POI_LABEL[poi.kind] ?? poi.kind;
 }
 
@@ -76,6 +79,14 @@ function describe(events: WorldEvent[], state: ClientState, names: Map<string, s
             : ev.kind === "wood" ? `${n(ev.heroId)} comes on a fallen tree, dry enough to carry off.`
             : ev.kind === "bones" ? `${n(ev.heroId)} finds an old carcass picked clean, and takes the bones.`
             : `${n(ev.heroId)} catches a glint under the roots: someone buried coin here.`,
+        );
+        break;
+      case "pickup":
+        out.push(
+          ev.find === "herbs" ? `${n(ev.heroId)} stops to pick herbs.`
+            : ev.find === "mushrooms" ? `${n(ev.heroId)} gathers a handful of mushrooms.`
+            : ev.find === "wood" ? `${n(ev.heroId)} shoulders some of a woodpile.`
+            : `${n(ev.heroId)} loads up a few good stones.`,
         );
         break;
       case "search": out.push(ev.found ? `${n(ev.heroId)} turns up something in the cache.` : `${n(ev.heroId)} finds nothing but dust.`); break;
