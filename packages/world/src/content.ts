@@ -4,14 +4,15 @@
 
 import type { StatKey, Stats } from "@gantt-quest/core";
 
-/** Effect names match EFFECT_META in packages/core/src/flavor.ts, plus `guarded`. */
-export type EffectKind = "bleeding" | "burning" | "stunned" | "guarded";
+/** Effect names match EFFECT_META in packages/core/src/flavor.ts, plus `guarded` and `taunting`. */
+export type EffectKind = "bleeding" | "burning" | "stunned" | "guarded" | "taunting";
 
 export const EFFECT_INFO: Record<EffectKind, { name: string; blurb: string; color: string }> = {
   bleeding: { name: "Bleeding", blurb: "Loses 2 HP at the start of each turn.", color: "#f87171" },
   burning: { name: "Burning", blurb: "Loses 3 HP at the start of each turn.", color: "#fb923c" },
   stunned: { name: "Stunned", blurb: "Skips the next turn.", color: "#a78bfa" },
   guarded: { name: "Guarded", blurb: "Takes half damage until its next turn.", color: "#93c5fd" },
+  taunting: { name: "Taunting", blurb: "Every enemy attack aimed at one hero goes to it instead, until its next turn.", color: "#fbbf24" },
 };
 
 export const EFFECT_TICK: Partial<Record<EffectKind, number>> = { bleeding: 2, burning: 3 };
@@ -32,6 +33,10 @@ export interface HeroClass {
 export const DRUID_REGEN = 2;
 /** Extra damage on every other hero's attacks while a Frontend Bard is standing. One Bard's worth, however many there are. */
 export const BARD_AURA = 2;
+/** Bulwark Strike adds the Warden's armor divided by this to its damage. */
+export const ARMOR_DAMAGE_DIVISOR = 3;
+/** Turns of bleeding the Data Warlock's perfect hits leave behind. */
+export const WARLOCK_BLEED_TURNS = 3;
 
 export const HERO_CLASSES: HeroClass[] = [
   {
@@ -72,6 +77,20 @@ export const HERO_CLASSES: HeroClass[] = [
     blurb: "Raw power. The hardest-hitting spells of any class, and little else to fall back on.",
     weapons: ["orb", "scepter"],
   },
+  {
+    id: "sre_warden",
+    name: "SRE Warden",
+    blurb: "The wall. Draws every blow onto itself and hits back with Strength and the weight of its armor.",
+    weapons: ["pager_axe", "maul"],
+    passive: "Always on call: starts every fight guarded (half damage) until its second turn.",
+  },
+  {
+    id: "data_warlock",
+    name: "Data Warlock",
+    blurb: "Curses and drains with Intelligence. The bigger the enemy, the harder its Hex lands.",
+    weapons: ["grimoire", "void_staff"],
+    passive: `Corrupted data: every perfect hit also leaves the target bleeding for ${WARLOCK_BLEED_TURNS} turns.`,
+  },
 ];
 
 export function heroClass(id: string): HeroClass | undefined {
@@ -96,6 +115,12 @@ export interface AbilityDef {
   selfEffect?: { effect: EffectKind; turns: number };
   /** Applied to the target only on a perfect result. */
   perfect?: { effect: EffectKind; turns: number };
+  /** Adds a share of the user's armor (ARMOR_DAMAGE_DIVISOR) to the damage. */
+  armorDamage?: boolean;
+  /** Adds this share of the target's max HP to the damage, so it lands hardest on big enemies. */
+  maxHpDamage?: number;
+  /** Heals the user this share of the damage it deals. */
+  drain?: number;
   blurb: string;
 }
 
@@ -120,6 +145,13 @@ export const ABILITIES: Record<string, AbilityDef> = {
   manifest: { id: "manifest", name: "Manifest", stat: "int_stat", rolls: 3, target: "enemy", damage: 13, blurb: "Raw force. The heaviest single spell there is." },
   arcane_ward: { id: "arcane_ward", name: "Arcane Ward", stat: "int_stat", rolls: 2, target: "self", heal: 3, selfEffect: { effect: "guarded", turns: 1 }, blurb: "Wrap yourself in a ward and steady your breath." },
   meteor: { id: "meteor", name: "Meteor", stat: "int_stat", rolls: 4, target: "all_enemies", damage: 9, perfect: { effect: "burning", turns: 3 }, blurb: "Everything has to land. Perfect: sets them all burning." },
+  bulwark_strike: { id: "bulwark_strike", name: "Bulwark Strike", stat: "str", rolls: 3, target: "enemy", damage: 6, armorDamage: true, blurb: "Your whole weight behind the blow: adds a third of your armor to the damage." },
+  taunt: { id: "taunt", name: "Taunt", stat: "str", rolls: 2, target: "enemy", damage: 4, selfEffect: { effect: "taunting", turns: 1 }, blurb: "A jab and a shout. Until your next turn, enemies aiming at one hero aim at you." },
+  hold_the_line: { id: "hold_the_line", name: "Hold the Line", stat: "vit", rolls: 2, target: "self", heal: 4, selfEffect: { effect: "guarded", turns: 1 }, blurb: "Plant your feet: guard yourself and catch your breath." },
+  shockwave: { id: "shockwave", name: "Shockwave", stat: "str", rolls: 4, target: "all_enemies", damage: 5, perfect: { effect: "stunned", turns: 1 }, blurb: "Slam the ground under every enemy. Perfect: stuns them all." },
+  hex: { id: "hex", name: "Hex", stat: "int_stat", rolls: 3, target: "enemy", damage: 6, maxHpDamage: 0.05, blurb: "A slow query on the target: adds 5% of its max HP to the damage." },
+  blight: { id: "blight", name: "Blight", stat: "int_stat", rolls: 4, target: "all_enemies", damage: 5, blurb: "A curse on every enemy at once." },
+  soul_drain: { id: "soul_drain", name: "Soul Drain", stat: "int_stat", rolls: 2, target: "enemy", damage: 7, drain: 0.5, blurb: "Takes some of their life for yours: heals you half the damage dealt." },
   pin_down: { id: "pin_down", name: "Pin Down", stat: "agi", rolls: 2, target: "enemy", damage: 4, perfect: { effect: "stunned", turns: 1 }, blurb: "Perfect: stuns." },
 };
 
@@ -143,6 +175,10 @@ export const WEAPONS: Record<string, WeaponDef> = {
   flute: { id: "flute", name: "Hot-Reload Flute", classId: "frontend_bard", abilities: ["cacophony", "dissonance", "encore"] },
   orb: { id: "orb", name: "Monolith Orb", classId: "staff_sage", abilities: ["manifest", "arcane_ward"] },
   scepter: { id: "scepter", name: "Legacy Scepter", classId: "staff_sage", abilities: ["meteor", "manifest", "arcane_ward"] },
+  pager_axe: { id: "pager_axe", name: "Pager Axe", classId: "sre_warden", abilities: ["bulwark_strike", "taunt", "hold_the_line"] },
+  maul: { id: "maul", name: "Five-Nines Maul", classId: "sre_warden", abilities: ["shockwave", "bulwark_strike", "taunt"] },
+  grimoire: { id: "grimoire", name: "Query Grimoire", classId: "data_warlock", abilities: ["hex", "soul_drain"] },
+  void_staff: { id: "void_staff", name: "Null Pointer Staff", classId: "data_warlock", abilities: ["blight", "hex", "soul_drain"] },
 };
 
 // ---------- enemies ----------

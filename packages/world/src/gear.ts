@@ -82,6 +82,10 @@ const WEAPON_ICON: Record<string, string> = {
   flute: "flute",
   orb: "orb",
   scepter: "scepter",
+  pager_axe: "pager-axe",
+  maul: "maul",
+  grimoire: "grimoire",
+  void_staff: "void-staff",
 };
 
 export interface Base {

@@ -26,9 +26,9 @@ export const STAT_LABEL: Record<StatKey, string> = {
 
 /** What each stat does in this game, in a line. Shown wherever stats are listed. */
 export const STAT_BLURB: Record<StatKey, string> = {
-  str: "Heavy weapon abilities: Smite, Cleave, Heavy Blow.",
-  int_stat: "Every spell, song and heal (Mages, Druids, Bards, Sages), and persuading islanders.",
-  vit: "+2 max HP per point. Also powers Shield Wall.",
+  str: "Heavy weapon abilities (Paladins and Wardens): Smite, Cleave, Bulwark Strike, Taunt.",
+  int_stat: "Every spell, song and heal (Mages, Druids, Bards, Sages, Warlocks), and persuading islanders.",
+  vit: "+2 max HP per point. Also powers Shield Wall and Hold the Line.",
   agi: "Movement each turn, acting first in a fight, and fleeing.",
   dex: "Dagger and bow abilities, and searching caches.",
 };

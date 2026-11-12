@@ -40,9 +40,10 @@ function drawHat(px: Px, look: Look) {
     px(6, 2, 5, 1, look.body);
     px(4, 3, 8, 1, look.accent);
   } else if (look.hat === "hood") {
-    px(4, 2, 8, 3, look.body);
-    px(4, 5, 1, 4, look.body);
-    px(11, 5, 1, 4, look.body);
+    const c = look.hatColor ?? look.body;
+    px(4, 2, 8, 3, c);
+    px(4, 5, 1, 4, c);
+    px(11, 5, 1, 4, c);
   } else if (look.hat === "leaves") {
     // A crown of leaves.
     px(5, 2, 6, 1, look.accent);
@@ -76,6 +77,15 @@ function drawHat(px: Px, look: Look) {
     px(5, 2, 6, 2, c);
     px(11, 3, 1, 2, c);
     px(12, 4, 1, 1, c);
+  } else if (look.hat === "greathelm") {
+    // A heavy closed helm: the whole head in iron, a dark slit to see through, a crest on top.
+    const c = look.hatColor ?? "#8b95a5";
+    px(4, 2, 8, 6, c);
+    px(5, 1, 6, 1, c);
+    px(5, 5, 6, 1, OUTLINE);
+    px(8, 6, 1, 2, OUTLINE);
+    px(7, 0, 2, 1, look.accent);
+    px(4, 8, 8, 1, c);
   } else if (look.hat === "horns") {
     px(4, 0, 1, 3, look.accent);
     px(11, 0, 1, 3, look.accent);
@@ -135,6 +145,21 @@ function drawHumanoid(ctx: CanvasRenderingContext2D, look: Look) {
     px(13, 9, 1, 6, "#7a5230");
     px(12, 6, 3, 3, look.accent);
     px(13, 7, 1, 1, "#ffffff");
+  } else if (look.weapon === "axe_shield") {
+    // A big axe in the right hand, a tower shield covering the left side.
+    px(13, 4, 1, 12, "#7a5230");
+    px(14, 4, 2, 4, "#c9d1dc");
+    px(15, 3, 1, 6, "#c9d1dc");
+    px(0, 8, 4, 9, "#6f7480");
+    px(1, 9, 2, 7, look.accent);
+    px(1, 12, 2, 1, "#c9d1dc");
+  } else if (look.weapon === "grimoire") {
+    // A dark book held open, its pages glowing.
+    px(12, 11, 4, 4, "#3a2a4a");
+    px(12, 11, 4, 1, look.accent);
+    px(13, 12, 2, 2, look.accent);
+    px(13, 9, 1, 1, look.accent);
+    px(15, 8, 1, 1, look.accent);
   } else if (look.weapon === "lantern") {
     // A lit lantern held out on its ring.
     px(13, 10, 1, 2, "#6f7480");
@@ -316,6 +341,34 @@ function drawHero(ctx: CanvasRenderingContext2D, look: Look, outfit: Outfit) {
     px(12, 3, 3, 3, trim("main_hand"));
     px(12, 2, 1, 1, GEAR.gold);
     px(14, 2, 1, 1, GEAR.gold);
+  } else if (weapon === "pager_axe") {
+    // A long haft and a broad single blade.
+    px(13, 4, 1, 12, GEAR.wood);
+    px(14, 4, 2, 4, GEAR.steel);
+    px(15, 3, 1, 6, GEAR.steel);
+    px(14, 5, 1, 2, GEAR.shine);
+    px(13, 15, 1, 1, trim("main_hand"));
+  } else if (weapon === "maul") {
+    // A heavy hammer: a block of iron on a long haft, clear of the helm.
+    px(14, 6, 1, 10, GEAR.wood);
+    px(13, 2, 4, 4, GEAR.iron);
+    px(13, 2, 4, 1, GEAR.steel);
+    px(14, 3, 2, 2, trim("main_hand"));
+  } else if (weapon === "grimoire") {
+    // A dark tome with glowing pages, its spine in the rarity colour.
+    px(12, 11, 4, 4, GEAR.dark);
+    px(12, 11, 1, 4, trim("main_hand"));
+    px(13, 11, 3, 1, "#6dff9e");
+    px(13, 12, 2, 2, "#6dff9e");
+    px(14, 9, 1, 1, "#6dff9e");
+  } else if (weapon === "void_staff") {
+    // A black staff with a hollow ring at the top and a spark inside it.
+    px(13, 5, 1, 14, GEAR.dark);
+    px(12, 1, 3, 1, GEAR.dark);
+    px(12, 4, 3, 1, GEAR.dark);
+    px(12, 2, 1, 2, GEAR.dark);
+    px(14, 2, 1, 2, GEAR.dark);
+    px(13, 2, 1, 2, trim("main_hand"));
   } else if (weapon === "shortbow") {
     px(13, 6, 1, 1, GEAR.wood);
     px(14, 7, 1, 7, GEAR.wood);

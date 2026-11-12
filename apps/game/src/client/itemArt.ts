@@ -150,6 +150,41 @@ const ART: Record<string, Art> = {
     p.r(11, 2, 2, 2, p.accent);
     p.r(11, 2, 1, 1, C.shine);
   },
+  "pager-axe": (p) => {
+    // A long haft on the slant and a broad bearded blade.
+    p.l(3, 15, 11, 3, C.wood);
+    p.l(4, 15, 12, 3, C.bark);
+    spans(p, C.steel, [[1, 9, 11], [2, 7, 12], [3, 6, 11], [4, 6, 10], [5, 6, 9], [6, 7, 8]]);
+    spans(p, C.shine, [[2, 7, 8], [3, 6, 7]]);
+    p.r(10, 1, 2, 1, p.accent);
+    p.r(3, 13, 2, 1, p.accent);
+  },
+  maul: (p) => {
+    // A block of iron on a long handle, banded in the accent.
+    p.l(3, 15, 9, 6, C.wood);
+    p.l(4, 15, 10, 6, C.bark);
+    spans(p, C.iron, [[1, 8, 13], [2, 7, 14], [3, 7, 14], [4, 7, 14], [5, 7, 14], [6, 8, 13]]);
+    spans(p, C.steel, [[2, 8, 13]]);
+    p.r(10, 2, 1, 4, p.accent);
+  },
+  grimoire: (p) => {
+    // A dark book, clasped, with glowing runes on the cover.
+    spans(p, C.dark, [[2, 3, 12], [3, 3, 12], [4, 3, 12], [5, 3, 12], [6, 3, 12], [7, 3, 12], [8, 3, 12], [9, 3, 12], [10, 3, 12], [11, 3, 12], [12, 3, 12], [13, 3, 12]]);
+    p.r(13, 3, 1, 10, C.paper);
+    p.r(3, 2, 1, 12, "#3a2a4a");
+    p.r(6, 5, 4, 1, p.accent);
+    p.r(7, 6, 2, 3, p.accent);
+    p.r(6, 10, 4, 1, p.accent);
+    p.r(11, 7, 2, 2, C.gold);
+  },
+  "void-staff": (p) => {
+    // A black staff with a hollow ring at the head and a spark inside it.
+    p.l(3, 15, 9, 6, C.dark);
+    p.l(4, 15, 10, 6, "#3a2a4a");
+    spans(p, C.dark, [[0, 10, 13], [1, 9, 9], [1, 14, 14], [2, 9, 9], [2, 14, 14], [3, 9, 9], [3, 14, 14], [4, 10, 13]]);
+    p.r(11, 2, 2, 1, p.accent);
+    p.r(11, 1, 1, 1, C.shine);
+  },
   "round-shield": (p) => {
     spans(p, C.iron, [[2, 5, 10], [3, 3, 12], [4, 2, 13], [5, 2, 13], [6, 2, 13], [7, 2, 13], [8, 2, 13], [9, 2, 13], [10, 2, 13], [11, 2, 13], [12, 3, 12], [13, 5, 10]]);
     spans(p, p.accent, [[4, 5, 10], [5, 4, 11], [6, 4, 11], [7, 4, 11], [8, 4, 11], [9, 4, 11], [10, 4, 11], [11, 5, 10]]);
