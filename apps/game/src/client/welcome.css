@@ -48,7 +48,18 @@
   background: var(--gold); color: #1b1830; font-weight: bold; letter-spacing: 0;
   box-shadow: 2px 2px 0 #0e0b1c;
 }
-.hero-name { font-size: 16px; padding: 9px 12px; width: 100%; max-width: 360px; background: #1f1c38; }
+.hero-name-row { display: flex; gap: 8px; align-items: stretch; max-width: 420px; }
+.hero-name-row .hero-name { flex: 1; min-width: 0; }
+.name-dice {
+  flex: none; display: grid; place-items: center; width: 46px; padding: 0;
+  background: #6b4a20; border-color: var(--gold); box-shadow: 0 3px 0 #0e0b1c;
+}
+.name-dice:hover:not(:disabled) { border-color: #fff1a8; background: #7d5826; }
+.name-dice:active:not(:disabled) { transform: translateY(2px); box-shadow: 0 1px 0 #0e0b1c; }
+.name-dice:disabled { opacity: 1; cursor: progress; }
+.name-dice.busy svg { animation: die-tumble 0.48s steps(4) infinite; }
+@keyframes die-tumble { to { transform: rotate(360deg); } }
+.hero-name { font-size: 16px; padding: 9px 12px; width: 100%; background: #1f1c38; }
 .hint { font-size: 12px; margin: 6px 0 0; }
 
 /* Class cards. */
@@ -171,7 +182,7 @@ button.big.primary:not(:disabled) { color: #eafff0; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .class-card.selected .cc-figure img, .hero-plinth img { animation: none; }
+  .class-card.selected .cc-figure img, .hero-plinth img, .name-dice.busy svg { animation: none; }
   .class-card { transition: none; }
   .class-card:hover:not(:disabled) { transform: none; }
 }

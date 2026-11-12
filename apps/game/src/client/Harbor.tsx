@@ -170,6 +170,22 @@ function Creation({ draft, busy, act, invite }: { draft: Character | null; busy:
   const cls = HERO_CLASSES.find((c) => c.id === classId) ?? HERO_CLASSES[0];
   const sprites = useMemo(() => Object.fromEntries(HERO_CLASSES.map((c) => [c.id, spriteDataUrl(c.id)])), []);
   const base = STARTING_STATS[classId];
+  const [naming, setNaming] = useState(false);
+  const [nameError, setNameError] = useState<string | null>(null);
+  const offered = useRef<string[]>([]);
+  const suggestName = async () => {
+    setNaming(true);
+    setNameError(null);
+    try {
+      const { name: suggested } = await api.suggestName(classId, offered.current);
+      offered.current = [...offered.current, suggested].slice(-8);
+      setName(suggested);
+    } catch (e) {
+      setNameError((e as Error).message);
+    } finally {
+      setNaming(false);
+    }
+  };
 
   return (
     <section className="panel creation" aria-labelledby="creation-title">
@@ -178,8 +194,15 @@ function Creation({ draft, busy, act, invite }: { draft: Character | null; busy:
 
       <div className="step">
         <h3 className="step-title"><span className="step-num">1</span><label htmlFor="hero-name">Name your hero</label></h3>
-        <input id="hero-name" className="hero-name" value={name} maxLength={20} autoComplete="nickname" onChange={(e) => setName(e.target.value)} placeholder="What do they call you?" aria-describedby="hero-name-hint" />
-        <p id="hero-name-hint" className={`hint ${name && !validName ? "bad" : "muted"}`}>Two to twenty characters.</p>
+        <div className="hero-name-row">
+          <input id="hero-name" className="hero-name" value={name} maxLength={20} autoComplete="nickname" onChange={(e) => setName(e.target.value)} placeholder="What do they call you?" aria-describedby="hero-name-hint" />
+          <button type="button" className={`name-dice ${naming ? "busy" : ""}`} onClick={suggestName} disabled={naming} aria-label={`Suggest a name for a ${label("class", classId)}`} title="Suggest a name">
+            <PixelDie />
+          </button>
+        </div>
+        <p id="hero-name-hint" className={`hint ${nameError || (name && !validName) ? "bad" : "muted"}`} aria-live="polite">
+          {nameError ?? (naming ? "Asking the harbor for a name…" : "Two to twenty characters, or roll the die for a name that suits your class.")}
+        </p>
       </div>
 
       <div className="step">
@@ -248,5 +271,17 @@ function Creation({ draft, busy, act, invite }: { draft: Character | null; busy:
         </div>
       </div>
     </section>
+  );
+}
+
+/** A six-sided die in pixels, for the name button. */
+function PixelDie() {
+  return (
+    <svg viewBox="0 0 11 11" width={22} height={22} shapeRendering="crispEdges" aria-hidden focusable="false">
+      <path fill="#1b1830" d="M2 0h7v1h1v1h1v7h-1v1h-1v1h-7v-1h-1v-1h-1v-7h1v-1h1z" />
+      <path fill="#f1eee4" d="M2 1h7v1h1v7h-1v1h-7v-1h-1v-7h1z" />
+      <path fill="#c9c3e0" d="M1 7h1v2h7v1h-7v-1h-1z" />
+      <path fill="#b9433d" d="M3 3h1v1h-1zM7 3h1v1h-1zM5 5h1v1h-1zM3 7h1v1h-1zM7 7h1v1h-1z" />
+    </svg>
   );
 }
