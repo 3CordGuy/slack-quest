@@ -23,6 +23,7 @@ import { rollItem, type ItemDef, type Outfit } from "./gear";
 import { freshVitals, heroCombatant } from "./hero";
 import { addResources, capPerks, xpWithBonus, type Perk, type ResourceKind, type Resources } from "./hut";
 import { capPubBuff } from "./pub";
+import { brewBag, brewBuff } from "./apothecary";
 import { MOVE_COST, PICKUP_MAX, findPath, generateMap, poiAt, poiById, tileAt, type Poi, type WorldMap } from "./map";
 import {
   MAX_NPC_MESSAGES,
@@ -65,6 +66,8 @@ export interface HeroInit {
   hutPerks?: Perk;
   /** What they ate and drank at the pub before sailing. Lasts this voyage only. */
   pubBuff?: Perk;
+  /** The brews in their bag from the apothecary (ids, at most one of each). Used up when this voyage sails. */
+  brews?: string[];
 }
 
 export interface Hero extends HeroInit {
@@ -360,7 +363,7 @@ interface Ctx {
 const fail = (error: string): StepResult => ({ ok: false, error });
 
 /** A hero's maximum HP: from stats and level, plus what their hut's hearth adds. */
-const heroMaxHp = (hero: Hero) => maxHpFor(heroStats(hero), hero.level) + capPerks(hero.hutPerks).maxHp + capPubBuff(hero.pubBuff).maxHp;
+const heroMaxHp = (hero: Hero) => maxHpFor(heroStats(hero), hero.level) + capPerks(hero.hutPerks).maxHp + capPubBuff(hero.pubBuff).maxHp + brewBuff(hero.brews).maxHp;
 const heroById = (state: WorldState, id: string) => state.heroes.find((h) => h.id === id);
 
 function grant(
@@ -920,8 +923,11 @@ export function stepWorld(prev: WorldState, action: WorldAction): StepResult {
       const hut = capPerks(action.hero.hutPerks);
       // Food and drink from the pub count on top, within what the menu can give.
       const pub = capPubBuff(action.hero.pubBuff);
-      const perks = { focus: hut.focus + pub.focus, potions: hut.potions + pub.potions, maxHp: hut.maxHp + pub.maxHp };
-      const init: HeroInit = { ...action.hero, hutPerks: hut, pubBuff: pub };
+      // And brews from the apothecary: known ones only, one of each.
+      const brews = brewBag(action.hero.brews);
+      const brew = brewBuff(brews);
+      const perks = { focus: hut.focus + pub.focus + brew.focus, potions: hut.potions + pub.potions + brew.potions, maxHp: hut.maxHp + pub.maxHp + brew.maxHp };
+      const init: HeroInit = { ...action.hero, hutPerks: hut, pubBuff: pub, brews };
       const rested = freshVitals(init);
       state.heroes.push({
         ...init,

@@ -9,6 +9,9 @@ import type { CarryState, GatherChoice, GatherSpot, HarborWorks, HutSummary, Ite
 import { forcedSalesman } from "./salesmanClock";
 import type { GatherStatus } from "../server/gather";
 import type { TradeList } from "../server/trade";
+import type { ApothecaryView, SmithyView } from "../server/workshops";
+
+export type { ApothecaryView, SmithyView };
 
 export type { GatherStatus };
 
@@ -56,6 +59,8 @@ export interface InventoryItem {
   icon: string;
   stat_bonus_json: string;
   equipped: number;
+  /** Steps of work at the smithy, already counted in `power`. */
+  upgrades?: number;
 }
 
 /** The traveling salesman in the pub, if one is in, and their stock for this player; otherwise who is due next. */
@@ -152,6 +157,10 @@ export const api = {
   salesman: () => request<SalesmanView>("/api/pub/salesman", undefined, salesmanHeader()),
   buyFromSalesman: (index: number) => request<{ got: SalesEntry }>("/api/pub/salesman/buy", { index }, salesmanHeader()),
   projects: () => request<Works>("/api/projects"),
+  apothecary: () => request<ApothecaryView>("/api/apothecary"),
+  brew: (brewId: string) => request<ApothecaryView>("/api/apothecary/brew", { brewId }),
+  smithy: () => request<SmithyView>("/api/smithy"),
+  smith: (itemId: number) => request<SmithyView & { worked: string }>("/api/smithy/work", { itemId }),
   giveToProject: (projectId: string, give: ProjectAmounts) => request<Works & { completed: boolean }>("/api/projects/give", { projectId, give }),
   hut: () => request<Hut>("/api/hut"),
   craft: (defId: string) => request("/api/hut/craft", { defId }),

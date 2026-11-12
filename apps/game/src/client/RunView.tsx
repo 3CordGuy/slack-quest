@@ -7,6 +7,9 @@ import {
   MAX_NPC_MESSAGES,
   MAX_PERSUADE_ATTEMPTS,
   MOVE_COST,
+  brewBag,
+  brewBuff,
+  brewById,
   STAT_LABEL,
   findPath,
   heroPct,
@@ -383,6 +386,7 @@ function Lobby({ state, run, code }: { state: ClientState; run: RunConnection; c
                 <strong>{h.name}</strong> <span className="muted">{className(h.classId)} · Level {h.level}{h.contract ? ` · ${contractName(h.contract.id)}` : ""}</span>
                 {perkText(h.hutPerks) && <span className="hut-perks" title="From the furniture in their hut"> · Hut: {perkText(h.hutPerks)}</span>}
                 {perkText(h.pubBuff) && <span className="hut-perks" title="From what they ate and drank at the pub. This voyage only."> · Pub: {perkText(h.pubBuff)}</span>}
+                {perkText(brewBuff(h.brews)) && <span className="hut-perks" title={`Brewed at the apothecary: ${brewBag(h.brews).map((id) => brewById(id)?.name).join(", ")}. Used up when the ship sails.`}> · Brews: {perkText(brewBuff(h.brews))}</span>}
               </span>
               <span className={h.id === state.hostId || h.ready ? "good" : "muted"}>{h.id === state.hostId ? "captain" : h.ready ? "ready" : "not ready"}</span>
             </li>

@@ -1,13 +1,16 @@
 /* The Harbor's works panel: crew projects, their costs and who gave what. */
 
 /* Leaves room for the top bar, which sits above the overlay. */
-.overlay .panel.works-panel { max-width: 600px; max-height: calc(100% - 56px); overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
+.overlay .panel.works-panel { max-width: 760px; max-height: calc(100% - 56px); overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
 .works-head { display: flex; align-items: center; gap: 10px; padding-right: 46px; }
 .works-head h2 { margin: 0; }
 .works-panel h3 { margin: 8px 0 0; }
 .works-panel p { margin: 0; }
 .works-list, .works-gifts { list-style: none; margin: 0; padding: 0; }
 .works-list { display: flex; flex-direction: column; gap: 8px; }
+/* The apothecary and the smithy open together, so they sit side by side. */
+.works-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.works-pair .works-cost { grid-template-columns: 54px minmax(60px, 1fr) 52px auto; gap: 5px; }
 .works-project { border: 1px solid var(--line); padding: 10px; display: flex; flex-direction: column; gap: 4px; }
 .works-project.built { border-color: var(--good); }
 .works-project.closed { opacity: 0.7; }
@@ -25,7 +28,18 @@
 .works-gifts li { display: flex; justify-content: space-between; gap: 10px; padding: 4px 0; border-bottom: 1px dashed #37335a; font-size: 13px; }
 .works-gifts .muted { white-space: nowrap; }
 
+/* The apothecary's and smithy's own panels. */
+.overlay .panel.workshop-panel { max-width: 520px; }
+.workshop-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.workshop-list li { display: flex; align-items: center; justify-content: space-between; gap: 8px; border: 1px solid var(--line); padding: 6px 8px; }
+.workshop-list li.having { border-color: var(--gold); }
+.workshop-list button { flex: none; min-width: 84px; }
+.workshop-list .small-note { font-size: 12px; }
+
 @media (max-width: 640px) {
+  .works-pair { grid-template-columns: 1fr; }
   .works-head { padding-right: 68px; }
   .works-cost { grid-template-columns: 50px minmax(60px, 1fr) 56px auto; gap: 5px; }
 }
+.works-pair-row { list-style: none; }
+.works-pair { list-style: none; margin: 0; padding: 0; }

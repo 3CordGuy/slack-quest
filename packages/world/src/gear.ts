@@ -64,6 +64,8 @@ export interface ItemDef {
   /** Hero level needed to equip it. */
   levelReq: number;
   icon: string;
+  /** Steps of work at the smithy, each already counted in `power`. Absent or 0 for untouched gear. */
+  upgrades?: number;
 }
 
 export const rarityIndex = (r: Rarity) => RARITIES.indexOf(r);

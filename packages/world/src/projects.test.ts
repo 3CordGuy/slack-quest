@@ -29,9 +29,9 @@ const rich = { gold: 1000, wood: 100, stone: 100, iron: 100, copper: 100, fur: 1
 const fresh = { paid: {}, built: false };
 
 describe("project catalogue", () => {
-  it("lists three projects, of which only the lighthouse is open", () => {
-    expect(PROJECTS.map((p) => p.id)).toEqual(["lighthouse", "smithy", "galley"]);
-    expect(PROJECTS.filter((p) => p.open).map((p) => p.id)).toEqual(["lighthouse"]);
+  it("lists four projects; the galley is the one not yet open", () => {
+    expect(PROJECTS.map((p) => p.id)).toEqual(["lighthouse", "apothecary", "smithy", "galley"]);
+    expect(PROJECTS.filter((p) => p.open).map((p) => p.id)).toEqual(["lighthouse", "apothecary", "smithy"]);
     for (const p of PROJECTS) {
       expect(Object.values(p.cost).every((n) => Number.isInteger(n) && n! > 0), p.id).toBe(true);
       expect(p.benefit.length).toBeGreaterThan(0);
@@ -77,8 +77,7 @@ describe("contributions", () => {
 
   it("refuses unknown projects and ones that are not yet open", () => {
     expect(checkContribution("castle", fresh, rich, { gold: 1 })).toEqual({ ok: false, error: "No such project." });
-    expect(checkContribution("smithy", fresh, rich, { gold: 1 })).toEqual({ ok: false, error: "The Smithy is not yet open." });
-    expect(checkContribution("galley", fresh, rich, { gold: 1 }).ok).toBe(false);
+    expect(checkContribution("galley", fresh, rich, { gold: 1 })).toEqual({ ok: false, error: "The Galley is not yet open." });
   });
 
   it("completes when the last cost is met, and takes nothing after that", () => {
@@ -114,9 +113,9 @@ describe("what built projects give a voyage", () => {
     return { state, events };
   }
 
-  it("only the lighthouse does anything, and only once", () => {
+  it("only the lighthouse changes the voyage itself, and only once", () => {
     expect(voyageBoons(undefined)).toEqual({ doomDays: 0, lines: [] });
-    expect(voyageBoons(["smithy", "galley", "castle"])).toEqual({ doomDays: 0, lines: [] });
+    expect(voyageBoons(["apothecary", "smithy", "galley", "castle"])).toEqual({ doomDays: 0, lines: [] });
     expect(voyageBoons(["lighthouse", "lighthouse"]).doomDays).toBe(1);
     expect(builtProjects({ projects: [{ id: "lighthouse", paid: {}, builtAt: 5 }, { id: "smithy", paid: {}, builtAt: null }], gifts: [] })).toEqual(["lighthouse"]);
     expect(builtProjects(undefined)).toEqual([]);

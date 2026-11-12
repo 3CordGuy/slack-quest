@@ -20,6 +20,9 @@ import { DragPanel } from "../DragPanel";
 import { blurb, costLabel, label } from "../labels";
 import "./works.css";
 
+/** Projects shown side by side, in this order. */
+const PAIRED = ["apothecary", "smithy"];
+
 function ago(at: number): string {
   const mins = Math.floor((Date.now() - at) / 60_000);
   if (mins < 1) return "just now";
@@ -152,9 +155,14 @@ export function WorksPanel({ works, refresh, onClose }: { works: HarborWorks | u
         {shown && (
           <>
             <ul className="works-list">
-              {PROJECTS.map((def) => {
-                const p = shown.projects.find((x) => x.id === def.id);
-                return <ProjectCard key={def.id} def={def} paid={p?.paid ?? {}} builtAt={p?.builtAt ?? null} stock={stock} onGive={give(def)} />;
+              {PROJECTS.filter((def) => !PAIRED.includes(def.id) || def.id === PAIRED[0]).map((def) => {
+                const card = (d: ProjectDef) => {
+                  const p = shown.projects.find((x) => x.id === d.id);
+                  return <ProjectCard key={d.id} def={d} paid={p?.paid ?? {}} builtAt={p?.builtAt ?? null} stock={stock} onGive={give(d)} />;
+                };
+                // The apothecary and the smithy open together and are shown as a pair.
+                if (def.id === PAIRED[0]) return <li key="pair" className="works-pair-row"><ul className="works-pair">{PROJECTS.filter((d) => PAIRED.includes(d.id)).map(card)}</ul></li>;
+                return card(def);
               })}
             </ul>
             <h3>Recent contributions</h3>

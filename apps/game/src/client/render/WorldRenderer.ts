@@ -766,7 +766,8 @@ export class WorldRenderer {
       const at = this.standAt(poi.pos);
       g.position.set(at.x, at.y, at.z - 0.28);
       g.traverse((o) => {
-        if (o instanceof THREE.Mesh) o.castShadow = o.receiveShadow = true;
+        // A glow is light, not a solid: it neither casts nor takes a shadow.
+        if (o instanceof THREE.Mesh) o.castShadow = o.receiveShadow = !o.userData.glow;
       });
       this.poiGroup.add(g);
       if (g.userData.smoke) stacks.push((g.userData.smoke as THREE.Vector3).clone().add(g.position));
@@ -1332,6 +1333,81 @@ export class WorldRenderer {
           for (let i = 0; i < 3; i++) add(box(0.6, 0.05, 0.14), lambert(i % 2 ? "#a07a4c" : "#8a6a44"), 0.72, 0.03 + i * 0.05, 0.3, 0.25 * i);
           add(box(0.24, 0.22, 0.24), lambert("#9a6b2f"), -0.72, 0.11, 0.35, 0.4);
         }
+        break;
+      }
+      case "apothecary":
+      case "smithy": {
+        if (!poi.cleared) {
+          // Still a crew project: a fenced building site with the materials stacked inside it.
+          const post = lambert("#7a5230");
+          const rail = lambert("#a07a4c");
+          for (const [x, z] of [[-0.55, -0.3], [0.55, -0.3], [-0.55, 0.55], [0.55, 0.55], [0, -0.3]]) add(box(0.06, 0.4, 0.06), post, x, 0.2, z);
+          for (const y of [0.16, 0.32]) {
+            add(box(1.1, 0.04, 0.03), rail, 0, y, -0.3);
+            add(box(0.03, 0.04, 0.85), rail, -0.55, y, 0.125);
+            add(box(0.03, 0.04, 0.85), rail, 0.55, y, 0.125);
+          }
+          // The front is left open, with a little board saying what is coming.
+          add(box(0.04, 0.5, 0.04), post, 0.4, 0.25, 0.62);
+          add(box(0.3, 0.18, 0.03), lambert(poi.kind === "apothecary" ? "#4f8a4a" : "#4a4f5a"), 0.4, 0.46, 0.64);
+          // A pile of planks, squared stones, and the trade's own makings: sacks of herbs, or iron bars.
+          for (let i = 0; i < 3; i++) add(box(0.5, 0.05, 0.12), lambert(i % 2 ? "#c9a877" : "#8a6a44"), -0.2, 0.03 + i * 0.05, -0.05 + i * 0.02, 0.15 * i);
+          for (const [x, y, z] of [[0.25, 0.08, -0.05], [0.38, 0.08, 0.1], [0.3, 0.22, 0.02]]) add(box(0.16, 0.14, 0.16), lambert("#959eac"), x, y, z, 0.3);
+          if (poi.kind === "apothecary") {
+            for (const [x, z] of [[-0.25, 0.3], [0.05, 0.35]]) add(new THREE.CylinderGeometry(0.11, 0.13, 0.22, 6), lambert("#c9b37a"), x, 0.11, z);
+            for (const [x, z] of [[-0.25, 0.3], [0.05, 0.35]]) add(new THREE.SphereGeometry(0.09, 5, 4), lambert("#5f9e4a"), x, 0.25, z);
+          } else {
+            for (let i = 0; i < 4; i++) add(box(0.32, 0.05, 0.07), lambert(i < 2 ? "#6f737a" : "#c8743a"), -0.1 + (i % 2) * 0.08, 0.03 + Math.floor(i / 2) * 0.05, 0.32, 0.2);
+          }
+          break;
+        }
+        if (poi.kind === "apothecary") {
+          // The apothecary: a narrow plastered shop under a dark green roof, a green sign, and bunches of herbs hung from the eaves.
+          const wall = lambert("#d9ccb0");
+          add(box(0.9, 0.62, 0.7), wall, 0, 0.31, 0);
+          add(box(0.98, 0.06, 0.78), lambert("#4a3a2a"), 0, 0.64, 0);
+          const roof = add(new THREE.ConeGeometry(0.62, 0.5, 4), lambert("#2f5a3a"), 0, 0.92, 0, Math.PI / 4);
+          roof.scale.z = 0.85;
+          add(box(0.2, 0.34, 0.04), lambert("#3e5a3a"), -0.18, 0.17, 0.36);
+          add(box(0.24, 0.2, 0.03), new THREE.MeshBasicMaterial({ color: "#ffe2a0" }), 0.2, 0.38, 0.36);
+          // A swinging green sign on a bracket, with a pale leaf on it.
+          add(box(0.04, 0.04, 0.32), lambert("#3a2c22"), 0.42, 0.58, 0.5);
+          add(box(0.03, 0.22, 0.26), lambert("#3f8a46"), 0.42, 0.44, 0.58);
+          add(box(0.035, 0.1, 0.06), lambert("#cfe8a0"), 0.42, 0.45, 0.58);
+          // Bunches of herbs drying under the eaves: stems up, leaves hanging.
+          for (const [x, c] of [[-0.36, "#6aa34f"], [-0.12, "#8fb84f"], [0.08, "#5f8f3f"]] as [number, string][]) {
+            add(box(0.015, 0.1, 0.015), lambert("#5a3d22"), x, 0.57, 0.42);
+            add(new THREE.ConeGeometry(0.06, 0.16, 5), lambert(c), x, 0.46, 0.42, 0).rotation.x = Math.PI;
+          }
+          // A little copper still by the door, for show.
+          add(new THREE.CylinderGeometry(0.1, 0.12, 0.2, 7), lambert("#c8743a"), -0.58, 0.1, 0.3);
+          add(new THREE.CylinderGeometry(0.02, 0.02, 0.2, 4), lambert("#c8743a"), -0.58, 0.28, 0.3);
+          break;
+        }
+        // The smithy: an open-fronted shed with a stone forge glowing at the back, a chimney, and an anvil on a block out front.
+        const timber = lambert("#5a3d22");
+        for (const [x, z] of [[-0.5, -0.32], [0.5, -0.32], [-0.5, 0.32], [0.5, 0.32]]) add(box(0.08, 0.7, 0.08), timber, x, 0.35, z);
+        add(box(1.0, 0.5, 0.05), lambert("#8a6a44"), 0, 0.25, -0.34);
+        const roof = add(box(1.18, 0.07, 0.86), lambert("#4a4f5a"), 0, 0.74, 0);
+        roof.rotation.x = -0.18;
+        // The forge: a stone hearth with coals in it, and their glow.
+        add(box(0.46, 0.3, 0.34), lambert("#7b8494"), -0.2, 0.15, -0.14);
+        add(box(0.3, 0.05, 0.2), new THREE.MeshBasicMaterial({ color: "#ff7a2a" }), -0.2, 0.31, -0.12);
+        add(new THREE.ConeGeometry(0.08, 0.16, 5), new THREE.MeshBasicMaterial({ color: "#ffc04a" }), -0.2, 0.39, -0.12);
+        const glow = add(new THREE.SphereGeometry(0.32, 8, 6), new THREE.MeshBasicMaterial({ color: "#ff8a3a", transparent: true, opacity: 0.22, depthWrite: false }), -0.2, 0.36, -0.1);
+        glow.userData.glow = true;
+        // The chimney rises from the back of the forge; the ambience draws its smoke.
+        add(box(0.2, 1.05, 0.2), lambert("#6f737a"), -0.2, 0.75, -0.26);
+        add(box(0.26, 0.06, 0.26), lambert("#5d6168"), -0.2, 1.28, -0.26);
+        g.userData.smoke = new THREE.Vector3(-0.2, 1.35, -0.26);
+        // The anvil on its block, a hammer on top, and a water trough.
+        add(new THREE.CylinderGeometry(0.11, 0.13, 0.22, 7), lambert("#6b4a2b"), 0.25, 0.11, 0.2);
+        add(box(0.3, 0.08, 0.12), lambert("#3a3d44"), 0.25, 0.26, 0.2);
+        add(box(0.16, 0.06, 0.08), lambert("#3a3d44"), 0.25, 0.32, 0.2);
+        add(new THREE.ConeGeometry(0.05, 0.12, 4), lambert("#3a3d44"), 0.45, 0.31, 0.2).rotation.z = Math.PI / 2;
+        add(box(0.03, 0.03, 0.2), lambert("#7a5230"), 0.22, 0.37, 0.22, 0.4);
+        add(box(0.3, 0.12, 0.16), lambert("#6b4a2b"), 0.62, 0.06, -0.05);
+        add(box(0.26, 0.02, 0.12), lambert("#3f7fb8"), 0.62, 0.12, -0.05);
         break;
       }
       case "door":
