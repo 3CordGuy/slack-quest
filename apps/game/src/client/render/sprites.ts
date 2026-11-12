@@ -47,6 +47,31 @@ function finish(ctx: CanvasRenderingContext2D): void {
   }
 }
 
+type Px = (x: number, y: number, w: number, h: number, c: string) => void;
+
+/** The headgear a class or enemy has by default. */
+function drawHat(px: Px, look: Look) {
+  if (look.hat === "helm") {
+    px(5, 2, 6, 3, "#aeb6c2");
+    px(5, 5, 1, 2, "#aeb6c2");
+    px(10, 5, 1, 2, "#aeb6c2");
+    px(7, 1, 2, 1, look.accent);
+  } else if (look.hat === "wizard") {
+    px(8, 0, 1, 1, look.body);
+    px(7, 1, 3, 1, look.body);
+    px(6, 2, 5, 1, look.body);
+    px(4, 3, 8, 1, look.accent);
+  } else if (look.hat === "hood") {
+    px(4, 2, 8, 3, look.body);
+    px(4, 5, 1, 4, look.body);
+    px(11, 5, 1, 4, look.body);
+  } else if (look.hat === "horns") {
+    px(4, 0, 1, 3, look.accent);
+    px(11, 0, 1, 3, look.accent);
+    px(5, 2, 6, 1, look.accent);
+  }
+}
+
 function drawHumanoid(ctx: CanvasRenderingContext2D, look: Look) {
   const px = (x: number, y: number, w: number, h: number, c: string) => {
     ctx.fillStyle = c;
@@ -70,25 +95,7 @@ function drawHumanoid(ctx: CanvasRenderingContext2D, look: Look) {
   px(7, 6, 1, 1, OUTLINE);
   px(9, 6, 1, 1, OUTLINE);
 
-  if (look.hat === "helm") {
-    px(5, 2, 6, 3, "#aeb6c2");
-    px(5, 5, 1, 2, "#aeb6c2");
-    px(10, 5, 1, 2, "#aeb6c2");
-    px(7, 1, 2, 1, look.accent);
-  } else if (look.hat === "wizard") {
-    px(8, 0, 1, 1, look.body);
-    px(7, 1, 3, 1, look.body);
-    px(6, 2, 5, 1, look.body);
-    px(4, 3, 8, 1, look.accent);
-  } else if (look.hat === "hood") {
-    px(4, 2, 8, 3, look.body);
-    px(4, 5, 1, 4, look.body);
-    px(11, 5, 1, 4, look.body);
-  } else if (look.hat === "horns") {
-    px(4, 0, 1, 3, look.accent);
-    px(11, 0, 1, 3, look.accent);
-    px(5, 2, 6, 1, look.accent);
-  }
+  drawHat(px, look);
 
   if (look.weapon === "sword") {
     px(13, 5, 1, 8, "#dfe6ee");
@@ -109,7 +116,7 @@ const GEAR = { steel: "#c9d1dc", shine: "#f1f5fa", iron: "#8b95a5", wood: "#8a5a
 /**
  * A hero wearing what they have equipped. The body is the class's own
  * colours; every worn item is drawn over it where it belongs: helmet or
- * hood on the head, armor on the torso and legs, boots on the feet, the
+ * hood on the head (the class's own hat shows until one is equipped), armor on the torso and legs, boots on the feet, the
  * main-hand weapon at the right of the picture and a shield at the left.
  * Each item's rarity colour shows as its trim.
  */
@@ -189,6 +196,9 @@ function drawHero(ctx: CanvasRenderingContext2D, look: Look, outfit: Outfit) {
     px(5, 5, 1, 3, GEAR.steel);
     px(10, 5, 1, 3, GEAR.steel);
     px(8, 5, 1, 1, GEAR.steel);
+  } else {
+    // No helmet equipped: the class keeps its own hat.
+    drawHat(px, look);
   }
 
   // Main hand: at the right of the picture.
@@ -343,4 +353,95 @@ export function labelTexture(text: string): { texture: THREE.CanvasTexture; aspe
   texture.generateMipmaps = false;
   texture.colorSpace = THREE.SRGBColorSpace;
   return { texture, aspect: canvas.width / canvas.height };
+}
+
+// ---------- battle effects ----------
+
+export type FxKind = "slash" | "bolt" | "arrow" | "burst" | "spark";
+
+const fxCache = new Map<string, THREE.CanvasTexture>();
+
+/**
+ * A small pixel effect in one colour: a crescent swipe, a spell bolt, an
+ * arrow, an impact burst, or healing sparkles. `flip` mirrors it for
+ * attacks travelling right to left.
+ */
+export function fxTexture(kind: FxKind, color: string, flip = false): THREE.CanvasTexture {
+  const key = `${kind}|${color}|${flip}`;
+  const hit = fxCache.get(key);
+  if (hit) return hit;
+  const N = 16;
+  const canvas = document.createElement("canvas");
+  canvas.width = N;
+  canvas.height = N;
+  const ctx = canvas.getContext("2d")!;
+  const dot = (x: number, y: number, c = color) => {
+    ctx.fillStyle = c;
+    ctx.fillRect(flip ? N - 1 - x : x, y, 1, 1);
+  };
+  if (kind === "slash") {
+    // A crescent sweeping from upper left round to lower right, thickest in the middle.
+    for (let y = 0; y < N; y++) {
+      for (let x = 0; x < N; x++) {
+        const dx = x - 2.5;
+        const dy = y - 13.5;
+        const d = Math.hypot(dx, dy);
+        const a = Math.atan2(-dy, dx);
+        if (a < 0.05 || a > 1.5) continue;
+        const width = 0.6 + 2.6 * Math.sin(((a - 0.05) / 1.45) * Math.PI);
+        if (Math.abs(d - 11) <= width / 2 + 0.3) dot(x, y, Math.abs(d - 11.4) < 0.7 ? "#ffffff" : color);
+      }
+    }
+  } else if (kind === "bolt") {
+    for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+      const d = Math.hypot(x - 9.5, y - 7.5);
+      if (d < 3.6) dot(x, y, d < 1.8 ? "#ffffff" : color);
+    }
+    // A short trail behind it.
+    for (let x = 1; x < 6; x++) if (x % 2) dot(x, 7);
+    dot(3, 9);
+    dot(4, 5);
+  } else if (kind === "arrow") {
+    for (let x = 2; x < 12; x++) dot(x, 8, "#e8dcc0");
+    dot(12, 8);
+    dot(13, 8);
+    dot(11, 7);
+    dot(11, 9);
+    dot(12, 7);
+    dot(12, 9);
+    dot(2, 7, "#ffffff");
+    dot(2, 9, "#ffffff");
+    dot(3, 7, "#ffffff");
+    dot(3, 9, "#ffffff");
+  } else if (kind === "burst") {
+    for (let i = 2; i < 7; i++) {
+      dot(8 + i, 8);
+      dot(7 - i, 8);
+      dot(8, 8 + i - 1);
+      dot(8, 7 - i + 1);
+    }
+    for (let i = 2; i < 5; i++) {
+      dot(8 + i, 8 + i);
+      dot(7 - i, 7 - i);
+      dot(8 + i, 7 - i);
+      dot(7 - i, 8 + i);
+    }
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(7, 7, 2, 2);
+  } else {
+    for (const [cx, cy] of [[4, 4], [11, 6], [6, 11], [12, 12]]) {
+      dot(cx, cy, "#ffffff");
+      dot(cx - 1, cy);
+      dot(cx + 1, cy);
+      dot(cx, cy - 1);
+      dot(cx, cy + 1);
+    }
+  }
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.magFilter = THREE.NearestFilter;
+  tex.minFilter = THREE.NearestFilter;
+  tex.generateMipmaps = false;
+  tex.colorSpace = THREE.SRGBColorSpace;
+  fxCache.set(key, tex);
+  return tex;
 }

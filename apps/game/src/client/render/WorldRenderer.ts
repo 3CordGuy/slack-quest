@@ -9,7 +9,17 @@
 import * as THREE from "three";
 import type { HexPos } from "@gantt-quest/core";
 import { findPath, reachable, tileAt, type ClientState, type Outfit, type Phase, type Poi, type Tile, type WorldEvent, type WorldMap } from "@gantt-quest/world";
-import { SPRITE_ASPECT, labelTexture, spriteKey, spriteTexture, textTexture } from "./sprites";
+import { SPRITE_ASPECT, fxTexture, labelTexture, spriteKey, spriteTexture, textTexture, type FxKind } from "./sprites";
+
+/** Spells fly as a coloured bolt; these are their colours, by ability name. */
+const SPELL_COLOR: Record<string, string> = {
+  Firebolt: "#ff9a3c",
+  "Chain Spark": "#7fe3ff",
+  "Hex Bolt": "#c084fc",
+  "Dark Bolt": "#b06cff",
+  Immolate: "#ff6a3c",
+};
+const ARROW_ABILITIES = new Set(["Aimed Shot", "Pin Down"]);
 
 /**
  * What the renderer needs to draw a scene. An island's ClientState satisfies
@@ -64,6 +74,13 @@ interface Unit {
   path: THREE.Vector3[];
   /** Brief attack lunge, decays to zero. */
   kick: THREE.Vector3;
+  /** Lean into an attack, in radians; decays to zero. */
+  lean: number;
+  /** Resting rotation: upright, or on their side when down. */
+  baseRot: number;
+  /** Distance walked, which drives the hop, and the current hop height. */
+  stride: number;
+  bob: number;
   kind: string;
 }
 
@@ -83,6 +100,21 @@ interface Want {
 interface Floater {
   sprite: THREE.Sprite;
   age: number;
+}
+
+/** A short-lived effect sprite: a swipe, a projectile in flight, a burst. */
+interface Fx {
+  sprite: THREE.Sprite;
+  age: number;
+  life: number;
+  from: THREE.Vector3;
+  to: THREE.Vector3;
+  /** Start and end size, in world units. */
+  size: [number, number];
+  /** Total rotation over its life, in radians. */
+  spin: number;
+  fade: boolean;
+  onEnd?: () => void;
 }
 
 export interface RendererCallbacks {
@@ -114,6 +146,7 @@ export class WorldRenderer {
   private units = new Map<string, Unit>();
   private pulsing = new Set<string>();
   private floaters: Floater[] = [];
+  private fx: Fx[] = [];
   private pending: { at: number; run: () => void }[] = [];
 
   private state: RenderState | null = null;
@@ -225,9 +258,9 @@ export class WorldRenderer {
         if (unit) unit.path = ev.path.map((p) => this.standAt(p));
       } else if (ev.t === "battle") {
         const b = ev.ev;
-        if (b.t === "hit") this.later(beat++, () => { this.lunge(b.actor, b.target); this.float(b.target, `-${b.amount}`, b.perfect ? "#ffd23f" : "#ff6b6b"); });
-        else if (b.t === "miss") this.later(beat++, () => { this.lunge(b.actor, b.target); this.float(b.target, "miss", "#c9d1e0"); });
-        else if (b.t === "heal") this.later(beat++, () => this.float(b.target, `+${b.amount}`, "#7dff9a"));
+        if (b.t === "hit") this.later(beat++, () => this.attack(b.actor, b.target, b.ability, b.perfect, () => this.float(b.target, `-${b.amount}`, b.perfect ? "#ffd23f" : "#ff6b6b")));
+        else if (b.t === "miss") this.later(beat++, () => this.attack(b.actor, b.target, b.ability, false, () => this.float(b.target, "miss", "#c9d1e0")));
+        else if (b.t === "heal") this.later(beat++, () => { this.sparkle(b.target, "#7dff9a"); this.float(b.target, `+${b.amount}`, "#7dff9a"); });
         else if (b.t === "tick") this.later(beat++, () => this.float(b.target, `-${b.amount}`, "#ffa94d"));
       }
     }
@@ -241,6 +274,53 @@ export class WorldRenderer {
     const a = this.units.get(actorId);
     const t = this.units.get(targetId);
     if (a && t && a !== t) a.kick.copy(t.goal).sub(a.goal).setLength(0.7);
+  }
+
+  /**
+   * Play one attack: the attacker leans in, then either a melee swipe lands
+   * on the target at once, or a bolt or arrow flies across first. `onImpact`
+   * runs when it lands.
+   */
+  private attack(actorId: string, targetId: string, ability: string, perfect: boolean, onImpact: () => void) {
+    const a = this.units.get(actorId);
+    const t = this.units.get(targetId);
+    if (!a || !t || a === t) return onImpact();
+    const dir = t.goal.x >= a.goal.x ? 1 : -1;
+    const flip = dir < 0;
+    a.lean = -dir * 0.5;
+    const hitAt = t.goal.clone().add(new THREE.Vector3(0, t.sprite.scale.y * 0.5, 0.05));
+    const spell = SPELL_COLOR[ability];
+
+    if (spell || ARROW_ABILITIES.has(ability)) {
+      const kind: FxKind = spell ? "bolt" : "arrow";
+      const color = spell ?? "#e8dcc0";
+      const from = a.goal.clone().add(new THREE.Vector3(dir * 0.5, a.sprite.scale.y * 0.6, 0.05));
+      this.spawnFx(kind, color, flip, { from, to: hitAt, life: 0.24, size: [1.0, 1.0], spin: 0, fade: false, onEnd: () => {
+        this.spawnFx("burst", perfect ? "#ffd23f" : color, false, { from: hitAt, to: hitAt, life: 0.22, size: [0.7, 1.7], spin: 0.5, fade: true });
+        onImpact();
+      } });
+      return;
+    }
+    // Melee: step in and swipe across the target.
+    this.lunge(actorId, targetId);
+    this.spawnFx("slash", perfect ? "#ffd23f" : "#dfe9ff", flip, { from: hitAt, to: hitAt, life: 0.26, size: [1.3, 2.3], spin: -dir * 0.9, fade: true });
+    onImpact();
+  }
+
+  private sparkle(unitId: string, color: string) {
+    const unit = this.units.get(unitId);
+    if (!unit) return;
+    const from = unit.goal.clone().add(new THREE.Vector3(0, unit.sprite.scale.y * 0.4, 0.05));
+    this.spawnFx("spark", color, false, { from, to: from.clone().add(new THREE.Vector3(0, 0.9, 0)), life: 0.6, size: [1.2, 1.5], spin: 0, fade: true });
+  }
+
+  private spawnFx(kind: FxKind, color: string, flip: boolean, opts: Omit<Fx, "sprite" | "age">) {
+    const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: fxTexture(kind, color, flip), transparent: true, depthTest: false }));
+    sprite.position.copy(opts.from);
+    sprite.scale.set(opts.size[0], opts.size[0], 1);
+    sprite.renderOrder = 9;
+    this.fxGroup.add(sprite);
+    this.fx.push({ sprite, age: 0, ...opts });
   }
 
   private float(unitId: string, text: string, color: string) {
@@ -535,13 +615,13 @@ export class WorldRenderer {
         sprite.center.set(0.5, 0);
         sprite.position.copy(w.pos);
         this.unitGroup.add(sprite);
-        unit = { sprite, ring: null, hpBack: null, hpFill: null, label: null, labelText: "", goal: w.pos.clone(), path: [], kick: new THREE.Vector3(), kind: spriteKey(w.kind, w.outfit) };
+        unit = { sprite, ring: null, hpBack: null, hpFill: null, label: null, labelText: "", goal: w.pos.clone(), path: [], kick: new THREE.Vector3(), lean: 0, baseRot: 0, stride: 0, bob: 0, kind: spriteKey(w.kind, w.outfit) };
         this.units.set(id, unit);
       }
       unit.goal.copy(w.pos);
       unit.sprite.scale.set(w.size * SPRITE_ASPECT, w.size, 1);
       const mat = unit.sprite.material;
-      mat.rotation = w.down ? Math.PI / 2 : 0;
+      unit.baseRot = w.down ? Math.PI / 2 : 0;
       mat.opacity = w.down ? 0.55 : 1;
       unit.sprite.center.set(0.5, w.down ? 0.5 : 0);
 
@@ -724,31 +804,59 @@ export class WorldRenderer {
 
     for (const [id, unit] of this.units) {
       const p = unit.sprite.position;
+      // The hop is drawn on top of where the unit really is; take it off before moving.
+      p.y -= unit.bob;
       if (unit.path.length > 0) {
         const next = unit.path[0].clone();
         next.z += 0.25;
-        const step = 6 * dt;
+        const step = 4.2 * dt;
+        unit.stride += step;
         if (p.distanceTo(next) <= step) {
           p.copy(next);
           unit.path.shift();
         } else {
           p.add(next.sub(p).setLength(step));
         }
+        // Two hops per hex, landing as each hex is reached.
+        unit.bob = Math.abs(Math.sin(unit.stride * 3.6)) * 0.2;
       } else {
+        unit.bob *= Math.exp(-dt * 18);
+        unit.stride = 0;
         const goal = unit.goal.clone().add(unit.kick);
         p.lerp(goal, 1 - Math.exp(-dt * 14));
         unit.kick.multiplyScalar(Math.exp(-dt * 9));
       }
+      unit.lean *= Math.exp(-dt * 8);
+      unit.sprite.material.rotation = unit.baseRot + unit.lean;
+      const ground = p.y;
+      p.y += unit.bob;
       if (unit.ring) {
-        unit.ring.position.set(p.x, p.y + 0.04, p.z);
+        unit.ring.position.set(p.x, ground + 0.04, p.z);
         const s = this.pulsing.has(id) ? 1.25 + Math.sin(this.clock * 6) * 0.2 : 1;
         unit.ring.scale.set(s, s, 1);
       }
-      if (unit.label) unit.label.position.set(p.x, p.y + unit.label.userData.lift, p.z);
+      if (unit.label) unit.label.position.set(p.x, ground + unit.label.userData.lift, p.z);
       if (unit.hpBack && unit.hpFill) {
         const lift = unit.hpBack.userData.lift ?? 2;
-        unit.hpBack.position.set(p.x - 0.6, p.y + lift, p.z);
-        unit.hpFill.position.set(p.x - 0.57, p.y + lift, p.z);
+        unit.hpBack.position.set(p.x - 0.6, ground + lift, p.z);
+        unit.hpFill.position.set(p.x - 0.57, ground + lift, p.z);
+      }
+    }
+
+    for (let i = this.fx.length - 1; i >= 0; i--) {
+      const f = this.fx[i];
+      f.age += dt;
+      const t = Math.min(1, f.age / f.life);
+      f.sprite.position.lerpVectors(f.from, f.to, t);
+      const size = f.size[0] + (f.size[1] - f.size[0]) * t;
+      f.sprite.scale.set(size, size, 1);
+      f.sprite.material.rotation = f.spin * t;
+      if (f.fade) f.sprite.material.opacity = 1 - t * t;
+      if (t >= 1) {
+        this.fxGroup.remove(f.sprite);
+        f.sprite.material.dispose();
+        this.fx.splice(i, 1);
+        f.onEnd?.();
       }
     }
 
