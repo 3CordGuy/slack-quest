@@ -5,6 +5,7 @@
 // them. This file holds the fixed map and the message shapes both sides use.
 
 import { allHexesInGrid, type HexGrid, type HexPos } from "@gantt-quest/core";
+import type { DiceRequest, DiceView } from "./dice";
 import type { Outfit } from "./gear";
 import { findPath, type Biome, type Poi, type PoiKind, type Tile, type WorldMap } from "./map";
 
@@ -25,6 +26,8 @@ export const HARBOR_BOARD: HexPos = at(6, 4);
 export const HARBOR_SHOP: HexPos = at(9, 5);
 /** The sparring ring, where crewmates try out their gear. */
 export const HARBOR_RING: HexPos = at(3, 5);
+/** The dice table, where crewmates gamble a small stake. */
+export const HARBOR_DICE: HexPos = at(8, 6);
 
 const HEIGHT: Record<Biome, number> = { water: 0.05, plains: 0.3, forest: 0.42, hills: 0.75, dock: 0.1, floor: 0.1, wall: 0.9 };
 
@@ -49,7 +52,7 @@ export function generateHarbor(): WorldMap {
     const ripple = ((pos.q * 7 + pos.r * 13) % 5) * 0.012;
     return { q: pos.q, r: pos.r, biome, h: HEIGHT[biome] + (biome === "plains" ? ripple : 0) };
   });
-  return { grid: HARBOR_GRID, tiles, pois: [harborPoi("board", "board", HARBOR_BOARD), harborPoi("shop", "shop", HARBOR_SHOP), harborPoi("ring", "ring", HARBOR_RING)] };
+  return { grid: HARBOR_GRID, tiles, pois: [harborPoi("board", "board", HARBOR_BOARD), harborPoi("shop", "shop", HARBOR_SHOP), harborPoi("ring", "ring", HARBOR_RING), harborPoi("dice", "dice", HARBOR_DICE)] };
 }
 
 /** Longest walk the server will accept in one request. */
@@ -113,13 +116,18 @@ export type HarborServerMessage =
   | { type: "joined"; player: HarborPlayer }
   | { type: "left"; id: string }
   | { type: "moved"; id: string; path: HexPos[] }
-  | { type: "said"; id: string; name: string; text: string };
+  | { type: "said"; id: string; name: string; text: string }
+  /** The dice table as the receiver may see it, or null when there is none. */
+  | { type: "dice"; table: DiceView | null }
+  /** Why the receiver's last dice request was refused. */
+  | { type: "diceError"; text: string };
 
 export type HarborClientMessage =
   | { type: "move"; to: HexPos }
   | { type: "say"; text: string }
   /** "I changed my gear or level": the server re-reads the sender's character and tells everyone. */
-  | { type: "refresh" };
+  | { type: "refresh" }
+  | { type: "dice"; action: DiceRequest };
 
 export const HARBOR_MAX_SAY = 200;
 export const MAX_CREW = 40;

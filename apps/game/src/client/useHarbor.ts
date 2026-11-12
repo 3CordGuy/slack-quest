@@ -3,7 +3,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { HexPos } from "@gantt-quest/core";
-import type { HarborBoard, HarborClientMessage, HarborPlayer, HarborServerMessage } from "@gantt-quest/world";
+import type { DiceView, HarborBoard, HarborClientMessage, HarborPlayer, HarborServerMessage } from "@gantt-quest/world";
 import { PROFILE } from "./api";
 
 export interface HarborChatLine {
@@ -17,6 +17,10 @@ export interface HarborConnection {
   players: HarborPlayer[];
   board: HarborBoard;
   chat: HarborChatLine[];
+  /** The dice table as this player may see it, or null when nobody has opened one. */
+  dice: DiceView | null;
+  /** Why the last dice request was refused. Cleared by the next change at the table. */
+  diceError: string | null;
   status: "connecting" | "open" | "closed";
   error: string | null;
   send(message: HarborClientMessage): void;
@@ -31,6 +35,8 @@ export function useHarbor(onMoved: (id: string, path: HexPos[]) => void): Harbor
   const [players, setPlayers] = useState<HarborPlayer[]>([]);
   const [board, setBoard] = useState<HarborBoard>(EMPTY);
   const [chat, setChat] = useState<HarborChatLine[]>([]);
+  const [dice, setDice] = useState<DiceView | null>(null);
+  const [diceError, setDiceError] = useState<string | null>(null);
   const [status, setStatus] = useState<HarborConnection["status"]>("connecting");
   const [error, setError] = useState<string | null>(null);
   const socket = useRef<WebSocket | null>(null);
@@ -87,6 +93,11 @@ export function useHarbor(onMoved: (id: string, path: HexPos[]) => void): Harbor
           queueMicrotask(() => moved.current(msg.id, msg.path));
         } else if (msg.type === "said") {
           setChat((c) => [...c, { name: msg.name, text: msg.text }].slice(-30));
+        } else if (msg.type === "dice") {
+          setDice(msg.table);
+          setDiceError(null);
+        } else if (msg.type === "diceError") {
+          setDiceError(msg.text);
         }
       };
       ws.onclose = (e) => {
@@ -110,5 +121,5 @@ export function useHarbor(onMoved: (id: string, path: HexPos[]) => void): Harbor
   const send = useCallback((message: HarborClientMessage) => {
     if (socket.current?.readyState === WebSocket.OPEN) socket.current.send(JSON.stringify(message));
   }, []);
-  return { you, crew, players, board, chat, status, error, send };
+  return { you, crew, players, board, chat, dice, diceError, status, error, send };
 }
