@@ -32,7 +32,7 @@ export function ShopScreen({ me, refresh, onClose }: { me: Me; refresh(): Promis
 
   return (
     <div className="overlay inv-overlay" onClick={(e) => e.target === e.currentTarget && onClose()}>
-      <DragPanel id="shop" title="Market stall" compact className="inv panel shop" role="dialog" aria-label="Market stall">
+      <DragPanel id="shop" title="Market stall" compact resizable className="inv panel shop" role="dialog" aria-label="Market stall">
         <header className="inv-head">
           <h2>Market stall</h2>
           <button className={`small ${tab === "buy" ? "selected" : ""}`} onClick={() => setTab("buy")}>Buy</button>

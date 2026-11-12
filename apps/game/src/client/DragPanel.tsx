@@ -8,10 +8,14 @@
 // Every panel also has a minimize button that folds it down to its title.
 // The larger ones start folded on a phone so they do not cover the map.
 //
+// A `resizable` panel also has a handle in each corner. Dragging one changes
+// the panel's size while the opposite corner stays put; double-click a
+// handle to go back to the default size.
+//
 // The offset is applied with the CSS `translate` property, which stacks with
 // whatever `transform` the panel's own styles use for centring.
 
-import { useCallback, useEffect, useRef, useState, type HTMLAttributes, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type HTMLAttributes, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 
 interface Offset {
   x: number;
@@ -26,6 +30,40 @@ const THRESHOLD = 5;
 const KEEP = 48;
 
 const storageKey = (id: string) => `gq.panel.${id}`;
+
+interface Size {
+  w: number;
+  h: number;
+}
+
+/** Smallest a panel may be resized to. */
+const MIN_SIZE: Size = { w: 300, h: 240 };
+const CORNERS = [
+  { name: "nw", sx: -1, sy: -1 },
+  { name: "ne", sx: 1, sy: -1 },
+  { name: "sw", sx: -1, sy: 1 },
+  { name: "se", sx: 1, sy: 1 },
+] as const;
+
+function loadSize(id: string): Size | null {
+  try {
+    const raw = JSON.parse(localStorage.getItem(`${storageKey(id)}.size`) ?? "null") as Size | null;
+    if (!raw || !Number.isFinite(raw.w) || !Number.isFinite(raw.h)) return null;
+    // A size saved on a bigger screen is trimmed to fit this one.
+    return { w: Math.min(raw.w, innerWidth), h: Math.min(raw.h, innerHeight) };
+  } catch {
+    return null;
+  }
+}
+
+function saveSize(id: string, size: Size | null) {
+  try {
+    if (size) localStorage.setItem(`${storageKey(id)}.size`, JSON.stringify(size));
+    else localStorage.removeItem(`${storageKey(id)}.size`);
+  } catch {
+    // Not remembered.
+  }
+}
 
 function load(id: string): Offset {
   try {
@@ -52,6 +90,8 @@ interface Props extends HTMLAttributes<HTMLDivElement> {
   title: string;
   /** A slim bar with no room for a header: the title only appears once minimized. */
   compact?: boolean;
+  /** Give the panel a resize handle in each corner. */
+  resizable?: boolean;
   /** Start folded on narrow screens. The player's own choice, once made, wins. */
   foldOnPhone?: boolean;
   children: ReactNode;
@@ -69,7 +109,10 @@ function loadFolded(id: string, foldOnPhone: boolean): boolean {
   return foldOnPhone && isPhone();
 }
 
-export function DragPanel({ id, title, compact = false, foldOnPhone = false, className = "", children, style, ...rest }: Props) {
+export function DragPanel({ id, title, compact = false, resizable = false, foldOnPhone = false, className = "", children, style, ...rest }: Props) {
+  const [size, setSize] = useState<Size | null>(() => (resizable ? loadSize(id) : null));
+  /** While a corner is being dragged: where the opposite corner must stay. */
+  const pin = useRef<{ sx: number; sy: number; x: number; y: number } | null>(null);
   const [folded, setFolded] = useState(() => loadFolded(id, foldOnPhone));
   const toggle = () => {
     setFolded((f) => {
@@ -104,9 +147,65 @@ export function DragPanel({ id, title, compact = false, foldOnPhone = false, cla
     return () => removeEventListener("resize", check);
   }, [reset]);
 
+  // The panel may be centred by its parent, so growing it would move both edges.
+  // After each size change, shift the panel so the pinned corner is back where it was.
+  useLayoutEffect(() => {
+    const p = pin.current;
+    const r = el.current?.getBoundingClientRect();
+    if (!p || !r) return;
+    const dx = p.x - (p.sx > 0 ? r.left : r.right);
+    const dy = p.y - (p.sy > 0 ? r.top : r.bottom);
+    if (Math.abs(dx) > 0.5 || Math.abs(dy) > 0.5) setOffset((o) => ({ x: Math.round(o.x + dx), y: Math.round(o.y + dy) }));
+  });
+
+  const startResize = (sx: number, sy: number) => (e: ReactPointerEvent<HTMLSpanElement>) => {
+    if (e.button !== 0 || !el.current) return;
+    e.stopPropagation();
+    e.preventDefault();
+    const start = { x: e.clientX, y: e.clientY };
+    const rect = el.current.getBoundingClientRect();
+    pin.current = { sx, sy, x: sx > 0 ? rect.left : rect.right, y: sy > 0 ? rect.top : rect.bottom };
+    let latest: Size = { w: rect.width, h: rect.height };
+    setDragging(true);
+
+    const move = (ev: PointerEvent) => {
+      // The dragged corner cannot pass the pinned one, nor leave the screen.
+      const maxW = sx > 0 ? innerWidth - rect.left : rect.right;
+      const maxH = sy > 0 ? innerHeight - rect.top : rect.bottom;
+      latest = {
+        w: Math.round(Math.max(Math.min(MIN_SIZE.w, maxW), Math.min(maxW, rect.width + sx * (ev.clientX - start.x)))),
+        h: Math.round(Math.max(Math.min(MIN_SIZE.h, maxH), Math.min(maxH, rect.height + sy * (ev.clientY - start.y)))),
+      };
+      setSize(latest);
+    };
+    const up = () => {
+      removeEventListener("pointermove", move);
+      removeEventListener("pointerup", up);
+      removeEventListener("pointercancel", up);
+      setDragging(false);
+      saveSize(id, latest);
+      // Let the last corner correction land before saving where the panel ended up.
+      setTimeout(() => {
+        pin.current = null;
+        save(id, live.current);
+      }, 60);
+    };
+    addEventListener("pointermove", move);
+    addEventListener("pointerup", up);
+    addEventListener("pointercancel", up);
+  };
+
+  const resetSize = () => {
+    pin.current = null;
+    setSize(null);
+    saveSize(id, null);
+    reset();
+  };
+
   const onPointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
     if (e.button !== 0 || !el.current) return;
     const target = e.target as HTMLElement;
+    if (target.closest(".resize")) return;
     const onGrip = !!target.closest(".grip");
     if (!onGrip && (e.pointerType !== "mouse" || target.closest(INTERACTIVE))) return;
 
@@ -153,8 +252,13 @@ export function DragPanel({ id, title, compact = false, foldOnPhone = false, cla
     <div
       ref={el}
       {...rest}
-      className={`${className} draggable ${dragging ? "dragging" : ""} ${folded ? "folded" : ""}`}
-      style={{ ...style, translate: `${offset.x}px ${offset.y}px` }}
+      className={`${className} draggable ${dragging ? "dragging" : ""} ${folded ? "folded" : ""} ${resizable ? "resizable" : ""}`}
+      style={{
+        ...style,
+        translate: `${offset.x}px ${offset.y}px`,
+        // A minimized panel shrinks to its title whatever size it was given.
+        ...(size && !folded ? { width: size.w, height: size.h, maxWidth: "none", maxHeight: "none" } : {}),
+      }}
       onPointerDown={onPointerDown}
     >
       <span className="panel-tools">
@@ -171,6 +275,18 @@ export function DragPanel({ id, title, compact = false, foldOnPhone = false, cla
         </button>
       )}
       {children}
+      {resizable &&
+        !folded &&
+        CORNERS.map((c) => (
+          <span
+            key={c.name}
+            className={`resize ${c.name}`}
+            title="Drag to resize. Double-click for the default size."
+            onPointerDown={startResize(c.sx, c.sy)}
+            onDoubleClick={resetSize}
+            aria-hidden
+          />
+        ))}
     </div>
   );
 }
