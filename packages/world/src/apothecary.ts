@@ -23,7 +23,7 @@ export interface BrewDef {
 export const BREWS: BrewDef[] = [
   { id: "healing", name: "Healing Draught", blurb: "Bitter, green, and better than bleeding.", recipe: { herbs: 3 }, buff: { potions: 1 } },
   { id: "focus", name: "Focus Tonic", blurb: "A sharp tea that keeps the mind on the job.", recipe: { herbs: 2, mushrooms: 2 }, buff: { focus: 1 } },
-  { id: "stoneskin", name: "Stoneskin Salve", blurb: "Rubbed in before a fight. Smells of cellar.", recipe: { mushrooms: 3, bone: 1 }, buff: { maxHp: 3 } },
+  { id: "stoneskin", name: "Stoneskin Salve", blurb: "Rubbed in before a fight. Smells of cellar.", recipe: { mushrooms: 3, bone: 1 }, buff: { maxHp: 4 } },
 ];
 
 export const brewById = (id: string): BrewDef | undefined => BREWS.find((b) => b.id === id);

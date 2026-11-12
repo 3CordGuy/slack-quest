@@ -36,7 +36,7 @@ describe("brewing", () => {
     expect(BREWS.map((b) => [b.id, b.recipe, b.buff])).toEqual([
       ["healing", { herbs: 3 }, { potions: 1 }],
       ["focus", { herbs: 2, mushrooms: 2 }, { focus: 1 }],
-      ["stoneskin", { mushrooms: 3, bone: 1 }, { maxHp: 3 }],
+      ["stoneskin", { mushrooms: 3, bone: 1 }, { maxHp: 4 }],
     ]);
   });
 
@@ -53,7 +53,7 @@ describe("brewing", () => {
   it("counts each kind once and ignores unknown ids", () => {
     expect(brewBag(["stoneskin", "healing", "healing", "elixir"])).toEqual(["healing", "stoneskin"]);
     expect(brewBuff(["healing", "healing", "elixir"])).toEqual({ focus: 0, potions: 1, maxHp: 0, xpPct: 0 });
-    expect(brewBuff(["healing", "focus", "stoneskin"])).toEqual({ focus: 1, potions: 1, maxHp: 3, xpPct: 0 });
+    expect(brewBuff(["healing", "focus", "stoneskin"])).toEqual({ focus: 1, potions: 1, maxHp: 4, xpPct: 0 });
     expect(brewBuff(undefined)).toEqual({ focus: 0, potions: 0, maxHp: 0, xpPct: 0 });
   });
 
@@ -67,8 +67,8 @@ describe("brewing", () => {
     expect(b.potions).toBe(a.potions + 1);
     expect(b.focus).toBe(a.focus + 1);
     expect(b.maxFocus).toBe(a.maxFocus + 1);
-    expect(b.maxHp).toBe(a.maxHp + 3);
-    expect(b.hp).toBe(a.hp + 3);
+    expect(b.maxHp).toBe(a.maxHp + 4);
+    expect(b.hp).toBe(a.hp + 4);
     expect(b.brews).toEqual(["healing", "focus", "stoneskin"]);
   });
 });
