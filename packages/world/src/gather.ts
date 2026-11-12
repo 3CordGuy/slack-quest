@@ -403,6 +403,25 @@ export function gatherView(state: GatherState): GatherView {
   };
 }
 
+// ---------- resting ----------
+
+/** How long a player must wait between rests. */
+export const REST_COOLDOWN_MS = 20 * 60 * 1000;
+/** Outings a rest gives back: one on a bedroll under the sky, two in a bed of your own. */
+export const REST_OUTINGS = { bedroll: 1, hut: 2 } as const;
+export type RestPlace = keyof typeof REST_OUTINGS;
+
+/** When a player who last rested at `restedAt` may rest again, in ms. Zero if they never have. */
+export const restReadyAt = (restedAt: number | null | undefined): number => (restedAt ? restedAt + REST_COOLDOWN_MS : 0);
+
+/** Why a rest would do nothing right now, or null if it would help. */
+export function restProblem(record: { day: string; used: number; rested_at?: number | null } | null | undefined, now: number): string | null {
+  if (outingsLeft(record, now) >= GATHER_DAILY_OUTINGS) return "You are not tired. Rest when you have been out gathering.";
+  const ready = restReadyAt(record?.rested_at);
+  if (now < ready) return `You have not long been up. You can rest again in ${Math.ceil((ready - now) / 60_000)} min.`;
+  return null;
+}
+
 // ---------- stamina ----------
 
 /** The UTC day a moment belongs to, as YYYY-MM-DD. Stamina resets when it changes. */

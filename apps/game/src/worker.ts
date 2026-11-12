@@ -4,7 +4,7 @@
 
 import { Hono, type Context } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
-import { HARBOR_PIERS, HERO_CLASSES, MAX_CREW, PUB_MAX_TALK, PUB_MENU, hutPerks, makeRng, pubBuff, rollStartingStats } from "@gantt-quest/world";
+import { HARBOR_PIERS, HARBOR_PLOTS, HERO_CLASSES, MAX_CREW, PUB_MAX_TALK, PUB_MENU, hutPerks, makeRng, pubBuff, rollStartingStats } from "@gantt-quest/world";
 import { barkeepReply } from "./server/ai";
 import { noticeBoard } from "./server/board";
 import { sendSignInCode } from "./server/email";
@@ -47,11 +47,13 @@ import {
   harborBoard,
   orderAtPub,
   pubOrders,
+  buyPlot,
+  plotOf,
 } from "./server/db";
 
 import { enterHut } from "./server/hut-room";
 import { enterPub } from "./server/pub-room";
-import { gatherStatus, startOuting, stepOuting } from "./server/gather";
+import { gatherStatus, rest, startOuting, stepOuting } from "./server/gather";
 import { builtProjectIds, contribute, crewWorks, projectStock } from "./server/projects";
 
 export { HarborRoom } from "./server/harbor-room";
@@ -325,6 +327,28 @@ app.post("/api/gather/step", async (c) => {
   const body = await c.req.json<{ choice?: unknown }>().catch(() => ({}) as { choice?: unknown });
   const result = await stepOuting(c.env.DB, c.get("player").id, body.choice);
   return typeof result === "string" ? c.json({ error: result }, 409) : c.json(result);
+});
+
+// Rest: on a bedroll in the Harbor, or at home if you have a hut. Gives back gathering stamina, on a cooldown.
+app.post("/api/rest", async (c) => {
+  const player = c.get("player");
+  const body = await c.req.json<{ place?: unknown }>().catch(() => ({}) as { place?: unknown });
+  const place = body.place === "hut" ? "hut" : "bedroll";
+  if (place === "hut" && (await plotOf(c.env.DB, player.id)) === null) return c.json({ error: "You have no hut to rest in yet." }, 409);
+  const result = await rest(c.env.DB, player.id, place);
+  return typeof result === "string" ? c.json({ error: result }, 409) : c.json(result);
+});
+
+// Buy a plot of land in the crew's Harbor: the ground a hut stands on.
+app.post("/api/hut/plot", async (c) => {
+  const player = c.get("player");
+  const body = await c.req.json<{ plot?: unknown }>().catch(() => ({}) as { plot?: unknown });
+  const crew = await crewFor(c.env.DB, player.id);
+  if (!crew) return c.json({ error: "Join a crew first." }, 409);
+  const error = await buyPlot(c.env.DB, crew.id, player.id, Number(body.plot), HARBOR_PLOTS.length);
+  if (error) return c.json({ error }, 409);
+  c.executionCtx.waitUntil(refreshHarbor(c.env, crew.id));
+  return c.json({ plot: Number(body.plot) });
 });
 
 // ---------- Harbor projects ----------

@@ -54,6 +54,13 @@ class Builder {
 }
 
 const MODELS: Record<string, (b: Builder) => void> = {
+  // A bedroll laid out on the ground: a blanket, a rolled end for a pillow, and a pack beside it.
+  bedroll(b) {
+    b.box("#7a5a3c", 0.55, 0.05, 1.05, 0.25, 0, 0.1);
+    b.box("#9c3f36", 0.5, 0.06, 0.7, 0.25, 0.04, 0.25);
+    b.box("#d8d2c0", 0.42, 0.12, 0.2, 0.25, 0.04, -0.32);
+    b.box("#5a4632", 0.28, 0.24, 0.24, -0.35, 0, -0.25);
+  },
   // A length of bar counter, a full hex wide so neighbouring lengths join into one bar.
   bar(b) {
     b.box(WOOD, 1.76, 0.6, 0.5);
@@ -69,8 +76,9 @@ const MODELS: Record<string, (b: Builder) => void> = {
     b.box(DARK_WOOD, 0.08, 0.08, 0.12, 0, 0.26, 0.36);
   },
   table(b) {
-    b.box(PALE_WOOD, 1.0, 0.08, 0.7, 0, 0.42);
-    for (const [x, z] of [[-0.42, -0.27], [0.42, -0.27], [-0.42, 0.27], [0.42, 0.27]]) b.box(DARK_WOOD, 0.08, 0.42, 0.08, x, 0, z);
+    // Dark, oiled wood, so it stands out from the pale floorboards it sits on.
+    b.box("#5e3d24", 1.0, 0.08, 0.7, 0, 0.42);
+    for (const [x, z] of [[-0.42, -0.27], [0.42, -0.27], [-0.42, 0.27], [0.42, 0.27]]) b.box("#3b2616", 0.08, 0.42, 0.08, x, 0, z);
     b.box("#d8d2c0", 0.2, 0.05, 0.2, 0.22, 0.5, 0.05);
   },
   chair(b) {

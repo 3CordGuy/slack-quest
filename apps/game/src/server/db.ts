@@ -13,6 +13,7 @@ import {
   gearSheet,
   heroClass,
   gatherDay,
+  PLOT_PRICE,
   hutPerks,
   pubBuff,
   pubItem,
@@ -583,13 +584,48 @@ export async function joinCrew(db: D1Database, playerId: string, crewId: string,
   if ((count?.n ?? 0) >= maxMembers) return null;
   await db.batch([
     db.prepare("DELETE FROM crew_members WHERE player_id = ?").bind(playerId),
+    // Moving to another crew leaves the old Harbor's plot behind.
+    db.prepare("UPDATE huts SET plot = NULL WHERE player_id = ? AND NOT EXISTS (SELECT 1 FROM crew_members WHERE player_id = ?1 AND crew_id = ?2)").bind(playerId, crewId),
     db.prepare("INSERT INTO crew_members (crew_id, player_id, joined_at) VALUES (?, ?, ?)").bind(crewId, playerId, now()),
   ]);
   return crew;
 }
 
 export async function leaveCrew(db: D1Database, playerId: string): Promise<void> {
-  await db.prepare("DELETE FROM crew_members WHERE player_id = ?").bind(playerId).run();
+  // A plot is land in one crew's Harbor: leaving the crew gives it up. The hut's contents stay with the player.
+  await db.batch([
+    db.prepare("DELETE FROM crew_members WHERE player_id = ?").bind(playerId),
+    db.prepare("UPDATE huts SET plot = NULL WHERE player_id = ?").bind(playerId),
+  ]);
+}
+
+/** The plot a player owns in their crew's Harbor, or null. */
+export async function plotOf(db: D1Database, playerId: string): Promise<number | null> {
+  const row = await db.prepare("SELECT plot FROM huts WHERE player_id = ?").bind(playerId).first<{ plot: number | null }>();
+  return row?.plot ?? null;
+}
+
+/**
+ * Buy a plot in the crew's Harbor. One plot a player, one player a plot. The
+ * gold only moves if the plot is still free and the buyer has none, and the
+ * plot is only written if the gold moved.
+ */
+export async function buyPlot(db: D1Database, crewId: string, playerId: string, plot: number, plots: number): Promise<string | null> {
+  if (!Number.isInteger(plot) || plot < 0 || plot >= plots) return "There is no such plot.";
+  const [paid] = await db.batch([
+    db
+      .prepare(
+        `UPDATE characters SET gold = gold - ?1 WHERE player_id = ?2 AND status = 'active' AND gold >= ?1
+         AND NOT EXISTS (SELECT 1 FROM huts WHERE player_id = ?2 AND plot IS NOT NULL)
+         AND NOT EXISTS (SELECT 1 FROM huts h JOIN crew_members m ON m.player_id = h.player_id WHERE m.crew_id = ?3 AND h.plot = ?4)`,
+      )
+      .bind(PLOT_PRICE, playerId, crewId, plot),
+    db.prepare("INSERT INTO huts (player_id, tier, plot) SELECT ?1, 1, ?2 WHERE changes() > 0 ON CONFLICT (player_id) DO UPDATE SET plot = excluded.plot").bind(playerId, plot),
+  ]);
+  if (paid.meta.changes > 0) return null;
+  if ((await plotOf(db, playerId)) !== null) return "You already own a plot.";
+  const taken = await db.prepare("SELECT 1 FROM huts h JOIN crew_members m ON m.player_id = h.player_id WHERE m.crew_id = ? AND h.plot = ?").bind(crewId, plot).first();
+  return taken ? "Someone has already bought that plot." : `A plot costs ${PLOT_PRICE} gold.`;
 }
 
 const LOBBY_STALE_MS = 2 * 60 * 60_000;
@@ -601,13 +637,13 @@ export async function harborBoard(db: D1Database, crewId: string, pierCount: num
     crewWorks(db, crewId),
     db
       .prepare(
-        `SELECT m.player_id AS id, c.name, c.class_id AS classId, c.level, COALESCE(h.tier, 1) AS hutTier
+        `SELECT m.player_id AS id, c.name, c.class_id AS classId, c.level, COALESCE(h.tier, 1) AS hutTier, h.plot AS plot
          FROM crew_members m JOIN characters c ON c.player_id = m.player_id AND c.status = 'active'
          LEFT JOIN huts h ON h.player_id = m.player_id
          WHERE m.crew_id = ? ORDER BY m.joined_at, m.player_id`,
       )
       .bind(crewId)
-      .all<{ id: string; name: string; classId: string; level: number; hutTier: number }>(),
+      .all<{ id: string; name: string; classId: string; level: number; hutTier: number; plot: number | null }>(),
     db
       .prepare(
         `SELECT r.code, r.status, r.state_json, r.updated_at, c.name AS creator

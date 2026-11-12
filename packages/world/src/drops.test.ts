@@ -63,7 +63,8 @@ function begin(frame: StoryFrame, demand: Demand, seed: string): Log {
   const fill = rng.pick(CANNED_FILLS[frame.id]);
   must(log, { type: "begin", bible: buildBible(frame, fill, demand, rng) });
   // Strong enough that fights are won whatever the dice do.
-  log.state = { ...log.state, heroes: log.state.heroes.map((h) => ({ ...h, base: { str: 12, int_stat: 12, vit: 12, agi: 12, dex: 12 }, hp: 900, maxHp: 900 })) };
+  // These tests are about what a voyage pays, so the island has no fog and nothing roaming on it.
+  log.state = { ...log.state, roamers: undefined, seen: undefined, heroes: log.state.heroes.map((h) => ({ ...h, base: { str: 12, int_stat: 12, vit: 12, agi: 12, dex: 12 }, hp: 900, maxHp: 900 })) };
   return log;
 }
 

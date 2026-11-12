@@ -24,7 +24,7 @@ import {
   type HutServerMessage,
   type WorldMap,
 } from "@gantt-quest/world";
-import { crewFor, furnishingStatement, getCharacter, getHut, heroInitFor, type Env, type Player } from "./db";
+import { crewFor, furnishingStatement, getCharacter, getHut, heroInitFor, plotOf, type Env, type Player } from "./db";
 
 /** What a player with nothing at all is given the first time they open their own hut. */
 const STARTER_SET = ["table", "chair", "rug"];
@@ -52,6 +52,10 @@ export async function enterHut(env: Env, player: Player, ownerId: string, reques
   // The same answer whether the hut does not exist or belongs to another crew.
   if (!mine && (owner?.status !== "active" || !crew || ownerCrew?.id !== crew.id)) {
     return new Response("That hut is not in your crew's Harbor.", { status: 403 });
+  }
+  // A hut stands on a plot: until its owner has bought one there is nothing to walk into.
+  if ((await plotOf(env.DB, ownerId)) === null) {
+    return new Response(mine ? "You have no hut yet. Buy a plot in the Harbor first." : "They have not built a hut yet.", { status: 403 });
   }
   const headers = new Headers(request.headers);
   headers.set("x-hut-owner", ownerId);

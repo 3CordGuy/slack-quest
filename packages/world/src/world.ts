@@ -23,7 +23,7 @@ import { rollItem, type ItemDef, type Outfit } from "./gear";
 import { freshVitals, heroCombatant } from "./hero";
 import { addResources, capPerks, xpWithBonus, type Perk, type Resources } from "./hut";
 import { capPubBuff } from "./pub";
-import { findPath, generateMap, poiAt, poiById, tileAt, type Poi, type WorldMap } from "./map";
+import { MOVE_COST, findPath, generateMap, poiAt, poiById, tileAt, type Poi, type WorldMap } from "./map";
 import {
   MAX_NPC_MESSAGES,
   MAX_PERSUADE_ATTEMPTS,
@@ -119,6 +119,23 @@ export interface Earned {
 
 export type Phase = "lobby" | "generating" | "overworld" | "battle" | "ended";
 
+/** How far a hero sees, in hexes. One further from a hilltop. */
+export const VISION = 2;
+/** Roaming bands on the island when a voyage begins, and the most there can be at once. */
+export const ROAMERS_AT_START = 2;
+export const ROAMERS_MAX = 4;
+/** A new band comes ashore every this many days, while there is room for one. */
+export const ROAMER_EVERY_DAYS = 3;
+/** A band that is this close to a hero makes for them; further off it only wanders. */
+export const ROAMER_SCENT = 3;
+
+export interface Roamer {
+  id: string;
+  /** Who is in the band, as enemy kinds. */
+  kinds: string[];
+  pos: HexPos;
+}
+
 /** What a forest hex can turn up as a hero walks through it. */
 export type ForageKind = "berries" | "wood" | "bones" | "treasure" | "wolves";
 
@@ -135,6 +152,14 @@ export interface WorldState {
   code: string;
   seed: string;
   rng: number;
+  /**
+   * Hexes the party has seen (as "q,r"). Everything else is fog: it is not sent to clients and cannot be
+   * walked into. Absent on voyages begun before there was fog, which have none.
+   */
+  seen?: string[];
+  /** Enemy bands loose on the island. They wander, close on heroes they scent, and attack when they reach one. */
+  roamers?: Roamer[];
+  roamerSeq?: number;
   /** Forest hexes already walked through (as "q,r"). Each can turn something up only once a voyage. */
   forest?: string[];
   phase: Phase;
@@ -199,6 +224,8 @@ export type WorldEvent =
   | { t: "check"; heroId: string; check: CheckResult }
   | { t: "rest"; heroId: string; hp: number; focus: number; where: string }
   | { t: "search"; heroId: string; found: boolean }
+  /** A roaming band has caught a hero, or a hero has walked into one. */
+  | { t: "ambush"; heroId: string; kinds: string[]; by: "band" | "hero" }
   /** Something turned up while crossing a forest hex. `hp` is what berries restored. */
   | { t: "forage"; heroId: string; kind: ForageKind; hp?: number }
   | { t: "xp"; heroId: string; amount: number }
@@ -449,6 +476,95 @@ function endRun(ctx: Ctx, outcome: "victory" | "defeat", reason: string) {
   ctx.effects.push({ kind: "epilogue" }, { kind: "run_end", outcome });
 }
 
+const posKeyOf = (p: HexPos) => `${p.q},${p.r}`;
+
+/** Add everything each hero can see from where they stand (and from `also`, the hexes of a walk) to what the party has seen. */
+function look(state: WorldState, also: HexPos[] = []) {
+  if (!state.seen) return;
+  const seen = new Set(state.seen);
+  const from = [...state.heroes.map((h) => h.pos), ...also];
+  for (const eye of from) {
+    const reach = VISION + (tileAt(state.map, eye)?.biome === "hills" ? 1 : 0);
+    for (const t of state.map.tiles) if (hexDistance(t, eye) <= reach) seen.add(posKeyOf(t));
+  }
+  state.seen = [...seen];
+}
+
+/** Whether a hero standing at `from` may step onto `tile`: it has been seen, or is in plain sight right now. */
+function inSight(state: WorldState, tile: HexPos, from: HexPos): boolean {
+  return !state.seen || hexDistance(tile, from) <= VISION || state.seen.includes(posKeyOf(tile));
+}
+
+const walkable = (state: WorldState, pos: HexPos) => Number.isFinite(MOVE_COST[tileAt(state.map, pos)?.biome ?? "water"]);
+
+/** Put a new band ashore somewhere out of the heroes' sight, clear of places and other bands. False if there is nowhere. */
+function spawnRoamer(ctx: Ctx): boolean {
+  const { state, rng } = ctx;
+  const roamers = (state.roamers ??= []);
+  const open = state.map.tiles.filter(
+    (t) =>
+      walkable(state, t) &&
+      !poiAt(state.map, t) &&
+      state.heroes.every((h) => hexDistance(t, h.pos) >= VISION + 2) &&
+      state.map.pois.every((p) => hexDistance(t, p.pos) >= 2) &&
+      roamers.every((r) => hexDistance(t, r.pos) >= 3),
+  );
+  if (open.length === 0) return false;
+  const at = rng.pick(open);
+  const lead = rng.pick(["wolf", "bandit"]);
+  // A lone hero meets one enemy; a party meets a pair, and a full ship a third.
+  const kinds = [lead, ...(state.heroes.length >= 2 ? [lead === "bandit" ? "archer" : "wolf"] : []), ...(state.heroes.length >= 4 ? [lead] : [])];
+  state.roamerSeq = (state.roamerSeq ?? 0) + 1;
+  roamers.push({ id: `r${state.roamerSeq}`, kinds, pos: { q: at.q, r: at.r } });
+  return true;
+}
+
+/** A band and a hero have met: the band leaves the map and the fight begins where the hero stands. */
+function clash(ctx: Ctx, roamer: Roamer, hero: Hero, by: "band" | "hero") {
+  ctx.state.roamers = (ctx.state.roamers ?? []).filter((r) => r.id !== roamer.id);
+  ctx.events.push({ t: "ambush", heroId: hero.id, kinds: roamer.kinds, by });
+  startBattle(ctx, hero.pos, roamer.kinds, null, null);
+}
+
+/**
+ * A day has passed: every band moves. One that scents a hero closes two hexes
+ * on them; the rest drift a hex, or stay put. The first to come alongside a
+ * hero attacks, and the others hold where they are. Now and then a new band
+ * comes ashore.
+ */
+function roam(ctx: Ctx) {
+  const { state, rng } = ctx;
+  if (!state.roamers || state.phase !== "overworld") return;
+  const taken = (pos: HexPos, self: Roamer) => !!poiAt(state.map, pos) || state.roamers!.some((r) => r !== self && r.pos.q === pos.q && r.pos.r === pos.r);
+  for (const roamer of [...state.roamers]) {
+    const prey = [...state.heroes].filter((h) => h.hp > 0).sort((a, b) => hexDistance(a.pos, roamer.pos) - hexDistance(b.pos, roamer.pos) || a.id.localeCompare(b.id))[0];
+    if (!prey) return;
+    if (hexDistance(prey.pos, roamer.pos) <= ROAMER_SCENT) {
+      const route = findPath(state.map, roamer.pos, prey.pos, 30);
+      // A band that starts the night out of the hero's sight comes into view but no closer, so nobody is
+      // jumped by something they never had the chance to see. One already in sight comes right up.
+      const unseen = hexDistance(prey.pos, roamer.pos) > VISION;
+      // Up to two hexes, stopping short of the hero's own hex.
+      for (const step of (route?.path ?? []).slice(0, 2)) {
+        if ((step.q === prey.pos.q && step.r === prey.pos.r) || taken(step, roamer)) break;
+        if (unseen && hexDistance(step, prey.pos) < VISION) break;
+        roamer.pos = step;
+      }
+    } else if (rng.chance(0.6)) {
+      const around = state.map.tiles.filter((t) => hexDistance(t, roamer.pos) === 1 && walkable(state, t) && !taken(t, roamer));
+      if (around.length > 0) {
+        const to = rng.pick(around);
+        roamer.pos = { q: to.q, r: to.r };
+      }
+    }
+    if (hexDistance(prey.pos, roamer.pos) <= 1) {
+      clash(ctx, roamer, prey, "band");
+      return;
+    }
+  }
+  if (state.round % ROAMER_EVERY_DAYS === 0 && state.roamers.length < ROAMERS_MAX) spawnRoamer(ctx);
+}
+
 function startTurn(ctx: Ctx) {
   const { state, rng } = ctx;
   for (let i = 0; i < state.order.length; i++) {
@@ -462,6 +578,8 @@ function startTurn(ctx: Ctx) {
         endRun(ctx, "defeat", state.bible?.defeatLine ?? "Time ran out.");
         return;
       }
+      // Overnight the island's bands move, and one may find the party.
+      roam(ctx);
     }
     const hero = heroById(state, state.order[state.turnIdx]);
     if (!hero) continue;
@@ -469,6 +587,7 @@ function startTurn(ctx: Ctx) {
     const mp = 2 + check.successes;
     state.turn = { heroId: hero.id, mp, rolls: check.rolls, acted: false, deadline: null };
     ctx.events.push({ t: "turn_start", heroId: hero.id, mp, check });
+    look(state);
     return;
   }
 }
@@ -856,6 +975,11 @@ export function stepWorld(prev: WorldState, action: WorldAction): StepResult {
         .map((h) => h.id);
       state.phase = "overworld";
       state.round = 1;
+      // The island starts under fog but for what can be seen from the landing, with a couple of bands already loose on it.
+      state.seen = [];
+      state.roamers = [];
+      look(state);
+      for (let i = 0; i < ROAMERS_AT_START; i++) spawnRoamer(ctx);
       ctx.events.push({ t: "phase", phase: "overworld" });
       for (const line of boons.lines) ctx.events.push({ t: "harbor_boon", ...line });
       startTurn(ctx);
@@ -866,20 +990,29 @@ export function stepWorld(prev: WorldState, action: WorldAction): StepResult {
       if (state.phase !== "overworld" || !state.turn) return fail("you cannot move right now");
       if (state.turn.heroId !== action.heroId) return fail("not your turn");
       const hero = heroById(state, action.heroId)!;
-      const route = findPath(state.map, hero.pos, action.to, state.turn.mp);
+      // Nobody walks into fog: only over ground the party has seen, or can see from here.
+      const from = hero.pos;
+      const route = findPath(state.map, from, action.to, state.turn.mp, (t) => (inSight(state, t, from) ? MOVE_COST[t.biome] : Infinity));
       if (!route || route.path.length === 0) return fail("out of reach");
+      // Walking up to a roaming band starts the fight there, on the hex where they meet.
+      const metAt = route.path.findIndex((p) => (state.roamers ?? []).some((r) => hexDistance(r.pos, p) <= 1));
+      const band = metAt < 0 ? undefined : (state.roamers ?? []).find((r) => hexDistance(r.pos, route.path[metAt]) <= 1);
+      const open = metAt < 0 ? route.path : route.path.slice(0, metAt + 1);
       // The forest may have something in it. Wolves stop the walk where they spring.
-      const walk = forage(ctx, hero, route.path);
-      const walked = walk.ambushAt === null ? route.path : route.path.slice(0, walk.ambushAt + 1);
-      state.turn.mp = walk.ambushAt === null ? state.turn.mp - route.cost : 0;
+      const walk = forage(ctx, hero, open);
+      const walked = walk.ambushAt === null ? open : open.slice(0, walk.ambushAt + 1);
+      const stopped = walk.ambushAt !== null || band !== undefined;
+      state.turn.mp = stopped ? 0 : state.turn.mp - route.cost;
       hero.pos = walked[walked.length - 1];
       ctx.events.push({ t: "moved", heroId: hero.id, path: walked });
+      look(state, walked);
       for (const run of walk.after) run();
       // Walking past something hidden uncovers it.
       for (const poi of state.map.pois) {
         if (poi.hidden && walked.some((p) => hexDistance(p, poi.pos) <= 1)) revealPoi(ctx, poi);
       }
       if (walk.ambushAt !== null) startBattle(ctx, hero.pos, state.heroes.length >= 3 ? ["wolf", "wolf"] : ["wolf"], null, null);
+      else if (band) clash(ctx, band, hero, "hero");
       return done(null);
     }
 

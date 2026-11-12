@@ -119,10 +119,11 @@ input:focus, button:focus-visible, select:focus { outline: 2px solid var(--accen
 
 .tip { white-space: nowrap; position: absolute; left: 50%; bottom: 76px; transform: translateX(-50%); z-index: 11; background: var(--panel); border: 2px solid var(--line); padding: 2px 10px; pointer-events: none; }
 /* A place's main button, floated over the hex you stand on. TileAction moves the wrapper every frame. */
-.tile-action { position: absolute; left: 0; top: 0; width: 0; height: 0; z-index: 8; pointer-events: none; visibility: hidden; will-change: transform; }
-.tile-action button { position: absolute; left: 0; bottom: 26px; transform: translateX(-50%); pointer-events: auto; white-space: nowrap; padding: 3px 10px; font-size: 13px; box-shadow: 0 2px 0 rgba(0, 0, 0, 0.45); }
+.tile-action { position: absolute; left: 0; top: 0; width: 0; height: 0; z-index: 16; pointer-events: none; visibility: hidden; will-change: transform; }
+.tile-action button { position: absolute; left: 0; bottom: 52px; transform: translateX(-50%); pointer-events: auto; white-space: nowrap; padding: 3px 10px; font-size: 13px; box-shadow: 0 2px 0 rgba(0, 0, 0, 0.45); }
 .tile-action button::after { content: ""; position: absolute; left: 50%; top: 100%; margin: 2px 0 0 -6px; border: 6px solid transparent; border-bottom-width: 0; border-top-color: #58c486; }
 .tile-action button:hover::after { border-top-color: var(--accent); }
+.toast.note { background: #1f3a2c; border-color: var(--good); }
 .toast { position: absolute; left: 50%; top: 52px; transform: translateX(-50%); z-index: 40; background: #4a2020; border: 2px solid var(--bad); padding: 6px 14px; }
 
 .slots { position: absolute; left: 50%; top: 22%; transform: translateX(-50%); z-index: 35; text-align: center; pointer-events: none; }
@@ -446,3 +447,35 @@ body { touch-action: manipulation; overscroll-behavior: none; }
 .returning { margin-top: 16px; max-width: 520px; }
 .signed-in { margin-top: 16px; }
 button.nudge { border-color: var(--gold); color: var(--gold); }
+
+/* The crossing, shown while an island's story is written (SailingView). */
+.sailing { position: absolute; inset: 0; z-index: 18; background: #2b4558; }
+.sailing-stage { position: absolute; inset: 0; }
+.sailing-stage .camera-rotate { display: none; }
+.sailing-caption { position: absolute; left: 50%; bottom: 14%; transform: translateX(-50%); text-align: center; max-width: min(520px, calc(100% - 32px)); }
+.sailing-caption h2 { margin: 0 0 4px; }
+.sailing-caption p { margin: 0; }
+
+/* A fight's opening card and its recap (BattleBeats). */
+.battle-card { position: absolute; left: 50%; top: 46%; transform: translate(-50%, -50%); z-index: 34; background: var(--panel); border: 2px solid var(--line); padding: 14px 18px; text-align: center; max-width: min(520px, calc(100% - 24px)); box-shadow: 0 6px 0 rgba(0, 0, 0, 0.35); }
+.battle-card h2 { margin: 0 0 4px; }
+.battle-card p { margin: 0; }
+.battle-card.intro { top: 22%; border-color: var(--bad); pointer-events: none; animation: card-in 0.25s ease-out; }
+.battle-card.intro h2 { color: var(--bad); }
+.battle-card.recap { text-align: left; width: min(520px, calc(100% - 24px)); animation: card-in 0.3s ease-out; }
+.battle-card.recap.victory { border-color: var(--gold); }
+.battle-card.recap.victory h2 { color: var(--gold); }
+.battle-card.recap.defeat { border-color: var(--bad); }
+.recap-heroes { list-style: none; margin: 10px 0; padding: 0; display: flex; flex-direction: column; gap: 8px; max-height: 46vh; overflow-y: auto; }
+.recap-heroes li { border: 1px solid var(--line); padding: 6px 8px; }
+.recap-heroes li.you { border-color: var(--gold); }
+.recap-who { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
+.recap-who .spacer { flex: 1; }
+.recap-gains { display: flex; flex-wrap: wrap; gap: 6px; }
+.recap-gains .chip { border: 1px solid var(--line); padding: 1px 7px; font-size: 13px; }
+.recap-gains .chip.gold { color: var(--gold); border-color: var(--gold); }
+.battle-card .row { display: flex; align-items: center; }
+.battle-card .row .spacer { flex: 1; }
+@keyframes card-in { from { opacity: 0; transform: translate(-50%, -46%); } to { opacity: 1; transform: translate(-50%, -50%); } }
+@media (prefers-reduced-motion: reduce) { .battle-card { animation: none !important; } }
+.find-gains { margin: 10px 0; }
