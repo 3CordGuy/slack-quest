@@ -1,0 +1,79 @@
+/* The crew roster: the Harbor's Crew panel and the hut's and pub's "Inside" panels. */
+/* Narrower where there is no Trade button (the hut and the pub). */
+.crew.roster-panel:not(.folded) { width: 230px; }
+.crew.roster-panel.roster-trade:not(.folded) { width: 270px; }
+.panel.crew-roster { padding: 10px 10px 8px; }
+.crew-roster .roster-head { margin: 0 0 6px; font-size: 12px; }
+
+.roster {
+  max-height: min(420px, calc(100vh - 230px));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line) transparent;
+  margin-right: -4px;
+  padding-right: 4px;
+}
+.roster li.cm { display: flex; align-items: center; gap: 6px; padding: 3px 0; border-bottom: 1px dashed #37335a; }
+.roster li.cm:last-child { border-bottom: none; }
+.roster-sep {
+  margin: 8px 0 2px; font-size: 11px; color: var(--muted);
+  text-transform: uppercase; letter-spacing: 0.08em;
+}
+
+/* The person: portrait, name and class. A button when it opens their sheet. */
+.cm-main {
+  display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0;
+  padding: 2px 4px 2px 2px; margin: 0; text-align: left;
+  background: none; border: 1px solid transparent; color: inherit;
+}
+button.cm-main:hover:not(:disabled) { border-color: var(--line); background: rgba(255, 255, 255, 0.04); }
+.cm.open .cm-main { border-color: var(--gold); background: rgba(255, 210, 63, 0.06); }
+
+.cm-face {
+  position: relative; flex: none; width: 40px; height: 48px;
+  display: grid; place-items: center;
+  background: #14122a; border: 1px solid var(--line);
+}
+.cm-face img { width: 36px; height: 44px; }
+.mine .cm-face { border-color: var(--gold); }
+/* Presence: a lit dot ringed in the panel colour, tucked into the portrait's corner. */
+.cm-face .dot { position: absolute; right: -4px; bottom: -4px; width: 10px; height: 10px; border: 2px solid var(--ink); }
+.cm.here .cm-face .dot { box-shadow: 0 0 4px rgba(125, 255, 154, 0.7); }
+
+.cm-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.cm-line { display: flex; align-items: center; gap: 5px; min-width: 0; }
+.cm-name, .cm-class { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.cm-name { font-size: 13px; }
+.cm-class { font-size: 11px; color: var(--muted); }
+.cm-lv {
+  flex: none; font-size: 10px; line-height: 14px; padding: 0 4px;
+  color: var(--gold); background: #2a2414; border: 1px solid #8a6d1f;
+}
+.cm-tag { flex: none; font-size: 10px; line-height: 14px; padding: 0 4px; color: var(--muted); border: 1px solid var(--line); }
+.cm-tag.you { color: var(--ink); background: var(--gold); border-color: var(--gold); font-weight: bold; }
+
+.cm-trade { flex: none; display: grid; place-items: center; width: 30px; height: 30px; padding: 0; color: var(--gold); }
+.cm-trade-icon { display: block; }
+
+/* Away: greyed, but still readable. */
+.cm.away .cm-face img { filter: grayscale(1) brightness(0.7); }
+.cm.away .cm-face { background: #1a1830; border-style: dashed; }
+.cm.away .cm-name { color: #c9c5dc; font-weight: normal; }
+.cm.away .cm-lv { color: #b9ad86; border-color: #5a4c26; background: none; }
+.cm.away .cm-trade { opacity: 0.8; }
+
+@media (max-width: 760px) {
+  .crew.roster-panel:not(.folded) { width: min(230px, calc(100vw - 12px)); }
+  .crew.roster-panel.roster-trade:not(.folded) { width: min(270px, calc(100vw - 12px)); }
+  .roster { max-height: calc(100vh - 340px); }
+}
+@media (pointer: coarse) {
+  .cm-trade { width: 36px; height: 36px; }
+}
+
+/* A sheet opened from the roster sits beside it rather than on top of it. */
+@media (min-width: 900px) {
+  :has(> .roster-panel:not(.folded)) > .hero-card { right: 252px; }
+  :has(> .roster-panel.roster-trade:not(.folded)) > .hero-card { right: 292px; }
+}

@@ -1019,7 +1019,7 @@ export async function getHut(db: D1Database, playerId: string): Promise<HutSumma
     db.prepare("SELECT kind, qty FROM resources WHERE player_id = ? AND qty > 0").bind(playerId).all<{ kind: ResourceKind; qty: number }>(),
     db.prepare("SELECT blueprint_id FROM blueprints WHERE player_id = ?").bind(playerId).all<{ blueprint_id: string }>(),
     db
-      .prepare("SELECT id, def_id AS defId, label, q, r, facing, x, z, angle, on_id AS onId, in_id AS inId FROM furnishings WHERE player_id = ? ORDER BY id")
+      .prepare("SELECT id, def_id AS defId, label, q, r, facing, x, z, y, angle, on_id AS onId, in_id AS inId FROM furnishings WHERE player_id = ? ORDER BY id")
       .bind(playerId)
       .all<HutSummary["furnishings"][number]>(),
     db

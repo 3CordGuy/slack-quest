@@ -188,6 +188,7 @@ describe("small things and containers", () => {
     facing: 0,
     x: 0,
     z: 0,
+    y: 0,
     angle: 0,
     onId: null,
     inId: null,
