@@ -4,7 +4,7 @@
 
 import { useState } from "react";
 import { STARTING_STATS } from "@gantt-quest/core";
-import { HERO_CLASSES, STAT_KEYS, STAT_LABEL, WEAPONS, statPct } from "@gantt-quest/world";
+import { HERO_CLASSES, STAT_BLURB, STAT_KEYS, STAT_LABEL, WEAPONS, statPct } from "@gantt-quest/world";
 import { api, type Character, type Me, type StatKey } from "./api";
 
 type Act = (fn: () => Promise<unknown>) => Promise<void>;
@@ -82,12 +82,13 @@ function CrewGate({ busy, act, invite }: { busy: boolean; act: Act; invite: stri
 function StatRow({ stat, value, base, children }: { stat: StatKey; value: number; base?: number; children?: React.ReactNode }) {
   const delta = base === undefined ? 0 : value - base;
   return (
-    <div className="stat-row">
+    <div className="stat-row" title={STAT_BLURB[stat]}>
       <span className="stat-name">{STAT_LABEL[stat]}</span>
       <span className="stat-value">{value}</span>
       <span className={delta > 0 ? "good" : delta < 0 ? "bad" : "muted"}>{base === undefined ? "" : delta > 0 ? `+${delta}` : delta || "·"}</span>
       <span className="muted">{statPct(value)}% per roll</span>
       {children}
+      <span className="stat-blurb">{STAT_BLURB[stat]}</span>
     </div>
   );
 }

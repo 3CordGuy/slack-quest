@@ -9,6 +9,7 @@ import {
   SLOTS,
   SLOT_ICON,
   SLOT_LABEL,
+  STAT_BLURB,
   STAT_KEYS,
   STAT_LABEL,
   armorBlock,
@@ -155,12 +156,13 @@ export function InventoryScreen({ me, refresh, onClose, onIsland = false }: Prop
             <div className="stats">
               {c.unspent_points > 0 && <p className="good">{c.unspent_points} stat point{c.unspent_points > 1 ? "s" : ""} to spend</p>}
               {STAT_KEYS.map((k) => (
-                <div key={k} className="stat-row">
+                <div key={k} className="stat-row" title={STAT_BLURB[k]}>
                   <span className="stat-name">{STAT_LABEL[k]}</span>
                   <span className="stat-value">{total(k)}</span>
                   <span className={loadout.bonus[k] ? "good" : "muted"}>{loadout.bonus[k] ? `+${loadout.bonus[k]}` : ""}</span>
                   <span className="muted">{statPct(total(k))}% per roll</span>
                   {c.unspent_points > 0 && <button className="small" disabled={busy} onClick={() => act(() => api.spend(k))}>+1</button>}
+                  <span className="stat-blurb">{STAT_BLURB[k]}</span>
                 </div>
               ))}
             </div>
