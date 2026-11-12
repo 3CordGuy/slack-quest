@@ -30,7 +30,7 @@ import { ContractStatus } from "./board/ContractStatus";
 import { BEAT_MS, BattleIntro, BattleRecap, FindCard, INTRO_BEATS, INTRO_MS, blowsIn, findFor, introFor, recapFor, settleBattle, type Find, type Intro, type Recap } from "./BattleBeats";
 import { BattleHud, useCountdown } from "./BattleHud";
 import { DragPanel } from "./DragPanel";
-import { SailingView } from "./SailingView";
+import { SailingView, type SeaMode } from "./SailingView";
 import { HutSpoils, blueprintName, isTrophy, perkText, resourceText } from "./hutDrops";
 import { InventoryScreen } from "./InventoryScreen";
 import { Trading } from "./TradePanel";
@@ -41,8 +41,8 @@ import { itemName, label } from "./labels";
 import { Icon } from "./items";
 import { GOLD_ICON, ThingIcon, dishIcon } from "./thingIcons";
 
-/** The least time the crossing stays on screen once a ship has sailed. */
-const MIN_CROSSING_MS = 4500;
+/** The least time the ship is seen under way once she has sailed, before she makes landfall, so a quick story does not flash by. */
+const MIN_CROSSING_MS = 1200;
 
 const className = (id: string) => label("class", id);
 const POI_LABEL: Record<string, string> = { landing: "The Landing", hut: "Hut", lair: "Lair", shrine: "Old shrine", cache: "Hidden cache", camp: "Brigand camp" };
@@ -157,6 +157,13 @@ export function RunView({ code, me, refresh, onLeave }: { code: string; me: Me; 
   const [tradeWith, setTradeWith] = useState<string | null>(null);
   const mount = useRef<HTMLDivElement>(null);
   const renderer = useRef<WorldRenderer | null>(null);
+  /** The same renderer, as state, for the ship at sea to draw on once it exists. */
+  const [view, setView] = useState<WorldRenderer | null>(null);
+  /**
+   * The view is the crew's ship at sea (aboard, under way, or making landfall), not the island:
+   * the island's state is kept from the renderer until the ship is in. Set from the render below.
+   */
+  const atSea = useRef(false);
   const latest = useRef<ClientState | null>(null);
   const names = useRef(new Map<string, string>());
   const [feed, setFeed] = useState<string[]>([]);
@@ -177,7 +184,7 @@ export function RunView({ code, me, refresh, onLeave }: { code: string; me: Me; 
     holding.current = null;
     setHeld(null);
     setRecap(null);
-    if (latest.current) renderer.current?.setState(latest.current);
+    if (latest.current && !atSea.current) renderer.current?.setState(latest.current);
   };
   const [shown, setShown] = useState<Shown | null>(null);
   const [hover, setHover] = useState<HexPos | null>(null);
@@ -185,6 +192,8 @@ export function RunView({ code, me, refresh, onLeave }: { code: string; me: Me; 
   const run = useRun(code, (events, state) => {
     const prev = latest.current;
     latest.current = state;
+    // While the ship is at sea the island is not drawn; it is put on the view as she comes in (see `onIsland` below).
+    const island = atSea.current || state.phase === "lobby" || state.phase === "generating" ? null : renderer.current;
     for (const h of state.heroes) names.current.set(h.id, h.name);
     for (const c of state.battle?.combatants ?? []) names.current.set(c.id, c.name);
 
@@ -201,8 +210,8 @@ export function RunView({ code, me, refresh, onLeave }: { code: string; me: Me; 
       const frozen: ClientState = { ...prev, phase: "battle", battle: settled };
       holding.current = frozen;
       setHeld(frozen);
-      renderer.current?.setState(frozen);
-      renderer.current?.playEvents(events);
+      island?.setState(frozen);
+      island?.playEvents(events);
       const summary = recapFor(events, settled, state);
       clearTimeout(recapTimer.current);
       recapTimer.current = setTimeout(() => setRecap(summary), blowsIn(events) * BEAT_MS + 1100);
@@ -212,11 +221,11 @@ export function RunView({ code, me, refresh, onLeave }: { code: string; me: Me; 
       setIntro(opening);
       clearTimeout(introTimer.current);
       introTimer.current = setTimeout(() => setIntro(null), INTRO_MS);
-      renderer.current?.setState(state);
-      renderer.current?.playEvents(events, INTRO_BEATS);
+      island?.setState(state);
+      island?.playEvents(events, INTRO_BEATS);
     } else if (!holding.current) {
-      renderer.current?.setState(state);
-      renderer.current?.playEvents(events);
+      island?.setState(state);
+      island?.playEvents(events);
     }
     const lines = describe(events, state, names.current);
     if (lines.length) setFeed((f) => [...f, ...lines].slice(-40));
@@ -232,6 +241,8 @@ export function RunView({ code, me, refresh, onLeave }: { code: string; me: Me; 
   useEffect(() => {
     const r = new WorldRenderer(mount.current!, {
       onHexClick: (pos) => {
+        // At sea a click is for the landfall (it goes ashore), not for the island underneath.
+        if (atSea.current) return;
         const s = latest.current;
         // Clicking where an islander stands means "talk to them": the chat opens with its box ready to type in.
         const npc = s?.story?.npcs.find((n) => {
@@ -249,10 +260,11 @@ export function RunView({ code, me, refresh, onLeave }: { code: string; me: Me; 
       onHeroHover: heroSheet.onHeroHover,
     });
     renderer.current = r;
-    if (latest.current) r.setState(latest.current);
+    setView(r);
     return () => {
       r.dispose();
       renderer.current = null;
+      setView(null);
     };
   }, []);
 
@@ -277,31 +289,45 @@ export function RunView({ code, me, refresh, onLeave }: { code: string; me: Me; 
   // Dev-only handle for driving a run from the console or a test script.
   if (import.meta.env.DEV) (window as unknown as { __gq: unknown }).__gq = { state, send: run.send, World };
 
-  // The crossing is shown while the story is written, and for a few seconds at least, so a quick answer does not flash by.
-  const [sailing, setSailing] = useState(false);
+  // The ship at sea: aboard in the lobby, under way while the story is written, then landfall at the island.
+  // Only a crew that was aboard sees the landfall: anyone who arrives (or reloads) once the voyage is ashore goes straight to the island.
+  const phase = run.state?.phase;
+  const aboard = phase === "lobby" || phase === "generating";
+  const sawSea = useRef(false);
   const sailedAt = useRef(0);
-  const writing = state?.phase === "generating";
+  if (aboard) sawSea.current = true;
+  if (phase === "generating" && !sailedAt.current) sailedAt.current = Date.now();
+  const [landed, setLanded] = useState(false);
+  const arriving = !!phase && !aboard && sawSea.current && !landed;
+  const [makingLand, setMakingLand] = useState(false);
   useEffect(() => {
-    if (writing) {
-      sailedAt.current = Date.now();
-      setSailing(true);
-      return;
-    }
-    const left = Math.max(0, MIN_CROSSING_MS - (Date.now() - sailedAt.current));
-    const timer = setTimeout(() => setSailing(false), left);
+    if (!arriving) return;
+    const timer = setTimeout(() => setMakingLand(true), Math.max(0, MIN_CROSSING_MS - (Date.now() - sailedAt.current)));
     return () => clearTimeout(timer);
-  }, [writing]);
+  }, [arriving]);
+  const sea: SeaMode | null = phase === "lobby" ? "moored" : phase === "generating" || (arriving && !makingLand) ? "crossing" : arriving ? "landfall" : null;
+  atSea.current = sea !== null;
+  // A fight that breaks out while she is still coming in (a shipmate went ashore first) is not kept waiting.
+  useEffect(() => {
+    if (sea === "landfall" && phase === "battle") setLanded(true);
+  }, [sea, phase]);
+  // Ashore (or never at sea): the island goes on the view as it now is.
+  const onIsland = !!phase && sea === null;
+  useEffect(() => {
+    const s = holding.current ?? latest.current;
+    if (onIsland && view && s) view.setState(s);
+  }, [onIsland, view]);
 
   return (
-    <div className={`run ${state?.phase === "battle" ? "in-battle" : ""}`}>
+    <div className={`run ${state?.phase === "battle" ? "in-battle" : ""} ${sea ? "at-sea" : ""}`}>
       <div className="stage" ref={mount} />
       {!state && <div className="overlay"><div className="panel">{run.error ?? "Hailing the ship…"}{run.error && <p><button onClick={onLeave}>Back to the Harbor</button></p>}</div></div>}
       {state && (
         <>
           <TopBar state={state} code={code} status={run.status} onLeave={onLeave} onInventory={() => { void refresh(); setInventory(true); }} />
           {state.phase === "lobby" && <Lobby state={state} run={run} code={code} />}
-          {sailing && <SailingView names={state.heroes.map((h) => h.name)} />}
-          {(state.phase === "overworld" || state.phase === "battle") && (
+          <SailingView view={view} mode={sea} island={run.state} names={state.heroes.map((h) => h.name)} onLanded={() => setLanded(true)} />
+          {(state.phase === "overworld" || state.phase === "battle") && !sea && (
             <>
               <Story state={state} />
               <Crew state={state} online={run.online} onTrade={ashore ? setTradeWith : undefined} />
@@ -401,7 +427,7 @@ function Lobby({ state, run, code }: { state: ClientState; run: RunConnection; c
   const host = state.hostId === state.you;
   const waiting = state.heroes.filter((h) => h.id !== state.hostId && !h.ready).length;
   return (
-    <div className="overlay">
+    <div className="overlay at-sea">
       <div className="panel lobby">
         <h2>Aboard the ship</h2>
         <p className="muted">Share this code so your crew can board:</p>
