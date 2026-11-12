@@ -23,7 +23,7 @@ import { rollItem, type ItemDef, type Outfit } from "./gear";
 import { freshVitals, heroCombatant } from "./hero";
 import { addResources, capPerks, xpWithBonus, type Perk, type Resources } from "./hut";
 import { capPubBuff } from "./pub";
-import { findPath, generateMap, poiAt, poiById, type Poi, type WorldMap } from "./map";
+import { findPath, generateMap, poiAt, poiById, tileAt, type Poi, type WorldMap } from "./map";
 import {
   MAX_NPC_MESSAGES,
   MAX_PERSUADE_ATTEMPTS,
@@ -119,11 +119,24 @@ export interface Earned {
 
 export type Phase = "lobby" | "generating" | "overworld" | "battle" | "ended";
 
+/** What a forest hex can turn up as a hero walks through it. */
+export type ForageKind = "berries" | "wood" | "bones" | "treasure" | "wolves";
+
+/**
+ * Chance, out of 100, of each find on a forest hex nobody has crossed before.
+ * The rest of the time the trees are just trees.
+ */
+export const FORAGE_ODDS: Record<ForageKind, number> = { wood: 13, berries: 10, bones: 7, wolves: 6, treasure: 4 };
+/** HP a handful of berries gives back. */
+export const BERRY_HEAL = 3;
+
 export interface WorldState {
   v: 1;
   code: string;
   seed: string;
   rng: number;
+  /** Forest hexes already walked through (as "q,r"). Each can turn something up only once a voyage. */
+  forest?: string[];
   phase: Phase;
   hostId: string | null;
   map: WorldMap;
@@ -186,6 +199,8 @@ export type WorldEvent =
   | { t: "check"; heroId: string; check: CheckResult }
   | { t: "rest"; heroId: string; hp: number; focus: number; where: string }
   | { t: "search"; heroId: string; found: boolean }
+  /** Something turned up while crossing a forest hex. `hp` is what berries restored. */
+  | { t: "forage"; heroId: string; kind: ForageKind; hp?: number }
   | { t: "xp"; heroId: string; amount: number }
   | { t: "level_up"; heroId: string; level: number }
   | { t: "gold"; heroId: string; amount: number }
@@ -461,6 +476,47 @@ function startTurn(ctx: Ctx) {
 /** The hero as they stand right now: the shared combatant, with this voyage's wounds and spent focus. */
 function toCombatant(hero: Hero): Combatant {
   return heroCombatant(hero, hero);
+}
+
+/**
+ * Roll for each forest hex on a walk that nobody has crossed before: wood,
+ * berries, old bones, a little buried gold, or wolves. Places with something
+ * already on them are left alone. Finds are returned as steps to run once
+ * the walk itself has been reported, so the feed reads in order; `ambushAt`
+ * is the index of the hex where wolves cut the walk short.
+ */
+function forage(ctx: Ctx, hero: Hero, path: HexPos[]): { ambushAt: number | null; after: (() => void)[] } {
+  const { state, rng } = ctx;
+  const seen = (state.forest ??= []);
+  const after: (() => void)[] = [];
+  for (let i = 0; i < path.length; i++) {
+    const pos = path[i];
+    const key = `${pos.q},${pos.r}`;
+    if (tileAt(state.map, pos)?.biome !== "forest" || seen.includes(key) || poiAt(state.map, pos)) continue;
+    seen.push(key);
+    let roll = rng.next() * 100;
+    const kind = (Object.keys(FORAGE_ODDS) as ForageKind[]).find((k) => (roll -= FORAGE_ODDS[k]) < 0);
+    if (!kind) continue;
+    if (kind === "wolves") {
+      after.push(() => ctx.events.push({ t: "forage", heroId: hero.id, kind }));
+      return { ambushAt: i, after };
+    }
+    if (kind === "berries") {
+      after.push(() => {
+        const hp = Math.min(hero.maxHp - hero.hp, BERRY_HEAL);
+        hero.hp += hp;
+        ctx.events.push({ t: "forage", heroId: hero.id, kind, hp });
+      });
+      continue;
+    }
+    const amount = kind === "treasure" ? rng.int(8, 20) : rng.int(1, 2);
+    after.push(() => {
+      ctx.events.push({ t: "forage", heroId: hero.id, kind });
+      if (kind === "treasure") grant(ctx, hero, { gold: amount });
+      else grant(ctx, hero, { resources: { [kind === "wood" ? "wood" : "bone"]: amount } });
+    });
+  }
+  return { ambushAt: null, after };
 }
 
 function startBattle(ctx: Ctx, at: HexPos, enemies: string[], poiId: string | null, npcId: string | null) {
@@ -812,13 +868,18 @@ export function stepWorld(prev: WorldState, action: WorldAction): StepResult {
       const hero = heroById(state, action.heroId)!;
       const route = findPath(state.map, hero.pos, action.to, state.turn.mp);
       if (!route || route.path.length === 0) return fail("out of reach");
-      state.turn.mp -= route.cost;
-      hero.pos = route.path[route.path.length - 1];
-      ctx.events.push({ t: "moved", heroId: hero.id, path: route.path });
+      // The forest may have something in it. Wolves stop the walk where they spring.
+      const walk = forage(ctx, hero, route.path);
+      const walked = walk.ambushAt === null ? route.path : route.path.slice(0, walk.ambushAt + 1);
+      state.turn.mp = walk.ambushAt === null ? state.turn.mp - route.cost : 0;
+      hero.pos = walked[walked.length - 1];
+      ctx.events.push({ t: "moved", heroId: hero.id, path: walked });
+      for (const run of walk.after) run();
       // Walking past something hidden uncovers it.
       for (const poi of state.map.pois) {
-        if (poi.hidden && route.path.some((p) => hexDistance(p, poi.pos) <= 1)) revealPoi(ctx, poi);
+        if (poi.hidden && walked.some((p) => hexDistance(p, poi.pos) <= 1)) revealPoi(ctx, poi);
       }
+      if (walk.ambushAt !== null) startBattle(ctx, hero.pos, state.heroes.length >= 3 ? ["wolf", "wolf"] : ["wolf"], null, null);
       return done(null);
     }
 
