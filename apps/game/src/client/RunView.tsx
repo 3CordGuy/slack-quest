@@ -38,6 +38,8 @@ import { HeroSheet, useHeroSheet } from "./HeroSheet";
 import { WorldRenderer } from "./render/WorldRenderer";
 import { useRun, type RunConnection } from "./useRun";
 import { itemName, label } from "./labels";
+import { Icon } from "./items";
+import { GOLD_ICON, ThingIcon, dishIcon } from "./thingIcons";
 
 /** The least time the crossing stays on screen once a ship has sailed. */
 const MIN_CROSSING_MS = 4500;
@@ -378,7 +380,7 @@ function TopBar({ state, code, status, onLeave, onInventory }: { state: ClientSt
       )}
       {state.larder && state.larder.chowder > 0 && state.phase !== "ended" && (
         <span className="larder-chip" title="From the galley's larder. A hero resting at the landing eats one when the plain rest would leave them short: back to full HP and focus.">
-          Chowder ×{state.larder.chowder}
+          <ThingIcon icon={dishIcon("chowder")} size={18} />Chowder ×{state.larder.chowder}
         </span>
       )}
       <span className="spacer" />
@@ -627,8 +629,12 @@ function Ending({ state, onLeave }: { state: ClientState; onLeave(): void }) {
         <h3>What you bring home</h3>
         {earned ? (
           <ul className="gear">
-            <li><span>{earned.xp} XP · {earned.gold} gold</span></li>
-            {earned.items.map((item, i) => <li key={i} className={`rarity-${item.rarity}`}><span><strong>{itemName(item)}</strong> <span className="muted">{item.rarity}</span></span></li>)}
+            <li><span className="with-icon"><ThingIcon icon={GOLD_ICON} size={27} />{earned.xp} XP · {earned.gold} gold</span></li>
+            {earned.items.map((item, i) => (
+              <li key={i} className={`rarity-${item.rarity}`}>
+                <span className="with-icon"><Icon name={item.icon} color={World.RARITY_COLOR[item.rarity]} size={27} /><span><strong>{itemName(item)}</strong> <span className="muted">{item.rarity}</span></span></span>
+              </li>
+            ))}
           </ul>
         ) : (
           <p className="muted">Nothing but the story.</p>

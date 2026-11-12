@@ -1,22 +1,10 @@
 // Hut materials as the voyage and the inventory show them: feed wording, a
 // row of resource counts, and the list on the ending screen.
 
-import { FURNISHINGS, PERK_CAPS, RESOURCE_KINDS, type Earned, type FurnishingGrant, type Perk, type ResourceKind, type Resources } from "@gantt-quest/world";
-import { Icon } from "./items";
+import { FURNISHINGS, PERK_CAPS, RESOURCE_KINDS, type Earned, type FurnishingGrant, type Perk, type Resources } from "@gantt-quest/world";
+import { BlueprintIcon, GOLD_ICON, ThingIcon, furnishingIcon, resourceIcon } from "./thingIcons";
 import "./hutDrops.css";
 import { label } from "./labels";
-
-/** Icon tint per resource; only the outline pass and cache key use it. */
-const RESOURCE_COLOR: Record<ResourceKind, string> = {
-  wood: "#8a5a2b",
-  stone: "#8b95a5",
-  iron: "#c9d1dc",
-  copper: "#c8743a",
-  fur: "#a0683a",
-  bone: "#eee6cf",
-  herbs: "#6fae4a",
-  mushrooms: "#b8452f",
-};
 
 /** "2 fur, 1 bone", in the catalogue's order. */
 export function resourceText(resources: Resources): string {
@@ -32,12 +20,26 @@ export function ResourceChips({ resources, all = false }: { resources: Resources
     <div className="res-chips">
       {RESOURCE_KINDS.filter((k) => all || resources[k]).map((k) => (
         <span key={k} className={`res-chip ${resources[k] ? "" : "none"}`} title={label("resource", k)}>
-          <Icon name={`res-${k}`} color={RESOURCE_COLOR[k]} size={22} />
+          <ThingIcon icon={resourceIcon(k)} size={22} />
           <strong>{resources[k] ?? 0}</strong>
           <span className="res-name">{label("resource", k)}</span>
         </span>
       ))}
     </div>
+  );
+}
+
+/** Gold and materials as small icon-and-count chips (the name is the tooltip): a contract's pay, what a workshop visitor holds. With `zeros`, kinds given as 0 still show. */
+export function RewardChips({ gold, resources = {}, zeros = false }: { gold?: number; resources?: Resources; zeros?: boolean }) {
+  return (
+    <span className="cost-chips reward-chips">
+      {gold || (zeros && gold !== undefined) ? <span className="cost" title="Gold"><ThingIcon icon={GOLD_ICON} size={18} /> {gold}g</span> : null}
+      {RESOURCE_KINDS.filter((k) => resources[k] || (zeros && resources[k] !== undefined)).map((k) => (
+        <span key={k} className="cost" title={label("resource", k)}>
+          <ThingIcon icon={resourceIcon(k)} size={18} /> {resources[k]}
+        </span>
+      ))}
+    </span>
   );
 }
 
@@ -54,13 +56,16 @@ export function HutSpoils({ earned }: { earned: Earned }) {
       {(blueprints.length > 0 || furnishings.length > 0) && (
         <ul>
           {furnishings.map((f, i) => (
-            <li key={`f${i}`}>
-              <span className="tag">{isTrophy(f) ? "Trophy" : "Decor"}</span> <strong>{f.label}</strong>
-              {isTrophy(f) && <span className="muted"> · {label("furnishing", f.defId)}</span>}
+            <li key={`f${i}`} className="with-icon">
+              <ThingIcon icon={furnishingIcon(f.defId)} size={27} />
+              <span className="grow">
+                <span className="tag">{isTrophy(f) ? "Trophy" : "Decor"}</span> <strong>{f.label}</strong>
+                {isTrophy(f) && <span className="muted"> · {label("furnishing", f.defId)}</span>}
+              </span>
             </li>
           ))}
           {blueprints.map((id, i) => (
-            <li key={`b${i}`}><span className="tag">Blueprint</span> <strong>{blueprintName(id)}</strong></li>
+            <li key={`b${i}`} className="with-icon"><BlueprintIcon defId={id} size={27} /><span className="grow"><span className="tag">Blueprint</span> <strong>{blueprintName(id)}</strong></span></li>
           ))}
         </ul>
       )}
@@ -100,10 +105,10 @@ export function PerkMeter({ perks }: { perks: Required<Perk> }) {
 export function CostChips({ cost, have, gold, haveGold }: { cost: Resources; have: Resources; gold?: number; haveGold?: number }) {
   return (
     <span className="cost-chips">
-      {gold ? <span className={`cost ${(haveGold ?? 0) < gold ? "short" : ""}`} title={`You have ${haveGold ?? 0} gold`}><Icon name="cash" color="#ffd23f" size={16} /> {gold}g</span> : null}
+      {gold ? <span className={`cost ${(haveGold ?? 0) < gold ? "short" : ""}`} title={`You have ${haveGold ?? 0} gold`}><ThingIcon icon={GOLD_ICON} size={18} /> {gold}g</span> : null}
       {RESOURCE_KINDS.filter((k) => cost[k]).map((k) => (
         <span key={k} className={`cost ${(have[k] ?? 0) < cost[k]! ? "short" : ""}`} title={`${label("resource", k)}: you have ${have[k] ?? 0}`}>
-          <Icon name={`res-${k}`} color={RESOURCE_COLOR[k]} size={16} /> {have[k] ?? 0}/{cost[k]}
+          <ThingIcon icon={resourceIcon(k)} size={18} /> {have[k] ?? 0}/{cost[k]}
         </span>
       ))}
     </span>

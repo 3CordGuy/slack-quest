@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { rewardText } from "@gantt-quest/world";
 import { api, type Board } from "../api";
 import { DragPanel } from "../DragPanel";
+import { RewardChips } from "../hutDrops";
 import "./board.css";
 
 function timeLeft(endsAt: number): string {
@@ -46,7 +47,7 @@ export function NoticeBoard({ refresh, onClose }: { refresh(): Promise<unknown>;
                 {goal.rewarded ? (
                   <span className="good">Filled. Every crew member was paid {goal.reward} gold.</span>
                 ) : (
-                  <span>Pays every crew member <strong>{goal.reward} gold</strong> when it is filled.</span>
+                  <span className="with-icon">Pays every crew member <RewardChips gold={goal.reward} /> when it is filled.</span>
                 )}
                 <span className="muted">Any voyage from this Harbor counts. A new goal is posted in {timeLeft(goal.endsAt)}.</span>
               </div>
@@ -60,7 +61,7 @@ export function NoticeBoard({ refresh, onClose }: { refresh(): Promise<unknown>;
               {board.contracts.map((c) => (
                 <li key={c.id}>
                   <strong>{c.name}</strong>
-                  <span className="contract-reward">{rewardText(c.reward)}</span>
+                  <span className="contract-reward" title={rewardText(c.reward)}><RewardChips gold={c.reward.gold} resources={c.reward.resources} /></span>
                   <span className="muted">{c.text}</span>
                 </li>
               ))}

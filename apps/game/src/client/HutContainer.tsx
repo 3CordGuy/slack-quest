@@ -4,9 +4,11 @@
 // out of (and go back into) the bag and the material pool.
 
 import { useState } from "react";
-import { CARRY_FORMULA, FURNISHINGS, RESOURCE_KINDS, carryProblem, type Furnishing, type HutClientMessage, type ResourceKind } from "@gantt-quest/world";
+import { CARRY_FORMULA, FURNISHINGS, RARITY_COLOR, RESOURCE_KINDS, carryProblem, type Furnishing, type HutClientMessage, type Rarity, type ResourceKind } from "@gantt-quest/world";
 import { api, type Hut, type InventoryItem, type Me } from "./api";
+import { Icon } from "./items";
 import { label } from "./labels";
+import { ThingIcon, furnishingIcon, resourceIcon } from "./thingIcons";
 
 export function HutContainer({
   box,
@@ -55,7 +57,7 @@ export function HutContainer({
       <ul className="hut-list">
         {inside.map((f) => (
           <li key={f.id} className="hut-box-row">
-            <span>{f.label}</span>
+            <span className="with-icon"><ThingIcon icon={furnishingIcon(f.defId)} size={27} />{f.label}</span>
             <button className="small" onClick={() => carry(f.id)}>Set out</button>
             <button className="small" onClick={() => send({ type: "pick_up", id: f.id })}>To storage</button>
           </li>
@@ -87,7 +89,7 @@ export function HutContainer({
             const name = label("resource", k);
             return (
               <div key={k} role="row" className="hut-mats-row">
-                <span role="cell">{name}</span>
+                <span role="cell" className="with-icon"><ThingIcon icon={resourceIcon(k)} size={18} />{name}</span>
                 <strong role="cell">{kept}</strong>
                 <span role="cell" className="muted">{have}</span>
                 <span role="cell" className="hut-mats-btns">
@@ -112,7 +114,7 @@ export function HutContainer({
       <ul className="hut-list">
         {stowed.map((g) => (
           <li key={g.itemId} className="hut-box-row">
-            <span className={`rarity-${g.rarity}`}>{g.name}</span>
+            <span className={`rarity-${g.rarity} with-icon`}><Icon name={g.icon} color={RARITY_COLOR[g.rarity as Rarity] ?? RARITY_COLOR.common} size={27} />{g.name}</span>
             <button className="small" disabled={!!packFull} title={packFull ?? "Into your pack"} onClick={() => act(() => api.stow(null, g.itemId))}>To bag</button>
           </li>
         ))}

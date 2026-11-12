@@ -10,6 +10,7 @@ import { DragPanel } from "./DragPanel";
 import { useAct } from "./Harbor";
 import { Icon, ItemDetail, ItemTile, VerdictTag, bonusSummary, compare, powerLabel, toOwned } from "./items";
 import { blurb, itemName, label } from "./labels";
+import { ThingIcon, furnishingIcon, resourceIcon } from "./thingIcons";
 
 export function ShopScreen({ me, refresh, onClose }: { me: Me; refresh(): Promise<unknown>; onClose(): void }) {
   const c = me.character!;
@@ -98,6 +99,7 @@ export function ShopScreen({ me, refresh, onClose }: { me: Me; refresh(): Promis
                 {bought && !busy && !error && <p className="good">{bought} bought. It is in your hut's storage.</p>}
                 {STALL_FURNITURE.map((def) => (
                   <div key={def.id} className="shop-row">
+                    <span className="thing-tile"><ThingIcon icon={furnishingIcon(def.id)} size={36} /></span>
                     <div className="shop-info">
                       <strong>{label("furnishing", def.id)}</strong>
                       <span className="muted">{blurb("furnishing", def.id)}</span>
@@ -121,7 +123,7 @@ export function ShopScreen({ me, refresh, onClose }: { me: Me; refresh(): Promis
                   const each = STALL_BUYS[k]!;
                   return (
                     <div key={k} className="shop-row">
-                      <Icon name={`res-${k}`} color="#6fae4a" size={32} />
+                      <span className="thing-tile"><ThingIcon icon={resourceIcon(k)} size={36} /></span>
                       <div className="shop-info">
                         <strong>{label("resource", k)}</strong>
                         <span className="muted">You have {have} · {each}g each</span>

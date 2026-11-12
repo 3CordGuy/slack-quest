@@ -6,6 +6,7 @@
 
 .hut-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
 .hut-list button { width: 100%; text-align: left; }
+.hut-list > li > button { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 
 .hut-recipes { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
 .hut-recipes li { border: 1px solid var(--line); padding: 6px 8px; }
@@ -46,7 +47,7 @@
 .hut-craft { position: absolute; top: 48px; left: calc(min(300px, 40vw) + 20px); width: min(330px, 40vw); z-index: 10; max-height: calc(100vh - 200px); overflow-y: auto; }
 .hut-info { position: absolute; top: 240px; right: 10px; width: 240px; z-index: 10; max-height: calc(100vh - 340px); overflow-y: auto; }
 /* Above the floating piece toolbar and the tile-action chips (16): the chest that toolbar opened must not sit under it. */
-.hut-boxpanel { position: absolute; top: 48px; right: 250px; width: min(320px, 44vw); z-index: 17; max-height: calc(100vh - 200px); overflow-y: auto; }
+.hut-boxpanel { position: absolute; top: 48px; right: 250px; width: min(364px, 44vw); z-index: 17; max-height: calc(100vh - 200px); overflow-y: auto; }
 .hut-storage h3, .hut-craft h3, .hut-info h3, .hut-boxpanel h3 { margin: 10px 0 4px; }
 .hut-storage p, .hut-craft p, .hut-info p, .hut-boxpanel p { margin: 0 0 6px; }
 .hut-storage h4, .hut-info h4, .hut-boxpanel h4 { margin: 10px 0 4px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted, #9aa); }
@@ -69,11 +70,12 @@
 }
 
 /* A container's materials: one line each. */
-.hut-mats { display: grid; grid-template-columns: 1fr auto auto auto; column-gap: 8px; row-gap: 3px; align-items: center; font-size: 13px; }
+.hut-mats { display: grid; grid-template-columns: minmax(0, 1fr) auto auto auto; column-gap: 8px; row-gap: 3px; align-items: center; font-size: 13px; }
 .hut-mats-head, .hut-mats-row { display: contents; }
 .hut-mats-head span { font-size: 11px; color: var(--muted, #9aa); text-transform: uppercase; }
 .hut-mats-row strong, .hut-mats-row .muted { text-align: right; }
 .hut-mats-btns { display: flex; gap: 2px; }
+.hut-mats-row .with-icon { gap: 4px; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .hut-mats-btns button { padding: 1px 5px; min-width: 0; }
 
 /* The bar at the bottom: a short hint on one line, then stamina, Rest and Leave. Kept to the right so the chat on the left never runs under it. */

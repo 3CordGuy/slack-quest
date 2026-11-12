@@ -20,6 +20,7 @@ import { HeroSheet, useHeroSheet } from "./HeroSheet";
 import { useHut } from "./useHut";
 import "./hut.css";
 import { blurb, label } from "./labels";
+import { ThingIcon, furnishingIcon } from "./thingIcons";
 import { xpEvents } from "./xpEvents";
 
 const same = (a: HexPos, b: HexPos) => a.q === b.q && a.r === b.r;
@@ -502,7 +503,7 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
                 {(list as Furnishing[]).map((f) => (
                   <li key={f.id}>
                     <button className={holding === f.id ? "selected" : ""} title={`${blurb("furnishing", f.defId)} Pick it up to place it.`} onClick={() => pick(f.id)}>
-                      {f.label}{tags(f.defId).filter((t) => t !== "small").map((t) => <span key={t} className="tag">{t}</span>)}
+                      <ThingIcon icon={furnishingIcon(f.defId)} size={27} />{f.label}{tags(f.defId).filter((t) => t !== "small").map((t) => <span key={t} className="tag">{t}</span>)}
                     </button>
                   </li>
                 ))}
@@ -523,9 +524,12 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
                 const problem = craftProblem(def.id, own.blueprints, own.resources);
                 return (
                   <li key={def.id} className={known ? "" : "locked"}>
-                    <div>
+                    <div className="with-icon">
+                      <ThingIcon icon={furnishingIcon(def.id)} size={36} />
+                      <span className="grow">
                       <strong>{label("furnishing", def.id)}</strong>
                       <span className="muted"> · {known ? blurb("furnishing", def.id) : "Blueprint not found yet. Islands hide them."}</span>
+                      </span>
                     </div>
                     <div className="row">
                       <CostChips cost={def.recipe!} have={own.resources} />

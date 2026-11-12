@@ -24,3 +24,4 @@
 @media (max-width: 640px) {
   .trade-head { padding-right: 68px; }
 }
+.trade-amount .with-icon { gap: 4px; }

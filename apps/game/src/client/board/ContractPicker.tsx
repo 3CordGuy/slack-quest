@@ -2,6 +2,7 @@
 
 import { CONTRACTS, rewardText, type ClientState } from "@gantt-quest/world";
 import type { RunConnection } from "../useRun";
+import { RewardChips } from "../hutDrops";
 import "./board.css";
 
 export function ContractPicker({ state, run }: { state: ClientState; run: RunConnection }) {
@@ -20,7 +21,7 @@ export function ContractPicker({ state, run }: { state: ClientState; run: RunCon
               onClick={() => run.send({ type: "contract", contractId: taken === c.id ? null : c.id })}
             >
               <strong>{c.name}</strong>
-              <span className="contract-reward">{rewardText(c.reward)}</span>
+              <span className="contract-reward" title={rewardText(c.reward)}><RewardChips gold={c.reward.gold} resources={c.reward.resources} /></span>
               <span className="contract-terms">{c.text}</span>
             </button>
           </li>

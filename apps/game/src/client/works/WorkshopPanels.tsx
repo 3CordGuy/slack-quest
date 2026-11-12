@@ -7,10 +7,12 @@
 // checks every brew and every step again.
 
 import { useEffect, useState } from "react";
-import { BREWS, DISHES, SMITHY_MAX_STEPS, brewBuff, cookProblem, dishRecipeText, larderText, brewProblem, recipeText, smithyProblem, smithyWork, upgradedName, type Resources } from "@gantt-quest/world";
+import { BREWS, DISHES, RARITY_COLOR, SMITHY_MAX_STEPS, brewBuff, cookProblem, larderText, brewProblem, smithyProblem, smithyWork, upgradedName, type Resources } from "@gantt-quest/world";
 import { api, type ApothecaryView, type GalleyView, type SmithyView } from "../api";
 import { DragPanel } from "../DragPanel";
-import { perkText } from "../hutDrops";
+import { CostChips, RewardChips, perkText } from "../hutDrops";
+import { Icon } from "../items";
+import { ThingIcon, brewIcon, dishIcon } from "../thingIcons";
 import { label } from "../labels";
 import "./works.css";
 
@@ -67,20 +69,25 @@ export function ApothecaryPanel({ onClose }: { onClose(): void }) {
       {view && (
         <>
           <p className="works-stock">
-            Your brew bag: <strong>{view.bag.length ? view.bag.map((id) => BREWS.find((b) => b.id === id)?.name).join(", ") : "empty"}</strong>
+            Your brew bag: {view.bag.length ? view.bag.map((id) => (
+              <span key={id} className="works-bag-brew"><ThingIcon icon={brewIcon(id)} size={18} /><strong>{BREWS.find((b) => b.id === id)?.name}</strong></span>
+            )) : <strong>empty</strong>}
             {bagBuff && <span className="muted"> · next voyage {bagBuff}</span>}
           </p>
-          <p className="works-stock">You hold: <strong>{amountsText(0, { herbs: view.resources.herbs ?? 0, mushrooms: view.resources.mushrooms ?? 0, bone: view.resources.bone ?? 0 })}</strong></p>
+          <p className="works-stock">You hold: <RewardChips zeros resources={{ herbs: view.resources.herbs ?? 0, mushrooms: view.resources.mushrooms ?? 0, bone: view.resources.bone ?? 0 }} /></p>
           <ul className="workshop-list">
             {BREWS.map((b) => {
               const carried = view.bag.includes(b.id);
               const problem = brewProblem(b.id, view);
               return (
                 <li key={b.id} className={carried ? "having" : ""} data-brew={b.id}>
-                  <span>
+                  <ThingIcon icon={brewIcon(b.id)} size={36} />
+                  <span className="grow">
                     <strong>{b.name}</strong> <span className="muted">· {perkText(b.buff)}</span>
                     <br />
-                    <span className="muted small-note">{b.blurb} Takes {recipeText(b.recipe)}.</span>
+                    <span className="muted small-note">{b.blurb}</span>
+                    <br />
+                    <CostChips cost={b.recipe} have={view.resources} />
                   </span>
                   <button className="small" disabled={busy || !!problem} title={problem ?? `Brew a ${b.name}`} onClick={() => void brew(b.id, b.name)}>
                     {carried ? "In your bag" : "Brew"}
@@ -126,7 +133,7 @@ export function SmithyPanel({ onClose, refresh }: { onClose(): void; refresh(): 
       {!view && !error && <p className="muted">Stoking the forge…</p>}
       {view && (
         <>
-          <p className="works-stock">You hold: <strong>{amountsText(view.gold, { iron: view.resources.iron ?? 0, copper: view.resources.copper ?? 0 })}</strong></p>
+          <p className="works-stock">You hold: <RewardChips zeros gold={view.gold} resources={{ iron: view.resources.iron ?? 0, copper: view.resources.copper ?? 0 }} /></p>
           {view.items.length === 0 && <p className="muted">You have no weapons or armour with you.</p>}
           <ul className="workshop-list">
             {view.items.map((item) => {
@@ -135,11 +142,12 @@ export function SmithyPanel({ onClose, refresh }: { onClose(): void; refresh(): 
               const verb = smithyWork(item) === "sharpen" ? "Sharpen" : "Reinforce";
               return (
                 <li key={item.id} data-item={item.id}>
-                  <span>
+                  <span className="thing-tile workshop-gear" style={{ borderColor: RARITY_COLOR[item.rarity] }}><Icon name={item.icon} color={RARITY_COLOR[item.rarity]} size={36} /></span>
+                  <span className="grow">
                     <strong>{shown.name}</strong> <span className="muted">· power {item.power}{item.equipped ? " · worn" : ""}</span>
                     <br />
                     <span className="muted small-note">
-                      {item.cost ? `Step ${item.upgrades + 1} of ${SMITHY_MAX_STEPS}: ${amountsText(item.cost.gold, item.cost.resources)}` : "As good as the smith can make it."}
+                      {item.cost ? <>Step {item.upgrades + 1} of {SMITHY_MAX_STEPS}: <CostChips cost={item.cost.resources} have={view.resources} gold={item.cost.gold} haveGold={view.gold} /></> : "As good as the smith can make it."}
                     </span>
                   </span>
                   <button className="small" disabled={busy || !!problem} title={problem ?? `${verb} for ${amountsText(item.cost!.gold, item.cost!.resources)}`} onClick={() => void work(item.id)}>
@@ -194,20 +202,25 @@ export function GalleyPanel({ onClose }: { onClose(): void }) {
       {view && view.inCrew && (
         <>
           <p className="works-stock">
-            The crew's larder: <strong>{stocked || "empty"}</strong>
+            The crew's larder: {stocked ? DISHES.filter((d) => view.larder[d.id]).map((d) => (
+              <span key={d.id} className="works-bag-brew"><ThingIcon icon={dishIcon(d.id)} size={18} /><strong>{view.larder[d.id]} {view.larder[d.id] === 1 ? d.name : d.plural}</strong></span>
+            )) : <strong>empty</strong>}
             {stocked && <span className="muted"> · goes aboard the next ship</span>}
           </p>
-          <p className="works-stock">You hold: <strong>{amountsText(0, { bone: view.resources.bone ?? 0, herbs: view.resources.herbs ?? 0, fur: view.resources.fur ?? 0, mushrooms: view.resources.mushrooms ?? 0 })}</strong></p>
+          <p className="works-stock">You hold: <RewardChips zeros resources={{ bone: view.resources.bone ?? 0, herbs: view.resources.herbs ?? 0, fur: view.resources.fur ?? 0, mushrooms: view.resources.mushrooms ?? 0 }} /></p>
           <ul className="workshop-list">
             {DISHES.map((d) => {
               const held = view.larder[d.id] ?? 0;
               const problem = cookProblem(d.id, view);
               return (
                 <li key={d.id} className={held >= d.cap ? "having" : ""} data-dish={d.id}>
-                  <span>
+                  <ThingIcon icon={dishIcon(d.id)} size={36} />
+                  <span className="grow">
                     <strong>{d.name}</strong> <span className="muted">· {held}/{d.cap} in the larder</span>
                     <br />
-                    <span className="muted small-note">{d.effect} {d.blurb} Takes {dishRecipeText(d.recipe)}.</span>
+                    <span className="muted small-note">{d.effect} {d.blurb}</span>
+                    <br />
+                    <CostChips cost={d.recipe} have={view.resources} />
                   </span>
                   <button className="small" disabled={busy || !!problem} title={problem ?? `Cook ${d.name}`} onClick={() => void cook(d.id, d.name)}>
                     {held >= d.cap ? "Larder full" : "Cook"}
