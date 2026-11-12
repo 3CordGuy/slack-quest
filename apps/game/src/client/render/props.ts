@@ -44,6 +44,23 @@ class Builder {
     return this.mesh(geometry, new THREE.MeshBasicMaterial({ color }), x, y, z);
   }
 
+  /**
+   * A tongue of flame: an unlit box standing on `y`, marked so the ambience can
+   * flicker it each frame (see Ambience.setFires). Its base stays put as it grows.
+   */
+  flame(color: string, w: number, h: number, d: number, x: number, y: number, z: number): THREE.Mesh {
+    const geometry = new THREE.BoxGeometry(w, h, d).translate(0, h / 2, 0);
+    const mesh = this.glow(color, geometry, x, y, z);
+    mesh.userData.flame = this.group.children.filter((o) => o.userData.flame).length;
+    return mesh;
+  }
+
+  /** Where the fire's light hangs, in the model's own space. */
+  fire(x: number, y: number, z: number): this {
+    this.group.userData.fire = new THREE.Vector3(x, y, z);
+    return this;
+  }
+
   /** A trophy's stand, with its top at y = 0.5. */
   pedestal(): this {
     this.post(STONE, 0.36, 0.42, 0.1);
@@ -60,6 +77,18 @@ const MODELS: Record<string, (b: Builder) => void> = {
     b.box("#9c3f36", 0.5, 0.06, 0.7, 0.25, 0.04, 0.25);
     b.box("#d8d2c0", 0.42, 0.12, 0.2, 0.25, 0.04, -0.32);
     b.box("#5a4632", 0.28, 0.24, 0.24, -0.35, 0, -0.25);
+    // A small campfire beside it: a ring of stones, two crossed sticks and a few flames.
+    const [fx, fz] = [-0.42, 0.42];
+    for (let i = 0; i < 6; i++) {
+      const a = (i * Math.PI) / 3 + 0.3;
+      b.box(i % 2 ? STONE : "#7d796f", 0.1, 0.07, 0.1, fx + Math.sin(a) * 0.17, 0, fz + Math.cos(a) * 0.17);
+    }
+    b.box(DARK_WOOD, 0.3, 0.05, 0.06, fx, 0.02, fz).rotation.y = 0.6;
+    b.box(DARK_WOOD, 0.3, 0.05, 0.06, fx, 0.04, fz).rotation.y = -0.6;
+    b.flame("#ff7a2a", 0.13, 0.22, 0.13, fx, 0.04, fz);
+    b.flame("#ffb03a", 0.08, 0.16, 0.08, fx + 0.06, 0.04, fz + 0.04);
+    b.flame("#ffe066", 0.06, 0.1, 0.06, fx - 0.05, 0.04, fz + 0.02);
+    b.fire(fx, 0.4, fz);
   },
   // A length of bar counter, a full hex wide so neighbouring lengths join into one bar.
   bar(b) {
@@ -125,9 +154,18 @@ const MODELS: Record<string, (b: Builder) => void> = {
     b.box("#3a3632", 0.6, 0.6, 0.12, 0, 0.14, -0.24);
     b.box("#8d8674", 1.2, 0.16, 0.72, 0, 0.74);
     b.box(STONE, 0.4, 0.5, 0.4, 0, 0.9, -0.1);
-    b.glow("#ff9a3c", new THREE.ConeGeometry(0.16, 0.34, 4), 0, 0.32, 0.02);
-    b.glow("#ffd23f", new THREE.ConeGeometry(0.09, 0.2, 4), 0.08, 0.26, 0.12);
+    // Logs on the grate, and pixel flames licking up off them.
     b.box(DARK_WOOD, 0.44, 0.08, 0.1, 0, 0.14, 0.06);
+    b.box("#4a321c", 0.4, 0.07, 0.09, 0.02, 0.14, -0.06);
+    b.box("#c4421c", 0.36, 0.03, 0.14, 0, 0.21, 0);
+    b.flame("#ff6a1f", 0.13, 0.3, 0.1, -0.12, 0.2, -0.02);
+    b.flame("#ff8a2a", 0.15, 0.38, 0.1, 0.02, 0.2, 0.0);
+    b.flame("#ff7424", 0.12, 0.26, 0.1, 0.14, 0.2, -0.03);
+    b.flame("#ffb83a", 0.09, 0.24, 0.08, -0.05, 0.2, 0.06);
+    b.flame("#ffd84a", 0.08, 0.18, 0.07, 0.09, 0.2, 0.07);
+    b.flame("#fff0a0", 0.05, 0.1, 0.05, 0.02, 0.2, 0.09);
+    // The light sits just out of the firebox, so it spills across the floor in front.
+    b.fire(0, 0.5, 0.48);
   },
   bookshelf(b) {
     b.box(DARK_WOOD, 0.95, 1.25, 0.34, 0, 0, -0.1);

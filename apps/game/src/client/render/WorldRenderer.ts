@@ -697,15 +697,25 @@ export class WorldRenderer {
       (mesh.material as THREE.Material | undefined)?.dispose();
     });
     this.propGroup.clear();
+    /** Hearths and campfires: where each one's light hangs, and the flames the ambience flickers. */
+    const fires: THREE.Vector3[] = [];
+    const flames: THREE.Mesh[] = [];
     for (const prop of props) {
       const g = propModel(prop.model);
       const at = this.standAt(prop.pos);
       g.position.copy(at);
       g.rotation.y = -(prop.facing * Math.PI) / 3;
       g.traverse((o) => {
-        if (o instanceof THREE.Mesh) o.castShadow = o.receiveShadow = true;
+        if (!(o instanceof THREE.Mesh)) return;
+        // Flames give light rather than block it.
+        if (o.userData.flame !== undefined) flames.push(o);
+        else o.castShadow = o.receiveShadow = true;
       });
       this.propGroup.add(g);
+      if (g.userData.fire) {
+        g.updateMatrix();
+        fires.push((g.userData.fire as THREE.Vector3).clone().applyMatrix4(g.matrix));
+      }
       if (prop.selected) {
         const ring = new THREE.Mesh(new THREE.RingGeometry(0.8, 0.95, 6), new THREE.MeshBasicMaterial({ color: "#ffd23f", side: THREE.DoubleSide }));
         ring.rotation.x = -Math.PI / 2;
@@ -714,6 +724,7 @@ export class WorldRenderer {
         this.propGroup.add(ring);
       }
     }
+    this.ambience.setFires(fires, flames);
   }
 
   /** Cost of stepping onto a tile: the terrain's, except that furniture cannot be walked through. */
