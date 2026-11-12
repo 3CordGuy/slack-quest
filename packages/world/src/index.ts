@@ -14,6 +14,7 @@ export * from "./npc";
 export * from "./world";
 export * from "./view";
 export * from "./harbor";
+export * from "./dice";
 export * from "./hut";
 export * from "./hutroom";
 export * from "./contracts";

@@ -759,6 +759,15 @@ export class WorldRenderer {
         add(box(0.5, 0.06, 0.06), lambert("#7a5230"), 0.2, 0.45, 0.1);
         break;
       }
+      case "dice": {
+        // Dice table: a round top on a barrel, a stool either side, and a pair of dice. Set back so whoever stands here is seen to sit at it.
+        add(new THREE.CylinderGeometry(0.18, 0.22, 0.4, 7), lambert("#6b4a2b"), 0, 0.2, -0.3);
+        add(new THREE.CylinderGeometry(0.5, 0.5, 0.07, 8), lambert("#a07a4c"), 0, 0.43, -0.3);
+        for (const x of [-0.72, 0.72]) add(new THREE.CylinderGeometry(0.14, 0.12, 0.24, 6), lambert("#5a3d22"), x, 0.12, -0.15);
+        add(box(0.13, 0.13, 0.13), lambert("#f4efe1"), -0.12, 0.53, -0.25, 0.4);
+        add(box(0.13, 0.13, 0.13), lambert("#b9433d"), 0.14, 0.53, -0.38, 1.1);
+        break;
+      }
       case "works": {
         const stone = lambert("#b9b4a8");
         if (poi.cleared) {

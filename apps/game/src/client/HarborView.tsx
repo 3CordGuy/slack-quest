@@ -4,9 +4,10 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { HexPos } from "@gantt-quest/core";
-import { HARBOR_BOARD, HARBOR_PIERS, HARBOR_PLOTS, HARBOR_RING, HARBOR_SHOP, HARBOR_WORKS, HERO_CLASSES, MAX_PARTY, builtProjects, generateHarbor, harborPoi, hutTier, poiAt, type HarborShip } from "@gantt-quest/world";
+import { HARBOR_BOARD, HARBOR_DICE, HARBOR_PIERS, HARBOR_PLOTS, HARBOR_RING, HARBOR_SHOP, HARBOR_WORKS, HERO_CLASSES, MAX_PARTY, builtProjects, generateHarbor, harborPoi, hutTier, poiAt, type HarborShip } from "@gantt-quest/world";
 import { api, type Me } from "./api";
 import { AccountPanel } from "./Account";
+import { DiceTable } from "./DiceTable";
 import { NoticeBoard } from "./board/NoticeBoard";
 import { DragPanel } from "./DragPanel";
 import { InventoryScreen } from "./InventoryScreen";
@@ -40,6 +41,16 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
   const base = useMemo(generateHarbor, []);
   const { board, players, you } = harbor;
   const moored = board.ships.filter((s) => s.pier !== null);
+  // Holding dice: a stray click on the map would walk away from the table and forfeit, so the map is ignored until the game is over.
+  const holdingDice = harbor.dice?.phase === "playing" && harbor.dice.seats.some((s) => s.id === you && s.count > 0);
+  const pinned = useRef(holdingDice);
+  pinned.current = holdingDice;
+  // Gold moves when a dice game starts and when it ends.
+  const dicePhase = harbor.dice?.phase;
+  useEffect(() => {
+    if (dicePhase === "playing" || dicePhase === "done") void refresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dicePhase]);
   const lit = builtProjects(board.works).includes("lighthouse");
 
   // The Harbor as the renderer sees it: the fixed map plus a hut per member and a ship per moored voyage.
@@ -70,7 +81,7 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
   latest.current = scene;
 
   useEffect(() => {
-    const r = new WorldRenderer(mount.current!, { onHexClick: (to) => send.current({ type: "move", to }), onHover: setHover });
+    const r = new WorldRenderer(mount.current!, { onHexClick: (to) => !pinned.current && send.current({ type: "move", to }), onHover: setHover });
     renderer.current = r;
     if (latest.current) r.setState(latest.current);
     return () => {
@@ -97,6 +108,7 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
     : hoverPoi.kind === "board" ? "Notice board: the crew goal and contracts"
     : hoverPoi.kind === "shop" ? "Market stall: gear, and furniture for your hut"
     : hoverPoi.kind === "ring" ? "Sparring ring"
+    : hoverPoi.kind === "dice" ? "Dice table: a bluffing game for a small stake"
     : hoverPoi.kind === "works" ? (lit ? "The lighthouse: crew projects" : "The works: crew projects")
     : hoverPoi.kind === "plot" ? `${board.members.find((m) => `plot:${m.id}` === hoverPoi.id)?.name ?? "Someone"}'s ${hutTier(hoverPoi.tier ?? 1).name.toLowerCase()}`
     : hoverPoi.kind === "pier" ? `${moored.find((s) => `ship:${s.code}` === hoverPoi.id)?.captain ?? "A"}'s ship`
@@ -135,6 +147,7 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
   const atShop = !!self && same(self.pos, HARBOR_SHOP);
   const atBoard = !!self && same(self.pos, HARBOR_BOARD);
   const atRing = !!self && same(self.pos, HARBOR_RING);
+  const atDice = !!self && same(self.pos, HARBOR_DICE);
   const atWorks = !!self && same(self.pos, HARBOR_WORKS);
   const error = harbor.error ?? launchError;
 
@@ -239,6 +252,8 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
             <span>The sparring ring</span>
             <button className="primary" onClick={() => setSpar(true)}>Spar</button>
           </>
+        ) : atDice ? (
+          <span>The dice table{holdingDice ? " · you are in a game" : ""}</span>
         ) : atWorks ? (
           <>
             <span>{lit ? "The lighthouse" : "The works"}</span>
@@ -262,6 +277,7 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
         )}
       </DragPanel>
 
+      {atDice && you && !spar && <DiceTable table={harbor.dice} you={you} gold={me.character?.gold ?? 0} error={harbor.diceError} send={(action) => harbor.send({ type: "dice", action })} />}
       {tip && <div className="tip">{tip}</div>}
       {error && <div className="toast">{error}</div>}
       {sheet && me.character && <InventoryScreen me={me} refresh={refreshAll} onClose={() => setSheet(false)} />}
