@@ -4,7 +4,7 @@
 
 import { useState } from "react";
 import { STARTING_STATS } from "@gantt-quest/core";
-import { HERO_CLASSES, STAT_BLURB, STAT_KEYS, STAT_LABEL, WEAPONS, statPct } from "@gantt-quest/world";
+import { HARBOR_NAME, HERO_CLASSES, STAT_BLURB, STAT_KEYS, STAT_LABEL, WEAPONS, statPct } from "@gantt-quest/world";
 import { EmailSignIn } from "./Account";
 import { api, type Character, type Me, type StatKey } from "./api";
 
@@ -42,7 +42,7 @@ export function Harbor({ me, refresh, invite }: Props) {
   return (
     <div className="harbor">
       <header>
-        <h1>The Harbor</h1>
+        <h1>{HARBOR_NAME}</h1>
         <p className="muted">Your crew's base between voyages. Every island is a new story.</p>
       </header>
       {error && <div className="banner error">{error}</div>}

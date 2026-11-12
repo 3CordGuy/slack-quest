@@ -3,7 +3,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { HexPos } from "@gantt-quest/core";
-import type { DiceView, HarborBoard, HarborClientMessage, HarborPlayer, HarborServerMessage } from "@gantt-quest/world";
+import { HARBOR_NAME, type DiceView, type HarborBoard, type HarborClientMessage, type HarborPlayer, type HarborServerMessage } from "@gantt-quest/world";
 import { PROFILE } from "./api";
 
 export interface HarborChatLine {
@@ -103,7 +103,7 @@ export function useHarbor(onMoved: (id: string, path: HexPos[]) => void): Harbor
       ws.onclose = (e) => {
         if (closed) return;
         setStatus("closed");
-        if (e.code === 4000) return setError("The Harbor is open in another tab.");
+        if (e.code === 4000) return setError(`${HARBOR_NAME} is open in another tab.`);
         if (attempts++ < 6) retry = setTimeout(connect, Math.min(8000, 500 * 2 ** attempts));
         else setError("Lost the connection to the Harbor. Reload to try again.");
       };

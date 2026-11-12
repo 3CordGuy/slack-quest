@@ -4,7 +4,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { HexPos } from "@gantt-quest/core";
-import { GATHER_SPOTS, GATHER_SPOT_IDS, HARBOR_BOARD, HARBOR_DICE, HARBOR_GATHER, HARBOR_PIERS, HARBOR_PLOTS, HARBOR_RING, HARBOR_SHOP, HARBOR_WORKS, HERO_CLASSES, MAX_PARTY, builtProjects, generateHarbor, harborPoi, hutTier, poiAt, type GatherSpot, type HarborShip } from "@gantt-quest/world";
+import { GATHER_SPOTS, HARBOR_NAME, GATHER_SPOT_IDS, HARBOR_BOARD, HARBOR_DICE, HARBOR_GATHER, HARBOR_PIERS, HARBOR_PLOTS, HARBOR_RING, HARBOR_SHOP, HARBOR_WORKS, HERO_CLASSES, MAX_PARTY, builtProjects, generateHarbor, harborPoi, hutTier, poiAt, type GatherSpot, type HarborShip } from "@gantt-quest/world";
 import { api, type Me } from "./api";
 import { AccountPanel } from "./Account";
 import { DiceTable } from "./DiceTable";
@@ -159,7 +159,7 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
     <div className="run harbor-view">
       <div className="stage" ref={mount} />
       <div className="topbar">
-        <strong>The Harbor</strong>
+        <strong>{HARBOR_NAME}</strong>
         <span className="muted">{harbor.crew?.name ?? me.crew?.name}</span>
         <span className="spacer" />
         {harbor.status !== "open" && <span className="bad">connecting…</span>}
