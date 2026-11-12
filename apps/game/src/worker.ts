@@ -5,7 +5,7 @@
 import { Hono, type Context } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import { HARBOR_PIERS, HARBOR_PLOTS, HERO_CLASSES, MAX_CREW, PUB_MAX_TALK, PUB_MENU, dueIn, hutPerks, nextSalesmanVisit, salesman, salesmanVisitAt, makeRng, pubBuff, rollStartingStats } from "@gantt-quest/world";
-import { barkeepReply } from "./server/ai";
+import { barkeepReply, heroName } from "./server/ai";
 import { noticeBoard } from "./server/board";
 import { sendSignInCode } from "./server/email";
 import {
@@ -247,6 +247,15 @@ app.post("/api/admin/import", async (c) => {
   if (!checked.ok) return c.json({ error: checked.error }, 400);
   const version = await putOverrides(c.env.DB, checked.items, c.get("player").id);
   return c.json({ version, imported: checked.items.length });
+});
+
+// Suggest a hero name for the class being created. Text only: nothing is saved.
+app.post("/api/character/name", async (c) => {
+  const body = await c.req.json<{ classId?: string; avoid?: unknown }>().catch(() => ({}) as { classId?: string; avoid?: unknown });
+  const cls = HERO_CLASSES.find((k) => k.id === body.classId);
+  if (!cls) return c.json({ error: "Unknown class." }, 400);
+  const avoid = Array.isArray(body.avoid) ? body.avoid.filter((a): a is string => typeof a === "string").map((a) => a.slice(0, 20)).slice(-8) : [];
+  return c.json({ name: await heroName(c.env, { className: cls.name, blurb: cls.blurb, avoid }) });
 });
 
 // Roll (or re-roll) starting stats for a character that is still a draft.

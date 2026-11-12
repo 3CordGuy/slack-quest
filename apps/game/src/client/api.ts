@@ -128,6 +128,7 @@ export async function loadMe(): Promise<Me> {
 export const api = {
   /** Another hero's public sheet (or your own): name, level, stats and worn gear. */
   hero: (id: string) => request<{ hero: PublicHero }>(`/api/hero/${encodeURIComponent(id)}`),
+  suggestName: (classId: string, avoid: string[]) => request<{ name: string }>("/api/character/name", { classId, avoid }),
   roll: (classId: string, name: string) => request<{ character: Character }>("/api/character/roll", { classId, name }),
   confirm: () => request("/api/character/confirm", {}),
   reroll: () => request("/api/character/reroll", {}),
