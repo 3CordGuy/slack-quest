@@ -7,7 +7,7 @@
 // in on the fight and lines the two sides up facing each other.
 
 import * as THREE from "three";
-import { Ambience } from "./ambience";
+import { Ambience, CARD_LAYER, SHADOW_SLOTS, SLOT_LAYER } from "./ambience";
 import "./camera.css";
 import type { HexPos } from "@gantt-quest/core";
 import { hexDistance } from "@gantt-quest/core";
@@ -196,8 +196,16 @@ const noise = (q: number, r: number, salt: number) => {
 
 interface Unit {
   sprite: THREE.Sprite;
-  /** Unseen cut-out of the sprite, turned to the sun, that throws its shadow. */
-  caster: THREE.Mesh;
+  /**
+   * Unseen cut-outs of the sprite that throw its shadow, each turned to face one light: the first for the sun
+   * (or a hut's hanging lamp), then one per shadow slot indoors. Each sits on its own layer, which only its
+   * light's shadow camera looks at, so every light sees the hero face on and none sees another light's card.
+   */
+  casters: THREE.Mesh[];
+  /** Where its shadow was last drawn from, and whether it threw one: a change asks the lights near it to redraw. */
+  shadowAt: THREE.Vector3;
+  shadowShown: boolean;
+  shadowSize: number;
   ring: THREE.Mesh | null;
   hpBack: THREE.Sprite | null;
   hpFill: THREE.Sprite | null;
@@ -450,6 +458,8 @@ export class WorldRenderer {
   constructor(private container: HTMLElement, private callbacks: RendererCallbacks) {
     this.renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: "low-power" });
     this.renderer.setPixelRatio(1);
+    // Dev server only: the latest view, for reading draw calls (`__gqWorld.renderer.info.render.calls`) from the console.
+    if (import.meta.env.DEV) (globalThis as { __gqWorld?: WorldRenderer }).__gqWorld = this;
     const canvas = this.renderer.domElement;
     canvas.style.width = "100%";
     canvas.style.height = "100%";
@@ -1004,6 +1014,7 @@ export class WorldRenderer {
     const kerb = tileTop({ q: 0, r: 0, biome: "wall", h: 0.22 } as Tile);
     // A wall away from the camera stands its full height; the low front wall, seen from behind, comes up a little.
     const raised = tileTop({ q: 0, r: 0, biome: "wall", h: 0.9 } as Tile);
+    const was = [...this.lowered].join("|");
     this.lowered.clear();
     this.tiles.forEach((t, i) => {
       if ((t.biome as string) !== "wall") return;
@@ -1015,6 +1026,8 @@ export class WorldRenderer {
     });
     this.terrain.instanceMatrix.needsUpdate = true;
     this.hideLoweredWallProps();
+    // A wall cut down (or stood back up) and the pieces hung on it change every light's shadows.
+    if ([...this.lowered].join("|") !== was) this.ambience.stirAll();
   }
 
   /** Things hung on a wall that has been cut down for the camera would float in the air: hide them until it stands again. */
@@ -2179,10 +2192,13 @@ export class WorldRenderer {
       const w = want.get(id);
       // A change of gear is a different sprite, so the unit is rebuilt.
       if (w && spriteKey(w.kind, w.outfit, w.asleep) === unit.kind) continue;
-      this.unitGroup.remove(unit.sprite, unit.caster);
-      unit.caster.material instanceof THREE.Material && unit.caster.material.dispose();
-      unit.caster.customDepthMaterial?.dispose();
-      unit.caster.customDistanceMaterial?.dispose();
+      this.unitGroup.remove(unit.sprite, ...unit.casters);
+      // The cards share one set of materials.
+      const card = unit.casters[0];
+      card.material instanceof THREE.Material && card.material.dispose();
+      card.customDepthMaterial?.dispose();
+      card.customDistanceMaterial?.dispose();
+      if (unit.shadowShown) this.ambience.stir(unit.shadowAt);
       if (unit.ring) this.unitGroup.remove(unit.ring);
       if (unit.hpBack) this.unitGroup.remove(unit.hpBack);
       if (unit.hpFill) this.unitGroup.remove(unit.hpFill);
@@ -2199,13 +2215,20 @@ export class WorldRenderer {
         sprite.renderOrder = 2;
         sprite.center.set(0.5, 0);
         sprite.position.copy(w.pos);
-        const caster = new THREE.Mesh(CASTER_PLANE, new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false, side: THREE.DoubleSide, map: sprite.material.map, alphaTest: 0.5 }));
-        caster.customDepthMaterial = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking, map: sprite.material.map, alphaTest: 0.5, side: THREE.DoubleSide });
+        const material = new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false, side: THREE.DoubleSide, map: sprite.material.map, alphaTest: 0.5 });
+        const depth = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking, map: sprite.material.map, alphaTest: 0.5, side: THREE.DoubleSide });
         // Point lights (a hut's lamp, its fires and candles) draw shadows with a distance pass, which needs its own cut-out.
-        caster.customDistanceMaterial = new THREE.MeshDistanceMaterial({ map: sprite.material.map, alphaTest: 0.5, side: THREE.DoubleSide });
-        caster.castShadow = true;
-        this.unitGroup.add(sprite, caster);
-        unit = { sprite, caster, ring: null, hpBack: null, hpFill: null, label: null, labelText: "", goal: w.pos.clone(), path: [], kick: new THREE.Vector3(), lean: 0, baseRot: 0, stride: 0, bob: 0, kind: spriteKey(w.kind, w.outfit, w.asleep), asleep: false, nextZ: 0, zCount: 0, glowUntil: 0, glowing: false, head: w.size + 0.3, stack: 0, feet: w.pos.clone() };
+        const distance = new THREE.MeshDistanceMaterial({ map: sprite.material.map, alphaTest: 0.5, side: THREE.DoubleSide });
+        const casters = Array.from({ length: 1 + SHADOW_SLOTS }, (_, i) => {
+          const caster = new THREE.Mesh(CASTER_PLANE, material);
+          caster.customDepthMaterial = depth;
+          caster.customDistanceMaterial = distance;
+          caster.castShadow = true;
+          caster.layers.set(i === 0 ? CARD_LAYER : SLOT_LAYER + i - 1);
+          return caster;
+        });
+        this.unitGroup.add(sprite, ...casters);
+        unit = { sprite, casters, shadowAt: w.pos.clone(), shadowShown: false, shadowSize: 0, ring: null, hpBack: null, hpFill: null, label: null, labelText: "", goal: w.pos.clone(), path: [], kick: new THREE.Vector3(), lean: 0, baseRot: 0, stride: 0, bob: 0, kind: spriteKey(w.kind, w.outfit, w.asleep), asleep: false, nextZ: 0, zCount: 0, glowUntil: 0, glowing: false, head: w.size + 0.3, stack: 0, feet: w.pos.clone() };
         this.units.set(id, unit);
       }
       unit.goal.copy(w.pos);
@@ -2216,8 +2239,10 @@ export class WorldRenderer {
       unit.head = w.asleep ? w.size * SPRITE_ASPECT + 0.3 : w.size + 0.3;
       unit.stack = w.stack ?? 0;
       unit.sprite.scale.set(w.size * SPRITE_ASPECT, w.size, 1);
-      unit.caster.scale.copy(unit.sprite.scale);
-      unit.caster.visible = !w.down && !w.asleep;
+      for (const caster of unit.casters) {
+        caster.scale.copy(unit.sprite.scale);
+        caster.visible = !w.down && !w.asleep;
+      }
       const mat = unit.sprite.material;
       unit.baseRot = w.down ? Math.PI / 2 : w.asleep ? Math.PI / 2 : 0;
       mat.opacity = w.down ? 0.55 : 1;
@@ -2700,8 +2725,20 @@ export class WorldRenderer {
       const ground = p.y;
       unit.feet.set(p.x, ground, p.z);
       p.y += unit.bob;
-      unit.caster.position.copy(p);
-      unit.caster.rotation.y = this.ambience.towardLight(p.x, p.z);
+      unit.casters.forEach((caster, i) => {
+        caster.position.copy(p);
+        caster.rotation.y = i === 0 ? this.ambience.towardLight(p.x, p.z) : this.ambience.slotFacing(i - 1, p.x, p.z);
+      });
+      // Indoors the shadow maps are drawn only when something changes: a hero that moved (or lay down, or stood up)
+      // asks the lights in reach of where it was and where it is now to redraw.
+      const shown = unit.casters[0].visible;
+      if (shown !== unit.shadowShown || (shown && (unit.shadowAt.distanceToSquared(p) > 1e-6 || unit.shadowSize !== unit.sprite.scale.y))) {
+        if (unit.shadowShown) this.ambience.stir(unit.shadowAt);
+        if (shown) this.ambience.stir(p);
+        unit.shadowAt.copy(p);
+        unit.shadowShown = shown;
+        unit.shadowSize = unit.sprite.scale.y;
+      }
       if (unit.ring) {
         unit.ring.position.set(p.x, ground + 0.04, p.z);
         const s = this.pulsing.has(id) ? 1.25 + Math.sin(this.clock * 6) * 0.2 : 1;
@@ -2787,6 +2824,7 @@ export class WorldRenderer {
       }
     }
 
+    this.ambience.settleShadows();
     this.renderer.render(this.scene, this.camera);
   };
 }
