@@ -3,7 +3,7 @@
 // posts the player's choice to push on or bank.
 
 import { useEffect, useRef, useState } from "react";
-import { FELLING_SIDE, GATHER_SPOTS, QUARRY_SIDE, TIMING, markerAt, timingGrade, type TimingGrade, STAT_LABEL, type GatherChoice, type GatherSpot, type GatherView, type Resources } from "@gantt-quest/world";
+import { FELLING_SIDE, GATHER_SPOTS, QUARRY_SIDE, TIMING, TIMING_LIMIT_MS, markerAt, timingGrade, type TimingGrade, STAT_LABEL, type GatherChoice, type GatherSpot, type GatherView, type Resources } from "@gantt-quest/world";
 import { api, type GatherStatus } from "./api";
 import { DragPanel } from "./DragPanel";
 import { ResourceChips, resourceText } from "./hutDrops";
@@ -104,15 +104,19 @@ function TimingBar({ aim, spot, busy, stop }: { aim: NonNullable<GatherView["aim
   /** When the player pressed, in ms after the marker started; null until they do. The marker stops there at once. */
   const stopped = useRef<number | null>(null);
   const [verdict, setVerdict] = useState<TimingGrade | null>(null);
+  /** Past the time limit: any stop now counts as too slow, so say so instead of letting the marker run on silently. */
+  const [overdue, setOverdue] = useState(false);
   const { motion } = aim;
   useEffect(() => {
     started.current = performance.now();
     stopped.current = null;
     setVerdict(null);
+    setOverdue(false);
     let raf = 0;
     const frame = () => {
       raf = requestAnimationFrame(frame);
       const at = stopped.current ?? performance.now() - started.current;
+      if (stopped.current === null && at > TIMING_LIMIT_MS) setOverdue(true);
       if (marker.current) marker.current.style.left = `${markerAt(motion, at) * 100}%`;
     };
     raf = requestAnimationFrame(frame);
@@ -153,6 +157,7 @@ function TimingBar({ aim, spot, busy, stop }: { aim: NonNullable<GatherView["aim
       </div>
       <div className="row">
         <button className="primary" disabled={busy || verdict !== null} onPointerDown={press} onKeyDown={(e) => (e.key === "Enter" ? press(e) : undefined)}>{spot === "fishing" ? "Reel!" : "Strike!"}</button>
+        {overdue && !verdict && <span className="bad">Too slow now: whenever you stop it, the roll is {TIMING.late.bonus}%.</span>}
         <span className="muted">Stop it on the mark (or press space). Bang on the middle: +{TIMING.perfect.bonus}% a roll. On the mark: +{TIMING.good.bonus}%. Off it: {TIMING.miss.bonus}%.</span>
       </div>
     </div>
@@ -215,7 +220,7 @@ export function GatherPanel({ spot, onClose }: { spot: GatherSpot; onClose(): vo
           // Walked to another spot with an outing still open: say where it is and offer the way out, without alarm.
           <div className="gather-elsewhere">
             <p>
-              You still have an outing open at <strong>{def.name.replace(/^The /, "the ")}</strong>. Carry on with it here, or {words.bank.toLowerCase()} with what you have
+              You still have an outing open at <strong>{def.name.replace(/^The /, "the ")}</strong>. Carry on with it here, or {words.bank.toLowerCase()}
               {Object.keys(outing.haul).length > 0 ? <> ({resourceText(outing.haul)})</> : null} and then {WORDS[spot].start.toLowerCase()} here.
             </p>
             <button disabled={busy} onClick={() => step({ t: "bank" })}>{words.bank}</button>
