@@ -7,6 +7,7 @@
 // in on the fight and lines the two sides up facing each other.
 
 import * as THREE from "three";
+import { Ambience } from "./ambience";
 import "./camera.css";
 import type { HexPos } from "@gantt-quest/core";
 import { hexDistance } from "@gantt-quest/core";
@@ -153,6 +154,7 @@ export class WorldRenderer {
   private terrain: THREE.InstancedMesh | null = null;
   private tiles: Tile[] = [];
   private mapCode = "";
+  private ambience: Ambience;
   private decor = new THREE.Group();
   private poiGroup = new THREE.Group();
   private poiSig = "";
@@ -208,15 +210,13 @@ export class WorldRenderer {
     canvas.style.touchAction = "none";
     container.appendChild(canvas);
 
-    this.scene.background = new THREE.Color("#a9dcf7");
-    this.scene.add(new THREE.HemisphereLight("#ffffff", "#5a6a8a", 1.5));
-    const sun = new THREE.DirectionalLight("#fff3d6", 1.6);
-    sun.position.set(-6, 12, 5);
-    this.scene.add(sun);
+    // Sky, sun and moon, shadows, and the moving decoration.
+    this.ambience = new Ambience(this.scene, this.renderer);
 
     const sea = new THREE.Mesh(new THREE.PlaneGeometry(240, 240), new THREE.MeshLambertMaterial({ color: "#3577cf" }));
     sea.rotation.x = -Math.PI / 2;
     sea.position.y = 0.1;
+    sea.receiveShadow = true;
     this.scene.add(sea);
 
     this.hoverRing = new THREE.Mesh(
@@ -232,6 +232,7 @@ export class WorldRenderer {
       new THREE.MeshLambertMaterial({ color: "#3b3550", flatShading: true }),
     );
     this.arena.visible = false;
+    this.arena.receiveShadow = true;
 
     this.scene.add(this.decor, this.poiGroup, this.rangeGroup, this.pathGroup, this.hoverRing, this.arena, this.unitGroup, this.fxGroup);
 
@@ -280,6 +281,7 @@ export class WorldRenderer {
     removeEventListener("keyup", this.onKeyUp);
     removeEventListener("blur", this.onBlur);
     this.rotateButtons.remove();
+    this.ambience.dispose();
     this.renderer.dispose();
     canvas.remove();
   }
@@ -423,47 +425,43 @@ export class WorldRenderer {
       m.compose(new THREE.Vector3(x, 0, z), new THREE.Quaternion(), new THREE.Vector3(1, tileTop(t), 1));
       terrain.setMatrixAt(i, m);
     });
+    terrain.castShadow = true;
+    terrain.receiveShadow = true;
     this.terrain = terrain;
     this.scene.add(terrain);
 
-    // Trees on forest, rocks on hills. POI hexes stay clear.
+    // Trees on forest. POI hexes stay clear. Rocks, grass and waves come from the ambience.
     const poiKeys = new Set(state.map.pois.map((p) => key(p.pos)));
     const trees: THREE.Matrix4[] = [];
-    const rocks: THREE.Matrix4[] = [];
     for (const t of this.tiles) {
-      if (poiKeys.has(key(t))) continue;
+      if (poiKeys.has(key(t)) || t.biome !== "forest") continue;
       const { x, z } = hexToWorld(t);
       const top = tileTop(t);
-      if (t.biome === "forest") {
-        for (let i = 0; i < 2; i++) {
-          const s = 0.8 + noise(t.q, t.r, i) * 0.5;
-          trees.push(
-            new THREE.Matrix4().compose(
-              new THREE.Vector3(x + (noise(t.q, t.r, i + 3) - 0.5) * 0.9, top + 0.45 * s, z + (noise(t.q, t.r, i + 7) - 0.5) * 0.8 - 0.1),
-              new THREE.Quaternion(),
-              new THREE.Vector3(s, s, s),
-            ),
-          );
-        }
-      } else if (t.biome === "hills") {
-        const s = 0.7 + noise(t.q, t.r, 1) * 0.6;
-        rocks.push(
+      for (let i = 0; i < 2; i++) {
+        const s = 0.8 + noise(t.q, t.r, i) * 0.5;
+        trees.push(
           new THREE.Matrix4().compose(
-            new THREE.Vector3(x + (noise(t.q, t.r, 2) - 0.5) * 0.7, top + 0.12, z - 0.3),
-            new THREE.Quaternion().setFromEuler(new THREE.Euler(noise(t.q, t.r, 4), noise(t.q, t.r, 5) * 3, 0)),
-            new THREE.Vector3(s, s * 0.8, s),
+            new THREE.Vector3(x + (noise(t.q, t.r, i + 3) - 0.5) * 0.9, top + 0.45 * s, z + (noise(t.q, t.r, i + 7) - 0.5) * 0.8 - 0.1),
+            new THREE.Quaternion(),
+            new THREE.Vector3(s, s, s),
           ),
         );
       }
     }
+    this.ambience.build(
+      this.tiles,
+      (t) => poiKeys.has(key(t)),
+      (t) => ({ ...hexToWorld(t), y: tileTop(t) }),
+    );
     const instanced = (geometry: THREE.BufferGeometry, color: string, mats: THREE.Matrix4[]) => {
       const mesh = new THREE.InstancedMesh(geometry, new THREE.MeshLambertMaterial({ color, flatShading: true }), Math.max(1, mats.length));
       mesh.count = mats.length;
       mats.forEach((mat, i) => mesh.setMatrixAt(i, mat));
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
       this.decor.add(mesh);
     };
     instanced(new THREE.ConeGeometry(0.34, 0.9, 5), "#2f7a3d", trees);
-    instanced(new THREE.DodecahedronGeometry(0.3, 0), "#8d8674", rocks);
 
     // Start centred on the island.
     const xs = this.tiles.map((t) => hexToWorld(t).x);
@@ -503,6 +501,9 @@ export class WorldRenderer {
       const g = this.poiModel(poi);
       const at = this.standAt(poi.pos);
       g.position.set(at.x, at.y, at.z - 0.28);
+      g.traverse((o) => {
+        if (o instanceof THREE.Mesh) o.castShadow = o.receiveShadow = true;
+      });
       this.poiGroup.add(g);
     }
   }
@@ -1059,6 +1060,7 @@ export class WorldRenderer {
       this.target.z + Math.cos(this.yaw) * this.camDist * 0.72,
     );
     this.camera.lookAt(this.target);
+    this.ambience.update(this.clock, this.yaw, this.target);
 
     for (const [id, unit] of this.units) {
       const p = unit.sprite.position;
