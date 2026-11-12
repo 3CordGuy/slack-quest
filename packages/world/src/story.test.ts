@@ -45,7 +45,8 @@ function begin(frame: StoryFrame, demand: Demand, seed: string): WorldState {
   const fill = rng.pick(CANNED_FILLS[frame.id]);
   s = must(s, { type: "begin", bible: buildBible(frame, fill, demand, rng) });
   // Strong enough that fights are won whatever the dice do: these tests are about the story's shape.
-  return { ...s, heroes: s.heroes.map((h) => ({ ...h, base: { str: 12, int_stat: 12, vit: 12, agi: 12, dex: 12 }, hp: 900, maxHp: 900 })) };
+  // No fog and nothing roaming either: only the story is under test.
+  return { ...s, roamers: undefined, seen: undefined, heroes: s.heroes.map((h) => ({ ...h, base: { str: 12, int_stat: 12, vit: 12, agi: 12, dex: 12 }, hp: 900, maxHp: 900 })) };
 }
 
 /**

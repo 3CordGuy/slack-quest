@@ -24,13 +24,18 @@ import type { Me } from "./api";
 import { ContractPicker, contractName } from "./board/ContractPicker";
 import { ContractResult } from "./board/ContractResult";
 import { ContractStatus } from "./board/ContractStatus";
+import { BEAT_MS, BattleIntro, BattleRecap, FindCard, INTRO_BEATS, INTRO_MS, blowsIn, findFor, introFor, recapFor, settleBattle, type Find, type Intro, type Recap } from "./BattleBeats";
 import { BattleHud, useCountdown } from "./BattleHud";
 import { DragPanel } from "./DragPanel";
+import { SailingView } from "./SailingView";
 import { HutSpoils, blueprintName, isTrophy, perkText, resourceText } from "./hutDrops";
 import { InventoryScreen } from "./InventoryScreen";
 import { Trading } from "./TradePanel";
 import { WorldRenderer } from "./render/WorldRenderer";
 import { useRun, type RunConnection } from "./useRun";
+
+/** The least time the crossing stays on screen once a ship has sailed. */
+const MIN_CROSSING_MS = 4500;
 
 const className = (id: string) => HERO_CLASSES.find((c) => c.id === id)?.name ?? id;
 const POI_LABEL: Record<string, string> = { landing: "The Landing", hut: "Hut", lair: "Lair", shrine: "Old shrine", cache: "Hidden cache", camp: "Brigand camp" };
@@ -59,6 +64,11 @@ function describe(events: WorldEvent[], state: ClientState, names: Map<string, s
         break;
       }
       case "rest": out.push(`${n(ev.heroId)} rests at the ${ev.where}: +${ev.hp} HP${ev.focus ? `, +${ev.focus} focus` : ""}.`); break;
+      case "ambush": {
+        const who = ev.kinds.length > 1 ? `${ev.kinds.length} ${ev.kinds[0] === "wolf" ? "wolves" : "raiders"}` : ev.kinds[0] === "wolf" ? "a wolf" : "a raider";
+        out.push(ev.by === "band" ? `In the night ${who} ${ev.kinds.length > 1 ? "find" : "finds"} ${n(ev.heroId)}!` : `${n(ev.heroId)} runs into ${who} on the road!`);
+        break;
+      }
       case "forage":
         out.push(
           ev.kind === "wolves" ? `Wolves break from the trees at ${n(ev.heroId)}!`
@@ -119,19 +129,68 @@ export function RunView({ code, me, refresh, onLeave }: { code: string; me: Me; 
   const latest = useRef<ClientState | null>(null);
   const names = useRef(new Map<string, string>());
   const [feed, setFeed] = useState<string[]>([]);
+  // Pacing around a fight: an opening card, the finished fight held on screen, and its recap. See BattleBeats.
+  const [intro, setIntro] = useState<Intro | null>(null);
+  const [held, setHeld] = useState<ClientState | null>(null);
+  const [recap, setRecap] = useState<Recap | null>(null);
+  const holding = useRef<ClientState | null>(null);
+  const introTimer = useRef<ReturnType<typeof setTimeout>>();
+  const recapTimer = useRef<ReturnType<typeof setTimeout>>();
+  const [find, setFind] = useState<Find | null>(null);
+  const findTimer = useRef<ReturnType<typeof setTimeout>>();
+  /** Let go of a finished fight and show the island as it now is. */
+  const release = () => {
+    clearTimeout(recapTimer.current);
+    holding.current = null;
+    setHeld(null);
+    setRecap(null);
+    if (latest.current) renderer.current?.setState(latest.current);
+  };
   const [shown, setShown] = useState<Shown | null>(null);
   const [hover, setHover] = useState<HexPos | null>(null);
 
   const run = useRun(code, (events, state) => {
+    const prev = latest.current;
     latest.current = state;
     for (const h of state.heroes) names.current.set(h.id, h.name);
     for (const c of state.battle?.combatants ?? []) names.current.set(c.id, c.name);
-    renderer.current?.setState(state);
-    renderer.current?.playEvents(events);
+
+    const opening = introFor(events, state, names.current);
+    // A cache opened: say what was in it, after the dice have been seen.
+    const found = findFor(events, state.you, names.current);
+    if (found) {
+      clearTimeout(findTimer.current);
+      findTimer.current = setTimeout(() => setFind(found), 1300);
+    }
+    if (prev?.battle && events.some((e) => e.t === "battle_end")) {
+      // The fight is over on the server. Keep it on screen as it stood while the last blows land, then say how it went.
+      const settled = settleBattle(prev.battle, events);
+      const frozen: ClientState = { ...prev, phase: "battle", battle: settled };
+      holding.current = frozen;
+      setHeld(frozen);
+      renderer.current?.setState(frozen);
+      renderer.current?.playEvents(events);
+      const summary = recapFor(events, settled, state);
+      clearTimeout(recapTimer.current);
+      recapTimer.current = setTimeout(() => setRecap(summary), blowsIn(events) * BEAT_MS + 1100);
+    } else if (opening) {
+      // A new fight: whatever was being held gives way, and the first blows wait for the opening card.
+      release();
+      setIntro(opening);
+      clearTimeout(introTimer.current);
+      introTimer.current = setTimeout(() => setIntro(null), INTRO_MS);
+      renderer.current?.setState(state);
+      renderer.current?.playEvents(events, INTRO_BEATS);
+    } else if (!holding.current) {
+      renderer.current?.setState(state);
+      renderer.current?.playEvents(events);
+    }
     const lines = describe(events, state, names.current);
     if (lines.length) setFeed((f) => [...f, ...lines].slice(-40));
     const check = lastCheck(events, names.current);
-    if (check) setShown(check);
+    // A fight's first roll waits for its opening card to clear, like its first blow.
+    if (check && opening) setTimeout(() => setShown(check), INTRO_MS);
+    else if (check) setShown(check);
   });
   const send = useRef(run.send);
   send.current = run.send;
@@ -163,14 +222,30 @@ export function RunView({ code, me, refresh, onLeave }: { code: string; me: Me; 
     return () => clearTimeout(t);
   }, [run.error, run.clearError]);
 
-  const state = run.state;
+  // While a finished fight is held on screen, everything is drawn from it rather than from the live state.
+  const state = held ?? run.state;
   // Trading is for the walk, not the fight: a panel left open closes when one starts.
-  const ashore = state?.phase === "overworld";
+  const ashore = run.state?.phase === "overworld" && !held;
   useEffect(() => {
     if (!ashore) setTradeWith(null);
   }, [ashore]);
   // Dev-only handle for driving a run from the console or a test script.
   if (import.meta.env.DEV) (window as unknown as { __gq: unknown }).__gq = { state, send: run.send, World };
+
+  // The crossing is shown while the story is written, and for a few seconds at least, so a quick answer does not flash by.
+  const [sailing, setSailing] = useState(false);
+  const sailedAt = useRef(0);
+  const writing = state?.phase === "generating";
+  useEffect(() => {
+    if (writing) {
+      sailedAt.current = Date.now();
+      setSailing(true);
+      return;
+    }
+    const left = Math.max(0, MIN_CROSSING_MS - (Date.now() - sailedAt.current));
+    const timer = setTimeout(() => setSailing(false), left);
+    return () => clearTimeout(timer);
+  }, [writing]);
 
   return (
     <div className={`run ${state?.phase === "battle" ? "in-battle" : ""}`}>
@@ -180,7 +255,7 @@ export function RunView({ code, me, refresh, onLeave }: { code: string; me: Me; 
         <>
           <TopBar state={state} code={code} status={run.status} onLeave={onLeave} onInventory={() => { void refresh(); setInventory(true); }} />
           {state.phase === "lobby" && <Lobby state={state} run={run} code={code} />}
-          {state.phase === "generating" && <div className="overlay"><div className="panel"><h2>Land ho…</h2><p className="muted">The lookout is making out the shape of the island.</p></div></div>}
+          {sailing && <SailingView names={state.heroes.map((h) => h.name)} />}
           {(state.phase === "overworld" || state.phase === "battle") && (
             <>
               <Story state={state} />
@@ -189,7 +264,10 @@ export function RunView({ code, me, refresh, onLeave }: { code: string; me: Me; 
               {state.phase === "overworld" && <TurnBar state={state} run={run} />}
               {ashore && me.character && <Trading me={me} partners={state.heroes.filter((h) => h.id !== state.you)} withId={tradeWith} onWith={setTradeWith} refresh={refresh} run={code} />}
               {state.phase === "overworld" && <Chat state={state} run={run} />}
-              {state.phase === "battle" && <BattleHud battle={state.battle!} you={state.you} onAction={(action) => run.send({ type: "battle", action })} />}
+              {state.phase === "battle" && !held && !intro && <BattleHud battle={state.battle!} you={state.you} onAction={(action) => run.send({ type: "battle", action })} />}
+              {intro && !held && <BattleIntro intro={intro} />}
+              {held && recap && <BattleRecap recap={recap} you={state.you} onDone={release} />}
+              {find && !held && !intro && <FindCard find={find} onDone={() => setFind(null)} />}
               {hover && state.phase === "overworld" && <HexTip state={state} hover={hover} />}
             </>
           )}

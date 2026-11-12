@@ -1,8 +1,12 @@
 // What a player's client is allowed to see. The full WorldState holds the
 // hidden lair, NPC secrets and the RNG state; none of that leaves the server.
+// Nor does anything under fog: the ground the party has not seen, the places
+// on it, and the bands roaming out of sight.
 
 import { demandMet } from "./story";
-import type { WorldState } from "./world";
+import { hexDistance, type HexPos } from "@gantt-quest/core";
+import { BASE_HEIGHT, tileAt } from "./map";
+import { VISION, type WorldState } from "./world";
 
 export interface PublicStory {
   title: string;
@@ -19,15 +23,22 @@ export interface PublicStory {
   demand: { npcName: string; text: string; done: boolean } | null;
 }
 
-export type ClientState = Omit<WorldState, "rng" | "seed" | "bible"> & {
+export type ClientState = Omit<WorldState, "rng" | "seed" | "bible" | "seen" | "forest" | "roamerSeq"> & {
   story: PublicStory | null;
   /** The viewing player's hero id. */
   you: string;
 };
 
 export function clientView(state: WorldState, playerId: string): ClientState {
-  const { rng: _rng, seed: _seed, bible, ...rest } = state;
-  const visible = state.map.pois.filter((p) => !p.hidden);
+  const { rng: _rng, seed: _seed, bible, seen: _seen, forest: _forest, roamerSeq: _seq, ...rest } = state;
+  // Fog: ground the party has not seen is sent as a blank, and the places and bands on it are not sent at all.
+  const seen = state.seen ? new Set(state.seen) : null;
+  const key = (p: HexPos) => `${p.q},${p.r}`;
+  const inFog = (p: HexPos) => !!seen && !seen.has(key(p));
+  const visible = state.map.pois.filter((p) => !p.hidden && !inFog(p.pos));
+  const tiles = seen ? state.map.tiles.map((t) => (seen.has(key(t)) ? t : { q: t.q, r: t.r, biome: "fog" as const, h: BASE_HEIGHT.fog })) : state.map.tiles;
+  // A band shows only while some hero can actually see it, not merely because its hex was once seen.
+  const roamers = (state.roamers ?? []).filter((r) => state.heroes.some((h) => hexDistance(h.pos, r.pos) <= VISION + (tileAt(state.map, h.pos)?.biome === "hills" ? 1 : 0)));
   const visibleIds = new Set(visible.map((p) => p.id));
   const story: PublicStory | null = bible && {
     title: bible.title,
@@ -45,5 +56,5 @@ export function clientView(state: WorldState, playerId: string): ClientState {
       ? { npcName: bible.npcs[0].name, text: bible.demand.text, done: demandMet(bible, state.facts, !!state.npcs[bible.npcs[0].id]?.persuaded) }
       : null,
   };
-  return { ...rest, map: { ...state.map, pois: visible }, story, you: playerId };
+  return { ...rest, roamers, map: { ...state.map, tiles, pois: visible }, story, you: playerId };
 }

@@ -7,6 +7,11 @@
 
 import {
   GATHER_DAILY_OUTINGS,
+  REST_COOLDOWN_MS,
+  REST_OUTINGS,
+  restProblem,
+  restReadyAt,
+  type RestPlace,
   GATHER_SPOTS,
   GATHER_SPOT_IDS,
   RESOURCE_KINDS,
@@ -28,6 +33,8 @@ import { heroInitFor } from "./db";
 
 export interface GatherStatus {
   stamina: { left: number; max: number; resetsAt: number };
+  /** When the player may next rest, in ms (0 or past: now). */
+  restReadyAt: number;
   /** The hero's chance per roll at each spot, from their stats and gear. */
   chances: Record<GatherSpot, number>;
   /** The outing in progress, or the one that just ended. */
@@ -38,10 +45,11 @@ interface Row {
   day: string;
   used: number;
   session_json: string | null;
+  rested_at: number | null;
 }
 
 const readRow = (db: D1Database, playerId: string) =>
-  db.prepare("SELECT day, used, session_json FROM gathering WHERE player_id = ?").bind(playerId).first<Row>();
+  db.prepare("SELECT day, used, session_json, rested_at FROM gathering WHERE player_id = ?").bind(playerId).first<Row>();
 
 /** The hero's value for each spot's stat, gear included. Null without an active character. */
 async function gatherStats(db: D1Database, playerId: string): Promise<Record<GatherSpot, number> | null> {
@@ -56,6 +64,7 @@ async function status(db: D1Database, playerId: string, stats: Record<GatherSpot
   const now = Date.now();
   return {
     stamina: { left: outingsLeft(row, now), max: GATHER_DAILY_OUTINGS, resetsAt: gatherResetAt(now) },
+    restReadyAt: restReadyAt(row?.rested_at),
     chances: { fishing: statPct(stats.fishing), felling: statPct(stats.felling), quarry: statPct(stats.quarry) },
     outing: ended ? gatherView(ended) : row?.session_json ? gatherView(JSON.parse(row.session_json) as GatherState) : null,
   };
@@ -64,6 +73,27 @@ async function status(db: D1Database, playerId: string, stats: Record<GatherSpot
 export async function gatherStatus(db: D1Database, playerId: string): Promise<GatherStatus | string> {
   const stats = await gatherStats(db, playerId);
   return stats ? status(db, playerId, stats) : "Create a character first.";
+}
+
+/**
+ * Rest: get back one outing on a bedroll, or two at home, once every twenty
+ * minutes. The one statement only writes if the player is tired today and
+ * the cooldown has passed, so two requests cannot both count.
+ */
+export async function rest(db: D1Database, playerId: string, place: RestPlace): Promise<(GatherStatus & { regained: number }) | string> {
+  const stats = await gatherStats(db, playerId);
+  if (!stats) return "Create a character first.";
+  const now = Date.now();
+  const before = await readRow(db, playerId);
+  const problem = restProblem(before, now);
+  if (problem) return problem;
+  const res = await db
+    .prepare("UPDATE gathering SET used = MAX(0, used - ?2), rested_at = ?3 WHERE player_id = ?1 AND day = ?4 AND used > 0 AND (rested_at IS NULL OR rested_at <= ?5)")
+    .bind(playerId, REST_OUTINGS[place], now, gatherDay(now), now - REST_COOLDOWN_MS)
+    .run();
+  if (res.meta.changes === 0) return "You have only just rested.";
+  const after = await status(db, playerId, stats);
+  return { ...after, regained: after.stamina.left - outingsLeft(before, now) };
 }
 
 /** Start an outing, spending one of the day's three. Returns an error string if refused. */

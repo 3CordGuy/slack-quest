@@ -117,13 +117,20 @@ export class HarborRoom extends DurableObject<Env> {
       if (!Number.isInteger(to.q) || !Number.isInteger(to.r)) return;
       const path = harborPath(MAP, player.pos, to);
       if (!path) return;
-      ws.serializeAttachment({ ...player, pos: path[path.length - 1] } satisfies HarborPlayer);
+      // Walking off rolls the bedroll back up.
+      ws.serializeAttachment({ ...player, pos: path[path.length - 1], bedroll: undefined } satisfies HarborPlayer);
       this.broadcast({ type: "moved", id: player.id, path });
     } else if (msg.type === "refresh") {
       // They changed gear or levelled: re-read the character and show everyone the new look.
       const hero = await heroInitFor(this.env.DB, player.id);
       if (!hero) return;
       const next: HarborPlayer = { ...player, name: hero.name, classId: hero.classId, level: hero.level, outfit: hero.outfit };
+      ws.serializeAttachment(next);
+      this.broadcast({ type: "joined", player: next });
+    } else if (msg.type === "bedroll") {
+      // Purely for show: the rest itself is decided by the server over HTTP. Not on a place, a street corner is fine.
+      if (MAP.pois.some((p) => p.pos.q === player.pos.q && p.pos.r === player.pos.r)) return;
+      const next: HarborPlayer = { ...player, bedroll: player.pos };
       ws.serializeAttachment(next);
       this.broadcast({ type: "joined", player: next });
     } else if (msg.type === "say") {

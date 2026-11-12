@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { STARTING_STATS, hexDistance } from "@gantt-quest/core";
-import { BERRY_HEAL, FORAGE_ODDS,
+import { BERRY_HEAL, FORAGE_ODDS, ROAMERS_AT_START, ROAMERS_MAX, ROAMER_SCENT, VISION,
   PERK_CAPS, PUB_BUFF_CAPS, pubBuff,
   xpWithBonus,
   CANNED_FILLS,
@@ -66,7 +66,8 @@ function startedWorld(seed = "test-seed"): WorldState {
   s = must(s, { type: "join", hero: heroInit("p2", "devops_mage", "staff") });
   s = must(s, { type: "ready", heroId: "p2", ready: true });
   s = must(s, { type: "start", heroId: "p1" });
-  return must(s, { type: "begin", bible: buildBible(frame, fill) });
+  // Most tests here are about one rule at a time, so the island is clear: no fog, nothing roaming. Fog and roamers have their own tests.
+  return { ...must(s, { type: "begin", bible: buildBible(frame, fill) }), roamers: undefined, seen: undefined };
 }
 
 /** Teleport helper for tests: put every hero on a hex. */
@@ -641,6 +642,114 @@ describe("world reducer", () => {
     s = must(s, { type: "move", heroId: me, to: adjacent.pos });
     expect(poiById(s.map, "lair")!.hidden).toBe(false);
     expect(s.facts["revealed:lair"]).toBe(true);
+  });
+});
+
+describe("fog of war and roaming bands", () => {
+  /** A voyage as it really begins: under fog, with bands loose. */
+  function foggy(seed: string): WorldState {
+    let s = createWorld("ABCD", seed);
+    s = must(s, { type: "join", hero: heroInit("p1", "qa_paladin", "mace") });
+    s = must(s, { type: "join", hero: heroInit("p2", "devops_mage", "staff") });
+    s = must(s, { type: "ready", heroId: "p2", ready: true });
+    s = must(s, { type: "start", heroId: "p1" });
+    return must(s, { type: "begin", bible: buildBible(frame, fill) });
+  }
+  const keyOf = (p: { q: number; r: number }) => `${p.q},${p.r}`;
+
+  it("starts with only the landing in view, and hides the rest from clients", () => {
+    for (let i = 0; i < 20; i++) {
+      const s = foggy(`fog-${i}`);
+      const landing = poiById(s.map, "landing")!.pos;
+      expect(s.seen!.length).toBeGreaterThan(3);
+      for (const k of s.seen!) {
+        const [q, r] = k.split(",").map(Number);
+        expect(hexDistance({ q, r }, landing)).toBeLessThanOrEqual(VISION + 1);
+      }
+      const view = clientView(s, "p1");
+      const fogged = view.map.tiles.filter((t) => t.biome === "fog");
+      expect(fogged.length).toBe(s.map.tiles.length - s.seen!.length);
+      // Nothing about fogged ground leaves the server: not its terrain, not what stands on it.
+      for (const t of fogged) expect(view.map.pois.some((p) => p.pos.q === t.q && p.pos.r === t.r)).toBe(false);
+      expect(view).not.toHaveProperty("seen");
+      expect(view.roamers!.every((r) => s.heroes.some((h) => hexDistance(h.pos, r.pos) <= VISION + 1))).toBe(true);
+    }
+  });
+
+  it("will not let a hero walk into fog, and lifts it as they go", () => {
+    let s = foggy("fog-walk");
+    const me = s.turn!.heroId;
+    const hero = s.heroes.find((h) => h.id === me)!;
+    const far = s.map.tiles.find((t) => !s.seen!.includes(keyOf(t)) && t.biome !== "water" && hexDistance(t, hero.pos) > VISION + 1)!;
+    s = { ...s, turn: { ...s.turn!, mp: 99 }, roamers: [] };
+    expect(stepWorld(s, { type: "move", heroId: me, to: { q: far.q, r: far.r } }).ok).toBe(false);
+    const step = [...reachable(s.map, hero.pos, 2).values()].find((r) => r.cost > 0 && s.seen!.includes(keyOf(r.pos)))!;
+    const before = s.seen!.length;
+    s = must(s, { type: "move", heroId: me, to: step.pos });
+    expect(s.seen!.length).toBeGreaterThanOrEqual(before);
+    for (const t of s.map.tiles) if (hexDistance(t, step.pos) <= VISION) expect(s.seen).toContain(keyOf(t));
+  });
+
+  it("puts bands ashore out of sight at the start, clear of every place", () => {
+    for (let i = 0; i < 30; i++) {
+      const s = foggy(`bands-${i}`);
+      expect(s.roamers!.length).toBeLessThanOrEqual(ROAMERS_AT_START);
+      for (const r of s.roamers!) {
+        expect(s.heroes.every((h) => hexDistance(h.pos, r.pos) >= VISION + 2)).toBe(true);
+        expect(s.map.pois.some((p) => p.pos.q === r.pos.q && p.pos.r === r.pos.r)).toBe(false);
+        expect(tileAt(s.map, r.pos)!.biome).not.toBe("water");
+        expect(r.kinds.length).toBe(2);
+      }
+    }
+  });
+
+  it("a band that scents a hero closes on them overnight and attacks when it arrives", () => {
+    let s = foggy("hunt");
+    const me = s.turn!.heroId;
+    const hero = s.heroes.find((h) => h.id === me)!;
+    // Stand a band three hexes off, with a clear run in.
+    const spot = [...reachable(s.map, hero.pos, 12).values()].find((r) => hexDistance(r.pos, hero.pos) === 3 && !s.map.pois.some((p) => p.pos.q === r.pos.q && p.pos.r === r.pos.r))!;
+    s = { ...s, roamers: [{ id: "r9", kinds: ["wolf"], pos: spot.pos }] };
+    const sink = { events: [] as WorldEvent[], effects: [] as WorldEffect[] };
+    // The first night it comes into view and stops there: nobody is jumped by a band they could not have seen.
+    for (let i = 0; i < s.heroes.length && s.phase === "overworld"; i++) s = must(s, { type: "end_turn", heroId: s.turn!.heroId }, sink);
+    expect(s.phase).toBe("overworld");
+    expect(Math.min(...s.heroes.map((h) => hexDistance(h.pos, s.roamers![0].pos)))).toBe(VISION);
+    expect(clientView(s, me).roamers).toHaveLength(1);
+    // The second night it attacks.
+    for (let i = 0; i < s.heroes.length && s.phase === "overworld"; i++) s = must(s, { type: "end_turn", heroId: s.turn!.heroId }, sink);
+    expect(s.phase).toBe("battle");
+    expect(s.roamers).toEqual([]);
+    expect(sink.events.some((e) => e.t === "ambush" && e.by === "band")).toBe(true);
+    expect(s.battle!.combatants.filter((c) => c.side === "enemy").map((c) => c.kind)).toEqual(["wolf"]);
+  });
+
+  it("a hero who walks up to a band starts the fight there", () => {
+    let s = foggy("bump");
+    const me = s.turn!.heroId;
+    const hero = s.heroes.find((h) => h.id === me)!;
+    const two = [...reachable(s.map, hero.pos, 6).values()].find((r) => hexDistance(r.pos, hero.pos) === 2 && s.seen!.includes(keyOf(r.pos)) && !s.map.pois.some((p) => p.pos.q === r.pos.q && p.pos.r === r.pos.r))!;
+    s = { ...s, turn: { ...s.turn!, mp: 9 }, roamers: [{ id: "r9", kinds: ["bandit"], pos: two.pos }], forest: s.map.tiles.map(keyOf) };
+    const sink = { events: [] as WorldEvent[], effects: [] as WorldEffect[] };
+    s = must(s, { type: "move", heroId: me, to: two.pos }, sink);
+    expect(s.phase).toBe("battle");
+    expect(sink.events.some((e) => e.t === "ambush" && e.by === "hero")).toBe(true);
+    // They stopped beside the band, not on top of it.
+    expect(hexDistance(s.heroes.find((h) => h.id === me)!.pos, two.pos)).toBeLessThanOrEqual(1);
+    expect(s.turn!.mp).toBe(0);
+  });
+
+  it("more bands come ashore as the days pass, up to a limit", () => {
+    let s = foggy("tide");
+    // Park the party on the landing and let the days run, moving any band that gets close back out of the way.
+    let most = 0;
+    for (let day = 0; day < 14 && s.phase === "overworld"; day++) {
+      s = { ...s, roamers: (s.roamers ?? []).filter((r) => s.heroes.every((h) => hexDistance(h.pos, r.pos) > ROAMER_SCENT + 2)), doom: 99 };
+      for (let i = 0; i < s.heroes.length && s.phase === "overworld"; i++) s = must(s, { type: "end_turn", heroId: s.turn!.heroId });
+      most = Math.max(most, s.roamers?.length ?? 0);
+      expect(s.roamers!.length).toBeLessThanOrEqual(ROAMERS_MAX);
+    }
+    expect(most).toBeGreaterThan(0);
   });
 });
 
