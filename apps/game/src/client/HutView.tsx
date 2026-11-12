@@ -1,6 +1,9 @@
 // Inside a hut: a small room drawn by the same renderer as the Harbor, where
-// everyone present sees each other and the furniture. The owner furnishes it
-// from the Furnish panel; a visiting crewmate can only look.
+// everyone present sees each other and the furniture. The owner picks pieces
+// out of the Storage panel to place them, makes new ones in the Craft panel,
+// and grows the hut from the Hut panel. Clicking a placed piece floats its
+// controls above it (HutToolbar); a container opens into a panel of its own.
+// A visiting crewmate can only look.
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { HexPos } from "@gantt-quest/core";
@@ -9,6 +12,7 @@ import { api, type Hut, type Me } from "./api";
 import { DragPanel } from "./DragPanel";
 import { CostChips, PerkMeter, ResourceChips } from "./hutDrops";
 import { TileAction } from "./TileAction";
+import { HutToolbar, type ToolAction } from "./HutToolbar";
 import { WorldRenderer, type PlaceTarget, type RenderState } from "./render/WorldRenderer";
 import { HutContainer } from "./HutContainer";
 import { useHut } from "./useHut";
@@ -39,7 +43,8 @@ function tags(defId: string): string[] {
 /** Everything that can be crafted, starter recipes first. */
 const RECIPES = Object.values(FURNISHINGS).filter((f) => f.recipe).sort((a, b) => Number(!!a.needsBlueprint) - Number(!!b.needsBlueprint));
 
-type Tab = "furnish" | "craft" | "upgrade";
+/** Which panel a message belongs in. */
+type Where = "storage" | "craft" | "hut" | "box";
 
 export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me: Me; refresh(): Promise<unknown>; onLeave(): void }) {
   const mount = useRef<HTMLDivElement>(null);
@@ -55,12 +60,16 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
   /** The prop under the pointer, for its tooltip. */
   const [hoverProp, setHoverProp] = useState<number | null>(null);
   const chatEnd = useRef<HTMLDivElement>(null);
-  const [tab, setTab] = useState<Tab>("furnish");
+  /** The container whose contents panel is open. */
+  const [opened, setOpened] = useState<number | null>(null);
   /** The owner's materials, blueprints and gold. Re-read after anything is spent. */
   const [own, setOwn] = useState<Hut | null>(null);
   const [busy, setBusy] = useState(false);
-  const [spendError, setSpendError] = useState<string | null>(null);
-  const [made, setMade] = useState<string | null>(null);
+  /** Why the room (or the rules, before asking it) said no; shown for a few seconds. */
+  const [refusal, setRefusal] = useState<string | null>(null);
+  /** The last thing done or refused, shown in the panel it happened in. */
+  const [note, setNote] = useState<{ where: Where; text: string; ok: boolean } | null>(null);
+  const noteIn = (where: Where) => note && note.where === where ? <p className={note.ok ? "good" : "bad"}>{note.text}</p> : null;
 
   const hut = useHut(ownerId, (id, path) => renderer.current?.playEvents([{ t: "moved", heroId: id, path }]));
   const { you, players, furnishings, canEdit, tier, owner } = hut;
@@ -117,30 +126,33 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
       setHolding(null);
     } else if (canEdit && piece) {
       setSelected(piece.id);
-      // Clicking a container (the free Storage Chest, say) opens it in the Furnish panel.
-      if (FURNISHINGS[piece.defId]?.storage) setTab("furnish");
+    } else if (selected !== null) {
+      // With a piece chosen, a click on the floor only lets go of it.
+      setSelected(null);
     } else {
       setSelected(null);
       hut.send({ type: "move", to: pos });
     }
   };
 
-  /** Whether the carried piece may go at `target`, by the same rules the server checks. */
-  const fits = useRef<(target: PlaceTarget) => boolean>(() => true);
-  fits.current = (target) => {
-    if (!held || !room) return false;
+  /** Why the carried piece may not go at `target`, by the same rules the server checks, or null if it may. */
+  const whyNot = useRef<(target: PlaceTarget) => string | null>(() => null);
+  whyNot.current = (target) => {
+    if (!held || !room) return "Nothing is being carried.";
     const others = furnishings.filter((f) => f.id !== held.id);
     if (isSmall(held.defId)) {
       const spot = target.on !== undefined ? { on: Number(target.on), x: target.x, z: target.z, angle: turn.angle } : { pos: target.pos, x: target.x, z: target.z, angle: turn.angle };
-      return smallPlaceProblem(room, others, held.defId, spot) === null;
+      return smallPlaceProblem(room, others, held.defId, spot);
     }
     // Its own riders move with it.
-    if (placeProblem(room, others.filter((f) => f.onId !== held.id), held.defId, target.pos)) return false;
-    return !players.some((p) => same(p.pos, target.pos));
+    return placeProblem(room, others.filter((f) => f.onId !== held.id), held.defId, target.pos) ?? (players.some((p) => same(p.pos, target.pos)) ? "Someone is standing there." : null);
   };
   const place = useRef<(target: PlaceTarget) => void>(() => {});
   place.current = (target) => {
     if (!held) return;
+    // A spot it cannot go: say why, and keep hold of it.
+    const problem = whyNot.current(target);
+    if (problem) return setRefusal(problem);
     const small = isSmall(held.defId);
     hut.send({
       type: "place",
@@ -151,13 +163,16 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
     setSelected(held.id);
     setHolding(null);
   };
-  /** Turn what is carried, or (with nothing carried) the piece chosen, one notch. */
-  const turnBy = useRef<(dir: 1 | -1) => void>(() => {});
-  turnBy.current = (dir) => {
+  /**
+   * Turn what is carried, or (with nothing carried) the piece chosen: furniture
+   * a sixth of a turn, a small thing `notches` twenty-fourths.
+   */
+  const turnBy = useRef<(dir: 1 | -1, notches?: number) => void>(() => {});
+  turnBy.current = (dir, notches = 1) => {
     if (held) {
-      setTurn((t) => ({ facing: (t.facing + dir + 6) % 6, angle: wrap(t.angle + dir * NOTCH) }));
+      setTurn((t) => ({ facing: (t.facing + dir + 6) % 6, angle: wrap(t.angle + dir * notches * NOTCH) }));
     } else if (chosen) {
-      if (isSmall(chosen.defId)) hut.send({ type: "rotate", id: chosen.id, angle: wrap(chosen.angle + dir * NOTCH) });
+      if (isSmall(chosen.defId)) hut.send({ type: "rotate", id: chosen.id, angle: wrap(chosen.angle + dir * notches * NOTCH) });
       else hut.send({ type: "rotate", id: chosen.id, facing: (chosen.facing + dir + 6) % 6 });
     }
   };
@@ -175,7 +190,7 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
       onPropClick: (id) => propClick.current(Number(id)),
       onPropHover: (id) => setHoverProp(id === null ? null : Number(id)),
       onPlace: (target) => place.current(target),
-      canPlace: (target) => fits.current(target),
+      canPlace: (target) => whyNot.current(target) === null,
       onTurnHeld: (dir) => turnBy.current(dir),
     });
     renderer.current = r;
@@ -195,7 +210,7 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
     const onKey = (e: KeyboardEvent) => {
       const el = e.target as HTMLElement | null;
       if (el && /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName)) return;
-      if (e.key === "Escape") (setHolding(null), setSelected(null));
+      if (e.key === "Escape") (setHolding(null), setSelected(null), setOpened(null));
       else if (e.key === "[") turnBy.current(-1);
       else if (e.key === "]") turnBy.current(1);
     };
@@ -207,20 +222,19 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
   if (import.meta.env.DEV) (window as unknown as { __hut: unknown }).__hut = { hut, renderer };
 
   const mine = ownerId === me.player.id;
-  const loadOwn = () => api.hut().then(setOwn, (e: Error) => setSpendError(e.message));
+  const loadOwn = () => api.hut().then(setOwn, (e: Error) => setNote({ where: "storage", text: e.message, ok: false }));
   useEffect(() => {
     if (mine) void loadOwn();
   }, [mine]);
   /** Craft or upgrade: the server decides, then the panel re-reads what is left. */
-  const spend = async (fn: () => Promise<unknown>, done: string) => {
+  const spend = async (where: Where, fn: () => Promise<unknown>, done: string) => {
     setBusy(true);
-    setSpendError(null);
-    setMade(null);
+    setNote(null);
     try {
       await fn();
-      setMade(done);
+      setNote({ where, text: done, ok: true });
     } catch (e) {
-      setSpendError((e as Error).message);
+      setNote({ where, text: (e as Error).message, ok: false });
     } finally {
       await Promise.all([loadOwn(), refresh()]);
       setBusy(false);
@@ -256,17 +270,54 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
   };
   /** Gear or materials in or out of a container: then re-read the hut and the bag. */
   const act = (fn: () => Promise<unknown>) => {
-    setSpendError(null);
+    setNote(null);
     void fn()
-      .catch((e: Error) => setSpendError(e.message))
+      .catch((e: Error) => setNote({ where: "box", text: e.message, ok: false }))
       .finally(() => void Promise.all([loadOwn(), refresh()]));
   };
   const onTop = chosen ? placed.filter((f) => f.onId === chosen.id) : [];
+  const box = opened !== null ? furnishings.find((f) => f.id === opened && defOf(f)?.storage) ?? null : null;
   // Opening a container re-reads what it holds, which may have changed since the panel last looked.
-  const openBox = chosen && defOf(chosen)?.storage ? chosen.id : null;
   useEffect(() => {
-    if (mine && openBox !== null) void loadOwn();
-  }, [mine, openBox]);
+    if (mine && opened !== null) void loadOwn();
+  }, [mine, opened]);
+  // A container that is put away (or into another) closes.
+  useEffect(() => {
+    if (opened !== null && (!box || box.q === null)) setOpened(null);
+  }, [opened, box]);
+
+  // A refusal from the room shows as a toast, and goes after a few seconds.
+  useEffect(() => setRefusal(hut.refused), [hut.refused]);
+  useEffect(() => {
+    if (!refusal) return;
+    const t = setTimeout(() => setRefusal(null), 4000);
+    return () => clearTimeout(t);
+  }, [refusal]);
+
+  /** The floating controls for the chosen piece. */
+  const tools: ToolAction[] = [];
+  if (chosen && canEdit && !held) {
+    const small = isSmall(chosen.defId);
+    tools.push({ key: "move", icon: "move", title: "Move: pick it up and set it down somewhere else", run: () => pick(chosen.id) });
+    if (small) {
+      tools.push(
+        { key: "left", icon: "left", title: "Turn left 45°", run: () => turnBy.current(-1, 3) },
+        { key: "fine-left", icon: "fineLeft", title: "Turn left a notch (15°, or [ )", run: () => turnBy.current(-1) },
+        { key: "fine-right", icon: "fineRight", title: "Turn right a notch (15°, or ] )", run: () => turnBy.current(1) },
+        { key: "right", icon: "right", title: "Turn right 45°", run: () => turnBy.current(1, 3) },
+      );
+    } else {
+      tools.push(
+        { key: "left", icon: "left", title: "Turn left a sixth ( [ )", run: () => turnBy.current(-1) },
+        { key: "right", icon: "right", title: "Turn right a sixth ( ] )", run: () => turnBy.current(1) },
+      );
+    }
+    if (defOf(chosen)?.storage) {
+      tools.push({ key: "open", icon: "open", title: opened === chosen.id ? "Close: hide what it holds" : "Open: see what it holds", active: opened === chosen.id, run: () => setOpened((o) => (o === chosen.id ? null : chosen.id)) });
+    }
+    const riders = onTop.length > 0 ? ` (and what stands on it: ${onTop.map((f) => f.label).join(", ")})` : "";
+    tools.push({ key: "away", icon: "away", title: `Put away: back into storage${riders}`, run: () => (hut.send({ type: "pick_up", id: chosen.id }), setSelected(null)) });
+  }
 
   return (
     <div className="run hut-view">
@@ -280,55 +331,25 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
       </div>
 
       {canEdit && (
-        <DragPanel id="hut.furnish" title="Furnish" foldOnPhone className="story panel hut-furnish">
-          <div className="hut-tabs">
-            {(["furnish", "craft", "upgrade"] as Tab[]).map((t) => (
-              <button key={t} className={`small ${tab === t ? "selected" : ""}`} onClick={() => (setTab(t), setMade(null), setSpendError(null))}>
-                {t === "furnish" ? "Furnish" : t === "craft" ? "Craft" : "Upgrade"}
-              </button>
-            ))}
-          </div>
-          {tab !== "furnish" && spendError && <p className="bad">{spendError}</p>}
-          {tab !== "furnish" && made && <p className="good">{made}</p>}
-
-          {tab === "furnish" && <>
+        <DragPanel id="hut.storage" title="Storage" foldOnPhone className="story panel hut-storage">
           {held ? (
             <p className="hut-hint">
               Click to set the <strong>{held.label}</strong> down.{" "}
               {isSmall(held.defId) ? "It goes anywhere in a hex, or on a table, desk or other top. " : ""}
               <kbd>[</kbd> <kbd>]</kbd> or Shift + wheel turns it. <button className="link" onClick={() => setHolding(null)}>Cancel</button>
             </p>
-          ) : chosen ? (
-            <div className="hut-chosen">
-              <strong>{chosen.label}</strong>
-              <div className="hut-tags">{tags(chosen.defId).map((t) => <span key={t} className="tag">{t}</span>)}</div>
-              <p className="muted">{blurb("furnishing", chosen.defId)}</p>
-              <div className="row">
-                <button className="small" title="Turn left ( [ )" onClick={() => turnBy.current(-1)}>⟲</button>
-                <button className="small" title="Turn right ( ] )" onClick={() => turnBy.current(1)}>⟳</button>
-                <button className="small" onClick={() => pick(chosen.id)}>Move</button>
-                <button className="small" onClick={() => (hut.send({ type: "pick_up", id: chosen.id }), setSelected(null))}>Put away</button>
-              </div>
-              {onTop.length > 0 && <p className="muted">On top: {onTop.map((f) => f.label).join(", ")}. They move with it, and go back to storage if it is put away.</p>}
-              {defOf(chosen)?.storage && (
-                <HutContainer box={chosen} furnishings={furnishings} own={own} bag={me.inventory} pack={me.carry} send={hut.send} act={act} carry={pick} />
-              )}
-            </div>
           ) : (
-            <p className="muted">Pick something from storage, then click where it goes. Small things go anywhere in a hex, or on top of a table, desk, dresser or chest. Click a placed piece to turn it, move it, or open it.</p>
+            <p className="muted">Pick a piece up to place it. Small things go anywhere in a hex, or on top of a table, desk, dresser or chest. Click a placed piece for its controls.</p>
           )}
-          {hut.refused && <p className="bad">{hut.refused}</p>}
-          {spendError && <p className="bad">{spendError}</p>}
-
-          <h3>In storage</h3>
-          {stored.length === 0 && <p className="muted">Nothing in storage.</p>}
+          {noteIn("storage")}
+          {stored.length === 0 && <p className="muted">Nothing in storage. Make something in the Craft panel.</p>}
           {[["Furniture", storedBig], ["Small things", storedSmall]].map(([heading, list]) => (list as Furnishing[]).length > 0 && (
             <div key={heading as string}>
               <h4>{heading as string}</h4>
               <ul className="hut-list">
                 {(list as Furnishing[]).map((f) => (
                   <li key={f.id}>
-                    <button className={holding === f.id ? "selected" : ""} title={blurb("furnishing", f.defId)} onClick={() => pick(f.id)}>
+                    <button className={holding === f.id ? "selected" : ""} title={`${blurb("furnishing", f.defId)} Pick it up to place it.`} onClick={() => pick(f.id)}>
                       {f.label}{tags(f.defId).filter((t) => t !== "small").map((t) => <span key={t} className="tag">{t}</span>)}
                     </button>
                   </li>
@@ -336,67 +357,93 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
               </ul>
             </div>
           ))}
+        </DragPanel>
+      )}
 
-          <h3>In the room</h3>
+      {canEdit && (
+        <DragPanel id="hut.craft" title="Craft" foldOnPhone startFolded className="panel hut-craft">
+          {noteIn("craft")}
+          {!own ? <p className="muted">Counting your materials…</p> : <>
+            <ResourceChips resources={own.resources} all />
+            <ul className="hut-recipes">
+              {RECIPES.map((def) => {
+                const known = !def.needsBlueprint || own.blueprints.includes(def.id);
+                const problem = craftProblem(def.id, own.blueprints, own.resources);
+                return (
+                  <li key={def.id} className={known ? "" : "locked"}>
+                    <div>
+                      <strong>{label("furnishing", def.id)}</strong>
+                      <span className="muted"> · {known ? blurb("furnishing", def.id) : "Blueprint not found yet. Islands hide them."}</span>
+                    </div>
+                    <div className="row">
+                      <CostChips cost={def.recipe!} have={own.resources} />
+                      <span className="spacer" />
+                      <button className="small primary" disabled={busy || !!problem} title={problem ?? "Goes into storage"} onClick={() => void spend("craft", () => api.craft(def.id), `${label("furnishing", def.id)} crafted. It is in storage.`)}>
+                        Craft
+                      </button>
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          </>}
+        </DragPanel>
+      )}
+
+      {you && tier !== null && (
+        <DragPanel id="hut.info" title="Hut" foldOnPhone startFolded className="panel hut-info">
+          {noteIn("hut")}
+          <p>{mine ? "Your hut" : `${owner?.name ?? "This"}'s hut`} is a <strong>{hutTier(tier).name}</strong>: a floor of {hutTier(tier).cols} by {hutTier(tier).rows}.</p>
+          {canEdit && (!bigger ? <p className="muted">It is as big as huts get.</p> : !own ? <p className="muted">Counting your materials…</p> : <>
+            <h4>Build the {bigger.name}</h4>
+            <p className="muted">A floor of {bigger.cols} by {bigger.rows}, and a bigger building in the Harbor. Everything placed stays where it stands.</p>
+            <div className="row">
+              <CostChips cost={bigger.resources} have={own.resources} gold={bigger.gold} haveGold={own.gold} />
+            </div>
+            {upgradeProblem(tier, own.gold, own.resources) && <p className="muted">{upgradeProblem(tier, own.gold, own.resources)}</p>}
+            <button className="primary" disabled={busy || !!upgradeProblem(tier, own.gold, own.resources)} onClick={() => void spend("hut", () => api.upgradeHut(), `Your hut is now a ${bigger.name}.`)}>
+              Build the {bigger.name}
+            </button>
+          </>)}
+
+          <h4>Voyage perks</h4>
+          <p className="muted">What the pieces standing in the room give {mine ? "you" : "their owner"} when boarding a ship, and the most a hut can give.</p>
+          <PerkMeter perks={perks} />
+
+          <h4>In the room</h4>
           {placed.length === 0 && <p className="muted">Nothing placed yet.</p>}
           <ul className="hut-list">
             {placed.map((f) => (
               <li key={f.id}>
-                <button className={selected === f.id || holding === f.id ? "selected" : ""} title={blurb("furnishing", f.defId)} onClick={() => (setHolding(null), setSelected((s) => (s === f.id ? null : f.id)))}>
-                  {f.label}
-                </button>
+                {canEdit ? (
+                  <button className={selected === f.id || holding === f.id ? "selected" : ""} title={blurb("furnishing", f.defId)} onClick={() => (setHolding(null), setSelected((s) => (s === f.id ? null : f.id)))}>
+                    {f.label}
+                  </button>
+                ) : (
+                  <span title={blurb("furnishing", f.defId)}>{f.label}</span>
+                )}
               </li>
             ))}
           </ul>
-
-          <h3>Voyage perks</h3>
-          <p className="muted">What the pieces standing in the room give you when you board a ship, and the most a hut can give.</p>
-          <PerkMeter perks={perks} />
-          </>}
-
-          {tab === "craft" && <>
-            {!own ? <p className="muted">Counting your materials…</p> : <>
-              <ResourceChips resources={own.resources} all />
-              <ul className="hut-recipes">
-                {RECIPES.map((def) => {
-                  const known = !def.needsBlueprint || own.blueprints.includes(def.id);
-                  const problem = craftProblem(def.id, own.blueprints, own.resources);
-                  return (
-                    <li key={def.id} className={known ? "" : "locked"}>
-                      <div>
-                        <strong>{label("furnishing", def.id)}</strong>
-                        <span className="muted"> · {known ? blurb("furnishing", def.id) : "Blueprint not found yet. Islands hide them."}</span>
-                      </div>
-                      <div className="row">
-                        <CostChips cost={def.recipe!} have={own.resources} />
-                        <span className="spacer" />
-                        <button className="small primary" disabled={busy || !!problem} title={problem ?? "Goes into storage"} onClick={() => void spend(() => api.craft(def.id), `${label("furnishing", def.id)} crafted. It is in storage.`)}>
-                          Craft
-                        </button>
-                      </div>
-                    </li>
-                  );
-                })}
-              </ul>
-            </>}
-          </>}
-
-          {tab === "upgrade" && tier !== null && <>
-            <p>Your hut is a <strong>{hutTier(tier).name}</strong>: a floor of {hutTier(tier).cols} by {hutTier(tier).rows}.</p>
-            {!bigger ? <p className="muted">It is as big as huts get.</p> : !own ? <p className="muted">Counting your materials…</p> : <>
-              <h3>{bigger.name}</h3>
-              <p className="muted">A floor of {bigger.cols} by {bigger.rows}, and a bigger building in the Harbor. Everything placed stays where it stands.</p>
-              <div className="row">
-                <CostChips cost={bigger.resources} have={own.resources} gold={bigger.gold} haveGold={own.gold} />
-              </div>
-              {upgradeProblem(tier, own.gold, own.resources) && <p className="muted">{upgradeProblem(tier, own.gold, own.resources)}</p>}
-              <button className="primary" disabled={busy || !!upgradeProblem(tier, own.gold, own.resources)} onClick={() => void spend(() => api.upgradeHut(), `Your hut is now a ${bigger.name}.`)}>
-                Build the {bigger.name}
-              </button>
-            </>}
-          </>}
         </DragPanel>
       )}
+
+      {canEdit && box && (
+        <DragPanel id="hut.box" title={box.label} className="panel hut-boxpanel">
+          <div className="row">
+            <span className="muted">{blurb("furnishing", box.defId)}</span>
+            <span className="spacer" />
+            <button className="small" onClick={() => setOpened(null)}>Close</button>
+          </div>
+          {noteIn("box")}
+          <HutContainer box={box} furnishings={furnishings} own={own} bag={me.inventory} pack={me.carry} send={hut.send} act={act} carry={pick} />
+        </DragPanel>
+      )}
+
+      {chosen && tools.length > 0 && (
+        <HutToolbar renderer={renderer} propId={chosen.id} name={chosen.label} tags={tags(chosen.defId)} actions={tools} />
+      )}
+      {refusal && <div className="toast" role="status">{refusal}</div>}
 
       {you && <>
       <DragPanel id="hut.crew" title="Inside" foldOnPhone className="crew">
@@ -427,7 +474,7 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
 
       <DragPanel id="hut.turn" title="Here" compact className="turnbar panel">
         {atDoor ? <span>The door back to the Harbor.</span>
-          : canEdit ? <span className="muted">Click a hex to walk. Furnish the room from the Furnish panel.</span>
+          : canEdit ? <span className="muted">Click a hex to walk. Place pieces from the Storage panel; click one for its controls.</span>
           : <span className="muted">Click a hex to walk. Only {owner?.name ?? "the owner"} can move the furniture.</span>}
         {canEdit && <button title="Sleep in your own bed: all your gathering outings back, once every twenty minutes" onClick={() => void restAtHome()}>Rest</button>}
         {rested && <span className={rested.ok ? "good" : "bad"}>{rested.text}</span>}
