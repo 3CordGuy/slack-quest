@@ -10,6 +10,7 @@ import { AccountPanel } from "./Account";
 import { NoticeBoard } from "./board/NoticeBoard";
 import { DragPanel } from "./DragPanel";
 import { GatherPanel } from "./GatherPanel";
+import { HeroSheet, useHeroSheet } from "./HeroSheet";
 import { InventoryScreen } from "./InventoryScreen";
 import { ShopScreen } from "./ShopScreen";
 import { SparView } from "./SparView";
@@ -83,7 +84,7 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
       phase: "overworld",
       round: 0,
       map: { ...base, pois },
-      heroes: players.map((p) => ({ id: p.id, classId: p.classId, pos: p.pos, label: p.name, outfit: p.outfit, asleep: !!p.bedroll && same(p.bedroll, p.pos) })),
+      heroes: players.map((p) => ({ id: p.id, classId: p.classId, pos: p.pos, label: p.name, outfit: p.outfit, asleep: !!p.bedroll && same(p.bedroll, p.pos), level: p.level, xp: p.xp })),
       turn: null,
       battle: null,
       story: null,
@@ -96,9 +97,10 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
   }, [base, board, players, you]);
   const latest = useRef(scene);
   latest.current = scene;
+  const heroSheet = useHeroSheet();
 
   useEffect(() => {
-    const r = new WorldRenderer(mount.current!, { onHexClick: (to) => send.current({ type: "move", to }), onHover: setHover });
+    const r = new WorldRenderer(mount.current!, { onHexClick: (to) => send.current({ type: "move", to }), onHover: setHover, onHeroClick: heroSheet.onHeroClick, onHeroHover: heroSheet.onHeroHover });
     renderer.current = r;
     if (latest.current) r.setState(latest.current);
     return () => {
@@ -410,6 +412,7 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
       {gather && me.character && <GatherPanel spot={gather} onClose={() => setGather(null)} />}
       {shop && me.character && <ShopScreen me={me} refresh={refreshAll} onClose={() => setShop(false)} />}
       {me.character && <Trading me={me} partners={board.members.filter((m) => m.id !== you)} withId={tradeWith} onWith={setTradeWith} refresh={refresh} />}
+      {heroSheet.open && you && !spar && <HeroSheet id={heroSheet.open} you={you} pinned={heroSheet.pinned} onClose={heroSheet.close} />}
     </div>
   );
 }

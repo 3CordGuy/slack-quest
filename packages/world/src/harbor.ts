@@ -6,7 +6,9 @@
 
 import { allHexesInGrid, type HexGrid, type HexPos } from "@gantt-quest/core";
 import type { Outfit } from "./gear";
-import type { Resources } from "./hut";
+import type { Perk, Resources } from "./hut";
+import type { ItemDef } from "./gear";
+import type { Stats } from "@gantt-quest/core";
 import type { HarborWorks } from "./projects";
 import { findPath, type Biome, type Poi, type PoiKind, type Tile, type WorldMap } from "./map";
 
@@ -135,11 +137,36 @@ export interface HarborPlayer {
   name: string;
   classId: string;
   level: number;
+  /** XP into their current level, for the bar over their head. Absent from presence saved before it was sent. */
+  xp?: number;
   pos: HexPos;
   /** What they are visibly wearing. */
   outfit?: Outfit;
   /** Where their bedroll is laid out, until they walk off. */
   bedroll?: HexPos;
+}
+
+/**
+ * What anyone sharing a crew or a voyage may see of a hero, for the sheet
+ * that opens on hovering or clicking them. Game facts only: no email, no
+ * gold, nothing in their pack or at home.
+ */
+export interface PublicHero {
+  id: string;
+  name: string;
+  classId: string;
+  level: number;
+  /** XP into the current level. */
+  xp: number;
+  /** Stats without gear, and what the worn gear adds. */
+  base: Stats;
+  bonus: Partial<Stats>;
+  weaponPower: number;
+  armor: number;
+  /** What they wear, one item per slot. */
+  gear: ItemDef[];
+  /** What the furniture in their hut gives them on a voyage. */
+  hutPerks?: Perk;
 }
 
 export interface HarborMember {
