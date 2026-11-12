@@ -53,6 +53,8 @@ export interface RenderState {
   indoors?: boolean;
   /** Inside a hut with its hanging lamp put out: the room is lit by its own candles, lanterns and fires. */
   lampOff?: boolean;
+  /** Your gathering outings, shown as lightning bolts on your own plate. */
+  stamina?: { left: number; max: number };
   /** A piece being carried: a ghost of it follows the pointer, and a click sets it down (RendererCallbacks.onPlace). */
   holding?: Holding | null;
 }
@@ -78,6 +80,11 @@ export interface RenderHero {
   /** Absent off a voyage, where every hero is at full health. */
   hp?: number;
   maxHp?: number;
+}
+
+/** The first word of a name, for a plate: "Ewan Driftwood" is "Ewan". */
+export function firstName(name: string): string {
+  return name.trim().split(/\s+/)[0] || name;
 }
 
 /** A hero's plate stats, or nothing for someone who is not a player's hero. */
@@ -2144,8 +2151,11 @@ export class WorldRenderer {
         const pos = this.standAt(h.pos);
         pos.x += (i - (n - 1) / 2) * 0.6;
         pos.z += 0.25;
-        const plate = plateOf(h);
-        const label = h.label ?? (plate ? h.name : undefined);
+        const base = plateOf(h);
+        const plate = base && h.id === state.you && state.stamina ? { ...base, bolts: state.stamina } : base;
+        // A plate shows a first name only: full names run long over a crowd.
+        const full = h.label ?? (plate ? h.name : undefined);
+        const label = plate && full ? firstName(full) : full;
         want.set(h.id, { kind: h.classId, outfit: h.outfit, pos, size: 1.5, label, plate: label ? plate : undefined, stack: i, ring: colorOf(h.id), pulse: state.turn?.heroId === h.id, asleep: h.asleep });
       }
       for (const npc of state.story?.npcs ?? []) {
