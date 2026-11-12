@@ -29,25 +29,13 @@ import {
 } from "@gantt-quest/world";
 import { api } from "../api";
 import { DragPanel } from "../DragPanel";
-import { Icon } from "../items";
 import { blurb, costLabel, label } from "../labels";
+import { GOLD_ICON, ThingIcon, resourceIcon } from "../thingIcons";
 import { BuildingIcon, LockIcon } from "./buildingArt";
 import "./works.css";
 
-/** Each material's icon tint. The material icons hardly use it; it keys their cache. */
-const KIND_COLOR: Record<ProjectCostKind, string> = {
-  gold: "#ffd23f",
-  wood: "#8a5a2b",
-  stone: "#8b95a5",
-  iron: "#c9d1dc",
-  copper: "#c8743a",
-  fur: "#a0683a",
-  bone: "#eee6cf",
-  herbs: "#6fae4a",
-  mushrooms: "#b8452f",
-};
-
-const KindIcon = ({ kind, size = 18 }: { kind: ProjectCostKind; size?: number }) => <Icon name={kind === "gold" ? "cash" : `res-${kind}`} color={KIND_COLOR[kind]} size={size} />;
+/** A cost's icon: the shared gold and material icons, so an admin override reaches here too. */
+const KindIcon = ({ kind, size = 18 }: { kind: ProjectCostKind; size?: number }) => <ThingIcon icon={kind === "gold" ? GOLD_ICON : resourceIcon(kind)} size={size} />;
 
 /** How much one press of − or + moves: gold goes in tens, materials one at a time. */
 const stepOf = (kind: ProjectCostKind) => (kind === "gold" ? 10 : 1);
