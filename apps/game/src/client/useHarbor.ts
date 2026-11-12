@@ -3,7 +3,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { HexPos } from "@gantt-quest/core";
-import { HARBOR_NAME, type HarborBoard, type HarborClientMessage, type HarborPlayer, type HarborServerMessage } from "@gantt-quest/world";
+import { HARBOR_NAME, type HarborBoard, type HarborClientMessage, type HarborPlayer, type HarborServerMessage, type XpMessage } from "@gantt-quest/world";
 import { PROFILE } from "./api";
 
 export interface HarborChatLine {
@@ -25,7 +25,7 @@ export interface HarborConnection {
 const EMPTY: HarborBoard = { members: [], ships: [], log: [] };
 
 /** `onMoved` fires for every walk, including your own, so the renderer can animate it. */
-export function useHarbor(onMoved: (id: string, path: HexPos[]) => void): HarborConnection {
+export function useHarbor(onMoved: (id: string, path: HexPos[]) => void, onXp?: (m: XpMessage) => void): HarborConnection {
   const [you, setYou] = useState<string | null>(null);
   const [crew, setCrew] = useState<HarborConnection["crew"]>(null);
   const [players, setPlayers] = useState<HarborPlayer[]>([]);
@@ -36,6 +36,8 @@ export function useHarbor(onMoved: (id: string, path: HexPos[]) => void): Harbor
   const socket = useRef<WebSocket | null>(null);
   const moved = useRef(onMoved);
   moved.current = onMoved;
+  const xpSeen = useRef(onXp);
+  xpSeen.current = onXp;
 
   useEffect(() => {
     let closed = false;
@@ -86,6 +88,10 @@ export function useHarbor(onMoved: (id: string, path: HexPos[]) => void): Harbor
           setPlayers((ps) => ps.map((p) => (p.id === msg.id ? { ...p, pos: end, bedroll: undefined } : p)));
           // After React has applied the new position, so the walk is not snapped over.
           queueMicrotask(() => moved.current(msg.id, msg.path));
+        } else if (msg.type === "xp") {
+          // Someone here earned XP: their plate shows the new level and bar, then the sparkle plays.
+          setPlayers((ps) => ps.map((p) => (p.id === msg.id ? { ...p, level: msg.level, xp: msg.xp } : p)));
+          queueMicrotask(() => xpSeen.current?.(msg));
         } else if (msg.type === "said") {
           setChat((c) => [...c, { name: msg.name, text: msg.text }].slice(-30));
         }

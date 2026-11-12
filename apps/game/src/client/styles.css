@@ -482,3 +482,6 @@ button.nudge { border-color: var(--gold); color: var(--gold); }
 .chip .intent { font-size: 12px; color: var(--muted, #b8b0a0); }
 .chip .intent.heavy { color: #ff8a7a; font-weight: 600; }
 .turn-chip.skip { opacity: 0.5; text-decoration: line-through; }
+
+/* A little XP from a Harbor pastime, in its result line. */
+.xp-gain { color: #ffe27a; font-weight: 600; }

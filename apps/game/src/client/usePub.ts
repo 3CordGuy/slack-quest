@@ -3,7 +3,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { HexPos } from "@gantt-quest/core";
-import type { DiceView, HarborPlayer, PubClientMessage, PubServerMessage, ShoalsView } from "@gantt-quest/world";
+import type { DiceView, HarborPlayer, PubClientMessage, PubServerMessage, ShoalsView, XpMessage } from "@gantt-quest/world";
 import { PROFILE } from "./api";
 import type { HarborChatLine } from "./useHarbor";
 
@@ -18,13 +18,15 @@ export interface PubConnection {
   /** The Shoals table, likewise. */
   shoals: ShoalsView | null;
   shoalsError: string | null;
+  /** The last XP anyone here earned, for the tables' "won" line. */
+  lastXp: XpMessage | null;
   status: "connecting" | "open" | "closed";
   error: string | null;
   send(message: PubClientMessage): void;
 }
 
 /** `onMoved` fires for every walk, including your own, so the renderer can animate it. */
-export function usePub(onMoved: (id: string, path: HexPos[]) => void): PubConnection {
+export function usePub(onMoved: (id: string, path: HexPos[]) => void, onXp?: (m: XpMessage) => void): PubConnection {
   const [you, setYou] = useState<string | null>(null);
   const [players, setPlayers] = useState<HarborPlayer[]>([]);
   const [chat, setChat] = useState<HarborChatLine[]>([]);
@@ -32,11 +34,14 @@ export function usePub(onMoved: (id: string, path: HexPos[]) => void): PubConnec
   const [diceError, setDiceError] = useState<string | null>(null);
   const [shoals, setShoals] = useState<ShoalsView | null>(null);
   const [shoalsError, setShoalsError] = useState<string | null>(null);
+  const [lastXp, setLastXp] = useState<XpMessage | null>(null);
   const [status, setStatus] = useState<PubConnection["status"]>("connecting");
   const [error, setError] = useState<string | null>(null);
   const socket = useRef<WebSocket | null>(null);
   const moved = useRef(onMoved);
   moved.current = onMoved;
+  const xpSeen = useRef(onXp);
+  xpSeen.current = onXp;
 
   useEffect(() => {
     let closed = false;
@@ -71,6 +76,11 @@ export function usePub(onMoved: (id: string, path: HexPos[]) => void): PubConnec
           setPlayers((ps) => ps.map((p) => (p.id === msg.id ? { ...p, pos: end } : p)));
           // After React has applied the new position, so the walk is not snapped over.
           queueMicrotask(() => moved.current(msg.id, msg.path));
+        } else if (msg.type === "xp") {
+          // Someone here earned XP: their plate shows the new level and bar, then the sparkle plays.
+          setPlayers((ps) => ps.map((p) => (p.id === msg.id ? { ...p, level: msg.level, xp: msg.xp } : p)));
+          setLastXp(msg);
+          queueMicrotask(() => xpSeen.current?.(msg));
         } else if (msg.type === "said") {
           setChat((c) => [...c, { name: msg.name, text: msg.text }].slice(-30));
         } else if (msg.type === "dice") {
@@ -112,5 +122,5 @@ export function usePub(onMoved: (id: string, path: HexPos[]) => void): PubConnec
   const send = useCallback((message: PubClientMessage) => {
     if (socket.current?.readyState === WebSocket.OPEN) socket.current.send(JSON.stringify(message));
   }, []);
-  return { you, players, chat, dice, diceError, shoals, shoalsError, status, error, send };
+  return { you, players, chat, dice, diceError, shoals, shoalsError, lastXp, status, error, send };
 }

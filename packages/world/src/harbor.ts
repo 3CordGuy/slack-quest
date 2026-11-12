@@ -214,6 +214,20 @@ export interface HarborBoard {
   works?: HarborWorks;
 }
 
+/**
+ * A hero just earned XP at the Harbor, in a hut or at the pub. Sent by the
+ * server once the award is written, to everyone in the room the hero is in:
+ * their new level and XP for the plate, and the amount for the sparkle.
+ */
+export interface XpMessage {
+  type: "xp";
+  id: string;
+  amount: number;
+  level: number;
+  xp: number;
+  levelsGained: number;
+}
+
 export type HarborServerMessage =
   | ({ type: "snapshot"; you: string; crew: { id: string; name: string }; players: HarborPlayer[] } & HarborBoard)
   | ({ type: "board" } & HarborBoard)
@@ -221,7 +235,7 @@ export type HarborServerMessage =
   | { type: "left"; id: string }
   | { type: "moved"; id: string; path: HexPos[] }
   | { type: "said"; id: string; name: string; text: string }
-;
+  | XpMessage;
 
 export type HarborClientMessage =
   | { type: "move"; to: HexPos }

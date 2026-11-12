@@ -5,15 +5,16 @@ import type { NoticeBoard } from "../server/board";
 
 /** What the Harbor's notice board shows: the crew goal and the contracts on offer. */
 export type Board = NoticeBoard;
-import type { CarryState, GatherChoice, GatherSpot, HarborWorks, HutSummary, ItemDef, Perk, ProjectAmounts, PublicHero, Resources, SalesEntry, SalesmanId, SalesmanVisit, ShopEntry, TradeOffer } from "@gantt-quest/world";
+import type { CarryState, GatherChoice, HarborXpStatus, GatherSpot, HarborWorks, HutSummary, ItemDef, Perk, ProjectAmounts, PublicHero, Resources, SalesEntry, SalesmanId, SalesmanVisit, ShopEntry, TradeOffer } from "@gantt-quest/world";
 import { forcedSalesman } from "./salesmanClock";
 import type { GatherStatus } from "../server/gather";
+import type { XpResult } from "../server/harbor-xp";
 import type { TradeList } from "../server/trade";
 import type { ApothecaryView, SmithyView } from "../server/workshops";
 
 export type { ApothecaryView, SmithyView };
 
-export type { GatherStatus };
+export type { GatherStatus, XpResult };
 
 /** What a hero has ordered at the pub and what it gives on their next voyage. */
 export interface PubTab {
@@ -93,6 +94,8 @@ export interface Me {
   carry: CarryState | null;
   /** The crew whose Harbor this player shares, if any. The id doubles as the invite code. */
   crew: { id: string; name: string } | null;
+  /** Harbor XP still to be had today, from any pastime. Absent from an older server. */
+  harborXp?: HarborXpStatus;
   /** On the ADMIN_EMAILS allow-list. Only shows the admin link; the server checks every admin call. */
   isAdmin: boolean;
 }
@@ -153,7 +156,7 @@ export const api = {
   buyPlot: (plot: number) => request<{ plot: number }>("/api/hut/plot", { plot }),
   fillBin: () => request<{ put: Resources; bin: Resources | null }>("/api/hut/bin", {}),
   gatherStart: (spot: GatherSpot) => request<GatherStatus>("/api/gather/start", { spot }),
-  gatherStep: (choice: GatherChoice) => request<GatherStatus & { paid?: Resources }>("/api/gather/step", { choice }),
+  gatherStep: (choice: GatherChoice) => request<GatherStatus & { paid?: Resources; xp?: XpResult }>("/api/gather/step", { choice }),
   pub: () => request<PubTab>("/api/pub"),
   pubOrder: (itemId: string) => request<PubTab>("/api/pub/order", { itemId }),
   pubTalk: (text: string) => request<{ say: string }>("/api/pub/talk", { text }),
@@ -161,12 +164,14 @@ export const api = {
   buyFromSalesman: (index: number) => request<{ got: SalesEntry }>("/api/pub/salesman/buy", { index }, salesmanHeader()),
   projects: () => request<Works>("/api/projects"),
   apothecary: () => request<ApothecaryView>("/api/apothecary"),
-  brew: (brewId: string) => request<ApothecaryView>("/api/apothecary/brew", { brewId }),
+  brew: (brewId: string) => request<ApothecaryView & { xp?: XpResult }>("/api/apothecary/brew", { brewId }),
   smithy: () => request<SmithyView>("/api/smithy"),
-  smith: (itemId: number) => request<SmithyView & { worked: string }>("/api/smithy/work", { itemId }),
-  giveToProject: (projectId: string, give: ProjectAmounts) => request<Works & { completed: boolean }>("/api/projects/give", { projectId, give }),
+  smith: (itemId: number) => request<SmithyView & { worked: string; xp?: XpResult }>("/api/smithy/work", { itemId }),
+  giveToProject: (projectId: string, give: ProjectAmounts) => request<Works & { completed: boolean; xp?: XpResult }>("/api/projects/give", { projectId, give }),
   hut: () => request<Hut>("/api/hut"),
-  craft: (defId: string) => request("/api/hut/craft", { defId }),
+  craft: (defId: string) => request<{ ok: true; xp?: XpResult }>("/api/hut/craft", { defId }),
+  /** A bout at the sparring ring is over: its few XP, if today still has room. */
+  sparDone: () => request<{ xp?: XpResult }>("/api/spar/done", {}),
   /** Materials into (qty > 0) or out of (qty < 0) one of your hut's containers. */
   stash: (container: number, kind: string, qty: number) => request("/api/hut/stash", { container, kind, qty }),
   /** Gear from the bag into a container, or (container null) back into the bag. */

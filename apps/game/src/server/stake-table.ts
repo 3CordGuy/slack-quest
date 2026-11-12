@@ -33,8 +33,10 @@ import {
   type HarborPlayer,
   type ShoalsGame,
   type ShoalsRequest,
+  HARBOR_XP,
 } from "@gantt-quest/world";
 import type { Env } from "./db";
+import { prepareXp, relayXp, xpMessage, xpOutcome } from "./harbor-xp";
 
 /** What every table game's state has in common. */
 interface StakeGame {
@@ -187,9 +189,20 @@ export class StakeTable<G extends StakeGame, R extends { type: string }> {
     return res.meta.changes === ids.length;
   }
 
+  /** The pot to the winner, and a little Harbor XP with it, in one batch. Everyone in the pub sees the XP. */
   private async pay(game: G): Promise<void> {
     if (!game.winner) return;
-    await this.env.DB.batch([this.env.DB.prepare("UPDATE characters SET gold = gold + ? WHERE player_id = ?").bind(this.rules.prize(game.pot), game.winner)]);
+    const xp = await prepareXp(this.env.DB, game.winner, HARBOR_XP.pubWin);
+    const results = await this.env.DB.batch([
+      this.env.DB.prepare("UPDATE characters SET gold = gold + ? WHERE player_id = ?").bind(this.rules.prize(game.pot), game.winner),
+      ...(xp?.statements() ?? []),
+    ]);
+    const earned = xpOutcome(xp, results);
+    if (earned && earned.granted > 0) relayXp(this.ctx, xpMessage(game.winner, earned), (m) => this.publishRaw(m));
+  }
+
+  private publishRaw(message: object) {
+    for (const { ws } of this.sockets()) this.send(ws, message);
   }
 
   /**

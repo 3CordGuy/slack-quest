@@ -16,7 +16,9 @@ import {
   type ProjectAmounts,
   type ProjectCostKind,
   type ProjectGift,
+  HARBOR_XP,
 } from "@gantt-quest/world";
+import { prepareXp, xpOutcome, type XpResult } from "./harbor-xp";
 
 const GIFTS_SHOWN = 12;
 const isKind = (k: string): k is ProjectCostKind => (PROJECT_COST_KINDS as readonly string[]).includes(k);
@@ -79,7 +81,7 @@ export async function projectStock(db: D1Database, playerId: string): Promise<Pr
  * the tables' own constraints refuse an over-payment or an overdraft and the
  * whole batch is rolled back.
  */
-export async function contribute(db: D1Database, crewId: string, playerId: string, projectId: string, give: unknown): Promise<{ error: string } | { completed: boolean }> {
+export async function contribute(db: D1Database, crewId: string, playerId: string, projectId: string, give: unknown): Promise<{ error: string } | { completed: boolean; xp?: XpResult }> {
   const [works, stock] = await Promise.all([crewWorks(db, crewId), projectStock(db, playerId)]);
   const project = works.projects.find((p) => p.id === projectId);
   const check = checkContribution(projectId, { paid: project?.paid ?? {}, built: !!project && project.builtAt !== null }, stock, give);
@@ -126,9 +128,14 @@ export async function contribute(db: D1Database, crewId: string, playerId: strin
       .bind(at, ...key, ...key, ...kinds.flatMap((k) => [k, def.cost[k]!]), kinds.length),
   );
 
+  // The batch is all or nothing (a refused gift throws and rolls it back), so the XP needs no guard of its own.
+  const built = stmts.length - 1;
+  const xp = await prepareXp(db, playerId, HARBOR_XP.project);
+  stmts.push(...(xp?.statements("1") ?? []));
+
   try {
     const res = await db.batch(stmts);
-    return { completed: res[res.length - 1].meta.changes > 0 };
+    return { completed: res[built].meta.changes > 0, xp: xpOutcome(xp, res) };
   } catch (err) {
     console.warn("projects:gift-refused", { projectId, err: err instanceof Error ? err.message : String(err) });
     return { error: `Someone else just gave to the ${def.name}, or your stock changed. Look again and give what is still needed.` };

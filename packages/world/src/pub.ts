@@ -12,7 +12,7 @@
 import type { HexGrid, HexPos } from "@gantt-quest/core";
 import type { DiceRequest, DiceView } from "./dice";
 import type { ShoalsRequest, ShoalsView } from "./shoals";
-import { harborPoi, type HarborPlayer } from "./harbor";
+import { harborPoi, type HarborPlayer, type XpMessage } from "./harbor";
 import type { Perk } from "./hut";
 import { buildRoom, hutPath } from "./hutroom";
 import type { WorldMap } from "./map";
@@ -148,7 +148,8 @@ export type PubServerMessage =
   | { type: "dice"; table: DiceView | null }
   | { type: "diceError"; text: string }
   | { type: "shoals"; table: ShoalsView | null }
-  | { type: "shoalsError"; text: string };
+  | { type: "shoalsError"; text: string }
+  | XpMessage;
 
 export type PubClientMessage =
   | { type: "move"; to: HexPos }

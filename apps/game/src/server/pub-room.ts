@@ -11,6 +11,7 @@ import { DurableObject } from "cloudflare:workers";
 import { HARBOR_MAX_SAY, pubPath, pubRoom, type DiceGame, type DiceRequest, type HarborPlayer, type PubClientMessage, type PubServerMessage, type ShoalsGame, type ShoalsRequest } from "@gantt-quest/world";
 import { crewFor, getCharacter, heroInitFor, type Env, type Player } from "./db";
 import { DICE_RULES, SHOALS_RULES, StakeTable } from "./stake-table";
+import { readXpPost, relayXp } from "./harbor-xp";
 
 const ROOM = pubRoom();
 const DOOR = ROOM.pois.find((p) => p.kind === "door")!.pos;
@@ -62,6 +63,12 @@ export class PubRoom extends DurableObject<Env> {
   }
 
   async fetch(request: Request): Promise<Response> {
+    // A hero earned XP: show it over their head, if they are here.
+    if (new URL(request.url).pathname === "/xp") {
+      const msg = await readXpPost(request);
+      if (msg) relayXp(this.ctx, msg, (m) => this.broadcast(m));
+      return new Response("ok");
+    }
     if (request.headers.get("Upgrade") !== "websocket") return new Response("expected websocket", { status: 426 });
     const id = request.headers.get("x-player-id");
     if (!id) return new Response("missing player", { status: 400 });

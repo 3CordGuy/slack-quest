@@ -21,7 +21,9 @@ import {
   type Resources,
   type Slot,
   type SmithyCost,
+  HARBOR_XP,
 } from "@gantt-quest/world";
+import { prepareXp, xpOutcome, type XpResult } from "./harbor-xp";
 import { crewFor, spendStatements } from "./db";
 import { builtProjectIds, projectStock } from "./projects";
 
@@ -55,7 +57,7 @@ export async function apothecaryView(db: D1Database, playerId: string): Promise<
 }
 
 /** Brew one thing into the bag. Returns an error message, or null once it is in the bag. */
-export async function brew(db: D1Database, playerId: string, brewId: string): Promise<string | null> {
+export async function brew(db: D1Database, playerId: string, brewId: string): Promise<string | { xp?: XpResult }> {
   const view = await apothecaryView(db, playerId);
   const problem = brewProblem(brewId, view);
   if (problem) return problem;
@@ -63,11 +65,13 @@ export async function brew(db: D1Database, playerId: string, brewId: string): Pr
   // The bag is checked again inside the batch: a second brew of the same kind spends nothing.
   const notCarried = `NOT EXISTS (SELECT 1 FROM brews WHERE player_id = ?1 AND brew_id = '${def.id}')`;
   const spend = spendStatements(db, playerId, 0, def.recipe, notCarried);
+  const xp = await prepareXp(db, playerId, HARBOR_XP.brew);
   const res = await db.batch([
     ...spend,
     db.prepare("INSERT INTO brews (player_id, brew_id, brewed_at) SELECT ?1, ?2, ?3 WHERE changes() > 0").bind(playerId, def.id, Date.now()),
+    ...(xp?.statements() ?? []),
   ]);
-  return res[res.length - 1].meta.changes > 0 ? null : "You no longer have what that takes, or it is already in your bag.";
+  return res[spend.length].meta.changes > 0 ? { xp: xpOutcome(xp, res) } : "You no longer have what that takes, or it is already in your bag.";
 }
 
 /** A voyage has sailed: the brews each hero took aboard are used up. Brews made since boarding stay in the bag. */
@@ -123,7 +127,7 @@ export async function smithyView(db: D1Database, playerId: string): Promise<Smit
  * the item's new name. The price comes from the catalogue, for the step the
  * item is on; the batch only goes through if the item is still on that step.
  */
-export async function smithItem(db: D1Database, playerId: string, itemId: unknown): Promise<string | { name: string }> {
+export async function smithItem(db: D1Database, playerId: string, itemId: unknown): Promise<string | { name: string; xp?: XpResult }> {
   const id = typeof itemId === "number" && Number.isSafeInteger(itemId) && itemId > 0 ? itemId : null;
   if (id === null) return "No such item.";
   const view = await smithyView(db, playerId);
@@ -135,9 +139,11 @@ export async function smithItem(db: D1Database, playerId: string, itemId: unknow
   const cost = item.cost!;
   const stillOnThisStep = `(SELECT upgrades FROM inventory WHERE id = ${id} AND player_id = ?1 AND stored_in IS NULL AND kind IN ('weapon', 'armor')) = ${Math.floor(item.upgrades)}`;
   const spend = spendStatements(db, playerId, cost.gold, cost.resources, stillOnThisStep);
+  const xp = await prepareXp(db, playerId, HARBOR_XP.smith);
   const res = await db.batch([
     ...spend,
     db.prepare("UPDATE inventory SET upgrades = upgrades + 1, power = power + 1 WHERE id = ?1 AND player_id = ?2 AND changes() > 0").bind(id, playerId),
+    ...(xp?.statements() ?? []),
   ]);
-  return res[res.length - 1].meta.changes > 0 ? { name: upgradedName(item.name, item.upgrades + 1) } : "You no longer have what that costs.";
+  return res[spend.length].meta.changes > 0 ? { name: upgradedName(item.name, item.upgrades + 1), xp: xpOutcome(xp, res) } : "You no longer have what that costs.";
 }

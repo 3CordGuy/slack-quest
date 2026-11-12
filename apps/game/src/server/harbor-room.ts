@@ -22,6 +22,7 @@ import {
   type HarborServerMessage,
 } from "@gantt-quest/world";
 import { getCrew, harborBoard, heroInitFor, type Env } from "./db";
+import { readXpPost, relayXp } from "./harbor-xp";
 
 const MAP = generateHarbor();
 
@@ -63,6 +64,13 @@ export class HarborRoom extends DurableObject<Env> {
       if (this.ctx.getWebSockets().length > 0) {
         this.broadcast({ type: "board", ...(await harborBoard(this.env.DB, crewId, HARBOR_PIERS.length)) });
       }
+      return new Response("ok");
+    }
+
+    // A hero earned XP: show it over their head, if they are here.
+    if (new URL(request.url).pathname === "/xp") {
+      const msg = await readXpPost(request);
+      if (msg) relayXp(this.ctx, msg, (m) => this.broadcast(m));
       return new Response("ok");
     }
 
