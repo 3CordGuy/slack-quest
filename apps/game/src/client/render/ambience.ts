@@ -298,6 +298,10 @@ export class Ambience {
   readonly sunDir = new THREE.Vector3(-0.4, 0.8, 0.4);
   /** A hut's hanging lamp: the one light indoors, and what the furniture's shadows fall away from. */
   private lamp = new THREE.PointLight("#ffd7a1", 0, 0, 0);
+  /** Whether the hut's hanging lamp is lit. Off, the room is lit only by its candles, lanterns and fires. */
+  private lampOn = true;
+  /** The lamp's glowing lantern, dimmed when the lamp is put out. */
+  private lanternMat: THREE.MeshBasicMaterial | null = null;
   /**
    * Firelight: one warm light for the hearth (or campfire) nearest the camera's
    * target. Indoors it casts shadows alongside the lamp; outdoors it only glows,
@@ -477,11 +481,13 @@ export class Ambience {
 
     // ---- a hut is lit by a lamp hung over the middle of the room, not by the sky ----
     const inside = tiles.some((t) => (t.biome as string) === "floor");
-    this.lamp.visible = this.lamp.castShadow = inside;
+    this.lamp.visible = inside;
+    this.lamp.castShadow = inside && this.lampOn;
     this.sun.castShadow = !inside;
     if (inside) {
       this.lamp.position.set((minX + maxX) / 2, 2.7, (minZ + maxZ) / 2);
-      const lantern = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.26, 0.2), new THREE.MeshBasicMaterial({ color: "#ffe2a8" }));
+      this.lanternMat = new THREE.MeshBasicMaterial({ color: this.lampOn ? "#ffe2a8" : "#4a3f30" });
+      const lantern = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.26, 0.2), this.lanternMat);
       lantern.position.copy(this.lamp.position);
       const cap = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.06, 0.28), new THREE.MeshBasicMaterial({ color: "#3a2c22" }));
       cap.position.copy(this.lamp.position).setY(this.lamp.position.y + 0.16);
@@ -760,13 +766,14 @@ export class Ambience {
   }
 
   /** Advance the sky and everything that sways. `yaw` is the camera's turn; `target` is what it looks at. */
-  update(clock: number, yaw: number, target: THREE.Vector3) {
+  /** `focus`, if given, is where your own hero stands: the lights near you are the ones that matter. */
+  update(clock: number, yaw: number, target: THREE.Vector3, focus?: THREE.Vector3) {
     this.light(target, clock);
     this.fall(clock, target);
     this.puff(clock);
     this.sweep(clock);
     this.splash(clock);
-    this.flicker(clock, target);
+    this.flicker(clock, focus ?? target);
     const motion = this.still ? 0 : 1;
 
     if (this.grass) {
@@ -875,6 +882,14 @@ export class Ambience {
   }
 
   /** Draw smoke rising from these points (chimney tops). An empty list clears it. */
+  /** Light or put out a hut's hanging lamp. */
+  setLampOn(on: boolean) {
+    if (on === this.lampOn) return;
+    this.lampOn = on;
+    this.lamp.castShadow = on && this.indoors;
+    this.lanternMat?.color.set(on ? "#ffe2a8" : "#4a3f30");
+  }
+
   /** The lights the props ask for (hearths, campfires, candles, lanterns) and the flames to flicker. The meshes belong to the caller. */
   setLights(lights: { pos: THREE.Vector3; kind: LightKind }[], flames: THREE.Mesh[]) {
     this.lights = lights;
@@ -898,13 +913,27 @@ export class Ambience {
     const near = (a: { pos: THREE.Vector3 }, b: { pos: THREE.Vector3 }) => a.pos.distanceToSquared(target) - b.pos.distanceToSquared(target);
     const sorted = [...this.lights].sort(near);
 
-    // The nearest fire gets the light that throws shadows.
-    const fire = sorted.find((l) => l.kind === "fire");
+    // One light throws shadows: the nearest fire or, with a hut's lamp put out, the nearest light of any kind,
+    // so a candle or lantern casts the hero's shadow across the floor too.
+    const fire = sorted.find((l) => l.kind === "fire") ?? (this.indoors && !this.lampOn ? sorted[0] : undefined);
     const light = this.fireLight;
     if (fire) {
       light.position.copy(fire.pos);
       light.castShadow = this.indoors;
-      light.intensity = 3.2 * dusk * this.waver(clock, 0, motion);
+      if (fire.kind === "fire") {
+        light.color.set("#ff9548");
+        light.distance = 6;
+        light.decay = 2;
+        light.intensity = 3.2 * dusk * this.waver(clock, 0, motion);
+      } else {
+        const look = GLOW[fire.kind];
+        light.color.set(look.color);
+        // A little more reach than it has as a plain light, so the shadow it throws shows on the floor.
+        // A small light fades gently (decay 1), so a hero a hex or two away still throws a shadow you can see.
+        light.distance = Math.max(look.range * 2, 6);
+        light.decay = 1;
+        light.intensity = look.power * 4 * dusk * (look.flicker ? this.waver(clock, 0, motion) : 1);
+      }
     } else {
       // Kept in the scene (at no strength) rather than hidden, so the light count stays fixed.
       light.intensity = 0;
@@ -1125,7 +1154,10 @@ export class Ambience {
 
   /** The turn, about the vertical, that faces something at (x, z) toward whatever lights it. */
   towardLight(x: number, z: number): number {
-    return this.indoors ? Math.atan2(this.lamp.position.x - x, this.lamp.position.z - z) : Math.atan2(this.sunDir.x, this.sunDir.z);
+    if (!this.indoors) return Math.atan2(this.sunDir.x, this.sunDir.z);
+    // With the lamp out, shadows fall away from the light that throws them, not from the dark lamp.
+    const from = !this.lampOn && this.fireLight.intensity > 0 ? this.fireLight.position : this.lamp.position;
+    return Math.atan2(from.x - x, from.z - z);
   }
 
   private light(target: THREE.Vector3, clock: number) {
@@ -1156,8 +1188,14 @@ export class Ambience {
       this.sun.intensity = 0;
       // With a fire going, the lamp and fill step back so the room is not overlit.
       const fire = this.lights.some((l) => l.kind === "fire");
-      this.lamp.intensity = (fire ? 1.15 : 1.5) * (this.still ? 1 : 1 + Math.sin(clock * 7) * 0.035 + Math.sin(clock * 13.3) * 0.02);
-      this.hemi.intensity = fire ? 0.8 : 0.95;
+      if (this.lampOn) {
+        this.lamp.intensity = (fire ? 1.15 : 1.5) * (this.still ? 1 : 1 + Math.sin(clock * 7) * 0.035 + Math.sin(clock * 13.3) * 0.02);
+        this.hemi.intensity = fire ? 0.8 : 0.95;
+      } else {
+        // Lamp out: a faint fill so the room never goes black, and the candles, lanterns and fires do the rest.
+        this.lamp.intensity = 0;
+        this.hemi.intensity = 0.15;
+      }
       this.hemi.color.set("#ffe9c9");
       this.hemi.groundColor.set("#3b2f2a");
       this.background.set("#1d1a2b");

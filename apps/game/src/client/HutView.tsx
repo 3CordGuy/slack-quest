@@ -75,6 +75,27 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
   const [text, setText] = useState("");
   /** A furnishing picked up to be put down on the next floor hex clicked. */
   const [holding, setHolding] = useState<number | null>(null);
+  /**
+   * Whether this player has put the hanging lamp out, for mood light from the
+   * room's own candles, lanterns and fires. Each player's own view, remembered per hut.
+   */
+  const lampKey = `gq.hutLamp.${ownerId}`;
+  const [lampOff, setLampOff] = useState(() => {
+    try {
+      return localStorage.getItem(lampKey) === "off";
+    } catch {
+      return false;
+    }
+  });
+  const toggleLamp = () =>
+    setLampOff((off) => {
+      try {
+        localStorage.setItem(lampKey, off ? "on" : "off");
+      } catch {
+        // Storage is off: the choice lasts until the page closes.
+      }
+      return !off;
+    });
   /** How the carried piece is turned, in radians. */
   const [turn, setTurn] = useState(0);
   /** Whether turning snaps to notches (the hex's facings, or 15° for small things). Alt flips it while held. */
@@ -137,6 +158,7 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
       npcs: {},
       freeRoam: true,
       indoors: true,
+      lampOff,
       props: placed.map((f) => {
         const def = defOf(f);
         const small = isSmall(f.defId);
@@ -162,7 +184,7 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
       }),
       holding: held && canEdit ? { model: defOf(held)?.model ?? held.defId, small: isSmall(held.defId), mount: defOf(held)?.mount, facing: 0, angle: turn } : null,
     };
-  }, [ownerId, tier, room, players, you, placed, selected, holding, held, canEdit, turn, turning]);
+  }, [ownerId, tier, room, players, you, placed, selected, holding, held, canEdit, turn, turning, lampOff]);
   const latest = useRef(scene);
   latest.current = scene;
   const snapRef = useRef(snap);
@@ -642,6 +664,9 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
             </>
           )}
           <span className="spacer" />
+          <button className={lampOff ? "" : "lamp-on"} aria-pressed={!lampOff} title={lampOff ? "Light the hanging lamp" : "Put the hanging lamp out and let the candles, lanterns and fire light the room"} onClick={toggleLamp}>
+            {lampOff ? "Lamp off" : "Lamp on"}
+          </button>
           <button className={atDoor ? "primary" : ""} onClick={onLeave}>Leave</button>
         </div>
       </DragPanel>
