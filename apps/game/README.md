@@ -56,14 +56,20 @@ Build before deploying: `wrangler deploy` ships whatever the last build produced
 | `…/view.ts` | What a client is allowed to see (hides the lair, NPC secrets, RNG) |
 | `…/harbor.ts` | The Harbor map, path check and message types |
 | `…/gear.ts` | Slots, rarities, item generation, armor, prices and the stall's stock |
+| `…/hut.ts`, `…/hutroom.ts` | Hut materials, furnishings, tiers and perks; the walk-in room, placement and its message types |
+| `…/drops.ts` | Materials, blueprints, decor and trophies paid out by fights, caches and a won story |
+| `…/contracts.ts` | Notice-board contracts and the crew's weekly goal |
+| `…/hero.ts` | A hero as the battle rules see one; shared by voyages and the sparring ring |
 | `apps/game/src/worker.ts` | Harbor HTTP API and the WebSocket route |
 | `apps/game/src/server/run-room.ts` | One Durable Object per voyage: persist, broadcast, timers |
 | `apps/game/src/server/harbor-room.ts` | One Durable Object per crew: presence, walking, chat, dock board |
+| `apps/game/src/server/hut-room.ts` | One Durable Object per hut owner: presence, walking, chat and furniture |
+| `apps/game/src/server/board.ts` | Contract results and crew-goal progress in D1 |
 | `apps/game/src/server/ai.ts` | Prompts and the Workers AI calls (and the mock) |
 | `apps/game/src/server/db.ts` | D1 access |
 | `apps/game/src/server/email.ts` | Sending sign-in codes |
-| `apps/game/src/client/render/` | Three.js island renderer and placeholder sprites |
-| `apps/game/src/client/*.tsx` | Character creation, crew gate, shared Harbor, inventory, market stall and in-voyage HUD (React) |
+| `apps/game/src/client/render/` | Three.js renderer, placeholder sprites, furniture models (`props.ts`) and the sky, shadows and moving decoration (`ambience.ts`) |
+| `apps/game/src/client/*.tsx` | Character creation, crew gate, shared Harbor, huts, notice board (`board/`), sparring ring, inventory, market stall and in-voyage HUD (React) |
 | `apps/game/src/client/itemArt.ts` | Pixel-art item icons drawn in code, in the style of the hero sprites; the accent colour is the item's rarity |
 
 ## Rules worth knowing before changing things
@@ -83,15 +89,15 @@ pnpm --filter @gantt-quest/world typecheck
 pnpm --filter @gantt-quest/game typecheck
 ```
 
-In dev builds the page exposes `window.__gq` (`state`, `send`, and the `World` module) on a voyage and `window.__harbor` in the Harbor, for driving either from the console.
+In dev builds the page exposes `window.__gq` (`state`, `send`, and the `World` module) on a voyage and `window.__harbor` in the Harbor, for driving either from the console. Set `window.__gqTime` to a number from 0 to 1 to pin the time of day (0 is midnight, 0.5 is noon).
 
 ## Known gaps in milestone 1
 
 - Placeholder art: sprites are drawn in code (`render/sprites.ts`), props are primitive shapes.
-- One story frame, one talkable NPC, three hero classes.
+- Four story frames, one talkable NPC per story, three hero classes.
 - Battle numbers are not tuned; a focused party can stun-lock the boss.
 - Battle events animate in sequence but HP bars jump to the final value.
-- Huts are plots only: no interiors, decorating or upgrades yet, and only the first 12 crew members get one drawn.
+- Huts can be entered and furnished, but crafting, buying furniture, hut tiers and applying hut perks to a voyage are not built. Only the first 12 crew members get a hut drawn.
 - The Harbor's only shop is the market stall (gear). No smithy, potions or provisioning yet. Crew chat is not stored.
 - Gear has no affixes, uniques, sets or elements.
 - No production deploy and no CI deploy. Staging is deployed by hand; production needs a workflow change and review.
