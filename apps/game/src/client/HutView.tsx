@@ -4,10 +4,11 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { HexPos } from "@gantt-quest/core";
-import { FURNISHINGS, HERO_CLASSES, craftProblem, hutPerks, hutRoom, hutTier, nextHutTier, placedFurnishings, poiAt, upgradeProblem, type Furnishing } from "@gantt-quest/world";
+import { CARRY_FORMULA, FURNISHINGS, HERO_CLASSES, RARITY_COLOR, SLOT_LABEL, STORAGE_CHEST, carryProblem, craftProblem, hutPerks, hutRoom, hutTier, nextHutTier, placedFurnishings, poiAt, upgradeProblem, type Furnishing } from "@gantt-quest/world";
 import { api, type Hut, type Me } from "./api";
 import { DragPanel } from "./DragPanel";
 import { CostChips, PerkMeter, ResourceChips } from "./hutDrops";
+import { ItemTile, bonusSummary, toOwned } from "./items";
 import { TileAction } from "./TileAction";
 import { WorldRenderer, type RenderState } from "./render/WorldRenderer";
 import { useHut } from "./useHut";
@@ -20,7 +21,8 @@ const defOf = (f: Furnishing) => FURNISHINGS[f.defId];
 /** Everything that can be crafted, starter recipes first. */
 const RECIPES = Object.values(FURNISHINGS).filter((f) => f.recipe).sort((a, b) => Number(!!a.needsBlueprint) - Number(!!b.needsBlueprint));
 
-type Tab = "furnish" | "craft" | "upgrade";
+type Tab = "furnish" | "chest" | "craft" | "upgrade";
+const TAB_LABEL: Record<Tab, string> = { furnish: "Furnish", chest: "Chest", craft: "Craft", upgrade: "Upgrade" };
 
 export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me: Me; refresh(): Promise<unknown>; onLeave(): void }) {
   const mount = useRef<HTMLDivElement>(null);
@@ -39,12 +41,14 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
   const [spendError, setSpendError] = useState<string | null>(null);
   const [made, setMade] = useState<string | null>(null);
 
-  const hut = useHut(ownerId, (id, path) => renderer.current?.playEvents([{ t: "moved", heroId: id, path }]));
+  // Whenever the chest changes, so has the pack: re-read the player.
+  const hut = useHut(ownerId, (id, path) => renderer.current?.playEvents([{ t: "moved", heroId: id, path }]), () => void refresh());
   const { you, players, furnishings, canEdit, tier, owner } = hut;
   const room = useMemo(() => (tier === null ? null : hutRoom(tier)), [tier]);
   const placed = useMemo(() => placedFurnishings(furnishings), [furnishings]);
   const stored = furnishings.filter((f) => f.q === null);
   const chosen = placed.find((f) => f.id === selected) ?? null;
+  const chosenChest = chosen?.defId === STORAGE_CHEST;
   const held = furnishings.find((f) => f.id === holding) ?? null;
 
   const scene = useMemo<RenderState | null>(() => {
@@ -79,6 +83,8 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
       setHolding(null);
     } else if (canEdit && piece) {
       setSelected(piece.id);
+      // Clicking the storage chest opens it.
+      if (piece.defId === STORAGE_CHEST) setTab("chest");
     } else {
       setSelected(null);
       hut.send({ type: "move", to: pos });
@@ -130,6 +136,7 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
     }
   };
   const perks = useMemo(() => hutPerks(furnishings), [furnishings]);
+  const packItems = useMemo(() => me.inventory.filter((i) => !i.equipped).map(toOwned), [me.inventory]);
   const bigger = tier === null ? null : nextHutTier(tier);
   const title = mine ? "Your hut" : owner ? `${owner.name}'s hut` : "A hut";
   const self = players.find((p) => p.id === you);
@@ -170,14 +177,63 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
       {canEdit && (
         <DragPanel id="hut.furnish" title="Furnish" foldOnPhone className="story panel hut-furnish">
           <div className="hut-tabs">
-            {(["furnish", "craft", "upgrade"] as Tab[]).map((t) => (
+            {(["furnish", "chest", "craft", "upgrade"] as Tab[]).map((t) => (
               <button key={t} className={`small ${tab === t ? "selected" : ""}`} onClick={() => (setTab(t), setMade(null), setSpendError(null))}>
-                {t === "furnish" ? "Furnish" : t === "craft" ? "Craft" : "Upgrade"}
+                {TAB_LABEL[t]}
               </button>
             ))}
           </div>
           {tab !== "furnish" && spendError && <p className="bad">{spendError}</p>}
           {tab !== "furnish" && made && <p className="good">{made}</p>}
+
+          {tab === "chest" && <>
+            {!hut.chest ? <p className="muted">Opening the chest…</p> : <>
+              {chosenChest && (
+                <p className="muted">
+                  Storage Chest selected. <button className="link" onClick={() => setTab("furnish")}>Move or turn it</button>
+                </p>
+              )}
+              <p className={hut.chest.carried > hut.chest.limit ? "bad" : "muted"} title={`Pack size: ${CARRY_FORMULA}`}>
+                Carried {hut.chest.carried} / {hut.chest.limit}. Gear you cannot carry waits here; only you can open it, and only from inside your hut.
+              </p>
+              {hut.refused && <p className="bad">{hut.refused}</p>}
+              <h3>In the chest</h3>
+              {hut.chest.items.length === 0 && <p className="muted">Empty. Send gear here from your inventory, from anywhere.</p>}
+              <ul className="hut-chest">
+                {hut.chest.items.map((item) => (
+                  <li key={item.id}>
+                    <ItemTile item={item} />
+                    <div className="hut-chest-info">
+                      <strong style={{ color: RARITY_COLOR[item.rarity] }}>{item.name}</strong>
+                      <span className="muted">{SLOT_LABEL[item.slot]}{item.power > 0 && ` · +${item.power}`}{bonusSummary(item) && ` · ${bonusSummary(item)}`}</span>
+                    </div>
+                    <button
+                      className="small primary"
+                      disabled={!!carryProblem(hut.chest!, 1)}
+                      title={carryProblem(hut.chest!, 1) ?? "Into your pack"}
+                      onClick={() => hut.send({ type: "take", id: item.id })}
+                    >
+                      Take
+                    </button>
+                  </li>
+                ))}
+              </ul>
+              <h3>In your pack</h3>
+              {packItems.length === 0 && <p className="muted">Nothing carried besides what you wear.</p>}
+              <ul className="hut-chest">
+                {packItems.map((item) => (
+                  <li key={item.id}>
+                    <ItemTile item={item} />
+                    <div className="hut-chest-info">
+                      <strong style={{ color: RARITY_COLOR[item.rarity] }}>{item.name}</strong>
+                      <span className="muted">{SLOT_LABEL[item.slot]}{item.power > 0 && ` · +${item.power}`}{bonusSummary(item) && ` · ${bonusSummary(item)}`}</span>
+                    </div>
+                    <button className="small" disabled={busy} onClick={() => void spend(() => api.store(item.id), `${item.name} is in the chest.`)}>Store</button>
+                  </li>
+                ))}
+              </ul>
+            </>}
+          </>}
 
           {tab === "furnish" && <>
           {chosen ? (
@@ -188,6 +244,7 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
                 <button className="small" onClick={() => hut.send({ type: "rotate", id: chosen.id })}>Rotate</button>
                 <button className="small" onClick={() => pick(chosen.id)}>Move</button>
                 <button className="small" onClick={() => (hut.send({ type: "pick_up", id: chosen.id }), setSelected(null))}>Put away</button>
+                {chosen.defId === STORAGE_CHEST && <button className="small primary" onClick={() => setTab("chest")}>Open</button>}
               </div>
             </div>
           ) : held ? (

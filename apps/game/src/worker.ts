@@ -30,6 +30,8 @@ import {
   getCharacter,
   getHut,
   getInventory,
+  carryState,
+  storeItem,
   getRun,
   getShop,
   joinCrew,
@@ -146,12 +148,14 @@ app.use("/api/*", async (c, next) => {
 
 app.get("/api/me", async (c) => {
   const player = c.get("player");
-  const [character, inventory, crew] = await Promise.all([
+  const [character, inventory, crew, carry] = await Promise.all([
     getCharacter(c.env.DB, player.id),
     getInventory(c.env.DB, player.id),
     crewFor(c.env.DB, player.id),
+    carryState(c.env.DB, player.id),
   ]);
-  return c.json({ player, character, inventory, crew });
+  // `inventory` is what the hero has with them; what is in storage at home is only listed inside their hut.
+  return c.json({ player, character, inventory, crew, carry });
 });
 
 // Roll (or re-roll) starting stats for a character that is still a draft.
@@ -198,6 +202,17 @@ app.post("/api/character/unequip", async (c) => {
   const body = await c.req.json<{ itemId?: number }>().catch(() => ({}) as { itemId?: number });
   const error = await unequipItem(c.env.DB, c.get("player").id, Number(body.itemId));
   return error ? c.json({ error }, 409) : c.json({ ok: true });
+});
+
+// Send an unequipped item to the storage chest at home. Allowed from anywhere; taking it back is only done inside the hut.
+app.post("/api/inventory/store", async (c) => {
+  const player = c.get("player");
+  const body = await c.req.json<{ itemId?: number }>().catch(() => ({}) as { itemId?: number });
+  const error = await storeItem(c.env.DB, player.id, Number(body.itemId));
+  if (error) return c.json({ error }, 409);
+  // If they are standing in their hut (another tab), the chest there shows it.
+  c.executionCtx.waitUntil(refreshHut(c.env, player.id));
+  return c.json({ ok: true });
 });
 
 // ---------- the market stall ----------

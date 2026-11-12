@@ -5,6 +5,7 @@
 
 import { useMemo, useState, type DragEvent } from "react";
 import {
+  CARRY_FORMULA,
   HERO_CLASSES,
   SLOTS,
   SLOT_ICON,
@@ -67,6 +68,7 @@ export function InventoryScreen({ me, refresh, onClose, onIsland = false }: Prop
   const [over, setOver] = useState<string | null>(null);
 
   const items = useMemo(() => me.inventory.map(toOwned), [me.inventory]);
+  const carry = me.carry;
   const worn = useMemo(() => new Map(items.filter((i) => i.equipped).map((i) => [i.slot, i])), [items]);
   const pack = useMemo(
     () => items.filter((i) => !i.equipped && FILTERS.find((f) => f.id === filter)!.test(i)).sort(SORTS[sort]),
@@ -178,6 +180,14 @@ export function InventoryScreen({ me, refresh, onClose, onIsland = false }: Prop
                 </button>
               ))}
               <span className="spacer" />
+              {carry && (
+                <span
+                  className={`carry ${carry.carried > carry.limit ? "bad" : carry.carried === carry.limit ? "warn" : "muted"}`}
+                  title={`Pack size: ${CARRY_FORMULA} (${total("str")}) = ${carry.limit}. Worn gear does not count, and neither do hut materials.`}
+                >
+                  Carried {carry.carried} / {carry.limit}
+                </span>
+              )}
               <span className="muted">Sort</span>
               {(Object.keys(SORTS) as SortKey[]).map((s) => (
                 <button key={s} className={`small ${sort === s ? "selected" : ""}`} onClick={() => setSort(s)}>{s}</button>
@@ -197,6 +207,15 @@ export function InventoryScreen({ me, refresh, onClose, onIsland = false }: Prop
               ))}
               {pack.length === 0 && <p className="muted">{items.some((i) => !i.equipped) ? "Nothing of that kind in your pack." : "Your pack is empty. Islands and the market stall are where gear comes from."}</p>}
             </div>
+            {carry && (
+              <p className="muted carry-note">
+                Pack size {CARRY_FORMULA} = {carry.limit}, not counting what you wear.{" "}
+                {carry.carried > carry.limit ? <span className="bad">Over the limit: send {carry.carried - carry.limit} to storage before taking on more. </span> : null}
+                {carry.hasHome
+                  ? `${carry.stored} in storage at home. Send things there from anywhere; take them back inside your hut.`
+                  : "No storage yet: build a shack on a plot in the Harbor for a chest to keep the rest in."}
+              </p>
+            )}
           </section>
 
           <section className="inv-detail">
@@ -208,6 +227,13 @@ export function InventoryScreen({ me, refresh, onClose, onIsland = false }: Prop
                   <>
                     <button className="primary" disabled={busy || !!equipProblem(selected, c.class_id, c.level)} onClick={() => equip(selected.id)}>Equip</button>
                     <button disabled={busy} onClick={() => act(async () => { await api.sell(selected.id); setSelectedId(null); })}>Sell · {sellPrice(selected)}g</button>
+                    <button
+                      disabled={busy || !carry?.hasHome}
+                      title={carry?.hasHome ? "Off to the chest in your hut. Take it back from inside the hut." : "You have no storage yet. Build a shack on a plot in the Harbor."}
+                      onClick={() => act(async () => { await api.store(selected.id); setSelectedId(null); })}
+                    >
+                      Send to storage
+                    </button>
                   </>
                 )}
               </ItemDetail>

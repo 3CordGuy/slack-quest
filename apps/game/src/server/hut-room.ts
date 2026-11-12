@@ -13,6 +13,9 @@ import { DurableObject } from "cloudflare:workers";
 import {
   FURNISHINGS,
   HARBOR_MAX_SAY,
+  STORAGE_CHEST,
+  freeSpot,
+  placedFurnishings,
   hutDoor,
   hutPath,
   hutRoom,
@@ -24,7 +27,7 @@ import {
   type HutServerMessage,
   type WorldMap,
 } from "@gantt-quest/world";
-import { crewFor, furnishingStatement, getCharacter, getHut, hasShack, heroInitFor, homeOf, type Env, type Player } from "./db";
+import { carryState, crewFor, furnishingStatement, getCharacter, getHut, getStored, hasShack, heroInitFor, homeOf, rowToItem, takeStoredItem, type Env, type Player } from "./db";
 
 /** What a player with nothing at all is given the first time they open their own hut. */
 const STARTER_SET = ["table", "chair", "rug"];
@@ -95,11 +98,32 @@ export class HutRoom extends DurableObject<Env> {
     return this.loading;
   }
 
-  /** The owner opening a hut while owning no furnishings at all gets a few to start with. */
-  private async stockIfEmpty(ownerId: string): Promise<Hut> {
+  /**
+   * The owner opening a hut while owning no furnishings at all gets a few to
+   * start with. Every home also comes with one free storage chest, standing
+   * in the room; a hut built before chests existed gets it on the owner's
+   * next visit. The insert checks for a chest itself, so two tabs at once
+   * cannot both add one.
+   */
+  private async stock(ownerId: string): Promise<Hut> {
     const hut = await this.load(ownerId, true);
-    if (hut.furnishings.length > 0) return hut;
-    await this.env.DB.batch(STARTER_SET.map((defId) => furnishingStatement(this.env.DB, ownerId, { defId, label: FURNISHINGS[defId].name })));
+    const statements: D1PreparedStatement[] = [];
+    if (hut.furnishings.length === 0) {
+      statements.push(...STARTER_SET.map((defId) => furnishingStatement(this.env.DB, ownerId, { defId, label: FURNISHINGS[defId].name })));
+    }
+    if (!hut.furnishings.some((f) => f.defId === STORAGE_CHEST)) {
+      const spot = freeSpot(hut.room, placedFurnishings(hut.furnishings), STORAGE_CHEST, hutDoor(hut.tier));
+      statements.push(
+        this.env.DB
+          .prepare(
+            `INSERT INTO furnishings (player_id, def_id, label, meta_json, q, r, facing, created_at)
+             SELECT ?1, ?2, ?3, '{}', ?4, ?5, 0, ?6 WHERE NOT EXISTS (SELECT 1 FROM furnishings WHERE player_id = ?1 AND def_id = ?2)`,
+          )
+          .bind(ownerId, STORAGE_CHEST, FURNISHINGS[STORAGE_CHEST].name, spot?.q ?? null, spot?.r ?? null, Date.now()),
+      );
+    }
+    if (statements.length === 0) return hut;
+    await this.env.DB.batch(statements);
     return this.load(ownerId, true);
   }
 
@@ -125,6 +149,18 @@ export class HutRoom extends DurableObject<Env> {
     for (const ws of this.ctx.getWebSockets()) if (ws !== except) this.send(ws, message);
   }
 
+  /**
+   * Tell the owner, on every socket they have in this room, what is in their
+   * storage chest and how full their pack is. Visitors never see it.
+   */
+  private async sendChest(ownerId: string): Promise<void> {
+    const sockets = this.ctx.getWebSockets(ownerId);
+    if (sockets.length === 0) return;
+    const [rows, carry] = await Promise.all([getStored(this.env.DB, ownerId), carryState(this.env.DB, ownerId)]);
+    const message: HutServerMessage = { type: "chest", items: rows.map((r) => ({ ...rowToItem(r), id: r.id })), carried: carry?.carried ?? 0, limit: carry?.limit ?? 0 };
+    for (const ws of sockets) this.send(ws, message);
+  }
+
   /** The owner's id is the tag every socket in this room carries besides its player's. */
   private ownerId(ws: WebSocket): string | null {
     return this.ctx.getTags(ws).find((t) => t.startsWith("owner:"))?.slice(6) ?? null;
@@ -139,6 +175,8 @@ export class HutRoom extends DurableObject<Env> {
       if (this.ctx.getWebSockets().length > 0) {
         const hut = await this.load(ownerId, true);
         this.broadcast({ type: "furnishings", tier: hut.tier, furnishings: hut.furnishings });
+        // Gear may have gone into or out of the chest from the inventory screen.
+        await this.sendChest(ownerId);
       } else {
         this.hut = null;
       }
@@ -149,7 +187,7 @@ export class HutRoom extends DurableObject<Env> {
     const id = request.headers.get("x-player-id");
     if (!id) return new Response("missing player", { status: 400 });
     const canEdit = id === ownerId;
-    const hut = canEdit ? await this.stockIfEmpty(ownerId) : await this.load(ownerId);
+    const hut = canEdit ? await this.stock(ownerId) : await this.load(ownerId);
 
     // One socket per player. A new tab takes over, standing where the old one stood.
     let pos = hutDoor(hut.tier);
@@ -180,6 +218,7 @@ export class HutRoom extends DurableObject<Env> {
       furnishings: hut.furnishings,
     });
     this.broadcast({ type: "joined", player }, pair[1]);
+    if (canEdit) await this.sendChest(ownerId);
     return new Response(null, { status: 101, webSocket: pair[0] });
   }
 
@@ -200,6 +239,15 @@ export class HutRoom extends DurableObject<Env> {
       if (text) this.broadcast({ type: "said", id: player.id, name: player.name, text });
       return;
     }
+    if (msg.type === "take") {
+      // Only here, on the owner's own socket in their own hut, can anything come out of storage.
+      if (player.id !== ownerId) return this.send(ws, { type: "refused", reason: "Only the owner can open the storage chest." });
+      const error = await takeStoredItem(this.env.DB, ownerId, Number(msg.id));
+      if (error) this.send(ws, { type: "refused", reason: error });
+      await this.sendChest(ownerId);
+      return;
+    }
+
     const hut = await this.load(ownerId);
 
     if (msg.type === "move") {

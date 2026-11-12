@@ -200,7 +200,11 @@ export class RunRoom extends DurableObject<Env> {
     await db.batch(stmts);
     // Rewards reach the character as they are earned, not at the end of the run.
     for (const effect of res.effects) {
-      if (effect.kind === "grant") await applyGrant(db, next.code, effect.heroId, effect);
+      if (effect.kind === "grant") {
+        const place = await applyGrant(db, next.code, effect.heroId, effect);
+        // A full pack never loses loot, but the hero hears where it went.
+        if (effect.item && (place === "storage" || place === "overfull")) res.events.push({ t: "pack_full", heroId: effect.heroId, item: effect.item.name, place });
+      }
       else if (effect.kind === "penalty") await applyPenalty(db, effect.heroId, effect.goldPct, effect.cap);
     }
     // Notice board: contract outcomes when the run ends, and the crew's goal.

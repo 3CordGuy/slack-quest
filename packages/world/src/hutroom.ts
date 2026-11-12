@@ -7,6 +7,7 @@
 
 import { allHexesInGrid, posKey, type HexGrid, type HexPos } from "@gantt-quest/core";
 import { harborPoi, type HarborPlayer } from "./harbor";
+import type { ItemDef } from "./gear";
 import { FURNISHINGS, HUT_TIERS, type Furnishing, type HutTier } from "./hut";
 import { BASE_HEIGHT, findPath, poiAt, tileAt, type Tile, type WorldMap } from "./map";
 
@@ -59,6 +60,19 @@ export function hutRoom(tier: number): WorldMap {
 /** Floor hexes a furnishing could stand on: every floor hex but the door. */
 export function hutFloor(room: WorldMap): HexPos[] {
   return room.tiles.filter((t) => t.biome === "floor" && poiAt(room, t)?.kind !== "door").map((t) => ({ q: t.q, r: t.r }));
+}
+
+/**
+ * Where a new piece can go in a room with these pieces already standing:
+ * against the back wall facing the door, as near the middle as it can be, so
+ * it is out of the way and in plain sight. Null if the floor is full.
+ */
+export function freeSpot(room: WorldMap, placed: Pick<Furnishing, "q" | "r">[], defId: string, door: HexPos): HexPos | null {
+  const free = hutFloor(room).filter((p) => !placeProblem(room, placed, defId, p));
+  // Rows away from the door first, then sideways from its column.
+  const depth = (p: HexPos) => Math.abs(p.r - door.r);
+  const side = (p: HexPos) => Math.abs(colOf(p) - colOf(door));
+  return free.sort((a, b) => depth(b) - depth(a) || side(a) - side(b) || a.q - b.q)[0] ?? null;
 }
 
 /** The furnishings that are standing in the room, not in storage. */
@@ -130,7 +144,9 @@ export type HutServerMessage =
   | { type: "moved"; id: string; path: HexPos[] }
   | { type: "said"; id: string; name: string; text: string }
   /** Sent only to whoever asked for something that was not allowed. */
-  | { type: "refused"; reason: string };
+  | { type: "refused"; reason: string }
+  /** Owner only: what is in their storage chest, and how full their pack is. Sent on entering and after any change. */
+  | { type: "chest"; items: ChestItem[]; carried: number; limit: number };
 
 export type HutClientMessage =
   | { type: "move"; to: HexPos }
@@ -140,4 +156,9 @@ export type HutClientMessage =
   /** Owner only. Back into storage. */
   | { type: "pick_up"; id: number }
   /** Owner only. Turn a placed furnishing; one step clockwise unless `facing` is given. */
-  | { type: "rotate"; id: number; facing?: number };
+  | { type: "rotate"; id: number; facing?: number }
+  /** Owner only. Take an item out of the storage chest into the pack. */
+  | { type: "take"; id: number };
+
+/** An item in a storage chest. */
+export type ChestItem = ItemDef & { id: number };

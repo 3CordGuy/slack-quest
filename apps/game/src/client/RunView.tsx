@@ -94,6 +94,11 @@ function describe(events: WorldEvent[], state: ClientState, names: Map<string, s
       case "gold": out.push(`${n(ev.heroId)} gains ${ev.amount} gold.`); break;
       case "xp": out.push(`${n(ev.heroId)} gains ${ev.amount} XP.`); break;
       case "loot": out.push(`${n(ev.heroId)} found ${ev.item.name} (${ev.item.rarity}).`); break;
+      case "pack_full":
+        out.push(ev.heroId === state.you
+          ? World.lootPlaceText(ev.place, ev.item)!
+          : `${n(ev.heroId)}'s pack is full: ${ev.item} ${ev.place === "storage" ? "goes to their storage chest at home" : "is carried over the limit"}.`);
+        break;
       case "key_item": out.push(`${n(ev.heroId)} now carries ${ev.name}.`); break;
       case "resources": out.push(`${n(ev.heroId)} gathers ${resourceText(ev.resources)}.`); break;
       case "blueprint": out.push(`${n(ev.heroId)} found a blueprint: ${blueprintName(ev.blueprint)}.`); break;

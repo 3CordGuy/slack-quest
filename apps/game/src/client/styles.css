@@ -244,6 +244,9 @@ input:focus, button:focus-visible, select:focus { outline: 2px solid var(--accen
 
 .inv-pack { border: 2px solid var(--line); padding: 8px; display: flex; flex-direction: column; gap: 8px; }
 .pack-bar { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.carry { font-size: 0.85em; font-variant-numeric: tabular-nums; margin-right: 6px; }
+.carry.warn { color: var(--gold); }
+.carry-note { font-size: 0.8em; margin: 6px 0 0; }
 .pack-grid { display: flex; flex-wrap: wrap; gap: 8px; align-content: flex-start; }
 
 .detail { display: flex; flex-direction: column; gap: 6px; }

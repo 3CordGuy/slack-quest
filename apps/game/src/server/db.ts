@@ -30,6 +30,14 @@ import {
   binDeposit,
   binNeeds,
   STARTER_BLUEPRINTS,
+  addStats,
+  carryLimit,
+  carryProblem,
+  loadoutOf,
+  lootPlace,
+  storeProblem,
+  type CarryState,
+  type LootPlace,
   type FurnishingGrant,
   type HarborBoard,
   type HarborLogEntry,
@@ -102,6 +110,8 @@ export interface InventoryRow {
   icon: string;
   stat_bonus_json: string;
   equipped: number;
+  /** 1 while the item is in the storage chest at home. */
+  stored: number;
 }
 
 export function rowToItem(row: InventoryRow): ItemDef {
@@ -118,12 +128,21 @@ export function rowToItem(row: InventoryRow): ItemDef {
   };
 }
 
-function insertItem(db: D1Database, playerId: string, item: ItemDef, equipped: boolean): D1PreparedStatement {
+function insertItem(db: D1Database, playerId: string, item: ItemDef, equipped: boolean, stored = false): D1PreparedStatement {
   return db
     .prepare(
-      "INSERT INTO inventory (player_id, kind, ref, name, rarity, slot, power, level_req, icon, stat_bonus_json, equipped, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      "INSERT INTO inventory (player_id, kind, ref, name, rarity, slot, power, level_req, icon, stat_bonus_json, equipped, stored, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
-    .bind(playerId, item.kind, item.ref, item.name, item.rarity, item.slot, item.power, item.levelReq, item.icon, JSON.stringify(item.statBonus), equipped ? 1 : 0, Date.now());
+    .bind(playerId, item.kind, item.ref, item.name, item.rarity, item.slot, item.power, item.levelReq, item.icon, JSON.stringify(item.statBonus), equipped ? 1 : 0, stored ? 1 : 0, Date.now());
+}
+
+/** A new item into the pack, but only if the statement before it in the batch changed a row. */
+function paidPackItemStatement(db: D1Database, playerId: string, item: ItemDef): D1PreparedStatement {
+  return db
+    .prepare(
+      "INSERT INTO inventory (player_id, kind, ref, name, rarity, slot, power, level_req, icon, stat_bonus_json, equipped, stored, created_at) SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ? WHERE changes() > 0",
+    )
+    .bind(playerId, item.kind, item.ref, item.name, item.rarity, item.slot, item.power, item.levelReq, item.icon, JSON.stringify(item.statBonus), Date.now());
 }
 
 async function getItem(db: D1Database, playerId: string, itemId: number): Promise<InventoryRow | null> {
@@ -237,9 +256,82 @@ export async function getCharacter(db: D1Database, playerId: string): Promise<Ch
   return db.prepare("SELECT * FROM characters WHERE player_id = ?").bind(playerId).first<CharacterRow>();
 }
 
+/** Everything the player has with them: worn gear and the pack. Not what is in storage at home. */
 export async function getInventory(db: D1Database, playerId: string): Promise<InventoryRow[]> {
-  const res = await db.prepare("SELECT * FROM inventory WHERE player_id = ? ORDER BY id").bind(playerId).all<InventoryRow>();
+  const res = await db.prepare("SELECT * FROM inventory WHERE player_id = ? AND stored = 0 ORDER BY id").bind(playerId).all<InventoryRow>();
   return res.results;
+}
+
+/** What is in the player's storage chest at home. */
+export async function getStored(db: D1Database, playerId: string): Promise<InventoryRow[]> {
+  const res = await db.prepare("SELECT * FROM inventory WHERE player_id = ? AND stored = 1 ORDER BY id").bind(playerId).all<InventoryRow>();
+  return res.results;
+}
+
+// ---------- the pack and the storage chest ----------
+
+/** SQL for how many unequipped items player ?1 carries right now. */
+const CARRIED_SQL = "(SELECT COUNT(*) FROM inventory WHERE player_id = ?1 AND equipped = 0 AND stored = 0)";
+/** SQL that is true if player ?1 has a hut standing, and so a storage chest. */
+const HAS_HOME_SQL = "EXISTS (SELECT 1 FROM huts WHERE player_id = ?1 AND plot IS NOT NULL AND bin_json IS NULL)";
+
+/**
+ * How full the player's pack is, how big it may be (Strength, base plus
+ * worn gear), what is in storage and whether they have a home for it.
+ * Null without a character.
+ */
+export async function carryState(db: D1Database, playerId: string): Promise<CarryState | null> {
+  const [c, worn, counts, home] = await db.batch([
+    db.prepare("SELECT * FROM characters WHERE player_id = ?1").bind(playerId),
+    db.prepare("SELECT * FROM inventory WHERE player_id = ?1 AND equipped = 1").bind(playerId),
+    db.prepare(`SELECT ${CARRIED_SQL} AS carried, (SELECT COUNT(*) FROM inventory WHERE player_id = ?1 AND stored = 1) AS stored`).bind(playerId),
+    db.prepare(`SELECT ${HAS_HOME_SQL} AS yes`).bind(playerId),
+  ]);
+  const character = c.results[0] as CharacterRow | undefined;
+  if (!character) return null;
+  const bonus = loadoutOf((worn.results as InventoryRow[]).map(rowToItem)).bonus;
+  const n = counts.results[0] as { carried: number; stored: number };
+  return {
+    carried: n.carried,
+    stored: n.stored,
+    limit: carryLimit(addStats(statsOf(character), bonus)),
+    hasHome: !!(home.results[0] as { yes: number }).yes,
+  };
+}
+
+/**
+ * Send an unequipped item to the storage chest at home. Works from
+ * anywhere, as long as there is a home to send it to. Returns an error
+ * message or null.
+ */
+export async function storeItem(db: D1Database, playerId: string, itemId: number): Promise<string | null> {
+  const [row, carry] = await Promise.all([getItem(db, playerId, itemId), carryState(db, playerId)]);
+  if (!carry) return "Create a character first.";
+  const problem = storeProblem(row && { equipped: !!row.equipped, stored: !!row.stored }, carry.hasHome);
+  if (problem) return problem;
+  const res = await db
+    .prepare(`UPDATE inventory SET stored = 1 WHERE id = ?2 AND player_id = ?1 AND equipped = 0 AND stored = 0 AND ${HAS_HOME_SQL}`)
+    .bind(playerId, itemId)
+    .run();
+  return res.meta.changes > 0 ? null : "That item changed just now. Try again.";
+}
+
+/**
+ * Take an item out of storage into the pack. Only the owner's own HutRoom
+ * calls this, for a player standing in their hut. Refused if the pack is
+ * full; the count is checked again inside the write.
+ */
+export async function takeStoredItem(db: D1Database, playerId: string, itemId: number): Promise<string | null> {
+  const [row, carry] = await Promise.all([getItem(db, playerId, itemId), carryState(db, playerId)]);
+  if (!carry) return "Create a character first.";
+  if (!row?.stored) return "That is not in your storage.";
+  const full = carryProblem(carry, 1);
+  if (full) return full;
+  const res = await db
+    .prepare(`UPDATE inventory SET stored = 0 WHERE id = ?2 AND player_id = ?1 AND stored = 1 AND ${CARRIED_SQL} < ?3`)
+    .bind(playerId, itemId, carry.limit)
+    .run();
+  return res.meta.changes > 0 ? null : "Your pack filled up just now. Send something to storage first.";
 }
 
 /** Create or overwrite the player's draft character with freshly rolled stats. */
@@ -291,11 +383,13 @@ export async function spendPoint(db: D1Database, playerId: string, stat: string)
 export async function equipItem(db: D1Database, playerId: string, itemId: number): Promise<string | null> {
   const [row, c] = await Promise.all([getItem(db, playerId, itemId), getCharacter(db, playerId)]);
   if (!row || !c) return "No such item.";
+  if (row.stored) return "That is in storage at home. Take it out there first.";
   const problem = equipProblem(rowToItem(row), c.class_id, c.level);
   if (problem) return `${problem}.`;
+  // Swapping never changes how many are carried: one comes off as the other goes on.
   await db.batch([
-    db.prepare("UPDATE inventory SET equipped = 0 WHERE player_id = ? AND slot = ?").bind(playerId, row.slot),
-    db.prepare("UPDATE inventory SET equipped = 1 WHERE id = ?").bind(itemId),
+    db.prepare("UPDATE inventory SET equipped = 0 WHERE player_id = ?1 AND slot = ?2 AND EXISTS (SELECT 1 FROM inventory WHERE id = ?3 AND stored = 0)").bind(playerId, row.slot, itemId),
+    db.prepare("UPDATE inventory SET equipped = 1 WHERE id = ? AND stored = 0").bind(itemId),
   ]);
   return null;
 }
@@ -305,6 +399,7 @@ export async function unequipItem(db: D1Database, playerId: string, itemId: numb
   if (!row) return "No such item.";
   // Abilities come from the weapon, so the main hand is only ever swapped.
   if (row.slot === "main_hand") return "You need a weapon in hand. Equip another to swap.";
+  // Into the pack even if that puts it over the limit: nothing is ever dropped.
   await db.prepare("UPDATE inventory SET equipped = 0 WHERE id = ?").bind(itemId).run();
   return null;
 }
@@ -314,9 +409,10 @@ export async function sellItem(db: D1Database, playerId: string, itemId: number)
   const row = await getItem(db, playerId, itemId);
   if (!row) return "No such item.";
   if (row.equipped) return "Unequip it first.";
+  if (row.stored) return "That is in storage at home. Take it out there first.";
   const gold = sellPrice(rowToItem(row));
   const res = await db.batch([
-    db.prepare("DELETE FROM inventory WHERE id = ? AND player_id = ? AND equipped = 0").bind(itemId, playerId),
+    db.prepare("DELETE FROM inventory WHERE id = ? AND player_id = ? AND equipped = 0 AND stored = 0").bind(itemId, playerId),
     db.prepare("UPDATE characters SET gold = gold + ? WHERE player_id = ? AND changes() > 0").bind(gold, playerId),
   ]);
   return res[0].meta.changes > 0 ? gold : "No such item.";
@@ -366,26 +462,30 @@ export async function getShop(db: D1Database, playerId: string): Promise<ShopVie
 
 /** Buy one entry of today's stock. The stock is re-derived here, so the client cannot name its own item or price. */
 export async function buyShopItem(db: D1Database, playerId: string, index: number): Promise<string | null> {
-  const [shop, c] = await Promise.all([getShop(db, playerId), getCharacter(db, playerId)]);
+  const [shop, c, carry] = await Promise.all([getShop(db, playerId), getCharacter(db, playerId), carryState(db, playerId)]);
   const entry = shop?.entries.find((e) => e.index === index);
-  if (!shop || !c || !entry) return "The stall has nothing like that.";
+  if (!shop || !c || !carry || !entry) return "The stall has nothing like that.";
   if (entry.bought) return "Already sold.";
   if (c.gold < entry.price) return "Not enough gold.";
+  const full = carryProblem(carry, 1);
+  if (full) return full;
   const day = Math.floor(now() / DAY_MS);
   try {
-    // The purchase row's primary key makes a double-buy fail the whole batch.
+    // The first statement checks the gold and the room in the pack again and
+    // records the purchase; each one after it runs only if the one before it
+    // changed a row. The purchase row's primary key makes a double-buy fail
+    // the whole batch.
     const res = await db.batch([
-      db.prepare("INSERT INTO shop_purchases (player_id, day, idx) VALUES (?, ?, ?)").bind(playerId, day, index),
-      db.prepare("UPDATE characters SET gold = gold - ?1 WHERE player_id = ?2 AND gold >= ?1").bind(entry.price, playerId),
-      insertItem(db, playerId, entry.item, false),
+      db
+        .prepare(`INSERT INTO shop_purchases (player_id, day, idx) SELECT ?1, ?2, ?3 WHERE (SELECT gold FROM characters WHERE player_id = ?1) >= ?4 AND ${CARRIED_SQL} < ?5`)
+        .bind(playerId, day, index, entry.price, carry.limit),
+      db.prepare("UPDATE characters SET gold = gold - ?1 WHERE player_id = ?2 AND changes() > 0").bind(entry.price, playerId),
+      paidPackItemStatement(db, playerId, entry.item),
     ]);
-    if (res[1].meta.changes === 0) {
-      // Gold went elsewhere between the check and the batch: undo.
-      await db.batch([
-        db.prepare("DELETE FROM shop_purchases WHERE player_id = ? AND day = ? AND idx = ?").bind(playerId, day, index),
-        db.prepare("DELETE FROM inventory WHERE id = ?").bind(res[2].meta.last_row_id),
-      ]);
-      return "Not enough gold.";
+    if (res[2].meta.changes === 0) {
+      // Gold or room went elsewhere between the check and the batch: nothing happened.
+      const fresh = await carryState(db, playerId);
+      return (fresh && carryProblem(fresh, 1)) || "Not enough gold.";
     }
   } catch {
     return "Already sold.";
@@ -464,17 +564,23 @@ export async function clearPubOrders(db: D1Database, playerIds: string[]): Promi
 // ---------- rewards ----------
 
 /** Write XP, gold and an item to the character as they are earned. */
+/**
+ * Write XP, gold and an item to the character as they are earned. Returns
+ * where the item went: the pack if it has room, else the storage chest at
+ * home, else the pack anyway, over the limit. Earned gear is never lost.
+ */
 export async function applyGrant(
   db: D1Database,
   code: string,
   playerId: string,
   grant: { xp: number; gold: number; item: ItemDef | null; resources?: Resources; blueprint?: string; furnishing?: FurnishingGrant },
-): Promise<void> {
-  const c = await getCharacter(db, playerId);
-  if (!c) return;
+): Promise<LootPlace | null> {
+  const [c, carry] = await Promise.all([getCharacter(db, playerId), grant.item ? carryState(db, playerId) : null]);
+  if (!c) return null;
   const gold = grant.gold;
   const stmts: D1PreparedStatement[] = [];
-  if (grant.item) stmts.push(insertItem(db, playerId, grant.item, false));
+  const place = carry ? lootPlace(carry) : null;
+  if (grant.item) stmts.push(insertItem(db, playerId, grant.item, false, place === "storage"));
   if (grant.resources) stmts.push(...resourceStatements(db, playerId, grant.resources));
   if (grant.blueprint) stmts.push(blueprintStatement(db, playerId, grant.blueprint));
   if (grant.furnishing) stmts.push(furnishingStatement(db, playerId, grant.furnishing));
@@ -491,6 +597,7 @@ export async function applyGrant(
       .bind(code, playerId, grant.xp, gold),
   );
   await db.batch(stmts);
+  return place;
 }
 
 /** Soft death: lose a capped slice of gold, nothing else. */

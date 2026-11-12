@@ -5,7 +5,7 @@ import type { NoticeBoard } from "../server/board";
 
 /** What the Harbor's notice board shows: the crew goal and the contracts on offer. */
 export type Board = NoticeBoard;
-import type { GatherChoice, GatherSpot, HarborWorks, HutSummary, ItemDef, Perk, ProjectAmounts, Resources, ShopEntry, TradeOffer } from "@gantt-quest/world";
+import type { CarryState, GatherChoice, GatherSpot, HarborWorks, HutSummary, ItemDef, Perk, ProjectAmounts, Resources, ShopEntry, TradeOffer } from "@gantt-quest/world";
 import type { GatherStatus } from "../server/gather";
 import type { TradeList } from "../server/trade";
 
@@ -55,6 +55,7 @@ export interface InventoryItem {
   icon: string;
   stat_bonus_json: string;
   equipped: number;
+  stored: number;
 }
 
 export interface Shop {
@@ -69,7 +70,10 @@ export interface Me {
   /** `email` is null for a guest, whose account lives only in this browser. */
   player: { id: string; name: string; email: string | null };
   character: Character | null;
+  /** What the hero has with them, worn and in the pack. Stored items are only listed inside their hut. */
   inventory: InventoryItem[];
+  /** How full the pack is, its size, what is in storage and whether there is a home for it. Null without a character. */
+  carry: CarryState | null;
   /** The crew whose Harbor this player shares, if any. The id doubles as the invite code. */
   crew: { id: string; name: string } | null;
 }
@@ -109,6 +113,7 @@ export const api = {
   spend: (stat: StatKey) => request("/api/character/spend", { stat }),
   equip: (itemId: number) => request("/api/character/equip", { itemId }),
   unequip: (itemId: number) => request("/api/character/unequip", { itemId }),
+  store: (itemId: number) => request("/api/inventory/store", { itemId }),
   sell: (itemId: number) => request<{ gold: number }>("/api/inventory/sell", { itemId }),
   sellMaterial: (kind: string, qty: number) => request<{ gold: number }>("/api/shop/materials/sell", { kind, qty }),
   shop: () => request<Shop>("/api/shop"),

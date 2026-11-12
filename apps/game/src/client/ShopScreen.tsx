@@ -4,7 +4,7 @@
 // pieces for a hut, always in stock, at the catalogue's price.
 
 import { useEffect, useMemo, useState } from "react";
-import { RARITY_COLOR, RESOURCE_KINDS, RESOURCE_LABEL, SLOT_LABEL, STALL_BUYS, STALL_FURNITURE, equipProblem, sellPrice, type Resources } from "@gantt-quest/world";
+import { CARRY_FORMULA, RARITY_COLOR, RESOURCE_KINDS, carryProblem, RESOURCE_LABEL, SLOT_LABEL, STALL_BUYS, STALL_FURNITURE, equipProblem, sellPrice, type Resources } from "@gantt-quest/world";
 import { api, type Me, type Shop } from "./api";
 import { DragPanel } from "./DragPanel";
 import { useAct } from "./Harbor";
@@ -39,6 +39,8 @@ export function ShopScreen({ me, refresh, onClose }: { me: Me; refresh(): Promis
   const forageHeld = forage.reduce((n, k) => n + (stock[k] ?? 0), 0);
   const buying = picked?.tab === "buy" ? shop?.entries.find((e) => e.index === picked.key) : undefined;
   const selling = picked?.tab === "sell" ? sellable.find((i) => i.id === picked.key) : undefined;
+  /** Why a purchase would not fit in the pack, or null. */
+  const full = me.carry ? carryProblem(me.carry, 1) : null;
   const hours = shop ? Math.max(0, Math.ceil((shop.refreshAt - Date.now()) / 3_600_000)) : 0;
 
   return (
@@ -60,6 +62,11 @@ export function ShopScreen({ me, refresh, onClose }: { me: Me; refresh(): Promis
             {tab === "buy" ? (
               <>
                 {!shop && !loadError && <p className="muted">Laying out the wares…</p>}
+                {me.carry && (
+                  <p className={full ? "bad" : "muted"} title={`Pack size: ${CARRY_FORMULA}`}>
+                    Carried {me.carry.carried} / {me.carry.limit}.{full ? ` ${full}` : ""}
+                  </p>
+                )}
                 {shop?.entries.map((e) => {
                   const diff = compare(e.item, worn.get(e.item.slot) ?? null);
                   return (
@@ -74,7 +81,8 @@ export function ShopScreen({ me, refresh, onClose }: { me: Me; refresh(): Promis
                       <VerdictTag verdict={diff.verdict} />
                       <button
                         className="primary"
-                        disabled={busy || e.bought || c.gold < e.price}
+                        disabled={busy || e.bought || c.gold < e.price || !!full}
+                        title={full ?? undefined}
                         onClick={(ev) => { ev.stopPropagation(); void act(() => api.buy(e.index)); }}
                       >
                         {e.bought ? "Sold" : `${e.price}g`}

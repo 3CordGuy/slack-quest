@@ -142,6 +142,14 @@ const MODELS: Record<string, (b: Builder) => void> = {
     b.box("#f4efe1", 0.5, 0.1, 0.24, 0, 0.32, -0.42);
     b.box(DARK_WOOD, 0.84, 0.6, 0.08, 0, 0, -0.62);
   },
+  /** The free storage chest every home has: smaller and plainer than the Sea Chest, with a domed lid and a padlock. */
+  small_chest(b) {
+    b.box(WOOD, 0.55, 0.28, 0.4);
+    b.box(DARK_WOOD, 0.58, 0.1, 0.43, 0, 0.28);
+    b.box(DARK_WOOD, 0.5, 0.06, 0.36, 0, 0.38);
+    for (const x of [-0.2, 0.2]) b.box(IRON, 0.05, 0.42, 0.45, x, 0);
+    b.box(IRON, 0.1, 0.12, 0.04, 0, 0.18, 0.22);
+  },
   chest(b) {
     b.box(WOOD, 0.75, 0.34, 0.5);
     b.box(DARK_WOOD, 0.79, 0.14, 0.54, 0, 0.34);

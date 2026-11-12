@@ -26,3 +26,10 @@
 @media (max-width: 760px) {
   .hut-furnish { width: 60vw; max-height: 50vh; font-size: 12px; }
 }
+
+/* The storage chest: gear kept at home, and the pack beside it. */
+.hut-chest { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.hut-chest li { display: flex; align-items: center; gap: 8px; }
+.hut-chest .tile { flex: none; }
+.hut-chest-info { display: flex; flex-direction: column; min-width: 0; flex: 1; font-size: 0.85em; }
+.hut-chest-info strong, .hut-chest-info span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
