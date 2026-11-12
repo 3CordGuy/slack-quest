@@ -320,7 +320,7 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
   }
 
   return (
-    <div className="run hut-view">
+    <div className={`run hut-view ${canEdit && box ? "box-open" : ""}`}>
       <div className="stage" ref={mount} />
       <div className="topbar">
         <strong>{title}</strong>
@@ -416,7 +416,12 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
             {placed.map((f) => (
               <li key={f.id}>
                 {canEdit ? (
-                  <button className={selected === f.id || holding === f.id ? "selected" : ""} title={blurb("furnishing", f.defId)} onClick={() => (setHolding(null), setSelected((s) => (s === f.id ? null : f.id)))}>
+                  <button className={selected === f.id || holding === f.id ? "selected" : ""} title={blurb("furnishing", f.defId)} onClick={() => {
+                    setHolding(null);
+                    setSelected((s) => (s === f.id ? null : f.id));
+                    // Picked from the list, it may be off screen (a phone shows little of the room): bring it into view.
+                    renderer.current?.lookAt({ q: f.q, r: f.r });
+                  }}>
                     {f.label}
                   </button>
                 ) : (

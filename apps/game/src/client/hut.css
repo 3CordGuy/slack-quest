@@ -32,7 +32,7 @@
   background: var(--panel); border: 2px solid var(--line); padding: 4px 6px; box-shadow: 0 2px 0 rgba(0, 0, 0, 0.45);
   display: flex; flex-direction: column; align-items: center; gap: 4px; white-space: nowrap;
 }
-.hut-toolbar-box::after { content: ""; position: absolute; left: 50%; top: 100%; margin: 2px 0 0 -6px; border: 6px solid transparent; border-bottom-width: 0; border-top-color: var(--line); }
+.hut-toolbar-box::after { content: ""; position: absolute; left: calc(50% + var(--aim, 0px)); top: 100%; margin: 2px 0 0 -6px; border: 6px solid transparent; border-bottom-width: 0; border-top-color: var(--line); }
 .hut-toolbar-name { font-size: 12px; display: flex; gap: 4px; align-items: center; }
 .hut-toolbar-name .tag { font-size: 10px; }
 .hut-toolbar-buttons { display: flex; gap: 4px; }
@@ -52,8 +52,17 @@
 .hut-boxpanel .hut-box { border-top: 0; margin-top: 0; padding-top: 0; }
 
 @media (max-width: 760px) {
-  .hut-storage, .hut-craft, .hut-boxpanel { width: 60vw; max-height: 50vh; font-size: 12px; left: 6px; right: auto; }
-  .hut-info { width: 44vw; }
+  /* Phones: Storage top left, Craft bottom left (growing upward, clear of the chat tab), Hut on the right under Inside. */
+  .hut-storage { top: 46px; left: 6px; width: 64vw; max-height: 45vh; font-size: 12px; }
+  .hut-craft { top: auto; bottom: 146px; left: 6px; width: calc(100vw - 12px); max-height: 45vh; font-size: 12px; }
+  .hut-info { top: 230px; right: 6px; width: 64vw; max-height: 45vh; font-size: 12px; }
+  /* An opened container is the thing in hand: across the top, over the rest. */
+  .hut-boxpanel { top: 46px; left: 6px; right: 6px; width: auto; max-height: 55vh; font-size: 12px; z-index: 14; }
+  .hut-toolbar .icon-btn { width: 32px; height: 32px; }
+  /* An unfolded panel sits over the folded tabs around it. */
+  .hut-storage:not(.folded), .hut-craft:not(.folded), .hut-info:not(.folded) { z-index: 13; }
+  /* The open container's panel covers the middle of the screen; its own Close stands in for the toolbar. */
+  .hut-view.box-open .hut-toolbar { display: none; }
 }
 
 /* A container's materials: one line each. */
