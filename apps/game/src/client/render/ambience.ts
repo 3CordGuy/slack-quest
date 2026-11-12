@@ -85,7 +85,7 @@ const WAVE_WIDTH = 1.3;
 /** How far each row sits from the middle of its hex. */
 const WAVE_ROW = 0.3;
 /** Pixels in one wisp's trail. */
-const TRAIL = 22;
+const TRAIL = 34;
 
 interface Tuft {
   x: number;
@@ -102,13 +102,8 @@ interface Crest {
   phase: number;
 }
 interface Wisp {
-  x: number;
-  y: number;
-  z: number;
   offset: number;
   speed: number;
-  /** Radius of its loop. */
-  loop: number;
 }
 
 export class Ambience {
@@ -129,6 +124,8 @@ export class Ambience {
   private waves: THREE.InstancedMesh[] = [];
   private crests: Crest[] = [];
   private wisps: Wisp[] = [];
+  /** The map's extent, which gusts are scattered over. */
+  private bounds = { minX: 0, maxX: 0, minZ: 0, maxZ: 0 };
   private wispPoints: THREE.Points | null = null;
   private flatTint = new THREE.Color();
   private still = typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -264,19 +261,13 @@ export class Ambience {
       return mesh;
     });
 
+    this.bounds = { minX, maxX, minZ, maxZ };
     // ---- wisps: trails of single pixels that curl through a loop as they cross ----
     // No wind indoors.
     const indoors = (this.indoors = tiles.some((t) => (t.biome as string) === "floor"));
     const count = this.still || indoors ? 0 : Math.min(14, Math.max(7, Math.round(tiles.length / 30)));
     for (let i = 0; i < count; i++) {
-      this.wisps.push({
-        x: minX + hash(i, 1, 100) * (maxX - minX),
-        y: 1.4 + hash(i, 2, 100) * 2.2,
-        z: minZ + hash(i, 3, 100) * (maxZ - minZ),
-        offset: hash(i, 4, 100),
-        speed: 0.08 + hash(i, 5, 100) * 0.05,
-        loop: 0.3 + hash(i, 6, 100) * 0.25,
-      });
+      this.wisps.push({ offset: hash(i, 4, 100), speed: 0.1 + hash(i, 5, 100) * 0.07 });
     }
     if (count > 0) {
       const geometry = new THREE.BufferGeometry();
@@ -370,20 +361,54 @@ export class Ambience {
       const pos = this.wispPoints.geometry.getAttribute("position") as THREE.BufferAttribute;
       const col = this.wispPoints.geometry.getAttribute("color") as THREE.BufferAttribute;
       const glow = 0.72 + 0.28 * this.daylight;
+      const b = this.bounds;
       this.wisps.forEach((w, n) => {
-        const head = (clock * w.speed + w.offset) % 1;
+        const t = clock * w.speed + w.offset;
+        // Every crossing is a new gust: its own place, height, length, and its own curls.
+        const gust = Math.floor(t);
+        const r = (salt: number) => hash(n + 1, gust, 200 + salt);
+        const head = t - gust;
+        const x0 = b.minX + r(1) * (b.maxX - b.minX);
+        const y0 = 1.2 + r(2) * 2.6;
+        const z0 = b.minZ + r(3) * (b.maxZ - b.minZ);
+        const reach = 4 + r(4) * 3;
+        // One to three tight curls, each somewhere different along the way and its own size.
+        const curls = r(5) < 0.4 ? 1 : r(5) < 0.8 ? 2 : 3;
+        const at1 = 0.2 + r(6) * 0.2;
+        const at2 = at1 + 0.16 + r(7) * 0.12;
+        const at3 = at2 + 0.14 + r(14) * 0.1;
+        const size1 = 0.16 + r(8) * 0.16;
+        const size2 = 0.12 + r(9) * 0.14;
+        const size3 = 0.1 + r(15) * 0.1;
+        // A quick, shallow ripple the whole way, so the line is never straight.
+        const ripple = 0.08 + r(10) * 0.08;
+        const beat = 34 + r(11) * 26;
+        const drift = (r(12) - 0.5) * 0.8;
         for (let i = 0; i < TRAIL; i++) {
           // Each pixel follows the head a little further back along the same path.
-          const s = head - i * 0.011;
-          // Mid-flight the path rolls once round a loop.
-          const u = smooth(0.32, 0.68, s);
-          const along = (s - 0.5) * 6 - Math.sin(u * Math.PI * 2) * w.loop;
-          const up = (1 - Math.cos(u * Math.PI * 2)) * w.loop + Math.sin(s * 9 + w.offset * 6) * 0.12;
+          const s = head - i * 0.0095;
+          let along = (s - 0.5) * reach;
+          let up = Math.sin(s * beat + r(13) * 6) * ripple + (s - 0.5) * drift;
+          if (curls >= 1) {
+            const u = smooth(at1 - 0.045, at1 + 0.045, s) * Math.PI * 2;
+            along -= Math.sin(u) * size1;
+            up += (1 - Math.cos(u)) * size1;
+          }
+          if (curls >= 2) {
+            const u = smooth(at2 - 0.035, at2 + 0.035, s) * Math.PI * 2;
+            along -= Math.sin(u) * size2;
+            up += (1 - Math.cos(u)) * size2;
+          }
+          if (curls >= 3) {
+            const u = smooth(at3 - 0.03, at3 + 0.03, s) * Math.PI * 2;
+            along -= Math.sin(u) * size3;
+            up += (1 - Math.cos(u)) * size3;
+          }
           const k = n * TRAIL + i;
-          pos.setXYZ(k, w.x + cos * along, w.y + up, w.z - sin * along);
-          // Fades toward the tail, and in and out at the ends of the crossing. Every other pixel is fainter, so it reads as dots.
-          const fade = s <= 0 ? 0 : Math.sin(Math.PI * Math.min(1, s)) ** 0.7 * (1 - i / TRAIL) * (i % 2 ? 0.5 : 1);
-          col.setXYZW(k, 1, 0.95 + 0.05 * this.daylight, glow, fade * (0.6 + 0.35 * this.daylight));
+          pos.setXYZ(k, x0 + cos * along, y0 + up, z0 - sin * along);
+          // Fades toward the tail, and in and out at the ends of the crossing.
+          const fade = s <= 0 ? 0 : Math.sin(Math.PI * Math.min(1, s)) ** 0.6 * (1 - i / TRAIL) ** 0.8;
+          col.setXYZW(k, 1, 0.95 + 0.05 * this.daylight, glow, fade * (0.55 + 0.35 * this.daylight));
         }
       });
       pos.needsUpdate = true;
