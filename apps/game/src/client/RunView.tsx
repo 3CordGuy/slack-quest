@@ -25,6 +25,7 @@ import {
 import * as World from "@gantt-quest/world";
 import type { Me } from "./api";
 import { DragPanel } from "./DragPanel";
+import { HutSpoils, blueprintName, isTrophy, resourceText } from "./hutDrops";
 import { InventoryScreen } from "./InventoryScreen";
 import { WorldRenderer } from "./render/WorldRenderer";
 import { useRun, type RunConnection } from "./useRun";
@@ -62,6 +63,9 @@ function describe(events: WorldEvent[], state: ClientState, names: Map<string, s
       case "xp": out.push(`${n(ev.heroId)} gains ${ev.amount} XP.`); break;
       case "loot": out.push(`${n(ev.heroId)} found ${ev.item.name} (${ev.item.rarity}).`); break;
       case "key_item": out.push(`${n(ev.heroId)} now carries ${ev.name}.`); break;
+      case "resources": out.push(`${n(ev.heroId)} gathers ${resourceText(ev.resources)}.`); break;
+      case "blueprint": out.push(`${n(ev.heroId)} found a blueprint: ${blueprintName(ev.blueprint)}.`); break;
+      case "furnishing": out.push(isTrophy(ev.furnishing) ? `${n(ev.heroId)} takes a trophy home: ${ev.furnishing.label}.` : `${n(ev.heroId)} found a ${ev.furnishing.label} for the hut.`); break;
       case "rite": out.push(ev.text); break;
       case "objective": out.push(`Objective complete: ${state.story?.objectives.find((o) => o.id === ev.id)?.text ?? ev.id}`); break;
       case "battle_start": out.push("Battle!"); break;
@@ -552,6 +556,7 @@ function Ending({ state, onLeave }: { state: ClientState; onLeave(): void }) {
         ) : (
           <p className="muted">Nothing but the story.</p>
         )}
+        {earned && <HutSpoils earned={earned} />}
         {!won && <p className="muted">A little gold was lost in the retreat. Your character is safe.</p>}
         <button className="primary" onClick={onLeave}>Sail back to the Harbor</button>
       </div>
