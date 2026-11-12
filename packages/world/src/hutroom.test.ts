@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { hexNeighbors } from "@gantt-quest/core";
-import { FURNISHINGS, HUT_TIERS, SMALL_PER_SPOT, displacedFurnishings, hutDoor, hutFloor, hutPath, hutRoom, hutTier, placeProblem, placedFurnishings, poiAt, putInProblem, smallPlaceProblem, tileAt, validFacing, type Furnishing } from "./index";
+import { FURNISHINGS, HUT_TIERS, SMALL_PER_SPOT, STORAGE_CHEST, displacedFurnishings, freeSpot, hutDoor, hutFloor, hutPath, hutRoom, hutTier, placeProblem, placedFurnishings, poiAt, putInProblem, smallPlaceProblem, tileAt, validFacing, type Furnishing } from "./index";
 
 const at = (q: number, r: number) => ({ q, r });
 
@@ -144,6 +144,34 @@ describe("a hut changing size", () => {
     const spot = hutFloor(small)[0];
     const twin = [{ defId: "table", ...spot }, { defId: "rug", ...spot }, { defId: "bed", q: null, r: null }];
     expect(displacedFurnishings(1, twin)).toEqual([twin[1]]);
+  });
+});
+
+describe("the free storage chest", () => {
+  it("is a free container with no perk, never sold or crafted", () => {
+    const def = FURNISHINGS[STORAGE_CHEST];
+    expect(def.kind).toBe("furniture");
+    expect(def.storage).toBeGreaterThan(0);
+    expect(def.price ?? def.recipe ?? def.perk).toBeUndefined();
+  });
+
+  it("finds a legal spot away from the door, and none on a full floor", () => {
+    for (const { tier } of HUT_TIERS) {
+      const room = hutRoom(tier);
+      const door = hutDoor(tier);
+      const spot = freeSpot(room, [], STORAGE_CHEST, door)!;
+      expect(placeProblem(room, [], STORAGE_CHEST, spot)).toBeNull();
+      const full = hutFloor(room).map((p) => ({ ...p }));
+      expect(freeSpot(room, full, STORAGE_CHEST, door)).toBeNull();
+    }
+  });
+
+  it("goes around what already stands", () => {
+    const room = hutRoom(1);
+    const door = hutDoor(1);
+    const first = freeSpot(room, [], STORAGE_CHEST, door)!;
+    const second = freeSpot(room, [first], STORAGE_CHEST, door)!;
+    expect(second).not.toEqual(first);
   });
 });
 

@@ -38,7 +38,7 @@ export interface TradeHoldings {
   gold: number;
   resources: Resources;
   /** Every item the player owns, worn or not. */
-  items: { id: number; equipped: boolean; name?: string }[];
+  items: { id: number; equipped: boolean; name?: string; /** In the storage chest at home, out of reach until taken out there. */ stored?: boolean }[];
 }
 
 const isEmpty = (goods: TradeGoods) => goods.gold === 0 && RESOURCE_KINDS.every((k) => !goods.resources[k]);
@@ -166,6 +166,7 @@ export function tradeProblem(offer: TradeOffer, ctx: TradeContext): string | nul
   for (const id of items) {
     const held = ctx.giver.items.find((i) => i.id === id);
     if (!held) return giverName === "You" ? "You no longer have one of those items." : `${giverName} no longer has one of those items.`;
+    if (held.stored) return giverName === "You" ? `${held.name ?? "That item"} is in storage at home. Take it out there first.` : `${giverName} has put ${held.name ?? "one of those items"} in storage.`;
     if (held.equipped) return giverName === "You" ? `Unequip ${held.name ?? "that item"} first.` : `${giverName} is wearing ${held.name ?? "one of those items"} now.`;
   }
   return shortOf(offer.give, ctx.giver, giverName) ?? (ctx.taker ? shortOf(offer.ask, ctx.taker, takerName) : null);

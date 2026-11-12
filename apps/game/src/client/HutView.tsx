@@ -117,6 +117,8 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
       setHolding(null);
     } else if (canEdit && piece) {
       setSelected(piece.id);
+      // Clicking a container (the free Storage Chest, say) opens it in the Furnish panel.
+      if (FURNISHINGS[piece.defId]?.storage) setTab("furnish");
     } else {
       setSelected(null);
       hut.send({ type: "move", to: pos });
@@ -309,7 +311,7 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
               </div>
               {onTop.length > 0 && <p className="muted">On top: {onTop.map((f) => f.label).join(", ")}. They move with it, and go back to storage if it is put away.</p>}
               {defOf(chosen)?.storage && (
-                <HutContainer box={chosen} furnishings={furnishings} own={own} bag={me.inventory} send={hut.send} act={act} carry={pick} />
+                <HutContainer box={chosen} furnishings={furnishings} own={own} bag={me.inventory} pack={me.carry} send={hut.send} act={act} carry={pick} />
               )}
             </div>
           ) : (

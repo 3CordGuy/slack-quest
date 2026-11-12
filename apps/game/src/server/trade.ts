@@ -17,8 +17,8 @@
 // Amounts and ownership always come from the stored offer and from D1,
 // never from the request that accepts it.
 
-import { RESOURCE_KINDS, TRADE_TTL_MS, isGift, readTradeOffer, tradeProblem, type TradeGoods, type TradeHoldings, type TradeOffer, type WorldState } from "@gantt-quest/world";
-import type { InventoryRow } from "./db";
+import { RESOURCE_KINDS, TRADE_TTL_MS, carryProblem, isGift, readTradeOffer, tradeProblem, type TradeGoods, type TradeHoldings, type TradeOffer, type WorldState } from "@gantt-quest/world";
+import { carryState, type InventoryRow } from "./db";
 
 /** A voyage nobody has touched for this long is taken to be abandoned, as on the dock board. */
 const VOYAGE_STALE_MS = 12 * 60 * 60_000;
@@ -86,7 +86,7 @@ async function party(db: D1Database, playerId: string): Promise<Party | null> {
   const [c, res, inv] = await db.batch([
     db.prepare("SELECT name, gold FROM characters WHERE player_id = ? AND status = 'active'").bind(playerId),
     db.prepare("SELECT kind, qty FROM resources WHERE player_id = ? AND qty > 0").bind(playerId),
-    db.prepare("SELECT id, name, equipped FROM inventory WHERE player_id = ?").bind(playerId),
+    db.prepare("SELECT id, name, equipped, stored_in FROM inventory WHERE player_id = ?").bind(playerId),
   ]);
   const character = c.results[0] as { name: string; gold: number } | undefined;
   if (!character) return null;
@@ -95,7 +95,7 @@ async function party(db: D1Database, playerId: string): Promise<Party | null> {
     holdings: {
       gold: character.gold,
       resources: Object.fromEntries((res.results as { kind: string; qty: number }[]).map((r) => [r.kind, r.qty])),
-      items: (inv.results as { id: number; name: string; equipped: number }[]).map((i) => ({ id: i.id, name: i.name, equipped: !!i.equipped })),
+      items: (inv.results as { id: number; name: string; equipped: number; stored_in: number | null }[]).map((i) => ({ id: i.id, name: i.name, equipped: !!i.equipped, stored: i.stored_in !== null })),
     },
   };
 }
@@ -166,7 +166,17 @@ async function refusal(db: D1Database, offer: TradeOffer, terms: Terms, viewer: 
   // The proposer may ask for more than the other holds; it is only checked once they try to accept.
   const check = (giverName: string, takerName: string) => tradeProblem(offer, { from, giver: giver.holdings, taker: viewer === to ? taker.holdings : undefined, giverName, takerName });
   const error = check(viewer === from ? "You" : giver.name, viewer === to ? "You" : taker.name);
-  return error ? { error, reason: check(giver.name, taker.name) ?? error, final: true } : null;
+  if (error) return { error, reason: check(giver.name, taker.name) ?? error, final: true };
+
+  // Gear has to fit in the taker's pack. Checked only on accepting: until
+  // then they may make room. A full pack waits rather than closing the offer.
+  const items = offer.give.items.length;
+  if (viewer === to && items > 0) {
+    const carry = await carryState(db, to);
+    const full = carry && carryProblem(carry, items, "You");
+    if (full) return { error: full, reason: carryProblem(carry, items, taker.name)!, final: false };
+  }
+  return null;
 }
 
 /**
@@ -208,7 +218,15 @@ export async function proposeTrade(db: D1Database, playerId: string, raw: unknow
  * carries that token, so a second attempt (whose gate changes nothing, and
  * whose token is therefore nowhere) moves nothing.
  */
-export function settleStatements(db: D1Database, row: Pick<TradeRow, "id" | "crew_id" | "from_id" | "to_id" | "run_code">, offer: TradeOffer, token: string, at: number): D1PreparedStatement[] {
+export function settleStatements(
+  db: D1Database,
+  row: Pick<TradeRow, "id" | "crew_id" | "from_id" | "to_id" | "run_code">,
+  offer: TradeOffer,
+  token: string,
+  at: number,
+  /** How many unequipped items the taker may carry; the items given must fit under it. */
+  takerLimit = Number.MAX_SAFE_INTEGER,
+): D1PreparedStatement[] {
   const { from_id: from, to_id: to } = row;
   const conditions: string[] = [];
   const binds: (string | number)[] = [];
@@ -230,7 +248,8 @@ export function settleStatements(db: D1Database, row: Pick<TradeRow, "id" | "cre
   }
   const { items } = offer.give;
   if (items.length > 0) {
-    need(`(SELECT COUNT(*) FROM inventory WHERE player_id = ? AND equipped = 0 AND id IN (${items.map(() => "?").join(", ")})) = ?`, from, ...items, items.length);
+    need(`(SELECT COUNT(*) FROM inventory WHERE player_id = ? AND equipped = 0 AND stored_in IS NULL AND id IN (${items.map(() => "?").join(", ")})) = ?`, from, ...items, items.length);
+    need("(SELECT COUNT(*) FROM inventory WHERE player_id = ? AND equipped = 0 AND stored_in IS NULL) + ? <= ?", to, items.length, takerLimit);
   }
   for (const [who, goods] of [[from, offer.give], [to, offer.ask]] as const) {
     if (goods.gold > 0) need("(SELECT gold FROM characters WHERE player_id = ?) >= ?", who, goods.gold);
@@ -250,7 +269,7 @@ export function settleStatements(db: D1Database, row: Pick<TradeRow, "id" | "cre
     // The gear arrives in the other pack, not worn.
     stmts.push(
       db
-        .prepare(`UPDATE inventory SET player_id = ? WHERE player_id = ? AND equipped = 0 AND id IN (${items.map(() => "?").join(", ")}) AND ${settled}`)
+        .prepare(`UPDATE inventory SET player_id = ? WHERE player_id = ? AND equipped = 0 AND stored_in IS NULL AND id IN (${items.map(() => "?").join(", ")}) AND ${settled}`)
         .bind(to, from, ...items, row.id, token),
     );
   }
@@ -300,7 +319,8 @@ export async function acceptTrade(db: D1Database, playerId: string, tradeId: num
     await fail(db, row.id, refused.reason, at);
     return { error: `${refused.error} ${closed}` };
   }
-  const res = await db.batch(settleStatements(db, row, offer, crypto.randomUUID(), at));
+  const takerLimit = (await carryState(db, row.to_id))?.limit ?? 0;
+  const res = await db.batch(settleStatements(db, row, offer, crypto.randomUUID(), at, takerLimit));
   if (res[0].meta.changes > 0) return { ok: true, crewId: row.crew_id };
 
   // Something changed between the read above and the batch (an item sold, gold spent, a fight begun). Nothing moved; find out what.
@@ -338,7 +358,7 @@ export async function listTrades(db: D1Database, playerId: string): Promise<Trad
   const offers = new Map(open.map((r) => [r.id, offerOf(r)]));
   const ids = [...new Set([...offers.values()].flatMap((o) => o.give.items))];
   const items = ids.length
-    ? (await db.prepare(`SELECT * FROM inventory WHERE equipped = 0 AND id IN (${ids.map(() => "?").join(", ")})`).bind(...ids).all<InventoryRow & { player_id: string }>()).results
+    ? (await db.prepare(`SELECT * FROM inventory WHERE equipped = 0 AND stored_in IS NULL AND id IN (${ids.map(() => "?").join(", ")})`).bind(...ids).all<InventoryRow & { player_id: string }>()).results
     : [];
   return {
     open: open.map((r) => {

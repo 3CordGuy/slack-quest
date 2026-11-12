@@ -4,8 +4,8 @@
 // out of (and go back into) the bag and the material pool.
 
 import { useState } from "react";
-import { FURNISHINGS, RESOURCE_KINDS, type Furnishing, type HutClientMessage, type ResourceKind } from "@gantt-quest/world";
-import { api, type Hut, type InventoryItem } from "./api";
+import { CARRY_FORMULA, FURNISHINGS, RESOURCE_KINDS, carryProblem, type Furnishing, type HutClientMessage, type ResourceKind } from "@gantt-quest/world";
+import { api, type Hut, type InventoryItem, type Me } from "./api";
 import { label } from "./labels";
 
 export function HutContainer({
@@ -13,6 +13,7 @@ export function HutContainer({
   furnishings,
   own,
   bag,
+  pack,
   send,
   act,
   carry,
@@ -22,6 +23,8 @@ export function HutContainer({
   /** The owner's materials and what the containers hold; null while loading. */
   own: Hut | null;
   bag: InventoryItem[];
+  /** How full the owner's pack is: gear only comes out of here while there is room in it. */
+  pack: Me["carry"];
   send(message: HutClientMessage): void;
   /** Run a request, then re-read the hut and the bag. */
   act(fn: () => Promise<unknown>): void;
@@ -39,6 +42,8 @@ export function HutContainer({
   const looseDecor = furnishings.filter((f) => f.q === null && f.inId === null && f.id !== box.id && !FURNISHINGS[f.defId]?.storage);
   const looseGear = bag.filter((i) => !i.equipped);
   const had = (k: ResourceKind) => stash.find((s) => s.kind === k)?.qty ?? 0;
+  /** Why gear cannot come out into the pack right now, or null. */
+  const packFull = pack ? carryProblem(pack, 1) : null;
   const kinds = RESOURCE_KINDS.filter((k) => (own?.resources[k] ?? 0) > 0 || had(k) > 0);
 
   return (
@@ -87,12 +92,17 @@ export function HutContainer({
       )}
 
       <h4>Gear</h4>
+      {pack && (
+        <p className={packFull ? "bad" : "muted"} title={`Pack size: ${CARRY_FORMULA}`}>
+          Carried {pack.carried} / {pack.limit}.{packFull ? ` ${packFull}` : " Gear you cannot carry waits here; only you can take it out, and only here."}
+        </p>
+      )}
       {stowed.length === 0 && <p className="muted">None inside.</p>}
       <ul className="hut-list">
         {stowed.map((g) => (
           <li key={g.itemId} className="hut-box-row">
             <span className={`rarity-${g.rarity}`}>{g.name}</span>
-            <button className="small" onClick={() => act(() => api.stow(null, g.itemId))}>To bag</button>
+            <button className="small" disabled={!!packFull} title={packFull ?? "Into your pack"} onClick={() => act(() => api.stow(null, g.itemId))}>To bag</button>
           </li>
         ))}
       </ul>

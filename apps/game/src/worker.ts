@@ -33,6 +33,8 @@ import {
   getCharacter,
   getHut,
   getInventory,
+  carryState,
+  storeItem,
   getRun,
   getShop,
   joinCrew,
@@ -163,13 +165,15 @@ app.use("/api/*", async (c, next) => {
 
 app.get("/api/me", async (c) => {
   const player = c.get("player");
-  const [character, inventory, crew] = await Promise.all([
+  const [character, inventory, crew, carry] = await Promise.all([
     getCharacter(c.env.DB, player.id),
     getInventory(c.env.DB, player.id),
     crewFor(c.env.DB, player.id),
+    carryState(c.env.DB, player.id),
   ]);
-  // Only decides whether the client shows the admin link: every admin route checks again.
-  return c.json({ player, character, inventory, crew, isAdmin: isAdmin(c.env, player) });
+  // `inventory` is what the hero has with them; what is in storage at home is only listed inside their hut.
+  // `isAdmin` only decides whether the client shows the admin link: every admin route checks again.
+  return c.json({ player, character, inventory, crew, carry, isAdmin: isAdmin(c.env, player) });
 });
 
 // ---------- content overrides ----------
@@ -275,6 +279,17 @@ app.post("/api/character/unequip", async (c) => {
   return error ? c.json({ error }, 409) : c.json({ ok: true });
 });
 
+// Send an unequipped item to the storage chest at home. Allowed from anywhere; taking it back is only done inside the hut.
+app.post("/api/inventory/store", async (c) => {
+  const player = c.get("player");
+  const body = await c.req.json<{ itemId?: number }>().catch(() => ({}) as { itemId?: number });
+  const error = await storeItem(c.env.DB, player.id, Number(body.itemId));
+  if (error) return c.json({ error }, 409);
+  // If they are standing in their hut (another tab), the chest there shows it.
+  c.executionCtx.waitUntil(refreshHut(c.env, player.id));
+  return c.json({ ok: true });
+});
+
 // ---------- the market stall ----------
 
 app.post("/api/inventory/sell", async (c) => {
@@ -343,6 +358,16 @@ app.post("/api/hut/upgrade", async (c) => {
   return c.json(result);
 });
 
+/** True if the player has a socket open in their own hut's room right now: they are standing in it. */
+async function inOwnHut(env: Env, playerId: string): Promise<boolean> {
+  try {
+    const res = await env.HUT_ROOM.get(env.HUT_ROOM.idFromName(playerId)).fetch("https://hut/present", { headers: { "x-hut-owner": playerId, "x-player-id": playerId } });
+    return (await res.text()) === "yes";
+  } catch {
+    return false;
+  }
+}
+
 // Materials in or out of one of your hut's containers: `qty` > 0 puts that many in, < 0 takes them out.
 app.post("/api/hut/stash", async (c) => {
   const player = c.get("player");
@@ -356,8 +381,12 @@ app.post("/api/hut/stow", async (c) => {
   const player = c.get("player");
   const body = await c.req.json<{ container?: number | null; itemId?: number }>().catch(() => ({}) as { container?: number | null; itemId?: number });
   const itemId = Number(body.itemId);
+  // Putting gear away works from anywhere; taking it out only while standing in your own hut.
+  if (body.container == null && !(await inOwnHut(c.env, player.id))) return c.json({ error: "What you keep at home can only be taken out at home. Walk into your hut first." }, 409);
   const error = body.container == null ? await unstowGear(c.env.DB, player.id, itemId) : await stowGear(c.env.DB, player.id, Number(body.container), itemId);
-  return error ? c.json({ error }, 409) : c.json({ ok: true });
+  if (error) return c.json({ error }, 409);
+  c.executionCtx.waitUntil(refreshHut(c.env, player.id));
+  return c.json({ ok: true });
 });
 
 // Walk into a hut's room: your own, or a crewmate's.

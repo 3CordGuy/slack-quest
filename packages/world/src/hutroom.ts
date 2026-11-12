@@ -61,6 +61,19 @@ export function hutFloor(room: WorldMap): HexPos[] {
   return room.tiles.filter((t) => t.biome === "floor" && poiAt(room, t)?.kind !== "door").map((t) => ({ q: t.q, r: t.r }));
 }
 
+/**
+ * Where a new piece can go in a room with these pieces already standing:
+ * against the back wall facing the door, as near the middle as it can be, so
+ * it is out of the way and in plain sight. Null if the floor is full.
+ */
+export function freeSpot(room: WorldMap, placed: Pick<Furnishing, "q" | "r">[], defId: string, door: HexPos): HexPos | null {
+  const free = hutFloor(room).filter((p) => !placeProblem(room, placed, defId, p));
+  // Rows away from the door first, then sideways from its column.
+  const depth = (p: HexPos) => Math.abs(p.r - door.r);
+  const side = (p: HexPos) => Math.abs(colOf(p) - colOf(door));
+  return free.sort((a, b) => depth(b) - depth(a) || side(a) - side(b) || a.q - b.q)[0] ?? null;
+}
+
 /** True for something small enough to sit anywhere in a hex or on a surface. */
 export const isSmall = (defId: string): boolean => FURNISHINGS[defId]?.size === "small";
 

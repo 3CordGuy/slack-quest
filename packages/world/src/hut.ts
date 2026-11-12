@@ -121,6 +121,9 @@ export const FURNISHINGS: Record<string, FurnishingDef> = {
   hearth: { id: "hearth", name: "Stone Hearth", kind: "furniture", model: "hearth", blurb: "A hot meal before the voyage. +4 max HP.", recipe: { stone: 10, iron: 2 }, needsBlueprint: true, perk: { maxHp: 4 }, light: "fire" },
   bookshelf: { id: "bookshelf", name: "Bookshelf", kind: "furniture", model: "bookshelf", blurb: "Other people's mistakes, written down. +2% XP.", recipe: { wood: 8, bone: 2 }, needsBlueprint: true, perk: { xpPct: 2 } },
   workbench: { id: "workbench", name: "Workbench", kind: "furniture", model: "workbench", blurb: "Where the next thing gets made.", recipe: { wood: 6, iron: 4 }, needsBlueprint: true, surface: { y: 0.6, w: 1.1, d: 0.56 } },
+  // Every home gets one, free, standing in the room: where gear the hero cannot carry waits (carry.ts).
+  // Never sold or crafted, and it gives no perk. A container like the others, and moved like any piece.
+  storage_chest: { id: "storage_chest", name: "Storage Chest", kind: "furniture", model: "small_chest", blurb: "Every home's own chest, for the gear you cannot carry. Holds 10 things.", storage: 10, surface: { y: 0.42, w: 0.54, d: 0.4 } },
   weapon_rack: { id: "weapon_rack", name: "Weapon Rack", kind: "furniture", model: "weapon_rack", blurb: "Everything in reach.", recipe: { wood: 4, iron: 4, copper: 2 }, needsBlueprint: true },
 
   // ---- more furniture: tops to put things on, and places to keep things ----
@@ -158,6 +161,9 @@ export const FURNISHINGS: Record<string, FurnishingDef> = {
   trophy_pelt: { id: "trophy_pelt", name: "Beast's Pelt", kind: "trophy", model: "trophy_pelt", blurb: "It is bigger than it looked in the dark. +1% XP.", perk: { xpPct: 1 } },
   trophy_core: { id: "trophy_core", name: "Guardian's Core", kind: "trophy", model: "trophy_core", blurb: "Still faintly warm. +1% XP.", perk: { xpPct: 1 } },
 };
+
+/** The free storage chest every home has. */
+export const STORAGE_CHEST = "storage_chest";
 
 /** Which trophy each story shape awards, by frame id. */
 export const TROPHY_FOR_FRAME: Record<string, string> = {

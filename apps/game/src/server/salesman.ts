@@ -3,8 +3,8 @@
 // nothing here schedules anything. A purchase re-derives the stock, so the
 // client names only an index, never an item or a price.
 
-import { FURNISHINGS, SALESMAN_SLOT_MS, nextSalesmanVisit, salesProblem, salesman, salesmanStock, salesmanVisitAt, type SalesEntry, type SalesmanId, type SalesmanVisit } from "@gantt-quest/world";
-import { crewFor, getCharacter, getHut, paidFurnishingStatement, paidItemStatement, spendStatements } from "./db";
+import { FURNISHINGS, SALESMAN_SLOT_MS, carryProblem, nextSalesmanVisit, salesProblem, salesman, salesmanStock, salesmanVisitAt, type SalesEntry, type SalesmanId, type SalesmanVisit } from "@gantt-quest/world";
+import { carryState, crewFor, getCharacter, getHut, packHasRoomSql, paidFurnishingStatement, paidItemStatement, spendStatements } from "./db";
 
 export interface SalesmanView {
   /** The visitor in the pub now, if any, and their stock as this player sees it. */
@@ -50,9 +50,15 @@ export async function getSalesman(db: D1Database, playerId: string, force?: stri
     const next = nextSalesmanVisit(crew.id, at);
     return { here: null, next: next && { salesmanId: next.salesmanId, startsAt: next.startsAt } };
   }
-  const [bought, hut] = await Promise.all([boughtOn(db, playerId, crew.id, visit), getHut(db, playerId)]);
+  const [bought, hut, carry] = await Promise.all([boughtOn(db, playerId, crew.id, visit), getHut(db, playerId), carryState(db, playerId)]);
   const buyer = { gold: c.gold, resources: hut.resources, blueprints: hut.blueprints, bought };
-  const entries = salesmanStock(crew.id, visit, playerId, c.class_id, c.level).map((e) => ({ ...e, bought: bought.includes(e.index), problem: salesProblem(e, buyer) }));
+  // Gear also has to fit in the pack.
+  const full = carry && carryProblem(carry, 1);
+  const entries = salesmanStock(crew.id, visit, playerId, c.class_id, c.level).map((e) => ({
+    ...e,
+    bought: bought.includes(e.index),
+    problem: salesProblem(e, buyer) ?? (e.goods.kind === "item" && !bought.includes(e.index) ? full : null),
+  }));
   return { here: { ...visit, entries }, next: null };
 }
 
@@ -62,12 +68,16 @@ export async function buyFromSalesman(db: D1Database, playerId: string, index: u
   if (typeof ctx === "string") return ctx;
   const { c, crew, visit } = ctx;
   if (!visit) return "Nobody is selling in the pub just now.";
-  const [bought, hut] = await Promise.all([boughtOn(db, playerId, crew.id, visit), getHut(db, playerId)]);
+  const [bought, hut, carry] = await Promise.all([boughtOn(db, playerId, crew.id, visit), getHut(db, playerId), carryState(db, playerId)]);
   const entry = salesmanStock(crew.id, visit, playerId, c.class_id, c.level).find((e) => e.index === index);
   const problem = salesProblem(entry, { gold: c.gold, resources: hut.resources, blueprints: hut.blueprints, bought });
   if (problem || !entry) return problem ?? "There is nothing like that on the table.";
 
   const { goods } = entry;
+  // Gear has to fit in the pack; checked again inside the spend below.
+  const isGear = goods.kind === "item";
+  const full = isGear && carry ? carryProblem(carry, 1) : null;
+  if (full) return full;
   const give =
     goods.kind === "item" ? paidItemStatement(db, playerId, goods.item)
     : goods.kind === "blueprint" ? db.prepare("INSERT OR IGNORE INTO blueprints (player_id, blueprint_id) SELECT ?, ? WHERE changes() > 0").bind(playerId, goods.defId)
@@ -76,7 +86,7 @@ export async function buyFromSalesman(db: D1Database, playerId: string, index: u
   if (!give) return "There is nothing like that on the table.";
 
   // The price and materials come from the derived stock, never from the request.
-  const spend = spendStatements(db, playerId, entry.price, entry.materials);
+  const spend = spendStatements(db, playerId, entry.price, entry.materials, isGear && carry ? packHasRoomSql(carry.limit) : "1");
   const mark = db.prepare("INSERT INTO salesman_purchases (player_id, crew_id, visit, salesman, idx, created_at) VALUES (?, ?, ?, ?, ?, ?)").bind(playerId, crew.id, visit.visit, visit.salesmanId, entry.index, Date.now());
   try {
     // The purchase row's primary key makes a second buy fail the whole batch.
@@ -85,7 +95,8 @@ export async function buyFromSalesman(db: D1Database, playerId: string, index: u
     if (res[1].meta.changes === 0) {
       // Gold or materials went elsewhere between the check and the batch: nothing changed hands.
       await db.prepare("DELETE FROM salesman_purchases WHERE player_id = ? AND crew_id = ? AND visit = ? AND salesman = ? AND idx = ?").bind(playerId, crew.id, visit.visit, visit.salesmanId, entry.index).run();
-      return entry.price > 0 ? "Not enough gold." : "You no longer have what that takes.";
+      const fresh = isGear ? await carryState(db, playerId) : null;
+      return (fresh && carryProblem(fresh, 1)) || (entry.price > 0 ? "Not enough gold." : "You no longer have what that takes.");
     }
   } catch {
     return "You have had that one already. One each, this visit.";

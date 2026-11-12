@@ -234,6 +234,8 @@ export type WorldEvent =
   | { t: "level_up"; heroId: string; level: number }
   | { t: "gold"; heroId: string; amount: number }
   | { t: "loot"; heroId: string; item: ItemDef }
+  /** Added by the server, never by `stepWorld`: loot that did not fit in the hero's pack, and where it went instead. */
+  | { t: "pack_full"; heroId: string; item: string; place: "storage" | "overfull" }
   | { t: "key_item"; heroId: string; item: string; name: string }
   | { t: "resources"; heroId: string; resources: Resources }
   | { t: "blueprint"; heroId: string; blueprint: string }

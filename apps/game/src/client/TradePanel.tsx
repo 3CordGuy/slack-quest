@@ -8,7 +8,7 @@
 // as the server so the button explains itself, but the server decides.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { RESOURCE_KINDS, TRADE_MAX_ITEMS, isGift, tradeGoodsText, tradeProblem, type ResourceKind, type Resources, type TradeGoods, type TradeOffer } from "@gantt-quest/world";
+import { RESOURCE_KINDS, TRADE_MAX_ITEMS, carryProblem, isGift, tradeGoodsText, tradeProblem, type ResourceKind, type Resources, type TradeGoods, type TradeOffer } from "@gantt-quest/world";
 import type { TradeList, TradeOutcome, TradeView } from "../server/trade";
 import { api, type Me } from "./api";
 import { DragPanel } from "./DragPanel";
@@ -132,7 +132,7 @@ export function Trading({ me, partners, withId, onWith, refresh, run }: Props) {
             </header>
             {notice && <p className="good" role="status">{notice}</p>}
             {!list ? <p className="muted">Checking for offers…</p>
-              : between ? <Offer key={between.id} trade={between} mine={between.from.id === myId} acted={acted} />
+              : between ? <Offer key={between.id} trade={between} mine={between.from.id === myId} acted={acted} carry={me.carry} />
               : <Compose key={moved} me={me} to={{ id: withId, name: partnerName }} run={run} acted={acted} />}
           </DragPanel>
         </div>
@@ -178,8 +178,10 @@ function Goods({ goods, items = [] }: { goods: TradeGoods; items?: TradeView["gi
 type Acted = (id: number | null, goodsMoved: boolean, said?: string) => Promise<void>;
 
 /** The open offer between the two players, with the buttons that settle it. */
-function Offer({ trade, mine, acted }: { trade: TradeView; mine: boolean; acted: Acted }) {
+function Offer({ trade, mine, acted, carry }: { trade: TradeView; mine: boolean; acted: Acted; carry: Me["carry"] }) {
   const [busy, setBusy] = useState(false);
+  /** The gear in it must fit in your pack. The server checks again. */
+  const full = !mine && carry ? carryProblem(carry, trade.give.items.length) : null;
   const [error, setError] = useState<string | null>(null);
   const settle = async (accept: boolean) => {
     setBusy(true);
@@ -207,6 +209,7 @@ function Offer({ trade, mine, acted }: { trade: TradeView; mine: boolean; acted:
       )}
       <h3>{trade.gift ? "A gift: nothing is asked in return" : mine ? "And you ask for" : "And asks you for"}</h3>
       {!trade.gift && <Goods goods={trade.ask} />}
+      {full && !error && <p className="bad">{full}</p>}
       {error && <p className="bad" role="alert">{error}</p>}
       <div className="row">
         {mine ? (
@@ -216,7 +219,7 @@ function Offer({ trade, mine, acted }: { trade: TradeView; mine: boolean; acted:
           </>
         ) : (
           <>
-            <button className="primary" disabled={busy} onClick={() => settle(true)}>{trade.gift ? "Accept the gift" : "Accept the trade"}</button>
+            <button className="primary" disabled={busy || !!full} onClick={() => settle(true)}>{trade.gift ? "Accept the gift" : "Accept the trade"}</button>
             <button disabled={busy} onClick={() => settle(false)}>Decline</button>
           </>
         )}
