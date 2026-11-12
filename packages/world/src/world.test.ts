@@ -506,6 +506,39 @@ describe("world reducer", () => {
     expect(s.result!.epilogue).toBe("And so it ended.");
   });
 
+  it("lets a hero change gear on the island, but not in a fight and not to heal", () => {
+    let s = startedWorld("gear");
+    const before = s.heroes.find((h) => h.id === "p1")!;
+    const gear = { base: before.base, unspent: 0, bonus: { vit: 3, str: 1 }, weapon: "greatsword", weaponPower: 2, armor: 7, outfit: {} };
+    s = { ...s, heroes: s.heroes.map((h) => (h.id === "p1" ? { ...h, hp: 10 } : h)) };
+    s = must(s, { type: "gear", heroId: "p1", gear });
+    const after = s.heroes.find((h) => h.id === "p1")!;
+    expect(after.weapon).toBe("greatsword");
+    expect(after.armor).toBe(7);
+    expect(after.maxHp).toBe(before.maxHp + 6);
+    expect(after.hp).toBe(10);
+    // Taking the Vitality back off clamps HP to the lower ceiling, and never raises it.
+    s = { ...s, heroes: s.heroes.map((h) => (h.id === "p1" ? { ...h, hp: h.maxHp } : h)) };
+    s = must(s, { type: "gear", heroId: "p1", gear: { ...gear, bonus: {} } });
+    expect(s.heroes.find((h) => h.id === "p1")!.hp).toBe(before.maxHp);
+    // The new weapon and armor are what the hero fights with.
+    s = placeAll(s, "camp");
+    s = must(s, { type: "interact", heroId: s.turn!.heroId });
+    const fighter = s.battle!.combatants.find((c) => c.id === "p1")!;
+    expect(fighter.abilities).toContain("cleave");
+    expect(fighter.power).toBe(2);
+    expect(fighter.armor).toBe(7);
+    expect(stepWorld(s, { type: "gear", heroId: "p1", gear }).ok).toBe(false);
+  });
+
+  it("applies a stat point spent mid-voyage", () => {
+    let s = startedWorld("spend");
+    const h = s.heroes.find((x) => x.id === "p1")!;
+    const gear = { base: { ...h.base, vit: h.base.vit + 1 }, unspent: 0, bonus: h.bonus, weapon: h.weapon, weaponPower: 0, armor: 0, outfit: {} };
+    s = must(s, { type: "gear", heroId: "p1", gear });
+    expect(s.heroes.find((x) => x.id === "p1")!.maxHp).toBe(h.maxHp + 2);
+  });
+
   it("reveals the hidden lair when a hero walks next to it", () => {
     let s = startedWorld("walk");
     const lair = poiById(s.map, "lair")!.pos;

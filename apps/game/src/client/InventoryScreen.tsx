@@ -47,7 +47,15 @@ type SortKey = keyof typeof SORTS;
 
 const DRAG_TYPE = "application/x-gq-item";
 
-export function InventoryScreen({ me, refresh, onClose }: { me: Me; refresh(): Promise<unknown>; onClose(): void }) {
+interface Props {
+  me: Me;
+  refresh(): Promise<unknown>;
+  onClose(): void;
+  /** Opened during a voyage: gear can be changed, but the character cannot be re-rolled or leave its crew. */
+  onIsland?: boolean;
+}
+
+export function InventoryScreen({ me, refresh, onClose, onIsland = false }: Props) {
   const c = me.character!;
   const { busy, error, act } = useAct(refresh);
   const [selectedId, setSelectedId] = useState<number | null>(null);
@@ -205,7 +213,8 @@ export function InventoryScreen({ me, refresh, onClose }: { me: Me; refresh(): P
           </section>
         </div>
 
-        <footer className="row">
+        {onIsland && <p className="muted">Changes take effect on the island straight away. Gear cannot be changed during a fight.</p>}
+        <footer className="row" hidden={onIsland}>
           <button
             className="danger small"
             disabled={busy}

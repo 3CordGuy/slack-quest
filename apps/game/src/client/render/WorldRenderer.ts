@@ -50,6 +50,8 @@ const PIXEL = 2;
 /** Nearest and farthest the camera may sit from what it looks at. */
 const MIN_ZOOM = 7;
 const MAX_ZOOM = 40;
+/** Below 1 makes a pinch zoom less than the fingers move. */
+const PINCH_DAMPING = 0.55;
 const PLAYER_COLORS = ["#ffd23f", "#5ce1e6", "#ff7ab6", "#9dff6b"];
 const BIOME_COLOR: Record<string, string> = { plains: "#7cb856", forest: "#4c9a52", hills: "#a39672", water: "#3f86dc", dock: "#9a7748" };
 
@@ -769,7 +771,8 @@ export class WorldRenderer {
     if (this.pinch && this.touches.size >= 2) {
       const now = this.pinchState();
       // Fingers apart zooms in: the camera distance shrinks as the spread grows.
-      this.userDist = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, this.pinch.zoom * (this.pinch.dist / now.dist)));
+      // Damped: doubling the spread zooms by about a half, not by two.
+      this.userDist = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, this.pinch.zoom * Math.pow(this.pinch.dist / now.dist, PINCH_DAMPING)));
       if (!this.state?.battle) this.dist = this.userDist;
       this.panBy(now.x - this.pinch.x, now.y - this.pinch.y);
       this.pinch.x = now.x;
@@ -817,7 +820,10 @@ export class WorldRenderer {
 
   private onWheel = (e: WheelEvent) => {
     e.preventDefault();
-    this.userDist = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, this.userDist * (e.deltaY > 0 ? 1.1 : 0.9)));
+    // Proportional to how far the wheel moved, capped so one notch is about 6%.
+    // A trackpad sends many small deltas and a mouse wheel a few big ones; both end up gentle.
+    const step = Math.max(-50, Math.min(50, e.deltaY)) * 0.0012;
+    this.userDist = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, this.userDist * Math.exp(step)));
     if (!this.state?.battle) this.dist = this.userDist;
   };
 
