@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { hexNeighbors } from "@gantt-quest/core";
-import { HUT_TIERS, displacedFurnishings, hutDoor, hutFloor, hutPath, hutRoom, hutTier, placeProblem, placedFurnishings, poiAt, tileAt, validFacing } from "./index";
+import { FURNISHINGS, HUT_TIERS, SMALL_PER_SPOT, displacedFurnishings, hutDoor, hutFloor, hutPath, hutRoom, hutTier, placeProblem, placedFurnishings, poiAt, putInProblem, smallPlaceProblem, tileAt, validFacing, type Furnishing } from "./index";
 
 const at = (q: number, r: number) => ({ q, r });
 
@@ -144,5 +144,80 @@ describe("a hut changing size", () => {
     const spot = hutFloor(small)[0];
     const twin = [{ defId: "table", ...spot }, { defId: "rug", ...spot }, { defId: "bed", q: null, r: null }];
     expect(displacedFurnishings(1, twin)).toEqual([twin[1]]);
+  });
+});
+
+describe("small things and containers", () => {
+  const room = hutRoom(1);
+  const [a, b] = hutFloor(room).filter((p) => poiAt(room, p)?.kind !== "door");
+  let next = 1;
+  const piece = (defId: string, at: { q: number; r: number } | null, more: Partial<Furnishing> = {}): Furnishing => ({
+    id: next++,
+    defId,
+    label: defId,
+    q: at?.q ?? null,
+    r: at?.r ?? null,
+    facing: 0,
+    x: 0,
+    z: 0,
+    angle: 0,
+    onId: null,
+    inId: null,
+    ...more,
+  });
+
+  it("puts a small thing anywhere near the middle of a free hex", () => {
+    expect(smallPlaceProblem(room, [], "candle", { pos: a, x: 0.3, z: -0.4, angle: 1 })).toBeNull();
+    expect(smallPlaceProblem(room, [], "candle", { pos: a, x: 0.8, z: 0.2, angle: 0 })).toMatch(/inside the hex/);
+    expect(smallPlaceProblem(room, [], "table", { pos: a, x: 0, z: 0, angle: 0 })).toMatch(/too big/);
+    expect(smallPlaceProblem(room, [], "candle", { pos: a, x: Number.NaN, z: 0, angle: 0 })).not.toBeNull();
+  });
+
+  it("stands a small thing on a top, within its edges, but not on something without one", () => {
+    const table = piece("table", a);
+    const stool = piece("chair", b);
+    const top = FURNISHINGS.table.surface!;
+    expect(smallPlaceProblem(room, [table], "mug", { on: table.id, x: top.w / 2 - 0.01, z: 0, angle: 0 })).toBeNull();
+    expect(smallPlaceProblem(room, [table], "mug", { on: table.id, x: top.w, z: 0, angle: 0 })).toMatch(/edge/);
+    expect(smallPlaceProblem(room, [stool], "mug", { on: stool.id, x: 0, z: 0, angle: 0 })).toMatch(/Nothing can stand/);
+    // Nor on a hex furniture stands on.
+    expect(smallPlaceProblem(room, [table], "mug", { pos: a, x: 0, z: 0, angle: 0 })).toMatch(/already stands/);
+    // A top fills up.
+    const full = Array.from({ length: SMALL_PER_SPOT }, () => piece("candle", a, { onId: table.id }));
+    expect(smallPlaceProblem(room, [table, ...full], "mug", { on: table.id, x: 0, z: 0, angle: 0 })).toMatch(/no room/);
+  });
+
+  it("keeps furniture off small things on the floor, but not off what stands on it", () => {
+    const candle = piece("candle", a);
+    expect(placeProblem(room, [candle], "table", a)).toMatch(/Clear the small things/);
+    const table = piece("table", b);
+    const mug = piece("mug", b, { onId: table.id });
+    expect(placeProblem(room, [mug], "chair", b)).toBeNull();
+  });
+
+  it("lets people step over small things", () => {
+    const door = hutDoor(1);
+    const candle = piece("candle", a);
+    const path = hutPath(room, [candle], door, a);
+    expect(path?.at(-1)).toEqual(a);
+  });
+
+  it("only lets containers take things, never themselves or other containers, and only while there is room", () => {
+    const chest = piece("chest", a);
+    const crate = piece("crate", null);
+    const candle = piece("candle", null);
+    expect(putInProblem(candle, chest, 0)).toBeNull();
+    expect(putInProblem(candle, chest, FURNISHINGS.chest.storage!)).toMatch(/full/);
+    expect(putInProblem(crate, chest, 0)).toMatch(/other containers/);
+    expect(putInProblem(chest, chest, 0)).not.toBeNull();
+    expect(putInProblem(candle, piece("table", b), 0)).toMatch(/does not hold/);
+  });
+
+  it("sends small things home with the furniture they stood on when the room shrinks around it", () => {
+    const table = piece("table", { q: 99, r: 99 });
+    const mug = piece("mug", { q: 99, r: 99 }, { onId: table.id });
+    const candle = piece("candle", a);
+    const out = displacedFurnishings(1, [table, mug, candle]);
+    expect(out.map((f) => f.id).sort()).toEqual([table.id, mug.id].sort());
   });
 });

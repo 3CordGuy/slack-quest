@@ -13,6 +13,9 @@ import {
   buyFurniture,
   buyShopItem,
   craftFurnishing,
+  stashMaterial,
+  stowGear,
+  unstowGear,
   consumeEmailCode,
   createPlayerWithEmail,
   createSession,
@@ -267,6 +270,23 @@ app.post("/api/hut/upgrade", async (c) => {
   // The building in the Harbor grows too.
   c.executionCtx.waitUntil(crewFor(c.env.DB, player.id).then((crew) => refreshHarbor(c.env, crew?.id ?? null)));
   return c.json(result);
+});
+
+// Materials in or out of one of your hut's containers: `qty` > 0 puts that many in, < 0 takes them out.
+app.post("/api/hut/stash", async (c) => {
+  const player = c.get("player");
+  const body = await c.req.json<{ container?: number; kind?: string; qty?: number }>().catch(() => ({}) as { container?: number; kind?: string; qty?: number });
+  const error = await stashMaterial(c.env.DB, player.id, Number(body.container), body.kind, body.qty);
+  return error ? c.json({ error }, 409) : c.json({ ok: true });
+});
+
+// A piece of gear from the bag into a container, or (with no container) back out into the bag.
+app.post("/api/hut/stow", async (c) => {
+  const player = c.get("player");
+  const body = await c.req.json<{ container?: number | null; itemId?: number }>().catch(() => ({}) as { container?: number | null; itemId?: number });
+  const itemId = Number(body.itemId);
+  const error = body.container == null ? await unstowGear(c.env.DB, player.id, itemId) : await stowGear(c.env.DB, player.id, Number(body.container), itemId);
+  return error ? c.json({ error }, 409) : c.json({ ok: true });
 });
 
 // Walk into a hut's room: your own, or a crewmate's.

@@ -90,6 +90,7 @@ Build before deploying: `wrangler deploy` ships whatever the last build produced
 - **Everything random goes through the seeded RNG in `WorldState`.** No `Math.random` in `packages/world`; a run must replay from its seed and action log.
 - **D1 is the system of record.** The Durable Object caches state and reloads it after hibernation. Persist before broadcast. Timers are DO Alarms.
 - **Rewards are written as they are earned**, so a dropped run never loses loot. Defeat costs a capped amount of gold and nothing else.
+- **Hut furniture is in one catalogue.** `FURNISHINGS` (`packages/world/src/hut.ts`) says what each piece is: `size: "small"` for things that go anywhere in a hex or on a top, `surface` for a top small things can stand on, `light` for a candle, lamp or fire, and `storage` for how many slots a container has. The server checks placement with `placeProblem` and `smallPlaceProblem`, and the client uses the same rules to tint the ghost of the piece being carried. A model in `render/props.ts` must match its catalogue `surface`. Indoors there is one shadow-casting fire light and four plain lights, shared by whichever lit pieces are nearest the camera, so the light count never changes.
 
 ## Tests
 

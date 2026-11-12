@@ -165,7 +165,7 @@ describe("drop tables", () => {
       }
       if (d.furnishing) {
         decor++;
-        expect(["lantern", "banner", "rug"]).toContain(d.furnishing.defId);
+        expect(CACHE_DECOR).toContain(d.furnishing.defId);
         expect(d.furnishing.label).toBe(FURNISHINGS[d.furnishing.defId].name);
       }
     }
