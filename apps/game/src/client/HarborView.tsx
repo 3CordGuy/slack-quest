@@ -4,7 +4,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { HexPos } from "@gantt-quest/core";
-import { HARBOR_BOARD, HARBOR_PIERS, HARBOR_PLOTS, HARBOR_RING, HARBOR_SHOP, HARBOR_WORKS, HERO_CLASSES, MAX_PARTY, builtProjects, generateHarbor, harborPoi, poiAt, type HarborShip } from "@gantt-quest/world";
+import { HARBOR_BOARD, HARBOR_PIERS, HARBOR_PLOTS, HARBOR_RING, HARBOR_SHOP, HARBOR_WORKS, HERO_CLASSES, MAX_PARTY, builtProjects, generateHarbor, harborPoi, hutTier, poiAt, type HarborShip } from "@gantt-quest/world";
 import { api, type Me } from "./api";
 import { AccountPanel } from "./Account";
 import { NoticeBoard } from "./board/NoticeBoard";
@@ -48,7 +48,7 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
     const pois = [
       // The works are a building site until the lighthouse stands there.
       ...base.pois.map((p) => (p.id === "works" ? { ...p, cleared: lit } : p)),
-      ...board.members.slice(0, HARBOR_PLOTS.length).map((m, i) => harborPoi(`plot:${m.id}`, "plot", HARBOR_PLOTS[i])),
+      ...board.members.slice(0, HARBOR_PLOTS.length).map((m, i) => ({ ...harborPoi(`plot:${m.id}`, "plot", HARBOR_PLOTS[i]), tier: m.hutTier ?? 1 })),
       ...moored.map((s) => harborPoi(`ship:${s.code}`, "pier", HARBOR_PIERS[s.pier!])),
     ];
     return {
@@ -95,10 +95,10 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
   const hoverPoi = scene && hover ? poiAt(scene.map, hover) : undefined;
   const tip = !hoverPoi ? null
     : hoverPoi.kind === "board" ? "Notice board: the crew goal and contracts"
-    : hoverPoi.kind === "shop" ? "Market stall: buy and sell gear"
+    : hoverPoi.kind === "shop" ? "Market stall: gear, and furniture for your hut"
     : hoverPoi.kind === "ring" ? "Sparring ring"
     : hoverPoi.kind === "works" ? (lit ? "The lighthouse: crew projects" : "The works: crew projects")
-    : hoverPoi.kind === "plot" ? `${board.members.find((m) => `plot:${m.id}` === hoverPoi.id)?.name ?? "Someone"}'s hut`
+    : hoverPoi.kind === "plot" ? `${board.members.find((m) => `plot:${m.id}` === hoverPoi.id)?.name ?? "Someone"}'s ${hutTier(hoverPoi.tier ?? 1).name.toLowerCase()}`
     : hoverPoi.kind === "pier" ? `${moored.find((s) => `ship:${s.code}` === hoverPoi.id)?.captain ?? "A"}'s ship`
     : null;
 
@@ -246,7 +246,7 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
           </>
         ) : hutOwner ? (
           <>
-            <span>{hutOwner.id === you ? "Your hut" : `${hutOwner.name}'s hut`}</span>
+            <span>{hutOwner.id === you ? "Your hut" : `${hutOwner.name}'s hut`} <span className="muted">· {hutTier(hutOwner.hutTier ?? 1).name}</span></span>
             <button className="primary" onClick={() => {
               // Remembered so that leaving the hut puts you back at its door.
               try {

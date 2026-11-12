@@ -26,7 +26,7 @@ import { ContractResult } from "./board/ContractResult";
 import { ContractStatus } from "./board/ContractStatus";
 import { BattleHud, useCountdown } from "./BattleHud";
 import { DragPanel } from "./DragPanel";
-import { HutSpoils, blueprintName, isTrophy, resourceText } from "./hutDrops";
+import { HutSpoils, blueprintName, isTrophy, perkText, resourceText } from "./hutDrops";
 import { InventoryScreen } from "./InventoryScreen";
 import { WorldRenderer } from "./render/WorldRenderer";
 import { useRun, type RunConnection } from "./useRun";
@@ -258,7 +258,10 @@ function Lobby({ state, run, code }: { state: ClientState; run: RunConnection; c
         <ul className="crew-list">
           {state.heroes.map((h) => (
             <li key={h.id}>
-              <span><strong>{h.name}</strong> <span className="muted">{className(h.classId)} · Level {h.level}{h.contract ? ` · ${contractName(h.contract.id)}` : ""}</span></span>
+              <span>
+                <strong>{h.name}</strong> <span className="muted">{className(h.classId)} · Level {h.level}{h.contract ? ` · ${contractName(h.contract.id)}` : ""}</span>
+                {perkText(h.hutPerks) && <span className="hut-perks" title="From the furniture in their hut"> · Hut: {perkText(h.hutPerks)}</span>}
+              </span>
               <span className={h.id === state.hostId || h.ready ? "good" : "muted"}>{h.id === state.hostId ? "captain" : h.ready ? "ready" : "not ready"}</span>
             </li>
           ))}

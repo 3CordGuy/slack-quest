@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { FURNISHINGS, HUT_TIERS, PERK_CAPS, RESOURCE_KINDS, STARTER_BLUEPRINTS, STORY_FRAMES, TROPHY_FOR_FRAME, addResources, canAfford, hutPerks } from "./index";
+import { FURNISHINGS, HUT_TIERS, PERK_CAPS, RESOURCE_KINDS, STARTER_BLUEPRINTS, STORY_FRAMES, TROPHY_FOR_FRAME, addResources, buyFurnitureProblem, canAfford, capPerks, craftProblem, hutPerks, nextHutTier, upgradeProblem, xpWithBonus, STALL_FURNITURE } from "./index";
 
 describe("hut catalogue", () => {
   it("is internally consistent", () => {
@@ -56,5 +56,83 @@ describe("resources", () => {
     expect(canAfford({ wood: 5 }, { wood: 5 })).toBe(true);
     expect(canAfford({ wood: 5 }, { wood: 5, stone: 1 })).toBe(false);
     expect(canAfford({}, {})).toBe(true);
+  });
+});
+
+describe("perk caps", () => {
+  it("holds any perk to the caps and to whole, non-negative numbers", () => {
+    expect(capPerks(undefined)).toEqual({ focus: 0, potions: 0, maxHp: 0, xpPct: 0 });
+    expect(capPerks({ focus: 9, potions: 9, maxHp: 99, xpPct: 99 })).toEqual(PERK_CAPS);
+    expect(capPerks({ focus: -3, maxHp: 2.9, xpPct: Number.NaN })).toEqual({ focus: 0, potions: 0, maxHp: 2, xpPct: 0 });
+  });
+
+  it("adds the XP bonus as a rounded percentage, never above the cap", () => {
+    expect(xpWithBonus(100, 0)).toBe(100);
+    expect(xpWithBonus(100, 2)).toBe(102);
+    expect(xpWithBonus(100, 50)).toBe(100 + PERK_CAPS.xpPct);
+    expect(xpWithBonus(10, 5)).toBe(11);
+    expect(xpWithBonus(10, 2)).toBe(10);
+    expect(xpWithBonus(0, 5)).toBe(0);
+  });
+});
+
+describe("crafting", () => {
+  it("lets anyone craft a starter recipe they hold the materials for", () => {
+    expect(craftProblem("table", STARTER_BLUEPRINTS, { wood: 6 })).toBeNull();
+    expect(craftProblem("table", [], { wood: 99 })).toBeNull();
+  });
+
+  it("names what is missing", () => {
+    expect(craftProblem("table", STARTER_BLUEPRINTS, { wood: 5 })).toBe("You need 1 more wood.");
+    expect(craftProblem("lantern", STARTER_BLUEPRINTS, { wood: 1 })).toBe("You need 3 more copper.");
+    expect(craftProblem("bed", ["bed"], {})).toBe("You need 8 more wood, 4 more fur.");
+  });
+
+  it("needs the blueprint for the pieces that have one", () => {
+    const plenty = { wood: 99, fur: 99, iron: 99, stone: 99, bone: 99, copper: 99 };
+    expect(craftProblem("bed", STARTER_BLUEPRINTS, plenty)).toMatch(/blueprint/);
+    expect(craftProblem("bed", [...STARTER_BLUEPRINTS, "bed"], plenty)).toBeNull();
+    for (const def of Object.values(FURNISHINGS)) {
+      if (def.recipe) expect(craftProblem(def.id, [def.id], plenty)).toBeNull();
+    }
+  });
+
+  it("refuses trophies and things that do not exist", () => {
+    expect(craftProblem("trophy_pelt", ["trophy_pelt"], { fur: 99 })).toBe("That cannot be crafted.");
+    expect(craftProblem("throne", ["throne"], {})).toBe("There is no such furnishing.");
+    expect(craftProblem("toString", [], {})).toBe("There is no such furnishing.");
+  });
+});
+
+describe("furniture at the stall", () => {
+  it("sells only what the catalogue prices, at the catalogue's price", () => {
+    expect(STALL_FURNITURE.map((f) => f.id)).toEqual(expect.arrayContaining(["table", "chair", "rug", "lantern", "banner"]));
+    for (const def of STALL_FURNITURE) {
+      expect(buyFurnitureProblem(def.id, def.price!)).toBeNull();
+      expect(buyFurnitureProblem(def.id, def.price! - 1)).toBe("Not enough gold.");
+    }
+    expect(buyFurnitureProblem("bed", 9999)).toBe("The stall does not sell that.");
+    expect(buyFurnitureProblem("trophy_core", 9999)).toBe("The stall does not sell that.");
+    expect(buyFurnitureProblem("nothing", 9999)).toBe("The stall does not sell that.");
+  });
+});
+
+describe("making a hut bigger", () => {
+  it("costs the next tier's gold and materials", () => {
+    const cottage = HUT_TIERS[1];
+    expect(nextHutTier(1)).toBe(cottage);
+    expect(upgradeProblem(1, cottage.gold, cottage.resources)).toBeNull();
+    expect(upgradeProblem(1, cottage.gold - 1, cottage.resources)).toBe("You need 1 more gold.");
+    expect(upgradeProblem(1, cottage.gold, { wood: 20, stone: 4 })).toBe("You need 6 more stone.");
+    expect(upgradeProblem(1, 0, {})).toBe("You need 150 more gold, 20 more wood, 10 more stone.");
+    // The Cottage's price does not buy a Lodge.
+    expect(upgradeProblem(2, cottage.gold, cottage.resources)).toMatch(/^You need /);
+    expect(upgradeProblem(2, HUT_TIERS[2].gold, HUT_TIERS[2].resources)).toBeNull();
+  });
+
+  it("stops at the top tier", () => {
+    const top = HUT_TIERS[HUT_TIERS.length - 1].tier;
+    expect(nextHutTier(top)).toBeNull();
+    expect(upgradeProblem(top, 99999, { wood: 999, stone: 999, iron: 999 })).toBe("Your hut is as big as huts get.");
   });
 });

@@ -81,6 +81,8 @@ export interface HarborMember {
   name: string;
   classId: string;
   level: number;
+  /** How big their hut is, so its building can be drawn to match. Absent from boards saved before tiers. */
+  hutTier?: number;
 }
 
 export interface HarborShip {

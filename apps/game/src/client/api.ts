@@ -50,6 +50,9 @@ export interface Shop {
   entries: (ShopEntry & { bought: boolean })[];
 }
 
+/** What the player owns for their hut, the perks it gives right now, and their gold. */
+export type Hut = HutSummary & { perks: Required<Perk>; gold: number };
+
 export interface Me {
   /** `email` is null for a guest, whose account lives only in this browser. */
   player: { id: string; name: string; email: string | null };
@@ -107,5 +110,8 @@ export const api = {
   leaveCrew: () => request("/api/crew/leave", {}),
   projects: () => request<Works>("/api/projects"),
   giveToProject: (projectId: string, give: ProjectAmounts) => request<Works & { completed: boolean }>("/api/projects/give", { projectId, give }),
-  hut: () => request<HutSummary & { perks: Required<Perk> }>("/api/hut"),
+  hut: () => request<Hut>("/api/hut"),
+  craft: (defId: string) => request("/api/hut/craft", { defId }),
+  upgradeHut: () => request<{ tier: number }>("/api/hut/upgrade", {}),
+  buyFurniture: (defId: string) => request("/api/shop/furniture", { defId }),
 };

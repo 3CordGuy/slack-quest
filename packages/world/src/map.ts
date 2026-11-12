@@ -54,6 +54,8 @@ export interface Poi {
   usedBy: string[];
   /** Enemy kinds for camp and lair. */
   enemies: string[];
+  /** For a hut plot in the Harbor: the hut's tier, which sets how big the building is drawn. */
+  tier?: number;
 }
 
 export interface WorldMap {
