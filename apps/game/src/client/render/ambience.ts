@@ -262,7 +262,7 @@ export class Ambience {
     });
 
     this.bounds = { minX, maxX, minZ, maxZ };
-    // ---- wisps: trails of single pixels that curl through a loop as they cross ----
+    // ---- wisps: trails of single pixels that sway gently as they cross ----
     // No wind indoors.
     const indoors = (this.indoors = tiles.some((t) => (t.biome as string) === "floor"));
     const count = this.still || indoors ? 0 : Math.min(14, Math.max(7, Math.round(tiles.length / 30)));
@@ -364,7 +364,7 @@ export class Ambience {
       const b = this.bounds;
       this.wisps.forEach((w, n) => {
         const t = clock * w.speed + w.offset;
-        // Every crossing is a new gust: its own place, height, length, and its own curls.
+        // Every crossing is a new gust: its own place, height, length and sway.
         const gust = Math.floor(t);
         const r = (salt: number) => hash(n + 1, gust, 200 + salt);
         const head = t - gust;
@@ -372,38 +372,17 @@ export class Ambience {
         const y0 = 1.2 + r(2) * 2.6;
         const z0 = b.minZ + r(3) * (b.maxZ - b.minZ);
         const reach = 4 + r(4) * 3;
-        // One to three open curls, each somewhere different along the way and its own size.
-        const curls = r(5) < 0.5 ? 1 : r(5) < 0.9 ? 2 : 3;
-        const at1 = 0.18 + r(6) * 0.15;
-        const at2 = at1 + 0.2 + r(7) * 0.1;
-        const at3 = at2 + 0.18 + r(14) * 0.08;
-        const size1 = 0.3 + r(8) * 0.25;
-        const size2 = 0.24 + r(9) * 0.2;
-        const size3 = 0.2 + r(15) * 0.15;
-        // A slow, shallow ripple the whole way, so the line is never straight.
-        const ripple = 0.1 + r(10) * 0.08;
-        const beat = 14 + r(11) * 12;
+        // A long, soft wave with a fainter, slower one under it, so no two gusts sway alike.
+        const swell = 0.12 + r(10) * 0.1;
+        const beat = 7 + r(11) * 6;
+        const under = 0.06 + r(8) * 0.06;
+        const underBeat = 3 + r(9) * 3;
         const drift = (r(12) - 0.5) * 0.8;
         for (let i = 0; i < TRAIL; i++) {
           // Each pixel follows the head a little further back along the same path.
           const s = head - i * 0.0095;
-          let along = (s - 0.5) * reach;
-          let up = Math.sin(s * beat + r(13) * 6) * ripple + (s - 0.5) * drift;
-          if (curls >= 1) {
-            const u = smooth(at1 - 0.08, at1 + 0.08, s) * Math.PI * 2;
-            along -= Math.sin(u) * size1;
-            up += (1 - Math.cos(u)) * size1;
-          }
-          if (curls >= 2) {
-            const u = smooth(at2 - 0.07, at2 + 0.07, s) * Math.PI * 2;
-            along -= Math.sin(u) * size2;
-            up += (1 - Math.cos(u)) * size2;
-          }
-          if (curls >= 3) {
-            const u = smooth(at3 - 0.06, at3 + 0.06, s) * Math.PI * 2;
-            along -= Math.sin(u) * size3;
-            up += (1 - Math.cos(u)) * size3;
-          }
+          const along = (s - 0.5) * reach;
+          const up = Math.sin(s * beat + r(13) * 6) * swell + Math.sin(s * underBeat + r(6) * 6) * under + (s - 0.5) * drift;
           const k = n * TRAIL + i;
           pos.setXYZ(k, x0 + cos * along, y0 + up, z0 - sin * along);
           // Fades toward the tail, and in and out at the ends of the crossing.
