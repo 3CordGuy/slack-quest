@@ -44,3 +44,22 @@ export const LOOKS: Record<string, Look> = {
 
 /** The colour fields of a look, which an admin palette override may change. */
 export const LOOK_COLORS = ["skin", "hair", "body", "legs", "accent", "hatColor"] as const;
+
+/** The colour, hat and weapon changes an admin may make to a look. Every field is optional. */
+export type LookPalette = Partial<Pick<Look, (typeof LOOK_COLORS)[number] | "hat" | "weapon">>;
+
+/**
+ * A stock look with an admin palette laid over it, field by field. Anything
+ * the palette leaves out (or gets wrong) keeps the code default.
+ */
+export function mergeLook(base: Look, palette: Record<string, unknown> | undefined): Look {
+  if (!palette) return base;
+  const out: Look = { ...base };
+  for (const key of LOOK_COLORS) {
+    const v = palette[key];
+    if (typeof v === "string" && /^#[0-9a-f]{6}$/i.test(v)) out[key] = v;
+  }
+  if (typeof palette.hat === "string" && (HATS as readonly string[]).includes(palette.hat)) out.hat = palette.hat as Hat;
+  if (typeof palette.weapon === "string" && (LOOK_WEAPONS as readonly string[]).includes(palette.weapon)) out.weapon = palette.weapon as Weapon;
+  return out;
+}

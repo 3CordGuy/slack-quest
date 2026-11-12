@@ -1,7 +1,7 @@
 // Calls to the admin routes. The server checks the ADMIN_EMAILS allow-list
 // on every one; a 403 here means this account is not on it.
 
-import type { ContentBundle, HistoryRow, OverrideKind, OverrideRow, OverrideValue } from "../../server/content";
+import type { ContentBundle, HistoryRow, LogRow, OverrideKind, OverrideRow, OverrideValue } from "../../server/content";
 import { PROFILE } from "../api";
 
 async function call<T>(method: string, path: string, body?: unknown): Promise<T> {
@@ -22,6 +22,7 @@ export const adminApi = {
   save: (kind: OverrideKind, target: string, value: OverrideValue) => call<{ version: number; value: OverrideValue }>("PUT", at(kind, target), { value }),
   revert: (kind: OverrideKind, target: string) => call<{ removed: boolean }>("DELETE", at(kind, target)),
   history: (kind: OverrideKind, target: string) => call<{ history: HistoryRow[] }>("GET", `${at(kind, target)}/history`).then((r) => r.history),
+  log: () => call<{ log: LogRow[] }>("GET", "/api/admin/log").then((r) => r.log),
   exportAll: () => call<ContentBundle>("GET", "/api/admin/export"),
   importAll: (bundle: unknown) => call<{ version: number; imported: number }>("POST", "/api/admin/import", bundle),
 };

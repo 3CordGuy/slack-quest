@@ -8,6 +8,7 @@
 
 import type { ContentBundle } from "../server/content";
 import { PROFILE } from "./api";
+import { applyArt } from "./art";
 
 export type { ContentBundle };
 
@@ -61,5 +62,7 @@ export async function loadContent(): Promise<ContentBundle> {
   } catch {
     setContent(stored() ?? EMPTY);
   }
+  // Palettes and icons reach the renderers before anything is drawn.
+  await applyArt(bundle).catch(() => undefined);
   return bundle;
 }

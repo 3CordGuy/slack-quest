@@ -17,6 +17,7 @@ import {
   pngSize,
   putOverride,
   putOverrides,
+  recentLog,
 } from "../src/server/content";
 
 type Row = Record<string, unknown>;
@@ -203,5 +204,26 @@ describe("the override store", () => {
     const bundle = await contentBundle(db);
     expect(Object.keys(bundle.names)).toEqual(["pub:ale"]);
     expect(Object.keys(bundle.icons)).toEqual(["chest-armor"]);
+  });
+
+  it("lists the latest changes of every kind, newest first, and pages back by id", async () => {
+    await putOverride(db, "name", "class:qa_paladin", { name: "Tester" }, "ann");
+    await putOverride(db, "palette", "bandit", { body: "#000000" }, "ann");
+    await putOverride(db, "icon", "chest-armor", { png: fakePng(16, 16) }, "ann");
+    await deleteOverride(db, "palette", "bandit", "ann");
+
+    const log = await recentLog(db);
+    expect(log.map((r) => [r.kind, r.target, r.new === null])).toEqual([
+      ["palette", "bandit", true],
+      ["icon", "chest-armor", false],
+      ["palette", "bandit", false],
+      ["name", "class:qa_paladin", false],
+    ]);
+    expect(log[0].old).toEqual({ body: "#000000" });
+    expect(log[0].by_name).toBe("Ann");
+
+    const older = await recentLog(db, 100, log[1].id);
+    expect(older.map((r) => r.target)).toEqual(["bandit", "class:qa_paladin"]);
+    expect(await recentLog(db, 1)).toHaveLength(1);
   });
 });

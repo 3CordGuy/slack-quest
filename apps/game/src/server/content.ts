@@ -5,7 +5,7 @@
 
 import { CATALOGUE, isCatalogueKind } from "@gantt-quest/world";
 import { ITEM_ART_NAMES } from "../client/itemArt";
-import { HATS, LOOKS, LOOK_COLORS, LOOK_WEAPONS } from "../client/render/looks";
+import { HATS, LOOKS, LOOK_COLORS, LOOK_WEAPONS, type Hat, type LookPalette, type Weapon } from "../client/render/looks";
 import type { Env, Player } from "./db";
 
 export const OVERRIDE_KINDS = ["name", "palette", "icon", "sprite"] as const;
@@ -15,7 +15,7 @@ export interface NameValue {
   name?: string;
   blurb?: string;
 }
-export type PaletteValue = Partial<Record<(typeof LOOK_COLORS)[number], string>> & { hat?: string; weapon?: string };
+export type PaletteValue = LookPalette;
 export interface ImageValue {
   /** Base64 PNG, no data: prefix. */
   png: string;
@@ -149,10 +149,10 @@ export function checkOverride(kind: string, target: string, raw: unknown): Check
         out[key as (typeof LOOK_COLORS)[number]] = v.toLowerCase();
       } else if (key === "hat") {
         if (typeof v !== "string" || !(HATS as readonly string[]).includes(v)) return { ok: false, error: `hat must be one of ${HATS.join(", ")}.` };
-        out.hat = v;
+        out.hat = v as Hat;
       } else if (key === "weapon") {
         if (typeof v !== "string" || !(LOOK_WEAPONS as readonly string[]).includes(v)) return { ok: false, error: `weapon must be one of ${LOOK_WEAPONS.join(", ")}.` };
-        out.weapon = v;
+        out.weapon = v as Weapon;
       } else return { ok: false, error: `Unknown field "${key}".` };
     }
     if (!Object.keys(out).length) return { ok: false, error: "Change at least one colour, the hat or the weapon." };
@@ -252,6 +252,31 @@ export async function overrideHistory(db: D1Database, kind: OverrideKind, target
     .all<{ id: number; old_json: string | null; new_json: string | null; by: string; by_name: string | null; at: number }>();
   return results.map((r) => ({
     id: r.id,
+    old: r.old_json ? JSON.parse(r.old_json) : null,
+    new: r.new_json ? JSON.parse(r.new_json) : null,
+    by: r.by,
+    by_name: r.by_name,
+    at: r.at,
+  }));
+}
+
+export interface LogRow extends HistoryRow {
+  kind: OverrideKind;
+  target: string;
+}
+
+/** The latest changes of every kind, newest first: the admin page's change log. */
+export async function recentLog(db: D1Database, limit = 100, before?: number): Promise<LogRow[]> {
+  const { results } = await db
+    .prepare(
+      "SELECT l.id, l.kind, l.target, l.old_json, l.new_json, l.by, p.name AS by_name, l.at FROM content_override_log l LEFT JOIN players p ON p.id = l.by WHERE (?1 IS NULL OR l.id < ?1) ORDER BY l.id DESC LIMIT ?2",
+    )
+    .bind(before ?? null, Math.max(1, Math.min(limit, 200)))
+    .all<{ id: number; kind: OverrideKind; target: string; old_json: string | null; new_json: string | null; by: string; by_name: string | null; at: number }>();
+  return results.map((r) => ({
+    id: r.id,
+    kind: r.kind,
+    target: r.target,
     old: r.old_json ? JSON.parse(r.old_json) : null,
     new: r.new_json ? JSON.parse(r.new_json) : null,
     by: r.by,
