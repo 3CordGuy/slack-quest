@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { hexNeighbors } from "@gantt-quest/core";
-import { HUT_TIERS, hutDoor, hutFloor, hutPath, hutRoom, hutTier, placeProblem, placedFurnishings, poiAt, tileAt, validFacing } from "./index";
+import { HUT_TIERS, displacedFurnishings, hutDoor, hutFloor, hutPath, hutRoom, hutTier, placeProblem, placedFurnishings, poiAt, tileAt, validFacing } from "./index";
 
 const at = (q: number, r: number) => ({ q, r });
 
@@ -122,5 +122,27 @@ describe("walking around furniture", () => {
   it("cannot leave a room whose doorway is boxed in", () => {
     const blockers = hexNeighbors(door, room.grid).filter((n) => tileAt(room, n)!.biome === "floor");
     expect(hutPath(room, blockers, door, floor[0])).toBeNull();
+  });
+});
+
+describe("a hut changing size", () => {
+  it("keeps every piece where it stands when the room grows", () => {
+    for (const tier of HUT_TIERS.slice(0, -1)) {
+      const full = hutFloor(hutRoom(tier.tier)).map((pos) => ({ defId: "chair", ...pos }));
+      expect(displacedFurnishings(tier.tier, full)).toEqual([]);
+      expect(displacedFurnishings(tier.tier + 1, full)).toEqual([]);
+    }
+  });
+
+  it("sends back pieces the new room has no place for", () => {
+    const big = hutFloor(hutRoom(3)).map((pos) => ({ defId: "chair", ...pos }));
+    const out = displacedFurnishings(1, big);
+    expect(out.length).toBeGreaterThan(0);
+    const small = hutRoom(1);
+    for (const f of big) expect(out.includes(f)).toBe(placeProblem(small, [], f.defId, f) !== null);
+    // Two pieces on one hex: the later one goes. Stored pieces are never touched.
+    const spot = hutFloor(small)[0];
+    const twin = [{ defId: "table", ...spot }, { defId: "rug", ...spot }, { defId: "bed", q: null, r: null }];
+    expect(displacedFurnishings(1, twin)).toEqual([twin[1]]);
   });
 });

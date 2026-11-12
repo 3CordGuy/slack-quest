@@ -1,9 +1,10 @@
 // The market stall in the Harbor: buy from a small stock that changes each
 // day, and sell what you no longer want. Every row is compared against what
-// you are wearing so an upgrade is obvious.
+// you are wearing so an upgrade is obvious. The Furniture tab sells plain
+// pieces for a hut, always in stock, at the catalogue's price.
 
 import { useEffect, useMemo, useState } from "react";
-import { RARITY_COLOR, SLOT_LABEL, equipProblem, sellPrice } from "@gantt-quest/world";
+import { RARITY_COLOR, SLOT_LABEL, STALL_FURNITURE, equipProblem, sellPrice } from "@gantt-quest/world";
 import { api, type Me, type Shop } from "./api";
 import { DragPanel } from "./DragPanel";
 import { useAct } from "./Harbor";
@@ -13,7 +14,9 @@ export function ShopScreen({ me, refresh, onClose }: { me: Me; refresh(): Promis
   const c = me.character!;
   const [shop, setShop] = useState<Shop | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [tab, setTab] = useState<"buy" | "sell">("buy");
+  const [tab, setTab] = useState<"buy" | "sell" | "furniture">("buy");
+  /** The furnishing last bought, and how many of it are now owned, so a purchase is visible. */
+  const [bought, setBought] = useState<string | null>(null);
   const [picked, setPicked] = useState<{ tab: "buy" | "sell"; key: number } | null>(null);
   const load = () => api.shop().then(setShop, (e: Error) => setLoadError(e.message));
   const { busy, error, act } = useAct(async () => {
@@ -37,6 +40,7 @@ export function ShopScreen({ me, refresh, onClose }: { me: Me; refresh(): Promis
           <h2>Market stall</h2>
           <button className={`small ${tab === "buy" ? "selected" : ""}`} onClick={() => setTab("buy")}>Buy</button>
           <button className={`small ${tab === "sell" ? "selected" : ""}`} onClick={() => setTab("sell")}>Sell <span className="muted">{sellable.length}</span></button>
+          <button className={`small ${tab === "furniture" ? "selected" : ""}`} onClick={() => setTab("furniture")}>Furniture</button>
           <span className="spacer" />
           <span className="gold"><Icon name="cash" color="#ffd23f" size={18} /> {c.gold} gold</span>
           <button onClick={onClose}>Close</button>
@@ -72,6 +76,26 @@ export function ShopScreen({ me, refresh, onClose }: { me: Me; refresh(): Promis
                 })}
                 {shop && <p className="muted">New stock in about {hours} hour{hours === 1 ? "" : "s"}. The stall carries gear for your class and level.</p>}
               </>
+            ) : tab === "furniture" ? (
+              <>
+                {bought && !busy && !error && <p className="good">{bought} bought. It is in your hut's storage.</p>}
+                {STALL_FURNITURE.map((def) => (
+                  <div key={def.id} className="shop-row">
+                    <div className="shop-info">
+                      <strong>{def.name}</strong>
+                      <span className="muted">{def.blurb}</span>
+                    </div>
+                    <button
+                      className="primary"
+                      disabled={busy || c.gold < def.price!}
+                      onClick={() => { setBought(null); void act(() => api.buyFurniture(def.id).then(() => setBought(def.name))); }}
+                    >
+                      {def.price}g
+                    </button>
+                  </div>
+                ))}
+                <p className="muted">Furniture goes to your hut's storage. Pieces that help on a voyage are crafted from blueprints, not sold.</p>
+              </>
             ) : (
               <>
                 {sellable.length === 0 && <p className="muted">Nothing to sell. Equipped gear has to be taken off first.</p>}
@@ -95,6 +119,8 @@ export function ShopScreen({ me, refresh, onClose }: { me: Me; refresh(): Promis
               <ItemDetail item={buying.item} current={worn.get(buying.item.slot) ?? null} classId={c.class_id} level={c.level} />
             ) : selling ? (
               <ItemDetail item={selling} current={worn.get(selling.slot) ?? null} classId={c.class_id} level={c.level} />
+            ) : tab === "furniture" ? (
+              <p className="muted">Walk into your hut from its plot in the Harbor to put furniture down. The same pieces can be crafted there from wood, fur and copper.</p>
             ) : (
               <p className="muted">Pick something to see how it compares with what you are wearing.</p>
             )}

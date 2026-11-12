@@ -49,7 +49,7 @@ export function App() {
       />
     );
   }
-  if (hut && ready && me.crew) return <HutView key={hut} ownerId={hut} me={me} onLeave={() => (location.hash = "")} />;
+  if (hut && ready && me.crew) return <HutView key={hut} ownerId={hut} me={me} refresh={refresh} onLeave={() => (location.hash = "")} />;
   // An invite to a different crew than your own takes you back to the gate to accept it.
   if (ready && me.crew && (!invite || invite === me.crew.id)) return <HarborView me={me} refresh={refresh} />;
   return <Harbor me={me} refresh={refresh} invite={invite} />;
