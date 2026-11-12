@@ -82,6 +82,8 @@ const PAN_KEYS: Record<string, [number, number]> = {
   w: [0, 1], s: [0, -1], a: [-1, 0], d: [1, 0],
   arrowup: [0, 1], arrowdown: [0, -1], arrowleft: [-1, 0], arrowright: [1, 0],
 };
+/** A unit square standing on its bottom edge, like a sprite. */
+const CASTER_PLANE = new THREE.PlaneGeometry(1, 1).translate(0, 0.5, 0);
 const PLAYER_COLORS = ["#ffd23f", "#5ce1e6", "#ff7ab6", "#9dff6b"];
 const BIOME_COLOR: Record<string, string> = { plains: "#7cb856", forest: "#4c9a52", hills: "#a39672", water: "#3f86dc", dock: "#9a7748", floor: "#b08a5c", wall: "#6e5a48" };
 
@@ -99,6 +101,8 @@ const noise = (q: number, r: number, salt: number) => {
 
 interface Unit {
   sprite: THREE.Sprite;
+  /** Unseen cut-out of the sprite, turned to the sun, that throws its shadow. */
+  caster: THREE.Mesh;
   ring: THREE.Mesh | null;
   hpBack: THREE.Sprite | null;
   hpFill: THREE.Sprite | null;
@@ -215,6 +219,8 @@ export class WorldRenderer {
   private rotating = false;
   /** Movement keys held down right now (W A S D and the arrows), for sliding the view. */
   private heldKeys = new Set<string>();
+  /** The camera turn the indoor walls were last cut for. */
+  private wallTurn = NaN;
   private rotateButtons: HTMLDivElement;
   private pointer = { x: 0, y: 0, downX: 0, downY: 0, down: false, dragged: false, dirty: false, inside: false };
 
@@ -336,9 +342,8 @@ export class WorldRenderer {
       this.rotateButtons.hidden = true;
     } else {
       this.dist = this.userDist;
-      // A room's front wall is the low one, so indoors the view stays where it can see over it.
-      this.yawGoal = nearestTurn(this.yaw, state.indoors ? 0 : this.userYaw);
-      this.rotateButtons.hidden = !!state.indoors;
+      this.yawGoal = nearestTurn(this.yaw, this.userYaw);
+      this.rotateButtons.hidden = false;
       const turnKey = `${state.phase}:${state.round}:${state.turn?.heroId ?? ""}`;
       // A room is small enough to see whole, so indoors the camera stays on its middle.
       if (first && me && !state.indoors) this.target.copy(this.standAt(me.pos));
@@ -436,6 +441,7 @@ export class WorldRenderer {
 
   private buildTerrain(state: RenderState) {
     this.mapCode = state.code;
+    this.wallTurn = NaN;
     this.tiles = state.map.tiles;
     if (this.terrain) {
       this.scene.remove(this.terrain);
@@ -496,6 +502,27 @@ export class WorldRenderer {
     const zs = this.tiles.map((t) => hexToWorld(t).z);
     this.target.set((Math.min(...xs) + Math.max(...xs)) / 2, 0, (Math.min(...zs) + Math.max(...zs)) / 2);
     this.targetGoal.copy(this.target);
+  }
+
+  /**
+   * Indoors, the walls between the camera and the room are cut down to a
+   * kerb, like a doll's house, so the room can be seen from any side.
+   */
+  private lowerNearWalls() {
+    const turn = Math.round(this.yaw * 20);
+    if (!this.terrain || turn === this.wallTurn) return;
+    this.wallTurn = turn;
+    const m = new THREE.Matrix4();
+    const upright = new THREE.Quaternion();
+    const kerb = tileTop({ q: 0, r: 0, biome: "wall", h: 0.22 } as Tile);
+    this.tiles.forEach((t, i) => {
+      if ((t.biome as string) !== "wall") return;
+      const { x, z } = hexToWorld(t);
+      const toward = (x - this.target.x) * Math.sin(this.yaw) + (z - this.target.z) * Math.cos(this.yaw);
+      m.compose(new THREE.Vector3(x, 0, z), upright, new THREE.Vector3(1, toward > 0.6 ? kerb : Math.max(kerb, tileTop({ ...t, h: 0.9 })), 1));
+      this.terrain!.setMatrixAt(i, m);
+    });
+    this.terrain.instanceMatrix.needsUpdate = true;
   }
 
   private paintTiles() {
@@ -799,7 +826,9 @@ export class WorldRenderer {
       const w = want.get(id);
       // A change of gear is a different sprite, so the unit is rebuilt.
       if (w && spriteKey(w.kind, w.outfit) === unit.kind) continue;
-      this.unitGroup.remove(unit.sprite);
+      this.unitGroup.remove(unit.sprite, unit.caster);
+      unit.caster.material instanceof THREE.Material && unit.caster.material.dispose();
+      unit.caster.customDepthMaterial?.dispose();
       if (unit.ring) this.unitGroup.remove(unit.ring);
       if (unit.hpBack) this.unitGroup.remove(unit.hpBack);
       if (unit.hpFill) this.unitGroup.remove(unit.hpFill);
@@ -813,12 +842,17 @@ export class WorldRenderer {
         const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: spriteTexture(w.kind, w.outfit), transparent: true, alphaTest: 0.5 }));
         sprite.center.set(0.5, 0);
         sprite.position.copy(w.pos);
-        this.unitGroup.add(sprite);
-        unit = { sprite, ring: null, hpBack: null, hpFill: null, label: null, labelText: "", goal: w.pos.clone(), path: [], kick: new THREE.Vector3(), lean: 0, baseRot: 0, stride: 0, bob: 0, kind: spriteKey(w.kind, w.outfit) };
+        const caster = new THREE.Mesh(CASTER_PLANE, new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false, side: THREE.DoubleSide, map: sprite.material.map, alphaTest: 0.5 }));
+        caster.customDepthMaterial = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking, map: sprite.material.map, alphaTest: 0.5, side: THREE.DoubleSide });
+        caster.castShadow = true;
+        this.unitGroup.add(sprite, caster);
+        unit = { sprite, caster, ring: null, hpBack: null, hpFill: null, label: null, labelText: "", goal: w.pos.clone(), path: [], kick: new THREE.Vector3(), lean: 0, baseRot: 0, stride: 0, bob: 0, kind: spriteKey(w.kind, w.outfit) };
         this.units.set(id, unit);
       }
       unit.goal.copy(w.pos);
       unit.sprite.scale.set(w.size * SPRITE_ASPECT, w.size, 1);
+      unit.caster.scale.copy(unit.sprite.scale);
+      unit.caster.visible = !w.down;
       const mat = unit.sprite.material;
       unit.baseRot = w.down ? Math.PI / 2 : 0;
       mat.opacity = w.down ? 0.55 : 1;
@@ -949,14 +983,14 @@ export class WorldRenderer {
 
   /** Turn the view freely by an angle. No effect during a battle. */
   private turn(radians: number) {
-    if (this.state?.battle || this.state?.indoors) return;
+    if (this.state?.battle) return;
     this.userYaw += radians;
     this.yaw = this.yawGoal = this.userYaw;
   }
 
   /** Turn the view by whole hex sides (60°), easing there. */
   rotateBy(steps: number) {
-    if (this.state?.battle || this.state?.indoors) return;
+    if (this.state?.battle) return;
     const step = Math.PI / 3;
     // Snap to the nearest side first, so repeated presses land on clean angles.
     this.userYaw = (Math.round(this.userYaw / step) + steps) * step;
@@ -1052,7 +1086,8 @@ export class WorldRenderer {
     this.pointer.down = false;
     if (!wasClick) return;
     const pos = this.pick();
-    if (pos) this.callbacks.onHexClick(pos);
+    // Nobody walks during a fight, and a practice bout borrows the Harbor's view.
+    if (pos && !this.state?.battle) this.callbacks.onHexClick(pos);
   };
 
   private onPointerLeave = () => {
@@ -1129,7 +1164,9 @@ export class WorldRenderer {
     );
     this.camera.lookAt(this.target);
     this.ambience.update(this.clock, this.yaw, this.target);
+    if (this.state?.indoors) this.lowerNearWalls();
 
+    const sunTurn = Math.atan2(this.ambience.sunDir.x, this.ambience.sunDir.z);
     for (const [id, unit] of this.units) {
       const p = unit.sprite.position;
       // The hop is drawn on top of where the unit really is; take it off before moving.
@@ -1158,6 +1195,8 @@ export class WorldRenderer {
       unit.sprite.material.rotation = unit.baseRot + unit.lean;
       const ground = p.y;
       p.y += unit.bob;
+      unit.caster.position.copy(p);
+      unit.caster.rotation.y = sunTurn;
       if (unit.ring) {
         unit.ring.position.set(p.x, ground + 0.04, p.z);
         const s = this.pulsing.has(id) ? 1.25 + Math.sin(this.clock * 6) * 0.2 : 1;

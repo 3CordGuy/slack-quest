@@ -12,6 +12,7 @@ import { DurableObject } from "cloudflare:workers";
 import {
   HARBOR_MAX_SAY,
   HARBOR_PIERS,
+  HARBOR_PLOTS,
   HARBOR_SPAWN,
   generateHarbor,
   harborPath,
@@ -69,7 +70,9 @@ export class HarborRoom extends DurableObject<Env> {
     if (!id || !crew) return new Response("missing player or crew", { status: 400 });
 
     // One socket per player. A new tab takes over, standing where the old one stood.
-    let pos = HARBOR_SPAWN;
+    // Someone stepping out of a hut arrives at that hut's door.
+    const at = new URL(request.url).searchParams.get("at");
+    let pos = (at !== null && /^\d{1,2}$/.test(at) ? HARBOR_PLOTS[Number(at)] : undefined) ?? HARBOR_SPAWN;
     for (const old of this.ctx.getWebSockets(id)) {
       pos = (old.deserializeAttachment() as HarborPlayer | null)?.pos ?? pos;
       old.serializeAttachment(null);

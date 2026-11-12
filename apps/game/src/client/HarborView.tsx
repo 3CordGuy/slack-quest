@@ -236,7 +236,15 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
         ) : hutOwner ? (
           <>
             <span>{hutOwner.id === you ? "Your hut" : `${hutOwner.name}'s hut`}</span>
-            <button className="primary" onClick={() => (location.hash = `hut/${hutOwner.id}`)}>{hutOwner.id === you ? "Enter your hut" : `Enter ${hutOwner.name}'s hut`}</button>
+            <button className="primary" onClick={() => {
+              // Remembered so that leaving the hut puts you back at its door.
+              try {
+                sessionStorage.setItem("gq.harborAt", String(plotIndex));
+              } catch {
+                // Without it you come back at the usual spot.
+              }
+              location.hash = `hut/${hutOwner.id}`;
+            }}>{hutOwner.id === you ? "Enter your hut" : `Enter ${hutOwner.name}'s hut`}</button>
           </>
         ) : (
           <span className="muted">Click a hex to walk. Ships are boarded at the piers; gear is traded at the market stall.</span>

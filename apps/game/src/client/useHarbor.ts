@@ -44,7 +44,15 @@ export function useHarbor(onMoved: (id: string, path: HexPos[]) => void): Harbor
 
     const connect = () => {
       const proto = location.protocol === "https:" ? "wss:" : "ws:";
-      const ws = new WebSocket(`${proto}//${location.host}/api/crew/ws${PROFILE ? `?p=${PROFILE}` : ""}`);
+      // Coming out of a hut: ask to arrive at its door rather than the usual spot.
+      const query = new URLSearchParams(PROFILE ? { p: PROFILE } : {});
+      try {
+        const at = sessionStorage.getItem("gq.harborAt");
+        if (at) query.set("at", at);
+      } catch {
+        // No hint; the Harbor picks.
+      }
+      const ws = new WebSocket(`${proto}//${location.host}/api/crew/ws${query.size ? `?${query}` : ""}`);
       socket.current = ws;
       setStatus("connecting");
       ws.onopen = () => {
@@ -56,6 +64,12 @@ export function useHarbor(onMoved: (id: string, path: HexPos[]) => void): Harbor
         if (e.data === "pong") return;
         const msg = JSON.parse(e.data) as HarborServerMessage;
         if (msg.type === "snapshot") {
+          // The hint has been used. (Cleared here, not on connect, so a connection dropped before it lands can ask again.)
+          try {
+            sessionStorage.removeItem("gq.harborAt");
+          } catch {
+            // Nothing to clear.
+          }
           setYou(msg.you);
           setCrew(msg.crew);
           setPlayers(msg.players);

@@ -119,6 +119,10 @@ export class Ambience {
   private background = new THREE.Color("#a9dcf7");
   /** How much of the day's light there is, 0 (night) to 1. */
   private daylight = 1;
+  /** A room: steady lamplight, a dark backdrop and no wind. */
+  private indoors = false;
+  /** Direction to the sun (or the moon), for anything that must face it. */
+  readonly sunDir = new THREE.Vector3(-0.4, 0.8, 0.4);
 
   private grass: THREE.InstancedMesh | null = null;
   private tufts: Tuft[] = [];
@@ -261,7 +265,9 @@ export class Ambience {
     });
 
     // ---- wisps: trails of single pixels that curl through a loop as they cross ----
-    const count = this.still ? 0 : Math.min(14, Math.max(7, Math.round(tiles.length / 30)));
+    // No wind indoors.
+    const indoors = (this.indoors = tiles.some((t) => (t.biome as string) === "floor"));
+    const count = this.still || indoors ? 0 : Math.min(14, Math.max(7, Math.round(tiles.length / 30)));
     for (let i = 0; i < count; i++) {
       this.wisps.push({
         x: minX + hash(i, 1, 100) * (maxX - minX),
@@ -386,7 +392,7 @@ export class Ambience {
   }
 
   private light(target: THREE.Vector3) {
-    const t = this.timeOfDay();
+    const t = this.indoors ? 0.42 : this.timeOfDay();
     const angle = (t - 0.25) * Math.PI * 2;
     // Nudged up so the day is a little longer than the night.
     const height = Math.sin(angle) + 0.2;
@@ -397,7 +403,7 @@ export class Ambience {
 
     // By night the same light is the moon, on the other side of the sky.
     const side = day ? -Math.cos(angle) : Math.cos(angle);
-    const dir = new THREE.Vector3(side * 0.9, Math.max(Math.abs(height), 0.3) * 1.1, 0.42).normalize();
+    const dir = this.sunDir.set(side * 0.9, Math.max(Math.abs(height), 0.3) * 1.1, 0.42).normalize();
     this.sun.position.copy(target).addScaledVector(dir, 50);
     this.sun.target.position.copy(target);
     if (day) {
@@ -411,7 +417,8 @@ export class Ambience {
     this.hemi.intensity = 1.0 + 0.5 * daylight;
     this.hemi.color.set("#7686c8").lerp(WHITE, daylight).lerp(DUSK, glow * 0.4);
     this.hemi.groundColor.set("#232a4d").lerp(GROUND_DAY, daylight);
-    this.background.set("#161c3c").lerp(SKY_DAY, daylight).lerp(DUSK, glow * 0.7);
+    if (this.indoors) this.background.set("#1d1a2b");
+    else this.background.set("#161c3c").lerp(SKY_DAY, daylight).lerp(DUSK, glow * 0.7);
     // Unlit cut-outs (grass, wave crests) are tinted by hand to match.
     this.flatTint.set("#56669c").lerp(WHITE, daylight).lerp(DUSK, glow * 0.2);
   }
