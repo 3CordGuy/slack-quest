@@ -22,6 +22,7 @@ import "./hut.css";
 import { blurb, label } from "./labels";
 import { ThingIcon, furnishingIcon } from "./thingIcons";
 import { xpEvents } from "./xpEvents";
+import { StaminaBolts } from "./StaminaBolts";
 
 const same = (a: HexPos, b: HexPos) => a.q === b.q && a.r === b.r;
 const defOf = (f: Furnishing) => FURNISHINGS[f.defId];
@@ -80,6 +81,11 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
    * room's own candles, lanterns and fires. Each player's own view, remembered per hut.
    */
   const lampKey = `gq.hutLamp.${ownerId}`;
+  /** Your gathering stamina, and when you may next rest: bolts on your plate, and the owner's Rest button. Read on the way in and after each rest. */
+  const [stamina, setStamina] = useState<Awaited<ReturnType<typeof api.gather>> | null>(null);
+  useEffect(() => {
+    void api.gather().then(setStamina, () => setStamina(null));
+  }, []);
   const [lampOff, setLampOff] = useState(() => {
     try {
       return localStorage.getItem(lampKey) === "off";
@@ -159,6 +165,7 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
       freeRoam: true,
       indoors: true,
       lampOff,
+      stamina: stamina ? { left: stamina.stamina.left, max: stamina.stamina.max } : undefined,
       props: placed.map((f) => {
         const def = defOf(f);
         const small = isSmall(f.defId);
@@ -184,7 +191,7 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
       }),
       holding: held && canEdit ? { model: defOf(held)?.model ?? held.defId, small: isSmall(held.defId), mount: defOf(held)?.mount, facing: 0, angle: turn } : null,
     };
-  }, [ownerId, tier, room, players, you, placed, selected, holding, held, canEdit, turn, turning, lampOff]);
+  }, [ownerId, tier, room, players, you, placed, selected, holding, held, canEdit, turn, turning, lampOff, stamina]);
   const latest = useRef(scene);
   latest.current = scene;
   const snapRef = useRef(snap);
@@ -376,11 +383,6 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
   const atDoor = !!self && !!room && poiAt(room, self.pos)?.kind === "door";
   const hoverPiece = (hoverProp !== null ? placed.find((f) => f.id === hoverProp) : undefined) ?? (hover ? placed.find((f) => same({ q: f.q, r: f.r }, hover) && f.onId === null && !isSmall(f.defId)) : undefined);
   const tip = hoverPiece ? hoverPiece.label : hover && room && poiAt(room, hover)?.kind === "door" ? "The door" : null;
-  /** The owner's gathering stamina, and when they may next rest. Read on the way in and after each rest. */
-  const [stamina, setStamina] = useState<Awaited<ReturnType<typeof api.gather>> | null>(null);
-  useEffect(() => {
-    if (mine) void api.gather().then(setStamina, () => setStamina(null));
-  }, [mine]);
   /** Ticks once a minute while a rest is cooling down, so "rest again in" counts down. */
   const [clock, setClock] = useState(() => Date.now());
   const coolingUntil = stamina?.restReadyAt ?? 0;
@@ -659,7 +661,12 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
         <div className="hut-here-row">
           {canEdit && (
             <>
-              {staminaLine && <span className="hut-stamina" title="Gathering outings left today">{staminaLine}</span>}
+              {stamina && (
+                <span className="hut-stamina" title={staminaLine ?? undefined}>
+                  <StaminaBolts left={stamina.stamina.left} max={stamina.stamina.max} size={16} />
+                  {restIn > 0 && <span className="muted"> rest in {restIn} min</span>}
+                </span>
+              )}
               <button disabled={resting || !!restBlocked} title={restBlocked ?? "Sleep here: all your gathering outings back, once every twenty minutes"} onClick={() => void restAtHome()}>Rest</button>
             </>
           )}

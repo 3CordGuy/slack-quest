@@ -8,6 +8,7 @@ import { api, type GatherStatus, type XpResult } from "./api";
 import { DragPanel } from "./DragPanel";
 import { ResourceChips, resourceText } from "./hutDrops";
 import "./gather.css";
+import { StaminaBolts } from "./StaminaBolts";
 
 const WORDS: Record<GatherSpot, { start: string; push: string; bank: string; meter: string }> = {
   fishing: { start: "Go fishing", push: "", bank: "Land what you have", meter: "Line tension" },
@@ -164,7 +165,7 @@ function TimingBar({ aim, spot, busy, stop }: { aim: NonNullable<GatherView["aim
   );
 }
 
-export function GatherPanel({ spot, onClose }: { spot: GatherSpot; onClose(): void }) {
+export function GatherPanel({ spot, onClose, onStamina }: { spot: GatherSpot; onClose(): void; /** Told each time the outings left change, so the plate can follow. */ onStamina?(s: { left: number; max: number }): void }) {
   const [status, setStatus] = useState<GatherStatus | null>(null);
   const [paid, setPaid] = useState<Resources | null>(null);
   /** What the outing just ended paid in XP. */
@@ -174,6 +175,11 @@ export function GatherPanel({ spot, onClose }: { spot: GatherSpot; onClose(): vo
   useEffect(() => {
     api.gather().then(setStatus, (e: Error) => setError(e.message));
   }, []);
+  const tell = useRef(onStamina);
+  tell.current = onStamina;
+  useEffect(() => {
+    if (status) tell.current?.({ left: status.stamina.left, max: status.stamina.max });
+  }, [status?.stamina.left, status?.stamina.max]);
 
   const run = async (call: () => Promise<GatherStatus & { paid?: Resources; xp?: XpResult }>) => {
     setBusy(true);
@@ -236,8 +242,8 @@ export function GatherPanel({ spot, onClose }: { spot: GatherSpot; onClose(): vo
             <div><span className="muted">Chance per roll</span><strong>{pct}%</strong><span className="muted">{STAT_LABEL[def.stat]} · {outing?.rolls ?? 2} rolls a check</span></div>
             <div>
               <span className="muted">Stamina</span>
-              <strong className="gather-pips" aria-label={`${left} of ${status.stamina.max} outings left today`}>
-                {Array.from({ length: status.stamina.max }, (_, i) => <i key={i} className={i < left ? "on" : ""} />)}
+              <strong className="gather-pips">
+                <StaminaBolts left={left} max={status.stamina.max} size={21} />
               </strong>
               <span className="muted">{left} of {status.stamina.max} left · resets in {resetIn(status.stamina.resetsAt)}</span>
             </div>

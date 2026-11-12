@@ -60,6 +60,8 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
   const send = useRef(harbor.send);
   send.current = harbor.send;
   const base = useMemo(generateHarbor, []);
+  /** Your gathering outings left today, drawn as lightning bolts on your plate. Read on the way in and after anything that spends or restores them. */
+  const [stamina, setStamina] = useState<{ left: number; max: number } | null>(null);
   const { board, players, you } = harbor;
   // The whole crew, with whoever is walking the Harbor right now marked here (and drawn in what they wear).
   const roster: RosterMember[] = useMemo(() => board.members.map((m) => {
@@ -106,9 +108,10 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
       freeRoam: true,
       // Bedrolls laid out by whoever is resting.
       props: players.filter((p) => p.bedroll).map((p, i) => ({ id: 9000 + i, model: "bedroll", pos: p.bedroll!, facing: 0 })),
+      stamina: stamina ?? undefined,
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [base, board, players, you]);
+  }, [base, board, players, you, stamina]);
   const latest = useRef(scene);
   latest.current = scene;
   const heroSheet = useHeroSheet();
@@ -205,7 +208,10 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
   const [note, setNote] = useState<string | null>(null);
   const [, tick] = useState(0);
   useEffect(() => {
-    api.gather().then((g) => setRestReadyAt(g.restReadyAt), () => undefined);
+    api.gather().then((g) => {
+      setRestReadyAt(g.restReadyAt);
+      setStamina({ left: g.stamina.left, max: g.stamina.max });
+    }, () => undefined);
     const timer = setInterval(() => tick((n) => n + 1), 30_000);
     return () => clearInterval(timer);
   }, []);
@@ -218,6 +224,7 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
     try {
       const res = await api.rest("bedroll");
       setRestReadyAt(res.restReadyAt);
+      setStamina({ left: res.stamina.left, max: res.stamina.max });
       harbor.send({ type: "bedroll" });
       say_(`You sleep a while. ${res.regained} gathering outing${res.regained === 1 ? "" : "s"} back: ${res.stamina.left} of ${res.stamina.max} left today.`);
     } catch (e) {
@@ -423,7 +430,7 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
       {workshop === "galley" && <GalleyPanel onClose={() => setWorkshop(null)} />}
       {workshop === "smithy" && <SmithyPanel refresh={refreshAll} onClose={() => setWorkshop(null)} />}
       {spar && scene && me.character && <SparView me={me} scene={scene} renderer={renderer} onClose={() => setSpar(false)} />}
-      {gather && me.character && <GatherPanel spot={gather} onClose={() => setGather(null)} />}
+      {gather && me.character && <GatherPanel spot={gather} onClose={() => setGather(null)} onStamina={setStamina} />}
       {shop && me.character && <ShopScreen me={me} refresh={refreshAll} onClose={() => setShop(false)} />}
       {me.character && <Trading me={me} partners={board.members.filter((m) => m.id !== you)} withId={tradeWith} onWith={setTradeWith} refresh={refresh} />}
       {heroSheet.open && you && !spar && <HeroSheet id={heroSheet.open} you={you} pinned={heroSheet.pinned} onClose={heroSheet.close} />}
