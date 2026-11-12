@@ -2,13 +2,20 @@
 // that pay hut materials. Fishing off the shore (Dexterity), felling in the
 // tree line (Strength) and the quarry (Vitality).
 //
+// Each one gives the player something to read. Felling: a felled tree says
+// how many rotten ones stand beside it. Fishing: every cast says how near the
+// school was and which way, and the school drifts. The quarry: dust falling
+// along each row and column says how many weak blocks are in it, and a cut
+// block says how much ore is beside it. The hero's stat sets the chance of
+// each roll; reading the signs well decides what those rolls are spent on.
+//
 // Pure functions. An outing is a GatherState made from a seed; the player
 // either pushes on (one rollCheck against their stat) or banks what they
 // have. The server holds the state: `gatherView` is what a client may see,
 // and leaves out the seed, the RNG and anything still hidden.
 
 import type { StatKey } from "@gantt-quest/core";
-import { rollCheck, statPct, MIN_PCT, type CheckResult } from "./check";
+import { rollCheck, statPct, MAX_PCT, MIN_PCT, type CheckResult } from "./check";
 import type { ResourceKind, Resources } from "./hut";
 import { makeRng, type Rng } from "./rng";
 
@@ -30,7 +37,7 @@ export const GATHER_SPOTS: Record<GatherSpot, GatherSpotDef> = {
     name: "Fishing off the shore",
     stat: "dex",
     pays: ["bone", "copper"],
-    blurb: "Each reel brings more in, and the line pulls tighter every time. If both rolls miss, it snaps and the catch is gone.",
+    blurb: "Pick where to cast. Each cast tells you how near the school was and which way; it drifts a little between casts. Over the school your rolls are better, far from it worse. The line pulls tighter every cast, and if both rolls miss it snaps and the catch is gone.",
   },
   felling: {
     id: "felling",
@@ -44,7 +51,7 @@ export const GATHER_SPOTS: Record<GatherSpot, GatherSpotDef> = {
     name: "The quarry",
     stat: "vit",
     pays: ["stone", "iron", "copper"],
-    blurb: "Each strike is two rolls. A hit breaks a piece loose; a miss cracks the roof. Three cracks and it caves in on the lot.",
+    blurb: "Pick a block to cut. Two of the nine are weak: cutting one brings down two cracks' worth of roof. Dust along each row and column says how many weak blocks are in it. A cut block tells you how much ore lies beside it. Missing both rolls is a crack too; three and it caves in on the lot.",
   },
 };
 
@@ -65,10 +72,28 @@ export const FISHING_TENSION = 5;
 export const FELLING_SIDE = 3;
 export const FELLING_ROTTEN = 2;
 export const FELLING_DENS = 2;
-/** Quarry: missed rolls the roof can take. */
+/** Fishing: places to cast, in a row along the shore. */
+export const FISHING_CELLS = 5;
+/** Fishing: points added to each roll when the cast lands on the school, and taken off when it is two or more away. */
+export const FISHING_READ = 15;
+/** Quarry: a square face of blocks, some weak, some carrying ore. */
+export const QUARRY_SIDE = 3;
+export const QUARRY_WEAK = 2;
+export const QUARRY_ORE = 3;
+/** Quarry: cracks the roof can take. Missing both rolls is one; cutting a weak block is two. */
 export const QUARRY_MAX_CRACKS = 3;
 
 type TreeKind = "sound" | "den" | "rotten";
+type BlockKind = "stone" | "ore" | "weak";
+/** How a cast landed: on the school, one place off, or further. */
+export type FishRead = "on" | "near" | "far";
+
+export interface Cast {
+  cell: number;
+  read: FishRead;
+  /** Which way the school lay from the cast: -1 west, 1 east, 0 right there. */
+  dir: -1 | 0 | 1;
+}
 
 export interface GatherEntry {
   text: string;
@@ -93,10 +118,14 @@ export interface GatherState {
   picked: number[];
   /** Quarry: cracks in the roof. */
   cracks: number;
+  /** Quarry: what each block of the face is. Cut blocks are in `picked`. */
+  face?: BlockKind[];
+  /** Fishing: where the school is now (hidden), where the gulls were at the start, and each cast so far. */
+  water?: { school: number; gulls: number; casts: Cast[] };
 }
 
 export type GatherChoice =
-  /** Reel, fell or strike. `cell` is the tree to fell, 0 to 8, row by row. */
+  /** Cast, fell or cut. `cell` is where: a place along the shore (0 to 4), or a tree or block (0 to 8, row by row). */
   | { t: "push"; cell?: number }
   | { t: "bank" };
 
@@ -106,6 +135,14 @@ export interface TreeView {
   kind: TreeKind | null;
   /** For a picked tree that was not rotten: rotten trees next to it, diagonals included. */
   near: number | null;
+}
+
+/** A block of the quarry face as the client sees it. Uncut blocks say nothing until the outing is over. */
+export interface BlockView {
+  cut: boolean;
+  kind: BlockKind | null;
+  /** For a cut block that was not weak: ore blocks next to it, diagonals included. */
+  oreNear: number | null;
 }
 
 export interface GatherView {
@@ -123,6 +160,10 @@ export interface GatherView {
   trees: TreeView[] | null;
   cracks: number | null;
   maxCracks: number | null;
+  /** Quarry: the face, and how many weak blocks are in each row and each column. */
+  face: { blocks: BlockView[]; rows: number[]; cols: number[] } | null;
+  /** Fishing: where the gulls were circling at the start (within one place of the school), each cast, and the school itself once it is over. */
+  water: { cells: number; gulls: number; casts: Cast[]; school: number | null; read: number } | null;
 }
 
 const units = (r: Resources) => Object.values(r).reduce((a, n) => a + (n ?? 0), 0);
@@ -148,10 +189,20 @@ export function startGather(spot: GatherSpot, seed: number, stat: number): Gathe
       ...Array<TreeKind>(cells - FELLING_ROTTEN - FELLING_DENS).fill("sound"),
     ]);
   }
-  return { spot, seed: seed >>> 0, rng: rng.state(), pct: statPct(stat), status: "active", step: 0, haul: {}, log: [], trees, picked: [], cracks: 0 };
+  let face: BlockKind[] | undefined;
+  if (spot === "quarry") {
+    const cells = QUARRY_SIDE * QUARRY_SIDE;
+    face = shuffled(rng, [...Array<BlockKind>(QUARRY_WEAK).fill("weak"), ...Array<BlockKind>(QUARRY_ORE).fill("ore"), ...Array<BlockKind>(cells - QUARRY_WEAK - QUARRY_ORE).fill("stone")]);
+  }
+  let water: GatherState["water"];
+  if (spot === "fishing") {
+    const school = rng.int(0, FISHING_CELLS - 1);
+    water = { school, gulls: Math.max(0, Math.min(FISHING_CELLS - 1, school + rng.int(-1, 1))), casts: [] };
+  }
+  return { spot, seed: seed >>> 0, rng: rng.state(), pct: statPct(stat), status: "active", step: 0, haul: {}, log: [], trees, picked: [], cracks: 0, face, water };
 }
 
-/** Chance per roll of the next push. Only fishing changes it as the outing goes on. */
+/** Chance per roll of the next push, before what the cast's place does to it. Only fishing changes it as the outing goes on. */
 export function gatherPct(state: Pick<GatherState, "spot" | "pct" | "step">): number {
   return state.spot === "fishing" ? Math.max(MIN_PCT, state.pct - FISHING_TENSION * state.step) : state.pct;
 }
@@ -164,6 +215,20 @@ function rottenNear(trees: readonly TreeKind[], cell: number): number {
     for (let c = col - 1; c <= col + 1; c++) {
       if (r < 0 || c < 0 || r >= FELLING_SIDE || c >= FELLING_SIDE || (r === row && c === col)) continue;
       if (trees[r * FELLING_SIDE + c] === "rotten") n++;
+    }
+  }
+  return n;
+}
+
+/** Count of `kind` in the cells around `cell` of a square grid, diagonals included. */
+function near<T>(grid: readonly T[], side: number, cell: number, kind: T): number {
+  const row = Math.floor(cell / side);
+  const col = cell % side;
+  let n = 0;
+  for (let r = row - 1; r <= row + 1; r++) {
+    for (let c = col - 1; c <= col + 1; c++) {
+      if (r < 0 || c < 0 || r >= side || c >= side || (r === row && c === col)) continue;
+      if (grid[r * side + c] === kind) n++;
     }
   }
   return n;
@@ -208,14 +273,29 @@ export function stepGather(state: GatherState, choice: GatherChoice): GatherStep
   let bust = false;
 
   if (state.spot === "fishing") {
-    check = roll(`Reel ${next.step}`);
+    // An outing saved before casts had places is fished from the middle.
+    const water = state.water ?? { school: Math.floor(FISHING_CELLS / 2), gulls: Math.floor(FISHING_CELLS / 2), casts: [] };
+    const asked = Number(choice.cell);
+    const cell = Number.isInteger(asked) && asked >= 0 && asked < FISHING_CELLS ? asked : (water.casts.at(-1)?.cell ?? water.gulls);
+    const off = water.school - cell;
+    const read: FishRead = off === 0 ? "on" : Math.abs(off) === 1 ? "near" : "far";
+    const dir = Math.sign(off) as -1 | 0 | 1;
+    const pct = Math.max(MIN_PCT, Math.min(MAX_PCT, gatherPct(state) + (read === "on" ? FISHING_READ : read === "far" ? -FISHING_READ : 0)));
+    check = rollCheck(rng, { label: `Cast ${next.step}`, stat: def.stat, pct, count: GATHER_ROLLS });
+    const where = dir < 0 ? "west" : "east";
     if (check.fumble) {
       bust = true;
       text = "The line snaps. Everything on it is gone.";
     } else {
-      gained = draw(rng, check.successes, [["bone", 65], ["copper", 35]]);
-      text = check.perfect ? "A clean pull: two more on the bank." : "One more on the bank. The line hums.";
+      // Over the school there is one more on the hook.
+      gained = draw(rng, check.successes + (read === "on" ? 1 : 0), [["bone", 65], ["copper", 35]]);
+      text = read === "on" ? "Right over the school: the float goes straight under."
+        : read === "near" ? `Close. The water is boiling just to the ${where}.`
+        : `Quiet water here. The gulls are working well to the ${where}.`;
     }
+    // The school wanders a place at most between casts.
+    const drift = rng.pick([-1, 0, 0, 1]);
+    next.water = { school: Math.max(0, Math.min(FISHING_CELLS - 1, water.school + drift)), gulls: water.gulls, casts: [...water.casts, { cell, read, dir }] };
   } else if (state.spot === "felling") {
     const cell = Number(choice.cell);
     if (!Number.isInteger(cell) || cell < 0 || cell >= state.trees.length) return { state, error: "Pick a tree." };
@@ -238,14 +318,25 @@ export function stepGather(state: GatherState, choice: GatherChoice): GatherStep
         : `Down it comes. ${near}`;
     }
   } else {
-    check = roll(`Strike ${next.step}`);
-    next.cracks = state.cracks + (GATHER_ROLLS - check.successes);
+    // An outing saved before the face had blocks is cut as plain stone.
+    const face = state.face ?? Array<BlockKind>(QUARRY_SIDE * QUARRY_SIDE).fill("stone");
+    const asked = Number(choice.cell);
+    const cell = choice.cell === undefined ? face.findIndex((_, i) => !state.picked.includes(i)) : asked;
+    if (!Number.isInteger(cell) || cell < 0 || cell >= face.length) return { state, error: "Pick a block." };
+    if (state.picked.includes(cell)) return { state, error: "That block is already cut." };
+    next.picked.push(cell);
+    const kind = face[cell];
+    check = roll(`Cut ${next.step}`);
+    next.cracks = state.cracks + (kind === "weak" ? 2 : check.fumble ? 1 : 0);
     if (next.cracks >= QUARRY_MAX_CRACKS) {
       bust = true;
-      text = "The roof lets go. The seam and everything you cut are under it.";
+      text = kind === "weak" ? "A weak block. It drops out whole and the roof follows it down." : "The roof lets go. The face and everything you cut are under it.";
+    } else if (kind === "weak") {
+      text = "A weak block. It crumbles to nothing and the roof shifts hard.";
     } else {
-      gained = draw(rng, check.successes, [["stone", 60], ["iron", 25], ["copper", 15]]);
-      text = check.perfect ? "Two clean pieces come away." : check.fumble ? "Nothing but dust, and the roof groans." : "One piece comes away, and a crack runs overhead.";
+      gained = kind === "ore" ? draw(rng, check.successes, [["iron", 60], ["copper", 40]]) : check.successes > 0 ? { stone: check.successes } : {};
+      const ore = `${plural(near(face, QUARRY_SIDE, cell, "ore"), "block")} of ore beside it.`;
+      text = check.fumble ? `The pick skids and the roof groans. ${ore}` : kind === "ore" ? `Ore, bright in the cut. ${ore}` : `Good stone comes away. ${ore}`;
     }
   }
 
@@ -259,7 +350,7 @@ export function stepGather(state: GatherState, choice: GatherChoice): GatherStep
   next.log.push({ text, check, gained });
   if (!bust && next.step >= GATHER_MAX_STEPS) {
     next.status = "banked";
-    next.log.push({ text: state.spot === "fishing" ? "The last of it is landed." : state.spot === "felling" ? "Your arms are done for the day." : "The seam is worked out.", check: null, gained: {} });
+    next.log.push({ text: state.spot === "fishing" ? "The light is going. You land the last of it." : state.spot === "felling" ? "Your arms are done for the day." : "The seam is worked out.", check: null, gained: {} });
   }
   return { state: next };
 }
@@ -300,6 +391,15 @@ export function gatherView(state: GatherState): GatherView {
     }),
     cracks: state.spot === "quarry" ? state.cracks : null,
     maxCracks: state.spot === "quarry" ? QUARRY_MAX_CRACKS : null,
+    face: !state.face ? null : {
+      blocks: state.face.map((kind, cell) => {
+        const cut = state.picked.includes(cell);
+        return { cut, kind: cut || over ? kind : null, oreNear: cut && kind !== "weak" ? near(state.face!, QUARRY_SIDE, cell, "ore") : null };
+      }),
+      rows: Array.from({ length: QUARRY_SIDE }, (_, r) => state.face!.filter((k, i) => k === "weak" && Math.floor(i / QUARRY_SIDE) === r).length),
+      cols: Array.from({ length: QUARRY_SIDE }, (_, c) => state.face!.filter((k, i) => k === "weak" && i % QUARRY_SIDE === c).length),
+    },
+    water: !state.water ? null : { cells: FISHING_CELLS, gulls: state.water.gulls, casts: state.water.casts, school: over ? state.water.school : null, read: FISHING_READ },
   };
 }
 

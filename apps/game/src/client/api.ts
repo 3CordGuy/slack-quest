@@ -14,6 +14,8 @@ export type { GatherStatus };
 export interface PubTab {
   orders: string[];
   buff: Required<Perk>;
+  /** Set on an order: the meal gave back one gathering outing. */
+  rested?: boolean;
 }
 
 /** The crew's projects and what this player has to give toward them. */

@@ -9,7 +9,10 @@ import {
   GATHER_MIN_BANK,
   GATHER_SPOTS,
   GATHER_SPOT_IDS,
-  QUARRY_MAX_CRACKS,
+  FISHING_CELLS,
+  FISHING_READ,
+  QUARRY_ORE,
+  QUARRY_WEAK,
   gatherDay,
   gatherPayout,
   gatherPct,
@@ -31,7 +34,9 @@ const units = (r: Resources) => Object.values(r).reduce((a, n) => a + (n ?? 0), 
 function playOut(spot: GatherSpot, seed: number, stat: number, bankAfter = Infinity): GatherState {
   let state = startGather(spot, seed, stat);
   while (state.status === "active") {
-    const choice: GatherChoice = state.step >= bankAfter ? { t: "bank" } : { t: "push", cell: state.trees.findIndex((_, i) => !state.picked.includes(i)) };
+    // Felling and the quarry take the first tree or block still standing; fishing casts where it last did.
+    const cell = state.spot === "felling" ? state.trees.findIndex((_, i) => !state.picked.includes(i)) : undefined;
+    const choice: GatherChoice = state.step >= bankAfter ? { t: "bank" } : { t: "push", cell };
     const step = stepGather(state, choice);
     expect(step.error).toBeUndefined();
     state = step.state;
@@ -75,7 +80,10 @@ describe("gathering", () => {
     for (const spot of GATHER_SPOT_IDS) {
       expect(startGather(spot, 1, 4).pct).toBe(statPct(4));
       expect(startGather(spot, 1, 15).pct).toBe(statPct(15));
-      const step = stepGather(startGather(spot, 1, 15), { t: "push", cell: 0 }).state;
+      const fresh = startGather(spot, 1, 15);
+      // Fishing shifts the chance by how near the cast is, so cast one place off the school, where it does not.
+      const cell = spot === "fishing" ? (fresh.water!.school > 0 ? fresh.water!.school - 1 : 1) : 0;
+      const step = stepGather(fresh, { t: "push", cell }).state;
       expect(step.log[0].check).toMatchObject({ stat: GATHER_SPOTS[spot].stat, pct: statPct(15) });
       expect(step.log[0].check!.rolls).toHaveLength(2);
     }
@@ -162,7 +170,7 @@ describe("gathering", () => {
     expect(stepGather(trees, { t: "nope" } as unknown as GatherChoice).error).toBeDefined();
   });
 
-  it("fishing: the line tightens with every reel", () => {
+  it("fishing: the line tightens with every cast", () => {
     let state = startGather("fishing", seedEnding("fishing", "banked", 20), 20);
     const seen: number[] = [];
     while (state.status === "active") {
@@ -171,7 +179,42 @@ describe("gathering", () => {
     }
     expect(seen).toEqual([...seen].sort((a, b) => b - a));
     expect(new Set(seen).size).toBe(seen.length);
-    expect(state.log.filter((e) => e.check).map((e) => e.check!.pct)).toEqual(seen);
+  });
+
+  it("fishing: a cast reads how near the school is and which way, and nearer is better", () => {
+    for (let seed = 1; seed <= 200; seed++) {
+      const state = startGather("fishing", seed, 9);
+      const { school, gulls } = state.water!;
+      // The gulls start within a place of the school.
+      expect(Math.abs(gulls - school)).toBeLessThanOrEqual(1);
+      for (let cell = 0; cell < FISHING_CELLS; cell++) {
+        const cast = stepGather(state, { t: "push", cell }).state;
+        const off = school - cell;
+        expect(cast.water!.casts[0]).toEqual({ cell, read: off === 0 ? "on" : Math.abs(off) === 1 ? "near" : "far", dir: Math.sign(off) });
+        expect(cast.log[0].check!.pct).toBe(statPct(9) + (off === 0 ? FISHING_READ : Math.abs(off) === 1 ? 0 : -FISHING_READ));
+        // The school drifts a place at most.
+        expect(Math.abs(cast.water!.school - school)).toBeLessThanOrEqual(1);
+      }
+    }
+    expect(stepGather(startGather("fishing", 3, 9), { t: "push", cell: 99 }).error).toBeUndefined();
+  });
+
+  it("fishing: following the reads lands more than casting blind", () => {
+    const total = (follow: boolean) => {
+      let sum = 0;
+      for (let seed = 1; seed <= 600; seed++) {
+        let state = startGather("fishing", seed, 9);
+        let cell = follow ? state.water!.gulls : 0;
+        while (state.status === "active") {
+          state = stepGather(state, { t: "push", cell }).state;
+          const last = state.water!.casts.at(-1)!;
+          if (follow) cell = Math.max(0, Math.min(FISHING_CELLS - 1, cell + last.dir * (last.read === "far" ? 2 : last.read === "near" ? 1 : 0)));
+        }
+        sum += units(gatherPayout(state));
+      }
+      return sum;
+    };
+    expect(total(true)).toBeGreaterThan(total(false) * 1.3);
   });
 
   it("felling: a fixed mix of trees; a rotten one needs both rolls", () => {
@@ -189,17 +232,61 @@ describe("gathering", () => {
     }
   });
 
-  it("quarry: every missed roll is a crack, and the third brings the roof down", () => {
+  it("quarry: a fixed mix of blocks; a weak one is two cracks, a double miss is one", () => {
     for (let seed = 1; seed <= 300; seed++) {
-      let state = startGather("quarry", seed, 9);
-      let misses = 0;
-      while (state.status === "active") {
-        state = stepGather(state, { t: "push" }).state;
-        misses = state.log.filter((e) => e.check).reduce((a, e) => a + e.check!.rolls.filter((r) => !r).length, 0);
-        expect(state.cracks).toBe(misses);
-      }
-      expect(state.status === "bust").toBe(misses >= QUARRY_MAX_CRACKS);
+      const start = startGather("quarry", seed, 9);
+      expect(start.face).toHaveLength(9);
+      expect(start.face!.filter((k) => k === "weak")).toHaveLength(QUARRY_WEAK);
+      expect(start.face!.filter((k) => k === "ore")).toHaveLength(QUARRY_ORE);
+      const weak = stepGather(start, { t: "push", cell: start.face!.indexOf("weak") }).state;
+      expect(weak.cracks).toBe(2);
+      expect(weak.haul).toEqual({});
+      const stone = stepGather(start, { t: "push", cell: start.face!.indexOf("stone") }).state;
+      const check = stone.log[0].check!;
+      expect(stone.cracks).toBe(check.fumble ? 1 : 0);
+      expect(stone.haul).toEqual(check.successes ? { stone: check.successes } : {});
+      const ore = stepGather(start, { t: "push", cell: start.face!.indexOf("ore") }).state;
+      expect(Object.keys(ore.haul).every((k) => k === "iron" || k === "copper")).toBe(true);
+      // The second weak block brings the roof down.
+      const both = stepGather(weak, { t: "push", cell: start.face!.lastIndexOf("weak") }).state;
+      expect(both.status).toBe("bust");
+      expect(stepGather(weak, { t: "push", cell: start.face!.indexOf("weak") }).error).toBeDefined();
     }
+  });
+
+  it("quarry: the dust along each row and column counts its weak blocks, and never names them", () => {
+    for (let seed = 1; seed <= 100; seed++) {
+      const state = startGather("quarry", seed, 9);
+      const view = gatherView(state);
+      expect(view.face!.rows.reduce((a, n) => a + n, 0)).toBe(QUARRY_WEAK);
+      expect(view.face!.cols.reduce((a, n) => a + n, 0)).toBe(QUARRY_WEAK);
+      state.face!.forEach((kind, i) => {
+        if (kind === "weak") expect(view.face!.rows[Math.floor(i / 3)]).toBeGreaterThan(0);
+      });
+      expect(view.face!.blocks.every((b) => b.kind === null && b.oreNear === null)).toBe(true);
+      const cut = gatherView(stepGather(state, { t: "push", cell: state.face!.indexOf("stone") }).state);
+      expect(cut.face!.blocks.filter((b) => b.kind !== null)).toHaveLength(1);
+      expect(cut.face!.blocks[state.face!.indexOf("stone")].oreNear).toBeTypeOf("number");
+    }
+  });
+
+  it("quarry: reading the dust caves in far less often than cutting blind", () => {
+    const busts = (read: boolean) => {
+      let n = 0;
+      for (let seed = 1; seed <= 600; seed++) {
+        let state = startGather("quarry", seed, 9);
+        const view = gatherView(state).face!;
+        // A block is certainly safe if its row or its column has no dust.
+        const safe = state.face!.map((_, i) => i).filter((i) => view.rows[Math.floor(i / 3)] === 0 || view.cols[i % 3] === 0);
+        while (state.status === "active") {
+          const open = (read ? safe : state.face!.map((_, i) => i)).filter((i) => !state.picked.includes(i));
+          state = stepGather(state, open.length > 0 ? { t: "push", cell: open[0] } : { t: "bank" }).state;
+        }
+        if (state.status === "bust") n++;
+      }
+      return n;
+    };
+    expect(busts(true)).toBeLessThan(busts(false) / 2);
   });
 
   it("shows the client no seed, no RNG and no unpicked tree", () => {
@@ -216,6 +303,10 @@ describe("gathering", () => {
     // Once it is over the whole stand is shown.
     expect(gatherView(stepGather(one, { t: "bank" }).state).trees!.every((t) => t.kind !== null)).toBe(true);
     expect(gatherView(startGather("fishing", 1, 9)).trees).toBeNull();
+    // Nor where the school is, until the outing is over.
+    const water = startGather("fishing", 7, 9);
+    expect(gatherView(water).water!.school).toBeNull();
+    expect(gatherView(stepGather(water, { t: "bank" }).state).water!.school).toBe(water.water!.school);
   });
 });
 

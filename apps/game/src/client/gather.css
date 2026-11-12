@@ -34,3 +34,23 @@
   .gather-head { padding-right: 68px; }
   .gather-facts { grid-template-columns: 1fr; }
 }
+
+/* Fishing: the row of places to cast. */
+.gather-water { display: grid; gap: 6px; }
+.gather-swim { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 8px 4px; min-height: 74px; font-size: 12px; background: #24406f; border-color: #3f6fb0; }
+.gather-swim.on { border-color: var(--good); }
+.gather-swim.near { border-color: var(--gold); }
+.gather-swim.far { opacity: 0.8; }
+.gather-swim.last { box-shadow: inset 0 -3px 0 var(--gold); }
+.gather-swim.school { border-color: var(--good); background: #2c5a52; }
+.gather-hint { font-size: 12px; margin: 0; }
+
+/* The quarry: the face with its dust counts along the right and the bottom. */
+.gather-face { display: grid; gap: 6px; align-items: center; }
+.gather-block.ore { border-color: var(--gold); }
+.gather-block.weak { border-color: var(--bad); }
+.gather-dust { font-size: 11px; color: var(--muted); text-align: center; white-space: nowrap; padding: 0 4px; }
+.gather-dust.on { color: var(--gold); }
+.gather-block .tree-glyph { color: #9aa3b2; }
+.gather-block.ore .tree-glyph { color: var(--gold); }
+.gather-block.picked .tree-glyph { color: #6b7180; }

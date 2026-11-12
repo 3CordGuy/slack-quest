@@ -3,16 +3,16 @@
 // posts the player's choice to push on or bank.
 
 import { useEffect, useRef, useState } from "react";
-import { FELLING_SIDE, GATHER_SPOTS, STAT_LABEL, type GatherChoice, type GatherSpot, type GatherView, type Resources } from "@gantt-quest/world";
+import { FELLING_SIDE, GATHER_SPOTS, QUARRY_SIDE, STAT_LABEL, type GatherChoice, type GatherSpot, type GatherView, type Resources } from "@gantt-quest/world";
 import { api, type GatherStatus } from "./api";
 import { DragPanel } from "./DragPanel";
 import { ResourceChips, resourceText } from "./hutDrops";
 import "./gather.css";
 
 const WORDS: Record<GatherSpot, { start: string; push: string; bank: string; meter: string }> = {
-  fishing: { start: "Cast", push: "Keep reeling", bank: "Land what you have", meter: "Line tension" },
+  fishing: { start: "Go fishing", push: "", bank: "Land what you have", meter: "Line tension" },
   felling: { start: "Start felling", push: "", bank: "Carry it home", meter: "" },
-  quarry: { start: "Start cutting", push: "Strike the seam", bank: "Haul it out", meter: "Cracks in the roof" },
+  quarry: { start: "Start cutting", push: "", bank: "Haul it out", meter: "Cracks in the roof" },
 };
 
 function resetIn(at: number): string {
@@ -42,6 +42,53 @@ function Trees({ outing, busy, pick }: { outing: GatherView; busy: boolean; pick
           </button>
         );
       })}
+    </div>
+  );
+}
+
+/** The shore: five places to cast. Past casts show what they read; the gulls mark where to start looking. */
+function Water({ outing, busy, cast }: { outing: GatherView; busy: boolean; cast(cell: number): void }) {
+  const water = outing.water!;
+  const active = outing.status === "active";
+  const last = water.casts.at(-1);
+  return (
+    <div className="gather-water" style={{ gridTemplateColumns: `repeat(${water.cells}, 1fr)` }}>
+      {Array.from({ length: water.cells }, (_, cell) => {
+        const here = [...water.casts].reverse().find((c) => c.cell === cell);
+        const isLast = last?.cell === cell;
+        const read = !here ? null : here.read === "on" ? "On the school" : here.read === "near" ? `Close, ${here.dir < 0 ? "← west" : "east →"}` : `Far, ${here.dir < 0 ? "← west" : "east →"}`;
+        return (
+          <button key={cell} className={`gather-swim ${here?.read ?? ""} ${isLast ? "last" : ""} ${water.school === cell ? "school" : ""}`} disabled={!active || busy} onClick={() => cast(cell)} aria-label={`Cast at place ${cell + 1}${read ? `: last read ${read}` : ""}`}>
+            <span className="tree-glyph">{water.school === cell ? "🐟" : water.casts.length === 0 && water.gulls === cell ? "⌄⌄" : "≈"}</span>
+            <span>{water.school === cell ? "The school" : water.casts.length === 0 && water.gulls === cell ? "Gulls" : read ?? "Cast here"}</span>
+            {here && !isLast && <span className="muted">earlier</span>}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+/** The quarry face: nine blocks, with the dust count for each row down the side and each column along the bottom. */
+function Face({ outing, busy, cut }: { outing: GatherView; busy: boolean; cut(cell: number): void }) {
+  const face = outing.face!;
+  const dust = (n: number) => (n === 0 ? "no dust" : n === 1 ? "· dust" : "·· dust");
+  return (
+    <div className="gather-face" style={{ gridTemplateColumns: `repeat(${QUARRY_SIDE}, 1fr) auto` }}>
+      {face.blocks.map((block, cell) => {
+        const open = outing.status === "active" && !block.cut;
+        const label = block.kind === null ? "Uncut" : block.kind === "weak" ? "Weak" : block.kind === "ore" ? "Ore" : "Stone";
+        return [
+          <button key={cell} className={`gather-tree gather-block ${block.kind ?? "hidden"} ${block.cut ? "picked" : ""}`} disabled={!open || busy} onClick={() => cut(cell)} aria-label={`Block ${cell + 1}: ${label}`}>
+            <span className="tree-glyph">{block.kind === "weak" ? "☠" : block.kind === "ore" ? "◆" : block.cut ? "▫" : "▩"}</span>
+            <span>{label}</span>
+            {block.oreNear !== null && <span className="muted">{block.oreNear} ore near</span>}
+          </button>,
+          cell % QUARRY_SIDE === QUARRY_SIDE - 1 && <span key={`r${cell}`} className={`gather-dust ${face.rows[Math.floor(cell / QUARRY_SIDE)] ? "on" : ""}`} title="Weak blocks in this row">{dust(face.rows[Math.floor(cell / QUARRY_SIDE)])}</span>,
+        ];
+      })}
+      {face.cols.map((n, c) => <span key={`c${c}`} className={`gather-dust ${n ? "on" : ""}`} title="Weak blocks in this column">{dust(n)}</span>)}
+      <span />
     </div>
   );
 }
@@ -116,7 +163,7 @@ export function GatherPanel({ spot, onClose }: { spot: GatherSpot; onClose(): vo
         {status && !outing && (
           left > 0
             ? <button className="primary" disabled={busy} onClick={() => run(() => api.gatherStart(spot))}>{words.start} · uses 1 stamina</button>
-            : <p className="bad">You are worn out for today. Come back after the reset.</p>
+            : <p className="bad">You are worn out for today. A voyage gives all three outings back, and a meal at the pub gives back one a day.</p>
         )}
 
         {outing && (
@@ -132,10 +179,22 @@ export function GatherPanel({ spot, onClose }: { spot: GatherSpot; onClose(): vo
               <div className="gather-meter" aria-label={`Reel ${outing.step} of ${outing.maxSteps}`}>
                 <span className="muted">{words.meter}</span>
                 {Array.from({ length: outing.maxSteps }, (_, i) => <i key={i} className={i < outing.step ? "on" : ""} />)}
-                <span className="muted">reel {outing.step} of {outing.maxSteps}</span>
+                <span className="muted">cast {outing.step} of {outing.maxSteps}</span>
               </div>
             )}
             {outing.trees && <Trees outing={outing} busy={busy} pick={(cell) => step({ t: "push", cell })} />}
+            {outing.water && (
+              <>
+                <Water outing={outing} busy={busy} cast={(cell) => step({ t: "push", cell })} />
+                {active && <p className="muted gather-hint">On the school: +{outing.water.read}% a roll and one more fish. Two or more places off: −{outing.water.read}%. The school drifts a place at most between casts.</p>}
+              </>
+            )}
+            {outing.face && (
+              <>
+                <Face outing={outing} busy={busy} cut={(cell) => step({ t: "push", cell })} />
+                {active && <p className="muted gather-hint">Dust marks a row or column with a weak block in it (two dots: both). A weak block is two cracks; missing both rolls is one.</p>}
+              </>
+            )}
 
             <div className="gather-haul">
               <span className="muted">{active ? "Haul so far" : outing.status === "banked" ? "Brought home" : "Lost"}</span>
@@ -152,7 +211,7 @@ export function GatherPanel({ spot, onClose }: { spot: GatherSpot; onClose(): vo
                   {Object.keys(entry.gained).length > 0 && <span className="good"> +{resourceText(entry.gained)}</span>}
                 </li>
               ))}
-              {outing.log.length === 0 && <li className="muted">{outing.spot === "felling" ? "Nine trees. Pick one." : outing.spot === "fishing" ? "The float sits still. Start reeling." : "The seam is in front of you."}</li>}
+              {outing.log.length === 0 && <li className="muted">{outing.spot === "felling" ? "Nine trees. Pick one." : outing.spot === "fishing" ? "Gulls are circling. The school is under them or right beside. Pick where to cast." : "Nine blocks. Read the dust, then pick one to cut."}</li>}
             </ol>
 
             {active ? (
