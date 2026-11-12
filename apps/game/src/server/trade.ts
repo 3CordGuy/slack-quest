@@ -17,7 +17,7 @@
 // Amounts and ownership always come from the stored offer and from D1,
 // never from the request that accepts it.
 
-import { RESOURCE_KINDS, TRADE_TTL_MS, carryProblem, isGift, readTradeOffer, tradeProblem, type TradeGoods, type TradeHoldings, type TradeOffer, type WorldState } from "@gantt-quest/world";
+import { RESOURCE_KINDS, TRADE_TTL_MS, carryProblem, isGift, readTradeOffer, tradeProblem, upgradedName, type TradeGoods, type TradeHoldings, type TradeOffer, type WorldState } from "@gantt-quest/world";
 import { carryState, type InventoryRow } from "./db";
 
 /** A voyage nobody has touched for this long is taken to be abandoned, as on the dock board. */
@@ -86,7 +86,7 @@ async function party(db: D1Database, playerId: string): Promise<Party | null> {
   const [c, res, inv] = await db.batch([
     db.prepare("SELECT name, gold FROM characters WHERE player_id = ? AND status = 'active'").bind(playerId),
     db.prepare("SELECT kind, qty FROM resources WHERE player_id = ? AND qty > 0").bind(playerId),
-    db.prepare("SELECT id, name, equipped, stored_in FROM inventory WHERE player_id = ?").bind(playerId),
+    db.prepare("SELECT id, name, upgrades, equipped, stored_in FROM inventory WHERE player_id = ?").bind(playerId),
   ]);
   const character = c.results[0] as { name: string; gold: number } | undefined;
   if (!character) return null;
@@ -95,7 +95,7 @@ async function party(db: D1Database, playerId: string): Promise<Party | null> {
     holdings: {
       gold: character.gold,
       resources: Object.fromEntries((res.results as { kind: string; qty: number }[]).map((r) => [r.kind, r.qty])),
-      items: (inv.results as { id: number; name: string; equipped: number; stored_in: number | null }[]).map((i) => ({ id: i.id, name: i.name, equipped: !!i.equipped, stored: i.stored_in !== null })),
+      items: (inv.results as { id: number; name: string; upgrades: number; equipped: number; stored_in: number | null }[]).map((i) => ({ id: i.id, name: upgradedName(i.name, i.upgrades), equipped: !!i.equipped, stored: i.stored_in !== null })),
     },
   };
 }

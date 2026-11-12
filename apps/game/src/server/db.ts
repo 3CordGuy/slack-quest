@@ -57,6 +57,7 @@ import {
 } from "@gantt-quest/world";
 import type { HarborRoom } from "./harbor-room";
 import { crewWorks } from "./projects";
+import { brewBagOf } from "./workshops";
 import type { HutRoom } from "./hut-room";
 import type { PubRoom } from "./pub-room";
 import type { RunRoom } from "./run-room";
@@ -116,6 +117,8 @@ export interface InventoryRow {
   equipped: number;
   /** The container at home it is kept in, or null while it is worn or carried. */
   stored_in: number | null;
+  /** Steps of work done at the smithy, already counted in `power`. */
+  upgrades: number;
 }
 
 export function rowToItem(row: InventoryRow): ItemDef {
@@ -129,6 +132,7 @@ export function rowToItem(row: InventoryRow): ItemDef {
     statBonus: JSON.parse(row.stat_bonus_json) as Partial<Stats>,
     levelReq: row.level_req,
     icon: row.icon,
+    ...(row.upgrades ? { upgrades: row.upgrades } : {}),
   };
 }
 
@@ -525,10 +529,11 @@ export async function buyShopItem(db: D1Database, playerId: string, index: numbe
 export async function heroInitFor(db: D1Database, playerId: string): Promise<HeroInit | null> {
   const c = await getCharacter(db, playerId);
   if (!c || c.status !== "active") return null;
-  const [inventory, orders, placed] = await Promise.all([
+  const [inventory, orders, placed, brews] = await Promise.all([
     getInventory(db, playerId),
     pubOrders(db, playerId),
     db.prepare("SELECT def_id AS defId, q FROM furnishings WHERE player_id = ? AND q IS NOT NULL").bind(playerId).all<{ defId: string; q: number }>(),
+    brewBagOf(db, playerId),
   ]);
   const worn = inventory.filter((i) => i.equipped).map(rowToItem);
   return {
@@ -544,6 +549,8 @@ export async function heroInitFor(db: D1Database, playerId: string): Promise<Her
     hutPerks: hutPerks(placed.results),
     // And what they have eaten and drunk at the pub since their last one.
     pubBuff: pubBuff(orders),
+    // And the brews in their bag from the apothecary.
+    brews,
   };
 }
 

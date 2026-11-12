@@ -4,7 +4,7 @@
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { HexPos } from "@gantt-quest/core";
-import { GATHER_SPOTS, GATHER_SPOT_IDS, HARBOR_BOARD, HARBOR_GATHER, HARBOR_NAME, HARBOR_PIERS, HARBOR_PLOTS, HARBOR_PUB, HARBOR_RING, HARBOR_SHOP, HARBOR_WORKS, MAX_PARTY, PLOT_PRICE, RESOURCE_KINDS, SHACK_COST, binFill, binNeeds, builtProjects, generateHarbor, harborPoi, hutTier, poiAt, salesman, type GatherSpot, type HarborShip, type Resources } from "@gantt-quest/world";
+import { GATHER_SPOTS, GATHER_SPOT_IDS, HARBOR_APOTHECARY, HARBOR_BOARD, HARBOR_SMITHY, HARBOR_GATHER, HARBOR_NAME, HARBOR_PIERS, HARBOR_PLOTS, HARBOR_PUB, HARBOR_RING, HARBOR_SHOP, HARBOR_WORKS, MAX_PARTY, PLOT_PRICE, RESOURCE_KINDS, SHACK_COST, binFill, binNeeds, builtProjects, generateHarbor, harborPoi, hutTier, poiAt, salesman, type GatherSpot, type HarborShip, type Resources } from "@gantt-quest/world";
 import { api, type Me } from "./api";
 import { AccountPanel } from "./Account";
 import { NoticeBoard } from "./board/NoticeBoard";
@@ -19,6 +19,7 @@ import { WorldRenderer, type RenderState } from "./render/WorldRenderer";
 import { useHarbor } from "./useHarbor";
 import { useSalesman } from "./salesmanClock";
 import { WorksPanel } from "./works/WorksPanel";
+import { ApothecaryPanel, SmithyPanel } from "./works/WorkshopPanels";
 import { label } from "./labels";
 
 const className = (id: string) => label("class", id);
@@ -39,6 +40,7 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
   const [spar, setSpar] = useState(false);
   const [gather, setGather] = useState<GatherSpot | null>(null);
   const [works, setWorks] = useState(false);
+  const [workshop, setWorkshop] = useState<"apothecary" | "smithy" | null>(null);
   const [account, setAccount] = useState(false);
   const [tradeWith, setTradeWith] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
@@ -54,14 +56,18 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
   const base = useMemo(generateHarbor, []);
   const { board, players, you } = harbor;
   const moored = board.ships.filter((s) => s.pier !== null);
-  const lit = builtProjects(board.works).includes("lighthouse");
+  const built = builtProjects(board.works);
+  const lit = built.includes("lighthouse");
+  const apothecaryBuilt = built.includes("apothecary");
+  const smithyBuilt = built.includes("smithy");
 
   // The Harbor as the renderer sees it: the fixed map plus a hut per member and a ship per moored voyage.
   const scene = useMemo<RenderState | null>(() => {
     if (!you) return null;
     const pois = [
       // The works are a building site until the lighthouse stands there.
-      ...base.pois.map((p) => (p.id === "works" ? { ...p, cleared: lit } : p)),
+      // So are the apothecary's and smithy's spots until the crew has paid for them.
+      ...base.pois.map((p) => (p.id === "works" ? { ...p, cleared: lit } : p.id === "apothecary" ? { ...p, cleared: apothecaryBuilt } : p.id === "smithy" ? { ...p, cleared: smithyBuilt } : p)),
       // A plot someone has bought has their hut on it, or a resource bin while the shack is still to go up; the rest are staked out and for sale.
       ...HARBOR_PLOTS.map((pos, i) => {
         const owner = board.members.find((m) => m.plot === i);
@@ -128,6 +134,8 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
     : hoverPoi.kind === "wreck" ? "A wreck on the rocks. Nobody remembers her name."
     : hoverPoi.kind === "pub" ? (visitor ? `The pub: a traveling salesman is in. ${visitor.name}, ${visitor.trade}` : "The pub: food, drink, Old Tam and the dice table")
     : hoverPoi.kind === "works" ? (lit ? "The lighthouse: crew projects" : "The works: crew projects")
+    : hoverPoi.kind === "apothecary" ? (apothecaryBuilt ? "The apothecary: brew herbs and mushrooms for your next voyage" : "The apothecary's building site: a crew project at the works")
+    : hoverPoi.kind === "smithy" ? (smithyBuilt ? "The smithy: sharpen weapons, reinforce armour" : "The smithy's building site: a crew project at the works")
     : hoverPoi.kind === "lot" ? (myPlot === null ? `A plot for sale: ${PLOT_PRICE} gold` : "An empty plot")
     : hoverPoi.kind === "site" ? (hoverPoi.id === `site:${you}` ? "Your plot: fill the bin and the shack goes up" : `${board.members.find((m) => `site:${m.id}` === hoverPoi.id)?.name ?? "Someone"}'s plot: building a shack`)
     : hoverPoi.kind === "plot" ? `${board.members.find((m) => `plot:${m.id}` === hoverPoi.id)?.name ?? "Someone"}'s ${hutTier(hoverPoi.tier ?? 1).name.toLowerCase()}`
@@ -170,6 +178,8 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
   const gatherHere = self ? GATHER_SPOT_IDS.find((id) => same(self.pos, HARBOR_GATHER[id])) : undefined;
   const atPub = !!self && same(self.pos, HARBOR_PUB);
   const atWorks = !!self && same(self.pos, HARBOR_WORKS);
+  const atApothecary = !!self && same(self.pos, HARBOR_APOTHECARY);
+  const atSmithy = !!self && same(self.pos, HARBOR_SMITHY);
   // Resting: the server keeps the clock; this is only what it last told us, counted down for show.
   const [restReadyAt, setRestReadyAt] = useState(0);
   const [note, setNote] = useState<string | null>(null);
@@ -251,6 +261,13 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
       }
     : atPub ? { title: visitor ? <>The pub <span className="pub-visitor">· {visitor.name}, {visitor.trade}, is in</span></> : "The pub", label: "Go in", run: () => goInside("pub", "pub") }
     : atWorks ? { title: lit ? "The lighthouse" : "The works", label: "See the crew's projects", run: () => setWorks(true) }
+    // A workshop still to be built points to the works, where the crew pays for it.
+    : atApothecary ? (apothecaryBuilt
+        ? { title: "The apothecary", label: "Brew something", run: () => setWorkshop("apothecary") }
+        : { title: <>The apothecary's building site <span className="muted">· paid for at the works</span></>, label: "See the crew's projects", run: () => setWorks(true) })
+    : atSmithy ? (smithyBuilt
+        ? { title: "The smithy", label: "Work your gear", run: () => setWorkshop("smithy") }
+        : { title: <>The smithy's building site <span className="muted">· paid for at the works</span></>, label: "See the crew's projects", run: () => setWorks(true) })
     : myBin ? {
         title: (
           <>Your plot <span className="muted">· the shack's resource bin: {RESOURCE_KINDS.filter((k) => SHACK_COST[k]).map((k) => `${myBin[k] ?? 0}/${SHACK_COST[k]} ${label("resource", k).toLowerCase()}`).join(", ")}{held ? ` · you hold ${RESOURCE_KINDS.filter((k) => SHACK_COST[k]).map((k) => `${held[k] ?? 0} ${label("resource", k).toLowerCase()}`).join(", ")}` : ""}</span></>
@@ -281,7 +298,7 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
       }
     : null;
   // Anything laid over the Harbor, the sparring bout included, takes the floating button away.
-  const panelOpen = sheet || shop || notices || spar || !!gather || works || account || !!tradeWith;
+  const panelOpen = sheet || shop || notices || spar || !!gather || works || !!workshop || account || !!tradeWith;
   const error = harbor.error ?? launchError;
 
   return (
@@ -387,6 +404,8 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
       {account && <AccountPanel me={me} refresh={refresh} onClose={() => setAccount(false)} />}
       {notices && <NoticeBoard refresh={refresh} onClose={() => setNotices(false)} />}
       {works && <WorksPanel works={board.works} refresh={refresh} onClose={() => setWorks(false)} />}
+      {workshop === "apothecary" && <ApothecaryPanel onClose={() => setWorkshop(null)} />}
+      {workshop === "smithy" && <SmithyPanel refresh={refreshAll} onClose={() => setWorkshop(null)} />}
       {spar && scene && me.character && <SparView me={me} scene={scene} renderer={renderer} onClose={() => setSpar(false)} />}
       {gather && me.character && <GatherPanel spot={gather} onClose={() => setGather(null)} />}
       {shop && me.character && <ShopScreen me={me} refresh={refreshAll} onClose={() => setShop(false)} />}

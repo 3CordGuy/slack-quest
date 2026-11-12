@@ -4,7 +4,7 @@
 // a rename on the admin side reaches the whole UI. Display only: the rules
 // and the server keep using ids and the code defaults.
 
-import { CATALOGUE, RARITY_PREFIX, type CatalogueKind, type ItemDef, type ProjectCostKind } from "@gantt-quest/world";
+import { CATALOGUE, RARITY_PREFIX, upgradedName, type CatalogueKind, type ItemDef, type ProjectCostKind } from "@gantt-quest/world";
 import { content } from "./content";
 
 const override = (kind: CatalogueKind, id: string) => content().names[`${kind}:${id}`];
@@ -24,10 +24,11 @@ export function blurb(kind: CatalogueKind, id: string): string {
  * base name), so when the base has been renamed it is built again from the
  * ref and rarity; otherwise the stored name stands.
  */
-export function itemName(item: Pick<ItemDef, "kind" | "ref" | "rarity" | "name">): string {
+export function itemName(item: Pick<ItemDef, "kind" | "ref" | "rarity" | "name" | "upgrades">): string {
   const kind: CatalogueKind = item.kind === "weapon" ? "weapon" : "gear";
   const renamed = override(kind, item.ref)?.name;
-  return renamed ? `${RARITY_PREFIX[item.rarity] ?? ""}${renamed}` : item.name;
+  // Work done at the smithy shows after the name: "Audit Mace +2".
+  return upgradedName(renamed ? `${RARITY_PREFIX[item.rarity] ?? ""}${renamed}` : item.name, item.upgrades);
 }
 
 /** What a crew project asks for: gold, or a resource by its (possibly renamed) label. */

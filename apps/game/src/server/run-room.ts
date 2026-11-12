@@ -32,6 +32,7 @@ import {
 import { generateFill, islandFacts, npcTurn, writeEpilogue } from "./ai";
 import { recordStep } from "./board";
 import { clearPubOrders, restoreGathering, applyGrant, applyPenalty, conversationStatement, getRun, heroInitFor, refreshHarbor, saveRunStatements, type Env } from "./db";
+import { clearBrews } from "./workshops";
 
 const TURN_MS = 120_000;
 const CLOSE_AFTER_END_MS = 10 * 60_000;
@@ -278,6 +279,8 @@ export class RunRoom extends DurableObject<Env> {
     const fill = (await generateFill(this.env, frame, world.heroes.map((h) => h.name), demand, islandFacts(world.map), hints)) ?? fallback;
     // The ship has sailed: what the heroes ate and drank at the pub is used up on this voyage.
     await clearPubOrders(this.env.DB, world.heroes.map((h) => h.id)).catch((err) => console.warn("run-room:pub-clear-failed", { err: err instanceof Error ? err.message : String(err) }));
+    // So are the brews they took aboard from the apothecary. One brewed since boarding stays in the bag for next time.
+    await clearBrews(this.env.DB, world.heroes).catch((err) => console.warn("run-room:brew-clear-failed", { err: err instanceof Error ? err.message : String(err) }));
     const error = await this.serial(() => this.apply({ type: "begin", bible: buildBible(frame, fill, demand, rng) }));
     if (error) {
       console.warn("run-room:story-rejected", { error });

@@ -42,12 +42,20 @@ export const PROJECTS: ProjectDef[] = [
     voyageLine: "The Harbor's lighthouse saw you out past the shoals before dawn: one more day on the clock.",
   },
   {
+    id: "apothecary",
+    name: "Apothecary",
+    blurb: "A narrow shop by the market stall, hung with drying herbs.",
+    benefit: "Brew herbs and mushrooms into draughts, tonics and salves for your next voyage.",
+    cost: { gold: 250, wood: 25, stone: 15, herbs: 20, mushrooms: 20 },
+    open: true,
+  },
+  {
     id: "smithy",
     name: "Smithy",
-    blurb: "A forge and an anvil by the plaza.",
-    benefit: "Somewhere to work on gear between voyages.",
+    blurb: "A forge and an anvil by the sparring ring.",
+    benefit: "Sharpen weapons and reinforce armour, up to +3 an item.",
     cost: { gold: 400, stone: 30, iron: 30, copper: 15 },
-    open: false,
+    open: true,
   },
   {
     id: "galley",

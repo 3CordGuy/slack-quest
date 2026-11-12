@@ -64,6 +64,7 @@ import { buyFromSalesman, getSalesman } from "./server/salesman";
 import { gatherStatus, rest, startOuting, stepOuting } from "./server/gather";
 import { builtProjectIds, contribute, crewWorks, projectStock } from "./server/projects";
 import { acceptTrade, closeTrade, listTrades, proposeTrade } from "./server/trade";
+import { apothecaryView, brew, smithItem, smithyView } from "./server/workshops";
 import {
   checkImport,
   checkOverride,
@@ -546,6 +547,32 @@ app.post("/api/projects/give", async (c) => {
   c.executionCtx.waitUntil(refreshHarbor(c.env, crew.id));
   const [works, stock] = await Promise.all([crewWorks(c.env.DB, crew.id), projectStock(c.env.DB, player.id)]);
   return c.json({ works, stock, completed: result.completed });
+});
+
+// ---------- the apothecary and the smithy ----------
+
+// What this hero carries in their brew bag, and the herbs and mushrooms they could brew with.
+app.get("/api/apothecary", async (c) => c.json(await apothecaryView(c.env.DB, c.get("player").id)));
+
+// Brew one thing into the bag. The recipe is the catalogue's; the client names only the brew.
+app.post("/api/apothecary/brew", async (c) => {
+  const player = c.get("player");
+  const body = await c.req.json<{ brewId?: unknown }>().catch(() => ({}) as { brewId?: unknown });
+  const error = await brew(c.env.DB, player.id, String(body.brewId ?? ""));
+  if (error) return c.json({ error }, 409);
+  return c.json(await apothecaryView(c.env.DB, player.id));
+});
+
+// The weapons and armour this hero has with them, and what the next step on each would cost.
+app.get("/api/smithy", async (c) => c.json(await smithyView(c.env.DB, c.get("player").id)));
+
+// Sharpen a weapon or reinforce armour by one step. The price is the catalogue's, for the step the item is on.
+app.post("/api/smithy/work", async (c) => {
+  const player = c.get("player");
+  const body = await c.req.json<{ itemId?: unknown }>().catch(() => ({}) as { itemId?: unknown });
+  const result = await smithItem(c.env.DB, player.id, body.itemId);
+  if (typeof result === "string") return c.json({ error: result }, 409);
+  return c.json({ ...(await smithyView(c.env.DB, player.id)), worked: result.name });
 });
 
 // ---------- giving and trading between crewmates ----------
