@@ -808,6 +808,36 @@ export class WorldRenderer {
         add(new THREE.CylinderGeometry(0.1, 0.12, 0.7, 6), lambert("#efefef"), 0, 0.45, 0);
         add(new THREE.OctahedronGeometry(0.15), new THREE.MeshBasicMaterial({ color: "#ffd23f" }), 0, 0.98, 0);
         break;
+      case "pickup": {
+        // Taken: nothing left to draw.
+        if (poi.cleared) break;
+        // Each is a small low thing at the hex's edge, so a hero standing on the hex still reads.
+        if (poi.find === "herbs") {
+          for (const [x, z, s] of [[-0.18, 0.1, 1], [0.05, 0.22, 0.8], [0.2, 0.05, 0.9], [-0.02, -0.05, 0.7]]) {
+            add(new THREE.ConeGeometry(0.09 * s, 0.26 * s, 5), lambert("#4f8a3a"), x, 0.13 * s, z);
+            add(new THREE.ConeGeometry(0.06 * s, 0.2 * s, 5), lambert("#6fae4a"), x + 0.05, 0.1 * s, z + 0.03, 0.6);
+          }
+          for (const [x, z] of [[-0.18, 0.1], [0.2, 0.05], [0.05, 0.22]]) add(box(0.05, 0.05, 0.05), lambert("#c9a3e6"), x, 0.29, z);
+        } else if (poi.find === "mushrooms") {
+          for (const [x, z, s] of [[-0.15, 0.12, 1], [0.12, 0.2, 0.75], [0.08, -0.02, 0.6]]) {
+            add(new THREE.CylinderGeometry(0.035 * s, 0.045 * s, 0.16 * s, 6), lambert("#efe6d2"), x, 0.08 * s, z);
+            add(new THREE.SphereGeometry(0.11 * s, 8, 4, 0, Math.PI * 2, 0, Math.PI / 2), lambert("#b8452f"), x, 0.15 * s, z);
+            add(box(0.03, 0.02, 0.03), lambert("#f4efe1"), x + 0.04 * s, 0.25 * s, z + 0.03 * s);
+          }
+        } else if (poi.find === "wood") {
+          // A small stack of cut logs, ends toward the camera.
+          const log = new THREE.CylinderGeometry(0.07, 0.07, 0.5, 7);
+          for (const [x, y] of [[-0.15, 0.07], [0, 0.07], [0.15, 0.07], [-0.075, 0.2], [0.075, 0.2]]) {
+            const m = add(log, lambert("#8a5a2b"), x, y, 0.1);
+            m.rotation.x = Math.PI / 2;
+          }
+        } else {
+          for (const [x, z, s] of [[-0.12, 0.1, 1], [0.13, 0.15, 0.8], [0.02, -0.05, 0.7], [0.0, 0.12, 0.6]]) {
+            add(new THREE.DodecahedronGeometry(0.11 * s), lambert(s > 0.75 ? "#8b95a5" : "#a7afbb"), x, 0.09 * s + (s === 0.6 ? 0.12 : 0), z);
+          }
+        }
+        break;
+      }
       case "cache":
         add(box(0.38, 0.24, 0.26), lambert(poi.cleared ? "#6b6b6b" : "#9a6b2f"), 0, 0.12, 0.2);
         if (!poi.cleared) add(box(0.4, 0.05, 0.28), lambert("#e0b12e"), 0, 0.26, 0.2);

@@ -245,6 +245,32 @@ const ART: Record<string, Art> = {
     p.r(11, 3, 2, 2, C.bone);
   },
 
+  "res-herbs": (p) => {
+    // A tied bunch of leafy stems with a few small flowers.
+    p.l(8, 15, 8, 6, "#3d6b2c");
+    p.l(8, 13, 4, 6, "#3d6b2c");
+    p.l(8, 13, 12, 6, "#3d6b2c");
+    spans(p, "#4f8a3a", [[2, 6, 9], [3, 5, 10], [4, 3, 12], [5, 2, 13], [6, 2, 13], [7, 3, 12], [8, 5, 10]]);
+    spans(p, "#6fae4a", [[3, 6, 8], [4, 4, 6], [5, 10, 12], [6, 7, 9]]);
+    p.r(4, 2, 2, 2, "#c9a3e6");
+    p.r(10, 1, 2, 2, "#c9a3e6");
+    p.r(7, 0, 2, 2, C.paper);
+    p.r(6, 11, 4, 2, C.leather);
+  },
+  "res-mushrooms": (p) => {
+    // Two caps on pale stems, the near one larger.
+    const shroom = (x: number, y: number, w: number) => {
+      p.r(x + Math.floor(w / 2) - 1, y + 3, 2, 5, C.paper);
+      spans(p, "#b8452f", [[y, x + 1, x + w - 2], [y + 1, x, x + w - 1], [y + 2, x, x + w - 1]]);
+      p.r(x + 2, y, 1, 1, "#e07a5f");
+      p.r(x + 1, y + 1, 1, 1, C.paper);
+      p.r(x + w - 3, y + 1, 1, 1, C.paper);
+    };
+    shroom(8, 3, 7);
+    shroom(1, 6, 9);
+    p.r(1, 14, 14, 1, "#4f8a3a");
+  },
+
   // ---- interface ----
   hand: (p) => {
     p.r(5, 6, 7, 7, C.leather);

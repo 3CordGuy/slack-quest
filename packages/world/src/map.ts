@@ -13,6 +13,7 @@ import {
   type HexPos,
 } from "@gantt-quest/core";
 import { makeRng, seedFromString, type Rng } from "./rng";
+import type { ResourceKind } from "./hut";
 
 /**
  * `dock`, `cobble`, `mud` and `rampart` belong to the Harbor: the wooden pier
@@ -50,7 +51,7 @@ export interface Tile {
  * `board` and `shop` exist only in the Harbor: a moored ship, a crew member's
  * hut, the notice board and the market stall. `door` is the way out of a hut's room.
  */
-export type PoiKind = "landing" | "hut" | "lair" | "shrine" | "cache" | "camp" | "pier" | "plot" | "board" | "shop" | "ring" | "dice" | "door" | "works" | "pub" | "counter" | "shoals" | "rocks" | "wreck" | "lot" | "ship" | "fishing" | "felling" | "quarry";
+export type PoiKind = "landing" | "hut" | "lair" | "shrine" | "cache" | "camp" | "pier" | "plot" | "board" | "shop" | "ring" | "dice" | "door" | "works" | "pub" | "counter" | "shoals" | "rocks" | "wreck" | "lot" | "ship" | "pickup" | "fishing" | "felling" | "quarry";
 
 export interface Poi {
   id: string;
@@ -66,6 +67,8 @@ export interface Poi {
   enemies: string[];
   /** For a hut plot in the Harbor: the hut's tier, which sets how big the building is drawn. */
   tier?: number;
+  /** For a pickup on an island: what lies there for the taking. */
+  find?: ResourceKind;
 }
 
 export interface WorldMap {
@@ -287,5 +290,52 @@ export function generateMap(seed: string, grid: HexGrid = MAP_GRID): WorldMap {
       if (tileAt(map, step)!.biome === "water") setBiome(step, "plains");
     }
   }
+  scatterPickups(map, seed, landing);
   return map;
+}
+
+/**
+ * What lies about on an island for the taking, by kind: how many, and which
+ * ground each is found on, best first. Herbs grow in the open, mushrooms
+ * under the trees, wood lies stacked at the forest edge, and stone where the
+ * ground rises.
+ */
+export const PICKUPS: { find: ResourceKind; count: number; ground: Biome[] }[] = [
+  { find: "herbs", count: 3, ground: ["plains"] },
+  { find: "mushrooms", count: 3, ground: ["forest"] },
+  { find: "wood", count: 2, ground: ["forest", "plains"] },
+  { find: "stone", count: 2, ground: ["hills", "plains"] },
+];
+
+/** Most a single pickup gives; the least is one. */
+export const PICKUP_MAX = 3;
+
+/**
+ * Lay herbs, mushrooms and piles of wood and stone about the island, on
+ * ground a hero can walk to and clear of the story's places. Uses its own
+ * random stream, so the rest of the island comes out the same as before
+ * pickups existed.
+ */
+function scatterPickups(map: WorldMap, seed: string, landing: HexPos) {
+  const rng = makeRng(seedFromString(`pickups|${seed}`));
+  const onFoot = reachable(map, landing);
+  const places = map.pois.map((p) => p.pos);
+  const spots: HexPos[] = [];
+  for (const { find, count, ground } of PICKUPS) {
+    for (let n = 0; n < count; n++) {
+      const open = map.tiles.filter(
+        (t) =>
+          onFoot.has(posKey(t)) &&
+          places.every((p) => hexDistance(p, t) >= 2) &&
+          spots.every((p) => hexDistance(p, t) >= 2),
+      );
+      // The first kind of ground that has room, else anywhere open.
+      const fits = ground.map((b) => open.filter((t) => t.biome === b)).find((list) => list.length > 0) ?? open;
+      if (fits.length === 0) return;
+      const t = rng.pick(fits);
+      const pos = { q: t.q, r: t.r };
+      spots.push(pos);
+      map.pois.push({ id: `pickup${map.pois.length}`, kind: "pickup", pos, hidden: false, cleared: false, usedBy: [], enemies: [], find });
+    }
+  }
 }

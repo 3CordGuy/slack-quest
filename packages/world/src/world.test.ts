@@ -14,7 +14,10 @@ import { BERRY_HEAL, FORAGE_ODDS, ROAMERS_AT_START, ROAMERS_MAX, ROAMER_SCENT, V
   demandMet,
   describeBearing,
   findPath,
+  PICKUPS,
+  PICKUP_MAX,
   generateMap,
+  poiAt,
   makeRng,
   newNpcRun,
   parseNpcOutput,
@@ -894,5 +897,46 @@ describe("client view", () => {
     expect(view.story!.demand).toBeNull();
     // The source state is untouched.
     expect(poiById(s.map, "lair")).toBeDefined();
+  });
+});
+
+describe("herbs, mushrooms and piles on the island", () => {
+  it("lays every kind out on ground a hero can reach, clear of the story's places", () => {
+    for (let i = 0; i < 30; i++) {
+      const map = generateMap(`pickups-${i}`);
+      const landing = poiById(map, "landing")!.pos;
+      const onFoot = reachable(map, landing);
+      const pickups = map.pois.filter((p) => p.kind === "pickup");
+      expect(pickups.length).toBe(PICKUPS.reduce((n, k) => n + k.count, 0));
+      for (const want of PICKUPS) expect(pickups.filter((p) => p.find === want.find).length).toBe(want.count);
+      for (const p of pickups) {
+        expect(onFoot.has(`${p.pos.q},${p.pos.r}`)).toBe(true);
+        for (const other of map.pois) if (other !== p && other.kind !== "pickup") expect(hexDistance(other.pos, p.pos)).toBeGreaterThanOrEqual(2);
+      }
+      expect(new Set(map.pois.map((p) => p.id)).size).toBe(map.pois.length);
+    }
+  });
+
+  it("gives one to three of it to whoever walks over it, once", () => {
+    let s = startedWorld();
+    const me = s.turn!.heroId;
+    const pickup = s.map.pois.find((p) => p.kind === "pickup")!;
+    const next = [...reachable(s.map, pickup.pos, 3).values()].find((r) => r.cost > 0 && hexDistance(r.pos, pickup.pos) === 1 && !poiAt(s.map, r.pos))!;
+    s = { ...s, heroes: s.heroes.map((h) => (h.id === me ? { ...h, pos: next.pos } : h)), turn: { ...s.turn!, mp: 8 } };
+    const sink = { events: [] as WorldEvent[], effects: [] as WorldEffect[] };
+    s = must(s, { type: "move", heroId: me, to: pickup.pos }, sink);
+    expect(sink.events).toContainEqual({ t: "pickup", heroId: me, poiId: pickup.id, find: pickup.find });
+    const got = sink.effects.find((e) => e.kind === "grant" && e.heroId === me) as Extract<WorldEffect, { kind: "grant" }>;
+    const n = got.resources?.[pickup.find!] ?? 0;
+    expect(n).toBeGreaterThanOrEqual(1);
+    expect(n).toBeLessThanOrEqual(PICKUP_MAX);
+    expect(poiById(s.map, pickup.id)!.cleared).toBe(true);
+    // Back off and step on it again: nothing left.
+    s = { ...s, turn: { ...s.turn!, mp: 8 } };
+    s = must(s, { type: "move", heroId: me, to: next.pos });
+    const again = { events: [] as WorldEvent[], effects: [] as WorldEffect[] };
+    s = { ...s, turn: { ...s.turn!, mp: 8 } };
+    must(s, { type: "move", heroId: me, to: pickup.pos }, again);
+    expect(again.events.filter((e) => e.t === "pickup")).toEqual([]);
   });
 });

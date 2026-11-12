@@ -13,6 +13,8 @@ const RESOURCE_COLOR: Record<ResourceKind, string> = {
   copper: "#c8743a",
   fur: "#a0683a",
   bone: "#eee6cf",
+  herbs: "#6fae4a",
+  mushrooms: "#b8452f",
 };
 
 /** "2 fur, 1 bone", in the catalogue's order. */
