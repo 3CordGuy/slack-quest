@@ -11,8 +11,8 @@ const W = 18;
 const H = 22;
 const OUTLINE = "#1b1830";
 
-type Hat = "helm" | "wizard" | "hood" | "horns" | "none";
-type Weapon = "sword" | "staff" | "daggers" | "club" | "bow" | "none";
+type Hat = "helm" | "wizard" | "hood" | "horns" | "leaves" | "feather" | "circlet" | "none";
+type Weapon = "sword" | "staff" | "daggers" | "club" | "bow" | "lute" | "orb" | "none";
 
 interface Look {
   skin: string;
@@ -28,6 +28,9 @@ const LOOKS: Record<string, Look> = {
   qa_paladin: { skin: "#f1c9a5", hair: "#8a5a2b", body: "#c9ced6", legs: "#5b6475", accent: "#e0b12e", hat: "helm", weapon: "sword" },
   devops_mage: { skin: "#f1c9a5", hair: "#e8e8f0", body: "#4b5fd1", legs: "#2d357a", accent: "#7fe3ff", hat: "wizard", weapon: "staff" },
   refactor_rogue: { skin: "#d9a67c", hair: "#2b2b33", body: "#3d7a4f", legs: "#2f3b33", accent: "#b9433d", hat: "hood", weapon: "daggers" },
+  backend_druid: { skin: "#d9a67c", hair: "#5a3d22", body: "#5d7d3a", legs: "#4a3a26", accent: "#a6d06a", hat: "leaves", weapon: "staff" },
+  frontend_bard: { skin: "#f1c9a5", hair: "#c9743a", body: "#b9433d", legs: "#3b2f5a", accent: "#e0b12e", hat: "feather", weapon: "lute" },
+  staff_sage: { skin: "#e8c2a0", hair: "#d9d9e3", body: "#6a3fa0", legs: "#3a2560", accent: "#f2d675", hat: "circlet", weapon: "orb" },
   npc: { skin: "#e8b891", hair: "#b9b9b9", body: "#a0683a", legs: "#5a4632", accent: "#e8dcc0", hat: "none", weapon: "none" },
   bandit: { skin: "#d9a67c", hair: "#3a2a20", body: "#7a2f2f", legs: "#3a3030", accent: "#1f1f1f", hat: "hood", weapon: "club" },
   cultist: { skin: "#cdb7d6", hair: "#2a1838", body: "#5b2a7a", legs: "#34194a", accent: "#e04fd0", hat: "hood", weapon: "staff" },
@@ -68,6 +71,22 @@ function drawHat(px: Px, look: Look) {
     px(4, 2, 8, 3, look.body);
     px(4, 5, 1, 4, look.body);
     px(11, 5, 1, 4, look.body);
+  } else if (look.hat === "leaves") {
+    // A crown of leaves.
+    px(5, 2, 6, 1, look.accent);
+    px(4, 1, 2, 2, look.accent);
+    px(7, 1, 2, 1, look.accent);
+    px(10, 1, 2, 2, look.accent);
+    px(6, 2, 1, 1, look.body);
+  } else if (look.hat === "feather") {
+    // A floppy cap with a feather.
+    px(4, 2, 8, 2, look.body);
+    px(3, 3, 1, 1, look.body);
+    px(10, 0, 1, 2, look.accent);
+    px(11, 0, 1, 1, look.accent);
+  } else if (look.hat === "circlet") {
+    px(5, 3, 6, 1, look.accent);
+    px(7, 2, 2, 1, "#7fe3ff");
   } else if (look.hat === "horns") {
     px(4, 0, 1, 3, look.accent);
     px(11, 0, 1, 3, look.accent);
@@ -111,6 +130,14 @@ function drawHumanoid(ctx: CanvasRenderingContext2D, look: Look) {
     px(13, 11, 1, 3, "#dfe6ee");
   } else if (look.weapon === "club") {
     px(13, 7, 2, 7, "#7a5230");
+  } else if (look.weapon === "lute") {
+    px(12, 10, 3, 4, "#a0683a");
+    px(13, 5, 1, 5, "#7a5230");
+    px(13, 11, 1, 1, OUTLINE);
+  } else if (look.weapon === "orb") {
+    px(13, 9, 1, 6, "#7a5230");
+    px(12, 6, 3, 3, look.accent);
+    px(13, 7, 1, 1, "#ffffff");
   } else if (look.weapon === "bow") {
     px(13, 6, 1, 1, "#7a5230");
     px(14, 7, 1, 7, "#7a5230");
@@ -238,6 +265,37 @@ function drawHero(ctx: CanvasRenderingContext2D, look: Look, outfit: Outfit) {
       px(2, 9, 1, 5, GEAR.steel);
       px(1, 14, 3, 1, trim("main_hand"));
     }
+  } else if (weapon === "root_staff") {
+    px(13, 4, 1, 15, GEAR.wood);
+    px(12, 2, 1, 2, GEAR.wood);
+    px(14, 1, 1, 3, GEAR.wood);
+    px(12, 1, 1, 1, trim("main_hand"));
+    px(14, 0, 1, 1, "#a6d06a");
+  } else if (weapon === "sickle") {
+    px(13, 9, 1, 6, GEAR.wood);
+    px(12, 5, 1, 4, GEAR.steel);
+    px(13, 4, 2, 1, GEAR.steel);
+    px(15, 5, 1, 1, GEAR.steel);
+    px(13, 15, 1, 1, trim("main_hand"));
+  } else if (weapon === "lute") {
+    px(12, 10, 3, 4, GEAR.leather);
+    px(13, 5, 1, 5, GEAR.wood);
+    px(13, 11, 1, 1, GEAR.dark);
+    px(13, 4, 1, 1, trim("main_hand"));
+  } else if (weapon === "flute") {
+    px(13, 6, 1, 9, GEAR.paper);
+    px(13, 8, 1, 1, GEAR.dark);
+    px(13, 11, 1, 1, GEAR.dark);
+    px(13, 5, 1, 1, trim("main_hand"));
+  } else if (weapon === "orb") {
+    px(13, 9, 1, 7, GEAR.wood);
+    px(12, 5, 3, 4, trim("main_hand"));
+    px(13, 6, 1, 1, GEAR.shine);
+  } else if (weapon === "scepter") {
+    px(13, 6, 1, 10, GEAR.gold);
+    px(12, 3, 3, 3, trim("main_hand"));
+    px(12, 2, 1, 1, GEAR.gold);
+    px(14, 2, 1, 1, GEAR.gold);
   } else if (weapon === "shortbow") {
     px(13, 6, 1, 1, GEAR.wood);
     px(14, 7, 1, 7, GEAR.wood);

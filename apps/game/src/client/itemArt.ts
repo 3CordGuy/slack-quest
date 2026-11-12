@@ -100,6 +100,56 @@ const ART: Record<string, Art> = {
   },
 
   // ---- armor ----
+  "root-staff": (p) => {
+    // A crooked staff, roots at the top, a leaf budding.
+    p.l(4, 15, 9, 4, C.wood);
+    p.l(5, 15, 10, 4, C.bark);
+    p.l(9, 4, 7, 1, C.wood);
+    p.l(10, 4, 13, 2, C.wood);
+    p.l(9, 4, 9, 1, C.bark);
+    p.r(12, 1, 2, 2, "#a6d06a");
+    p.r(6, 0, 2, 1, p.accent);
+  },
+  sickle: (p) => {
+    // A curved blade on a short handle.
+    p.l(3, 14, 7, 10, C.wood);
+    p.l(4, 14, 8, 10, C.bark);
+    spans(p, C.steel, [[2, 7, 11], [3, 11, 13], [4, 13, 14], [5, 14, 14], [6, 14, 14], [7, 13, 14], [8, 11, 13]]);
+    spans(p, C.shine, [[3, 8, 10], [4, 11, 12]]);
+    p.r(7, 10, 2, 1, p.accent);
+  },
+  lute: (p) => {
+    // A round body, a long neck, the pegs bent back.
+    spans(p, C.leather, [[8, 4, 9], [9, 3, 10], [10, 2, 11], [11, 2, 11], [12, 2, 11], [13, 3, 10], [14, 4, 9]]);
+    p.r(6, 11, 2, 2, C.dark);
+    p.l(8, 8, 13, 3, C.wood);
+    p.l(9, 8, 14, 3, C.bark);
+    p.r(13, 1, 2, 2, p.accent);
+    p.l(5, 10, 11, 4, C.paper);
+  },
+  flute: (p) => {
+    // A pale pipe on the slant, finger holes along it.
+    p.l(2, 14, 13, 3, C.paper);
+    p.l(3, 14, 14, 3, C.bone);
+    p.l(2, 13, 12, 3, C.paper);
+    for (const [x, y] of [[5, 11], [7, 9], [9, 7], [11, 5]]) p.r(x, y, 1, 1, C.dark);
+    p.r(12, 2, 2, 2, p.accent);
+  },
+  orb: (p) => {
+    // A glowing sphere on a short haft.
+    spans(p, p.accent, [[1, 6, 9], [2, 4, 11], [3, 3, 12], [4, 3, 12], [5, 3, 12], [6, 3, 12], [7, 4, 11], [8, 6, 9]]);
+    p.r(5, 3, 2, 2, C.shine);
+    p.r(7, 9, 2, 6, C.wood);
+    p.r(6, 9, 4, 1, C.gold);
+  },
+  scepter: (p) => {
+    // A gold rod with a jewelled head.
+    p.l(4, 15, 10, 6, C.gold);
+    p.l(5, 15, 11, 6, "#b8891f");
+    spans(p, C.gold, [[1, 10, 13], [2, 9, 14], [3, 9, 14], [4, 10, 13], [5, 11, 12]]);
+    p.r(11, 2, 2, 2, p.accent);
+    p.r(11, 2, 1, 1, C.shine);
+  },
   "round-shield": (p) => {
     spans(p, C.iron, [[2, 5, 10], [3, 3, 12], [4, 2, 13], [5, 2, 13], [6, 2, 13], [7, 2, 13], [8, 2, 13], [9, 2, 13], [10, 2, 13], [11, 2, 13], [12, 3, 12], [13, 5, 10]]);
     spans(p, p.accent, [[4, 5, 10], [5, 4, 11], [6, 4, 11], [7, 4, 11], [8, 4, 11], [9, 4, 11], [10, 4, 11], [11, 5, 10]]);
