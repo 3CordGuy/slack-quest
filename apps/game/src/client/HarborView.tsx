@@ -4,11 +4,12 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { HexPos } from "@gantt-quest/core";
-import { HARBOR_BOARD, HARBOR_PIERS, HARBOR_PLOTS, HARBOR_RING, HARBOR_SHOP, HERO_CLASSES, MAX_PARTY, generateHarbor, harborPoi, poiAt, type HarborShip } from "@gantt-quest/world";
+import { GATHER_SPOTS, GATHER_SPOT_IDS, HARBOR_BOARD, HARBOR_GATHER, HARBOR_PIERS, HARBOR_PLOTS, HARBOR_RING, HARBOR_SHOP, HERO_CLASSES, MAX_PARTY, generateHarbor, harborPoi, poiAt, type GatherSpot, type HarborShip } from "@gantt-quest/world";
 import { api, type Me } from "./api";
 import { AccountPanel } from "./Account";
 import { NoticeBoard } from "./board/NoticeBoard";
 import { DragPanel } from "./DragPanel";
+import { GatherPanel } from "./GatherPanel";
 import { InventoryScreen } from "./InventoryScreen";
 import { ShopScreen } from "./ShopScreen";
 import { SparView } from "./SparView";
@@ -26,6 +27,7 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
   const [shop, setShop] = useState(false);
   const [notices, setNotices] = useState(false);
   const [spar, setSpar] = useState(false);
+  const [gather, setGather] = useState<GatherSpot | null>(null);
   const [account, setAccount] = useState(false);
   const [copied, setCopied] = useState(false);
   const [text, setText] = useState("");
@@ -93,6 +95,7 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
     : hoverPoi.kind === "board" ? "Notice board: the crew goal and contracts"
     : hoverPoi.kind === "shop" ? "Market stall: buy and sell gear"
     : hoverPoi.kind === "ring" ? "Sparring ring"
+    : hoverPoi.kind === "fishing" || hoverPoi.kind === "felling" || hoverPoi.kind === "quarry" ? `${GATHER_SPOTS[hoverPoi.kind].name}: gather hut materials`
     : hoverPoi.kind === "plot" ? `${board.members.find((m) => `plot:${m.id}` === hoverPoi.id)?.name ?? "Someone"}'s hut`
     : hoverPoi.kind === "pier" ? `${moored.find((s) => `ship:${s.code}` === hoverPoi.id)?.captain ?? "A"}'s ship`
     : null;
@@ -130,6 +133,7 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
   const atShop = !!self && same(self.pos, HARBOR_SHOP);
   const atBoard = !!self && same(self.pos, HARBOR_BOARD);
   const atRing = !!self && same(self.pos, HARBOR_RING);
+  const gatherHere = self ? GATHER_SPOT_IDS.find((id) => same(self.pos, HARBOR_GATHER[id])) : undefined;
   const error = harbor.error ?? launchError;
 
   return (
@@ -233,6 +237,13 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
             <span>The sparring ring</span>
             <button className="primary" onClick={() => setSpar(true)}>Spar</button>
           </>
+        ) : gatherHere ? (
+          <>
+            <span>{GATHER_SPOTS[gatherHere].name}</span>
+            <button className="primary" onClick={() => setGather(gatherHere)}>
+              {gatherHere === "fishing" ? "Cast a line" : gatherHere === "felling" ? "Take up the axe" : "Work the seam"}
+            </button>
+          </>
         ) : hutOwner ? (
           <>
             <span>{hutOwner.id === you ? "Your hut" : `${hutOwner.name}'s hut`}</span>
@@ -257,6 +268,7 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
       {account && <AccountPanel me={me} refresh={refresh} onClose={() => setAccount(false)} />}
       {notices && <NoticeBoard refresh={refresh} onClose={() => setNotices(false)} />}
       {spar && scene && me.character && <SparView me={me} scene={scene} renderer={renderer} onClose={() => setSpar(false)} />}
+      {gather && me.character && <GatherPanel spot={gather} onClose={() => setGather(null)} />}
       {shop && me.character && <ShopScreen me={me} refresh={refreshAll} onClose={() => setShop(false)} />}
     </div>
   );

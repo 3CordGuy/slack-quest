@@ -42,6 +42,7 @@ import {
 } from "./server/db";
 
 import { enterHut } from "./server/hut-room";
+import { gatherStatus, startOuting, stepOuting } from "./server/gather";
 
 export { HarborRoom } from "./server/harbor-room";
 export { HutRoom } from "./server/hut-room";
@@ -219,6 +220,27 @@ app.get("/api/hut/:owner/ws", (c) => enterHut(c.env, c.get("player"), c.req.para
 app.get("/api/board", async (c) => {
   const crew = await crewFor(c.env.DB, c.get("player").id);
   return c.json(await noticeBoard(c.env.DB, crew?.id ?? null));
+});
+
+// ---------- gathering: fishing, felling and the quarry ----------
+
+// Stamina left today, the hero's chance at each spot, and any outing in progress.
+app.get("/api/gather", async (c) => {
+  const result = await gatherStatus(c.env.DB, c.get("player").id);
+  return typeof result === "string" ? c.json({ error: result }, 409) : c.json(result);
+});
+
+app.post("/api/gather/start", async (c) => {
+  const body = await c.req.json<{ spot?: string }>().catch(() => ({}) as { spot?: string });
+  const result = await startOuting(c.env.DB, c.get("player").id, body.spot);
+  return typeof result === "string" ? c.json({ error: result }, 409) : c.json(result);
+});
+
+// One choice: push on or bank. The server rolls; the reply is what the player may see.
+app.post("/api/gather/step", async (c) => {
+  const body = await c.req.json<{ choice?: unknown }>().catch(() => ({}) as { choice?: unknown });
+  const result = await stepOuting(c.env.DB, c.get("player").id, body.choice);
+  return typeof result === "string" ? c.json({ error: result }, 409) : c.json(result);
 });
 
 // ---------- crews and the shared Harbor ----------
