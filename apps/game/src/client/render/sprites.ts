@@ -706,6 +706,128 @@ export function labelTexture(text: string, plate?: PlateStats): { texture: THREE
   return { texture, aspect: canvas.width / canvas.height };
 }
 
+// ---------- speech bubbles ----------
+
+const BUBBLE_FILL: [number, number, number] = [250, 246, 232];
+const BUBBLE_EDGE: [number, number, number] = [27, 24, 48];
+const BUBBLE_INK: [number, number, number] = [35, 31, 58];
+/** Widest a line of speech may be, in pixels of text, so a bubble stays narrow on a phone. */
+const BUBBLE_TEXT_WIDTH = 120;
+const BUBBLE_MAX_LINES = 3;
+const BUBBLE_LINE_ROWS = 13;
+/** Rows the tail hangs below the box. */
+export const BUBBLE_TAIL_ROWS = 4;
+
+/** Break speech into at most three lines that fit the bubble, ending in an ellipsis if it had to be cut. */
+export function wrapSpeech(text: string): string[] {
+  const words = text.replace(/\s+/g, " ").trim().split(" ").filter(Boolean);
+  const lines: string[] = [];
+  let line = "";
+  let cut = false;
+  const fits = (s: string) => measure(s) <= BUBBLE_TEXT_WIDTH;
+  for (let word of words) {
+    const tryLine = line ? `${line} ${word}` : word;
+    if (fits(tryLine)) {
+      line = tryLine;
+      continue;
+    }
+    if (line) {
+      lines.push(line);
+      line = "";
+      if (lines.length === BUBBLE_MAX_LINES) {
+        cut = true;
+        break;
+      }
+    }
+    // A word too long for a line on its own is broken wherever it runs out of room.
+    while (!fits(word)) {
+      let n = word.length - 1;
+      while (n > 1 && !fits(word.slice(0, n))) n--;
+      lines.push(word.slice(0, n));
+      word = word.slice(n);
+      if (lines.length === BUBBLE_MAX_LINES) {
+        cut = true;
+        break;
+      }
+    }
+    if (cut) break;
+    line = word;
+  }
+  if (!cut && line) lines.push(line);
+  if (cut && lines.length > 0) {
+    let last = lines[lines.length - 1];
+    while (last.length > 0 && !fits(`${last}…`)) last = last.slice(0, -1);
+    lines[lines.length - 1] = `${last.trimEnd()}…`;
+  }
+  return lines.length > 0 ? lines : ["…"];
+}
+
+/**
+ * A speech bubble: pale, with a one-pixel dark outline, clipped corners and a
+ * tail at the bottom middle pointing down at the speaker. The text is drawn as
+ * text on a canvas (never markup) and snapped to solid pixels like a name tag.
+ */
+export function bubbleTexture(text: string): { texture: THREE.CanvasTexture; width: number; rows: number } {
+  const lines = wrapSpeech(text);
+  const textW = Math.max(...lines.map(measure));
+  const width = Math.max(16, textW + 10);
+  const box = lines.length * BUBBLE_LINE_ROWS + 4;
+  const rows = box + BUBBLE_TAIL_ROWS;
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = rows;
+  const ctx = canvas.getContext("2d", { willReadFrequently: true })!;
+  ctx.font = LABEL_FONT;
+  (ctx as CanvasRenderingContext2D & { letterSpacing?: string }).letterSpacing = "1px";
+  ctx.textBaseline = "middle";
+  ctx.textAlign = "left";
+  ctx.fillStyle = "#ffffff";
+  const left = Math.floor((width - textW) / 2);
+  lines.forEach((line, i) => ctx.fillText(line, left, 2 + i * BUBBLE_LINE_ROWS + BUBBLE_LINE_ROWS / 2 + 1));
+  const image = ctx.getImageData(0, 0, width, rows);
+  const px = image.data;
+  const mid = Math.floor(width / 2);
+  // What each pixel is: outside, edge, or inside the bubble (box with clipped corners, plus the tail).
+  const shape = (x: number, y: number): 0 | 1 | 2 => {
+    if (y < box) {
+      const sideX = x === 0 || x === width - 1;
+      const sideY = y === 0 || y === box - 1;
+      // Corners are clipped, and the pixel diagonally inside each one is outline, so they read as round.
+      if (sideX && sideY) return 0;
+      if ((x === 1 || x === width - 2) && (y === 1 || y === box - 2)) return 1;
+      // The outline is open where the tail joins the box.
+      if (y === box - 1 && Math.abs(x - mid) <= 2) return 2;
+      return sideX || sideY ? 1 : 2;
+    }
+    // The tail narrows a pixel each row to a point.
+    const t = y - box;
+    const half = 2 - t;
+    if (half < 0) return x === mid ? 1 : 0;
+    if (x === mid - half - 1 || x === mid + half + 1) return 1;
+    if (x >= mid - half && x <= mid + half) return 2;
+    return 0;
+  };
+  for (let y = 0; y < rows; y++) {
+    for (let x = 0; x < width; x++) {
+      const k = (y * width + x) * 4;
+      const ink = px[k + 3] >= 96;
+      const s = shape(x, y);
+      const colour = s === 0 ? null : s === 1 ? BUBBLE_EDGE : ink ? BUBBLE_INK : BUBBLE_FILL;
+      px[k] = colour?.[0] ?? 0;
+      px[k + 1] = colour?.[1] ?? 0;
+      px[k + 2] = colour?.[2] ?? 0;
+      px[k + 3] = colour ? 255 : 0;
+    }
+  }
+  ctx.putImageData(image, 0, 0);
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.magFilter = THREE.NearestFilter;
+  texture.minFilter = THREE.NearestFilter;
+  texture.generateMipmaps = false;
+  texture.colorSpace = THREE.SRGBColorSpace;
+  return { texture, width, rows };
+}
+
 // ---------- battle effects ----------
 
 export type FxKind = "slash" | "bolt" | "arrow" | "burst" | "spark" | "mote";

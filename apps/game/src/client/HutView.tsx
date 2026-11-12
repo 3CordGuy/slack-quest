@@ -77,6 +77,7 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
     ownerId,
     (id, path) => renderer.current?.playEvents([{ t: "moved", heroId: id, path }]),
     (m) => renderer.current?.playEvents(xpEvents(m)),
+    (id, text) => renderer.current?.say(id, text),
   );
   const { you, players, furnishings, canEdit, tier, owner } = hut;
   const room = useMemo(() => (tier === null ? null : hutRoom(tier)), [tier]);

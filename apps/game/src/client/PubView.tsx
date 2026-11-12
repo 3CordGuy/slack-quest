@@ -66,6 +66,7 @@ export function PubView({ me, refresh, onLeave }: { me: Me; refresh(): Promise<u
       // Your own win: your sheet's level and XP are stale.
       if (m.id === pub.you) void refresh();
     },
+    (id, text) => renderer.current?.say(id, text),
   );
   const { you, players } = pub;
   const self = players.find((p) => p.id === you);

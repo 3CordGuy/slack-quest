@@ -24,8 +24,8 @@ export interface HarborConnection {
 
 const EMPTY: HarborBoard = { members: [], ships: [], log: [] };
 
-/** `onMoved` fires for every walk, including your own, so the renderer can animate it. */
-export function useHarbor(onMoved: (id: string, path: HexPos[]) => void, onXp?: (m: XpMessage) => void): HarborConnection {
+/** `onMoved` fires for every walk, including your own, so the renderer can animate it; `onSaid` for every chat line, yours too, so it can show it over the speaker. */
+export function useHarbor(onMoved: (id: string, path: HexPos[]) => void, onXp?: (m: XpMessage) => void, onSaid?: (id: string, text: string) => void): HarborConnection {
   const [you, setYou] = useState<string | null>(null);
   const [crew, setCrew] = useState<HarborConnection["crew"]>(null);
   const [players, setPlayers] = useState<HarborPlayer[]>([]);
@@ -38,6 +38,8 @@ export function useHarbor(onMoved: (id: string, path: HexPos[]) => void, onXp?: 
   moved.current = onMoved;
   const xpSeen = useRef(onXp);
   xpSeen.current = onXp;
+  const said = useRef(onSaid);
+  said.current = onSaid;
 
   useEffect(() => {
     let closed = false;
@@ -94,6 +96,8 @@ export function useHarbor(onMoved: (id: string, path: HexPos[]) => void, onXp?: 
           queueMicrotask(() => xpSeen.current?.(msg));
         } else if (msg.type === "said") {
           setChat((c) => [...c, { name: msg.name, text: msg.text }].slice(-30));
+          // Over their head too, for everyone who can see them.
+          said.current?.(msg.id, msg.text);
         }
       };
       ws.onclose = (e) => {

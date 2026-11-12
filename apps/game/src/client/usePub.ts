@@ -25,8 +25,8 @@ export interface PubConnection {
   send(message: PubClientMessage): void;
 }
 
-/** `onMoved` fires for every walk, including your own, so the renderer can animate it. */
-export function usePub(onMoved: (id: string, path: HexPos[]) => void, onXp?: (m: XpMessage) => void): PubConnection {
+/** `onMoved` fires for every walk, including your own, so the renderer can animate it; `onSaid` for every chat line, yours too, so it can show it over the speaker. */
+export function usePub(onMoved: (id: string, path: HexPos[]) => void, onXp?: (m: XpMessage) => void, onSaid?: (id: string, text: string) => void): PubConnection {
   const [you, setYou] = useState<string | null>(null);
   const [players, setPlayers] = useState<HarborPlayer[]>([]);
   const [chat, setChat] = useState<HarborChatLine[]>([]);
@@ -42,6 +42,8 @@ export function usePub(onMoved: (id: string, path: HexPos[]) => void, onXp?: (m:
   moved.current = onMoved;
   const xpSeen = useRef(onXp);
   xpSeen.current = onXp;
+  const said = useRef(onSaid);
+  said.current = onSaid;
 
   useEffect(() => {
     let closed = false;
@@ -83,6 +85,8 @@ export function usePub(onMoved: (id: string, path: HexPos[]) => void, onXp?: (m:
           queueMicrotask(() => xpSeen.current?.(msg));
         } else if (msg.type === "said") {
           setChat((c) => [...c, { name: msg.name, text: msg.text }].slice(-30));
+          // Over their head too, for everyone who can see them.
+          said.current?.(msg.id, msg.text);
         } else if (msg.type === "dice") {
           setDice(msg.table);
           setDiceError(null);
