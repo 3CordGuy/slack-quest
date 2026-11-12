@@ -323,8 +323,9 @@ export class WorldRenderer {
       this.rotateButtons.hidden = true;
     } else {
       this.dist = this.userDist;
-      this.yawGoal = nearestTurn(this.yaw, this.userYaw);
-      this.rotateButtons.hidden = false;
+      // A room's front wall is the low one, so indoors the view stays where it can see over it.
+      this.yawGoal = nearestTurn(this.yaw, state.indoors ? 0 : this.userYaw);
+      this.rotateButtons.hidden = !!state.indoors;
       const turnKey = `${state.phase}:${state.round}:${state.turn?.heroId ?? ""}`;
       // A room is small enough to see whole, so indoors the camera stays on its middle.
       if (first && me && !state.indoors) this.target.copy(this.standAt(me.pos));
@@ -936,14 +937,14 @@ export class WorldRenderer {
 
   /** Turn the view freely by an angle. No effect during a battle. */
   private turn(radians: number) {
-    if (this.state?.battle) return;
+    if (this.state?.battle || this.state?.indoors) return;
     this.userYaw += radians;
     this.yaw = this.yawGoal = this.userYaw;
   }
 
   /** Turn the view by whole hex sides (60°), easing there. */
   rotateBy(steps: number) {
-    if (this.state?.battle) return;
+    if (this.state?.battle || this.state?.indoors) return;
     const step = Math.PI / 3;
     // Snap to the nearest side first, so repeated presses land on clean angles.
     this.userYaw = (Math.round(this.userYaw / step) + steps) * step;
