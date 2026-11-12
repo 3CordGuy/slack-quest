@@ -1,8 +1,8 @@
-# Gantt Quest — overworld game (`apps/game`)
+# The Harbor of Heylets (`apps/game`)
 
 The rewrite described in [`docs/overworld-revamp.md`](../../docs/overworld-revamp.md): a live, turn-based co-op game. A crew shares **the Harbor** (a walkable place where you see each other), up to four of them board a ship and sail to **an Island** (one seeded hex map with one generated story), talks to Workers AI characters, fights line-up battles, and brings XP and loot home.
 
-This app is separate from `apps/web` (the existing game), with its own Worker, Durable Objects and D1 database. It runs on staging; production (harbor.heylets.party) is set up by [`docs/game-production-checklist.md`](../../docs/game-production-checklist.md).
+This app is separate from `apps/web` (the original game), with its own Worker, Durable Objects and D1 database. It's live at https://harbor.heylets.party, with staging at https://harbor-staging.heylets.party. For setting up and deploying production, see [`docs/game-production-checklist.md`](../../docs/game-production-checklist.md); the [root README](../../README.md) has the deploy steps for both.
 
 ## Run it locally
 
@@ -105,16 +105,14 @@ The game's own tests (`apps/game/test/`) run the trading server code against SQL
 
 In dev builds the page exposes `window.__gq` (`state`, `send`, and the `World` module) on a voyage and `window.__harbor` in the Harbor, for driving either from the console. Set `window.__gqTime` to a number from 0 to 1 to pin the time of day (0 is midnight, 0.5 is noon), and `window.__gqWeather` from 0 (clear) to 1 (heavy rain) to pin the weather. The pub and huts expose `window.__pub` and `window.__hut` the same way.
 
-## Known gaps in milestone 1
+## Known gaps
 
-- Placeholder art: sprites are drawn in code (`render/sprites.ts`), props are primitive shapes.
-- Four story frames, one talkable NPC per story.
-- Eight hero classes: Tidewall Paladin, Stormcall Mage, Smuggler Rogue, Reef Druid, Shanty Bard, Starchart Sage, Lighthouse Warden and Wreck Warlock, each with two weapons, its own abilities and a code-drawn sprite.
-- Battle numbers are not tuned; a focused party can stun-lock the boss.
-- Battle events animate in sequence but HP bars jump to the final value.
-- The Harbor has twelve plots; a crew larger than that cannot all own one.
-- The smithy and galley projects are not open yet. Crew chat is not stored.
-- The doom clock does not allow for time lost to fog and roaming bands.
+- Art is drawn in code: sprites in `render/sprites.ts`, props from simple shapes. Admins can recolour sprites and swap item icons from `#admin`.
+- Four story frames, with one talkable islander per story.
+- Balance has a seeded simulation (`packages/world/src/balance.ts`), but real play will still need tuning.
+- The Harbor has twelve plots: a crew larger than that can't all own one.
+- The Galley project is still locked. Crew chat isn't stored.
+- The doom clock doesn't allow for time lost to fog and roaming bands.
 - Timing in fishing and the quarry trusts the client's reported moment within a round trip, so a script can always hit dead centre (capped at +20% a roll).
 - Gear has no affixes, uniques, sets or elements.
-- No production deploy and no CI deploy. Staging is deployed by hand; production needs a workflow change and review.
+- Deploys are by hand unless the CI workflow is switched on (see the root README).
