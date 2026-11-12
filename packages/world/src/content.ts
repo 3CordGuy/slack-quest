@@ -278,6 +278,15 @@ export const ENEMIES: Record<string, EnemyDef> = {
     kind: "wolf", name: "Dire Wolf", hp: 9, speed: 75, xp: 10,
     attacks: [{ name: "Bite", rolls: 2, pct: 57, damage: 5, target: "hero", perfect: { effect: "bleeding", turns: 2 }, weight: 1 }],
   },
+  // A beast bruiser: slow and thick-hided, and every blow lands like a falling tree.
+  // Where the Brute stuns with a club, the bear tears (bleeding) and only its roar stuns.
+  bear: {
+    kind: "bear", name: "Cave Bear", hp: 26, speed: 30, xp: 20,
+    attacks: [
+      { name: "Mauling Swipe", rolls: 2, pct: 53, damage: 12, target: "hero", perfect: { effect: "bleeding", turns: 2 }, weight: 3 },
+      { name: "Roar", rolls: 2, pct: 45, damage: 4, target: "hero", perfect: { effect: "stunned", turns: 1 }, weight: 1 },
+    ],
+  },
   cultist: {
     kind: "cultist", name: "Cultist", hp: 11, speed: 50, xp: 14,
     attacks: [
@@ -308,6 +317,14 @@ export const ENEMIES: Record<string, EnemyDef> = {
       { name: "Rending Howl", rolls: 4, pct: 45, damage: 5, target: "all_heroes", weight: 1 },
     ],
   },
+  // A beast boss that comes alone: slow, huge, and it tears; its roar can stun the whole crew.
+  great_bear: {
+    kind: "great_bear", name: "Great Bear", hp: 42, speed: 35, xp: 44, boss: true,
+    attacks: [
+      { name: "Crushing Maul", rolls: 3, pct: 57, damage: 13, target: "hero", perfect: { effect: "bleeding", turns: 3 }, weight: 3 },
+      { name: "Thunderous Roar", rolls: 4, pct: 45, damage: 5, target: "all_heroes", perfect: { effect: "stunned", turns: 1 }, weight: 2 },
+    ],
+  },
   // A guardian boss: slow and alone, but each blow lands like a wall.
   guardian: {
     kind: "guardian", name: "Guardian", hp: 35, speed: 30, xp: 44, boss: true,
@@ -324,6 +341,20 @@ export const ENEMIES: Record<string, EnemyDef> = {
     ],
   },
 };
+
+/** What leads a roaming band ashore, as an even pick: wolves and bandits twice as often as a bear. */
+export const ROAMER_LEADS = ["wolf", "bandit", "wolf", "bandit", "bear"] as const;
+export type RoamerLead = (typeof ROAMER_LEADS)[number];
+
+/**
+ * A roaming band for a crew of `party` heroes: a lone hero meets one enemy, a
+ * party a pair, a full ship a third. A bear is a pair's worth on its own, so
+ * it comes alone until the ship is full, and then with a second.
+ */
+export function bandKinds(lead: RoamerLead, party: number): string[] {
+  if (lead === "bear") return party >= 4 ? ["bear", "bear"] : ["bear"];
+  return [lead, ...(party >= 2 ? [lead === "bandit" ? "archer" : "wolf"] : []), ...(party >= 4 ? [lead] : [])];
+}
 
 // ---------- run-scoped key items ----------
 

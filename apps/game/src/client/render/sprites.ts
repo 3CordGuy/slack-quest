@@ -410,6 +410,36 @@ function drawWolf(ctx: CanvasRenderingContext2D, fur = "#7d8793", dark = "#59616
   px(9, 15, 2, 4, dark);
 }
 
+/**
+ * A bear on all fours, facing right: a heavier animal than the wolf, with a
+ * hump at the shoulders, round ears, a pale muzzle and thick clawed legs.
+ * `frost` greys the hump and brow for the old Great Bear.
+ */
+function drawBear(ctx: CanvasRenderingContext2D, fur = "#7a5232", dark = "#4f3420", muzzle = "#b98a5a", eye = "#f2a33a", frost?: string) {
+  const px = (x: number, y: number, w: number, h: number, c: string) => {
+    ctx.fillStyle = c;
+    ctx.fillRect(x + 1, y + 1, w, h);
+  };
+  px(0, 10, 1, 2, dark); // stub of a tail
+  px(1, 9, 10, 7, fur); // body
+  px(5, 7, 5, 2, fur); // shoulder hump
+  px(2, 15, 8, 1, dark); // belly shadow
+  px(10, 7, 5, 5, fur); // head
+  px(10, 5, 2, 2, dark); // round ears
+  px(13, 5, 2, 2, dark);
+  px(14, 9, 2, 3, muzzle); // snout
+  px(15, 9, 1, 1, OUTLINE); // nose
+  px(13, 8, 1, 1, eye);
+  if (frost) {
+    px(5, 7, 5, 1, frost);
+    px(11, 7, 3, 1, frost);
+  }
+  px(1, 16, 3, 4, dark); // legs, thick
+  px(8, 16, 3, 4, dark);
+  px(3, 19, 1, 1, "#e8dcc0"); // claws
+  px(10, 19, 1, 1, "#e8dcc0");
+}
+
 /** The sparring ring's training dummy: a straw sack on a post, with a target painted on its chest. */
 function drawDummy(ctx: CanvasRenderingContext2D) {
   const px = (x: number, y: number, w: number, h: number, c: string) => {
@@ -483,6 +513,9 @@ function drawSprite(kind: string, look: Look, outfit: Outfit | undefined, asleep
   if (kind === "wolf") drawWolf(ctx);
   // The pack leader: the same animal, darker, with a red eye. The renderer draws it larger.
   else if (kind === "alpha") drawWolf(ctx, "#4a4f5c", "#2c3039", "#ff4d4d");
+  else if (kind === "bear") drawBear(ctx);
+  // The Great Bear: darker and grizzled, with a red eye. The renderer draws it larger.
+  else if (kind === "great_bear") drawBear(ctx, "#4a3426", "#2a1d15", "#8a7a6a", "#ff4d4d", "#9a8f86");
   else if (kind === "dummy") drawDummy(ctx);
   else if (outfit) drawHero(ctx, look, outfit);
   else drawHumanoid(ctx, look);

@@ -16,7 +16,7 @@ import {
   type Combatant,
 } from "./battle";
 import { rollCheck, statPct, type CheckResult } from "./check";
-import { ENEMIES, KEY_ITEMS, WEAPONS } from "./content";
+import { ENEMIES, KEY_ITEMS, ROAMER_LEADS, WEAPONS, bandKinds } from "./content";
 import { bumpTally, contractById, tallyBattle, type TakenContract, type TallyKey } from "./contracts";
 import { battleDrops, cacheDrops, storyTrophy } from "./drops";
 import { rollItem, type ItemDef, type Outfit } from "./gear";
@@ -547,9 +547,7 @@ function spawnRoamer(ctx: Ctx): boolean {
   );
   if (open.length === 0) return false;
   const at = rng.pick(open);
-  const lead = rng.pick(["wolf", "bandit"]);
-  // A lone hero meets one enemy; a party meets a pair, and a full ship a third.
-  const kinds = [lead, ...(state.heroes.length >= 2 ? [lead === "bandit" ? "archer" : "wolf"] : []), ...(state.heroes.length >= 4 ? [lead] : [])];
+  const kinds = bandKinds(rng.pick(ROAMER_LEADS), state.heroes.length);
   state.roamerSeq = (state.roamerSeq ?? 0) + 1;
   roamers.push({ id: `r${state.roamerSeq}`, kinds, pos: { q: at.q, r: at.r } });
   return true;

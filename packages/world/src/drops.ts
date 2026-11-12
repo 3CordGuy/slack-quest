@@ -17,6 +17,8 @@ const ARMED: ResourceKind[] = ["iron", "copper"];
 export const ENEMY_DROPS: Record<string, ResourceKind[]> = {
   wolf: BEAST,
   alpha: BEAST,
+  bear: BEAST,
+  great_bear: BEAST,
   bandit: ARMED,
   archer: ARMED,
   brute: ARMED,

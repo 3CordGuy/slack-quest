@@ -21,8 +21,9 @@ describe("balance simulation", () => {
     const bard = gauntletRow(party("frontend_bard"), 60);
     expect(bard.auraShare).toBeGreaterThan(0.03);
     expect(bard.auraShare).toBeLessThan(0.2);
-    const druid = gauntletRow(party("backend_druid"), 60);
-    const bare = gauntletRow(party("backend_druid"), 60, { noRegen: true });
+    // With and without regrowth the fights roll differently, so a voyage or two swings either way: enough seeds to see past that.
+    const druid = gauntletRow(party("backend_druid"), 200);
+    const bare = gauntletRow(party("backend_druid"), 200, { noRegen: true });
     expect(druid.clearRate).toBeGreaterThanOrEqual(bare.clearRate);
     expect(druid.clearRate - bare.clearRate).toBeLessThan(0.15);
   });
