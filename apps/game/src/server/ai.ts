@@ -385,3 +385,63 @@ function mockBarkeep(input: BarkeepInput): string {
   if (/\b(free|discount|give|gold)\b/.test(said)) return "Prices are on the board, and the board does not haggle. Neither do I.";
   return `Evening, ${input.hero}. Something off the board, or just the warm?`;
 }
+
+// ---------- hero names ----------
+
+const NAME_SCHEMA = {
+  type: "object",
+  properties: { name: { type: "string" } },
+  required: ["name"],
+};
+
+/** A usable hero name: 2 to 20 characters of letters, spaces, apostrophes and hyphens. */
+export function cleanHeroName(raw: unknown): string | null {
+  if (typeof raw !== "string") return null;
+  const name = raw.replace(/["“”.,!]/g, "").replace(/\s+/g, " ").trim();
+  return /^[\p{L}][\p{L}' -]{1,19}$/u.test(name) ? name : null;
+}
+
+/**
+ * A name for a new hero of the given class, in the harbor's seafaring style.
+ * `avoid` holds names already offered, so a second press gives a new one.
+ * A failed, empty or unusable model reply falls back to the stock generator.
+ */
+export async function heroName(env: Env, input: { className: string; blurb: string; avoid: string[] }): Promise<string> {
+  if (isMock(env)) return mockHeroName(input.avoid);
+  const system = [
+    "You name heroes for a cosy pixel-art fantasy game about a seafaring crew who live in a small harbor town and sail to nearby islands.",
+    "Invent one memorable name for a new hero: a first name, optionally with a short surname or epithet. It should sound salty, nautical or folkloric, be easy to read aloud, and fit the class.",
+    "At most 20 characters in total. Letters, spaces, hyphens and apostrophes only. No titles like Captain, no real or famous people, nothing rude.",
+    'Reply as JSON: {"name": "..."}',
+  ].join("\n");
+  const avoid = input.avoid.length ? `\nDo not use any of these: ${input.avoid.join(", ")}.` : "";
+  const user = `Class: ${input.className}. ${input.blurb}${avoid}`;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const out = (await runJson(env, [{ role: "system", content: system }, { role: "user", content: user }], NAME_SCHEMA, 40)) as { name?: unknown } | string | null;
+    let raw: unknown = null;
+    if (typeof out === "string") {
+      try {
+        raw = (JSON.parse(out) as { name?: unknown }).name;
+      } catch {
+        raw = out;
+      }
+    } else raw = out?.name;
+    const name = cleanHeroName(raw);
+    if (name && !input.avoid.some((a) => a.toLowerCase() === name.toLowerCase())) return name;
+  }
+  return mockHeroName(input.avoid);
+}
+
+const FIRST = ["Marlow", "Isla", "Brannoc", "Wren", "Tobin", "Maren", "Corwin", "Nell", "Haldor", "Sable", "Fen", "Oriel", "Dunstan", "Briony", "Quill", "Rosk", "Tamsin", "Ewan", "Leda", "Pike"];
+const LAST = ["Saltmarsh", "Tidewell", "Gullsworth", "Brine", "Keelhart", "Ropewise", "Driftmoor", "Fathom", "Netherby", "Larboard", "Gale", "Harrow", "Shoals", "Wake"];
+
+/** Stock name generator: the stand-in for the model, and its fallback. */
+function mockHeroName(avoid: string[]): string {
+  const taken = new Set(avoid.map((a) => a.toLowerCase()));
+  for (let i = 0; i < 20; i++) {
+    const [a, b] = crypto.getRandomValues(new Uint32Array(2));
+    const name = `${FIRST[a % FIRST.length]} ${LAST[b % LAST.length]}`;
+    if (name.length <= 20 && !taken.has(name.toLowerCase())) return name;
+  }
+  return FIRST[crypto.getRandomValues(new Uint32Array(1))[0] % FIRST.length];
+}

@@ -126,6 +126,7 @@ export async function loadMe(): Promise<Me> {
 }
 
 export const api = {
+  suggestName: (classId: string, avoid: string[]) => request<{ name: string }>("/api/character/name", { classId, avoid }),
   roll: (classId: string, name: string) => request<{ character: Character }>("/api/character/roll", { classId, name }),
   confirm: () => request("/api/character/confirm", {}),
   reroll: () => request("/api/character/reroll", {}),
