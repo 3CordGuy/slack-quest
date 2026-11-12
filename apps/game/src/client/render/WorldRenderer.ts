@@ -7,6 +7,7 @@
 // in on the fight and lines the two sides up facing each other.
 
 import * as THREE from "three";
+import "./camera.css";
 import type { HexPos } from "@gantt-quest/core";
 import { hexDistance } from "@gantt-quest/core";
 import { BATTLE_JOIN_RANGE, ENEMIES, MOVE_COST, findPath, reachable, tileAt, type ClientState, type Outfit, type Phase, type Poi, type Tile, type WorldEvent, type WorldMap } from "@gantt-quest/world";
@@ -70,6 +71,11 @@ const MIN_ZOOM = 7;
 const MAX_ZOOM = 40;
 /** Below 1 makes a pinch zoom less than the fingers move. */
 const PINCH_DAMPING = 0.55;
+/** The angle equal to `to` (mod a full turn) that is closest to `from`, so easing takes the short way round. */
+function nearestTurn(from: number, to: number): number {
+  const full = Math.PI * 2;
+  return to + Math.round((from - to) / full) * full;
+}
 const PLAYER_COLORS = ["#ffd23f", "#5ce1e6", "#ff7ab6", "#9dff6b"];
 const BIOME_COLOR: Record<string, string> = { plains: "#7cb856", forest: "#4c9a52", hills: "#a39672", water: "#3f86dc", dock: "#9a7748", floor: "#b08a5c", wall: "#6e5a48" };
 
@@ -189,7 +195,18 @@ export class WorldRenderer {
   private userDist = 24;
   /** Active pointers on the canvas, by id. Two of them make a pinch. */
   private touches = new Map<number, { x: number; y: number }>();
-  private pinch: { dist: number; x: number; y: number; zoom: number } | null = null;
+  private pinch: { dist: number; x: number; y: number; zoom: number; angle: number } | null = null;
+  /**
+   * Which way the camera looks from, as a turn about the vertical axis. 0 is
+   * the default view from the south. `yaw` eases toward `yawGoal`; `userYaw`
+   * is what the player chose, kept while a battle forces the view back to 0.
+   */
+  private yaw = 0;
+  private yawGoal = 0;
+  private userYaw = 0;
+  /** The current drag turns the camera instead of panning it. */
+  private rotating = false;
+  private rotateButtons: HTMLDivElement;
   private pointer = { x: 0, y: 0, downX: 0, downY: 0, down: false, dragged: false, dirty: false, inside: false };
 
   constructor(private container: HTMLElement, private callbacks: RendererCallbacks) {
@@ -237,6 +254,22 @@ export class WorldRenderer {
     canvas.addEventListener("pointercancel", this.onPointerUp);
     canvas.addEventListener("pointerleave", this.onPointerLeave);
     canvas.addEventListener("wheel", this.onWheel, { passive: false });
+    canvas.addEventListener("contextmenu", this.onContextMenu);
+    addEventListener("keydown", this.onKeyDown);
+
+    // Two small buttons at the right edge, for those without a right mouse button or a keyboard.
+    this.rotateButtons = document.createElement("div");
+    this.rotateButtons.className = "camera-rotate";
+    for (const [label, steps, title] of [["⟲", -1, "Turn the view left (Q)"], ["⟳", 1, "Turn the view right (E)"]] as const) {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.textContent = label;
+      b.title = title;
+      b.setAttribute("aria-label", title);
+      b.addEventListener("click", () => this.rotateBy(steps));
+      this.rotateButtons.appendChild(b);
+    }
+    container.appendChild(this.rotateButtons);
     this.resizeObserver = new ResizeObserver(() => this.resize());
     this.resizeObserver.observe(container);
     this.resize();
@@ -253,6 +286,9 @@ export class WorldRenderer {
     canvas.removeEventListener("pointercancel", this.onPointerUp);
     canvas.removeEventListener("pointerleave", this.onPointerLeave);
     canvas.removeEventListener("wheel", this.onWheel);
+    canvas.removeEventListener("contextmenu", this.onContextMenu);
+    removeEventListener("keydown", this.onKeyDown);
+    this.rotateButtons.remove();
     this.renderer.dispose();
     canvas.remove();
   }
@@ -282,8 +318,13 @@ export class WorldRenderer {
     if (state.battle) {
       this.targetGoal.copy(this.battleCentre(state));
       this.dist = 12;
+      // The line-up is laid out for the default view, so a fight always faces the same way.
+      this.yawGoal = nearestTurn(this.yaw, 0);
+      this.rotateButtons.hidden = true;
     } else {
       this.dist = this.userDist;
+      this.yawGoal = nearestTurn(this.yaw, this.userYaw);
+      this.rotateButtons.hidden = false;
       const turnKey = `${state.phase}:${state.round}:${state.turn?.heroId ?? ""}`;
       // A room is small enough to see whole, so indoors the camera stays on its middle.
       if (first && me && !state.indoors) this.target.copy(this.standAt(me.pos));
@@ -872,6 +913,8 @@ export class WorldRenderer {
     }
     this.touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
     if (this.touches.size === 1) {
+      // Right button, or Shift or Alt with the left, turns the view instead of sliding it.
+      this.rotating = e.button === 2 || e.shiftKey || e.altKey;
       this.pointer.down = true;
       this.pointer.dragged = false;
       this.pointer.downX = this.pointer.x = e.clientX;
@@ -879,21 +922,51 @@ export class WorldRenderer {
     } else if (this.touches.size === 2) {
       // A second finger: this is a pinch, never a tap.
       this.pointer.dragged = true;
+      this.rotating = false;
       this.pinch = { ...this.pinchState(), zoom: this.userDist };
     }
   };
 
   /** Distance between the two touches and their midpoint. */
-  private pinchState(): { dist: number; x: number; y: number } {
+  /** Distance between the two touches, their midpoint, and the angle of the line between them. */
+  private pinchState(): { dist: number; x: number; y: number; angle: number } {
     const [a, b] = [...this.touches.values()];
-    return { dist: Math.max(1, Math.hypot(a.x - b.x, a.y - b.y)), x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+    return { dist: Math.max(1, Math.hypot(a.x - b.x, a.y - b.y)), x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, angle: Math.atan2(b.y - a.y, b.x - a.x) };
   }
+
+  /** Turn the view freely by an angle. No effect during a battle. */
+  private turn(radians: number) {
+    if (this.state?.battle) return;
+    this.userYaw += radians;
+    this.yaw = this.yawGoal = this.userYaw;
+  }
+
+  /** Turn the view by whole hex sides (60°), easing there. */
+  rotateBy(steps: number) {
+    if (this.state?.battle) return;
+    const step = Math.PI / 3;
+    // Snap to the nearest side first, so repeated presses land on clean angles.
+    this.userYaw = (Math.round(this.userYaw / step) + steps) * step;
+    this.yawGoal = this.userYaw;
+  }
+
+  private onContextMenu = (e: Event) => e.preventDefault();
+
+  private onKeyDown = (e: KeyboardEvent) => {
+    const el = e.target as HTMLElement | null;
+    if (e.metaKey || e.ctrlKey || e.altKey || (el && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName)))) return;
+    if (e.key === "q" || e.key === "Q") this.rotateBy(-1);
+    else if (e.key === "e" || e.key === "E") this.rotateBy(1);
+  };
 
   private panBy(dx: number, dy: number) {
     if (this.state?.battle) return;
     const k = (this.dist / this.container.clientHeight) * 0.75;
-    this.targetGoal.x -= dx * k;
-    this.targetGoal.z -= dy * k * 1.3;
+    // Slide along the screen's own right and up, whichever way the camera is turned.
+    const cos = Math.cos(this.yaw);
+    const sin = Math.sin(this.yaw);
+    this.targetGoal.x -= dx * k * cos + dy * k * 1.3 * sin;
+    this.targetGoal.z -= -dx * k * sin + dy * k * 1.3 * cos;
     this.target.copy(this.targetGoal);
   }
 
@@ -910,8 +983,14 @@ export class WorldRenderer {
       this.userDist = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, this.pinch.zoom * Math.pow(this.pinch.dist / now.dist, PINCH_DAMPING)));
       if (!this.state?.battle) this.dist = this.userDist;
       this.panBy(now.x - this.pinch.x, now.y - this.pinch.y);
+      // Twisting the two fingers turns the view with them.
+      let twist = now.angle - this.pinch.angle;
+      if (twist > Math.PI) twist -= 2 * Math.PI;
+      if (twist < -Math.PI) twist += 2 * Math.PI;
+      this.turn(-twist);
       this.pinch.x = now.x;
       this.pinch.y = now.y;
+      this.pinch.angle = now.angle;
       return;
     }
     const dx = e.clientX - this.pointer.x;
@@ -921,7 +1000,10 @@ export class WorldRenderer {
     this.pointer.inside = true;
     if (this.pointer.down) {
       if (Math.hypot(e.clientX - this.pointer.downX, e.clientY - this.pointer.downY) > 6) this.pointer.dragged = true;
-      if (this.pointer.dragged) this.panBy(dx, dy);
+      if (this.pointer.dragged) {
+        if (this.rotating) this.turn(-dx * 0.008);
+        else this.panBy(dx, dy);
+      }
     } else {
       this.pointer.dirty = true;
     }
@@ -940,7 +1022,8 @@ export class WorldRenderer {
       return;
     }
     this.pinch = null;
-    const wasClick = this.pointer.down && !this.pointer.dragged && e.type === "pointerup";
+    // A right-click, or a Shift/Alt click, is the start of a turn, not an order to walk.
+    const wasClick = this.pointer.down && !this.pointer.dragged && !this.rotating && e.type === "pointerup";
     this.pointer.down = false;
     if (!wasClick) return;
     const pos = this.pick();
@@ -1000,7 +1083,12 @@ export class WorldRenderer {
 
     this.target.lerp(this.targetGoal, ease);
     this.camDist += (this.dist - this.camDist) * ease;
-    this.camera.position.set(this.target.x, this.target.y + this.camDist * 0.78, this.target.z + this.camDist * 0.72);
+    this.yaw += (this.yawGoal - this.yaw) * ease;
+    this.camera.position.set(
+      this.target.x + Math.sin(this.yaw) * this.camDist * 0.72,
+      this.target.y + this.camDist * 0.78,
+      this.target.z + Math.cos(this.yaw) * this.camDist * 0.72,
+    );
     this.camera.lookAt(this.target);
 
     for (const [id, unit] of this.units) {
