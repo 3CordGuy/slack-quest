@@ -26,6 +26,7 @@ import {
   STALL_BUYS,
   sellMaterialProblem,
   RESOURCE_LABEL,
+  storageFree,
   SHACK_COST,
   binDeposit,
   binNeeds,
@@ -138,7 +139,7 @@ function insertItem(db: D1Database, playerId: string, item: ItemDef, equipped: b
 }
 
 async function getItem(db: D1Database, playerId: string, itemId: number): Promise<InventoryRow | null> {
-  return db.prepare("SELECT * FROM inventory WHERE id = ? AND player_id = ?").bind(itemId, playerId).first<InventoryRow>();
+  return db.prepare("SELECT * FROM inventory WHERE id = ? AND player_id = ? AND stored_in IS NULL").bind(itemId, playerId).first<InventoryRow>();
 }
 
 const now = () => Date.now();
@@ -249,7 +250,8 @@ export async function getCharacter(db: D1Database, playerId: string): Promise<Ch
 }
 
 export async function getInventory(db: D1Database, playerId: string): Promise<InventoryRow[]> {
-  const res = await db.prepare("SELECT * FROM inventory WHERE player_id = ? ORDER BY id").bind(playerId).all<InventoryRow>();
+  // Gear kept in a hut's container is out of the bag until it is taken out.
+  const res = await db.prepare("SELECT * FROM inventory WHERE player_id = ? AND stored_in IS NULL ORDER BY id").bind(playerId).all<InventoryRow>();
   return res.results;
 }
 
@@ -822,21 +824,110 @@ export function furnishingStatement(db: D1Database, playerId: string, furnishing
 
 /** A player's hut tier, materials, known blueprints and furnishings. Everyone has a tier 1 hut by default. */
 export async function getHut(db: D1Database, playerId: string): Promise<HutSummary> {
-  const [hut, resources, blueprints, furnishings] = await Promise.all([
+  const [hut, resources, blueprints, furnishings, stash, stowed] = await Promise.all([
     db.prepare("SELECT tier FROM huts WHERE player_id = ?").bind(playerId).first<{ tier: number }>(),
     db.prepare("SELECT kind, qty FROM resources WHERE player_id = ? AND qty > 0").bind(playerId).all<{ kind: ResourceKind; qty: number }>(),
     db.prepare("SELECT blueprint_id FROM blueprints WHERE player_id = ?").bind(playerId).all<{ blueprint_id: string }>(),
     db
-      .prepare("SELECT id, def_id AS defId, label, q, r, facing FROM furnishings WHERE player_id = ? ORDER BY id")
+      .prepare("SELECT id, def_id AS defId, label, q, r, facing, x, z, angle, on_id AS onId, in_id AS inId FROM furnishings WHERE player_id = ? ORDER BY id")
       .bind(playerId)
       .all<HutSummary["furnishings"][number]>(),
+    db
+      .prepare("SELECT furnishing_id AS containerId, kind, qty FROM stash WHERE player_id = ? AND qty > 0 ORDER BY furnishing_id, kind")
+      .bind(playerId)
+      .all<HutSummary["stash"][number]>(),
+    db
+      .prepare("SELECT id AS itemId, stored_in AS containerId, name, icon, slot, rarity FROM inventory WHERE player_id = ? AND stored_in IS NOT NULL ORDER BY id")
+      .bind(playerId)
+      .all<HutSummary["stowed"][number]>(),
   ]);
   return {
     tier: hut?.tier ?? 1,
     resources: Object.fromEntries(resources.results.map((r) => [r.kind, r.qty])),
     blueprints: [...new Set([...STARTER_BLUEPRINTS, ...blueprints.results.map((b) => b.blueprint_id)])],
     furnishings: furnishings.results,
+    stash: stash.results,
+    stowed: stowed.results,
   };
+}
+
+// ---------- containers: what a chest, crate or cupboard holds ----------
+
+/** How many slots of a container are filled: decorations in it, gear in it, and one per kind of material. */
+export async function containerUsed(db: D1Database, playerId: string, containerId: number): Promise<number> {
+  const row = await db
+    .prepare(
+      `SELECT (SELECT COUNT(*) FROM furnishings WHERE in_id = ?1 AND player_id = ?2)
+            + (SELECT COUNT(*) FROM inventory WHERE stored_in = ?1 AND player_id = ?2)
+            + (SELECT COUNT(*) FROM stash WHERE furnishing_id = ?1 AND player_id = ?2 AND qty > 0) AS used`,
+    )
+    .bind(containerId, playerId)
+    .first<{ used: number }>();
+  return row?.used ?? 0;
+}
+
+/** The owner's container `containerId`, or null if it is not theirs or holds nothing. */
+async function ownContainer(db: D1Database, playerId: string, containerId: number): Promise<{ defId: string } | null> {
+  if (!Number.isSafeInteger(containerId)) return null;
+  const row = await db.prepare("SELECT def_id AS defId FROM furnishings WHERE id = ? AND player_id = ?").bind(containerId, playerId).first<{ defId: string }>();
+  return row && FURNISHINGS[row.defId]?.storage ? row : null;
+}
+
+/**
+ * Move materials between the owner's pool and a container: a positive `qty`
+ * puts that many in, a negative one takes them out. Returns an error, or null.
+ * Each side is only changed if the other had them.
+ */
+export async function stashMaterial(db: D1Database, playerId: string, containerId: number, kind: unknown, qty: unknown): Promise<string | null> {
+  const k = RESOURCE_KINDS.find((r) => r === kind);
+  if (!k) return "That is not a material.";
+  if (typeof qty !== "number" || !Number.isSafeInteger(qty) || qty === 0) return "Move at least one.";
+  const box = await ownContainer(db, playerId, containerId);
+  if (!box) return "That does not hold anything.";
+  const n = Math.abs(qty);
+  if (qty > 0) {
+    const [has, used] = await Promise.all([
+      db.prepare("SELECT qty FROM stash WHERE furnishing_id = ? AND kind = ? AND qty > 0").bind(containerId, k).first<{ qty: number }>(),
+      containerUsed(db, playerId, containerId),
+    ]);
+    if (!has && storageFree(box.defId, used) < 1) return "It is full.";
+    const res = await db.batch([
+      db.prepare("UPDATE resources SET qty = qty - ?3 WHERE player_id = ?1 AND kind = ?2 AND qty >= ?3").bind(playerId, k, n),
+      db
+        .prepare("INSERT INTO stash (furnishing_id, player_id, kind, qty) SELECT ?1, ?2, ?3, ?4 WHERE changes() > 0 ON CONFLICT(furnishing_id, kind) DO UPDATE SET qty = qty + excluded.qty")
+        .bind(containerId, playerId, k, n),
+    ]);
+    return res[0].meta.changes > 0 ? null : `You do not have ${n} ${RESOURCE_LABEL[k].toLowerCase()}.`;
+  }
+  const res = await db.batch([
+    db.prepare("UPDATE stash SET qty = qty - ?4 WHERE furnishing_id = ?1 AND player_id = ?2 AND kind = ?3 AND qty >= ?4").bind(containerId, playerId, k, n),
+    db
+      .prepare("INSERT INTO resources (player_id, kind, qty) SELECT ?1, ?2, ?3 WHERE changes() > 0 ON CONFLICT(player_id, kind) DO UPDATE SET qty = qty + excluded.qty")
+      .bind(playerId, k, n),
+    db.prepare("DELETE FROM stash WHERE furnishing_id = ? AND qty <= 0").bind(containerId),
+  ]);
+  return res[0].meta.changes > 0 ? null : `There are not ${n} ${RESOURCE_LABEL[k].toLowerCase()} in there.`;
+}
+
+/** Put a piece of gear from the bag into a container. Worn gear has to be taken off first. Returns an error, or null. */
+export async function stowGear(db: D1Database, playerId: string, containerId: number, itemId: number): Promise<string | null> {
+  const [box, item, used] = await Promise.all([ownContainer(db, playerId, containerId), getItem(db, playerId, itemId), containerUsed(db, playerId, containerId)]);
+  if (!box) return "That does not hold anything.";
+  if (!item) return "No such item.";
+  if (item.equipped) return "Take it off first.";
+  if (storageFree(box.defId, used) < 1) return "It is full.";
+  const res = await db
+    .prepare("UPDATE inventory SET stored_in = ? WHERE id = ? AND player_id = ? AND equipped = 0 AND stored_in IS NULL")
+    .bind(containerId, itemId, playerId)
+    .run();
+  return res.meta.changes > 0 ? null : "No such item.";
+}
+
+/** Take a piece of gear out of whatever container holds it, back into the bag. */
+export async function unstowGear(db: D1Database, playerId: string, itemId: number): Promise<string | null> {
+  if (!Number.isSafeInteger(itemId)) return "No such item.";
+  const res = await db.prepare("UPDATE inventory SET stored_in = NULL WHERE id = ? AND player_id = ? AND stored_in IS NOT NULL").bind(itemId, playerId).run();
+  return res.meta.changes > 0 ? null : "That is not in a container.";
 }
 
 /** Ask a hut's room to re-read the hut from D1 and tell everyone inside. Never throws. */
@@ -922,7 +1013,7 @@ export async function upgradeHut(db: D1Database, playerId: string): Promise<stri
       .prepare("INSERT INTO huts (player_id, tier) SELECT ?1, ?2 WHERE changes() > 0 ON CONFLICT(player_id) DO UPDATE SET tier = ?2")
       .bind(playerId, next.tier),
     ...displacedFurnishings(next.tier, hut.furnishings).map((f) =>
-      db.prepare("UPDATE furnishings SET q = NULL, r = NULL WHERE id = ?1 AND player_id = ?2 AND (SELECT tier FROM huts WHERE player_id = ?2) = ?3").bind(f.id, playerId, next.tier),
+      db.prepare("UPDATE furnishings SET q = NULL, r = NULL, on_id = NULL WHERE id = ?1 AND player_id = ?2 AND (SELECT tier FROM huts WHERE player_id = ?2) = ?3").bind(f.id, playerId, next.tier),
     ),
   ]);
   return res[spend.length].meta.changes > 0 ? { tier: next.tier } : "You no longer have what that costs.";

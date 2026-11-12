@@ -26,3 +26,12 @@
 @media (max-width: 760px) {
   .hut-furnish { width: 60vw; max-height: 50vh; font-size: 12px; }
 }
+
+.hut-furnish h4 { margin: 10px 0 4px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted, #9aa); }
+.hut-box { border-top: 1px solid var(--line); margin-top: 8px; padding-top: 4px; }
+.hut-box-row { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.hut-box-row > span { flex: 1 1 100%; }
+.hut-box select { flex: 1; min-width: 0; }
+.hut-tags { display: flex; gap: 4px; flex-wrap: wrap; margin: 2px 0 6px; }
+.hut-list button .tag { margin-left: 6px; }
+.hut-list .hut-box-row button { width: auto; }

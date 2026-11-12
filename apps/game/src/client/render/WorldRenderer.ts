@@ -12,7 +12,7 @@ import "./camera.css";
 import type { HexPos } from "@gantt-quest/core";
 import { hexDistance } from "@gantt-quest/core";
 import { BATTLE_JOIN_RANGE, ENEMIES, MOVE_COST, findPath, reachable, tileAt, type ClientState, type Outfit, type Phase, type Poi, type Tile, type WorldEvent, type WorldMap } from "@gantt-quest/world";
-import { propModel } from "./props";
+import { ghostModel, propModel, tintGhost, type LightKind } from "./props";
 import { SPRITE_ASPECT, fxTexture, labelTexture, sleepZTexture, spriteKey, spriteTexture, textTexture, type FxKind } from "./sprites";
 
 /** Spells fly as a coloured bolt; these are their colours, by ability name. */
@@ -51,6 +51,8 @@ export interface RenderState {
   props?: SceneProp[];
   /** Inside a building: no sea or sky around the map, and the camera starts closer. */
   indoors?: boolean;
+  /** A piece being carried: a ghost of it follows the pointer, and a click sets it down (RendererCallbacks.onPlace). */
+  holding?: Holding | null;
 }
 
 export interface SceneProp {
@@ -62,6 +64,33 @@ export interface SceneProp {
   facing: number;
   /** Ringed, to show it is the one being handled. */
   selected?: boolean;
+  /** A small thing: stepped over, not walked around. */
+  small?: boolean;
+  /** A small thing's offset from the middle of its hex (or of its support's top), and its turn in radians. */
+  x?: number;
+  z?: number;
+  angle?: number;
+  /** The prop it stands on; then x/z/angle are in that prop's own frame. */
+  on?: string | number;
+  /** Its flat top, in its own frame, for small things to stand on. */
+  surface?: { y: number; w: number; d: number; x?: number; z?: number };
+}
+
+/** Where something carried would be set down: a hex, an offset in it, and (for a small thing on a top) the prop it stands on. */
+export interface PlaceTarget {
+  pos: HexPos;
+  x: number;
+  z: number;
+  on?: string | number;
+}
+
+/** Something being carried, to be set down where the pointer is. */
+export interface Holding {
+  model: string;
+  small: boolean;
+  /** Furniture's turn, in sixths; a small thing's, in radians. */
+  facing: number;
+  angle: number;
 }
 
 /** Furthest a free-roaming walk may be previewed; matches the Harbor's server-side limit. */
@@ -106,6 +135,8 @@ export function hexToWorld(p: HexPos): { x: number; z: number } {
 
 const tileTop = (t: Tile | undefined) => (!t ? 0.2 : t.biome === "water" ? 0.14 : 0.35 + t.h * 1.1);
 const key = (p: HexPos) => `${p.q},${p.r}`;
+/** To the nearest thousandth, so offsets sent to the server stay short. */
+const round = (n: number) => Math.round(n * 1000) / 1000;
 /** Small deterministic hash for per-tile variation. */
 const noise = (q: number, r: number, salt: number) => {
   const n = Math.sin(q * 127.1 + r * 311.7 + salt * 74.7) * 43758.5453;
@@ -190,7 +221,20 @@ interface Fx {
 export interface RendererCallbacks {
   onHexClick(pos: HexPos): void;
   onHover(pos: HexPos | null): void;
+  /** A click on a prop. Return true if it was handled; otherwise the click falls through to its hex. */
+  onPropClick?(id: string | number): boolean;
+  /** The prop under the pointer changed. */
+  onPropHover?(id: string | number | null): void;
+  /** While carrying something: a click on a spot to set it down. */
+  onPlace?(target: PlaceTarget): void;
+  /** While carrying something: whether it may go at that spot (the ghost turns red if not). */
+  canPlace?(target: PlaceTarget): boolean;
+  /** Shift and the wheel, while carrying something: turn it one step (+1 clockwise). */
+  onTurnHeld?(dir: 1 | -1): void;
 }
+
+/** A small thing on the floor keeps this close to the middle of its hex. */
+const SMALL_REACH = 0.7;
 
 export class WorldRenderer {
   private scene = new THREE.Scene();
@@ -211,6 +255,15 @@ export class WorldRenderer {
   private poiSig = "";
   private propGroup = new THREE.Group();
   private propSig = "";
+  /** Each prop's model, by id, and the unseen sheets over the tops small things can stand on. */
+  private propModels = new Map<string | number, THREE.Group>();
+  private surfaces: THREE.Mesh[] = [];
+  private ghost: THREE.Group | null = null;
+  private ghostSig = "";
+  /** Where the carried piece would go if the pointer clicked now. */
+  private aimedAt: PlaceTarget | null = null;
+  /** The prop under the pointer, for its tooltip. */
+  private hoverProp: string | number | null = null;
   private sea: THREE.Mesh;
   private unitGroup = new THREE.Group();
   private fxGroup = new THREE.Group();
@@ -376,6 +429,7 @@ export class WorldRenderer {
     this.state = state;
     this.buildPois(state);
     this.buildProps(state);
+    this.updateGhost();
     this.buildJoinRanges(state);
     if (first) {
       this.sea.visible = !state.indoors;
@@ -708,7 +762,7 @@ export class WorldRenderer {
   /** Furniture: rebuilt whenever a piece is added, moved, turned or selected. */
   private buildProps(state: RenderState) {
     const props = state.props ?? [];
-    const sig = props.map((p) => `${p.id}:${p.model}:${key(p.pos)}:${p.facing}:${p.selected ? 1 : 0}`).join("|");
+    const sig = props.map((p) => `${p.id}:${p.model}:${key(p.pos)}:${p.facing}:${p.selected ? 1 : 0}:${p.x ?? 0}:${p.z ?? 0}:${p.angle ?? 0}:${p.on ?? ""}`).join("|");
     if (sig === this.propSig) return;
     this.propSig = sig;
     this.propGroup.traverse((o) => {
@@ -717,40 +771,165 @@ export class WorldRenderer {
       (mesh.material as THREE.Material | undefined)?.dispose();
     });
     this.propGroup.clear();
-    /** Hearths and campfires: where each one's light hangs, and the flames the ambience flickers. */
-    const fires: THREE.Vector3[] = [];
+    this.propModels.clear();
+    this.surfaces = [];
+    /** The flames the ambience flickers. */
     const flames: THREE.Mesh[] = [];
-    for (const prop of props) {
+    // Pieces on the floor first, then the small things standing on them, which are hung on their support so they turn and move with it.
+    const ordered = [...props.filter((p) => p.on === undefined), ...props.filter((p) => p.on !== undefined)];
+    for (const prop of ordered) {
       const g = propModel(prop.model);
-      const at = this.standAt(prop.pos);
-      g.position.copy(at);
-      g.rotation.y = -(prop.facing * Math.PI) / 3;
+      const base = prop.on !== undefined ? this.propModels.get(prop.on) : undefined;
+      if (prop.on !== undefined && !base) continue;
+      if (base) {
+        const top = (base.userData.surface as SceneProp["surface"]) ?? { y: 0, w: 0, d: 0 };
+        g.position.set(prop.x ?? 0, top.y, prop.z ?? 0);
+        g.rotation.y = -(prop.angle ?? 0);
+        base.add(g);
+      } else {
+        const at = this.standAt(prop.pos);
+        g.position.set(at.x + (prop.x ?? 0), at.y, at.z + (prop.z ?? 0));
+        g.rotation.y = prop.small ? -(prop.angle ?? 0) : -(prop.facing * Math.PI) / 3;
+        this.propGroup.add(g);
+      }
+      g.userData.surface = prop.surface;
+      this.propModels.set(prop.id, g);
       g.traverse((o) => {
         if (!(o instanceof THREE.Mesh)) return;
-        // Flames give light rather than block it.
+        o.userData.propId = prop.id;
+        // Flames give light rather than block it; glass lets it through.
         if (o.userData.flame !== undefined) flames.push(o);
-        else o.castShadow = o.receiveShadow = true;
+        else if (!o.userData.glass) o.castShadow = o.receiveShadow = true;
       });
-      this.propGroup.add(g);
-      if (g.userData.fire) {
-        g.updateMatrix();
-        fires.push((g.userData.fire as THREE.Vector3).clone().applyMatrix4(g.matrix));
+      if (prop.surface) {
+        // An unseen sheet over its top, which a carried small thing is aimed at.
+        const t = prop.surface;
+        const sheet = new THREE.Mesh(new THREE.PlaneGeometry(t.w, t.d), new THREE.MeshBasicMaterial({ visible: false }));
+        sheet.rotation.x = -Math.PI / 2;
+        sheet.position.set(t.x ?? 0, t.y + 0.002, t.z ?? 0);
+        sheet.userData.sheetOf = prop.id;
+        g.add(sheet);
+        this.surfaces.push(sheet);
       }
+    }
+    this.propGroup.updateMatrixWorld(true);
+    // Rings for the piece being handled, and lights wherever a model asks for one.
+    const lights: { pos: THREE.Vector3; kind: LightKind }[] = [];
+    for (const prop of ordered) {
+      const g = this.propModels.get(prop.id);
+      if (!g) continue;
+      g.traverse((o) => {
+        if (o.userData.light) lights.push({ pos: o.getWorldPosition(new THREE.Vector3()), kind: o.userData.light as LightKind });
+      });
       if (prop.selected) {
-        const ring = new THREE.Mesh(new THREE.RingGeometry(0.8, 0.95, 6), new THREE.MeshBasicMaterial({ color: "#ffd23f", side: THREE.DoubleSide }));
+        const [inner, outer] = prop.small ? [0.18, 0.24] : [0.8, 0.95];
+        const ring = new THREE.Mesh(new THREE.RingGeometry(inner, outer, 6), new THREE.MeshBasicMaterial({ color: "#ffd23f", side: THREE.DoubleSide, depthTest: !prop.small }));
         ring.rotation.x = -Math.PI / 2;
         ring.rotation.z = Math.PI / 6;
-        ring.position.set(at.x, at.y + 0.03, at.z);
+        ring.position.copy(g.getWorldPosition(new THREE.Vector3())).setY(g.getWorldPosition(new THREE.Vector3()).y + 0.03);
+        ring.renderOrder = 2;
         this.propGroup.add(ring);
       }
     }
-    this.ambience.setFires(fires, flames);
+    this.ambience.setLights(lights, flames);
+  }
+
+  // ---------- carrying a piece: the ghost that follows the pointer ----------
+
+  /** The ghost of whatever is being carried, rebuilt when that changes. */
+  private updateGhost() {
+    const holding = this.state?.holding ?? null;
+    const sig = holding ? holding.model : "";
+    if (sig !== this.ghostSig) {
+      this.ghostSig = sig;
+      if (this.ghost) {
+        this.scene.remove(this.ghost);
+        this.ghost.traverse((o) => {
+          const mesh = o as THREE.Mesh;
+          mesh.geometry?.dispose();
+          (mesh.material as THREE.Material | undefined)?.dispose();
+        });
+        this.ghost = null;
+      }
+      if (holding) {
+        this.ghost = ghostModel(holding.model);
+        this.ghost.visible = false;
+        this.scene.add(this.ghost);
+      }
+    }
+    this.placeGhost();
+  }
+
+  /** Where the pointer would set the carried piece down, or null if it is off the room. */
+  private aim(): PlaceTarget | null {
+    const holding = this.state?.holding;
+    if (!holding || !this.terrain || !this.pointer.inside) return null;
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    const ndc = new THREE.Vector2(((this.pointer.x - rect.left) / rect.width) * 2 - 1, -((this.pointer.y - rect.top) / rect.height) * 2 + 1);
+    this.raycaster.setFromCamera(ndc, this.camera);
+    if (holding.small) {
+      // A top first: aimed at, the thing stands on it, kept inside its edges.
+      const top = this.raycaster.intersectObjects(this.surfaces, false)[0];
+      if (top) {
+        const id = top.object.userData.sheetOf as string | number;
+        const base = this.propModels.get(id)!;
+        const t = base.userData.surface as NonNullable<SceneProp["surface"]>;
+        const local = base.worldToLocal(top.point.clone());
+        const x = Math.max((t.x ?? 0) - t.w / 2, Math.min((t.x ?? 0) + t.w / 2, local.x));
+        const z = Math.max((t.z ?? 0) - t.d / 2, Math.min((t.z ?? 0) + t.d / 2, local.z));
+        const prop = this.state?.props?.find((p) => p.id === id);
+        return { pos: prop?.pos ?? { q: 0, r: 0 }, x: round(x), z: round(z), on: id };
+      }
+    }
+    const hit = this.raycaster.intersectObject(this.terrain)[0];
+    if (!hit || hit.instanceId === undefined) return null;
+    const t = this.tiles[hit.instanceId];
+    const pos = { q: t.q, r: t.r };
+    if (!holding.small) return { pos, x: 0, z: 0 };
+    const mid = hexToWorld(pos);
+    let x = hit.point.x - mid.x;
+    let z = hit.point.z - mid.z;
+    const d = Math.hypot(x, z);
+    if (d > SMALL_REACH) [x, z] = [(x / d) * SMALL_REACH, (z / d) * SMALL_REACH];
+    return { pos, x: round(x), z: round(z) };
+  }
+
+  private placeGhost() {
+    const ghost = this.ghost;
+    const holding = this.state?.holding;
+    if (!ghost || !holding) return;
+    const target = this.aim();
+    this.aimedAt = target;
+    ghost.visible = !!target;
+    if (!target) return;
+    const base = target.on !== undefined ? this.propModels.get(target.on) : undefined;
+    if (base) {
+      const t = base.userData.surface as NonNullable<SceneProp["surface"]>;
+      ghost.position.copy(base.localToWorld(new THREE.Vector3(target.x, t.y + 0.004, target.z)));
+      // Props only ever turn about the vertical, so the support's yaw is all there is to add.
+      ghost.rotation.y = new THREE.Euler().setFromQuaternion(base.getWorldQuaternion(new THREE.Quaternion()), "YXZ").y - holding.angle;
+    } else {
+      const at = this.standAt(target.pos);
+      ghost.position.set(at.x + target.x, at.y + 0.004, at.z + target.z);
+      ghost.rotation.y = holding.small ? -holding.angle : -(holding.facing * Math.PI) / 3;
+    }
+    tintGhost(ghost, this.callbacks.canPlace?.(target) ?? true);
+  }
+
+  /** The prop under the pointer, if any. */
+  private pickProp(): string | number | null {
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    const ndc = new THREE.Vector2(((this.pointer.x - rect.left) / rect.width) * 2 - 1, -((this.pointer.y - rect.top) / rect.height) * 2 + 1);
+    this.raycaster.setFromCamera(ndc, this.camera);
+    const hit = this.raycaster.intersectObject(this.propGroup, true).find((h) => h.object.userData.propId !== undefined && !h.object.userData.sheetOf);
+    return hit ? (hit.object.userData.propId as string | number) : null;
   }
 
   /** Cost of stepping onto a tile: the terrain's, except that furniture cannot be walked through. */
   private stepCost(state: RenderState): ((t: Tile) => number) | undefined {
     if (!state.props?.length) return undefined;
-    const blocked = new Set(state.props.map((p) => key(p.pos)));
+    // Small things are stepped over.
+    const blocked = new Set(state.props.filter((p) => !p.small && p.on === undefined).map((p) => key(p.pos)));
     return (t) => (blocked.has(key(t)) ? Infinity : MOVE_COST[t.biome]);
   }
 
@@ -1451,7 +1630,8 @@ export class WorldRenderer {
     const state = this.state;
     const hovered = this.hovered;
     this.hoverRing.visible = false;
-    if (!state || !hovered || state.battle) return;
+    // While carrying a piece the ghost shows where it would go; no walking route.
+    if (!state || !hovered || state.battle || state.holding) return;
     const at = this.standAt(hovered);
     this.hoverRing.position.set(at.x, at.y + 0.04, at.z);
     this.hoverRing.visible = true;
@@ -1650,6 +1830,15 @@ export class WorldRenderer {
     const wasClick = this.pointer.down && !this.pointer.dragged && !this.rotating && e.type === "pointerup";
     this.pointer.down = false;
     if (!wasClick) return;
+    if (this.state?.holding && this.callbacks.onPlace) {
+      const target = this.aim();
+      if (target) this.callbacks.onPlace(target);
+      return;
+    }
+    if (this.callbacks.onPropClick && !this.state?.battle) {
+      const prop = this.pickProp();
+      if (prop !== null && this.callbacks.onPropClick(prop)) return;
+    }
     const pos = this.pick();
     // Nobody walks during a fight, and a practice bout borrows the Harbor's view.
     if (pos && !this.state?.battle) this.callbacks.onHexClick(pos);
@@ -1663,6 +1852,15 @@ export class WorldRenderer {
 
   private onWheel = (e: WheelEvent) => {
     e.preventDefault();
+    // Shift and the wheel turn whatever is being carried, a notch at a time.
+    if (e.shiftKey && this.state?.holding && this.callbacks.onTurnHeld) {
+      const now = performance.now();
+      if (now - this.lastTurn > 90 && Math.abs(e.deltaY || e.deltaX) > 0) {
+        this.lastTurn = now;
+        this.callbacks.onTurnHeld((e.deltaY || e.deltaX) > 0 ? 1 : -1);
+      }
+      return;
+    }
     // Proportional to how far the wheel moved, capped so one notch is about 6%.
     // A trackpad sends many small deltas and a mouse wheel a few big ones; both end up gentle.
     const step = Math.max(-50, Math.min(50, e.deltaY)) * 0.0012;
@@ -1689,6 +1887,7 @@ export class WorldRenderer {
   }
 
   private camDist = 24;
+  private lastTurn = 0;
 
   private frame = (now: number) => {
     this.raf = requestAnimationFrame(this.frame);
@@ -1700,6 +1899,11 @@ export class WorldRenderer {
     if (this.pointer.dirty && this.pointer.inside) {
       this.pointer.dirty = false;
       this.setHovered(this.pick());
+      if (this.state?.holding) this.placeGhost();
+      if (this.callbacks.onPropHover) {
+        const prop = this.state?.battle ? null : this.pickProp();
+        if (prop !== this.hoverProp) this.callbacks.onPropHover((this.hoverProp = prop));
+      }
     }
 
     for (let i = this.pending.length - 1; i >= 0; i--) {

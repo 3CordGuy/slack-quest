@@ -16,7 +16,10 @@ import {
   hutDoor,
   hutPath,
   hutRoom,
+  isSmall,
   placeProblem,
+  putInProblem,
+  smallPlaceProblem,
   validFacing,
   type Furnishing,
   type HarborPlayer,
@@ -24,7 +27,7 @@ import {
   type HutServerMessage,
   type WorldMap,
 } from "@gantt-quest/world";
-import { crewFor, furnishingStatement, getCharacter, getHut, hasShack, heroInitFor, homeOf, type Env, type Player } from "./db";
+import { containerUsed, crewFor, furnishingStatement, getCharacter, getHut, hasShack, heroInitFor, homeOf, type Env, type Player } from "./db";
 
 /** What a player with nothing at all is given the first time they open their own hut. */
 const STARTER_SET = ["table", "chair", "rug"];
@@ -212,42 +215,93 @@ export class HutRoom extends DurableObject<Env> {
       return;
     }
 
-    if (msg.type !== "place" && msg.type !== "pick_up" && msg.type !== "rotate") return;
+    if (msg.type !== "place" && msg.type !== "pick_up" && msg.type !== "rotate" && msg.type !== "put_in") return;
     const refuse = (reason: string) => this.send(ws, { type: "refused", reason });
     if (player.id !== ownerId) return refuse("Only the owner can move the furniture.");
     const piece = hut.furnishings.find((f) => f.id === Number(msg.id));
     if (!piece) return refuse("You do not own that.");
+    const small = isSmall(piece.defId);
+    const others = hut.furnishings.filter((f) => f !== piece);
+    /** Small things standing on this piece. They ride along when it moves and go back to storage with it. */
+    const riders = others.filter((f) => f.onId === piece.id);
 
-    let next: Pick<Furnishing, "q" | "r" | "facing">;
+    type Spot = Pick<Furnishing, "q" | "r" | "facing" | "x" | "z" | "angle" | "onId" | "inId">;
+    const stored: Spot = { q: null, r: null, facing: piece.facing, x: 0, z: 0, angle: 0, onId: null, inId: null };
+    let next: Spot;
+    /** Where the riders end up: with the piece on its new hex, or back in storage. */
+    let ridersTo: "follow" | "storage" | "stay" = "stay";
+
     if (msg.type === "place") {
-      const to = { q: Number(msg.to?.q), r: Number(msg.to?.r) };
-      const facing = msg.facing === undefined ? piece.facing : msg.facing;
-      if (!validFacing(facing)) return refuse("It cannot face that way.");
-      const problem = placeProblem(hut.room, hut.furnishings.filter((f) => f !== piece), piece.defId, to);
-      if (problem) return refuse(problem);
-      if (this.players().some((p) => p.pos.q === to.q && p.pos.r === to.r)) return refuse("Someone is standing there.");
-      next = { q: to.q, r: to.r, facing };
+      if (small) {
+        const angle = msg.angle === undefined ? piece.angle : Number(msg.angle);
+        const x = Number(msg.x ?? 0);
+        const z = Number(msg.z ?? 0);
+        if (msg.on !== undefined) {
+          const on = Number(msg.on);
+          const problem = smallPlaceProblem(hut.room, others, piece.defId, { on, x, z, angle });
+          if (problem) return refuse(problem);
+          const base = others.find((f) => f.id === on)!;
+          next = { q: base.q, r: base.r, facing: 0, x, z, angle, onId: on, inId: null };
+        } else {
+          const to = { q: Number(msg.to?.q), r: Number(msg.to?.r) };
+          const problem = smallPlaceProblem(hut.room, others, piece.defId, { pos: to, x, z, angle });
+          if (problem) return refuse(problem);
+          next = { q: to.q, r: to.r, facing: 0, x, z, angle, onId: null, inId: null };
+        }
+      } else {
+        const to = { q: Number(msg.to?.q), r: Number(msg.to?.r) };
+        const facing = msg.facing === undefined ? piece.facing : msg.facing;
+        if (!validFacing(facing)) return refuse("It cannot face that way.");
+        // Its own riders move with it, so they do not count as in the way.
+        const problem = placeProblem(hut.room, others.filter((f) => f.onId !== piece.id), piece.defId, to);
+        if (problem) return refuse(problem);
+        if (this.players().some((p) => p.pos.q === to.q && p.pos.r === to.r)) return refuse("Someone is standing there.");
+        next = { q: to.q, r: to.r, facing, x: 0, z: 0, angle: 0, onId: null, inId: null };
+        ridersTo = "follow";
+      }
     } else if (msg.type === "pick_up") {
-      if (piece.q === null) return;
-      next = { q: null, r: null, facing: piece.facing };
+      if (piece.q === null && piece.inId === null) return;
+      next = stored;
+      ridersTo = "storage";
+    } else if (msg.type === "put_in") {
+      const into = others.find((f) => f.id === Number(msg.into));
+      const used = into ? await containerUsed(this.env.DB, ownerId, into.id) : 0;
+      const problem = putInProblem(piece, into, used);
+      if (problem) return refuse(problem);
+      next = { ...stored, inId: into!.id };
+      ridersTo = "storage";
     } else {
       if (piece.q === null) return refuse("Put it down before turning it.");
-      const facing = msg.facing === undefined ? (piece.facing + 1) % 6 : msg.facing;
-      if (!validFacing(facing)) return refuse("It cannot face that way.");
-      next = { q: piece.q, r: piece.r, facing };
+      if (small) {
+        const angle = msg.angle === undefined ? piece.angle + Math.PI / 12 : Number(msg.angle);
+        if (!Number.isFinite(angle)) return refuse("It cannot face that way.");
+        next = { ...piece, angle: ((angle % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI) };
+      } else {
+        const facing = msg.facing === undefined ? (piece.facing + 1) % 6 : msg.facing;
+        if (!validFacing(facing)) return refuse("It cannot face that way.");
+        next = { ...piece, facing };
+      }
     }
 
     // The copy in memory changes at once, so a request arriving while D1 is
     // being written is checked against the new layout. Nobody is told until
     // the write has landed; if it fails the change is undone.
-    const before = { q: piece.q, r: piece.r, facing: piece.facing };
-    Object.assign(piece, next);
+    const moved = riders.map((f) => ({ f, before: { ...f } }));
+    const before = { ...piece };
+    const pick = (f: Furnishing): Spot => ({ q: f.q, r: f.r, facing: f.facing, x: f.x, z: f.z, angle: f.angle, onId: f.onId, inId: f.inId });
+    Object.assign(piece, pick({ ...piece, ...next }));
+    for (const { f } of moved) {
+      if (ridersTo === "follow") Object.assign(f, { q: piece.q, r: piece.r });
+      else if (ridersTo === "storage") Object.assign(f, { q: null, r: null, x: 0, z: 0, angle: 0, onId: null });
+    }
+    const save = (f: Furnishing) =>
+      this.env.DB.prepare("UPDATE furnishings SET q = ?, r = ?, facing = ?, x = ?, z = ?, angle = ?, on_id = ?, in_id = ? WHERE id = ? AND player_id = ?")
+        .bind(f.q, f.r, f.facing, f.x, f.z, f.angle, f.onId, f.inId, f.id, ownerId);
     try {
-      await this.env.DB.prepare("UPDATE furnishings SET q = ?, r = ?, facing = ? WHERE id = ? AND player_id = ?")
-        .bind(next.q, next.r, next.facing, piece.id, ownerId)
-        .run();
+      await this.env.DB.batch([save(piece), ...(ridersTo === "stay" ? [] : moved.map(({ f }) => save(f)))]);
     } catch (err) {
       Object.assign(piece, before);
+      for (const { f, before: b } of moved) Object.assign(f, b);
       console.warn("hut:save-failed", { err: err instanceof Error ? err.message : String(err) });
       return refuse("That could not be saved. Try again.");
     }
