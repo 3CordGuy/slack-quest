@@ -273,10 +273,10 @@ app.get("/api/pub", async (c) => {
 app.post("/api/pub/order", async (c) => {
   const player = c.get("player");
   const body = await c.req.json<{ itemId?: unknown }>().catch(() => ({}) as { itemId?: unknown });
-  const error = await orderAtPub(c.env.DB, player.id, String(body.itemId ?? ""));
-  if (error) return c.json({ error }, 409);
+  const result = await orderAtPub(c.env.DB, player.id, String(body.itemId ?? ""));
+  if (typeof result === "string") return c.json({ error: result }, 409);
   const orders = await pubOrders(c.env.DB, player.id);
-  return c.json({ orders, buff: pubBuff(orders) });
+  return c.json({ orders, buff: pubBuff(orders), rested: result.rested });
 });
 
 // A word with the barkeep. He only talks: nothing he says changes anything.

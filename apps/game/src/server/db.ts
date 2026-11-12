@@ -12,6 +12,7 @@ import {
   equipProblem,
   gearSheet,
   heroClass,
+  gatherDay,
   hutPerks,
   pubBuff,
   pubItem,
@@ -404,16 +405,27 @@ export async function pubOrders(db: D1Database, playerId: string): Promise<strin
  * caller. Gold is taken and the order recorded together: the second
  * statement only writes if the first one found the gold.
  */
-export async function orderAtPub(db: D1Database, playerId: string, itemId: string): Promise<string | null> {
+export async function orderAtPub(db: D1Database, playerId: string, itemId: string): Promise<string | { rested: boolean }> {
   const item = pubItem(itemId);
   if (!item) return "That is not on the menu.";
-  const [paid] = await db.batch([
+  const today = gatherDay(Date.now());
+  const [paid, , rest] = await db.batch([
     db.prepare("UPDATE characters SET gold = gold - ?1 WHERE player_id = ?2 AND status = 'active' AND gold >= ?1").bind(item.price, playerId),
     db
       .prepare("INSERT INTO pub_buffs (player_id, kind, item_id, bought_at) SELECT ?1, ?2, ?3, ?4 WHERE changes() > 0 ON CONFLICT (player_id, kind) DO UPDATE SET item_id = excluded.item_id, bought_at = excluded.bought_at")
       .bind(playerId, item.kind, item.id, Date.now()),
+    // A meal (not a drink) also gives back one of today's gathering outings, once a day, and only if one has been used.
+    db
+      .prepare("UPDATE gathering SET used = used - 1, meal_day = ?2 WHERE player_id = ?1 AND ?3 = 'food' AND changes() > 0 AND day = ?2 AND used > 0 AND (meal_day IS NULL OR meal_day <> ?2)")
+      .bind(playerId, today, item.kind),
   ]);
-  return paid.meta.changes > 0 ? null : "You cannot afford that.";
+  return paid.meta.changes > 0 ? { rested: rest.meta.changes > 0 } : "You cannot afford that.";
+}
+
+/** Home from a voyage, however it went: these heroes can gather again today as if they had not been out. */
+export async function restoreGathering(db: D1Database, playerIds: string[]): Promise<void> {
+  if (playerIds.length === 0) return;
+  await db.prepare(`UPDATE gathering SET used = 0 WHERE player_id IN (${playerIds.map(() => "?").join(",")})`).bind(...playerIds).run();
 }
 
 /** A voyage has begun: what these heroes ate and drank is used up. */

@@ -35,6 +35,8 @@ export function PubView({ me, refresh, onLeave }: { me: Me; refresh(): Promise<u
   const [tab, setTab] = useState<PubTab | null>(null);
   const [busy, setBusy] = useState(false);
   const [orderError, setOrderError] = useState<string | null>(null);
+  /** The last order was a meal that gave back a gathering outing. */
+  const [rested, setRested] = useState(false);
   /** The conversation with the barkeep. Kept in this browser only. */
   const [talk, setTalk] = useState<TalkLine[]>([]);
   const [ask, setAsk] = useState("");
@@ -133,7 +135,9 @@ export function PubView({ me, refresh, onLeave }: { me: Me; refresh(): Promise<u
     setBusy(true);
     setOrderError(null);
     try {
-      setTab(await api.pubOrder(itemId));
+      const next = await api.pubOrder(itemId);
+      setTab(next);
+      setRested(!!next.rested);
       await refresh();
     } catch (e) {
       setOrderError((e as Error).message);
@@ -174,7 +178,7 @@ export function PubView({ me, refresh, onLeave }: { me: Me; refresh(): Promise<u
       {you && atCounter && (
         <DragPanel id="pub.bar" title="At the bar" className="story panel pub-bar">
           <h3>The board</h3>
-          <p className="muted">One drink and one meal go with you on your next voyage, then they are gone. Ordering another replaces the one you have.</p>
+          <p className="muted">One drink and one meal go with you on your next voyage, then they are gone. Ordering another replaces the one you have. A meal also gives back one gathering outing, once a day.</p>
           <ul className="pub-menu">
             {PUB_MENU.map((item) => {
               const mine = tab?.orders.includes(item.id);
@@ -192,6 +196,7 @@ export function PubView({ me, refresh, onLeave }: { me: Me; refresh(): Promise<u
             })}
           </ul>
           {orderError && <p className="bad">{orderError}</p>}
+          {rested && <p className="good">That set you up: one gathering outing is yours again today.</p>}
           <p>
             In you: <strong>{having("drink")?.name ?? "no drink"}</strong> and <strong>{having("food")?.name ?? "no meal"}</strong>
             {tab && perkText(tab.buff) && <span className="good"> · next voyage: {perkText(tab.buff)}</span>}

@@ -31,7 +31,7 @@ import {
 } from "@gantt-quest/world";
 import { generateFill, islandFacts, npcTurn, writeEpilogue } from "./ai";
 import { recordStep } from "./board";
-import { clearPubOrders, applyGrant, applyPenalty, conversationStatement, getRun, heroInitFor, refreshHarbor, saveRunStatements, type Env } from "./db";
+import { clearPubOrders, restoreGathering, applyGrant, applyPenalty, conversationStatement, getRun, heroInitFor, refreshHarbor, saveRunStatements, type Env } from "./db";
 
 const TURN_MS = 120_000;
 const CLOSE_AFTER_END_MS = 10 * 60_000;
@@ -219,6 +219,8 @@ export class RunRoom extends DurableObject<Env> {
     if (effect.kind === "story_gen") this.ctx.waitUntil(this.generateStory());
     else if (effect.kind === "npc_call") this.ctx.waitUntil(this.npcReply(effect));
     else if (effect.kind === "epilogue") this.ctx.waitUntil(this.epilogue());
+    // Home again, win or lose: the crew aboard can gather today as if they had not been out.
+    else if (effect.kind === "run_end") this.ctx.waitUntil(restoreGathering(this.env.DB, this.world?.heroes.map((h) => h.id) ?? []).catch((err) => console.warn("run-room:gather-restore-failed", { err: err instanceof Error ? err.message : String(err) })));
   }
 
   private broadcast(events: WorldEvent[]) {
