@@ -207,7 +207,16 @@ export function GatherPanel({ spot, onClose }: { spot: GatherSpot; onClose(): vo
           <span className="spacer" />
           <button className="small" onClick={onClose}>{active ? "Step away" : "Close"}</button>
         </header>
-        {outing && outing.spot !== spot && active && <p className="bad">You left this outing unfinished. Finish it before starting another.</p>}
+        {outing && outing.spot !== spot && active && (
+          // Walked to another spot with an outing still open: say where it is and offer the way out, without alarm.
+          <div className="gather-elsewhere">
+            <p>
+              You still have an outing open at <strong>{def.name.replace(/^The /, "the ")}</strong>. Carry on with it here, or {words.bank.toLowerCase()} with what you have
+              {Object.keys(outing.haul).length > 0 ? <> ({resourceText(outing.haul)})</> : null} and then {WORDS[spot].start.toLowerCase()} here.
+            </p>
+            <button disabled={busy} onClick={() => step({ t: "bank" })}>{words.bank}</button>
+          </div>
+        )}
         <p className="muted">{def.blurb}</p>
 
         {status && (
