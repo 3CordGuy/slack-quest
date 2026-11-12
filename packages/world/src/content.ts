@@ -126,7 +126,15 @@ export interface EnemyDef {
   attacks: EnemyAttack[];
 }
 
+/** The sparring ring's stand-in opponent. Practice only: no story or map may field it. */
+export const DUMMY_KIND = "dummy";
+
 export const ENEMIES: Record<string, EnemyDef> = {
+  // Soaks up a whole rotation of abilities and barely hits back.
+  dummy: {
+    kind: "dummy", name: "Training Dummy", hp: 60, speed: 0, xp: 0,
+    attacks: [{ name: "Wobble", rolls: 2, pct: 35, damage: 1, target: "hero", weight: 1 }],
+  },
   bandit: {
     kind: "bandit", name: "Bandit", hp: 16, speed: 60, xp: 12,
     attacks: [

@@ -5,9 +5,8 @@ import type { StatKey, Stats } from "@gantt-quest/core";
 import {
   applyXp,
   equipProblem,
+  gearSheet,
   heroClass,
-  loadoutOf,
-  outfitOf,
   sellPrice,
   shopStock,
   weaponItem,
@@ -358,7 +357,6 @@ export async function heroInitFor(db: D1Database, playerId: string): Promise<Her
   const c = await getCharacter(db, playerId);
   if (!c || c.status !== "active") return null;
   const worn = (await getInventory(db, playerId)).filter((i) => i.equipped).map(rowToItem);
-  const loadout = loadoutOf(worn);
   return {
     id: c.player_id,
     name: c.name,
@@ -367,11 +365,7 @@ export async function heroInitFor(db: D1Database, playerId: string): Promise<Her
     xp: c.xp,
     unspent: c.unspent_points,
     base: statsOf(c),
-    bonus: loadout.bonus,
-    weapon: loadout.weapon ?? heroClass(c.class_id)!.weapons[0],
-    weaponPower: loadout.weaponPower,
-    armor: loadout.armor,
-    outfit: outfitOf(worn),
+    ...gearSheet(c.class_id, worn),
   };
 }
 

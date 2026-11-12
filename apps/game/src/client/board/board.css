@@ -1,0 +1,39 @@
+/* The notice board: contract picker (ship lobby), contract status (Story
+   panel and ending) and the Harbor's notice-board panel. */
+
+.contracts { margin: 4px 0 14px; }
+.contracts h3 { margin-top: 12px; }
+.contracts > p { margin: 0 0 8px; font-size: 13px; }
+.contract-list { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 6px; max-height: 34vh; overflow-y: auto; }
+.contract-list button.contract { display: grid; grid-template-columns: 1fr auto; gap: 2px 8px; width: 100%; height: 100%; text-align: left; align-content: start; padding: 6px 8px; }
+.contract .contract-terms { grid-column: 1 / -1; font-size: 12px; color: var(--muted); white-space: normal; }
+.contract-reward { color: var(--gold); font-size: 12px; white-space: nowrap; }
+.contract.selected .contract-terms { color: var(--text); }
+
+.contract-status { margin: 8px 0 0; padding-top: 8px; border-top: 1px dashed #37335a; }
+.contract-status.met { color: var(--good); }
+.contract-status .muted { display: block; font-size: 12px; }
+
+.contract-result { margin: 0 0 14px; padding: 8px 10px; border: 1px solid var(--line); }
+.contract-result.met { border-color: var(--good); }
+.contract-result p { margin: 0; white-space: normal; }
+.contract-result p + p { margin-top: 2px; font-size: 13px; }
+
+/* Leaves room for the top bar, which sits above the overlay. */
+.overlay .panel.notice-board { max-width: 560px; max-height: calc(100% - 56px); overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
+.notice-head { display: flex; align-items: center; gap: 10px; padding-right: 46px; }
+.notice-head h2 { margin: 0; }
+.notice-board h3 { margin: 8px 0 0; }
+.notice-board p { margin: 0; }
+.crew-goal { border: 1px solid var(--line); padding: 10px; display: flex; flex-direction: column; gap: 4px; }
+.crew-goal.filled { border-color: var(--good); }
+.crew-goal .bar-fill.goal { background: #8a6d1f; }
+.crew-goal.filled .bar-fill.goal { background: #2f6f4a; }
+.notice-list { list-style: none; margin: 0; padding: 0; }
+.notice-list li { display: grid; grid-template-columns: 1fr auto; gap: 0 10px; padding: 6px 0; border-bottom: 1px dashed #37335a; }
+.notice-list li .muted { grid-column: 1 / -1; font-size: 13px; }
+
+@media (max-width: 640px) {
+  .contract-list { grid-template-columns: 1fr; max-height: 30vh; }
+  .notice-head { padding-right: 68px; }
+}

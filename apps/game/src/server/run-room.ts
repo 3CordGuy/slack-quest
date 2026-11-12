@@ -30,6 +30,7 @@ import {
   type WorldState,
 } from "@gantt-quest/world";
 import { generateFill, islandFacts, npcTurn, writeEpilogue } from "./ai";
+import { recordStep } from "./board";
 import { applyGrant, applyPenalty, conversationStatement, getRun, heroInitFor, refreshHarbor, saveRunStatements, type Env } from "./db";
 
 const TURN_MS = 120_000;
@@ -192,6 +193,8 @@ export class RunRoom extends DurableObject<Env> {
       if (effect.kind === "grant") await applyGrant(db, next.code, effect.heroId, effect);
       else if (effect.kind === "penalty") await applyPenalty(db, effect.heroId, effect.goldPct, effect.cap);
     }
+    // Notice board: contract outcomes when the run ends, and the crew's goal.
+    await recordStep(db, this.crewId, prev, res);
 
     this.broadcast(res.events);
     for (const effect of res.effects) this.dispatch(effect);

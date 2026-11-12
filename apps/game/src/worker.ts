@@ -5,6 +5,7 @@
 import { Hono, type Context } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import { HERO_CLASSES, MAX_CREW, hutPerks, makeRng, rollStartingStats } from "@gantt-quest/world";
+import { noticeBoard } from "./server/board";
 import { sendSignInCode } from "./server/email";
 import {
   attachEmail,
@@ -211,6 +212,14 @@ app.get("/api/hut", async (c) => {
 
 // Walk into a hut's room: your own, or a crewmate's.
 app.get("/api/hut/:owner/ws", (c) => enterHut(c.env, c.get("player"), c.req.param("owner"), c.req.raw));
+
+// ---------- the notice board ----------
+
+// The crew's goal for the week and the contracts a hero can take aboard a ship.
+app.get("/api/board", async (c) => {
+  const crew = await crewFor(c.env.DB, c.get("player").id);
+  return c.json(await noticeBoard(c.env.DB, crew?.id ?? null));
+});
 
 // ---------- crews and the shared Harbor ----------
 

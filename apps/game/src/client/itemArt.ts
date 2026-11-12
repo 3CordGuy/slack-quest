@@ -205,6 +205,46 @@ const ART: Record<string, Art> = {
     p.r(4, 5, 2, 1, C.shine);
   },
 
+  // ---- hut materials ----
+  "res-wood": (p) => {
+    // Two stacked logs, cut ends to the right.
+    const log = (x: number, y: number) => {
+      p.r(x, y, 12, 5, C.wood);
+      p.r(x, y, 9, 1, C.leather);
+      p.r(x + 2, y + 2, 4, 1, C.bark);
+      p.r(x + 9, y, 3, 5, C.paper);
+      p.r(x + 10, y + 2, 1, 1, C.wood);
+    };
+    log(3, 2);
+    log(1, 9);
+  },
+  "res-stone": (p) => {
+    spans(p, C.iron, [[3, 6, 10], [4, 4, 12], [5, 3, 13], [6, 2, 13], [7, 2, 14], [8, 1, 14], [9, 1, 14], [10, 1, 14], [11, 2, 14], [12, 3, 13]]);
+    spans(p, C.steel, [[4, 6, 9], [5, 4, 8], [6, 3, 5], [7, 3, 3]]);
+    spans(p, "#646d7c", [[10, 9, 14], [11, 6, 14], [12, 3, 13]]);
+    p.l(10, 5, 8, 8, C.dark);
+    p.l(8, 8, 9, 10, C.dark);
+  },
+  "res-iron": (p) => ingot(p, C.steel, C.iron, "#646d7c", C.shine),
+  "res-copper": (p) => ingot(p, "#e39a5c", "#c8743a", "#8f4d24", "#f6c79a"),
+  "res-fur": (p) => {
+    // A pelt stretched flat: four legs, a tail, darker along the spine.
+    spans(p, C.leather, [[1, 6, 9], [2, 2, 3], [2, 5, 10], [2, 12, 13], [3, 2, 13], [4, 3, 12], [5, 4, 11], [6, 4, 11], [7, 4, 11], [8, 4, 11], [9, 3, 12], [10, 2, 13], [11, 2, 3], [11, 5, 10], [11, 12, 13], [12, 7, 8], [13, 7, 8], [14, 7, 7]]);
+    p.r(7, 2, 2, 9, C.hide);
+    spans(p, C.paper, [[4, 5, 5], [6, 10, 10], [8, 5, 5], [9, 10, 10]]);
+  },
+  "res-bone": (p) => {
+    p.l(4, 10, 10, 4, C.bone);
+    p.l(5, 11, 11, 5, C.bone);
+    p.l(5, 10, 10, 5, C.shine);
+    p.r(2, 9, 2, 2, C.bone);
+    p.r(4, 12, 2, 2, C.bone);
+    p.r(10, 2, 2, 2, C.bone);
+    p.r(12, 4, 2, 2, C.bone);
+    p.r(3, 11, 2, 2, C.bone);
+    p.r(11, 3, 2, 2, C.bone);
+  },
+
   // ---- interface ----
   hand: (p) => {
     p.r(5, 6, 7, 7, C.leather);
@@ -223,6 +263,14 @@ const ART: Record<string, Art> = {
     p.r(6, 9, 4, 1, C.wood);
   },
 };
+
+/** A cast bar seen from above and in front: lit top face, darker front, a glint. */
+function ingot(p: Pen, top: string, front: string, under: string, glint: string) {
+  spans(p, top, [[4, 5, 12], [5, 4, 13], [6, 3, 14]]);
+  spans(p, front, [[7, 2, 14], [8, 2, 14], [9, 1, 14], [10, 1, 14]]);
+  p.r(1, 11, 14, 1, under);
+  p.r(6, 5, 4, 1, glint);
+}
 
 function darken(hex: string, by = 0.35): string {
   const n = parseInt(hex.slice(1), 16);

@@ -276,6 +276,30 @@ function drawWolf(ctx: CanvasRenderingContext2D, fur = "#7d8793", dark = "#59616
   px(9, 15, 2, 4, dark);
 }
 
+/** The sparring ring's training dummy: a straw sack on a post, with a target painted on its chest. */
+function drawDummy(ctx: CanvasRenderingContext2D) {
+  const px = (x: number, y: number, w: number, h: number, c: string) => {
+    ctx.fillStyle = c;
+    ctx.fillRect(x + 1, y + 1, w, h);
+  };
+  const straw = "#d9b662";
+  const shade = "#b08d3e";
+  px(7, 14, 2, 5, GEAR.wood); // post
+  px(4, 19, 8, 1, GEAR.wood); // foot
+  px(2, 9, 12, 2, GEAR.wood); // crossbar arms
+  px(2, 8, 1, 4, shade); // straw tufts at the hands
+  px(13, 8, 1, 4, shade);
+  px(4, 8, 8, 7, straw); // sack body
+  px(4, 14, 8, 1, shade);
+  px(6, 9, 4, 4, "#f4efe2"); // target
+  px(7, 10, 2, 2, "#c8433d");
+  px(5, 2, 6, 6, straw); // head
+  px(5, 7, 6, 1, GEAR.leather); // rope at the neck
+  px(6, 4, 1, 1, OUTLINE); // stitched eyes and mouth
+  px(9, 4, 1, 1, OUTLINE);
+  px(7, 6, 2, 1, shade);
+}
+
 const cache = new Map<string, THREE.CanvasTexture>();
 
 /** Cache key for a sprite: the kind plus whatever is being worn. */
@@ -299,6 +323,7 @@ export function spriteTexture(kind: string, outfit?: Outfit): THREE.CanvasTextur
   if (kind === "wolf") drawWolf(ctx);
   // The pack leader: the same animal, darker, with a red eye. The renderer draws it larger.
   else if (kind === "alpha") drawWolf(ctx, "#4a4f5c", "#2c3039", "#ff4d4d");
+  else if (kind === "dummy") drawDummy(ctx);
   else if (outfit) drawHero(ctx, LOOKS[kind] ?? LOOKS.bandit, outfit);
   else drawHumanoid(ctx, LOOKS[kind] ?? LOOKS.bandit);
   finish(ctx);

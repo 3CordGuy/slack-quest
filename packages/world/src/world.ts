@@ -17,7 +17,10 @@ import {
 } from "./battle";
 import { rollCheck, statPct, type CheckResult } from "./check";
 import { ENEMIES, KEY_ITEMS, WEAPONS } from "./content";
+import { bumpTally, contractById, tallyBattle, type TakenContract, type TallyKey } from "./contracts";
+import { battleDrops, cacheDrops, storyTrophy } from "./drops";
 import { rollItem, type ItemDef, type Outfit } from "./gear";
+import { freshVitals, heroCombatant } from "./hero";
 import { addResources, type Resources } from "./hut";
 import { findPath, generateMap, poiAt, poiById, type Poi, type WorldMap } from "./map";
 import {
@@ -67,6 +70,10 @@ export interface Hero extends HeroInit {
   keyItems: string[];
   pos: HexPos;
   ready: boolean;
+  /** The notice-board contract taken in the lobby. Absent on voyages saved before contracts. */
+  contract?: TakenContract;
+  /** Counts that contracts are judged on. Absent until something is counted. */
+  tally?: Partial<Record<TallyKey, number>>;
 }
 
 export interface ChatLine {
@@ -135,6 +142,7 @@ export type WorldAction =
   | { type: "join"; hero: HeroInit }
   | { type: "ready"; heroId: string; ready: boolean }
   | { type: "start"; heroId: string }
+  | { type: "contract"; heroId: string; contractId: string | null }
   | { type: "begin"; bible: StoryBible }
   | { type: "move"; heroId: string; to: HexPos }
   | { type: "interact"; heroId: string }
@@ -150,6 +158,7 @@ export type WorldAction =
 export const CLIENT_ACTIONS: ReadonlySet<WorldAction["type"]> = new Set([
   "ready",
   "start",
+  "contract",
   "move",
   "interact",
   "end_turn",
@@ -180,6 +189,7 @@ export type WorldEvent =
   | { t: "chat"; line: ChatLine }
   | { t: "npc_intent"; npcId: string; verb: string; ok: boolean; reason?: string }
   | { t: "objective"; id: string }
+  | { t: "contract"; heroId: string; contractId: string; met: boolean }
   | { t: "battle_start"; heroes: string[]; enemies: string[] }
   | { t: "battle"; ev: BattleEvent }
   | { t: "battle_end"; status: string }
@@ -367,6 +377,19 @@ function revealPoi(ctx: Ctx, poi: Poi) {
   setFact(ctx, `revealed:${poi.id}`);
 }
 
+/** Settle every hero's notice-board contract, once. Only a won story pays. */
+function settleContracts(ctx: Ctx, outcome: "victory" | "defeat") {
+  for (const hero of ctx.state.heroes) {
+    const taken = hero.contract;
+    if (!taken || taken.outcome) continue;
+    const def = contractById(taken.id);
+    const met = outcome === "victory" && !!def && def.check(ctx.state, hero);
+    taken.outcome = met ? "met" : "failed";
+    ctx.events.push({ t: "contract", heroId: hero.id, contractId: taken.id, met });
+    if (met && def) grant(ctx, hero, def.reward);
+  }
+}
+
 function endRun(ctx: Ctx, outcome: "victory" | "defeat", reason: string) {
   const { state } = ctx;
   if (state.phase === "ended") return;
@@ -376,12 +399,18 @@ function endRun(ctx: Ctx, outcome: "victory" | "defeat", reason: string) {
   state.result = { outcome, reason, epilogue: null };
   for (const hero of state.heroes) {
     if (outcome === "victory") {
-      grant(ctx, hero, { xp: 50, gold: 30, item: rollItem(ctx.rng, hero.classId, 0.8, hero.level) });
+      grant(ctx, hero, {
+        xp: 50,
+        gold: 30,
+        item: rollItem(ctx.rng, hero.classId, 0.8, hero.level),
+        furnishing: state.bible ? storyTrophy(state.bible) : undefined,
+      });
     } else {
       // Soft death: a capped gold loss, never the character.
       ctx.effects.push({ kind: "penalty", heroId: hero.id, goldPct: 0.1, cap: 25 });
     }
   }
+  settleContracts(ctx, outcome);
   ctx.events.push({ t: "ended", outcome, reason });
   ctx.effects.push({ kind: "epilogue" }, { kind: "run_end", outcome });
 }
@@ -410,27 +439,9 @@ function startTurn(ctx: Ctx) {
   }
 }
 
+/** The hero as they stand right now: the shared combatant, with this voyage's wounds and spent focus. */
 function toCombatant(hero: Hero): Combatant {
-  const stats = heroStats(hero);
-  return {
-    id: hero.id,
-    side: "hero",
-    name: hero.name,
-    kind: hero.classId,
-    level: hero.level,
-    hp: hero.hp,
-    maxHp: hero.maxHp,
-    pct: { str: statPct(stats.str), int_stat: statPct(stats.int_stat), vit: statPct(stats.vit), agi: statPct(stats.agi), dex: statPct(stats.dex) },
-    outfit: hero.outfit,
-    power: hero.weaponPower ?? 0,
-    armor: hero.armor ?? 0,
-    speed: statPct(stats.agi),
-    focus: hero.focus,
-    potions: hero.potions,
-    abilities: WEAPONS[hero.weapon]?.abilities ?? [],
-    effects: [],
-    down: false,
-  };
+  return heroCombatant(hero, hero);
 }
 
 function startBattle(ctx: Ctx, at: HexPos, enemies: string[], poiId: string | null, npcId: string | null) {
@@ -452,6 +463,7 @@ function startBattle(ctx: Ctx, at: HexPos, enemies: string[], poiId: string | nu
   state.battle = { ...created.state, npcId, deadline: null };
   ctx.events.push({ t: "battle_start", heroes: fighters.map((h) => h.id), enemies });
   for (const ev of created.events) ctx.events.push({ t: "battle", ev });
+  tallyBattle(state.heroes, created.events);
   if (created.state.status !== "active") finishBattle(ctx);
 }
 
@@ -470,6 +482,7 @@ function finishBattle(ctx: Ctx) {
   }
   ctx.events.push({ t: "battle_end", status: battle.status });
   state.battle = null;
+  const beaten = battle.combatants.filter((c) => c.side === "enemy").map((c) => c.kind);
 
   if (battle.status === "defeat") {
     endRun(ctx, "defeat", "The party fell in battle.");
@@ -484,6 +497,7 @@ function finishBattle(ctx: Ctx) {
       xp: battle.xp,
       gold: rng.int(5, 12) * (battle.boss ? 3 : 1),
       item: battle.boss || rng.chance(0.4) ? rollItem(rng, hero.classId, battle.boss ? 0.6 : 0.2, hero.level) : null,
+      resources: battleDrops(rng, beaten),
     });
   }
   if (battle.npcId) setFact(ctx, `fought:${battle.npcId}`);
@@ -543,6 +557,7 @@ function interact(ctx: Ctx, hero: Hero): string | null {
         xp: 10,
         gold: rng.int(6, 14) * check.successes,
         item: check.perfect ? rollItem(rng, hero.classId, 0.4, hero.level) : null,
+        ...cacheDrops(rng, state.earned[hero.id]?.blueprints),
       });
     }
     // Whatever the story needed from this place is found by anyone who looks, loot or no loot.
@@ -582,6 +597,7 @@ function talk(ctx: Ctx, hero: Hero, action: Extract<WorldAction, { type: "talk" 
     check = rollCheck(rng, { label: "Persuade", stat: "int_stat", pct: heroPct(hero, "int_stat"), count: 3, focus });
     ctx.events.push({ t: "check", heroId: hero.id, check });
     if (check.successes >= 2) {
+      bumpTally(hero, "persuaded");
       run.persuaded = true;
       run.attitude = Math.min(2, run.attitude + 1);
     } else if (check.fumble) {
@@ -670,6 +686,7 @@ function battleAction(ctx: Ctx, heroId: string, action: BattleAction): string | 
   if (!res.ok) return res.error;
   state.battle = { ...res.state, npcId, deadline };
   for (const ev of res.events) ctx.events.push({ t: "battle", ev });
+  tallyBattle(state.heroes, res.events, { heroId, action });
   if (res.state.status !== "active") finishBattle(ctx);
   return null;
 }
@@ -691,15 +708,9 @@ export function stepWorld(prev: WorldState, action: WorldAction): StepResult {
       if (state.phase !== "lobby") return fail("this ship has already sailed");
       if (state.heroes.length >= MAX_PARTY) return fail("the ship is full");
       const init = action.hero;
-      const maxHp = maxHpFor(addStats(init.base, init.bonus), init.level);
-      const maxFocus = maxFocusFor(init.level);
       state.heroes.push({
         ...init,
-        hp: maxHp,
-        maxHp,
-        focus: maxFocus,
-        maxFocus,
-        potions: 1,
+        ...freshVitals(init),
         keyItems: [],
         pos: poiById(state.map, "landing")!.pos,
         ready: false,
@@ -714,6 +725,21 @@ export function stepWorld(prev: WorldState, action: WorldAction): StepResult {
       if (!hero) return fail("not aboard");
       if (state.phase !== "lobby") return fail("already under way");
       hero.ready = !!action.ready;
+      return done(null);
+    }
+
+    case "contract": {
+      // Take (or, with null, put back) a notice-board contract. Only before the ship sails.
+      const hero = heroById(state, action.heroId);
+      if (!hero) return fail("not aboard");
+      if (state.phase !== "lobby") return fail("contracts are taken before the ship sails");
+      if (action.contractId === null || action.contractId === undefined) {
+        delete hero.contract;
+        return done(null);
+      }
+      const def = contractById(String(action.contractId));
+      if (!def) return fail("no such contract");
+      hero.contract = { id: def.id };
       return done(null);
     }
 

@@ -4,7 +4,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { hexDistance, type HexPos } from "@gantt-quest/core";
 import {
-  ABILITIES,
   EFFECT_INFO,
   HERO_CLASSES,
   MAX_NPC_MESSAGES,
@@ -15,16 +14,19 @@ import {
   heroPct,
   poiAt,
   tileAt,
-  type AbilityDef,
   type CheckResult,
   type ClientState,
-  type Combatant,
   type Poi,
   type WorldEvent,
 } from "@gantt-quest/world";
 import * as World from "@gantt-quest/world";
 import type { Me } from "./api";
+import { ContractPicker, contractName } from "./board/ContractPicker";
+import { ContractResult } from "./board/ContractResult";
+import { ContractStatus } from "./board/ContractStatus";
+import { BattleHud, useCountdown } from "./BattleHud";
 import { DragPanel } from "./DragPanel";
+import { HutSpoils, blueprintName, isTrophy, resourceText } from "./hutDrops";
 import { InventoryScreen } from "./InventoryScreen";
 import { WorldRenderer } from "./render/WorldRenderer";
 import { useRun, type RunConnection } from "./useRun";
@@ -62,11 +64,15 @@ function describe(events: WorldEvent[], state: ClientState, names: Map<string, s
       case "xp": out.push(`${n(ev.heroId)} gains ${ev.amount} XP.`); break;
       case "loot": out.push(`${n(ev.heroId)} found ${ev.item.name} (${ev.item.rarity}).`); break;
       case "key_item": out.push(`${n(ev.heroId)} now carries ${ev.name}.`); break;
+      case "resources": out.push(`${n(ev.heroId)} gathers ${resourceText(ev.resources)}.`); break;
+      case "blueprint": out.push(`${n(ev.heroId)} found a blueprint: ${blueprintName(ev.blueprint)}.`); break;
+      case "furnishing": out.push(isTrophy(ev.furnishing) ? `${n(ev.heroId)} takes a trophy home: ${ev.furnishing.label}.` : `${n(ev.heroId)} found a ${ev.furnishing.label} for the hut.`); break;
       case "rite": out.push(ev.text); break;
       case "objective": out.push(`Objective complete: ${state.story?.objectives.find((o) => o.id === ev.id)?.text ?? ev.id}`); break;
       case "battle_start": out.push("Battle!"); break;
       case "battle_end": out.push(ev.status === "victory" ? "The fight is won." : ev.status === "fled" ? "The party got away." : "The party has fallen."); break;
       case "ended": out.push(ev.reason); break;
+      case "contract": out.push(`${n(ev.heroId)}'s contract (${contractName(ev.contractId) ?? ev.contractId}) ${ev.met ? "is fulfilled!" : "went unfulfilled."}`); break;
       case "battle": {
         const b = ev.ev;
         if (b.t === "hit") out.push(`${n(b.actor)}: ${b.ability} hits ${n(b.target)} for ${b.amount}${b.perfect ? " (perfect!)" : ""}.`);
@@ -165,7 +171,7 @@ export function RunView({ code, me, refresh, onLeave }: { code: string; me: Me; 
               <Feed lines={feed} />
               {state.phase === "overworld" && <TurnBar state={state} run={run} />}
               {state.phase === "overworld" && <Chat state={state} run={run} />}
-              {state.phase === "battle" && <Battle state={state} run={run} />}
+              {state.phase === "battle" && <BattleHud battle={state.battle!} you={state.you} onAction={(action) => run.send({ type: "battle", action })} />}
               {hover && state.phase === "overworld" && <HexTip state={state} hover={hover} />}
             </>
           )}
@@ -216,15 +222,6 @@ function HexTip({ state, hover }: { state: ClientState; hover: HexPos }) {
   );
 }
 
-function useCountdown(deadline: number | null | undefined): number | null {
-  const [, tick] = useState(0);
-  useEffect(() => {
-    const t = setInterval(() => tick((n) => n + 1), 1000);
-    return () => clearInterval(t);
-  }, []);
-  return deadline ? Math.max(0, Math.ceil((deadline - Date.now()) / 1000)) : null;
-}
-
 function TopBar({ state, code, status, onLeave, onInventory }: { state: ClientState; code: string; status: string; onLeave(): void; onInventory(): void }) {
   const fighting = state.phase === "battle";
   return (
@@ -260,11 +257,12 @@ function Lobby({ state, run, code }: { state: ClientState; run: RunConnection; c
         <ul className="crew-list">
           {state.heroes.map((h) => (
             <li key={h.id}>
-              <span><strong>{h.name}</strong> <span className="muted">{className(h.classId)} · Level {h.level}</span></span>
+              <span><strong>{h.name}</strong> <span className="muted">{className(h.classId)} · Level {h.level}{h.contract ? ` · ${contractName(h.contract.id)}` : ""}</span></span>
               <span className={h.id === state.hostId || h.ready ? "good" : "muted"}>{h.id === state.hostId ? "captain" : h.ready ? "ready" : "not ready"}</span>
             </li>
           ))}
         </ul>
+        <ContractPicker state={state} run={run} />
         {host ? (
           <button className="primary" disabled={waiting > 0} onClick={() => run.send({ type: "start" })}>
             {waiting > 0 ? `Waiting on ${waiting} crew…` : "Set sail"}
@@ -294,6 +292,7 @@ function Story({ state }: { state: ClientState }) {
           {state.story.demand.done ? "☑" : "☐"} {state.story.demand.npcName} asks that you {state.story.demand.text}.
         </p>
       )}
+      <ContractStatus state={state} />
     </DragPanel>
   );
 }
@@ -445,94 +444,6 @@ function Chat({ state, run }: { state: ClientState; run: RunConnection }) {
   );
 }
 
-function CombatantChip({ c, active, onClick, selectable }: { c: Combatant; active: boolean; onClick?: () => void; selectable?: boolean }) {
-  return (
-    <button className={`chip ${c.side} ${active ? "active" : ""} ${c.down ? "down" : ""} ${selectable ? "selectable" : ""}`} disabled={!selectable} onClick={onClick}>
-      <strong>{c.name}</strong>
-      <span className="bar"><span className="bar-fill hp" style={{ width: `${(100 * c.hp) / c.maxHp}%` }} /><span>{c.hp} / {c.maxHp}</span></span>
-      {c.effects.length > 0 && <span className="effects">{c.effects.map((e) => <i key={e.kind} style={{ color: EFFECT_INFO[e.kind].color }} title={EFFECT_INFO[e.kind].blurb}>{EFFECT_INFO[e.kind].name}</i>)}</span>}
-    </button>
-  );
-}
-
-function Battle({ state, run }: { state: ClientState; run: RunConnection }) {
-  const battle = state.battle!;
-  const [abilityId, setAbilityId] = useState<string | null>(null);
-  const [focus, setFocus] = useState(0);
-  const left = useCountdown(battle.deadline);
-  const actorId = battle.order[battle.turn];
-  const actor = battle.combatants.find((c) => c.id === actorId);
-  const me = battle.combatants.find((c) => c.id === state.you);
-  const mine = actorId === state.you && !!me;
-  useEffect(() => {
-    setAbilityId(null);
-    setFocus(0);
-  }, [actorId, battle.round]);
-
-  const ability: AbilityDef | null = abilityId ? ABILITIES[abilityId] : null;
-  const fire = (target?: string) => {
-    if (!ability) return;
-    run.send({ type: "battle", action: { type: "ability", ability: ability.id, target, focus: Math.min(focus, ability.rolls) } });
-  };
-  const targetSide = ability?.target === "enemy" ? "enemy" : ability?.target === "ally" ? "hero" : null;
-  const order = battle.order.map((id) => battle.combatants.find((c) => c.id === id)!).filter((c) => !c.down);
-
-  return (
-    <div className="battle">
-      <DragPanel id="run.timeline" title="Turn order" compact className="timeline panel">
-        <span className="muted">Round {battle.round}</span>
-        {order.map((c) => <span key={c.id} className={`turn-chip ${c.side} ${c.id === actorId ? "active" : ""}`}>{c.name}</span>)}
-        {left !== null && <span className={left <= 15 ? "bad" : "muted"}>{left}s</span>}
-      </DragPanel>
-      <div className="sides">
-        {(["hero", "enemy"] as const).map((side) => (
-          <div key={side} className="side">
-            {battle.combatants.filter((c) => c.side === side).map((c) => (
-              <CombatantChip key={c.id} c={c} active={c.id === actorId} selectable={mine && targetSide === side && !c.down} onClick={() => fire(c.id)} />
-            ))}
-          </div>
-        ))}
-      </div>
-      <DragPanel id="run.actions" title="Actions" compact className="actions panel">
-        {mine && me ? (
-          <>
-            <div className="ability-row">
-              {me.abilities.map((id) => {
-                const a = ABILITIES[id];
-                return (
-                  <button key={id} className={`ability ${abilityId === id ? "selected" : ""}`} onClick={() => { setAbilityId(id); setFocus((f) => Math.min(f, a.rolls)); }}>
-                    <strong>{a.name}</strong>
-                    <span>{a.rolls} × {me.pct[a.stat]}% {STAT_LABEL[a.stat]}</span>
-                    <span className="muted">{a.blurb}</span>
-                  </button>
-                );
-              })}
-            </div>
-            <div className="row">
-              {ability ? (
-                <>
-                  <span>Focus:</span>
-                  {Array.from({ length: Math.min(me.focus, ability.rolls) + 1 }, (_, i) => (
-                    <button key={i} className={`small ${focus === i ? "selected" : ""}`} onClick={() => setFocus(i)}>{i}</button>
-                  ))}
-                  {targetSide ? <span className="muted">Now pick {targetSide === "enemy" ? "an enemy" : "an ally"} above.</span> : <button className="primary" onClick={() => fire()}>Use {ability.name}</button>}
-                </>
-              ) : (
-                <span className="muted">Your turn. Choose an ability.</span>
-              )}
-              <span className="spacer" />
-              <button disabled={me.potions <= 0} onClick={() => run.send({ type: "battle", action: { type: "potion" } })}>Potion ({me.potions})</button>
-              {!battle.boss && <button onClick={() => run.send({ type: "battle", action: { type: "flee" } })}>Flee</button>}
-            </div>
-          </>
-        ) : (
-          <span>{me ? <>Waiting for <strong>{actor?.name}</strong>…</> : "Your crewmates are fighting. You are too far away to join."}</span>
-        )}
-      </DragPanel>
-    </div>
-  );
-}
-
 function Ending({ state, onLeave }: { state: ClientState; onLeave(): void }) {
   const result = state.result!;
   const earned = state.earned[state.you];
@@ -543,6 +454,7 @@ function Ending({ state, onLeave }: { state: ClientState; onLeave(): void }) {
         <h2 className={won ? "good" : "bad"}>{won ? "Victory" : "Defeat"}</h2>
         <p><strong>{state.story?.title}</strong></p>
         <p>{result.epilogue ?? "The tale is being written…"}</p>
+        <ContractResult state={state} />
         <h3>What you bring home</h3>
         {earned ? (
           <ul className="gear">
@@ -552,6 +464,7 @@ function Ending({ state, onLeave }: { state: ClientState; onLeave(): void }) {
         ) : (
           <p className="muted">Nothing but the story.</p>
         )}
+        {earned && <HutSpoils earned={earned} />}
         {!won && <p className="muted">A little gold was lost in the retreat. Your character is safe.</p>}
         <button className="primary" onClick={onLeave}>Sail back to the Harbor</button>
       </div>
