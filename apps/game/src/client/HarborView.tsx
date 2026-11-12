@@ -14,6 +14,7 @@ import { InventoryScreen } from "./InventoryScreen";
 import { ShopScreen } from "./ShopScreen";
 import { SparView } from "./SparView";
 import { TileAction } from "./TileAction";
+import { Trading } from "./TradePanel";
 import { WorldRenderer, type RenderState } from "./render/WorldRenderer";
 import { useHarbor } from "./useHarbor";
 import { WorksPanel } from "./works/WorksPanel";
@@ -32,6 +33,7 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
   const [gather, setGather] = useState<GatherSpot | null>(null);
   const [works, setWorks] = useState(false);
   const [account, setAccount] = useState(false);
+  const [tradeWith, setTradeWith] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [text, setText] = useState("");
   const [launchError, setLaunchError] = useState<string | null>(null);
@@ -174,7 +176,7 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
       }
     : null;
   // Anything laid over the Harbor, the sparring bout included, takes the floating button away.
-  const panelOpen = sheet || shop || notices || spar || !!gather || works || account;
+  const panelOpen = sheet || shop || notices || spar || !!gather || works || account || !!tradeWith;
   const error = harbor.error ?? launchError;
 
   return (
@@ -237,7 +239,10 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
               return (
                 <li key={m.id} className={here ? "" : "away"}>
                   <span><i className={`dot ${here ? "on" : ""}`} /> <strong>{m.name}</strong>{m.id === you && <span className="tag">you</span>}</span>
-                  <span className="muted">{className(m.classId)} · {m.level}</span>
+                  <span className="muted">
+                    {className(m.classId)} · {m.level}
+                    {m.id !== you && <button className="small trade-btn" title={`Give or trade with ${m.name}`} onClick={() => setTradeWith(m.id)}>Trade</button>}
+                  </span>
                 </li>
               );
             })}
@@ -278,6 +283,7 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
       {spar && scene && me.character && <SparView me={me} scene={scene} renderer={renderer} onClose={() => setSpar(false)} />}
       {gather && me.character && <GatherPanel spot={gather} onClose={() => setGather(null)} />}
       {shop && me.character && <ShopScreen me={me} refresh={refreshAll} onClose={() => setShop(false)} />}
+      {me.character && <Trading me={me} partners={board.members.filter((m) => m.id !== you)} withId={tradeWith} onWith={setTradeWith} refresh={refresh} />}
     </div>
   );
 }

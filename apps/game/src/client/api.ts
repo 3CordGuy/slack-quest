@@ -5,8 +5,9 @@ import type { NoticeBoard } from "../server/board";
 
 /** What the Harbor's notice board shows: the crew goal and the contracts on offer. */
 export type Board = NoticeBoard;
-import type { GatherChoice, GatherSpot, HarborWorks, HutSummary, ItemDef, Perk, ProjectAmounts, Resources, ShopEntry } from "@gantt-quest/world";
+import type { GatherChoice, GatherSpot, HarborWorks, HutSummary, ItemDef, Perk, ProjectAmounts, Resources, ShopEntry, TradeOffer } from "@gantt-quest/world";
 import type { GatherStatus } from "../server/gather";
+import type { TradeList } from "../server/trade";
 
 export type { GatherStatus };
 
@@ -131,4 +132,8 @@ export const api = {
   craft: (defId: string) => request("/api/hut/craft", { defId }),
   upgradeHut: () => request<{ tier: number }>("/api/hut/upgrade", {}),
   buyFurniture: (defId: string) => request("/api/shop/furniture", { defId }),
+  trades: () => request<TradeList>("/api/trade"),
+  proposeTrade: (offer: TradeOffer, run?: string) => request<{ id: number }>("/api/trade/propose", { ...offer, run }),
+  acceptTrade: (id: number) => request("/api/trade/accept", { id }),
+  closeTrade: (id: number) => request("/api/trade/close", { id }),
 };
