@@ -811,29 +811,50 @@ export class WorldRenderer {
       case "pickup": {
         // Taken: nothing left to draw.
         if (poi.cleared) break;
-        // Each is a small low thing at the hex's edge, so a hero standing on the hex still reads.
+        // Drawn at 1.7x into its own group, and lit a little from within so it still reads at night and under trees.
+        const pile = new THREE.Group();
+        pile.scale.setScalar(1.7);
+        g.add(pile);
+        const lit = (color: string, glow = 0.35) =>
+          new THREE.MeshLambertMaterial({ color, flatShading: true, emissive: new THREE.Color(color).multiplyScalar(glow) });
+        const put = (geometry: THREE.BufferGeometry, material: THREE.Material, x: number, y: number, z: number, rotY = 0) => {
+          const mesh = new THREE.Mesh(geometry, material);
+          mesh.position.set(x, y, z);
+          mesh.rotation.y = rotY;
+          pile.add(mesh);
+          return mesh;
+        };
+        // A soft pale disc on the ground marks it as something to pick up.
+        const halo = new THREE.Mesh(
+          new THREE.CircleGeometry(0.3, 16),
+          new THREE.MeshBasicMaterial({ color: "#fff4c2", transparent: true, opacity: 0.18, depthWrite: false }),
+        );
+        halo.rotation.x = -Math.PI / 2;
+        halo.position.set(0, 0.01, 0.08);
+        pile.add(halo);
         if (poi.find === "herbs") {
-          for (const [x, z, s] of [[-0.18, 0.1, 1], [0.05, 0.22, 0.8], [0.2, 0.05, 0.9], [-0.02, -0.05, 0.7]]) {
-            add(new THREE.ConeGeometry(0.09 * s, 0.26 * s, 5), lambert("#4f8a3a"), x, 0.13 * s, z);
-            add(new THREE.ConeGeometry(0.06 * s, 0.2 * s, 5), lambert("#6fae4a"), x + 0.05, 0.1 * s, z + 0.03, 0.6);
+          for (const [x, z, k] of [[-0.14, 0.1, 1], [0.04, 0.2, 0.85], [0.16, 0.05, 0.95], [-0.02, -0.03, 0.75]]) {
+            put(new THREE.ConeGeometry(0.08 * k, 0.26 * k, 5), lit("#6fc24a"), x, 0.13 * k, z);
+            put(new THREE.ConeGeometry(0.06 * k, 0.2 * k, 5), lit("#9be06a"), x + 0.05, 0.1 * k, z + 0.03, 0.6);
           }
-          for (const [x, z] of [[-0.18, 0.1], [0.2, 0.05], [0.05, 0.22]]) add(box(0.05, 0.05, 0.05), lambert("#c9a3e6"), x, 0.29, z);
+          for (const [x, z] of [[-0.14, 0.1], [0.16, 0.05], [0.04, 0.2], [-0.02, -0.03]]) put(new THREE.BoxGeometry(0.06, 0.06, 0.06), lit("#e2b8ff", 0.6), x, 0.28, z);
         } else if (poi.find === "mushrooms") {
-          for (const [x, z, s] of [[-0.15, 0.12, 1], [0.12, 0.2, 0.75], [0.08, -0.02, 0.6]]) {
-            add(new THREE.CylinderGeometry(0.035 * s, 0.045 * s, 0.16 * s, 6), lambert("#efe6d2"), x, 0.08 * s, z);
-            add(new THREE.SphereGeometry(0.11 * s, 8, 4, 0, Math.PI * 2, 0, Math.PI / 2), lambert("#b8452f"), x, 0.15 * s, z);
-            add(box(0.03, 0.02, 0.03), lambert("#f4efe1"), x + 0.04 * s, 0.25 * s, z + 0.03 * s);
+          for (const [x, z, k] of [[-0.12, 0.12, 1], [0.12, 0.18, 0.8], [0.06, -0.02, 0.65]]) {
+            put(new THREE.CylinderGeometry(0.035 * k, 0.045 * k, 0.16 * k, 6), lit("#fbf3e2", 0.4), x, 0.08 * k, z);
+            put(new THREE.SphereGeometry(0.11 * k, 8, 4, 0, Math.PI * 2, 0, Math.PI / 2), lit("#e2412a", 0.45), x, 0.15 * k, z);
+            for (const [dx, dz] of [[0.04, 0.04], [-0.04, 0.03], [0.0, -0.05]]) put(new THREE.BoxGeometry(0.025, 0.02, 0.025), lit("#ffffff", 0.8), x + dx * k, 0.15 * k + 0.085 * k, z + dz * k);
           }
         } else if (poi.find === "wood") {
-          // A small stack of cut logs, ends toward the camera.
-          const log = new THREE.CylinderGeometry(0.07, 0.07, 0.5, 7);
+          // A small stack of cut logs, pale cut ends toward the camera.
+          const log = new THREE.CylinderGeometry(0.07, 0.07, 0.42, 7);
+          const end = new THREE.CircleGeometry(0.06, 7);
           for (const [x, y] of [[-0.15, 0.07], [0, 0.07], [0.15, 0.07], [-0.075, 0.2], [0.075, 0.2]]) {
-            const m = add(log, lambert("#8a5a2b"), x, y, 0.1);
-            m.rotation.x = Math.PI / 2;
+            put(log, lit("#a8713a", 0.3), x, y, 0.08).rotation.x = Math.PI / 2;
+            put(end, lit("#e8c890", 0.4), x, y, 0.295);
           }
         } else {
-          for (const [x, z, s] of [[-0.12, 0.1, 1], [0.13, 0.15, 0.8], [0.02, -0.05, 0.7], [0.0, 0.12, 0.6]]) {
-            add(new THREE.DodecahedronGeometry(0.11 * s), lambert(s > 0.75 ? "#8b95a5" : "#a7afbb"), x, 0.09 * s + (s === 0.6 ? 0.12 : 0), z);
+          for (const [x, z, k, y] of [[-0.12, 0.1, 1, 0], [0.13, 0.15, 0.8, 0], [0.02, -0.05, 0.7, 0], [0.0, 0.12, 0.6, 0.12]]) {
+            put(new THREE.DodecahedronGeometry(0.11 * k), lit(k > 0.75 ? "#b4bcc8" : "#d0d6de", 0.3), x, 0.09 * k + y, z);
           }
         }
         break;
