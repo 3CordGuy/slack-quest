@@ -64,7 +64,7 @@ function sheetOf(me: Me, id: string): HeroSheet {
 function describe(ev: BattleEvent, n: (id: string) => string): string | null {
   switch (ev.t) {
     case "hit": return `${n(ev.actor)}: ${ev.ability} hits ${n(ev.target)} for ${ev.amount}${ev.perfect ? " (perfect!)" : ""}.`;
-    case "miss": return `${n(ev.actor)}: ${ev.ability} misses ${n(ev.target)}.`;
+    case "miss": return ev.heal ? `${n(ev.actor)}: ${ev.ability} fails.` : `${n(ev.actor)}: ${ev.ability} misses ${n(ev.target)}.`;
     case "heal": return `${n(ev.actor)}: ${ev.ability} restores ${ev.amount} HP to ${n(ev.target)}.`;
     case "effect": return `${n(ev.target)} is ${label("effect", ev.effect).toLowerCase()}.`;
     case "tick": return `${n(ev.target)} takes ${ev.amount} from ${label("effect", ev.effect).toLowerCase()}.`;

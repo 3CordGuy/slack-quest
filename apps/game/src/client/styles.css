@@ -163,7 +163,8 @@ input:focus, button:focus-visible, select:focus { outline: 2px solid var(--accen
 
 /* In battle the arena needs the middle of the screen: drop the story panel and move the log up top. */
 .in-battle .story { display: none; }
-.in-battle .feed { left: 10px; top: 48px; bottom: auto; max-height: 150px; justify-content: flex-start; }
+/* Below the turn-order bar, which runs along the top of the fight. */
+.in-battle .feed { left: 10px; top: 104px; bottom: auto; max-height: 150px; justify-content: flex-start; }
 
 @keyframes pulse { from { box-shadow: 0 0 0 0 rgba(125, 255, 154, 0.5); } to { box-shadow: 0 0 0 4px rgba(125, 255, 154, 0); } }
 @media (prefers-reduced-motion: reduce) { .chip.selectable { animation: none; } }

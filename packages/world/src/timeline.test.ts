@@ -226,3 +226,34 @@ describe("timeline statuses", () => {
     expect(r.events).toContainEqual({ t: "effect", target: "e0", effect: "exposed", turns: 2 });
   });
 });
+
+describe("the fight log reads in order", () => {
+  it("logs the blow before the down it causes, and a failed heal as a miss", async () => {
+    const { createBattle, stepBattle, currentActor, makeRng, heroCombatant, gearSheet, DUMMY_KIND } = await import("./index");
+    const { STARTING_STATS } = await import("@gantt-quest/core");
+    const hero = { id: "b", name: "B", classId: "frontend_bard", level: 1, xp: 0, unspent: 0, base: { ...STARTING_STATS.frontend_bard }, ...gearSheet("frontend_bard", []) };
+    let sawDown = false;
+    let sawFailedHeal = false;
+    for (let seed = 0; seed < 80 && !(sawDown && sawFailedHeal); seed++) {
+      const rng = makeRng(seed);
+      let { state } = createBattle({ heroes: [heroCombatant(hero)], enemyKinds: ["bandit"], avgLevel: 1, poiId: null }, rng);
+      for (let i = 0; i < 40 && state.status === "active"; i++) {
+        const actor = currentActor(state)!;
+        const heal = i % 3 === 2;
+        const res = stepBattle(state, actor.id, heal ? { type: "ability", ability: "encore", target: "b" } : { type: "ability", ability: "dissonance", target: "e0" }, rng);
+        if (!res.ok) break;
+        res.events.forEach((e, k) => {
+          if (e.t === "down") {
+            sawDown = true;
+            const before = res.events.slice(0, k).reverse().find((x) => (x.t === "hit" || x.t === "tick") && x.target === e.id);
+            expect(before, "a down follows the blow that caused it").toBeDefined();
+          }
+          if (e.t === "miss" && e.heal) sawFailedHeal = true;
+        });
+        state = res.state;
+      }
+    }
+    expect(sawDown).toBe(true);
+    expect(sawFailedHeal).toBe(true);
+  });
+});
