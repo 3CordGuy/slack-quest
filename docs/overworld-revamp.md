@@ -113,6 +113,7 @@ Built to bring the new game closer to the original's inventory and economy.
 
 ### HUD panels and touch
 - **Every floating panel can be moved and minimized.** `DragPanel` wraps each one: drag it by its grip (or, with a mouse, by any part that is not a control), and fold it to its title with the minimize button. Positions and folded state are remembered per browser; double-click the grip to put a panel back.
+- **The inventory and market stall can be resized from any corner**, with the opposite corner staying put; double-click a corner for the default size. Their layout follows the panel's own size through CSS container queries: three columns when large, two at medium width, one scrolling column when narrow, and when short the paper doll turns on its side (hero at the left, two rows of four slots) with the long text moved to tooltips.
 - **On a phone the larger panels start minimized** (story, crew, docks, crew chat) as chips under the top bar, so the map and the turn bar are clear.
 - **The map takes touch gestures.** One finger pans, two fingers pinch to zoom and pan together, and a tap walks. A pinch never counts as a tap.
 

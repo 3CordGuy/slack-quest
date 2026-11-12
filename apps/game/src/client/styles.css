@@ -265,10 +265,6 @@ input:focus, button:focus-visible, select:focus { outline: 2px solid var(--accen
 .shop-info { flex: 1; min-width: 0; display: flex; flex-direction: column; font-size: 12px; }
 .shop-info strong { font-size: 14px; }
 
-@media (max-width: 900px) {
-  .inv-body, .shop-body { grid-template-columns: 1fr; overflow-y: auto; }
-  .inv-left, .inv-detail, .inv-pack, .shop-list { overflow: visible; }
-}
 
 /* ---------- Draggable panels ---------- */
 .draggable { touch-action: pan-y; }
@@ -344,3 +340,94 @@ body { touch-action: manipulation; overscroll-behavior: none; }
 /* What a stat does, on its own line under the numbers. */
 .stat-blurb { grid-column: 1 / -1; font-size: 11px; line-height: 1.3; color: var(--muted); padding-bottom: 2px; }
 .stat-row { row-gap: 0; }
+
+/* ---------- Resizable panels ---------- */
+.resize { position: absolute; width: 16px; height: 16px; z-index: 3; touch-action: none; }
+.resize.nw { top: -2px; left: -2px; cursor: nwse-resize; }
+.resize.ne { top: -2px; right: -2px; cursor: nesw-resize; width: 9px; height: 9px; }
+.resize.sw { bottom: -2px; left: -2px; cursor: nesw-resize; }
+.resize.se { bottom: -2px; right: -2px; cursor: nwse-resize; }
+/* A small corner bracket shows where to grab. */
+.resize::after { content: ""; position: absolute; inset: 3px; border: 0 solid var(--muted); }
+.resize.nw::after { border-top-width: 2px; border-left-width: 2px; }
+.resize.ne::after { display: none; }
+.resize.sw::after { border-bottom-width: 2px; border-left-width: 2px; }
+.resize.se::after { border-bottom-width: 2px; border-right-width: 2px; }
+.resize:hover::after { border-color: var(--gold); }
+@media (pointer: coarse) {
+  .resize { width: 26px; height: 26px; }
+  .resize.ne { width: 12px; height: 12px; }
+}
+
+/* ---------- Inventory and stall: laid out by the panel's own size ----------
+   The panel is a size container, so these rules respond to how big the
+   player has made it (or how small the screen is), not to the window. */
+.overlay .inv.panel { width: min(1120px, 100%); height: min(780px, 100%); max-width: none; max-height: none; container: inv / size; }
+.overlay .inv.panel.folded { container-type: normal; width: auto; height: auto; }
+.inv-left, .inv-detail, .inv-pack, .shop-list, .inv-body, .shop-body { scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
+
+/* Medium width: gear on the left; pack above the detail panel on the right. */
+@container inv (max-width: 900px) {
+  .inv-body { grid-template-columns: 300px minmax(0, 1fr); grid-template-rows: minmax(120px, 1fr) minmax(0, auto); }
+  .inv-left { grid-row: 1 / span 2; }
+  .inv-detail { max-height: 45cqh; }
+  .shop-body { grid-template-columns: minmax(0, 1fr) 240px; }
+}
+
+/* Narrow: one column, and the whole body scrolls as a page. */
+@container inv (max-width: 620px) {
+  .inv-body, .shop-body { display: flex; flex-direction: column; overflow-y: auto; }
+  .inv-left, .inv-detail, .inv-pack, .shop-list { overflow: visible; flex: none; max-height: none; }
+  .inv-pack { min-height: 90px; }
+  .inv-head h2 { font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  .inv-head h2 .muted { display: none; }
+  .shop-row { flex-wrap: wrap; }
+}
+
+/* Short: the paper doll turns on its side (hero at the left, two rows of
+   four slots), tiles shrink, and the long-form text gives way to tooltips. */
+@container inv (max-height: 640px) {
+  .inv { gap: 6px; }
+  .doll { grid-template-columns: auto repeat(4, auto); justify-content: start; gap: 4px 6px; }
+  .doll-col { display: contents; }
+  .figure { grid-column: 1; grid-row: 1 / span 2; }
+  .figure img { width: 72px; height: 88px; }
+  .inv .tile { width: 46px; height: 46px; }
+  .slot-cell { padding: 1px; }
+  .slot-name { font-size: 8px; }
+  .hint-line { display: none; }
+  .totals { grid-template-columns: repeat(4, 1fr); margin: 6px 0; }
+  .totals strong { font-size: 15px; }
+  .totals span { font-size: 10px; }
+  .inv .stat-blurb { display: none; }
+  .inv .stat-row { padding: 1px 0; }
+  .inv .stats { margin: 4px 0; }
+  .detail-icon { width: 52px; height: 52px; }
+  .inv footer .small { padding: 0 6px; font-size: 12px; }
+}
+/* Short and narrow at once (a phone on its side, or a small window): drop the slot labels too. */
+@container inv (max-height: 480px) {
+  .slot-name { display: none; }
+  .inv-head h2 { font-size: 15px; }
+}
+
+/* Narrow, continued: the pack and the item detail come straight after the
+   doll, ahead of the numbers, so equipping does not mean scrolling past the
+   stats. The doll takes its sideways form here too. */
+@container inv (max-width: 620px) {
+  .inv-left { display: contents; }
+  .inv-body > *, .inv-left > * { flex: none; }
+  .doll { order: 1; grid-template-columns: auto repeat(4, auto); justify-content: start; gap: 4px 6px; }
+  .doll-col { display: contents; }
+  .figure { grid-column: 1; grid-row: 1 / span 2; }
+  .figure img { width: 72px; height: 88px; }
+  .inv .tile { width: 50px; height: 50px; }
+  .slot-cell { padding: 1px; }
+  .slot-name { font-size: 8px; }
+  .hint-line { order: 2; min-height: 0; margin: 2px 0; }
+  .inv-pack { order: 3; }
+  .inv-detail { order: 4; }
+  .inv-left > .bar { order: 5; }
+  .totals { order: 6; }
+  .inv .stats { order: 7; }
+}

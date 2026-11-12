@@ -122,7 +122,7 @@ export function InventoryScreen({ me, refresh, onClose, onIsland = false }: Prop
 
   return (
     <div className="overlay inv-overlay" onClick={(e) => e.target === e.currentTarget && onClose()}>
-      <DragPanel id="inventory" title="Inventory" compact className="inv panel" role="dialog" aria-label="Inventory">
+      <DragPanel id="inventory" title="Inventory" compact resizable className="inv panel" role="dialog" aria-label="Inventory">
         <header className="inv-head">
           <h2>{c.name} <span className="muted">· {cls?.name} · Level {c.level}</span></h2>
           <span className="spacer" />
