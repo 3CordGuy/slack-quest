@@ -106,8 +106,20 @@ export class RunRoom extends DurableObject<Env> {
     } catch {
       return;
     }
-    if (msg.type !== "action" || !msg.action || !CLIENT_ACTIONS.has(msg.action.type as WorldAction["type"])) return;
     const { playerId } = ws.deserializeAttachment() as Attachment;
+    if (msg.type === "regear") {
+      // The player changed gear in their inventory: re-read it from D1 rather than trust the client.
+      const error = await this.serial(async () => {
+        await this.load();
+        const hero = await heroInitFor(this.env.DB, playerId);
+        if (!hero) return "No character.";
+        const { base, unspent, bonus, weapon, weaponPower, armor, outfit } = hero;
+        return this.apply({ type: "gear", heroId: playerId, gear: { base, unspent, bonus, weapon, weaponPower, armor, outfit } });
+      });
+      if (error) ws.send(JSON.stringify({ type: "error", message: error }));
+      return;
+    }
+    if (msg.type !== "action" || !msg.action || !CLIENT_ACTIONS.has(msg.action.type as WorldAction["type"])) return;
     // The acting hero always comes from the socket, never from the message.
     const action = { ...msg.action, heroId: playerId } as WorldAction;
     const error = await this.serial(async () => {

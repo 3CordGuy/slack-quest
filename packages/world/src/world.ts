@@ -132,6 +132,7 @@ export type WorldAction =
   | { type: "talk"; heroId: string; npcId: string; text: string; persuade?: boolean; focus?: number }
   | { type: "npc_reply"; npcId: string; heroId: string; output: NpcOutput }
   | { type: "battle"; heroId: string; action: BattleAction }
+  | { type: "gear"; heroId: string; gear: Pick<HeroInit, "base" | "unspent" | "bonus" | "weapon" | "weaponPower" | "armor" | "outfit"> }
   | { type: "epilogue"; text: string };
 
 /** Action types a player's client may send. Everything else is server-only. */
@@ -160,6 +161,7 @@ export type WorldEvent =
   | { t: "gold"; heroId: string; amount: number }
   | { t: "loot"; heroId: string; item: ItemDef }
   | { t: "key_item"; heroId: string; item: string; name: string }
+  | { t: "geared"; heroId: string }
   | { t: "chat"; line: ChatLine }
   | { t: "npc_intent"; npcId: string; verb: string; ok: boolean; reason?: string }
   | { t: "objective"; id: string }
@@ -726,6 +728,19 @@ export function stepWorld(prev: WorldState, action: WorldAction): StepResult {
 
     case "battle":
       return done(battleAction(ctx, action.heroId, action.action));
+
+    case "gear": {
+      // Server-only: the hero changed what they wear, or spent a stat point, in their inventory. Not during a fight.
+      if (state.phase !== "overworld" && state.phase !== "lobby") return fail("you cannot change gear right now");
+      const hero = heroById(state, action.heroId);
+      if (!hero) return fail("not aboard");
+      Object.assign(hero, action.gear);
+      hero.maxHp = maxHpFor(heroStats(hero), hero.level);
+      // Extra Vitality raises the ceiling but does not heal, or swapping gear back and forth would.
+      hero.hp = Math.min(hero.hp, hero.maxHp);
+      ctx.events.push({ t: "geared", heroId: hero.id });
+      return done(null);
+    }
 
     case "epilogue": {
       if (state.phase !== "ended" || !state.result) return fail("the story is not over");

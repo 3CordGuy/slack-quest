@@ -23,6 +23,15 @@ export const STAT_LABEL: Record<StatKey, string> = {
   dex: "Dexterity",
 };
 
+/** What each stat does in this game, in a line. Shown wherever stats are listed. */
+export const STAT_BLURB: Record<StatKey, string> = {
+  str: "Heavy weapon abilities: Smite, Cleave, Heavy Blow.",
+  int_stat: "Spells and healing (Firebolt, Mend, Chain Spark), and persuading islanders.",
+  vit: "+2 max HP per point. Also powers Shield Wall.",
+  agi: "Movement each turn, acting first in a fight, and fleeing.",
+  dex: "Dagger and bow abilities, and searching caches.",
+};
+
 /**
  * Starting stats for a new character: the class baseline with each stat
  * nudged by -1..+2. Re-rolling just calls this again.

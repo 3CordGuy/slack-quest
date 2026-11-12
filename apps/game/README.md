@@ -86,6 +86,6 @@ In dev builds the page exposes `window.__gq` (`state`, `send`, and the `World` m
 - Battle events animate in sequence but HP bars jump to the final value.
 - Huts are plots only: no interiors, decorating or upgrades yet, and only the first 12 crew members get one drawn.
 - The Harbor's only shop is the market stall (gear). No smithy, potions or provisioning yet. Crew chat is not stored.
-- Gear has no affixes, uniques, sets or elements, and gear found on an island cannot be equipped until you are back in the Harbor.
+- Gear has no affixes, uniques, sets or elements.
 - Accounts are still guest cookies.
 - No production deploy and no CI deploy. Staging is deployed by hand; production needs a workflow change and review.

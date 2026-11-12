@@ -36,6 +36,8 @@ export function App() {
     return (
       <RunView
         code={code}
+        me={me}
+        refresh={refresh}
         onLeave={() => {
           location.hash = "";
           void refresh();

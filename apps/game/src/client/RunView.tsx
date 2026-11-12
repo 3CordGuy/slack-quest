@@ -23,7 +23,9 @@ import {
   type WorldEvent,
 } from "@gantt-quest/world";
 import * as World from "@gantt-quest/world";
+import type { Me } from "./api";
 import { DragPanel } from "./DragPanel";
+import { InventoryScreen } from "./InventoryScreen";
 import { WorldRenderer } from "./render/WorldRenderer";
 import { useRun, type RunConnection } from "./useRun";
 
@@ -91,7 +93,8 @@ function lastCheck(events: WorldEvent[], names: Map<string, string>): Shown | nu
   return shown;
 }
 
-export function RunView({ code, onLeave }: { code: string; onLeave(): void }) {
+export function RunView({ code, me, refresh, onLeave }: { code: string; me: Me; refresh(): Promise<unknown>; onLeave(): void }) {
+  const [inventory, setInventory] = useState(false);
   const mount = useRef<HTMLDivElement>(null);
   const renderer = useRef<WorldRenderer | null>(null);
   const latest = useRef<ClientState | null>(null);
@@ -151,7 +154,7 @@ export function RunView({ code, onLeave }: { code: string; onLeave(): void }) {
       {!state && <div className="overlay"><div className="panel">{run.error ?? "Hailing the ship…"}{run.error && <p><button onClick={onLeave}>Back to the Harbor</button></p>}</div></div>}
       {state && (
         <>
-          <TopBar state={state} code={code} status={run.status} onLeave={onLeave} />
+          <TopBar state={state} code={code} status={run.status} onLeave={onLeave} onInventory={() => { void refresh(); setInventory(true); }} />
           {state.phase === "lobby" && <Lobby state={state} run={run} code={code} />}
           {state.phase === "generating" && <div className="overlay"><div className="panel"><h2>Land ho…</h2><p className="muted">The lookout is making out the shape of the island.</p></div></div>}
           {(state.phase === "overworld" || state.phase === "battle") && (
@@ -167,6 +170,18 @@ export function RunView({ code, onLeave }: { code: string; onLeave(): void }) {
           )}
           {state.phase === "ended" && <Ending state={state} onLeave={onLeave} />}
           {shown && <Slots shown={shown} />}
+          {inventory && me.character && state.phase !== "battle" && (
+            <InventoryScreen
+              me={me}
+              onIsland
+              // After any change, have the voyage pick up what the hero is now wearing.
+              refresh={async () => {
+                await refresh();
+                run.regear();
+              }}
+              onClose={() => setInventory(false)}
+            />
+          )}
           {run.error && <div className="toast">{run.error}</div>}
         </>
       )}
@@ -208,7 +223,8 @@ function useCountdown(deadline: number | null | undefined): number | null {
   return deadline ? Math.max(0, Math.ceil((deadline - Date.now()) / 1000)) : null;
 }
 
-function TopBar({ state, code, status, onLeave }: { state: ClientState; code: string; status: string; onLeave(): void }) {
+function TopBar({ state, code, status, onLeave, onInventory }: { state: ClientState; code: string; status: string; onLeave(): void; onInventory(): void }) {
+  const fighting = state.phase === "battle";
   return (
     <div className="topbar">
       <strong>{state.story?.title ?? "A ship at the Harbor"}</strong>
@@ -219,6 +235,11 @@ function TopBar({ state, code, status, onLeave }: { state: ClientState; code: st
       <span className="spacer" />
       {status !== "open" && <span className="bad">reconnecting…</span>}
       <span className="muted wide-only">Ship {code}</span>
+      {state.phase !== "ended" && (
+        <button className="small" disabled={fighting} title={fighting ? "Not during a fight" : "Your gear and stats"} onClick={onInventory}>
+          Inventory
+        </button>
+      )}
       <button className="small" onClick={onLeave}>Harbor</button>
     </div>
   );

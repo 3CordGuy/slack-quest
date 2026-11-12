@@ -12,6 +12,8 @@ export interface RunConnection {
   status: "connecting" | "open" | "closed";
   error: string | null;
   send(action: Outgoing): void;
+  /** Tell the voyage this hero's equipped gear changed, so it re-reads it. */
+  regear(): void;
   clearError(): void;
 }
 
@@ -72,6 +74,9 @@ export function useRun(code: string, onEvents: (events: WorldEvent[], state: Cli
   const send = useCallback((action: Outgoing) => {
     if (socket.current?.readyState === WebSocket.OPEN) socket.current.send(JSON.stringify({ type: "action", action }));
   }, []);
+  const regear = useCallback(() => {
+    if (socket.current?.readyState === WebSocket.OPEN) socket.current.send(JSON.stringify({ type: "regear" }));
+  }, []);
   const clearError = useCallback(() => setError(null), []);
-  return { state, online, status, error, send, clearError };
+  return { state, online, status, error, send, regear, clearError };
 }

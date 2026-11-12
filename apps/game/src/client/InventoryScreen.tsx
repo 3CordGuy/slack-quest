@@ -9,6 +9,7 @@ import {
   SLOTS,
   SLOT_ICON,
   SLOT_LABEL,
+  STAT_BLURB,
   STAT_KEYS,
   STAT_LABEL,
   armorBlock,
@@ -47,7 +48,15 @@ type SortKey = keyof typeof SORTS;
 
 const DRAG_TYPE = "application/x-gq-item";
 
-export function InventoryScreen({ me, refresh, onClose }: { me: Me; refresh(): Promise<unknown>; onClose(): void }) {
+interface Props {
+  me: Me;
+  refresh(): Promise<unknown>;
+  onClose(): void;
+  /** Opened during a voyage: gear can be changed, but the character cannot be re-rolled or leave its crew. */
+  onIsland?: boolean;
+}
+
+export function InventoryScreen({ me, refresh, onClose, onIsland = false }: Props) {
   const c = me.character!;
   const { busy, error, act } = useAct(refresh);
   const [selectedId, setSelectedId] = useState<number | null>(null);
@@ -147,12 +156,13 @@ export function InventoryScreen({ me, refresh, onClose }: { me: Me; refresh(): P
             <div className="stats">
               {c.unspent_points > 0 && <p className="good">{c.unspent_points} stat point{c.unspent_points > 1 ? "s" : ""} to spend</p>}
               {STAT_KEYS.map((k) => (
-                <div key={k} className="stat-row">
+                <div key={k} className="stat-row" title={STAT_BLURB[k]}>
                   <span className="stat-name">{STAT_LABEL[k]}</span>
                   <span className="stat-value">{total(k)}</span>
                   <span className={loadout.bonus[k] ? "good" : "muted"}>{loadout.bonus[k] ? `+${loadout.bonus[k]}` : ""}</span>
                   <span className="muted">{statPct(total(k))}% per roll</span>
                   {c.unspent_points > 0 && <button className="small" disabled={busy} onClick={() => act(() => api.spend(k))}>+1</button>}
+                  <span className="stat-blurb">{STAT_BLURB[k]}</span>
                 </div>
               ))}
             </div>
@@ -205,7 +215,8 @@ export function InventoryScreen({ me, refresh, onClose }: { me: Me; refresh(): P
           </section>
         </div>
 
-        <footer className="row">
+        {onIsland && <p className="muted">Changes take effect on the island straight away. Gear cannot be changed during a fight.</p>}
+        <footer className="row" hidden={onIsland}>
           <button
             className="danger small"
             disabled={busy}

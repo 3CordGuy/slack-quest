@@ -338,3 +338,9 @@ body { touch-action: manipulation; overscroll-behavior: none; }
   .side { width: 46vw; }
   .ability-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
+
+[hidden] { display: none !important; }
+
+/* What a stat does, on its own line under the numbers. */
+.stat-blurb { grid-column: 1 / -1; font-size: 11px; line-height: 1.3; color: var(--muted); padding-bottom: 2px; }
+.stat-row { row-gap: 0; }
