@@ -78,7 +78,7 @@ class Builder {
     return this;
   }
 
-  /** A fire's light: warm, flickering, and the one that throws shadows indoors. */
+  /** A fire's light: warm and flickering. */
   fire(x: number, y: number, z: number): this {
     return this.light("fire", x, y, z);
   }
