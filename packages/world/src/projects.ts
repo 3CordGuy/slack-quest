@@ -61,9 +61,9 @@ export const PROJECTS: ProjectDef[] = [
     id: "galley",
     name: "Galley",
     blurb: "A cookhouse that provisions ships before they sail.",
-    benefit: "Provisions for the crew before a voyage.",
+    benefit: "Cook chowder and ship's stores into a larder the whole crew sails with.",
     cost: { gold: 250, wood: 30, fur: 15, bone: 10 },
-    open: false,
+    open: true,
   },
 ];
 

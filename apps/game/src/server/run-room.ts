@@ -34,6 +34,7 @@ import { generateFill, islandFacts, npcTurn, writeEpilogue } from "./ai";
 import { recordStep } from "./board";
 import { clearPubOrders, restoreGathering, applyGrant, applyPenalty, conversationStatement, getRun, heroInitFor, refreshHarbor, saveRunStatements, type Env } from "./db";
 import { clearBrews } from "./workshops";
+import { takeLarder } from "./galley";
 
 const TURN_MS = 120_000;
 const CLOSE_AFTER_END_MS = 10 * 60_000;
@@ -337,10 +338,15 @@ export class RunRoom extends DurableObject<Env> {
     await clearPubOrders(this.env.DB, world.heroes.map((h) => h.id)).catch((err) => console.warn("run-room:pub-clear-failed", { err: err instanceof Error ? err.message : String(err) }));
     // So are the brews they took aboard from the apothecary. One brewed since boarding stays in the bag for next time.
     await clearBrews(this.env.DB, world.heroes).catch((err) => console.warn("run-room:brew-clear-failed", { err: err instanceof Error ? err.message : String(err) }));
-    const error = await this.serial(() => this.apply({ type: "begin", bible: buildBible(frame, fill, demand, rng) }));
+    // And the crew's galley larder goes aboard: the larder is emptied as the ship sails.
+    const larder = await takeLarder(this.env.DB, this.crewId).catch((err) => {
+      console.warn("run-room:larder-take-failed", { err: err instanceof Error ? err.message : String(err) });
+      return undefined;
+    });
+    const error = await this.serial(() => this.apply({ type: "begin", bible: buildBible(frame, fill, demand, rng), larder }));
     if (error) {
       console.warn("run-room:story-rejected", { error });
-      await this.serial(() => this.apply({ type: "begin", bible: buildBible(frame, fallback, demand, rng) }));
+      await this.serial(() => this.apply({ type: "begin", bible: buildBible(frame, fallback, demand, rng), larder }));
     }
   }
 
