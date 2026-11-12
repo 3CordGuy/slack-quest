@@ -296,6 +296,13 @@ const STIR_MARGIN = 1.6;
 const SLOT_HOLD = 1;
 /** How much nearer a fire counts as when the slots are handed out. */
 const FIRE_PULL = 3;
+/**
+ * Seconds a piece's shadow takes to fade in or out when a slot changes hands. Meanwhile the piece's light is
+ * shared between its slot and a plain light in the same spot, so its brightness never changes; only the shadow fades.
+ */
+const SLOT_FADE = 0.45;
+/** Plain lights added indoors only, for pieces whose shadow is fading: they need a plain light alongside their slot. */
+const FADE_GLOWS = 2;
 
 /** How each kind of small light looks outdoors, and indoors under the lamp. Outdoor fires past the first use these too. */
 const GLOW: Record<LightKind, { color: string; power: number; range: number; flicker: boolean }> = {
@@ -342,6 +349,14 @@ export class Ambience {
   private slots = Array.from({ length: SHADOW_SLOTS }, () => new THREE.PointLight("#ffb35c", 0, 6, 1));
   /** The piece each slot is lighting, or null while it has none. */
   private slotOf: ({ pos: THREE.Vector3; kind: LightKind } | null)[] = Array(SHADOW_SLOTS).fill(null);
+  /**
+   * How much of its piece's light each slot carries, 0 to 1; a plain light carries the rest. It eases up after a
+   * slot is handed to a piece and down before the slot leaves it, so a shadow fades rather than pops.
+   */
+  private slotWeight: number[] = Array(SHADOW_SLOTS).fill(0);
+  /** A room just built: its slots start at full strength instead of fading in. */
+  private freshRoom = false;
+  private lastClock = 0;
   /** Slots a moving hero has asked to redraw, waiting for their turn. */
   private stirred = new Set<number>();
   /** The frame each slot's map was last drawn on, so the longest-waiting go first. */
@@ -354,6 +369,8 @@ export class Ambience {
    * handed to the ones nearest each frame. Also always in the scene, for the same reason.
    */
   private glows = Array.from({ length: GLOW_LIGHTS }, () => new THREE.PointLight("#ffb35c", 0, 4, 2));
+  /** A couple more plain lights indoors, so pieces whose shadow is fading in or out always have one. Hidden outdoors. */
+  private fadeGlows = Array.from({ length: FADE_GLOWS }, () => new THREE.PointLight("#ffb35c", 0, 4, 2));
   private lights: { pos: THREE.Vector3; kind: LightKind }[] = [];
   private flames: THREE.Mesh[] = [];
 
@@ -428,7 +445,8 @@ export class Ambience {
       s.castShadow = true;
       s.visible = false;
     });
-    scene.add(this.hemi, this.sun, this.sun.target, this.lamp, this.fireLight, ...this.slots, ...this.glows, this.group);
+    for (const g of this.fadeGlows) g.visible = false;
+    scene.add(this.hemi, this.sun, this.sun.target, this.lamp, this.fireLight, ...this.slots, ...this.glows, ...this.fadeGlows, this.group);
   }
 
   /** Lay out the decoration for a map. `skip` holds the hexes to leave clear. */
@@ -538,7 +556,10 @@ export class Ambience {
     this.sun.castShadow = !inside;
     this.fireLight.visible = !inside;
     for (const s of this.slots) s.visible = inside;
+    for (const g of this.fadeGlows) g.visible = inside;
     this.slotOf.fill(null);
+    this.slotWeight.fill(0);
+    this.freshRoom = inside;
     this.stirAll();
     if (inside) {
       this.lamp.position.set((minX + maxX) / 2, 2.7, (minZ + maxZ) / 2);
@@ -788,7 +809,7 @@ export class Ambience {
     this.clear();
     this.setSmoke([]);
     this.setBeacon(null);
-    this.scene.remove(this.hemi, this.sun, this.sun.target, this.lamp, this.fireLight, ...this.slots, ...this.glows, this.group);
+    this.scene.remove(this.hemi, this.sun, this.sun.target, this.lamp, this.fireLight, ...this.slots, ...this.glows, ...this.fadeGlows, this.group);
     this.lamp.shadow.map?.dispose();
     this.fireLight.shadow.map?.dispose();
     for (const s of this.slots) s.shadow.map?.dispose();
@@ -1008,32 +1029,47 @@ export class Ambience {
   }
 
   /**
-   * Give the slots to these lights (the nearest few). A slot keeps its light
-   * while that light is still wanted, so walking hands over only the slot whose
-   * light fell out, and only that one is redrawn.
+   * Give the slots to these lights (the nearest few). A slot keeps its light while that light is still wanted,
+   * so walking hands over only the slot whose light fell out. That slot's shadow fades out first (its weight
+   * eases to 0), and only then is the slot moved to the new piece, redrawn once, and faded in.
    */
-  private assignSlots(want: { pos: THREE.Vector3; kind: LightKind }[]) {
+  private assignSlots(want: { pos: THREE.Vector3; kind: LightKind }[], dt: number) {
     const same = (a: { pos: THREE.Vector3; kind: LightKind }, b: { pos: THREE.Vector3; kind: LightKind }) => a.kind === b.kind && a.pos.distanceToSquared(b.pos) < 1e-6;
+    const step = dt / SLOT_FADE;
     const left = [...want];
     const free: number[] = [];
     this.slotOf.forEach((cur, i) => {
-      const k = cur ? left.findIndex((l) => same(l, cur)) : -1;
-      if (k < 0) {
+      if (!cur) {
         free.push(i);
         return;
       }
-      this.slotOf[i] = left[k];
-      left.splice(k, 1);
+      const k = left.findIndex((l) => same(l, cur));
+      if (k >= 0) {
+        // Still wanted (perhaps again, part way through fading out): ease back up.
+        this.slotOf[i] = left[k];
+        left.splice(k, 1);
+        this.slotWeight[i] = Math.min(1, this.slotWeight[i] + step);
+        return;
+      }
+      // No longer wanted. A piece taken out of the room goes at once; one walked away from fades out first.
+      const still = this.lights.find((l) => same(l, cur));
+      this.slotWeight[i] = still ? Math.max(0, this.slotWeight[i] - step) : 0;
+      if (still) this.slotOf[i] = still;
+      if (this.slotWeight[i] > 0) return;
+      this.slotOf[i] = null;
+      free.push(i);
     });
     for (const i of free) {
       const next = left.shift() ?? null;
       this.slotOf[i] = next;
       if (!next) continue;
+      this.slotWeight[i] = this.freshRoom ? 1 : 0;
       this.slots[i].position.copy(next.pos);
       this.slots[i].shadow.needsUpdate = true;
       this.drawnAt[i] = this.frameNo;
       this.stirred.delete(i);
     }
+    this.freshRoom = false;
   }
 
   /** Lick the flames up and down, and let the lights breathe with them. */
@@ -1062,9 +1098,11 @@ export class Ambience {
       // A fire is the brightest thing in the room and throws the longest shadows, so it counts as a little nearer.
       const keyed = sorted.map((l) => ({ l, d: l.pos.distanceTo(target) - (slotted(l) ? SLOT_HOLD : 0) - (l.kind === "fire" ? FIRE_PULL : 0) }));
       keyed.sort((a, b) => a.d - b.d);
-      this.assignSlots(keyed.slice(0, SHADOW_SLOTS).map((k) => k.l));
-      // Only their strength changes from frame to frame (the flicker), which needs no redraw of their maps;
-      // their place and reach change only when a slot is handed to another piece.
+      const dt = Math.min(0.1, Math.max(0, clock - this.lastClock));
+      this.lastClock = clock;
+      this.assignSlots(keyed.slice(0, SHADOW_SLOTS).map((k) => k.l), dt);
+      // Only their strength changes from frame to frame (the flicker and the fades), which needs no redraw of
+      // their maps; their place and reach change only when a slot is handed to another piece.
       this.slots.forEach((s, i) => {
         const l = this.slotOf[i];
         if (!l) {
@@ -1075,12 +1113,17 @@ export class Ambience {
         const look = this.roomLook(l, clock, motion);
         this.reach(s, look.distance, look.decay);
         s.color.set(look.color);
-        s.intensity = look.intensity;
+        s.intensity = look.intensity * this.slotWeight[i];
       });
-      // The rest look exactly as they would holding a slot, only without a shadow: a piece handed between a slot
-      // and a plain light keeps its brightness, so nothing seems to switch on or off as you walk.
-      const rest = keyed.slice(SHADOW_SLOTS).map((k) => k.l);
-      this.glows.forEach((g, i) => {
+      // Whatever share of a piece's light its slot does not carry (all of it, for a piece with no slot) goes to a
+      // plain light in the same spot with the same look, so the piece is always exactly as bright: handing it to
+      // or from a slot only fades its shadow in or out.
+      const share = (l: { pos: THREE.Vector3; kind: LightKind }) => {
+        const i = this.slotOf.indexOf(l);
+        return i < 0 ? 1 : 1 - this.slotWeight[i];
+      };
+      const rest = sorted.filter((l) => share(l) > 0.001);
+      [...this.glows, ...this.fadeGlows].forEach((g, i) => {
         const l = rest[i];
         if (!l) {
           g.intensity = 0;
@@ -1091,7 +1134,7 @@ export class Ambience {
         g.color.set(look.color);
         g.distance = look.distance;
         g.decay = look.decay;
-        g.intensity = look.intensity;
+        g.intensity = look.intensity * share(l);
       });
       return;
     }
