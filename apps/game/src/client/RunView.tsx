@@ -109,7 +109,8 @@ function describe(events: WorldEvent[], state: ClientState, names: Map<string, s
       case "harbor_boon": out.push(ev.text); break;
       case "objective": out.push(`Objective complete: ${state.story?.objectives.find((o) => o.id === ev.id)?.text ?? ev.id}`); break;
       case "battle_start": out.push("Battle!"); break;
-      case "battle_end": out.push(ev.status === "victory" ? "The fight is won." : ev.status === "fled" ? "The party got away." : "The party has fallen."); break;
+      case "battle_end": out.push(ev.status === "victory" ? "The fight is won." : ev.status === "fled" ? "The party got away." : "The fight is lost."); break;
+      case "carried_back": out.push(`${ev.heroIds.map(n).join(" and ")} ${ev.heroIds.length === 1 ? "is" : "are"} carried back to the ship on their last legs. The voyage goes on.`); break;
       case "ended": out.push(ev.reason); break;
       case "contract": out.push(`${n(ev.heroId)}'s contract (${contractName(ev.contractId) ?? ev.contractId}) ${ev.met ? "is fulfilled!" : "went unfulfilled."}`); break;
       case "battle": {

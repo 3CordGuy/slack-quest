@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { STARTING_STATS, hexDistance } from "@gantt-quest/core";
-import { BERRY_HEAL, FORAGE_ODDS, ROAMERS_AT_START, ROAMERS_MAX, ROAMER_SCENT, VISION,
+import { BATTLE_JOIN_RANGE, BERRY_HEAL, FORAGE_ODDS, ROAMERS_AT_START, ROAMERS_MAX, ROAMER_SCENT, VISION,
   PERK_CAPS, PUB_BUFF_CAPS, pubBuff,
   xpWithBonus,
   CANNED_FILLS,
@@ -485,6 +485,31 @@ describe("world reducer", () => {
     expect(s.battle!.npcId).toBe("npc1");
     expect(s.npcs.npc1.hostile).toBe(true);
     expect(stepWorld(s, { type: "talk", heroId: "p1", npcId: "npc1", text: "sorry" }).ok).toBe(false);
+  });
+
+  it("carries a hero beaten alone back to the ship, and the voyage goes on for the rest", () => {
+    let s = startedWorld("alone");
+    const me = s.turn!.heroId;
+    const other = s.heroes.find((h) => h.id !== me)!.id;
+    const camp = poiById(s.map, "camp")!.pos;
+    const landing = poiById(s.map, "landing")!.pos;
+    expect(hexDistance(camp, landing)).toBeGreaterThan(BATTLE_JOIN_RANGE);
+    // The one at the camp is on their last legs; the other is far off at the landing, out of the fight.
+    s = { ...s, heroes: s.heroes.map((h) => (h.id === me ? { ...h, pos: camp, hp: 1, potions: 0 } : { ...h, pos: landing })) };
+    const sink = { events: [] as WorldEvent[], effects: [] as WorldEffect[] };
+    s = must(s, { type: "interact", heroId: me }, sink);
+    expect(s.phase).toBe("battle");
+    expect(s.battle!.combatants.filter((c) => c.side === "hero").map((c) => c.id)).toEqual([me]);
+    for (let i = 0; i < 100 && s.phase === "battle"; i++) s = must(s, { type: "timeout" }, sink);
+    expect(sink.events).toContainEqual({ t: "battle_end", status: "defeat" });
+    expect(s.phase).toBe("overworld");
+    expect(s.result).toBeNull();
+    expect(sink.events).toContainEqual({ t: "carried_back", heroIds: [me] });
+    const beaten = s.heroes.find((h) => h.id === me)!;
+    expect(beaten.pos).toEqual(landing);
+    expect(beaten.hp).toBe(1);
+    expect(s.heroes.find((h) => h.id === other)!.hp).toBeGreaterThan(1);
+    expect(poiById(s.map, "camp")!.cleared).toBe(false);
   });
 
   it("plays a fight at the lair through to victory, rewards and the ending", () => {
