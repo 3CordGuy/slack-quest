@@ -23,3 +23,4 @@ export * from "./gather";
 export * from "./projects";
 export * from "./pub";
 export * from "./shoals";
+export * from "./trade";

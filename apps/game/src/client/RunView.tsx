@@ -28,13 +28,14 @@ import { BEAT_MS, BattleIntro, BattleRecap, FindCard, INTRO_BEATS, INTRO_MS, blo
 import { BattleHud, useCountdown } from "./BattleHud";
 import { DragPanel } from "./DragPanel";
 import { SailingView } from "./SailingView";
+import { HutSpoils, blueprintName, isTrophy, perkText, resourceText } from "./hutDrops";
+import { InventoryScreen } from "./InventoryScreen";
+import { Trading } from "./TradePanel";
+import { WorldRenderer } from "./render/WorldRenderer";
+import { useRun, type RunConnection } from "./useRun";
 
 /** The least time the crossing stays on screen once a ship has sailed. */
 const MIN_CROSSING_MS = 4500;
-import { HutSpoils, blueprintName, isTrophy, perkText, resourceText } from "./hutDrops";
-import { InventoryScreen } from "./InventoryScreen";
-import { WorldRenderer } from "./render/WorldRenderer";
-import { useRun, type RunConnection } from "./useRun";
 
 const className = (id: string) => HERO_CLASSES.find((c) => c.id === id)?.name ?? id;
 const POI_LABEL: Record<string, string> = { landing: "The Landing", hut: "Hut", lair: "Lair", shrine: "Old shrine", cache: "Hidden cache", camp: "Brigand camp" };
@@ -122,6 +123,7 @@ function lastCheck(events: WorldEvent[], names: Map<string, string>): Shown | nu
 
 export function RunView({ code, me, refresh, onLeave }: { code: string; me: Me; refresh(): Promise<unknown>; onLeave(): void }) {
   const [inventory, setInventory] = useState(false);
+  const [tradeWith, setTradeWith] = useState<string | null>(null);
   const mount = useRef<HTMLDivElement>(null);
   const renderer = useRef<WorldRenderer | null>(null);
   const latest = useRef<ClientState | null>(null);
@@ -222,6 +224,11 @@ export function RunView({ code, me, refresh, onLeave }: { code: string; me: Me; 
 
   // While a finished fight is held on screen, everything is drawn from it rather than from the live state.
   const state = held ?? run.state;
+  // Trading is for the walk, not the fight: a panel left open closes when one starts.
+  const ashore = run.state?.phase === "overworld" && !held;
+  useEffect(() => {
+    if (!ashore) setTradeWith(null);
+  }, [ashore]);
   // Dev-only handle for driving a run from the console or a test script.
   if (import.meta.env.DEV) (window as unknown as { __gq: unknown }).__gq = { state, send: run.send, World };
 
@@ -252,9 +259,10 @@ export function RunView({ code, me, refresh, onLeave }: { code: string; me: Me; 
           {(state.phase === "overworld" || state.phase === "battle") && (
             <>
               <Story state={state} />
-              <Crew state={state} online={run.online} />
+              <Crew state={state} online={run.online} onTrade={ashore ? setTradeWith : undefined} />
               <Feed lines={feed} />
               {state.phase === "overworld" && <TurnBar state={state} run={run} />}
+              {ashore && me.character && <Trading me={me} partners={state.heroes.filter((h) => h.id !== state.you)} withId={tradeWith} onWith={setTradeWith} refresh={refresh} run={code} />}
               {state.phase === "overworld" && <Chat state={state} run={run} />}
               {state.phase === "battle" && !held && !intro && <BattleHud battle={state.battle!} you={state.you} onAction={(action) => run.send({ type: "battle", action })} />}
               {intro && !held && <BattleIntro intro={intro} />}
@@ -393,7 +401,7 @@ function Pips({ n, max }: { n: number; max: number }) {
   return <span className="pips" title={`${n} / ${max} focus`}>{Array.from({ length: max }, (_, i) => <i key={i} className={i < n ? "on" : ""} />)}</span>;
 }
 
-function Crew({ state, online }: { state: ClientState; online: string[] }) {
+function Crew({ state, online, onTrade }: { state: ClientState; online: string[]; onTrade?: (id: string) => void }) {
   return (
     <DragPanel id="run.crew" title="Crew" foldOnPhone className="crew">
       {state.heroes.map((h) => {
@@ -402,7 +410,10 @@ function Crew({ state, online }: { state: ClientState; online: string[] }) {
         const focus = c?.focus ?? h.focus;
         return (
           <div key={h.id} className={`panel hero-card ${state.turn?.heroId === h.id && state.phase === "overworld" ? "active" : ""} ${online.includes(h.id) ? "" : "offline"}`}>
-            <div><strong>{h.name}</strong>{h.id === state.you && <span className="tag">you</span>}</div>
+            <div>
+              <strong>{h.name}</strong>{h.id === state.you && <span className="tag">you</span>}
+              {onTrade && h.id !== state.you && <button className="small trade-btn" title={`Give or trade with ${h.name}`} onClick={() => onTrade(h.id)}>Trade</button>}
+            </div>
             <div className="muted">{className(h.classId)} · Lv {h.level}{(h.armor ?? 0) > 0 ? ` · armor ${h.armor}` : ""}{online.includes(h.id) ? "" : " · away"}</div>
             <div className="bar"><div className="bar-fill hp" style={{ width: `${(100 * hp) / h.maxHp}%` }} /><span>{hp} / {h.maxHp}</span></div>
             <div className="muted"><Pips n={focus} max={h.maxFocus} /> · {c?.potions ?? h.potions} potion{(c?.potions ?? h.potions) === 1 ? "" : "s"}</div>

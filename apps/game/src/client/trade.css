@@ -1,0 +1,26 @@
+/* Giving and trading: the notices under the top bar, the panel, and the Trade buttons in the crew lists. */
+
+.trade-notices { position: absolute; left: 50%; top: 52px; transform: translateX(-50%); z-index: 35; display: flex; flex-direction: column; gap: 6px; align-items: center; max-width: calc(100% - 24px); }
+.trade-notice { display: flex; align-items: center; gap: 12px; padding: 6px 12px; }
+.trade-notice.incoming { border-color: var(--gold); }
+
+/* Leaves room for the top bar, which sits above the overlay. */
+.overlay .panel.trade-panel { max-width: 560px; max-height: calc(100% - 56px); overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
+.trade-head { display: flex; align-items: center; gap: 10px; padding-right: 46px; }
+.trade-head h2 { margin: 0; }
+.trade-panel h3 { margin: 8px 0 0; }
+.trade-panel p { margin: 0; }
+.trade-offer, .trade-compose, .trade-goods { display: flex; flex-direction: column; gap: 8px; }
+.trade-items { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 8px 16px; }
+.trade-items li { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.trade-goods .res-chips:empty { display: none; }
+.trade-amounts { display: grid; grid-template-columns: repeat(auto-fill, minmax(112px, 1fr)); gap: 6px 10px; }
+.trade-amount { display: flex; flex-direction: column; gap: 2px; font-size: 13px; }
+.trade-amount input { width: 100%; min-width: 0; }
+.trade-summary { border-top: 1px dashed var(--line); padding-top: 8px; }
+
+.trade-btn { margin-left: 8px; padding: 0 8px; font-size: 12px; }
+
+@media (max-width: 640px) {
+  .trade-head { padding-right: 68px; }
+}

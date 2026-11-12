@@ -55,6 +55,7 @@ import { enterHut } from "./server/hut-room";
 import { enterPub } from "./server/pub-room";
 import { gatherStatus, rest, startOuting, stepOuting } from "./server/gather";
 import { builtProjectIds, contribute, crewWorks, projectStock } from "./server/projects";
+import { acceptTrade, closeTrade, listTrades, proposeTrade } from "./server/trade";
 
 export { HarborRoom } from "./server/harbor-room";
 export { HutRoom } from "./server/hut-room";
@@ -373,6 +374,35 @@ app.post("/api/projects/give", async (c) => {
   c.executionCtx.waitUntil(refreshHarbor(c.env, crew.id));
   const [works, stock] = await Promise.all([crewWorks(c.env.DB, crew.id), projectStock(c.env.DB, player.id)]);
   return c.json({ works, stock, completed: result.completed });
+});
+
+// ---------- giving and trading between crewmates ----------
+
+// The offers this player has open, made or received, and how recent ones ended.
+app.get("/api/trade", async (c) => c.json(await listTrades(c.env.DB, c.get("player").id)));
+
+// Open an offer to one crewmate. `run` says it is made on that voyage's island; the server checks every part of it.
+app.post("/api/trade/propose", async (c) => {
+  const body = await c.req.json<{ run?: unknown }>().catch(() => ({}) as { run?: unknown });
+  const run = typeof body.run === "string" && /^[A-Za-z]{4}$/.test(body.run) ? body.run.toUpperCase() : null;
+  const result = await proposeTrade(c.env.DB, c.get("player").id, body, run);
+  return "error" in result ? c.json({ error: result.error }, 409) : c.json({ id: result.id });
+});
+
+// Accept an offer: everything in it changes hands in one batch, or nothing does.
+app.post("/api/trade/accept", async (c) => {
+  const body = await c.req.json<{ id?: unknown }>().catch(() => ({}) as { id?: unknown });
+  const result = await acceptTrade(c.env.DB, c.get("player").id, Number(body.id));
+  if ("error" in result) return c.json({ error: result.error }, 409);
+  c.executionCtx.waitUntil(refreshHarbor(c.env, result.crewId));
+  return c.json({ ok: true });
+});
+
+// Decline an offer made to you, or withdraw one you made.
+app.post("/api/trade/close", async (c) => {
+  const body = await c.req.json<{ id?: unknown }>().catch(() => ({}) as { id?: unknown });
+  const result = await closeTrade(c.env.DB, c.get("player").id, Number(body.id));
+  return "error" in result ? c.json({ error: result.error }, 409) : c.json({ ok: true });
 });
 
 // ---------- crews and the shared Harbor ----------
