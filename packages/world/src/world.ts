@@ -16,7 +16,8 @@ import {
   type Combatant,
 } from "./battle";
 import { rollCheck, statPct, type CheckResult } from "./check";
-import { ENEMIES, KEY_ITEMS } from "./content";
+import { ENEMIES, KEY_ITEMS, WEAPONS } from "./content";
+import { battleDrops, cacheDrops, storyTrophy } from "./drops";
 import { rollItem, type ItemDef, type Outfit } from "./gear";
 import { freshVitals, heroCombatant } from "./hero";
 import { addResources, type Resources } from "./hut";
@@ -377,7 +378,12 @@ function endRun(ctx: Ctx, outcome: "victory" | "defeat", reason: string) {
   state.result = { outcome, reason, epilogue: null };
   for (const hero of state.heroes) {
     if (outcome === "victory") {
-      grant(ctx, hero, { xp: 50, gold: 30, item: rollItem(ctx.rng, hero.classId, 0.8, hero.level) });
+      grant(ctx, hero, {
+        xp: 50,
+        gold: 30,
+        item: rollItem(ctx.rng, hero.classId, 0.8, hero.level),
+        furnishing: state.bible ? storyTrophy(state.bible) : undefined,
+      });
     } else {
       // Soft death: a capped gold loss, never the character.
       ctx.effects.push({ kind: "penalty", heroId: hero.id, goldPct: 0.1, cap: 25 });
@@ -453,6 +459,7 @@ function finishBattle(ctx: Ctx) {
   }
   ctx.events.push({ t: "battle_end", status: battle.status });
   state.battle = null;
+  const beaten = battle.combatants.filter((c) => c.side === "enemy").map((c) => c.kind);
 
   if (battle.status === "defeat") {
     endRun(ctx, "defeat", "The party fell in battle.");
@@ -467,6 +474,7 @@ function finishBattle(ctx: Ctx) {
       xp: battle.xp,
       gold: rng.int(5, 12) * (battle.boss ? 3 : 1),
       item: battle.boss || rng.chance(0.4) ? rollItem(rng, hero.classId, battle.boss ? 0.6 : 0.2, hero.level) : null,
+      resources: battleDrops(rng, beaten),
     });
   }
   if (battle.npcId) setFact(ctx, `fought:${battle.npcId}`);
@@ -526,6 +534,7 @@ function interact(ctx: Ctx, hero: Hero): string | null {
         xp: 10,
         gold: rng.int(6, 14) * check.successes,
         item: check.perfect ? rollItem(rng, hero.classId, 0.4, hero.level) : null,
+        ...cacheDrops(rng, state.earned[hero.id]?.blueprints),
       });
     }
     // Whatever the story needed from this place is found by anyone who looks, loot or no loot.

@@ -15,3 +15,4 @@ export * from "./world";
 export * from "./view";
 export * from "./harbor";
 export * from "./hut";
+export * from "./drops";

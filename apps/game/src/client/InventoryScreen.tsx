@@ -28,6 +28,7 @@ import { api, type Me, type StatKey } from "./api";
 import { DragPanel } from "./DragPanel";
 import { useAct } from "./Harbor";
 import { Icon, ItemDetail, ItemTile, toOwned, type OwnedItem } from "./items";
+import { Materials } from "./Materials";
 import { spriteDataUrl } from "./render/sprites";
 
 const LEFT: Slot[] = ["helmet", "body", "amulet", "ring"];
@@ -152,6 +153,7 @@ export function InventoryScreen({ me, refresh, onClose, onIsland = false }: Prop
               <div title="Added to the damage of every ability"><strong>+{loadout.weaponPower}</strong><span>Weapon power</span></div>
               <div title="Focus points at the start of a voyage"><strong>{maxFocusFor(c.level)}</strong><span>Focus</span></div>
             </div>
+            <Materials />
 
             <div className="stats">
               {c.unspent_points > 0 && <p className="good">{c.unspent_points} stat point{c.unspent_points > 1 ? "s" : ""} to spend</p>}
