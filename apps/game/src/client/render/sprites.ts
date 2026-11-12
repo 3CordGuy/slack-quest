@@ -5,7 +5,7 @@
 // a texture per `kind`.
 
 import * as THREE from "three";
-import { RARITY_COLOR, outfitKey, type Outfit, type Slot } from "@gantt-quest/world";
+import { ENEMIES, RARITY_COLOR, outfitKey, type Outfit, type Slot } from "@gantt-quest/world";
 import { LOOKS, mergeLook, type Look, type LookPalette } from "./looks";
 
 const W = 18;
@@ -477,13 +477,10 @@ function drawSprite(kind: string, look: Look, outfit: Outfit | undefined, asleep
   canvas.width = W;
   canvas.height = H;
   const ctx = canvas.getContext("2d", { willReadFrequently: true })!;
-  if (kind === "wolf" || kind === "alpha") {
-    // The pack leader: the same animal, darker, with a red eye. The renderer draws it larger.
-    if (kind === "wolf") drawWolf(ctx);
-    else drawWolf(ctx, "#4a4f5c", "#2c3039", "#ff4d4d");
-    // Drawn nose-right; turn it round so it faces left, at the heroes across the arena.
-    mirror(ctx);
-  } else if (kind === "dummy") drawDummy(ctx);
+  if (kind === "wolf") drawWolf(ctx);
+  // The pack leader: the same animal, darker, with a red eye. The renderer draws it larger.
+  else if (kind === "alpha") drawWolf(ctx, "#4a4f5c", "#2c3039", "#ff4d4d");
+  else if (kind === "dummy") drawDummy(ctx);
   else if (outfit) drawHero(ctx, look, outfit);
   else drawHumanoid(ctx, look);
   // Asleep: the eyes are shut, a short dark line where each one was.
@@ -495,6 +492,9 @@ function drawSprite(kind: string, look: Look, outfit: Outfit | undefined, asleep
     ctx.fillRect(7, 7, 2, 1);
     ctx.fillRect(10, 7, 2, 1);
   }
+  // Everything is drawn facing right (a wolf's nose, a weapon in the right of the picture).
+  // Enemies line up on the right of the arena, so turn them round to face the heroes.
+  if (ENEMIES[kind] && !outfit) mirror(ctx);
   finish(ctx);
   return canvas;
 }
