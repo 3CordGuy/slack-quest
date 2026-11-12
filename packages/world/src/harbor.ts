@@ -9,6 +9,9 @@ import type { Outfit } from "./gear";
 import type { HarborWorks } from "./projects";
 import { findPath, type Biome, type Poi, type PoiKind, type Tile, type WorldMap } from "./map";
 
+/** What the crew's home port is called, wherever its name is shown. */
+export const HARBOR_NAME = "Heylets Harbor";
+
 export const HARBOR_GRID: HexGrid = { cols: 13, rows: 11 };
 
 /** Offset column (visual left-to-right index) of an axial hex. */
