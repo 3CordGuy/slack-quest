@@ -54,6 +54,20 @@ class Builder {
 }
 
 const MODELS: Record<string, (b: Builder) => void> = {
+  // A length of bar counter, a full hex wide so neighbouring lengths join into one bar.
+  bar(b) {
+    b.box(WOOD, 1.76, 0.6, 0.5);
+    b.box(DARK_WOOD, 1.8, 0.07, 0.62, 0, 0.6);
+    b.box(DARK_WOOD, 1.76, 0.08, 0.04, 0, 0.12, 0.27);
+    b.post("#d8d2c0", 0.07, 0.06, 0.14, -0.4, 0.67, 0.08);
+    b.post("#c98b3a", 0.07, 0.06, 0.14, 0.3, 0.67, -0.05);
+  },
+  keg(b) {
+    b.post(WOOD, 0.34, 0.34, 0.7, 0, 0, 0, 8);
+    b.post("#4a4f5a", 0.355, 0.355, 0.06, 0, 0.12, 0, 8);
+    b.post("#4a4f5a", 0.355, 0.355, 0.06, 0, 0.52, 0, 8);
+    b.box(DARK_WOOD, 0.08, 0.08, 0.12, 0, 0.26, 0.36);
+  },
   table(b) {
     b.box(PALE_WOOD, 1.0, 0.08, 0.7, 0, 0.42);
     for (const [x, z] of [[-0.42, -0.27], [0.42, -0.27], [-0.42, 0.27], [0.42, 0.27]]) b.box(DARK_WOOD, 0.08, 0.42, 0.08, x, 0, z);

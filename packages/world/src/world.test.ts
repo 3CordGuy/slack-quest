@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { STARTING_STATS, hexDistance } from "@gantt-quest/core";
 import { BERRY_HEAL, FORAGE_ODDS,
-  PERK_CAPS,
+  PERK_CAPS, PUB_BUFF_CAPS, pubBuff,
   xpWithBonus,
   CANNED_FILLS,
   STORY_FRAMES,
@@ -555,6 +555,22 @@ describe("world reducer", () => {
     expect(greedy.potions).toBe(plain.potions + PERK_CAPS.potions);
     expect(greedy.maxHp).toBe(plain.maxHp + PERK_CAPS.maxHp);
     expect(greedy.hp).toBe(greedy.maxHp);
+  });
+
+  it("adds what a hero ate and drank at the pub on top of their hut, within the menu's limits", () => {
+    let s = createWorld("ABCD", "pub");
+    s = must(s, { type: "join", hero: heroInit("p0", "qa_paladin", "mace") });
+    s = must(s, { type: "join", hero: { ...heroInit("p1", "qa_paladin", "mace"), hutPerks: { focus: 1, maxHp: 4 }, pubBuff: pubBuff(["rum", "stew"]) } });
+    // More than the menu sells: a caller cannot hand out a bigger meal.
+    s = must(s, { type: "join", hero: { ...heroInit("p2", "qa_paladin", "mace"), pubBuff: { focus: 9, potions: 9, maxHp: 99, xpPct: 99 } } });
+    const [plain, fed, greedy] = s.heroes;
+    expect(plain.pubBuff).toEqual({ focus: 0, potions: 0, maxHp: 0, xpPct: 0 });
+    expect(fed.focus).toBe(plain.focus + 2);
+    expect(fed.maxHp).toBe(plain.maxHp + 8);
+    expect(fed.hp).toBe(fed.maxHp);
+    expect(greedy.pubBuff).toEqual(PUB_BUFF_CAPS);
+    expect(greedy.potions).toBe(plain.potions);
+    expect(greedy.maxHp).toBe(plain.maxHp + PUB_BUFF_CAPS.maxHp);
   });
 
   it("keeps the hearth's HP through a gear change and takes potions and focus into a fight", () => {
