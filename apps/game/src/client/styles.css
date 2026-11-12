@@ -70,13 +70,8 @@ input:focus, button:focus-visible, select:focus { outline: 2px solid var(--accen
 .centre { height: 100%; }
 
 /* ---------- Harbor ---------- */
-.harbor { max-width: 980px; margin: 0 auto; padding: 28px 16px 60px; }
-.harbor header { margin-bottom: 18px; }
 .harbor-grid { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 16px; align-items: start; }
 .field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 12px; max-width: 320px; }
-.class-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-bottom: 14px; }
-.class-card { display: flex; flex-direction: column; gap: 6px; text-align: left; padding: 10px; }
-.class-card.selected { border-color: var(--gold); background: #3a3520; }
 .stats { margin: 10px 0 14px; }
 .stat-row { display: grid; grid-template-columns: 120px 32px 28px 1fr auto; gap: 8px; align-items: center; padding: 3px 0; border-bottom: 1px dashed #37335a; }
 .stat-value { font-weight: bold; text-align: right; }
@@ -174,7 +169,7 @@ input:focus, button:focus-visible, select:focus { outline: 2px solid var(--accen
 @media (prefers-reduced-motion: reduce) { .chip.selectable { animation: none; } }
 
 @media (max-width: 760px) {
-  .harbor-grid, .class-grid { grid-template-columns: 1fr; }
+  .harbor-grid { grid-template-columns: 1fr; }
   .story { width: 46vw; font-size: 12px; }
   .crew { width: 44vw; }
   .feed { display: none; }
@@ -447,7 +442,6 @@ body { touch-action: manipulation; overscroll-behavior: none; }
 .signin .field { width: 100%; max-width: 320px; margin: 0; }
 .code-input { font-size: 22px; letter-spacing: 0.35em; width: 9em; text-align: center; }
 .small-print { font-size: 12px; }
-.returning { margin-top: 16px; max-width: 520px; }
 .signed-in { margin-top: 16px; }
 button.nudge { border-color: var(--gold); color: var(--gold); }
 
@@ -482,6 +476,5 @@ button.nudge { border-color: var(--gold); color: var(--gold); }
 @keyframes card-in { from { opacity: 0; transform: translate(-50%, -46%); } to { opacity: 1; transform: translate(-50%, -50%); } }
 @media (prefers-reduced-motion: reduce) { .battle-card { animation: none !important; } }
 .find-gains { margin: 10px 0; }
-.class-card span.class-passive { color: var(--gold); font-size: 12px; }
 .shop-subhead { margin: 10px 0 4px; font-size: 13px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted, #9a96b8); }
 .pub-visitor { color: var(--gold); }
