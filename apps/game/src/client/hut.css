@@ -1,0 +1,20 @@
+/* Inside a hut (HutView). Shared layout classes come from styles.css. */
+
+.hut-furnish { max-height: calc(100vh - 270px); overflow-y: auto; }
+.hut-furnish h3 { margin: 12px 0 4px; }
+.hut-furnish p { margin: 0 0 6px; }
+.hut-chosen .row { display: flex; gap: 6px; flex-wrap: wrap; }
+.hut-hint { color: var(--gold); }
+
+.hut-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.hut-list button { width: 100%; text-align: left; }
+
+.hut-refused {
+  position: absolute; left: 50%; top: 40%; transform: translate(-50%, -50%); z-index: 40;
+  max-width: min(360px, calc(100% - 32px)); text-align: center; border-color: var(--bad);
+}
+.hut-refused p { margin: 0 0 12px; }
+
+@media (max-width: 760px) {
+  .hut-furnish { width: 60vw; max-height: 50vh; font-size: 12px; }
+}

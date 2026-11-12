@@ -11,7 +11,8 @@ import { Ambience } from "./ambience";
 import "./camera.css";
 import type { HexPos } from "@gantt-quest/core";
 import { hexDistance } from "@gantt-quest/core";
-import { BATTLE_JOIN_RANGE, ENEMIES, findPath, reachable, tileAt, type ClientState, type Outfit, type Phase, type Poi, type Tile, type WorldEvent, type WorldMap } from "@gantt-quest/world";
+import { BATTLE_JOIN_RANGE, ENEMIES, MOVE_COST, findPath, reachable, tileAt, type ClientState, type Outfit, type Phase, type Poi, type Tile, type WorldEvent, type WorldMap } from "@gantt-quest/world";
+import { propModel } from "./props";
 import { SPRITE_ASPECT, fxTexture, labelTexture, spriteKey, spriteTexture, textTexture, type FxKind } from "./sprites";
 
 /** Spells fly as a coloured bolt; these are their colours, by ability name. */
@@ -43,6 +44,21 @@ export interface RenderState {
   npcs: Record<string, { hostile: boolean }>;
   /** No turns or movement points: the viewer may walk anywhere reachable, and tiles are not lit. */
   freeRoam?: boolean;
+  /** Furniture standing on hexes (a hut's room). Each blocks the hex it is on. */
+  props?: SceneProp[];
+  /** Inside a building: no sea or sky around the map, and the camera starts closer. */
+  indoors?: boolean;
+}
+
+export interface SceneProp {
+  id: string | number;
+  /** Which model to draw; see render/props.ts. */
+  model: string;
+  pos: HexPos;
+  /** 0 to 5, in sixths of a turn. */
+  facing: number;
+  /** Ringed, to show it is the one being handled. */
+  selected?: boolean;
 }
 
 /** Furthest a free-roaming walk may be previewed; matches the Harbor's server-side limit. */
@@ -67,7 +83,7 @@ const PAN_KEYS: Record<string, [number, number]> = {
   arrowup: [0, 1], arrowdown: [0, -1], arrowleft: [-1, 0], arrowright: [1, 0],
 };
 const PLAYER_COLORS = ["#ffd23f", "#5ce1e6", "#ff7ab6", "#9dff6b"];
-const BIOME_COLOR: Record<string, string> = { plains: "#7cb856", forest: "#4c9a52", hills: "#a39672", water: "#3f86dc", dock: "#9a7748" };
+const BIOME_COLOR: Record<string, string> = { plains: "#7cb856", forest: "#4c9a52", hills: "#a39672", water: "#3f86dc", dock: "#9a7748", floor: "#b08a5c", wall: "#6e5a48" };
 
 export function hexToWorld(p: HexPos): { x: number; z: number } {
   return { x: SQRT3 * (p.q + p.r / 2), z: 1.5 * p.r };
@@ -158,6 +174,9 @@ export class WorldRenderer {
   private decor = new THREE.Group();
   private poiGroup = new THREE.Group();
   private poiSig = "";
+  private propGroup = new THREE.Group();
+  private propSig = "";
+  private sea: THREE.Mesh;
   private unitGroup = new THREE.Group();
   private fxGroup = new THREE.Group();
   private pathGroup = new THREE.Group();
@@ -218,6 +237,7 @@ export class WorldRenderer {
     sea.position.y = 0.1;
     sea.receiveShadow = true;
     this.scene.add(sea);
+    this.sea = sea;
 
     this.hoverRing = new THREE.Mesh(
       new THREE.RingGeometry(0.78, 0.95, 6),
@@ -234,7 +254,7 @@ export class WorldRenderer {
     this.arena.visible = false;
     this.arena.receiveShadow = true;
 
-    this.scene.add(this.decor, this.poiGroup, this.rangeGroup, this.pathGroup, this.hoverRing, this.arena, this.unitGroup, this.fxGroup);
+    this.scene.add(this.decor, this.poiGroup, this.propGroup, this.rangeGroup, this.pathGroup, this.hoverRing, this.arena, this.unitGroup, this.fxGroup);
 
     canvas.addEventListener("pointerdown", this.onPointerDown);
     canvas.addEventListener("pointermove", this.onPointerMove);
@@ -293,11 +313,17 @@ export class WorldRenderer {
     if (first) this.buildTerrain(state);
     this.state = state;
     this.buildPois(state);
+    this.buildProps(state);
     this.buildJoinRanges(state);
+    if (first) {
+      this.sea.visible = !state.indoors;
+      (this.scene.background as THREE.Color).set(state.indoors ? "#1d1a2b" : "#a9dcf7");
+      if (state.indoors) this.userDist = this.camDist = 15;
+    }
 
     const me = state.heroes.find((h) => h.id === state.you);
     const myTurn = !!me && (state.freeRoam || (state.phase === "overworld" && state.turn?.heroId === state.you));
-    this.reach = myTurn ? reachable(state.map, me!.pos, state.freeRoam ? FREE_ROAM_REACH : state.turn!.mp) : new Map();
+    this.reach = myTurn ? reachable(state.map, me!.pos, state.freeRoam ? FREE_ROAM_REACH : state.turn!.mp, this.stepCost(state)) : new Map();
     this.paintTiles();
     this.syncUnits(state);
     this.updatePath();
@@ -310,11 +336,13 @@ export class WorldRenderer {
       this.rotateButtons.hidden = true;
     } else {
       this.dist = this.userDist;
-      this.yawGoal = nearestTurn(this.yaw, this.userYaw);
-      this.rotateButtons.hidden = false;
+      // A room's front wall is the low one, so indoors the view stays where it can see over it.
+      this.yawGoal = nearestTurn(this.yaw, state.indoors ? 0 : this.userYaw);
+      this.rotateButtons.hidden = !!state.indoors;
       const turnKey = `${state.phase}:${state.round}:${state.turn?.heroId ?? ""}`;
-      if (first && me) this.target.copy(this.standAt(me.pos));
-      if ((first || turnKey !== this.turnKey) && me && (myTurn || first)) this.targetGoal.copy(this.standAt(me.pos));
+      // A room is small enough to see whole, so indoors the camera stays on its middle.
+      if (first && me && !state.indoors) this.target.copy(this.standAt(me.pos));
+      if ((first || turnKey !== this.turnKey) && me && (myTurn || first) && !state.indoors) this.targetGoal.copy(this.standAt(me.pos));
       this.turnKey = turnKey;
     }
   }
@@ -508,6 +536,41 @@ export class WorldRenderer {
     }
   }
 
+  /** Furniture: rebuilt whenever a piece is added, moved, turned or selected. */
+  private buildProps(state: RenderState) {
+    const props = state.props ?? [];
+    const sig = props.map((p) => `${p.id}:${p.model}:${key(p.pos)}:${p.facing}:${p.selected ? 1 : 0}`).join("|");
+    if (sig === this.propSig) return;
+    this.propSig = sig;
+    this.propGroup.traverse((o) => {
+      const mesh = o as THREE.Mesh;
+      mesh.geometry?.dispose();
+      (mesh.material as THREE.Material | undefined)?.dispose();
+    });
+    this.propGroup.clear();
+    for (const prop of props) {
+      const g = propModel(prop.model);
+      const at = this.standAt(prop.pos);
+      g.position.copy(at);
+      g.rotation.y = -(prop.facing * Math.PI) / 3;
+      this.propGroup.add(g);
+      if (prop.selected) {
+        const ring = new THREE.Mesh(new THREE.RingGeometry(0.8, 0.95, 6), new THREE.MeshBasicMaterial({ color: "#ffd23f", side: THREE.DoubleSide }));
+        ring.rotation.x = -Math.PI / 2;
+        ring.rotation.z = Math.PI / 6;
+        ring.position.set(at.x, at.y + 0.03, at.z);
+        this.propGroup.add(ring);
+      }
+    }
+  }
+
+  /** Cost of stepping onto a tile: the terrain's, except that furniture cannot be walked through. */
+  private stepCost(state: RenderState): ((t: Tile) => number) | undefined {
+    if (!state.props?.length) return undefined;
+    const blocked = new Set(state.props.map((p) => key(p.pos)));
+    return (t) => (blocked.has(key(t)) ? Infinity : MOVE_COST[t.biome]);
+  }
+
   /**
    * Outline, in red, the area around a place with enemies still in it: a
    * hero standing inside the line when a fight starts there is pulled in.
@@ -637,6 +700,11 @@ export class WorldRenderer {
         add(box(0.5, 0.06, 0.06), lambert("#7a5230"), 0.2, 0.45, 0.1);
         break;
       }
+      case "door":
+        // A doormat in the gap, and a post either side of it.
+        add(box(0.9, 0.04, 0.5), lambert("#8c3b2f"), 0, 0.02, 0.28);
+        for (const x of [-0.8, 0.8]) add(box(0.14, 0.9, 0.14), lambert("#5a3d22"), x, 0.45, 0.28);
+        break;
       case "board":
         add(new THREE.CylinderGeometry(0.05, 0.05, 0.9, 5), lambert("#5a3d22"), -0.3, 0.45, 0);
         add(new THREE.CylinderGeometry(0.05, 0.05, 0.9, 5), lambert("#5a3d22"), 0.3, 0.45, 0);
@@ -826,7 +894,7 @@ export class WorldRenderer {
     (this.hoverRing.material as THREE.MeshBasicMaterial).color.set(reach && reach.cost > 0 ? "#ffffff" : "#35405a");
     const budget = state.freeRoam ? FREE_ROAM_REACH : state.turn?.mp;
     if (!reach || reach.cost === 0 || !me || budget === undefined) return;
-    const route = findPath(state.map, me.pos, hovered, budget);
+    const route = findPath(state.map, me.pos, hovered, budget, this.stepCost(state));
     for (const step of route?.path ?? []) {
       const dot = new THREE.Mesh(new THREE.SphereGeometry(0.13, 6, 4), new THREE.MeshBasicMaterial({ color: "#ffffff" }));
       const p = this.standAt(step);
@@ -881,14 +949,14 @@ export class WorldRenderer {
 
   /** Turn the view freely by an angle. No effect during a battle. */
   private turn(radians: number) {
-    if (this.state?.battle) return;
+    if (this.state?.battle || this.state?.indoors) return;
     this.userYaw += radians;
     this.yaw = this.yawGoal = this.userYaw;
   }
 
   /** Turn the view by whole hex sides (60°), easing there. */
   rotateBy(steps: number) {
-    if (this.state?.battle) return;
+    if (this.state?.battle || this.state?.indoors) return;
     const step = Math.PI / 3;
     // Snap to the nearest side first, so repeated presses land on clean angles.
     this.userYaw = (Math.round(this.userYaw / step) + steps) * step;

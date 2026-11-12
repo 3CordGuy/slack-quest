@@ -26,7 +26,7 @@ export const HARBOR_SHOP: HexPos = at(9, 5);
 /** The sparring ring, where crewmates try out their gear. */
 export const HARBOR_RING: HexPos = at(3, 5);
 
-const HEIGHT: Record<Biome, number> = { water: 0.05, plains: 0.3, forest: 0.42, hills: 0.75, dock: 0.1 };
+const HEIGHT: Record<Biome, number> = { water: 0.05, plains: 0.3, forest: 0.42, hills: 0.75, dock: 0.1, floor: 0.1, wall: 0.9 };
 
 export function harborPoi(id: string, kind: PoiKind, pos: HexPos): Poi {
   return { id, kind, pos, hidden: false, cleared: false, usedBy: [], enemies: [] };

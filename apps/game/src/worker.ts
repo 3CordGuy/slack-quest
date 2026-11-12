@@ -41,6 +41,8 @@ import {
   type Player,
 } from "./server/db";
 
+import { enterHut } from "./server/hut-room";
+
 export { HarborRoom } from "./server/harbor-room";
 export { HutRoom } from "./server/hut-room";
 export { RunRoom } from "./server/run-room";
@@ -207,6 +209,9 @@ app.get("/api/hut", async (c) => {
   const hut = await getHut(c.env.DB, c.get("player").id);
   return c.json({ ...hut, perks: hutPerks(hut.furnishings) });
 });
+
+// Walk into a hut's room: your own, or a crewmate's.
+app.get("/api/hut/:owner/ws", (c) => enterHut(c.env, c.get("player"), c.req.param("owner"), c.req.raw));
 
 // ---------- the notice board ----------
 

@@ -14,8 +14,8 @@ import {
 } from "@gantt-quest/core";
 import { makeRng, seedFromString, type Rng } from "./rng";
 
-/** `dock` is the wooden pier surface used in the Harbor. */
-export type Biome = "plains" | "forest" | "hills" | "water" | "dock";
+/** `dock` is the wooden pier surface used in the Harbor. `floor` and `wall` make up the inside of a hut. */
+export type Biome = "plains" | "forest" | "hills" | "water" | "dock" | "floor" | "wall";
 
 export const MOVE_COST: Record<Biome, number> = {
   plains: 1,
@@ -23,6 +23,8 @@ export const MOVE_COST: Record<Biome, number> = {
   hills: 2,
   water: Infinity,
   dock: 1,
+  floor: 1,
+  wall: Infinity,
 };
 
 export interface Tile {
@@ -36,9 +38,9 @@ export interface Tile {
 /**
  * `landing` is where the party's ship puts in on an island. `pier`, `plot`
  * `board` and `shop` exist only in the Harbor: a moored ship, a crew member's
- * hut, the notice board and the market stall.
+ * hut, the notice board and the market stall. `door` is the way out of a hut's room.
  */
-export type PoiKind = "landing" | "hut" | "lair" | "shrine" | "cache" | "camp" | "pier" | "plot" | "board" | "shop" | "ring";
+export type PoiKind = "landing" | "hut" | "lair" | "shrine" | "cache" | "camp" | "pier" | "plot" | "board" | "shop" | "ring" | "door";
 
 export interface Poi {
   id: string;
@@ -183,7 +185,7 @@ function pickBiome(rng: Rng): Biome {
   return "plains";
 }
 
-const BASE_HEIGHT: Record<Biome, number> = { water: 0.05, plains: 0.3, forest: 0.4, hills: 0.75, dock: 0.1 };
+export const BASE_HEIGHT: Record<Biome, number> = { water: 0.05, plains: 0.3, forest: 0.4, hills: 0.75, dock: 0.1, floor: 0.1, wall: 0.9 };
 
 /** Offset-space position of a hex, used for the island outline. */
 function flatPos(pos: HexPos): { x: number; y: number } {
