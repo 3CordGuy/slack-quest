@@ -129,7 +129,8 @@ export function WorksPanel({ works, refresh, onClose }: { works: HarborWorks | u
       const res = await api.giveToProject(def.id, amounts);
       setFetched(res.works);
       setStock(res.stock);
-      setNotice(res.completed ? `The ${def.name} is built!` : `You gave ${projectAmountsText(amounts)} to the ${def.name}.`);
+      const xp = res.xp?.text ? ` ${res.xp.text}` : "";
+      setNotice((res.completed ? `The ${def.name} is built!` : `You gave ${projectAmountsText(amounts)} to the ${def.name}.`) + xp);
       // Gold left the character sheet too.
       void refresh();
     } catch (e) {
