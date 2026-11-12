@@ -21,6 +21,7 @@ import {
   makeRng,
   pickDemand,
   pickFrame,
+  pickSpine,
   seedFromString,
   stepWorld,
   storyHints,
@@ -335,10 +336,12 @@ export class RunRoom extends DurableObject<Env> {
     });
     const frame = pickFrame(rng, recent.frames);
     const fallback = cannedFill(frame, rng);
+    // Where the islander is, how the way is found and how it ends, so two stories of a kind still differ.
+    const spine = pickSpine(frame, rng);
     // The NPC's ask is chosen by the game, then handed to the model so the prose agrees with it.
-    const demand = pickDemand(frame, rng, recent.demand);
+    const demand = pickDemand(frame, rng, recent.demand, spine);
     const hints = storyHints(rng, frame);
-    const fill = (await generateFill(this.env, frame, world.heroes.map((h) => h.name), demand, islandFacts(world.map), hints)) ?? fallback;
+    const fill = (await generateFill(this.env, frame, spine, world.heroes.map((h) => h.name), demand, islandFacts(world.map, spine.npcAt), hints)) ?? fallback;
     // The ship has sailed: what the heroes ate and drank at the pub is used up on this voyage.
     await clearPubOrders(this.env.DB, world.heroes.map((h) => h.id)).catch((err) => console.warn("run-room:pub-clear-failed", { err: err instanceof Error ? err.message : String(err) }));
     // So are the brews they took aboard from the apothecary. One brewed since boarding stays in the bag for next time.
@@ -348,10 +351,10 @@ export class RunRoom extends DurableObject<Env> {
       console.warn("run-room:larder-take-failed", { err: err instanceof Error ? err.message : String(err) });
       return undefined;
     });
-    const error = await this.serial(() => this.apply({ type: "begin", bible: buildBible(frame, fill, demand, rng), larder }));
+    const error = await this.serial(() => this.apply({ type: "begin", bible: buildBible(frame, fill, demand, rng, spine), larder }));
     if (error) {
       console.warn("run-room:story-rejected", { error });
-      await this.serial(() => this.apply({ type: "begin", bible: buildBible(frame, fallback, demand, rng), larder }));
+      await this.serial(() => this.apply({ type: "begin", bible: buildBible(frame, fallback, demand, rng, spine), larder }));
     }
   }
 
