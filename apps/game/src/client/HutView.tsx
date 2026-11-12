@@ -8,6 +8,7 @@ import { FURNISHINGS, HERO_CLASSES, craftProblem, hutPerks, hutRoom, hutTier, ne
 import { api, type Hut, type Me } from "./api";
 import { DragPanel } from "./DragPanel";
 import { CostChips, PerkMeter, ResourceChips } from "./hutDrops";
+import { TileAction } from "./TileAction";
 import { WorldRenderer, type RenderState } from "./render/WorldRenderer";
 import { useHut } from "./useHut";
 import "./hut.css";
@@ -292,6 +293,7 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
           : <span className="muted">Click a hex to walk. Only {owner?.name ?? "the owner"} can move the furniture.</span>}
         <button className={atDoor ? "primary" : ""} onClick={onLeave}>Leave</button>
       </DragPanel>
+      {atDoor && self && <TileAction renderer={renderer} pos={self.pos} unitId={self.id} label="Leave" run={onLeave} />}
       </>}
 
       {tip && <div className="tip">{tip}</div>}

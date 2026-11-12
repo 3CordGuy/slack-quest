@@ -2,7 +2,7 @@
 // each other. Ships are moored and boarded at the docks, each member has a
 // hut, and the notice board keeps the crew roster and voyage log.
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { HexPos } from "@gantt-quest/core";
 import { GATHER_SPOTS, GATHER_SPOT_IDS, HARBOR_BOARD, HARBOR_GATHER, HARBOR_NAME, HARBOR_PIERS, HARBOR_PLOTS, HARBOR_PUB, HARBOR_RING, HARBOR_SHOP, HARBOR_WORKS, HERO_CLASSES, MAX_PARTY, builtProjects, generateHarbor, harborPoi, hutTier, poiAt, type GatherSpot, type HarborShip } from "@gantt-quest/world";
 import { api, type Me } from "./api";
@@ -13,6 +13,7 @@ import { GatherPanel } from "./GatherPanel";
 import { InventoryScreen } from "./InventoryScreen";
 import { ShopScreen } from "./ShopScreen";
 import { SparView } from "./SparView";
+import { TileAction } from "./TileAction";
 import { WorldRenderer, type RenderState } from "./render/WorldRenderer";
 import { useHarbor } from "./useHarbor";
 import { WorksPanel } from "./works/WorksPanel";
@@ -142,6 +143,36 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
   const gatherHere = self ? GATHER_SPOT_IDS.find((id) => same(self.pos, HARBOR_GATHER[id])) : undefined;
   const atPub = !!self && same(self.pos, HARBOR_PUB);
   const atWorks = !!self && same(self.pos, HARBOR_WORKS);
+  // Remembered so that leaving a hut or the pub puts you back at its door; without it you come back at the usual spot.
+  const goInside = (at: string, hash: string) => {
+    try {
+      sessionStorage.setItem("gq.harborAt", at);
+    } catch {
+      // Storage is off: the usual spot it is.
+    }
+    location.hash = hash;
+  };
+  // The place under your feet and the one thing to do there, shown in the bar below and floated over the hex.
+  const here: { title: ReactNode; label: string; run(): void } | null =
+    atBoard ? { title: "The notice board", label: "Read the notice board", run: () => setNotices(true) }
+    : shipHere ? { title: `${shipHere.captain}'s ship · ${shipHere.aboard.length}/${MAX_PARTY} aboard`, label: "Walk aboard", run: () => board_(shipHere) }
+    : atShop ? { title: "The market stall", label: "Browse the wares", run: () => setShop(true) }
+    : atRing ? { title: "The sparring ring", label: "Spar", run: () => setSpar(true) }
+    : gatherHere ? {
+        title: GATHER_SPOTS[gatherHere].name,
+        label: gatherHere === "fishing" ? "Cast a line" : gatherHere === "felling" ? "Take up the axe" : "Work the seam",
+        run: () => setGather(gatherHere),
+      }
+    : atPub ? { title: "The pub", label: "Go in", run: () => goInside("pub", "pub") }
+    : atWorks ? { title: lit ? "The lighthouse" : "The works", label: "See the crew's projects", run: () => setWorks(true) }
+    : hutOwner ? {
+        title: <>{hutOwner.id === you ? "Your hut" : `${hutOwner.name}'s hut`} <span className="muted">· {hutTier(hutOwner.hutTier ?? 1).name}</span></>,
+        label: hutOwner.id === you ? "Enter your hut" : `Enter ${hutOwner.name}'s hut`,
+        run: () => goInside(String(plotIndex), `hut/${hutOwner.id}`),
+      }
+    : null;
+  // Anything laid over the Harbor, the sparring bout included, takes the floating button away.
+  const panelOpen = sheet || shop || notices || spar || !!gather || works || account;
   const error = harbor.error ?? launchError;
 
   return (
@@ -225,69 +256,17 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
       </DragPanel>
 
       <DragPanel id="harbor.turn" title="Here" compact className="turnbar panel">
-        {atBoard ? (
+        {here ? (
           <>
-            <span>The notice board</span>
-            <button className="primary" onClick={() => setNotices(true)}>Read the notice board</button>
-          </>
-        ) : shipHere ? (
-          <>
-            <span>{shipHere.captain}'s ship · {shipHere.aboard.length}/{MAX_PARTY} aboard</span>
-            <button className="primary" onClick={() => board_(shipHere)}>Walk aboard</button>
-          </>
-        ) : atShop ? (
-          <>
-            <span>The market stall</span>
-            <button className="primary" onClick={() => setShop(true)}>Browse the wares</button>
-          </>
-        ) : atRing ? (
-          <>
-            <span>The sparring ring</span>
-            <button className="primary" onClick={() => setSpar(true)}>Spar</button>
-          </>
-        ) : gatherHere ? (
-          <>
-            <span>{GATHER_SPOTS[gatherHere].name}</span>
-            <button className="primary" onClick={() => setGather(gatherHere)}>
-              {gatherHere === "fishing" ? "Cast a line" : gatherHere === "felling" ? "Take up the axe" : "Work the seam"}
-            </button>
-          </>
-        ) : atPub ? (
-          <>
-            <span>The pub</span>
-            <button className="primary" onClick={() => {
-              // Remembered so that leaving the pub puts you back at its door.
-              try {
-                sessionStorage.setItem("gq.harborAt", "pub");
-              } catch {
-                // Without it you come back at the usual spot.
-              }
-              location.hash = "pub";
-            }}>Go in</button>
-          </>
-        ) : atWorks ? (
-          <>
-            <span>{lit ? "The lighthouse" : "The works"}</span>
-            <button className="primary" onClick={() => setWorks(true)}>See the crew's projects</button>
-          </>
-        ) : hutOwner ? (
-          <>
-            <span>{hutOwner.id === you ? "Your hut" : `${hutOwner.name}'s hut`} <span className="muted">· {hutTier(hutOwner.hutTier ?? 1).name}</span></span>
-            <button className="primary" onClick={() => {
-              // Remembered so that leaving the hut puts you back at its door.
-              try {
-                sessionStorage.setItem("gq.harborAt", String(plotIndex));
-              } catch {
-                // Without it you come back at the usual spot.
-              }
-              location.hash = `hut/${hutOwner.id}`;
-            }}>{hutOwner.id === you ? "Enter your hut" : `Enter ${hutOwner.name}'s hut`}</button>
+            <span>{here.title}</span>
+            <button className="primary" onClick={here.run}>{here.label}</button>
           </>
         ) : (
           <span className="muted">Click a hex to walk. Ships are boarded at the piers; gear is traded at the market stall.</span>
         )}
       </DragPanel>
 
+      {here && self && !panelOpen && <TileAction renderer={renderer} pos={self.pos} unitId={self.id} label={here.label} run={here.run} />}
       {tip && <div className="tip">{tip}</div>}
       {error && <div className="toast">{error}</div>}
       {sheet && me.character && <InventoryScreen me={me} refresh={refreshAll} onClose={() => setSheet(false)} />}

@@ -10,6 +10,7 @@ import { DiceTable } from "./DiceTable";
 import { ShoalsTable } from "./ShoalsTable";
 import { DragPanel } from "./DragPanel";
 import { perkText } from "./hutDrops";
+import { TileAction } from "./TileAction";
 import { WorldRenderer, type RenderState } from "./render/WorldRenderer";
 import { usePub } from "./usePub";
 import "./hut.css";
@@ -250,6 +251,7 @@ export function PubView({ me, refresh, onLeave }: { me: Me; refresh(): Promise<u
           : <span className="muted">Click a hex to walk. Order at the menu board; the game tables are across the room.</span>}
         <button className={atDoor ? "primary" : ""} disabled={holdingDice} onClick={onLeave}>Leave</button>
       </DragPanel>
+      {atDoor && self && !holdingDice && <TileAction renderer={renderer} pos={self.pos} unitId={self.id} label="Leave" run={onLeave} />}
       </>}
 
       {tip && <div className="tip">{tip}</div>}
