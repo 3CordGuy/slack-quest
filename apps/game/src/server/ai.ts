@@ -81,7 +81,7 @@ export function islandFacts(map: WorldMap): string[] {
   const biome = (b: string) => map.tiles.filter((t) => t.biome === b).length;
   const facts: string[] = [];
   if (landing && hut) facts.push(`The islander's hut is ${describeBearing(landing, hut)} of where the ship lands.`);
-  if (hut && lair) facts.push(`The villain's lair is in the hills, ${describeBearing(hut, lair)} of the hut.`);
+  if (hut && lair) facts.push(`The hidden place the story leads to (the lair, den, hideout or vault) is in the hills, ${describeBearing(hut, lair)} of the hut.`);
   if (hut && camp) facts.push(`A camp of brigands lies ${describeBearing(hut, camp)} of the hut.`);
   facts.push(
     biome("forest") > biome("hills") ? "The island is mostly woodland and meadow, with some rocky hills." : "The island is mostly rocky hills and meadow, with some woodland.",
@@ -116,20 +116,20 @@ export async function generateFill(
         "What makes THIS voyage different from every other. Build the story around these, not around generic fantasy:\n" +
         `- Mood: ${hints.mood}\n` +
         `- The island is ${hints.island}\n` +
-        `- The stolen thing is ${hints.relic}, and the islanders depend on it for something specific and practical\n` +
-        `- The villain is ${hints.villain}\n` +
+        `- At the heart of it: ${hints.relic}. The islanders depend on it for something specific and practical\n` +
+        `- The threat: ${hints.villain}\n` +
         `- The islander in the hut is ${hints.islander}\n` +
         `- Naming style: ${hints.naming}\n` +
         `- The island's name starts with ${hints.initials.island}, the villain's with ${hints.initials.villain}, the islander's with ${hints.initials.islander}\n` +
         "- Do not use the words relic, ancient, shadow, dark, sacred, balance or prosperity anywhere. No apostrophes inside names. No sorcerers.\n\n" +
-        `Before the islander will say where the lair is, the heroes must: ${demand.text}. That is the only thing the islander asks for.\n\n` +
+        `The islander will not help until the heroes: ${demand.text}. That is the only thing the islander asks for.\n\n` +
         "Fill in:\n" +
-        "- title: the adventure's title, 2-6 words, naming the stolen thing or the island rather than describing a quest\n" +
+        "- title: the adventure's title, 2-6 words, naming what is at stake or the island rather than describing a quest\n" +
         "- premise: 2-3 sentences the players read on arrival; say what was stolen and why it matters\n" +
         "- island_name\n" +
-        "- villain_name, villain_description (one sentence)\n" +
-        "- relic_name: the stolen thing, starting with \"the\"\n" +
-        "- lair_name: where the villain hides, starting with \"the\"\n" +
+        `- villain_name, villain_description (one sentence): ${frame.fields.villain}\n` +
+        `- relic_name: ${frame.fields.relic}\n` +
+        `- lair_name: ${frame.fields.lair}\n` +
         "- npc_name, npc_role: the islander in the hut\n" +
         "- npc_persona: one or two sentences of temperament\n" +
         "- npc_voice: how they talk\n" +
@@ -190,10 +190,10 @@ function npcSystemPrompt(input: NpcTurnInput): string {
       ? ""
       : met
       ? `WHAT YOU ASKED OF THEM: that they ${bible.demand.text}. They have done it. You are grateful and ready to help.`
-      : `THE ONE THING YOU ASK OF THEM: that they ${bible.demand.text}. They have not done it yet. Until they do, you will not say where ${bible.poiNames.lair ?? "the lair"} is, however they ask. Tell them plainly that this is what you need. Ask for exactly this and nothing else: no errands, items, payments or favours of any other kind.`,
+      : `THE ONE THING YOU ASK OF THEM: that they ${bible.demand.text}. They have not done it yet. Until they do, you will not give them what they came to you for, however they ask. Tell them plainly that this is what you need. Ask for exactly this and nothing else: no errands, items, payments or favours of any other kind.`,
     `YOUR SECRET (never state it outright; you may let it slip only to someone you have truly come to trust): ${sheet.secret}`,
     `WHAT YOU KNOW:\n${sheet.knows.map((k) => `- ${k}`).join("\n")}`,
-    `THE SITUATION: ${bible.premise} The one responsible is ${bible.villain.name}: ${bible.villain.description}`,
+    `THE SITUATION: ${bible.premise} At the centre of it is ${bible.villain.name}: ${bible.villain.description}`,
     `WHAT THE HEROES ARE TRYING TO DO:\n${objectives}`,
     `HOW YOU FEEL ABOUT THEM RIGHT NOW: ${mood}.`,
     "RULES OF THE WORLD:",
@@ -293,7 +293,7 @@ export async function writeEpilogue(env: Env, state: WorldState): Promise<string
   const bible = state.bible!;
   const won = state.result?.outcome === "victory";
   const fallback = won
-    ? `${bible.villain.name} is beaten and ${bible.relicName} is on its way home. ${bible.islandName} will remember the crew that came ashore. The ship turns back toward the Harbor, heavier than it arrived.`
+    ? `${bible.victoryLine} ${bible.islandName} will remember the crew that came ashore. The ship turns back toward the Harbor, heavier than it arrived.`
     : `${state.result?.reason ?? "The island proved too much."} The crew limps back to the ship, and ${bible.islandName} slips below the horizon. There will be other tides.`;
   if (isMock(env)) return fallback;
 
@@ -313,7 +313,7 @@ export async function writeEpilogue(env: Env, state: WorldState): Promise<string
       { role: "system", content: "You are the narrator of a 16-bit fantasy adventure. Write a 3-4 sentence epilogue in past tense. Plain prose only: no lists, no headings, no quotation marks around the whole thing." },
       {
         role: "user",
-        content: `Island: ${bible.islandName}. Premise: ${bible.premise}\nHeroes: ${heroes}.\nWhat happened: ${beats}\nOutcome: ${won ? `Victory. ${bible.villain.name} was defeated and ${bible.relicName} recovered.` : `Defeat. ${state.result?.reason}`}\nEnd with the ship sailing back to the Harbor.`,
+        content: `Island: ${bible.islandName}. Premise: ${bible.premise}\nHeroes: ${heroes}.\nWhat happened: ${beats}\nOutcome: ${won ? `Victory. ${bible.victoryLine}` : `Defeat. ${state.result?.reason}`}\nEnd with the ship sailing back to the Harbor.`,
       },
     ],
     260,

@@ -16,7 +16,7 @@ import {
   type Combatant,
 } from "./battle";
 import { rollCheck, statPct, type CheckResult } from "./check";
-import { KEY_ITEMS, WEAPONS } from "./content";
+import { ENEMIES, KEY_ITEMS, WEAPONS } from "./content";
 import { rollItem, type ItemDef, type Outfit } from "./gear";
 import { findPath, generateMap, poiAt, poiById, type Poi, type WorldMap } from "./map";
 import {
@@ -162,6 +162,7 @@ export type WorldEvent =
   | { t: "loot"; heroId: string; item: ItemDef }
   | { t: "key_item"; heroId: string; item: string; name: string }
   | { t: "geared"; heroId: string }
+  | { t: "rite"; heroId: string; text: string }
   | { t: "chat"; line: ChatLine }
   | { t: "npc_intent"; npcId: string; verb: string; ok: boolean; reason?: string }
   | { t: "objective"; id: string }
@@ -210,6 +211,17 @@ export function createWorld(code: string, seed: string): WorldState {
 /** Bring a saved state up to the current shape. Call on every state loaded from storage. */
 export function upgradeWorld(state: WorldState): WorldState {
   if (state.bible && !state.bible.demand) state.bible.demand = NO_DEMAND;
+  if (state.bible && !state.bible.rites) {
+    // Stories saved before there was more than one shape of story.
+    Object.assign(state.bible, {
+      rites: [],
+      triggers: [],
+      encounters: {},
+      route: ["landing", "hut", "lair"],
+      victoryLine: `${state.bible.villain.name} is defeated.`,
+      defeatLine: `${state.bible.villain.name} slipped away with ${state.bible.relicName}.`,
+    });
+  }
   // Heroes saved before gear had power and armor.
   for (const hero of state.heroes) {
     hero.weaponPower ??= 0;
@@ -240,22 +252,18 @@ export function awaitingKey(state: WorldState): string | null {
 
 /**
  * Days the doom clock must allow for this party to finish this story on this
- * island: walk landing → hut → (the demanded camp and back) → lair at the slowest
- * hero's expected pace, with half again for detours and bad rolls, plus a
- * few days to talk, rest and fight.
+ * island: walk the story's route (including any errand for the NPC and the
+ * trip back) at the slowest hero's expected pace, with half again for
+ * detours and bad rolls, plus days to talk, search, rest and fight.
  */
 export function requiredDoom(map: WorldMap, bible: StoryBible, heroes: Pick<Hero, "base" | "bonus">[]): number {
-  const hut = bible.npcs[0]?.poi;
-  const errand = bible.demand.fact?.startsWith("defeated:") ? bible.demand.fact.slice(9) : null;
-  // After the errand the party has to return to the NPC to be told where the lair is.
-  const stops = ["landing", hut, ...(errand ? [errand, hut] : []), "lair"]
-    .map((id) => (id ? poiById(map, id) : undefined))
-    .filter((p): p is Poi => !!p);
+  const stops = bible.route.map((id) => poiById(map, id)).filter((p): p is Poi => !!p);
   let cost = 0;
   for (let i = 1; i < stops.length; i++) cost += findPath(map, stops[i - 1].pos, stops[i].pos)?.cost ?? 0;
   // Movement is 2 plus one per success on four Agility rolls.
   const slowest = Math.min(...heroes.map((h) => 2 + (4 * heroPct(h, "agi")) / 100), 6);
-  return Math.ceil((cost / slowest) * 1.5) + 4;
+  // A day for each stop where something has to be done, on top of the walking.
+  return Math.ceil((cost / slowest) * 1.5) + 2 + Math.ceil(stops.length / 2);
 }
 
 // ---------- internals ----------
@@ -308,7 +316,12 @@ function setFact(ctx: Ctx, fact: string) {
   for (const o of bible.objectives) {
     if (o.fact !== fact) continue;
     ctx.events.push({ t: "objective", id: o.id });
-    if (o.id === bible.finalObjective) endRun(ctx, "victory", `${bible.villain.name} is defeated.`);
+    if (o.id === bible.finalObjective) endRun(ctx, "victory", bible.victoryLine);
+  }
+  // Some places are found by piecing things together rather than by being told.
+  for (const trigger of bible.triggers) {
+    const poi = poiById(ctx.state.map, trigger.reveal);
+    if (poi?.hidden && trigger.requires.every((f) => ctx.state.facts[f])) revealPoi(ctx, poi);
   }
 }
 
@@ -348,7 +361,7 @@ function startTurn(ctx: Ctx) {
       state.doom -= 1;
       ctx.events.push({ t: "round", round: state.round, doom: state.doom });
       if (state.doom <= 0) {
-        endRun(ctx, "defeat", `${state.bible?.villain.name ?? "The villain"} slipped away with ${state.bible?.relicName ?? "the relic"}.`);
+        endRun(ctx, "defeat", state.bible?.defeatLine ?? "Time ran out.");
         return;
       }
     }
@@ -389,7 +402,7 @@ function startBattle(ctx: Ctx, at: HexPos, enemies: string[], poiId: string | nu
   const { state } = ctx;
   const fighters = state.heroes.filter((h) => hexDistance(h.pos, at) <= BATTLE_JOIN_RANGE);
   if (fighters.length === 0) return;
-  const boss = enemies.includes("villain");
+  const boss = enemies.some((k) => ENEMIES[k]?.boss);
   const created = createBattle(
     {
       heroes: fighters.map(toCombatant),
@@ -460,6 +473,16 @@ function interact(ctx: Ctx, hero: Hero): string | null {
   if (!poi) return "nothing here";
   const turn = state.turn!;
 
+  // A story step that happens here comes before whatever the place normally offers.
+  const rite = state.bible?.rites.find((r) => r.poi === poi.id && !state.facts[r.sets] && r.requires.every((f) => state.facts[f]));
+  if (rite) {
+    turn.acted = true;
+    ctx.events.push({ t: "rite", heroId: hero.id, text: rite.text });
+    for (const h of state.heroes) grant(ctx, h, { xp: 20 });
+    setFact(ctx, rite.sets);
+    return null;
+  }
+
   if (poi.kind === "shrine") {
     if (poi.usedBy.includes(hero.id)) return "the shrine has nothing more for you";
     poi.usedBy.push(hero.id);
@@ -468,6 +491,7 @@ function interact(ctx: Ctx, hero: Hero): string | null {
     hero.hp += hp;
     hero.focus = hero.maxFocus;
     ctx.events.push({ t: "rest", heroId: hero.id, hp, focus, where: "shrine" });
+    setFact(ctx, `prayed:${poi.id}`);
   } else if (poi.kind === "landing") {
     const hp = Math.min(hero.maxHp - hero.hp, 6);
     hero.hp += hp;
@@ -486,6 +510,8 @@ function interact(ctx: Ctx, hero: Hero): string | null {
         item: check.perfect ? rollItem(rng, hero.classId, 0.4, hero.level) : null,
       });
     }
+    // Whatever the story needed from this place is found by anyone who looks, loot or no loot.
+    setFact(ctx, `searched:${poi.id}`);
   } else if (poi.kind === "camp" || poi.kind === "lair") {
     if (poi.cleared) return "nothing left to fight here";
     turn.acted = true;
@@ -671,6 +697,10 @@ export function stepWorld(prev: WorldState, action: WorldAction): StepResult {
       const problems = validateBible(action.bible, state.map);
       if (problems.length > 0) return fail(`story rejected: ${problems.join("; ")}`);
       state.bible = action.bible;
+      for (const [poiId, enemies] of Object.entries(action.bible.encounters)) {
+        const poi = poiById(state.map, poiId);
+        if (poi) poi.enemies = enemies;
+      }
       state.doom = Math.max(action.bible.doomRounds, requiredDoom(state.map, action.bible, state.heroes));
       state.npcs = Object.fromEntries(action.bible.npcs.map((n) => [n.id, newNpcRun()]));
       state.order = [...state.heroes]

@@ -12,7 +12,7 @@ const H = 22;
 const OUTLINE = "#1b1830";
 
 type Hat = "helm" | "wizard" | "hood" | "horns" | "none";
-type Weapon = "sword" | "staff" | "daggers" | "club" | "none";
+type Weapon = "sword" | "staff" | "daggers" | "club" | "bow" | "none";
 
 interface Look {
   skin: string;
@@ -31,6 +31,9 @@ const LOOKS: Record<string, Look> = {
   npc: { skin: "#e8b891", hair: "#b9b9b9", body: "#a0683a", legs: "#5a4632", accent: "#e8dcc0", hat: "none", weapon: "none" },
   bandit: { skin: "#d9a67c", hair: "#3a2a20", body: "#7a2f2f", legs: "#3a3030", accent: "#1f1f1f", hat: "hood", weapon: "club" },
   cultist: { skin: "#cdb7d6", hair: "#2a1838", body: "#5b2a7a", legs: "#34194a", accent: "#e04fd0", hat: "hood", weapon: "staff" },
+  brute: { skin: "#c9a27c", hair: "#2a1c14", body: "#5a4632", legs: "#3a2e22", accent: "#b9433d", hat: "none", weapon: "club" },
+  archer: { skin: "#d9a67c", hair: "#3a2a20", body: "#4f6b3a", legs: "#33402a", accent: "#e8dcc0", hat: "hood", weapon: "bow" },
+  guardian: { skin: "#9aa4b2", hair: "#7b8494", body: "#6b7280", legs: "#4b5563", accent: "#7fe3ff", hat: "none", weapon: "none" },
   villain: { skin: "#b8c7b0", hair: "#101010", body: "#2a2a35", legs: "#15151c", accent: "#e23b3b", hat: "horns", weapon: "sword" },
 };
 
@@ -108,6 +111,11 @@ function drawHumanoid(ctx: CanvasRenderingContext2D, look: Look) {
     px(13, 11, 1, 3, "#dfe6ee");
   } else if (look.weapon === "club") {
     px(13, 7, 2, 7, "#7a5230");
+  } else if (look.weapon === "bow") {
+    px(13, 6, 1, 1, "#7a5230");
+    px(14, 7, 1, 7, "#7a5230");
+    px(13, 14, 1, 1, "#7a5230");
+    px(13, 7, 1, 7, look.accent);
   }
 }
 
@@ -252,20 +260,18 @@ function drawHero(ctx: CanvasRenderingContext2D, look: Look, outfit: Outfit) {
   }
 }
 
-function drawWolf(ctx: CanvasRenderingContext2D) {
+function drawWolf(ctx: CanvasRenderingContext2D, fur = "#7d8793", dark = "#59616c", eye = "#ffd23f") {
   const px = (x: number, y: number, w: number, h: number, c: string) => {
     ctx.fillStyle = c;
     ctx.fillRect(x + 1, y + 1, w, h);
   };
-  const fur = "#7d8793";
-  const dark = "#59616c";
   px(2, 11, 10, 4, fur); // body
   px(0, 10, 2, 2, dark); // tail
   px(10, 8, 5, 5, fur); // head
   px(14, 10, 2, 2, dark); // snout
   px(10, 6, 1, 2, dark); // ears
   px(13, 6, 1, 2, dark);
-  px(13, 9, 1, 1, "#ffd23f"); // eye
+  px(13, 9, 1, 1, eye);
   px(3, 15, 2, 4, dark); // legs
   px(9, 15, 2, 4, dark);
 }
@@ -291,6 +297,8 @@ export function spriteTexture(kind: string, outfit?: Outfit): THREE.CanvasTextur
   canvas.height = H;
   const ctx = canvas.getContext("2d", { willReadFrequently: true })!;
   if (kind === "wolf") drawWolf(ctx);
+  // The pack leader: the same animal, darker, with a red eye. The renderer draws it larger.
+  else if (kind === "alpha") drawWolf(ctx, "#4a4f5c", "#2c3039", "#ff4d4d");
   else if (outfit) drawHero(ctx, LOOKS[kind] ?? LOOKS.bandit, outfit);
   else drawHumanoid(ctx, LOOKS[kind] ?? LOOKS.bandit);
   finish(ctx);

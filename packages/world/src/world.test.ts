@@ -493,7 +493,8 @@ describe("world reducer", () => {
     expect(s.result!.outcome).toBe("victory");
     expect(s.facts["defeated:lair"]).toBe(true);
     for (const id of ["p1", "p2"]) {
-      expect(s.earned[id].xp).toBeGreaterThanOrEqual(54 + 50);
+      // The villain (40) plus whichever lieutenant the story rolled (13 to 18), plus the story bonus (50).
+      expect(s.earned[id].xp).toBeGreaterThanOrEqual(40 + 13 + 50);
       expect(s.earned[id].gold).toBeGreaterThan(30);
       expect(s.earned[id].items.length).toBeGreaterThanOrEqual(2);
     }
