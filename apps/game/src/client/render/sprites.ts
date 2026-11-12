@@ -825,17 +825,23 @@ const BUBBLE_INK: [number, number, number] = [35, 31, 58];
 /** Widest a line of speech may be, in pixels of text, so a bubble stays narrow on a phone. */
 const BUBBLE_TEXT_WIDTH = 120;
 const BUBBLE_MAX_LINES = 3;
+/** Rows per line: the system font's, and the pixel font's (9 rows of glyph and 2 between lines). */
 const BUBBLE_LINE_ROWS = 13;
+const BUBBLE_PIXEL_LINE_ROWS = PIXEL_LINE_ROWS + 2;
 /** Rows the tail hangs below the box. */
 export const BUBBLE_TAIL_ROWS = 4;
 
-/** Break speech into at most three lines that fit the bubble, ending in an ellipsis if it had to be cut. */
-export function wrapSpeech(text: string): string[] {
+/**
+ * Break speech into at most three lines that fit the bubble, ending in an
+ * ellipsis if it had to be cut. `width` measures a line in whichever font
+ * the bubble is drawn in.
+ */
+export function wrapSpeech(text: string, width: (s: string) => number = measure): string[] {
   const words = text.replace(/\s+/g, " ").trim().split(" ").filter(Boolean);
   const lines: string[] = [];
   let line = "";
   let cut = false;
-  const fits = (s: string) => measure(s) <= BUBBLE_TEXT_WIDTH;
+  const fits = (s: string) => width(s) <= BUBBLE_TEXT_WIDTH;
   for (let word of words) {
     const tryLine = line ? `${line} ${word}` : word;
     if (fits(tryLine)) {
@@ -876,25 +882,36 @@ export function wrapSpeech(text: string): string[] {
 /**
  * A speech bubble: pale, with a one-pixel dark outline, clipped corners and a
  * tail at the bottom middle pointing down at the speaker. The text is drawn as
- * text on a canvas (never markup) and snapped to solid pixels like a name tag.
+ * text on a canvas (never markup): in the bitmap font the plates use, or, for
+ * speech it has no glyphs for (an emoji, another script), in the system font
+ * snapped to solid pixels.
  */
 export function bubbleTexture(text: string): { texture: THREE.CanvasTexture; width: number; rows: number } {
-  const lines = wrapSpeech(text);
-  const textW = Math.max(...lines.map(measure));
+  // The ellipsis a cut line ends with is in the bitmap font too, so the check is on the speech itself.
+  const pixel = canDrawPixelText(text);
+  const lineWidth = pixel ? pixelTextWidth : measure;
+  const lines = wrapSpeech(text, lineWidth);
+  const textW = Math.max(...lines.map(lineWidth));
   const width = Math.max(16, textW + 10);
-  const box = lines.length * BUBBLE_LINE_ROWS + 4;
+  const lineRows = pixel ? BUBBLE_PIXEL_LINE_ROWS : BUBBLE_LINE_ROWS;
+  // Pixel font: outline, a row of margin, the lines, a row of margin, outline.
+  const box = pixel ? lines.length * lineRows + 2 : lines.length * lineRows + 4;
   const rows = box + BUBBLE_TAIL_ROWS;
   const canvas = document.createElement("canvas");
   canvas.width = width;
   canvas.height = rows;
   const ctx = canvas.getContext("2d", { willReadFrequently: true })!;
-  ctx.font = LABEL_FONT;
-  (ctx as CanvasRenderingContext2D & { letterSpacing?: string }).letterSpacing = "1px";
-  ctx.textBaseline = "middle";
-  ctx.textAlign = "left";
-  ctx.fillStyle = "#ffffff";
   const left = Math.floor((width - textW) / 2);
-  lines.forEach((line, i) => ctx.fillText(line, left, 2 + i * BUBBLE_LINE_ROWS + BUBBLE_LINE_ROWS / 2 + 1));
+  if (pixel) {
+    lines.forEach((line, i) => drawPixelText(ctx, line, left, 2 + i * lineRows, "#ffffff"));
+  } else {
+    ctx.font = LABEL_FONT;
+    (ctx as CanvasRenderingContext2D & { letterSpacing?: string }).letterSpacing = "1px";
+    ctx.textBaseline = "middle";
+    ctx.textAlign = "left";
+    ctx.fillStyle = "#ffffff";
+    lines.forEach((line, i) => ctx.fillText(line, left, 2 + i * lineRows + lineRows / 2 + 1));
+  }
   const image = ctx.getImageData(0, 0, width, rows);
   const px = image.data;
   const mid = Math.floor(width / 2);
