@@ -372,17 +372,17 @@ export class Ambience {
         const y0 = 1.2 + r(2) * 2.6;
         const z0 = b.minZ + r(3) * (b.maxZ - b.minZ);
         const reach = 4 + r(4) * 3;
-        // One to three tight curls, each somewhere different along the way and its own size.
-        const curls = r(5) < 0.4 ? 1 : r(5) < 0.8 ? 2 : 3;
-        const at1 = 0.2 + r(6) * 0.2;
-        const at2 = at1 + 0.16 + r(7) * 0.12;
-        const at3 = at2 + 0.14 + r(14) * 0.1;
-        const size1 = 0.16 + r(8) * 0.16;
-        const size2 = 0.12 + r(9) * 0.14;
-        const size3 = 0.1 + r(15) * 0.1;
-        // A quick, shallow ripple the whole way, so the line is never straight.
-        const ripple = 0.08 + r(10) * 0.08;
-        const beat = 34 + r(11) * 26;
+        // One to three open curls, each somewhere different along the way and its own size.
+        const curls = r(5) < 0.5 ? 1 : r(5) < 0.9 ? 2 : 3;
+        const at1 = 0.18 + r(6) * 0.15;
+        const at2 = at1 + 0.2 + r(7) * 0.1;
+        const at3 = at2 + 0.18 + r(14) * 0.08;
+        const size1 = 0.3 + r(8) * 0.25;
+        const size2 = 0.24 + r(9) * 0.2;
+        const size3 = 0.2 + r(15) * 0.15;
+        // A slow, shallow ripple the whole way, so the line is never straight.
+        const ripple = 0.1 + r(10) * 0.08;
+        const beat = 14 + r(11) * 12;
         const drift = (r(12) - 0.5) * 0.8;
         for (let i = 0; i < TRAIL; i++) {
           // Each pixel follows the head a little further back along the same path.
@@ -390,17 +390,17 @@ export class Ambience {
           let along = (s - 0.5) * reach;
           let up = Math.sin(s * beat + r(13) * 6) * ripple + (s - 0.5) * drift;
           if (curls >= 1) {
-            const u = smooth(at1 - 0.045, at1 + 0.045, s) * Math.PI * 2;
+            const u = smooth(at1 - 0.08, at1 + 0.08, s) * Math.PI * 2;
             along -= Math.sin(u) * size1;
             up += (1 - Math.cos(u)) * size1;
           }
           if (curls >= 2) {
-            const u = smooth(at2 - 0.035, at2 + 0.035, s) * Math.PI * 2;
+            const u = smooth(at2 - 0.07, at2 + 0.07, s) * Math.PI * 2;
             along -= Math.sin(u) * size2;
             up += (1 - Math.cos(u)) * size2;
           }
           if (curls >= 3) {
-            const u = smooth(at3 - 0.03, at3 + 0.03, s) * Math.PI * 2;
+            const u = smooth(at3 - 0.06, at3 + 0.06, s) * Math.PI * 2;
             along -= Math.sin(u) * size3;
             up += (1 - Math.cos(u)) * size3;
           }
