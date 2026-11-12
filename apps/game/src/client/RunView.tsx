@@ -129,6 +129,8 @@ export function RunView({ code, me, refresh, onLeave }: { code: string; me: Me; 
   const latest = useRef<ClientState | null>(null);
   const names = useRef(new Map<string, string>());
   const [feed, setFeed] = useState<string[]>([]);
+  /** An islander the player just clicked: once they are in earshot, the chat opens and its box takes the keyboard. */
+  const [talkTo, setTalkTo] = useState<{ id: string; at: number } | null>(null);
   // Pacing around a fight: an opening card, the finished fight held on screen, and its recap. See BattleBeats.
   const [intro, setIntro] = useState<Intro | null>(null);
   const [held, setHeld] = useState<ClientState | null>(null);
@@ -199,6 +201,15 @@ export function RunView({ code, me, refresh, onLeave }: { code: string; me: Me; 
     const r = new WorldRenderer(mount.current!, {
       onHexClick: (pos) => {
         const s = latest.current;
+        // Clicking where an islander stands means "talk to them": the chat opens with its box ready to type in.
+        const npc = s?.story?.npcs.find((n) => {
+          const poi = s.map.pois.find((p) => p.id === n.poi);
+          return poi && poi.pos.q === pos.q && poi.pos.r === pos.r && !s.npcs[n.id]?.hostile;
+        });
+        setTalkTo(npc ? { id: npc.id, at: Date.now() } : null);
+        // Already beside them: talking is the whole point, so do not also try to walk onto their doorstep.
+        const me = s?.heroes.find((h) => h.id === s.you);
+        if (npc && me && hexDistance(me.pos, pos) <= 1) return;
         if (s?.phase === "overworld" && s.turn?.heroId === s.you) send.current({ type: "move", to: pos });
       },
       onHover: setHover,
@@ -263,7 +274,7 @@ export function RunView({ code, me, refresh, onLeave }: { code: string; me: Me; 
               <Feed lines={feed} />
               {state.phase === "overworld" && <TurnBar state={state} run={run} />}
               {ashore && me.character && <Trading me={me} partners={state.heroes.filter((h) => h.id !== state.you)} withId={tradeWith} onWith={setTradeWith} refresh={refresh} run={code} />}
-              {state.phase === "overworld" && <Chat state={state} run={run} />}
+              {state.phase === "overworld" && <Chat state={state} run={run} talkTo={talkTo} onTalked={() => setTalkTo(null)} />}
               {state.phase === "battle" && !held && !intro && <BattleHud battle={state.battle!} you={state.you} onAction={(action) => run.send({ type: "battle", action })} />}
               {intro && !held && <BattleIntro intro={intro} />}
               {held && recap && <BattleRecap recap={recap} you={state.you} onDone={release} />}
@@ -484,8 +495,10 @@ function TurnBar({ state, run }: { state: ClientState; run: RunConnection }) {
   );
 }
 
-function Chat({ state, run }: { state: ClientState; run: RunConnection }) {
+function Chat({ state, run, talkTo, onTalked }: { state: ClientState; run: RunConnection; talkTo: { id: string; at: number } | null; onTalked(): void }) {
   const [text, setText] = useState("");
+  const input = useRef<HTMLInputElement>(null);
+  const [unfold, setUnfold] = useState(0);
   const [persuade, setPersuade] = useState(false);
   const [focus, setFocus] = useState(0);
   const end = useRef<HTMLDivElement>(null);
@@ -498,6 +511,15 @@ function Chat({ state, run }: { state: ClientState; run: RunConnection }) {
   useEffect(() => {
     end.current?.scrollIntoView({ block: "end" });
   }, [lines.length]);
+  // The islander the player clicked is in earshot: open the panel if it was folded, and put the cursor in the box.
+  useEffect(() => {
+    if (!talkTo || talkTo.id !== npc?.id) return;
+    setUnfold((n) => n + 1);
+    // After the panel has unfolded and drawn its box. Not cancelled when the request is cleared just below.
+    setTimeout(() => input.current?.focus(), 60);
+    onTalked();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [talkTo, npc?.id]);
   if (!npc || !me) return null;
   const npcRun = state.npcs[npc.id];
   const attemptsLeft = MAX_PERSUADE_ATTEMPTS - (npcRun.attempts[me.id] ?? 0);
@@ -511,7 +533,7 @@ function Chat({ state, run }: { state: ClientState; run: RunConnection }) {
     setFocus(0);
   };
   return (
-    <DragPanel id="run.chat" title="Talk" compact className="chat panel">
+    <DragPanel id="run.chat" title="Talk" compact className="chat panel" unfold={unfold}>
       <div className="chat-head">
         <strong>{npc.name}</strong> <span className="muted">{npc.role}</span>
         <span className="tag">{mood}</span>
@@ -529,7 +551,7 @@ function Chat({ state, run }: { state: ClientState; run: RunConnection }) {
       ) : (
         <>
           <div className="row">
-            <input value={text} maxLength={280} placeholder={`Speak to ${npc.name}…`} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => e.key === "Enter" && submit()} />
+            <input ref={input} value={text} maxLength={280} placeholder={`Speak to ${npc.name}…`} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => e.key === "Enter" && submit()} />
             <button className="primary" disabled={!text.trim() || npcRun.busy} onClick={submit}>Say</button>
           </div>
           <label className="persuade">
