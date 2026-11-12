@@ -64,6 +64,19 @@ import { buyFromSalesman, getSalesman } from "./server/salesman";
 import { gatherStatus, rest, startOuting, stepOuting } from "./server/gather";
 import { builtProjectIds, contribute, crewWorks, projectStock } from "./server/projects";
 import { acceptTrade, closeTrade, listTrades, proposeTrade } from "./server/trade";
+import {
+  checkImport,
+  checkOverride,
+  contentBundle,
+  deleteOverride,
+  isAdmin,
+  isOverrideKind,
+  listOverrides,
+  overrideHistory,
+  putOverride,
+  putOverrides,
+  type OverrideKind,
+} from "./server/content";
 
 export { HarborRoom } from "./server/harbor-room";
 export { HutRoom } from "./server/hut-room";
@@ -159,7 +172,65 @@ app.get("/api/me", async (c) => {
     carryState(c.env.DB, player.id),
   ]);
   // `inventory` is what the hero has with them; what is in storage at home is only listed inside their hut.
-  return c.json({ player, character, inventory, crew, carry });
+  // `isAdmin` only decides whether the client shows the admin link: every admin route checks again.
+  return c.json({ player, character, inventory, crew, carry, isAdmin: isAdmin(c.env, player) });
+});
+
+// ---------- content overrides ----------
+
+// Names, palettes and pixel art changed on the admin side, as one bundle every
+// client loads at start. The ETag is the bundle's version, so a reload with
+// nothing new costs one small 304.
+app.get("/api/content", async (c) => {
+  const bundle = await contentBundle(c.env.DB);
+  const etag = `"content-${bundle.version}"`;
+  c.header("ETag", etag);
+  c.header("Cache-Control", "no-cache");
+  if (c.req.header("If-None-Match") === etag) return c.body(null, 304);
+  return c.json(bundle);
+});
+
+// Every admin route: signed in (above) and on the ADMIN_EMAILS allow-list.
+app.use("/api/admin/*", async (c, next) => {
+  if (!isAdmin(c.env, c.get("player"))) return c.json({ error: "admins only" }, 403);
+  return next();
+});
+
+app.get("/api/admin/overrides", async (c) => c.json({ overrides: await listOverrides(c.env.DB) }));
+
+app.put("/api/admin/overrides/:kind/:target", async (c) => {
+  const { kind, target } = c.req.param();
+  const body = await c.req.json<{ value?: unknown }>().catch(() => null);
+  const checked = checkOverride(kind, target, body?.value);
+  if (!checked.ok) return c.json({ error: checked.error }, 400);
+  const version = await putOverride(c.env.DB, kind as OverrideKind, target, checked.value, c.get("player").id);
+  return c.json({ version, value: checked.value });
+});
+
+app.delete("/api/admin/overrides/:kind/:target", async (c) => {
+  const { kind, target } = c.req.param();
+  if (!isOverrideKind(kind)) return c.json({ error: `Unknown override kind "${kind}".` }, 400);
+  const removed = await deleteOverride(c.env.DB, kind, target, c.get("player").id);
+  return c.json({ removed });
+});
+
+app.get("/api/admin/overrides/:kind/:target/history", async (c) => {
+  const { kind, target } = c.req.param();
+  if (!isOverrideKind(kind)) return c.json({ error: `Unknown override kind "${kind}".` }, 400);
+  return c.json({ history: await overrideHistory(c.env.DB, kind, target) });
+});
+
+// Export is the bundle itself; import takes one back (from another environment) and checks every entry first.
+app.get("/api/admin/export", async (c) => {
+  c.header("Content-Disposition", 'attachment; filename="gantt-quest-content.json"');
+  return c.json(await contentBundle(c.env.DB));
+});
+
+app.post("/api/admin/import", async (c) => {
+  const checked = checkImport(await c.req.json().catch(() => null));
+  if (!checked.ok) return c.json({ error: checked.error }, 400);
+  const version = await putOverrides(c.env.DB, checked.items, c.get("player").id);
+  return c.json({ version, imported: checked.items.length });
 });
 
 // Roll (or re-roll) starting stats for a character that is still a draft.

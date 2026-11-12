@@ -5,6 +5,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { loadMe, type Me } from "./api";
+import { loadContent } from "./content";
 import { Harbor } from "./Harbor";
 import { HarborView } from "./HarborView";
 import { HutView } from "./HutView";
@@ -26,7 +27,14 @@ export function App() {
 
   const refresh = useCallback(() => loadMe().then(setMe, (e: Error) => setError(e.message)), []);
   useEffect(() => {
-    void refresh();
+    // The content overrides need a session, so they load after the first /api/me
+    // (which signs a new visitor in as a guest) and before anything is drawn.
+    loadMe()
+      .then(async (first) => {
+        await loadContent();
+        setMe(first);
+      })
+      .catch((e: Error) => setError(e.message));
     const onHash = () => {
       setCode(runCodeFromHash());
       setInvite(inviteFromHash());

@@ -26,3 +26,4 @@ export * from "./salesman";
 export * from "./shoals";
 export * from "./trade";
 export * from "./carry";
+export * from "./catalogue";

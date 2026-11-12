@@ -75,6 +75,8 @@ export interface Env {
   EMAIL?: SendEmail;
   MAIL_FROM_ADDRESS?: string;
   MAIL_FROM_NAME?: string;
+  /** Secret: comma-separated emails allowed into the admin side. Unset means nobody is an admin. */
+  ADMIN_EMAILS?: string;
 }
 
 export interface Player {
