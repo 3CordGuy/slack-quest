@@ -34,6 +34,9 @@
 .workshop-list li { display: flex; align-items: center; justify-content: space-between; gap: 8px; border: 1px solid var(--line); padding: 6px 8px; }
 .workshop-list li.having { border-color: var(--gold); }
 .workshop-list button { flex: none; min-width: 84px; }
+.workshop-list li > .grow { flex: 1; min-width: 0; }
+.workshop-list .workshop-gear { width: 46px; height: 46px; }
+.works-bag-brew { display: inline-flex; align-items: center; gap: 3px; margin-right: 8px; vertical-align: middle; }
 .workshop-list .small-note { font-size: 12px; }
 
 @media (max-width: 640px) {

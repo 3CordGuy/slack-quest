@@ -37,6 +37,8 @@ import { HeroSheet, useHeroSheet } from "./HeroSheet";
 import { WorldRenderer } from "./render/WorldRenderer";
 import { useRun, type RunConnection } from "./useRun";
 import { itemName, label } from "./labels";
+import { Icon } from "./items";
+import { GOLD_ICON, ThingIcon } from "./thingIcons";
 
 /** The least time the crossing stays on screen once a ship has sailed. */
 const MIN_CROSSING_MS = 4500;
@@ -615,8 +617,12 @@ function Ending({ state, onLeave }: { state: ClientState; onLeave(): void }) {
         <h3>What you bring home</h3>
         {earned ? (
           <ul className="gear">
-            <li><span>{earned.xp} XP · {earned.gold} gold</span></li>
-            {earned.items.map((item, i) => <li key={i} className={`rarity-${item.rarity}`}><span><strong>{itemName(item)}</strong> <span className="muted">{item.rarity}</span></span></li>)}
+            <li><span className="with-icon"><ThingIcon icon={GOLD_ICON} size={27} />{earned.xp} XP · {earned.gold} gold</span></li>
+            {earned.items.map((item, i) => (
+              <li key={i} className={`rarity-${item.rarity}`}>
+                <span className="with-icon"><Icon name={item.icon} color={World.RARITY_COLOR[item.rarity]} size={27} /><span><strong>{itemName(item)}</strong> <span className="muted">{item.rarity}</span></span></span>
+              </li>
+            ))}
           </ul>
         ) : (
           <p className="muted">Nothing but the story.</p>

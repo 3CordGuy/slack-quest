@@ -6,6 +6,8 @@
 .pub-bar p { margin: 0 0 6px; }
 .pub-menu { list-style: none; margin: 0 0 8px; padding: 0; display: flex; flex-direction: column; gap: 6px; }
 .pub-menu li { display: flex; align-items: center; justify-content: space-between; gap: 8px; border: 1px solid var(--line); padding: 6px 8px; }
+.pub-menu li > .grow { flex: 1; min-width: 0; }
+.pub-having { display: inline-flex; align-items: center; gap: 3px; vertical-align: middle; }
 .pub-menu li.having { border-color: var(--gold); }
 .pub-menu button { flex: none; min-width: 64px; }
 .pub-talk { max-height: 150px; overflow-y: auto; border: 1px solid var(--line); padding: 6px 8px; margin-bottom: 6px; display: flex; flex-direction: column; gap: 4px; }

@@ -18,6 +18,8 @@ import {
 import { api } from "../api";
 import { DragPanel } from "../DragPanel";
 import { blurb, costLabel, label } from "../labels";
+import { RewardChips } from "../hutDrops";
+import { GOLD_ICON, ThingIcon, resourceIcon } from "../thingIcons";
 import "./works.css";
 
 /** Projects shown side by side, in this order. */
@@ -69,7 +71,7 @@ function ProjectCard({ def, paid, builtAt, stock, onGive }: { def: ProjectDef; p
             const max = givable[kind] ?? 0;
             return (
               <div key={kind} className="works-cost" data-kind={kind}>
-                <span className="works-kind">{costLabel(kind)}</span>
+                <span className="works-kind with-icon"><ThingIcon icon={kind === "gold" ? GOLD_ICON : resourceIcon(kind)} size={18} />{costLabel(kind)}</span>
                 <span className="bar" role="progressbar" aria-label={`${label("project", def.id)}: ${costLabel(kind)}`} aria-valuemin={0} aria-valuemax={cost} aria-valuenow={have}>
                   <span className={`bar-fill works-fill ${have >= cost ? "met" : ""}`} style={{ width: `${(100 * have) / cost}%` }} />
                   <span>{have} / {cost}</span>
@@ -149,7 +151,7 @@ export function WorksPanel({ works, refresh, onClose }: { works: HarborWorks | u
           <button className="small" onClick={onClose}>Close</button>
         </header>
         <p className="muted">Buildings the whole crew pays for together. Anyone can give gold or materials; once every cost is met the building stands for good.</p>
-        <p className="works-stock">You hold: <strong>{stock ? projectAmountsText(stock) || "nothing to give" : "…"}</strong></p>
+        <p className="works-stock" title={stock ? projectAmountsText(stock) : undefined}>You hold: {!stock ? <strong>…</strong> : projectAmountsText(stock) ? <RewardChips gold={stock.gold ?? 0} resources={stock} /> : <strong>nothing to give</strong>}</p>
         {error && <p className="bad" role="alert">{error}</p>}
         {notice && <p className="good" role="status">{notice}</p>}
         {!shown && !error && <p className="muted">Looking over the plans…</p>}

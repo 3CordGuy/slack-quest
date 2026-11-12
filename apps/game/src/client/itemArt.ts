@@ -4,40 +4,17 @@
 //
 // Each icon is keyed by the item's `icon` name. One colour in every icon,
 // the "accent", is the item's rarity colour, so a rare helm has a blue plume
-// and an epic one a purple plume.
+// and an epic one a purple plume. Icons for things that have no rarity (pub
+// fare, brews, hut furniture) live in thingArt.ts and are merged in below,
+// so they go through the same lookup and admin overrides as gear.
+
+import { C, spans, type Art, type Pen } from "./artKit";
+import { THING_ART } from "./thingArt";
 
 const SIZE = 16;
 /** Canvas is one pixel larger on every side to leave room for the outline. */
 export const ART_PIXELS = SIZE + 2;
 const OUTLINE = "#1b1830";
-
-const C = {
-  steel: "#c9d1dc",
-  shine: "#f1f5fa",
-  iron: "#8b95a5",
-  wood: "#8a5a2b",
-  bark: "#5a3d22",
-  leather: "#a0683a",
-  hide: "#6b4a2b",
-  gold: "#e0b12e",
-  paper: "#e8dcc0",
-  bone: "#eee6cf",
-  dark: "#2a2740",
-};
-
-interface Pen {
-  /** Filled rectangle. */
-  r(x: number, y: number, w: number, h: number, color: string): void;
-  /** One-pixel line between two points. */
-  l(x0: number, y0: number, x1: number, y1: number, color: string): void;
-  accent: string;
-  shade: string;
-}
-
-type Art = (p: Pen) => void;
-
-/** Rows of a filled shape given as [y, x0, x1] spans. */
-const spans = (p: Pen, color: string, rows: [number, number, number][]) => rows.forEach(([y, a, b]) => p.r(a, y, b - a + 1, 1, color));
 
 const ART: Record<string, Art> = {
   // ---- weapons ----
@@ -373,6 +350,9 @@ const ART: Record<string, Art> = {
     p.r(6, 6, 4, 1, C.wood);
     p.r(6, 9, 4, 1, C.wood);
   },
+
+  // ---- pub, brews, hut furniture and trophies (thingArt.ts) ----
+  ...THING_ART,
 };
 
 /** A cast bar seen from above and in front: lit top face, darker front, a glint. */
@@ -439,7 +419,7 @@ function pixelArt(pixels: IconPixels): Art {
   };
 }
 
-function drawIcon(art: Art, accent: string, silhouette: boolean): string {
+function drawIcon(art: Art, accent: string, silhouette: boolean, lines = false): string {
   const canvas = document.createElement("canvas");
   canvas.width = ART_PIXELS;
   canvas.height = ART_PIXELS;
@@ -463,7 +443,23 @@ function drawIcon(art: Art, accent: string, silhouette: boolean): string {
   };
   art(pen);
 
-  if (!silhouette) {
+  if (lines) {
+    // A blueprint: the figure's edges, and every seam where one colour meets another, as pale lines over a faint fill.
+    const img = ctx.getImageData(0, 0, ART_PIXELS, ART_PIXELS);
+    const at = (x: number, y: number) => (y * ART_PIXELS + x) * 4;
+    const filled = (x: number, y: number) => x >= 0 && y >= 0 && x < ART_PIXELS && y < ART_PIXELS && img.data[at(x, y) + 3] > 0;
+    const differs = (x: number, y: number, nx: number, ny: number) =>
+      filled(nx, ny) && [0, 1, 2].some((c) => img.data[at(x, y) + c] !== img.data[at(nx, ny) + c]);
+    ctx.clearRect(0, 0, ART_PIXELS, ART_PIXELS);
+    for (let y = 0; y < ART_PIXELS; y++) {
+      for (let x = 0; x < ART_PIXELS; x++) {
+        if (!filled(x, y)) continue;
+        const edge = !filled(x - 1, y) || !filled(x + 1, y) || !filled(x, y - 1) || !filled(x, y + 1) || differs(x, y, x - 1, y) || differs(x, y, x, y - 1);
+        ctx.fillStyle = edge ? accent : "rgba(214, 232, 255, 0.22)";
+        ctx.fillRect(x, y, 1, 1);
+      }
+    }
+  } else if (!silhouette) {
     // Same outline pass as the character sprites: empty pixels touching a filled one go dark.
     const img = ctx.getImageData(0, 0, ART_PIXELS, ART_PIXELS);
     const filled = (x: number, y: number) => x >= 0 && y >= 0 && x < ART_PIXELS && y < ART_PIXELS && img.data[(y * ART_PIXELS + x) * 4 + 3] > 0;
@@ -491,6 +487,20 @@ export function itemArtUrl(name: string, accent: string, silhouette = false): st
   if (hit) return hit;
   const over = iconOverrides[name];
   const url = drawIcon(over ? pixelArt(over) : codeArt(name), accent, silhouette);
+  cache.set(key, url);
+  return url;
+}
+
+/**
+ * A blueprint of an icon: its edges and inner seams as lines in `line`, for
+ * a plan of a piece rather than the piece. Goes through the same overrides.
+ */
+export function blueprintArtUrl(name: string, line: string): string {
+  const key = `${name}|${line}|blueprint`;
+  const hit = cache.get(key);
+  if (hit) return hit;
+  const over = iconOverrides[name];
+  const url = drawIcon(over ? pixelArt(over) : codeArt(name), line, false, true);
   cache.set(key, url);
   return url;
 }
