@@ -217,7 +217,10 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
             <button className="primary" onClick={() => setShop(true)}>Browse the wares</button>
           </>
         ) : hutOwner ? (
-          <span>{hutOwner.id === you ? "Your hut. Decorating and upgrades are coming." : `${hutOwner.name}'s hut.`}</span>
+          <>
+            <span>{hutOwner.id === you ? "Your hut" : `${hutOwner.name}'s hut`}</span>
+            <button className="primary" onClick={() => (location.hash = `hut/${hutOwner.id}`)}>{hutOwner.id === you ? "Enter your hut" : `Enter ${hutOwner.name}'s hut`}</button>
+          </>
         ) : (
           <span className="muted">Click a hex to walk. Ships are boarded at the piers; gear is traded at the market stall.</span>
         )}
