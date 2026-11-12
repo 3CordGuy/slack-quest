@@ -502,6 +502,9 @@ button.nudge { border-color: var(--gold); color: var(--gold); }
 .skip-vote { position: absolute; top: 46px; left: 50%; transform: translateX(-50%); z-index: 15; display: flex; align-items: center; gap: 10px; padding: 6px 10px; font-size: 12px; max-width: calc(100% - 24px); flex-wrap: wrap; justify-content: center; }
 .in-battle .skip-vote { top: auto; bottom: 168px; }
 
+/* The galley's chowder in the hold, beside the doom clock. */
+.topbar .larder-chip { color: var(--gold); border: 1px solid var(--gold); padding: 0 6px; font-size: 13px; }
+
 /* Your turn: a gold frame round the whole screen. Flashes as the turn arrives, then holds softly. Never takes clicks. */
 .your-turn-frame {
   position: fixed; inset: 0; z-index: 40; pointer-events: none;

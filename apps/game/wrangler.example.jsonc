@@ -84,7 +84,7 @@
       // Email sign-in codes. Needs the sending domain onboarded under Email
       // Service > Send Emails. Leave both out and codes are written to the log.
       "send_email": [{ "name": "EMAIL", "remote": true }],
-      "vars": { "AI_MODE": "live", "MAIL_FROM_ADDRESS": "noreply@heylets.party", "MAIL_FROM_NAME": "Gantt Quest" },
+      "vars": { "AI_MODE": "live", "MAIL_FROM_ADDRESS": "noreply@heylets.party", "MAIL_FROM_NAME": "The Harbor of Heylets" },
       "durable_objects": {
         "bindings": [
           { "name": "RUN_ROOM", "class_name": "RunRoom" },
@@ -113,7 +113,7 @@
       ],
       "ai": { "binding": "AI" },
       "send_email": [{ "name": "EMAIL", "remote": true }],
-      "vars": { "AI_MODE": "live", "MAIL_FROM_ADDRESS": "noreply@heylets.party", "MAIL_FROM_NAME": "Gantt Quest" },
+      "vars": { "AI_MODE": "live", "MAIL_FROM_ADDRESS": "noreply@heylets.party", "MAIL_FROM_NAME": "The Harbor of Heylets" },
       "durable_objects": {
         "bindings": [
           { "name": "RUN_ROOM", "class_name": "RunRoom" },

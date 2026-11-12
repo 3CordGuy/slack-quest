@@ -67,6 +67,7 @@ import { gatherStatus, rest, startOuting, stepOuting } from "./server/gather";
 import { builtProjectIds, contribute, crewWorks, projectStock } from "./server/projects";
 import { acceptTrade, closeTrade, listTrades, proposeTrade } from "./server/trade";
 import { apothecaryView, brew, smithItem, smithyView } from "./server/workshops";
+import { cook, galleyView } from "./server/galley";
 import { announceXp, harborXpFor, prepareXp, xpOutcome } from "./server/harbor-xp";
 import {
   checkImport,
@@ -617,6 +618,21 @@ app.post("/api/smithy/work", async (c) => {
   if (typeof result === "string") return c.json({ error: result }, 409);
   if (result.xp) c.executionCtx.waitUntil(announceXp(c.env, player.id, result.xp));
   return c.json({ ...(await smithyView(c.env.DB, player.id)), worked: result.name, xp: result.xp });
+});
+
+// ---------- the galley ----------
+
+// The crew's shared larder, and the materials this player could cook with.
+app.get("/api/galley", async (c) => c.json(await galleyView(c.env.DB, c.get("player").id)));
+
+// Cook one dish into the crew's larder. The recipe and the cap are the catalogue's; the client names only the dish.
+app.post("/api/galley/cook", async (c) => {
+  const player = c.get("player");
+  const body = await c.req.json<{ dishId?: unknown }>().catch(() => ({}) as { dishId?: unknown });
+  const result = await cook(c.env.DB, player.id, String(body.dishId ?? ""));
+  if (typeof result === "string") return c.json({ error: result }, 409);
+  if (result.xp) c.executionCtx.waitUntil(announceXp(c.env, player.id, result.xp));
+  return c.json({ ...(await galleyView(c.env.DB, player.id)), xp: result.xp });
 });
 
 // ---------- the sparring ring ----------
