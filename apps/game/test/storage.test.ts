@@ -6,6 +6,7 @@ import { DatabaseSync } from "node:sqlite";
 import { beforeEach, describe, expect, it } from "vitest";
 import { CARRY_BASE, type ItemDef } from "@gantt-quest/world";
 import { applyGrant, buyShopItem, carryState, equipItem, getInventory, getShop, sellItem, storeItem, takeStoredItem } from "../src/server/db";
+import { buyFromSalesman, getSalesman } from "../src/server/salesman";
 import { acceptTrade, proposeTrade } from "../src/server/trade";
 
 type Row = Record<string, unknown>;
@@ -211,5 +212,22 @@ describe("trades", () => {
     await storeItem(db, "ann", id);
     const made = await proposeTrade(db, "ann", { to: "bo", give: { items: [id] }, ask: {} }, null);
     expect("error" in made && made.error).toMatch(/in storage at home/);
+  });
+});
+
+describe("the pub's curio dealer", () => {
+  it("will not sell gear into a full pack, and takes no gold", async () => {
+    fillPack(LIMIT);
+    const view = await getSalesman(db, "ann", "curio");
+    if (typeof view === "string" || !view.here) throw new Error("no salesman");
+    const gear = view.here.entries.find((e) => e.goods.kind === "item")!;
+    expect(gear.problem).toMatch(/pack is full/);
+    expect(await buyFromSalesman(db, "ann", gear.index, "curio")).toMatch(/pack is full/);
+    expect(gold()).toBe(5000);
+    expect(carried()).toBe(LIMIT);
+    // Make room (Ann has no home here, so drop a ring rather than store it).
+    sql.prepare("DELETE FROM inventory WHERE id = ?").run(packIds()[0]);
+    expect(await buyFromSalesman(db, "ann", gear.index, "curio")).toMatchObject({ got: { index: gear.index } });
+    expect(carried()).toBe(LIMIT);
   });
 });

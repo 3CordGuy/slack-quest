@@ -136,8 +136,12 @@ function insertItem(db: D1Database, playerId: string, item: ItemDef, equipped: b
     .bind(playerId, item.kind, item.ref, item.name, item.rarity, item.slot, item.power, item.levelReq, item.icon, JSON.stringify(item.statBonus), equipped ? 1 : 0, stored ? 1 : 0, Date.now());
 }
 
-/** A new item into the pack, but only if the statement before it in the batch changed a row. */
-function paidPackItemStatement(db: D1Database, playerId: string, item: ItemDef): D1PreparedStatement {
+/**
+ * A new unequipped item into the pack, but only if the statement before it
+ * in the batch changed a row. Put the pack's room check in that statement
+ * (see `buyShopItem`): this one does not look at the limit.
+ */
+export function paidItemStatement(db: D1Database, playerId: string, item: ItemDef): D1PreparedStatement {
   return db
     .prepare(
       "INSERT INTO inventory (player_id, kind, ref, name, rarity, slot, power, level_req, icon, stat_bonus_json, equipped, stored, created_at) SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ? WHERE changes() > 0",
@@ -272,6 +276,12 @@ export async function getStored(db: D1Database, playerId: string): Promise<Inven
 
 /** SQL for how many unequipped items player ?1 carries right now. */
 const CARRIED_SQL = "(SELECT COUNT(*) FROM inventory WHERE player_id = ?1 AND equipped = 0 AND stored = 0)";
+/**
+ * SQL, true while player ?1's pack has room for one more under `limit`. The
+ * limit is inlined, so it must come from `carryState`, never a request. For
+ * the `alsoIf` of `spendStatements`.
+ */
+export const packHasRoomSql = (limit: number) => `${CARRIED_SQL} < ${Math.max(0, Math.floor(limit))}`;
 /** SQL that is true if player ?1 has a hut standing, and so a storage chest. */
 const HAS_HOME_SQL = "EXISTS (SELECT 1 FROM huts WHERE player_id = ?1 AND plot IS NOT NULL AND bin_json IS NULL)";
 
@@ -480,7 +490,7 @@ export async function buyShopItem(db: D1Database, playerId: string, index: numbe
         .prepare(`INSERT INTO shop_purchases (player_id, day, idx) SELECT ?1, ?2, ?3 WHERE (SELECT gold FROM characters WHERE player_id = ?1) >= ?4 AND ${CARRIED_SQL} < ?5`)
         .bind(playerId, day, index, entry.price, carry.limit),
       db.prepare("UPDATE characters SET gold = gold - ?1 WHERE player_id = ?2 AND changes() > 0").bind(entry.price, playerId),
-      paidPackItemStatement(db, playerId, entry.item),
+      paidItemStatement(db, playerId, entry.item),
     ]);
     if (res[2].meta.changes === 0) {
       // Gold or room went elsewhere between the check and the batch: nothing happened.
@@ -956,7 +966,7 @@ export async function refreshHut(env: Env, ownerId: string): Promise<void> {
  * Amounts and `alsoIf` are inlined, so they must come from the catalogue,
  * never from a request.
  */
-function spendStatements(db: D1Database, playerId: string, gold: number, resources: Resources, alsoIf = "1"): D1PreparedStatement[] {
+export function spendStatements(db: D1Database, playerId: string, gold: number, resources: Resources, alsoIf = "1"): D1PreparedStatement[] {
   const kinds = RESOURCE_KINDS.filter((k) => (resources[k] ?? 0) > 0);
   const amount = (n: number) => Math.max(0, Math.floor(n));
   const enough = kinds.map((k) => `COALESCE((SELECT qty FROM resources WHERE player_id = ?1 AND kind = '${k}'), 0) >= ${amount(resources[k]!)}`);
@@ -970,7 +980,7 @@ function spendStatements(db: D1Database, playerId: string, gold: number, resourc
 }
 
 /** A new furnishing into storage, but only if the statement before it in the batch changed a row. */
-function paidFurnishingStatement(db: D1Database, playerId: string, defId: string): D1PreparedStatement {
+export function paidFurnishingStatement(db: D1Database, playerId: string, defId: string): D1PreparedStatement {
   return db
     .prepare("INSERT INTO furnishings (player_id, def_id, label, meta_json, created_at) SELECT ?, ?, ?, '{}', ? WHERE changes() > 0")
     .bind(playerId, defId, FURNISHINGS[defId].name, now());

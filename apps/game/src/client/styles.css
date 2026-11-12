@@ -484,3 +484,4 @@ button.nudge { border-color: var(--gold); color: var(--gold); }
 .find-gains { margin: 10px 0; }
 .class-card span.class-passive { color: var(--gold); font-size: 12px; }
 .shop-subhead { margin: 10px 0 4px; font-size: 13px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted, #9a96b8); }
+.pub-visitor { color: var(--gold); }
