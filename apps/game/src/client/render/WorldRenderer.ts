@@ -84,6 +84,12 @@ const PAN_KEYS: Record<string, [number, number]> = {
 };
 /** A unit square standing on its bottom edge, like a sprite. */
 const CASTER_PLANE = new THREE.PlaneGeometry(1, 1).translate(0, 0.5, 0);
+/** The camera's usual tilt (about 47° above the horizon) and how far it may be tipped. */
+const DEFAULT_PITCH = Math.atan2(0.78, 0.72);
+const MIN_PITCH = 0.42;
+const MAX_PITCH = 1.25;
+/** Camera distance per unit of zoom, kept from when the tilt was fixed. */
+const CAMERA_REACH = Math.hypot(0.72, 0.78);
 const PLAYER_COLORS = ["#ffd23f", "#5ce1e6", "#ff7ab6", "#9dff6b"];
 const BIOME_COLOR: Record<string, string> = { plains: "#7cb856", forest: "#4c9a52", hills: "#a39672", water: "#3f86dc", dock: "#9a7748", floor: "#b08a5c", wall: "#6e5a48" };
 
@@ -217,6 +223,10 @@ export class WorldRenderer {
   private userYaw = 0;
   /** The current drag turns the camera instead of panning it. */
   private rotating = false;
+  /** How steeply the camera looks down, in radians above the horizon. Eases toward `pitchGoal`; `userPitch` is the player's choice. */
+  private pitch = DEFAULT_PITCH;
+  private pitchGoal = DEFAULT_PITCH;
+  private userPitch = DEFAULT_PITCH;
   /** Movement keys held down right now (W A S D and the arrows), for sliding the view. */
   private heldKeys = new Set<string>();
   /** The camera turn the indoor walls were last cut for. */
@@ -276,13 +286,19 @@ export class WorldRenderer {
     // Two small buttons at the right edge, for those without a right mouse button or a keyboard.
     this.rotateButtons = document.createElement("div");
     this.rotateButtons.className = "camera-rotate";
-    for (const [label, steps, title] of [["⟲", -1, "Turn the view left (Q)"], ["⟳", 1, "Turn the view right (E)"]] as const) {
+    const buttons: [string, string, () => void][] = [
+      ["⟲", "Turn the view left (Q)", () => this.rotateBy(-1)],
+      ["⟳", "Turn the view right (E)", () => this.rotateBy(1)],
+      ["▲", "Tip the view toward overhead (R)", () => this.tiltBy(0.18, true)],
+      ["▼", "Tip the view toward the horizon (F)", () => this.tiltBy(-0.18, true)],
+    ];
+    for (const [label, title, run] of buttons) {
       const b = document.createElement("button");
       b.type = "button";
       b.textContent = label;
       b.title = title;
       b.setAttribute("aria-label", title);
-      b.addEventListener("click", () => this.rotateBy(steps));
+      b.addEventListener("click", run);
       this.rotateButtons.appendChild(b);
     }
     container.appendChild(this.rotateButtons);
@@ -339,10 +355,12 @@ export class WorldRenderer {
       this.dist = 12;
       // The line-up is laid out for the default view, so a fight always faces the same way.
       this.yawGoal = nearestTurn(this.yaw, 0);
+      this.pitchGoal = DEFAULT_PITCH;
       this.rotateButtons.hidden = true;
     } else {
       this.dist = this.userDist;
       this.yawGoal = nearestTurn(this.yaw, this.userYaw);
+      this.pitchGoal = this.userPitch;
       this.rotateButtons.hidden = false;
       const turnKey = `${state.phase}:${state.round}:${state.turn?.heroId ?? ""}`;
       // A room is small enough to see whole, so indoors the camera stays on its middle.
@@ -550,7 +568,7 @@ export class WorldRenderer {
   // ---------- points of interest ----------
 
   private buildPois(state: RenderState) {
-    const sig = state.map.pois.map((p) => `${p.id}:${p.cleared}`).join("|");
+    const sig = state.map.pois.map((p) => `${p.id}:${p.cleared}:${p.tier ?? ""}`).join("|");
     if (sig === this.poiSig) return;
     this.poiSig = sig;
     this.poiGroup.clear();
@@ -582,6 +600,9 @@ export class WorldRenderer {
       const at = this.standAt(prop.pos);
       g.position.copy(at);
       g.rotation.y = -(prop.facing * Math.PI) / 3;
+      g.traverse((o) => {
+        if (o instanceof THREE.Mesh) o.castShadow = o.receiveShadow = true;
+      });
       this.propGroup.add(g);
       if (prop.selected) {
         const ring = new THREE.Mesh(new THREE.RingGeometry(0.8, 0.95, 6), new THREE.MeshBasicMaterial({ color: "#ffd23f", side: THREE.DoubleSide }));
@@ -703,9 +724,18 @@ export class WorldRenderer {
         const roofs = ["#8c3b2f", "#2f6f8c", "#6b8c2f", "#8c6a2f", "#6a2f8c", "#2f8c7a"];
         let hash = 0;
         for (const ch of poi.id) hash = (hash * 31 + ch.charCodeAt(0)) >>> 0;
-        add(box(0.8, 0.5, 0.65), lambert("#c9a877"), 0, 0.25, 0);
-        add(new THREE.ConeGeometry(0.72, 0.45, 4), lambert(roofs[hash % roofs.length]), 0, 0.72, 0, Math.PI / 4);
-        add(box(0.18, 0.3, 0.04), lambert("#5a3d22"), 0, 0.15, 0.33);
+        // A bigger hut is a wider, taller building: a Cottage gains a chimney, a Lodge a second wing.
+        const tier = Math.max(1, Math.min(3, poi.tier ?? 1));
+        const k = 1 + (tier - 1) * 0.22;
+        const roof = lambert(roofs[hash % roofs.length]);
+        add(box(0.8 * k, 0.5 * k, 0.65 * k), lambert("#c9a877"), 0, 0.25 * k, 0);
+        add(new THREE.ConeGeometry(0.72 * k, 0.45 * k, 4), roof, 0, 0.72 * k, 0, Math.PI / 4);
+        add(box(0.18, 0.3, 0.04), lambert("#5a3d22"), 0, 0.15, 0.325 * k + 0.005);
+        if (tier >= 2) add(box(0.14, 0.42, 0.14), lambert("#8b8f96"), 0.26 * k, 0.86 * k, -0.1);
+        if (tier >= 3) {
+          add(box(0.5, 0.42, 0.5), lambert("#c9a877"), -0.72, 0.21, 0.08);
+          add(new THREE.ConeGeometry(0.46, 0.3, 4), roof, -0.72, 0.57, 0.08, Math.PI / 4);
+        }
         break;
       }
       case "shop": {
@@ -736,6 +766,34 @@ export class WorldRenderer {
         for (const x of [-0.72, 0.72]) add(new THREE.CylinderGeometry(0.14, 0.12, 0.24, 6), lambert("#5a3d22"), x, 0.12, -0.15);
         add(box(0.13, 0.13, 0.13), lambert("#f4efe1"), -0.12, 0.53, -0.25, 0.4);
         add(box(0.13, 0.13, 0.13), lambert("#b9433d"), 0.14, 0.53, -0.38, 1.1);
+        break;
+      }
+      case "works": {
+        const stone = lambert("#b9b4a8");
+        if (poi.cleared) {
+          // The lighthouse: a tapering white tower with a red band, a gallery and a lit lamp.
+          add(new THREE.CylinderGeometry(0.5, 0.56, 0.22, 8), stone, 0, 0.11, 0);
+          add(new THREE.CylinderGeometry(0.3, 0.42, 0.7, 8), lambert("#f4efe1"), 0, 0.57, 0);
+          add(new THREE.CylinderGeometry(0.25, 0.3, 0.35, 8), lambert("#b9433d"), 0, 1.095, 0);
+          add(new THREE.CylinderGeometry(0.21, 0.25, 0.4, 8), lambert("#f4efe1"), 0, 1.47, 0);
+          add(new THREE.CylinderGeometry(0.34, 0.34, 0.06, 8), lambert("#4a4458"), 0, 1.7, 0);
+          add(new THREE.CylinderGeometry(0.15, 0.15, 0.24, 6), new THREE.MeshBasicMaterial({ color: "#ffd23f" }), 0, 1.85, 0);
+          add(new THREE.ConeGeometry(0.26, 0.24, 8), lambert("#8c3b2f"), 0, 2.09, 0);
+          add(box(0.16, 0.28, 0.04), lambert("#5a3d22"), 0, 0.36, 0.41);
+          // Tall enough to stand over the huts when seen from the tilted camera.
+          g.scale.y = 1.3;
+        } else {
+          // A building site: the first course of the foundation, scaffold poles, planks and a crate.
+          add(new THREE.CylinderGeometry(0.5, 0.56, 0.16, 8), stone, 0, 0.08, 0);
+          for (const [x, z] of [[-0.42, -0.3], [0.42, -0.3], [-0.42, 0.34], [0.42, 0.34]]) add(new THREE.CylinderGeometry(0.035, 0.035, 0.95, 5), lambert("#7a5230"), x, 0.47, z);
+          add(box(0.9, 0.04, 0.05), lambert("#8a6a44"), 0, 0.62, -0.3);
+          add(box(0.9, 0.04, 0.05), lambert("#8a6a44"), 0, 0.62, 0.34);
+          add(box(0.05, 0.04, 0.68), lambert("#8a6a44"), -0.42, 0.9, 0.02);
+          add(box(0.05, 0.04, 0.68), lambert("#8a6a44"), 0.42, 0.9, 0.02);
+          add(box(0.34, 0.14, 0.26), stone, -0.08, 0.23, 0.05, 0.3);
+          for (let i = 0; i < 3; i++) add(box(0.6, 0.05, 0.14), lambert(i % 2 ? "#a07a4c" : "#8a6a44"), 0.72, 0.03 + i * 0.05, 0.3, 0.25 * i);
+          add(box(0.24, 0.22, 0.24), lambert("#9a6b2f"), -0.72, 0.11, 0.35, 0.4);
+        }
         break;
       }
       case "door":
@@ -889,10 +947,11 @@ export class WorldRenderer {
           const { texture, aspect } = labelTexture(w.label);
           // A fixed size on screen, whatever the zoom: each pixel of the label lands on exactly one pixel of the view.
           unit.label = new THREE.Sprite(new THREE.SpriteMaterial({ map: texture, transparent: true, depthTest: false, sizeAttenuation: false }));
-          unit.label.center.set(0.5, 0);
+          // Held a third of its own height clear of the head, at any zoom.
+          unit.label.center.set(0.5, -0.35);
           unit.label.userData.aspect = aspect;
           unit.label.userData.rows = texture.image.height;
-          unit.label.userData.lift = w.size + 0.28;
+          unit.label.userData.lift = w.size + 0.3;
           unit.label.renderOrder = 7;
           this.unitGroup.add(unit.label);
         }
@@ -1004,6 +1063,14 @@ export class WorldRenderer {
     this.yaw = this.yawGoal = this.userYaw;
   }
 
+  /** Tip the view up or down by an angle; `ease` glides there instead of jumping. No effect during a battle. */
+  tiltBy(radians: number, ease = false) {
+    if (this.state?.battle) return;
+    this.userPitch = Math.max(MIN_PITCH, Math.min(MAX_PITCH, this.userPitch + radians));
+    this.pitchGoal = this.userPitch;
+    if (!ease) this.pitch = this.userPitch;
+  }
+
   /** Turn the view by whole hex sides (60°), easing there. */
   rotateBy(steps: number) {
     if (this.state?.battle) return;
@@ -1020,6 +1087,8 @@ export class WorldRenderer {
     if (e.metaKey || e.ctrlKey || e.altKey || (el && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName)))) return;
     if (e.key === "q" || e.key === "Q") this.rotateBy(-1);
     else if (e.key === "e" || e.key === "E") this.rotateBy(1);
+    else if (e.key === "r" || e.key === "R") this.tiltBy(0.18, true);
+    else if (e.key === "f" || e.key === "F") this.tiltBy(-0.18, true);
     else if (PAN_KEYS[e.key.toLowerCase()]) {
       this.heldKeys.add(e.key.toLowerCase());
       // Arrow keys would otherwise scroll whatever panel has focus.
@@ -1040,8 +1109,10 @@ export class WorldRenderer {
     // Slide along the screen's own right and up, whichever way the camera is turned.
     const cos = Math.cos(this.yaw);
     const sin = Math.sin(this.yaw);
-    this.targetGoal.x -= dx * k * cos + dy * k * 1.3 * sin;
-    this.targetGoal.z -= -dx * k * sin + dy * k * 1.3 * cos;
+    // The ground is foreshortened by the tilt, so a drag up or down covers more of it the lower the camera is.
+    const deep = Math.min(2.4, 0.96 / Math.sin(this.pitch));
+    this.targetGoal.x -= dx * k * cos + dy * k * deep * sin;
+    this.targetGoal.z -= -dx * k * sin + dy * k * deep * cos;
     this.target.copy(this.targetGoal);
   }
 
@@ -1076,7 +1147,11 @@ export class WorldRenderer {
     if (this.pointer.down) {
       if (Math.hypot(e.clientX - this.pointer.downX, e.clientY - this.pointer.downY) > 6) this.pointer.dragged = true;
       if (this.pointer.dragged) {
-        if (this.rotating) this.turn(-dx * 0.008);
+        if (this.rotating) {
+          this.turn(-dx * 0.008);
+          // Dragging down lifts the camera to look more steeply; up drops it toward the horizon.
+          this.tiltBy(dy * 0.006);
+        }
         else this.panBy(dx, dy);
       }
     } else {
@@ -1173,10 +1248,13 @@ export class WorldRenderer {
     this.target.lerp(this.targetGoal, ease);
     this.camDist += (this.dist - this.camDist) * ease;
     this.yaw += (this.yawGoal - this.yaw) * ease;
+    this.pitch += (this.pitchGoal - this.pitch) * ease;
+    const reach = this.camDist * CAMERA_REACH;
+    const flat = reach * Math.cos(this.pitch);
     this.camera.position.set(
-      this.target.x + Math.sin(this.yaw) * this.camDist * 0.72,
-      this.target.y + this.camDist * 0.78,
-      this.target.z + Math.cos(this.yaw) * this.camDist * 0.72,
+      this.target.x + Math.sin(this.yaw) * flat,
+      this.target.y + reach * Math.sin(this.pitch),
+      this.target.z + Math.cos(this.yaw) * flat,
     );
     this.camera.lookAt(this.target);
     this.ambience.update(this.clock, this.yaw, this.target);
@@ -1184,7 +1262,6 @@ export class WorldRenderer {
 
     // The height of one view pixel, in the units an unattenuated sprite is sized in.
     const labelRow = (2 * Math.tan(THREE.MathUtils.degToRad(this.camera.fov / 2))) / this.renderer.domElement.height;
-    const sunTurn = Math.atan2(this.ambience.sunDir.x, this.ambience.sunDir.z);
     for (const [id, unit] of this.units) {
       const p = unit.sprite.position;
       // The hop is drawn on top of where the unit really is; take it off before moving.
@@ -1214,7 +1291,7 @@ export class WorldRenderer {
       const ground = p.y;
       p.y += unit.bob;
       unit.caster.position.copy(p);
-      unit.caster.rotation.y = sunTurn;
+      unit.caster.rotation.y = this.ambience.towardLight(p.x, p.z);
       if (unit.ring) {
         unit.ring.position.set(p.x, ground + 0.04, p.z);
         const s = this.pulsing.has(id) ? 1.25 + Math.sin(this.clock * 6) * 0.2 : 1;

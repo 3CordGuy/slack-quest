@@ -5,7 +5,13 @@ import type { NoticeBoard } from "../server/board";
 
 /** What the Harbor's notice board shows: the crew goal and the contracts on offer. */
 export type Board = NoticeBoard;
-import type { HutSummary, ItemDef, Perk, ShopEntry } from "@gantt-quest/world";
+import type { HarborWorks, HutSummary, ItemDef, Perk, ProjectAmounts, ShopEntry } from "@gantt-quest/world";
+
+/** The crew's projects and what this player has to give toward them. */
+export interface Works {
+  works: HarborWorks;
+  stock: ProjectAmounts;
+}
 
 /** Optional ?p=2 gives this tab its own guest session, for testing two players on one machine. */
 export const PROFILE = new URLSearchParams(location.search).get("p") ?? "";
@@ -43,6 +49,9 @@ export interface Shop {
   refreshAt: number;
   entries: (ShopEntry & { bought: boolean })[];
 }
+
+/** What the player owns for their hut, the perks it gives right now, and their gold. */
+export type Hut = HutSummary & { perks: Required<Perk>; gold: number };
 
 export interface Me {
   /** `email` is null for a guest, whose account lives only in this browser. */
@@ -99,5 +108,10 @@ export const api = {
   createCrew: (name: string) => request("/api/crew", { name }),
   joinCrew: (code: string) => request("/api/crew/join", { code }),
   leaveCrew: () => request("/api/crew/leave", {}),
-  hut: () => request<HutSummary & { perks: Required<Perk> }>("/api/hut"),
+  projects: () => request<Works>("/api/projects"),
+  giveToProject: (projectId: string, give: ProjectAmounts) => request<Works & { completed: boolean }>("/api/projects/give", { projectId, give }),
+  hut: () => request<Hut>("/api/hut"),
+  craft: (defId: string) => request("/api/hut/craft", { defId }),
+  upgradeHut: () => request<{ tier: number }>("/api/hut/upgrade", {}),
+  buyFurniture: (defId: string) => request("/api/shop/furniture", { defId }),
 };

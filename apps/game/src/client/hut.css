@@ -9,6 +9,14 @@
 .hut-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
 .hut-list button { width: 100%; text-align: left; }
 
+.hut-tabs { display: flex; gap: 6px; margin-bottom: 8px; }
+.hut-tabs button { flex: 1; }
+.hut-furnish .res-chips { margin-bottom: 8px; }
+.hut-recipes { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.hut-recipes li { border: 1px solid var(--line); padding: 6px 8px; }
+.hut-recipes li.locked { opacity: 0.6; }
+.hut-recipes .row, .hut-furnish .row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 4px; }
+
 .hut-refused {
   position: absolute; left: 50%; top: 40%; transform: translate(-50%, -50%); z-index: 40;
   max-width: min(360px, calc(100% - 32px)); text-align: center; border-color: var(--bad);

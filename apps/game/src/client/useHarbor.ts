@@ -79,9 +79,9 @@ export function useHarbor(onMoved: (id: string, path: HexPos[]) => void): Harbor
           setYou(msg.you);
           setCrew(msg.crew);
           setPlayers(msg.players);
-          setBoard({ members: msg.members, ships: msg.ships, log: msg.log });
+          setBoard({ members: msg.members, ships: msg.ships, log: msg.log, works: msg.works });
         } else if (msg.type === "board") {
-          setBoard({ members: msg.members, ships: msg.ships, log: msg.log });
+          setBoard({ members: msg.members, ships: msg.ships, log: msg.log, works: msg.works });
         } else if (msg.type === "joined") {
           setPlayers((ps) => [...ps.filter((p) => p.id !== msg.player.id), msg.player]);
         } else if (msg.type === "left") {

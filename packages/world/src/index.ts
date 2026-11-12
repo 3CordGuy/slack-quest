@@ -19,3 +19,4 @@ export * from "./hut";
 export * from "./hutroom";
 export * from "./contracts";
 export * from "./drops";
+export * from "./projects";

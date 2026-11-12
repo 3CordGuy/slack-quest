@@ -40,6 +40,16 @@ interface Attachment {
   playerId: string;
 }
 
+/** The Harbor projects fixed on a run at launch. Anything unreadable counts as none. */
+function launchProjects(json: string | null): string[] {
+  try {
+    const ids: unknown = JSON.parse(json ?? "[]");
+    return Array.isArray(ids) ? ids.filter((id): id is string => typeof id === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
 export class RunRoom extends DurableObject<Env> {
   private world: WorldState | null = null;
   /** The crew whose Harbor this ship sailed from, if any. */
@@ -65,7 +75,7 @@ export class RunRoom extends DurableObject<Env> {
     if (!runCode) throw new Error("run room has no code");
     const row = await getRun(this.env.DB, runCode);
     if (!row) throw new Error(`run ${runCode} not found`);
-    this.world = row.state_json ? upgradeWorld(JSON.parse(row.state_json) as WorldState) : createWorld(row.code, row.seed);
+    this.world = row.state_json ? upgradeWorld(JSON.parse(row.state_json) as WorldState) : createWorld(row.code, row.seed, launchProjects(row.projects_json));
     this.crewId = row.crew_id;
     if (code) await this.ctx.storage.put("code", code);
     return this.world;

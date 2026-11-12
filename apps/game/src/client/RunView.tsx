@@ -26,7 +26,7 @@ import { ContractResult } from "./board/ContractResult";
 import { ContractStatus } from "./board/ContractStatus";
 import { BattleHud, useCountdown } from "./BattleHud";
 import { DragPanel } from "./DragPanel";
-import { HutSpoils, blueprintName, isTrophy, resourceText } from "./hutDrops";
+import { HutSpoils, blueprintName, isTrophy, perkText, resourceText } from "./hutDrops";
 import { InventoryScreen } from "./InventoryScreen";
 import { WorldRenderer } from "./render/WorldRenderer";
 import { useRun, type RunConnection } from "./useRun";
@@ -68,6 +68,7 @@ function describe(events: WorldEvent[], state: ClientState, names: Map<string, s
       case "blueprint": out.push(`${n(ev.heroId)} found a blueprint: ${blueprintName(ev.blueprint)}.`); break;
       case "furnishing": out.push(isTrophy(ev.furnishing) ? `${n(ev.heroId)} takes a trophy home: ${ev.furnishing.label}.` : `${n(ev.heroId)} found a ${ev.furnishing.label} for the hut.`); break;
       case "rite": out.push(ev.text); break;
+      case "harbor_boon": out.push(ev.text); break;
       case "objective": out.push(`Objective complete: ${state.story?.objectives.find((o) => o.id === ev.id)?.text ?? ev.id}`); break;
       case "battle_start": out.push("Battle!"); break;
       case "battle_end": out.push(ev.status === "victory" ? "The fight is won." : ev.status === "fled" ? "The party got away." : "The party has fallen."); break;
@@ -257,7 +258,10 @@ function Lobby({ state, run, code }: { state: ClientState; run: RunConnection; c
         <ul className="crew-list">
           {state.heroes.map((h) => (
             <li key={h.id}>
-              <span><strong>{h.name}</strong> <span className="muted">{className(h.classId)} · Level {h.level}{h.contract ? ` · ${contractName(h.contract.id)}` : ""}</span></span>
+              <span>
+                <strong>{h.name}</strong> <span className="muted">{className(h.classId)} · Level {h.level}{h.contract ? ` · ${contractName(h.contract.id)}` : ""}</span>
+                {perkText(h.hutPerks) && <span className="hut-perks" title="From the furniture in their hut"> · Hut: {perkText(h.hutPerks)}</span>}
+              </span>
               <span className={h.id === state.hostId || h.ready ? "good" : "muted"}>{h.id === state.hostId ? "captain" : h.ready ? "ready" : "not ready"}</span>
             </li>
           ))}

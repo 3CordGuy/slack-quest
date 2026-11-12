@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { STARTING_STATS, hexDistance } from "@gantt-quest/core";
 import {
+  PERK_CAPS,
+  xpWithBonus,
   CANNED_FILLS,
   STORY_FRAMES,
   applyXp,
@@ -531,6 +533,78 @@ describe("world reducer", () => {
     expect(fighter.power).toBe(2);
     expect(fighter.armor).toBe(7);
     expect(stepWorld(s, { type: "gear", heroId: "p1", gear }).ok).toBe(false);
+  });
+
+  it("gives a hero their hut's perks on boarding, held to the caps, and nobody else's", () => {
+    let s = createWorld("ABCD", "perks");
+    s = must(s, { type: "join", hero: heroInit("p0", "qa_paladin", "mace") });
+    s = must(s, { type: "join", hero: { ...heroInit("p1", "qa_paladin", "mace"), hutPerks: { focus: 1, potions: 1 } } });
+    // More than any hut could give: a caller cannot hand out bigger perks.
+    s = must(s, { type: "join", hero: { ...heroInit("p2", "qa_paladin", "mace"), hutPerks: { focus: 5, potions: 9, maxHp: 400, xpPct: 80 } } });
+    const [plain, bedAndChest, greedy] = s.heroes;
+    expect(plain.hutPerks).toEqual({ focus: 0, potions: 0, maxHp: 0, xpPct: 0 });
+    expect(plain.potions).toBe(1);
+
+    expect(bedAndChest.focus).toBe(plain.focus + 1);
+    expect(bedAndChest.maxFocus).toBe(plain.maxFocus + 1);
+    expect(bedAndChest.potions).toBe(plain.potions + 1);
+    expect(bedAndChest.maxHp).toBe(plain.maxHp);
+
+    expect(greedy.hutPerks).toEqual(PERK_CAPS);
+    expect(greedy.focus).toBe(plain.focus + PERK_CAPS.focus);
+    expect(greedy.potions).toBe(plain.potions + PERK_CAPS.potions);
+    expect(greedy.maxHp).toBe(plain.maxHp + PERK_CAPS.maxHp);
+    expect(greedy.hp).toBe(greedy.maxHp);
+  });
+
+  it("keeps the hearth's HP through a gear change and takes potions and focus into a fight", () => {
+    let s = createWorld("ABCD", "perk-gear");
+    s = must(s, { type: "join", hero: { ...heroInit("p1", "qa_paladin", "mace"), hutPerks: { focus: 1, potions: 1, maxHp: 4 } } });
+    s = must(s, { type: "join", hero: heroInit("p2", "devops_mage", "staff") });
+    s = must(s, { type: "ready", heroId: "p2", ready: true });
+    s = must(s, { type: "start", heroId: "p1" });
+    s = must(s, { type: "begin", bible: buildBible(frame, fill) });
+    const h = s.heroes.find((x) => x.id === "p1")!;
+    const gear = { base: h.base, unspent: 0, bonus: { vit: 1 }, weapon: h.weapon, weaponPower: 0, armor: 0, outfit: {} };
+    s = must(s, { type: "gear", heroId: "p1", gear });
+    expect(s.heroes.find((x) => x.id === "p1")!.maxHp).toBe(h.maxHp + 2);
+    s = must(s, { type: "gear", heroId: "p1", gear: { ...gear, bonus: {} } });
+    expect(s.heroes.find((x) => x.id === "p1")!.maxHp).toBe(h.maxHp);
+    s = placeAll(s, "camp");
+    s = must(s, { type: "interact", heroId: s.turn!.heroId });
+    const [me, mate] = ["p1", "p2"].map((id) => s.battle!.combatants.find((c) => c.id === id)!);
+    expect(me.potions).toBe(2);
+    expect(mate.potions).toBe(1);
+    expect(me.focus).toBe(h.maxFocus);
+    expect(me.maxHp).toBe(h.maxHp);
+  });
+
+  it("adds the hut's XP bonus to every award, for that hero only", () => {
+    const play = (perk?: { xpPct: number }) => {
+      let s = createWorld("ABCD", "xp-bonus");
+      s = must(s, { type: "join", hero: { ...heroInit("p1", "qa_paladin", "mace"), hutPerks: perk } });
+      s = must(s, { type: "join", hero: heroInit("p2", "devops_mage", "staff") });
+      s = must(s, { type: "ready", heroId: "p2", ready: true });
+      s = must(s, { type: "start", heroId: "p1" });
+      s = placeAll(must(s, { type: "begin", bible: buildBible(frame, fill) }), "lair");
+      s = { ...s, heroes: s.heroes.map((h) => ({ ...h, base: { str: 12, int_stat: 12, vit: 12, agi: 12, dex: 12 }, hp: 200, maxHp: 200 })) };
+      const sink = { events: [] as WorldEvent[], effects: [] as WorldEffect[] };
+      s = must(s, { type: "interact", heroId: s.turn!.heroId }, sink);
+      for (let i = 0; i < 100 && s.phase === "battle"; i++) s = must(s, { type: "timeout" }, sink);
+      expect(s.result?.outcome).toBe("victory");
+      const xp = (id: string) => sink.effects.flatMap((e) => (e.kind === "grant" && e.heroId === id && e.xp > 0 ? [e.xp] : []));
+      return { s, p1: xp("p1"), p2: xp("p2") };
+    };
+    const base = play();
+    const boosted = play({ xpPct: 5 });
+    expect(base.p1.length).toBeGreaterThanOrEqual(2);
+    expect(boosted.p1).toEqual(base.p1.map((xp) => xpWithBonus(xp, 5)));
+    expect(boosted.p1.reduce((a, b) => a + b, 0)).toBeGreaterThan(base.p1.reduce((a, b) => a + b, 0));
+    // The D1 effect, the run's tally and the crewmate without a bookshelf all agree.
+    expect(boosted.s.earned.p1.xp).toBe(boosted.p1.reduce((a, b) => a + b, 0));
+    expect(boosted.p2).toEqual(base.p2);
+    // A bonus above the cap is cut down to it.
+    expect(play({ xpPct: 90 }).p1).toEqual(boosted.p1);
   });
 
   it("applies a stat point spent mid-voyage", () => {
