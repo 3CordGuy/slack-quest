@@ -1779,6 +1779,9 @@ export class WorldRenderer {
       // Capture is a nicety (keeps a drag alive off the canvas); carry on without it.
     }
     this.touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    // A tap on a touch screen comes with no move before it, so the press itself says the pointer is over the canvas.
+    // Without this, placing a carried piece by tapping (aim() needs it) did nothing on a phone.
+    this.pointer.inside = true;
     if (this.touches.size === 1) {
       // Right button, or Shift or Alt with the left, turns the view instead of sliding it.
       this.rotating = e.button === 2 || e.shiftKey || e.altKey;
