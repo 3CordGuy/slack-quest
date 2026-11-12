@@ -75,3 +75,21 @@
 .hut-mats-row strong, .hut-mats-row .muted { text-align: right; }
 .hut-mats-btns { display: flex; gap: 2px; }
 .hut-mats-btns button { padding: 1px 5px; min-width: 0; }
+
+/* The bar at the bottom: a short hint on one line, then stamina, Rest and Leave. Kept to the right so the chat on the left never runs under it. */
+.hut-view .turnbar.hut-here { left: auto; right: 12px; transform: none; flex-direction: column; align-items: stretch; gap: 6px; white-space: normal; width: max-content; max-width: min(460px, calc(100vw - min(340px, 40vw) - 44px)); }
+.hut-here-hint { margin: 0; font-size: 12px; }
+.hut-here-row { display: flex; gap: 8px; align-items: center; }
+.hut-here-row > button { flex: none; }
+/* The stamina line wraps rather than pushing Rest and Leave off the row. */
+.hut-stamina { font-size: 12px; color: var(--gold); flex: 1 1 auto; min-width: 0; }
+@media (max-width: 760px) {
+  .hut-view .turnbar.hut-here { left: 6px; right: 6px; width: auto; max-width: none; }
+  /* Room under the chat for the two-line bar. */
+  .hut-view .harbor-chat { bottom: 124px; }
+  .hut-view .hut-craft { bottom: 168px; }
+}
+/* A note that says its piece and fades. */
+.toast.fade { animation: toast-fade 4s ease forwards; }
+@keyframes toast-fade { 0%, 75% { opacity: 1; } 100% { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .toast.fade { animation: none; } }

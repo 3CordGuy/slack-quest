@@ -353,14 +353,43 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
   const atDoor = !!self && !!room && poiAt(room, self.pos)?.kind === "door";
   const hoverPiece = (hoverProp !== null ? placed.find((f) => f.id === hoverProp) : undefined) ?? (hover ? placed.find((f) => same({ q: f.q, r: f.r }, hover) && f.onId === null && !isSmall(f.defId)) : undefined);
   const tip = hoverPiece ? hoverPiece.label : hover && room && poiAt(room, hover)?.kind === "door" ? "The door" : null;
-  /** What the last rest did, or why it did nothing. */
-  const [rested, setRested] = useState<{ text: string; ok: boolean } | null>(null);
+  /** The owner's gathering stamina, and when they may next rest. Read on the way in and after each rest. */
+  const [stamina, setStamina] = useState<Awaited<ReturnType<typeof api.gather>> | null>(null);
+  useEffect(() => {
+    if (mine) void api.gather().then(setStamina, () => setStamina(null));
+  }, [mine]);
+  /** Ticks once a minute while a rest is cooling down, so "rest again in" counts down. */
+  const [clock, setClock] = useState(() => Date.now());
+  const coolingUntil = stamina?.restReadyAt ?? 0;
+  useEffect(() => {
+    if (coolingUntil <= Date.now()) return;
+    const t = setInterval(() => setClock(Date.now()), 15_000);
+    return () => clearInterval(t);
+  }, [coolingUntil]);
+  const restIn = Math.max(0, Math.ceil((coolingUntil - clock) / 60_000));
+  const tired = !!stamina && stamina.stamina.left < stamina.stamina.max;
+  /** Why resting would do nothing right now, or null (the server has the last word). */
+  const restBlocked = !stamina ? null : !tired ? "You are not tired. Rest after you have been out gathering." : restIn > 0 ? `You can rest again in ${restIn} min.` : null;
+  const staminaLine = stamina && `${stamina.stamina.left} of ${stamina.stamina.max} outings${restIn > 0 ? ` · rest again in ${restIn} min` : ""}`;
+  /** A short note that fades: what a rest did, or why it did nothing. */
+  const [notice, setNotice] = useState<{ text: string; ok: boolean; n: number } | null>(null);
+  useEffect(() => {
+    if (!notice) return;
+    const t = setTimeout(() => setNotice(null), 4000);
+    return () => clearTimeout(t);
+  }, [notice]);
+  const [resting, setResting] = useState(false);
   const restAtHome = async () => {
+    setResting(true);
     try {
       const res = await api.rest("hut");
-      setRested({ text: `You sleep in your own bed and wake rested: your stamina is full again, ${res.stamina.left} of ${res.stamina.max} outings.`, ok: true });
+      setStamina(res);
+      setClock(Date.now());
+      setNotice({ text: `You wake rested: ${res.stamina.left} of ${res.stamina.max} outings.`, ok: true, n: Date.now() });
     } catch (e) {
-      setRested({ text: (e as Error).message, ok: false });
+      setNotice({ text: (e as Error).message, ok: false, n: Date.now() });
+    } finally {
+      setResting(false);
     }
   };
   const say = () => {
@@ -417,6 +446,9 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
   if (chosen && canEdit && !held) {
     tools.push({ key: "move", icon: "move", title: isMounted(chosen.defId) ? "Move: take it down and hang it somewhere else" : "Move: pick it up and set it down somewhere else", run: () => pick(chosen.id) });
     if (!isMounted(chosen.defId)) tools.push(...turnTools(chosen.defId));
+    if (chosen.defId === "bed") {
+      tools.push({ key: "rest", icon: "rest", title: restBlocked ?? "Rest: sleep here and wake with all your outings back", run: () => void restAtHome() });
+    }
     if (defOf(chosen)?.storage) {
       tools.push({ key: "open", icon: "open", title: opened === chosen.id ? "Close: hide what it holds" : "Open: see what it holds", active: opened === chosen.id, run: () => setOpened((o) => (o === chosen.id ? null : chosen.id)) });
     }
@@ -568,7 +600,8 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
       {chosen && tools.length > 0 && (
         <HutToolbar renderer={renderer} propId={chosen.id} name={chosen.label} tags={tags(chosen.defId)} actions={tools} />
       )}
-      {refusal && <div className="toast" role="status">{refusal}</div>}
+      {refusal ? <div className="toast" role="status">{refusal}</div>
+        : notice && <div key={notice.n} className={`toast fade ${notice.ok ? "note" : ""}`} role="status">{notice.text}</div>}
 
       {you && <>
       <DragPanel id="hut.crew" title="Inside" foldOnPhone className="crew">
@@ -597,13 +630,20 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
         </div>
       </DragPanel>
 
-      <DragPanel id="hut.turn" title="Here" compact className="turnbar panel">
-        {atDoor ? <span>The door back to the Harbor.</span>
-          : canEdit ? <span className="muted">Click a hex to walk. Place pieces from the Storage panel; click one for its controls.</span>
-          : <span className="muted">Click a hex to walk. Only {owner?.name ?? "the owner"} can move the furniture.</span>}
-        {canEdit && <button title="Sleep in your own bed: all your gathering outings back, once every twenty minutes" onClick={() => void restAtHome()}>Rest</button>}
-        {rested && <span className={rested.ok ? "good" : "bad"}>{rested.text}</span>}
-        <button className={atDoor ? "primary" : ""} onClick={onLeave}>Leave</button>
+      <DragPanel id="hut.turn" title="Here" compact className="turnbar panel hut-here">
+        <p className={`hut-here-hint ${atDoor ? "" : "muted"}`}>
+          {atDoor ? "The door back to the Harbor." : canEdit ? "Click a hex to walk, or a piece for its controls." : `Only ${owner?.name ?? "the owner"} can move the furniture.`}
+        </p>
+        <div className="hut-here-row">
+          {canEdit && (
+            <>
+              {staminaLine && <span className="hut-stamina" title="Gathering outings left today">{staminaLine}</span>}
+              <button disabled={resting || !!restBlocked} title={restBlocked ?? "Sleep here: all your gathering outings back, once every twenty minutes"} onClick={() => void restAtHome()}>Rest</button>
+            </>
+          )}
+          <span className="spacer" />
+          <button className={atDoor ? "primary" : ""} onClick={onLeave}>Leave</button>
+        </div>
       </DragPanel>
       {atDoor && self && <TileAction renderer={renderer} pos={self.pos} unitId={self.id} label="Leave" run={onLeave} />}
       </>}
