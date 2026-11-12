@@ -46,7 +46,7 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
       phase: "overworld",
       round: 0,
       map: { ...base, pois },
-      heroes: players.map((p) => ({ id: p.id, classId: p.classId, pos: p.pos, label: p.name })),
+      heroes: players.map((p) => ({ id: p.id, classId: p.classId, pos: p.pos, label: p.name, outfit: p.outfit })),
       turn: null,
       battle: null,
       story: null,
@@ -112,6 +112,11 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
     if (!text.trim()) return;
     harbor.send({ type: "say", text });
     setText("");
+  };
+  // After a change of gear, have the Harbor show everyone the new look.
+  const refreshAll = async () => {
+    await refresh();
+    harbor.send({ type: "refresh" });
   };
   const atShop = !!self && same(self.pos, HARBOR_SHOP);
   const error = harbor.error ?? launchError;
@@ -214,8 +219,8 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
 
       {tip && <div className="tip">{tip}</div>}
       {error && <div className="toast">{error}</div>}
-      {sheet && me.character && <InventoryScreen me={me} refresh={refresh} onClose={() => setSheet(false)} />}
-      {shop && me.character && <ShopScreen me={me} refresh={refresh} onClose={() => setShop(false)} />}
+      {sheet && me.character && <InventoryScreen me={me} refresh={refreshAll} onClose={() => setSheet(false)} />}
+      {shop && me.character && <ShopScreen me={me} refresh={refreshAll} onClose={() => setShop(false)} />}
     </div>
   );
 }

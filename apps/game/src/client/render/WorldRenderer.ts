@@ -8,8 +8,8 @@
 
 import * as THREE from "three";
 import type { HexPos } from "@gantt-quest/core";
-import { findPath, reachable, tileAt, type ClientState, type Phase, type Poi, type Tile, type WorldEvent, type WorldMap } from "@gantt-quest/world";
-import { SPRITE_ASPECT, labelTexture, spriteTexture, textTexture } from "./sprites";
+import { findPath, reachable, tileAt, type ClientState, type Outfit, type Phase, type Poi, type Tile, type WorldEvent, type WorldMap } from "@gantt-quest/world";
+import { SPRITE_ASPECT, labelTexture, spriteKey, spriteTexture, textTexture } from "./sprites";
 
 /**
  * What the renderer needs to draw a scene. An island's ClientState satisfies
@@ -22,7 +22,7 @@ export interface RenderState {
   phase: Phase;
   round: number;
   map: WorldMap;
-  heroes: { id: string; classId: string; pos: HexPos; label?: string }[];
+  heroes: { id: string; classId: string; pos: HexPos; label?: string; outfit?: Outfit }[];
   turn: { heroId: string; mp: number } | null;
   battle: ClientState["battle"];
   story: { npcs: { id: string; poi: string }[] } | null;
@@ -69,6 +69,8 @@ interface Unit {
 
 interface Want {
   kind: string;
+  /** Draw the unit wearing this instead of its kind's stock look. */
+  outfit?: Outfit;
   pos: THREE.Vector3;
   size: number;
   label?: string;
@@ -470,6 +472,7 @@ export class WorldRenderer {
           const dir = side === "hero" ? -1 : 1;
           want.set(c.id, {
             kind: c.kind,
+            outfit: c.outfit,
             // Staggered diagonally so the tall sprites do not hide each other.
             pos: new THREE.Vector3(centre.x + dir * (1.2 + i * 1.05), centre.y, centre.z + (i - (line.length - 1) / 2) * 1.25),
             size: c.kind === "villain" ? 2.5 : 1.9,
@@ -493,7 +496,7 @@ export class WorldRenderer {
         const pos = this.standAt(h.pos);
         pos.x += (i - (n - 1) / 2) * 0.6;
         pos.z += 0.25;
-        want.set(h.id, { kind: h.classId, pos, size: 1.5, label: h.label, ring: colorOf(h.id), pulse: state.turn?.heroId === h.id });
+        want.set(h.id, { kind: h.classId, outfit: h.outfit, pos, size: 1.5, label: h.label, ring: colorOf(h.id), pulse: state.turn?.heroId === h.id });
       }
       for (const npc of state.story?.npcs ?? []) {
         const poi = state.map.pois.find((p) => p.id === npc.poi);
@@ -514,7 +517,9 @@ export class WorldRenderer {
     }
 
     for (const [id, unit] of this.units) {
-      if (want.has(id) && want.get(id)!.kind === unit.kind) continue;
+      const w = want.get(id);
+      // A change of gear is a different sprite, so the unit is rebuilt.
+      if (w && spriteKey(w.kind, w.outfit) === unit.kind) continue;
       this.unitGroup.remove(unit.sprite);
       if (unit.ring) this.unitGroup.remove(unit.ring);
       if (unit.hpBack) this.unitGroup.remove(unit.hpBack);
@@ -526,11 +531,11 @@ export class WorldRenderer {
     for (const [id, w] of want) {
       let unit = this.units.get(id);
       if (!unit) {
-        const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: spriteTexture(w.kind), transparent: true, alphaTest: 0.5 }));
+        const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: spriteTexture(w.kind, w.outfit), transparent: true, alphaTest: 0.5 }));
         sprite.center.set(0.5, 0);
         sprite.position.copy(w.pos);
         this.unitGroup.add(sprite);
-        unit = { sprite, ring: null, hpBack: null, hpFill: null, label: null, labelText: "", goal: w.pos.clone(), path: [], kick: new THREE.Vector3(), kind: w.kind };
+        unit = { sprite, ring: null, hpBack: null, hpFill: null, label: null, labelText: "", goal: w.pos.clone(), path: [], kick: new THREE.Vector3(), kind: spriteKey(w.kind, w.outfit) };
         this.units.set(id, unit);
       }
       unit.goal.copy(w.pos);

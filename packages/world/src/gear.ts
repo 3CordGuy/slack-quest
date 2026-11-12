@@ -230,6 +230,24 @@ export function loadoutOf(equipped: ItemDef[]): Loadout {
   return out;
 }
 
+/**
+ * What a hero is visibly wearing, slot by slot: enough for a client to draw
+ * the items on the hero's sprite, and nothing else.
+ */
+export type Outfit = Partial<Record<Slot, { icon: string; ref: string; rarity: Rarity }>>;
+
+export function outfitOf(equipped: ItemDef[]): Outfit {
+  const out: Outfit = {};
+  for (const item of equipped) out[item.slot] = { icon: item.icon, ref: item.ref, rarity: item.rarity };
+  return out;
+}
+
+/** Stable string for an outfit, for caching whatever is drawn from it. */
+export function outfitKey(outfit: Outfit | undefined): string {
+  if (!outfit) return "";
+  return SLOTS.map((s) => (outfit[s] ? `${outfit[s]!.icon}:${outfit[s]!.rarity[0]}` : "-")).join(",");
+}
+
 /** Damage taken off each enemy hit by this much armor, before the half-the-hit cap. */
 export function armorBlock(armor: number): number {
   return Math.floor(armor / 3);

@@ -17,7 +17,7 @@ import {
 } from "./battle";
 import { rollCheck, statPct, type CheckResult } from "./check";
 import { KEY_ITEMS, WEAPONS } from "./content";
-import { rollItem, type ItemDef } from "./gear";
+import { rollItem, type ItemDef, type Outfit } from "./gear";
 import { findPath, generateMap, poiAt, poiById, type Poi, type WorldMap } from "./map";
 import {
   MAX_NPC_MESSAGES,
@@ -53,6 +53,8 @@ export interface HeroInit {
   weaponPower: number;
   /** Armor total from equipped gear. */
   armor: number;
+  /** What the hero is visibly wearing, for drawing the sprite. */
+  outfit?: Outfit;
 }
 
 export interface Hero extends HeroInit {
@@ -369,6 +371,7 @@ function toCombatant(hero: Hero): Combatant {
     hp: hero.hp,
     maxHp: hero.maxHp,
     pct: { str: statPct(stats.str), int_stat: statPct(stats.int_stat), vit: statPct(stats.vit), agi: statPct(stats.agi), dex: statPct(stats.dex) },
+    outfit: hero.outfit,
     power: hero.weaponPower ?? 0,
     armor: hero.armor ?? 0,
     speed: statPct(stats.agi),

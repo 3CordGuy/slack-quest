@@ -16,6 +16,7 @@ import {
   loadoutOf,
   maxFocusFor,
   maxHpFor,
+  outfitOf,
   rarityIndex,
   sellPrice,
   statPct,
@@ -124,7 +125,7 @@ export function InventoryScreen({ me, refresh, onClose }: { me: Me; refresh(): P
           <section className="inv-left">
             <div className="doll">
               <div className="doll-col">{LEFT.map(slotCell)}</div>
-              <div className="figure"><img src={spriteDataUrl(c.class_id)} alt="" /></div>
+              <div className="figure"><img src={spriteDataUrl(c.class_id, outfitOf([...worn.values()]))} alt="" /></div>
               <div className="doll-col">{RIGHT.map(slotCell)}</div>
             </div>
             <p className="muted hint-line">

@@ -6,7 +6,7 @@
 import type { StatKey } from "@gantt-quest/core";
 import { rollCheck, statPct, type CheckResult } from "./check";
 import { ABILITIES, EFFECT_TICK, ENEMIES, type AbilityDef, type EffectKind } from "./content";
-import { afterArmor } from "./gear";
+import { afterArmor, type Outfit } from "./gear";
 import type { Rng } from "./rng";
 
 export interface ActiveEffect {
@@ -25,6 +25,8 @@ export interface Combatant {
   maxHp: number;
   /** Per-roll success chance by stat. Heroes only. */
   pct: Partial<Record<StatKey, number>>;
+  /** What a hero is visibly wearing, for drawing the sprite. */
+  outfit?: Outfit;
   /** Added to this hero's ability damage. From the equipped weapon. */
   power: number;
   /** Blunts each enemy hit. From equipped armor. */

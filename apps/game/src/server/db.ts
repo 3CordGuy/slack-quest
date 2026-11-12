@@ -7,6 +7,7 @@ import {
   equipProblem,
   heroClass,
   loadoutOf,
+  outfitOf,
   sellPrice,
   shopStock,
   weaponItem,
@@ -265,7 +266,8 @@ export async function buyShopItem(db: D1Database, playerId: string, index: numbe
 export async function heroInitFor(db: D1Database, playerId: string): Promise<HeroInit | null> {
   const c = await getCharacter(db, playerId);
   if (!c || c.status !== "active") return null;
-  const loadout = loadoutOf((await getInventory(db, playerId)).filter((i) => i.equipped).map(rowToItem));
+  const worn = (await getInventory(db, playerId)).filter((i) => i.equipped).map(rowToItem);
+  const loadout = loadoutOf(worn);
   return {
     id: c.player_id,
     name: c.name,
@@ -278,6 +280,7 @@ export async function heroInitFor(db: D1Database, playerId: string): Promise<Her
     weapon: loadout.weapon ?? heroClass(c.class_id)!.weapons[0],
     weaponPower: loadout.weaponPower,
     armor: loadout.armor,
+    outfit: outfitOf(worn),
   };
 }
 

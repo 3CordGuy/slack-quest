@@ -5,6 +5,7 @@
 // them. This file holds the fixed map and the message shapes both sides use.
 
 import { allHexesInGrid, type HexGrid, type HexPos } from "@gantt-quest/core";
+import type { Outfit } from "./gear";
 import { findPath, type Biome, type Poi, type PoiKind, type Tile, type WorldMap } from "./map";
 
 export const HARBOR_GRID: HexGrid = { cols: 13, rows: 11 };
@@ -66,6 +67,8 @@ export interface HarborPlayer {
   classId: string;
   level: number;
   pos: HexPos;
+  /** What they are visibly wearing. */
+  outfit?: Outfit;
 }
 
 export interface HarborMember {
@@ -110,7 +113,11 @@ export type HarborServerMessage =
   | { type: "moved"; id: string; path: HexPos[] }
   | { type: "said"; id: string; name: string; text: string };
 
-export type HarborClientMessage = { type: "move"; to: HexPos } | { type: "say"; text: string };
+export type HarborClientMessage =
+  | { type: "move"; to: HexPos }
+  | { type: "say"; text: string }
+  /** "I changed my gear or level": the server re-reads the sender's character and tells everyone. */
+  | { type: "refresh" };
 
 export const HARBOR_MAX_SAY = 200;
 export const MAX_CREW = 40;

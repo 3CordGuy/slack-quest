@@ -5,6 +5,7 @@
 // a texture per `kind`.
 
 import * as THREE from "three";
+import { RARITY_COLOR, outfitKey, type Outfit, type Slot } from "@gantt-quest/world";
 
 const W = 18;
 const H = 22;
@@ -103,6 +104,144 @@ function drawHumanoid(ctx: CanvasRenderingContext2D, look: Look) {
   }
 }
 
+const GEAR = { steel: "#c9d1dc", shine: "#f1f5fa", iron: "#8b95a5", wood: "#8a5a2b", leather: "#a0683a", gold: "#e0b12e", paper: "#e8dcc0", bone: "#eee6cf", dark: "#2a2740" };
+
+/**
+ * A hero wearing what they have equipped. The body is the class's own
+ * colours; every worn item is drawn over it where it belongs: helmet or
+ * hood on the head, armor on the torso and legs, boots on the feet, the
+ * main-hand weapon at the right of the picture and a shield at the left.
+ * Each item's rarity colour shows as its trim.
+ */
+function drawHero(ctx: CanvasRenderingContext2D, look: Look, outfit: Outfit) {
+  const px = (x: number, y: number, w: number, h: number, c: string) => {
+    ctx.fillStyle = c;
+    ctx.fillRect(x + 1, y + 1, w, h);
+  };
+  const trim = (slot: Slot) => RARITY_COLOR[outfit[slot]!.rarity];
+
+  // Legs and feet.
+  const legs = outfit.legs ? GEAR.iron : look.legs;
+  px(5, 15, 2, 4, legs);
+  px(9, 15, 2, 4, legs);
+  if (outfit.legs) {
+    px(5, 16, 2, 1, GEAR.steel);
+    px(9, 16, 2, 1, GEAR.steel);
+    px(5, 15, 6, 1, trim("legs"));
+  }
+  if (outfit.boots) {
+    px(4, 17, 3, 2, GEAR.leather);
+    px(9, 17, 3, 2, GEAR.leather);
+    px(5, 17, 2, 1, trim("boots"));
+    px(9, 17, 2, 1, trim("boots"));
+  } else {
+    px(5, 18, 2, 1, OUTLINE);
+    px(9, 18, 2, 1, OUTLINE);
+  }
+
+  // Torso and arms.
+  const torso = outfit.body ? GEAR.iron : look.body;
+  px(4, 9, 8, 6, torso);
+  px(3, 9, 1, 5, torso);
+  px(12, 9, 1, 5, torso);
+  px(3, 14, 1, 1, look.skin);
+  px(12, 14, 1, 1, look.skin);
+  if (outfit.body) {
+    px(3, 9, 2, 2, GEAR.steel);
+    px(11, 9, 2, 2, GEAR.steel);
+    px(7, 11, 2, 2, trim("body"));
+    px(4, 13, 8, 1, GEAR.gold);
+  } else {
+    px(4, 13, 8, 1, look.accent);
+  }
+  if (outfit.amulet) {
+    px(6, 9, 4, 1, GEAR.gold);
+    px(7, 10, 2, 1, trim("amulet"));
+  }
+  if (outfit.ring) px(12, 14, 1, 1, trim("ring"));
+
+  // Head.
+  px(5, 3, 6, 6, look.skin);
+  px(5, 3, 6, 2, look.hair);
+  px(7, 6, 1, 1, OUTLINE);
+  px(9, 6, 1, 1, OUTLINE);
+  const helmet = outfit.helmet?.icon;
+  if (helmet === "hood") {
+    px(7, 1, 2, 1, GEAR.leather);
+    px(4, 2, 8, 3, GEAR.leather);
+    px(4, 5, 1, 5, GEAR.leather);
+    px(11, 5, 1, 5, GEAR.leather);
+    px(5, 4, 6, 1, trim("helmet"));
+  } else if (helmet === "brutal-helm") {
+    px(3, 0, 1, 3, GEAR.bone);
+    px(12, 0, 1, 3, GEAR.bone);
+    px(4, 2, 8, 4, GEAR.iron);
+    px(5, 6, 6, 1, GEAR.dark);
+    px(7, 6, 1, 1, trim("helmet"));
+    px(9, 6, 1, 1, trim("helmet"));
+    px(5, 7, 1, 2, GEAR.iron);
+    px(10, 7, 1, 2, GEAR.iron);
+  } else if (helmet) {
+    px(7, 0, 2, 2, trim("helmet"));
+    px(5, 2, 6, 3, GEAR.steel);
+    px(4, 3, 1, 4, GEAR.steel);
+    px(11, 3, 1, 4, GEAR.steel);
+    px(5, 5, 1, 3, GEAR.steel);
+    px(10, 5, 1, 3, GEAR.steel);
+    px(8, 5, 1, 1, GEAR.steel);
+  }
+
+  // Main hand: at the right of the picture.
+  const weapon = outfit.main_hand?.ref;
+  if (weapon === "mace") {
+    px(13, 8, 1, 8, GEAR.wood);
+    px(12, 5, 3, 3, GEAR.iron);
+    px(13, 6, 1, 1, trim("main_hand"));
+  } else if (weapon === "greatsword") {
+    px(13, 1, 1, 1, GEAR.shine);
+    px(13, 2, 2, 11, GEAR.steel);
+    px(13, 2, 1, 11, GEAR.shine);
+    px(12, 13, 4, 1, GEAR.gold);
+    px(13, 14, 1, 1, GEAR.wood);
+    px(13, 15, 1, 1, trim("main_hand"));
+  } else if (weapon === "staff") {
+    px(13, 4, 1, 15, GEAR.wood);
+    px(12, 1, 3, 3, trim("main_hand"));
+    px(13, 2, 1, 1, GEAR.shine);
+  } else if (weapon === "tome") {
+    px(12, 11, 4, 4, trim("main_hand"));
+    px(12, 11, 1, 4, GEAR.dark);
+    px(14, 12, 1, 2, GEAR.gold);
+  } else if (weapon === "daggers") {
+    px(13, 9, 1, 5, GEAR.steel);
+    px(12, 14, 3, 1, trim("main_hand"));
+    // The second dagger goes in the other hand unless a shield is there.
+    if (!outfit.off_hand) {
+      px(2, 9, 1, 5, GEAR.steel);
+      px(1, 14, 3, 1, trim("main_hand"));
+    }
+  } else if (weapon === "shortbow") {
+    px(13, 6, 1, 1, GEAR.wood);
+    px(14, 7, 1, 7, GEAR.wood);
+    px(13, 14, 1, 1, GEAR.wood);
+    px(13, 7, 1, 7, GEAR.paper);
+    px(14, 10, 1, 2, trim("main_hand"));
+  }
+
+  // Off hand: a shield at the left of the picture, in front of the arm.
+  const shield = outfit.off_hand?.icon;
+  if (shield === "round-shield") {
+    px(1, 9, 2, 6, GEAR.iron);
+    px(0, 10, 4, 4, GEAR.iron);
+    px(1, 11, 2, 2, trim("off_hand"));
+  } else if (shield) {
+    px(0, 8, 4, 6, GEAR.iron);
+    px(1, 14, 2, 1, GEAR.iron);
+    px(1, 9, 2, 4, trim("off_hand"));
+    px(1, 9, 2, 1, GEAR.steel);
+  }
+}
+
 function drawWolf(ctx: CanvasRenderingContext2D) {
   const px = (x: number, y: number, w: number, h: number, c: string) => {
     ctx.fillStyle = c;
@@ -123,15 +262,26 @@ function drawWolf(ctx: CanvasRenderingContext2D) {
 
 const cache = new Map<string, THREE.CanvasTexture>();
 
-/** Texture for a hero class, enemy kind, or "npc". Unknown kinds get the bandit. */
-export function spriteTexture(kind: string): THREE.CanvasTexture {
-  const hit = cache.get(kind);
+/** Cache key for a sprite: the kind plus whatever is being worn. */
+export function spriteKey(kind: string, outfit?: Outfit): string {
+  return outfit ? `${kind}|${outfitKey(outfit)}` : kind;
+}
+
+/**
+ * Texture for a hero class, enemy kind, or "npc". Unknown kinds get the
+ * bandit. Pass a hero's outfit to draw them wearing it; without one the
+ * kind's stock look is used.
+ */
+export function spriteTexture(kind: string, outfit?: Outfit): THREE.CanvasTexture {
+  const key = spriteKey(kind, outfit);
+  const hit = cache.get(key);
   if (hit) return hit;
   const canvas = document.createElement("canvas");
   canvas.width = W;
   canvas.height = H;
   const ctx = canvas.getContext("2d", { willReadFrequently: true })!;
   if (kind === "wolf") drawWolf(ctx);
+  else if (outfit) drawHero(ctx, LOOKS[kind] ?? LOOKS.bandit, outfit);
   else drawHumanoid(ctx, LOOKS[kind] ?? LOOKS.bandit);
   finish(ctx);
   const tex = new THREE.CanvasTexture(canvas);
@@ -139,15 +289,15 @@ export function spriteTexture(kind: string): THREE.CanvasTexture {
   tex.minFilter = THREE.NearestFilter;
   tex.generateMipmaps = false;
   tex.colorSpace = THREE.SRGBColorSpace;
-  cache.set(kind, tex);
+  cache.set(key, tex);
   return tex;
 }
 
 export const SPRITE_ASPECT = W / H;
 
 /** The same sprite as an image URL, for use in the HUD. */
-export function spriteDataUrl(kind: string): string {
-  return (spriteTexture(kind).image as HTMLCanvasElement).toDataURL();
+export function spriteDataUrl(kind: string, outfit?: Outfit): string {
+  return (spriteTexture(kind, outfit).image as HTMLCanvasElement).toDataURL();
 }
 
 /** A short text label as a pixel-crisp texture, for floating combat numbers. */
