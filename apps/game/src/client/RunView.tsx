@@ -211,7 +211,7 @@ function HexTip({ state, hover }: { state: ClientState; hover: HexPos }) {
       {poi && <span className="muted"> · {BIOME_LABEL[tile.biome]}</span>}
       <span className="muted"> · {Number.isFinite(cost) ? `${cost} movement to enter` : "cannot be crossed"}</span>
       {walk && <span className={walk.startsWith("out") ? "bad" : "good"}> · {walk}</span>}
-      {poi && !poi.cleared && poi.enemies.length > 0 && <span className="bad"> · heroes inside the red line join the fight</span>}
+      {poi && !poi.cleared && poi.enemies.length > 0 && <span className="bad"> · heroes inside the red line join a fight here</span>}
     </div>
   );
 }

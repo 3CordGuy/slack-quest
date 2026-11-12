@@ -456,11 +456,18 @@ export class WorldRenderer {
   }
 
   /**
-   * Outline, in red, the area around every place with enemies still in it:
-   * a hero standing inside the line when a fight starts there is pulled in.
+   * Outline, in red, the area around a place with enemies still in it: a
+   * hero standing inside the line when a fight starts there is pulled in.
+   * Shown only when it matters: while the pointer is over the place or its
+   * surroundings, or while a hero is standing inside the area.
    */
   private buildJoinRanges(state: RenderState) {
-    const hostile = state.battle ? [] : state.map.pois.filter((p) => !p.cleared && p.enemies.length > 0);
+    const near = (p: HexPos, poi: Poi) => hexDistance(p, poi.pos) <= BATTLE_JOIN_RANGE;
+    const hostile = state.battle
+      ? []
+      : state.map.pois.filter(
+          (poi) => !poi.cleared && poi.enemies.length > 0 && ((this.hovered && near(this.hovered, poi)) || state.heroes.some((h) => near(h.pos, poi))),
+        );
     const sig = `${state.code}|${hostile.map((p) => p.id).join(",")}`;
     if (sig === this.rangeSig) return;
     this.rangeSig = sig;
@@ -880,6 +887,7 @@ export class WorldRenderer {
     if ((pos && this.hovered && key(pos) === key(this.hovered)) || (!pos && !this.hovered)) return;
     this.hovered = pos;
     this.updatePath();
+    if (this.state) this.buildJoinRanges(this.state);
     this.callbacks.onHover(pos);
   }
 
