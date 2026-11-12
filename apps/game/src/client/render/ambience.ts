@@ -126,6 +126,8 @@ const floorTexture = () =>
 
 /** Raindrops in the air at once. */
 const DROPS = 150;
+/** How long one spell of weather lasts before the sky starts turning to the next. */
+const WEATHER_SPELL_MS = 7 * 60 * 1000;
 /** Puffs of smoke in the air over one chimney at a time. */
 const PUFFS = 12;
 /**
@@ -263,7 +265,12 @@ export class Ambience {
   private bounds = { minX: 0, maxX: 0, minZ: 0, maxZ: 0 };
   private wispPoints: THREE.Points | null = null;
   /** Low cloud and rain: set for a map with streets. */
-  private overcast = false;
+  /** The map is the Harbor (it has streets): its weather runs wetter. */
+  private wetPort = false;
+  private outdoors = true;
+  /** How cloudy and how rainy it is right now, 0 to 1 each. */
+  private cloud = 0;
+  private rainfall = 0;
   private rain: THREE.Points | null = null;
   /** Chimney smoke: a column of pixel puffs over each stack. Outlives a map rebuild, so it is kept out of `group`. */
   private smoke: THREE.Points | null = null;
@@ -478,9 +485,10 @@ export class Ambience {
       this.group.add(mesh);
     }
 
-    // ---- weather: a place with streets (the Harbor) sits under low cloud and steady rain ----
-    this.overcast = tiles.some((t) => (t.biome as string) === "cobble");
-    if (this.overcast && !this.still) {
+    // ---- weather: outdoors the sky changes with the clock (see weather()); a port with streets is wetter than an island ----
+    this.wetPort = tiles.some((t) => (t.biome as string) === "cobble");
+    this.outdoors = !tiles.some((t) => (t.biome as string) === "floor");
+    if (this.outdoors && !this.still) {
       const geometry = new THREE.BufferGeometry();
       geometry.setAttribute("position", new THREE.BufferAttribute(new Float32Array(DROPS * 2 * 3), 3));
       this.rain = new THREE.Points(geometry, new THREE.PointsMaterial({ size: 2, sizeAttenuation: false, color: "#b9c7dc", transparent: true, opacity: 0.42, depthWrite: false }));
@@ -532,6 +540,24 @@ export class Ambience {
   }
 
   /** Time of day from 0 to 1: 0 is midnight, 0.5 is noon. */
+  /**
+   * The weather, 0 (clear) to 1 (heavy rain), from the wall clock like the time of day, so a crew shares one sky.
+   * A new spell starts every few minutes and the sky eases from one to the next. The Harbor runs wetter than an island.
+   */
+  private weather(): number {
+    if (import.meta.env.DEV) {
+      const forced = (globalThis as { __gqWeather?: number }).__gqWeather;
+      if (typeof forced === "number") return forced;
+    }
+    const at = Date.now() / WEATHER_SPELL_MS;
+    const spell = Math.floor(at);
+    const bias = this.wetPort ? 0.12 : -0.08;
+    const of = (k: number) => Math.max(0, Math.min(1, hash(k, 7, 700) + bias));
+    // Hold each spell for most of its length, then ease into the next.
+    const blend = smooth(0.7, 1, at - spell);
+    return of(spell) * (1 - blend) + of(spell + 1) * blend;
+  }
+
   private timeOfDay(): number {
     if (import.meta.env.DEV) {
       const forced = (globalThis as { __gqTime?: number }).__gqTime;
@@ -631,7 +657,16 @@ export class Ambience {
   private fall(clock: number, target: THREE.Vector3) {
     if (!this.rain) return;
     const pos = this.rain.geometry.getAttribute("position") as THREE.BufferAttribute;
+    // Only as many drops fall as the weather calls for; the rest wait out of sight.
+    const falling = Math.round(DROPS * this.rainfall);
+    (this.rain.material as THREE.PointsMaterial).opacity = 0.2 + 0.25 * this.rainfall;
+    this.rain.visible = falling > 0;
     for (let i = 0; i < DROPS; i++) {
+      if (i >= falling) {
+        pos.setXYZ(i * 2, 0, -100, 0);
+        pos.setXYZ(i * 2 + 1, 0, -100, 0);
+        continue;
+      }
       const life = (clock * (0.9 + hash(i, 1, 500) * 0.5) + hash(i, 2, 500)) % 1;
       const y = 8 * (1 - life);
       const x = target.x + (hash(i, 3, 500) - 0.5) * 30 + life * 2.2;
@@ -722,16 +757,21 @@ export class Ambience {
     this.hemi.groundColor.set("#232a4d").lerp(GROUND_DAY, daylight);
     if (this.indoors) this.background.set("#1d1a2b");
     else this.background.set("#161c3c").lerp(SKY_DAY, daylight).lerp(DUSK, glow * 0.7);
-    if (this.overcast) {
+    // Cloud comes in before the rain does; indoors there is no sky.
+    const wet = this.outdoors ? this.weather() : 0;
+    this.cloud = smooth(0.3, 0.6, wet);
+    this.rainfall = smooth(0.6, 0.9, wet);
+    if (this.cloud > 0) {
       // Low cloud: a weaker, greyer sun, a slate sky, and everything a shade cooler.
-      this.sun.intensity *= 0.55;
-      this.hemi.intensity *= 0.92;
-      this.hemi.color.lerp(SLATE, 0.45);
-      this.background.lerp(SLATE, 0.8).multiplyScalar(0.75 + 0.2 * daylight);
+      const c = this.cloud;
+      this.sun.intensity *= 1 - 0.45 * c;
+      this.hemi.intensity *= 1 - 0.08 * c;
+      this.hemi.color.lerp(SLATE, 0.45 * c);
+      this.background.lerp(SLATE, 0.8 * c).multiplyScalar(1 - c * (0.25 - 0.2 * daylight));
     }
     // Unlit cut-outs (grass, wave crests) are tinted by hand to match.
     this.flatTint.set("#56669c").lerp(WHITE, daylight).lerp(DUSK, glow * 0.2);
-    if (this.overcast) this.flatTint.lerp(SLATE, 0.35).multiplyScalar(0.82);
+    if (this.cloud > 0) this.flatTint.lerp(SLATE, 0.35 * this.cloud).multiplyScalar(1 - 0.18 * this.cloud);
   }
 }
 
