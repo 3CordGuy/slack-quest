@@ -104,7 +104,8 @@ export type BattleEvent =
   | { t: "intent"; id: string; intent: Intent }
   | { t: "check"; actor: string; check: CheckResult }
   | { t: "hit"; actor: string; target: string; amount: number; ability: string; perfect: boolean }
-  | { t: "miss"; actor: string; target: string; ability: string }
+  /** A failed attack, or (`heal`) a heal that failed every roll. */
+  | { t: "miss"; actor: string; target: string; ability: string; heal?: boolean }
   | { t: "heal"; actor: string; target: string; amount: number; ability: string }
   | { t: "effect"; target: string; effect: EffectKind; turns: number }
   | { t: "tick"; target: string; effect: EffectKind; amount: number }
@@ -267,13 +268,18 @@ function addEffect(state: BattleState, target: Combatant, effect: EffectKind, tu
   }
 }
 
-/** Apply damage. `direct` hits are blunted by armor; bleeding and burning are not. */
-function damage(state: BattleState, target: Combatant, raw: number, events: BattleEvent[], direct = true): number {
+/**
+ * Apply damage. `direct` hits are blunted by armor; bleeding and burning are not.
+ * `cause` is the event saying what did it (the hit, the tick): it is logged
+ * first, so a "goes down" always comes after the blow that caused it.
+ */
+function damage(state: BattleState, target: Combatant, raw: number, events: BattleEvent[], direct: boolean, cause: (amount: number) => BattleEvent): number {
   const guarded = hasEffect(target, "guarded");
   const exposed = direct && hasEffect(target, "exposed") ? EXPOSED_BONUS : 0;
   const blunted = direct ? afterArmor(raw + exposed, target.armor) : raw;
   const amount = Math.max(0, guarded ? Math.ceil(blunted / 2) : blunted);
   target.hp = Math.max(0, target.hp - amount);
+  events.push(cause(amount));
   if (target.hp === 0 && !target.down) {
     target.down = true;
     target.effects = [];
@@ -331,8 +337,7 @@ function advance(state: BattleState, rng: Rng, events: BattleEvent[]) {
     for (const e of [...actor.effects]) {
       const tick = EFFECT_TICK[e.kind];
       if (tick) {
-        const amount = damage(state, actor, tick, events, false);
-        events.push({ t: "tick", target: actor.id, effect: e.kind, amount });
+        damage(state, actor, tick, events, false, (amount) => ({ t: "tick", target: actor.id, effect: e.kind, amount }));
         e.turns -= 1;
       } else if (e.kind === "exposed") {
         e.turns -= 1;
@@ -386,8 +391,7 @@ function enemyTurn(state: BattleState, actor: Combatant, rng: Rng, events: Battl
       events.push({ t: "miss", actor: actor.id, target: target.id, ability: attack.name });
       continue;
     }
-    const amount = damage(state, target, scaled, events);
-    events.push({ t: "hit", actor: actor.id, target: target.id, amount, ability: attack.name, perfect: check.perfect });
+    damage(state, target, scaled, events, true, (amount) => ({ t: "hit", actor: actor.id, target: target.id, amount, ability: attack.name, perfect: check.perfect }));
     if (check.perfect && attack.perfect && !target.down) {
       addEffect(state, target, attack.perfect.effect, attack.perfect.turns, events);
     }
@@ -434,8 +438,9 @@ function resolveAbility(
       // Bulwark Strike leans on the Warden's armor; Hex on the size of its target.
       const armorBonus = def.armorDamage ? Math.floor(actor.armor / ARMOR_DAMAGE_DIVISOR) : 0;
       const sizeBonus = def.maxHpDamage ? Math.round(target.maxHp * def.maxHpDamage) : 0;
-      const amount = damage(state, target, Math.round((def.damage + actor.level + actor.power + aura + armorBonus + sizeBonus) * scale), events);
-      events.push({ t: "hit", actor: actor.id, target: target.id, amount, ability: def.name, perfect: check.perfect });
+      const amount = damage(state, target, Math.round((def.damage + actor.level + actor.power + aura + armorBonus + sizeBonus) * scale), events, true, (amount) => ({
+        t: "hit", actor: actor.id, target: target.id, amount, ability: def.name, perfect: check.perfect,
+      }));
       if (check.perfect && def.perfect && !target.down) addEffect(state, target, def.perfect.effect, def.perfect.turns, events);
       // The Wreck Warlock's perfect hits leave the target bleeding.
       if (check.perfect && actor.side === "hero" && actor.kind === "data_warlock" && !target.down) addEffect(state, target, "bleeding", WARLOCK_BLEED_TURNS, events);
@@ -444,6 +449,10 @@ function resolveAbility(
         actor.hp += healed;
         events.push({ t: "heal", actor: actor.id, target: actor.id, amount: healed, ability: def.name });
       }
+    }
+    // A heal-only ability that fails every roll says so, rather than passing in silence.
+    if (def.heal !== undefined && check.fumble && def.damage === undefined) {
+      events.push({ t: "miss", actor: actor.id, target: target.id, ability: def.name, heal: true });
     }
     if (def.heal !== undefined && !check.fumble) {
       const amount = Math.min(target.maxHp - target.hp, Math.round((def.heal + actor.level) * scale));

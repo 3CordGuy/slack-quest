@@ -117,7 +117,7 @@ function describe(events: WorldEvent[], state: ClientState, names: Map<string, s
       case "battle": {
         const b = ev.ev;
         if (b.t === "hit") out.push(`${n(b.actor)}: ${b.ability} hits ${n(b.target)} for ${b.amount}${b.perfect ? " (perfect!)" : ""}.`);
-        else if (b.t === "miss") out.push(`${n(b.actor)}: ${b.ability} misses ${n(b.target)}.`);
+        else if (b.t === "miss") out.push(b.heal ? `${n(b.actor)}: ${b.ability} fails.` : `${n(b.actor)}: ${b.ability} misses ${n(b.target)}.`);
         else if (b.t === "heal") out.push(`${n(b.actor)}: ${b.ability} restores ${b.amount} HP to ${n(b.target)}.`);
         else if (b.t === "effect") out.push(`${n(b.target)} is ${label("effect", b.effect).toLowerCase()}.`);
         else if (b.t === "tick") out.push(`${n(b.target)} takes ${b.amount} from ${label("effect", b.effect).toLowerCase()}.`);
