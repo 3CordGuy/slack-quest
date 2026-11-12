@@ -299,6 +299,7 @@ export function RunView({ code, me, refresh, onLeave }: { code: string; me: Me; 
               <Feed lines={feed} />
               {state.phase === "overworld" && <TurnBar state={state} run={run} />}
               <SkipVoteBar state={state} run={run} />
+              <YourTurnFrame state={state} />
               {ashore && me.character && <Trading me={me} partners={state.heroes.filter((h) => h.id !== state.you)} withId={tradeWith} onWith={setTradeWith} refresh={refresh} run={code} />}
               {state.phase === "overworld" && <Chat state={state} run={run} talkTo={talkTo} onTalked={() => setTalkTo(null)} />}
               {state.phase === "battle" && !held && !intro && <BattleHud battle={state.battle!} you={state.you} onAction={(action) => run.send({ type: "battle", action })} />}
@@ -653,4 +654,20 @@ function SkipVoteBar({ state, run }: { state: ClientState; run: ReturnType<typeo
       </button>
     </div>
   );
+}
+
+/**
+ * A gold frame around the whole screen while it is your turn, on the island
+ * or in a fight: it flashes as the turn arrives, then holds as a soft glow.
+ * Keyed on the turn so the flash plays again each time it comes back round.
+ */
+function YourTurnFrame({ state }: { state: ClientState }) {
+  let turnKey: string | null = null;
+  if (state.phase === "overworld" && state.turn?.heroId === state.you) turnKey = `o:${state.round}`;
+  else if (state.phase === "battle" && state.battle) {
+    const actor = World.currentActor(state.battle);
+    if (actor?.id === state.you && !actor.down) turnKey = `b:${state.battle.deadline ?? 0}`;
+  }
+  if (!turnKey) return null;
+  return <div key={turnKey} className="your-turn-frame" aria-hidden="true" />;
 }
