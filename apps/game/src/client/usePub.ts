@@ -3,7 +3,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { HexPos } from "@gantt-quest/core";
-import type { DiceView, HarborPlayer, PubClientMessage, PubServerMessage } from "@gantt-quest/world";
+import type { DiceView, HarborPlayer, PubClientMessage, PubServerMessage, ShoalsView } from "@gantt-quest/world";
 import { PROFILE } from "./api";
 import type { HarborChatLine } from "./useHarbor";
 
@@ -15,6 +15,9 @@ export interface PubConnection {
   dice: DiceView | null;
   /** Why the last dice request was refused. Cleared by the next change at the table. */
   diceError: string | null;
+  /** The Shoals table, likewise. */
+  shoals: ShoalsView | null;
+  shoalsError: string | null;
   status: "connecting" | "open" | "closed";
   error: string | null;
   send(message: PubClientMessage): void;
@@ -27,6 +30,8 @@ export function usePub(onMoved: (id: string, path: HexPos[]) => void): PubConnec
   const [chat, setChat] = useState<HarborChatLine[]>([]);
   const [dice, setDice] = useState<DiceView | null>(null);
   const [diceError, setDiceError] = useState<string | null>(null);
+  const [shoals, setShoals] = useState<ShoalsView | null>(null);
+  const [shoalsError, setShoalsError] = useState<string | null>(null);
   const [status, setStatus] = useState<PubConnection["status"]>("connecting");
   const [error, setError] = useState<string | null>(null);
   const socket = useRef<WebSocket | null>(null);
@@ -73,6 +78,11 @@ export function usePub(onMoved: (id: string, path: HexPos[]) => void): PubConnec
           setDiceError(null);
         } else if (msg.type === "diceError") {
           setDiceError(msg.text);
+        } else if (msg.type === "shoals") {
+          setShoals(msg.table);
+          setShoalsError(null);
+        } else if (msg.type === "shoalsError") {
+          setShoalsError(msg.text);
         }
       };
       ws.onclose = async (e) => {
@@ -102,5 +112,5 @@ export function usePub(onMoved: (id: string, path: HexPos[]) => void): PubConnec
   const send = useCallback((message: PubClientMessage) => {
     if (socket.current?.readyState === WebSocket.OPEN) socket.current.send(JSON.stringify(message));
   }, []);
-  return { you, players, chat, dice, diceError, status, error, send };
+  return { you, players, chat, dice, diceError, shoals, shoalsError, status, error, send };
 }

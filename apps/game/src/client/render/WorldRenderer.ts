@@ -762,6 +762,16 @@ export class WorldRenderer {
         g.userData.smoke = new THREE.Vector3(0.5, 1.4, -0.22);
         break;
       }
+      case "shoals": {
+        // The Shoals table: a low square table under a sea-blue cloth, with a few markers on it and a stool either side.
+        add(box(0.7, 0.36, 0.7), lambert("#6b4a2b"), 0, 0.18, -0.3, Math.PI / 4);
+        add(box(0.82, 0.05, 0.82), lambert("#2f6f8c"), 0, 0.385, -0.3, Math.PI / 4);
+        for (const x of [-0.74, 0.74]) add(new THREE.CylinderGeometry(0.14, 0.12, 0.24, 6), lambert("#5a3d22"), x, 0.12, -0.15);
+        add(new THREE.CylinderGeometry(0.09, 0.09, 0.04, 8), lambert("#7db6f2"), -0.16, 0.43, -0.28);
+        add(new THREE.CylinderGeometry(0.09, 0.09, 0.04, 8), lambert("#d9b45a"), 0.14, 0.43, -0.4);
+        add(new THREE.CylinderGeometry(0.09, 0.09, 0.08, 8), lambert("#6b4a2b"), 0.04, 0.45, -0.16);
+        break;
+      }
       case "counter": {
         // The menu board, on a post where customers stand to order.
         add(box(0.05, 0.7, 0.05), lambert("#5a3d22"), 0.55, 0.35, -0.1);

@@ -11,6 +11,7 @@
 
 import type { HexGrid, HexPos } from "@gantt-quest/core";
 import type { DiceRequest, DiceView } from "./dice";
+import type { ShoalsRequest, ShoalsView } from "./shoals";
 import { harborPoi, type HarborPlayer } from "./harbor";
 import type { Perk } from "./hut";
 import { buildRoom, hutPath } from "./hutroom";
@@ -26,6 +27,8 @@ const at = (col: number, row: number): HexPos => ({ q: col - Math.floor(row / 2)
 export const PUB_COUNTER: HexPos = at(3, 3);
 /** Where players stand to sit at the dice table. */
 export const PUB_DICE: HexPos = at(7, 5);
+/** Where players stand to sit at the Shoals table. */
+export const PUB_SHOALS: HexPos = at(5, 5);
 /** The barkeep's spot, behind the bar. */
 export const PUB_BARKEEP_POS: HexPos = at(3, 1);
 export const PUB_BARKEEP = { id: "barkeep", name: "Old Tam" } as const;
@@ -58,10 +61,10 @@ export const PUB_FITTINGS: PubFitting[] = [
   fit(14, "chair", 8, 6, 1),
 ];
 
-/** The room: the same every time. The counter and the dice table are places to stand, not obstacles. */
+/** The room: the same every time. The counter and the two game tables are places to stand, not obstacles. */
 export function pubRoom(): WorldMap {
   const room = buildRoom(PUB_GRID);
-  return { ...room, pois: [...room.pois, harborPoi("counter", "counter", PUB_COUNTER), harborPoi("dice", "dice", PUB_DICE)] };
+  return { ...room, pois: [...room.pois, harborPoi("counter", "counter", PUB_COUNTER), harborPoi("dice", "dice", PUB_DICE), harborPoi("shoals", "shoals", PUB_SHOALS)] };
 }
 
 /** A walkable route across the pub, or null. The barkeep's side of the bar is his alone. */
@@ -137,9 +140,12 @@ export type PubServerMessage =
   | { type: "moved"; id: string; path: HexPos[] }
   | { type: "said"; id: string; name: string; text: string }
   | { type: "dice"; table: DiceView | null }
-  | { type: "diceError"; text: string };
+  | { type: "diceError"; text: string }
+  | { type: "shoals"; table: ShoalsView | null }
+  | { type: "shoalsError"; text: string };
 
 export type PubClientMessage =
   | { type: "move"; to: HexPos }
   | { type: "say"; text: string }
-  | { type: "dice"; action: DiceRequest };
+  | { type: "dice"; action: DiceRequest }
+  | { type: "shoals"; action: ShoalsRequest };
