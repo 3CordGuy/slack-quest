@@ -3,7 +3,7 @@
 // posts the player's choice to push on or bank.
 
 import { useEffect, useRef, useState } from "react";
-import { FELLING_SIDE, GATHER_SPOTS, QUARRY_SIDE, TIMING, markerAt, STAT_LABEL, type GatherChoice, type GatherSpot, type GatherView, type Resources } from "@gantt-quest/world";
+import { FELLING_SIDE, GATHER_SPOTS, QUARRY_SIDE, TIMING, markerAt, timingGrade, type TimingGrade, STAT_LABEL, type GatherChoice, type GatherSpot, type GatherView, type Resources } from "@gantt-quest/world";
 import { api, type GatherStatus } from "./api";
 import { DragPanel } from "./DragPanel";
 import { ResourceChips, resourceText } from "./hutDrops";
@@ -101,15 +101,19 @@ function Face({ outing, busy, cut }: { outing: GatherView; busy: boolean; cut(ce
 function TimingBar({ aim, spot, busy, stop }: { aim: NonNullable<GatherView["aim"]>; spot: "fishing" | "quarry"; busy: boolean; stop(at: number): void }) {
   const marker = useRef<HTMLDivElement>(null);
   const started = useRef(performance.now());
-  const done = useRef(false);
+  /** When the player pressed, in ms after the marker started; null until they do. The marker stops there at once. */
+  const stopped = useRef<number | null>(null);
+  const [verdict, setVerdict] = useState<TimingGrade | null>(null);
   const { motion } = aim;
   useEffect(() => {
     started.current = performance.now();
-    done.current = false;
+    stopped.current = null;
+    setVerdict(null);
     let raf = 0;
     const frame = () => {
       raf = requestAnimationFrame(frame);
-      if (marker.current) marker.current.style.left = `${markerAt(motion, performance.now() - started.current) * 100}%`;
+      const at = stopped.current ?? performance.now() - started.current;
+      if (marker.current) marker.current.style.left = `${markerAt(motion, at) * 100}%`;
     };
     raf = requestAnimationFrame(frame);
     return () => cancelAnimationFrame(raf);
@@ -119,16 +123,20 @@ function TimingBar({ aim, spot, busy, stop }: { aim: NonNullable<GatherView["aim
   useEffect(() => {
     box.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
   }, [motion]);
-  const press = () => {
-    if (done.current || busy) return;
-    done.current = true;
-    stop(Math.round(performance.now() - started.current));
+  // Acts on the press itself (pointer down, key down), not the release, and freezes the marker where it was.
+  const press = (e?: { preventDefault(): void }) => {
+    e?.preventDefault();
+    if (stopped.current !== null || busy) return;
+    const at = Math.round(performance.now() - started.current);
+    stopped.current = at;
+    // What it looks like from here; the server decides, on the same moment.
+    setVerdict(timingGrade(motion, at));
+    stop(at);
   };
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.code !== "Space" || (e.target as HTMLElement)?.closest?.("input, textarea")) return;
-      e.preventDefault();
-      press();
+      if (e.code !== "Space" || e.repeat || (e.target as HTMLElement)?.closest?.("input, textarea")) return;
+      press(e);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -140,10 +148,11 @@ function TimingBar({ aim, spot, busy, stop }: { aim: NonNullable<GatherView["aim
         <div className="timing-zone" style={{ left: `${left}%`, width: `${motion.width * 100}%` }}>
           <div className="timing-sweet" />
         </div>
-        <div className="timing-marker" ref={marker}>{spot === "fishing" ? "🐟" : "⛏"}</div>
+        <div className={`timing-marker ${verdict ? "stopped" : ""}`} ref={marker}>{spot === "fishing" ? "🐟" : "⛏"}</div>
+        {verdict && <div className={`timing-verdict timing-${verdict}`}>{TIMING[verdict].label}!</div>}
       </div>
       <div className="row">
-        <button className="primary" disabled={busy} onClick={press}>{spot === "fishing" ? "Reel!" : "Strike!"}</button>
+        <button className="primary" disabled={busy || verdict !== null} onPointerDown={press} onKeyDown={(e) => (e.key === "Enter" ? press(e) : undefined)}>{spot === "fishing" ? "Reel!" : "Strike!"}</button>
         <span className="muted">Stop it on the mark (or press space). Bang on the middle: +{TIMING.perfect.bonus}% a roll. On the mark: +{TIMING.good.bonus}%. Off it: {TIMING.miss.bonus}%.</span>
       </div>
     </div>
